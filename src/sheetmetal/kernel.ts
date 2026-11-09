@@ -211,6 +211,78 @@ function removedPieces(api: SheetApi, st: SheetState, folded: Named, fid: string
     if (volumeOf(api, gone.shape) <= v * 1e-6) continue;
     out.push(moved(api, gone, flatTrsf(api, p.M, st.root)));
   }
+  // Bends: what was taken out of each, unrolled from its neutral surface onto the flat strip.
+  for (const b of st.bends) {
+    const solid = bendSolid(api, b, st.T);
+    const v = volumeOf(api, solid.shape);
+    const gone = api.bool("cut", solid, folded, `${fid}:cut`);
+    if (volumeOf(api, gone.shape) <= v * 1e-6) continue;
+    out.push(...unrolled(api, st, b, gone, fid));
+  }
+  return out;
+}
+
+/**
+ * Cut prisms on the flat pattern for what was taken out of a bend: the removed piece is cut with the bend's
+ * neutral surface (radius ba / angle, so arc lengths there are flat lengths) and each piece of that surface
+ * is mapped onto the bend's flat strip (along the bend line, and turned angle × radius across it).
+ */
+function unrolled(api: SheetApi, st: SheetState, b: Bend, gone: Named, fid: string): Named[] {
+  const oc = api.oc, T = st.T;
+  const l = Math.hypot(b.a1[0] - b.a0[0], b.a1[1] - b.a0[1]);
+  const e: V2 = [(b.a1[0] - b.a0[0]) / l, (b.a1[1] - b.a0[1]) / l], o: V2 = [e[1], -e[0]];
+  const rho = Math.min(Math.max(b.ba / b.angle, b.r), b.r + T);
+  const zc = b.up ? T + b.r : -b.r, zn = b.up ? zc - rho : zc + rho;
+  const P = (q: V3) => new oc.gp_Pnt_3(q[0], q[1], q[2]);
+  const w = (p: V2, z: number) => apply(b.M, [p[0], p[1], z]);
+  const ua = applyDir(b.M, b.up ? [-e[0], -e[1], 0] : [e[0], e[1], 0]);
+  // A little wider than the bend so cuts reaching its ends are whole.
+  const pad = l * 0.01 + T;
+  const n0: V2 = [b.a0[0] - e[0] * pad, b.a0[1] - e[1] * pad], n1: V2 = [b.a1[0] + e[0] * pad, b.a1[1] + e[1] * pad];
+  const edge = new oc.BRepBuilderAPI_MakeEdge_3(P(w(n0, zn)), P(w(n1, zn))).Edge();
+  const c = w(b.a0, zc);
+  const surf = new oc.BRepPrimAPI_MakeRevol_1(edge, new oc.gp_Ax1_2(P(c), new oc.gp_Dir_4(ua[0], ua[1], ua[2])), b.angle, false).Shape();
+  const common = new oc.BRepAlgoAPI_Common_3(surf, gone.shape, new oc.Message_ProgressRange_1());
+  if (!common.IsDone()) return [];
+  // World point on the neutral surface → flat pattern point.
+  const s3 = applyDir(b.M, [0, 0, b.up ? -1 : 1]), e3 = applyDir(b.M, [e[0], e[1], 0]);
+  const A0 = w(b.a0, 0);
+  const flat = (x: V3): V2 => {
+    const t = dot(sub3(x, A0), e3);
+    const v = sub3(x, c), along = dot(v, e3);
+    const vp: V3 = [v[0] - e3[0] * along, v[1] - e3[1] * along, v[2] - e3[2] * along];
+    const cr: V3 = [s3[1] * vp[2] - s3[2] * vp[1], s3[2] * vp[0] - s3[0] * vp[2], s3[0] * vp[1] - s3[1] * vp[0]];
+    const phi = Math.atan2(dot(ua, cr), dot(s3, vp));
+    return [b.a0[0] + t * e[0] + phi * rho * o[0], b.a0[1] + t * e[1] + phi * rho * o[1]];
+  };
+  const loopOf = (wire: any): Seg[] => {
+    const pts: V2[] = [];
+    const ex = new oc.BRepTools_WireExplorer_2(wire);
+    for (; ex.More(); ex.Next()) {
+      const ed = ex.Current();
+      const cu = new oc.BRepAdaptor_Curve_2(ed);
+      const u0 = cu.FirstParameter(), u1 = cu.LastParameter();
+      const n = cu.GetType() === oc.GeomAbs_CurveType.GeomAbs_Line ? 1 : 24;
+      const seq: V2[] = [];
+      for (let i = 0; i <= n; i++) { const q = cu.Value(u0 + (u1 - u0) * i / n); seq.push(flat([q.X(), q.Y(), q.Z()])); }
+      if (ed.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED) seq.reverse();
+      for (const q of seq) if (!pts.length || Math.hypot(q[0] - pts.at(-1)![0], q[1] - pts.at(-1)![1]) > 1e-7) pts.push(q);
+    }
+    if (pts.length > 1 && Math.hypot(pts[0][0] - pts.at(-1)![0], pts[0][1] - pts.at(-1)![1]) < 1e-7) pts.pop();
+    if (pts.length < 3 || Math.abs(polyArea(pts)) < 1e-9) return [];
+    const ccw = polyArea(pts) >= 0 ? pts : [...pts].reverse();
+    return ccw.map((a, i) => ({ ent: `u${i}`, kind: "line", a, b: ccw[(i + 1) % ccw.length] }) as Seg);
+  };
+  const out: Named[] = [];
+  for (const fc of api.sub(common.Shape(), "FACE")) {
+    const outer = loopOf(oc.BRepTools.OuterWire(fc));
+    if (!outer.length) continue;
+    try {
+      const shape = prism(api, faceOf(api, outer, [], frameOf(st.root, -T * 0.01)), applyDir(st.root, [0, 0, T * 1.02]));
+      const faces = api.sub(shape, "FACE");
+      out.push({ shape, faces, names: faces.map((_f, i) => `${fid}:u${i}`) });
+    } catch { /* a sliver that makes no face */ }
+  }
   return out;
 }
 

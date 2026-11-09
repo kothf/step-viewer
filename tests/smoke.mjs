@@ -2234,7 +2234,7 @@ try {
     const ctxAfter = await mp.evaluate(id => { const ed = window.__sv.model.editor(); return { sel: [...ed.selection], cons: !!ed.sk.ents.find(e => e.id === id)?.cons }; }, added);
     check(ended.tool === "line" && ended.pts === 0 && !ended.menu && (await lineIds()).length === linesBefore + 1
       && ["Select chain", "Construction geometry", "Horizontal", "Delete", "Exit sketch", "Discard"].every(l => menuItems.some(m => m.endsWith(l))) && ctxAfter.sel.includes(added) && ctxAfter.cons,
-      `model 1.270: right-click ends a line chain, and the sketch menu sets construction on the line under the cursor (${JSON.stringify(ended)}, ${JSON.stringify(menuItems)}, ${JSON.stringify(ctxAfter)})`);
+      `model 1.275: right-click ends a line chain, and the sketch menu sets construction on the line under the cursor (${JSON.stringify(ended)}, ${JSON.stringify(menuItems)}, ${JSON.stringify(ctxAfter)})`);
     await mp.evaluate(() => window.__sv.modeller.ok());
     await idle();
     // Convert entities: the top face of a block into a sketch on it, four fixed lines.
@@ -8807,6 +8807,25 @@ try {
     check(mf0.title === "Miter Flange" && mf0.sketch === "s5" && mf0.edges === 2 && !mf1.bad && mf1.mitres === 4 && mf1.size[0] === 110 && mf1.size[1] === 60 && Math.abs(mf1.size[2] - (20 + T)) < 2e-3 && /Miter-Flange1$/.test(mf1.names)
       && mru.title === "Кромка под углом" && !/[A-Za-z]{3}/.test(mru.text.replace(/Enter|Esc|MSG|mm|Sketch5/g, "")),
       `sheet metal: Miter Flange runs a sketched profile along two clicked edges, mitred at their corner; panel in Russian (${JSON.stringify({ mf0, mf1, mru })})`);
+    // A slot cut across the front flange's bend: the flat pattern loses the same material, bend part unrolled.
+    const across = async withCut => {
+      await mp.evaluate(withCut => window.__sv.model.store.change("Slot across bend", d => {
+        const b = d.features.find(f => f.type === "smbase");
+        d.features = d.features.filter(f => f.id === "s1" || f.id === b.id);
+        const P = (id, x, y) => ({ id, t: "point", x, y });
+        d.features.push({ id: "fx", type: "smflange", name: "Edge-Flange6", edges: [{ faces: [`${b.id}:p0:top`, `${b.id}:p0:l1`] }], length: { v: 20 }, angle: { v: Math.PI / 2 } },
+          { id: "s6", type: "sketch", name: "Sketch6", plane: { std: "XY" }, rels: [], dims: [], ents: [P("k1", 40, -5), P("k2", 60, -5), P("k3", 60, 10), P("k4", 40, 10), { id: "k5", t: "line", a: "k1", b: "k2" }, { id: "k6", t: "line", a: "k2", b: "k3" }, { id: "k7", t: "line", a: "k3", b: "k4" }, { id: "k8", t: "line", a: "k4", b: "k1" }] },
+          { id: "c6", type: "extrude", name: "Cut-Extrude6", sketch: "s6", op: "cut", end: "through2", depth: { v: 0 } });
+        if (!withCut) d.features = d.features.filter(f => f.id !== "c6");
+        d.features.push({ id: "fp6", type: "smflat", name: "Flat-Pattern1" });
+      }), withCut);
+      await settle();
+      return mp.evaluate(() => ({ v: window.__sv.model.last().props?.volume ?? 0, bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";") }));
+    };
+    const xb0 = await across(false), xb1 = await across(true);
+    const xbWant = T * 20 * (10 - (R + T) + (Math.PI / 2) * (R + 0.42 * T) + 20 - (R + T));
+    check(!xb0.bad && !xb1.bad && Math.abs(xb0.v - xb1.v - xbWant) / xbWant < 1e-3,
+      `sheet metal: a cut across a bend is unrolled in the flat pattern (${JSON.stringify({ xb0, xb1, xbWant })})`);
     await ctx.close();
   }
 
