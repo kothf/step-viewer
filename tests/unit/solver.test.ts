@@ -319,3 +319,22 @@ test("offset relations: the copy follows its source and one dimension (FR-SK-034
   const rad = (id: string) => (c.ents.find(e => e.id === id) as SkEnt & { t: "circle" }).r;
   near(rad("k2"), 22); near(rad("k3"), 18);
 });
+
+test("Midpoint moves the new point, not the line (exam #43)", () => {
+  const s = sk([pt("a", 0, 13), pt("b", 0, -20), ln("l", "a", "b"), pt("p", 0, -0.7)], [rel("vertical", "l"), rel("onCurve", "p", "l")]);
+  assert.equal(solve(s).status, "ok");
+  const r = tryAdd(s, { rel: rel("midpoint", "p", "l") });
+  assert.ok(r.ok);
+  assert.deepEqual(P(r.sketch, "a"), [0, 13]);
+  assert.deepEqual(P(r.sketch, "b"), [0, -20]);
+  near(P(r.sketch, "p")![0], 0); near(P(r.sketch, "p")![1], -3.5);
+});
+
+test("a reference dimension follows the geometry (exam #42)", () => {
+  const s = sk([pt("a", 0, 13), pt("b", 0, -13), ln("l", "a", "b")], [rel("vertical", "l"), rel("fix", "a")]);
+  const ref = dim("distance", 26, "l"); ref.driven = true;
+  s.dims.push(ref);
+  s.dims.push(dim("vdistance", 7, "a", "b"));
+  assert.equal(solve(s).status, "ok");
+  near(s.dims[0].val.v, 7);
+});

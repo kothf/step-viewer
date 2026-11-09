@@ -9,7 +9,7 @@ import { PART_EXT, unpackPart } from "../model/file";
 import { t, onLangChange } from "../i18n";
 import { confirmModal, toast } from "../ui";
 import { ASM_EXT, packAsm, unpackAsm } from "./file";
-import { IDENTITY, applyDir, applyPoint, compose, fromPose, invert, poseAngles, translation } from "./math";
+import { IDENTITY, applyDir, applyPoint, compose, fromPose, invert, poseAngles, rotation, translation } from "./math";
 import { activateState, addState, deleteState } from "./states";
 import { activateConfig, addConfig, deleteConfig, partUsed } from "./configs";
 import { activate as activatePartConfig } from "../model/configs";
@@ -89,7 +89,7 @@ export class AsmController {
   private again = false;
   private gen = 0;
   private first = true;
-  private drag: { id: string; idx: number; plane: THREE.Plane; start: THREE.Vector3; delta: THREE.Vector3; moved: boolean; mated: boolean; result?: Record<string, Tf>; touching?: Set<string>; stopped?: boolean; grab?: MateRef } | null = null;
+  private drag: { id: string; idx: number; plane: THREE.Plane; start: THREE.Vector3; delta: THREE.Vector3; moved: boolean; mated: boolean; result?: Record<string, Tf>; touching?: Set<string>; stopped?: boolean; grab?: MateRef; axis?: { o: V3; u: V3 } | null } | null = null;
   /** Collision detection while dragging (FR-MATE-002): the drag stops where a component would enter another. */
   collide = (() => { try { return localStorage.getItem("mc:asmCollide") === "1"; } catch { return false; } })();
   /** Mate geometry of each part's faces, in part coordinates, learnt from the shown meshes (by part key, face name). */
@@ -1309,6 +1309,23 @@ export class AsmController {
     return c && g ? placeGeo(g, c.tf) : null;
   }
 
+  /** The world axis a dragged component may turn about: its side of a concentric, hinge or screw mate. */
+  private dragAxis(id: string): { o: V3; u: V3 } | null {
+    const c = this.comp(id);
+    if (!c || !this.doc) return null;
+    for (const m of this.doc.mates ?? []) {
+      if (m.suppressed || (m.type !== "concentric" && m.type !== "hinge" && m.type !== "screw")) continue;
+      const ref = m.a.comp === id ? m.a : m.b.comp === id ? m.b : null;
+      const g = ref && this.geo.get(c.part)?.get(ref.face);
+      if (!g || g.k !== "axis") continue;
+      const w = placeGeo(g, c.tf);
+      if (w.k !== "axis") continue;
+      const l = Math.hypot(...w.d);
+      if (l > 0) return { o: w.p, u: [w.d[0] / l, w.d[1] / l, w.d[2] / l] };
+    }
+    return null;
+  }
+
   private mateLive(id: string) { return (this.doc?.mates ?? []).some(m => !m.suppressed && (m.a.comp === id || m.b.comp === id)); }
 
   /** Mate (FR-MATE-003/006): pick two faces, the likely mate type is chosen and previewed. */
@@ -2020,7 +2037,8 @@ export class AsmController {
       e.preventDefault();
       const n = this.host.viewer.camera.getWorldDirection(new THREE.Vector3());
       const p = new THREE.Vector3(...hit.point);
-      this.drag = { id, idx: hit.idx, plane: new THREE.Plane().setFromNormalAndCoplanarPoint(n, p), start: p, delta: new THREE.Vector3(), moved: false, mated: this.mateLive(id), ...(this.collide ? { touching: this.clashes() } : {}) };
+      const mated = this.mateLive(id);
+      this.drag = { id, idx: hit.idx, plane: new THREE.Plane().setFromNormalAndCoplanarPoint(n, p), start: p, delta: new THREE.Vector3(), moved: false, mated, axis: mated ? this.dragAxis(id) : null, ...(this.collide ? { touching: this.clashes() } : {}) };
       // Alt-drag (FR-MATE-007): the grabbed face is mated to the face it is dropped on.
       const face = this.faceNames[hit.idx]?.[hit.face], own = this.shownIds[hit.idx];
       if (e.altKey && face && own === id && this.geo.get(c.part)?.get(face)) this.drag.grab = { comp: id, face };
@@ -2042,7 +2060,22 @@ export class AsmController {
         // A mated component moves only where its mates let it (FR-MATE-001): solved from the dragged position.
         if (!d.mated) return tfs;
         const r = this.solveDoc(doc, [], tfs);
-        return r.ok ? r.tfs : null;
+        // On an axis (concentric, hinge, screw) it may turn instead, as a wheel does in SolidWorks: the grabbed
+        // point turned towards the pointer about that axis, solved too; the one that follows the pointer better wins.
+        const ax = d.axis;
+        if (!ax) return r.ok ? r.tfs : null;
+        const to = d.start.clone().add(delta), u = new THREE.Vector3(...ax.u), o = new THREE.Vector3(...ax.o);
+        const v0 = d.start.clone().sub(o), v1 = to.clone().sub(o);
+        v0.sub(u.clone().multiplyScalar(v0.dot(u))); v1.sub(u.clone().multiplyScalar(v1.dot(u)));
+        if (v0.lengthSq() < 1e-12 || v1.lengthSq() < 1e-12) return r.ok ? r.tfs : null;
+        const ang = Math.atan2(u.dot(v0.clone().cross(v1)), v0.dot(v1));
+        const turned = { ...tfs, [d.id]: compose(rotation(ax.o, ax.u, ang), c.tf) };
+        const rr = this.solveDoc(doc, [], turned);
+        if (!rr.ok) return r.ok ? r.tfs : null;
+        if (!r.ok) return rr.tfs;
+        const grab = applyPoint(invert(c.tf), [d.start.x, d.start.y, d.start.z]);
+        const miss = (x: Record<string, Tf>) => to.distanceTo(new THREE.Vector3(...applyPoint(x[d.id], grab)));
+        return miss(rr.tfs) < miss(r.tfs) ? rr.tfs : r.tfs;
       };
       const want = q.clone().sub(d.start), next = at(want);
       if (!next) return;
@@ -2091,7 +2124,9 @@ export class AsmController {
       if (!d) return;
       e.stopPropagation();
       this.drag = null;
-      if (!d.moved || !d.result) { this.renderTree(); this.renderBar(); return; }
+      // A fully constrained component snaps back where it was: no undo step, nothing modified.
+      const res0 = d.result, still = !!res0 && (this.doc?.components ?? []).every(c => !res0[c.id] || res0[c.id].every((v, i) => Math.abs(v - c.tf[i]) < 1e-9 * (i % 4 === 3 ? 1 + this.size() : 1)));
+      if (!d.moved || !d.result || (still && !d.grab)) { if (still) this.previewTfs(this.shownTf); this.renderTree(); this.renderBar(); return; }
       if (d.grab && this.inferMate(d.grab, ray(e), d.result)) return;
       const res = d.result;
       this.change(doc => { for (const c of doc.components) if (res[c.id]) c.tf = res[c.id]; });

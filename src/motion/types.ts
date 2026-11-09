@@ -24,18 +24,25 @@ export interface MateTrack { id: string; kind: "mate"; mate: string; keys: Key[]
  * Constant: `speed` in rpm (rotary) or mm/s (linear). Oscillating: `amp` in radians or mm at `freq` Hz.
  * Distance: `dist` (radians or mm) reached at `end` along a smooth step (SolidWorks distance motor).
  * Data points: `pts` = [seconds after `start`, radians or mm] rows joined by `fit` (absent = linear; cubic spline or Akima), ends held.
+ * Segments: `segs` = [end time after `start` (s), end value (radians or mm), shape] rows, each from where the last ended
+ *   (the first from 0 at the start), shaped linear, cubic, quintic, harmonic or cycloidal (SolidWorks segments motor).
  * Expression: `expr` = the displacement (degrees or mm) as a formula in `t`, seconds after `start` (SolidWorks expression motor).
  */
+/** A segments motor row: end time (s after the motor start), end value (rad or mm), shape of the move. */
+export type SegShape = "linear" | "cubic" | "quintic" | "harmonic" | "cycloid";
+export type MotorSeg = [number, number, SegShape];
+
 export interface MotorTrack {
   id: string;
   kind: "motor";
   mate: string;
   motion: "rotary" | "linear";
-  profile: "constant" | "oscillate" | "distance" | "points" | "expr";
+  profile: "constant" | "oscillate" | "distance" | "points" | "segments" | "expr";
   speed: number;
   dist?: number;
   pts?: [number, number][];
   fit?: "cubic" | "akima";
+  segs?: MotorSeg[];
   expr?: string;
   amp?: number;
   freq?: number;
