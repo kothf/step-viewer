@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.341.0] - 2026-11-09
+
+### Added
+- Centrelines on cones and tori in drawings (FR-DRW-023): a cone, torus or revolved face seen from the side (a taper, a countersink, a groove, an O-ring) gets a centreline on its axis, 2 mm past its ends, like cylinders; a part with no cylinder on that axis now gets one too.
+
 ## [1.334.0] - 2026-11-09
 
 ### Added
@@ -1975,7 +1980,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.334.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.341.0...HEAD
+[1.341.0]: https://github.com/kothf/step-viewer/compare/v1.340.0...v1.341.0
 [1.334.0]: https://github.com/kothf/step-viewer/compare/v1.333.0...v1.334.0
 [1.333.0]: https://github.com/kothf/step-viewer/compare/v1.332.0...v1.333.0
 [1.332.0]: https://github.com/kothf/step-viewer/compare/v1.331.0...v1.332.0

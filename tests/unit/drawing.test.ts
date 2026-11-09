@@ -1028,3 +1028,31 @@ test("arc slot centre marks: a centre-line arc through the end centres and a rad
   assert.equal(arcSlots(halves, []).length, 0, "two loose notches");
   assert.equal(arcSlots([halves[0], { ...halves[1], m: [0, 1] }], [{ c: [0, 0], r: 29 }]).length, 0, "ends bulging the same way round");
 });
+
+test("cones and tori seen from the side get a centreline on their axis (FR-DRW-023)", async () => {
+  const { topology } = await import("../../src/kernel/drawing");
+  const { centreMarks, projector } = await import("../../src/drawing/annot");
+  const { ORIENTS } = await import("../../src/drawing/views");
+  const m = new Modeller(await occ());
+  // A frustum Ø20 → Ø10 over 20 mm, revolved about the sketch's y axis: one cone and two flat caps, no cylinder.
+  const P = (id: string, x: number, y: number): SkEnt => ({ id, t: "point", x, y });
+  const pts = [P("p0", 0, 0), P("p1", 10, 0), P("p2", 5, 20), P("p3", 0, 20)], ids = pts.map(p => p.id);
+  const s: SketchFeature = { id: "r", type: "sketch", name: "r", plane: { std: "XZ" }, rels: [], dims: [],
+    ents: [...pts, ...ids.map((a, i): SkEnt => ({ id: `l${i}`, t: "line", a, b: ids[(i + 1) % ids.length] }))] };
+  const r = m.evaluate(doc([s, { id: "f1", type: "revolve", name: "R", sketch: "r", op: "boss", axis: "l3", angle: { v: 2 * Math.PI } } as Feature]));
+  assert.ok(r.body, JSON.stringify(r.errors ?? r.warnings));
+  const topo = topology(await occ(), r.body!.shape, r.body!.names);
+  assert.equal(topo.cyls.length, 0);
+  assert.ok(topo.revs!.some(q => q.k === "cone"), `a cone: ${topo.revs!.map(q => q.k)}`);
+  const pl = { s: 1, uc: 0, vc: 0, x: 0, y: 0, box: [-50, -30, 50, 30] as [number, number, number, number], ready: true };
+  const front = projector(ORIENTS.front);
+  const cm = centreMarks({ id: "f", name: "f", orient: "front", x: 0, y: 0 }, pl, topo, front.P, front.n);
+  assert.equal(cm.length, 1, "one centreline on the cone's axis");
+  const [x0, y0, x1, y1] = cm[0].p as number[];
+  assert.ok(Math.abs(x0) < 1e-9 && Math.abs(x1) < 1e-9 && Math.abs(Math.abs(y1 - y0) - 24) < 1e-6, `along the axis, 2 mm past both ends: ${cm[0].p}`);
+  // A torus alone (an O-ring) gets one too; a cone that does not go all round does not.
+  const ring = { edges: [], cyls: [], revs: [{ k: "torus" as const, o: [0, 0, 0] as V3, ax: [0, 0, 1] as V3, v0: -2, v1: 2, sp: 2 * Math.PI }] };
+  assert.equal(centreMarks({ id: "f", name: "f", orient: "front", x: 0, y: 0 }, pl, ring, front.P, front.n).length, 1);
+  const part = { edges: [], cyls: [], revs: [{ k: "cone" as const, o: [0, 0, 0] as V3, ax: [0, 0, 1] as V3, v0: 0, v1: 5, sp: Math.PI / 2 }] };
+  assert.equal(centreMarks({ id: "f", name: "f", orient: "front", x: 0, y: 0 }, pl, part, front.P, front.n).length, 0);
+});
