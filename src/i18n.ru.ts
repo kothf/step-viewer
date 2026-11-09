@@ -3035,6 +3035,8 @@ export const RU: Record<string, string> = {
   "Clearance to the tube": "Зазор до трубы",
   "An internal end cap needs a hollow profile (a tube or pipe).": "Внутренней заглушке нужен полый профиль (труба).",
   "Weld gap": "Зазор под сварку",
+  "Body trim": "Отсечение по телу",
+  "Planar trim": "Плоское отсечение",
   "Gap": "Зазор",
   "Corners": "Углы",
   "As set above": "Как задано выше",
