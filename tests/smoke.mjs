@@ -11013,6 +11013,14 @@ try {
     });
     const runs = sm.map(q => Math.hypot(q[2] - q[0], q[3] - q[1])).sort((a, b) => a - b);
     check(sm.length === 3 && Math.abs(runs[0] - 14) < 0.05 && Math.abs(runs[1] - 14) < 0.05 && Math.abs(runs[2] - 54) < 0.05, `drawing: slot centreline and end centre lines, no crosses (${JSON.stringify(sm)})`);
+    // Front view (views[0]): the axis of each rounded slot end, 2 mm past the plate's faces (FR-DRW-023).
+    const sf = await dp.evaluate(() => {
+      const v = window.__sv.drw.doc().sheets[0].views[0], p = window.__sv.drw.placement(v.id), U = x => (x - p.x) / p.s + p.uc, W = y => (y - p.y) / p.s + p.vc;
+      const box = [p.x + (p.box[0] - p.uc) * p.s - 5, p.x + (p.box[2] - p.uc) * p.s + 5];
+      return { orient: v.orient, ls: window.__sv.drw.prims().filter(q => q.layer === "CENTER" && q.t === "l" && Math.abs(q.p[1] - p.y) < 20 * p.s && q.p[0] > box[0] && q.p[0] < box[1]).map(q => [U(q.p[0]), W(q.p[1]), U(q.p[2]), W(q.p[3])].map(x => Math.round(x * 100) / 100)) };
+    });
+    const xs = sf.ls.filter(q => q[0] === q[2] && Math.abs(Math.abs(q[3] - q[1]) - 14) < 0.05).map(q => q[0]).sort((a, b) => a - b);
+    check(sf.ls.length === 2 && xs.length === 2 && xs[0] === -20 && xs[1] === 20, `drawing: a slot seen from the side gets an axis at each rounded end (${JSON.stringify(sf)})`);
     await ctx.close();
   }
 
