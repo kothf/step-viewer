@@ -10,6 +10,35 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Added
 
 - Sheet Metal → Normal Cut (FR-FT-120): SolidWorks' Extruded Cut with Normal cut. A closed sketch is projected along its normal onto the sheet, and every panel and bend it lands on is cut square to the sheet there (radially through bends), so the flat pattern gets clean openings with no slanted walls. End condition Link to thickness (default), Blind or Through all, with Reverse direction.
+- Sheet Metal → Convert to Sheet Metal (FR-FT-120): turn a solid into a sheet metal part, as SolidWorks' Convert to Sheet Metal. Click the face that stays fixed, then the straight edges of it to bend along; each face across a bend edge becomes a flange as long and at the angle the solid has, with the thickness inside the solid, so the part keeps its outside size. Edges between converted faces are ripped and mitred (Rip gap). Holes and shaped ends of the converted faces carry over, in the flat pattern too. It starts a sheet metal part like a base flange.
+- Corner Relief options (FR-FT-120): an Obround relief (rounded as far as it goes, keeping the clearance round the face's own corner) and Add fillet corners with a radius for rectangular reliefs; both follow into the flat pattern.
+- Sheet Metal Gusset options (FR-FT-120): a different profile length on the second face, and several gussets along the bend, spaced centre to centre about the position.
+- Sheet Metal → Insert Bends (FR-FT-120): turn a thin-walled solid (a shelled box, a bent section) into sheet metal, as SolidWorks' Insert Bends. Click an outside face to stay fixed; its sharp edges to other flat walls become bends of the given radius, the thickness is the walls' own, and corners between walls are ripped. Holes in the walls carry over.
+
+## [1.346.0] - 2026-11-09
+
+### Changed
+
+- CI runs the browser smoke test in 6 parallel shards instead of 4, balanced by measured block times, so a CI run takes about 6–7 minutes instead of about 10. The smoke test prints each block's time at the end of a run.
+
+## [1.344.0] - 2026-11-09
+
+### Added
+
+- **Evaluate ▸ Mass properties**, like SolidWorks' Mass Properties: a panel beside the view with mass, volume, surface area, centre of mass, the principal axes and principal moments of inertia at the centre of mass (drawn in the view as red, green and blue lines through the centre of mass), the moments and products of inertia at the centre of mass aligned with the output coordinate system (Lxx…) and at its origin (Ixx…), in kg·mm² or g·mm² (following the display unit). Products use positive notation (Lxy = ∫xy dm). It follows the selection, visibility, units and coordinate system while open; **Include hidden bodies**, **Recalculate** and **Copy to clipboard** (FR-MAT-002).
+- Your own output axes: **Pick axes** and click a flat face, straight edge, circle, cylinder or point, or **Type axes…** with an origin and the X and Z directions; a part's coordinate system features and the active CSYS are listed too, and the chosen axes are drawn while the panel is open.
+- Moments of inertia for every model, not only modelled parts: exact from the B-rep (OpenCASCADE) once the kernel has read the file, from the mesh until then and for STL/OBJ/3MF. Assemblies add their components with each part's own material (the density field for parts without one), like the BOM. The Mass tab and the PDF report list the principal moments and axes and the moments at the centre of mass and at the origin.
+
+### Changed
+
+- A mass override on a modelled part scales the moments of inertia with the mass, as SolidWorks does.
+- Multibody modelled parts get exact volume and centre of mass too (only single solids did).
+
+## [1.343.0] - 2026-11-09
+
+### Added
+
+- **Coped cuts on structural members (FR-FT-121)**: Structural Member gets SolidWorks' choice for butted ends. **Simple cut** keeps the flat end square to the face the member stops at; **Coped cut** makes the end follow the shape of the member it stops at, so a round tube meeting another gets its saddle (fish-mouth) end, ready to weld. A weld gap moves the coped end back along the member.
 
 ## [1.342.0] - 2026-11-09
 
@@ -2049,7 +2078,10 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.348.0...HEAD
-[1.348.0]: https://github.com/kothf/step-viewer/compare/v1.342.0...v1.348.0
+[1.348.0]: https://github.com/kothf/step-viewer/compare/v1.346.0...v1.348.0
+[1.346.0]: https://github.com/kothf/step-viewer/compare/v1.344.0...v1.346.0
+[1.344.0]: https://github.com/kothf/step-viewer/compare/v1.343.0...v1.344.0
+[1.343.0]: https://github.com/kothf/step-viewer/compare/v1.342.0...v1.343.0
 [1.342.0]: https://github.com/kothf/step-viewer/compare/v1.341.0...v1.342.0
 [1.341.0]: https://github.com/kothf/step-viewer/compare/v1.340.0...v1.341.0
 [1.340.0]: https://github.com/kothf/step-viewer/compare/v1.339.0...v1.340.0

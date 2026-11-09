@@ -102,12 +102,21 @@ let failures = 0;
 const check = (cond, msg) => { console.log(`${cond ? "PASS" : "FAIL"} ${msg}`); if (!cond) failures++; };
 const near = (a, b, tol = 1e-3) => Math.abs(a - b) <= tol;
 // Shards: SMOKE_SHARD=i/n runs only the blocks marked inShard(k) with (k - 1) % n + 1 === i (CI runs
-// 1/4 … 4/4 as parallel jobs); unset, every block runs. A block must not rely on what another block
+// 1/6 … 6/6 as parallel jobs); unset, every block runs. A block must not rely on what another block
 // left behind (blocks 1 and 2 hold several sections that share `page`). A new section goes in its own
 // `if (inShard(k)) { … }` block, k = the shard with the shortest time (printed at the end of a run).
 const [shardI, shardN] = (process.env.SMOKE_SHARD || "1/1").split("/").map(Number);
 if (!(shardN >= 1 && shardI >= 1 && shardI <= shardN)) throw new Error(`SMOKE_SHARD must be i/n, got ${process.env.SMOKE_SHARD}`);
-const inShard = k => (k - 1) % shardN + 1 === shardI;
+// Each block that runs is timed (block n = the n-th inShard call in the file); the times are printed at the
+// end of a run, to keep the shards balanced.
+const blockTimes = [];
+let blockCount = 0;
+const inShard = k => {
+  blockCount++;
+  const on = (k - 1) % shardN + 1 === shardI;
+  if (on) blockTimes.push({ n: blockCount, k, at: Date.now() });
+  return on;
+};
 // A click on a Features tree row. While a command panel is open the tree is the folded fly-out over the view
 // (FR-UI-003): open it for the click and fold it again, so later clicks in the view are not covered.
 async function treeClick(pg, sel, opts) {
@@ -156,7 +165,7 @@ async function open(file, kernel = false) {
 }
 
 try {
-  if (inShard(1)) { // these sections share `page`: keep them together
+  if (inShard(5)) { // these sections share `page`: keep them together
   // --- a 10 mm cube: exact topology and every basic measurement ---
   await open("cube-10x10mm/Cube 10x10.stp");
   // --- branding: name, header logo, favicon and web manifest ---
@@ -1227,7 +1236,7 @@ try {
   }
   }
 
-  if (inShard(2)) { // these sections share `page`: keep them together
+  if (inShard(3)) { // these sections share `page`: keep them together
   // --- exact geometry: the full kernel reads the file again; values switch to the B-rep ---
   {
     await open("rounded-cube/rounded-cube.step", true);
@@ -1459,7 +1468,7 @@ try {
   }
 
   // --- Part modelling (FRS P1): new part, sketch with dimensions, extrude, cut on a face, fillet, edit, undo, save/open, STEP, recovery, RU ---
-  if (inShard(4)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -1715,7 +1724,7 @@ try {
   }
 
   // --- Part modelling 1.19.0 (FRS P1 rest): empty-state planes, polygon, drag arrow, rollback bar, rename, menu, reference plane, up to face, trim, sketch fillet, views, properties ---
-  if (inShard(1)) {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -1987,7 +1996,7 @@ try {
     await mp.evaluate(() => document.querySelector("#mass-run").click());
     await mp.waitForTimeout(300);
     const massTxt = await mp.evaluate(() => document.querySelector("#mass-out").textContent);
-    check(/Principal moments.*kg·mm²/.test(massTxt) && /Principal axes/.test(massTxt), `model 1.19: mass properties list the principal moments of the modelled part (${massTxt.match(/Principal moments[^A-Z]*/)?.[0]})`);
+    check(/Principal moments.*k?g·mm²/.test(massTxt) && /Principal axes/.test(massTxt), `model 1.19: mass properties list the principal moments of the modelled part (${massTxt.match(/Principal moments[^A-Z]*/)?.[0]})`);
     // 1.43: mass property override (FR-MAT-004): 1.25 kg and a centre of mass replace the calculated values.
     await mp.dblclick('#mc-tree .ft-row[data-id="part"]');
     await mp.waitForSelector("#mc-pm input[data-p=ovr]");
@@ -2073,7 +2082,7 @@ try {
   }
 
   // --- Part modelling 1.20.0: slot, extend, split, sketch chamfer, offset and convert entities, sketch-bar flyouts ---
-  if (inShard(4)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -2548,7 +2557,7 @@ try {
   }
 
   // --- Part modelling 1.21.0: reference axes and points, S shortcut bar, sketch box selection ---
-  if (inShard(3)) {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -3066,7 +3075,7 @@ try {
   }
 
   // --- Part modelling 1.34.0: ellipse and partial ellipse in sketches (FR-SK-018) ---
-  if (inShard(4)) {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -3182,7 +3191,7 @@ try {
   }
 
   // --- Part modelling 1.139.0: section at the sketch plane (FR-SK-006), configuration table CSV (FR-CFG-003) ---
-  if (inShard(1)) {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -3229,6 +3238,87 @@ try {
     await mp.evaluate(() => document.querySelector("#lang-btn").click());
     check(/^Configuration,\$STATE@Sketch1,/.test(csv) && /\nDefault,/.test(csv) && /\nConfig2,/.test(csv) && /D1@Sketch1/.test(csv) && cfg.names.join() === "Default,Config2,Tall" && cfg.act === "Config2" && cfg.depth === 35 && cfg.d1 === 30 && cfg.ok, `model 1.139: configuration table export and import (${csv.split("\n")[0]}, ${JSON.stringify(cfg)})`);
     check(ru === "Таблица конфигураций|Экспорт таблицы|Импорт таблицы…", `model 1.139: configuration table in Russian (${ru})`);
+    await ctx.close();
+  }
+
+  // --- 1.344.0: Evaluate ▸ Mass properties (FR-MAT-002): moments of inertia, principal axes, output frames incl. own axes ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 60000 });
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // A 100 × 50 × 20 block from the origin, density 20 g/cm³: 2000 g, centre (50, 25, 10).
+    await mp.evaluate(() => window.__sv.model.store.change("Block", d => {
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [
+        { id: "p1", t: "point", x: 0, y: 0 }, { id: "p2", t: "point", x: 100, y: 0 }, { id: "p3", t: "point", x: 100, y: 50 }, { id: "p4", t: "point", x: 0, y: 50 },
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }] });
+      d.features.push({ id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } });
+      d.material = { name: "Test", density: 20 };
+    }));
+    await idle();
+    await mp.waitForFunction(() => window.__sv.viewer.parts.length === 1);
+    await mp.evaluate(() => { const d = document.querySelector("#density"); d.value = "20"; d.dispatchEvent(new Event("input")); });
+    await mp.evaluate(() => [...document.querySelectorAll("#cm-tabs button")].find(b => /Evaluate/.test(b.textContent))?.click());
+    await mp.click("#mp-btn");
+    await mp.waitForSelector("#mp-panel:not([hidden]) .mp-grid");
+    const read = () => mp.evaluate(() => {
+      const P = document.querySelector("#mp-panel"), grids = P.querySelectorAll(".mp-grid");
+      const val = (g, k) => +([...g.querySelectorAll(".mp-c")].map(e => e.textContent).find(x => x.startsWith(`${k} =`)) ?? "").split("=")[1]?.replace(/,/g, "");
+      return {
+        text: P.textContent, frames: [...P.querySelectorAll("select[data-mp=frame] option")].map(o => o.value), frame: P.querySelector("select[data-mp=frame]").value,
+        com: ["X", "Y", "Z"].map(k => val(grids[0], k)), L: ["Lxx", "Lyy", "Lzz", "Lxy"].map(k => val(grids[1], k)), I: ["Ixx", "Iyy", "Izz", "Ixy", "Iyz", "Izx"].map(k => val(grids[2], k)),
+        P: [...P.querySelectorAll(".mp-princ span")].map(e => e.textContent),
+        axes: window.__sv.hl.com.visible, btn: document.querySelector("#mp-btn").getAttribute("aria-pressed"),
+      };
+    });
+    let r = await read();
+    // kg·mm² (mass ≥ 1 kg; one decimal from 1000 up): Lxx = m(b² + h²)/12 = 483.3333, Ixx = Lxx + m(25² + 10²) = 1933.3333, Ixy = m·50·25 = 2500.
+    check(r.btn === "true" && r.axes && /2\.0000 kg/.test(r.text) && /kg·mm²/.test(r.text) && r.com.join() === "50,25,10"
+      && near(r.L[0], 483.3333, 0.06) && near(r.L[1], 1733.3333, 0.06) && near(r.L[2], 2083.3333, 0.06) && r.L[3] === 0
+      && near(r.I[0], 1933.3333, 0.06) && near(r.I[3], 2500, 0.06) && near(r.I[4], 500, 0.06) && near(r.I[5], 1000, 0.06)
+      && /^Ix = \(1\.0000, 0\.0000, 0\.0000\)/.test(r.P[0]) && /Px = 483\.3333/.test(r.P[1]),
+      `mass 1.344: Evaluate ▸ Mass properties lists CoM, principal, Lxx… and Ixx… of a 2 kg block (${JSON.stringify({ com: r.com, L: r.L, I: r.I, P: r.P.slice(0, 2) })})`);
+    // Own axes, typed: origin at the centre of mass, X along world Y → Ixx is the world-Y moment and the centre is at 0.
+    await mp.click("#mp-panel [data-mp=type]");
+    for (const [k, v] of [["o0", "50"], ["o1", "25"], ["o2", "10"], ["x0", "0"], ["x1", "1"], ["x2", "0"]]) await mp.fill(`#mp-panel [data-ax="${k}"]`, v);
+    await mp.fill('#mp-panel [data-ax="name"]', "Mine");
+    await mp.click("#mp-panel [data-mp=addaxes]");
+    r = await read();
+    const markOn = await mp.evaluate(() => window.__sv.viewer.scene.children.some(o => o.type === "AxesHelper" && o.visible && Math.abs(o.position.x - 50) < 1e-9));
+    check(r.frame === "u:0" && /Mine/.test(r.text) && r.com.every(v => Math.abs(v) < 1e-9) && near(r.I[0], 1733.3333, 0.06) && near(r.I[1], 483.3333, 0.06) && markOn,
+      `mass 1.344: typed own axes become the output coordinate system (${JSON.stringify({ frame: r.frame, com: r.com, I: r.I.slice(0, 2), markOn })})`);
+    // Own axes, picked: Pick axes, then a click on the top face puts Z up at its centre; the part stays unselected.
+    await mp.click("#mp-panel [data-mp=pick]");
+    await mp.evaluate(() => {
+      const { viewer, handlePick } = window.__sv, p = viewer.parts[0], V3 = p.group.position.constructor;
+      const f = p.data.faces.find(x => x.normal?.[2] > 0.99);
+      handlePick({ kind: "onFace", point: new V3(...f.centroid), part: p, face: f, normal: new V3(...f.normal), px: 0 });
+    });
+    r = await read();
+    const sel = await mp.evaluate(() => window.__sv.state.selectedParts.length);
+    check(r.frame === "u:1" && r.frames.join() === "global,u:0,u:1" && near(r.com[2], -10, 1e-3) && sel === 0,
+      `mass 1.344: picked own axes on the top face (${JSON.stringify({ frames: r.frames, com: r.com, sel })})`);
+    await mp.selectOption("#mp-panel select[data-mp=frame]", "global");
+    r = await read();
+    check(r.com.join() === "50,25,10", `mass 1.344: back to the global frame (${r.com})`);
+    await mp.addScriptTag({ content: await readFile(createRequire(import.meta.url).resolve("axe-core/axe.min.js"), "utf8") });
+    const ax = await mp.evaluate(async () => (await window.axe.run(document.querySelector("#mp-panel"), { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] }, resultTypes: ["violations"] })).violations.map(v => `${v.id}: ${v.nodes.slice(0, 2).map(n => n.target.join(" ")).join(", ")}`));
+    check(ax.length === 0, `mass 1.344: 0 WCAG 2.1 AA violations in the mass properties panel${ax.length ? ": " + ax.join(" | ") : ""}`);
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(300);
+    const ru = await mp.evaluate(() => { const P = document.querySelector("#mp-panel"); return { h: P.querySelector("h2").textContent, eng: [...P.querySelectorAll("h3, label, button, .mp-note, .k, .mp-scope")].map(e => e.textContent.trim()).filter(x => /\b(the|of|and|Mass|Density|Volume|Pick|Show|Include)\b/.test(x)) }; });
+    await mp.click("#lang-btn");
+    check(ru.h === "Массовые характеристики" && ru.eng.length === 0, `mass 1.344: mass properties panel in Russian (${ru.h}${ru.eng.length ? ": " + ru.eng.join(" | ") : ""})`);
+    await mp.click("#mp-panel [data-mp=close]");
+    const closed = await mp.evaluate(() => ({ hidden: document.querySelector("#mp-panel").hidden, marks: window.__sv.viewer.scene.children.filter(o => o.type === "AxesHelper" && o.visible && Math.abs(o.position.x - 50) < 1e-9).length }));
+    check(closed.hidden && closed.marks === 0, `mass 1.344: closing the panel removes its axes (${JSON.stringify(closed)})`);
     await ctx.close();
   }
 
@@ -3280,7 +3370,7 @@ try {
   }
 
   // --- Part modelling 1.142.0: text along a curve (FR-SK-020) ---
-  if (inShard(4)) {
+  if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -3324,7 +3414,7 @@ try {
   }
 
   // --- Part modelling 1.144.0: arc and centrepoint slot tools with the Modify box (FR-SK-017) ---
-  if (inShard(3)) {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -3457,7 +3547,7 @@ try {
   }
 
   // --- Part modelling 1.157.0: conic, parabola and equation driven curve (FR-SK-021) ---
-  if (inShard(2)) {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -3581,7 +3671,7 @@ try {
   }
 
   // --- Part modelling 1.215.0: sketch orientation, X axis along a model edge (FR-SK-002); 1.234.0 pierce (FR-SK-051) ---
-  if (inShard(4)) {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -3640,7 +3730,7 @@ try {
   }
 
   // --- Part modelling 1.36.0: selection helpers while picking fillet edges (FR-SEL-005) ---
-  if (inShard(4)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -3684,7 +3774,7 @@ try {
   }
 
   // --- Part modelling 1.37.0: sketch Show/Hide, visible main planes, Normal to (N), hole snapping to the origin ---
-  if (inShard(2)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -3779,7 +3869,7 @@ try {
   }
 
   // --- Part modelling 1.38.0: modelled (helical) thread from the thread panel (FR-FT-055) ---
-  if (inShard(4)) {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -3811,7 +3901,7 @@ try {
   }
 
   // --- 1.39.0: local vault in the browser: save a part, check in, read-only bar, history, roll back, audit trail (FR-PDM) ---
-  if (inShard(3)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -3870,7 +3960,7 @@ try {
   }
 
   // --- 1.40.0: vault export to ZIP and import, storage report and purge (FR-PDM-007/008) ---
-  if (inShard(2)) {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -3924,7 +4014,7 @@ try {
   }
 
   // --- Drawings (FRS 11, FR-DRW-001/002/003/010/011/016/030/031): standard 3 views, model and projected views, drag, title block, export, .mcaddrw, associative update, RU, axe ---
-  if (inShard(1)) {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
@@ -4042,7 +4132,7 @@ try {
   }
 
   // --- Drawings: section, detail and auxiliary views (FR-DRW-012/013/014, AT-P5-2) ---
-  if (inShard(4)) {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
@@ -4222,7 +4312,7 @@ try {
   }
 
   // --- Drawings: dimensions, model items, hole callouts, centre marks, notes (FR-DRW-020..023, AT-P5-1/3) ---
-  if (inShard(2)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
@@ -4371,7 +4461,7 @@ try {
   }
 
   // --- Drawings: GD&T, datums, surface finish, tables, GOST, PNG, dangling warning (FR-DRW-023/024/026/031) ---
-  if (inShard(4)) {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
@@ -4652,7 +4742,7 @@ try {
   }
 
   // --- PDM: drawing compare, an assembly added with its parts (FR-PDM-051, FR-PDM-003/020) ---
-  if (inShard(1)) {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const vp = await ctx.newPage();
     vp.on("pageerror", e => errors.push(e.message));
@@ -4727,7 +4817,7 @@ try {
   }
 
   // --- PDM vault thread (FRS 12.5 P4): lifecycle and revisions, data card, search, rename, recycle bin ---
-  if (inShard(3)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -4808,7 +4898,7 @@ try {
   }
 
   // --- PDM vault thread (FRS 12.5 P5): change order, release package, workflow editor, notifications ---
-  if (inShard(1)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -4890,7 +4980,7 @@ try {
   }
 
   // 1.47: offline start (FR-STO-030): the service worker precaches the app; a reload offline still starts it.
-  if (inShard(2)) {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const pg = await ctx.newPage();
     await pg.goto(`${origin}/index.html?sw`);
@@ -4905,7 +4995,7 @@ try {
   }
 
   // --- 1.53: sketch: converted edges follow the model and dangle (FR-SK-064), dimension names (065), draggable text (066), edit sketch plane (007) ---
-  if (inShard(4)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -4994,7 +5084,7 @@ try {
   }
 
   // --- 1.56: rib (FR-FT-062) from the Sweep ▾ menu: an L bracket's corner gusset, previewed live, panel in Russian ---
-  if (inShard(2)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -5050,7 +5140,7 @@ try {
   }
 
   // --- 1.57: multibody (FRS 9.10, AT-P3-3): split a body by a plane and combine it back, a boss that does not merge ---
-  if (inShard(3)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -5123,7 +5213,7 @@ try {
   }
 
   // --- 1.58: Insert body (FR-FT-130/131): a STEP cube into a new part, then Check and heal ---
-  if (inShard(4)) {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -5153,7 +5243,7 @@ try {
   }
 
   // --- 1.59: full round fillet and face fillet (FR-FT-032), Scale (FR-BODY-006) ---
-  if (inShard(4)) {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -5200,7 +5290,7 @@ try {
   }
 
   // --- 1.60: Solid Bodies folder (FR-BODY-001): list, hide, colour, rename, delete ---
-  if (inShard(3)) {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -5357,7 +5447,7 @@ try {
   }
 
   // --- 1.62: mates (FR-MATE-003/006/008/009, AT-P4-1/3): pick faces in the view, preview, DOF, conflict refused, constrained drag ---
-  if (inShard(2)) {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -5548,7 +5638,7 @@ try {
   }
 
   // --- 1.63: interference detection, BOM and assembly STEP (FR-ASM-020/024, AT-P4-4..6) ---
-  if (inShard(3)) {
+  if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -5597,7 +5687,7 @@ try {
   }
 
   // --- 1.63: component patterns and exploded views (FR-ASM-022/023, AT-P4-5) ---
-  if (inShard(1)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -5663,7 +5753,7 @@ try {
   }
 
   // --- 1.65: sub-assemblies, replace, suppress, colour, BOM modes (FR-ASM-001/006/008/024) ---
-  if (inShard(4)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -5741,7 +5831,7 @@ try {
   }
 
   // --- 1.74: flexible sub-assemblies (FR-ASM-006), linked components (FR-ASM-003, FR-IO-011) ---
-  if (inShard(1)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -5815,7 +5905,7 @@ try {
   }
 
   // --- 1.81: assembly features (FR-ASM-027), assembly configurations (FR-ASM-026) ---
-  if (inShard(3)) {
+  if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const ap = await ctx.newPage();
     ap.on("pageerror", e => errors.push(e.message));
@@ -5888,7 +5978,7 @@ try {
   }
 
   // --- 1.79: fastener library (FR-ASM-028), mate references (FR-MATE-011) ---
-  if (inShard(1)) {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const fp = await ctx.newPage();
     fp.on("pageerror", e => errors.push(e.message));
@@ -5974,7 +6064,7 @@ try {
   }
 
   // --- 1.158: toolbox (FR-ASM-028): size from the hole, flush parts; McMaster-Carr STEP drop-in ---
-  if (inShard(2)) {
+  if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const tp = await ctx.newPage();
     tp.on("pageerror", e => errors.push(e.message));
@@ -6050,7 +6140,7 @@ try {
   }
 
   // --- 1.76: mechanical mates (FR-MATE-005), clearance check (FR-ASM-021) ---
-  if (inShard(4)) {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -6603,7 +6693,7 @@ try {
   }
 
   // --- 1.65: advanced mates, display states, transparency, open part (FR-MATE-004, FR-ASM-025/007) ---
-  if (inShard(2)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -6694,7 +6784,7 @@ try {
   }
 
   // --- 1.135: edit in context, sketch on another component, external references (FR-ASM-030) ---
-  if (inShard(3)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -6793,7 +6883,7 @@ try {
   }
 
   // --- 1.67: collision detection while dragging (FR-MATE-002) ---
-  if (inShard(3)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -6846,7 +6936,7 @@ try {
   }
 
   // --- 1.67: Alt-drag inferred mates (FR-MATE-007) ---
-  if (inShard(4)) {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -6900,7 +6990,7 @@ try {
   }
 
   // --- 1.67: direct editing, Move Face and Delete Face (FR-FT-101) ---
-  if (inShard(1)) {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -6941,7 +7031,7 @@ try {
   }
 
   // --- Move Face translate and rotate (FR-FT-101) ---
-  if (inShard(2)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -7008,7 +7098,7 @@ try {
   }
 
   // --- surfaces 2 (FRS 9.11): revolved, lofted and trimmed surfaces; Delete Face leaving a surface ---
-  if (inShard(3)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -7093,7 +7183,7 @@ try {
   }
 
   // --- surfaces (FRS 9.11, FR-FT-100): extruded, planar, offset, knit into a solid, thicken ---
-  if (inShard(1)) {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -7165,7 +7255,7 @@ try {
   }
 
   // --- 1.55: helix, sweep and loft (FRS 9.9, AT-P3-1/2) from the Sweep ▾ commands, with their panels ---
-  if (inShard(3)) {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -7335,7 +7425,7 @@ try {
   }
 
   // --- 1.83: 3D sketch (FR-SK-080): click lines in space, Tab to turn the plane, relations and dimensions, then a sweep along it ---
-  if (inShard(4)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -7406,7 +7496,7 @@ try {
   }
 
   // --- 1.85: sweep twist and guide curve, loft centreline, variable pitch helix (FR-FT-080, FR-FT-082, FR-FT-083) ---
-  if (inShard(3)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -7489,7 +7579,7 @@ try {
   }
 
   // --- 1.88: Intersect bodies into regions (FR-BODY-007) and Untrim Surface (FR-FT-100) ---
-  if (inShard(4)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -7565,7 +7655,7 @@ try {
   }
 
   // --- 1.101: a sketch line made parallel to a model edge picked in the view (FR-SK-064) ---
-  if (inShard(1)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -7626,7 +7716,7 @@ try {
   }
 
   // --- 1.116: Recognize Holes turns the holes of a body into Hole features (FR-FT-102) ---
-  if (inShard(3)) {
+  if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -7660,7 +7750,7 @@ try {
   }
 
   // --- 1.119: Loft guide curves (FR-FT-082) ---
-  if (inShard(4)) {
+  if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -7702,7 +7792,7 @@ try {
   }
 
   // --- 1.134: Setback fillets (FR-FT-033) ---
-  if (inShard(1)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -7758,7 +7848,7 @@ try {
   }
 
   // --- 1.131: Loft connectors (FR-FT-082) ---
-  if (inShard(2)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -7996,7 +8086,7 @@ try {
   }
 
   // --- 1.98: vertex chamfer clicked on a corner, multi-thickness shell (FR-FT-041, FR-FT-060) ---
-  if (inShard(3)) {
+  if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -8066,7 +8156,7 @@ try {
   }
 
   // --- 1.96: slot hole up to next, extrude up to body (FR-FT-050, FR-FT-012) ---
-  if (inShard(1)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -8122,7 +8212,7 @@ try {
   }
 
   // --- 1.90: sketch- and table-driven patterns, patterns of faces (FR-FT-070, FR-FT-073) ---
-  if (inShard(1)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -8191,7 +8281,7 @@ try {
   }
 
   // --- 1.89: sketch snaps to model geometry (relations to the model) and middle-drag orbit while sketching ---
-  if (inShard(2)) {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -8266,7 +8356,7 @@ try {
   }
 
   // --- 1.317: Smart Dimension takes a model edge clicked at its middle, and the sketch status passes clicks through (exam bugs 49, 46) ---
-  if (inShard(3)) {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -8473,7 +8563,7 @@ try {
   }
 
   // 1.80.0: vault geometry compare (FR-PDM-050) and check-in with referenced files (FR-PDM-011).
-  if (inShard(2)) {
+  if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const vp = await ctx.newPage();
     vp.on("pageerror", e => errors.push(e.message));
@@ -8529,7 +8619,7 @@ try {
   }
 
   // --- View navigation (FRS 13.13: FR-UI-101..104): arrow keys, Z, previous view, zoom to area/selection, Space picker ---
-  if (inShard(4)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const np = await ctx.newPage();
     np.on("pageerror", e => errors.push(e.message));
@@ -8651,7 +8741,7 @@ try {
   }
 
   // --- Commands (FRS 13.13: FR-UND-005, FR-UI-106/107/111): named undo and its list, Enter repeats, right-click OK/Cancel, pushpin ---
-  if (inShard(3)) {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const cp = await ctx.newPage();
     cp.on("pageerror", e => errors.push(e.message));
@@ -8824,7 +8914,7 @@ try {
   }
 
   // --- Weldments (FR-FT-121): structural members on a sketch, cut list, end cap, Russian panel ---
-  if (inShard(2)) {
+  if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -9176,6 +9266,18 @@ try {
     check(alNone && al.align?.ent === "j3" && al.align?.axis === "h" && !al.bad, `weldments: member profile alignment (${JSON.stringify({ alNone, alOpt, al })})`);
     await mp.evaluate(() => window.__sv.modeller.undo());
     await settle();
+    // Coped cut: the Butt end choice; the line meets the arc tangent-free at a sharp corner, so it butts there.
+    await mp.evaluate(id => window.__sv.modeller.editFeature(id), bendId);
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wcope"]', "coped");
+    await settle();
+    const copeHelp = await mp.evaluate(() => !!document.querySelector("#mc-pm .pm-help") && [...document.querySelectorAll("#mc-pm .pm-help")].some(e => /saddle/.test(e.textContent)));
+    await mp.click("#mc-ok");
+    await settle();
+    const cp2 = await mp.evaluate(id => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.find(x => x.id === id); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), coped: f.coped, bodies: l.bodies?.length }; }, bendId);
+    check(copeHelp && cp2.coped === true && !cp2.bad, `weldments: coped cut option on a member (${JSON.stringify({ copeHelp, cp2 })})`);
+    await mp.evaluate(() => window.__sv.modeller.undo());
+    await settle();
     // Trim/Extend End miter: two separate beams that stop short of a corner meet in a mitre.
     await mp.evaluate(() => {
       const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b });
@@ -9275,7 +9377,7 @@ try {
   }
 
   // --- Sheet metal (FR-FT-120): base flange from a gauge table, edge flange picked in the view, flatten, flat pattern DXF ---
-  if (inShard(3)) {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -9781,7 +9883,7 @@ try {
   }
 
   // --- Tabs + assembly rebuild, Modify box, feature dimensions on the model, resizable panels (FR-UI-114, FR-UI-115, FR-UI-002) ---
-  if (inShard(3)) {
+  if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
@@ -9869,7 +9971,7 @@ try {
   }
 
   // --- Document tabs (FR-DOC-003, FR-UI-120): parts, assemblies and drawings stay open in tabs at the bottom ---
-  if (inShard(1)) {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
@@ -9932,7 +10034,7 @@ try {
   }
 
   // --- Several part tabs next to a STEP tab: each tab shows its own body; a lost WebGL context comes back ---
-  if (inShard(1)) {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
@@ -9988,7 +10090,7 @@ try {
   }
 
   // --- STEP names written as raw Windows-1251 bytes (Russian CAD exports) show as Cyrillic, not "ÏË31à" ---
-  if (inShard(3)) {
+  if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
     const pg = await ctx.newPage();
     pg.on("pageerror", e => errors.push(e.message));
@@ -10006,7 +10108,7 @@ try {
   }
 
   // --- ✓/✕ always in reach: pinned panel title row and the confirmation corner at the top right of the view (FR-UI-021) ---
-  if (inShard(4)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1366, height: 700 } });
     const kp = await ctx.newPage();
     kp.on("pageerror", e => errors.push(e.message));
@@ -10062,7 +10164,7 @@ try {
   }
 
   // --- Drawings: a model view of another part configuration (FR-DRW-010) ---
-  if (inShard(1)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
@@ -10107,7 +10209,7 @@ try {
   }
 
   // --- Drawings: flat pattern view of a sheet metal part, with bend lines and notes (FR-FT-120) ---
-  if (inShard(4)) {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
@@ -10161,7 +10263,7 @@ try {
   }
 
   // --- Drawings: revision cloud ---
-  if (inShard(3)) {
+  if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
@@ -10201,7 +10303,7 @@ try {
   }
 
   // --- Drawings: centreline and centre mark ---
-  if (inShard(1)) {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
@@ -10260,7 +10362,7 @@ try {
   }
 
   // --- Drawings: bolt circle on evenly spaced holes (FR-DRW-023) ---
-  if (inShard(4)) {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
@@ -10304,7 +10406,7 @@ try {
   }
 
   // --- Drawings: slot centre marks (FR-DRW-023) ---
-  if (inShard(4)) {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
@@ -10339,7 +10441,7 @@ try {
   }
 
   // --- Drawings: arc slot centre marks (FR-DRW-023) ---
-  if (inShard(4)) {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
@@ -10378,7 +10480,7 @@ try {
   }
 
   // --- Drawings: hole row centreline (FR-DRW-023) ---
-  if (inShard(1)) {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
@@ -10446,7 +10548,7 @@ try {
   }
 
   // --- Drawings: weld symbol ---
-  if (inShard(1)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
@@ -10546,7 +10648,7 @@ try {
   }
 
   // --- Drawings: quick previews of slow views while the exact lines are computed (FR-DRW-016, NFR-PERF-040) ---
-  if (inShard(3)) {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
@@ -10580,7 +10682,7 @@ try {
   check(errors.length === 0, `no page errors${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
 
   // --- Parallel assembly builds (FR-ARC-016): distinct parts are built by helper kernel workers, same result as one worker ---
-  if (inShard(4)) {
+  if (inShard(3)) {
     const P = (id, x, y) => ({ id, t: "point", x, y });
     const plate = (id, w, h, d, holes) => ({ schema: 1, kind: "part", id, name: id, units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
       { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", -w / 2, -h / 2), P("p2", w / 2, -h / 2), P("p3", w / 2, h / 2), P("p4", -w / 2, h / 2),
@@ -10622,7 +10724,7 @@ try {
     check(Math.abs(one.props.volume - many.props.volume) < 1e-6 * one.props.volume && one.props.bodies === many.props.bodies, `parallel build: assembly mass properties match (${many.props.volume} vs ${one.props.volume})`);
   }
   // File menu (FR-UI-010): the header's File button replaces Open file; shortcuts, recent documents, Pack and Go.
-  if (inShard(2)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true });
     const fp = await ctx.newPage();
     fp.on("pageerror", e => errors.push(e.message));
@@ -10690,6 +10792,11 @@ try {
 } finally {
   await browser.close();
   server.close();
+}
+{
+  const end = Date.now();
+  const secs = blockTimes.map((b, i) => `#${b.n}:${Math.round(((blockTimes[i + 1]?.at ?? end) - b.at) / 1000)}`);
+  console.log(`\nblock times (s, #n = n-th block in the file): ${secs.join(" ")}`);
 }
 console.log(`${shardN > 1 ? `\nshard ${shardI}/${shardN}: ` : "\n"}${failures ? `${failures} check(s) failed` : "all checks passed"} in ${Math.round((Date.now() - started) / 1000)} s`);
 process.exit(failures ? 1 : 0);
