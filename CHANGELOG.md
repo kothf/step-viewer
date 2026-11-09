@@ -12,6 +12,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Sketch relation glyphs sit beside their line, arc or circle (out along its normal, at the middle) instead of on it, so a click on the curve no longer picks its glyph and Delete no longer removes the relation instead of the curve.
 - Fully define sketch dimensions arc and circle centres and the ends of construction lines first (a slot's centreline), then other curve points, instead of the derived tangent points of a slot's caps.
 - "The sketch is already defined there: added as a reference dimension" is a passing note now, not a warning that stays until closed.
+## [1.324.0] - 2026-11-09
+
+### Added
+
+- **Hover link between the Features tree and the view (FR-UI-061)**: point at a feature, body or cut list item in the Features tree and its faces light up see-through blue in the view; point at a face in the view and the tree marks the row of the feature that made it. It works while no command is open, as in SolidWorks.
+
 ## [1.323.0] - 2026-11-09
 
 ### Added
@@ -1906,7 +1912,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.325.0...HEAD
-[1.325.0]: https://github.com/kothf/step-viewer/compare/v1.323.0...v1.325.0
+[1.325.0]: https://github.com/kothf/step-viewer/compare/v1.324.0...v1.325.0
+[1.324.0]: https://github.com/kothf/step-viewer/compare/v1.323.0...v1.324.0
 [1.323.0]: https://github.com/kothf/step-viewer/compare/v1.322.0...v1.323.0
 [1.322.0]: https://github.com/kothf/step-viewer/compare/v1.321.0...v1.322.0
 [1.321.0]: https://github.com/kothf/step-viewer/compare/v1.320.0...v1.321.0

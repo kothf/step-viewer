@@ -721,6 +721,7 @@ input.drop-val { outline: 2px solid var(--accent) !important; background: var(--
 .ft { overflow: auto; flex: 1; padding: 6px 4px 12px; }
 .ft-row { display: flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 6px; cursor: pointer; user-select: none; min-height: 26px; }
 .ft-row:hover { background: var(--panel-2); }
+.ft-row.hover:not(.sel) { background: var(--panel-2); box-shadow: inset 2px 0 0 var(--accent); }
 .ft-row.sel { background: var(--accent-soft); color: var(--accent-text); }
 .ft-row.editing { outline: 1px dashed var(--accent); }
 .ft-row.sup .ft-name, .ft-row.rolled .ft-name { color: var(--muted); text-decoration: line-through; }
