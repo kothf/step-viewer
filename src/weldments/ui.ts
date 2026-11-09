@@ -81,6 +81,15 @@ function segLabel(sk: SketchFeature | Sketch3dFeature, ent: string): string {
   return sk.type === "sketch" && sk.ents.find(e => e.id === ent)?.t === "arc" ? t("Arc {n}", { n }) : t("Line {n}", { n });
 }
 
+/** Straight lines a member's profile can be aligned with: every line of the 2D and 3D sketches before the feature (construction lines too), as "sketch|line" keys. */
+function alignOpts(ctx: WeldCtx): [string, string][] {
+  return ctx.before.flatMap((sk): [string, string][] => {
+    if (sk.suppressed || (sk.type !== "sketch" && sk.type !== "sketch3d")) return [];
+    const ids = sk.type === "sketch" ? sk.ents.filter(e => e.t === "line").map(e => e.id) : sk.segs.filter(x => x.t === "line").map(x => x.id);
+    return ids.map((id, i) => [`${sk.id}|${id}`, `${featureLabel(sk.name)}: ${t("Line {n}", { n: i + 1 })}`]);
+  });
+}
+
 /** The corners between a member's segments: the segments that share an end point, by the sketch's point ids. */
 function memberCorners(sk: SketchFeature | Sketch3dFeature, ents: string[]): string[][] {
   const at = new Map<string, string[]>();
@@ -192,6 +201,9 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
           + sel("anchor", t("Profile position"), anchorOpts, f.anchor ?? defAnchor)
           + numField("angle", t("Rotation angle"), f.angle ?? { v: 0 }, "angle")
           + chk("mirror", f.mirror, t("Mirror profile"))
+          + sel("walign", t("Alignment"), [["", t("None")], ...alignOpts(ctx)], f.align ? `${f.align.sketch}|${f.align.ent}` : "")
+          + (f.align ? sel("walignAxis", t("Align"), [["v", t("Vertical axis")], ["h", t("Horizontal axis")]], f.align.axis)
+            + help(t("The profile's axis points along the line, square to each segment, for every group; the rotation angle turns it from there.")) : "")
           + (f.segs.length > 1 && !groups.length ? help(t("To place some segments' profile differently, put them in a new group with the list above.")) : ""))
         + groupBoxes
         + (corners.length ? group(t("Corners"), corners.map(c => {
@@ -303,6 +315,8 @@ export function weldChange(f: WeldFeature, k: string, val: string | boolean, ctx
     };
     if (k === "wGap") return () => { if (val) f.gap = { v: 2 }; else delete f.gap; };
     if (k === "wMergeArcs") return () => { if (val) f.mergeArcs = true; else delete f.mergeArcs; };
+    if (k === "walign") return () => { const [sketch, ent] = String(val).split("|"); if (val && sketch && ent) f.align = { sketch, ent, axis: f.align?.axis ?? "v" }; else delete f.align; };
+    if (k === "walignAxis") return () => { if (f.align) f.align.axis = val === "h" ? "h" : "v"; };
     if (k === "wMergeMiter") return () => { if (val) f.mergeMiter = true; else delete f.mergeMiter; };
     if (k === "wdesc") return () => { const s = String(val).trim(); if (s) f.desc = s; else delete f.desc; };
     if (k === "anchor") return () => { if (val === (f.profile === "sketch" ? "o" : "c")) delete f.anchor; else f.anchor = val as Anchor; };
