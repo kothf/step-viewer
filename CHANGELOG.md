@@ -11,6 +11,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - Motion studies: a motor's panel now plots its **Displacement**, **Velocity** or **Acceleration** over the study, with the playhead, like the SolidWorks motor graph. It works for every profile, so you can check a data point or segments motor for jumps before you play it (FR-FT-122).
 
+## [1.321.0] - 2026-11-09
+
+### Added
+
+- **Forming tools (FR-FT-120)**: Sheet Metal → Forming Tool presses a library form into a flat face of the sheet, like dropping a SolidWorks forming tool on a face: a **Dimple** (round, with drafted walls), an **Embossed rib** (a long rounded rib), a **Louver** (a hood open on one side) or an **Extruded hole** (a hole with a collar). Click the face to place a tool, and click again for more; the positions can also be typed. The form keeps the sheet's thickness and stands out of the picked face, or the other one with Reverse direction. The flat pattern leaves forms out, as SolidWorks does: their outlines go on a FORM_TOOL layer in the DXF, and an extruded hole leaves its pre-pierce hole.
+
 ## [1.320.0] - 2026-11-09
 
 ### Added
@@ -1887,7 +1893,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.323.0...HEAD
-[1.323.0]: https://github.com/kothf/step-viewer/compare/v1.320.0...v1.323.0
+[1.323.0]: https://github.com/kothf/step-viewer/compare/v1.321.0...v1.323.0
+[1.321.0]: https://github.com/kothf/step-viewer/compare/v1.320.0...v1.321.0
 [1.320.0]: https://github.com/kothf/step-viewer/compare/v1.319.0...v1.320.0
 [1.319.0]: https://github.com/kothf/step-viewer/compare/v1.318.0...v1.319.0
 [1.318.0]: https://github.com/kothf/step-viewer/compare/v1.317.0...v1.318.0
