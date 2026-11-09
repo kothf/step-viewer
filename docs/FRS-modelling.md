@@ -1585,7 +1585,7 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | Box selection in the part | FR-SEL-002, FR-SEL-008 | Sketch only | Weaker |
 | Select other | FR-SEL-004 | Alt+click cycles faces behind | Done |
 | Selection filter F5 | FR-SEL-003 | Done (faces, edges, vertices) | Done |
-| Breadcrumbs, D to the cursor | FR-SEL-009 | 1.354.0: part breadcrumbs (face/edge → feature → sketch → body → part) with hover, select and menu; Shift+D; assemblies not yet | Partly |
+| Breadcrumbs, D to the cursor | FR-SEL-009 | 1.354.0: part breadcrumbs (face/edge → feature → sketch → body → part) with hover, select and menu; Shift+D; 1.360.0: assemblies (face → part feature → component → sub-assemblies → assembly) | Done |
 | Magnifying glass G | FR-SEL-010 | 1.354.0: G lens at the cursor, wheel factor, picks inside at that zoom | Done |
 | Colour-coded selection boxes | FR-SEL-011 | 1.351.0: box colours on the panel and on the picks with a naming tag for edge/face boxes (fillet, chamfer, draft, shell, face edits, split); other panels' boxes not yet | Partly |
 | Tab / Shift+Tab hide and show under the cursor | FR-UI-105 | 1.351.0: Tab hides the body/component under the cursor, Shift+Tab shows a hidden one there, Ctrl+Shift+Tab held draws them see-through (bodies hidden earlier in the session; hidden ones from a saved file have no ghost until shown once) | Done |

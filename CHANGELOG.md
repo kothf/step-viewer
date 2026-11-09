@@ -11,6 +11,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - **Named views (FR-UI-104)**: the Space orientation picker has a Named views row: type a name and press Save view (or Enter) to store the camera; a click on a named view goes back to it, ✕ deletes it. Parts and assemblies keep their named views in the document (saved with it, left alone by undo and redo); model files keep them for the session.
 - **Heads-up view bar (FR-UI-022)**: with a part or an assembly open, the view commands float at the top centre of the view, as in SolidWorks: Zoom to area, Previous view, the standard views, projection and display style. For model files they stay in the header.
+- **Assembly selection breadcrumbs (FR-SEL-009)**: a click on a component in an assembly shows the chain face › part feature › component › its sub-assemblies › assembly at the top left of the view; a crumb selects that component as in the tree, a right-click opens its menu, Shift+D brings the bar to the cursor and Esc hides it.
 
 ## [1.354.0] - 2026-11-09
 

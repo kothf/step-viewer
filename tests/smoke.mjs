@@ -5730,6 +5730,25 @@ try {
     await shown(3);
     const tabBack = await mp.evaluate(() => window.__sv.asm.doc.components.every(c => !c.hidden));
     check(tabHid.length === 1 && tabBack, `asm 1.351: Tab hides the component under the cursor, Shift+Tab shows it again (${JSON.stringify([tabAt, tabHid, tabBack])})`);
+    // 1.360 (FR-SEL-009): a click on a component shows face › feature › component › assembly breadcrumbs.
+    await mp.mouse.click(tabAt.x, tabAt.y);
+    await mp.waitForTimeout(150);
+    const crumbs = await mp.evaluate(() => {
+      const el = document.getElementById("asm-crumbs");
+      if (!el) return null;
+      const ids = [...el.querySelectorAll(".mc-crumb")].map(b => b.dataset.id ?? "");
+      const comp = el.querySelector(".mc-crumb[data-id]:not([data-id=asm])");
+      window.__sv.asm.selected = null;
+      comp?.click();
+      return { ids, n: el.querySelectorAll(".mc-crumb").length, sel: window.__sv.asm.selected, cid: comp?.dataset.id, row: !!document.querySelector(`#asm-tree .ft-row.sel[data-id="${comp?.dataset.id}"]`) };
+    });
+    await mp.mouse.move(tabAt.x + 2, tabAt.y);
+    await mp.keyboard.press("Shift+D");
+    const crumbAt = await mp.evaluate(() => { const el = document.getElementById("asm-crumbs"); return el ? { c: el.classList.contains("at-cursor"), x: el.getBoundingClientRect().left } : null; });
+    await mp.keyboard.press("Escape");
+    const crumbGone = await mp.evaluate(() => !document.getElementById("asm-crumbs"));
+    check(!!crumbs && crumbs.n >= 3 && crumbs.ids[0] === "" && crumbs.ids.at(-1) === "asm" && crumbs.sel === crumbs.cid && crumbs.row && crumbAt?.c && crumbGone,
+      `asm 1.360: selection breadcrumbs from a click on a component, a crumb selects its tree row, Shift+D, Esc (${JSON.stringify({ crumbs, crumbAt, crumbGone })})`);
     // Save to bytes and reopen: the same components and poses.
     const re = await mp.evaluate(async () => {
       const sig = () => JSON.stringify(window.__sv.asm.doc.components.map(c => [c.id, c.name, c.part, c.tf, !!c.fixed, !!c.hidden]));

@@ -9,6 +9,7 @@ import { ModelKernel } from "../model/kernelClient";
 import { newPart, uid } from "../model/doc";
 import { PART_EXT, unpackPart } from "../model/file";
 import { t, onLangChange } from "../i18n";
+import { featureLabel } from "../model/controller";
 import { confirmModal, toast, untoast } from "../ui";
 import { ASM_EXT, packAsm, unpackAsm } from "./file";
 import { IDENTITY, applyDir, applyPoint, compose, fromPose, invert, poseAngles, rotation, translation } from "./math";
@@ -201,6 +202,7 @@ export class AsmController {
   park(): AsmTab | null {
     if (!this.doc) return null;
     this.closeTools();
+    this.hideCrumbs();
     const tab: AsmTab = { doc: this.doc, fileName: this.fileName, handle: this.handle, undo: this.undoStack, redo: this.redoStack, savedAt: this.savedAt, sel: this.selected };
     this.close();
     return tab;
@@ -251,6 +253,7 @@ export class AsmController {
 
   close() {
     if (!this.doc) return;
+    this.hideCrumbs();
     for (const o of [...this.ghostGroup.children]) this.dropGhost(o.userData.ghost);
     this.ghostGroup.visible = false;
     this.motion?.close();
@@ -2051,6 +2054,77 @@ export class AsmController {
     const c = this.comp(top), sub = c?.flexible ? this.doc?.parts[c.part]?.asm : undefined;
     return !more && !!sub?.components.some(x => x.id === child);
   }
+  /** The pointer over the view canvas (client px), for Shift+D. */
+  private pointer: { x: number; y: number } | null = null;
+  /** Where Shift+D put the breadcrumbs; null = top left of the view. */
+  private crumbAt: { x: number; y: number } | null = null;
+
+  /**
+   * Selection breadcrumbs (FR-SEL-009) for assemblies: after a click on the model, the chain from the face up to the
+   * assembly (face → part feature → component → its sub-assemblies → assembly) at the top left of the view. A click
+   * on a component selects it as in the tree, a right-click opens its menu.
+   */
+  private showCrumbs(hit: { idx: number; face: number } | null) {
+    const list: { id: string; icon: string; label: string; info?: boolean }[] = [];
+    const sid = hit ? this.shownIds[hit.idx] : undefined;
+    if (this.doc && sid && hit) {
+      const src = this.expanded?.doc ?? this.doc, own = this.anyComp(sid) ?? src.components.find(x => x.id === sid);
+      list.push({ id: "", icon: "▱", label: t("Face") });
+      const part = own ? src.parts[own.part]?.doc : undefined, fid = this.faceNames[hit.idx]?.[hit.face]?.split(":")[0];
+      const f = fid ? part?.features.find(x => x.id === fid) : undefined;
+      if (f) list.push({ id: "", icon: "⬚", label: featureLabel(f.name), info: true });
+      const parts = sid.split("/");
+      for (let k = parts.length; k >= 1; k--) {
+        const id = parts.slice(0, k).join("/"), c = this.anyComp(id) ?? src.components.find(x => x.id === id);
+        if (c) list.push({ id, icon: k === parts.length && !src.parts[c.part]?.asm ? "◧" : "◆", label: c.name });
+      }
+      list.push({ id: "asm", icon: "◆", label: this.doc.name });
+    }
+    let el = document.getElementById("asm-crumbs");
+    if (list.length < 3) { el?.remove(); this.crumbAt = null; return; }
+    if (!el) {
+      el = document.createElement("nav");
+      el.id = "asm-crumbs";
+      el.className = "mc-crumbs";
+      el.setAttribute("aria-label", t("Selection breadcrumbs"));
+      $("#asm-bar").append(el);
+    }
+    el.innerHTML = list.map((c, i) => (i ? `<span class="mc-crumb-sep" aria-hidden="true">›</span>` : "")
+      + (c.id ? `<button class="mc-crumb" data-id="${esc(c.id)}" translate="no">` : `<span class="mc-crumb here"${i ? "" : ` aria-current="true"`} translate="no">`)
+      + `<span aria-hidden="true">${esc(c.icon)}</span>${esc(c.label)}${c.id ? "</button>" : "</span>"}`).join("");
+    this.placeCrumbs();
+    el.querySelectorAll<HTMLElement>(".mc-crumb[data-id]").forEach(b => {
+      const id = b.dataset.id!;
+      b.addEventListener("click", () => this.selectCrumb(id));
+      b.addEventListener("contextmenu", e => {
+        e.preventDefault();
+        this.selectCrumb(id);
+        const c = this.comp(id);
+        if (c) this.menu(c, e.clientX, e.clientY);
+      });
+    });
+  }
+
+  private hideCrumbs() { this.showCrumbs(null); }
+
+  /** Selects what a breadcrumb names, as a click on its tree row does. */
+  private selectCrumb(id: string) {
+    this.selected = this.anyComp(id) ? id : null;
+    this.renderTree();
+    this.renderBar();
+    document.querySelector(`#asm-tree .ft-row[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "nearest" });
+  }
+
+  private placeCrumbs() {
+    const el = document.getElementById("asm-crumbs"), at = this.crumbAt;
+    if (!el) return;
+    el.classList.toggle("at-cursor", !!at);
+    if (!at) { el.style.left = el.style.top = ""; return; }
+    const vr = this.host.vp.getBoundingClientRect(), w = el.offsetWidth || 120, h = el.offsetHeight || 40;
+    el.style.left = `${Math.max(vr.left + 4, Math.min(at.x + 12, vr.right - w - 4))}px`;
+    el.style.top = `${Math.max(vr.top + 4, Math.min(at.y + 16, vr.bottom - h - 4))}px`;
+  }
+
   /** A component or a pattern instance. */
   private anyComp(id: string | null) { return id ? this.comp(id) ?? this.expanded?.doc.components.find(c => c.id === id) ?? null : null; }
 
@@ -2233,6 +2307,11 @@ export class AsmController {
           return;
         }
       }
+      if (this.doc && !this.picking && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.target as HTMLElement).closest("input, textarea, select, dialog[open]")) {
+        // Breadcrumbs (FR-SEL-009): Esc hides them, Shift+D brings them to the cursor.
+        if (e.key === "Escape" && document.getElementById("asm-crumbs") && !document.querySelector(".mag-lens")) this.hideCrumbs();
+        if (e.key.toLowerCase() === "d" && e.shiftKey && this.pointer && document.getElementById("asm-crumbs")) { e.preventDefault(); e.stopImmediatePropagation(); this.crumbAt = { ...this.pointer }; this.placeCrumbs(); return; }
+      }
       if (!this.doc || !(e.ctrlKey || e.metaKey) || e.altKey) return;
       const tg = e.target as HTMLElement;
       if (tg.closest("input, textarea, select, [contenteditable=true], dialog[open]")) return;
@@ -2255,11 +2334,12 @@ export class AsmController {
       // The Mate panel picks faces on a click (the view still orbits on a drag).
       if (this.picking) { this.mateDown = { x: e.clientX, y: e.clientY }; return; }
       const hit = this.host.partAt(e.clientX, e.clientY);
-      if (!hit) return;
+      if (!hit) { this.hideCrumbs(); return; }
       // A sub-assembly moves as one (FR-ASM-006): its children drag their top component.
       const id = topOf(this.shownIds[hit.idx]), c = this.comp(id);
       if (!c) return;
       this.selected = id;
+      this.showCrumbs(hit);
       this.renderStatus();
       if (c.fixed) { this.renderTree(); return; }
       // Left-drag on a floating component moves it in the view plane; the orbit controls never see it.
@@ -2274,6 +2354,8 @@ export class AsmController {
       if (e.altKey && face && own === id && this.geo.get(c.part)?.get(face)) this.drag.grab = { comp: id, face };
       canvas().setPointerCapture?.(e.pointerId);
     }, true);
+    vp.addEventListener("pointermove", e => { this.pointer = e.target === canvas() ? { x: e.clientX, y: e.clientY } : null; });
+    vp.addEventListener("pointerleave", () => { this.pointer = null; });
     vp.addEventListener("pointermove", e => {
       const d = this.drag;
       if (!d) return;
@@ -2377,6 +2459,7 @@ export class AsmController {
   private renderBar() {
     const bar = $("#asm-bar");
     bar.hidden = !this.doc;
+    if (!this.doc || this.picking || this.moving) this.hideCrumbs();
     if (!this.doc) return;
     const sel = this.comp(this.selected);
     const n0 = this.doc.components.length;
