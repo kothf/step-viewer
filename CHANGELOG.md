@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.321.0] - 2026-11-09
+
+### Added
+
+- **Forming tools (FR-FT-120)**: Sheet Metal → Forming Tool presses a library form into a flat face of the sheet, like dropping a SolidWorks forming tool on a face: a **Dimple** (round, with drafted walls), an **Embossed rib** (a long rounded rib), a **Louver** (a hood open on one side) or an **Extruded hole** (a hole with a collar). Click the face to place a tool, and click again for more; the positions can also be typed. The form keeps the sheet's thickness and stands out of the picked face, or the other one with Reverse direction. The flat pattern leaves forms out, as SolidWorks does: their outlines go on a FORM_TOOL layer in the DXF, and an extruded hole leaves its pre-pierce hole.
+
 ## [1.314.0] - 2026-11-09
 
 ### Added
@@ -1839,7 +1845,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.314.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.321.0...HEAD
+[1.321.0]: https://github.com/kothf/step-viewer/compare/v1.314.0...v1.321.0
 [1.314.0]: https://github.com/kothf/step-viewer/compare/v1.313.0...v1.314.0
 [1.313.0]: https://github.com/kothf/step-viewer/compare/v1.312.0...v1.313.0
 [1.312.0]: https://github.com/kothf/step-viewer/compare/v1.311.0...v1.312.0
