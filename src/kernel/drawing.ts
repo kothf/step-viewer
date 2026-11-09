@@ -28,6 +28,8 @@ export interface Projection {
   cutMat?: (string | null)[];
   /** Shaded views (FR-DRW-010): triangles facing the viewer, back to front, 7 numbers each: u0 v0 u1 v1 u2 v2 grey. */
   shade?: number[];
+  /** A quick polygonal preview (`projectPoly`): drawn, never measured. */
+  preview?: boolean;
 }
 /** A view direction: `dir` points from the model towards the viewer; `up` is the sheet's +y. */
 export interface ViewDir { dir: V3; up: V3 }
@@ -88,6 +90,51 @@ export function project(oc: any, shape: any, view: ViewDir, tol = 0.02): Project
   take(h.Rg1LineHCompound_1(), hid, 1);
   take(h.OutLineHCompound_1(), hid, 2);
   return { vis, hid: unhide(hid, vis), box: bounds(vis.length ? vis : hid), ms: Date.now() - t0 };
+}
+
+/**
+ * A quick preview of a view (FR-DRW-016, NFR-PERF-040): OCCT's polygonal HLR (HLRBRep_PolyAlgo) on the
+ * shape's triangulation, meshed at `lin` mm chord error. Every line is a polyline, so it is for showing
+ * only: dimensions and picking wait for the exact projection. The result is marked `preview`.
+ */
+export function projectPoly(oc: any, shape: any, view: ViewDir, lin: number): Projection {
+  const t0 = Date.now();
+  new oc.BRepMesh_IncrementalMesh_2(shape, lin, false, 0.5, false);
+  const { x, n } = viewAxes(view);
+  const ax = new oc.gp_Ax2_2(new oc.gp_Pnt_3(0, 0, 0), new oc.gp_Dir_4(n[0], n[1], n[2]), new oc.gp_Dir_4(x[0], x[1], x[2]));
+  const algo = new oc.HLRBRep_PolyAlgo_1();
+  algo.Load(shape);
+  algo.Projector_2(new oc.HLRAlgo_Projector_2(ax));
+  algo.Update();
+  const h = new oc.HLRBRep_PolyHLRToShape();
+  h.Update(new oc.Handle_HLRBRep_PolyAlgo_2(algo));
+  const vis: Seg2[] = [], hid: Seg2[] = [];
+  const take = (get: () => any, out: Seg2[], c: EdgeClass) => { let s: any; try { s = get(); } catch { return; } if (s && !s.IsNull()) polyEdges(oc, s, out, c); };
+  take(() => h.VCompound_1(), vis, 0);
+  take(() => h.Rg1LineVCompound_1(), vis, 1);
+  take(() => h.OutLineVCompound_1(), vis, 2);
+  take(() => h.HCompound_1(), hid, 0);
+  take(() => h.Rg1LineHCompound_1(), hid, 1);
+  take(() => h.OutLineHCompound_1(), hid, 2);
+  return { vis, hid, box: bounds(vis.length ? vis : hid), ms: Date.now() - t0, preview: true };
+}
+
+/** The straight pieces of a polygonal HLR result (its edges are lines between mesh points), joined end to end. */
+function polyEdges(oc: any, comp: any, out: Seg2[], c: EdgeClass) {
+  const A = oc.TopAbs_ShapeEnum;
+  let run: number[] | null = null;
+  const flush = () => { if (run && run.length >= 4) out.push(run.length === 4 ? { k: "l", c, p: [run[0], run[1], run[2], run[3]] } : { k: "p", c, p: run }); run = null; };
+  for (const ex = new oc.TopExp_Explorer_2(comp, A.TopAbs_EDGE, A.TopAbs_SHAPE); ex.More(); ex.Next()) {
+    const e = oc.TopoDS.Edge_1(ex.Current());
+    let ad: any;
+    try { ad = new oc.BRepAdaptor_Curve_2(e); } catch { continue; }
+    const a = ad.Value(ad.FirstParameter()), b = ad.Value(ad.LastParameter());
+    const ax = a.X(), ay = a.Y(), bx = b.X(), by = b.Y();
+    if (Math.hypot(bx - ax, by - ay) < 1e-9) continue;
+    if (run && Math.abs(run[run.length - 2] - ax) < 1e-7 && Math.abs(run[run.length - 1] - ay) < 1e-7) run.push(bx, by);
+    else { flush(); run = [ax, ay, bx, by]; }
+  }
+  flush();
 }
 
 /** Removes the parts of hidden lines and arcs that lie under visible ones (a back edge behind the outline). */
