@@ -981,6 +981,18 @@ test("slot centre marks: a centreline over a straight slot and a cross line at e
   assert.ok(along && Math.min(along[0], along[2]) === -27 && Math.max(along[0], along[2]) === 27, `centreline 2 mm past the ends: ${along}`);
   const ends = ls.filter(q => Math.abs(q[0] - q[2]) < 1e-6).map(q => [q[0], Math.min(q[1], q[3]), Math.max(q[1], q[3])]).sort((a, b) => a[0] - b[0]);
   assert.deepEqual(ends, [[-20, -7, 7], [20, -7, 7]]);
+  // From the side each slot end (half a cylinder with material outside) gets its axis, 2 mm past the faces; from the
+  // end the two axes fall on one line.
+  const front = projector(ORIENTS.front);
+  const side = centreMarks({ id: "f", name: "f", orient: "front", x: 0, y: 0 }, pl, topo, front.P, front.n)
+    .flatMap(p => p.t === "l" ? [p.p.map(x => Math.round(x * 1000) / 1000)] : []).sort((a, b) => a[0] - b[0]);
+  assert.equal(side.length, 2, `two end axes side-on: ${JSON.stringify(side)}`);
+  assert.ok(side.every(q => q[0] === q[2] && Math.abs(Math.abs(q[3] - q[1]) - 24) < 1e-6) && side[0][0] === -20 && side[1][0] === 20, JSON.stringify(side));
+  const right = projector(ORIENTS.right);
+  assert.equal(centreMarks({ id: "r", name: "r", orient: "right", x: 0, y: 0 }, pl, topo, right.P, right.n).length, 1, "one line looking along the slot");
+  // An outside half round (a rounded bar end) and a quarter (an inside fillet) get none.
+  const bar = { edges: [], cyls: [{ o: [0, 0, 0] as V3, ax: [0, 1, 0] as V3, r: 5, v0: 0, v1: 20, sp: Math.PI }, { o: [30, 0, 0] as V3, ax: [0, 1, 0] as V3, r: 5, v0: 0, v1: 20, sp: Math.PI / 2, in: true }] };
+  assert.equal(centreMarks({ id: "t", name: "t", orient: "top", x: 0, y: 0 }, pl, bar, top.P, top.n).length, 0);
   // Pure: half circles facing each other pair up; facing the same way or of another radius do not.
   assert.equal(straightSlots([{ c: [0, 0], r: 3, m: [-1, 0] }, { c: [10, 0], r: 3, m: [1, 0] }]).length, 1);
   assert.equal(straightSlots([{ c: [0, 0], r: 3, m: [1, 0] }, { c: [10, 0], r: 3, m: [-1, 0] }]).length, 0, "bulging towards each other");
