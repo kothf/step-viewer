@@ -495,7 +495,7 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 - **FR-SK-038** (P2, M) Linear and circular sketch patterns with count and spacing as dimensions; instances keep equal relations to the seed.
 - **FR-SK-039** (P2, M) Move, copy, rotate, scale entities (numeric and by drag; relations to unselected geometry are kept or removed by choice).
 - **FR-SK-040** (P2, M) Import DXF (R12–2018 lines, arcs, circles, polylines with bulges, splines, ellipses; layers selectable; units) into the active sketch, reusing the parser for profile export where possible.
-- **FR-SK-041** (P1, S) Grid (optional), with snap to grid (off by default).
+- **FR-SK-041** (P1, S) Grid (optional), with snap to grid (off by default). *Done in 1.303.0 (sketch panel Grid section: show, snap, spacing; automatic 1-2-5 spacing from the zoom).*
 - **FR-SK-042** (P1, M) Sketch inference while drawing: snap to end points, mid points, centres, quadrants, intersections, nearest on curve, model vertices/edges/face centres projected to the sketch plane (reuse Snapper). Dotted inference lines for horizontal/vertical alignment with existing points.
 
 ### 8.4 Relations
@@ -1573,7 +1573,7 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | Habit | FRS | 1.85.0 | Class |
 | --- | --- | --- | --- |
 | Middle-drag rotate, Ctrl+middle pan, Shift+middle zoom | FR-UI-020 | Left drag orbits, middle and right drag pan; no preference | Weaker (sketch mode fixed in 1.89.0) |
-| Snapping to model geometry and automatic relations while sketching | FR-SK-042, FR-SK-052 | Sketch points, origin, curves, H/V only | Weaker (model vertices, midpoints and centres snap and stay attached in 1.89.0) |
+| Snapping to model geometry and automatic relations while sketching | FR-SK-042, FR-SK-052 | Sketch points, origin, curves, H/V; dotted alignment lines with existing points (1.303.0) | Weaker (model vertices, midpoints and centres snap and stay attached in 1.89.0) |
 | Middle click sets the rotation centre | FR-UI-100 | No | New |
 | Double middle click fits; wheel direction preference | FR-UI-101 | No (F fits; zoom to cursor on) | New |
 | Arrow keys rotate/pan/roll, Z / Shift+Z zoom | FR-UI-102 (was only in Appendix A) | No | New |

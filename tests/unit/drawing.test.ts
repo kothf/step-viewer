@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Modeller } from "../../src/kernel/model";
-import { project, bounds, geometryDiff, type V3 } from "../../src/kernel/drawing";
+import { project, projectPoly, bounds, geometryDiff, type V3 } from "../../src/kernel/drawing";
 import type { Feature, PartDoc, SketchFeature, SkEnt } from "../../src/model/types";
 import { occ } from "./occ";
 
@@ -23,6 +23,20 @@ export async function block() {
     hole, { id: "f2", type: "extrude", name: "C", sketch: "s2", op: "cut", end: "through", depth: { v: 0 } }]));
   return { oc: await occ(), shape: r.body!.shape };
 }
+
+test("quick preview (polygonal HLR) matches the exact view's outline", async () => {
+  const { oc, shape } = await block();
+  const view = { dir: [0, -1, 0] as V3, up: [0, 0, 1] as V3 };
+  const p = projectPoly(oc, shape, view, 0.5), e = project(oc, shape, view);
+  assert.equal(p.preview, true);
+  assert.ok(p.vis.length > 0 && p.vis.every(s => s.k !== "a"), "polylines and lines only");
+  p.box.forEach((v, i) => assert.ok(Math.abs(v - e.box[i]) < 0.05, `box ${p.box} vs ${e.box}`));
+  // The hole is behind the front face: it shows as hidden lines.
+  assert.ok(p.hid.length > 0);
+  const t = projectPoly(oc, shape, { dir: [0, 0, 1], up: [0, 1, 0] }, 0.5);
+  const xs = t.vis.flatMap(s => s.k === "l" ? [s.p[0], s.p[2]] : s.k === "p" ? s.p.filter((_v, i) => i % 2 === 0) : []);
+  assert.ok(xs.some(x => Math.abs(x - 15) < 0.05) && xs.some(x => Math.abs(x - 5) < 0.05), "hole circle seen from the top");
+});
 
 test("top view: outline, hole circle, no hidden lines", async () => {
   const { oc, shape } = await block();

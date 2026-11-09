@@ -2328,6 +2328,47 @@ try {
       `model 1.298: Fully define sketch adds H/V relations, a diameter and origin dimensions until DOF 0, one undo step (${fd0}, ${JSON.stringify(fd1)}, ${fd2})`);
     await mp.evaluate(() => window.__sv.modeller.ok());
     await idle();
+    // 1.303: sketch grid (FR-SK-041): Show grid draws it; Snap to grid at 10 mm puts free line ends on grid nodes.
+    await mp.evaluate(() => window.__sv.model.store.change("Sketch", d => { d.features.push({ id: "gr", type: "sketch", name: "SketchGR", plane: { std: "XY" }, rels: [], dims: [], ents: [] }); }));
+    await idle();
+    await mp.evaluate(() => window.__sv.modeller.editSketch("gr"));
+    await mp.waitForTimeout(800);
+    const setGridUi = (a, v) => mp.evaluate(([a, v]) => { const i = document.querySelector(`#mc-pm [data-a=${a}]`); if (!i) return; if (i.type === "checkbox") i.checked = v; else i.value = v; i.dispatchEvent(new Event("change", { bubbles: true })); }, [a, v]);
+    await setGridUi("grid", true);
+    await mp.waitForTimeout(200);
+    const grid0 = await mp.evaluate(() => { let n = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData?.skGrid) n += o.geometry.attributes.position.count / 2; }); return n; });
+    await setGridUi("gridsnap", true);
+    await setGridUi("gridstep", "10");
+    await tool("line");
+    await click([21.5, 8.7]);
+    await click([48.6, 31.2]);
+    await mp.keyboard.press("Escape");
+    await mp.waitForTimeout(150);
+    const grid1 = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sk = ed.sk, ln = sk.ents.find(e => e.t === "line"), P = id => sk.ents.find(e => e.id === id); return { ui: { show: ed.grid, snap: ed.gridSnap, step: ed.gridSpacing }, a: ln && [P(ln.a).x, P(ln.a).y], b: ln && [P(ln.b).x, P(ln.b).y], ls: localStorage.getItem("mc:skGridStep") }; });
+    await setGridUi("gridsnap", false);
+    await setGridUi("grid", false);
+    await mp.waitForTimeout(200);
+    const grid2 = await mp.evaluate(() => { let n = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData?.skGrid) n++; }); return n; });
+    // Alignment inference (FR-SK-042): a point 3 px off the line end's y lines up with it, with a dotted line and no relation.
+    const mmpx = await mp.evaluate(() => window.__sv.model.editor().px([50, 30]));
+    await tool("point");
+    await hover([50, 30]);
+    await hover([70, 31]);
+    const alAt = [83.7, 30 + 3 * mmpx];
+    await hover(alAt);
+    const alHover = await mp.evaluate(() => { let n = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData?.skAlign) n++; }); return { n, lines: window.__sv.model.editor().aligned.length }; });
+    await click(alAt);
+    const alPt = await mp.evaluate(() => { const sk = window.__sv.model.editor().sk, pt = sk.ents.filter(e => e.t === "point").at(-1); return { x: pt.x, y: pt.y, rels: sk.rels.length }; });
+    await tool("select");
+    await mp.waitForTimeout(100);
+    const alGone = await mp.evaluate(() => { let n = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData?.skAlign) n++; }); return n; });
+    check(alHover.n === 1 && alHover.lines === 1 && near(alPt.y, 30, 1e-9) && near(alPt.x, 83.7, 0.2) && alGone === 0,
+      `model 1.303: after passing over a line end, a point placed 3 px off its height lines up with it, shown by a dotted line (${JSON.stringify(alHover)}, ${JSON.stringify(alPt)}, ${alGone})`);
+    check(grid0 > 10 && grid1.ui.show && grid1.ui.snap && grid1.ui.step === 10 && grid1.a && near(grid1.a[0], 20, 1e-9) && near(grid1.a[1], 10, 1e-9) && near(grid1.b[0], 50, 1e-9) && near(grid1.b[1], 30, 1e-9) && grid1.ls === "10" && grid2 === 0,
+      `model 1.303: sketch grid is drawn, and Snap to grid at 10 mm puts line ends on grid nodes (${grid0}, ${JSON.stringify(grid1)}, ${grid2})`);
+    await mp.evaluate(() => { try { localStorage.removeItem("mc:skGridStep"); } catch {} });
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await idle();
     // Convert entities: the top face of a block into a sketch on it, four fixed lines.
     await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); window.__sv.model.store.change("Block", d => { d.features.push({ id: "s2", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a2", 0, -60), P("b2", 40, -60), P("c2", 40, -30), P("d2", 0, -30), { id: "m1", t: "line", a: "a2", b: "b2" }, { id: "m2", t: "line", a: "b2", b: "c2" }, { id: "m3", t: "line", a: "c2", b: "d2" }, { id: "m4", t: "line", a: "d2", b: "a2" }] }, { id: "x", type: "extrude", name: "Extrude1", sketch: "s2", op: "boss", end: "blind", depth: { v: 10 } }, { id: "s3", type: "sketch", name: "Sketch3", plane: { face: { name: "x:end", hint: [20, -45, 10] } }, rels: [], dims: [], ents: [] }); }); });
     await idle();
@@ -8445,6 +8486,18 @@ try {
       return { folder: document.querySelector('#mc-tree .ft-row[data-id="folder:cutlist"]')?.textContent, rows: [...document.querySelectorAll('#mc-tree .ft-row[data-id^="cut:"] .ft-name')].map(e => e.textContent), tris: hl.reduce((n, o) => n + o.geometry.getAttribute("position").count / 3, 0), faces: window.__sv.model.last().bodies.map(b => b.faces) };
     });
     check(/Cut list \(2\)/.test(ct.folder ?? "") && JSON.stringify(ct.rows) === '["Top rail × 650 mm (2)","SHS 50x50x4 × 450 mm (2)"]' && ct.tris > 0 && ct.faces.every(n => n > 0), `weldments: Cut list folder in the tree highlights an item's bodies (${JSON.stringify(ct)})`);
+    // Merge miter trimmed bodies: the four mitred tubes of the frame become one body, one cut list item 2 × 650 + 2 × 450 long.
+    const frameId = await mp.evaluate(() => window.__sv.model.store.doc.features.find(x => x.type === "member").id);
+    await mp.evaluate(id => window.__sv.modeller.editFeature(id), frameId);
+    await settle();
+    await mp.click('#mc-pm input[data-k="wMergeMiter"]');
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const mm = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bodies: l.bodies?.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), cut: (l.cutList ?? []).map(c => [c.qty, c.length]) }; });
+    await mp.evaluate(() => window.__sv.model.store.undo());
+    await settle();
+    check(mm.bodies === 1 && !mm.bad && JSON.stringify(mm.cut) === "[[1,2200]]", `weldments: merge miter trimmed bodies (${JSON.stringify(mm)})`);
     // End cap on an open end: an L of two members butted, a cap on the free end.
     await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("L", d => { d.features.push({ id: "s2", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [P("e", 0, 600), P("f", 300, 600), P("g", 300, 800), L("k1", "e", "f"), L("k2", "f", "g")] }, { id: "m2", type: "member", name: "Structural Member2", profile: "shs", size: "40x40x3", segs: [{ sketch: "s2", ent: "k1" }, { sketch: "s2", ent: "k2" }], corner: "butt1" }); }); });
     await settle();
@@ -9632,6 +9685,38 @@ try {
     const cdim = await dp.evaluate(() => { const a = (window.__sv.drw.doc().sheets[0].annots ?? []).find(x => x.t === "dim" && x.refs.some(r => r.com)); return a && JSON.parse(JSON.stringify(a)); });
     const ten = await dp.evaluate(() => window.__sv.drw.prims().some(p => p.t === "t" && p.layer === "ANNOT" && p.s === "10"));
     check(comBox && sym === 3 && cdim && ten, `drawing: centre of mass point on a view, and a dimension measured from it (${JSON.stringify({ comBox, sym, cdim, ten })})`);
+    await ctx.close();
+  }
+
+  // --- Drawings: quick previews of slow views while the exact lines are computed (FR-DRW-016, NFR-PERF-040) ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    // A plate with 25 holes: over the edge count that turns quick previews on.
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    const holes = [];
+    for (let i = 0; i < 25; i++) holes.push(P(`h${i}`, -40 + 20 * (i % 5), -40 + 20 * Math.floor(i / 5)), { id: `c${i}`, t: "circle", c: `h${i}`, r: 4 });
+    const part = { schema: 1, kind: "part", id: "d_drwpreview", name: "Grid", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", -55, -55), P("p2", 55, -55), P("p3", 55, 55), P("p4", -55, 55),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 10 } },
+      { id: "s2", type: "sketch", name: "Sketch2", plane: { face: { name: "f1:end" } }, rels: [], dims: [], ents: holes },
+      { id: "f2", type: "extrude", name: "Cut1", sketch: "s2", op: "cut", end: "through", depth: { v: 0 } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-09T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "Grid.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 120000 });
+    await dp.waitForTimeout(200);
+    const pv = await dp.evaluate(() => window.__sv.drw.previews());
+    const exact = await dp.evaluate(() => window.__sv.drw.doc().sheets[0].views.every(v => { const p = window.__sv.drw.proj(v.id); return p && !p.preview && p.vis.length > 0; }));
+    check(pv.made >= 3 && pv.shown >= 1 && pv.left === 0 && exact, `drawing: slow model views show a quick preview first, then the exact lines (${JSON.stringify(pv)}, exact ${exact})`);
     await ctx.close();
   }
 
