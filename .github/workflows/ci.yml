@@ -32,17 +32,17 @@ jobs:
       - name: Unit tests (kernel, sketch solver, documents)
         run: npm run test:unit
 
-  # The browser smoke test in 4 parallel shards (SMOKE_SHARD, see tests/smoke.mjs), about 2 minutes each
+  # The browser smoke test in 6 parallel shards (SMOKE_SHARD, see tests/smoke.mjs), about 5 minutes each
   # instead of 9 minutes in one job. Each job packages the build itself: that takes ~15 s, less than
   # passing it between jobs as an artifact would.
   smoke:
-    name: smoke ${{ matrix.shard }}/4
+    name: smoke ${{ matrix.shard }}/6
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - uses: actions/checkout@v7
 
@@ -65,9 +65,9 @@ jobs:
       - name: Package
         run: npm run package
 
-      - name: Smoke test (packaged build), shard ${{ matrix.shard }}/4
+      - name: Smoke test (packaged build), shard ${{ matrix.shard }}/6
         env:
-          SMOKE_SHARD: ${{ matrix.shard }}/4
+          SMOKE_SHARD: ${{ matrix.shard }}/6
         run: npm test
 
   # One check that is green only when every job above is (the Release workflow reads the whole run's result).

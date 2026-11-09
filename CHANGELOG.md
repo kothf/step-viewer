@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.346.0] - 2026-11-09
+
+### Changed
+
+- CI runs the browser smoke test in 6 parallel shards instead of 4, balanced by measured block times, so a CI run takes about 6–7 minutes instead of about 10. The smoke test prints each block's time at the end of a run.
+
 ## [1.339.0] - 2026-11-09
 
 ### Added
@@ -2025,7 +2031,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.339.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.346.0...HEAD
+[1.346.0]: https://github.com/kothf/step-viewer/compare/v1.339.0...v1.346.0
 [1.339.0]: https://github.com/kothf/step-viewer/compare/v1.338.0...v1.339.0
 [1.338.0]: https://github.com/kothf/step-viewer/compare/v1.337.0...v1.338.0
 [1.337.0]: https://github.com/kothf/step-viewer/compare/v1.336.0...v1.337.0
