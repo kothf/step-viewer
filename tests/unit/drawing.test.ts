@@ -885,3 +885,38 @@ test("section views can be dimensioned on their cut faces: cut edges named after
   // Without the section's edges the reference is gone (a plain view of the uncut model).
   assert.equal(refEdge(dim.refs[0], topology(oc, shape, names)), null);
 });
+
+test("bolt circles: evenly spaced holes on a circle get a centre-line circle and radial marks (FR-DRW-023)", async () => {
+  const { boltCircles, centreMarks, projector } = await import("../../src/drawing/annot");
+  const { ORIENTS } = await import("../../src/drawing/views");
+  const at = (R: number, degs: number[], r: number, o: [number, number] = [0, 0]) => degs.map(d => ({ c: [o[0] + R * Math.cos(d * Math.PI / 180), o[1] + R * Math.sin(d * Math.PI / 180)] as [number, number], r }));
+  // Six Ø6 on PCD 80 around a Ø30 bore: one full bolt circle; the bore keeps its cross.
+  const six = [...at(40, [0, 60, 120, 180, 240, 300], 3), { c: [0, 0] as [number, number], r: 15 }];
+  const b6 = boltCircles(six);
+  assert.equal(b6.length, 1);
+  assert.ok(b6[0].full && Math.abs(b6[0].R - 40) < 1e-9 && Math.hypot(...b6[0].o) < 1e-9 && b6[0].members.length === 6);
+  // A partial pattern (3 holes, 30° apart, one missing) is an arc from the first to the last hole.
+  const part = boltCircles(at(50, [10, 40, 100], 2));
+  assert.equal(part.length, 1);
+  assert.ok(!part[0].full && Math.abs(part[0].a0 - 10 * Math.PI / 180) < 1e-9 && Math.abs(part[0].a1 - 100 * Math.PI / 180) < 1e-9);
+  // Holes at the corners of a square are a pattern; an oblong rectangle's corners and uneven spacing are not.
+  assert.equal(boltCircles([{ c: [10, 10], r: 2 }, { c: [-10, 10], r: 2 }, { c: [-10, -10], r: 2 }, { c: [10, -10], r: 2 }]).length, 1);
+  assert.equal(boltCircles([{ c: [30, 10], r: 2 }, { c: [-30, 10], r: 2 }, { c: [-30, -10], r: 2 }, { c: [30, -10], r: 2 }]).length, 0);
+  assert.equal(boltCircles(at(40, [0, 50, 120], 3)).length, 0, "gaps 50 and 70: not whole multiples");
+  assert.equal(boltCircles(at(40, [0, 90, 180], 3).map((h, i) => ({ ...h, r: i ? 3 : 4 }))).length, 0, "holes of different sizes");
+  // Drawn: the circle as one centre-line polyline, a radial line per hole, a cross on the bore; off = crosses.
+  const edges = six.map((h, i) => ({ k: `h${i}`, t: "c" as const, a: [0, 0, 0] as [number, number, number], b: [0, 0, 0] as [number, number, number], c: [h.c[0], h.c[1], 0] as [number, number, number], ax: [0, 0, 1] as [number, number, number], r: h.r, sp: 2 * Math.PI }));
+  const topo = { edges, cyls: [] };
+  const pl = { s: 1, uc: 0, vc: 0, x: 0, y: 0, box: [-50, -50, 50, 50] as [number, number, number, number], ready: true };
+  const top = projector(ORIENTS.top);
+  const on = centreMarks({ id: "v", name: "v", orient: "top", x: 0, y: 0 }, pl, topo as any, top.P, top.n);
+  assert.equal(on.filter(p => p.t === "p").length, 1);
+  assert.equal(on.filter(p => p.t === "l").length, 6 + 2);
+  const poly = on.find(p => p.t === "p")!;
+  assert.ok(poly.t === "p" && poly.pen === "center" && Math.abs(Math.hypot(poly.p[0], poly.p[1]) - 40) < 1e-9);
+  const radial = on.find(p => p.t === "l" && Math.abs(p.p[1] - p.p[3]) < 1e-4 && p.p[0] > 30);
+  assert.ok(radial && radial.t === "l" && Math.abs(radial.p[0] - 35) < 1e-4 && Math.abs(radial.p[2] - 45) < 1e-4, "radial line through the hole at 0°");
+  const off = centreMarks({ id: "v", name: "v", orient: "top", x: 0, y: 0, bolts: false }, pl, topo as any, top.P, top.n);
+  assert.equal(off.filter(p => p.t === "p").length, 0);
+  assert.equal(off.length, 14);
+});

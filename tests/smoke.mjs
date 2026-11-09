@@ -8693,6 +8693,11 @@ try {
     await mp.click('#mc-pm input[data-k="wField"]');
     await settle();
     const symFlags = await mp.evaluate(() => document.querySelector('#mc-layer .wld-sym[data-weld="w5"]')?.textContent);
+    // Unequal legs: unticking Equal leg lengths gives a second leg (1.5 × the first) and the symbol shows both.
+    await mp.click('#mc-pm input[data-k="wEqual"]');
+    await settle();
+    const uneq = await mp.evaluate(() => ({ n: document.querySelectorAll('#mc-pm [data-num="size"], #mc-pm [data-num="size2"]').length, t: document.querySelector('#mc-layer .wld-sym[data-weld="w5"]')?.textContent, bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";") }));
+    check(uneq.n === 2 && uneq.t === "○ ⚑ ◺ z4×6 50 (100)" && !uneq.bad, `weldments: unequal leg fillet bead (${JSON.stringify(uneq)})`);
     await mp.click("#mc-cancel");
     await settle();
     check(sym.t === "◺ z4 50 (100)" && sym.mode === "feature" && sym.id === "w5", `weldments: weld symbol on the bead (${JSON.stringify(sym)})`);
@@ -9058,6 +9063,21 @@ try {
     const cb1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, n: l.sheet?.crosses?.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
     check(cb0.title === "Cross Break" && cb0.faces?.length === 1 && /:p0:top$/.test(cb0.faces[0]) && !cb1.bad && cb1.n === 2 && Math.abs(cb1.v - bc1.v) < 1e-6,
       `sheet metal: Cross Break marks the clicked flat face with two diagonals, solid unchanged (${JSON.stringify({ cb0, cb1 })})`);
+    // Vent: a sketch on the plate's bottom face (XY) with a 60 × 25 boundary and one rib across it; the command picks it up.
+    await mp.evaluate(() => window.__sv.model.store.change("Vent sketch", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), L = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "vsk", type: "sketch", name: "Sketch9", plane: { std: "XY" }, rels: [], dims: [], ents: [
+        P("v1", 20, 15), P("v2", 80, 15), P("v3", 80, 40), P("v4", 20, 40), L("w1", "v1", "v2"), L("w2", "v2", "v3"), L("w3", "v3", "v4"), L("w4", "v4", "v1"),
+        P("v5", 50, 15), P("v6", 50, 40), L("w5", "v5", "v6")] });
+    }));
+    await settle();
+    await smMenu("Vent");
+    const vt0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, sketch: window.__sv.model.mode().draft?.sketch, info: document.querySelector("#mc-pm [data-sm-vent]")?.textContent }));
+    await mp.click("#mc-ok");
+    await settle();
+    const vt1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    check(vt0.title === "Vent" && vt0.sketch === "vsk" && /1/.test(vt0.info ?? "") && !vt1.bad && Math.abs(cb1.v - vt1.v - (60 * 25 - 2 * 25) * T) < 1e-3,
+      `sheet metal: Vent cuts the boundary less the rib through the plate (${JSON.stringify({ vt0, vt1 })})`);
     // Closed Corner: two flanges, material outside, made one at a time leave an open corner; clicking the front one's end face closes it.
     await mp.evaluate(() => window.__sv.model.store.change("Flanges", d => {
       const b = d.features.find(f => f.type === "smbase");
@@ -9660,6 +9680,50 @@ try {
     const c3 = await centre();
     const longer = c3.some(q => Math.abs(q[1] - midY) < 0.05 && Math.abs(Math.min(q[0], q[2]) - (fr.box[0] - 5)) < 0.05);
     check(sel && ext === 5 && longer, `drawing: select a centreline on its line and change its extension (${JSON.stringify({ sel, ext, longer })})`);
+    await ctx.close();
+  }
+
+  // --- Drawings: bolt circle on evenly spaced holes (FR-DRW-023) ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    const holes = [0, 1, 2, 3, 4, 5].flatMap(k => [P(`h${k}`, 35 * Math.cos(k * Math.PI / 3), 35 * Math.sin(k * Math.PI / 3)), { id: `c${k}`, t: "circle", c: `h${k}`, r: 4 }]);
+    const part = { schema: 1, kind: "part", id: "d_drwbolt", name: "Flange", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], ents: [P("p1", -60, -60), P("p2", 60, -60), P("p3", 60, 60), P("p4", -60, 60),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" },
+        P("o", 0, 0), { id: "cb", t: "circle", c: "o", r: 10 }, ...holes], dims: [] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 10 } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-09T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "Flange.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
+    // The top view (views[1]) looks down on the holes: one centre-line circle through them, a radial line per hole, a cross on the bore.
+    const marks = () => dp.evaluate(() => {
+      const v = window.__sv.drw.doc().sheets[0].views[1], p = window.__sv.drw.placement(v.id), cx = p.x + (0 - p.uc) * p.s, cy = p.y + (0 - p.vc) * p.s;
+      const c = window.__sv.drw.prims().filter(q => q.layer === "CENTER");
+      const near = (x, y) => Math.abs(x - cx) < 70 * p.s && Math.abs(y - cy) < 70 * p.s;
+      const polys = c.filter(q => q.t === "p" && near(q.p[0], q.p[1])).map(q => { let lo = Infinity, hi = 0; for (let i = 0; i < q.p.length; i += 2) { const r = Math.hypot(q.p[i] - cx, q.p[i + 1] - cy); lo = Math.min(lo, r); hi = Math.max(hi, r); } return [lo / p.s, hi / p.s]; });
+      const lines = c.filter(q => q.t === "l" && near(q.p[0], q.p[1])).length;
+      return { id: v.id, x: v.x, y: v.y, polys, lines, s: p.s };
+    });
+    const m0 = await marks();
+    check(m0.polys.length === 1 && Math.abs(m0.polys[0][0] - 35) < 0.05 && Math.abs(m0.polys[0][1] - 35) < 0.05 && m0.lines === 6 + 2, `drawing: bolt circle through six evenly spaced holes with radial marks (${JSON.stringify(m0)})`);
+    // Turned off in the view's properties: plain crosses on every hole.
+    const q = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [m0.x + 50 * m0.s, m0.y + 50 * m0.s]);
+    await dp.mouse.click(q[0], q[1]);
+    await dp.waitForSelector('#drw .drw-props [data-v="bolts"]');
+    await dp.uncheck('#drw .drw-props [data-v="bolts"]');
+    await dp.waitForTimeout(150);
+    const m1 = await marks(), off = await dp.evaluate(id => window.__sv.drw.doc().sheets[0].views.find(v => v.id === id).bolts, m0.id);
+    check(off === false && m1.polys.length === 0 && m1.lines === 7 * 2, `drawing: bolt circles off gives plain centre marks (${JSON.stringify({ off, m1 })})`);
     await ctx.close();
   }
 

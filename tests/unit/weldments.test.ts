@@ -210,7 +210,19 @@ test("fillet bead round a tube standing on a plate (FR-FT-121)", async () => {
   const R = 48.3 / 2;
   near(b.length!, 2 * Math.PI * R, 1e-3);
   // Pappus: the triangle's area times the path of its centroid (R + s/3 from the axis).
-  near(r.volume - base.volume, 12.5 * 2 * Math.PI * (R + 5 / 3), 1e-3);
+  near(r.volume - base.volume, 12.5 * 2 * Math.PI * (R + 5 / 3), 1e-3);  // Unequal legs: 5 on the plate (set 1), 8 up the tube (set 2); the triangle's centroid is still 5/3 out from the tube.
+  const ru = run(m, doc([sk, plate, k, mem, { ...bead, size2: { v: 8 } } as Feature]));
+  const bu = ru.cut.find(c => c.kind === "bead")!;
+  assert.equal(bu.desc, "5×8");
+  near(bu.length!, 2 * Math.PI * R, 1e-3);
+  near(ru.volume - base.volume, 20 * 2 * Math.PI * (R + 5 / 3), 1e-3);
+  const top = ru.body!.faces.map((x, i) => ({ x, n: ru.body!.names[i] })).filter(({ n }) => n.endsWith(":leg2"));
+  assert.ok(top.length > 0);
+  const zs = top.map(({ x }) => centroid(m, x)[2]);
+  // The leg on the tube runs from the plate (z = 10) up to z = 18: its centroid sits halfway.
+  for (const z of zs) near(z, 14, 1e-3);
+  // Equal legs again with the same size2: one leg value in the cut list.
+  assert.equal(run(m, doc([sk, plate, k, mem, { ...bead, size2: { v: 5 } } as Feature])).cut.find(c => c.kind === "bead")!.desc, "5");
 });
 
 test("bead all round a square tube on a plate: tangent faces join, the pieces fuse into one bead (FR-FT-121)", async () => {
