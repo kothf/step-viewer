@@ -1205,9 +1205,9 @@ try {
       document.querySelector("#display-menu").hidden = false;
     });
     await pg.waitForTimeout(200);
-    const model = await pg.evaluate(() => ({ lang: document.documentElement.lang, tree: document.querySelector("#t-tree").textContent, card: document.querySelector("#readout .ttl span")?.textContent, list: document.querySelector("#m-list .m-item .t")?.textContent, hint: document.querySelector("#tool-hint").textContent }));
+    const model = await pg.evaluate(() => ({ lang: document.documentElement.lang, tree: document.querySelector("#t-tree").textContent, card: document.querySelector("#readout .ttl span")?.textContent, list: document.querySelector("#m-list .m-item .t")?.textContent, hint: document.querySelector("#st-hint").textContent, banner: !document.querySelector("#tool-hint").hidden }));
     const leftModel = await untranslated();
-    check(model.lang === "ru" && model.tree === "Дерево модели" && !/[A-Za-z]{3}/.test(model.card ?? "x") && /\d\. [А-Яа-я]/.test(model.list ?? "") && /Умное измерение/.test(model.hint), `i18n: language kept after reload; model view, result card and list in Russian (${JSON.stringify(model)})`);
+    check(model.lang === "ru" && model.tree === "Дерево модели" && !/[A-Za-z]{3}/.test(model.card ?? "x") && /\d\. [А-Яа-я]/.test(model.list ?? "") && /Умное измерение/.test(model.hint) && !model.banner, `i18n: language kept after reload; model view, result card and list in Russian (${JSON.stringify(model)})`);
     check(leftModel.length === 0, `i18n: no English left in the model view${leftModel.length ? ": " + leftModel.slice(0, 6).join(" | ") : ""}`);
     for (const lang of ["ru", "en"]) {
       for (const w of [1024, 1280, 1440]) {
@@ -2690,6 +2690,97 @@ try {
     await idle();
     check(bx.plane && bx.faces && bx.plane !== bx.faces && bx.mesh && bx.tag === "Faces to draft" && bx.tagC === bx.faces,
       `model 1.351: Draft's selection boxes have their own colours and the picked face is drawn in the faces box's colour with a "Faces to draft" tag (${JSON.stringify(bx)})`);
+    // 1.354 (FR-UI-109): selection box flow: a one-item box that has just been filled hands focus to the next empty required box, also an earlier one; a panel opens on its first empty box.
+    await mp.evaluate(() => window.__sv.modeller.command("lpattern"));
+    await mp.waitForSelector('#mc-pm .pm-box[data-focus="dir"]');
+    const flow = await mp.evaluate(() => {
+      const m = window.__sv.modeller, d = m.mode.draft, open = m.mode.focus === (d.features.length ? "dir" : "seeds");
+      d.features = []; delete d.dir; m.mode.focus = "dir"; d.dir = { axis: "x" }; m.draftChanged();
+      const after = m.mode.focus;
+      const sel = document.querySelector('#mc-pm .pm-box.focus')?.dataset.focus;
+      const edit = m.openFocus({ type: "csys", id: "c", name: "c", origin: { point: "p" } }, undefined);
+      const keep = m.openFocus({ type: "draft", id: "d", name: "d", plane: { std: "XY" }, faces: [] }, "faces");
+      return { open, after, sel, edit, keep };
+    });
+    await mp.evaluate(() => window.__sv.modeller.exitMode(false));
+    await idle();
+    check(flow.open && flow.after === "seeds" && flow.sel === "seeds" && flow.edit === "cz" && flow.keep === "faces",
+      `model 1.354: selection boxes hand focus on by themselves (${JSON.stringify(flow)})`);
+    // 1.354 (FR-SEL-010): G opens the magnifying glass at the cursor; the wheel inside changes its factor, pointer events inside
+    // reach the view at the magnified point, G or Esc closes it.
+    {
+      const vb = await mp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+      await mp.mouse.move(vb.x, vb.y);
+      await mp.evaluate(() => window.__sv.viewer.renderer.domElement.focus());
+      await mp.keyboard.press("g");
+      await mp.waitForSelector(".mag-lens");
+      await mp.waitForTimeout(150);
+      const lens = await mp.evaluate(() => {
+        const c = document.querySelector(".mag-lens"), x = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+        let lit = 0; for (let i = 3; i < x.length; i += 4) if (x[i]) lit++;
+        return { lit, f: document.querySelector(".mag-ring").dataset.f };
+      });
+      await mp.mouse.wheel(0, -100);
+      await mp.waitForTimeout(50);
+      const f2 = await mp.evaluate(() => document.querySelector(".mag-ring").dataset.f);
+      const probe = mp.evaluate(() => new Promise(res => window.__sv.viewer.renderer.domElement.addEventListener("pointermove", e => res({ x: e.clientX, y: e.clientY }), { once: true })));
+      await mp.mouse.move(vb.x + 50, vb.y);
+      const moved = await probe;
+      await mp.keyboard.press("Escape");
+      const closed = await mp.evaluate(() => !document.querySelector(".mag-lens"));
+      const fac = Number(f2.slice(1));
+      check(lens.lit > 200 && lens.f === "×4" && fac === 5 && Math.abs(moved.x - (vb.x + 50 / fac)) < 1.5 && Math.abs(moved.y - vb.y) < 1.5 && closed,
+        `model 1.354: G opens the magnifying glass, the wheel changes its factor, a move inside reaches the view at the magnified point and Esc closes it (${JSON.stringify({ lens, f2, moved, vb, closed })})`);
+    }
+    // 1.354 (FR-SEL-009): a pick shows breadcrumbs (face → feature → sketch → body → part); hovering a crumb lights it up,
+    // a click selects its tree row, Shift+D brings the crumbs to the cursor, Esc hides them.
+    {
+      const vb = await mp.evaluate(() => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(), s = new (v.camera.position.constructor)(210, 210, 10).project(v.camera); return { x: r.left + ((s.x + 1) / 2) * r.width, y: r.top + ((1 - s.y) / 2) * r.height }; });
+      await mp.evaluate(() => { const m = window.__sv.modeller; m.selected = null; m.renderTree(); m.drawDecor(); });
+      await mp.mouse.click(vb.x, vb.y);
+      await mp.waitForSelector("#mc-crumbs", { timeout: 5000 }).catch(() => {});
+      const crumbs = await mp.evaluate(() => [...document.querySelectorAll("#mc-crumbs .mc-crumb")].map(b => b.dataset.id ?? "·" + b.textContent));
+      const feat = crumbs.find(c => c !== "part" && !c.startsWith("·") && !c.startsWith("body:"));
+      let hov = null, picked = null;
+      if (feat) {
+        await mp.hover(`#mc-crumbs .mc-crumb[data-id="${feat}"]`);
+        hov = await mp.evaluate(() => window.__sv.modeller.hoverGroup.children.length);
+        await mp.click(`#mc-crumbs .mc-crumb[data-id="${feat}"]`);
+        picked = await mp.evaluate(() => ({ sel: window.__sv.modeller.selected, row: document.querySelector("#mc-tree .ft-row.sel")?.dataset.id }));
+      }
+      await mp.mouse.move(vb.x - 40, vb.y + 30);
+      await mp.keyboard.press("Shift+D");
+      const near = await mp.evaluate(p => { const r = document.querySelector("#mc-crumbs")?.getBoundingClientRect(); return r && { at: document.querySelector("#mc-crumbs").classList.contains("at-cursor"), dx: Math.round(r.left - p.x), dy: Math.round(r.top - p.y), w: Math.round(r.width) }; }, { x: vb.x - 40, y: vb.y + 30 });
+      await mp.keyboard.press("Escape");
+      const gone = await mp.evaluate(() => !document.querySelector("#mc-crumbs"));
+      check(crumbs[0]?.startsWith("·") && feat && crumbs.some(c => c.startsWith("body:")) && crumbs.at(-1) === "part" && hov > 0 && picked?.sel === feat && picked.row === feat
+        && near?.at && near.dx <= 12 && near.dx + near.w >= 0 && near.dy >= 0 && near.dy < 40 && gone,
+        `model 1.354: picking a face shows breadcrumbs up to the part; a crumb lights up on hover and selects its row, Shift+D brings them to the cursor, Esc hides them (${JSON.stringify({ crumbs, hov, picked, near, gone })})`);
+    }
+    // 1.354 (FR-UI-110): value callouts: Shell's thickness shows on the model; a click opens the Modify box and the typed value goes to the panel and the feature.
+    {
+      await mp.evaluate(() => window.__sv.modeller.command("shell"));
+      await mp.waitForSelector('#mc-pm input[data-num="thickness"]');
+      await mp.evaluate(() => {
+        const m = window.__sv.modeller, d = m.mode.draft, names = window.__sv.model.last().faceNames;
+        d.faces = [{ name: names.find(n => n.startsWith("cpe:")) }]; m.draftChanged();
+      });
+      await idle();
+      await mp.waitForSelector('#mc-layer .mc-vcall[data-v="thickness"] .mc-handle', { timeout: 8000 }).catch(() => {});
+      const before = await mp.evaluate(() => document.querySelector('#mc-layer .mc-vcall[data-v="thickness"] .mc-handle')?.textContent ?? null);
+      if (before) {
+        await mp.click('#mc-layer .mc-vcall[data-v="thickness"] .mc-handle');
+        await mp.waitForSelector(".mod-box input");
+        await mp.fill(".mod-box input", "2.5");
+        await mp.keyboard.press("Enter");
+        await idle();
+      }
+      const after = await mp.evaluate(() => ({ v: window.__sv.modeller.mode.draft.thickness?.v, inp: document.querySelector('#mc-pm input[data-num="thickness"]')?.value, call: document.querySelector('#mc-layer .mc-vcall[data-v="thickness"] .mc-handle')?.textContent, box: !!document.querySelector(".mod-box") }));
+      await mp.evaluate(() => window.__sv.modeller.exitMode(false));
+      await idle();
+      check(before && after.v === 2.5 && after.inp === "2.5" && /2\.5/.test(after.call ?? "") && !after.box,
+        `model 1.354: Shell's thickness callout on the model opens the Modify box and the typed value reaches the panel and the feature (${JSON.stringify({ before, after })})`);
+    }
     // FR-UI-100: a middle click on the model sets the rotation centre; orbiting keeps that point still on screen; a middle click on empty space clears it.
     await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
     const pvAt = await mp.evaluate(() => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(), s = new (v.camera.position.constructor)(210, 210, 10).project(v.camera); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; });
@@ -8689,6 +8780,13 @@ try {
     await ap.selectOption('.drw-props [data-st="lines"]', "0.7");
     const sty = await ap.evaluate(() => ({ style: window.__sv.drw.doc().style, svg: /stroke-width="0.7"/.test(window.__sv.drw.svg()) }));
     check(sty.style?.text === 5 && sty.style?.arrow === "tick" && sty.style?.lines === 0.7 && sty.svg, `drawing: drafting style is kept with the drawing and thickens visible lines (${JSON.stringify(sty)})`);
+    // Default decimals per dimension kind (FR-DRW-025): Auto, or a number that dimensions without their own precision take.
+    await ap.selectOption('.drw-props [data-st="lin"]', "1");
+    await ap.selectOption('.drw-props [data-st="ang"]', "2");
+    const dec1 = await ap.evaluate(() => window.__sv.drw.doc().style);
+    await ap.selectOption('.drw-props [data-st="ang"]', "");
+    const dec2 = await ap.evaluate(() => window.__sv.drw.doc().style);
+    check(dec1.lin === 1 && dec1.ang === 2 && dec2.lin === 1 && !("ang" in dec2), `drawing: drafting style keeps default linear/angle decimals, Auto clears them (${JSON.stringify([dec1, dec2])})`);
     // 1.87.0 view properties (FR-DRW-017): break a projected view's alignment, drag it off line, then put it back in line.
     const pv0 = await ap.evaluate(() => { const sh = window.__sv.drw.doc().sheets[0]; const v = sh.views.find(x => x.parent && x.side && !x.kind); const p = sh.views.find(x => x.id === v.parent); return { id: v.id, x: v.x, y: v.y, px: p.x, py: p.y, side: v.side }; });
     await clickAt(pv0.x, pv0.y);
@@ -9947,6 +10045,17 @@ try {
     const gs3 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, n: l.sheet?.gussets?.length ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
     check(gs2.count === 3 && gs2.spacing > 0 && gs2.field && !gs3.bad && gs3.n === 3 && Math.abs((gs3.v - gsv0) - 3 * (gs1.v - gsv0)) < 1e-3,
       `sheet metal: Sheet Metal Gusset makes three ribs along the bend (${JSON.stringify({ gs2, gs3 })})`);
+    // Rounded tip: the ribs lose their top corners (less volume, still more than none); filleted edges likewise.
+    await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "smgusset").id));
+    await settle();
+    await mp.selectOption('#mc-pm select[data-sm="gtip"]', "round");
+    await settle();
+    const gsr0 = await mp.evaluate(() => ({ tip: window.__sv.model.mode().draft?.tip, fil: !!document.querySelector('#mc-pm input[data-sm="gfil"]') }));
+    await mp.click("#mc-ok");
+    await settle();
+    const gsr = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    check(gsr0.tip === "round" && !gsr0.fil && !gsr.bad && gsr.v < gs3.v - 1e-3 && gsr.v > gsv0 + 1e-3,
+      `sheet metal: Sheet Metal Gusset rounded tip (${JSON.stringify({ gsr0, gsr, gs3: gs3.v, gsv0 })})`);
     // Closed Corner: two flanges, material outside, made one at a time leave an open corner; clicking the front one's end face closes it.
     await mp.evaluate(() => window.__sv.model.store.change("Flanges", d => {
       const b = d.features.find(f => f.type === "smbase");
@@ -10117,6 +10226,19 @@ try {
     const ibWant = 100 * 3 * (60 - 10 + 2 * (40 - 5 + (Math.PI / 2) * 3.5));
     check(ib0.title === "Insert Bends" && ib0.face === "ie:side:il0" && !ib1.bad && ib1.bends === 2 && Math.abs(ib1.t - 3) < 1e-9 && Math.abs(ib1.v - ibWant) < 1e-2,
       `sheet metal: Insert Bends turns the thin U section into sheet metal from the clicked face (${JSON.stringify({ ib0, ib1, ibWant })})`);
+    // A hat section: the brims at the walls' feet don't touch the fixed top face; they are found across the walls and bent too.
+    await mp.evaluate(() => window.__sv.model.store.change("Hat section", d => {
+      const q = [[0, 0], [23, 0], [23, 37], [57, 37], [57, 0], [80, 0], [80, 3], [60, 3], [60, 40], [20, 40], [20, 3], [0, 3]];
+      d.features = [
+        { id: "hu", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [...q.map((p, i) => ({ id: `hq${i}`, t: "point", x: p[0], y: p[1] })), ...q.map((_p, i) => ({ id: `hl${i}`, t: "line", a: `hq${i}`, b: `hq${(i + 1) % q.length}` }))] },
+        { id: "he", type: "extrude", name: "Boss-Extrude1", sketch: "hu", op: "boss", end: "blind", depth: { v: 100 } },
+        { id: "hi", type: "sminsert", name: "Insert-Bends1", face: { name: "he:side:hl8" }, radius: { v: 2 }, k: 0.5 },
+      ];
+    }));
+    await settle();
+    const hb = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, bends: l.sheet?.bends.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    const hbWant = 100 * 3 * (154 + 4 * ((Math.PI / 2 - 2) * 3.5));
+    check(!hb.bad && hb.bends === 4 && Math.abs(hb.v - hbWant) < 1e-2, `sheet metal: Insert Bends follows a hat section's walls to the brims (${JSON.stringify({ hb, hbWant })})`);
     await ctx.close();
   }
 

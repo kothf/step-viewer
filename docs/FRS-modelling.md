@@ -1585,8 +1585,8 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | Box selection in the part | FR-SEL-002, FR-SEL-008 | Sketch only | Weaker |
 | Select other | FR-SEL-004 | Alt+click cycles faces behind | Done |
 | Selection filter F5 | FR-SEL-003 | Done (faces, edges, vertices) | Done |
-| Breadcrumbs, D to the cursor | FR-SEL-009 | No | New |
-| Magnifying glass G | FR-SEL-010 | No | New |
+| Breadcrumbs, D to the cursor | FR-SEL-009 | 1.354.0: part breadcrumbs (face/edge → feature → sketch → body → part) with hover, select and menu; Shift+D; assemblies not yet | Partly |
+| Magnifying glass G | FR-SEL-010 | 1.354.0: G lens at the cursor, wheel factor, picks inside at that zoom | Done |
 | Colour-coded selection boxes | FR-SEL-011 | 1.351.0: box colours on the panel and on the picks with a naming tag for edge/face boxes (fillet, chamfer, draft, shell, face edits, split); other panels' boxes not yet | Partly |
 | Tab / Shift+Tab hide and show under the cursor | FR-UI-105 | 1.351.0: Tab hides the body/component under the cursor, Shift+Tab shows a hidden one there, Ctrl+Shift+Tab held draws them see-through (bodies hidden earlier in the session; hidden ones from a saved file have no ghost until shown once) | Done |
 | Confirmation corner | FR-UI-021 | ✓/✕ in the view | Done |
@@ -1599,9 +1599,9 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | Fly-out mini tree while a panel is open | FR-UI-003 | 1.335.0: the panel fills the Features tab, the tree flies out at the top left of the view, folded until opened | Done |
 | Pushpin / OK and repeat | FR-UI-044, FR-UI-106 | 1.107.0: 📌 Keep visible and Ctrl+Enter | Done |
 | Undo inside an open panel | FR-UI-108 | 1.351.0: Ctrl+Z / Ctrl+Y step the panel's draft; the document stack waits for OK | Done |
-| Selection box focus moves on by itself | FR-UI-109 | Partly per feature (`focus` fields) | New (rule) |
+| Selection box focus moves on by itself | FR-UI-109 | 1.354.0: one-item boxes hand focus to the next empty required box; panels open on the first empty box | Done |
 | Panel remembers last options | FR-UI-043 | 1.107.0: options remembered per command (`rememberOptions`) | Done |
-| Value callouts on the model | FR-UI-110 | Fillet/chamfer callouts, extrude arrow | New (rule for all) |
+| Value callouts on the model | FR-UI-110 | 1.354.0: callouts for the main values of every feature panel (Modify box, two-way with the panel, ⇄ flip); extrude/revolve/fillet/chamfer/end cap/gusset/flange keep their handles | Done |
 | Enter repeats the last command | FR-UI-111 | 1.107.0: Enter with no command running repeats the last one | Done |
 | Modify box with rebuild, spin, wheel | FR-UI-053, FR-UI-114 | 1.140.0: Modify box with name, ✓ ✕ ⟲, spin arrows, ↑/↓ and wheel (Shift ×10, Alt ×0.1), live solve in sketches; no editable title, increment field or reverse direction yet | Partly |
 | Feature dimensions on the model, double-click to edit | FR-HIS-010, FR-UI-028, FR-UI-115 | 1.140.0: double-click a face shows its feature's sketch dimensions and extrude depth on the model; a click opens the Modify box, one undo step; not yet from a tree click, and no angles or other feature values | Partly |

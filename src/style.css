@@ -384,6 +384,10 @@ details > :last-child { margin-bottom: 12px; }
 .snaps { display: flex; gap: 8px; align-items: center; color: var(--muted); }
 .st-snap { color: var(--warn-text); font-weight: 600; min-width: 70px; }
 .st-kernel { color: var(--muted); white-space: nowrap; }
+/* Smart measure's prompt lives here, SolidWorks style, never over the model. */
+.st-hint { color: var(--muted); min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
+.st-hint b { color: var(--text); font-weight: 600; }
+#app.sketching .st-hint, #app.mc-cmd .st-hint { display: none; }
 .st-units { border: 1px solid transparent; background: none; color: var(--text); font: inherit; padding: 1px 6px; border-radius: 4px; cursor: pointer; min-height: 20px; }
 .st-units:hover, .st-units[aria-expanded="true"] { border-color: var(--line); background: var(--panel-2); }
 .st-units-menu { gap: 2px; min-width: 180px; }
@@ -1247,3 +1251,23 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 /* Sub-weldment folders in the cut list (tree) and their heading rows in the Cut list dialog. */
 .ft-row.wld-sub .ft-ico { color: var(--accent, #4dabf7); }
 #wld-cut tr.wld-subrow th { text-align: left; padding-top: 8px; border-bottom: 1px solid var(--line, #ccc); }
+
+/* Magnifying glass (FR-SEL-010) */
+.mag-lens, .mag-ring { position: fixed; width: 240px; height: 240px; border-radius: 50%; pointer-events: none; z-index: 40; }
+.mag-lens { background: var(--bg); }
+.mag-ring { box-sizing: border-box; border: 2px solid var(--accent, #1971c2); box-shadow: 0 2px 12px rgb(0 0 0 / 0.35); }
+.mag-ring::after { content: attr(data-f); position: absolute; right: 22px; bottom: 14px; font: 600 11px/1 system-ui, sans-serif; padding: 2px 5px; border-radius: 4px; background: var(--panel, #fff); color: var(--text); }
+
+/* Selection breadcrumbs (FR-SEL-009) */
+.mc-crumbs { pointer-events: auto; display: flex; align-items: center; flex-wrap: wrap; gap: 2px; max-width: 100%; padding: 3px 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); box-shadow: var(--shadow); font-size: 12px; }
+.mc-crumb { display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px; border: 0; border-radius: 5px; background: none; color: var(--text); font: inherit; cursor: pointer; white-space: nowrap; }
+.mc-crumb.here { cursor: default; color: var(--muted); }
+.mc-crumb[data-id]:hover, .mc-crumb[data-id]:focus-visible { background: var(--accent-soft); color: var(--accent-text); }
+.mc-crumb-sep { color: var(--muted); }
+.mc-crumbs.at-cursor, .mc-confirm.at-cursor { position: fixed; right: auto; z-index: 30; max-width: 60vw; }
+
+/* Value callouts (FR-UI-110): the label button plus an optional ⇄ in one pill */
+.mc-vcall { position: absolute; display: inline-flex; gap: 2px; padding: 0; border: 0; background: none; pointer-events: auto; }
+.mc-vcall > .mc-handle { position: static; transform: none; border-color: #e0a800; background: #fff8db; color: #5c4400; }
+:root[data-theme="dark"] .mc-vcall > .mc-handle { background: #3a3110; color: #ffe08a; }
+:root[data-theme="dark"] .mc-vcall { background: none; }
