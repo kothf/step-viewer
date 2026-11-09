@@ -1,23 +1,10 @@
 import * as THREE from "three";
 import type { Part, Viewer } from "../viewer/Viewer";
+import { LIBRARY, type Material } from "./materials";
 import { combine, rotateSym, type Combined, type MassBody, type V3 } from "./inertia";
 
-export const MATERIALS: { name: string; density: number }[] = [
-  { name: "Steel (carbon)", density: 7.85 },
-  { name: "Stainless steel 304", density: 8.0 },
-  { name: "Aluminium 6061", density: 2.7 },
-  { name: "Brass", density: 8.5 },
-  { name: "Copper", density: 8.96 },
-  { name: "Titanium Ti-6Al-4V", density: 4.43 },
-  { name: "Cast iron", density: 7.2 },
-  { name: "ABS", density: 1.04 },
-  { name: "PLA", density: 1.24 },
-  { name: "Nylon PA6", density: 1.14 },
-  { name: "Polycarbonate", density: 1.2 },
-  { name: "POM (Delrin)", density: 1.41 },
-  { name: "PEEK", density: 1.32 },
-  { name: "Wood (oak)", density: 0.75 },
-];
+/** The built-in material library (see materials.ts); kept under this name for its older users. */
+export const MATERIALS: Material[] = LIBRARY;
 
 export interface MassResult extends Combined {
   /** Centre of mass, world mm. */
