@@ -5,11 +5,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.297.0] - 2026-11-09
+## [1.301.0] - 2026-11-09
 
 ### Added
 
 - Motion studies: motors get SolidWorks' **Expression** profile. The angle (degrees) or distance (mm) is typed as a formula in `t`, the seconds after the motor start, such as `30*sin(2*pi*t)` (sin and cos take radians). Text that doesn't give a number is refused with the reason (FR-FT-122).
+
+## [1.295.0] - 2026-11-09
+
+### Added
+
+- **Cut list item material (FR-FT-121).** Each item in the weldment Cut List dialog can have its own material, as in SolidWorks: its mass, the total and the CSV (new Material column) follow that material's density. Items left on Part material use the part's material, as before.
+
 
 ## [1.290.0] - 2026-11-09
 
@@ -1736,8 +1743,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.297.0...HEAD
-[1.297.0]: https://github.com/kothf/step-viewer/compare/v1.290.0...v1.297.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.301.0...HEAD
+[1.301.0]: https://github.com/kothf/step-viewer/compare/v1.295.0...v1.301.0
+[1.295.0]: https://github.com/kothf/step-viewer/compare/v1.290.0...v1.295.0
 [1.290.0]: https://github.com/kothf/step-viewer/compare/v1.286.0...v1.290.0
 [1.286.0]: https://github.com/kothf/step-viewer/compare/v1.284.0...v1.286.0
 [1.284.0]: https://github.com/kothf/step-viewer/compare/v1.282.0...v1.284.0
