@@ -2836,6 +2836,7 @@ export const RU: Record<string, string> = {
   "Recording frame {i} of {n}…": "Запись кадра {i} из {n}…",
   "Writing the GIF…": "Запись GIF…",
   "Writing the ZIP…": "Запись ZIP…",
+  "Save the plot as an SVG image": "Сохранить график как изображение SVG",
   "Images": "Кадры",
   "Save every frame of the study as PNG images in a ZIP": "Сохранить каждый кадр исследования как изображения PNG в ZIP",
   "Mate keys": "Ключи сопряжения",
