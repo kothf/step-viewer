@@ -9755,6 +9755,28 @@ try {
     const cvWant = 100 * (60 - 8 + 2 * (36 + 1.5 * Math.PI)) * 2;
     check(cv0.title === "Convert to Sheet Metal" && cv0.face === "ce:end" && cv0.edges?.length === 2 && !cv1.bad && cv1.bends === 2 && Math.abs(cv1.v - cvWant) < 1e-2,
       `sheet metal: Convert to Sheet Metal turns the box into a U channel from the clicked face and edges (${JSON.stringify({ cv0, cv1, cvWant })})`);
+    // Insert Bends: a thin U section (walls 3) opening towards -Y, extruded 100; click its outside top (y = 40), ✓: two bends, thickness 3.
+    await mp.evaluate(() => window.__sv.model.store.change("U section", d => {
+      const q = [[0, 40], [60, 40], [60, 0], [57, 0], [57, 37], [3, 37], [3, 0], [0, 0]];
+      d.features = [
+        { id: "iu", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [...q.map((p, i) => ({ id: `iq${i}`, t: "point", x: p[0], y: p[1] })), ...q.map((_p, i) => ({ id: `il${i}`, t: "line", a: `iq${i}`, b: `iq${(i + 1) % q.length}` }))] },
+        { id: "ie", type: "extrude", name: "Boss-Extrude1", sketch: "iu", op: "boss", end: "blind", depth: { v: 100 } },
+      ];
+    }));
+    await settle();
+    await mp.evaluate(() => window.__sv.viewer.fit(false));
+    await mp.waitForTimeout(300);
+    await smMenu("Insert Bends");
+    const [ibx, iby] = await scr([30, 40, 50]);
+    await mp.mouse.click(ibx, iby);
+    await settle();
+    const ib0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, face: window.__sv.model.mode().draft?.face?.name }));
+    await mp.click("#mc-ok");
+    await settle();
+    const ib1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, bends: l.sheet?.bends.length, t: l.sheet?.T, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    const ibWant = 100 * 3 * (60 - 10 + 2 * (40 - 5 + (Math.PI / 2) * 3.5));
+    check(ib0.title === "Insert Bends" && ib0.face === "ie:side:il0" && !ib1.bad && ib1.bends === 2 && Math.abs(ib1.t - 3) < 1e-9 && Math.abs(ib1.v - ibWant) < 1e-2,
+      `sheet metal: Insert Bends turns the thin U section into sheet metal from the clicked face (${JSON.stringify({ ib0, ib1, ibWant })})`);
     await ctx.close();
   }
 

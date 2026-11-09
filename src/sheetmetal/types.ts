@@ -207,6 +207,19 @@ export interface SmConvertFeature {
 }
 
 /**
+ * Insert Bends (SolidWorks' Insert Bends): a thin-walled solid of flat walls (a shelled box, a bent profile) becomes sheet
+ * metal. The picked outside face stays fixed; every sharp outside edge of it to another flat wall becomes a bend of the
+ * given radius; the thickness is the wall's own. Corners between walls are ripped and mitred `gap` apart.
+ */
+export interface SmInsertFeature {
+  id: string; type: "sminsert"; name: string; suppressed?: boolean;
+  face: FaceRef;
+  radius: Num;
+  k?: number;
+  gap?: Num;
+}
+
+/**
  * Normal cut (SolidWorks' Extruded Cut with Normal cut): a closed sketch is projected along its normal onto the
  * sheet's mid-surface, and each piece it lands on is cut square to the sheet there, panels and bends alike, so the
  * flat pattern gets clean openings. End: link to thickness (default: as deep as the sheet), blind or through all.
@@ -312,10 +325,10 @@ export interface SmGussetFeature {
   spacing?: Num;
 }
 
-export type SheetFeature = SmConvertFeature | SmCutFeature | SmGussetFeature | SmReliefFeature | SmUnfoldFeature | SmFormFeature | SmVentFeature | SmCrossFeature | SmLoftFeature | SmBaseFeature | SmFlangeFeature | SmHemFeature | SmSketchBendFeature | SmJogFeature | SmTabFeature | SmCornerFeature | SmClosedFeature | SmMiterFeature | SmFlatFeature;
-export const SHEET_TYPES: ReadonlySet<string> = new Set(["smloft", "smbase", "smconvert", "smflange", "smhem", "smbend", "smjog", "smtab", "smcross", "smvent", "smcut", "smform", "smunfold", "smfold", "smrelief", "smgusset", "smcorner", "smclosed", "smmiter", "smswept", "smflat"]);
+export type SheetFeature = SmInsertFeature | SmConvertFeature | SmCutFeature | SmGussetFeature | SmReliefFeature | SmUnfoldFeature | SmFormFeature | SmVentFeature | SmCrossFeature | SmLoftFeature | SmBaseFeature | SmFlangeFeature | SmHemFeature | SmSketchBendFeature | SmJogFeature | SmTabFeature | SmCornerFeature | SmClosedFeature | SmMiterFeature | SmFlatFeature;
+export const SHEET_TYPES: ReadonlySet<string> = new Set(["smloft", "smbase", "smconvert", "sminsert", "smflange", "smhem", "smbend", "smjog", "smtab", "smcross", "smvent", "smcut", "smform", "smunfold", "smfold", "smrelief", "smgusset", "smcorner", "smclosed", "smmiter", "smswept", "smflat"]);
 /** The feature that starts a sheet metal part: a base flange, a lofted bend or a solid converted to sheet metal. */
-export const isSheetBase = (f: { type: string; suppressed?: boolean }) => (f.type === "smbase" || f.type === "smloft" || f.type === "smconvert") && !f.suppressed;
+export const isSheetBase = (f: { type: string; suppressed?: boolean }) => (f.type === "smbase" || f.type === "smloft" || f.type === "smconvert" || f.type === "sminsert") && !f.suppressed;
 export const isSheet = (f: { type: string }): f is SheetFeature => SHEET_TYPES.has(f.type);
 
 /** Gauge tables: thickness, default inside radius and K-factor for common sheet gauges. */

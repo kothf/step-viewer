@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Modeller } from "../../src/kernel/model";
 import type { Feature, PartDoc, SketchFeature, SkEnt } from "../../src/model/types";
-import type { SmConvertFeature, SmCutFeature, SmGussetFeature, SmReliefFeature, SmUnfoldFeature, SmFormFeature, SmVentFeature, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
+import type { SmInsertFeature, SmConvertFeature, SmCutFeature, SmGussetFeature, SmReliefFeature, SmUnfoldFeature, SmFormFeature, SmVentFeature, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
 import { flatLoops, flatSize, bendAllowance, reliefCorners, filletLoop } from "../../src/sheetmetal/sheet";
 import { flatDrawing } from "../../src/sheetmetal/flat";
 import { loopPolygon, polyArea } from "../../src/sketch/profile";
@@ -774,4 +774,32 @@ test("sheet metal: convert a solid box to sheet metal (FR-FT-120)", async () => 
   close(run(doc([s, box, hs, hole, conv({ edges: [edge("l1"), edge("l3")] }), flat])).props.volume, 100 * flatW * 2 - 2 * 50 * Math.PI, 1e-5);
   // A bend edge off the fixed face, or a curved fixed face, fails.
   assert.equal(m.evaluate(doc([s, box, conv({ edges: [{ faces: ["e:side:sl1", "e:side:sl2"] }] })])).statuses.find(x => x.id === "c")!.ok, false);
+});
+
+test("sheet metal: insert bends into a thin-walled U profile (FR-FT-120)", async () => {
+  oc ??= await occ();
+  m ??= new Modeller(oc);
+  // A U section 60 wide, 40 high, walls 3 thick, extruded 100 along Z.
+  const pts: [number, number][] = [[0, 0], [60, 0], [60, 40], [57, 40], [57, 3], [3, 3], [3, 40], [0, 40]];
+  const u: SketchFeature = {
+    id: "u", type: "sketch", name: "u", plane: { std: "XY" }, rels: [], dims: [],
+    ents: [...pts.map((p, i): SkEnt => ({ id: `up${i}`, t: "point", x: p[0], y: p[1] })), ...pts.map((_p, i): SkEnt => ({ id: `ul${i}`, t: "line", a: `up${i}`, b: `up${(i + 1) % pts.length}` }))],
+  };
+  const ex: Feature = { id: "e", type: "extrude", name: "Boss1", sketch: "u", op: "boss", end: "blind", depth: { v: 100 } };
+  const ins = (over: Partial<SmInsertFeature> = {}): SmInsertFeature => ({ id: "i", type: "sminsert", name: "Insert-Bends1", face: { name: "e:side:ul0" }, radius: { v: 2 }, k: 0.5, ...over });
+  const T = 3, flatW = 60 - 2 * (2 + T) + 2 * (40 - (2 + T) + (Math.PI / 2) * (2 + T / 2));
+  const r = run(doc([u, ex, ins()]));
+  assert.equal(r.sheet!.bends.length, 2, "the two sharp outside edges, not the end faces");
+  close(r.sheet!.T, T, 1e-9);
+  close(r.props.volume, 100 * flatW * T, 1e-5);
+  close(r.size[0], 60, 1e-6); close(r.size[1], 40, 1e-6); close(r.size[2], 100, 1e-6);
+  const f = run(doc([u, ex, ins(), flat]));
+  close(f.props.volume, 100 * flatW * T, 1e-5);
+  close(f.size[0] + f.size[1] + f.size[2] - 100 - T, flatW, 1e-6);
+  // A large radius: the bends are kept whole though the solid has no material inside its corners.
+  const big = run(doc([u, ex, ins({ radius: { v: 10 } })]));
+  const flatB = 60 - 2 * (10 + T) + 2 * (40 - (10 + T) + (Math.PI / 2) * (10 + T / 2));
+  close(big.props.volume, 100 * flatB * T, 1e-5);
+  // An inside face has no face behind it at the wall's thickness... it finds the outside one, but no sharp outside edges.
+  assert.equal(m.evaluate(doc([u, ex, ins({ face: { name: "e:side:ul4" } })])).statuses.find(x => x.id === "i")!.ok, false);
 });

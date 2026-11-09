@@ -5,7 +5,7 @@ import type { EdgeRef, FaceRef, Frame, PartDoc, SketchFeature, SkEnt, V2, V3 } f
 import type { Named } from "../kernel/model";
 import { inPolygon, loopPolygon, polyArea, sketchProfile, type Seg } from "../sketch/profile";
 import { convertFlanges, gussetSheet, type GussetMark, cornerRelief, apply, applyDir, bendStrip, sheetPlace, unfoldSheet, type SheetPlace, baseFlange, crossBreak, formTools, obroundLoop, type FormItem, ventLayout, ventPanel, loftedBend, type SheetMesh, breakCorner, closedCorner, miterFlange, miterProfile, sweptProfile, type FlatEdge, bendSketchLine, edgeFlange, flatLoops, hem, jog, sketchedBend, tab, SheetError, type Bend, type Mat, type Panel, type SheetOp, type SheetState } from "./sheet";
-import type { SheetFeature, SmBaseFeature, SmConvertFeature, SmCutFeature, SmFormFeature, SmVentFeature } from "./types";
+import type { SheetFeature, SmBaseFeature, SmConvertFeature, SmInsertFeature, SmCutFeature, SmFormFeature, SmVentFeature } from "./types";
 
 /** The few Modeller helpers the sheet metal code needs. */
 export interface SheetApi {
@@ -40,7 +40,7 @@ export function evalSheet(api: SheetApi, f: SheetFeature, doc: PartDoc, body: Na
     const { state, ops } = loftedBend(f, s1, frameOfSketch(s1), s2, frameOfSketch(s2));
     return { body: applyOps(api, body, ops, state.T, f.id), sm: state };
   }
-  if (f.type === "smconvert") {
+  if (f.type === "smconvert" || f.type === "sminsert") {
     if (sm) throw new SheetError("E-SM-BASE2", "This part already has a base flange.");
     if (!body) throw new SheetError("E-SM-CONVBODY", "Make a solid to convert first.");
     return convertSolid(api, body, f);
@@ -517,7 +517,7 @@ function ventCut(api: SheetApi, body: Named, f: SmVentFeature, st: SheetState, s
  * plane with the thickness inside the solid; each bend edge gets a flange as long and as steep as the face across it;
  * then the sheet is trimmed to the solid, so openings and slanted ends of those faces carry over.
  */
-function convertSolid(api: SheetApi, body: Named, f: SmConvertFeature): { body: Named; sm: SheetState } {
+function convertSolid(api: SheetApi, body: Named, f: SmConvertFeature | SmInsertFeature): { body: Named; sm: SheetState } {
   const oc = api.oc;
   const plane = (fc: any): { o: V3; n: V3; x: V3 } | null => {
     const ad = new oc.BRepAdaptor_Surface_2(fc, true);
@@ -569,16 +569,43 @@ function convertSolid(api: SheetApi, body: Named, f: SmConvertFeature): { body: 
       if (isOuter) edgeEnt.push({ edge: ed, ent: id });
     }
   }
+  // Insert Bends: the thickness is the wall's, the distance to the nearest face facing the other way behind the fixed one.
+  let T = f.type === "smconvert" ? f.thickness.v : Infinity;
+  if (f.type === "sminsert") {
+    for (const fc of body.faces) {
+      const q = fc.IsSame(face) ? null : plane(fc);
+      if (!q || dot(q.n, pl.n) > -1 + 1e-6) continue;
+      const d = dot(sub3(pl.o, q.o), pl.n);
+      if (d > 1e-6 && d < T) T = d;
+    }
+    if (!Number.isFinite(T)) throw new SheetError("E-SM-INSERTT", "Pick an outside face of a thin wall: no face behind it gives the thickness.");
+  }
   const sk: SketchFeature = { id: `${f.id}:sk`, type: "sketch", name: f.name, plane: { std: "XY" }, rels: [], dims: [], ents };
-  const base: SmBaseFeature = { id: f.id, type: "smbase", name: f.name, sketch: sk.id, thickness: f.thickness, radius: f.radius, depth: { v: 1 }, k: f.k ?? 0.5 };
+  const base: SmBaseFeature = { id: f.id, type: "smbase", name: f.name, sketch: sk.id, thickness: { v: T }, radius: f.radius, depth: { v: 1 }, k: f.k ?? 0.5 };
   const { state, ops } = baseFlange(base, sk, fr);
   // Each bend edge: the face across it, its angle to the fixed face and its reach from the edge.
-  const items = f.edges.map(ref => {
+  const across = (ed: any) => {
+    const other = body.faces.find(fc => !fc.IsSame(face) && api.sub(fc, "EDGE").some((x: any) => x.IsSame(ed)));
+    return { other, op: other ? plane(other) : null };
+  };
+  const planes = f.type === "sminsert" ? body.faces.map(plane).filter((q): q is NonNullable<typeof q> => !!q) : [];
+  // Insert Bends: every straight outline edge to a flat wall on the inside of the fixed face's plane (a sharp outside edge).
+  const picked = f.type === "smconvert" ? f.edges.map(ref => {
     const ed = api.edge(body, ref);
     const hit = ed ? edgeEnt.find(x => x.edge.IsSame(ed)) : undefined;
     if (!ed || !hit) throw new SheetError("E-SM-CONVEDGE", "Pick bend edges on the outline of the fixed face.");
-    const other = body.faces.find(fc => !fc.IsSame(face) && api.sub(fc, "EDGE").some((x: any) => x.IsSame(ed)));
-    const op = other ? plane(other) : null;
+    return hit;
+  }) : edgeEnt.filter(x => {
+    if (new oc.BRepAdaptor_Curve_2(x.edge).GetType() !== oc.GeomAbs_CurveType.GeomAbs_Line) return false;
+    const { other, op } = across(x.edge);
+    if (!op || !(dot(sub3(api.centroid(other), pl.o), pl.n) < -T * 0.5)) return false;
+    // A wall, not an end face across the thickness: it has its own inside face T behind it.
+    return planes.some(q => dot(q.n, op.n) < -1 + 1e-6 && Math.abs(dot(sub3(op.o, q.o), op.n) - T) < 1e-4 * (1 + T));
+  });
+  if (f.type === "sminsert" && !picked.length) throw new SheetError("E-SM-INSERTNONE", "The face has no sharp edges to other flat walls to bend.");
+  const items = picked.map(hit => {
+    const ed = hit.edge;
+    const { other, op } = across(ed);
     if (!op) throw new SheetError("E-SM-CONVFLAT", "A bend edge must join the fixed face to another flat face.");
     const cu = new oc.BRepAdaptor_Curve_2(ed);
     const p0 = cu.Value(cu.FirstParameter()), p1 = cu.Value(cu.LastParameter());
@@ -600,8 +627,10 @@ function convertSolid(api: SheetApi, body: Named, f: SmConvertFeature): { body: 
   let out = applyOps(api, null, ops, state.T, f.id);
   if (fl.ops.length) out = applyOps(api, out, fl.ops, state.T, f.id);
   // Trimmed to the solid: openings and shapes of the converted faces carry over (the flat pattern picks them up as cuts).
+  // A thin-walled solid has no material where large bends round its inside corners: the bends are put back whole.
   const v = volumeOf(api, out.shape);
-  const trimmed = api.bool("common", out, body, f.id);
+  let trimmed = api.bool("common", out, body, f.id);
+  if (f.type === "sminsert") for (const b of fl.state.bends) trimmed = api.bool("fuse", trimmed, bendSolid(api, b, T), f.id);
   if (volumeOf(api, trimmed.shape) < v * (1 - 1e-7)) out = trimmed;
   return { body: out, sm: fl.state };
 }
