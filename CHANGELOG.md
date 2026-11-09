@@ -12,6 +12,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Sketch relation glyphs sit beside their line, arc or circle (out along its normal, at the middle) instead of on it, so a click on the curve no longer picks its glyph and Delete no longer removes the relation instead of the curve.
 - Fully define sketch dimensions arc and circle centres and the ends of construction lines first (a slot's centreline), then other curve points, instead of the derived tangent points of a slot's caps.
 - "The sketch is already defined there: added as a reference dimension" is a passing note now, not a warning that stays until closed.
+## [1.323.0] - 2026-11-09
+
+### Added
+
+- Motion studies: a motor's panel now plots its **Displacement**, **Velocity** or **Acceleration** over the study, with the playhead, like the SolidWorks motor graph. It works for every profile, so you can check a data point or segments motor for jumps before you play it (FR-FT-122).
+
+## [1.322.0] - 2026-11-09
+
+### Added
+
+- **End cap thickness ratio (FR-FT-121)**: Weldments → End Cap → Offset has SolidWorks' Use thickness ratio: the inset is a multiple of the capped member's wall thickness (0.5 on an SHS 40×40×3 = 1.5 mm in from the edges), so caps on tubes of different walls follow them. On a solid section the wall is taken as 2 × area / perimeter (a flat bar's or a channel leg's thickness); Internal caps keep their clearance.
+
 ## [1.321.0] - 2026-11-09
 
 ### Added
@@ -1894,7 +1906,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.325.0...HEAD
-[1.325.0]: https://github.com/kothf/step-viewer/compare/v1.321.0...v1.325.0
+[1.325.0]: https://github.com/kothf/step-viewer/compare/v1.323.0...v1.325.0
+[1.323.0]: https://github.com/kothf/step-viewer/compare/v1.322.0...v1.323.0
+[1.322.0]: https://github.com/kothf/step-viewer/compare/v1.321.0...v1.322.0
 [1.321.0]: https://github.com/kothf/step-viewer/compare/v1.320.0...v1.321.0
 [1.320.0]: https://github.com/kothf/step-viewer/compare/v1.319.0...v1.320.0
 [1.319.0]: https://github.com/kothf/step-viewer/compare/v1.318.0...v1.319.0
