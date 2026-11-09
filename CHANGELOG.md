@@ -12,6 +12,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - **Sketch context menu (FR-SK-045)**: a right-click without moving in a sketch opens a menu with Select chain, Construction geometry on/off, the relations that fit the selection, Merge points, Delete, Zoom to selection, Exit sketch and Discard. An item under the cursor that isn't selected becomes the selection first. While drawing, the menu cancels the shape or ends a spline; with the line tool a right-click ends the chain at once, like a double-click.
 - Zoom to selection (the view navigation key) frames the selected sketch items while sketching.
 
+## [1.274.0] - 2026-11-09
+
+### Added
+
+- Motion studies: two more motor profiles, as in SolidWorks. **Distance** turns or moves the mate by a set angle or distance between the motor's start and end, starting and stopping smoothly. **Data points** follows rows of time after the motor start and value, typed or pasted from a spreadsheet, in straight lines between them (the motor ends at the last row) (FR-FT-122).
+
 ## [1.271.0] - 2026-11-09
 
 ### Added
@@ -1687,7 +1693,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.275.0...HEAD
-[1.275.0]: https://github.com/kothf/step-viewer/compare/v1.271.0...v1.275.0
+[1.275.0]: https://github.com/kothf/step-viewer/compare/v1.274.0...v1.275.0
+[1.274.0]: https://github.com/kothf/step-viewer/compare/v1.271.0...v1.274.0
 [1.271.0]: https://github.com/kothf/step-viewer/compare/v1.269.0...v1.271.0
 [1.269.0]: https://github.com/kothf/step-viewer/compare/v1.268.0...v1.269.0
 [1.268.0]: https://github.com/kothf/step-viewer/compare/v1.266.0...v1.268.0

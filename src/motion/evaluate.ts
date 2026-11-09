@@ -107,11 +107,47 @@ export function posed(rest: Tf, p: { d: V3; r: V3 }): Tf {
   return out;
 }
 
+/** Linear interpolation in [time, value] rows sorted by time; the first and last values are held outside them. */
+export function pointsAt(pts: [number, number][], t: number): number {
+  if (!pts.length) return 0;
+  if (t <= pts[0][0]) return pts[0][1];
+  for (let i = 1; i < pts.length; i++) {
+    const [t1, v1] = pts[i];
+    if (t <= t1) { const [t0, v0] = pts[i - 1]; return t1 > t0 ? v0 + ((v1 - v0) * (t - t0)) / (t1 - t0) : v1; }
+  }
+  return pts[pts.length - 1][1];
+}
+
+/**
+ * Motor data points typed or pasted as "time, value" lines (spaces, commas or semicolons with decimal commas;
+ * `#` starts a comment). `scale` turns the value into internal units. Null when fewer than two rows or the
+ * times don't increase.
+ */
+export function parsePoints(text: string, scale = 1): [number, number][] | null {
+  const out: [number, number][] = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.replace(/#.*$/, "").trim();
+    if (!line) continue;
+    const parts = line.includes(";") ? line.split(";").map(x => x.trim().replace(",", ".")) : line.split(/[\s,]+/);
+    const nums = parts.filter(Boolean).map(Number);
+    if (nums.length < 2 || !Number.isFinite(nums[0]) || !Number.isFinite(nums[1])) return null;
+    if (out.length && nums[0] <= out[out.length - 1][0]) return null;
+    if (nums[0] < 0) return null;
+    out.push([nums[0], nums[1] * scale]);
+  }
+  return out.length >= 2 ? out : null;
+}
+
 /** How far a motor has driven at `t`: radians (rotary) or mm (linear). */
 export function motorAmount(m: MotorTrack, t: number): number {
   const dt = clamp(t, m.start, Math.max(m.start, m.end)) - m.start;
   const s = m.flip ? -1 : 1;
   if (m.profile === "oscillate") return s * (m.amp ?? 0) * Math.sin(2 * Math.PI * (m.freq ?? 1) * dt);
+  if (m.profile === "distance") {
+    const len = m.end - m.start, u = len > 0 ? dt / len : 1;
+    return s * (m.dist ?? 0) * u * u * (3 - 2 * u);
+  }
+  if (m.profile === "points") return s * pointsAt(m.pts ?? [], dt);
   return s * (m.motion === "rotary" ? (m.speed * 2 * Math.PI) / 60 : m.speed) * dt;
 }
 

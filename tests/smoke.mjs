@@ -5718,6 +5718,21 @@ try {
     // A 60 rpm rotary motor on Concentric1: half a turn at 0.5 s.
     await mp.evaluate(() => { const m = window.__sv.motion; m.addTrack("motor:mc"); m.edit(s => { const k = s.tracks.find(x => x.kind === "motor"); k.speed = 60; }); m.seek(0.5); });
     const turn = await pos();
+    // Motor profiles from its panel: Distance 180° over the study (half way at 2.5 s), Data points 0 → 90° in 1 s.
+    const setP = (sel, v) => mp.evaluate(([sel, v]) => { const el = document.querySelector(`#motion ${sel}`); el.value = v; el.dispatchEvent(new Event("change", { bubbles: true })); }, [sel, v]);
+    await mp.evaluate(() => { const m = window.__sv.motion; const k = m.study.tracks.find(x => x.kind === "motor"); m.sel = { track: k.id }; m.render(); });
+    await setP("select[data-p=profile]", "distance");
+    await setP("input[data-p=dist]", "180");
+    await mp.evaluate(() => window.__sv.motion.seek(2.5));
+    const dist = await pos();
+    await setP("select[data-p=profile]", "points");
+    await setP("textarea[data-p=pts]", "0, 0\n1; 90");
+    await mp.evaluate(() => window.__sv.motion.seek(0.5));
+    const ptsAt = await pos();
+    const ptsEnd = await mp.evaluate(() => window.__sv.motion.study.tracks.find(x => x.kind === "motor").end);
+    await setP("textarea[data-p=pts]", "1, 0\n0, 5");
+    const ptsBad = await mp.evaluate(() => document.querySelector("#motion textarea[data-p=pts]").getAttribute("aria-invalid"));
+    const motorProf = { dist, ptsAt, ptsEnd, ptsBad };
     // Animation wizard: explode over the study, and rotate the model (camera keys).
     const cam0 = await mp.evaluate(() => window.__sv.viewer.camera.position.toArray());
     await mp.evaluate(() => { const m = window.__sv.motion; m.edit(s => { s.tracks = s.tracks.filter(k => k.kind !== "motor"); }); m.wizard("explode"); m.wizard("orbit"); m.seek(5); });
@@ -6057,12 +6072,13 @@ try {
       `motion study: the timeline zooms in, follows the playhead and fits again (FR-FT-122) (${JSON.stringify(pose.zoomed)})`);
     check(keys.n === 1 && JSON.stringify(keys.keys) === "[[0,10],[5,40]]" && keys.rows === 2
       && Math.abs(mid.z - 15) < 0.01 && Math.abs(end.z - 30) < 0.01 && Math.abs(Math.abs(turn.rz) - Math.PI) < 0.01 && Math.abs(turn.z - 3) < 0.01
+      && Math.abs(Math.abs(dist.rz) - Math.PI / 2) < 0.01 && Math.abs(Math.abs(ptsAt.rz) - Math.PI / 4) < 0.01 && ptsEnd === 1 && ptsBad === "true"
       && Math.abs(exploded.x - 50) < 0.01
       && look.listed && Math.abs(look.half.op - 0.5) < 0.02 && look.half.vis && look.half.mat && !look.end.vis && look.label === "Appearance"
       && Math.abs(look.moved[1] - (5 - 1 / 30)) < 1e-6 && look.back.op === 1 && look.back.vis && Math.abs(Math.hypot(cam1.p[0] - cam1.t[0], cam1.p[1] - cam1.t[1]) - Math.hypot(cam0[0] - cam1.t[0], cam0[1] - cam1.t[1])) < 1e-3 * Math.hypot(...cam0)
       && rec.gif === "GIF89a" && rec.gifSize > 1000 && rec.pngs.pk === "PK" && rec.pngs.n === rec.pngs.want && /_0001\.png$/.test(rec.pngs.name) && rec.webm === "1a45dfa3" && rec.webmSize > 1000 && undo === 5
       && !ru.bad.length && ru.title === "Исследование движения" && Math.abs(back.z) < 0.01 && Math.abs(back.x) < 0.01,
-      `motion study: mate keys, rotary motor, explode and orbit wizard, appearance keys, GIF and WebM, undo, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, exploded, cam1, look, rec, undo, ru, back })})`);
+      `motion study: mate keys, rotary motor (constant, distance, data points), explode and orbit wizard, appearance keys, GIF and WebM, undo, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, motorProf, exploded, cam1, look, rec, undo, ru, back })})`);
     await ctx.close();
   }
 
