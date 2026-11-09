@@ -2273,6 +2273,44 @@ try {
     check(tFree === "hdistance" && tLocked.t === "hdistance" && tLocked.lock && tLocked.cls && placed?.t === "hdistance" && near(placed.v, 30, 0.01) && gripPos && near(gripPos[0], 50, 0.01)
       && near(dragged?.v, 40, 1e-6) && near(undoneDim?.v, placed?.v, 1e-9),
       `model 1.282: right-click locks a dimension while placing, and dragging its handle changes the value with one undo step (${tFree}, ${JSON.stringify(tLocked)}, ${JSON.stringify(placed)}, ${JSON.stringify(gripPos)}, ${JSON.stringify(dragged)}, ${JSON.stringify(undoneDim)})`);
+    // Quick snaps (FR-SK-046): Tangent from the quick access bar ends the next line on the circle, tangent to it;
+    // Intersection from the right-click menu puts a point where a line crosses the circle, with an intersection relation.
+    await tool("circle");
+    await click([90, -12]);
+    await click([96, -12]);
+    await tool("line");
+    await click([78, -12]);
+    await click([100, -12]);
+    await rclick([100, 5]);
+    const menuPick = async label => { await mp.evaluate(l => [...document.querySelectorAll("#mc-menu button")].find(b => b.textContent.startsWith(l))?.click(), label); await mp.waitForTimeout(80); };
+    await click([76, -22]);
+    await mp.evaluate(() => document.querySelector('#mc-quick [data-fly="qsnap"]')?.click());
+    await mp.waitForTimeout(80);
+    await menuPick("Tangent");
+    const qsBar = await mp.evaluate(() => ({ q: window.__sv.model.editor().quickSnap, label: document.querySelector('#mc-quick [data-fly="qsnap"]')?.textContent ?? "" }));
+    // The lower tangent point from (76, -22) to the circle at (90, -12), r 6, approached from a little outside.
+    const tq = (() => { const c = [90, -12], s = [76, -22], d = Math.hypot(c[0] - s[0], c[1] - s[1]), b = Math.atan2(s[1] - c[1], s[0] - c[0]), o = Math.acos(6 / d); const a = [b + o, b - o].map(x => [c[0] + 7 * Math.cos(x), c[1] + 7 * Math.sin(x)]).sort((p, q) => p[1] - q[1]); return a[0]; })();
+    await hover(tq);
+    await click(tq);
+    const tang = await mp.evaluate(() => {
+      const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id);
+      const circ = sk.ents.filter(e => e.t === "circle").at(-1), ln = sk.ents.filter(e => e.t === "line").at(-1), c = P(circ.c), a = P(ln.a), b = P(ln.b);
+      return { r: Math.hypot(b.x - c.x, b.y - c.y) - circ.r, dot: (b.x - c.x) * (b.x - a.x) + (b.y - c.y) * (b.y - a.y), rel: sk.rels.some(r => r.t === "tangent" && r.e.includes(circ.id) && r.e.includes(ln.id)), q: ed.quickSnap, chain: ed.draft.pts.length, status: ed.info.status };
+    });
+    await rclick([100, 5]);
+    await tool("point");
+    await rclick([60, 5]);
+    const ctxRows = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent));
+    await menuPick("Quick snaps");
+    await menuPick("Intersection");
+    await click([85, -13]);
+    const cross = await mp.evaluate(() => {
+      const ed = window.__sv.model.editor(), sk = ed.sk, pt = sk.ents.filter(e => e.t === "point").at(-1);
+      return { x: pt.x, y: pt.y, rel: sk.rels.some(r => r.t === "intersection" && r.e[0] === pt.id), q: ed.quickSnap, status: ed.info.status };
+    });
+    check(qsBar.q === "tangent" && /Tangent/.test(qsBar.label) && Math.abs(tang.r) < 1e-6 && Math.abs(tang.dot) < 1e-6 && tang.rel && tang.q === null && tang.chain === 2 && tang.status === "ok"
+      && ctxRows.some(r => r.startsWith("Quick snaps")) && near(cross.x, 84, 1e-3) && near(cross.y, -12, 1e-3) && cross.rel && cross.q === null && cross.status === "ok",
+      `model 1.290: quick snaps Tangent (bar) and Intersection (right-click menu) place the next point and add the relation (${JSON.stringify(qsBar)}, ${JSON.stringify(tang)}, ${JSON.stringify(ctxRows)}, ${JSON.stringify(cross)})`);
     await mp.evaluate(() => window.__sv.modeller.ok());
     await idle();
     // Convert entities: the top face of a block into a sketch on it, four fixed lines.

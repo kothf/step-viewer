@@ -5,11 +5,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.289.0] - 2026-11-09
+## [1.293.0] - 2026-11-09
 
 ### Added
 
 - **Centre of mass on drawings**: tick Centre of mass in a view's panel to mark the model's centre of mass with the quartered circle symbol, as SolidWorks' Center of Mass model item does. It follows the model when it changes, and Dimension picks it like a corner, so you can dimension from the centre of mass to an edge or another point. The symbol prints and exports with the sheet.
+## [1.290.0] - 2026-11-09
+
+### Added
+
+- **Quick snaps (FR-SK-046)**: while drawing in a sketch, pick one snap type for the next point only: End point, Midpoint, Centre point, Quadrant point, Intersection, Tangent, Perpendicular, Parallel, Nearest or Horizontal/vertical. Pick it from the Quick snaps button in the quick access bar or from the right-click menu (Quick snaps ▸). Only that snap works, in a wider radius, and it keeps its relation: a midpoint or crossing gets a midpoint or intersection relation, and a tangent or perpendicular line gets that relation to the curve. The quick snap clears once the point is placed; Esc clears it sooner.
+- **Snap preferences**: the sketch panel's Snaps section turns each snap type on or off for automatic snapping, and the choice is remembered. Midpoints, quadrants and intersections can now snap automatically too; they start off.
+
+
 ## [1.286.0] - 2026-11-09
 
 ### Added
@@ -1727,8 +1735,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.289.0...HEAD
-[1.289.0]: https://github.com/kothf/step-viewer/compare/v1.286.0...v1.289.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.293.0...HEAD
+[1.293.0]: https://github.com/kothf/step-viewer/compare/v1.290.0...v1.293.0
+[1.290.0]: https://github.com/kothf/step-viewer/compare/v1.286.0...v1.290.0
 [1.286.0]: https://github.com/kothf/step-viewer/compare/v1.284.0...v1.286.0
 [1.284.0]: https://github.com/kothf/step-viewer/compare/v1.282.0...v1.284.0
 [1.282.0]: https://github.com/kothf/step-viewer/compare/v1.279.0...v1.282.0
