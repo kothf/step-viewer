@@ -1587,7 +1587,7 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | Selection filter F5 | FR-SEL-003 | Done (faces, edges, vertices) | Done |
 | Breadcrumbs, D to the cursor | FR-SEL-009 | No | New |
 | Magnifying glass G | FR-SEL-010 | No | New |
-| Colour-coded selection boxes | FR-SEL-011 | 1.353.0: box colours on the panel and on the picks with a naming tag for edge/face boxes (fillet, chamfer, draft, shell, face edits, split); other panels' boxes not yet | Partly |
+| Colour-coded selection boxes | FR-SEL-011 | 1.351.0: box colours on the panel and on the picks with a naming tag for edge/face boxes (fillet, chamfer, draft, shell, face edits, split); other panels' boxes not yet | Partly |
 | Tab / Shift+Tab hide and show under the cursor | FR-UI-105 | 1.351.0: Tab hides the body/component under the cursor, Shift+Tab shows a hidden one there, Ctrl+Shift+Tab held draws them see-through (bodies hidden earlier in the session; hidden ones from a saved file have no ghost until shown once) | Done |
 | Confirmation corner | FR-UI-021 | ✓/✕ in the view | Done |
 | Shortcut bar on S | FR-UI-023 | Done (part and sketch) | Done |

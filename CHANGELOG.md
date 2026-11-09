@@ -5,12 +5,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.353.0] - 2026-11-09
-
-### Added
-
-- **Colour-coded selection boxes (FR-SEL-011)**: the selection boxes of a feature panel each have their own colour (orange, blue, green, purple), shown on the box's left edge; the picks of each box are drawn in the view in its colour, with a small tag naming the box ("Faces to draft", "Neutral plane", "Face set 1"…) when a panel has several. Fillet and chamfer edges, face fillet and full round face sets, draft, shell, delete/move/offset/replace face and split line use it.
-
 ## [1.351.0] - 2026-11-09
 
 ### Added
@@ -20,6 +14,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - **Units in the status bar (FR-UI-116)**: the unit and decimals show at the right of the status bar; a click picks millimetres, centimetres, metres, inches or feet and the decimals. With a part open the unit is the part's own, saved with it and changed as one undo step (values stay stored in mm), and opening a part shows its unit. Mass still shows in g/kg.
 - **Command tooltips (FR-UI-112)**: hovering a command bar button (or focusing it from the keyboard) shows its name, its shortcut key and a one-line description; a disabled button says why (Undo in a command with nothing to undo, Undo while a command runs elsewhere). Inside a feature command the Undo and Redo buttons step the panel's own changes.
 - **Hide and show under the cursor (FR-UI-105)**: with the pointer over the view, Tab hides the body (in a part) or the component (in an assembly) under it, Shift+Tab shows a hidden one under it again, and holding Ctrl+Shift+Tab draws the hidden ones see-through so a click shows one, as in SolidWorks. Each is one undo step. Items hidden from the tree work the same way once hidden in this session.
+- **Colour-coded selection boxes (FR-SEL-011)**: the selection boxes of a feature panel each have their own colour (orange, blue, green, purple), shown on the box's left edge; the picks of each box are drawn in the view in its colour, with a small tag naming the box ("Faces to draft", "Neutral plane", "Face set 1"…) when a panel has several. Fillet and chamfer edges, face fillet and full round face sets, draft, shell, delete/move/offset/replace face and split line use it.
 
 ## [1.350.0] - 2026-11-09
 
@@ -2109,8 +2104,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.353.0...HEAD
-[1.353.0]: https://github.com/kothf/step-viewer/compare/v1.351.0...v1.353.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.351.0...HEAD
 [1.351.0]: https://github.com/kothf/step-viewer/compare/v1.350.0...v1.351.0
 [1.350.0]: https://github.com/kothf/step-viewer/compare/v1.349.0...v1.350.0
 [1.349.0]: https://github.com/kothf/step-viewer/compare/v1.348.0...v1.349.0
