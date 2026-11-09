@@ -4,6 +4,7 @@
 // lines clipped to a circle; parents carry the cutting lines, detail circles and
 // view arrows of the views made from them (FR-DRW-012/013/014).
 import type { Projection, Seg2, V3 } from "../kernel/drawing";
+import { findMaterial } from "../tools/materials";
 import type { Pen, Layer, Prim } from "./prims";
 import { formatPrims, type Fields } from "./sheet";
 import type { DrawingView, HatchPattern, Sheet } from "./types";
@@ -390,6 +391,13 @@ export const HATCH_PATTERNS: { id: HatchPattern; name: string }[] = [
 /** The ANSI pattern for a material name (ANSI Y14.2); anything unknown is general use (ANSI31). */
 export function materialPattern(mat: string | null | undefined): Exclude<HatchPattern, "material"> {
   const m = (mat ?? "").toLowerCase();
+  const cat = findMaterial(mat)?.cat;
+  if (cat === "steel" || cat === "stainless") return "ansi32";
+  if (cat === "castiron") return /steel/.test(m) ? "ansi32" : "ansi31";
+  if (cat === "copper") return "ansi33";
+  if (cat === "aluminium" || /^(die cast )?magnesium/.test(m)) return "ansi38";
+  if (cat === "plastic" || cat === "elastomer" || cat === "composite") return "ansi34";
+  if (cat === "metal" && /zinc|zamak|lead/.test(m)) return "ansi37";
   if (/steel/.test(m)) return "ansi32";
   if (/brass|bronze|copper/.test(m)) return "ansi33";
   if (/alumin|magnes/.test(m)) return "ansi38";
