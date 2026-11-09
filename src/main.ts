@@ -24,7 +24,8 @@ import {
   type CircleMode,
   type Entity, type Measurement, type MeasureSource, type MeasureType, type PickRef,
 } from "./tools/measure";
-import { MATERIALS, massProperties, type MassResult } from "./tools/analysis";
+import { massProperties, type MassResult } from "./tools/analysis";
+import { pickMaterial } from "./materialPicker";
 import { massReport, principal, type Combined, type Frame } from "./tools/inertia";
 import { inertiaUnit, massPanelHtml, massText, type MassView } from "./tools/massPanel";
 import { exportMesh, inspectionReport, measurementsCsv, measurementsJson, snapshot, download } from "./tools/exporters";
@@ -119,8 +120,8 @@ const modeller = new ModelController({
   setUnits: u => applyUnits(u),
   setMaterial: m => {
     if (!m) return;
-    const i = MATERIALS.findIndex(x => x.name === m.name && x.density === m.density);
-    matSel.value = i >= 0 ? String(i) : "custom";
+    massMat = m.name;
+    renderMaterials();
     $<HTMLInputElement>("#density").value = String(m.density);
     validateDensity();
   },
@@ -2501,17 +2502,21 @@ function refreshSelectionOverlays() {
 }
 
 // ---------- mass properties ----------
-const matSel = $<HTMLSelectElement>("#material");
+const matBtn = $<HTMLButtonElement>("#material");
+/** The material the density on the Mass page came from (its name), or null for a typed density. */
+let massMat: string | null = "Steel (carbon)";
 function renderMaterials() {
-  const v = matSel.value;
-  matSel.innerHTML = MATERIALS.map((m, i) => `<option value="${i}">${esc(t(m.name))} (${m.density})</option>`).join("") + `<option value="custom">${t("Custom…")}</option>`;
-  if (v) matSel.value = v;
+  matBtn.innerHTML = `<span translate="no">${esc(massMat ? t(massMat) : t("Custom…"))}</span> …`;
 }
 renderMaterials();
-matSel.addEventListener("change", () => {
-  if (matSel.value !== "custom") $<HTMLInputElement>("#density").value = String(MATERIALS[+matSel.value].density);
-});
-$<HTMLInputElement>("#density").addEventListener("input", () => { matSel.value = "custom"; validateDensity(); });
+matBtn.addEventListener("click", () => void pickMaterial({ current: massMat ? { name: massMat, density: +$<HTMLInputElement>("#density").value || 1 } : null }).then(r => {
+  if (!r?.material) return;
+  massMat = r.material.name;
+  $<HTMLInputElement>("#density").value = String(r.material.density);
+  renderMaterials();
+  validateDensity();
+}));
+$<HTMLInputElement>("#density").addEventListener("input", () => { massMat = null; renderMaterials(); validateDensity(); });
 /** Inline validation of the density field; returns the density or null when it is not usable. */
 function validateDensity(): number | null {
   const inp = $<HTMLInputElement>("#density"), err = $("#density-err");

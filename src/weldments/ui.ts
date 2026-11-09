@@ -6,7 +6,7 @@ import { t } from "../i18n";
 import { toast } from "../ui";
 import { featureLabel } from "../model/controller";
 import { units, UNITS } from "../tools/units";
-import { MATERIALS } from "../tools/analysis";
+import { CATEGORIES, allMaterials, findMaterial } from "../tools/materials";
 import { ANCHORS, PROFILE_TYPES, profileSizes, type Anchor, type ProfileType } from "./profiles";
 import { sketchProfile } from "../sketch/profile";
 import type { CutItem, Pierce, EndCapFeature, GussetFeature, MemberFeature, MemberGroup, TrimExtendFeature, WeldBeadFeature, WeldFeature, WeldSegRef } from "./types";
@@ -588,7 +588,16 @@ function beadText(c: CutItem, tr: (k: string, p?: Record<string, string | number
 type CutProps = NonNullable<PartDoc["cutProps"]>;
 
 /** An item's own material (cut list item property), if it names a known one. */
-function itemMat(p: { mat?: string } | undefined) { return p?.mat ? MATERIALS.find(m => m.name === p.mat) : undefined; }
+function itemMat(p: { mat?: string } | undefined) { return findMaterial(p?.mat); }
+
+/** The library as grouped options (one group per category), for the cut list item's Material list. */
+function matOptions(cur: string) {
+  const all = allMaterials();
+  return CATEGORIES.map(c => {
+    const ms = all.filter(m => m.cat === c.id);
+    return ms.length ? `<optgroup label="${esc(t(c.name))}">${ms.map(m => `<option value="${esc(m.name)}"${m.name === cur ? " selected" : ""}>${esc(t(m.name))}</option>`).join("")}</optgroup>` : "";
+  }).join("");
+}
 
 function rowsOf(items: CutItem[], density: number, props?: CutProps) {
   const L = (mm: number | undefined) => mm == null ? "" : (mm * UNITS[units.current].f).toLocaleString(undefined, { maximumFractionDigits: 1 });
@@ -655,7 +664,7 @@ export function showCutList(items: CutItem[] | undefined, doc: PartDoc, onProps?
         : esc(v || ph);
       const partName = doc.material ? t(doc.material.name) : t("Steel (assumed)");
       const mat = onProps
-        ? `<select class="wld-cp" data-cp="mat" data-ci="${i}" aria-label="${esc(t("Material"))} ${r.item}"><option value="">${esc(t("Part material ({m})", { m: partName }))}</option>${MATERIALS.map(m => `<option value="${esc(m.name)}"${m.name === r.mat ? " selected" : ""}>${esc(t(m.name))}</option>`).join("")}</select>`
+        ? `<select class="wld-cp" data-cp="mat" data-ci="${i}" aria-label="${esc(t("Material"))} ${r.item}"><option value="">${esc(t("Part material ({m})", { m: partName }))}</option>${matOptions(r.mat)}</select>`
         : esc(r.mat ? t(r.mat) : partName);
       const ex = onProps
         ? `<input type="checkbox" class="wld-cx" data-cp="excl" data-ci="${i}"${r.excl ? " checked" : ""} aria-label="${esc(t("Exclude from cut list"))} ${i + 1}" />`

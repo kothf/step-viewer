@@ -30,7 +30,8 @@ import type { CtxRef, SkEnt, SketchPatternFeature, FeatureFolder, ThreadFeature,
   AxisFeature, ChamferFeature, CsysFeature, CircularPatternFeature, EdgeRef, ExtrudeFeature, Feature, FeatureStatus, FilletFeature, ScaleFeature, Frame, LinearPatternFeature, LineRef,
   GlobalVar, HelixFeature, LoftFeature, RibFeature, SplitFeature, FaceRef, RecognizedHole, ImportFeature, HealFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, UntrimSurfFeature, IntersectFeature, SweepFeature, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3, VertexRef,
 } from "./types";
-import { MATERIALS } from "../tools/analysis";
+import { hexRgb, toRef, type MatRef } from "../tools/materials";
+import { pickMaterial } from "../materialPicker";
 import { ISO_METRIC, HEAT_INSERTS, holeSize, insertSize, type HoleSize } from "./holes";
 
 /** What a hole favourite keeps: the definition, not the placement. */
@@ -98,7 +99,7 @@ export interface ModelHost {
   /** The edge picked with Smart measure, if any (pre-selection for fillet and chamfer). */
   selectedEdge?(): EdgeInfo | null;
   /** The part's material changed (or a part opened): preset the mass properties panel. */
-  setMaterial?(m: { name: string; density: number } | undefined): void;
+  setMaterial?(m: MatRef | undefined): void;
   /** The open part's length unit became the display unit (FR-UI-116). */
   setUnits?(u: PartDoc["units"]["length"]): void;
   /** Normal to the picked flat face (the view's "8"). */
@@ -6467,14 +6468,13 @@ export class ModelController {
   /** Part properties, material and colour (FR-DOC-007, FR-MAT-001/003). */
   private renderPropsPanel(pm: HTMLElement, d: PartDoc) {
     const text = (k: string, label: string, v: string | undefined) => `<label class="pm-field"><span>${esc(label)}</span><input type="text" data-p="${k}" value="${esc(v ?? "")}" spellcheck="false" translate="no" /></label>`;
-    const mi = d.material ? MATERIALS.findIndex(x => x.name === d.material!.name && x.density === d.material!.density) : -2;
     const col = d.color ?? DEFAULT_COLOR;
     const hex = `#${col.map(c => Math.round(c * 255).toString(16).padStart(2, "0")).join("")}`;
     pm.innerHTML = okHead(t("Part properties"))
       + text("name", t("Name"), d.name) + text("title", t("Title"), d.props.title) + text("partNumber", t("Part number"), d.props.partNumber)
       + text("description", t("Description"), d.props.description) + text("revision", t("Revision"), d.props.revision) + text("author", t("Author"), d.props.author)
-      + `<label class="pm-field"><span>${esc(t("Material"))}</span><select data-p="material"><option value="-2"${mi === -2 ? " selected" : ""}>${esc(t("Not specified"))}</option>${MATERIALS.map((x, i) => `<option value="${i}"${mi === i ? " selected" : ""}>${esc(t(x.name))} (${x.density})</option>`).join("")}<option value="-1"${mi === -1 ? " selected" : ""}>${esc(t("Custom…"))}</option></select></label>`
-      + (mi === -1 ? text("matName", t("Material name"), d.material?.name) + `<label class="pm-field"><span>${esc(t("Density"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-p="density" value="${d.material?.density ?? ""}" /><span class="muted">g/cm³</span></span></label>` : "")
+      + `<div class="pm-field"><span>${esc(t("Material"))}</span><button type="button" class="btn small pm-mat" data-a="matpick" title="${esc(t("Choose a material from the library"))}"><span translate="no">${esc(d.material ? t(d.material.name) : t("Not specified"))}</span> …</button></div>`
+      + (d.material ? `<label class="pm-field"><span>${esc(t("Density"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-p="density" value="${d.material.density}" /><span class="muted">g/cm³</span></span></label>` : "")
       + `<label class="pm-field"><span>${esc(t("Colour"))}</span><input type="color" data-p="color" value="${hex}" /></label>`
       + `<fieldset class="pm-group"><legend>${esc(t("Mass properties"))}</legend><label class="chk pm-chk"><input type="checkbox" data-p="ovr"${d.massOverride ? " checked" : ""} />${esc(t("Override mass properties"))}</label>`
       + (d.massOverride ? `<label class="pm-field"><span>${esc(t("Mass"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-p="ovrMass" value="${d.massOverride.mass ?? ""}" placeholder="${esc(t("calculated"))}" /><span class="muted">kg</span></span></label>`
@@ -6484,18 +6484,11 @@ export class ModelController {
     pm.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-p]").forEach(el => el.addEventListener("change", () => {
       const k = el.dataset.p!, v = el.value;
       if (k === "name") { if (v.trim()) d.name = v.trim(); }
-      else if (k === "material") {
-        const i = +v;
-        if (i >= 0) d.material = { ...MATERIALS[i] };
-        else if (i === -1) d.material = { name: d.material?.name ?? "Custom", density: d.material?.density ?? 1 };
-        else delete d.material;
-        this.renderPanel();
-      } else if (k === "matName") d.material = { name: v.trim() || "Custom", density: d.material?.density ?? 1 };
       else if (k === "density") {
         const x = parseFloat(v.replace(",", "."));
         if (!(x > 0)) { el.setAttribute("aria-invalid", "true"); toast(t("Density must be a number greater than 0 g/cm³."), true); return; }
         el.removeAttribute("aria-invalid");
-        d.material = { name: d.material?.name ?? "Custom", density: x };
+        d.material = { ...(d.material ?? { name: "Custom" }), density: x };
       } else if (k === "color") {
         d.color = [1, 3, 5].map(i => parseInt(v.slice(i, i + 2), 16) / 255) as V3;
         void this.rebuild();
@@ -6519,6 +6512,13 @@ export class ModelController {
         const p = d.props as Record<string, string | undefined>;
         if (v.trim()) p[k] = v.trim(); else delete p[k];
       }
+    }));
+    pm.querySelector("[data-a=matpick]")!.addEventListener("click", () => void pickMaterial({ current: d.material, allowNone: true, colour: true }).then(r => {
+      if (!r || this.mode.kind !== "props" || this.mode.draft !== d) return;
+      if (r.material) d.material = toRef(r.material); else delete d.material;
+      if (r.colour && r.material?.color) { d.color = hexRgb(r.material.color); void this.rebuild(); }
+      this.renderPanel();
+      pm.querySelector<HTMLElement>("[data-a=matpick]")?.focus();
     }));
     pm.querySelector("[data-a=ok]")!.addEventListener("click", () => this.ok());
     pm.querySelector("[data-a=cancel]")!.addEventListener("click", () => void this.cancel());

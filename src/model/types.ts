@@ -3,6 +3,7 @@
 // Lengths are millimetres, angles radians.
 
 import type { WeldFeature } from "../weldments/types";
+import type { MatRef } from "../tools/materials";
 
 export type V2 = [number, number];
 export type V3 = [number, number, number];
@@ -874,7 +875,7 @@ export interface PartConfig {
     ints: Record<string, number>;
     suppressed: string[];
     vars: Record<string, string>;
-    material: { name: string; density: number } | null;
+    material: MatRef | null;
     /** Features that existed then (newer ones keep their suppression when switching). */
     ids: string[];
   };
@@ -889,7 +890,8 @@ export interface PartDoc {
   name: string;
   units: { length: "mm" | "cm" | "m" | "in" | "ft"; decimals: number };
   props: PartProps;
-  material?: { name: string; density: number };
+  /** The part's material (FR-MAT-001): name and density, plus the library properties it was picked with. */
+  material?: MatRef;
   /** Mass property override (FR-MAT-004), e.g. for a purchased part: mass in kg, centre of mass in mm; each absent one is calculated. */
   massOverride?: { mass?: number; com?: V3 };
   /** Weldment cut list item properties (FR-FT-121), keyed by `cutKey` of the item: own description, part number, notes. */
