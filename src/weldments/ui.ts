@@ -226,7 +226,12 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
         + numField("thickness", t("Thickness"), f.thickness, "length")
         + sel("wCapDir", t("Thickness direction"), [["out", t("Outward")], ["in", t("Inward")], ["internal", t("Internal")]], capDir(f))
         + help(t("Click the flat end faces of members. Drag the arrow to change the thickness.")))
-        + group(t("Offset"), chk("wInset", f.inset.v > 0, capDir(f) === "internal" ? t("Clearance to the tube") : t("Inset from the edges")) + (f.inset.v > 0 ? numField("inset", capDir(f) === "internal" ? t("Clearance") : t("Inset"), f.inset, "length") : ""))
+        + group(t("Offset"), chk("wInset", f.inset.v > 0, capDir(f) === "internal" ? t("Clearance to the tube") : t("Inset from the edges"))
+          + (f.inset.v > 0 && capDir(f) !== "internal" ? chk("wRatio", !!f.ratio, t("Use thickness ratio")) : "")
+          + (f.inset.v > 0 && f.ratio && capDir(f) !== "internal"
+            ? `<label class="pm-field"><span>${esc(t("Thickness ratio"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-num="ratio" data-q="number" value="${esc(f.ratio.expr ?? String(+f.ratio.v.toFixed(6)))}" spellcheck="false" /></span></label>`
+              + help(t("The inset is this times the member's wall thickness."))
+            : f.inset.v > 0 ? numField("inset", capDir(f) === "internal" ? t("Clearance") : t("Inset"), f.inset, "length") : ""))
         + group(t("Corner treatment"), chk("wChamfer", !!f.chamfer, t("Treat the corners"))
           + (f.chamfer ? sel("wCapCorner", t("Type"), [["chamfer", t("Chamfer")], ["fillet", t("Fillet")]], f.fillet ? "fillet" : "chamfer")
             + numField("chamfer", f.fillet ? t("Radius") : t("Distance"), f.chamfer, "length") : "")),
@@ -315,7 +320,8 @@ export function weldChange(f: WeldFeature, k: string, val: string | boolean, ctx
     if (k === "wGap") return () => { if (val) f.gap = { v: 2 }; else delete f.gap; };
   }
   if (f.type === "endcap") {
-    if (k === "wInset") return () => { f.inset = { v: val ? 2 : 0 }; };
+    if (k === "wInset") return () => { f.inset = { v: val ? 2 : 0 }; if (!val) delete f.ratio; };
+    if (k === "wRatio") return () => { if (val) f.ratio = { v: 0.5 }; else delete f.ratio; };
     if (k === "wChamfer") return () => { if (val) f.chamfer = { v: 3 }; else { delete f.chamfer; delete f.fillet; } };
     if (k === "wCapDir") return () => { delete f.inward; if (val === "out") delete f.dir; else f.dir = val as "in" | "internal"; };
     if (k === "wCapCorner") return () => { if (val === "fillet") f.fillet = true; else delete f.fillet; };

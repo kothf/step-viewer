@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.322.0] - 2026-11-09
+
+### Added
+
+- **End cap thickness ratio (FR-FT-121)**: Weldments → End Cap → Offset has SolidWorks' Use thickness ratio: the inset is a multiple of the capped member's wall thickness (0.5 on an SHS 40×40×3 = 1.5 mm in from the edges), so caps on tubes of different walls follow them. On a solid section the wall is taken as 2 × area / perimeter (a flat bar's or a channel leg's thickness); Internal caps keep their clearance.
+
 ## [1.315.0] - 2026-11-09
 
 ### Added
@@ -1845,7 +1851,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.315.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.322.0...HEAD
+[1.322.0]: https://github.com/kothf/step-viewer/compare/v1.321.0...v1.322.0
 [1.315.0]: https://github.com/kothf/step-viewer/compare/v1.314.0...v1.315.0
 [1.314.0]: https://github.com/kothf/step-viewer/compare/v1.313.0...v1.314.0
 [1.313.0]: https://github.com/kothf/step-viewer/compare/v1.312.0...v1.313.0
