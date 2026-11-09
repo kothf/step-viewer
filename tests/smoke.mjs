@@ -9243,6 +9243,35 @@ try {
     check(ft0.title === "Forming Tool" && /:p0:top$/.test(ft0.face ?? "") && ft0.pts?.length === 1 && Math.hypot(ft0.pts[0][0] - 10, ft0.pts[0][1] - 25) < 1 && ft0.tool === "xhole" && ft0.rows === 1
       && !ft1.bad && ft1.forms === 1 && Math.abs(ft1.v - vt1.v - ftDv) < 1e-3,
       `sheet metal: Forming Tool places an extruded hole where the face is clicked (${JSON.stringify({ ft0, ft1, ftDv, v0: vt1.v })})`);
+    // Unfold: a flange on the back edge; click the plate's top face as the fixed face, ✓ with all bends: the sheet lies flat.
+    // (The flat volume differs a little from the folded one unless K = 0.5.) Fold, ✓: back as it was.
+    await mp.evaluate(() => window.__sv.model.store.change("Flange", d => {
+      const b = d.features.find(f => f.type === "smbase");
+      d.features = d.features.filter(f => f.id === "s1" || f.id === b.id);
+      d.features.push({ id: "uf", type: "smflange", name: "Edge-Flange6", edges: [{ faces: [`${b.id}:p0:top`, `${b.id}:p0:l3`] }], length: { v: 20 }, angle: { v: Math.PI / 2 } });
+    }));
+    await settle();
+    const ufBox = () => mp.evaluate(() => {
+      const l = window.__sv.model.last(), P = l.data.positions, lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+      for (let i = 0; i < P.length; i++) { lo[i % 3] = Math.min(lo[i % 3], P[i]); hi[i % 3] = Math.max(hi[i % 3], P[i]); }
+      return { v: l.props?.volume ?? 0, y: Math.round((hi[1] - lo[1]) * 1000) / 1000, z: Math.round((hi[2] - lo[2]) * 1000) / 1000, unfold: l.sheet?.unfold?.bends.length ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") };
+    });
+    const uf0 = await ufBox();
+    await smMenu("Unfold");
+    const [ufx, ufy] = await scr([50, 20, T]);
+    await mp.mouse.click(ufx, ufy);
+    await settle();
+    const uf1 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { title: document.querySelector("#mc-pm h3")?.textContent, face: d?.face?.name, bends: d?.bends?.length, all: document.querySelector("#mc-pm [data-sm-bends]")?.textContent }; });
+    await mp.click("#mc-ok");
+    await settle();
+    const uf2 = await ufBox();
+    await smMenu("Fold");
+    await mp.click("#mc-ok");
+    await settle();
+    const uf3 = await ufBox();
+    check(uf1.title === "Unfold" && /:p0:top$/.test(uf1.face ?? "") && uf1.bends === 0 && uf1.all === "All bends" && !uf2.bad && uf2.z === T && uf2.unfold === 1 && uf2.y > 50 + 15 && Math.abs(uf2.v - uf0.v) < uf0.v * 0.01
+      && !uf3.bad && uf3.unfold === 0 && Math.abs(uf3.z - uf0.z) < 1e-3 && Math.abs(uf3.v - uf0.v) < 1e-3,
+      `sheet metal: Unfold lays the flange flat about the clicked face and Fold bends it back (${JSON.stringify({ uf0, uf1, uf2, uf3 })})`);
     // Closed Corner: two flanges, material outside, made one at a time leave an open corner; clicking the front one's end face closes it.
     await mp.evaluate(() => window.__sv.model.store.change("Flanges", d => {
       const b = d.features.find(f => f.type === "smbase");

@@ -5,11 +5,11 @@
 import { t } from "../i18n";
 import type { EdgeRef, FaceRef, Feature, Num, PartDoc, SketchFeature } from "../model/types";
 import { sketchPath, sketchProfile } from "../sketch/profile";
-import { flatSize, ventLayout, type SheetState } from "./sheet";
+import { flatSize, panelOfFace, ventLayout, type SheetState } from "./sheet";
 import { loopPolygon } from "../sketch/profile";
-import { GAUGE_TABLES, gaugeRow, type SheetFeature, type SmLoftFeature, type SmBaseFeature, type SmClosedFeature, type SmCornerFeature, type SmCrossFeature, type SmVentFeature, type SmFormFeature, type FormTool, type SmFlangeFeature, type SmHemFeature, type SmJogFeature, type SmMiterFeature, type SmSketchBendFeature, type SmTabFeature } from "./types";
+import { GAUGE_TABLES, gaugeRow, type SheetFeature, type SmLoftFeature, type SmBaseFeature, type SmClosedFeature, type SmCornerFeature, type SmCrossFeature, type SmVentFeature, type SmFormFeature, type SmUnfoldFeature, type FormTool, type SmFlangeFeature, type SmHemFeature, type SmJogFeature, type SmMiterFeature, type SmSketchBendFeature, type SmTabFeature } from "./types";
 
-export type SmTool = "smbase" | "smloft" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smcross" | "smvent" | "smform" | "smmiter" | "smswept" | "smflat" | "smdxf";
+export type SmTool = "smbase" | "smloft" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smcross" | "smvent" | "smform" | "smunfold" | "smfold" | "smmiter" | "smswept" | "smflat" | "smdxf";
 
 
 /** The Sheet metal flyout's commands. */
@@ -27,13 +27,15 @@ export const SM_TOOLS = (): [SmTool, string, string][] => [
   ["smcross", t("Cross Break"), t("Cross break: mark a flat face with crossed lines, the shallow stiffening break from corner to corner")],
   ["smvent", t("Vent"), t("Vent: cut openings in a flat face from one sketch, a closed boundary with ribs (lines) and spars (circles) left as material")],
   ["smform", t("Forming Tool"), t("Forming tool: press a dimple, rib, louver or extruded hole into a flat face; click the face to place each one")],
+  ["smunfold", t("Unfold"), t("Unfold: flatten the picked bends (or all of them) with one flat face kept in place, so features can cut across them")],
+  ["smfold", t("Fold"), t("Fold: bend unfolded bends back; cuts made across them wrap onto the bends")],
   ["smflat", t("Flatten"), t("Flatten: show the flat pattern, or fold it back")],
   ["smdxf", t("Flat pattern DXF"), t("Export the flat pattern with its bend lines as DXF")],
 ];
 
 /** Default feature names (translated in the tree like the others). */
-export const SM_BASES = ["Lofted-Bend", "Base-Flange", "Edge-Flange", "Hem", "Sketched-Bend", "Jog", "Tab", "Break-Corner", "Closed-Corner", "Cross-Break", "Vent", "Form-Tool", "Miter-Flange", "Swept-Flange", "Flat-Pattern"];
-export const SM_TREE_ICONS: Record<string, string> = { smbase: "▬", smloft: "⏢", smflange: "⌐", smhem: "⊃", smbend: "⌙", smjog: "⎍", smtab: "▭", smcorner: "◿", smclosed: "⌟", smcross: "⨯", smvent: "▦", smform: "◉", smmiter: "⌐", smswept: "⌒", smflat: "▭" };
+export const SM_BASES = ["Lofted-Bend", "Base-Flange", "Edge-Flange", "Hem", "Sketched-Bend", "Jog", "Tab", "Break-Corner", "Closed-Corner", "Cross-Break", "Vent", "Form-Tool", "Unfold", "Fold", "Miter-Flange", "Swept-Flange", "Flat-Pattern"];
+export const SM_TREE_ICONS: Record<string, string> = { smbase: "▬", smloft: "⏢", smflange: "⌐", smhem: "⊃", smbend: "⌙", smjog: "⎍", smtab: "▭", smcorner: "◿", smclosed: "⌟", smcross: "⨯", smvent: "▦", smform: "◉", smunfold: "⤢", smfold: "⤡", smmiter: "⌐", smswept: "⌒", smflat: "▭" };
 
 const S = (body: string) => `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
 export const SM_ICONS: Record<string, string> = {
@@ -50,6 +52,8 @@ export const SM_ICONS: Record<string, string> = {
   smcross: S('<path d="M2 4h12v8H2z"/><path d="M2 4l12 8M14 4 2 12" stroke-dasharray="1.6 1.4"/>'),
   smvent: S('<rect x="2" y="3" width="12" height="10" rx="1"/><path d="M5 6h6M5 8h6M5 10h6"/>'),
   smform: S('<path d="M1.5 11h4a2.5 2.5 0 0 0 5 0h4"/><path d="M5.5 11 7 7h2l1.5 4" stroke-dasharray="1.6 1.4"/>'),
+  smunfold: S('<path d="M2 12h6l5-6"/><path d="M8 12h6" stroke-dasharray="1.6 1.4"/><path d="M12.5 8.5l1.5 2.5"/>'),
+  smfold: S('<path d="M2 12h12" stroke-dasharray="1.6 1.4"/><path d="M2 12h6l5-6"/><path d="M12 10.5l1-2.5"/>'),
   smflat: S('<path d="M1.5 11h13M4 5h8"/><path d="M8 5v6" stroke-dasharray="1.6 1.4"/><path d="M4 5 1.5 11M12 5l2.5 6"/>'),
   smdxf: S('<path d="M3 2h7l3 3v9H3z"/><path d="M5 9h6M8 6v6" stroke-dasharray="1.6 1.4"/>'),
 };
@@ -88,7 +92,7 @@ const loftChain = (s: SketchFeature) => { const p = sketchPath(s); return !p.err
 const oneLine = (s: SketchFeature) => { const p = sketchPath(s); return !p.error && p.segs.length === 1 && p.segs[0].kind === "line"; };
 
 /** A new sheet metal feature, or the message to show when it can't start yet. */
-export function smDraft(type: "smbase" | "smloft" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smcross" | "smvent" | "smform" | "smmiter" | "smswept", c: DraftCtx): Feature | string {
+export function smDraft(type: "smbase" | "smloft" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smcross" | "smvent" | "smform" | "smunfold" | "smfold" | "smmiter" | "smswept", c: DraftCtx): Feature | string {
   const base = c.doc.features.find(f => f.type === "smbase" || f.type === "smloft");
   if (type === "smloft") {
     if (base) return t("This part already has a base flange.");
@@ -142,6 +146,15 @@ export function smDraft(type: "smbase" | "smloft" | "smflange" | "smhem" | "smbe
     const sk = sel ?? c.sketches.filter(s => !c.used.has(s.id) && closed(s)).at(-1);
     if (!sk) return t("Sketch the vent on a flat face first: a closed boundary, with lines for ribs and circles for spars.");
     return { id: c.id, type: "smvent", name: c.name("smvent"), sketch: sk.id, rib: { v: 2 }, spar: { v: 2 } } satisfies SmVentFeature;
+  }
+  if (type === "smunfold") {
+    // A flat face picked first stays fixed; every bend unfolds until bends are picked (SolidWorks: Collect All Bends).
+    const face = c.face && c.sheet && /:(top|bot)$/.test(c.face.name) && panelOfFace(c.sheet, c.face.name) ? c.face : undefined;
+    return { id: c.id, type: "smunfold", name: c.name("smunfold"), ...(face ? { face } : {}), bends: [] } satisfies SmUnfoldFeature;
+  }
+  if (type === "smfold") {
+    if (c.sheet && !c.sheet.unfold?.bends.length) return t("Unfold some bends first.");
+    return { id: c.id, type: "smfold", name: c.name("smfold"), bends: [] } satisfies SmUnfoldFeature;
   }
   if (type === "smform") {
     // A face picked first gets one tool at the middle of its panel (SolidWorks: drop the tool on a face).
@@ -347,6 +360,19 @@ export function smPanel(f: SheetFeature, k: PanelKit): { title: string; body: st
           + help(t("The form keeps the sheet's thickness and stands out of the picked face. The flat pattern leaves it out and marks its outline; an extruded hole leaves its pre-pierce hole."))),
     };
   }
+  if (f.type === "smunfold" || f.type === "smfold") {
+    const unf = f.type === "smunfold";
+    const bends = `<p class="pm-count" data-sm-bends>${esc(f.bends.length ? t("{n} bend|{n} bends", { n: f.bends.length }) : unf ? t("All bends") : t("All unfolded bends"))}</p>`
+      + (f.bends.length ? `<button class="btn small" data-sm="clear">${esc(unf ? t("Collect all bends") : t("All unfolded bends"))}</button>` : "");
+    return {
+      title: unf ? t("Unfold") : t("Fold"),
+      body: (unf ? group(t("Fixed face"), `<p class="pm-count" data-sm-faces>${esc(f.face ? t("Picked face") : t("The first face of the sheet; click a flat face to keep it in place"))}</p>`
+        + (f.face ? `<button class="btn small" data-sm="fclear">${esc(t("Use the first face"))}</button>` : "")) : "")
+        + group(unf ? t("Bends to unfold") : t("Bends to fold"), bends
+          + help(unf ? t("Click bends in the view to unfold only those. Cut across the flat bends with ordinary features, then add a Fold.")
+            : t("Click bends in the view to fold only those. Cuts made across them while flat wrap onto the bends; lengths on the neutral surface are kept."))),
+    };
+  }
   if (f.type === "smcross") {
     return {
       title: t("Cross Break"),
@@ -405,6 +431,8 @@ export function bindSmPanel(pm: HTMLElement, f: SheetFeature, upd: (fn: () => vo
         if (key === "clear" && (f.type === "smflange" || f.type === "smhem" || f.type === "smcorner" || f.type === "smmiter" || f.type === "smswept")) upd(() => { f.edges = []; }, true);
         if (key === "clear" && (f.type === "smclosed" || f.type === "smcross")) upd(() => { f.faces = []; }, true);
         if (key === "clear" && f.type === "smform") upd(() => { f.pts = []; }, true);
+        if (key === "clear" && (f.type === "smunfold" || f.type === "smfold")) upd(() => { f.bends = []; }, true);
+        if (key === "fclear" && f.type === "smunfold") upd(() => { delete f.face; }, true);
         if (key.startsWith("rm:") && f.type === "smform") upd(() => { f.pts.splice(Number(key.slice(3)), 1); }, true);
       });
       return;

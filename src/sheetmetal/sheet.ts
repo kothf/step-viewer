@@ -14,7 +14,7 @@
 // `…:<edge>` says which panel edge it is without looking at geometry.
 import type { Frame, PartDoc, SketchFeature, V2, V3 } from "../model/types";
 import { inPolygon, loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type Seg } from "../sketch/profile";
-import type { FormTool, SmFormFeature, BendCalc, BendPosition, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "./types";
+import type { FormTool, SmFormFeature, SmUnfoldFeature, BendCalc, BendPosition, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "./types";
 import { isSheetBase } from "./types";
 
 export class SheetError extends Error {
@@ -72,6 +72,8 @@ export interface SheetState {
   crosses?: CrossLine[];
   /** Forming tools pressed into panels: footprints in flat coordinates (left out of the flat pattern). */
   forms?: FormMark[];
+  /** Unfold (FR-FT-120): bends flattened, with `fixed`'s panel held at `anchor`. Panels and bends keep their folded M. */
+  unfold?: { fixed: string; anchor: Mat; bends: string[] };
 }
 
 /** Where a forming tool sits on the flat pattern: its footprint loop and, for an extruded hole, the pre-pierce hole radius. */
@@ -1532,4 +1534,142 @@ export function flatPointOn(st: SheetState, face: string, p: V3): V2 | null {
   if (!m || !panel) return null;
   const q = local(panel.M, p);
   return [q[0], q[1]];
+}
+
+// ---------- unfold / fold ----------
+
+/** M⁻¹ of a rigid transform. */
+export function invert(M: Mat): Mat {
+  const x: V3 = [M.x[0], M.y[0], M.z[0]], y: V3 = [M.x[1], M.y[1], M.z[1]], z: V3 = [M.x[2], M.y[2], M.z[2]];
+  return { o: [-dot(M.x, M.o), -dot(M.y, M.o), -dot(M.z, M.o)], x, y, z };
+}
+
+const matEq = (a: Mat, b: Mat, tol: number) =>
+  (["o", "x", "y", "z"] as const).every(k => Math.hypot(...sub3(a[k], b[k])) <= (k === "o" ? tol : 1e-9));
+
+/** Where each panel and bend lies: `mats` per panel id (flat → world), `flat` = bends lying flat, `a` = each bend's start panel. */
+export interface SheetPlace { mats: Record<string, Mat>; flat: string[]; a: Record<string, string> }
+
+/** Each bend's start panel (same M) and far panel (an outline edge on the strip's far line). */
+export function bendLinks(st: SheetState): { bid: string; a: string; b: string | null }[] {
+  const size = Math.max(1, ...st.panels.flatMap(p => p.outer.flatMap(s => s.kind === "line" ? [...s.a, ...s.b].map(Math.abs) : [])));
+  const tol = size * 1e-6;
+  return st.bends.map(b => {
+    const A = st.panels.find(p => matEq(p.M, b.M, tol));
+    const l = d2(b.a0, b.a1), o: V2 = [(b.a1[1] - b.a0[1]) / l, -(b.a1[0] - b.a0[0]) / l];
+    const p0 = p2(b.a0, s2(o, b.ba)), e: V2 = [(b.a1[0] - b.a0[0]) / l, (b.a1[1] - b.a0[1]) / l];
+    const off = (q: V2) => Math.abs((q[0] - p0[0]) * o[0] + (q[1] - p0[1]) * o[1]);
+    const along = (q: V2) => (q[0] - p0[0]) * e[0] + (q[1] - p0[1]) * e[1];
+    let best: Panel | undefined, bl = tol;
+    for (const p of st.panels) {
+      if (A && matEq(p.M, A.M, tol)) continue;
+      for (const s of p.outer) {
+        if (s.kind !== "line" || off(s.a) > tol * 10 || off(s.b) > tol * 10) continue;
+        const lo = Math.max(0, Math.min(along(s.a), along(s.b))), hi = Math.min(l, Math.max(along(s.a), along(s.b)));
+        if (hi - lo > bl) { bl = hi - lo; best = p; }
+      }
+    }
+    return { bid: b.id, a: A?.id ?? st.panels[0].id, b: best?.id ?? null };
+  });
+}
+
+/**
+ * Lays the panels out with `fixed` at `anchor` and the bends in `flat` straightened: across a kept bend both panels
+ * move together, across a flat one the far panel lies in the start panel's plane (the flat pattern's coordinates are
+ * shared by every panel, so its M is the start panel's).
+ */
+export function placeSheet(st: SheetState, fixed: string, anchor: Mat, flat: string[]): SheetPlace {
+  const links = bendLinks(st);
+  const size = Math.max(1, ...st.panels.map(p => Math.hypot(...p.M.o)));
+  const byId = new Map(st.panels.map(p => [p.id, p]));
+  const F = byId.get(fixed) ?? st.panels[0];
+  // G = the rigid motion of each panel from where it lies folded.
+  const G = new Map<string, Mat>([[F.id, compose(anchor, invert(F.M))]]);
+  const queue = [F.id];
+  const flatSet = new Set(flat);
+  const visit = (id: string, g: Mat) => { if (!G.has(id)) { G.set(id, g); queue.push(id); } };
+  while (queue.length) {
+    const id = queue.shift()!, P = byId.get(id)!, g = G.get(id)!;
+    for (const q of st.panels) if (matEq(q.M, P.M, size * 1e-9)) visit(q.id, g);
+    for (const l of links) {
+      if (!l.b) continue;
+      const A = byId.get(l.a)!, B = byId.get(l.b)!;
+      const sameA = matEq(A.M, P.M, size * 1e-9), sameB = matEq(B.M, P.M, size * 1e-9);
+      if (!sameA && !sameB) continue;
+      const fl = flatSet.has(l.bid);
+      // G_B = G_A ∘ M_A ∘ M_B⁻¹ for a flat bend, else G_B = G_A.
+      if (sameA) visit(B.id, fl ? compose(compose(g, A.M), invert(B.M)) : g);
+      else visit(A.id, fl ? compose(compose(g, B.M), invert(A.M)) : g);
+    }
+  }
+  const g0 = G.get(F.id)!;
+  const mats: Record<string, Mat> = {};
+  for (const p of st.panels) mats[p.id] = compose(G.get(p.id) ?? g0, p.M);
+  return { mats, flat: [...flatSet], a: Object.fromEntries(links.map(l => [l.bid, l.a])) };
+}
+
+/** Where the sheet lies now: folded, or as the last Unfold / Fold left it. */
+export function sheetPlace(st: SheetState): SheetPlace {
+  if (st.unfold) return placeSheet(st, st.unfold.fixed, st.unfold.anchor, st.unfold.bends);
+  const mats: Record<string, Mat> = {};
+  for (const p of st.panels) mats[p.id] = p.M;
+  return { mats, flat: [], a: Object.fromEntries(bendLinks(st).map(l => [l.bid, l.a])) };
+}
+
+/** The state with each panel and bend at its current place (for drawing marks on an unfolded sheet). */
+export function placedState(st: SheetState): SheetState {
+  if (!st.unfold) return st;
+  const pl = sheetPlace(st);
+  return { ...st, panels: st.panels.map(p => ({ ...p, M: pl.mats[p.id] })), bends: st.bends.map(b => ({ ...b, M: pl.mats[pl.a[b.id]] ?? b.M })) };
+}
+
+/** The panel a face belongs to (`<panel>:top`, `<panel>:<edge>`), if any. */
+export function panelOfFace(st: SheetState, name: string): Panel | undefined {
+  return st.panels.find(p => name.startsWith(p.id + ":") && !name.slice(p.id.length + 1).includes(":"));
+}
+
+/** The bend a face belongs to (`<bend>:in`, `<bend>:top` once flat, ...), if any. */
+export function bendOfFace(st: SheetState, name: string): Bend | undefined {
+  return st.bends.find(b => name.startsWith(b.id + ":") && !name.slice(b.id.length + 1).includes(":"));
+}
+
+/** Unfold / Fold: the new state and where the sheet lies before and after. */
+export function unfoldSheet(st: SheetState, f: SmUnfoldFeature): { state: SheetState; from: SheetPlace; to: SheetPlace } {
+  if (st.faceted) throw new SheetError("E-SM-UNFOLDLOFT", "A lofted bend can't be unfolded; use the Flat-Pattern.");
+  if (!st.bends.length) throw new SheetError("E-SM-NOBENDS", "The sheet has no bends to unfold.");
+  const from = sheetPlace(st);
+  const ids = new Set(st.bends.map(b => b.id));
+  for (const b of f.bends) if (!ids.has(b)) throw new SheetError("E-SM-UNFOLDBEND", "A picked bend no longer exists.");
+  const now = new Set(from.flat);
+  let fixed: string, flat: string[];
+  if (f.type === "smunfold") {
+    fixed = st.unfold?.fixed ?? st.panels[0].id;
+    if (f.face) {
+      const p = panelOfFace(st, f.face.name);
+      if (!p) throw new SheetError("E-SM-UNFOLDFACE", "Pick a flat face of the sheet to stay fixed.");
+      fixed = p.id;
+    }
+    flat = [...new Set([...now, ...(f.bends.length ? f.bends : [...ids])])];
+  } else {
+    if (!st.unfold || !now.size) throw new SheetError("E-SM-NOTUNFOLDED", "Unfold some bends first.");
+    for (const b of f.bends) if (!now.has(b)) throw new SheetError("E-SM-FOLDBEND", "A picked bend isn't unfolded.");
+    fixed = st.unfold.fixed;
+    const back = new Set(f.bends.length ? f.bends : [...now]);
+    flat = [...now].filter(b => !back.has(b));
+  }
+  const anchor = from.mats[fixed] ?? st.panels[0].M;
+  const to = placeSheet(st, fixed, anchor, flat);
+  const home = st.panels.find(p => p.id === fixed)!;
+  const folded = !flat.length && matEq(anchor, home.M, 1e-9 * Math.max(1, Math.hypot(...home.M.o)));
+  return { state: { ...st, unfold: folded ? undefined : { fixed, anchor, bends: flat } }, from, to };
+}
+
+/** Bend lines of the unfolded bends, on the flat strips' top faces, in world coordinates. */
+export function unfoldBendLines(st: SheetState): { a: V3; b: V3; up: boolean }[] {
+  if (!st.unfold?.bends.length) return [];
+  const pl = sheetPlace(st), flat = new Set(pl.flat);
+  return st.bends.filter(b => flat.has(b.id)).map(b => {
+    const M = pl.mats[pl.a[b.id]] ?? b.M, [p, q] = bendLine(b);
+    return { a: apply(M, [p[0], p[1], st.T]), b: apply(M, [q[0], q[1], st.T]), up: b.up };
+  });
 }
