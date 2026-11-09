@@ -2142,14 +2142,30 @@ const sessionViews = new Map<string, NamedView[]>();
   hud.querySelector('[data-hud="area"]')!.addEventListener("click", () => nav.startZoomArea());
   hud.querySelector('[data-hud="prev"]')!.addEventListener("click", () => nav.previousView());
   $("#viewport").append(hud);
-  const moved = ["#views", "#projection", "#display-mode", "#display-btn"].map(sel => { const el = $(sel), mark = document.createComment(sel); el.before(mark); return { el, mark }; });
+  const moved = ["#views", "#projection", "#display-mode"].map(sel => { const el = $(sel), mark = document.createComment(sel); el.before(mark); return { el, mark }; });
   const sync = () => {
     const app = $("#app"), on = (app.classList.contains("model") || app.classList.contains("asm")) && !app.classList.contains("gerber");
     if (on === !hud.hidden) return;
     hud.hidden = !on;
     for (const { el, mark } of moved) { if (on) hud.append(el); else mark.after(el); }
     requestAnimationFrame(fitToolbar);
+    place();
   };
+  // Centred on the view, but moved left when it would reach the confirmation corner or the view cube.
+  const place = () => {
+    if (hud.hidden) return;
+    const vp = $("#viewport").getBoundingClientRect(), w = hud.offsetWidth;
+    let limit = vp.right;
+    for (const el of document.querySelectorAll<HTMLElement>("#navcube, #mc-confirm:not([hidden]):not(.at-cursor), #asm-confirm:not([hidden]):not(.at-cursor)")) {
+      const r = el.getBoundingClientRect();
+      if (r.width && r.top < vp.top + 60) limit = Math.min(limit, r.left);
+    }
+    const left = Math.max(8, Math.min((vp.width - w) / 2, limit - vp.left - 8 - w));
+    hud.style.left = `${Math.round(left)}px`;
+  };
+  new ResizeObserver(place).observe($("#viewport"));
+  new ResizeObserver(place).observe(hud);
+  for (const id of ["#mc-confirm", "#asm-confirm"]) new MutationObserver(place).observe($(id), { attributes: true, attributeFilter: ["hidden", "class"] });
   new MutationObserver(sync).observe($("#app"), { attributes: true, attributeFilter: ["class"] });
   sync();
   onLangChange(() => {

@@ -2841,7 +2841,7 @@ try {
       check(hud?.shown && hud.views && hud.mode && hud.proj && hud.centred && !hud.inHeader && dir[2] > 0.99,
         `model 1.371: the heads-up view bar holds the view groups at the top centre of the view and Previous view goes back (${JSON.stringify({ hud, dir })})`);
     }
-    // 1.375 (FR-UI-022): Section view in the heads-up bar cuts the model, a second click turns the cut off (the plane stays), a third on again; Display ▾ sits in the bar and opens its menu under it.
+    // 1.375 (FR-UI-022): Section view in the heads-up bar cuts the model, a second click turns the cut off (the plane stays), a third on again; the bar keeps clear of the ✓ ✕ corner.
     {
       const st = () => mp.evaluate(() => { const b = document.querySelector('#hud [data-hud="section"]'), ps = window.__sv.section.planes; return { n: ps.length, on: ps.filter(p => p.enabled).length, pressed: b.getAttribute("aria-pressed") }; });
       await mp.click('#hud [data-hud="section"]');
@@ -2852,11 +2852,13 @@ try {
       const s3 = await st();
       await mp.evaluate(() => document.querySelector("#sec-clear").click());
       const s4 = await st();
-      await mp.click("#hud #display-btn");
-      const menu = await mp.evaluate(() => { const m = document.querySelector("#display-menu"), b = document.querySelector("#display-btn").getBoundingClientRect(), r = m.getBoundingClientRect(); return { open: !m.hidden, under: r.top >= b.bottom, inView: r.left >= 0 && r.right <= innerWidth }; });
-      await mp.keyboard.press("Escape");
-      check(s1.n === 1 && s1.on === 1 && s1.pressed === "true" && s2.n === 1 && s2.on === 0 && s2.pressed === "false" && s3.on === 1 && s3.pressed === "true" && s4.n === 0 && s4.pressed === "false" && menu.open && menu.under && menu.inView,
-        `model 1.375: Section view in the heads-up bar turns the cut on and off, and Display opens from the bar (${JSON.stringify({ s1, s2, s3, s4, menu })})`);
+      // While a command is open the bar keeps clear of the ✓ ✕ corner.
+      await runCmd(mp, "Shell");
+      await mp.waitForSelector("#mc-confirm:not([hidden])");
+      const clear = await mp.evaluate(() => { const h = document.querySelector("#hud").getBoundingClientRect(), c = document.querySelector("#mc-confirm").getBoundingClientRect(); return { hud: Math.round(h.right), ok: Math.round(c.left), free: h.right <= c.left || h.bottom <= c.top }; });
+      await mp.click("#mc-cancel");
+      check(s1.n === 1 && s1.on === 1 && s1.pressed === "true" && s2.n === 1 && s2.on === 0 && s2.pressed === "false" && s3.on === 1 && s3.pressed === "true" && s4.n === 0 && s4.pressed === "false" && clear.free,
+        `model 1.375: Section view in the heads-up bar turns the cut on and off, and the bar keeps clear of the confirmation corner (${JSON.stringify({ s1, s2, s3, s4, clear })})`);
     }
     // 1.371 (FR-UI-104): named views: Space → Save view stores the camera in the part; the picker brings it back.
     {

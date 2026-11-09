@@ -10,7 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Added
 
 - **Document tabs keep the view (FR-DOC-003)**: a part, an assembly or a model file comes back to its tab with the camera it was left with, and a part with its selected Features row, instead of the fitted isometric view.
-- **Section view and Display in the heads-up bar (FR-UI-022)**: the bar at the top of the view has a Section view button: it cuts the model at the selected flat face, or through the middle on the front plane; a second click turns the cut off and keeps its planes, a third brings it back. Display ▾ moved into the bar next to the display style.
+- **Section view in the heads-up bar (FR-UI-022)**: the bar at the top of the view has a Section view button: it cuts the model at the selected flat face, or through the middle on the front plane; a second click turns the cut off and keeps its planes, a third brings it back. The bar moves aside when it would reach the ✓ ✕ corner or the view cube.
 
 ## [1.374.0] - 2026-11-09
 
