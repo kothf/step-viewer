@@ -5,11 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.283.0] - 2026-11-09
+## [1.286.0] - 2026-11-09
 
 ### Added
 
 - **Centre of mass on drawings**: tick Centre of mass in a view's panel to mark the model's centre of mass with the quartered circle symbol, as SolidWorks' Center of Mass model item does. It follows the model when it changes, and Dimension picks it like a corner, so you can dimension from the centre of mass to an edge or another point. The symbol prints and exports with the sheet.
+## [1.284.0] - 2026-11-09
+
+### Added
+
+- **Bend table on flat pattern drawing views (FR-FT-120)**: Annotate ▾ → Bend table, click a flat pattern view and place the table. The bend lines get tags A, B, … (top to bottom, then left to right) in place of their notes, and the table lists each bend's direction, angle and inner radius, like SolidWorks' Bend Table. The table follows the model and the interface language.
+
 ## [1.282.0] - 2026-11-09
 
 ### Added
@@ -1715,8 +1721,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.283.0...HEAD
-[1.283.0]: https://github.com/kothf/step-viewer/compare/v1.282.0...v1.283.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.286.0...HEAD
+[1.286.0]: https://github.com/kothf/step-viewer/compare/v1.284.0...v1.286.0
+[1.284.0]: https://github.com/kothf/step-viewer/compare/v1.282.0...v1.284.0
 [1.282.0]: https://github.com/kothf/step-viewer/compare/v1.279.0...v1.282.0
 [1.279.0]: https://github.com/kothf/step-viewer/compare/v1.276.0...v1.279.0
 [1.276.0]: https://github.com/kothf/step-viewer/compare/v1.275.0...v1.276.0

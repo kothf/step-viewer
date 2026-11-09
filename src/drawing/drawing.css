@@ -7,7 +7,7 @@
 .drw-cmds { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-wrap: wrap; }
 .drw-sep { width: 1px; align-self: stretch; background: var(--line); margin: 0 2px; }
 .drw-dd { position: relative; }
-.drw-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 5; min-width: 190px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); padding: 4px; display: flex; flex-direction: column; }
+.drw-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 5; min-width: 190px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); padding: 4px; display: flex; flex-direction: column; max-height: calc(100vh - 110px); overflow-y: auto; }
 .drw-menu.right { left: auto; right: 0; }
 .drw-menu button { text-align: left; background: transparent; border: 0; padding: 7px 10px; border-radius: 6px; cursor: pointer; }
 .drw-menu button:hover, .drw-menu button:focus-visible { background: var(--accent-soft); color: var(--accent-text); }

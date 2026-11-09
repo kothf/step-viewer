@@ -10,7 +10,7 @@ import type { HoleInfo, ModelItem, SketchInfo, ThreadInfo } from "./items";
 import { PEN_W, rotateBox, rotatePrims, type Prim } from "./prims";
 import { balloonPrims, bomCells, compOfKey, type Bom } from "./bom";
 import { datumPrims, gtolPrims, surfPrims, tablePrims } from "./gdt";
-import type { CLineAnnot, CloudAnnot, DimAnnot, DraftStyle, DrawingView, GeoRef, HoleAnnot, HoleTableAnnot, NoteAnnot, Sheet, SurfAnnot, Tol } from "./types";
+import type { BendTableAnnot, CLineAnnot, CloudAnnot, DimAnnot, DraftStyle, DrawingView, GeoRef, HoleAnnot, HoleTableAnnot, NoteAnnot, Sheet, SurfAnnot, Tol } from "./types";
 import { topoOnly, viewDir, viewOnly } from "./views";
 import { fitLimits } from "./iso286";
 import { weldPrims } from "./weld";
@@ -541,7 +541,8 @@ export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: Ann
   if (v.marks !== false && ctx.topo) out.prims.push(...centreMarks(v, pl, ctx.topo, P, n));
   if (v.threads !== false && ctx.threads?.length) out.prims.push(...threadPrims(v, pl, ctx.threads, ctx.topo, P, n));
   if (v.sketches && ctx.sketches?.length) out.prims.push(...sketchPrims(v, pl, ctx.sketches, P));
-  if (v.bendLines !== false && ctx.bends?.length) out.prims.push(...bendPrims(v, pl, ctx.bends, P, ctx));
+  const btable = (sheet.annots ?? []).some(a => a.t === "btable" && a.view === v.id);
+  if (v.bendLines !== false && ctx.bends?.length) out.prims.push(...bendPrims(v, pl, ctx.bends, P, ctx, btable));
   if (v.com && ctx.topo?.com) out.prims.push(...comPrims(toSheet(pl, ...P(ctx.topo.com))));
   for (const a of sheet.annots ?? []) {
     if (a.view !== v.id) continue;
@@ -580,6 +581,10 @@ export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: Ann
       const more = (a.stack ?? []).map(sc => String(ctx.bom?.itemOf(sc) ?? "?"));
       r = balloonPrims(toSheet(pl, a.pos[0], a.pos[1]), e ? toSheet(pl, ...P(e.m)) : null, a.txt || (item ? String(item) : "?"), more);
       if (!e || (!a.txt && !item)) out.dangling.push(a.id);
+    } else if (a.t === "btable") {
+      const bends = ctx.bends ?? [];
+      r = tablePrims({ id: a.id, t: "table", kind: "general", pos: toSheet(pl, a.pos[0], a.pos[1]), cols: BEND_COLS, rows: bendRows(a, bends, P, ctx) }, ctx.label);
+      if (!bends.length) out.dangling.push(a.id);
     } else if (a.t === "htable") {
       const ht = holeTablePrims(a, P, pl, ctx);
       r = ht;
@@ -870,18 +875,18 @@ export function sketchPrims(v: DrawingView, pl: Placement, sketches: SketchInfo[
 }
 
 /** Flat pattern bend lines (FR-FT-120): centre lines with a note along each, "UP 90° R2" (SolidWorks' bend notes). */
-export function bendPrims(v: DrawingView, pl: Placement, bends: FlatBend[], P: (p: V3) => P2, ctx: AnnotCtx): Prim[] {
+export function bendPrims(v: DrawingView, pl: Placement, bends: FlatBend[], P: (p: V3) => P2, ctx: AnnotCtx, tagged = false): Prim[] {
   const segs: Seg2[] = bends.map(b => ({ k: "p", c: 0, p: [...P(b.a), ...P(b.b)] }));
   const out = decorPrims(v, pl, segs, "center", "CENTER");
-  if (v.bendNotes === false) return out;
-  const h = TEXT_H * 0.8;
-  for (const b of bends) {
+  if (v.bendNotes === false && !tagged) return out;
+  const h = TEXT_H * 0.8, tags = tagged ? bendTags(bends, P) : null;
+  for (const [i, b] of bends.entries()) {
     const A = toSheet(pl, ...P(b.a)), B = toSheet(pl, ...P(b.b));
     let ang = Math.atan2(B[1] - A[1], B[0] - A[0]) * 180 / Math.PI;
     if (ang > 90.001) ang -= 180; else if (ang <= -90) ang += 180;
     const r = ang * Math.PI / 180, nx = -Math.sin(r), ny = Math.cos(r);
     const deg = Math.round(b.angle * 180 / Math.PI * 100) / 100, rad = Math.round(b.r * 100) / 100;
-    const s = `${ctx.label(b.up ? "UP" : "DOWN")} ${String(deg).replace(".", ctx.dec)}° R${String(rad).replace(".", ctx.dec)}`;
+    const s = tags ? tags[i] : `${ctx.label(b.up ? "UP" : "DOWN")} ${String(deg).replace(".", ctx.dec)}° R${String(rad).replace(".", ctx.dec)}`;
     out.push({ t: "t", x: (A[0] + B[0]) / 2 + nx * 0.8, y: (A[1] + B[1]) / 2 + ny * 0.8, s, h, al: "c", rot: ang, layer: "ANNOT" });
   }
   return out;
@@ -900,6 +905,24 @@ export function comPrims(C: P2): Prim[] {
     out.push({ t: "p", p, pen: "thin", layer: "ANNOT", closed: true, fill: true });
   }
   return out;
+}
+
+/** Bend tags A, B, … by the bend line's middle on the view: top to bottom, then left to right. */
+export function bendTags(bends: FlatBend[], P: (p: V3) => P2): string[] {
+  const mid = bends.map(b => { const a = P(b.a), c = P(b.b); return [(a[0] + c[0]) / 2, (a[1] + c[1]) / 2]; });
+  const order = bends.map((_b, i) => i).sort((i, j) => (Math.abs(mid[i][1] - mid[j][1]) > 1e-6 ? mid[j][1] - mid[i][1] : mid[i][0] - mid[j][0]));
+  const tags: string[] = [];
+  order.forEach((i, k) => { tags[i] = k < 26 ? String.fromCharCode(65 + k) : `Z${k - 25}`; });
+  return tags;
+}
+
+export const BEND_COLS = ["Tag", "Direction", "Angle", "Inner radius"];
+
+/** The rows of a bend table in tag order: tag, UP/DOWN (translated when drawn), angle in degrees and inner radius. */
+export function bendRows(a: BendTableAnnot, bends: FlatBend[], P: (p: V3) => P2, ctx: AnnotCtx): string[][] {
+  const tags = bendTags(bends, P), f = (v: number) => fmtNum(v, a.prec, ctx.dec);
+  return bends.map((b, i) => ({ b, tag: tags[i] })).sort((x, y) => (x.tag.length - y.tag.length) || x.tag.localeCompare(y.tag))
+    .map(({ b, tag }) => [tag, ctx.label(b.up ? "UP" : "DOWN"), `${f(b.angle * 180 / Math.PI)}°`, f(b.r)]);
 }
 
 // ---------- model items ----------
