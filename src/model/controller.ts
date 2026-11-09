@@ -768,7 +768,7 @@ export class ModelController {
       },
       renamedDim: (from, to) => this.store!.change("Rename dimension", d => renameEverywhere(d, from, to)),
     }, sk, this.frameOf(sk));
-    try { editor.modelSnap = localStorage.getItem("mc:modelSnap") !== "0"; editor.autoRels = localStorage.getItem("mc:autoRels") !== "0"; editor.showRels = localStorage.getItem("mc:skRels") !== "0"; editor.slotDims = localStorage.getItem("mc:slotDims") !== "0"; editor.snaps = parseSnaps(localStorage.getItem("mc:skSnaps")); } catch { /* private mode */ }
+    try { editor.modelSnap = localStorage.getItem("mc:modelSnap") !== "0"; editor.autoRels = localStorage.getItem("mc:autoRels") !== "0"; editor.showRels = localStorage.getItem("mc:skRels") !== "0"; editor.slotDims = localStorage.getItem("mc:slotDims") !== "0"; editor.snaps = parseSnaps(localStorage.getItem("mc:skSnaps")); editor.setGrid({ show: localStorage.getItem("mc:skGrid") === "1", snap: localStorage.getItem("mc:skGridSnap") === "1", spacing: Number(localStorage.getItem("mc:skGridStep")) || 0 }); } catch { /* private mode */ }
     editor.onQuickSnap = () => this.renderQuick();
     this.mode = { kind: "sketch", id, editor, entry, isNew };
     document.getElementById("app")!.classList.add("sketching");
@@ -5675,6 +5675,11 @@ export class ModelController {
       + `<label class="chk pm-chk" title="${esc(t("Lines snap horizontal, vertical, perpendicular, parallel or tangent and keep that relation; hold Ctrl to draw without them."))}"><input type="checkbox" data-a="autorels"${ed.autoRels ? " checked" : ""} />${esc(t("Automatic relations"))}</label>`
       + `<label class="chk pm-chk" title="${esc(t("Relation glyphs next to the entities; hover one to see what it ties, click to select it."))}"><input type="checkbox" data-a="showrels"${ed.showRels ? " checked" : ""} />${esc(t("Show relations"))}</label>`
       + `<details class="pm-snaps"><summary>${esc(t("Snaps"))}</summary><div class="pm-snapgrid">${SNAP_KINDS.map(([k, label]) => `<label class="chk pm-chk"><input type="checkbox" data-snap="${k}"${ed.snaps.has(k) ? " checked" : ""} />${esc(t(label))}</label>`).join("")}</div></details>`
+      + `<details class="pm-snaps pm-grid"${ed.grid || ed.gridSnap ? " open" : ""}><summary>${esc(t("Grid"))}</summary><div class="pm-snapgrid">`
+        + `<label class="chk pm-chk"><input type="checkbox" data-a="grid"${ed.grid ? " checked" : ""} />${esc(t("Show grid"))}</label>`
+        + `<label class="chk pm-chk" title="${esc(t("Points that snap to nothing else go to the nearest grid point; hold Ctrl to place freely."))}"><input type="checkbox" data-a="gridsnap"${ed.gridSnap ? " checked" : ""} />${esc(t("Snap to grid"))}</label>`
+        + `<label class="pm-field">${esc(t("Grid spacing"))} <input type="number" min="0" step="any" data-a="gridstep" value="${ed.gridSpacing || ""}" placeholder="${esc(t("Automatic"))}" title="${esc(t("Millimetres between grid lines; empty follows the zoom."))}" /></label>`
+        + `</div></details>`
       + `<div class="pm-sec"><h4>${esc(t("Selected"))}: ${nSel}</h4>`
       + (nSel ? `<div class="pm-rels">${rels.map(r => `<button class="btn small" data-rel="${r}">${esc(t(REL_NAME[r]))}</button>`).join("")}</div>`
         + `<div class="pm-rels"><button class="btn small" data-a="cons">${esc(t("Construction"))}</button>${ed.canMerge() ? `<button class="btn small" data-a="merge" title="${esc(t("Merge the two points into one"))}">${esc(t("Merge points"))}</button>` : ""}<button class="btn small danger" data-a="del">${esc(t("Delete"))}</button></div>`
@@ -5711,6 +5716,10 @@ export class ModelController {
     pm.querySelector<HTMLInputElement>("[data-a=slotdims]")?.addEventListener("change", e => { ed.slotDims = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:slotDims", ed.slotDims ? "1" : "0"); } catch { /* private mode */ } });
     pm.querySelector<HTMLInputElement>("[data-a=autorels]")?.addEventListener("change", e => { ed.autoRels = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:autoRels", ed.autoRels ? "1" : "0"); } catch { /* private mode */ } });
     pm.querySelector<HTMLInputElement>("[data-a=showrels]")?.addEventListener("change", e => { ed.showRels = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:skRels", ed.showRels ? "1" : "0"); } catch { /* private mode */ } ed.render(); });
+    const saveGrid = () => { try { localStorage.setItem("mc:skGrid", ed.grid ? "1" : "0"); localStorage.setItem("mc:skGridSnap", ed.gridSnap ? "1" : "0"); localStorage.setItem("mc:skGridStep", String(ed.gridSpacing || "")); } catch { /* private mode */ } };
+    pm.querySelector<HTMLInputElement>("[data-a=grid]")?.addEventListener("change", e => { ed.setGrid({ show: (e.target as HTMLInputElement).checked }); saveGrid(); });
+    pm.querySelector<HTMLInputElement>("[data-a=gridsnap]")?.addEventListener("change", e => { ed.setGrid({ snap: (e.target as HTMLInputElement).checked }); saveGrid(); });
+    pm.querySelector<HTMLInputElement>("[data-a=gridstep]")?.addEventListener("change", e => { const v = Number((e.target as HTMLInputElement).value); ed.setGrid({ spacing: isFinite(v) && v > 0 ? v : 0 }); saveGrid(); });
     pm.querySelectorAll<HTMLInputElement>("[data-snap]").forEach(i => i.addEventListener("change", () => {
       const k = i.dataset.snap as SnapKind;
       if (i.checked) ed.snaps.add(k); else ed.snaps.delete(k);

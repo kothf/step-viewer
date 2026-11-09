@@ -26,6 +26,7 @@ import { inPolygon, textPath } from "./profile";
 import { quadCorners, perimeterCircle, type PerimItem } from "./shapes";
 import { conicBezier, conicShoulder, entBezier, eqBezier, hasControl, parabolaFrom, rhoAt, styleBezier, type CurveEq } from "./conic";
 import { DEFAULT_SNAPS, SNAP_KINDS, arcCurve, intersections, perpendicularFoot, quadrants, tangentPoints, type SnapCurve, type SnapKind } from "./snaps";
+import { gridLines, gridStep, snapToGrid } from "./grid";
 import { arcSlotCorners, arcSlotEnts, arcSlotHalfWidth, arcSlotOutline, centreArcAxis, threePointArcAxis, type ArcSlotAxis } from "./slots";
 
 /** Points an entity refers to (its ends, centre, axis points). */
@@ -180,6 +181,14 @@ export class SketchEditor {
   showRels = true;
   /** Snap types on while drawing (FR-SK-046 preferences, localStorage `mc:skSnaps`). */
   snaps = new Set<SnapKind>(DEFAULT_SNAPS);
+  /** Sketch grid (FR-SK-041): shown, points snap to its nodes, and its spacing in mm (0 = automatic from the zoom). */
+  grid = false;
+  gridSnap = false;
+  gridSpacing = 0;
+  private gridObj: THREE.LineSegments | null = null;
+  private gridKey = "";
+  /** The spacing the grid was last drawn with (what Snap to grid rounds to). */
+  gridAt = 0;
   /** Quick snap (FR-SK-046): the one snap type the next point uses; cleared once the point is placed. */
   quickSnap: SnapKind | null = null;
   /** Called when the quick snap changes (set, used or cancelled), so the bar can show it. */
@@ -213,6 +222,7 @@ export class SketchEditor {
   dispose() {
     this.closeInput(false);
     this.host.viewer.scene.remove(this.group, this.marker);
+    this.dropGrid();
     this.clearGroup();
     for (const l of this.labels.values()) l.remove();
     this.labels.clear();
@@ -607,7 +617,89 @@ export class SketchEditor {
   // ---------- snapping ----------
 
   /** Snaps a cursor point to points, the origin, curves and horizontal/vertical from the last point. */
+  // ---------- grid (FR-SK-041) ----------
+
+  /** The part of the sketch plane the view shows (corners and middle of the canvas), or null when edge-on. */
+  private visibleBox(): [V2, V2] | null {
+    const r = this.host.viewer.renderer.domElement.getBoundingClientRect();
+    const xs: number[] = [], ys: number[] = [];
+    for (const [fx, fy] of [[0, 0], [1, 0], [0, 1], [1, 1], [0.5, 0.5]]) {
+      const q = this.uv({ clientX: r.left + fx * r.width, clientY: r.top + fy * r.height } as PointerEvent);
+      if (!q) return null;
+      xs.push(q[0]); ys.push(q[1]);
+    }
+    return [[Math.min(...xs), Math.min(...ys)], [Math.max(...xs), Math.max(...ys)]];
+  }
+
+  /** The spacing Snap to grid uses now: the drawn one, else worked out at a point. */
+  private snapStep(p: V2): number {
+    if (this.gridAt > 0) return this.gridAt;
+    const box = this.visibleBox();
+    return gridStep(this.gridSpacing, this.px(p), box ?? [p, p]);
+  }
+
+  private dropGrid() {
+    if (!this.gridObj) return;
+    this.host.viewer.scene.remove(this.gridObj);
+    this.gridObj.geometry.dispose();
+    (this.gridObj.material as THREE.Material).dispose();
+    this.gridObj = null;
+  }
+
+  /** Draws (or removes) the grid for the current view; runs on every render, rebuilding only when the view moved. */
+  private syncGrid() {
+    if (!this.grid) { if (this.gridObj) { this.dropGrid(); this.gridKey = ""; this.gridAt = 0; } return; }
+    const box = this.visibleBox();
+    if (!box) { this.dropGrid(); this.gridKey = ""; return; }
+    const mid: V2 = [(box[0][0] + box[1][0]) / 2, (box[0][1] + box[1][1]) / 2];
+    const step = gridStep(this.gridSpacing, this.px(mid), box);
+    // Pad by a few steps so small pans need no rebuild.
+    const pad = step * 4, k = (v: number) => Math.floor(v / pad);
+    const key = `${step}|${k(box[0][0])}|${k(box[0][1])}|${k(box[1][0])}|${k(box[1][1])}|${this.dark ? 1 : 0}`;
+    if (key === this.gridKey && this.gridObj) return;
+    this.gridKey = key;
+    this.gridAt = step;
+    const lo: V2 = [Math.floor(box[0][0] / pad) * pad, Math.floor(box[0][1] / pad) * pad];
+    const hi: V2 = [Math.ceil(box[1][0] / pad + 1) * pad, Math.ceil(box[1][1] / pad + 1) * pad];
+    const pos: number[] = [], col: number[] = [];
+    const bg = this.dark ? [0.09, 0.1, 0.12] : [1, 1, 1], ink = this.dark ? [0.75, 0.8, 0.88] : [0.35, 0.4, 0.5];
+    const mix = (a: number) => bg.map((b, i) => b + (ink[i] - b) * a);
+    for (const [a, b, major] of gridLines([lo, hi], step)) {
+      const c = mix(major ? 0.32 : 0.14);
+      for (const q of [a, b]) { const w = this.w(q); pos.push(w.x, w.y, w.z); col.push(...c); }
+    }
+    this.dropGrid();
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
+    this.gridObj = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ vertexColors: true, depthTest: false, transparent: true, opacity: 0.9 }));
+    this.gridObj.renderOrder = 2990;
+    this.gridObj.userData.skGrid = true;
+    this.host.viewer.scene.add(this.gridObj);
+  }
+
+  /** Shows or hides the grid, sets Snap to grid and the spacing (mm, 0 = automatic). */
+  setGrid(o: { show?: boolean; snap?: boolean; spacing?: number }) {
+    if (o.show !== undefined) this.grid = o.show;
+    if (o.snap !== undefined) this.gridSnap = o.snap;
+    if (o.spacing !== undefined) this.gridSpacing = Math.max(0, o.spacing || 0);
+    this.gridKey = "";
+    this.gridAt = 0;
+    this.syncGrid();
+    this.host.viewer.invalidate();
+  }
+
   private snapPoint(p: V2, active: boolean, materialize = false): Snap {
+    const r = this.snapPointRaw(p, active, materialize);
+    // Snap to grid (FR-SK-041): a point that snapped to nothing else goes to the nearest grid node.
+    if (!this.gridSnap || !active || r.id || r.curve || r.rel || (this.suppressed() && !this.quickSnap) || this.quickSnap) return r;
+    const keep = r.hv === "horizontal" ? "y" : r.hv === "vertical" ? "x" : null;
+    const q = snapToGrid(r.p, this.snapStep(r.p), keep);
+    if (keep === null) this.showMarker(q);
+    return { ...r, p: q };
+  }
+
+  private snapPointRaw(p: V2, active: boolean, materialize = false): Snap {
     this.marker.visible = false;
     // Ctrl held (or automatic relations off): the point goes where the cursor is, with no relation (FR-SK-052).
     if (!active || (this.suppressed() && !this.quickSnap)) return { p, id: null, curve: null, hv: null };
@@ -3572,6 +3664,7 @@ export class SketchEditor {
 
   private placeLabels() {
     if (this.disposed) return;
+    this.syncGrid();
     if (this.grip) { const [x, y] = this.screen(JSON.parse(this.grip.dataset.pos ?? "[0,0]") as V2); this.grip.style.left = `${x}px`; this.grip.style.top = `${y}px`; }
     for (const el of this.labels.values()) {
       const p = JSON.parse(el.dataset.pos ?? "[0,0]") as V2;
