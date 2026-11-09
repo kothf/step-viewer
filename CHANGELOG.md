@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.304.0] - 2026-11-09
+
+### Added
+
+- **Quick previews of drawing views** (FR-DRW-016): views of a big model (80 edges or more, or once an exact view took longer than 0.4 s) first show a paler preview from OCCT's polygonal hidden-line removal, then the exact lines replace it. On the CAx-IF test parts the preview comes in about 14 times sooner than the exact view (0.1–0.3 s instead of 1.8–4 s). Dimensions, picking and exports always use the exact lines.
+
 ## [1.303.0] - 2026-11-09
 
 ### Added
@@ -1773,7 +1779,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.303.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.304.0...HEAD
+[1.304.0]: https://github.com/kothf/step-viewer/compare/v1.303.0...v1.304.0
 [1.303.0]: https://github.com/kothf/step-viewer/compare/v1.302.0...v1.303.0
 [1.302.0]: https://github.com/kothf/step-viewer/compare/v1.300.0...v1.302.0
 [1.300.0]: https://github.com/kothf/step-viewer/compare/v1.298.0...v1.300.0

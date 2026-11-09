@@ -4,7 +4,7 @@
 // document through the Modeller; STEP / IGES / BREP files are read as they are.
 import { FLAT_CONFIG, type Align, type Stair } from "./views";
 import { flatBends, flatPatternDoc, flatToXY } from "../sheetmetal/sheet";
-import { geometryDiff, project, readShape, alignedShape, section, shadeTris, shapeInfo, topology, type V3, type ViewDir } from "../kernel/drawing";
+import { geometryDiff, project, projectPoly, readShape, alignedShape, section, shadeTris, shapeInfo, topology, type V3, type ViewDir } from "../kernel/drawing";
 import { Assembler } from "../kernel/assembly";
 import { Modeller } from "../kernel/model";
 import type { AsmDoc } from "../asm/types";
@@ -16,6 +16,8 @@ export type DrawingRequest =
   | { id: number; type: "init"; base: string; module: WebAssembly.Module }
   | { id: number; type: "load"; part?: PartDoc; asm?: AsmDoc; file?: { name: string; bytes: Uint8Array } }
   | { id: number; type: "project"; view: ViewDir; shade?: boolean; cfg?: string; only?: string[] }
+  /** A quick polygonal preview of a view (FR-DRW-016) while the exact one is computed. */
+  | { id: number; type: "preview"; view: ViewDir; cfg?: string; only?: string[] }
   | { id: number; type: "section"; view: ViewDir; p: V3; poly?: number[]; stair?: Stair; align?: Align; exclude?: string[]; cfg?: string; only?: string[] }
   /** Another configuration of the loaded part (FR-DRW-010): built once, its facts returned like a load's. */
   | { id: number; type: "config"; name: string }
@@ -162,6 +164,12 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
         proj.shade = shadeTris(oc, sh, r.view, Math.max(0.01, Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 400));
       }
       post({ id: r.id, ok: true, proj });
+    } else if (r.type === "preview") {
+      if (!shape) throw new Error("No model loaded");
+      const sh = r.only?.length && placedShapes.length ? onlyOf(r.only).shape : shapeOf(r.cfg).shape;
+      // Mesh chord error: 1/300 of the model's size (the preview only has to look right).
+      const [lo, hi] = shapeInfo(oc, sh).box;
+      post({ id: r.id, ok: true, proj: projectPoly(oc, sh, r.view, Math.max(0.01, Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 300)) });
     } else if (r.type === "diff") {
       if (!oc) throw new Error("Kernel not started");
       post({ id: r.id, ok: true, diff: geometryDiff(oc, solidOf(r.a), solidOf(r.b)) });

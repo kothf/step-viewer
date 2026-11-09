@@ -30,6 +30,13 @@ export class DrawingKernel {
   readonly configs = new Map<string, ModelFacts>();
   private cfgLoading = new Map<string, Promise<ModelFacts>>();
   private inflight = new Map<string, Promise<Projection>>();
+  /** Quick polygonal previews (FR-DRW-016) by the same keys as `cache`; only drawn, never measured. */
+  readonly previews = new Map<string, Projection>();
+  private previewing = new Map<string, Promise<Projection>>();
+  /** The longest exact projection of this model so far (ms): slow models get previews first. */
+  slowest = 0;
+  /** Previews made so far (for the smoke test). */
+  previewsMade = 0;
 
   constructor(private base: string) {}
 
@@ -64,6 +71,9 @@ export class DrawingKernel {
     this.loaded = null;
     this.cache.clear();
     this.inflight.clear();
+    this.previews.clear();
+    this.previewing.clear();
+    this.slowest = 0;
     this.configs.clear();
     this.cfgLoading.clear();
   }
@@ -73,6 +83,9 @@ export class DrawingKernel {
     this.gen++;
     this.cache.clear();
     this.inflight.clear();
+    this.previews.clear();
+    this.previewing.clear();
+    this.slowest = 0;
     this.configs.clear();
     this.cfgLoading.clear();
     this.loaded = this.start().then(() => this.call<ModelFacts>({ type: "load", ...src })).then(facts);
@@ -138,11 +151,34 @@ export class DrawingKernel {
       const gen = this.gen;
       const cfg = req.cfg;
       p = (cfg ? this.config(cfg) : this.loaded).then(() => this.call<{ proj: Projection }>(req.p ? { type: "section", view, p: req.p, poly: req.poly, stair: req.stair, align: req.align, exclude: req.exclude, cfg, only: req.only } : { type: "project", view, shade: req.shade, cfg, only: req.only })).then(r => {
-        if (gen === this.gen) this.cache.set(key, r.proj);
+        if (gen === this.gen) { this.cache.set(key, r.proj); this.previews.delete(key); this.slowest = Math.max(this.slowest, r.proj.ms); }
         this.inflight.delete(key);
         return r.proj;
       }, err => { this.inflight.delete(key); throw err; });
       this.inflight.set(key, p);
+    }
+    return p;
+  }
+
+  /**
+   * A quick polygonal preview of a plain view (not a section), cached by the same key. Ask for it before
+   * the exact projection: the worker answers in order.
+   */
+  preview(req: { view: ViewDir; cfg?: string; only?: string[]; key: string }): Promise<Projection> {
+    const { key } = req;
+    const have = this.previews.get(key);
+    if (have) return Promise.resolve(have);
+    let p = this.previewing.get(key);
+    if (!p) {
+      if (!this.loaded) return Promise.reject(new Error("No model loaded"));
+      const gen = this.gen, cfg = req.cfg;
+      p = (cfg ? this.config(cfg) : this.loaded).then(() => this.call<{ proj: Projection }>({ type: "preview", view: req.view, cfg, only: req.only })).then(r => {
+        this.previewsMade++;
+        if (gen === this.gen && !this.cache.has(key)) this.previews.set(key, r.proj);
+        this.previewing.delete(key);
+        return r.proj;
+      }, err => { this.previewing.delete(key); throw err; });
+      this.previewing.set(key, p);
     }
     return p;
   }
