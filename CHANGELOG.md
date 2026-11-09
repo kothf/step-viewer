@@ -5,6 +5,33 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.364.0] - 2026-11-09
+
+### Added
+- Tab and Slot (FR-FT-120): tabs grow out of a straight edge of a sheet face, in its plane, through the face they meet (on another body or the sheet itself), which gets matching slots with a clearance all round. Set the tab length and height, the number of tabs with an edge offset or a fixed spacing, and optionally round the slot corners. The tabs are part of the flat pattern, and slots cut in the sheet show in it like any cut.
+
+## [1.363.0] - 2026-11-10
+
+### Changed
+
+- Extrude and Revolve open with the cursor in Depth (or Angle), so a typed size goes straight there.
+- Extrude seen straight down the sketch's normal turns to a three-quarter view on the sketch's side, so the depth and its arrow can be seen.
+- Cut on a sketch beside the part (a reference plane under it): when the whole part lies on the sketch normal's side, the cut starts reversed, towards the part, instead of cutting nothing.
+- A new empty part's Properties page says to start a sketch on a plane, not "Open a model to begin."
+- The right panel's page tabs show every name when they fit; when they don't, only the open page keeps its name and the others show their icon with a tooltip (the names ran into the next tab).
+
+### Fixed
+
+- Coincident mate between two flat faces: the first guess is face to face; when that cannot be solved and the aligned one can (a part that cannot turn over, such as a die block on a pin), the panel takes Aligned instead of refusing the mate. A choice made in the panel stays.
+- Screw mates: moving the nut (a distance mate, a drag) now turns the screw. The solver measured axis offsets × the assembly size, which made its damping swamp the screw's gentle turn, so a handwheel driving a fork could not move; offsets are now in mm, the screw keeps its turn count within a step, and the damping adapts (Levenberg–Marquardt).
+- Overall size of a modelled part is taken from the exact geometry (a Ø15 cylinder read 14.995 × 14.998 from its mesh).
+
+## [1.357.0] - 2026-11-09
+
+### Added
+
+- **Sub-weldments in the cut list (FR-FT-121)**: right-click a cut list item or a weldment body in the Features tree and pick **Create sub-weldment** to list that part of the weldment on its own, as SolidWorks does. The sub-weldment is a folder in the Cut list with its items under it; rename it with a double-click or F2, add more items or bodies to it with **Add to Sub-weldment1** (or take them out with **Remove from sub-weldment**), and **Dissolve sub-weldment** puts its items back. An item whose bodies sit in different places is split, each part with its own quantity (a weld bead's length and mass share out by its bodies); item properties typed in the Cut List dialog stay shared. Clicking a sub-weldment highlights its bodies, the Cut List dialog heads each one's rows with its name, and the CSV gets a Sub-weldment column.
+
 ## [1.356.0] - 2026-11-09
 
 ### Added
@@ -2138,7 +2165,10 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.356.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.364.0...HEAD
+[1.364.0]: https://github.com/kothf/step-viewer/compare/v1.363.0...v1.364.0
+[1.363.0]: https://github.com/kothf/step-viewer/compare/v1.357.0...v1.363.0
+[1.357.0]: https://github.com/kothf/step-viewer/compare/v1.356.0...v1.357.0
 [1.356.0]: https://github.com/kothf/step-viewer/compare/v1.355.0...v1.356.0
 [1.355.0]: https://github.com/kothf/step-viewer/compare/v1.354.0...v1.355.0
 [1.354.0]: https://github.com/kothf/step-viewer/compare/v1.353.0...v1.354.0
