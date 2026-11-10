@@ -436,7 +436,15 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
     // A short horizontal shoulder at the text, which sits on it.
     const sx = u[0] >= 0 ? 1 : -1;
     let box: [number, number, number, number];
-    if (outside) {
+    if (a.along) {
+      // Text along the leader, readable from the bottom or the right; outside the rim the leader runs on under it.
+      let rot = Math.atan2(u[1], u[0]) * 180 / Math.PI;
+      if (rot > 90.001) rot -= 180;
+      if (rot <= -89.999) rot += 180;
+      const rr = rot * Math.PI / 180, up: P2 = [-Math.sin(rr), Math.cos(rr)];
+      if (outside) out.push(thin(T, add2(T, u, totalW + 1)));
+      box = writeText(add2(outside ? add2(T, u, totalW / 2 + 0.5) : T, up, 0.8), rot, "c");
+    } else if (outside) {
       const end: P2 = [T[0] + sx * (totalW + 1), T[1]];
       out.push(thin(T, end));
       box = writeText([T[0] + sx * 0.5, T[1] + 0.8], 0, sx > 0 ? "l" : "r");
