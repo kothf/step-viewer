@@ -20,8 +20,8 @@ import type { Prim } from "./prims";
 import { editTitleBlock } from "./tbEditor";
 import { loadFormats } from "./formats";
 import { FIELD_LABEL, isoFormat, editableOf, SIZES, fieldAt, formatPrims, frameOf, sheetSize, tbSize, titleBlockAt, type Fields } from "./sheet";
-import type { Annot, BalloonAnnot, CLineAnnot, DatumTargetAnnot, DimAnnot, SketchAnnot, SkPen, WeldSide, WeldSym, DisplayStyle, DraftStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, GRow, GSym, HatchPattern, Orient, Sheet, SheetSize, TableAnnot, TangentEdges, Tol } from "./types";
-import { GSYMS, GSYM_NAMES, cellLabel } from "./gdt";
+import type { Annot, BalloonAnnot, CLineAnnot, DatumTargetAnnot, DimAnnot, SketchAnnot, SkPen, WeldSide, WeldSym, DisplayStyle, DraftStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, GRow, GSym, HatchPattern, Orient, Sheet, SheetSize, SurfLay, TableAnnot, TangentEdges, Tol } from "./types";
+import { GSYMS, GSYM_NAMES, SURF_LAYS, cellLabel } from "./gdt";
 import { WELD_SYMS, WELD_SYM_NAMES } from "./weld";
 import { SK_PENS, SK_PEN_NAMES, orthoSnap, skPoints, skPrims } from "./sheetSketch";
 import { fitLimits, splitFit } from "./iso286";
@@ -1864,6 +1864,10 @@ export class DrawingWorkspace {
         <label class="drw-f">${esc(t("Process"))}<select data-d="sp">${([["any", "Any process"], ["removal", "Material removed"], ["none", "No material removed"]] as const).map(([k, l]) => `<option value="${k}"${a.proc === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>
         <label class="drw-f">${esc(t("Roughness"))}<input data-d="st" value="${esc(a.text)}" translate="no" placeholder="Ra 3.2"></label>
         <label class="drw-f">${esc(t("Production method"))}<input data-d="sm" value="${esc(a.method ?? "")}" translate="no"></label>
+        <label class="drw-f">${esc(t("Second requirement"))}<input data-d="st2" value="${esc(a.text2 ?? "")}" translate="no" placeholder="Rz 6.3"></label>
+        <label class="drw-f">${esc(t("Lay"))}<select data-d="slay"><option value="">${esc(t("None"))}</option>${SURF_LAYS.map(k => `<option value="${k}"${a.lay === k ? " selected" : ""} translate="no">${k}</option>`).join("")}</select></label>
+        <label class="drw-f">${esc(t("Machining allowance"))}<input data-d="sallow" value="${esc(a.allow ?? "")}" translate="no"></label>
+        <label class="drw-chk"><input type="checkbox" data-d="saround"${a.around ? " checked" : ""}> ${esc(t("All around"))}</label>
       </fieldset>${del}`;
     }
     if (a.t === "balloon") {
@@ -1990,7 +1994,11 @@ export class DrawingWorkspace {
       else if (a.t === "balloon" && k === "bstack") { if (val) a.stack = [...(a.stack ?? []), val]; }
       else if (a.t === "table" && a.kind === "bom" && k === "bsub") { if (val) a.sub = val; else delete a.sub; }
       else if (a.t === "table" && a.kind === "bom" && k === "bmode") { if (val === "parts") a.mode = "parts"; else delete a.mode; }
-      else if (a.t === "surf") { if (k === "sp") a.proc = val as typeof a.proc; else if (k === "st") a.text = val.trim(); else if (k === "sm") { if (val.trim()) a.method = val.trim(); else delete a.method; } }
+      else if (a.t === "surf") { if (k === "sp") a.proc = val as typeof a.proc; else if (k === "st") a.text = val.trim(); else if (k === "sm") { if (val.trim()) a.method = val.trim(); else delete a.method; }
+        else if (k === "st2") { if (val.trim()) a.text2 = val.trim(); else delete a.text2; }
+        else if (k === "slay") { if (val) a.lay = val as SurfLay; else delete a.lay; }
+        else if (k === "sallow") { if (val.trim()) a.allow = val.trim(); else delete a.allow; }
+        else if (k === "saround") { if ((el as HTMLInputElement).checked) a.around = true; else delete a.around; } }
       else if (a.t === "table") {
         // Headers and the title keep their English key while unchanged, so they follow the language.
         if (k === "tt") { if (!val.trim()) delete a.title; else if (!(a.title && cellLabel(a.title, t) === val)) a.title = val; }

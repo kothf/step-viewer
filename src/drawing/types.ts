@@ -165,7 +165,9 @@ export interface GtolAnnot { id: string; t: "gtol"; view?: string; pos: [number,
 /** Datum feature symbol: a filled triangle on an edge and a framed letter. */
 export interface DatumAnnot { id: string; t: "datum"; view: string; ref: GeoRef; pos: [number, number]; letter: string }
 /** Surface finish (ISO 1302 / 21920): the tick on an edge, any process, material removed or not removed, with the roughness above. */
-export interface SurfAnnot { id: string; t: "surf"; view?: string; ref?: GeoRef; pos: [number, number]; proc: "any" | "removal" | "none"; text: string; method?: string }
+/** `text2`: a second requirement under the first (the long leg grows). `lay`: the lay symbol beside the long leg. `allow`: machining allowance in mm, left of the short leg. `around`: the circle that makes it apply to every surface round the outline. */
+export type SurfLay = "=" | "⊥" | "X" | "M" | "C" | "R" | "P";
+export interface SurfAnnot { id: string; t: "surf"; view?: string; ref?: GeoRef; pos: [number, number]; proc: "any" | "removal" | "none"; text: string; method?: string; text2?: string; lay?: SurfLay; allow?: string; around?: boolean }
 /** A table on the sheet (FR-DRW-024): revision table or a general one; `pos` is its top-left corner (sheet mm), its top-right one with `anchor: "tr"` (revision tables grow to the left), or its bottom-right one with `anchor: "br"` (a BOM on the title block: header at the bottom, items upwards). A BOM's rows come from the assembly when drawn. */
 export interface TableAnnot { id: string; t: "table"; view?: undefined; kind: "rev" | "general" | "bom"; pos: [number, number]; cols: string[]; rows: string[][]; title?: string; anchor?: "tr" | "br"; /** BOM only: "parts" lists the parts inside sub-assemblies (FR-ASM-024). */ mode?: "top" | "parts"; /** BOM only: list just this top-level sub-assembly's parts. */ sub?: string }
 

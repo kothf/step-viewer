@@ -5027,6 +5027,18 @@ try {
     const g = an.find(a => a.t === "gtol"), ds = an.filter(a => a.t === "datum").map(a => a.letter).join(""), sf = an.find(a => a.t === "surf");
     check(g?.leader && g.view === front.id && g.rows[0].sym === "perp" && ds === "AB" && sf?.ref && tx.includes("0.05") && tx.includes("A") && tx.includes("B") && tx.includes("Ra 3.2"),
       `drawing: tolerance frame with a leader, datums A and B, surface finish on an edge (${JSON.stringify({ g: g?.rows, ds, sf: !!sf?.ref })}; ${tx.join(" ")})`);
+    // Surface finish options (the new symbol is selected): second requirement, lay, allowance, all around.
+    const ssel = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-d="st2"]'));
+    if (ssel) {
+      await dp.fill('#drw [data-d="st2"]', "Rz 6.3"); await dp.dispatchEvent('#drw [data-d="st2"]', "change");
+      await dp.selectOption('#drw [data-d="slay"]', "⊥");
+      await dp.fill('#drw [data-d="sallow"]', "0.5"); await dp.dispatchEvent('#drw [data-d="sallow"]', "change");
+      await dp.check('#drw [data-d="saround"]');
+    }
+    an = await annots(); tx = await texts();
+    const sf2 = an.find(a => a.t === "surf");
+    check(ssel && sf2.text2 === "Rz 6.3" && sf2.lay === "⊥" && sf2.allow === "0.5" && sf2.around === true && tx.includes("Rz 6.3") && tx.includes("⊥") && tx.includes("0.5"),
+      `drawing: surface finish with a second requirement, lay, allowance and all around (${JSON.stringify(sf2)}; ${tx.join(" ")})`);
     // The frame's properties: a Ø zone, (M) and a second row.
     await dp.mouse.move(gx + 8, gy + 4); await dp.mouse.click(gx + 8, gy + 4);
     const gsel = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-grow="+"]'));
