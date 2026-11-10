@@ -1362,6 +1362,22 @@ test("a dimension can carry a second line of text under its line (FR-DRW-021)", 
     assert.deepEqual(dimPrims({ ...(inn as object), outside: true } as never, dg, pl, ".").prims, dimPrims(inn, dg, pl, ".").prims);
   }
   {
+    // Angle arrows: a wide sector keeps them inside; a narrow one gets them outside on tails of the arc; the choice can be forced.
+    const lines = [[[0, 0], [40, 0]], [[0, 0], [0, 40]]];
+    const ang = (pos: number[], more: object = {}) => dimPrims({ id: "d", t: "dim", view: "v", k: "ang", refs: [], pos, ...more } as never, { k: "ang", pts: [], lines, value: 0 } as never, pl, ".");
+    const arc = (o: { prims: { t: string }[] }) => o.prims.find(q => q.t === "a") as never as { a0: number; a1: number; r: number };
+    const wide = arc(ang([14, 14])), narrow = arc(ang([2.2, 2.2]));
+    assert.ok(Math.abs(wide.a1 - wide.a0 - Math.PI / 2) < 1e-9, "wide: the arc spans just the angle");
+    assert.ok(Math.abs(narrow.a1 - narrow.a0 - Math.PI / 2 - 2 * 5 / narrow.r) < 1e-9, "narrow: a tail of arrow + 2 at each end");
+    assert.ok(Math.abs(arc(ang([2.2, 2.2], { arrows: "in" })).a1 - arc(ang([2.2, 2.2], { arrows: "in" })).a0 - Math.PI / 2) < 1e-9, "forced inside");
+    assert.ok(arc(ang([14, 14], { arrows: "out" })).a1 - arc(ang([14, 14], { arrows: "out" })).a0 > Math.PI / 2 + 0.1, "forced outside");
+    assert.equal(ang([2.2, 2.2]).prims.length, ang([2.2, 2.2], { arrows: "in" }).prims.length, "same pieces either way");
+    // Extension lines appear when the arc is past the lines' ends, and can be hidden one by one.
+    const far = ang([50, 50]), nl = (o: { prims: { t: string }[] }) => o.prims.filter(q => q.t === "l").length;
+    assert.equal(nl(far) - nl(ang([50, 50], { noExt: "a" })), 1);
+    assert.equal(nl(far) - nl(ang([50, 50], { noExt: "both" })), 2);
+  }
+  {
     // A diameter displayed as a linear dimension: extension lines from the rim's left and right ends, arrows on a level line, Ø kept.
     const dia = { id: "d", t: "dim", view: "v", k: "dia", refs: [], pos: [3, 30], lin: "h" } as never, dg = { k: "dia", pts: [], c: [0, 0], r: 10, value: 20 } as never;
     const o = dimPrims(dia, dg, pl, ".");

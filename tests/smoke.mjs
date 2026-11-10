@@ -4989,6 +4989,31 @@ try {
     tx = await texts();
     check(hov >= 1 && pv >= 1 && smart.length === 2 && smart[0].k === "h" && smart[0].view === front.id && smart[1].k === "dia" && tx.filter(s => s === "100").length === 2 && tx.filter(s => s === "Ø16").length === 2,
       `drawing: Smart dimension: an edge placed above it gives a horizontal 100, a circle gives Ø16, with a live preview (${JSON.stringify(smart.map(a => a.k))}, ${tx.join(" ")})`);
+    // 1.443.0 angle arrows: an angle placed tight in the corner gets its arrows outside (the arc grows tails); Inside takes them off; then deleted.
+    {
+      const sc = await dp.evaluate(() => { const s = window.__sv.drw.doc().sheets[0].scale; return s[0] / s[1]; });
+      await dp.click('#drw [data-a="dim"]');
+      [x, y] = await at(front.id, -20, 20); await dp.mouse.move(x, y + 3); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+      [x, y] = await at(front.id, 50, 7); await dp.mouse.move(x + 3, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+      [x, y] = await at(front.id, 50 - 2 / sc, 20 - 2 / sc); await dp.mouse.move(x - 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+      await dp.keyboard.press("Escape");
+      const n0 = (await annots()).length, made = (await annots()).find(a => a.k === "ang");
+      const sweep = () => dp.evaluate(() => { const q = window.__sv.drw.prims().filter(p => p.t === "a" && p.layer === "ANNOT" && Math.abs(p.r - 3) < 0.2).pop(); return q ? q.a1 - q.a0 : null; });
+      const s0 = await sweep();
+      const tp = await dp.evaluate(() => { const q = window.__sv.drw.prims().find(p => p.t === "t" && p.layer === "ANNOT" && p.s === "90°"); return q ? window.__sv.drw.sheetPt(q.x + 1.5, q.y + 1.2) : null; });
+      let s1 = null, has = false, st = false, gone = false;
+      if (tp) {
+        await dp.mouse.click(tp[0], tp[1]);
+        has = !!(await dp.$('#drw .drw-props [data-d="arrows"]')) && !!(await dp.$('#drw .drw-props [data-d="noext"]'));
+        if (has) {
+          await dp.selectOption('#drw .drw-props [data-d="arrows"]', "in");
+          s1 = await sweep(); st = (await annots()).some(a => a.k === "ang" && a.arrows === "in");
+          await dp.click('#drw .drw-props [data-a="adel"]');
+          gone = (await annots()).length === n0 - 1 && !(await annots()).some(a => a.k === "ang");
+        }
+      }
+      check(!!made && has && st && gone && s0 > Math.PI / 2 + 1 && Math.abs(s1 - Math.PI / 2) < 1e-6, `drawing: a tight angle dimension has its arrows outside, Inside puts them back (${JSON.stringify({ made: !!made, has, st, gone, s0, s1, tp: !!tp, ks: (await annots()).map(q => q.k).join() })})`);
+    }
     // Select the 100 by its text and give it a ± tolerance.
     [x, y] = await at(front.id, 0, 40.5);
     await dp.mouse.click(x, y);
