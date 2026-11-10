@@ -2106,7 +2106,11 @@ try {
     const imp = await mp.evaluate(() => ({ stored: JSON.parse(localStorage.getItem("mc:materials")).map(m => `${m.name}=${m.density}`).join(), rows: [...document.querySelectorAll("#mat-dlg .mat-list li[data-i] b")].map(e => e.textContent).join() }));
     check(mdl.suggestedFilename() === "my-materials.json" && exported.format === "mobiuscad-materials" && exported.materials[0]?.name === "Сплав 7" && exported.materials[0]?.E === 55 && imp.stored === "Сплав 7=3.4,Cork=0.24" && imp.rows === "Сплав 7,Cork",
       `model 1.470: My materials export to a file and import back, replacing by name (${JSON.stringify({ name: mdl.suggestedFilename(), exported: exported.materials, imp })})`);
-    await mp.evaluate(() => localStorage.setItem("mc:materials", JSON.stringify(JSON.parse(localStorage.getItem("mc:materials")).filter(m => m.name !== "Cork"))));
+    // The import selected Cork: delete it, then pick Сплав 7 again for the deletion below.
+    await mp.click("#mat-dlg [data-a=del]");
+    await mp.click("#confirm [data-a=ok]");
+    await mp.waitForFunction(() => !document.querySelector("#confirm").open && JSON.parse(localStorage.getItem("mc:materials")).length === 1);
+    await mp.click('#mat-dlg .mat-list li[data-i]:has-text("Сплав 7")');
     await mp.click("#mat-dlg [data-a=del]");
     await mp.click("#confirm [data-a=ok]");
     await mp.waitForFunction(() => !document.querySelector("#confirm").open && JSON.parse(localStorage.getItem("mc:materials")).length === 0);
