@@ -1867,7 +1867,9 @@ export class DrawingWorkspace {
         <div class="drw-datums">${[0, 1, 2].map(k => `<label class="drw-f">${esc(t(["Primary datum", "Secondary datum", "Tertiary datum"][k]))}<input data-d="g:${i}:d${k}" value="${esc(r.datums[k] ?? "")}" maxlength="6" translate="no"></label>`).join("")}</div>
         ${a.rows.length > 1 ? `<div class="row"><button class="btn small" data-grow="-${i}">${esc(t("Remove row"))}</button></div>` : ""}
       </fieldset>`).join("");
-      return `<fieldset class="pm-group"><legend>${esc(t("Geometric tolerance"))}</legend>${a.leader ? `<p class="drw-note">${esc(t("With a leader to the model."))}</p><label class="drw-chk"><input type="checkbox" data-d="gall"${a.around ? " checked" : ""}> ${esc(t("All around"))}</label>` : ""}</fieldset>${rows}
+      return `<fieldset class="pm-group"><legend>${esc(t("Geometric tolerance"))}</legend>${a.leader ? `<p class="drw-note">${esc(t("With a leader to the model."))}</p><label class="drw-chk"><input type="checkbox" data-d="gall"${a.around ? " checked" : ""}> ${esc(t("All around"))}</label>` : ""}
+        <label class="drw-f">${esc(t("Text above the frame"))}<input data-d="gabove" value="${esc(a.above ?? "")}" translate="no" placeholder="2×"></label>
+        <label class="drw-f">${esc(t("Text below the frame"))}<input data-d="gbelow" value="${esc(a.below ?? "")}" translate="no"></label></fieldset>${rows}
         <div class="row"><button class="btn small" data-grow="+">${esc(t("Add row"))}</button></div>${del}`;
     }
     if (a.t === "datum") {
@@ -2018,7 +2020,8 @@ export class DrawingWorkspace {
         else if (f === "comp") { if ((el as HTMLInputElement).checked) { r.composite = true; r.sym = a.rows[+si - 1]?.sym ?? r.sym; } else delete r.composite; }
         else if (f === "mod") { if (val === "M" || val === "L") r.mod = val; else delete r.mod; }
         else if (f[0] === "d") { const d = [0, 1, 2].map(j => r.datums[j] ?? ""); d[+f[1]] = val.trim().toUpperCase(); while (d.length && !d[d.length - 1]) d.pop(); r.datums = d; }
-      } else if (a.t === "gtol" && k === "gall") { if ((el as HTMLInputElement).checked) a.around = true; else delete a.around; }
+      } else if (a.t === "gtol" && (k === "gabove" || k === "gbelow")) { const key = k === "gabove" ? "above" : "below"; if (val.trim()) a[key] = val.trim(); else delete a[key]; }
+      else if (a.t === "gtol" && k === "gall") { if ((el as HTMLInputElement).checked) a.around = true; else delete a.around; }
       else if (a.t === "datum" && k === "dl" && val.trim()) a.letter = val.trim().toUpperCase();
       else if (a.t === "balloon" && k === "bshape") { if (val === "split" || val === "tri" || val === "hex" || val === "box" || val === "none") a.shape = val; else delete a.shape; }
       else if (a.t === "balloon" && k === "btxt") { if (val.trim()) a.txt = val.trim(); else delete a.txt; }
