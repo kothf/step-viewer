@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.419.0] - 2026-11-10
+## [1.422.0] - 2026-11-10
 
 ### Fixed
 
@@ -17,6 +17,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Added
 
 - **Rename mates** (#80): **Rename** in a mate's menu in the assembly tree.
+
+## [1.421.0] - 2026-11-10
+
+### Added
+
+- **Selected Contours for Extrude and Revolve (FR-FT-010)**: a feature can use only some regions of its sketch, as in SolidWorks, and sketches whose lines cross or branch (a rectangle with a line across it, two overlapping circles, a circle inside a shape) now work. Click in the **Selected Contours** box and click the regions in the view: picked ones are filled orange, a second click takes one off, **Use all regions** goes back to the whole sketch. When the sketch has no plain closed outline, the box opens first by itself. Neighbouring regions picked together give one clean body with no seam.
+
+### Fixed
+
+- **Saving names the file (exam #9)**: in a browser without the save dialog, the first Save (and every Save as) of a part or assembly now asks for the file name instead of downloading "Part1.mcadprt"; the part takes that name.
+
+## [1.420.0] - 2026-11-10
+
+### Changed
+
+- **Teak, mahogany and balsa checked (FR-MAT-001)**: these three woods now show **Checked against:** with a link to the USDA Wood Handbook chapter on mechanical properties (modulus 10 700, 10 300 and 3 400 MPa at 12 % moisture). The rows already matched. 146 of 170 materials are checked; the other 24 still say they are not.
+
+## [1.419.0] - 2026-11-10
+
+### Added
+
+- **Balloon styles (FR-DRW-023)**: a drawing balloon's **Style** can be a circle split by a line with the BOM quantity below, a triangle, a hexagon, a rectangle or just an underline; stacked balloons and the leader follow the outline.
 
 ## [1.418.0] - 2026-11-10
 
@@ -2483,7 +2505,10 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.419.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.422.0...HEAD
+[1.422.0]: https://github.com/kothf/step-viewer/compare/v1.421.0...v1.422.0
+[1.421.0]: https://github.com/kothf/step-viewer/compare/v1.420.0...v1.421.0
+[1.420.0]: https://github.com/kothf/step-viewer/compare/v1.419.0...v1.420.0
 [1.419.0]: https://github.com/kothf/step-viewer/compare/v1.418.0...v1.419.0
 [1.418.0]: https://github.com/kothf/step-viewer/compare/v1.417.0...v1.418.0
 [1.417.0]: https://github.com/kothf/step-viewer/compare/v1.416.0...v1.417.0

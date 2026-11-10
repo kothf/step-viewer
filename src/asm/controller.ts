@@ -11,7 +11,7 @@ import { newPart, uid } from "../model/doc";
 import { PART_EXT, unpackPart } from "../model/file";
 import { t, onLangChange } from "../i18n";
 import { featureLabel } from "../model/controller";
-import { confirmModal, toast, untoast } from "../ui";
+import { askFileName, confirmModal, toast, untoast } from "../ui";
 import { ASM_EXT, packAsm, unpackAsm } from "./file";
 import { IDENTITY, applyDir, applyPoint, compose, fromPose, invert, poseAngles, rotation, translation } from "./math";
 import { activateState, addState, deleteState } from "./states";
@@ -2289,12 +2289,15 @@ export class AsmController {
         await out.close();
         this.fileName = this.handle.name;
       } else {
+        // No save dialog in this browser: ask for the name on the first save and on Save as (exam #9).
+        const file = this.fileName && !as ? this.fileName : await askFileName(suggested, ASM_EXT);
+        if (!file) return;
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
-        a.download = suggested;
+        a.download = file;
         a.click();
         setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-        this.fileName = suggested;
+        this.fileName = file;
       }
     } catch (err) { if ((err as Error).name !== "AbortError") toast(t("Could not save: {err}", { err: (err as Error).message }), true); return; }
     this.savedAt = JSON.stringify(this.doc);

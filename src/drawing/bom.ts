@@ -123,30 +123,71 @@ function finish(mode: BomMode, rows: BomRow[], keyOf: (comp: string) => string |
 /** The BOM as table cells, in the order of `BOM_COLS`. */
 export const bomCells = (b: Bom): string[][] => b.rows.map(r => [String(r.item), r.part, r.description, String(r.qty)]);
 
+/** Balloon outlines (SolidWorks' balloon styles): the plain circle, a circle split for the quantity, or a polygon; "none" = the number alone, underlined. */
+export type BalloonShape = "split" | "tri" | "hex" | "box" | "none";
+const BALLOON_R = 5;
+
+/** The corners of a polygon balloon about `o`, ccw (every shape is 2R tall, so stacked balloons touch). */
+export function balloonOutline(o: P2, shape: BalloonShape | undefined, R = BALLOON_R): P2[] | null {
+  const [x, y] = o;
+  if (shape === "tri") { const w = 2 * R / Math.sqrt(3); return [[x - w, y - R], [x + w, y - R], [x, y + R]]; }
+  if (shape === "hex") { const w = 2 * R / Math.sqrt(3); return [[x - w, y], [x - w / 2, y - R], [x + w / 2, y - R], [x + w, y], [x + w / 2, y + R], [x - w / 2, y + R]]; }
+  if (shape === "box") return [[x - R, y - R], [x + R, y - R], [x + R, y + R], [x - R, y + R]];
+  if (shape === "none") return [[x - R, y - R * 0.6], [x + R, y - R * 0.6], [x + R, y + R * 0.6], [x - R, y + R * 0.6]];
+  return null;
+}
+
+/** How far from `o` along the unit direction `u` the outline `poly` is (o inside it). */
+function reach(o: P2, u: P2, poly: P2[]): number {
+  let best = Infinity;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length], ex = b[0] - a[0], ey = b[1] - a[1], den = u[0] * ey - u[1] * ex;
+    if (Math.abs(den) < 1e-12) continue;
+    const t = ((a[0] - o[0]) * ey - (a[1] - o[1]) * ex) / den, k = ((a[0] - o[0]) * u[1] - (a[1] - o[1]) * u[0]) / den;
+    if (t > 0 && k >= -1e-9 && k <= 1 + 1e-9) best = Math.min(best, t);
+  }
+  return best;
+}
+
 /**
  * A balloon: a Ø10 circle with the item number, a leader to `tip` ending in a dot on the part.
  * `more` are stacked balloons: circles touching it downwards, sharing its leader.
+ * `opt.shape`: the outline. `opt.lower`: with "split", the text of each balloon's lower half (the quantity),
+ * in the order of `text` then `more`.
  */
-export function balloonPrims(at: P2, tip: P2 | null, text: string, more: string[] = []): { prims: Prim[]; box: Box } {
-  const R = 5, out: Prim[] = [];
+export function balloonPrims(at: P2, tip: P2 | null, text: string, more: string[] = [], opt: { shape?: BalloonShape; lower?: string[] } = {}): { prims: Prim[]; box: Box } {
+  const R = BALLOON_R, out: Prim[] = [], shape = opt.shape;
+  const line = (a: P2, b: P2): Prim => ({ t: "l", p: [a[0], a[1], b[0], b[1]], pen: "thin", layer: "ANNOT" });
   [text, ...more].forEach((s, i) => {
-    const o: P2 = [at[0], at[1] - 2 * R * i];
-    out.push({ t: "a", o, r: R, a0: 0, a1: 2 * Math.PI, pen: "thin", layer: "ANNOT" });
-    out.push({ t: "t", x: o[0], y: o[1] - (s.length > 2 ? 1.25 : 1.75) + 0.2, s, h: s.length > 2 ? 3.5 : 5, al: "c", layer: "ANNOT" });
+    const o: P2 = [at[0], at[1] - 2 * R * i], poly = balloonOutline(o, shape);
+    if (shape === "none") out.push(line(poly![0], poly![1]));
+    else if (poly) poly.forEach((q, j) => out.push(line(q, poly[(j + 1) % poly.length])));
+    else out.push({ t: "a", o, r: R, a0: 0, a1: 2 * Math.PI, pen: "thin", layer: "ANNOT" });
+    if (shape === "split") {
+      out.push(line([o[0] - R, o[1]], [o[0] + R, o[1]]));
+      out.push({ t: "t", x: o[0], y: o[1] + 0.9, s, h: s.length > 2 ? 2.5 : 3.5, al: "c", layer: "ANNOT" });
+      const q = opt.lower?.[i] ?? "";
+      if (q) out.push({ t: "t", x: o[0], y: o[1] - 3.6, s: q, h: q.length > 2 ? 2.5 : 3, al: "c", layer: "ANNOT" });
+    } else {
+      // A triangle is narrow at the top: its text is smaller and sits lower.
+      const h = shape === "tri" ? (s.length > 2 ? 2.5 : 3.5) : s.length > 2 ? 3.5 : 5;
+      out.push({ t: "t", x: o[0], y: o[1] - h * 0.35 + 0.2 - (shape === "tri" ? 1.6 : 0), s, h, al: "c", layer: "ANNOT" });
+    }
   });
   if (tip) {
-    // The leader leaves the circle of the stack nearest the tip (the top one or the bottom one).
+    // The leader leaves the balloon of the stack nearest the tip (the top one or the bottom one).
     const o: P2 = more.length && tip[1] < at[1] - R * more.length ? [at[0], at[1] - 2 * R * more.length] : at;
     const d = Math.hypot(tip[0] - o[0], tip[1] - o[1]);
     if (d > R + 0.5) {
-      const u: P2 = [(tip[0] - o[0]) / d, (tip[1] - o[1]) / d];
-      out.push({ t: "l", p: [o[0] + u[0] * R, o[1] + u[1] * R, tip[0], tip[1]], pen: "thin", layer: "ANNOT" });
+      const u: P2 = [(tip[0] - o[0]) / d, (tip[1] - o[1]) / d], poly = balloonOutline(o, shape), r0 = poly ? Math.min(reach(o, u, poly), d) : R;
+      out.push({ t: "l", p: [o[0] + u[0] * r0, o[1] + u[1] * r0, tip[0], tip[1]], pen: "thin", layer: "ANNOT" });
       const dot: number[] = [];
       for (let i = 0; i < 8; i++) dot.push(tip[0] + 0.6 * Math.cos(i * Math.PI / 4), tip[1] + 0.6 * Math.sin(i * Math.PI / 4));
       out.push({ t: "p", p: dot, pen: "thin", layer: "ANNOT", fill: true, closed: true });
     }
   }
-  return { prims: out, box: [at[0] - R, at[1] - R - 2 * R * more.length, at[0] + R, at[1] + R] };
+  const w = shape === "tri" || shape === "hex" ? 2 * R / Math.sqrt(3) : R;
+  return { prims: out, box: [at[0] - w, at[1] - R - 2 * R * more.length, at[0] + w, at[1] + R] };
 }
 
 /** Is the 2D point on a visible line of the projection (within `tol`)? */

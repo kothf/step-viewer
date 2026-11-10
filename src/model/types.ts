@@ -177,6 +177,11 @@ export interface ExtrudeFeature {
   thin?: { t: Num; mode: "inside" | "outside" | "mid" };
   /** Draft while extruding (FR-FT-014): the side faces taper by this angle (outward: they flare). */
   draft?: { angle: Num; outward?: boolean };
+  /**
+   * Selected contours (FR-FT-010): a point (sketch coordinates) inside each region of the sketch to use;
+   * absent or empty = every closed region. The regions may come from crossing or branching curves.
+   */
+  contours?: V2[];
 }
 
 export interface RevolveFeature {
@@ -197,6 +202,8 @@ export interface RevolveFeature {
   angle2?: Num;
   /** Thin revolve (FR-FT-022): a wall along the profile instead of a solid. */
   thin?: { t: Num; mode: "inside" | "outside" | "mid" };
+  /** Selected contours (FR-FT-010), as for extrude. */
+  contours?: V2[];
 }
 
 export interface FilletFeature {

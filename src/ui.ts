@@ -116,6 +116,59 @@ export function confirmModal(text: string, ok = "Delete", title = "Are you sure?
   });
 }
 
+/**
+ * Asks for a file name before a document is downloaded (exam #9): browsers without the save dialog
+ * would otherwise write "Part1.mcadprt" with no chance to name it, where SolidWorks shows Save As on the
+ * first save. Returns the name with `ext`, or null when cancelled.
+ */
+export function askFileName(suggested: string, ext: string): Promise<string | null> {
+  let d = document.querySelector<HTMLDialogElement>("#name-dlg");
+  if (!d) {
+    d = document.createElement("dialog");
+    d.id = "name-dlg";
+    d.className = "modal";
+    d.setAttribute("aria-labelledby", "name-dlg-title");
+    d.innerHTML = `<form method="dialog"><h3 id="name-dlg-title">Save as</h3>`
+      + `<label class="name-dlg-row"><span>File name</span><span class="name-dlg-in"><input id="name-dlg-in" type="text" spellcheck="false" autocomplete="off" translate="no"><span class="name-dlg-ext" translate="no"></span></span></label>`
+      + `<p class="name-dlg-err" role="alert" hidden>Type a file name.</p>`
+      + `<div class="row end"><button class="btn" type="button" data-a="cancel">Cancel</button><button class="btn primary" value="ok">Save</button></div></form>`;
+    document.body.appendChild(d);
+    trapFocus(d, () => d!.open);
+  }
+  const dlg = d;
+  const input = dlg.querySelector<HTMLInputElement>("#name-dlg-in")!;
+  const err = dlg.querySelector<HTMLElement>(".name-dlg-err")!;
+  const base = suggested.endsWith(ext) ? suggested.slice(0, -ext.length) : suggested.replace(/\.[^.]+$/, "");
+  input.value = base;
+  err.hidden = true;
+  dlg.querySelector<HTMLElement>(".name-dlg-ext")!.textContent = ext;
+  if (dlg.open) dlg.close();
+  const opener = document.activeElement as HTMLElement | null;
+  dlg.returnValue = "";
+  dlg.showModal();
+  input.focus();
+  input.select();
+  return new Promise(resolve => {
+    // Characters no file system takes are dropped; an empty name keeps the dialog open.
+    const clean = () => input.value.replace(/[\\/:*?"<>|]/g, "").trim().replace(/\.+$/, "");
+    const form = dlg.querySelector("form")!;
+    const onSubmit = (e: Event) => { if (!clean()) { e.preventDefault(); err.hidden = false; input.focus(); } };
+    const onClick = (e: Event) => { if ((e.target as HTMLElement).closest("[data-a=cancel]")) dlg.close(""); };
+    const onClose = () => {
+      if (dlg.open) return;
+      form.removeEventListener("submit", onSubmit);
+      dlg.removeEventListener("click", onClick);
+      dlg.removeEventListener("close", onClose);
+      opener?.focus?.();
+      const name = clean();
+      resolve(dlg.returnValue === "ok" && name ? (name.toLowerCase().endsWith(ext.toLowerCase()) ? name : name + ext) : null);
+    };
+    form.addEventListener("submit", onSubmit);
+    dlg.addEventListener("click", onClick);
+    dlg.addEventListener("close", onClose);
+  });
+}
+
 export function initModals() {
   const confirm = $<HTMLDialogElement>("#confirm");
   trapFocus(confirm, () => confirm.open);
