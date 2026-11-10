@@ -57,10 +57,17 @@ Written for whoever continues drawing work (FRS section 11, `FR-DRW-…`). The C
    - Otherwise wait for CI on main's latest commit and run `release.yml` on `main` (`actions_run_trigger`).
    - Then check `https://aerocat.tech/tools/mobiuscad/VERSION`.
 
+## State on 2026-11-10 (end of the "Continue drawings polish" thread)
+
+- Released through 1.469.0. PR #391 (FAST_EDGES 4000 → 1500, `std3Layout` 85 % margin only when enlarging) was open; if it is not merged, finish it first (renumber to main + 1).
+- Big assemblies (drawings exam round two): `projectAuto` in `src/kernel/drawing.ts` picks `projectFast` from `FAST_EDGES` edges up. `projectFast` = `projectPoly` at diag/1000 and 0.1 rad, then `exactify` (chords chained by `chains`, straight runs → lines snapped to `viewCurves` model lines, runs on end-on circles → exact arcs, the rest polylines), `mergeLines`, `underLines`, `unhide`. `?fasthlr` forces it (smoke block in shard 3). Known look: a shaft end seen at a slant can come out dotted (the mesh HLR flickers along it); a "speck makes the hidden curve visible" rule was tried and made hidden lines visible, so it was dropped.
+- Open question from the exam: an older engine copy (desktop Projects/drawings-exam/parts/engine.mcadasm) stayed slow under 4000 edges. If 1500 is still not enough, switch by time instead (e.g. run exact with a budget, or count solids too) rather than lowering the edge count further.
+- Standard 3 views: `std3Layout(dx, dy, dz, area, tb, third)` in `views.ts` tries scales from the largest, placing the L-shaped group centred, at the frame edges, left of or above the title block; null falls back to the old `fitScale`.
+
 ## Ideas for next slices (none started)
 
 - **Centre marks on views at an angle**: end-on tests use `|ax·n| ≈ 1` (1e-6). Isometric views get no marks at all, which matches SolidWorks, so leave them unless asked.
-- **Performance**: big assemblies spend most time in `HLRBRep_Algo`. Previews (`projectPoly`) already cover the wait; projecting views in parallel across the kernel pool (`src/kernel/pool.ts`) is the next step.
+- **Performance**: big models now get `projectFast`; projecting views in parallel across the kernel pool (`src/kernel/pool.ts`) would still help mid-size models under `FAST_EDGES`.
 - Check the FRS (`docs/FRS-modelling.md`, FR-DRW-001..031) and Appendix G for drawing items marked partial.
 
 ## Gotchas
