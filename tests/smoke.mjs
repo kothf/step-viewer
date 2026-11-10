@@ -1948,7 +1948,7 @@ try {
     check(trimmed !== null && near(trimmed, -10, 0.01), `model 1.19: Trim cuts the line back to the crossing (end at x = ${trimmed})`);
     // Exam #76: a circle that lines only touch (ends held On curve, slipped a little along the tangent the way solved
     // positions do) is cut at those ends, not deleted, and the kept arc ends on the lines' own end points.
-    const touch = await mp.evaluate(() => {
+    const touch76 = await mp.evaluate(() => {
       const ed = window.__sv.model.editor(), sk = ed.sk;
       const P = (id, x, y) => sk.ents.push({ id, t: "point", x, y });
       P("tc0", -25, -20); P("tl1a", -30, -19.9998); P("tl1b", -30, -12); P("tl2a", -20, -19.9998); P("tl2b", -20, -12);
@@ -1959,8 +1959,8 @@ try {
     });
     await mp.keyboard.press("t");
     await click([-25, -25]);
-    const kept = await mp.evaluate(() => { const c = window.__sv.model.editor().sk.ents.find(e => e.id === "tcirc"); return c ? { t: c.t, ends: [c.a, c.b].sort().join(",") } : null; });
-    check(touch && kept?.t === "arc" && kept.ends === "tl1a,tl2a", `exam #76: Trim cuts a circle at the ends of lines touching it (${JSON.stringify(kept)})`);
+    const kept76 = await mp.evaluate(() => { const c = window.__sv.model.editor().sk.ents.find(e => e.id === "tcirc"); return c ? { t: c.t, ends: [c.a, c.b].sort().join(",") } : null; });
+    check(touch76 && kept76?.t === "arc" && kept76.ends === "tl1a,tl2a", `exam #76: Trim cuts a circle at the ends of lines touching it (${JSON.stringify(kept76)})`);
     await mp.keyboard.press("Escape");
     await mp.evaluate(() => { const ed = window.__sv.model.editor(), sk = ed.sk, mine = new Set(["tc0", "tl1a", "tl1b", "tl2a", "tl2b", "tcirc", "tl1", "tl2"]);
       sk.ents = sk.ents.filter(e => !mine.has(e.id) && !(e.t === "point" && sk.rels.some(r => r.t === "onCurve" && r.e[0] === e.id && mine.has(r.e[1]))));
