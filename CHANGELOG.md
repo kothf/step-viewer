@@ -5,6 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.447.0] - 2026-11-10
+
+### Fixed
+
+- Drawings: **Ctrl+Z** on a drawing undoes the last drawing step only. It used to undo the last feature of the part behind the drawing as well (drawings exam #1).
+- Hole table: one row per hole, with its whole callout as the size (Ø6.6 THRU ⌴Ø11 ↧6.4). A counterbored hole was listed twice, and a boss's rim or a chamfer's circle was listed as a hole (drawings exam #5).
+- A datum feature no longer takes a letter that a section, detail or auxiliary view already uses, and new view letters skip datum letters (drawings exam #6).
+- PDF, PNG and DXF exports draw the counterbore ⌴ and countersink ⌵ symbols in lines; the embedded font has no glyph for them, so they were missing (drawings exam #7).
+- DXF R12 writes Ø, ±, ° and Cyrillic as \U+ codes like DXF 2000, so AutoCAD no longer shows "Ã˜" (drawings exam #8).
+- A new note is typed straight into its text box, several lines included, instead of a one-line browser prompt (drawings exam #9).
+
 ## [1.446.0] - 2026-11-10
 
 ### Added
@@ -2666,7 +2677,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.446.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.447.0...HEAD
+[1.447.0]: https://github.com/kothf/step-viewer/compare/v1.446.0...v1.447.0
 [1.446.0]: https://github.com/kothf/step-viewer/compare/v1.445.0...v1.446.0
 [1.445.0]: https://github.com/kothf/step-viewer/compare/v1.444.0...v1.445.0
 [1.444.0]: https://github.com/kothf/step-viewer/compare/v1.443.0...v1.444.0
