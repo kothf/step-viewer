@@ -5,10 +5,44 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.401.0] - 2026-11-10
+## [1.406.0] - 2026-11-10
 
 ### Added
 - Drawings: a linear or arc length dimension can hide its first, second or both extension lines (**Extension lines** in the dimension's panel), for a dimension taken to an edge that already draws the line. **Horizontal text in the dimension line** keeps a linear dimension's text level and puts it in a gap of the dimension line, as ISO 129 method 2 and ASME drawings do (FR-DRW-021).
+## [1.405.0] - 2026-11-10
+
+### Changed
+
+- **Four more materials checked (FR-MAT-001)**: POM (Delrin), PEEK, PET (PET-P) and OSB/3 now show **Checked against:** with a link to a stock shape or board maker's data sheet. 137 of 170 materials are checked; the other 33 still say they are not. Values changed to match the sheets: POM (Delrin) modulus 3.1 → 2.4 GPa, strength 70 → 76 MPa and expansion 110 → 120; PEEK modulus 4.0 → 4.5 GPa and strength 98 → 110 MPa; PET density 1.39 → 1.38, modulus 3.5 → 3.2 GPa, strength 90 → 69 MPa, expansion 60 → 70, specific heat added; OSB/3 density 0.65 → 0.6.
+
+## [1.404.0] - 2026-11-10
+
+### Added
+- Sheet Metal Properties (FR-FT-120): a new command on the Sheet Metal tab lists the cut-list values of the flat pattern: the smallest bounding box round it (length, width, area), sheet thickness, bend radius and K-factor, the flat pattern's area, the cutting length round the outside and round the openings, the number of cut outs and bends, and the mass when the part has a material. Export CSV saves them in millimetres and kilograms.
+
+### Fixed
+- A circle inside a base flange's closed sketch now cuts a hole in the plate; it used to add the disc back on.
+
+## [1.403.0] - 2026-11-10
+
+### Added
+
+- Move component: a "Turn by" box turns the component by a typed angle about the axis of its concentric, hinge or screw mate, and the parts mated to it follow (typed rotations used to be about the world axes only).
+
+### Changed
+
+- Mate: two flat faces that cannot be made Coincident either way round, but can be Parallel (side faces of a part its other mates already hold), start as Parallel instead of showing "over-defined".
+
+## [1.402.0] - 2026-11-10
+
+### Added
+
+- **Recognize Extrudes (FR-FT-102)**: a new command in the Direct flyout, beside Recognize Holes and Recognize Fillets. Pockets and bosses with straight walls on a flat face (blind pockets with a flat floor, cuts through the body, bosses with a flat top; lines and arcs in the outline) are removed with Delete Face and made again as a sketch on that face with an Extruded Cut or Boss, so the outline and the depth of an imported body can be edited. Round pockets stay with Recognize Holes. Only finds that rebuild to the same solid are kept.
+
+## [1.401.0] - 2026-11-10
+
+### Added
+- Rip (FR-FT-120): cut a narrow gap along straight edges where two flat walls of a thin-walled solid meet, so Insert Bends can unfold the walls apart. Rip both directions (the gap on the corner's bisector, also on outside edges) or along one wall only, so the other wall keeps the corner (inside corner edges), with a gap of your choice (0.1 mm by default). It works on any solid, before or after the sheet metal base.
 
 ## [1.400.0] - 2026-11-10
 
@@ -2357,7 +2391,12 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.401.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.406.0...HEAD
+[1.406.0]: https://github.com/kothf/step-viewer/compare/v1.405.0...v1.406.0
+[1.405.0]: https://github.com/kothf/step-viewer/compare/v1.404.0...v1.405.0
+[1.404.0]: https://github.com/kothf/step-viewer/compare/v1.403.0...v1.404.0
+[1.403.0]: https://github.com/kothf/step-viewer/compare/v1.402.0...v1.403.0
+[1.402.0]: https://github.com/kothf/step-viewer/compare/v1.401.0...v1.402.0
 [1.401.0]: https://github.com/kothf/step-viewer/compare/v1.400.0...v1.401.0
 [1.400.0]: https://github.com/kothf/step-viewer/compare/v1.399.0...v1.400.0
 [1.399.0]: https://github.com/kothf/step-viewer/compare/v1.398.0...v1.399.0

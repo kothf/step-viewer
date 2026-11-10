@@ -71,7 +71,7 @@ const mechFits = (a: Geo["k"], b: Geo["k"]): MateType[] => (a === "axis" && b ==
 const MORE_REFS: ReadonlySet<MateType> = new Set(["symmetric", "width", "hinge", "slot"]);
 const advFits = (a: Geo["k"], b: Geo["k"]): MateType[] => [...(a === b ? ["symmetric" as const] : []), ...(a === "plane" ? ["width" as const] : []), "limitdist", ...(a === b ? ["limitangle" as const] : [])];
 /** The mate being made or edited in the Mate panel. */
-interface MateDraft { edit?: string; a?: MateRef; b?: MateRef; c?: MateRef; d?: MateRef; type?: MateType; align?: "aligned" | "anti"; alignSet?: boolean; value?: number; flip?: boolean; min?: number; max?: number; ratio?: number; lockRot?: boolean; problem?: string; added?: string }
+interface MateDraft { edit?: string; a?: MateRef; b?: MateRef; c?: MateRef; d?: MateRef; type?: MateType; align?: "aligned" | "anti"; alignSet?: boolean; typeSet?: boolean; value?: number; flip?: boolean; min?: number; max?: number; ratio?: number; lockRot?: boolean; problem?: string; added?: string }
 
 /** An assembly kept in a document tab while another document is shown. */
 /** The Mate panel's message when a mate cannot be solved even from turned starts. */
@@ -1378,6 +1378,31 @@ export class AsmController {
     return null;
   }
 
+  /**
+   * Turns a component by `deg` about the axis of its concentric, hinge or screw mate (exam #51). Each step of at most
+   * 60° is solved with a lock that holds the component's orientation against a fixed one (as a motion study's motor
+   * holds a turn), so the parts coupled to it follow instead of pulling it back, and a screw counts whole turns.
+   */
+  private turnOnAxis(id: string, deg: number): Record<string, Tf> | null {
+    const doc = this.doc, c = this.comp(id), ax = this.dragAxis(id);
+    const base = doc?.components.find(x => x.fixed && !x.suppressed && x.id !== id);
+    if (!doc || !c || !ax || !base || c.fixed || !Number.isFinite(deg)) return null;
+    const n = Math.max(1, Math.ceil(Math.abs(deg) / 60)), step = (deg * Math.PI) / 180 / n;
+    let work: AsmDoc = doc, tfs: Record<string, Tf> | null = null;
+    for (let k = 0; k < n; k++) {
+      const now = work.components.find(x => x.id === id)!.tf, want = compose(rotation(ax.o, ax.u, step), now);
+      const lock: Mate = { id: `${id}~turn`, name: "", type: "lock", a: { comp: base.id, face: "" }, b: { comp: id, face: "" }, rel: compose(invert(base.tf), want), keep: "rot" };
+      const start: Record<string, Tf> = {};
+      for (const x of work.components) start[x.id] = x.id === id ? want : x.tf;
+      const r = this.solveDoc(work, [lock], start, false);
+      if (!r.ok) return null;
+      tfs = r.tfs;
+      const got = tfs;
+      work = { ...work, components: work.components.map(x => (got[x.id] ? { ...x, tf: got[x.id] } : x)) };
+    }
+    return tfs;
+  }
+
   private mateLive(id: string) { return (this.doc?.mates ?? []).some(m => !m.suppressed && (m.a.comp === id || m.b.comp === id)); }
 
   /** Mate (FR-MATE-003/006): pick two faces, the likely mate type is chosen and previewed. */
@@ -1491,6 +1516,13 @@ export class AsmController {
       const r2 = this.solveMate(this.withoutEdited(), other);
       if (r2.ok) { m.align = other.align; r = r2; }
     }
+    // Two flat faces start as Coincident; when the parts are already held so that it cannot be solved either way but
+    // Parallel can (two side faces of a part held by its other mates), start with Parallel (exam #27).
+    if (!r.ok && mate.type === "coincident" && mate.align && !m.typeSet && !m.alignSet && !m.edit) {
+      const par: Mate = { id: mate.id, name: mate.name.replace(/^Coincident/, "Parallel"), type: "parallel", a: mate.a, b: mate.b };
+      const r3 = this.solveMate(this.withoutEdited(), par);
+      if (r3.ok) { m.type = "parallel"; m.align = undefined; r = r3; }
+    }
     if (r.ok) this.previewTfs(r.tfs);
     else { this.previewTfs(this.shownTf); m.problem = r.bad.includes(mate.id) || r.missing.includes(mate.id) ? t(MATE_FAILS) : t("The assembly mates cannot all be solved."); }
     this.renderPanel();
@@ -1533,7 +1565,7 @@ export class AsmController {
       const o = this.mateOther, same = o && o.draft === m && Math.hypot(o.x - x, o.y - y) <= 4;
       const i = same ? (o!.i + 1) % faces.length : Math.min(1, faces.length - 1);
       const before = same ? o!.before : { ...m };
-      for (const k of ["a", "b", "c", "d", "type", "align", "alignSet", "value", "flip", "min", "max", "ratio"] as const) delete m[k];
+      for (const k of ["a", "b", "c", "d", "type", "align", "alignSet", "typeSet", "value", "flip", "min", "max", "ratio"] as const) delete m[k];
       Object.assign(m, before);
       this.mateOther = { x, y, i, before, draft: m };
       hit = faces[i];
@@ -1570,7 +1602,7 @@ export class AsmController {
     if (m.a && m.b) {
       const ga = this.worldGeo(m.a)!, gb = this.worldGeo(m.b)!;
       m.type = mateTypes(ga.k, gb.k)[0];
-      Object.assign(m, { align: undefined, alignSet: undefined, value: undefined, flip: undefined }, mateDefaults(m.type, ga, gb));
+      Object.assign(m, { align: undefined, alignSet: undefined, typeSet: undefined, value: undefined, flip: undefined }, mateDefaults(m.type, ga, gb));
       if (m.type === "coincident" && ga.k === "plane" && gb.k === "plane") m.align = "anti";
     }
     this.drawPicks();
@@ -1581,6 +1613,7 @@ export class AsmController {
     const m = this.mating;
     if (!m) return;
     m.type = type;
+    m.typeSet = true;
     m.alignSet = undefined;
     const ga = m.a && this.worldGeo(m.a), gb = m.b && this.worldGeo(m.b);
     if (ga && gb) {
@@ -2742,6 +2775,7 @@ export class AsmController {
       + `<p class="pm-help" translate="no">${esc(c.name)}</p>`
       + `<fieldset class="pm-sec"><legend>${esc(t("Position"))}</legend>${f("x", "X", p[0], "mm")}${f("y", "Y", p[1], "mm")}${f("z", "Z", p[2], "mm")}</fieldset>`
       + `<fieldset class="pm-sec"><legend>${esc(t("Rotation"))}</legend>${f("rx", t("About X"), r[0], "°")}${f("ry", t("About Y"), r[1], "°")}${f("rz", t("About Z"), r[2], "°")}</fieldset>`
+      + (this.dragAxis(c.id) ? `<fieldset class="pm-sec"><legend>${esc(t("Turn on its mate axis"))}</legend><label class="pm-field"><span>${esc(t("Turn by"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-turn value="0" spellcheck="false" /><span class="muted">°</span></span></label><p class="pm-help muted">${esc(t("Enter turns the component by this angle about the axis of its concentric, hinge or screw mate; the parts mated to it follow."))}</p></fieldset>` : "")
       + `<label class="pm-field pm-check"><input type="checkbox" data-a="collide"${this.collide ? " checked" : ""} /> ${esc(t("Collision detection"))}</label>`
       + `<p class="pm-help muted">${esc(t("Or drag the component in the view."))}${this.collide ? ` ${esc(t("The drag stops where it would touch another component."))}` : ""}</p><p class="pm-help muted">${esc(t("Hold Alt while dragging a face onto a face of another component to mate them."))}</p>`;
     pm.querySelector("[data-a=ok]")!.addEventListener("click", () => { this.moving = null; this.renderPanel(); });
@@ -2752,6 +2786,21 @@ export class AsmController {
       this.renderPanel();
     });
     pm.onkeydown = e => { if (e.key === "Escape") { this.moving = null; this.renderPanel(); } };
+    const turn = pm.querySelector<HTMLInputElement>("input[data-turn]");
+    turn?.addEventListener("keydown", e => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      e.stopPropagation();
+      const deg = Number(turn.value.replace(",", "."));
+      if (!Number.isFinite(deg)) { turn.setAttribute("aria-invalid", "true"); return; }
+      turn.removeAttribute("aria-invalid");
+      if (!deg) return;
+      const res = this.turnOnAxis(c.id, deg);
+      if (!res) { toast(t("The mates do not let the component turn that far."), true); return; }
+      this.typedAngles.delete(c.id);
+      this.change(d => { for (const x of d.components) if (res[x.id]) x.tf = res[x.id]; });
+      turn.select();
+    });
     pm.querySelectorAll<HTMLInputElement>("input[data-pose]").forEach(inp => {
       const apply = () => {
         const vals: Record<string, number> = {};

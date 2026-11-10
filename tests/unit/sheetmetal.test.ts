@@ -5,9 +5,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Modeller } from "../../src/kernel/model";
 import type { Feature, PartDoc, SketchFeature, SkEnt } from "../../src/model/types";
-import type { SmTabSlotFeature, SmInsertFeature, SmConvertFeature, SmCutFeature, SmGussetFeature, SmReliefFeature, SmUnfoldFeature, SmFormFeature, SmVentFeature, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
+import type { SmRipFeature, SmTabSlotFeature, SmInsertFeature, SmConvertFeature, SmCutFeature, SmGussetFeature, SmReliefFeature, SmUnfoldFeature, SmFormFeature, SmVentFeature, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
 import { flatLoops, flatSize, bendAllowance, reliefCorners, filletLoop } from "../../src/sheetmetal/sheet";
 import { flatDrawing } from "../../src/sheetmetal/flat";
+import { cutPropsCsv, sheetCutProps } from "../../src/sheetmetal/cutprops";
 import { loopPolygon, polyArea } from "../../src/sketch/profile";
 import { occ } from "./occ";
 
@@ -890,4 +891,66 @@ test("sheet metal: tab and slot through another body (FR-FT-120)", async () => {
   assert.equal(bad(ts({ count: 4, length: { v: 15 } })).code, "E-SM-TSOVER");
   assert.equal(bad(ts({ offset: { v: 30 }, count: 1 })).ok, true);
   assert.equal(bad(ts({ count: 2, spacing: { v: 60 } })).code, "E-SM-TSFIT");
+});
+
+test("sheet metal: rip the corners of a shelled box (FR-FT-120)", async () => {
+  oc ??= await occ();
+  m ??= new Modeller(oc);
+  // A 60 × 40 × 30 box shelled 2 thick, open at the top.
+  const box: Feature[] = [rect("s", 0, 0, 60, 40), { id: "e", type: "extrude", name: "Boss1", sketch: "s", op: "boss", end: "blind", depth: { v: 30 } } as Feature, { id: "sh", type: "shell", name: "Shell1", thickness: { v: 2 }, faces: [{ name: "e:end" }] } as Feature];
+  const inEdge = (a: string, b: string) => ({ faces: [`sh:off:e:side:${a}`, `sh:off:e:side:${b}`] as [string, string] });
+  const rip = (over: Partial<SmRipFeature> = {}): SmRipFeature => ({ id: "r", type: "smrip", name: "Rip1", edges: [inEdge("sl1", "sl2")], gap: { v: 0.5 }, ...over });
+  const T = 2, H = 30, g = 0.5;
+  const v0 = run(doc(box)).props.volume;
+  // Both ways: a slot on the bisector across the corner, √2·T·g per mm of the inside edge (it starts on the floor).
+  close(v0 - run(doc([...box, rip()])).props.volume, Math.SQRT2 * T * g * (H - T), 1e-6);
+  // One way: along the first wall's plane, through the second wall.
+  close(v0 - run(doc([...box, rip({ side: "a" })])).props.volume, g * T * (H - T), 1e-6);
+  close(v0 - run(doc([...box, rip({ side: "b" })])).props.volume, g * T * (H - T), 1e-6);
+  // The walls really part: a point in the slot is outside.
+  const r = run(doc([...box, rip()]));
+  const at = (p: [number, number, number]) => new oc.BRepClass3d_SolidClassifier_3(r.body!.shape, new oc.gp_Pnt_3(...p), 1e-7).State() === oc.TopAbs_State.TopAbs_IN;
+  assert.ok(!at([59, 1, 20]) && at([59, 5, 20]) && at([55, 1, 20]), "the corner at x = 60, y = 0 is split");
+  // All four corners ripped, then Insert Bends makes a tray with four bends.
+  const all = rip({ edges: [inEdge("sl1", "sl2"), inEdge("sl2", "sl3"), inEdge("sl3", "sl4"), inEdge("sl4", "sl1")] });
+  close(v0 - run(doc([...box, all])).props.volume, 4 * Math.SQRT2 * T * g * (H - T), 1e-6);
+  const ins: SmInsertFeature = { id: "i", type: "sminsert", name: "Insert-Bends1", face: { name: "e:start" }, radius: { v: 2 }, k: 0.5 };
+  assert.equal(run(doc([...box, all, ins])).sheet!.bends.length, 4);
+  // Errors: one-way rip on an outside edge, a zero gap.
+  const bad = (f: SmRipFeature) => m.evaluate(doc([...box, f])).statuses.find(x => x.id === "r")!;
+  assert.equal(bad(rip({ edges: [{ faces: ["e:side:sl1", "e:side:sl2"] }], side: "a" })).code, "E-SM-RIPSIDE");
+  assert.equal(bad(rip({ edges: [{ faces: ["e:side:sl1", "e:side:sl2"] }] })).ok, true);
+  assert.equal(bad(rip({ gap: { v: 0 } })).code, "E-SM-RIPGAP");
+});
+
+test("sheet metal: cut-list properties from the flat pattern (FR-FT-120)", async () => {
+  oc ??= await occ();
+  m ??= new Modeller(oc);
+  // A 100 × 50 plate with a Ø10 hole, then a 90° flange 30 long on the y = 0 edge.
+  const s = rect("s", 0, 0, 100, 50);
+  s.ents.push({ id: "sc0", t: "point", x: 70, y: 30 }, { id: "sc", t: "circle", c: "sc0", r: 5 });
+  const fl: SmFlangeFeature = { id: "f", type: "smflange", name: "Edge-Flange1", edges: [{ faces: ["b:p0:top", "b:p0:sl1"] }], length: { v: 30 }, angle: { v: Math.PI / 2 } };
+  const r = run(doc([s, base(), fl]));
+  const p = sheetCutProps(r.sheet!);
+  const ba = (Math.PI / 2) * (2 + 0.5 * 2), H = 50 - 4 + ba + 26;
+  close(p.length, 100, 1e-9); close(p.width, H, 1e-9); close(p.angle, 0, 1e-9);
+  close(p.boxArea, 100 * H, 1e-9);
+  close(p.outer, 2 * (100 + H), 1e-9);
+  close(p.inner, 2 * Math.PI * 5, 1e-9);
+  assert.equal(p.cutouts, 1);
+  assert.equal(p.bends, 1);
+  close(p.T, 2); close(p.R, 2); close(p.k, 0.5);
+  // The area takes the hole out (the circle is a 48-gon here, ~0.3 % short).
+  close(p.area, 100 * H - Math.PI * 25, 1e-4);
+  close(p.area * p.T, r.props.volume, 1e-4);
+  // A plate turned 30° in its sketch: the smallest box turns with it.
+  const c = Math.cos(Math.PI / 6), sn = Math.sin(Math.PI / 6);
+  const q: [number, number][] = [[0, 0], [80 * c, 80 * sn], [80 * c - 20 * sn, 80 * sn + 20 * c], [-20 * sn, 20 * c]];
+  const tilt: SketchFeature = { id: "s", type: "sketch", name: "s", plane: { std: "XY" }, rels: [], dims: [], ents: [...q.map((v, i): SkEnt => ({ id: `tp${i}`, t: "point", x: v[0], y: v[1] })), ...q.map((_v, i): SkEnt => ({ id: `tl${i}`, t: "line", a: `tp${i}`, b: `tp${(i + 1) % 4}` }))] };
+  const pt = sheetCutProps(run(doc([tilt, base()])).sheet!);
+  close(pt.length, 80, 1e-9); close(pt.width, 20, 1e-9); close(pt.angle, Math.PI / 6, 1e-9);
+  assert.equal(pt.cutouts, 0); assert.equal(pt.bends, 0);
+  // CSV in mm.
+  const csv = cutPropsCsv(p, 1234.5);
+  assert.ok(csv.startsWith("Property,Value,Unit\nBounding box length,100,mm\n") && csv.includes("Cut outs,1,") && csv.includes("Mass,1.2345,kg"), csv);
 });
