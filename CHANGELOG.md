@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.410.0] - 2026-11-10
+
+### Added
+
+- **Weld table on drawings (FR-FT-121)**: in a drawing of a weldment part, Annotate ▾ Weld table lists the part's fillet beads: click a view, then place the table. Each kind of bead (continuous, intermittent or staggered, by leg size) gets a row with its item number, ISO 2553 leg (z4, z5×8), total length along the root and how many beads, then a total row. Cut list items marked Exclude are left out, and the table follows the part when it changes.
+
 ## [1.409.0] - 2026-11-10
 
 ### Added
@@ -2410,7 +2416,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.409.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.410.0...HEAD
+[1.410.0]: https://github.com/kothf/step-viewer/compare/v1.409.0...v1.410.0
 [1.409.0]: https://github.com/kothf/step-viewer/compare/v1.408.0...v1.409.0
 [1.408.0]: https://github.com/kothf/step-viewer/compare/v1.407.0...v1.408.0
 [1.407.0]: https://github.com/kothf/step-viewer/compare/v1.406.0...v1.407.0
