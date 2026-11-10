@@ -351,7 +351,10 @@ function textBox(x: number, y: number, s: string, h: number, al: "l" | "c" | "r"
 
 /** Draws one dimension. `pl` places the view's model axes on the sheet; an inspection dimension frames its text with an obround, a basic one with a box. */
 export function dimPrims(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims: Prim[]; box: [number, number, number, number] } {
-  const r = dimPrims0(a, g, pl, dec);
+  const kind = ARROW_KIND;
+  if (a.ends) ARROW_KIND = a.ends;
+  let r: ReturnType<typeof dimPrims0>;
+  try { r = dimPrims0(a, g, pl, dec); } finally { ARROW_KIND = kind; }
   if (a.insp) r.prims.push(...obround(r.box));
   if (a.show === "basic") {
     const [x0, y0, x1, y1] = [r.box[0] - 0.6, r.box[1] - 0.4, r.box[2] + 0.6, r.box[3] + 0.2];
