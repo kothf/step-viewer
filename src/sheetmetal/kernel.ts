@@ -4,7 +4,7 @@
 import type { EdgeRef, FaceRef, Frame, PartDoc, SketchFeature, SkEnt, V2, V3 } from "../model/types";
 import type { Named } from "../kernel/model";
 import { inPolygon, loopPolygon, polyArea, sketchProfile, type Seg } from "../sketch/profile";
-import { tabSlot, type SlotCut, convertFlanges, type ConvertLevel, gussetSheet, type GussetMark, cornerRelief, apply, applyDir, bendStrip, sheetPlace, unfoldSheet, type SheetPlace, baseFlange, crossBreak, formTools, obroundLoop, type FormItem, ventLayout, ventPanel, loftedBend, type SheetMesh, breakCorner, closedCorner, miterFlange, miterProfile, sweptProfile, type FlatEdge, bendSketchLine, edgeFlange, flatLoops, hem, jog, sketchedBend, tab, SheetError, type Bend, type Mat, type Panel, type SheetOp, type SheetState } from "./sheet";
+import { tabSlot, type SlotCut, convertFlanges, type ConvertLevel, gussetSheet, type GussetMark, cornerRelief, reliefCorners, reliefLoop, apply, applyDir, bendStrip, sheetPlace, unfoldSheet, type SheetPlace, baseFlange, crossBreak, formTools, obroundLoop, type FormItem, ventLayout, ventPanel, loftedBend, type SheetMesh, breakCorner, closedCorner, miterFlange, miterProfile, sweptProfile, type FlatEdge, bendSketchLine, edgeFlange, flatLoops, hem, jog, sketchedBend, tab, SheetError, type Bend, type Mat, type Panel, type SheetOp, type SheetState } from "./sheet";
 import type { SmRipFeature, SheetFeature, SmBaseFeature, SmConvertFeature, SmInsertFeature, SmCutFeature, SmFormFeature, SmVentFeature } from "./types";
 
 /** The few Modeller helpers the sheet metal code needs. */
@@ -43,7 +43,13 @@ export function evalSheet(api: SheetApi, f: SheetFeature, doc: PartDoc, body: Na
   if (f.type === "smconvert" || f.type === "sminsert") {
     if (sm) throw new SheetError("E-SM-BASE2", "This part already has a base flange.");
     if (!body) throw new SheetError("E-SM-CONVBODY", "Make a solid to convert first.");
-    return convertSolid(api, body, f);
+    const out = convertSolid(api, body, f);
+    // Auto relief: the corners where two walls' bends meet get a relief at once, so the bends don't overlap there.
+    if (!f.relief) return out;
+    const corners = reliefCorners(out.sm);
+    if (!corners.length) return out;
+    const w = (f.reliefRatio ?? 0.5) * out.sm.T;
+    return { body: reliefCut(api, out.body, out.sm, corners.map(c => reliefLoop(c, f.relief!, w)), f.id), sm: out.sm };
   }
   if (f.type === "smrip") {
     if (!body) throw new SheetError("E-SM-RIPBODY", "Make a thin-walled solid to rip first.");
@@ -287,8 +293,41 @@ function nameSides(api: SheetApi, shape: any, M: Mat, T: number, loops: Seg[], p
 }
 
 function panelSolid(api: SheetApi, p: Panel, T: number): Named {
-  const shape = prism(api, faceOf(api, p.outer, p.holes, frameOf(p.M)), applyDir(p.M, [0, 0, T]));
+  let shape = prism(api, faceOf(api, p.outer, p.holes, frameOf(p.M)), applyDir(p.M, [0, 0, T]));
+  if (p.bevels?.length) shape = bevelled(api, shape, p, T);
   return nameSides(api, shape, p.M, T, [p.outer, ...p.holes].flat(), p.id);
+}
+
+/** Leans the panel's mitre faces (`Panel.bevels`): each outline line on o·q = k gets a strip added outside it as far
+ * as the leaning face reaches, then the wedge past the face is cut off. */
+function bevelled(api: SheetApi, shape: any, p: Panel, T: number): any {
+  const oc = api.oc;
+  const P = (q: V3) => new oc.gp_Pnt_3(q[0], q[1], q[2]);
+  const poly = (pts: V3[]) => {
+    const mk = new oc.BRepBuilderAPI_MakePolygon_1();
+    for (const q of pts) mk.Add_1(P(q));
+    mk.Close();
+    return new oc.BRepBuilderAPI_MakeFace_15(mk.Wire(), true).Face();
+  };
+  const tol = 1e-7 * (1 + T);
+  for (const bv of p.bevels!) {
+    const ext = Math.abs(bv.s) * T / 2, d = ext + T;
+    for (const sg of p.outer) {
+      if (sg.kind !== "line") continue;
+      const on = (q: V2) => Math.abs(bv.o[0] * q[0] + bv.o[1] * q[1] - bv.k) < tol * 10;
+      if (!on(sg.a) || !on(sg.b)) continue;
+      const w = (q: V2, t: number, z: number) => apply(p.M, [q[0] + bv.o[0] * t, q[1] + bv.o[1] * t, z]);
+      const along = sub3(w(sg.b, 0, 0), w(sg.a, 0, 0));
+      const add = prism(api, poly([w(sg.a, 0, 0), w(sg.b, 0, 0), w(sg.b, ext, 0), w(sg.a, ext, 0)]), applyDir(p.M, [0, 0, T]));
+      const fu = new oc.BRepAlgoAPI_Fuse_3(shape, add, new oc.Message_ProgressRange_1());
+      if (fu.IsDone()) shape = fu.Shape();
+      // The wedge past the leaning face t = s·(z − T/2), in the section square to the line, run along it.
+      const wedge = prism(api, poly([w(sg.a, bv.s * (-T / 2), 0), w(sg.a, d, 0), w(sg.a, d, T), w(sg.a, bv.s * (T / 2), T)]), along);
+      const cu = new oc.BRepAlgoAPI_Cut_3(shape, wedge, new oc.Message_ProgressRange_1());
+      if (cu.IsDone()) shape = cu.Shape();
+    }
+  }
+  return shape;
 }
 
 /** A bend: the panel's cross-section on its start line turned about the bend axis. */

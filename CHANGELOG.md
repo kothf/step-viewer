@@ -5,11 +5,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.443.0] - 2026-11-10
+## [1.444.0] - 2026-11-10
 
 ### Added
 
 - **Angle dimension arrows (FR-DRW-021)**: a small angle whose arc has no room for two arrowheads gets them outside the sector, on short tails of the arc, the way narrow linear dimensions do. **Arrows** (Auto, Inside, Outside) and **Extension lines** (hide the first, the second or both) in the dimension panel now work for angles as well.
+
+## [1.443.0] - 2026-11-10
+
+### Added
+
+- Sheet metal Convert to Sheet Metal and Insert Bends have Auto relief (FR-FT-120): corners where two walls' bends meet get a rectangular, obround, circular or tear relief at once, sized by a relief ratio. New features start with Rectangular, 0.5.
+
+### Fixed
+
+- Mitred sheet metal corners (edge flanges, miter flanges, Convert to Sheet Metal) now meet on the corner's bisector plane, as in SolidWorks. Before, the two walls were cut square and overlapped in a thin strip along the inside of the seam, so the flat pattern had slightly more material than the part.
+
 
 ## [1.442.0] - 2026-11-10
 
@@ -2641,7 +2652,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.443.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.444.0...HEAD
+[1.444.0]: https://github.com/kothf/step-viewer/compare/v1.443.0...v1.444.0
 [1.443.0]: https://github.com/kothf/step-viewer/compare/v1.442.0...v1.443.0
 [1.442.0]: https://github.com/kothf/step-viewer/compare/v1.441.0...v1.442.0
 [1.441.0]: https://github.com/kothf/step-viewer/compare/v1.440.0...v1.441.0

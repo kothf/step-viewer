@@ -4989,7 +4989,7 @@ try {
     tx = await texts();
     check(hov >= 1 && pv >= 1 && smart.length === 2 && smart[0].k === "h" && smart[0].view === front.id && smart[1].k === "dia" && tx.filter(s => s === "100").length === 2 && tx.filter(s => s === "Ø16").length === 2,
       `drawing: Smart dimension: an edge placed above it gives a horizontal 100, a circle gives Ø16, with a live preview (${JSON.stringify(smart.map(a => a.k))}, ${tx.join(" ")})`);
-    // 1.443.0 angle arrows: an angle placed tight in the corner gets its arrows outside (the arc grows tails); Inside takes them off; then deleted.
+    // 1.444.0 angle arrows: an angle placed tight in the corner gets its arrows outside (the arc grows tails); Inside takes them off; then deleted.
     {
       const sc = await dp.evaluate(() => { const s = window.__sv.drw.doc().sheets[0].scale; return s[0] / s[1]; });
       await dp.click('#drw [data-a="dim"]');
@@ -11088,12 +11088,12 @@ try {
       await mp.mouse.click(x, y);
       await settle();
     }
-    const cv0 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { title: document.querySelector("#mc-pm h3")?.textContent, face: d?.face?.name, edges: d?.edges?.map(e => [...e.faces].sort().join("|")) }; });
+    const cv0 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { title: document.querySelector("#mc-pm h3")?.textContent, face: d?.face?.name, edges: d?.edges?.map(e => [...e.faces].sort().join("|")), relief: d?.relief, rsel: document.querySelector('#mc-pm [data-sm="arelief"]')?.value }; });
     await mp.click("#mc-ok");
     await settle();
     const cv1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, bends: l.sheet?.bends.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
     const cvWant = 100 * (60 - 8 + 2 * (36 + 1.5 * Math.PI)) * 2;
-    check(cv0.title === "Convert to Sheet Metal" && cv0.face === "ce:end" && cv0.edges?.length === 2 && !cv1.bad && cv1.bends === 2 && Math.abs(cv1.v - cvWant) < 1e-2,
+    check(cv0.title === "Convert to Sheet Metal" && cv0.face === "ce:end" && cv0.edges?.length === 2 && cv0.relief === "rect" && cv0.rsel === "rect" && !cv1.bad && cv1.bends === 2 && Math.abs(cv1.v - cvWant) < 1e-2,
       `sheet metal: Convert to Sheet Metal turns the box into a U channel from the clicked face and edges (${JSON.stringify({ cv0, cv1, cvWant })})`);
     // Insert Bends: a thin U section (walls 3) opening towards +Y, extruded 100; click its outside bottom (y = 0, seen from the default view), ✓: two bends, thickness 3.
     await mp.evaluate(() => window.__sv.model.store.change("U section", d => {
@@ -11159,6 +11159,21 @@ try {
     const lpf = await mp.evaluate(() => window.__sv.model.last().props?.volume ?? 0);
     check(!lp.bad && lp.bends === 8 && !lp.out.length && Math.abs(lpf / lp.v - 1) < 6e-3,
       `sheet metal: Convert gives each wall its own lip off a shared rim, mitred at the corners (${JSON.stringify({ lp, lpf })})`);
+    // A tray (all four walls of the 100 × 60 × 40 box) with Auto relief: the walls meet on the corners' bisector planes
+    // and each corner gets a rectangular relief, so the flat pattern has the part's volume; without relief, more.
+    const trayDoc = ([relief, flat]) => window.__sv.model.store.change("Tray", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), L = (id, a, b) => ({ id, t: "line", a, b });
+      d.features = [
+        { id: "s", type: "sketch", name: "s", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", 0, 0), P("p2", 100, 0), P("p3", 100, 60), P("p4", 0, 60), L("l1", "p1", "p2"), L("l2", "p2", "p3"), L("l3", "p3", "p4"), L("l4", "p4", "p1")] },
+        { id: "e", type: "extrude", name: "Boss-Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 40 } },
+        { id: "c", type: "smconvert", name: "Convert-Solid1", face: { name: "e:start" }, edges: ["l1", "l2", "l3", "l4"].map(l => ({ faces: ["e:start", `e:side:${l}`] })), thickness: { v: 2 }, radius: { v: 2 }, k: 0.5, ...(relief ? { relief: "rect" } : {}) },
+        ...(flat ? [{ id: "fp", type: "smflat", name: "Flat-Pattern1" }] : []),
+      ];
+    });
+    const trayVol = async (args) => { await mp.evaluate(trayDoc, args); await settle(); return mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; }); };
+    const tr0 = await trayVol([false, false]), tr1 = await trayVol([true, false]), tr1f = await trayVol([true, true]);
+    check(!tr0.bad && !tr1.bad && !tr1f.bad && tr1.v < tr0.v - 1 && Math.abs(tr1f.v / tr1.v - 1) < 1e-6,
+      `sheet metal: Convert's Auto relief cuts the tray's corners, and the flat pattern keeps the part's volume (${JSON.stringify({ tr0, tr1, tr1f })})`);
     // Tab and Slot: a 100 × 50 plate and a separate 3 mm block 1 mm past one end (on the side away from the camera, so
     // its face towards the plate shows above it). Click the plate's top edge there, then that block face, ✓: two tabs
     // 10 × (1 + 2) into slots 0.1 bigger all round (2.1 deep: the default height is the thickness).
