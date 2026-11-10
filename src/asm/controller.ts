@@ -1379,26 +1379,28 @@ export class AsmController {
   }
 
   /**
-   * Turns a component by `deg` about the axis its mate leaves free (exam #51): solved with a lock that holds the
-   * turn, as a motion study's motor does, so the parts coupled to it follow instead of pulling it back.
+   * Turns a component by `deg` about the axis of its concentric, hinge or screw mate (exam #51). Each step of at most
+   * 60° is solved with a lock that holds the component's orientation against a fixed one (as a motion study's motor
+   * holds a turn), so the parts coupled to it follow instead of pulling it back, and a screw counts whole turns.
    */
   private turnOnAxis(id: string, deg: number): Record<string, Tf> | null {
-    const doc = this.doc, c = this.comp(id);
-    if (!doc || !c || !Number.isFinite(deg)) return null;
-    for (const m of doc.mates ?? []) {
-      if (m.suppressed || (m.type !== "concentric" && m.type !== "hinge" && m.type !== "screw") || (m.a.comp !== id && m.b.comp !== id)) continue;
-      const a = this.anyComp(m.a.comp), b = this.anyComp(m.b.comp), g = a && this.geo.get(a.part)?.get(m.a.face);
-      if (!a || !b || !g || g.k !== "axis") continue;
-      // The lock turns b about a's axis: turning a itself is the same turn the other way.
-      const amount = ((m.b.comp === id ? deg : -deg) * Math.PI) / 180;
-      const lock: Mate = { id: `${m.id}~turn`, name: "", type: "lock", a: { comp: a.id, face: "" }, b: { comp: b.id, face: "" }, rel: compose(rotation(g.p, unit(g.d), amount), compose(invert(a.tf), b.tf)), keep: "rot", along: unit(g.d) };
-      const ax = this.dragAxis(id), start: Record<string, Tf> = {};
-      for (const x of doc.components) start[x.id] = x.tf;
-      if (ax) start[id] = compose(rotation(ax.o, ax.u, (deg * Math.PI) / 180), c.tf);
-      const r = this.solveDoc(doc, [lock], start, false);
-      return r.ok ? r.tfs : null;
+    const doc = this.doc, c = this.comp(id), ax = this.dragAxis(id);
+    const base = doc?.components.find(x => x.fixed && !x.suppressed && x.id !== id);
+    if (!doc || !c || !ax || !base || c.fixed || !Number.isFinite(deg)) return null;
+    const n = Math.max(1, Math.ceil(Math.abs(deg) / 60)), step = (deg * Math.PI) / 180 / n;
+    let work: AsmDoc = doc, tfs: Record<string, Tf> | null = null;
+    for (let k = 0; k < n; k++) {
+      const now = work.components.find(x => x.id === id)!.tf, want = compose(rotation(ax.o, ax.u, step), now);
+      const lock: Mate = { id: `${id}~turn`, name: "", type: "lock", a: { comp: base.id, face: "" }, b: { comp: id, face: "" }, rel: compose(invert(base.tf), want), keep: "rot" };
+      const start: Record<string, Tf> = {};
+      for (const x of work.components) start[x.id] = x.id === id ? want : x.tf;
+      const r = this.solveDoc(work, [lock], start, false);
+      if (!r.ok) return null;
+      tfs = r.tfs;
+      const got = tfs;
+      work = { ...work, components: work.components.map(x => (got[x.id] ? { ...x, tf: got[x.id] } : x)) };
     }
-    return null;
+    return tfs;
   }
 
   private mateLive(id: string) { return (this.doc?.mates ?? []).some(m => !m.suppressed && (m.a.comp === id || m.b.comp === id)); }
