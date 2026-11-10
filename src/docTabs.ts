@@ -13,11 +13,15 @@ export interface DocTab {
   label: string;
   /** What `park` returned while the tab is not shown; null while it is live. */
   state: unknown;
+  /** The camera of a parked 3D document (FR-DOC-003), put back when it is shown again. */
+  view?: unknown;
 }
 
 export interface DocsHost {
   /** Keeps the live document of this kind and closes it; null when there is nothing to keep. */
   park(kind: DocKind): unknown;
+  /** The 3D view's camera, kept with a parked 3D document. */
+  view?(): unknown;
   /** Shows a parked document again. */
   resume(tab: DocTab): Promise<void> | void;
   /** Closes the live document of this kind for good. */
@@ -139,6 +143,7 @@ export class DocTabs {
 
   private parkTab(tab: DocTab) {
     this.parking = true;
+    if (tab.kind !== "drawing") tab.view = this.host.view?.();
     try { tab.state = this.host.park(tab.kind); } finally { this.parking = false; }
     if (tab.state == null) this.tabs = this.tabs.filter(x => x !== tab);
   }

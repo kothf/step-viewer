@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.377.0] - 2026-11-10
+
+### Added
+
+- **Document tabs keep the view (FR-DOC-003)**: a part, an assembly or a model file comes back to its tab with the camera it was left with, and a part with its selected Features row, instead of the fitted isometric view.
+- **Section view in the heads-up bar (FR-UI-022)**: the bar at the top of the view has a Section view button: it cuts the model at the selected flat face, or through the middle on the front plane; a second click turns the cut off and keeps its planes, a third brings it back. The bar moves aside when it would reach the ✓ ✕ corner or the view cube.
+
 ## [1.376.0] - 2026-11-10
 
 ### Added
@@ -2215,7 +2222,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.376.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.377.0...HEAD
+[1.377.0]: https://github.com/kothf/step-viewer/compare/v1.376.0...v1.377.0
 [1.376.0]: https://github.com/kothf/step-viewer/compare/v1.375.0...v1.376.0
 [1.375.0]: https://github.com/kothf/step-viewer/compare/v1.374.0...v1.375.0
 [1.374.0]: https://github.com/kothf/step-viewer/compare/v1.373.0...v1.374.0
