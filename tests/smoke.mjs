@@ -4735,6 +4735,11 @@ try {
     await mp.click('#vault-panel [data-mtr="Submit for review"]');
     await mp.click('#vault-dlg button[value="ok"]');
     await mp.waitForFunction(() => window.__sv.vault.files.filter(f => f.state === "In review").length === 2);
+    // Approve names the revision each file will get, before it is given.
+    await mp.click('#vault-panel [data-mtr="Approve"]');
+    await mp.waitForSelector("#vault-dlg[open] .v-check li");
+    const nextRev = await mp.evaluate(() => [...document.querySelectorAll("#vault-dlg .v-nextrev")].map(x => x.textContent).join("|"));
+    await mp.click('#vault-dlg button[value="cancel"]');
     // A plain right-click on an unselected row selects it alone and shows the one-file menu.
     await rows.nth(0).click({ button: "right" });
     const oneMenu = await menuText();
@@ -4747,11 +4752,60 @@ try {
     await mp.keyboard.press("Delete");
     await mp.click('#confirm [data-a="ok"]');
     await mp.waitForFunction(() => window.__sv.vault.files.length === 0);
-    check(top === "more,close,add,addfolder,savepart,search" && more === "notes,changes,packages,audit,verify,storage,export,bin,settings,workflow,user" && back === "more:true",
+    // What's behind: the part moves on, its drawing still keeps v1's copy; Update puts v2's document in (FR-PDM-022).
+    const pmf = { format: "mobiuscad", schema: 1, kind: "part" }, wmf = { format: "mobiuscad", schema: 1, kind: "drawing" };
+    const pdoc = d => ({ schema: 1, kind: "part", id: "d_plate", name: "plate", features: [], props: { description: d } });
+    const pfile = d => [...zip(Object.entries({ "manifest.json": JSON.stringify(pmf), "document.json": JSON.stringify(pdoc(d)) }))];
+    const wfile = [...zip(Object.entries({ "manifest.json": JSON.stringify(wmf), "drawing.json": JSON.stringify({ schema: 1, kind: "drawing", id: "w1", name: "plate", sheets: [{}], source: { kind: "part", name: "plate.mcadprt", doc: pdoc("v1") } }) }))];
+    await mp.evaluate(async ([a, b, w]) => {
+      const p = window.__sv.vault, v = p.vault;
+      const f = await v.add("plate.mcadprt", new Uint8Array(a));
+      await v.add("plate.mcaddrw", new Uint8Array(w));
+      await v.checkOut(f.id); await v.saveWorking(f.id, new Uint8Array(b)); await v.checkIn(f.id, "v2");
+      await p.refresh();
+    }, [pfile("v1"), pfile("v2"), wfile]);
+    await mp.waitForSelector('#vault-panel [data-a="behind"]');
+    const behindBtn = await mp.textContent('#vault-panel [data-a="behind"]');
+    await mp.click('#vault-panel [data-a="behind"]');
+    await mp.waitForFunction(() => /What's behind/.test(document.querySelector("#vault-dlg[open] h3")?.textContent ?? ""));
+    const behindDlg = await mp.evaluate(() => document.querySelector("#vault-dlg").innerText.replace(/\s+/g, " "));
+    await mp.click("#vault-dlg [data-up]");
+    await mp.waitForFunction(() => /up to date/.test(document.querySelector("#vault-dlg[open]")?.innerText ?? ""));
+    await mp.keyboard.press("Escape");
+    const updated = await mp.evaluate(async () => {
+      const p = window.__sv.vault, f = p.files.find(x => x.path === "plate.mcaddrw");
+      return { n: f.versions.length, comment: f.versions.at(-1).comment, lock: !!f.checkout, btn: !!document.querySelector('#vault-panel [data-a="behind"]') };
+    });
+    // Folders in the list fold, and filter chips narrow it (FR-PDM-080).
+    await mp.evaluate(async () => { const p = window.__sv.vault; await p.vault.add("docs/specs/e.txt", new TextEncoder().encode("e")); await p.refresh(); });
+    await mp.waitForSelector('#vault-panel .v-folder[data-folder="docs/specs"]');
+    const listText = () => mp.evaluate(() => [...document.querySelectorAll("#vault-panel .v-files > *")].map(x => x.classList.contains("v-folder") ? `[${x.dataset.folder}]` : x.querySelector(".v-name").textContent).join(","));
+    const tree = await listText();
+    await mp.click('#vault-panel .v-folder[data-folder="docs"]');
+    const foldedList = await listText();
+    await mp.click('#vault-panel .v-folder[data-folder="docs"]');
+    const chipsShown = await mp.evaluate(() => [...document.querySelectorAll("#vault-panel [data-chip]")].map(b => b.textContent.trim()).join("|"));
+    await mp.click('#vault-panel [data-chip="drawing"]');
+    const onlyDrw = await listText();
+    await mp.click('#vault-panel [data-chip="all"]');
+    // Close vault with a changed file still checked out: a reminder first; Cancel keeps the vault open.
+    await mp.evaluate(async () => { const p = window.__sv.vault, f = p.files.find(x => x.path === "docs/specs/e.txt"); await p.vault.checkOut(f.id); await p.vault.saveWorking(f.id, new TextEncoder().encode("e2")); await p.refresh(); });
+    await mp.click('#vault-panel [data-a="close"]');
+    await mp.waitForSelector("#vault-dlg[open]");
+    const remind = await mp.evaluate(() => document.querySelector("#vault-dlg").innerText.replace(/\s+/g, " "));
+    await mp.click('#vault-dlg button[value="cancel"]');
+    const stillOpen = await mp.evaluate(() => !!window.__sv.vault.vault);
+    check(/Changes not checked in .*docs\/specs\/e\.txt/.test(remind) && stillOpen, `vault UI: closing the vault with changes not checked in reminds first (${remind}, ${stillOpen})`);
+    check(tree === "plate.mcaddrw,plate.mcadprt,[docs],[docs/specs],e.txt" && foldedList === "plate.mcaddrw,plate.mcadprt,[docs]" && chipsShown === "All|Parts 1|Drawings 1|Other files 1" && onlyDrw === "plate.mcaddrw",
+      `vault UI: folders in the list fold, filter chips narrow it (${tree} | ${foldedList} | ${chipsShown} | ${onlyDrw})`);
+    check(top === "more,close,add,addfolder,savepart,search" && more === "behind,notes,changes,packages,audit,verify,storage,export,bin,settings,workflow,user" && back === "more:true",
       `vault UI: a slim panel top with the vault's commands in ⋯ (${top} | ${more} | ${back})`);
     check(ctrlSel === "a.txt,c.txt" && shiftSel === "c.txt,d.txt" && /^Check out\|Get latest\|Change state: Submit for review\|Request change…\|Delete$/.test(multiMenu)
       && versions === "a.txt:1:Added,b.txt:1:Added,c.txt:1:Added,d.txt:2:both" && /^Open\|Check out\|Get latest\|.*History\|Where used\|Data card\|Rename/.test(oneMenu) && oneSel === "a.txt" && allSel === "a.txt,b.txt,c.txt,d.txt",
       `vault UI: Ctrl/Shift multi-select, row menu, check-in / state change / delete for several files (${ctrlSel} | ${shiftSel} | ${multiMenu} | ${versions} | ${oneMenu} | ${oneSel} | ${allSel})`);
+    check(nextRev === "becomes revision A|becomes revision A", `vault UI: the state change dialog names the revision each file will get (${nextRev})`);
+    check(behindBtn === "1 behind" && /Drawings whose model changed/.test(behindDlg) && /plate\.mcaddrw/.test(behindDlg) && /plate\.mcadprt · v1 → v2/.test(behindDlg) && updated.n === 2 && /^Updated to the latest plate\.mcadprt$/.test(updated.comment) && !updated.lock && !updated.btn,
+      `vault UI: What's behind lists a drawing whose model moved on, and Update checks in a version with the latest model (${behindBtn} | ${behindDlg} | ${JSON.stringify(updated)})`);
     await ctx.close();
   }
 

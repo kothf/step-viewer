@@ -32,6 +32,8 @@ export interface DocsHost {
   dirty(tab: DocTab): boolean;
   /** A tab closed without saving (drop its recovery copy). */
   forget?(tab: DocTab): void;
+  /** Asked before a tab closes (a vault check-in reminder); false keeps it open. */
+  beforeClose?(tab: DocTab, unsaved: boolean): Promise<boolean>;
 }
 
 const ICON: Record<DocKind, string> = {
@@ -183,7 +185,9 @@ export class DocTabs {
   async close(id: string) {
     const tab = this.tabs.find(x => x.id === id);
     if (!tab || this.busy) return;
-    if (this.host.dirty(tab) && !(await confirmModal(t("{name} has unsaved changes. Close it anyway?", { name: tab.label.replace(/\s*•$/, "") }), t("Close"), t("Close document")))) return;
+    const unsaved = this.host.dirty(tab);
+    if (unsaved && !(await confirmModal(t("{name} has unsaved changes. Close it anyway?", { name: tab.label.replace(/\s*•$/, "") }), t("Close"), t("Close document")))) return;
+    if (this.host.beforeClose && !(await this.host.beforeClose(tab, false))) return;
     const i = this.tabs.indexOf(tab);
     this.busy = true;
     try {

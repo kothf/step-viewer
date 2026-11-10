@@ -154,7 +154,7 @@ export class VaultMenu {
       case "addfolder": this.host.showPanel(); await p.addFolderFiles(); break;
       case "search": await p.searchDlg(); this.host.showPanel(); break;
       case "settings": await p.settingsDlg(); break;
-      case "close": p.close(); break;
+      case "close": void p.closeVault(); break;
     }
   }
 }

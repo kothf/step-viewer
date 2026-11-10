@@ -8,7 +8,9 @@
 // `log/` (append-only, so concurrent writers never overwrite each other, FR-PDM-071).
 
 import { defaultCards, defaultWorkflow, formatNumber, PART_NUMBER, preLabel, revLabel, revIndex, ROLES, type CardField, type Numbering, type RevScheme, type Role, type Workflow, type WfTransition } from "./workflow";
-import { docJson, docRefs, docText, embedDocs, featureDiff, readProps, relPath, resolveRel, rewriteRefs, writeProps } from "./codec";
+import { flattenSubs } from "../asm/patterns";
+import type { AsmDoc } from "../asm/types";
+import { docJson, docRefs, docText, embedDocs, embedModel, featureDiff, readProps, relPath, resolveRel, rewriteRefs, writeProps } from "./codec";
 
 /** The little a vault needs from a directory. Names are single path segments. */
 export interface VDir {
@@ -587,6 +589,68 @@ export class Vault {
     return changed;
   }
 
+  /**
+   * What's behind (FR-PDM-022): files whose latest version was checked in against older versions of the files
+   * they use, so an assembly keeps old copies of its parts and a drawing an old copy of its model. Each with the
+   * references that moved on.
+   */
+  async behind(): Promise<{ id: string; path: string; kind: string; refs: { id: string; path: string; version: number; latest: number }[] }[]> {
+    const files = await this.files();
+    const all = new Map(files.map(x => [x.id, x]));
+    const out: { id: string; path: string; kind: string; refs: { id: string; path: string; version: number; latest: number }[] }[] = [];
+    for (const f of files) {
+      if (f.kind !== "assembly" && f.kind !== "drawing") continue;
+      const refs: { id: string; path: string; version: number; latest: number }[] = [];
+      for (const r of this.latest(f).refs ?? []) {
+        const c = all.get(r.id);
+        if (c && this.latest(c).n > r.version && !refs.some(x => x.id === c.id)) refs.push({ id: c.id, path: c.path, version: r.version, latest: this.latest(c).n });
+      }
+      if (refs.length) out.push({ id: f.id, path: f.path, kind: f.kind, refs });
+    }
+    return out;
+  }
+
+  /**
+   * Update from the vault (FR-PDM-022): the checked-out assembly's working copy takes the latest version of each
+   * part or sub-assembly that moved on since it was checked in (linked or embedded), a drawing's working copy the
+   * latest version of its model. Check it in to record it. Returns the paths that changed.
+   */
+  async updateRefs(id: string): Promise<string[]> {
+    const f = await this.file(id);
+    const st = await this.status(f);
+    if (!st.mine) throw new VaultError("Check the file out first.");
+    const data = await this.working(f.path);
+    if (!data) return [];
+    const all = new Map((await this.files()).map(x => [x.id, x]));
+    const moved = (this.latest(f).refs ?? []).flatMap(r => { const c = all.get(r.id); const lv = c && this.latest(c); return c && lv && !lv.purged && lv.n > r.version ? [{ r, c, lv }] : []; });
+    if (!moved.length) return [];
+    let out: Uint8Array | null = null;
+    if (f.kind === "drawing") {
+      const { c, lv } = moved[0];
+      const doc = await docJson(await this.object(lv.sha));
+      if (!doc) return [];
+      out = await embedModel(data, doc, old => {
+        // Pattern instances need face geometry to place: the drawing keeps the ones it had for parts still there.
+        const flat = flattenSubs(doc as unknown as AsmDoc);
+        const inst = ((old as unknown as AsmDoc | null)?.components ?? []).filter(x => x.id.includes("~") && flat.parts[x.part] && !flat.components.some(y => y.id === x.id));
+        return { ...flat, components: [...flat.components, ...inst] } as unknown as Record<string, unknown>;
+      });
+      return out ? (await this.writeWorking(f.path, out), [c.path]) : [];
+    }
+    const parts = new Map<string, unknown>(), subs = new Map<string, unknown>(), shas = new Map<string, string>(), changed: string[] = [];
+    for (const { r, c, lv } of moved) {
+      const d = await docJson(await this.object(lv.sha));
+      if (!d) continue;
+      (/\.mcadasm$/i.test(c.path) ? subs : parts).set(r.path, d);
+      shas.set(r.path, lv.sha);
+      changed.push(c.path);
+    }
+    out = changed.length ? await embedDocs(data, parts, subs, shas) : null;
+    if (!out) return [];
+    await this.writeWorking(f.path, out);
+    return changed;
+  }
+
   /** Get latest (FR-PDM-015): the working copy becomes the latest version (refused over local changes unless forced). */
   async getLatest(id: string, force = false) {
     const f = await this.file(id);
@@ -936,6 +1000,14 @@ export class Vault {
    * latest version the next revision label and, in MöbiusCAD documents, writes revision, state, approver and date
    * into the properties (a new version, FR-PDM-034). Returns the revision labels given.
    */
+  /** The revision label a transition will give the file, if it gives one (shown before approving). */
+  nextRevision(f: FileRec, name: string): string | undefined {
+    const tr = this.transitionsOf(f).find(x => x.name === name);
+    if (tr?.revision === "release") { const last = this.released(f); return revLabel(this.revScheme, last ? revIndex(this.revScheme, last.rev!) + 1 : 0); }
+    if (tr?.revision === "pre" && !this.released(f)) return preLabel(this.revScheme, f.versions.filter(v => v.pre).length) ?? undefined;
+    return undefined;
+  }
+
   async transition(ids: string[], name: string, comment = "", to?: string): Promise<Record<string, string | undefined>> {
     const chk = await this.checkTransition(ids, name, comment);
     const bad = chk.find(c => c.problems.length);
