@@ -9778,6 +9778,38 @@ try {
     const vfr = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(x => x.type === "fillet"); return f && { v: !!f.variable, r: [f.edges[0].r, f.edges[0].r2].sort((a, b) => a - b) }; });
     check(!vf0.bad && Math.abs(vf1.v - vf0.v) < 0.1 && !vf1.bad && vf1.types === "import,sketch,extrude,delbody,fillet" && vfr?.v && Math.abs(vfr.r[0] - 3) < 1e-3 && Math.abs(vfr.r[1] - 8) < 1e-3,
       `model 1.489.0: Recognize Features makes a variable radius fillet again with its end radii (FR-FT-102) (${JSON.stringify({ vf0, vf1, vfr })})`);
+    // 1.492.0 (FR-UI-100): a middle click on a straight edge turns the view about the edge's line; empty space clears it and puts Z up again.
+    await mp.evaluate(() => window.__sv.model.store.change("Block", d => {
+      const xy = [[-30, -20], [30, -20], [30, 20], [-30, 20]];
+      const ents = xy.map(([x, y], i) => ({ id: "bp" + i, t: "point", x, y }));
+      xy.forEach((_, i) => ents.push({ id: "bl" + (i + 1), t: "line", a: "bp" + i, b: "bp" + ((i + 1) % 4) }));
+      d.features = [{ id: "bs", type: "sketch", name: "Sketch1", plane: { std: "XY" }, ents, rels: [], dims: [] },
+        { id: "be", type: "extrude", name: "Boss-Extrude1", sketch: "bs", op: "boss", end: "blind", depth: { v: 20 } }];
+    }));
+    await settle();
+    await mp.evaluate(() => { const v = window.__sv.viewer; v.setPivot(null); v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
+    await mp.waitForTimeout(200);
+    const scr = pts => mp.evaluate(ps => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(), V = v.camera.position.constructor; return ps.map(p => { const s = new V(...p).project(v.camera); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; }); }, pts);
+    const [ep] = await scr([[-12, -20, 20]]);
+    await mp.mouse.click(ep[0], ep[1], { button: "middle" });
+    await mp.waitForTimeout(100);
+    const ex0 = await mp.evaluate(() => { const v = window.__sv.viewer; return { axis: v.pivotAxis && v.pivotAxis.toArray().map(x => +x.toFixed(3)), line: !!v.scene.children.find(o => o.userData.pivot === "axis"), rot: v.controls.enableRotate }; });
+    const line0 = await scr([[-25, -20, 20], [25, -20, 20], [0, 20, 0]]);
+    const exCv = await mp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return [r.left + r.width * 0.35, r.top + r.height * 0.75]; });
+    await mp.mouse.move(exCv[0], exCv[1]);
+    await mp.mouse.down();
+    for (let k = 1; k <= 8; k++) await mp.mouse.move(exCv[0] + k * 6, exCv[1] - k * 12);
+    await mp.mouse.up();
+    await mp.waitForTimeout(400);
+    const line1 = await scr([[-25, -20, 20], [25, -20, 20], [0, 20, 0]]);
+    const exCorner = await mp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return [r.right - 60, r.bottom - 60]; });
+    await mp.mouse.click(exCorner[0], exCorner[1], { button: "middle" });
+    await mp.waitForTimeout(100);
+    const ex1 = await mp.evaluate(() => { const v = window.__sv.viewer; return { pivot: v.pivot, axis: v.pivotAxis, line: !!v.scene.children.find(o => o.userData.pivot === "axis"), up: v.camera.up.toArray(), rot: v.controls.enableRotate }; });
+    const still = k => Math.hypot(line1[k][0] - line0[k][0], line1[k][1] - line0[k][1]);
+    check(ex0.axis && Math.abs(Math.abs(ex0.axis[0]) - 1) < 1e-3 && ex0.line && !ex0.rot && still(0) < 1.5 && still(1) < 1.5 && still(2) > 10
+      && ex1.pivot === null && ex1.axis === null && !ex1.line && ex1.rot && Math.abs(ex1.up[2] - 1) < 1e-9,
+      `model 1.492.0: a middle click on a straight edge turns the view about the edge's line (both ends stay put, the far corner moves); empty space clears it and puts Z up (FR-UI-100) (${JSON.stringify({ ex0, line0, line1, ex1 })})`);
     await ctx.close();
   }
 

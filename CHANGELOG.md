@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.492.0] - 2026-11-10
+
+### Added
+
+- Rotation centre on an edge (FR-UI-100): a middle click on a straight edge, away from its ends, makes the view turn about the edge's line, shown dashed, as in SolidWorks. Before, the view turned about the clicked point only. A middle click on empty space goes back to turning about the view centre and puts Z up again.
+
 ## [1.491.0] - 2026-11-10
 
 ### Fixed
@@ -3028,7 +3034,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.491.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.492.0...HEAD
+[1.492.0]: https://github.com/kothf/step-viewer/compare/v1.491.0...v1.492.0
 [1.491.0]: https://github.com/kothf/step-viewer/compare/v1.490.0...v1.491.0
 [1.490.0]: https://github.com/kothf/step-viewer/compare/v1.489.0...v1.490.0
 [1.489.0]: https://github.com/kothf/step-viewer/compare/v1.488.0...v1.489.0
