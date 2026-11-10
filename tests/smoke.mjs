@@ -4851,6 +4851,14 @@ try {
     await dp.selectOption('#drw .drw-props [data-d="arrows"]', "");
     const len2b = await dimLine();
     check(len1 > len0 + 5 && Math.abs(len2b - len0) < 1e-6, `drawing: a linear dimension's arrows go outside by hand and back (${[len0, len1, len2b].map(v => v.toFixed(1)).join(" → ")})`);
+    // Text below (FR-DRW-021): a second line under the dimension line, gone again when cleared.
+    await dp.fill('#drw .drw-props [data-d="below"]', "2 PLACES"); await dp.dispatchEvent('#drw .drw-props [data-d="below"]', "change");
+    await dp.waitForTimeout(100);
+    const below1 = await dp.evaluate(() => { const ps = window.__sv.drw.prims().filter(q => q.t === "t" && q.layer === "ANNOT"); const b = ps.find(q => q.s === "2 PLACES"), m = ps.find(q => q.s === "100±0.1"); return b && m ? [m.y - b.y, b.h] : null; });
+    await dp.fill('#drw .drw-props [data-d="below"]', ""); await dp.dispatchEvent('#drw .drw-props [data-d="below"]', "change");
+    await dp.waitForTimeout(100);
+    const below2 = (await texts()).includes("2 PLACES");
+    check(!!below1 && below1[0] > below1[1] && !below2, `drawing: a dimension takes a second line of text under its line and loses it again (${JSON.stringify(below1)})`);
     // ISO 286 fit (FR-DRW-021): the Ø16 takes H7, shown with its deviations from the table (+0.018 / 0).
     const dia = await dp.evaluate(() => { const p = window.__sv.drw.prims().find(q => q.t === "t" && q.layer === "ANNOT" && q.s === "Ø16"); return p && [p.x, p.y + p.h / 2]; });
     [x, y] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), dia);
@@ -9804,6 +9812,21 @@ try {
     await settle();
     const pb = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), beads: (l.cutList ?? []).filter(c => c.kind === "bead").map(c => [c.qty, c.length]) }; });
     check(!pb.bad && pb.beads.length === 1 && pb.beads[0][0] === 1 && Math.abs(pb.beads[0][1] - (4 * 28 + 12 * Math.PI)) < 0.2, `weldments: a bead all round a square tube from one picked side (${JSON.stringify(pb)})`);
+    // A round tube standing tilted on the plate: the root is an ellipse (semi-axes R and R / cos θ); one picked side brings the
+    // other half in, and the bead is one closed loft all round.
+    await mp.evaluate(() => {
+      window.__sv.model.store.change("Tilted post", d => {
+        d.features.push({ id: "k6", type: "sketch3d", name: "3DSketch3", rels: [], dims: [], pts: [{ id: "A", p: [1960, -60, -60], fixed: true }, { id: "B", p: [1960, 90, 290] }], segs: [{ id: "post", t: "line", pts: ["A", "B"] }] },
+          { id: "m6", type: "member", name: "Structural Member6", profile: "chs", size: "33.7x2.6", segs: [{ sketch: "k6", ent: "post" }], corner: "none" },
+          { id: "w6", type: "weldbead", name: "Fillet Bead2", faces1: [{ name: "pe:end", hint: [2050, 50, 10] }], faces2: [{ name: "m6:post:side:0" }], size: { v: 3 } });
+      });
+    });
+    await settle();
+    const eb = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), beads: (l.cutList ?? []).filter(c => c.kind === "bead").map(c => c.length) }; });
+    const eA = 33.7 / 2 / (350 / Math.hypot(150, 350)), eB = 33.7 / 2, ePer = Math.PI * (3 * (eA + eB) - Math.sqrt((3 * eA + eB) * (eA + 3 * eB)));
+    await mp.evaluate(() => window.__sv.model.store.undo());
+    await settle();
+    check(!eb.bad && eb.beads.length === 2 && eb.beads.some(x => Math.abs(x - ePer) < 0.3), `weldments: a bead round a tilted round tube follows the elliptical root (${JSON.stringify({ eb, ePer })})`);
     // Intermittent bead from the panel: the defaults (50 every 100) round the 149.7 mm loop give welds at 0 and 100.
     await mp.evaluate(() => window.__sv.modeller.editFeature("w5"));
     await settle();

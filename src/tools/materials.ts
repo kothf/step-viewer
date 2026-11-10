@@ -433,7 +433,7 @@ export const CHECKED: Record<string, string> = {
   "Titanium Ti-6Al-4V": "www.ulbrich.com/alloys/ti-6-al-4-v-uns-r56400/",
   "Steel ASTM A500 Grade B (shaped tube)": "major-metals-website.pages.dev/welded-steel-tubing/astm-a500",
   "Steel C22 (normalized)": "en.saarstahl.com/app/uploads/2024/03/20160401100253-0402_C22.pdf",
-  // 1.396.0: four plastics from their makers' data sheets.
+  // 1.399.0: four plastics from their makers' data sheets.
   "PLA": "cdn.shopify.com/s/files/1/1223/5992/files/PLA_4043D_TDS.pdf",
   "PETG": "protolabs.com/media/pzub5tfo/eastar-6763.pdf",
   "PEI (Ultem 1000)": "cdn.shopify.com/s/files/1/0260/7421/files/ULTEM_1000_DATA_SHEET.pdf",

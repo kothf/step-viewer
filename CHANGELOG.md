@@ -5,11 +5,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.396.0] - 2026-11-10
+## [1.399.0] - 2026-11-10
 
 ### Changed
 
 - **Four plastics checked (FR-MAT-001)**: PLA, PETG, PEI (Ultem 1000) and PE-HD now show **Checked against:** with a link to a maker's or stockist's data sheet. 133 of 170 materials are checked; the other 37 still say they are not. Values changed to match the sheets: PEI modulus 3.2 → 3.6 GPa and strength 105 → 110 MPa, PE-HD modulus 1.0 → 1.1 GPa.
+
+## [1.398.0] - 2026-11-10
+
+### Added
+
+- **Recognize Fillets finds more chamfers (FR-FT-102)**: chamfers on round edges, such as the broken edge of a shaft end or a boss, and chamfers with two different distances now come back as Chamfer features too, with their distances, so they can be changed or deleted on an imported body.
+
+## [1.397.0] - 2026-11-10
+
+### Added
+- Text below a dimension (FR-DRW-021): **Text below** in a drawing dimension's panel adds a second line under the dimension line, centred under the value (2 PLACES, for instance).
+
+## [1.396.0] - 2026-11-10
+
+### Added
+
+- **Fillet beads along curved edges (FR-FT-121)**: a Fillet Bead now follows any edge where its two face sets meet, not only straight and round ones: the ellipse where a round tube stands tilted on a plate, the saddle where a tube meets another tube, and edges between curved faces such as cones. The bead's cross-section follows the changing angle between the faces along the edge; a closed run (all round a tube) becomes one ring-shaped bead, and From/to length and intermittent welds work along these edges too. Edges where the faces become tangent are still skipped, with a warning.
 
 ## [1.395.0] - 2026-11-10
 
@@ -2330,7 +2347,10 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.396.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.399.0...HEAD
+[1.399.0]: https://github.com/kothf/step-viewer/compare/v1.398.0...v1.399.0
+[1.398.0]: https://github.com/kothf/step-viewer/compare/v1.397.0...v1.398.0
+[1.397.0]: https://github.com/kothf/step-viewer/compare/v1.396.0...v1.397.0
 [1.396.0]: https://github.com/kothf/step-viewer/compare/v1.395.0...v1.396.0
 [1.395.0]: https://github.com/kothf/step-viewer/compare/v1.394.0...v1.395.0
 [1.394.0]: https://github.com/kothf/step-viewer/compare/v1.393.0...v1.394.0

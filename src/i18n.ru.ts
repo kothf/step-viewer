@@ -2210,6 +2210,7 @@ export const RU: Record<string, string> = {
   "THRU": "НАСКВОЗЬ",
   "Text height (mm)": "Высота текста (мм)",
   "Text instead of the value": "Текст вместо значения",
+  "Text below": "Текст снизу",
   "Text": "Текст",
   "The model has no dimensions to import: model items come from a part's sketches and extrudes.": "У модели нет размеров для вставки: размеры модели берутся из эскизов и вытягиваний детали.",
   "Value": "Значение",
@@ -3550,8 +3551,8 @@ export const RU: Record<string, string> = {
   "Sheet Metal": "Листовой металл",
   "Cut list": "Список вырезов",
   "Settings": "Параметры",
-  "Weld beads follow straight and round edges between flat and cylindrical faces; other edges were skipped.": "Швы строятся вдоль прямых и круглых рёбер между плоскими и цилиндрическими гранями; остальные рёбра пропущены.",
-  "The faces of the two sets do not meet along a straight or round edge.": "Грани двух наборов не встречаются по прямому или круглому ребру.",
+  "Some edges were skipped: the faces are tangent somewhere along them, so a bead has no room there.": "Некоторые рёбра пропущены: грани где-то вдоль них касаются, и шву там нет места.",
+  "The faces of the two sets do not meet along an edge a bead can follow.": "Грани двух наборов не встречаются по ребру, вдоль которого можно построить шов.",
   // 1.89.0: sketch snapping to model geometry.
   "Automatic relations": "Автоматические взаимосвязи",
   "Lines snap horizontal, vertical, perpendicular, parallel or tangent and keep that relation; hold Ctrl to draw without them.": "Отрезки привязываются горизонтально, вертикально, перпендикулярно, параллельно или по касательной и сохраняют эту взаимосвязь; удерживайте Ctrl, чтобы рисовать без них.",
