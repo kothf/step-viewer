@@ -8403,6 +8403,26 @@ try {
     const x2 = await state();
     check(!x0.bad && Math.abs(x0.v - (48000 - 1000 + 504)) < 0.05 && Math.abs(x1.v - x0.v) < 0.05 && !x1.bad && x1.types === "import,sketch,extrude,delbody,sketch,extrude,sketch,extrude" && exts === "boss:blind:20 boss:blind:7 cut:blind:5" && !x2.bad && Math.abs(x2.v - (x1.v - 800)) < 0.05,
       `model: Recognize Extrudes makes an imported block with a pocket and a boss again as a base extrude and sketches with extrudes (FR-FT-102) (${JSON.stringify({ x0, x1, x2, exts })})`);
+    // 1.415: a turned shaft (a step and a cone, about Z) comes back as a sketch with a revolve.
+    await mp.evaluate(() => window.__sv.model.store.change("Shaft", d => {
+      const xy = [[0, 0], [10, 0], [10, 20], [6, 26], [6, 40], [0, 40]];
+      const ents = xy.map(([x, y], i) => ({ id: "rp" + i, t: "point", x, y }));
+      xy.forEach((_, i) => ents.push({ id: "rl" + i, t: "line", a: "rp" + i, b: "rp" + (i + 1) % xy.length }));
+      ents.push({ id: "ra", t: "point", x: 0, y: -5 }, { id: "rb", t: "point", x: 0, y: 45 }, { id: "rax", t: "line", a: "ra", b: "rb", cons: true });
+      d.features = [{ id: "r", type: "sketch", name: "r", plane: { std: "XZ" }, ents, rels: [], dims: [] },
+        { id: "v", type: "revolve", name: "Revolve1", sketch: "r", op: "boss", axis: "rax", angle: { v: Math.PI * 2 } }];
+    }));
+    await settle();
+    const t0 = await state();
+    const brep3 = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "shaft.brep", brep }]; }), brep3);
+    await settle();
+    await runCmd(mp, "Recognize Extrudes");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.some(f => f.type === "revolve"), null, { timeout: 120000 });
+    await settle();
+    const t1 = await state();
+    check(!t0.bad && t0.v > 1000 && Math.abs(t1.v - t0.v) < 0.05 && !t1.bad && t1.types === "import,sketch,revolve,delbody",
+      `model: Recognize Extrudes makes an imported turned shaft again as a sketch with a revolve (FR-FT-102) (${JSON.stringify({ t0, t1 })})`);
     await ctx.close();
   }
 

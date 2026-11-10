@@ -279,3 +279,53 @@ test("feature recognition: the base of an imported prism comes back as a sketch 
   const odd = imported(m, [...base(), ch("h1", 1), ch("h2", 2), pocket, cut("c1", "q", 5)]);
   assert.equal(m.recognizeExtrudes(odd).map(f => f.type).join(), "delface,sketch,extrude");
 });
+
+test("feature recognition: the base of an imported body of revolution comes back as a sketch with a revolve (FR-FT-102)", async () => {
+  const m = new Modeller(await occ());
+  // A stepped shaft with a cone, turned about Z; `x0` moves the axis, `bore` keeps the profile off it.
+  const shaft = (plane: SketchFeature["plane"], x0 = 0, bore = 0): Feature[] => {
+    const xy: [number, number][] = [[bore, 0], [10, 0], [10, 20], [6, 26], [6, 40], [bore, 40]];
+    const ents: SkEnt[] = xy.map(([x, y], i) => ({ id: `rp${i}`, t: "point", x: x + x0, y }) as SkEnt);
+    xy.forEach((_, i) => ents.push({ id: `rl${i}`, t: "line", a: `rp${i}`, b: `rp${(i + 1) % xy.length}` }));
+    ents.push({ id: "ra", t: "point", x: x0, y: -5 }, { id: "rb", t: "point", x: x0, y: 45 }, { id: "rax", t: "line", a: "ra", b: "rb", cons: true });
+    return [{ id: "r", type: "sketch", name: "r", plane, ents, rels: [], dims: [] },
+      { id: "v", type: "revolve", name: "V", sketch: "r", op: "boss", axis: "rax", angle: { v: Math.PI * 2 } } as Feature];
+  };
+  const back = (d: PartDoc, want: string) => {
+    const v0 = vol(m, d), fs = m.recognizeExtrudes(d);
+    assert.equal(fs.map(f => f.type).join(), want);
+    const r = m.evaluate(doc([...d.features, ...fs]));
+    assert.deepEqual(r.statuses.filter(s => !s.ok), []);
+    assert.equal(m.props(r.body!).bodies, 1);
+    close(m.props(r.body!).volume, v0);
+    return fs;
+  };
+  // On the axis of a standard plane: the half section with its line on the axis, and a centreline.
+  const f1 = back(imported(m, shaft({ std: "XZ" })), "sketch,revolve,delbody");
+  const sk = f1[0] as SketchFeature;
+  assert.deepEqual(sk.plane, { std: "XZ" });
+  assert.equal(sk.ents.filter(e => e.t === "line" && !e.cons).length, 6);
+  assert.equal(sk.ents.filter(e => e.t === "line" && e.cons).length, 1);
+  assert.equal((f1[1] as any).merge, false);
+  // With a bore the profile stays off the axis.
+  const f2 = back(imported(m, shaft({ std: "XZ" }, 0, 4)), "sketch,revolve,delbody");
+  assert.equal((f2[0] as SketchFeature).ents.filter(e => e.t === "line" && !e.cons).length, 6);
+  // An axis beside the standard planes gets a reference plane through it.
+  const pl = { id: "pl", type: "plane", name: "pl", base: { std: "XZ" }, mode: "offset", offset: { v: 20 } } as Feature;
+  const f3 = back(imported(m, [pl, ...shaft({ plane: "pl" }, 30)]), "plane,sketch,revolve,delbody");
+  close((f3[0] as any).offset.v, 20);
+  // A pocket in the end face goes back on the new body.
+  const top = { id: "pt", type: "plane", name: "pt", base: { std: "XY" }, mode: "offset", offset: { v: 40 } } as Feature;
+  const q = { ...rect("q", 4, 3), plane: { plane: "pt" } } as SketchFeature;
+  const f4 = back(imported(m, [...shaft({ std: "XZ" }), top, q, { id: "c", type: "extrude", name: "C", sketch: "q", op: "cut", end: "blind", depth: { v: 5 } } as Feature]),
+    "sketch,revolve,delbody,sketch,extrude");
+  assert.equal((f4[4] as any).op, "cut");
+  // A pin with a ball end: the arc of the sphere stays an arc.
+  const P = (id: string, x: number, y: number): SkEnt => ({ id, t: "point", x, y });
+  const pin: Feature[] = [{ id: "r", type: "sketch", name: "r", plane: { std: "XZ" }, rels: [], dims: [], ents: [P("a", 0, 0), P("b", 5, 0), P("c", 5, 20), P("d", 0, 25), P("o", 0, 20),
+    { id: "l1", t: "line", a: "a", b: "b" }, { id: "l2", t: "line", a: "b", b: "c" }, { id: "ar", t: "arc", c: "o", a: "c", b: "d" }, { id: "l3", t: "line", a: "d", b: "a" },
+    P("u", 0, -5), P("w", 0, 30), { id: "rax", t: "line", a: "u", b: "w", cons: true }] } as Feature,
+    { id: "v", type: "revolve", name: "V", sketch: "r", op: "boss", axis: "rax", angle: { v: Math.PI * 2 } } as Feature];
+  const f5 = back(imported(m, pin), "sketch,revolve,delbody");
+  assert.equal((f5[0] as SketchFeature).ents.filter(e => e.t === "arc").length, 1);
+});
