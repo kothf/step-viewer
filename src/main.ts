@@ -2049,11 +2049,21 @@ $("#m-csv").addEventListener("click", () => state.measurements.length ? measurem
 const showLeftTab = bindTabs($(".tabs"), tab => { $$(".tab").forEach(t => t.classList.toggle("on", t.id === `tab-${tab}`)); if (tab === "vault") void vaultPanel.render(); });
 // Local vault (FRS 12.5): the Vault tab.
 const vaultPanel = new VaultPanel($("#vault-panel"), {
-  open: async (name, data) => {
+  open: async (name, data, replace) => {
     const buf = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
-    if (modeller.isPartName(name)) await modeller.openFile({ name, data: buf });
-    else if (asm.isAsmName(name)) await asm.openFile({ name, data: buf });
-    else await openFiles([new File([buf], name)]);
+    const go = async () => {
+      if (modeller.isPartName(name)) await modeller.openFile({ name, data: buf });
+      else if (asm.isAsmName(name)) await asm.openFile({ name, data: buf });
+      else await openFiles([new File([buf], name)]);
+    };
+    // A vault file reloaded after a vault action stays in its own tab instead of opening a second one.
+    if (replace && docs) await docs.replacing(go); else await go();
+  },
+  show: async id => {
+    const tab = docs?.tabs.find(x => x !== docs!.active && (x.state as { vault?: { id: string } | null } | null)?.vault?.id === id);
+    if (!tab) return false;
+    await docs!.activate(tab.id);
+    return true;
   },
   doc: () => {
     const k = fileMenuLive();
