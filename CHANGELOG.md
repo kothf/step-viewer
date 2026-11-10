@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.483.0] - 2026-11-10
+
+### Fixed
+
+- Big assembly drawings get back to work faster still after the drawing kernel frees its memory: the copy of the model kept for the restart is now binary (exact and quicker to read), and after the first fast view it also keeps the model's mesh, so the restart no longer meshes the engine again (about 6 s saved per restart).
+
 ## [1.482.0] - 2026-11-10
 
 ### Fixed
@@ -2958,7 +2964,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.482.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.483.0...HEAD
+[1.483.0]: https://github.com/kothf/step-viewer/compare/v1.482.0...v1.483.0
 [1.482.0]: https://github.com/kothf/step-viewer/compare/v1.481.0...v1.482.0
 [1.481.0]: https://github.com/kothf/step-viewer/compare/v1.480.0...v1.481.0
 [1.480.0]: https://github.com/kothf/step-viewer/compare/v1.479.0...v1.480.0
