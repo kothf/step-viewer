@@ -5,11 +5,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.394.0] - 2026-11-10
+## [1.396.0] - 2026-11-10
 
 ### Added
 
 - **Fillet beads along curved edges (FR-FT-121)**: a Fillet Bead now follows any edge where its two face sets meet, not only straight and round ones: the ellipse where a round tube stands tilted on a plate, the saddle where a tube meets another tube, and edges between curved faces such as cones. The bead's cross-section follows the changing angle between the faces along the edge; a closed run (all round a tube) becomes one ring-shaped bead, and From/to length and intermittent welds work along these edges too. Edges where the faces become tangent are still skipped, with a warning.
+
+## [1.395.0] - 2026-11-10
+
+### Changed
+
+- CI: on main the run in progress finishes and only the newest commit pushed meanwhile waits for a run, so main CI no longer queues behind every merge. A newer push to a PR still cancels its older run.
+
+## [1.394.0] - 2026-11-10
+
+### Added
+
+- **Touch gestures (FR-UI-091)**: on a tablet, holding a finger still for about half a second opens the menu a right-click opens: on a Features tree row, an assembly component, a selection breadcrumb, the rollback bar or a motion study lane. Held on a face it shows the context toolbar, and while a command runs it gives OK and Cancel, the fillet edge helpers or the sketch menu. One finger turns the view and two fingers pan and zoom it, as before; a finger that moves never opens a menu.
 
 ## [1.393.0] - 2026-11-10
 
@@ -2318,7 +2330,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.394.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.396.0...HEAD
+[1.396.0]: https://github.com/kothf/step-viewer/compare/v1.395.0...v1.396.0
+[1.395.0]: https://github.com/kothf/step-viewer/compare/v1.394.0...v1.395.0
 [1.394.0]: https://github.com/kothf/step-viewer/compare/v1.393.0...v1.394.0
 [1.393.0]: https://github.com/kothf/step-viewer/compare/v1.392.0...v1.393.0
 [1.392.0]: https://github.com/kothf/step-viewer/compare/v1.391.0...v1.392.0
