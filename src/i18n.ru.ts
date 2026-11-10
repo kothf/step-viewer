@@ -1654,7 +1654,6 @@ export const RU: Record<string, string> = {
   "Qty": "Кол.",
   "This file references no other files.": "Этот файл не ссылается на другие файлы.",
   "Export BOM CSV": "Спецификация в CSV",
-  "uses v{n}": "использует v{n}",
   "Where used: {name}": "Где используется: {name}",
   "No file in the vault uses this file.": "Ни один файл хранилища не использует этот файл.",
   "The two versions have the same content.": "У двух версий одинаковое содержимое.",
@@ -4568,4 +4567,9 @@ export const RU: Record<string, string> = {
   "Open the vault you used last": "Открыть хранилище, с которым вы работали последним",
   "Reopen vault {name}": "Снова открыть хранилище {name}",
   "Release file of {name}": "Файл выпуска для {name}",
+  "Uses": "Использует",
+  "Used by": "Используется в",
+  "Release files": "Файлы выпуска",
+  "Version {n} by {user}, {date}": "Версия {n}, {user}, {date}",
+  "uses v{n}": "использует v{n}",
 };

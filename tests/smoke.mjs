@@ -4776,6 +4776,12 @@ try {
       const p = window.__sv.vault, f = p.files.find(x => x.path === "plate.mcaddrw");
       return { n: f.versions.length, comment: f.versions.at(-1).comment, lock: !!f.checkout, btn: !!document.querySelector('#vault-panel [data-a="behind"]') };
     });
+    // The selected file's details: who uses it, as links that select that file.
+    await mp.click('#vault-panel .v-row:has-text("plate.mcadprt")');
+    const det = await mp.evaluate(() => document.querySelector("#vault-panel .v-details")?.innerText.replace(/\s+/g, " "));
+    await mp.click('#vault-panel .v-details [data-goto]');
+    const went = await mp.textContent("#vault-panel .v-acts-h");
+    check(/Version 2 by Andrey/.test(det) && /Used by plate\.mcaddrw · uses v2/.test(det) && went === "plate.mcaddrw", `vault UI: the details show the version and who uses the file, with links (${det} | ${went})`);
     // Folders in the list fold, and filter chips narrow it (FR-PDM-080).
     await mp.evaluate(async () => { const p = window.__sv.vault; await p.vault.add("docs/specs/e.txt", new TextEncoder().encode("e")); await p.refresh(); });
     await mp.waitForSelector('#vault-panel .v-folder[data-folder="docs/specs"]');

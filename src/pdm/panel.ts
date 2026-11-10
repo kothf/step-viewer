@@ -772,6 +772,26 @@ export class VaultPanel {
 
   // ---------- lifecycle (FR-PDM-031..034, 082) ----------
 
+  /**
+   * The selected file's details (FR-PDM-080), without opening a dialog: the latest version, the files it uses and
+   * the files that use it (each a link that selects that file), and its release files.
+   */
+  private details(f: FileRec) {
+    const v = this.vault!, lv = v.latest(f);
+    const link = (id: string, text: string) => `<button class="v-link" data-goto="${id}" translate="no">${esc(text)}</button>`;
+    const uses = (lv.refs ?? []).flatMap(r => { const c = this.files.find(x => x.id === r.id); return c ? [`${link(c.id, c.path)} · v${r.version}${v.latest(c).n > r.version ? ` <span class="v-warn-i">→ v${v.latest(c).n}</span>` : ""}`] : []; });
+    const usedBy = this.files.filter(x => (v.latest(x).refs ?? []).some(r => r.id === f.id)).map(x => { const r = v.latest(x).refs!.find(y => y.id === f.id)!; return `${link(x.id, x.path)} · ${esc(t("uses v{n}", { n: r.version }))}`; });
+    const outs = this.files.filter(x => x.outputOf?.id === f.id).map(x => link(x.id, x.path));
+    const li = (xs: string[]) => `<ul>${xs.map(x => `<li>${x}</li>`).join("")}</ul>`;
+    const open = storage.get("mc:vaultDetails") !== "0";
+    return `<details class="v-details"${open ? " open" : ""}><summary>${esc(t("Details"))}</summary>
+      <p class="v-latest">${esc(t("Version {n} by {user}, {date}", { n: lv.n, user: lv.user, date: fmtDate(lv.at) }))}${lv.comment ? ` · <i translate="no">${esc(lv.comment)}</i>` : ""}</p>
+      ${uses.length ? `<p class="v-h">${esc(t("Uses"))}</p>${li(uses)}` : ""}
+      ${usedBy.length ? `<p class="v-h">${esc(t("Used by"))}</p>${li(usedBy)}` : ""}
+      ${outs.length ? `<p class="v-h">${esc(t("Release files"))}</p>${li(outs)}` : ""}
+    </details>`;
+  }
+
   private cardSummary(f: FileRec) {
     const v = this.vault!;
     const rel = v.released(f);
@@ -1735,6 +1755,7 @@ export class VaultPanel {
           return `<div class="v-warn v-stale"><p>${esc(sel.kind === "drawing" ? t("The model has a newer version in the vault:") : t("Uses older versions of:"))}</p><ul>${b.refs.map(x => `<li translate="no">${esc(x.path)} · v${x.version} → v${x.latest}</li>`).join("")}</ul>${why ? `<p class="muted">${esc(why)}</p>` : `<button class="btn small" data-a="upd" title="${esc(st?.mine ? t("The working copy takes the latest versions; check it in to keep them") : t("Checked out, updated and checked in as a new version"))}">${esc(t("Update"))}</button>`}</div>`;
         })()}
         ${this.cardSummary(sel)}
+        ${this.details(sel)}
       </div>` : "";
       const multi = many.length > 1 ? (() => {
         const trsM = this.commonTransitions(many);
@@ -1805,6 +1826,17 @@ export class VaultPanel {
         }
       });
     });
+    h.querySelector<HTMLDetailsElement>(".v-details")?.addEventListener("toggle", e => storage.set("mc:vaultDetails", (e.target as HTMLDetailsElement).open ? "1" : "0"));
+    h.querySelectorAll<HTMLElement>("[data-goto]").forEach(b => b.addEventListener("click", () => {
+      const id = b.dataset.goto!, f = this.files.find(x => x.id === id);
+      if (!f) return;
+      // A file hidden by a filter or a folded folder comes into view.
+      if (!this.shownFiles.some(x => x.id === id)) { this.filter = "all"; this.found = null; }
+      const dirs = f.path.split("/").slice(0, -1);
+      dirs.forEach((_d, i) => this.closedDirs.delete(dirs.slice(0, i + 1).join("/")));
+      this.pick(id);
+      void this.render().then(() => { const r = h.querySelector<HTMLElement>(`.v-row[data-id="${id}"]`); r?.scrollIntoView({ block: "nearest" }); r?.focus(); });
+    }));
     h.querySelectorAll<HTMLElement>("[data-chip]").forEach(b => b.addEventListener("click", () => {
       this.filter = b.dataset.chip as Chip;
       // Files the filter hides leave the selection.

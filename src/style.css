@@ -969,6 +969,12 @@ input.drop-val { outline: 2px solid var(--accent) !important; background: var(--
 .v-row:hover, .v-folder:hover { background: var(--panel-2); }
 .v-row[style*="--d"] { padding-left: calc(10px + var(--d) * 14px + 14px); }
 .v-row.v-out { padding-left: calc(10px + var(--d, 0) * 14px + 28px); }
+.v-details { margin-top: 8px; font-size: var(--fs-caption); }
+.v-details summary { cursor: pointer; font-weight: 600; }
+.v-details ul { margin: 2px 0; padding-left: 16px; }
+.v-details .v-h { margin: 6px 0 2px; }
+.v-latest { margin: 4px 0; color: var(--muted); }
+.v-link { background: none; border: 0; padding: 0; font: inherit; color: var(--accent-text); text-decoration: underline; cursor: pointer; text-align: left; overflow-wrap: anywhere; }
 .v-folder { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; padding: 5px 10px 5px calc(10px + var(--d, 0) * 14px); border: 0; border-bottom: 1px solid var(--line); background: var(--panel); color: var(--text); font: inherit; font-weight: 600; cursor: pointer; }
 .v-folder .muted { font-weight: 400; font-size: var(--fs-caption); }
 .v-twist { display: inline-block; width: 10px; color: var(--muted); }
