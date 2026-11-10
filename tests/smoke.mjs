@@ -2199,6 +2199,10 @@ try {
     await mp.click("#mc-menu button:nth-child(2)");
     const flyTool = await mp.evaluate(() => ({ tool: window.__sv.model.editor().tool, shown: document.querySelector('#mc-tools [data-c^="sk:"][data-c="sk:extend"]')?.textContent?.trim() }));
     check(fly.join("|") === "Trim|Extend|Split" && flyTool.tool === "extend" && flyTool.shown === "Extend", `model 1.20: the sketch bar groups Trim, Extend and Split in a flyout (${fly.join("|")}, ${JSON.stringify(flyTool)})`);
+    // A tool picked on the sketch bar shows its fields in the panel at once (exam #89: Fillet came without its radius).
+    await mp.click('#mc-tools [data-c="sk:fillet"]');
+    const frBox = await mp.evaluate(() => ({ tool: window.__sv.model.editor().tool, box: !!document.querySelector('#mc-pm input[data-a="fr"]') }));
+    check(frBox.tool === "fillet" && frBox.box, `exam #89: Fillet picked on the sketch bar shows its radius box in the panel (${JSON.stringify(frBox)})`);
     // Offset the rectangle 5 mm inwards: a closed chain of four parallel lines.
     await tool("offset");
     await mp.evaluate(() => { window.__sv.model.editor().offsetDist = 5; });
@@ -6563,9 +6567,11 @@ try {
       // Insert the plate's document under another file name: <1>, standing in the view.
       const ins = await mp.evaluate(() => {
         const a = window.__sv.asm, v = window.__sv.viewer, pd = JSON.parse(JSON.stringify(a.doc.parts[a.doc.components[0].part].doc));
+        const k0 = Object.keys(a.doc.parts).length;
         a.insertPart(pd, "other.mcadprt");
         const c = a.doc.components.at(-1), p = new v.camera.position.constructor(c.tf[3], c.tf[7], c.tf[11]).project(v.camera);
-        return { name: c.name, inView: Math.abs(p.x) < 1 && Math.abs(p.y) < 1 };
+        // Another file is another part, even with the same content (exam #87): editing it leaves the plate alone.
+        return { name: c.name, inView: Math.abs(p.x) < 1 && Math.abs(p.y) < 1, own: Object.keys(a.doc.parts).length === k0 + 1 && c.part !== a.doc.components[0].part };
       });
       await shown(3);
       await mp.evaluate(() => window.__sv.asm.undo());
@@ -6621,7 +6627,7 @@ try {
       await shown(2);
       check(par.pinTop && par.seated === n0 + 1 && par.type === "parallel" && !par.problem, `asm: flat faces that cannot be Coincident start as Parallel (exam #27) (${JSON.stringify(par)})`);
       check(/^Undo: .+ \(Ctrl\+Z\)$/.test(undoTip) && delKey.n === n0 - 1 && /^Undo: Delete Concentric1 \(Ctrl\+Z\)$/.test(delKey.tip)
-        && menu.open && menu.inside && enter.next === "y" && enter.open && ins.name === "other<1>" && ins.inView && neg.flipped && neg.value === 5,
+        && menu.open && menu.inside && enter.next === "y" && enter.open && ins.name === "other<1>" && ins.inView && ins.own && neg.flipped && neg.value === 5,
         `asm 1.339: Delete key, menus inside the window, Enter through Move, inserts in view numbered by file, negative distance flips, undo tips (${JSON.stringify({ undoTip, delKey, n0, menu, enter, ins, neg })})`);
     }
     const re = await mp.evaluate(async () => { const b = await window.__sv.asm.bytes(); await window.__sv.asm.openFile({ name: "m.mcadasm", data: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) }); return window.__sv.asm.doc.mates?.map(m => m.type).join(); });
