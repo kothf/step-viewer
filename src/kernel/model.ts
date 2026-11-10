@@ -3284,14 +3284,20 @@ export class Modeller {
       const body = this.evaluate(at(out)).body;
       if (!body) return [];
       const es = this.sub(body.shape, "EDGE").map(e => ({ e, m: this.edgeMid(e) }));
-      const again = (r: EdgeRef): EdgeRef | null => {
+      const again = (r: EdgeRef, first?: V3): EdgeRef | null => {
         let best: typeof es[0] | null = null, bd = tol;
         for (const x of es) { const d = d3(x.m, r.hint!); if (d < bd) { bd = d; best = x; } }
         const names = best ? this.edgeKey(body, best.e).split("|") : [];
-        return names.length === 2 ? { faces: [names[0], names[1]], hint: best!.m } : null;
+        if (names.length !== 2) return null;
+        // A two-distance chamfer measures its first distance on the first face: keep that face first.
+        if (first) {
+          const lean = (n: string) => { const i = body.names.indexOf(n); return i < 0 ? -2 : dot(this.normalNear(body.faces[i], best!.m), first); };
+          if (lean(names[1]) > lean(names[0])) names.reverse();
+        }
+        return { faces: [names[0], names[1]], hint: best!.m };
       };
       const r = rounds[k];
-      const fix = <T extends { edges: EdgeRef[] }>(g: T): T => ({ ...g, edges: g.edges.map(again).filter((x): x is EdgeRef => !!x) });
+      const fix = <T extends { edges: EdgeRef[]; first?: V3[] }>(g: T): T => ({ ...g, edges: g.edges.map((e, n) => again(e, g.first?.[n])).filter((x): x is EdgeRef => !!x) });
       const fixed: RecognizedBlends = { faces: r.faces, fillets: r.fillets.map(fix), chamfers: r.chamfers.map(fix) };
       if ([...fixed.fillets, ...fixed.chamfers].some((g, n) => g.edges.length !== [...r.fillets, ...r.chamfers][n].edges.length)) return [];
       out.push(...this.blendFeatures(fixed, id));
@@ -3303,7 +3309,7 @@ export class Modeller {
 
   private blendFeatures(r: RecognizedBlends, id: () => string): Feature[] {
     return [
-      ...r.chamfers.map(g => ({ id: id(), type: "chamfer", name: "", distance: { v: g.distance }, edges: g.edges }) as Feature),
+      ...r.chamfers.map(g => ({ id: id(), type: "chamfer", name: "", distance: { v: g.distance }, ...(g.distance2 ? { mode: "two", distance2: { v: g.distance2 } } : {}), edges: g.edges }) as Feature),
       ...r.fillets.map(g => ({ id: id(), type: "fillet", name: "", radius: { v: g.radius }, edges: g.edges }) as Feature)];
   }
 
@@ -3320,34 +3326,48 @@ export class Modeller {
     const edges = body.faces.map((f, i) => this.sub(f, "EDGE").map(e => { const k = emap.FindIndex(e); if (k > 0) users[k].push(i); return { e, k }; }));
     const across = (i: number, k: number) => users[k]?.find(j => j !== i) ?? -1;
     const area = (x: any) => { const g = new oc.GProp_GProps_1(); oc.BRepGProp.SurfaceProperties_1(x, g, false, false); return Math.abs(g.Mass()); };
-    type Cand = { i: number; kind: "fillet" | "chamfer"; r: number; sides: [number, number]; mid: V3 };
+    type Cand = { i: number; kind: "fillet" | "chamfer"; r: number; r2?: number; first?: V3; sides: [number, number]; mid: V3 };
     const cands: Cand[] = [], spheres: number[] = [];
     const S = oc.GeomAbs_SurfaceType, C = oc.GeomAbs_CurveType;
     body.faces.forEach((face, i) => {
       const ad = new oc.BRepAdaptor_Surface_2(face, true);
       const ty = ad.GetType();
       if (ty === S.GeomAbs_Sphere) { spheres.push(i); return; }
-      const cyl = ty === S.GeomAbs_Cylinder, tor = ty === S.GeomAbs_Torus, pln = ty === S.GeomAbs_Plane;
-      if (!cyl && !tor && !pln) return;
-      const axis = cyl ? unit(this.xyz(ad.Cylinder().Axis().Direction())) : tor ? unit(this.xyz(ad.Torus().Axis().Direction())) : null;
+      const cyl = ty === S.GeomAbs_Cylinder, tor = ty === S.GeomAbs_Torus, pln = ty === S.GeomAbs_Plane, cone = ty === S.GeomAbs_Cone;
+      if (!cyl && !tor && !pln && !cone) return;
+      const axis = cyl ? unit(this.xyz(ad.Cylinder().Axis().Direction())) : tor ? unit(this.xyz(ad.Torus().Axis().Direction())) : cone ? unit(this.xyz(ad.Cone().Axis().Direction())) : null;
       // The long edges: straight along the axis (cylinder), circles about the axis (torus), straight (flat).
-      const sides: { j: number; m: V3; d: V3; nj: V3; ni: V3 }[] = [];
+      const sides: { j: number; m: V3; d: V3; nj: V3; ni: V3; r?: number; z?: number }[] = [];
       for (const { e, k } of edges[i]) {
         const j = across(i, k);
         if (j < 0) continue;
         const ca = new oc.BRepAdaptor_Curve_2(e), ct = ca.GetType();
-        let d: V3;
-        if (tor) {
+        let d: V3, r: number | undefined, z: number | undefined;
+        if (tor || cone) {
           if (ct !== C.GeomAbs_Circle) continue;
           d = unit(this.xyz(ca.Circle().Axis().Direction()));
           if (Math.abs(Math.abs(dot(d, axis!)) - 1) > 1e-6) continue;
+          r = ca.Circle().Radius();
+          z = dot(this.xyz(ca.Circle().Location()), axis!);
         } else {
           if (ct !== C.GeomAbs_Line) continue;
           d = unit(this.xyz(ca.Line().Direction()));
           if (cyl && Math.abs(Math.abs(dot(d, axis!)) - 1) > 1e-6) continue;
         }
         const m = this.xyz(ca.Value((ca.FirstParameter() + ca.LastParameter()) / 2));
-        sides.push({ j, m, d, nj: this.normalNear(body.faces[j], m), ni: this.normalNear(face, m) });
+        sides.push({ j, m, d, nj: this.normalNear(body.faces[j], m), ni: this.normalNear(face, m), r, z });
+      }
+      if (cone) {
+        // A chamfer on a round edge: a cone leaning equally on the faces across its two circles (several arcs of one circle count once).
+        const rings: typeof sides = [];
+        for (const sd of sides) if (!rings.some(q => q.j === sd.j && Math.abs(q.r! - sd.r!) < tol && Math.abs(q.z! - sd.z!) < tol)) rings.push(sd);
+        if (rings.length !== 2 || rings[0].j === rings[1].j) return;
+        const [A, B] = rings, ca = dot(A.ni, A.nj), cb = dot(B.ni, B.nj);
+        if (Math.abs(ca - cb) > 1e-6 || ca < 0.05 || ca > 0.999) return;
+        const dist = Math.hypot(A.r! - B.r!, A.z! - B.z!) / (2 * ca);
+        if (!(dist > tol)) return;
+        cands.push({ i, kind: "chamfer", r: dist, sides: [A.j, B.j], mid: this.centroid(face) });
+        return;
       }
       if (!pln) {
         const tang = sides.filter(s => dot(s.ni, s.nj) > 1 - 1e-5);
@@ -3357,24 +3377,28 @@ export class Modeller {
         cands.push({ i, kind: "fillet", r: cyl ? ad.Cylinder().Radius() : ad.Torus().MinorRadius(), sides: [tang[0].j, tang[1].j], mid: this.centroid(face) });
         return;
       }
-      // A chamfer leans equally against both neighbours and is the small face of the three.
+      // A chamfer leans against both neighbours along parallel edges and is the smallest face of the three.
       const pairs: [typeof sides[0], typeof sides[0]][] = [];
       for (let a = 0; a < sides.length; a++) for (let b = a + 1; b < sides.length; b++) {
         const A = sides[a], B = sides[b];
         if (A.j === B.j || Math.abs(Math.abs(dot(A.d, B.d)) - 1) > 1e-6) continue;
         const ca = dot(A.ni, A.nj), cb = dot(B.ni, B.nj);
-        if (Math.abs(ca - cb) > 1e-6 || ca < 0.05 || ca > 0.999) continue;
+        if (ca < 0.05 || ca > 0.999 || cb < 0.05 || cb > 0.999) continue;
         pairs.push([A, B]);
       }
       if (pairs.length !== 1) return;
       const [A, B] = pairs[0];
       const a0 = area(face);
-      if (a0 > 0.5 * Math.min(area(body.faces[A.j]), area(body.faces[B.j]))) return;
+      if (a0 > 0.9 * Math.min(area(body.faces[A.j]), area(body.faces[B.j]))) return;
       const q = sub3(B.m, A.m), w = Math.hypot(...sub3(q, mul(A.d, dot(q, A.d))));
-      const th = Math.acos(Math.max(-1, Math.min(1, dot(A.nj, B.nj))));
-      const dist = w / (2 * Math.cos(th / 2));
-      if (!(dist > tol)) return;
-      cands.push({ i, kind: "chamfer", r: dist, sides: [A.j, B.j], mid: this.centroid(face) });
+      // In the section square to the edge the chamfer, of width w, closes a triangle with the two faces: it turns
+      // by a from the first face and by b from the second, so the distances along them are w·sin b and w·sin a over sin(a + b).
+      const a = Math.acos(dot(A.ni, A.nj)), b = Math.acos(dot(B.ni, B.nj));
+      if (a + b > Math.PI - 0.05) return;
+      const d1 = w * Math.sin(b) / Math.sin(a + b), d2 = w * Math.sin(a) / Math.sin(a + b);
+      if (!(d1 > tol) || !(d2 > tol)) return;
+      if (Math.abs(d1 - d2) <= 1e-6 * Math.max(d1, d2)) cands.push({ i, kind: "chamfer", r: d1, sides: [A.j, B.j], mid: this.centroid(face) });
+      else cands.push({ i, kind: "chamfer", r: d1, r2: d2, first: A.nj, sides: [A.j, B.j], mid: this.centroid(face) });
     });
     // A blend another blend ends on waits for the next round.
     const under = new Set(cands.flatMap(c => c.sides));
@@ -3396,17 +3420,22 @@ export class Modeller {
       try {
         const after = this.evaluate({ ...doc, rollback: null, features: [...upto, del] });
         if (after.statuses.at(-1)?.ok === false || !after.body) return null;
-        const fil = new Map<string, { radius: number; edges: EdgeRef[] }>(), ch = new Map<string, { distance: number; edges: EdgeRef[] }>();
+        const fil = new Map<string, { radius: number; edges: EdgeRef[] }>(), ch = new Map<string, RecognizedBlends["chamfers"][0]>();
         for (const c of cs) {
           const pair: [string, string] = [body.names[c.sides[0]], body.names[c.sides[1]]];
           const er: EdgeRef = { faces: pair, hint: this.edgeMid(this.resolveEdge(after.body, { faces: pair, hint: c.mid })) };
-          const key = c.r.toFixed(5);
+          const key = c.r.toFixed(5) + (c.r2 ? `|${c.r2.toFixed(5)}` : "");
           if (c.kind === "fillet") { const g = fil.get(key); if (g) g.edges.push(er); else fil.set(key, { radius: c.r, edges: [er] }); }
-          else { const g = ch.get(key); if (g) g.edges.push(er); else ch.set(key, { distance: c.r, edges: [er] }); }
+          else {
+            let g = ch.get(key);
+            if (!g) ch.set(key, g = c.r2 ? { distance: c.r, distance2: c.r2, edges: [], first: [] } : { distance: c.r, edges: [] });
+            g.edges.push(er);
+            if (c.first) g.first!.push(c.first);
+          }
         }
         const out: RecognizedBlends = { faces, fillets: [...fil.values()], chamfers: [...ch.values()] };
         const feats: Feature[] = [
-          ...out.chamfers.map((g, k) => ({ id: `__rc${k}`, type: "chamfer", name: "", distance: { v: g.distance }, edges: g.edges }) as Feature),
+          ...out.chamfers.map((g, k) => ({ id: `__rc${k}`, type: "chamfer", name: "", distance: { v: g.distance }, ...(g.distance2 ? { mode: "two", distance2: { v: g.distance2 } } : {}), edges: g.edges }) as Feature),
           ...out.fillets.map((g, k) => ({ id: `__rf${k}`, type: "fillet", name: "", radius: { v: g.radius }, edges: g.edges }) as Feature)];
         const fin = this.evaluate({ ...doc, rollback: null, features: [...upto, del, ...feats] });
         if (!fin.body || fin.statuses.slice(-feats.length).some(s => s.ok === false)) return null;

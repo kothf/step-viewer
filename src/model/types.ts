@@ -445,7 +445,7 @@ export interface ThreadFeature {
 
 /** Hole wizard (FR-FT-050..053): holes of one kind at points on a flat face or plane. */
 /** Fillets and chamfers found on a body (FR-FT-102): the faces to delete and the edges to treat again after that. */
-export interface RecognizedBlends { faces: FaceRef[]; fillets: { radius: number; edges: EdgeRef[] }[]; chamfers: { distance: number; edges: EdgeRef[] }[] }
+export interface RecognizedBlends { faces: FaceRef[]; fillets: { radius: number; edges: EdgeRef[] }[]; chamfers: { distance: number; distance2?: number; edges: EdgeRef[]; first?: [number, number, number][] }[] }
 
 /** A hole found on a body (FR-FT-102): where a hole feature would rebuild it. */
 export interface RecognizedHole { plane: PlaneRef; pt: [number, number]; diameter: number; end: "blind" | "through"; depth: number; flat: boolean }
