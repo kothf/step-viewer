@@ -9477,6 +9477,9 @@ try {
     const rdef = await mp.evaluate(() => window.__sv.model.store.doc.features.filter(f => f.type === "sketch").map(f => ({ dims: f.dims.length, hv: f.rels.filter(r => r.t === "horizontal" || r.t === "vertical").length, names: f.dims.map(d => d.name).join() })));
     check(rdef.length === 2 && rdef.every(r => r.dims >= 4 && r.hv >= 4) && rdef[0].names.startsWith("D1,D2"),
       `model 1.467: recognised sketches are fully defined with dimensions (FR-FT-102, FR-SK-045) (${JSON.stringify(rdef)})`);
+    // 1.472: as FeatureWorks dimensions them: the base sketch (a rectangle) gets its width and height as line lengths.
+    const lens = await mp.evaluate(() => window.__sv.model.store.doc.features.filter(f => f.type === "sketch").map(f => f.dims.filter(d => d.t === "distance" && d.e.length === 1).length));
+    check(lens.length === 2 && lens[0] >= 2 && lens[1] >= 2, `model 1.472: recognised sketches carry the lengths of their straight edges (${JSON.stringify(lens)})`);
     await ctx.close();
   }
 
