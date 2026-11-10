@@ -36,7 +36,7 @@ export interface VaultInfo {
 }
 /** A reference from one version to another file (FR-PDM-020): the version it was checked in against, and how many. */
 /** A reference at check-in; `linked` = a linked assembly component (FR-ASM-003), whose version is the one its hash names. */
-export interface RefRec { id: string; path: string; version: number; qty: number; linked?: boolean }
+export interface RefRec { id: string; path: string; version: number; qty: number; linked?: boolean; docId?: string }
 export interface VersionRec {
   n: number; sha: string; size: number; at: string; user: string; comment: string; state: string; rolledBackFrom?: number;
   /** Content dropped by Purge old versions (the row stays in the history). */ purged?: boolean;
@@ -320,6 +320,39 @@ export class Vault {
 
   latest(f: FileRec) { return f.versions[f.versions.length - 1]; }
 
+  /**
+   * Files in the vault folder that are not vault files yet (FR-PDM-003), with their subfolders: a vault made in
+   * a project folder takes the parts, assemblies and drawings already there in place. Hidden files and folders
+   * (the vault's own `.mcadvault`) are skipped; at most `limit` paths.
+   */
+  async untracked(limit = 2000): Promise<string[]> {
+    const known = new Set((await this.files(true)).map(f => f.path.toLowerCase()));
+    const out: string[] = [];
+    const walk = async (d: VDir, at: string, depth: number) => {
+      const list = (await d.list()).sort((a, b) => a.name.localeCompare(b.name));
+      for (const e of list) {
+        if (out.length >= limit) return;
+        if (e.name.startsWith(".") || e.name === STORE) continue;
+        const p = at ? `${at}/${e.name}` : e.name;
+        if (e.kind === "dir") { if (depth < 8) { const sub = await d.dir(e.name, false); if (sub) await walk(sub, p, depth + 1); } }
+        else if (!known.has(p.toLowerCase())) out.push(p);
+      }
+    };
+    await walk(this.root, "", 0);
+    return out;
+  }
+
+  /** Adds files already in the vault folder, in place: the assemblies after the parts they use, drawings last. */
+  async addInPlace(paths: string[], comment = "Added from the vault folder"): Promise<FileRec[]> {
+    const rank = (p: string) => (/\.mcadprt$/i.test(p) ? 0 : /\.mcadasm$/i.test(p) ? 1 : /\.mcaddrw$/i.test(p) ? 2 : 0);
+    const out: FileRec[] = [];
+    for (const p of [...paths].sort((a, b) => rank(a) - rank(b))) {
+      const data = await this.working(p);
+      if (data) out.push(await this.add(p, data, comment));
+    }
+    return out;
+  }
+
   /** Badge facts for a file (FR-PDM-016). */
   async status(f: FileRec) {
     const w = await this.working(f.path);
@@ -352,7 +385,30 @@ export class Vault {
     await this.writeWorking(path, data);
     await this.saveRec(f);
     await this.log("add", { file: f.id, path, version: 1, details: comment });
+    await this.linkDangling(f);
     return f;
+  }
+
+  /**
+   * Files added before the file they use (an assembly before its parts, a drawing before its model) get their
+   * references tied to it once it comes in, so Contains and Where used see it.
+   */
+  private async linkDangling(added: FileRec) {
+    if (added.kind !== "part" && added.kind !== "assembly") return;
+    const files = await this.files();
+    for (const o of files) {
+      const v = this.latest(o);
+      if (o.id === added.id || !v.refs?.some(r => !r.id)) continue;
+      let hit = false;
+      for (const r of v.refs) {
+        if (r.id || (await this.refTarget(o.path, r, files))?.id !== added.id) continue;
+        r.id = added.id;
+        r.version = 1;
+        if (!r.path) r.path = relPath(o.path, added.path);
+        hit = true;
+      }
+      if (hit) await this.saveRec(o);
+    }
   }
 
   /** Check out (FR-PDM-010): the file becomes editable here; others see the lock. */
@@ -670,13 +726,42 @@ export class Vault {
     const files = await this.files();
     const out: RefRec[] = [];
     for (const r of refs) {
-      const target = resolveRel(path, r.path);
-      const f = target ? files.find(x => x.path.toLowerCase() === target.toLowerCase()) : undefined;
+      const f = await this.refTarget(path, r, files);
       // A linked component names the bytes it was read from: that version, even if newer ones exist.
       const exact = f && r.hash ? [...f.versions].reverse().find(v => v.sha === r.hash) : undefined;
-      out.push({ id: f?.id ?? "", path: r.path, version: exact?.n ?? (f ? this.latest(f).n : 0), qty: r.qty, ...(r.hash ? { linked: true } : {}) });
+      out.push({ id: f?.id ?? "", path: r.path || (f ? relPath(path, f.path) : ""), version: exact?.n ?? (f ? this.latest(f).n : 0), qty: r.qty, ...(r.hash ? { linked: true } : {}), ...(r.docId ? { docId: r.docId } : {}) });
     }
     return out;
+  }
+
+  /**
+   * The vault file a reference points at: the file at its relative path; else, as files added from a project
+   * folder keep their subfolders (parts/, drawings/), the one file of that name anywhere in the vault; else, for
+   * a drawing's model, the part or assembly whose document id it names.
+   */
+  private async refTarget(from: string, r: { path: string; docId?: string }, files: FileRec[]): Promise<FileRec | undefined> {
+    const target = r.path ? resolveRel(from, r.path) : null;
+    const at = target ? files.find(x => x.path.toLowerCase() === target.toLowerCase()) : undefined;
+    if (at) return at;
+    const base = r.path.split("/").pop()!.toLowerCase();
+    const named = base ? files.filter(x => x.path.split("/").pop()!.toLowerCase() === base) : [];
+    if (named.length === 1) return named[0];
+    if (!r.docId) return undefined;
+    for (const f of files) if ((f.kind === "part" || f.kind === "assembly") && await this.docIdOf(f) === r.docId) return f;
+    return undefined;
+  }
+
+  /** The document id inside a part or assembly file's latest version (kept per content hash). */
+  private docIds = new Map<string, string>();
+  private async docIdOf(f: FileRec): Promise<string> {
+    const v = this.latest(f);
+    let id = this.docIds.get(v.sha);
+    if (id === undefined) {
+      const d = v.purged ? null : await docJson(await this.object(v.sha)).catch(() => null);
+      id = typeof d?.id === "string" ? d.id : "";
+      this.docIds.set(v.sha, id);
+    }
+    return id;
   }
 
   /** The version of a referenced file a parent resolves to (FR-PDM-022). */
