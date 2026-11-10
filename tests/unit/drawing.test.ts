@@ -1608,3 +1608,55 @@ test("half section: hatched even when the stored line is a hair off the rounded 
     assert.ok(s.cut!.length >= 1, `look ${look}: ${s.cut!.length} cut faces`);
   }
 });
+
+test("Standard 3 views layout uses the corner beside the title block", async () => {
+  const { std3Layout } = await import("../../src/drawing/views");
+  // A3 ISO frame [20, 10, 410, 287], 180 × 40 title block at the bottom right; a 430 × 140 × 220 engine. The old fit (the strip
+  // above the title block, 85 %) gave 1:5.
+  const area: [number, number, number, number] = [24, 14, 406, 283], tb: [number, number, number, number] = [226, 10, 410, 54];
+  for (const third of [false, true]) {
+    const lay = std3Layout(430, 140, 220, area, tb, third)!;
+    assert.deepEqual(lay.scale, [1, 2], `third ${third}`);
+    // Every view, padded, stays inside and clear of the title block.
+    const k = 0.5, gap = 25, { gx, gy } = lay;
+    const fy = third ? gy : gy + k * 140 + gap, ty = third ? gy + k * 220 + gap : gy;
+    const rs = [[gx, fy, gx + k * 430, fy + k * 220], [gx, ty, gx + k * 430, ty + k * 140], [gx + k * 430 + gap, fy, gx + k * 570 + gap, fy + k * 220]];
+    for (const r of rs) {
+      assert.ok(r[0] >= area[0] && r[2] <= area[2] && r[1] >= area[1] && r[3] <= area[3]);
+      assert.ok(!(r[0] < tb[2] && tb[0] < r[2] && r[1] < tb[3] && tb[1] < r[3]));
+    }
+  }
+  const { fitScale } = await import("../../src/drawing/views");
+  assert.deepEqual(fitScale(570, 360, (370 - 20 - 25) * 0.85, (267 - 60 - 25) * 0.85), [1, 5]);
+  assert.equal(std3Layout(5000, 5000, 5000, area, tb, false)?.scale.join(":"), "1:100");
+  assert.equal(std3Layout(1e6, 1e6, 1e6, area, tb, false), null);
+});
+
+test("fast hidden-line views keep exact lines and end-on circles", async () => {
+  const { projectFast, projectAuto, edgeCount, FAST_EDGES } = await import("../../src/kernel/drawing");
+  const oc = await occ();
+  // A plate with a Ø20 through hole and a Ø16 boss on top.
+  const pr = new oc.Message_ProgressRange_1();
+  const plate = new oc.BRepPrimAPI_MakeBox_3(new oc.gp_Pnt_3(-50, -50, 0), 100, 100, 10).Shape();
+  const ax = (x: number, y: number, z: number) => new oc.gp_Ax2_3(new oc.gp_Pnt_3(x, y, z), new oc.gp_Dir_4(0, 0, 1));
+  const hole = new oc.BRepPrimAPI_MakeCylinder_3(ax(10, 5, -1), 10, 12).Shape();
+  const boss = new oc.BRepPrimAPI_MakeCylinder_3(ax(-25, -25, 10), 8, 15).Shape();
+  const shape = new oc.BRepAlgoAPI_Fuse_3(new oc.BRepAlgoAPI_Cut_3(plate, hole, pr).Shape(), boss, pr).Shape();
+  assert.ok(edgeCount(oc, shape) < FAST_EDGES);
+  const len = (p: any) => p.vis.reduce((t: number, s: any) => t + (s.k === "l" ? Math.hypot(s.p[2] - s.p[0], s.p[3] - s.p[1]) : s.k === "a" ? s.r * Math.abs(s.a1 - s.a0) : 0), 0);
+  for (const view of [{ dir: [0, 0, 1] as V3, up: [0, 1, 0] as V3 }, { dir: [0.5, -0.6, 0.62] as V3, up: [0, 0, 1] as V3 }]) {
+    const e = project(oc, shape, view), f = projectFast(oc, shape, view, 0.15);
+    assert.equal(projectAuto(oc, shape, view).fast, undefined, "a small model gets the exact HLR");
+    assert.ok(f.fast);
+    assert.ok(Math.abs(len(f) - len(e)) < 0.01 * len(e), `visible length ${len(f)} vs ${len(e)}`);
+    for (const a of e.vis.filter(s => s.k === "a") as any[]) {
+      const m = (f.vis as any[]).find(s => s.k === "a" && Math.hypot(s.o[0] - a.o[0], s.o[1] - a.o[1]) < 1e-6 && Math.abs(s.r - a.r) < 1e-9);
+      assert.ok(m, `end-on circle r ${a.r} at ${a.o} kept exact`);
+    }
+    for (const s of f.vis.filter(s => s.k === "l") as any[]) {
+      // Every line lies on an exact one.
+      const on = e.vis.some((x: any) => x.k === "l" && [0, 2].every(i => { const dx = x.p[2] - x.p[0], dy = x.p[3] - x.p[1], l = Math.hypot(dx, dy); return Math.abs((s.p[i] - x.p[0]) * dy - (s.p[i + 1] - x.p[1]) * dx) / l < 1e-6; }));
+      assert.ok(on, `line ${s.p} on an exact line`);
+    }
+  }
+});

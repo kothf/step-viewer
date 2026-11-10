@@ -4,7 +4,7 @@
 // document through the Modeller; STEP / IGES / BREP files are read as they are.
 import { FLAT_CONFIG, type Align, type Stair } from "./views";
 import { flatBends, flatPatternDoc, flatToXY } from "../sheetmetal/sheet";
-import { geometryDiff, project, projectPoly, readShape, alignedShape, section, shadeTris, shapeInfo, topology, type V3, type ViewDir } from "../kernel/drawing";
+import { geometryDiff, projectAuto, FAST_EDGES, projectPoly, readShape, alignedShape, section, shadeTris, shapeInfo, topology, type V3, type ViewDir } from "../kernel/drawing";
 import { Assembler } from "../kernel/assembly";
 import { Modeller } from "../kernel/model";
 import type { AsmDoc } from "../asm/types";
@@ -16,7 +16,7 @@ import { bodiesDensity, findMaterial } from "../tools/materials";
 import { activate } from "../model/configs";
 
 export type DrawingRequest =
-  | { id: number; type: "init"; base: string; module: WebAssembly.Module }
+  | { id: number; type: "init"; base: string; module: WebAssembly.Module; fast?: number }
   | { id: number; type: "load"; part?: PartDoc; asm?: AsmDoc; file?: { name: string; bytes: Uint8Array } }
   | { id: number; type: "project"; view: ViewDir; shade?: boolean; cfg?: string; only?: string[] }
   /** A quick polygonal preview of a view (FR-DRW-016) while the exact one is computed. */
@@ -45,6 +45,8 @@ function solidOf(src: DiffSrc): any {
 }
 
 let oc: any = null;
+/** Edge count from which views use the fast hidden-line removal (`?fasthlr` = always). */
+let fastEdges = FAST_EDGES;
 let shape: any = null;
 /** The loaded shape's face names in TopExp order (absent for files: faces are then f<i>, as `topology` names them). */
 let shapeNames: string[] | undefined;
@@ -161,6 +163,7 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
         print: () => {}, printErr: () => {},
         instantiateWasm: (imports: WebAssembly.Imports, done: (inst: WebAssembly.Instance) => void) => { WebAssembly.instantiate(r.module, imports).then(done); return {}; },
       });
+      if (r.fast !== undefined) fastEdges = r.fast;
       post({ id: r.id, ok: true });
     } else if (r.type === "load") {
       placedShapes = [];
@@ -212,7 +215,7 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
     } else if (r.type === "project") {
       if (!shape) throw new Error("No model loaded");
       const sh = r.only?.length && placedShapes.length ? onlyOf(r.only).shape : shapeOf(r.cfg).shape;
-      const proj = project(oc, sh, r.view);
+      const proj = projectAuto(oc, sh, r.view, 0.02, fastEdges);
       if (r.shade) {
         // Mesh chord error: 1/400 of the model's size, so the shading stays light even for big models.
         const [lo, hi] = shapeInfo(oc, sh).box;
@@ -239,7 +242,7 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
         const loc = new oc.TopLoc_Location_2(trsf);
         for (const pc of placedShapes) if (pc.id === mv.comp || pc.id.startsWith(`${mv.comp}/`)) { b.Add(comp, pc.shape.Moved(loc, false)); n++; }
       }
-      post({ id: r.id, ok: true, proj: n ? project(oc, comp, r.view) : { vis: [], hid: [], box: [0, 0, 0, 0], ms: 0 } });
+      post({ id: r.id, ok: true, proj: n ? projectAuto(oc, comp, r.view, 0.02, fastEdges) : { vis: [], hid: [], box: [0, 0, 0, 0], ms: 0 } });
     } else if (r.type === "section") {
       if (!shape) throw new Error("No model loaded");
       const own0 = shapeOf(r.cfg), modelMat = own0.mat;
@@ -253,7 +256,7 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
         let na = 0, nk = 0;
         for (const pc of base) { if (out(pc.id)) { b.Add(k, pc.shape); nk++; } else { b.Add(a, pc.shape); na++; } }
         if (nk) {
-          if (!na) { post({ id: r.id, ok: true, proj: { ...project(oc, k, r.view), cut: [] } }); return; }
+          if (!na) { post({ id: r.id, ok: true, proj: { ...projectAuto(oc, k, r.view, 0.02, fastEdges), cut: [] } }); return; }
           cutShape = a; keep = k; cutList = base.filter(pc => !out(pc.id));
         }
       }
@@ -266,7 +269,7 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
         cutShape = c;
         if (keep) keep = alignedShape(oc, keep, r.align);
       }
-      const proj = section(oc, cutShape, r.view, r.p, 0.02, r.poly, { stair: r.stair, keep, namer: namer(own0.shape, own0.names) });
+      const proj = section(oc, cutShape, r.view, r.p, 0.02, r.poly, { stair: r.stair, keep, namer: namer(own0.shape, own0.names), fast: fastEdges });
       const own = solidOwners(cutList);
       proj.cutKey = (proj.cutOf ?? []).map(i => own[i]?.key ?? "");
       proj.cutMat = (proj.cutOf ?? []).map(i => own[i]?.mat ?? modelMat);

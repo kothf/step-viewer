@@ -4975,6 +4975,39 @@ try {
     await ctx.close();
   }
 
+  // --- Drawings: fast hidden-line views for big assemblies (drawings exam round two; `?fasthlr` = always) ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug&fasthlr`);
+    await dp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    const part = { schema: 1, kind: "part", id: "d_drwfast", name: "Block", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", -50, -30), P("p2", 50, -30), P("p3", 50, 30), P("p4", -50, 30),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
+      { id: "s2", type: "sketch", name: "Sketch2", plane: { face: { name: "f1:end" } }, rels: [], dims: [], ents: [P("c0", 10, 0), { id: "c1", t: "circle", c: "c0", r: 8 }] },
+      { id: "f2", type: "extrude", name: "Cut1", sketch: "s2", op: "cut", end: "through", depth: { v: 0 } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-10T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "Block.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
+    await dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
+    const prims = await dp.evaluate(() => {
+      const p = window.__sv.drw.prims(), vis = p.filter(x => x.layer === "VISIBLE");
+      const len = vis.reduce((t, x) => t + (x.t === "l" ? Math.hypot(x.p[2] - x.p[0], x.p[3] - x.p[1]) : 0), 0);
+      return { hidden: p.filter(x => x.layer === "HIDDEN").length, circles: vis.filter(x => x.t === "a" && Math.abs(x.r - 8) < 1e-9).length, poly: vis.filter(x => x.t === "p").length, len: Math.round(len * 1000) / 1000, kinds: [...new Set(vis.map(x => x.t))].join("") };
+    });
+    check(prims.hidden === 4 && prims.circles === 1 && prims.poly === 0,
+      `drawing: fast hidden-line views rebuild exact lines and the hole as a true Ø16 circle (${JSON.stringify(prims)})`);
+    await ctx.close();
+  }
+
   // --- Drawings: section, detail and auxiliary views (FR-DRW-012/013/014, AT-P5-2) ---
   if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
