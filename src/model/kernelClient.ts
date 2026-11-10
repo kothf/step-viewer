@@ -183,6 +183,12 @@ export class ModelKernel {
     return (await this.call<{ features: Feature[] }>({ type: "recognizeExtrudes", doc })).features;
   }
 
+  /** Recognize Features (FR-FT-102): fillets, holes, extrudes and the base in one go, in modelling order. */
+  async recognizeFeatures(doc: PartDoc): Promise<Feature[]> {
+    await this.start();
+    return (await this.call<{ features: Feature[] }>({ type: "recognizeFeatures", doc })).features;
+  }
+
   /** Evaluates an assembly: one mesh per shown component, placed (FRS 10). */
   async assembly(doc: AsmDoc): Promise<{ parts: { id: string; data: PartData; faces: string[]; bodies?: OwnBody[] }[]; statuses: AsmComponentStatus[]; features?: AsmFeatureStatus[]; props: BodyProps | null }> {
     let t = performance.now();

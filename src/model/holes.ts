@@ -55,3 +55,17 @@ export const HEAT_INSERTS: InsertSize[] = [
 ];
 
 export const insertSize = (s: string | undefined) => HEAT_INSERTS.find(h => h.size === s);
+
+/**
+ * Hole features for holes found on a body (FR-FT-102): one simple Hole per opening face, size, end and
+ * depth, holding every centre of that group. Ids from `id`; names are left empty for the caller.
+ */
+export function recognizedHoleFeatures(holes: import("./types").RecognizedHole[], id: () => string): import("./types").HoleFeature[] {
+  const groups = new Map<string, { h: import("./types").RecognizedHole; pts: [number, number][] }>();
+  for (const h of holes) {
+    const k = `${"face" in h.plane ? h.plane.face.name : ""}|${h.diameter.toFixed(6)}|${h.end}|${h.end === "blind" ? h.depth.toFixed(6) : ""}|${h.flat}`;
+    const g = groups.get(k);
+    if (g) g.pts.push(h.pt); else groups.set(k, { h, pts: [h.pt] });
+  }
+  return [...groups.values()].map(({ h, pts }) => ({ id: id(), type: "hole", name: "", plane: h.plane, pts, kind: "simple", diameter: { v: h.diameter }, end: h.end, depth: { v: h.end === "blind" ? h.depth : 10 }, ...(h.flat && h.end === "blind" ? { flat: true } : {}) }));
+}

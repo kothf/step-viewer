@@ -14,6 +14,7 @@ import type { V2, SkEnt } from "../model/types";
 import type { HealFeature, RecognizedHole, RecognizedBlends, SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, ChamferFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
 import { dir2Apart, dir2Feature } from "../model/types";
 import { featureRefs } from "../model/doc";
+import { recognizedHoleFeatures } from "../model/holes";
 import { ctxFrame } from "../model/context";
 import { loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 import { splineBezierN } from "../sketch/spline";
@@ -3498,6 +3499,94 @@ export class Modeller {
     } catch { /* the first round alone */ }
     // The rounds do not go back together: the first one alone is still a good find.
     return first;
+  }
+
+  /**
+   * Recognize Features (FR-FT-102), FeatureWorks' automatic mode in one go: fillets and chamfers, holes,
+   * then pockets, bosses and the base, each found on the body with the earlier finds taken off. The tree
+   * comes back in modelling order: the base and extrudes, then the holes, then the fillets and chamfers,
+   * their faces and edges found again by place on the body the extrudes make. When the base is found the
+   * Delete Faces of the fillets and holes are left out. Kept only when it rebuilds to the same volume;
+   * otherwise the finds are stacked one after another (blends, holes, extrudes), as the single commands do.
+   */
+  recognizeFeatures(doc: PartDoc): Feature[] {
+    const upto = doc.features.slice(0, doc.rollback ?? doc.features.length);
+    const at = (fs: Feature[]): PartDoc => ({ ...doc, rollback: null, features: [...upto, ...fs] });
+    const id = () => `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
+    const start = this.evaluate(at([])).body;
+    if (!start) return [];
+    const v0 = this.volume(start.shape), tol = Math.max(1e-4, this.size(start.shape) * 1e-6) * 100;
+    const B = this.recognizeBlends(at([]));
+    const bDel = B.filter(f => f.type === "delface"), blends = B.filter(f => f.type !== "delface");
+    const H = this.recognizeHoles(at(bDel));
+    const hDel: Feature[] = H.holes.length ? [{ id: id(), type: "delface", name: "", faces: H.faces } as Feature] : [];
+    const holes = recognizedHoleFeatures(H.holes, id);
+    const E = this.recognizeExtrudes(at([...bDel, ...hDel]));
+    const good = (fs: Feature[]): boolean => {
+      try {
+        const r = this.evaluate(at(fs));
+        return !!r.body && !r.statuses.slice(-fs.length).some(x => x.ok === false) && this.solids(r.body.shape) === this.solids(start.shape)
+          && Math.abs(this.volume(r.body.shape) - v0) <= 1e-6 * Math.abs(v0) + 1e-9;
+      } catch { return false; }
+    };
+    // Holes and blends go back on where they were, on the faces the body has by then.
+    const replace = (head: Feature[]): Feature[] | null => {
+      const out = [...head];
+      if (holes.length) {
+        const ref = this.evaluate(at([...bDel, ...hDel])).body, body = this.evaluate(at(out)).body;
+        if (!ref || !body) return null;
+        for (const h of holes) {
+          const fr = this.planeFrame(h.plane!, ref, {});
+          const pts3 = h.pts.map(([x, y]) => add(fr.o, add(mul(fr.x, x), mul(fr.y, y))));
+          const i = this.flatFaceAt(body, pts3[0], fr.n, tol);
+          if (i < 0) return null;
+          const plane: PlaneRef = { face: { name: body.names[i] } };
+          const nf = this.planeFrame(plane, body, {});
+          out.push({ ...h, plane, pts: pts3.map(p => { const q = sub3(p, nf.o); return [dot(q, nf.x), dot(q, nf.y)] as [number, number]; }) });
+        }
+      }
+      for (const g of blends) {
+        const f = g as FilletFeature | ChamferFeature;
+        // The body this blend was found on: a two-distance chamfer keeps its first face by its normal there.
+        const before = f.type === "chamfer" && f.mode === "two" ? this.evaluate(at(B.slice(0, B.indexOf(g)))).body : null;
+        const body = this.evaluate(at(out)).body;
+        if (!body) return null;
+        const es = this.sub(body.shape, "EDGE").map(e => ({ e, m: this.edgeMid(e) }));
+        const edges: EdgeRef[] = [];
+        for (const r of f.edges) {
+          if (!r.hint) return null;
+          let best: typeof es[0] | null = null, bd = tol;
+          for (const x of es) { const d = d3(x.m, r.hint); if (d < bd) { bd = d; best = x; } }
+          const names = best ? this.edgeKey(body, best.e).split("|") : [];
+          if (names.length !== 2) return null;
+          if (before) {
+            const k = before.names.indexOf(r.faces[0]);
+            const first = k >= 0 ? this.normalNear(before.faces[k], r.hint) : null;
+            const lean = (n: string) => { const i = body.names.indexOf(n); return i < 0 || !first ? -2 : dot(this.normalNear(body.faces[i], best!.m), first); };
+            if (first && lean(names[1]) > lean(names[0])) names.reverse();
+          }
+          edges.push({ faces: [names[0], names[1]], hint: best!.m });
+        }
+        out.push({ ...f, edges } as Feature);
+      }
+      return out;
+    };
+    if (!B.length && !holes.length && !E.length) return [];
+    try {
+      if (E.some(f => f.type === "delbody")) {
+        // The base replaces the imported body: the Delete Faces before it are not needed.
+        const lean = replace(E);
+        if (lean && good(lean)) return lean;
+      }
+      const full = replace([...bDel, ...hDel, ...E]);
+      if (full && good(full)) return full;
+    } catch { /* stacked below */ }
+    // Stacked: each command's finds on the body the earlier ones leave, as running them one by one does.
+    const out: Feature[] = [...B];
+    const H2 = this.recognizeHoles(at(out));
+    if (H2.holes.length) out.push({ id: id(), type: "delface", name: "", faces: H2.faces } as Feature, ...recognizedHoleFeatures(H2.holes, id));
+    out.push(...this.recognizeExtrudes(at(out)));
+    return out.length && good(out) ? out : [];
   }
 
   /**
