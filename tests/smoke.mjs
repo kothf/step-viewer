@@ -10688,6 +10688,35 @@ try {
     const hb = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, bends: l.sheet?.bends.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
     const hbWant = 100 * 3 * (154 + 4 * ((Math.PI / 2 - 2) * 3.5));
     check(!hb.bad && hb.bends === 4 && Math.abs(hb.v - hbWant) < 1e-2, `sheet metal: Insert Bends follows a hat section's walls to the brims (${JSON.stringify({ hb, hbWant })})`);
+    // Convert with lips: a 100 × 60 × 40 box with a 10 mm rim round a 20 mm deep pocket; the four bottom edges and the
+    // walls' four top edges: each wall gets a 10 mm lip off the shared rim, mitred at the corners, none past the box.
+    const lipDoc = flat => window.__sv.model.store.change("Lip tray", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), L = (id, a, b) => ({ id, t: "line", a, b });
+      const rect = (id, x0, y0, x1, y1, plane) => ({ id, type: "sketch", name: id, plane, rels: [], dims: [], ents: [P(`${id}p1`, x0, y0), P(`${id}p2`, x1, y0), P(`${id}p3`, x1, y1), P(`${id}p4`, x0, y1), L(`${id}l1`, `${id}p1`, `${id}p2`), L(`${id}l2`, `${id}p2`, `${id}p3`), L(`${id}l3`, `${id}p3`, `${id}p4`), L(`${id}l4`, `${id}p4`, `${id}p1`)] });
+      const ls = ["l1", "l2", "l3", "l4"];
+      d.features = [
+        rect("s", 0, 0, 100, 60, { std: "XY" }),
+        { id: "e", type: "extrude", name: "Boss-Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 40 } },
+        { id: "pl", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 40 } },
+        rect("pk", 10, 10, 90, 50, { plane: "pl" }),
+        { id: "px", type: "extrude", name: "Cut-Extrude1", sketch: "pk", op: "cut", end: "blind", depth: { v: 20 } },
+        { id: "c", type: "smconvert", name: "Convert-Solid1", face: { name: "e:start" }, edges: [...ls.map(l => ({ faces: ["e:start", `e:side:s${l}`] })), ...ls.map(l => ({ faces: ["e:end", `e:side:s${l}`] }))], thickness: { v: 2 }, radius: { v: 2 }, k: 0.5 },
+        ...(flat ? [{ id: "fp", type: "smflat", name: "Flat-Pattern1" }] : []),
+      ];
+    });
+    await mp.evaluate(lipDoc, false);
+    await settle();
+    const lp = await mp.evaluate(() => {
+      const l = window.__sv.model.last(), ps = l.sheet?.panels ?? [];
+      const ap = (M, q) => [0, 1, 2].map(i => M.o[i] + M.x[i] * q[0] + M.y[i] * q[1]);
+      const out = ps.filter(p => p.outer.some(sg => sg.kind === "line" && [sg.a, sg.b].some(q => { const w = ap(p.M, q); return w[0] < -1e-6 || w[0] > 100 + 1e-6 || w[1] < -1e-6 || w[1] > 60 + 1e-6; }))).map(p => p.id);
+      return { v: l.props?.volume ?? 0, bends: l.sheet?.bends.length, out, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") };
+    });
+    await mp.evaluate(lipDoc, true);
+    await settle();
+    const lpf = await mp.evaluate(() => window.__sv.model.last().props?.volume ?? 0);
+    check(!lp.bad && lp.bends === 8 && !lp.out.length && Math.abs(lpf / lp.v - 1) < 6e-3,
+      `sheet metal: Convert gives each wall its own lip off a shared rim, mitred at the corners (${JSON.stringify({ lp, lpf })})`);
     // Tab and Slot: a 100 × 50 plate and a separate 3 mm block 1 mm past one end (on the side away from the camera, so
     // its face towards the plate shows above it). Click the plate's top edge there, then that block face, ✓: two tabs
     // 10 × (1 + 2) into slots 0.1 bigger all round (2.1 deep: the default height is the thickness).
