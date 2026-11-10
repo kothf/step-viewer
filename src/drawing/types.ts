@@ -104,7 +104,8 @@ export interface ViewBreak { axis: "u" | "v"; a: number; b: number }
  * of a circle, or the whole edge. Or a fixed model point (model items, whose points are rebuilt); with `com` it is the
  * model's centre of mass, which follows the model (`pt` = where it was last).
  */
-export type GeoRef = { e: string; h: V3; p: "a" | "b" | "c" | "e"; q?: V3 } | { pt: V3; com?: true };
+/** `s`: on a circle edge, one outline line (+1/−1) of the cylinder it bounds, seen from the side (a linear dimension's line). */
+export type GeoRef = { e: string; h: V3; p: "a" | "b" | "c" | "e"; q?: V3; s?: 1 | -1 } | { pt: V3; com?: true };
 
 /** Tolerance (FR-DRW-021): symmetric ±up, deviations +up/−lo, limits, or an ISO 286 fit code. */
 /** A dimension tolerance; "none" turns the drawing's default tolerance (`DraftStyle.tol`/`atol`) off for one dimension. */
@@ -150,7 +151,8 @@ export interface DimAnnot {
   lin?: "h" | "v";
   /** Arrowheads of this dimension; absent = as the drawing's style says (`DraftStyle.arrow`). */
   ends?: "filled" | "open" | "dot" | "tick";
-  /** Radius and diameter dimensions with the text outside the circle: the leader stops at the rim with one arrow pointing at it from outside, instead of crossing the circle. */
+  /** Radius and diameter dimensions with the text outside the circle: the leader stops at the rim with one arrow pointing at it from outside, instead of crossing the circle.
+   * Radii: true turns it on. Diameters do it by default (1.454.0); false draws the line across the circle with two arrows. */
   outside?: boolean;
   /** Radius and diameter dimensions: the text lies along the leader (ISO aligned), not on a level shoulder. */
   along?: boolean;

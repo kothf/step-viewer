@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
-import { combine, covOfTensor, massReport, meshMoments, principal, rotateSym, type Sym, type V3 } from "../../src/tools/inertia";
+import { bodyMasses, combine, covOfTensor, massReport, meshMoments, principal, rotateSym, type Sym, type V3 } from "../../src/tools/inertia";
 import { Kernel } from "../../src/kernel/occ";
 import { occ } from "./occ";
 
@@ -96,4 +96,19 @@ test("two densities: the heavy body pulls the centre of mass", () => {
   near(c.cov[0], 4 * 100 / 12 + 225 + 75);
   assert.equal(c.partial, false);
   assert.equal(combine([{ volume: 1, area: 1, com: [0, 0, 0], density: 1 }]).partial, true);
+});
+
+test("bodies with their own materials: own density where set, the part's for the rest", () => {
+  const list = [
+    { key: "a", volume: 8000, area: 2800, com: [0, 0, 5] as V3, cov: [1, 1, 1, 0, 0, 0] as Sym },
+    { key: "b", volume: 1000, area: 600, com: [40, 0, 5] as V3, cov: [1, 1, 1, 0, 0, 0] as Sym },
+  ];
+  const bs = bodyMasses(list, k => (k === "b" ? 4.43 : undefined), 7.85)!;
+  assert.deepEqual(bs.map(b => b.density), [7.85, 4.43]);
+  const c = combine(bs);
+  assert.ok(Math.abs(c.mass - (62.8 + 4.43)) < 1e-9);
+  assert.ok(Math.abs(c.com[0] - (40 * 4.43) / 67.23) < 1e-9);
+  // Bodies without their own mass properties (a one-body rebuild): nothing to combine.
+  assert.equal(bodyMasses([{ key: "a", volume: 1 }], () => undefined, 1), null);
+  assert.equal(bodyMasses([], () => undefined, 1), null);
 });

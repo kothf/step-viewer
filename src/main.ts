@@ -29,7 +29,7 @@ import {
 } from "./tools/measure";
 import { massProperties, type MassResult } from "./tools/analysis";
 import { pickMaterial } from "./materialPicker";
-import { massReport, principal, type Combined, type Frame } from "./tools/inertia";
+import { combine, massReport, principal, type Combined, type Frame } from "./tools/inertia";
 import { inertiaUnit, massPanelHtml, massText, type MassView } from "./tools/massPanel";
 import { exportMesh, inspectionReport, measurementsCsv, measurementsJson, snapshot, download } from "./tools/exporters";
 import { csys, makeCsys, type Csys } from "./tools/csys";
@@ -2803,7 +2803,13 @@ function runMass() {
   if (density === null) return;
   // Assemblies take each component's part material (the field's density where a part has none), like the BOM.
   const each = asm.active ? (p: Part) => asm.partDensity(viewer.parts.indexOf(p)) ?? density : density;
-  const r = massProperties(viewer, parts, each);
+  let r = massProperties(viewer, parts, each);
+  // A modelled part whose bodies have their own materials (FR-MAT-001): each body weighs with its density.
+  const own = modeller.active && parts.length === 1 ? modeller.bodyMasses(density) : null;
+  if (own) {
+    const c = combine(own.map(b => ({ ...b, area: 0 })));
+    r = { ...r, ...c, volume: r.volume, area: r.area, com3: new THREE.Vector3(...c.com), densities: [...new Set(own.map(b => b.density))] };
+  }
   const whole = !(state.selectedParts.length && state.selectedNode !== viewer.tree);
   // Mass property override of a modelled part (FR-MAT-004): an entered mass scales the moments with it; an entered centre moves it.
   const o = whole && modeller.active ? modeller.massOverride() : null;

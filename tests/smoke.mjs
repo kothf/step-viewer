@@ -136,7 +136,10 @@ async function runCmd(pg, label) {
       const texts = await pg.$$eval(sel, els => els.map(e => (e.querySelector(".mc-l") ?? e).textContent.trim()));
       return exact ? texts.indexOf(label) : texts.findIndex(x => x.startsWith(label));
     };
-    for (const tab of ["features", "surfaces", "sheetmetal", "weldments", "sketch"]) {
+    // In a sketch the Sketch tab's tools come first: the other tabs' commands would exit the sketch (FR-SK-004).
+    const sketching = await pg.evaluate(() => document.getElementById("app").classList.contains("sketching"));
+    const tabs = sketching ? ["sketch"] : ["features", "surfaces", "sheetmetal", "weldments", "sketch"];
+    for (const tab of tabs) {
       if (!(await pg.$(`#cm-t-${tab}`))) continue;
       await pg.click(`#cm-t-${tab}`);
       const i = await pick("#mc-tools [data-c]");
@@ -4158,7 +4161,9 @@ try {
     // Focus (20, -8), vertex (20, -12): f = 4; ends over x = 10 and x = 35 → (10, -5.75), (35, 2.0625); tangents meet at (22.5, -21.375).
     await click([20, -8]); await click([20, -12]); await click([10, -15]); await click([35, -15]);
     const par = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id), c = sk.ents.find(e => e.kind === "parabola"); return c ? c.pts.map(id => [P(id).x, P(id).y].map(v => Math.round(v * 1000) / 1000).join(",")).join(" ") : ""; });
-    check(par === "10,-5.75 22.5,-21.375 35,2.063", `model 1.157: parabola from focus, vertex and two ends (${par})`);
+    // 35, 2.0625 sits on a rounding edge: compare within 0.002 (pixel snapping of the clicks).
+    const parWant = [10, -5.75, 22.5, -21.375, 35, 2.0625], parGot = par.split(/[ ,]/).map(Number);
+    check(parGot.length === 6 && parGot.every((v, i) => Math.abs(v - parWant[i]) < 0.002), `model 1.157: parabola from focus, vertex and two ends (${par})`);
     await mp.click('#mc-tools [data-fly="line"]');
     const lfly = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
     await mp.click("#mc-menu button:nth-child(4)");
@@ -4696,6 +4701,20 @@ try {
     await dp.keyboard.press("Control+z"); await dp.keyboard.press("Control+z");
     const undone = await views(), rev = await dp.evaluate(() => window.__sv.modeller.store.doc.props.revision);
     check(undone.length === 3 && d(v3[0], undone[0]) === "0,0" && d(v3[2], undone[2]) === "0,0" && rev === "B", `drawing: Ctrl+Z undoes the moves and not the part's last step (revision ${rev})`);
+    // Custom sheet scale (drawings exam #17): a box under the list takes it, no browser prompt.
+    {
+      await dp.keyboard.press("Escape");
+      await dp.selectOption('#drw .drw-props [data-s="scale"]', "custom");
+      const box = dp.locator("#drw .drw-props input.drw-cscale");
+      const focused = await dp.evaluate(() => document.activeElement?.classList.contains("drw-cscale"));
+      await box.fill("1:3"); await box.press("Enter");
+      await dp.waitForTimeout(150);
+      const sc = await dp.evaluate(() => window.__sv.drw.doc().sheets[0].scale.join(":"));
+      await dp.selectOption('#drw .drw-props [data-s="scale"]', "1:1");
+      await ready();
+      const back = await dp.evaluate(() => window.__sv.drw.doc().sheets[0].scale.join(":"));
+      check(focused && sc === "1:3" && back === "1:1", `drawing: Custom… scale is typed into a box under the list (${focused}, ${sc}, back ${back})`);
+    }
     // Model view ▾ Isometric: the preview follows the cursor; the click places it, then projected views come off it.
     await dp.click('#drw [data-a="model"]');
     await dp.click('#drw [data-orient="iso"]');
@@ -5092,6 +5111,14 @@ try {
       }
       const back = (await annots()).length === n0;
       check(made && made.k === "dia" && made.view === front.id && c1 === c0 + 1 && upright >= 2 && back, `drawing: a hole's hidden line in a side view gives its diameter as a linear dimension (${JSON.stringify({ k: made?.k, c0, c1, upright, back })})`);
+      // Both hidden lines of the hole, one after the other: the distance between the two lines (exam #14), not between circle centres.
+      await dp.click('#drw [data-a="dim"]');
+      for (const u of [2, 18]) { [x, y] = await at(front.id, u, (bx.b[1] + bx.b[3]) / 2); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); }
+      [x, y] = await at(front.id, 10, bx.b[1] - 14 / bx.s); await dp.mouse.move(x, y + 2); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+      await dp.keyboard.press("Escape");
+      const two = (await annots()).slice(n0), t16 = (await texts()).includes("16");
+      if (two.length) await dp.keyboard.press("Control+z");
+      check(two.length === 1 && two[0].k === "al" && two[0].refs.every(r => r.s) && t16, `drawing: two outline lines of a hole give the distance between them (${JSON.stringify(two.map(a => ({ k: a.k, refs: a.refs })))}, 16 shown ${t16})`);
     }
     // Select the 100 by its text and give it a ± tolerance.
     [x, y] = await at(front.id, 0, 40.5);
@@ -5135,15 +5162,17 @@ try {
       fore = { j0, j1, stored, r8: txR.includes("R8"), back: (await annots()).some(a => a.k === "dia" && !a.fore) && !(await dp.$('#drw .drw-props [data-d="fore"]')) };
     }
     check(fore && fore.j1 === fore.j0 + 1 && fore.stored && fore.r8 && fore.back, `drawing: a radius dimension is foreshortened with a jog and goes back to a diameter (${selR}; ${JSON.stringify(fore)})`);
-    // Arrow outside the circle (the Ø16 is still selected): stored, never more prims than before, and off again.
+    // Arrow outside the circle (the Ø16 is still selected): on by default for a diameter (1.452.0); off draws the line
+    // across the circle (more prims, stored as false), and on again drops the key.
     {
       const nAn = () => dp.evaluate(() => window.__sv.drw.prims().filter(q => q.layer === "ANNOT").length);
       const n0 = await nAn(), has = !!(await dp.$('#drw .drw-props [data-d="rout"]'));
-      if (has) await dp.check('#drw .drw-props [data-d="rout"]');
-      const n1 = await nAn(), st = (await annots()).some(a => a.k === "dia" && a.outside === true);
+      const on0 = has && await dp.isChecked('#drw .drw-props [data-d="rout"]');
       if (has) await dp.uncheck('#drw .drw-props [data-d="rout"]');
-      const n2 = await nAn(), off = !(await annots()).some(a => a.outside);
-      check(has && st && off && n1 <= n0 && n2 === n0, `drawing: a diameter's arrow goes outside the circle and back (${JSON.stringify({ has, st, off, n0, n1, n2 })})`);
+      const n1 = await nAn(), st = (await annots()).some(a => a.k === "dia" && a.outside === false);
+      if (has) await dp.check('#drw .drw-props [data-d="rout"]');
+      const n2 = await nAn(), off = !(await annots()).some(a => "outside" in a);
+      check(has && on0 && st && off && n1 >= n0 && n2 === n0, `drawing: a diameter's leader stops at the rim by default, crosses the circle when turned off, and back (${JSON.stringify({ has, on0, st, off, n0, n1, n2 })})`);
     }
     // 1.446.0 text along the leader (the Ø16 is still selected): the text turns to the leader's angle and back.
     {
@@ -5169,7 +5198,7 @@ try {
       }
       check(r && r.n1 > r.n0 && r.stored && r.dia && r.back, `drawing: a diameter is displayed as a linear dimension with extension lines and goes back (${JSON.stringify(r)})`);
     }
-    // Arrowheads of its own (the Ø16 is still selected): oblique strokes are thick lines; Document goes back.
+    // Arrowheads of its own (the Ø16 is still selected, one arrow at the rim since 1.452.0): oblique strokes are thick lines; Document goes back.
     {
       const thick = () => dp.evaluate(() => window.__sv.drw.prims().filter(q => q.t === "l" && q.layer === "ANNOT" && q.pen === "thick").length);
       const k0 = await thick();
@@ -5177,7 +5206,7 @@ try {
       const k1 = await thick(), stored = (await annots()).some(a => a.ends === "tick");
       await dp.selectOption('#drw .drw-props [data-d="ends"]', "");
       const k2 = await thick();
-      check(k1 === k0 + 2 && stored && k2 === k0 && !(await annots()).some(a => a.ends), `drawing: a dimension takes its own arrowheads and goes back to the document's (${k0} → ${k1} → ${k2})`);
+      check(k1 === k0 + 1 && stored && k2 === k0 && !(await annots()).some(a => a.ends), `drawing: a dimension takes its own arrowheads and goes back to the document's (${k0} → ${k1} → ${k2})`);
     }
     // Back to the 100, which the next checks work on.
     [x, y] = await at(front.id, 0, 40.5);
@@ -6263,6 +6292,23 @@ try {
     }));
     await settle();
     const t0 = await mp.evaluate(() => ({ folder: document.querySelector('#mc-tree .ft-row[data-id="folder:bodies"] .ft-name')?.textContent, rows: [...document.querySelectorAll("#mc-tree .ft-body .ft-name")].map(e => e.textContent), faces: window.__sv.model.last().faceNames.length }));
+    // A body's own material (FR-MAT-001): the cylinder in titanium weighs with its density, the box with the part's.
+    const massOf = async () => { await mp.evaluate(() => { document.querySelector("#mass-out").textContent = ""; document.querySelector("#mass-run").click(); }); await mp.waitForFunction(() => /Mass/.test(document.querySelector("#mass-out").textContent), null, { timeout: 10000 }); return mp.evaluate(() => { const s = document.querySelector("#mass-out").textContent; return { g: +(/Mass([\d.]+) g/.exec(s)?.[1] ?? NaN), dens: /from part materials/.test(s) }; }); };
+    await mp.evaluate(() => void window.__sv.modeller.pickBodyMaterial("e"));
+    await mp.waitForSelector("#mat-dlg[open]");
+    await mp.fill("#mat-q", "Ti-6Al-4V");
+    await mp.keyboard.press("ArrowDown");
+    await mp.keyboard.press("ArrowUp");
+    await mp.keyboard.press("Enter");
+    await mp.waitForSelector("#mat-dlg", { state: "detached" });
+    await settle();
+    const bm = { mat: await mp.evaluate(() => window.__sv.model.store.doc.bodies?.e?.material?.name), ...(await massOf()) };
+    await mp.evaluate(() => window.__sv.modeller.undo());
+    await settle();
+    const bm0 = await massOf();
+    const wantG = (8000 * 7.85 + Math.PI * 250 * 4.43) / 1000, plainG = (8000 + Math.PI * 250) * 7.85 / 1000;
+    check(bm.mat === "Titanium Ti-6Al-4V" && Math.abs(bm.g - wantG) < 0.02 && bm.dens && Math.abs(bm0.g - plainG) < 0.02 && !bm0.dens,
+      `model 1.453.0: a body's own material is used for its mass, the part's for the rest (${JSON.stringify({ bm, bm0, wantG, plainG })})`);
     // Hide the cylinder from its row: it leaves the view, the mass properties keep it.
     await mp.hover('#mc-tree .ft-row[data-id="body:e"]');
     await treeClick(mp, '#mc-tree .ft-row[data-id="body:e"] [data-a="bhide"]');
@@ -8817,6 +8863,49 @@ try {
     const ps1 = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(x => x.type === "planesurf"); const l = window.__sv.model.last(); return { contours: f?.contours?.length, sheetFaces: l.sheetFaces, bad: l.statuses.filter(s => !s.ok).map(s => s.code).join() }; });
     check(ps0.type === "planesurf" && ps0.sketch === "s" && ps0.focus === "contours" && ps1.contours === 1 && ps1.sheetFaces === 1 && !ps1.bad,
       `model 1.428: Planar Surface on a sketch with a line across picks a region with Selected Contours (FR-FT-010) (${JSON.stringify({ ps0, ps1 })})`);
+    await ctx.close();
+  }
+
+  // --- 1.451: features straight from the sketch being edited (FR-SK-004) ---
+  if (inShard(5)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Rect", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", -50, -30), P("p2", 50, -30), P("p3", 50, 30), P("p4", -50, 30), Ln("l1", "p1", "p2"), Ln("l2", "p2", "p3"), Ln("l3", "p3", "p4"), Ln("l4", "p4", "p1")] });
+    }));
+    await settle();
+    // In the sketch, the Sketch tab offers Extrude: it exits the sketch and opens the extrude on it with a preview.
+    await mp.evaluate(() => window.__sv.modeller.editSketch("s"));
+    await mp.waitForTimeout(200);
+    const inSk = await mp.evaluate(() => ({ mode: window.__sv.model.mode().kind, ext: !!document.querySelector('#mc-tools [data-c="extrude"]'), line: !!document.querySelector('#mc-tools [data-c="sk:line"]') }));
+    await mp.click('#mc-tools [data-c="extrude"]');
+    await settle();
+    const ext = await mp.evaluate(() => { const m = window.__sv.model.mode(); return { mode: m.kind, type: m.draft?.type, sketch: m.draft?.sketch, v: Math.round(window.__sv.model.last().props?.volume ?? 0), sk: !document.getElementById("app").classList.contains("sketching") }; });
+    await mp.evaluate(() => window.__sv.modeller.cancel());
+    await settle();
+    // Another tab while sketching shows its own commands: Surfaces → Planar Surface uses the open sketch too.
+    await mp.evaluate(() => window.__sv.modeller.editSketch("s"));
+    await mp.waitForTimeout(200);
+    await mp.click("#cm-t-surfaces");
+    const surfTab = await mp.evaluate(() => ({ ps: !!document.querySelector('#mc-tools [data-c="planesurf"]'), line: !!document.querySelector('#mc-tools [data-c="sk:line"]'), mode: window.__sv.model.mode().kind }));
+    await mp.click('#mc-tools [data-c="planesurf"]');
+    await settle();
+    const ps = await mp.evaluate(() => { const m = window.__sv.model.mode(); return { mode: m.kind, type: m.draft?.type, sketch: m.draft?.sketch }; });
+    await mp.evaluate(() => window.__sv.modeller.cancel());
+    await settle();
+    check(inSk.mode === "sketch" && inSk.ext && inSk.line && ext.mode === "feature" && ext.type === "extrude" && ext.sketch === "s" && ext.v === 60000 && ext.sk
+      && surfTab.ps && !surfTab.line && surfTab.mode === "sketch" && ps.mode === "feature" && ps.type === "planesurf" && ps.sketch === "s",
+      `model 1.451: Extrude or Planar Surface picked while editing a sketch exits it and opens the feature on it with a preview (FR-SK-004) (${JSON.stringify({ inSk, ext, surfTab, ps })})`);
     await ctx.close();
   }
 

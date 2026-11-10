@@ -944,8 +944,8 @@ export interface PartDoc {
   /** Lock external references (FR-ASM-030): in-context planes keep their stored values. */
   ctxLocked?: boolean;
   stdHidden?: ("XY" | "XZ" | "YZ")[];
-  /** Bodies folder (FR-BODY-001): per body key (see `Modeller.bodyInfo`), a name, hidden, colour. */
-  bodies?: Record<string, { name?: string; hidden?: boolean; color?: V3 }>;
+  /** Bodies folder (FR-BODY-001): per body key (see `Modeller.bodyInfo`), a name, hidden, colour, and its own material (FR-MAT-001; absent = the part's). */
+  bodies?: Record<string, { name?: string; hidden?: boolean; color?: V3; material?: MatRef }>;
   /** Mate references (FR-MATE-011): named faces (persistent names; primary, secondary, tertiary) an assembly mates to a same-named reference on insert. */
   mateRefs?: { name: string; faces: string[] }[];
   /** Named views (FR-UI-104): saved cameras, view data kept out of the undo history. */

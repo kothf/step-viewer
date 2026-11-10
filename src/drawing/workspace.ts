@@ -6,7 +6,7 @@
 import type { VaultTie } from "../pdm/panel";
 import fontUrl from "dejavu-fonts-ttf/ttf/DejaVuSans.ttf?url";
 import type { MEdge, Projection, ViewDir } from "../kernel/drawing";
-import { AUTO_LAYERS, withCut, wholeCircle, clineSegs, cloudPrims, dimGeo, factsCtx, holeEdges, ringDist, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, stackItem, edgeItem, weldItem, cutDesc, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
+import { AUTO_LAYERS, arrowOutside, withCut, wholeCircle, edgeOnSeg, outlineSeg, clineSegs, cloudPrims, dimGeo, factsCtx, holeEdges, ringDist, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, stackItem, edgeItem, weldItem, cutDesc, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
 import type { PartDoc } from "../model/types";
 import type { AsmDoc } from "../asm/types";
 import { BOM_COLS, autoBalloons, compOfKey, sheetBom, subsOf, type BalloonItems, type Bom } from "./bom";
@@ -98,7 +98,9 @@ type Mode =
   | AnnotMode;
 type Pt = [number, number];
 /** A pick for a dimension: a point (edge end or circle centre), a line or a circle, in a view. */
-interface Pick { kind: "pt" | "line" | "circle"; ref: GeoRef; e: MEdge }
+/** `seg`: the line a pick stands for in view axes, when it is not the edge's own (a circle seen edge-on, a cylinder's outline);
+ *  `side`: a cylinder outline pick (+1/−1, which of the two outline lines; `GeoRef.s`). */
+interface Pick { kind: "pt" | "line" | "circle"; ref: GeoRef; e: MEdge; seg?: [Pt, Pt]; side?: 1 | -1 }
 type AnnotMode =
   /** Smart dimension (FR-DRW-021): pick one or two entities, then place. */
   | { kind: "dim"; view: string | null; picks: Pick[]; at: Pt | null }
@@ -1186,7 +1188,7 @@ export class DrawingWorkspace {
   }
 
   /** The point, line or circle of a view's model under a sheet point (points first), within the snap distance. */
-  private pickAt(viewId: string, p: Pt, only?: "circle", first = false): Pick | null {
+  private pickAt(viewId: string, p: Pt, only?: "circle", first = false, edgeOn = false): Pick | null {
     const v = findView(this.sheet, viewId), pl = this.placements.get(viewId), topo = this.factsOf(viewId)?.topo;
     if (!v || !pl || !topo) return null;
     const { P, n } = projector(viewDir(this.sheet, v));
@@ -1221,7 +1223,17 @@ export class DrawingWorkspace {
         if (L2 < 1e-6) continue;
         const k = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2));
         const q: Pt = [a[0] + dx * k, a[1] + dy * k], d = Math.hypot(q[0] - p[0], q[1] - p[1]);
-        if (d < bd && inDetail(fromSheet(pl, q[0], q[1]))) { bd = d; best = { kind: "line", ref: edgeRef(e, "e"), e }; }
+        // A straight edge wins a tie with an edge-on circle lying on it (a hole's rim on a plate's face line).
+        if ((d < bd || (best?.seg && d < bd + 1e-6)) && inDetail(fromSheet(pl, q[0], q[1]))) { bd = d; best = { kind: "line", ref: edgeRef(e, "e"), e }; }
+      } else if (edgeOn && !only && e.t === "c" && e.c && e.r && e.ax && Math.abs(e.ax[0] * n[0] + e.ax[1] * n[1] + e.ax[2] * n[2]) < 1e-6) {
+        // A circle seen edge-on is a line across its axis: SolidWorks picks it as one (a boss top, a shaft's end).
+        const seg = edgeOnSeg(e, P);
+        if (!seg) continue;
+        const a = toSheet(pl, ...seg[0]), b = toSheet(pl, ...seg[1]), dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy;
+        if (L2 < 1e-6) continue;
+        const k = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2));
+        const q: Pt = [a[0] + dx * k, a[1] + dy * k], d = Math.hypot(q[0] - p[0], q[1] - p[1]);
+        if (d < bd - 1e-6 && inDetail(fromSheet(pl, q[0], q[1]))) { bd = d; best = { kind: "line", ref: edgeRef(e, "e"), e, seg }; }
       } else if (endOn(e) && e.c && e.r) {
         const c = S(e.c), R = e.r * pl.s, d = Math.abs(Math.hypot(p[0] - c[0], p[1] - c[1]) - R);
         // Arcs of one circle seen end-on lie on top of each other: on a tie the fuller one wins, so a whole circle gives a Ø (exam bug 36).
@@ -1235,7 +1247,6 @@ export class DrawingWorkspace {
     for (const cy of topo.cyls) {
       const ax = cy.ax, dn = ax[0] * n[0] + ax[1] * n[1] + ax[2] * n[2];
       if (Math.abs(dn) > 1e-6 || cy.v1 - cy.v0 < 1e-9) continue;
-      const w: [number, number, number] = [n[1] * ax[2] - n[2] * ax[1], n[2] * ax[0] - n[0] * ax[2], n[0] * ax[1] - n[1] * ax[0]];
       const tolr = 1e-6 * Math.max(1, cy.r);
       // The whole circle on this cylinder nearest the click along the axis.
       let ce: MEdge | null = null, cd = Infinity;
@@ -1249,13 +1260,13 @@ export class DrawingWorkspace {
         if (dd < cd) { cd = dd; ce = e; }
       }
       if (!ce) continue;
-      for (const sgn of [1, -1]) {
-        const at = (v: number): [number, number, number] => [cy.o[0] + ax[0] * v + w[0] * cy.r * sgn, cy.o[1] + ax[1] * v + w[1] * cy.r * sgn, cy.o[2] + ax[2] * v + w[2] * cy.r * sgn];
-        const a = S(at(cy.v0)), b = S(at(cy.v1)), dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy;
+      for (const sgn of [1, -1] as const) {
+        const seg = outlineSeg(o2, ad, cy.r, cy.v0, cy.v1, sgn);
+        const a = toSheet(pl, ...seg[0]), b = toSheet(pl, ...seg[1]), dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy;
         if (L2 < 1e-6) continue;
         const k = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2));
         const q: Pt = [a[0] + dx * k, a[1] + dy * k], d = Math.hypot(q[0] - p[0], q[1] - p[1]);
-        if (d < bd + (best?.kind === "line" && !best.e.k.endsWith("|§") ? 1e-6 : -1e-6) && inDetail(fromSheet(pl, q[0], q[1]))) { bd = d; best = { kind: "circle", ref: edgeRef(ce, "e"), e: ce }; }
+        if (d < bd + (best?.kind === "line" && !best.e.k.endsWith("|§") && !best.seg ? 1e-6 : -1e-6) && inDetail(fromSheet(pl, q[0], q[1]))) { bd = d; best = { kind: "circle", ref: edgeRef(ce, "e"), e: ce, seg, side: sgn }; }
       }
     }
     // A first dimension pick on a circle takes the circle even when another edge ends on it there (a cross hole's
@@ -1277,13 +1288,19 @@ export class DrawingWorkspace {
       if (p0.kind === "circle") return { ...base, k: wholeCircle(p0.e, this.factsOf(viewId)?.topo ?? null) ? "dia" : "rad", refs: [p0.ref] };
       if (p0.kind === "pt") return null;
     }
-    if (p0.kind === "line" && p1?.kind === "line") {
-      const d = (e: MEdge) => { const a = P(e.a), b = P(e.b); const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1; return [(b[0] - a[0]) / L, (b[1] - a[1]) / L]; };
-      const u = d(p0.e), w = d(p1.e);
-      return { ...base, k: Math.abs(u[0] * w[1] - u[1] * w[0]) < 1e-6 ? "al" : "ang", refs: [p0.ref, p1.ref] };
+    // With another pick a cylinder's outline is the line it is (SolidWorks: the distance between two outlines, exam #14).
+    const lineRef = (pk: Pick): GeoRef | null => pk.kind === "line" ? pk.ref : pk.side ? { ...edgeRef(pk.e, "e"), s: pk.side } : null;
+    const l0 = lineRef(p0), l1 = p1 ? lineRef(p1) : null;
+    if (l0 && l1) {
+      const d = (pk: Pick) => { const [a, b] = pk.seg ?? [P(pk.e.a), P(pk.e.b)]; const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1; return [(b[0] - a[0]) / L, (b[1] - a[1]) / L]; };
+      const u = d(p0), w = d(p1!);
+      const par = Math.abs(u[0] * w[1] - u[1] * w[0]) < 1e-6;
+      // The angle of two lines needs straight edges; an outline or an edge-on circle with a slanted line gives no angle.
+      if (!par && (p0.seg || p1!.seg)) return null;
+      return { ...base, k: par ? "al" : "ang", refs: [l0, l1] };
     }
     const asPoint = (pk: Pick): GeoRef => (pk.kind === "circle" ? edgeRef(pk.e, "c") : pk.ref);
-    if (p1 && (p0.kind === "line" || p1.kind === "line")) return { ...base, k: "al", refs: [p0.kind === "line" ? p0.ref : asPoint(p0), p1.kind === "line" ? p1.ref : asPoint(p1)] };
+    if (p1 && (l0 || l1)) return { ...base, k: "al", refs: [l0 ?? asPoint(p0), l1 ?? asPoint(p1)] };
     const refs = picks.length === 1 ? [p0.ref] : [asPoint(p0), asPoint(p1)];
     const g = dimGeo({ ...base, k: "al", refs }, P, this.factsOf(viewId)?.topo ?? null);
     if (!g) return null;
@@ -1344,10 +1361,10 @@ export class DrawingWorkspace {
     const vid = m.view ?? this.viewAt(p);
     if (m.kind === "dim") {
       if (!vid) return;
-      const pick = this.pickAt(vid, p, undefined, !m.picks.length);
-      const same = (a: Pick, b: Pick) => JSON.stringify(a.ref) === JSON.stringify(b.ref);
+      const pick = this.pickAt(vid, p, undefined, !m.picks.length, true);
+      const same = (a: Pick, b: Pick) => JSON.stringify(a.ref) === JSON.stringify(b.ref) && a.side === b.side;
       if (!m.picks.length) { if (!pick) return; m.view = vid; m.picks = [pick]; }
-      else if (pick && m.picks.length === 1 && !same(pick, m.picks[0]) && !(m.picks[0].kind === "circle" && pick.kind === "circle" && pick.e === m.picks[0].e)) m.picks.push(pick);
+      else if (pick && m.picks.length === 1 && !same(pick, m.picks[0]) && !(m.picks[0].kind === "circle" && pick.kind === "circle" && pick.e === m.picks[0].e && !(pick.side && m.picks[0].side))) m.picks.push(pick);
       else {
         const d = this.buildDim(m.view!, m.picks, p);
         if (!d) return;
@@ -1683,13 +1700,13 @@ export class DrawingWorkspace {
     const S = (q: [number, number, number]) => toSheet(pl, ...P(q));
     const show = (pk: Pick, cls: string) => {
       if (pk.kind === "pt") { const q = S(pk.ref && "pt" in pk.ref ? pk.ref.pt : (pk.ref.p === "c" ? pk.e.c! : pk.ref.p === "a" ? pk.e.a : pk.e.b)); return `<circle class="drw-snap" cx="${q[0]}" cy="${H - q[1]}" r="${this.snapTol() / 2.5}"/>`; }
-      if (pk.kind === "line") { const a = S(pk.e.a), b = S(pk.e.b); return `<line class="${cls}" x1="${a[0]}" y1="${H - a[1]}" x2="${b[0]}" y2="${H - b[1]}"/>`; }
+      if (pk.seg || pk.kind === "line") { const [a, b] = pk.seg ? pk.seg.map(q => toSheet(pl, ...q)) : [S(pk.e.a), S(pk.e.b)]; return `<line class="${cls}" x1="${a[0]}" y1="${H - a[1]}" x2="${b[0]}" y2="${H - b[1]}"/>`; }
       const c = S(pk.e.c!); return `<circle class="${cls}" cx="${c[0]}" cy="${H - c[1]}" r="${pk.e.r! * pl.s}" fill="none"/>`;
     };
     let s = "";
     if (m.kind === "dim") {
       for (const pk of m.picks) s += show(pk, "drw-edge on");
-      const hov = this.pickAt(vid, at, undefined, !m.picks.length);
+      const hov = this.pickAt(vid, at, undefined, !m.picks.length, true);
       if (hov && !(m.picks.length >= 2)) s += show(hov, "drw-edge");
       if (m.picks.length) {
         const d = this.buildDim(vid, m.picks, at), g = d && dimGeo(d, P, this.factsOf(vid)?.topo ?? null);
@@ -1758,7 +1775,7 @@ export class DrawingWorkspace {
     const S = (q: [number, number, number]) => toSheet(pl, ...P(q));
     const show = (pk: Pick, cls: string) => {
       if (pk.kind === "pt") { const q = S("pt" in pk.ref ? pk.ref.pt : (pk.ref.p === "c" ? pk.e.c! : pk.ref.p === "a" ? pk.e.a : pk.e.b)); return `<circle class="drw-snap" cx="${q[0]}" cy="${H - q[1]}" r="${this.snapTol() / 2.5}"/>`; }
-      if (pk.kind === "line") { const a = S(pk.e.a), b = S(pk.e.b); return `<line class="${cls}" x1="${a[0]}" y1="${H - a[1]}" x2="${b[0]}" y2="${H - b[1]}"/>`; }
+      if (pk.seg || pk.kind === "line") { const [a, b] = pk.seg ? pk.seg.map(q => toSheet(pl, ...q)) : [S(pk.e.a), S(pk.e.b)]; return `<line class="${cls}" x1="${a[0]}" y1="${H - a[1]}" x2="${b[0]}" y2="${H - b[1]}"/>`; }
       const c = S(pk.e.c!); return `<circle class="${cls}" cx="${c[0]}" cy="${H - c[1]}" r="${pk.e.r! * pl.s}" fill="none"/>`;
     };
     let s = m.picks.map(pk => show(pk, "drw-edge on")).join("");
@@ -1880,7 +1897,7 @@ export class DrawingWorkspace {
         ${lin || a.k === "arc" || a.k === "ang" ? `<label class="drw-f">${esc(t("Extension lines"))}<select data-d="noext">${([["", "Both shown"], ["a", "First hidden"], ["b", "Second hidden"], ["both", "Both hidden"]] as const).map(([k, l]) => `<option value="${k}"${(a.noExt ?? "") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : ""}
         <label class="drw-f">${esc(t("Arrowheads"))}<select data-d="ends"><option value="">${esc(t("Document"))}</option>${(["filled", "open", "dot", "tick"] as const).map(k => `<option value="${k}"${a.ends === k ? " selected" : ""}>${esc(t(ARROW_NAMES[k]))}</option>`).join("")}</select></label>
         ${a.k === "dia" && !g?.dl ? `<label class="drw-f">${esc(t("Display"))}<select data-d="dlin">${([["", "Diameter"], ["h", "Linear, horizontal"], ["v", "Linear, vertical"]] as const).map(([k, l]) => `<option value="${k}"${(a.lin ?? "") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : ""}
-        ${!g?.dl && ((a.k === "rad" && !a.fore) || (a.k === "dia" && !a.lin)) ? `<label class="drw-chk"><input type="checkbox" data-d="rout"${a.outside ? " checked" : ""}> ${esc(t("Arrow outside the circle"))}</label>` : ""}
+        ${!g?.dl && ((a.k === "rad" && !a.fore) || (a.k === "dia" && !a.lin)) ? `<label class="drw-chk"><input type="checkbox" data-d="rout"${arrowOutside(a) ? " checked" : ""}> ${esc(t("Arrow outside the circle"))}</label>` : ""}
         ${!g?.dl && (a.k === "rad" || (a.k === "dia" && !a.lin)) ? `<label class="drw-chk"><input type="checkbox" data-d="ralong"${a.along ? " checked" : ""}> ${esc(t("Text along the leader"))}</label>` : ""}
         ${a.k === "rad" ? `<label class="drw-chk"><input type="checkbox" data-d="fore"${a.fore ? " checked" : ""}> ${esc(t("Foreshortened radius"))}</label>` : ""}
         ${lin ? `<label class="drw-chk"><input type="checkbox" data-d="horiz"${a.horiz ? " checked" : ""}> ${esc(t("Horizontal text in the dimension line"))}</label>` : ""}
@@ -2066,7 +2083,7 @@ export class DrawingWorkspace {
     this.setAnnot(k === "ntxt" || k === "htxt" ? "Text" : "Annotation property", a => {
       if (a.t === "dim") {
         if (k === "k") { a.k = val as DimAnnot["k"]; if (a.k !== "dia") delete a.lin; if (a.k !== "rad") delete a.fore; if (a.k !== "rad" && a.k !== "dia") { delete a.outside; delete a.along; } }
-        else if (k === "rout") { if ((el as HTMLInputElement).checked) a.outside = true; else delete a.outside; }
+        else if (k === "rout") { const on = (el as HTMLInputElement).checked; if (a.k === "dia") { if (on) delete a.outside; else a.outside = false; } else if (on) a.outside = true; else delete a.outside; }
         else if (k === "ralong") { if ((el as HTMLInputElement).checked) a.along = true; else delete a.along; }
         else if (k === "dlin") { if (val === "h" || val === "v") a.lin = val; else delete a.lin; }
         else if (k === "ends") { if (val === "filled" || val === "open" || val === "dot" || val === "tick") a.ends = val; else delete a.ends; }
@@ -2675,7 +2692,30 @@ export class DrawingWorkspace {
       + sh.views.filter(v => !v.parent || !findView(sh, v.parent)).map(v => item(v, 1)).join("");
   }
 
+  /** The Custom… scale box being typed into ("v" view, "s" sheet): kept across re-renders of the panel. */
+  private cscale: { k: "v" | "s"; val: string; focus: boolean } | null = null;
+
   private renderProps() {
+    const keep = this.cscale, box0 = this.el.querySelector<HTMLInputElement>(".drw-cscale");
+    if (keep && box0) { keep.val = box0.value; keep.focus = document.activeElement === box0; }
+    this.renderPropsOnly();
+    const sel = keep && this.el.querySelector<HTMLSelectElement>(`.drw-props select[data-${keep.k}="scale"]`);
+    if (keep && sel) { sel.value = "custom"; this.addScaleBox(sel, keep); } else this.cscale = null;
+  }
+
+  private addScaleBox(sel: HTMLSelectElement, c: { k: "v" | "s"; val: string; focus: boolean }) {
+    const box = document.createElement("input");
+    box.dataset[c.k] = "scale";
+    box.className = "drw-cscale";
+    box.value = c.val;
+    box.placeholder = "1:3";
+    box.setAttribute("aria-label", t("Scale, for example 1:3 or 3:2"));
+    box.title = t("Scale, for example 1:3 or 3:2");
+    sel.closest("label")?.after(box);
+    if (c.focus) box.focus();
+  }
+
+  private renderPropsOnly() {
     const host = this.el.querySelector<HTMLElement>(".drw-props")!;
     const sh = this.sheet;
     const sa = this.selA ? this.annot(this.selA) : undefined;
@@ -3031,11 +3071,14 @@ export class DrawingWorkspace {
       this.setView("View orientation", v => { v.orient = o; v.dir = c ?? undefined; });
     } else if (vk === "scale" || sk === "scale") {
       let s: [number, number] | null | undefined = val === "" ? undefined : parseScale(val);
+      // Custom…: a box under the list takes the scale (a browser prompt covered the sheet, drawings exam #17).
       if (val === "custom") {
-        const txt = prompt(t("Scale, for example 1:3 or 3:2"), "1:3");
-        s = txt ? parseScale(txt) : null;
-        if (!s) { if (txt) toast(t("Type a scale like 1:3."), true); this.renderProps(); return; }
+        this.cscale = { k: vk ? "v" : "s", val: "", focus: true };
+        this.addScaleBox(el as HTMLSelectElement, this.cscale);
+        return;
       }
+      if (el instanceof HTMLInputElement && !s) { toast(t("Type a scale like 1:3."), true); el.focus(); return; }
+      this.cscale = null;
       if (vk) this.setView("View scale", v => { if (s) v.scale = s; else delete v.scale; });
       else if (s) this.setSheet("Sheet scale", sh => { sh.scale = s!; });
     } else if (vk === "tangent") this.setView("Tangent edges", v => { v.tangent = val as TangentEdges; });

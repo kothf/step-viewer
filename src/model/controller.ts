@@ -59,6 +59,7 @@ import { ORIGIN, repairs, solve } from "../sketch/solver";
 import { sketchPath, sketchProfile, textPath } from "../sketch/profile";
 import { regionAt, regionPoint, sketchRegions, type Region } from "../sketch/regions";
 import { SEL_FILTER } from "../tools/Snapper";
+import { bodyMasses } from "../tools/inertia";
 import { units, UNITS } from "../tools/units";
 import { csys } from "../tools/csys";
 import { askFileName, confirmModal, toast, trapFocus } from "../ui";
@@ -2889,10 +2890,12 @@ export class ModelController {
   /** Commands Ctrl+K can run now: [id, label in the UI language, English label]. */
   private searchable(): [string, string, string][] {
     const m = this.mode;
-    if (m.kind === "sketch") return [["exit", t("Exit sketch"), "Exit sketch"]];
-    if (m.kind !== "none") return [];
-    const fixed: [string, string][] = [["sketch", "Sketch"], ["extrude", "Extrude"], ["cut", "Cut"], ["revolve", "Revolve"], ["fillet", "Fillet"], ["chamfer", "Chamfer"], ["hole", "Hole"], ["thread", "Thread"], ["shell", "Shell"], ["draft", "Draft"], ["mirror", "Mirror"], ["lpattern", "Linear pattern"], ["cpattern", "Circular pattern"], ["plane", "Plane"], ["axis", "Axis"], ["point", "Point"], ["csys", "Coordinate system"], ["import", "Insert body"], ["save", "Save"], ["step", "Export STEP"], ["filter", "Selection filter"], ["undo", "Undo"], ["redo", "Redo"]];
-    const en = withLang("en", () => [...P3_TOOLS(), ...SURF_TOOLS(), ...SM_TOOLS()].map(x => [x[0], x[1]] as [string, string]));
+    if (m.kind !== "none" && m.kind !== "sketch") return [];
+    let fixed: [string, string][] = [["sketch", "Sketch"], ["extrude", "Extrude"], ["cut", "Cut"], ["revolve", "Revolve"], ["fillet", "Fillet"], ["chamfer", "Chamfer"], ["hole", "Hole"], ["thread", "Thread"], ["shell", "Shell"], ["draft", "Draft"], ["mirror", "Mirror"], ["lpattern", "Linear pattern"], ["cpattern", "Circular pattern"], ["plane", "Plane"], ["axis", "Axis"], ["point", "Point"], ["csys", "Coordinate system"], ["import", "Insert body"], ["save", "Save"], ["step", "Export STEP"], ["filter", "Selection filter"], ["undo", "Undo"], ["redo", "Redo"]];
+    // In a sketch: Exit sketch, then the features, which exit the sketch and use it (FR-SK-004).
+    if (m.kind === "sketch") fixed = [["exit", "Exit sketch"], ...fixed.filter(([id]) => !FROM_SKETCH_SKIP.has(id))];
+    let en = withLang("en", () => [...P3_TOOLS(), ...SURF_TOOLS(), ...SM_TOOLS()].map(x => [x[0], x[1]] as [string, string]));
+    if (m.kind === "sketch") en = en.filter(([id]) => !FROM_SKETCH_SKIP.has(id));
     const loc = new Map([...P3_TOOLS(), ...SURF_TOOLS(), ...SM_TOOLS()].map(x => [x[0] as string, x[1]]));
     return [...fixed.map(([id, l]) => [id, t(l), l] as [string, string, string]), ...en.map(([id, l]) => [id, loc.get(id) ?? l, l] as [string, string, string])];
   }
@@ -3020,6 +3023,9 @@ export class ModelController {
       rows.push([t("Quick snaps") + " ▸", () => this.quickSnapMenu(e.clientX, e.clientY, () => this.host.viewer.renderer.domElement.focus())]);
     }
     if (rows.length && rows.at(-1) !== null) rows.push(null);
+    // Features straight from the open sketch (FR-SK-004): it is exited and used as the profile.
+    for (const id of ["extrude", "cut", "revolve"] as const) rows.push([this.cmdInfo(id)[0], () => this.command(id), ICON_SVG[id]]);
+    rows.push(null);
     rows.push([t("Exit sketch"), () => this.ok(), "✓"], [t("Discard"), () => void this.cancel(), "✕"]);
     this.showMenu(rows, e.clientX, e.clientY, () => this.host.viewer.renderer.domElement.focus());
   }
@@ -5001,7 +5007,9 @@ export class ModelController {
     const btn = (id: string, label: string, title: string, on = false, dis = false) =>
       `<button class="mc-b${on ? " on" : ""}" data-c="${id}" title="${esc(title)}"${on ? ' aria-pressed="true"' : ""}${dis ? " disabled" : ""}><span class="mc-i" aria-hidden="true">${ICON_SVG[id] ?? ""}</span><span class="mc-l">${esc(label)}</span></button>`;
     let html: string;
-    if (m.kind === "sketch") {
+    // While a sketch is open the Sketch tab shows its tools; the other tabs keep their commands, and picking one
+    // exits the sketch and starts the feature on it (FR-SK-004).
+    if (m.kind === "sketch" && cmTab() === "sketch") {
       const tool = m.editor.tool;
       const tools: [SkTool, string, string][] = [
         ["select", t("Select"), t("Select and drag (Esc)")], ["line", t("Line"), t("Line (L)")], ["rect", t("Rectangle"), t("Corner rectangle (R)")],
@@ -5029,6 +5037,7 @@ export class ModelController {
       }).join("")}</div>`
         + `<div class="mc-sep"></div><div class="mc-g">${btn("cons", t("Construction"), t("Construction geometry on/off for the selection (Q)"))}${btn("skmirror", t("Mirror"), t("Mirror entities: select them and a line to mirror about, then click"))}${btn("skdxf", t("DXF"), t("Import a DXF drawing into the sketch"))}${btn("sksec", t("Section"), t("Section view at the sketch plane: hides the material in front of it"), this.skSection)}</div>`
         + `<div class="mc-sep"></div><div class="mc-g">${btn("sklpat", t("Linear pattern"), t("Linear sketch pattern: select entities, then set count and spacing"))}${btn("skcpat", t("Circular pattern"), t("Circular sketch pattern: select entities (and a centre point), then set count and angle"))}${btn("skmove", t("Move"), t("Move or copy entities by a distance"))}${btn("skrot", t("Rotate"), t("Rotate entities about a point"))}${btn("skscale", t("Scale"), t("Scale entities about a point"))}</div>`
+        + `<div class="mc-sep"></div><div class="mc-g" role="group" aria-label="${esc(t("Features from this sketch"))}">${(["extrude", "cut", "revolve"] as const).map(id => { const [l, ti] = this.cmdInfo(id); return btn(id, l, ti); }).join("")}</div>`
         + `<div class="mc-sep"></div><div class="mc-g">${btn("exit", t("Exit sketch"), t("Exit sketch (Enter)"))}</div>`;
     } else {
       // Command manager tabs (FR-UI-010): Features, Sketch, Surfaces, Weldments; Evaluate is main.ts's pane.
@@ -5065,13 +5074,13 @@ export class ModelController {
     $("#mc-tools").querySelectorAll<HTMLButtonElement>("[data-fly]").forEach(b => b.addEventListener("click", () => {
       const mm = this.mode;
       const key = b.dataset.fly!;
-      if (CM_FLY[key] && mm.kind !== "sketch") {
+      if (CM_FLY[key] && (mm.kind !== "sketch" || cmTab() !== "sketch")) {
         const r = b.getBoundingClientRect();
         this.showMenu(CM_FLY[key].map(id => [this.cmdInfo(id)[0], () => { if (id !== "cutlist") this.flyLast.set(key, id); this.command(id); }, ICON_SVG[id]] as [string, () => void, string]), r.left - 40, r.bottom + 4,
           () => $("#mc-tools").querySelector<HTMLElement>(`[data-fly="${key}"]`)?.focus());
         return;
       }
-      if (mm.kind !== "sketch") return;
+      if (mm.kind !== "sketch" || cmTab() !== "sketch") return;
       const g = ({ line: ["line", "spline", "sspline", "eqn"], rect: ["rect", "crect", "rect3", "crect3", "pgram", "polygon"], circle: ["circle", "circle3", "pcircle", "ellipse", "earc", "parabola", "conic"], arc: ["arc", "arc3"], slot: ["slot", "cslot", "aslot", "aslot3"], trim: ["trim", "extend", "split"], fillet: ["fillet", "chamfer"], offset: ["offset", "convert", "intersect"], dim: ["dim", "hord", "vord"], point: ["point", "text"] } as Record<string, SkTool[]>)[key];
       const label: Record<string, string> = { point: t("Point"), text: t("Text"), line: t("Line"), spline: t("Spline"), sspline: t("Style spline"), rect: t("Corner rectangle"), crect: t("Centre rectangle"), rect3: t("3-point corner rectangle"), crect3: t("3-point centre rectangle"), pgram: t("Parallelogram"), polygon: t("Polygon"), circle: t("Circle"), circle3: t("3-point circle"), pcircle: t("Perimeter circle"), arc: t("Centre-point arc"), arc3: t("3-point arc"), slot: t("Straight slot"), cslot: t("Centerpoint straight slot"), aslot: t("Centerpoint arc slot"), aslot3: t("3-point arc slot"), ellipse: t("Ellipse"), earc: t("Partial ellipse"), parabola: t("Parabola"), conic: t("Conic"), eqn: t("Equation driven curve"), trim: t("Trim"), extend: t("Extend"), split: t("Split"), fillet: t("Sketch fillet"), chamfer: t("Sketch chamfer"), offset: t("Offset entities"), convert: t("Convert entities"), intersect: t("Intersection curve"), dim: t("Smart dimension"), hord: t("Horizontal ordinate"), vord: t("Vertical ordinate") };
       const r = b.getBoundingClientRect();
@@ -5551,16 +5560,16 @@ export class ModelController {
       case "exit": this.ok(); break;
       case "sketch": this.startSketch(); break;
       case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "spattern": case "tpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "indent": case "intersect": case "bsplit": case "delbody": case "movebody": case "scale": case "delface": case "moveface": case "heal": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": case "revsurf": case "loftsurf": case "trimsurf": case "fillsurf": case "extendsurf": case "untrimsurf": case "sweepsurf": case "xyzcurve": case "compcurve": case "projcurve": case "sketch3d": case "member": case "trimext": case "endcap": case "gusset": case "weldbead": this.lastCmd = this.activeCmd = c; this.startFeature(c); break;
-      case "cutlist": this.cutList(); break;
-      case "import": this.importBodyFile(); break;
+      case "cutlist": if (m.kind === "sketch") this.ok(); this.cutList(); break;
+      case "import": if (m.kind === "sketch") this.ok(); this.importBodyFile(); break;
       case "smbase": case "smloft": case "smflange": case "smhem": case "smbend": case "smjog": case "smcorner": case "smclosed": case "smrelief": case "smgusset": case "smcross": case "smvent": case "smcut": case "smconvert": case "sminsert": case "smform": case "smunfold": case "smfold": case "smmiter": case "smswept": case "smtabslot": case "smrip": this.startFeature(c); break;
-      case "smflat": this.toggleFlat(); break;
-      case "smdxf": this.exportFlatDxf(); break;
-      case "smprops": this.sheetProps(); break;
-      case "recognize": void this.recognizeHoles(); break;
-      case "recblend": void this.recognizeBlends(); break;
-      case "recext": void this.recognizeExtrudes(); break;
-      case "extrefs": this.showExtRefs(); break;
+      case "smflat": if (m.kind === "sketch") this.ok(); this.toggleFlat(); break;
+      case "smdxf": if (m.kind === "sketch") this.ok(); this.exportFlatDxf(); break;
+      case "smprops": if (m.kind === "sketch") this.ok(); this.sheetProps(); break;
+      case "recognize": if (m.kind === "sketch") this.ok(); void this.recognizeHoles(); break;
+      case "recblend": if (m.kind === "sketch") this.ok(); void this.recognizeBlends(); break;
+      case "recext": if (m.kind === "sketch") this.ok(); void this.recognizeExtrudes(); break;
+      case "extrefs": if (m.kind === "sketch") this.ok(); this.showExtRefs(); break;
       case "undo": this.undo(); break;
       case "redo": this.redo(); break;
       case "save": void this.save(); break;
@@ -5915,6 +5924,7 @@ export class ModelController {
       const key = id.slice(5);
       items.push([this.doc.bodies?.[key]?.hidden ? t("Show body") : t("Hide body"), () => this.setBody(key, { hidden: !this.doc.bodies?.[key]?.hidden })]);
       items.push([t("Rename"), () => this.startRename(id)]);
+      items.push([t("Material…"), () => void this.pickBodyMaterial(key)]);
       if (this.doc.bodies?.[key]?.color) items.push([t("Reset colour"), () => this.setBody(key, { color: undefined })]);
       items.push([t("Delete body"), () => this.deleteBody(key)]);
     }
@@ -6036,22 +6046,39 @@ export class ModelController {
   }
 
   /** Bodies folder actions: show/hide and colour are display state (one undo step each), delete adds a Body-Delete feature. */
-  setBody(key: string, ch: { name?: string; hidden?: boolean; color?: V3 }) {
+  setBody(key: string, ch: { name?: string; hidden?: boolean; color?: V3; material?: MatRef }) {
     if (!this.store) return;
     // A body being hidden leaves a see-through copy, so Shift+Tab / Ctrl+Shift+Tab can find it again (FR-UI-105).
     // (A shown body keeps its ghost: undo may hide it again; only still-hidden bodies are picked.)
     if (ch.hidden === true) this.keepGhost(key);
-    this.store.change(ch.hidden != null ? (ch.hidden ? "Hide body" : "Show body") : "color" in ch ? "Body colour" : "Rename body", d => {
+    this.store.change(ch.hidden != null ? (ch.hidden ? "Hide body" : "Show body") : "color" in ch ? "Body colour" : "material" in ch ? "Body material" : "Rename body", d => {
       const cur = { ...(d.bodies?.[key] ?? {}), ...ch };
       if (!cur.hidden) delete cur.hidden;
       if (!cur.name) delete cur.name;
       if (!cur.color) delete cur.color;
+      if (!cur.material) delete cur.material;
       d.bodies = { ...(d.bodies ?? {}), [key]: cur };
       if (!Object.keys(cur).length) delete d.bodies[key];
       if (!Object.keys(d.bodies).length) delete d.bodies;
     });
     this.renderTree();
     void this.rebuild();
+  }
+
+  /** A body's own material from the library (FR-MAT-001); None gives it the part's again. */
+  async pickBodyMaterial(key: string) {
+    const r = await pickMaterial({ current: this.doc.bodies?.[key]?.material ?? this.doc.material ?? null, allowNone: true });
+    if (r) this.setBody(key, { material: r.material ? toRef(r.material) : undefined });
+  }
+
+  /**
+   * The bodies for mass properties when any has its own material: shown ones (all with `hidden`), each
+   * with its density, `fallback` for bodies without one. Null when no body has a material.
+   */
+  bodyMasses(fallback: number, hidden = false) {
+    const st = this.store?.doc.bodies;
+    if (!st || !Object.values(st).some(b => b.material)) return null;
+    return bodyMasses((this.last?.bodies ?? []).filter(b => hidden || b.faces), k => st[k]?.material?.density, fallback);
   }
 
   deleteBody(key: string) {
@@ -8039,6 +8066,9 @@ const sketchOpenOk = (s: SketchFeature) => { const p = sketchPath(s); return !p.
 
 /** The sweep flyout's commands (FRS 9.9). */
 /** Flyout buttons of the Features tab (FR-UI-011): related commands share one button that shows the last one used. */
+/** Commands Ctrl+K leaves out while a sketch is open (the rest exit the sketch and start on it). */
+const FROM_SKETCH_SKIP = new Set(["sketch", "import", "save", "step", "filter", "undo", "redo", "smflat", "smdxf", "smprops"]);
+
 const CM_FLY: Record<string, string[]> = {
   sweep: ["sweep", "loft"],
   sweepcut: ["sweepcut", "loftcut"],

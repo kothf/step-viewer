@@ -11,7 +11,7 @@ import { PEN_W, rotateBox, rotatePrims, type Prim } from "./prims";
 import { balloonPrims, bomCells, compOfKey, type Bom } from "./bom";
 import { datumPrims, gtolPrims, surfPrims, tablePrims } from "./gdt";
 import type { BendTableAnnot, CLineAnnot, CloudAnnot, DimAnnot, DraftStyle, DrawingView, GeoRef, HoleAnnot, HoleTableAnnot, NoteAnnot, Sheet, SurfAnnot, Tol, WeldTableAnnot, CutTableAnnot } from "./types";
-import { topoOnly, viewDir, viewOnly } from "./views";
+import { topoOnly, viewDir, viewOnly, viewReq } from "./views";
 import { fitLimits } from "./iso286";
 import { weldPrims } from "./weld";
 import { dtargetPrims } from "./dtarget";
@@ -106,6 +106,44 @@ export function edgeRef(e: MEdge, p: "a" | "b" | "c" | "e"): GeoRef {
   return { e: e.k, h: e.m, p, ...(p === "a" ? { q: e.a } : p === "b" ? { q: e.b } : {}) };
 }
 
+/** A circle seen edge-on (its axis in the view plane) as the line it looks like, in view axes; null when it is not edge-on.
+ *  A whole circle spans its diameter; an arc spans what its ends and middle cover. */
+export function edgeOnSeg(e: MEdge, P: (p: V3) => P2, topo: Topo | null = null): [P2, P2] | null {
+  if (e.t !== "c" || !e.c || !e.r || !e.ax) return null;
+  const o = P([0, 0, 0]), q = P(e.ax), ad: P2 = [q[0] - o[0], q[1] - o[1]];
+  if (Math.abs(len2(ad) - 1) > 1e-6) return null;
+  const dl: P2 = [-ad[1], ad[0]], c = P(e.c);
+  let t0 = -e.r, t1 = e.r;
+  if (!wholeCircle(e, topo)) {
+    const ts = [e.a, e.b, e.m].map(w => { const p = P(w); return (p[0] - c[0]) * dl[0] + (p[1] - c[1]) * dl[1]; });
+    t0 = Math.min(...ts); t1 = Math.max(...ts);
+  }
+  return [[c[0] + dl[0] * t0, c[1] + dl[1] * t0], [c[0] + dl[0] * t1, c[1] + dl[1] * t1]];
+}
+
+/** One outline line of a cylinder seen from the side, in view axes: `o` = its origin projected, `ad` = its axis in the view (unit),
+ *  `v0`..`v1` along the axis, `s` = which side (+1 = left of the axis direction). */
+export function outlineSeg(o: P2, ad: P2, r: number, v0: number, v1: number, s: 1 | -1): [P2, P2] {
+  const dl: P2 = [-ad[1] * r * s, ad[0] * r * s];
+  return [[o[0] + ad[0] * v0 + dl[0], o[1] + ad[1] * v0 + dl[1]], [o[0] + ad[0] * v1 + dl[0], o[1] + ad[1] * v1 + dl[1]]];
+}
+
+/** The cylinder outline a `GeoRef` with `s` names: the side line of the cylinder the circle bounds (a short piece when none is found). */
+function outlineOf(e: MEdge, s: 1 | -1, P: (p: V3) => P2, topo: Topo | null): [P2, P2] | null {
+  if (e.t !== "c" || !e.c || !e.r || !e.ax) return null;
+  const o = P([0, 0, 0]), q = P(e.ax), ad: P2 = [q[0] - o[0], q[1] - o[1]];
+  if (Math.abs(len2(ad) - 1) > 1e-6) return null;
+  const tol = 1e-6 * Math.max(1, e.r);
+  for (const cy of topo?.cyls ?? []) {
+    if (Math.abs(cy.r - e.r) > tol || Math.abs(Math.abs(dot3(cy.ax, e.ax)) - 1) > 1e-6) continue;
+    const dq = sub3(e.c, cy.o), t = dot3(dq, cy.ax);
+    if (Math.hypot(dq[0] - cy.ax[0] * t, dq[1] - cy.ax[1] * t, dq[2] - cy.ax[2] * t) > tol) continue;
+    const p0 = P(cy.o), q1 = P(cy.ax), a2: P2 = [q1[0] - o[0], q1[1] - o[1]];
+    return outlineSeg(p0, a2, cy.r, cy.v0, cy.v1, s);
+  }
+  return outlineSeg(P(e.c), ad, e.r, 0, 1e-3, s);
+}
+
 /** Projects model points into a view's axes. */
 export function projector(vd: ViewDir) {
   const { x, y, n } = viewAxes(vd);
@@ -185,7 +223,14 @@ export function dimGeo(a: DimAnnot, P: (p: V3) => P2, topo: Topo | null): DimGeo
   // Linear: two points, or the two ends of one line; a line and a point or two parallel lines: the square distance.
   const pts: P2[] = [];
   let segs: ([P2, P2] | null)[] | undefined;
-  const lineOf = (r: GeoRef): [P2, P2] | null => { if ("pt" in r || r.p !== "e") return null; const e = refEdge(r, topo); return e && e.t === "l" ? [P(e.a), P(e.b)] : null; };
+  const lineOf = (r: GeoRef): [P2, P2] | null => {
+    if ("pt" in r || r.p !== "e") return null;
+    const e = refEdge(r, topo);
+    if (!e) return null;
+    if (e.t === "l") return [P(e.a), P(e.b)];
+    // A cylinder's outline seen from the side, or a circle seen edge-on: both are lines in the view.
+    return r.s ? outlineOf(e, r.s, P, topo) : edgeOnSeg(e, P, topo);
+  };
   const foot = (p: P2, l: [P2, P2]): P2 => { const [u, v] = l, dx = v[0] - u[0], dy = v[1] - u[1], L2 = dx * dx + dy * dy || 1, t = ((p[0] - u[0]) * dx + (p[1] - u[1]) * dy) / L2; return [u[0] + dx * t, u[1] + dy * t]; };
   if (a.refs.length === 1) { const l = lineOf(a.refs[0]); if (!l) return null; pts.push(l[0], l[1]); }
   else {
@@ -398,6 +443,12 @@ export function obround(b: [number, number, number, number]): Prim[] {
   return [thin([x0, y0], [x0, y1]), thin([x1, y0], [x1, y1]), P([cx, y1], r, 0, Math.PI), P([cx, y0], r, Math.PI, 2 * Math.PI)];
 }
 
+/** Whether a radius/diameter with its text outside the circle stops its leader at the rim (one arrow from outside):
+ * diameters do unless `outside` is false (a line across the whole circle runs over the part), radii only when asked. */
+export function arrowOutside(a: DimAnnot): boolean {
+  return a.k === "dia" ? a.outside !== false && !a.lin : !!a.outside && !a.fore;
+}
+
 function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims: Prim[]; box: [number, number, number, number] } {
   const out: Prim[] = [];
   const S = (p: P2) => toSheet(pl, p[0], p[1]);
@@ -438,7 +489,7 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
     const u = unit2([T[0] - C[0], T[1] - C[1]], [Math.SQRT1_2, Math.SQRT1_2]);
     const outside = d2(T, C) > R;
     const far = outside ? T : add2(C, u, R);
-    const lead = !!a.outside && outside && !(g.k === "rad" && a.fore);
+    const lead = outside && arrowOutside(a);
     if (g.k === "rad" && a.fore) {
       // Foreshortened radius: the centre is far away (or off the sheet), so the line stops short of it with a jog.
       const A = add2(C, u, R), n: P2 = [-u[1], u[0]], len = Math.min(R * 0.6, FORE_LEN);
@@ -741,6 +792,25 @@ export function withCut<T extends { topo: Topo }>(f: T | null, proj?: { cutEdges
   return f && proj?.cutEdges?.length ? { ...f, topo: { ...f.topo, edges: [...f.topo.edges, ...proj.cutEdges] } } : f;
 }
 
+/**
+ * A plain section's centre marks and centrelines leave out what the cut took away: circles, cylinders and spheres wholly
+ * on the viewer's side of the cutting plane (drawings exam #4: a cut beside the boss still drew its axis). Offset, half,
+ * aligned and broken-out sections keep everything.
+ */
+export function cutAway(sheet: Sheet, v: DrawingView, topo: Topo): Topo {
+  let rq: ReturnType<typeof viewReq>;
+  try { rq = viewReq(sheet, v); } catch { return topo; }
+  if (!rq.p || rq.stair || rq.align || rq.poly) return topo;
+  const n = rq.view.dir, d = dot3(rq.p, n), side = (q: V3) => dot3(q, n) - d, eps = 1e-6;
+  const gone = (o: V3, r: number) => side(o) - r > -eps;
+  return {
+    ...topo,
+    edges: topo.edges.filter(e => !(side(e.a) > eps && side(e.b) > eps && side(e.m) > eps)),
+    cyls: topo.cyls.filter(c => Math.abs(dot3(c.ax, n)) > 1e-6 || !gone(c.o, c.r)),
+    ...(topo.revs ? { revs: topo.revs.filter(q => !q.r || Math.abs(dot3(q.ax, n)) > 1e-6 && q.k !== "sphere" || !gone(q.o, q.r)) } : {}),
+  };
+}
+
 export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: AnnotCtx): AnnotOut {
   const own = ctx.forView?.(v);
   if (own) ctx = { ...ctx, ...own, forView: undefined };
@@ -748,7 +818,7 @@ export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: Ann
   if (only && ctx.topo) ctx = { ...ctx, topo: topoOnly(ctx.topo, only) };
   const out: AnnotOut = { prims: [], hits: [], dangling: [] };
   const vd = viewDir(sheet, v), { P, n } = projector(vd);
-  if (v.marks !== false && ctx.topo) out.prims.push(...centreMarks(v, pl, ctx.topo, P, n));
+  if (v.marks !== false && ctx.topo) out.prims.push(...centreMarks(v, pl, v.kind === "section" ? cutAway(sheet, v, ctx.topo) : ctx.topo, P, n));
   if (v.threads !== false && ctx.threads?.length) out.prims.push(...threadPrims(v, pl, ctx.threads, ctx.topo, P, n));
   if (v.sketches && ctx.sketches?.length) out.prims.push(...sketchPrims(v, pl, ctx.sketches, P));
   const btable = (sheet.annots ?? []).some(a => a.t === "btable" && a.view === v.id);

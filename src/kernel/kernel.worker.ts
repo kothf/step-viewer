@@ -145,7 +145,9 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
       }
       if (res.body) props = modeller.props(res.body);
       // `faces`: how many of the view's faces the body has (in order; 0 when hidden), so the tree can light it up.
-      const bodies = info.map(b => ({ key: b.key, ref: b.ref, volume: b.volume, faces: state[b.key]?.hidden || !shown ? 0 : b.part.faces.length }));
+      // Each body's own mass properties when there are several or one has its own material (FR-MAT-001).
+      const ownMass = info.length > 1 || Object.values(state).some(b => b.material);
+      const bodies = info.map(b => ({ key: b.key, ref: b.ref, volume: b.volume, faces: state[b.key]?.hidden || !shown ? 0 : b.part.faces.length, ...(ownMass ? modeller!.bodyMass(b.part) : {}) }));
       // Weldment cut list (FR-FT-121).
       const cut = res.body && r.doc.features.some(f => isWeld(f) && !f.suppressed) ? cutList(modeller as unknown as WeldHost, info, r.doc, res.frames) : undefined;
       // Preview of the feature at `previewAt` (fillet, chamfer) while its edges are picked on the body before it:

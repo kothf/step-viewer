@@ -87,6 +87,15 @@ export interface Combined {
   partial: boolean;
 }
 
+/**
+ * The bodies of a multibody part as `combine` input (FR-MAT-001): a body with its own material takes
+ * that density, the others `fallback` (the part's). Null when the bodies carry no mass properties.
+ */
+export function bodyMasses(bodies: { key: string; volume: number; area?: number; com?: V3; cov?: Sym }[], own: (key: string) => number | undefined, fallback: number): MassBody[] | null {
+  if (!bodies.length || bodies.some(b => !b.com)) return null;
+  return bodies.map(b => ({ volume: b.volume, area: b.area ?? 0, com: b.com!, cov: b.cov, density: own(b.key) ?? fallback }));
+}
+
 /** Adds bodies with their densities: mass, centre of mass and the mass covariance about it. */
 export function combine(bodies: MassBody[]): Combined {
   let volume = 0, area = 0, mass = 0, partial = false;
