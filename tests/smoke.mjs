@@ -5045,6 +5045,16 @@ try {
       }
       check(r && r.n1 > r.n0 && r.stored && r.dia && r.back, `drawing: a diameter is displayed as a linear dimension with extension lines and goes back (${JSON.stringify(r)})`);
     }
+    // Arrowheads of its own (the Ø16 is still selected): oblique strokes are thick lines; Document goes back.
+    {
+      const thick = () => dp.evaluate(() => window.__sv.drw.prims().filter(q => q.t === "l" && q.layer === "ANNOT" && q.pen === "thick").length);
+      const k0 = await thick();
+      await dp.selectOption('#drw .drw-props [data-d="ends"]', "tick");
+      const k1 = await thick(), stored = (await annots()).some(a => a.ends === "tick");
+      await dp.selectOption('#drw .drw-props [data-d="ends"]', "");
+      const k2 = await thick();
+      check(k1 === k0 + 2 && stored && k2 === k0 && !(await annots()).some(a => a.ends), `drawing: a dimension takes its own arrowheads and goes back to the document's (${k0} → ${k1} → ${k2})`);
+    }
     // Back to the 100, which the next checks work on.
     [x, y] = await at(front.id, 0, 40.5);
     await dp.mouse.click(x, y);

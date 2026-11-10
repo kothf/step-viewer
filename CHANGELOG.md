@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.437.0] - 2026-11-10
+
+### Added
+
+- **Arrowheads per dimension (FR-DRW-021)**: a drawing dimension has an **Arrowheads** choice of its own: Document (the drafting style's), Filled, Open, Dot or Oblique stroke, so a tight chain can use dots while the rest keeps arrows.
+
 ## [1.436.0] - 2026-11-10
 
 ### Added
@@ -2593,7 +2599,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.436.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.437.0...HEAD
+[1.437.0]: https://github.com/kothf/step-viewer/compare/v1.436.0...v1.437.0
 [1.436.0]: https://github.com/kothf/step-viewer/compare/v1.435.0...v1.436.0
 [1.435.0]: https://github.com/kothf/step-viewer/compare/v1.434.0...v1.435.0
 [1.434.0]: https://github.com/kothf/step-viewer/compare/v1.433.0...v1.434.0

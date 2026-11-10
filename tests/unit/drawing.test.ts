@@ -1360,6 +1360,15 @@ test("a dimension can carry a second line of text under its line (FR-DRW-021)", 
     const v = dimPrims({ ...(dia as object), lin: "v", pos: [30, 3] } as never, dg, pl, ".").prims.filter(q => q.t === "l").map(q => (q as { p: number[] }).p);
     assert.ok(v.some(p => Math.abs(p[0] - 30) < 1e-9 && Math.abs(p[2] - 30) < 1e-9 && Math.abs(Math.abs(p[3] - p[1]) - 20) < 1e-9), "vertical dimension line at x = 30");
   }
+  {
+    // Arrowheads of its own: oblique strokes are two thick lines in place of the two filled heads, and the next dimension is back to the style's.
+    const base = dimPrims(lin as never, geo as never, pl, ".").prims, tick = dimPrims({ ...lin, ends: "tick" } as never, geo as never, pl, ".").prims;
+    const thick = (ps: typeof base) => ps.filter(q => q.t === "l" && (q as { pen?: string }).pen === "thick").length;
+    const filled = (ps: typeof base) => ps.filter(q => q.t === "p" && (q as { fill?: boolean }).fill).length;
+    assert.equal(thick(tick), thick(base) + 2);
+    assert.equal(filled(tick), filled(base) - 2);
+    assert.deepEqual(dimPrims(lin as never, geo as never, pl, ".").prims, base);
+  }
   const plain = dimPrims(lin as never, geo as never, pl, ".");
   const r = dimPrims({ ...lin, below: "2 PLACES" } as never, geo as never, pl, ".");
   const ts = r.prims.filter(q => q.t === "t") as { s: string; x: number; y: number; h: number }[];
