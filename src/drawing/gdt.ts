@@ -153,36 +153,49 @@ export function cellLabel(c: string, label: (s: string, p?: Record<string, strin
 }
 
 /** A table: optional title row, a header row and the rows, column widths from their contents. */
-export function tablePrims(a: TableAnnot, label: (s: string, p?: Record<string, string>) => string): { prims: Prim[]; box: Box } {
+export function tablePrims(a: TableAnnot, label: (s: string, p?: Record<string, string>) => string, maxH = Infinity): { prims: Prim[]; box: Box; boxes: Box[] } {
   const out: Prim[] = [];
   const h = 2.5, rh = 6;
   const head = a.cols.map(c => cellLabel(c, label));
   const widths = head.map((c, i) => Math.max(12, tw(c, h) + 3, ...a.rows.map(r => tw(r[i] ?? "", h) + 3)));
   const W = widths.reduce((s, w) => s + w, 0);
-  const nRows = (a.title ? 1 : 0) + 1 + a.rows.length;
-  // Anchored at the bottom (a parts list on the title block): the header is at the bottom and items count upwards.
-  let y = a.anchor === "br" ? a.pos[1] + nRows * rh : a.pos[1];
-  const top = y;
-  const x0 = a.anchor === "tr" || a.anchor === "br" ? a.pos[0] - W : a.pos[0];
-  const rows: { cells: string[]; bold?: boolean; span?: boolean }[] = [];
-  if (a.title) rows.push({ cells: [cellLabel(a.title, label)], bold: true, span: true });
-  const body = a.rows.map(r => ({ cells: a.cols.map((_c, i) => r[i] ?? "") }));
-  if (a.anchor === "br") rows.push(...body.reverse(), { cells: head, bold: true });
-  else rows.push({ cells: head, bold: true }, ...body);
-  for (const r of rows) {
-    const y0 = y - rh;
-    out.push(L([x0, y0], [x0 + W, y0]), L([x0, y], [x0 + W, y]));
-    if (r.span) { out.push({ ...T(x0 + W / 2, y0 + 1.8, r.cells[0], h, "c"), bold: true }); }
-    else {
-      let x = x0;
-      r.cells.forEach((c, i) => {
-        out.push(L([x, y0], [x, y]));
-        if (c) out.push({ ...T(x + 1.5, y0 + 1.8, c, h, "l"), bold: r.bold });
-        x += widths[i];
-      });
+  // A parts list taller than the room above it is split into blocks side by side, each with its header, continuing to the
+  // left (SolidWorks' split table): drawings exam round 2, a 43-row BOM ran off the sheet.
+  const per = a.anchor === "br" && Number.isFinite(maxH) ? Math.max(1, Math.floor(maxH / rh) - 1 - (a.title ? 1 : 0)) : Infinity;
+  const blocks: string[][][] = [];
+  for (let i = 0; i < Math.max(1, a.rows.length); i += per === Infinity ? Math.max(1, a.rows.length) : per) blocks.push(a.rows.slice(i, per === Infinity ? undefined : i + per));
+  const xr = a.anchor === "tr" || a.anchor === "br" ? a.pos[0] - W : a.pos[0];
+  let top = -Infinity, bottom = Infinity;
+  const boxes: Box[] = [];
+  blocks.forEach((block, bi) => {
+    const title = bi === 0 && a.title;
+    const nRows = (title ? 1 : 0) + 1 + block.length;
+    // Anchored at the bottom (a parts list on the title block): the header is at the bottom and items count upwards.
+    let y = a.anchor === "br" ? a.pos[1] + nRows * rh : a.pos[1];
+    top = Math.max(top, y);
+    const x0 = xr - bi * W;
+    const rows: { cells: string[]; bold?: boolean; span?: boolean }[] = [];
+    if (title) rows.push({ cells: [cellLabel(title, label)], bold: true, span: true });
+    const body = block.map(r => ({ cells: a.cols.map((_c, i) => r[i] ?? "") }));
+    if (a.anchor === "br") rows.push(...body.reverse(), { cells: head, bold: true });
+    else rows.push({ cells: head, bold: true }, ...body);
+    for (const r of rows) {
+      const y0 = y - rh;
+      out.push(L([x0, y0], [x0 + W, y0]), L([x0, y], [x0 + W, y]));
+      if (r.span) { out.push({ ...T(x0 + W / 2, y0 + 1.8, r.cells[0], h, "c"), bold: true }); }
+      else {
+        let x = x0;
+        r.cells.forEach((c, i) => {
+          out.push(L([x, y0], [x, y]));
+          if (c) out.push({ ...T(x + 1.5, y0 + 1.8, c, h, "l"), bold: r.bold });
+          x += widths[i];
+        });
+      }
+      out.push(L([x0, y0], [x0, y]), L([x0 + W, y0], [x0 + W, y]));
+      y = y0;
     }
-    out.push(L([x0, y0], [x0, y]), L([x0 + W, y0], [x0 + W, y]));
-    y = y0;
-  }
-  return { prims: out, box: [x0, y, x0 + W, top] };
+    bottom = Math.min(bottom, y);
+    boxes.push(a.anchor === "br" ? [x0, y, x0 + W, a.pos[1] + nRows * rh] : [x0, y, x0 + W, a.pos[1]]);
+  });
+  return { prims: out, box: [xr - (blocks.length - 1) * W, bottom, xr + W, top], boxes };
 }

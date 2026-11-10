@@ -3822,6 +3822,7 @@ export const RU: Record<string, string> = {
   "Click a point: a corner or a circle centre.": "Щёлкните точку: угол или центр окружности.",
   "Click the base point: a corner or a circle centre.": "Щёлкните базовую точку: угол или центр окружности.",
   "Click the next point. Enter or Esc ends.": "Щёлкните следующую точку. Enter или Esc — завершить.",
+  "Click where the dimensions go.": "Щёлкните, где пройдут размеры.",
   // Command search (FR-UI-014)
   "Command search": "Поиск команды",
   "Type a command (Ctrl+K)": "Введите команду (Ctrl+K)",
