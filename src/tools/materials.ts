@@ -234,11 +234,11 @@ const ROWS: Row[] = [
   ["plastic", "POM (Delrin)", "POM (Delrin, полиацеталь)", "POM-H", [1.41, 3.1, 0.35, 70, 70, 0.33, 1470, 110], "plastic", "#f4f4f1"],
   ["plastic", "POM-C (acetal copolymer)", "POM-C (полиацеталь, сополимер)", "ПОМ", [1.41, 2.8, 0.35, 64, 64, 0.31, 1470, 110], "plastic", "#f4f4f1"],
   ["plastic", "PEEK", "PEEK", "ПЭЭК", [1.32, 4.0, 0.4, 98, 98, 0.29, 2200, 45], "plastic", "#cdbf9f"],
-  ["plastic", "PEI (Ultem 1000)", "PEI (Ultem 1000)", "ПЭИ", [1.27, 3.2, 0.36, 105, 105, 0.22, _, 56], "plastic", "#c79a3c"],
+  ["plastic", "PEI (Ultem 1000)", "PEI (Ultem 1000)", "ПЭИ", [1.27, 3.6, 0.36, 110, 110, 0.22, _, 56], "plastic", "#c79a3c"],
   ["plastic", "PMMA (acrylic)", "PMMA (оргстекло)", "ПММА", [1.19, 3.3, 0.37, _, 80, 0.19, 1470, 70], "plastic", "#e6eef2"],
   ["plastic", "PVC-U (rigid PVC)", "PVC-U (жёсткий ПВХ)", "ПВХ", [1.4, 3.0, 0.38, 55, 55, 0.16, 900, 80], "plastic", "#8a8e93"],
   ["plastic", "Polypropylene PP-H", "Полипропилен PP-H", "ПП", [0.91, 1.7, 0.42, 32, 32, 0.22, 1700, 160], "plastic", "#e8e6df"],
-  ["plastic", "Polyethylene PE-HD", "Полиэтилен PE-HD", "HDPE · ПНД", [0.95, 1.0, 0.42, 23, 23, 0.38, 1900, 180], "plastic", "#ecebe6"],
+  ["plastic", "Polyethylene PE-HD", "Полиэтилен PE-HD", "HDPE · ПНД", [0.95, 1.1, 0.42, 23, 23, 0.38, 1900, 180], "plastic", "#ecebe6"],
   ["plastic", "Polyethylene PE-LD", "Полиэтилен PE-LD", "LDPE · ПВД", [0.92, 0.2, _, 10, 10, 0.33, _, 200], "plastic", "#ecebe6"],
   ["plastic", "Polyethylene PE-UHMW", "Полиэтилен PE-UHMW", "PE 1000 · СВМПЭ", [0.93, 0.7, _, 20, 20, 0.4, 1900, 200], "plastic", "#ecebe6"],
   ["plastic", "PTFE", "PTFE (фторопласт-4)", "Teflon · Ф-4", [2.16, 0.5, 0.46, _, 25, 0.25, 1000, 130], "plastic", "#f6f6f4"],
@@ -433,6 +433,11 @@ export const CHECKED: Record<string, string> = {
   "Titanium Ti-6Al-4V": "www.ulbrich.com/alloys/ti-6-al-4-v-uns-r56400/",
   "Steel ASTM A500 Grade B (shaped tube)": "major-metals-website.pages.dev/welded-steel-tubing/astm-a500",
   "Steel C22 (normalized)": "en.saarstahl.com/app/uploads/2024/03/20160401100253-0402_C22.pdf",
+  // 1.399.0: four plastics from their makers' data sheets.
+  "PLA": "cdn.shopify.com/s/files/1/1223/5992/files/PLA_4043D_TDS.pdf",
+  "PETG": "protolabs.com/media/pzub5tfo/eastar-6763.pdf",
+  "PEI (Ultem 1000)": "cdn.shopify.com/s/files/1/0260/7421/files/ULTEM_1000_DATA_SHEET.pdf",
+  "Polyethylene PE-HD": "www.oadbyplastics.co.uk/wp-content/uploads/2025/11/PE-HD-300-Technical-Datasheet.pdf",
 };
 
 export const LIBRARY: Material[] = ROWS.map(([cat, name, , eq, [density, E, nu, sy, su, k, cp, alpha], src, color]) =>
