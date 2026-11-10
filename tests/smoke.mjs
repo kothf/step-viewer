@@ -2005,7 +2005,7 @@ try {
       `model 1.375: a checked material shows the page its values were checked against (${JSON.stringify(refLink)})`);
     // 1.382.0: a material without a checked reference says so.
     const refNote = await mp.evaluate(() => !!document.querySelector("#mat-dlg .mat-unver"));
-    await mp.fill("#mat-q", "teak");
+    await mp.fill("#mat-q", "kevlar");
     const unver = await mp.evaluate(() => ({ note: document.querySelector("#mat-dlg .mat-unver")?.textContent ?? "", link: !!document.querySelector("#mat-dlg .mat-src a") }));
     check(!refNote && unver.note === "Not checked against a public reference yet." && !unver.link,
       `model 1.382: a material with no checked reference is marked as not checked (${refNote}, ${JSON.stringify(unver)})`);

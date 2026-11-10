@@ -453,6 +453,11 @@ export const CHECKED: Record<string, string> = {
   "Polyethylene PE-LD": "www.modernplastics.com/wp-content/uploads/2015/04/TECAFINE-LDPE.pdf",
   // 1.417.0: BASF Ultramid A3WG6, dry as moulded (1.36 g/cm³, 10.0 GPa, 190 MPa).
   "Nylon PA66-GF30": "salesplastics.com/wp-content/uploads/2025/09/BASF-Ultramid%C2%AE-A3WG6-.pdf",
+  // 1.419.0: USDA Wood Handbook FPL-GTR-282, chapter 5, table 5-4a (imported woods, 12 %):
+  // teak 0.55 / 10 700 MPa, mahogany (true) 0.45 / 10 300 MPa, balsa 0.16 / 3 400 MPa.
+  "Wood (teak)": "research.fs.usda.gov/download/treesearch/62244.pdf",
+  "Wood (mahogany)": "research.fs.usda.gov/download/treesearch/62244.pdf",
+  "Wood (balsa)": "research.fs.usda.gov/download/treesearch/62244.pdf",
 };
 
 export const LIBRARY: Material[] = ROWS.map(([cat, name, , eq, [density, E, nu, sy, su, k, cp, alpha], src, color]) =>
