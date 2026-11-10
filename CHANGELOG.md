@@ -5,11 +5,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.428.0] - 2026-11-10
+## [1.430.0] - 2026-11-10
 
 ### Added
 
 - **Tolerance frame text (FR-DRW-023)**: a drawing's geometric tolerance has **Text above the frame** (such as 2×) and **Text below the frame** boxes; the text is written left-aligned over and under the feature control frame and moves with it.
+
+## [1.429.0] - 2026-11-10
+
+### Fixed
+
+- **ASA and PC/ABS (FR-MAT-001)**: both now follow a named general purpose grade's data sheet and show **Checked against:**. ASA (Luran S 778T): modulus 2.5 GPa, yield 54 MPa (were 2.3 GPa and 48 MPa). PC/ABS (Bayblend T65 XF): modulus 2.35 GPa, yield 54 MPa (were 2.2 GPa and 52 MPa). 149 of 170 materials are checked; the other 21 still say they are not.
+
+## [1.428.0] - 2026-11-10
+
+### Added
+
+- **Selected Contours: hover highlight and Planar Surface** (FR-FT-010): while the Selected Contours box has focus, the sketch region under the pointer lights up blue before you click, as in SolidWorks. Planar Surface takes Selected Contours too, so a sketch whose lines cross or branch can fill just the regions you pick.
 
 ## [1.427.0] - 2026-11-10
 
@@ -2540,7 +2552,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.428.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.430.0...HEAD
+[1.430.0]: https://github.com/kothf/step-viewer/compare/v1.429.0...v1.430.0
+[1.429.0]: https://github.com/kothf/step-viewer/compare/v1.428.0...v1.429.0
 [1.428.0]: https://github.com/kothf/step-viewer/compare/v1.427.0...v1.428.0
 [1.427.0]: https://github.com/kothf/step-viewer/compare/v1.426.0...v1.427.0
 [1.426.0]: https://github.com/kothf/step-viewer/compare/v1.425.0...v1.426.0
