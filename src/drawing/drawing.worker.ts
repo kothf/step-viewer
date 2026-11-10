@@ -4,7 +4,7 @@
 // document through the Modeller; STEP / IGES / BREP files are read as they are.
 import { FLAT_CONFIG, type Align, type Stair } from "./views";
 import { flatBends, flatPatternDoc, flatToXY } from "../sheetmetal/sheet";
-import { geometryDiff, projectAuto, FAST_EDGES, projectPoly, readShape, shapeBrep, childShapes, alignedShape, section, shadeTris, shapeInfo, topology, type V3, type ViewDir } from "../kernel/drawing";
+import { geometryDiff, projectAuto, FAST_EDGES, projectPoly, readShape, shapeBin, readBin, childShapes, alignedShape, section, shadeTris, shapeInfo, topology, type V3, type ViewDir } from "../kernel/drawing";
 import { Assembler } from "../kernel/assembly";
 import { Modeller } from "../kernel/model";
 import type { AsmDoc } from "../asm/types";
@@ -30,31 +30,35 @@ export type DrawingRequest =
   | { id: number; type: "diff"; a: DiffSrc; b: DiffSrc };
 
 /**
- * The loaded model's shape as BREP text with what a lite load needs besides it (names, materials, component ids),
- * sent back by a full load so a restart or the helper reads it (~0.2 s) instead of building the model again
- * (an engine assembly: ~10 s).
+ * The loaded model's shape in binary BREP with what a lite load needs besides it (names, materials, component ids),
+ * sent back by a full load so a restart or the helper reads it (~0.3 s) instead of building the model again
+ * (an engine assembly: ~12 s). After the first fast view a big model's snapshot is sent again with its mesh
+ * (`mesh`), so a restart need not mesh it again either (~6 s).
  */
-export interface ModelSnap { brep: string; names?: string[]; mat: string | null; mats: (string | null)[] | null; placed?: { id: string; mat: string | null; mats?: (string | null)[] | null }[] }
+export interface ModelSnap { bin: Uint8Array; mesh?: boolean; names?: string[]; mat: string | null; mats: (string | null)[] | null; placed?: { id: string; mat: string | null; mats?: (string | null)[] | null }[] }
 
-/** Snapshots past this many characters are not made (they would cost more memory than the rebuild time saved). */
-const SNAP_MAX = 64 * 1048576;
+/** Snapshots past this many bytes are not made (they would cost more memory than the time saved). */
+const SNAP_MAX = 128 * 1048576;
+/** Whether the loaded shape's meshed snapshot has been sent (or the shape came from one). */
+let snapMeshed = false;
 
-function writeSnap(): ModelSnap | undefined {
+function writeSnap(mesh = false): ModelSnap | undefined {
   try {
-    const brep = shapeBrep(oc, shape);
-    if (brep.length > SNAP_MAX) return undefined;
-    return { brep, names: shapeNames, mat: modelMat, mats: modelMats, placed: placedShapes.length ? placedShapes.map(p => ({ id: p.id, mat: p.mat, mats: p.mats })) : undefined };
+    const bin = shapeBin(oc, shape, mesh);
+    if (bin.length > SNAP_MAX) return undefined;
+    return { bin, mesh, names: shapeNames, mat: modelMat, mats: modelMats, placed: placedShapes.length ? placedShapes.map(p => ({ id: p.id, mat: p.mat, mats: p.mats })) : undefined };
   } catch { return undefined; }
 }
 
 function readSnap(snap: ModelSnap) {
-  const s = readShape(oc, new TextEncoder().encode(snap.brep), "snap.brep");
+  const s = readBin(oc, snap.bin);
   if (snap.placed) {
     const kids = childShapes(oc, s);
     if (kids.length !== snap.placed.length) throw new Error("The model snapshot does not match its components");
     placedShapes = snap.placed.map((p, i) => ({ ...p, shape: kids[i] }));
   }
   shape = s; shapeNames = snap.names; modelMat = snap.mat; modelMats = snap.mats;
+  snapMeshed = !!snap.mesh;
 }
 
 export type DiffSrc = { part?: PartDoc; asm?: AsmDoc };
@@ -222,6 +226,7 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
       post({ id: r.id, ok: true });
     } else if (r.type === "load") {
       placedShapes = [];
+      snapMeshed = false;
       modelMat = null;
       modelMats = null;
       shapeNames = undefined;
@@ -284,7 +289,9 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
         const [lo, hi] = shapeInfo(oc, sh).box;
         proj.shade = shadeTris(oc, sh, r.view, Math.max(0.01, Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 400));
       }
-      post({ id: r.id, ok: true, proj });
+      // The first fast view of the whole model meshed it: send the snapshot again with that mesh (see `ModelSnap`).
+      const snap = proj.fast && sh === shape && !snapMeshed ? (snapMeshed = true, writeSnap(true)) : undefined;
+      post({ id: r.id, ok: true, proj, ...(snap ? { snap } : {}) });
     } else if (r.type === "preview") {
       if (!shape) throw new Error("No model loaded");
       const sh = r.only?.length && placedShapes.length ? onlyOf(r.only).shape : shapeOf(r.cfg).shape;

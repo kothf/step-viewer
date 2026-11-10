@@ -144,6 +144,8 @@ export class DrawingKernel {
       if (!p) return;
       this.pending.delete(d.id);
       if (typeof d.heap === "number" && d.heap > HEAP_RECYCLE) this.wantRecycle = true;
+      // A meshed snapshot after the first fast view (worker `ModelSnap`); replies come in order, so it is this model's.
+      if (d.ok && d.snap && d.proj && this.src) this.snap = d.snap;
       if (d.ok) p.resolve(d); else p.reject(new Error(d.error));
       if (this.wantRecycle && !this.pending.size) void this.recycle();
     };
@@ -268,7 +270,7 @@ export class DrawingKernel {
   }
 
   /** For tests: whether the helper worker is up and has the model, and how many projections it made. */
-  helperState() { return { on: !!this.helper, loaded: !!this.helper?.loaded, helped: this.helped, recycles: this.recycles, snap: this.snap?.brep.length ?? 0 }; }
+  helperState() { return { on: !!this.helper, loaded: !!this.helper?.loaded, helped: this.helped, recycles: this.recycles, snap: this.snap?.bin.length ?? 0, snapMesh: !!this.snap?.mesh }; }
 
   /** An exact projection or section, run by whichever worker is free first. */
   private exact<T>(msg: Record<string, unknown>): Promise<T> {

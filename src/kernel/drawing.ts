@@ -54,11 +54,25 @@ export function viewAxes(v: ViewDir): { x: V3; y: V3; n: V3 } {
   return { x, y: cross(n, x), n };
 }
 
-/** A shape as BREP text (no triangulation), read back by `readShape(oc, bytes, "x.brep")`; compound children keep their order. */
-export function shapeBrep(oc: any, shape: any): string {
-  const path = `/drw-${Math.random().toString(36).slice(2)}.brep`;
-  oc.BRepTools.Write_4(shape, path, false, false, oc.TopTools_FormatVersion.TopTools_FormatVersion_CURRENT, new oc.Message_ProgressRange_1());
-  try { return oc.FS.readFile(path, { encoding: "utf8" }); } finally { oc.FS.unlink(path); }
+/**
+ * A shape in OCCT's binary BREP format (exact doubles; with `mesh`, its triangulation too, so the reader need not mesh it
+ * again), read back by `readBin`; compound children keep their order.
+ */
+export function shapeBin(oc: any, shape: any, mesh = false): Uint8Array {
+  const path = `/drw-${Math.random().toString(36).slice(2)}.bin`;
+  oc.BinTools.Write_4(shape, path, mesh, false, oc.BinTools_FormatVersion.BinTools_FormatVersion_CURRENT, new oc.Message_ProgressRange_1());
+  try { return oc.FS.readFile(path); } finally { oc.FS.unlink(path); }
+}
+
+export function readBin(oc: any, bytes: Uint8Array): any {
+  const path = `/drw-${Math.random().toString(36).slice(2)}.bin`;
+  oc.FS.writeFile(path, bytes);
+  try {
+    const shape = new oc.TopoDS_Shape();
+    oc.BinTools.Read_2(shape, path, new oc.Message_ProgressRange_1());
+    if (shape.IsNull()) throw new Error("Could not read the model snapshot");
+    return shape;
+  } finally { oc.FS.unlink(path); }
 }
 
 /** A compound's direct children in order. */
