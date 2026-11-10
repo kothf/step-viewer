@@ -310,7 +310,8 @@ export class DrawingWorkspace {
       this.boms = src.kind === "asm" ? new Map() : null;
       this.stale = false;
       this.renderAll();
-      void this.renderPalette();
+      // The palette's thumbnails queue behind the sheet's previews and views, so the sheet shows first.
+      setTimeout(() => void this.renderPalette(), 0);
       return this.facts;
     } catch (err) {
       toast(t("The drawing's model could not be loaded: {err}", { err: t((err as Error).message) }), true);
@@ -652,7 +653,11 @@ export class DrawingWorkspace {
     const req = viewReq(sheet, v);
     const p = this.kernel.cache.get(req.key);
     if (!p && this.facts) {
-      const ask = () => this.track(req.key, this.kernel.request(req)).then(() => this.renderSheet(), err => toast(t("A view could not be projected: {err}", { err: kernelError(err) }), true));
+      // Asked once: every render while it is on the way would otherwise add one more redraw when it lands.
+      const ask = () => {
+        if (this.projecting.has(req.key)) return;
+        void this.track(req.key, this.kernel.request(req)).then(() => this.renderSheetSoon(), err => toast(t("A view could not be projected: {err}", { err: kernelError(err) }), true));
+      };
       // With previews on, the exact requests go after this render's previews (the worker answers in order).
       if (this.previewsOn()) void Promise.resolve().then(ask); else void ask();
     }
@@ -684,7 +689,11 @@ export class DrawingWorkspace {
     const req = viewReq(sheet, v);
     if (req.p || !this.previewsOn() || this.kernel.cache.has(req.key)) return undefined;
     const have = this.kernel.previews.get(req.key);
-    if (!have) void this.kernel.preview(req).then(() => { if (!this.kernel.cache.has(req.key)) this.renderSheet(); }, () => {});
+    if (!have && !this.previewAsked.has(req.key)) {
+      this.previewAsked.add(req.key);
+      const done = () => { this.previewAsked.delete(req.key); };
+      void this.kernel.preview(req).then(() => { done(); if (!this.kernel.cache.has(req.key)) this.renderSheetSoon(); }, done);
+    }
     return have;
   }
 
@@ -693,8 +702,24 @@ export class DrawingWorkspace {
     const req = altReq(sheet, v);
     if (!req) return undefined;
     const p = this.kernel.cache.get(req.key);
-    if (!p && this.facts) void this.track(req.key, this.kernel.alt(req)).then(() => this.renderSheet(), err => toast(t("A view could not be projected: {err}", { err: kernelError(err) }), true));
+    if (!p && this.facts && !this.projecting.has(req.key)) void this.track(req.key, this.kernel.alt(req)).then(() => this.renderSheetSoon(), err => toast(t("A view could not be projected: {err}", { err: kernelError(err) }), true));
     return p;
+  }
+
+  /** Previews asked for and not back yet (asked once, like `projecting`). */
+  private previewAsked = new Set<string>();
+  private sheetSoon = false;
+  /** Sheet redraws so far (big assembly sheets once redrew 66 times while three views came in). */
+  private sheetRenders = 0;
+
+  /**
+   * One redraw for everything that lands in the same moment: a big assembly sheet is megabytes of SVG,
+   * and a redraw per arriving view (plus one per render that asked) kept the page busy for half a minute.
+   */
+  private renderSheetSoon() {
+    if (this.sheetSoon) return;
+    this.sheetSoon = true;
+    queueMicrotask(() => { this.sheetSoon = false; if (this.store) this.renderSheet(); });
   }
 
   private renderSheet() {
@@ -725,6 +750,7 @@ export class DrawingWorkspace {
     this.svg.style.fontFamily = FONT;
     this.renderOverlay();
     this.applyViewBox();
+    this.sheetRenders++;
   }
 
   /** Selection and hover frames, and the live preview of a view being placed. */
@@ -3359,6 +3385,7 @@ export class DrawingWorkspace {
       fields: () => (this.store ? this.fields() : null),
       helper: () => this.kernel.helperState(),
       previews: () => ({ shown: this.previewsShown, made: this.kernel.previewsMade, left: this.svg.querySelectorAll(".drw-preview").length }),
+      renders: () => this.sheetRenders,
       holes: () => (this.facts?.topo?.holes ?? []).map(h => ({ segs: h.segs.length, open: h.open })),
       proj: (id: string) => { const sh = this.sheet, v = findView(sh, id); return v ? this.kernel.cache.get(viewReq(sh, v).key) ?? null : null; },
       /** A section of the loaded model through `p` looking along `dir` (tests: who and what each cut loop is). */
