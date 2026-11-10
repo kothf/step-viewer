@@ -34,6 +34,8 @@ export interface Material {
   color?: string;
   /** Key of `SOURCES`. */
   src?: string;
+  /** Public page the density, modulus and strengths were checked against (no scheme), see `CHECKED`. */
+  ref?: string;
 }
 
 /** What a document keeps: the name and density at least; the other properties travel with it. */
@@ -61,12 +63,12 @@ export const CATEGORIES: { id: MatCat; name: string; ru: string; color: string }
 export const SOURCES: Record<string, { text: string; ru?: string; basis: "min" | "typ" }> = {
   en10025: { text: "EN 10025-2/-3/-6 (t ≤ 16 mm), EN 1993-1-1", basis: "min" },
   en10130: { text: "EN 10130, EN 10346", basis: "min" },
-  en10083: { text: "EN 10083-2/-3 (16–40 mm), EN 10277", basis: "min" },
+  en10083: { text: "EN 10083-2 (normalized, ≤ 16 mm), EN 10083-3 (quenched and tempered, 16–40 mm), EN 10277", ru: "EN 10083-2 (нормализация, ≤ 16 мм), EN 10083-3 (улучшение, 16–40 мм), EN 10277", basis: "min" },
   astm: { text: "ASTM A36 / A572 / A500", basis: "min" },
   asm1: { text: "ASM Handbook, Vol. 1", ru: "Справочник ASM Handbook, т. 1", basis: "typ" },
   gost: { text: "GOST 4543, GOST 14959, GOST 19281", ru: "ГОСТ 4543, ГОСТ 14959, ГОСТ 19281", basis: "min" },
   tool: { text: "Steel makers' data sheets (EN ISO 4957 grades)", ru: "Паспорта производителей стали (марки EN ISO 4957)", basis: "typ" },
-  en10088: { text: "EN 10088-1/-2/-3", basis: "min" },
+  en10088: { text: "EN 10088-1, EN 10088-2 (hot rolled plate), EN 10088-3 (bar)", ru: "EN 10088-1, EN 10088-2 (горячекатаный лист), EN 10088-3 (пруток)", basis: "min" },
   en1561: { text: "EN 1561, EN 1563, EN 10293", basis: "min" },
   en485: { text: "EN 485-2, EN 755-2", basis: "min" },
   asm2: { text: "ASM Handbook, Vol. 2", ru: "Справочник ASM Handbook, т. 2", basis: "typ" },
@@ -104,7 +106,7 @@ const ROWS: Row[] = [
   ["steel", "Steel S960QL", "Сталь S960QL", "1.8933", [7.85, 210, 0.3, 960, 980, _, _, 12], "en10025"],
   ["steel", "Steel ASTM A36", "Сталь ASTM A36", "UNS K02600", [7.85, 200, 0.26, 250, 400, 51.9, 486, 11.7], "astm"],
   ["steel", "Steel ASTM A572 Grade 50", "Сталь ASTM A572 Grade 50", "", [7.85, 200, 0.3, 345, 450, _, _, 11.7], "astm"],
-  ["steel", "Steel ASTM A500 Grade B (shaped tube)", "Сталь ASTM A500 Grade B (профильная труба)", "", [7.85, 200, 0.3, 315, 400, _, _, 11.7], "astm"],
+  ["steel", "Steel ASTM A500 Grade B (shaped tube)", "Сталь ASTM A500 Grade B (профильная труба)", "", [7.85, 200, 0.3, 317, 400, _, _, 11.7], "astm"],
   ["steel", "Steel 09G2S", "Сталь 09Г2С", "09Г2С", [7.85, 200, 0.3, 345, 490, _, _, 11.4], "gost"],
   ["steel", "Steel DC01 (cold rolled sheet)", "Сталь DC01 (холоднокатаный лист)", "1.0330 · St12 · 08кп · SPCC", [7.85, 210, 0.3, 140, 270, _, _, 12], "en10130"],
   ["steel", "Steel DC04 (deep drawing sheet)", "Сталь DC04 (лист для глубокой вытяжки)", "1.0338 · St14 · 08Ю", [7.85, 210, 0.3, 140, 270, _, _, 12], "en10130"],
@@ -174,19 +176,19 @@ const ROWS: Row[] = [
   ["aluminium", "Aluminium EN AW-6082 T6", "Алюминий EN AW-6082 T6", "AlSi1MgMn · АД35Т1", [2.7, 70, 0.33, 260, 310, 172, 896, 23.4], "en485"],
   ["aluminium", "Aluminium EN AW-7020 T6", "Алюминий EN AW-7020 T6", "AlZn4.5Mg1 · 1915Т", [2.78, 70, 0.33, 290, 350, 137, 875, 23.1], "en485"],
   ["aluminium", "Aluminium EN AW-7075 T6", "Алюминий EN AW-7075 T6", "AlZn5.5MgCu · В95Т1", [2.81, 71.7, 0.33, 503, 572, 130, 960, 23.6], "asm2"],
-  ["aluminium", "Cast aluminium EN AC-42100 T6 (AlSi7Mg0.3)", "Литейный алюминий EN AC-42100 T6 (AlSi7Mg0.3)", "A356 · АК7ч · АЛ9", [2.68, 72.4, 0.33, 190, 230, 151, 963, 21.4], "en1706"],
+  ["aluminium", "Cast aluminium EN AC-42100 T6 (AlSi7Mg0.3, sand cast)", "Литейный алюминий EN AC-42100 T6 (AlSi7Mg0.3, литьё в песок)", "A356 · АК7ч · АЛ9", [2.68, 72.4, 0.33, 190, 230, 151, 963, 21.4], "en1706"],
   ["aluminium", "Cast aluminium EN AC-43000 T6 (AlSi10Mg)", "Литейный алюминий EN AC-43000 T6 (AlSi10Mg)", "A360 · АК9ч · АЛ4", [2.65, 74, 0.33, 180, 220, _, _, 21], "en1706"],
-  ["aluminium", "Die cast aluminium A380", "Алюминий A380 (литьё под давлением)", "EN AC-46000 · AlSi9Cu3(Fe) · АК8М3", [2.74, 71, 0.33, 159, 324, 96.2, 963, 21.8], "nadca"],
+  ["aluminium", "Die cast aluminium A380", "Алюминий A380 (литьё под давлением)", "EN AC-46000 · AlSi9Cu3(Fe) · АК8М3", [2.71, 71, 0.33, 159, 324, 96.2, 963, 21.8], "nadca"],
 
   // ---------- copper alloys ----------
   ["copper", "Copper", "Медь", "Cu-ETP · CW004A · C11000 · М1", [8.96, 117, 0.34, 69, 220, 391, 385, 17], "cda"],
   ["copper", "Brass", "Латунь", "", [8.5, 110, 0.34, _, 300, 120, 377, 20.2], "cda", "#c9a544"],
   ["copper", "Brass CuZn37", "Латунь CuZn37", "CW508L · C27400 · Л63", [8.44, 110, 0.34, _, 300, 120, 377, 20.2], "cda", "#c9a544"],
   ["copper", "Brass CuZn39Pb3 (free cutting)", "Латунь CuZn39Pb3 (автоматная)", "CW614N · C38500 · ЛС59-1", [8.47, 97, 0.34, _, 430, 123, 377, 20.9], "cda", "#c9a544"],
-  ["copper", "Bronze CuSn8 (phosphor bronze)", "Бронза CuSn8 (оловянно-фосфористая)", "CW453K · C52100 · БрОФ7-0,2", [8.8, 110, 0.34, _, 390, 62, 377, 18.2], "cda", "#a9793d"],
-  ["copper", "Cast bronze CuSn12-C", "Литейная бронза CuSn12-C", "CC483K · C90800 · БрО10Ф1", [8.6, 100, 0.34, 140, 260, 55, 376, 18.5], "cda", "#a9793d"],
-  ["copper", "Gunmetal CuSn5Zn5Pb5-C", "Бронза CuSn5Zn5Pb5-C (литейная)", "CC491K · C83600 · БрО5Ц5С5", [8.8, 83, 0.34, 90, 200, 72, 376, 18], "cda", "#a9793d"],
-  ["copper", "Aluminium bronze CuAl10Ni5Fe4", "Алюминиевая бронза CuAl10Ni5Fe4", "CW307G · C63000 · БрАЖН10-4-4", [7.58, 115, 0.33, _, 680, 39, 377, 16.2], "cda", "#b08d57"],
+  ["copper", "Bronze CuSn8 (phosphor bronze)", "Бронза CuSn8 (оловянно-фосфористая)", "CW453K · C52100 · БрОФ7-0,2", [8.8, 115, 0.34, _, 390, 62, 377, 18.2], "cda", "#a9793d"],
+  ["copper", "Cast bronze CuSn12-C", "Литейная бронза CuSn12-C", "CC483K · C90800 · БрО10Ф1", [8.7, 97, 0.34, 140, 260, 55, 376, 18.5], "cda", "#a9793d"],
+  ["copper", "Gunmetal CuSn5Zn5Pb5-C", "Бронза CuSn5Zn5Pb5-C (литейная)", "CC491K · C83600 · БрО5Ц5С5", [8.7, 83, 0.34, 90, 200, 72, 376, 18], "cda", "#a9793d"],
+  ["copper", "Aluminium bronze CuAl10Ni5Fe4", "Алюминиевая бронза CuAl10Ni5Fe4", "CW307G · C63000 · БрАЖН10-4-4", [7.58, 120, 0.33, _, 680, 39, 377, 16.2], "cda", "#b08d57"],
   ["copper", "Beryllium copper CuBe2 (age hardened)", "Бериллиевая бронза CuBe2 (состаренная)", "CW101C · C17200 · БрБ2", [8.25, 131, 0.3, 965, 1140, 105, 420, 16.7], "cda", "#b08d57"],
 
   // ---------- titanium ----------
@@ -198,7 +200,7 @@ const ROWS: Row[] = [
 
   // ---------- nickel alloys ----------
   ["nickel", "Nickel 200", "Никель 200", "2.4066 · UNS N02200 · НП2", [8.89, 204, 0.29, 105, 380, 70.2, 456, 13.3], "nickel"],
-  ["nickel", "Inconel 718 (aged)", "Inconel 718 (состаренный)", "2.4668 · UNS N07718 · ХН45МВТЮБР", [8.19, 200, 0.29, 1034, 1241, 11.4, 435, 13], "nickel"],
+  ["nickel", "Inconel 718 (aged)", "Inconel 718 (состаренный)", "2.4668 · UNS N07718 · ХН45МВТЮБР", [8.19, 200, 0.29, 1034, 1276, 11.4, 435, 13], "nickel"],
   ["nickel", "Inconel 625 (annealed)", "Inconel 625 (отожжённый)", "2.4856 · UNS N06625 · ХН75МБТЮ", [8.44, 208, 0.28, 414, 827, 9.8, 410, 12.8], "nickel"],
   ["nickel", "Monel 400 (annealed)", "Monel 400 (отожжённый)", "2.4360 · UNS N04400 · НМЖМц28-2,5-1,5", [8.8, 179, 0.32, 170, 480, 21.8, 427, 13.9], "nickel"],
   ["nickel", "Hastelloy C-276", "Hastelloy C-276", "2.4819 · UNS N10276 · ХН65МВ", [8.89, 205, 0.31, 283, 690, 9.8, 427, 11.2], "nickel"],
@@ -214,7 +216,7 @@ const ROWS: Row[] = [
   ["metal", "Tungsten", "Вольфрам", "W", [19.25, 411, 0.28, _, _, 173, 132, 4.5], "crc", "#7d8187"],
   ["metal", "Molybdenum", "Молибден", "Mo", [10.22, 329, 0.31, _, _, 138, 251, 4.8], "crc"],
   ["metal", "Silver", "Серебро", "Ag", [10.49, 83, 0.37, _, _, 429, 235, 18.9], "crc", "#d8d8d8"],
-  ["metal", "Gold", "Золото", "Au", [19.32, 79, 0.44, _, _, 318, 129, 14.2], "crc", "#d4af37"],
+  ["metal", "Gold", "Золото", "Au", [19.32, 78, 0.44, _, _, 318, 129, 14.2], "crc", "#d4af37"],
 
   // ---------- plastics ----------
   ["plastic", "ABS", "ABS", "", [1.04, 2.3, 0.35, 43, 43, 0.17, 1300, 90], "plastic", "#e9e4d4"],
@@ -265,7 +267,7 @@ const ROWS: Row[] = [
   ["ceramic", "Fused silica", "Кварцевое стекло", "SiO₂", [2.2, 73, 0.16, _, _, 1.3, 770, 0.57], "ceramic", "#e9f1f2"],
   ["ceramic", "Alumina 99.5 %", "Корунд 99,5 % (оксид алюминия)", "Al₂O₃", [3.9, 370, 0.22, _, 262, 30, 880, 8.2], "ceramic"],
   ["ceramic", "Zirconia (Y-TZP)", "Диоксид циркония (Y-TZP)", "ZrO₂", [6.02, 200, 0.3, _, _, 2.2, 400, 10.3], "ceramic"],
-  ["ceramic", "Silicon carbide (sintered)", "Карбид кремния (спечённый)", "SSiC", [3.1, 410, 0.14, _, _, 125.6, 670, 4.02], "ceramic", "#4a4d52"],
+  ["ceramic", "Silicon carbide (sintered)", "Карбид кремния (спечённый)", "SSiC", [3.15, 410, 0.14, _, _, 125.6, 670, 4.02], "ceramic", "#4a4d52"],
 
   // ---------- woods and wood panels ----------
   ["wood", "Wood (oak)", "Дерево (дуб)", "white oak", [0.75, 12.3, _, _, _, 0.18, 1600, _], "wood", "#a47b4c"],
@@ -293,8 +295,137 @@ const ROWS: Row[] = [
 ];
 
 /** The built-in library, in category order. */
+/**
+ * Public pages the values were compared with (2026-11): density, modulus, yield and tensile strength.
+ * A material without an entry has only its `SOURCES` reference. Keys are material names.
+ */
+// prettier-ignore
+export const CHECKED: Record<string, string> = {
+  "Steel S235JR": "steelcalculator.pages.dev/reference/eu-steel-fy-fu/",
+  "Steel S275JR": "steelcalculator.pages.dev/reference/eu-steel-fy-fu/",
+  "Steel S355J2": "steelcalculator.pages.dev/reference/eu-steel-fy-fu/",
+  "Steel S420N": "steelcalculator.pages.dev/reference/european-steel-properties/",
+  "Steel S460N": "steelcalculator.pages.dev/reference/european-steel-properties/",
+  "Steel S690QL": "shop.macsteel.co.za/SpecSheets/P_S690QL_0100.pdf",
+  "Steel AISI 1018 (cold drawn)": "matweb.com/search/datasheettext.aspx?matid=6817",
+  "Steel C45 (normalized)": "en.saarstahl.com/app/uploads/2024/03/20160401102929-0503_C45.pdf",
+  "Steel 41Cr4 (quenched and tempered)": "www.saarstahl.com/app/uploads/2024/03/20160318090949-41Cr4-41CrS4.pdf",
+  "Steel 34CrNiMo6 (quenched and tempered)": "www.marks-gmbh.de/afs/downloads/16582-datenblatt.pdf",
+  "Steel 30KhGSA (quenched and tempered)": "metinvestholding.com/en/products/steel-grades/30khgsa",
+  "Steel 65G (spring, quenched and tempered)": "metinvestholding.com/en/products/steel-grades/65g",
+  "Stainless steel 1.4512 (X2CrTi12, ferritic)": "www.quality.marcegaglia.com/wp-content/uploads/2018/12/DOP_0101-055_409_LAF_EN10088-4_EN-exp2015-11-01.pdf",
+  "Stainless steel 1.4021 (X20Cr13, QT700)": "www.rightonblackburns.co.uk/datasheets/view/stainless-steel-1-4021-420-bar",
+  "Grey cast iron EN-GJL-250": "www.kippwerk.de/en/en-gjl-250",
+  "Ductile cast iron EN-GJS-400-15": "www.jjsiddons.co.uk/?p=2252",
+  "Ductile cast iron EN-GJS-500-7": "www.jjsiddons.co.uk/?p=2252",
+  "Ductile cast iron EN-GJS-600-3": "www.jjsiddons.co.uk/?p=2252",
+  "Ductile cast iron EN-GJS-700-2": "www.jjsiddons.co.uk/?p=2252",
+  "Aluminium EN AW-5754 H22": "www.marks-gmbh.de/afs/downloads/AW-5754-datenblatt.pdf",
+  "Aluminium EN AW-6082 T6": "www.rightonblackburns.co.uk/datasheets/view/Righton-Blackburns-Ltd_Aluminium-Alloy-6082-T6-T651-Sheet-Plate_148.pdf",
+  "Cast aluminium EN AC-42100 T6 (AlSi7Mg0.3, sand cast)": "www.roth-giesserei.de/pdf/MechEigenschaftenAluTabelleHomepage2019Si7Mg.pdf",
+  "Die cast aluminium A380": "dynacast.com/knowledge-center/dynamic-process-metal-selector",
+  "Cast bronze CuSn12-C": "www.metalcentergroup.fi/media/2crp1tgl/cc483k-version1.pdf",
+  "Gunmetal CuSn5Zn5Pb5-C": "www.kemper-group.com/en-en/casting-technology/gunmetal-multi-constituent-bronze/cusn5zn5pb5-c-gs/",
+  "Aluminium bronze CuAl10Ni5Fe4": "www.makeitfrom.com/compare/UNS-C63000-CW307G-Aluminum-Nickel-Bronze/UNS-C17000-CW100C-Beryllium-Copper",
+  "Titanium Ti-6Al-4V ELI": "ferrobend.com/specifications/astm/bars-rods/b348-b348m-grade-23",
+  "Nickel 200": "www.specialmetals.com/documents/technical-bulletins/nickel-200.pdf",
+  "Inconel 625 (annealed)": "www.langleyalloys.com/knowledge-advice/what-is-inconel-625-grade-2/",
+  "Monel 400 (annealed)": "mechanicalc.com/reference/material-properties-tables",
+  "Hastelloy C-276": "mechanicalc.com/reference/material-properties-tables",
+  "Invar 36": "www.mcmaster.com/invar-round-stock",
+  "Die cast magnesium AZ91D": "dynacast.com/knowledge-center/dynamic-process-metal-selector",
+  "Zinc alloy Zamak 3": "eazall.com/zamak-3",
+  "Zinc alloy Zamak 5": "eazall.com/zamak-5",
+  "Lead": "en.wikipedia.org/wiki/Elastic_properties_of_the_elements_(data_page)",
+  "Tungsten": "en.wikipedia.org/wiki/Elastic_properties_of_the_elements_(data_page)",
+  "Molybdenum": "en.wikipedia.org/wiki/Elastic_properties_of_the_elements_(data_page)",
+  "Silver": "en.wikipedia.org/wiki/Elastic_properties_of_the_elements_(data_page)",
+  "Gold": "en.wikipedia.org/wiki/Elastic_properties_of_the_elements_(data_page)",
+  "Polycarbonate": "www.ensingerplastics.com/en-us/shapes/polycarbonate-tecanat-natural",
+  "Alumina 99.5 %": "www.coorstek.com/media/4235/advanced-alumina.pdf",
+  "Zirconia (Y-TZP)": "www.coorstek.com/media/8908/semiconductor-oxides-material-properties-chart-02084.pdf",
+  "Silicon carbide (sintered)": "www.syalons.com/wp-content/uploads/2018/03/sycarb-10-datasheet.pdf",
+  "Wood (spruce)": "amesweb.info/Materials/Youngs-Modulus-of-Wood.aspx",
+  "Wood (ash)": "amesweb.info/Materials/Youngs-Modulus-of-Wood.aspx",
+  "Wood (walnut)": "www.engineeringtoolbox.com/timber-mechanical-properties-d_1789.html",
+  "Steel (carbon)": "steelcalculator.pages.dev/reference/eu-steel-fy-fu/",
+  // 1.382.0: second pass over the rows that had no reference.
+  "Steel S960QL": "www.ssab.com/en/brands-and-products/strenx/product-offer/960/e-f",
+  "Steel ASTM A36": "en.wikipedia.org/wiki/A36_steel",
+  "Steel ASTM A572 Grade 50": "en.wikipedia.org/wiki/A572_steel",
+  "Steel DC01 (cold rolled sheet)": "roymech.org/Useful_Tables/Matter/Steel_Data/Steel-10130.html",
+  "Steel DC04 (deep drawing sheet)": "roymech.org/Useful_Tables/Matter/Steel_Data/Steel-10130.html",
+  "Steel DX51D+Z (galvanized sheet)": "www.usske.sk/en/products/hot-dip-galvanized/drawing-steels",
+  "Steel C35 (normalized)": "roymech.org/Useful_Tables/Matter/Steel_Data/Steel-10083.html",
+  "Steel C60 (normalized)": "roymech.org/Useful_Tables/Matter/Steel_Data/Steel-10083.html",
+  "Steel 11SMn30 (free cutting, cold drawn)": "roymech.org/Useful_Tables/Matter/Steel_Data/Steel-10277.html",
+  "Steel 25CrMo4 (quenched and tempered)": "roymech.org/Useful_Tables/Matter/Steel_Data/Steel-10083.html",
+  "Steel 42CrMo4 (quenched and tempered)": "roymech.org/Useful_Tables/Matter/Steel_Data/Steel-10083.html",
+  "Steel 51CrV4 (spring, quenched and tempered)": "roymech.org/Useful_Tables/Matter/Steel_Data/Steel-10083.html",
+  "Cast steel GE240": "roymech.org/Useful_Tables/Matter/Steel_Data/Steel-10293.html",
+  "Stainless steel 304": "www.thyssenkrupp-materials.co.uk/stainless-steel-304-14301.html",
+  "Stainless steel 1.4301 (X5CrNi18-10)": "roymech.org/Useful_Tables/Matter/Steel_Data/Steel-10088.html",
+  "Stainless steel 1.4307 (X2CrNi18-9)": "roymech.org/Useful_Tables/Matter/Steel_Data/Steel-10088.html",
+  "Stainless steel 1.4305 (X8CrNiS18-9)": "roymech.org/Useful_Tables/Matter/Steel_Data/Steel-10088.html",
+  "Stainless steel 1.4310 (X10CrNi18-8)": "roymech.org/Useful_Tables/Matter/Steel_Data/Steel-10088.html",
+  "Stainless steel 1.4401 (X5CrNiMo17-12-2)": "www.thyssenkrupp-materials.co.uk/stainless-steel-316-14401.html",
+  "Stainless steel 1.4404 (X2CrNiMo17-12-2)": "www.thyssenkrupp-materials.co.uk/stainless-steel-316l-14404.html",
+  "Stainless steel 1.4571 (X6CrNiMoTi17-12-2)": "www.thyssenkrupp-materials.co.uk/stainless-steel-316ti-14571.html",
+  "Stainless steel 1.4541 (X6CrNiTi18-10)": "roymech.org/Useful_Tables/Matter/Steel_Data/Steel-10088.html",
+  "Stainless steel 1.4539 (X1NiCrMoCu25-20-5)": "www.thyssenkrupp-materials.co.uk/stainless-steel-904l-14539.html",
+  "Stainless steel 1.4016 (X6Cr17, ferritic)": "www.thyssenkrupp-materials.co.uk/stainless-steel-430-14016.html",
+  "Stainless steel 1.4057 (X17CrNi16-2, QT800)": "roymech.org/Useful_Tables/Matter/Steel_Data/Steel-10088.html",
+  "Stainless steel 1.4542 (17-4 PH, P1070)": "roymech.org/Useful_Tables/Matter/Steel_Data/Steel-10088.html",
+  "Stainless steel 1.4462 (duplex 2205)": "roymech.org/Useful_Tables/Matter/Steel_Data/Steel-10088.html",
+  "Stainless steel 1.4410 (super duplex 2507)": "roymech.org/Useful_Tables/Matter/Steel_Data/Steel-10088.html",
+  "Cast iron": "www.mfgrobots.com/Article/material/metal/39356.html",
+  "Grey cast iron EN-GJL-150": "www.mfgrobots.com/Article/material/metal/39354.html",
+  "Grey cast iron EN-GJL-200": "www.mfgrobots.com/Article/material/metal/39355.html",
+  "Grey cast iron EN-GJL-300": "www.kippwerk.de/en/en-gkl-300",
+  "Aluminium 6061": "en.wikipedia.org/wiki/6061_aluminium_alloy",
+  "Aluminium EN AW-1050A H14": "www.aalco.co.uk/datasheets/Aluminium-Alloy-1050A-H14-Sheet_57.ashx",
+  "Aluminium EN AW-2024 T3": "www.aerospacemetals.com/wp-content/uploads/2023/06/Aluminum-2024-T3.pdf",
+  "Aluminium EN AW-3003 H14": "www.referansmetal.com/alasimli-aluminyum/product/454/sac/ams-4008-almn1cu-3003-h14?lang=en",
+  "Aluminium EN AW-5052 H32": "en.wikipedia.org/wiki/5052_aluminium_alloy",
+  "Aluminium EN AW-5083 O/H111": "www.aalco.co.uk/datasheets/Aluminium-Alloy-5083-0-H111-Sheet-and-Plate_149.ashx",
+  "Aluminium EN AW-6060 T6": "www.wieland.com/cn/content/download/17146/file/EN-AW-6060_EN.pdf",
+  "Aluminium EN AW-6063 T6": "www.aalco.co.uk/datasheets/Aluminium-Alloy-6063-T6-Extrusions_158.ashx",
+  "Aluminium EN AW-7075 T6": "en.wikipedia.org/wiki/7075_aluminium_alloy",
+  "Cast aluminium EN AC-43000 T6 (AlSi10Mg)": "www.roth-giesserei.de/pdf/MechEigenschaftenAluTabelleHomepage2010Si10Mg.pdf",
+  "Copper": "www.makeitfrom.com/material-properties/Annealed-OS050-C11000-Copper",
+  "Brass CuZn37": "www.aalco.co.uk/datasheets/Copper-and-Copper-Alloys-CW508L-Tube_350.ashx",
+  "Brass CuZn39Pb3 (free cutting)": "www.rightonblackburns.co.uk/datasheets/view/Righton-Blackburns-Ltd_Copper-and-Copper-Alloys-CW614N-CZ121-Bar_31.pdf",
+  "Bronze CuSn8 (phosphor bronze)": "www.kemper-group.com/en-en/rolled-products/alloys/cusn8/",
+  "Titanium Grade 2": "aircraftmaterials.com/data/titanium/cpgr2.html",
+  "Inconel 718 (aged)": "premiumalloys.com/products/inconel-718/ams-5663/",
+  "Magnesium AZ31B H24": "www.techsteel.net/alloy/az31b-h24",
+  "Zinc": "en.wikipedia.org/wiki/Zinc",
+  "ABS": "en.wikipedia.org/wiki/Acrylonitrile_butadiene_styrene",
+  "Nylon PA12 (laser sintered)": "store.eos.info/products/pa-2200-polyamide-12",
+  "POM-C (acetal copolymer)": "en.wikipedia.org/wiki/Polyoxymethylene",
+  "Polypropylene PP-H": "en.wikipedia.org/wiki/Polypropylene",
+  "Polyethylene PE-UHMW": "www.roechling.com/us/industrial/materials/thermoplastics/industrial-plastics/pe/pe-uhmw-pe-1000/polystone-m-grey-astm-774088",
+  "PTFE": "en.wikipedia.org/wiki/Polytetrafluoroethylene",
+  "Polystyrene PS": "en.wikipedia.org/wiki/Polystyrene",
+  "TPU 95A": "www.utwente.nl/en/rpl/Data%20sheets/Ultimaker%203/TPU%2095A.pdf",
+  "E-glass/epoxy, woven fabric (M10E/3783)": "www.performance-composites.com/carbonfibre/mechanicalproperties_2.asp",
+  "FR-4 (glass/epoxy laminate)": "en.wikipedia.org/wiki/FR-4",
+  "Glass (soda-lime)": "en.wikipedia.org/wiki/Soda%E2%80%93lime_glass",
+  "Glass (borosilicate 3.3)": "cdn.standards.iteh.ai/samples/8993/bb194e27aa514eac8aa9c927feeed624/ISO-3585-1976.pdf",
+  "Fused silica": "en.wikipedia.org/wiki/Fused_quartz",
+  "Wood (oak)": "www.wood-database.com/white-oak/",
+  "Wood (beech)": "www.wood-database.com/american-beech/",
+  "Wood (birch)": "www.wood-database.com/yellow-birch/",
+  "Wood (maple)": "www.wood-database.com/hard-maple/",
+  "Wood (pine, southern)": "www.wood-database.com/loblolly-pine/",
+  "Wood (pine, eastern white)": "www.wood-database.com/eastern-white-pine/",
+  "Wood (western red cedar)": "www.wood-database.com/western-red-cedar/",
+  "Plywood (birch)": "en.wikipedia.org/wiki/Plywood",
+  "Concrete C25/30": "eurocodeapplied.com/design/en1992/concrete-design-properties",
+};
+
 export const LIBRARY: Material[] = ROWS.map(([cat, name, , eq, [density, E, nu, sy, su, k, cp, alpha], src, color]) =>
-  ({ name, density, cat, eq, E, nu, sy, su, k, cp, alpha, src, color: color ?? CATEGORIES.find(c => c.id === cat)!.color }));
+  ({ name, density, cat, eq, E, nu, sy, su, k, cp, alpha, src, ref: CHECKED[name], color: color ?? CATEGORIES.find(c => c.id === cat)!.color }));
 
 /** Russian names of the materials, categories and sources (spread into the dictionary in i18n.ru.ts). */
 export const MATERIAL_RU: Record<string, string> = Object.fromEntries([

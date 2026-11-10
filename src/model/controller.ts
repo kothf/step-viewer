@@ -238,7 +238,7 @@ function statusText(s: FeatureStatus) {
 }
 
 /** A part kept in a document tab while another document is shown. */
-export interface PartTab { store: DocStore; fileName: string; handle: FileSystemFileHandle | null; vault: ModelController["vault"]; returnTo: ModelController["returnTo"]; context: PartContext | null }
+export interface PartTab { store: DocStore; fileName: string; handle: FileSystemFileHandle | null; vault: ModelController["vault"]; returnTo: ModelController["returnTo"]; context: PartContext | null; sel: string | null }
 
 /**
  * Hole positions in the panel (FR-FT-052): on a face square to a world axis they show as the world coordinates
@@ -477,13 +477,17 @@ export class ModelController {
   // ---------- opening and closing ----------
 
   /** Starts a new, empty part. */
-  newPart() {
+  newPart(base?: string) {
     let n = 1;
     const used = new Set([...journalList().map(j => j.doc.name), ...(this.host.openNames?.() ?? [])]);
-    while (used.has(`Part${n}`)) n++;
-    this.load(newPart(`Part${n}`), "", null);
+    const name = (k: number) => (base ? (k === 1 ? base : `${base} ${k}`) : `Part${k}`);
+    while (used.has(name(n))) n++;
+    const doc = newPart(name(n));
+    this.load(doc, "", null);
     this.warm();
-    toast(t("New part: click Sketch, pick a plane and draw a closed profile, then Extrude."));
+    // The tutorial (FR-HLP-003) names its part and gives the directions itself.
+    if (!base) toast(t("New part: click Sketch, pick a plane and draw a closed profile, then Extrude."));
+    return doc.id;
   }
 
   warm() { this.kernel.warm(); }
@@ -503,7 +507,7 @@ export class ModelController {
     if (!this.store) return null;
     if (this.mode.kind === "sketch") this.ok();
     else if (this.mode.kind !== "none") this.exitMode(false);
-    const tab: PartTab = { store: this.store, fileName: this.fileName, handle: this.handle, vault: this.vault, returnTo: this.returnTo, context: this.context };
+    const tab: PartTab = { store: this.store, fileName: this.fileName, handle: this.handle, vault: this.vault, returnTo: this.returnTo, context: this.context, sel: this.selected };
     this.close();
     return tab;
   }
@@ -517,6 +521,8 @@ export class ModelController {
     this.setContext(tab.context);
     this.renderReturnBar();
     this.host.setDoc(this.docLabel());
+    // The row that was selected when the tab was left (FR-DOC-003).
+    if (tab.sel && (tab.sel.includes(":") || this.store?.feature(tab.sel))) { this.selected = tab.sel; this.renderTree(); this.drawDecor(); }
   }
 
   /** Whether the part has unsaved changes. */

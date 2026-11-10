@@ -35,6 +35,7 @@ let ARROW = 3, ARROW_KIND: NonNullable<DraftStyle["arrow"]> = "filled";
 let PREC_LIN: number | undefined, PREC_ANG: number | undefined;
 /** The drawing's default ± tolerance (mm, degrees) for dimensions without their own, set by `useStyle`. */
 let TOL_LIN: number | undefined, TOL_ANG: number | undefined;
+let DUAL = false, DUAL_PREC = 3;
 
 /** Applies a drawing's drafting style: text height (arrow length follows it), arrowhead kind and the ISO 128 line group. */
 export function useStyle(st: DraftStyle | undefined) {
@@ -43,6 +44,7 @@ export function useStyle(st: DraftStyle | undefined) {
   ARROW_KIND = st?.arrow ?? "filled";
   PREC_LIN = st?.lin; PREC_ANG = st?.ang;
   TOL_LIN = st?.tol; TOL_ANG = st?.atol;
+  DUAL = st?.dual === "in"; DUAL_PREC = st?.dualPrec ?? 3;
   const thick = st?.lines ?? 0.35, thin = { 0.25: 0.13, 0.35: 0.18, 0.5: 0.25, 0.7: 0.35 }[thick] ?? thick / 2;
   Object.assign(PEN_W, { thick, thin, hidden: thin, center: thin, phantom: thin, frame: Math.max(0.5, thick * 1.4) });
 }
@@ -206,20 +208,23 @@ export function dimText(a: DimAnnot, g: DimGeo, dec: string): { main: string; up
   const dt = g.k === "ang" ? TOL_ANG : TOL_LIN;
   const tol: Tol | undefined = a.tol ?? (dt ? { t: "sym", up: dt } : undefined);
   if (a.txt) return { main: a.txt };
-  if (g.k === "chamfer") return { main: `${pre}${f(g.value)} × ${fa(g.ang ?? 0)}°${suf}` };
+  // Dual dimension: the same length in inches, in brackets after the millimetres (angles have none).
+  const dual = g.k !== "ang" && (a.dual ?? DUAL);
+  const fi = (x: number) => fmtNum(x / 25.4, DUAL_PREC, dec), inch = (x: number, more = "") => (dual ? ` [${fi(x)}${more}]` : "");
+  if (g.k === "chamfer") return { main: `${pre}${f(g.value)}${inch(g.value)} × ${fa(g.ang ?? 0)}°${suf}` };
   const v = g.value;
-  if (tol?.t === "limit") return { main: "", up: pre + f(v + (tol.up ?? 0)) + suf, lo: pre + f(v - (tol.lo ?? 0)) + suf };
+  if (tol?.t === "limit") { const hi = v + (tol.up ?? 0), low = v - (tol.lo ?? 0); return { main: "", up: pre + f(hi) + suf + inch(hi), lo: pre + f(low) + suf + inch(low) }; }
   let main = pre + f(v);
-  if (tol?.t === "sym") return { main: `${main}±${f(tol.up ?? 0)}${suf}` };
+  if (tol?.t === "sym") return { main: `${main}±${f(tol.up ?? 0)}${suf}${inch(v, `±${fi(tol.up ?? 0)}`)}` };
   const sg = (x: number) => (x > 0 ? `+${f(x)}` : x < 0 ? `−${f(-x)}` : "0");
   if (tol?.t === "fit") {
     const code = tol.fit ?? "", lim = tol.show && tol.show !== "code" && !code.includes("/") ? fitLimits(code, v) : null;
-    if (!lim) return { main: `${main}${code}${suf}` };
+    if (!lim) return { main: `${main}${code}${suf}${inch(v)}` };
     // Deviations to the fit's own precision (µm), never rounded away by the dimension's.
     const fd = (x: number) => (x > 0 ? "+" : x < 0 ? "−" : "") + (x === 0 ? "0" : fmtNum(Math.abs(x), Math.max(prec ?? 0, 3), dec));
-    return { main: tol.show === "both" ? `${main}${code}${suf}` : main + suf, up: fd(lim.up), lo: fd(lim.lo) };
+    return { main: (tol.show === "both" ? `${main}${code}${suf}` : main + suf) + inch(v), up: fd(lim.up), lo: fd(lim.lo) };
   }
-  main += suf;
+  main += suf + inch(v);
   if (tol?.t === "dev") return { main, up: sg(tol.up ?? 0), lo: sg(-(tol.lo ?? 0)) };
   return { main };
 }
@@ -937,7 +942,7 @@ export function centreMarks(v: DrawingView, pl: Placement, topo: Topo, P: (p: V3
   });
   // Cylinders, cones and tori seen from the side: one centreline per axis over all the faces on it. A cone or torus
   // counts when it goes all round (a taper, a countersink, a groove); a cylinder when its pieces of one radius do.
-  const axes = new Map<string, { a: P2; d: P2; t0: number; t1: number; sp: Map<string, number> }>();
+  const axes = new Map<string, { a: P2; d: P2; t0: number; t1: number; sp: Map<string, number>; half: Map<string, number> }>();
   for (const y of [...topo.cyls, ...(topo.revs ?? []).filter(q => q.k !== "sphere").map(q => ({ ...q, r: NaN, rk: `${q.k}:${q.o.map(x => x.toFixed(4))}` }))] as (MCyl & { rk?: string })[]) {
     if (Math.abs(dot3(y.ax, n)) > 1e-6) continue;
     const a3 = (t: number): V3 => [y.o[0] + y.ax[0] * t, y.o[1] + y.ax[1] * t, y.o[2] + y.ax[2] * t];
@@ -946,15 +951,17 @@ export function centreMarks(v: DrawingView, pl: Placement, topo: Topo, P: (p: V3
     if (d[0] < -1e-9 || (Math.abs(d[0]) < 1e-9 && d[1] < 0)) d = [-d[0], -d[1]];
     const off = p0[0] * -d[1] + p0[1] * d[0];
     const key = `${Math.atan2(d[1], d[0]).toFixed(5)},${off.toFixed(4)}`;
-    const g = axes.get(key) ?? { a: p0, d, t0: Infinity, t1: -Infinity, sp: new Map() };
+    const g = axes.get(key) ?? { a: p0, d, t0: Infinity, t1: -Infinity, sp: new Map(), half: new Map() };
     const t = (p: P2) => (p[0] - g.a[0]) * g.d[0] + (p[1] - g.a[1]) * g.d[1];
     g.t0 = Math.min(g.t0, t(p0), t(p1)); g.t1 = Math.max(g.t1, t(p0), t(p1));
     const rk = y.rk ?? y.r.toFixed(4);
     g.sp.set(rk, (g.sp.get(rk) ?? 0) + y.sp);
+    // A slot's end seen from the side: half a cylinder with material outside, keyed by where it sits along the axis.
+    if (y.in && !y.rk) { const hk = `${rk}|${Math.min(t(p0), t(p1)).toFixed(3)}`; g.half.set(hk, (g.half.get(hk) ?? 0) + y.sp); }
     axes.set(key, g);
   }
   for (const g of axes.values()) {
-    if (![...g.sp.values()].some(s => s >= 2 * Math.PI - 1e-3)) continue;
+    if (![...g.sp.values()].some(s => s >= 2 * Math.PI - 1e-3) && ![...g.half.values()].some(s => Math.abs(s - Math.PI) < 1e-3)) continue;
     const A = add2(g.a, g.d, g.t0 - ext), B = add2(g.a, g.d, g.t1 + ext);
     segs.push({ k: "l", c: 0, p: [A[0], A[1], B[0], B[1]] });
   }
@@ -1261,12 +1268,21 @@ export function bendRows(a: BendTableAnnot, bends: FlatBend[], P: (p: V3) => P2,
 /**
  * Model items (FR-DRW-020): each item goes to the first view where it reads best (looking along its
  * plane's normal, or for a depth, square to it), once per sheet; its dimension line sits outside the view.
+ * On each side of a view the shorter dimensions sit nearer the outline (so extension lines do not cross
+ * dimension lines), the stack starts beyond the dimensions already on that side, and the gaps are sheet
+ * millimetres whatever the view's scale. Radius and diameter texts that would land on another one turn aside.
  */
-export function placeItems(sheet: Sheet, items: ModelItem[], boxOf: (v: DrawingView) => [number, number, number, number] | null, uid: () => string): DimAnnot[] {
+export function placeItems(sheet: Sheet, items: ModelItem[], boxOf: (v: DrawingView) => [number, number, number, number] | null, uid: () => string,
+  scaleOf: (v: DrawingView) => number = () => 1): DimAnnot[] {
   const have = new Set((sheet.annots ?? []).map(a => (a.t === "dim" ? a.src : undefined)).filter(Boolean));
   const out: DimAnnot[] = [];
-  const stack = new Map<string, number>();
   const order = [...sheet.views].sort((a, b) => (a.kind ? 1 : 0) - (b.kind ? 1 : 0) || (a.parent ? 1 : 0) - (b.parent ? 1 : 0));
+  const r2 = (x: number) => Math.round(x * 100) / 100;
+  /** Dimensions waiting for a place in a stack: view + side → entries with the measured length. */
+  const stacks = new Map<string, { v: DrawingView; side: string; box: [number, number, number, number]; list: { d: DimAnnot; len: number; mid: P2 }[] }>();
+  /** Radius/diameter texts placed so far, per view (existing ones included). */
+  const round = new Map<string, P2[]>();
+  for (const a of sheet.annots ?? []) if (a.t === "dim" && (a.k === "rad" || a.k === "dia") && a.pos) (round.get(a.view) ?? round.set(a.view, []).get(a.view)!).push(a.pos);
   for (const it of items) {
     if (have.has(it.src)) continue;
     for (const v of order) {
@@ -1275,6 +1291,7 @@ export function placeItems(sheet: Sheet, items: ModelItem[], boxOf: (v: DrawingV
       if (it.side ? c > 1e-6 : c < 1 - 1e-6) continue;
       const box = boxOf(v);
       if (!box) continue;
+      const g = 1 / (scaleOf(v) || 1);
       const [a, b] = it.p.map(P);
       let k: DimAnnot["k"] = it.k === "lin" ? "al" : it.k;
       if (it.k === "lin") {
@@ -1282,22 +1299,48 @@ export function placeItems(sheet: Sheet, items: ModelItem[], boxOf: (v: DrawingV
         k = Math.abs(dd[1]) < 1e-6 * (Math.abs(dd[0]) || 1) ? "h" : Math.abs(dd[0]) < 1e-6 * (Math.abs(dd[1]) || 1) ? "v" : "al";
         if (Math.abs(k === "h" ? b[0] - a[0] : k === "v" ? b[1] - a[1] : Math.hypot(b[0] - a[0], b[1] - a[1])) < 1e-6) break;
       }
-      let pos: P2;
+      const d: DimAnnot = { id: uid(), t: "dim", view: v.id, k, refs: [{ pt: it.p[0] }, { pt: it.p[1] }], pos: [0, 0], src: it.src };
+      const mid: P2 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
       if (k === "rad" || k === "dia") {
-        const c2 = a, r = Math.hypot(b[0] - a[0], b[1] - a[1]), dirv = unit2([b[0] - a[0], b[1] - a[1]], [Math.SQRT1_2, Math.SQRT1_2]);
-        pos = [c2[0] + dirv[0] * (r + 8), c2[1] + dirv[1] * (r + 8)];
+        const r = Math.hypot(b[0] - a[0], b[1] - a[1]), d0 = unit2([b[0] - a[0], b[1] - a[1]], [Math.SQRT1_2, Math.SQRT1_2]);
+        const taken = round.get(v.id) ?? round.set(v.id, []).get(v.id)!;
+        let pos: P2 = [a[0] + d0[0] * (r + 8 * g), a[1] + d0[1] * (r + 8 * g)];
+        // Turn aside in 30° steps while another radius/diameter text sits within 7 mm on the sheet.
+        for (let i = 1; i < 12 && taken.some(q => Math.hypot(q[0] - pos[0], q[1] - pos[1]) < 7 * g); i++) {
+          const t = (i % 2 ? 1 : -1) * Math.ceil(i / 2) * Math.PI / 6, cs = Math.cos(t), sn = Math.sin(t);
+          pos = [a[0] + (d0[0] * cs - d0[1] * sn) * (r + 8 * g), a[1] + (d0[0] * sn + d0[1] * cs) * (r + 8 * g)];
+        }
+        d.pos = [r2(pos[0]), r2(pos[1])];
+        taken.push(d.pos);
+      } else if (k === "h" || k === "v") {
+        // Outside the view on the side nearer the measured points; the place in the stack comes later.
+        const cx = (box[0] + box[2]) / 2, cy = (box[1] + box[3]) / 2;
+        const side = k === "h" ? (mid[1] >= cy ? "t" : "b") : (mid[0] >= cx ? "r" : "l"), key = `${v.id}|${side}`;
+        const st = stacks.get(key) ?? stacks.set(key, { v, side, box, list: [] }).get(key)!;
+        st.list.push({ d, len: Math.abs(k === "h" ? b[0] - a[0] : b[1] - a[1]), mid });
       } else {
-        // Outside the view on the side nearer the measured points, stacked 8 mm apart.
-        const mid: P2 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], cx = (box[0] + box[2]) / 2, cy = (box[1] + box[3]) / 2;
-        let side: string, p: P2;
-        if (k === "h") { side = mid[1] >= cy ? "t" : "b"; const s = stack.get(v.id + side) ?? 0; p = [mid[0], side === "t" ? box[3] + 10 + 8 * s : box[1] - 10 - 8 * s]; stack.set(v.id + side, s + 1); }
-        else if (k === "v") { side = mid[0] >= cx ? "r" : "l"; const s = stack.get(v.id + side) ?? 0; p = [side === "r" ? box[2] + 10 + 8 * s : box[0] - 10 - 8 * s, mid[1]]; stack.set(v.id + side, s + 1); }
-        else { const d = unit2([b[0] - a[0], b[1] - a[1]]), nn: P2 = [-d[1], d[0]]; p = [mid[0] + nn[0] * 10, mid[1] + nn[1] * 10]; }
-        pos = p;
+        const dd = unit2([b[0] - a[0], b[1] - a[1]]), nn: P2 = [-dd[1], dd[0]];
+        d.pos = [r2(mid[0] + nn[0] * 10 * g), r2(mid[1] + nn[1] * 10 * g)];
       }
-      out.push({ id: uid(), t: "dim", view: v.id, k, refs: [{ pt: it.p[0] }, { pt: it.p[1] }], pos: [Math.round(pos[0] * 100) / 100, Math.round(pos[1] * 100) / 100], src: it.src });
+      out.push(d);
       break;
     }
+  }
+  for (const { v, side, box, list } of stacks.values()) {
+    const g = 1 / (scaleOf(v) || 1), hz = side === "t" || side === "b", sg = side === "t" || side === "r" ? 1 : -1;
+    const edge = side === "t" ? box[3] : side === "b" ? box[1] : side === "r" ? box[2] : box[0];
+    // Start beyond the dimensions of this kind already outside this side of the view.
+    let from = 10 * g;
+    for (const a of sheet.annots ?? []) {
+      if (a.t !== "dim" || a.view !== v.id || a.k !== (hz ? "h" : "v") || !a.pos) continue;
+      const o = sg * ((hz ? a.pos[1] : a.pos[0]) - edge);
+      if (o > 0) from = Math.max(from, o + 8 * g);
+    }
+    list.sort((x, y) => x.len - y.len);
+    list.forEach((e, i) => {
+      const o = edge + sg * (from + 8 * g * i);
+      e.d.pos = hz ? [r2(e.mid[0]), r2(o)] : [r2(o), r2(e.mid[1])];
+    });
   }
   return out;
 }

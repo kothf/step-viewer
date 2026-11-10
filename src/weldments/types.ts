@@ -129,8 +129,14 @@ export interface GussetFeature {
   /** Polygonal profile: the outer corner is cut off, leaving `d3` along each leg's end. */
   shape: "tri" | "poly";
   d3?: Num;
-  /** Inner corner chamfer (clears the weld between the members). */
+  /** Polygonal profile: the flat at the end of leg 2 (along face 1's direction) when it differs from `d3`. */
+  d4?: Num;
+  /** Polygonal profile: the sloping edge's angle from face 1 (radians); sets the flat at the end of leg 2 instead of `d4`. */
+  polyAngle?: Num;
+  /** Inner corner chamfer (clears the weld between the members): the distance along face 1, and along face 2 unless `chamfer2`. */
   chamfer?: Num;
+  /** The chamfer's distance along face 2 when it differs. */
+  chamfer2?: Num;
   loc: "mid" | "start" | "end";
   /** Moves the plate from its location along the corner line (from the start or end inwards; from the middle towards the end). */
   offset?: Num;
@@ -152,6 +158,8 @@ export interface WeldBeadFeature {
   inter?: { len: Num; pitch: Num; stagger?: boolean };
   /** From/to length: the bead only from `start` along each chain of edges for `len` (from the chain's other end when `flip`); intermittent welds fill this span. */
   span?: { start: Num; len: Num; flip?: boolean };
+  /** Weld both sides: each flat face of set 1 also brings the face on the other side of its plate (the nearest flat face of the same body facing the opposite way behind it). */
+  both?: boolean;
   /** false hides the weld symbol in the view. */
   symbol?: false;
   /** Weld all around (ISO 2553 circle at the knee of the symbol). */
@@ -225,4 +233,17 @@ export function splitSubs(items: CutItem[], subs: SubWeld[] | undefined): CutIte
 /** The key of a corner in `MemberFeature.corners`: the meeting segments' ids, sorted, joined with "+". */
 export function cornerKey(ents: string[]): string {
   return [...ents].sort().join("+");
+}
+
+/** Stock to buy for a cut list: per profile (member description), the number of pieces and their summed length in mm; `skip` leaves items out (excluded ones). */
+export function stockTotals(items: CutItem[], skip?: (c: CutItem) => boolean): { desc: string; pieces: number; length: number }[] {
+  const out = new Map<string, { desc: string; pieces: number; length: number }>();
+  for (const c of items) {
+    if (c.kind !== "member" || skip?.(c)) continue;
+    const r = out.get(c.desc) ?? { desc: c.desc, pieces: 0, length: 0 };
+    r.pieces += c.qty;
+    r.length += (c.length ?? 0) * c.qty;
+    out.set(c.desc, r);
+  }
+  return [...out.values()].map(r => ({ ...r, length: Math.round(r.length * 10) / 10 }));
 }

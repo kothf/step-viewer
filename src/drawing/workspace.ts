@@ -1673,7 +1673,7 @@ export class DrawingWorkspace {
   private insertItems() {
     if (!this.facts) { toast(t("The drawing's model is still loading.")); return; }
     if (!this.facts.items.length) { toast(t("The model has no dimensions to import: model items come from a part's sketches and extrudes."), true); return; }
-    const add = placeItems(this.sheet, this.facts.items, v => this.placements.get(v.id)?.box ?? null, () => uid("a_"));
+    const add = placeItems(this.sheet, this.facts.items, v => this.placements.get(v.id)?.box ?? null, () => uid("a_"), v => viewScale(this.sheet, v));
     if (!add.length) { toast(t("Every model item is on the sheet already, or no view shows it square on.")); return; }
     this.store!.change("Model items", d => { const S = d.sheets[this.sheetIdx]; (S.annots ??= []).push(...add); });
     toast(t("{n} model dimension inserted|{n} model dimensions inserted", { n: add.length }), "success");
@@ -1742,7 +1742,7 @@ export class DrawingWorkspace {
     const sh = this.sheet;
     if (a.t === "dim") {
       const v = findView(sh, a.view), g = v ? dimGeo(a.src ? { ...a, refs: (() => { const it = this.factsOf(a.view)?.items.find(i => i.src === a.src); return it ? [{ pt: it.p[0] }, { pt: it.p[1] }] : a.refs; })() } : a, projector(viewDir(sh, v)).P, this.factsOf(a.view)?.topo ?? null) : null;
-      const val = g ? (g.k === "ang" ? null : dimText({ ...a, tol: { t: "none" }, txt: undefined }, g, this.ctx().dec).main) : "?";
+      const val = g ? (g.k === "ang" ? null : dimText({ ...a, tol: { t: "none" }, txt: undefined, dual: false }, g, this.ctx().dec).main) : "?";
       // With a drawing default tolerance, no tolerance of its own reads "Document" and "None" turns the default off.
       const dflt = a.k === "ang" ? this.doc.style?.atol : a.k === "chamfer" ? undefined : this.doc.style?.tol;
       const tol = a.tol?.t ?? "";
@@ -1761,6 +1761,7 @@ export class DrawingWorkspace {
         <label class="drw-f">${esc(t("Suffix"))}<input data-d="suf" value="${esc(a.suf ?? "")}" translate="no"></label>
         <label class="drw-f">${esc(t("Text instead of the value"))}<input data-d="txt" value="${esc(a.txt ?? "")}" translate="no"></label>
         <label class="drw-chk"><input type="checkbox" data-d="insp"${a.insp ? " checked" : ""}> ${esc(t("Inspection dimension"))}</label>
+        ${a.k !== "ang" ? `<label class="drw-chk"><input type="checkbox" data-d="dual"${a.dual ?? this.doc.style?.dual === "in" ? " checked" : ""}> ${esc(t("Dual dimension (inches in brackets)"))}</label>` : ""}
       </fieldset>
       <fieldset class="pm-group"><legend>${esc(t("Tolerance"))}</legend>
         <div class="seg drw-seg drw-tolseg" role="radiogroup" aria-label="${esc(t("Tolerance"))}">${([...(dflt ? [["", "Document"], ["none", "None"]] : [["", "None"]]), ["sym", "±"], ["dev", "+/−"], ["limit", "Limits"], ["fit", "Fit"]] as [string, string][]).map(([k, l]) => `<button role="radio" aria-checked="${tol === k}" class="${tol === k ? "on" : ""}" data-tolt="${k}">${esc(t(l))}</button>`).join("")}</div>
@@ -1900,6 +1901,7 @@ export class DrawingWorkspace {
       if (a.t === "dim") {
         if (k === "k") a.k = val as DimAnnot["k"];
         else if (k === "insp") { if ((el as HTMLInputElement).checked) a.insp = true; else delete a.insp; }
+        else if (k === "dual") { const on = (el as HTMLInputElement).checked; if (on === (this.doc.style?.dual === "in")) delete a.dual; else a.dual = on; }
         else if (k === "prec") { if (val === "") delete a.prec; else a.prec = +val; }
         else if (k === "pre" || k === "suf" || k === "txt") { if (val) a[k] = val; else delete a[k]; }
         else if (a.tol && (k === "up" || k === "lo")) a.tol[k] = num(val);
@@ -2551,6 +2553,8 @@ export class DrawingWorkspace {
         <label class="drw-f">${esc(t("Angle decimals"))}<select data-st="ang"><option value=""${this.doc.style?.ang == null ? " selected" : ""}>${esc(t("Auto"))}</option>${[0, 1, 2, 3, 4].map(n => `<option value="${n}"${this.doc.style?.ang === n ? " selected" : ""}>${n}</option>`).join("")}</select></label>
         <label class="drw-f">${esc(t("Default tolerance (±)"))}<input data-st="tol" inputmode="decimal" value="${this.doc.style?.tol ?? ""}" placeholder="${esc(t("None"))}"></label>
         <label class="drw-f">${esc(t("Default angle tolerance (±°)"))}<input data-st="atol" inputmode="decimal" value="${this.doc.style?.atol ?? ""}" placeholder="${esc(t("None"))}"></label>
+        <label class="drw-f">${esc(t("Dual dimensions"))}<select data-st="dual"><option value=""${this.doc.style?.dual ? "" : " selected"}>${esc(t("Off"))}</option><option value="in"${this.doc.style?.dual === "in" ? " selected" : ""}>${esc(t("Inches in brackets"))}</option></select></label>
+        ${this.doc.style?.dual ? `<label class="drw-f">${esc(t("Inch decimals"))}<select data-st="dualPrec">${[1, 2, 3, 4].map(n => `<option value="${n}"${(this.doc.style?.dualPrec ?? 3) === n ? " selected" : ""}>${n}</option>`).join("")}</select></label>` : ""}
       </fieldset>
       <fieldset class="pm-group"><legend>${esc(t("Title block"))}</legend>
         ${editableOf(sh).map(k => `<label class="drw-f">${esc(t(FIELD_LABEL[k]))}<input data-f="${k}" value="${esc(this.doc.props[k] ?? "")}" placeholder="${esc(String(f[k] ?? ""))}"${k === "litera" ? ' maxlength="3"' : ""} translate="no"></label>`).join("")}
@@ -2898,7 +2902,7 @@ export class DrawingWorkspace {
     }
     else if (el.dataset.st) {
       const k = el.dataset.st as keyof DraftStyle;
-      this.store.change("Drafting style", d => { const st: DraftStyle = { ...d.style }; if (k === "arrow") st.arrow = val as DraftStyle["arrow"]; else if (k === "tol" || k === "atol") { const x = parseFloat(val.replace(",", ".")); if (x > 0) st[k] = x; else delete st[k]; } else if (val === "") delete st[k]; else (st as Record<string, number>)[k] = +val; d.style = st; });
+      this.store.change("Drafting style", d => { const st: DraftStyle = { ...d.style }; if (k === "arrow") st.arrow = val as DraftStyle["arrow"]; else if (k === "dual") { if (val === "in") st.dual = "in"; else { delete st.dual; delete st.dualPrec; } } else if (k === "tol" || k === "atol") { const x = parseFloat(val.replace(",", ".")); if (x > 0) st[k] = x; else delete st[k]; } else if (val === "") delete st[k]; else (st as Record<string, number>)[k] = +val; d.style = st; });
     }
   }
 

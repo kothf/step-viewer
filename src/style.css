@@ -1292,6 +1292,7 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .mat-props .mat-table th { font-weight: 400; }
 .mat-props .mat-table td { font-family: inherit; font-size: inherit; white-space: nowrap; text-align: right; padding-right: 0; }
 .mat-props .mat-src { font-size: var(--fs-caption); margin: 6px 0; }
+.mat-props .mat-unver { color: var(--warn-text); font-weight: 600; }
 .mat-f { display: grid; grid-template-columns: minmax(0, 1fr) 96px 62px; align-items: center; gap: 6px; margin: 4px 0; font-size: var(--fs-caption); }
 .mat-f input { width: 100%; min-width: 0; }
 .mat-f input[type=color] { padding: 0; height: 26px; }
@@ -1305,6 +1306,8 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 }
 /* Sub-weldment folders in the cut list (tree) and their heading rows in the Cut list dialog. */
 .ft-row.wld-sub .ft-ico { color: var(--accent, #4dabf7); }
+#wld-cut table.wld-stock { margin-top: 10px; width: auto; }
+#wld-cut table.wld-stock caption { text-align: left; font-weight: 600; padding: 4px 0; }
 #wld-cut tr.wld-subrow th { text-align: left; padding-top: 8px; border-bottom: 1px solid var(--line, #ccc); }
 
 /* Magnifying glass (FR-SEL-010) */
@@ -1333,9 +1336,27 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 :root[data-theme="dark"] .mc-ival { background: none; }
 
 /* Heads-up view bar (FR-UI-022): view commands at the top centre of the view for parts and assemblies */
-.hud { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 5; display: flex; gap: 4px; padding: 3px; background: color-mix(in srgb, var(--panel) 90%, transparent); border: 1px solid var(--line); border-radius: 9px; box-shadow: var(--shadow); backdrop-filter: blur(3px); }
+.hud { position: absolute; top: 8px; left: 8px; z-index: 5; display: flex; gap: 4px; padding: 3px; background: color-mix(in srgb, var(--panel) 90%, transparent); border: 1px solid var(--line); border-radius: 9px; box-shadow: var(--shadow); backdrop-filter: blur(3px); }
 .hud[hidden] { display: none; }
 .hud .seg { background: var(--panel); }
 .hud [data-hud] { font-size: 14px; line-height: 1; padding: 4px 8px; }
 /* The status line, filter, fly-out tree and breadcrumbs start below the heads-up bar, so it never covers them. */
 #viewport:has(.hud:not([hidden])) .mc-bar { top: 48px; }
+
+/* Tutorial "Bracket in 10 steps" (FR-HLP-003): step list at the top of the right panel. */
+.empty-tut { margin-top: 8px; }
+.tut { border-bottom: 1px solid var(--line); padding: 8px 10px 10px; background: var(--accent-soft); }
+.tut-h { display: flex; align-items: center; gap: 8px; }
+.tut-h h2 { margin: 0; font-size: 14px; font-weight: 650; flex: 1; }
+.tut-n { font-size: var(--fs-caption); color: var(--muted); white-space: nowrap; }
+.tut-bar { height: 4px; border-radius: 2px; background: var(--line); margin: 6px 0; overflow: hidden; }
+.tut-bar > i { display: block; height: 100%; background: var(--accent-fill); transition: width .2s; }
+.tut-steps { list-style: none; margin: 0; padding: 0; }
+.tut-step { display: flex; align-items: baseline; gap: 8px; width: 100%; padding: 3px 2px; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; border-radius: 4px; }
+.tut-step:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.tut-mark { flex: none; width: 20px; height: 20px; line-height: 18px; border: 1px solid var(--muted); border-radius: 50%; text-align: center; font-size: 11px; }
+.tut-steps li.done .tut-mark { background: var(--accent-fill); border-color: var(--accent-fill); color: #fff; }
+.tut-steps li.done .tut-step { color: var(--muted); }
+.tut-steps li.cur .tut-step { font-weight: 650; }
+.tut-how, .tut-end { margin: 2px 0 6px 30px; font-size: 12.5px; }
+.tut-end { margin-left: 0; }

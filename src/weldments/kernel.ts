@@ -786,13 +786,15 @@ export function gusset(h: WeldHost, f: GussetFeature, prev: Named | null, frames
   const leg = (n: V3, other: V3) => { let d = unit(cross(L, n)); if (dot(d, other) < 0) d = mul(d, -1); return d; };
   const u1 = leg(a.n, b.n), u2 = leg(b.n, a.n);
   const d1 = f.d1.v, d2 = f.d2.v, c = Math.min(f.chamfer?.v ?? 0, Math.min(d1, d2) * 0.9);
+  // An unequal chamfer: `chamfer` along face 1, `chamfer2` along face 2.
+  const c2 = c > 1e-9 && f.chamfer2 ? Math.min(f.chamfer2.v, d2 * 0.9) : c;
   const at = (x: number, y: number) => add(add(P, mul(u1, x)), mul(u2, y));
   const pts: V3[] = c > 1e-9 ? [at(c, 0)] : [at(0, 0)];
   if (f.shape === "poly" && f.d3 && f.d3.v > 1e-9) {
-    const d3v = Math.min(f.d3.v, Math.min(d1, d2) * 0.9);
-    pts.push(at(d1, 0), at(d1, d3v), at(d3v, d2), at(0, d2));
+    const { d3, d4 } = gussetEnds(f);
+    pts.push(at(d1, 0), at(d1, d3), at(d4, d2), at(0, d2));
   } else pts.push(at(d1, 0), at(0, d2));
-  if (c > 1e-9) pts.push(at(0, c));
+  if (c > 1e-9) pts.push(at(0, c2));
   const shifted = pts.map(p => sub(p, mul(L, th / 2)));
   const mk = new oc.BRepBuilderAPI_MakePolygon_1();
   for (const p of shifted) mk.Add_1(new oc.gp_Pnt_3(p[0], p[1], p[2]));
@@ -880,6 +882,29 @@ export function weldBead(h: WeldHost, f: WeldBeadFeature, prev: Named | null, _f
     return set;
   };
   const set1 = grow(f.faces1), set2 = grow(f.faces2);
+  if (f.both) {
+    // Both sides: the other side of each flat set 1 face's plate = the nearest flat face of its body behind it, facing the opposite way.
+    const flat = (x: any): { p: V3; n: V3 } | null => {
+      const ad = new oc.BRepAdaptor_Surface_2(x, true);
+      if (ad.GetType() !== S.GeomAbs_Plane) return null;
+      const l = ad.Plane().Location(), p: V3 = [l.X(), l.Y(), l.Z()];
+      return { p, n: normalAt(x, p)! };
+    };
+    const solids = h.bodyList(prev);
+    for (const fa of [...set1]) {
+      const a = flat(fa), body = a && solids.find(b => b.faces.some(x => x.IsSame(fa)));
+      if (!a || !body) continue;
+      let best: any[] = [], bd = Infinity;
+      for (const g of body.faces) {
+        const b = flat(g);
+        if (!b || dot(a.n, b.n) > -1 + 1e-6) continue;
+        const d = dot(sub(a.p, b.p), a.n);
+        if (d < 1e-6) continue;
+        if (d < bd - 1e-6) { best = [g]; bd = d; } else if (Math.abs(d - bd) <= 1e-6) best.push(g);
+      }
+      for (const g of best) if (!set1.some(x => x.IsSame(g)) && !set2.some(x => x.IsSame(g))) set1.push(g);
+    }
+  }
   /** One straight or round stretch of the root: its ends, length, and a builder for the bead from distance a to b along it. */
   type Run = { p0: V3; p1: V3; len: number; make: (a: number, b: number) => void };
   const runs: Run[] = [];
@@ -1031,6 +1056,23 @@ function arcLength(h: WeldHost, part: Named, s: PathSeg): number {
   };
   const ts = edgePoints(h, part.shape).map(along);
   return Math.max(...ts) - Math.min(...ts);
+}
+
+/**
+ * A polygonal gusset's end flats: `d3` up face 2's direction at the end of leg 1 and `d4` along face 1's direction at the
+ * end of leg 2. `d4` is the feature's own, or follows the profile angle (the sloping edge's angle from face 1), else = d3.
+ */
+export function gussetEnds(f: GussetFeature): { d3: number; d4: number } {
+  const d1 = f.d1.v, d2 = f.d2.v;
+  const own = f.d4 || f.polyAngle;
+  const d3 = Math.min(f.d3?.v ?? 0, (own ? d2 : Math.min(d1, d2)) * 0.9);
+  if (f.polyAngle) {
+    const a = f.polyAngle.v;
+    const d4 = a > 1e-6 && a < Math.PI - 1e-6 ? d1 - (d2 - d3) / Math.tan(a) : -1;
+    if (!(d4 > 1e-6) || d4 > d1 * 2) throw new FeatureError("E-WLD-GUSSETANG", "The profile angle doesn't fit this gusset: make it steeper, or the leg along face 1 longer.");
+    return { d3, d4 };
+  }
+  return { d3, d4: f.d4 ? Math.min(f.d4.v, d1 * 0.9) : d3 };
 }
 
 /** The weldment cut list (FR-FT-121): members by profile, length and end angles; plates by size; weld beads by size. */

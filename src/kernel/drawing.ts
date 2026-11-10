@@ -446,7 +446,8 @@ function sectionEdges(oc: any, shape: any, cutter: any, capEdges: any, namer: (f
  */
 export interface MEdge { k: string; t: "l" | "c" | "o"; a: V3; b: V3; m: V3; c?: V3; ax?: V3; r?: number; sp?: number }
 /** A cylindrical face: axis point and direction, radius, extent along the axis from `o`, angle swept. */
-export interface MCyl { o: V3; ax: V3; r: number; v0: number; v1: number; sp: number; f?: string }
+/** `in`: material lies outside the cylinder (a hole, a slot end), not inside (a shaft). */
+export interface MCyl { o: V3; ax: V3; r: number; v0: number; v1: number; sp: number; f?: string; in?: boolean }
 /** A cone, torus or surface of revolution: its axis like a cylinder's, extent along it from `o`, angle swept (FR-DRW-023 centrelines). */
 /** A cone, torus, revolved face or sphere (`o` = its centre, `r` = its radius) and the span of its axis it covers. */
 export interface MRev { k: "cone" | "torus" | "rev" | "sphere"; o: V3; ax: V3; v0: number; v1: number; sp: number; r?: number; f?: string }
@@ -546,7 +547,7 @@ export function topology(oc: any, shape: any, names?: string[]): Topo {
       for (const p of [me.a, me.b, me.m]) { const v = dot([p[0] - o[0], p[1] - o[1], p[2] - o[2]], ax); v0 = Math.min(v0, v); v1 = Math.max(v1, v); }
     }
     const sp = Math.min(2 * Math.PI, sa.LastUParameter() - sa.FirstUParameter());
-    if (v1 > v0) cyls.push({ o, ax, r, v0, v1, sp, f: names?.[i - 1] ?? `f${i - 1}` });
+    if (v1 > v0) cyls.push({ o, ax, r, v0, v1, sp, f: names?.[i - 1] ?? `f${i - 1}`, ...(inward(f, ax3) ? { in: true } : {}) });
     if (v1 > v0 && inward(f, ax3)) bores.push({ o, ax, k: "cyl", v0, v1, r0: r, r1: r, sp, f: names?.[i - 1] ?? `f${i - 1}` });
   }
   emap.delete(); fmap.delete();

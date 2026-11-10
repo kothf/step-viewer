@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CATEGORIES, LIBRARY, MATERIAL_RU, SOURCES, findMaterial, parseCustom, resolveRef, searchMaterials, toRef, validMaterial } from "../../src/tools/materials";
+import { CATEGORIES, CHECKED, LIBRARY, MATERIAL_RU, SOURCES, findMaterial, parseCustom, resolveRef, searchMaterials, toRef, validMaterial } from "../../src/tools/materials";
 import { RU } from "../../src/i18n.ru";
 import { materialPattern } from "../../src/drawing/compose";
 
@@ -68,10 +68,35 @@ test("section hatching follows the library category of a material", () => {
   assert.equal(materialPattern("Cast steel GE240"), "ansi32");
   assert.equal(materialPattern("Ductile cast iron EN-GJS-400-15"), "ansi31");
   assert.equal(materialPattern("Gunmetal CuSn5Zn5Pb5-C"), "ansi33");
-  assert.equal(materialPattern("Cast aluminium EN AC-42100 T6 (AlSi7Mg0.3)"), "ansi38");
+  assert.equal(materialPattern("Cast aluminium EN AC-42100 T6 (AlSi7Mg0.3, sand cast)"), "ansi38");
   assert.equal(materialPattern("Die cast magnesium AZ91D"), "ansi38");
   assert.equal(materialPattern("Zinc alloy Zamak 3"), "ansi37");
   assert.equal(materialPattern("PTFE"), "ansi34");
   assert.equal(materialPattern("FR-4 (glass/epoxy laminate)"), "ansi34");
   assert.equal(materialPattern("Titanium Grade 2"), "ansi31");
+});
+
+test("checked references name library materials and are plain https pages; corrected values (1.375.0)", () => {
+  const keys = Object.keys(CHECKED);
+  assert.ok(keys.length >= 40, `only ${keys.length} checked`);
+  for (const k of keys) {
+    const m = LIBRARY.find(x => x.name === k);
+    assert.ok(m, `${k}: not in the library`);
+    assert.equal(m!.ref, CHECKED[k]);
+    assert.match(CHECKED[k], /^[a-z0-9.-]+\.[a-z]{2,}\/\S*$/, k);
+    assert.doesNotThrow(() => new URL(`https://${CHECKED[k]}`), k);
+  }
+  assert.equal(findMaterial("Die cast aluminium A380")!.density, 2.71);
+  assert.equal(findMaterial("Silicon carbide (sintered)")!.density, 3.15);
+  assert.equal(findMaterial("Inconel 718 (aged)")!.su, 1276);
+  assert.equal(findMaterial("Gold")!.E, 78);
+});
+
+test("second pass (1.382.0): most of the library has a checked reference, the rest is known", () => {
+  const un = LIBRARY.filter(m => !m.ref).map(m => m.name);
+  assert.ok(Object.keys(CHECKED).length >= 119, `${Object.keys(CHECKED).length} checked`);
+  assert.ok(un.length <= 51, `${un.length} unchecked`);
+  assert.ok(un.includes("PEEK") && un.includes("Wood (teak)"));
+  assert.equal(findMaterial("Stainless steel 1.4404 (X2CrNiMo17-12-2)")!.ref, "www.thyssenkrupp-materials.co.uk/stainless-steel-316l-14404.html");
+  assert.equal(findMaterial("Bronze CuSn8 (phosphor bronze)")!.E, 115);
 });

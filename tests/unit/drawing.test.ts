@@ -981,6 +981,18 @@ test("slot centre marks: a centreline over a straight slot and a cross line at e
   assert.ok(along && Math.min(along[0], along[2]) === -27 && Math.max(along[0], along[2]) === 27, `centreline 2 mm past the ends: ${along}`);
   const ends = ls.filter(q => Math.abs(q[0] - q[2]) < 1e-6).map(q => [q[0], Math.min(q[1], q[3]), Math.max(q[1], q[3])]).sort((a, b) => a[0] - b[0]);
   assert.deepEqual(ends, [[-20, -7, 7], [20, -7, 7]]);
+  // From the side each slot end (half a cylinder with material outside) gets its axis, 2 mm past the faces; from the
+  // end the two axes fall on one line.
+  const front = projector(ORIENTS.front);
+  const side = centreMarks({ id: "f", name: "f", orient: "front", x: 0, y: 0 }, pl, topo, front.P, front.n)
+    .flatMap(p => p.t === "l" ? [p.p.map(x => Math.round(x * 1000) / 1000)] : []).sort((a, b) => a[0] - b[0]);
+  assert.equal(side.length, 2, `two end axes side-on: ${JSON.stringify(side)}`);
+  assert.ok(side.every(q => q[0] === q[2] && Math.abs(Math.abs(q[3] - q[1]) - 24) < 1e-6) && side[0][0] === -20 && side[1][0] === 20, JSON.stringify(side));
+  const right = projector(ORIENTS.right);
+  assert.equal(centreMarks({ id: "r", name: "r", orient: "right", x: 0, y: 0 }, pl, topo, right.P, right.n).length, 1, "one line looking along the slot");
+  // An outside half round (a rounded bar end) and a quarter (an inside fillet) get none.
+  const bar = { edges: [], cyls: [{ o: [0, 0, 0] as V3, ax: [0, 1, 0] as V3, r: 5, v0: 0, v1: 20, sp: Math.PI }, { o: [30, 0, 0] as V3, ax: [0, 1, 0] as V3, r: 5, v0: 0, v1: 20, sp: Math.PI / 2, in: true }] };
+  assert.equal(centreMarks({ id: "t", name: "t", orient: "top", x: 0, y: 0 }, pl, bar, top.P, top.n).length, 0);
   // Pure: half circles facing each other pair up; facing the same way or of another radius do not.
   assert.equal(straightSlots([{ c: [0, 0], r: 3, m: [-1, 0] }, { c: [10, 0], r: 3, m: [1, 0] }]).length, 1);
   assert.equal(straightSlots([{ c: [0, 0], r: 3, m: [1, 0] }, { c: [10, 0], r: 3, m: [-1, 0] }]).length, 0, "bulging towards each other");
@@ -1129,6 +1141,25 @@ test("hole callout adds a cosmetic thread; drafting style sets default decimals 
   assert.equal(dimText(lin, { k: "h", pts: [], value: 100 }, ".").main, "100");
 });
 
+test("dual dimensions add inches in brackets; a dimension can opt in or out (FR-DRW-021)", async () => {
+  const { dimText, useStyle } = await import("../../src/drawing/annot");
+  const lin = { id: "a", t: "dim" as const, view: "v", k: "h" as const, refs: [], pos: [0, 0] as [number, number] };
+  const g = { k: "h" as const, pts: [], value: 25.4 };
+  assert.equal(dimText({ ...lin, dual: true }, g, ".").main, "25.4 [1.000]", "one dimension, three decimals by default");
+  try {
+    useStyle({ dual: "in", dualPrec: 2 });
+    assert.equal(dimText(lin, g, ",").main, "25,4 [1,00]");
+    assert.equal(dimText({ ...lin, dual: false }, g, ".").main, "25.4", "turned off for one dimension");
+    assert.equal(dimText({ ...lin, k: "dia" as const, suf: " H7" }, { k: "dia", pts: [], value: 50.8 }, ".").main, "Ø50.8 H7 [2.00]");
+    assert.equal(dimText({ ...lin, tol: { t: "sym", up: 0.254 } }, g, ".").main, "25.4±0.25 [1.00±0.01]");
+    assert.deepEqual(dimText({ ...lin, tol: { t: "limit", up: 25.4, lo: 0 } }, g, "."), { main: "", up: "50.8 [2.00]", lo: "25.4 [1.00]" });
+    assert.deepEqual(dimText({ ...lin, tol: { t: "dev", up: 0.2, lo: 0 } }, g, "."), { main: "25.4 [1.00]", up: "+0.2", lo: "0" });
+    assert.equal(dimText({ ...lin, k: "ang" as const }, { k: "ang", pts: [], value: 30 }, ".").main, "30°", "angles have no inch value");
+    assert.equal(dimText({ ...lin, txt: "REF" }, g, ".").main, "REF", "typed text stays as typed");
+  } finally { useStyle(undefined); }
+  assert.equal(dimText(lin, g, ".").main, "25.4");
+});
+
 test("drafting style sets a default ± tolerance; a dimension's own tolerance or None wins (FR-DRW-025)", async () => {
   const { dimText, useStyle } = await import("../../src/drawing/annot");
   const lin = { id: "a", t: "dim" as const, view: "v", k: "h" as const, refs: [], pos: [0, 0] as [number, number] };
@@ -1143,4 +1174,28 @@ test("drafting style sets a default ± tolerance; a dimension's own tolerance or
     assert.equal(dimText(ang, { k: "ang", pts: [], value: 30 }, ".").main, "30°", "no angle default: angles stay plain");
   } finally { useStyle(undefined); }
   assert.equal(dimText(lin, { k: "h", pts: [], value: 100 }, ".").main, "100");
+});
+
+test("model items stack by size, clear of each other, in sheet millimetres (FR-DRW-020)", async () => {
+  const { placeItems } = await import("../../src/drawing/annot");
+  const lin = (src: string, len: number) => ({ src, name: src, k: "lin" as const, p: [[-len / 2, 30, 0], [len / 2, 30, 0]] as [V3, V3], dir: [1, 0, 0] as V3, n: [0, 0, 1] as V3, value: len });
+  const dia = (src: string) => ({ src, name: src, k: "dia" as const, p: [[0, 0, 0], [5, 0, 0]] as [V3, V3], n: [0, 0, 1] as V3, value: 10 });
+  const sheet = { id: "s", name: "S", size: "A3" as const, scale: [1, 1] as [number, number], projection: "first" as const, format: "iso" as const, views: [{ id: "top", name: "top", orient: "top", x: 0, y: 0 }] as never[], annots: [] as never[] };
+  const box = (): [number, number, number, number] => [-50, -30, 50, 30];
+  let n = 0;
+  const id = () => `a${n++}`;
+  const items = [lin("a:100", 100), lin("a:20", 20), lin("a:40", 40), dia("a:d1"), dia("a:d2")] as never[];
+  const off = (ds: { src?: string; pos: [number, number] }[], src: string) => Math.abs(ds.find(d => d.src === src)!.pos[1]) - 30;
+  const placed = placeItems(sheet, items, box, id);
+  assert.deepEqual(placed.filter(d => d.k === "h").map(d => Math.sign(d.pos[1])).filter((v, i, a) => a.indexOf(v) === i).length, 1, "all on one side");
+  assert.deepEqual(["a:20", "a:40", "a:100"].map(s => off(placed, s)), [10, 18, 26], "shorter dimensions nearer the view");
+  const [d1, d2] = placed.filter(d => d.k === "dia");
+  assert.ok(Math.hypot(d1.pos[0] - d2.pos[0], d1.pos[1] - d2.pos[1]) >= 7 - 1e-6, "two diameters on one centre do not share a place");
+  // At 1:2 the gaps are the same on the sheet, so twice as large in model millimetres.
+  const half = placeItems(sheet, items, box, id, () => 0.5);
+  assert.deepEqual(["a:20", "a:40", "a:100"].map(s => off(half, s)), [20, 36, 52]);
+  // A later import starts beyond the dimensions already on that side.
+  const more = placeItems({ ...sheet, annots: placed as never[] }, [...items, lin("a:10", 10)] as never[], box, id);
+  assert.equal(more.length, 1);
+  assert.equal(off(more, "a:10"), 34);
 });

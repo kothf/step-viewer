@@ -10,7 +10,7 @@ import { CATEGORIES, allMaterials, findMaterial } from "../tools/materials";
 import { ANCHORS, PROFILE_TYPES, profileSizes, type Anchor, type ProfileType } from "./profiles";
 import { sketchProfile } from "../sketch/profile";
 import type { CutItem, Pierce, SubWeld, EndCapFeature, GussetFeature, MemberFeature, MemberGroup, TrimExtendFeature, WeldBeadFeature, WeldFeature, WeldSegRef } from "./types";
-import { capDir, cornerKey, cutKey } from "./types";
+import { capDir, cornerKey, cutKey, stockTotals } from "./types";
 import { pierceSpots, segOf } from "./kernel";
 
 export type WeldTool = "member" | "trimext" | "endcap" | "gusset" | "weldbead";
@@ -327,9 +327,12 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
         + help(t("Click two flat faces that meet at a corner, such as a beam and a post.")))
         + group(t("Profile"), sel("wshape", t("Shape"), [["tri", t("Triangular")], ["poly", t("Polygonal")]], f.shape)
           + numField("d1", t("Length along face 1"), f.d1, "length") + numField("d2", t("Length along face 2"), f.d2, "length")
-          + (f.shape === "poly" ? numField("d3", t("End width"), f.d3 ?? { v: 10 }, "length") : "")
+          + (f.shape === "poly" ? numField("d3", t("End width"), f.d3 ?? { v: 10 }, "length")
+            + sel("wpolyEnd", t("Other end"), [["same", t("Same width")], ["d4", t("Its own width")], ["angle", t("By profile angle")]], f.polyAngle ? "angle" : f.d4 ? "d4" : "same")
+            + (f.polyAngle ? numField("polyAngle", t("Profile angle"), f.polyAngle, "angle") : f.d4 ? numField("d4", t("End width at face 2"), f.d4, "length") : "") : "")
           + numField("thickness", t("Thickness"), f.thickness, "length")
-          + chk("wChamfer", !!f.chamfer, t("Chamfer the inner corner")) + (f.chamfer ? numField("chamfer", t("Distance"), f.chamfer, "length") : ""))
+          + chk("wChamfer", !!f.chamfer, t("Chamfer the inner corner")) + (f.chamfer ? numField("chamfer", f.chamfer2 ? t("Distance along face 1") : t("Distance"), f.chamfer, "length")
+            + chk("wChamfer2", !!f.chamfer2, t("Different distance along face 2")) + (f.chamfer2 ? numField("chamfer2", t("Distance along face 2"), f.chamfer2, "length") : "") : ""))
         + group(t("Location"), sel("wloc", t("Location"), [["mid", t("Mid point")], ["start", t("Start")], ["end", t("End")]], f.loc)
           + (f.loc !== "mid" ? sel("wgside", t("Thickness"), [["in", t("Inner side")], ["both", t("Both sides")], ["out", t("Outer side")]], f.side ?? "in") : "")
           + chk("wgOffset", !!f.offset, t("Offset")) + (f.offset ? numField("offset", t("Offset"), f.offset, "length") : "")
@@ -340,6 +343,7 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
     title: t("Fillet Bead"),
     body: group(t("Settings"), (f.size2 ? numField("size", t("Leg on set 1"), f.size, "length") + numField("size2", t("Leg on set 2"), f.size2, "length") : numField("size", t("Bead size"), f.size, "length"))
         + chk("wEqual", !f.size2, t("Equal leg lengths")) + chk("wTangent", f.tangent !== false, t("Tangent propagation"))
+        + chk("wBoth", !!f.both, t("Weld both sides")) + (f.both ? help(t("Each flat face of set 1 also brings the face on the other side of its plate, so a plate standing on another is welded along both sides.")) : "")
         + chk("wSymbol", f.symbol !== false, t("Show weld symbol"))
         + (f.symbol !== false ? chk("wAround", !!f.around, t("Weld all around")) + chk("wField", !!f.field, t("Field weld")) : "")
         + sel("wLen", t("Bead length"), [["full", t("Full length")], ["span", t("From/to length")]], f.span ? "span" : "full")
@@ -421,15 +425,24 @@ export function weldChange(f: WeldFeature, k: string, val: string | boolean, ctx
     if (k === "wCapCorner") return () => { if (val === "fillet") f.fillet = true; else delete f.fillet; };
   }
   if (f.type === "gusset") {
-    if (k === "wshape") return () => { f.shape = val as "tri" | "poly"; if (f.shape === "poly") f.d3 ??= { v: Math.round(Math.min(f.d1.v, f.d2.v) / 4) || 5 }; else delete f.d3; };
+    if (k === "wshape") return () => { f.shape = val as "tri" | "poly"; if (f.shape === "poly") f.d3 ??= { v: Math.round(Math.min(f.d1.v, f.d2.v) / 4) || 5 }; else { delete f.d3; delete f.d4; delete f.polyAngle; } };
+    if (k === "wpolyEnd") return () => {
+      delete f.d4; delete f.polyAngle;
+      const d3 = f.d3?.v ?? 10;
+      if (val === "d4") f.d4 = { v: d3 };
+      // Starts at the angle the symmetric profile has, so nothing jumps.
+      else if (val === "angle") f.polyAngle = { v: Math.atan2(Math.max(f.d2.v - d3, 1e-6), Math.max(f.d1.v - d3, 1e-6)) };
+    };
+    if (k === "wChamfer2") return () => { if (val) f.chamfer2 = { v: f.chamfer?.v ?? 5 }; else delete f.chamfer2; };
     if (k === "wloc") return () => { f.loc = val as GussetFeature["loc"]; if (f.loc === "mid") delete f.side; };
     if (k === "wgside") return () => { if (val === "in") delete f.side; else f.side = val as "both" | "out"; };
     if (k === "wgOffset") return () => { if (val) f.offset = { v: 10 }; else delete f.offset; };
-    if (k === "wChamfer") return () => { if (val) f.chamfer = { v: 5 }; else delete f.chamfer; };
+    if (k === "wChamfer") return () => { if (val) f.chamfer = { v: 5 }; else { delete f.chamfer; delete f.chamfer2; } };
   }
   if (f.type === "weldbead" && k === "wEqual") return () => { if (val) delete f.size2; else f.size2 = { v: f.size.v * 1.5 }; };
   if (f.type === "weldbead" && k === "wTangent") return () => { if (val) delete f.tangent; else f.tangent = false; };
   if (f.type === "weldbead" && k === "wSymbol") return () => { if (val) delete f.symbol; else f.symbol = false; };
+  if (f.type === "weldbead" && k === "wBoth") return () => { if (val) f.both = true; else delete f.both; };
   if (f.type === "weldbead" && k === "wAround") return () => { if (val) f.around = true; else delete f.around; };
   if (f.type === "weldbead" && k === "wField") return () => { if (val) f.field = true; else delete f.field; };
   if (f.type === "weldbead" && k === "wLen") return () => { if (val === "span") f.span ??= { start: { v: 0 }, len: { v: 50 } }; else delete f.span; };
@@ -558,11 +571,11 @@ export function weldPick(ctx: WeldCtx, e: PointerEvent, f: WeldFeature, focus: s
 
 // ---------- weld symbols ----------
 
-/** A bead's weld symbol in ISO 2553 short form: ○ when welded all around, ⚑ for a field weld, fillet triangle, leg size z, and for intermittent welds the weld length, Z when staggered, and the pitch in brackets. */
+/** A bead's weld symbol in ISO 2553 short form: ○ when welded all around, ⚑ for a field weld, fillet triangle (two for a weld on both sides), leg size z, and for intermittent welds the weld length, Z when staggered, and the pitch in brackets. */
 export function weldSymbol(f: WeldBeadFeature): string {
   const n = (v: number) => String(Math.round(v * 100) / 100);
   const it = f.inter;
-  return (f.around ? "○ " : "") + (f.field ? "⚑ " : "") + `◺ z${n(f.size.v)}${f.size2 && Math.abs(f.size2.v - f.size.v) > 1e-9 ? `×${n(f.size2.v)}` : ""}` + (it ? ` ${n(it.len.v)}${it.stagger ? " Z" : ""} (${n(Math.max(it.pitch.v, it.len.v))})` : f.span ? ` ${n(f.span.len.v)}` : "");
+  return (f.around ? "○ " : "") + (f.field ? "⚑ " : "") + `${f.both ? "◺◹" : "◺"} z${n(f.size.v)}${f.size2 && Math.abs(f.size2.v - f.size.v) > 1e-9 ? `×${n(f.size2.v)}` : ""}` + (it ? ` ${n(it.len.v)}${it.stagger ? " Z" : ""} (${n(Math.max(it.pitch.v, it.len.v))})` : f.span ? ` ${n(f.span.len.v)}` : "");
 }
 
 /** The weld symbols to show: shown, built beads up to the rollback bar; the one being edited from its draft. */
@@ -649,10 +662,21 @@ export function cutListCsv(items: CutItem[], density: number, props?: CutProps, 
     const m = itemMat(p), kg = (c.volume * (m?.density ?? density)) / 1e6, qty = c.kind === "bead" ? 1 : c.qty;
     lines.push([++n, qty, desc, c.length ?? "", c.kind === "member" ? c.angle1 ?? 0 : "", c.kind === "member" ? c.angle2 ?? 0 : "", m?.name ?? partMat, kg.toFixed(4), (kg * (c.kind === "bead" ? 1 : c.qty)).toFixed(4), p.part ?? "", p.note ?? "", ...(subs?.length ? [subName(c.sub)] : [])].map(q).join(","));
   });
+  const stock = stockTotals(items, c => !!props?.[cutKey(c)]?.excl);
+  if (stock.length) lines.push("", "Stock lengths", "Profile,Pieces,Total length (mm)", ...stock.map(r => [q(r.desc), r.pieces, r.length].join(",")));
   return `${lines.join("\r\n")}\r\n`;
 }
 
 const STEEL = 7.85;
+
+/** Stock lengths under the cut list: per profile, the pieces and their summed length (excluded items left out). */
+function stockHtml(items: CutItem[], props: CutProps): string {
+  const rows = stockTotals(items, c => !!props[cutKey(c)]?.excl);
+  if (!rows.length) return "";
+  const L = (mm: number) => (mm * UNITS[units.current].f).toLocaleString(undefined, { maximumFractionDigits: 1 });
+  return `<table class="v-table wld-stock"><caption>${esc(t("Stock lengths"))}</caption><thead><tr><th>${esc(t("Section"))}</th><th>${esc(t("Pieces"))}</th><th>${esc(t("Total length"))} (${esc(units.current)})</th></tr></thead><tbody>`
+    + rows.map(r => `<tr data-stock><td translate="no">${esc(r.desc)}</td><td>${r.pieces}</td><td>${L(r.length)}</td></tr>`).join("") + "</tbody></table>";
+}
 
 /**
  * Opens the cut list dialog for the part's current cut list. Description, part number and notes of each item can be
@@ -689,7 +713,7 @@ export function showCutList(items: CutItem[] | undefined, doc: PartDoc, onProps?
         : r.excl ? "✓" : "";
       return `${head(i)}<tr data-ri="${i}"${r.excl ? ` class="wld-excl"` : ""}><td data-witem>${r.item || "—"}</td><td>${r.qty}</td><td translate="no">${inp("desc", props[r.key]?.desc ?? "", r.auto, t("Description"))}</td><td>${r.length}</td><td>${r.a1}</td><td>${r.a2}</td><td>${mat}</td><td data-wkg>${kg(r.total)}</td><td>${inp("part", r.part, "", t("Part number"))}</td><td>${inp("note", r.note, "", t("Notes"))}</td><td>${ex}</td></tr>`;
     }).join("")
-    + `</tbody></table><p class="muted" data-wtotal><span data-wsum>${esc(t("Total mass {m} kg", { m: kg(total) }))}</span>${doc.material ? "" : ` · ${esc(t("Steel assumed (7.85 g/cm³): set the part's material in Properties."))}`}</p>`;
+    + `</tbody></table><p class="muted" data-wtotal><span data-wsum>${esc(t("Total mass {m} kg", { m: kg(total) }))}</span>${doc.material ? "" : ` · ${esc(t("Steel assumed (7.85 g/cm³): set the part's material in Properties."))}`}</p><div data-wstock>${stockHtml(items, props)}</div>`;
   dlg.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-cp]").forEach(el => el.addEventListener("change", () => {
     const r = rows[Number(el.dataset.ci)], f = el.dataset.cp as "desc" | "part" | "note" | "mat" | "excl";
     const p = { ...(props[r.key] ?? {}) };
@@ -708,6 +732,8 @@ export function showCutList(items: CutItem[] | undefined, doc: PartDoc, onProps?
     });
     const tot = dlg.querySelector<HTMLElement>("[data-wsum]");
     if (tot) tot.textContent = t("Total mass {m} kg", { m: kg(now.reduce((s, r) => s + r.total, 0)) });
+    const st = dlg.querySelector<HTMLElement>("[data-wstock]");
+    if (st) st.innerHTML = stockHtml(items, props);
   };
   dlg.querySelector<HTMLButtonElement>("[data-a=close]")!.onclick = () => dlg.close();
   dlg.querySelector<HTMLButtonElement>("[data-a=csv]")!.onclick = () => {

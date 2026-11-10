@@ -5,10 +5,71 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.373.0] - 2026-11-09
+## [1.383.0] - 2026-11-10
 
 ### Added
 - Tab and Slot (FR-FT-120): tabs grow out of a straight edge of a sheet face, in its plane, through the face they meet (on another body or the sheet itself), which gets matching slots with a clearance all round. Set the tab length and height, the number of tabs with an edge offset or a fixed spacing, and optionally round the slot corners. The tabs are part of the flat pattern, and slots cut in the sheet show in it like any cut.
+
+## [1.382.0] - 2026-11-10
+
+### Changed
+
+- **More material values checked (FR-MAT-001)**: 72 more library materials were compared with public pages (EN 10083, EN 10088, EN 10130, EN 10277 and EN 10293 tables, producer datasheets for stainless steels, aluminium, copper alloys, cast irons and plastics, the Wood Database and others), so 119 of the 170 materials now show **Checked against:** with a link. The checks confirmed the values; one changed: bronze CuSn8 elastic modulus 110 → 115 GPa.
+- A material that has not been compared with a public page yet says **Not checked against a public reference yet.** in the dialog (51 materials: tool steels, several plastics and rubbers, carbon and aramid composites, four woods, a few others). Its values still name their source.
+
+## [1.381.0] - 2026-11-10
+
+### Added
+
+- **Tutorial "Bracket in 10 steps" (FR-HLP-003)**: the start screen has a tutorial button. It opens a new part named Bracket with a step list at the top of the right panel: sketch the base, size it, extrude it, add the wall, a fillet, a hole, chamfers and a material. Each step ticks itself when the part has it and unticks on undo, the next step shows what to click, and any step can be opened again. The list follows the bracket's document tab and closes with ✕.
+
+## [1.380.0] - 2026-11-10
+
+### Added
+- Dual dimensions in drawings (FR-DRW-021): the sheet's drafting style has **Dual dimensions**, which adds every length in inches in brackets after the millimetres (25.4 [1.000]), with its own number of decimals. Tolerances follow (±, limits), angles stay as they are, and one dimension can be switched on or off with its **Dual dimension** box.
+
+## [1.379.0] - 2026-11-10
+
+### Added
+
+- **Stock lengths in the cut list (FR-FT-121)**: under the weldment cut list a **Stock lengths** table sums the members of each section: how many pieces and their total length, so the bar to order is read straight off. Items ticked **Exclude from cut list** are left out, and the CSV export ends with the same table.
+
+## [1.378.0] - 2026-11-10
+
+### Changed
+- Model items layout (FR-DRW-020): imported model dimensions are stacked outside the view with the shorter ones nearer the outline, so extension lines no longer cross dimension lines. The gaps (10 mm from the view, 8 mm apart) are sheet millimetres at any view scale, a later import starts beyond the dimensions already on that side, and radius or diameter texts on one centre turn aside instead of sharing a place.
+
+## [1.377.0] - 2026-11-10
+
+### Added
+
+- **Document tabs keep the view (FR-DOC-003)**: a part, an assembly or a model file comes back to its tab with the camera it was left with, and a part with its selected Features row, instead of the fitted isometric view.
+- **Section view in the heads-up bar (FR-UI-022)**: the bar at the top of the view has a Section view button: it cuts the model at the selected flat face, or through the middle on the front plane; a second click turns the cut off and keeps its planes, a third brings it back. The bar moves aside when it would reach the ✓ ✕ corner or the view cube.
+
+## [1.376.0] - 2026-11-10
+
+### Added
+
+- **Weld both sides (FR-FT-121)**: a fillet bead's new **Weld both sides** option also welds the other side of each flat plate picked in face set 1, so a plate standing on another gets its two fillets from one pick. Staggered intermittent welds then alternate between the two sides, and the weld symbol shows two triangles (◺◹).
+
+## [1.375.0] - 2026-11-10
+
+### Changed
+
+- **Material values checked (FR-MAT-001)**: the density, elastic modulus, yield and tensile strength of the library's materials were compared with public pages of the standards' tables, producers' data sheets and handbooks. 47 materials now show **Checked against:** with a link to the page in the Material dialog; the others keep only their named source.
+- Corrected: die cast aluminium A380 density 2.74 → 2.71 g/cm³; cast bronze CuSn12-C 8.6 → 8.7 g/cm³ and 100 → 97 GPa; gunmetal CuSn5Zn5Pb5-C 8.8 → 8.7 g/cm³; sintered silicon carbide 3.1 → 3.15 g/cm³; gold 79 → 78 GPa; aluminium bronze CuAl10Ni5Fe4 115 → 120 GPa; ASTM A500 Grade B shaped tube yield 315 → 317 MPa (46 ksi); Inconel 718 tensile 1241 → 1276 MPa (185 ksi, ASTM B637).
+- Cast aluminium EN AC-42100 T6 is named **sand cast**, which is what its 190 / 230 MPa are. The EN 10083 source says which size each condition is for (normalized ≤ 16 mm, quenched and tempered 16–40 mm), and the EN 10088 source that the sheet values are for hot rolled plate.
+
+## [1.374.0] - 2026-11-09
+
+### Added
+
+- **Gusset profile options (FR-FT-121)**: a polygonal weldment gusset can now have different flats at its two ends, as SolidWorks' polygonal profile does. **Other end** in the Gusset panel takes the same width as before, **Its own width** (the flat at face 2), or **By profile angle**, where the sloping edge's angle from face 1 sets it (it starts at the angle the profile already has, so nothing jumps). The inner corner's chamfer can take a **Different distance along face 2**, for a chamfer that clears an unequal leg weld. An angle too shallow for the legs fails the feature with a message saying what to change.
+
+## [1.373.0] - 2026-11-10
+
+### Added
+- Slot end axes from the side (FR-DRW-023): a view that looks at a slot from the side draws the axis of each rounded end (half a cylinder with material around it), like a hole's centreline. Rounded bar ends and fillets get none.
 
 ## [1.372.0] - 2026-11-09
 
@@ -2195,7 +2256,17 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.373.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.383.0...HEAD
+[1.383.0]: https://github.com/kothf/step-viewer/compare/v1.382.0...v1.383.0
+[1.382.0]: https://github.com/kothf/step-viewer/compare/v1.381.0...v1.382.0
+[1.381.0]: https://github.com/kothf/step-viewer/compare/v1.380.0...v1.381.0
+[1.380.0]: https://github.com/kothf/step-viewer/compare/v1.379.0...v1.380.0
+[1.379.0]: https://github.com/kothf/step-viewer/compare/v1.378.0...v1.379.0
+[1.378.0]: https://github.com/kothf/step-viewer/compare/v1.377.0...v1.378.0
+[1.377.0]: https://github.com/kothf/step-viewer/compare/v1.376.0...v1.377.0
+[1.376.0]: https://github.com/kothf/step-viewer/compare/v1.375.0...v1.376.0
+[1.375.0]: https://github.com/kothf/step-viewer/compare/v1.374.0...v1.375.0
+[1.374.0]: https://github.com/kothf/step-viewer/compare/v1.373.0...v1.374.0
 [1.373.0]: https://github.com/kothf/step-viewer/compare/v1.372.0...v1.373.0
 [1.372.0]: https://github.com/kothf/step-viewer/compare/v1.371.0...v1.372.0
 [1.371.0]: https://github.com/kothf/step-viewer/compare/v1.365.0...v1.371.0

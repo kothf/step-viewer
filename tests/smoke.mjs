@@ -1998,6 +1998,17 @@ try {
     const axMat = await axe();
     await mp.fill("#mat-q", "д16т");
     lib.gost = await matRows();
+    // 1.375.0: a material whose values were checked against a public page links to it.
+    await mp.fill("#mat-q", "S690QL");
+    const refLink = await mp.evaluate(() => { const l = document.querySelector("#mat-dlg .mat-src a"); return l && { href: l.href, text: l.textContent, rel: l.rel }; });
+    check(!!refLink && /^https:\/\/shop\.macsteel\.co\.za\//.test(refLink.href) && refLink.text === "shop.macsteel.co.za" && /noopener/.test(refLink.rel),
+      `model 1.375: a checked material shows the page its values were checked against (${JSON.stringify(refLink)})`);
+    // 1.382.0: a material without a checked reference says so.
+    const refNote = await mp.evaluate(() => !!document.querySelector("#mat-dlg .mat-unver"));
+    await mp.fill("#mat-q", "PEEK");
+    const unver = await mp.evaluate(() => ({ note: document.querySelector("#mat-dlg .mat-unver")?.textContent ?? "", link: !!document.querySelector("#mat-dlg .mat-src a") }));
+    check(!refNote && unver.note === "Not checked against a public reference yet." && !unver.link,
+      `model 1.382: a material with no checked reference is marked as not checked (${refNote}, ${JSON.stringify(unver)})`);
     await mp.fill("#mat-q", "6061");
     await mp.keyboard.press("ArrowDown");
     await mp.keyboard.press("ArrowUp");
@@ -2840,6 +2851,25 @@ try {
       const dir = await mp.evaluate(() => { const v = window.__sv.viewer, d = v.camera.position.clone().sub(v.controls.target).normalize(); return d.toArray().map(x => Math.round(x * 100) / 100); });
       check(hud?.shown && hud.views && hud.mode && hud.proj && hud.centred && !hud.inHeader && dir[2] > 0.99,
         `model 1.371: the heads-up view bar holds the view groups at the top centre of the view and Previous view goes back (${JSON.stringify({ hud, dir })})`);
+    }
+    // 1.377 (FR-UI-022): Section view in the heads-up bar cuts the model, a second click turns the cut off (the plane stays), a third on again; the bar keeps clear of the ✓ ✕ corner.
+    {
+      const st = () => mp.evaluate(() => { const b = document.querySelector('#hud [data-hud="section"]'), ps = window.__sv.section.planes; return { n: ps.length, on: ps.filter(p => p.enabled).length, pressed: b.getAttribute("aria-pressed") }; });
+      await mp.click('#hud [data-hud="section"]');
+      const s1 = await st();
+      await mp.click('#hud [data-hud="section"]');
+      const s2 = await st();
+      await mp.click('#hud [data-hud="section"]');
+      const s3 = await st();
+      await mp.evaluate(() => document.querySelector("#sec-clear").click());
+      const s4 = await st();
+      // While a command is open the bar keeps clear of the ✓ ✕ corner.
+      await runCmd(mp, "Shell");
+      await mp.waitForSelector("#mc-confirm:not([hidden])");
+      const clear = await mp.evaluate(() => { const h = document.querySelector("#hud").getBoundingClientRect(), c = document.querySelector("#mc-confirm").getBoundingClientRect(); return { hud: Math.round(h.right), ok: Math.round(c.left), free: h.right <= c.left || h.bottom <= c.top }; });
+      await mp.click("#mc-cancel");
+      check(s1.n === 1 && s1.on === 1 && s1.pressed === "true" && s2.n === 1 && s2.on === 0 && s2.pressed === "false" && s3.on === 1 && s3.pressed === "true" && s4.n === 0 && s4.pressed === "false" && clear.free,
+        `model 1.377: Section view in the heads-up bar turns the cut on and off, and the bar keeps clear of the confirmation corner (${JSON.stringify({ s1, s2, s3, s4, clear })})`);
     }
     // 1.371 (FR-UI-104): named views: Space → Save view stores the camera in the part; the picker brings it back.
     {
@@ -4748,6 +4778,14 @@ try {
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="items"]');
     await dp.waitForTimeout(150);
     check((await annots()).length === 4, "drawing: model items are not inserted twice");
+    {
+      // Their dimension lines sit 10 mm from the view on the sheet, whatever its scale.
+      const sc = await dp.evaluate(() => { const s = window.__sv.drw.doc().sheets[0].scale; return s[0] / s[1]; });
+      const near = (x, cands) => Math.min(...cands.map(c => Math.abs(Math.abs(x - c) - 10 / sc)));
+      const hd = an.find(a => a.src === "s1:d1"), vd = an.find(a => a.src === "s1:d2");
+      const eh = near(hd.pos[1], [-30, 30, 0, 60, -60]), ev = near(vd.pos[0], [-50, 50, 0, 100, -100]);
+      check(eh < 0.02 && ev < 0.02, `drawing: model items sit 10 mm outside the view on the sheet (scale ${sc}; off by ${eh.toFixed(3)} / ${ev.toFixed(3)})`);
+    }
     // Smart dimension: the front view's top edge, placed above it, is a horizontal 100; the hole's circle gives Ø16.
     await dp.click('#drw [data-a="dim"]');
     let [x, y] = await at(front.id, -20, 20);
@@ -8982,6 +9020,13 @@ try {
     await ap.press('.drw-props [data-st="tol"]', "Tab");
     const tol2 = await ap.evaluate(() => window.__sv.drw.doc().style);
     check(tol1 === 0.05 && !("tol" in tol2), `drawing: drafting style keeps a default ± tolerance, empty clears it (${JSON.stringify([tol1, tol2])})`);
+    // Dual dimensions (FR-DRW-021): inches in brackets with their own decimals; Off drops both keys.
+    await ap.selectOption('.drw-props [data-st="dual"]', "in");
+    await ap.selectOption('.drw-props [data-st="dualPrec"]', "2");
+    const dual1 = await ap.evaluate(() => window.__sv.drw.doc().style);
+    await ap.selectOption('.drw-props [data-st="dual"]', "");
+    const dual2 = await ap.evaluate(() => ({ st: window.__sv.drw.doc().style, sel: !!document.querySelector('.drw-props [data-st="dualPrec"]') }));
+    check(dual1.dual === "in" && dual1.dualPrec === 2 && !("dual" in dual2.st) && !("dualPrec" in dual2.st) && !dual2.sel, `drawing: drafting style keeps dual dimensions and their decimals, Off clears them (${JSON.stringify([dual1, dual2])})`);
     // 1.87.0 view properties (FR-DRW-017): break a projected view's alignment, drag it off line, then put it back in line.
     const pv0 = await ap.evaluate(() => { const sh = window.__sv.drw.doc().sheets[0]; const v = sh.views.find(x => x.parent && x.side && !x.kind); const p = sh.views.find(x => x.id === v.parent); return { id: v.id, x: v.x, y: v.y, px: p.x, py: p.y, side: v.side }; });
     await clickAt(pv0.x, pv0.y);
@@ -9430,7 +9475,7 @@ try {
     // Cut List… opens a table: two member rows and the total mass (steel assumed).
     await runCmd(mp, "Cut List");
     await mp.waitForSelector("#wld-cut[open]");
-    const cl = await mp.evaluate(() => ({ rows: document.querySelectorAll("#wld-cut tbody tr").length, total: document.querySelector("#wld-cut [data-wtotal]")?.textContent }));
+    const cl = await mp.evaluate(() => ({ rows: document.querySelectorAll("#wld-cut tbody tr:not([data-stock])").length, total: document.querySelector("#wld-cut [data-wtotal]")?.textContent }));
     // Item properties typed in the dialog are kept with the part and rename the item in the tree and the CSV.
     await mp.fill('#wld-cut input[data-cp="desc"][data-ci="0"]', "Top rail");
     await mp.press('#wld-cut input[data-cp="desc"][data-ci="0"]', "Tab");
@@ -9449,6 +9494,9 @@ try {
     // Exclude from cut list: the row stays (struck through) without an item number, and the total drops its mass; unticked it comes back.
     const sumOf = () => mp.evaluate(() => document.querySelector("#wld-cut [data-wsum]")?.textContent ?? "");
     const tot0 = num(await sumOf());
+    // Stock lengths under the list: one row per section with its pieces and summed length.
+    const stock = await mp.evaluate(() => [...document.querySelectorAll("#wld-cut tr[data-stock]")].map(tr => [...tr.children].map(td => td.textContent)));
+    check(stock.length >= 1 && stock.every(r => r[0] && Number(r[1]) >= 1 && num(r[2]) > 0), `weldments: stock lengths under the cut list (${JSON.stringify(stock)})`);
     await mp.check('#wld-cut input[data-cp="excl"][data-ci="1"]');
     await settle();
     const ex = await mp.evaluate(() => { const tr = document.querySelectorAll("#wld-cut tbody tr")[1]; return { item: tr.querySelector("[data-witem]")?.textContent, cls: tr.classList.contains("wld-excl"), excl: Object.values(window.__sv.model.store.doc.cutProps ?? {}).some(p => p.excl) }; });
@@ -9684,6 +9732,13 @@ try {
     await mp.click('#mc-pm input[data-k="wField"]');
     await settle();
     const symFlags = await mp.evaluate(() => document.querySelector('#mc-layer .wld-sym[data-weld="w5"]')?.textContent);
+    // Weld both sides: the symbol doubles its triangle; the plate's far side meets nothing here, so the bead stays valid.
+    await mp.click('#mc-pm input[data-k="wBoth"]');
+    await settle();
+    const bothSym = await mp.evaluate(() => ({ t: document.querySelector('#mc-layer .wld-sym[data-weld="w5"]')?.textContent, bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";") }));
+    check(!!bothSym.t?.includes("◺◹") && !bothSym.bad, `weldments: weld both sides shows on the symbol (${JSON.stringify(bothSym)})`);
+    await mp.click('#mc-pm input[data-k="wBoth"]');
+    await settle();
     // Unequal legs: unticking Equal leg lengths gives a second leg (1.5 × the first) and the symbol shows both.
     await mp.click('#mc-pm input[data-k="wEqual"]');
     await settle();
@@ -9745,6 +9800,36 @@ try {
     await settle();
     const glBad = await mp.evaluate(() => window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";"));
     check(gLoc.loc === "start" && gLoc.side === "both" && gLoc.off === 10 && gLoc.field && !glBad, `weldments: gusset location offset and thickness side (${JSON.stringify({ gLoc, glBad })})`);
+    await mp.evaluate(() => window.__sv.model.store.undo());
+    await settle();
+    // Polygonal gusset: the other end by profile angle starts at the symmetric profile's angle; 60° then moves the flat at
+    // face 2; an unequal chamfer of the inner corner takes its own distance along face 2.
+    const gVol = () => mp.evaluate(() => window.__sv.model.last().props?.volume ?? 0);
+    const gv0 = await gVol();
+    await mp.evaluate(() => window.__sv.modeller.editFeature("g5"));
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wshape"]', "poly");
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wpolyEnd"]', "angle");
+    await settle();
+    const gp0 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { d1: d.d1.v, d2: d.d2.v, d3: d.d3?.v, a: d.polyAngle?.v, field: !!document.querySelector('#mc-pm [data-num="polyAngle"]') }; });
+    await mp.fill('#mc-pm input[data-num="polyAngle"]', "60");
+    await mp.press('#mc-pm input[data-num="polyAngle"]', "Tab");
+    await settle();
+    await mp.click('#mc-pm input[data-k="wChamfer"]');
+    await settle();
+    await mp.click('#mc-pm input[data-k="wChamfer2"]');
+    await settle();
+    await mp.fill('#mc-pm input[data-num="chamfer2"]', "12");
+    await mp.press('#mc-pm input[data-num="chamfer2"]', "Tab");
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const gp1 = await mp.evaluate(() => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.find(x => x.id === "g5"); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), a: f.polyAngle?.v, c: f.chamfer?.v, c2: f.chamfer2?.v, t: f.thickness.v, v: l.props?.volume ?? 0 }; });
+    const gd4 = gp0.d1 - (gp0.d2 - gp0.d3) / Math.tan(Math.PI / 3);
+    const gWant = ((gp0.d1 * gp0.d2 - 0.5 * (gp0.d1 - gd4) * (gp0.d2 - gp0.d3) - 0.5 * 5 * 12) - 0.5 * gp0.d1 * gp0.d2) * gp1.t;
+    check(gp0.field && Math.abs(gp0.a - Math.atan2(gp0.d2 - gp0.d3, gp0.d1 - gp0.d3)) < 1e-9 && !gp1.bad && Math.abs(gp1.a - Math.PI / 3) < 1e-9 && gp1.c === 5 && gp1.c2 === 12 && Math.abs(gp1.v - gv0 - gWant) < 1e-3 * Math.abs(gWant),
+      `weldments: polygonal gusset by profile angle, unequal chamfer (${JSON.stringify({ gp0, gp1, dv: gp1.v - gv0, gWant })})`);
     await mp.evaluate(() => window.__sv.model.store.undo());
     await settle();
     // A curved member: a line, a tangent quarter arc and a line; the arc is listed as such and revolved, its cut length is the arc length.
@@ -10678,6 +10763,31 @@ try {
       seen.push(i ? `${s.name}:${s.w}${s.step ? "+step" : ""}` : "step");
     }
     check(seen.join() === "Part1:40,Part2:80,step,Part1:40,Part2:80,Part1:40", `tabs: switching between two part tabs and a STEP tab shows each part's own body, without the STEP header (${seen})`);
+    // 1.377 (FR-DOC-003): a tab comes back with the camera and the selected row it was left with.
+    {
+      const go = async i => {
+        await dp.click(`#doc-tabs .dt >> nth=${i} >> .dt-b`);
+        if (i === 0) await dp.waitForFunction(() => !window.__sv.model.store && window.__sv.viewer.parts.length > 1 && document.querySelector("#loading").hidden, null, { timeout: 60000 });
+        else { await dp.waitForFunction(n => window.__sv.model.store?.doc.name === n, i === 1 ? "Part1" : "Part2"); await idle(); }
+        await dp.waitForTimeout(150);
+      };
+      const cam = () => dp.evaluate(() => { const v = window.__sv.viewer.getView(); return [...v.t, ...v.p, v.h].map(x => Math.round(x * 100) / 100); });
+      await treeClick(dp, '#mc-tree .ft-row[data-id="x"]');
+      await dp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(0.3, -0.2, 1), false); v.camera.zoom *= 1.7; v.camera.updateProjectionMatrix(); v.invalidate(); });
+      const c1 = await cam();
+      await go(0);
+      await dp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(-1, 0.4, 0.2), false); v.invalidate(); });
+      const c0 = await cam();
+      await go(2);
+      const c2 = await cam();
+      await go(1);
+      const b1 = await cam(), sel = await dp.evaluate(() => document.querySelector("#mc-tree .ft-row.sel")?.dataset.id ?? null);
+      await go(0);
+      const b0 = await cam();
+      await go(1);
+      const same = (a, b) => a.every((x, k) => Math.abs(x - b[k]) < 0.02 * Math.max(1, Math.abs(x)));
+      check(same(c1, b1) && same(c0, b0) && !same(c1, c2) && sel === "x", `tabs 1.377: a tab comes back with its camera and its selected row (${JSON.stringify({ c1, b1, c0, b0, c2, sel })})`);
+    }
     // A lost WebGL context (GPU reset) blanks the view; once the browser gives it back the view draws again.
     const lost = await dp.evaluate(async () => {
       const v = window.__sv.viewer, gl = v.renderer.getContext(), ext = gl.getExtension("WEBGL_lose_context");
@@ -11044,6 +11154,14 @@ try {
     });
     const runs = sm.map(q => Math.hypot(q[2] - q[0], q[3] - q[1])).sort((a, b) => a - b);
     check(sm.length === 3 && Math.abs(runs[0] - 14) < 0.05 && Math.abs(runs[1] - 14) < 0.05 && Math.abs(runs[2] - 54) < 0.05, `drawing: slot centreline and end centre lines, no crosses (${JSON.stringify(sm)})`);
+    // Front view (views[0]): the axis of each rounded slot end, 2 mm past the plate's faces (FR-DRW-023).
+    const sf = await dp.evaluate(() => {
+      const v = window.__sv.drw.doc().sheets[0].views[0], p = window.__sv.drw.placement(v.id), U = x => (x - p.x) / p.s + p.uc, W = y => (y - p.y) / p.s + p.vc;
+      const box = [p.x + (p.box[0] - p.uc) * p.s - 5, p.x + (p.box[2] - p.uc) * p.s + 5];
+      return { orient: v.orient, ls: window.__sv.drw.prims().filter(q => q.layer === "CENTER" && q.t === "l" && Math.abs(q.p[1] - p.y) < 20 * p.s && q.p[0] > box[0] && q.p[0] < box[1]).map(q => [U(q.p[0]), W(q.p[1]), U(q.p[2]), W(q.p[3])].map(x => Math.round(x * 100) / 100)) };
+    });
+    const xs = sf.ls.filter(q => q[0] === q[2] && Math.abs(Math.abs(q[3] - q[1]) - 14) < 0.05).map(q => q[0]).sort((a, b) => a - b);
+    check(sf.ls.length === 2 && xs.length === 2 && xs[0] === -20 && xs[1] === 20, `drawing: a slot seen from the side gets an axis at each rounded end (${JSON.stringify(sf)})`);
     await ctx.close();
   }
 
@@ -11391,6 +11509,63 @@ try {
     await fp.click("#file-menu [data-f='recent:0']");
     await fp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
     check(true, "File menu: a recent document opens again from the list");
+    await ctx.close();
+  }
+  // 1.381 (FR-HLP-003): the tutorial from the start card makes a part and ticks its steps from the document.
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const tp = await ctx.newPage();
+    tp.on("pageerror", e => errors.push(e.message));
+    tp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await tp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await tp.goto(`${origin}/index.html?debug&nokernel`);
+    await tp.waitForFunction(() => window.__sv);
+    const state = () => tp.evaluate(() => {
+      const el = document.querySelector("#tutorial");
+      return { shown: !el.hidden, n: Number(el.querySelector(".tut-n")?.dataset.n ?? -1), done: [...el.querySelectorAll("li.done")].map(li => Number(li.dataset.i)), cur: Number(el.querySelector("li.cur")?.dataset.i ?? -1), how: el.querySelector(".tut-how")?.textContent ?? "", steps: el.querySelectorAll("li").length };
+    });
+    const waitN = n => tp.waitForFunction(n => Number(document.querySelector("#tutorial .tut-n")?.dataset.n) === n, n, { timeout: 15000 });
+    const hidden0 = await tp.evaluate(() => document.querySelector("#tutorial").hidden);
+    await tp.click("#empty-tut");
+    await tp.waitForFunction(() => !document.querySelector("#tutorial").hidden);
+    const t0 = await state();
+    const name = await tp.evaluate(() => window.__sv.modeller.store.doc.name);
+    check(hidden0 && t0.shown && t0.steps === 10 && t0.n === 0 && t0.cur === 0 && /Top \(XY\)/.test(t0.how) && name === "Bracket", `tutorial 1.381: the start card opens a part named Bracket with ten steps, the first one open (${JSON.stringify({ hidden0, t0, name })})`);
+    // A sketch with a dimensioned rectangle ticks steps 1 to 3; an extrude ticks the fourth.
+    await tp.evaluate(() => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), L = (id, a, b) => ({ id, t: "line", a, b });
+      window.__sv.modeller.store.change("Sketch", d => { d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", 0, 0), P("b", 80, 0), P("c", 80, 50), P("d", 0, 50), L("l1", "a", "b"), L("l2", "b", "c"), L("l3", "c", "d"), L("l4", "d", "a")] }); });
+    });
+    await waitN(2);
+    const t2 = await state();
+    await tp.evaluate(() => window.__sv.modeller.store.change("Dimension", d => { const s = d.features.find(f => f.id === "s"); s.dims.push({ id: "d1", name: "D1", t: "distance", e: ["a", "b"], val: { v: 80 }, pos: [40, -10] }, { id: "d2", name: "D2", t: "distance", e: ["b", "c"], val: { v: 50 }, pos: [90, 25] }); }));
+    await waitN(3);
+    await tp.evaluate(() => window.__sv.modeller.store.change("Extrude", d => { d.features.push({ id: "e", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 6 } }); }));
+    await waitN(4);
+    const t4 = await state();
+    check(t2.cur === 2 && t2.done.join() === "0,1" && t4.cur === 4 && t4.done.join() === "0,1,2,3" && /top face/.test(t4.how), `tutorial 1.381: the steps tick themselves as the part grows, and the next one opens (${JSON.stringify({ t2, t4 })})`);
+    // Undo unticks; a click on a done step shows its directions again; Russian has every text.
+    await tp.evaluate(() => window.__sv.modeller.undo());
+    await waitN(3);
+    await tp.click('#tutorial li[data-i="0"] .tut-step');
+    const back = await state();
+    await tp.click("#lang-btn");
+    await tp.waitForFunction(() => document.documentElement.lang === "ru");
+    const ru = await tp.evaluate(() => document.querySelector("#tutorial").textContent);
+    await tp.click("#lang-btn");
+    await tp.waitForFunction(() => document.documentElement.lang === "en");
+    check(back.n === 3 && /Top \(XY\)/.test(back.how) && /Кронштейн за 10 шагов/.test(ru) && /3 из 10/.test(ru) && !/[A-Za-z]{4,}/.test(ru.replace(/\(XY\)/g, "")), `tutorial 1.381: undo unticks a step, a done step opens again, and the list is in Russian (${JSON.stringify({ back, ru: ru.slice(0, 120) })})`);
+    // Another document hides the list, the bracket's tab brings it back, ✕ closes it for good.
+    await tp.click("#new-part");
+    await tp.waitForFunction(() => window.__sv.modeller.store?.doc.name === "Part1");
+    await tp.waitForFunction(() => document.querySelector("#tutorial").hidden);
+    await tp.evaluate(() => [...document.querySelectorAll("#doc-tabs .dt .dt-b")].find(b => /Bracket/.test(b.textContent)).click());
+    await tp.waitForFunction(() => !document.querySelector("#tutorial").hidden, null, { timeout: 15000 });
+    const again = await state();
+    await tp.click("#tutorial [data-a=close]");
+    await tp.waitForTimeout(600);
+    const closed = await tp.evaluate(() => document.querySelector("#tutorial").hidden);
+    check(again.n === 3 && closed, `tutorial 1.381: the list follows the bracket's tab and ✕ closes it (${JSON.stringify({ again, closed })})`);
     await ctx.close();
   }
 } catch (err) {

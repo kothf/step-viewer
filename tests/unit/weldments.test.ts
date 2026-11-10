@@ -3,11 +3,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Modeller } from "../../src/kernel/model";
-import { cutList, pierceSpots, type WeldHost } from "../../src/weldments/kernel";
+import { cutList, gussetEnds, pierceSpots, type WeldHost } from "../../src/weldments/kernel";
 import { PROFILE_TYPES, profileArea, profileShape, profileSizes } from "../../src/weldments/profiles";
 import type { Feature, PartDoc, SketchFeature, SkEnt, V2, V3, Sketch3dFeature } from "../../src/model/types";
-import type { MemberFeature } from "../../src/weldments/types";
-import { cutKey, splitSubs } from "../../src/weldments/types";
+import type { GussetFeature, MemberFeature } from "../../src/weldments/types";
+import { cutKey, splitSubs, stockTotals } from "../../src/weldments/types";
 import { occ } from "./occ";
 
 const doc = (features: Feature[]): PartDoc => ({ schema: 1, kind: "part", id: "d", name: "t", units: { length: "mm", decimals: 2 }, props: {}, features, rollback: null });
@@ -336,6 +336,20 @@ test("gusset faces on the two picked faces are named for the leg arrows (FR-FT-1
   near(centroid(m, r.body!.faces[on1[0].i])[2], 10);
   near(centroid(m, r.body!.faces[on2[0].i])[0], 20);
   near(r.volume - base.volume, 0.5 * 50 * 70 * 5, 1e-6);
+  // Polygonal profile: the same flat at both ends, a flat of its own at face 2, or the sloping edge at a profile angle.
+  const area = (d3: number, d4: number) => 50 * 70 - 0.5 * (50 - d4) * (70 - d3);
+  const vol = (gf: object) => run(m, doc([sk, plate, k, mem, { ...g, shape: "poly", d3: { v: 10 }, ...gf } as Feature])).volume - base.volume;
+  near(vol({}), area(10, 10) * 5, 1e-6);
+  near(vol({ d4: { v: 20 } }), area(10, 20) * 5, 1e-6);
+  near(vol({ polyAngle: { v: Math.PI / 3 } }), area(10, 50 - 60 / Math.tan(Math.PI / 3)) * 5, 1e-6);
+  near(vol({ polyAngle: { v: Math.atan2(60, 40) } }), area(10, 10) * 5, 1e-6);
+  assert.deepEqual(gussetEnds({ ...g, shape: "poly", d3: { v: 10 }, d4: { v: 20 } } as GussetFeature), { d3: 10, d4: 20 });
+  // Too shallow an angle runs the sloping edge past face 2: the feature fails.
+  assert.ok(!m.evaluate(doc([sk, plate, k, mem, { ...g, shape: "poly", d3: { v: 10 }, polyAngle: { v: 0.5 } } as Feature])).statuses.find(x => x.id === "g")!.ok);
+  // Unequal chamfer of the inner corner: 8 along face 1, 12 along face 2.
+  const tri = 0.5 * 50 * 70 * 5;
+  near(run(m, doc([sk, plate, k, mem, { ...g, chamfer: { v: 8 } } as Feature])).volume - base.volume, tri - 0.5 * 8 * 8 * 5, 1e-6);
+  near(run(m, doc([sk, plate, k, mem, { ...g, chamfer: { v: 8 }, chamfer2: { v: 12 } } as Feature])).volume - base.volume, tri - 0.5 * 8 * 12 * 5, 1e-6);
 });
 
 test("curved members: arcs of the path sketch are revolved, tangent joints stay open, a corner at an arc is mitred (FR-FT-121)", async () => {
@@ -518,4 +532,36 @@ test("sub-weldments split cut list items by their bodies", () => {
   assert.equal(cutKey(out[0]), cutKey(out[2]));
   // A body listed by two sub-weldments sits in the first.
   assert.deepEqual(splitSubs(items, [{ id: "x", name: "X", bodies: ["a"] }, { id: "y", name: "Y", bodies: ["a"] }]).filter(c => c.sub).map(c => c.sub), ["x"]);
+});
+
+test("fillet bead on both sides of a plate standing on another (FR-FT-121)", async () => {
+  const m = new Modeller(await occ());
+  const s1 = poly("s", [[-100, -100], [100, -100], [100, 100], [-100, 100]], true);
+  const base: Feature = { id: "p", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } };
+  const s2 = poly("t", [[-5, -50], [5, -50], [5, 50], [-5, 50]], true);
+  const stem: Feature = { id: "st", type: "extrude", name: "Extrude2", sketch: "t", op: "boss", end: "blind", depth: { v: 80 }, merge: false } as Feature;
+  const r0 = run(m, doc([s1, base, s2, stem]));
+  const side = r0.body!.names.map((n, i) => ({ n, c: centroid(m, r0.body!.faces[i]) })).find(x => x.n.startsWith("st:") && Math.abs(x.c[0] - 5) < 1e-6)!;
+  const bead: Feature = { id: "w", type: "weldbead", name: "Fillet Bead1", faces1: [{ name: side.n, hint: side.c }], faces2: [{ name: "p:end" }], size: { v: 4 }, tangent: false };
+  const one = run(m, doc([s1, base, s2, stem, bead]));
+  near(one.cut.find(c => c.kind === "bead")!.length!, 100, 1e-3);
+  const both = run(m, doc([s1, base, s2, stem, { ...bead, both: true } as Feature]));
+  const beads = both.cut.filter(c => c.kind === "bead");
+  near(beads.reduce((a, c) => a + c.length!, 0), 200, 1e-3);
+  near(both.volume - r0.volume, 2 * 8 * 100, 1e-3);
+  // The second bead sits on the plate's other side.
+  const xs = both.body!.names.map((n, i) => ({ n, c: centroid(m, both.body!.faces[i]) })).filter(x => x.n.startsWith("w:") && x.n.endsWith(":face")).map(x => Math.sign(x.c[0]));
+  assert.deepEqual(xs.sort(), [-1, 1]);
+});
+
+test("stock lengths of a cut list (FR-FT-121)", () => {
+  const items = [
+    { kind: "member" as const, desc: "SHS 40x40x3", qty: 3, length: 420, angle1: 0, angle2: 0, volume: 10, bodies: ["a", "b", "c"] },
+    { kind: "member" as const, desc: "SHS 40x40x3", qty: 1, length: 150.25, angle1: 45, angle2: 0, volume: 4, bodies: ["d"] },
+    { kind: "member" as const, desc: "CHS 33.7x2.6", qty: 2, length: 100, angle1: 0, angle2: 0, volume: 3, bodies: ["e", "f"] },
+    { kind: "bead" as const, desc: "4", qty: 2, length: 100, volume: 8, bodies: ["w1", "w2"] },
+    { kind: "plate" as const, desc: "PL 5", qty: 1, plate: [50, 50, 5] as [number, number, number], volume: 1, bodies: ["p"] },
+  ];
+  assert.deepEqual(stockTotals(items), [{ desc: "SHS 40x40x3", pieces: 4, length: 1410.3 }, { desc: "CHS 33.7x2.6", pieces: 2, length: 200 }]);
+  assert.deepEqual(stockTotals(items, c => c.qty === 3), [{ desc: "SHS 40x40x3", pieces: 1, length: 150.3 }, { desc: "CHS 33.7x2.6", pieces: 2, length: 200 }]);
 });
