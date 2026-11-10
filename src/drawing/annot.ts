@@ -710,7 +710,7 @@ export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: Ann
       // The tip stays on the edge's middle; the number is the component's item in the BOM.
       const e = refEdge(a.ref, ctx.topo), c = "e" in a.ref ? compOfKey(a.ref.e) : null, item = c && ctx.bom ? ctx.bom.itemOf(c) : null;
       const more = (a.stack ?? []).map(sc => String(ctx.bom?.itemOf(sc) ?? "?"));
-      r = balloonPrims(toSheet(pl, a.pos[0], a.pos[1]), e ? toSheet(pl, ...P(e.m)) : null, a.txt || (item ? String(item) : "?"), more);
+      r = balloonPrims(toSheet(pl, a.pos[0], a.pos[1]), e ? toSheet(pl, ...P(e.m)) : null, a.txt || (item ? String(item) : "?"), more, { shape: a.shape, lower: a.shape === "split" ? [c, ...(a.stack ?? [])].map(k => { const n = k ? ctx.bom?.itemOf(k) : null, row = n ? ctx.bom!.rows.find(x => x.item === n) : null; return row ? String(row.qty) : ""; }) : undefined });
       if (!e || (!a.txt && !item)) out.dangling.push(a.id);
     } else if (a.t === "btable") {
       const bends = ctx.bends ?? [];

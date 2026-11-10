@@ -1872,6 +1872,7 @@ export class DrawingWorkspace {
       return `<fieldset class="pm-group"><legend>${esc(t("Balloon"))}</legend>
         ${comp ? `<p class="drw-note">${esc(t("Component"))}: <b translate="no">${esc(comp)}</b>${item ? ` · ${esc(t("item {n}", { n: item }))}` : ""}</p>` : ""}
         <label class="drw-f">${esc(t("Text instead of the item number"))}<input data-d="btxt" value="${esc(a.txt ?? "")}" translate="no"></label>
+        <label class="drw-f">${esc(t("Style"))}<select data-d="bshape">${([["", "Circle"], ["split", "Circular split line"], ["tri", "Triangle"], ["hex", "Hexagon"], ["box", "Rectangle"], ["none", "Underline"]] as const).map(([v, l]) => `<option value="${v}"${(a.shape ?? "") === v ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>
         ${this.stackRows(a)}
       </fieldset>${del}`;
     }
@@ -1984,6 +1985,7 @@ export class DrawingWorkspace {
         else if (f[0] === "d") { const d = [0, 1, 2].map(j => r.datums[j] ?? ""); d[+f[1]] = val.trim().toUpperCase(); while (d.length && !d[d.length - 1]) d.pop(); r.datums = d; }
       } else if (a.t === "gtol" && k === "gall") { if ((el as HTMLInputElement).checked) a.around = true; else delete a.around; }
       else if (a.t === "datum" && k === "dl" && val.trim()) a.letter = val.trim().toUpperCase();
+      else if (a.t === "balloon" && k === "bshape") { if (val === "split" || val === "tri" || val === "hex" || val === "box" || val === "none") a.shape = val; else delete a.shape; }
       else if (a.t === "balloon" && k === "btxt") { if (val.trim()) a.txt = val.trim(); else delete a.txt; }
       else if (a.t === "balloon" && k === "bstack") { if (val) a.stack = [...(a.stack ?? []), val]; }
       else if (a.t === "table" && a.kind === "bom" && k === "bsub") { if (val) a.sub = val; else delete a.sub; }
