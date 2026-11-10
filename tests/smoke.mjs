@@ -11776,7 +11776,8 @@ try {
     const idle = () => dp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
     const plate = async w => {
       await dp.click("#new-part");
-      await dp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.last());
+      // A new part rebuilds at once now that a kernel worker is ready, so wait for the empty document, not for no result.
+      await dp.waitForFunction(() => window.__sv.model?.store?.doc.features.length === 0);
       await dp.evaluate(w => window.__sv.model.store.change("Plate", d => {
         const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
         d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -w / 2, -10), P("b", w / 2, -10), P("c", w / 2, 10), P("d", -w / 2, 10), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
