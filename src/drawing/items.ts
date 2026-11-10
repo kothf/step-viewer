@@ -121,7 +121,7 @@ export function modelItems(doc: PartDoc, frames: Record<string, Frame>, sketches
       const a = at(sfr, p.x, p.y), depth = f0.depth.v;
       items.push({ src: `${f0.id}:depth`, name: `${f0.name} depth`, k: "lin", p: [a, add(a, sfr.n, s * depth)], dir: sfr.n, n: sfr.n, side: true, value: depth });
     } else if (f0.type === "hole" && fr) {
-      holes.push({ id: f0.id, pts: f0.pts.map(([x, y]) => at(fr, x, y)), n: fr.n, f: f0 });
+      holes.push({ id: f0.id, pts: f0.pts.map(([x, y]) => at(fr, x, y)), n: f0.flip ? [-fr.n[0], -fr.n[1], -fr.n[2]] : fr.n, f: f0 });
     } else if (f0.type === "thread" && !f0.modelled && f0.edge && edgeCircle) {
       const e = edgeCircle(f0.edge);
       if (e) threads.push({ id: f0.id, ...e, d: f0.diameter.v, L: f0.upToEnd ? null : f0.length.v, internal: !!f0.internal, ...(f0.size ? { size: f0.size } : {}) });
