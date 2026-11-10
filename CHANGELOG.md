@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.489.0] - 2026-11-10
+
+### Fixed
+
+- Drawings: a view clicked in the drawing tree keeps the focus there, so Delete deletes it (drawings exam #36).
+- Drawings: Auto balloon keeps the balloons inside the drawing frame and off the title block; with no free room they move in between the view and the frame, clear of each other (drawings exam #39).
+
 ## [1.488.0] - 2026-11-10
 
 ### Added
@@ -3004,7 +3011,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.488.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.489.0...HEAD
+[1.489.0]: https://github.com/kothf/step-viewer/compare/v1.488.0...v1.489.0
 [1.488.0]: https://github.com/kothf/step-viewer/compare/v1.487.0...v1.488.0
 [1.487.0]: https://github.com/kothf/step-viewer/compare/v1.486.0...v1.487.0
 [1.486.0]: https://github.com/kothf/step-viewer/compare/v1.485.0...v1.486.0
