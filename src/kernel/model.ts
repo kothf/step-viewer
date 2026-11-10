@@ -3318,7 +3318,7 @@ export class Modeller {
    * removed with Delete Face and each loop comes back as a sketch on the face with an Extrude. Round
    * pockets are left to Recognize Holes. A find counts only when the body comes back with the same volume.
    */
-  recognizeExtrudes(doc: PartDoc): Feature[] {
+  recognizeExtrudes(doc: PartDoc, base = true): Feature[] {
     const upto = doc.features.slice(0, doc.rollback ?? doc.features.length);
     const at = (fs: Feature[]): PartDoc => ({ ...doc, rollback: null, features: [...upto, ...fs] });
     // A pocket in the floor of another pocket (or in a boss) comes off first; the one around it is found in the
@@ -3331,6 +3331,9 @@ export class Modeller {
       rounds.push(r.finds);
       dels.push(r.feats[0]);
       if (!k) first = r.feats;
+    }
+    if (base) {
+      try { const b = this.baseExtrude(upto, at, dels, rounds); if (b) return b; } catch { /* without the base */ }
     }
     if (rounds.length < 2) return first;
     try {
@@ -3349,6 +3352,80 @@ export class Modeller {
     } catch { /* the first round alone */ }
     // The rounds do not go back together: the first one alone is still a good find.
     return first;
+  }
+
+  /**
+   * The base of an imported body (FR-FT-102): when the body without its pockets and bosses is one plain prism
+   * (two flat ends, every other face a flat wall square to them or a cylinder along their normal), it is made
+   * again as a sketch on one end with an Extrude that adds a new body, the imported body is deleted, and the
+   * finds go back on the new one. No Delete Face is needed then.
+   */
+  private baseExtrude(upto: Feature[], at: (fs: Feature[]) => PartDoc, dels: Feature[], rounds: ExtrudeFind[][]): Feature[] | null {
+    const oc = this.oc;
+    const imports = upto.filter(f => f.type === "import" && !f.suppressed).map(f => `${f.id}:`);
+    if (!imports.length) return null;
+    const start = this.evaluate(at([]));
+    const body = dels.length ? this.evaluate(at(dels)).body : start.body;
+    if (!start.body || !body || this.solids(start.body.shape) !== 1 || this.solids(body.shape) !== 1) return null;
+    if (body.names.some(n => !imports.some(p => n.startsWith(p)))) return null;
+    const v0 = this.volume(start.body.shape);
+    const tol = Math.max(1e-4, this.size(body.shape) * 1e-6) * 10;
+    const S = oc.GeomAbs_SurfaceType, C = oc.GeomAbs_CurveType;
+    const kinds = body.faces.map(face => {
+      const ad = new oc.BRepAdaptor_Surface_2(face, true), ty = ad.GetType();
+      if (ty === S.GeomAbs_Plane) return { pln: this.faceNormalAt(face) };
+      if (ty === S.GeomAbs_Cylinder) return { cyl: unit(this.xyz(ad.Cylinder().Axis().Direction())) };
+      return {} as { pln?: V3; cyl?: V3 };
+    }) as { pln?: V3; cyl?: V3 }[];
+    const area = (i: number): number => { const g = new oc.GProp_GProps_1(); oc.BRepGProp.SurfaceProperties_1(body.faces[i], g, false, false); return g.Mass(); };
+    let best = -1, far = -1, ba = 0;
+    kinds.forEach((k, i) => {
+      const n = k.pln;
+      if (!n) return;
+      let j = -1, ok = true;
+      kinds.forEach((q, x) => {
+        if (x === i || !ok) return;
+        if (q.pln && dot(q.pln, n) < -1 + 1e-6 && j < 0) j = x;
+        else if (!(q.pln && Math.abs(dot(q.pln, n)) < 1e-6) && !(q.cyl && Math.abs(Math.abs(dot(q.cyl, n)) - 1) < 1e-6)) ok = false;
+      });
+      if (!ok || j < 0) return;
+      const a = area(i);
+      if (a > ba * (1 + 1e-9)) { ba = a; best = i; far = j; }
+    });
+    if (best < 0) return null;
+    const n = kinds[best].pln!;
+    const depth = Math.abs(dot(sub3(this.centroid(body.faces[far]), this.centroid(body.faces[best])), n));
+    if (depth < tol) return null;
+    const segs: ExtrudeFind["segs"] = [], pts: V3[] = [];
+    for (const e of this.sub(body.faces[best], "EDGE")) {
+      const ca = new oc.BRepAdaptor_Curve_2(e), t0 = ca.FirstParameter(), t1 = ca.LastParameter(), ct = ca.GetType();
+      const a = this.xyz(ca.Value(t0)), b = this.xyz(ca.Value(t1)), m = this.xyz(ca.Value((t0 + t1) / 2));
+      pts.push(a, m);
+      if (ct === C.GeomAbs_Line) segs.push({ line: [a, b] });
+      else if (ct === C.GeomAbs_Circle) {
+        const c = this.xyz(ca.Circle().Location()), r = ca.Circle().Radius();
+        if (Math.abs(Math.abs(t1 - t0) - 2 * Math.PI) < 1e-9) segs.push({ circle: { c, r } });
+        else segs.push({ arc: { c, a, b, m } });
+      } else return null;
+    }
+    // The sketch goes on the imported body as it is: the end face is found there by place.
+    const p = pts.find(q => this.flatFaceAt(start.body!, q, n, tol) >= 0);
+    if (!p) return null;
+    const made = this.extrudeFeatures([{ p, n, op: "boss", end: "blind", depth, segs }], start.body, start.frames);
+    if (!made) return null;
+    const fi = this.flatFaceAt(start.body, p, n, tol);
+    const id = `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
+    const out: Feature[] = [made[0], { ...made[1], merge: false, flip: true } as Feature,
+      { id, type: "delbody", name: "", bodies: [{ name: start.body.names[fi], hint: this.centroid(start.body.faces[fi]) }] } as Feature];
+    for (let k = rounds.length - 1; k >= 0; k--) {
+      const r = this.evaluate(at(out));
+      const fs = r.body && !r.statuses.slice(-out.length).some(s => s.ok === false) ? this.extrudeFeatures(rounds[k], r.body, r.frames) : null;
+      if (!fs) return null;
+      out.push(...fs);
+    }
+    const fin = this.evaluate(at(out));
+    if (!fin.body || this.solids(fin.body.shape) !== 1 || fin.statuses.slice(-out.length).some(s => s.ok === false)) return null;
+    return Math.abs(this.volume(fin.body.shape) - v0) <= 1e-6 * Math.abs(v0) + 1e-9 ? out : null;
   }
 
   /** The flat face of a body that holds point `p` and faces along `n`. */

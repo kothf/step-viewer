@@ -8381,8 +8381,8 @@ try {
     await mp.evaluate(() => window.__sv.model.store.change("Edit", d => { d.features.find(f => f.type === "extrude" && f.op === "cut").depth.v = 9; }));
     await settle();
     const x2 = await state();
-    check(!x0.bad && Math.abs(x0.v - (48000 - 1000 + 504)) < 0.05 && Math.abs(x1.v - x0.v) < 0.05 && !x1.bad && x1.types === "import,delface,sketch,extrude,sketch,extrude" && exts === "boss:blind:7 cut:blind:5" && !x2.bad && Math.abs(x2.v - (x1.v - 800)) < 0.05,
-      `model: Recognize Extrudes removes a pocket and a boss of an imported body and makes them again as sketches with extrudes (FR-FT-102) (${JSON.stringify({ x0, x1, x2, exts })})`);
+    check(!x0.bad && Math.abs(x0.v - (48000 - 1000 + 504)) < 0.05 && Math.abs(x1.v - x0.v) < 0.05 && !x1.bad && x1.types === "import,sketch,extrude,delbody,sketch,extrude,sketch,extrude" && exts === "boss:blind:20 boss:blind:7 cut:blind:5" && !x2.bad && Math.abs(x2.v - (x1.v - 800)) < 0.05,
+      `model: Recognize Extrudes makes an imported block with a pocket and a boss again as a base extrude and sketches with extrudes (FR-FT-102) (${JSON.stringify({ x0, x1, x2, exts })})`);
     await ctx.close();
   }
 
