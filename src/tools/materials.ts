@@ -451,6 +451,8 @@ export const CHECKED: Record<string, string> = {
   "Water (20 °C)": "www.usgs.gov/special-topics/water-science-school/science/water-density",
   // 1.416.0: Ensinger TECAFINE LDPE stock shapes (0.92 g/cm³, 30 000 psi, 1 420 psi at yield).
   "Polyethylene PE-LD": "www.modernplastics.com/wp-content/uploads/2015/04/TECAFINE-LDPE.pdf",
+  // 1.417.0: BASF Ultramid A3WG6, dry as moulded (1.36 g/cm³, 10.0 GPa, 190 MPa).
+  "Nylon PA66-GF30": "salesplastics.com/wp-content/uploads/2025/09/BASF-Ultramid%C2%AE-A3WG6-.pdf",
 };
 
 export const LIBRARY: Material[] = ROWS.map(([cat, name, , eq, [density, E, nu, sy, su, k, cp, alpha], src, color]) =>
