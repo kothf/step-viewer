@@ -2,6 +2,7 @@
 // view or type the pose), fixed/floating, hide, delete, save and open .mcadasm. The kernel places the
 // components (src/kernel/assembly.ts) and the viewer shows one part per component, so the measuring
 // tools work across components as for an imported assembly.
+import type { VaultTie } from "../pdm/panel";
 import type { NamedViews } from "../viewer/navigation";
 import { MATE_LABEL, mateName } from "./mateName";
 import type { NamedView } from "../model/types";
@@ -23,6 +24,8 @@ import { ctxRefs, syncCtx, type CtxComp, type PartContext } from "../model/conte
 import { mateDefaults, mateTypes, placeGeo, solve, type Geo, type SolveResult } from "./solver";
 import { folderPath, hashBytes, planLinks, type LinkFile } from "./links";
 import { MCMASTER, mcmasterPart, tagVendor, vendorOf } from "./vendor";
+import { pickMaterial } from "../materialPicker";
+import { toRef } from "../tools/materials";
 import { FASTENERS, TOOLBOX_GROUPS, defaultLength, fastenerInfo, fastenerLengths, fastenerName, fastenerPart, fastenerSizes, sizeForHole, type FastenerKind } from "./fasteners";
 import { applySolved, autoExplode, expandPatterns, explodeAt, explodeOffsets, flattenSubs, patternSteps, solveView, topOf, type Expanded } from "./patterns";
 import { STOPPED, type AsmFeatureStatus } from "../model/kernelClient";
@@ -77,7 +80,7 @@ interface MateDraft { edit?: string; a?: MateRef; b?: MateRef; c?: MateRef; d?: 
 /** The Mate panel's message when a mate cannot be solved even from turned starts. */
 const MATE_FAILS = "This mate cannot be solved with the others: the assembly would be over-defined, or the components stand too far from where the mate puts them. Move them closer and try again.";
 
-export interface AsmTab { doc: AsmDoc; fileName: string; handle: FileSystemFileHandle | null; undo: string[]; redo: string[]; savedAt: string; sel: string | null }
+export interface AsmTab { doc: AsmDoc; fileName: string; handle: FileSystemFileHandle | null; undo: string[]; redo: string[]; savedAt: string; sel: string | null; vault: VaultTie | null }
 
 export class AsmController {
   doc: AsmDoc | null = null;
@@ -203,7 +206,7 @@ export class AsmController {
     if (!this.doc) return null;
     this.closeTools();
     this.hideCrumbs();
-    const tab: AsmTab = { doc: this.doc, fileName: this.fileName, handle: this.handle, undo: this.undoStack, redo: this.redoStack, savedAt: this.savedAt, sel: this.selected };
+    const tab: AsmTab = { doc: this.doc, fileName: this.fileName, handle: this.handle, undo: this.undoStack, redo: this.redoStack, savedAt: this.savedAt, sel: this.selected, vault: this.vault };
     this.close();
     return tab;
   }
@@ -215,6 +218,23 @@ export class AsmController {
     this.redoStack = tab.redo;
     this.savedAt = tab.savedAt;
     this.selected = tab.sel;
+    this.vault = tab.vault;
+    this.renderAll();
+  }
+
+  /**
+   * The open assembly came from a vault (FR-PDM-010/081): Save writes the working copy there, only while it is
+   * checked out here; the title shows the version and the lock.
+   */
+  vault: VaultTie | null = null;
+  setVault(v: VaultTie | null) {
+    this.vault = v;
+    if (this.doc) this.renderAll();
+  }
+  /** Marks the open assembly saved (the vault wrote it). */
+  markSaved() {
+    if (!this.doc) return;
+    this.savedAt = JSON.stringify(this.doc);
     this.renderAll();
   }
 
@@ -227,6 +247,7 @@ export class AsmController {
     this.redoStack = [];
     this.fileName = fileName;
     this.handle = handle;
+    this.vault = null;
     this.selected = null;
     this.moving = null;
     this.mating = null;
@@ -258,6 +279,7 @@ export class AsmController {
     this.ghostGroup.visible = false;
     this.motion?.close();
     this.doc = null;
+    this.vault = null;
     this.drag = null;
     this.mating = null;
     this.interfere = null;
@@ -278,7 +300,7 @@ export class AsmController {
     this.host.selectLeftTab("tree");
   }
 
-  private label() { return `${this.fileName || `${this.doc!.name}${ASM_EXT}`}${this.dirty ? " •" : ""}`; }
+  private label() { return `${this.fileName || `${this.doc!.name}${ASM_EXT}`}${this.vault ? ` · ${this.vault.label}` : ""}${this.dirty ? " •" : ""}`; }
 
   // ---------- changes, undo ----------
 
@@ -1273,7 +1295,7 @@ export class AsmController {
         for (const x of doc.components) if (x.id.startsWith(`${c.id}/`) && !start[x.id]) start[x.id] = compose(move, x.tf);
       }
     }
-    return solve({ doc, extra, start, geo: (part, face) => this.geo.get(part)?.get(face) ?? null, centre: part => this.centres.get(part) ?? [0, 0, 0], size: this.size(), dof });
+    return solve({ doc, extra, start, geo: (part, face) => this.geo.get(part)?.get(face) ?? null, faces: part => this.geo.get(part)?.values() ?? [], centre: part => this.centres.get(part) ?? [0, 0, 0], size: this.size(), dof });
   }
 
   /** Solves a changed document's mates into its transforms; when they conflict nothing moves. */
@@ -2278,6 +2300,17 @@ export class AsmController {
   async save(as = false) {
     if (!this.doc) return;
     const bytes = await packAsm(this.doc, `MöbiusCAD ${this.host.appVersion}`);
+    if (this.vault && !as) {
+      // A vaulted assembly saves into the vault's working copy, and only while checked out here (FR-PDM-081).
+      if (this.vault.readOnly) { toast(t("This file is read-only: check it out to save, or use Save as."), true); return; }
+      try { await this.vault.save(bytes); }
+      catch (err) { toast(t("Could not save: {err}", { err: t((err as Error).message) }), true); return; }
+      this.savedAt = JSON.stringify(this.doc);
+      this.renderAll();
+      toast(t("Saved {name}", { name: this.title }), "success");
+      return;
+    }
+    if (as && this.vault) this.setVault(null);
     const blob = new Blob([bytes as BlobPart], { type: "application/zip" });
     const suggested = this.fileName || `${this.doc.name}${ASM_EXT}`;
     const w = window as Window & { showSaveFilePicker?: (o: unknown) => Promise<FileSystemFileHandle> };
@@ -2710,6 +2743,23 @@ export class AsmController {
     });
   }
 
+  /** Sets (or clears) the material of a component's part from the assembly, as SolidWorks' Edit Material does:
+   *  every instance of that part follows, and the BOM and mass properties with it. One undo step. */
+  setPartMaterial(id: string, m: ReturnType<typeof toRef> | null) {
+    this.change(d => {
+      const c = d.components.find(x => x.id === id), e = c && d.parts[c.part];
+      if (!e || e.asm || !e.doc) return;
+      if (m) e.doc.material = m; else delete e.doc.material;
+    });
+  }
+
+  async pickPartMaterial(id: string) {
+    const c = this.doc?.components.find(x => x.id === id), e = c && this.doc?.parts[c.part];
+    if (!e || e.asm) return;
+    const r = await pickMaterial({ current: e.doc?.material ?? null, allowNone: true });
+    if (r) this.setPartMaterial(id, r.material ? toRef(r.material) : null);
+  }
+
   private menu(c: Component, x: number, y: number) {
     this.popup([
       ...(this.doc?.parts[c.part]?.asm ? [[c.flexible ? t("Make rigid") : t("Make flexible"), () => this.setFlexible(c.id, !c.flexible)] as [string, () => void]] : [[t("Open part"), () => this.editPart(c.id)] as [string, () => void], [t("Edit in context"), () => this.editPart(c.id, true)] as [string, () => void]]),
@@ -2719,6 +2769,7 @@ export class AsmController {
       ...(c.fixed ? [] : [[t("Move component"), () => this.moveComponent(c.id)] as [string, () => void]]),
       [c.hidden ? t("Show component") : t("Hide component"), () => this.setHidden(c.id, !c.hidden)],
       [c.suppressed ? t("Unsuppress") : t("Suppress"), () => this.setSuppressed(c.id, !c.suppressed)],
+      ...(this.doc?.parts[c.part]?.asm ? [] : [[t("Material…"), () => void this.pickPartMaterial(c.id)] as [string, () => void]]),
       [t("Component colour…"), () => this.pickColor(c)],
       [c.opacity !== undefined && c.opacity < 1 ? t("Make opaque") : t("Change transparency"), () => this.setOpacity(c.id, c.opacity !== undefined && c.opacity < 1 ? null : 0.35)],
       ...(c.color ? [[t("Reset colour"), () => this.setColor(c.id, null)] as [string, () => void]] : []),
@@ -2860,7 +2911,7 @@ export class AsmController {
         + `<p class="pm-help muted">${esc(t("The two cylinders share an axis and the two flat faces touch: one turn is left."))}</p>`
       : m.type === "slot"
         ? `<div class="pm-field"><span>${esc(t("Slot face 2"))}</span><button class="pm-box${m.a && m.b && !m.c ? " focus" : ""}" data-a="sc" translate="no">${esc(this.refText(m.c))}</button></div>`
-          + `<p class="pm-help muted">${esc(t("Selection 1 and slot face 2 are the sides of the slot; the pin (selection 2) stays centred between them and slides along."))}</p>`
+          + `<p class="pm-help muted">${esc(t("Selection 1 and slot face 2 are the sides of the slot; the pin (selection 2) stays centred between them and slides along, up to the slot's rounded ends."))}</p>`
         : m.type === "gear" ? ratioIn("Ratio", "") + `<p class="pm-help muted">${esc(t("Turns of selection 2 per turn of selection 1 (the radius ratio to start with). External gears turn opposite ways; Reverse makes them turn the same way."))}</p>`
           : m.type === "screw" ? ratioIn("Distance per revolution", "mm") + `<p class="pm-help muted">${esc(t("The two cylinders share an axis; turning one moves it along by this distance per turn."))}</p>` : "";
     const typeBtn = (k: MateType) => `<button class="btn small${m.type === k ? " on" : ""}" data-mt="${k}" aria-pressed="${m.type === k}"${fits.has(k) ? "" : " disabled"}><span aria-hidden="true">${MATE_ICON[k]}</span> ${esc(t(MATE_LABEL[k]))}</button>`;

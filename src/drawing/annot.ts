@@ -36,6 +36,8 @@ let PREC_LIN: number | undefined, PREC_ANG: number | undefined;
 /** The drawing's default ± tolerance (mm, degrees) for dimensions without their own, set by `useStyle`. */
 let TOL_LIN: number | undefined, TOL_ANG: number | undefined;
 let DUAL = false, DUAL_PREC = 3;
+/** Extension lines: gap at the outline and run past the dimension line (sheet mm), set by `useStyle`. */
+let EXT_GAP = 1, EXT_OVER = 2;
 
 /** Applies a drawing's drafting style: text height (arrow length follows it), arrowhead kind and the ISO 128 line group. */
 export function useStyle(st: DraftStyle | undefined) {
@@ -45,6 +47,7 @@ export function useStyle(st: DraftStyle | undefined) {
   PREC_LIN = st?.lin; PREC_ANG = st?.ang;
   TOL_LIN = st?.tol; TOL_ANG = st?.atol;
   DUAL = st?.dual === "in"; DUAL_PREC = st?.dualPrec ?? 3;
+  EXT_GAP = st?.extGap ?? 1; EXT_OVER = st?.extOver ?? 2;
   const thick = st?.lines ?? 0.35, thin = { 0.25: 0.13, 0.35: 0.18, 0.5: 0.25, 0.7: 0.35 }[thick] ?? thick / 2;
   Object.assign(PEN_W, { thick, thin, hidden: thin, center: thin, phantom: thin, frame: Math.max(0.5, thick * 1.4) });
 }
@@ -246,7 +249,7 @@ export function holeText(e: MEdge, ctx: AnnotCtx, count = true): string[] {
       if (Math.abs(Math.abs(dot3(h.n, ax)) - 1) > 1e-6) continue;
       const on = h.pts.some(p => { const w = sub3(c, p), along = dot3(w, h.n); return Math.hypot(w[0] - h.n[0] * along, w[1] - h.n[1] * along, w[2] - h.n[2] * along) < 1e-3; });
       if (!on) continue;
-      const H = h.f, n = h.pts.length > 1 ? `${h.pts.length}× ` : "";
+      const H = h.f, n = count && h.pts.length > 1 ? `${h.pts.length}× ` : "";
       const depth = H.end === "through" ? ` ${ctx.label("THRU")}` : H.end === "blind" ? ` ↧${f(H.depth.v)}` : "";
       const lines: string[] = [];
       if (H.kind === "tapped" && H.size) {
@@ -351,7 +354,10 @@ function textBox(x: number, y: number, s: string, h: number, al: "l" | "c" | "r"
 
 /** Draws one dimension. `pl` places the view's model axes on the sheet; an inspection dimension frames its text with an obround, a basic one with a box. */
 export function dimPrims(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims: Prim[]; box: [number, number, number, number] } {
-  const r = dimPrims0(a, g, pl, dec);
+  const kind = ARROW_KIND;
+  if (a.ends) ARROW_KIND = a.ends;
+  let r: ReturnType<typeof dimPrims0>;
+  try { r = dimPrims0(a, g, pl, dec); } finally { ARROW_KIND = kind; }
   if (a.insp) r.prims.push(...obround(r.box));
   if (a.show === "basic") {
     const [x0, y0, x1, y1] = [r.box[0] - 0.6, r.box[1] - 0.4, r.box[2] + 0.6, r.box[3] + 0.2];
@@ -406,7 +412,8 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
     const bb = textBox(sb[0], sb[1], "x".repeat(Math.max(1, Math.round(wb / (h * 0.85)))), h, "l", rot);
     return [Math.min(box[0], bb[0]), Math.min(box[1], bb[1]), Math.max(box[2], bb[2]), Math.max(box[3], bb[3])];
   };
-  if (g.k === "rad" || g.k === "dia") {
+  const diaLin = g.k === "dia" && !!a.lin;
+  if ((g.k === "rad" || g.k === "dia") && !diaLin) {
     const C = S(g.c!), R = g.r! * pl.s;
     const u = unit2([T[0] - C[0], T[1] - C[1]], [Math.SQRT1_2, Math.SQRT1_2]);
     const outside = d2(T, C) > R;
@@ -439,7 +446,7 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
     out.push(arrow(...tip(a1), -Math.sin(a1), Math.cos(a1)));
     for (const [an, k] of [[a0, "a"], [a1, "b"]] as [number, "a" | "b"][]) {
       if (a.noExt === k || a.noExt === "both") continue;
-      const e: P2 = [Math.cos(an), Math.sin(an)]; out.push(thin(add2(C, e, R0 + 1), add2(C, e, R + 2)));
+      const e: P2 = [Math.cos(an), Math.sin(an)]; out.push(thin(add2(C, e, R0 + EXT_GAP), add2(C, e, R + EXT_OVER)));
     }
     const mid = a0 + g.sw! / 2, tp: P2 = [C[0] + (R + 1.5) * Math.cos(mid), C[1] + (R + 1.5) * Math.sin(mid)];
     const box = writeText([tp[0], tp[1] - (Math.sin(mid) < 0 ? h : 0)], 0, Math.cos(mid) > 0.3 ? "l" : Math.cos(mid) < -0.3 ? "r" : "c");
@@ -459,7 +466,7 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
     const Q = S(g.pts[1]), hor = g.k === "oh";
     const end: P2 = hor ? [Q[0], T[1]] : [T[0], Q[1]];
     const L = d2(Q, end), dir = unit2([end[0] - Q[0], end[1] - Q[1]], hor ? [0, 1] : [1, 0]);
-    if (L > 1.5) out.push(thin(add2(Q, dir, 1), end));
+    if (L > EXT_GAP + 0.5) out.push(thin(add2(Q, dir, EXT_GAP), end));
     const box = hor ? writeText([end[0] + h * 0.35, end[1] + dir[1]], 90, dir[1] > 0 ? "l" : "r")
       : writeText([end[0] + dir[0], end[1] - h * 0.35], 0, dir[0] > 0 ? "l" : "r");
     return { prims: out, box };
@@ -487,15 +494,17 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
     return { prims: out, box };
   }
   // Linear.
-  const [S1, S2] = g.pts.map(S);
-  const d: P2 = g.k === "h" ? [1, 0] : g.k === "v" ? [0, 1] : unit2([S2[0] - S1[0], S2[1] - S1[1]]);
+  // A diameter shown as a linear dimension: between the rim's two ends along the sheet's horizontal or vertical.
+  const dl: P2 = a.lin === "v" ? [0, 1] : [1, 0];
+  const [S1, S2] = diaLin ? [add2(S(g.c!), dl, -g.r! * pl.s), add2(S(g.c!), dl, g.r! * pl.s)] : g.pts.map(S);
+  const d: P2 = diaLin ? dl : g.k === "h" ? [1, 0] : g.k === "v" ? [0, 1] : unit2([S2[0] - S1[0], S2[1] - S1[1]]);
   const nrm: P2 = [-d[1], d[0]];
   const off = (p: P2) => (T[0] - p[0]) * nrm[0] + (T[1] - p[1]) * nrm[1];
   const D1 = add2(S1, nrm, off(S1)), D2 = add2(S2, nrm, off(S2));
   for (const [s, e, k] of [[S1, D1, "a"], [S2, D2, "b"]] as [P2, P2, "a" | "b"][]) {
     if (a.noExt === k || a.noExt === "both") continue;
     const v: P2 = [e[0] - s[0], e[1] - s[1]], L = len2(v);
-    if (L > 1.5) { const u: P2 = [v[0] / L, v[1] / L]; out.push(thin(add2(s, u, 1), add2(e, u, 2))); }
+    if (L > EXT_GAP + 0.5) { const u: P2 = [v[0] / L, v[1] / L]; out.push(thin(add2(s, u, EXT_GAP), add2(e, u, EXT_OVER))); }
   }
   const al = (p: P2) => p[0] * d[0] + p[1] * d[1];
   let [lo, hi] = [D1, D2];
@@ -525,7 +534,8 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
 /** Draws a hole callout: a leader to the circle, a shoulder and the lines of text. */
 function holePrims(a: HoleAnnot, e: MEdge, P: (p: V3) => P2, pl: Placement, ctx: AnnotCtx): { prims: Prim[]; box: [number, number, number, number] } {
   const out: Prim[] = [];
-  const lines = a.txt ? a.txt.split("\n") : holeText(e, ctx);
+  const lines = a.txt ? a.txt.split("\n") : holeText(e, ctx, a.count !== false);
+  if (a.below) lines.push(...a.below.split("\n"));
   const C = toSheet(pl, ...P(e.c ?? e.m)), R = (e.r ?? 0) * pl.s, T = toSheet(pl, a.pos[0], a.pos[1]);
   const u = unit2([T[0] - C[0], T[1] - C[1]], [Math.SQRT1_2, Math.SQRT1_2]);
   const tip = add2(C, u, R);

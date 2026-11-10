@@ -8,17 +8,38 @@ import { packPart } from "../model/file";
 import type { PartDoc } from "../model/types";
 import { embeddedParts } from "./codec";
 import { geomComparable, geometryCompare, geomRows, mountDiffView } from "./geomCompare";
-import { fsaDir, MOVED_ON, Vault, VaultError, type FileRec, type Msg, type Resolve, type SearchQuery, type TreeNode, type VDir } from "./vault";
+import { folderHandle, forgetFolder, rememberFolder, vaultFolders } from "./folders";
+import { fsaDir, MOVED_ON, Vault, VaultError, type FileRec, type Msg, type Resolve, type SearchQuery, type TreeNode, type VDir, STORE } from "./vault";
 import { defaultWorkflow, PART_NUMBER, ROLES, type CardField, type Role, type Workflow } from "./workflow";
 
+/**
+ * What ties an open document to its vault file: Save writes the working copy through it, only while the file
+ * is checked out here. `label` and `readOnly` are read when used, so a parked document tab stays up to date.
+ */
+export interface VaultTie {
+  /** The vault file's id. */
+  id: string;
+  readonly label: string;
+  readonly readOnly: boolean;
+  save(bytes: Uint8Array): Promise<void>;
+  checkOut(): Promise<void>;
+}
+/** The live document a vault can keep: a part, an assembly or a drawing. */
+export interface VaultDoc {
+  name: string;
+  kind: "part" | "assembly" | "drawing";
+  tie: VaultTie | null;
+  /** The document as saved. */
+  bytes(): Promise<Uint8Array | null>;
+  /** Ties the document to a vault file (null unties it). */
+  setVault(v: VaultTie | null): void;
+  markSaved(): void;
+}
 export interface VaultHost {
   /** Opens bytes as a document (a part, or any file the viewer reads). */
   open(name: string, data: Uint8Array): Promise<void>;
-  /** The open part, if any: its file name and saved bytes. */
-  part(): { name: string; bytes(): Promise<Uint8Array | null> } | null;
-  /** Ties the open part to a vault file (null unties it). */
-  setVault(v: { label: string; readOnly: boolean; save(bytes: Uint8Array): Promise<void>; checkOut(): Promise<void> } | null): void;
-  markSaved(): void;
+  /** The live part, assembly or drawing, if any. */
+  doc(): VaultDoc | null;
 }
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -52,8 +73,23 @@ export class VaultPanel {
   private files: FileRec[] = [];
   private state = new Map<string, Awaited<ReturnType<Vault["status"]>>>();
   private sel: string | null = null;
-  /** The vault file the open part came from. */
-  private openId: string | null = null;
+  /** The ties this vault handed out: a document tied by another vault (closed since) is not ours. */
+  private ties = new WeakSet<VaultTie>();
+  /** The vault file the live document came from. */
+  get openId(): string | null { const tie = this.app.doc()?.tie; return tie && this.ties.has(tie) ? tie.id : null; }
+  /** The live document's vault file with its lock state, for the Vault menu. */
+  get openFileState() {
+    const id = this.openId, f = id ? this.files.find(x => x.id === id) : undefined;
+    return f ? { file: f, mine: !!this.state.get(f.id)?.mine, canCheckOut: !f.checkout && !!this.vault?.stateOf(f.state).checkout } : null;
+  }
+  /** The live document's name when a vault can keep it. */
+  get docName() { return this.app.doc()?.name ?? null; }
+  /** Puts the cursor in the new vault's name box (no vault open). */
+  focusName() { this.host.querySelector<HTMLInputElement>("#v-name")?.focus(); }
+  /** The file picker of Add files (a vault is open). */
+  pickFiles() { this.host.querySelector<HTMLInputElement>("#v-files")?.click(); }
+  /** Called when the vault opens, closes or its files change (the Vault menu's button follows). */
+  onChange: (() => void) | null = null;
   /** Search results shown instead of all files (FR-PDM-042), with what was searched. */
   private found: { ids: Set<string>; label: string } | null = null;
   /** Users whose check-out of the selected file lost to an earlier one (FR-PDM-071). */
@@ -93,18 +129,54 @@ export class VaultPanel {
     await this.use(await Vault.open(dir, this.user, this.computer));
   }
 
-  private async pickFolder(create: boolean) {
+  /** Folder vaults need the File System Access API: Chrome, Edge and other Chromium browsers on a computer. */
+  get foldersOk() { return !!(window as PickerWindow).showDirectoryPicker; }
+
+  /**
+   * A vault in a folder on disk (FR-PDM-002): the user picks the folder; `create` makes a new vault there,
+   * else the vault in it is opened. A folder that already holds a vault is opened either way, and an
+   * ordinary folder picked for Open can become a vault after a question.
+   */
+  async pickFolder(create: boolean) {
     const w = window as PickerWindow;
-    if (!w.showDirectoryPicker) return;
+    if (!w.showDirectoryPicker) { toast(t("A vault in a folder needs Chrome or Edge on a computer. In this browser, use a browser vault and Export ZIP for backups."), true); return; }
     let h: FileSystemDirectoryHandle;
     try { h = await w.showDirectoryPicker({ mode: "readwrite", id: "mc-vault" }); } catch { return; }
     const dir = fsaDir(h);
-    try { await this.use(create ? await Vault.create(dir, h.name, this.user, this.computer) : await Vault.open(dir, this.user, this.computer)); }
-    catch (e) { toast(errText(e), true); }
+    try {
+      const has = !!(await dir.dir(STORE, false));
+      if (!has && !create && !await confirmModal(t("The folder {name} holds no vault yet. Create a vault in it?", { name: h.name }), t("Create vault"))) return;
+      await this.use(has ? await Vault.open(dir, this.user, this.computer) : await Vault.create(dir, h.name, this.user, this.computer));
+      if (has && create) toast(t("This folder already held a vault: it is open now."));
+      await rememberFolder(h);
+    } catch (e) { toast(errText(e), true); }
+  }
+
+  /** Opens a vault folder used before; the browser may ask for access to the folder again. */
+  async openFolder(key: string) {
+    const h = await folderHandle(key);
+    if (h === "denied") { toast(t("The browser was not allowed to use that folder."), true); return; }
+    if (!h) { toast(t("That folder is no longer in the list."), true); return; }
+    try {
+      await this.use(await Vault.open(fsaDir(h), this.user, this.computer));
+      await rememberFolder(h);
+    } catch (e) {
+      toast(errText(e), true);
+      // A folder that was moved or deleted leaves the list.
+      if ((e as Error).name === "NotFoundError") await forgetFolder(key);
+    }
+  }
+
+  /** The browser vaults' names. */
+  async browserVaults() {
+    const ws = await workspace();
+    return ws ? (await ws.list()).filter(e => e.kind === "dir").map(e => e.name).sort() : [];
   }
 
   /** Opens a vault given its directory (tests, and the folder picker). */
   async use(v: Vault) {
+    if (this.vault && this.openId) this.app.doc()?.setVault(null);
+    this.ties = new WeakSet();
     this.vault = v;
     this.sel = null;
     storage.set("mc:lastVault", v.root.name);
@@ -115,8 +187,10 @@ export class VaultPanel {
   close() {
     this.vault = null;
     this.files = [];
-    if (this.openId) { this.app.setVault(null); this.openId = null; }
+    if (this.openId) this.app.doc()?.setVault(null);
+    this.ties = new WeakSet();
     void this.render();
+    this.onChange?.();
   }
 
   async refresh() {
@@ -129,12 +203,15 @@ export class VaultPanel {
       this.files = files;
       this.state = state;
       // The open part follows its file's lock and version.
-      if (this.openId) { const f = this.files.find(x => x.id === this.openId); if (f) this.tieOpen(f); }
+      // (The tie reads the label and the lock when asked; setting it again redraws the title.)
+      const d = this.app.doc();
+      if (this.openId && d) d.setVault(d.tie);
       this.conflicts = this.sel ? [...new Set((await v.lockConflicts(this.sel)).map(c => c.user))] : [];
       this.stale = this.sel ? await v.outdatedLinks(this.sel).catch(() => []) : [];
       this.unseen = (await v.notifications(this.seenAt)).length;
     }
     await this.render();
+    this.onChange?.();
   }
 
   // ---------- commands ----------
@@ -174,17 +251,23 @@ export class VaultPanel {
     });
   }
 
-  /** Save to vault (FR-PDM-003): the open part goes in as a new file at version 1, checked out here so work goes on. */
-  async saveOpenPart() {
-    const v = this.vault, p = this.app.part();
-    if (!v || !p) { toast(t("Open or create a part first."), true); return; }
+  /**
+   * Save to vault (FR-PDM-003): the live part, assembly or drawing goes in as a new file at version 1, checked
+   * out here so work goes on; from then on Save writes its working copy in the vault.
+   */
+  async saveOpenDoc() {
+    const v = this.vault, p = this.app.doc();
+    if (!v) { toast(t("Open or create a vault first."), true); return; }
+    if (!p) { toast(t("Open or create a part, an assembly or a drawing first."), true); return; }
+    if (this.openId) { toast(t("This document is already in the vault."), true); return; }
     await this.run(async () => {
       const bytes = await p.bytes();
       if (!bytes) return;
       const f = await v.add(p.name, bytes, "Added");
       await v.checkOut(f.id);
-      this.openId = f.id;
-      this.app.markSaved();
+      p.setVault(this.tie(f.id));
+      p.markSaved();
+      this.sel = f.id;
       toast(t("{name} is in the vault, checked out to you", { name: p.name }), "success");
     });
   }
@@ -233,21 +316,42 @@ export class VaultPanel {
         }
       }
       await this.app.open(version ? name.replace(/(\.[^.]+)$/, ` (v${version})$1`) : name, data);
-      if (f.kind === "part" && !version) { this.openId = id; this.tieOpen(f); }
-      else this.openId = null;
+      // A part, assembly or drawing opened from the vault saves back into it (an old version is a loose copy).
+      const d = this.app.doc();
+      if (!version && d && d.kind === f.kind) d.setVault(this.tie(id));
     } catch (e) { toast(errText(e), true); }
   }
 
-  private tieOpen(f: FileRec) {
-    const v = this.vault!, st = this.state.get(f.id);
-    const mine = !!st?.mine;
-    const label = `v${v.latest(f).n}${f.revision ? ` · ${t("Rev {rev}", { rev: f.revision })}` : ""} · ${tn(f.state)}${f.checkout ? ` · ${mine ? t("checked out") : t("locked by {user}", { user: f.checkout.user })}` : ""}${st?.modified ? ` · ${mine ? t("modified") : t("local copy outdated")}` : ""}`;
-    this.app.setVault({
-      label, readOnly: !mine,
-      save: async bytes => { await v.saveWorking(f.id, bytes); await this.refresh(); },
-      checkOut: async () => { await this.run(() => v.checkOut(f.id)); },
-    });
+  /** The tie between an open document and its vault file (FR-PDM-010/081). */
+  private tie(id: string): VaultTie {
+    const v = this.vault!, panel = this;
+    const cur = () => (panel.vault === v ? panel.files.find(x => x.id === id) : undefined);
+    const tie: VaultTie = {
+      id,
+      get label() {
+        const f = cur(), st = panel.state.get(id);
+        if (!f) return t("vault closed");
+        const mine = !!st?.mine;
+        return `v${v.latest(f).n}${f.revision ? ` · ${t("Rev {rev}", { rev: f.revision })}` : ""} · ${tn(f.state)}${f.checkout ? ` · ${mine ? t("checked out") : t("locked by {user}", { user: f.checkout.user })}` : ""}${st?.modified ? ` · ${mine ? t("modified") : t("local copy outdated")}` : ""}`;
+      },
+      get readOnly() { return !cur() || !panel.state.get(id)?.mine; },
+      save: async bytes => { await v.saveWorking(id, bytes); await this.refresh(); },
+      checkOut: async () => { await this.run(() => v.checkOut(id)); },
+    };
+    this.ties.add(tie);
+    return tie;
   }
+
+  /** The live document's unsaved edits go into its working copy (before a check-in). */
+  private async flushOpen(id: string) {
+    if (this.openId !== id) return;
+    const v = this.vault!, p = this.app.doc();
+    const b = p && await p.bytes();
+    if (b) { await v.saveWorking(id, b); p!.markSaved(); }
+  }
+
+  /** Opens the file again after the vault changed its content (the assembly as it is, without asking). */
+  private reopen(id: string) { return this.openFile(id, undefined, "built"); }
 
   async checkOut(id: string) { const v = this.vault; if (v) await this.run(() => v.checkOut(id)); }
 
@@ -268,7 +372,7 @@ export class VaultPanel {
     // The referenced files first, so the file that uses them is checked in against their new versions.
     for (const rid of withRefs) {
       try {
-        if (this.openId === rid) { const p = this.app.part(); const b = p && await p.bytes(); if (b) { await v.saveWorking(rid, b); this.app.markSaved(); } }
+        await this.flushOpen(rid);
         const n = await v.checkIn(rid, comment!, keep);
         if (n) toast(t("{name}: version {n}", { name: this.rec(rid).path, n }), "success");
       } catch (e) {
@@ -278,7 +382,7 @@ export class VaultPanel {
       }
     }
     // Unsaved edits of the open part go into the working copy first.
-    if (this.openId === id) { const p = this.app.part(); const b = p && await p.bytes(); if (b) { await v.saveWorking(id, b); this.app.markSaved(); } }
+    await this.flushOpen(id);
     try {
       const n = await v.checkIn(id, comment!, keep);
       toast(n ? t("Checked in as version {n}", { n }) : t("No changes: no new version"), "success");
@@ -307,14 +411,14 @@ export class VaultPanel {
     const path = d.el.querySelector<HTMLInputElement>('[name="path"]')!.value.trim();
     if (a === "new") await this.run(async () => { const nf = await v.saveAsNew(id, path); this.sel = nf.id; toast(t("Saved as {name}", { name: path }), "success"); });
     else if (a === "discard") await this.run(() => v.undoCheckOut(id));
-    if (this.openId === id) await this.openFile(id);
+    if (this.openId === id) await this.reopen(id);
   }
 
   async undoCheckOut(id: string) {
     const v = this.vault;
     if (!v || !await confirmModal(t("Throw away the local changes to {name} and release it?", { name: this.rec(id).path }), t("Undo check-out"))) return;
     await this.run(() => v.undoCheckOut(id));
-    if (this.openId === id) await this.openFile(id);
+    if (this.openId === id) await this.reopen(id);
   }
 
   async getLatest(id: string) {
@@ -323,6 +427,7 @@ export class VaultPanel {
     const st = this.state.get(id);
     if (st?.modified && !await confirmModal(t("The local copy of {name} has changes that are not checked in. Replace it with the latest version?", { name: this.rec(id).path }), t("Get latest"))) return;
     await this.run(() => v.getLatest(id, true));
+    if (this.openId === id) await this.reopen(id);
   }
 
   /** Update links (FR-ASM-003): the checked-out assembly takes the latest versions of its linked components. */
@@ -333,14 +438,14 @@ export class VaultPanel {
       const changed = await v.updateLinks(id);
       toast(changed.length ? t("Links updated: {list}. Check the assembly in to keep them.", { list: changed.join(", ") }) : t("The links are up to date."), "success");
     });
-    if (this.openId === id) await this.openFile(id);
+    if (this.openId === id) await this.reopen(id);
   }
 
   async rollBack(id: string, n: number) {
     const v = this.vault;
     if (!v || !await confirmModal(t("Make version {n} the latest again? A new version is added; nothing is lost.", { n }), t("Roll back"), t("Roll back"))) return;
     await this.run(async () => { const m = await v.rollBack(id, n); toast(t("Version {m} has the content of version {n}", { m, n }), "success"); });
-    if (this.openId === id) await this.openFile(id);
+    if (this.openId === id) await this.reopen(id);
   }
 
   async history(id: string) {
@@ -505,7 +610,7 @@ export class VaultPanel {
         for (const x of r.failed) toast(t("Could not make the release file of {path}: {err}", { path: x.path, err: x.error }), true);
       }
     }
-    if (this.openId && ids.includes(this.openId)) await this.openFile(this.openId);
+    if (this.openId && ids.includes(this.openId)) await this.reopen(this.openId);
   }
 
   // ---------- data card and numbering (FR-PDM-040/041) ----------
@@ -538,7 +643,7 @@ export class VaultPanel {
     await this.run(async () => {
       await v.setCard(id, vals);
       // The open part gets the properties too (its saved copy is the vault's working copy).
-      if (this.openId === id) await this.openFile(id);
+      if (this.openId === id) await this.reopen(id);
       toast(t("Data card saved"), "success");
     });
   }
@@ -653,7 +758,7 @@ export class VaultPanel {
       to = (r.path as string).trim();
     }
     await this.run(async () => { await v.rename(id, to!); toast(t("Renamed to {name}", { name: to! }), "success"); });
-    if (this.openId === id) await this.openFile(id);
+    if (this.openId === id) await this.reopen(id);
   }
 
   async copyTreeDlg(id: string) {
@@ -691,7 +796,7 @@ export class VaultPanel {
     if (!await confirmModal(t("Move {name} to the recycle bin?", { name: f.path }), t("Delete"))) return;
     await this.run(() => v.remove(id));
     if (this.sel === id) this.sel = null;
-    if (this.openId === id) { this.app.setVault(null); this.openId = null; }
+    if (this.openId === id) this.app.doc()?.setVault(null);
     await this.render();
   }
 
@@ -987,7 +1092,13 @@ export class VaultPanel {
 
   // ---------- view ----------
 
-  async render() {
+  /** Renders run one after another, so the last one asked for is the last one drawn. */
+  private rendering: Promise<void> = Promise.resolve();
+  render(): Promise<void> {
+    return (this.rendering = this.rendering.then(() => this.draw()).catch(e => { console.error(e); }));
+  }
+
+  private async draw() {
     const h = this.host, v = this.vault;
     const user = `<label class="v-user">${esc(t("User"))} <input id="v-user" value="${esc(this.user)}" maxlength="40" autocomplete="name" translate="no" /></label>`;
     if (!v) {
@@ -995,14 +1106,19 @@ export class VaultPanel {
       // A re-render (the tab was shown again) keeps a name being typed.
       const names = ws ? (await ws.list()).filter(e => e.kind === "dir").map(e => e.name).sort() : [];
       const typed = h.querySelector<HTMLInputElement>("#v-name")?.value ?? "";
-      const fsa = !!(window as PickerWindow).showDirectoryPicker;
+      const fsa = this.foldersOk;
+      const folders = fsa ? await vaultFolders() : [];
       h.innerHTML = `<div class="pad v-start">
         <p class="muted">${esc(t("A vault keeps every version of your files, with check-out, check-in, history and an audit trail."))}</p>
         ${user}
         ${names.length ? `<p class="v-h">${esc(t("Vaults in this browser"))}</p><div class="v-list">${names.map(n => `<button class="btn small" data-openws="${esc(n)}" translate="no">${esc(n)}</button>`).join("")}</div>` : ""}
         <div class="row"><input id="v-name" value="${esc(typed)}" placeholder="${esc(t("Vault name"))}" aria-label="${esc(t("Vault name"))}" maxlength="60" /><button class="btn small primary" data-a="new-ws"${ws ? "" : " disabled"}>${esc(t("New vault"))}</button></div>
         <div class="row"><button class="btn small" data-a="import"${ws ? "" : " disabled"}>${esc(t("Import vault ZIP…"))}</button><input type="file" id="v-zip" accept=".zip" hidden /></div>
-        ${fsa ? `<div class="row"><button class="btn small" data-a="new-dir">${esc(t("New vault in a folder…"))}</button><button class="btn small" data-a="open-dir">${esc(t("Open vault folder…"))}</button></div>` : ""}
+        <p class="v-h">${esc(t("Vault in a folder on this computer"))}</p>
+        ${fsa ? `<p class="muted">${esc(t("Pick any folder, also on a network drive or a synced one: the vault's files and all their versions are kept there."))}</p>
+        ${folders.length ? `<div class="v-list">${folders.map(f => `<button class="btn small" data-openfolder="${esc(f.key)}" title="${esc(t("Open the vault in this folder"))}" translate="no">${esc(f.name)}</button>`).join("")}</div>` : ""}
+        <div class="row"><button class="btn small primary" data-a="new-dir">${esc(t("New vault in a folder…"))}</button><button class="btn small" data-a="open-dir">${esc(t("Open vault folder…"))}</button></div>`
+          : `<p class="muted v-nofsa">${esc(t("A vault in a folder needs Chrome or Edge on a computer. In this browser, use a browser vault and Export ZIP for backups."))}</p>`}
       </div>`;
     } else {
       const sel = this.sel ? this.files.find(f => f.id === this.sel) ?? null : null;
@@ -1041,7 +1157,7 @@ export class VaultPanel {
       </div>` : "";
       const shown = this.found ? this.files.filter(f => this.found!.ids.has(f.id)) : this.files;
       h.innerHTML = `<div class="pad v-top"><div class="v-title"><b translate="no">${esc(v.info.name)}</b><button class="btn small" data-a="close">${esc(t("Close vault"))}</button></div>${user}
-        <div class="row"><button class="btn small" data-a="add">${esc(t("Add files…"))}</button><button class="btn small" data-a="savepart"${this.app.part() && !this.openId ? "" : " disabled"}>${esc(t("Save part to vault"))}</button></div>
+        <div class="row"><button class="btn small" data-a="add">${esc(t("Add files…"))}</button><button class="btn small" data-a="savepart"${this.app.doc() && !this.openId ? "" : " disabled"} title="${esc(t("The open part, assembly or drawing becomes a vault file, checked out to you"))}">${esc(t("Save to vault"))}</button></div>
         <div class="row"><button class="btn small" data-a="audit">${esc(t("Audit trail"))}</button><button class="btn small" data-a="verify">${esc(t("Integrity check"))}</button><button class="btn small" data-a="storage">${esc(t("Storage"))}</button><button class="btn small" data-a="export">${esc(t("Export ZIP"))}</button></div>
         <div class="row"><button class="btn small" data-a="changes">${esc(t("Change orders"))}</button><button class="btn small" data-a="packages">${esc(t("Release packages"))}</button><button class="btn small" data-a="notes">${esc(t("Notifications"))}${this.unseen ? ` <span class="v-badge">${this.unseen}</span>` : ""}</button></div>
         <div class="row"><button class="btn small" data-a="bin">${esc(t("Recycle bin"))}</button><button class="btn small" data-a="settings">${esc(t("Vault settings"))}</button><button class="btn small" data-a="workflow">${esc(t("Workflow"))}</button></div>
@@ -1061,6 +1177,7 @@ export class VaultPanel {
       if (u) { storage.set("mc:vaultUser", u); if (this.vault) this.vault.user = u; void this.refresh(); }
     });
     h.querySelectorAll<HTMLElement>("[data-openws]").forEach(b => b.addEventListener("click", () => void this.openInBrowser(b.dataset.openws!).catch(e => toast(t((e as Error).message), true))));
+    h.querySelectorAll<HTMLElement>("[data-openfolder]").forEach(b => b.addEventListener("click", () => void this.openFolder(b.dataset.openfolder!)));
     h.querySelectorAll<HTMLElement>(".v-row").forEach(b => {
       b.addEventListener("click", () => { this.sel = b.dataset.id!; this.conflicts = []; this.stale = []; void this.render().then(() => this.loadConflicts()); });
       b.addEventListener("dblclick", () => void this.openFile(b.dataset.id!));
@@ -1077,7 +1194,7 @@ export class VaultPanel {
         case "open-dir": void this.pickFolder(false); break;
         case "close": this.close(); break;
         case "add": files?.click(); break;
-        case "savepart": void this.saveOpenPart(); break;
+        case "savepart": void this.saveOpenDoc(); break;
         case "audit": void this.auditTrail(); break;
         case "verify": void this.verify(); break;
         case "storage": void this.storage(); break;

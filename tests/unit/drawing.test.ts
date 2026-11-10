@@ -1184,6 +1184,7 @@ test("hole callouts read from the geometry: count, counterbore, countersink, bli
   const ctx = { topo, holes: [], items: [], box: [[-50, -30, 0], [50, 30, 20]] as [V3, V3], dec: ".", label: (s: string) => s };
   const at = (x: number, y: number, r: number) => topo.edges.find(e => e.t === "c" && Math.abs(e.r! - r) < 1e-6 && Math.abs(e.c![0] - x) < 1e-6 && Math.abs(e.c![1] - y) < 1e-6)!;
   assert.deepEqual(holeText(at(-30, 15, 3.3), ctx), ["4× Ø6.6 THRU", "⌴Ø11 ↧6.4"]);
+  assert.deepEqual(holeText(at(-30, 15, 3.3), ctx, false), ["Ø6.6 THRU", "⌴Ø11 ↧6.4"], "without the number of holes");
   assert.deepEqual(holeText(at(10, 15, 5.5), ctx), ["4× Ø6.6 THRU", "⌴Ø11 ↧6.4"], "the counterbore's own circle gives the same callout");
   assert.deepEqual(holeText(at(0, -15, 6.72), ctx), ["2× Ø6.6 THRU", "⌵Ø13.44 × 90°"]);
   assert.deepEqual(holeText(at(30, -15, 2.5), ctx), ["Ø5 ↧12"]);
@@ -1347,6 +1348,40 @@ test("a dimension can carry a second line of text under its line (FR-DRW-021)", 
     assert.ok(Math.hypot(zig.p[0], zig.p[1]) > 70 && Math.hypot(zig.p[0], zig.p[1]) < 80, "and starts about 24 mm inside it");
     assert.ok(!short.prims.some(q => q.t === "l" && Math.hypot((q as { p: number[] }).p[0], (q as { p: number[] }).p[1]) < 1e-9));
     assert.equal(short.prims.filter(q => q.t === "t").length, full.prims.filter(q => q.t === "t").length);
+  }
+  {
+    // A diameter displayed as a linear dimension: extension lines from the rim's left and right ends, arrows on a level line, Ø kept.
+    const dia = { id: "d", t: "dim", view: "v", k: "dia", refs: [], pos: [3, 30], lin: "h" } as never, dg = { k: "dia", pts: [], c: [0, 0], r: 10, value: 20 } as never;
+    const o = dimPrims(dia, dg, pl, ".");
+    const ls = o.prims.filter(q => q.t === "l").map(q => (q as { p: number[] }).p);
+    assert.ok(ls.some(p => Math.abs(p[0] + 10) < 1e-9 && Math.abs(p[2] + 10) < 1e-9 && p[3] > 30), "extension line at x = -10");
+    assert.ok(ls.some(p => Math.abs(p[0] - 10) < 1e-9 && Math.abs(p[2] - 10) < 1e-9 && p[3] > 30), "extension line at x = 10");
+    assert.ok(ls.some(p => Math.abs(p[1] - 30) < 1e-9 && Math.abs(p[3] - 30) < 1e-9 && Math.abs(Math.abs(p[2] - p[0]) - 20) < 1e-9), "dimension line 20 long at y = 30");
+    assert.ok(o.prims.some(q => q.t === "t" && (q as { s: string }).s === "Ø20"));
+    const v = dimPrims({ ...(dia as object), lin: "v", pos: [30, 3] } as never, dg, pl, ".").prims.filter(q => q.t === "l").map(q => (q as { p: number[] }).p);
+    assert.ok(v.some(p => Math.abs(p[0] - 30) < 1e-9 && Math.abs(p[2] - 30) < 1e-9 && Math.abs(Math.abs(p[3] - p[1]) - 20) < 1e-9), "vertical dimension line at x = 30");
+  }
+  {
+    // The drawing's extension line gap and overshoot: with gap 0 and 3 past, the Ø20's lines start on the rim (y = 0) and end 3 above the dimension line.
+    const { useStyle } = await import("../../src/drawing/annot");
+    const dia = { id: "d", t: "dim", view: "v", k: "dia", refs: [], pos: [3, 30], lin: "h" } as never, dg = { k: "dia", pts: [], c: [0, 0], r: 10, value: 20 } as never;
+    const ext = () => dimPrims(dia, dg, pl, ".").prims.filter(q => q.t === "l").map(q => (q as { p: number[] }).p).filter(p => Math.abs(p[0] - p[2]) < 1e-9 && Math.abs(Math.abs(p[0]) - 10) < 1e-9);
+    const std = ext();
+    assert.ok(std.length === 2 && std.every(p => Math.abs(Math.min(p[1], p[3]) - 1) < 1e-9 && Math.abs(Math.max(p[1], p[3]) - 32) < 1e-9), JSON.stringify(std));
+    try {
+      useStyle({ extGap: 0, extOver: 3 });
+      const own = ext();
+      assert.ok(own.length === 2 && own.every(p => Math.abs(Math.min(p[1], p[3])) < 1e-9 && Math.abs(Math.max(p[1], p[3]) - 33) < 1e-9), JSON.stringify(own));
+    } finally { useStyle(undefined); }
+  }
+  {
+    // Arrowheads of its own: oblique strokes are two thick lines in place of the two filled heads, and the next dimension is back to the style's.
+    const base = dimPrims(lin as never, geo as never, pl, ".").prims, tick = dimPrims({ ...lin, ends: "tick" } as never, geo as never, pl, ".").prims;
+    const thick = (ps: typeof base) => ps.filter(q => q.t === "l" && (q as { pen?: string }).pen === "thick").length;
+    const filled = (ps: typeof base) => ps.filter(q => q.t === "p" && (q as { fill?: boolean }).fill).length;
+    assert.equal(thick(tick), thick(base) + 2);
+    assert.equal(filled(tick), filled(base) - 2);
+    assert.deepEqual(dimPrims(lin as never, geo as never, pl, ".").prims, base);
   }
   const plain = dimPrims(lin as never, geo as never, pl, ".");
   const r = dimPrims({ ...lin, below: "2 PLACES" } as never, geo as never, pl, ".");

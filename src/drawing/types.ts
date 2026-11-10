@@ -146,6 +146,10 @@ export interface DimAnnot {
   horiz?: boolean;
   /** Radius dimensions: foreshortened (the dimension line stops short of the centre with a jog), for a centre far away or off the sheet. */
   fore?: boolean;
+  /** Diameter dimensions: shown as a linear dimension across the circle, measured horizontally or vertically on the sheet (extension lines from the rim). */
+  lin?: "h" | "v";
+  /** Arrowheads of this dimension; absent = as the drawing's style says (`DraftStyle.arrow`). */
+  ends?: "filled" | "open" | "dot" | "tick";
 }
 
 /** A note: on the sheet (sheet mm) or on a view (its model axes, so it moves with the view), with an optional leader to the model. */
@@ -154,7 +158,8 @@ export interface DimAnnot {
 export interface NoteAnnot { id: string; t: "note"; view?: string; pos: [number, number]; text: string; h?: number; leader?: GeoRef; border?: "box" | "round" | "circle"; al?: "c" | "r"; end?: "dot" | "none"; bent?: boolean }
 
 /** A hole callout (FR-DRW-022) on a round edge, from the hole feature when there is one. */
-export interface HoleAnnot { id: string; t: "hole"; view: string; ref: GeoRef; pos: [number, number]; txt?: string }
+/** `count` false leaves the number of equal holes ("4×") out of the automatic text; `below` adds a line under it (e.g. "EQUALLY SPACED"). */
+export interface HoleAnnot { id: string; t: "hole"; view: string; ref: GeoRef; pos: [number, number]; txt?: string; count?: boolean; below?: string }
 
 /** Geometric characteristics (ISO 1101 / ASME Y14.5). */
 export type GSym = "straight" | "flat" | "circ" | "cyl" | "pline" | "psurf" | "par" | "perp" | "ang" | "pos" | "conc" | "sym" | "runout" | "trunout";
@@ -292,7 +297,9 @@ export interface DraftStyle { text?: 2.5 | 3.5 | 5; arrow?: "filled" | "open" | 
   /** Default symmetric tolerance (±) of dimensions with none of their own: linear in mm, angular in degrees. */
   tol?: number; atol?: number;
   /** Dual dimensions: lengths also shown in inches in brackets, with `dualPrec` decimals (3 when absent). */
-  dual?: "in"; dualPrec?: number }
+  dual?: "in"; dualPrec?: number;
+  /** Extension lines (sheet mm): the gap left at the outline (1 when absent; ISO 129 allows 0) and how far they run past the dimension line (2 when absent). */
+  extGap?: number; extOver?: number }
 
 /** Model facts for the title block. */
 export interface ModelInfo { title: string; number?: string; revision?: string; author?: string; material?: string; mass?: number; box: [V3, V3] }
