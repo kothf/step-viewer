@@ -359,6 +359,35 @@ test("assembly BOM: items in first-use order, pattern and sub-assembly instances
   assert.ok(onVisible(proj, [5, 0.001], 0.01) && onVisible(proj, [20, 5], 0.01) && !onVisible(proj, [20, -5], 0.01));
 });
 
+test("balloon styles: split circle with quantities, triangle, hexagon, box and underline (FR-DRW-023)", async () => {
+  const { balloonPrims, balloonOutline } = await import("../../src/drawing/bom");
+  type L = { t: "l"; p: number[] }; type T = { t: "t"; s: string; y: number };
+  const n = (r: { prims: { t: string }[] }, t: string) => r.prims.filter(q => q.t === t).length;
+  const plain = balloonPrims([0, 0], null, "7");
+  assert.deepEqual([n(plain, "a"), n(plain, "l")], [1, 0]);
+  // Split: the circle stays, a line across it, the item above and the quantity below.
+  const split = balloonPrims([0, 0], null, "7", ["8"], { shape: "split", lower: ["2", "12"] });
+  assert.deepEqual([n(split, "a"), n(split, "l")], [2, 2]);
+  const st = split.prims.filter(q => q.t === "t") as unknown as T[];
+  assert.deepEqual(st.map(q => q.s), ["7", "2", "8", "12"]);
+  assert.ok(st[0].y > 0 && st[1].y < 0 && st[2].y > -10 && st[3].y < -10, "item above the line, quantity below, per balloon");
+  // Polygons: sides instead of the circle, all 2R tall so a stack touches.
+  for (const [shape, sides] of [["tri", 3], ["hex", 6], ["box", 4]] as const) {
+    const r = balloonPrims([0, 0], null, "7", [], { shape });
+    assert.deepEqual([n(r, "a"), n(r, "l")], [0, sides], shape);
+    const ys = balloonOutline([0, 0], shape)!.map(q => q[1]);
+    assert.ok(Math.abs(Math.min(...ys) + 5) < 1e-9 && Math.abs(Math.max(...ys) - 5) < 1e-9, `${shape} is 10 mm tall`);
+  }
+  const none = balloonPrims([0, 0], null, "7", [], { shape: "none" });
+  assert.deepEqual([n(none, "a"), n(none, "l")], [0, 1], "underline only");
+  // The leader starts on the outline: on a box side to the right, on the hexagon's corner.
+  const lead = (shape: "box" | "hex" | "tri") => (balloonPrims([0, 0], [30, 0], "7", [], { shape }).prims.filter(q => q.t === "l") as unknown as L[]).find(q => q.p[2] === 30 && q.p[3] === 0)!;
+  assert.ok(Math.abs(lead("box").p[0] - 5) < 1e-9 && Math.abs(lead("hex").p[0] - 10 / Math.sqrt(3)) < 1e-9);
+  // Triangle: a level ray from the centre meets the sloping side half way up, at w/2.
+  assert.ok(Math.abs(lead("tri").p[0] - 5 / Math.sqrt(3)) < 1e-9, String(lead("tri").p[0]));
+  assert.ok(balloonPrims([0, 0], null, "7", [], { shape: "hex" }).box[2] > plain.box[2], "the hit box takes the wider outline in");
+});
+
 test("parts-only BOM, stacked balloons, surface symbol on a slanted edge, GOST signature cells", async () => {
   const { bomOf, bomCells, bomMode, balloonPrims } = await import("../../src/drawing/bom");
   const { rotatePrims, rotateBox } = await import("../../src/drawing/prims");
