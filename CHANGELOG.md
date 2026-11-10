@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.483.0] - 2026-11-10
+
+### Added
+
+- Recognize Holes and Recognize Features bring back blind cross holes in shafts and round bars (FR-FT-102): a hole that comes out on a curved face at one end and stops at a flat bottom or a drill point at the other becomes a reference Plane through the farthest point of its rim (the plane tangent to the shaft) and a Hole Wizard hole on it, with its diameter, depth and bottom, when the hole runs along X, Y or Z. Before, such holes stayed part of the imported body.
+- Hole Wizard: **Reverse direction** under End condition, for holes placed on a reference plane outside the body (on a face the holes still go into the material). The ⇄ button on the depth callout flips it too.
+
 ## [1.482.0] - 2026-11-10
 
 ### Fixed
@@ -2958,7 +2965,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.482.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.483.0...HEAD
+[1.483.0]: https://github.com/kothf/step-viewer/compare/v1.482.0...v1.483.0
 [1.482.0]: https://github.com/kothf/step-viewer/compare/v1.481.0...v1.482.0
 [1.481.0]: https://github.com/kothf/step-viewer/compare/v1.480.0...v1.481.0
 [1.480.0]: https://github.com/kothf/step-viewer/compare/v1.479.0...v1.480.0

@@ -141,3 +141,32 @@ test("recognize features: a cross hole through a shaft comes back as a Through A
     ? { ...f, ents: (f as SketchFeature).ents.map(e => e.t === "circle" ? { ...e, r: 3 } : e) } as Feature : f);
   assert.ok(vol(m, doc([...imp.features, ...big])) < v0 - 100);
 });
+
+test("recognize features: blind cross holes in a shaft come back as Hole Wizard holes on a plane tangent to it (FR-FT-102)", async () => {
+  const m = new Modeller(await occ());
+  const xy: [number, number][] = [[0, 0], [10, 0], [10, 20], [6, 26], [6, 40], [0, 40]];
+  const ents: SkEnt[] = xy.map(([x, y], i) => ({ id: `rp${i}`, t: "point", x, y }) as SkEnt);
+  xy.forEach((_, i) => ents.push({ id: `rl${i}`, t: "line", a: `rp${i}`, b: `rp${(i + 1) % xy.length}` }));
+  ents.push({ id: "ra", t: "point", x: 0, y: -5 }, { id: "rb", t: "point", x: 0, y: 45 }, { id: "rax", t: "line", a: "ra", b: "rb", cons: true });
+  // Ø4 drilled 7 deep with a drill point from the Ø20 part's side (tangent plane 10 from XZ), and Ø3 flat
+  // bottomed 5 deep from the other side of the Ø12 part (plane 6 behind YZ, the hole reversed).
+  const imp = imported(m, [{ id: "r", type: "sketch", name: "r", plane: { std: "XZ" }, ents, rels: [], dims: [] },
+    { id: "v", type: "revolve", name: "V", sketch: "r", op: "boss", axis: "rax", angle: { v: Math.PI * 2 } } as Feature,
+    { id: "pa", type: "plane", name: "PA", base: { std: "XZ" }, mode: "offset", offset: { v: 10 } } as Feature,
+    { id: "ha", type: "hole", name: "HA", plane: { plane: "pa" }, pts: [[0, 10]], kind: "simple", diameter: { v: 4 }, end: "blind", depth: { v: 7 } } as Feature,
+    { id: "pb", type: "plane", name: "PB", base: { std: "YZ" }, mode: "offset", offset: { v: 6 }, flip: true } as Feature,
+    { id: "hb", type: "hole", name: "HB", plane: { plane: "pb" }, pts: [[0, 33]], kind: "simple", diameter: { v: 3 }, end: "blind", depth: { v: 5 }, flat: true, flip: true } as Feature]);
+  const v0 = vol(m, imp);
+  const H = m.recognizeHoles(imp);
+  assert.equal(H.holes.length, 0);
+  assert.equal(types(H.cuts ?? []), "plane,hole,plane,hole");
+  const hs = (H.cuts ?? []).filter(f => f.type === "hole") as any[];
+  assert.deepEqual(hs.map(h => [h.diameter.v, Math.round(h.depth.v * 1e6) / 1e6, !!h.flat]).sort((a, b) => a[0] - b[0]), [[3, 5, true], [4, 7, false]]);
+  close(vol(m, doc([...imp.features, { id: "d", type: "delface", name: "", faces: H.faces } as Feature, ...H.cuts!])), v0, 1e-5);
+  const fs = m.recognizeFeatures(imp);
+  assert.equal(types(fs), "sketch,revolve,delbody,plane,hole,plane,hole");
+  close(vol(m, doc([...imp.features, ...fs])), v0, 1e-5);
+  // The holes stay editable: a deeper hole takes more material.
+  const deep = fs.map(f => f.type === "hole" ? { ...f, depth: { v: (f as any).depth.v + 2 } } as Feature : f);
+  assert.ok(vol(m, doc([...imp.features, ...deep])) < v0 - 5);
+});

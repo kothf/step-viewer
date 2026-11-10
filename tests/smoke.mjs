@@ -9541,6 +9541,30 @@ try {
     const cx1 = await state();
     check(!cx0.bad && cx0.v > 9000 && Math.abs(cx1.v - cx0.v) < 0.1 && !cx1.bad && cx1.types === "import,sketch,extrude,delbody,sketch,extrude",
       `model 1.477: Recognize Features makes a cross hole through an imported shaft again as a Through All cut (FR-FT-102) (${JSON.stringify({ cx0, cx1 })})`);
+    // 1.483.0: a blind cross hole (drilled from a plane tangent to the bar, reversed) comes back as a plane and a Hole Wizard hole.
+    await mp.evaluate(() => window.__sv.model.store.change("Blind cross", d => {
+      const xy = [[0, 0], [10, 0], [10, 30], [0, 30]];
+      const ents = xy.map(([x, y], i) => ({ id: "rp" + i, t: "point", x, y }));
+      xy.forEach((_, i) => ents.push({ id: "rl" + i, t: "line", a: "rp" + i, b: "rp" + ((i + 1) % 4) }));
+      ents.push({ id: "ra", t: "point", x: 0, y: -5 }, { id: "rb", t: "point", x: 0, y: 35 }, { id: "rax", t: "line", a: "ra", b: "rb", cons: true });
+      d.features = [{ id: "r", type: "sketch", name: "Sketch1", plane: { std: "XZ" }, ents, rels: [], dims: [] },
+        { id: "v", type: "revolve", name: "Revolve1", sketch: "r", op: "boss", axis: "rax", angle: { v: Math.PI * 2 } },
+        { id: "p", type: "plane", name: "Plane1", base: { std: "XZ" }, mode: "offset", offset: { v: 10 }, flip: true },
+        { id: "h", type: "hole", name: "Hole1", plane: { plane: "p" }, pts: [[0, 15]], kind: "simple", diameter: { v: 5 }, end: "blind", depth: { v: 8 }, flip: true }];
+    }));
+    await settle();
+    const bx0 = await state();
+    const brepBx = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "blind.brep", brep }]; }), brepBx);
+    await settle();
+    await runCmd(mp, "Recognize Features");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.length > 1, null, { timeout: 120000 });
+    await settle();
+    const bx1 = await state();
+    const bxHole = await mp.evaluate(() => { const h = window.__sv.model.store.doc.features.find(f => f.type === "hole"); return h && { d: h.diameter.v, depth: +h.depth.v.toFixed(4), flip: !!h.flip }; });
+    check(!bx0.bad && bx0.v > 9000 && bx0.v < 9425 && Math.abs(bx1.v - bx0.v) < 0.1 && !bx1.bad && bx1.types === "import,sketch,extrude,delbody,plane,hole"
+      && bxHole?.d === 5 && bxHole.depth === 8 && bxHole.flip,
+      `model 1.483.0: Recognize Features makes a blind cross hole in an imported shaft again as a Hole on a tangent plane (FR-FT-102) (${JSON.stringify({ bx0, bx1, bxHole })})`);
     await ctx.close();
   }
 

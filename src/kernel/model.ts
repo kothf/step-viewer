@@ -143,6 +143,27 @@ export class Modeller {
     return this.xyz(props.CentreOfMass());
   }
 
+  /** How far a face's edges reach along a direction from `o`: the largest dot(p − o, d), each edge sampled then refined. */
+  private reachAlong(face: any, o: V3, d: V3): number {
+    const oc = this.oc;
+    let best = -Infinity;
+    for (const e of this.sub(face, "EDGE")) {
+      const ad = new oc.BRepAdaptor_Curve_2(e);
+      const a = ad.FirstParameter(), b = ad.LastParameter(), n = 48;
+      const f = (t: number) => dot(sub3(this.xyz(ad.Value(t)), o), d);
+      let k = 0, fk = -Infinity;
+      for (let i = 0; i <= n; i++) { const v = f(a + ((b - a) * i) / n); if (v > fk) { fk = v; k = i; } }
+      // Golden-section search between the best sample's neighbours.
+      let lo = a + ((b - a) * Math.max(0, k - 1)) / n, hi = a + ((b - a) * Math.min(n, k + 1)) / n;
+      for (let i = 0; i < 60; i++) {
+        const m1 = hi - (hi - lo) / 1.618033988749895, m2 = lo + (hi - lo) / 1.618033988749895;
+        if (f(m1) < f(m2)) lo = m1; else hi = m2;
+      }
+      best = Math.max(best, fk, f((lo + hi) / 2));
+    }
+    return best;
+  }
+
   private edgeMid(edge: any): V3 {
     const props = new this.oc.GProp_GProps_1();
     this.oc.BRepGProp.LinearProperties(edge, props, false, false);
@@ -2218,9 +2239,11 @@ export class Modeller {
     const oc = this.oc;
     if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
     if (!f.plane) throw new FeatureError("E-HOLE-FACE", "Pick a flat face or a plane for the holes.");
-    const fr = this.planeFrame(f.plane, prev, frames);
+    const fr0 = this.planeFrame(f.plane, prev, frames);
     // The panel places holes in this frame, so it is known even before the first hole.
-    frames[f.id] = fr;
+    frames[f.id] = fr0;
+    // Reverse direction: the holes go along the plane's normal instead of against it (x, y stay, so do the points).
+    const fr: Frame = f.flip ? { ...fr0, n: mul(fr0.n, -1) } : fr0;
     if (!f.pts.length) throw new FeatureError("E-HOLE-PTS", "Click on the face to place the holes.");
     const r = f.diameter.v / 2;
     if (!(r > 1e-6)) throw new FeatureError("E-FT-ZERO", "The diameter must be more than 0.");
@@ -2322,7 +2345,7 @@ export class Modeller {
     this.tools.set(f.id, [{ shape: tool, op: "cut" }]);
     const out = this.bool("cut", prev, tool, f.id);
     if (Math.abs(this.volume(out.shape) - this.volume(prev.shape)) < 1e-9) throw new FeatureError("E-FT-NOCHANGE", "The holes do not touch the body.");
-    return { body: out, frame: fr };
+    return { body: out, frame: fr0 };
   }
 
   /**
@@ -3373,6 +3396,7 @@ export class Modeller {
     type Found = { faces: number[]; open: number; at: V3; end: "blind" | "through"; depth: number; flat: boolean; r: number;
       d: V3; floor?: number; caps: number[]; cs?: { dia: number; angle: number; faces: number[] }; cb?: { dia: number; depth: number } };
     const found: Found[] = [], crossH: { faces: number[]; o: V3; d: V3; r: number }[] = [];
+    const crossB: { faces: number[]; at: V3; d: V3; r: number; depth: number; flat: boolean }[] = [];
     for (const g of groups) {
       const at = (s: number): V3 => add(g.o, mul(g.d, s));
       // A flat face square to the axis through a point, facing `out`; of coplanar ones (the floors of two
@@ -3423,6 +3447,15 @@ export class Modeller {
         const eps = Math.max(tol * 100, g.r * 1e-3);
         if (plainOr(e0) && plainOr(e1) && Math.abs(g.du - 2 * Math.PI) < 1e-6 && out(g.lo - eps) && out(g.hi + eps))
           crossH.push({ faces: g.faces, o: g.o, d: g.d, r: g.r });
+        // A blind cross hole: it comes out on a curved face at one end and stops at a flat floor or a drill
+        // point at the other. It is drilled from the plane square to it through the farthest point of its rim
+        // (the plane tangent to a shaft), so a reference plane carries it.
+        const [shut, bare] = !e0 ? [e1, -1] : [e0, 1];
+        if ((!e0 !== !e1) && shut && (shut.kind === "floor" || shut.kind === "drill") && Math.abs(g.du - 2 * Math.PI) < 1e-6) {
+          // The face's parameter range is loose: measure the rim's farthest point from the edges.
+          const s = bare * Math.max(...g.faces.map(i => this.reachAlong(body.faces[i], g.o, mul(g.d, bare))));
+          if (out(s + bare * eps)) crossB.push({ faces: [...g.faces, ...shut.faces], at: at(s), d: mul(g.d, -bare), r: g.r, depth: Math.abs(shut.s - s), flat: shut.kind === "floor" });
+        }
         continue;
       }
       if (e0.kind === "open" && e1.kind === "open") {
@@ -3454,8 +3487,31 @@ export class Modeller {
     const ref = (i: number): FaceRef => ({ name: body.names[i], hint: this.centroid(body.faces[i]) });
     // Cross holes come back as a circle on the standard plane square to the hole, cut Through All both
     // ways (FeatureWorks makes them cut-extrudes too); one is kept only when it gives the same volume.
-    const v0 = crossH.length ? this.volume(body.shape) : 0;
+    const v0 = crossH.length || crossB.length ? this.volume(body.shape) : 0;
     const cuts: Feature[] = [], crossFaces: FaceRef[] = [];
+    const tryPair = (pair: Feature[], fs: FaceRef[]) => {
+      try {
+        const r = this.evaluate({ ...doc, rollback: null, features: [...upto, { id: "__cross", type: "delface", name: "", faces: fs } as Feature, ...pair] });
+        if (!r.body || r.statuses.slice(-3).some(x => x.ok === false)) return;
+        const same = Math.abs(this.volume(r.body.shape) - v0) <= 1e-6 * Math.abs(v0) + 1e-9 || this.sameVolume(r.body.shape, body.shape);
+        if (!same) return;
+      } catch { return; }
+      cuts.push(...pair);
+      crossFaces.push(...fs);
+    };
+    // Blind cross holes: a reference plane offset from the standard plane square to the hole, through the
+    // rim's farthest point, and a Hole Wizard hole on it (reversed when it runs along the plane's normal).
+    for (const c of crossB) {
+      const std = (["XY", "XZ", "YZ"] as const).find(k => Math.abs(Math.abs(dot(STD_FRAMES[k].n, c.d)) - 1) < 1e-9);
+      if (!std) continue;
+      const F = STD_FRAMES[std], h = dot(sub3(c.at, F.o), F.n), pid = `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
+      const q = sub3(c.at, F.o);
+      const pair: Feature[] = [
+        { id: pid, type: "plane", name: "", base: { std }, mode: "offset", offset: { v: Math.abs(h) }, ...(h < 0 ? { flip: true } : {}) } as Feature,
+        { id: `${pid}h`, type: "hole", name: "", plane: { plane: pid }, pts: [[dot(q, F.x), dot(q, F.y)]], kind: "simple", diameter: { v: 2 * c.r }, end: "blind",
+          depth: { v: c.depth }, ...(c.flat ? { flat: true } : {}), ...(dot(c.d, F.n) > 0 ? { flip: true } : {}) } as Feature];
+      tryPair(pair, c.faces.map(ref));
+    }
     for (const c of crossH) {
       const std = (["XY", "XZ", "YZ"] as const).find(k => Math.abs(Math.abs(dot(STD_FRAMES[k].n, c.d)) - 1) < 1e-9);
       if (!std) continue;
@@ -3463,13 +3519,7 @@ export class Modeller {
       const pair: Feature[] = [
         { id: sid, type: "sketch", name: "", plane: { std }, rels: [], dims: [], ents: [{ id: `${sid}c`, t: "point", x: dot(q, F.x), y: dot(q, F.y) }, { id: `${sid}k`, t: "circle", c: `${sid}c`, r: c.r }] } as Feature,
         { id: `${sid}x`, type: "extrude", name: "", sketch: sid, op: "cut", end: "through2", depth: { v: 10 } } as Feature];
-      const fs = c.faces.map(ref);
-      try {
-        const r = this.evaluate({ ...doc, rollback: null, features: [...upto, { id: "__cross", type: "delface", name: "", faces: fs } as Feature, ...pair] });
-        if (!r.body || r.statuses.slice(-3).some(x => x.ok === false) || Math.abs(this.volume(r.body.shape) - v0) > 1e-6 * Math.abs(v0) + 1e-9) continue;
-      } catch { continue; }
-      cuts.push(...pair);
-      crossFaces.push(...fs);
+      tryPair(pair, c.faces.map(ref));
     }
     if (!keep.length) return cuts.length ? { faces: crossFaces, holes: [], cuts } : { faces: [], holes: [] };
     const faces = [...keep.flatMap(h => h.faces.map(ref)), ...crossFaces];
