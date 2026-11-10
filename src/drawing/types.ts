@@ -140,6 +140,10 @@ export interface DimAnnot {
   show?: "ref" | "basic";
   /** Dual dimension: the inch value follows in brackets. Absent = as the drawing's style says (`DraftStyle.dual`). */
   dual?: boolean;
+  /** Extension lines left out (linear and arc length dimensions): the first reference's, the second's or both. */
+  noExt?: "a" | "b" | "both";
+  /** Linear dimensions: the text stays horizontal and sits in a gap of the dimension line (ISO 129 method 2, ASME unidirectional). */
+  horiz?: boolean;
 }
 
 /** A note: on the sheet (sheet mm) or on a view (its model axes, so it moves with the view), with an optional leader to the model. */
