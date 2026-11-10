@@ -8447,14 +8447,37 @@ try {
       const q = new v.camera.position.constructor(35, 0, 0).project(v.camera);
       return { x: r.left + ((q.x + 1) / 2) * r.width, y: r.top + ((1 - q.y) / 2) * r.height };
     });
+    // 1.428: hovering a region lights it up before the click (SolidWorks' pre-highlight).
+    const hoverN = () => mp.evaluate(() => { let n = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData.contourHover !== undefined && o.visible) n++; }); return n; });
+    await mp.mouse.move(at.x - 30, at.y - 30);
+    await mp.mouse.move(at.x, at.y);
+    await mp.waitForTimeout(200);
+    const hov = await hoverN();
     await mp.mouse.click(at.x, at.y);
     await settle();
-    const one = await mp.evaluate(() => ({ n: window.__sv.model.mode().draft?.contours?.length, box: document.querySelector('#mc-pm [data-focus="contours"]')?.textContent, v: Math.round(window.__sv.model.last().props?.volume ?? 0), bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.code).join() }));
+    const one = await mp.evaluate(() => ({ hov: 0, n: window.__sv.model.mode().draft?.contours?.length, box: document.querySelector('#mc-pm [data-focus="contours"]')?.textContent, v: Math.round(window.__sv.model.last().props?.volume ?? 0), bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.code).join() }));
     await mp.evaluate(() => window.__sv.modeller.ok());
     await settle();
     const done = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(x => x.type === "extrude"); return { contours: f.contours?.length, v: Math.round(window.__sv.model.last().props?.volume ?? 0), faces: window.__sv.model.last().data?.faces?.length ?? 0 }; });
-    check(/focus/.test(open0.box ?? "") && open0.help === "contours" && one.n === 1 && !one.bad && one.v === 18000 && done.contours === 1 && done.v === 18000,
-      `model 1.421: Extrude on a sketch with a line across opens Selected Contours, a click in the view picks one region (FR-FT-010) (${JSON.stringify({ open0, one, done })})`);
+    one.hov = hov;
+    check(/focus/.test(open0.box ?? "") && open0.help === "contours" && hov === 1 && one.n === 1 && !one.bad && one.v === 18000 && done.contours === 1 && done.v === 18000,
+      `model 1.421: Extrude on a sketch with a line across opens Selected Contours, hovering lights a region, a click in the view picks it (FR-FT-010) (${JSON.stringify({ open0, one, done })})`);
+    // 1.428: Planar Surface takes Selected Contours too: the left region (x -50..20) becomes one flat face.
+    await mp.evaluate(() => { window.__sv.modeller.startFeature("planesurf"); });
+    await settle();
+    const ps0 = await mp.evaluate(() => ({ type: window.__sv.model.mode().draft?.type, sketch: window.__sv.model.mode().draft?.sketch, focus: document.querySelector("#mc-pm .pm-box.focus")?.dataset.focus }));
+    const left = await mp.evaluate(() => {
+      const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect();
+      const q = new v.camera.position.constructor(-15, 0, 0).project(v.camera);
+      return { x: r.left + ((q.x + 1) / 2) * r.width, y: r.top + ((1 - q.y) / 2) * r.height };
+    });
+    await mp.mouse.click(left.x, left.y);
+    await settle();
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await settle();
+    const ps1 = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(x => x.type === "planesurf"); const l = window.__sv.model.last(); return { contours: f?.contours?.length, sheetFaces: l.sheetFaces, bad: l.statuses.filter(s => !s.ok).map(s => s.code).join() }; });
+    check(ps0.type === "planesurf" && ps0.sketch === "s" && ps0.focus === "contours" && ps1.contours === 1 && ps1.sheetFaces === 1 && !ps1.bad,
+      `model 1.428: Planar Surface on a sketch with a line across picks a region with Selected Contours (FR-FT-010) (${JSON.stringify({ ps0, ps1 })})`);
     await ctx.close();
   }
 
