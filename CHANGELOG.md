@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.408.0] - 2026-11-10
+
+### Changed
+
+- **Douglas fir checked (FR-MAT-001)**: Wood (Douglas fir) now shows **Checked against:** with a link to Oregon State University's table from the USDA Wood Handbook (air-dry weight 545 kg/m³, modulus 13 400 MPa). 140 of 170 materials are checked; the other 30 still say they are not.
+
 ## [1.407.0] - 2026-11-10
 
 ### Changed
@@ -2399,7 +2405,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.407.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.408.0...HEAD
+[1.408.0]: https://github.com/kothf/step-viewer/compare/v1.407.0...v1.408.0
 [1.407.0]: https://github.com/kothf/step-viewer/compare/v1.406.0...v1.407.0
 [1.406.0]: https://github.com/kothf/step-viewer/compare/v1.405.0...v1.406.0
 [1.405.0]: https://github.com/kothf/step-viewer/compare/v1.404.0...v1.405.0
