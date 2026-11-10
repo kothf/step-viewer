@@ -5,7 +5,12 @@ import type { DrawingDoc, Sheet } from "./types";
 export const uid = (p = "") => p + Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-3);
 
 export function newSheet(n: number, base?: Partial<Sheet>): Sheet {
-  return { id: uid("s_"), name: `Sheet${n}`, size: base?.size ?? "A3", portrait: base?.portrait, scale: base?.scale ?? [1, 1], projection: base?.projection ?? "first", format: base?.format ?? "iso", views: [] };
+  const s: Sheet = { id: uid("s_"), name: `Sheet${n}`, size: base?.size ?? "A3", portrait: base?.portrait, scale: base?.scale ?? [1, 1], projection: base?.projection ?? "first", format: base?.format ?? "iso", views: [] };
+  // The sheet format goes along, as in SolidWorks: a custom size and a user title block (drawings exam #31: both were dropped).
+  if (base?.w !== undefined) s.w = base.w;
+  if (base?.h !== undefined) s.h = base.h;
+  if (base?.tb) s.tb = structuredClone(base.tb);
+  return s;
 }
 
 export class DrawingStore {

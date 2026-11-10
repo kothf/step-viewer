@@ -1687,3 +1687,13 @@ test("Standard 3 views again: placed clear of the views on the sheet at its scal
   // The flange block at 2:1 filling the sheet: no room for a second set at 2:1.
   assert.equal(std3Layout(80, 60, 35, area, tb, false, 25, 8, [[60, 60, 300, 270]], [[2, 1]]), null);
 });
+
+test("Add sheet keeps the sheet format: custom size and user title block (drawings exam #31)", async () => {
+  const { newSheet } = await import("../../src/drawing/doc");
+  const tb = { id: "f1", name: "Mine", w: 180, h: 40, cells: [{ x: 0, y: 0, w: 180, h: 40, label: "Firma" }] };
+  const a = { ...newSheet(1), size: "custom" as const, w: 500, h: 350, format: "ansi" as const, tb };
+  const b = newSheet(2, a);
+  assert.deepEqual([b.size, b.w, b.h, b.format, b.tb], ["custom", 500, 350, "ansi", tb]);
+  assert.notEqual(b.tb, a.tb, "a copy, so editing one sheet's block leaves the other");
+  assert.equal(newSheet(2, newSheet(1)).tb, undefined);
+});
