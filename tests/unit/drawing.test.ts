@@ -1116,6 +1116,14 @@ test("hole callouts read from the geometry: count, counterbore, countersink, bli
   assert.deepEqual(holeText(at(10, 15, 5.5), ctx), ["4× Ø6.6 THRU", "⌴Ø11 ↧6.4"], "the counterbore's own circle gives the same callout");
   assert.deepEqual(holeText(at(0, -15, 6.72), ctx), ["2× Ø6.6 THRU", "⌵Ø13.44 × 90°"]);
   assert.deepEqual(holeText(at(30, -15, 2.5), ctx), ["Ø5 ↧12"]);
+  // Callouts follow the drawing's default decimals and dual dimensions; angles stay as they are.
+  const { useStyle: styleFor } = await import("../../src/drawing/annot");
+  try {
+    styleFor({ lin: 1, dual: "in", dualPrec: 2 });
+    assert.deepEqual(holeText(at(30, -15, 2.5), ctx), ["Ø5.0 [0.20] ↧12.0 [0.47]"]);
+    assert.deepEqual(holeText(at(0, -15, 6.72), ctx), ["2× Ø6.6 [0.26] THRU", "⌵Ø13.4 [0.53] × 90°"]);
+  } finally { styleFor(undefined); }
+  assert.deepEqual(holeText(at(30, -15, 2.5), ctx), ["Ø5 ↧12"]);
   assert.deepEqual(holeText(at(-30, 15, 3.3), ctx, false), ["Ø6.6 THRU", "⌴Ø11 ↧6.4"], "no count in a hole table");
   assert.deepEqual(holeText(at(-30, 15, 3.3), { ...ctx, dec: ",", label: (s: string) => (s === "THRU" ? "СКВОЗН." : s) }), ["4× Ø6,6 СКВОЗН.", "⌴Ø11 ↧6,4"]);
   // Entered from the bottom, a counterbore is a different hole: holes count only with the same way in.
@@ -1159,6 +1167,25 @@ test("reference dimensions are in parentheses, basic ones boxed and never tolera
   const geo = { k: "h" as const, pts: [[0, 0], [40, 0]] as [number, number][], value: 40 };
   const n = (a: object) => dimPrims({ ...lin, pos: [20, 15], ...a } as never, geo as never, pl, ".").prims.filter(q => q.t === "l").length;
   assert.equal(n({ show: "basic" }) - n({}), 4, "four box sides");
+});
+
+test("a note can have a border; the leader starts on it (FR-DRW-023)", async () => {
+  const { notePrims } = await import("../../src/drawing/annot");
+  const note = { id: "n", t: "note" as const, pos: [0, 0] as [number, number], text: "A1" };
+  const plain = notePrims(note, [10, 10], [40, 10]);
+  const kinds = (b: "box" | "round" | "circle") => notePrims({ ...note, border: b }, [10, 10], [40, 10]);
+  const count = (r: { prims: { t: string }[] }, t: string) => r.prims.filter(q => q.t === t).length;
+  assert.equal(count(kinds("box"), "l") - count(plain, "l"), 4, "four sides");
+  assert.equal(count(kinds("round"), "a") - count(plain, "a"), 2, "two round ends");
+  assert.equal(count(kinds("circle"), "a") - count(plain, "a"), 1, "one circle");
+  for (const b of ["box", "round", "circle"] as const) {
+    const r = kinds(b);
+    assert.ok(r.box[0] < plain.box[0] && r.box[2] > plain.box[2], `${b}: the hit box takes the frame in`);
+    // The leader is the line ending at the arrow point; it starts on the frame's right side.
+    const lead = (r.prims.filter(q => q.t === "l") as { p: number[] }[]).find(q => Math.abs(q.p[2] - 40) < 1e-9 && Math.abs(q.p[3] - 10) < 1e-9)!;
+    assert.ok(Math.abs(lead.p[0] - r.box[2]) < 1e-6 || b === "circle", `${b}: leader from the frame edge`);
+    if (b === "circle") { const cx = (r.box[0] + r.box[2]) / 2, cy = (r.box[1] + r.box[3]) / 2; assert.ok(Math.abs(Math.hypot(lead.p[0] - cx, lead.p[1] - cy) - (r.box[2] - r.box[0]) / 2) < 1e-6, "leader from the circle"); }
+  }
 });
 
 test("a linear dimension's arrows can be put outside or inside by hand (FR-DRW-021)", async () => {
