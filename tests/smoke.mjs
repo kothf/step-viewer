@@ -6409,7 +6409,7 @@ try {
     await shown(2);
     const cmat0 = await mp.evaluate(() => window.__sv.asm.bom()[0].material);
     check(cmat.mat === "Titanium Ti-6Al-4V" && cmat.mass === 0.00443 && cmat.dens.join() === "4.43,4.43" && cmat0 === "Aluminium 6061",
-      `asm 1.431: Material… on a component sets the part's material for all its instances (${JSON.stringify(cmat)}, ${cmat0})`);
+      `asm 1.433.0: Material… on a component sets the part's material for all its instances (${JSON.stringify(cmat)}, ${cmat0})`);
     // STEP of the assembly reopens with the same names and placements (AT-P4-6).
     const step = [...await mp.evaluate(async () => [...await window.__sv.asm.stepBytes()])];
     await mp.setInputFiles("#file-input", { name: "rig.step", mimeType: "model/step", buffer: Buffer.from(step) });
