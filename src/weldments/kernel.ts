@@ -286,6 +286,20 @@ function bool(h: WeldHost, kind: "fuse" | "cut", a: Named, b: Named, fid: string
   return h.carry(mk, [a, b], mk.Shape(), fid);
 }
 
+/** All the pieces fused in one go with BOPAlgo_GlueShift: they only touch (beads end to end), never overlap. */
+function glueAll(h: WeldHost, parts: Named[], fid: string): Named {
+  const oc = h.oc;
+  const mk = new oc.BRepAlgoAPI_Fuse_1();
+  const A = new oc.TopTools_ListOfShape_1(), B = new oc.TopTools_ListOfShape_1();
+  A.Append_1(parts[0].shape);
+  for (const p of parts.slice(1)) B.Append_1(p.shape);
+  mk.SetArguments(A); mk.SetTools(B);
+  mk.SetGlue(oc.BOPAlgo_GlueEnum.BOPAlgo_GlueShift);
+  mk.Build(new oc.Message_ProgressRange_1());
+  if (!mk.IsDone() || mk.HasErrors()) throw new FeatureError("E-WLD-BOOL", "A weldment cut or join failed.");
+  return h.carry(mk, parts, mk.Shape(), fid);
+}
+
 /** The solid of a shape nearest a point (pieces a cut leaves on the far side are dropped). */
 function pieceNear(h: WeldHost, body: Named, p: V3): Named {
   const oc = h.oc;
@@ -842,8 +856,42 @@ export function weldBead(h: WeldHost, f: WeldBeadFeature, prev: Named | null, _f
       n = unit(sub(q, mul(a, dot(q, a))));
       // The surface's own normal points away from the axis on a right-handed frame, towards it on a left-handed one.
       if (!ad.Cylinder().Position().Direct()) n = mul(n, -1);
-    } else return null;
+    } else {
+      // Any other surface (a cone, a torus, a spline face): the normal at the point's (u, v) on it.
+      try {
+        const uv = new oc.ShapeAnalysis_Surface(oc.BRep_Tool.Surface_2(face)).ValueOfUV(new oc.gp_Pnt_3(p[0], p[1], p[2]), 1e-6);
+        const pr = new oc.BRepLProp_SLProps_1(ad, uv.X(), uv.Y(), 1, 1e-9);
+        if (!pr.IsNormalDefined()) return null;
+        const d = pr.Normal();
+        n = [d.X(), d.Y(), d.Z()];
+      } catch { return null; }
+    }
     return face.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED ? mul(n, -1) : n;
+  };
+  /** Flat or cylindrical: a bead along a straight or round edge between two such faces keeps one cross-section. */
+  const simple = (face: any) => { const ty = new oc.BRepAdaptor_Surface_2(face, true).GetType(); return ty === S.GeomAbs_Plane || ty === S.GeomAbs_Cylinder; };
+  /** A bead whose cross-section changes along the root (a tube meeting a tube, a curved edge): a loft through sections, named by GeneratedFace. */
+  const pushLoft = (secs: { face: any; edges: [any, string][] }[]) => {
+    // The same first and last section (a closed chain): ThruSections closes the ring and makes no caps.
+    const mk = new oc.BRepOffsetAPI_ThruSections(true, false, 1e-6);
+    // The sections are made alike (root, leg 1, leg 2): OCCT's own matching turns them as the root goes round.
+    mk.CheckCompatibility(false);
+    for (const x of secs) mk.AddWire(oc.BRepTools.OuterWire(x.face));
+    mk.Build(new oc.Message_ProgressRange_1());
+    if (!mk.IsDone()) return false;
+    let shape = mk.Shape();
+    if (h.volume(shape) < 0) shape = shape.Reversed();
+    const faces = h.sub(shape, "FACE"), k = beads.length;
+    const names: (string | null)[] = faces.map(() => null);
+    for (const [e, role] of secs[0].edges) {
+      let g: any = null;
+      try { g = mk.GeneratedFace(e); } catch { g = null; }
+      const i = g && !g.IsNull() ? faces.findIndex(x => x.IsSame(g)) : -1;
+      if (i >= 0) names[i] = `${f.id}:b${k}:${role}`;
+    }
+    const caps = [...h.sub(mk.FirstShape(), "FACE"), ...h.sub(mk.LastShape(), "FACE")];
+    beads.push({ shape, faces, names: faces.map((x, i) => names[i] ?? (caps.some(c => c.IsSame(x)) ? `${f.id}:b${k}:cap` : `${f.id}:b${k}:side:${i}`)) });
+    return true;
   };
   /** The bead's cross-section at `p`, and its edges by role: the legs on face 1 and face 2, and the weld face. */
   const tri = (p: V3, ua: V3, ub: V3) => {
@@ -906,7 +954,9 @@ export function weldBead(h: WeldHost, f: WeldBeadFeature, prev: Named | null, _f
     }
   }
   /** One straight or round stretch of the root: its ends, length, and a builder for the bead from distance a to b along it. */
-  type Run = { p0: V3; p1: V3; len: number; make: (a: number, b: number) => void };
+  type Sec = { face: any; edges: [any, string][] };
+  /** `sec` (curved roots): the cross-section at a distance along the run, so a chain of such runs is lofted as one bead. */
+  type Run = { p0: V3; p1: V3; len: number; make: (a: number, b: number) => void; sec?: (d: number) => Sec | null };
   const runs: Run[] = [];
   for (const fa of set1) for (const fb of set2) {
     if (fa.IsSame(fb)) continue;
@@ -931,7 +981,8 @@ export function weldBead(h: WeldHost, f: WeldBeadFeature, prev: Named | null, _f
       };
       if (!section(t0)) { skipped++; continue; }
       const p0 = at(t0).p, p1 = at(t1).p;
-      if (ty === oc.GeomAbs_CurveType.GeomAbs_Line) {
+      const exact = simple(fa) && simple(fb);
+      if (ty === oc.GeomAbs_CurveType.GeomAbs_Line && exact) {
         const dv = sub(p1, p0), L = len(dv);
         if (L < 1e-6) continue;
         const w = mul(dv, 1 / L);
@@ -940,14 +991,30 @@ export function weldBead(h: WeldHost, f: WeldBeadFeature, prev: Named | null, _f
           const v = mul(w, b - a);
           push(new oc.BRepPrimAPI_MakePrism_1(face, new oc.gp_Vec_4(v[0], v[1], v[2]), false, true), edges);
         } });
-      } else if (ty === oc.GeomAbs_CurveType.GeomAbs_Circle) {
+      } else if (ty === oc.GeomAbs_CurveType.GeomAbs_Circle && exact) {
         // Round the circle's axis: a tube standing on a plate, or the round corners of a hollow section.
         const ax = ad.Circle().Axis(), r = ad.Circle().Radius();
         runs.push({ p0, p1, len: r * (t1 - t0), make: (a, b) => {
           const { face, edges } = section(t0 + a / r)!;
           push(new oc.BRepPrimAPI_MakeRevol_1(face, ax, (b - a) / r, true), edges);
         } });
-      } else skipped++;
+      } else {
+        // Any other root (an ellipse where a tube meets a plate at an angle, the saddle where two tubes meet, a curve
+        // between curved faces): sections every few millimetres, lofted, at most 64 per piece.
+        let L = 0;
+        try { L = oc.GCPnts_AbscissaPoint.Length_7(ad, t0, t1, 1e-7); } catch { L = 0; }
+        if (!(L > 1e-6)) { skipped++; continue; }
+        const param = (d: number) => new oc.GCPnts_AbscissaPoint_2(ad, d, t0).Parameter();
+        // The sections must exist along the whole edge (the faces are not tangent anywhere on it).
+        const probe = Array.from({ length: 9 }, (_x, i) => section(param((L * i) / 8)));
+        if (probe.some(x => !x)) { skipped++; continue; }
+        const sec = (d: number) => section(param(Math.min(L, Math.max(0, d))));
+        runs.push({ p0, p1, len: L, sec, make: (a, b) => {
+          const n = Math.min(64, Math.max(4, Math.ceil((b - a) / Math.max(1, Math.min(sz, sz2)))));
+          const secs = Array.from({ length: n + 1 }, (_x, i) => sec(a + ((b - a) * i) / n));
+          if (secs.some(x => !x) || !pushLoft(secs as Sec[])) skipped++;
+        } });
+      }
     }
   }
   // Runs chained end to end; each chain gets its welds as windows of distance along it: the whole chain, or the
@@ -992,6 +1059,31 @@ export function weldBead(h: WeldHost, f: WeldBeadFeature, prev: Named | null, _f
       const off = lo + (f.inter.stagger && chain % 2 ? e / 2 : 0);
       for (let w0 = off; w0 < hi; w0 += e) { const x = Math.max(w0, lo), y = Math.min(w0 + l, hi); if (y - x >= 0.05) wins.push([x, y]); }
     }
+    // A chain of curved runs only (the saddle round a tube on a tube): each window is lofted in one go, since OCCT
+    // can drop one of two lofted pieces that only touch when fusing them.
+    if (pieces.every(p => p.r.sec)) {
+      const closed = d3(pieces[0].rev ? pieces[0].r.p1 : pieces[0].r.p0, pieces.at(-1)!.rev ? pieces.at(-1)!.r.p0 : pieces.at(-1)!.r.p1) < tol;
+      const secAt = (x: number) => {
+        const p = pieces.find(q => x <= q.s + q.r.len + 1e-9) ?? pieces.at(-1)!;
+        const d = Math.min(p.r.len, Math.max(0, x - p.s));
+        return p.r.sec!(p.rev ? p.r.len - d : d);
+      };
+      for (const [x, y] of wins) {
+        const whole = closed && x <= 1e-9 && y >= L - 1e-9;
+        // Sections at every piece end inside the window (corners of the root) and every few millimetres between.
+        const ts = new Set<number>([x, y]);
+        for (const p of pieces) for (const q of [p.s, p.s + p.r.len]) if (q > x + 1e-6 && q < y - 1e-6) ts.add(q);
+        const n = Math.min(96, Math.max(4, Math.ceil((y - x) / Math.max(1, Math.min(sz, sz2)))));
+        for (let i = 1; i < n; i++) ts.add(x + ((y - x) * i) / n);
+        const at = [...ts].sort((a, b) => a - b).filter((v, i, a) => i === 0 || v - a[i - 1] > 1e-6 * (1 + L));
+        const secs = (whole ? at.slice(0, -1) : at).map(secAt);
+        if (secs.some(q => !q)) { skipped++; continue; }
+        if (whole) secs.push(secs[0]);
+        if (pushLoft(secs as Sec[])) made++; else skipped++;
+      }
+      chain++;
+      continue;
+    }
     for (const { r, rev: rv, s: s0 } of pieces) {
       for (const [x0, y0] of wins) {
         const x = Math.max(x0, s0), y = Math.min(y0, s0 + r.len);
@@ -1006,15 +1098,24 @@ export function weldBead(h: WeldHost, f: WeldBeadFeature, prev: Named | null, _f
   if (runs.length && !made) throw new FeatureError("E-WLD-BEAD", "The weld starts past the end of the edges.");
   // Pieces that meet end to end become one bead (all round a tube, along a side and round its corners).
   if (beads.length > 1) {
-    try {
-      let all = beads[0];
-      for (const b of beads.slice(1)) all = bool(h, "fuse", all, b, f.id);
-      const joined = h.bodyList(unify(h, all));
-      if (joined.length && joined.length < beads.length) beads.splice(0, beads.length, ...joined);
-    } catch { /* kept as separate pieces */ }
+    // The join must keep every piece's volume: lofted pieces (curved roots) can come out of a plain fuse with one
+    // missing, so they are glued instead (they only touch end to end); failing that they stay separate pieces.
+    const total = beads.reduce((a, b) => a + Math.abs(h.volume(b.shape)), 0);
+    for (const glue of [false, true]) {
+      try {
+        let all: Named;
+        if (!glue) { all = beads[0]; for (const b of beads.slice(1)) all = bool(h, "fuse", all, b, f.id); }
+        else all = glueAll(h, beads, f.id);
+        const joined = h.bodyList(unify(h, all));
+        const v = joined.reduce((a, b) => a + Math.abs(h.volume(b.shape)), 0);
+        if (Math.abs(v - total) > 1e-4 * total) continue;
+        if (joined.length && joined.length < beads.length) beads.splice(0, beads.length, ...joined);
+        break;
+      } catch { /* the next way, else kept as separate pieces */ }
+    }
   }
-  if (skipped) h.warning = "Weld beads follow straight and round edges between flat and cylindrical faces; other edges were skipped.";
-  if (!beads.length) throw new FeatureError("E-WLD-BEAD", "The faces of the two sets do not meet along a straight or round edge.");
+  if (skipped) h.warning = "Some edges were skipped: the faces are tangent somewhere along them, so a bead has no room there.";
+  if (!beads.length) throw new FeatureError("E-WLD-BEAD", "The faces of the two sets do not meet along an edge a bead can follow.");
   return h.compoundOf([...h.bodyList(prev), ...beads]);
 }
 

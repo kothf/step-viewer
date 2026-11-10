@@ -398,7 +398,13 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
       if (txt.up) { const p = add2(s0, up, big ? h * 0.55 : h * 0.6); out.push({ t: "t", x: p[0], y: p[1], s: txt.up, h: hh, al: "l", layer: "ANNOT", rot: rot || undefined }); }
       if (txt.lo) { const p = add2(s0, up, big ? -h * 0.45 : -h * 0.25); out.push({ t: "t", x: p[0], y: p[1], s: txt.lo, h: hh, al: "l", layer: "ANNOT", rot: rot || undefined }); }
     }
-    return textBox(start[0], start[1], "x".repeat(Math.max(1, Math.round(totalW / (h * 0.85)))), h, "l", rot);
+    const box = textBox(start[0], start[1], "x".repeat(Math.max(1, Math.round(totalW / (h * 0.85)))), h, "l", rot);
+    if (!a.below) return box;
+    // A second line under the dimension line (the value sits 0.8 above it), centred under the value.
+    const wb = textW(a.below, h), sb = add2(add2(start, dir, (totalW - wb) / 2), up, -(h + 1.6));
+    out.push({ t: "t", x: sb[0], y: sb[1], s: a.below, h, al: "l", layer: "ANNOT", rot: rot || undefined });
+    const bb = textBox(sb[0], sb[1], "x".repeat(Math.max(1, Math.round(wb / (h * 0.85)))), h, "l", rot);
+    return [Math.min(box[0], bb[0]), Math.min(box[1], bb[1]), Math.max(box[2], bb[2]), Math.max(box[3], bb[3])];
   };
   if (g.k === "rad" || g.k === "dia") {
     const C = S(g.c!), R = g.r! * pl.s;
@@ -522,12 +528,25 @@ export function notePrims(a: NoteAnnot, at: P2, leaderTo: P2 | null): { prims: P
   const out: Prim[] = [], h = a.h ?? TEXT_H, lines = expandProps(a.text).split("\n");
   lines.forEach((s, i) => out.push({ t: "t", x: at[0], y: at[1] - i * h * 1.5, s, h, al: "l", layer: "ANNOT" }));
   const w = Math.max(1, ...lines.map(s => textW(s, h)));
+  let box: [number, number, number, number] = [at[0] - 0.5, at[1] - (lines.length - 1) * h * 1.5 - 0.3 * h, at[0] + w + 0.5, at[1] + h * 1.1];
+  // Border (FR-DRW-023): a box, an obround or a circle round the text; the leader then starts on it.
+  const cx = (box[0] + box[2]) / 2, cy = (box[1] + box[3]) / 2, cr = Math.hypot(box[2] - box[0], box[3] - box[1]) / 2 + 0.3;
+  const fr: [number, number, number, number] = [box[0] - 0.6, box[1] - 0.4, box[2] + 0.6, box[3] + 0.2];
+  // The round ends of an obround stand out of the frame box on its short sides.
+  if (a.border === "round") { const fw = fr[2] - fr[0], fh = fr[3] - fr[1]; if (fw >= fh) { fr[0] -= fh / 2; fr[2] += fh / 2; } else { fr[1] -= fw / 2; fr[3] += fw / 2; } }
+  if (a.border === "box") out.push(thin([fr[0], fr[1]], [fr[2], fr[1]]), thin([fr[2], fr[1]], [fr[2], fr[3]]), thin([fr[2], fr[3]], [fr[0], fr[3]]), thin([fr[0], fr[3]], [fr[0], fr[1]]));
+  else if (a.border === "round") out.push(...obround(box));
+  else if (a.border === "circle") out.push({ t: "a", o: [cx, cy], r: cr, a0: 0, a1: 2 * Math.PI, pen: "thin", layer: "ANNOT" });
   if (leaderTo) {
-    const start: P2 = [leaderTo[0] < at[0] ? at[0] - 1 : at[0] + w + 1, at[1] + h * 0.35];
+    let start: P2 = [leaderTo[0] < at[0] ? at[0] - 1 : at[0] + w + 1, at[1] + h * 0.35];
+    if (a.border === "circle") { const d = unit2([leaderTo[0] - cx, leaderTo[1] - cy], [1, 0]); start = [cx + d[0] * cr, cy + d[1] * cr]; }
+    else if (a.border === "box" || a.border === "round") start = [leaderTo[0] < at[0] ? fr[0] : fr[2], (fr[1] + fr[3]) / 2];
     const u = unit2([leaderTo[0] - start[0], leaderTo[1] - start[1]]);
     out.push(thin(start, leaderTo), arrow(leaderTo[0], leaderTo[1], u[0], u[1]));
   }
-  return { prims: out, box: [at[0] - 0.5, at[1] - (lines.length - 1) * h * 1.5 - 0.3 * h, at[0] + w + 0.5, at[1] + h * 1.1] };
+  if (a.border === "circle") box = [cx - cr, cy - cr, cx + cr, cy + cr];
+  else if (a.border) box = fr;
+  return { prims: out, box };
 }
 
 // ---------- property links in notes (FR-DRW-023) ----------

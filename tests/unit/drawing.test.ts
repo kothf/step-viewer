@@ -1169,6 +1169,25 @@ test("reference dimensions are in parentheses, basic ones boxed and never tolera
   assert.equal(n({ show: "basic" }) - n({}), 4, "four box sides");
 });
 
+test("a note can have a border; the leader starts on it (FR-DRW-023)", async () => {
+  const { notePrims } = await import("../../src/drawing/annot");
+  const note = { id: "n", t: "note" as const, pos: [0, 0] as [number, number], text: "A1" };
+  const plain = notePrims(note, [10, 10], [40, 10]);
+  const kinds = (b: "box" | "round" | "circle") => notePrims({ ...note, border: b }, [10, 10], [40, 10]);
+  const count = (r: { prims: { t: string }[] }, t: string) => r.prims.filter(q => q.t === t).length;
+  assert.equal(count(kinds("box"), "l") - count(plain, "l"), 4, "four sides");
+  assert.equal(count(kinds("round"), "a") - count(plain, "a"), 2, "two round ends");
+  assert.equal(count(kinds("circle"), "a") - count(plain, "a"), 1, "one circle");
+  for (const b of ["box", "round", "circle"] as const) {
+    const r = kinds(b);
+    assert.ok(r.box[0] < plain.box[0] && r.box[2] > plain.box[2], `${b}: the hit box takes the frame in`);
+    // The leader is the line ending at the arrow point; it starts on the frame's right side.
+    const lead = (r.prims.filter(q => q.t === "l") as { p: number[] }[]).find(q => Math.abs(q.p[2] - 40) < 1e-9 && Math.abs(q.p[3] - 10) < 1e-9)!;
+    assert.ok(Math.abs(lead.p[0] - r.box[2]) < 1e-6 || b === "circle", `${b}: leader from the frame edge`);
+    if (b === "circle") { const cx = (r.box[0] + r.box[2]) / 2, cy = (r.box[1] + r.box[3]) / 2; assert.ok(Math.abs(Math.hypot(lead.p[0] - cx, lead.p[1] - cy) - (r.box[2] - r.box[0]) / 2) < 1e-6, "leader from the circle"); }
+  }
+});
+
 test("a linear dimension's arrows can be put outside or inside by hand (FR-DRW-021)", async () => {
   const { dimPrims } = await import("../../src/drawing/annot");
   const lin = { id: "a", t: "dim" as const, view: "v", k: "h" as const, refs: [], pos: [20, 15] as [number, number] };
@@ -1182,6 +1201,21 @@ test("a linear dimension's arrows can be put outside or inside by hand (FR-DRW-0
   assert.ok(Math.abs(line(40, { arrows: "out" }) - 50) < 1e-9, "outside: the line runs an arrow and 2 mm past each side");
   assert.ok(line(3, {}) > 3 + 1e-9, "no room: arrows outside");
   assert.ok(line(3, { arrows: "in" }) < line(3, {}) - 5, "inside by hand: no arrow tails");
+});
+
+test("a dimension can carry a second line of text under its line (FR-DRW-021)", async () => {
+  const { dimPrims } = await import("../../src/drawing/annot");
+  const lin = { id: "a", t: "dim" as const, view: "v", k: "h" as const, refs: [], pos: [20, 15] as [number, number] };
+  const pl = { s: 1, uc: 0, vc: 0, x: 0, y: 0 } as never;
+  const geo = { k: "h" as const, pts: [[0, 0], [40, 0]] as [number, number][], value: 40 };
+  const plain = dimPrims(lin as never, geo as never, pl, ".");
+  const r = dimPrims({ ...lin, below: "2 PLACES" } as never, geo as never, pl, ".");
+  const ts = r.prims.filter(q => q.t === "t") as { s: string; x: number; y: number; h: number }[];
+  const main = ts.find(q => q.s === "40")!, low = ts.find(q => q.s === "2 PLACES")!;
+  assert.ok(main && low, "both lines are written");
+  assert.ok(main.y > 15 && low.y + low.h < 15, "the value above the dimension line, the second line under it");
+  assert.ok(r.box[1] < plain.box[1] - low.h * 0.9 && r.box[0] <= plain.box[0] && r.box[2] >= plain.box[2], "the hit box covers both lines");
+  assert.equal(plain.prims.filter(q => q.t === "t").length, 1);
 });
 
 test("dual dimensions add inches in brackets; a dimension can opt in or out (FR-DRW-021)", async () => {

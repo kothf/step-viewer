@@ -61,6 +61,7 @@ import { units, UNITS } from "../tools/units";
 import { csys } from "../tools/csys";
 import { confirmModal, toast, trapFocus } from "../ui";
 import { cmTab, onCmTab, selectCmTab } from "../commandBar";
+import { rememberWeld } from "../weldments/defaults";
 import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, cornerSpots, cutListRows, locateSpots, isWeldFeature, showCutList, weldChange, weldSymbols, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
 import type { EndCapFeature, GussetFeature } from "../weldments/types";
 import { capDir, splitSubs } from "../weldments/types";
@@ -73,6 +74,7 @@ import { ModifyBox } from "../modifyBox";
 import { checkSketch, SKETCH_USES, type CheckResult, type SketchUse } from "../sketch/check";
 import { lang, onLangChange, t, withLang } from "../i18n";
 import { gestureSlot, loadGestures, GESTURE_SHOW, type GestureMode } from "../gestures";
+import { isLongPress } from "../longPress";
 import { gestureGuide } from "../gestureUi";
 import { autosaveDelay, getPref, loadPrefs, onPrefs, qualityFactor, stepFor, type Prefs } from "../prefs";
 
@@ -1281,6 +1283,7 @@ export class ModelController {
     this.renderAll();
     // Pushpin or Ctrl+Enter: the same command again once the part has rebuilt (FR-UI-106).
     if (m.isNew && this.activeCmd) this.rememberOptions(this.activeCmd, f);
+    if (m.isNew && isWeldFeature(f)) rememberWeld(f);
     const again = m.isNew && (repeat || this.pinned) ? this.activeCmd : null;
     void Promise.resolve(this.rebuild()).then(() => { if (again && this.mode.kind === "none") this.command(again); });
   }
@@ -2213,6 +2216,15 @@ export class ModelController {
     vp.addEventListener("contextmenu", e => {
       // The edge helpers open on the button going up without a drag (a right-drag pans).
       const m = this.mode;
+      // A finger held still (FR-UI-091) opens what a right-click without a drag opens; lifting it then picks nothing.
+      if (isLongPress(e) && onCanvas(e) && this.active) {
+        e.preventDefault();
+        this.down = null;
+        if (m.kind === "sketch") this.sketchMenu(e);
+        else if (m.kind === "none") this.showContextBar({ x: e.clientX, y: e.clientY }, false);
+        else { this.rightHit = m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer") ? this.host.edgeAt(e.clientX, e.clientY) : null; if (!this.edgeMenu(e)) this.commandMenu(e); }
+        return;
+      }
       if (onCanvas(e) && (m.kind === "sketch" || (m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer")))) e.preventDefault();
     }, true);
     vp.addEventListener("dblclick", e => {
