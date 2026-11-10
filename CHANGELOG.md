@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.467.0] - 2026-11-10
+
+### Added
+
+- **Recognised sketches are fully defined (FR-FT-102, FR-SK-045)**: Recognize Features and Recognize Extrudes now run Fully define sketch on every sketch they make, as FeatureWorks gives its sketches dimensions. Lines along the axes get horizontal and vertical relations, circles and arcs their diameters and radii, and the points dimensions from the sketch origin, so the base, pocket and revolve sketches can be edited by their dimensions at once. Nothing moves and the body stays the same.
+
 ## [1.466.0] - 2026-11-10
 
 ### Fixed (drawings exam, round 2)
@@ -2819,6 +2825,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.466.0...HEAD
+[1.467.0]: https://github.com/kothf/step-viewer/compare/v1.466.0...v1.467.0
 [1.466.0]: https://github.com/kothf/step-viewer/compare/v1.465.0...v1.466.0
 [1.465.0]: https://github.com/kothf/step-viewer/compare/v1.464.0...v1.465.0
 [1.464.0]: https://github.com/kothf/step-viewer/compare/v1.463.0...v1.464.0
