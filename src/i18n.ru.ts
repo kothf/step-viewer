@@ -4369,4 +4369,11 @@ export const RU: Record<string, string> = {
   "Inside": "Внутри",
   "Outside": "Снаружи",
   "Border": "Рамка",
+  // FR-DRW-021: extension lines and horizontal text
+  "Extension lines": "Выносные линии",
+  "Both shown": "Обе показаны",
+  "First hidden": "Первая скрыта",
+  "Second hidden": "Вторая скрыта",
+  "Both hidden": "Обе скрыты",
+  "Horizontal text in the dimension line": "Горизонтальный текст в разрыве размерной линии",
 };

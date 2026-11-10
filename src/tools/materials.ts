@@ -225,7 +225,7 @@ const ROWS: Row[] = [
   ["plastic", "PETG", "PETG", "", [1.27, 2.1, _, 50, 50, 0.21, 1300, 51], "plastic", "#dfe6ea"],
   ["plastic", "PET (PET-P)", "PET (ПЭТ)", "", [1.38, 3.2, _, 69, 69, 0.29, 1170, 70], "plastic", "#f1f1ee"],
   ["plastic", "Nylon PA6", "Нейлон PA6", "ПА6 · капролон", [1.14, 3.0, 0.39, 80, 80, 0.25, 1700, 80], "plastic", "#efece2"],
-  ["plastic", "Nylon PA66", "Нейлон PA66", "ПА66", [1.14, 3.3, 0.39, 85, 85, 0.25, 1700, 80], "plastic", "#efece2"],
+  ["plastic", "Nylon PA66", "Нейлон PA66", "ПА66", [1.14, 2.4, 0.39, 83, 83, 0.25, 1700, 80], "plastic", "#efece2"],
   ["plastic", "Nylon PA66-GF30", "Нейлон PA66-GF30", "ПА66-СВ30", [1.36, 10, 0.35, _, 190, 0.35, 1500, 25], "plastic", "#3a3d42"],
   ["plastic", "Nylon PA12", "Нейлон PA12", "ПА12", [1.01, 1.4, _, 45, 45, 0.23, _, 120], "plastic", "#efece2"],
   ["plastic", "Nylon PA12 (laser sintered)", "Нейлон PA12 (лазерное спекание)", "PA 2200 · SLS", [0.93, 1.65, _, _, 48, _, _, _], "plastic", "#f4f4f1"],
@@ -443,6 +443,9 @@ export const CHECKED: Record<string, string> = {
   "PEEK": "www.curbellplastics.com/wp-content/uploads/2022/11/TECAPEEK-Natural-Data-Sheet.pdf",
   "PET (PET-P)": "plasticsintl.com/media/ocglsyfe/pet-tecapet-data-sheet.pdf",
   "OSB/3": "forest.one/media/sparsh/product_attachment/EGGER_-_OSB_TDS.pdf",
+  // 1.407.0: PA66 stock shapes and the PLEXIGLAS GS/XT sheet.
+  "Nylon PA66": "www.polymershapes.com/wp-content/uploads/2020/04/Polymershapes_Ensigner_DataSheet-TECAMID-66-natural.pdf",
+  "PMMA (acrylic)": "www.voskunststoffen.nl/files/166151/datasheet%20plexiglas%20XT%20GS.pdf",
 };
 
 export const LIBRARY: Material[] = ROWS.map(([cat, name, , eq, [density, E, nu, sy, su, k, cp, alpha], src, color]) =>

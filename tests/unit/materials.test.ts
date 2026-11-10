@@ -116,7 +116,6 @@ test("fourth pass (1.399.0): four plastics checked against makers' sheets", () =
   for (const n of ["PLA", "PETG", "PEI (Ultem 1000)", "Polyethylene PE-HD"]) assert.ok(findMaterial(n)!.ref, n);
   assert.equal(findMaterial("PEI (Ultem 1000)")!.E, 3.6);
   assert.equal(findMaterial("Polyethylene PE-HD")!.E, 1.1);
-  assert.ok(!findMaterial("Nylon PA66")!.ref);
 });
 
 test("fifth pass (1.405.0): POM-H, PEEK, PET-P and OSB/3 checked against makers' sheets", () => {
@@ -126,4 +125,13 @@ test("fifth pass (1.405.0): POM-H, PEEK, PET-P and OSB/3 checked against makers'
   for (const n of ["POM (Delrin)", "PEEK", "PET (PET-P)", "OSB/3"]) assert.ok(findMaterial(n)?.ref, n);
   assert.equal(findMaterial("PEEK")!.E, 4.5);
   assert.equal(findMaterial("OSB/3")!.density, 0.6);
+});
+
+test("sixth pass (1.407.0): PA66 and PMMA checked against makers' sheets", () => {
+  const checked = LIBRARY.filter((m) => m.ref);
+  assert.ok(checked.length >= 139, `${checked.length} checked`);
+  assert.ok(LIBRARY.length - checked.length <= 31);
+  assert.ok(findMaterial("Nylon PA66")?.ref && findMaterial("PMMA (acrylic)")?.ref);
+  assert.equal(findMaterial("Nylon PA66")!.E, 2.4);
+  assert.ok(!findMaterial("Nylon PA66-GF30")!.ref);
 });

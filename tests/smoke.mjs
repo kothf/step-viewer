@@ -4859,6 +4859,17 @@ try {
     await dp.waitForTimeout(100);
     const below2 = (await texts()).includes("2 PLACES");
     check(!!below1 && below1[0] > below1[1] && !below2, `drawing: a dimension takes a second line of text under its line and loses it again (${JSON.stringify(below1)})`);
+    // Extension lines and horizontal text (FR-DRW-021): hiding both drops two lines; horizontal text splits the dimension line in two.
+    const annLines = () => dp.evaluate(() => window.__sv.drw.prims().filter(q => q.t === "l" && q.layer === "ANNOT").length);
+    const nl0 = await annLines();
+    await dp.selectOption('#drw .drw-props [data-d="noext"]', "both");
+    const nl1 = await annLines();
+    await dp.selectOption('#drw .drw-props [data-d="noext"]', "");
+    await dp.check('#drw .drw-props [data-d="horiz"]');
+    const nl2 = await annLines();
+    await dp.uncheck('#drw .drw-props [data-d="horiz"]');
+    const nl3 = await annLines();
+    check(nl1 === nl0 - 2 && nl2 === nl0 + 1 && nl3 === nl0, `drawing: a dimension hides its extension lines and takes horizontal text in a gap of its line (${[nl0, nl1, nl2, nl3].join(" → ")} lines)`);
     // ISO 286 fit (FR-DRW-021): the Ø16 takes H7, shown with its deviations from the table (+0.018 / 0).
     const dia = await dp.evaluate(() => { const p = window.__sv.drw.prims().find(q => q.t === "t" && q.layer === "ANNOT" && q.s === "Ø16"); return p && [p.x, p.y + p.h / 2]; });
     [x, y] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), dia);
