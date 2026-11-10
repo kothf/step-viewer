@@ -5826,8 +5826,9 @@ try {
     // Releasing the part and the drawing stores Plate_revA.step (revision in it) and Base_revA.pdf beside them.
     const rel = await vp.evaluate(async did => {
       const p = window.__sv.vault, v = p.vault;
-      const part = (await v.files()).find(f => f.path === "Plate.mcadprt");
-      for (const id of [part.id, did]) { await p.transitionDlg(id, "Submit for review", "ok", [], ""); await p.transitionDlg(id, "Approve", "ok", [], ""); }
+      const part = (await v.files()).find(f => f.path === "Plate.mcadprt"), asm = (await v.files()).find(f => f.path === "Base.mcadasm");
+      // The drawing references its model now (vault exam V3), and a drawing is released after the model it shows.
+      for (const id of [part.id, asm.id, did]) { await p.transitionDlg(id, "Submit for review", "ok", [], ""); await p.transitionDlg(id, "Approve", "ok", [], ""); }
       const files = await v.files(), step = files.find(f => f.path === "Plate_revA.step"), pdf = files.find(f => f.path === "Base_revA.pdf");
       const text = step ? new TextDecoder().decode(await v.versionBytes(step.id, 1)) : "";
       const head = pdf ? new TextDecoder().decode((await v.versionBytes(pdf.id, 1)).slice(0, 5)) : "";
