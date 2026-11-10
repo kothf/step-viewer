@@ -2506,7 +2506,7 @@ export const RU: Record<string, string> = {
   "Coincident face 2": "Совпадающая грань 2",
   "Slot face 2": "Грань паза 2",
   "The two cylinders share an axis and the two flat faces touch: one turn is left.": "Два цилиндра соосны, а две плоские грани касаются: остаётся одно вращение.",
-  "Selection 1 and slot face 2 are the sides of the slot; the pin (selection 2) stays centred between them and slides along.": "Выбор 1 и грань паза 2 — стороны паза; штифт (выбор 2) остаётся посередине между ними и скользит вдоль.",
+  "Selection 1 and slot face 2 are the sides of the slot; the pin (selection 2) stays centred between them and slides along, up to the slot's rounded ends.": "Выбор 1 и грань паза 2 — стороны паза; штифт (выбор 2) остаётся посередине между ними и скользит вдоль, не дальше скруглённых концов паза.",
   "Turns of selection 2 per turn of selection 1 (the radius ratio to start with). External gears turn opposite ways; Reverse makes them turn the same way.": "Обороты выбора 2 на один оборот выбора 1 (сначала — отношение радиусов). Внешние шестерни вращаются в разные стороны; «Обратное направление» делает вращение одинаковым.",
   "The two cylinders share an axis; turning one moves it along by this distance per turn.": "Два цилиндра соосны; поворот одного перемещает его вдоль оси на это расстояние за оборот.",
   "Click a flat face on each component to touch.": "Щёлкните по плоской грани на каждом компоненте, которые должны касаться.",
