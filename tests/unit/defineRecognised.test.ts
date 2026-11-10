@@ -34,6 +34,18 @@ test("fully define: a free rectangle gets H/V relations and dimensions, and noth
   }
 });
 
+test("fully define with sizes: a rectangle gets its width and height and one corner's place (FeatureWorks style)", () => {
+  const sk = { ...rect("r", 60, 40), ents: rect("r", 60, 40).ents.map(e => e.t === "point" ? { ...e, x: e.x + 37, y: e.y + 23 } : e) };
+  const { sketch } = fullyDefineSketch(sk, { sizes: true });
+  assert.equal(solve(sketch).dof, 0);
+  const lens = sketch.dims.filter(d => d.t === "distance" && d.e.length === 1).map(d => d.val.v).sort((a, b) => a - b);
+  close(lens[0], 40); close(lens[1], 60);
+  assert.equal(lens.length, 2, "one width and one height, the parallel sides are left alone");
+  const fromOrigin = sketch.dims.filter(d => d.t === "hdistance" || d.t === "vdistance");
+  assert.equal(fromOrigin.length, 2, "one corner placed from the origin");
+  assert.equal(sketch.dims.length, 4);
+});
+
 test("recognised base and pocket sketches are fully defined and rebuild the same body (FR-FT-102)", async () => {
   const m = new Modeller(await occ());
   const pocket = { ...rect("q", 20, 10), plane: { face: { name: "e:end" } } } as SketchFeature;
@@ -45,7 +57,7 @@ test("recognised base and pocket sketches are fully defined and rebuild the same
   const r = m.evaluate(doc(src));
   const imp = doc([{ id: "i", type: "import", name: "Imported1", file: "b.brep", brep: m.brepText(r.body!).brep } as Feature]);
   const v0 = vol(m, imp);
-  const fs = m.recognizeFeatures(imp).map(f => f.type === "sketch" ? fullyDefineSketch(f).sketch : f);
+  const fs = m.recognizeFeatures(imp).map(f => f.type === "sketch" ? fullyDefineSketch(f, { sizes: true }).sketch : f);
   const sks = fs.filter((f): f is SketchFeature => f.type === "sketch");
   assert.ok(sks.length >= 2);
   for (const sk of sks) {

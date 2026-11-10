@@ -19,7 +19,7 @@ import { SectionManager, type SectionPlane } from "./viewer/Section";
 import { profileDrawing, toDxf, toSvg } from "./tools/profileExport";
 import { quadrants, virtualCorners, Snapper, SNAP_FILTERS, SEL_FILTER, type Snap } from "./tools/Snapper";
 import { Annotations } from "./tools/Annotations";
-import { VaultPanel } from "./pdm/panel";
+import { VaultPanel, type VaultTie } from "./pdm/panel";
 import { VaultMenu } from "./pdm/menu";
 import { useMemoryFolders } from "./pdm/folders";
 import {
@@ -605,6 +605,12 @@ docs = new DocTabs({
     if (tab.kind === "asm") return st ? JSON.stringify((st as AsmTab).doc) !== (st as AsmTab).savedAt : asm.dirty;
     if (tab.kind === "drawing") return st ? (st as DrawingTab).store.dirty : drawing.dirty;
     return false;
+  },
+  beforeClose(tab) {
+    // The vault file behind the tab, live or parked: a check-in reminder when it is checked out here.
+    const st = tab.state as { vault?: VaultTie | null } | null;
+    const tie = st ? st.vault : tab.kind === "part" ? modeller.vault : tab.kind === "asm" ? asm.vault : tab.kind === "drawing" ? drawing.vault : null;
+    return vaultPanel.closeReminder(tie);
   },
   forget(tab) {
     // Closed without saving: no "recover unsaved part" card for it later.

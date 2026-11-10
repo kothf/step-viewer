@@ -125,7 +125,7 @@ export function projectPoly(oc: any, shape: any, view: ViewDir, lin: number, ang
 }
 
 /** Edges at or above which a view is projected by `projectFast`: the exact HLR grows too slow (a 57-part engine ran 20+ min). */
-export const FAST_EDGES = 4000;
+export const FAST_EDGES = 1500;
 
 /** How many edges a shape has. */
 export function edgeCount(oc: any, shape: any): number {

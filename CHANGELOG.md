@@ -5,6 +5,45 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.473.0] - 2026-11-10
+
+### Fixed
+
+- **Drawings of big assemblies (drawings exam retest)**: the fast hidden-line views now start at 1500 edges instead of 4000, so an older 57-part engine whose Top and Right views stayed previews for 8+ minutes gets exact-looking views in seconds too.
+- **Standard 3 views** reduces only as far as needed: the views may now fill the room beside the title block (the 85 % margin applies only to enlarged views), so the engine (430 × 187 × 184 mm) gets 1:2 on A3 instead of 1:5.
+
+## [1.472.0] - 2026-11-10
+
+### Changed
+
+- **Recognised sketches dimensioned the way FeatureWorks does (FR-FT-102)**: the sketches that Recognize Features and Recognize Extrudes make now get the lengths of their horizontal and vertical edges first, longest first, and only then the distances from the origin that are still needed. A rectangle gets its width and height and one corner's place, instead of four distances from the origin. Fully Define Sketch in the sketcher keeps dimensioning from the origin, as SolidWorks does by default.
+
+## [1.471.0] - 2026-11-10
+
+### Added
+- Drawings: the bill of materials has a Material column (FR-MAT-001). It shows each part's material, or the materials of its bodies when they have their own; a sub-assembly row stays empty. New BOMs get the column, and a tick box in the BOM's properties adds it to older ones or takes it off.
+- My materials can be exported to a file and imported again (FR-MAT-001), to carry your own materials to another browser or computer or share them with colleagues. Import… and Export… sit at the bottom of the material dialog; an imported material replaces one of yours with the same name, and one named like a library material is left out.
+
+### Changed
+- Drawings: when a part's bodies have their own materials, the title block lists them all and weighs each body with its own density, instead of the part's material alone.
+
+## [1.470.0] - 2026-11-10
+
+### Added
+
+- **What's behind (FR-PDM-022)**: the Vault tab shows **n behind** when an assembly was checked in against older versions of its parts or sub-assemblies, a drawing against an older version of its model, or a local copy is not the latest version. The view lists each one with what moved on (`plate.mcadprt · v1 → v2`) and an **Update** button, plus **Update all** (sub-assemblies first). Update puts the latest part documents into the assembly, and the latest part or assembly into the drawing's copy of its model, so a drawing now picks up a new part version. A file not checked out is checked out, updated and checked in as a new version in one go; a file checked out to you gets the update in its working copy. Released files say that a change has to be started first. The same Update is on the selected file and in its right-click menu, and **What's behind…** is in the ⋯ menu.
+- **Folders in the vault file list (FR-PDM-080)**: files in subfolders (`parts/`, `drawings/`, …) are listed under a header per folder that folds and unfolds (click, or ←/→), with the number of files in it. Folded folders are remembered per vault in this browser.
+- **Filter chips** above the list: All, Parts, Assemblies, Drawings, Other files, Checked out to me and Behind, each with its count; they work together with the search.
+- The state change dialog says which revision each file will get (**becomes revision B**) before you approve.
+- **Reopen vault** on the start card: while no vault is open, the start card offers the vault used last (its folder, or the browser vault).
+- **Check-in reminders**: closing a document tab that is checked out to you asks whether to check it in (or, with no changes, to undo the check-out), keep it checked out, or cancel. **Close vault** lists the files with changes not checked in first, and leaving the page with such files makes the browser ask.
+- **Details of the selected vault file (FR-PDM-080)**: under its commands, a foldable Details section shows the latest version (who, when, comment), the files it uses (with newer versions marked), the files that use it and its release files. Each is a link that selects that file in the list.
+
+### Changed
+
+- **Release files belong to their part (FR-PDM-036)**: the STEP and PDF a release makes are stored in the released state with the part's revision (they were Work in progress files before), are listed right under the part, assembly or drawing they came from ("Release file of arm.mcadprt · Rev A"), and are made again without a check-out. When the part is made obsolete, its release files of that revision go with it; a change in work leaves them Released.
+- The selected assembly's box "Linked components with newer versions" became the general "Uses older versions of:" box, which covers embedded parts and drawings too.
+
 ## [1.469.0] - 2026-11-10
 
 ### Changed
@@ -2842,7 +2881,11 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.469.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.473.0...HEAD
+[1.473.0]: https://github.com/kothf/step-viewer/compare/v1.472.0...v1.473.0
+[1.472.0]: https://github.com/kothf/step-viewer/compare/v1.471.0...v1.472.0
+[1.471.0]: https://github.com/kothf/step-viewer/compare/v1.470.0...v1.471.0
+[1.470.0]: https://github.com/kothf/step-viewer/compare/v1.469.0...v1.470.0
 [1.469.0]: https://github.com/kothf/step-viewer/compare/v1.468.0...v1.469.0
 [1.468.0]: https://github.com/kothf/step-viewer/compare/v1.467.0...v1.468.0
 [1.467.0]: https://github.com/kothf/step-viewer/compare/v1.466.0...v1.467.0

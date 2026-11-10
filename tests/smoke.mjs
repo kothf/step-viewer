@@ -2097,6 +2097,20 @@ try {
     await mp.fill('#mat-dlg [data-f="E"]', "55");
     await mp.click("#mat-dlg [data-a=save]");
     const own = await mp.evaluate(() => ({ cat: document.querySelector("#mat-dlg .mat-cat.on").dataset.cat, rows: [...document.querySelectorAll("#mat-dlg .mat-list li[data-i] b")].map(e => e.textContent), stored: JSON.parse(localStorage.getItem("mc:materials")) }));
+    // 1.471: My materials to a file and back (FR-MAT-001): the export holds the material; importing it plus one more adds that one and replaces the same name.
+    const [mdl] = await Promise.all([mp.waitForEvent("download"), mp.click("#mat-dlg [data-a=export]")]);
+    const exported = JSON.parse(await readFile(await mdl.path(), "utf8"));
+    const more = { ...exported, materials: [...exported.materials.map(m => ({ ...m, density: 3.4 })), { name: "Cork", density: 0.24 }] };
+    await mp.setInputFiles("#mat-dlg input[data-a=file]", { name: "mine.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(more)) });
+    await mp.waitForFunction(() => JSON.parse(localStorage.getItem("mc:materials")).length === 2);
+    const imp = await mp.evaluate(() => ({ stored: JSON.parse(localStorage.getItem("mc:materials")).map(m => `${m.name}=${m.density}`).join(), rows: [...document.querySelectorAll("#mat-dlg .mat-list li[data-i] b")].map(e => e.textContent).join() }));
+    check(mdl.suggestedFilename() === "my-materials.json" && exported.format === "mobiuscad-materials" && exported.materials[0]?.name === "Сплав 7" && exported.materials[0]?.E === 55 && imp.stored === "Сплав 7=3.4,Cork=0.24" && imp.rows === "Сплав 7,Cork",
+      `model 1.471: My materials export to a file and import back, replacing by name (${JSON.stringify({ name: mdl.suggestedFilename(), exported: exported.materials, imp })})`);
+    // The import selected Cork: delete it, then pick Сплав 7 again for the deletion below.
+    await mp.click("#mat-dlg [data-a=del]");
+    await mp.click("#confirm [data-a=ok]");
+    await mp.waitForFunction(() => !document.querySelector("#confirm").open && JSON.parse(localStorage.getItem("mc:materials")).length === 1);
+    await mp.click('#mat-dlg .mat-list li[data-i]:has-text("Сплав 7")');
     await mp.click("#mat-dlg [data-a=del]");
     await mp.click("#confirm [data-a=ok]");
     await mp.waitForFunction(() => !document.querySelector("#confirm").open && JSON.parse(localStorage.getItem("mc:materials")).length === 0);
@@ -4576,8 +4590,11 @@ try {
     await mp.waitForSelector("#vault-dlg tbody tr");
     const hist = await mp.evaluate(() => [...document.querySelectorAll("#vault-dlg tbody tr")].map(r => r.cells[0].textContent + ":" + r.cells[3].textContent).join("|"));
     await mp.click('#vault-dlg button[value="cancel"]');
-    // Close vault: the folder is remembered in the menu and opens again without the picker.
+    // Close vault: the folder is remembered in the menu and opens again without the picker. The assembly is still
+    // checked out with changes, so the check-in reminder comes first.
     await menu("close");
+    await mp.waitForSelector('#vault-dlg[open] button[value="close"]');
+    await mp.click('#vault-dlg button[value="close"]');
     await mp.waitForFunction(() => !document.querySelector("#vault-btn").classList.contains("on"));
     await mp.evaluate(() => { window.showDirectoryPicker = async () => { throw new Error("picker used"); }; });
     await menu();
@@ -4681,7 +4698,7 @@ try {
     await mp.click('#vault-menu [data-v="ws:Other"]');
     await mp.waitForFunction(() => window.__sv.vault.vault?.info.name === "Other");
     check(closedMenu.includes("import") && offered === "parts/notes.txt,readme.txt" && paths === "parts/notes.txt,readme.txt" && openMenu.includes("addfolder") && openMenu.includes("ws:Other"), `vault exam: a vault in a project folder takes its files in place; Import and Switch to in the menu (${closedMenu} | ${offered} | ${paths} | ${openMenu})`);
-    check(sticky === "sticky:parts/notes.txt" && editable && /recycle bin/.test(deleted) && /restored/.test(restored), `vault exam: commands in view, Check out from the data card, delete and restore feedback (${sticky}, ${editable}, ${deleted}, ${restored})`);
+    check(sticky === "sticky:readme.txt" && editable && /recycle bin/.test(deleted) && /restored/.test(restored), `vault exam: commands in view, Check out from the data card, delete and restore feedback (${sticky}, ${editable}, ${deleted}, ${restored})`);
     check(/v1 · newer v2 in the vault/.test(stale) && tabs === 1, `vault exam: a tab behind the vault says so and reloads in place (${stale}, ${tabs} tabs)`);
     await ctx.close();
   }
@@ -4735,6 +4752,11 @@ try {
     await mp.click('#vault-panel [data-mtr="Submit for review"]');
     await mp.click('#vault-dlg button[value="ok"]');
     await mp.waitForFunction(() => window.__sv.vault.files.filter(f => f.state === "In review").length === 2);
+    // Approve names the revision each file will get, before it is given.
+    await mp.click('#vault-panel [data-mtr="Approve"]');
+    await mp.waitForSelector("#vault-dlg[open] .v-check li");
+    const nextRev = await mp.evaluate(() => [...document.querySelectorAll("#vault-dlg .v-nextrev")].map(x => x.textContent).join("|"));
+    await mp.click('#vault-dlg button[value="cancel"]');
     // A plain right-click on an unselected row selects it alone and shows the one-file menu.
     await rows.nth(0).click({ button: "right" });
     const oneMenu = await menuText();
@@ -4747,11 +4769,73 @@ try {
     await mp.keyboard.press("Delete");
     await mp.click('#confirm [data-a="ok"]');
     await mp.waitForFunction(() => window.__sv.vault.files.length === 0);
-    check(top === "more,close,add,addfolder,savepart,search" && more === "notes,changes,packages,audit,verify,storage,export,bin,settings,workflow,user" && back === "more:true",
+    // What's behind: the part moves on, its drawing still keeps v1's copy; Update puts v2's document in (FR-PDM-022).
+    const pmf = { format: "mobiuscad", schema: 1, kind: "part" }, wmf = { format: "mobiuscad", schema: 1, kind: "drawing" };
+    const pdoc = d => ({ schema: 1, kind: "part", id: "d_plate", name: "plate", features: [], props: { description: d } });
+    const pfile = d => [...zip(Object.entries({ "manifest.json": JSON.stringify(pmf), "document.json": JSON.stringify(pdoc(d)) }))];
+    const wfile = [...zip(Object.entries({ "manifest.json": JSON.stringify(wmf), "drawing.json": JSON.stringify({ schema: 1, kind: "drawing", id: "w1", name: "plate", sheets: [{}], source: { kind: "part", name: "plate.mcadprt", doc: pdoc("v1") } }) }))];
+    await mp.evaluate(async ([a, b, w]) => {
+      const p = window.__sv.vault, v = p.vault;
+      const f = await v.add("plate.mcadprt", new Uint8Array(a));
+      await v.add("plate.mcaddrw", new Uint8Array(w));
+      await v.checkOut(f.id); await v.saveWorking(f.id, new Uint8Array(b)); await v.checkIn(f.id, "v2");
+      await p.refresh();
+    }, [pfile("v1"), pfile("v2"), wfile]);
+    await mp.waitForSelector('#vault-panel [data-a="behind"]');
+    const behindBtn = await mp.textContent('#vault-panel [data-a="behind"]');
+    await mp.click('#vault-panel [data-a="behind"]');
+    await mp.waitForFunction(() => /What's behind/.test(document.querySelector("#vault-dlg[open] h3")?.textContent ?? ""));
+    const behindDlg = await mp.evaluate(() => document.querySelector("#vault-dlg").innerText.replace(/\s+/g, " "));
+    await mp.click("#vault-dlg [data-up]");
+    await mp.waitForFunction(() => /up to date/.test(document.querySelector("#vault-dlg[open]")?.innerText ?? ""));
+    await mp.keyboard.press("Escape");
+    const updated = await mp.evaluate(async () => {
+      const p = window.__sv.vault, f = p.files.find(x => x.path === "plate.mcaddrw");
+      return { n: f.versions.length, comment: f.versions.at(-1).comment, lock: !!f.checkout, btn: !!document.querySelector('#vault-panel [data-a="behind"]') };
+    });
+    // The selected file's details: who uses it, as links that select that file.
+    await mp.click('#vault-panel .v-row:has-text("plate.mcadprt")');
+    const det = await mp.evaluate(() => document.querySelector("#vault-panel .v-details")?.innerText.replace(/\s+/g, " "));
+    await mp.click('#vault-panel .v-details [data-goto]');
+    const went = await mp.textContent("#vault-panel .v-acts-h");
+    check(/Version 2 by Andrey/.test(det) && /Used by plate\.mcaddrw · uses v2/.test(det) && went === "plate.mcaddrw", `vault UI: the details show the version and who uses the file, with links (${det} | ${went})`);
+    // Folders in the list fold, and filter chips narrow it (FR-PDM-080).
+    await mp.evaluate(async () => { const p = window.__sv.vault; await p.vault.add("docs/specs/e.txt", new TextEncoder().encode("e")); await p.refresh(); });
+    await mp.waitForSelector('#vault-panel .v-folder[data-folder="docs/specs"]');
+    const listText = () => mp.evaluate(() => [...document.querySelectorAll("#vault-panel .v-files > *")].map(x => x.classList.contains("v-folder") ? `[${x.dataset.folder}]` : x.querySelector(".v-name").textContent).join(","));
+    const tree = await listText();
+    await mp.click('#vault-panel .v-folder[data-folder="docs"]');
+    const foldedList = await listText();
+    await mp.click('#vault-panel .v-folder[data-folder="docs"]');
+    const chipsShown = await mp.evaluate(() => [...document.querySelectorAll("#vault-panel [data-chip]")].map(b => b.textContent.trim()).join("|"));
+    await mp.click('#vault-panel [data-chip="drawing"]');
+    const onlyDrw = await listText();
+    await mp.click('#vault-panel [data-chip="all"]');
+    // Close vault with a changed file still checked out: a reminder first; Cancel keeps the vault open.
+    await mp.evaluate(async () => { const p = window.__sv.vault, f = p.files.find(x => x.path === "docs/specs/e.txt"); await p.vault.checkOut(f.id); await p.vault.saveWorking(f.id, new TextEncoder().encode("e2")); await p.refresh(); });
+    await mp.click('#vault-panel [data-a="close"]');
+    await mp.waitForSelector("#vault-dlg[open]");
+    const remind = await mp.evaluate(() => document.querySelector("#vault-dlg").innerText.replace(/\s+/g, " "));
+    await mp.click('#vault-dlg button[value="cancel"]');
+    const stillOpen = await mp.evaluate(() => !!window.__sv.vault.vault);
+    // Closed, the start card offers the vault used last; a click opens it again.
+    await mp.evaluate(() => window.__sv.vault.close());
+    await mp.waitForSelector("#empty-vault");
+    const reopenText = await mp.textContent("#empty-vault");
+    await mp.click("#empty-vault");
+    await mp.waitForFunction(() => window.__sv.vault.vault?.info.name === "Multi" && !document.querySelector("#empty-vault"));
+    check(reopenText === "Reopen vault Multi", `vault UI: the start card reopens the vault used last (${reopenText})`);
+    check(/Changes not checked in .*docs\/specs\/e\.txt/.test(remind) && stillOpen, `vault UI: closing the vault with changes not checked in reminds first (${remind}, ${stillOpen})`);
+    check(tree === "plate.mcaddrw,plate.mcadprt,[docs],[docs/specs],e.txt" && foldedList === "plate.mcaddrw,plate.mcadprt,[docs]" && chipsShown === "All|Parts 1|Drawings 1|Other files 1" && onlyDrw === "plate.mcaddrw",
+      `vault UI: folders in the list fold, filter chips narrow it (${tree} | ${foldedList} | ${chipsShown} | ${onlyDrw})`);
+    check(top === "more,close,add,addfolder,savepart,search" && more === "behind,notes,changes,packages,audit,verify,storage,export,bin,settings,workflow,user" && back === "more:true",
       `vault UI: a slim panel top with the vault's commands in ⋯ (${top} | ${more} | ${back})`);
     check(ctrlSel === "a.txt,c.txt" && shiftSel === "c.txt,d.txt" && /^Check out\|Get latest\|Change state: Submit for review\|Request change…\|Delete$/.test(multiMenu)
       && versions === "a.txt:1:Added,b.txt:1:Added,c.txt:1:Added,d.txt:2:both" && /^Open\|Check out\|Get latest\|.*History\|Where used\|Data card\|Rename/.test(oneMenu) && oneSel === "a.txt" && allSel === "a.txt,b.txt,c.txt,d.txt",
       `vault UI: Ctrl/Shift multi-select, row menu, check-in / state change / delete for several files (${ctrlSel} | ${shiftSel} | ${multiMenu} | ${versions} | ${oneMenu} | ${oneSel} | ${allSel})`);
+    check(nextRev === "becomes revision A|becomes revision A", `vault UI: the state change dialog names the revision each file will get (${nextRev})`);
+    check(behindBtn === "1 behind" && /Drawings whose model changed/.test(behindDlg) && /plate\.mcaddrw/.test(behindDlg) && /plate\.mcadprt · v1 → v2/.test(behindDlg) && updated.n === 2 && /^Updated to the latest plate\.mcadprt$/.test(updated.comment) && !updated.lock && !updated.btn,
+      `vault UI: What's behind lists a drawing whose model moved on, and Update checks in a version with the latest model (${behindBtn} | ${behindDlg} | ${JSON.stringify(updated)})`);
     await ctx.close();
   }
 
@@ -5731,7 +5815,7 @@ try {
       { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", -w / 2, -h / 2), P("p2", w / 2, -h / 2), P("p3", w / 2, h / 2), P("p4", -w / 2, h / 2),
         { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }] },
       { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: d } }] });
-    const pin = { schema: 1, kind: "part", id: "pin", name: "Pin", units: { length: "mm", decimals: 2 }, props: { partNumber: "PN-7", description: "Dowel pin" }, rollback: null, features: [
+    const pin = { schema: 1, kind: "part", id: "pin", name: "Pin", units: { length: "mm", decimals: 2 }, props: { partNumber: "PN-7", description: "Dowel pin" }, material: { name: "Steel S235", density: 7.85 }, rollback: null, features: [
       { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("c0", 0, 0), { id: "c1", t: "circle", c: "c0", r: 4 }] },
       { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 15 } }] };
     const T = (x, y, z) => [1, 0, 0, x, 0, 1, 0, y, 0, 0, 1, z];
@@ -5757,7 +5841,7 @@ try {
     await tool("bom");
     await dp.waitForTimeout(150);
     let tx = await texts();
-    const bomOk = ["Item", "Part number", "Description", "Qty", "Plate", "PN-7", "Dowel pin"].every(s => tx.includes(s)) && tx.includes("2");
+    const bomOk = ["Item", "Part number", "Description", "Qty", "Material", "Plate", "PN-7", "Dowel pin", "Steel S235"].every(s => tx.includes(s)) && tx.includes("2");
     // Auto balloon on the front view: one balloon per item, numbered 1 and 2.
     await dp.keyboard.press("Escape");
     const [fx, fy] = await at(front, 0, 10);
@@ -5988,8 +6072,11 @@ try {
       const files = await v.files(), step = files.find(f => f.path === "Plate_revA.step"), pdf = files.find(f => f.path === "Base_revA.pdf");
       const text = step ? new TextDecoder().decode(await v.versionBytes(step.id, 1)) : "";
       const head = pdf ? new TextDecoder().decode((await v.versionBytes(pdf.id, 1)).slice(0, 5)) : "";
-      return { step: !!step, rev: /PRODUCT_DEFINITION_FORMATION[A-Z_]*\('A'/.test(text), pdf: head };
+      await p.refresh();
+      const row = [...document.querySelectorAll("#vault-panel .v-row.v-out")].map(r => r.textContent.replace(/\s+/g, " ").trim()).join("|");
+      return { step: !!step, rev: /PRODUCT_DEFINITION_FORMATION[A-Z_]*\('A'/.test(text), pdf: head, out: step && `${step.state}:${step.outputOf?.id === part.id}:${step.outputOf?.rev}`, row };
     }, id);
+    check(rel.out === "Released:true:A" && /↳ Plate_revA\.step.*Release file of Plate\.mcadprt · Rev A/.test(rel.row), `vault: release files are Released outputs listed under their part (${rel.out} | ${rel.row})`);
     check(rel.step && rel.rev && rel.pdf === "%PDF-", `vault: a release stores the part's STEP with its revision and the drawing's PDF (${JSON.stringify(rel)})`);
     await ctx.close();
   }
@@ -6052,7 +6139,7 @@ try {
     await mp.click('#vault-panel [data-a="rename"]');
     await mp.fill('#vault-dlg [name="path"]', "parts/bracket.txt");
     await mp.click('#vault-dlg button[value="ok"]');
-    await mp.waitForFunction(() => [...document.querySelectorAll("#vault-panel .v-name")].some(x => x.textContent === "parts/bracket.txt"));
+    await mp.waitForFunction(() => document.querySelector('#vault-panel .v-folder[data-folder="parts"]') && [...document.querySelectorAll("#vault-panel .v-name")].some(x => x.textContent === "bracket.txt"));
     // Delete the spare file to the recycle bin and restore it.
     await mp.click('#vault-panel .v-row:has-text("spare.txt")');
     await mp.click('#vault-panel [data-a="del"]');
@@ -6066,8 +6153,10 @@ try {
     const audit = await mp.evaluate(async () => (await window.__sv.vault.vault.auditTrail()).map(e => e.action).filter(a => /transition|data card|move|rename|delete|restore/.test(a)).join(","));
     // Russian: state and revision are translated.
     await mp.click("#lang-btn");
-    await mp.waitForFunction(() => /Выпущен/.test(document.querySelector("#vault-panel .v-row")?.textContent ?? ""), null, { timeout: 5000 }).catch(() => {});
-    const ruRow = await rowText(0);
+    // The released file is in parts/ now, under the loose spare.txt.
+    const bracketRow = () => [...document.querySelectorAll("#vault-panel .v-row")].find(r => /bracket/.test(r.textContent))?.textContent.replace(/\s+/g, " ").trim() ?? "";
+    await mp.waitForFunction(f => /Выпущен/.test(eval(f)()), bracketRow.toString(), { timeout: 5000 }).catch(() => {});
+    const ruRow = await mp.evaluate(f => eval(f)(), bracketRow.toString());
     await mp.click("#lang-btn");
     check(/Work in progress/.test(row0) && checks && /Approve/.test(dlgTitle) && /Released/.test(row1) && /Rev A/.test(row1) && /BR-001/.test(row1) && !canCheckOut, `vault P4: data card, Submit for review and Approve give revision A (${row0} → ${row1}; ${dlgTitle})`);
     check(found === "bracket.txt" && audit === "data card,transition,transition,move,delete,restore", `vault P4: search, move, recycle bin and audit (${found}; ${audit})`);
@@ -6595,6 +6684,10 @@ try {
     const pairs = cut.keys.map((k, i) => `${k}=${cut.mats[i]}`).sort().join();
     check(pairs === "body0=Steel S235,body1=Titanium Ti-6Al-4V",
       `drawing 1.462: a section hatches each body by its own material, the part's for the rest (FR-MAT-001) (${pairs})`);
+    // 1.471: the title block lists the bodies' materials and weighs each body with its own density (40×20×10 steel + Ø10×10 titanium = 0.066 kg).
+    const tb = await mp.evaluate(() => window.__sv.drw.fields());
+    check(tb.material === "Steel S235, Titanium Ti-6Al-4V" && tb.mass === "0.066 kg",
+      `drawing 1.471: the title block's material and mass follow each body's material (FR-MAT-001) (${tb.material}; ${tb.mass})`);
     await ctx.close();
   }
 
@@ -9384,6 +9477,9 @@ try {
     const rdef = await mp.evaluate(() => window.__sv.model.store.doc.features.filter(f => f.type === "sketch").map(f => ({ dims: f.dims.length, hv: f.rels.filter(r => r.t === "horizontal" || r.t === "vertical").length, names: f.dims.map(d => d.name).join() })));
     check(rdef.length === 2 && rdef.every(r => r.dims >= 4 && r.hv >= 4) && rdef[0].names.startsWith("D1,D2"),
       `model 1.467: recognised sketches are fully defined with dimensions (FR-FT-102, FR-SK-045) (${JSON.stringify(rdef)})`);
+    // 1.472: as FeatureWorks dimensions them: the base sketch (a rectangle) gets its width and height as line lengths.
+    const lens = await mp.evaluate(() => window.__sv.model.store.doc.features.filter(f => f.type === "sketch").map(f => f.dims.filter(d => d.t === "distance" && d.e.length === 1).length));
+    check(lens.length === 2 && lens[0] >= 2 && lens[1] >= 2, `model 1.472: recognised sketches carry the lengths of their straight edges (${JSON.stringify(lens)})`);
     await ctx.close();
   }
 

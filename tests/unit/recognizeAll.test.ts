@@ -84,7 +84,7 @@ test("recognize features: a shaft with a bore in its end comes back as a revolve
   close((fs[3] as any).diameter.v, 4); close((fs[3] as any).depth.v, 8);
   close(vol(m, doc([...imp.features, ...fs])), vol(m, imp));
   // Its half section comes back fully defined (the controller runs Fully define sketch on recognised sketches).
-  const def = fs.map(f => f.type === "sketch" ? fullyDefineSketch(f).sketch : f);
+  const def = fs.map(f => f.type === "sketch" ? fullyDefineSketch(f, { sizes: true }).sketch : f);
   assert.equal(solve(def[0] as SketchFeature).dof, 0);
   close(vol(m, doc([...imp.features, ...def])), vol(m, imp));
 });
