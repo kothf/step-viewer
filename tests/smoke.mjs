@@ -6184,6 +6184,23 @@ try {
         a.cancelMate();
         return out;
       }, ref);
+      // Move panel: "Turn by" turns the pin about its concentric mate's axis (exam #51), as one undo step.
+      const turn = await mp.evaluate(async () => {
+        const a = window.__sv.asm, id = a.doc.components[1].id, x0 = a.doc.components[1].tf.filter((_, i) => i % 4 === 0);
+        a.moving = id; a.renderPanel();
+        const inp = document.querySelector("#asm-pm input[data-turn]");
+        if (!inp) return { box: false };
+        inp.value = "30";
+        inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+        const x1 = a.doc.components[1].tf.filter((_, i) => i % 4 === 0), dot = x0[0] * x1[0] + x0[1] * x1[1] + x0[2] * x1[2];
+        const out = { box: true, deg: Math.round(Math.acos(Math.max(-1, Math.min(1, dot))) * 1800 / Math.PI) / 10, ok: a.solved?.ok, mates: a.doc.mates.length };
+        a.moving = null; a.renderPanel();
+        return out;
+      });
+      await shown(2);
+      await mp.evaluate(() => window.__sv.asm.undo());
+      await shown(2);
+      check(turn.box && turn.deg === 30 && turn.ok && turn.mates === n0, `asm: Move panel turns a component by a typed angle about its mate axis (exam #51) (${JSON.stringify(turn)})`);
       check(/^Undo: .+ \(Ctrl\+Z\)$/.test(undoTip) && delKey.n === n0 - 1 && /^Undo: Delete Concentric1 \(Ctrl\+Z\)$/.test(delKey.tip)
         && menu.open && menu.inside && enter.next === "y" && enter.open && ins.name === "other<1>" && ins.inView && neg.flipped && neg.value === 5,
         `asm 1.339: Delete key, menus inside the window, Enter through Move, inserts in view numbered by file, negative distance flips, undo tips (${JSON.stringify({ undoTip, delKey, n0, menu, enter, ins, neg })})`);
