@@ -65,6 +65,7 @@ import { rememberWeld } from "../weldments/defaults";
 import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, cornerSpots, cutListRows, locateSpots, isWeldFeature, showCutList, weldChange, weldSymbols, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
 import type { EndCapFeature, GussetFeature } from "../weldments/types";
 import { capDir, splitSubs } from "../weldments/types";
+import { showSheetProps } from "../sheetmetal/propsUi";
 import { bindSmPanel, smCheck, smDraft, smPanel, SM_BASES, SM_ICONS, SM_TOOLS, SM_TREE_ICONS } from "../sheetmetal/ui";
 import { isSheet, isSheetBase, type SmFlangeFeature, type SmFormFeature, type SmUnfoldFeature, type SmReliefFeature, type SmGussetFeature, type SmConvertFeature, type SmInsertFeature, type SmTabSlotFeature } from "../sheetmetal/types";
 import { apply as smApply, applyDir as smApplyDir, bendOfFace, reliefCorners, crossBreakLines, flatBendLines, flatPointOn, panelOfFace, placedState, unfoldBendLines } from "../sheetmetal/sheet";
@@ -2665,6 +2666,12 @@ export class ModelController {
     const fp = d.features.find(f => f.type === "smflat");
     if (fp) this.store.change(fp.suppressed ? "Flatten" : "Fold", dd => { const x = dd.features.find(g => g.id === fp.id)!; if (x.suppressed) delete x.suppressed; else x.suppressed = true; });
     else this.store.change("Flatten", dd => { dd.features.push({ id: uid("f_"), type: "smflat", name: nextName(dd, "smflat") }); if (dd.rollback != null) dd.rollback = null; });
+  }
+
+  /** Sheet metal cut-list properties (FR-FT-120): bounding box, thickness, cutting lengths, bends, mass. */
+  private sheetProps() {
+    const vol = this.last?.props?.volume, rho = this.doc.material?.density;
+    showSheetProps(this.last?.sheet, this.doc.name, vol != null && rho != null ? vol * rho / 1000 : undefined);
   }
 
   /** The flat pattern with its bend lines as DXF (R12, mm). */
@@ -5400,6 +5407,7 @@ export class ModelController {
       case "smbase": case "smloft": case "smflange": case "smhem": case "smbend": case "smjog": case "smcorner": case "smclosed": case "smrelief": case "smgusset": case "smcross": case "smvent": case "smcut": case "smconvert": case "sminsert": case "smform": case "smunfold": case "smfold": case "smmiter": case "smswept": case "smtabslot": case "smrip": this.startFeature(c); break;
       case "smflat": this.toggleFlat(); break;
       case "smdxf": this.exportFlatDxf(); break;
+      case "smprops": this.sheetProps(); break;
       case "recognize": void this.recognizeHoles(); break;
       case "recblend": void this.recognizeBlends(); break;
       case "extrefs": this.showExtRefs(); break;

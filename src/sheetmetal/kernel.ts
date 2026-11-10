@@ -238,18 +238,19 @@ function applyOps(api: SheetApi, body: Named | null, ops: SheetOp[], T: number, 
   return out;
 }
 
-function wireOf(api: SheetApi, loop: Seg[], fr: Frame): any {
+function wireOf(api: SheetApi, loop: Seg[], fr: Frame, cw = false): any {
   const mk = new api.oc.BRepBuilderAPI_MakeWire_1();
   for (const s of loop) mk.Add_1(api.segEdge(s, fr));
   if (!mk.IsDone()) throw new SheetError("E-SM-WIRE", "A sheet metal outline could not be closed.");
-  return mk.Wire();
+  // A whole circle has no direction of its own (its edge runs counter-clockwise): turn it round for a hole.
+  return cw && loop.length === 1 && loop[0].kind === "circle" ? api.oc.TopoDS.Wire_1(mk.Wire().Reversed()) : mk.Wire();
 }
 
 /** A planar face from a counter-clockwise outer loop and clockwise holes, in the frame. */
 function faceOf(api: SheetApi, outer: Seg[], holes: Seg[][], fr: Frame): any {
   const oc = api.oc;
   const mk = new oc.BRepBuilderAPI_MakeFace_15(wireOf(api, outer, fr), true);
-  for (const h of holes) mk.Add(wireOf(api, h, fr));
+  for (const h of holes) mk.Add(wireOf(api, h, fr, true));
   if (!mk.IsDone()) throw new SheetError("E-SM-FACE", "A sheet metal face could not be made.");
   const fix = new oc.ShapeFix_Face_2(mk.Face());
   fix.Perform();
