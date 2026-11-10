@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.479.0] - 2026-11-10
+
+### Fixed
+
+- **Drawings of big assemblies ran out of memory (drawings exam round three)**: OpenCASCADE's fast hidden-line pass keeps about 100 MB per view of an engine assembly, so an alternate position after Standard 3 views failed with "malloc failed". The drawing worker is now started over with the same model once its memory passes 1.2 GB (the views already made stay), and a view that still runs out is tried once more on a fresh worker. If even that fails, the message says there was not enough memory for the view instead of quoting OpenCASCADE.
+
 ## [1.476.0] - 2026-11-10
 
 ### Changed
@@ -2908,7 +2914,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.476.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.479.0...HEAD
+[1.479.0]: https://github.com/kothf/step-viewer/compare/v1.476.0...v1.479.0
 [1.476.0]: https://github.com/kothf/step-viewer/compare/v1.475.0...v1.476.0
 [1.475.0]: https://github.com/kothf/step-viewer/compare/v1.474.0...v1.475.0
 [1.474.0]: https://github.com/kothf/step-viewer/compare/v1.473.0...v1.474.0

@@ -38,6 +38,14 @@ function helperWanted(): boolean {
   return !nav.connection?.saveData;
 }
 
+/** Heap size after which the main drawing worker is started over between calls (see `recycle`). */
+const HEAP_RECYCLE = (() => {
+  const q = typeof location !== "undefined" ? Number(new URLSearchParams(location.search).get("drwheap")) : 0;
+  return (q > 0 ? q : 1200) * 1048576;
+})();
+/** An error that means the worker's heap is full. */
+export const OUT_OF_MEMORY = /malloc failed|bad_alloc|out of memory|Cannot enlarge memory|Array buffer allocation failed/i;
+
 /** A helper drawing worker idle this long is stopped (its model is loaded again at the next load). */
 const HELPER_IDLE_MS = 60_000;
 
@@ -114,6 +122,12 @@ export class DrawingKernel {
   private helperIdle: ReturnType<typeof setTimeout> | null = null;
   /** Exact projections the helper worker made (for the smoke test). */
   helped = 0;
+  /** The loaded model, for starting the worker over (`recycle`). */
+  private src: { part?: PartDoc; asm?: AsmDoc; file?: { name: string; bytes: Uint8Array } } | null = null;
+  private wantRecycle = false;
+  private recycling: Promise<void> | null = null;
+  /** Times the main worker was started over (for tests). */
+  recycles = 0;
 
   constructor(private base: string) {}
 
@@ -124,7 +138,9 @@ export class DrawingKernel {
       const d = e.data, p = this.pending.get(d.id);
       if (!p) return;
       this.pending.delete(d.id);
+      if (typeof d.heap === "number" && d.heap > HEAP_RECYCLE) this.wantRecycle = true;
       if (d.ok) p.resolve(d); else p.reject(new Error(d.error));
+      if (this.wantRecycle && !this.pending.size) void this.recycle();
     };
     w.onerror = e => { for (const p of this.pending.values()) p.reject(new Error(e.message || "The drawing kernel stopped")); this.pending.clear(); this.stop(); };
     this.worker = w;
@@ -134,6 +150,9 @@ export class DrawingKernel {
   }
 
   private call<T>(msg: Record<string, unknown>): Promise<T> {
+    // While the worker starts over, everything but its own set-up waits for the model to be back.
+    if (this.recycling && msg.type !== "init" && msg.type !== "load") return this.recycling.then(() => this.call<T>(msg));
+    if (!this.worker) return Promise.reject(new Error("The drawing kernel stopped"));
     const id = ++this.seq;
     return new Promise<T>((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
@@ -141,7 +160,35 @@ export class DrawingKernel {
     });
   }
 
+  /**
+   * Starts the main worker over with the same model (the projection cache stays): OCCT's polygonal HLR leaks
+   * ~100 MB per fast view of an engine assembly, and the heap ran out on an alternate position after
+   * Standard 3 views (drawings exam round three). Calls still waiting fail with "stopped".
+   */
+  private recycle(): Promise<void> {
+    if (this.recycling) return this.recycling;
+    const src = this.src;
+    if (!src || !this.worker) return Promise.resolve();
+    this.wantRecycle = false;
+    this.recycles++;
+    this.worker.terminate();
+    this.worker = null;
+    this.ready = null;
+    for (const p of this.pending.values()) p.reject(new Error("The drawing kernel stopped"));
+    this.pending.clear();
+    // Configurations are built inside the worker: build them again when asked.
+    this.configs.clear();
+    this.cfgLoading.clear();
+    const gen = this.gen;
+    const done = this.start().then(() => this.call<ModelFacts>({ type: "load", ...src })).then(facts);
+    this.loaded = done;
+    this.recycling = done.then(() => undefined, () => undefined).then(() => { this.recycling = null; if (gen === this.gen) this.pump(); });
+    return this.recycling;
+  }
+
   stop() {
+    this.src = null;
+    this.wantRecycle = false;
     this.stopHelper();
     for (const j of this.jobs.splice(0)) j.reject(new Error("The drawing kernel stopped"));
     this.mainBusy = false;
@@ -168,6 +215,8 @@ export class DrawingKernel {
     this.slowest = 0;
     this.configs.clear();
     this.cfgLoading.clear();
+    this.src = src;
+    this.wantRecycle = false;
     // The helper only for models under FAST_EDGES: a second copy of a big assembly can run the tab out of memory
     // (drawings exam: an engine tab crashed after Standard 3 views); big ones take the fast path anyway.
     const gen = this.gen;
@@ -207,7 +256,7 @@ export class DrawingKernel {
   }
 
   /** For tests: whether the helper worker is up and has the model, and how many projections it made. */
-  helperState() { return { on: !!this.helper, loaded: !!this.helper?.loaded, helped: this.helped }; }
+  helperState() { return { on: !!this.helper, loaded: !!this.helper?.loaded, helped: this.helped, recycles: this.recycles }; }
 
   /** An exact projection or section, run by whichever worker is free first. */
   private exact<T>(msg: Record<string, unknown>): Promise<T> {
@@ -217,12 +266,27 @@ export class DrawingKernel {
   private pump() {
     if (!this.worker) return;
     while (this.jobs.length) {
-      if (!this.mainBusy) {
+      if (!this.mainBusy && !this.recycling) {
         const j = this.jobs.shift()!;
         this.mainBusy = true;
-        this.call(j.msg).then(j.resolve, j.reject).finally(() => { this.mainBusy = false; this.pump(); });
+        const gen = this.gen;
+        this.call(j.msg).then(j.resolve, (err: Error) => {
+          // Out of memory: start the worker over and try once more.
+          if (gen === this.gen && j.tries < 2 && OUT_OF_MEMORY.test(err.message) && this.src) {
+            j.tries = 2;
+            this.jobs.unshift(j);
+            this.wantRecycle = true;
+            return;
+          }
+          j.reject(err);
+        }).finally(() => {
+          this.mainBusy = false;
+          if (this.wantRecycle && !this.pending.size) void this.recycle();
+          else this.pump();
+        });
         continue;
       }
+      if (this.recycling) break;
       // The helper takes plain jobs of the loaded model (configurations are built on the main worker only).
       const h = this.helper;
       if (!h || !h.loaded || h.busy || h.gen !== this.gen) break;

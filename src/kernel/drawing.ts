@@ -106,21 +106,29 @@ export function project(oc: any, shape: any, view: ViewDir, tol = 0.02): Project
  */
 export function projectPoly(oc: any, shape: any, view: ViewDir, lin: number, ang = 0.5): Projection {
   const t0 = Date.now();
-  new oc.BRepMesh_IncrementalMesh_2(shape, lin, false, ang, false);
+  // Every OCCT object made here is deleted at the end: the polygonal HLR holds the whole model's mesh data,
+  // ~100 MB for an engine assembly, and leaked objects ran the worker's heap out after a few views (exam round three).
+  const made: any[] = [];
+  const keep = <T,>(o: T): T => { made.push(o); return o; };
+  keep(new oc.BRepMesh_IncrementalMesh_2(shape, lin, false, ang, false));
   const { x, n } = viewAxes(view);
-  const ax = new oc.gp_Ax2_2(new oc.gp_Pnt_3(0, 0, 0), new oc.gp_Dir_4(n[0], n[1], n[2]), new oc.gp_Dir_4(x[0], x[1], x[2]));
+  const ax = keep(new oc.gp_Ax2_2(keep(new oc.gp_Pnt_3(0, 0, 0)), keep(new oc.gp_Dir_4(n[0], n[1], n[2])), keep(new oc.gp_Dir_4(x[0], x[1], x[2]))));
   const algo = new oc.HLRBRep_PolyAlgo_1();
-  algo.Load(shape);
-  algo.Projector_2(new oc.HLRAlgo_Projector_2(ax));
-  algo.Update();
+  // The handle owns the algorithm: deleting the handle (and the reader holding a copy) frees it.
+  const ha = new oc.Handle_HLRBRep_PolyAlgo_2(algo);
   const h = new oc.HLRBRep_PolyHLRToShape();
-  h.Update(new oc.Handle_HLRBRep_PolyAlgo_2(algo));
+  try {
+  algo.Load(shape);
+  algo.Projector_2(keep(new oc.HLRAlgo_Projector_2(ax)));
+  algo.Update();
+  h.Update(ha);
   const vis: Seg2[] = [], hid: Seg2[] = [];
   const fails: string[] = [];
   const take = (get: () => any, out: Seg2[], c: EdgeClass) => {
     let s: any;
     try { s = get(); } catch (e) { fails.push(e instanceof Error ? e.message : typeof e === "number" ? `OCCT exception ${e}` : String(e)); return; }
     if (s && !s.IsNull()) polyEdges(oc, s, out, c);
+    s?.delete?.();
   };
   take(() => h.VCompound_1(), vis, 0);
   take(() => h.Rg1LineVCompound_1(), vis, 1);
@@ -129,6 +137,12 @@ export function projectPoly(oc: any, shape: any, view: ViewDir, lin: number, ang
   take(() => h.Rg1LineHCompound_1(), hid, 1);
   take(() => h.OutLineHCompound_1(), hid, 2);
   return { vis, hid, box: bounds(vis.length ? vis : hid), ms: Date.now() - t0, preview: true, ...(fails.length ? { fail: [...new Set(fails)].join("; ") } : {}) };
+  } finally {
+    try { algo.Clear(); } catch { /* older builds */ }
+    h.delete();
+    ha.delete();
+    for (const o of made) { try { o.delete(); } catch { /* already gone */ } }
+  }
 }
 
 /** Edges at or above which a view is projected by `projectFast`: the exact HLR grows too slow (a 57-part engine ran 20+ min). */
