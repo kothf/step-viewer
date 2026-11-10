@@ -750,6 +750,15 @@ test("DXF 2000: handles, owners, model space records, LWPOLYLINE, Unicode text (
   assert.ok(d.includes("\\U+041C\\U+0430") && d.includes("\\U+00D8") && !/[^\x00-\x7f]/.test(d));
 });
 
+test("DXF 2000 of a big sheet: no call stack overflow (File ▸ Export on the Leuenberger engine drawing)", async () => {
+  const { sheetDxf2000 } = await import("../../src/drawing/output");
+  const prims: any[] = [];
+  for (let i = 0; i < 60000; i++) prims.push({ t: "l", p: [i % 400, 0, i % 400, 10], pen: "thin", layer: "VISIBLE" });
+  const d = sheetDxf2000(prims, 420, 297);
+  assert.ok(d.startsWith("0\nSECTION\n2\nHEADER") && d.trimEnd().endsWith("EOF"));
+  assert.equal(d.split("\nLINE\n").length - 1, 60000);
+});
+
 test("note property links: $PRP:\"name\" takes the title block field, SolidWorks names too (FR-DRW-023)", async () => {
   const { expandProps, useProps, notePrims } = await import("../../src/drawing/annot");
   const props = { material: "Steel", mass: "1.25 kg", number: "MC-001", scale: "2:1", title: "Plate" };
