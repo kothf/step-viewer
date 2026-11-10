@@ -3,6 +3,7 @@
 // lines as a live preview, then projected views come off it as the cursor moves
 // around (Esc or ✓ ends); views drag on the sheet and projected ones stay lined up
 // with their parent. Lines come from the drawing worker (exact HLR).
+import type { VaultTie } from "../pdm/panel";
 import fontUrl from "dejavu-fonts-ttf/ttf/DejaVuSans.ttf?url";
 import type { MEdge, Projection, ViewDir } from "../kernel/drawing";
 import { AUTO_LAYERS, withCut, clineSegs, cloudPrims, dimGeo, factsCtx, holeEdges, ringDist, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
@@ -168,7 +169,7 @@ const ICON = {
 };
 
 /** A drawing kept in a document tab while another document is shown. */
-export interface DrawingTab { store: DrawingStore; model: Uint8Array | undefined; fileName: string; info: DrawingModel["info"]; modelKey: string; sheetIdx: number }
+export interface DrawingTab { store: DrawingStore; model: Uint8Array | undefined; fileName: string; info: DrawingModel["info"]; modelKey: string; sheetIdx: number; vault: VaultTie | null }
 
 export class DrawingWorkspace {
   readonly el: HTMLElement;
@@ -262,6 +263,7 @@ export class DrawingWorkspace {
     this.store.onChange(() => this.renderAll());
     this.model = model;
     this.fileName = fileName;
+    this.vault = null;
     this.sheetIdx = 0;
     this.sel = null;
     this.mode = { kind: "none" };
@@ -294,7 +296,8 @@ export class DrawingWorkspace {
   park(): DrawingTab | null {
     if (!this.store) return null;
     this.cancelMode();
-    const tab: DrawingTab = { store: this.store, model: this.model, fileName: this.fileName, info: this.info, modelKey: this.modelKey, sheetIdx: this.sheetIdx };
+    const tab: DrawingTab = { store: this.store, model: this.model, fileName: this.fileName, info: this.info, modelKey: this.modelKey, sheetIdx: this.sheetIdx, vault: this.vault };
+    this.vault = null;
     this.hide();
     this.store = null;
     return tab;
@@ -307,6 +310,7 @@ export class DrawingWorkspace {
     this.fileName = tab.fileName;
     this.info = tab.info;
     this.modelKey = tab.modelKey;
+    this.vault = tab.vault;
     this.sheetIdx = tab.sheetIdx;
     this.sel = null;
     this.mode = { kind: "none" };
@@ -527,7 +531,7 @@ export class DrawingWorkspace {
     this.renderTabs();
     this.renderStatus();
     const name = this.el.querySelector(".drw-name")!;
-    name.textContent = `${this.fileName || `${this.doc.name}${DRAWING_EXT}`}${this.store.dirty ? " •" : ""}`;
+    name.textContent = `${this.fileName || `${this.doc.name}${DRAWING_EXT}`}${this.vault ? ` · ${this.vault.label}` : ""}${this.store.dirty ? " •" : ""}`;
     const u = this.el.querySelector<HTMLButtonElement>('[data-a="undo"]')!, r = this.el.querySelector<HTMLButtonElement>('[data-a="redo"]')!;
     u.disabled = !this.store.undoLabel; r.disabled = !this.store.redoLabel;
     u.title = this.store.undoLabel ? t("Undo {what} (Ctrl+Z)", { what: t(this.store.undoLabel) }) : t("Undo (Ctrl+Z)");
@@ -3013,10 +3017,37 @@ export class DrawingWorkspace {
 
   // ---------- saving and output ----------
 
-  async save() {
+  /**
+   * The open drawing came from a vault (FR-PDM-010/081): Save writes the working copy there, only while it is
+   * checked out here; the title shows the version and the lock.
+   */
+  vault: VaultTie | null = null;
+  setVault(v: VaultTie | null) {
+    this.vault = v;
+    if (this.store) this.renderAll();
+  }
+  /** Marks the open drawing saved (the vault wrote it). */
+  markSaved() {
+    if (!this.store) return;
+    this.store.markSaved();
+    this.renderAll();
+  }
+
+  /** Saves the drawing; `as` = a copy outside the vault. */
+  async save(as = false) {
     if (!this.store) return;
     const bytes = await packDrawing(this.doc, `MöbiusCAD ${this.host.appVersion}`, this.model);
     const name = this.fileName || `${this.doc.name}${DRAWING_EXT}`;
+    if (this.vault && !as) {
+      if (this.vault.readOnly) { toast(t("This file is read-only: check it out to save, or use Save as."), true); return; }
+      try { await this.vault.save(bytes); }
+      catch (err) { toast(t("Could not save: {err}", { err: t((err as Error).message) }), true); return; }
+      this.store.markSaved();
+      this.renderAll();
+      toast(t("Saved {name}", { name }), "success");
+      return;
+    }
+    if (as && this.vault) this.setVault(null);
     this.host.download(new Blob([bytes], { type: "application/zip" }), name);
     this.fileName = name;
     this.store.markSaved();

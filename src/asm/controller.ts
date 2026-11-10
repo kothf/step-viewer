@@ -2,6 +2,7 @@
 // view or type the pose), fixed/floating, hide, delete, save and open .mcadasm. The kernel places the
 // components (src/kernel/assembly.ts) and the viewer shows one part per component, so the measuring
 // tools work across components as for an imported assembly.
+import type { VaultTie } from "../pdm/panel";
 import type { NamedViews } from "../viewer/navigation";
 import { MATE_LABEL, mateName } from "./mateName";
 import type { NamedView } from "../model/types";
@@ -77,7 +78,7 @@ interface MateDraft { edit?: string; a?: MateRef; b?: MateRef; c?: MateRef; d?: 
 /** The Mate panel's message when a mate cannot be solved even from turned starts. */
 const MATE_FAILS = "This mate cannot be solved with the others: the assembly would be over-defined, or the components stand too far from where the mate puts them. Move them closer and try again.";
 
-export interface AsmTab { doc: AsmDoc; fileName: string; handle: FileSystemFileHandle | null; undo: string[]; redo: string[]; savedAt: string; sel: string | null }
+export interface AsmTab { doc: AsmDoc; fileName: string; handle: FileSystemFileHandle | null; undo: string[]; redo: string[]; savedAt: string; sel: string | null; vault: VaultTie | null }
 
 export class AsmController {
   doc: AsmDoc | null = null;
@@ -203,7 +204,7 @@ export class AsmController {
     if (!this.doc) return null;
     this.closeTools();
     this.hideCrumbs();
-    const tab: AsmTab = { doc: this.doc, fileName: this.fileName, handle: this.handle, undo: this.undoStack, redo: this.redoStack, savedAt: this.savedAt, sel: this.selected };
+    const tab: AsmTab = { doc: this.doc, fileName: this.fileName, handle: this.handle, undo: this.undoStack, redo: this.redoStack, savedAt: this.savedAt, sel: this.selected, vault: this.vault };
     this.close();
     return tab;
   }
@@ -215,6 +216,23 @@ export class AsmController {
     this.redoStack = tab.redo;
     this.savedAt = tab.savedAt;
     this.selected = tab.sel;
+    this.vault = tab.vault;
+    this.renderAll();
+  }
+
+  /**
+   * The open assembly came from a vault (FR-PDM-010/081): Save writes the working copy there, only while it is
+   * checked out here; the title shows the version and the lock.
+   */
+  vault: VaultTie | null = null;
+  setVault(v: VaultTie | null) {
+    this.vault = v;
+    if (this.doc) this.renderAll();
+  }
+  /** Marks the open assembly saved (the vault wrote it). */
+  markSaved() {
+    if (!this.doc) return;
+    this.savedAt = JSON.stringify(this.doc);
     this.renderAll();
   }
 
@@ -227,6 +245,7 @@ export class AsmController {
     this.redoStack = [];
     this.fileName = fileName;
     this.handle = handle;
+    this.vault = null;
     this.selected = null;
     this.moving = null;
     this.mating = null;
@@ -258,6 +277,7 @@ export class AsmController {
     this.ghostGroup.visible = false;
     this.motion?.close();
     this.doc = null;
+    this.vault = null;
     this.drag = null;
     this.mating = null;
     this.interfere = null;
@@ -278,7 +298,7 @@ export class AsmController {
     this.host.selectLeftTab("tree");
   }
 
-  private label() { return `${this.fileName || `${this.doc!.name}${ASM_EXT}`}${this.dirty ? " •" : ""}`; }
+  private label() { return `${this.fileName || `${this.doc!.name}${ASM_EXT}`}${this.vault ? ` · ${this.vault.label}` : ""}${this.dirty ? " •" : ""}`; }
 
   // ---------- changes, undo ----------
 
@@ -2278,6 +2298,17 @@ export class AsmController {
   async save(as = false) {
     if (!this.doc) return;
     const bytes = await packAsm(this.doc, `MöbiusCAD ${this.host.appVersion}`);
+    if (this.vault && !as) {
+      // A vaulted assembly saves into the vault's working copy, and only while checked out here (FR-PDM-081).
+      if (this.vault.readOnly) { toast(t("This file is read-only: check it out to save, or use Save as."), true); return; }
+      try { await this.vault.save(bytes); }
+      catch (err) { toast(t("Could not save: {err}", { err: t((err as Error).message) }), true); return; }
+      this.savedAt = JSON.stringify(this.doc);
+      this.renderAll();
+      toast(t("Saved {name}", { name: this.title }), "success");
+      return;
+    }
+    if (as && this.vault) this.setVault(null);
     const blob = new Blob([bytes as BlobPart], { type: "application/zip" });
     const suggested = this.fileName || `${this.doc.name}${ASM_EXT}`;
     const w = window as Window & { showSaveFilePicker?: (o: unknown) => Promise<FileSystemFileHandle> };
