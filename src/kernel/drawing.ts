@@ -398,9 +398,54 @@ export function section(oc: any, shape: any, view: ViewDir, p: V3, tol = 0.02, p
       if (loop.length >= 6) { cut.push(loop); cutOf.push(owner); }
     }
   }
+  if (st) dropSteps(proj, st, x, y, cut);
   const cutEdges = opts.namer ? sectionEdges(oc, shape, cutter, capEdges, opts.namer) : undefined;
   capEdges.delete();
   return cutEdges ? { ...proj, cut, cutOf, cutEdges } : { ...proj, cut, cutOf };
+}
+
+/**
+ * An offset or half section's steps (the cutter's walls square to the cut planes, at a constant t inside the model) are
+ * no edges of the part: ISO 128-44 and SolidWorks leave them out of the section, so the hatching on both sides meets on
+ * no line. Their edges lie on one line each in the view; where cut faces lie on both sides of it the line is dropped
+ * (drawings exam #12). Where the step meets material that is not cut, it stays: there it is the cut face's outline.
+ */
+export function dropSteps(proj: { vis: Seg2[]; hid: Seg2[] }, st: { o: V3; e: V3; pts: number[] }, x: V3, y: V3, cut: number[][]) {
+  const ex = dot(st.e, x), ey = dot(st.e, y), len = Math.hypot(ex, ey);
+  if (len < 1e-9 || !cut.length) return;
+  const nx = ex / len, ny = ey / len, cs: number[] = [];
+  for (let i = 0; i + 3 < st.pts.length; i += 2) {
+    const t = st.pts[i];
+    if (Math.abs(t) >= 1e8 || Math.abs(st.pts[i + 2] - t) > 1e-9) continue;
+    const P: V3 = [st.o[0] + st.e[0] * t, st.o[1] + st.e[1] * t, st.o[2] + st.e[2] * t];
+    cs.push(nx * dot(P, x) + ny * dot(P, y));
+  }
+  if (!cs.length) return;
+  // Even-odd over all cut loops: is (u, v) on a cut (hatched) face?
+  const hatched = (u: number, v: number) => {
+    let inside = false;
+    for (const l of cut) for (let i = 0, j = l.length - 2; i < l.length; j = i, i += 2) {
+      const yi = l[i + 1], yj = l[j + 1];
+      if ((yi > v) !== (yj > v) && u < (l[j] - l[i]) * (v - yi) / (yj - yi) + l[i]) inside = !inside;
+    }
+    return inside;
+  };
+  const on = (u: number, v: number) => cs.some(c => Math.abs(nx * u + ny * v - c) < 1e-4);
+  const cutLine = (u: number, v: number) => hatched(u + nx * 0.05, v + ny * 0.05) && hatched(u - nx * 0.05, v - ny * 0.05);
+  const split = (list: Seg2[]) => list.flatMap((g): Seg2[] => {
+    if (g.k !== "l" || !on(g.p[0], g.p[1]) || !on(g.p[2], g.p[3])) return [g];
+    // Keep the stretches where the step borders material that is not cut (it is a real outline there).
+    const [a, b, c, d] = g.p, L = Math.hypot(c - a, d - b), n = Math.max(2, Math.ceil(L / 0.25)), out: Seg2[] = [];
+    let start = -1;
+    for (let k = 0; k <= n; k++) {
+      const keep = k < n && !cutLine(a + (c - a) * (k + 0.5) / n, b + (d - b) * (k + 0.5) / n);
+      if (keep && start < 0) start = k;
+      if (!keep && start >= 0) { out.push({ ...g, p: [a + (c - a) * start / n, b + (d - b) * start / n, a + (c - a) * k / n, b + (d - b) * k / n] }); start = -1; }
+    }
+    return out;
+  });
+  proj.vis = split(proj.vis);
+  proj.hid = split(proj.hid);
 }
 
 /** The cut faces' edges as model edges, each named after the input face it lies on (`<name>|§`); unnamed ones are left out. */

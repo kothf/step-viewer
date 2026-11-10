@@ -1494,3 +1494,18 @@ test("model items stack by size, clear of each other, in sheet millimetres (FR-D
   assert.equal(more.length, 1);
   assert.equal(off(more, "a:10"), 34);
 });
+
+test("offset section: the cutter's steps are no lines in the view (drawings exam #12)", async () => {
+  const { dropSteps } = await import("../../src/kernel/drawing");
+  // Frame: e = +X, view x = +X, y = +Z; one step at t = 25 (x = 25 - 40 = -15), the outer walls at ±FAR stay.
+  const st = { o: [-40, -20, 0] as [number, number, number], e: [1, 0, 0] as [number, number, number], pts: [-1e9, 1e9, -1e9, 0, 25, 0, 25, 20, 1e9, 20, 1e9, 1e9] };
+  const l = (p: [number, number, number, number]) => ({ k: "l" as const, c: 0 as const, p });
+  const proj = { vis: [l([-15, 0, -15, 35]), l([-40, 0, 40, 0]), l([-20, 15, -20, 33]), l([-15, 15, -10, 15])], hid: [l([-15, 2, -15, 8])] };
+  // Cut faces: the plate cut on both sides of the step (z 0…15), and only right of it above (the boss beyond on the left).
+  const cut = [[-40, 0, -15, 0, -15, 15, -40, 15], [-15, 0, 40, 0, 40, 15, -10, 15, -10, 35, -15, 35]];
+  dropSteps(proj, st, [1, 0, 0], [0, 0, 1], cut);
+  const ps = proj.vis.map(g => (g as { p: number[] }).p.map(v => Math.round(v * 100) / 100));
+  assert.deepEqual(ps.slice(1), [[-40, 0, 40, 0], [-20, 15, -20, 33], [-15, 15, -10, 15]], "lines with only one end on the step stay");
+  assert.ok(ps[0][0] === -15 && ps[0][2] === -15 && Math.abs(ps[0][1] - 15) < 0.3 && ps[0][3] === 35, `the step stays only where it borders the uncut boss (${ps[0]})`);
+  assert.equal(proj.hid.length, 0, "between two cut faces it goes");
+});
