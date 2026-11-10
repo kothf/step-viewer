@@ -458,7 +458,7 @@ export const CHECKED: Record<string, string> = {
   "Wood (teak)": "research.fs.usda.gov/download/treesearch/62244.pdf",
   "Wood (mahogany)": "research.fs.usda.gov/download/treesearch/62244.pdf",
   "Wood (balsa)": "research.fs.usda.gov/download/treesearch/62244.pdf",
-  // 1.425.0: IBC Advanced Alloys C17200 sheet, AT (TF00) plate: 0.302 lb/in³ (8.36 g/cm³), 19 Msi (131 GPa),
+  // 1.426.0: IBC Advanced Alloys C17200 sheet, AT (TF00) plate: 0.302 lb/in³ (8.36 g/cm³), 19 Msi (131 GPa),
   // tensile 165-200 ksi, yield 140-175 ksi (the row keeps the lower ends), 56 Btu/ft·h·°F (97 W/m·K),
   // 0.44 J/g·K, 9.7e-6 /°F (17.5e-6 /K). The row's density was 8.25, the value before age hardening.
   "Beryllium copper CuBe2 (age hardened)": "ibcadvancedalloys.com/wp-content/uploads/2017/11/C17200_Copper_Alloy_Product_Data_Sheet.pdf",
