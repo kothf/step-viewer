@@ -9651,6 +9651,37 @@ try {
     check(agPanel.about === "Z" && agPanel.opts === "edge,X,Y,Z" && !agPanel.edgeBox, `model 1.486.0: the Plane panel offers X, Y, Z and edges to turn about, Z picked (FR-REF-002) (${JSON.stringify(agPanel)})`);
     await mp.evaluate(() => window.__sv.modeller.ok());
     await settle();
+    // 1.488.0: a cross hole at a compound angle (35° round the shaft, 20° up) comes back on a plane about Z, the
+    // axis where it meets XY and a plane at an angle about that axis.
+    await mp.evaluate(() => window.__sv.model.store.change("Compound cross", d => {
+      const xy = [[0, 0], [10, 0], [10, 30], [0, 30]];
+      const ents = xy.map(([x, y], i) => ({ id: "rp" + i, t: "point", x, y }));
+      xy.forEach((_, i) => ents.push({ id: "rl" + i, t: "line", a: "rp" + i, b: "rp" + ((i + 1) % 4) }));
+      ents.push({ id: "ra", t: "point", x: 0, y: -5 }, { id: "rb", t: "point", x: 0, y: 35 }, { id: "rax", t: "line", a: "ra", b: "rb", cons: true });
+      d.features = [{ id: "r", type: "sketch", name: "Sketch1", plane: { std: "XZ" }, ents, rels: [], dims: [] },
+        { id: "v", type: "revolve", name: "Revolve1", sketch: "r", op: "boss", axis: "rax", angle: { v: Math.PI * 2 } },
+        { id: "p1", type: "plane", name: "Plane1", base: { std: "YZ" }, mode: "angle", offset: { v: 0 }, angle: { v: 35 * Math.PI / 180 }, about: { std: "Z" } },
+        { id: "a1", type: "axis", name: "Axis1", mode: "planes", planes: [{ std: "XY" }, { plane: "p1" }] },
+        { id: "p2", type: "plane", name: "Plane2", base: { plane: "p1" }, mode: "angle", offset: { v: 0 }, angle: { v: 20 * Math.PI / 180 }, about: { axis: "a1" } }];
+    }));
+    await settle();
+    const cpF = await mp.evaluate(() => window.__sv.model.last().frames?.p2 ?? null);
+    const cpXY = cpF ? [0, 1].map(k => { const ax = k ? cpF.y : cpF.x; return (0 - cpF.o[0]) * ax[0] + (0 - cpF.o[1]) * ax[1] + (15 - cpF.o[2]) * ax[2]; }) : [0, 15];
+    await mp.evaluate(xy => window.__sv.model.store.change("Compound cut", d => {
+      d.features.push({ id: "o", type: "sketch", name: "Sketch2", plane: { plane: "p2" }, rels: [], dims: [], ents: [{ id: "oc", t: "point", x: xy[0], y: xy[1] }, { id: "ok", t: "circle", c: "oc", r: 2 }] },
+        { id: "c", type: "extrude", name: "Cut-Extrude1", sketch: "o", op: "cut", end: "through2", depth: { v: 10 } });
+    }), cpXY);
+    await settle();
+    const cp0 = await state();
+    const brepCp = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "compound.brep", brep }]; }), brepCp);
+    await settle();
+    await runCmd(mp, "Recognize Features");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.length > 1, null, { timeout: 120000 });
+    await settle();
+    const cp1 = await state();
+    check(!!cpF && !cp0.bad && cp0.v > 9000 && cp0.v < 9300 && Math.abs(cp1.v - cp0.v) < 0.1 && !cp1.bad && cp1.types === "import,sketch,extrude,delbody,plane,axis,plane,sketch,extrude",
+      `model 1.488.0: Recognize Features makes a cross hole at a compound angle again on a plane about an axis (FR-FT-102) (${JSON.stringify({ cp0, cp1, cpXY })})`);
     await ctx.close();
   }
 

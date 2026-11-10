@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.488.0] - 2026-11-10
+
+### Added
+
+- Recognize Holes and Recognize Features also bring back cross holes at a compound angle, tilted in two directions at once (FR-FT-102): the plane square to the hole is built the way it is in SolidWorks, a Plane at an angle about Z, a reference Axis where that plane meets XY, and a Plane at an angle about that axis. Before, such holes stayed part of the imported body.
+
+### Fixed
+
+- Recognize Holes counted cross holes and keyways wrongly in its message (each was counted by its number of features).
+
 ## [1.486.0] - 2026-11-10
 
 ### Added
@@ -2985,7 +2995,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.486.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.488.0...HEAD
+[1.488.0]: https://github.com/kothf/step-viewer/compare/v1.486.0...v1.488.0
 [1.486.0]: https://github.com/kothf/step-viewer/compare/v1.485.0...v1.486.0
 [1.485.0]: https://github.com/kothf/step-viewer/compare/v1.484.0...v1.485.0
 [1.484.0]: https://github.com/kothf/step-viewer/compare/v1.483.0...v1.484.0

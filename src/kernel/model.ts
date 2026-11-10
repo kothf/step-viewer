@@ -3504,25 +3504,44 @@ export class Modeller {
       crossFaces.push(...fs);
     };
     const newId = () => `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
-    // The plane square to a hole's axis `d` through the origin: a standard plane, else a plane at an angle to
-    // one about the standard axis square to `d` (a hole tilted in a standard plane); compound angles are left.
+    // The plane square to a hole's axis `d` through the origin: a standard plane; else a plane at an angle to
+    // one about the standard axis square to `d` (a hole tilted in a standard plane); else (a compound angle)
+    // a plane about Z through the hole's direction, the axis where it meets XY, and a plane about that axis.
+    const turned = (base: PlaneRef, n: V3, about: LineRef, u: V3, d: V3): { pf: PlaneFeature; fr: Frame } => {
+      const dd = dot(n, d) < 0 ? mul(d, -1) : d, a = Math.atan2(dot(dd, cross(u, n)), dot(dd, n));
+      const pf = { id: newId(), type: "plane", name: "", base, mode: "angle", offset: { v: 0 }, angle: { v: Math.abs(a) }, about, ...(a < 0 ? { flip: true } : {}) } as PlaneFeature;
+      return { pf, fr: this.refPlane(pf, body, frames) };
+    };
+    const frames: Record<string, Frame> = {};
     const squareTo = (d: V3): { feats: Feature[]; ref: PlaneRef; fr: Frame } | null => {
-      const std = (["XY", "XZ", "YZ"] as const).find(k => Math.abs(Math.abs(dot(STD_FRAMES[k].n, d)) - 1) < 1e-9);
+      const STD = ["XY", "XZ", "YZ"] as const;
+      const std = STD.find(k => Math.abs(Math.abs(dot(STD_FRAMES[k].n, d)) - 1) < 1e-9);
       if (std) return { feats: [], ref: { std }, fr: STD_FRAMES[std] };
-      const axes = [["X", [1, 0, 0]], ["Y", [0, 1, 0]], ["Z", [0, 0, 1]]] as const;
-      const ax = axes.find(([, A]) => Math.abs(dot(A as unknown as V3, d)) < 1e-9);
-      if (!ax) return null;
-      const A = ax[1] as unknown as V3;
-      // Of the two standard planes holding the axis, the one nearer square to the hole.
-      const base = (["XY", "XZ", "YZ"] as const).filter(k => Math.abs(dot(STD_FRAMES[k].n, A)) < 1e-9)
-        .sort((a, b) => Math.abs(dot(STD_FRAMES[b].n, d)) - Math.abs(dot(STD_FRAMES[a].n, d)))[0];
-      const n = STD_FRAMES[base].n, dd = dot(n, d) < 0 ? mul(d, -1) : d;
-      const a = Math.atan2(dot(dd, cross(A, n)), dot(dd, n));
-      const id = newId();
-      const pf = { id, type: "plane", name: "", base: { std: base }, mode: "angle", offset: { v: 0 }, angle: { v: Math.abs(a) }, about: { std: ax[0] }, ...(a < 0 ? { flip: true } : {}) } as PlaneFeature;
-      const fr = this.refPlane(pf, body, {});
-      if (Math.abs(Math.abs(dot(fr.n, d)) - 1) > 1e-9) return null;
-      return { feats: [pf], ref: { plane: id }, fr };
+      const axes = [["X", [1, 0, 0]], ["Y", [0, 1, 0]], ["Z", [0, 0, 1]]] as [("X" | "Y" | "Z"), V3][];
+      const ax = axes.find(([, A]) => Math.abs(dot(A, d)) < 1e-9);
+      let out: { feats: Feature[]; ref: PlaneRef; fr: Frame };
+      if (ax) {
+        // Of the two standard planes holding the axis, the one nearer square to the hole.
+        const base = STD.filter(k => Math.abs(dot(STD_FRAMES[k].n, ax[1])) < 1e-9)
+          .sort((a, b) => Math.abs(dot(STD_FRAMES[b].n, d)) - Math.abs(dot(STD_FRAMES[a].n, d)))[0];
+        const { pf, fr } = turned({ std: base }, STD_FRAMES[base].n, { std: ax[0] }, ax[1], d);
+        out = { feats: [pf], ref: { plane: pf.id }, fr };
+      } else {
+        const Z: V3 = [0, 0, 1], h = unit(sub3(d, mul(Z, d[2])));
+        // Plane 1 is square to the hole's direction seen from above (turned about Z from YZ or XZ); it meets XY
+        // along the horizontal line square to the hole, which plane 2 turns about until it is square to it.
+        const base = Math.abs(h[0]) >= Math.abs(h[1]) ? "YZ" as const : "XZ" as const;
+        const p1 = turned({ std: base }, STD_FRAMES[base].n, { std: "Z" }, Z, h);
+        frames[p1.pf.id] = p1.fr;
+        const aid = newId();
+        const axis = { id: aid, type: "axis", name: "", mode: "planes", planes: [{ std: "XY" }, { plane: p1.pf.id }] } as AxisFeature;
+        const af = this.refAxis(axis, body, frames);
+        frames[aid] = af;
+        const p2 = turned({ plane: p1.pf.id }, p1.fr.n, { axis: aid }, unit(af.n), d);
+        frames[p2.pf.id] = p2.fr;
+        out = { feats: [p1.pf, axis, p2.pf], ref: { plane: p2.pf.id }, fr: p2.fr };
+      }
+      return Math.abs(Math.abs(dot(out.fr.n, d)) - 1) < 1e-9 ? out : null;
     };
     // Blind cross holes: a reference plane offset from the plane square to the hole, through the rim's
     // farthest point, and a Hole Wizard hole on it (reversed when it runs along the plane's normal).
