@@ -1231,6 +1231,7 @@ export class DrawingWorkspace {
     }
     // A cylinder seen from the side: either of its outline lines stands for the whole circle at its end, so a click
     // gives the diameter as a linear dimension (a hole's hidden lines, a shaft's or a disc's sides).
+    // A section's cut edge on top of such a line stays itself: two cut walls give a linear dimension.
     for (const cy of topo.cyls) {
       const ax = cy.ax, dn = ax[0] * n[0] + ax[1] * n[1] + ax[2] * n[2];
       if (Math.abs(dn) > 1e-6 || cy.v1 - cy.v0 < 1e-9) continue;
@@ -1254,7 +1255,7 @@ export class DrawingWorkspace {
         if (L2 < 1e-6) continue;
         const k = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2));
         const q: Pt = [a[0] + dx * k, a[1] + dy * k], d = Math.hypot(q[0] - p[0], q[1] - p[1]);
-        if (d < bd + (best?.kind === "line" ? 1e-6 : -1e-6) && inDetail(fromSheet(pl, q[0], q[1]))) { bd = d; best = { kind: "circle", ref: edgeRef(ce, "e"), e: ce }; }
+        if (d < bd + (best?.kind === "line" && !best.e.k.endsWith("|§") ? 1e-6 : -1e-6) && inDetail(fromSheet(pl, q[0], q[1]))) { bd = d; best = { kind: "circle", ref: edgeRef(ce, "e"), e: ce }; }
       }
     }
     // A first dimension pick on a circle takes the circle even when another edge ends on it there (a cross hole's
