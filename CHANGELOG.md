@@ -2831,7 +2831,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.466.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.469.0...HEAD
 [1.469.0]: https://github.com/kothf/step-viewer/compare/v1.467.0...v1.469.0
 [1.467.0]: https://github.com/kothf/step-viewer/compare/v1.466.0...v1.467.0
 [1.466.0]: https://github.com/kothf/step-viewer/compare/v1.465.0...v1.466.0
