@@ -185,7 +185,7 @@ export interface TableAnnot { id: string; t: "table"; view?: undefined; kind: "r
  * start with `<component id>@`), the number is that part's item in the BOM unless `txt` overrides it.
  * `stack` lists more components whose items are stacked under it (one leader for all).
  */
-export interface BalloonAnnot { id: string; t: "balloon"; view: string; ref: GeoRef; pos: [number, number]; txt?: string; stack?: string[]; /** Outline other than the plain circle; "split" shows the BOM quantity in the lower half. */ shape?: "split" | "tri" | "hex" | "box" | "none" }
+export interface BalloonAnnot { id: string; t: "balloon"; view: string; ref: GeoRef; pos: [number, number]; txt?: string; stack?: string[]; /** Outline other than the plain circle; "split" shows the BOM quantity in the lower half. */ shape?: "split" | "tri" | "hex" | "box" | "none"; /** Weld tag (weldment part): the number is the bead's row in the weld table, stacked entries are `weld:<row>`. */ weld?: true }
 
 /**
  * A hole table (FR-DRW-024): the holes seen end-on in a view, tagged on the view (A1, A2, B1: one letter per size) and listed
