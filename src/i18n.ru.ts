@@ -2023,6 +2023,7 @@ export const RU: Record<string, string> = {
   "Body colour": "Цвет тела",
   "Delete body": "Удалить тело",
   "Reset colour": "Сбросить цвет",
+  "Body material": "Материал тела",
   "Insert body: a part, STEP, IGES or BREP file into this part, with check and heal": "Вставить тело: файл детали, STEP, IGES или BREP в эту деталь, с проверкой и исправлением",
   "The part has no body.": "У детали нет тела.",
   "New assembly: insert a part or a STEP model as the first component; it is fixed at the origin.": "Новая сборка: вставьте деталь или модель STEP как первый компонент; он зафиксирован в начале координат.",

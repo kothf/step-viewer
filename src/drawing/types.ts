@@ -152,7 +152,7 @@ export interface DimAnnot {
   /** Arrowheads of this dimension; absent = as the drawing's style says (`DraftStyle.arrow`). */
   ends?: "filled" | "open" | "dot" | "tick";
   /** Radius and diameter dimensions with the text outside the circle: the leader stops at the rim with one arrow pointing at it from outside, instead of crossing the circle.
-   * Radii: true turns it on. Diameters do it by default (1.452.0); false draws the line across the circle with two arrows. */
+   * Radii: true turns it on. Diameters do it by default (1.454.0); false draws the line across the circle with two arrows. */
   outside?: boolean;
   /** Radius and diameter dimensions: the text lies along the leader (ISO aligned), not on a level shoulder. */
   along?: boolean;
