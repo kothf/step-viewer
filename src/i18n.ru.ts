@@ -4459,4 +4459,5 @@ export const RU: Record<string, string> = {
   "Click inside a closed region of the sketch.": "Щёлкните внутри замкнутой области эскиза.",
   "The sketch's regions could not be found.": "Не удалось найти области эскиза.",
   "A selected contour is no longer a closed region: pick the contours again.": "Выбранный контур больше не замкнутая область: выберите контуры заново.",
+  "Corners where two walls' bends meet get this relief, so the bends don't overlap there.": "Углы, где сходятся сгибы двух стенок, получают этот вырез, чтобы сгибы там не накладывались.",
 };

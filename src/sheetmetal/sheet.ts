@@ -34,6 +34,10 @@ export interface Panel {
   M: Mat;
   /** Edge ids handed out so far (new edges are `x<n>`). */
   n: number;
+  /** Mitre faces that lean through the thickness: the outline's pieces on the line o·q = k (o = unit, pointing out
+   * of the panel) are cut at o·q = k + s·(z − T/2) in the folded solid, so two walls meet on the corner's bisector
+   * plane instead of overlapping; the flat outline (the mid-plane) is unchanged. */
+  bevels?: { o: V2; k: number; s: number }[];
 }
 
 export interface Bend {
@@ -535,9 +539,21 @@ function mitre(st: SheetState, ida: string, idb: string, gap: number, mids?: [V3
     const q = mid ? to2(mid) : ref && ref.kind === "line" ? [(ref.a[0] + ref.b[0]) / 2, (ref.a[1] + ref.b[1]) / 2] as V2 : att && att.kind === "line" ? att.a : p0;
     const keep: 1 | -1 = n[0] * q[0] + n[1] * q[1] - k >= 0 ? 1 : -1;
     k += keep * gap / 2;
-    try { P.outer = clipOuter(P.outer, n, k, keep, "miter", 1e-7 * (1 + st.T)); } catch { /* the cut misses: leave the flange */ }
+    try { P.outer = clipOuter(P.outer, n, k, keep, "miter", 1e-7 * (1 + st.T)); } catch { return; /* the cut misses: leave the flange */ }
+    return { P, o: [-keep * n[0], -keep * n[1]] as V2, k: -keep * k, m: applyDir(P.M, [-keep * n[0], -keep * n[1], 0]) };
   };
-  cut(A); cut(B);
+  const a = cut(A), b = cut(B);
+  // The seam is the bisector plane of the two walls: its normal out of each wall is (m_this − m_other).
+  if (a && b) for (const [x, y] of [[a, b], [b, a]] as const) addBevel(x.P, x.o, x.k, unit(add(x.m, mul(y.m, -1))));
+}
+
+/** Leans a panel's mitre face (the outline line o·q = k) to the world plane whose normal out of the panel is N. */
+function addBevel(P: Panel, o: V2, k: number, N: V3) {
+  const l = dot(N, applyDir(P.M, [o[0], o[1], 0]));
+  if (!(l > 1e-9)) return;
+  const s = -dot(N, P.M.z) / l;
+  if (Math.abs(s) < 1e-9) return;
+  (P.bevels ??= []).push({ o, k, s });
 }
 
 /** A miter flange's profile: the sketch's open chain of lines as world points, in chain order. */
@@ -693,7 +709,8 @@ function planeCut(st: SheetState, id: string, V: V3, n: V3, keep: 1 | -1, gap: n
   const n2: V2 = [dot(n, P.M.x), dot(n, P.M.y)], l = Math.hypot(...n2);
   if (l < 1e-9) return;
   const k = (dot(n, V) - dot(n, P.M.o) - (st.T / 2) * dot(n, P.M.z)) / l + keep * gap / (2 * l);
-  try { P.outer = clipOuter(P.outer, [n2[0] / l, n2[1] / l], k, keep, "miter", 1e-7 * (1 + st.T)); } catch { /* the plane misses the panel */ }
+  try { P.outer = clipOuter(P.outer, [n2[0] / l, n2[1] / l], k, keep, "miter", 1e-7 * (1 + st.T)); } catch { return; /* the plane misses the panel */ }
+  addBevel(P, [-keep * n2[0] / l, -keep * n2[1] / l], -keep * k, mul(n, -keep));
 }
 
 /** A slot to cut: `loop` in the plane at `o` spanned by `u`, `v` (flat coordinates along them), swept `depth` along `w`. */
