@@ -220,3 +220,16 @@ test("weld tags: a tag on a bead edge shows the bead's row in the weld table, ap
   const lost = { ...tag, ref: { ...tag.ref, e: edges[2].k } };
   assert.deepEqual(viewAnnots({ ...sh, annots: [lost] } as unknown as Sheet, view, pl, ctx).dangling, ["w"], "an edge of no bead dangles");
 });
+
+test("section centrelines: cylinders the cut took away get none (drawings exam #4)", async () => {
+  const { cutAway } = await import("../../src/drawing/annot");
+  const parent = { id: "t", name: "Top", orient: "top", x: 100, y: 200 };
+  const t: Topo = { edges: [], cyls: [{ o: [0, 0, 15], ax: [0, 0, 1], r: 20, v0: 0, v1: 20, sp: 2 * Math.PI, f: "boss" }, { o: [0, 0, 0], ax: [0, 0, 1], r: 10, v0: 0, v1: 35, sp: 2 * Math.PI, f: "bore", in: true }, { o: [30, 25, 0], ax: [0, 0, 1], r: 3, v0: 0, v1: 15, sp: 2 * Math.PI, f: "far hole", in: true }] };
+  const kept = (look: 1 | -1) => {
+    const v = { id: "s", name: "A", kind: "section", parent: "t", line: [-40, 20, 40, 20], look, x: 100, y: 80 };
+    const sheet = { id: "sh", name: "S", size: "A3", scale: [1, 1], projection: "first", views: [parent, v], annots: [] } as never;
+    return cutAway(sheet, v as never, t).cyls.map(c => c.f).join(",");
+  };
+  const a = kept(1), b = kept(-1);
+  assert.deepEqual([a, b].sort(), ["boss,bore", "far hole"].sort(), `${a} | ${b}: one side keeps only the hole beyond y = 20, the other only the boss and bore`);
+});
