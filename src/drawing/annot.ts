@@ -14,6 +14,7 @@ import type { BendTableAnnot, CLineAnnot, CloudAnnot, DimAnnot, DraftStyle, Draw
 import { topoOnly, viewDir, viewOnly, viewReq } from "./views";
 import { fitLimits } from "./iso286";
 import { weldPrims } from "./weld";
+import { frameOf } from "./sheet";
 import { dtargetPrims } from "./dtarget";
 import { skPrims } from "./sheetSketch";
 import { textWidth } from "./textWidth";
@@ -1046,7 +1047,7 @@ export function sheetNotes(sheet: Sheet, label: Label = s => s, dec = ".", bom?:
       continue;
     }
     const r = a.t === "weld" ? weldPrims(a, a.pos, null) : a.t === "dtarget" ? dtargetPrims(a, a.pos, null) : a.t === "note" ? notePrims(a, a.pos, null) : a.t === "gtol" ? gtolPrims(a, a.pos, null, dec)
-      : a.t === "surf" ? surfPrims(a, a.pos, dec) : a.t === "table" ? tablePrims(a.kind === "bom" ? { ...a, rows: bom ? bomCells(bom) : [] } : a, label) : null;
+      : a.t === "surf" ? surfPrims(a, a.pos, dec) : a.t === "table" ? tablePrims(a.kind === "bom" ? { ...a, rows: bom ? bomCells(bom) : [] } : a, label, a.anchor === "br" ? frameOf(sheet)[3] - a.pos[1] : Infinity) : null;
     if (r) { out.prims.push(...r.prims); out.hits.push({ id: a.id, box: r.box }); }
   }
   return out;

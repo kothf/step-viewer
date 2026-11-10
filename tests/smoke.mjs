@@ -5536,6 +5536,15 @@ try {
     const auto = an.filter(a => a.t === "balloon");
     const autoNums = (await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "ANNOT" && p.h === 5).map(p => p.s))).sort().join();
     check(src === "asm" && bomOk && auto.length === 2 && auto.every(a => a.view === front) && autoNums === "1,2", `drawing: assembly drawing with a BOM (Plate ×1, PN-7 ×2) and auto balloons 1 and 2 (${src}; ${auto.length} balloons ${autoNums}; ${tx.join(" ")})`);
+    // Auto balloons keep clear of each other and of every view and annotation on the sheet (drawings exam round 2).
+    const clearOk = await dp.evaluate(ids => {
+      const d = window.__sv.drw, sh = d.doc().sheets[0], bs = (sh.annots ?? []).filter(a => ids.includes(a.id));
+      const at = a => { const p = d.placement(a.view); return [p.x + (a.pos[0] - p.uc) * p.s, p.y + (a.pos[1] - p.vc) * p.s]; };
+      const rects = sh.views.map(v => { const p = d.placement(v.id), hw = (p.box[2] - p.box[0]) / 2 * p.s, hh = (p.box[3] - p.box[1]) / 2 * p.s; return [p.x - hw, p.y - hh, p.x + hw, p.y + hh]; });
+      const q = bs.map(at);
+      return q.every((a, i) => q.every((b, j) => i === j || Math.hypot(a[0] - b[0], a[1] - b[1]) >= 10) && rects.every(r => !(a[0] > r[0] - 5 && a[0] < r[2] + 5 && a[1] > r[1] - 5 && a[1] < r[3] + 5)));
+    }, auto.map(a => a.id));
+    check(clearOk, `drawing: auto balloons sit clear of each other and of the views (${JSON.stringify(auto.map(a => a.pos))})`);
     // A balloon by hand on a pin's circle in the top view reads 2.
     await tool("balloon");
     let [x, y] = await at(top, 34, 0);

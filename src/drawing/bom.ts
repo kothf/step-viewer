@@ -269,15 +269,19 @@ export function autoBalloons(sheet: Sheet, v: DrawingView, topo: Topo, P: (p: V3
   }
   // A balloon on top of something already there (a dimension's text, a note, another view) takes the nearest free place
   // further out or along the side it sits on, in 3 mm steps; with none free it stays where it was.
-  if (taken) for (const p of placed) {
-    if (!taken(p.pos)) continue;
+  // Balloons still on top of each other after the spread (many items round a small view) are moved the same way.
+  const done: typeof placed = [];
+  for (const p of placed) {
+    const clear = (q: P2) => done.every(o => Math.hypot(o.pos[0] - q[0], o.pos[1] - q[1]) >= minD);
+    if (!taken?.(p.pos) && clear(p.pos)) { done.push(p); continue; }
     const onSide = Math.abs(Math.abs(p.pos[0] - cx) - ((x1 - x0) / 2 + g)) < 1e-6;
     const out: P2 = onSide ? [Math.sign(p.pos[0] - cx) || 1, 0] : [0, Math.sign(p.pos[1] - cy) || 1], along: P2 = onSide ? [0, 1] : [1, 0], st = 3 / s;
     const cands: { q: P2; d: number }[] = [];
-    for (let k = 0; k <= 12; k++) for (let j = -8; j <= 8; j++) if (k || j) cands.push({ q: [p.pos[0] + (out[0] * k + along[0] * j) * st, p.pos[1] + (out[1] * k + along[1] * j) * st], d: Math.hypot(k, j) });
+    for (let k = 0; k <= 20; k++) for (let j = -16; j <= 16; j++) if (k || j) cands.push({ q: [p.pos[0] + (out[0] * k + along[0] * j) * st, p.pos[1] + (out[1] * k + along[1] * j) * st], d: Math.hypot(k, j) });
     cands.sort((a, b) => a.d - b.d);
-    const free = cands.find(c => !taken(c.q) && placed.every(o => o === p || Math.hypot(o.pos[0] - c.q[0], o.pos[1] - c.q[1]) >= minD));
+    const free = cands.find(c => !taken?.(c.q) && clear(c.q));
     if (free) p.pos = free.q;
+    done.push(p);
   }
   return placed.map(p => ({ id: uid(), t: "balloon" as const, view: v.id, ref: { e: p.b.e.k, h: p.b.e.m, p: "e" as const }, pos: [Math.round(p.pos[0] * 100) / 100, Math.round(p.pos[1] * 100) / 100] as P2 }));
 }

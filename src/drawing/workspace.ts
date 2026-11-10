@@ -1175,7 +1175,7 @@ export class DrawingWorkspace {
 
   private startAnnot(kind: AnnotMode["kind"] | "cmark" | "skline" | "skrect" | "skcircle" | "skpoly", how: "chain" | "base" | "ord" = "chain") {
     const free = kind === "note" || kind === "gtol" || kind === "surf" || kind === "cloud" || kind === "weld" || kind === "dtarget" || kind.startsWith("sk");
-    if (kind === "balloon" && !this.bom && !this.cuts && !this.single) { toast(t("Balloons are for drawings of an assembly or of a weldment part."), true); return; }
+    if (kind === "balloon" && this.facts && !this.bom && !this.cuts && !this.single) { toast(t("Balloons are for drawings of an assembly or of a weldment part."), true); return; }
     if (!free && !this.facts) { toast(t("The drawing's model is still loading.")); return; }
     if (!free && !this.sheet.views.length) { toast(t("Place a model view first."), true); return; }
     if (kind === "cloud") this.mode = { kind, view: null, pts: [], at: null };
@@ -1673,6 +1673,7 @@ export class DrawingWorkspace {
 
   /** A BOM table (FR-DRW-030) on top of the title block, header at the bottom, items upwards; its rows follow the assembly. */
   private insertBom() {
+    if (!this.facts) { toast(t("The drawing's model is still loading.")); return; }
     if (!this.bom) { toast(t("Balloons and the bill of materials are for drawings of an assembly."), true); return; }
     if ((this.sheet.annots ?? []).some(a => a.t === "table" && a.kind === "bom")) { toast(t("The sheet has a bill of materials already.")); return; }
     const [bx, by] = titleBlockAt(this.sheet), [tw, th] = tbSize(this.sheet);
@@ -1681,7 +1682,8 @@ export class DrawingWorkspace {
 
   /** Auto balloon (FR-DRW-030): one balloon per BOM item in the selected view (or the first view), around it. */
   private async autoBalloon() {
-    if ((!this.bom && !this.cuts && !this.single) || !this.facts) { toast(t("Balloons are for drawings of an assembly or of a weldment part."), true); return; }
+    if (!this.facts) { toast(t("The drawing's model is still loading.")); return; }
+    if (!this.bom && !this.cuts && !this.single) { toast(t("Balloons are for drawings of an assembly or of a weldment part."), true); return; }
     const v = this.sheet.views.find(x => x.id === this.sel) ?? this.sheet.views.find(x => x.kind !== "detail");
     if (!v) { toast(t("Place a model view first."), true); return; }
     const proj = await this.kernel.request(viewReq(this.sheet, v)).catch(() => null);
