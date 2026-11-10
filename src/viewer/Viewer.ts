@@ -383,10 +383,10 @@ export class Viewer {
   }
 
   /** View direction = vector from target toward the camera. */
-  viewFrom(dir: THREE.Vector3, animate = true) {
+  viewFrom(dir: THREE.Vector3, animate = true, box?: THREE.Box3) {
     const d = dir.clone().normalize();
     if (Math.abs(d.z) > 0.9999) d.y -= 1e-4;
-    const b = this.computeBounds();
+    const b = box && !box.isEmpty() ? box : this.computeBounds();
     const sphere = b.getBoundingSphere(new THREE.Sphere());
     const dist = sphere.radius / Math.sin(THREE.MathUtils.degToRad(this.persp.fov / 2)) * 1.05;
     this.animateTo(sphere.center, sphere.center.clone().addScaledVector(d.normalize(), dist), animate, sphere.radius * 2.2);

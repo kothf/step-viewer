@@ -927,7 +927,18 @@ export class ModelController {
     if (m.kind === "sketch" && m.id === id) {
       const f = this.frameOf(sk);
       m.editor.setSketch(this.store!.feature(id) as SketchFeature, f);
-      if (getPref("rotateToSketch")) this.host.viewer.viewFrom(new THREE.Vector3(...f.n));
+      if (getPref("rotateToSketch")) {
+        // The view frames what is built before the sketch; a sketch that reaches past it (a sweep path drawn from a
+        // short boss) is framed too, or most of it opens off screen (exam #96).
+        const cur = this.store!.feature(id) as SketchFeature, pt = new Map(cur.ents.filter(e => e.t === "point").map(e => [e.id, e] as const));
+        let box: THREE.Box3 | undefined;
+        if (!isNew && pt.size) {
+          box = this.host.viewer.parts.some(p => p.visible) ? this.host.viewer.computeBounds().clone() : new THREE.Box3();
+          for (const p of pt.values()) box.expandByPoint(m.editor.w([p.x, p.y]));
+          for (const e of cur.ents) if (e.t === "circle") { const c = pt.get(e.c); if (c) for (const [du, dv] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) box.expandByPoint(m.editor.w([c.x + du * e.r, c.y + dv * e.r])); }
+        }
+        this.host.viewer.viewFrom(new THREE.Vector3(...f.n), true, box);
+      }
     }
   }
 
