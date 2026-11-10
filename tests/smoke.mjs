@@ -4880,6 +4880,14 @@ try {
     an = await annots();
     check(tx.includes("Ø16 THRU") && tx.includes("BREAK SHARP EDGES") && an.some(a => a.t === "hole") && an.some(a => a.t === "note" && !a.view),
       `drawing: hole callout from the model (Ø16 THRU) and a note on the sheet (${tx.filter(s => /THRU|BREAK/.test(s)).join(" / ")})`);
+    // Note border (FR-DRW-023): the placed note is selected; a circle frames it, None takes it away.
+    const arcsOf = async () => (await prims()).filter(p => p.t === "a" && p.layer === "ANNOT").length;
+    const arcs0 = await arcsOf();
+    await dp.selectOption('.drw-props [data-d="nborder"]', "circle");
+    const nb1 = { arcs: await arcsOf(), border: (await annots()).find(a => a.t === "note" && !a.view)?.border };
+    await dp.selectOption('.drw-props [data-d="nborder"]', "");
+    const nb2 = { arcs: await arcsOf(), has: "border" in (await annots()).find(a => a.t === "note" && !a.view) };
+    check(nb1.border === "circle" && nb1.arcs === arcs0 + 1 && nb2.arcs === arcs0 && !nb2.has, `drawing: a note takes a circle border and loses it again (${JSON.stringify([arcs0, nb1, nb2])})`);
     // The worker reads holes from the geometry too (FR-DRW-022): the Ø16 cut is a one-piece stack open at both ends.
     const geoHoles = await dp.evaluate(() => window.__sv.drw.holes());
     check(geoHoles.some(h => h.segs === 1 && h.open[0] && h.open[1]), `drawing: holes read from the geometry (${JSON.stringify(geoHoles)})`);
@@ -9920,10 +9928,12 @@ try {
     await settle();
     await runCmd(mp, "Structural Member");
     await settle();
-    const bl = await mp.evaluate(() => ({ segs: window.__sv.model.mode().draft?.segs?.map(s => s.ent), labels: [...document.querySelectorAll("#mc-pm input[data-wseg]")].map(e => e.closest("label")?.textContent?.trim()) }));
+    const bl = await mp.evaluate(() => ({ size: window.__sv.model.mode().draft?.size, segs: window.__sv.model.mode().draft?.segs?.map(s => s.ent), labels: [...document.querySelectorAll("#mc-pm input[data-wseg]")].map(e => e.closest("label")?.textContent?.trim()) }));
     await mp.click("#mc-ok");
     await settle();
     const bend = await mp.evaluate(() => { const l = window.__sv.model.last(), id = window.__sv.model.store.doc.features.at(-1).id; return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), arc: (l.cutList ?? []).some(c => c.length === 157.1), faces: (l.faceNames ?? []).filter(n => n.startsWith(id + ":j2:")).length }; });
+    // The new member starts with the size the first one was given (weldment defaults: the settings used last).
+    check(bl.size === "50x50x4", `weldments: a new member starts with the profile used last (${bl.size})`);
     check(JSON.stringify(bl.segs) === '["j1","j2","j3"]' && JSON.stringify(bl.labels) === '["Line 1","Arc 2","Line 3"]' && bend.faces > 0 && !bend.bad && bend.arc, `weldments: a member along a line, an arc and a line (${JSON.stringify({ bl, bend })})`);
     // Merge arc segment bodies: the line, arc and line become one body, one cut list item of the whole bent length (300 + 157.1 + 300).
     const bendId = await mp.evaluate(() => window.__sv.model.store.doc.features.at(-1).id);
@@ -11651,7 +11661,7 @@ try {
     check(again.n === 3 && closed, `tutorial 1.381: the list follows the bracket's tab and ✕ closes it (${JSON.stringify({ again, closed })})`);
     await ctx.close();
   }
-  // 1.392 (FR-UI-091): touch: a finger held still opens the right-click menus, one finger orbits, two zoom.
+  // 1.394 (FR-UI-091): touch: a finger held still opens the right-click menus, one finger orbits, two zoom.
   if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true });
     const tp = await ctx.newPage();
@@ -11691,7 +11701,7 @@ try {
     const sup = await tp.evaluate(() => { const b = [...document.querySelectorAll("#mc-menu button")].find(b => b.textContent.trim() === "Suppress"); const r = b.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; });
     await tp.touchscreen.tap(sup[0], sup[1]);
     await tp.waitForFunction(() => window.__sv.modeller.store.doc.features.find(f => f.id === "e").suppressed === true, null, { timeout: 5000 });
-    check(tapMenu === null && held?.includes("Suppress") && still?.length === held.length, `touch 1.392: a finger held on a tree row opens its menu, a tap does not, and the menu stays when the finger lifts (${JSON.stringify({ tapMenu, held: held?.length, still: still?.length })})`);
+    check(tapMenu === null && held?.includes("Suppress") && still?.length === held.length, `touch 1.394: a finger held on a tree row opens its menu, a tap does not, and the menu stays when the finger lifts (${JSON.stringify({ tapMenu, held: held?.length, still: still?.length })})`);
     await tp.evaluate(() => window.__sv.modeller.undo());
     await tp.waitForFunction(() => !window.__sv.modeller.store.doc.features.find(f => f.id === "e").suppressed && window.__sv.viewer.parts.length > 0, null, { timeout: 30000 });
     await tp.waitForTimeout(800);
@@ -11712,7 +11722,7 @@ try {
     await tp.waitForTimeout(300);
     const c2 = await cam();
     const moved = Math.hypot(...c1.p.map((v, i) => v - c0.p[i])), dist = c => c.d / c.z;
-    check(dragMenu === null && moved > 1 && Math.abs(c1.z - c0.z) < 1e-9 && dist(c2) < dist(c1) * 0.9, `touch 1.392: one finger orbits and two fingers moving apart zoom in, with no menu (${JSON.stringify({ dragMenu, moved: +moved.toFixed(1), z: [c1.z, c2.z], d: [+dist(c1).toFixed(1), +dist(c2).toFixed(1)] })})`);
+    check(dragMenu === null && moved > 1 && Math.abs(c1.z - c0.z) < 1e-9 && dist(c2) < dist(c1) * 0.9, `touch 1.394: one finger orbits and two fingers moving apart zoom in, with no menu (${JSON.stringify({ dragMenu, moved: +moved.toFixed(1), z: [c1.z, c2.z], d: [+dist(c1).toFixed(1), +dist(c2).toFixed(1)] })})`);
     // Held on a face: the context toolbar, and lifting the finger leaves it there.
     const mid = await tp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; });
     await tp.evaluate(() => document.getElementById("mc-cbar")?.remove());
@@ -11723,7 +11733,7 @@ try {
     await touch("touchEnd", []);
     await tp.waitForTimeout(400);
     const bar = await tp.evaluate(() => document.querySelectorAll("#mc-cbar button").length);
-    check(!early && bar > 0, `touch 1.392: a finger held on a face shows the context toolbar (${JSON.stringify({ early, bar })})`);
+    check(!early && bar > 0, `touch 1.394: a finger held on a face shows the context toolbar (${JSON.stringify({ early, bar })})`);
     await ctx.close();
   }
 } catch (err) {
