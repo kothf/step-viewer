@@ -6,7 +6,7 @@
 import type { VaultTie } from "../pdm/panel";
 import fontUrl from "dejavu-fonts-ttf/ttf/DejaVuSans.ttf?url";
 import type { MEdge, Projection, ViewDir } from "../kernel/drawing";
-import { AUTO_LAYERS, withCut, wholeCircle, edgeOnSeg, outlineSeg, clineSegs, cloudPrims, dimGeo, factsCtx, holeEdges, ringDist, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, stackItem, edgeItem, weldItem, cutDesc, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
+import { AUTO_LAYERS, arrowOutside, withCut, wholeCircle, edgeOnSeg, outlineSeg, clineSegs, cloudPrims, dimGeo, factsCtx, holeEdges, ringDist, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, stackItem, edgeItem, weldItem, cutDesc, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
 import type { PartDoc } from "../model/types";
 import type { AsmDoc } from "../asm/types";
 import { BOM_COLS, autoBalloons, compOfKey, sheetBom, subsOf, type BalloonItems, type Bom } from "./bom";
@@ -1897,7 +1897,7 @@ export class DrawingWorkspace {
         ${lin || a.k === "arc" || a.k === "ang" ? `<label class="drw-f">${esc(t("Extension lines"))}<select data-d="noext">${([["", "Both shown"], ["a", "First hidden"], ["b", "Second hidden"], ["both", "Both hidden"]] as const).map(([k, l]) => `<option value="${k}"${(a.noExt ?? "") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : ""}
         <label class="drw-f">${esc(t("Arrowheads"))}<select data-d="ends"><option value="">${esc(t("Document"))}</option>${(["filled", "open", "dot", "tick"] as const).map(k => `<option value="${k}"${a.ends === k ? " selected" : ""}>${esc(t(ARROW_NAMES[k]))}</option>`).join("")}</select></label>
         ${a.k === "dia" && !g?.dl ? `<label class="drw-f">${esc(t("Display"))}<select data-d="dlin">${([["", "Diameter"], ["h", "Linear, horizontal"], ["v", "Linear, vertical"]] as const).map(([k, l]) => `<option value="${k}"${(a.lin ?? "") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : ""}
-        ${!g?.dl && ((a.k === "rad" && !a.fore) || (a.k === "dia" && !a.lin)) ? `<label class="drw-chk"><input type="checkbox" data-d="rout"${a.outside ? " checked" : ""}> ${esc(t("Arrow outside the circle"))}</label>` : ""}
+        ${!g?.dl && ((a.k === "rad" && !a.fore) || (a.k === "dia" && !a.lin)) ? `<label class="drw-chk"><input type="checkbox" data-d="rout"${arrowOutside(a) ? " checked" : ""}> ${esc(t("Arrow outside the circle"))}</label>` : ""}
         ${!g?.dl && (a.k === "rad" || (a.k === "dia" && !a.lin)) ? `<label class="drw-chk"><input type="checkbox" data-d="ralong"${a.along ? " checked" : ""}> ${esc(t("Text along the leader"))}</label>` : ""}
         ${a.k === "rad" ? `<label class="drw-chk"><input type="checkbox" data-d="fore"${a.fore ? " checked" : ""}> ${esc(t("Foreshortened radius"))}</label>` : ""}
         ${lin ? `<label class="drw-chk"><input type="checkbox" data-d="horiz"${a.horiz ? " checked" : ""}> ${esc(t("Horizontal text in the dimension line"))}</label>` : ""}
@@ -2083,7 +2083,7 @@ export class DrawingWorkspace {
     this.setAnnot(k === "ntxt" || k === "htxt" ? "Text" : "Annotation property", a => {
       if (a.t === "dim") {
         if (k === "k") { a.k = val as DimAnnot["k"]; if (a.k !== "dia") delete a.lin; if (a.k !== "rad") delete a.fore; if (a.k !== "rad" && a.k !== "dia") { delete a.outside; delete a.along; } }
-        else if (k === "rout") { if ((el as HTMLInputElement).checked) a.outside = true; else delete a.outside; }
+        else if (k === "rout") { const on = (el as HTMLInputElement).checked; if (a.k === "dia") { if (on) delete a.outside; else a.outside = false; } else if (on) a.outside = true; else delete a.outside; }
         else if (k === "ralong") { if ((el as HTMLInputElement).checked) a.along = true; else delete a.along; }
         else if (k === "dlin") { if (val === "h" || val === "v") a.lin = val; else delete a.lin; }
         else if (k === "ends") { if (val === "filled" || val === "open" || val === "dot" || val === "tick") a.ends = val; else delete a.ends; }
