@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.415.0] - 2026-11-10
+
+### Added
+
+- **Cut list table on drawings (FR-FT-121)**: Annotate ▾ **Cut list table** puts a weldment's cut list on the sheet, like SolidWorks' Weldment Cut List table: click a view of the weldment, then place the table. It lists each item with the number it has in the Cut List dialog, its quantity, its description (the one typed for the item, else the profile, plate size or weld), the length and both end angles of each member. Select it to leave out the weld beads (they have the weld table) or add a mass column; excluded items are left out, and the table follows the part.
+
 ## [1.414.0] - 2026-11-10
 
 ### Added
@@ -2442,7 +2448,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.414.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.415.0...HEAD
+[1.415.0]: https://github.com/kothf/step-viewer/compare/v1.414.0...v1.415.0
 [1.414.0]: https://github.com/kothf/step-viewer/compare/v1.413.0...v1.414.0
 [1.413.0]: https://github.com/kothf/step-viewer/compare/v1.412.0...v1.413.0
 [1.412.0]: https://github.com/kothf/step-viewer/compare/v1.411.0...v1.412.0
