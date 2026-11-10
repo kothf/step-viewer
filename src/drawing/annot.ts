@@ -11,7 +11,7 @@ import { PEN_W, rotateBox, rotatePrims, type Prim } from "./prims";
 import { balloonPrims, bomCells, compOfKey, type Bom } from "./bom";
 import { datumPrims, gtolPrims, surfPrims, tablePrims } from "./gdt";
 import type { BendTableAnnot, CLineAnnot, CloudAnnot, DimAnnot, DraftStyle, DrawingView, GeoRef, HoleAnnot, HoleTableAnnot, NoteAnnot, Sheet, SurfAnnot, Tol, WeldTableAnnot, CutTableAnnot } from "./types";
-import { topoOnly, viewDir, viewOnly } from "./views";
+import { topoOnly, viewDir, viewOnly, viewReq } from "./views";
 import { fitLimits } from "./iso286";
 import { weldPrims } from "./weld";
 import { dtargetPrims } from "./dtarget";
@@ -786,6 +786,25 @@ export function withCut<T extends { topo: Topo }>(f: T | null, proj?: { cutEdges
   return f && proj?.cutEdges?.length ? { ...f, topo: { ...f.topo, edges: [...f.topo.edges, ...proj.cutEdges] } } : f;
 }
 
+/**
+ * A plain section's centre marks and centrelines leave out what the cut took away: circles, cylinders and spheres wholly
+ * on the viewer's side of the cutting plane (drawings exam #4: a cut beside the boss still drew its axis). Offset, half,
+ * aligned and broken-out sections keep everything.
+ */
+export function cutAway(sheet: Sheet, v: DrawingView, topo: Topo): Topo {
+  let rq: ReturnType<typeof viewReq>;
+  try { rq = viewReq(sheet, v); } catch { return topo; }
+  if (!rq.p || rq.stair || rq.align || rq.poly) return topo;
+  const n = rq.view.dir, d = dot3(rq.p, n), side = (q: V3) => dot3(q, n) - d, eps = 1e-6;
+  const gone = (o: V3, r: number) => side(o) - r > -eps;
+  return {
+    ...topo,
+    edges: topo.edges.filter(e => !(side(e.a) > eps && side(e.b) > eps && side(e.m) > eps)),
+    cyls: topo.cyls.filter(c => Math.abs(dot3(c.ax, n)) > 1e-6 || !gone(c.o, c.r)),
+    ...(topo.revs ? { revs: topo.revs.filter(q => !q.r || Math.abs(dot3(q.ax, n)) > 1e-6 && q.k !== "sphere" || !gone(q.o, q.r)) } : {}),
+  };
+}
+
 export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: AnnotCtx): AnnotOut {
   const own = ctx.forView?.(v);
   if (own) ctx = { ...ctx, ...own, forView: undefined };
@@ -793,7 +812,7 @@ export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: Ann
   if (only && ctx.topo) ctx = { ...ctx, topo: topoOnly(ctx.topo, only) };
   const out: AnnotOut = { prims: [], hits: [], dangling: [] };
   const vd = viewDir(sheet, v), { P, n } = projector(vd);
-  if (v.marks !== false && ctx.topo) out.prims.push(...centreMarks(v, pl, ctx.topo, P, n));
+  if (v.marks !== false && ctx.topo) out.prims.push(...centreMarks(v, pl, v.kind === "section" ? cutAway(sheet, v, ctx.topo) : ctx.topo, P, n));
   if (v.threads !== false && ctx.threads?.length) out.prims.push(...threadPrims(v, pl, ctx.threads, ctx.topo, P, n));
   if (v.sketches && ctx.sketches?.length) out.prims.push(...sketchPrims(v, pl, ctx.sketches, P));
   const btable = (sheet.annots ?? []).some(a => a.t === "btable" && a.view === v.id);
