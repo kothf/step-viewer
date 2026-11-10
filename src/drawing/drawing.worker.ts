@@ -83,18 +83,23 @@ function buildPart(doc: PartDoc): { shape: any; mat: string | null; names: strin
   try { mi = modelItems(doc, res.frames, res.sketches, edgeCircle); } catch { /* no model items */ }
   // Weld table (FR-FT-121): the cut list's beads, less the items marked Exclude from cut list.
   // Cut list table: every item in the dialog's order (sub-weldments after the loose items), numbered the same way.
+  // Cut list balloons: every face of an item's bodies names its item number.
   let welds: WeldInfo[] = [], cuts: CutInfo[] = [];
+  const cutFaces: Record<string, number> = {};
   const WELD_TYPES = new Set(["member", "endcap", "gusset", "weldbead"]);
   if (doc.features.some(f => WELD_TYPES.has(f.type) && !f.suppressed)) {
     try {
-      const raw = cutList(md as unknown as WeldHost, md.bodyInfo(body, doc), doc, res.frames), items = splitSubs(raw, doc.subWelds);
+      const info = md.bodyInfo(body, doc), raw = cutList(md as unknown as WeldHost, info, doc, res.frames), items = splitSubs(raw, doc.subWelds);
+      const namesOf = new Map(info.map(b => [b.key, b.part.names]));
       const density = doc.material?.density ?? 7.85;
       let n = 0;
       for (const c of items) {
         const p = doc.cutProps?.[cutKey(c)];
         if (p?.excl) continue;
         const kg = c.volume * (findMaterial(p?.mat)?.density ?? density) / 1e6;
-        cuts.push({ item: ++n, kind: c.kind, desc: p?.desc || c.desc, ...(p?.desc ? { own: true } : {}), qty: c.kind === "bead" ? 1 : c.qty, kg,
+        ++n;
+        for (const k of c.bodies) for (const nm of namesOf.get(k) ?? []) cutFaces[nm] ??= n;
+        cuts.push({ item: n, kind: c.kind, desc: p?.desc || c.desc, ...(p?.desc ? { own: true } : {}), qty: c.kind === "bead" ? 1 : c.qty, kg,
           ...(c.length != null ? { length: c.length } : {}), ...(c.kind === "member" ? { a1: c.angle1 ?? 0, a2: c.angle2 ?? 0 } : {}),
           ...(c.plate ? { plate: c.plate } : {}), ...(c.inter ? { inter: c.inter } : {}) });
       }
@@ -102,7 +107,7 @@ function buildPart(doc: PartDoc): { shape: any; mat: string | null; names: strin
         .map(c => ({ legs: c.desc, length: c.length ?? 0, qty: c.qty, ...(c.inter ? { inter: c.inter } : {}) }));
     } catch { /* no weld or cut list table rows */ }
   }
-  return { shape, mat: doc.material?.name ?? null, names: body.names, extra: { topo: topology(oc, shape, body.names), ...mi, welds, cuts } };
+  return { shape, mat: doc.material?.name ?? null, names: body.names, extra: { topo: topology(oc, shape, body.names), ...mi, welds, cuts, cutFaces } };
 }
 
 /** The shape (and material) a request draws: the loaded model, or one of the part's configurations. */

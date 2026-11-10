@@ -5,13 +5,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.431.0] - 2026-11-10
+## [1.433.0] - 2026-11-10
 
 ### Fixed
 
 - **File ▸ Export ▸ STEP for parts and assemblies**: the STEP button in the Export panel said "STEP export needs a STEP, IGES or BREP model" for a part you model or an assembly. It now saves them like the command bar's STEP button does.
 - **DXF 2000 of a big drawing sheet**: export failed with "Maximum call stack size exceeded" on sheets with many lines (the Leuenberger engine drawing). It now saves.
 - **Export on an empty part**: PNG, mesh and PDF report buttons did nothing when there was no body yet; they now say so.
+
+## [1.432.0] - 2026-11-10
+
+### Added
+
+- **Datum feature options (FR-DRW-023)**: a drawing's datum feature can have an **Open triangle** (an outline instead of the filled one) and a **Bent leader**, which leaves the edge square to it and then runs level to the letter's frame.
+
+## [1.431.0] - 2026-11-10
+
+### Added
+
+- **Balloons on weldment part drawings (FR-FT-121)**: a balloon on a drawing of a weldment part now shows the body's cut list item number, as in SolidWorks: click an edge of a member, plate or weld bead and place the balloon. **Auto balloon** puts one balloon on each cut list item seen in the view, and the balloon's panel names the item and stacks other items under it. The numbers match the Cut List dialog and the cut list table, and follow the part.
 
 ## [1.430.0] - 2026-11-10
 
@@ -2560,7 +2572,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.431.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.433.0...HEAD
+[1.433.0]: https://github.com/kothf/step-viewer/compare/v1.432.0...v1.433.0
+[1.432.0]: https://github.com/kothf/step-viewer/compare/v1.431.0...v1.432.0
 [1.431.0]: https://github.com/kothf/step-viewer/compare/v1.430.0...v1.431.0
 [1.430.0]: https://github.com/kothf/step-viewer/compare/v1.429.0...v1.430.0
 [1.429.0]: https://github.com/kothf/step-viewer/compare/v1.428.0...v1.429.0
