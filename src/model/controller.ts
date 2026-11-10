@@ -7689,6 +7689,8 @@ export class ModelController {
       const all = { ...(d.cutProps ?? {}) };
       if (Object.keys(p).length) all[key] = p; else delete all[key];
       if (Object.keys(all).length) d.cutProps = all; else delete d.cutProps;
+    }), s => this.store?.change("Stock bar length", d => {
+      if (Object.keys(s).length) d.stock = s; else delete d.stock;
     }));
   }
 

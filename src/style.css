@@ -1307,6 +1307,9 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .ft-row.wld-sub .ft-ico { color: var(--accent, #4dabf7); }
 #wld-cut table.wld-stock { margin-top: 10px; width: auto; }
 #wld-cut table.wld-stock caption { text-align: left; font-weight: 600; padding: 4px 0; }
+#wld-cut .wld-barrow { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 8px 0 0; }
+#wld-cut .wld-bar { width: 7em; }
+#wld-cut .wld-over { color: var(--danger, #c0392b); }
 #wld-cut tr.wld-subrow th { text-align: left; padding-top: 8px; border-bottom: 1px solid var(--line, #ccc); }
 
 /* Magnifying glass (FR-SEL-010) */

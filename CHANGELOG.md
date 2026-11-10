@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.380.0] - 2026-11-10
+
+### Added
+
+- **Bars to buy in the cut list (FR-FT-121)**: type a **Stock bar length** (and the **Saw kerf**) under the weldment cut list's Stock lengths table, and each section shows how many bars to buy and what is left of them; members longer than a bar are counted apart. The values are saved with the part and go into the CSV export.
+
 ## [1.379.0] - 2026-11-10
 
 ### Added
@@ -2233,7 +2239,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.379.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.380.0...HEAD
+[1.380.0]: https://github.com/kothf/step-viewer/compare/v1.379.0...v1.380.0
 [1.379.0]: https://github.com/kothf/step-viewer/compare/v1.378.0...v1.379.0
 [1.378.0]: https://github.com/kothf/step-viewer/compare/v1.377.0...v1.378.0
 [1.377.0]: https://github.com/kothf/step-viewer/compare/v1.376.0...v1.377.0

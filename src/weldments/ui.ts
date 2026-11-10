@@ -599,6 +599,7 @@ function beadText(c: CutItem, tr: (k: string, p?: Record<string, string | number
 
 /** Display rows of a cut list: item number, quantity, description, length, angles, mass each. */
 type CutProps = NonNullable<PartDoc["cutProps"]>;
+type StockBar = NonNullable<PartDoc["stock"]>;
 
 /** An item's own material (cut list item property), if it names a known one. */
 function itemMat(p: { mat?: string } | undefined) { return findMaterial(p?.mat); }
@@ -650,7 +651,7 @@ export function cutListRows(items: CutItem[] | undefined, open: boolean, row: (i
 }
 
 /** The weldment cut list as CSV (English, like the other exports; lengths in mm). */
-export function cutListCsv(items: CutItem[], density: number, props?: CutProps, partMat = "Steel (assumed)", subs?: SubWeld[]): string {
+export function cutListCsv(items: CutItem[], density: number, props?: CutProps, partMat = "Steel (assumed)", subs?: SubWeld[], bar?: StockBar): string {
   const q = (v: string | number) => { const s = String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
   const subName = (id?: string) => subs?.find(x => x.id === id)?.name ?? "";
   const lines = [["Item", "Qty", "Description", "Length (mm)", "Angle 1 (deg)", "Angle 2 (deg)", "Material", "Mass each (kg)", "Mass (kg)", "Part number", "Notes", ...(subs?.length ? ["Sub-weldment"] : [])].join(",")];
@@ -662,32 +663,42 @@ export function cutListCsv(items: CutItem[], density: number, props?: CutProps, 
     const m = itemMat(p), kg = (c.volume * (m?.density ?? density)) / 1e6, qty = c.kind === "bead" ? 1 : c.qty;
     lines.push([++n, qty, desc, c.length ?? "", c.kind === "member" ? c.angle1 ?? 0 : "", c.kind === "member" ? c.angle2 ?? 0 : "", m?.name ?? partMat, kg.toFixed(4), (kg * (c.kind === "bead" ? 1 : c.qty)).toFixed(4), p.part ?? "", p.note ?? "", ...(subs?.length ? [subName(c.sub)] : [])].map(q).join(","));
   });
-  const stock = stockTotals(items, c => !!props?.[cutKey(c)]?.excl);
-  if (stock.length) lines.push("", "Stock lengths", "Profile,Pieces,Total length (mm)", ...stock.map(r => [q(r.desc), r.pieces, r.length].join(",")));
+  const stock = stockTotals(items, c => !!props?.[cutKey(c)]?.excl, bar);
+  if (stock.length) {
+    const bars = stock.some(r => r.bars !== undefined);
+    lines.push("", "Stock lengths", `Profile,Pieces,Total length (mm)${bars ? ",Bar length (mm),Saw kerf (mm),Bars,Left over (mm),Too long" : ""}`,
+      ...stock.map(r => [q(r.desc), r.pieces, r.length, ...(bars ? [bar!.len!, bar!.kerf ?? 0, r.bars!, r.left!, r.over!] : [])].join(",")));
+  }
   return `${lines.join("\r\n")}\r\n`;
 }
 
 const STEEL = 7.85;
 
-/** Stock lengths under the cut list: per profile, the pieces and their summed length (excluded items left out). */
-function stockHtml(items: CutItem[], props: CutProps): string {
-  const rows = stockTotals(items, c => !!props[cutKey(c)]?.excl);
+/** Stock lengths under the cut list: per profile, the pieces and their summed length (excluded items left out); with a stock bar length also the bars to buy and what is left of them. */
+function stockHtml(items: CutItem[], props: CutProps, bar: StockBar, edit: boolean): string {
+  const rows = stockTotals(items, c => !!props[cutKey(c)]?.excl, bar);
   if (!rows.length) return "";
-  const L = (mm: number) => (mm * UNITS[units.current].f).toLocaleString(undefined, { maximumFractionDigits: 1 });
-  return `<table class="v-table wld-stock"><caption>${esc(t("Stock lengths"))}</caption><thead><tr><th>${esc(t("Section"))}</th><th>${esc(t("Pieces"))}</th><th>${esc(t("Total length"))} (${esc(units.current)})</th></tr></thead><tbody>`
-    + rows.map(r => `<tr data-stock><td translate="no">${esc(r.desc)}</td><td>${r.pieces}</td><td>${L(r.length)}</td></tr>`).join("") + "</tbody></table>";
+  const f = UNITS[units.current].f;
+  const L = (mm: number) => (mm * f).toLocaleString(undefined, { maximumFractionDigits: 1 });
+  const bars = rows.some(r => r.bars !== undefined);
+  const val = (mm?: number) => mm ? String(Math.round(mm * f * 1e4) / 1e4) : "";
+  const inp = (k: "len" | "kerf", label: string) => `<label>${esc(t(label))} (${esc(units.current)}) <input type="number" class="wld-bar" data-wbar="${k}" min="0" step="any" value="${val(bar[k])}"${edit ? "" : " disabled"} /></label>`;
+  return `<table class="v-table wld-stock"><caption>${esc(t("Stock lengths"))}</caption><thead><tr><th>${esc(t("Section"))}</th><th>${esc(t("Pieces"))}</th><th>${esc(t("Total length"))} (${esc(units.current)})</th>${bars ? `<th>${esc(t("Bars"))}</th><th>${esc(t("Left over"))} (${esc(units.current)})</th>` : ""}</tr></thead><tbody>`
+    + rows.map(r => `<tr data-stock><td translate="no">${esc(r.desc)}</td><td>${r.pieces}</td><td>${L(r.length)}</td>${bars ? `<td data-wbars>${r.bars}${r.over ? ` <span class="wld-over">${esc(t("+ {n} too long", { n: r.over }))}</span>` : ""}</td><td>${L(r.left!)}</td>` : ""}</tr>`).join("") + "</tbody></table>"
+    + `<p class="wld-barrow">${inp("len", "Stock bar length")} ${inp("kerf", "Saw kerf")}</p>`;
 }
 
 /**
  * Opens the cut list dialog for the part's current cut list. Description, part number and notes of each item can be
  * typed (SolidWorks' cut list item properties); `onProps` stores them in `PartDoc.cutProps`.
  */
-export function showCutList(items: CutItem[] | undefined, doc: PartDoc, onProps?: (key: string, p: { desc?: string; part?: string; note?: string; mat?: string; excl?: boolean }) => void) {
+export function showCutList(items: CutItem[] | undefined, doc: PartDoc, onProps?: (key: string, p: { desc?: string; part?: string; note?: string; mat?: string; excl?: boolean }) => void, onStock?: (s: StockBar) => void) {
   const dlg = document.querySelector<HTMLDialogElement>("#wld-cut");
   if (!dlg) return;
   if (!items?.length) { toast(t("There are no weldment members yet: add a Structural Member first."), true); return; }
   const density = doc.material?.density ?? STEEL;
   const props: CutProps = { ...(doc.cutProps ?? {}) };
+  const bar: StockBar = { ...(doc.stock ?? {}) };
   const rows = rowsOf(items, density, props);
   const kg = (m: number) => m.toLocaleString(undefined, { maximumFractionDigits: 3 });
   const total = rows.reduce((s, r) => s + r.total, 0);
@@ -713,7 +724,7 @@ export function showCutList(items: CutItem[] | undefined, doc: PartDoc, onProps?
         : r.excl ? "✓" : "";
       return `${head(i)}<tr data-ri="${i}"${r.excl ? ` class="wld-excl"` : ""}><td data-witem>${r.item || "—"}</td><td>${r.qty}</td><td translate="no">${inp("desc", props[r.key]?.desc ?? "", r.auto, t("Description"))}</td><td>${r.length}</td><td>${r.a1}</td><td>${r.a2}</td><td>${mat}</td><td data-wkg>${kg(r.total)}</td><td>${inp("part", r.part, "", t("Part number"))}</td><td>${inp("note", r.note, "", t("Notes"))}</td><td>${ex}</td></tr>`;
     }).join("")
-    + `</tbody></table><p class="muted" data-wtotal><span data-wsum>${esc(t("Total mass {m} kg", { m: kg(total) }))}</span>${doc.material ? "" : ` · ${esc(t("Steel assumed (7.85 g/cm³): set the part's material in Properties."))}`}</p><div data-wstock>${stockHtml(items, props)}</div>`;
+    + `</tbody></table><p class="muted" data-wtotal><span data-wsum>${esc(t("Total mass {m} kg", { m: kg(total) }))}</span>${doc.material ? "" : ` · ${esc(t("Steel assumed (7.85 g/cm³): set the part's material in Properties."))}`}</p><div data-wstock>${stockHtml(items, props, bar, !!onStock)}</div>`;
   dlg.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-cp]").forEach(el => el.addEventListener("change", () => {
     const r = rows[Number(el.dataset.ci)], f = el.dataset.cp as "desc" | "part" | "note" | "mat" | "excl";
     const p = { ...(props[r.key] ?? {}) };
@@ -733,12 +744,23 @@ export function showCutList(items: CutItem[] | undefined, doc: PartDoc, onProps?
     const tot = dlg.querySelector<HTMLElement>("[data-wsum]");
     if (tot) tot.textContent = t("Total mass {m} kg", { m: kg(now.reduce((s, r) => s + r.total, 0)) });
     const st = dlg.querySelector<HTMLElement>("[data-wstock]");
-    if (st) st.innerHTML = stockHtml(items, props);
+    if (st) st.innerHTML = stockHtml(items, props, bar, !!onStock);
+  };
+  // The stock bar inputs are redrawn with the table, so one listener on the container serves them.
+  const stockBox = dlg.querySelector<HTMLElement>("[data-wstock]")!;
+  stockBox.onchange = ev => {
+    const el = ev.target as HTMLInputElement, k = el.dataset?.wbar as "len" | "kerf" | undefined;
+    if (!k) return;
+    const mm = Number(el.value) / UNITS[units.current].f;
+    if (el.value.trim() && Number.isFinite(mm) && mm > 0) bar[k] = Math.round(mm * 1e6) / 1e6; else delete bar[k];
+    onStock?.({ ...bar });
+    stockBox.innerHTML = stockHtml(items, props, bar, !!onStock);
+    stockBox.querySelector<HTMLInputElement>(`[data-wbar=${k}]`)?.focus();
   };
   dlg.querySelector<HTMLButtonElement>("[data-a=close]")!.onclick = () => dlg.close();
   dlg.querySelector<HTMLButtonElement>("[data-a=csv]")!.onclick = () => {
     const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([cutListCsv(items, density, props, doc.material?.name, subs)], { type: "text/csv" }));
+    a.href = URL.createObjectURL(new Blob([cutListCsv(items, density, props, doc.material?.name, subs, bar)], { type: "text/csv" }));
     a.download = `${doc.name}-cut-list.csv`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
