@@ -566,9 +566,14 @@ export class SketchEditor {
   }
 
   /** World box of the selected sketch items, with a margin (Zoom to selection while sketching). */
-  selectionBox(): THREE.Box3 | null {
+  selectionBox(): THREE.Box3 | null { return this.boxOf(this.selection); }
+
+  /** World box of the whole sketch with the same margin, or null for an empty sketch (Edit sketch frames it). */
+  sketchBox(): THREE.Box3 | null { return this.boxOf(this.sk.ents.filter(e => !(e.t === "point" && this.sk.ents.some(o => o.t !== "point" && refPts(o).includes(e.id)))).map(e => e.id)); }
+
+  private boxOf(ids: Iterable<string>): THREE.Box3 | null {
     const b = new THREE.Box3();
-    for (const id of this.selection) {
+    for (const id of ids) {
       const e = id === ORIGIN ? null : this.ent(id);
       if (id === ORIGIN) b.expandByPoint(this.w([0, 0]));
       else if (!e) continue;

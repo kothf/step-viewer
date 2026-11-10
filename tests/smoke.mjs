@@ -9533,6 +9533,53 @@ try {
     await ctx.close();
   }
 
+  // --- 1.477: Edit sketch frames the whole sketch, also past the body; one-point and empty sketches still open (exam #96) ---
+  if (inShard(6)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Parts", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), L = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "b", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", 0, 0), P("c", 20, 0), P("e", 20, 20), P("f", 0, 20), L("l1", "a", "c"), L("l2", "c", "e"), L("l3", "e", "f"), L("l4", "f", "a")] },
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "b", op: "boss", end: "blind", depth: { v: 10 } },
+        { id: "far", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [P("g", 10, 10), P("h", 400, 250), L("lf", "g", "h")] },
+        { id: "one", type: "sketch", name: "Sketch3", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p", 5, 5)] },
+        { id: "none", type: "sketch", name: "Sketch4", plane: { std: "XY" }, rels: [], dims: [], ents: [] });
+    }));
+    await settle();
+    // Where each sketch point lands on the canvas, as a fraction of its width and height, once the view has stopped.
+    const shown = async id => {
+      await mp.evaluate(id => window.__sv.modeller.editSketch(id), id);
+      await mp.waitForFunction(id => window.__sv.model.editor()?.sk?.id === id, id, { timeout: 30000 });
+      await settle();
+      await mp.waitForFunction(() => !window.__sv.viewer.animating, null, { timeout: 10000 });
+      const r = await mp.evaluate(() => {
+        const v = window.__sv.viewer, ed = window.__sv.model.editor(), f = ed.frame;
+        return ed.sk.ents.filter(e => e.t === "point").map(e => {
+          const w = [0, 1, 2].map(i => f.o[i] + f.x[i] * e.x + f.y[i] * e.y);
+          const s = new (v.camera.position.constructor)(...w).project(v.camera);
+          return [(s.x + 1) / 2, (1 - s.y) / 2].map(q => Math.round(q * 100) / 100);
+        });
+      });
+      await mp.evaluate(() => window.__sv.modeller.ok());
+      await settle();
+      return r;
+    };
+    const far = await shown("far"), one = await shown("one"), none = await shown("none");
+    const inside = ps => ps.every(([x, y]) => x > 0 && x < 1 && y > 0 && y < 1);
+    check(far.length === 2 && inside(far) && one.length === 1 && inside(one) && none.length === 0,
+      `exam #96: Edit sketch frames the whole sketch past the body, and sketches with one point or none still open (${JSON.stringify({ far, one, none })})`);
+    await ctx.close();
+  }
+
   // --- 1.119: Loft guide curves (FR-FT-082) ---
   if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

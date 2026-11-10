@@ -11,6 +11,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - **Cross holes through a shaft are recognised (FR-FT-102)**: a round hole right across an imported shaft or round bar, coming out on its curved faces, comes back from Recognize Holes and Recognize Features as a circle sketched on the standard plane square to the hole with an Extruded Cut Through All in both directions, when the hole runs along X, Y or Z. Before, such holes were left in the imported body.
 
+### Fixed
+
+- **Edit sketch shows the whole sketch (Leuenberger exam #96)**: turning normal to a sketch framed only the body, so a sketch reaching past it opened mostly off screen. The view now frames the body and the whole sketch; sketches with one point or none open as before.
+
 ## [1.476.0] - 2026-11-10
 
 ### Changed

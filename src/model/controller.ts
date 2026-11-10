@@ -927,7 +927,8 @@ export class ModelController {
     if (m.kind === "sketch" && m.id === id) {
       const f = this.frameOf(sk);
       m.editor.setSketch(this.store!.feature(id) as SketchFeature, f);
-      if (getPref("rotateToSketch")) this.host.viewer.viewFrom(new THREE.Vector3(...f.n));
+      // Normal to the sketch, framing the model and the whole sketch, which may reach past the body (exam #96).
+      if (getPref("rotateToSketch")) this.host.viewer.viewFrom(new THREE.Vector3(...f.n), true, m.editor.sketchBox());
     }
   }
 
