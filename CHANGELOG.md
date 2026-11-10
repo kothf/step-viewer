@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.455.0] - 2026-11-10
+
+### Added
+
+- **Body materials in assemblies (FR-MAT-001)**: a component whose part has bodies with their own materials is weighed body by body in the assembly's mass properties (mass, centre of mass, moments of inertia) and in the BOM mass and its CSV. Bodies without their own material take the part's.
+
 ## [1.454.0] - 2026-11-10
 
 ### Changed
@@ -2730,7 +2736,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.454.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.455.0...HEAD
+[1.455.0]: https://github.com/kothf/step-viewer/compare/v1.454.0...v1.455.0
 [1.454.0]: https://github.com/kothf/step-viewer/compare/v1.453.0...v1.454.0
 [1.453.0]: https://github.com/kothf/step-viewer/compare/v1.452.0...v1.453.0
 [1.452.0]: https://github.com/kothf/step-viewer/compare/v1.451.0...v1.452.0
