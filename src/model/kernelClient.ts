@@ -165,6 +165,12 @@ export class ModelKernel {
     return (await this.call<{ features: Feature[] }>({ type: "recognizeBlends", doc })).features;
   }
 
+  /** Feature recognition (FR-FT-102): pockets and bosses that can be deleted and made again as sketches with extrudes. */
+  async recognizeExtrudes(doc: PartDoc): Promise<Feature[]> {
+    await this.start();
+    return (await this.call<{ features: Feature[] }>({ type: "recognizeExtrudes", doc })).features;
+  }
+
   /** Evaluates an assembly: one mesh per shown component, placed (FRS 10). */
   async assembly(doc: AsmDoc): Promise<{ parts: { id: string; data: PartData; faces: string[] }[]; statuses: AsmComponentStatus[]; features?: AsmFeatureStatus[]; props: BodyProps | null }> {
     let t = performance.now();

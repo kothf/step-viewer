@@ -119,7 +119,7 @@ test("fourth pass (1.399.0): four plastics checked against makers' sheets", () =
   assert.ok(!findMaterial("Nylon PA66")!.ref);
 });
 
-test("fifth pass (1.400.0): POM-H, PEEK, PET-P and OSB/3 checked against makers' sheets", () => {
+test("fifth pass (1.403.0): POM-H, PEEK, PET-P and OSB/3 checked against makers' sheets", () => {
   const checked = LIBRARY.filter((m) => m.ref);
   assert.ok(checked.length >= 137, `${checked.length} checked`);
   assert.ok(LIBRARY.length - checked.length <= 33);

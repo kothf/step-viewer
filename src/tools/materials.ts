@@ -438,7 +438,7 @@ export const CHECKED: Record<string, string> = {
   "PETG": "protolabs.com/media/pzub5tfo/eastar-6763.pdf",
   "PEI (Ultem 1000)": "cdn.shopify.com/s/files/1/0260/7421/files/ULTEM_1000_DATA_SHEET.pdf",
   "Polyethylene PE-HD": "www.oadbyplastics.co.uk/wp-content/uploads/2025/11/PE-HD-300-Technical-Datasheet.pdf",
-  // 1.400.0: stock shape and board makers' data sheets.
+  // 1.403.0: stock shape and board makers' data sheets.
   "POM (Delrin)": "polymershapes.com/wp-content/uploads/2025/07/DELRIN_150_Series_Nat_Acetal_Homopolymer_14.pdf",
   "PEEK": "www.curbellplastics.com/wp-content/uploads/2022/11/TECAPEEK-Natural-Data-Sheet.pdf",
   "PET (PET-P)": "plasticsintl.com/media/ocglsyfe/pet-tecapet-data-sheet.pdf",
