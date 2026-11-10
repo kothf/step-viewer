@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.429.0] - 2026-11-10
+
+### Fixed
+
+- **ASA and PC/ABS (FR-MAT-001)**: both now follow a named general purpose grade's data sheet and show **Checked against:**. ASA (Luran S 778T): modulus 2.5 GPa, yield 54 MPa (were 2.3 GPa and 48 MPa). PC/ABS (Bayblend T65 XF): modulus 2.35 GPa, yield 54 MPa (were 2.2 GPa and 52 MPa). 149 of 170 materials are checked; the other 21 still say they are not.
+
 ## [1.428.0] - 2026-11-10
 
 ### Added
@@ -2540,7 +2546,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.428.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.429.0...HEAD
+[1.429.0]: https://github.com/kothf/step-viewer/compare/v1.428.0...v1.429.0
 [1.428.0]: https://github.com/kothf/step-viewer/compare/v1.427.0...v1.428.0
 [1.427.0]: https://github.com/kothf/step-viewer/compare/v1.426.0...v1.427.0
 [1.426.0]: https://github.com/kothf/step-viewer/compare/v1.425.0...v1.426.0
