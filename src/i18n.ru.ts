@@ -4271,4 +4271,8 @@ export const RU: Record<string, string> = {
   "Inches in brackets": "Дюймы в скобках",
   "Inch decimals": "Знаков в дюймах",
   "Dual dimension (inches in brackets)": "Двойной размер (дюймы в скобках)",
+  // FR-DRW-021: reference and basic dimensions
+  "As measured": "Как измерено",
+  "Reference (in parentheses)": "Справочный (в скобках)",
+  "Basic (boxed)": "Теоретический (в рамке)",
 };

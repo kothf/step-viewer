@@ -4813,6 +4813,17 @@ try {
     if (selA) await dp.click('#drw [data-tolt="sym"]');
     tx = await texts();
     check(selA && tx.includes("100±0.1"), `drawing: a dimension selected by its text takes a ± tolerance (${tx.filter(s => /±/.test(s)).join(" ")})`);
+    // Reference and basic dimensions (FR-DRW-021): parentheses round the whole value; a basic one is boxed and drops its tolerance.
+    await dp.selectOption('#drw .drw-props [data-d="show"]', "ref");
+    const txRef = await texts();
+    const thin0 = await dp.evaluate(() => window.__sv.drw.prims().filter(q => q.t === "l" && q.layer === "ANNOT").length);
+    await dp.selectOption('#drw .drw-props [data-d="show"]', "basic");
+    const txBasic = await texts();
+    const thin1 = await dp.evaluate(() => window.__sv.drw.prims().filter(q => q.t === "l" && q.layer === "ANNOT").length);
+    await dp.selectOption('#drw .drw-props [data-d="show"]', "");
+    tx = await texts();
+    check(txRef.includes("(100±0.1)") && !txBasic.some(s => /±/.test(s)) && thin1 === thin0 + 4 && tx.includes("100±0.1"),
+      `drawing: a reference dimension is in parentheses, a basic one boxed without tolerance (${txRef.filter(s => /\(/.test(s)).join(" ")}; ${thin0} → ${thin1} lines)`);
     // ISO 286 fit (FR-DRW-021): the Ø16 takes H7, shown with its deviations from the table (+0.018 / 0).
     const dia = await dp.evaluate(() => { const p = window.__sv.drw.prims().find(q => q.t === "t" && q.layer === "ANNOT" && q.s === "Ø16"); return p && [p.x, p.y + p.h / 2]; });
     [x, y] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), dia);

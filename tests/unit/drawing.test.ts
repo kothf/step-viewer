@@ -1141,6 +1141,26 @@ test("hole callout adds a cosmetic thread; drafting style sets default decimals 
   assert.equal(dimText(lin, { k: "h", pts: [], value: 100 }, ".").main, "100");
 });
 
+test("reference dimensions are in parentheses, basic ones boxed and never toleranced (FR-DRW-021)", async () => {
+  const { dimText, dimPrims, useStyle } = await import("../../src/drawing/annot");
+  const lin = { id: "a", t: "dim" as const, view: "v", k: "h" as const, refs: [], pos: [0, 0] as [number, number] };
+  const g = { k: "h" as const, pts: [], value: 40 };
+  assert.equal(dimText({ ...lin, show: "ref" }, g, ".").main, "(40)");
+  assert.equal(dimText({ ...lin, show: "ref", tol: { t: "sym", up: 0.1 } }, g, ".").main, "(40±0.1)");
+  assert.deepEqual(dimText({ ...lin, show: "ref", tol: { t: "limit", up: 1, lo: 1 } }, g, "."), { main: "", up: "(41)", lo: "(39)" });
+  assert.equal(dimText({ ...lin, show: "ref", txt: "REF" }, g, ".").main, "REF");
+  assert.equal(dimText({ ...lin, show: "basic", tol: { t: "sym", up: 0.1 } }, g, ".").main, "40", "a basic dimension has no tolerance of its own");
+  try {
+    useStyle({ tol: 0.2, dual: "in", dualPrec: 2 });
+    assert.equal(dimText({ ...lin, show: "basic" }, g, ".").main, "40 [1.57]", "nor the drawing's default");
+    assert.equal(dimText({ ...lin, show: "ref" }, g, ".").main, "(40±0.2 [1.57±0.01])");
+  } finally { useStyle(undefined); }
+  const pl = { toSheet: (p: [number, number]) => p, s: 1 } as never;
+  const geo = { k: "h" as const, pts: [[0, 0], [40, 0]] as [number, number][], value: 40 };
+  const n = (a: object) => dimPrims({ ...lin, pos: [20, 15], ...a } as never, geo as never, pl, ".").prims.filter(q => q.t === "l").length;
+  assert.equal(n({ show: "basic" }) - n({}), 4, "four box sides");
+});
+
 test("dual dimensions add inches in brackets; a dimension can opt in or out (FR-DRW-021)", async () => {
   const { dimText, useStyle } = await import("../../src/drawing/annot");
   const lin = { id: "a", t: "dim" as const, view: "v", k: "h" as const, refs: [], pos: [0, 0] as [number, number] };
