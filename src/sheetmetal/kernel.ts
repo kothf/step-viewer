@@ -4,7 +4,7 @@
 import type { EdgeRef, FaceRef, Frame, PartDoc, SketchFeature, SkEnt, V2, V3 } from "../model/types";
 import type { Named } from "../kernel/model";
 import { inPolygon, loopPolygon, polyArea, sketchProfile, type Seg } from "../sketch/profile";
-import { convertFlanges, type ConvertLevel, gussetSheet, type GussetMark, cornerRelief, apply, applyDir, bendStrip, sheetPlace, unfoldSheet, type SheetPlace, baseFlange, crossBreak, formTools, obroundLoop, type FormItem, ventLayout, ventPanel, loftedBend, type SheetMesh, breakCorner, closedCorner, miterFlange, miterProfile, sweptProfile, type FlatEdge, bendSketchLine, edgeFlange, flatLoops, hem, jog, sketchedBend, tab, SheetError, type Bend, type Mat, type Panel, type SheetOp, type SheetState } from "./sheet";
+import { tabSlot, type SlotCut, convertFlanges, type ConvertLevel, gussetSheet, type GussetMark, cornerRelief, apply, applyDir, bendStrip, sheetPlace, unfoldSheet, type SheetPlace, baseFlange, crossBreak, formTools, obroundLoop, type FormItem, ventLayout, ventPanel, loftedBend, type SheetMesh, breakCorner, closedCorner, miterFlange, miterProfile, sweptProfile, type FlatEdge, bendSketchLine, edgeFlange, flatLoops, hem, jog, sketchedBend, tab, SheetError, type Bend, type Mat, type Panel, type SheetOp, type SheetState } from "./sheet";
 import type { SheetFeature, SmBaseFeature, SmConvertFeature, SmInsertFeature, SmCutFeature, SmFormFeature, SmVentFeature } from "./types";
 
 /** The few Modeller helpers the sheet metal code needs. */
@@ -95,6 +95,16 @@ export function evalSheet(api: SheetApi, f: SheetFeature, doc: PartDoc, body: Na
     return { body: formBody(api, body, f, sm.T, items), sm: state };
   }
   let res: { state: SheetState; ops: SheetOp[] };
+  if (f.type === "smtabslot") {
+    if (!body || !sm) throw new SheetError("E-SM-NOBASE", "Make a base flange first.");
+    const fc = f.face?.name ? api.face(body, f.face) : null;
+    const pl = fc ? facePlane(api, fc) : null;
+    if (!pl) throw new SheetError("E-SM-TSFACE", "Pick the flat face the edge looks at, square to the tabs.");
+    const r = tabSlot(sm, f, pl);
+    let out = body;
+    r.slots.forEach((sl, i) => { out = api.bool("cut", out, slotTool(api, sl, `${f.id}:s${i}`), f.id); });
+    return { body: applyOps(api, out, r.ops, r.state.T, f.id), sm: r.state };
+  }
   if (f.type === "smtab") {
     const sk = doc.features.find(x => x.id === f.sketch);
     if (!sk || sk.type !== "sketch") throw new SheetError("E-SM-SKETCH", "Pick a closed sketch for the tab.");
@@ -116,6 +126,24 @@ export function evalSheet(api: SheetApi, f: SheetFeature, doc: PartDoc, body: Na
   const { state, ops } = res;
   if (!body) throw new SheetError("E-SM-NOBASE", "Make a base flange first.");
   return { body: applyOps(api, body, ops, state.T, f.id), sm: state };
+}
+
+/** A flat face's plane with its outward normal (null when it isn't flat). */
+function facePlane(api: SheetApi, fc: any): { o: V3; n: V3 } | null {
+  const oc = api.oc;
+  const ad = new oc.BRepAdaptor_Surface_2(fc, true);
+  if (ad.GetType() !== oc.GeomAbs_SurfaceType.GeomAbs_Plane) return null;
+  const pl = ad.Plane(), a = pl.Axis().Direction(), l = pl.Location();
+  const s = fc.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED ? -1 : 1;
+  return { o: [l.X(), l.Y(), l.Z()], n: [a.X() * s, a.Y() * s, a.Z() * s] };
+}
+
+/** A tab and slot's slot: its outline swept through the slot body; faces named `<fid>:<i>`. */
+function slotTool(api: SheetApi, sl: SlotCut, fid: string): Named {
+  const fr: Frame = { o: sl.o, x: sl.u, y: sl.v, n: cross3(sl.u, sl.v) };
+  const shape = prism(api, faceOf(api, sl.loop, [], fr), [sl.w[0] * sl.depth, sl.w[1] * sl.depth, sl.w[2] * sl.depth]);
+  const faces = api.sub(shape, "FACE");
+  return { shape, faces, names: faces.map((_f, i) => `${fid}:${i}`) };
 }
 
 /** Cuts first, then joins the new panels and bends. */

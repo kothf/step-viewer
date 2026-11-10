@@ -4880,9 +4880,26 @@ try {
     an = await annots();
     check(tx.includes("Ø16 THRU") && tx.includes("BREAK SHARP EDGES") && an.some(a => a.t === "hole") && an.some(a => a.t === "note" && !a.view),
       `drawing: hole callout from the model (Ø16 THRU) and a note on the sheet (${tx.filter(s => /THRU|BREAK/.test(s)).join(" / ")})`);
+    // Note border (FR-DRW-023): the placed note is selected; a circle frames it, None takes it away.
+    const arcsOf = async () => (await prims()).filter(p => p.t === "a" && p.layer === "ANNOT").length;
+    const arcs0 = await arcsOf();
+    await dp.selectOption('.drw-props [data-d="nborder"]', "circle");
+    const nb1 = { arcs: await arcsOf(), border: (await annots()).find(a => a.t === "note" && !a.view)?.border };
+    await dp.selectOption('.drw-props [data-d="nborder"]', "");
+    const nb2 = { arcs: await arcsOf(), has: "border" in (await annots()).find(a => a.t === "note" && !a.view) };
+    check(nb1.border === "circle" && nb1.arcs === arcs0 + 1 && nb2.arcs === arcs0 && !nb2.has, `drawing: a note takes a circle border and loses it again (${JSON.stringify([arcs0, nb1, nb2])})`);
     // The worker reads holes from the geometry too (FR-DRW-022): the Ø16 cut is a one-piece stack open at both ends.
     const geoHoles = await dp.evaluate(() => window.__sv.drw.holes());
     check(geoHoles.some(h => h.segs === 1 && h.open[0] && h.open[1]), `drawing: holes read from the geometry (${JSON.stringify(geoHoles)})`);
+    // Hole callouts follow the drawing's dual dimensions and default decimals (FR-DRW-022).
+    await dp.keyboard.press("Escape");
+    await dp.selectOption('.drw-props [data-st="dual"]', "in");
+    await dp.selectOption('.drw-props [data-st="lin"]', "1");
+    const dualHole = await texts();
+    await dp.selectOption('.drw-props [data-st="dual"]', "");
+    await dp.selectOption('.drw-props [data-st="lin"]', "");
+    const plainHole = await texts();
+    check(dualHole.includes("Ø16.0 [0.630] THRU") && plainHole.includes("Ø16 THRU"), `drawing: a hole callout shows inches and the default decimals with the drawing (${dualHole.filter(s => /THRU/.test(s)).join(" / ")})`);
     // Property link in a note (FR-DRW-023): $PRP:"Scale" shows the sheet scale.
     dp.once("dialog", d => d.accept('SCALE $PRP:"Scale"'));
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="note"]');
@@ -8281,6 +8298,30 @@ try {
     const r1 = await state();
     check(Math.abs(r1.v - r0.v) < 0.05 && !r1.bad && r1.types === "sketch,extrude,hole,hole,delface,hole,hole" && r1.holes === "blind:1:8 blind:1:8 through:2:10 through:2:10",
       `model 1.116: Recognize Holes fills the holes and makes them again as Hole features (FR-FT-102) (${JSON.stringify({ r0, r1 })})`);
+    // 1.390 (FR-FT-102): Recognize Fillets on an imported body: a block with two R5 corners and a 2 mm chamfer.
+    await mp.evaluate(() => window.__sv.model.store.change("Blends", d => {
+      const S = k => `e:side:s${k}`;
+      d.features = d.features.filter(f => f.id === "s" || f.id === "e");
+      d.features.push({ id: "bf", type: "fillet", name: "Fillet1", radius: { v: 5 }, edges: [{ faces: [S("a"), S("b")] }, { faces: [S("b"), S("c")] }] },
+        { id: "bc", type: "chamfer", name: "Chamfer1", distance: { v: 2 }, edges: [{ faces: ["e:end", S("d")] }] });
+    }));
+    await settle();
+    const b0 = await state();
+    const brep = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "block.brep", brep }]; }), brep);
+    await settle();
+    const b1 = await state();
+    await runCmd(mp, "Recognize Fillets");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.some(f => f.type === "fillet"), null, { timeout: 120000 });
+    await settle();
+    const b2 = await state();
+    const blends = await mp.evaluate(() => window.__sv.model.store.doc.features.filter(f => f.type === "fillet" || f.type === "chamfer").map(f => `${f.name}:${Math.round((f.radius ?? f.distance).v * 100) / 100}:${f.edges.length}`).join(" "));
+    // The recognised fillet can be edited like any other.
+    await mp.evaluate(() => window.__sv.model.store.change("Edit", d => { d.features.find(f => f.type === "fillet").radius.v = 8; }));
+    await settle();
+    const b3 = await state();
+    check(!b0.bad && Math.abs(b1.v - b0.v) < 0.05 && Math.abs(b2.v - b0.v) < 0.05 && !b2.bad && b2.types === "import,delface,chamfer,fillet" && blends === "Chamfer1:2:1 Fillet1:5:2" && !b3.bad && b3.v < b2.v - 100,
+      `model 1.390: Recognize Fillets removes the fillets and chamfers of an imported body and makes them again as features (FR-FT-102) (${JSON.stringify({ b0, b1, b2, b3, blends })})`);
     await ctx.close();
   }
 
@@ -10571,6 +10612,37 @@ try {
     const hb = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, bends: l.sheet?.bends.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
     const hbWant = 100 * 3 * (154 + 4 * ((Math.PI / 2 - 2) * 3.5));
     check(!hb.bad && hb.bends === 4 && Math.abs(hb.v - hbWant) < 1e-2, `sheet metal: Insert Bends follows a hat section's walls to the brims (${JSON.stringify({ hb, hbWant })})`);
+    // Tab and Slot: a 100 × 50 plate and a separate 3 mm block 1 mm past one end (on the side away from the camera, so
+    // its face towards the plate shows above it). Click the plate's top edge there, then that block face, ✓: two tabs
+    // 10 × (1 + 2) into slots 0.1 bigger all round (2.1 deep: the default height is the thickness).
+    const tsS = await mp.evaluate(() => { const v = window.__sv.viewer; return v.camera.position.x > v.controls.target.x ? -1 : 1; });
+    await mp.evaluate(S => window.__sv.model.store.change("Plate and block", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), L = (id, a, b) => ({ id, t: "line", a, b });
+      const rect = (id, x0, y0, x1, y1) => ({ id, type: "sketch", name: id, plane: { std: "XY" }, rels: [], dims: [], ents: [P(`${id}p1`, x0, y0), P(`${id}p2`, x1, y0), P(`${id}p3`, x1, y1), P(`${id}p4`, x0, y1), L(`${id}l1`, `${id}p1`, `${id}p2`), L(`${id}l2`, `${id}p2`, `${id}p3`), L(`${id}l3`, `${id}p3`, `${id}p4`), L(`${id}l4`, `${id}p4`, `${id}p1`)] });
+      d.features = [
+        rect("s", -50, 0, 50, 50),
+        { id: "b", type: "smbase", name: "Base-Flange1", sketch: "s", thickness: { v: 2 }, radius: { v: 2 }, depth: { v: 20 }, k: 0.5 },
+        S > 0 ? rect("k", 51, -10, 54, 60) : rect("k", -54, -10, -51, 60),
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "k", op: "boss", end: "mid", depth: { v: 20 }, merge: false },
+      ];
+    }), tsS);
+    await settle();
+    await mp.evaluate(() => window.__sv.viewer.fit(false));
+    await mp.waitForTimeout(300);
+    await smMenu("Tab and Slot");
+    for (const p of [[50 * tsS, 25, 2], [51 * tsS, 25, 7]]) {
+      const [x, y] = await scr(p);
+      await mp.mouse.click(x, y);
+      await settle();
+    }
+    const ts0 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { title: document.querySelector("#mc-pm h3")?.textContent, edge: d?.edge ? [...d.edge.faces].sort().join("|") : null, face: d?.face?.name }; });
+    await mp.click("#mc-ok");
+    await settle();
+    const ts1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, panels: l.sheet?.panels.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    const tsWant = 100 * 50 * 2 + 3 * 70 * 20 + 2 * 10 * 3 * 2 - 2 * 10.2 * 2.2 * 2.1;
+    check(ts0.title === "Tab and Slot" && ts0.edge === (tsS > 0 ? "b:p0:sl2|b:p0:top" : "b:p0:sl4|b:p0:top") && ts0.face === (tsS > 0 ? "x:side:kl4" : "x:side:kl2")
+      && !ts1.bad && ts1.panels === 3 && Math.abs(ts1.v - tsWant) < 1e-2,
+      `sheet metal: Tab and Slot grows tabs from the clicked edge through slots in the clicked face (${JSON.stringify({ tsS, ts0, ts1, tsWant })})`);
     await ctx.close();
   }
 
