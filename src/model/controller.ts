@@ -1776,7 +1776,8 @@ export class ModelController {
     try { feats = await this.kernel.recognizeExtrudes(this.doc); }
     catch (err) { toast(t("Feature recognition failed: {msg}", { msg: (err as Error).message }), true); return; }
     finally { this.setBusy(-1); }
-    const n = feats.filter(f => f.type === "extrude").length;
+    const rev = feats.some(f => f.type === "revolve");
+    const n = feats.filter(f => f.type === "extrude" || f.type === "revolve").length;
     if (!n) { toast(t("No pockets or bosses were found to recognise.")); return; }
     this.store.change("Recognize extrudes", d => {
       let at = d.rollback ?? d.features.length;
@@ -1786,7 +1787,7 @@ export class ModelController {
         if (d.rollback != null) d.rollback++;
       }
     });
-    toast(t("{n} extrude recognised|{n} extrudes recognised", { n }));
+    toast(rev ? t("{n} feature recognised|{n} features recognised", { n }) : t("{n} extrude recognised|{n} extrudes recognised", { n }));
   }
 
   /** Configurations (FR-CFG-001/002): list, switch, add, rename, delete. */

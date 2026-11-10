@@ -145,7 +145,7 @@ test("seventh pass (1.413.0): Douglas fir and water checked", () => {
   assert.equal(fir.E, 13.4);
 });
 
-test("eighth pass (1.415.0): PE-LD checked against a stock shape sheet", () => {
+test("eighth pass (1.416.0): PE-LD checked against a stock shape sheet", () => {
   assert.ok(LIBRARY.filter((m) => m.ref).length >= 142);
   const pe = findMaterial("Polyethylene PE-LD")!;
   assert.ok(pe.ref);

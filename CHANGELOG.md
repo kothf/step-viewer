@@ -5,11 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.415.0] - 2026-11-10
+## [1.416.0] - 2026-11-10
 
 ### Changed
 
 - **PE-LD checked (FR-MAT-001)**: Polyethylene PE-LD now shows **Checked against:** with a link to a maker's stock shape data sheet (density 0.92 g/cm³, modulus 207 MPa, 9.8 MPa at yield). The row already matched. 142 of 170 materials are checked; the other 28 still say they are not.
+
+## [1.415.0] - 2026-11-10
+
+### Added
+
+- **Recognize Extrudes makes turned bases (FR-FT-102)**: an imported body of revolution (a stepped shaft, a bush, a flange, with cones, rounded grooves and ball ends) comes back as a sketch of its half section with a centreline and a Revolve that makes a new body; the imported body is deleted, and recognised pockets and bosses go on the new one. It works when the axis lies in a standard plane or runs parallel to one (a reference plane through the axis is added then). Bodies with a skew axis are handled as before.
 
 ## [1.414.0] - 2026-11-10
 
@@ -2448,7 +2454,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.415.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.416.0...HEAD
+[1.416.0]: https://github.com/kothf/step-viewer/compare/v1.415.0...v1.416.0
 [1.415.0]: https://github.com/kothf/step-viewer/compare/v1.414.0...v1.415.0
 [1.414.0]: https://github.com/kothf/step-viewer/compare/v1.413.0...v1.414.0
 [1.413.0]: https://github.com/kothf/step-viewer/compare/v1.412.0...v1.413.0
