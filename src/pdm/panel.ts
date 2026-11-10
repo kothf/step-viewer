@@ -185,8 +185,31 @@ export class VaultPanel {
     void this.render();
     // Interpolated text (revision labels, counts) is rebuilt in the new language.
     onLangChange(() => { if (this.vault) void this.render(); });
+    void this.startCard();
     // Leaving the page with changed files still checked out here: the browser asks first.
     window.addEventListener("beforeunload", e => { if (this.pendingCheckIns.length) e.preventDefault(); });
+  }
+
+  /**
+   * Reopen last vault (FR-PDM-002): the start card offers the vault used last while none is open: its folder
+   * (the browser may ask for access again) or the browser vault of that name.
+   */
+  async startCard() {
+    const card = document.querySelector<HTMLElement>("#empty .empty-tut")?.parentElement;
+    if (!card) return;
+    let row = card.querySelector<HTMLElement>(".empty-vault");
+    const name = storage.get("mc:lastVault"), where = storage.get("mc:lastVaultWhere") || "browser";
+    let open: (() => void) | null = null;
+    if (!this.vault && name) {
+      if (where === "folder" && this.foldersOk) {
+        const f = (await vaultFolders()).find(x => x.name === name);
+        if (f) open = () => void this.openFolder(f.key);
+      } else if (where === "browser" && (await this.browserVaults()).includes(name)) open = () => void this.openInBrowser(name).catch(e => toast(t((e as Error).message), true));
+    }
+    if (!open || this.vault || !name) { row?.remove(); return; }
+    if (!row) { row = document.createElement("div"); row.className = "row center empty-vault"; card.appendChild(row); }
+    row.innerHTML = `<button class="btn small" id="empty-vault" title="${esc(t("Open the vault you used last"))}">${esc(t("Reopen vault {name}", { name }))}</button>`;
+    row.querySelector("button")!.addEventListener("click", () => { open!(); document.getElementById("t-vault")?.click(); });
   }
 
   /** Files checked out here whose local copy differs from the latest version (changes not checked in). */
@@ -304,6 +327,7 @@ export class VaultPanel {
     this.filter = "all";
     this.loadClosed();
     storage.set("mc:lastVault", v.root.name);
+    storage.set("mc:lastVaultWhere", where);
     await this.refresh();
     toast(t("Vault {name} open", { name: v.info.name }), "success");
   }
@@ -315,6 +339,7 @@ export class VaultPanel {
     this.ties = new WeakSet();
     void this.render();
     this.onChange?.();
+    void this.startCard();
   }
 
   async refresh() {
@@ -336,6 +361,7 @@ export class VaultPanel {
     }
     await this.render();
     this.onChange?.();
+    void this.startCard();
   }
 
   // ---------- commands ----------

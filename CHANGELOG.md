@@ -13,6 +13,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - **Folders in the vault file list (FR-PDM-080)**: files in subfolders (`parts/`, `drawings/`, …) are listed under a header per folder that folds and unfolds (click, or ←/→), with the number of files in it. Folded folders are remembered per vault in this browser.
 - **Filter chips** above the list: All, Parts, Assemblies, Drawings, Other files, Checked out to me and Behind, each with its count; they work together with the search.
 - The state change dialog says which revision each file will get (**becomes revision B**) before you approve.
+- **Reopen vault** on the start card: while no vault is open, the start card offers the vault used last (its folder, or the browser vault).
 - **Check-in reminders**: closing a document tab that is checked out to you asks whether to check it in (or, with no changes, to undo the check-out), keep it checked out, or cancel. **Close vault** lists the files with changes not checked in first, and leaving the page with such files makes the browser ask.
 
 ### Changed

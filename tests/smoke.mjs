@@ -4795,6 +4795,13 @@ try {
     const remind = await mp.evaluate(() => document.querySelector("#vault-dlg").innerText.replace(/\s+/g, " "));
     await mp.click('#vault-dlg button[value="cancel"]');
     const stillOpen = await mp.evaluate(() => !!window.__sv.vault.vault);
+    // Closed, the start card offers the vault used last; a click opens it again.
+    await mp.evaluate(() => window.__sv.vault.close());
+    await mp.waitForSelector("#empty-vault");
+    const reopenText = await mp.textContent("#empty-vault");
+    await mp.click("#empty-vault");
+    await mp.waitForFunction(() => window.__sv.vault.vault?.info.name === "Multi" && !document.querySelector("#empty-vault"));
+    check(reopenText === "Reopen vault Multi", `vault UI: the start card reopens the vault used last (${reopenText})`);
     check(/Changes not checked in .*docs\/specs\/e\.txt/.test(remind) && stillOpen, `vault UI: closing the vault with changes not checked in reminds first (${remind}, ${stillOpen})`);
     check(tree === "plate.mcaddrw,plate.mcadprt,[docs],[docs/specs],e.txt" && foldedList === "plate.mcaddrw,plate.mcadprt,[docs]" && chipsShown === "All|Parts 1|Drawings 1|Other files 1" && onlyDrw === "plate.mcaddrw",
       `vault UI: folders in the list fold, filter chips narrow it (${tree} | ${foldedList} | ${chipsShown} | ${onlyDrw})`);

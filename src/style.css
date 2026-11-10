@@ -1390,7 +1390,7 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 #viewport:has(.hud:not([hidden])) .mc-bar { top: 48px; }
 
 /* Tutorial "Bracket in 10 steps" (FR-HLP-003): step list at the top of the right panel. */
-.empty-tut { margin-top: 8px; }
+.empty-tut, .empty-vault { margin-top: 8px; }
 .tut { border-bottom: 1px solid var(--line); padding: 8px 10px 10px; background: var(--accent-soft); }
 .tut-h { display: flex; align-items: center; gap: 8px; }
 .tut-h h2 { margin: 0; font-size: 14px; font-weight: 650; flex: 1; }
