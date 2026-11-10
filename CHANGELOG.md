@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.394.0] - 2026-11-10
+
+### Added
+- Text below a dimension (FR-DRW-021): **Text below** in a drawing dimension's panel adds a second line under the dimension line, centred under the value (2 PLACES, for instance).
+
 ## [1.393.0] - 2026-11-10
 
 ### Added
@@ -2312,7 +2317,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.393.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.394.0...HEAD
+[1.394.0]: https://github.com/kothf/step-viewer/compare/v1.393.0...v1.394.0
 [1.393.0]: https://github.com/kothf/step-viewer/compare/v1.392.0...v1.393.0
 [1.392.0]: https://github.com/kothf/step-viewer/compare/v1.391.0...v1.392.0
 [1.391.0]: https://github.com/kothf/step-viewer/compare/v1.390.0...v1.391.0
