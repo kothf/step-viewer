@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.382.0] - 2026-11-10
+
+### Added
+
+- **Selection box colours in more panels (FR-SEL-011)**: Extrude's Start at, Up to and Body boxes, Revolve's Up to, the Hole Wizard's Face and Up to, Mirror's Plane, the faces to mirror or pattern and Split's plane now have their own colours too. The picked face is drawn in its box's colour with a small tag naming the box, so you see which pick went where.
+
 ## [1.381.0] - 2026-11-10
 
 ### Added
@@ -2244,7 +2250,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.381.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.382.0...HEAD
+[1.382.0]: https://github.com/kothf/step-viewer/compare/v1.381.0...v1.382.0
 [1.381.0]: https://github.com/kothf/step-viewer/compare/v1.380.0...v1.381.0
 [1.380.0]: https://github.com/kothf/step-viewer/compare/v1.379.0...v1.380.0
 [1.379.0]: https://github.com/kothf/step-viewer/compare/v1.378.0...v1.379.0
