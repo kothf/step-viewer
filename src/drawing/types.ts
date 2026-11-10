@@ -188,6 +188,9 @@ export interface BalloonAnnot { id: string; t: "balloon"; view: string; ref: Geo
  *  `pos` (the table's top-left corner) is in the view's model axes. */
 /** Weld table (FR-FT-121): a weldment part's fillet beads from its cut list, placed beside the view whose model they come from. */
 export interface WeldTableAnnot { id: string; t: "wtable"; view: string; pos: [number, number]; prec?: number }
+/** Weldment cut list table (SolidWorks' Weldment Cut List table, FR-FT-121): the part's cut list items beside a view of it;
+ *  `beads` false leaves weld beads out, `mass` adds a mass column. */
+export interface CutTableAnnot { id: string; t: "ctable"; view: string; pos: [number, number]; prec?: number; beads?: boolean; mass?: boolean }
 export interface BendTableAnnot { id: string; t: "btable"; view: string; pos: [number, number]; prec?: number }
 
 export interface HoleTableAnnot { id: string; t: "htable"; view: string; origin: GeoRef; holes: GeoRef[]; pos: [number, number]; prec?: number }
@@ -218,7 +221,7 @@ export type SkPen = "thin" | "thick" | "center" | "hidden" | "phantom";
 /** A sketch entity on the sheet (sheet mm): `pos` = first point, `pts` = points relative to it (line: the end; rect: the
  *  opposite corner; circle: a point on it, `pos` the centre; poly: every point, `closed` joins the last to the first). */
 export interface SketchAnnot { id: string; t: "sk"; view?: undefined; pos: [number, number]; k: "line" | "rect" | "circle" | "poly"; pts: number[]; closed?: boolean; pen?: SkPen }
-export type Annot = DimAnnot | NoteAnnot | HoleAnnot | GtolAnnot | DatumAnnot | SurfAnnot | TableAnnot | BalloonAnnot | HoleTableAnnot | BendTableAnnot | WeldTableAnnot | CloudAnnot | CLineAnnot | WeldAnnot | DatumTargetAnnot | SketchAnnot;
+export type Annot = DimAnnot | NoteAnnot | HoleAnnot | GtolAnnot | DatumAnnot | SurfAnnot | TableAnnot | BalloonAnnot | HoleTableAnnot | BendTableAnnot | WeldTableAnnot | CutTableAnnot | CloudAnnot | CLineAnnot | WeldAnnot | DatumTargetAnnot | SketchAnnot;
 
 export interface Sheet {
   id: string;
