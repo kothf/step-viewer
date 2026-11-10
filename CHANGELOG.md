@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.462.0] - 2026-11-10
+
+### Changed
+
+- **Selected Contours look like the feature they make**: in a cut (Extrude Cut, Revolve Cut) the picked regions are filled in the cut preview's yellow instead of the boss orange, so a picked region no longer reads as material being added. Each picked region also gets a darker outline, so two picked neighbours stay apart.
+
 ## [1.461.0] - 2026-11-10
 
 ### Fixed
@@ -2784,7 +2790,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.460.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.462.0...HEAD
+[1.462.0]: https://github.com/kothf/step-viewer/compare/v1.461.0...v1.462.0
+[1.461.0]: https://github.com/kothf/step-viewer/compare/v1.460.0...v1.461.0
 [1.460.0]: https://github.com/kothf/step-viewer/compare/v1.459.0...v1.460.0
 [1.459.0]: https://github.com/kothf/step-viewer/compare/v1.458.0...v1.459.0
 [1.458.0]: https://github.com/kothf/step-viewer/compare/v1.457.0...v1.458.0
