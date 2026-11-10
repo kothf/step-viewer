@@ -490,7 +490,7 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
   const base = add2(lo, d, st - al(lo));
   // The dimension line runs under the text when the text is outside the arrows.
   const tLo = st - totalW / 2 - 1, tHi = st + totalW / 2 + 1;
-  const inside = span >= 2 * ARROW + 2;
+  const inside = a.arrows ? a.arrows === "in" : span >= 2 * ARROW + 2;
   const from = Math.min(al(lo) - (inside ? 0 : ARROW + 2), tLo < al(lo) ? tLo : Infinity), to = Math.max(al(hi) + (inside ? 0 : ARROW + 2), tHi > al(hi) ? tHi : -Infinity);
   out.push(thin(add2(lo, d, from - al(lo)), add2(lo, d, to - al(lo))));
   if (inside) { out.push(arrow(lo[0], lo[1], -d[0], -d[1])); out.push(arrow(hi[0], hi[1], d[0], d[1])); }

@@ -5,11 +5,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.386.0] - 2026-11-10
+## [1.389.0] - 2026-11-10
 
 ### Changed
 
 - **Four plastics checked (FR-MAT-001)**: PLA, PETG, PEI (Ultem 1000) and PE-HD now show **Checked against:** with a link to a maker's or stockist's data sheet. 133 of 170 materials are checked; the other 37 still say they are not. Values changed to match the sheets: PEI modulus 3.2 → 3.6 GPa and strength 105 → 110 MPa, PE-HD modulus 1.0 → 1.1 GPa.
+
+## [1.388.0] - 2026-11-10
+
+### Added
+
+- **Cutting plan in the cut list (FR-FT-121)**: with a stock bar length typed, **Cutting plan** under the weldment cut list's Stock lengths table lists the pieces to cut from each bar and what is left of it, equal bars put together. The CSV export ends with the same plan.
+
+## [1.387.0] - 2026-11-10
+
+### Added
+
+- **Selection box colours in more panels (FR-SEL-011)**: Extrude's Start at, Up to and Body boxes, Revolve's Up to, the Hole Wizard's Face and Up to, Mirror's Plane, the faces to mirror or pattern and Split's plane now have their own colours too. The picked face is drawn in its box's colour with a small tag naming the box, so you see which pick went where.
+
+## [1.386.0] - 2026-11-10
+
+### Added
+- Dimension arrows by hand in drawings (FR-DRW-021): a linear dimension's **Arrows** can be set to **Inside** or **Outside** the extension lines, instead of following the room there is.
 
 ## [1.385.0] - 2026-11-10
 
@@ -2274,7 +2291,10 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.386.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.389.0...HEAD
+[1.389.0]: https://github.com/kothf/step-viewer/compare/v1.388.0...v1.389.0
+[1.388.0]: https://github.com/kothf/step-viewer/compare/v1.387.0...v1.388.0
+[1.387.0]: https://github.com/kothf/step-viewer/compare/v1.386.0...v1.387.0
 [1.386.0]: https://github.com/kothf/step-viewer/compare/v1.385.0...v1.386.0
 [1.385.0]: https://github.com/kothf/step-viewer/compare/v1.384.0...v1.385.0
 [1.384.0]: https://github.com/kothf/step-viewer/compare/v1.383.0...v1.384.0

@@ -2751,6 +2751,25 @@ try {
     await idle();
     check(bx.plane && bx.faces && bx.plane !== bx.faces && bx.mesh && bx.tag === "Faces to draft" && bx.tagC === bx.faces,
       `model 1.351: Draft's selection boxes have their own colours and the picked face is drawn in the faces box's colour with a "Faces to draft" tag (${JSON.stringify(bx)})`);
+    // 1.387 (FR-SEL-011, AT-UX-6): the other panels' boxes: the Hole Wizard's face is drawn in the Face box's colour with its tag, and an extrude's Start at / Up to faces get one box each.
+    await mp.evaluate(() => window.__sv.modeller.command("hole"));
+    await mp.waitForSelector('#mc-pm .pm-box[data-focus="hplane"]');
+    await mp.evaluate(() => {
+      const m = window.__sv.modeller, d = m.mode.draft, names = window.__sv.model.last().faceNames;
+      d.plane = { face: { name: names.find(n => n.startsWith("cpe:")) } }; m.draftChanged();
+    });
+    await idle();
+    await mp.waitForTimeout(100);
+    const bx2 = await mp.evaluate(() => {
+      const m = window.__sv.modeller, names = window.__sv.model.last().faceNames;
+      const tag = document.querySelector('#mc-layer .mc-boxtag[data-box="hplane"]');
+      const ex = m.boxPicks({ type: "extrude", end: "upto", upTo: { face: { name: names[0] } }, start: "surface", startRef: { face: { name: names[1] } } });
+      return { c: getComputedStyle(document.querySelector('#mc-pm .pm-box[data-focus="hplane"]')).getPropertyValue("--box-c").trim(), mesh: m.decor.children.some(o => o.userData.boxPick === "hplane"), tag: tag?.textContent, tagC: tag && getComputedStyle(tag).getPropertyValue("--box-c").trim(), ex: ex.map(g => `${g.focus}:${g.label}:${g.faces.length}`).join() };
+    });
+    await mp.evaluate(() => window.__sv.modeller.exitMode(false));
+    await idle();
+    check(bx2.c && bx2.mesh && bx2.tag === "Face" && bx2.tagC === bx2.c && bx2.ex === "start:Start at:1,upto:Up to:1",
+      `model 1.387: the Hole Wizard's face is drawn in the Face box's colour with a "Face" tag, and an extrude's Start at and Up to faces have their own boxes (${JSON.stringify(bx2)})`);
     // 1.354 (FR-UI-109): selection box flow: a one-item box that has just been filled hands focus to the next empty required box, also an earlier one; a panel opens on its first empty box.
     await mp.evaluate(() => window.__sv.modeller.command("lpattern"));
     await mp.waitForSelector('#mc-pm .pm-box[data-focus="dir"]');
@@ -4824,6 +4843,14 @@ try {
     tx = await texts();
     check(txRef.includes("(100±0.1)") && !txBasic.some(s => /±/.test(s)) && thin1 === thin0 + 4 && tx.includes("100±0.1"),
       `drawing: a reference dimension is in parentheses, a basic one boxed without tolerance (${txRef.filter(s => /\(/.test(s)).join(" ")}; ${thin0} → ${thin1} lines)`);
+    // Arrows outside by hand (FR-DRW-021): the dimension line grows past both extension lines; Auto puts them back.
+    const dimLine = () => dp.evaluate(() => Math.max(...window.__sv.drw.prims().filter(q => q.t === "l" && q.layer === "ANNOT" && Math.abs(q.p[1] - q.p[3]) < 1e-6).map(q => Math.abs(q.p[2] - q.p[0]))));
+    const len0 = await dimLine();
+    await dp.selectOption('#drw .drw-props [data-d="arrows"]', "out");
+    const len1 = await dimLine();
+    await dp.selectOption('#drw .drw-props [data-d="arrows"]', "");
+    const len2b = await dimLine();
+    check(len1 > len0 + 5 && Math.abs(len2b - len0) < 1e-6, `drawing: a linear dimension's arrows go outside by hand and back (${[len0, len1, len2b].map(v => v.toFixed(1)).join(" → ")})`);
     // ISO 286 fit (FR-DRW-021): the Ø16 takes H7, shown with its deviations from the table (+0.018 / 0).
     const dia = await dp.evaluate(() => { const p = window.__sv.drw.prims().find(q => q.t === "t" && q.layer === "ANNOT" && q.s === "Ø16"); return p && [p.x, p.y + p.h / 2]; });
     [x, y] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), dia);
@@ -9513,11 +9540,13 @@ try {
     await mp.dispatchEvent('#wld-cut input[data-wbar="len"]', "change");
     await settle();
     const bars = await mp.evaluate(() => [...document.querySelectorAll("#wld-cut tr[data-stock]")].map(tr => [...tr.children].map(td => td.textContent)));
+    const plan = await mp.evaluate(() => [...document.querySelectorAll("#wld-cut .wld-plan li[data-wplan]")].map(li => li.textContent));
     await mp.fill('#wld-cut input[data-wbar="len"]', "");
     await mp.dispatchEvent('#wld-cut input[data-wbar="len"]', "change");
     await settle();
     const bars0 = await mp.evaluate(() => document.querySelectorAll("#wld-cut tr[data-stock] [data-wbars]").length);
     check(bars.length === stock.length && bars.every(r => r.length === 5 && Number(r[3]) >= 1) && bars0 === 0, `weldments: bars to buy from a stock bar length (${JSON.stringify({ bars, bars0 })})`);
+    check(plan.length >= 1 && plan.every(x => /\d/.test(x)), `weldments: cutting plan under the stock lengths (${JSON.stringify(plan)})`);
     await mp.check('#wld-cut input[data-cp="excl"][data-ci="1"]');
     await settle();
     const ex = await mp.evaluate(() => { const tr = document.querySelectorAll("#wld-cut tbody tr")[1]; return { item: tr.querySelector("[data-witem]")?.textContent, cls: tr.classList.contains("wld-excl"), excl: Object.values(window.__sv.model.store.doc.cutProps ?? {}).some(p => p.excl) }; });

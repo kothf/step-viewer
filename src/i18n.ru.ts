@@ -3411,6 +3411,8 @@ export const RU: Record<string, string> = {
   "+ {n} too long": "+ {n} длиннее прутка",
   "Stock bar length": "Длина прутка",
   "Saw kerf": "Ширина пропила",
+  "Cutting plan": "План раскроя",
+  "left {l}": "остаток {l}",
   "Each flat face of set 1 also brings the face on the other side of its plate, so a plate standing on another is welded along both sides.": "Каждая плоская грань набора 1 добавляет грань с другой стороны своей пластины, поэтому пластина, стоящая на другой, приваривается с обеих сторон.",
   "Merge arc segment bodies": "Объединять тела с дугами",
   "Merge miter trimmed bodies": "Объединять тела, обрезанные на ус",
@@ -4275,4 +4277,8 @@ export const RU: Record<string, string> = {
   "As measured": "Как измерено",
   "Reference (in parentheses)": "Справочный (в скобках)",
   "Basic (boxed)": "Теоретический (в рамке)",
+  // FR-DRW-021: dimension arrows side
+  "Arrows": "Стрелки",
+  "Inside": "Внутри",
+  "Outside": "Снаружи",
 };

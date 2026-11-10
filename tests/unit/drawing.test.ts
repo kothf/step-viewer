@@ -1155,10 +1155,25 @@ test("reference dimensions are in parentheses, basic ones boxed and never tolera
     assert.equal(dimText({ ...lin, show: "basic" }, g, ".").main, "40 [1.57]", "nor the drawing's default");
     assert.equal(dimText({ ...lin, show: "ref" }, g, ".").main, "(40±0.2 [1.57±0.01])");
   } finally { useStyle(undefined); }
-  const pl = { toSheet: (p: [number, number]) => p, s: 1 } as never;
+  const pl = { s: 1, uc: 0, vc: 0, x: 0, y: 0 } as never;
   const geo = { k: "h" as const, pts: [[0, 0], [40, 0]] as [number, number][], value: 40 };
   const n = (a: object) => dimPrims({ ...lin, pos: [20, 15], ...a } as never, geo as never, pl, ".").prims.filter(q => q.t === "l").length;
   assert.equal(n({ show: "basic" }) - n({}), 4, "four box sides");
+});
+
+test("a linear dimension's arrows can be put outside or inside by hand (FR-DRW-021)", async () => {
+  const { dimPrims } = await import("../../src/drawing/annot");
+  const lin = { id: "a", t: "dim" as const, view: "v", k: "h" as const, refs: [], pos: [20, 15] as [number, number] };
+  const pl = { s: 1, uc: 0, vc: 0, x: 0, y: 0 } as never;
+  const line = (value: number, a: object) => {
+    const geo = { k: "h" as const, pts: [[0, 0], [value, 0]] as [number, number][], value };
+    const ls = dimPrims({ ...lin, pos: [value / 2, 15], ...a } as never, geo as never, pl, ".").prims.filter(q => q.t === "l" && Math.abs((q as { p: number[] }).p[1] - 15) < 1e-9 && Math.abs((q as { p: number[] }).p[3] - 15) < 1e-9) as { p: number[] }[];
+    return Math.max(...ls.map(q => Math.abs(q.p[2] - q.p[0])));
+  };
+  assert.ok(Math.abs(line(40, {}) - 40) < 1e-9, "room enough: arrows inside, the line spans the extension lines");
+  assert.ok(Math.abs(line(40, { arrows: "out" }) - 50) < 1e-9, "outside: the line runs an arrow and 2 mm past each side");
+  assert.ok(line(3, {}) > 3 + 1e-9, "no room: arrows outside");
+  assert.ok(line(3, { arrows: "in" }) < line(3, {}) - 5, "inside by hand: no arrow tails");
 });
 
 test("dual dimensions add inches in brackets; a dimension can opt in or out (FR-DRW-021)", async () => {
