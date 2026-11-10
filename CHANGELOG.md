@@ -5,6 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.432.0] - 2026-11-10
+
+### Fixed
+
+- **Slot mate ends (Leuenberger exam #81)**: a Slot mate now keeps the pin between the slot's rounded ends, like SolidWorks' free slot mate, instead of letting it run past them. The ends are found from the slot's two end cylinders; inside the slot the pin still slides freely, so the mate takes no extra freedom away.
+- **Touching boss joins the body (exam #82)**: a boss extrude standing on the body with a gap of sketch round-off (a few millionths of a millimetre, e.g. from a snapped edge) became a second solid body. When a plain join leaves the new material apart, it is joined again with a 0.00001 mm tolerance.
+- **Interference detection (exam #83)**: coincident faces, such as a shaft in a bore of its own size or a foot on a plate, no longer show as interferences of "0 mm³": an overlap thinner than 0.0001 mm on average counts as touching, and shows only with **Treat coincidence as interference**.
+
 ## [1.431.0] - 2026-11-10
 
 ### Added
@@ -2558,7 +2566,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.431.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.432.0...HEAD
+[1.432.0]: https://github.com/kothf/step-viewer/compare/v1.431.0...v1.432.0
 [1.431.0]: https://github.com/kothf/step-viewer/compare/v1.430.0...v1.431.0
 [1.430.0]: https://github.com/kothf/step-viewer/compare/v1.429.0...v1.430.0
 [1.429.0]: https://github.com/kothf/step-viewer/compare/v1.428.0...v1.429.0
