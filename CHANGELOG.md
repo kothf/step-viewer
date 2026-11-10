@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.398.0] - 2026-11-10
+
+### Added
+
+- **Recognize Fillets finds more chamfers (FR-FT-102)**: chamfers on round edges, such as the broken edge of a shaft end or a boss, and chamfers with two different distances now come back as Chamfer features too, with their distances, so they can be changed or deleted on an imported body.
+
 ## [1.397.0] - 2026-11-10
 
 ### Added
@@ -2335,7 +2341,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.397.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.398.0...HEAD
+[1.398.0]: https://github.com/kothf/step-viewer/compare/v1.397.0...v1.398.0
 [1.397.0]: https://github.com/kothf/step-viewer/compare/v1.396.0...v1.397.0
 [1.396.0]: https://github.com/kothf/step-viewer/compare/v1.395.0...v1.396.0
 [1.395.0]: https://github.com/kothf/step-viewer/compare/v1.394.0...v1.395.0
