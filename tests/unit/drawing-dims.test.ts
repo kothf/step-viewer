@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { MEdge, Projection, Topo, V3 } from "../../src/kernel/drawing";
-import { bendRows, cutCols, cutRows, weldRows, dimGeo, dimPrims, dimText, holeEdges, holeRows, viewAnnots, type AnnotCtx } from "../../src/drawing/annot";
+import { bendRows, cutCols, cutDesc, cutRows, edgeItem, stackItem, weldRows, dimGeo, dimPrims, dimText, holeEdges, holeRows, viewAnnots, type AnnotCtx } from "../../src/drawing/annot";
 import { placement } from "../../src/drawing/compose";
 import type { DimAnnot, DrawingView, GeoRef, Sheet } from "../../src/drawing/types";
 
@@ -159,4 +159,27 @@ test("cut list table: the cut list's items with their numbers, typed description
   const out = viewAnnots(sh, view, pl, ctx), tx = out.prims.filter(p => p.t === "t").map(p => (p as { s: string }).s);
   assert.ok(["Item", "Qty", "Description", "Angle 1", "SHS 40x40x3", "Plate 10 × 200 × 150"].every(s => tx.includes(s)), tx.join(" "));
   assert.deepEqual(viewAnnots(sh, view, pl, { ...ctx, cuts: [] }).dangling, ["c"]);
+});
+
+test("cut list balloons: a weldment part drawing numbers bodies by their cut list item (FR-FT-121)", () => {
+  const cuts = [
+    { item: 1, kind: "member" as const, desc: "SHS 40x40x3", length: 300, a1: 45, a2: 45, qty: 4, kg: 1 },
+    { item: 2, kind: "plate" as const, desc: "10", plate: [200, 150, 10] as [number, number, number], qty: 2, kg: 2 },
+  ];
+  const cutFaces = { "m:e1:side:0": 1, "m:e1:side:1": 1, "p:f0": 2 };
+  const edges = [line("m:e1:side:0|m:e1:side:1", [0, 0, 0], [40, 0, 0]), line("p:f0|p:f1", [0, 20, 0], [40, 20, 0]), line("x:a|x:b", [0, 30, 0], [40, 30, 0])];
+  const ctx: AnnotCtx = { topo: { edges, cyls: [] }, holes: [], cuts, cutFaces, items: [], box: null, dec: ".", label: (s, p) => s.replace(/\{(\w+)\}/g, (_m, k) => p?.[k] ?? "") };
+  assert.equal(edgeItem(edges[0].k, ctx), 1);
+  assert.equal(edgeItem(edges[1].k, ctx), 2, "either face of the edge names the body");
+  assert.equal(edgeItem(edges[2].k, ctx), null);
+  assert.equal(stackItem("cut:2", ctx), 2);
+  assert.equal(stackItem("cut:9", ctx), null, "an item the cut list no longer has");
+  assert.equal(cutDesc(cuts[1], ctx), "Plate 10 × 200 × 150");
+  const b = { id: "b", t: "balloon" as const, view: "v", ref: { e: edges[0].k, h: edges[0].m, p: "e" as const }, pos: [20, -20] as [number, number], stack: ["cut:2"], shape: "split" as const };
+  const sh = { ...sheet, views: [view], annots: [b] } as unknown as Sheet;
+  const out = viewAnnots(sh, view, pl, ctx), tx = out.prims.filter(p => p.t === "t").map(p => (p as { s: string }).s);
+  assert.ok(["1", "2", "4"].every(s => tx.includes(s)), `item numbers and the split quantities: ${tx.join(" ")}`);
+  assert.deepEqual(out.dangling, []);
+  const lost = { ...b, ref: { ...b.ref, e: edges[2].k }, stack: [] };
+  assert.deepEqual(viewAnnots({ ...sh, annots: [lost] } as unknown as Sheet, view, pl, ctx).dangling, ["b"], "an edge of no cut list body dangles");
 });
