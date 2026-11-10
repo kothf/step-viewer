@@ -10,6 +10,7 @@ import type { PartDoc } from "../model/types";
 import type { AsmDoc } from "../asm/types";
 import DrawingWorker from "./drawing.worker?worker";
 import { dirKey, type Align, type Stair } from "./views";
+import { FAST_EDGES } from "../kernel/drawing";
 
 /** An assembly's placed component (FR-DRW-030): its edges' face names start with `<id>@`. */
 export interface CompInfo { id: string; part: string; name: string; /** Its part's body materials, when its bodies have their own (FR-MAT-001). */ mats?: string[] }
@@ -167,8 +168,13 @@ export class DrawingKernel {
     this.slowest = 0;
     this.configs.clear();
     this.cfgLoading.clear();
-    this.loaded = this.start().then(() => this.call<ModelFacts>({ type: "load", ...src })).then(facts);
-    this.loadHelper(src);
+    // The helper only for models under FAST_EDGES: a second copy of a big assembly can run the tab out of memory
+    // (drawings exam: an engine tab crashed after Standard 3 views); big ones take the fast path anyway.
+    const gen = this.gen;
+    this.loaded = this.start().then(() => this.call<ModelFacts>({ type: "load", ...src })).then(facts).then(f => {
+      if (gen === this.gen) { if (f.topo.edges.length < FAST_EDGES) this.loadHelper(src); else this.stopHelper(); }
+      return f;
+    });
     return this.loaded;
   }
 

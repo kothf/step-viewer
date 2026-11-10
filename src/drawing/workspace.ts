@@ -637,7 +637,7 @@ export class DrawingWorkspace {
     const req = viewReq(sheet, v);
     const p = this.kernel.cache.get(req.key);
     if (!p && this.facts) {
-      const ask = () => this.kernel.request(req).then(() => this.renderSheet(), err => toast(t("A view could not be projected: {err}", { err: (err as Error).message }), true));
+      const ask = () => this.kernel.request(req).then(() => this.renderSheet(), err => toast(t("A view could not be projected: {err}", { err: kernelError(err) }), true));
       // With previews on, the exact requests go after this render's previews (the worker answers in order).
       if (this.previewsOn()) void Promise.resolve().then(ask); else void ask();
     }
@@ -666,7 +666,7 @@ export class DrawingWorkspace {
     const req = altReq(sheet, v);
     if (!req) return undefined;
     const p = this.kernel.cache.get(req.key);
-    if (!p && this.facts) void this.kernel.alt(req).then(() => this.renderSheet(), err => toast(t("A view could not be projected: {err}", { err: (err as Error).message }), true));
+    if (!p && this.facts) void this.kernel.alt(req).then(() => this.renderSheet(), err => toast(t("A view could not be projected: {err}", { err: kernelError(err) }), true));
     return p;
   }
 
@@ -3314,6 +3314,12 @@ export class DrawingWorkspace {
       section: (dir: [number, number, number], up: [number, number, number], p: [number, number, number], tag = "") => this.kernel.request({ view: { dir, up }, p, key: `debug|${tag}|${[dir, up, p].join("|")}` }).then(pr => ({ keys: pr.cutKey ?? [], mats: pr.cutMat ?? [] })),
     };
   }
+}
+
+/** A drawing worker error for a toast: a bare OCCT exception number becomes a sentence. */
+function kernelError(err: unknown): string {
+  const m = err instanceof Error ? err.message : String(err), n = /^OpenCASCADE error (\d+)$/.exec(m);
+  return n ? t("the geometry kernel failed (error {n}). The model may be too big for the browser's memory: close other tabs or draw fewer views.", { n: n[1] }) : m;
 }
 
 const STYLE_NAMES: Record<DisplayStyle, string> = { hlv: "Hidden lines visible", hlr: "Hidden lines removed", wire: "Wireframe", shaded: "Shaded", shadedEdges: "Shaded with edges" };

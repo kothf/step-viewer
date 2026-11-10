@@ -171,6 +171,13 @@ function namer(full: any, names?: string[]): (face: any) => string | null {
   return face => { const i = map.FindIndex(face); return i > 0 ? names?.[i - 1] ?? `f${i - 1}` : null; };
 }
 
+/** An OCCT exception (a number in wasm): its message when the build keeps it, else `OpenCASCADE error <n>` (the workspace explains that). */
+function occtMessage(err: number): string {
+  let m = "";
+  try { m = oc?.OCJS?.getStandard_FailureData?.(err)?.GetMessageString?.() ?? ""; } catch { /* no message */ }
+  return m ? `OpenCASCADE: ${m}` : `OpenCASCADE error ${err}`;
+}
+
 const post = (msg: unknown) => (self as DedicatedWorkerGlobalScope).postMessage(msg);
 
 self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
@@ -296,6 +303,6 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
       post({ id: r.id, ok: true, proj });
     }
   } catch (err) {
-    post({ id: r.id, ok: false, error: err instanceof Error ? err.message : typeof err === "number" ? `OpenCASCADE error ${err}` : String(err) });
+    post({ id: r.id, ok: false, error: err instanceof Error ? err.message : typeof err === "number" ? occtMessage(err) : String(err) });
   }
 };

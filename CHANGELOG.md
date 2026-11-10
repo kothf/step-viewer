@@ -9,11 +9,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Changed
 
-- **Drawings project two views at once**: on a computer with four or more threads a second drawing worker loads the same model and takes every other exact view or section, so Standard 3 views and other sheets with several views finish sooner. It stops after a minute without work; `?drwhelper=0` turns it off.
+- **Drawings project two views at once**: on a computer with four or more threads a second drawing worker loads the same model and takes every other exact view or section, so Standard 3 views and other sheets with several views finish sooner. Big models (from 1500 edges, which take the fast views) keep one worker, so a second copy cannot run the tab out of memory. It stops after a minute without work; `?drwhelper=0` turns it off.
 
 ### Fixed
 
 - **Fast views of big assemblies came out empty (drawings exam round three)**: an older engine copy got Standard 3 views with only centre lines, because the polygonal hidden-line pass returned no lines. A fast view without visible lines now tries again on a fresh, coarser mesh and then falls back to the exact hidden-line removal, and the console says why.
+- A view that OpenCASCADE fails on no longer shows a bare "OpenCASCADE error 24": the toast gives the kernel's own message when it has one, else says the model may be too big for the browser's memory.
 
 ## [1.474.0] - 2026-11-10
 
