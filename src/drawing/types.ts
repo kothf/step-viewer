@@ -146,6 +146,8 @@ export interface DimAnnot {
   horiz?: boolean;
   /** Radius dimensions: foreshortened (the dimension line stops short of the centre with a jog), for a centre far away or off the sheet. */
   fore?: boolean;
+  /** Diameter dimensions: shown as a linear dimension across the circle, measured horizontally or vertically on the sheet (extension lines from the rim). */
+  lin?: "h" | "v";
 }
 
 /** A note: on the sheet (sheet mm) or on a view (its model axes, so it moves with the view), with an optional leader to the model. */

@@ -4910,6 +4910,20 @@ try {
       fore = { j0, j1, stored, r8: txR.includes("R8"), back: (await annots()).some(a => a.k === "dia" && !a.fore) && !(await dp.$('#drw .drw-props [data-d="fore"]')) };
     }
     check(fore && fore.j1 === fore.j0 + 1 && fore.stored && fore.r8 && fore.back, `drawing: a radius dimension is foreshortened with a jog and goes back to a diameter (${selR}; ${JSON.stringify(fore)})`);
+    // A diameter displayed as a linear dimension (the Ø16 is still selected), then back.
+    {
+      const has = !!(await dp.$('#drw .drw-props [data-d="dlin"]'));
+      const count = () => dp.evaluate(() => window.__sv.drw.prims().filter(q => q.t === "l" && q.layer === "ANNOT").length);
+      let r = null;
+      if (has) {
+        const n0 = await count();
+        await dp.selectOption('#drw .drw-props [data-d="dlin"]', "h");
+        const n1 = await count(), stored = (await annots()).some(a => a.k === "dia" && a.lin === "h"), txD = await texts();
+        await dp.selectOption('#drw .drw-props [data-d="dlin"]', "");
+        r = { n0, n1, stored, dia: txD.includes("Ø16"), back: await count() === n0 && !(await annots()).some(a => a.lin) };
+      }
+      check(r && r.n1 > r.n0 && r.stored && r.dia && r.back, `drawing: a diameter is displayed as a linear dimension with extension lines and goes back (${JSON.stringify(r)})`);
+    }
     // Back to the 100, which the next checks work on.
     [x, y] = await at(front.id, 0, 40.5);
     await dp.mouse.click(x, y);

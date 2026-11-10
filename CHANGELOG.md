@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.433.0] - 2026-11-10
+
+### Added
+
+- **Diameter as a linear dimension (FR-DRW-021)**: a drawing's diameter dimension has a **Display** choice: Diameter, or a linear dimension across the circle, horizontal or vertical, with extension lines from the rim and the Ø kept.
+
 ## [1.432.0] - 2026-11-10
 
 ### Added
@@ -2564,7 +2570,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.432.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.433.0...HEAD
+[1.433.0]: https://github.com/kothf/step-viewer/compare/v1.432.0...v1.433.0
 [1.432.0]: https://github.com/kothf/step-viewer/compare/v1.431.0...v1.432.0
 [1.431.0]: https://github.com/kothf/step-viewer/compare/v1.430.0...v1.431.0
 [1.430.0]: https://github.com/kothf/step-viewer/compare/v1.429.0...v1.430.0
