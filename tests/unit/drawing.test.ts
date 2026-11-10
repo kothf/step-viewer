@@ -1116,6 +1116,14 @@ test("hole callouts read from the geometry: count, counterbore, countersink, bli
   assert.deepEqual(holeText(at(10, 15, 5.5), ctx), ["4× Ø6.6 THRU", "⌴Ø11 ↧6.4"], "the counterbore's own circle gives the same callout");
   assert.deepEqual(holeText(at(0, -15, 6.72), ctx), ["2× Ø6.6 THRU", "⌵Ø13.44 × 90°"]);
   assert.deepEqual(holeText(at(30, -15, 2.5), ctx), ["Ø5 ↧12"]);
+  // Callouts follow the drawing's default decimals and dual dimensions; angles stay as they are.
+  const { useStyle: styleFor } = await import("../../src/drawing/annot");
+  try {
+    styleFor({ lin: 1, dual: "in", dualPrec: 2 });
+    assert.deepEqual(holeText(at(30, -15, 2.5), ctx), ["Ø5.0 [0.20] ↧12.0 [0.47]"]);
+    assert.deepEqual(holeText(at(0, -15, 6.72), ctx), ["2× Ø6.6 [0.26] THRU", "⌵Ø13.4 [0.53] × 90°"]);
+  } finally { styleFor(undefined); }
+  assert.deepEqual(holeText(at(30, -15, 2.5), ctx), ["Ø5 ↧12"]);
   assert.deepEqual(holeText(at(-30, 15, 3.3), ctx, false), ["Ø6.6 THRU", "⌴Ø11 ↧6.4"], "no count in a hole table");
   assert.deepEqual(holeText(at(-30, 15, 3.3), { ...ctx, dec: ",", label: (s: string) => (s === "THRU" ? "СКВОЗН." : s) }), ["4× Ø6,6 СКВОЗН.", "⌴Ø11 ↧6,4"]);
   // Entered from the bottom, a counterbore is a different hole: holes count only with the same way in.

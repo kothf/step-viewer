@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.387.0] - 2026-11-10
+
+### Changed
+- Hole callouts in drawings follow the drafting style (FR-DRW-022): their sizes take the drawing's default decimals and, with dual dimensions on, show inches in brackets, as in `Ø5.0 [0.20] ↧12.0 [0.47]`. Angles and thread sizes stay as they are.
+
 ## [1.386.0] - 2026-11-10
 
 ### Added
@@ -2273,7 +2278,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.386.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.387.0...HEAD
+[1.387.0]: https://github.com/kothf/step-viewer/compare/v1.386.0...v1.387.0
 [1.386.0]: https://github.com/kothf/step-viewer/compare/v1.385.0...v1.386.0
 [1.385.0]: https://github.com/kothf/step-viewer/compare/v1.384.0...v1.385.0
 [1.384.0]: https://github.com/kothf/step-viewer/compare/v1.383.0...v1.384.0
