@@ -178,7 +178,8 @@ function occtMessage(err: number): string {
   return m ? `OpenCASCADE: ${m}` : `OpenCASCADE error ${err}`;
 }
 
-const post = (msg: unknown) => (self as DedicatedWorkerGlobalScope).postMessage(msg);
+/** Every projection reply carries the heap size, so the client can start a worker over before it runs out. */
+const post = (msg: Record<string, unknown>) => (self as DedicatedWorkerGlobalScope).postMessage(msg.proj ? { ...msg, heap: oc?.HEAP8?.length } : msg);
 
 self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
   const r = e.data;

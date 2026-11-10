@@ -12,7 +12,7 @@ import type { AsmDoc } from "../asm/types";
 import { BALLOON_R, BOM_COLS, BOM_MAT_COL, autoBalloons, bomMats, compOfKey, sheetBom, subsOf, type BalloonItems, type Bom } from "./bom";
 import { t, onLangChange, lang } from "../i18n";
 import { toast, confirmModal } from "../ui";
-import { DrawingKernel, type ModelFacts } from "./client";
+import { OUT_OF_MEMORY, DrawingKernel, type ModelFacts } from "./client";
 import { BREAK_GAP, composeSheet, fromSheet, HATCH_PATTERNS, hatchOf, inPoly, nextLetter, polyBox, placement, toSheet, viewBody, viewPrims, viewRect, type Placement } from "./compose";
 import { DrawingStore, newSheet, uid } from "./doc";
 import { DRAWING_EXT, packDrawing, unpackDrawing } from "./file";
@@ -215,6 +215,7 @@ export class DrawingWorkspace {
 
   constructor(private host: DrawingHost) {
     this.kernel = new DrawingKernel(host.occtBase);
+    this.kernel.onRestart = () => this.renderStatus();
     this.el = document.createElement("div");
     this.el.id = "drw";
     this.el.className = "drw";
@@ -623,6 +624,8 @@ export class DrawingWorkspace {
     else if (m.kind === "surf") s = m.ref ? t("Click on the edge to put the symbol there, or away from it for a leader.") : t("Click the edge of the surface, or an empty place on the sheet.");
     else if (m.kind === "aux") s = m.line ? t("Move the cursor to the side of the edge and click to place the auxiliary view. Esc cancels.") : t("Click a straight edge of a view.");
     else if (this.stale) s = t("The model changed: the views are out of date. Updating…");
+    else if (this.projecting.size && this.kernel.restarting) s = t("Freeing the drawing kernel's memory, then projecting… {n} to go", { n: this.projecting.size });
+    else if (this.projecting.size) s = t("Projecting the views… {n} to go", { n: this.projecting.size });
     else s = t("Drag a view to move it. Double-click the title block to fill it in.");
     st.textContent = s;
     st.classList.toggle("warn", this.stale && !this.loading);
@@ -649,7 +652,7 @@ export class DrawingWorkspace {
     const req = viewReq(sheet, v);
     const p = this.kernel.cache.get(req.key);
     if (!p && this.facts) {
-      const ask = () => this.kernel.request(req).then(() => this.renderSheet(), err => toast(t("A view could not be projected: {err}", { err: kernelError(err) }), true));
+      const ask = () => this.track(req.key, this.kernel.request(req)).then(() => this.renderSheet(), err => toast(t("A view could not be projected: {err}", { err: kernelError(err) }), true));
       // With previews on, the exact requests go after this render's previews (the worker answers in order).
       if (this.previewsOn()) void Promise.resolve().then(ask); else void ask();
     }
@@ -658,6 +661,18 @@ export class DrawingWorkspace {
 
   /** How many times a view was drawn from its quick preview (for the smoke test). */
   private previewsShown = 0;
+  /** Exact projections asked for and not back yet, by key: the status line says they are coming. */
+  private projecting = new Set<string>();
+
+  private track<T>(key: string, p: Promise<T>): Promise<T> {
+    if (!this.projecting.has(key)) {
+      this.projecting.add(key);
+      this.renderStatus();
+      const done = () => { if (this.projecting.delete(key)) this.renderStatus(); };
+      p.then(done, done);
+    }
+    return p;
+  }
 
   /** Slow models (many edges, or an exact view that took long) get quick previews first (FR-DRW-016). */
   private previewsOn(): boolean {
@@ -678,7 +693,7 @@ export class DrawingWorkspace {
     const req = altReq(sheet, v);
     if (!req) return undefined;
     const p = this.kernel.cache.get(req.key);
-    if (!p && this.facts) void this.kernel.alt(req).then(() => this.renderSheet(), err => toast(t("A view could not be projected: {err}", { err: kernelError(err) }), true));
+    if (!p && this.facts) void this.track(req.key, this.kernel.alt(req)).then(() => this.renderSheet(), err => toast(t("A view could not be projected: {err}", { err: kernelError(err) }), true));
     return p;
   }
 
@@ -3346,6 +3361,7 @@ export class DrawingWorkspace {
 /** A drawing worker error for a toast: a bare OCCT exception number becomes a sentence. */
 function kernelError(err: unknown): string {
   const m = err instanceof Error ? err.message : String(err), n = /^OpenCASCADE error (\d+)$/.exec(m);
+  if (OUT_OF_MEMORY.test(m)) return t("not enough memory for this view. Close other tabs, or draw the big assembly with fewer views per sheet.");
   return n ? t("the geometry kernel failed (error {n}). The model may be too big for the browser's memory: close other tabs or draw fewer views.", { n: n[1] }) : m;
 }
 
