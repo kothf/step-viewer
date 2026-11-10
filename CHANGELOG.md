@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.494.0] - 2026-11-11
+
+### Changed
+
+- Section views of a big model show a quick preview with their cut faces hatched as soon as the cut is made, instead of an empty frame until the exact lines are ready (the engine assembly's sections: about 2 to 3 s instead of 5 to 9 s). The exact lines that follow reuse the same cut, so they come at most about half a second later than before.
+
 ## [1.493.0] - 2026-11-10
 
 ### Added
@@ -3040,7 +3046,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.493.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.494.0...HEAD
+[1.494.0]: https://github.com/kothf/step-viewer/compare/v1.493.0...v1.494.0
 [1.493.0]: https://github.com/kothf/step-viewer/compare/v1.492.0...v1.493.0
 [1.492.0]: https://github.com/kothf/step-viewer/compare/v1.491.0...v1.492.0
 [1.491.0]: https://github.com/kothf/step-viewer/compare/v1.490.0...v1.491.0

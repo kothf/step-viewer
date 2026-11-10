@@ -734,7 +734,23 @@ export function cutSolids(oc: any, shape: any, solids: any[], box: any, half: { 
  * spanned by `e` and `m`, run through the model square to that plane; values of 1e8 or more stand for "beyond the
  * model". Cut faces lying on any of `planes` (n · p) are hatched. `keep` is drawn whole (components left uncut).
  */
-export function section(oc: any, shape: any, view: ViewDir, p0: V3, tol = 0.02, poly?: number[], opts: { stair?: { o: V3; e: V3; m: V3; pts: number[]; planes: number[] }; keep?: any; namer?: (face: any) => string | null; fast?: number } = {}): Projection {
+export function section(oc: any, shape: any, view: ViewDir, p0: V3, tol = 0.02, poly?: number[], opts: { stair?: SectionStair; keep?: any; namer?: (face: any) => string | null; fast?: number } = {}): Projection {
+  return sectionFinish(oc, sectionCut(oc, shape, view, p0, poly, opts), view, tol, opts);
+}
+
+export interface SectionStair { o: V3; e: V3; m: V3; pts: number[]; planes: number[] }
+
+/**
+ * A section's cut (the slow Boolean part), kept so a quick preview and the exact lines can share it: `drawn` = what
+ * is drawn (cut pieces + `keep`), `cut`/`cutOf` = the cut faces' loops in view axes and the input solid of each.
+ */
+export interface SectionCut {
+  drawn: any; rest: any; parts: CutPart[]; cut: number[][]; cutOf: number[]; capEdges: any;
+  st?: SectionStair; n: V3; x: V3; y: V3;
+}
+
+/** The cut of a section (see `section`), with the plane SECTION_NUDGE towards the viewer. Free it with `freeSection`. */
+export function sectionCut(oc: any, shape: any, view: ViewDir, p0: V3, poly?: number[], opts: { stair?: SectionStair; keep?: any } = {}): SectionCut {
   const { x, y, n } = viewAxes(view);
   const [lo, hi] = shapeBox(oc, shape);
   const L = 2 * Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) + 10;
@@ -798,7 +814,6 @@ export function section(oc: any, shape: any, view: ViewDir, p0: V3, tol = 0.02, 
     b.MakeCompound(c); b.Add(c, rest); b.Add(c, opts.keep);
     drawn = c;
   }
-  const proj = projectAuto(oc, drawn, view, tol, opts.fast);
   // Faces on the cutting plane: their wires, flattened into the view's axes.
   const cut: number[][] = [], cutOf: number[] = [];
   const A = oc.TopAbs_ShapeEnum;
@@ -812,7 +827,7 @@ export function section(oc: any, shape: any, view: ViewDir, p0: V3, tol = 0.02, 
     const ld = lp.X() * N[0] + lp.Y() * N[1] + lp.Z() * N[2];
     if (!(st ? st.planes : [d0]).some(d => Math.abs(ld - d) <= 1e-5)) continue;
     const owner = owned.find(o => o.f.IsSame(f))?.i ?? -1;
-    if (opts.namer) oc.TopExp.MapShapes_1(f, A.TopAbs_EDGE, capEdges);
+    oc.TopExp.MapShapes_1(f, A.TopAbs_EDGE, capEdges);
     for (const wx = new oc.TopExp_Explorer_2(f, A.TopAbs_WIRE, A.TopAbs_SHAPE); wx.More(); wx.Next()) {
       const loop: number[] = [];
       for (const it = new oc.BRepTools_WireExplorer_2(oc.TopoDS.Wire_1(wx.Current())); it.More(); it.Next()) {
@@ -829,11 +844,35 @@ export function section(oc: any, shape: any, view: ViewDir, p0: V3, tol = 0.02, 
       if (loop.length >= 6) { cut.push(loop); cutOf.push(owner); }
     }
   }
+  return { drawn, rest, parts: cuts.parts, cut, cutOf, capEdges, st, n, x, y };
+}
+
+/** The exact lines of a cut section (projected like any view), its cut edges named by `namer`; frees the cut. */
+export function sectionFinish(oc: any, sc: SectionCut, view: ViewDir, tol = 0.02, opts: { namer?: (face: any) => string | null; fast?: number } = {}): Projection {
+  const { st, n, x, y, cut, cutOf } = sc;
+  const proj = projectAuto(oc, sc.drawn, view, tol, opts.fast);
   if (st) dropSteps(proj, st, x, y, cut);
-  const cutEdges = opts.namer ? sectionEdges(oc, cuts.parts, capEdges, opts.namer, st ? st.m.map(v => v * SECTION_NUDGE) as V3 : [n[0] * SECTION_NUDGE, n[1] * SECTION_NUDGE, n[2] * SECTION_NUDGE]) : undefined;
-  capEdges.delete();
-  for (const pc of cuts.parts) pc.cutter?.delete();
+  const cutEdges = opts.namer ? sectionEdges(oc, sc.parts, sc.capEdges, opts.namer, st ? st.m.map(v => v * SECTION_NUDGE) as V3 : [n[0] * SECTION_NUDGE, n[1] * SECTION_NUDGE, n[2] * SECTION_NUDGE]) : undefined;
+  freeSection(sc);
   return cutEdges ? { ...proj, cut, cutOf, cutEdges } : { ...proj, cut, cutOf };
+}
+
+/**
+ * A quick preview of a cut section (FR-DRW-016): the polygonal HLR of the cut shape at `lin` chord error, with the
+ * same cut loops, so the view shows its outline and hatching while the exact lines are on the way. Keeps the cut.
+ */
+export function sectionPreview(oc: any, sc: SectionCut, view: ViewDir, lin: number): Projection {
+  const proj = projectPoly(oc, sc.drawn, view, lin);
+  if (sc.st) dropSteps(proj, sc.st, sc.x, sc.y, sc.cut);
+  return { ...proj, cut: sc.cut, cutOf: sc.cutOf };
+}
+
+/** Frees a section's Booleans (once). */
+export function freeSection(sc: SectionCut) {
+  if (!sc.capEdges) return;
+  sc.capEdges.delete();
+  sc.capEdges = null;
+  for (const pc of sc.parts) pc.cutter?.delete();
 }
 
 /**

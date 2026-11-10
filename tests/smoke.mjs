@@ -13267,6 +13267,21 @@ try {
     const pv = await dp.evaluate(() => window.__sv.drw.previews());
     const exact = await dp.evaluate(() => window.__sv.drw.doc().sheets[0].views.every(v => { const p = window.__sv.drw.proj(v.id); return p && !p.preview && p.vis.length > 0; }));
     check(pv.made >= 3 && pv.shown >= 1 && pv.left === 0 && exact, `drawing: slow model views show a quick preview first, then the exact lines (${JSON.stringify(pv)}, exact ${exact})`);
+    // 1.494: a section view gets a quick preview too (its cut, projected polygonally, with the cut loops hatched).
+    const front = await dp.evaluate(() => JSON.parse(JSON.stringify(window.__sv.drw.doc().sheets[0].views[0])));
+    const at = (u, w) => dp.evaluate(([a, b]) => { const p = window.__sv.drw.placement(window.__sv.drw.doc().sheets[0].views[0].id); return window.__sv.drw.sheetPt(p.x + (a - p.uc) * p.s, p.y + (b - p.vc) * p.s); }, [u, w]);
+    await dp.click('#drw [data-a="section"]'); await dp.click('#drw [data-cut="v"]');
+    let [sx, sy] = await at(10, 5);
+    await dp.mouse.move(sx - 5, sy); await dp.mouse.move(sx, sy);
+    await dp.mouse.click(sx, sy);
+    [sx, sy] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [front.x + (front.x > 200 ? -140 : 140), front.y]);
+    await dp.mouse.move(sx + 5, sy); await dp.mouse.move(sx, sy);
+    await dp.mouse.click(sx, sy);
+    await dp.waitForFunction(() => window.__sv.drw.doc().sheets[0].views.some(v => v.kind === "section") && window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 120000 });
+    await dp.waitForTimeout(200);
+    const spv = await dp.evaluate(() => window.__sv.drw.previews());
+    const sexact = await dp.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views.find(x => x.kind === "section"), p = window.__sv.drw.proj(v.id); return !!p && p.vis.length > 0 && (p.cut?.length ?? 0) > 0; });
+    check(spv.sections >= 1 && spv.left === 0 && sexact, `drawing: a section view shows a quick preview with its cut first, then the exact lines (${JSON.stringify(spv)}, exact ${sexact})`);
     await ctx.close();
   }
 

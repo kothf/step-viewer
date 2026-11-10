@@ -700,10 +700,10 @@ export class DrawingWorkspace {
     return !!this.facts && (this.facts.topo.edges.length >= PREVIEW_EDGES || this.kernel.slowest > PREVIEW_MS);
   }
 
-  /** A view's quick polygonal preview while its exact lines are on the way; none for sections. */
+  /** A view's quick polygonal preview while its exact lines are on the way (a section's with its cut and hatching). */
   private previewFor(sheet: Sheet, v: DrawingView): Projection | undefined {
     const req = viewReq(sheet, v);
-    if (req.p || !this.previewsOn() || this.kernel.cache.has(req.key)) return undefined;
+    if (!this.previewsOn() || this.kernel.cache.has(req.key)) return undefined;
     const have = this.kernel.previews.get(req.key);
     if (!have && !this.previewAsked.has(req.key)) {
       this.previewAsked.add(req.key);
@@ -3408,7 +3408,7 @@ export class DrawingWorkspace {
       mode: () => this.mode.kind,
       fields: () => (this.store ? this.fields() : null),
       helper: () => this.kernel.helperState(),
-      previews: () => ({ shown: this.previewsShown, made: this.kernel.previewsMade, left: this.svg.querySelectorAll(".drw-preview").length }),
+      previews: () => ({ shown: this.previewsShown, made: this.kernel.previewsMade, sections: this.kernel.sectionPreviewsMade, left: this.svg.querySelectorAll(".drw-preview").length }),
       renders: () => this.sheetRenders,
       drop: () => this.dropGone(true),
       holes: () => (this.facts?.topo?.holes ?? []).map(h => ({ segs: h.segs.length, open: h.open })),

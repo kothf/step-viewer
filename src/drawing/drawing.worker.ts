@@ -4,7 +4,8 @@
 // document through the Modeller; STEP / IGES / BREP files are read as they are.
 import { FLAT_CONFIG, type Align, type Stair } from "./views";
 import { flatBends, flatPatternDoc, flatToXY } from "../sheetmetal/sheet";
-import { geometryDiff, projectAuto, FAST_EDGES, projectPoly, readShape, shapeBin, readBin, childShapes, alignedShape, section, shadeTris, shapeInfo, topology, type V3, type ViewDir } from "../kernel/drawing";
+import type { Projection, SectionCut } from "../kernel/drawing";
+import { geometryDiff, projectAuto, FAST_EDGES, projectPoly, readShape, shapeBin, readBin, childShapes, alignedShape, sectionCut, sectionFinish, sectionPreview, freeSection, shapeBox, shadeTris, shapeInfo, topology, type V3, type ViewDir } from "../kernel/drawing";
 import { Assembler } from "../kernel/assembly";
 import { Modeller } from "../kernel/model";
 import type { AsmDoc } from "../asm/types";
@@ -23,6 +24,8 @@ export type DrawingRequest =
   /** A quick polygonal preview of a view (FR-DRW-016) while the exact one is computed. */
   | { id: number; type: "preview"; view: ViewDir; cfg?: string; only?: string[] }
   | { id: number; type: "section"; view: ViewDir; p: V3; poly?: number[]; stair?: Stair; align?: Align; exclude?: string[]; cfg?: string; only?: string[] }
+  /** A section's quick preview: its cut, projected polygonally; the cut is kept for the exact request that follows. */
+  | { id: number; type: "secpreview"; view: ViewDir; p: V3; poly?: number[]; stair?: Stair; align?: Align; exclude?: string[]; cfg?: string; only?: string[] }
   /** Another configuration of the loaded part (FR-DRW-010): built once, its facts returned like a load's. */
   | { id: number; type: "config"; name: string }
   | { id: number; type: "alt"; view: ViewDir; moves: { comp: string; tf: number[] }[] }
@@ -211,6 +214,15 @@ function occtMessage(err: number): string {
 }
 
 /** Every projection reply carries the heap size, so the client can start a worker over before it runs out. */
+/** A section cut made for a preview, kept for its exact request (the worker answers in order). */
+let stash: { key: string; sc: SectionCut } | null = null;
+
+/** A preview's mesh chord error: 1/300 of the shape's size (the preview only has to look right). */
+function previewLin(sh: any): number {
+  const [lo, hi] = shapeBox(oc, sh);
+  return Math.max(0.01, Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 300);
+}
+
 const post = (msg: Record<string, unknown>) => (self as DedicatedWorkerGlobalScope).postMessage(msg.proj ? { ...msg, heap: oc?.HEAP8?.length } : msg);
 
 self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
@@ -225,6 +237,7 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
       if (r.fast !== undefined) fastEdges = r.fast;
       post({ id: r.id, ok: true });
     } else if (r.type === "load") {
+      if (stash) { freeSection(stash.sc); stash = null; }
       placedShapes = [];
       snapMeshed = false;
       modelMat = null;
@@ -295,9 +308,7 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
     } else if (r.type === "preview") {
       if (!shape) throw new Error("No model loaded");
       const sh = r.only?.length && placedShapes.length ? onlyOf(r.only).shape : shapeOf(r.cfg).shape;
-      // Mesh chord error: 1/300 of the model's size (the preview only has to look right).
-      const [lo, hi] = shapeInfo(oc, sh).box;
-      post({ id: r.id, ok: true, proj: projectPoly(oc, sh, r.view, Math.max(0.01, Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 300)) });
+      post({ id: r.id, ok: true, proj: projectPoly(oc, sh, r.view, previewLin(sh)) });
     } else if (r.type === "diff") {
       if (!oc) throw new Error("Kernel not started");
       post({ id: r.id, ok: true, diff: geometryDiff(oc, solidOf(r.a), solidOf(r.b)) });
@@ -313,8 +324,12 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
         for (const pc of placedShapes) if (pc.id === mv.comp || pc.id.startsWith(`${mv.comp}/`)) { b.Add(comp, pc.shape.Moved(loc, false)); n++; }
       }
       post({ id: r.id, ok: true, proj: n ? projectAuto(oc, comp, r.view, 0.02, fastEdges) : { vis: [], hid: [], box: [0, 0, 0, 0], ms: 0 } });
-    } else if (r.type === "section") {
+    } else if (r.type === "section" || r.type === "secpreview") {
       if (!shape) throw new Error("No model loaded");
+      // A preview's cut is kept for the exact request of the same section, which comes next (FR-DRW-016).
+      const skey = JSON.stringify([r.view, r.p, r.poly, r.stair, r.align, r.exclude, r.cfg, r.only]);
+      const stashed = stash?.key === skey ? stash : null;
+      if (stash && !stashed) { freeSection(stash.sc); stash = null; }
       const own0 = shapeOf(r.cfg), modelMat = own0.mat;
       // Components left whole (FR-DRW-012) are drawn but not cut; a top-level id takes its sub-components along.
       const only = r.only?.length && placedShapes.length ? onlyOf(r.only) : null, base = only ? only.list : placedShapes;
@@ -326,7 +341,7 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
         let na = 0, nk = 0;
         for (const pc of base) { if (out(pc.id)) { b.Add(k, pc.shape); nk++; } else { b.Add(a, pc.shape); na++; } }
         if (nk) {
-          if (!na) { post({ id: r.id, ok: true, proj: { ...projectAuto(oc, k, r.view, 0.02, fastEdges), cut: [] } }); return; }
+          if (!na) { post({ id: r.id, ok: true, proj: { ...(r.type === "secpreview" ? projectPoly(oc, k, r.view, previewLin(k)) : projectAuto(oc, k, r.view, 0.02, fastEdges)), cut: [] } }); return; }
           cutShape = a; keep = k; cutList = base.filter(pc => !out(pc.id));
         }
       }
@@ -339,7 +354,15 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
         cutShape = c;
         if (keep) keep = alignedShape(oc, keep, r.align);
       }
-      const proj = section(oc, cutShape, r.view, r.p, 0.02, r.poly, { stair: r.stair, keep, namer: namer(own0.shape, own0.names), fast: fastEdges });
+      const sc = stashed?.sc ?? sectionCut(oc, cutShape, r.view, r.p, r.poly, { stair: r.stair, keep });
+      let proj: Projection;
+      if (r.type === "secpreview") {
+        stash = { key: skey, sc };
+        proj = sectionPreview(oc, sc, r.view, previewLin(sc.drawn));
+      } else {
+        stash = null;
+        proj = sectionFinish(oc, sc, r.view, 0.02, { namer: namer(own0.shape, own0.names), fast: fastEdges });
+      }
       const own = solidOwners(cutList);
       proj.cutKey = (proj.cutOf ?? []).map(i => own[i]?.key ?? "");
       proj.cutMat = (proj.cutOf ?? []).map(i => own[i]?.mat ?? modelMat);
