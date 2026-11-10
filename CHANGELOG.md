@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.480.0] - 2026-11-10
+
+### Fixed
+
+- Big assembly drawings use far less memory per view: each fast view of the engine assembly kept about 100 MB of the drawing kernel's memory, now about 40 MB, so the kernel has to restart (the "Freeing the drawing kernel's memory" pause) less than half as often. The polygonal hidden-line step no longer leaves its edge readers alive and reuses one OpenCASCADE reader, whose memory was never given back when it was deleted.
+
 ## [1.479.0] - 2026-11-10
 
 ### Fixed (drawings exam, round 3)
@@ -2939,7 +2945,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.479.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.480.0...HEAD
+[1.480.0]: https://github.com/kothf/step-viewer/compare/v1.479.0...v1.480.0
 [1.479.0]: https://github.com/kothf/step-viewer/compare/v1.478.0...v1.479.0
 [1.478.0]: https://github.com/kothf/step-viewer/compare/v1.477.0...v1.478.0
 [1.477.0]: https://github.com/kothf/step-viewer/compare/v1.476.0...v1.477.0
