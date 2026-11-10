@@ -1788,7 +1788,7 @@ export class AsmController {
       // Components are named after their file, as in SolidWorks.
       const base = f.name.replace(/\.[^.]+$/, "") || pd.name;
       // The same document again shares its source (FR-ASM-005).
-      const key = this.sourceKey(pd, asm);
+      const key = this.sourceKey(pd, asm, f.name);
       // Numbered by the file name, so the first insert of a file is <1> even when it shares a part with another file (exam #70).
       const n = this.doc!.components.filter(c => c.name.startsWith(`${base}<`)).length + 1;
       const id = uid("c_");
@@ -1854,10 +1854,13 @@ export class AsmController {
     finally { $("#asm-busy").hidden = true; }
   }
 
-  /** The key of an embedded source with this content, or a new one (FR-ASM-005). */
-  private sourceKey(pd: PartDoc, asm?: AsmDoc) {
+  /**
+   * The key of an embedded source with this content, or a new one (FR-ASM-005). With `file`, only a source read from a file
+   * of that name is shared: another file is another part even when its content is the same, as in SolidWorks (exam #87).
+   */
+  private sourceKey(pd: PartDoc, asm?: AsmDoc, file?: string) {
     const json = JSON.stringify(asm ?? pd);
-    return Object.entries(this.doc!.parts).find(([, p]) => JSON.stringify(p.asm ?? p.doc) === json && !!p.asm === !!asm)?.[0] ?? uid(asm ? "s_" : "p_");
+    return Object.entries(this.doc!.parts).find(([, p]) => JSON.stringify(p.asm ?? p.doc) === json && !!p.asm === !!asm && (file === undefined || p.file === file))?.[0] ?? uid(asm ? "s_" : "p_");
   }
 
   /** Replace component (FR-ASM-008): another file in its place; mates find their faces by name where they can. */
@@ -1865,7 +1868,7 @@ export class AsmController {
     const run = async (f: File) => {
       const src = await this.readSource(f);
       if (!src || !this.doc) return;
-      const key = this.sourceKey(src.pd, src.asm), base = f.name.replace(/\.[^.]+$/, "") || src.pd.name;
+      const key = this.sourceKey(src.pd, src.asm, f.name), base = f.name.replace(/\.[^.]+$/, "") || src.pd.name;
       this.change(d => {
         d.parts[key] ??= { name: base, file: f.name, doc: src.pd, ...(src.asm ? { asm: src.asm } : {}) };
         const c = d.components.find(x => x.id === id);
@@ -1874,7 +1877,11 @@ export class AsmController {
         c.name = `${base}<${d.components.filter(x => x.part === key).length}>`;
         for (const k of Object.keys(d.parts)) if (!partUsed(d, k)) delete d.parts[k];
       });
-      const lost = (this.doc.mates ?? []).filter(m => (m.a.comp === id || m.b.comp === id) && this.solved?.missing.includes(m.id)).length;
+      // The new part's faces are known once it is built: count the lost mates then, not against the old faces (exam #88).
+      do await this.idle; while (this.building);
+      if (!this.doc) return;
+      const missing = this.solveDoc(this.doc).missing;
+      const lost = (this.doc.mates ?? []).filter(m => (m.a.comp === id || m.b.comp === id) && missing.includes(m.id)).length;
       if (lost) toast(t("{n} mate could not find its face on the new component.|{n} mates could not find their faces on the new component.", { n: lost }), "warn");
     };
     if (file) { void run(file); return; }
