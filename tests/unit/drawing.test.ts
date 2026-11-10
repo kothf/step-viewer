@@ -373,6 +373,12 @@ test("GD&T, datums, surface finish, tables, GOST title block, dangling annotatio
   // GOST dates read DD.MM.YY and fit the 10 mm date cell (drawings exam round 2: 2026-11-10 ran over it).
   const dated = formatPrims(g, { ...fields, date: "2026-11-10" }, k => k).filter(p => p.t === "t" && (p as { s: string }).s === "10.11.26");
   assert.equal(dated.length, 1);
+  {
+    // …and stay inside it (round 3: at the 1.8 mm floor "10.11.26" was 11 mm wide in the 10 mm cell).
+    const { textWidth } = await import("../../src/drawing/textWidth");
+    const d = dated[0] as { x: number; h: number; s: string };
+    assert.ok(textWidth(d.s, d.h) <= 9.5, `${textWidth(d.s, d.h)} mm`);
+  }
   assert.ok(fp.every(p => p.t !== "t" || p.x >= 230), "no zone letters on a GOST frame");
   // A datum whose edge is gone is reported and drawn as its framed letter only; sheet-level tables are drawn.
   const sh = { ...newSheet(1), views: [{ id: "v", name: "v", orient: "front" as const, x: 0, y: 0 }], annots: [
@@ -1671,4 +1677,29 @@ test("fast hidden-line views keep exact lines and end-on circles", async () => {
       assert.ok(on, `line ${s.p} on an exact line`);
     }
   }
+});
+
+test("Standard 3 views again: placed clear of the views on the sheet at its scale, or nowhere (drawings exam #27)", async () => {
+  const { std3Layout } = await import("../../src/drawing/views");
+  const area: [number, number, number, number] = [24, 14, 406, 283], tb: [number, number, number, number] = [226, 10, 410, 54];
+  const hit = (a: number[], b: number[]) => a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];
+  // A small block (40 × 30 × 20) at 1:1, its first set top left.
+  const first: [number, number, number, number][] = [[40, 200, 80, 220], [40, 245, 80, 275], [105, 200, 135, 220]];
+  const lay = std3Layout(40, 30, 20, area, tb, false, 25, 8, first, [[1, 1]])!;
+  assert.deepEqual(lay.scale, [1, 1]);
+  const { gx, gy } = lay, fy = gy + 30 + 25;
+  for (const r of [[gx, fy, gx + 40, fy + 20], [gx, gy, gx + 40, gy + 30], [gx + 65, fy, gx + 95, fy + 20]])
+    for (const a of first) assert.ok(!hit(r, a), `${r} over ${a}`);
+  // The flange block at 2:1 filling the sheet: no room for a second set at 2:1.
+  assert.equal(std3Layout(80, 60, 35, area, tb, false, 25, 8, [[60, 60, 300, 270]], [[2, 1]]), null);
+});
+
+test("Add sheet keeps the sheet format: custom size and user title block (drawings exam #31)", async () => {
+  const { newSheet } = await import("../../src/drawing/doc");
+  const tb = { id: "f1", name: "Mine", w: 180, h: 40, cells: [{ x: 0, y: 0, w: 180, h: 40, label: "Firma" }] };
+  const a = { ...newSheet(1), size: "custom" as const, w: 500, h: 350, format: "ansi" as const, tb };
+  const b = newSheet(2, a);
+  assert.deepEqual([b.size, b.w, b.h, b.format, b.tb], ["custom", 500, 350, "ansi", tb]);
+  assert.notEqual(b.tb, a.tb, "a copy, so editing one sheet's block leaves the other");
+  assert.equal(newSheet(2, newSheet(1)).tb, undefined);
 });

@@ -78,6 +78,18 @@ export function sheetSvg(prims: Prim[], W: number, H: number): string {
 }
 
 /**
+ * The print page for the sheets (FR-DRW-031): each sheet on its own named page of its own size, so a
+ * B sheet after an A3 one is not clipped to A3 (drawings exam #26), and ⌴ / ⌵ drawn in lines as in the PDF.
+ */
+export function printHtml(sheets: { prims: Prim[]; W: number; H: number }[], title: string, fontHref: string): string {
+  const esc = (v: string) => v.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+  const pages = sheets.map((s, i) => `@page p${i}{size:${f(s.W)}mm ${f(s.H)}mm;margin:0}svg.p${i}{page:p${i}}`).join("");
+  const body = sheets.map((s, i) => sheetSvg(drawnSymbols(s.prims), s.W, s.H).replace(/^<\?xml[^>]*>\n/, "").replace("<svg ", `<svg class="p${i}" `)).join("");
+  const first = sheets[0];
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>@page{size:${f(first.W)}mm ${f(first.H)}mm;margin:0}${pages}html,body{margin:0}svg{display:block;break-after:page}svg:last-child{break-after:auto}@font-face{font-family:"DejaVu Sans";src:url(${fontHref})}</style></head><body>${body}</body></html>`;
+}
+
+/**
  * A sheet as a PNG at `dpi` (FR-DRW-031), white background. The SVG carries the DejaVu font as a
  * data URI so the text renders the same as on screen and in the PDF. Very large sheets drop to
  * the dpi that keeps the image under ~120 megapixels (browser canvas limits); `dpi` in the result says which.

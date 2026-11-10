@@ -16,7 +16,7 @@ import { OUT_OF_MEMORY, DrawingKernel, type ModelFacts } from "./client";
 import { BREAK_GAP, composeSheet, fromSheet, HATCH_PATTERNS, hatchOf, inPoly, nextLetter, polyBox, placement, toSheet, viewBody, viewPrims, viewRect, type Placement } from "./compose";
 import { DrawingStore, newSheet, uid } from "./doc";
 import { DRAWING_EXT, packDrawing, unpackDrawing } from "./file";
-import { sheetDxf, sheetDxf2000, sheetPng, sheetSvg, sheetsPdf, svgBody, FONT } from "./output";
+import { printHtml, sheetDxf, sheetDxf2000, sheetPng, sheetSvg, sheetsPdf, svgBody, FONT } from "./output";
 import type { Prim } from "./prims";
 import { editTitleBlock } from "./tbEditor";
 import { loadFormats } from "./formats";
@@ -191,6 +191,10 @@ export class DrawingWorkspace {
   private model: Uint8Array | undefined;
   private fileName = "";
   private sheetIdx = 0;
+  /** The listeners on `el` itself are on (see `build`). */
+  private bound = false;
+  /** The palette view being dragged onto the sheet. */
+  private palDragged: Orient | null = null;
   private sel: string | null = null;
   private hover: string | null = null;
   private mode: Mode = { kind: "none" };
@@ -534,20 +538,26 @@ export class DrawingWorkspace {
       </div>
       <div class="drw-status" role="status"></div>`;
     this.svg = this.el.querySelector(".drw-svg")!;
-    this.el.addEventListener("click", e => this.onClick(e));
-    this.el.addEventListener("change", e => this.onInput(e as Event, true));
-    this.el.addEventListener("input", e => this.onInput(e as Event, false));
+    // `build` runs again for every drawing opened or brought back from its tab, but `el` stays: its listeners go on once,
+    // else each click ran twice after a trip to the model and back, and the menus opened and closed at once (drawings exam #29).
+    const first = !this.bound;
+    this.bound = true;
+    if (first) {
+      this.el.addEventListener("click", e => this.onClick(e));
+      this.el.addEventListener("change", e => this.onInput(e as Event, true));
+      this.el.addEventListener("input", e => this.onInput(e as Event, false));
+      document.addEventListener("pointerdown", e => { if (!(e.target as HTMLElement).closest?.(".drw-dd")) this.closeMenus(); });
+    }
     this.svg.addEventListener("pointerdown", e => this.onDown(e));
     this.svg.addEventListener("pointermove", e => this.onMove(e));
     this.svg.addEventListener("pointerup", e => this.onUp(e));
     this.svg.addEventListener("dblclick", e => this.onDbl(e));
     this.svg.addEventListener("wheel", e => this.onWheel(e), { passive: false });
     this.svg.addEventListener("contextmenu", e => e.preventDefault());
-    this.bindPalette();
+    this.bindPalette(first);
     // The side panel resizes from its edge and keeps its width (FR-UI-002).
     const side = this.el.querySelector<HTMLElement>(".drw-side")!;
     side.after(makeGrip({ key: "drw-side", axis: "x", sign: 1, def: 280, min: 200, max: () => Math.min(640, window.innerWidth * 0.45), apply: px => { side.style.width = px == null ? "" : `${px}px`; }, label: "Resize the side panel" }));
-    document.addEventListener("pointerdown", e => { if (!(e.target as HTMLElement).closest?.(".drw-dd")) this.closeMenus(); });
     new ResizeObserver(() => this.applyViewBox()).observe(this.svg);
     this.renderAll();
   }
@@ -558,6 +568,8 @@ export class DrawingWorkspace {
 
   private renderAll() {
     if (!this.store || !this.svg) return;
+    // Undo of Add sheet (or redo of Delete sheet) removes the open sheet: edits wrote to sheets[sheetIdx] = undefined (drawings exam #28).
+    if (this.sheetIdx >= this.doc.sheets.length) this.sheetIdx = this.doc.sheets.length - 1;
     if (this.sel && !findView(this.sheet, this.sel)) this.sel = null;
     this.renderSheet();
     this.renderTree();
@@ -1065,26 +1077,25 @@ export class DrawingWorkspace {
   }
 
   /** Dragging a palette view over the sheet previews it under the cursor; dropping places it. */
-  private bindPalette() {
-    let dragged: Orient | null = null;
+  private bindPalette(first: boolean) {
     this.el.querySelector(".drw-pal-grid")!.addEventListener("dragstart", e => {
       const b = (e.target as HTMLElement).closest<HTMLElement>("[data-pal]"), de = e as DragEvent;
       if (!b || !de.dataTransfer) return;
       if (!this.facts) { e.preventDefault(); toast(t("The drawing's model is still loading.")); return; }
       const flat = b.dataset.pal === "flat";
-      dragged = flat ? "top" : b.dataset.pal as Orient;
+      this.palDragged = flat ? "top" : b.dataset.pal as Orient;
       de.dataTransfer.setData(PALETTE_MIME, b.dataset.pal!);
       de.dataTransfer.effectAllowed = "copy";
       this.cancelMode();
-      this.mode = { kind: "model", orient: dragged, dir: ORIENTS[dragged as Exclude<Orient, "current">], at: null, cfg: flat ? FLAT_CONFIG : undefined };
+      this.mode = { kind: "model", orient: this.palDragged, dir: ORIENTS[this.palDragged as Exclude<Orient, "current">], at: null, cfg: flat ? FLAT_CONFIG : undefined };
       this.renderStatus();
     });
-    this.el.addEventListener("dragend", () => {
-      if (dragged && this.mode.kind === "model" && this.mode.orient === dragged) this.cancelMode();
-      dragged = null;
+    if (first) this.el.addEventListener("dragend", () => {
+      if (this.palDragged && this.mode.kind === "model" && this.mode.orient === this.palDragged) this.cancelMode();
+      this.palDragged = null;
     });
     this.svg.addEventListener("dragover", e => {
-      if (!dragged || this.mode.kind !== "model") return;
+      if (!this.palDragged || this.mode.kind !== "model") return;
       e.preventDefault();
       e.dataTransfer!.dropEffect = "copy";
       const s = this.infer(this.sheetPt(e), new Set());
@@ -1094,10 +1105,10 @@ export class DrawingWorkspace {
     });
     this.svg.addEventListener("dragleave", () => { if (this.mode.kind === "model") { this.mode.at = null; this.renderOverlay(); } });
     this.svg.addEventListener("drop", e => {
-      if (!dragged || this.mode.kind !== "model") return;
+      if (!this.palDragged || this.mode.kind !== "model") return;
       e.preventDefault();
       const m = this.mode;
-      dragged = null;
+      this.palDragged = null;
       this.placeModel(m, this.sheetPt(e));
       this.svg.focus({ preventScroll: true });
     });
@@ -2699,8 +2710,18 @@ export class DrawingWorkspace {
     const third = sh.projection === "third";
     const [bx, by] = titleBlockAt(sh), [tw, th] = tbSize(sh);
     const auto = fresh || !sh.views.length;
-    const lay = auto ? std3Layout(dx, dy, dz, [f[0] + 4, f[1] + 4, f[2] - 4, f[3] - 4], [bx - 4, by, bx + tw, by + th + 4], third, gap) : null;
-    const s = lay ? lay.scale : auto ? fitScale(dx + dy, dz + dy, (ax1 - ax0 - gap) * 0.85, (ay1 - ay0 - gap) * 0.85) : sh.scale;
+    const area: [number, number, number, number] = [f[0] + 4, f[1] + 4, f[2] - 4, f[3] - 4], tbBox: [number, number, number, number] = [bx - 4, by, bx + tw, by + th + 4];
+    let lay = auto ? std3Layout(dx, dy, dz, area, tbBox, third, gap) : null, onNew = false;
+    if (!auto) {
+      // A second set goes beside what is on the sheet, at its scale (drawings exam #27: it was centred on top of the first),
+      // else on a new sheet of the same size.
+      const avoid = [...sh.views.flatMap(w => { const q = this.placements.get(w.id); return q ? [viewRect(q)] : []; }), ...this.annotHits.filter(h => !h.ring).map(h => h.box)];
+      // Clear of everything on the sheet taken as one box, so the two sets never interleave.
+      const all: [number, number, number, number] = avoid.reduce((b, r) => [Math.min(b[0], r[0]), Math.min(b[1], r[1]), Math.max(b[2], r[2]), Math.max(b[3], r[3])], [Infinity, Infinity, -Infinity, -Infinity]);
+      lay = std3Layout(dx, dy, dz, area, tbBox, third, gap, 8, avoid.length ? [all] : [], [sh.scale]);
+      if (!lay) { onNew = true; lay = std3Layout(dx, dy, dz, area, tbBox, third, gap); }
+    }
+    const s = lay ? lay.scale : auto || onNew ? fitScale(dx + dy, dz + dy, (ax1 - ax0 - gap) * 0.85, (ay1 - ay0 - gap) * 0.85) : sh.scale;
     const k = s[0] / s[1];
     const Wg = k * (dx + dy) + gap, Hg = k * (dz + dy) + gap;
     const gx = lay ? lay.gx : (ax0 + ax1) / 2 - Wg / 2, gy = lay ? lay.gy : (ay0 + ay1) / 2 - Hg / 2;
@@ -2710,7 +2731,8 @@ export class DrawingWorkspace {
     const fid = uid("v_");
     const n = this.nextViewNumber();
     this.store!.change("Standard 3 views", d => {
-      const S = d.sheets[this.sheetIdx];
+      if (onNew) { d.sheets.push(newSheet(d.sheets.length + 1, this.sheet)); d.sheets[d.sheets.length - 1].views = []; }
+      const S = d.sheets[onNew ? d.sheets.length - 1 : this.sheetIdx];
       S.scale = s;
       S.views.push(
         { id: fid, name: `${t("Drawing View")}${n}`, orient: "front", x: round(front[0]), y: round(front[1]), style: "hlv" },
@@ -2719,6 +2741,11 @@ export class DrawingWorkspace {
       );
     });
     this.sel = fid;
+    if (onNew) {
+      this.sheetIdx = this.doc.sheets.length - 1;
+      toast(t("No room left on the sheet: the views went on {name}.", { name: sheetName(this.sheet) }));
+      this.fit();
+    }
     this.renderAll();
   }
 
@@ -3355,8 +3382,7 @@ function printSheets(sheets: { prims: Prim[]; W: number; H: number }[], title: s
   fr.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0";
   fr.setAttribute("aria-hidden", "true");
   document.body.appendChild(fr);
-  const first = sheets[0];
-  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>@page{size:${first.W}mm ${first.H}mm;margin:0}html,body{margin:0}svg{display:block;page-break-after:always;break-after:page}@font-face{font-family:"DejaVu Sans";src:url(${new URL(fontUrl, location.href).href})}</style></head><body>${sheets.map(s => sheetSvg(s.prims, s.W, s.H).replace(/^<\?xml[^>]*>\n/, "")).join("")}</body></html>`;
+  const html = printHtml(sheets, title, new URL(fontUrl, location.href).href);
   const d = fr.contentDocument!;
   d.open(); d.write(html); d.close();
   const go = () => { try { fr.contentWindow!.focus(); fr.contentWindow!.print(); } finally { setTimeout(() => fr.remove(), 60_000); } };

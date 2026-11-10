@@ -343,11 +343,11 @@ type Box = [number, number, number, number];
 /** Standard 3 views layout: the largest standard scale and the group's bottom-left corner at which front (dx × dz), top (dx × dy) and side (dy × dz)
  *  fit inside `area` with `pad` round each view, clear of the title block `tb` (all sheet mm, y up). The group's empty corner may sit over the
  *  title block, so a big model is not shrunk to the strip above it. Null when nothing fits. */
-export function std3Layout(dx: number, dy: number, dz: number, area: Box, tb: Box, third: boolean, gap = 25, pad = 8): { scale: [number, number]; gx: number; gy: number } | null {
+export function std3Layout(dx: number, dy: number, dz: number, area: Box, tb: Box, third: boolean, gap = 25, pad = 8, avoid: Box[] = [], scales: [number, number][] = SCALES): { scale: [number, number]; gx: number; gy: number } | null {
   const [x0, y0, x1, y1] = area;
   const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
   const hit = (a: Box, b: Box) => a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];
-  for (const s of SCALES) {
+  for (const s of scales) {
     const k = s[0] / s[1];
     const W = k * (dx + dy) + gap, H = k * (dz + dy) + gap;
     // Enlarged views fill at most 85 % of the room left by the gaps and margins, as before (a small part stays at 1:1); reductions may fill it.
@@ -357,13 +357,15 @@ export function std3Layout(dx: number, dy: number, dz: number, area: Box, tb: Bo
       return [[gx, fy, gx + k * dx, fy + k * dz], [gx, ty, gx + k * dx, ty + k * dy], [gx + k * dx + gap, fy, gx + k * dx + gap + k * dy, fy + k * dz]];
     };
     const xs = [cx - W / 2, x0 + pad, x1 - pad - W, tb[0] - pad - W], ys = [cy - H / 2, y1 - pad - H, y0 + pad, tb[3] + pad, (tb[3] + y1 - H) / 2];
+    // Views already on the sheet (drawings exam #27): the corners beside each of them are candidates too.
+    for (const a of avoid) { xs.push(a[2] + pad, a[0] - pad - W); ys.push(a[3] + pad, a[1] - pad - H); }
     const cands: [number, number][] = [];
     for (const gx of xs) for (const gy of ys) cands.push([gx, gy]);
     cands.sort((a, b) => Math.hypot(a[0] + W / 2 - cx, a[1] + H / 2 - cy) - Math.hypot(b[0] + W / 2 - cx, b[1] + H / 2 - cy));
     for (const [gx, gy] of cands) {
       const ok = rects(gx, gy).every(r => {
         const g: Box = [r[0] - pad, r[1] - pad, r[2] + pad, r[3] + pad];
-        return g[0] >= x0 - 1e-6 && g[1] >= y0 - 1e-6 && g[2] <= x1 + 1e-6 && g[3] <= y1 + 1e-6 && !hit(g, tb);
+        return g[0] >= x0 - 1e-6 && g[1] >= y0 - 1e-6 && g[2] <= x1 + 1e-6 && g[3] <= y1 + 1e-6 && !hit(g, tb) && !avoid.some(a => hit(g, a));
       });
       if (ok) return { scale: s, gx, gy };
     }
