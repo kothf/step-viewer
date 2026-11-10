@@ -337,3 +337,21 @@ test("feature recognition: the base of an imported body of revolution comes back
   const f5 = back(imported(m, pin), "sketch,revolve,delbody");
   assert.equal((f5[0] as SketchFeature).ents.filter(e => e.t === "arc").length, 1);
 });
+
+test("feature recognition: a variable radius fillet comes back with its end radii (FR-FT-102, FR-FT-032)", async () => {
+  const m = new Modeller(await occ());
+  const src = [...base(),
+    { id: "f", type: "fillet", name: "F", variable: true, radius: { v: 5 }, edges: [{ faces: [S(1), S(2)], r: 3, r2: 8 }] } as Feature,
+    { id: "g", type: "fillet", name: "G", radius: { v: 4 }, edges: [{ faces: [S(3), S(4)] }] } as Feature];
+  const imp = imported(m, src);
+  const v0 = vol(m, imp);
+  const feats = m.recognizeBlends(imp);
+  assert.equal(feats.map(f => f.type).join(), "delface,fillet,fillet");
+  const fs = feats.slice(1) as FilletFeature[];
+  const vf = fs.find(f => f.variable)!, cf = fs.find(f => !f.variable)!;
+  close(cf.radius.v, 4, 1e-4);
+  assert.equal(vf.edges.length, 1);
+  const e = vf.edges[0];
+  close(Math.min(e.r!, e.r2!), 3, 1e-4); close(Math.max(e.r!, e.r2!), 8, 1e-4);
+  close(vol(m, doc([...imp.features, ...feats])), v0);
+});

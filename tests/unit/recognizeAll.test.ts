@@ -297,3 +297,16 @@ test("recognize features: a keyway running out through the shaft's end comes bac
   assert.equal(types(fs), "sketch,extrude,delbody,plane,sketch,extrude");
   close(vol(m, doc([...imp.features, ...fs])), v0, 1e-5);
 });
+
+test("recognize features: a block with a variable radius fillet comes back as base and variable fillet (FR-FT-102)", async () => {
+  const m = new Modeller(await occ());
+  const vf = { id: "f", type: "fillet", name: "F", variable: true, radius: { v: 5 }, edges: [{ faces: [S(1), S(2)], r: 2, r2: 6 }] } as Feature;
+  const imp = imported(m, [...base(), vf]);
+  const v0 = vol(m, imp);
+  const fs = m.recognizeFeatures(imp);
+  assert.equal(types(fs), "sketch,extrude,delbody,fillet");
+  const f = fs[3] as Extract<Feature, { type: "fillet" }>;
+  assert.equal(f.variable, true);
+  close(Math.min(f.edges[0].r!, f.edges[0].r2!), 2, 1e-4); close(Math.max(f.edges[0].r!, f.edges[0].r2!), 6, 1e-4);
+  close(vol(m, doc([...imp.features, ...fs])), v0);
+});

@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.489.0] - 2026-11-10
+
+### Added
+
+- Recognize Fillets and Recognize Features bring back variable radius fillets (FR-FT-102, FR-FT-032): the blend face is removed with Delete Face and comes back as a variable radius Fillet with the radius measured at each end of the edge. Before, such a fillet stayed part of the imported body.
+
 ## [1.488.0] - 2026-11-10
 
 ### Added
@@ -3004,7 +3010,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.488.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.489.0...HEAD
+[1.489.0]: https://github.com/kothf/step-viewer/compare/v1.488.0...v1.489.0
 [1.488.0]: https://github.com/kothf/step-viewer/compare/v1.487.0...v1.488.0
 [1.487.0]: https://github.com/kothf/step-viewer/compare/v1.486.0...v1.487.0
 [1.486.0]: https://github.com/kothf/step-viewer/compare/v1.485.0...v1.486.0
