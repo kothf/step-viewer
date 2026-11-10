@@ -5,13 +5,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.483.0] - 2026-11-10
+## [1.484.0] - 2026-11-10
 
 ### Added
 
 - Recognize Holes and Recognize Features bring back blind cross holes in shafts and round bars (FR-FT-102): a hole that comes out on a curved face at one end and stops at a flat bottom or a drill point at the other becomes a reference Plane through the farthest point of its rim (the plane tangent to the shaft) and a Hole Wizard hole on it, with its diameter, depth and bottom, when the hole runs along X, Y or Z. Before, such holes stayed part of the imported body.
 - Recognize Extrudes and Recognize Features bring back keyways and other closed pockets sunk into a shaft (FR-FT-102): a flat floor whose outline walls rise into curved faces only (no flat face to sketch on) becomes a reference Plane tangent to the shaft, the floor's outline sketched on it and a blind Extruded Cut down to the floor, when the floor faces X, Y or Z. Before, a keyway also stopped the shaft itself from being recognised as a base.
 - Hole Wizard: **Reverse direction** under End condition, for holes placed on a reference plane outside the body (on a face the holes still go into the material). The ⇄ button on the depth callout flips it too.
+
+## [1.483.0] - 2026-11-10
+
+### Fixed
+
+- Big assembly drawings get back to work faster still after the drawing kernel frees its memory: the copy of the model kept for the restart is now binary (exact and quicker to read), and after the first fast view it also keeps the model's mesh, so the restart no longer meshes the engine again (about 6 s saved per restart).
 
 ## [1.482.0] - 2026-11-10
 
@@ -2966,7 +2972,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.483.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.484.0...HEAD
+[1.484.0]: https://github.com/kothf/step-viewer/compare/v1.483.0...v1.484.0
 [1.483.0]: https://github.com/kothf/step-viewer/compare/v1.482.0...v1.483.0
 [1.482.0]: https://github.com/kothf/step-viewer/compare/v1.481.0...v1.482.0
 [1.481.0]: https://github.com/kothf/step-viewer/compare/v1.480.0...v1.481.0

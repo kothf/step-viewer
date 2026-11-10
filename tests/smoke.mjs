@@ -6706,7 +6706,7 @@ try {
     const { recycles: rc, snap } = await mp.evaluate(() => window.__sv.drw.helper());
     check(rc >= 2, `drawing 1.478: a drawing worker past its heap limit starts over with the same model between views (${rc} restarts)`);
     // 1.482: the restarts and the helper read the full load's BREP snapshot instead of building the model again.
-    check(snap > 1000, `drawing 1.482: the drawing workers restart from a BREP snapshot of the model (${snap} characters)`);
+    check(snap > 1000, `drawing 1.482: the drawing workers restart from a snapshot of the model (${snap} bytes)`);
     await ctx.close();
   }
 
@@ -9541,7 +9541,7 @@ try {
     const cx1 = await state();
     check(!cx0.bad && cx0.v > 9000 && Math.abs(cx1.v - cx0.v) < 0.1 && !cx1.bad && cx1.types === "import,sketch,extrude,delbody,sketch,extrude",
       `model 1.477: Recognize Features makes a cross hole through an imported shaft again as a Through All cut (FR-FT-102) (${JSON.stringify({ cx0, cx1 })})`);
-    // 1.483.0: a blind cross hole (drilled from a plane tangent to the bar, reversed) comes back as a plane and a Hole Wizard hole.
+    // 1.484.0: a blind cross hole (drilled from a plane tangent to the bar, reversed) comes back as a plane and a Hole Wizard hole.
     await mp.evaluate(() => window.__sv.model.store.change("Blind cross", d => {
       const xy = [[0, 0], [10, 0], [10, 30], [0, 30]];
       const ents = xy.map(([x, y], i) => ({ id: "rp" + i, t: "point", x, y }));
@@ -9564,8 +9564,8 @@ try {
     const bxHole = await mp.evaluate(() => { const h = window.__sv.model.store.doc.features.find(f => f.type === "hole"); return h && { d: h.diameter.v, depth: +h.depth.v.toFixed(4), flip: !!h.flip }; });
     check(!bx0.bad && bx0.v > 9000 && bx0.v < 9425 && Math.abs(bx1.v - bx0.v) < 0.1 && !bx1.bad && bx1.types === "import,sketch,extrude,delbody,plane,hole"
       && bxHole?.d === 5 && bxHole.depth === 8 && bxHole.flip,
-      `model 1.483.0: Recognize Features makes a blind cross hole in an imported shaft again as a Hole on a tangent plane (FR-FT-102) (${JSON.stringify({ bx0, bx1, bxHole })})`);
-    // 1.483.0: a keyway (a slot with round ends sunk into the bar) comes back as a tangent plane, its outline sketched there and a blind cut.
+      `model 1.484.0: Recognize Features makes a blind cross hole in an imported shaft again as a Hole on a tangent plane (FR-FT-102) (${JSON.stringify({ bx0, bx1, bxHole })})`);
+    // 1.484.0: a keyway (a slot with round ends sunk into the bar) comes back as a tangent plane, its outline sketched there and a blind cut.
     await mp.evaluate(() => window.__sv.model.store.change("Keyway", d => {
       const xy = [[0, 0], [10, 0], [10, 30], [0, 30]];
       const ents = xy.map(([x, y], i) => ({ id: "rp" + i, t: "point", x, y }));
@@ -9591,7 +9591,7 @@ try {
     const kwCut = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.filter(f => f.type === "extrude").at(-1); return f && { op: f.op, depth: +f.depth.v.toFixed(4) }; });
     check(!kw0.bad && kw0.v > 9000 && kw0.v < 9300 && Math.abs(kw1.v - kw0.v) < 0.1 && !kw1.bad && kw1.types === "import,sketch,extrude,delbody,plane,sketch,extrude"
       && kwCut?.op === "cut" && kwCut.depth === 3.5,
-      `model 1.483.0: Recognize Features makes a keyway in an imported shaft again as a tangent plane, sketch and blind cut (FR-FT-102) (${JSON.stringify({ kw0, kw1, kwCut })})`);
+      `model 1.484.0: Recognize Features makes a keyway in an imported shaft again as a tangent plane, sketch and blind cut (FR-FT-102) (${JSON.stringify({ kw0, kw1, kwCut })})`);
     await ctx.close();
   }
 
