@@ -9500,7 +9500,7 @@ try {
     const sunk = await mp.evaluate(() => window.__sv.model.store.doc.features.filter(f => f.type === "hole").map(f => f.kind).sort().join());
     check(!sk0.bad && Math.abs(sk1.v - sk0.v) < 0.05 && !sk1.bad && sk1.types === "import,sketch,extrude,delbody,hole,hole" && sunk === "cbore,csink",
       `model 1.474: Recognize Features makes counterbored and countersunk holes again as Hole Wizard holes (FR-FT-102) (${JSON.stringify({ sk0, sk1, sunk })})`);
-    // 1.475: a cross hole through a round bar comes back as a sketch and a Through All cut on a standard plane (the bar itself as an extrude).
+    // 1.476: a cross hole through a round bar comes back as a sketch and a Through All cut on a standard plane (the bar itself as an extrude).
     await mp.evaluate(() => window.__sv.model.store.change("Cross", d => {
       const xy = [[0, 0], [10, 0], [10, 30], [0, 30]];
       const ents = xy.map(([x, y], i) => ({ id: "rp" + i, t: "point", x, y }));
@@ -9521,7 +9521,7 @@ try {
     await settle();
     const cx1 = await state();
     check(!cx0.bad && cx0.v > 9000 && Math.abs(cx1.v - cx0.v) < 0.1 && !cx1.bad && cx1.types === "import,sketch,extrude,delbody,sketch,extrude",
-      `model 1.475: Recognize Features makes a cross hole through an imported shaft again as a Through All cut (FR-FT-102) (${JSON.stringify({ cx0, cx1 })})`);
+      `model 1.476: Recognize Features makes a cross hole through an imported shaft again as a Through All cut (FR-FT-102) (${JSON.stringify({ cx0, cx1 })})`);
     await ctx.close();
   }
 

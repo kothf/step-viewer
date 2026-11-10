@@ -450,7 +450,10 @@ export class AsmController {
       const hit = new Set(pairs.map(p => `${p.a}|${p.b}`));
       it.near = near.filter(p => p.distance > 1e-6 && !hit.has(`${p.a}|${p.b}`));
       this.drawOverlay();
-    } catch (err) { toast(t("Interference detection failed: {err}", { err: (err as Error).message }), true); }
+    } catch (err) {
+      // The panel was closed while the clearance rows were still being worked out (opening a part stops the kernel): nothing failed for the user (exam #95).
+      if (this.interfere === it) toast(t("Interference detection failed: {err}", { err: (err as Error).message }), true);
+    }
     finally { $("#asm-busy").hidden = true; }
     this.renderPanel();
   }
