@@ -96,7 +96,6 @@ test("second pass (1.382.0): most of the library has a checked reference, the re
   const un = LIBRARY.filter(m => !m.ref).map(m => m.name);
   assert.ok(Object.keys(CHECKED).length >= 119, `${Object.keys(CHECKED).length} checked`);
   assert.ok(un.length <= 51, `${un.length} unchecked`);
-  assert.ok(un.includes("Wood (teak)"));
   assert.equal(findMaterial("Stainless steel 1.4404 (X2CrNiMo17-12-2)")!.ref, "www.thyssenkrupp-materials.co.uk/stainless-steel-316l-14404.html");
   assert.equal(findMaterial("Bronze CuSn8 (phosphor bronze)")!.E, 115);
 });
@@ -156,4 +155,13 @@ test("ninth pass (1.417.0): PA66-GF30 checked against a maker's sheet", () => {
   const pa = findMaterial("Nylon PA66-GF30")!;
   assert.ok(pa.ref);
   assert.equal(pa.density, 1.36);
+});
+
+test("tenth pass (1.420.0): teak, mahogany and balsa checked against the Wood Handbook", () => {
+  assert.ok(LIBRARY.filter((m) => m.ref).length >= 146);
+  for (const [n, e] of [["Wood (teak)", 10.7], ["Wood (mahogany)", 10.3], ["Wood (balsa)", 3.4]] as const) {
+    const m = findMaterial(n)!;
+    assert.equal(m.ref, "research.fs.usda.gov/download/treesearch/62244.pdf");
+    assert.equal(m.E, e);
+  }
 });
