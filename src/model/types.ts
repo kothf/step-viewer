@@ -553,6 +553,8 @@ export interface HoleFeature {
   slotAngle?: Num;
   /** Flat bottom instead of a 118° drill point. */
   flat?: boolean;
+  /** Reverse direction: the holes run along the plane's normal (Hole Wizard on a plane in the air, e.g. a plane tangent to a shaft). */
+  flip?: boolean;
   cbDia?: Num;
   cbDepth?: Num;
   csDia?: Num;

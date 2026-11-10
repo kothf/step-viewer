@@ -152,7 +152,7 @@ const INSTANT_VALUES: [string, "length" | "angle" | "count", string][] = [
   ["offset", "length", "Offset"], ["spacing", "length", "Spacing"], ["count", "count", "Instances"], ["spacing2", "length", "Spacing"],
   ["count2", "count", "Instances"], ["pitch", "length", "Pitch"], ["height", "length", "Height"], ["length", "length", "Length"]];
 /** Features with a `flip` the Modify box can reverse. */
-const FLIP_TYPES = new Set(["extrude", "revolve", "plane", "moveface", "draft", "lpattern"]);
+const FLIP_TYPES = new Set(["extrude", "revolve", "plane", "moveface", "draft", "lpattern", "hole"]);
 const VALUE_CALLOUT_SKIP = new Set(["extrude", "revolve", "fillet", "chamfer", "endcap", "gusset", "smflange", "sketch", "sketch3d"]);
 const roundReady = (f: FilletFeature | ChamferFeature) => f.type === "fillet" && f.kind
   ? !!f.faces1?.length && !!f.faces2?.length && (f.kind !== "full" || !!f.center?.length)
@@ -1826,7 +1826,7 @@ export class ModelController {
     try { feats = await this.kernel.recognizeFeatures(this.doc); }
     catch (err) { toast(t("Feature recognition failed: {msg}", { msg: (err as Error).message }), true); return; }
     finally { this.setBusy(-1); }
-    const n = feats.filter(f => f.type !== "sketch" && f.type !== "delface" && f.type !== "delbody").length;
+    const n = feats.filter(f => f.type !== "sketch" && f.type !== "delface" && f.type !== "delbody" && f.type !== "plane").length;
     if (!n) { toast(t("No features were found to recognise.")); return; }
     defineRecognised(feats);
     this.store.change("Recognize features", d => {
@@ -4251,7 +4251,7 @@ export class ModelController {
         if (h.kind === "tapped" && h.major) {
           const td = h.threadDepth?.v ?? (h.end === "through" ? 0 : h.depth.v);
           const o = at(p, 0, 0) as V3;
-          if (td > 0) this.threadShade(o, [-fr.n[0], -fr.n[1], -fr.n[2]], h.diameter.v / 2, td, h.pitch ?? Math.max(0.25, h.major * 0.15), true);
+          if (td > 0) this.threadShade(o, (h.flip ? fr.n : [-fr.n[0], -fr.n[1], -fr.n[2]]) as V3, h.diameter.v / 2, td, h.pitch ?? Math.max(0.25, h.major * 0.15), true);
           const r = h.major / 2, n = 48;
           for (let k = 0; k < n; k++) {
             const a0 = (k / n) * Math.PI * 2, a1 = ((k + 1) / n) * Math.PI * 2;
@@ -6422,7 +6422,8 @@ export class ModelController {
         + group(t("End condition"), sel("end", t("End condition"), [["blind", t("Blind")], ["through", t("Through all")], ["next", t("Up to next")], ["upto", t("Up to face or plane")]], f.end)
           + (f.end === "upto" ? hbox("hupto", t("Up to"), this.refLabel(f.upTo)) + `<p class="pm-help muted">${esc(t("Click a flat face or a plane in the view or the tree."))}</p>` : "")
           + (f.end === "next" ? `<p class="pm-help muted">${esc(t("Each hole stops where it leaves the material."))}</p>` : "")
-          + (f.end === "blind" ? numField("depth", t("Depth"), f.depth, "length") + chk("flat", f.flat, t("Flat bottom (no drill point)")) : ""))
+          + (f.end === "blind" ? numField("depth", t("Depth"), f.depth, "length") + chk("flat", f.flat, t("Flat bottom (no drill point)")) : "")
+          + chk("flip", f.flip, t("Reverse direction")))
         + group(t("Positions"), hbox("hplane", t("Face"), this.refLabel(f.plane)) + hbox("pts", t("Hole positions"), t("{n} hole|{n} holes", { n: f.pts.length }))
           + (f.pts.length ? `<ul class="pm-items pm-hpts" aria-label="${esc(t("Hole positions"))}">${f.pts.map((p, i) => `<li><span>${i + 1}</span>${holeAxes(this.last?.frames[f.id]).names.map((ax, j) => `<span class="pm-in"><span class="muted">${ax}</span><input type="text" inputmode="decimal" data-hp="${i}:${j}" value="${esc(trimNum(holeAxes(this.last?.frames[f.id]).show(p)[j] * UNITS[unit].f, 6))}" aria-label="${esc(t("Hole {n}", { n: i + 1 }))} ${ax}" spellcheck="false" /></span>`).join("")}<button class="icon" data-rmh="${i}" title="${esc(t("Remove"))}" aria-label="${esc(t("Remove"))} ${esc(t("Hole {n}", { n: i + 1 }))}">✕</button></li>`).join("")}</ul>` : "")
           + (f.plane ? `<button class="btn small" data-k="addPt">${esc(t("Add hole"))}</button> ` : "")
