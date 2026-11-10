@@ -5,6 +5,7 @@
 // The document (DocStore) is the source of truth; every rebuild sends it to the
 // kernel worker and shows the returned body with the viewer's own pipeline, so
 // the measuring tools work on modelled parts unchanged.
+import { fullyDefineSketch } from "../sketch/define";
 import type { VaultTie } from "../pdm/panel";
 import type { NamedView, V2 } from "./types";
 import type { NamedViews } from "../viewer/navigation";
@@ -274,6 +275,17 @@ function okHead(title: string, o: { ok?: string; okKey?: string; cancelKey?: str
   return `<div class="pm-head pm-top"><h3${o.noTranslate ? ' translate="no"' : ""}>${esc(title)}</h3><span class="pm-okc">`
     + `<button class="pm-ok" data-a="${o.okKey ?? "ok"}" title="${esc(ok)}" aria-label="${esc(ok)}">✓</button>`
     + `<button class="pm-cancel" data-a="${o.cancelKey ?? "cancel"}" title="${esc(cancel)}" aria-label="${esc(cancel)}">✕</button></span></div>`;
+}
+
+/**
+ * Recognised sketches come back dimensioned, as FeatureWorks gives them (FR-FT-102): Fully define sketch
+ * (FR-SK-045) adds horizontal/vertical relations, diameters/radii and dimensions from the sketch origin.
+ */
+function defineRecognised(feats: Feature[]) {
+  feats.forEach((f, i) => {
+    if (f.type !== "sketch") return;
+    try { feats[i] = fullyDefineSketch(f).sketch; } catch { /* keep it as found */ }
+  });
 }
 
 export class ModelController {
@@ -1785,6 +1797,7 @@ export class ModelController {
     const rev = feats.some(f => f.type === "revolve");
     const n = feats.filter(f => f.type === "extrude" || f.type === "revolve").length;
     if (!n) { toast(t("No pockets or bosses were found to recognise.")); return; }
+    defineRecognised(feats);
     this.store.change("Recognize extrudes", d => {
       let at = d.rollback ?? d.features.length;
       for (const f of feats) {
@@ -1811,6 +1824,7 @@ export class ModelController {
     finally { this.setBusy(-1); }
     const n = feats.filter(f => f.type !== "sketch" && f.type !== "delface" && f.type !== "delbody").length;
     if (!n) { toast(t("No features were found to recognise.")); return; }
+    defineRecognised(feats);
     this.store.change("Recognize features", d => {
       let at = d.rollback ?? d.features.length;
       for (const f of feats) {
