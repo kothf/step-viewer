@@ -2286,6 +2286,8 @@ export class ModelController {
 
   private key(e: KeyboardEvent) {
     if (!this.store) return;
+    // An open drawing owns the keyboard: Ctrl+Z there undid the part's last feature (drawings exam #1).
+    if (document.getElementById("app")?.classList.contains("drawing")) return;
     const tg = e.target as HTMLElement;
     if (tg.matches?.("input, select, textarea") || tg.closest?.("dialog")) return;
     const k = e.key.toLowerCase();

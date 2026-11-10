@@ -1485,12 +1485,14 @@ export class DrawingWorkspace {
         const pick = this.pickAt(vid, p);
         if (pick) { m.view = vid; m.leader = pick.kind === "circle" ? edgeRef(pick.e, "c") : pick.kind === "line" ? { ...pick.ref, p: "e" } : pick.ref; this.renderStatus(); this.renderOverlay(); return; }
       }
-      const text = prompt(t("Note text"), "");
-      if (!text?.trim()) return;
+      // The note goes down at once and its text box takes the typing (several lines), like SolidWorks; a browser
+      // prompt took one line and covered the sheet (drawings exam #9).
       const view = m.view ?? vid ?? undefined, pl = view ? this.placements.get(view) : undefined;
       const pos: Pt = pl ? fromSheet(pl, p[0], p[1]) : p;
-      this.addAnnot({ id: uid("a_"), t: "note", ...(view ? { view } : {}), pos: [round(pos[0]), round(pos[1])], text: text.trim(), ...(m.leader ? { leader: m.leader } : {}) }, "Note");
+      this.addAnnot({ id: uid("a_"), t: "note", ...(view ? { view } : {}), pos: [round(pos[0]), round(pos[1])], text: t("Note"), ...(m.leader ? { leader: m.leader } : {}) }, "Note");
       this.mode = { kind: "none" };
+      // After the pointer press has finished focusing the sheet.
+      setTimeout(() => { const box = this.el.querySelector<HTMLTextAreaElement>("textarea[data-d=ntxt]"); if (box) { box.focus(); box.select(); } }, 0);
     }
     this.renderStatus();
     this.renderOverlay();
@@ -1596,7 +1598,8 @@ export class DrawingWorkspace {
   }
 
   private nextDatum(): string {
-    const used = new Set(this.doc.sheets.flatMap(s => (s.annots ?? []).map(a => (a.t === "datum" ? a.letter : ""))));
+    // Section, detail and auxiliary view letters are taken too (drawings exam #6).
+    const used = new Set(this.doc.sheets.flatMap(s => [...(s.annots ?? []).map(a => (a.t === "datum" ? a.letter : "")), ...s.views.map(v => v.letter ?? "")]));
     for (const c of "ABCDEFGHJKLMNPRSTUVWXYZ") if (!used.has(c)) return c;
     return "A";
   }

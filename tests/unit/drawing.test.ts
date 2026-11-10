@@ -188,6 +188,7 @@ test("detail clipping and section hatching", async () => {
   const sh = (letters: string[]) => [{ id: "s", name: "S", size: "A3" as const, scale: [1, 1] as [number, number], projection: "first" as const, format: "iso" as const, views: letters.map((l, i) => ({ id: `v${i}`, name: "", x: 0, y: 0, letter: l })) }];
   assert.equal(nextLetter(sh([])), "A");
   assert.equal(nextLetter(sh(["A", "B", "C", "D", "E", "F", "G", "H"])), "J");
+  assert.equal(nextLetter([{ ...sh(["A"])[0], annots: [{ id: "d", t: "datum", view: "v0", ref: { e: "x", h: [0, 0, 0], p: "e" }, pos: [0, 0], letter: "B" }] }] as never), "C", "a datum letter is taken (drawings exam #6)");
 });
 
 test("annotations: topology names, centre marks, dimensions, hole callout, model items", async () => {
@@ -1539,4 +1540,34 @@ test("model items stack by size, clear of each other, in sheet millimetres (FR-D
   const more = placeItems({ ...sheet, annots: placed as never[] }, [...items, lin("a:10", 10)] as never[], box, id);
   assert.equal(more.length, 1);
   assert.equal(off(more, "a:10"), 34);
+});
+
+test("offset section: the cutter's steps are no lines in the view (drawings exam #12)", async () => {
+  const { dropSteps } = await import("../../src/kernel/drawing");
+  // Frame: e = +X, view x = +X, y = +Z; one step at t = 25 (x = 25 - 40 = -15), the outer walls at ±FAR stay.
+  const st = { o: [-40, -20, 0] as [number, number, number], e: [1, 0, 0] as [number, number, number], pts: [-1e9, 1e9, -1e9, 0, 25, 0, 25, 20, 1e9, 20, 1e9, 1e9] };
+  const l = (p: [number, number, number, number]) => ({ k: "l" as const, c: 0 as const, p });
+  const proj = { vis: [l([-15, 0, -15, 35]), l([-40, 0, 40, 0]), l([-20, 15, -20, 33]), l([-15, 15, -10, 15])], hid: [l([-15, 2, -15, 8])] };
+  // Cut faces: the plate cut on both sides of the step (z 0…15), and only right of it above (the boss beyond on the left).
+  const cut = [[-40, 0, -15, 0, -15, 15, -40, 15], [-15, 0, 40, 0, 40, 15, -10, 15, -10, 35, -15, 35]];
+  dropSteps(proj, st, [1, 0, 0], [0, 0, 1], cut);
+  const ps = proj.vis.map(g => (g as { p: number[] }).p.map(v => Math.round(v * 100) / 100));
+  assert.deepEqual(ps.slice(1), [[-40, 0, 40, 0], [-20, 15, -20, 33], [-15, 15, -10, 15]], "lines with only one end on the step stay");
+  assert.ok(ps[0][0] === -15 && ps[0][2] === -15 && Math.abs(ps[0][1] - 15) < 0.3 && ps[0][3] === 35, `the step stays only where it borders the uncut boss (${ps[0]})`);
+  assert.equal(proj.hid.length, 0, "between two cut faces it goes");
+});
+
+test("half section: hatched even when the stored line is a hair off the rounded path (drawings exam #13)", async () => {
+  const { section } = await import("../../src/kernel/drawing");
+  const { viewReq } = await import("../../src/drawing/views");
+  const { oc, shape } = await block();
+  const parent = { id: "t", name: "Top", orient: "top", x: 100, y: 200 };
+  for (const look of [1, -1]) {
+    // The first point snapped to the block's edge: the line keeps 1.6e-5 of drift, the path is rounded.
+    const v = { id: "s", name: "A", kind: "section", parent: "t", line: [20.0000162, -30.000004, 20, 0], path: [20, -30, 20, 0, 50, 0], look, x: 100, y: 80 };
+    const sheet = { id: "sh", name: "S", size: "A3", scale: [1, 1], projection: "first", views: [parent, v], annots: [] } as never;
+    const req = viewReq(sheet, v as never);
+    const s = section(oc, shape, req.view, req.p!, 0.02, undefined, { stair: req.stair });
+    assert.ok(s.cut!.length >= 1, `look ${look}: ${s.cut!.length} cut faces`);
+  }
 });
