@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.460.0] - 2026-11-10
+## [MINE] - 2026-11-10
 
 ### Fixed
 
@@ -13,6 +13,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - **Ctrl+A** in a sketch selects every sketch entity instead of the page's text (exam #91).
 - A centre-point arc runs the way the mouse went round its centre, so a clockwise arc no longer comes out as the long way round (exam #92).
 - While an early sketch of a finished part is edited, Properties says there are no bodies before that feature instead of "This part is empty" (exam #93).
+
+## [1.459.0] - 2026-11-10
+
+### Changed
+
+- **Parts open in a fraction of a second**: opening a part used to start a new geometry kernel (OpenCASCADE, 3–5 s to set itself up) every time, even for a part that rebuilds in 0.1 s. The app now sets one kernel up in the background after it starts, and a closed part's kernel is cleared and kept for the next document. Measured on a 4-core machine: a two-feature part 4.3 s → 0.45 s the first time, 3.3 s → 0.1–0.5 s for the next ones; the exact geometry of the first STEP file is ready after 0.8 s instead of 5 s. Devices with 4 GB of memory or less, and `?nospare`, keep the old behaviour.
 
 ## [1.458.0] - 2026-11-10
 
@@ -2772,7 +2778,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.458.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.459.0...HEAD
+[1.459.0]: https://github.com/kothf/step-viewer/compare/v1.458.0...v1.459.0
 [1.458.0]: https://github.com/kothf/step-viewer/compare/v1.457.0...v1.458.0
 [1.457.0]: https://github.com/kothf/step-viewer/compare/v1.456.0...v1.457.0
 [1.456.0]: https://github.com/kothf/step-viewer/compare/v1.455.0...v1.456.0
