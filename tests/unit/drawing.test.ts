@@ -36,6 +36,15 @@ test("quick preview (polygonal HLR) matches the exact view's outline", async () 
   const t = projectPoly(oc, shape, { dir: [0, 0, 1], up: [0, 1, 0] }, 0.5);
   const xs = t.vis.flatMap(s => s.k === "l" ? [s.p[0], s.p[2]] : s.k === "p" ? s.p.filter((_v, i) => i % 2 === 0) : []);
   assert.ok(xs.some(x => Math.abs(x - 15) < 0.05) && xs.some(x => Math.abs(x - 5) < 0.05), "hole circle seen from the top");
+  // 1.480.0: the HLR reader is reused across calls; the same view again gives the same lines and the heap stays put.
+  const again = () => projectPoly(oc, shape, view, 0.5);
+  const first = again(), heap = oc.HEAP8.length;
+  for (let i = 0; i < 20; i++) again();
+  const last = again();
+  assert.equal(last.vis.length, first.vis.length);
+  assert.equal(last.hid.length, first.hid.length);
+  assert.deepEqual(last.box, first.box);
+  assert.equal(oc.HEAP8.length, heap, "no heap growth over repeated views");
 });
 
 test("top view: outline, hole circle, no hidden lines", async () => {

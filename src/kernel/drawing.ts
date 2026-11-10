@@ -100,6 +100,17 @@ export function project(oc: any, shape: any, view: ViewDir, tol = 0.02): Project
 }
 
 /**
+ * One HLRBRep_PolyHLRToShape per OpenCASCADE instance, reused by every polygonal view: deleting one does not give
+ * its memory back (an engine assembly lost ~25 MB per view that way), while `Update` on a kept one reuses it.
+ */
+const polyReaders = new WeakMap<object, any>();
+function polyReader(oc: any): any {
+  let h = polyReaders.get(oc);
+  if (!h) { h = new oc.HLRBRep_PolyHLRToShape(); polyReaders.set(oc, h); }
+  return h;
+}
+
+/**
  * A quick preview of a view (FR-DRW-016, NFR-PERF-040): OCCT's polygonal HLR (HLRBRep_PolyAlgo) on the
  * shape's triangulation, meshed at `lin` mm chord error. Every line is a polyline, so it is for showing
  * only: dimensions and picking wait for the exact projection. The result is marked `preview`.
@@ -116,7 +127,7 @@ export function projectPoly(oc: any, shape: any, view: ViewDir, lin: number, ang
   const algo = new oc.HLRBRep_PolyAlgo_1();
   // The handle owns the algorithm: deleting the handle (and the reader holding a copy) frees it.
   const ha = new oc.Handle_HLRBRep_PolyAlgo_2(algo);
-  const h = new oc.HLRBRep_PolyHLRToShape();
+  const h = polyReader(oc);
   try {
   algo.Load(shape);
   algo.Projector_2(keep(new oc.HLRAlgo_Projector_2(ax)));
@@ -139,7 +150,6 @@ export function projectPoly(oc: any, shape: any, view: ViewDir, lin: number, ang
   return { vis, hid, box: bounds(vis.length ? vis : hid), ms: Date.now() - t0, preview: true, ...(fails.length ? { fail: [...new Set(fails)].join("; ") } : {}) };
   } finally {
     try { algo.Clear(); } catch { /* older builds */ }
-    h.delete();
     ha.delete();
     for (const o of made) { try { o.delete(); } catch { /* already gone */ } }
   }
@@ -151,8 +161,7 @@ export const FAST_EDGES = 1500;
 /** How many edges a shape has. */
 export function edgeCount(oc: any, shape: any): number {
   const m = new oc.TopTools_IndexedMapOfShape_1();
-  oc.TopExp.MapShapes_1(shape, oc.TopAbs_ShapeEnum.TopAbs_EDGE, m);
-  return m.Extent();
+  try { oc.TopExp.MapShapes_1(shape, oc.TopAbs_ShapeEnum.TopAbs_EDGE, m); return m.Extent(); } finally { m.delete(); }
 }
 
 /** The exact HLR, or `projectFast` (chord 1/1000 of the model's size) for models of `FAST_EDGES` edges or more. */
@@ -172,29 +181,38 @@ export function viewCurves(oc: any, shape: any, view: ViewDir): { circles: Circl
   const { x, y, n } = viewAxes(view), T = oc.GeomAbs_CurveType, out: Circle2[] = [], lines: Line2[] = [], seen = new Set<string>();
   const m = new oc.TopTools_IndexedMapOfShape_1();
   oc.TopExp.MapShapes_1(shape, oc.TopAbs_ShapeEnum.TopAbs_EDGE, m);
-  for (let i = 1; i <= m.Extent(); i++) {
-    let ad: any;
-    try { ad = new oc.BRepAdaptor_Curve_2(oc.TopoDS.Edge_1(m.FindKey(i))); } catch { continue; }
-    const ty = ad.GetType();
-    if (ty === T.GeomAbs_Line) {
-      const a = ad.Value(ad.FirstParameter()), b = ad.Value(ad.LastParameter());
-      const A: V3 = [a.X(), a.Y(), a.Z()], B: V3 = [b.X(), b.Y(), b.Z()];
-      const ax = dot(A, x), ay = dot(A, y);
-      let ux = dot(B, x) - ax, uy = dot(B, y) - ay;
-      const l = Math.hypot(ux, uy);
-      if (l < 1e-9) continue;
-      ux /= l; uy /= l;
-      if (ux < -1e-9 || (Math.abs(ux) <= 1e-9 && uy < 0)) { ux = -ux; uy = -uy; }
-      lines.push({ u: [ux, uy], d: ax * -uy + ay * ux });
-      continue;
+  // Every wrapper is deleted: this runs on each fast view of a big assembly (see `polyEdges`).
+  const gone: any[] = [];
+  const own = <O,>(o: O): O => { gone.push(o); return o; };
+  try {
+    for (let i = 1; i <= m.Extent(); i++) {
+      try {
+        let ad: any;
+        try { ad = own(new oc.BRepAdaptor_Curve_2(own(oc.TopoDS.Edge_1(own(m.FindKey(i)))))); } catch { continue; }
+        const ty = ad.GetType();
+        if (ty === T.GeomAbs_Line) {
+          const a = own(ad.Value(ad.FirstParameter())), b = own(ad.Value(ad.LastParameter()));
+          const A: V3 = [a.X(), a.Y(), a.Z()], B: V3 = [b.X(), b.Y(), b.Z()];
+          const ax = dot(A, x), ay = dot(A, y);
+          let ux = dot(B, x) - ax, uy = dot(B, y) - ay;
+          const l = Math.hypot(ux, uy);
+          if (l < 1e-9) continue;
+          ux /= l; uy /= l;
+          if (ux < -1e-9 || (Math.abs(ux) <= 1e-9 && uy < 0)) { ux = -ux; uy = -uy; }
+          lines.push({ u: [ux, uy], d: ax * -uy + ay * ux });
+          continue;
+        }
+        if (ty !== T.GeomAbs_Circle) continue;
+        const c = own(ad.Circle()), axis = own(c.Axis()), a = own(axis.Direction()), p = own(c.Location());
+        if (Math.abs(a.X() * n[0] + a.Y() * n[1] + a.Z() * n[2]) < 0.9999) continue;
+        const P: V3 = [p.X(), p.Y(), p.Z()], o: [number, number] = [dot(P, x), dot(P, y)], r = c.Radius();
+        const k = `${o[0].toFixed(4)},${o[1].toFixed(4)},${r.toFixed(4)}`;
+        if (!seen.has(k)) { seen.add(k); out.push({ o, r }); }
+      } finally {
+        for (const o of gone.splice(0)) { try { o.delete(); } catch { /* not a wrapper */ } }
+      }
     }
-    if (ty !== T.GeomAbs_Circle) continue;
-    const c = ad.Circle(), a = c.Axis().Direction(), p = c.Location();
-    if (Math.abs(a.X() * n[0] + a.Y() * n[1] + a.Z() * n[2]) < 0.9999) continue;
-    const P: V3 = [p.X(), p.Y(), p.Z()], o: [number, number] = [dot(P, x), dot(P, y)], r = c.Radius();
-    const k = `${o[0].toFixed(4)},${o[1].toFixed(4)},${r.toFixed(4)}`;
-    if (!seen.has(k)) { seen.add(k); out.push({ o, r }); }
-  }
+  } finally { m.delete(); }
   return { circles: out, lines };
 }
 
@@ -447,16 +465,25 @@ function polyEdges(oc: any, comp: any, out: Seg2[], c: EdgeClass) {
   const A = oc.TopAbs_ShapeEnum;
   let run: number[] | null = null;
   const flush = () => { if (run && run.length >= 4) out.push(run.length === 4 ? { k: "l", c, p: [run[0], run[1], run[2], run[3]] } : { k: "p", c, p: run }); run = null; };
-  for (const ex = new oc.TopExp_Explorer_2(comp, A.TopAbs_EDGE, A.TopAbs_SHAPE); ex.More(); ex.Next()) {
-    const e = oc.TopoDS.Edge_1(ex.Current());
-    let ad: any;
-    try { ad = new oc.BRepAdaptor_Curve_2(e); } catch { continue; }
-    const a = ad.Value(ad.FirstParameter()), b = ad.Value(ad.LastParameter());
-    const ax = a.X(), ay = a.Y(), bx = b.X(), by = b.Y();
-    if (Math.hypot(bx - ax, by - ay) < 1e-9) continue;
-    if (run && Math.abs(run[run.length - 2] - ax) < 1e-7 && Math.abs(run[run.length - 1] - ay) < 1e-7) run.push(bx, by);
-    else { flush(); run = [ax, ay, bx, by]; }
-  }
+  // Every wrapper is deleted: a live adaptor or edge keeps the HLR result's edges and curves in the wasm heap,
+  // which leaked ~100 MB per fast view of an engine assembly (drawings exam round three).
+  const ex = new oc.TopExp_Explorer_2(comp, A.TopAbs_EDGE, A.TopAbs_SHAPE);
+  try {
+    for (; ex.More(); ex.Next()) {
+      const cur = ex.Current(), e = oc.TopoDS.Edge_1(cur);
+      let ad: any = null, a: any = null, b: any = null;
+      try {
+        ad = new oc.BRepAdaptor_Curve_2(e);
+        a = ad.Value(ad.FirstParameter()); b = ad.Value(ad.LastParameter());
+        const ax = a.X(), ay = a.Y(), bx = b.X(), by = b.Y();
+        if (Math.hypot(bx - ax, by - ay) < 1e-9) continue;
+        if (run && Math.abs(run[run.length - 2] - ax) < 1e-7 && Math.abs(run[run.length - 1] - ay) < 1e-7) run.push(bx, by);
+        else { flush(); run = [ax, ay, bx, by]; }
+      } catch { continue; } finally {
+        a?.delete(); b?.delete(); ad?.delete(); e.delete(); cur.delete?.();
+      }
+    }
+  } finally { ex.delete(); }
   flush();
 }
 
