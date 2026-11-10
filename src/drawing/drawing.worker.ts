@@ -9,7 +9,9 @@ import { Assembler } from "../kernel/assembly";
 import { Modeller } from "../kernel/model";
 import type { AsmDoc } from "../asm/types";
 import type { EdgeRef, PartDoc } from "../model/types";
-import { modelItems } from "./items";
+import { modelItems, type WeldInfo } from "./items";
+import { cutList, type WeldHost } from "../weldments/kernel";
+import { cutKey } from "../weldments/types";
 import { activate } from "../model/configs";
 
 export type DrawingRequest =
@@ -78,7 +80,16 @@ function buildPart(doc: PartDoc): { shape: any; mat: string | null; names: strin
   };
   let mi: ReturnType<typeof modelItems> = { items: [], holes: [], threads: [], sketches: [] };
   try { mi = modelItems(doc, res.frames, res.sketches, edgeCircle); } catch { /* no model items */ }
-  return { shape, mat: doc.material?.name ?? null, names: body.names, extra: { topo: topology(oc, shape, body.names), ...mi } };
+  // Weld table (FR-FT-121): the cut list's beads, less the items marked Exclude from cut list.
+  let welds: WeldInfo[] = [];
+  if (doc.features.some(f => f.type === "weldbead" && !f.suppressed)) {
+    try {
+      welds = cutList(md as unknown as WeldHost, md.bodyInfo(body, doc), doc, res.frames)
+        .filter(c => c.kind === "bead" && !doc.cutProps?.[cutKey(c)]?.excl)
+        .map(c => ({ legs: c.desc, length: c.length ?? 0, qty: c.qty, ...(c.inter ? { inter: c.inter } : {}) }));
+    } catch { /* no weld table rows */ }
+  }
+  return { shape, mat: doc.material?.name ?? null, names: body.names, extra: { topo: topology(oc, shape, body.names), ...mi, welds } };
 }
 
 /** The shape (and material) a request draws: the loaded model, or one of the part's configurations. */

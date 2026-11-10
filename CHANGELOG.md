@@ -5,11 +5,31 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.410.0] - 2026-11-10
+## [1.413.0] - 2026-11-10
 
 ### Changed
 
-- **Douglas fir checked (FR-MAT-001)**: Wood (Douglas fir) now shows **Checked against:** with a link to Oregon State University's table from the USDA Wood Handbook (air-dry weight 545 kg/m³, modulus 13 400 MPa). 140 of 170 materials are checked; the other 30 still say they are not.
+- **Douglas fir and water checked (FR-MAT-001)**: Wood (Douglas fir) and Water now show **Checked against:** with a link. Douglas fir is compared with Oregon State University's table from the USDA Wood Handbook (air-dry weight 545 kg/m³, modulus 13 400 MPa), water with the USGS density table. 141 of 170 materials are checked; the other 29 still say they are not.
+
+## [1.412.0] - 2026-11-10
+
+### Added
+- Convert to Sheet Metal (FR-FT-120): a lip ring round an opening (one face shared by several walls) now gives each picked wall its own lip, straight across to the ring's inner edge, and the lips meet mitred at the corners like the walls. Every further wall at a corner is mitred too: in the plane bisecting the two bend edges when both chains have the same walls, else where the walls' mid-planes meet.
+
+### Fixed
+- Convert to Sheet Metal: with four walls round a face, a wall's second mitre could keep the wrong side and leave the wall running on past its corner (hidden in the part, where the solid trimmed it, but not in the panel outlines). Each mitre now keeps the side the wall's own bend edge lies on.
+
+## [1.411.0] - 2026-11-10
+
+### Added
+
+- **Recognize Extrudes takes notches cut right through at an edge (FR-FT-102)**: a notch, a cut-off corner or a half-round cut-out in the outline of an imported body that goes through its whole thickness is removed and made again as a sketch on the face with a **Through all** Extruded Cut. When a cut can be read two ways (through from one face, blind from the next), the sketch goes on the larger face.
+
+## [1.410.0] - 2026-11-10
+
+### Added
+
+- **Weld table on drawings (FR-FT-121)**: in a drawing of a weldment part, Annotate ▾ Weld table lists the part's fillet beads: click a view, then place the table. Each kind of bead (continuous, intermittent or staggered, by leg size) gets a row with its item number, ISO 2553 leg (z4, z5×8), total length along the root and how many beads, then a total row. Cut list items marked Exclude are left out, and the table follows the part when it changes.
 
 ## [1.409.0] - 2026-11-10
 
@@ -2416,7 +2436,10 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.410.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.413.0...HEAD
+[1.413.0]: https://github.com/kothf/step-viewer/compare/v1.412.0...v1.413.0
+[1.412.0]: https://github.com/kothf/step-viewer/compare/v1.411.0...v1.412.0
+[1.411.0]: https://github.com/kothf/step-viewer/compare/v1.410.0...v1.411.0
 [1.410.0]: https://github.com/kothf/step-viewer/compare/v1.409.0...v1.410.0
 [1.409.0]: https://github.com/kothf/step-viewer/compare/v1.408.0...v1.409.0
 [1.408.0]: https://github.com/kothf/step-viewer/compare/v1.407.0...v1.408.0

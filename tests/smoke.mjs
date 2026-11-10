@@ -6212,6 +6212,26 @@ try {
       await mp.evaluate(() => window.__sv.asm.undo());
       await shown(2);
       check(turn.box && turn.deg === 30 && turn.ok && turn.mates === n0, `asm: Move panel turns a component by a typed angle about its mate axis (exam #51) (${JSON.stringify(turn)})`);
+      // Two flat faces that cannot be Coincident either way round but can be Parallel start as Parallel (exam #27):
+      // with the pin seated on the plate, its other end face cannot also lie on the plate's top.
+      const par = await mp.evaluate(r => {
+        const a = window.__sv.asm, d = a.doc, plate = d.components[0], pin = d.components[1];
+        const topOfPin = [...a.geo.get(pin.part).entries()].find(([, g]) => g.k === "plane" && g.n[2] > 0.99)?.[0];
+        a.startMate();
+        Object.assign(a.mating, { a: { comp: plate.id, face: r.top }, b: { comp: pin.id, face: r.bottom } });
+        a.setMateType("coincident"); a.okMate();
+        const seated = a.doc.mates.length;
+        // As a click on the second face leaves it: Coincident, face to face, nothing chosen by hand.
+        Object.assign(a.mating, { a: { comp: plate.id, face: r.top }, b: { comp: pin.id, face: topOfPin }, type: "coincident", align: "anti", typeSet: undefined, alignSet: undefined });
+        a.previewMate();
+        const out = { seated, type: a.mating.type, problem: a.mating.problem ?? "", pinTop: !!topOfPin };
+        a.cancelMate();
+        return out;
+      }, ref);
+      await shown(2);
+      await mp.evaluate(() => window.__sv.asm.undo());
+      await shown(2);
+      check(par.pinTop && par.seated === n0 + 1 && par.type === "parallel" && !par.problem, `asm: flat faces that cannot be Coincident start as Parallel (exam #27) (${JSON.stringify(par)})`);
       check(/^Undo: .+ \(Ctrl\+Z\)$/.test(undoTip) && delKey.n === n0 - 1 && /^Undo: Delete Concentric1 \(Ctrl\+Z\)$/.test(delKey.tip)
         && menu.open && menu.inside && enter.next === "y" && enter.open && ins.name === "other<1>" && ins.inView && neg.flipped && neg.value === 5,
         `asm 1.339: Delete key, menus inside the window, Enter through Move, inserts in view numbered by file, negative distance flips, undo tips (${JSON.stringify({ undoTip, delKey, n0, menu, enter, ins, neg })})`);
@@ -9119,7 +9139,7 @@ try {
     await ap.click('#drw-pane-annot [data-an="note"]');
     const mode = await ap.evaluate(() => window.__sv.drw.mode());
     await ap.keyboard.press("Escape");
-    check(tab.views && !tab.annot && tab.n === 26 && mode === "note", `drawing: annotation tab shows the 26 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
+    check(tab.views && !tab.annot && tab.n === 27 && mode === "note", `drawing: annotation tab shows the 27 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
     // 1.82.0 break view (FR-DRW-015): select the first front view, leave out u = −25…15 mm; it closes up to a 6 mm gap.
     const fv = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views[0]; const pl = window.__sv.drw.placement(v.id); return { id: v.id, x: v.x, y: v.y, s: pl.s, w: pl.box[2] - pl.box[0], uc: pl.uc }; });
     const clickAt = async (x, y) => { const q = await ap.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await ap.mouse.click(q[0], q[1]); };
@@ -10688,6 +10708,35 @@ try {
     const hb = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, bends: l.sheet?.bends.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
     const hbWant = 100 * 3 * (154 + 4 * ((Math.PI / 2 - 2) * 3.5));
     check(!hb.bad && hb.bends === 4 && Math.abs(hb.v - hbWant) < 1e-2, `sheet metal: Insert Bends follows a hat section's walls to the brims (${JSON.stringify({ hb, hbWant })})`);
+    // Convert with lips: a 100 × 60 × 40 box with a 10 mm rim round a 20 mm deep pocket; the four bottom edges and the
+    // walls' four top edges: each wall gets a 10 mm lip off the shared rim, mitred at the corners, none past the box.
+    const lipDoc = flat => window.__sv.model.store.change("Lip tray", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), L = (id, a, b) => ({ id, t: "line", a, b });
+      const rect = (id, x0, y0, x1, y1, plane) => ({ id, type: "sketch", name: id, plane, rels: [], dims: [], ents: [P(`${id}p1`, x0, y0), P(`${id}p2`, x1, y0), P(`${id}p3`, x1, y1), P(`${id}p4`, x0, y1), L(`${id}l1`, `${id}p1`, `${id}p2`), L(`${id}l2`, `${id}p2`, `${id}p3`), L(`${id}l3`, `${id}p3`, `${id}p4`), L(`${id}l4`, `${id}p4`, `${id}p1`)] });
+      const ls = ["l1", "l2", "l3", "l4"];
+      d.features = [
+        rect("s", 0, 0, 100, 60, { std: "XY" }),
+        { id: "e", type: "extrude", name: "Boss-Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 40 } },
+        { id: "pl", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 40 } },
+        rect("pk", 10, 10, 90, 50, { plane: "pl" }),
+        { id: "px", type: "extrude", name: "Cut-Extrude1", sketch: "pk", op: "cut", end: "blind", depth: { v: 20 } },
+        { id: "c", type: "smconvert", name: "Convert-Solid1", face: { name: "e:start" }, edges: [...ls.map(l => ({ faces: ["e:start", `e:side:s${l}`] })), ...ls.map(l => ({ faces: ["e:end", `e:side:s${l}`] }))], thickness: { v: 2 }, radius: { v: 2 }, k: 0.5 },
+        ...(flat ? [{ id: "fp", type: "smflat", name: "Flat-Pattern1" }] : []),
+      ];
+    });
+    await mp.evaluate(lipDoc, false);
+    await settle();
+    const lp = await mp.evaluate(() => {
+      const l = window.__sv.model.last(), ps = l.sheet?.panels ?? [];
+      const ap = (M, q) => [0, 1, 2].map(i => M.o[i] + M.x[i] * q[0] + M.y[i] * q[1]);
+      const out = ps.filter(p => p.outer.some(sg => sg.kind === "line" && [sg.a, sg.b].some(q => { const w = ap(p.M, q); return w[0] < -1e-6 || w[0] > 100 + 1e-6 || w[1] < -1e-6 || w[1] > 60 + 1e-6; }))).map(p => p.id);
+      return { v: l.props?.volume ?? 0, bends: l.sheet?.bends.length, out, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") };
+    });
+    await mp.evaluate(lipDoc, true);
+    await settle();
+    const lpf = await mp.evaluate(() => window.__sv.model.last().props?.volume ?? 0);
+    check(!lp.bad && lp.bends === 8 && !lp.out.length && Math.abs(lpf / lp.v - 1) < 6e-3,
+      `sheet metal: Convert gives each wall its own lip off a shared rim, mitred at the corners (${JSON.stringify({ lp, lpf })})`);
     // Tab and Slot: a 100 × 50 plate and a separate 3 mm block 1 mm past one end (on the side away from the camera, so
     // its face towards the plate shows above it). Click the plate's top edge there, then that block face, ✓: two tabs
     // 10 × (1 + 2) into slots 0.1 bigger all round (2.1 deep: the default height is the thickness).
@@ -11194,6 +11243,48 @@ try {
     const bt = await dp.evaluate(() => ({ n: window.__sv.drw.doc().sheets[0].annots.filter(a => a.t === "btable").length, tx: [...document.querySelectorAll(".drw-svg text")].map(t => t.textContent) }));
     check(bt.n === 1 && ["Tag", "Direction", "Angle", "Inner radius", "90°", "2"].every(s => bt.tx.includes(s)) && bt.tx.filter(s => s === "A").length === aBefore + 2 && !bt.tx.some(s => /^(UP|DOWN) /.test(s)) && bt.tx.some(s => s === "UP" || s === "DOWN"),
       `drawing: bend table lists the flat pattern's bend and tags it on the view (${bt.tx.filter(s => /^(Tag|A|UP|DOWN|90|2|Inner)/.test(s)).join(" ")})`);
+    await ctx.close();
+  }
+
+  // --- Drawings: weld table of a weldment part (FR-FT-121) ---
+  if (inShard(6)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    // A 40x40x3 square tube standing on a plate, welded all round (tangent propagation from one side).
+    const part = { schema: 1, kind: "part", id: "d_drwweld", name: "Post", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p0", -100, -100), P("p1", 100, -100), P("p2", 100, 100), P("p3", -100, 100),
+        { id: "l0", t: "line", a: "p0", b: "p1" }, { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p0" }] },
+      { id: "p", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } },
+      { id: "k", type: "sketch3d", name: "3DSketch1", rels: [], dims: [], pts: [{ id: "A", p: [0, 0, 10], fixed: true }, { id: "B", p: [0, 0, 300] }], segs: [{ id: "post", t: "line", pts: ["A", "B"] }] },
+      { id: "m", type: "member", name: "Structural Member1", profile: "shs", size: "40x40x3", segs: [{ sketch: "k", ent: "post" }], corner: "none" },
+      { id: "w", type: "weldbead", name: "Fillet Bead1", faces1: [{ name: "p:end" }], faces2: [{ name: "m:post:side:5", hint: [20, 0, 155] }], size: { v: 4 } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-10T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "Post.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    const ready = () => dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
+    await ready();
+    // Click the first view, then place the table beside it.
+    const vp = await dp.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views[0], p = window.__sv.drw.placement(v.id); return { x: p.x, y: p.y, w: (p.box[2] - p.box[0]) * p.s }; });
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="wtable"]');
+    for (const [x, y] of [[vp.x, vp.y], [vp.x + vp.w / 2 + 20, vp.y]]) {
+      const [cx, cy] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]);
+      await dp.mouse.click(cx, cy);
+    }
+    await ready();
+    const wt = await dp.evaluate(() => ({ n: window.__sv.drw.doc().sheets[0].annots.filter(a => a.t === "wtable").length, tx: [...document.querySelectorAll(".drw-svg text")].map(t => t.textContent),
+      note: document.querySelector("#drw .drw-props .drw-note")?.textContent ?? "" }));
+    const loop = (4 * (40 - 12) + 2 * Math.PI * 6).toFixed(2).replace(/\.?0+$/, "");
+    check(wt.n === 1 && ["Item", "Weld", "Leg", "Length", "Qty", "Continuous", "z4", loop].every(s => wt.tx.includes(s)),
+      `drawing: weld table lists the weldment's fillet bead with its leg and length (${JSON.stringify({ n: wt.n, loop, tx: wt.tx.filter(s => /^(Item|Weld|Leg|Continuous|z\d|1\d\d)/.test(s)), note: wt.note })})`);
     await ctx.close();
   }
 

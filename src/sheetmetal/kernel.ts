@@ -724,6 +724,7 @@ function convertSolid(api: SheetApi, body: Named, f: SmConvertFeature | SmInsert
     }
     return out;
   };
+  const walls = picked.map(h => across(h.edge).other).filter(Boolean);
   const items = picked.map(hit => {
     const ed = hit.edge;
     const { other, op } = across(ed);
@@ -738,12 +739,13 @@ function convertSolid(api: SheetApi, body: Named, f: SmConvertFeature | SmInsert
     const to2p = (q: V3): V2 => [dot(sub3(q, A), o), dot(sub3(q, A), n)];
     const prof: V2[] = [[0, 0]];
     const used: any[] = [face];
-    let cur = other, curOp = op;
+    let cur = other, curOp = op, inEd = ed, prev = face;
+    const tm = dot(sub3([(p0.X() + p1.X()) / 2, (p0.Y() + p1.Y()) / 2, (p0.Z() + p1.Z()) / 2], A), u);
     for (let guard = 0; guard < 32; guard++) {
       used.push(cur);
       const last = prof[prof.length - 1];
       // The far straight edge parallel to the bend edge, and the face across it.
-      let far: { ed: any; d: number; q: V3 } | null = null;
+      let far: { ed: any; d: number; q: V3 } | null = null, near: { ed: any; d: number; q: V3 } | null = null;
       let reach = 0, rq: V3 | null = null;
       for (const q of pts3(cur)) {
         const p = to2p(q), dd = Math.hypot(p[0] - last[0], p[1] - last[1]);
@@ -757,7 +759,16 @@ function convertSolid(api: SheetApi, body: Named, f: SmConvertFeature | SmInsert
         if (Math.abs(Math.abs(dot(dir, u)) - 1) > 1e-6) continue;
         const pa = to2p(qa), dd = Math.hypot(pa[0] - last[0], pa[1] - last[1]);
         if (dd > 1e-6 && (!far || dd > far.d)) far = { ed: x, d: dd, q: qa };
+        // The nearest one across the bend edge's middle, for a rim.
+        const ta = dot(sub3(qa, A), u), tb = dot(sub3(qb, A), u);
+        if (dd > 1e-6 && Math.min(ta, tb) <= tm + 1e-9 && tm <= Math.max(ta, tb) + 1e-9 && (!near || dd < near.d)) near = { ed: x, d: dd, q: qa };
       }
+      // A rim: a face further on that other walls reach too (a lip ring round a tray's opening, one face for all its
+      // sides). This wall's lip is only the strip straight across from it, up to the rim's nearest edge there; the
+      // lips meet mitred at the corners.
+      const rim = guard > 0 && near && far && near.d < far.d - 1e-6 * (1 + far.d) && api.sub(cur, "EDGE").some((x: any) =>
+        !x.IsSame(inEd) && (chainEdges.some((c: any) => c.IsSame(x)) || walls.some(w => !w.IsSame(prev) && api.sub(w, "EDGE").some((y: any) => y.IsSame(x)))));
+      if (rim) { far = near; reach = near!.d; rq = near!.q; }
       let next: any = null, nextOp: { o: V3; n: V3; x: V3 } | null = null;
       if (far && far.d > reach - 1e-6 * (1 + reach)) {
         const nf = body.faces.find(fc => !used.some(x => x.IsSame(fc)) && api.sub(fc, "EDGE").some((x: any) => x.IsSame(far!.ed)));
@@ -767,7 +778,7 @@ function convertSolid(api: SheetApi, body: Named, f: SmConvertFeature | SmInsert
       }
       if (!next) { prof.push(to2p(rq ?? A)); break; }
       prof.push(to2p(far!.q));
-      cur = next; curOp = nextOp!;
+      prev = cur; inEd = far!.ed; cur = next; curOp = nextOp!;
     }
     const lines = prof.slice(1).map((q, k) => { const p = prof[k], L = Math.hypot(q[0] - p[0], q[1] - p[1]); return { d: [(q[0] - p[0]) / L, (q[1] - p[1]) / L] as V2, L }; });
     const more: ConvertLevel[] = lines.slice(1).map((x, k) => {

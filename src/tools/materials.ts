@@ -446,8 +446,9 @@ export const CHECKED: Record<string, string> = {
   // 1.407.0: PA66 stock shapes and the PLEXIGLAS GS/XT sheet.
   "Nylon PA66": "www.polymershapes.com/wp-content/uploads/2020/04/Polymershapes_Ensigner_DataSheet-TECAMID-66-natural.pdf",
   "PMMA (acrylic)": "www.voskunststoffen.nl/files/166151/datasheet%20plexiglas%20XT%20GS.pdf",
-  // 1.410.0: Oregon State's table from the USDA Wood Handbook.
+  // 1.413.0: Oregon State's table from the USDA Wood Handbook, USGS water density.
   "Wood (Douglas fir)": "owic.oregonstate.edu/node/68",
+  "Water (20 °C)": "www.usgs.gov/special-topics/water-science-school/science/water-density",
 };
 
 export const LIBRARY: Material[] = ROWS.map(([cat, name, , eq, [density, E, nu, sy, su, k, cp, alpha], src, color]) =>
