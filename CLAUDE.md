@@ -19,14 +19,14 @@ npm run test:unit  # node unit tests: modelling kernel, sketch solver, expressio
 
 The smoke test (`tests/smoke.mjs`) needs Playwright's Chromium (`npx playwright install chromium`). Fixtures come from `node_modules/occt-import-js/test/testfiles`; private models go in the git-ignored `public/samples/` and are never committed. Add a check to the smoke test for every measurement or geometry change.
 
-CI runs the smoke test as 4 parallel jobs (`SMOKE_SHARD=i/4 npm test` runs one; unset runs all). Put a new section in its own `if (inShard(k)) { … }` block that opens its own page or context, with k = the shard whose last CI run was shortest (each prints `shard i/4: … in N s`); unmarked code runs in every shard.
+CI runs the smoke test as 6 parallel jobs (`SMOKE_SHARD=i/6 npm test` runs one; unset runs all). Put a new section in its own `if (inShard(k)) { … }` block that opens its own page or context, with k = the shard whose last CI run was shortest (each prints `shard i/6: … in N s`); unmarked code runs in every shard.
 
 ## Releasing
 
 1. Bump `version` in `package.json` (`npm version X.Y.Z --no-git-tag-version`) and add a dated section to `CHANGELOG.md` (Keep a Changelog style, update the compare links at the bottom). `npm run release-notes -- X.Y.Z` must print it.
 2. `npm run package && npm test` must pass locally.
 3. Get it onto `main` (merge the PR, or commit and push). CI runs on every commit on `main`.
-4. Release with **Actions → Release → Run workflow** on `main`; Claude starts it without asking as soon as the bump is on `main` (from the cloud: the GitHub `actions_run_trigger` tool, workflow `release.yml`, ref `main`). It releases `package.json`'s version (or the one typed in), reuses that commit's CI result (testing itself only if CI has no finished run), and tags `main` itself once that passes, so no tag push is needed. Pushing a `vX.Y.Z` tag by hand still works the same way. Don't create releases in GitHub's Releases page: the workflow makes them.
+4. Release with **Actions → Release → Run workflow** on `main`; Claude starts it without asking as soon as the bump is on `main` (from the cloud: the GitHub `actions_run_trigger` tool, workflow `release.yml`, ref `main`). It releases `package.json`'s version (or the one typed in), reuses that commit's CI result (when CI has no result and no run under way for the commit, its own `smoke` job tests it in 6 shards; jobs `check` → `smoke` → `release` → `pages`), and tags `main` itself once that passes, so no tag push is needed. Pushing a `vX.Y.Z` tag by hand still works the same way. Don't create releases in GitHub's Releases page: the workflow makes them.
 5. `.github/workflows/release.yml` publishes `step-viewer-X.Y.Z.tar.gz` + `.sha256` as a GitHub release, deploys GitHub Pages and, with the `SITE_DISPATCH_TOKEN` secret set, starts aerocat.tech's vendor update at once.
 6. aerocat.tech (repo `kothf/astro_source-new_theme`) pins the release in `vendor.json` (version + SHA-256 from the release's `.sha256` asset). Its vendor-update workflow (dispatched by the release, otherwise daily) opens the bump PR; the NUC deploys `main` within ~5 minutes of merging. Check the pin after merging; don't assume.
 

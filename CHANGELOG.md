@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.400.0] - 2026-11-10
+
+### Fixed
+- Releases were cancelled when main CI had no result for the commit: the Release workflow then ran the whole smoke test in one job, which no longer fits in its 20 minutes. It now runs the smoke test in the same 6 parallel shards as CI, waits only for a CI run that has really started, and publishes in a separate job.
+
 ## [1.399.0] - 2026-11-10
 
 ### Changed
@@ -2347,7 +2352,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.399.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.400.0...HEAD
+[1.400.0]: https://github.com/kothf/step-viewer/compare/v1.399.0...v1.400.0
 [1.399.0]: https://github.com/kothf/step-viewer/compare/v1.398.0...v1.399.0
 [1.398.0]: https://github.com/kothf/step-viewer/compare/v1.397.0...v1.398.0
 [1.397.0]: https://github.com/kothf/step-viewer/compare/v1.396.0...v1.397.0
