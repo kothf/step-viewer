@@ -2892,7 +2892,8 @@ try {
     }
     // Exam #78: after a click on Front in the heads-up bar, ← turns the view (the bar was a toolbar, whose arrows did nothing).
     {
-      await mp.click('#hud [data-view="front"]');
+      // The button may be folded away at narrow widths: click it in the page and leave the focus on it, as a click does.
+      await mp.$eval('#hud [data-view="front"]', b => { b.focus(); b.click(); });
       await mp.waitForTimeout(900);
       const look = () => mp.evaluate(() => { const v = window.__sv.viewer; return v.camera.position.clone().sub(v.controls.target).normalize().toArray(); });
       const d0 = await look();
