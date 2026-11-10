@@ -198,6 +198,7 @@ const EN: Tab[] = [
     id: "model", title: "Modelling",
     html: `
 <p><b>New part</b> (the page icon next to Open, or on the start screen) starts a parametric part: sketches and features in a history you can edit at any time. The <b>Features</b> tab on the left lists them; the bar over the view holds the commands.</p>
+<p><b>Tutorial: bracket in 10 steps</b> on the start screen opens a new part with a step list at the top of the right panel: a base, a wall, a fillet, a hole, chamfers and a material. Each step ticks itself when the part has it (undo unticks it), the next one shows what to click, and a click on any step shows its directions again; ✕ closes the list.</p>
 <h4>Sketch</h4>
 <ul>
   <li><b>Sketch</b>, then pick <b>Top (XY)</b>, <b>Front (XZ)</b>, <b>Right (YZ)</b> or a flat face of the part (a face picked with Smart measure is used at once). The view turns to face the sketch.</li>
@@ -492,6 +493,7 @@ const RU: Tab[] = [
     id: "model", title: "Моделирование",
     html: `
 <p><b>Новая деталь</b> (значок страницы рядом с «Открыть» или на начальном экране) начинает параметрическую деталь: эскизы и элементы в истории, которую можно менять в любой момент. Они перечислены на вкладке <b>Элементы</b> слева; команды на панели над видом.</p>
+<p><b>Урок: кронштейн за 10 шагов</b> на начальном экране открывает новую деталь со списком шагов вверху правой панели: основание, стенка, скругление, отверстие, фаски и материал. Шаг отмечается сам, когда в детали появляется нужное (отмена снимает отметку), следующий шаг подсказывает, что нажать, а щелчок по любому шагу снова показывает его указания; ✕ закрывает список.</p>
 <h4>Эскиз</h4>
 <ul>
   <li><b>Эскиз</b>, затем выберите <b>Сверху (XY)</b>, <b>Спереди (XZ)</b>, <b>Справа (YZ)</b> или плоскую грань детали (грань, выбранная умным измерением, берётся сразу). Вид поворачивается к эскизу.</li>

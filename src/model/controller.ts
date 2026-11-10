@@ -477,13 +477,17 @@ export class ModelController {
   // ---------- opening and closing ----------
 
   /** Starts a new, empty part. */
-  newPart() {
+  newPart(base?: string) {
     let n = 1;
     const used = new Set([...journalList().map(j => j.doc.name), ...(this.host.openNames?.() ?? [])]);
-    while (used.has(`Part${n}`)) n++;
-    this.load(newPart(`Part${n}`), "", null);
+    const name = (k: number) => (base ? (k === 1 ? base : `${base} ${k}`) : `Part${k}`);
+    while (used.has(name(n))) n++;
+    const doc = newPart(name(n));
+    this.load(doc, "", null);
     this.warm();
-    toast(t("New part: click Sketch, pick a plane and draw a closed profile, then Extrude."));
+    // The tutorial (FR-HLP-003) names its part and gives the directions itself.
+    if (!base) toast(t("New part: click Sketch, pick a plane and draw a closed profile, then Extrude."));
+    return doc.id;
   }
 
   warm() { this.kernel.warm(); }

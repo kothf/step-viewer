@@ -1644,7 +1644,7 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 | FR-UI-061 | Hovering a tree row highlights the feature, and the other way round | 1.324.0 | Done |
 | FR-UI-080 | Preferences dialog with a Modelling page | 1.329.0: Display ▾ → Preferences… with Modelling, Sketch and Mouse pages (units, image quality, verification on rebuild, autosave, spin steps, sketch settings and colour legend, middle button and wheel). No document templates | Done |
 | FR-UI-091 | Tablets: touch gestures for parameters and view (P2, S) | No touch gestures | Not built |
-| FR-HLP-003 | Tutorial document "Bracket in 10 steps" (S) | No | Not built |
+| FR-HLP-003 | Tutorial document "Bracket in 10 steps" (S) | 1.378.0: start card button opens a part named Bracket with a ten-step list at the top of the right panel; steps tick from the document (sketch, rectangle, dimensions, extrude, face sketch, wall, fillet, hole, chamfer, material), undo unticks, the list follows the document tab | Done |
 | FR-MEA-002 | Drag a measured value into a numeric input (S) | 1.319.0 | Done |
 | FR-CFG-003 | Configuration table as CSV (P5, C) | Done in 1.139.0 (Configurations panel: Export table / Import table…) | Done |
 

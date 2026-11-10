@@ -11456,6 +11456,63 @@ try {
     check(true, "File menu: a recent document opens again from the list");
     await ctx.close();
   }
+  // 1.378 (FR-HLP-003): the tutorial from the start card makes a part and ticks its steps from the document.
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const tp = await ctx.newPage();
+    tp.on("pageerror", e => errors.push(e.message));
+    tp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await tp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await tp.goto(`${origin}/index.html?debug&nokernel`);
+    await tp.waitForFunction(() => window.__sv);
+    const state = () => tp.evaluate(() => {
+      const el = document.querySelector("#tutorial");
+      return { shown: !el.hidden, n: Number(el.querySelector(".tut-n")?.dataset.n ?? -1), done: [...el.querySelectorAll("li.done")].map(li => Number(li.dataset.i)), cur: Number(el.querySelector("li.cur")?.dataset.i ?? -1), how: el.querySelector(".tut-how")?.textContent ?? "", steps: el.querySelectorAll("li").length };
+    });
+    const waitN = n => tp.waitForFunction(n => Number(document.querySelector("#tutorial .tut-n")?.dataset.n) === n, n, { timeout: 15000 });
+    const hidden0 = await tp.evaluate(() => document.querySelector("#tutorial").hidden);
+    await tp.click("#empty-tut");
+    await tp.waitForFunction(() => !document.querySelector("#tutorial").hidden);
+    const t0 = await state();
+    const name = await tp.evaluate(() => window.__sv.modeller.store.doc.name);
+    check(hidden0 && t0.shown && t0.steps === 10 && t0.n === 0 && t0.cur === 0 && /Top \(XY\)/.test(t0.how) && name === "Bracket", `tutorial 1.378: the start card opens a part named Bracket with ten steps, the first one open (${JSON.stringify({ hidden0, t0, name })})`);
+    // A sketch with a dimensioned rectangle ticks steps 1 to 3; an extrude ticks the fourth.
+    await tp.evaluate(() => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), L = (id, a, b) => ({ id, t: "line", a, b });
+      window.__sv.modeller.store.change("Sketch", d => { d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", 0, 0), P("b", 80, 0), P("c", 80, 50), P("d", 0, 50), L("l1", "a", "b"), L("l2", "b", "c"), L("l3", "c", "d"), L("l4", "d", "a")] }); });
+    });
+    await waitN(2);
+    const t2 = await state();
+    await tp.evaluate(() => window.__sv.modeller.store.change("Dimension", d => { const s = d.features.find(f => f.id === "s"); s.dims.push({ id: "d1", name: "D1", t: "distance", e: ["a", "b"], val: { v: 80 }, pos: [40, -10] }, { id: "d2", name: "D2", t: "distance", e: ["b", "c"], val: { v: 50 }, pos: [90, 25] }); }));
+    await waitN(3);
+    await tp.evaluate(() => window.__sv.modeller.store.change("Extrude", d => { d.features.push({ id: "e", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 6 } }); }));
+    await waitN(4);
+    const t4 = await state();
+    check(t2.cur === 2 && t2.done.join() === "0,1" && t4.cur === 4 && t4.done.join() === "0,1,2,3" && /top face/.test(t4.how), `tutorial 1.378: the steps tick themselves as the part grows, and the next one opens (${JSON.stringify({ t2, t4 })})`);
+    // Undo unticks; a click on a done step shows its directions again; Russian has every text.
+    await tp.evaluate(() => window.__sv.modeller.undo());
+    await waitN(3);
+    await tp.click('#tutorial li[data-i="0"] .tut-step');
+    const back = await state();
+    await tp.click("#lang-btn");
+    await tp.waitForFunction(() => document.documentElement.lang === "ru");
+    const ru = await tp.evaluate(() => document.querySelector("#tutorial").textContent);
+    await tp.click("#lang-btn");
+    await tp.waitForFunction(() => document.documentElement.lang === "en");
+    check(back.n === 3 && /Top \(XY\)/.test(back.how) && /Кронштейн за 10 шагов/.test(ru) && /3 из 10/.test(ru) && !/[A-Za-z]{4,}/.test(ru.replace(/\(XY\)/g, "")), `tutorial 1.378: undo unticks a step, a done step opens again, and the list is in Russian (${JSON.stringify({ back, ru: ru.slice(0, 120) })})`);
+    // Another document hides the list, the bracket's tab brings it back, ✕ closes it for good.
+    await tp.click("#new-part");
+    await tp.waitForFunction(() => window.__sv.modeller.store?.doc.name === "Part1");
+    await tp.waitForFunction(() => document.querySelector("#tutorial").hidden);
+    await tp.evaluate(() => [...document.querySelectorAll("#doc-tabs .dt .dt-b")].find(b => /Bracket/.test(b.textContent)).click());
+    await tp.waitForFunction(() => !document.querySelector("#tutorial").hidden, null, { timeout: 15000 });
+    const again = await state();
+    await tp.click("#tutorial [data-a=close]");
+    await tp.waitForTimeout(600);
+    const closed = await tp.evaluate(() => document.querySelector("#tutorial").hidden);
+    check(again.n === 3 && closed, `tutorial 1.378: the list follows the bracket's tab and ✕ closes it (${JSON.stringify({ again, closed })})`);
+    await ctx.close();
+  }
 } catch (err) {
   console.error(err);
   failures++;
