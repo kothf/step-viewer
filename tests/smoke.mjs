@@ -4682,6 +4682,20 @@ try {
     await dp.keyboard.press("Control+z"); await dp.keyboard.press("Control+z");
     const undone = await views(), rev = await dp.evaluate(() => window.__sv.modeller.store.doc.props.revision);
     check(undone.length === 3 && d(v3[0], undone[0]) === "0,0" && d(v3[2], undone[2]) === "0,0" && rev === "B", `drawing: Ctrl+Z undoes the moves and not the part's last step (revision ${rev})`);
+    // Custom sheet scale (drawings exam #17): a box under the list takes it, no browser prompt.
+    {
+      await dp.keyboard.press("Escape");
+      await dp.selectOption('#drw .drw-props [data-s="scale"]', "custom");
+      const box = dp.locator("#drw .drw-props input.drw-cscale");
+      const focused = await dp.evaluate(() => document.activeElement?.classList.contains("drw-cscale"));
+      await box.fill("1:3"); await box.press("Enter");
+      await dp.waitForTimeout(150);
+      const sc = await dp.evaluate(() => window.__sv.drw.doc().sheets[0].scale.join(":"));
+      await dp.selectOption('#drw .drw-props [data-s="scale"]', "1:1");
+      await ready();
+      const back = await dp.evaluate(() => window.__sv.drw.doc().sheets[0].scale.join(":"));
+      check(focused && sc === "1:3" && back === "1:1", `drawing: Custom… scale is typed into a box under the list (${focused}, ${sc}, back ${back})`);
+    }
     // Model view ▾ Isometric: the preview follows the cursor; the click places it, then projected views come off it.
     await dp.click('#drw [data-a="model"]');
     await dp.click('#drw [data-orient="iso"]');
@@ -6273,7 +6287,7 @@ try {
     const bm0 = await massOf();
     const wantG = (8000 * 7.85 + Math.PI * 250 * 4.43) / 1000, plainG = (8000 + Math.PI * 250) * 7.85 / 1000;
     check(bm.mat === "Titanium Ti-6Al-4V" && Math.abs(bm.g - wantG) < 0.02 && bm.dens && Math.abs(bm0.g - plainG) < 0.02 && !bm0.dens,
-      `model 1.452.0: a body's own material is used for its mass, the part's for the rest (${JSON.stringify({ bm, bm0, wantG, plainG })})`);
+      `model 1.453.0: a body's own material is used for its mass, the part's for the rest (${JSON.stringify({ bm, bm0, wantG, plainG })})`);
     // Hide the cylinder from its row: it leaves the view, the mass properties keep it.
     await mp.hover('#mc-tree .ft-row[data-id="body:e"]');
     await treeClick(mp, '#mc-tree .ft-row[data-id="body:e"] [data-a="bhide"]');
