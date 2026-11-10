@@ -4277,4 +4277,8 @@ export const RU: Record<string, string> = {
   "As measured": "Как измерено",
   "Reference (in parentheses)": "Справочный (в скобках)",
   "Basic (boxed)": "Теоретический (в рамке)",
+  // FR-DRW-021: dimension arrows side
+  "Arrows": "Стрелки",
+  "Inside": "Внутри",
+  "Outside": "Снаружи",
 };
