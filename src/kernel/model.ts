@@ -68,6 +68,8 @@ export const STD_FRAMES: Record<"XY" | "XZ" | "YZ", Frame> = {
 
 const add = (a: V3, b: V3): V3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 const mul = (a: V3, s: number): V3 => [a[0] * s, a[1] * s, a[2] * s];
+/** Gap within which touching material is joined when a plain fuse leaves it apart (mm). */
+const FUSE_FUZZ = 1e-5;
 const d3 = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 const dot = (a: V3, b: V3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const sub3 = (a: V3, b: V3): V3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -909,6 +911,21 @@ export class Modeller {
       : kind === "cut" ? new oc.BRepAlgoAPI_Cut_3(a.shape, b.shape, pr)
       : new oc.BRepAlgoAPI_Common_3(a.shape, b.shape, pr);
     if (!mk.IsDone() || mk.HasErrors()) throw new FeatureError("E-FT-BOOL", kind === "fuse" ? "The new material could not be joined to the body." : "The cut failed.");
+    if (kind === "fuse" && !glue) {
+      // Material that only touches the body, with a gap of sketch round-off (a few 1e-6 mm, e.g. a boss
+      // drawn on a snapped edge), stayed a separate solid (Leuenberger exam #82). When the plain fuse
+      // joins nothing, fuse again with a fuzzy value of 1e-5 mm, about SolidWorks' modelling tolerance.
+      const n = this.solids(mk.Shape());
+      if (n > 1 && n >= this.solids(a.shape) + this.solids(b.shape)) {
+        const fz = new oc.BRepAlgoAPI_Fuse_1();
+        const A = new oc.TopTools_ListOfShape_1(), B = new oc.TopTools_ListOfShape_1();
+        A.Append_1(a.shape); B.Append_1(b.shape);
+        fz.SetArguments(A); fz.SetTools(B);
+        fz.SetFuzzyValue(FUSE_FUZZ);
+        fz.Build(new oc.Message_ProgressRange_1());
+        if (fz.IsDone() && !fz.HasErrors() && this.solids(fz.Shape()) < n) return this.carry(fz, [a, b], fz.Shape(), fid);
+      }
+    }
     return this.carry(mk, [a, b], mk.Shape(), fid);
   }
 
