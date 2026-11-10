@@ -882,6 +882,29 @@ export function weldBead(h: WeldHost, f: WeldBeadFeature, prev: Named | null, _f
     return set;
   };
   const set1 = grow(f.faces1), set2 = grow(f.faces2);
+  if (f.both) {
+    // Both sides: the other side of each flat set 1 face's plate = the nearest flat face of its body behind it, facing the opposite way.
+    const flat = (x: any): { p: V3; n: V3 } | null => {
+      const ad = new oc.BRepAdaptor_Surface_2(x, true);
+      if (ad.GetType() !== S.GeomAbs_Plane) return null;
+      const l = ad.Plane().Location(), p: V3 = [l.X(), l.Y(), l.Z()];
+      return { p, n: normalAt(x, p)! };
+    };
+    const solids = h.bodyList(prev);
+    for (const fa of [...set1]) {
+      const a = flat(fa), body = a && solids.find(b => b.faces.some(x => x.IsSame(fa)));
+      if (!a || !body) continue;
+      let best: any[] = [], bd = Infinity;
+      for (const g of body.faces) {
+        const b = flat(g);
+        if (!b || dot(a.n, b.n) > -1 + 1e-6) continue;
+        const d = dot(sub(a.p, b.p), a.n);
+        if (d < 1e-6) continue;
+        if (d < bd - 1e-6) { best = [g]; bd = d; } else if (Math.abs(d - bd) <= 1e-6) best.push(g);
+      }
+      for (const g of best) if (!set1.some(x => x.IsSame(g)) && !set2.some(x => x.IsSame(g))) set1.push(g);
+    }
+  }
   /** One straight or round stretch of the root: its ends, length, and a builder for the bead from distance a to b along it. */
   type Run = { p0: V3; p1: V3; len: number; make: (a: number, b: number) => void };
   const runs: Run[] = [];

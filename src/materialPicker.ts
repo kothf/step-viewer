@@ -96,6 +96,7 @@ export function pickMaterial(o: PickOptions = {}): Promise<Picked | undefined> {
       + (m.eq ? `<p class="muted mat-eq" translate="no">${esc(m.eq)}</p>` : "")
       + `<table class="v-table mat-table"><tbody>${row("Density", m.density, "g/cm³")}${MAT_PROPS.map(([k, l, u]) => row(l, m[k], u)).join("")}</tbody></table>`
       + (s ? `<p class="muted mat-src">${esc(t(s.basis === "min" ? "Strengths are the standard's minimum values." : "Typical values."))} ${esc(t("Source:"))} <span translate="no">${esc(t(s.text))}</span></p>` : "")
+      + (m.ref ? `<p class="muted mat-src">${esc(t("Checked against:"))} <a href="https://${esc(m.ref)}" target="_blank" rel="noopener noreferrer" translate="no">${esc(m.ref.split("/")[0].replace(/^www\./, ""))}</a></p>` : "")
       + `<p class="muted mat-src">${esc(t("For mass and first estimates; use the supplier's certificate for design."))}</p>`
       + `<div class="row wrap">${m.cat === "custom"
         ? `<button class="btn small" data-a="edit">${esc(t("Edit"))}</button>${customMaterials().some(c => c.name === m.name) ? `<button class="btn small" data-a="del">${esc(t("Delete"))}</button>` : `<button class="btn small" data-a="keep">${esc(t("Add to my materials"))}</button>`}`
