@@ -5,6 +5,7 @@
 // The document (DocStore) is the source of truth; every rebuild sends it to the
 // kernel worker and shows the returned body with the viewer's own pipeline, so
 // the measuring tools work on modelled parts unchanged.
+import type { VaultTie } from "../pdm/panel";
 import type { NamedView, V2 } from "./types";
 import type { NamedViews } from "../viewer/navigation";
 import * as THREE from "three";
@@ -285,7 +286,7 @@ export class ModelController {
    * The open part came from a vault (FR-PDM-010/081): saving writes the working copy there, only while it is
    * checked out here; the title shows the version and a read-only bar offers Check out.
    */
-  vault: { label: string; readOnly: boolean; save(bytes: Uint8Array): Promise<void>; checkOut(): Promise<void> } | null = null;
+  vault: VaultTie | null = null;
 
   /** Ties (or unties) the open part to a vault file and refreshes the title and read-only bar. */
   setVault(v: ModelController["vault"]) {

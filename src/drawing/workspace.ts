@@ -3,6 +3,7 @@
 // lines as a live preview, then projected views come off it as the cursor moves
 // around (Esc or ✓ ends); views drag on the sheet and projected ones stay lined up
 // with their parent. Lines come from the drawing worker (exact HLR).
+import type { VaultTie } from "../pdm/panel";
 import fontUrl from "dejavu-fonts-ttf/ttf/DejaVuSans.ttf?url";
 import type { MEdge, Projection, ViewDir } from "../kernel/drawing";
 import { AUTO_LAYERS, withCut, clineSegs, cloudPrims, dimGeo, factsCtx, holeEdges, ringDist, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, stackItem, edgeItem, cutDesc, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
@@ -168,7 +169,7 @@ const ICON = {
 };
 
 /** A drawing kept in a document tab while another document is shown. */
-export interface DrawingTab { store: DrawingStore; model: Uint8Array | undefined; fileName: string; info: DrawingModel["info"]; modelKey: string; sheetIdx: number }
+export interface DrawingTab { store: DrawingStore; model: Uint8Array | undefined; fileName: string; info: DrawingModel["info"]; modelKey: string; sheetIdx: number; vault: VaultTie | null }
 
 export class DrawingWorkspace {
   readonly el: HTMLElement;
@@ -266,6 +267,7 @@ export class DrawingWorkspace {
     this.store.onChange(() => this.renderAll());
     this.model = model;
     this.fileName = fileName;
+    this.vault = null;
     this.sheetIdx = 0;
     this.sel = null;
     this.mode = { kind: "none" };
@@ -298,7 +300,8 @@ export class DrawingWorkspace {
   park(): DrawingTab | null {
     if (!this.store) return null;
     this.cancelMode();
-    const tab: DrawingTab = { store: this.store, model: this.model, fileName: this.fileName, info: this.info, modelKey: this.modelKey, sheetIdx: this.sheetIdx };
+    const tab: DrawingTab = { store: this.store, model: this.model, fileName: this.fileName, info: this.info, modelKey: this.modelKey, sheetIdx: this.sheetIdx, vault: this.vault };
+    this.vault = null;
     this.hide();
     this.store = null;
     return tab;
@@ -311,6 +314,7 @@ export class DrawingWorkspace {
     this.fileName = tab.fileName;
     this.info = tab.info;
     this.modelKey = tab.modelKey;
+    this.vault = tab.vault;
     this.sheetIdx = tab.sheetIdx;
     this.sel = null;
     this.mode = { kind: "none" };
@@ -531,7 +535,7 @@ export class DrawingWorkspace {
     this.renderTabs();
     this.renderStatus();
     const name = this.el.querySelector(".drw-name")!;
-    name.textContent = `${this.fileName || `${this.doc.name}${DRAWING_EXT}`}${this.store.dirty ? " •" : ""}`;
+    name.textContent = `${this.fileName || `${this.doc.name}${DRAWING_EXT}`}${this.vault ? ` · ${this.vault.label}` : ""}${this.store.dirty ? " •" : ""}`;
     const u = this.el.querySelector<HTMLButtonElement>('[data-a="undo"]')!, r = this.el.querySelector<HTMLButtonElement>('[data-a="redo"]')!;
     u.disabled = !this.store.undoLabel; r.disabled = !this.store.redoLabel;
     u.title = this.store.undoLabel ? t("Undo {what} (Ctrl+Z)", { what: t(this.store.undoLabel) }) : t("Undo (Ctrl+Z)");
@@ -1809,6 +1813,8 @@ export class DrawingWorkspace {
         ${lin ? `<label class="drw-f">${esc(t("Direction"))}<select data-d="k">${(["h", "v", "al"] as const).map(k => `<option value="${k}"${a.k === k ? " selected" : ""}>${esc(t(k === "h" ? "Horizontal" : k === "v" ? "Vertical" : "Aligned"))}</option>`).join("")}</select></label>` : ""}
         ${lin ? `<label class="drw-f">${esc(t("Arrows"))}<select data-d="arrows">${([["", "Auto"], ["in", "Inside"], ["out", "Outside"]] as const).map(([k, l]) => `<option value="${k}"${(a.arrows ?? "") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : ""}
         ${lin || a.k === "arc" ? `<label class="drw-f">${esc(t("Extension lines"))}<select data-d="noext">${([["", "Both shown"], ["a", "First hidden"], ["b", "Second hidden"], ["both", "Both hidden"]] as const).map(([k, l]) => `<option value="${k}"${(a.noExt ?? "") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : ""}
+        <label class="drw-f">${esc(t("Arrowheads"))}<select data-d="ends"><option value="">${esc(t("Document"))}</option>${(["filled", "open", "dot", "tick"] as const).map(k => `<option value="${k}"${a.ends === k ? " selected" : ""}>${esc(t(ARROW_NAMES[k]))}</option>`).join("")}</select></label>
+        ${a.k === "dia" ? `<label class="drw-f">${esc(t("Display"))}<select data-d="dlin">${([["", "Diameter"], ["h", "Linear, horizontal"], ["v", "Linear, vertical"]] as const).map(([k, l]) => `<option value="${k}"${(a.lin ?? "") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : ""}
         ${a.k === "rad" ? `<label class="drw-chk"><input type="checkbox" data-d="fore"${a.fore ? " checked" : ""}> ${esc(t("Foreshortened radius"))}</label>` : ""}
         ${lin ? `<label class="drw-chk"><input type="checkbox" data-d="horiz"${a.horiz ? " checked" : ""}> ${esc(t("Horizontal text in the dimension line"))}</label>` : ""}
         <label class="drw-f">${esc(t("Decimals"))}<select data-d="prec"><option value="">${esc(t("Auto"))}</option>${[0, 1, 2, 3].map(n => `<option value="${n}"${a.prec === n ? " selected" : ""}>${n}</option>`).join("")}</select></label>
@@ -1987,7 +1993,9 @@ export class DrawingWorkspace {
     const num = (s: string) => { const v = parseFloat(s.replace(",", ".")); return isFinite(v) ? v : undefined; };
     this.setAnnot(k === "ntxt" || k === "htxt" ? "Text" : "Annotation property", a => {
       if (a.t === "dim") {
-        if (k === "k") a.k = val as DimAnnot["k"];
+        if (k === "k") { a.k = val as DimAnnot["k"]; if (a.k !== "dia") delete a.lin; if (a.k !== "rad") delete a.fore; }
+        else if (k === "dlin") { if (val === "h" || val === "v") a.lin = val; else delete a.lin; }
+        else if (k === "ends") { if (val === "filled" || val === "open" || val === "dot" || val === "tick") a.ends = val; else delete a.ends; }
         else if (k === "arrows") { if (val === "in" || val === "out") a.arrows = val; else delete a.arrows; }
         else if (k === "noext") { if (val === "a" || val === "b" || val === "both") a.noExt = val; else delete a.noExt; }
         else if (k === "fore") { if ((el as HTMLInputElement).checked) a.fore = true; else delete a.fore; }
@@ -3042,10 +3050,37 @@ export class DrawingWorkspace {
 
   // ---------- saving and output ----------
 
-  async save() {
+  /**
+   * The open drawing came from a vault (FR-PDM-010/081): Save writes the working copy there, only while it is
+   * checked out here; the title shows the version and the lock.
+   */
+  vault: VaultTie | null = null;
+  setVault(v: VaultTie | null) {
+    this.vault = v;
+    if (this.store) this.renderAll();
+  }
+  /** Marks the open drawing saved (the vault wrote it). */
+  markSaved() {
+    if (!this.store) return;
+    this.store.markSaved();
+    this.renderAll();
+  }
+
+  /** Saves the drawing; `as` = a copy outside the vault. */
+  async save(as = false) {
     if (!this.store) return;
     const bytes = await packDrawing(this.doc, `MöbiusCAD ${this.host.appVersion}`, this.model);
     const name = this.fileName || `${this.doc.name}${DRAWING_EXT}`;
+    if (this.vault && !as) {
+      if (this.vault.readOnly) { toast(t("This file is read-only: check it out to save, or use Save as."), true); return; }
+      try { await this.vault.save(bytes); }
+      catch (err) { toast(t("Could not save: {err}", { err: t((err as Error).message) }), true); return; }
+      this.store.markSaved();
+      this.renderAll();
+      toast(t("Saved {name}", { name }), "success");
+      return;
+    }
+    if (as && this.vault) this.setVault(null);
     this.host.download(new Blob([bytes], { type: "application/zip" }), name);
     this.fileName = name;
     this.store.markSaved();

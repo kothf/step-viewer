@@ -256,8 +256,9 @@ export function sheetDxf2000(prims: Prim[], W: number, H: number): string {
   g(0, "DICTIONARY"); g(5, H_.root); g(330, "0"); g(100, "AcDbDictionary"); n(281, 1); g(3, "ACAD_GROUP"); g(350, H_.groups);
   g(0, "DICTIONARY"); g(5, H_.groups); g(330, H_.root); g(100, "AcDbDictionary"); n(281, 1);
   g(0, "ENDSEC"); g(0, "EOF");
-  body.push(...o.splice(0));
-  o.push(...head);
+  // No spreads of `o`: a big sheet has more codes than the call stack takes as arguments.
+  for (const x of o.splice(0)) body.push(x);
+  for (const x of head) o.push(x);
   g(0, "SECTION"); g(2, "HEADER");
   g(9, "$ACADVER"); g(1, "AC1015");
   g(9, "$DWGCODEPAGE"); g(3, "ANSI_1252");
@@ -270,7 +271,7 @@ export function sheetDxf2000(prims: Prim[], W: number, H: number): string {
   g(9, "$LIMMAX"); g(10, W); g(20, H);
   g(9, "$LTSCALE"); g(40, 1);
   g(0, "ENDSEC");
-  return [...o, ...body].join("\n") + "\n";
+  return o.concat(body).join("\n") + "\n";
 }
 
 // ---------- PDF ----------

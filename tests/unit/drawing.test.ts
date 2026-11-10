@@ -750,6 +750,15 @@ test("DXF 2000: handles, owners, model space records, LWPOLYLINE, Unicode text (
   assert.ok(d.includes("\\U+041C\\U+0430") && d.includes("\\U+00D8") && !/[^\x00-\x7f]/.test(d));
 });
 
+test("DXF 2000 of a big sheet: no call stack overflow (File ▸ Export on the Leuenberger engine drawing)", async () => {
+  const { sheetDxf2000 } = await import("../../src/drawing/output");
+  const prims: any[] = [];
+  for (let i = 0; i < 60000; i++) prims.push({ t: "l", p: [i % 400, 0, i % 400, 10], pen: "thin", layer: "VISIBLE" });
+  const d = sheetDxf2000(prims, 420, 297);
+  assert.ok(d.startsWith("0\nSECTION\n2\nHEADER") && d.trimEnd().endsWith("EOF"));
+  assert.equal(d.split("\nLINE\n").length - 1, 60000);
+});
+
 test("note property links: $PRP:\"name\" takes the title block field, SolidWorks names too (FR-DRW-023)", async () => {
   const { expandProps, useProps, notePrims } = await import("../../src/drawing/annot");
   const props = { material: "Steel", mass: "1.25 kg", number: "MC-001", scale: "2:1", title: "Plate" };
@@ -1338,6 +1347,27 @@ test("a dimension can carry a second line of text under its line (FR-DRW-021)", 
     assert.ok(Math.hypot(zig.p[0], zig.p[1]) > 70 && Math.hypot(zig.p[0], zig.p[1]) < 80, "and starts about 24 mm inside it");
     assert.ok(!short.prims.some(q => q.t === "l" && Math.hypot((q as { p: number[] }).p[0], (q as { p: number[] }).p[1]) < 1e-9));
     assert.equal(short.prims.filter(q => q.t === "t").length, full.prims.filter(q => q.t === "t").length);
+  }
+  {
+    // A diameter displayed as a linear dimension: extension lines from the rim's left and right ends, arrows on a level line, Ø kept.
+    const dia = { id: "d", t: "dim", view: "v", k: "dia", refs: [], pos: [3, 30], lin: "h" } as never, dg = { k: "dia", pts: [], c: [0, 0], r: 10, value: 20 } as never;
+    const o = dimPrims(dia, dg, pl, ".");
+    const ls = o.prims.filter(q => q.t === "l").map(q => (q as { p: number[] }).p);
+    assert.ok(ls.some(p => Math.abs(p[0] + 10) < 1e-9 && Math.abs(p[2] + 10) < 1e-9 && p[3] > 30), "extension line at x = -10");
+    assert.ok(ls.some(p => Math.abs(p[0] - 10) < 1e-9 && Math.abs(p[2] - 10) < 1e-9 && p[3] > 30), "extension line at x = 10");
+    assert.ok(ls.some(p => Math.abs(p[1] - 30) < 1e-9 && Math.abs(p[3] - 30) < 1e-9 && Math.abs(Math.abs(p[2] - p[0]) - 20) < 1e-9), "dimension line 20 long at y = 30");
+    assert.ok(o.prims.some(q => q.t === "t" && (q as { s: string }).s === "Ø20"));
+    const v = dimPrims({ ...(dia as object), lin: "v", pos: [30, 3] } as never, dg, pl, ".").prims.filter(q => q.t === "l").map(q => (q as { p: number[] }).p);
+    assert.ok(v.some(p => Math.abs(p[0] - 30) < 1e-9 && Math.abs(p[2] - 30) < 1e-9 && Math.abs(Math.abs(p[3] - p[1]) - 20) < 1e-9), "vertical dimension line at x = 30");
+  }
+  {
+    // Arrowheads of its own: oblique strokes are two thick lines in place of the two filled heads, and the next dimension is back to the style's.
+    const base = dimPrims(lin as never, geo as never, pl, ".").prims, tick = dimPrims({ ...lin, ends: "tick" } as never, geo as never, pl, ".").prims;
+    const thick = (ps: typeof base) => ps.filter(q => q.t === "l" && (q as { pen?: string }).pen === "thick").length;
+    const filled = (ps: typeof base) => ps.filter(q => q.t === "p" && (q as { fill?: boolean }).fill).length;
+    assert.equal(thick(tick), thick(base) + 2);
+    assert.equal(filled(tick), filled(base) - 2);
+    assert.deepEqual(dimPrims(lin as never, geo as never, pl, ".").prims, base);
   }
   const plain = dimPrims(lin as never, geo as never, pl, ".");
   const r = dimPrims({ ...lin, below: "2 PLACES" } as never, geo as never, pl, ".");
