@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.417.0] - 2026-11-10
+
+### Added
+
+- **Selected Contours for Extrude and Revolve (FR-FT-010)**: a feature can use only some regions of its sketch, as in SolidWorks, and sketches whose lines cross or branch (a rectangle with a line across it, two overlapping circles, a circle inside a shape) now work. Click in the **Selected Contours** box and click the regions in the view: picked ones are filled orange, a second click takes one off, **Use all regions** goes back to the whole sketch. When the sketch has no plain closed outline, the box opens first by itself. Neighbouring regions picked together give one clean body with no seam.
+
+### Fixed
+
+- **Saving names the file (exam #9)**: in a browser without the save dialog, the first Save (and every Save as) of a part or assembly now asks for the file name instead of downloading "Part1.mcadprt"; the part takes that name.
+
 ## [1.416.0] - 2026-11-10
 
 ### Changed
@@ -2454,7 +2464,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.416.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.417.0...HEAD
+[1.417.0]: https://github.com/kothf/step-viewer/compare/v1.416.0...v1.417.0
 [1.416.0]: https://github.com/kothf/step-viewer/compare/v1.415.0...v1.416.0
 [1.415.0]: https://github.com/kothf/step-viewer/compare/v1.414.0...v1.415.0
 [1.414.0]: https://github.com/kothf/step-viewer/compare/v1.413.0...v1.414.0
