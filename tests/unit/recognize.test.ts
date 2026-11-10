@@ -107,3 +107,47 @@ test("feature recognition: a two-distance chamfer keeps its two distances, also 
   assert.equal((feats2[2] as ChamferFeature).mode, "two");
   close(vol(m, doc([...imp2.features, ...feats2])), v2);
 });
+
+const on = (sk: SketchFeature, face: string): SketchFeature => ({ ...sk, plane: { face: { name: face } } });
+const cut = (id: string, sketch: string, depth: number, end: "blind" | "through" = "blind"): Feature => ({ id, type: "extrude", name: id, sketch, op: "cut", end, depth: { v: depth } }) as Feature;
+const boss = (id: string, sketch: string, depth: number): Feature => ({ id, type: "extrude", name: id, sketch, op: "boss", end: "blind", depth: { v: depth } }) as Feature;
+
+test("feature recognition: a pocket, a through cut and a boss come back as extrudes (FR-FT-102)", async () => {
+  const m = new Modeller(await occ());
+  // A rounded pocket: rectangle 20 × 10 with its corners filleted in the sketch is not needed; a slot shape does.
+  const slot: SketchFeature = { id: "k", type: "sketch", name: "k", plane: { face: { name: "e:end" } }, rels: [], dims: [], ents: [
+    { id: "ka", t: "point", x: -22, y: 4 }, { id: "kb", t: "point", x: -12, y: 4 }, { id: "kc", t: "point", x: -12, y: 12 }, { id: "kd", t: "point", x: -22, y: 12 },
+    { id: "k1", t: "point", x: -12, y: 8 }, { id: "k2", t: "point", x: -22, y: 8 },
+    { id: "kl1", t: "line", a: "ka", b: "kb" }, { id: "kl2", t: "line", a: "kc", b: "kd" },
+    { id: "ka1", t: "arc", c: "k1", a: "kb", b: "kc" }, { id: "ka2", t: "arc", c: "k2", a: "kd", b: "ka" }] as SkEnt[] };
+  const sq = on(rect("q", 10, 8), "e:end"), bs = on(rect("b", 12, 6), "e:end");
+  bs.ents = bs.ents.map(e => e.t === "point" ? { ...e, x: e.x + 18, y: e.y - 10 } : e);
+  const src = [...base(), slot, cut("c1", "k", 5), sq, cut("c2", "q", 10, "through"), bs, boss("b1", "b", 7)];
+  const imp = imported(m, src);
+  const v0 = vol(m, imp);
+  const feats = m.recognizeExtrudes(imp);
+  assert.equal(feats.map(f => f.type).join(), "delface,sketch,extrude,sketch,extrude,sketch,extrude");
+  const ex = feats.filter(f => f.type === "extrude") as any[];
+  assert.deepEqual(ex.map(f => `${f.op}:${f.end}`).sort(), ["boss:blind", "cut:blind", "cut:through"]);
+  close(ex.find(f => f.op === "boss").depth.v, 7);
+  close(ex.find(f => f.op === "cut" && f.end === "blind").depth.v, 5);
+  const sl = feats.find(f => f.type === "sketch" && (f as SketchFeature).ents.some(e => e.t === "arc")) as SketchFeature;
+  assert.equal(sl.ents.filter(e => e.t === "arc").length, 2);
+  close(vol(m, doc([...imp.features, feats[0]])), 60 * 40 * 20);
+  close(vol(m, doc([...imp.features, ...feats])), v0);
+  // Editable: a deeper pocket takes more away.
+  const deeper = feats.map(f => f.type === "extrude" && (f as any).op === "cut" && (f as any).end === "blind" ? { ...f, depth: { v: 8 } } as Feature : f);
+  assert.ok(vol(m, doc([...imp.features, ...deeper])) < v0 - 1);
+});
+
+test("feature recognition: round holes and plain blocks give no extrudes (FR-FT-102)", async () => {
+  const m = new Modeller(await occ());
+  assert.equal(m.recognizeExtrudes(imported(m, base())).length, 0);
+  const circle: SketchFeature = { id: "o", type: "sketch", name: "o", plane: { face: { name: "e:end" } }, rels: [], dims: [],
+    ents: [{ id: "oc", t: "point", x: 5, y: 5 }, { id: "ok", t: "circle", c: "oc", r: 4 } as SkEnt] };
+  assert.equal(m.recognizeExtrudes(imported(m, [...base(), circle, cut("c", "o", 6)])).length, 0);
+  // A round boss is an extrude.
+  const up = m.recognizeExtrudes(imported(m, [...base(), circle, boss("b", "o", 6)]));
+  assert.equal(up.map(f => f.type).join(), "delface,sketch,extrude");
+  assert.ok((up[1] as SketchFeature).ents.some(e => e.t === "circle" && Math.abs(e.r - 4) < 1e-9));
+});

@@ -3794,6 +3794,11 @@ export const RU: Record<string, string> = {
   "Recognize Fillets": "Распознать скругления",
   "Recognize fillets and chamfers: the body's fillets and chamfers become Fillet and Chamfer features you can edit": "Распознать скругления и фаски: скругления и фаски тела становятся редактируемыми элементами «Скругление» и «Фаска»",
   "Recognize fillets": "Распознать скругления",
+  "Recognize Extrudes": "Распознать вытягивания",
+  "Recognize extrudes: pockets and bosses of the body become sketches with Extrude features you can edit": "Распознать вытягивания: карманы и бобышки тела становятся эскизами с редактируемыми элементами «Вытягивание»",
+  "Recognize extrudes": "Распознать вытягивания",
+  "No pockets or bosses were found to recognise.": "Карманов и бобышек для распознавания не найдено.",
+  "{n} extrude recognised|{n} extrudes recognised": "Распознано {n} вытягивание|Распознано {n} вытягивания|Распознано {n} вытягиваний",
   "No fillets or chamfers were found to recognise.": "Скруглений и фасок для распознавания не найдено.",
   "Fillets and chamfers recognised: {n} edge|Fillets and chamfers recognised: {n} edges": "Распознаны скругления и фаски: {n} ребро|Распознаны скругления и фаски: {n} ребра|Распознаны скругления и фаски: {n} рёбер",
   // 1.112.0: hole table (FR-DRW-024) and inspection dimensions (FR-DRW-021).
