@@ -2005,7 +2005,7 @@ try {
       `model 1.375: a checked material shows the page its values were checked against (${JSON.stringify(refLink)})`);
     // 1.382.0: a material without a checked reference says so.
     const refNote = await mp.evaluate(() => !!document.querySelector("#mat-dlg .mat-unver"));
-    await mp.fill("#mat-q", "PEEK");
+    await mp.fill("#mat-q", "teak");
     const unver = await mp.evaluate(() => ({ note: document.querySelector("#mat-dlg .mat-unver")?.textContent ?? "", link: !!document.querySelector("#mat-dlg .mat-src a") }));
     check(!refNote && unver.note === "Not checked against a public reference yet." && !unver.link,
       `model 1.382: a material with no checked reference is marked as not checked (${refNote}, ${JSON.stringify(unver)})`);
@@ -6184,6 +6184,23 @@ try {
         a.cancelMate();
         return out;
       }, ref);
+      // Move panel: "Turn by" turns the pin about its concentric mate's axis (exam #51), as one undo step.
+      const turn = await mp.evaluate(async () => {
+        const a = window.__sv.asm, id = a.doc.components[1].id, x0 = a.doc.components[1].tf.filter((_, i) => i % 4 === 0);
+        a.moving = id; a.renderPanel();
+        const inp = document.querySelector("#asm-pm input[data-turn]");
+        if (!inp) return { box: false };
+        inp.value = "30";
+        inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+        const x1 = a.doc.components[1].tf.filter((_, i) => i % 4 === 0), dot = x0[0] * x1[0] + x0[1] * x1[1] + x0[2] * x1[2];
+        const out = { box: true, deg: Math.round(Math.acos(Math.max(-1, Math.min(1, dot))) * 1800 / Math.PI) / 10, ok: a.solved?.ok, mates: a.doc.mates.length };
+        a.moving = null; a.renderPanel();
+        return out;
+      });
+      await shown(2);
+      await mp.evaluate(() => window.__sv.asm.undo());
+      await shown(2);
+      check(turn.box && turn.deg === 30 && turn.ok && turn.mates === n0, `asm: Move panel turns a component by a typed angle about its mate axis (exam #51) (${JSON.stringify(turn)})`);
       check(/^Undo: .+ \(Ctrl\+Z\)$/.test(undoTip) && delKey.n === n0 - 1 && /^Undo: Delete Concentric1 \(Ctrl\+Z\)$/.test(delKey.tip)
         && menu.open && menu.inside && enter.next === "y" && enter.open && ins.name === "other<1>" && ins.inView && neg.flipped && neg.value === 5,
         `asm 1.339: Delete key, menus inside the window, Enter through Move, inserts in view numbered by file, negative distance flips, undo tips (${JSON.stringify({ undoTip, delKey, n0, menu, enter, ins, neg })})`);
@@ -10719,6 +10736,27 @@ try {
     const rpEdge = ({ "2,2": "rl1|rl4", "58,2": "rl1|rl2", "58,38": "rl2|rl3", "2,38": "rl3|rl4" })[far.join(",")].split("|").map(n => `rh:off:re:side:${n}`).join("|");
     check(rp0.title === "Rip" && rp0.edges?.length === 1 && rp0.edges[0] === rpEdge && !rp1.bad && Math.abs(rv0 - rp1.v - Math.SQRT2 * 2 * 0.1 * 28) < 1e-3,
       `sheet metal: Rip cuts a slot along the clicked inside corner edge (${JSON.stringify({ far, rp0, rp1, rv0, rpEdge })})`);
+    // Sheet Metal Properties: a 100 × 50 plate with a Ø10 hole and a 30 flange, aluminium; the dialog lists the cut-list values.
+    await mp.evaluate(() => window.__sv.model.store.change("Props plate", d => {
+      const q = [[0, 0], [100, 0], [100, 50], [0, 50]];
+      d.features = [
+        { id: "ps", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [...q.map((p, i) => ({ id: `pq${i}`, t: "point", x: p[0], y: p[1] })), ...q.map((_p, i) => ({ id: `pl${i + 1}`, t: "line", a: `pq${i}`, b: `pq${(i + 1) % 4}` })), { id: "pc0", t: "point", x: 70, y: 30 }, { id: "pc", t: "circle", c: "pc0", r: 5 }] },
+        { id: "pb", type: "smbase", name: "Base-Flange1", sketch: "ps", thickness: { v: 2 }, radius: { v: 2 }, depth: { v: 20 }, k: 0.5 },
+        { id: "pf", type: "smflange", name: "Edge-Flange1", edges: [{ faces: ["pb:p0:top", "pb:p0:pl1"] }], length: { v: 30 }, angle: { v: Math.PI / 2 } },
+      ];
+      d.material = { name: "Aluminium 6061", density: 2.7 };
+    }));
+    await settle();
+    await smMenu("Sheet Metal Properties");
+    await mp.waitForSelector("#sm-props[open]");
+    const sp = await mp.evaluate(() => Object.fromEntries([...document.querySelectorAll("#sm-props tr[data-prop]")].map(r => [r.dataset.prop, r.querySelector("td").textContent])));
+    const spH = 50 - 4 + (Math.PI / 2) * 3 + 26, spV = await mp.evaluate(() => window.__sv.model.last().props?.volume ?? 0);
+    const num = s => parseFloat(String(s).replace(",", "."));
+    check(Math.abs(num(sp["Bounding box length"]) - 100) < 0.01 && Math.abs(num(sp["Bounding box width"]) - spH) < 0.01 && num(sp["Sheet metal thickness"]) === 2
+      && sp["Cut outs"] === "1" && sp["Bends"] === "1" && Math.abs(num(sp["Cutting length - outer"]) - 2 * (100 + spH)) < 0.01 && Math.abs(num(sp["Cutting length - inner"]) - 10 * Math.PI) < 0.01
+      && Math.abs(spV - 2 * (100 * spH - 25 * Math.PI)) < 0.01 && /g$/.test(sp.Mass),
+      `sheet metal: Sheet Metal Properties lists the flat pattern's cut-list values (${JSON.stringify({ sp, spH, spV })})`);
+    await mp.click("#sm-props [data-a=close]");
     await ctx.close();
   }
 

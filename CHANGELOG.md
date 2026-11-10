@@ -5,11 +5,41 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.403.0] - 2026-11-10
+## [1.407.0] - 2026-11-10
 
 ### Added
 
 - **Weld table on drawings (FR-FT-121)**: in a drawing of a weldment part, Annotate ▾ Weld table lists the part's fillet beads: click a view, then place the table. Each kind of bead (continuous, intermittent or staggered, by leg size) gets a row with its item number, ISO 2553 leg (z4, z5×8), total length along the root and how many beads, then a total row. Cut list items marked Exclude are left out, and the table follows the part when it changes.
+
+## [1.406.0] - 2026-11-10
+
+### Added
+
+- **Recognize Extrudes takes nested shapes (FR-FT-102)**: a pocket in the floor of another pocket, a cut in the top of a boss or a boss on a pocket floor are now recognised together. The inner shape is removed first and put back last, on the face the outer extrude makes, so each one stays editable on its own.
+
+## [1.405.0] - 2026-11-10
+
+### Changed
+
+- **Four more materials checked (FR-MAT-001)**: POM (Delrin), PEEK, PET (PET-P) and OSB/3 now show **Checked against:** with a link to a stock shape or board maker's data sheet. 137 of 170 materials are checked; the other 33 still say they are not. Values changed to match the sheets: POM (Delrin) modulus 3.1 → 2.4 GPa, strength 70 → 76 MPa and expansion 110 → 120; PEEK modulus 4.0 → 4.5 GPa and strength 98 → 110 MPa; PET density 1.39 → 1.38, modulus 3.5 → 3.2 GPa, strength 90 → 69 MPa, expansion 60 → 70, specific heat added; OSB/3 density 0.65 → 0.6.
+
+## [1.404.0] - 2026-11-10
+
+### Added
+- Sheet Metal Properties (FR-FT-120): a new command on the Sheet Metal tab lists the cut-list values of the flat pattern: the smallest bounding box round it (length, width, area), sheet thickness, bend radius and K-factor, the flat pattern's area, the cutting length round the outside and round the openings, the number of cut outs and bends, and the mass when the part has a material. Export CSV saves them in millimetres and kilograms.
+
+### Fixed
+- A circle inside a base flange's closed sketch now cuts a hole in the plate; it used to add the disc back on.
+
+## [1.403.0] - 2026-11-10
+
+### Added
+
+- Move component: a "Turn by" box turns the component by a typed angle about the axis of its concentric, hinge or screw mate, and the parts mated to it follow (typed rotations used to be about the world axes only).
+
+### Changed
+
+- Mate: two flat faces that cannot be made Coincident either way round, but can be Parallel (side faces of a part its other mates already hold), start as Parallel instead of showing "over-defined".
 
 ## [1.402.0] - 2026-11-10
 
@@ -2369,7 +2399,11 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.403.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.407.0...HEAD
+[1.407.0]: https://github.com/kothf/step-viewer/compare/v1.406.0...v1.407.0
+[1.406.0]: https://github.com/kothf/step-viewer/compare/v1.405.0...v1.406.0
+[1.405.0]: https://github.com/kothf/step-viewer/compare/v1.404.0...v1.405.0
+[1.404.0]: https://github.com/kothf/step-viewer/compare/v1.403.0...v1.404.0
 [1.403.0]: https://github.com/kothf/step-viewer/compare/v1.402.0...v1.403.0
 [1.402.0]: https://github.com/kothf/step-viewer/compare/v1.401.0...v1.402.0
 [1.401.0]: https://github.com/kothf/step-viewer/compare/v1.400.0...v1.401.0

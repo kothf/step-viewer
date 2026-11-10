@@ -8,6 +8,7 @@ import type { Feature, PartDoc, SketchFeature, SkEnt } from "../../src/model/typ
 import type { SmRipFeature, SmTabSlotFeature, SmInsertFeature, SmConvertFeature, SmCutFeature, SmGussetFeature, SmReliefFeature, SmUnfoldFeature, SmFormFeature, SmVentFeature, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
 import { flatLoops, flatSize, bendAllowance, reliefCorners, filletLoop } from "../../src/sheetmetal/sheet";
 import { flatDrawing } from "../../src/sheetmetal/flat";
+import { cutPropsCsv, sheetCutProps } from "../../src/sheetmetal/cutprops";
 import { loopPolygon, polyArea } from "../../src/sketch/profile";
 import { occ } from "./occ";
 
@@ -920,4 +921,36 @@ test("sheet metal: rip the corners of a shelled box (FR-FT-120)", async () => {
   assert.equal(bad(rip({ edges: [{ faces: ["e:side:sl1", "e:side:sl2"] }], side: "a" })).code, "E-SM-RIPSIDE");
   assert.equal(bad(rip({ edges: [{ faces: ["e:side:sl1", "e:side:sl2"] }] })).ok, true);
   assert.equal(bad(rip({ gap: { v: 0 } })).code, "E-SM-RIPGAP");
+});
+
+test("sheet metal: cut-list properties from the flat pattern (FR-FT-120)", async () => {
+  oc ??= await occ();
+  m ??= new Modeller(oc);
+  // A 100 × 50 plate with a Ø10 hole, then a 90° flange 30 long on the y = 0 edge.
+  const s = rect("s", 0, 0, 100, 50);
+  s.ents.push({ id: "sc0", t: "point", x: 70, y: 30 }, { id: "sc", t: "circle", c: "sc0", r: 5 });
+  const fl: SmFlangeFeature = { id: "f", type: "smflange", name: "Edge-Flange1", edges: [{ faces: ["b:p0:top", "b:p0:sl1"] }], length: { v: 30 }, angle: { v: Math.PI / 2 } };
+  const r = run(doc([s, base(), fl]));
+  const p = sheetCutProps(r.sheet!);
+  const ba = (Math.PI / 2) * (2 + 0.5 * 2), H = 50 - 4 + ba + 26;
+  close(p.length, 100, 1e-9); close(p.width, H, 1e-9); close(p.angle, 0, 1e-9);
+  close(p.boxArea, 100 * H, 1e-9);
+  close(p.outer, 2 * (100 + H), 1e-9);
+  close(p.inner, 2 * Math.PI * 5, 1e-9);
+  assert.equal(p.cutouts, 1);
+  assert.equal(p.bends, 1);
+  close(p.T, 2); close(p.R, 2); close(p.k, 0.5);
+  // The area takes the hole out (the circle is a 48-gon here, ~0.3 % short).
+  close(p.area, 100 * H - Math.PI * 25, 1e-4);
+  close(p.area * p.T, r.props.volume, 1e-4);
+  // A plate turned 30° in its sketch: the smallest box turns with it.
+  const c = Math.cos(Math.PI / 6), sn = Math.sin(Math.PI / 6);
+  const q: [number, number][] = [[0, 0], [80 * c, 80 * sn], [80 * c - 20 * sn, 80 * sn + 20 * c], [-20 * sn, 20 * c]];
+  const tilt: SketchFeature = { id: "s", type: "sketch", name: "s", plane: { std: "XY" }, rels: [], dims: [], ents: [...q.map((v, i): SkEnt => ({ id: `tp${i}`, t: "point", x: v[0], y: v[1] })), ...q.map((_v, i): SkEnt => ({ id: `tl${i}`, t: "line", a: `tp${i}`, b: `tp${(i + 1) % 4}` }))] };
+  const pt = sheetCutProps(run(doc([tilt, base()])).sheet!);
+  close(pt.length, 80, 1e-9); close(pt.width, 20, 1e-9); close(pt.angle, Math.PI / 6, 1e-9);
+  assert.equal(pt.cutouts, 0); assert.equal(pt.bends, 0);
+  // CSV in mm.
+  const csv = cutPropsCsv(p, 1234.5);
+  assert.ok(csv.startsWith("Property,Value,Unit\nBounding box length,100,mm\n") && csv.includes("Cut outs,1,") && csv.includes("Mass,1.2345,kg"), csv);
 });
