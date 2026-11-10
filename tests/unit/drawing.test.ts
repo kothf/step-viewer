@@ -373,6 +373,12 @@ test("GD&T, datums, surface finish, tables, GOST title block, dangling annotatio
   // GOST dates read DD.MM.YY and fit the 10 mm date cell (drawings exam round 2: 2026-11-10 ran over it).
   const dated = formatPrims(g, { ...fields, date: "2026-11-10" }, k => k).filter(p => p.t === "t" && (p as { s: string }).s === "10.11.26");
   assert.equal(dated.length, 1);
+  {
+    // …and stay inside it (round 3: at the 1.8 mm floor "10.11.26" was 11 mm wide in the 10 mm cell).
+    const { textWidth } = await import("../../src/drawing/textWidth");
+    const d = dated[0] as { x: number; h: number; s: string };
+    assert.ok(textWidth(d.s, d.h) <= 9.5, `${textWidth(d.s, d.h)} mm`);
+  }
   assert.ok(fp.every(p => p.t !== "t" || p.x >= 230), "no zone letters on a GOST frame");
   // A datum whose edge is gone is reported and drawn as its framed letter only; sheet-level tables are drawn.
   const sh = { ...newSheet(1), views: [{ id: "v", name: "v", orient: "front" as const, x: 0, y: 0 }], annots: [

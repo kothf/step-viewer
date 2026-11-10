@@ -134,7 +134,7 @@ export function cellText(v: string, x: number, yc: number, hMax: number, w: numb
 }
 
 /** The text height that fits `s` into `w` mm, at most `h` (smaller than 1.8 mm only when nothing larger fits). */
-function fitH(s: string, h: number, w: number, bold = false) { const k = textWidth(s, 1, bold); return Math.max(Math.min(1.8, h), Math.min(h, w / Math.max(0.5, k))); }
+function fitH(s: string, h: number, w: number, bold = false, min = 1.8) { const k = textWidth(s, 1, bold); return Math.max(Math.min(min, h), Math.min(h, w / Math.max(0.5, k))); }
 
 /** The frame, zone marks and title block. Labels come translated through `label`. */
 export function formatPrims(s: Sheet, f: Fields, label: (cellLabel: string) => string): Prim[] {
@@ -239,7 +239,8 @@ function gostBlock(s: Sheet, f: Fields, label: (cellLabel: string) => string): P
     const iso = c.key === "date" ? /^(\d{2})(\d{2})-(\d{2})-(\d{2})$/.exec(raw) : null;
     const v = iso ? `${iso[4]}.${iso[3]}.${iso[2]}` : raw;
     if (!v) continue;
-    const h = fitH(v, c.big ? 5 : c.h >= 10 ? 3.5 : 2.5, c.w - 2);
+    // The 10 mm date cell takes DD.MM.YY only below 1.8 mm in DejaVu Sans (wider than GOST 2.304 type A): it ran over the cell's right line.
+    const h = fitH(v, c.big ? 5 : c.h >= 10 ? 3.5 : 2.5, c.w - 1, !!c.big, 1.4);
     const y = c.label ? by + c.y + 0.6 : by + c.y + c.h / 2 - h / 2;
     out.push({ t: "t", x: c.label ? bx + c.x + c.w - 1 : bx + c.x + c.w / 2, y, s: v, h: c.label ? Math.min(h, 2.5) : h, al: c.label ? "r" : "c", layer: "TEXT", bold: c.big });
   }
