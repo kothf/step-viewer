@@ -1662,7 +1662,7 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 
 | ID | Requirement | 1.87.0 | Class |
 | --- | --- | --- | --- |
-| FR-FT-010 | Extrude/revolve from **selected regions** of a sketch | 1.421.0: Selected Contours (regions of crossing or branching curves, picked in the view; `src/sketch/regions.ts`, kernel `contourFaces`) | Done |
+| FR-FT-010 | Extrude/revolve from **selected regions** of a sketch | 1.421.0: Selected Contours (regions of crossing or branching curves, picked in the view; `src/sketch/regions.ts`, kernel `contourFaces`); 1.427.0: hover pre-highlight, Planar Surface | Done |
 | FR-FT-012 | Extrude end condition **Up to body** | 1.100.0: Up to body | Done |
 | FR-FT-033 | Setback fillets (P3, S) | Yes | Built in 1.134.0: setback vertices with a distance each; fillets cut square to the edges, corner filled with a G1 patch |
 | FR-FT-041 | Vertex chamfer (three distances) and offset-face chamfer | 1.100.0: offset-face and vertex chamfers | Done |

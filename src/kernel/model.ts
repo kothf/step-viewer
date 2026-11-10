@@ -1497,7 +1497,7 @@ export class Modeller {
   /** Planar surface: the sketch's closed regions become flat surface bodies. */
   private planeSurf(f: PlaneSurfFeature, doc: PartDoc, body: Named | null, sheets: Named | null, frames: Record<string, Frame>): Named | null {
     const { sk, frame } = this.sketchOf(f.sketch, doc, body, frames, "a sketch with a closed contour");
-    const { faces } = this.profileFaces(sk, frame);
+    const { faces } = this.profileFaces(sk, frame, [0, 0, 0], undefined, f.contours);
     if (!faces.length) throw new FeatureError("E-SRF-EMPTY", "The sketch has no closed contour.");
     return this.sheetsOf([...this.sheetList(sheets), ...faces.map((x, k) => ({ shape: x, faces: [x], names: [`${f.id}:face:${k}`] }))]);
   }
