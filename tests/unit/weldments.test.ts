@@ -621,3 +621,57 @@ test("weldment defaults: a new feature starts with the settings used last, check
   const c = applyWeldMemory({ id: "c", type: "endcap", name: "C", faces: [], thickness: { v: 5 }, inset: { v: 0 } } as Feature, { thickness: { v: 10 }, inset: { v: 0 }, ratio: { v: 0.5 }, dir: "in" }) as Feature & { thickness: { v: number }; ratio?: unknown; dir?: string };
   assert.deepEqual([c.thickness.v, c.ratio, c.dir], [10, undefined, "in"]);
 });
+
+test("fillet beads along curved roots: a tilted tube on a plate (ellipse), a tube on a tube (saddle) (FR-FT-121)", async () => {
+  const m = new Modeller(await occ());
+  const sk = poly("s", [[-150, -150], [150, -150], [150, 150], [-150, 150]], true);
+  const plate: Feature = { id: "p", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } };
+  const R = 48.3 / 2;
+  // A post tilted by θ through the plate: its outside meets the plate's top in an ellipse of semi-axes R and R / cos θ.
+  const k: Sketch3dFeature = { id: "k", type: "sketch3d", name: "3DSketch1", rels: [], dims: [], pts: [{ id: "A", p: [0, -30, -60], fixed: true }, { id: "B", p: [0, 120, 290] }], segs: [{ id: "post", t: "line", pts: ["A", "B"] }] };
+  const mem: MemberFeature = { id: "m", type: "member", name: "Structural Member1", profile: "chs", size: "48.3x3.2", segs: [{ sketch: "k", ent: "post" }], corner: "none" };
+  const base = run(m, doc([sk, plate, k, mem]));
+  const axis = unit3([0, 150, 350]), ctr: V3 = [0, -30, -60];
+  const fromAxis = (c: V3) => { const q = [c[0] - ctr[0], c[1] - ctr[1], c[2] - ctr[2]] as V3; const t = q[0] * axis[0] + q[1] * axis[1] + q[2] * axis[2]; return Math.hypot(q[0] - t * axis[0], q[1] - t * axis[1], q[2] - t * axis[2]); };
+  const outer = base.body!.names.filter((n, i) => n.startsWith("m:post:side:") && fromAxis(centroid(m, base.body!.faces[i])) > 2 * (R - 1.6) / Math.PI + 0.5);
+  assert.equal(outer.length, 2);
+  const bead: Feature = { id: "w", type: "weldbead", name: "Fillet Bead1", faces1: [{ name: "p:end" }], faces2: outer.map(name => ({ name })), size: { v: 5 } };
+  const r = run(m, doc([sk, plate, k, mem, bead]));
+  const b = r.cut.find(c => c.kind === "bead")!;
+  const a = R / (350 / Math.hypot(150, 350)), e = R;
+  // Ramanujan's ellipse perimeter.
+  const per = Math.PI * (3 * (a + e) - Math.sqrt((3 * a + e) * (a + 3 * e)));
+  near(b.length!, per, 5e-3);
+  assert.ok(r.volume > base.volume + 0.8 * 12.5 * per, `bead volume ${r.volume - base.volume}`);
+  assert.ok(r.body!.names.some(n => n.startsWith("w:") && n.endsWith(":face")));
+  // All round: one closed bead, no end caps.
+  assert.equal(r.cut.filter(c => c.kind === "bead").length, 1);
+  assert.ok(!r.body!.names.some(n => n.startsWith("w:") && n.endsWith(":cap")));
+  // From/to length on the curved root: 50 mm of it.
+  const part = run(m, doc([sk, plate, k, mem, { ...bead, span: { start: { v: 10 }, len: { v: 50 } } } as Feature]));
+  near(part.cut.find(c => c.kind === "bead")!.length!, 50, 5e-3);
+
+  // A post standing on a horizontal tube: the root is the saddle x = r cos φ, y = r sin φ, z = √(Rh² − r² sin² φ).
+  const h: Sketch3dFeature = { id: "h", type: "sketch3d", name: "3DSketch2", rels: [], dims: [], pts: [{ id: "C", p: [-200, 0, 400], fixed: true }, { id: "D", p: [200, 0, 400] }, { id: "E", p: [0, 0, 400] }, { id: "F", p: [0, 0, 600] }], segs: [{ id: "rail", t: "line", pts: ["C", "D"] }, { id: "up", t: "line", pts: ["E", "F"] }] };
+  const rail: MemberFeature = { id: "r", type: "member", name: "Rail", profile: "chs", size: "88.9x4", segs: [{ sketch: "h", ent: "rail" }], corner: "none" };
+  const up: MemberFeature = { id: "u", type: "member", name: "Up", profile: "chs", size: "48.3x3.2", segs: [{ sketch: "h", ent: "up" }], corner: "none" };
+  const b2 = run(m, doc([h, rail, up]));
+  const Rh = 88.9 / 2;
+  const outR = b2.body!.names.filter((n, i) => n.startsWith("r:rail:side:") && Math.hypot(centroid(m, b2.body!.faces[i])[1], centroid(m, b2.body!.faces[i])[2] - 400) > 2 * (Rh - 2) / Math.PI + 0.5);
+  const outU = b2.body!.names.filter((n, i) => n.startsWith("u:up:side:") && Math.hypot(centroid(m, b2.body!.faces[i])[0], centroid(m, b2.body!.faces[i])[1]) > 2 * (R - 1.6) / Math.PI + 0.5);
+  assert.equal(outR.length, 2);
+  assert.equal(outU.length, 2);
+  const saddle: Feature = { id: "w2", type: "weldbead", name: "Fillet Bead2", faces1: outR.map(name => ({ name })), faces2: outU.map(name => ({ name })), size: { v: 4 } };
+  const r2 = run(m, doc([h, rail, up, saddle]));
+  const sb = r2.cut.find(c => c.kind === "bead")!;
+  let L = 0, prev: V3 | null = null;
+  for (let i = 0; i <= 2000; i++) {
+    const f = (2 * Math.PI * i) / 2000, p: V3 = [R * Math.cos(f), R * Math.sin(f), Math.sqrt(Rh * Rh - R * R * Math.sin(f) ** 2)];
+    if (prev) L += Math.hypot(p[0] - prev[0], p[1] - prev[1], p[2] - prev[2]);
+    prev = p;
+  }
+  near(sb.length!, L, 5e-3);
+  assert.ok(r2.volume > b2.volume);
+});
+
+function unit3(v: V3): V3 { const l = Math.hypot(...v); return [v[0] / l, v[1] / l, v[2] / l]; }
