@@ -98,7 +98,12 @@ export interface SkDim {
 /** Plane of a sketch or a reference: a standard plane, a planar face of the model, a reference plane feature, or a face of another component (in-context). */
 export type PlaneRef =
   | { std: "XY" | "XZ" | "YZ" }
-  | { face: FaceRef; offset?: number }
+  /**
+   * A flat face. `ax: 1`: the sketch X is the part's X laid onto the face (its Y when the face is square to X), so
+   * editing the features that made the face no longer turns what is sketched on it (exam #85). Without it (older
+   * files) X is the face surface's own direction, kept so their sketches stay where they are.
+   */
+  | { face: FaceRef; offset?: number; ax?: 1 }
   | { plane: string }
   | { ctx: CtxRef };
 

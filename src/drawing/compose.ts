@@ -694,7 +694,8 @@ export function composeSheet(sheet: Sheet, fields: Fields, projections: Map<stri
 
 /** The next free letter for a section, detail or auxiliary view (I, O, Q are skipped, as ISO advises). */
 export function nextLetter(sheets: Sheet[]): string {
-  const used = new Set(sheets.flatMap(s => s.views.map(v => v.letter).filter(Boolean)));
+  // Datum letters count as used too: a section A-A beside datum A reads as the same thing (drawings exam #6).
+  const used = new Set(sheets.flatMap(s => [...s.views.map(v => v.letter), ...(s.annots ?? []).map(a => (a.t === "datum" ? a.letter : ""))].filter(Boolean)));
   const abc = "ABCDEFGHJKLMNPRSTUVWXYZ";
   for (let n = 0; ; n++) for (const ch of abc) { const l = n ? ch + n : ch; if (!used.has(l)) return l; }
 }

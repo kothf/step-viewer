@@ -272,12 +272,16 @@ function rawReq(sheet: Sheet, v: DrawingView, depth = 0): ViewReq {
       const legs = v.path && !v.aligned ? cutLegs(v.path) : null;
       if (legs) {
         const n = viewAxes(view).n, mu = n[0] * x[0] + n[1] * x[1] + n[2] * x[2], mv = n[0] * y[0] + n[1] * y[1] + n[2] * y[2];
-        const ml = Math.hypot(mu, mv) || 1, m: [number, number] = [mu / ml, mv / ml];
+        // m: square to the path's first leg, on the viewer's side (n from the stored line may be a hair off the path).
+        const l0 = legs[0], lx = l0.b[0] - l0.a[0], ly = l0.b[1] - l0.a[1], ll = Math.hypot(lx, ly) || 1;
+        const sq: [number, number] = [-ly / ll, lx / ll], m: [number, number] = sq[0] * mu + sq[1] * mv >= 0 ? sq : [-sq[0], -sq[1]];
         const { pts, offs } = staircase(legs, m);
         const o = add(mul(x, legs[0].a[0]), y, legs[0].a[1]);
         const ev = [legs[0].b[0] - legs[0].a[0], legs[0].b[1] - legs[0].a[1]], el = Math.hypot(ev[0], ev[1]);
         const e = add(mul(x, ev[0] / el), y, ev[1] / el), m3 = add(mul(x, m[0]), y, m[1]);
-        const d0 = o[0] * n[0] + o[1] * n[1] + o[2] * n[2];
+        // Offsets along the cutter's own normal m3: the view's n comes from the stored line, which can be a hair off
+        // the rounded path, and then no cut face matched its plane (half section without hatching, drawings exam #13).
+        const d0 = o[0] * m3[0] + o[1] * m3[1] + o[2] * m3[2];
         const stair: Stair = { o, e, m: m3, pts, planes: offs.map(k => d0 + k) };
         return { view, p: o, stair, exclude, key: `${dirKey(view)}|st|${o.map(c => c.toFixed(6)).join(",")}|${pts.map(c => c.toFixed(5)).join(",")}${ex}` };
       }

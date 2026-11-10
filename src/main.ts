@@ -20,6 +20,8 @@ import { profileDrawing, toDxf, toSvg } from "./tools/profileExport";
 import { quadrants, virtualCorners, Snapper, SNAP_FILTERS, SEL_FILTER, type Snap } from "./tools/Snapper";
 import { Annotations } from "./tools/Annotations";
 import { VaultPanel } from "./pdm/panel";
+import { VaultMenu } from "./pdm/menu";
+import { useMemoryFolders } from "./pdm/folders";
 import {
   CIRCLE_MODES, describeEntity, entityFromSnap, formatMeasurement, makeNote, measure, measureBBox, MeasureError, smartBody, smartMeasure, TOOL_INFO, tx,
   type CircleMode,
@@ -38,7 +40,7 @@ import ImportWorker from "./worker/import.worker?worker";
 import { GerberView } from "./gerber/GerberView";
 import { bindGerberPanel } from "./gerber/panel";
 import { isPcbName, sniff } from "./gerber/load";
-import { bindModal, bindTabs, busy, confirmModal, emptyState, initConfirmCorners, initModals, initPanels, storage, toast } from "./ui";
+import { bindModal, bindTabs, busy, confirmModal, emptyState, initConfirmCorners, initModals, initPanels, storage, toast, trapFocus } from "./ui";
 import { lang, onLangChange, setLang, startI18n, t, withLang } from "./i18n";
 import { bindCommandBar, onCmTab, relabelCmTabs, setCmTabs, type CmTabId } from "./commandBar";
 import { renderHelp } from "./help";
@@ -415,6 +417,31 @@ const drawing = new DrawingWorkspace({
     const bytes = await kernel.step(null, viewer.parts.map(p => p.data.name), viewer.parts.map(p => p.data.color));
     const name = `${baseName()}.step`;
     return { name, file: { name, bytes }, info: { title: baseName() } };
+  },
+  // A drawing opened by itself carries its model: Model opens that copy in its own tab (or shows its parked tab).
+  async openModel(m) {
+    const tabOf = (kind: "part" | "asm", id: string) => docs?.tabs.find(x => x.kind === kind && x.state && (kind === "part" ? (x.state as PartTab).store.doc.id : (x.state as AsmTab).doc.id) === id);
+    const ext = (name: string, e: string) => (name.toLowerCase().endsWith(e) ? name : `${name.replace(/\.[^.]+$/, "")}${e}`);
+    if (m.part) {
+      if (modeller.active && modeller.store?.doc.id === m.part.id) return false;
+      const tab = tabOf("part", m.part.id);
+      if (tab) await docs!.activate(tab.id);
+      else { const b = await packPart(m.part, `MöbiusCAD ${__APP_VERSION__}`); await modeller.openFile({ name: ext(m.name, PART_EXT), data: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer }); }
+      return true;
+    }
+    if (m.asm) {
+      if (asm.active && asm.doc?.id === m.asm.id) return false;
+      const tab = tabOf("asm", m.asm.id);
+      if (tab) await docs!.activate(tab.id);
+      else { const b = await packAsm(m.asm, `MöbiusCAD ${__APP_VERSION__}`); await asm.openFile({ name: ext(m.name, ASM_EXT), data: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer }); }
+      return true;
+    }
+    if (m.file) {
+      if (viewer.parts.length && !modeller.active && !asm.active && state.fileName === m.file.name) return false;
+      await openFiles([new File([m.file.bytes as BlobPart], m.file.name)]);
+      return true;
+    }
+    return false;
   },
   livePart: id => (modeller.store?.doc.id === id ? modeller.store.doc : null),
   liveAsm: id => (asm.active && asm.doc?.id === id ? { doc: asm.doc, flat: asm.expanded?.doc ?? flattenSubs(asm.doc) } : null),
@@ -2028,10 +2055,51 @@ const vaultPanel = new VaultPanel($("#vault-panel"), {
     else if (asm.isAsmName(name)) await asm.openFile({ name, data: buf });
     else await openFiles([new File([buf], name)]);
   },
-  part: () => (modeller.active ? { name: modeller.partName, bytes: () => modeller.partBytes() } : null),
-  setVault: v => modeller.setVault(v),
-  markSaved: () => modeller.markSaved(),
+  doc: () => {
+    const k = fileMenuLive();
+    if (k === "drawing") return { name: drawing.title, kind: "drawing", tie: drawing.vault, bytes: async () => (await drawing.packed())?.data ?? null, setVault: v => drawing.setVault(v), markSaved: () => drawing.markSaved() };
+    if (k === "part" && modeller.active) return { name: plainLabel(modeller.partName), kind: "part", tie: modeller.vault, bytes: () => modeller.partBytes(), setVault: v => modeller.setVault(v), markSaved: () => modeller.markSaved() };
+    if (k === "asm" && asm.active) return { name: asm.title, kind: "assembly", tie: asm.vault, bytes: async () => asm.bytes(), setVault: v => asm.setVault(v), markSaved: () => asm.markSaved() };
+    return null;
+  },
 });
+/**
+ * Shows the vault's file list: the Vault tab of the side panel, or, when that panel is not on screen (a
+ * drawing, a PCB, a phone, the panel folded away), the same list in a window.
+ */
+function showVault() {
+  const panel = $("#vault-panel"), home = $("#tab-vault");
+  const win = document.getElementById("vault-win") as HTMLDialogElement | null;
+  if (win?.open) return;
+  const side = $("#tree-panel");
+  if (!drawing.open && side.offsetParent !== null && side.getBoundingClientRect().width > 150) { showLeftTab("vault"); return; }
+  let d = win;
+  if (!d) {
+    d = document.createElement("dialog");
+    d.id = "vault-win";
+    d.className = "modal v-dlg vault-win";
+    d.setAttribute("aria-labelledby", "vault-win-title");
+    d.innerHTML = `<div class="vault-win-h"><h3 id="vault-win-title">${t("Vault")}</h3><button class="btn small" data-a="close">${t("Close")}</button></div><div class="vault-win-b"></div>`;
+    document.body.appendChild(d);
+    trapFocus(d, () => d!.open);
+    d.querySelector("[data-a=close]")!.addEventListener("click", () => d!.close());
+    d.addEventListener("close", () => home.appendChild(panel));
+  }
+  d.querySelector(".vault-win-b")!.appendChild(panel);
+  void vaultPanel.render();
+  d.showModal();
+}
+const vaultMenu = new VaultMenu({ panel: vaultPanel, showPanel: showVault });
+/** The Vault button says which vault is open. */
+function syncVaultButton() {
+  const b = $("#vault-btn"), v = vaultPanel.vault;
+  b.classList.toggle("on", !!v);
+  b.title = v ? t("Vault {name}: check out, check in, history, versions", { name: v.info.name }) : t("Vault: keep every version of your files, in a folder or in the browser");
+  b.setAttribute("aria-label", b.title);
+}
+vaultPanel.onChange = syncVaultButton;
+onLangChange(syncVaultButton);
+$("#vault-btn").addEventListener("click", e => vaultMenu.toggle(e.currentTarget as HTMLElement));
 
 // ---------- display / views ----------
 function setMode(m: DisplayMode) {
@@ -2932,7 +3000,7 @@ const plainLabel = (s: string) => s.replace(/\s*•$/, "");
 /** Saves the live document (File ▸ Save / Save as). A model file has no document of ours: Save as keeps a copy of it. */
 async function saveLive(as: boolean) {
   const k = fileMenuLive();
-  if (k === "drawing") await drawing.save();
+  if (k === "drawing") await drawing.save(as);
   else if (k === "part") await modeller.save(as);
   else if (k === "asm") await asm.save(as);
   else if (k === "model" && modelSrc && as) download(new Blob([modelSrc.data]), modelSrc.name);
@@ -3015,6 +3083,7 @@ const fileMenu = new FileMenu({
     if (drawing.open) void drawing.exportAs("print");
     else print3d();
   },
+  vault: btn => vaultMenu.toggle(btn),
   properties() {
     if (drawing.open) drawing.sheetProperties();
     else if (fileMenuLive() === "part") modeller.editProps();
@@ -3092,4 +3161,4 @@ refreshMeasurements();
 // Orthographic by default (true dimensions on screen); the last choice is remembered.
 setProjection(storage.get("sv:proj") === "perspective" ? "perspective" : "orthographic");
 
-if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { tutorial, surfAna, modeller, asm, motion, drawing, drw: drawing.debug(), vault: vaultPanel, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, csys, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, timings: () => Object.assign(timings, kernel.timing) } });
+if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { tutorial, surfAna, modeller, asm, motion, drawing, drw: drawing.debug(), vault: vaultPanel, vaultFolders: { useMemory: useMemoryFolders }, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, csys, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, timings: () => Object.assign(timings, kernel.timing) } });

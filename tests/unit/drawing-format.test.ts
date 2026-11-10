@@ -3,8 +3,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { deleteFormat, formatFile, loadFormats, saveFormat, validFormat } from "../../src/drawing/formats";
 import { fieldAt, formatPrims, isoFormat, tbSize, titleBlockAt, type Fields } from "../../src/drawing/sheet";
-import { sheetDxf, svgBody } from "../../src/drawing/output";
+import { drawnSymbols, sheetDxf, svgBody } from "../../src/drawing/output";
 import type { Sheet, TitleFormat } from "../../src/drawing/types";
+import type { Prim } from "../../src/drawing/prims";
 
 const PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 const fields = { title: "Bracket", number: "BR-001", revision: "A", material: "", mass: "", company: "ACME", author: "AD", checked: "", approved: "", date: "", tcontrol: "", ncontrol: "", litera: "", scale: "1:1", sheet: "1/1", size: "A3", units: "mm" } as Fields;
@@ -57,4 +58,26 @@ test("the library keeps formats in the browser", () => {
     deleteFormat("f1");
     assert.deepEqual(loadFormats(), []);
   } finally { delete (globalThis as { localStorage?: unknown }).localStorage; }
+});
+
+test("counterbore and countersink symbols are drawn in lines for PDF, PNG and DXF (drawings exam #7)", () => {
+  const out = drawnSymbols([{ t: "t", x: 10, y: 20, s: "⌴Ø11 ↧6.4", h: 3.5, al: "l", layer: "ANNOT" }]);
+  const lines = out.filter(p => p.t === "l"), texts = out.filter(p => p.t === "t") as Extract<Prim, { t: "t" }>[];
+  assert.equal(lines.length, 3, "a cup: two sides and a floor");
+  assert.equal(texts.length, 1);
+  assert.equal(texts[0].s, "Ø11 ↧6.4");
+  assert.ok(Math.abs(texts[0].x - (10 + 0.95 * 3.5)) < 1e-9 && texts[0].y === 20, "the text starts after the symbol");
+  const cs = drawnSymbols([{ t: "t", x: 0, y: 0, s: "⌵Ø13.44 × 90°", h: 3.5, al: "c", layer: "ANNOT", rot: 90 }]);
+  assert.equal(cs.filter(p => p.t === "l").length, 2, "a V");
+  const t = cs.find(p => p.t === "t") as Extract<Prim, { t: "t" }>;
+  assert.ok(Math.abs(t.x) < 1e-9 && t.y < 0 && t.rot === 90 && t.al === "l", "centred and turned with the text");
+  const plain: Prim[] = [{ t: "t", x: 0, y: 0, s: "Ø20", h: 3.5, al: "l", layer: "ANNOT" }];
+  assert.equal(drawnSymbols(plain), plain);
+  assert.ok(!/⌴/.test(sheetDxf([{ t: "t", x: 10, y: 20, s: "⌴Ø11", h: 3.5, al: "l", layer: "ANNOT" }], 420, 297)));
+});
+
+test("DXF R12 writes text outside ASCII as \\U+XXXX, like DXF 2000 (drawings exam #8)", () => {
+  const dxf = sheetDxf([{ t: "t", x: 10, y: 20, s: "Ø20 ±0.1 Вид А", h: 3.5, al: "l", layer: "ANNOT" }], 420, 297);
+  assert.ok(dxf.includes("\\U+00D820 \\U+00B10.1 \\U+0412\\U+0438\\U+0434 \\U+0410"), dxf.split("\n").find(l => l.includes("20 ")));
+  assert.ok(!/[^\x00-\x7e]/.test(dxf), "pure ASCII file");
 });

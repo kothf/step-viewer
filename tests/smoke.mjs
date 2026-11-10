@@ -2199,6 +2199,10 @@ try {
     await mp.click("#mc-menu button:nth-child(2)");
     const flyTool = await mp.evaluate(() => ({ tool: window.__sv.model.editor().tool, shown: document.querySelector('#mc-tools [data-c^="sk:"][data-c="sk:extend"]')?.textContent?.trim() }));
     check(fly.join("|") === "Trim|Extend|Split" && flyTool.tool === "extend" && flyTool.shown === "Extend", `model 1.20: the sketch bar groups Trim, Extend and Split in a flyout (${fly.join("|")}, ${JSON.stringify(flyTool)})`);
+    // A tool picked on the sketch bar shows its fields in the panel at once (exam #89: Fillet came without its radius).
+    await mp.click('#mc-tools [data-c="sk:fillet"]');
+    const frBox = await mp.evaluate(() => ({ tool: window.__sv.model.editor().tool, box: !!document.querySelector('#mc-pm input[data-a="fr"]') }));
+    check(frBox.tool === "fillet" && frBox.box, `exam #89: Fillet picked on the sketch bar shows its radius box in the panel (${JSON.stringify(frBox)})`);
     // Offset the rectangle 5 mm inwards: a closed chain of four parallel lines.
     await tool("offset");
     await mp.evaluate(() => { window.__sv.model.editor().offsetDist = 5; });
@@ -4445,7 +4449,7 @@ try {
     await mp.waitForFunction(() => window.__sv.model?.store);
     await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("Block", d => { d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -10, -10), P("b", 10, -10), P("c", 10, 10), P("d", -10, 10), L("l1", "a", "b"), L("l2", "b", "c"), L("l3", "c", "d"), L("l4", "d", "a")] }, { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } }); }); });
     await idle();
-    // A new vault in the browser workspace, then Save part to vault.
+    // A new vault in the browser workspace, then Save to vault.
     await mp.click("#t-vault");
     await mp.fill("#v-name", "Smoke vault");
     await mp.click('#vault-panel [data-a="new-ws"]');
@@ -4484,6 +4488,84 @@ try {
     const chk = await mp.evaluate(async () => { const r = await window.__sv.vault.vault.verify(); return `${r.files}/${r.objects}/${r.missing.length + r.corrupt.length}`; });
     check(/Part1\.mcadprt/.test(row1) && /v1/.test(row1) && /Andrey/.test(row1) && /v1 · .*checked out/.test(title1) && dirty === true && hist === "v2:Twice as deep|v1:Added" && Math.abs(vBack - 4000) < 1e-3, `vault 1.39: save to vault, check in, read-only, history and roll back (${row1}, ${title1}, ${dirty}, ${hist}, ${vBack})`);
     check(audit === "create vault,add,check out,check in,roll back" && chk === "1/2/0", `vault 1.39: audit trail and integrity check (${audit}, ${chk})`);
+    await ctx.close();
+  }
+
+  // --- Vault menu (1.436.0) in the header, a vault in a picked folder that is remembered, an assembly saved back into the vault (FR-PDM-002/010/080) ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    // The folder picker cannot be driven: it hands out a folder of the origin's private file system instead.
+    await mp.addInitScript(() => { window.showDirectoryPicker = async () => (await navigator.storage.getDirectory()).getDirectoryHandle("Picked folder", { create: true }); });
+    await mp.goto(`${origin}/index.html?debug&nokernel`);
+    await mp.evaluate(() => { localStorage.setItem("sv:tips", "off"); localStorage.setItem("mc:vaultUser", "Andrey"); });
+    await mp.goto(`${origin}/index.html?debug&nokernel`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.evaluate(() => window.__sv.vaultFolders.useMemory());
+    const menu = async id => { await mp.click("#vault-btn"); await mp.waitForSelector("#vault-menu:not([hidden])"); if (id) await mp.click(`#vault-menu [data-v="${id}"]`); };
+    const items = () => mp.evaluate(() => [...document.querySelectorAll("#vault-menu button")].map(b => `${b.dataset.v.replace(/^folder:.*/, "folder")}${b.disabled ? "-" : ""}`).join(","));
+    // No vault: the menu offers the folder and the browser vaults; File ▸ Vault… opens the same menu.
+    const btnShown = await mp.evaluate(() => { const r = document.querySelector("#vault-btn").getBoundingClientRect(); return r.width > 20 && r.height > 20; });
+    await menu();
+    const closed = await items();
+    await mp.keyboard.press("Escape");
+    await mp.click("#file-btn");
+    await mp.click('#file-menu [data-f="vault"]');
+    await mp.waitForSelector("#vault-menu:not([hidden])");
+    // New vault in a folder: the vault opens, its file list shows, the button is lit.
+    await mp.click('#vault-menu [data-v="new-dir"]');
+    await mp.waitForSelector('#vault-panel [data-a="add"]');
+    const lit = await mp.evaluate(() => document.querySelector("#vault-btn").classList.contains("on") && document.querySelector("#t-vault").getAttribute("aria-selected") === "true" && window.__sv.vault.vault.info.name);
+    // An assembly goes in with Save to vault, checked out; Save then writes the working copy, Check in makes v2.
+    await mp.click("#empty-asm");
+    await mp.waitForFunction(() => window.__sv.asm.doc);
+    await menu("save");
+    await mp.waitForSelector("#vault-panel .v-row", { state: "attached" });
+    await mp.waitForFunction(() => /v1/.test(document.querySelector("#doc-name").textContent));
+    const title1 = await mp.evaluate(() => document.querySelector("#doc-name").textContent);
+    await mp.evaluate(() => window.__sv.asm.change(d => { d.name = "Frame"; }));
+    await mp.evaluate(() => window.__sv.asm.save());
+    const saved = await mp.evaluate(async () => { const v = window.__sv.vault.vault, f = (await v.files())[0]; return `${window.__sv.asm.dirty}/${(await v.status(f)).modified}`; });
+    await menu();
+    const opened = await items();
+    await mp.click('#vault-menu [data-v="ci"]');
+    await mp.fill('#vault-dlg textarea[name="comment"]', "Renamed");
+    await mp.click('#vault-dlg button[value="ok"]');
+    await mp.waitForFunction(() => /v2/.test(document.querySelector("#vault-panel .v-row")?.textContent ?? ""));
+    // Checked in: saving is refused until it is checked out again from the menu.
+    await mp.evaluate(() => window.__sv.asm.change(d => { d.name = "Frame 2"; }));
+    await mp.evaluate(() => window.__sv.asm.save());
+    const refused = await mp.evaluate(() => window.__sv.asm.dirty);
+    await menu("co");
+    await mp.waitForFunction(() => /checked out/.test(document.querySelector("#doc-name").textContent));
+    await mp.evaluate(() => window.__sv.asm.save());
+    const savedAgain = await mp.evaluate(() => window.__sv.asm.dirty);
+    await menu("hist");
+    await mp.waitForSelector("#vault-dlg tbody tr");
+    const hist = await mp.evaluate(() => [...document.querySelectorAll("#vault-dlg tbody tr")].map(r => r.cells[0].textContent + ":" + r.cells[3].textContent).join("|"));
+    await mp.click('#vault-dlg button[value="cancel"]');
+    // Close vault: the folder is remembered in the menu and opens again without the picker.
+    await menu("close");
+    await mp.waitForFunction(() => !document.querySelector("#vault-btn").classList.contains("on"));
+    await mp.evaluate(() => { window.showDirectoryPicker = async () => { throw new Error("picker used"); }; });
+    await menu();
+    const again = await items();
+    const folderName = await mp.evaluate(() => document.querySelector('#vault-menu [data-v^="folder:"]')?.textContent ?? "");
+    await mp.click('#vault-menu [data-v^="folder:"]');
+    await mp.waitForSelector("#vault-panel .v-row");
+    const row = await mp.evaluate(() => document.querySelector("#vault-panel .v-row").textContent.replace(/\s+/g, " ").trim());
+    // With the side panel folded away the file list comes in a window.
+    await mp.click("#nav-toggle");
+    await menu("panel");
+    await mp.waitForSelector("#vault-win[open] .v-row");
+    await mp.click('#vault-win [data-a="close"]');
+    await mp.waitForFunction(() => document.querySelector("#vault-panel").parentElement.id === "tab-vault", null, { timeout: 5000 }).catch(() => {});
+    const home = await mp.evaluate(() => document.querySelector("#vault-panel").parentElement.id);
+    check(btnShown && closed === "new-dir,open-dir,new-ws,panel" && lit === "Picked folder", `vault menu: Vault button and menu, new vault in a picked folder (${btnShown}, ${closed}, ${lit})`);
+    check(/v1 · .*checked out/.test(title1) && saved === "false/true" && opened === "save-,co-,ci,undo,latest,hist,add,search,panel,settings,close" && refused === true && savedAgain === false && hist === "v2:Renamed|v1:Added", `vault menu: an assembly saved to the vault, saved into the working copy, checked in and out from the menu (${title1}, ${saved}, ${opened}, ${refused}, ${savedAgain}, ${hist})`);
+    check(again === "new-dir,open-dir,folder,new-ws,panel" && folderName === "Picked folder" && /\.mcadasm/.test(row) && /v2/.test(row) && home === "tab-vault", `vault menu: the vault folder is remembered and reopens; the file list opens in a window without the side panel (${again}, ${folderName}, ${row}, ${home})`);
     await ctx.close();
   }
 
@@ -4589,9 +4671,12 @@ try {
     const flat = (a, b) => Math.abs(b.y - a.y) < 1e-9;
     check(d(v3[0], moved[0]) === "-20,15" && d(v3[1], moved[1]) === "-20,15" && d(v3[2], moved[2]) === "-20,15" && d(moved[2], slid[2]) === "10,0" && flat(moved[2], slid[2]),
       `drawing: dragging the parent moves its projected views; a side view only slides sideways (${d(v3[0], moved[0])} ${d(v3[1], moved[1])} ${d(v3[2], moved[2])}, side ${d(moved[2], slid[2])})`);
+    // The part behind the drawing has an undo step of its own; Ctrl+Z on the drawing must leave it alone (drawings exam #1).
+    await dp.evaluate(() => window.__sv.modeller.store.change("Revision", d => { d.props.revision = "B"; }));
+    await ready();
     await dp.keyboard.press("Control+z"); await dp.keyboard.press("Control+z");
-    const undone = await views();
-    check(undone.length === 3 && d(v3[0], undone[0]) === "0,0" && d(v3[2], undone[2]) === "0,0", "drawing: Ctrl+Z undoes the moves");
+    const undone = await views(), rev = await dp.evaluate(() => window.__sv.modeller.store.doc.props.revision);
+    check(undone.length === 3 && d(v3[0], undone[0]) === "0,0" && d(v3[2], undone[2]) === "0,0" && rev === "B", `drawing: Ctrl+Z undoes the moves and not the part's last step (revision ${rev})`);
     // Model view ▾ Isometric: the preview follows the cursor; the click places it, then projected views come off it.
     await dp.click('#drw [data-a="model"]');
     await dp.click('#drw [data-orient="iso"]');
@@ -4656,6 +4741,21 @@ try {
     await dp2.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 5 && window.__sv.drw.ready(), null, { timeout: 90000 });
     const reb = await dp2.evaluate(() => ({ open: !document.querySelector("#drw").hidden, name: document.querySelector("#drw .drw-name").textContent }));
     check(reb.open && reb.name === "Block.mcaddrw", `drawing: a saved .mcaddrw opens with its views (${JSON.stringify(reb)})`);
+    // Model on a drawing opened by itself opens the part it carries in its own tab; the drawing's tab then has the part under it.
+    {
+      const tabs = () => dp2.$$eval("#doc-tabs [data-dt]", els => els.length);
+      const t0 = await tabs();
+      await dp2.click('#drw [data-a="back"]');
+      await dp2.waitForFunction(() => window.__sv.modeller.active && window.__sv.viewer.parts.length > 0 && document.querySelector("#drw").hidden, null, { timeout: 60000 });
+      const t1 = await tabs(), pid = await dp2.evaluate(() => window.__sv.modeller.store.doc.id);
+      await dp2.evaluate(() => [...document.querySelectorAll("#doc-tabs [data-dt]")].find(e => /mcaddrw/.test(e.textContent))?.click());
+      await dp2.waitForFunction(() => !document.querySelector("#drw").hidden && window.__sv.drw.doc()?.sheets[0].views.length === 5, null, { timeout: 60000 });
+      const same = await dp2.evaluate(id => window.__sv.drw.doc().source.doc.id === id && window.__sv.modeller.active, pid);
+      await dp2.click('#drw [data-a="back"]');
+      await dp2.waitForFunction(() => document.querySelector("#drw").hidden, null, { timeout: 20000 });
+      const t2 = await tabs();
+      check(t0 === 1 && t1 === 2 && same && t2 === 2, `drawing: Model on a drawing opened alone opens its part in a tab, once (${JSON.stringify({ t0, t1, t2, same })})`);
+    }
     await ctx.close();
   }
 
@@ -4911,6 +5011,69 @@ try {
     tx = await texts();
     check(hov >= 1 && pv >= 1 && smart.length === 2 && smart[0].k === "h" && smart[0].view === front.id && smart[1].k === "dia" && tx.filter(s => s === "100").length === 2 && tx.filter(s => s === "Ø16").length === 2,
       `drawing: Smart dimension: an edge placed above it gives a horizontal 100, a circle gives Ø16, with a live preview (${JSON.stringify(smart.map(a => a.k))}, ${tx.join(" ")})`);
+    // 1.445.0 angle arrows: an angle placed tight in the corner gets its arrows outside (the arc grows tails); Inside takes them off; then deleted.
+    {
+      const sc = await dp.evaluate(() => { const s = window.__sv.drw.doc().sheets[0].scale; return s[0] / s[1]; });
+      await dp.click('#drw [data-a="dim"]');
+      [x, y] = await at(front.id, -20, 20); await dp.mouse.move(x, y + 3); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+      [x, y] = await at(front.id, 50, 7); await dp.mouse.move(x + 3, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+      [x, y] = await at(front.id, 50 - 2 / sc, 20 - 2 / sc); await dp.mouse.move(x - 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+      await dp.keyboard.press("Escape");
+      const n0 = (await annots()).length, made = (await annots()).find(a => a.k === "ang");
+      const sweep = () => dp.evaluate(() => { const q = window.__sv.drw.prims().filter(p => p.t === "a" && p.layer === "ANNOT" && Math.abs(p.r - 3) < 0.2).pop(); return q ? q.a1 - q.a0 : null; });
+      const s0 = await sweep();
+      const tp = await dp.evaluate(() => { const q = window.__sv.drw.prims().find(p => p.t === "t" && p.layer === "ANNOT" && p.s === "90°"); return q ? window.__sv.drw.sheetPt(q.x + 1.5, q.y + 1.2) : null; });
+      let s1 = null, has = false, st = false, gone = false;
+      if (tp) {
+        await dp.mouse.click(tp[0], tp[1]);
+        has = !!(await dp.$('#drw .drw-props [data-d="arrows"]')) && !!(await dp.$('#drw .drw-props [data-d="noext"]'));
+        if (has) {
+          await dp.selectOption('#drw .drw-props [data-d="arrows"]', "in");
+          s1 = await sweep(); st = (await annots()).some(a => a.k === "ang" && a.arrows === "in");
+          await dp.click('#drw .drw-props [data-a="adel"]');
+          gone = (await annots()).length === n0 - 1 && !(await annots()).some(a => a.k === "ang");
+        }
+      }
+      check(!!made && has && st && gone && s0 > Math.PI / 2 + 1 && Math.abs(s1 - Math.PI / 2) < 1e-6, `drawing: a tight angle dimension has its arrows outside, Inside puts them back (${JSON.stringify({ made: !!made, has, st, gone, s0, s1, tp: !!tp, ks: (await annots()).map(q => q.k).join() })})`);
+    }
+    // Extension lines (Andrey, 2026-11-10): a distance between the top and bottom edges placed right of the view starts
+    // both extension lines at the edges' right ends, not at their middles across the part. Undone afterwards.
+    {
+      const bx = await dp.evaluate(id => { const p = window.__sv.drw.placement(id); return { b: p.box, right: p.x + (p.box[2] - p.uc) * p.s, s: p.s }; }, front.id);
+      const level = () => dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "l" && p.layer === "ANNOT" && Math.abs(p.p[1] - p.p[3]) < 1e-6).map(p => [Math.min(p.p[0], p.p[2]), Math.max(p.p[0], p.p[2]), p.p[1]].map(v => Math.round(v * 1000) / 1000).join()));
+      const before = new Set(await level()), n0 = (await annots()).length;
+      await dp.click('#drw [data-a="dim"]');
+      [x, y] = await at(front.id, -20, bx.b[3]); await dp.mouse.move(x, y + 3); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+      [x, y] = await at(front.id, -20, bx.b[1]); await dp.mouse.move(x, y - 3); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+      [x, y] = await at(front.id, bx.b[2] + 14 / bx.s, (bx.b[1] + bx.b[3]) / 2); await dp.mouse.move(x - 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+      await dp.keyboard.press("Escape");
+      const made = (await annots()).slice(n0).map(a => a.k).join(), added = (await level()).filter(s => !before.has(s)).map(s => s.split(",").map(Number));
+      await dp.keyboard.press("Control+z");
+      const back = (await annots()).length === n0;
+      check(made === "al" && back && added.length === 2 && added.every(l => l[0] > bx.right + 0.5 && l[0] < bx.right + 1.5), `drawing: extension lines start at the edge ends nearest the dimension line (${JSON.stringify({ made, back, right: bx.right, added })})`);
+    }
+    // Diameter from the side (Andrey, 2026-11-10): in the front view the Ø16 hole shows as two hidden lines; a click on
+    // one gives its diameter as a linear dimension with Ø. Undone afterwards.
+    {
+      const bx = await dp.evaluate(id => { const p = window.__sv.drw.placement(id); return { b: p.box, s: p.s }; }, front.id);
+      const n0 = (await annots()).length, c0 = (await texts()).filter(s => s === "Ø16").length;
+      let made = null, c1 = 0, upright = 0;
+      for (const u of [18, -18, 2, -2]) {
+        await dp.click('#drw [data-a="dim"]');
+        [x, y] = await at(front.id, u, (bx.b[1] + bx.b[3]) / 2); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+        [x, y] = await at(front.id, u, bx.b[1] - 14 / bx.s); await dp.mouse.move(x, y + 2); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+        await dp.keyboard.press("Escape");
+        const an2 = await annots();
+        if (an2.length > n0) {
+          made = an2[an2.length - 1]; c1 = (await texts()).filter(s => s === "Ø16").length;
+          upright = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "l" && p.layer === "ANNOT" && Math.abs(p.p[0] - p.p[2]) < 1e-6).length);
+          await dp.keyboard.press("Control+z");
+          break;
+        }
+      }
+      const back = (await annots()).length === n0;
+      check(made && made.k === "dia" && made.view === front.id && c1 === c0 + 1 && upright >= 2 && back, `drawing: a hole's hidden line in a side view gives its diameter as a linear dimension (${JSON.stringify({ k: made?.k, c0, c1, upright, back })})`);
+    }
     // Select the 100 by its text and give it a ± tolerance.
     [x, y] = await at(front.id, 0, 40.5);
     await dp.mouse.click(x, y);
@@ -4953,6 +5116,50 @@ try {
       fore = { j0, j1, stored, r8: txR.includes("R8"), back: (await annots()).some(a => a.k === "dia" && !a.fore) && !(await dp.$('#drw .drw-props [data-d="fore"]')) };
     }
     check(fore && fore.j1 === fore.j0 + 1 && fore.stored && fore.r8 && fore.back, `drawing: a radius dimension is foreshortened with a jog and goes back to a diameter (${selR}; ${JSON.stringify(fore)})`);
+    // Arrow outside the circle (the Ø16 is still selected): stored, never more prims than before, and off again.
+    {
+      const nAn = () => dp.evaluate(() => window.__sv.drw.prims().filter(q => q.layer === "ANNOT").length);
+      const n0 = await nAn(), has = !!(await dp.$('#drw .drw-props [data-d="rout"]'));
+      if (has) await dp.check('#drw .drw-props [data-d="rout"]');
+      const n1 = await nAn(), st = (await annots()).some(a => a.k === "dia" && a.outside === true);
+      if (has) await dp.uncheck('#drw .drw-props [data-d="rout"]');
+      const n2 = await nAn(), off = !(await annots()).some(a => a.outside);
+      check(has && st && off && n1 <= n0 && n2 === n0, `drawing: a diameter's arrow goes outside the circle and back (${JSON.stringify({ has, st, off, n0, n1, n2 })})`);
+    }
+    // 1.446.0 text along the leader (the Ø16 is still selected): the text turns to the leader's angle and back.
+    {
+      const rot = () => dp.evaluate(() => { const q = window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "ANNOT" && p.s === "Ø16").pop(); return q ? q.rot ?? 0 : null; });
+      const r0 = await rot(), has = !!(await dp.$('#drw .drw-props [data-d="ralong"]'));
+      if (has) await dp.check('#drw .drw-props [data-d="ralong"]');
+      const r1 = await rot(), st = (await annots()).some(a => a.k === "dia" && a.along === true);
+      if (has) await dp.uncheck('#drw .drw-props [data-d="ralong"]');
+      const r2 = await rot(), off = !(await annots()).some(a => a.along);
+      check(has && st && off && r0 === 0 && r2 === 0 && r1 !== null && Math.abs(r1) > 1, `drawing: a diameter's text lies along its leader and goes back (${JSON.stringify({ has, st, off, r0, r1, r2 })})`);
+    }
+    // A diameter displayed as a linear dimension (the Ø16 is still selected), then back.
+    {
+      const has = !!(await dp.$('#drw .drw-props [data-d="dlin"]'));
+      const count = () => dp.evaluate(() => window.__sv.drw.prims().filter(q => q.t === "l" && q.layer === "ANNOT").length);
+      let r = null;
+      if (has) {
+        const n0 = await count();
+        await dp.selectOption('#drw .drw-props [data-d="dlin"]', "h");
+        const n1 = await count(), stored = (await annots()).some(a => a.k === "dia" && a.lin === "h"), txD = await texts();
+        await dp.selectOption('#drw .drw-props [data-d="dlin"]', "");
+        r = { n0, n1, stored, dia: txD.includes("Ø16"), back: await count() === n0 && !(await annots()).some(a => a.lin) };
+      }
+      check(r && r.n1 > r.n0 && r.stored && r.dia && r.back, `drawing: a diameter is displayed as a linear dimension with extension lines and goes back (${JSON.stringify(r)})`);
+    }
+    // Arrowheads of its own (the Ø16 is still selected): oblique strokes are thick lines; Document goes back.
+    {
+      const thick = () => dp.evaluate(() => window.__sv.drw.prims().filter(q => q.t === "l" && q.layer === "ANNOT" && q.pen === "thick").length);
+      const k0 = await thick();
+      await dp.selectOption('#drw .drw-props [data-d="ends"]', "tick");
+      const k1 = await thick(), stored = (await annots()).some(a => a.ends === "tick");
+      await dp.selectOption('#drw .drw-props [data-d="ends"]', "");
+      const k2 = await thick();
+      check(k1 === k0 + 2 && stored && k2 === k0 && !(await annots()).some(a => a.ends), `drawing: a dimension takes its own arrowheads and goes back to the document's (${k0} → ${k1} → ${k2})`);
+    }
     // Back to the 100, which the next checks work on.
     [x, y] = await at(front.id, 0, 40.5);
     await dp.mouse.click(x, y);
@@ -4995,10 +5202,30 @@ try {
     await dp.mouse.move(x, y); await dp.mouse.click(x, y);
     [x, y] = await at(top.id, 40, -45);
     await dp.mouse.move(x, y); await dp.mouse.click(x, y);
-    dp.once("dialog", d => d.accept("BREAK SHARP EDGES"));
+    // Hole callout options (FR-DRW-022): a line under the automatic text, and the number of holes left out.
+    {
+      await dp.waitForTimeout(150);
+      let r = null;
+      if (await dp.$('#drw .drw-props [data-d="hbelow"]')) {
+        await dp.fill('#drw .drw-props [data-d="hbelow"]', "EQ SP");
+        await dp.dispatchEvent('#drw .drw-props [data-d="hbelow"]', "change");
+        const t1 = await texts();
+        await dp.uncheck('#drw .drw-props [data-d="hcount"]');
+        const h1 = (await annots()).find(a => a.t === "hole");
+        await dp.check('#drw .drw-props [data-d="hcount"]');
+        await dp.fill('#drw .drw-props [data-d="hbelow"]', "");
+        await dp.dispatchEvent('#drw .drw-props [data-d="hbelow"]', "change");
+        const t2 = await texts(), h2 = (await annots()).find(a => a.t === "hole");
+        r = { below: t1.includes("EQ SP") && t1.includes("Ø16 THRU"), stored: h1?.below === "EQ SP" && h1?.count === false, back: !t2.includes("EQ SP") && h2 && h2.below == null && h2.count == null };
+      }
+      check(r && r.below && r.stored && r.back, `drawing: a hole callout takes a line below and leaves the number of holes out (${JSON.stringify(r)})`);
+    }
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="note"]');
     [x, y] = await dp.evaluate(() => window.__sv.drw.sheetPt(40, 60));
     await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    // The new note's text box has the focus with its text selected (drawings exam #9): type, Tab commits.
+    await dp.waitForFunction(() => document.activeElement?.matches?.("textarea[data-d=ntxt]"));
+    await dp.keyboard.type("BREAK SHARP EDGES"); await dp.keyboard.press("Tab");
     await dp.waitForTimeout(150);
     tx = await texts();
     an = await annots();
@@ -5033,11 +5260,27 @@ try {
     await dp.selectOption('.drw-props [data-st="lin"]', "");
     const plainHole = await texts();
     check(dualHole.includes("Ø16.0 [0.630] THRU") && plainHole.includes("Ø16 THRU"), `drawing: a hole callout shows inches and the default decimals with the drawing (${dualHole.filter(s => /THRU/.test(s)).join(" / ")})`);
+    // Extension lines follow the drafting style (FR-DRW-025): no gap and 3 mm past the dimension line make the thin lines longer; the defaults bring them back.
+    {
+      const thinLen = () => dp.evaluate(() => window.__sv.drw.prims().filter(q => q.t === "l" && q.layer === "ANNOT" && q.pen === "thin").reduce((s, q) => s + Math.hypot(q.p[2] - q.p[0], q.p[3] - q.p[1]), 0));
+      const e0 = await thinLen();
+      await dp.selectOption('.drw-props [data-st="extGap"]', "0");
+      const e1 = await thinLen();
+      await dp.selectOption('.drw-props [data-st="extOver"]', "3");
+      const e2 = await thinLen(), st = await dp.evaluate(() => window.__sv.drw.doc().style);
+      await dp.selectOption('.drw-props [data-st="extGap"]', "");
+      await dp.selectOption('.drw-props [data-st="extOver"]', "");
+      const e3 = await thinLen(), st3 = await dp.evaluate(() => window.__sv.drw.doc().style ?? {});
+      check(e1 > e0 + 1.9 && e2 > e1 + 1.9 && st?.extGap === 0 && st?.extOver === 3 && Math.abs(e3 - e0) < 1e-6 && st3.extGap == null && st3.extOver == null,
+        `drawing: extension lines take the style's gap and overshoot and go back (${[e0, e1, e2, e3].map(v => v.toFixed(1)).join(" → ")})`);
+    }
     // Property link in a note (FR-DRW-023): $PRP:"Scale" shows the sheet scale.
-    dp.once("dialog", d => d.accept('SCALE $PRP:"Scale"'));
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="note"]');
     [x, y] = await dp.evaluate(() => window.__sv.drw.sheetPt(40, 75));
     await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    // The new note's text box has the focus with its text selected (drawings exam #9): type, Tab commits.
+    await dp.waitForFunction(() => document.activeElement?.matches?.("textarea[data-d=ntxt]"));
+    await dp.keyboard.type('SCALE $PRP:"Scale"'); await dp.keyboard.press("Tab");
     await dp.waitForTimeout(150);
     tx = await texts();
     const scaleNote = tx.find(s => s.startsWith("SCALE "));
@@ -6017,7 +6260,7 @@ try {
     const bm0 = await massOf();
     const wantG = (8000 * 7.85 + Math.PI * 250 * 4.43) / 1000, plainG = (8000 + Math.PI * 250) * 7.85 / 1000;
     check(bm.mat === "Titanium Ti-6Al-4V" && Math.abs(bm.g - wantG) < 0.02 && bm.dens && Math.abs(bm0.g - plainG) < 0.02 && !bm0.dens,
-      `model 1.435.0: a body's own material is used for its mass, the part's for the rest (${JSON.stringify({ bm, bm0, wantG, plainG })})`);
+      `model 1.450.0: a body's own material is used for its mass, the part's for the rest (${JSON.stringify({ bm, bm0, wantG, plainG })})`);
     // Hide the cylinder from its row: it leaves the view, the mass properties keep it.
     await mp.hover('#mc-tree .ft-row[data-id="body:e"]');
     await treeClick(mp, '#mc-tree .ft-row[data-id="body:e"] [data-a="bhide"]');
@@ -6348,9 +6591,11 @@ try {
       // Insert the plate's document under another file name: <1>, standing in the view.
       const ins = await mp.evaluate(() => {
         const a = window.__sv.asm, v = window.__sv.viewer, pd = JSON.parse(JSON.stringify(a.doc.parts[a.doc.components[0].part].doc));
+        const k0 = Object.keys(a.doc.parts).length;
         a.insertPart(pd, "other.mcadprt");
         const c = a.doc.components.at(-1), p = new v.camera.position.constructor(c.tf[3], c.tf[7], c.tf[11]).project(v.camera);
-        return { name: c.name, inView: Math.abs(p.x) < 1 && Math.abs(p.y) < 1 };
+        // Another file is another part, even with the same content (exam #87): editing it leaves the plate alone.
+        return { name: c.name, inView: Math.abs(p.x) < 1 && Math.abs(p.y) < 1, own: Object.keys(a.doc.parts).length === k0 + 1 && c.part !== a.doc.components[0].part };
       });
       await shown(3);
       await mp.evaluate(() => window.__sv.asm.undo());
@@ -6406,7 +6651,7 @@ try {
       await shown(2);
       check(par.pinTop && par.seated === n0 + 1 && par.type === "parallel" && !par.problem, `asm: flat faces that cannot be Coincident start as Parallel (exam #27) (${JSON.stringify(par)})`);
       check(/^Undo: .+ \(Ctrl\+Z\)$/.test(undoTip) && delKey.n === n0 - 1 && /^Undo: Delete Concentric1 \(Ctrl\+Z\)$/.test(delKey.tip)
-        && menu.open && menu.inside && enter.next === "y" && enter.open && ins.name === "other<1>" && ins.inView && neg.flipped && neg.value === 5,
+        && menu.open && menu.inside && enter.next === "y" && enter.open && ins.name === "other<1>" && ins.inView && ins.own && neg.flipped && neg.value === 5,
         `asm 1.339: Delete key, menus inside the window, Enter through Move, inserts in view numbered by file, negative distance flips, undo tips (${JSON.stringify({ undoTip, delKey, n0, menu, enter, ins, neg })})`);
     }
     const re = await mp.evaluate(async () => { const b = await window.__sv.asm.bytes(); await window.__sv.asm.openFile({ name: "m.mcadasm", data: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) }); return window.__sv.asm.doc.mates?.map(m => m.type).join(); });
@@ -10936,12 +11181,12 @@ try {
       await mp.mouse.click(x, y);
       await settle();
     }
-    const cv0 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { title: document.querySelector("#mc-pm h3")?.textContent, face: d?.face?.name, edges: d?.edges?.map(e => [...e.faces].sort().join("|")) }; });
+    const cv0 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { title: document.querySelector("#mc-pm h3")?.textContent, face: d?.face?.name, edges: d?.edges?.map(e => [...e.faces].sort().join("|")), relief: d?.relief, rsel: document.querySelector('#mc-pm [data-sm="arelief"]')?.value }; });
     await mp.click("#mc-ok");
     await settle();
     const cv1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, bends: l.sheet?.bends.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
     const cvWant = 100 * (60 - 8 + 2 * (36 + 1.5 * Math.PI)) * 2;
-    check(cv0.title === "Convert to Sheet Metal" && cv0.face === "ce:end" && cv0.edges?.length === 2 && !cv1.bad && cv1.bends === 2 && Math.abs(cv1.v - cvWant) < 1e-2,
+    check(cv0.title === "Convert to Sheet Metal" && cv0.face === "ce:end" && cv0.edges?.length === 2 && cv0.relief === "rect" && cv0.rsel === "rect" && !cv1.bad && cv1.bends === 2 && Math.abs(cv1.v - cvWant) < 1e-2,
       `sheet metal: Convert to Sheet Metal turns the box into a U channel from the clicked face and edges (${JSON.stringify({ cv0, cv1, cvWant })})`);
     // Insert Bends: a thin U section (walls 3) opening towards +Y, extruded 100; click its outside bottom (y = 0, seen from the default view), ✓: two bends, thickness 3.
     await mp.evaluate(() => window.__sv.model.store.change("U section", d => {
@@ -11007,6 +11252,21 @@ try {
     const lpf = await mp.evaluate(() => window.__sv.model.last().props?.volume ?? 0);
     check(!lp.bad && lp.bends === 8 && !lp.out.length && Math.abs(lpf / lp.v - 1) < 6e-3,
       `sheet metal: Convert gives each wall its own lip off a shared rim, mitred at the corners (${JSON.stringify({ lp, lpf })})`);
+    // A tray (all four walls of the 100 × 60 × 40 box) with Auto relief: the walls meet on the corners' bisector planes
+    // and each corner gets a rectangular relief, so the flat pattern has the part's volume; without relief, more.
+    const trayDoc = ([relief, flat]) => window.__sv.model.store.change("Tray", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), L = (id, a, b) => ({ id, t: "line", a, b });
+      d.features = [
+        { id: "s", type: "sketch", name: "s", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", 0, 0), P("p2", 100, 0), P("p3", 100, 60), P("p4", 0, 60), L("l1", "p1", "p2"), L("l2", "p2", "p3"), L("l3", "p3", "p4"), L("l4", "p4", "p1")] },
+        { id: "e", type: "extrude", name: "Boss-Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 40 } },
+        { id: "c", type: "smconvert", name: "Convert-Solid1", face: { name: "e:start" }, edges: ["l1", "l2", "l3", "l4"].map(l => ({ faces: ["e:start", `e:side:${l}`] })), thickness: { v: 2 }, radius: { v: 2 }, k: 0.5, ...(relief ? { relief: "rect" } : {}) },
+        ...(flat ? [{ id: "fp", type: "smflat", name: "Flat-Pattern1" }] : []),
+      ];
+    });
+    const trayVol = async (args) => { await mp.evaluate(trayDoc, args); await settle(); return mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; }); };
+    const tr0 = await trayVol([false, false]), tr1 = await trayVol([true, false]), tr1f = await trayVol([true, true]);
+    check(!tr0.bad && !tr1.bad && !tr1f.bad && tr1.v < tr0.v - 1 && Math.abs(tr1f.v / tr1.v - 1) < 1e-6,
+      `sheet metal: Convert's Auto relief cuts the tray's corners, and the flat pattern keeps the part's volume (${JSON.stringify({ tr0, tr1, tr1f })})`);
     // Tab and Slot: a 100 × 50 plate and a separate 3 mm block 1 mm past one end (on the side away from the camera, so
     // its face towards the plate shows above it). Click the plate's top edge there, then that block face, ✓: two tabs
     // 10 × (1 + 2) into slots 0.1 bigger all round (2.1 deep: the default height is the thickness).
@@ -11574,6 +11834,15 @@ try {
     const loop = (4 * (40 - 12) + 2 * Math.PI * 6).toFixed(2).replace(/\.?0+$/, "");
     check(wt.n === 1 && ["Item", "Weld", "Leg", "Length", "Qty", "Continuous", "z4", loop].every(s => wt.tx.includes(s)),
       `drawing: weld table lists the weldment's fillet bead with its leg and length (${JSON.stringify({ n: wt.n, loop, tx: wt.tx.filter(s => /^(Item|Weld|Leg|Continuous|z\d|1\d\d)/.test(s)), note: wt.note })})`);
+    // Placing the weld table tags the bead seen in its view with a box holding its weld table row; Tag the beads adds no second one.
+    await dp.waitForFunction(() => window.__sv.drw.doc().sheets[0].annots.some(a => a.t === "balloon" && a.weld), null, { timeout: 30000 }).catch(() => {});
+    await ready();
+    const tg = await dp.evaluate(() => { const ws = window.__sv.drw.doc().sheets[0].annots.filter(a => a.t === "balloon" && a.weld);
+      return { n: ws.length, shape: ws[0]?.shape, btn: !!document.querySelector('#drw .drw-props [data-a="wtags"]'), dangle: document.querySelectorAll("#drw .drw-dangle").length }; });
+    if (tg.btn) { await dp.click('#drw .drw-props [data-a="wtags"]'); await dp.waitForTimeout(500); }
+    const tg2 = await dp.evaluate(() => window.__sv.drw.doc().sheets[0].annots.filter(a => a.t === "balloon" && a.weld).length);
+    check(tg.n === 1 && tg.shape === "box" && tg.btn && tg.dangle === 0 && tg2 === 1,
+      `drawing: placing the weld table tags its view's bead once, numbered by its row (${JSON.stringify({ ...tg, again: tg2 })})`);
     // Cut list table under the same view: the tube (300 - 10 mm long, square ends), then the bead; Weld beads unticked leaves it out.
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="ctable"]');
     for (const [x, y] of [[vp.x, vp.y], [vp.x - vp.w / 2, vp.y - vp.w / 2 - 20]]) {

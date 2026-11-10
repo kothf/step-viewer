@@ -942,8 +942,8 @@ input.drop-val { outline: 2px solid var(--accent) !important; background: var(--
 .cfg-act { background: none; border: 0; color: var(--accent-text); cursor: pointer; font-size: 14px; padding: 2px 4px; }
 
 /* Vault tab (FRS 12.5) */
-#tab-vault .row { flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-#tab-vault .v-start .row input, .v-user input { flex: 1; min-width: 0; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); }
+#vault-panel .row { flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+#vault-panel .v-start .row input, .v-user input { flex: 1; min-width: 0; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); }
 .v-user { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: var(--fs-caption); color: var(--muted); }
 .v-title { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .v-h { margin: 12px 0 4px; font-size: var(--fs-caption); color: var(--muted); }
@@ -991,8 +991,8 @@ input.drop-val { outline: 2px solid var(--accent) !important; background: var(--
 .v-card dd { margin: 0; overflow-wrap: anywhere; }
 .v-form { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; margin: 8px 0; }
 .v-form label { display: flex; flex-direction: column; gap: 3px; font-size: var(--fs-caption); }
-.v-form input:not([type="checkbox"]), .v-form select, #tab-vault .v-search input, .v-cmp select, #vault-dlg .row select { padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); font: inherit; min-width: 0; }
-#tab-vault .v-search input { flex: 1; }
+.v-form input:not([type="checkbox"]), .v-form select, #vault-panel .v-search input, .v-cmp select, #vault-dlg .row select { padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); font: inherit; min-width: 0; }
+#vault-panel .v-search input { flex: 1; }
 .v-tree { padding-left: 16px; margin: 4px 0; font-size: var(--fs-caption); }
 .v-bad { color: #b91c1c; }
 .v-warn { color: #92400e; }
@@ -1376,3 +1376,16 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .tut-steps li.cur .tut-step { font-weight: 650; }
 .tut-how, .tut-end { margin: 2px 0 6px 30px; font-size: 12.5px; }
 .tut-end { margin-left: 0; }
+
+/* Vault button and menu (FR-PDM-002/080). The label goes below 1440 px, the safe icon stays. */
+.vault-btn { display: inline-flex; align-items: center; gap: 6px; height: 32px; flex: none; padding: 0 9px; }
+.vault-btn.on { border-color: var(--accent); color: var(--accent-text); background: var(--accent-soft); }
+@media (max-width: 1439px) { #app:not(.gerber) .vault-lbl { display: none; } .vault-btn { padding: 0 7px; gap: 3px; } }
+.vault-menu .vm-h { padding: 6px 12px 2px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.vault-menu .vm-h b { text-transform: none; letter-spacing: 0; font-size: 12px; color: var(--text); }
+.vault-win { width: min(460px, calc(100vw - 16px)); max-height: calc(100vh - 32px); padding: 0; }
+.vault-win[open] { display: flex; flex-direction: column; }
+.vault-win-h { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.vault-win-h h3 { margin: 0; }
+.vault-win-b { overflow-y: auto; min-height: 0; }
+.v-nofsa { margin-top: 6px; }

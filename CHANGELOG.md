@@ -5,11 +5,131 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.435.0] - 2026-11-10
+## [1.450.0] - 2026-11-10
 
 ### Added
 
 - **Material per body (FR-MAT-001)**: in a part with several bodies, right-click a body in the **Solid Bodies** folder and choose **Material…** to give it its own material from the library; **None** gives it the part's material again. Mass properties then weigh each body with its own density (mass, centre of mass and moments of inertia), and the Density row says "from part materials". One undo step. An assembly still weighs such a part with the part's material.
+
+## [1.449.0] - 2026-11-10
+
+### Fixed
+
+- Drawings: **Ctrl+Z** on a drawing undoes the last drawing step only. It used to undo the last feature of the part behind the drawing as well (drawings exam #1).
+- Hole table: one row per hole, with its whole callout as the size (Ø6.6 THRU ⌴Ø11 ↧6.4). A counterbored hole was listed twice, and a boss's rim or a chamfer's circle was listed as a hole (drawings exam #5).
+- A datum feature no longer takes a letter that a section, detail or auxiliary view already uses, and new view letters skip datum letters (drawings exam #6).
+- PDF, PNG and DXF exports draw the counterbore ⌴ and countersink ⌵ symbols in lines; the embedded font has no glyph for them, so they were missing (drawings exam #7).
+- DXF R12 writes Ø, ±, ° and Cyrillic as \U+ codes like DXF 2000, so AutoCAD no longer shows "Ã˜" (drawings exam #8).
+- A new note is typed straight into its text box, several lines included, instead of a one-line browser prompt (drawings exam #9).
+- Offset and half sections: no line where the cutting plane steps between cut faces, and a half section started on the part's edge is hatched again (drawings exam #12, #13).
+
+## [1.448.0] - 2026-11-10
+
+### Added
+
+- **Open the model from a drawing (FR-DRW-001)**: a drawing file opened by itself carries its part, assembly or STEP model. **Model** in the drawing bar now opens that model in its own tab (or shows its tab when it is open already); back on the drawing's tab, the views follow the model as usual.
+- **Diameter from a side view (FR-DRW-021)**: with Dimension, click either outline line of a cylinder seen from the side (a disc's or shaft's side, a hole's hidden line) and place the text: the diameter is drawn as a linear dimension with Ø, the same value as on the round view.
+
+### Fixed
+
+- Drawing dimensions between two edges no longer run their extension lines along the edges or across the part: each extension line starts at the end of its edge nearest the dimension line.
+- A new dimension on a hole is a diameter also when the model file stores the circle as two half circles (STEP); a radius stays the default for fillets and other arcs.
+
+## [1.447.0] - 2026-11-10
+
+### Fixed
+
+- Assemblies: inserting or replacing a component with another file makes it its own part, even when the file holds the same content as a part already in the assembly, so editing one no longer changes the other (exam #87).
+- Replace component counts mates that lost their faces only once the new part is built, so it no longer warns about mates that solve (exam #88).
+- Sketches: a tool picked on the sketch command bar shows its options in the panel at once, such as the Fillet radius (exam #89).
+
+## [1.446.0] - 2026-11-10
+
+### Added
+
+- **Text along the leader (FR-DRW-021)**: a radius or diameter dimension can have its text written along its line (the ISO aligned style) instead of on a level shoulder. Outside the circle the leader runs on under the text.
+
+## [1.445.0] - 2026-11-10
+
+### Added
+
+- **Angle dimension arrows (FR-DRW-021)**: a small angle whose arc has no room for two arrowheads gets them outside the sector, on short tails of the arc, the way narrow linear dimensions do. **Arrows** (Auto, Inside, Outside) and **Extension lines** (hide the first, the second or both) in the dimension panel now work for angles as well.
+
+## [1.444.0] - 2026-11-10
+
+### Fixed
+
+- Assemblies: after a part is edited, a mate on a face whose name went away follows the same surface under its new name (exam #84).
+- New sketches and holes on a flat face take their X direction from the part's X laid onto the face, so it stays the same across rebuilds (exam #85).
+- **Fully define sketch** adds horizontal and vertical relations instead of near-zero dimensions (exam #86).
+
+## [1.443.0] - 2026-11-10
+
+### Added
+
+- Sheet metal Convert to Sheet Metal and Insert Bends have Auto relief (FR-FT-120): corners where two walls' bends meet get a rectangular, obround, circular or tear relief at once, sized by a relief ratio. New features start with Rectangular, 0.5.
+
+### Fixed
+
+- Mitred sheet metal corners (edge flanges, miter flanges, Convert to Sheet Metal) now meet on the corner's bisector plane, as in SolidWorks. Before, the two walls were cut square and overlapped in a thin strip along the inside of the seam, so the flat pattern had slightly more material than the part.
+
+
+## [1.442.0] - 2026-11-10
+
+### Added
+
+- **Arrow outside the circle (FR-DRW-021)**: a radius or diameter dimension whose text is outside the circle can stop its leader at the rim, with one arrow pointing at it from outside, instead of crossing the circle.
+
+## [1.441.0] - 2026-11-10
+
+### Added
+
+- **Weld tags on weldment drawings (FR-FT-121)**: placing a **Weld table** on a drawing of a weldment part also tags each fillet bead seen in that view with a box holding the bead's item number in the table, so the beads on the view and the rows of the table match. **Tag the beads** in the table's panel tags beads added later; a tag's panel names its weld table row. Weld tags and cut list balloons number their own lists and don't count against each other in Auto balloon.
+
+## [1.440.0] - 2026-11-10
+
+### Added
+
+- **Hole callout options (FR-DRW-022)**: a hole callout on a drawing can leave the number of equal holes (4×) out of its automatic text and take a line of text below it, such as EQ SP.
+
+### Fixed
+
+- A hole table no longer repeats the number of holes in the size of a Hole feature.
+
+## [1.439.0] - 2026-11-10
+
+### Added
+
+- **Extension line gap and overshoot (FR-DRW-025)**: a drawing's Drafting style sets the gap extension lines leave at the outline (0 to 2 mm; 0 for drawings that touch the outline as ISO 129 allows) and how far they run past the dimension line (1 to 3 mm).
+
+## [1.438.0] - 2026-11-10
+
+### Fixed
+
+- **Slot mate ends (Leuenberger exam #81)**: a Slot mate now keeps the pin between the slot's rounded ends, like SolidWorks' free slot mate, instead of letting it run past them. The ends are found from the slot's two end cylinders; inside the slot the pin still slides freely, so the mate takes no extra freedom away.
+- **Touching boss joins the body (exam #82)**: a boss extrude standing on the body with a gap of sketch round-off (a few millionths of a millimetre, e.g. from a snapped edge) became a second solid body. When a plain join leaves the new material apart, it is joined again with a 0.00001 mm tolerance.
+- **Interference detection (exam #83)**: coincident faces, such as a shaft in a bore of its own size or a foot on a plate, no longer show as interferences of "0 mm³": an overlap thinner than 0.0001 mm on average counts as touching, and shows only with **Treat coincidence as interference**.
+
+## [1.437.0] - 2026-11-10
+
+### Added
+
+- **Arrowheads per dimension (FR-DRW-021)**: a drawing dimension has an **Arrowheads** choice of its own: Document (the drafting style's), Filled, Open, Dot or Oblique stroke, so a tight chain can use dots while the rest keeps arrows.
+
+## [1.436.0] - 2026-11-10
+
+### Added
+
+- **Vault menu** (FR-PDM-002, FR-PDM-080): a **Vault** button in the header, also **File ▸ Vault…** and so reachable from a drawing. With no vault open it offers **New vault in a folder…**, **Open vault folder…**, the vault folders used before and the vaults kept in the browser. With a vault open it has the commands for the document on screen: **Save to vault**, **Check out**, **Check in…**, **Undo check-out**, **Get latest** and **History…**, then Add files, search, the file list, settings and Close vault. The button is lit while a vault is open. Until now the vault was only a small tab in the side panel.
+- **Vault folders are remembered**: a vault made or opened in a folder on disk is listed in the Vault menu and on the Vault tab, so it opens again with one click (the browser asks for access to the folder once per session). Keep one vault per project folder and switch between them from the menu. Open vault folder… on a folder without a vault offers to create one there. Folder vaults need Chrome or Edge on a computer; other browsers say so and keep browser vaults with Export ZIP.
+- **Assemblies and drawings in the vault** (FR-PDM-010, FR-PDM-081): Save to vault takes the open part, assembly or drawing. An assembly or drawing opened from the vault is tied to its vault file like a part: the title shows version, state and lock, **Save** writes the vault's working copy while it is checked out to you and is refused otherwise, and Check in stores the edits on screen as the next version. Before, only parts could be saved back.
+- With the side panel folded away, on a phone or over a drawing, the vault's file list opens in a window.
+
+## [1.435.0] - 2026-11-10
+
+### Added
+
+- **Diameter as a linear dimension (FR-DRW-021)**: a drawing's diameter dimension has a **Display** choice: Diameter, or a linear dimension across the circle, horizontal or vertical, with extension lines from the rim and the Ø kept.
 
 ## [1.434.0] - 2026-11-10
 
@@ -2584,7 +2704,22 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.435.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.450.0...HEAD
+[1.450.0]: https://github.com/kothf/step-viewer/compare/v1.449.0...v1.450.0
+[1.449.0]: https://github.com/kothf/step-viewer/compare/v1.448.0...v1.449.0
+[1.448.0]: https://github.com/kothf/step-viewer/compare/v1.447.0...v1.448.0
+[1.447.0]: https://github.com/kothf/step-viewer/compare/v1.446.0...v1.447.0
+[1.446.0]: https://github.com/kothf/step-viewer/compare/v1.445.0...v1.446.0
+[1.445.0]: https://github.com/kothf/step-viewer/compare/v1.444.0...v1.445.0
+[1.444.0]: https://github.com/kothf/step-viewer/compare/v1.443.0...v1.444.0
+[1.443.0]: https://github.com/kothf/step-viewer/compare/v1.442.0...v1.443.0
+[1.442.0]: https://github.com/kothf/step-viewer/compare/v1.441.0...v1.442.0
+[1.441.0]: https://github.com/kothf/step-viewer/compare/v1.440.0...v1.441.0
+[1.440.0]: https://github.com/kothf/step-viewer/compare/v1.439.0...v1.440.0
+[1.439.0]: https://github.com/kothf/step-viewer/compare/v1.438.0...v1.439.0
+[1.438.0]: https://github.com/kothf/step-viewer/compare/v1.437.0...v1.438.0
+[1.437.0]: https://github.com/kothf/step-viewer/compare/v1.436.0...v1.437.0
+[1.436.0]: https://github.com/kothf/step-viewer/compare/v1.435.0...v1.436.0
 [1.435.0]: https://github.com/kothf/step-viewer/compare/v1.434.0...v1.435.0
 [1.434.0]: https://github.com/kothf/step-viewer/compare/v1.433.0...v1.434.0
 [1.433.0]: https://github.com/kothf/step-viewer/compare/v1.432.0...v1.433.0
