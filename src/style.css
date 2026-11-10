@@ -795,6 +795,9 @@ input.drop-val { outline: 2px solid var(--accent) !important; background: var(--
 .pm-in { display: flex; align-items: center; gap: 6px; }
 .pm-in input { font-family: var(--mono); }
 .pm-field input[aria-invalid=true] { border-color: var(--danger); }
+.pm-field.pm-col { grid-template-columns: 1fr; }
+.pm-field textarea { width: 100%; box-sizing: border-box; font: 12px/1.4 var(--mono); tab-size: 8; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); resize: vertical; }
+.pm-field textarea[aria-invalid=true] { border-color: var(--danger); }
 .pm-chk { display: flex; align-items: flex-start; gap: 6px; white-space: normal; margin: 6px 0; font-size: 12px; }
 .pm-actions { display: flex; gap: 6px; margin-top: 10px; }
 .pm-err { color: var(--danger); font-size: 12px; margin: 6px 0; }

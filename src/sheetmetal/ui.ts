@@ -7,6 +7,7 @@ import type { EdgeRef, FaceRef, Feature, Num, PartDoc, SketchFeature } from "../
 import { sketchPath, sketchProfile } from "../sketch/profile";
 import { bendOfFace, flatSize, panelOfFace, reliefCorners, ventLayout, type SheetState } from "./sheet";
 import { loopPolygon } from "../sketch/profile";
+import { bendTableText, defaultTable, dinTable, parseBendTable } from "./bendTable";
 import { GAUGE_TABLES, gaugeRow, type SheetFeature, type SmLoftFeature, type SmBaseFeature, type SmClosedFeature, type SmCornerFeature, type SmReliefFeature, type SmGussetFeature, type SmCrossFeature, type SmVentFeature, type SmCutFeature, type SmConvertFeature, type SmInsertFeature, type SmFormFeature, type SmUnfoldFeature, type FormTool, type SmFlangeFeature, type SmHemFeature, type SmJogFeature, type SmMiterFeature, type SmSketchBendFeature, type SmTabFeature, type SmTabSlotFeature, type SmRipFeature } from "./types";
 
 export type SmTool = "smrip" | "smtabslot" | "smbase" | "smloft" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smrelief" | "smgusset" | "smcross" | "smvent" | "smcut" | "smconvert" | "sminsert" | "smform" | "smunfold" | "smfold" | "smmiter" | "smswept" | "smflat" | "smdxf" | "smprops";
@@ -282,6 +283,17 @@ export interface PanelKit {
 
 const opt = (esc: PanelKit["esc"], v: string, cur: string | undefined, label: string) => `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(label)}</option>`;
 
+/** Bend table fields of the Base Flange panel: what the values are, the table as text, and a DIN 6935 start. */
+function tableFields(f: SmBaseFeature): string {
+  const tb = f.table ?? dinTable(f.thickness.v);
+  const kinds: [string, string][] = [["k", t("K-factor")], ["ba", t("Bend allowance")], ["bd", t("Bend deduction")]];
+  return `<label class="pm-field"><span>${escHtml(t("Values"))}</span><select data-sm="tkind">${kinds.map(([v, l]) => `<option value="${v}"${v === tb.kind ? " selected" : ""}>${escHtml(l)}</option>`).join("")}</select></label>`
+    + `<label class="pm-field pm-col"><span>${escHtml(t("Table (radius in rows, bend angle in columns)"))}</span><textarea data-sm="table" rows="${Math.min(10, tb.radii.length + 2)}" spellcheck="false" translate="no">${escHtml(bendTableText(tb))}</textarea></label>`
+    + `<button class="btn small" data-sm="tdin">${escHtml(t("DIN 6935 K-factors"))}</button>`
+    + `<p class="pm-help muted">${escHtml(t("First line: bend angles in degrees. Each further line: an inside radius in mm, then a value per angle (allowances and deductions in mm). Values in between are interpolated; outside the table the nearest row or column is used."))}</p>`;
+}
+const escHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
 /** The panel of a sheet metal feature. */
 export function smPanel(f: SheetFeature, k: PanelKit): { title: string; body: string } {
   const { esc, group, numField, chk } = k;
@@ -302,8 +314,9 @@ export function smPanel(f: SheetFeature, k: PanelKit): { title: string; body: st
         + group(t("Sheet metal parameters"), sel("gauge", t("Gauge table"), gauges, f.gauge ?? "")
           + numField("thickness", t("Thickness"), f.thickness, "length") + chk("reverse", f.reverse, t("Reverse direction"))
           + numField("radius", t("Bend radius"), f.radius, "length"))
-        + group(t("Bend allowance"), sel("calc", t("Type"), [["k", t("K-factor")], ["ba", t("Bend allowance")], ["bd", t("Bend deduction")]], calc)
-          + (calc === "k" ? `<label class="pm-field"><span>${esc(t("K-factor"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-sm="k" value="${esc(String(f.k ?? 0.5))}" spellcheck="false" /></span></label>`
+        + group(t("Bend allowance"), sel("calc", t("Type"), [["k", t("K-factor")], ["ba", t("Bend allowance")], ["bd", t("Bend deduction")], ["table", t("Bend table")]], calc)
+          + (calc === "table" ? tableFields(f)
+            : calc === "k" ? `<label class="pm-field"><span>${esc(t("K-factor"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-sm="k" value="${esc(String(f.k ?? 0.5))}" spellcheck="false" /></span></label>`
             : calc === "ba" ? numField("ba", t("Bend allowance"), f.ba ?? { v: 3 }, "length") : numField("bd", t("Bend deduction"), f.bd ?? { v: 3 }, "length")))
         + group(t("Auto relief"), sel("relief", t("Type"), [["rect", t("Rectangular")], ["none", t("None")]], f.relief === "none" ? "none" : "rect")
           + (f.relief === "none" ? "" : `<label class="pm-field"><span>${esc(t("Relief ratio"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-sm="ratio" value="${esc(String(f.reliefRatio ?? 0.5))}" spellcheck="false" /></span></label>`)),
@@ -586,11 +599,12 @@ export function smPanel(f: SheetFeature, k: PanelKit): { title: string; body: st
 
 /** Wires the `data-sm` controls; `upd` changes the draft and rebuilds (structural: the panel is drawn again). */
 export function bindSmPanel(pm: HTMLElement, f: SheetFeature, upd: (fn: () => void, structural?: boolean) => void, dxf: () => void, toastBad: (msg: string) => void, unitF = 1, T = 1) {
-  pm.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>("[data-sm]").forEach(el => {
+  pm.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement | HTMLTextAreaElement>("[data-sm]").forEach(el => {
     const key = el.dataset.sm!;
     if (el instanceof HTMLButtonElement) {
       el.addEventListener("click", () => {
         if (key === "dxf") dxf();
+        if (key === "tdin" && f.type === "smbase") upd(() => { f.table = dinTable(f.thickness.v); }, true);
         if (key === "clear" && f.type === "smconvert") upd(() => { f.edges = []; }, true);
         if (key === "clear" && (f.type === "smflange" || f.type === "smhem" || f.type === "smcorner" || f.type === "smrip" || f.type === "smmiter" || f.type === "smswept")) upd(() => { f.edges = []; }, true);
         if (key === "clear" && (f.type === "smclosed" || f.type === "smcross")) upd(() => { f.faces = []; }, true);
@@ -621,7 +635,15 @@ export function bindSmPanel(pm: HTMLElement, f: SheetFeature, upd: (fn: () => vo
           }, true);
           return;
         }
-        if (key === "calc") { upd(() => { f.calc = val as SmBaseFeature["calc"]; if (f.calc === "ba") f.ba ??= { v: 3 }; if (f.calc === "bd") f.bd ??= { v: 3 }; if (f.calc === "k") f.k ??= 0.5; }, true); return; }
+        if (key === "calc") { upd(() => { f.calc = val as SmBaseFeature["calc"]; if (f.calc === "ba") f.ba ??= { v: 3 }; if (f.calc === "bd") f.bd ??= { v: 3 }; if (f.calc === "k") f.k ??= 0.5; if (f.calc === "table") f.table ??= dinTable(f.thickness.v); }, true); return; }
+        if (key === "tkind") { upd(() => { f.table = defaultTable(val as "k" | "ba" | "bd", f.thickness.v); }, true); return; }
+        if (key === "table") {
+          const tb = parseBendTable(String(val), f.table?.kind ?? "k");
+          if (typeof tb === "string") { el.setAttribute("aria-invalid", "true"); toastBad(t(tb)); return; }
+          el.removeAttribute("aria-invalid");
+          upd(() => { f.table = tb; delete f.gauge; });
+          return;
+        }
         if (key === "relief") { upd(() => { if (val === "none") f.relief = "none"; else delete f.relief; }, true); return; }
         if (key === "k" || key === "ratio") {
           const v = Number(String(val).replace(",", "."));
