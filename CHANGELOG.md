@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.457.0] - 2026-11-10
+
+### Added
+
+- **File ▸ Open drawing**: with a part, assembly or model file open, opens the drawing that belongs to it, in its own tab. It is found wherever it is: the drawing already open in a tab, a drawing in the open vault or one among the recent documents. With several drawings you pick one; with none it offers New drawing. The reverse of the drawing's Model button.
+
 ## [1.456.0] - 2026-11-10
 
 ### Added
@@ -2751,7 +2757,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.456.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.457.0...HEAD
+[1.457.0]: https://github.com/kothf/step-viewer/compare/v1.456.0...v1.457.0
 [1.456.0]: https://github.com/kothf/step-viewer/compare/v1.455.0...v1.456.0
 [1.455.0]: https://github.com/kothf/step-viewer/compare/v1.454.0...v1.455.0
 [1.454.0]: https://github.com/kothf/step-viewer/compare/v1.453.0...v1.454.0
