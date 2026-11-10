@@ -1712,3 +1712,24 @@ test("Add sheet keeps the sheet format: custom size and user title block (drawin
   assert.notEqual(b.tb, a.tb, "a copy, so editing one sheet's block leaves the other");
   assert.equal(newSheet(2, newSheet(1)).tb, undefined);
 });
+
+test("1.481: hole stacks per solid; a pin in a hole or a plate on top does not close it", async () => {
+  const { oc, shape } = await block();
+  const { topology } = await import("../../src/kernel/drawing");
+  const tr = new oc.gp_Trsf_1();
+  tr.SetTranslation_1(new oc.gp_Vec_4(0, 0, 20));
+  const top = shape.Moved(new oc.TopLoc_Location_2(tr), false);
+  const pin = new oc.BRepPrimAPI_MakeCylinder_3(new oc.gp_Ax2_3(new oc.gp_Pnt_3(10, 0, -5), new oc.gp_Dir_4(0, 0, 1)), 5, 50).Shape();
+  const b = new oc.BRep_Builder(), comp = new oc.TopoDS_Compound();
+  b.MakeCompound(comp);
+  for (const s of [shape, top, pin]) b.Add(comp, s);
+  const alone = topology(oc, shape).holes!;
+  assert.equal(alone.length, 1);
+  const holes = topology(oc, comp).holes!;
+  // One hole in each plate, each as long as the plate and open at both ends, as in the part's own drawing.
+  assert.equal(holes.length, 2);
+  for (const h of holes) {
+    assert.deepEqual(h.open, [true, true]);
+    assert.ok(Math.abs(h.segs.at(-1)!.v1 - h.segs[0].v0 - 20) < 1e-6);
+  }
+});

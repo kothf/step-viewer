@@ -860,6 +860,16 @@ export function topology(oc: any, shape: any, names?: string[]): Topo {
   const emap = new oc.TopTools_IndexedMapOfShape_1(), fmap = new oc.TopTools_IndexedMapOfShape_1();
   oc.TopExp.MapShapes_1(shape, A.TopAbs_EDGE, emap);
   oc.TopExp.MapShapes_1(shape, A.TopAbs_FACE, fmap);
+  // The solids and which one each face is on: a hole end is checked against the solids its own faces belong to
+  // (see `holeStacks`), not against a pin or bolt of another component sitting in it.
+  const solidList: any[] = [], faceSolid: number[] = [];
+  for (const ex = new oc.TopExp_Explorer_2(shape, A.TopAbs_SOLID, A.TopAbs_SHAPE); ex.More(); ex.Next()) {
+    const so = ex.Current(), m = new oc.TopTools_IndexedMapOfShape_1();
+    oc.TopExp.MapShapes_1(so, A.TopAbs_FACE, m);
+    for (let j = 1; j <= m.Extent(); j++) { const k = fmap.FindIndex(m.FindKey(j)); if (k > 0 && faceSolid[k] == null) faceSolid[k] = solidList.length; }
+    m.delete();
+    solidList.push(so);
+  }
   const faceOf: string[][] = Array.from({ length: emap.Extent() + 1 }, () => []);
   const faceEdges: number[][] = [];
   for (let i = 1; i <= fmap.Extent(); i++) {
@@ -916,7 +926,7 @@ export function topology(oc: any, shape: any, names?: string[]): Topo {
       const sp = Math.min(2 * Math.PI, sa.LastUParameter() - sa.FirstUParameter());
       if (v1 > v0 && st === S.GeomAbs_Cone) {
         const cn = sa.Cone(), R = cn.RefRadius(), ta = Math.tan(cn.SemiAngle());
-        if (inward(f, cn.Position())) bores.push({ o, ax, k: "cone", v0, v1, r0: R + v0 * ta, r1: R + v1 * ta, sp, f: names?.[i - 1] ?? `f${i - 1}` });
+        if (inward(f, cn.Position())) bores.push({ o, ax, k: "cone", v0, v1, r0: R + v0 * ta, r1: R + v1 * ta, sp, f: names?.[i - 1] ?? `f${i - 1}`, s: faceSolid[i] });
       }
       if (v1 > v0) revs.push({ k: st === S.GeomAbs_Cone ? "cone" : st === S.GeomAbs_Torus ? "torus" : "rev", o, ax, v0, v1, sp, f: names?.[i - 1] ?? `f${i - 1}` });
       continue;
@@ -940,12 +950,39 @@ export function topology(oc: any, shape: any, names?: string[]): Topo {
     }
     const sp = Math.min(2 * Math.PI, sa.LastUParameter() - sa.FirstUParameter());
     if (v1 > v0) cyls.push({ o, ax, r, v0, v1, sp, f: names?.[i - 1] ?? `f${i - 1}`, ...(inward(f, ax3) ? { in: true } : {}) });
-    if (v1 > v0 && inward(f, ax3)) bores.push({ o, ax, k: "cyl", v0, v1, r0: r, r1: r, sp, f: names?.[i - 1] ?? `f${i - 1}` });
+    if (v1 > v0 && inward(f, ax3)) bores.push({ o, ax, k: "cyl", v0, v1, r0: r, r1: r, sp, f: names?.[i - 1] ?? `f${i - 1}`, s: faceSolid[i] });
   }
   emap.delete(); fmap.delete();
-  const holes = holeStacks(bores, p => {
-    try { return new oc.BRepClass3d_SolidClassifier_3(shape, new oc.gp_Pnt_3(p[0], p[1], p[2]), 1e-7).State() === oc.TopAbs_State.TopAbs_OUT; } catch { return false; }
+  // A point is in the air when it is outside the hole's own solid (all solids when unknown). One classifier per solid,
+  // made once and tried only where the solid's box holds the point: a fresh classifier of the whole compound per point
+  // took 45 s on an engine assembly, and it took a pin in a hole for air or not depending on the faces' parity.
+  const solids: ({ box: any; cls: any } | undefined)[] = [];
+  const solid = (k: number) => {
+    let s = solids[k];
+    if (!s) {
+      const so = solidList.length ? solidList[k] : shape, box = new oc.Bnd_Box_1();
+      oc.BRepBndLib.Add(so, box, false);
+      box.Enlarge(1e-6);
+      s = solids[k] = { box, cls: new oc.BRepClass3d_SolidClassifier_2(so) };
+    }
+    return s;
+  };
+  const holes = holeStacks(bores, (p, own) => {
+    try {
+      const P = new oc.gp_Pnt_3(p[0], p[1], p[2]);
+      try {
+        const ks = own != null ? [own] : solidList.length ? solidList.map((_, k) => k) : [0];
+        for (const k of ks) {
+          const s = solid(k);
+          if (s.box.IsOut_1(P)) continue;
+          s.cls.Perform(P, 1e-7);
+          if (s.cls.State() !== oc.TopAbs_State.TopAbs_OUT) return false;
+        }
+        return true;
+      } finally { P.delete(); }
+    } catch { return false; }
   });
+  for (const s of solids) { s?.cls.delete(); s?.box.delete(); }
   let com: V3 | undefined;
   try {
     const g = new oc.GProp_GProps_1();
@@ -960,20 +997,22 @@ export function topology(oc: any, shape: any, names?: string[]): Topo {
 }
 
 /** A cylinder or cone face with material outside, before it is put into a hole. */
-export type Bore = MHoleSeg & { o: V3; ax: V3; sp: number; f?: string };
+export type Bore = MHoleSeg & { o: V3; ax: V3; sp: number; f?: string; /** Index of the solid the face is on. */ s?: number };
 
 /**
  * Hole stacks from bore faces: faces on one axis line (split halves of one surface summed) that follow on from each
  * other along it; only whole holes (every piece goes all the way round). `out(p)` says whether a point is in the air.
  */
-export function holeStacks(bores: Bore[], out: (p: V3) => boolean): MHole[] {
-  const lines: { o: V3; ax: V3; f?: string; segs: (MHoleSeg & { sp: number })[] }[] = [];
+export function holeStacks(bores: Bore[], out: (p: V3, solid?: number) => boolean): MHole[] {
+  const lines: { o: V3; ax: V3; f?: string; s?: number; segs: (MHoleSeg & { sp: number })[] }[] = [];
   for (const b of bores) {
-    let L = lines.find(l => Math.abs(Math.abs(dot(l.ax, b.ax)) - 1) < 1e-6 && (() => {
+    // One line per solid: a bolt hole through two plates of an assembly is a hole in each plate (as each part's own
+    // drawing shows it), not one stack.
+    let L = lines.find(l => l.s === b.s && Math.abs(Math.abs(dot(l.ax, b.ax)) - 1) < 1e-6 && (() => {
       const w: V3 = [b.o[0] - l.o[0], b.o[1] - l.o[1], b.o[2] - l.o[2]], al = dot(w, l.ax);
       return Math.hypot(w[0] - l.ax[0] * al, w[1] - l.ax[1] * al, w[2] - l.ax[2] * al) < 1e-4;
     })());
-    if (!L) lines.push(L = { o: b.o, ax: b.ax, f: b.f, segs: [] });
+    if (!L) lines.push(L = { o: b.o, ax: b.ax, f: b.f, s: b.s, segs: [] });
     // Express the piece along the line's axis: shift by the origins' offset, flip when the axes are opposite.
     const sh = dot([b.o[0] - L.o[0], b.o[1] - L.o[1], b.o[2] - L.o[2]], L.ax), sg = dot(b.ax, L.ax) > 0 ? 1 : -1;
     let v0 = sh + sg * b.v0, v1 = sh + sg * b.v1, r0 = b.r0, r1 = b.r1;
@@ -989,7 +1028,7 @@ export function holeStacks(bores: Bore[], out: (p: V3) => boolean): MHole[] {
       if (run.length && run.every(s => s.sp >= 2 * Math.PI - 1e-3)) {
         const a = run[0].v0, b = end, d = Math.max(1e-3, (b - a) * 1e-3);
         const at = (v: number): V3 => [L.o[0] + L.ax[0] * v, L.o[1] + L.ax[1] * v, L.o[2] + L.ax[2] * v];
-        holes.push({ o: L.o, ax: L.ax, segs: run.map(({ k, v0, v1, r0, r1 }) => ({ k, v0, v1, r0, r1 })), open: [out(at(a - d)), out(at(b + d))], ...(L.f ? { f: L.f } : {}) });
+        holes.push({ o: L.o, ax: L.ax, segs: run.map(({ k, v0, v1, r0, r1 }) => ({ k, v0, v1, r0, r1 })), open: [out(at(a - d), L.s), out(at(b + d), L.s)], ...(L.f ? { f: L.f } : {}) });
       }
       run = [];
     };
