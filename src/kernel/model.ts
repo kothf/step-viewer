@@ -3648,8 +3648,10 @@ export class Modeller {
    * edge is under a wall square to it (planes, cylinders along its normal) rising into curved faces only, so
    * there is no flat face to sketch on. Like FeatureWorks it comes back as a reference plane square to the
    * floor through the walls' farthest point (tangent to a shaft) with the floor's outline sketched on it and a
-   * blind cut down to the floor. The floor must face a standard axis. Each find is kept only when Delete Face
-   * plus the cut gives the same volume.
+   * blind cut down to the floor. The floor must face a standard axis. A keyway may run out through the shaft's
+   * end: outline lines on a flat face square to the floor that goes on below it and faces away from the floor
+   * are open sides, sketched where they are and left out of the Delete Face. Each find is kept only when
+   * Delete Face plus the cut gives the same volume.
    */
   private keyways(doc: PartDoc): { faces: FaceRef[]; feats: Feature[] } {
     const oc = this.oc;
@@ -3682,14 +3684,26 @@ export class Modeller {
       const wmap = new oc.TopTools_IndexedMapOfShape_1();
       oc.TopExp.MapShapes_1(face, oc.TopAbs_ShapeEnum.TopAbs_WIRE, wmap);
       if (wmap.Extent() !== 1) return;
-      const segs: ExtrudeFind["segs"] = [], walls: number[] = [];
+      const segs: ExtrudeFind["segs"] = [], walls: number[] = [], open: number[] = [];
       let P: V3 | null = null;
+      const fc = this.centroid(face);
+      // A face that goes on below the floor: an open end (the shaft's end face) when it is flat, square to the floor and faces away from it.
+      const below = (j: number, Q: V3) => edges[j].some(({ e }) => {
+        const ca = new oc.BRepAdaptor_Curve_2(e);
+        return [ca.FirstParameter(), ca.LastParameter()].some(t => dot(sub3(this.xyz(ca.Value(t)), Q), n) < -tol);
+      });
       for (const e of this.sub(wmap.FindKey(1), "EDGE")) {
         const j = across(i, emap.FindIndex(e)), k = j >= 0 ? kinds[j] : {} as { pln?: V3; cyl?: V3 };
         if (!(k.pln && Math.abs(dot(k.pln, n)) < 1e-6) && !(k.cyl && Math.abs(Math.abs(dot(k.cyl, n)) - 1) < 1e-6)) return;
         const ca = new oc.BRepAdaptor_Curve_2(e), t0 = ca.FirstParameter(), t1 = ca.LastParameter(), ct = ca.GetType();
         const a = this.xyz(ca.Value(t0)), b = this.xyz(ca.Value(t1)), m = this.xyz(ca.Value((t0 + t1) / 2));
         P ??= a;
+        if (k.pln && below(j, a)) {
+          if (!(dot(k.pln, sub3(fc, m)) < -tol) || ct !== C.GeomAbs_Line) return;
+          segs.push({ line: [a, b] });
+          if (!open.includes(j)) open.push(j);
+          continue;
+        }
         if (ct === C.GeomAbs_Line) segs.push({ line: [a, b] });
         else if (ct === C.GeomAbs_Circle) {
           const c = this.xyz(ca.Circle().Location());
@@ -3698,13 +3712,13 @@ export class Modeller {
         } else return;
         if (!walls.includes(j)) walls.push(j);
       }
-      if (!P || !walls.length) return;
+      if (!P || !walls.length || walls.some(j => open.includes(j))) return;
       // The walls rise from the floor into curved faces only (a flat top is an ordinary pocket), over air.
       for (const j of walls) for (const { e } of edges[j]) {
         const ca = new oc.BRepAdaptor_Curve_2(e);
         for (const t of [ca.FirstParameter(), ca.LastParameter()]) if (dot(sub3(this.xyz(ca.Value(t)), P), n) < -tol) return;
       }
-      const far = [...new Set(walls.flatMap(j => edges[j].map(x => across(j, x.k))))].filter(j => j >= 0 && j !== i && !walls.includes(j));
+      const far = [...new Set(walls.flatMap(j => edges[j].map(x => across(j, x.k))))].filter(j => j >= 0 && j !== i && !walls.includes(j) && !open.includes(j));
       if (!far.length || far.some(j => kinds[j].pln)) return;
       const c = this.centroid(face);
       if (new oc.BRepClass3d_SolidClassifier_3(body.shape, this.P(add(c, mul(n, tol * 10))), 1e-7).State() !== oc.TopAbs_State.TopAbs_OUT) return;
