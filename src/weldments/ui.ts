@@ -10,7 +10,7 @@ import { CATEGORIES, allMaterials, findMaterial } from "../tools/materials";
 import { ANCHORS, PROFILE_TYPES, profileSizes, type Anchor, type ProfileType } from "./profiles";
 import { sketchProfile } from "../sketch/profile";
 import type { CutItem, Pierce, SubWeld, EndCapFeature, GussetFeature, MemberFeature, MemberGroup, TrimExtendFeature, WeldBeadFeature, WeldFeature, WeldSegRef } from "./types";
-import { capDir, cornerKey, cutKey, stockTotals } from "./types";
+import { capDir, cornerKey, cutKey, planGroups, stockTotals } from "./types";
 import { pierceSpots, segOf } from "./kernel";
 
 export type WeldTool = "member" | "trimext" | "endcap" | "gusset" | "weldbead";
@@ -668,11 +668,16 @@ export function cutListCsv(items: CutItem[], density: number, props?: CutProps, 
     const bars = stock.some(r => r.bars !== undefined);
     lines.push("", "Stock lengths", `Profile,Pieces,Total length (mm)${bars ? ",Bar length (mm),Saw kerf (mm),Bars,Left over (mm),Too long" : ""}`,
       ...stock.map(r => [q(r.desc), r.pieces, r.length, ...(bars ? [bar!.len!, bar!.kerf ?? 0, r.bars!, r.left!, r.over!] : [])].join(",")));
+    if (bars) lines.push("", "Cutting plan", "Profile,Bars,Pieces (mm),Left over (mm)",
+      ...stock.flatMap(r => planGroups(r.plan ?? []).map(g => [q(r.desc), g.n, q(g.pieces.join(" + ")), g.left].join(","))));
   }
   return `${lines.join("\r\n")}\r\n`;
 }
 
 const STEEL = 7.85;
+
+/** Whether the cutting plan under the stock table is unfolded (view-only, kept while the dialog redraws). */
+let planOpen = false;
 
 /** Stock lengths under the cut list: per profile, the pieces and their summed length (excluded items left out); with a stock bar length also the bars to buy and what is left of them. */
 function stockHtml(items: CutItem[], props: CutProps, bar: StockBar, edit: boolean): string {
@@ -685,7 +690,9 @@ function stockHtml(items: CutItem[], props: CutProps, bar: StockBar, edit: boole
   const inp = (k: "len" | "kerf", label: string) => `<label>${esc(t(label))} (${esc(units.current)}) <input type="number" class="wld-bar" data-wbar="${k}" min="0" step="any" value="${val(bar[k])}"${edit ? "" : " disabled"} /></label>`;
   return `<table class="v-table wld-stock"><caption>${esc(t("Stock lengths"))}</caption><thead><tr><th>${esc(t("Section"))}</th><th>${esc(t("Pieces"))}</th><th>${esc(t("Total length"))} (${esc(units.current)})</th>${bars ? `<th>${esc(t("Bars"))}</th><th>${esc(t("Left over"))} (${esc(units.current)})</th>` : ""}</tr></thead><tbody>`
     + rows.map(r => `<tr data-stock><td translate="no">${esc(r.desc)}</td><td>${r.pieces}</td><td>${L(r.length)}</td>${bars ? `<td data-wbars>${r.bars}${r.over ? ` <span class="wld-over">${esc(t("+ {n} too long", { n: r.over }))}</span>` : ""}</td><td>${L(r.left!)}</td>` : ""}</tr>`).join("") + "</tbody></table>"
-    + `<p class="wld-barrow">${inp("len", "Stock bar length")} ${inp("kerf", "Saw kerf")}</p>`;
+    + `<p class="wld-barrow">${inp("len", "Stock bar length")} ${inp("kerf", "Saw kerf")}</p>`
+    + (bars ? `<details class="wld-plan"${planOpen ? " open" : ""}><summary>${esc(t("Cutting plan"))}</summary>${rows.map(r => `<p class="wld-plan-h" translate="no">${esc(r.desc)}</p><ol>`
+      + planGroups(r.plan ?? []).map(g => `<li data-wplan>${g.n > 1 ? `${g.n} × ` : ""}${g.pieces.map(L).join(" + ")} <span class="muted">${esc(t("left {l}", { l: L(g.left) }))}</span></li>`).join("") + "</ol>").join("")}</details>` : "");
 }
 
 /**
@@ -748,6 +755,7 @@ export function showCutList(items: CutItem[] | undefined, doc: PartDoc, onProps?
   };
   // The stock bar inputs are redrawn with the table, so one listener on the container serves them.
   const stockBox = dlg.querySelector<HTMLElement>("[data-wstock]")!;
+  stockBox.addEventListener("toggle", ev => { if ((ev.target as HTMLElement).matches?.(".wld-plan")) planOpen = (ev.target as HTMLDetailsElement).open; }, true);
   stockBox.onchange = ev => {
     const el = ev.target as HTMLInputElement, k = el.dataset?.wbar as "len" | "kerf" | undefined;
     if (!k) return;
