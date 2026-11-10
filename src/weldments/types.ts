@@ -158,6 +158,8 @@ export interface WeldBeadFeature {
   inter?: { len: Num; pitch: Num; stagger?: boolean };
   /** From/to length: the bead only from `start` along each chain of edges for `len` (from the chain's other end when `flip`); intermittent welds fill this span. */
   span?: { start: Num; len: Num; flip?: boolean };
+  /** Weld both sides: each flat face of set 1 also brings the face on the other side of its plate (the nearest flat face of the same body facing the opposite way behind it). */
+  both?: boolean;
   /** false hides the weld symbol in the view. */
   symbol?: false;
   /** Weld all around (ISO 2553 circle at the knee of the symbol). */
