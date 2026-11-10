@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.465.0] - 2026-11-10
+
+### Added
+
+- **Recognize Features (FR-FT-102)**: one command in the Direct menu runs all the recognitions at once, like FeatureWorks' automatic mode. Fillets and chamfers, holes, then pockets, bosses and the base are found, each on the body with the earlier finds taken off, and the tree comes back in modelling order: the base sketch with its Extrude or Revolve, the cuts and bosses, the Hole features, then the Fillets and Chamfers, whose faces and edges are found again on the new body. When the base is found no Delete Face is left in the tree, and chamfers along two directions no longer stop the base from being found. A body the combined way cannot rebuild exactly gets the finds one after another, as the single commands give them.
+
 ## [1.464.0] - 2026-11-10
 
 ### Fixed (drawings exam, round 2)
@@ -2807,7 +2813,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.464.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.465.0...HEAD
+[1.465.0]: https://github.com/kothf/step-viewer/compare/v1.464.0...v1.465.0
 [1.464.0]: https://github.com/kothf/step-viewer/compare/v1.463.0...v1.464.0
 [1.463.0]: https://github.com/kothf/step-viewer/compare/v1.462.0...v1.463.0
 [1.462.0]: https://github.com/kothf/step-viewer/compare/v1.461.0...v1.462.0

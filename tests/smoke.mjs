@@ -9250,6 +9250,28 @@ try {
     const t1 = await state();
     check(!t0.bad && t0.v > 1000 && Math.abs(t1.v - t0.v) < 0.05 && !t1.bad && t1.types === "import,sketch,revolve,delbody",
       `model: Recognize Extrudes makes an imported turned shaft again as a sketch with a revolve (FR-FT-102) (${JSON.stringify({ t0, t1 })})`);
+    // 1.465: Recognize Features: a block with filleted corners, a pocket and a through hole comes back in modelling order.
+    await mp.evaluate(() => window.__sv.model.store.change("Block", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      const R = (id, plane, x, y, w, h) => ({ id, type: "sketch", name: id, plane, rels: [], dims: [], ents: [P(id + 1, x, y), P(id + 2, x + w, y), P(id + 3, x + w, y + h), P(id + 4, x, y + h), Ln(id + "a", id + 1, id + 2), Ln(id + "b", id + 2, id + 3), Ln(id + "c", id + 3, id + 4), Ln(id + "d", id + 4, id + 1)] });
+      d.features = [R("s", { std: "XY" }, -30, -20, 60, 40), { id: "e", type: "extrude", name: "Boss-Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } },
+        { id: "f", type: "fillet", name: "Fillet1", radius: { v: 5 }, edges: ["a", "b", "c", "d"].map((k, i) => ({ faces: ["e:side:s" + k, "e:side:s" + "abcd"[(i + 1) % 4]] })) },
+        R("pk", { face: { name: "e:end" } }, -25, -5, 20, 10), { id: "ec", type: "extrude", name: "Cut-Extrude1", sketch: "pk", op: "cut", end: "blind", depth: { v: 5 } },
+        { id: "o", type: "sketch", name: "o", plane: { face: { name: "e:end" } }, rels: [], dims: [], ents: [P("oc", 15, 5), { id: "ok", t: "circle", c: "oc", r: 4 }] },
+        { id: "eo", type: "extrude", name: "Cut-Extrude2", sketch: "o", op: "cut", end: "through", depth: { v: 10 } }];
+    }));
+    await settle();
+    const rf0 = await state();
+    const brepRf = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "block.brep", brep }]; }), brepRf);
+    await settle();
+    await runCmd(mp, "Recognize Features");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.some(f => f.type === "hole"), null, { timeout: 120000 });
+    await settle();
+    const rf1 = await state();
+    const names = await mp.evaluate(() => window.__sv.model.store.doc.features.map(f => f.name).join(","));
+    check(!rf0.bad && rf0.v > 40000 && Math.abs(rf1.v - rf0.v) < 0.05 && !rf1.bad && rf1.types === "import,sketch,extrude,delbody,sketch,extrude,hole,fillet" && names.split(",")[5] === "Cut1" && names.split(",")[7] === "Fillet1",
+      `model 1.465: Recognize Features makes an imported filleted block with a pocket and a hole again as base, cut, hole and fillet (FR-FT-102) (${JSON.stringify({ rf0, rf1, names })})`);
     await ctx.close();
   }
 
