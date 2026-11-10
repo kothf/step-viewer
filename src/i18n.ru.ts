@@ -3741,6 +3741,11 @@ export const RU: Record<string, string> = {
   "Feature recognition failed: {msg}": "Не удалось распознать элементы: {msg}",
   "No holes were found to recognise.": "Отверстий для распознавания не найдено.",
   "{n} hole recognised|{n} holes recognised": "Распознано {n} отверстие|Распознано {n} отверстия|Распознано {n} отверстий",
+  "Recognize Fillets": "Распознать скругления",
+  "Recognize fillets and chamfers: the body's fillets and chamfers become Fillet and Chamfer features you can edit": "Распознать скругления и фаски: скругления и фаски тела становятся редактируемыми элементами «Скругление» и «Фаска»",
+  "Recognize fillets": "Распознать скругления",
+  "No fillets or chamfers were found to recognise.": "Скруглений и фасок для распознавания не найдено.",
+  "Fillets and chamfers recognised: {n} edge|Fillets and chamfers recognised: {n} edges": "Распознаны скругления и фаски: {n} ребро|Распознаны скругления и фаски: {n} ребра|Распознаны скругления и фаски: {n} рёбер",
   // 1.112.0: hole table (FR-DRW-024) and inspection dimensions (FR-DRW-021).
   "Hole table": "Таблица отверстий",
   "Tag": "Обозн.",

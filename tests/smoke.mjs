@@ -8290,6 +8290,30 @@ try {
     const r1 = await state();
     check(Math.abs(r1.v - r0.v) < 0.05 && !r1.bad && r1.types === "sketch,extrude,hole,hole,delface,hole,hole" && r1.holes === "blind:1:8 blind:1:8 through:2:10 through:2:10",
       `model 1.116: Recognize Holes fills the holes and makes them again as Hole features (FR-FT-102) (${JSON.stringify({ r0, r1 })})`);
+    // 1.390 (FR-FT-102): Recognize Fillets on an imported body: a block with two R5 corners and a 2 mm chamfer.
+    await mp.evaluate(() => window.__sv.model.store.change("Blends", d => {
+      const S = k => `e:side:s${k}`;
+      d.features = d.features.filter(f => f.id === "s" || f.id === "e");
+      d.features.push({ id: "bf", type: "fillet", name: "Fillet1", radius: { v: 5 }, edges: [{ faces: [S("a"), S("b")] }, { faces: [S("b"), S("c")] }] },
+        { id: "bc", type: "chamfer", name: "Chamfer1", distance: { v: 2 }, edges: [{ faces: ["e:end", S("d")] }] });
+    }));
+    await settle();
+    const b0 = await state();
+    const brep = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "block.brep", brep }]; }), brep);
+    await settle();
+    const b1 = await state();
+    await runCmd(mp, "Recognize Fillets");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.some(f => f.type === "fillet"), null, { timeout: 120000 });
+    await settle();
+    const b2 = await state();
+    const blends = await mp.evaluate(() => window.__sv.model.store.doc.features.filter(f => f.type === "fillet" || f.type === "chamfer").map(f => `${f.name}:${Math.round((f.radius ?? f.distance).v * 100) / 100}:${f.edges.length}`).join(" "));
+    // The recognised fillet can be edited like any other.
+    await mp.evaluate(() => window.__sv.model.store.change("Edit", d => { d.features.find(f => f.type === "fillet").radius.v = 8; }));
+    await settle();
+    const b3 = await state();
+    check(!b0.bad && Math.abs(b1.v - b0.v) < 0.05 && Math.abs(b2.v - b0.v) < 0.05 && !b2.bad && b2.types === "import,delface,chamfer,fillet" && blends === "Chamfer1:2:1 Fillet1:5:2" && !b3.bad && b3.v < b2.v - 100,
+      `model 1.390: Recognize Fillets removes the fillets and chamfers of an imported body and makes them again as features (FR-FT-102) (${JSON.stringify({ b0, b1, b2, b3, blends })})`);
     await ctx.close();
   }
 
