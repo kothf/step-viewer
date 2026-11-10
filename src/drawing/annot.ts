@@ -485,12 +485,15 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
     const txt2 = dimText(a, g, dec);
     txt.main = txt2.main; txt.up = txt2.up; txt.lo = txt2.lo;
     const R = Math.max(d2(T, sec.x), 3), a1 = sec.a0 + sec.sw;
-    out.push({ t: "a", o: sec.x, r: R, a0: sec.a0, a1, pen: "thin", layer: "ANNOT" });
-    const tip = (an: number): P2 => [sec.x[0] + R * Math.cos(an), sec.x[1] + R * Math.sin(an)];
-    out.push(arrow(...tip(sec.a0), Math.sin(sec.a0), -Math.cos(sec.a0)));
-    out.push(arrow(...tip(a1), -Math.sin(a1), Math.cos(a1)));
+    // Arrows inside the sector while its arc has room for both; else outside it, on tails of the arc.
+    const inside = a.arrows ? a.arrows === "in" : R * sec.sw >= 2 * ARROW + 2, tail = inside ? 0 : Math.min((ARROW + 2) / R, (2 * Math.PI - sec.sw) / 2 - 1e-3);
+    out.push({ t: "a", o: sec.x, r: R, a0: sec.a0 - tail, a1: a1 + tail, pen: "thin", layer: "ANNOT" });
+    const tip = (an: number): P2 => [sec.x[0] + R * Math.cos(an), sec.x[1] + R * Math.sin(an)], sg = inside ? 1 : -1;
+    out.push(arrow(...tip(sec.a0), sg * Math.sin(sec.a0), -sg * Math.cos(sec.a0)));
+    out.push(arrow(...tip(a1), -sg * Math.sin(a1), sg * Math.cos(a1)));
     // Extension lines when the arc runs past the lines' ends.
-    for (const [l, an] of [[L[0], sec.a0], [L[1], a1]] as [[P2, P2], number][]) {
+    for (const [l, an, k] of [[L[0], sec.a0, "a"], [L[1], a1, "b"]] as [[P2, P2], number, string][]) {
+      if (a.noExt === k || a.noExt === "both") continue;
       const e: P2 = [Math.cos(an), Math.sin(an)], reach = Math.max(...l.map(p => (p[0] - sec.x[0]) * e[0] + (p[1] - sec.x[1]) * e[1]));
       if (reach < R - 1) out.push(thin(add2(sec.x, e, Math.max(reach, 0) + 1), add2(sec.x, e, R + 2)));
     }
