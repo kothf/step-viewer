@@ -63,9 +63,15 @@ export const insertSize = (s: string | undefined) => HEAT_INSERTS.find(h => h.si
 export function recognizedHoleFeatures(holes: import("./types").RecognizedHole[], id: () => string): import("./types").HoleFeature[] {
   const groups = new Map<string, { h: import("./types").RecognizedHole; pts: [number, number][] }>();
   for (const h of holes) {
-    const k = `${"face" in h.plane ? h.plane.face.name : ""}|${h.diameter.toFixed(6)}|${h.end}|${h.end === "blind" ? h.depth.toFixed(6) : ""}|${h.flat}`;
+    const k = `${"face" in h.plane ? h.plane.face.name : ""}|${h.diameter.toFixed(6)}|${h.end}|${h.end === "blind" ? h.depth.toFixed(6) : ""}|${h.flat}`
+      + `|${h.cb ? `${h.cb.dia.toFixed(6)},${h.cb.depth.toFixed(6)}` : ""}|${h.cs ? `${h.cs.dia.toFixed(6)},${h.cs.angle.toFixed(6)}` : ""}`;
     const g = groups.get(k);
     if (g) g.pts.push(h.pt); else groups.set(k, { h, pts: [h.pt] });
   }
-  return [...groups.values()].map(({ h, pts }) => ({ id: id(), type: "hole", name: "", plane: h.plane, pts, kind: "simple", diameter: { v: h.diameter }, end: h.end, depth: { v: h.end === "blind" ? h.depth : 10 }, ...(h.flat && h.end === "blind" ? { flat: true } : {}) }));
+  // Counterbored and countersunk holes come back as Hole Wizard holes of that kind (FeatureWorks does the same).
+  return [...groups.values()].map(({ h, pts }) => ({ id: id(), type: "hole", name: "", plane: h.plane, pts,
+    kind: h.cb ? "cbore" : h.cs ? "csink" : "simple", diameter: { v: h.diameter }, end: h.end, depth: { v: h.end === "blind" ? h.depth : 10 },
+    ...(h.flat && h.end === "blind" ? { flat: true } : {}),
+    ...(h.cb ? { cbDia: { v: h.cb.dia }, cbDepth: { v: h.cb.depth } } : {}),
+    ...(h.cs ? { csDia: { v: h.cs.dia }, csAngle: { v: h.cs.angle } } : {}) }));
 }
