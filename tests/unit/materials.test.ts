@@ -151,3 +151,10 @@ test("eighth pass (1.416.0): PE-LD checked against a stock shape sheet", () => {
   assert.ok(pe.ref);
   assert.equal(pe.density, 0.92);
 });
+
+test("ninth pass (1.417.0): PA66-GF30 checked against a maker's sheet", () => {
+  assert.ok(LIBRARY.filter((m) => m.ref).length >= 143);
+  const pa = findMaterial("Nylon PA66-GF30")!;
+  assert.ok(pa.ref);
+  assert.equal(pa.density, 1.36);
+});
