@@ -8330,6 +8330,31 @@ try {
     const b3 = await state();
     check(!b0.bad && Math.abs(b1.v - b0.v) < 0.05 && Math.abs(b2.v - b0.v) < 0.05 && !b2.bad && b2.types === "import,delface,chamfer,fillet" && blends === "Chamfer1:2:1 Fillet1:5:2" && !b3.bad && b3.v < b2.v - 100,
       `model 1.390: Recognize Fillets removes the fillets and chamfers of an imported body and makes them again as features (FR-FT-102) (${JSON.stringify({ b0, b1, b2, b3, blends })})`);
+    // Recognize Extrudes (FR-FT-102): a block with a 20 × 10 pocket 5 deep and a 12 × 6 boss 7 high, imported.
+    await mp.evaluate(() => window.__sv.model.store.change("Pocket and boss", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      const R = (id, x, y, w, h) => ({ id, type: "sketch", name: id, plane: { face: { name: "e:end" } }, rels: [], dims: [], ents: [P(id + 1, x, y), P(id + 2, x + w, y), P(id + 3, x + w, y + h), P(id + 4, x, y + h), Ln(id + "a", id + 1, id + 2), Ln(id + "b", id + 2, id + 3), Ln(id + "c", id + 3, id + 4), Ln(id + "d", id + 4, id + 1)] });
+      const B = (id, x, y) => ({ id, type: "sketch", name: id, plane: { std: "XY" }, rels: [], dims: [], ents: [P(id + 1, -x, -y), P(id + 2, x, -y), P(id + 3, x, y), P(id + 4, -x, y), Ln(id + "a", id + 1, id + 2), Ln(id + "b", id + 2, id + 3), Ln(id + "c", id + 3, id + 4), Ln(id + "d", id + 4, id + 1)] });
+      d.features = [B("s", 30, 20), { id: "e", type: "extrude", name: "Boss-Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } },
+        R("pk", -25, -5, 20, 10), { id: "ec", type: "extrude", name: "Cut-Extrude1", sketch: "pk", op: "cut", end: "blind", depth: { v: 5 } },
+        R("bs", 8, 2, 12, 6), { id: "eb", type: "extrude", name: "Boss-Extrude2", sketch: "bs", op: "boss", end: "blind", depth: { v: 7 } }];
+    }));
+    await settle();
+    const x0 = await state();
+    const brep2 = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "block.brep", brep }]; }), brep2);
+    await settle();
+    await runCmd(mp, "Recognize Extrudes");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.some(f => f.type === "extrude"), null, { timeout: 120000 });
+    await settle();
+    const x1 = await state();
+    const exts = await mp.evaluate(() => window.__sv.model.store.doc.features.filter(f => f.type === "extrude").map(f => `${f.op}:${f.end}:${Math.round(f.depth.v * 100) / 100}`).sort().join(" "));
+    // The recognised pocket can be made deeper like any other cut.
+    await mp.evaluate(() => window.__sv.model.store.change("Edit", d => { d.features.find(f => f.type === "extrude" && f.op === "cut").depth.v = 9; }));
+    await settle();
+    const x2 = await state();
+    check(!x0.bad && Math.abs(x0.v - (48000 - 1000 + 504)) < 0.05 && Math.abs(x1.v - x0.v) < 0.05 && !x1.bad && x1.types === "import,delface,sketch,extrude,sketch,extrude" && exts === "boss:blind:7 cut:blind:5" && !x2.bad && Math.abs(x2.v - (x1.v - 800)) < 0.05,
+      `model: Recognize Extrudes removes a pocket and a boss of an imported body and makes them again as sketches with extrudes (FR-FT-102) (${JSON.stringify({ x0, x1, x2, exts })})`);
     await ctx.close();
   }
 
