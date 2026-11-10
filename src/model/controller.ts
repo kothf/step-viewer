@@ -1966,16 +1966,9 @@ export class ModelController {
         await out.close();
         this.fileName = this.handle.name;
       } else {
-        // No save dialog in this browser: ask for the name here, so Save as names the file and the part (exam #9).
-        let file = suggested;
-        if (as || !this.fileName) {
-          const typed = prompt(t("Save as: file name"), suggested)?.trim();
-          if (!typed) return;
-          file = /\.mcadprt$/i.test(typed) ? typed : `${typed}${PART_EXT}`;
-        }
-        await named(file);
-        downloadBlob(blob, file);
-        this.fileName = file;
+        await named(suggested);
+        downloadBlob(blob, suggested);
+        this.fileName = suggested;
       }
     } catch (err) {
       if ((err as Error).name === "AbortError") return;

@@ -13,7 +13,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - **Face names of arcs next to a smaller concentric curve** (#77): an extruded arc's side face could take the name of a hole or slot end sharing its centre (and the hole became "…:1"), so mates and references named the wrong face. New parts match each face to its sketch curve by a point on the edge; parts saved before keep their face names, so their mates still find them.
 - **Arrow keys after a heads-up view button** (#78): after a click on Front, Top… in the view bar the arrow keys did nothing; they turn the view again.
 - **Mate names** (#79): a new mate no longer repeats the name of one still in the assembly after another of its type was deleted.
-- **Save as without a save dialog** (#9): in browsers with no file save dialog, Save as now asks for the file name, which also names the part.
 
 ### Added
 

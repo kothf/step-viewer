@@ -702,7 +702,6 @@ export const RU: Record<string, string> = {
   "{name} is used by {list}. Delete them too?": "{name} используется в: {list}. Удалить и их?",
   "Delete feature": "Удалить элемент",
   "Could not save: {err}": "Не удалось сохранить: {err}",
-  "Save as: file name": "Сохранить как: имя файла",
   "Saved {name}": "Сохранено: {name}",
   "There is no body to export yet.": "Тела для экспорта пока нет.",
   "Unsaved parts from an earlier session:": "Несохранённые детали из прошлого сеанса:",
