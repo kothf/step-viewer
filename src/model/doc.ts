@@ -169,6 +169,7 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
     if (l.axis) features.push(l.axis);
   };
   if (f.type === "csys") { line(f.x); line(f.z); }
+  if (f.type === "plane") line(f.about);
   if (f.type === "moveface") line(f.axis);
   if (f.type === "hole") { plane(f.plane); if (f.end === "upto") plane(f.upTo); }
   if (f.type === "shell" || f.type === "delface" || f.type === "moveface") faces.push(...f.faces.map(x => x.name));

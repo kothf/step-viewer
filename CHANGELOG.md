@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.486.0] - 2026-11-10
+
+### Added
+
+- Recognize Holes and Recognize Features bring back cross holes at an angle (FR-FT-102): a hole right through a shaft or a blind one whose axis is tilted in a standard plane (for example at 45° round the shaft, or at 30° to its end) comes back on a reference Plane at an angle about the standard axis square to it, then a sketch with an Extruded Cut Through All - Both, or an offset Plane through the rim and a Hole Wizard hole. Before, only cross holes along X, Y or Z were recognised. Holes tilted in two directions at once are still left.
+- Plane at angle turns about a standard axis (X, Y or Z through the origin) or a reference axis too, not only a straight model edge (FR-REF-002): pick it in the new **Axis** list of the Plane panel.
+
 ## [1.485.0] - 2026-11-10
 
 ### Added
@@ -2978,7 +2985,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.485.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.486.0...HEAD
+[1.486.0]: https://github.com/kothf/step-viewer/compare/v1.485.0...v1.486.0
 [1.485.0]: https://github.com/kothf/step-viewer/compare/v1.484.0...v1.485.0
 [1.484.0]: https://github.com/kothf/step-viewer/compare/v1.483.0...v1.484.0
 [1.483.0]: https://github.com/kothf/step-viewer/compare/v1.482.0...v1.483.0

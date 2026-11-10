@@ -171,6 +171,44 @@ test("recognize features: blind cross holes in a shaft come back as Hole Wizard 
   assert.ok(vol(m, doc([...imp.features, ...deep])) < v0 - 5);
 });
 
+test("recognize features: cross holes at an angle come back on a plane at an angle about a standard axis (FR-FT-102, FR-REF-002)", async () => {
+  const m = new Modeller(await occ());
+  const xy: [number, number][] = [[0, 0], [10, 0], [10, 20], [6, 26], [6, 40], [0, 40]];
+  const ents: SkEnt[] = xy.map(([x, y], i) => ({ id: `rp${i}`, t: "point", x, y }) as SkEnt);
+  xy.forEach((_, i) => ents.push({ id: `rl${i}`, t: "line", a: `rp${i}`, b: `rp${(i + 1) % xy.length}` }));
+  ents.push({ id: "ra", t: "point", x: 0, y: -5 }, { id: "rb", t: "point", x: 0, y: 45 }, { id: "rax", t: "line", a: "ra", b: "rb", cons: true });
+  const shaft: Feature[] = [{ id: "r", type: "sketch", name: "r", plane: { std: "XZ" }, ents, rels: [], dims: [] },
+    { id: "v", type: "revolve", name: "V", sketch: "r", op: "boss", axis: "rax", angle: { v: Math.PI * 2 } } as Feature];
+  // Ø4 right through at 30° to X in the XZ plane, through (0, 0, 10); Ø3 drilled 4 deep at 45° round the
+  // Ø12 part (axis along Z, so square to Z) at z = 33, from the plane tangent to it.
+  const pa = { id: "pa", type: "plane", name: "PA", base: { std: "YZ" }, mode: "angle", offset: { v: 0 }, angle: { v: Math.PI / 6 }, about: { std: "Y" } } as Feature;
+  const pb = { id: "pb", type: "plane", name: "PB", base: { std: "YZ" }, mode: "angle", offset: { v: 0 }, angle: { v: Math.PI / 4 }, about: { std: "Z" } } as Feature;
+  const pc = { id: "pc", type: "plane", name: "PC", base: { plane: "pb" }, mode: "offset", offset: { v: 6 } } as Feature;
+  const F = m.evaluate(doc([...shaft, pa, pb, pc])).frames;
+  const at = (fr: { o: number[]; x: number[]; y: number[] }, p: number[]): [number, number] => {
+    const q = p.map((v, i) => v - fr.o[i]);
+    return [q[0] * fr.x[0] + q[1] * fr.x[1] + q[2] * fr.x[2], q[0] * fr.y[0] + q[1] * fr.y[1] + q[2] * fr.y[2]];
+  };
+  const [ax, ay] = at(F.pa, [0, 0, 10]);
+  const xh: SketchFeature = { id: "o", type: "sketch", name: "o", plane: { plane: "pa" }, rels: [], dims: [],
+    ents: [{ id: "oc", t: "point", x: ax, y: ay }, { id: "ok", t: "circle", c: "oc", r: 2 } as SkEnt] };
+  const plain = vol(m, doc(shaft));
+  const hb = (flip: boolean) => ({ id: "hb", type: "hole", name: "HB", plane: { plane: "pc" }, pts: [at(F.pc, [0, 0, 33])], kind: "simple", diameter: { v: 3 }, end: "blind", depth: { v: 4 }, flat: true, ...(flip ? { flip: true } : {}) }) as Feature;
+  const flip = vol(m, doc([...shaft, pa, pb, pc, hb(false)])) > plain - 1;
+  const imp = imported(m, [...shaft, pa, xh, { id: "c", type: "extrude", name: "C", sketch: "o", op: "cut", end: "through2", depth: { v: 10 } } as Feature, pb, pc, hb(flip)]);
+  const v0 = vol(m, imp);
+  assert.ok(v0 < plain - 100);
+  const H = m.recognizeHoles(imp);
+  assert.equal(H.holes.length, 0);
+  assert.equal(types(H.cuts ?? []), "plane,plane,hole,plane,sketch,extrude");
+  const angled = (H.cuts ?? []).filter(f => f.type === "plane" && (f as any).mode === "angle") as any[];
+  assert.deepEqual(angled.map(p => p.about.std).sort(), ["Y", "Z"]);
+  close(vol(m, doc([...imp.features, { id: "d", type: "delface", name: "", faces: H.faces } as Feature, ...H.cuts!])), v0, 1e-5);
+  const fs = m.recognizeFeatures(imp);
+  assert.equal(types(fs), "sketch,revolve,delbody,plane,plane,hole,plane,sketch,extrude");
+  close(vol(m, doc([...imp.features, ...fs])), v0, 1e-5);
+});
+
 test("recognize features: keyways in a shaft come back as a tangent plane, a slot sketch and a blind cut (FR-FT-102)", async () => {
   const m = new Modeller(await occ());
   const xy: [number, number][] = [[0, 0], [10, 0], [10, 40], [0, 40]];

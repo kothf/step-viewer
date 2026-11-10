@@ -370,14 +370,18 @@ export class Modeller {
       const o = add(base.o, mul(base.n, sg * f.offset.v));
       return { o: mul(base.n, dot(o, base.n)), x: base.x, y: base.y, n: base.n };
     }
-    if (!f.axis) throw new FeatureError("E-REF-AXIS", "Pick a straight edge to turn the plane about.");
     const oc = this.oc;
-    const e = this.resolveEdge(body, f.axis);
-    const ad = new oc.BRepAdaptor_Curve_2(e);
-    if (ad.GetType() !== oc.GeomAbs_CurveType.GeomAbs_Line) throw new FeatureError("E-REF-AXIS", "The plane turns about a straight edge.");
-    const lin = ad.Line();
-    const p = this.xyz(lin.Location());
-    const u = this.xyz(lin.Direction());
+    let p: V3, u: V3;
+    if (f.about) ({ o: p, d: u } = this.lineOf(f.about, body, frames, "an axis to turn the plane about"));
+    else {
+      if (!f.axis) throw new FeatureError("E-REF-AXIS", "Pick a straight edge to turn the plane about.");
+      const ad = new oc.BRepAdaptor_Curve_2(this.resolveEdge(body, f.axis));
+      if (ad.GetType() !== oc.GeomAbs_CurveType.GeomAbs_Line) throw new FeatureError("E-REF-AXIS", "The plane turns about a straight edge.");
+      const lin = ad.Line();
+      p = this.xyz(lin.Location());
+      u = this.xyz(lin.Direction());
+    }
+    u = unit(u);
     const a = sg * (f.angle?.v ?? 0);
     const rot = (v: V3) => rotate(v, u, a);
     const n = rot(base.n);
@@ -3492,32 +3496,53 @@ export class Modeller {
     const tryPair = (pair: Feature[], fs: FaceRef[]) => {
       try {
         const r = this.evaluate({ ...doc, rollback: null, features: [...upto, { id: "__cross", type: "delface", name: "", faces: fs } as Feature, ...pair] });
-        if (!r.body || r.statuses.slice(-3).some(x => x.ok === false)) return;
+        if (!r.body || r.statuses.slice(-(pair.length + 1)).some(x => x.ok === false)) return;
         const same = Math.abs(this.volume(r.body.shape) - v0) <= 1e-6 * Math.abs(v0) + 1e-9 || this.sameVolume(r.body.shape, body.shape);
         if (!same) return;
       } catch { return; }
       cuts.push(...pair);
       crossFaces.push(...fs);
     };
-    // Blind cross holes: a reference plane offset from the standard plane square to the hole, through the
-    // rim's farthest point, and a Hole Wizard hole on it (reversed when it runs along the plane's normal).
+    const newId = () => `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
+    // The plane square to a hole's axis `d` through the origin: a standard plane, else a plane at an angle to
+    // one about the standard axis square to `d` (a hole tilted in a standard plane); compound angles are left.
+    const squareTo = (d: V3): { feats: Feature[]; ref: PlaneRef; fr: Frame } | null => {
+      const std = (["XY", "XZ", "YZ"] as const).find(k => Math.abs(Math.abs(dot(STD_FRAMES[k].n, d)) - 1) < 1e-9);
+      if (std) return { feats: [], ref: { std }, fr: STD_FRAMES[std] };
+      const axes = [["X", [1, 0, 0]], ["Y", [0, 1, 0]], ["Z", [0, 0, 1]]] as const;
+      const ax = axes.find(([, A]) => Math.abs(dot(A as unknown as V3, d)) < 1e-9);
+      if (!ax) return null;
+      const A = ax[1] as unknown as V3;
+      // Of the two standard planes holding the axis, the one nearer square to the hole.
+      const base = (["XY", "XZ", "YZ"] as const).filter(k => Math.abs(dot(STD_FRAMES[k].n, A)) < 1e-9)
+        .sort((a, b) => Math.abs(dot(STD_FRAMES[b].n, d)) - Math.abs(dot(STD_FRAMES[a].n, d)))[0];
+      const n = STD_FRAMES[base].n, dd = dot(n, d) < 0 ? mul(d, -1) : d;
+      const a = Math.atan2(dot(dd, cross(A, n)), dot(dd, n));
+      const id = newId();
+      const pf = { id, type: "plane", name: "", base: { std: base }, mode: "angle", offset: { v: 0 }, angle: { v: Math.abs(a) }, about: { std: ax[0] }, ...(a < 0 ? { flip: true } : {}) } as PlaneFeature;
+      const fr = this.refPlane(pf, body, {});
+      if (Math.abs(Math.abs(dot(fr.n, d)) - 1) > 1e-9) return null;
+      return { feats: [pf], ref: { plane: id }, fr };
+    };
+    // Blind cross holes: a reference plane offset from the plane square to the hole, through the rim's
+    // farthest point, and a Hole Wizard hole on it (reversed when it runs along the plane's normal).
     for (const c of crossB) {
-      const std = (["XY", "XZ", "YZ"] as const).find(k => Math.abs(Math.abs(dot(STD_FRAMES[k].n, c.d)) - 1) < 1e-9);
-      if (!std) continue;
-      const F = STD_FRAMES[std], h = dot(sub3(c.at, F.o), F.n), pid = `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
+      const sq = squareTo(c.d);
+      if (!sq) continue;
+      const F = sq.fr, h = dot(sub3(c.at, F.o), F.n), pid = newId();
       const q = sub3(c.at, F.o);
-      const pair: Feature[] = [
-        { id: pid, type: "plane", name: "", base: { std }, mode: "offset", offset: { v: Math.abs(h) }, ...(h < 0 ? { flip: true } : {}) } as Feature,
+      const pair: Feature[] = [...sq.feats,
+        { id: pid, type: "plane", name: "", base: sq.ref, mode: "offset", offset: { v: Math.abs(h) }, ...(h < 0 ? { flip: true } : {}) } as Feature,
         { id: `${pid}h`, type: "hole", name: "", plane: { plane: pid }, pts: [[dot(q, F.x), dot(q, F.y)]], kind: "simple", diameter: { v: 2 * c.r }, end: "blind",
           depth: { v: c.depth }, ...(c.flat ? { flat: true } : {}), ...(dot(c.d, F.n) > 0 ? { flip: true } : {}) } as Feature];
       tryPair(pair, c.faces.map(ref));
     }
     for (const c of crossH) {
-      const std = (["XY", "XZ", "YZ"] as const).find(k => Math.abs(Math.abs(dot(STD_FRAMES[k].n, c.d)) - 1) < 1e-9);
-      if (!std) continue;
-      const F = STD_FRAMES[std], q = sub3(c.o, F.o), sid = `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
-      const pair: Feature[] = [
-        { id: sid, type: "sketch", name: "", plane: { std }, rels: [], dims: [], ents: [{ id: `${sid}c`, t: "point", x: dot(q, F.x), y: dot(q, F.y) }, { id: `${sid}k`, t: "circle", c: `${sid}c`, r: c.r }] } as Feature,
+      const sq = squareTo(c.d);
+      if (!sq) continue;
+      const F = sq.fr, q = sub3(c.o, F.o), sid = newId();
+      const pair: Feature[] = [...sq.feats,
+        { id: sid, type: "sketch", name: "", plane: sq.ref, rels: [], dims: [], ents: [{ id: `${sid}c`, t: "point", x: dot(q, F.x), y: dot(q, F.y) }, { id: `${sid}k`, t: "circle", c: `${sid}c`, r: c.r }] } as Feature,
         { id: `${sid}x`, type: "extrude", name: "", sketch: sid, op: "cut", end: "through2", depth: { v: 10 } } as Feature];
       tryPair(pair, c.faces.map(ref));
     }
@@ -4677,6 +4702,7 @@ export class Modeller {
   private lineOf(ref: LineRef | undefined, body: Named | null, frames: Record<string, Frame>, what: string): { o: V3; d: V3 } {
     const oc = this.oc;
     if (!ref) throw new FeatureError("E-PAT-DIR", `Pick ${what}.`);
+    if (ref.std) return { o: [0, 0, 0], d: ref.std === "X" ? [1, 0, 0] : ref.std === "Y" ? [0, 1, 0] : [0, 0, 1] };
     if (ref.axis) {
       const fr = frames[ref.axis];
       if (!fr) throw new FeatureError("E-FT-PARENT", "The reference axis is missing or has an error.");

@@ -1441,6 +1441,7 @@ export const RU: Record<string, string> = {
   "Coordinate system": "Система координат",
   "Coordinate system: an origin and X and Z directions, for measurements and export": "Система координат: начало и направления X и Z, для измерений и экспорта",
   "X axis": "Ось X",
+  "Y axis": "Ось Y",
   "Z axis": "Ось Z",
   "Part origin": "Начало координат детали",
   "Global X": "Глобальная X",
@@ -4588,4 +4589,6 @@ export const RU: Record<string, string> = {
   "Release files": "Файлы выпуска",
   "Version {n} by {user}, {date}": "Версия {n}, {user}, {date}",
   "uses v{n}": "использует v{n}",
+  "At angle about an edge or axis": "Под углом вокруг ребра или оси",
+  "Pick an axis to turn the plane about.": "Выберите ось, вокруг которой поворачивается плоскость.",
 };
