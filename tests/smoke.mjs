@@ -6663,7 +6663,7 @@ try {
     mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
     await mp.goto(`${origin}/index.html?debug`);
     await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
-    await mp.goto(`${origin}/index.html?debug`);
+    await mp.goto(`${origin}/index.html?debug&drwhelper=1`);
     await mp.waitForFunction(() => window.__sv);
     const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
     await mp.click("#new-part");
@@ -6688,6 +6688,14 @@ try {
     const tb = await mp.evaluate(() => window.__sv.drw.fields());
     check(tb.material === "Steel S235, Titanium Ti-6Al-4V" && tb.mass === "0.066 kg",
       `drawing 1.471: the title block's material and mass follow each body's material (FR-MAT-001) (${tb.material}; ${tb.mass})`);
+    // 1.476: a second drawing worker holds the same model; two sections asked at once run one on each.
+    await mp.waitForFunction(() => window.__sv.drw.helper().loaded, null, { timeout: 60000 });
+    const h0 = await mp.evaluate(() => window.__sv.drw.helper().helped);
+    const two = await mp.evaluate(() => Promise.all(["a", "b"].map(tag => window.__sv.drw.section([0, 1, 0], [0, 0, 1], [0, 0, 5], tag))));
+    const h1 = await mp.evaluate(() => window.__sv.drw.helper().helped);
+    const same = two.map(c => c.keys.map((k, i) => `${k}=${c.mats[i]}`).sort().join());
+    check(h1 > h0 && same.every(x => x === pairs),
+      `drawing 1.476: exact views run on two drawing workers at once, with the same model (${h0} → ${h1}; ${same.join(" | ")})`);
     await ctx.close();
   }
 
@@ -9500,7 +9508,7 @@ try {
     const sunk = await mp.evaluate(() => window.__sv.model.store.doc.features.filter(f => f.type === "hole").map(f => f.kind).sort().join());
     check(!sk0.bad && Math.abs(sk1.v - sk0.v) < 0.05 && !sk1.bad && sk1.types === "import,sketch,extrude,delbody,hole,hole" && sunk === "cbore,csink",
       `model 1.474: Recognize Features makes counterbored and countersunk holes again as Hole Wizard holes (FR-FT-102) (${JSON.stringify({ sk0, sk1, sunk })})`);
-    // 1.476: a cross hole through a round bar comes back as a sketch and a Through All cut on a standard plane (the bar itself as an extrude).
+    // 1.477: a cross hole through a round bar comes back as a sketch and a Through All cut on a standard plane (the bar itself as an extrude).
     await mp.evaluate(() => window.__sv.model.store.change("Cross", d => {
       const xy = [[0, 0], [10, 0], [10, 30], [0, 30]];
       const ents = xy.map(([x, y], i) => ({ id: "rp" + i, t: "point", x, y }));
@@ -9521,7 +9529,7 @@ try {
     await settle();
     const cx1 = await state();
     check(!cx0.bad && cx0.v > 9000 && Math.abs(cx1.v - cx0.v) < 0.1 && !cx1.bad && cx1.types === "import,sketch,extrude,delbody,sketch,extrude",
-      `model 1.476: Recognize Features makes a cross hole through an imported shaft again as a Through All cut (FR-FT-102) (${JSON.stringify({ cx0, cx1 })})`);
+      `model 1.477: Recognize Features makes a cross hole through an imported shaft again as a Through All cut (FR-FT-102) (${JSON.stringify({ cx0, cx1 })})`);
     await ctx.close();
   }
 
@@ -12890,7 +12898,8 @@ try {
     dp.on("pageerror", e => errors.push(e.message));
     dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
     await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
-    await dp.goto(`${origin}/index.html?debug`);
+    // One drawing worker: with the helper, the exact views of this small part can land before any preview is drawn.
+    await dp.goto(`${origin}/index.html?debug&drwhelper=0`);
     await dp.waitForFunction(() => window.__sv);
     // A plate with 25 holes: over the edge count that turns quick previews on.
     const P = (id, x, y) => ({ id, t: "point", x, y });

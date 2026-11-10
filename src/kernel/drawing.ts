@@ -32,6 +32,8 @@ export interface Projection {
   preview?: boolean;
   /** Made by the fast hidden-line removal (`projectFast`, big models): lines and edge-on circles exact, visibility from a fine mesh. */
   fast?: boolean;
+  /** Polygonal HLR: why some of its line sets could not be read (the fast path then tries again). */
+  fail?: string;
   /** Section views: the cut faces' edges as model edges (model coordinates), each named `<model face>|§` after the
    * face the plane cut through, so dimensions can measure the section and find the edge again after a rebuild. */
   cutEdges?: MEdge[];
@@ -114,14 +116,19 @@ export function projectPoly(oc: any, shape: any, view: ViewDir, lin: number, ang
   const h = new oc.HLRBRep_PolyHLRToShape();
   h.Update(new oc.Handle_HLRBRep_PolyAlgo_2(algo));
   const vis: Seg2[] = [], hid: Seg2[] = [];
-  const take = (get: () => any, out: Seg2[], c: EdgeClass) => { let s: any; try { s = get(); } catch { return; } if (s && !s.IsNull()) polyEdges(oc, s, out, c); };
+  const fails: string[] = [];
+  const take = (get: () => any, out: Seg2[], c: EdgeClass) => {
+    let s: any;
+    try { s = get(); } catch (e) { fails.push(e instanceof Error ? e.message : typeof e === "number" ? `OCCT exception ${e}` : String(e)); return; }
+    if (s && !s.IsNull()) polyEdges(oc, s, out, c);
+  };
   take(() => h.VCompound_1(), vis, 0);
   take(() => h.Rg1LineVCompound_1(), vis, 1);
   take(() => h.OutLineVCompound_1(), vis, 2);
   take(() => h.HCompound_1(), hid, 0);
   take(() => h.Rg1LineHCompound_1(), hid, 1);
   take(() => h.OutLineHCompound_1(), hid, 2);
-  return { vis, hid, box: bounds(vis.length ? vis : hid), ms: Date.now() - t0, preview: true };
+  return { vis, hid, box: bounds(vis.length ? vis : hid), ms: Date.now() - t0, preview: true, ...(fails.length ? { fail: [...new Set(fails)].join("; ") } : {}) };
 }
 
 /** Edges at or above which a view is projected by `projectFast`: the exact HLR grows too slow (a 57-part engine ran 20+ min). */
@@ -186,7 +193,21 @@ export function viewCurves(oc: any, shape: any, view: ViewDir): { circles: Circl
  */
 export function projectFast(oc: any, shape: any, view: ViewDir, lin: number): Projection {
   const t0 = Date.now();
-  const p = projectPoly(oc, shape, view, lin, 0.1);
+  const poly = (l: number, a: number): Projection => {
+    try { return projectPoly(oc, shape, view, l, a); } catch (e) { return { vis: [], hid: [], box: [0, 0, 0, 0], ms: 0, fail: e instanceof Error ? e.message : String(e) }; }
+  };
+  let p = poly(lin, 0.1);
+  // The polygonal HLR can come back empty (drawings exam round three: an engine assembly got views with no
+  // lines at all). Try again on a fresh, coarser mesh (what the previews use), then fall back to the exact HLR.
+  if (!p.vis.length) {
+    console.warn(`Fast view: the polygonal HLR gave ${p.hid.length} hidden and no visible lines${p.fail ? ` (${p.fail})` : ""}; trying a coarser mesh.`);
+    try { oc.BRepTools.Clean(shape, true); } catch { /* keep the old mesh */ }
+    p = poly(lin * 10 / 3, 0.5);
+  }
+  if (!p.vis.length) {
+    console.warn(`Fast view: still no visible lines${p.fail ? ` (${p.fail})` : ""}; using the exact HLR.`);
+    return project(oc, shape, view, 0.02);
+  }
   const { circles, lines } = viewCurves(oc, shape, view);
   const vis = exactify(p.vis, circles, lin, lines), hid = underLines(exactify(p.hid, circles, lin, lines), vis, Math.max(1e-4, lin * 1.5));
   return { vis, hid: unhide(hid, vis), box: bounds(vis.length ? vis : hid), ms: Date.now() - t0, fast: true };
