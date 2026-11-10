@@ -6848,6 +6848,23 @@ try {
     const cmat0 = await mp.evaluate(() => window.__sv.asm.bom()[0].material);
     check(cmat.mat === "Titanium Ti-6Al-4V" && cmat.mass === 0.00443 && cmat.dens.join() === "4.43,4.43" && cmat0 === "Aluminium 6061",
       `asm 1.434.0: Material… on a component sets the part's material for all its instances (${JSON.stringify(cmat)}, ${cmat0})`);
+    // A body with its own material (FR-MAT-001): the assembly's mass properties and the BOM weigh it with that material.
+    await mp.evaluate(() => window.__sv.asm.change(d => {
+      const pd = Object.values(d.parts)[0].doc;
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      pd.features.push({ id: "k", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", 20, -5), P("b", 30, -5), P("c", 30, 5), P("d", 20, 5), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
+        { id: "e", type: "extrude", name: "Extrude2", sketch: "k", op: "boss", end: "blind", depth: { v: 10 }, merge: false });
+      pd.bodies = { e: { material: { name: "Titanium Ti-6Al-4V", density: 4.43 } } };
+    }));
+    await shown(2);
+    await mp.evaluate(() => { document.querySelector("#mass-out").textContent = ""; document.querySelector("#mass-run").click(); });
+    await mp.waitForFunction(() => /Mass/.test(document.querySelector("#mass-out").textContent), null, { timeout: 10000 });
+    const bodyMat = await mp.evaluate(() => { const a = window.__sv.asm, s = document.querySelector("#mass-out").textContent; return { g: +(/Mass([\d.]+) g/.exec(s)?.[1] ?? NaN), com: window.__sv.hl.com.position.toArray().map(x => Math.round(x * 1000) / 1000), dens: a.partMasses(1, 1)?.map(b => b.density), kg: Math.round(a.bom()[0].mass * 1e6) / 1e6, csv: a.bomCsvText().split("\r\n")[1] }; });
+    await mp.evaluate(() => window.__sv.asm.undo());
+    await shown(2);
+    const bodyMat0 = await mp.evaluate(() => ({ none: window.__sv.asm.partMasses(0, 1), kg: window.__sv.asm.bom()[0].mass }));
+    check(Math.abs(bodyMat.g - 14.26) < 0.01 && bodyMat.com.join() === "20.033,0,5" && bodyMat.dens?.join() === "2.7,4.43" && bodyMat.kg === 0.00713 && bodyMat0.none === null && Math.abs(bodyMat0.kg - 0.0027) < 1e-9,
+      `asm 1.458.0: a body's own material counts in the assembly's mass properties and the BOM (${JSON.stringify({ bodyMat, bodyMat0 })})`);
     // STEP of the assembly reopens with the same names and placements (AT-P4-6).
     const step = [...await mp.evaluate(async () => [...await window.__sv.asm.stepBytes()])];
     await mp.setInputFiles("#file-input", { name: "rig.step", mimeType: "model/step", buffer: Buffer.from(step) });
@@ -9054,7 +9071,7 @@ try {
     const dd = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(x => x.id === "e"); return { a2: Math.round((f.draft2?.angle.v ?? 0) * 1800 / Math.PI), side2: window.__sv.model.last().faceNames?.filter(n => n.startsWith("e:side2:")).length }; });
     // Frustum 20 high, 5° in: 120000 − 160·tan5°·400 + 4/3·tan²5°·8000 = 114482; the pad adds 1500.
     check(Math.abs(d1.v - 235982) < 4 && d1.box === 1 && Math.abs(d2.v - 230464) < 4 && d2.angle === 1 && dd.a2 === 50 && dd.side2 === 4,
-      `model 1.458: a draft angle for each extrude direction (FR-FT-014) (${JSON.stringify({ d1, d2, dd })})`);
+      `model 1.459: a draft angle for each extrude direction (FR-FT-014) (${JSON.stringify({ d1, d2, dd })})`);
     await ctx.close();
   }
 

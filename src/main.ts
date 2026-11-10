@@ -2889,7 +2889,7 @@ function runMass() {
   const density = validateDensity();
   if (density === null) return;
   // Assemblies take each component's part material (the field's density where a part has none), like the BOM.
-  const each = asm.active ? (p: Part) => asm.partDensity(viewer.parts.indexOf(p)) ?? density : density;
+  const each = asm.active ? (p: Part) => { const i = viewer.parts.indexOf(p); return asm.partMasses(i, density) ?? asm.partDensity(i) ?? density; } : density;
   let r = massProperties(viewer, parts, each);
   // A modelled part whose bodies have their own materials (FR-MAT-001): each body weighs with its density.
   const own = modeller.active && parts.length === 1 ? modeller.bodyMasses(density) : null;
