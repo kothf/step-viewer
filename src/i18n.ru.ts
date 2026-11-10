@@ -4482,4 +4482,5 @@ export const RU: Record<string, string> = {
   "{name} restored": "{name} восстановлен",
   "(latest is v{n})": "(последняя — v{n})",
   "in this browser": "в этом браузере",
+  "Adding {n} files to the vault…": "Добавление файлов в хранилище: {n}…",
 };

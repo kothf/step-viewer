@@ -4559,9 +4559,96 @@ try {
     await mp.click('#vault-win [data-a="close"]');
     await mp.waitForFunction(() => document.querySelector("#vault-panel").parentElement.id === "tab-vault", null, { timeout: 5000 }).catch(() => {});
     const home = await mp.evaluate(() => document.querySelector("#vault-panel").parentElement.id);
-    check(btnShown && closed === "new-dir,open-dir,new-ws,panel" && lit === "Picked folder", `vault menu: Vault button and menu, new vault in a picked folder (${btnShown}, ${closed}, ${lit})`);
-    check(/v1 · .*checked out/.test(title1) && saved === "false/true" && opened === "save-,co-,ci,undo,latest,hist,add,search,panel,settings,close" && refused === true && savedAgain === false && hist === "v2:Renamed|v1:Added", `vault menu: an assembly saved to the vault, saved into the working copy, checked in and out from the menu (${title1}, ${saved}, ${opened}, ${refused}, ${savedAgain}, ${hist})`);
-    check(again === "new-dir,open-dir,folder,new-ws,panel" && folderName === "Picked folder" && /\.mcadasm/.test(row) && /v2/.test(row) && home === "tab-vault", `vault menu: the vault folder is remembered and reopens; the file list opens in a window without the side panel (${again}, ${folderName}, ${row}, ${home})`);
+    check(btnShown && closed === "new-dir,open-dir,new-ws,import,panel" && lit === "Picked folder", `vault menu: Vault button and menu, new vault in a picked folder (${btnShown}, ${closed}, ${lit})`);
+    check(/v1 · .*checked out/.test(title1) && saved === "false/true" && opened === "save-,co-,ci,undo,latest,hist,add,addfolder,search,panel,settings,close" && refused === true && savedAgain === false && hist === "v2:Renamed|v1:Added", `vault menu: an assembly saved to the vault, saved into the working copy, checked in and out from the menu (${title1}, ${saved}, ${opened}, ${refused}, ${savedAgain}, ${hist})`);
+    check(again === "new-dir,open-dir,folder,new-ws,import,panel" && folderName === "Picked folder" && /\.mcadasm/.test(row) && /v2/.test(row) && home === "tab-vault", `vault menu: the vault folder is remembered and reopens; the file list opens in a window without the side panel (${again}, ${folderName}, ${row}, ${home})`);
+    await ctx.close();
+  }
+
+  // --- Vault exam (1.451.0): a vault in a project folder takes its files in place, Switch to and Import in the Vault menu,
+  // the selected file's commands in view, Check out from the data card, recycle bin feedback, one tab per vault file
+  // that says when the vault has a newer version (FR-PDM-002/003/016/040/080) ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    // The picked folder is a project folder with files in a subfolder already (the real picker cannot be driven).
+    await mp.addInitScript(() => { window.showDirectoryPicker = async () => (await navigator.storage.getDirectory()).getDirectoryHandle("Project", { create: true }); });
+    await mp.goto(`${origin}/index.html?debug&nokernel`);
+    await mp.evaluate(() => { localStorage.setItem("sv:tips", "off"); localStorage.setItem("mc:vaultUser", "Andrey"); });
+    await mp.goto(`${origin}/index.html?debug&nokernel`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.evaluate(async () => {
+      window.__sv.vaultFolders.useMemory();
+      const root = await (await navigator.storage.getDirectory()).getDirectoryHandle("Project", { create: true });
+      const put = async (d, name, text) => { const w = await (await d.getFileHandle(name, { create: true })).createWritable(); await w.write(text); await w.close(); };
+      await put(await root.getDirectoryHandle("parts", { create: true }), "notes.txt", "bolt list");
+      await put(root, "readme.txt", "project");
+      // A second vault, in the browser, to switch to.
+      await window.__sv.vault.createInBrowser("Other");
+      window.__sv.vault.close();
+    });
+    const menu = async id => { await mp.click("#vault-btn"); await mp.waitForSelector("#vault-menu:not([hidden])"); if (id) await mp.click(`#vault-menu [data-v="${id}"]`); };
+    const items = () => mp.evaluate(() => [...document.querySelectorAll("#vault-menu button")].map(b => b.dataset.v.replace(/^folder:.*/, "folder")).join(","));
+    const toastText = () => mp.evaluate(() => document.querySelector("#toasts")?.textContent ?? "");
+    await menu();
+    const closedMenu = await items();
+    // New vault in the folder: the files already there are offered, with their subfolders, and go in where they are.
+    await mp.click('#vault-menu [data-v="new-dir"]');
+    await mp.waitForSelector("#vault-dlg[open] .v-pick");
+    const offered = await mp.evaluate(() => [...document.querySelectorAll("#vault-dlg .v-pick label")].map(l => l.textContent.trim()).join(","));
+    await mp.click('#vault-dlg button[value="ok"]');
+    await mp.waitForFunction(() => window.__sv.vault.files.length === 2);
+    const paths = await mp.evaluate(() => window.__sv.vault.files.map(f => f.path).sort().join(","));
+    await menu();
+    const openMenu = await items();
+    await mp.keyboard.press("Escape");
+    // The selected file's commands stay at the foot of the panel.
+    await mp.click("#t-vault");
+    await mp.click('#vault-panel .v-row[data-id]');
+    const sticky = await mp.evaluate(() => getComputedStyle(document.querySelector("#vault-panel > .v-acts")).position + ":" + document.querySelector("#vault-panel .v-acts-h")?.textContent);
+    // Data card of a file not checked out: Check out right there, and the card opens editable.
+    await mp.click('#vault-panel [data-a="card"]');
+    await mp.waitForSelector('#vault-dlg[open] button[value="co"]');
+    await mp.click('#vault-dlg button[value="co"]');
+    await mp.waitForFunction(() => document.querySelector("#vault-dlg[open] .v-form input:not([disabled])"));
+    const editable = await mp.evaluate(() => !!document.querySelector("#vault-dlg[open] .v-form input:not([disabled])"));
+    await mp.click('#vault-dlg button[value="cancel"]');
+    await mp.click('#vault-panel [data-a="undo"]');
+    await mp.click('#confirm [data-a="ok"]');
+    await mp.waitForFunction(() => !document.querySelector("#vault-panel .v-lock"));
+    // Delete and restore say what happened.
+    await mp.click('#vault-panel [data-a="del"]');
+    await mp.click('#confirm [data-a="ok"]');
+    await mp.waitForFunction(() => /recycle bin/.test(document.querySelector("#toasts")?.textContent ?? ""));
+    const deleted = await toastText();
+    await mp.click('#vault-panel [data-a="bin"]');
+    await mp.click("#vault-dlg [data-restore]");
+    await mp.waitForFunction(() => /restored/.test(document.querySelector("#toasts")?.textContent ?? ""));
+    const restored = await toastText();
+    // An assembly saved to the vault, then the vault moves on (a roll back): its tab says so.
+    await mp.click("#empty-asm");
+    await mp.waitForFunction(() => window.__sv.asm.doc);
+    await menu("save");
+    await mp.waitForFunction(() => /v1/.test(document.querySelector("#doc-name").textContent));
+    await mp.evaluate(async () => { const p = window.__sv.vault, v = p.vault, f = p.files.find(x => x.kind === "assembly"); await v.undoCheckOut(f.id); await v.rollBack(f.id, 1); await p.refresh(); });
+    await mp.waitForFunction(() => /newer v2/.test(document.querySelector("#doc-name").textContent));
+    const stale = await mp.evaluate(() => document.querySelector("#doc-name").textContent);
+    // Opening it again from the list reloads it in its own tab instead of a second one.
+    await menu("panel");
+    await mp.evaluate(() => [...document.querySelectorAll("#vault-panel .v-row")].find(r => /\.mcadasm/.test(r.textContent)).dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
+    await mp.waitForFunction(() => /v2/.test(document.querySelector("#doc-name").textContent) && !/newer/.test(document.querySelector("#doc-name").textContent));
+    await mp.evaluate(() => [...document.querySelectorAll("#vault-panel .v-row")].find(r => /\.mcadasm/.test(r.textContent)).dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
+    await mp.waitForTimeout(500);
+    const tabs = await mp.evaluate(() => document.querySelectorAll("#doc-tabs [data-dt]").length);
+    // Switch to the browser vault straight from the menu.
+    await menu();
+    await mp.click('#vault-menu [data-v="ws:Other"]');
+    await mp.waitForFunction(() => window.__sv.vault.vault?.info.name === "Other");
+    check(closedMenu.includes("import") && offered === "parts/notes.txt,readme.txt" && paths === "parts/notes.txt,readme.txt" && openMenu.includes("addfolder") && openMenu.includes("ws:Other"), `vault exam: a vault in a project folder takes its files in place; Import and Switch to in the menu (${closedMenu} | ${offered} | ${paths} | ${openMenu})`);
+    check(sticky === "sticky:parts/notes.txt" && editable && /recycle bin/.test(deleted) && /restored/.test(restored), `vault exam: commands in view, Check out from the data card, delete and restore feedback (${sticky}, ${editable}, ${deleted}, ${restored})`);
+    check(/v1 · newer v2 in the vault/.test(stale) && tabs === 1, `vault exam: a tab behind the vault says so and reloads in place (${stale}, ${tabs} tabs)`);
     await ctx.close();
   }
 

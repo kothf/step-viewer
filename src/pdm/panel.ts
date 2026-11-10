@@ -239,6 +239,7 @@ export class VaultPanel {
     const items = await Promise.all(list.map(async f => ({ name: f.name, data: new Uint8Array(await f.arrayBuffer()) })));
     const chosen = await this.embeddedOffer(items.map(it => ({ path: it.name, data: it.data })), items.map(it => it.name), withParts);
     if (!chosen) return;
+    if (items.length + chosen.length > 3) toast(t("Adding {n} files to the vault…", { n: items.length + chosen.length }));
     await this.run(async () => {
       for (const p of chosen) await v.add(p.path, await packPart(p.doc as unknown as PartDoc, "MöbiusCAD vault"), "Added from an assembly");
       for (const it of items) await v.add(it.name, it.data);
@@ -289,6 +290,7 @@ export class VaultPanel {
     const asms = (await Promise.all(picked.filter(p => /\.mcadasm$/i.test(p)).map(async p => ({ path: p, data: await v.working(p) })))).filter((x): x is { path: string; data: Uint8Array } => !!x.data);
     const extra = await this.embeddedOffer(asms, picked);
     if (!extra) return;
+    if (picked.length + extra.length > 3) toast(t("Adding {n} files to the vault…", { n: picked.length + extra.length }));
     await this.run(async () => {
       for (const p of extra) await v.add(p.path, await packPart(p.doc as unknown as PartDoc, "MöbiusCAD vault"), "Added from an assembly");
       const added = await v.addInPlace(picked);
