@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.379.0] - 2026-11-10
+
+### Changed
+
+- **More material values checked (FR-MAT-001)**: 72 more library materials were compared with public pages (EN 10083, EN 10088, EN 10130, EN 10277 and EN 10293 tables, producer datasheets for stainless steels, aluminium, copper alloys, cast irons and plastics, the Wood Database and others), so 119 of the 170 materials now show **Checked against:** with a link. The checks confirmed the values; one changed: bronze CuSn8 elastic modulus 110 → 115 GPa.
+- A material that has not been compared with a public page yet says **Not checked against a public reference yet.** in the dialog (51 materials: tool steels, several plastics and rubbers, carbon and aramid composites, four woods, a few others). Its values still name their source.
+
 ## [1.378.0] - 2026-11-10
 
 ### Changed
@@ -2227,7 +2234,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.378.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.379.0...HEAD
+[1.379.0]: https://github.com/kothf/step-viewer/compare/v1.378.0...v1.379.0
 [1.378.0]: https://github.com/kothf/step-viewer/compare/v1.377.0...v1.378.0
 [1.377.0]: https://github.com/kothf/step-viewer/compare/v1.376.0...v1.377.0
 [1.376.0]: https://github.com/kothf/step-viewer/compare/v1.375.0...v1.376.0

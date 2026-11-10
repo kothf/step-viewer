@@ -2003,6 +2003,12 @@ try {
     const refLink = await mp.evaluate(() => { const l = document.querySelector("#mat-dlg .mat-src a"); return l && { href: l.href, text: l.textContent, rel: l.rel }; });
     check(!!refLink && /^https:\/\/shop\.macsteel\.co\.za\//.test(refLink.href) && refLink.text === "shop.macsteel.co.za" && /noopener/.test(refLink.rel),
       `model 1.375: a checked material shows the page its values were checked against (${JSON.stringify(refLink)})`);
+    // 1.379.0: a material without a checked reference says so.
+    const refNote = await mp.evaluate(() => !!document.querySelector("#mat-dlg .mat-unver"));
+    await mp.fill("#mat-q", "PEEK");
+    const unver = await mp.evaluate(() => ({ note: document.querySelector("#mat-dlg .mat-unver")?.textContent ?? "", link: !!document.querySelector("#mat-dlg .mat-src a") }));
+    check(!refNote && unver.note === "Not checked against a public reference yet." && !unver.link,
+      `model 1.379: a material with no checked reference is marked as not checked (${refNote}, ${JSON.stringify(unver)})`);
     await mp.fill("#mat-q", "6061");
     await mp.keyboard.press("ArrowDown");
     await mp.keyboard.press("ArrowUp");

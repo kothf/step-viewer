@@ -84,9 +84,19 @@ test("checked references name library materials and are plain https pages; corre
     assert.ok(m, `${k}: not in the library`);
     assert.equal(m!.ref, CHECKED[k]);
     assert.match(CHECKED[k], /^[a-z0-9.-]+\.[a-z]{2,}\/\S*$/, k);
+    assert.doesNotThrow(() => new URL(`https://${CHECKED[k]}`), k);
   }
   assert.equal(findMaterial("Die cast aluminium A380")!.density, 2.71);
   assert.equal(findMaterial("Silicon carbide (sintered)")!.density, 3.15);
   assert.equal(findMaterial("Inconel 718 (aged)")!.su, 1276);
   assert.equal(findMaterial("Gold")!.E, 78);
+});
+
+test("second pass (1.379.0): most of the library has a checked reference, the rest is known", () => {
+  const un = LIBRARY.filter(m => !m.ref).map(m => m.name);
+  assert.ok(Object.keys(CHECKED).length >= 119, `${Object.keys(CHECKED).length} checked`);
+  assert.ok(un.length <= 51, `${un.length} unchecked`);
+  assert.ok(un.includes("PEEK") && un.includes("Wood (teak)"));
+  assert.equal(findMaterial("Stainless steel 1.4404 (X2CrNiMo17-12-2)")!.ref, "www.thyssenkrupp-materials.co.uk/stainless-steel-316l-14404.html");
+  assert.equal(findMaterial("Bronze CuSn8 (phosphor bronze)")!.E, 115);
 });
