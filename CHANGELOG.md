@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.406.0] - 2026-11-10
+
+### Added
+
+- **Recognize Extrudes takes nested shapes (FR-FT-102)**: a pocket in the floor of another pocket, a cut in the top of a boss or a boss on a pocket floor are now recognised together. The inner shape is removed first and put back last, on the face the outer extrude makes, so each one stays editable on its own.
+
 ## [1.405.0] - 2026-11-10
 
 ### Changed
@@ -2387,7 +2393,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.405.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.406.0...HEAD
+[1.406.0]: https://github.com/kothf/step-viewer/compare/v1.405.0...v1.406.0
 [1.405.0]: https://github.com/kothf/step-viewer/compare/v1.404.0...v1.405.0
 [1.404.0]: https://github.com/kothf/step-viewer/compare/v1.403.0...v1.404.0
 [1.403.0]: https://github.com/kothf/step-viewer/compare/v1.402.0...v1.403.0
