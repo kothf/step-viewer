@@ -6,11 +6,11 @@
 import { viewAxes, type MCyl, type MEdge, type MHole, type Seg2, type Topo, type V3, type ViewDir } from "../kernel/drawing";
 import type { FlatBend } from "../sheetmetal/sheet";
 import { arrowHead, clipToCircle, decorPrims, toSheet, type Placement } from "./compose";
-import type { HoleInfo, ModelItem, SketchInfo, ThreadInfo } from "./items";
+import type { HoleInfo, ModelItem, SketchInfo, ThreadInfo, WeldInfo } from "./items";
 import { PEN_W, rotateBox, rotatePrims, type Prim } from "./prims";
 import { balloonPrims, bomCells, compOfKey, type Bom } from "./bom";
 import { datumPrims, gtolPrims, surfPrims, tablePrims } from "./gdt";
-import type { BendTableAnnot, CLineAnnot, CloudAnnot, DimAnnot, DraftStyle, DrawingView, GeoRef, HoleAnnot, HoleTableAnnot, NoteAnnot, Sheet, SurfAnnot, Tol } from "./types";
+import type { BendTableAnnot, CLineAnnot, CloudAnnot, DimAnnot, DraftStyle, DrawingView, GeoRef, HoleAnnot, HoleTableAnnot, NoteAnnot, Sheet, SurfAnnot, Tol, WeldTableAnnot } from "./types";
 import { topoOnly, viewDir, viewOnly } from "./views";
 import { fitLimits } from "./iso286";
 import { weldPrims } from "./weld";
@@ -23,7 +23,7 @@ export type Label = (s: string, p?: Record<string, string>) => string;
 
 /** What annotations need from the model and the UI. */
 export interface AnnotCtx {
-  topo: Topo | null; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; bends?: FlatBend[]; items: ModelItem[]; box: [V3, V3] | null; dec: string; label: Label; bom?: Bom | null;
+  topo: Topo | null; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; bends?: FlatBend[]; welds?: WeldInfo[]; items: ModelItem[]; box: [V3, V3] | null; dec: string; label: Label; bom?: Bom | null;
   /** A view that shows another part configuration (FR-DRW-010) gets that configuration's topology and model items. */
   forView?: (v: DrawingView) => Partial<AnnotCtx> | null;
 }
@@ -431,7 +431,10 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
     const tip = (an: number): P2 => [C[0] + R * Math.cos(an), C[1] + R * Math.sin(an)];
     out.push(arrow(...tip(a0), Math.sin(a0), -Math.cos(a0)));
     out.push(arrow(...tip(a1), -Math.sin(a1), Math.cos(a1)));
-    for (const an of [a0, a1]) { const e: P2 = [Math.cos(an), Math.sin(an)]; out.push(thin(add2(C, e, R0 + 1), add2(C, e, R + 2))); }
+    for (const [an, k] of [[a0, "a"], [a1, "b"]] as [number, "a" | "b"][]) {
+      if (a.noExt === k || a.noExt === "both") continue;
+      const e: P2 = [Math.cos(an), Math.sin(an)]; out.push(thin(add2(C, e, R0 + 1), add2(C, e, R + 2)));
+    }
     const mid = a0 + g.sw! / 2, tp: P2 = [C[0] + (R + 1.5) * Math.cos(mid), C[1] + (R + 1.5) * Math.sin(mid)];
     const box = writeText([tp[0], tp[1] - (Math.sin(mid) < 0 ? h : 0)], 0, Math.cos(mid) > 0.3 ? "l" : Math.cos(mid) < -0.3 ? "r" : "c");
     return { prims: out, box };
@@ -483,7 +486,8 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
   const nrm: P2 = [-d[1], d[0]];
   const off = (p: P2) => (T[0] - p[0]) * nrm[0] + (T[1] - p[1]) * nrm[1];
   const D1 = add2(S1, nrm, off(S1)), D2 = add2(S2, nrm, off(S2));
-  for (const [s, e] of [[S1, D1], [S2, D2]] as [P2, P2][]) {
+  for (const [s, e, k] of [[S1, D1, "a"], [S2, D2, "b"]] as [P2, P2, "a" | "b"][]) {
+    if (a.noExt === k || a.noExt === "both") continue;
     const v: P2 = [e[0] - s[0], e[1] - s[1]], L = len2(v);
     if (L > 1.5) { const u: P2 = [v[0] / L, v[1] / L]; out.push(thin(add2(s, u, 1), add2(e, u, 2))); }
   }
@@ -500,10 +504,15 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
   const tLo = st - totalW / 2 - 1, tHi = st + totalW / 2 + 1;
   const inside = a.arrows ? a.arrows === "in" : span >= 2 * ARROW + 2;
   const from = Math.min(al(lo) - (inside ? 0 : ARROW + 2), tLo < al(lo) ? tLo : Infinity), to = Math.max(al(hi) + (inside ? 0 : ARROW + 2), tHi > al(hi) ? tHi : -Infinity);
-  out.push(thin(add2(lo, d, from - al(lo)), add2(lo, d, to - al(lo))));
+  if (a.horiz) {
+    // Horizontal text in a gap of the dimension line: the line stops where it would enter the text's box.
+    const hw = totalW / 2 + 1, hh = h / 2 + 0.8, gap = Math.min(hw / Math.max(Math.abs(d[0]), 1e-9), hh / Math.max(Math.abs(d[1]), 1e-9));
+    if (st - gap > from) out.push(thin(add2(lo, d, from - al(lo)), add2(lo, d, st - gap - al(lo))));
+    if (to > st + gap) out.push(thin(add2(lo, d, st + gap - al(lo)), add2(lo, d, to - al(lo))));
+  } else out.push(thin(add2(lo, d, from - al(lo)), add2(lo, d, to - al(lo))));
   if (inside) { out.push(arrow(lo[0], lo[1], -d[0], -d[1])); out.push(arrow(hi[0], hi[1], d[0], d[1])); }
   else { out.push(arrow(lo[0], lo[1], d[0], d[1])); out.push(arrow(hi[0], hi[1], -d[0], -d[1])); }
-  const box = writeText(add2(base, up, 1), rot, "c");
+  const box = a.horiz ? writeText([base[0], base[1] - h * 0.4], 0, "c") : writeText(add2(base, up, 1), rot, "c");
   return { prims: out, box };
 }
 
@@ -633,8 +642,8 @@ function holeTablePrims(a: HoleTableAnnot, P: (p: V3) => P2, pl: Placement, ctx:
 
 /** Everything annotated on one view: its dimensions, callouts and notes, plus the automatic centre marks. */
 /** The model facts annotations draw on (topology, holes, threads, sketches, model items, box). */
-export function factsCtx(f: { topo: Topo; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; bends?: FlatBend[]; items: ModelItem[]; box: [V3, V3] } | null): Pick<AnnotCtx, "topo" | "holes" | "threads" | "sketches" | "bends" | "items" | "box"> {
-  return { topo: f?.topo ?? null, holes: f?.holes ?? [], threads: f?.threads ?? [], sketches: f?.sketches ?? [], bends: f?.bends ?? [], items: f?.items ?? [], box: f?.box ?? null };
+export function factsCtx(f: { topo: Topo; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; bends?: FlatBend[]; welds?: WeldInfo[]; items: ModelItem[]; box: [V3, V3] } | null): Pick<AnnotCtx, "topo" | "holes" | "threads" | "sketches" | "bends" | "welds" | "items" | "box"> {
+  return { topo: f?.topo ?? null, holes: f?.holes ?? [], threads: f?.threads ?? [], sketches: f?.sketches ?? [], bends: f?.bends ?? [], welds: f?.welds ?? [], items: f?.items ?? [], box: f?.box ?? null };
 }
 
 /** A section view's facts (FR-DRW-021): the model's plus the cut faces' edges from its projection, so the section can be dimensioned. */
@@ -696,6 +705,10 @@ export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: Ann
       const bends = ctx.bends ?? [];
       r = tablePrims({ id: a.id, t: "table", kind: "general", pos: toSheet(pl, a.pos[0], a.pos[1]), cols: BEND_COLS, rows: bendRows(a, bends, P, ctx) }, ctx.label);
       if (!bends.length) out.dangling.push(a.id);
+    } else if (a.t === "wtable") {
+      const welds = ctx.welds ?? [];
+      r = tablePrims({ id: a.id, t: "table", kind: "general", pos: toSheet(pl, a.pos[0], a.pos[1]), cols: WELD_COLS, rows: weldRows(a, welds, ctx) }, ctx.label);
+      if (!welds.length) out.dangling.push(a.id);
     } else if (a.t === "htable") {
       const ht = holeTablePrims(a, P, pl, ctx);
       r = ht;
@@ -1292,6 +1305,21 @@ export function bendRows(a: BendTableAnnot, bends: FlatBend[], P: (p: V3) => P2,
   const tags = bendTags(bends, P), f = (v: number) => fmtNum(v, a.prec, ctx.dec);
   return bends.map((b, i) => ({ b, tag: tags[i] })).sort((x, y) => (x.tag.length - y.tag.length) || x.tag.localeCompare(y.tag))
     .map(({ b, tag }) => [tag, ctx.label(b.up ? "UP" : "DOWN"), `${f(b.angle * 180 / Math.PI)}°`, f(b.r)]);
+}
+
+export const WELD_COLS = ["Item", "Weld", "Leg", "Length", "Qty"];
+
+/**
+ * The rows of a weld table: one per kind of bead in cut list order (item, continuous / intermittent l / e /
+ * staggered, ISO 2553 leg "z5" or "z5×8", summed root length, number of beads), then a total row.
+ */
+export function weldRows(a: WeldTableAnnot, welds: WeldInfo[], ctx: AnnotCtx): string[][] {
+  const f = (v: number) => fmtNum(v, a.prec, ctx.dec);
+  const kind = (w: WeldInfo) => !w.inter ? ctx.label("Continuous")
+    : ctx.label(w.inter[2] ? "Staggered {l} / {e}" : "Intermittent {l} / {e}", { l: f(w.inter[0]), e: f(w.inter[1]) });
+  const rows = welds.map((w, i) => [String(i + 1), kind(w), `z${ctx.dec === "." ? w.legs : w.legs.split(".").join(ctx.dec)}`, f(w.length), String(w.qty)]);
+  if (welds.length > 1) rows.push(["", ctx.label("Total"), "", f(welds.reduce((t, w) => t + w.length, 0)), String(welds.reduce((t, w) => t + w.qty, 0))]);
+  return rows;
 }
 
 // ---------- model items ----------

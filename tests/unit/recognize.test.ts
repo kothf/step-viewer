@@ -175,3 +175,63 @@ test("feature recognition: a pocket in the floor of a pocket and a hole-shaped c
   assert.equal(fb.map(f => f.type === "extrude" ? (f as any).op : f.type).join(), "delface,delface,sketch,boss,sketch,cut");
   close(vol(m, doc([...bossed.features, ...fb])), v1);
 });
+
+test("feature recognition: a step and a slot open to the side come back as blind cuts (FR-FT-102)", async () => {
+  const m = new Modeller(await occ());
+  // A slot across the top, open at both ends.
+  const across = on(rect("q", 12, 60), "e:end");
+  const slotted = imported(m, [...base(), across, cut("c1", "q", 5)]);
+  const v0 = vol(m, slotted);
+  close(v0, 60 * 40 * 20 - 12 * 40 * 5);
+  const fs = m.recognizeExtrudes(slotted);
+  assert.equal(fs.map(f => f.type === "extrude" ? `${(f as any).op}:${(f as any).end}` : f.type).join(), "delface,sketch,cut:blind");
+  close((fs[2] as any).depth.v, 5);
+  close(vol(m, doc([...slotted.features, fs[0]])), 60 * 40 * 20);
+  close(vol(m, doc([...slotted.features, ...fs])), v0);
+  // A notch at one edge, with a round inner end.
+  const notch: SketchFeature = { id: "k", type: "sketch", name: "k", plane: { face: { name: "e:end" } }, rels: [], dims: [], ents: [
+    { id: "ka", t: "point", x: 10, y: -4 }, { id: "kb", t: "point", x: 40, y: -4 }, { id: "kc", t: "point", x: 40, y: 4 }, { id: "kd", t: "point", x: 10, y: 4 },
+    { id: "k0", t: "point", x: 10, y: 0 },
+    { id: "kl1", t: "line", a: "ka", b: "kb" }, { id: "kl2", t: "line", a: "kb", b: "kc" }, { id: "kl3", t: "line", a: "kc", b: "kd" },
+    { id: "ka1", t: "arc", c: "k0", a: "kd", b: "ka" }] as SkEnt[] };
+  const notched = imported(m, [...base(), notch, cut("c2", "k", 7)]);
+  const v1 = vol(m, notched);
+  const fn = m.recognizeExtrudes(notched);
+  assert.equal(fn.map(f => f.type).join(), "delface,sketch,extrude");
+  close((fn[2] as any).depth.v, 7);
+  assert.equal((fn[1] as SketchFeature).ents.filter(e => e.t === "arc").length, 1);
+  close(vol(m, doc([...notched.features, fn[0]])), 60 * 40 * 20);
+  close(vol(m, doc([...notched.features, ...fn])), v1);
+});
+
+test("feature recognition: notches cut right through at an edge come back as through cuts (FR-FT-102)", async () => {
+  const m = new Modeller(await occ());
+  const types = (fs: Feature[]) => fs.map(f => f.type === "extrude" ? `${(f as any).op}:${(f as any).end}` : f.type).join();
+  const moved = (sk: SketchFeature, dx: number, dy: number) => ({ ...sk, ents: sk.ents.map(e => e.t === "point" ? { ...e, x: e.x + dx, y: e.y + dy } : e) }) as SketchFeature;
+  // A square notch in the middle of one side.
+  const notched = imported(m, [...base(), moved(on(rect("q", 10, 12), "e:end"), 0, 20), cut("c1", "q", 30, "through")]);
+  const v0 = vol(m, notched);
+  close(v0, 60 * 40 * 20 - 10 * 6 * 20);
+  const fs = m.recognizeExtrudes(notched);
+  assert.equal(types(fs), "delface,sketch,cut:through");
+  close(vol(m, doc([...notched.features, fs[0]])), 60 * 40 * 20);
+  close(vol(m, doc([...notched.features, ...fs])), v0);
+  // A corner cut away: the sketch closes at the corner the sides would meet in.
+  const corner = imported(m, [...base(), moved(on(rect("q", 20, 20), "e:end"), 30, 20), cut("c1", "q", 30, "through")]);
+  const v1 = vol(m, corner);
+  close(v1, 60 * 40 * 20 - 10 * 10 * 20);
+  const fc = m.recognizeExtrudes(corner);
+  assert.equal(types(fc), "delface,sketch,cut:through");
+  assert.equal((fc[1] as SketchFeature).ents.filter(e => e.t === "line").length, 4);
+  close(vol(m, doc([...corner.features, fc[0]])), 60 * 40 * 20);
+  close(vol(m, doc([...corner.features, ...fc])), v1);
+  // A half-round notch.
+  const round: SketchFeature = { id: "o", type: "sketch", name: "o", plane: { face: { name: "e:end" } }, rels: [], dims: [],
+    ents: [{ id: "oc", t: "point", x: 0, y: 20 }, { id: "ok", t: "circle", c: "oc", r: 6 } as SkEnt] };
+  const scooped = imported(m, [...base(), round, cut("c1", "o", 30, "through")]);
+  const v2 = vol(m, scooped);
+  const fr = m.recognizeExtrudes(scooped);
+  assert.equal(types(fr), "delface,sketch,cut:through");
+  assert.equal((fr[1] as SketchFeature).ents.filter(e => e.t === "arc").length, 1);
+  close(vol(m, doc([...scooped.features, ...fr])), v2);
+});

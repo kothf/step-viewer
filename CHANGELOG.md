@@ -5,13 +5,36 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.407.0] - 2026-11-10
+## [1.412.0] - 2026-11-10
 
 ### Added
 - Convert to Sheet Metal (FR-FT-120): a lip ring round an opening (one face shared by several walls) now gives each picked wall its own lip, straight across to the ring's inner edge, and the lips meet mitred at the corners like the walls. Every further wall at a corner is mitred too: in the plane bisecting the two bend edges when both chains have the same walls, else where the walls' mid-planes meet.
 
 ### Fixed
 - Convert to Sheet Metal: with four walls round a face, a wall's second mitre could keep the wrong side and leave the wall running on past its corner (hidden in the part, where the solid trimmed it, but not in the panel outlines). Each mitre now keeps the side the wall's own bend edge lies on.
+
+## [1.411.0] - 2026-11-10
+
+### Added
+
+- **Recognize Extrudes takes notches cut right through at an edge (FR-FT-102)**: a notch, a cut-off corner or a half-round cut-out in the outline of an imported body that goes through its whole thickness is removed and made again as a sketch on the face with a **Through all** Extruded Cut. When a cut can be read two ways (through from one face, blind from the next), the sketch goes on the larger face.
+
+## [1.410.0] - 2026-11-10
+
+### Added
+
+- **Weld table on drawings (FR-FT-121)**: in a drawing of a weldment part, Annotate ▾ Weld table lists the part's fillet beads: click a view, then place the table. Each kind of bead (continuous, intermittent or staggered, by leg size) gets a row with its item number, ISO 2553 leg (z4, z5×8), total length along the root and how many beads, then a total row. Cut list items marked Exclude are left out, and the table follows the part when it changes.
+
+## [1.409.0] - 2026-11-10
+
+### Added
+- Drawings: a linear or arc length dimension can hide its first, second or both extension lines (**Extension lines** in the dimension's panel), for a dimension taken to an edge that already draws the line. **Horizontal text in the dimension line** keeps a linear dimension's text level and puts it in a gap of the dimension line, as ISO 129 method 2 and ASME drawings do (FR-DRW-021).
+
+## [1.408.0] - 2026-11-10
+
+### Added
+
+- **Recognize Extrudes takes cuts open to the side (FR-FT-102)**: a step, a slot running across a face or a notch at an edge of an imported body (a flat floor under straight walls that reach one flat top, open where the floor meets the outside) is removed and made again as a sketch on the top face with a blind Extruded Cut, so its outline and depth can be edited.
 
 ## [1.407.0] - 2026-11-10
 
@@ -2407,8 +2430,12 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.407.0...HEAD
-[1.407.0]: https://github.com/kothf/step-viewer/compare/v1.407.0...v1.407.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.412.0...HEAD
+[1.412.0]: https://github.com/kothf/step-viewer/compare/v1.411.0...v1.412.0
+[1.411.0]: https://github.com/kothf/step-viewer/compare/v1.410.0...v1.411.0
+[1.410.0]: https://github.com/kothf/step-viewer/compare/v1.409.0...v1.410.0
+[1.409.0]: https://github.com/kothf/step-viewer/compare/v1.408.0...v1.409.0
+[1.408.0]: https://github.com/kothf/step-viewer/compare/v1.407.0...v1.408.0
 [1.407.0]: https://github.com/kothf/step-viewer/compare/v1.406.0...v1.407.0
 [1.406.0]: https://github.com/kothf/step-viewer/compare/v1.405.0...v1.406.0
 [1.405.0]: https://github.com/kothf/step-viewer/compare/v1.404.0...v1.405.0

@@ -140,6 +140,10 @@ export interface DimAnnot {
   show?: "ref" | "basic";
   /** Dual dimension: the inch value follows in brackets. Absent = as the drawing's style says (`DraftStyle.dual`). */
   dual?: boolean;
+  /** Extension lines left out (linear and arc length dimensions): the first reference's, the second's or both. */
+  noExt?: "a" | "b" | "both";
+  /** Linear dimensions: the text stays horizontal and sits in a gap of the dimension line (ISO 129 method 2, ASME unidirectional). */
+  horiz?: boolean;
 }
 
 /** A note: on the sheet (sheet mm) or on a view (its model axes, so it moves with the view), with an optional leader to the model. */
@@ -179,6 +183,8 @@ export interface BalloonAnnot { id: string; t: "balloon"; view: string; ref: Geo
 /** A bend table (SolidWorks' Bend Table, FR-FT-120) on a flat pattern view: the bend lines get tags A, B, … (top to bottom,
  *  then left to right on the view) in place of their notes, and the table lists each one's direction, angle and inner radius.
  *  `pos` (the table's top-left corner) is in the view's model axes. */
+/** Weld table (FR-FT-121): a weldment part's fillet beads from its cut list, placed beside the view whose model they come from. */
+export interface WeldTableAnnot { id: string; t: "wtable"; view: string; pos: [number, number]; prec?: number }
 export interface BendTableAnnot { id: string; t: "btable"; view: string; pos: [number, number]; prec?: number }
 
 export interface HoleTableAnnot { id: string; t: "htable"; view: string; origin: GeoRef; holes: GeoRef[]; pos: [number, number]; prec?: number }
@@ -209,7 +215,7 @@ export type SkPen = "thin" | "thick" | "center" | "hidden" | "phantom";
 /** A sketch entity on the sheet (sheet mm): `pos` = first point, `pts` = points relative to it (line: the end; rect: the
  *  opposite corner; circle: a point on it, `pos` the centre; poly: every point, `closed` joins the last to the first). */
 export interface SketchAnnot { id: string; t: "sk"; view?: undefined; pos: [number, number]; k: "line" | "rect" | "circle" | "poly"; pts: number[]; closed?: boolean; pen?: SkPen }
-export type Annot = DimAnnot | NoteAnnot | HoleAnnot | GtolAnnot | DatumAnnot | SurfAnnot | TableAnnot | BalloonAnnot | HoleTableAnnot | BendTableAnnot | CloudAnnot | CLineAnnot | WeldAnnot | DatumTargetAnnot | SketchAnnot;
+export type Annot = DimAnnot | NoteAnnot | HoleAnnot | GtolAnnot | DatumAnnot | SurfAnnot | TableAnnot | BalloonAnnot | HoleTableAnnot | BendTableAnnot | WeldTableAnnot | CloudAnnot | CLineAnnot | WeldAnnot | DatumTargetAnnot | SketchAnnot;
 
 export interface Sheet {
   id: string;

@@ -4859,6 +4859,17 @@ try {
     await dp.waitForTimeout(100);
     const below2 = (await texts()).includes("2 PLACES");
     check(!!below1 && below1[0] > below1[1] && !below2, `drawing: a dimension takes a second line of text under its line and loses it again (${JSON.stringify(below1)})`);
+    // Extension lines and horizontal text (FR-DRW-021): hiding both drops two lines; horizontal text splits the dimension line in two.
+    const annLines = () => dp.evaluate(() => window.__sv.drw.prims().filter(q => q.t === "l" && q.layer === "ANNOT").length);
+    const nl0 = await annLines();
+    await dp.selectOption('#drw .drw-props [data-d="noext"]', "both");
+    const nl1 = await annLines();
+    await dp.selectOption('#drw .drw-props [data-d="noext"]', "");
+    await dp.check('#drw .drw-props [data-d="horiz"]');
+    const nl2 = await annLines();
+    await dp.uncheck('#drw .drw-props [data-d="horiz"]');
+    const nl3 = await annLines();
+    check(nl1 === nl0 - 2 && nl2 === nl0 + 1 && nl3 === nl0, `drawing: a dimension hides its extension lines and takes horizontal text in a gap of its line (${[nl0, nl1, nl2, nl3].join(" → ")} lines)`);
     // ISO 286 fit (FR-DRW-021): the Ø16 takes H7, shown with its deviations from the table (+0.018 / 0).
     const dia = await dp.evaluate(() => { const p = window.__sv.drw.prims().find(q => q.t === "t" && q.layer === "ANNOT" && q.s === "Ø16"); return p && [p.x, p.y + p.h / 2]; });
     [x, y] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), dia);
@@ -9108,7 +9119,7 @@ try {
     await ap.click('#drw-pane-annot [data-an="note"]');
     const mode = await ap.evaluate(() => window.__sv.drw.mode());
     await ap.keyboard.press("Escape");
-    check(tab.views && !tab.annot && tab.n === 26 && mode === "note", `drawing: annotation tab shows the 26 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
+    check(tab.views && !tab.annot && tab.n === 27 && mode === "note", `drawing: annotation tab shows the 27 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
     // 1.82.0 break view (FR-DRW-015): select the first front view, leave out u = −25…15 mm; it closes up to a 6 mm gap.
     const fv = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views[0]; const pl = window.__sv.drw.placement(v.id); return { id: v.id, x: v.x, y: v.y, s: pl.s, w: pl.box[2] - pl.box[0], uc: pl.uc }; });
     const clickAt = async (x, y) => { const q = await ap.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await ap.mouse.click(q[0], q[1]); };
@@ -11212,6 +11223,48 @@ try {
     const bt = await dp.evaluate(() => ({ n: window.__sv.drw.doc().sheets[0].annots.filter(a => a.t === "btable").length, tx: [...document.querySelectorAll(".drw-svg text")].map(t => t.textContent) }));
     check(bt.n === 1 && ["Tag", "Direction", "Angle", "Inner radius", "90°", "2"].every(s => bt.tx.includes(s)) && bt.tx.filter(s => s === "A").length === aBefore + 2 && !bt.tx.some(s => /^(UP|DOWN) /.test(s)) && bt.tx.some(s => s === "UP" || s === "DOWN"),
       `drawing: bend table lists the flat pattern's bend and tags it on the view (${bt.tx.filter(s => /^(Tag|A|UP|DOWN|90|2|Inner)/.test(s)).join(" ")})`);
+    await ctx.close();
+  }
+
+  // --- Drawings: weld table of a weldment part (FR-FT-121) ---
+  if (inShard(6)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    // A 40x40x3 square tube standing on a plate, welded all round (tangent propagation from one side).
+    const part = { schema: 1, kind: "part", id: "d_drwweld", name: "Post", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p0", -100, -100), P("p1", 100, -100), P("p2", 100, 100), P("p3", -100, 100),
+        { id: "l0", t: "line", a: "p0", b: "p1" }, { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p0" }] },
+      { id: "p", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } },
+      { id: "k", type: "sketch3d", name: "3DSketch1", rels: [], dims: [], pts: [{ id: "A", p: [0, 0, 10], fixed: true }, { id: "B", p: [0, 0, 300] }], segs: [{ id: "post", t: "line", pts: ["A", "B"] }] },
+      { id: "m", type: "member", name: "Structural Member1", profile: "shs", size: "40x40x3", segs: [{ sketch: "k", ent: "post" }], corner: "none" },
+      { id: "w", type: "weldbead", name: "Fillet Bead1", faces1: [{ name: "p:end" }], faces2: [{ name: "m:post:side:5", hint: [20, 0, 155] }], size: { v: 4 } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-10T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "Post.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    const ready = () => dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
+    await ready();
+    // Click the first view, then place the table beside it.
+    const vp = await dp.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views[0], p = window.__sv.drw.placement(v.id); return { x: p.x, y: p.y, w: (p.box[2] - p.box[0]) * p.s }; });
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="wtable"]');
+    for (const [x, y] of [[vp.x, vp.y], [vp.x + vp.w / 2 + 20, vp.y]]) {
+      const [cx, cy] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]);
+      await dp.mouse.click(cx, cy);
+    }
+    await ready();
+    const wt = await dp.evaluate(() => ({ n: window.__sv.drw.doc().sheets[0].annots.filter(a => a.t === "wtable").length, tx: [...document.querySelectorAll(".drw-svg text")].map(t => t.textContent),
+      note: document.querySelector("#drw .drw-props .drw-note")?.textContent ?? "" }));
+    const loop = (4 * (40 - 12) + 2 * Math.PI * 6).toFixed(2).replace(/\.?0+$/, "");
+    check(wt.n === 1 && ["Item", "Weld", "Leg", "Length", "Qty", "Continuous", "z4", loop].every(s => wt.tx.includes(s)),
+      `drawing: weld table lists the weldment's fillet bead with its leg and length (${JSON.stringify({ n: wt.n, loop, tx: wt.tx.filter(s => /^(Item|Weld|Leg|Continuous|z\d|1\d\d)/.test(s)), note: wt.note })})`);
     await ctx.close();
   }
 
