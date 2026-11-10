@@ -537,6 +537,15 @@ export function findMaterial(name: string | null | undefined): Material | undefi
 }
 
 /** What a document stores for a material: every known property, so the file stands alone. */
+/**
+ * The density (g/cm³) of a group of a part's bodies (a cut list item, FR-MAT-001): the mean of each body's
+ * own material, `fallback` for bodies without one (keys as in `PartDoc.bodies`).
+ */
+export function bodiesDensity(keys: string[], bodies: Record<string, { material?: MatRef }> | undefined, fallback: number): number {
+  if (!keys.length) return fallback;
+  return keys.reduce((a, k) => a + (bodies?.[k]?.material?.density ?? fallback), 0) / keys.length;
+}
+
 export function toRef(m: Material): MatRef {
   const r: MatRef = { name: m.name, density: m.density };
   if (m.cat !== "custom") r.cat = m.cat;

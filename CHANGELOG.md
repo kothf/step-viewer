@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.460.0] - 2026-11-10
+
+### Added
+
+- **Body materials in drawings (FR-MAT-001)**: in a section view of a multibody part, each body's cut faces are hatched by its own material (steel, aluminium, titanium and so on get their own pattern), and the bodies of an assembly component are told apart the same way. The cut list table on a weldment drawing weighs an item by its bodies' own materials when the item has no material of its own.
+
 ## [1.459.0] - 2026-11-10
 
 ### Changed
@@ -2769,7 +2775,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.459.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.460.0...HEAD
+[1.460.0]: https://github.com/kothf/step-viewer/compare/v1.459.0...v1.460.0
 [1.459.0]: https://github.com/kothf/step-viewer/compare/v1.458.0...v1.459.0
 [1.458.0]: https://github.com/kothf/step-viewer/compare/v1.457.0...v1.458.0
 [1.457.0]: https://github.com/kothf/step-viewer/compare/v1.456.0...v1.457.0
