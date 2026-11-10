@@ -672,19 +672,77 @@ function shapeList(oc: any, l: any): any[] {
   return out;
 }
 
+/** How far (mm) a section's cutting plane is moved off the picked place (see `section`). */
+export const SECTION_NUDGE = 1e-3;
+
+/** The shape's bounding box (no mass properties). */
+export function shapeBox(oc: any, shape: any): [V3, V3] {
+  const b = new oc.Bnd_Box_1();
+  oc.BRepBndLib.AddOptimal(shape, b, false, false);
+  const lo = b.CornerMin(), hi = b.CornerMax();
+  b.delete();
+  return [[lo.X(), lo.Y(), lo.Z()], [hi.X(), hi.Y(), hi.Z()]];
+}
+
+/** One input solid of a section: the pieces left of it (itself when the cutter cannot reach it) and its own Boolean. */
+export interface CutPart { solid: any; pieces: any[]; cutter: any | null }
+
+/**
+ * Cuts `box` from each solid on its own. `half` (a plain section) = the box is the half space n · q > d: a solid wholly
+ * on that side is dropped and one wholly on the other kept whole, from its bounding box; otherwise a solid whose box
+ * misses the cutter's is kept whole. A shape without solids is cut as one.
+ */
+export function cutSolids(oc: any, shape: any, solids: any[], box: any, half: { n: V3; d: number } | null): { rest: any; parts: CutPart[] } {
+  const b = new oc.BRep_Builder(), rest = new oc.TopoDS_Compound();
+  b.MakeCompound(rest);
+  const cutOne = (s: any): CutPart => {
+    const c = new oc.BRepAlgoAPI_Cut_3(s, box, new oc.Message_ProgressRange_1());
+    c.Build(new oc.Message_ProgressRange_1());
+    if (!c.IsDone()) throw new Error("The section could not be cut");
+    return { solid: s, pieces: [c.Shape()], cutter: c };
+  };
+  if (!solids.length) {
+    const pc = cutOne(shape);
+    b.Add(rest, pc.pieces[0]);
+    return { rest, parts: [pc] };
+  }
+  let cb: any = null;
+  if (!half) { cb = new oc.Bnd_Box_1(); oc.BRepBndLib.Add(box, cb, false); }
+  const parts = solids.map(s => {
+    const sb = new oc.Bnd_Box_1();
+    oc.BRepBndLib.Add(s, sb, true);
+    let where = 0;
+    if (sb.IsVoid()) where = 0;
+    else if (half) {
+      const lo = sb.CornerMin(), hi = sb.CornerMax(), xs = [lo.X(), hi.X()], ys = [lo.Y(), hi.Y()], zs = [lo.Z(), hi.Z()];
+      let mn = Infinity, mx = -Infinity;
+      for (const x of xs) for (const y of ys) for (const z of zs) { const v = x * half.n[0] + y * half.n[1] + z * half.n[2] - half.d; mn = Math.min(mn, v); mx = Math.max(mx, v); }
+      where = mx < -1e-6 ? -1 : mn > 1e-6 ? 1 : 0;
+    } else if (sb.IsOut_4(cb)) where = -1;
+    sb.delete();
+    const pc: CutPart = where < 0 ? { solid: s, pieces: [s], cutter: null } : where > 0 ? { solid: s, pieces: [], cutter: null } : cutOne(s);
+    for (const piece of pc.pieces) b.Add(rest, piece);
+    return pc;
+  });
+  cb?.delete();
+  return { rest, parts };
+}
+
 /** A section view (FR-DRW-012): `view.dir` is the plane's normal, pointing at the viewer; material on the viewer's side of the plane through `p` is cut away. `cut` holds the cut faces as closed 2D loops (outer and holes alike; fill them even-odd). */
 /**
  * `stair` (offset and half sections): the cutter is a staircase polygon of (t, o) points in the plane through `o`
  * spanned by `e` and `m`, run through the model square to that plane; values of 1e8 or more stand for "beyond the
  * model". Cut faces lying on any of `planes` (n · p) are hatched. `keep` is drawn whole (components left uncut).
  */
-export function section(oc: any, shape: any, view: ViewDir, p: V3, tol = 0.02, poly?: number[], opts: { stair?: { o: V3; e: V3; m: V3; pts: number[]; planes: number[] }; keep?: any; namer?: (face: any) => string | null; fast?: number } = {}): Projection {
+export function section(oc: any, shape: any, view: ViewDir, p0: V3, tol = 0.02, poly?: number[], opts: { stair?: { o: V3; e: V3; m: V3; pts: number[]; planes: number[] }; keep?: any; namer?: (face: any) => string | null; fast?: number } = {}): Projection {
   const { x, y, n } = viewAxes(view);
-  const info = shapeInfo(oc, shape);
-  const [lo, hi] = info.box;
+  const [lo, hi] = shapeBox(oc, shape);
   const L = 2 * Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) + 10;
   let box: any;
-  const st = opts.stair;
+  // The cutting plane goes SECTION_NUDGE towards the viewer from the picked place: a plane exactly through a
+  // revolved face's axis (a piston cut along its centre line) took OCCT's Boolean minutes; 1 µm off it takes 0.1 s.
+  const p: V3 = [p0[0] + n[0] * SECTION_NUDGE, p0[1] + n[1] * SECTION_NUDGE, p0[2] + n[2] * SECTION_NUDGE];
+  const st = opts.stair && { ...opts.stair, o: opts.stair.o.map((v, j) => v + opts.stair!.m[j] * SECTION_NUDGE) as V3, planes: opts.stair.planes.map(d => d + SECTION_NUDGE) };
   if (st) {
     const { o, e, m } = st;
     const w: V3 = [e[1] * m[2] - e[2] * m[1], e[2] * m[0] - e[0] * m[2], e[0] * m[1] - e[1] * m[0]];
@@ -721,21 +779,19 @@ export function section(oc: any, shape: any, view: ViewDir, p: V3, tol = 0.02, p
     const ax = new oc.gp_Ax2_2(new oc.gp_Pnt_3(o[0], o[1], o[2]), new oc.gp_Dir_4(n[0], n[1], n[2]), new oc.gp_Dir_4(x[0], x[1], x[2]));
     box = new oc.BRepPrimAPI_MakeBox_5(ax, 2 * L, 2 * L, L).Shape();
   }
-  const cutter = new oc.BRepAlgoAPI_Cut_3(shape, box, new oc.Message_ProgressRange_1());
-  cutter.Build(new oc.Message_ProgressRange_1());
-  if (!cutter.IsDone()) throw new Error("The section could not be cut");
-  const rest = cutter.Shape();
+  // Each solid is cut on its own, and only when the cutter can reach it (drawings exam round four: one Boolean of a
+  // 57-part engine with the box ran for 25+ minutes, since the operation also intersects the parts with each other).
+  // A solid the cutter cannot reach stays whole; one wholly on the viewer's side of a plain section's plane is dropped.
+  const plain = !st && !(poly && poly.length >= 6), d0 = dot(p, n);
+  const A0 = oc.TopAbs_ShapeEnum, solids: any[] = [];
+  for (const ex = new oc.TopExp_Explorer_2(shape, A0.TopAbs_SOLID, A0.TopAbs_SHAPE); ex.More(); ex.Next()) solids.push(ex.Current());
+  const cuts = cutSolids(oc, shape, solids, box, plain ? { n, d: d0 } : null);
+  const rest = cuts.rest;
   // Which input solid each piece of the result came from, so each component or body is hatched on its own.
-  const A0 = oc.TopAbs_ShapeEnum, owned: { f: any; i: number }[] = [];
-  {
-    let i = 0;
-    for (const ex = new oc.TopExp_Explorer_2(shape, A0.TopAbs_SOLID, A0.TopAbs_SHAPE); ex.More(); ex.Next(), i++) {
-      const s = ex.Current();
-      let pieces = shapeList(oc, cutter.Modified(s));
-      if (!pieces.length && !cutter.IsDeleted(s)) pieces = [s];
-      for (const pc of pieces) for (const fx = new oc.TopExp_Explorer_2(pc, A0.TopAbs_FACE, A0.TopAbs_SHAPE); fx.More(); fx.Next()) owned.push({ f: fx.Current(), i });
-    }
-  }
+  const owned: { f: any; i: number }[] = [];
+  cuts.parts.forEach((pc, i) => {
+    for (const piece of pc.pieces) for (const fx = new oc.TopExp_Explorer_2(piece, A0.TopAbs_FACE, A0.TopAbs_SHAPE); fx.More(); fx.Next()) owned.push({ f: fx.Current(), i });
+  });
   let drawn = rest;
   if (opts.keep) {
     const b = new oc.BRep_Builder(), c = new oc.TopoDS_Compound();
@@ -745,7 +801,7 @@ export function section(oc: any, shape: any, view: ViewDir, p: V3, tol = 0.02, p
   const proj = projectAuto(oc, drawn, view, tol, opts.fast);
   // Faces on the cutting plane: their wires, flattened into the view's axes.
   const cut: number[][] = [], cutOf: number[] = [];
-  const A = oc.TopAbs_ShapeEnum, d0 = dot(p, n);
+  const A = oc.TopAbs_ShapeEnum;
   const capEdges = new oc.TopTools_IndexedMapOfShape_1();
   for (const ex = new oc.TopExp_Explorer_2(rest, A.TopAbs_FACE, A.TopAbs_SHAPE); ex.More(); ex.Next()) {
     const f = oc.TopoDS.Face_1(ex.Current());
@@ -774,8 +830,9 @@ export function section(oc: any, shape: any, view: ViewDir, p: V3, tol = 0.02, p
     }
   }
   if (st) dropSteps(proj, st, x, y, cut);
-  const cutEdges = opts.namer ? sectionEdges(oc, shape, cutter, capEdges, opts.namer) : undefined;
+  const cutEdges = opts.namer ? sectionEdges(oc, cuts.parts, capEdges, opts.namer, st ? st.m.map(v => v * SECTION_NUDGE) as V3 : [n[0] * SECTION_NUDGE, n[1] * SECTION_NUDGE, n[2] * SECTION_NUDGE]) : undefined;
   capEdges.delete();
+  for (const pc of cuts.parts) pc.cutter?.delete();
   return cutEdges ? { ...proj, cut, cutOf, cutEdges } : { ...proj, cut, cutOf };
 }
 
@@ -824,21 +881,25 @@ export function dropSteps(proj: { vis: Seg2[]; hid: Seg2[] }, st: { o: V3; e: V3
 }
 
 /** The cut faces' edges as model edges, each named after the input face it lies on (`<name>|§`); unnamed ones are left out. */
-function sectionEdges(oc: any, shape: any, cutter: any, capEdges: any, namer: (face: any) => string | null): MEdge[] {
+function sectionEdges(oc: any, parts: CutPart[], capEdges: any, namer: (face: any) => string | null, back: V3 = [0, 0, 0]): MEdge[] {
   const A = oc.TopAbs_ShapeEnum, T = oc.GeomAbs_CurveType, n = capEdges.Extent();
   if (!n) return [];
   const name: (string | null)[] = new Array(n + 1).fill(null);
-  for (const ex = new oc.TopExp_Explorer_2(shape, A.TopAbs_FACE, A.TopAbs_SHAPE); ex.More(); ex.Next()) {
-    const of = ex.Current(), nm = namer(of);
-    if (!nm) continue;
-    let pieces = shapeList(oc, cutter.Modified(of));
-    if (!pieces.length && !cutter.IsDeleted(of)) pieces = [of];
-    for (const pc of pieces) for (const ix = new oc.TopExp_Explorer_2(pc, A.TopAbs_EDGE, A.TopAbs_SHAPE); ix.More(); ix.Next()) {
-      const k = capEdges.FindIndex(ix.Current());
-      if (k > 0 && !name[k]) name[k] = nm;
+  for (const pc of parts) {
+    if (!pc.pieces.length) continue;
+    for (const ex = new oc.TopExp_Explorer_2(pc.solid, A.TopAbs_FACE, A.TopAbs_SHAPE); ex.More(); ex.Next()) {
+      const of = ex.Current(), nm = namer(of);
+      if (!nm) continue;
+      let pieces = pc.cutter ? shapeList(oc, pc.cutter.Modified(of)) : [];
+      if (!pieces.length && !pc.cutter?.IsDeleted(of)) pieces = [of];
+      for (const p of pieces) for (const ix = new oc.TopExp_Explorer_2(p, A.TopAbs_EDGE, A.TopAbs_SHAPE); ix.More(); ix.Next()) {
+        const k = capEdges.FindIndex(ix.Current());
+        if (k > 0 && !name[k]) name[k] = nm;
+      }
     }
   }
-  const xyz = (q: any): V3 => [q.X(), q.Y(), q.Z()];
+  // Put back on the picked plane (the cut was made SECTION_NUDGE off it).
+  const xyz = (q: any): V3 => [q.X() - back[0], q.Y() - back[1], q.Z() - back[2]];
   const out: MEdge[] = [];
   for (let i = 1; i <= n; i++) {
     if (!name[i]) continue;
@@ -851,7 +912,7 @@ function sectionEdges(oc: any, shape: any, cutter: any, capEdges: any, namer: (f
     if (ty === T.GeomAbs_Line) out.push({ k, t: "l", a, b, m });
     else if (ty === T.GeomAbs_Circle) {
       const ci = ad.Circle();
-      out.push({ k, t: "c", a, b, m, c: xyz(ci.Location()), ax: xyz(ci.Axis().Direction()), r: ci.Radius(), sp: Math.min(2 * Math.PI, u1 - u0) });
+      out.push({ k, t: "c", a, b, m, c: xyz(ci.Location()), ax: ((d: any): V3 => [d.X(), d.Y(), d.Z()])(ci.Axis().Direction()), r: ci.Radius(), sp: Math.min(2 * Math.PI, u1 - u0) });
     } else out.push({ k, t: "o", a, b, m });
   }
   return out;

@@ -5,6 +5,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.489.0] - 2026-11-10
+
+### Fixed
+
+- A section view through an axis of a big assembly is ready in seconds instead of never (the engine assembly cut through the crank axis: over 25 minutes to about 12 s). The cutting plane ran exactly through the axes of round parts, a case OpenCASCADE's Boolean handles very slowly, and the whole assembly was cut as one. Now each part is cut on its own (parts wholly behind the plane are kept as they are, parts wholly in front are left out), and the plane is moved 1 µm off, which no drawing can show.
+- Deleting a view that is still being projected stops its projection, so the next views no longer wait behind a view that is gone.
+- A view switched to another display style (for example Shaded with edges) keeps showing its lines until the new style arrives, instead of an empty frame.
+- Auto balloon on a view whose lines are still coming says so instead of placing no balloons without a word.
+
 ## [1.488.0] - 2026-11-10
 
 ### Added
@@ -3004,7 +3013,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.488.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.489.0...HEAD
+[1.489.0]: https://github.com/kothf/step-viewer/compare/v1.488.0...v1.489.0
 [1.488.0]: https://github.com/kothf/step-viewer/compare/v1.487.0...v1.488.0
 [1.487.0]: https://github.com/kothf/step-viewer/compare/v1.486.0...v1.487.0
 [1.486.0]: https://github.com/kothf/step-viewer/compare/v1.485.0...v1.486.0

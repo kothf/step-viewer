@@ -122,7 +122,8 @@ test("section through the hole: the cut faces are the block's middle slice minus
   const s = section(oc, shape, { dir: [0, -1, 0], up: [0, 0, 1] }, [0, 0, 0]);
   const area = (l: number[]) => { let a = 0; for (let i = 0; i < l.length; i += 2) { const j = (i + 2) % l.length; a += l[i] * l[j + 1] - l[j] * l[i + 1]; } return a / 2; };
   const total = s.cut!.reduce((t, l) => t + Math.abs(area(l)), 0);
-  assert.ok(Math.abs(total - (100 * 20 - 10 * 20)) < 1e-6, `cut area ${total}`);
+  // The plane is cut SECTION_NUDGE (1 µm) off the picked place, so the hole's chord is a hair shorter.
+  assert.ok(Math.abs(total - (100 * 20 - 10 * 20)) < 1e-3, `cut area ${total}`);
   assert.equal(s.cut!.length, 2);
   assert.equal(s.hid.length, 0);
 });
@@ -697,7 +698,8 @@ test("aligned section: the second leg turns about the centre into the first leg'
   const cut = section(oc, turned, { dir: [0, -1, 0], up: [0, 0, 1] }, [0, 0, 0]);
   const area = (l: number[]) => { let a = 0; for (let i = 0; i < l.length; i += 2) { const j = (i + 2) % l.length; a += l[i] * l[j + 1] - l[j] * l[i + 1]; } return a / 2; };
   const total = cut.cut!.reduce((t, l) => t + Math.abs(area(l)), 0);
-  assert.ok(Math.abs(total - 100 * 10) < 1e-6, `cut area ${total}`);
+  // The plane is cut SECTION_NUDGE (1 µm) off the picked place: a 1 µm sliver where the two legs meet.
+  assert.ok(Math.abs(total - 100 * 10) < 0.05, `cut area ${total}`);
 });
 
 test("ISO 286 fit limits: H7, g6, js6, K7, N7, P7, s6 and the dimension text (FR-DRW-021)", async () => {
