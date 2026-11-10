@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.434.0] - 2026-11-10
+
+### Added
+
+- **Material from the assembly (FR-MAT-001)**: right-click a component and choose **Material…** to pick its part's material from the library without opening the part. Every instance of that part follows, and the BOM and mass properties update. It is one undo step.
+
 ## [1.433.0] - 2026-11-10
 
 ### Fixed
@@ -2572,7 +2578,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.433.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.434.0...HEAD
+[1.434.0]: https://github.com/kothf/step-viewer/compare/v1.433.0...v1.434.0
 [1.433.0]: https://github.com/kothf/step-viewer/compare/v1.432.0...v1.433.0
 [1.432.0]: https://github.com/kothf/step-viewer/compare/v1.431.0...v1.432.0
 [1.431.0]: https://github.com/kothf/step-viewer/compare/v1.430.0...v1.431.0

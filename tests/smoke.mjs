@@ -6438,6 +6438,21 @@ try {
     await mp.click('#asm-tools [data-ac="bom"]');
     const bom = await mp.evaluate(() => ({ open: document.querySelector("#asm-bom").open, cells: [...document.querySelectorAll("#asm-bom tbody td")].map(e => e.textContent), csv: window.__sv.asm.bomCsvText() }));
     await mp.click('#asm-bom [data-a="close"]');
+    // Material… on a component sets its part's material for every instance; undo brings the old one back.
+    await mp.evaluate(() => { const a = window.__sv.asm; void a.pickPartMaterial(a.doc.components[1].id); });
+    await mp.waitForSelector("#mat-dlg[open]");
+    await mp.fill("#mat-q", "Ti-6Al-4V");
+    await mp.keyboard.press("ArrowDown");
+    await mp.keyboard.press("ArrowUp");
+    await mp.keyboard.press("Enter");
+    await mp.waitForSelector("#mat-dlg", { state: "detached" });
+    await shown(2);
+    const cmat = await mp.evaluate(() => { const a = window.__sv.asm, r = a.bom()[0]; return { mat: r.material, mass: Math.round(r.mass * 1e5) / 1e5, dens: [a.partDensity(0), a.partDensity(1)] }; });
+    await mp.evaluate(() => window.__sv.asm.undo());
+    await shown(2);
+    const cmat0 = await mp.evaluate(() => window.__sv.asm.bom()[0].material);
+    check(cmat.mat === "Titanium Ti-6Al-4V" && cmat.mass === 0.00443 && cmat.dens.join() === "4.43,4.43" && cmat0 === "Aluminium 6061",
+      `asm 1.434.0: Material… on a component sets the part's material for all its instances (${JSON.stringify(cmat)}, ${cmat0})`);
     // STEP of the assembly reopens with the same names and placements (AT-P4-6).
     const step = [...await mp.evaluate(async () => [...await window.__sv.asm.stepBytes()])];
     await mp.setInputFiles("#file-input", { name: "rig.step", mimeType: "model/step", buffer: Buffer.from(step) });
