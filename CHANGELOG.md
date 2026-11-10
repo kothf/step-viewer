@@ -5,12 +5,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.467.0] - 2026-11-10
+## [1.469.0] - 2026-11-10
 
 ### Changed
 
 - **Drawings of big assemblies (drawings exam)**: a model of 4000 edges or more is drawn by a fast hidden-line removal on a fine mesh, then each line is rebuilt from the model: straight edges become exact lines and circles seen end-on become exact arcs (true centre and radius), so dimensions, centre marks and picking work as before; other curves stay polylines within 1/1000 of the model's size. A 57-part engine whose top view never finished now takes seconds per view, and the views queued behind it (alternate positions, sections) no longer wait.
 - **Standard 3 views** picks its scale by placing the three views around the title block, using the free room beside it, so a 430 mm engine on A3 is drawn at 1:2 instead of 1:5.
+
+## [1.467.0] - 2026-11-10
+
+### Added
+
+- **Recognised sketches are fully defined (FR-FT-102, FR-SK-045)**: Recognize Features and Recognize Extrudes now run Fully define sketch on every sketch they make, as FeatureWorks gives its sketches dimensions. Lines along the axes get horizontal and vertical relations, circles and arcs their diameters and radii, and the points dimensions from the sketch origin, so the base, pocket and revolve sketches can be edited by their dimensions at once. Nothing moves and the body stays the same.
 
 ## [1.466.0] - 2026-11-10
 
@@ -2825,7 +2831,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.467.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.466.0...HEAD
+[1.469.0]: https://github.com/kothf/step-viewer/compare/v1.467.0...v1.469.0
 [1.467.0]: https://github.com/kothf/step-viewer/compare/v1.466.0...v1.467.0
 [1.466.0]: https://github.com/kothf/step-viewer/compare/v1.465.0...v1.466.0
 [1.465.0]: https://github.com/kothf/step-viewer/compare/v1.464.0...v1.465.0

@@ -12,8 +12,10 @@ import type { Viewer } from "../viewer/Viewer";
 import type { EdgeRef, Frame, RelKind, SkDim, SkEnt, SketchFeature, SkRel, TextFont, TextOutline, V2 } from "../model/types";
 import { applyExt, piercePoint, projectEdge, uvOf, type ExtGeo, type ModelEdge } from "./external";
 import { renameIn } from "../model/params";
+export { refPts } from "./define";
 import { ORIGIN, curveJoint, freeDirections, measureDim, solve, tryAdd, type SolveResult } from "./solver";
 import { uid } from "../model/doc";
+import { fullyDefineSketch, nextDimName, refPts } from "./define";
 import { cutTriangles, thin } from "./intersect";
 import { evaluate, ExprError, isPlain, type VarValue } from "../model/expr";
 import type { DxfShape } from "./dxf";
@@ -31,16 +33,6 @@ import { stepFor } from "../prefs";
 import { arcSlotCorners, arcSlotEnts, arcSlotHalfWidth, arcSlotOutline, centreArcAxis, threePointArcAxis, type ArcSlotAxis } from "./slots";
 
 /** Points an entity refers to (its ends, centre, axis points). */
-export function refPts(e: SkEnt): string[] {
-  if (e.t === "point") return [];
-  if (e.t === "line") return [e.a, e.b];
-  if (e.t === "circle") return [e.c];
-  if (e.t === "arc") return [e.c, e.a, e.b];
-  if (e.t === "spline") return e.pts.slice();
-  if (e.t === "text") return [e.p];
-  return [e.c, e.a, e.b, ...(e.p0 ? [e.p0] : []), ...(e.p1 ? [e.p1] : [])];
-}
-
 /** A conic's or equation curve's own fields, for a copy (a mirror image of an equation curve flips it). */
 function splineExtra(e: SkEnt & { t: "spline" }, mirror = false) {
   if (!e.kind) return {};
@@ -1665,12 +1657,7 @@ export class SketchEditor {
     if (side(q) * side(p) < 0) { dim.dia = true; dim.t = "distance"; }
   }
 
-  private nextDimName(sk: SketchFeature = this.sk) {
-    const used = new Set(sk.dims.map(d => d.name));
-    let n = 1;
-    while (used.has(`D${n}`)) n++;
-    return `D${n}`;
-  }
+  private nextDimName(sk: SketchFeature = this.sk) { return nextDimName(sk); }
 
   /** Adds a placed dimension: driving when it adds information, otherwise as a reference. */
   private addDimension(dim: SkDim) {
@@ -1855,67 +1842,9 @@ export class SketchEditor {
    * until nothing is free. Returns how many items were added (one undo step).
    */
   fullyDefine(): number {
-    const start = solve(this.sk);
-    if (start.status !== "ok" || start.dof === 0) return 0;
-    let sk = this.sk, dof = start.dof, added = 0;
-    const take = (item: { rel?: SkRel; dim?: SkDim }) => {
-      if (dof === 0) return;
-      const r = tryAdd(sk, item);
-      if (!r.ok || r.redundant || r.result.dof >= dof) return;
-      sk = r.sketch; dof = r.result.dof; added++;
-    };
-    const P = (id: string): V2 => { if (id === ORIGIN) return [0, 0]; const e = sk.ents.find(x => x.id === id); return e?.t === "point" ? [e.x, e.y] : [0, 0]; };
-    const tol = Math.sin(Math.PI / 180);
-    for (const e of this.sk.ents) {
-      if (e.t !== "line" || e.cons) continue;
-      if (sk.rels.some(r => (r.t === "horizontal" || r.t === "vertical") && r.e.length === 1 && r.e[0] === e.id)) continue;
-      const a = P(e.a), b = P(e.b), L = Math.hypot(b[0] - a[0], b[1] - a[1]);
-      if (L < 1e-9) continue;
-      if (Math.abs(b[1] - a[1]) / L < tol) take({ rel: { id: uid("r"), t: "horizontal", e: [e.id] } });
-      else if (Math.abs(b[0] - a[0]) / L < tol) take({ rel: { id: uid("r"), t: "vertical", e: [e.id] } });
-    }
-    // Box of the sketch, to set the new dimensions out beside it.
-    const pts = sk.ents.filter((x): x is SkEnt & { t: "point" } => x.t === "point");
-    const xs = [0, ...pts.map(q => q.x)], ys = [0, ...pts.map(q => q.y)];
-    const x0 = Math.min(...xs), y0 = Math.min(...ys), size = Math.max(Math.max(...xs) - x0, Math.max(...ys) - y0, 1);
-    const gap = size * 0.08;
-    const dim = (t: SkDim["t"], e: string[], pos: V2) => {
-      const d: SkDim = { id: uid("d"), name: "", t, e, val: { v: 0 }, pos };
-      d.val.v = measureDim(sk, d);
-      if (!isFinite(d.val.v)) return;
-      // A point level with (or plumb over) the origin to round-off gets a horizontal (vertical) relation, not a
-      // 0.0000004 mm dimension that shows as 0 and cannot be typed to 0 (exam #86), as SolidWorks does.
-      if (d.val.v < 1e-5 * size) {
-        if (t === "hdistance" || t === "vdistance") take({ rel: { id: uid("r"), t: t === "hdistance" ? "vertical" : "horizontal", e: [e[0], e[1]] } });
-        return;
-      }
-      d.name = this.nextDimName(sk);
-      take({ dim: d });
-    };
-    for (const e of this.sk.ents) {
-      if (e.cons || (e.t !== "circle" && e.t !== "arc")) continue;
-      if (sk.dims.some(d => (d.t === "radius" || d.t === "diameter") && d.e[0] === e.id)) continue;
-      const c = P(e.c), r = e.t === "circle" ? e.r : Math.hypot(P(e.a)[0] - c[0], P(e.a)[1] - c[1]);
-      dim(e.t === "circle" ? "diameter" : "radius", [e.id], [c[0] + r * 0.9, c[1] + r * 0.9]);
-    }
-    // Defining points first, as SolidWorks does: arc and circle centres and the ends of construction lines
-    // (a slot's centreline), then other curve points, then free points; nearest the origin first in each.
-    const centres = new Set(sk.ents.flatMap(x => (x.t === "circle" || x.t === "arc") ? [x.c] : x.t === "line" && x.cons ? [x.a, x.b] : []));
-    const onCurve = new Set(sk.ents.filter(x => x.t !== "point" && !x.cons).flatMap(x => refPts(x)));
-    const rank = (id: string) => (centres.has(id) ? 0 : onCurve.has(id) ? 1 : 2);
-    const order = pts.map(q => ({ q, k: rank(q.id), d: Math.hypot(q.x, q.y) })).sort((a, b) => a.k - b.k || a.d - b.d);
-    let nh = 0, nv = 0;
-    for (const { q } of order) {
-      if (dof === 0) break;
-      const n0 = added;
-      dim("hdistance", [ORIGIN, q.id], [q.x / 2, y0 - gap * (1 + nh)]);
-      if (added > n0) nh++;
-      const n1 = added;
-      dim("vdistance", [ORIGIN, q.id], [x0 - gap * (1 + nv), q.y / 2]);
-      if (added > n1) nv++;
-    }
+    const { sketch, added } = fullyDefineSketch(this.sk);
     if (!added) return 0;
-    this.sk = sk;
+    this.sk = sketch;
     this.info = solve(this.sk);
     this.commit("Fully define sketch");
     this.render();
