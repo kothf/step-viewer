@@ -350,8 +350,8 @@ export function std3Layout(dx: number, dy: number, dz: number, area: Box, tb: Bo
   for (const s of SCALES) {
     const k = s[0] / s[1];
     const W = k * (dx + dy) + gap, H = k * (dz + dy) + gap;
-    // Views fill at most 85 % of the room left by the gaps and margins, as before (a small part stays at 1:1).
-    if (k * (dx + dy) > (x1 - x0 - gap - 20) * 0.85 || k * (dz + dy) > (y1 - y0 - gap - 20) * 0.85) continue;
+    // Enlarged views fill at most 85 % of the room left by the gaps and margins, as before (a small part stays at 1:1); reductions may fill it.
+    if (k > 1 && (k * (dx + dy) > (x1 - x0 - gap - 20) * 0.85 || k * (dz + dy) > (y1 - y0 - gap - 20) * 0.85)) continue;
     const rects = (gx: number, gy: number): Box[] => {
       const fy = third ? gy : gy + k * dy + gap, ty = third ? gy + k * dz + gap : gy;
       return [[gx, fy, gx + k * dx, fy + k * dz], [gx, ty, gx + k * dx, ty + k * dy], [gx + k * dx + gap, fy, gx + k * dx + gap + k * dy, fy + k * dz]];

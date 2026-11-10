@@ -1635,7 +1635,12 @@ test("Standard 3 views layout uses the corner beside the title block", async () 
   }
   const { fitScale } = await import("../../src/drawing/views");
   assert.deepEqual(fitScale(570, 360, (370 - 20 - 25) * 0.85, (267 - 60 - 25) * 0.85), [1, 5]);
-  assert.equal(std3Layout(5000, 5000, 5000, area, tb, false)?.scale.join(":"), "1:100");
+  assert.equal(std3Layout(5000, 5000, 5000, area, tb, false)?.scale.join(":"), "1:50");
+  // The engine as the exam measured it (drawings exam round two, retest): 1:2 fits beside the title block.
+  assert.equal(std3Layout(430, 187, 184, area, tb, false)?.scale.join(":"), "1:2");
+  assert.equal(std3Layout(430, 187, 184, area, tb, true)?.scale.join(":"), "1:2");
+  // A small part is not blown up to fill the sheet.
+  assert.equal(std3Layout(100, 60, 20, area, tb, false)?.scale.join(":"), "1:1");
   assert.equal(std3Layout(1e6, 1e6, 1e6, area, tb, false), null);
 });
 
