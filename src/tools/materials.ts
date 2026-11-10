@@ -220,7 +220,7 @@ const ROWS: Row[] = [
 
   // ---------- plastics ----------
   ["plastic", "ABS", "ABS", "", [1.04, 2.3, 0.35, 43, 43, 0.17, 1300, 90], "plastic", "#e9e4d4"],
-  ["plastic", "ASA", "ASA", "", [1.07, 2.3, _, 48, 48, 0.17, 1300, 95], "plastic", "#e9e4d4"],
+  ["plastic", "ASA", "ASA", "Luran S 778T", [1.07, 2.5, _, 54, 54, 0.17, 1300, 95], "plastic", "#e9e4d4"],
   ["plastic", "PLA", "PLA", "", [1.24, 3.6, 0.36, 60, 60, 0.13, 1800, 68], "plastic", "#dfe3e6"],
   ["plastic", "PETG", "PETG", "", [1.27, 2.1, _, 50, 50, 0.21, 1300, 51], "plastic", "#dfe6ea"],
   ["plastic", "PET (PET-P)", "PET (ПЭТ)", "", [1.38, 3.2, _, 69, 69, 0.29, 1170, 70], "plastic", "#f1f1ee"],
@@ -230,7 +230,7 @@ const ROWS: Row[] = [
   ["plastic", "Nylon PA12", "Нейлон PA12", "ПА12", [1.01, 1.4, _, 45, 45, 0.23, _, 120], "plastic", "#efece2"],
   ["plastic", "Nylon PA12 (laser sintered)", "Нейлон PA12 (лазерное спекание)", "PA 2200 · SLS", [0.93, 1.65, _, _, 48, _, _, _], "plastic", "#f4f4f1"],
   ["plastic", "Polycarbonate", "Поликарбонат", "PC · ПК", [1.2, 2.4, 0.37, 65, 65, 0.2, 1200, 65], "plastic", "#dfe9ee"],
-  ["plastic", "PC/ABS", "PC/ABS", "", [1.13, 2.2, _, 52, 52, 0.2, _, 80], "plastic", "#3a3d42"],
+  ["plastic", "PC/ABS", "PC/ABS", "Bayblend T65 XF", [1.13, 2.35, _, 54, 54, 0.2, _, 80], "plastic", "#3a3d42"],
   ["plastic", "POM (Delrin)", "POM (Delrin, полиацеталь)", "POM-H", [1.41, 2.4, 0.35, 76, 76, 0.33, 1470, 120], "plastic", "#f4f4f1"],
   ["plastic", "POM-C (acetal copolymer)", "POM-C (полиацеталь, сополимер)", "ПОМ", [1.41, 2.8, 0.35, 64, 64, 0.31, 1470, 110], "plastic", "#f4f4f1"],
   ["plastic", "PEEK", "PEEK", "ПЭЭК", [1.32, 4.5, 0.4, 110, 110, 0.29, 2200, 45], "plastic", "#cdbf9f"],
@@ -462,6 +462,11 @@ export const CHECKED: Record<string, string> = {
   // tensile 165-200 ksi, yield 140-175 ksi (the row keeps the lower ends), 56 Btu/ft·h·°F (97 W/m·K),
   // 0.44 J/g·K, 9.7e-6 /°F (17.5e-6 /K). The row's density was 8.25, the value before age hardening.
   "Beryllium copper CuBe2 (age hardened)": "ibcadvancedalloys.com/wp-content/uploads/2017/11/C17200_Copper_Alloy_Product_Data_Sheet.pdf",
+  // 1.428.0: both rows moved to a named general purpose grade. Styrolution Luran S 778T (CAMPUS sheet): 1070 kg/m³,
+  // 2500 MPa, yield 54 MPa, 95e-6 /K (the row had 2.3 GPa and 48 MPa). Covestro Bayblend T65 XF ISO sheet
+  // (24.02.2017): 1130 kg/m³, 2350 MPa, yield 54 MPa, 0.8e-4 /K along the flow (the row had 2.2 GPa and 52 MPa).
+  ASA: "rolec.com/fileadmin/Media/bb/02/ASA%20Luran-en.pdf",
+  "PC/ABS": "www.protolabs.com/media/y5hnhojw/bayblend_t65_xf_iso_en.pdf",
 };
 
 export const LIBRARY: Material[] = ROWS.map(([cat, name, , eq, [density, E, nu, sy, su, k, cp, alpha], src, color]) =>
