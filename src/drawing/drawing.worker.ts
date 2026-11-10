@@ -9,9 +9,10 @@ import { Assembler } from "../kernel/assembly";
 import { Modeller } from "../kernel/model";
 import type { AsmDoc } from "../asm/types";
 import type { EdgeRef, PartDoc } from "../model/types";
-import { modelItems, type WeldInfo } from "./items";
+import { modelItems, type CutInfo, type WeldInfo } from "./items";
 import { cutList, type WeldHost } from "../weldments/kernel";
-import { cutKey } from "../weldments/types";
+import { cutKey, splitSubs } from "../weldments/types";
+import { findMaterial } from "../tools/materials";
 import { activate } from "../model/configs";
 
 export type DrawingRequest =
@@ -81,15 +82,27 @@ function buildPart(doc: PartDoc): { shape: any; mat: string | null; names: strin
   let mi: ReturnType<typeof modelItems> = { items: [], holes: [], threads: [], sketches: [] };
   try { mi = modelItems(doc, res.frames, res.sketches, edgeCircle); } catch { /* no model items */ }
   // Weld table (FR-FT-121): the cut list's beads, less the items marked Exclude from cut list.
-  let welds: WeldInfo[] = [];
-  if (doc.features.some(f => f.type === "weldbead" && !f.suppressed)) {
+  // Cut list table: every item in the dialog's order (sub-weldments after the loose items), numbered the same way.
+  let welds: WeldInfo[] = [], cuts: CutInfo[] = [];
+  const WELD_TYPES = new Set(["member", "endcap", "gusset", "weldbead"]);
+  if (doc.features.some(f => WELD_TYPES.has(f.type) && !f.suppressed)) {
     try {
-      welds = cutList(md as unknown as WeldHost, md.bodyInfo(body, doc), doc, res.frames)
-        .filter(c => c.kind === "bead" && !doc.cutProps?.[cutKey(c)]?.excl)
+      const raw = cutList(md as unknown as WeldHost, md.bodyInfo(body, doc), doc, res.frames), items = splitSubs(raw, doc.subWelds);
+      const density = doc.material?.density ?? 7.85;
+      let n = 0;
+      for (const c of items) {
+        const p = doc.cutProps?.[cutKey(c)];
+        if (p?.excl) continue;
+        const kg = c.volume * (findMaterial(p?.mat)?.density ?? density) / 1e6;
+        cuts.push({ item: ++n, kind: c.kind, desc: p?.desc || c.desc, ...(p?.desc ? { own: true } : {}), qty: c.kind === "bead" ? 1 : c.qty, kg,
+          ...(c.length != null ? { length: c.length } : {}), ...(c.kind === "member" ? { a1: c.angle1 ?? 0, a2: c.angle2 ?? 0 } : {}),
+          ...(c.plate ? { plate: c.plate } : {}), ...(c.inter ? { inter: c.inter } : {}) });
+      }
+      welds = raw.filter(c => c.kind === "bead" && !doc.cutProps?.[cutKey(c)]?.excl)
         .map(c => ({ legs: c.desc, length: c.length ?? 0, qty: c.qty, ...(c.inter ? { inter: c.inter } : {}) }));
-    } catch { /* no weld table rows */ }
+    } catch { /* no weld or cut list table rows */ }
   }
-  return { shape, mat: doc.material?.name ?? null, names: body.names, extra: { topo: topology(oc, shape, body.names), ...mi, welds } };
+  return { shape, mat: doc.material?.name ?? null, names: body.names, extra: { topo: topology(oc, shape, body.names), ...mi, welds, cuts } };
 }
 
 /** The shape (and material) a request draws: the loaded model, or one of the part's configurations. */

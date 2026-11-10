@@ -104,6 +104,8 @@ type AnnotMode =
   | { kind: "btable"; view: string | null; at: Pt | null }
   /** Weld table (FR-FT-121): click a view of a weldment part with fillet beads, then place the table. */
   | { kind: "wtable"; view: string | null; at: Pt | null }
+  /** Cut list table (FR-FT-121): click a view of a weldment part, then place the table. */
+  | { kind: "ctable"; view: string | null; at: Pt | null }
   /** Hole callout (FR-DRW-022): pick a round edge, then place. */
   | { kind: "hole"; view: string | null; e: MEdge | null; at: Pt | null }
   /** Note: click the place (first clicking an edge gives it a leader). */
@@ -126,7 +128,7 @@ type AnnotMode =
   | { kind: "surf"; view: string | null; ref: GeoRef | null; at: Pt | null }
   /** Balloon (FR-DRW-030): click an edge of a component, then place the balloon. */
   | { kind: "balloon"; view: string | null; ref: GeoRef | null; at: Pt | null };
-const ANNOT_KINDS = new Set(["dim", "dimset", "htable", "btable", "wtable", "hole", "note", "gtol", "datum", "surf", "balloon", "cloud", "cline", "weld", "dtarget", "sk"]);
+const ANNOT_KINDS = new Set(["dim", "dimset", "htable", "btable", "wtable", "ctable", "hole", "note", "gtol", "datum", "surf", "balloon", "cloud", "cline", "weld", "dtarget", "sk"]);
 const isAnnotMode = (m: Mode): m is AnnotMode => ANNOT_KINDS.has(m.kind);
 type Line4 = [number, number, number, number];
 
@@ -138,7 +140,7 @@ const SIZE_LIST = Object.keys(SIZES) as Exclude<SheetSize, "custom">[];
 const I = (d: string) => `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
 /** The annotation palette's tools (FR-UI-072), the same commands as Dimension and Annotate ▾. */
 const ANNOT_TOOLS: [string, string][] = [
-  ["dim", "Dimension"], ["chain", "Chain dimension"], ["base", "Baseline dimension"], ["ord", "Ordinate dimension"], ["items", "Model items"], ["hole", "Hole callout"], ["htable", "Hole table"], ["btable", "Bend table"], ["wtable", "Weld table"], ["note", "Note"], ["gtol", "Geometric tolerance"], ["datum", "Datum feature"], ["dtarget", "Datum target"],
+  ["dim", "Dimension"], ["chain", "Chain dimension"], ["base", "Baseline dimension"], ["ord", "Ordinate dimension"], ["items", "Model items"], ["hole", "Hole callout"], ["htable", "Hole table"], ["btable", "Bend table"], ["wtable", "Weld table"], ["ctable", "Cut list table"], ["note", "Note"], ["gtol", "Geometric tolerance"], ["datum", "Datum feature"], ["dtarget", "Datum target"],
   ["surf", "Surface finish"], ["cline", "Centerline"], ["cmark", "Center mark"], ["weld", "Weld symbol"], ["cloud", "Revision cloud"], ["skline", "Line"], ["skrect", "Rectangle"], ["skcircle", "Circle"], ["skpoly", "Polyline"], ["balloon", "Balloon"], ["auto", "Auto balloon"], ["bom", "Bill of materials"], ["rev", "Revision table"], ["table", "General table"],
 ];
 
@@ -432,6 +434,7 @@ export class DrawingWorkspace {
               <button role="menuitem" data-an="htable">${esc(t("Hole table"))}</button>
               <button role="menuitem" data-an="btable">${esc(t("Bend table"))}</button>
               <button role="menuitem" data-an="wtable">${esc(t("Weld table"))}</button>
+              <button role="menuitem" data-an="ctable">${esc(t("Cut list table"))}</button>
               <button role="menuitem" data-an="note">${esc(t("Note"))}</button>
               <button role="menuitem" data-an="gtol">${esc(t("Geometric tolerance"))}</button>
               <button role="menuitem" data-an="datum">${esc(t("Datum feature"))}</button>
@@ -554,6 +557,7 @@ export class DrawingWorkspace {
     else if (m.kind === "htable") s = m.origin ? t("Click where the hole table goes.") : t("Click the origin of the hole table on a view: a corner or a circle centre.");
     else if (m.kind === "btable") s = m.view ? t("Click where the bend table goes.") : t("Click a flat pattern view.");
     else if (m.kind === "wtable") s = m.view ? t("Click where the weld table goes.") : t("Click a view of the weldment.");
+    else if (m.kind === "ctable") s = m.view ? t("Click where the cut list table goes.") : t("Click a view of the weldment.");
     else if (m.kind === "hole") s = m.e ? t("Click where the callout goes.") : t("Click the edge of a hole.");
     else if (m.kind === "cline") s = m.how === "mark" ? t("Click a round edge seen end-on: a circle or an arc. Esc ends.") : !m.picks.length ? t("Click a straight edge or a point (a circle's centre) of a view. Esc ends.") : t("Click a parallel edge, or a second point. Esc ends.");
     else if (m.kind === "sk") s = m.k === "circle" ? t(m.pts.length ? "Click a point on the circle." : "Click the centre of the circle.")
@@ -1146,7 +1150,7 @@ export class DrawingWorkspace {
     else if (kind === "dimset") this.mode = { kind, how, view: null, picks: [], axis: null, at: null };
     else if (kind === "hole") this.mode = { kind, view: null, e: null, at: null };
     else if (kind === "htable") this.mode = { kind, view: null, origin: null, holes: [], at: null };
-    else if (kind === "btable" || kind === "wtable") this.mode = { kind, view: null, at: null };
+    else if (kind === "btable" || kind === "wtable" || kind === "ctable") this.mode = { kind, view: null, at: null };
     else if (kind === "datum" || kind === "surf" || kind === "balloon") this.mode = { kind, view: null, ref: null, at: null };
     else if (kind === "dtarget") this.mode = { kind, view: null, leader: null, tp: null, at: null };
     else if (kind === "note" || kind === "gtol" || kind === "weld") this.mode = { kind, view: null, leader: null, at: null };
@@ -1328,6 +1332,17 @@ export class DrawingWorkspace {
       } else {
         const pl = this.placements.get(m.view)!, pos = fromSheet(pl, p[0], p[1]);
         this.addAnnot({ id: uid("a_"), t: "wtable", view: m.view, pos: [round(pos[0]), round(pos[1])] }, "Weld table");
+        this.mode = { kind: "none" };
+      }
+    } else if (m.kind === "ctable") {
+      if (!m.view) {
+        if (!vid) return;
+        if (!this.factsOf(vid)?.cuts?.length) { toast(t("This view's model has no cut list. Click a view of a weldment part."), true); return; }
+        m.view = vid;
+        this.renderStatus();
+      } else {
+        const pl = this.placements.get(m.view)!, pos = fromSheet(pl, p[0], p[1]);
+        this.addAnnot({ id: uid("a_"), t: "ctable", view: m.view, pos: [round(pos[0]), round(pos[1])] }, "Cut list table");
         this.mode = { kind: "none" };
       }
     } else if (m.kind === "dimset") {
@@ -1613,7 +1628,7 @@ export class DrawingWorkspace {
         const pa: Annot = { id: "_pt", t: "htable", view: vid, origin: m.origin, holes: m.holes, pos: fromSheet(pl, at[0], at[1]) };
         s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, this.ctx()).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
       }
-    } else if (m.kind === "btable" || m.kind === "wtable") {
+    } else if (m.kind === "btable" || m.kind === "wtable" || m.kind === "ctable") {
       if (m.view) {
         const pa: Annot = { id: "_pt", t: m.kind, view: vid, pos: fromSheet(pl, at[0], at[1]) };
         s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, this.ctx()).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
@@ -1906,6 +1921,15 @@ export class DrawingWorkspace {
         <label class="drw-f">${esc(t("Decimals"))}<select data-d="wprec"><option value="">${esc(t("Auto"))}</option>${[0, 1, 2, 3].map(k => `<option value="${k}"${a.prec === k ? " selected" : ""}>${k}</option>`).join("")}</select></label>
       </fieldset>${del}`;
     }
+    if (a.t === "ctable") {
+      const n = this.factsOf(a.view, sh)?.cuts?.length ?? 0;
+      return `<fieldset class="pm-group"><legend>${esc(t("Cut list table"))}</legend>
+        <p class="drw-note">${esc(t("Cut list items: {n}, from the part's cut list.", { n }))}</p>
+        <label class="drw-chk"><input type="checkbox" data-d="cbeads"${a.beads !== false ? " checked" : ""}> ${esc(t("Weld beads"))}</label>
+        <label class="drw-chk"><input type="checkbox" data-d="cmass"${a.mass ? " checked" : ""}> ${esc(t("Mass column"))}</label>
+        <label class="drw-f">${esc(t("Decimals"))}<select data-d="cprec"><option value="">${esc(t("Auto"))}</option>${[0, 1, 2, 3].map(k => `<option value="${k}"${a.prec === k ? " selected" : ""}>${k}</option>`).join("")}</select></label>
+      </fieldset>${del}`;
+    }
     if (a.t === "htable") {
       const v = findView(sh, a.view), n = v ? holeRows(a, projector(viewDir(sh, v)).P, this.ctx()).rows.length : 0;
       return `<fieldset class="pm-group"><legend>${esc(t("Hole table"))}</legend>
@@ -1974,6 +1998,11 @@ export class DrawingWorkspace {
       else if (a.t === "htable" && k === "hprec") { if (val === "") delete a.prec; else a.prec = +val; }
       else if (a.t === "btable" && k === "bprec") { if (val === "") delete a.prec; else a.prec = +val; }
       else if (a.t === "wtable" && k === "wprec") { if (val === "") delete a.prec; else a.prec = +val; }
+      else if (a.t === "ctable") {
+        if (k === "cprec") { if (val === "") delete a.prec; else a.prec = +val; }
+        else if (k === "cbeads") { if ((el as HTMLInputElement).checked) delete a.beads; else a.beads = false; }
+        else if (k === "cmass") { if ((el as HTMLInputElement).checked) a.mass = true; else delete a.mass; }
+      }
       else if (a.t === "gtol" && k.startsWith("g:")) {
         const [, si, f] = k.split(":"), r = a.rows[+si];
         if (!r) return;
