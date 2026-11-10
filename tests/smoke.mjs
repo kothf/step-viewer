@@ -5312,19 +5312,21 @@ try {
     tx = await texts();
     const scaleNote = tx.find(s => s.startsWith("SCALE "));
     check(scaleNote && !scaleNote.includes("$PRP") && /^SCALE \d+:\d+$/.test(scaleNote), `drawing: a note's $PRP:"Scale" link shows the sheet scale (${scaleNote})`);
-    // Ordinate and chain dimensions (FR-DRW-021): base corner, hole centre, far corner; one click adds each dimension.
+    // Ordinate and chain dimensions (FR-DRW-021): base corner, hole centre, a click where the set goes (drawings exam #15:
+    // like SolidWorks, so it doesn't land on the dimensions already there), far corner; each later click adds its dimension.
     const clicks = async (id, pts) => { for (const [u, w] of pts) { const [cx, cy] = await at(id, u, w); await dp.mouse.move(cx + 2, cy); await dp.mouse.move(cx, cy); await dp.mouse.click(cx, cy); } };
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="ord"]');
-    await clicks(top.id, [[-50, -30], [10, 0], [50, -30]]);
+    await clicks(top.id, [[-50, -30], [10, 0], [0, -45], [50, -30]]);
     await dp.keyboard.press("Escape");
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="chain"]');
-    await clicks(top.id, [[-50, 30], [10, 0], [50, 30]]);
+    await clicks(top.id, [[-50, 30], [10, 0], [0, 47], [50, 30]]);
     await dp.keyboard.press("Escape");
     an = await annots();
     tx = await texts();
     const ords = an.filter(a => a.k === "oh").length, chain = an.filter(a => !a.src && a.k === "h" && a.view === top.id).length;
-    check(ords === 3 && chain === 2 && tx.includes("0") && tx.includes("40") && tx.filter(s => s === "60").length >= 3,
-      `drawing: ordinate dimensions 0 / 60 / 100 from the base corner and a chain 60 + 40 along the top edge (${ords} ordinates, ${chain} chain; ${tx.join(" ")})`);
+    const rows = [...new Set(an.filter(a => a.k === "oh").map(a => a.pos[1]))].join() + "/" + [...new Set(an.filter(a => !a.src && a.k === "h" && a.view === top.id).map(a => a.pos[1]))].join();
+    check(ords === 3 && chain === 2 && rows === "-45/47" && tx.includes("0") && tx.includes("40") && tx.filter(s => s === "60").length >= 3,
+      `drawing: ordinate dimensions 0 / 60 / 100 from the base corner and a chain 60 + 40 along the top edge, each in the row clicked (${ords} ordinates, ${chain} chain, rows ${rows}; ${tx.join(" ")})`);
     // Hole table (FR-DRW-024): origin at the corner, the Ø16 hole tagged A1 at X 60 / Y 30, the table placed below the view.
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="htable"]');
     await clicks(top.id, [[-50, -30], [-50, -60]]);
@@ -12035,6 +12037,22 @@ try {
     const c3 = await centre();
     const longer = c3.some(q => Math.abs(q[1] - midY) < 0.05 && Math.abs(Math.min(q[0], q[2]) - (fr.box[0] - 5)) < 0.05);
     check(sel && ext === 5 && longer, `drawing: select a centreline on its line and change its extension (${JSON.stringify({ sel, ext, longer })})`);
+    // Drawings exam #16: the hole's two hidden outline lines in the front view (x = 17 and 33) give its centreline at x = 25.
+    await dp.keyboard.press("Escape");
+    const fq = (u, w) => dp.evaluate(([id, u, w]) => { const p = window.__sv.drw.placement(id); return [p.x + (u - p.uc) * p.s, p.y + (w - p.vc) * p.s]; }, [fr.id, u, w]);
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="cline"]');
+    for (const u of [17, 33]) { const q = await fq(u, 10); await clickSheet(q[0], q[1]); }
+    await dp.waitForTimeout(150);
+    const hl = await dp.evaluate(() => (window.__sv.drw.doc().sheets[0].annots ?? []).filter(a => a.t === "cline" && a.k === "line").map(a => a.refs.map(r => r.s ?? 0).join()));
+    const x25 = (await fq(25, 0))[0], c4 = await centre();
+    const onAxis = c4.filter(q => Math.abs(q[0] - x25) < 0.05 && Math.abs(q[2] - x25) < 0.05).length > c3.filter(q => Math.abs(q[0] - x25) < 0.05 && Math.abs(q[2] - x25) < 0.05).length;
+    check(hl.length === 2 && ["-1,1", "1,-1"].includes(hl[1]) && onAxis, `drawing: centreline between a hole's two hidden outline lines (${JSON.stringify({ hl, onAxis, x25 })})`);
+    // Balloons on a part drawing (drawings exam): item 1, as in SolidWorks, no longer refused.
+    await dp.keyboard.press("Escape");
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="auto"]');
+    await dp.waitForFunction(() => (window.__sv.drw.doc().sheets[0].annots ?? []).some(a => a.t === "balloon"), null, { timeout: 10000 }).catch(() => {});
+    const bal = await dp.evaluate(() => ({ n: (window.__sv.drw.doc().sheets[0].annots ?? []).filter(a => a.t === "balloon").length, one: window.__sv.drw.prims().some(p => p.t === "t" && p.layer === "ANNOT" && p.s === "1") }));
+    check(bal.n === 1 && bal.one, `drawing: Auto balloon on a part drawing numbers the part 1 (${JSON.stringify(bal)})`);
     await ctx.close();
   }
 
