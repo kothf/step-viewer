@@ -5,6 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.467.0] - 2026-11-10
+
+### Added
+
+- **Right-click menu on vault files (FR-PDM-080)**: right-click (or long press) a file in the Vault tab for Open, Check out, Check in…, Undo check-out, Get latest, the state changes, History, Where used, Contains, Data card, PDF, Rename / move…, Copy tree… and Delete. The menu key and Shift+F10 open it from the keyboard.
+- **Several vault files at once**: Ctrl+click adds or removes a file, Shift+click selects a run, Ctrl+A selects every file shown and Esc goes back to one. With several files selected, the foot of the panel and the right-click menu offer Check out, Check in (one comment for all, files the others use go first), Undo check-out, Get latest, the state changes they have in common, Request change… and Delete (files that use others go to the recycle bin first).
+
+### Changed
+
+- **Slimmer Vault tab top**: Add files…, Add files in this folder…, Save to vault and the search stay; Notifications, Change orders, Release packages, Audit trail, Integrity check, Storage, Export ZIP, Recycle bin, Vault settings, Workflow and the user name moved into a **⋯** menu next to the vault's name (the notification count shows on it). The file list starts about 200 px higher.
+
 ## [1.466.0] - 2026-11-10
 
 ### Fixed (drawings exam, round 2)
@@ -2818,7 +2829,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.466.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.467.0...HEAD
+[1.467.0]: https://github.com/kothf/step-viewer/compare/v1.466.0...v1.467.0
 [1.466.0]: https://github.com/kothf/step-viewer/compare/v1.465.0...v1.466.0
 [1.465.0]: https://github.com/kothf/step-viewer/compare/v1.464.0...v1.465.0
 [1.464.0]: https://github.com/kothf/step-viewer/compare/v1.463.0...v1.464.0
