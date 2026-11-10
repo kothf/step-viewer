@@ -4318,4 +4318,5 @@ export const RU: Record<string, string> = {
   "Arrows": "Стрелки",
   "Inside": "Внутри",
   "Outside": "Снаружи",
+  "Border": "Рамка",
 };

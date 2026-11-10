@@ -4880,6 +4880,14 @@ try {
     an = await annots();
     check(tx.includes("Ø16 THRU") && tx.includes("BREAK SHARP EDGES") && an.some(a => a.t === "hole") && an.some(a => a.t === "note" && !a.view),
       `drawing: hole callout from the model (Ø16 THRU) and a note on the sheet (${tx.filter(s => /THRU|BREAK/.test(s)).join(" / ")})`);
+    // Note border (FR-DRW-023): the placed note is selected; a circle frames it, None takes it away.
+    const arcsOf = async () => (await prims()).filter(p => p.t === "a" && p.layer === "ANNOT").length;
+    const arcs0 = await arcsOf();
+    await dp.selectOption('.drw-props [data-d="nborder"]', "circle");
+    const nb1 = { arcs: await arcsOf(), border: (await annots()).find(a => a.t === "note" && !a.view)?.border };
+    await dp.selectOption('.drw-props [data-d="nborder"]', "");
+    const nb2 = { arcs: await arcsOf(), has: "border" in (await annots()).find(a => a.t === "note" && !a.view) };
+    check(nb1.border === "circle" && nb1.arcs === arcs0 + 1 && nb2.arcs === arcs0 && !nb2.has, `drawing: a note takes a circle border and loses it again (${JSON.stringify([arcs0, nb1, nb2])})`);
     // The worker reads holes from the geometry too (FR-DRW-022): the Ø16 cut is a one-piece stack open at both ends.
     const geoHoles = await dp.evaluate(() => window.__sv.drw.holes());
     check(geoHoles.some(h => h.segs === 1 && h.open[0] && h.open[1]), `drawing: holes read from the geometry (${JSON.stringify(geoHoles)})`);
