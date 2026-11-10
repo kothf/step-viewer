@@ -1015,6 +1015,7 @@ export const RU: Record<string, string> = {
   "Centre-point arc": "Дуга по центру",
   "3-point arc": "Дуга по 3 точкам",
   "Sketch fillet": "Скругление в эскизе",
+  "Delete sketch items": "Удалить элементы эскиза",
   "Sketch chamfer": "Фаска в эскизе",
   "Drag the handle to change the angle; click to type it": "Перетащите маркер, чтобы изменить угол; щёлкните, чтобы ввести значение",
   "Or drag the orange handle in the view.": "Или перетащите оранжевый маркер на виде.",

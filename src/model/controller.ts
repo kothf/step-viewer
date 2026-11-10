@@ -1330,9 +1330,11 @@ export class ModelController {
 
   /** Undo/redo step names in the UI language; null when a name has no translation (FR-UND-005). */
   private stepName(label: string): string | null {
+    // A step with its own translation ("Delete sketch items") is used whole, not as Delete + a feature name.
+    const tr = t(label);
+    if (tr !== label) return tr;
     const m = /^(Add|Edit|Delete) (.+)$/.exec(label);
     if (m) return t(`${m[1]} {name}`, { name: featureLabel(m[2]) });
-    const tr = t(label);
     return tr === label && lang() !== "en" ? null : tr;
   }
   private undoTip(redo = false) {

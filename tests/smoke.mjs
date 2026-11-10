@@ -1993,13 +1993,13 @@ try {
     {
       const had = await mp.evaluate(() => window.__sv.model.editor().sk.ents.map(e => e.id));
       const hover = async q => { const [x, y] = await toPage(q, true); await mp.mouse.move(x, y, { steps: 4 }); await mp.waitForTimeout(40); };
-      await mp.keyboard.press("a");
-      await click([-60, -30]); await click([-50, -30]); await hover([-55, -38]); await hover([-60, -40]); await hover([-66, -37]); await click([-70, -30]);
+      await mp.click('#mc-tools [data-c="sk:arc"]');
+      await click([10, -22]); await click([16, -22]); await hover([14, -26]); await hover([10, -28]); await hover([6, -26]); await click([4, -22]);
       await mp.keyboard.press("Escape");
       const cw = await mp.evaluate(had => { const sk = window.__sv.model.editor().sk, P = id => sk.ents.find(e => e.id === id); const a = sk.ents.find(e => e.t === "arc" && !had.includes(e.id)); return a && { a: [P(a.a).x, P(a.a).y], b: [P(a.b).x, P(a.b).y] }; }, had);
-      check(cw && near(cw.a[0], -70, 0.3) && near(cw.b[0], -50, 0.3), `exam #92: a centre-point arc drawn clockwise keeps the side the mouse went round (${JSON.stringify(cw)})`);
-      await mp.keyboard.press("l"); await click([-50, -30]); await click([-30, -30]); await mp.keyboard.press("Escape"); await mp.keyboard.press("Escape");
-      await mp.keyboard.press("f"); await click([-50, -30]);
+      check(cw && near(cw.a[0], 4, 0.3) && near(cw.b[0], 16, 0.3), `exam #92: a centre-point arc drawn clockwise keeps the side the mouse went round (${JSON.stringify(cw)})`);
+      await mp.click('#mc-tools [data-c="sk:line"]'); await click([16, -22]); await click([24, -22]); await mp.keyboard.press("Escape"); await mp.keyboard.press("Escape");
+      await mp.click('#mc-tools [data-c="sk:fillet"]'); await click([16, -22]);
       const la = await mp.evaluate(had => { const e = window.__sv.model.editor(), sk = e.sk; const mine = sk.ents.filter(x => !had.includes(x.id)); return { arcs: mine.filter(x => x.t === "arc").length, tan: sk.rels.filter(r => r.t === "tangent" && r.e.some(id => mine.some(m => m.id === id))).length, ok: e.info.status }; }, had);
       check(la.arcs === 2 && la.tan === 2 && la.ok === "ok", `exam #90: sketch fillet rounds a corner where a line meets an arc (${JSON.stringify(la)})`);
       await mp.keyboard.press("Escape"); await mp.keyboard.press("Escape");
