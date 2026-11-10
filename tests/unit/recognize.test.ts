@@ -68,3 +68,42 @@ test("feature recognition: a plain block and a hexagon bar have no blends (FR-FT
   const bar = imported(m, [hex, { id: "e", type: "extrude", name: "E", sketch: "h", op: "boss", end: "blind", depth: { v: 30 } } as Feature]);
   assert.equal(m.recognizeBlends(bar).length, 0);
 });
+
+test("feature recognition: a chamfer on a round edge comes back as a chamfer (FR-FT-102)", async () => {
+  const m = new Modeller(await occ());
+  const circle: SketchFeature = { id: "s", type: "sketch", name: "s", plane: { std: "XY" }, rels: [], dims: [],
+    ents: [{ id: "c", t: "point", x: 0, y: 0 }, { id: "k", t: "circle", c: "c", r: 15 } as SkEnt] };
+  const ext = { id: "e", type: "extrude", name: "E", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } } as Feature;
+  const names = m.evaluate(doc([circle, ext])).body!.names;
+  const side = names.find(n => n.startsWith("e:side"))!;
+  const imp = imported(m, [circle, ext, { id: "c", type: "chamfer", name: "C", distance: { v: 3 }, edges: [{ faces: ["e:end", side] }] } as Feature]);
+  const v0 = vol(m, imp);
+  const feats = m.recognizeBlends(imp);
+  assert.equal(feats.map(f => f.type).join(), "delface,chamfer");
+  close((feats[1] as ChamferFeature).distance.v, 3);
+  close(vol(m, doc([...imp.features, ...feats])), v0);
+  // The size can then be changed like any chamfer's.
+  (feats[1] as ChamferFeature).distance = { v: 5 };
+  assert.ok(vol(m, doc([...imp.features, ...feats])) < v0 - 100);
+});
+
+test("feature recognition: a two-distance chamfer keeps its two distances, also under a later fillet (FR-FT-102)", async () => {
+  const m = new Modeller(await occ());
+  const cham = { id: "c", type: "chamfer", name: "C", mode: "two", distance: { v: 3 }, distance2: { v: 7 }, edges: [{ faces: ["e:end", S(4)] }] } as Feature;
+  const imp = imported(m, [...base(), cham]);
+  const v0 = vol(m, imp);
+  const feats = m.recognizeBlends(imp);
+  assert.equal(feats.map(f => f.type).join(), "delface,chamfer");
+  const ch = feats[1] as ChamferFeature;
+  assert.equal(ch.mode, "two");
+  assert.deepEqual([ch.distance.v, ch.distance2!.v].map(v => Math.round(v * 1e6) / 1e6).sort((a, b) => a - b), [3, 7]);
+  close(vol(m, doc([...imp.features, ...feats])), v0);
+  // A fillet between the chamfer and the side comes off first; the chamfer under it still comes back the right way round.
+  const face = m.evaluate(doc([...base(), cham])).body!.names.find(n => n.startsWith("c:"))!;
+  const imp2 = imported(m, [...base(), cham, { id: "f", type: "fillet", name: "F", radius: { v: 1 }, edges: [{ faces: [face, S(4)] }] } as Feature]);
+  const v2 = vol(m, imp2);
+  const feats2 = m.recognizeBlends(imp2);
+  assert.equal(feats2.map(f => f.type).join(), "delface,delface,chamfer,fillet");
+  assert.equal((feats2[2] as ChamferFeature).mode, "two");
+  close(vol(m, doc([...imp2.features, ...feats2])), v2);
+});

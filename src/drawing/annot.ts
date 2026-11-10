@@ -398,7 +398,13 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
       if (txt.up) { const p = add2(s0, up, big ? h * 0.55 : h * 0.6); out.push({ t: "t", x: p[0], y: p[1], s: txt.up, h: hh, al: "l", layer: "ANNOT", rot: rot || undefined }); }
       if (txt.lo) { const p = add2(s0, up, big ? -h * 0.45 : -h * 0.25); out.push({ t: "t", x: p[0], y: p[1], s: txt.lo, h: hh, al: "l", layer: "ANNOT", rot: rot || undefined }); }
     }
-    return textBox(start[0], start[1], "x".repeat(Math.max(1, Math.round(totalW / (h * 0.85)))), h, "l", rot);
+    const box = textBox(start[0], start[1], "x".repeat(Math.max(1, Math.round(totalW / (h * 0.85)))), h, "l", rot);
+    if (!a.below) return box;
+    // A second line under the dimension line (the value sits 0.8 above it), centred under the value.
+    const wb = textW(a.below, h), sb = add2(add2(start, dir, (totalW - wb) / 2), up, -(h + 1.6));
+    out.push({ t: "t", x: sb[0], y: sb[1], s: a.below, h, al: "l", layer: "ANNOT", rot: rot || undefined });
+    const bb = textBox(sb[0], sb[1], "x".repeat(Math.max(1, Math.round(wb / (h * 0.85)))), h, "l", rot);
+    return [Math.min(box[0], bb[0]), Math.min(box[1], bb[1]), Math.max(box[2], bb[2]), Math.max(box[3], bb[3])];
   };
   if (g.k === "rad" || g.k === "dia") {
     const C = S(g.c!), R = g.r! * pl.s;

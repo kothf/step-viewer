@@ -1776,6 +1776,7 @@ export class DrawingWorkspace {
         <label class="drw-f">${esc(t("Prefix"))}<input data-d="pre" value="${esc(a.pre ?? "")}" translate="no"></label>
         <label class="drw-f">${esc(t("Suffix"))}<input data-d="suf" value="${esc(a.suf ?? "")}" translate="no"></label>
         <label class="drw-f">${esc(t("Text instead of the value"))}<input data-d="txt" value="${esc(a.txt ?? "")}" translate="no"></label>
+        <label class="drw-f">${esc(t("Text below"))}<input data-d="below" value="${esc(a.below ?? "")}" translate="no"></label>
         <label class="drw-f">${esc(t("Display"))}<select data-d="show">${([["", "As measured"], ["ref", "Reference (in parentheses)"], ["basic", "Basic (boxed)"]] as const).map(([k, l]) => `<option value="${k}"${(a.show ?? "") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>
         <label class="drw-chk"><input type="checkbox" data-d="insp"${a.insp ? " checked" : ""}> ${esc(t("Inspection dimension"))}</label>
         ${a.k !== "ang" ? `<label class="drw-chk"><input type="checkbox" data-d="dual"${a.dual ?? this.doc.style?.dual === "in" ? " checked" : ""}> ${esc(t("Dual dimension (inches in brackets)"))}</label>` : ""}
@@ -1930,7 +1931,7 @@ export class DrawingWorkspace {
         else if (k === "insp") { if ((el as HTMLInputElement).checked) a.insp = true; else delete a.insp; }
         else if (k === "dual") { const on = (el as HTMLInputElement).checked; if (on === (this.doc.style?.dual === "in")) delete a.dual; else a.dual = on; }
         else if (k === "prec") { if (val === "") delete a.prec; else a.prec = +val; }
-        else if (k === "pre" || k === "suf" || k === "txt") { if (val) a[k] = val; else delete a[k]; }
+        else if (k === "pre" || k === "suf" || k === "txt" || k === "below") { if (val) a[k] = val; else delete a[k]; }
         else if (a.tol && (k === "up" || k === "lo")) a.tol[k] = num(val);
         else if (a.tol && k === "fit") a.tol.fit = val.trim();
         else if (a.tol && k === "fshow") { if (val === "code") delete a.tol.show; else a.tol.show = val as Tol["show"]; }

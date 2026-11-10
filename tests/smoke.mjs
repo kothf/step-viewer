@@ -4851,6 +4851,14 @@ try {
     await dp.selectOption('#drw .drw-props [data-d="arrows"]', "");
     const len2b = await dimLine();
     check(len1 > len0 + 5 && Math.abs(len2b - len0) < 1e-6, `drawing: a linear dimension's arrows go outside by hand and back (${[len0, len1, len2b].map(v => v.toFixed(1)).join(" → ")})`);
+    // Text below (FR-DRW-021): a second line under the dimension line, gone again when cleared.
+    await dp.fill('#drw .drw-props [data-d="below"]', "2 PLACES"); await dp.dispatchEvent('#drw .drw-props [data-d="below"]', "change");
+    await dp.waitForTimeout(100);
+    const below1 = await dp.evaluate(() => { const ps = window.__sv.drw.prims().filter(q => q.t === "t" && q.layer === "ANNOT"); const b = ps.find(q => q.s === "2 PLACES"), m = ps.find(q => q.s === "100±0.1"); return b && m ? [m.y - b.y, b.h] : null; });
+    await dp.fill('#drw .drw-props [data-d="below"]', ""); await dp.dispatchEvent('#drw .drw-props [data-d="below"]', "change");
+    await dp.waitForTimeout(100);
+    const below2 = (await texts()).includes("2 PLACES");
+    check(!!below1 && below1[0] > below1[1] && !below2, `drawing: a dimension takes a second line of text under its line and loses it again (${JSON.stringify(below1)})`);
     // ISO 286 fit (FR-DRW-021): the Ø16 takes H7, shown with its deviations from the table (+0.018 / 0).
     const dia = await dp.evaluate(() => { const p = window.__sv.drw.prims().find(q => q.t === "t" && q.layer === "ANNOT" && q.s === "Ø16"); return p && [p.x, p.y + p.h / 2]; });
     [x, y] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), dia);
