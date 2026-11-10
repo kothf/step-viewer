@@ -4916,6 +4916,15 @@ try {
     await dp.selectOption('.drw-props [data-d="nborder"]', "");
     const nb2 = { arcs: await arcsOf(), has: "border" in (await annots()).find(a => a.t === "note" && !a.view) };
     check(nb1.border === "circle" && nb1.arcs === arcs0 + 1 && nb2.arcs === arcs0 && !nb2.has, `drawing: a note takes a circle border and loses it again (${JSON.stringify([arcs0, nb1, nb2])})`);
+    // Note justification (FR-DRW-023): centred text keeps the block, the lines move to its middle.
+    const noteText = () => dp.evaluate(() => { const p = window.__sv.drw.prims().find(p => p.t === "t" && p.s === "BREAK SHARP EDGES"); return p && { x: p.x, al: p.al }; });
+    const nt0 = await noteText();
+    await dp.selectOption('.drw-props [data-d="nal"]', "c");
+    const nt1 = await noteText(), nal1 = (await annots()).find(a => a.t === "note" && !a.view)?.al;
+    await dp.selectOption('.drw-props [data-d="nal"]', "");
+    const nt2 = await noteText(), nal2 = "al" in (await annots()).find(a => a.t === "note" && !a.view);
+    check(nt0?.al === "l" && nt1?.al === "c" && nt1.x > nt0.x + 5 && nal1 === "c" && nt2?.al === "l" && Math.abs(nt2.x - nt0.x) < 1e-6 && !nal2,
+      `drawing: a note's text is centred and set left again (${JSON.stringify([nt0?.x, nt1?.x, nt1?.al, nal1, nal2])})`);
     // The worker reads holes from the geometry too (FR-DRW-022): the Ø16 cut is a one-piece stack open at both ends.
     const geoHoles = await dp.evaluate(() => window.__sv.drw.holes());
     check(geoHoles.some(h => h.segs === 1 && h.open[0] && h.open[1]), `drawing: holes read from the geometry (${JSON.stringify(geoHoles)})`);
@@ -8332,7 +8341,7 @@ try {
     await ctx.close();
   }
 
-  // --- 1.417: Selected Contours: extrude regions of a sketch whose lines cross or branch (FR-FT-010) ---
+  // --- 1.419: Selected Contours: extrude regions of a sketch whose lines cross or branch (FR-FT-010) ---
   if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
@@ -8367,7 +8376,7 @@ try {
     await settle();
     const done = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(x => x.type === "extrude"); return { contours: f.contours?.length, v: Math.round(window.__sv.model.last().props?.volume ?? 0), faces: window.__sv.model.last().data?.faces?.length ?? 0 }; });
     check(/focus/.test(open0.box ?? "") && open0.help === "contours" && one.n === 1 && !one.bad && one.v === 18000 && done.contours === 1 && done.v === 18000,
-      `model 1.417: Extrude on a sketch with a line across opens Selected Contours, a click in the view picks one region (FR-FT-010) (${JSON.stringify({ open0, one, done })})`);
+      `model 1.419: Extrude on a sketch with a line across opens Selected Contours, a click in the view picks one region (FR-FT-010) (${JSON.stringify({ open0, one, done })})`);
     await ctx.close();
   }
 
