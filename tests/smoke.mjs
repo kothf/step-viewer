@@ -4824,6 +4824,14 @@ try {
     tx = await texts();
     check(txRef.includes("(100±0.1)") && !txBasic.some(s => /±/.test(s)) && thin1 === thin0 + 4 && tx.includes("100±0.1"),
       `drawing: a reference dimension is in parentheses, a basic one boxed without tolerance (${txRef.filter(s => /\(/.test(s)).join(" ")}; ${thin0} → ${thin1} lines)`);
+    // Arrows outside by hand (FR-DRW-021): the dimension line grows past both extension lines; Auto puts them back.
+    const dimLine = () => dp.evaluate(() => Math.max(...window.__sv.drw.prims().filter(q => q.t === "l" && q.layer === "ANNOT" && Math.abs(q.p[1] - q.p[3]) < 1e-6).map(q => Math.abs(q.p[2] - q.p[0]))));
+    const len0 = await dimLine();
+    await dp.selectOption('#drw .drw-props [data-d="arrows"]', "out");
+    const len1 = await dimLine();
+    await dp.selectOption('#drw .drw-props [data-d="arrows"]', "");
+    const len2b = await dimLine();
+    check(len1 > len0 + 5 && Math.abs(len2b - len0) < 1e-6, `drawing: a linear dimension's arrows go outside by hand and back (${[len0, len1, len2b].map(v => v.toFixed(1)).join(" → ")})`);
     // ISO 286 fit (FR-DRW-021): the Ø16 takes H7, shown with its deviations from the table (+0.018 / 0).
     const dia = await dp.evaluate(() => { const p = window.__sv.drw.prims().find(q => q.t === "t" && q.layer === "ANNOT" && q.s === "Ø16"); return p && [p.x, p.y + p.h / 2]; });
     [x, y] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), dia);
