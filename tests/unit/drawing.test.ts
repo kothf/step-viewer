@@ -1733,3 +1733,27 @@ test("1.481: hole stacks per solid; a pin in a hole or a plate on top does not c
     assert.ok(Math.abs(h.segs.at(-1)!.v1 - h.segs[0].v0 - 20) < 1e-6);
   }
 });
+
+test("1.482: a model snapshot (BREP text) reads back with its components in order and the same views", async () => {
+  const { oc, shape, names } = await block();
+  const { shapeBrep, childShapes, readShape, topology } = await import("../../src/kernel/drawing");
+  const tr = new oc.gp_Trsf_1();
+  tr.SetTranslation_1(new oc.gp_Vec_4(0, 0, 20));
+  const top = shape.Moved(new oc.TopLoc_Location_2(tr), false);
+  const pin = new oc.BRepPrimAPI_MakeCylinder_3(new oc.gp_Ax2_3(new oc.gp_Pnt_3(10, 0, -5), new oc.gp_Dir_4(0, 0, 1)), 5, 50).Shape();
+  const b = new oc.BRep_Builder(), comp = new oc.TopoDS_Compound();
+  b.MakeCompound(comp);
+  for (const s of [pin, shape, top]) b.Add(comp, s);
+  const back = readShape(oc, new TextEncoder().encode(shapeBrep(oc, comp)), "snap.brep");
+  const kids = childShapes(oc, back);
+  assert.equal(kids.length, 3);
+  const vol = (s: any) => { const p = new oc.GProp_GProps_1(); oc.BRepGProp.VolumeProperties_1(s, p, false, false, false); return p.Mass(); };
+  const zc = (s: any) => { const p = new oc.GProp_GProps_1(); oc.BRepGProp.VolumeProperties_1(s, p, false, false, false); return p.CentreOfMass().Z(); };
+  assert.ok(Math.abs(vol(kids[0]) - Math.PI * 25 * 50) < 1e-6);
+  assert.ok(Math.abs(zc(kids[2]) - zc(kids[1]) - 20) < 1e-9);
+  const all = [...names.map(n => `a@${n}`), ...names.map(n => `b@${n}`)];
+  const r = (x: unknown) => JSON.stringify(x, (_k, v) => typeof v === "number" ? +v.toFixed(6) : v);
+  assert.equal(r(topology(oc, back, all)), r(topology(oc, comp, all)));
+  const view = { dir: [0, -1, 0] as V3, up: [0, 0, 1] as V3 };
+  assert.equal(r(project(oc, back, view).vis), r(project(oc, comp, view).vis));
+});

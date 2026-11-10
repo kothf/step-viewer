@@ -54,6 +54,20 @@ export function viewAxes(v: ViewDir): { x: V3; y: V3; n: V3 } {
   return { x, y: cross(n, x), n };
 }
 
+/** A shape as BREP text (no triangulation), read back by `readShape(oc, bytes, "x.brep")`; compound children keep their order. */
+export function shapeBrep(oc: any, shape: any): string {
+  const path = `/drw-${Math.random().toString(36).slice(2)}.brep`;
+  oc.BRepTools.Write_4(shape, path, false, false, oc.TopTools_FormatVersion.TopTools_FormatVersion_CURRENT, new oc.Message_ProgressRange_1());
+  try { return oc.FS.readFile(path, { encoding: "utf8" }); } finally { oc.FS.unlink(path); }
+}
+
+/** A compound's direct children in order. */
+export function childShapes(oc: any, shape: any): any[] {
+  const out: any[] = [];
+  for (const it = new oc.TopoDS_Iterator_2(shape, true, true); it.More(); it.Next()) out.push(it.Value());
+  return out;
+}
+
 /** Reads STEP / IGES / BREP bytes into one shape (all roots in a compound). */
 export function readShape(oc: any, bytes: Uint8Array, name: string): any {
   const ext = name.split(".").pop()?.toLowerCase() ?? "";

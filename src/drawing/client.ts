@@ -4,7 +4,7 @@
 import { compile } from "../kernel/client";
 import type { FlatBend } from "../sheetmetal/sheet";
 import type { GeomDiff, Projection, Topo, V3, ViewDir } from "../kernel/drawing";
-import type { DiffSrc } from "./drawing.worker";
+import type { DiffSrc, ModelSnap } from "./drawing.worker";
 import type { CutInfo, HoleInfo, ModelItem, SketchInfo, ThreadInfo, WeldInfo } from "./items";
 import type { PartDoc } from "../model/types";
 import type { AsmDoc } from "../asm/types";
@@ -124,6 +124,8 @@ export class DrawingKernel {
   helped = 0;
   /** The loaded model, for starting the worker over (`recycle`). */
   private src: { part?: PartDoc; asm?: AsmDoc; file?: { name: string; bytes: Uint8Array } } | null = null;
+  /** The full load's shape as BREP (worker `ModelSnap`): a restart and the helper read it instead of building the model. */
+  private snap: ModelSnap | null = null;
   private wantRecycle = false;
   private recycling: Promise<void> | null = null;
   /** Times the main worker was started over (for tests). */
@@ -185,7 +187,7 @@ export class DrawingKernel {
     // Loaded lite: the facts (topology, items, tables) are known already, and skipping them saves a good part
     // of the restart on a big assembly.
     const gen = this.gen;
-    const done = this.start().then(() => this.call<void>({ type: "load", ...src, lite: true }));
+    const done = this.start().then(() => this.call<void>({ type: "load", ...src, lite: true, snap: this.snap ?? undefined }));
     this.recycling = done.then(() => undefined, () => undefined).then(() => { this.recycling = null; this.onRestart?.(); if (gen === this.gen) this.pump(); });
     this.onRestart?.();
     return this.recycling;
@@ -193,6 +195,7 @@ export class DrawingKernel {
 
   stop() {
     this.src = null;
+    this.snap = null;
     this.wantRecycle = false;
     this.stopHelper();
     for (const j of this.jobs.splice(0)) j.reject(new Error("The drawing kernel stopped"));
@@ -221,11 +224,15 @@ export class DrawingKernel {
     this.configs.clear();
     this.cfgLoading.clear();
     this.src = src;
+    this.snap = null;
     this.wantRecycle = false;
     // The helper only for models under FAST_EDGES: a second copy of a big assembly can run the tab out of memory
     // (drawings exam: an engine tab crashed after Standard 3 views); big ones take the fast path anyway.
     const gen = this.gen;
-    this.loaded = this.start().then(() => this.call<ModelFacts>({ type: "load", ...src })).then(facts).then(f => {
+    this.loaded = this.start().then(() => this.call<ModelFacts & { snap?: ModelSnap }>({ type: "load", ...src })).then(r => {
+      if (gen === this.gen) this.snap = r.snap ?? null;
+      return facts(r);
+    }).then(f => {
       if (gen === this.gen) { if (f.topo.edges.length < FAST_EDGES) this.loadHelper(src); else this.stopHelper(); }
       return f;
     });
@@ -239,7 +246,7 @@ export class DrawingKernel {
     const gen = this.gen;
     h.loaded = false;
     h.gen = gen;
-    h.ready.then(() => h.call({ type: "load", ...src, lite: true })).then(() => {
+    h.ready.then(() => h.call({ type: "load", ...src, lite: true, snap: this.snap ?? undefined })).then(() => {
       if (h.gen !== gen || h.dead) return;
       h.loaded = true;
       this.pump();
@@ -261,7 +268,7 @@ export class DrawingKernel {
   }
 
   /** For tests: whether the helper worker is up and has the model, and how many projections it made. */
-  helperState() { return { on: !!this.helper, loaded: !!this.helper?.loaded, helped: this.helped, recycles: this.recycles }; }
+  helperState() { return { on: !!this.helper, loaded: !!this.helper?.loaded, helped: this.helped, recycles: this.recycles, snap: this.snap?.brep.length ?? 0 }; }
 
   /** An exact projection or section, run by whichever worker is free first. */
   private exact<T>(msg: Record<string, unknown>): Promise<T> {
