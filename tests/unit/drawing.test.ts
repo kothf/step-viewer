@@ -1335,7 +1335,7 @@ test("a dimension can hide extension lines and keep its text horizontal in the l
 });
 
 test("a dimension can carry a second line of text under its line (FR-DRW-021)", async () => {
-  const { dimPrims, dimGeo, wholeCircle } = await import("../../src/drawing/annot");
+  const { dimPrims, dimGeo, wholeCircle, edgeOnSeg, outlineSeg } = await import("../../src/drawing/annot");
   const lin = { id: "a", t: "dim" as const, view: "v", k: "h" as const, refs: [], pos: [20, 15] as [number, number] };
   const pl = { s: 1, uc: 0, vc: 0, x: 0, y: 0 } as never;
   const geo = { k: "h" as const, pts: [[0, 0], [40, 0]] as [number, number][], value: 40 };
@@ -1397,6 +1397,26 @@ test("a dimension can carry a second line of text under its line (FR-DRW-021)", 
     assert.ok(ls.some(p => Math.abs(p[0] + 10) < 1e-9 && Math.abs(p[2] + 10) < 1e-9) && ls.some(p => Math.abs(p[0] - 10) < 1e-9 && Math.abs(p[2] - 10) < 1e-9), "extension lines at both ends of the line");
     assert.ok(ls.some(p => Math.abs(p[1] - 20) < 1e-9 && Math.abs(p[3] - 20) < 1e-9 && Math.abs(Math.abs(p[2] - p[0]) - 20) < 1e-9), "a level dimension line 20 long");
     assert.ok(o.prims.some(q => q.t === "t" && (q as never as { s: string }).s === "Ø20"));
+  }
+  {
+    // A stepped shaft seen from the front (axis along X): Ø20 from x = −80 to 0, Ø24 from 0 to 80, end circles at x = ±80.
+    // Two outline lines (`s`) give their distance (exam #14: 2, not the end circles' centres 160 apart); an end circle seen
+    // edge-on is a line across the axis (exam #3/#10: the overall length).
+    const C = (k: string, x: number, r: number) => ({ k, t: "c", a: [x, r, 0], b: [x, r, 0], m: [x, -r, 0], c: [x, 0, 0], ax: [1, 0, 0], r, sp: 2 * Math.PI });
+    const e1 = C("a|e1", -80, 10), e2 = C("b|e2", 80, 12);
+    const topo = { edges: [e1, e2], cyls: [{ o: [0, 0, 0], ax: [1, 0, 0], r: 10, v0: -80, v1: 0, sp: 2 * Math.PI }, { o: [0, 0, 0], ax: [1, 0, 0], r: 12, v0: 0, v1: 80, sp: 2 * Math.PI }] } as never;
+    const front = (p: number[]) => [p[0], p[1]];
+    const R = (e: { k: string; m: number[] }, s?: 1 | -1) => ({ e: e.k, h: e.m, p: "e", ...(s ? { s } : {}) });
+    const lower = dimGeo({ id: "d", t: "dim", view: "v", k: "al", refs: [R(e1, 1), R(e2, 1)], pos: [0, -30] } as never, front, topo)!;
+    assert.ok(Math.abs(lower.value - 2) < 1e-9, `outline to outline: ${lower.value}`);
+    assert.deepEqual(lower.segs![0], [[-80, 10], [0, 10]]);
+    const across = dimGeo({ id: "d", t: "dim", view: "v", k: "al", refs: [R(e1, 1), R(e1, -1)], pos: [-40, 0] } as never, front, topo)!;
+    assert.ok(Math.abs(across.value - 20) < 1e-9, "both outlines of one cylinder: its diameter");
+    const len = dimGeo({ id: "d", t: "dim", view: "v", k: "h", refs: [R(e1), R(e2)], pos: [0, 30] } as never, front, topo)!;
+    assert.equal(len.value, 160, "edge-on end circles: the overall length");
+    assert.deepEqual(edgeOnSeg(e2 as never, front, topo), [[80, -12], [80, 12]]);
+    assert.equal(edgeOnSeg(e2 as never, (p: number[]) => [p[1], p[2]], topo), null, "end-on: no line");
+    assert.deepEqual(outlineSeg([0, 0], [1, 0], 5, -1, 2, -1), [[-1, -5], [2, -5]]);
   }
   {
     // A hole is dimensioned by its diameter: a whole circle, also when the file gives it as two half circles; other arcs by radius.
