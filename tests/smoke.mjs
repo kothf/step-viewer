@@ -9073,6 +9073,24 @@ try {
     // Blind both ways: 120000 + 100 × (5 + 5); up to next: down to the block, 100 × (5 + 10).
     check(blind.arrows === 2 && blind.v === 121000 && next.end2 === "next" && !next.bad && next.v === 121500 && next.arrows === 1 && done.end2 === "next" && done.v === 121500 && !/[A-Za-z]{3}/.test(ru),
       `model 1.456: extrude Direction 2 with its own end condition (up to next) and its own drag arrow (FR-FT-011) (${JSON.stringify({ blind, next, done, ru })})`);
+    // A draft for each direction (FR-FT-014): the block 20 up and 20 down, Direction 1 drafted 5°, then Direction 2 too.
+    await mp.evaluate(() => window.__sv.modeller.editFeature("e"));
+    await settle();
+    await mp.check('#mc-pm input[data-k="dir2"]');
+    await settle();
+    await mp.check('#mc-pm input[data-k="draftOn"]');
+    await settle();
+    const vol = () => mp.evaluate(() => Math.round(window.__sv.model.last().props?.volume ?? 0));
+    const d1 = { v: await vol(), box: await mp.locator('#mc-pm input[data-k="draft2On"]').count() };
+    await mp.check('#mc-pm input[data-k="draft2On"]');
+    await settle();
+    const d2 = { v: await vol(), angle: await mp.locator('#mc-pm input[data-num="draft2.angle"]').count() };
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await settle();
+    const dd = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(x => x.id === "e"); return { a2: Math.round((f.draft2?.angle.v ?? 0) * 1800 / Math.PI), side2: window.__sv.model.last().faceNames?.filter(n => n.startsWith("e:side2:")).length }; });
+    // Frustum 20 high, 5° in: 120000 − 160·tan5°·400 + 4/3·tan²5°·8000 = 114482 (the pad comes after the edited feature, so it is not built).
+    check(Math.abs(d1.v - 234482) < 4 && d1.box === 1 && Math.abs(d2.v - 228964) < 4 && d2.angle === 1 && dd.a2 === 50 && dd.side2 === 4,
+      `model 1.460: a draft angle for each extrude direction (FR-FT-014) (${JSON.stringify({ d1, d2, dd })})`);
     await ctx.close();
   }
 

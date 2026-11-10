@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.460.0] - 2026-11-10
+## [MINE] - 2026-11-10
 
 ### Fixed
 
@@ -13,6 +13,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - **Ctrl+A** in a sketch selects every sketch entity instead of the page's text (exam #91).
 - A centre-point arc runs the way the mouse went round its centre, so a clockwise arc no longer comes out as the long way round (exam #92).
 - While an early sketch of a finished part is edited, Properties says there are no bodies before that feature instead of "This part is empty" (exam #93).
+
+## [1.460.0] - 2026-11-10
+
+### Added
+
+- **Draft for each extrude direction (FR-FT-014)**: as in SolidWorks, a blind Direction 2 has its own Draft on/off, angle and Draft outward. Each direction now tapers away from the sketch plane on its own: drafting Direction 1 leaves Direction 2 straight, or each gets its own angle. Two-way extrudes drafted before keep their shape and face names.
 
 ## [1.459.0] - 2026-11-10
 
@@ -2778,7 +2784,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.459.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.460.0...HEAD
+[1.460.0]: https://github.com/kothf/step-viewer/compare/v1.459.0...v1.460.0
 [1.459.0]: https://github.com/kothf/step-viewer/compare/v1.458.0...v1.459.0
 [1.458.0]: https://github.com/kothf/step-viewer/compare/v1.457.0...v1.458.0
 [1.457.0]: https://github.com/kothf/step-viewer/compare/v1.456.0...v1.457.0
