@@ -1188,6 +1188,35 @@ test("a note can have a border; the leader starts on it (FR-DRW-023)", async () 
   }
 });
 
+test("a note's lines can be centred or set right, and its leader bent or ended in a dot (FR-DRW-023)", async () => {
+  const { notePrims, NOTE_SHOULDER, textW } = await import("../../src/drawing/annot");
+  const note = { id: "n", t: "note" as const, pos: [0, 0] as [number, number], text: "LONG LINE\nAB" };
+  type T = { t: "t"; x: number; al: string };
+  const texts = (r: { prims: { t: string }[] }) => r.prims.filter(q => q.t === "t") as unknown as T[];
+  const w = textW("LONG LINE", 3.5);
+  const left = notePrims(note, [10, 10], null), mid = notePrims({ ...note, al: "c" }, [10, 10], null), right = notePrims({ ...note, al: "r" }, [10, 10], null);
+  assert.deepEqual(texts(left).map(q => [q.x, q.al]), [[10, "l"], [10, "l"]]);
+  assert.ok(texts(mid).every(q => Math.abs(q.x - (10 + w / 2)) < 1e-9 && q.al === "c"), "centred on the block");
+  assert.ok(texts(right).every(q => Math.abs(q.x - (10 + w)) < 1e-9 && q.al === "r"), "set to the block's right side");
+  assert.deepEqual(mid.box, left.box, "the block stays where it was");
+  // Leader: straight with an arrow by default; bent adds a horizontal shoulder; a dot or nothing replaces the arrow.
+  const lines = (r: { prims: { t: string }[] }) => r.prims.filter(q => q.t === "l") as unknown as { p: number[] }[];
+  const fills = (r: { prims: { t: string }[] }) => (r.prims.filter(q => q.t === "p") as unknown as { fill?: boolean; p: number[] }[]).filter(q => q.fill);
+  const plain = notePrims(note, [10, 10], [60, 40]), bent = notePrims({ ...note, bent: true }, [10, 10], [60, 40]);
+  assert.equal(lines(bent).length, lines(plain).length + 1, "one more line: the shoulder");
+  const sh = lines(bent)[0], lead = lines(bent)[1];
+  assert.ok(Math.abs(sh.p[1] - sh.p[3]) < 1e-9 && Math.abs(sh.p[2] - sh.p[0] - NOTE_SHOULDER) < 1e-9, "shoulder runs level, towards the point");
+  assert.deepEqual([lead.p[0], lead.p[1], lead.p[2], lead.p[3]], [sh.p[2], sh.p[3], 60, 40], "the leader goes on from the shoulder to the point");
+  const toLeft = lines(notePrims({ ...note, bent: true }, [10, 10], [-30, 40]))[0];
+  assert.ok(Math.abs(toLeft.p[2] - toLeft.p[0] + NOTE_SHOULDER) < 1e-9, "a point on the left: the shoulder runs left");
+  const dot = notePrims({ ...note, end: "dot" }, [10, 10], [60, 40]), none = notePrims({ ...note, end: "none" }, [10, 10], [60, 40]);
+  assert.equal(fills(none).length, 0, "no arrow head");
+  assert.equal(fills(dot).length, 1);
+  const dp = fills(dot)[0].p; let cx = 0, cy = 0; for (let i = 0; i < dp.length; i += 2) { cx += dp[i]; cy += dp[i + 1]; }
+  assert.ok(Math.abs(cx / (dp.length / 2) - 60) < 1e-9 && Math.abs(cy / (dp.length / 2) - 40) < 1e-9 && dp.length === 24, "a dot centred on the point");
+  assert.equal(lines(dot).length, lines(plain).length, "the leader line stays");
+});
+
 test("a linear dimension's arrows can be put outside or inside by hand (FR-DRW-021)", async () => {
   const { dimPrims } = await import("../../src/drawing/annot");
   const lin = { id: "a", t: "dim" as const, view: "v", k: "h" as const, refs: [], pos: [20, 15] as [number, number] };
