@@ -88,3 +88,27 @@ test("recognize features: a shaft with a bore in its end comes back as a revolve
   assert.equal(solve(def[0] as SketchFeature).dof, 0);
   close(vol(m, doc([...imp.features, ...def])), vol(m, imp));
 });
+
+test("recognize features: counterbored and countersunk holes come back as Hole Wizard holes, not a hole and a chamfer (FR-FT-102)", async () => {
+  const m = new Modeller(await occ());
+  const H = (id: string, pts: [number, number][], o: object) => ({ id, type: "hole", name: id, plane: { face: { name: "e:end" } }, pts, diameter: { v: 4 }, end: "blind", depth: { v: 12 }, ...o }) as Feature;
+  const imp = imported(m, [...base(),
+    H("h1", [[-20, 10], [-20, -10]], { kind: "cbore", cbDia: { v: 8 }, cbDepth: { v: 4 } }),
+    H("h2", [[0, 10]], { kind: "cbore", cbDia: { v: 7 }, cbDepth: { v: 3 }, end: "through", flat: true }),
+    H("h3", [[20, 10]], { kind: "csink", csDia: { v: 9 }, csAngle: { v: Math.PI / 2 }, end: "through" }),
+    H("h4", [[20, -10]], { kind: "csink", csDia: { v: 8 }, csAngle: { v: (82 * Math.PI) / 180 }, flat: true })]);
+  const v0 = vol(m, imp);
+  const holes = m.recognizeHoles(imp).holes;
+  assert.equal(holes.length, 5);
+  assert.equal(holes.filter(h => h.cb).length, 3);
+  assert.equal(holes.filter(h => h.cs).length, 2);
+  const thru = holes.find(h => h.cb && h.end === "through")!;
+  close(thru.cb!.dia, 7); close(thru.cb!.depth, 3); close(thru.diameter, 4);
+  const sink = holes.find(h => h.cs && h.end === "blind")!;
+  close(sink.cs!.dia, 8); close(sink.cs!.angle, (82 * Math.PI) / 180, 1e-9); close(sink.depth, 12); assert.equal(sink.flat, true);
+  const fs = m.recognizeFeatures(imp);
+  assert.equal(types(fs), "sketch,extrude,delbody,hole,hole,hole,hole");
+  const kinds = fs.filter(f => f.type === "hole").map(f => `${(f as any).kind}:${(f as any).pts.length}`).sort().join();
+  assert.equal(kinds, "cbore:1,cbore:2,csink:1,csink:1");
+  close(vol(m, doc([...imp.features, ...fs])), v0);
+});

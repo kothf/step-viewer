@@ -3321,7 +3321,7 @@ export class Modeller {
    * (blind, with a flat or 118° drilled bottom) or both (through). The faces to fill come back with,
    * for each hole, its plane (the opening face, as it is after the fill) and centre in that frame.
    */
-  recognizeHoles(doc: PartDoc): { faces: FaceRef[]; holes: RecognizedHole[] } {
+  recognizeHoles(doc: PartDoc): { faces: FaceRef[]; holes: RecognizedHole[]; sinks?: string[] } {
     const oc = this.oc;
     const r = this.evaluate(doc);
     const body = r.body;
@@ -3329,29 +3329,35 @@ export class Modeller {
     const tol = Math.max(1e-4, this.size(body.shape) * 1e-6);
     type Cyl = { i: number; o: V3; d: V3; r: number; v0: number; v1: number };
     type Pln = { i: number; o: V3; n: V3 };
-    const cyls: Cyl[] = [], plns: Pln[] = [], cones: { i: number; o: V3; d: V3 }[] = [];
+    type Cone = { i: number; o: V3; d: V3; ends: V3[] };
+    const cyls: Cyl[] = [], plns: Pln[] = [], cones: Cone[] = [];
+    // Material outside a round face: its normal points at the axis.
+    const hollow = (ad: any, face: any, o: V3, d: V3): boolean => {
+      const u = (ad.FirstUParameter() + ad.LastUParameter()) / 2, v = (ad.FirstVParameter() + ad.LastVParameter()) / 2;
+      const pp = new oc.gp_Pnt_1(), du = new oc.gp_Vec_1(), dv = new oc.gp_Vec_1();
+      ad.D1(u, v, pp, du, dv);
+      let n = unit(cross(this.xyz(du), this.xyz(dv)));
+      if (face.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED) n = mul(n, -1);
+      const rel = sub3(this.xyz(pp), o), radial = sub3(rel, mul(d, dot(rel, d)));
+      return dot(n, radial) < 0;
+    };
     body.faces.forEach((face, i) => {
       const ad = new oc.BRepAdaptor_Surface_2(face, true);
       const ty = ad.GetType();
       if (ty === oc.GeomAbs_SurfaceType.GeomAbs_Cylinder) {
         const c = ad.Cylinder(), ax = c.Axis();
         const o = this.xyz(ax.Location()), d = unit(this.xyz(ax.Direction()));
-        // Normal and point at the same parameter (a full round's centroid lies on its axis).
-        const u = (ad.FirstUParameter() + ad.LastUParameter()) / 2, v = (ad.FirstVParameter() + ad.LastVParameter()) / 2;
-        const pp = new oc.gp_Pnt_1(), du = new oc.gp_Vec_1(), dv = new oc.gp_Vec_1();
-        ad.D1(u, v, pp, du, dv);
-        let n = unit(cross(this.xyz(du), this.xyz(dv)));
-        if (face.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED) n = mul(n, -1);
-        const rel = sub3(this.xyz(pp), o), radial = sub3(rel, mul(d, dot(rel, d)));
-        // Material outside: the face normal points at the axis.
-        if (dot(n, radial) >= 0) return;
+        if (!hollow(ad, face, o, d)) return;
         const vs = [ad.FirstVParameter(), ad.LastVParameter()];
         cyls.push({ i, o, d, r: c.Radius(), v0: Math.min(...vs), v1: Math.max(...vs) });
       } else if (ty === oc.GeomAbs_SurfaceType.GeomAbs_Plane) {
         plns.push({ i, o: this.xyz(ad.Plane().Location()), n: this.faceNormalAt(face) });
       } else if (ty === oc.GeomAbs_SurfaceType.GeomAbs_Cone) {
         const ax = ad.Cone().Axis();
-        cones.push({ i, o: this.xyz(ax.Location()), d: unit(this.xyz(ax.Direction())) });
+        const o = this.xyz(ax.Location()), d = unit(this.xyz(ax.Direction()));
+        if (!hollow(ad, face, o, d)) return;
+        const u = ad.FirstUParameter();
+        cones.push({ i, o, d, ends: [ad.FirstVParameter(), ad.LastVParameter()].map(v => this.xyz(ad.Value(u, v))) });
       }
     });
     const onAxis = (p: V3, o: V3, d: V3) => { const q = sub3(p, o); return Math.hypot(...sub3(q, mul(d, dot(q, d)))) < tol * 10; };
@@ -3364,22 +3370,73 @@ export class Modeller {
       if (g) { g.lo = Math.min(g.lo, a, b); g.hi = Math.max(g.hi, a, b); g.faces.push(c.i); }
       else groups.push({ o: c.o, d: c.d, r: c.r, lo: Math.min(a, b), hi: Math.max(a, b), faces: [c.i] });
     }
-    const found: { faces: number[]; open: number; at: V3; end: "blind" | "through"; depth: number; flat: boolean; r: number }[] = [];
+    type Found = { faces: number[]; open: number; at: V3; end: "blind" | "through"; depth: number; flat: boolean; r: number;
+      d: V3; floor?: number; caps: number[]; cs?: { dia: number; angle: number; faces: number[] }; cb?: { dia: number; depth: number } };
+    const found: Found[] = [];
     for (const g of groups) {
-      const P0 = add(g.o, mul(g.d, g.lo)), P1 = add(g.o, mul(g.d, g.hi));
-      // A flat face square to the axis through an end, facing away from the hole: the hole opens there.
-      const cap = (P: V3, out: V3) => plns.find(p => Math.abs(dot(sub3(P, p.o), p.n)) < tol * 10 && dot(p.n, out) > 1 - 1e-6);
-      const floor = (P: V3, up: V3) => plns.find(p => Math.abs(dot(sub3(P, p.o), p.n)) < tol * 10 && dot(p.n, up) > 1 - 1e-6);
-      const open0 = cap(P0, mul(g.d, -1)), open1 = cap(P1, g.d);
-      const len = g.hi - g.lo;
-      if (open0 && open1) { found.push({ faces: g.faces, open: open0.i, at: P0, end: "through", depth: len, flat: true, r: g.r }); continue; }
-      const open = open0 ?? open1;
-      if (!open) continue;
-      const [at, bot, up] = open0 ? [P0, P1, mul(g.d, -1)] : [P1, P0, g.d];
-      const flatFace = floor(bot, up);
-      const cone = cones.find(c => Math.abs(Math.abs(dot(c.d, g.d)) - 1) < 1e-6 && onAxis(c.o, g.o, g.d));
-      if (flatFace) found.push({ faces: [...g.faces, flatFace.i], open: open.i, at, end: "blind", depth: len, flat: true, r: g.r });
-      else if (cone) found.push({ faces: [...g.faces, cone.i], open: open.i, at, end: "blind", depth: len, flat: false, r: g.r });
+      const at = (s: number): V3 => add(g.o, mul(g.d, s));
+      // A flat face square to the axis through a point, facing `out`; of coplanar ones (the floors of two
+      // counterbores side by side) the one that reaches the hole's rim there.
+      const side = unit(Math.abs(g.d[0]) < 0.9 ? cross(g.d, [1, 0, 0]) : cross(g.d, [0, 1, 0]));
+      const plane = (P: V3, out: V3, rim = g.r) => {
+        const ps = plns.filter(p => Math.abs(dot(sub3(P, p.o), p.n)) < tol * 10 && dot(p.n, out) > 1 - 1e-6);
+        if (ps.length < 2) return ps[0];
+        const v = new oc.BRepBuilderAPI_MakeVertex(this.P(add(P, mul(side, rim)))).Vertex();
+        const gap = (p: Pln) => {
+          const d = new oc.BRepExtrema_DistShapeShape_2(v, body.faces[p.i], oc.Extrema_ExtFlag.Extrema_ExtFlag_MIN, oc.Extrema_ExtAlgo.Extrema_ExtAlgo_Grad, new oc.Message_ProgressRange_1());
+          return d.IsDone() ? d.Value() : Infinity;
+        };
+        const best = ps.map(p => ({ p, d: gap(p) })).sort((a, b) => a.d - b.d)[0];
+        return best.d < tol * 10 ? best.p : undefined;
+      };
+      // The cone faces on this axis, each end as (position along the axis, radius).
+      const conesHere = cones.filter(c => Math.abs(Math.abs(dot(c.d, g.d)) - 1) < 1e-6 && onAxis(c.o, g.o, g.d)).map(c => ({
+        i: c.i, ends: c.ends.map(p => { const q = sub3(p, g.o), s = dot(q, g.d); return { s, r: Math.hypot(...sub3(q, mul(g.d, s))) }; }),
+      }));
+      // What closes the hole at one end (s, going out along sign): open on a face, a countersink up to a face, a flat floor or a drill point.
+      const endAt = (s: number, sign: number) => {
+        const out = mul(g.d, sign);
+        const cap = plane(at(s), out);
+        if (cap) return { kind: "open" as const, s, cap: cap.i, faces: [] as number[] };
+        for (const c of conesHere) {
+          const k = c.ends.findIndex(e => Math.abs(e.s - s) < tol * 10 && Math.abs(e.r - g.r) < tol * 10);
+          if (k < 0) continue;
+          const w = c.ends[1 - k], h = (w.s - s) * sign;
+          // A round cone often comes as two half faces: take every face of the same cone.
+          const near = (e: { s: number; r: number }, f: { s: number; r: number }) => Math.abs(e.s - f.s) < tol * 10 && Math.abs(e.r - f.r) < tol * 10;
+          const faces = conesHere.filter(x => x.ends.some(e => near(e, c.ends[k])) && x.ends.some(e => near(e, w))).map(x => x.i);
+          if (h > tol && w.r > g.r + tol) {
+            const top = plane(at(w.s), out, w.r);
+            if (top) return { kind: "open" as const, s: w.s, cap: top.i, faces, cs: { dia: 2 * w.r, angle: 2 * Math.atan2(w.r - g.r, h), faces } };
+          } else if (h > tol && w.r < tol * 10) return { kind: "drill" as const, s, faces };
+        }
+        const floor = plane(at(s), mul(out, -1));
+        if (floor) return { kind: "floor" as const, s, floor: floor.i, faces: [floor.i] };
+        return null;
+      };
+      const e0 = endAt(g.lo, -1), e1 = endAt(g.hi, 1);
+      if (!e0 || !e1) continue;
+      if (e0.kind === "open" && e1.kind === "open") {
+        // Through: it opens on the countersunk end, else the lower one.
+        const [a, b] = e1.cs && !e0.cs ? [e1, e0] : [e0, e1];
+        found.push({ faces: [...g.faces, ...a.faces, ...b.faces], open: a.cap, at: at(a.s), end: "through", depth: Math.abs(b.s - a.s), flat: true, r: g.r,
+          d: g.d, caps: [a.cap, b.cap], ...(a.cs ? { cs: a.cs } : {}) });
+        continue;
+      }
+      const a = e0.kind === "open" ? e0 : e1.kind === "open" ? e1 : null, b = a === e0 ? e1 : e0;
+      if (!a || a.kind !== "open" || b.kind === "open") continue;
+      found.push({ faces: [...g.faces, ...a.faces, ...b.faces], open: a.cap, at: at(a.s), end: "blind", depth: Math.abs(b.s - a.s), flat: b.kind === "floor", r: g.r,
+        d: g.d, caps: [a.cap], ...(b.kind === "floor" ? { floor: b.floor } : {}), ...(a.cs ? { cs: a.cs } : {}) });
+    }
+    // Counterbores: a wider flat-bottomed hole whose floor is where a narrower one on its axis opens.
+    for (const A of [...found]) {
+      if (A.end !== "blind" || A.floor === undefined || A.cs || A.cb) continue;
+      const B = found.find(h => h !== A && !h.cs && !h.cb && h.r < A.r - tol && h.caps.includes(A.floor!) && Math.abs(Math.abs(dot(h.d, A.d)) - 1) < 1e-6 && onAxis(h.at, A.at, A.d));
+      if (!B) continue;
+      found.splice(found.indexOf(B), 1);
+      const far = B.end === "through" ? B.caps.find(c => c !== A.floor) : undefined;
+      found.splice(found.indexOf(A), 1, { ...A, faces: [...A.faces, ...B.faces], end: B.end, depth: A.depth + B.depth, flat: B.flat, r: B.r,
+        floor: B.floor, caps: far !== undefined ? [A.open, far] : [A.open], cb: { dia: 2 * A.r, depth: A.depth } });
     }
     // A face another hole fills cannot hold a hole.
     const filled = new Set(found.flatMap(h => h.faces));
@@ -3395,9 +3452,10 @@ export class Modeller {
       const plane: PlaneRef = { face: { name: body.names[h.open], hint: h.at } };
       const fr = this.planeFrame(plane, after.body, after.frames);
       const q = sub3(h.at, fr.o);
-      return { plane, pt: [dot(q, fr.x), dot(q, fr.y)], diameter: 2 * h.r, end: h.end, depth: h.depth, flat: h.flat };
+      return { plane, pt: [dot(q, fr.x), dot(q, fr.y)], diameter: 2 * h.r, end: h.end, depth: h.depth, flat: h.flat, ...(h.cb ? { cb: h.cb } : {}), ...(h.cs ? { cs: { dia: h.cs.dia, angle: h.cs.angle } } : {}) };
     });
-    return { faces, holes };
+    // The countersink cones, so Recognize Features does not take them for chamfers first.
+    return { faces, holes, sinks: keep.flatMap(h => h.cs ? h.cs.faces.map(i => body.names[i]) : []) };
   }
 
   /**
@@ -3410,14 +3468,14 @@ export class Modeller {
    * it comes in the next round, on the body without the first. The features come back in the order
    * to add them: the Delete Faces of each round, then the blends from the last round to the first.
    */
-  recognizeBlends(doc: PartDoc): Feature[] {
+  recognizeBlends(doc: PartDoc, skip: string[] = []): Feature[] {
     const rounds: RecognizedBlends[] = [];
     const upto = doc.features.slice(0, doc.rollback ?? doc.features.length);
     const id = () => `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
     const at = (fs: Feature[]): PartDoc => ({ ...doc, rollback: null, features: [...upto, ...fs] });
     const dels: Feature[] = [];
     for (let k = 0; k < 8; k++) {
-      const r = this.blendRound(at(dels));
+      const r = this.blendRound(at(dels), skip);
       if (!r.faces.length) break;
       rounds.push(r);
       dels.push({ id: id(), type: "delface", name: "", faces: r.faces } as Feature);
@@ -3516,7 +3574,7 @@ export class Modeller {
     const start = this.evaluate(at([])).body;
     if (!start) return [];
     const v0 = this.volume(start.shape), tol = Math.max(1e-4, this.size(start.shape) * 1e-6) * 100;
-    const B = this.recognizeBlends(at([]));
+    const B = this.recognizeBlends(at([]), this.recognizeHoles(at([])).sinks ?? []);
     const bDel = B.filter(f => f.type === "delface"), blends = B.filter(f => f.type !== "delface");
     const H = this.recognizeHoles(at(bDel));
     const hDel: Feature[] = H.holes.length ? [{ id: id(), type: "delface", name: "", faces: H.faces } as Feature] : [];
@@ -4043,7 +4101,8 @@ export class Modeller {
       ...r.fillets.map(g => ({ id: id(), type: "fillet", name: "", radius: { v: g.radius }, edges: g.edges }) as Feature)];
   }
 
-  private blendRound(doc: PartDoc): RecognizedBlends {
+  /** `skip` = names of faces that are not blends (countersinks Recognize Features gives to the holes). */
+  private blendRound(doc: PartDoc, skip: string[] = []): RecognizedBlends {
     const oc = this.oc;
     const none: RecognizedBlends = { faces: [], fillets: [], chamfers: [] };
     const body = this.evaluate(doc).body;
@@ -4065,6 +4124,7 @@ export class Modeller {
       if (ty === S.GeomAbs_Sphere) { spheres.push(i); return; }
       const cyl = ty === S.GeomAbs_Cylinder, tor = ty === S.GeomAbs_Torus, pln = ty === S.GeomAbs_Plane, cone = ty === S.GeomAbs_Cone;
       if (!cyl && !tor && !pln && !cone) return;
+      if (skip.includes(body.names[i])) return;
       const axis = cyl ? unit(this.xyz(ad.Cylinder().Axis().Direction())) : tor ? unit(this.xyz(ad.Torus().Axis().Direction())) : cone ? unit(this.xyz(ad.Cone().Axis().Direction())) : null;
       // The long edges: straight along the axis (cylinder), circles about the axis (torus), straight (flat).
       const sides: { j: number; m: V3; d: V3; nj: V3; ni: V3; r?: number; z?: number }[] = [];
