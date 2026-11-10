@@ -1877,10 +1877,12 @@ export class DrawingWorkspace {
       </fieldset><div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
     }
     if (a.t === "hole") {
-      const e = refEdge(a.ref, this.factsOf(a.view)?.topo ?? null), auto = e ? holeText(e, this.ctx()).join("\n") : "";
+      const e = refEdge(a.ref, this.factsOf(a.view)?.topo ?? null), auto = e ? holeText(e, this.ctx(), a.count !== false).join("\n") : "";
       return `<fieldset class="pm-group"><legend>${esc(t("Hole callout"))}</legend>
         <label class="drw-f">${esc(t("Text"))}<textarea data-d="htxt" rows="3" translate="no" placeholder="${esc(auto)}">${esc(a.txt ?? "")}</textarea></label>
         <p class="drw-note">${esc(t("Empty: the text comes from the hole."))}</p>
+        <label class="drw-chk"><input type="checkbox" data-d="hcount"${a.count !== false ? " checked" : ""}> ${esc(t("Show the number of holes"))}</label>
+        <label class="drw-f">${esc(t("Text below"))}<input data-d="hbelow" value="${esc(a.below ?? "")}" translate="no"></label>
       </fieldset><div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
     }
     const del = `<div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
@@ -2009,6 +2011,8 @@ export class DrawingWorkspace {
         else if (a.tol && k === "fit") a.tol.fit = val.trim();
         else if (a.tol && k === "fshow") { if (val === "code") delete a.tol.show; else a.tol.show = val as Tol["show"]; }
       } else if (a.t === "hole" && k === "htxt") { if (val.trim()) a.txt = val; else delete a.txt; }
+      else if (a.t === "hole" && k === "hcount") { if ((el as HTMLInputElement).checked) delete a.count; else a.count = false; }
+      else if (a.t === "hole" && k === "hbelow") { if (val.trim()) a.below = val; else delete a.below; }
       else if (a.t === "note" && k === "nprop") { if (val) a.text += `$PRP:"${val}"`; }
       else if (a.t === "sk") {
         const v = num(val);

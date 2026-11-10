@@ -158,7 +158,8 @@ export interface DimAnnot {
 export interface NoteAnnot { id: string; t: "note"; view?: string; pos: [number, number]; text: string; h?: number; leader?: GeoRef; border?: "box" | "round" | "circle"; al?: "c" | "r"; end?: "dot" | "none"; bent?: boolean }
 
 /** A hole callout (FR-DRW-022) on a round edge, from the hole feature when there is one. */
-export interface HoleAnnot { id: string; t: "hole"; view: string; ref: GeoRef; pos: [number, number]; txt?: string }
+/** `count` false leaves the number of equal holes ("4×") out of the automatic text; `below` adds a line under it (e.g. "EQUALLY SPACED"). */
+export interface HoleAnnot { id: string; t: "hole"; view: string; ref: GeoRef; pos: [number, number]; txt?: string; count?: boolean; below?: string }
 
 /** Geometric characteristics (ISO 1101 / ASME Y14.5). */
 export type GSym = "straight" | "flat" | "circ" | "cyl" | "pline" | "psurf" | "par" | "perp" | "ang" | "pos" | "conc" | "sym" | "runout" | "trunout";

@@ -249,7 +249,7 @@ export function holeText(e: MEdge, ctx: AnnotCtx, count = true): string[] {
       if (Math.abs(Math.abs(dot3(h.n, ax)) - 1) > 1e-6) continue;
       const on = h.pts.some(p => { const w = sub3(c, p), along = dot3(w, h.n); return Math.hypot(w[0] - h.n[0] * along, w[1] - h.n[1] * along, w[2] - h.n[2] * along) < 1e-3; });
       if (!on) continue;
-      const H = h.f, n = h.pts.length > 1 ? `${h.pts.length}× ` : "";
+      const H = h.f, n = count && h.pts.length > 1 ? `${h.pts.length}× ` : "";
       const depth = H.end === "through" ? ` ${ctx.label("THRU")}` : H.end === "blind" ? ` ↧${f(H.depth.v)}` : "";
       const lines: string[] = [];
       if (H.kind === "tapped" && H.size) {
@@ -534,7 +534,8 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
 /** Draws a hole callout: a leader to the circle, a shoulder and the lines of text. */
 function holePrims(a: HoleAnnot, e: MEdge, P: (p: V3) => P2, pl: Placement, ctx: AnnotCtx): { prims: Prim[]; box: [number, number, number, number] } {
   const out: Prim[] = [];
-  const lines = a.txt ? a.txt.split("\n") : holeText(e, ctx);
+  const lines = a.txt ? a.txt.split("\n") : holeText(e, ctx, a.count !== false);
+  if (a.below) lines.push(...a.below.split("\n"));
   const C = toSheet(pl, ...P(e.c ?? e.m)), R = (e.r ?? 0) * pl.s, T = toSheet(pl, a.pos[0], a.pos[1]);
   const u = unit2([T[0] - C[0], T[1] - C[1]], [Math.SQRT1_2, Math.SQRT1_2]);
   const tip = add2(C, u, R);
