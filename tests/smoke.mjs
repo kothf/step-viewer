@@ -10602,6 +10602,37 @@ try {
     const hb = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, bends: l.sheet?.bends.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
     const hbWant = 100 * 3 * (154 + 4 * ((Math.PI / 2 - 2) * 3.5));
     check(!hb.bad && hb.bends === 4 && Math.abs(hb.v - hbWant) < 1e-2, `sheet metal: Insert Bends follows a hat section's walls to the brims (${JSON.stringify({ hb, hbWant })})`);
+    // Tab and Slot: a 100 × 50 plate and a separate 3 mm block 1 mm past one end (on the side away from the camera, so
+    // its face towards the plate shows above it). Click the plate's top edge there, then that block face, ✓: two tabs
+    // 10 × (1 + 2) into slots 0.1 bigger all round (2.1 deep: the default height is the thickness).
+    const tsS = await mp.evaluate(() => { const v = window.__sv.viewer; return v.camera.position.x > v.controls.target.x ? -1 : 1; });
+    await mp.evaluate(S => window.__sv.model.store.change("Plate and block", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), L = (id, a, b) => ({ id, t: "line", a, b });
+      const rect = (id, x0, y0, x1, y1) => ({ id, type: "sketch", name: id, plane: { std: "XY" }, rels: [], dims: [], ents: [P(`${id}p1`, x0, y0), P(`${id}p2`, x1, y0), P(`${id}p3`, x1, y1), P(`${id}p4`, x0, y1), L(`${id}l1`, `${id}p1`, `${id}p2`), L(`${id}l2`, `${id}p2`, `${id}p3`), L(`${id}l3`, `${id}p3`, `${id}p4`), L(`${id}l4`, `${id}p4`, `${id}p1`)] });
+      d.features = [
+        rect("s", -50, 0, 50, 50),
+        { id: "b", type: "smbase", name: "Base-Flange1", sketch: "s", thickness: { v: 2 }, radius: { v: 2 }, depth: { v: 20 }, k: 0.5 },
+        S > 0 ? rect("k", 51, -10, 54, 60) : rect("k", -54, -10, -51, 60),
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "k", op: "boss", end: "mid", depth: { v: 20 }, merge: false },
+      ];
+    }), tsS);
+    await settle();
+    await mp.evaluate(() => window.__sv.viewer.fit(false));
+    await mp.waitForTimeout(300);
+    await smMenu("Tab and Slot");
+    for (const p of [[50 * tsS, 25, 2], [51 * tsS, 25, 7]]) {
+      const [x, y] = await scr(p);
+      await mp.mouse.click(x, y);
+      await settle();
+    }
+    const ts0 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { title: document.querySelector("#mc-pm h3")?.textContent, edge: d?.edge ? [...d.edge.faces].sort().join("|") : null, face: d?.face?.name }; });
+    await mp.click("#mc-ok");
+    await settle();
+    const ts1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, panels: l.sheet?.panels.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    const tsWant = 100 * 50 * 2 + 3 * 70 * 20 + 2 * 10 * 3 * 2 - 2 * 10.2 * 2.2 * 2.1;
+    check(ts0.title === "Tab and Slot" && ts0.edge === (tsS > 0 ? "b:p0:sl2|b:p0:top" : "b:p0:sl4|b:p0:top") && ts0.face === (tsS > 0 ? "x:side:kl4" : "x:side:kl2")
+      && !ts1.bad && ts1.panels === 3 && Math.abs(ts1.v - tsWant) < 1e-2,
+      `sheet metal: Tab and Slot grows tabs from the clicked edge through slots in the clicked face (${JSON.stringify({ tsS, ts0, ts1, tsWant })})`);
     await ctx.close();
   }
 

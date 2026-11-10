@@ -14,7 +14,7 @@
 // `…:<edge>` says which panel edge it is without looking at geometry.
 import type { Frame, PartDoc, SketchFeature, V2, V3 } from "../model/types";
 import { inPolygon, loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type Seg } from "../sketch/profile";
-import type { SmGussetFeature, ReliefKind, SmReliefFeature, FormTool, SmFormFeature, SmUnfoldFeature, BendCalc, BendPosition, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "./types";
+import type { SmGussetFeature, ReliefKind, SmReliefFeature, FormTool, SmFormFeature, SmUnfoldFeature, BendCalc, BendPosition, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature, SmTabSlotFeature } from "./types";
 import { isSheetBase } from "./types";
 
 export class SheetError extends Error {
@@ -638,6 +638,70 @@ function planeCut(st: SheetState, id: string, V: V3, n: V3, keep: 1 | -1, gap: n
   if (l < 1e-9) return;
   const k = (dot(n, V) - dot(n, P.M.o) - (st.T / 2) * dot(n, P.M.z)) / l + keep * gap / (2 * l);
   try { P.outer = clipOuter(P.outer, [n2[0] / l, n2[1] / l], k, keep, "miter", 1e-7 * (1 + st.T)); } catch { /* the plane misses the panel */ }
+}
+
+/** A slot to cut: `loop` in the plane at `o` spanned by `u`, `v` (flat coordinates along them), swept `depth` along `w`. */
+export interface SlotCut { o: V3; u: V3; v: V3; w: V3; depth: number; loop: Seg[] }
+
+/** Where the tabs of a tab and slot sit along an edge of length `l`: [start, end] along it. */
+export function tabSpans(l: number, f: Pick<SmTabSlotFeature, "length" | "count" | "offset" | "spacing">): [number, number][] {
+  const L = f.length.v, n = Math.max(1, Math.round(f.count));
+  if (!(L > 1e-6)) throw new SheetError("E-SM-TSLEN", "The tab length must be more than 0.");
+  let cs: number[];
+  if (f.spacing) cs = Array.from({ length: n }, (_, k) => l / 2 + (k - (n - 1) / 2) * f.spacing!.v);
+  else {
+    const e0 = f.offset.v;
+    if (!(e0 >= 0)) throw new SheetError("E-SM-TSOFF", "The edge offset can't be negative.");
+    cs = n === 1 ? [l / 2] : Array.from({ length: n }, (_, k) => e0 + L / 2 + k * (l - 2 * e0 - L) / (n - 1));
+  }
+  const spans = cs.map(c => [c - L / 2, c + L / 2] as [number, number]);
+  const tol = 1e-6 * (1 + l);
+  if (spans.some(([a, b]) => a < -tol || b > l + tol)) throw new SheetError("E-SM-TSFIT", "The tabs don't fit on the edge.");
+  for (let k = 1; k < spans.length; k++) if (spans[k][0] - spans[k - 1][1] < tol) throw new SheetError("E-SM-TSOVER", "The tabs overlap; space them further apart.");
+  return spans;
+}
+
+/**
+ * Tab and slot: each tab is a panel beside the picked edge, in its face's plane, running past the slot face by `height`;
+ * the slots are the tabs' footprints in the slot body grown by the clearance. `slot` is the slot face's plane (outward
+ * normal), found by the kernel; it must face the edge, square to the tabs.
+ */
+export function tabSlot(prev: SheetState, f: SmTabSlotFeature, slot: { o: V3; n: V3 }): { state: SheetState; ops: SheetOp[]; slots: SlotCut[] } {
+  if (!f.edge) throw new SheetError("E-SM-EDGE", "Pick an outside edge of a flat sheet metal face.");
+  const st = clone(prev);
+  const { panel, index } = findEdge(st, f.edge.faces as [string, string]);
+  const seg = panel.outer[index];
+  if (seg.kind !== "line") throw new SheetError("E-SM-TSSTRAIGHT", "Tabs go on a straight edge.");
+  const key = `${panel.id}:${seg.ent}`;
+  if (st.used.includes(key)) throw new SheetError("E-SM-USED", "That edge already has a flange.");
+  const a = seg.a, l = d2(a, seg.b);
+  const e = s2([seg.b[0] - a[0], seg.b[1] - a[1]], 1 / l), o: V2 = [e[1], -e[0]];
+  const M = panel.M, T = st.T;
+  const w3 = applyDir(M, [o[0], o[1], 0]), u3 = applyDir(M, [e[0], e[1], 0]);
+  if (dot(slot.n, w3) > -0.999) throw new SheetError("E-SM-TSFACE", "Pick the flat face the edge looks at, square to the tabs.");
+  const d0 = dot(sub3(slot.o, apply(M, [a[0], a[1], 0])), w3);
+  if (d0 < -1e-6 * (1 + T)) throw new SheetError("E-SM-TSBEHIND", "The slot face is behind the edge.");
+  const H = f.height.v, c = f.clearance.v;
+  if (!(H > 1e-6)) throw new SheetError("E-SM-TSHEIGHT", "The tab height must be more than 0.");
+  if (!(c >= 0)) throw new SheetError("E-SM-TSCLEAR", "The clearance can't be negative.");
+  if (f.round && f.round.v > c * (2 + Math.SQRT2) + 1e-9) throw new SheetError("E-SM-TSROUND", "The slot corner radius is too big for the clearance: a tab's corners would hit it.");
+  const spans = tabSpans(l, f);
+  const P = (t: number, n: number): V2 => [a[0] + t * e[0] + n * o[0], a[1] + t * e[1] + n * o[1]];
+  const ops: SheetOp[] = [];
+  const slots: SlotCut[] = [];
+  spans.forEach(([t0, t1], k) => {
+    const p: Panel = { id: `${f.id}:p${k}`, outer: strip(P(t0, 0), P(t1, 0), o, d0 + H, ["side0", "tip", "side1", "root"]), holes: [], M, n: 0 };
+    st.panels.push(p);
+    ops.push({ kind: "panel", panel: p });
+    const lu = t1 - t0 + 2 * c, lv = T + 2 * c;
+    const r = f.round ? Math.min(f.round.v, (lu / 2) * 0.999, (lv / 2) * 0.999) : 0;
+    const pts: V2[] = [[0, 0], [lu, 0], [lu, lv], [0, lv]];
+    const loop = r > 1e-6 ? filletLoop(pts, r, "slot") : polyLoop(pts, ["s0", "s1", "s2", "s3"]);
+    const q = P(t0 - c, d0);
+    slots.push({ o: apply(M, [q[0], q[1], -c]), u: u3, v: M.z, w: w3, depth: H + c, loop });
+  });
+  st.used.push(key);
+  return { state: st, ops, slots };
 }
 
 /** Hem: a 180° fold, closed (radius next to nothing) or open (radius half the gap). */
