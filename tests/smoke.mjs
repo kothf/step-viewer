@@ -6663,7 +6663,7 @@ try {
     mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
     await mp.goto(`${origin}/index.html?debug`);
     await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
-    await mp.goto(`${origin}/index.html?debug&drwhelper=1`);
+    await mp.goto(`${origin}/index.html?debug&drwhelper=1&drwheap=1`);
     await mp.waitForFunction(() => window.__sv);
     const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
     await mp.click("#new-part");
@@ -6696,6 +6696,10 @@ try {
     const same = two.map(c => c.keys.map((k, i) => `${k}=${c.mats[i]}`).sort().join());
     check(h1 > h0 && same.every(x => x === pairs),
       `drawing 1.476: exact views run on two drawing workers at once, with the same model (${h0} → ${h1}; ${same.join(" | ")})`);
+    // 1.478: this page runs with `drwheap=1`, so the main drawing worker is started over (same model, cache kept)
+    // after every projection; all the checks above ran through such restarts.
+    const rc = await mp.evaluate(() => window.__sv.drw.helper().recycles);
+    check(rc >= 2, `drawing 1.478: a drawing worker past its heap limit starts over with the same model between views (${rc} restarts)`);
     await ctx.close();
   }
 
