@@ -311,6 +311,18 @@ test("GD&T, datums, surface finish, tables, GOST title block, dangling annotatio
   assert.equal(tri.p[5], 3);
   assert.deepEqual(d.box, [6.5, 11.5, 13.5, 18.5]);
   {
+    // Open triangle: an outline, no fill. Bent leader: up from the apex square to the edge, then level to the frame.
+    const o = datumPrims({ id: "d", t: "datum", view: "v", ref: { pt: [0, 0, 0] }, pos: [0, 0], letter: "A", open: true, bent: true }, [10, 0], [1, 0], [30, 15]);
+    assert.ok(!o.prims.some(p => p.t === "p" && p.fill), "no filled triangle");
+    const ls = o.prims.filter(p => p.t === "l") as unknown as { p: number[] }[];
+    assert.equal(ls.length, 2);
+    assert.deepEqual(ls[0].p, [10, 3, 10, 15]);
+    assert.deepEqual(ls[1].p, [10, 15, 26.5, 15]);
+    // Straight above the edge point there is nothing to bend.
+    const st = datumPrims({ id: "d", t: "datum", view: "v", ref: { pt: [0, 0, 0] }, pos: [0, 0], letter: "A", bent: true }, [10, 0], [1, 0], [10, 15]);
+    assert.equal(st.prims.filter(p => p.t === "l").length, 1);
+  }
+  {
     // Text above and below a tolerance frame: left-aligned with it, and inside the hit box.
     const row = { sym: "pos" as const, tol: "0.1", datums: ["A"] };
     const g0 = gtolPrims({ id: "g", t: "gtol", pos: [0, 0], rows: [row] }, [10, 20], null, ".");
