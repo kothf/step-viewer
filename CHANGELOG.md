@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.476.0] - 2026-11-10
+## [1.477.0] - 2026-11-10
 
 ### Fixed (drawings exam, round 3)
 
@@ -15,6 +15,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - After going to the model and back to a drawing, the drawing toolbar's menus (Model view, Section, Detail, Annotate, Export) opened and closed at once and other buttons acted twice: each return added the toolbar's listeners again.
 - Add sheet keeps the sheet format: a user title block and a custom sheet size went back to the standard ISO block and lost their size on the new sheet.
 
+## [1.476.0] - 2026-11-10
+
+### Changed
+
+- **Drawings project two views at once**: on a computer with four or more threads a second drawing worker loads the same model and takes every other exact view or section, so Standard 3 views and other sheets with several views finish sooner. Big models (from 1500 edges, which take the fast views) keep one worker, so a second copy cannot run the tab out of memory. It stops after a minute without work; `?drwhelper=0` turns it off.
+
+### Fixed
+
+- **Fast views of big assemblies came out empty (drawings exam round three)**: an older engine copy got Standard 3 views with only centre lines, because the polygonal hidden-line pass returned no lines. A fast view without visible lines now tries again on a fresh, coarser mesh and then falls back to the exact hidden-line removal, and the console says why.
+- A view that OpenCASCADE fails on no longer shows a bare "OpenCASCADE error 24": the toast gives the kernel's own message when it has one, else says the model may be too big for the browser's memory.
 ## [1.475.0] - 2026-11-10
 
 ### Fixed
@@ -2908,8 +2918,10 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.476.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.477.0...HEAD
+[1.477.0]: https://github.com/kothf/step-viewer/compare/v1.476.0...v1.477.0
 [1.476.0]: https://github.com/kothf/step-viewer/compare/v1.475.0...v1.476.0
+[1.475.0]: https://github.com/kothf/step-viewer/compare/v1.474.0...v1.475.0
 [1.474.0]: https://github.com/kothf/step-viewer/compare/v1.473.0...v1.474.0
 [1.473.0]: https://github.com/kothf/step-viewer/compare/v1.472.0...v1.473.0
 [1.472.0]: https://github.com/kothf/step-viewer/compare/v1.471.0...v1.472.0
