@@ -176,7 +176,7 @@ test("eleventh pass (1.426.0): CuBe2 follows the maker's sheet for the age harde
   assert.equal(m.su, 1140);
 });
 
-test("twelfth pass (1.428.0): ASA and PC/ABS follow named grades' sheets", () => {
+test("twelfth pass (1.429.0): ASA and PC/ABS follow named grades' sheets", () => {
   assert.ok(LIBRARY.filter((m) => m.ref).length >= 149);
   const a = findMaterial("ASA")!;
   assert.ok(a.ref);

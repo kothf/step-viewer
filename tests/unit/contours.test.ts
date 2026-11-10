@@ -89,3 +89,22 @@ test("extrude and revolve selected contours (FR-FT-010)", async () => {
   assert.deepEqual(r.bad, []);
   close(r.v, Math.PI * (100 * 100 - 70 * 70) * 60, 1e-6);
 });
+
+test("planar surface on selected contours (FR-FT-010)", async () => {
+  const m = new Modeller(await occ());
+  const ps = (contours?: [number, number][]): Feature => ({ id: "f1", type: "planesurf", name: "Surface-Plane1", sketch: "s1", ...(contours ? { contours } : {}) });
+  const run = (fs: Feature[]) => {
+    const r = m.evaluate(doc(fs));
+    return { bad: r.statuses.filter(s => !s.ok), area: r.sheets ? m.props(r.sheets).area : 0, faces: r.sheets?.faces.length ?? 0 };
+  };
+  assert.ok(run([crossed(), ps()]).bad.length);
+  let r = run([crossed(), ps([[30, 0]])]);
+  assert.deepEqual(r.bad, []);
+  close(r.area, 30 * 60);
+  r = run([crossed(), ps([[0, 0], [30, 0]])]);
+  close(r.area, 100 * 60);
+  assert.equal(r.faces, 2);
+  const lensArea = 2 * 400 * Math.acos(0.5) - 10 * Math.sqrt(1600 - 400);
+  close(run([lens(), ps([[-25, 10]])]).area, 400 * Math.PI - lensArea - 16 * Math.PI, 1e-5);
+  assert.equal(run([crossed(), ps([[80, 0]])]).bad[0]?.code, "E-SK-CONTOUR");
+});
