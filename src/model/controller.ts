@@ -59,6 +59,7 @@ import { ORIGIN, repairs, solve } from "../sketch/solver";
 import { sketchPath, sketchProfile, textPath } from "../sketch/profile";
 import { regionAt, regionPoint, sketchRegions, type Region } from "../sketch/regions";
 import { SEL_FILTER } from "../tools/Snapper";
+import { bodyMasses } from "../tools/inertia";
 import { units, UNITS } from "../tools/units";
 import { csys } from "../tools/csys";
 import { askFileName, confirmModal, toast, trapFocus } from "../ui";
@@ -5949,6 +5950,7 @@ export class ModelController {
       const key = id.slice(5);
       items.push([this.doc.bodies?.[key]?.hidden ? t("Show body") : t("Hide body"), () => this.setBody(key, { hidden: !this.doc.bodies?.[key]?.hidden })]);
       items.push([t("Rename"), () => this.startRename(id)]);
+      items.push([t("Material…"), () => void this.pickBodyMaterial(key)]);
       if (this.doc.bodies?.[key]?.color) items.push([t("Reset colour"), () => this.setBody(key, { color: undefined })]);
       items.push([t("Delete body"), () => this.deleteBody(key)]);
     }
@@ -6070,22 +6072,39 @@ export class ModelController {
   }
 
   /** Bodies folder actions: show/hide and colour are display state (one undo step each), delete adds a Body-Delete feature. */
-  setBody(key: string, ch: { name?: string; hidden?: boolean; color?: V3 }) {
+  setBody(key: string, ch: { name?: string; hidden?: boolean; color?: V3; material?: MatRef }) {
     if (!this.store) return;
     // A body being hidden leaves a see-through copy, so Shift+Tab / Ctrl+Shift+Tab can find it again (FR-UI-105).
     // (A shown body keeps its ghost: undo may hide it again; only still-hidden bodies are picked.)
     if (ch.hidden === true) this.keepGhost(key);
-    this.store.change(ch.hidden != null ? (ch.hidden ? "Hide body" : "Show body") : "color" in ch ? "Body colour" : "Rename body", d => {
+    this.store.change(ch.hidden != null ? (ch.hidden ? "Hide body" : "Show body") : "color" in ch ? "Body colour" : "material" in ch ? "Body material" : "Rename body", d => {
       const cur = { ...(d.bodies?.[key] ?? {}), ...ch };
       if (!cur.hidden) delete cur.hidden;
       if (!cur.name) delete cur.name;
       if (!cur.color) delete cur.color;
+      if (!cur.material) delete cur.material;
       d.bodies = { ...(d.bodies ?? {}), [key]: cur };
       if (!Object.keys(cur).length) delete d.bodies[key];
       if (!Object.keys(d.bodies).length) delete d.bodies;
     });
     this.renderTree();
     void this.rebuild();
+  }
+
+  /** A body's own material from the library (FR-MAT-001); None gives it the part's again. */
+  async pickBodyMaterial(key: string) {
+    const r = await pickMaterial({ current: this.doc.bodies?.[key]?.material ?? this.doc.material ?? null, allowNone: true });
+    if (r) this.setBody(key, { material: r.material ? toRef(r.material) : undefined });
+  }
+
+  /**
+   * The bodies for mass properties when any has its own material: shown ones (all with `hidden`), each
+   * with its density, `fallback` for bodies without one. Null when no body has a material.
+   */
+  bodyMasses(fallback: number, hidden = false) {
+    const st = this.store?.doc.bodies;
+    if (!st || !Object.values(st).some(b => b.material)) return null;
+    return bodyMasses((this.last?.bodies ?? []).filter(b => hidden || b.faces), k => st[k]?.material?.density, fallback);
   }
 
   deleteBody(key: string) {
