@@ -2097,6 +2097,20 @@ try {
     await mp.fill('#mat-dlg [data-f="E"]', "55");
     await mp.click("#mat-dlg [data-a=save]");
     const own = await mp.evaluate(() => ({ cat: document.querySelector("#mat-dlg .mat-cat.on").dataset.cat, rows: [...document.querySelectorAll("#mat-dlg .mat-list li[data-i] b")].map(e => e.textContent), stored: JSON.parse(localStorage.getItem("mc:materials")) }));
+    // 1.471: My materials to a file and back (FR-MAT-001): the export holds the material; importing it plus one more adds that one and replaces the same name.
+    const [mdl] = await Promise.all([mp.waitForEvent("download"), mp.click("#mat-dlg [data-a=export]")]);
+    const exported = JSON.parse(await readFile(await mdl.path(), "utf8"));
+    const more = { ...exported, materials: [...exported.materials.map(m => ({ ...m, density: 3.4 })), { name: "Cork", density: 0.24 }] };
+    await mp.setInputFiles("#mat-dlg input[data-a=file]", { name: "mine.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(more)) });
+    await mp.waitForFunction(() => JSON.parse(localStorage.getItem("mc:materials")).length === 2);
+    const imp = await mp.evaluate(() => ({ stored: JSON.parse(localStorage.getItem("mc:materials")).map(m => `${m.name}=${m.density}`).join(), rows: [...document.querySelectorAll("#mat-dlg .mat-list li[data-i] b")].map(e => e.textContent).join() }));
+    check(mdl.suggestedFilename() === "my-materials.json" && exported.format === "mobiuscad-materials" && exported.materials[0]?.name === "Сплав 7" && exported.materials[0]?.E === 55 && imp.stored === "Сплав 7=3.4,Cork=0.24" && imp.rows === "Сплав 7,Cork",
+      `model 1.471: My materials export to a file and import back, replacing by name (${JSON.stringify({ name: mdl.suggestedFilename(), exported: exported.materials, imp })})`);
+    // The import selected Cork: delete it, then pick Сплав 7 again for the deletion below.
+    await mp.click("#mat-dlg [data-a=del]");
+    await mp.click("#confirm [data-a=ok]");
+    await mp.waitForFunction(() => !document.querySelector("#confirm").open && JSON.parse(localStorage.getItem("mc:materials")).length === 1);
+    await mp.click('#mat-dlg .mat-list li[data-i]:has-text("Сплав 7")');
     await mp.click("#mat-dlg [data-a=del]");
     await mp.click("#confirm [data-a=ok]");
     await mp.waitForFunction(() => !document.querySelector("#confirm").open && JSON.parse(localStorage.getItem("mc:materials")).length === 0);
@@ -5801,7 +5815,7 @@ try {
       { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", -w / 2, -h / 2), P("p2", w / 2, -h / 2), P("p3", w / 2, h / 2), P("p4", -w / 2, h / 2),
         { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }] },
       { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: d } }] });
-    const pin = { schema: 1, kind: "part", id: "pin", name: "Pin", units: { length: "mm", decimals: 2 }, props: { partNumber: "PN-7", description: "Dowel pin" }, rollback: null, features: [
+    const pin = { schema: 1, kind: "part", id: "pin", name: "Pin", units: { length: "mm", decimals: 2 }, props: { partNumber: "PN-7", description: "Dowel pin" }, material: { name: "Steel S235", density: 7.85 }, rollback: null, features: [
       { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("c0", 0, 0), { id: "c1", t: "circle", c: "c0", r: 4 }] },
       { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 15 } }] };
     const T = (x, y, z) => [1, 0, 0, x, 0, 1, 0, y, 0, 0, 1, z];
@@ -5827,7 +5841,7 @@ try {
     await tool("bom");
     await dp.waitForTimeout(150);
     let tx = await texts();
-    const bomOk = ["Item", "Part number", "Description", "Qty", "Plate", "PN-7", "Dowel pin"].every(s => tx.includes(s)) && tx.includes("2");
+    const bomOk = ["Item", "Part number", "Description", "Qty", "Material", "Plate", "PN-7", "Dowel pin", "Steel S235"].every(s => tx.includes(s)) && tx.includes("2");
     // Auto balloon on the front view: one balloon per item, numbered 1 and 2.
     await dp.keyboard.press("Escape");
     const [fx, fy] = await at(front, 0, 10);
@@ -6670,6 +6684,10 @@ try {
     const pairs = cut.keys.map((k, i) => `${k}=${cut.mats[i]}`).sort().join();
     check(pairs === "body0=Steel S235,body1=Titanium Ti-6Al-4V",
       `drawing 1.462: a section hatches each body by its own material, the part's for the rest (FR-MAT-001) (${pairs})`);
+    // 1.471: the title block lists the bodies' materials and weighs each body with its own density (40×20×10 steel + Ø10×10 titanium = 0.066 kg).
+    const tb = await mp.evaluate(() => window.__sv.drw.fields());
+    check(tb.material === "Steel S235, Titanium Ti-6Al-4V" && tb.mass === "0.066 kg",
+      `drawing 1.471: the title block's material and mass follow each body's material (FR-MAT-001) (${tb.material}; ${tb.mass})`);
     await ctx.close();
   }
 
