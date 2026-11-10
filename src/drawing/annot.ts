@@ -5,7 +5,7 @@
 // 3.5 mm text above the dimension line, reading from the bottom or the right.
 import { viewAxes, type MCyl, type MEdge, type MHole, type Seg2, type Topo, type V3, type ViewDir } from "../kernel/drawing";
 import type { FlatBend } from "../sheetmetal/sheet";
-import { arrowHead, clipToCircle, decorPrims, toSheet, type Placement } from "./compose";
+import { arrowHead, decorPrims, toSheet, type Placement } from "./compose";
 import type { CutInfo, HoleInfo, ModelItem, SketchInfo, ThreadInfo, WeldInfo } from "./items";
 import { PEN_W, rotateBox, rotatePrims, type Prim } from "./prims";
 import { balloonPrims, bomCells, compOfKey, type Bom } from "./bom";
@@ -14,6 +14,7 @@ import type { BendTableAnnot, CLineAnnot, CloudAnnot, DimAnnot, DraftStyle, Draw
 import { topoOnly, viewDir, viewOnly, viewReq } from "./views";
 import { fitLimits } from "./iso286";
 import { weldPrims } from "./weld";
+import { frameOf } from "./sheet";
 import { dtargetPrims } from "./dtarget";
 import { skPrims } from "./sheetSketch";
 import { textWidth } from "./textWidth";
@@ -24,6 +25,8 @@ export type Label = (s: string, p?: Record<string, string>) => string;
 /** What annotations need from the model and the UI. */
 export interface AnnotCtx {
   topo: Topo | null; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; bends?: FlatBend[]; welds?: WeldInfo[]; cuts?: CutInfo[]; cutFaces?: Record<string, number>; weldFaces?: Record<string, number>; items: ModelItem[]; box: [V3, V3] | null; dec: string; label: Label; bom?: Bom | null;
+  /** A part drawing with neither a BOM nor a cut list: every balloon is item 1, as in SolidWorks. */
+  single?: boolean;
   /** A view that shows another part configuration (FR-DRW-010) gets that configuration's topology and model items. */
   forView?: (v: DrawingView) => Partial<AnnotCtx> | null;
 }
@@ -128,6 +131,15 @@ export function outlineSeg(o: P2, ad: P2, r: number, v0: number, v1: number, s: 
   return [[o[0] + ad[0] * v0 + dl[0], o[1] + ad[1] * v0 + dl[1]], [o[0] + ad[0] * v1 + dl[0], o[1] + ad[1] * v1 + dl[1]]];
 }
 
+/** The line a `GeoRef` stands for in the view: a straight edge, a cylinder's outline seen from the side (`s`), or a circle seen edge-on. */
+export function refLine(r: GeoRef, P: (p: V3) => P2, topo: Topo | null): [P2, P2] | null {
+  if ("pt" in r || r.p !== "e") return null;
+  const e = refEdge(r, topo);
+  if (!e) return null;
+  if (e.t === "l") return [P(e.a), P(e.b)];
+  return r.s ? outlineOf(e, r.s, P, topo) : edgeOnSeg(e, P, topo);
+}
+
 /** The cylinder outline a `GeoRef` with `s` names: the side line of the cylinder the circle bounds (a short piece when none is found). */
 function outlineOf(e: MEdge, s: 1 | -1, P: (p: V3) => P2, topo: Topo | null): [P2, P2] | null {
   if (e.t !== "c" || !e.c || !e.r || !e.ax) return null;
@@ -223,14 +235,7 @@ export function dimGeo(a: DimAnnot, P: (p: V3) => P2, topo: Topo | null): DimGeo
   // Linear: two points, or the two ends of one line; a line and a point or two parallel lines: the square distance.
   const pts: P2[] = [];
   let segs: ([P2, P2] | null)[] | undefined;
-  const lineOf = (r: GeoRef): [P2, P2] | null => {
-    if ("pt" in r || r.p !== "e") return null;
-    const e = refEdge(r, topo);
-    if (!e) return null;
-    if (e.t === "l") return [P(e.a), P(e.b)];
-    // A cylinder's outline seen from the side, or a circle seen edge-on: both are lines in the view.
-    return r.s ? outlineOf(e, r.s, P, topo) : edgeOnSeg(e, P, topo);
-  };
+  const lineOf = (r: GeoRef) => refLine(r, P, topo);
   const foot = (p: P2, l: [P2, P2]): P2 => { const [u, v] = l, dx = v[0] - u[0], dy = v[1] - u[1], L2 = dx * dx + dy * dy || 1, t = ((p[0] - u[0]) * dx + (p[1] - u[1]) * dy) / L2; return [u[0] + dx * t, u[1] + dy * t]; };
   if (a.refs.length === 1) { const l = lineOf(a.refs[0]); if (!l) return null; pts.push(l[0], l[1]); }
   else {
@@ -861,7 +866,7 @@ export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: Ann
       // A weld tag numbers the bead's row in the weld table.
       const e = refEdge(a.ref, ctx.topo), item = "e" in a.ref ? (a.weld ? weldItem(a.ref.e, ctx) : edgeItem(a.ref.e, ctx)) : null;
       const more = (a.stack ?? []).map(sc => String(stackItem(sc, ctx) ?? "?"));
-      const qty = (n: number | null) => !n ? "" : a.weld ? String(ctx.welds?.[n - 1]?.qty ?? "") : ctx.bom ? String(ctx.bom.rows.find(x => x.item === n)?.qty ?? "") : String(ctx.cuts?.find(x => x.item === n)?.qty ?? "");
+      const qty = (n: number | null) => !n ? "" : a.weld ? String(ctx.welds?.[n - 1]?.qty ?? "") : ctx.bom ? String(ctx.bom.rows.find(x => x.item === n)?.qty ?? "") : ctx.single ? "1" : String(ctx.cuts?.find(x => x.item === n)?.qty ?? "");
       r = balloonPrims(toSheet(pl, a.pos[0], a.pos[1]), e ? toSheet(pl, ...P(e.m)) : null, a.txt || (item ? String(item) : "?"), more, { shape: a.shape, lower: a.shape === "split" ? [item, ...(a.stack ?? []).map(k => stackItem(k, ctx))].map(qty) : undefined });
       if (!e || (!a.txt && !item)) out.dangling.push(a.id);
     } else if (a.t === "btable") {
@@ -899,7 +904,8 @@ export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: Ann
       r = surfOn(a, T, f, ctx.dec);
       if (a.ref && !f) out.dangling.push(a.id);
     }
-    if (r) { out.prims.push(...r.prims); out.hits.push({ id: a.id, box: r.box }); }
+    // A split parts list is picked on its blocks, not on the empty corner between them.
+    if (r) { out.prims.push(...r.prims); const bx = (r as { boxes?: [number, number, number, number][] }).boxes; for (const box of bx && bx.length > 1 ? bx : [r.box]) out.hits.push({ id: a.id, box }); }
   }
   return out;
 }
@@ -923,10 +929,11 @@ export function clineSegs(a: CLineAnnot, P: (p: V3) => P2, topo: Topo | null, pl
   }
   if (a.refs.length < 2) return null;
   const e0 = refEdge(a.refs[0], topo), e1 = refEdge(a.refs[1], topo);
-  const isLine = (r: GeoRef, e: MEdge | null): e is MEdge => !!e && "p" in r && r.p === "e" && e.t === "l";
+  // Lines: straight edges, cylinder outlines (a hole's hidden lines) and circles seen edge-on (drawings exam #16).
+  const l0 = e0 ? refLine(a.refs[0], P, topo) : null, l1 = e1 ? refLine(a.refs[1], P, topo) : null;
   let A: P2, B: P2;
-  if (isLine(a.refs[0], e0) && isLine(a.refs[1], e1)) {
-    const a0 = P(e0.a), b0 = P(e0.b), a1 = P(e1.a), b1 = P(e1.b);
+  if (l0 && l1) {
+    const [a0, b0] = l0, [a1, b1] = l1;
     if (d2(a0, b0) < 1e-9 || d2(a1, b1) < 1e-9) return null;
     const d = unit2([b0[0] - a0[0], b0[1] - a0[1]]), w = unit2([b1[0] - a1[0], b1[1] - a1[1]]);
     if (Math.abs(d[0] * w[1] - d[1] * w[0]) > 1e-4) return null;
@@ -1047,8 +1054,9 @@ export function sheetNotes(sheet: Sheet, label: Label = s => s, dec = ".", bom?:
       continue;
     }
     const r = a.t === "weld" ? weldPrims(a, a.pos, null) : a.t === "dtarget" ? dtargetPrims(a, a.pos, null) : a.t === "note" ? notePrims(a, a.pos, null) : a.t === "gtol" ? gtolPrims(a, a.pos, null, dec)
-      : a.t === "surf" ? surfPrims(a, a.pos, dec) : a.t === "table" ? tablePrims(a.kind === "bom" ? { ...a, rows: bom ? bomCells(bom) : [] } : a, label) : null;
-    if (r) { out.prims.push(...r.prims); out.hits.push({ id: a.id, box: r.box }); }
+      : a.t === "surf" ? surfPrims(a, a.pos, dec) : a.t === "table" ? tablePrims(a.kind === "bom" ? { ...a, rows: bom ? bomCells(bom) : [] } : a, label, a.anchor === "br" ? frameOf(sheet)[3] - a.pos[1] : Infinity) : null;
+    // A split parts list is picked on its blocks, not on the empty corner between them.
+    if (r) { out.prims.push(...r.prims); const bx = (r as { boxes?: [number, number, number, number][] }).boxes; for (const box of bx && bx.length > 1 ? bx : [r.box]) out.hits.push({ id: a.id, box }); }
   }
   return out;
 }
@@ -1186,13 +1194,9 @@ export function centreMarks(v: DrawingView, pl: Placement, topo: Topo, P: (p: V3
     const L = q.r + ext;
     segs.push({ k: "l", c: 0, p: [c[0] - L, c[1], c[0] + L, c[1]] }, { k: "l", c: 0, p: [c[0], c[1] - L, c[0], c[1] + L] });
   }
-  const kept = v.kind === "detail" && v.c && v.r ? clipToCircle(segs, v.c, v.r) : segs;
-  const out: Prim[] = [];
-  for (const g of kept) {
-    if (g.k === "l") { const a = toSheet(pl, g.p[0], g.p[1]), b = toSheet(pl, g.p[2], g.p[3]); out.push({ t: "l", p: [a[0], a[1], b[0], b[1]], pen: "center", layer: "CENTER" }); }
-    else if (g.k === "p") { const p: number[] = []; for (let i = 0; i + 1 < g.p.length; i += 2) p.push(...toSheet(pl, g.p[i], g.p[i + 1])); out.push({ t: "p", p, pen: "center", layer: "CENTER" }); }
-  }
-  return out;
+  // Clipped and closed up like the view's edges: a detail's circle or profile, a crop, breaks (drawings exam round 2:
+  // a cropped section still drew the axis of a hole the crop left out).
+  return decorPrims(v, pl, segs, "center", "CENTER");
 }
 
 /**
@@ -1490,8 +1494,9 @@ export function weldRows(a: WeldTableAnnot, welds: WeldInfo[], ctx: AnnotCtx): s
 }
 
 /** The item a balloon on edge `k` numbers: its component's BOM item in an assembly drawing, else the cut list item of the weldment body the edge's faces belong to. */
-export function edgeItem(k: string, ctx: Pick<AnnotCtx, "bom" | "cutFaces">): number | null {
+export function edgeItem(k: string, ctx: Pick<AnnotCtx, "bom" | "cutFaces" | "single">): number | null {
   if (ctx.bom) { const c = compOfKey(k); return c ? ctx.bom.itemOf(c) : null; }
+  if (ctx.single) return 1;
   for (const f of k.split("|")) { const n = ctx.cutFaces?.[f]; if (n) return n; }
   return null;
 }
