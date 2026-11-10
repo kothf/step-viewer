@@ -100,6 +100,21 @@ test("AT-P4-4: interference finds a 1 mm overlap with the right volume; touching
   assert.equal(touching.length, 2);
 });
 
+test("a round-off sliver between coincident faces is touching, not interference (exam #83)", async () => {
+  const a = new Assembler(await occ());
+  const d = asm();
+  // Block<2> sits 2e-5 mm into the plate: 0.002 mm³ of overlap, 2e-5 mm thick.
+  d.components[2].tf = translation([25, 5, 5 - 2e-5]);
+  const { placed } = a.evaluate(d);
+  assert.equal(a.interference(placed).length, 0);
+  assert.equal(a.interference(placed, true).length, 2);
+  // 0.01 mm in is still interference.
+  d.components[2].tf = translation([25, 5, 5 - 0.01]);
+  const pairs = a.interference(a.evaluate(d).placed);
+  assert.equal(pairs.length, 1);
+  assert.ok(Math.abs(pairs[0].volume - 1) < 1e-6, String(pairs[0].volume));
+});
+
 test("FR-ASM-031: instances share one analysis of their part, moved rigidly", async () => {
   const { analyzeMesh } = await import("../../src/topology");
   const { transformPart } = await import("../../src/asm/light");

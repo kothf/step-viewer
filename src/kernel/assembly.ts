@@ -193,7 +193,15 @@ export class Assembler {
       const map = new oc.TopTools_IndexedMapOfShape_1();
       oc.TopExp.MapShapes_1(shape, oc.TopAbs_ShapeEnum.TopAbs_FACE, map);
       for (let k = 1; k <= map.Extent(); k++) faces.push(oc.TopoDS.Face_1(map.FindKey(k)));
-      if (volume < 1e-6) {
+      // Coincident faces (a pin in a bore of its own size, a foot on the plate) leave a sliver of round-off
+      // volume; one thinner than 1e-4 mm on average (2·V / area) is touching, not interference (exam #83).
+      let sliver = volume < 1e-6;
+      if (!sliver && volume < 1) {
+        const sp = new oc.GProp_GProps_1();
+        oc.BRepGProp.SurfaceProperties_1(shape, sp, false, false);
+        sliver = sp.Mass() > 0 && (2 * volume) / sp.Mass() < 1e-4;
+      }
+      if (sliver) {
         if (!touch) continue;
         const dist = new oc.BRepExtrema_DistShapeShape_2(placed[i].body.shape, placed[j].body.shape, oc.Extrema_ExtFlag.Extrema_ExtFlag_MIN, oc.Extrema_ExtAlgo.Extrema_ExtAlgo_Grad, new oc.Message_ProgressRange_1());
         if (!dist.IsDone() || dist.Value() > 1e-6) continue;

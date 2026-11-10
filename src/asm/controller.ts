@@ -1273,7 +1273,7 @@ export class AsmController {
         for (const x of doc.components) if (x.id.startsWith(`${c.id}/`) && !start[x.id]) start[x.id] = compose(move, x.tf);
       }
     }
-    return solve({ doc, extra, start, geo: (part, face) => this.geo.get(part)?.get(face) ?? null, centre: part => this.centres.get(part) ?? [0, 0, 0], size: this.size(), dof });
+    return solve({ doc, extra, start, geo: (part, face) => this.geo.get(part)?.get(face) ?? null, faces: part => this.geo.get(part)?.values() ?? [], centre: part => this.centres.get(part) ?? [0, 0, 0], size: this.size(), dof });
   }
 
   /** Solves a changed document's mates into its transforms; when they conflict nothing moves. */
@@ -2860,7 +2860,7 @@ export class AsmController {
         + `<p class="pm-help muted">${esc(t("The two cylinders share an axis and the two flat faces touch: one turn is left."))}</p>`
       : m.type === "slot"
         ? `<div class="pm-field"><span>${esc(t("Slot face 2"))}</span><button class="pm-box${m.a && m.b && !m.c ? " focus" : ""}" data-a="sc" translate="no">${esc(this.refText(m.c))}</button></div>`
-          + `<p class="pm-help muted">${esc(t("Selection 1 and slot face 2 are the sides of the slot; the pin (selection 2) stays centred between them and slides along."))}</p>`
+          + `<p class="pm-help muted">${esc(t("Selection 1 and slot face 2 are the sides of the slot; the pin (selection 2) stays centred between them and slides along, up to the slot's rounded ends."))}</p>`
         : m.type === "gear" ? ratioIn("Ratio", "") + `<p class="pm-help muted">${esc(t("Turns of selection 2 per turn of selection 1 (the radius ratio to start with). External gears turn opposite ways; Reverse makes them turn the same way."))}</p>`
           : m.type === "screw" ? ratioIn("Distance per revolution", "mm") + `<p class="pm-help muted">${esc(t("The two cylinders share an axis; turning one moves it along by this distance per turn."))}</p>` : "";
     const typeBtn = (k: MateType) => `<button class="btn small${m.type === k ? " on" : ""}" data-mt="${k}" aria-pressed="${m.type === k}"${fits.has(k) ? "" : " disabled"}><span aria-hidden="true">${MATE_ICON[k]}</span> ${esc(t(MATE_LABEL[k]))}</button>`;

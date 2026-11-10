@@ -29,6 +29,7 @@ const dot = (a: V3, b: V3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const len = (a: V3) => Math.hypot(a[0], a[1], a[2]);
 const scale = (a: V3, k: number): V3 => [a[0] * k, a[1] * k, a[2] * k];
+const add = (a: V3, b: V3): V3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 
 /** The geometry moved by a transform. */
 export function placeGeo(g: Geo, t: Tf): Geo {
@@ -75,7 +76,7 @@ function screwMotion(m: Mate, ga: Geo, tfa: Tf, tfb: Tf): { turn: number; travel
  * accepted it, so the residual is smooth within a step; without it the nearest turn count is taken, which jumps every
  * half pitch and made the solver lose its way when a handwheel had to turn far (exam #75).
  */
-export function residuals(m: Mate, ga: Geo, gb: Geo, L: number, tfa?: Tf, tfb?: Tf, gc?: Geo, gd?: Geo, branch?: { u: number }): number[] {
+export function residuals(m: Mate, ga: Geo, gb: Geo, L: number, tfa?: Tf, tfb?: Tf, gc?: Geo, gd?: Geo, branch?: { u: number }, ends?: [V3, V3]): number[] {
   const da = dirOf(ga), db0 = dirOf(gb);
   const s = m.align === "aligned" ? 1 : -1;
   const sg = m.flip ? -1 : 1;
@@ -182,7 +183,16 @@ export function residuals(m: Mate, ga: Geo, gb: Geo, L: number, tfa?: Tf, tfb?: 
       if (!gc || ga.k !== "plane" || gc.k !== "plane") break;
       // The width faces' midplane, measured along a's normal.
       const sa = dot(da, ga.p), sc = dot(da, gc.p), wm = (sa + sc) / 2;
-      if (gb.k === "axis") { out.push(dot(da, gb.d) * L, dot(da, gb.p) - wm); }
+      if (gb.k === "axis") {
+        out.push(dot(da, gb.d) * L, dot(da, gb.p) - wm);
+        // A slot's pin stays between the end centres (SolidWorks' Free slot mate, exam #81); zero inside, like a limit.
+        if (m.type === "slot" && ends) {
+          const [e0, e1] = ends, run = sub(e1, e0), Ls = len(run), u = scale(run, 1 / Math.max(Ls, 1e-12));
+          const mid = scale(add(e0, e1), 0.5), q = add(gb.p, scale(gb.d, dot(sub(mid, gb.p), gb.d)));
+          const t = dot(u, sub(q, e0));
+          out.push(t < 0 ? t : t > Ls ? t - Ls : 0);
+        }
+      }
       else if (gd) { parallel(); out.push((dot(da, gb.p) + dot(da, gd.p)) / 2 - wm); }
       break;
     }
@@ -198,10 +208,36 @@ export function residuals(m: Mate, ga: Geo, gb: Geo, L: number, tfa?: Tf, tfb?: 
   return out;
 }
 
+/**
+ * A slot's rounded ends: the two cylinders of the slot's half width that lie on its mid-plane, square to
+ * the side faces' normal (the farthest apart when there are more), in part coordinates. Null when the
+ * slot has no such ends (a slot open at one end, or straight walls only).
+ */
+export function slotEnds(a: Geo & { k: "plane" }, c: Geo & { k: "plane" }, faces: Iterable<Geo>): [V3, V3] | null {
+  const n = a.n, w = Math.abs(dot(n, sub(c.p, a.p))), mid = (dot(n, a.p) + dot(n, c.p)) / 2, tol = Math.max(1e-3, w * 1e-3);
+  const caps: (Geo & { k: "axis" })[] = [];
+  for (const g of faces) {
+    if (g.k !== "axis" || Math.abs(g.r - w / 2) > tol || Math.abs(dot(g.d, n)) > 1e-6 || Math.abs(dot(n, g.p) - mid) > tol) continue;
+    if (caps.some(q => Math.abs(Math.abs(dot(q.d, g.d)) - 1) > 1e-6)) continue;
+    if (!caps.some(q => len(cross(sub(q.p, g.p), g.d)) < tol)) caps.push(g);
+  }
+  if (caps.length < 2) return null;
+  // Each axis's point moved along it into the plane square to it through the first one.
+  const d = caps[0].d, o = caps[0].p, at = (g: Geo & { k: "axis" }): V3 => sub(g.p, scale(d, dot(sub(g.p, o), d)));
+  let best: [V3, V3] | null = null, far = 0;
+  for (let i = 0; i < caps.length; i++) for (let j = i + 1; j < caps.length; j++) {
+    const p = at(caps[i]), q = at(caps[j]), s = len(sub(q, p));
+    if (s > far) { far = s; best = [p, q]; }
+  }
+  return best;
+}
+
 export interface SolveInput {
   doc: AsmDoc;
   /** Local geometry of a component's face, or null when it cannot be found. */
   geo: (part: string, face: string) => Geo | null;
+  /** Every face's geometry of a part (finds a slot's rounded ends). */
+  faces?: (part: string) => Iterable<Geo>;
   /** Rotation centres in part coordinates (bounding-box centre), by part key. */
   centre?: (part: string) => V3;
   /** Extra mates to try (a mate being made), solved with the document's. */
@@ -222,7 +258,7 @@ export function solve(inp: SolveInput): SolveResult {
   const L = Math.max(1, inp.size ?? 100);
   const all = [...(doc.mates ?? []), ...(inp.extra ?? [])].filter(m => !m.suppressed);
   const missing: string[] = [];
-  type Live = { m: Mate; ga: Geo; gb: Geo; ca: string; cb: string; gc?: Geo; cc?: string; gd?: Geo; cd?: string };
+  type Live = { m: Mate; ga: Geo; gb: Geo; ca: string; cb: string; gc?: Geo; cc?: string; gd?: Geo; cd?: string; ends?: [V3, V3] };
   const live: Live[] = [];
   for (const m of all) {
     const ca = byId.get(m.a.comp), cb = byId.get(m.b.comp);
@@ -242,6 +278,7 @@ export function solve(inp: SolveInput): SolveResult {
         l.gd = gd; l.cd = cd.id;
       }
       if (m.type === "symmetric" && ca.id === cb.id && ca.id === cc.id) { missing.push(m.id); continue; }
+      if (m.type === "slot" && cc.id === ca.id && ga.k === "plane" && gc.k === "plane" && inp.faces) l.ends = slotEnds(ga, gc, inp.faces(ca.part)) ?? undefined;
     }
     live.push(l);
   }
@@ -269,7 +306,7 @@ export function solve(inp: SolveInput): SolveResult {
     }
   };
   pickBranches();
-  const resOf = (l: Live, t: Record<string, Tf>) => residuals(l.m, placeGeo(l.ga, t[l.ca]), placeGeo(l.gb, t[l.cb]), L, t[l.ca], t[l.cb], l.gc && placeGeo(l.gc, t[l.cc!]), l.gd && placeGeo(l.gd, t[l.cd!]), branches.get(l));
+  const resOf = (l: Live, t: Record<string, Tf>) => residuals(l.m, placeGeo(l.ga, t[l.ca]), placeGeo(l.gb, t[l.cb]), L, t[l.ca], t[l.cb], l.gc && placeGeo(l.gc, t[l.cc!]), l.gd && placeGeo(l.gd, t[l.cd!]), branches.get(l), l.ends && [applyPoint(t[l.ca], l.ends[0]), applyPoint(t[l.ca], l.ends[1])]);
   const R = (t: Record<string, Tf>) => {
     const r: number[] = [];
     for (const l of live) r.push(...resOf(l, t));
@@ -385,6 +422,7 @@ export function solve(inp: SolveInput): SolveResult {
   if (ok && n && inp.dof !== false) {
     // A limit takes no freedom away, even when it sits at its end.
     for (const l of live) if (l.m.type === "limitdist" || l.m.type === "limitangle") l.m = { ...l.m, min: -Infinity, max: Infinity };
+    for (const l of live) l.ends = undefined;
     const J = jac(R(tfs));
     const N = nullSpace(J, n);
     free = N.length + loose;
