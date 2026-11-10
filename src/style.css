@@ -407,6 +407,12 @@ dialog h3 { font-size: var(--fs-subtitle); margin: 14px 0 8px; }
 .modal-head h3 { margin-top: 4px; }
 #confirm { width: min(400px, calc(100vw - 32px)); }
 #confirm p { margin: 0 0 12px; }
+#name-dlg { width: min(420px, calc(100vw - 32px)); }
+.name-dlg-row { display: grid; gap: 4px; margin: 0 0 12px; }
+.name-dlg-in { display: flex; align-items: center; gap: 6px; }
+.name-dlg-in input { flex: 1; min-width: 0; }
+.name-dlg-ext { color: var(--muted); font-family: var(--mono); font-size: 12px; }
+.name-dlg-err { color: var(--danger); margin: -6px 0 10px; }
 .row.end { justify-content: flex-end; }
 dialog td { padding: 3px 12px 3px 0; vertical-align: top; }
 dialog td:first-child { font-family: var(--mono); font-size: 12px; white-space: nowrap; }
