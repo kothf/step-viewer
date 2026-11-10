@@ -566,9 +566,17 @@ export class SketchEditor {
   }
 
   /** World box of the selected sketch items, with a margin (Zoom to selection while sketching). */
-  selectionBox(): THREE.Box3 | null {
+  selectionBox(): THREE.Box3 | null { return this.boxOf(this.selection); }
+
+  /**
+   * World box of the sketch's curves and text with the same margin, or null when it has none (Edit sketch frames
+   * it). Lone points are left out: a sketch of one far point opens where the view was, as before.
+   */
+  sketchBox(): THREE.Box3 | null { return this.boxOf(this.sk.ents.filter(e => e.t !== "point").map(e => e.id)); }
+
+  private boxOf(ids: Iterable<string>): THREE.Box3 | null {
     const b = new THREE.Box3();
-    for (const id of this.selection) {
+    for (const id of ids) {
       const e = id === ORIGIN ? null : this.ent(id);
       if (id === ORIGIN) b.expandByPoint(this.w([0, 0]));
       else if (!e) continue;

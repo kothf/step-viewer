@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.477.0] - 2026-11-10
+## [1.478.0] - 2026-11-10
 
 ### Fixed (drawings exam, round 3)
 
@@ -18,13 +18,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [1.477.0] - 2026-11-10
 
-### Fixed (drawings exam, round 3)
+### Added
 
-- Print (Ctrl+P) gives every sheet its own paper size: a B sheet after an A3 sheet printed on A3 with its right border cut off. The counterbore and countersink symbols print drawn in lines, as in the PDF, instead of depending on a system font.
-- Standard 3 views on a sheet that already holds views no longer drops the new set on top of the old one: it goes beside them at the sheet's scale, or onto a new sheet of the same size when there is no room.
-- Undoing Add sheet while that sheet was open left no sheet selected, and every later edit failed until the drawing was reopened.
-- After going to the model and back to a drawing, the drawing toolbar's menus (Model view, Section, Detail, Annotate, Export) opened and closed at once and other buttons acted twice: each return added the toolbar's listeners again.
-- Add sheet keeps the sheet format: a user title block and a custom sheet size went back to the standard ISO block and lost their size on the new sheet.
+- **Cross holes through a shaft are recognised (FR-FT-102)**: a round hole right across an imported shaft or round bar, coming out on its curved faces, comes back from Recognize Holes and Recognize Features as a circle sketched on the standard plane square to the hole with an Extruded Cut Through All in both directions, when the hole runs along X, Y or Z. Before, such holes were left in the imported body.
+
+### Fixed
+
+- **Edit sketch shows the whole sketch (Leuenberger exam #96)**: turning normal to a sketch framed only the body, so a sketch reaching past it opened mostly off screen. The view now frames the body and the whole sketch; sketches with one point or none open as before.
 
 ## [1.476.0] - 2026-11-10
 
@@ -2929,8 +2929,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.477.0...HEAD
-[1.477.0]: https://github.com/kothf/step-viewer/compare/v1.477.0...v1.477.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.478.0...HEAD
+[1.478.0]: https://github.com/kothf/step-viewer/compare/v1.477.0...v1.478.0
 [1.477.0]: https://github.com/kothf/step-viewer/compare/v1.476.0...v1.477.0
 [1.476.0]: https://github.com/kothf/step-viewer/compare/v1.475.0...v1.476.0
 [1.475.0]: https://github.com/kothf/step-viewer/compare/v1.474.0...v1.475.0
