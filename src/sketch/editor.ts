@@ -287,7 +287,7 @@ export class SketchEditor {
 
   // ---------- coordinates ----------
 
-  w(p: V2): THREE.Vector3 {
+  private w(p: V2): THREE.Vector3 {
     const f = this.frame;
     return new THREE.Vector3(f.o[0] + f.x[0] * p[0] + f.y[0] * p[1], f.o[1] + f.x[1] * p[0] + f.y[1] * p[1], f.o[2] + f.x[2] * p[0] + f.y[2] * p[1]);
   }
