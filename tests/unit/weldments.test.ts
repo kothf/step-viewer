@@ -7,7 +7,7 @@ import { cutList, gussetEnds, pierceSpots, type WeldHost } from "../../src/weldm
 import { PROFILE_TYPES, profileArea, profileShape, profileSizes } from "../../src/weldments/profiles";
 import type { Feature, PartDoc, SketchFeature, SkEnt, V2, V3, Sketch3dFeature } from "../../src/model/types";
 import type { GussetFeature, MemberFeature } from "../../src/weldments/types";
-import { barsNeeded, cutKey, splitSubs, stockTotals } from "../../src/weldments/types";
+import { barPlan, barsNeeded, cutKey, planGroups, splitSubs, stockTotals } from "../../src/weldments/types";
 import { occ } from "./occ";
 
 const doc = (features: Feature[]): PartDoc => ({ schema: 1, kind: "part", id: "d", name: "t", units: { length: "mm", decimals: 2 }, props: {}, features, rollback: null });
@@ -566,9 +566,13 @@ test("stock lengths of a cut list (FR-FT-121)", () => {
   assert.deepEqual(stockTotals(items, c => c.qty === 3), [{ desc: "SHS 40x40x3", pieces: 1, length: 150.3 }, { desc: "CHS 33.7x2.6", pieces: 2, length: 200 }]);
   // Bars to buy: 3 × 420 + 150.25 fit two 1000 mm bars (420 + 420 + 150.25, then 420); a 4 mm kerf still fits (998.25).
   assert.deepEqual(stockTotals(items, undefined, { len: 1000 }), [
-    { desc: "SHS 40x40x3", pieces: 4, length: 1410.3, bars: 2, left: 589.8, over: 0 },
-    { desc: "CHS 33.7x2.6", pieces: 2, length: 200, bars: 1, left: 800, over: 0 },
+    { desc: "SHS 40x40x3", pieces: 4, length: 1410.3, bars: 2, left: 589.8, over: 0, plan: [{ pieces: [420, 420, 150.25], left: 9.8 }, { pieces: [420], left: 580 }] },
+    { desc: "CHS 33.7x2.6", pieces: 2, length: 200, bars: 1, left: 800, over: 0, plan: [{ pieces: [100, 100], left: 800 }] },
   ]);
+  // The cutting plan: the kerf between cuts comes off what is left, and equal bars are put together.
+  assert.deepEqual(barPlan([420, 420, 150.25, 420], 1000, 4), { bars: [{ pieces: [420, 420, 150.25], left: 1.8 }, { pieces: [420], left: 580 }], over: [] });
+  assert.deepEqual(barPlan([300, 700, 300, 700, 1200], 1000), { bars: [{ pieces: [700, 300], left: 0 }, { pieces: [700, 300], left: 0 }], over: [1200] });
+  assert.deepEqual(planGroups(barPlan([300, 700, 300, 700], 1000).bars), [{ n: 2, pieces: [700, 300], left: 0 }]);
   assert.deepEqual(barsNeeded([420, 420, 150.25, 420], 1000, 4), { bars: 2, over: 0 });
   // The kerf between cuts counts: two 500 mm pieces fill a 1000 mm bar exactly, but not with a saw cut between them.
   assert.deepEqual(barsNeeded([500, 500], 1000), { bars: 1, over: 0 });
