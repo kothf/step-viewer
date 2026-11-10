@@ -5,6 +5,32 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.407.0] - 2026-11-10
+
+### Added
+- Convert to Sheet Metal (FR-FT-120): a lip ring round an opening (one face shared by several walls) now gives each picked wall its own lip, straight across to the ring's inner edge, and the lips meet mitred at the corners like the walls. Every further wall at a corner is mitred too: in the plane bisecting the two bend edges when both chains have the same walls, else where the walls' mid-planes meet.
+
+### Fixed
+- Convert to Sheet Metal: with four walls round a face, a wall's second mitre could keep the wrong side and leave the wall running on past its corner (hidden in the part, where the solid trimmed it, but not in the panel outlines). Each mitre now keeps the side the wall's own bend edge lies on.
+
+## [1.407.0] - 2026-11-10
+
+### Changed
+
+- **Two more plastics checked (FR-MAT-001)**: Nylon PA66 and PMMA (acrylic) now show **Checked against:** with a link to a maker's data sheet. 139 of 170 materials are checked; the other 31 still say they are not. Nylon PA66 follows the stock shape sheet: modulus 3.3 → 2.4 GPa, strength 85 → 83 MPa. PMMA already matched its sheet.
+
+## [1.406.0] - 2026-11-10
+
+### Added
+
+- **Recognize Extrudes takes nested shapes (FR-FT-102)**: a pocket in the floor of another pocket, a cut in the top of a boss or a boss on a pocket floor are now recognised together. The inner shape is removed first and put back last, on the face the outer extrude makes, so each one stays editable on its own.
+
+## [1.405.0] - 2026-11-10
+
+### Changed
+
+- **Four more materials checked (FR-MAT-001)**: POM (Delrin), PEEK, PET (PET-P) and OSB/3 now show **Checked against:** with a link to a stock shape or board maker's data sheet. 137 of 170 materials are checked; the other 33 still say they are not. Values changed to match the sheets: POM (Delrin) modulus 3.1 → 2.4 GPa, strength 70 → 76 MPa and expansion 110 → 120; PEEK modulus 4.0 → 4.5 GPa and strength 98 → 110 MPa; PET density 1.39 → 1.38, modulus 3.5 → 3.2 GPa, strength 90 → 69 MPa, expansion 60 → 70, specific heat added; OSB/3 density 0.65 → 0.6.
+
 ## [1.404.0] - 2026-11-10
 
 ### Added
@@ -2381,7 +2407,11 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.404.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.407.0...HEAD
+[1.407.0]: https://github.com/kothf/step-viewer/compare/v1.407.0...v1.407.0
+[1.407.0]: https://github.com/kothf/step-viewer/compare/v1.406.0...v1.407.0
+[1.406.0]: https://github.com/kothf/step-viewer/compare/v1.405.0...v1.406.0
+[1.405.0]: https://github.com/kothf/step-viewer/compare/v1.404.0...v1.405.0
 [1.404.0]: https://github.com/kothf/step-viewer/compare/v1.403.0...v1.404.0
 [1.403.0]: https://github.com/kothf/step-viewer/compare/v1.402.0...v1.403.0
 [1.402.0]: https://github.com/kothf/step-viewer/compare/v1.401.0...v1.402.0
