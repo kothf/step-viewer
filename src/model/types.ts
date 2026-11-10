@@ -526,7 +526,8 @@ export interface ThreadFeature {
 export interface RecognizedBlends { faces: FaceRef[]; fillets: { radius: number; edges: EdgeRef[] }[]; chamfers: { distance: number; distance2?: number; edges: EdgeRef[]; first?: [number, number, number][] }[] }
 
 /** A hole found on a body (FR-FT-102): where a hole feature would rebuild it. */
-export interface RecognizedHole { plane: PlaneRef; pt: [number, number]; diameter: number; end: "blind" | "through"; depth: number; flat: boolean }
+/** A hole found by Recognize Holes; `cb` = counterbore (diameter, depth), `cs` = countersink (diameter, included angle in radians). */
+export interface RecognizedHole { plane: PlaneRef; pt: [number, number]; diameter: number; end: "blind" | "through"; depth: number; flat: boolean; cb?: { dia: number; depth: number }; cs?: { dia: number; angle: number } }
 
 export interface HoleFeature {
   id: string; type: "hole"; name: string; suppressed?: boolean;

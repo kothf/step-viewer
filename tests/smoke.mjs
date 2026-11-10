@@ -9480,6 +9480,26 @@ try {
     // 1.472: as FeatureWorks dimensions them: the base sketch (a rectangle) gets its width and height as line lengths.
     const lens = await mp.evaluate(() => window.__sv.model.store.doc.features.filter(f => f.type === "sketch").map(f => f.dims.filter(d => d.t === "distance" && d.e.length === 1).length));
     check(lens.length === 2 && lens[0] >= 2 && lens[1] >= 2, `model 1.472: recognised sketches carry the lengths of their straight edges (${JSON.stringify(lens)})`);
+    // 1.474: counterbored and countersunk holes come back as Hole Wizard holes of their kind (not a hole plus a chamfer).
+    await mp.evaluate(() => window.__sv.model.store.change("Sunk", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      const H = (id, x, o) => ({ id, type: "hole", name: id, plane: { face: { name: "e:end" } }, pts: [[x, 0]], diameter: { v: 4 }, end: "through", depth: { v: 10 }, ...o });
+      d.features = [{ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("s1", -30, -20), P("s2", 30, -20), P("s3", 30, 20), P("s4", -30, 20), Ln("sa", "s1", "s2"), Ln("sb", "s2", "s3"), Ln("sc", "s3", "s4"), Ln("sd", "s4", "s1")] },
+        { id: "e", type: "extrude", name: "Boss-Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } },
+        H("h1", -15, { kind: "cbore", cbDia: { v: 8 }, cbDepth: { v: 4 } }), H("h2", 15, { kind: "csink", csDia: { v: 9 }, csAngle: { v: Math.PI / 2 } })];
+    }));
+    await settle();
+    const sk0 = await state();
+    const brepSk = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "sunk.brep", brep }]; }), brepSk);
+    await settle();
+    await runCmd(mp, "Recognize Features");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.some(f => f.type === "hole"), null, { timeout: 120000 });
+    await settle();
+    const sk1 = await state();
+    const sunk = await mp.evaluate(() => window.__sv.model.store.doc.features.filter(f => f.type === "hole").map(f => f.kind).sort().join());
+    check(!sk0.bad && Math.abs(sk1.v - sk0.v) < 0.05 && !sk1.bad && sk1.types === "import,sketch,extrude,delbody,hole,hole" && sunk === "cbore,csink",
+      `model 1.474: Recognize Features makes counterbored and countersunk holes again as Hole Wizard holes (FR-FT-102) (${JSON.stringify({ sk0, sk1, sunk })})`);
     await ctx.close();
   }
 
