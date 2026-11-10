@@ -234,7 +234,10 @@ function gostBlock(s: Sheet, f: Fields, label: (cellLabel: string) => string): P
     out.push(...rect(bx + c.x, by + c.y, c.w, c.h, c.thick ? "frame" : "thin", "FORMAT"));
     if (c.label) { const l = label(c.label); out.push({ t: "t", x: bx + c.x + (c.key ? 1 : c.w / 2), y: by + c.y + (c.key ? c.h - 2.6 : 1.4), s: l, h: c.key ? 1.8 : fitH(l, 2.5, c.w - 1), al: c.key ? "l" : "c", layer: "FORMAT" }); }
     if (!c.key) continue;
-    const v = c.key === "sheet" ? n ?? "" : c.key === "size" ? m ?? "" : c.ch !== undefined ? [...String(f[c.key] ?? "")][c.ch] ?? "" : String(f[c.key] ?? "");
+    const raw = c.key === "sheet" ? n ?? "" : c.key === "size" ? m ?? "" : c.ch !== undefined ? [...String(f[c.key] ?? "")][c.ch] ?? "" : String(f[c.key] ?? "");
+    // GOST writes dates as DD.MM.YY: an ISO date (2026-11-10) did not fit the 10 mm date cell (drawings exam round 2).
+    const iso = c.key === "date" ? /^(\d{2})(\d{2})-(\d{2})-(\d{2})$/.exec(raw) : null;
+    const v = iso ? `${iso[4]}.${iso[3]}.${iso[2]}` : raw;
     if (!v) continue;
     const h = fitH(v, c.big ? 5 : c.h >= 10 ? 3.5 : 2.5, c.w - 2);
     const y = c.label ? by + c.y + 0.6 : by + c.y + c.h / 2 - h / 2;
