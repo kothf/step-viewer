@@ -4487,7 +4487,7 @@ try {
     await ctx.close();
   }
 
-  // --- Vault menu (1.432.0) in the header, a vault in a picked folder that is remembered, an assembly saved back into the vault (FR-PDM-002/010/080) ---
+  // --- Vault menu (1.436.0) in the header, a vault in a picked folder that is remembered, an assembly saved back into the vault (FR-PDM-002/010/080) ---
   if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
