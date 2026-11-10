@@ -221,6 +221,8 @@ export interface BalloonItems {
   edge(k: string): number | null;
   /** The item a stacked entry names. */
   stack(s: string): number | null;
+  /** Which balloons already in the view count (weld tags and cut list balloons number different lists). */
+  mine?(a: BalloonAnnot): boolean;
 }
 
 /** Items from a BOM: the component an edge key names. */
@@ -230,7 +232,7 @@ export function bomItems(bom: Bom): BalloonItems {
 
 export function autoBalloons(sheet: Sheet, v: DrawingView, topo: Topo, P: (p: V3) => P2, proj: Projection, s: number, items: BalloonItems, uid: () => string, gap = 12): BalloonAnnot[] {
   const have = new Set<number>();
-  for (const a of sheet.annots ?? []) if (a.t === "balloon" && a.view === v.id) {
+  for (const a of sheet.annots ?? []) if (a.t === "balloon" && a.view === v.id && (items.mine?.(a) ?? true)) {
     for (const i of ["e" in a.ref ? items.edge(a.ref.e) : null, ...(a.stack ?? []).map(x => items.stack(x))]) if (i) have.add(i);
   }
   const size = Math.max(proj.box[2] - proj.box[0], proj.box[3] - proj.box[1], 1), tol = size * 2e-3;

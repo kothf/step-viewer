@@ -11485,6 +11485,15 @@ try {
     const loop = (4 * (40 - 12) + 2 * Math.PI * 6).toFixed(2).replace(/\.?0+$/, "");
     check(wt.n === 1 && ["Item", "Weld", "Leg", "Length", "Qty", "Continuous", "z4", loop].every(s => wt.tx.includes(s)),
       `drawing: weld table lists the weldment's fillet bead with its leg and length (${JSON.stringify({ n: wt.n, loop, tx: wt.tx.filter(s => /^(Item|Weld|Leg|Continuous|z\d|1\d\d)/.test(s)), note: wt.note })})`);
+    // Placing the weld table tags the bead seen in its view with a box holding its weld table row; Tag the beads adds no second one.
+    await dp.waitForFunction(() => window.__sv.drw.doc().sheets[0].annots.some(a => a.t === "balloon" && a.weld), null, { timeout: 30000 }).catch(() => {});
+    await ready();
+    const tg = await dp.evaluate(() => { const ws = window.__sv.drw.doc().sheets[0].annots.filter(a => a.t === "balloon" && a.weld);
+      return { n: ws.length, shape: ws[0]?.shape, btn: !!document.querySelector('#drw .drw-props [data-a="wtags"]'), dangle: document.querySelectorAll("#drw .drw-dangle").length }; });
+    if (tg.btn) { await dp.click('#drw .drw-props [data-a="wtags"]'); await dp.waitForTimeout(500); }
+    const tg2 = await dp.evaluate(() => window.__sv.drw.doc().sheets[0].annots.filter(a => a.t === "balloon" && a.weld).length);
+    check(tg.n === 1 && tg.shape === "box" && tg.btn && tg.dangle === 0 && tg2 === 1,
+      `drawing: placing the weld table tags its view's bead once, numbered by its row (${JSON.stringify({ ...tg, again: tg2 })})`);
     // Cut list table under the same view: the tube (300 - 10 mm long, square ends), then the bead; Weld beads unticked leaves it out.
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="ctable"]');
     for (const [x, y] of [[vp.x, vp.y], [vp.x - vp.w / 2, vp.y - vp.w / 2 - 20]]) {
