@@ -9619,6 +9619,38 @@ try {
     check(!ok0.bad && ok0.v > 9000 && ok0.v < 9400 && Math.abs(ok1.v - ok0.v) < 0.1 && !ok1.bad && ok1.types === "import,sketch,extrude,delbody,plane,sketch,extrude"
       && okCut?.op === "cut" && okCut.depth === 3,
       `model 1.485.0: Recognize Features makes a keyway running out through an imported shaft's end again as a tangent plane, sketch and blind cut (FR-FT-102) (${JSON.stringify({ ok0, ok1, okCut })})`);
+    // 1.486.0: a cross hole at 45° round the shaft comes back on a plane at an angle about the Z axis (FR-REF-002).
+    await mp.evaluate(() => window.__sv.model.store.change("Angled cross", d => {
+      const xy = [[0, 0], [10, 0], [10, 30], [0, 30]];
+      const ents = xy.map(([x, y], i) => ({ id: "rp" + i, t: "point", x, y }));
+      xy.forEach((_, i) => ents.push({ id: "rl" + i, t: "line", a: "rp" + i, b: "rp" + ((i + 1) % 4) }));
+      ents.push({ id: "ra", t: "point", x: 0, y: -5 }, { id: "rb", t: "point", x: 0, y: 35 }, { id: "rax", t: "line", a: "ra", b: "rb", cons: true });
+      d.features = [{ id: "r", type: "sketch", name: "Sketch1", plane: { std: "XZ" }, ents, rels: [], dims: [] },
+        { id: "v", type: "revolve", name: "Revolve1", sketch: "r", op: "boss", axis: "rax", angle: { v: Math.PI * 2 } },
+        { id: "p", type: "plane", name: "Plane1", base: { std: "YZ" }, mode: "angle", offset: { v: 0 }, angle: { v: Math.PI / 4 }, about: { std: "Z" } },
+        { id: "o", type: "sketch", name: "Sketch2", plane: { plane: "p" }, rels: [], dims: [], ents: [{ id: "oc", t: "point", x: 0, y: 15 }, { id: "ok", t: "circle", c: "oc", r: 2.5 }] },
+        { id: "c", type: "extrude", name: "Cut-Extrude1", sketch: "o", op: "cut", end: "through2", depth: { v: 10 } }];
+    }));
+    await settle();
+    const ag0 = await state();
+    const brepAg = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "angled.brep", brep }]; }), brepAg);
+    await settle();
+    await runCmd(mp, "Recognize Features");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.length > 1, null, { timeout: 120000 });
+    await settle();
+    const ag1 = await state();
+    const agPlane = await mp.evaluate(() => { const p = window.__sv.model.store.doc.features.find(f => f.type === "plane"); return p && { mode: p.mode, about: p.about?.std, deg: Math.round(p.angle.v * 180 / Math.PI) }; });
+    check(!ag0.bad && ag0.v > 8900 && ag0.v < 9200 && Math.abs(ag1.v - ag0.v) < 0.1 && !ag1.bad && ag1.types === "import,sketch,extrude,delbody,plane,sketch,extrude"
+      && agPlane?.mode === "angle" && agPlane.about === "Z" && agPlane.deg === 45,
+      `model 1.486.0: Recognize Features makes a cross hole at 45° through an imported shaft again on a plane at an angle about the Z axis (FR-FT-102, FR-REF-002) (${JSON.stringify({ ag0, ag1, agPlane })})`);
+    // The Plane panel shows the axis it turns about.
+    await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "plane").id));
+    await mp.waitForSelector('#mc-pm select[data-k="about"]', { timeout: 10000 });
+    const agPanel = await mp.evaluate(() => ({ about: document.querySelector('#mc-pm select[data-k="about"]').value, opts: [...document.querySelectorAll('#mc-pm select[data-k="about"] option')].map(o => o.value).join(), edgeBox: !!document.querySelector('#mc-pm [data-k="focus-axis"]') }));
+    check(agPanel.about === "Z" && agPanel.opts === "edge,X,Y,Z" && !agPanel.edgeBox, `model 1.486.0: the Plane panel offers X, Y, Z and edges to turn about, Z picked (FR-REF-002) (${JSON.stringify(agPanel)})`);
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await settle();
     await ctx.close();
   }
 

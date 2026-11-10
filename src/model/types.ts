@@ -335,6 +335,8 @@ export interface PlaneFeature {
   angle?: Num;
   /** Angle mode: the straight edge the plane turns about. */
   axis?: EdgeRef;
+  /** Angle mode: a standard axis, a reference axis or a round face's axis to turn about instead of `axis` (FR-REF-002). */
+  about?: LineRef;
   flip?: boolean;
   /** Hidden in the view. */
   hidden?: boolean;
@@ -375,8 +377,8 @@ export interface CsysFeature {
   hidden?: boolean;
 }
 
-/** A direction or axis: a straight or round edge, a flat or round face, or a reference axis. */
-export interface LineRef { edge?: EdgeRef; face?: FaceRef; axis?: string }
+/** A direction or axis: a straight or round edge, a flat or round face, a reference axis or a standard axis (through the origin). */
+export interface LineRef { edge?: EdgeRef; face?: FaceRef; axis?: string; std?: "X" | "Y" | "Z" }
 
 /** Shell (FR-FT-060): hollows the body to a wall thickness, leaving the picked faces open. */
 export interface ShellFeature {
