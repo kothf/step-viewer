@@ -449,6 +449,8 @@ export const CHECKED: Record<string, string> = {
   // 1.413.0: Oregon State's table from the USDA Wood Handbook, USGS water density.
   "Wood (Douglas fir)": "owic.oregonstate.edu/node/68",
   "Water (20 °C)": "www.usgs.gov/special-topics/water-science-school/science/water-density",
+  // 1.415.0: Ensinger TECAFINE LDPE stock shapes (0.92 g/cm³, 30 000 psi, 1 420 psi at yield).
+  "Polyethylene PE-LD": "www.modernplastics.com/wp-content/uploads/2015/04/TECAFINE-LDPE.pdf",
 };
 
 export const LIBRARY: Material[] = ROWS.map(([cat, name, , eq, [density, E, nu, sy, su, k, cp, alpha], src, color]) =>
