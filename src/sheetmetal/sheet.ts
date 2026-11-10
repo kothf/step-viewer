@@ -16,6 +16,8 @@ import type { Frame, PartDoc, SketchFeature, V2, V3 } from "../model/types";
 import { inPolygon, loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type Seg } from "../sketch/profile";
 import type { SmGussetFeature, ReliefKind, SmReliefFeature, FormTool, SmFormFeature, SmUnfoldFeature, BendCalc, BendPosition, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature, SmTabSlotFeature } from "./types";
 import { isSheetBase } from "./types";
+import type { BendTable } from "./types";
+import { tableProblem, tableValue } from "./bendTable";
 
 export class SheetError extends Error {
   constructor(readonly code: string, message: string) { super(message); }
@@ -54,6 +56,8 @@ export interface SheetState {
   k: number;
   ba?: number;
   bd?: number;
+  /** Bend table when calc is "table". */
+  table?: BendTable;
   relief: "rect" | "obround" | "none";
   reliefRatio: number;
   /** Where the flat pattern lies: the first panel's transform. */
@@ -149,7 +153,13 @@ const translation = (t: V3): Mat => ({ o: t, x: [1, 0, 0], y: [0, 1, 0], z: [0, 
 // ---------- bend arithmetic ----------
 
 /** Bend allowance: the flat length a bend of `angle` and inside radius `r` takes. */
-export function bendAllowance(s: Pick<SheetState, "T" | "calc" | "k" | "ba" | "bd">, angle: number, r: number): number {
+export function bendAllowance(s: Pick<SheetState, "T" | "calc" | "k" | "ba" | "bd" | "table">, angle: number, r: number): number {
+  if (s.calc === "table" && s.table) {
+    const v = tableValue(s.table, r, angle);
+    if (s.table.kind === "ba") return v;
+    if (s.table.kind === "bd") return 2 * outerSetback(s.T, angle, r) - v;
+    return angle * (r + v * s.T);
+  }
   if (s.calc === "ba") return s.ba ?? 0;
   if (s.calc === "bd") return 2 * outerSetback(s.T, angle, r) - (s.bd ?? 0);
   return angle * (r + s.k * s.T);
@@ -201,7 +211,11 @@ function startState(f: SmBaseFeature, root: Mat): SheetState {
   if (!(R >= 0)) throw new SheetError("E-SM-R", "The bend radius can't be negative.");
   const k = f.k ?? 0.5;
   if (!(k >= 0 && k <= 1)) throw new SheetError("E-SM-K", "The K-factor must be between 0 and 1.");
-  return { T, R, calc: f.calc ?? "k", k, ba: f.ba?.v, bd: f.bd?.v, relief: f.relief ?? "rect", reliefRatio: f.reliefRatio ?? 0.5, root, panels: [], bends: [], used: [] };
+  if (f.calc === "table") {
+    const bad = tableProblem(f.table);
+    if (bad) throw new SheetError("E-SM-TABLE", bad);
+  }
+  return { T, R, calc: f.calc ?? "k", k, ba: f.ba?.v, bd: f.bd?.v, table: f.calc === "table" ? f.table : undefined, relief: f.relief ?? "rect", reliefRatio: f.reliefRatio ?? 0.5, root, panels: [], bends: [], used: [] };
 }
 
 /** Base flange: a flat plate from a closed sketch, or a bent strip from an open chain of lines. */
