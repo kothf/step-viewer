@@ -5035,6 +5035,11 @@ try {
       await dp2.evaluate(() => [...document.querySelectorAll("#doc-tabs [data-dt]")].find(e => /mcaddrw/.test(e.textContent))?.click());
       await dp2.waitForFunction(() => !document.querySelector("#drw").hidden && window.__sv.drw.doc()?.sheets[0].views.length === 5, null, { timeout: 60000 });
       const same = await dp2.evaluate(id => window.__sv.drw.doc().source.doc.id === id && window.__sv.modeller.active, pid);
+      // Back on the drawing its menus still open (drawings exam #29: each return added the toolbar listeners again, so a click toggled twice).
+      await dp2.click('#drw [data-a="annot"]');
+      const menuOpen = await dp2.evaluate(() => document.querySelector('#drw [data-a="annot"]').getAttribute("aria-expanded") === "true");
+      await dp2.keyboard.press("Escape");
+      check(menuOpen, "drawing: after Model and back, the Annotate menu still opens");
       await dp2.click('#drw [data-a="back"]');
       await dp2.waitForFunction(() => document.querySelector("#drw").hidden, null, { timeout: 20000 });
       const t2 = await tabs();

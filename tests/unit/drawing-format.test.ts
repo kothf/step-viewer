@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { deleteFormat, formatFile, loadFormats, saveFormat, validFormat } from "../../src/drawing/formats";
 import { fieldAt, formatPrims, isoFormat, tbSize, titleBlockAt, type Fields } from "../../src/drawing/sheet";
-import { drawnSymbols, sheetDxf, svgBody } from "../../src/drawing/output";
+import { drawnSymbols, printHtml, sheetDxf, svgBody } from "../../src/drawing/output";
 import type { Sheet, TitleFormat } from "../../src/drawing/types";
 import type { Prim } from "../../src/drawing/prims";
 
@@ -80,4 +80,14 @@ test("DXF R12 writes text outside ASCII as \\U+XXXX, like DXF 2000 (drawings exa
   const dxf = sheetDxf([{ t: "t", x: 10, y: 20, s: "Ø20 ±0.1 Вид А", h: 3.5, al: "l", layer: "ANNOT" }], 420, 297);
   assert.ok(dxf.includes("\\U+00D820 \\U+00B10.1 \\U+0412\\U+0438\\U+0434 \\U+0410"), dxf.split("\n").find(l => l.includes("20 ")));
   assert.ok(!/[^\x00-\x7e]/.test(dxf), "pure ASCII file");
+});
+
+test("Print gives each sheet its own page size and draws ⌴ in lines (drawings exam #26)", () => {
+  const cb: Prim = { t: "t", x: 10, y: 20, s: "⌴Ø11", h: 3.5, al: "l", layer: "ANNOT" };
+  const html = printHtml([{ prims: [cb], W: 420, H: 297 }, { prims: [], W: 431.8, H: 279.4 }], "a<b", "font.ttf");
+  assert.ok(html.includes("@page p0{size:420mm 297mm;margin:0}svg.p0{page:p0}"));
+  assert.ok(html.includes("@page p1{size:431.8mm 279.4mm;margin:0}svg.p1{page:p1}"));
+  assert.equal((html.match(/<svg class="p\d"/g) ?? []).length, 2);
+  assert.ok(!html.includes("⌴") && html.includes(">Ø11<"), "symbol drawn, text kept");
+  assert.ok(html.includes("<title>a&lt;b</title>") && !html.includes("<?xml"));
 });
