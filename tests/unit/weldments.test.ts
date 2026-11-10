@@ -7,7 +7,7 @@ import { cutList, gussetEnds, pierceSpots, type WeldHost } from "../../src/weldm
 import { PROFILE_TYPES, profileArea, profileShape, profileSizes } from "../../src/weldments/profiles";
 import type { Feature, PartDoc, SketchFeature, SkEnt, V2, V3, Sketch3dFeature } from "../../src/model/types";
 import type { GussetFeature, MemberFeature } from "../../src/weldments/types";
-import { cutKey, splitSubs } from "../../src/weldments/types";
+import { cutKey, splitSubs, stockTotals } from "../../src/weldments/types";
 import { occ } from "./occ";
 
 const doc = (features: Feature[]): PartDoc => ({ schema: 1, kind: "part", id: "d", name: "t", units: { length: "mm", decimals: 2 }, props: {}, features, rollback: null });
@@ -552,4 +552,16 @@ test("fillet bead on both sides of a plate standing on another (FR-FT-121)", asy
   // The second bead sits on the plate's other side.
   const xs = both.body!.names.map((n, i) => ({ n, c: centroid(m, both.body!.faces[i]) })).filter(x => x.n.startsWith("w:") && x.n.endsWith(":face")).map(x => Math.sign(x.c[0]));
   assert.deepEqual(xs.sort(), [-1, 1]);
+});
+
+test("stock lengths of a cut list (FR-FT-121)", () => {
+  const items = [
+    { kind: "member" as const, desc: "SHS 40x40x3", qty: 3, length: 420, angle1: 0, angle2: 0, volume: 10, bodies: ["a", "b", "c"] },
+    { kind: "member" as const, desc: "SHS 40x40x3", qty: 1, length: 150.25, angle1: 45, angle2: 0, volume: 4, bodies: ["d"] },
+    { kind: "member" as const, desc: "CHS 33.7x2.6", qty: 2, length: 100, angle1: 0, angle2: 0, volume: 3, bodies: ["e", "f"] },
+    { kind: "bead" as const, desc: "4", qty: 2, length: 100, volume: 8, bodies: ["w1", "w2"] },
+    { kind: "plate" as const, desc: "PL 5", qty: 1, plate: [50, 50, 5] as [number, number, number], volume: 1, bodies: ["p"] },
+  ];
+  assert.deepEqual(stockTotals(items), [{ desc: "SHS 40x40x3", pieces: 4, length: 1410.3 }, { desc: "CHS 33.7x2.6", pieces: 2, length: 200 }]);
+  assert.deepEqual(stockTotals(items, c => c.qty === 3), [{ desc: "SHS 40x40x3", pieces: 1, length: 150.3 }, { desc: "CHS 33.7x2.6", pieces: 2, length: 200 }]);
 });

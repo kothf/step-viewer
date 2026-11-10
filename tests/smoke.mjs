@@ -9014,6 +9014,13 @@ try {
     await ap.press('.drw-props [data-st="tol"]', "Tab");
     const tol2 = await ap.evaluate(() => window.__sv.drw.doc().style);
     check(tol1 === 0.05 && !("tol" in tol2), `drawing: drafting style keeps a default ± tolerance, empty clears it (${JSON.stringify([tol1, tol2])})`);
+    // Dual dimensions (FR-DRW-021): inches in brackets with their own decimals; Off drops both keys.
+    await ap.selectOption('.drw-props [data-st="dual"]', "in");
+    await ap.selectOption('.drw-props [data-st="dualPrec"]', "2");
+    const dual1 = await ap.evaluate(() => window.__sv.drw.doc().style);
+    await ap.selectOption('.drw-props [data-st="dual"]', "");
+    const dual2 = await ap.evaluate(() => ({ st: window.__sv.drw.doc().style, sel: !!document.querySelector('.drw-props [data-st="dualPrec"]') }));
+    check(dual1.dual === "in" && dual1.dualPrec === 2 && !("dual" in dual2.st) && !("dualPrec" in dual2.st) && !dual2.sel, `drawing: drafting style keeps dual dimensions and their decimals, Off clears them (${JSON.stringify([dual1, dual2])})`);
     // 1.87.0 view properties (FR-DRW-017): break a projected view's alignment, drag it off line, then put it back in line.
     const pv0 = await ap.evaluate(() => { const sh = window.__sv.drw.doc().sheets[0]; const v = sh.views.find(x => x.parent && x.side && !x.kind); const p = sh.views.find(x => x.id === v.parent); return { id: v.id, x: v.x, y: v.y, px: p.x, py: p.y, side: v.side }; });
     await clickAt(pv0.x, pv0.y);
@@ -9462,7 +9469,7 @@ try {
     // Cut List… opens a table: two member rows and the total mass (steel assumed).
     await runCmd(mp, "Cut List");
     await mp.waitForSelector("#wld-cut[open]");
-    const cl = await mp.evaluate(() => ({ rows: document.querySelectorAll("#wld-cut tbody tr").length, total: document.querySelector("#wld-cut [data-wtotal]")?.textContent }));
+    const cl = await mp.evaluate(() => ({ rows: document.querySelectorAll("#wld-cut tbody tr:not([data-stock])").length, total: document.querySelector("#wld-cut [data-wtotal]")?.textContent }));
     // Item properties typed in the dialog are kept with the part and rename the item in the tree and the CSV.
     await mp.fill('#wld-cut input[data-cp="desc"][data-ci="0"]', "Top rail");
     await mp.press('#wld-cut input[data-cp="desc"][data-ci="0"]', "Tab");
@@ -9481,6 +9488,9 @@ try {
     // Exclude from cut list: the row stays (struck through) without an item number, and the total drops its mass; unticked it comes back.
     const sumOf = () => mp.evaluate(() => document.querySelector("#wld-cut [data-wsum]")?.textContent ?? "");
     const tot0 = num(await sumOf());
+    // Stock lengths under the list: one row per section with its pieces and summed length.
+    const stock = await mp.evaluate(() => [...document.querySelectorAll("#wld-cut tr[data-stock]")].map(tr => [...tr.children].map(td => td.textContent)));
+    check(stock.length >= 1 && stock.every(r => r[0] && Number(r[1]) >= 1 && num(r[2]) > 0), `weldments: stock lengths under the cut list (${JSON.stringify(stock)})`);
     await mp.check('#wld-cut input[data-cp="excl"][data-ci="1"]');
     await settle();
     const ex = await mp.evaluate(() => { const tr = document.querySelectorAll("#wld-cut tbody tr")[1]; return { item: tr.querySelector("[data-witem]")?.textContent, cls: tr.classList.contains("wld-excl"), excl: Object.values(window.__sv.model.store.doc.cutProps ?? {}).some(p => p.excl) }; });
@@ -11464,7 +11474,7 @@ try {
     check(true, "File menu: a recent document opens again from the list");
     await ctx.close();
   }
-  // 1.379 (FR-HLP-003): the tutorial from the start card makes a part and ticks its steps from the document.
+  // 1.381 (FR-HLP-003): the tutorial from the start card makes a part and ticks its steps from the document.
   if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const tp = await ctx.newPage();
@@ -11483,7 +11493,7 @@ try {
     await tp.waitForFunction(() => !document.querySelector("#tutorial").hidden);
     const t0 = await state();
     const name = await tp.evaluate(() => window.__sv.modeller.store.doc.name);
-    check(hidden0 && t0.shown && t0.steps === 10 && t0.n === 0 && t0.cur === 0 && /Top \(XY\)/.test(t0.how) && name === "Bracket", `tutorial 1.379: the start card opens a part named Bracket with ten steps, the first one open (${JSON.stringify({ hidden0, t0, name })})`);
+    check(hidden0 && t0.shown && t0.steps === 10 && t0.n === 0 && t0.cur === 0 && /Top \(XY\)/.test(t0.how) && name === "Bracket", `tutorial 1.381: the start card opens a part named Bracket with ten steps, the first one open (${JSON.stringify({ hidden0, t0, name })})`);
     // A sketch with a dimensioned rectangle ticks steps 1 to 3; an extrude ticks the fourth.
     await tp.evaluate(() => {
       const P = (id, x, y) => ({ id, t: "point", x, y }), L = (id, a, b) => ({ id, t: "line", a, b });
@@ -11496,7 +11506,7 @@ try {
     await tp.evaluate(() => window.__sv.modeller.store.change("Extrude", d => { d.features.push({ id: "e", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 6 } }); }));
     await waitN(4);
     const t4 = await state();
-    check(t2.cur === 2 && t2.done.join() === "0,1" && t4.cur === 4 && t4.done.join() === "0,1,2,3" && /top face/.test(t4.how), `tutorial 1.379: the steps tick themselves as the part grows, and the next one opens (${JSON.stringify({ t2, t4 })})`);
+    check(t2.cur === 2 && t2.done.join() === "0,1" && t4.cur === 4 && t4.done.join() === "0,1,2,3" && /top face/.test(t4.how), `tutorial 1.381: the steps tick themselves as the part grows, and the next one opens (${JSON.stringify({ t2, t4 })})`);
     // Undo unticks; a click on a done step shows its directions again; Russian has every text.
     await tp.evaluate(() => window.__sv.modeller.undo());
     await waitN(3);
@@ -11507,7 +11517,7 @@ try {
     const ru = await tp.evaluate(() => document.querySelector("#tutorial").textContent);
     await tp.click("#lang-btn");
     await tp.waitForFunction(() => document.documentElement.lang === "en");
-    check(back.n === 3 && /Top \(XY\)/.test(back.how) && /Кронштейн за 10 шагов/.test(ru) && /3 из 10/.test(ru) && !/[A-Za-z]{4,}/.test(ru.replace(/\(XY\)/g, "")), `tutorial 1.379: undo unticks a step, a done step opens again, and the list is in Russian (${JSON.stringify({ back, ru: ru.slice(0, 120) })})`);
+    check(back.n === 3 && /Top \(XY\)/.test(back.how) && /Кронштейн за 10 шагов/.test(ru) && /3 из 10/.test(ru) && !/[A-Za-z]{4,}/.test(ru.replace(/\(XY\)/g, "")), `tutorial 1.381: undo unticks a step, a done step opens again, and the list is in Russian (${JSON.stringify({ back, ru: ru.slice(0, 120) })})`);
     // Another document hides the list, the bracket's tab brings it back, ✕ closes it for good.
     await tp.click("#new-part");
     await tp.waitForFunction(() => window.__sv.modeller.store?.doc.name === "Part1");
@@ -11518,7 +11528,7 @@ try {
     await tp.click("#tutorial [data-a=close]");
     await tp.waitForTimeout(600);
     const closed = await tp.evaluate(() => document.querySelector("#tutorial").hidden);
-    check(again.n === 3 && closed, `tutorial 1.379: the list follows the bracket's tab and ✕ closes it (${JSON.stringify({ again, closed })})`);
+    check(again.n === 3 && closed, `tutorial 1.381: the list follows the bracket's tab and ✕ closes it (${JSON.stringify({ again, closed })})`);
     await ctx.close();
   }
 } catch (err) {

@@ -3404,6 +3404,8 @@ export const RU: Record<string, string> = {
   "Show weld symbol": "Показывать обозначение шва",
   "Weld all around": "Шов по замкнутому контуру",
   "Weld both sides": "Шов с обеих сторон",
+  "Stock lengths": "Заготовки по сечениям",
+  "Pieces": "Штук",
   "Each flat face of set 1 also brings the face on the other side of its plate, so a plate standing on another is welded along both sides.": "Каждая плоская грань набора 1 добавляет грань с другой стороны своей пластины, поэтому пластина, стоящая на другой, приваривается с обеих сторон.",
   "Merge arc segment bodies": "Объединять тела с дугами",
   "Merge miter trimmed bodies": "Объединять тела, обрезанные на ус",
@@ -4258,4 +4260,9 @@ export const RU: Record<string, string> = {
   "Click Chamfer, pick the outer edges of the wall, type 1 and confirm.": "Нажмите «Фаска», выберите внешние рёбра стенки, введите 1 и подтвердите.",
   "Choose a material": "Выберите материал",
   "With nothing selected, click the material button on the Properties tab and pick a steel or an aluminium alloy: Mass properties now gives the weight.": "Ничего не выделяя, нажмите кнопку материала на вкладке «Свойства» и выберите сталь или алюминиевый сплав: «Массовые характеристики» покажут массу.",
+  // FR-DRW-021: dual dimensions
+  "Dual dimensions": "Двойные размеры",
+  "Inches in brackets": "Дюймы в скобках",
+  "Inch decimals": "Знаков в дюймах",
+  "Dual dimension (inches in brackets)": "Двойной размер (дюймы в скобках)",
 };

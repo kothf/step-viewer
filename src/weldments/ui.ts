@@ -10,7 +10,7 @@ import { CATEGORIES, allMaterials, findMaterial } from "../tools/materials";
 import { ANCHORS, PROFILE_TYPES, profileSizes, type Anchor, type ProfileType } from "./profiles";
 import { sketchProfile } from "../sketch/profile";
 import type { CutItem, Pierce, SubWeld, EndCapFeature, GussetFeature, MemberFeature, MemberGroup, TrimExtendFeature, WeldBeadFeature, WeldFeature, WeldSegRef } from "./types";
-import { capDir, cornerKey, cutKey } from "./types";
+import { capDir, cornerKey, cutKey, stockTotals } from "./types";
 import { pierceSpots, segOf } from "./kernel";
 
 export type WeldTool = "member" | "trimext" | "endcap" | "gusset" | "weldbead";
@@ -662,10 +662,21 @@ export function cutListCsv(items: CutItem[], density: number, props?: CutProps, 
     const m = itemMat(p), kg = (c.volume * (m?.density ?? density)) / 1e6, qty = c.kind === "bead" ? 1 : c.qty;
     lines.push([++n, qty, desc, c.length ?? "", c.kind === "member" ? c.angle1 ?? 0 : "", c.kind === "member" ? c.angle2 ?? 0 : "", m?.name ?? partMat, kg.toFixed(4), (kg * (c.kind === "bead" ? 1 : c.qty)).toFixed(4), p.part ?? "", p.note ?? "", ...(subs?.length ? [subName(c.sub)] : [])].map(q).join(","));
   });
+  const stock = stockTotals(items, c => !!props?.[cutKey(c)]?.excl);
+  if (stock.length) lines.push("", "Stock lengths", "Profile,Pieces,Total length (mm)", ...stock.map(r => [q(r.desc), r.pieces, r.length].join(",")));
   return `${lines.join("\r\n")}\r\n`;
 }
 
 const STEEL = 7.85;
+
+/** Stock lengths under the cut list: per profile, the pieces and their summed length (excluded items left out). */
+function stockHtml(items: CutItem[], props: CutProps): string {
+  const rows = stockTotals(items, c => !!props[cutKey(c)]?.excl);
+  if (!rows.length) return "";
+  const L = (mm: number) => (mm * UNITS[units.current].f).toLocaleString(undefined, { maximumFractionDigits: 1 });
+  return `<table class="v-table wld-stock"><caption>${esc(t("Stock lengths"))}</caption><thead><tr><th>${esc(t("Section"))}</th><th>${esc(t("Pieces"))}</th><th>${esc(t("Total length"))} (${esc(units.current)})</th></tr></thead><tbody>`
+    + rows.map(r => `<tr data-stock><td translate="no">${esc(r.desc)}</td><td>${r.pieces}</td><td>${L(r.length)}</td></tr>`).join("") + "</tbody></table>";
+}
 
 /**
  * Opens the cut list dialog for the part's current cut list. Description, part number and notes of each item can be
@@ -702,7 +713,7 @@ export function showCutList(items: CutItem[] | undefined, doc: PartDoc, onProps?
         : r.excl ? "✓" : "";
       return `${head(i)}<tr data-ri="${i}"${r.excl ? ` class="wld-excl"` : ""}><td data-witem>${r.item || "—"}</td><td>${r.qty}</td><td translate="no">${inp("desc", props[r.key]?.desc ?? "", r.auto, t("Description"))}</td><td>${r.length}</td><td>${r.a1}</td><td>${r.a2}</td><td>${mat}</td><td data-wkg>${kg(r.total)}</td><td>${inp("part", r.part, "", t("Part number"))}</td><td>${inp("note", r.note, "", t("Notes"))}</td><td>${ex}</td></tr>`;
     }).join("")
-    + `</tbody></table><p class="muted" data-wtotal><span data-wsum>${esc(t("Total mass {m} kg", { m: kg(total) }))}</span>${doc.material ? "" : ` · ${esc(t("Steel assumed (7.85 g/cm³): set the part's material in Properties."))}`}</p>`;
+    + `</tbody></table><p class="muted" data-wtotal><span data-wsum>${esc(t("Total mass {m} kg", { m: kg(total) }))}</span>${doc.material ? "" : ` · ${esc(t("Steel assumed (7.85 g/cm³): set the part's material in Properties."))}`}</p><div data-wstock>${stockHtml(items, props)}</div>`;
   dlg.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-cp]").forEach(el => el.addEventListener("change", () => {
     const r = rows[Number(el.dataset.ci)], f = el.dataset.cp as "desc" | "part" | "note" | "mat" | "excl";
     const p = { ...(props[r.key] ?? {}) };
@@ -721,6 +732,8 @@ export function showCutList(items: CutItem[] | undefined, doc: PartDoc, onProps?
     });
     const tot = dlg.querySelector<HTMLElement>("[data-wsum]");
     if (tot) tot.textContent = t("Total mass {m} kg", { m: kg(now.reduce((s, r) => s + r.total, 0)) });
+    const st = dlg.querySelector<HTMLElement>("[data-wstock]");
+    if (st) st.innerHTML = stockHtml(items, props);
   };
   dlg.querySelector<HTMLButtonElement>("[data-a=close]")!.onclick = () => dlg.close();
   dlg.querySelector<HTMLButtonElement>("[data-a=csv]")!.onclick = () => {

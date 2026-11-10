@@ -5,11 +5,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.379.0] - 2026-11-10
+## [1.381.0] - 2026-11-10
 
 ### Added
 
 - **Tutorial "Bracket in 10 steps" (FR-HLP-003)**: the start screen has a tutorial button. It opens a new part named Bracket with a step list at the top of the right panel: sketch the base, size it, extrude it, add the wall, a fillet, a hole, chamfers and a material. Each step ticks itself when the part has it and unticks on undo, the next step shows what to click, and any step can be opened again. The list follows the bracket's document tab and closes with ✕.
+
+## [1.380.0] - 2026-11-10
+
+### Added
+- Dual dimensions in drawings (FR-DRW-021): the sheet's drafting style has **Dual dimensions**, which adds every length in inches in brackets after the millimetres (25.4 [1.000]), with its own number of decimals. Tolerances follow (±, limits), angles stay as they are, and one dimension can be switched on or off with its **Dual dimension** box.
+
+## [1.379.0] - 2026-11-10
+
+### Added
+
+- **Stock lengths in the cut list (FR-FT-121)**: under the weldment cut list a **Stock lengths** table sums the members of each section: how many pieces and their total length, so the bar to order is read straight off. Items ticked **Exclude from cut list** are left out, and the CSV export ends with the same table.
 
 ## [1.378.0] - 2026-11-10
 
@@ -2233,7 +2244,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.379.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.381.0...HEAD
+[1.381.0]: https://github.com/kothf/step-viewer/compare/v1.380.0...v1.381.0
+[1.380.0]: https://github.com/kothf/step-viewer/compare/v1.379.0...v1.380.0
 [1.379.0]: https://github.com/kothf/step-viewer/compare/v1.378.0...v1.379.0
 [1.378.0]: https://github.com/kothf/step-viewer/compare/v1.377.0...v1.378.0
 [1.377.0]: https://github.com/kothf/step-viewer/compare/v1.376.0...v1.377.0
