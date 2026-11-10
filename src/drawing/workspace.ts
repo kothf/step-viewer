@@ -1912,6 +1912,8 @@ export class DrawingWorkspace {
     if (a.t === "datum") {
       return `<fieldset class="pm-group"><legend>${esc(t("Datum feature"))}</legend>
         <label class="drw-f">${esc(t("Letter"))}<input data-d="dl" value="${esc(a.letter)}" maxlength="2" translate="no"></label>
+        <label class="drw-chk"><input type="checkbox" data-d="dopen"${a.open ? " checked" : ""}> ${esc(t("Open triangle"))}</label>
+        <label class="drw-chk"><input type="checkbox" data-d="dbent"${a.bent ? " checked" : ""}> ${esc(t("Bent leader"))}</label>
       </fieldset>${del}`;
     }
     if (a.t === "surf") {
@@ -2065,6 +2067,7 @@ export class DrawingWorkspace {
       } else if (a.t === "gtol" && (k === "gabove" || k === "gbelow")) { const key = k === "gabove" ? "above" : "below"; if (val.trim()) a[key] = val.trim(); else delete a[key]; }
       else if (a.t === "gtol" && k === "gall") { if ((el as HTMLInputElement).checked) a.around = true; else delete a.around; }
       else if (a.t === "datum" && k === "dl" && val.trim()) a.letter = val.trim().toUpperCase();
+      else if (a.t === "datum" && (k === "dopen" || k === "dbent")) { const key = k === "dopen" ? "open" : "bent"; if ((el as HTMLInputElement).checked) a[key] = true; else delete a[key]; }
       else if (a.t === "balloon" && k === "bshape") { if (val === "split" || val === "tri" || val === "hex" || val === "box" || val === "none") a.shape = val; else delete a.shape; }
       else if (a.t === "balloon" && k === "btxt") { if (val.trim()) a.txt = val.trim(); else delete a.txt; }
       else if (a.t === "balloon" && k === "bstack") { if (val) a.stack = [...(a.stack ?? []), val]; }

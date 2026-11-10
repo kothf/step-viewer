@@ -3882,6 +3882,49 @@ try {
     await ctx.close();
   }
 
+  // --- 1.433.0: File ▸ Export ▸ STEP for a modelled part and an assembly (it said "needs a STEP, IGES or BREP model") ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // An empty part: the panel's buttons say why nothing is saved.
+    await mp.click("#file-btn");
+    await mp.click("#file-menu [data-f=export]");
+    await mp.waitForFunction(() => document.querySelector("#rt-export").getAttribute("aria-selected") === "true");
+    await mp.click("#png");
+    const empty = await mp.waitForFunction(() => [...document.querySelectorAll(".toast")].some(t => /no body to export/.test(t.textContent)), null, { timeout: 5000 }).then(() => true, () => false);
+    await mp.evaluate(() => window.__sv.model.store.change("Plate", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -20, -10), P("b", 20, -10), P("c", 20, 10), P("d", -20, 10), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } });
+    }));
+    await mp.waitForTimeout(150);
+    await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.data, null, { timeout: 120000 });
+    const stepOf = async () => {
+      const [dl] = await Promise.all([mp.waitForEvent("download", { timeout: 120000 }), mp.click("#step-export")]);
+      const text = (await readFile(await dl.path())).toString();
+      return { name: dl.suggestedFilename(), iso: text.startsWith("ISO-10303-21"), solid: /MANIFOLD_SOLID_BREP/.test(text) };
+    };
+    const part = await stepOf();
+    await mp.click("#new-more");
+    await mp.click("#new-asm-part");
+    await mp.waitForFunction(() => window.__sv.asm.doc?.components.length === 1 && !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === 1, null, { timeout: 120000 });
+    await mp.click("#file-btn");
+    await mp.click("#file-menu [data-f=export]");
+    const asmStep = await stepOf();
+    check(empty, "export 1.433: Export on an empty part says there is no body yet");
+    check(part.iso && part.solid && /\.step$/.test(part.name), `export 1.433: File ▸ Export ▸ STEP saves a modelled part (${JSON.stringify(part)})`);
+    check(asmStep.iso && asmStep.solid && /\.step$/.test(asmStep.name), `export 1.433: File ▸ Export ▸ STEP saves an assembly (${JSON.stringify(asmStep)})`);
+    await ctx.close();
+  }
+
   // --- Part modelling 1.144.0: arc and centrepoint slot tools with the Modify box (FR-SK-017) ---
   if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -5116,6 +5159,20 @@ try {
     const g2 = an.find(a => a.t === "gtol");
     check(gsel && g2.above === "2×" && g2.below === "SEP REQT" && tx.includes("2×") && tx.includes("SEP REQT"), `drawing: text above and below the tolerance frame (${g2?.above} / ${g2?.below}; ${tx.join(" ")})`);
     check(gsel && g2.rows.length === 2 && g2.rows[0].sym === "pos" && g2.rows[0].dia && tx.includes("Ø0.05") && tx.includes("M"), `drawing: tolerance frame edited: position, Ø, (M), second row (${JSON.stringify(g2?.rows)})`);
+    // Datum feature options: open triangle and bent leader (datum B in the top view).
+    {
+      const [bx, by] = await at(top.id, 35, 20);
+      await dp.mouse.move(bx + 1, by); await dp.mouse.click(bx, by);
+      const dsel = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-d="dopen"]'));
+      const fills = () => dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "p" && p.layer === "ANNOT" && p.fill && p.p.length === 6).length);
+      const f0 = await fills();
+      if (dsel) { await dp.check('#drw [data-d="dopen"]'); await dp.check('#drw [data-d="dbent"]'); }
+      an = await annots();
+      const db = an.find(a => a.t === "datum" && a.letter === "B");
+      const f1 = await fills();
+      check(dsel && db?.open === true && db.bent === true && f1 === f0 - 1, `drawing: datum with an open triangle and a bent leader (${JSON.stringify(db)}; filled triangles ${f0} → ${f1})`);
+      await dp.keyboard.press("Escape");
+    }
     // Revision table at the frame's top-right corner, then a second revision B.
     await tool("rev");
     await dp.waitForTimeout(100);
