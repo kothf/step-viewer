@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.452.0] - 2026-11-10
+
+### Changed
+
+- Drawings: a diameter dimension whose text is outside the circle now stops its leader at the near rim, with one arrow pointing at the circle from outside, as in SolidWorks. Before, the line ran across the whole circle and on to the text, so hole diameters drew long diagonals over the part. Untick **Arrow outside the circle** in the dimension panel for the old line across the circle with two arrows; radius dimensions are unchanged.
+
 ## [1.451.0] - 2026-11-10
 
 ### Added
@@ -2711,7 +2717,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.451.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.452.0...HEAD
+[1.452.0]: https://github.com/kothf/step-viewer/compare/v1.451.0...v1.452.0
 [1.451.0]: https://github.com/kothf/step-viewer/compare/v1.450.0...v1.451.0
 [1.450.0]: https://github.com/kothf/step-viewer/compare/v1.449.0...v1.450.0
 [1.449.0]: https://github.com/kothf/step-viewer/compare/v1.448.0...v1.449.0

@@ -443,6 +443,12 @@ export function obround(b: [number, number, number, number]): Prim[] {
   return [thin([x0, y0], [x0, y1]), thin([x1, y0], [x1, y1]), P([cx, y1], r, 0, Math.PI), P([cx, y0], r, Math.PI, 2 * Math.PI)];
 }
 
+/** Whether a radius/diameter with its text outside the circle stops its leader at the rim (one arrow from outside):
+ * diameters do unless `outside` is false (a line across the whole circle runs over the part), radii only when asked. */
+export function arrowOutside(a: DimAnnot): boolean {
+  return a.k === "dia" ? a.outside !== false && !a.lin : !!a.outside && !a.fore;
+}
+
 function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims: Prim[]; box: [number, number, number, number] } {
   const out: Prim[] = [];
   const S = (p: P2) => toSheet(pl, p[0], p[1]);
@@ -483,7 +489,7 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
     const u = unit2([T[0] - C[0], T[1] - C[1]], [Math.SQRT1_2, Math.SQRT1_2]);
     const outside = d2(T, C) > R;
     const far = outside ? T : add2(C, u, R);
-    const lead = !!a.outside && outside && !(g.k === "rad" && a.fore);
+    const lead = outside && arrowOutside(a);
     if (g.k === "rad" && a.fore) {
       // Foreshortened radius: the centre is far away (or off the sheet), so the line stops short of it with a jog.
       const A = add2(C, u, R), n: P2 = [-u[1], u[0]], len = Math.min(R * 0.6, FORE_LEN);

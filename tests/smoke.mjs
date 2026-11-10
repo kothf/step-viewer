@@ -5129,15 +5129,17 @@ try {
       fore = { j0, j1, stored, r8: txR.includes("R8"), back: (await annots()).some(a => a.k === "dia" && !a.fore) && !(await dp.$('#drw .drw-props [data-d="fore"]')) };
     }
     check(fore && fore.j1 === fore.j0 + 1 && fore.stored && fore.r8 && fore.back, `drawing: a radius dimension is foreshortened with a jog and goes back to a diameter (${selR}; ${JSON.stringify(fore)})`);
-    // Arrow outside the circle (the Ø16 is still selected): stored, never more prims than before, and off again.
+    // Arrow outside the circle (the Ø16 is still selected): on by default for a diameter (1.452.0); off draws the line
+    // across the circle (more prims, stored as false), and on again drops the key.
     {
       const nAn = () => dp.evaluate(() => window.__sv.drw.prims().filter(q => q.layer === "ANNOT").length);
       const n0 = await nAn(), has = !!(await dp.$('#drw .drw-props [data-d="rout"]'));
-      if (has) await dp.check('#drw .drw-props [data-d="rout"]');
-      const n1 = await nAn(), st = (await annots()).some(a => a.k === "dia" && a.outside === true);
+      const on0 = has && await dp.isChecked('#drw .drw-props [data-d="rout"]');
       if (has) await dp.uncheck('#drw .drw-props [data-d="rout"]');
-      const n2 = await nAn(), off = !(await annots()).some(a => a.outside);
-      check(has && st && off && n1 <= n0 && n2 === n0, `drawing: a diameter's arrow goes outside the circle and back (${JSON.stringify({ has, st, off, n0, n1, n2 })})`);
+      const n1 = await nAn(), st = (await annots()).some(a => a.k === "dia" && a.outside === false);
+      if (has) await dp.check('#drw .drw-props [data-d="rout"]');
+      const n2 = await nAn(), off = !(await annots()).some(a => "outside" in a);
+      check(has && on0 && st && off && n1 >= n0 && n2 === n0, `drawing: a diameter's leader stops at the rim by default, crosses the circle when turned off, and back (${JSON.stringify({ has, on0, st, off, n0, n1, n2 })})`);
     }
     // 1.446.0 text along the leader (the Ø16 is still selected): the text turns to the leader's angle and back.
     {
@@ -5163,7 +5165,7 @@ try {
       }
       check(r && r.n1 > r.n0 && r.stored && r.dia && r.back, `drawing: a diameter is displayed as a linear dimension with extension lines and goes back (${JSON.stringify(r)})`);
     }
-    // Arrowheads of its own (the Ø16 is still selected): oblique strokes are thick lines; Document goes back.
+    // Arrowheads of its own (the Ø16 is still selected, one arrow at the rim since 1.452.0): oblique strokes are thick lines; Document goes back.
     {
       const thick = () => dp.evaluate(() => window.__sv.drw.prims().filter(q => q.t === "l" && q.layer === "ANNOT" && q.pen === "thick").length);
       const k0 = await thick();
@@ -5171,7 +5173,7 @@ try {
       const k1 = await thick(), stored = (await annots()).some(a => a.ends === "tick");
       await dp.selectOption('#drw .drw-props [data-d="ends"]', "");
       const k2 = await thick();
-      check(k1 === k0 + 2 && stored && k2 === k0 && !(await annots()).some(a => a.ends), `drawing: a dimension takes its own arrowheads and goes back to the document's (${k0} → ${k1} → ${k2})`);
+      check(k1 === k0 + 1 && stored && k2 === k0 && !(await annots()).some(a => a.ends), `drawing: a dimension takes its own arrowheads and goes back to the document's (${k0} → ${k1} → ${k2})`);
     }
     // Back to the 100, which the next checks work on.
     [x, y] = await at(front.id, 0, 40.5);
