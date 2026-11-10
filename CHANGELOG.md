@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.475.0] - 2026-11-10
+
+### Added
+
+- **Cross holes through a shaft are recognised (FR-FT-102)**: a round hole right across an imported shaft or round bar, coming out on its curved faces, comes back from Recognize Holes and Recognize Features as a circle sketched on the standard plane square to the hole with an Extruded Cut Through All in both directions, when the hole runs along X, Y or Z. Before, such holes were left in the imported body.
+
 ## [1.474.0] - 2026-11-10
 
 ### Added
@@ -2891,7 +2897,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.474.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.475.0...HEAD
+[1.475.0]: https://github.com/kothf/step-viewer/compare/v1.474.0...v1.475.0
 [1.474.0]: https://github.com/kothf/step-viewer/compare/v1.473.0...v1.474.0
 [1.473.0]: https://github.com/kothf/step-viewer/compare/v1.472.0...v1.473.0
 [1.472.0]: https://github.com/kothf/step-viewer/compare/v1.471.0...v1.472.0

@@ -3321,13 +3321,13 @@ export class Modeller {
    * (blind, with a flat or 118° drilled bottom) or both (through). The faces to fill come back with,
    * for each hole, its plane (the opening face, as it is after the fill) and centre in that frame.
    */
-  recognizeHoles(doc: PartDoc): { faces: FaceRef[]; holes: RecognizedHole[]; sinks?: string[] } {
+  recognizeHoles(doc: PartDoc): { faces: FaceRef[]; holes: RecognizedHole[]; sinks?: string[]; cuts?: Feature[] } {
     const oc = this.oc;
     const r = this.evaluate(doc);
     const body = r.body;
     if (!body) return { faces: [], holes: [] };
     const tol = Math.max(1e-4, this.size(body.shape) * 1e-6);
-    type Cyl = { i: number; o: V3; d: V3; r: number; v0: number; v1: number };
+    type Cyl = { i: number; o: V3; d: V3; r: number; v0: number; v1: number; du: number };
     type Pln = { i: number; o: V3; n: V3 };
     type Cone = { i: number; o: V3; d: V3; ends: V3[] };
     const cyls: Cyl[] = [], plns: Pln[] = [], cones: Cone[] = [];
@@ -3349,7 +3349,7 @@ export class Modeller {
         const o = this.xyz(ax.Location()), d = unit(this.xyz(ax.Direction()));
         if (!hollow(ad, face, o, d)) return;
         const vs = [ad.FirstVParameter(), ad.LastVParameter()];
-        cyls.push({ i, o, d, r: c.Radius(), v0: Math.min(...vs), v1: Math.max(...vs) });
+        cyls.push({ i, o, d, r: c.Radius(), v0: Math.min(...vs), v1: Math.max(...vs), du: Math.abs(ad.LastUParameter() - ad.FirstUParameter()) });
       } else if (ty === oc.GeomAbs_SurfaceType.GeomAbs_Plane) {
         plns.push({ i, o: this.xyz(ad.Plane().Location()), n: this.faceNormalAt(face) });
       } else if (ty === oc.GeomAbs_SurfaceType.GeomAbs_Cone) {
@@ -3362,17 +3362,17 @@ export class Modeller {
     });
     const onAxis = (p: V3, o: V3, d: V3) => { const q = sub3(p, o); return Math.hypot(...sub3(q, mul(d, dot(q, d)))) < tol * 10; };
     // Group the cylinder faces of one hole (a full round is often two half faces).
-    const groups: { o: V3; d: V3; r: number; lo: number; hi: number; faces: number[] }[] = [];
+    const groups: { o: V3; d: V3; r: number; lo: number; hi: number; faces: number[]; du: number }[] = [];
     for (const c of cyls) {
       const g = groups.find(g => Math.abs(g.r - c.r) < tol * 10 && Math.abs(Math.abs(dot(g.d, c.d)) - 1) < 1e-6 && onAxis(c.o, g.o, g.d));
       const s = (v: number) => dot(sub3(add(c.o, mul(c.d, v)), g ? g.o : c.o), g ? g.d : c.d);
       const a = s(c.v0), b = s(c.v1);
-      if (g) { g.lo = Math.min(g.lo, a, b); g.hi = Math.max(g.hi, a, b); g.faces.push(c.i); }
-      else groups.push({ o: c.o, d: c.d, r: c.r, lo: Math.min(a, b), hi: Math.max(a, b), faces: [c.i] });
+      if (g) { g.lo = Math.min(g.lo, a, b); g.hi = Math.max(g.hi, a, b); g.faces.push(c.i); g.du += c.du; }
+      else groups.push({ o: c.o, d: c.d, r: c.r, lo: Math.min(a, b), hi: Math.max(a, b), faces: [c.i], du: c.du });
     }
     type Found = { faces: number[]; open: number; at: V3; end: "blind" | "through"; depth: number; flat: boolean; r: number;
       d: V3; floor?: number; caps: number[]; cs?: { dia: number; angle: number; faces: number[] }; cb?: { dia: number; depth: number } };
-    const found: Found[] = [];
+    const found: Found[] = [], crossH: { faces: number[]; o: V3; d: V3; r: number }[] = [];
     for (const g of groups) {
       const at = (s: number): V3 => add(g.o, mul(g.d, s));
       // A flat face square to the axis through a point, facing `out`; of coplanar ones (the floors of two
@@ -3415,7 +3415,16 @@ export class Modeller {
         return null;
       };
       const e0 = endAt(g.lo, -1), e1 = endAt(g.hi, 1);
-      if (!e0 || !e1) continue;
+      if (!e0 || !e1) {
+        // A hole right through that comes out on a curved face (a cross hole in a shaft): a full round
+        // whose ends are both outside the body, each either curved or plainly open on a flat face.
+        const plainOr = (e: typeof e0) => !e || (e.kind === "open" && !e.cs);
+        const out = (s: number) => new oc.BRepClass3d_SolidClassifier_3(body.shape, this.P(at(s)), 1e-7).State() === oc.TopAbs_State.TopAbs_OUT;
+        const eps = Math.max(tol * 100, g.r * 1e-3);
+        if (plainOr(e0) && plainOr(e1) && Math.abs(g.du - 2 * Math.PI) < 1e-6 && out(g.lo - eps) && out(g.hi + eps))
+          crossH.push({ faces: g.faces, o: g.o, d: g.d, r: g.r });
+        continue;
+      }
       if (e0.kind === "open" && e1.kind === "open") {
         // Through: it opens on the countersunk end, else the lower one.
         const [a, b] = e1.cs && !e0.cs ? [e1, e0] : [e0, e1];
@@ -3441,12 +3450,32 @@ export class Modeller {
     // A face another hole fills cannot hold a hole.
     const filled = new Set(found.flatMap(h => h.faces));
     const keep = found.filter(h => !filled.has(h.open));
-    if (!keep.length) return { faces: [], holes: [] };
+    const upto = doc.features.slice(0, doc.rollback ?? doc.features.length);
     const ref = (i: number): FaceRef => ({ name: body.names[i], hint: this.centroid(body.faces[i]) });
-    const faces = keep.flatMap(h => h.faces.map(ref));
+    // Cross holes come back as a circle on the standard plane square to the hole, cut Through All both
+    // ways (FeatureWorks makes them cut-extrudes too); one is kept only when it gives the same volume.
+    const v0 = crossH.length ? this.volume(body.shape) : 0;
+    const cuts: Feature[] = [], crossFaces: FaceRef[] = [];
+    for (const c of crossH) {
+      const std = (["XY", "XZ", "YZ"] as const).find(k => Math.abs(Math.abs(dot(STD_FRAMES[k].n, c.d)) - 1) < 1e-9);
+      if (!std) continue;
+      const F = STD_FRAMES[std], q = sub3(c.o, F.o), sid = `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
+      const pair: Feature[] = [
+        { id: sid, type: "sketch", name: "", plane: { std }, rels: [], dims: [], ents: [{ id: `${sid}c`, t: "point", x: dot(q, F.x), y: dot(q, F.y) }, { id: `${sid}k`, t: "circle", c: `${sid}c`, r: c.r }] } as Feature,
+        { id: `${sid}x`, type: "extrude", name: "", sketch: sid, op: "cut", end: "through2", depth: { v: 10 } } as Feature];
+      const fs = c.faces.map(ref);
+      try {
+        const r = this.evaluate({ ...doc, rollback: null, features: [...upto, { id: "__cross", type: "delface", name: "", faces: fs } as Feature, ...pair] });
+        if (!r.body || r.statuses.slice(-3).some(x => x.ok === false) || Math.abs(this.volume(r.body.shape) - v0) > 1e-6 * Math.abs(v0) + 1e-9) continue;
+      } catch { continue; }
+      cuts.push(...pair);
+      crossFaces.push(...fs);
+    }
+    if (!keep.length) return cuts.length ? { faces: crossFaces, holes: [], cuts } : { faces: [], holes: [] };
+    const faces = [...keep.flatMap(h => h.faces.map(ref)), ...crossFaces];
     // The planes are measured after the fill, which is what the hole features will be built on.
     const del: Feature = { id: "__recog", type: "delface", name: "", faces };
-    const after = this.evaluate({ ...doc, rollback: null, features: [...doc.features.slice(0, doc.rollback ?? doc.features.length), del] });
+    const after = this.evaluate({ ...doc, rollback: null, features: [...upto, del] });
     if (after.statuses.at(-1)?.ok === false || !after.body) return { faces: [], holes: [] };
     const holes: RecognizedHole[] = keep.map(h => {
       const plane: PlaneRef = { face: { name: body.names[h.open], hint: h.at } };
@@ -3455,7 +3484,7 @@ export class Modeller {
       return { plane, pt: [dot(q, fr.x), dot(q, fr.y)], diameter: 2 * h.r, end: h.end, depth: h.depth, flat: h.flat, ...(h.cb ? { cb: h.cb } : {}), ...(h.cs ? { cs: { dia: h.cs.dia, angle: h.cs.angle } } : {}) };
     });
     // The countersink cones, so Recognize Features does not take them for chamfers first.
-    return { faces, holes, sinks: keep.flatMap(h => h.cs ? h.cs.faces.map(i => body.names[i]) : []) };
+    return { faces, holes, sinks: keep.flatMap(h => h.cs ? h.cs.faces.map(i => body.names[i]) : []), ...(cuts.length ? { cuts } : {}) };
   }
 
   /**
@@ -3577,14 +3606,15 @@ export class Modeller {
     const B = this.recognizeBlends(at([]), this.recognizeHoles(at([])).sinks ?? []);
     const bDel = B.filter(f => f.type === "delface"), blends = B.filter(f => f.type !== "delface");
     const H = this.recognizeHoles(at(bDel));
-    const hDel: Feature[] = H.holes.length ? [{ id: id(), type: "delface", name: "", faces: H.faces } as Feature] : [];
-    const holes = recognizedHoleFeatures(H.holes, id);
+    const hDel: Feature[] = H.faces.length ? [{ id: id(), type: "delface", name: "", faces: H.faces } as Feature] : [];
+    // Cross holes (cut-extrudes on a standard plane) go back after the hole features.
+    const holes = recognizedHoleFeatures(H.holes, id), cuts = H.cuts ?? [];
     const E = this.recognizeExtrudes(at([...bDel, ...hDel]));
     const good = (fs: Feature[]): boolean => {
       try {
         const r = this.evaluate(at(fs));
         return !!r.body && !r.statuses.slice(-fs.length).some(x => x.ok === false) && this.solids(r.body.shape) === this.solids(start.shape)
-          && Math.abs(this.volume(r.body.shape) - v0) <= 1e-6 * Math.abs(v0) + 1e-9;
+          && (Math.abs(this.volume(r.body.shape) - v0) <= 1e-6 * Math.abs(v0) + 1e-9 || this.sameVolume(r.body.shape, start.shape));
       } catch { return false; }
     };
     // Holes and blends go back on where they were, on the faces the body has by then.
@@ -3603,6 +3633,7 @@ export class Modeller {
           out.push({ ...h, plane, pts: pts3.map(p => { const q = sub3(p, nf.o); return [dot(q, nf.x), dot(q, nf.y)] as [number, number]; }) });
         }
       }
+      out.push(...cuts);
       for (const g of blends) {
         const f = g as FilletFeature | ChamferFeature;
         // The body this blend was found on: a two-distance chamfer keeps its first face by its normal there.
@@ -3629,7 +3660,7 @@ export class Modeller {
       }
       return out;
     };
-    if (!B.length && !holes.length && !E.length) return [];
+    if (!B.length && !holes.length && !cuts.length && !E.length) return [];
     try {
       if (E.some(f => f.type === "delbody")) {
         // The base replaces the imported body: the Delete Faces before it are not needed.
@@ -3642,7 +3673,7 @@ export class Modeller {
     // Stacked: each command's finds on the body the earlier ones leave, as running them one by one does.
     const out: Feature[] = [...B];
     const H2 = this.recognizeHoles(at(out));
-    if (H2.holes.length) out.push({ id: id(), type: "delface", name: "", faces: H2.faces } as Feature, ...recognizedHoleFeatures(H2.holes, id));
+    if (H2.faces.length) out.push({ id: id(), type: "delface", name: "", faces: H2.faces } as Feature, ...recognizedHoleFeatures(H2.holes, id), ...(H2.cuts ?? []));
     out.push(...this.recognizeExtrudes(at(out)));
     return out.length && good(out) ? out : [];
   }
@@ -4807,6 +4838,16 @@ export class Modeller {
     const p = new this.oc.GProp_GProps_1();
     this.oc.BRepGProp.VolumeProperties_1(shape, p, true, false, false);
     return p.Mass();
+  }
+
+  /**
+   * Same volume by OCCT's adaptive integration (to 1e-9): the quick `volume` can be ~4e-6 off on faces such
+   * as the saddle where a cross hole meets a shaft, so a recognition that the quick check refuses is weighed again.
+   */
+  private sameVolume(a: any, b: any): boolean {
+    const v = (x: any) => { const p = new this.oc.GProp_GProps_1(); this.oc.BRepGProp.VolumeProperties_2(x, p, 1e-9, false, false); return p.Mass(); };
+    const va = v(a), vb = v(b);
+    return Math.abs(va - vb) <= 1e-6 * Math.abs(vb) + 1e-9;
   }
 
   // ---------- evaluation ----------

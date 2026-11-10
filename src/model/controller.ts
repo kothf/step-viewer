@@ -1739,19 +1739,22 @@ export class ModelController {
     if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
     if (this.mode.kind !== "none") this.exitMode(false);
     this.setBusy(1);
-    let rec: { faces: FaceRef[]; holes: RecognizedHole[] };
+    let rec: { faces: FaceRef[]; holes: RecognizedHole[]; cuts?: Feature[] };
     try { rec = await this.kernel.recognizeHoles(this.doc); }
     catch (err) { toast(t("Feature recognition failed: {msg}", { msg: (err as Error).message }), true); return; }
     finally { this.setBusy(-1); }
-    if (!rec.holes.length) { toast(t("No holes were found to recognise.")); return; }
+    const cuts = rec.cuts ?? [], n = rec.holes.length + cuts.length / 2;
+    if (!n) { toast(t("No holes were found to recognise.")); return; }
     const holes = recognizedHoleFeatures(rec.holes, () => uid("f_"));
     this.store.change("Recognize holes", d => {
       let at = d.rollback ?? d.features.length;
       const add = (f: Feature) => { d.features.splice(at++, 0, f); if (d.rollback != null) d.rollback++; };
       add({ id: uid("f_"), type: "delface", name: nextName(d, "delface"), faces: rec.faces } satisfies DeleteFaceFeature);
       for (const h of holes) add({ ...h, name: nextName(d, "hole") });
+      // Cross holes through a shaft come back as a sketch and a Through All cut.
+      for (const f of cuts) add({ ...f, name: nextName(d, f.type, f.type === "extrude") } as Feature);
     });
-    toast(t("{n} hole recognised|{n} holes recognised", { n: rec.holes.length }));
+    toast(t("{n} hole recognised|{n} holes recognised", { n }));
   }
 
   /**

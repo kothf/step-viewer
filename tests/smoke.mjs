@@ -9500,6 +9500,28 @@ try {
     const sunk = await mp.evaluate(() => window.__sv.model.store.doc.features.filter(f => f.type === "hole").map(f => f.kind).sort().join());
     check(!sk0.bad && Math.abs(sk1.v - sk0.v) < 0.05 && !sk1.bad && sk1.types === "import,sketch,extrude,delbody,hole,hole" && sunk === "cbore,csink",
       `model 1.474: Recognize Features makes counterbored and countersunk holes again as Hole Wizard holes (FR-FT-102) (${JSON.stringify({ sk0, sk1, sunk })})`);
+    // 1.475: a cross hole through a round bar comes back as a sketch and a Through All cut on a standard plane (the bar itself as an extrude).
+    await mp.evaluate(() => window.__sv.model.store.change("Cross", d => {
+      const xy = [[0, 0], [10, 0], [10, 30], [0, 30]];
+      const ents = xy.map(([x, y], i) => ({ id: "rp" + i, t: "point", x, y }));
+      xy.forEach((_, i) => ents.push({ id: "rl" + i, t: "line", a: "rp" + i, b: "rp" + ((i + 1) % 4) }));
+      ents.push({ id: "ra", t: "point", x: 0, y: -5 }, { id: "rb", t: "point", x: 0, y: 35 }, { id: "rax", t: "line", a: "ra", b: "rb", cons: true });
+      d.features = [{ id: "r", type: "sketch", name: "Sketch1", plane: { std: "XZ" }, ents, rels: [], dims: [] },
+        { id: "v", type: "revolve", name: "Revolve1", sketch: "r", op: "boss", axis: "rax", angle: { v: Math.PI * 2 } },
+        { id: "o", type: "sketch", name: "Sketch2", plane: { std: "XZ" }, rels: [], dims: [], ents: [{ id: "oc", t: "point", x: 0, y: 15 }, { id: "ok", t: "circle", c: "oc", r: 2.5 }] },
+        { id: "c", type: "extrude", name: "Cut-Extrude1", sketch: "o", op: "cut", end: "through2", depth: { v: 10 } }];
+    }));
+    await settle();
+    const cx0 = await state();
+    const brepCx = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "cross.brep", brep }]; }), brepCx);
+    await settle();
+    await runCmd(mp, "Recognize Features");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.length > 1, null, { timeout: 120000 });
+    await settle();
+    const cx1 = await state();
+    check(!cx0.bad && cx0.v > 9000 && Math.abs(cx1.v - cx0.v) < 0.1 && !cx1.bad && cx1.types === "import,sketch,extrude,delbody,sketch,extrude",
+      `model 1.475: Recognize Features makes a cross hole through an imported shaft again as a Through All cut (FR-FT-102) (${JSON.stringify({ cx0, cx1 })})`);
     await ctx.close();
   }
 
