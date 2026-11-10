@@ -6212,6 +6212,26 @@ try {
       await mp.evaluate(() => window.__sv.asm.undo());
       await shown(2);
       check(turn.box && turn.deg === 30 && turn.ok && turn.mates === n0, `asm: Move panel turns a component by a typed angle about its mate axis (exam #51) (${JSON.stringify(turn)})`);
+      // Two flat faces that cannot be Coincident either way round but can be Parallel start as Parallel (exam #27):
+      // with the pin seated on the plate, its other end face cannot also lie on the plate's top.
+      const par = await mp.evaluate(r => {
+        const a = window.__sv.asm, d = a.doc, plate = d.components[0], pin = d.components[1];
+        const topOfPin = [...a.geo.get(pin.part).entries()].find(([, g]) => g.k === "plane" && g.n[2] > 0.99)?.[0];
+        a.startMate();
+        Object.assign(a.mating, { a: { comp: plate.id, face: r.top }, b: { comp: pin.id, face: r.bottom } });
+        a.setMateType("coincident"); a.okMate();
+        const seated = a.doc.mates.length;
+        // As a click on the second face leaves it: Coincident, face to face, nothing chosen by hand.
+        Object.assign(a.mating, { a: { comp: plate.id, face: r.top }, b: { comp: pin.id, face: topOfPin }, type: "coincident", align: "anti", typeSet: undefined, alignSet: undefined });
+        a.previewMate();
+        const out = { seated, type: a.mating.type, problem: a.mating.problem ?? "", pinTop: !!topOfPin };
+        a.cancelMate();
+        return out;
+      }, ref);
+      await shown(2);
+      await mp.evaluate(() => window.__sv.asm.undo());
+      await shown(2);
+      check(par.pinTop && par.seated === n0 + 1 && par.type === "parallel" && !par.problem, `asm: flat faces that cannot be Coincident start as Parallel (exam #27) (${JSON.stringify(par)})`);
       check(/^Undo: .+ \(Ctrl\+Z\)$/.test(undoTip) && delKey.n === n0 - 1 && /^Undo: Delete Concentric1 \(Ctrl\+Z\)$/.test(delKey.tip)
         && menu.open && menu.inside && enter.next === "y" && enter.open && ins.name === "other<1>" && ins.inView && neg.flipped && neg.value === 5,
         `asm 1.339: Delete key, menus inside the window, Enter through Move, inserts in view numbered by file, negative distance flips, undo tips (${JSON.stringify({ undoTip, delKey, n0, menu, enter, ins, neg })})`);

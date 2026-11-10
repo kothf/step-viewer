@@ -135,3 +135,12 @@ test("sixth pass (1.407.0): PA66 and PMMA checked against makers' sheets", () =>
   assert.equal(findMaterial("Nylon PA66")!.E, 2.4);
   assert.ok(!findMaterial("Nylon PA66-GF30")!.ref);
 });
+
+test("seventh pass (1.413.0): Douglas fir and water checked", () => {
+  const checked = LIBRARY.filter((m) => m.ref);
+  assert.ok(checked.length >= 141, `${checked.length} checked`);
+  assert.ok(findMaterial("Water (20 °C)")!.ref);
+  const fir = findMaterial("Wood (Douglas fir)")!;
+  assert.ok(fir.ref);
+  assert.equal(fir.E, 13.4);
+});

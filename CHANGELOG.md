@@ -5,11 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.413.0] - 2026-11-10
+## [1.414.0] - 2026-11-10
 
 ### Added
 
 - **Recognize Extrudes makes the base too (FR-FT-102)**: when an imported body without its pockets and bosses is a plain prism (a plate, a block, a profile with straight sides, also with round holes through it), it comes back as a sketch on one end with an Extrude, the imported body is deleted, and the recognised cuts and bosses go on the new body. The whole part is then made of sketches and extrudes you can edit, with no Delete Face. Other bodies are handled as before.
+
+## [1.413.0] - 2026-11-10
+
+### Changed
+
+- **Douglas fir and water checked (FR-MAT-001)**: Wood (Douglas fir) and Water now show **Checked against:** with a link. Douglas fir is compared with Oregon State University's table from the USDA Wood Handbook (air-dry weight 545 kg/m³, modulus 13 400 MPa), water with the USGS density table. 141 of 170 materials are checked; the other 29 still say they are not.
 
 ## [1.412.0] - 2026-11-10
 
@@ -2436,7 +2442,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.413.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.414.0...HEAD
+[1.414.0]: https://github.com/kothf/step-viewer/compare/v1.413.0...v1.414.0
 [1.413.0]: https://github.com/kothf/step-viewer/compare/v1.412.0...v1.413.0
 [1.412.0]: https://github.com/kothf/step-viewer/compare/v1.411.0...v1.412.0
 [1.411.0]: https://github.com/kothf/step-viewer/compare/v1.410.0...v1.411.0
