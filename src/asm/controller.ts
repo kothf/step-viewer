@@ -23,6 +23,8 @@ import { ctxRefs, syncCtx, type CtxComp, type PartContext } from "../model/conte
 import { mateDefaults, mateTypes, placeGeo, solve, type Geo, type SolveResult } from "./solver";
 import { folderPath, hashBytes, planLinks, type LinkFile } from "./links";
 import { MCMASTER, mcmasterPart, tagVendor, vendorOf } from "./vendor";
+import { pickMaterial } from "../materialPicker";
+import { toRef } from "../tools/materials";
 import { FASTENERS, TOOLBOX_GROUPS, defaultLength, fastenerInfo, fastenerLengths, fastenerName, fastenerPart, fastenerSizes, sizeForHole, type FastenerKind } from "./fasteners";
 import { applySolved, autoExplode, expandPatterns, explodeAt, explodeOffsets, flattenSubs, patternSteps, solveView, topOf, type Expanded } from "./patterns";
 import { STOPPED, type AsmFeatureStatus } from "../model/kernelClient";
@@ -2710,6 +2712,23 @@ export class AsmController {
     });
   }
 
+  /** Sets (or clears) the material of a component's part from the assembly, as SolidWorks' Edit Material does:
+   *  every instance of that part follows, and the BOM and mass properties with it. One undo step. */
+  setPartMaterial(id: string, m: ReturnType<typeof toRef> | null) {
+    this.change(d => {
+      const c = d.components.find(x => x.id === id), e = c && d.parts[c.part];
+      if (!e || e.asm || !e.doc) return;
+      if (m) e.doc.material = m; else delete e.doc.material;
+    });
+  }
+
+  async pickPartMaterial(id: string) {
+    const c = this.doc?.components.find(x => x.id === id), e = c && this.doc?.parts[c.part];
+    if (!e || e.asm) return;
+    const r = await pickMaterial({ current: e.doc?.material ?? null, allowNone: true });
+    if (r) this.setPartMaterial(id, r.material ? toRef(r.material) : null);
+  }
+
   private menu(c: Component, x: number, y: number) {
     this.popup([
       ...(this.doc?.parts[c.part]?.asm ? [[c.flexible ? t("Make rigid") : t("Make flexible"), () => this.setFlexible(c.id, !c.flexible)] as [string, () => void]] : [[t("Open part"), () => this.editPart(c.id)] as [string, () => void], [t("Edit in context"), () => this.editPart(c.id, true)] as [string, () => void]]),
@@ -2719,6 +2738,7 @@ export class AsmController {
       ...(c.fixed ? [] : [[t("Move component"), () => this.moveComponent(c.id)] as [string, () => void]]),
       [c.hidden ? t("Show component") : t("Hide component"), () => this.setHidden(c.id, !c.hidden)],
       [c.suppressed ? t("Unsuppress") : t("Suppress"), () => this.setSuppressed(c.id, !c.suppressed)],
+      ...(this.doc?.parts[c.part]?.asm ? [] : [[t("Material…"), () => void this.pickPartMaterial(c.id)] as [string, () => void]]),
       [t("Component colour…"), () => this.pickColor(c)],
       [c.opacity !== undefined && c.opacity < 1 ? t("Make opaque") : t("Change transparency"), () => this.setOpacity(c.id, c.opacity !== undefined && c.opacity < 1 ? null : 0.35)],
       ...(c.color ? [[t("Reset colour"), () => this.setColor(c.id, null)] as [string, () => void]] : []),
