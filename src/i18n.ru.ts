@@ -3306,6 +3306,8 @@ export const RU: Record<string, string> = {
   "Lay": "Направление неровностей",
   "Machining allowance": "Припуск на обработку",
   "Foreshortened radius": "Радиус с изломом",
+  "Text above the frame": "Текст над рамкой",
+  "Text below the frame": "Текст под рамкой",
   "Fillet the edges": "Скруглить кромки",
   "Edge fillet radius": "Радиус скругления кромок",
   "The gusset's edge fillet must be less than half its width.": "Радиус скругления кромок ребра должен быть меньше половины его ширины.",
