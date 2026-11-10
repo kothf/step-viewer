@@ -200,6 +200,12 @@ export function angleSector(l1: [P2, P2], l2: [P2, P2], t: P2): { x: P2; a0: num
 // ---------- text of dimensions and callouts ----------
 
 export function dimText(a: DimAnnot, g: DimGeo, dec: string): { main: string; up?: string; lo?: string } {
+  if (a.show === "ref" && !a.txt) {
+    const r = dimText({ ...a, show: undefined }, g, dec);
+    return r.main ? { ...r, main: `(${r.main})` } : { main: "", up: `(${r.up})`, lo: `(${r.lo})` };
+  }
+  // A basic dimension is theoretically exact: no tolerance, not even the drawing's default.
+  if (a.show === "basic") a = { ...a, tol: { t: "none" } };
   const prec = a.prec ?? (g.k === "ang" ? PREC_ANG : PREC_LIN);
   const f = (v: number) => fmtNum(v, prec, dec), fa = (v: number) => fmtNum(v, a.prec ?? PREC_ANG, dec);
   // ◠ (U+25E0) stands for ISO 129's arc symbol: DejaVu Sans has no ⌒.
@@ -341,10 +347,14 @@ function textBox(x: number, y: number, s: string, h: number, al: "l" | "c" | "r"
   return [Math.min(...pts.map(p => p[0])), Math.min(...pts.map(p => p[1])), Math.max(...pts.map(p => p[0])), Math.max(...pts.map(p => p[1]))];
 }
 
-/** Draws one dimension. `pl` places the view's model axes on the sheet; an inspection dimension frames its text. */
+/** Draws one dimension. `pl` places the view's model axes on the sheet; an inspection dimension frames its text with an obround, a basic one with a box. */
 export function dimPrims(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims: Prim[]; box: [number, number, number, number] } {
   const r = dimPrims0(a, g, pl, dec);
   if (a.insp) r.prims.push(...obround(r.box));
+  if (a.show === "basic") {
+    const [x0, y0, x1, y1] = [r.box[0] - 0.6, r.box[1] - 0.4, r.box[2] + 0.6, r.box[3] + 0.2];
+    r.prims.push(thin([x0, y0], [x1, y0]), thin([x1, y0], [x1, y1]), thin([x1, y1], [x0, y1]), thin([x0, y1], [x0, y0]));
+  }
   return r;
 }
 
