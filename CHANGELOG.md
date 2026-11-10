@@ -5,12 +5,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.451.0] - 2026-11-10
+## [1.452.0] - 2026-11-10
 
 ### Fixed
 
 - A plain section view no longer draws centre marks and centrelines for holes and bosses the cut took away (drawings exam #4).
 - Scale ▾ **Custom…** is typed into a box under the list instead of a browser prompt (drawings exam #17).
+
+## [1.451.0] - 2026-11-10
+
+### Added
+
+- **Features from the sketch you are editing (FR-SK-004)**: there is no need to exit the sketch first. The Sketch tab ends with **Extrude**, **Cut** and **Revolve**, the sketch's right-click menu has them too, and the Features, Surfaces, Sheet Metal and Weldments tabs keep their commands while you sketch (Ctrl+K finds them as well). Picking one exits the sketch and opens the feature on it with its live preview, as in SolidWorks.
 
 ## [1.450.0] - 2026-11-10
 
@@ -2712,7 +2718,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.451.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.452.0...HEAD
+[1.452.0]: https://github.com/kothf/step-viewer/compare/v1.451.0...v1.452.0
 [1.451.0]: https://github.com/kothf/step-viewer/compare/v1.450.0...v1.451.0
 [1.450.0]: https://github.com/kothf/step-viewer/compare/v1.449.0...v1.450.0
 [1.449.0]: https://github.com/kothf/step-viewer/compare/v1.448.0...v1.449.0
