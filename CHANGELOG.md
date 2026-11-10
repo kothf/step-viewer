@@ -5,11 +5,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.414.0] - 2026-11-10
+## [1.416.0] - 2026-11-10
 
 ### Added
 
 - **Note justification and leader options (FR-DRW-023)**: a drawing note's lines can be centred or set to the right (**Justify**), its leader can end in a dot or plainly instead of an arrow (**Leader end**), and **Bent leader** gives it a short level shoulder at the text.
+
+## [1.415.0] - 2026-11-10
+
+### Added
+
+- **Recognize Extrudes makes turned bases (FR-FT-102)**: an imported body of revolution (a stepped shaft, a bush, a flange, with cones, rounded grooves and ball ends) comes back as a sketch of its half section with a centreline and a Revolve that makes a new body; the imported body is deleted, and recognised pockets and bosses go on the new one. It works when the axis lies in a standard plane or runs parallel to one (a reference plane through the axis is added then). Bodies with a skew axis are handled as before.
+
+## [1.414.0] - 2026-11-10
+
+### Added
+
+- **Recognize Extrudes makes the base too (FR-FT-102)**: when an imported body without its pockets and bosses is a plain prism (a plate, a block, a profile with straight sides, also with round holes through it), it comes back as a sketch on one end with an Extrude, the imported body is deleted, and the recognised cuts and bosses go on the new body. The whole part is then made of sketches and extrudes you can edit, with no Delete Face. Other bodies are handled as before.
 
 ## [1.413.0] - 2026-11-10
 
@@ -2442,7 +2454,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.414.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.416.0...HEAD
+[1.416.0]: https://github.com/kothf/step-viewer/compare/v1.415.0...v1.416.0
+[1.415.0]: https://github.com/kothf/step-viewer/compare/v1.414.0...v1.415.0
 [1.414.0]: https://github.com/kothf/step-viewer/compare/v1.413.0...v1.414.0
 [1.413.0]: https://github.com/kothf/step-viewer/compare/v1.412.0...v1.413.0
 [1.412.0]: https://github.com/kothf/step-viewer/compare/v1.411.0...v1.412.0
