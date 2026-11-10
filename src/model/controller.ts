@@ -1744,7 +1744,7 @@ export class ModelController {
     try { rec = await this.kernel.recognizeHoles(this.doc); }
     catch (err) { toast(t("Feature recognition failed: {msg}", { msg: (err as Error).message }), true); return; }
     finally { this.setBusy(-1); }
-    const cuts = rec.cuts ?? [], n = rec.holes.length + cuts.length / 2;
+    const cuts = rec.cuts ?? [], n = rec.holes.length + cuts.filter(f => f.type === "hole" || f.type === "extrude").length;
     if (!n) { toast(t("No holes were found to recognise.")); return; }
     const holes = recognizedHoleFeatures(rec.holes, () => uid("f_"));
     this.store.change("Recognize holes", d => {
@@ -1826,7 +1826,7 @@ export class ModelController {
     try { feats = await this.kernel.recognizeFeatures(this.doc); }
     catch (err) { toast(t("Feature recognition failed: {msg}", { msg: (err as Error).message }), true); return; }
     finally { this.setBusy(-1); }
-    const n = feats.filter(f => f.type !== "sketch" && f.type !== "delface" && f.type !== "delbody" && f.type !== "plane").length;
+    const n = feats.filter(f => f.type !== "sketch" && f.type !== "delface" && f.type !== "delbody" && f.type !== "plane" && f.type !== "axis").length;
     if (!n) { toast(t("No features were found to recognise.")); return; }
     defineRecognised(feats);
     this.store.change("Recognize features", d => {
