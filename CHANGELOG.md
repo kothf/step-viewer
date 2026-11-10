@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.453.0] - 2026-11-10
+
+### Added
+
+- **Extrude Direction 2 with any end condition (FR-FT-011)**: as in SolidWorks, Direction 2 has its own end condition (Blind, Through all, Up to next, Up to vertex, Up to face or plane, Offset from surface, Up to body) and works with every Direction 1 end condition except Mid plane and Through all - both. A blind Direction 2 gets its own orange drag arrow pointing the other way. Extrudes made before keep their shape and face names.
+
 ## [1.452.0] - 2026-11-10
 
 ### Fixed
@@ -2718,7 +2724,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.452.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.453.0...HEAD
+[1.453.0]: https://github.com/kothf/step-viewer/compare/v1.452.0...v1.453.0
 [1.452.0]: https://github.com/kothf/step-viewer/compare/v1.451.0...v1.452.0
 [1.451.0]: https://github.com/kothf/step-viewer/compare/v1.450.0...v1.451.0
 [1.450.0]: https://github.com/kothf/step-viewer/compare/v1.449.0...v1.450.0
