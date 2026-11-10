@@ -30,6 +30,7 @@ const RECYCLE_HEAP = 1024 * 1024 * 1024;
 export class KernelClient {
   private worker: Worker | null = null;
   private ready: Promise<void> | null = null;
+  private abortReady: ((err: Error) => void) | null = null;
   private pending = new Map<number, Pending>();
   private seq = 0;
   /** WASM heap size of the current worker after its last file. */
@@ -55,6 +56,9 @@ export class KernelClient {
 
   private stop() {
     this.worker?.terminate();
+    // An open waiting for this worker's set-up ends as cancelled instead of waiting for ever.
+    this.abortReady?.(new Error("cancelled"));
+    this.abortReady = null;
     this.worker = null;
     this.ready = null;
     this.file = null;
@@ -73,7 +77,8 @@ export class KernelClient {
     this.stop();
     const t = performance.now();
     // The page's spare worker when there is one (its set-up done or under way).
-    const { w, ready } = takeWorker(this.base);
+    const { w, ready, abort } = takeWorker(this.base);
+    this.abortReady = abort;
     w.onmessage = (e: MessageEvent) => {
       const d = e.data, p = this.pending.get(d.id);
       if (!p) return;

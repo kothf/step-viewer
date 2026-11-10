@@ -1327,7 +1327,7 @@ try {
   {
     await page.goto(`${origin}/index.html?debug`);
     await page.waitForFunction(() => window.__sv);
-    await page.waitForTimeout(4000); // idle: OpenCASCADE loads and reads its warm-up block
+    await page.waitForTimeout(9000); // idle: OpenCASCADE loads and reads its warm-up block; the spare full kernel sets itself up
     await page.setInputFiles("#file-input", join(fixtures, "cax-if/as1_pe_203.stp"));
     await page.waitForFunction(() => document.querySelector("#st-kernel").dataset.state === "ready" && window.__sv.timings().exact, null, { timeout: 120000 });
     const a = await page.evaluate(() => ({ ...window.__sv.timings() }));
@@ -1335,8 +1335,8 @@ try {
     await page.waitForFunction(() => document.title.startsWith("rounded-cube") && window.__sv.timings().exact, null, { timeout: 120000 });
     const b = await page.evaluate(() => ({ ...window.__sv.timings(), state: document.querySelector("#st-kernel").dataset.state, vol: window.__sv.viewer.parts[0].data.volume }));
     check(a.wasm < 50 && b.wasm < 50, `speed: OpenCASCADE was loaded before the first file (${a.wasm.toFixed(0)} ms, then ${b.wasm.toFixed(0)} ms to load it)`);
-    check(b.state === "ready" && near(b.vol, 946.3497, 1e-3) && b.init < 200 && b.init < a.init / 5,
-      `speed: the second file reuses the kernel worker (start-up ${a.init.toFixed(0)} ms, then ${b.init.toFixed(0)} ms) and still gets exact values (${b.vol.toFixed(4)} mm³)`);
+    check(b.state === "ready" && near(b.vol, 946.3497, 1e-3) && b.init < 200 && a.init < 1000,
+      `speed: the first file takes the spare kernel worker set up while idle and the second reuses it (start-up ${a.init.toFixed(0)} ms, then ${b.init.toFixed(0)} ms) and still gets exact values (${b.vol.toFixed(4)} mm³)`);
     console.log(`  timings (ms): first ${JSON.stringify(a, (k, v) => typeof v === "number" ? Math.round(v) : v)}, second ${JSON.stringify(b, (k, v) => typeof v === "number" ? Math.round(v) : v)}`);
   }
 

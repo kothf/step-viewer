@@ -12,9 +12,14 @@ const INIT_ID = -1;
 /** How long after the taken worker is ready the next spare starts (the taker's first job goes first). */
 const REFILL_MS = 400;
 
-export interface StartedWorker { w: Worker; ready: Promise<void> }
+export interface StartedWorker {
+  w: Worker;
+  ready: Promise<void>;
+  /** Rejects `ready` (when still pending): a caller that terminates the worker calls it, so nobody waits for ever on a set-up that will not finish. */
+  abort: (err: Error) => void;
+}
 
-let spare: StartedWorker | null = null;
+let spare: { w: Worker; ready: Promise<void> } | null = null;
 /** Whether the spare's set-up is done. */
 let spareUp = false;
 let refill: ReturnType<typeof setTimeout> | null = null;
@@ -29,8 +34,15 @@ export function sparesOn(): boolean {
   return !(nav.deviceMemory && nav.deviceMemory <= 4);
 }
 
+/** The taker's handle: `ready` follows the worker's set-up, and `abort` rejects it early. */
+function own(s: { w: Worker; ready: Promise<void> }): StartedWorker {
+  let abort!: (err: Error) => void;
+  const ready = new Promise<void>((resolve, reject) => { abort = reject; s.ready.then(resolve, reject); });
+  return { w: s.w, ready, abort };
+}
+
 /** Starts a kernel worker: compiles the module (once per page) and sets OpenCASCADE up in it. */
-function launch(b: string): StartedWorker {
+function launch(b: string): { w: Worker; ready: Promise<void> } {
   const w = new KernelWorker();
   const ready = new Promise<void>((resolve, reject) => {
     const on = (e: MessageEvent) => {
@@ -65,9 +77,9 @@ export function takeWorker(b: string): StartedWorker {
   const s = spare && base === b ? spare : null;
   spare = null;
   spareUp = false;
-  if (!sparesOn()) return s ?? launch(b);
+  if (!sparesOn()) return own(s ?? launch(b));
   base = b;
-  const got = s ?? launch(b);
+  const got = own(s ?? launch(b));
   // Two set-ups at once would slow the taker's: the next spare starts once this one is up.
   const again = () => { if (refill) clearTimeout(refill); refill = setTimeout(() => { refill = null; warmSpare(b); }, REFILL_MS); };
   got.ready.then(again, again);

@@ -49,6 +49,8 @@ export const STOPPED = "The geometry kernel was stopped.";
 export class ModelKernel {
   private worker: Worker | null = null;
   private ready: Promise<void> | null = null;
+  /** Rejects `ready` while the worker is still setting itself up (stop() then ends the wait). */
+  private abortReady: ((err: Error) => void) | null = null;
   private seq = 0;
   private pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
   private running = false;
@@ -61,7 +63,8 @@ export class ModelKernel {
   private start() {
     if (this.ready) return this.ready;
     // The page's spare worker when there is one: its seconds of set-up are already done (or under way).
-    const { w, ready } = takeWorker(this.base);
+    const { w, ready, abort } = takeWorker(this.base);
+    this.abortReady = abort;
     w.onmessage = (e: MessageEvent) => {
       const d = e.data, p = this.pending.get(d.id);
       if (!p) return;
@@ -91,6 +94,9 @@ export class ModelKernel {
     const w = this.worker, ready = this.ready;
     if (w && ready && reuse && idle && this.heap > 0) giveBack(w, this.base, this.heap);
     else w?.terminate();
+    // A rebuild waiting for the set-up of a worker stopped now must end too (it would wait for ever).
+    this.abortReady?.(new Error(STOPPED));
+    this.abortReady = null;
     this.worker = null;
     this.ready = null;
     this.heap = 0;

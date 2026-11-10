@@ -27,7 +27,7 @@ export function helperCount(): number {
   return Math.max(0, n);
 }
 
-interface Helper { w: Worker; ready: Promise<void>; busy: boolean; heap: number; pending: Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }> }
+interface Helper { w: Worker; ready: Promise<void>; abort: (err: Error) => void; busy: boolean; heap: number; pending: Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }> }
 
 export class KernelPool {
   private helpers: Helper[] = [];
@@ -66,14 +66,15 @@ export class KernelPool {
 
   private kill(h: Helper, why: string) {
     h.w.terminate();
+    h.abort(new Error(why));
     for (const p of h.pending.values()) p.reject(new Error(why));
     h.pending.clear();
     this.helpers = this.helpers.filter(x => x !== h);
   }
 
   private spawn(): Helper {
-    const { w, ready } = takeWorker(this.base);
-    const h: Helper = { w, ready, busy: false, heap: 0, pending: new Map() };
+    const { w, ready, abort } = takeWorker(this.base);
+    const h: Helper = { w, ready, abort, busy: false, heap: 0, pending: new Map() };
     w.onmessage = (e: MessageEvent) => {
       const d = e.data, p = h.pending.get(d.id);
       if (!p) return;
