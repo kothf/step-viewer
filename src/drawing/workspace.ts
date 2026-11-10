@@ -1673,7 +1673,7 @@ export class DrawingWorkspace {
   private insertItems() {
     if (!this.facts) { toast(t("The drawing's model is still loading.")); return; }
     if (!this.facts.items.length) { toast(t("The model has no dimensions to import: model items come from a part's sketches and extrudes."), true); return; }
-    const add = placeItems(this.sheet, this.facts.items, v => this.placements.get(v.id)?.box ?? null, () => uid("a_"));
+    const add = placeItems(this.sheet, this.facts.items, v => this.placements.get(v.id)?.box ?? null, () => uid("a_"), v => viewScale(this.sheet, v));
     if (!add.length) { toast(t("Every model item is on the sheet already, or no view shows it square on.")); return; }
     this.store!.change("Model items", d => { const S = d.sheets[this.sheetIdx]; (S.annots ??= []).push(...add); });
     toast(t("{n} model dimension inserted|{n} model dimensions inserted", { n: add.length }), "success");

@@ -1156,3 +1156,27 @@ test("drafting style sets a default ± tolerance; a dimension's own tolerance or
   } finally { useStyle(undefined); }
   assert.equal(dimText(lin, { k: "h", pts: [], value: 100 }, ".").main, "100");
 });
+
+test("model items stack by size, clear of each other, in sheet millimetres (FR-DRW-020)", async () => {
+  const { placeItems } = await import("../../src/drawing/annot");
+  const lin = (src: string, len: number) => ({ src, name: src, k: "lin" as const, p: [[-len / 2, 30, 0], [len / 2, 30, 0]] as [V3, V3], dir: [1, 0, 0] as V3, n: [0, 0, 1] as V3, value: len });
+  const dia = (src: string) => ({ src, name: src, k: "dia" as const, p: [[0, 0, 0], [5, 0, 0]] as [V3, V3], n: [0, 0, 1] as V3, value: 10 });
+  const sheet = { id: "s", name: "S", size: "A3" as const, scale: [1, 1] as [number, number], projection: "first" as const, format: "iso" as const, views: [{ id: "top", name: "top", orient: "top", x: 0, y: 0 }] as never[], annots: [] as never[] };
+  const box = (): [number, number, number, number] => [-50, -30, 50, 30];
+  let n = 0;
+  const id = () => `a${n++}`;
+  const items = [lin("a:100", 100), lin("a:20", 20), lin("a:40", 40), dia("a:d1"), dia("a:d2")] as never[];
+  const off = (ds: { src?: string; pos: [number, number] }[], src: string) => Math.abs(ds.find(d => d.src === src)!.pos[1]) - 30;
+  const placed = placeItems(sheet, items, box, id);
+  assert.deepEqual(placed.filter(d => d.k === "h").map(d => Math.sign(d.pos[1])).filter((v, i, a) => a.indexOf(v) === i).length, 1, "all on one side");
+  assert.deepEqual(["a:20", "a:40", "a:100"].map(s => off(placed, s)), [10, 18, 26], "shorter dimensions nearer the view");
+  const [d1, d2] = placed.filter(d => d.k === "dia");
+  assert.ok(Math.hypot(d1.pos[0] - d2.pos[0], d1.pos[1] - d2.pos[1]) >= 7 - 1e-6, "two diameters on one centre do not share a place");
+  // At 1:2 the gaps are the same on the sheet, so twice as large in model millimetres.
+  const half = placeItems(sheet, items, box, id, () => 0.5);
+  assert.deepEqual(["a:20", "a:40", "a:100"].map(s => off(half, s)), [20, 36, 52]);
+  // A later import starts beyond the dimensions already on that side.
+  const more = placeItems({ ...sheet, annots: placed as never[] }, [...items, lin("a:10", 10)] as never[], box, id);
+  assert.equal(more.length, 1);
+  assert.equal(off(more, "a:10"), 34);
+});
