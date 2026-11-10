@@ -4567,4 +4567,5 @@ export const RU: Record<string, string> = {
   "They stay checked out and keep their changes in the vault folder; open the vault again to check them in.": "Они останутся извлечёнными, а изменения — в папке хранилища; откройте хранилище снова, чтобы зарегистрировать их.",
   "Open the vault you used last": "Открыть хранилище, с которым вы работали последним",
   "Reopen vault {name}": "Снова открыть хранилище {name}",
+  "Release file of {name}": "Файл выпуска для {name}",
 };

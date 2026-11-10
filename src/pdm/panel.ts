@@ -120,7 +120,13 @@ export class VaultPanel {
   private get shownFiles() {
     const base = this.found ? this.files.filter(f => this.found!.ids.has(f.id)) : this.files;
     const keep = this.chipTest(this.filter);
-    return base.filter(keep).sort((a, b) => { const x = folderKey(a.path), y = folderKey(b.path); return x < y ? -1 : x > y ? 1 : 0; });
+    const sorted = base.filter(keep).sort((a, b) => { const x = folderKey(a.path), y = folderKey(b.path); return x < y ? -1 : x > y ? 1 : 0; });
+    // Release files sit right under the file they were made from when both are listed in one folder.
+    const dir = (p: string) => p.slice(0, Math.max(0, p.lastIndexOf("/")));
+    const src = (f: FileRec) => { const o = f.outputOf && sorted.find(x => x.id === f.outputOf!.id); return o && dir(o.path) === dir(f.path) ? o : undefined; };
+    const out = sorted.filter(f => !src(f));
+    for (const f of sorted) { const o = src(f); if (o) { let k = out.indexOf(o) + 1; while (k < out.length && out[k].outputOf?.id === o.id) k++; out.splice(k, 0, f); } }
+    return out;
   }
   /** The shown rows not inside a folded folder (the order Shift+click and Ctrl+A go by). */
   private get visibleFiles() { return this.shownFiles.filter(f => !this.folded(f.path)); }
@@ -1696,7 +1702,8 @@ export class VaultPanel {
         const color = v.stateOf(f.state).color;
         const pn = f.card?.[PART_NUMBER];
         const on = picked.has(f.id);
-        return `<button class="v-row${on ? " sel" : ""}" data-id="${f.id}" aria-pressed="${on}" aria-haspopup="menu"${depth ? ` style="--d:${depth}" title="${esc(f.path)}"` : ""}><span class="v-name" translate="no">${esc(depth ? f.path.split("/").pop()! : f.path)}</span><span class="v-meta"><span class="v-state"><i style="background:${esc(color)}"></i>${esc(tn(f.state))}</span>${f.revision ? ` · ${esc(t("Rev {rev}", { rev: f.revision }))}` : ""} · ${esc(t(f.kind))} · v${v.latest(f).n}${pn ? ` · <span translate="no">${esc(pn)}</span>` : ""}${s.modified ? ` · <b>${esc(t("modified"))}</b>` : ""}${s.missing ? ` · ${esc(t("no local copy"))}` : ""} ${lock}</span></button>`;
+        const of = f.outputOf ? this.files.find(x => x.id === f.outputOf!.id) : undefined;
+        return `<button class="v-row${on ? " sel" : ""}${of ? " v-out" : ""}" data-id="${f.id}" aria-pressed="${on}" aria-haspopup="menu"${depth ? ` style="--d:${depth}" title="${esc(f.path)}"` : ""}><span class="v-name" translate="no">${of ? '<span aria-hidden="true">↳ </span>' : ""}${esc(depth ? f.path.split("/").pop()! : f.path)}</span>${of ? `<span class="v-meta v-outof">${esc(t("Release file of {name}", { name: of.path.split("/").pop()! }))}${f.outputOf!.rev ? ` · ${esc(t("Rev {rev}", { rev: f.outputOf!.rev }))}` : ""} · v${f.outputOf!.version}</span>` : ""}<span class="v-meta"><span class="v-state"><i style="background:${esc(color)}"></i>${esc(tn(f.state))}</span>${f.revision ? ` · ${esc(t("Rev {rev}", { rev: f.revision }))}` : ""} · ${esc(t(f.kind))} · v${v.latest(f).n}${pn ? ` · <span translate="no">${esc(pn)}</span>` : ""}${s.modified ? ` · <b>${esc(t("modified"))}</b>` : ""}${s.missing ? ` · ${esc(t("no local copy"))}` : ""} ${lock}</span></button>`;
       };
       const trs = sel ? v.transitionsOf(sel) : [];
       const acts = sel ? `<div class="v-acts" aria-label="${esc(t("Selected file"))}">

@@ -65,6 +65,8 @@ export interface FileRec {
   /** In the recycle bin (FR-PDM-025). */ deleted?: { at: string; user: string };
   copiedFrom?: { id: string; version: number };
   /** Record sequence number: the highest wins when a shared vault holds several (FR-PDM-071). */ seq?: number;
+  /** A release file (PDF, STEP) made from this file's version (FR-PDM-036): it follows that file's state and revision. */
+  outputOf?: { id: string; version: number; rev?: string };
 }
 export interface SearchQuery {
   /** FR-PDM-043: text inside the latest versions (drawing notes and tables, document properties, text files). */
@@ -389,6 +391,30 @@ export class Vault {
     await this.log("add", { file: f.id, path, version: 1, details: comment });
     await this.linkDangling(f);
     return f;
+  }
+
+  /**
+   * Stores a release file made from `src` (FR-PDM-036): a new file in `src`'s state and revision, or a new version
+   * of the one already there (made again), without a check-out; it is the vault's own output, not a user's file.
+   */
+  async putOutput(path: string, data: Uint8Array, src: FileRec, comment: string): Promise<FileRec> {
+    const outputOf = { id: src.id, version: this.latest(src).n, ...(src.revision ? { rev: src.revision } : {}) };
+    const have = await this.byPath(path);
+    if (!have) {
+      const f = await this.add(path, data, comment, {}, { outputOf, state: src.state, ...(src.revision ? { revision: src.revision } : {}) });
+      f.versions[0].state = src.state;
+      await this.saveRec(f);
+      return f;
+    }
+    if (have.checkout) throw new VaultError("Checked out by {user}.", { user: have.checkout.user });
+    const sha = await this.putObject(data);
+    const n = this.latest(have).n + 1;
+    have.versions.push({ n, sha, size: data.length, at: new Date().toISOString(), user: this.user, comment, state: src.state, refs: [], card: { ...(have.card ?? {}) } });
+    Object.assign(have, { outputOf, state: src.state }, src.revision ? { revision: src.revision } : {});
+    await this.writeWorking(have.path, data);
+    await this.saveRec(have);
+    await this.log("check in", { file: have.id, path: have.path, version: n, details: comment });
+    return have;
   }
 
   /**
@@ -1043,6 +1069,13 @@ export class Vault {
       await this.saveRec(f);
       await this.log("transition", { file: id, path: f.path, version: this.latest(f).n, details: `${name}: ${from} → ${tr.to}${label ? `, revision ${label}` : ""}${comment.trim() ? ` (${comment.trim()})` : ""}`, to: to || undefined });
       out[id] = label;
+      // Its release files of the revision in force follow it (made obsolete with it, say); older revisions' stay.
+      for (const o of await this.files()) {
+        // Only into an end state (obsolete, no way out): a change in work leaves the released files as they are.
+        if (o.outputOf?.id !== id || o.outputOf.rev !== f.revision || o.state === f.state || this.workflow.transitions.some(x => x.from === f.state)) continue;
+        o.state = f.state;
+        await this.saveRec(o);
+      }
     }
     // Files released together are recorded as a release package (FR-PDM-054).
     const tgt = this.workflow.transitions.find(x => x.name === name);

@@ -86,3 +86,32 @@ test("vault: what's behind, and updating a drawing's model copy and an assembly'
   await v.checkIn(ad.id, "model");
   assert.deepEqual(await v.behind(), []);
 });
+
+test("vault: release files are outputs of their part and follow its state (FR-PDM-036)", async () => {
+  const v = await Vault.create(memDir("O"), "O", "Andrey", "pc1");
+  const part = await v.add("parts/arm.mcadprt", await zip([{ name: "manifest.json", data: JSON.stringify({ format: "mobiuscad", schema: 1, kind: "part" }) }, { name: "document.json", data: JSON.stringify({ kind: "part", props: {}, features: [] }) }]));
+  for (const tr of ["Submit for review", "Approve"]) await v.transition([part.id], tr, "ok");
+  const rel = (await v.files()).find(f => f.id === part.id)!;
+  assert.equal(rel.revision, "A");
+  const step = await v.putOutput("parts/arm_revA.step", new TextEncoder().encode("ISO-10303-21;"), rel, "Made on release");
+  assert.equal(step.state, "Released");
+  assert.equal(step.versions[0].state, "Released");
+  assert.deepEqual(step.outputOf, { id: part.id, version: v.latest(rel).n, rev: "A" });
+  assert.equal(step.revision, "A");
+  // Made again: a new version with no check-out, though Released files cannot be checked out.
+  const again = await v.putOutput("parts/arm_revA.step", new TextEncoder().encode("ISO-10303-21;x"), rel, "Made again");
+  assert.equal(again.versions.length, 2);
+  assert.equal(again.checkout, undefined);
+  // A change in work leaves the released file Released; made obsolete, it goes with the part.
+  await v.transition([part.id], "Change", "");
+  assert.equal((await v.files()).find(f => f.id === step.id)!.state, "Released");
+  await v.transition([part.id], "Submit change", "");
+  await v.transition([part.id], "Approve", "B");
+  const relB = (await v.files()).find(f => f.id === part.id)!;
+  assert.equal(relB.revision, "B");
+  await v.putOutput("parts/arm_revB.step", new TextEncoder().encode("ISO-10303-21;B"), relB, "Made on release");
+  await v.transition([part.id], "Make obsolete", "gone");
+  const st = (p: string) => (v as unknown as { files(): Promise<{ path: string; state: string }[]> }).files().then(fs => fs.find(f => f.path === p)!.state);
+  assert.equal(await st("parts/arm_revB.step"), "Obsolete");
+  assert.equal(await st("parts/arm_revA.step"), "Released");
+});

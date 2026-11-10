@@ -6049,8 +6049,11 @@ try {
       const files = await v.files(), step = files.find(f => f.path === "Plate_revA.step"), pdf = files.find(f => f.path === "Base_revA.pdf");
       const text = step ? new TextDecoder().decode(await v.versionBytes(step.id, 1)) : "";
       const head = pdf ? new TextDecoder().decode((await v.versionBytes(pdf.id, 1)).slice(0, 5)) : "";
-      return { step: !!step, rev: /PRODUCT_DEFINITION_FORMATION[A-Z_]*\('A'/.test(text), pdf: head };
+      await p.refresh();
+      const row = [...document.querySelectorAll("#vault-panel .v-row.v-out")].map(r => r.textContent.replace(/\s+/g, " ").trim()).join("|");
+      return { step: !!step, rev: /PRODUCT_DEFINITION_FORMATION[A-Z_]*\('A'/.test(text), pdf: head, out: step && `${step.state}:${step.outputOf?.id === part.id}:${step.outputOf?.rev}`, row };
     }, id);
+    check(rel.out === "Released:true:A" && /↳ Plate_revA\.step.*Release file of Plate\.mcadprt · Rev A/.test(rel.row), `vault: release files are Released outputs listed under their part (${rel.out} | ${rel.row})`);
     check(rel.step && rel.rev && rel.pdf === "%PDF-", `vault: a release stores the part's STEP with its revision and the drawing's PDF (${JSON.stringify(rel)})`);
     await ctx.close();
   }

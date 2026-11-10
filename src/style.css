@@ -968,6 +968,7 @@ input.drop-val { outline: 2px solid var(--accent) !important; background: var(--
 .v-row { display: flex; flex-direction: column; align-items: stretch; gap: 2px; width: 100%; text-align: left; padding: 6px 10px; border: 0; border-bottom: 1px solid var(--line); background: none; color: var(--text); cursor: pointer; font: inherit; }
 .v-row:hover, .v-folder:hover { background: var(--panel-2); }
 .v-row[style*="--d"] { padding-left: calc(10px + var(--d) * 14px + 14px); }
+.v-row.v-out { padding-left: calc(10px + var(--d, 0) * 14px + 28px); }
 .v-folder { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; padding: 5px 10px 5px calc(10px + var(--d, 0) * 14px); border: 0; border-bottom: 1px solid var(--line); background: var(--panel); color: var(--text); font: inherit; font-weight: 600; cursor: pointer; }
 .v-folder .muted { font-weight: 400; font-size: var(--fs-caption); }
 .v-twist { display: inline-block; width: 10px; color: var(--muted); }
