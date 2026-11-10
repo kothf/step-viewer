@@ -2,7 +2,7 @@
 // which gives undo/redo, dirty tracking and autosave in one place (FRS 6.2, 7.4).
 // Undo keeps whole snapshots: part documents are small JSON, and snapshots can't drift.
 import { weldRefs } from "../weldments/refs";
-import { SCHEMA, pathId, type Feature, type FeatureType, type PartDoc, type LineRef, type PlaneRef, type VertexRef } from "./types";
+import { SCHEMA, pathId, dir2Apart, type Feature, type FeatureType, type PartDoc, type LineRef, type PlaneRef, type VertexRef } from "./types";
 
 const UNDO_DEPTH = 200;
 
@@ -145,6 +145,12 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
     if (f.end === "body" && f.upToBody) faces.push(f.upToBody.name);
     if (f.start === "surface") plane(f.startRef);
     if (f.start === "vertex") vtx(f.startVertex);
+    // Direction 2's own end (FR-FT-011).
+    if (dir2Apart(f)) {
+      if (f.end2 === "upto" || f.end2 === "offset") plane(f.upTo2);
+      if (f.end2 === "vertex") vtx(f.upToVertex2);
+      if (f.end2 === "body" && f.upToBody2) faces.push(f.upToBody2.name);
+    }
   }
   if (f.type === "thread" && f.edge) faces.push(...f.edge.faces);
   if (f.type === "sketch") { plane(f.plane); if (f.xAxis) faces.push(...f.xAxis.edge.faces); }

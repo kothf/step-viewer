@@ -96,6 +96,19 @@ export function bodyMasses(bodies: { key: string; volume: number; area?: number;
   return bodies.map(b => ({ volume: b.volume, area: b.area ?? 0, com: b.com!, cov: b.cov, density: own(b.key) ?? fallback }));
 }
 
+/** A body of a part with what its mass needs, in the coordinates its part's data is in. */
+export interface OwnBody { key: string; volume: number; area?: number; com?: V3; cov?: Sym }
+
+/** Bodies moved by a rigid 3×4 row-major transform (a component's placement). */
+export function moveBodies(bodies: OwnBody[], t: number[]): OwnBody[] {
+  const R = [[t[0], t[1], t[2]], [t[4], t[5], t[6]], [t[8], t[9], t[10]]];
+  return bodies.map(b => ({
+    ...b,
+    com: b.com && [0, 1, 2].map(i => R[i][0] * b.com![0] + R[i][1] * b.com![1] + R[i][2] * b.com![2] + t[4 * i + 3]) as V3,
+    cov: b.cov && rotateSym(b.cov, R),
+  }));
+}
+
 /** Adds bodies with their densities: mass, centre of mass and the mass covariance about it. */
 export function combine(bodies: MassBody[]): Combined {
   let volume = 0, area = 0, mass = 0, partial = false;

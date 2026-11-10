@@ -23,7 +23,7 @@ import { evaluate, ExprError, isPlain } from "./expr";
 import { journalDrop, journalList, journalSave, packPart, unpackPart, PART_EXT, type JournalEntry } from "./file";
 import { snapshotList, snapshotRead, snapshotSave, SNAPSHOT_KEEP } from "./snapshots";
 import { ModelKernel, type Rebuild } from "./kernelClient";
-import { pathId } from "./types";
+import { pathId, hasDir2, dir2Apart, dir2Blind, clearDir2, DIR2_ENDS, type Dir2End } from "./types";
 import { parseXyz } from "./curves";
 import { textPolys, TEXT_FONTS } from "../sketch/text";
 import { ctxRefs, type PartContext } from "./context";
@@ -138,7 +138,7 @@ type Mode =
   | { kind: "cfg" };
 
 /** Which selection box of the feature panel the next click in the view fills. */
-type Focus = "wbodies" | "wbound" | "wfaces" | "wf1" | "wf2" | "tsurf" | "ttool" | "keep" | "fs1" | "fs2" | "fc" | "main" | "bodies" | "base" | "axis" | "upto" | "start" | "origin" | "cx" | "cz" | "seeds" | "psketch" | "hupto" | "upbody" | "mthick" | "dir" | "dir2" | "mplane" | "faces" | "hplane" | "pts" | "nplane" | "sbv" | "contours";
+type Focus = "wbodies" | "wbound" | "wfaces" | "wf1" | "wf2" | "tsurf" | "ttool" | "keep" | "fs1" | "fs2" | "fc" | "main" | "bodies" | "base" | "axis" | "upto" | "start" | "origin" | "cx" | "cz" | "seeds" | "psketch" | "hupto" | "upbody" | "upto2" | "upbody2" | "mthick" | "dir" | "dir2" | "mplane" | "faces" | "hplane" | "pts" | "nplane" | "sbv" | "contours";
 type CopyFeature = MirrorFeature | LinearPatternFeature | CircularPatternFeature | SketchPatternFeature;
 type BodyFeature = IntersectFeature | CombineFeature | IndentFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ScaleFeature;
 /** A fillet or chamfer has what it needs to preview: edges, or the face sets of a face fillet / full round. */
@@ -1242,6 +1242,12 @@ export class ModelController {
     if (f.type === "thread" && !f.edge) { toast(t("Pick a round edge of a cylinder."), true); return; }
     if (f.type === "hole" && f.end === "upto" && !f.upTo) { toast(t("Pick the face or plane the hole goes up to."), true); return; }
     if (f.type === "extrude" && f.end === "body" && !f.upToBody) { toast(t("Pick the body the extrusion goes up to."), true); return; }
+    if (f.type === "extrude" && dir2Apart(f)) {
+      const e2 = f.end2;
+      if ((e2 === "upto" || e2 === "offset") && !f.upTo2) { toast(t("Pick the face or plane direction 2 goes up to."), true); return; }
+      if (e2 === "vertex" && !f.upToVertex2) { toast(t("Pick the vertex direction 2 goes up to."), true); return; }
+      if (e2 === "body" && !f.upToBody2) { toast(t("Pick the body direction 2 goes up to."), true); return; }
+    }
     if (f.type === "hole" && (!f.plane || !f.pts.length)) { toast(t(f.plane ? "Click on the face to place the holes." : "Pick a flat face or a plane for the holes."), true); return; }
     if (f.type === "mirror" && !f.plane) { toast(t("Pick a plane or a flat face to mirror about."), true); return; }
     if ((f.type === "lpattern" || f.type === "cpattern" || f.type === "spattern") && (f.copy ?? "features") === "features" && !f.features.length) { toast(t("Pick the features to copy."), true); return; }
@@ -2227,14 +2233,19 @@ export class ModelController {
           const fr = h ? this.faceRef(h.faceId) : null;
           if (!fr || fr.name.startsWith(`${f.id}:`)) { toast(t("Click a face of a body.")); return; }
           f.upToBody = fr;
-        } else if (tg === "start-vertex" || tg === "vertex") {
+        } else if (tg === "body2") {
+          const h = this.host.faceAt(e.clientX, e.clientY);
+          const fr = h ? this.faceRef(h.faceId) : null;
+          if (!fr || fr.name.startsWith(`${f.id}:`)) { toast(t("Click a face of a body.")); return; }
+          f.upToBody2 = fr;
+        } else if (tg === "start-vertex" || tg === "vertex" || tg === "vertex2") {
           const v = this.pickVertex(e);
           if (!v) return;
-          if (tg === "vertex") f.upToVertex = v; else { f.startVertex = v; m.focus = "upto"; }
+          if (tg === "vertex") f.upToVertex = v; else if (tg === "vertex2") f.upToVertex2 = v; else { f.startVertex = v; m.focus = "upto"; }
         } else {
           const r = this.pickRef(e);
           if (!r) return;
-          if (tg === "upto") f.upTo = r; else { f.startRef = r; m.focus = "upto"; }
+          if (tg === "upto") f.upTo = r; else if (tg === "upto2") f.upTo2 = r; else { f.startRef = r; m.focus = "upto"; }
         }
         this.draftChanged();
       } else if (m.kind === "feature" && m.draft.type === "revolve" && m.draft.end === "upto") {
@@ -2568,7 +2579,8 @@ export class ModelController {
       case "extrude": return [
         ...(this.needsContours(d) ? [{ focus: "contours" as Focus, filled: !!d.contours?.length, one: false }] : []),
         ...(d.start === "surface" ? [{ focus: "start" as Focus, filled: !!d.startRef, one: true }] : d.start === "vertex" ? [{ focus: "start" as Focus, filled: !!d.startVertex, one: true }] : []),
-        ...(d.end === "upto" || d.end === "offset" ? [{ focus: "upto" as Focus, filled: !!d.upTo, one: true }] : d.end === "vertex" ? [{ focus: "upto" as Focus, filled: !!d.upToVertex, one: true }] : d.end === "body" ? [{ focus: "upbody" as Focus, filled: !!d.upToBody, one: true }] : [])];
+        ...(d.end === "upto" || d.end === "offset" ? [{ focus: "upto" as Focus, filled: !!d.upTo, one: true }] : d.end === "vertex" ? [{ focus: "upto" as Focus, filled: !!d.upToVertex, one: true }] : d.end === "body" ? [{ focus: "upbody" as Focus, filled: !!d.upToBody, one: true }] : []),
+        ...(!dir2Apart(d) ? [] : d.end2 === "upto" || d.end2 === "offset" ? [{ focus: "upto2" as Focus, filled: !!d.upTo2, one: true }] : d.end2 === "vertex" ? [{ focus: "upto2" as Focus, filled: !!d.upToVertex2, one: true }] : d.end2 === "body" ? [{ focus: "upbody2" as Focus, filled: !!d.upToBody2, one: true }] : [])];
       default: return [];
     }
   }
@@ -2597,13 +2609,18 @@ export class ModelController {
 
   /** A plane reference in words: "Top (XY)", "Plane1", "Face of Extrude1". */
   /** What a click in the view sets while an extrude is edited (FR-FT-012/013). */
-  private extrudeTarget(f: ExtrudeFeature, focus: Focus | undefined): "start-surface" | "start-vertex" | "upto" | "vertex" | "body" | null {
+  private extrudeTarget(f: ExtrudeFeature, focus: Focus | undefined): "start-surface" | "start-vertex" | "upto" | "vertex" | "body" | "upto2" | "vertex2" | "body2" | null {
+    const e2 = dir2Apart(f) ? f.end2 : undefined;
+    const t2 = e2 === "upto" || e2 === "offset" ? "upto2" : e2 === "vertex" ? "vertex2" : e2 === "body" ? "body2" : null;
+    const filled2 = t2 === "upto2" ? !!f.upTo2 : t2 === "vertex2" ? !!f.upToVertex2 : !!f.upToBody2;
+    if (t2 && (focus === "upto2" || focus === "upbody2")) return t2;
     if (f.start === "surface" && (focus === "start" || !f.startRef)) return "start-surface";
     if (f.start === "vertex" && (focus === "start" || !f.startVertex)) return "start-vertex";
-    if (f.end === "upto" || f.end === "offset") return "upto";
-    if (f.end === "vertex") return "vertex";
-    if (f.end === "body") return "body";
-    return null;
+    const t1 = f.end === "upto" || f.end === "offset" ? "upto" : f.end === "vertex" ? "vertex" : f.end === "body" ? "body" : null;
+    const filled1 = t1 === "upto" ? !!f.upTo : t1 === "vertex" ? !!f.upToVertex : !!f.upToBody;
+    // Direction 1's box unless it is filled and Direction 2 still waits for its reference.
+    if (t1 && !(t2 && filled1 && !filled2)) return t1;
+    return t2;
   }
 
   /** A vertex under the pointer: the end of the edge under it nearer the click on screen. */
@@ -3775,7 +3792,7 @@ export class ModelController {
         if (pos.length) this.lines(pos, up ? 0x2f9e44 : 0xc2255c, 1.6);
       }
     }
-    const picksPlanes = m.kind === "plane" || (m.kind === "feature" && ((m.draft.type === "plane" && m.focus !== "axis") || (m.draft.type === "extrude" && (this.extrudeTarget(m.draft, m.focus) === "upto" || this.extrudeTarget(m.draft, m.focus) === "start-surface")) || (m.draft.type === "revolve" && m.draft.end === "upto")));
+    const picksPlanes = m.kind === "plane" || (m.kind === "feature" && ((m.draft.type === "plane" && m.focus !== "axis") || (m.draft.type === "extrude" && ["upto", "upto2", "start-surface"].includes(this.extrudeTarget(m.draft, m.focus) ?? "")) || (m.draft.type === "revolve" && m.draft.end === "upto")));
     this.drawPlanes(picksPlanes);
     this.drawHoles();
     this.drawThreads();
@@ -3905,7 +3922,9 @@ export class ModelController {
       case "extrude": return [
         ...(d.start === "surface" ? [{ focus: "start", label: t("Start at"), faces: pf(d.startRef) }] : []),
         ...(d.end === "upto" || d.end === "offset" ? [{ focus: "upto", label: t("Up to"), faces: pf(d.upTo) }] : []),
-        ...(d.end === "body" ? [{ focus: "upbody", label: t("Body"), faces: d.upToBody ? [d.upToBody] : [] }] : [])];
+        ...(d.end === "body" ? [{ focus: "upbody", label: t("Body"), faces: d.upToBody ? [d.upToBody] : [] }] : []),
+        ...(dir2Apart(d) && (d.end2 === "upto" || d.end2 === "offset") ? [{ focus: "upto2", label: t("Up to (direction 2)"), faces: pf(d.upTo2) }] : []),
+        ...(dir2Apart(d) && d.end2 === "body" ? [{ focus: "upbody2", label: t("Body (direction 2)"), faces: d.upToBody2 ? [d.upToBody2] : [] }] : [])];
       case "revolve": return d.end === "upto" ? [{ focus: "upto", label: t("Up to"), faces: pf(d.upTo), sel: '.pm-box[data-k="focus-upto"]' }] : [];
       case "hole": return [{ focus: "hplane", label: t("Face"), faces: pf(d.plane) },
         ...(d.end === "upto" ? [{ focus: "hupto", label: t("Up to"), faces: pf(d.upTo) }] : [])];
@@ -4284,7 +4303,7 @@ export class ModelController {
     const m = this.mode;
     // Sheet metal flanges show their arrow while folded only (the flat pattern hides where the flange stands).
     const folded = () => !this.doc.features.some(x => x.type === "smflat" && !x.suppressed);
-    const ok = (f: Feature | undefined): f is ExtrudeFeature | RevolveFeature | EndCapFeature | GussetFeature | SmFlangeFeature => f?.type === "revolve" || (f?.type === "extrude" && (f.end === "blind" || f.end === "mid"))
+    const ok = (f: Feature | undefined): f is ExtrudeFeature | RevolveFeature | EndCapFeature | GussetFeature | SmFlangeFeature => f?.type === "revolve" || (f?.type === "extrude" && (f.end === "blind" || f.end === "mid" || dir2Blind(f)))
       || (f?.type === "endcap" && f.faces.length > 0) || (f?.type === "gusset" && !!f.face1 && !!f.face2) || (f?.type === "smflange" && f.edges.length > 0 && folded());
     if (m.kind === "feature") return ok(m.draft) ? m.draft : null;
     // A part that was closed or handed back to its assembly has no store; its last selection must not draw (exam bug 40).
@@ -4323,8 +4342,15 @@ export class ModelController {
     if (f.start === "offset") base.addScaledVector(new THREE.Vector3(...fr.n), (f.startOffset?.v ?? 0) * (f.startReverse ? -1 : 1));
     const dir = new THREE.Vector3(...fr.n).multiplyScalar((f.op === "cut" ? -1 : 1) * (f.flip ? -1 : 1));
     const mid = f.end === "mid";
-    this.placeArrow(base, dir, f.depth.v, mid, "depth");
-    this.handleLabel(f.id, "depth", t("Drag the arrow to change the depth; click to type it"));
+    if (f.end === "blind" || mid) {
+      this.placeArrow(base.clone(), dir.clone(), f.depth.v, mid, "depth");
+      this.handleLabel(f.id, "depth", t("Drag the arrow to change the depth; click to type it"));
+    }
+    // Direction 2 (FR-FT-011): its own arrow the other way, as SolidWorks shows one per direction.
+    if (dir2Blind(f)) {
+      this.placeArrow(base.clone(), dir.clone().negate(), f.depth2!.v, false, "depth2");
+      this.handleLabel(f.id, "depth2", t("Drag the arrow to change the depth in direction 2; click to type it"));
+    }
   }
 
   /** The thickness arrow of an end cap (FR-FT-121): from the first capped face, outwards (or into the member). */
@@ -5791,6 +5817,8 @@ export class ModelController {
           const tg = this.extrudeTarget(mm.draft, mm.focus), pt = this.store!.feature(id)?.type === "point" ? { point: id } : null;
           if (asRef && tg === "start-surface") { mm.draft.startRef = asRef; mm.focus = "upto"; this.draftChanged(); return; }
           if (asRef && tg === "upto") { mm.draft.upTo = asRef; this.draftChanged(); return; }
+          if (asRef && tg === "upto2") { mm.draft.upTo2 = asRef; this.draftChanged(); return; }
+          if (pt && tg === "vertex2") { mm.draft.upToVertex2 = pt; this.draftChanged(); return; }
           if (pt && tg === "start-vertex") { mm.draft.startVertex = pt; mm.focus = "upto"; this.draftChanged(); return; }
           if (pt && tg === "vertex") { mm.draft.upToVertex = pt; this.draftChanged(); return; }
         }
@@ -6206,6 +6234,15 @@ export class ModelController {
       const endSel = `<label class="pm-field"><span>${esc(t("End condition"))}</span><select data-k="end">${ends.map(([v, l]) => `<option value="${v}"${f.end === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;
       const upto = f.end === "upto" || f.end === "offset";
       const thinSel = f.thin ? `<label class="pm-field"><span>${esc(t("Type"))}</span><select data-k="thinMode">${([["inside", t("Inside the profile")], ["outside", t("Outside the profile")], ["mid", t("Mid-plane")]] as const).map(([v, l]) => `<option value="${v}"${f.thin!.mode === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>` + numField("thin.t", t("Thickness"), f.thin.t, "length") : "";
+      // Direction 2 (FR-FT-011): its own end condition, as SolidWorks offers (no mid plane or through all - both).
+      const e2 = f.end2 ?? "blind";
+      const bodyName = (r: FaceRef | undefined) => r ? t("Body of {name}", { name: featureLabel(this.store?.feature(r.name.split(":")[0])?.name ?? "?") }) : t("None");
+      const dir2Body = `<label class="pm-field"><span>${esc(t("End condition"))}</span><select data-k="end2">${DIR2_ENDS.map(v => `<option value="${v}"${e2 === v ? " selected" : ""}>${esc(ends.find(x => x[0] === v)![1])}</option>`).join("")}</select></label>`
+        + (e2 === "upto" || e2 === "offset" ? `<div class="pm-field"><span>${esc(t("Up to"))}</span><button class="pm-box${tg === "upto2" ? " focus" : ""}" data-focus="upto2" aria-label="${esc(t("Up to (direction 2)"))}: ${esc(this.refLabel(f.upTo2))}" translate="no">${esc(this.refLabel(f.upTo2))}</button></div>` : "")
+        + (e2 === "vertex" ? `<div class="pm-field"><span>${esc(t("Up to"))}</span><button class="pm-box${tg === "vertex2" ? " focus" : ""}" data-focus="upto2" translate="no">${esc(this.vertexLabel(f.upToVertex2))}</button></div>` : "")
+        + (e2 === "body" ? `<div class="pm-field"><span>${esc(t("Body"))}</span><button class="pm-box${tg === "body2" ? " focus" : ""}" data-focus="upbody2" translate="no">${esc(bodyName(f.upToBody2))}</button></div>` : "")
+        + (e2 === "offset" ? numField("upToOffset2", t("Offset distance"), f.upToOffset2 ?? { v: 5 }, "length") + chk("reverseOffset2", f.reverseOffset2, t("Reverse offset")) : "")
+        + (e2 === "blind" ? numField("depth2", t("Depth 2"), f.depth2 ?? f.depth, "length") : "");
       // Selected Contours comes first when the sketch needs it, as SolidWorks opens that box.
       const needCt = this.needsContours(f);
       body = (needCt ? this.contoursGroup(f, m.focus) : "") + group(t("From"), sketchSel(f.sketch) + opSel(f.op) + (f.op === "boss" && this.last?.data ? chk("merge", f.merge !== false, t("Merge result")) : "") + startSel)
@@ -6218,9 +6255,9 @@ export class ModelController {
           + (f.end === "through" || f.end === "through2" || f.end === "next" || f.end === "vertex" || f.end === "body" || upto ? "" : numField("depth", t("Depth"), f.depth, "length"))
           + (upto || f.end === "vertex" ? "" : chk("flip", f.flip, t("Reverse direction")))
           + (f.op === "cut" ? chk("outside", f.outside, t("Flip side to cut (keep inside the profile)")) : "")
-          + (f.end === "blind" || f.end === "mid" ? chk("draftOn", !!f.draft, t("Draft on/off")) + (f.draft ? numField("draft.angle", t("Draft angle"), f.draft.angle, "angle") + chk("draftOut", f.draft.outward, t("Draft outward")) : "") : "")
+          + ((f.end === "blind" || f.end === "mid") && !dir2Apart(f) ? chk("draftOn", !!f.draft, t("Draft on/off")) + (f.draft ? numField("draft.angle", t("Draft angle"), f.draft.angle, "angle") + chk("draftOut", f.draft.outward, t("Draft outward")) : "") : "")
           + (f.end === "blind" || f.end === "mid" ? `<p class="pm-help muted">${esc(t("Or drag the orange arrow in the view."))}</p>` : ""))
-        + (f.end === "blind" ? group(t("Direction 2"), chk("dir2", !!(f.depth2 && f.depth2.v > 0), t("Direction 2")) + (f.depth2 && f.depth2.v > 0 ? numField("depth2", t("Depth 2"), f.depth2, "length") : "")) : "")
+        + (f.end !== "mid" && f.end !== "through2" ? group(t("Direction 2"), chk("dir2", hasDir2(f), t("Direction 2")) + (hasDir2(f) ? dir2Body : "")) : "")
         + group(t("Thin feature"), chk("thinOn", !!f.thin, t("Thin feature")) + thinSel)
         + (needCt ? "" : this.contoursGroup(f, m.focus));
     } else if (f.type === "revolve") {
@@ -6742,7 +6779,28 @@ export class ModelController {
         }
         if (isWeldFeature(f)) { const fn = weldChange(f, k, val, this.weldCtx(m.index)); if (fn) { upd(fn, true); return; } }
         if (k === "merge") { upd(() => { if (val) delete (f as ExtrudeFeature).merge; else (f as ExtrudeFeature).merge = false; }); return; }
-        if (k === "dir2") { upd(() => { (f as ExtrudeFeature).depth2 = val ? { v: (f as ExtrudeFeature).depth.v } : undefined; if (!val) delete (f as ExtrudeFeature).depth2; }, true); return; }
+        if (k === "dir2") {
+          upd(() => {
+            const x = f as ExtrudeFeature;
+            if (val) { x.depth2 = { v: x.depth.v }; if (x.end !== "blind") x.end2 = "blind"; }
+            else { delete x.depth2; clearDir2(x); }
+          }, true);
+          return;
+        }
+        if (k === "end2" && f.type === "extrude") {
+          upd(() => {
+            const e2 = String(val) as Dir2End;
+            if (e2 === "blind" && f.end === "blind") delete f.end2; else f.end2 = e2;
+            if (e2 !== "upto" && e2 !== "offset") delete f.upTo2;
+            if (e2 !== "vertex") delete f.upToVertex2;
+            if (e2 !== "body") delete f.upToBody2;
+            if (e2 === "offset") f.upToOffset2 ??= { v: 5 }; else { delete f.upToOffset2; delete f.reverseOffset2; }
+            if (e2 !== "blind") delete f.draft;
+            if (e2 === "upto" || e2 === "offset" || e2 === "vertex") m.focus = "upto2";
+            if (e2 === "body") m.focus = "upbody2";
+          }, true);
+          return;
+        }
         if (k === "sketch" && f.type === "revolve") {
           const sk = this.store!.feature(String(val)) as SketchFeature;
           const ls = sk.ents.filter(x => x.t === "line");
@@ -6760,6 +6818,9 @@ export class ModelController {
           if (k === "end" && val === "offset") g.upToOffset ??= { v: 5 };
           if (k === "end" && val !== "offset") { delete g.upToOffset; delete g.reverseOffset; }
           if (k === "end" && val !== "blind" && val !== "mid") delete g.draft;
+          // Direction 2 stays on when Direction 1 leaves blind: it keeps its own (blind) end condition.
+          if (k === "end" && f.type === "extrude" && f.depth2 && f.depth2.v > 0 && val !== "blind") f.end2 ??= "blind";
+          if (k === "end" && f.type === "extrude" && (val === "mid" || val === "through2")) { delete f.depth2; clearDir2(f); }
           if (k === "op" && val !== "cut" && g.end === "through2") g.end = "through";
         }, k === "end" || k === "op" || k === "sketch" || k === "modelled" || k === "axes" || (k === "cut" && f.type === "indent"));
       });

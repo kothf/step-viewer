@@ -4587,9 +4587,96 @@ try {
     await mp.click('#vault-win [data-a="close"]');
     await mp.waitForFunction(() => document.querySelector("#vault-panel").parentElement.id === "tab-vault", null, { timeout: 5000 }).catch(() => {});
     const home = await mp.evaluate(() => document.querySelector("#vault-panel").parentElement.id);
-    check(btnShown && closed === "new-dir,open-dir,new-ws,panel" && lit === "Picked folder", `vault menu: Vault button and menu, new vault in a picked folder (${btnShown}, ${closed}, ${lit})`);
-    check(/v1 · .*checked out/.test(title1) && saved === "false/true" && opened === "save-,co-,ci,undo,latest,hist,add,search,panel,settings,close" && refused === true && savedAgain === false && hist === "v2:Renamed|v1:Added", `vault menu: an assembly saved to the vault, saved into the working copy, checked in and out from the menu (${title1}, ${saved}, ${opened}, ${refused}, ${savedAgain}, ${hist})`);
-    check(again === "new-dir,open-dir,folder,new-ws,panel" && folderName === "Picked folder" && /\.mcadasm/.test(row) && /v2/.test(row) && home === "tab-vault", `vault menu: the vault folder is remembered and reopens; the file list opens in a window without the side panel (${again}, ${folderName}, ${row}, ${home})`);
+    check(btnShown && closed === "new-dir,open-dir,new-ws,import,panel" && lit === "Picked folder", `vault menu: Vault button and menu, new vault in a picked folder (${btnShown}, ${closed}, ${lit})`);
+    check(/v1 · .*checked out/.test(title1) && saved === "false/true" && opened === "save-,co-,ci,undo,latest,hist,add,addfolder,search,panel,settings,close" && refused === true && savedAgain === false && hist === "v2:Renamed|v1:Added", `vault menu: an assembly saved to the vault, saved into the working copy, checked in and out from the menu (${title1}, ${saved}, ${opened}, ${refused}, ${savedAgain}, ${hist})`);
+    check(again === "new-dir,open-dir,folder,new-ws,import,panel" && folderName === "Picked folder" && /\.mcadasm/.test(row) && /v2/.test(row) && home === "tab-vault", `vault menu: the vault folder is remembered and reopens; the file list opens in a window without the side panel (${again}, ${folderName}, ${row}, ${home})`);
+    await ctx.close();
+  }
+
+  // --- Vault exam (1.451.0): a vault in a project folder takes its files in place, Switch to and Import in the Vault menu,
+  // the selected file's commands in view, Check out from the data card, recycle bin feedback, one tab per vault file
+  // that says when the vault has a newer version (FR-PDM-002/003/016/040/080) ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    // The picked folder is a project folder with files in a subfolder already (the real picker cannot be driven).
+    await mp.addInitScript(() => { window.showDirectoryPicker = async () => (await navigator.storage.getDirectory()).getDirectoryHandle("Project", { create: true }); });
+    await mp.goto(`${origin}/index.html?debug&nokernel`);
+    await mp.evaluate(() => { localStorage.setItem("sv:tips", "off"); localStorage.setItem("mc:vaultUser", "Andrey"); });
+    await mp.goto(`${origin}/index.html?debug&nokernel`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.evaluate(async () => {
+      window.__sv.vaultFolders.useMemory();
+      const root = await (await navigator.storage.getDirectory()).getDirectoryHandle("Project", { create: true });
+      const put = async (d, name, text) => { const w = await (await d.getFileHandle(name, { create: true })).createWritable(); await w.write(text); await w.close(); };
+      await put(await root.getDirectoryHandle("parts", { create: true }), "notes.txt", "bolt list");
+      await put(root, "readme.txt", "project");
+      // A second vault, in the browser, to switch to.
+      await window.__sv.vault.createInBrowser("Other");
+      window.__sv.vault.close();
+    });
+    const menu = async id => { await mp.click("#vault-btn"); await mp.waitForSelector("#vault-menu:not([hidden])"); if (id) await mp.click(`#vault-menu [data-v="${id}"]`); };
+    const items = () => mp.evaluate(() => [...document.querySelectorAll("#vault-menu button")].map(b => b.dataset.v.replace(/^folder:.*/, "folder")).join(","));
+    const toastText = () => mp.evaluate(() => document.querySelector("#toasts")?.textContent ?? "");
+    await menu();
+    const closedMenu = await items();
+    // New vault in the folder: the files already there are offered, with their subfolders, and go in where they are.
+    await mp.click('#vault-menu [data-v="new-dir"]');
+    await mp.waitForSelector("#vault-dlg[open] .v-pick");
+    const offered = await mp.evaluate(() => [...document.querySelectorAll("#vault-dlg .v-pick label")].map(l => l.textContent.trim()).join(","));
+    await mp.click('#vault-dlg button[value="ok"]');
+    await mp.waitForFunction(() => window.__sv.vault.files.length === 2);
+    const paths = await mp.evaluate(() => window.__sv.vault.files.map(f => f.path).sort().join(","));
+    await menu();
+    const openMenu = await items();
+    await mp.keyboard.press("Escape");
+    // The selected file's commands stay at the foot of the panel.
+    await mp.click("#t-vault");
+    await mp.click('#vault-panel .v-row[data-id]');
+    const sticky = await mp.evaluate(() => getComputedStyle(document.querySelector("#vault-panel > .v-acts")).position + ":" + document.querySelector("#vault-panel .v-acts-h")?.textContent);
+    // Data card of a file not checked out: Check out right there, and the card opens editable.
+    await mp.click('#vault-panel [data-a="card"]');
+    await mp.waitForSelector('#vault-dlg[open] button[value="co"]');
+    await mp.click('#vault-dlg button[value="co"]');
+    await mp.waitForFunction(() => document.querySelector("#vault-dlg[open] .v-form input:not([disabled])"));
+    const editable = await mp.evaluate(() => !!document.querySelector("#vault-dlg[open] .v-form input:not([disabled])"));
+    await mp.click('#vault-dlg button[value="cancel"]');
+    await mp.click('#vault-panel [data-a="undo"]');
+    await mp.click('#confirm [data-a="ok"]');
+    await mp.waitForFunction(() => !document.querySelector("#vault-panel .v-lock"));
+    // Delete and restore say what happened.
+    await mp.click('#vault-panel [data-a="del"]');
+    await mp.click('#confirm [data-a="ok"]');
+    await mp.waitForFunction(() => /recycle bin/.test(document.querySelector("#toasts")?.textContent ?? ""));
+    const deleted = await toastText();
+    await mp.click('#vault-panel [data-a="bin"]');
+    await mp.click("#vault-dlg [data-restore]");
+    await mp.waitForFunction(() => /restored/.test(document.querySelector("#toasts")?.textContent ?? ""));
+    const restored = await toastText();
+    // An assembly saved to the vault, then the vault moves on (a roll back): its tab says so.
+    await mp.click("#empty-asm");
+    await mp.waitForFunction(() => window.__sv.asm.doc);
+    await menu("save");
+    await mp.waitForFunction(() => /v1/.test(document.querySelector("#doc-name").textContent));
+    await mp.evaluate(async () => { const p = window.__sv.vault, v = p.vault, f = p.files.find(x => x.kind === "assembly"); await v.undoCheckOut(f.id); await v.rollBack(f.id, 1); await p.refresh(); });
+    await mp.waitForFunction(() => /newer v2/.test(document.querySelector("#doc-name").textContent));
+    const stale = await mp.evaluate(() => document.querySelector("#doc-name").textContent);
+    // Opening it again from the list reloads it in its own tab instead of a second one.
+    await menu("panel");
+    await mp.evaluate(() => [...document.querySelectorAll("#vault-panel .v-row")].find(r => /\.mcadasm/.test(r.textContent)).dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
+    await mp.waitForFunction(() => /v2/.test(document.querySelector("#doc-name").textContent) && !/newer/.test(document.querySelector("#doc-name").textContent));
+    await mp.evaluate(() => [...document.querySelectorAll("#vault-panel .v-row")].find(r => /\.mcadasm/.test(r.textContent)).dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
+    await mp.waitForTimeout(500);
+    const tabs = await mp.evaluate(() => document.querySelectorAll("#doc-tabs [data-dt]").length);
+    // Switch to the browser vault straight from the menu.
+    await menu();
+    await mp.click('#vault-menu [data-v="ws:Other"]');
+    await mp.waitForFunction(() => window.__sv.vault.vault?.info.name === "Other");
+    check(closedMenu.includes("import") && offered === "parts/notes.txt,readme.txt" && paths === "parts/notes.txt,readme.txt" && openMenu.includes("addfolder") && openMenu.includes("ws:Other"), `vault exam: a vault in a project folder takes its files in place; Import and Switch to in the menu (${closedMenu} | ${offered} | ${paths} | ${openMenu})`);
+    check(sticky === "sticky:parts/notes.txt" && editable && /recycle bin/.test(deleted) && /restored/.test(restored), `vault exam: commands in view, Check out from the data card, delete and restore feedback (${sticky}, ${editable}, ${deleted}, ${restored})`);
+    check(/v1 · newer v2 in the vault/.test(stale) && tabs === 1, `vault exam: a tab behind the vault says so and reloads in place (${stale}, ${tabs} tabs)`);
     await ctx.close();
   }
 
@@ -4793,6 +4880,22 @@ try {
       await dp2.waitForFunction(() => document.querySelector("#drw").hidden, null, { timeout: 20000 });
       const t2 = await tabs();
       check(t0 === 1 && t1 === 2 && same && t2 === 2, `drawing: Model on a drawing opened alone opens its part in a tab, once (${JSON.stringify({ t0, t1, t2, same })})`);
+    }
+    // File ▸ Open drawing on that part: its drawing (in a tab and in the recent documents, offered once) comes back; hidden over a drawing.
+    {
+      const tabs = () => dp2.$$eval("#doc-tabs [data-dt]", els => els.length);
+      await dp2.click("#file-btn");
+      await dp2.waitForFunction(() => !document.querySelector("#file-menu").hidden);
+      const has = await dp2.evaluate(() => !!document.querySelector('#file-menu [data-f="open-drawing"]'));
+      await dp2.click('#file-menu [data-f="open-drawing"]');
+      await dp2.waitForFunction(() => !document.querySelector("#drw").hidden && window.__sv.drw.doc()?.sheets[0].views.length === 5, null, { timeout: 60000 });
+      const picker = await dp2.evaluate(() => !!document.querySelector("#drw-pick-dlg[open]"));
+      const t3 = await tabs();
+      await dp2.click('#drw [data-a="file"]');
+      await dp2.waitForFunction(() => !document.querySelector("#file-menu").hidden);
+      const over = await dp2.evaluate(() => !!document.querySelector('#file-menu [data-f="open-drawing"]'));
+      await dp2.keyboard.press("Escape");
+      check(has && !picker && t3 === 2 && !over, `drawing: File ▸ Open drawing opens the part's drawing from its tab, without a second tab (${JSON.stringify({ has, picker, t3, over })})`);
     }
     await ctx.close();
   }
@@ -5760,8 +5863,9 @@ try {
     // Releasing the part and the drawing stores Plate_revA.step (revision in it) and Base_revA.pdf beside them.
     const rel = await vp.evaluate(async did => {
       const p = window.__sv.vault, v = p.vault;
-      const part = (await v.files()).find(f => f.path === "Plate.mcadprt");
-      for (const id of [part.id, did]) { await p.transitionDlg(id, "Submit for review", "ok", [], ""); await p.transitionDlg(id, "Approve", "ok", [], ""); }
+      const part = (await v.files()).find(f => f.path === "Plate.mcadprt"), asm = (await v.files()).find(f => f.path === "Base.mcadasm");
+      // The drawing references its model now (vault exam V3), and a drawing is released after the model it shows.
+      for (const id of [part.id, asm.id, did]) { await p.transitionDlg(id, "Submit for review", "ok", [], ""); await p.transitionDlg(id, "Approve", "ok", [], ""); }
       const files = await v.files(), step = files.find(f => f.path === "Plate_revA.step"), pdf = files.find(f => f.path === "Base_revA.pdf");
       const text = step ? new TextDecoder().decode(await v.versionBytes(step.id, 1)) : "";
       const head = pdf ? new TextDecoder().decode((await v.versionBytes(pdf.id, 1)).slice(0, 5)) : "";
@@ -6763,6 +6867,23 @@ try {
     const cmat0 = await mp.evaluate(() => window.__sv.asm.bom()[0].material);
     check(cmat.mat === "Titanium Ti-6Al-4V" && cmat.mass === 0.00443 && cmat.dens.join() === "4.43,4.43" && cmat0 === "Aluminium 6061",
       `asm 1.434.0: Material… on a component sets the part's material for all its instances (${JSON.stringify(cmat)}, ${cmat0})`);
+    // A body with its own material (FR-MAT-001): the assembly's mass properties and the BOM weigh it with that material.
+    await mp.evaluate(() => window.__sv.asm.change(d => {
+      const pd = Object.values(d.parts)[0].doc;
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      pd.features.push({ id: "k", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", 20, -5), P("b", 30, -5), P("c", 30, 5), P("d", 20, 5), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
+        { id: "e", type: "extrude", name: "Extrude2", sketch: "k", op: "boss", end: "blind", depth: { v: 10 }, merge: false });
+      pd.bodies = { e: { material: { name: "Titanium Ti-6Al-4V", density: 4.43 } } };
+    }));
+    await shown(2);
+    await mp.evaluate(() => { document.querySelector("#mass-out").textContent = ""; document.querySelector("#mass-run").click(); });
+    await mp.waitForFunction(() => /Mass/.test(document.querySelector("#mass-out").textContent), null, { timeout: 10000 });
+    const bodyMat = await mp.evaluate(() => { const a = window.__sv.asm, s = document.querySelector("#mass-out").textContent; return { g: +(/Mass([\d.]+) g/.exec(s)?.[1] ?? NaN), com: window.__sv.hl.com.position.toArray().map(x => Math.round(x * 1000) / 1000), dens: a.partMasses(1, 1)?.map(b => b.density), kg: Math.round(a.bom()[0].mass * 1e6) / 1e6, csv: a.bomCsvText().split("\r\n")[1] }; });
+    await mp.evaluate(() => window.__sv.asm.undo());
+    await shown(2);
+    const bodyMat0 = await mp.evaluate(() => ({ none: window.__sv.asm.partMasses(0, 1), kg: window.__sv.asm.bom()[0].mass }));
+    check(Math.abs(bodyMat.g - 14.26) < 0.01 && bodyMat.com.join() === "20.033,0,5" && bodyMat.dens?.join() === "2.7,4.43" && bodyMat.kg === 0.00713 && bodyMat0.none === null && Math.abs(bodyMat0.kg - 0.0027) < 1e-9,
+      `asm 1.458.0: a body's own material counts in the assembly's mass properties and the BOM (${JSON.stringify({ bodyMat, bodyMat0 })})`);
     // STEP of the assembly reopens with the same names and placements (AT-P4-6).
     const step = [...await mp.evaluate(async () => [...await window.__sv.asm.stepBytes()])];
     await mp.setInputFiles("#file-input", { name: "rig.step", mimeType: "model/step", buffer: Buffer.from(step) });
@@ -8906,6 +9027,52 @@ try {
     check(inSk.mode === "sketch" && inSk.ext && inSk.line && ext.mode === "feature" && ext.type === "extrude" && ext.sketch === "s" && ext.v === 60000 && ext.sk
       && surfTab.ps && !surfTab.line && surfTab.mode === "sketch" && ps.mode === "feature" && ps.type === "planesurf" && ps.sketch === "s",
       `model 1.451: Extrude or Planar Surface picked while editing a sketch exits it and opens the feature on it with a preview (FR-SK-004) (${JSON.stringify({ inSk, ext, surfTab, ps })})`);
+    await ctx.close();
+  }
+
+  // --- 1.456: extrude Direction 2 with its own end condition (FR-FT-011) ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // A 100 × 60 × 20 block, a plane 30 above XY and a 10 × 10 pad on it extruded 5 up.
+    await mp.evaluate(() => window.__sv.model.store.change("Pad", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      const rect = (id, cx, cy, w, h, plane) => ({ id, type: "sketch", name: id, plane, rels: [], dims: [], ents: [P(id + "1", cx - w / 2, cy - h / 2), P(id + "2", cx + w / 2, cy - h / 2), P(id + "3", cx + w / 2, cy + h / 2), P(id + "4", cx - w / 2, cy + h / 2), Ln(id + "a", id + "1", id + "2"), Ln(id + "b", id + "2", id + "3"), Ln(id + "c", id + "3", id + "4"), Ln(id + "d", id + "4", id + "1")] });
+      d.features.push(rect("s", 0, 0, 100, 60, { std: "XY" }), { id: "e", type: "extrude", name: "Boss-Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } },
+        { id: "pl", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 30 } }, rect("k", -30, 0, 10, 10, { plane: "pl" }),
+        { id: "f", type: "extrude", name: "Boss-Extrude2", sketch: "k", op: "boss", end: "blind", depth: { v: 5 } });
+    }));
+    await settle();
+    await mp.evaluate(() => window.__sv.modeller.editFeature("f"));
+    await settle();
+    await mp.check('#mc-pm input[data-k="dir2"]');
+    await settle();
+    const handles = () => mp.evaluate(() => document.querySelectorAll("#mc-layer .mc-handle").length);
+    const blind = { arrows: await handles(), v: await mp.evaluate(() => Math.round(window.__sv.model.last().props?.volume ?? 0)) };
+    await mp.selectOption('#mc-pm select[data-k="end2"]', "next");
+    await settle();
+    const next = await mp.evaluate(() => ({ end2: window.__sv.model.mode().draft?.end2, v: Math.round(window.__sv.model.last().props?.volume ?? 0), bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.code).join() }));
+    next.arrows = await handles();
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(200);
+    const ru = await mp.evaluate(() => [...document.querySelectorAll('#mc-pm select[data-k="end2"] option')].map(o => o.textContent).join("|"));
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(200);
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await settle();
+    const done = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(x => x.id === "f"); return { end2: f.end2, v: Math.round(window.__sv.model.last().props?.volume ?? 0) }; });
+    // Blind both ways: 120000 + 100 × (5 + 5); up to next: down to the block, 100 × (5 + 10).
+    check(blind.arrows === 2 && blind.v === 121000 && next.end2 === "next" && !next.bad && next.v === 121500 && next.arrows === 1 && done.end2 === "next" && done.v === 121500 && !/[A-Za-z]{3}/.test(ru),
+      `model 1.456: extrude Direction 2 with its own end condition (up to next) and its own drag arrow (FR-FT-011) (${JSON.stringify({ blind, next, done, ru })})`);
     await ctx.close();
   }
 

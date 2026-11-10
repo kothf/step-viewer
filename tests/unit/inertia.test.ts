@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
-import { bodyMasses, combine, covOfTensor, massReport, meshMoments, principal, rotateSym, type Sym, type V3 } from "../../src/tools/inertia";
+import { bodyMasses, moveBodies, combine, covOfTensor, massReport, meshMoments, principal, rotateSym, type Sym, type V3 } from "../../src/tools/inertia";
 import { Kernel } from "../../src/kernel/occ";
 import { occ } from "./occ";
 
@@ -111,4 +111,14 @@ test("bodies with their own materials: own density where set, the part's for the
   // Bodies without their own mass properties (a one-body rebuild): nothing to combine.
   assert.equal(bodyMasses([{ key: "a", volume: 1 }], () => undefined, 1), null);
   assert.equal(bodyMasses([], () => undefined, 1), null);
+});
+
+test("bodies placed with their component: centre moved, covariance turned", () => {
+  // 90° about Z, then 10 along X.
+  const t = [0, -1, 0, 10, 1, 0, 0, 0, 0, 0, 1, 0];
+  const [b] = moveBodies([{ key: "a", volume: 5, com: [2, 0, 3], cov: [4, 1, 9, 0, 0, 0] }, { key: "b", volume: 1 }], t);
+  assert.deepEqual(b.com!.map(x => Math.round(x * 1e9) / 1e9), [10, 2, 3]);
+  assert.deepEqual(b.cov!.map(x => Math.round(x * 1e9) / 1e9), [1, 4, 9, 0, 0, 0]);
+  assert.equal(b.volume, 5);
+  assert.equal(moveBodies([{ key: "b", volume: 1 }], t)[0].com, undefined);
 });
