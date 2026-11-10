@@ -3,7 +3,8 @@
 // undefined when cancelled. The user's own materials are kept in this browser (materials.ts).
 import { t } from "./i18n";
 import { confirmModal, toast, trapFocus } from "./ui";
-import { CATEGORIES, MAT_NUMS, SOURCES, allMaterials, customMaterials, removeCustom, resolveRef, saveCustom, searchMaterials, type MatCat, type MatNum, type MatRef, type Material } from "./tools/materials";
+import { CATEGORIES, MAT_NUMS, SOURCES, allMaterials, customFile, customMaterials, mergeCustom, removeCustom, resolveRef, saveCustom, searchMaterials, setCustom, type MatCat, type MatNum, type MatRef, type Material } from "./tools/materials";
+import { download } from "./tools/exporters";
 
 export interface PickOptions {
   current?: MatRef | null;
@@ -48,6 +49,9 @@ export function pickMaterial(o: PickOptions = {}): Promise<Picked | undefined> {
     + `<section class="mat-props" aria-live="polite"></section></div>`
     + `<div class="row end mat-foot">${o.colour ? `<label class="chk"><input type="checkbox" data-a="colour"${colour ? " checked" : ""} /> ${esc(t("Use the material's colour"))}</label>` : ""}<span class="mat-gap"></span>`
     + `<button class="btn" data-a="new">${esc(t("New material…"))}</button>`
+    + `<button class="btn" data-a="import" title="${esc(t("Add materials from a file exported from My materials"))}">${esc(t("Import…"))}</button>`
+    + `<button class="btn" data-a="export" title="${esc(t("Save My materials to a file, to use them in another browser or computer"))}">${esc(t("Export…"))}</button>`
+    + `<input type="file" accept=".json,application/json" data-a="file" hidden />`
     + (o.allowNone ? `<button class="btn" data-a="none">${esc(t("No material"))}</button>` : "")
     + `<button class="btn" data-a="cancel">${esc(t("Cancel"))}</button><button class="btn primary" data-a="ok">${esc(t("Apply"))}</button></div>`;
   document.body.appendChild(dlg);
@@ -179,8 +183,22 @@ export function pickMaterial(o: PickOptions = {}): Promise<Picked | undefined> {
       e.preventDefault();
       bs[(i + (e.key === "ArrowDown" ? 1 : -1) + bs.length) % bs.length].focus();
     });
+    const importText = (text: string) => {
+      let r;
+      try { r = mergeCustom(customMaterials(), text); } catch { toast(t("This file holds no materials. Choose a file exported from My materials."), true); return; }
+      if (r.added.length + r.replaced.length && !setCustom(r.list)) { toast(t("The browser would not store the materials."), true); return; }
+      all = allMaterials();
+      if (r.added.length + r.replaced.length) { cat = "custom"; sel = all.find(m => m.cat === "custom" && m.name === (r.added[0] ?? r.replaced[0])) ?? sel; }
+      render();
+      const parts = [t("{n} materials added", { n: r.added.length })];
+      if (r.replaced.length) parts.push(t("{n} replaced", { n: r.replaced.length }));
+      if (r.skipped.length) parts.push(t("{n} skipped: named like a library material", { n: r.skipped.length }));
+      if (r.bad) parts.push(t("{n} unusable", { n: r.bad }));
+      toast(parts.join(", "), !r.added.length && !r.replaced.length);
+    };
     dlg.addEventListener("change", e => {
       const el = e.target as HTMLInputElement;
+      if (el.dataset.a === "file") { const f = el.files?.[0]; el.value = ""; if (f) void f.text().then(importText); return; }
       if (el.dataset.a === "colour") { colour = el.checked; try { localStorage.setItem(COLOUR_KEY, colour ? "1" : "0"); } catch { /* private mode */ } }
     });
     dlg.addEventListener("click", e => {
@@ -205,6 +223,12 @@ export function pickMaterial(o: PickOptions = {}): Promise<Picked | undefined> {
           q.focus();
         });
       }
+      else if (a === "export") {
+        const mine = customMaterials();
+        if (!mine.length) { toast(t("My materials is empty: there is nothing to export yet.")); return; }
+        download(new Blob([customFile(mine)], { type: "application/json" }), "my-materials.json");
+      }
+      else if (a === "import") dlg.querySelector<HTMLInputElement>("input[data-a=file]")!.click();
       else if (a === "save") saveForm();
       else if (a === "back") { form = null; renderList(); renderProps(); }
     });

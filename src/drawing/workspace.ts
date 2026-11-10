@@ -9,7 +9,7 @@ import type { MEdge, Projection, ViewDir } from "../kernel/drawing";
 import { AUTO_LAYERS, arrowOutside, withCut, wholeCircle, edgeOnSeg, outlineSeg, clineSegs, cloudPrims, dimGeo, factsCtx, holeEdges, ringDist, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, stackItem, edgeItem, weldItem, cutDesc, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
 import type { PartDoc } from "../model/types";
 import type { AsmDoc } from "../asm/types";
-import { BALLOON_R, BOM_COLS, autoBalloons, compOfKey, sheetBom, subsOf, type BalloonItems, type Bom } from "./bom";
+import { BALLOON_R, BOM_COLS, BOM_MAT_COL, autoBalloons, bomMats, compOfKey, sheetBom, subsOf, type BalloonItems, type Bom } from "./bom";
 import { t, onLangChange, lang } from "../i18n";
 import { toast, confirmModal } from "../ui";
 import { DrawingKernel, type ModelFacts } from "./client";
@@ -267,7 +267,7 @@ export class DrawingWorkspace {
   /** The assembly's bill of materials (FR-DRW-030), for BOM tables and balloon numbers. */
   private boms: Map<string, Bom> | null = null;
   /** The BOM a sheet's balloons and parts list follow (its BOM table's mode). */
-  private bomFor(sh: Sheet): Bom | null { const src = this.doc.source; return this.boms && src.kind === "asm" ? sheetBom(sh, src.doc, src.flat, this.boms) : null; }
+  private bomFor(sh: Sheet): Bom | null { const src = this.doc.source; return this.boms && src.kind === "asm" ? sheetBom(sh, src.doc, src.flat, this.boms, bomMats(this.facts?.comps)) : null; }
   private get bom(): Bom | null { return this.bomFor(this.sheet); }
   /** A weldment part's cut list, which balloons number when the drawing has no BOM. */
   private get cuts() { return this.bom ? null : this.facts?.cuts?.length ? this.facts.cuts : null; }
@@ -622,10 +622,10 @@ export class DrawingWorkspace {
 
   private fields(sheet: Sheet = this.sheet): Fields {
     const p = this.doc.props, i = this.info;
-    const massKg = this.facts && i.density ? this.facts.volume * i.density * 1e-6 : null;
+    const massKg = this.facts?.kg ?? (this.facts && i.density ? this.facts.volume * i.density * 1e-6 : null);
     return {
       title: p.title || i.title || this.doc.name, number: p.number || i.number || this.doc.name, revision: p.revision || i.revision || "",
-      material: p.material || i.material || "", mass: p.mass || (massKg != null ? `${massKg < 10 ? massKg.toFixed(3) : massKg.toFixed(2)} kg` : ""),
+      material: p.material || this.facts?.mats?.join(", ") || i.material || "", mass: p.mass || (massKg != null ? `${massKg < 10 ? massKg.toFixed(3) : massKg.toFixed(2)} kg` : ""),
       company: p.company || "", author: p.author || i.author || "", checked: p.checked || "", approved: p.approved || "", date: p.date || "",
       tcontrol: p.tcontrol || "", ncontrol: p.ncontrol || "", litera: p.litera || "",
       scale: scaleText(sheet.scale), sheet: `${this.doc.sheets.indexOf(sheet) + 1}/${this.doc.sheets.length}`,
@@ -2063,7 +2063,8 @@ export class DrawingWorkspace {
       const head = a.cols.map((c, j) => `<label class="drw-f">${esc(t("Column {n}", { n: j + 1 }))}<input data-d="th:${j}" value="${esc(cellLabel(c, t))}" translate="no"></label>`).join("");
       return `<fieldset class="pm-group"><legend>${esc(t("Bill of materials"))}</legend>
         <p class="drw-note">${esc(t("The rows come from the assembly and follow it."))}</p>
-        <label class="drw-f">${esc(t("List"))}<select data-d="bmode"><option value="top"${a.mode !== "parts" ? " selected" : ""}>${esc(t("Top-level only"))}</option><option value="parts"${a.mode === "parts" ? " selected" : ""}>${esc(t("Parts only"))}</option></select></label>${this.subRow(a)}${head}
+        <label class="drw-f">${esc(t("List"))}<select data-d="bmode"><option value="top"${a.mode !== "parts" ? " selected" : ""}>${esc(t("Top-level only"))}</option><option value="parts"${a.mode === "parts" ? " selected" : ""}>${esc(t("Parts only"))}</option></select></label>${this.subRow(a)}
+        <label class="drw-chk"><input type="checkbox" data-d="bmat"${a.cols.length > BOM_MAT_COL ? " checked" : ""}> ${esc(t("Material column"))}</label>${head}
       </fieldset>${del}`;
     }
     if (a.t === "table") {
@@ -2196,6 +2197,7 @@ export class DrawingWorkspace {
       else if (a.t === "balloon" && k === "btxt") { if (val.trim()) a.txt = val.trim(); else delete a.txt; }
       else if (a.t === "balloon" && k === "bstack") { if (val) a.stack = [...(a.stack ?? []), val]; }
       else if (a.t === "table" && a.kind === "bom" && k === "bsub") { if (val) a.sub = val; else delete a.sub; }
+      else if (a.t === "table" && a.kind === "bom" && k === "bmat") { a.cols = (el as HTMLInputElement).checked ? [...a.cols.slice(0, BOM_MAT_COL), ...BOM_COLS.slice(a.cols.length, BOM_MAT_COL + 1)] : a.cols.slice(0, BOM_MAT_COL); }
       else if (a.t === "table" && a.kind === "bom" && k === "bmode") { if (val === "parts") a.mode = "parts"; else delete a.mode; }
       else if (a.t === "surf") { if (k === "sp") a.proc = val as typeof a.proc; else if (k === "st") a.text = val.trim(); else if (k === "sm") { if (val.trim()) a.method = val.trim(); else delete a.method; }
         else if (k === "st2") { if (val.trim()) a.text2 = val.trim(); else delete a.text2; }
@@ -3300,6 +3302,7 @@ export class DrawingWorkspace {
       sheetPt: (x: number, y: number) => { const rc = this.svg.getBoundingClientRect(), H = sheetSize(this.sheet)[1]; return [rc.left + (x - this.vb.x) / this.vb.w * rc.width, rc.top + (H - y - this.vb.y) / this.vb.h * rc.height]; },
       placement: (id: string) => this.placements.get(id) ?? null,
       mode: () => this.mode.kind,
+      fields: () => (this.store ? this.fields() : null),
       previews: () => ({ shown: this.previewsShown, made: this.kernel.previewsMade, left: this.svg.querySelectorAll(".drw-preview").length }),
       holes: () => (this.facts?.topo?.holes ?? []).map(h => ({ segs: h.segs.length, open: h.open })),
       proj: (id: string) => { const sh = this.sheet, v = findView(sh, id); return v ? this.kernel.cache.get(viewReq(sh, v).key) ?? null : null; },

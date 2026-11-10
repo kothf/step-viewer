@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { bodiesDensity, CATEGORIES, CHECKED, LIBRARY, MATERIAL_RU, SOURCES, findMaterial, parseCustom, resolveRef, searchMaterials, toRef, validMaterial } from "../../src/tools/materials";
+import { bodiesDensity, CATEGORIES, CHECKED, LIBRARY, MATERIAL_RU, SOURCES, customFile, findMaterial, mergeCustom, parseCustom, resolveRef, searchMaterials, toRef, validMaterial } from "../../src/tools/materials";
 import { RU } from "../../src/i18n.ru";
 import { materialPattern } from "../../src/drawing/compose";
 
@@ -192,4 +192,19 @@ test("a cut list item's density follows its bodies' own materials (FR-MAT-001)",
   assert.equal(bodiesDensity(["b", "c"], bodies, 7.85), 7.85);
   assert.ok(Math.abs(bodiesDensity(["a", "b"], bodies, 7.85) - (4.43 + 7.85) / 2) < 1e-12);
   assert.equal(bodiesDensity([], undefined, 2.7), 2.7);
+});
+
+test("My materials export and import (FR-MAT-001): round trip, replace by name, library names and bad rows left out", () => {
+  const mine = [{ name: "Shop steel", density: 7.8, cat: "custom" as const, E: 205, color: "#808080" }, { name: "Foam", density: 0.03, cat: "custom" as const }];
+  const file = customFile(mine);
+  assert.equal(JSON.parse(file).format, "mobiuscad-materials");
+  const back = mergeCustom([], file);
+  assert.deepEqual(back.list, mine);
+  assert.deepEqual(back.added, ["Shop steel", "Foam"]);
+  const other = JSON.stringify([{ name: "Foam", density: 0.05 }, { name: LIBRARY[0].name, density: 1 }, { name: "", density: 1 }, { name: "Cork", density: 0.24 }]);
+  const r = mergeCustom(mine, other);
+  assert.deepEqual(r.list.map(m => [m.name, m.density]), [["Shop steel", 7.8], ["Foam", 0.05], ["Cork", 0.24]]);
+  assert.deepEqual([r.added, r.replaced, r.skipped, r.bad], [["Cork"], ["Foam"], [LIBRARY[0].name], 1]);
+  assert.throws(() => mergeCustom(mine, "not json"), /NOT_MATERIALS/);
+  assert.throws(() => mergeCustom(mine, "{\"a\": 1}"), /NOT_MATERIALS/);
 });

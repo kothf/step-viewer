@@ -9,13 +9,23 @@ import type { BalloonAnnot, DrawingView, Sheet } from "./types";
 type P2 = [number, number];
 type Box = [number, number, number, number];
 
-export interface BomRow { key: string; item: number; part: string; description: string; qty: number; comp: string }
+export interface BomRow { key: string; item: number; part: string; description: string; qty: number; comp: string; /** The part's material, or its bodies' when they have their own (FR-MAT-001); empty for a sub-assembly. */ material: string }
 export interface Bom { mode: BomMode; rows: BomRow[]; itemOf(comp: string): number | null }
 /** FR-ASM-024: "top" lists sub-assemblies as one row; "parts" lists every part inside them. */
 export type BomMode = "top" | "parts";
 
 /** Default BOM columns (English keys; the sheet shows them in the interface language). */
-export const BOM_COLS = ["Item", "Part number", "Description", "Qty"];
+export const BOM_COLS = ["Item", "Part number", "Description", "Qty", "Material"];
+/** The column the Material cell goes in (BOMs made before 1.466.0 have only the first four). */
+export const BOM_MAT_COL = 4;
+
+/** Body materials by part key (from the drawing worker's components): what a BOM row shows in place of the part's material. */
+export type BomMats = Map<string, string[]>;
+export function bomMats(comps: { part: string; mats?: string[] }[] | undefined): BomMats | undefined {
+  const m: BomMats = new Map();
+  for (const c of comps ?? []) if (c.mats?.length && !m.has(c.part)) m.set(c.part, c.mats);
+  return m.size ? m : undefined;
+}
 
 /** The component an edge key belongs to (`<comp>@<face>|<comp>@<face>`), or null. */
 export function compOfKey(k: string): string | null {
@@ -34,19 +44,23 @@ export function bomMode(sheet: Sheet): BomMode {
  * pattern instances; a sub-assembly's parts count as the sub-assembly. "parts": one row per part,
  * wherever it is used (the same part document at the top and inside sub-assemblies is one row).
  */
-export function bomOf(top: AsmDoc, flat: AsmDoc, mode: BomMode = "top", sub?: string): Bom {
+export function bomOf(top: AsmDoc, flat: AsmDoc, mode: BomMode = "top", sub?: string, mats?: BomMats): Bom {
   // One sub-assembly's own parts list (FR-DRW-030): its parts, wherever they sit inside it.
-  if (sub) return partsBom({ ...flat, components: flat.components.filter(c => c.id.startsWith(`${sub}/`)) });
-  return mode === "parts" ? partsBom(flat) : topBom(top, flat);
+  if (sub) return partsBom({ ...flat, components: flat.components.filter(c => c.id.startsWith(`${sub}/`)) }, mats);
+  return mode === "parts" ? partsBom(flat, mats) : topBom(top, flat, mats);
 }
 
+/** A part's material text: its bodies' distinct materials when they have their own, else the part's. */
+const matText = (key: string, d: { material?: { name: string } | null } | null | undefined, mats?: BomMats): string =>
+  d ? mats?.get(key)?.join(", ") ?? d.material?.name ?? "" : "";
+
 /** The BOM a sheet's balloons and parts list follow: its BOM table's mode and sub-assembly (memoised in `cache`). */
-export function sheetBom(sheet: Sheet, top: AsmDoc, flat: AsmDoc, cache?: Map<string, Bom>): Bom {
+export function sheetBom(sheet: Sheet, top: AsmDoc, flat: AsmDoc, cache?: Map<string, Bom>, mats?: BomMats): Bom {
   const t = (sheet.annots ?? []).find(a => a.t === "table" && a.kind === "bom");
   const sub = t && t.t === "table" && t.sub && top.components.some(c => c.id === t.sub) ? t.sub : undefined;
   const mode = bomMode(sheet), key = `${mode}|${sub ?? ""}`;
   let b = cache?.get(key);
-  if (!b) { b = bomOf(top, flat, mode, sub); cache?.set(key, b); }
+  if (!b) { b = bomOf(top, flat, mode, sub, mats); cache?.set(key, b); }
   return b;
 }
 
@@ -54,7 +68,7 @@ export function sheetBom(sheet: Sheet, top: AsmDoc, flat: AsmDoc, cache?: Map<st
 export const subsOf = (top: AsmDoc): { id: string; name: string }[] =>
   top.components.filter(c => !c.suppressed && top.parts[c.part]?.asm).map(c => ({ id: c.id, name: c.name }));
 
-function topBom(top: AsmDoc, flat: AsmDoc): Bom {
+function topBom(top: AsmDoc, flat: AsmDoc, mats?: BomMats): Bom {
   const byId = new Map(top.components.map(c => [c.id, c]));
   // Pattern instances are `<pattern>~<seed>~<k>`; sub-assembly children `<top>/<child>`.
   const keyOf = (id: string): string | null => {
@@ -75,7 +89,7 @@ function topBom(top: AsmDoc, flat: AsmDoc): Bom {
     if (!p) continue;
     const d = p.asm ? null : p.doc;
     at.set(k, rows.length);
-    rows.push({ key: k, item: rows.length + 1, part: d?.props?.partNumber || p.name, description: d?.props?.description ?? "", qty: 0, comp: "" });
+    rows.push({ key: k, item: rows.length + 1, part: d?.props?.partNumber || p.name, description: d?.props?.description ?? "", qty: 0, comp: "", material: matText(k, d, mats) });
   }
   for (const [t, k] of tops) { const i = at.get(k); if (i !== undefined) { rows[i].qty++; if (!rows[i].comp) rows[i].comp = firstShown(flat, t); } }
   return finish("top", rows, keyOf);
@@ -86,7 +100,7 @@ function firstShown(flat: AsmDoc, t: string): string {
   return flat.components.find(c => !c.suppressed && (c.id === t || c.id.startsWith(`${t}/`)))?.id ?? t;
 }
 
-function partsBom(flat: AsmDoc): Bom {
+function partsBom(flat: AsmDoc, mats?: BomMats): Bom {
   const same = new Map<string, string>();
   const group = (k: string) => {
     let g = same.get(k);
@@ -104,7 +118,7 @@ function partsBom(flat: AsmDoc): Bom {
     if (i === undefined) {
       i = rows.length;
       at.set(g, i);
-      rows.push({ key: g, item: i + 1, part: p.doc.props?.partNumber || p.name, description: p.doc.props?.description ?? "", qty: 0, comp: c.id });
+      rows.push({ key: g, item: i + 1, part: p.doc.props?.partNumber || p.name, description: p.doc.props?.description ?? "", qty: 0, comp: c.id, material: matText(c.part, p.doc, mats) });
     }
     rows[i].qty++;
   }
@@ -121,7 +135,7 @@ function finish(mode: BomMode, rows: BomRow[], keyOf: (comp: string) => string |
 }
 
 /** The BOM as table cells, in the order of `BOM_COLS`. */
-export const bomCells = (b: Bom): string[][] => b.rows.map(r => [String(r.item), r.part, r.description, String(r.qty)]);
+export const bomCells = (b: Bom): string[][] => b.rows.map(r => [String(r.item), r.part, r.description, String(r.qty), r.material]);
 
 /** Balloon outlines (SolidWorks' balloon styles): the plain circle, a circle split for the quantity, or a polygon; "none" = the number alone, underlined. */
 export type BalloonShape = "split" | "tri" | "hex" | "box" | "none";

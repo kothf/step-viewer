@@ -526,6 +526,50 @@ export function removeCustom(name: string) {
   try { localStorage.setItem(STORE, JSON.stringify(customMaterials().filter(x => x.name !== name))); } catch { /* private mode */ }
 }
 
+/** The file My materials are exported to and imported from (FR-MAT-001): JSON, one entry per material. */
+export const MATERIALS_FORMAT = "mobiuscad-materials";
+
+export function customFile(list: Material[]): string {
+  const out = list.map(m => {
+    const o: Record<string, unknown> = { name: m.name, density: m.density };
+    for (const k of NUMS) if (typeof m[k] === "number") o[k] = m[k];
+    if (m.eq) o.eq = m.eq;
+    if (m.color) o.color = m.color;
+    return o;
+  });
+  return JSON.stringify({ format: MATERIALS_FORMAT, version: 1, materials: out }, null, 2) + "\n";
+}
+
+export interface MaterialImport { list: Material[]; added: string[]; replaced: string[]; skipped: string[]; bad: number }
+
+/**
+ * Merges an exported materials file (or a bare JSON array of materials) into `current`: a material
+ * with a name already there replaces it, one named like a library material is skipped, unusable
+ * entries count as `bad`. Throws when the text is no materials file at all.
+ */
+export function mergeCustom(current: Material[], text: string): MaterialImport {
+  let data: unknown;
+  try { data = JSON.parse(text); } catch { throw new Error("NOT_MATERIALS"); }
+  const arr = Array.isArray(data) ? data : data && typeof data === "object" && Array.isArray((data as { materials?: unknown }).materials) ? (data as { materials: unknown[] }).materials : null;
+  if (!arr) throw new Error("NOT_MATERIALS");
+  const list = [...current], added: string[] = [], replaced: string[] = [], skipped: string[] = [];
+  let bad = 0;
+  for (const x of arr) {
+    const m = validMaterial(x);
+    if (!m) { bad++; continue; }
+    if (LIBRARY.some(l => l.name.toLowerCase() === m.name.toLowerCase())) { skipped.push(m.name); continue; }
+    const i = list.findIndex(c => c.name === m.name);
+    if (i >= 0) { list[i] = m; if (!replaced.includes(m.name) && !added.includes(m.name)) replaced.push(m.name); }
+    else { list.push(m); added.push(m.name); }
+  }
+  return { list, added, replaced, skipped, bad };
+}
+
+/** Stores the whole list of the user's materials (an import). */
+export function setCustom(list: Material[]): boolean {
+  try { localStorage.setItem(STORE, JSON.stringify(list)); return true; } catch { return false; }
+}
+
 /** Built-in materials, then the user's own. */
 export function allMaterials(): Material[] { return [...LIBRARY, ...customMaterials()]; }
 

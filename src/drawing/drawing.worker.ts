@@ -72,6 +72,22 @@ function bodyMats(md: Modeller, body: any, doc: PartDoc): (string | null)[] | nu
   try { return md.bodyInfo(body, doc).map(b => doc.bodies?.[b.key]?.material?.name ?? doc.material?.name ?? null); }
   catch { return null; }
 }
+/** The part's mass in kg with each body's own material (title block), or undefined when a body has no density. */
+function bodiesKg(md: Modeller, body: any, doc: PartDoc): number | undefined {
+  try {
+    let kg = 0;
+    for (const b of md.bodyInfo(body, doc)) {
+      const d = doc.bodies?.[b.key]?.material?.density ?? doc.material?.density;
+      if (d == null) return undefined;
+      kg += b.volume * d * 1e-6;
+    }
+    return kg;
+  } catch { return undefined; }
+}
+/** The distinct materials of a part whose bodies have their own, in body order (title block, BOM), else undefined. */
+function usedMats(mats: (string | null)[] | null | undefined): string[] | undefined {
+  return mats ? [...new Set(mats.filter((m): m is string => !!m))] : undefined;
+}
 /** The loaded part's document, for its other configurations, and those built so far by name. */
 let partDoc: PartDoc | null = null;
 const variants = new Map<string, { shape: any; mat: string | null; mats?: (string | null)[] | null; names?: string[] }>();
@@ -122,7 +138,8 @@ function buildPart(doc: PartDoc): { shape: any; mat: string | null; mats: (strin
       welds = beads.map(c => ({ legs: c.desc, length: c.length ?? 0, qty: c.qty, ...(c.inter ? { inter: c.inter } : {}) }));
     } catch { /* no weld or cut list table rows */ }
   }
-  return { shape, mat: doc.material?.name ?? null, mats: bodyMats(md, body, doc), names: body.names, extra: { topo: topology(oc, shape, body.names), ...mi, welds, cuts, cutFaces, weldFaces } };
+  const mats = bodyMats(md, body, doc);
+  return { shape, mat: doc.material?.name ?? null, mats, names: body.names, extra: { topo: topology(oc, shape, body.names), ...mi, welds, cuts, cutFaces, weldFaces, mats: usedMats(mats), kg: mats ? bodiesKg(md, body, doc) : undefined } };
 }
 
 /** The shape (and material) a request draws: the loaded model, or one of the part's configurations. */
@@ -182,9 +199,9 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
         if (!placed.length) throw new Error("The assembly has no components to draw.");
         const b = new oc.BRep_Builder(), comp = new oc.TopoDS_Compound();
         b.MakeCompound(comp);
-        const names: string[] = [], comps: { id: string; part: string; name: string }[] = [];
+        const names: string[] = [], comps: { id: string; part: string; name: string; mats?: string[] }[] = [];
         placedShapes = placed.map(pc => ({ id: pc.id, shape: pc.body.shape, mat: r.asm!.parts[pc.part]?.doc?.material?.name ?? null, mats: asm.bodyMats(pc.part, r.asm!, pc.src) }));
-        for (const pc of placed) { b.Add(comp, pc.body.shape); names.push(...pc.body.names.map(n => `${pc.id}@${n}`)); comps.push({ id: pc.id, part: pc.part, name: pc.name }); }
+        placed.forEach((pc, i) => { b.Add(comp, pc.body.shape); names.push(...pc.body.names.map(n => `${pc.id}@${n}`)); comps.push({ id: pc.id, part: pc.part, name: pc.name, mats: usedMats(placedShapes[i].mats) }); });
         shape = comp; shapeNames = names;
         extra = { topo: topology(oc, shape, names), items: [], holes: [], comps };
       } else if (r.file) { shape = readShape(oc, r.file.bytes, r.file.name); extra = { topo: topology(oc, shape), items: [], holes: [] }; }
