@@ -4215,6 +4215,7 @@ export const RU: Record<string, string> = {
   "{name} (copy)": "{name} (копия)",
   "Delete the material “{name}” from My materials? Parts that use it keep their values.": "Удалить материал «{name}» из моих материалов? Детали, где он задан, сохранят его значения.",
   "Checked against:": "Сверено с:",
+  "Not checked against a public reference yet.": "Пока не сверено с открытым источником.",
   "Choose a material from the library": "Выбрать материал из библиотеки",
   // FR-SEL-009: selection breadcrumbs
   "Selection breadcrumbs": "Цепочка выбора",
