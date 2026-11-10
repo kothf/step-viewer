@@ -2692,7 +2692,30 @@ export class DrawingWorkspace {
       + sh.views.filter(v => !v.parent || !findView(sh, v.parent)).map(v => item(v, 1)).join("");
   }
 
+  /** The Custom… scale box being typed into ("v" view, "s" sheet): kept across re-renders of the panel. */
+  private cscale: { k: "v" | "s"; val: string; focus: boolean } | null = null;
+
   private renderProps() {
+    const keep = this.cscale, box0 = this.el.querySelector<HTMLInputElement>(".drw-cscale");
+    if (keep && box0) { keep.val = box0.value; keep.focus = document.activeElement === box0; }
+    this.renderPropsOnly();
+    const sel = keep && this.el.querySelector<HTMLSelectElement>(`.drw-props select[data-${keep.k}="scale"]`);
+    if (keep && sel) { sel.value = "custom"; this.addScaleBox(sel, keep); } else this.cscale = null;
+  }
+
+  private addScaleBox(sel: HTMLSelectElement, c: { k: "v" | "s"; val: string; focus: boolean }) {
+    const box = document.createElement("input");
+    box.dataset[c.k] = "scale";
+    box.className = "drw-cscale";
+    box.value = c.val;
+    box.placeholder = "1:3";
+    box.setAttribute("aria-label", t("Scale, for example 1:3 or 3:2"));
+    box.title = t("Scale, for example 1:3 or 3:2");
+    sel.closest("label")?.after(box);
+    if (c.focus) box.focus();
+  }
+
+  private renderPropsOnly() {
     const host = this.el.querySelector<HTMLElement>(".drw-props")!;
     const sh = this.sheet;
     const sa = this.selA ? this.annot(this.selA) : undefined;
@@ -3048,11 +3071,14 @@ export class DrawingWorkspace {
       this.setView("View orientation", v => { v.orient = o; v.dir = c ?? undefined; });
     } else if (vk === "scale" || sk === "scale") {
       let s: [number, number] | null | undefined = val === "" ? undefined : parseScale(val);
+      // Custom…: a box under the list takes the scale (a browser prompt covered the sheet, drawings exam #17).
       if (val === "custom") {
-        const txt = prompt(t("Scale, for example 1:3 or 3:2"), "1:3");
-        s = txt ? parseScale(txt) : null;
-        if (!s) { if (txt) toast(t("Type a scale like 1:3."), true); this.renderProps(); return; }
+        this.cscale = { k: vk ? "v" : "s", val: "", focus: true };
+        this.addScaleBox(el as HTMLSelectElement, this.cscale);
+        return;
       }
+      if (el instanceof HTMLInputElement && !s) { toast(t("Type a scale like 1:3."), true); el.focus(); return; }
+      this.cscale = null;
       if (vk) this.setView("View scale", v => { if (s) v.scale = s; else delete v.scale; });
       else if (s) this.setSheet("Sheet scale", sh => { sh.scale = s!; });
     } else if (vk === "tangent") this.setView("Tangent edges", v => { v.tangent = val as TangentEdges; });
