@@ -1250,7 +1250,7 @@ export class ModelController {
     if (f.type === "extrude" && (f.end === "upto" || f.end === "offset") && !f.upTo) { toast(t("Pick the face or plane the extrusion goes up to."), true); return; }
     if (f.type === "extrude" && f.end === "vertex" && !f.upToVertex) { toast(t("Pick the vertex the extrusion goes up to."), true); return; }
     if (f.type === "extrude" && ((f.start === "surface" && !f.startRef) || (f.start === "vertex" && !f.startVertex))) { toast(t("Pick where the extrusion starts."), true); return; }
-    if (f.type === "plane" && f.mode === "angle" && !f.axis) { toast(t("Pick a straight edge to turn the plane about."), true); return; }
+    if (f.type === "plane" && f.mode === "angle" && !f.axis && !f.about) { toast(t("Pick a straight edge to turn the plane about."), true); return; }
     if (f.type === "axis" && !(f.mode === "edge" ? f.edge : f.mode === "cylinder" ? f.face : (f.planes?.length ?? 0) >= 2)) { toast(t(f.mode === "planes" ? "Pick two planes or flat faces." : f.mode === "edge" ? "Pick a straight edge." : "Pick a cylindrical or conical face."), true); return; }
     if (f.type === "thread" && !f.edge) { toast(t("Pick a round edge of a cylinder."), true); return; }
     if (f.type === "hole" && f.end === "upto" && !f.upTo) { toast(t("Pick the face or plane the hole goes up to."), true); return; }
@@ -2261,7 +2261,7 @@ export class ModelController {
       else if (m.kind === "feature" && hasContours(m.draft) && m.focus === "contours") this.pickContour(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "plane") {
         if (m.focus === "axis") this.pickAxis(e);
-        else { const r = this.pickRef(e); if (r) { m.draft.base = r; if (m.draft.mode === "angle" && !m.draft.axis) m.focus = "axis"; this.draftChanged(); } }
+        else { const r = this.pickRef(e); if (r) { m.draft.base = r; if (m.draft.mode === "angle" && !m.draft.axis && !m.draft.about) m.focus = "axis"; this.draftChanged(); } }
       } else if (m.kind === "feature" && m.draft.type === "extrude" && this.extrudeTarget(m.draft, m.focus)) {
         const f = m.draft, tg = this.extrudeTarget(f, m.focus)!;
         if (tg === "body") {
@@ -2464,6 +2464,16 @@ export class ModelController {
   }
 
   /** Angle plane: the straight edge it turns about. */
+  /** Plane at angle (FR-REF-002): turn about a picked edge, a standard axis or a reference axis before the plane. */
+  private aboutField(f: PlaneFeature, focus: boolean): string {
+    const at = this.doc.features.findIndex(x => x.id === f.id);
+    const axes = this.doc.features.slice(0, at < 0 ? this.doc.features.length : at).filter(x => x.type === "axis" && !x.suppressed);
+    const cur = f.about?.std ?? (f.about?.axis ? `axis:${f.about.axis}` : "edge");
+    const opt = (v: string, label: string, raw = false) => `<option value="${esc(v)}"${cur === v ? " selected" : ""}${raw ? ' translate="no"' : ""}>${esc(label)}</option>`;
+    return `<label class="pm-field"><span>${esc(t("Axis"))}</span><select data-k="about">${opt("edge", t("Straight edge"))}${opt("X", t("X axis"))}${opt("Y", t("Y axis"))}${opt("Z", t("Z axis"))}${axes.map(a => opt(`axis:${a.id}`, featureLabel(a.name), true)).join("")}</select></label>`
+      + (f.about ? "" : `<div class="pm-field"><span>${esc(t("Edge"))}</span><button class="pm-box${focus ? " focus" : ""}" data-k="focus-axis">${esc(f.axis ? t("Edge picked") : t("None"))}</button></div>`);
+  }
+
   private pickAxis(e: PointerEvent) {
     const m = this.mode;
     if (m.kind !== "feature" || m.draft.type !== "plane") return;
@@ -2473,6 +2483,7 @@ export class ModelController {
     const ref = this.refOfEdge(hit.edge);
     if (!ref) return;
     m.draft.axis = ref;
+    delete m.draft.about;
     m.focus = "base";
     this.draftChanged();
   }
@@ -2612,7 +2623,7 @@ export class ModelController {
   private boxFlow(d: Feature): { focus: Focus; filled: boolean; one: boolean }[] {
     const seeds = (f: CopyFeature) => f.copy === "faces" ? !!f.faces?.length : f.copy === "bodies" ? !!f.bodies?.length : f.features.length > 0;
     switch (d.type) {
-      case "plane": return [{ focus: "base", filled: !!d.base, one: true }, ...(d.mode === "angle" ? [{ focus: "axis" as Focus, filled: !!d.axis, one: true }] : [])];
+      case "plane": return [{ focus: "base", filled: !!d.base, one: true }, ...(d.mode === "angle" ? [{ focus: "axis" as Focus, filled: !!(d.axis || d.about), one: true }] : [])];
       case "draft": return [{ focus: "nplane", filled: !!d.plane, one: true }, { focus: "faces", filled: d.kind === "parting" ? !!d.parting?.length : d.faces.length > 0, one: false }];
       case "hole": return [{ focus: "hplane", filled: !!d.plane, one: true }, ...(d.end === "upto" ? [{ focus: "hupto" as Focus, filled: !!d.upTo, one: true }] : []), { focus: "pts", filled: d.pts.length > 0, one: false }];
       case "mirror": return [{ focus: "mplane", filled: !!d.plane, one: true }, { focus: "seeds", filled: seeds(d), one: false }];
@@ -6552,9 +6563,9 @@ export class ModelController {
     if (f.type === "plane") {
       title = t("Plane");
       body = group(t("First reference"), `<button class="pm-box${m.focus !== "axis" ? " focus" : ""}" data-k="focus-base" translate="no">${esc(this.refLabel(f.base))}</button>`)
-        + group(t("Placement"), `<label class="pm-field"><span>${esc(t("Type"))}</span><select data-k="mode"><option value="offset"${f.mode === "offset" ? " selected" : ""}>${esc(t("Offset distance"))}</option><option value="angle"${f.mode === "angle" ? " selected" : ""}>${esc(t("At angle about an edge"))}</option></select></label>`
+        + group(t("Placement"), `<label class="pm-field"><span>${esc(t("Type"))}</span><select data-k="mode"><option value="offset"${f.mode === "offset" ? " selected" : ""}>${esc(t("Offset distance"))}</option><option value="angle"${f.mode === "angle" ? " selected" : ""}>${esc(t("At angle about an edge or axis"))}</option></select></label>`
           + (f.mode === "offset" ? numField("offset", t("Distance"), f.offset, "length")
-            : `<div class="pm-field"><span>${esc(t("Edge"))}</span><button class="pm-box${m.focus === "axis" ? " focus" : ""}" data-k="focus-axis">${esc(f.axis ? t("Edge picked") : t("None"))}</button></div>` + numField("angle", t("Angle"), f.angle ?? { v: Math.PI / 4 }, "angle"))
+            : this.aboutField(f, m.focus === "axis") + numField("angle", t("Angle"), f.angle ?? { v: Math.PI / 4 }, "angle"))
           + chk("flip", f.flip, t("Flip")))
         + `<p class="pm-help muted">${esc(m.focus === "axis" ? t("Click a straight edge of the model.") : t("Click a plane or a flat face in the view or the tree."))}</p>`;
     }
@@ -6636,7 +6647,15 @@ export class ModelController {
         const g = f as unknown as Record<string, unknown>;
         if (k === "name") { const s = String(val).trim(); if (s) f.name = s === featureLabel(f.name) ? f.name : s; this.renderPanel(); return; }
         if (k === "mode" && (f.type === "axis" || f.type === "point")) { upd(() => { (f as { mode: string }).mode = String(val); delete f.edge; delete f.face; if (f.type === "axis") delete f.planes; if (f.type === "point") delete f.at; }, true); return; }
-        if (k === "mode" && f.type === "plane") { upd(() => { f.mode = val as "offset" | "angle"; if (f.mode === "angle") { f.angle ??= { v: Math.PI / 4 }; if (!f.axis) m.focus = "axis"; } else m.focus = "base"; }, true); return; }
+        if (k === "about" && f.type === "plane") {
+          upd(() => {
+            const v = String(val);
+            if (v === "edge") { delete f.about; if (!f.axis) m.focus = "axis"; }
+            else { f.about = v.startsWith("axis:") ? { axis: v.slice(5) } : { std: v as "X" | "Y" | "Z" }; delete f.axis; m.focus = "base"; }
+          }, true);
+          return;
+        }
+        if (k === "mode" && f.type === "plane") { upd(() => { f.mode = val as "offset" | "angle"; if (f.mode === "angle") { f.angle ??= { v: Math.PI / 4 }; if (!f.axis && !f.about) m.focus = "axis"; } else m.focus = "base"; }, true); return; }
         if (k === "dkind" && f.type === "draft") { upd(() => { if (val === "parting") { f.kind = "parting"; f.parting ??= []; f.faces = []; } else { delete f.kind; delete f.parting; delete f.other; } m.focus = f.plane ? "faces" : "nplane"; }, true); return; }
         if (k === "endTan" && f.type === "sweep") { upd(() => { if (val === "path") f.endTangent = true; else delete f.endTangent; }, true); return; }
         if (k === "startTan" && f.type === "sweep") { upd(() => { if (val === "path") f.startTangent = true; else delete f.startTangent; }, true); return; }
