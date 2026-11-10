@@ -1995,15 +1995,36 @@ export class SketchEditor {
     const geo = (x: SkEnt) => curveOf(x, q => this.pt(q));
     const me = geo(e);
     if (!me) return out;
+    // Solved positions are only good to the solver's tolerance, so a shared end or a tangent touch is within this of the exact crossing.
+    const tol = 1e-5;
+    const near = (q: V2) => out.some(c => Math.hypot(c.p[0] - q[0], c.p[1] - q[1]) < tol);
+    // Ends of other curves held on this one (On curve, e.g. a line drawn to it and made tangent) cut it there, even when the
+    // carriers only touch and the numeric crossing is lost.
+    for (const r of this.sk.rels) {
+      if (r.t !== "onCurve" || r.e[1] !== id) continue;
+      const o = this.sk.ents.find(x => x.id !== id && (x.t === "line" || x.t === "arc") && (x.a === r.e[0] || x.b === r.e[0]));
+      if (!o) continue;
+      const q = this.pt(r.e[0]);
+      if (!near(q)) out.push({ u: paramOf(me, q), p: q, other: o.id, pt: r.e[0] });
+    }
     for (const o of this.sk.ents) {
       if (o.id === id || o.t === "point") continue;
       const og = geo(o);
       if (!og) continue;
-      for (const q of intersectCurves(me, og)) {
-        if (!onCurve(og, q) || !onCurve(me, q)) continue;
-        // An existing point there (a shared end): reuse it.
-        const pt = this.sk.ents.find(x => x.t === "point" && Math.hypot(x.x - q[0], x.y - q[1]) < 1e-7)?.id;
-        out.push({ u: paramOf(me, q), p: q, other: o.id, pt });
+      for (const q of intersectCurves(me, og, tol)) {
+        if (!onCurve(og, q, tol) || !onCurve(me, q, tol)) continue;
+        // Where curves only touch, a point on one is off the other by just (slip)²/2r, so the solved touch point slips along
+        // the tangent far more than the solver's tolerance: an end of the other curve that close is that touch, and a cut
+        // already made with that curve there is the same one.
+        const loose = 1e-3 * Math.max(1, "r" in me ? me.r : 0, "r" in og ? og.r : 0);
+        const ends = o.t === "line" || o.t === "arc" ? [o.a, o.b] : [];
+        if (out.some(c => c.other === o.id && Math.hypot(c.p[0] - q[0], c.p[1] - q[1]) < loose)) continue;
+        // An existing point there (a shared end): reuse it, at its own place.
+        const hit = ends.map(i => this.sk.ents.find(x => x.id === i)).find(x => x?.t === "point" && Math.hypot(x.x - q[0], x.y - q[1]) < loose)
+          ?? this.sk.ents.find(x => x.t === "point" && Math.hypot(x.x - q[0], x.y - q[1]) < tol);
+        const at: V2 = hit && hit.t === "point" ? [hit.x, hit.y] : q;
+        if (near(at)) continue;
+        out.push({ u: paramOf(me, at), p: at, other: o.id, pt: hit?.id });
       }
     }
     return out;
@@ -3879,35 +3900,46 @@ function paramOf(g: Curve, p: V2): number {
   return a;
 }
 
-function onCurve(g: Curve, p: V2): boolean {
-  const tol = 1e-7;
-  if (g.kind === "line") { const u = paramOf(g, p); return u >= -tol && u <= 1 + tol; }
+/** Whether p (on the carrier) lies within the curve's ends; `tol` is a distance (mm) past an end that still counts. */
+function onCurve(g: Curve, p: V2, tol = 1e-7): boolean {
+  if (g.kind === "line") { const u = paramOf(g, p), k = tol / (Math.hypot(g.b[0] - g.a[0], g.b[1] - g.a[1]) || 1); return u >= -k && u <= 1 + k; }
   if (g.kind === "circle") return true;
-  const u = paramOf(g, p);
-  return u <= g.sweep + tol || u >= Math.PI * 2 - tol;
+  const u = paramOf(g, p), k = tol / (g.r || 1);
+  return u <= g.sweep + k || u >= Math.PI * 2 - k;
 }
 
-/** Points where two curves' carriers (infinite line, full circle) meet. */
-function intersectCurves(g: Curve, h: Curve): V2[] {
+/** Points where two curves' carriers (infinite line, full circle) meet; carriers within `tol` (mm) of touching meet once. */
+function intersectCurves(g: Curve, h: Curve, tol = 0): V2[] {
   if (g.kind === "line" && h.kind === "line") { const p = intersect(g.a, g.b, h.a, h.b); return p ? [p] : []; }
-  if (g.kind === "line") return lineCircle(g.a, g.b, (h as { c: V2 }).c, (h as { r: number }).r);
-  if (h.kind === "line") return lineCircle(h.a, h.b, g.c, g.r);
-  return circleCircle(g.c, g.r, h.c, h.r);
+  if (g.kind === "line") return lineCircle(g.a, g.b, (h as { c: V2 }).c, (h as { r: number }).r, tol);
+  if (h.kind === "line") return lineCircle(h.a, h.b, g.c, g.r, tol);
+  return circleCircle(g.c, g.r, h.c, h.r, tol);
 }
 
-function lineCircle(a: V2, b: V2, c: V2, r: number): V2[] {
+function lineCircle(a: V2, b: V2, c: V2, r: number, tol = 0): V2[] {
   const d = sub2(b, a), f = sub2(a, c);
   const A = dot2(d, d), B = 2 * dot2(f, d), C = dot2(f, f) - r * r;
+  if (A < 1e-18) return [];
+  // A tangent line (to the solver's tolerance): one touch point at the foot of the perpendicular from the centre.
+  const t0 = -B / (2 * A), foot: V2 = [a[0] + d[0] * t0, a[1] + d[1] * t0];
+  const dist = Math.hypot(foot[0] - c[0], foot[1] - c[1]);
+  if (tol > 0 && Math.abs(dist - r) < tol) return [foot];
   const disc = B * B - 4 * A * C;
-  if (disc < -1e-12 * A * r * r || A < 1e-18) return [];
+  if (disc < -1e-12 * A * r * r) return [];
   const s = Math.sqrt(Math.max(0, disc));
   const ts = s < 1e-12 ? [-B / (2 * A)] : [(-B - s) / (2 * A), (-B + s) / (2 * A)];
   return ts.map(t => [a[0] + d[0] * t, a[1] + d[1] * t] as V2);
 }
 
-function circleCircle(c1: V2, r1: number, c2: V2, r2: number): V2[] {
+function circleCircle(c1: V2, r1: number, c2: V2, r2: number, tol = 0): V2[] {
   const d = Math.hypot(c2[0] - c1[0], c2[1] - c1[1]);
-  if (d < 1e-12 || d > r1 + r2 + 1e-9 || d < Math.abs(r1 - r2) - 1e-9) return [];
+  const slack = Math.max(1e-9, tol);
+  if (d < 1e-12 || d > r1 + r2 + slack || d < Math.abs(r1 - r2) - slack) return [];
+  // Touching (to the tolerance): one point on the line of centres.
+  if (tol > 0 && (Math.abs(d - r1 - r2) < tol || Math.abs(d - Math.abs(r1 - r2)) < tol)) {
+    const s = Math.abs(d - r1 - r2) < tol ? r1 : (r1 >= r2 ? r1 : -r1);
+    return [[c1[0] + ((c2[0] - c1[0]) * s) / d, c1[1] + ((c2[1] - c1[1]) * s) / d]];
+  }
   const a = (r1 * r1 - r2 * r2 + d * d) / (2 * d);
   const h = Math.sqrt(Math.max(0, r1 * r1 - a * a));
   const m: V2 = [c1[0] + ((c2[0] - c1[0]) * a) / d, c1[1] + ((c2[1] - c1[1]) * a) / d];

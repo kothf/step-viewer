@@ -3301,6 +3301,10 @@ export const RU: Record<string, string> = {
   "Circular split line": "Круг с разделительной линией",
   "Hexagon": "Шестиугольник",
   "Underline": "Подчёркивание",
+  // Drawings: surface finish options.
+  "Second requirement": "Второе требование",
+  "Lay": "Направление неровностей",
+  "Machining allowance": "Припуск на обработку",
   "Fillet the edges": "Скруглить кромки",
   "Edge fillet radius": "Радиус скругления кромок",
   "The gusset's edge fillet must be less than half its width.": "Радиус скругления кромок ребра должен быть меньше половины его ширины.",

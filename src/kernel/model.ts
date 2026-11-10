@@ -145,6 +145,15 @@ export class Modeller {
     return this.xyz(props.CentreOfMass());
   }
 
+  /** Face naming version 2 (PartDoc.naming): sweep sides matched to sketch curves by a point on the edge. */
+  private pointNaming = false;
+
+  /** A point on the edge at its middle parameter (an arc's centre of mass lies off it, inside the circle). */
+  private edgeOnPoint(edge: any): V3 {
+    const ad = new this.oc.BRepAdaptor_Curve_2(edge);
+    return this.xyz(ad.Value((ad.FirstParameter() + ad.LastParameter()) / 2));
+  }
+
   /** Names of a body's faces after an operation, carried over from its inputs. */
   private carry(mk: any, inputs: Named[], result: any, fallback: string): Named {
     const pairs: [any, string][] = [];
@@ -441,10 +450,11 @@ export class Modeller {
       const fix = new oc.ShapeFix_Face_2(mk.Face());
       fix.Perform();
       const face = fix.Face();
-      // Wire building and healing copy edges: match the face's edges to the sketch curves by position.
+      // Wire building and healing copy edges: match the face's edges to the sketch curves by position
+      // (a point on the edge: an arc's centre of mass sits nearer a smaller concentric arc than its own middle).
       const segs = [pf.outer, ...pf.holes].flat();
       for (const e of this.sub(face, "EDGE")) {
-        const p = this.edgeMid(e);
+        const p = this.pointNaming ? this.edgeOnPoint(e) : this.edgeMid(e);
         let best = segs[0], bd = Infinity;
         for (const sg of segs) { const d = this.segDist(sg, frame, off, p); if (d < bd) { bd = d; best = sg; } }
         edgeEnt.push([e, best.ent]);
@@ -4627,7 +4637,9 @@ export class Modeller {
     let sheets: Named | null = null;
     // Sheet metal (FR-FT-120): the panels and bends made so far.
     let sm: SheetState | null = null;
-    let chain = "";
+    // Face naming version (exam #77): part of the cache key, since it changes the names a sweep gives.
+    this.pointNaming = doc.naming === 2;
+    let chain = this.pointNaming ? "n2" : "";
     const statuses: FeatureStatus[] = [];
     const frames: Record<string, Frame> = {};
     const failed = new Set<string>();

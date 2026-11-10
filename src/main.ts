@@ -2141,7 +2141,9 @@ const sessionViews = new Map<string, NamedView[]>();
   const hud = document.createElement("div");
   hud.id = "hud";
   hud.className = "hud";
-  hud.setAttribute("role", "toolbar");
+  // A plain group, not role=toolbar: a toolbar's arrow keys would move focus along it, so after a click on Front the
+  // arrows did nothing at all; here they turn the view, as in SolidWorks (exam #78).
+  hud.setAttribute("role", "group");
   hud.setAttribute("aria-label", t("View"));
   hud.hidden = true;
   hud.innerHTML = `<div class="seg" role="group"><button type="button" data-hud="area" title="${t("Zoom to area")}" aria-label="${t("Zoom to area")}">⬚</button>`

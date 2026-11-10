@@ -1955,6 +1955,25 @@ try {
     await click([5, 10]);
     const trimmed = await mp.evaluate(() => { const sk = window.__sv.model.editor().sk; const P = id => sk.ents.find(e => e.id === id); const h = sk.ents.filter(e => e.t === "line").find(l => Math.abs(P(l.a).y - P(l.b).y) < 1e-6); return h ? Math.max(P(h.a).x, P(h.b).x) : null; });
     check(trimmed !== null && near(trimmed, -10, 0.01), `model 1.19: Trim cuts the line back to the crossing (end at x = ${trimmed})`);
+    // Exam #76: a circle that lines only touch (ends held On curve, slipped a little along the tangent the way solved
+    // positions do) is cut at those ends, not deleted, and the kept arc ends on the lines' own end points.
+    const touch76 = await mp.evaluate(() => {
+      const ed = window.__sv.model.editor(), sk = ed.sk;
+      const P = (id, x, y) => sk.ents.push({ id, t: "point", x, y });
+      P("tc0", -25, -20); P("tl1a", -30, -19.9998); P("tl1b", -30, -12); P("tl2a", -20, -19.9998); P("tl2b", -20, -12);
+      sk.ents.push({ id: "tcirc", t: "circle", c: "tc0", r: 5 }, { id: "tl1", t: "line", a: "tl1a", b: "tl1b" }, { id: "tl2", t: "line", a: "tl2a", b: "tl2b" });
+      sk.rels.push({ id: "tr1", t: "onCurve", e: ["tl1a", "tcirc"] }, { id: "tr2", t: "onCurve", e: ["tl2a", "tcirc"] });
+      ed.render();
+      return true;
+    });
+    await mp.keyboard.press("t");
+    await click([-25, -25]);
+    const kept76 = await mp.evaluate(() => { const c = window.__sv.model.editor().sk.ents.find(e => e.id === "tcirc"); return c ? { t: c.t, ends: [c.a, c.b].sort().join(",") } : null; });
+    check(touch76 && kept76?.t === "arc" && kept76.ends === "tl1a,tl2a", `exam #76: Trim cuts a circle at the ends of lines touching it (${JSON.stringify(kept76)})`);
+    await mp.keyboard.press("Escape");
+    await mp.evaluate(() => { const ed = window.__sv.model.editor(), sk = ed.sk, mine = new Set(["tc0", "tl1a", "tl1b", "tl2a", "tl2b", "tcirc", "tl1", "tl2"]);
+      sk.ents = sk.ents.filter(e => !mine.has(e.id) && !(e.t === "point" && sk.rels.some(r => r.t === "onCurve" && r.e[0] === e.id && mine.has(r.e[1]))));
+      sk.rels = sk.rels.filter(r => !r.e.some(x => mine.has(x))); sk.dims = sk.dims.filter(d => !d.e.some(x => mine.has(x))); ed.render(); });
     // 3-point circle sits in the Circle flyout.
     await mp.click('#mc-tools [data-fly="circle"]');
     await mp.click("#mc-menu button:nth-child(2)");
@@ -2879,6 +2898,21 @@ try {
       const dir = await mp.evaluate(() => { const v = window.__sv.viewer, d = v.camera.position.clone().sub(v.controls.target).normalize(); return d.toArray().map(x => Math.round(x * 100) / 100); });
       check(hud?.shown && hud.views && hud.mode && hud.proj && hud.centred && !hud.inHeader && dir[2] > 0.99,
         `model 1.371: the heads-up view bar holds the view groups at the top centre of the view and Previous view goes back (${JSON.stringify({ hud, dir })})`);
+    }
+    // Exam #78: after a click on Front in the heads-up bar, ← turns the view (the bar was a toolbar, whose arrows did nothing).
+    {
+      // The button may be folded away at narrow widths: click it in the page and leave the focus on it, as a click does.
+      await mp.$eval('#hud [data-view="front"]', b => { b.focus(); b.click(); });
+      await mp.waitForTimeout(900);
+      const look = () => mp.evaluate(() => { const v = window.__sv.viewer; return v.camera.position.clone().sub(v.controls.target).normalize().toArray(); });
+      const d0 = await look();
+      await mp.keyboard.press("ArrowLeft");
+      await mp.waitForTimeout(900);
+      const d1 = await look();
+      const turn = Math.acos(Math.min(1, d0.reduce((s, x, i) => s + x * d1[i], 0))) * 180 / Math.PI;
+      const role = await mp.evaluate(() => document.querySelector("#hud").getAttribute("role"));
+      check(Math.abs(turn - 15) < 1 && role === "group", `exam #78: ← turns the view after a click on the heads-up Front button (${turn.toFixed(2)}°, role ${role})`);
+      await mp.evaluate(() => document.activeElement?.blur());
     }
     // 1.377 (FR-UI-022): Section view in the heads-up bar cuts the model, a second click turns the cut off (the plane stays), a third on again; the bar keeps clear of the ✓ ✕ corner.
     {
@@ -5036,6 +5070,18 @@ try {
     const g = an.find(a => a.t === "gtol"), ds = an.filter(a => a.t === "datum").map(a => a.letter).join(""), sf = an.find(a => a.t === "surf");
     check(g?.leader && g.view === front.id && g.rows[0].sym === "perp" && ds === "AB" && sf?.ref && tx.includes("0.05") && tx.includes("A") && tx.includes("B") && tx.includes("Ra 3.2"),
       `drawing: tolerance frame with a leader, datums A and B, surface finish on an edge (${JSON.stringify({ g: g?.rows, ds, sf: !!sf?.ref })}; ${tx.join(" ")})`);
+    // Surface finish options (the new symbol is selected): second requirement, lay, allowance, all around.
+    const ssel = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-d="st2"]'));
+    if (ssel) {
+      await dp.fill('#drw [data-d="st2"]', "Rz 6.3"); await dp.dispatchEvent('#drw [data-d="st2"]', "change");
+      await dp.selectOption('#drw [data-d="slay"]', "⊥");
+      await dp.fill('#drw [data-d="sallow"]', "0.5"); await dp.dispatchEvent('#drw [data-d="sallow"]', "change");
+      await dp.check('#drw [data-d="saround"]');
+    }
+    an = await annots(); tx = await texts();
+    const sf2 = an.find(a => a.t === "surf");
+    check(ssel && sf2.text2 === "Rz 6.3" && sf2.lay === "⊥" && sf2.allow === "0.5" && sf2.around === true && tx.includes("Rz 6.3") && tx.includes("⊥") && tx.includes("0.5"),
+      `drawing: surface finish with a second requirement, lay, allowance and all around (${JSON.stringify(sf2)}; ${tx.join(" ")})`);
     // The frame's properties: a Ø zone, (M) and a second row.
     await dp.mouse.move(gx + 8, gy + 4); await dp.mouse.click(gx + 8, gy + 4);
     const gsel = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-grow="+"]'));
