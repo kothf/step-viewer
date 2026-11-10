@@ -5,11 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.427.0] - 2026-11-10
+## [1.428.0] - 2026-11-10
 
 ### Added
 
 - **Balloons on weldment part drawings (FR-FT-121)**: a balloon on a drawing of a weldment part now shows the body's cut list item number, as in SolidWorks: click an edge of a member, plate or weld bead and place the balloon. **Auto balloon** puts one balloon on each cut list item seen in the view, and the balloon's panel names the item and stacks other items under it. The numbers match the Cut List dialog and the cut list table, and follow the part.
+
+## [1.427.0] - 2026-11-10
+
+### Added
+
+- **Foreshortened radius (FR-DRW-021)**: a drawing's radius dimension can be **Foreshortened**: its line starts on the arc and stops short of the centre with a jog, for a centre far away or off the sheet.
 
 ## [1.426.0] - 2026-11-10
 
@@ -2534,7 +2540,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.427.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.428.0...HEAD
+[1.428.0]: https://github.com/kothf/step-viewer/compare/v1.427.0...v1.428.0
 [1.427.0]: https://github.com/kothf/step-viewer/compare/v1.426.0...v1.427.0
 [1.426.0]: https://github.com/kothf/step-viewer/compare/v1.425.0...v1.426.0
 [1.425.0]: https://github.com/kothf/step-viewer/compare/v1.424.0...v1.425.0
