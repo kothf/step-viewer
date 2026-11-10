@@ -1,10 +1,10 @@
 # Part modelling: handover (2026-11-10)
 
-State of the part modelling work when the thread "Add draft per extrude direction" stopped (13:10Z; it followed "Polish modelling to match SolidWorks" and "Continue part modelling from FRS"). The requirements are in `docs/FRS-modelling.md`; the code map is in `CLAUDE.md`.
+State of the part modelling work. Current thread: "Polish cut-extrude contour preview" (from 13:18Z, branch `claude/project-thread-9th1cp`); before it "Add draft per extrude direction", "Polish modelling to match SolidWorks" and "Continue part modelling from FRS". The requirements are in `docs/FRS-modelling.md`; the code map is in `CLAUDE.md`.
 
 ## Where things stand
 
-- `main` is at 1.460.0. Every row of the FRS gap table (section 13.13 and the feature tables) is Done except two that are partial on purpose:
+- `main` is at 1.464.0 (1.465.0 Recognize Features in review). Every row of the FRS gap table (section 13.13 and the feature tables) is Done except two that are partial on purpose:
   - **FR-UI-100** rotation centre: a middle click on an edge pivots about the clicked point, not about the edge's line (the orbit is Z-up).
   - **FR-FT-102** feature recognition on imported bodies. Done: Recognize Holes (1.116.0), Recognize Fillets with chamfers on round edges and two-distance chamfers (1.390.0, 1.398.0), Recognize Extrudes with nested rounds, cuts open to the side, through notches at the outline (1.402.0 to 1.411.0), the base of a prism as sketch + Extrude (1.414.0) and the base of a body of revolution as sketch + Revolve (1.415.0). Left: bodies of revolution with a skew axis (no plane through the axis without a model edge), lofted or swept bases, variable fillets. All are rare in real imports.
 - Last slices: PR #336 (1.421.0 Selected Contours, FR-FT-010), #344 (1.428.0 contour hover, Planar Surface contours), #354 (1.451.0 Extrude/Cut/Revolve from the sketch being edited, FR-SK-004), #371 (1.456.0 extrude Direction 2 with any end condition, FR-FT-011), #377 (1.460.0 draft angle for each extrude direction, FR-FT-014).
@@ -32,7 +32,7 @@ State of the part modelling work when the thread "Add draft per extrude directio
 ## Ideas for a SolidWorks-fidelity pass
 
 - **Done in 1.460.0: draft per direction (FR-FT-014).** `ExtrudeFeature.draft2 { angle, outward }`: the key being present (even at 0° = off) means each direction tapers on its own from the sketch plane; older files have no key and keep one draft over the whole two-way prism. `types.ts` `draftApart` makes `dir2Apart` true for blind both ways, `dir2Feature` takes `draft2` (blind only); Direction 2 side faces are `fid:side2:<ent>` when `draft2` is set. The panel writes `draft2` when Direction 2 or a draft is turned on. Tests: `tests/unit/extrudeDir2.test.ts`, smoke check "model 1.460" inside the "model 1.456" block (shard 2). Gotcha for smoke checks: while a feature is being edited the rebuild is rolled back to it, so volumes leave later features out.
-- **Next slice:** cut-extrude preview colour for Selected Contours (orange fills read as a boss).
-- Recognised features get default names and no dimensions in their sketches; Fully define sketch (`fullyDefine`) could run on them.
-- Recognize Extrudes leaves round pockets to Recognize Holes; one "Recognize features" command that runs fillets, holes, extrudes and the base in the right order (blends first) would match FeatureWorks better.
+- **Done in 1.463.0:** Selected Contours of a cut are filled in the cut preview's yellow (`CONTOUR_CUT`), a boss's in orange (`CONTOUR_BOSS`), each with a darker outline.
+- **Done in 1.465.0: Recognize Features** (`Modeller.recognizeFeatures`, command `recall`): blends, holes and extrudes found on the stripped body, then holes and blends put back after the extrudes by place; a FeatureWorks-like tree (base, cuts, Hole, Fillet) with no Delete Face when the base is found. Tests `tests/unit/recognizeAll.test.ts`, smoke "model 1.465" in the Recognize block (shard 1).
+- **Next slice:** recognised sketches get no dimensions; run Fully define sketch (`fullyDefine`, editor-side) on them so the base and pocket sketches come back dimensioned like FeatureWorks.
 - A base made by `baseRevolve` after Recognize Holes is refused, because the Delete Face patches no longer carry the import's face names.

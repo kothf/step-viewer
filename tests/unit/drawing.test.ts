@@ -353,6 +353,15 @@ test("GD&T, datums, surface finish, tables, GOST title block, dangling annotatio
   assert.equal(tb.box[2], 400);
   assert.equal(tb.box[1], 287 - 18);
   assert.ok(tb.prims.some(p => p.t === "t" && p.s === "C2") && tb.prims.some(p => p.t === "t" && p.s === "revisions" && p.bold));
+  // A 43-row parts list on the title block with 120 mm above it splits into side-by-side blocks (drawings exam round 2):
+  // 19 rows + header per block, three blocks continuing to the left, none past the room above.
+  const rows = Array.from({ length: 43 }, (_, i) => [String(i + 1), `part-${i + 1}`]);
+  const bt = tablePrims({ id: "b", t: "table", kind: "bom", anchor: "br", pos: [400, 50], cols: ["Item", "Part number"], rows }, k => k, 120);
+  const one = tablePrims({ id: "b", t: "table", kind: "bom", anchor: "br", pos: [400, 50], cols: ["Item", "Part number"], rows: rows.slice(0, 1) }, k => k, 120);
+  const W = one.box[2] - one.box[0];
+  assert.ok(bt.box[3] <= 170 + 1e-9 && bt.box[1] === 50 && Math.abs(bt.box[0] - (400 - 3 * W)) < 1e-6, JSON.stringify(bt.box));
+  assert.equal(bt.prims.filter(p => p.t === "t" && p.s === "Item").length, 3);
+  assert.ok(["1", "19", "20", "38", "39", "43"].every(n => bt.prims.some(p => p.t === "t" && p.s === n)));
   // GOST 2.104: frame 20/5/5/5, a 185 × 55 block in the bottom-right corner, sheet "2/3" split into its two cells.
   const g = newSheet(1); g.format = "gost";
   assert.deepEqual(frameOf(g), [20, 5, 415, 292]);
@@ -361,6 +370,9 @@ test("GD&T, datums, surface finish, tables, GOST title block, dangling annotatio
   const fp = formatPrims(g, fields, k => k);
   const texts = fp.filter(p => p.t === "t").map(p => (p as { s: string }).s);
   for (const k of ["Developed", "N. control", "Lit.", "No. of sheets", "АБВГ.123456.001", "Ivanov", "2", "3"]) assert.ok(texts.includes(k), k);
+  // GOST dates read DD.MM.YY and fit the 10 mm date cell (drawings exam round 2: 2026-11-10 ran over it).
+  const dated = formatPrims(g, { ...fields, date: "2026-11-10" }, k => k).filter(p => p.t === "t" && (p as { s: string }).s === "10.11.26");
+  assert.equal(dated.length, 1);
   assert.ok(fp.every(p => p.t !== "t" || p.x >= 230), "no zone letters on a GOST frame");
   // A datum whose edge is gone is reported and drawn as its framed letter only; sheet-level tables are drawn.
   const sh = { ...newSheet(1), views: [{ id: "v", name: "v", orient: "front" as const, x: 0, y: 0 }], annots: [

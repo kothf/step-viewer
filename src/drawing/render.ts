@@ -46,7 +46,7 @@ export async function renderDrawing(bytes: Uint8Array, base = new URL("occt/", d
     return doc.sheets.map(sh => {
       const [W, H] = sheetSize(sh);
       const ctx: AnnotCtx = {
-        ...factsCtx(facts), dec: ".", label, bom: src.kind === "asm" ? sheetBom(sh, src.doc, src.flat, boms) : null,
+        ...factsCtx(facts), dec: ".", label, bom: src.kind === "asm" ? sheetBom(sh, src.doc, src.flat, boms) : null, single: src.kind !== "asm" && !facts.cuts?.length,
         forView: v => { const c = viewConfig(sh, v), g = (c && k.configs.get(c)) || null, pr = k.cache.get(viewReq(sh, v).key); return pr?.cutEdges?.length ? factsCtx(withCut(g ?? facts, pr)) : g ? factsCtx(g) : null; },
       };
       return { name: sh.name, W, H, prims: composeSheet(sh, fieldsOf(doc, sh, mass), k.cache, facts.box, label, ctx).prims };

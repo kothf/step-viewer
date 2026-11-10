@@ -3822,6 +3822,7 @@ export const RU: Record<string, string> = {
   "Click a point: a corner or a circle centre.": "Щёлкните точку: угол или центр окружности.",
   "Click the base point: a corner or a circle centre.": "Щёлкните базовую точку: угол или центр окружности.",
   "Click the next point. Enter or Esc ends.": "Щёлкните следующую точку. Enter или Esc — завершить.",
+  "Click where the dimensions go.": "Щёлкните, где пройдут размеры.",
   // Command search (FR-UI-014)
   "Command search": "Поиск команды",
   "Type a command (Ctrl+K)": "Введите команду (Ctrl+K)",
@@ -3888,6 +3889,10 @@ export const RU: Record<string, string> = {
   "Recognize Extrudes": "Распознать вытягивания",
   "Recognize extrudes: pockets and bosses of the body become sketches with Extrude features you can edit": "Распознать вытягивания: карманы и бобышки тела становятся эскизами с редактируемыми элементами «Вытягивание»",
   "Recognize extrudes": "Распознать вытягивания",
+  "Recognize Features": "Распознать элементы",
+  "Recognize features": "Распознать элементы",
+  "Recognize features: the body's base, pockets, bosses, holes, fillets and chamfers become features you can edit, in modelling order": "Распознать элементы: основание тела, карманы, бобышки, отверстия, скругления и фаски становятся редактируемыми элементами в порядке построения",
+  "No features were found to recognise.": "Элементов для распознавания не найдено.",
   "No pockets or bosses were found to recognise.": "Карманов и бобышек для распознавания не найдено.",
   "{n} feature recognised|{n} features recognised": "Распознан {n} элемент|Распознано {n} элемента|Распознано {n} элементов",
   "{n} extrude recognised|{n} extrudes recognised": "Распознано {n} вытягивание|Распознано {n} вытягивания|Распознано {n} вытягиваний",
