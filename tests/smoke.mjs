@@ -1646,8 +1646,10 @@ try {
     await mp.evaluate(() => { window.showSaveFilePicker = undefined; });
     // With no save dialog the first save asks for the file name (exam #9); keep the suggested one.
     let askedName = null;
-    mp.once("dialog", d => { askedName = d.defaultValue(); void d.accept(); });
+    mp.removeAllListeners("dialog");
+    mp.once("dialog", d => { askedName = d.defaultValue(); void d.accept(d.defaultValue()); });
     const [dlPart] = await Promise.all([mp.waitForEvent("download"), mp.click('[data-c="save"]')]);
+    mp.on("dialog", d => d.accept());
     check(askedName === "Part1.mcadprt", `exam #9: the first save without a save dialog asks for the file name (suggested ${askedName})`);
     const partBytes = await readFile(await dlPart.path());
     const saved = await mp.evaluate(() => ({ dirty: window.__sv.model.store.dirty, doc: document.querySelector("#doc-name").textContent }));
