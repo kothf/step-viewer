@@ -23,7 +23,7 @@ export type Label = (s: string, p?: Record<string, string>) => string;
 
 /** What annotations need from the model and the UI. */
 export interface AnnotCtx {
-  topo: Topo | null; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; bends?: FlatBend[]; welds?: WeldInfo[]; cuts?: CutInfo[]; items: ModelItem[]; box: [V3, V3] | null; dec: string; label: Label; bom?: Bom | null;
+  topo: Topo | null; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; bends?: FlatBend[]; welds?: WeldInfo[]; cuts?: CutInfo[]; cutFaces?: Record<string, number>; items: ModelItem[]; box: [V3, V3] | null; dec: string; label: Label; bom?: Bom | null;
   /** A view that shows another part configuration (FR-DRW-010) gets that configuration's topology and model items. */
   forView?: (v: DrawingView) => Partial<AnnotCtx> | null;
 }
@@ -406,7 +406,8 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
     const bb = textBox(sb[0], sb[1], "x".repeat(Math.max(1, Math.round(wb / (h * 0.85)))), h, "l", rot);
     return [Math.min(box[0], bb[0]), Math.min(box[1], bb[1]), Math.max(box[2], bb[2]), Math.max(box[3], bb[3])];
   };
-  if (g.k === "rad" || g.k === "dia") {
+  const diaLin = g.k === "dia" && !!a.lin;
+  if ((g.k === "rad" || g.k === "dia") && !diaLin) {
     const C = S(g.c!), R = g.r! * pl.s;
     const u = unit2([T[0] - C[0], T[1] - C[1]], [Math.SQRT1_2, Math.SQRT1_2]);
     const outside = d2(T, C) > R;
@@ -487,8 +488,10 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
     return { prims: out, box };
   }
   // Linear.
-  const [S1, S2] = g.pts.map(S);
-  const d: P2 = g.k === "h" ? [1, 0] : g.k === "v" ? [0, 1] : unit2([S2[0] - S1[0], S2[1] - S1[1]]);
+  // A diameter shown as a linear dimension: between the rim's two ends along the sheet's horizontal or vertical.
+  const dl: P2 = a.lin === "v" ? [0, 1] : [1, 0];
+  const [S1, S2] = diaLin ? [add2(S(g.c!), dl, -g.r! * pl.s), add2(S(g.c!), dl, g.r! * pl.s)] : g.pts.map(S);
+  const d: P2 = diaLin ? dl : g.k === "h" ? [1, 0] : g.k === "v" ? [0, 1] : unit2([S2[0] - S1[0], S2[1] - S1[1]]);
   const nrm: P2 = [-d[1], d[0]];
   const off = (p: P2) => (T[0] - p[0]) * nrm[0] + (T[1] - p[1]) * nrm[1];
   const D1 = add2(S1, nrm, off(S1)), D2 = add2(S2, nrm, off(S2));
@@ -661,8 +664,8 @@ function holeTablePrims(a: HoleTableAnnot, P: (p: V3) => P2, pl: Placement, ctx:
 
 /** Everything annotated on one view: its dimensions, callouts and notes, plus the automatic centre marks. */
 /** The model facts annotations draw on (topology, holes, threads, sketches, model items, box). */
-export function factsCtx(f: { topo: Topo; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; bends?: FlatBend[]; welds?: WeldInfo[]; cuts?: CutInfo[]; items: ModelItem[]; box: [V3, V3] } | null): Pick<AnnotCtx, "topo" | "holes" | "threads" | "sketches" | "bends" | "welds" | "cuts" | "items" | "box"> {
-  return { topo: f?.topo ?? null, holes: f?.holes ?? [], threads: f?.threads ?? [], sketches: f?.sketches ?? [], bends: f?.bends ?? [], welds: f?.welds ?? [], cuts: f?.cuts ?? [], items: f?.items ?? [], box: f?.box ?? null };
+export function factsCtx(f: { topo: Topo; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; bends?: FlatBend[]; welds?: WeldInfo[]; cuts?: CutInfo[]; cutFaces?: Record<string, number>; items: ModelItem[]; box: [V3, V3] } | null): Pick<AnnotCtx, "topo" | "holes" | "threads" | "sketches" | "bends" | "welds" | "cuts" | "cutFaces" | "items" | "box"> {
+  return { topo: f?.topo ?? null, holes: f?.holes ?? [], threads: f?.threads ?? [], sketches: f?.sketches ?? [], bends: f?.bends ?? [], welds: f?.welds ?? [], cuts: f?.cuts ?? [], cutFaces: f?.cutFaces ?? {}, items: f?.items ?? [], box: f?.box ?? null };
 }
 
 /** A section view's facts (FR-DRW-021): the model's plus the cut faces' edges from its projection, so the section can be dimensioned. */
@@ -715,10 +718,12 @@ export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: Ann
       r = datumPrims(a, f?.at ?? null, f?.d ?? [1, 0], toSheet(pl, a.pos[0], a.pos[1]));
       if (!f) out.dangling.push(a.id);
     } else if (a.t === "balloon") {
-      // The tip stays on the edge's middle; the number is the component's item in the BOM.
-      const e = refEdge(a.ref, ctx.topo), c = "e" in a.ref ? compOfKey(a.ref.e) : null, item = c && ctx.bom ? ctx.bom.itemOf(c) : null;
-      const more = (a.stack ?? []).map(sc => String(ctx.bom?.itemOf(sc) ?? "?"));
-      r = balloonPrims(toSheet(pl, a.pos[0], a.pos[1]), e ? toSheet(pl, ...P(e.m)) : null, a.txt || (item ? String(item) : "?"), more, { shape: a.shape, lower: a.shape === "split" ? [c, ...(a.stack ?? [])].map(k => { const n = k ? ctx.bom?.itemOf(k) : null, row = n ? ctx.bom!.rows.find(x => x.item === n) : null; return row ? String(row.qty) : ""; }) : undefined });
+      // The tip stays on the edge's middle; the number is the component's item in the BOM (assembly) or the
+      // body's item in the cut list (weldment part).
+      const e = refEdge(a.ref, ctx.topo), item = "e" in a.ref ? edgeItem(a.ref.e, ctx) : null;
+      const more = (a.stack ?? []).map(sc => String(stackItem(sc, ctx) ?? "?"));
+      const qty = (n: number | null) => !n ? "" : ctx.bom ? String(ctx.bom.rows.find(x => x.item === n)?.qty ?? "") : String(ctx.cuts?.find(x => x.item === n)?.qty ?? "");
+      r = balloonPrims(toSheet(pl, a.pos[0], a.pos[1]), e ? toSheet(pl, ...P(e.m)) : null, a.txt || (item ? String(item) : "?"), more, { shape: a.shape, lower: a.shape === "split" ? [item, ...(a.stack ?? []).map(k => stackItem(k, ctx))].map(qty) : undefined });
       if (!e || (!a.txt && !item)) out.dangling.push(a.id);
     } else if (a.t === "btable") {
       const bends = ctx.bends ?? [];
@@ -1345,6 +1350,19 @@ export function weldRows(a: WeldTableAnnot, welds: WeldInfo[], ctx: AnnotCtx): s
   return rows;
 }
 
+/** The item a balloon on edge `k` numbers: its component's BOM item in an assembly drawing, else the cut list item of the weldment body the edge's faces belong to. */
+export function edgeItem(k: string, ctx: Pick<AnnotCtx, "bom" | "cutFaces">): number | null {
+  if (ctx.bom) { const c = compOfKey(k); return c ? ctx.bom.itemOf(c) : null; }
+  for (const f of k.split("|")) { const n = ctx.cutFaces?.[f]; if (n) return n; }
+  return null;
+}
+
+/** A stacked balloon's item: a component id (assembly) or `cut:<item>` (weldment cut list). */
+export function stackItem(s: string, ctx: Pick<AnnotCtx, "bom" | "cuts">): number | null {
+  if (s.startsWith("cut:")) { const n = +s.slice(4); return ctx.cuts?.some(c => c.item === n) ? n : null; }
+  return ctx.bom?.itemOf(s) ?? null;
+}
+
 /** The cut list table's columns (SolidWorks' Weldment Cut List: ITEM NO., QTY., DESCRIPTION, LENGTH, ANGLE1, ANGLE2), with Mass (kg) when asked. */
 export function cutCols(a: CutTableAnnot): string[] {
   return ["Item", "Qty", "Description", "Length", "Angle 1", "Angle 2", ...(a.mass ? ["Mass (kg)"] : [])];
@@ -1355,13 +1373,18 @@ export function cutCols(a: CutTableAnnot): string[] {
  * the profile / "Plate t × w × l" / fillet weld text (translated), length (member or bead root), end angles in degrees
  * from square for members, mass of one item. `beads` false leaves the weld beads out (their numbers stay).
  */
-export function cutRows(a: CutTableAnnot, cuts: CutInfo[], ctx: AnnotCtx): string[][] {
-  const f = (v: number) => fmtNum(v, a.prec, ctx.dec), d = (v: string) => ctx.dec === "." ? v : v.split(".").join(ctx.dec);
-  const desc = (c: CutInfo) => c.own ? c.desc
+/** A cut list item's description as the cut list table writes it (typed one, member description, plate size or bead). */
+export function cutDesc(c: CutInfo, ctx: Pick<AnnotCtx, "dec" | "label">, prec?: number): string {
+  const f = (v: number) => fmtNum(v, prec, ctx.dec), d = (v: string) => ctx.dec === "." ? v : v.split(".").join(ctx.dec);
+  return c.own ? c.desc
     : c.kind === "member" ? c.desc
     : c.kind === "plate" ? ctx.label("Plate {t} × {w} × {l}", { t: f(c.plate![2]), w: f(c.plate![0]), l: f(c.plate![1]) })
     : !c.inter ? ctx.label("Fillet weld, leg {s}", { s: d(c.desc) })
     : ctx.label(c.inter[2] ? "Staggered fillet weld, leg {s}, {l} every {e}" : "Intermittent fillet weld, leg {s}, {l} every {e}", { s: d(c.desc), l: f(c.inter[0]), e: f(c.inter[1]) });
+}
+
+export function cutRows(a: CutTableAnnot, cuts: CutInfo[], ctx: AnnotCtx): string[][] {
+  const f = (v: number) => fmtNum(v, a.prec, ctx.dec), desc = (c: CutInfo) => cutDesc(c, ctx, a.prec);
   return cuts.filter(c => a.beads !== false || c.kind !== "bead").map(c => [String(c.item), String(c.qty), desc(c), c.length != null ? f(c.length) : "",
     c.a1 != null ? `${f(c.a1)}°` : "", c.a2 != null ? `${f(c.a2)}°` : "", ...(a.mass ? [fmtNum(c.kg, a.prec ?? 2, ctx.dec)] : [])]);
 }

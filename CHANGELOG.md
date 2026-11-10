@@ -5,6 +5,50 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.435.0] - 2026-11-10
+
+### Added
+
+- **Diameter as a linear dimension (FR-DRW-021)**: a drawing's diameter dimension has a **Display** choice: Diameter, or a linear dimension across the circle, horizontal or vertical, with extension lines from the rim and the Ø kept.
+
+## [1.434.0] - 2026-11-10
+
+### Added
+
+- **Material from the assembly (FR-MAT-001)**: right-click a component and choose **Material…** to pick its part's material from the library without opening the part. Every instance of that part follows, and the BOM and mass properties update. It is one undo step.
+
+## [1.433.0] - 2026-11-10
+
+### Fixed
+
+- **File ▸ Export ▸ STEP for parts and assemblies**: the STEP button in the Export panel said "STEP export needs a STEP, IGES or BREP model" for a part you model or an assembly. It now saves them like the command bar's STEP button does.
+- **DXF 2000 of a big drawing sheet**: export failed with "Maximum call stack size exceeded" on sheets with many lines (the Leuenberger engine drawing). It now saves.
+- **Export on an empty part**: PNG, mesh and PDF report buttons did nothing when there was no body yet; they now say so.
+
+## [1.432.0] - 2026-11-10
+
+### Added
+
+- **Datum feature options (FR-DRW-023)**: a drawing's datum feature can have an **Open triangle** (an outline instead of the filled one) and a **Bent leader**, which leaves the edge square to it and then runs level to the letter's frame.
+
+## [1.431.0] - 2026-11-10
+
+### Added
+
+- **Balloons on weldment part drawings (FR-FT-121)**: a balloon on a drawing of a weldment part now shows the body's cut list item number, as in SolidWorks: click an edge of a member, plate or weld bead and place the balloon. **Auto balloon** puts one balloon on each cut list item seen in the view, and the balloon's panel names the item and stacks other items under it. The numbers match the Cut List dialog and the cut list table, and follow the part.
+
+## [1.430.0] - 2026-11-10
+
+### Added
+
+- **Tolerance frame text (FR-DRW-023)**: a drawing's geometric tolerance has **Text above the frame** (such as 2×) and **Text below the frame** boxes; the text is written left-aligned over and under the feature control frame and moves with it.
+
+## [1.429.0] - 2026-11-10
+
+### Fixed
+
+- **ASA and PC/ABS (FR-MAT-001)**: both now follow a named general purpose grade's data sheet and show **Checked against:**. ASA (Luran S 778T): modulus 2.5 GPa, yield 54 MPa (were 2.3 GPa and 48 MPa). PC/ABS (Bayblend T65 XF): modulus 2.35 GPa, yield 54 MPa (were 2.2 GPa and 52 MPa). 149 of 170 materials are checked; the other 21 still say they are not.
+
 ## [1.428.0] - 2026-11-10
 
 ### Added
@@ -2540,7 +2584,14 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.428.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.435.0...HEAD
+[1.435.0]: https://github.com/kothf/step-viewer/compare/v1.434.0...v1.435.0
+[1.434.0]: https://github.com/kothf/step-viewer/compare/v1.433.0...v1.434.0
+[1.433.0]: https://github.com/kothf/step-viewer/compare/v1.432.0...v1.433.0
+[1.432.0]: https://github.com/kothf/step-viewer/compare/v1.431.0...v1.432.0
+[1.431.0]: https://github.com/kothf/step-viewer/compare/v1.430.0...v1.431.0
+[1.430.0]: https://github.com/kothf/step-viewer/compare/v1.429.0...v1.430.0
+[1.429.0]: https://github.com/kothf/step-viewer/compare/v1.428.0...v1.429.0
 [1.428.0]: https://github.com/kothf/step-viewer/compare/v1.427.0...v1.428.0
 [1.427.0]: https://github.com/kothf/step-viewer/compare/v1.426.0...v1.427.0
 [1.426.0]: https://github.com/kothf/step-viewer/compare/v1.425.0...v1.426.0

@@ -803,6 +803,9 @@ kernel.onStatus = (_s, note) => { kernelNote = note ?? ""; showKernelStatus(); }
 
 /** Saves the visible parts as STEP (the whole file, with its assembly, when everything is visible). */
 async function exportStep() {
+  // A modelled part or an assembly has no imported file: its own kernel writes the STEP.
+  if (modeller.active) return modeller.exportStep();
+  if (asm.active) return asm.exportStep();
   if (!viewer.parts.length) return;
   if (state.fileKey.startsWith("sv:pcb:")) return exportBoardStep();
   if (kernelJob && kernel.status === "loading") { toast(t("Loading the geometry kernel…")); await kernelJob; }
@@ -2904,23 +2907,25 @@ onLangChange(renderMassPanel);
 $<HTMLInputElement>("#com-show").addEventListener("change", showMassMarks);
 
 // ---------- export ----------
+/** An empty new part or assembly: say so instead of doing nothing. */
+const nothingToExport = () => toast(t("There is no body to export yet."), true);
 const baseName = () => state.fileName.replace(/\.[^.]+$/, "") || "model";
 function bgColor() { return getComputedStyle(document.documentElement).getPropertyValue("--vp-top").trim() || "#ffffff"; }
 for (const [id, transparent] of [["#png", false], ["#png-t", true]] as const) {
   $(id).addEventListener("click", () => {
-    if (!viewer.parts.length) return;
+    if (!viewer.parts.length) { nothingToExport(); return; }
     const scale = parseInt($<HTMLSelectElement>("#png-scale").value);
     const c = snapshot(viewer, annotations, { scale, transparent, background: bgColor() });
     c.toBlob(b => b && download(b, `${baseName()}${transparent ? "-transparent" : ""}.png`), "image/png");
   });
 }
 $$("[data-export]").forEach(b => b.addEventListener("click", async () => {
-  if (!viewer.parts.length) return;
+  if (!viewer.parts.length) { nothingToExport(); return; }
   try { await exportMesh(viewer, b.dataset.export as "stl", baseName()); }
   catch (err) { toast(t("Export failed: {err}", { err: (err as Error).message }), true); }
 }));
 function report() {
-  if (!viewer.parts.length) return;
+  if (!viewer.parts.length) { nothingToExport(); return; }
   if (!lastMass.length) runMass();
   const s = overallSize();
   const m = state.meta;
