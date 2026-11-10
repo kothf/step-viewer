@@ -88,3 +88,38 @@ test("an older file with a stale Direction 2 depth under another end keeps one d
   const r = run(m, doc([block, ex1, pl, pad, old]));
   close(r.props!.volume, 100 * 60 * 20 + 100 * 10);
 });
+
+test("a draft for each direction, about the sketch plane (FR-FT-014)", async () => {
+  const m = new Modeller(await occ());
+  const a = (5 * Math.PI) / 180, tn = Math.tan(a);
+  // Frustum of the 100 × 60 rectangle tapering inward by tan(a) per mm over height h (outward: k = -1).
+  const fr = (h: number, k = 1) => 6000 * h - 160 * k * tn * h * h + (4 / 3) * tn * tn * h ** 3;
+  const f = ex1 as ExtrudeFeature;
+  // Direction 1 drafted, Direction 2 straight: only the upper part tapers.
+  const both: ExtrudeFeature = { ...f, depth2: { v: 10 }, draft: { angle: { v: a } }, draft2: { angle: { v: 0 } } };
+  assert.equal(dir2Apart(both), true);
+  let r = run(m, doc([block, both]));
+  close(r.props!.volume, fr(20) + 6000 * 10);
+  const names = r.body!.names;
+  assert.equal(names.filter(n => n.startsWith("f1:side:")).length, 4, names.join(" "));
+  assert.equal(names.filter(n => n.startsWith("f1:side2:")).length, 4, names.join(" "));
+  assert.equal(names.filter(n => n === "f1:start").length, 1);
+  assert.equal(names.filter(n => n === "f1:end").length, 1);
+  // Each direction its own angle, the second one flaring out.
+  r = run(m, doc([block, { ...both, draft2: { angle: { v: a }, outward: true } }]));
+  close(r.props!.volume, fr(20) + fr(10, -1));
+  // Only Direction 2 drafted.
+  const only2: ExtrudeFeature = { ...f, depth2: { v: 10 }, draft2: { angle: { v: a } } };
+  r = run(m, doc([block, only2]));
+  close(r.props!.volume, 6000 * 20 + fr(10));
+  // Both off: one prism again, names as before.
+  assert.equal(dir2Apart({ ...only2, draft2: { angle: { v: 0 } } }), false);
+  // Direction 2 as its own extrude takes draft2, blind only.
+  assert.equal(dir2Feature(only2).draft?.angle.v, a);
+  assert.equal(dir2Feature({ ...only2, end2: "through" }).draft, undefined);
+  // An older file (one draft, no draft2) keeps tapering the whole two-way prism from its far end.
+  const old: ExtrudeFeature = { ...f, depth2: { v: 10 }, draft: { angle: { v: a } } };
+  assert.equal(dir2Apart(old), false);
+  r = run(m, doc([block, old]));
+  close(r.props!.volume, fr(30));
+});

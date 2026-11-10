@@ -648,7 +648,10 @@ export class Modeller {
       tools = this.extrudeTools(apart ? { ...f, depth2: undefined } : f, sk, frame, prev, frames, so);
       if (apart) {
         const g = dir2Feature(f);
-        const ren = (n: string) => n === `${f.id}:end` ? `${f.id}:start` : n === `${f.id}:start` ? `${f.id}:mid` : n.startsWith(`${f.id}:new:`) ? `${f.id}:new2:${n.slice(f.id.length + 5)}` : n;
+        // With Direction 2's own draft (FR-FT-014) its side faces are not coplanar with Direction 1's: own names.
+        const side = `${f.id}:side:`, side2 = f.draft2 !== undefined;
+        const ren = (n: string) => n === `${f.id}:end` ? `${f.id}:start` : n === `${f.id}:start` ? `${f.id}:mid` : n.startsWith(`${f.id}:new:`) ? `${f.id}:new2:${n.slice(f.id.length + 5)}`
+          : side2 && n.startsWith(side) ? `${f.id}:side2:${n.slice(side.length)}` : n;
         for (const t of this.extrudeTools(g, sk, frame, prev, frames, so)) tools.push({ ...t, names: t.names.map(ren) });
       }
     } else {

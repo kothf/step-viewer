@@ -6233,12 +6233,15 @@ export class ModelController {
       // Direction 2 (FR-FT-011): its own end condition, as SolidWorks offers (no mid plane or through all - both).
       const e2 = f.end2 ?? "blind";
       const bodyName = (r: FaceRef | undefined) => r ? t("Body of {name}", { name: featureLabel(this.store?.feature(r.name.split(":")[0])?.name ?? "?") }) : t("None");
+      const draft2On = !!f.draft2 && Math.abs(f.draft2.angle.v) > 1e-9;
       const dir2Body = `<label class="pm-field"><span>${esc(t("End condition"))}</span><select data-k="end2">${DIR2_ENDS.map(v => `<option value="${v}"${e2 === v ? " selected" : ""}>${esc(ends.find(x => x[0] === v)![1])}</option>`).join("")}</select></label>`
         + (e2 === "upto" || e2 === "offset" ? `<div class="pm-field"><span>${esc(t("Up to"))}</span><button class="pm-box${tg === "upto2" ? " focus" : ""}" data-focus="upto2" aria-label="${esc(t("Up to (direction 2)"))}: ${esc(this.refLabel(f.upTo2))}" translate="no">${esc(this.refLabel(f.upTo2))}</button></div>` : "")
         + (e2 === "vertex" ? `<div class="pm-field"><span>${esc(t("Up to"))}</span><button class="pm-box${tg === "vertex2" ? " focus" : ""}" data-focus="upto2" translate="no">${esc(this.vertexLabel(f.upToVertex2))}</button></div>` : "")
         + (e2 === "body" ? `<div class="pm-field"><span>${esc(t("Body"))}</span><button class="pm-box${tg === "body2" ? " focus" : ""}" data-focus="upbody2" translate="no">${esc(bodyName(f.upToBody2))}</button></div>` : "")
         + (e2 === "offset" ? numField("upToOffset2", t("Offset distance"), f.upToOffset2 ?? { v: 5 }, "length") + chk("reverseOffset2", f.reverseOffset2, t("Reverse offset")) : "")
-        + (e2 === "blind" ? numField("depth2", t("Depth 2"), f.depth2 ?? f.depth, "length") : "");
+        + (e2 === "blind" ? numField("depth2", t("Depth 2"), f.depth2 ?? f.depth, "length")
+          // Direction 2's own draft (FR-FT-014), as SolidWorks: off at 0°.
+          + chk("draft2On", draft2On, t("Draft on/off")) + (draft2On ? numField("draft2.angle", t("Draft angle"), f.draft2!.angle, "angle") + chk("draft2Out", f.draft2!.outward, t("Draft outward")) : "") : "");
       // Selected Contours comes first when the sketch needs it, as SolidWorks opens that box.
       const needCt = this.needsContours(f);
       body = (needCt ? this.contoursGroup(f, m.focus) : "") + group(t("From"), sketchSel(f.sketch) + opSel(f.op) + (f.op === "boss" && this.last?.data ? chk("merge", f.merge !== false, t("Merge result")) : "") + startSel)
@@ -6251,7 +6254,7 @@ export class ModelController {
           + (f.end === "through" || f.end === "through2" || f.end === "next" || f.end === "vertex" || f.end === "body" || upto ? "" : numField("depth", t("Depth"), f.depth, "length"))
           + (upto || f.end === "vertex" ? "" : chk("flip", f.flip, t("Reverse direction")))
           + (f.op === "cut" ? chk("outside", f.outside, t("Flip side to cut (keep inside the profile)")) : "")
-          + ((f.end === "blind" || f.end === "mid") && !dir2Apart(f) ? chk("draftOn", !!f.draft, t("Draft on/off")) + (f.draft ? numField("draft.angle", t("Draft angle"), f.draft.angle, "angle") + chk("draftOut", f.draft.outward, t("Draft outward")) : "") : "")
+          + (f.end === "blind" || f.end === "mid" ? chk("draftOn", !!f.draft, t("Draft on/off")) + (f.draft ? numField("draft.angle", t("Draft angle"), f.draft.angle, "angle") + chk("draftOut", f.draft.outward, t("Draft outward")) : "") : "")
           + (f.end === "blind" || f.end === "mid" ? `<p class="pm-help muted">${esc(t("Or drag the orange arrow in the view."))}</p>` : ""))
         + (f.end !== "mid" && f.end !== "through2" ? group(t("Direction 2"), chk("dir2", hasDir2(f), t("Direction 2")) + (hasDir2(f) ? dir2Body : "")) : "")
         + group(t("Thin feature"), chk("thinOn", !!f.thin, t("Thin feature")) + thinSel)
@@ -6656,11 +6659,20 @@ export class ModelController {
           upd(() => { if (val) { m.focus = "dir2"; f.spacing2 ??= { v: f.spacing.v }; f.count2 ??= 2; } else { delete f.dir2; delete f.spacing2; delete f.count2; delete f.flip2; if (m.focus === "dir2") m.focus = "dir"; } }, true);
           return;
         }
+        if (f.type === "extrude" && (k === "draft2On" || k === "draft2Out")) {
+          upd(() => {
+            if (k === "draft2On") { if (val) f.draft2 = { angle: { v: (5 * Math.PI) / 180 } }; else f.draft2 = { angle: { v: 0 } }; }
+            if (k === "draft2Out" && f.draft2) { if (val) f.draft2.outward = true; else delete f.draft2.outward; }
+          }, true);
+          return;
+        }
         if (f.type === "extrude" && (k === "thinOn" || k === "thinMode" || k === "draftOn" || k === "draftOut")) {
           upd(() => {
             if (k === "thinOn") { if (val) f.thin = { t: { v: 2 }, mode: "inside" }; else delete f.thin; }
             if (k === "thinMode" && f.thin) f.thin.mode = val as "inside" | "outside" | "mid";
             if (k === "draftOn") { if (val) f.draft = { angle: { v: (5 * Math.PI) / 180 } }; else delete f.draft; }
+            // Turning the draft on with Direction 2 on drafts each direction on its own (FR-FT-014).
+            if (k === "draftOn" && val && hasDir2(f)) f.draft2 ??= { angle: { v: 0 } };
             if (k === "draftOut" && f.draft) { if (val) f.draft.outward = true; else delete f.draft.outward; }
           }, true);
           return;
@@ -6778,7 +6790,7 @@ export class ModelController {
         if (k === "dir2") {
           upd(() => {
             const x = f as ExtrudeFeature;
-            if (val) { x.depth2 = { v: x.depth.v }; if (x.end !== "blind") x.end2 = "blind"; }
+            if (val) { x.depth2 = { v: x.depth.v }; if (x.end !== "blind") x.end2 = "blind"; x.draft2 = { angle: { v: 0 } }; }
             else { delete x.depth2; clearDir2(x); }
           }, true);
           return;

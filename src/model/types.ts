@@ -152,9 +152,19 @@ export function hasDir2(f: { end: EndKind; depth2?: Num; end2?: Dir2End }): bool
   return !!(f.depth2 && f.depth2.v > 0) && f.end !== "mid" && f.end !== "through2" && (f.end === "blind" || f.end2 !== undefined);
 }
 
-/** Direction 2 made as its own tool: both ways, but not blind both ways (that stays one prism, as before). */
-export function dir2Apart(f: { end: EndKind; depth2?: Num; end2?: Dir2End }): boolean {
-  return hasDir2(f) && !(f.end === "blind" && (f.end2 ?? "blind") === "blind");
+/**
+ * Direction 2 made as its own tool: both ways, but not blind both ways (that stays one prism, as before),
+ * unless the directions are drafted apart (FR-FT-014: `draft2` set and a draft in either direction).
+ */
+export function dir2Apart(f: { end: EndKind; depth2?: Num; end2?: Dir2End; draft?: unknown; draft2?: { angle: Num } }): boolean {
+  if (!hasDir2(f)) return false;
+  if (!(f.end === "blind" && (f.end2 ?? "blind") === "blind")) return true;
+  return draftApart(f);
+}
+
+/** Each direction drafted on its own about the sketch plane (FR-FT-014): `draft2` set and some draft on. */
+export function draftApart(f: { draft?: unknown; draft2?: { angle: Num } }): boolean {
+  return f.draft2 !== undefined && (!!f.draft || Math.abs(f.draft2.angle.v) > 1e-9);
 }
 
 /** Direction 2 is on and blind: it gets a drag arrow. */
@@ -164,13 +174,15 @@ export function dir2Blind(f: { end: EndKind; depth2?: Num; end2?: Dir2End }): bo
 
 /** Drops Direction 2's end condition and references (not its depth). */
 export function clearDir2(f: ExtrudeFeature) {
-  delete f.end2; delete f.upTo2; delete f.upToOffset2; delete f.reverseOffset2; delete f.upToVertex2; delete f.upToBody2;
+  delete f.end2; delete f.upTo2; delete f.upToOffset2; delete f.reverseOffset2; delete f.upToVertex2; delete f.upToBody2; delete f.draft2;
 }
 
 /** Direction 2 of an extrude as a one-way extrude of its own (the other way, same start). */
 export function dir2Feature(f: ExtrudeFeature): ExtrudeFeature {
   const g: ExtrudeFeature = { ...f, end: f.end2 ?? "blind", depth: f.depth2 ?? f.depth, flip: !f.flip };
-  delete g.depth2; delete g.end2; delete g.draft;
+  delete g.depth2; delete g.end2; delete g.draft; delete g.draft2;
+  // Direction 2's own draft (FR-FT-014), blind only, as the panel offers it.
+  if (f.draft2 && Math.abs(f.draft2.angle.v) > 1e-9 && (f.end2 ?? "blind") === "blind") g.draft = { ...f.draft2 };
   delete g.upTo; delete g.upToOffset; delete g.reverseOffset; delete g.upToVertex; delete g.upToBody;
   if (f.upTo2) g.upTo = f.upTo2;
   if (f.upToOffset2) g.upToOffset = f.upToOffset2;
@@ -230,6 +242,12 @@ export interface ExtrudeFeature {
   thin?: { t: Num; mode: "inside" | "outside" | "mid" };
   /** Draft while extruding (FR-FT-014): the side faces taper by this angle (outward: they flare). */
   draft?: { angle: Num; outward?: boolean };
+  /**
+   * Direction 2's draft (FR-FT-014, as SolidWorks). Present (0° = off) means each direction tapers on its
+   * own about the sketch plane, `draft` being Direction 1's; the panel sets it once Direction 2 is on.
+   * Absent (older files): one `draft` tapers the whole two-way prism from its far end, as before.
+   */
+  draft2?: { angle: Num; outward?: boolean };
   /**
    * Selected contours (FR-FT-010): a point (sketch coordinates) inside each region of the sketch to use;
    * absent or empty = every closed region. The regions may come from crossing or branching curves.
