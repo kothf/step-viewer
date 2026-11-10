@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.484.0] - 2026-11-10
+
+### Fixed
+
+- Big assembly drawings are ready about a third sooner (the engine assembly's Standard 3 views: 60 s to 40 s). The sheet was redrawn once for every time a view had been asked for while it was still coming, 66 times for three views, and each redraw of a big assembly sheet is megabytes of drawing; now it is redrawn once when a view lands.
+- The view palette's thumbnails wait until the sheet's own views are asked for, so the quick previews of the sheet's views show about 10 s sooner.
+
 ## [1.483.0] - 2026-11-10
 
 ### Fixed
@@ -2964,7 +2971,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.483.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.484.0...HEAD
+[1.484.0]: https://github.com/kothf/step-viewer/compare/v1.483.0...v1.484.0
 [1.483.0]: https://github.com/kothf/step-viewer/compare/v1.482.0...v1.483.0
 [1.482.0]: https://github.com/kothf/step-viewer/compare/v1.481.0...v1.482.0
 [1.481.0]: https://github.com/kothf/step-viewer/compare/v1.480.0...v1.481.0

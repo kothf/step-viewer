@@ -6685,6 +6685,9 @@ try {
     await mp.waitForTimeout(300); await idle();
     await mp.click("#new-more"); await mp.click("#new-drawing");
     await mp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
+    // 1.484: the sheet is drawn once per view that lands, not once more for every render that asked for it.
+    const renders = await mp.evaluate(() => window.__sv.drw.renders());
+    check(renders <= 12, `drawing 1.484: Standard 3 views redraw the sheet a few times, not dozens (${renders} redraws)`);
     const cut = await mp.evaluate(() => window.__sv.drw.section([0, 1, 0], [0, 0, 1], [0, 0, 5]));
     const pairs = cut.keys.map((k, i) => `${k}=${cut.mats[i]}`).sort().join();
     check(pairs === "body0=Steel S235,body1=Titanium Ti-6Al-4V",
