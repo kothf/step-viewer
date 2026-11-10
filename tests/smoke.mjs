@@ -6704,7 +6704,7 @@ try {
     const same = two.map(c => c.keys.map((k, i) => `${k}=${c.mats[i]}`).sort().join());
     check(h1 > h0 && same.every(x => x === pairs),
       `drawing 1.476: exact views run on two drawing workers at once, with the same model (${h0} → ${h1}; ${same.join(" | ")})`);
-    // 1.489: a projection no view wants any more (a deleted view's) is dropped, even while a worker runs it,
+    // 1.490: a projection no view wants any more (a deleted view's) is dropped, even while a worker runs it,
     // and the next view is made as before.
     const dropped = await mp.evaluate(async () => {
       const p = window.__sv.drw.section([0, 1, 0], [0, 0, 1], [0, 0, 4], "gone").then(() => "made", e => e.message);
@@ -6714,7 +6714,7 @@ try {
       return p;
     });
     const after = await mp.evaluate(() => window.__sv.drw.section([0, 1, 0], [0, 0, 1], [0, 0, 5], "after").then(c => c.keys.length, e => e.message));
-    check(dropped === "The view is gone" && after === 2, `drawing 1.489: a deleted view's projection is dropped and the next view still comes (${dropped}; ${after})`);
+    check(dropped === "The view is gone" && after === 2, `drawing 1.490: a deleted view's projection is dropped and the next view still comes (${dropped}; ${after})`);
     // 1.478: this page runs with `drwheap=1`, so the main drawing worker is started over (same model, cache kept)
     // after every projection; all the checks above ran through such restarts.
     const { recycles: rc, snap } = await mp.evaluate(() => window.__sv.drw.helper());
@@ -9719,6 +9719,27 @@ try {
     const sw1 = await state();
     check(!sw0.bad && sw0.v > 8000 && Math.abs(sw1.v - sw0.v) < 0.1 && !sw1.bad && sw1.types === "import,plane,plane,sketch,revolve,delbody",
       `model 1.488.0: Recognize Features makes a shaft turned about a skew axis again as a sketch on a plane about Z and a revolve (FR-FT-102) (${JSON.stringify({ sw0, sw1 })})`);
+    // 1.489.0: a variable radius fillet comes back as a variable radius fillet with its two end radii.
+    await mp.evaluate(() => window.__sv.model.store.change("Variable fillet", d => {
+      const xy = [[-30, -20], [30, -20], [30, 20], [-30, 20]];
+      const ents = xy.map(([x, y], i) => ({ id: "vp" + i, t: "point", x, y }));
+      xy.forEach((_, i) => ents.push({ id: "vl" + (i + 1), t: "line", a: "vp" + i, b: "vp" + ((i + 1) % 4) }));
+      d.features = [{ id: "vs", type: "sketch", name: "Sketch1", plane: { std: "XY" }, ents, rels: [], dims: [] },
+        { id: "ve", type: "extrude", name: "Boss-Extrude1", sketch: "vs", op: "boss", end: "blind", depth: { v: 20 } },
+        { id: "vf", type: "fillet", name: "Fillet1", variable: true, radius: { v: 5 }, edges: [{ faces: ["ve:side:vl1", "ve:side:vl2"], r: 3, r2: 8 }] }];
+    }));
+    await settle();
+    const vf0 = await state();
+    const brepVf = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "vfil.brep", brep }]; }), brepVf);
+    await settle();
+    await runCmd(mp, "Recognize Features");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.length > 1, null, { timeout: 120000 });
+    await settle();
+    const vf1 = await state();
+    const vfr = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(x => x.type === "fillet"); return f && { v: !!f.variable, r: [f.edges[0].r, f.edges[0].r2].sort((a, b) => a - b) }; });
+    check(!vf0.bad && Math.abs(vf1.v - vf0.v) < 0.1 && !vf1.bad && vf1.types === "import,sketch,extrude,delbody,fillet" && vfr?.v && Math.abs(vfr.r[0] - 3) < 1e-3 && Math.abs(vfr.r[1] - 8) < 1e-3,
+      `model 1.489.0: Recognize Features makes a variable radius fillet again with its end radii (FR-FT-102) (${JSON.stringify({ vf0, vf1, vfr })})`);
     await ctx.close();
   }
 

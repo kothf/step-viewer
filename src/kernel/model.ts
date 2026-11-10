@@ -3627,7 +3627,7 @@ export class Modeller {
         return { faces: [names[0], names[1]], hint: best!.m };
       };
       const r = rounds[k];
-      const fix = <T extends { edges: EdgeRef[]; first?: V3[] }>(g: T): T => ({ ...g, edges: g.edges.map((e, n) => again(e, g.first?.[n])).filter((x): x is EdgeRef => !!x) });
+      const fix = <T extends { edges: EdgeRef[]; first?: V3[] }>(g: T): T => ({ ...g, edges: g.edges.map((e, n) => { const a = again(e, g.first?.[n]); return a && { ...e, ...a }; }).filter((x): x is EdgeRef => !!x) });
       const fixed: RecognizedBlends = { faces: r.faces, fillets: r.fillets.map(fix), chamfers: r.chamfers.map(fix) };
       if ([...fixed.fillets, ...fixed.chamfers].some((g, n) => g.edges.length !== [...r.fillets, ...r.chamfers][n].edges.length)) return [];
       out.push(...this.blendFeatures(fixed, id));
@@ -3856,7 +3856,7 @@ export class Modeller {
             const lean = (n: string) => { const i = body.names.indexOf(n); return i < 0 || !first ? -2 : dot(this.normalNear(body.faces[i], best!.m), first); };
             if (first && lean(names[1]) > lean(names[0])) names.reverse();
           }
-          edges.push({ faces: [names[0], names[1]], hint: best!.m });
+          edges.push({ ...r, faces: [names[0], names[1]], hint: best!.m });
         }
         out.push({ ...f, edges } as Feature);
       }
@@ -4356,7 +4356,41 @@ export class Modeller {
   private blendFeatures(r: RecognizedBlends, id: () => string): Feature[] {
     return [
       ...r.chamfers.map(g => ({ id: id(), type: "chamfer", name: "", distance: { v: g.distance }, ...(g.distance2 ? { mode: "two", distance2: { v: g.distance2 } } : {}), edges: g.edges }) as Feature),
-      ...r.fillets.map(g => ({ id: id(), type: "fillet", name: "", radius: { v: g.radius }, edges: g.edges }) as Feature)];
+      ...r.fillets.map(g => ({ id: id(), type: "fillet", name: "", radius: { v: g.radius }, ...(g.variable ? { variable: true } : {}), edges: g.edges }) as Feature)];
+  }
+
+  /**
+   * A variable radius fillet (FR-FT-032, FR-FT-102): a B-spline face with four edges, tangent to the faces
+   * across two of them and ending on the faces across the other two. Each end edge is a section of the
+   * blend: its ends touch the two tangent faces, whose normals there differ by the arc's angle φ, so the
+   * radius at that end is the chord over 2·sin(φ/2). Two equal ends make a plain fillet of that radius.
+   */
+  private variableBlend(body: Named, i: number, nbr: number[], tol: number): { i: number; kind: "fillet"; r: number; r2?: number; at?: V3; sides: [number, number]; mid: V3 } | null {
+    const face = body.faces[i], es = this.sub(face, "EDGE");
+    if (es.length !== 4 || nbr.some(j => j < 0)) return null;
+    const tang: number[] = [], ends: number[] = [];
+    es.forEach((e, n) => {
+      const m = this.edgeMid(e);
+      (dot(this.normalNear(face, m), this.normalNear(body.faces[nbr[n]], m)) > 1 - 1e-4 ? tang : ends).push(n);
+    });
+    if (tang.length !== 2 || ends.length !== 2 || nbr[tang[0]] === nbr[tang[1]]) return null;
+    const [A, B] = [nbr[tang[0]], nbr[tang[1]]];
+    const oc = this.oc, ends2 = (e: any): [V3, V3] => [this.xyz(oc.BRep_Tool.Pnt(oc.TopExp.FirstVertex(e, true))), this.xyz(oc.BRep_Tool.Pnt(oc.TopExp.LastVertex(e, true)))];
+    const onA = ends2(es[tang[0]]);
+    const radius = (n: number) => {
+      let [p, q] = ends2(es[n]);
+      // p is the end on the first tangent face (it is a vertex of the edge shared with it).
+      if (Math.min(...onA.map(v => d3(v, q))) < Math.min(...onA.map(v => d3(v, p)))) [p, q] = [q, p];
+      const c = Math.max(-1, Math.min(1, dot(this.normalNear(body.faces[A], p), this.normalNear(body.faces[B], q))));
+      const phi = Math.acos(c);
+      if (phi < 0.05 || phi > Math.PI - 0.05) return NaN;
+      return { r: d3(p, q) / (2 * Math.sin(phi / 2)), at: mul(add(p, q), 0.5) };
+    };
+    const e0 = radius(ends[0]), e1 = radius(ends[1]);
+    if (typeof e0 === "number" || typeof e1 === "number" || !(e0.r > tol) || !(e1.r > tol)) return null;
+    const mid = this.centroid(face);
+    if (Math.abs(e0.r - e1.r) <= 1e-4 * Math.max(e0.r, e1.r)) return { i, kind: "fillet", r: (e0.r + e1.r) / 2, sides: [A, B], mid };
+    return { i, kind: "fillet", r: e0.r, r2: e1.r, at: e0.at, sides: [A, B], mid };
   }
 
   /** `skip` = names of faces that are not blends (countersinks Recognize Features gives to the holes). */
@@ -4373,7 +4407,7 @@ export class Modeller {
     const edges = body.faces.map((f, i) => this.sub(f, "EDGE").map(e => { const k = emap.FindIndex(e); if (k > 0) users[k].push(i); return { e, k }; }));
     const across = (i: number, k: number) => users[k]?.find(j => j !== i) ?? -1;
     const area = (x: any) => { const g = new oc.GProp_GProps_1(); oc.BRepGProp.SurfaceProperties_1(x, g, false, false); return Math.abs(g.Mass()); };
-    type Cand = { i: number; kind: "fillet" | "chamfer"; r: number; r2?: number; first?: V3; sides: [number, number]; mid: V3 };
+    type Cand = { i: number; kind: "fillet" | "chamfer"; r: number; r2?: number; first?: V3; at?: V3; sides: [number, number]; mid: V3 };
     const cands: Cand[] = [], spheres: number[] = [];
     const S = oc.GeomAbs_SurfaceType, C = oc.GeomAbs_CurveType;
     body.faces.forEach((face, i) => {
@@ -4381,8 +4415,9 @@ export class Modeller {
       const ty = ad.GetType();
       if (ty === S.GeomAbs_Sphere) { spheres.push(i); return; }
       const cyl = ty === S.GeomAbs_Cylinder, tor = ty === S.GeomAbs_Torus, pln = ty === S.GeomAbs_Plane, cone = ty === S.GeomAbs_Cone;
-      if (!cyl && !tor && !pln && !cone) return;
       if (skip.includes(body.names[i])) return;
+      if (ty === S.GeomAbs_BSplineSurface) { const c = this.variableBlend(body, i, edges[i].map(x => across(i, x.k)), tol); if (c) cands.push(c); return; }
+      if (!cyl && !tor && !pln && !cone) return;
       const axis = cyl ? unit(this.xyz(ad.Cylinder().Axis().Direction())) : tor ? unit(this.xyz(ad.Torus().Axis().Direction())) : cone ? unit(this.xyz(ad.Cone().Axis().Direction())) : null;
       // The long edges: straight along the axis (cylinder), circles about the axis (torus), straight (flat).
       const sides: { j: number; m: V3; d: V3; nj: V3; ni: V3; r?: number; z?: number }[] = [];
@@ -4468,12 +4503,17 @@ export class Modeller {
       try {
         const after = this.evaluate({ ...doc, rollback: null, features: [...upto, del] });
         if (after.statuses.at(-1)?.ok === false || !after.body) return null;
-        const fil = new Map<string, { radius: number; edges: EdgeRef[] }>(), ch = new Map<string, RecognizedBlends["chamfers"][0]>();
+        const fil = new Map<string, RecognizedBlends["fillets"][0]>(), ch = new Map<string, RecognizedBlends["chamfers"][0]>();
         for (const c of cs) {
           const pair: [string, string] = [body.names[c.sides[0]], body.names[c.sides[1]]];
           const er: EdgeRef = { faces: pair, hint: this.edgeMid(this.resolveEdge(after.body, { faces: pair, hint: c.mid })) };
           const key = c.r.toFixed(5) + (c.r2 ? `|${c.r2.toFixed(5)}` : "");
-          if (c.kind === "fillet") { const g = fil.get(key); if (g) g.edges.push(er); else fil.set(key, { radius: c.r, edges: [er] }); }
+          if (c.kind === "fillet" && c.r2) {
+            // Variable radius fillets go in one feature; each edge keeps its own end radii.
+            const g = fil.get("var");
+            const ev = { ...er, r: c.r, r2: c.r2, at: c.at! };
+            if (g) g.edges.push(ev); else fil.set("var", { radius: c.r, variable: true, edges: [ev] });
+          } else if (c.kind === "fillet") { const g = fil.get(key); if (g) g.edges.push(er); else fil.set(key, { radius: c.r, edges: [er] }); }
           else {
             let g = ch.get(key);
             if (!g) ch.set(key, g = c.r2 ? { distance: c.r, distance2: c.r2, edges: [], first: [] } : { distance: c.r, edges: [] });
@@ -4484,7 +4524,7 @@ export class Modeller {
         const out: RecognizedBlends = { faces, fillets: [...fil.values()], chamfers: [...ch.values()] };
         const feats: Feature[] = [
           ...out.chamfers.map((g, k) => ({ id: `__rc${k}`, type: "chamfer", name: "", distance: { v: g.distance }, ...(g.distance2 ? { mode: "two", distance2: { v: g.distance2 } } : {}), edges: g.edges }) as Feature),
-          ...out.fillets.map((g, k) => ({ id: `__rf${k}`, type: "fillet", name: "", radius: { v: g.radius }, edges: g.edges }) as Feature)];
+          ...out.fillets.map((g, k) => ({ id: `__rf${k}`, type: "fillet", name: "", radius: { v: g.radius }, ...(g.variable ? { variable: true } : {}), edges: g.edges }) as Feature)];
         const fin = this.evaluate({ ...doc, rollback: null, features: [...upto, del, ...feats] });
         if (!fin.body || fin.statuses.slice(-feats.length).some(s => s.ok === false)) return null;
         return Math.abs(this.volume(fin.body.shape) - v0) <= 1e-6 * Math.abs(v0) + 1e-9 ? out : null;
