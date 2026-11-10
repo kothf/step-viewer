@@ -165,7 +165,7 @@ export interface GRow { sym: GSym; tol: string; dia?: boolean; mod?: "M" | "L"; 
 /** `around`: the all-around circle at the leader's bend (the tolerance applies all around the profile). */
 export interface GtolAnnot { id: string; t: "gtol"; view?: string; pos: [number, number]; rows: GRow[]; leader?: GeoRef; around?: boolean; /** Text above the frame (e.g. "2×") and below it. */ above?: string; below?: string }
 /** Datum feature symbol: a filled triangle on an edge and a framed letter. */
-export interface DatumAnnot { id: string; t: "datum"; view: string; ref: GeoRef; pos: [number, number]; letter: string }
+export interface DatumAnnot { id: string; t: "datum"; view: string; ref: GeoRef; pos: [number, number]; letter: string; /** Outline triangle instead of the filled one (ISO 1101 allows both). */ open?: boolean; /** The leader leaves the triangle square to the edge, then runs level along the edge to the frame. */ bent?: boolean }
 /** Surface finish (ISO 1302 / 21920): the tick on an edge, any process, material removed or not removed, with the roughness above. */
 /** `text2`: a second requirement under the first (the long leg grows). `lay`: the lay symbol beside the long leg. `allow`: machining allowance in mm, left of the short leg. `around`: the circle that makes it apply to every surface round the outline. */
 export type SurfLay = "=" | "⊥" | "X" | "M" | "C" | "R" | "P";
