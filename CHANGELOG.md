@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.435.0] - 2026-11-10
+
+### Added
+
+- **Material per body (FR-MAT-001)**: in a part with several bodies, right-click a body in the **Solid Bodies** folder and choose **Material…** to give it its own material from the library; **None** gives it the part's material again. Mass properties then weigh each body with its own density (mass, centre of mass and moments of inertia), and the Density row says "from part materials". One undo step. An assembly still weighs such a part with the part's material.
+
 ## [1.434.0] - 2026-11-10
 
 ### Added
@@ -2578,7 +2584,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.434.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.435.0...HEAD
+[1.435.0]: https://github.com/kothf/step-viewer/compare/v1.434.0...v1.435.0
 [1.434.0]: https://github.com/kothf/step-viewer/compare/v1.433.0...v1.434.0
 [1.433.0]: https://github.com/kothf/step-viewer/compare/v1.432.0...v1.433.0
 [1.432.0]: https://github.com/kothf/step-viewer/compare/v1.431.0...v1.432.0

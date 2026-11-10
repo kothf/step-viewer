@@ -6001,6 +6001,23 @@ try {
     }));
     await settle();
     const t0 = await mp.evaluate(() => ({ folder: document.querySelector('#mc-tree .ft-row[data-id="folder:bodies"] .ft-name')?.textContent, rows: [...document.querySelectorAll("#mc-tree .ft-body .ft-name")].map(e => e.textContent), faces: window.__sv.model.last().faceNames.length }));
+    // A body's own material (FR-MAT-001): the cylinder in titanium weighs with its density, the box with the part's.
+    const massOf = async () => { await mp.evaluate(() => { document.querySelector("#mass-out").textContent = ""; document.querySelector("#mass-run").click(); }); await mp.waitForFunction(() => /Mass/.test(document.querySelector("#mass-out").textContent), null, { timeout: 10000 }); return mp.evaluate(() => { const s = document.querySelector("#mass-out").textContent; return { g: +(/Mass([\d.]+) g/.exec(s)?.[1] ?? NaN), dens: /from part materials/.test(s) }; }); };
+    await mp.evaluate(() => void window.__sv.modeller.pickBodyMaterial("e"));
+    await mp.waitForSelector("#mat-dlg[open]");
+    await mp.fill("#mat-q", "Ti-6Al-4V");
+    await mp.keyboard.press("ArrowDown");
+    await mp.keyboard.press("ArrowUp");
+    await mp.keyboard.press("Enter");
+    await mp.waitForSelector("#mat-dlg", { state: "detached" });
+    await settle();
+    const bm = { mat: await mp.evaluate(() => window.__sv.model.store.doc.bodies?.e?.material?.name), ...(await massOf()) };
+    await mp.evaluate(() => window.__sv.modeller.undo());
+    await settle();
+    const bm0 = await massOf();
+    const wantG = (8000 * 7.85 + Math.PI * 250 * 4.43) / 1000, plainG = (8000 + Math.PI * 250) * 7.85 / 1000;
+    check(bm.mat === "Titanium Ti-6Al-4V" && Math.abs(bm.g - wantG) < 0.02 && bm.dens && Math.abs(bm0.g - plainG) < 0.02 && !bm0.dens,
+      `model 1.435.0: a body's own material is used for its mass, the part's for the rest (${JSON.stringify({ bm, bm0, wantG, plainG })})`);
     // Hide the cylinder from its row: it leaves the view, the mass properties keep it.
     await mp.hover('#mc-tree .ft-row[data-id="body:e"]');
     await treeClick(mp, '#mc-tree .ft-row[data-id="body:e"] [data-a="bhide"]');

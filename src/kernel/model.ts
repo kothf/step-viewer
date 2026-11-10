@@ -23,7 +23,7 @@ import { evalSheet } from "../sheetmetal/kernel";
 import { SheetError, type SheetState } from "../sheetmetal/sheet";
 import { isSheet } from "../sheetmetal/types";
 import { evalWeld, isWeld, type WeldHost } from "../weldments/kernel";
-import { eigenSym3 } from "../tools/inertia";
+import { covOfTensor, eigenSym3, type Sym } from "../tools/inertia";
 
 export class FeatureError extends Error {
   constructor(readonly code: string, message: string) { super(message); }
@@ -4822,6 +4822,17 @@ export class Modeller {
       if (!b.IsVoid()) box = [this.xyz(b.CornerMin()), this.xyz(b.CornerMax())];
     } catch { /* no box: the view's is used */ }
     return { volume: vp.Mass(), area: sp.Mass(), com: this.xyz(vp.CentreOfMass()), moments: values as V3, axes: vectors as [V3, V3, V3], bodies: this.solids(body.shape), ...(box ? { box } : {}) };
+  }
+
+  /** One body's area, centre of mass and covariance about it for unit density (src/tools/inertia.ts), for per-body materials. */
+  bodyMass(body: Named): { area: number; com: V3; cov: Sym } {
+    const oc = this.oc;
+    const vp = new oc.GProp_GProps_1();
+    oc.BRepGProp.VolumeProperties_1(body.shape, vp, true, false, false);
+    const sp = new oc.GProp_GProps_1();
+    oc.BRepGProp.SurfaceProperties_1(body.shape, sp, false, false);
+    const m = vp.MatrixOfInertia(), s = Math.sign(vp.Mass()) || 1;
+    return { area: sp.Mass(), com: this.xyz(vp.CentreOfMass()), cov: covOfTensor([0, 1, 2].map(r => [0, 1, 2].map(c => m.Value(r + 1, c + 1) * s))) };
   }
 
   /** Drops cached shapes (a new document). */
