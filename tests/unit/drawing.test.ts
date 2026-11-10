@@ -1672,3 +1672,18 @@ test("fast hidden-line views keep exact lines and end-on circles", async () => {
     }
   }
 });
+
+test("Standard 3 views again: placed clear of the views on the sheet at its scale, or nowhere (drawings exam #27)", async () => {
+  const { std3Layout } = await import("../../src/drawing/views");
+  const area: [number, number, number, number] = [24, 14, 406, 283], tb: [number, number, number, number] = [226, 10, 410, 54];
+  const hit = (a: number[], b: number[]) => a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];
+  // A small block (40 × 30 × 20) at 1:1, its first set top left.
+  const first: [number, number, number, number][] = [[40, 200, 80, 220], [40, 245, 80, 275], [105, 200, 135, 220]];
+  const lay = std3Layout(40, 30, 20, area, tb, false, 25, 8, first, [[1, 1]])!;
+  assert.deepEqual(lay.scale, [1, 1]);
+  const { gx, gy } = lay, fy = gy + 30 + 25;
+  for (const r of [[gx, fy, gx + 40, fy + 20], [gx, gy, gx + 40, gy + 30], [gx + 65, fy, gx + 95, fy + 20]])
+    for (const a of first) assert.ok(!hit(r, a), `${r} over ${a}`);
+  // The flange block at 2:1 filling the sheet: no room for a second set at 2:1.
+  assert.equal(std3Layout(80, 60, 35, area, tb, false, 25, 8, [[60, 60, 300, 270]], [[2, 1]]), null);
+});

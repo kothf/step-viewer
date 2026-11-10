@@ -1552,6 +1552,7 @@ export const RU: Record<string, string> = {
   "View scale": "Масштаб вида",
   "Visible": "Видимые",
   "Waiting for the views…": "Ожидание видов…",
+  "No room left on the sheet: the views went on {name}.": "На листе нет места: виды размещены на листе «{name}».",
   "Wireframe": "Каркас",
   "Third angle projection": "Проецирование по третьему углу",
   "First angle projection": "Проецирование по первому углу",

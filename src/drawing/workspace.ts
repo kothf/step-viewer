@@ -557,6 +557,8 @@ export class DrawingWorkspace {
 
   private renderAll() {
     if (!this.store || !this.svg) return;
+    // Undo of Add sheet (or redo of Delete sheet) removes the open sheet: edits wrote to sheets[sheetIdx] = undefined (drawings exam #28).
+    if (this.sheetIdx >= this.doc.sheets.length) this.sheetIdx = this.doc.sheets.length - 1;
     if (this.sel && !findView(this.sheet, this.sel)) this.sel = null;
     this.renderSheet();
     this.renderTree();
@@ -2684,8 +2686,18 @@ export class DrawingWorkspace {
     const third = sh.projection === "third";
     const [bx, by] = titleBlockAt(sh), [tw, th] = tbSize(sh);
     const auto = fresh || !sh.views.length;
-    const lay = auto ? std3Layout(dx, dy, dz, [f[0] + 4, f[1] + 4, f[2] - 4, f[3] - 4], [bx - 4, by, bx + tw, by + th + 4], third, gap) : null;
-    const s = lay ? lay.scale : auto ? fitScale(dx + dy, dz + dy, (ax1 - ax0 - gap) * 0.85, (ay1 - ay0 - gap) * 0.85) : sh.scale;
+    const area: [number, number, number, number] = [f[0] + 4, f[1] + 4, f[2] - 4, f[3] - 4], tbBox: [number, number, number, number] = [bx - 4, by, bx + tw, by + th + 4];
+    let lay = auto ? std3Layout(dx, dy, dz, area, tbBox, third, gap) : null, onNew = false;
+    if (!auto) {
+      // A second set goes beside what is on the sheet, at its scale (drawings exam #27: it was centred on top of the first),
+      // else on a new sheet of the same size.
+      const avoid = [...sh.views.flatMap(w => { const q = this.placements.get(w.id); return q ? [viewRect(q)] : []; }), ...this.annotHits.filter(h => !h.ring).map(h => h.box)];
+      // Clear of everything on the sheet taken as one box, so the two sets never interleave.
+      const all: [number, number, number, number] = avoid.reduce((b, r) => [Math.min(b[0], r[0]), Math.min(b[1], r[1]), Math.max(b[2], r[2]), Math.max(b[3], r[3])], [Infinity, Infinity, -Infinity, -Infinity]);
+      lay = std3Layout(dx, dy, dz, area, tbBox, third, gap, 8, avoid.length ? [all] : [], [sh.scale]);
+      if (!lay) { onNew = true; lay = std3Layout(dx, dy, dz, area, tbBox, third, gap); }
+    }
+    const s = lay ? lay.scale : auto || onNew ? fitScale(dx + dy, dz + dy, (ax1 - ax0 - gap) * 0.85, (ay1 - ay0 - gap) * 0.85) : sh.scale;
     const k = s[0] / s[1];
     const Wg = k * (dx + dy) + gap, Hg = k * (dz + dy) + gap;
     const gx = lay ? lay.gx : (ax0 + ax1) / 2 - Wg / 2, gy = lay ? lay.gy : (ay0 + ay1) / 2 - Hg / 2;
@@ -2695,7 +2707,8 @@ export class DrawingWorkspace {
     const fid = uid("v_");
     const n = this.nextViewNumber();
     this.store!.change("Standard 3 views", d => {
-      const S = d.sheets[this.sheetIdx];
+      if (onNew) { d.sheets.push(newSheet(d.sheets.length + 1, this.sheet)); d.sheets[d.sheets.length - 1].views = []; }
+      const S = d.sheets[onNew ? d.sheets.length - 1 : this.sheetIdx];
       S.scale = s;
       S.views.push(
         { id: fid, name: `${t("Drawing View")}${n}`, orient: "front", x: round(front[0]), y: round(front[1]), style: "hlv" },
@@ -2704,6 +2717,11 @@ export class DrawingWorkspace {
       );
     });
     this.sel = fid;
+    if (onNew) {
+      this.sheetIdx = this.doc.sheets.length - 1;
+      toast(t("No room left on the sheet: the views went on {name}.", { name: sheetName(this.sheet) }));
+      this.fit();
+    }
     this.renderAll();
   }
 
