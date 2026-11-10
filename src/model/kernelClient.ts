@@ -3,11 +3,11 @@
 // coalesce: while one runs, only the newest request waits (FR-ARC-013). A worker
 // whose heap grew too big, or that crashed, is replaced and rebuilds from the
 // document (FR-ARC-011/012).
-import { compile } from "../kernel/client";
-import KernelWorker from "../kernel/kernel.worker?worker";
+import { giveBack, takeWorker } from "../kernel/spare";
 import type { Prebuilt } from "../kernel/kernel.worker";
 import { kernelPool, type KernelPool } from "../kernel/pool";
 import type { PartData } from "../topology";
+import type { OwnBody } from "../tools/inertia";
 import type { AsmDoc, AsmComponentStatus } from "../asm/types";
 import type { SheetState } from "../sheetmetal/sheet";
 import type { CutItem } from "../weldments/types";
@@ -50,6 +50,8 @@ export const STOPPED = "The geometry kernel was stopped.";
 export class ModelKernel {
   private worker: Worker | null = null;
   private ready: Promise<void> | null = null;
+  /** Rejects `ready` while the worker is still setting itself up (stop() then ends the wait). */
+  private abortReady: ((err: Error) => void) | null = null;
   private seq = 0;
   private pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
   private running = false;
@@ -61,7 +63,9 @@ export class ModelKernel {
 
   private start() {
     if (this.ready) return this.ready;
-    const w = new KernelWorker();
+    // The page's spare worker when there is one: its seconds of set-up are already done (or under way).
+    const { w, ready, abort } = takeWorker(this.base);
+    this.abortReady = abort;
     w.onmessage = (e: MessageEvent) => {
       const d = e.data, p = this.pending.get(d.id);
       if (!p) return;
@@ -70,23 +74,30 @@ export class ModelKernel {
     };
     w.onerror = e => this.crash(e.message || "The geometry kernel stopped");
     this.worker = w;
-    this.ready = compile(this.base).then(module => this.call<void>({ type: "init", base: this.base, module }));
-    this.ready.catch(() => this.stop());
+    this.ready = ready;
+    this.ready.catch(() => this.stop(false));
     return this.ready;
   }
 
   private crash(msg: string) {
     for (const p of this.pending.values()) p.reject(new Error(msg));
     this.pending.clear();
-    this.stop();
+    this.stop(false);
     this.onCrash?.(msg);
   }
 
-  stop() {
+  /** Stops the worker; `reuse`: an idle, healthy one becomes the page's spare for the next document. */
+  stop(reuse = true) {
     // Calls in flight end now: a parked document's rebuild must not wait for ever (it held "Rebuilding…").
+    const idle = !this.pending.size;
     for (const p of this.pending.values()) p.reject(new Error(STOPPED));
     this.pending.clear();
-    this.worker?.terminate();
+    const w = this.worker, ready = this.ready;
+    if (w && ready && reuse && idle && this.heap > 0) giveBack(w, this.base, this.heap);
+    else w?.terminate();
+    // A rebuild waiting for the set-up of a worker stopped now must end too (it would wait for ever).
+    this.abortReady?.(new Error(STOPPED));
+    this.abortReady = null;
     this.worker = null;
     this.ready = null;
     this.heap = 0;
@@ -119,7 +130,7 @@ export class ModelKernel {
       const job = this.queued;
       this.queued = null;
       try {
-        if (this.heap > RECYCLE_HEAP) this.stop();
+        if (this.heap > RECYCLE_HEAP) this.stop(false);
         await this.start();
         const r = await this.call<Rebuild & { heap: number }>({ type: "model", doc: job.doc, color: job.color, quality: job.quality, previewAt: job.previewAt, verify: job.verify });
         this.heap = r.heap;
@@ -173,7 +184,7 @@ export class ModelKernel {
   }
 
   /** Evaluates an assembly: one mesh per shown component, placed (FRS 10). */
-  async assembly(doc: AsmDoc): Promise<{ parts: { id: string; data: PartData; faces: string[] }[]; statuses: AsmComponentStatus[]; features?: AsmFeatureStatus[]; props: BodyProps | null }> {
+  async assembly(doc: AsmDoc): Promise<{ parts: { id: string; data: PartData; faces: string[]; bodies?: OwnBody[] }[]; statuses: AsmComponentStatus[]; features?: AsmFeatureStatus[]; props: BodyProps | null }> {
     let t = performance.now();
     const todo = this.unbuilt(doc);
     const pool = todo.length > 1 ? kernelPool(this.base) : null;
@@ -184,7 +195,7 @@ export class ModelKernel {
     const start = lap();
     const pre = pool ? await this.prebuild(doc, todo, pool) : undefined;
     const pb = lap();
-    const r = await this.call<{ parts: { id: string; data: PartData; faces: string[] }[]; statuses: AsmComponentStatus[]; features?: AsmFeatureStatus[]; props: BodyProps | null }>({ type: "asm", doc, quality: 1, pre });
+    const r = await this.call<{ parts: { id: string; data: PartData; faces: string[]; bodies?: OwnBody[] }[]; statuses: AsmComponentStatus[]; features?: AsmFeatureStatus[]; props: BodyProps | null }>({ type: "asm", doc, quality: 1, pre });
     // The worker now holds these part sources; a new worker (after a crash) knows none.
     this.timing = { start, prebuild: pb, asm: lap(), worker: Math.round((r as any).ms) };
     if (this.worker === worker) this.known = new Map(Object.entries(doc.parts).map(([k, p]) => [k, JSON.stringify(p.doc)]));

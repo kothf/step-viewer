@@ -3,8 +3,7 @@
 // compiled module is shared). An assembly build hands its distinct parts to these helpers while
 // its own worker takes a share too. Helpers start on demand and stop after a while idle, so the
 // memory each instance holds goes back.
-import { compile } from "./client";
-import KernelWorker from "./kernel.worker?worker";
+import { takeWorker } from "./spare";
 
 /** Helpers stop after this long without work. */
 const IDLE_MS = 30_000;
@@ -28,7 +27,7 @@ export function helperCount(): number {
   return Math.max(0, n);
 }
 
-interface Helper { w: Worker; ready: Promise<void>; busy: boolean; heap: number; pending: Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }> }
+interface Helper { w: Worker; ready: Promise<void>; abort: (err: Error) => void; busy: boolean; heap: number; pending: Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }> }
 
 export class KernelPool {
   private helpers: Helper[] = [];
@@ -67,14 +66,15 @@ export class KernelPool {
 
   private kill(h: Helper, why: string) {
     h.w.terminate();
+    h.abort(new Error(why));
     for (const p of h.pending.values()) p.reject(new Error(why));
     h.pending.clear();
     this.helpers = this.helpers.filter(x => x !== h);
   }
 
   private spawn(): Helper {
-    const w = new KernelWorker();
-    const h: Helper = { w, ready: Promise.resolve(), busy: false, heap: 0, pending: new Map() };
+    const { w, ready, abort } = takeWorker(this.base);
+    const h: Helper = { w, ready, abort, busy: false, heap: 0, pending: new Map() };
     w.onmessage = (e: MessageEvent) => {
       const d = e.data, p = h.pending.get(d.id);
       if (!p) return;
@@ -83,7 +83,6 @@ export class KernelPool {
       if (d.ok) p.resolve(d); else p.reject(new Error(d.error));
     };
     w.onerror = e => this.kill(h, e.message || "The geometry kernel stopped");
-    h.ready = compile(this.base).then(module => this.send<void>(h, { type: "init", base: this.base, module }));
     this.helpers.push(h);
     return h;
   }

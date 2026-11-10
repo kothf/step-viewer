@@ -93,6 +93,12 @@ export class DocTabs {
     try { fn(); } finally { this.inPlace = false; }
   }
 
+  /** Opens a document in place of the live one, in its tab (a vault file reloaded after the vault changed it). */
+  async replacing(fn: () => Promise<void>) {
+    this.inPlace = true;
+    try { await fn(); } finally { this.inPlace = false; }
+  }
+
   /** A 3D document (part, assembly or model) is about to open: the one shown now is parked in its tab. */
   before3d() {
     if (this.busy || this.inPlace) return;
@@ -104,7 +110,7 @@ export class DocTabs {
 
   /** A drawing is about to open: a drawing shown now is parked; a 3D document shown now stays live under it. */
   beforeDrawing() {
-    if (this.busy) return;
+    if (this.busy || (this.inPlace && this.active?.kind === "drawing")) return;
     if (this.active?.kind === "drawing") { this.parkTab(this.active); this.active = this.under; }
     if (this.active && this.active.kind !== "drawing") this.under = this.active;
   }

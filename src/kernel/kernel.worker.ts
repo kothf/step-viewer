@@ -15,6 +15,7 @@ import { analyzeMesh } from "../topology";
 import { applyPatch, probe } from "./patch";
 import { transformPart } from "../asm/light";
 import { invert } from "../asm/math";
+import { moveBodies } from "../tools/inertia";
 import type { PartData } from "../topology";
 import type { PartDoc } from "../model/types";
 import parasolidWasm from "../sw/parasolid.wasm?url";
@@ -39,6 +40,8 @@ export type KernelRequest =
   | { id: number; type: "asmPrime"; doc: AsmDoc; key: string; quality: number }
   | { id: number; type: "prebuild"; doc: PartDoc; quality: number }
   | { id: number; type: "ping" }
+  /** Drops the document state so the worker can serve another document as the page's spare. */
+  | { id: number; type: "reset" }
   | { id: number; type: "asmInterfere"; doc: AsmDoc; touch?: boolean }
   | { id: number; type: "asmClearance"; doc: AsmDoc; min: number }
   | { id: number; type: "asmStep"; doc: AsmDoc }
@@ -63,6 +66,7 @@ let shared: WeakMap<object, { quality: number; data: PartData }> | null = null;
 /** The last evaluated body, for STEP export. */
 let lastBody: { shape: unknown; faces: unknown[] } | null = null;
 let heap: () => number = () => 0;
+let occ: unknown = null;
 const post = (msg: unknown, transfer: Transferable[] = []) => (self as DedicatedWorkerGlobalScope).postMessage(msg, transfer);
 
 async function init(base: string, module: WebAssembly.Module) {
@@ -76,6 +80,7 @@ async function init(base: string, module: WebAssembly.Module) {
       return {};
     },
   });
+  occ = oc;
   kernel = new Kernel(oc);
   heap = () => oc.HEAPU8?.length ?? 0;
 }
@@ -96,6 +101,12 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
     if (r.type === "init") { await init(r.base, r.module); post({ id: r.id, ok: true }); return; }
     if (!kernel) throw new Error("Kernel not started");
     if (r.type === "ping") { post({ id: r.id, ok: true }); return; }
+    if (r.type === "reset") {
+      modeller = null; assembler = null; shared = null; lastBody = null;
+      kernel = new Kernel(occ as ConstructorParameters<typeof Kernel>[0]);
+      post({ id: r.id, ok: true, heap: heap() });
+      return;
+    }
     if (r.type === "load") post({ id: r.id, ok: true, counts: kernel.load(new Uint8Array(r.buffer), r.name), heap: heap() });
     else if (r.type === "exact") post({ id: r.id, ok: true, patches: r.probes.map((p, i) => (p ? kernel!.exact(i, p) : null)) });
     else if (r.type === "step") {
@@ -236,7 +247,8 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
           shared.set(p.src, { quality: r.quality, data: transformPart(data, invert(p.tf)) });
         }
         data.color = color;
-        parts.push({ id: p.id, data, faces: p.body.names });
+        const own = assembler.ownBodies(p.part, r.doc, p.src);
+        parts.push({ id: p.id, data, faces: p.body.names, ...(own ? { bodies: moveBodies(own, p.tf) } : {}) });
       }
       post({ id: r.id, ok: true, parts, statuses, features: assembler.featureStatus, props: assembler.props(placed), heap: heap(), ms: performance.now() - t0 });
     } else if (r.type === "asmClearance") {

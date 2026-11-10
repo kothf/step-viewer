@@ -56,6 +56,9 @@ export function pasteClip(doc: PartDoc, clip: Clip, plane: PlaneRef, newId: (p: 
       f.sketch = ids.get(f.sketch) ?? f.sketch;
       if (f.end === "upto" || f.end === "offset" || f.end === "vertex" || f.end === "body") { f.end = "blind"; lost.add(LOST.end); }
       delete f.upTo; delete f.upToOffset; delete f.reverseOffset; delete f.upToVertex; delete f.upToBody; delete f.outside;
+      if (f.end2 === "upto" || f.end2 === "offset" || f.end2 === "vertex" || f.end2 === "body") { f.end2 = "blind"; lost.add(LOST.end); }
+      if (f.end2 === "blind" && f.end === "blind") delete f.end2;
+      delete f.upTo2; delete f.upToOffset2; delete f.reverseOffset2; delete f.upToVertex2; delete f.upToBody2;
       if (f.start === "surface" || f.start === "vertex") { delete f.start; lost.add(LOST.start); }
       delete f.startRef; delete f.startVertex;
       f.name = nextName(names, "extrude", f.op === "cut");

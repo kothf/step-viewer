@@ -12,6 +12,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { V2, SkEnt } from "../model/types";
 import type { HealFeature, RecognizedHole, RecognizedBlends, SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, ChamferFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
+import { dir2Apart, dir2Feature } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { ctxFrame } from "../model/context";
 import { loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
@@ -640,57 +641,18 @@ export class Modeller {
     let tools: Named[] = [];
     // Start from (FR-FT-013): the profile moves along the sketch normal before it is swept.
     const so = f.type === "extrude" ? mul(frame.n, this.startShift(f, frame, prev, frames)) : [0, 0, 0] as V3;
-    if (f.type === "extrude" && (f.end === "upto" || f.end === "offset")) {
-      tools = this.upTo(f, sk, frame, prev, frames, so);
-    } else if (f.type === "extrude") {
-      // A cut goes into the material (against the sketch normal); Reverse direction flips either.
-      let dir = (f.op === "cut" ? -1 : 1) * (f.flip ? -1 : 1);
-      let d1 = f.depth.v, d2 = f.depth2?.v ?? 0;
-      let target: Named | null = null;
-      if (f.end === "mid") { d2 = d1 / 2; d1 = d1 / 2; }
-      if (f.end === "vertex") {
-        // Up to vertex: as far as the vertex's level, toward it.
-        const s = dot(add(this.vertexPos(f.upToVertex, prev, frames), mul(add(frame.o, so), -1)), frame.n);
-        if (Math.abs(s) < 1e-7) throw new FeatureError("E-FT-ZERO", "The vertex is level with the start of the extrusion.");
-        dir = Math.sign(s); d1 = Math.abs(s); d2 = 0;
-      }
-      if (f.end === "next") {
-        if (!prev) throw new FeatureError("E-FT-NOBODY", "Up to next needs a body.");
-        d1 = this.reach(prev.shape, add(frame.o, so), mul(frame.n, dir)) + 1; d2 = 0;
-      }
-      if (f.end === "body") {
-        // Up to body: like up to next, against the picked solid only.
-        if (!prev) throw new FeatureError("E-FT-NOBODY", "Up to body needs a body.");
-        if (!f.upToBody) throw new FeatureError("E-FT-UPBODY", "Pick the body the extrusion goes up to.");
-        const list = this.bodyList(prev);
-        target = list[this.bodyIndex(list, prev, f.upToBody)];
-        d1 = this.reach(target.shape, add(frame.o, so), mul(frame.n, dir)) + 1; d2 = 0;
-      }
-      if (f.end === "through" || f.end === "through2") {
-        if (!prev) throw new FeatureError("E-FT-NOBODY", "Through all needs a body to cut.");
-        d1 = this.size(prev.shape) * 2 + 1;
-        // Through all both: as far again behind the sketch plane.
-        d2 = f.end === "through2" ? d1 : 0;
-      }
-      if (!(d1 + d2 > 1e-6)) throw new FeatureError("E-FT-ZERO", "The depth must be more than 0.");
-      const off = add(so, mul(frame.n, -d2 * dir));
-      const { faces, edgeEnt } = this.profileFaces(sk, frame, off, undefined, f.contours);
-      for (const face0 of faces) {
-        const face = f.thin ? this.thinFace(face0, f.thin) : face0;
-        const mk = new oc.BRepPrimAPI_MakePrism_1(face, this.V(mul(frame.n, (d1 + d2) * dir)), false, true);
-        mk.Build(new oc.Message_ProgressRange_1());
-        if (!mk.IsDone()) throw new FeatureError("E-FT-FAIL", "The extrusion failed.");
-        let t = this.nameSweep(mk, f.id, edgeEnt, mk.Shape());
-        // Draft while extruding: the side faces taper about the sketch plane, away from it.
-        if (f.draft && Math.abs(f.draft.angle.v) > 1e-9) {
-          const a = f.draft.angle.v;
-          if (Math.abs(a) >= Math.PI / 2 - 1e-3) throw new FeatureError("E-DRAFT-ANGLE", "The draft angle must be between 0° and 90°.");
-          const sides = t.faces.filter((_x, i) => t.names[i].includes(":side:") || t.names[i].includes(":new:"));
-          t = this.applyDraft(t, sides, mul(frame.n, dir), f.draft.outward ? -a : a, add(this.w(frame, [0, 0]), off), f.id);
-        }
-        if (f.end === "next") t = this.upToNext(t, prev!, f, add(frame.o, so), mul(frame.n, dir), d1);
-        if (f.end === "body") t = this.upToNext(t, target!, f, add(frame.o, so), mul(frame.n, dir), d1);
-        tools.push(t);
+    if (f.type === "extrude") {
+      // Direction 2 with its own end condition (FR-FT-011): a second one-way extrusion the other way,
+      // its far cap named as the start cap of a two-way prism; blind both ways stays one prism.
+      const apart = dir2Apart(f);
+      tools = this.extrudeTools(apart ? { ...f, depth2: undefined } : f, sk, frame, prev, frames, so);
+      if (apart) {
+        const g = dir2Feature(f);
+        // With Direction 2's own draft (FR-FT-014) its side faces are not coplanar with Direction 1's: own names.
+        const side = `${f.id}:side:`, side2 = f.draft2 !== undefined;
+        const ren = (n: string) => n === `${f.id}:end` ? `${f.id}:start` : n === `${f.id}:start` ? `${f.id}:mid` : n.startsWith(`${f.id}:new:`) ? `${f.id}:new2:${n.slice(f.id.length + 5)}`
+          : side2 && n.startsWith(side) ? `${f.id}:side2:${n.slice(side.length)}` : n;
+        for (const t of this.extrudeTools(g, sk, frame, prev, frames, so)) tools.push({ ...t, names: t.names.map(ren) });
       }
     } else {
       const ax = sk.ents.find(e => e.id === f.axis);
@@ -733,7 +695,7 @@ export class Modeller {
     // Several regions: fuse the tools first, in one operation. Picked contours next to each other leave
     // their shared curve as split faces; those halves (same name) are joined again, as one profile would give.
     let tool = this.fuseAll(tools, f.id);
-    if (tools.length > 1 && f.contours?.length) tool = this.unifyAlike(tool);
+    if (tools.length > 1 && (f.contours?.length || (f.type === "extrude" && dir2Apart(f)))) tool = this.unifyAlike(tool);
     if (!(f.type === "extrude" && f.outside)) this.tools.set(f.id, [{ shape: tool, op: f.op === "boss" ? "fuse" : "cut" }]);
     if (f.op === "boss" && prev && f.merge === false) return this.compoundOf([...this.bodyList(prev), tool]);
     if (f.op === "boss" && prev && f.type === "extrude") {
@@ -744,13 +706,70 @@ export class Modeller {
       const ahead = mul(frame.n, f.flip ? -1 : 1);
       const back = f.end === "mid" ? f.depth.v / 2 : f.end === "blind" ? f.depth2?.v ?? 0 : 0;
       const start = add(add(frame.o, so), mul(ahead, -back));
-      if (this.reach(prev.shape, start, ahead) < 1e-5 && this.reach(tool.shape, start, mul(ahead, -1)) < 1e-5) return this.bool("fuse", prev, tool, f.id, true);
+      if (!dir2Apart(f) && this.reach(prev.shape, start, ahead) < 1e-5 && this.reach(tool.shape, start, mul(ahead, -1)) < 1e-5) return this.bool("fuse", prev, tool, f.id, true);
     }
     if (f.op === "boss") return prev ? this.bool("fuse", prev, tool, f.id) : tool;
     if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body to cut yet.");
     const out = this.bool(f.type === "extrude" && f.outside ? "common" : "cut", prev, tool, f.id);
     if (Math.abs(this.volume(out.shape) - this.volume(prev.shape)) < 1e-9) throw new FeatureError("E-FT-NOCHANGE", "The cut does not touch the body.");
     return out;
+  }
+
+  /** The tool solids of a one- or two-way (blind) extrusion, one per profile region. */
+  private extrudeTools(f: ExtrudeFeature, sk: SketchFeature, frame: Frame, prev: Named | null, frames: Record<string, Frame>, so: V3): Named[] {
+    const oc = this.oc;
+    if (f.end === "upto" || f.end === "offset") return this.upTo(f, sk, frame, prev, frames, so);
+    const tools: Named[] = [];
+    // A cut goes into the material (against the sketch normal); Reverse direction flips either.
+    let dir = (f.op === "cut" ? -1 : 1) * (f.flip ? -1 : 1);
+    let d1 = f.depth.v, d2 = f.depth2?.v ?? 0;
+    let target: Named | null = null;
+    if (f.end === "mid") { d2 = d1 / 2; d1 = d1 / 2; }
+    if (f.end === "vertex") {
+      // Up to vertex: as far as the vertex's level, toward it.
+      const s = dot(add(this.vertexPos(f.upToVertex, prev, frames), mul(add(frame.o, so), -1)), frame.n);
+      if (Math.abs(s) < 1e-7) throw new FeatureError("E-FT-ZERO", "The vertex is level with the start of the extrusion.");
+      dir = Math.sign(s); d1 = Math.abs(s); d2 = 0;
+    }
+    if (f.end === "next") {
+      if (!prev) throw new FeatureError("E-FT-NOBODY", "Up to next needs a body.");
+      d1 = this.reach(prev.shape, add(frame.o, so), mul(frame.n, dir)) + 1; d2 = 0;
+    }
+    if (f.end === "body") {
+      // Up to body: like up to next, against the picked solid only.
+      if (!prev) throw new FeatureError("E-FT-NOBODY", "Up to body needs a body.");
+      if (!f.upToBody) throw new FeatureError("E-FT-UPBODY", "Pick the body the extrusion goes up to.");
+      const list = this.bodyList(prev);
+      target = list[this.bodyIndex(list, prev, f.upToBody)];
+      d1 = this.reach(target.shape, add(frame.o, so), mul(frame.n, dir)) + 1; d2 = 0;
+    }
+    if (f.end === "through" || f.end === "through2") {
+      if (!prev) throw new FeatureError("E-FT-NOBODY", "Through all needs a body to cut.");
+      d1 = this.size(prev.shape) * 2 + 1;
+      // Through all both: as far again behind the sketch plane.
+      d2 = f.end === "through2" ? d1 : 0;
+    }
+    if (!(d1 + d2 > 1e-6)) throw new FeatureError("E-FT-ZERO", "The depth must be more than 0.");
+    const off = add(so, mul(frame.n, -d2 * dir));
+    const { faces, edgeEnt } = this.profileFaces(sk, frame, off, undefined, f.contours);
+    for (const face0 of faces) {
+      const face = f.thin ? this.thinFace(face0, f.thin) : face0;
+      const mk = new oc.BRepPrimAPI_MakePrism_1(face, this.V(mul(frame.n, (d1 + d2) * dir)), false, true);
+      mk.Build(new oc.Message_ProgressRange_1());
+      if (!mk.IsDone()) throw new FeatureError("E-FT-FAIL", "The extrusion failed.");
+      let t = this.nameSweep(mk, f.id, edgeEnt, mk.Shape());
+      // Draft while extruding: the side faces taper about the sketch plane, away from it.
+      if (f.draft && Math.abs(f.draft.angle.v) > 1e-9) {
+        const a = f.draft.angle.v;
+        if (Math.abs(a) >= Math.PI / 2 - 1e-3) throw new FeatureError("E-DRAFT-ANGLE", "The draft angle must be between 0° and 90°.");
+        const sides = t.faces.filter((_x, i) => t.names[i].includes(":side:") || t.names[i].includes(":new:"));
+        t = this.applyDraft(t, sides, mul(frame.n, dir), f.draft.outward ? -a : a, add(this.w(frame, [0, 0]), off), f.id);
+      }
+      if (f.end === "next") t = this.upToNext(t, prev!, f, add(frame.o, so), mul(frame.n, dir), d1);
+      if (f.end === "body") t = this.upToNext(t, target!, f, add(frame.o, so), mul(frame.n, dir), d1);
+      tools.push(t);
+    }
+    return tools;
   }
 
   /**

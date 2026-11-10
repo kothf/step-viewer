@@ -9,7 +9,7 @@ import { toJson } from "../model/file";
 import { unzipLimited, zip } from "../model/zip";
 
 /** A reference; a linked assembly component (FR-ASM-003) also carries the SHA-256 of the file it was last read from. */
-export interface DocRef { path: string; qty: number; hash?: string }
+export interface DocRef { path: string; qty: number; hash?: string; docId?: string }
 
 const dec = new TextDecoder();
 const isDoc = (path: string) => /\.mcad(prt|asm|drw)$/i.test(path);
@@ -29,13 +29,24 @@ export async function docRefs(path: string, bytes: Uint8Array): Promise<DocRef[]
   if (!isDoc(path)) return [];
   const m = await entries(bytes);
   const refs = m && readJson(m, "manifest.json")?.references;
-  if (!Array.isArray(refs)) return m && /\.mcadasm$/i.test(path) ? embeddedRefs(m) : [];
+  if (!Array.isArray(refs)) return !m ? [] : /\.mcadasm$/i.test(path) ? embeddedRefs(m) : /\.mcaddrw$/i.test(path) ? drawingRefs(m) : [];
   const out = new Map<string, number>();
   for (const r of refs as { path?: unknown; qty?: unknown }[]) {
     if (typeof r?.path !== "string" || !r.path) continue;
     out.set(r.path, (out.get(r.path) ?? 0) + (typeof r.qty === "number" && r.qty > 0 ? r.qty : 1));
   }
   return [...out].map(([p, qty]) => ({ path: p, qty }));
+}
+
+/**
+ * The model a drawing shows (FR-PDM-020): a drawing keeps a copy of its part or assembly, which carries the
+ * document id of the file it was made from, so the vault finds that file by id (and by name for a part).
+ */
+function drawingRefs(m: Map<string, Uint8Array>): DocRef[] {
+  const src = (readJson(m, "drawing.json") as { source?: { kind?: unknown; name?: unknown; doc?: { id?: unknown } } } | null)?.source;
+  if (!src || (src.kind !== "part" && src.kind !== "asm") || typeof src.doc?.id !== "string" || !src.doc.id) return [];
+  const name = typeof src.name === "string" && /\.mcad(prt|asm)$/i.test(src.name) ? src.name : "";
+  return [{ path: name, qty: 1, docId: src.doc.id }];
 }
 
 /**

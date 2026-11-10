@@ -4,8 +4,9 @@
 import { Modeller, type ModelMesh, type Named } from "./model";
 import type { AsmComponentStatus, AsmDoc, AsmFeature, Tf } from "../asm/types";
 import type { BodyProps, V3 } from "../model/types";
+import type { OwnBody } from "../tools/inertia";
 
-interface Source { json: string; modeller: Modeller; body: Named | null; error?: string; mesh?: ModelMesh; quality?: number }
+interface Source { json: string; modeller: Modeller; body: Named | null; error?: string; mesh?: ModelMesh; quality?: number; own?: OwnBody[] | null }
 
 /** `src` is the evaluated source (same object while the part is unchanged), so callers can share work between its instances. */
 export interface Placed { id: string; name: string; part: string; tf: Tf; body: Named; src: object; mesh: () => ModelMesh }
@@ -55,6 +56,31 @@ export class Assembler {
     else s.error = pre.error ?? "The part has no body.";
     this.sources.set(key, s);
     return s;
+  }
+
+  /**
+   * The bodies of a part source with their mass properties in part coordinates, when one of them has
+   * its own material (FR-MAT-001); null otherwise. `src` is a `Placed.src`.
+   */
+  ownBodies(key: string, doc: AsmDoc, src: object): OwnBody[] | null {
+    const s = this.sources.get(key), pd = doc.parts[key]?.doc;
+    if (!s || s !== src || !s.body || !pd || !Object.values(pd.bodies ?? {}).some(b => b.material)) return null;
+    if (s.own === undefined) {
+      try { s.own = s.modeller.bodyInfo(s.body, pd).map(b => ({ key: b.key, volume: b.volume, ...s.modeller.bodyMass(b.part) })); }
+      catch { s.own = null; }
+    }
+    return s.own;
+  }
+
+  /**
+   * Each solid's material name (TopExp order) of a part source whose bodies have their own material
+   * (FR-MAT-001): the body's, else the part's. Null when no body has one, or `src` is not the source.
+   */
+  bodyMats(key: string, doc: AsmDoc, src: object): (string | null)[] | null {
+    const s = this.sources.get(key), pd = doc.parts[key]?.doc;
+    if (!s || s !== src || !s.body || !pd || !Object.values(pd.bodies ?? {}).some(b => b.material)) return null;
+    try { return s.modeller.bodyInfo(s.body, pd).map(b => pd.bodies?.[b.key]?.material?.name ?? pd.material?.name ?? null); }
+    catch { return null; }
   }
 
   /** A part's evaluated body in its own coordinates (null when it has none). */
