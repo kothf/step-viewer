@@ -9014,6 +9014,13 @@ try {
     await ap.press('.drw-props [data-st="tol"]', "Tab");
     const tol2 = await ap.evaluate(() => window.__sv.drw.doc().style);
     check(tol1 === 0.05 && !("tol" in tol2), `drawing: drafting style keeps a default ± tolerance, empty clears it (${JSON.stringify([tol1, tol2])})`);
+    // Dual dimensions (FR-DRW-021): inches in brackets with their own decimals; Off drops both keys.
+    await ap.selectOption('.drw-props [data-st="dual"]', "in");
+    await ap.selectOption('.drw-props [data-st="dualPrec"]', "2");
+    const dual1 = await ap.evaluate(() => window.__sv.drw.doc().style);
+    await ap.selectOption('.drw-props [data-st="dual"]', "");
+    const dual2 = await ap.evaluate(() => ({ st: window.__sv.drw.doc().style, sel: !!document.querySelector('.drw-props [data-st="dualPrec"]') }));
+    check(dual1.dual === "in" && dual1.dualPrec === 2 && !("dual" in dual2.st) && !("dualPrec" in dual2.st) && !dual2.sel, `drawing: drafting style keeps dual dimensions and their decimals, Off clears them (${JSON.stringify([dual1, dual2])})`);
     // 1.87.0 view properties (FR-DRW-017): break a projected view's alignment, drag it off line, then put it back in line.
     const pv0 = await ap.evaluate(() => { const sh = window.__sv.drw.doc().sheets[0]; const v = sh.views.find(x => x.parent && x.side && !x.kind); const p = sh.views.find(x => x.id === v.parent); return { id: v.id, x: v.x, y: v.y, px: p.x, py: p.y, side: v.side }; });
     await clickAt(pv0.x, pv0.y);

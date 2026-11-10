@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.379.0] - 2026-11-10
+
+### Added
+- Dual dimensions in drawings (FR-DRW-021): the sheet's drafting style has **Dual dimensions**, which adds every length in inches in brackets after the millimetres (25.4 [1.000]), with its own number of decimals. Tolerances follow (±, limits), angles stay as they are, and one dimension can be switched on or off with its **Dual dimension** box.
+
 ## [1.378.0] - 2026-11-10
 
 ### Changed
@@ -2227,7 +2232,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.378.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.379.0...HEAD
+[1.379.0]: https://github.com/kothf/step-viewer/compare/v1.378.0...v1.379.0
 [1.378.0]: https://github.com/kothf/step-viewer/compare/v1.377.0...v1.378.0
 [1.377.0]: https://github.com/kothf/step-viewer/compare/v1.376.0...v1.377.0
 [1.376.0]: https://github.com/kothf/step-viewer/compare/v1.375.0...v1.376.0

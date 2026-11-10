@@ -4226,4 +4226,9 @@ export const RU: Record<string, string> = {
   "View \"{name}\" saved.": "Вид «{name}» сохранён.",
   // FR-UI-022: heads-up view bar
   "Previous view (Alt+Z)": "Предыдущий вид (Alt+Z)",
+  // FR-DRW-021: dual dimensions
+  "Dual dimensions": "Двойные размеры",
+  "Inches in brackets": "Дюймы в скобках",
+  "Inch decimals": "Знаков в дюймах",
+  "Dual dimension (inches in brackets)": "Двойной размер (дюймы в скобках)",
 };
