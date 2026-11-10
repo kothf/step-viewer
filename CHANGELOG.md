@@ -11,6 +11,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - **Recognised sketches dimensioned the way FeatureWorks does (FR-FT-102)**: the sketches that Recognize Features and Recognize Extrudes make now get the lengths of their horizontal and vertical edges first, longest first, and only then the distances from the origin that are still needed. A rectangle gets its width and height and one corner's place, instead of four distances from the origin. Fully Define Sketch in the sketcher keeps dimensioning from the origin, as SolidWorks does by default.
 
+## [1.471.0] - 2026-11-10
+
+### Added
+- Drawings: the bill of materials has a Material column (FR-MAT-001). It shows each part's material, or the materials of its bodies when they have their own; a sub-assembly row stays empty. New BOMs get the column, and a tick box in the BOM's properties adds it to older ones or takes it off.
+- My materials can be exported to a file and imported again (FR-MAT-001), to carry your own materials to another browser or computer or share them with colleagues. Import… and Export… sit at the bottom of the material dialog; an imported material replaces one of yours with the same name, and one named like a library material is left out.
+
+### Changed
+- Drawings: when a part's bodies have their own materials, the title block lists them all and weighs each body with its own density, instead of the part's material alone.
+
 ## [1.470.0] - 2026-11-10
 
 ### Added
@@ -2865,8 +2874,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.470.0...HEAD
-[1.472.0]: https://github.com/kothf/step-viewer/compare/v1.470.0...v1.472.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.471.0...HEAD
+[1.472.0]: https://github.com/kothf/step-viewer/compare/v1.471.0...v1.472.0
+[1.471.0]: https://github.com/kothf/step-viewer/compare/v1.470.0...v1.471.0
 [1.470.0]: https://github.com/kothf/step-viewer/compare/v1.469.0...v1.470.0
 [1.469.0]: https://github.com/kothf/step-viewer/compare/v1.468.0...v1.469.0
 [1.468.0]: https://github.com/kothf/step-viewer/compare/v1.467.0...v1.468.0
