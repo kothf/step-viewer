@@ -9516,6 +9516,16 @@ try {
     // Stock lengths under the list: one row per section with its pieces and summed length.
     const stock = await mp.evaluate(() => [...document.querySelectorAll("#wld-cut tr[data-stock]")].map(tr => [...tr.children].map(td => td.textContent)));
     check(stock.length >= 1 && stock.every(r => r[0] && Number(r[1]) >= 1 && num(r[2]) > 0), `weldments: stock lengths under the cut list (${JSON.stringify(stock)})`);
+    // A stock bar length adds the bars to buy; clearing it takes the columns away again.
+    await mp.fill('#wld-cut input[data-wbar="len"]', "6000");
+    await mp.dispatchEvent('#wld-cut input[data-wbar="len"]', "change");
+    await settle();
+    const bars = await mp.evaluate(() => [...document.querySelectorAll("#wld-cut tr[data-stock]")].map(tr => [...tr.children].map(td => td.textContent)));
+    await mp.fill('#wld-cut input[data-wbar="len"]', "");
+    await mp.dispatchEvent('#wld-cut input[data-wbar="len"]', "change");
+    await settle();
+    const bars0 = await mp.evaluate(() => document.querySelectorAll("#wld-cut tr[data-stock] [data-wbars]").length);
+    check(bars.length === stock.length && bars.every(r => r.length === 5 && Number(r[3]) >= 1) && bars0 === 0, `weldments: bars to buy from a stock bar length (${JSON.stringify({ bars, bars0 })})`);
     await mp.check('#wld-cut input[data-cp="excl"][data-ci="1"]');
     await settle();
     const ex = await mp.evaluate(() => { const tr = document.querySelectorAll("#wld-cut tbody tr")[1]; return { item: tr.querySelector("[data-witem]")?.textContent, cls: tr.classList.contains("wld-excl"), excl: Object.values(window.__sv.model.store.doc.cutProps ?? {}).some(p => p.excl) }; });
