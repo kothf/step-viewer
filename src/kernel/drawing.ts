@@ -30,6 +30,8 @@ export interface Projection {
   shade?: number[];
   /** A quick polygonal preview (`projectPoly`): drawn, never measured. */
   preview?: boolean;
+  /** Made by the fast hidden-line removal (`projectFast`, big models): lines and edge-on circles exact, visibility from a fine mesh. */
+  fast?: boolean;
   /** Section views: the cut faces' edges as model edges (model coordinates), each named `<model face>|§` after the
    * face the plane cut through, so dimensions can measure the section and find the edge again after a rebuild. */
   cutEdges?: MEdge[];
@@ -100,9 +102,9 @@ export function project(oc: any, shape: any, view: ViewDir, tol = 0.02): Project
  * shape's triangulation, meshed at `lin` mm chord error. Every line is a polyline, so it is for showing
  * only: dimensions and picking wait for the exact projection. The result is marked `preview`.
  */
-export function projectPoly(oc: any, shape: any, view: ViewDir, lin: number): Projection {
+export function projectPoly(oc: any, shape: any, view: ViewDir, lin: number, ang = 0.5): Projection {
   const t0 = Date.now();
-  new oc.BRepMesh_IncrementalMesh_2(shape, lin, false, 0.5, false);
+  new oc.BRepMesh_IncrementalMesh_2(shape, lin, false, ang, false);
   const { x, n } = viewAxes(view);
   const ax = new oc.gp_Ax2_2(new oc.gp_Pnt_3(0, 0, 0), new oc.gp_Dir_4(n[0], n[1], n[2]), new oc.gp_Dir_4(x[0], x[1], x[2]));
   const algo = new oc.HLRBRep_PolyAlgo_1();
@@ -120,6 +122,289 @@ export function projectPoly(oc: any, shape: any, view: ViewDir, lin: number): Pr
   take(() => h.Rg1LineHCompound_1(), hid, 1);
   take(() => h.OutLineHCompound_1(), hid, 2);
   return { vis, hid, box: bounds(vis.length ? vis : hid), ms: Date.now() - t0, preview: true };
+}
+
+/** Edges at or above which a view is projected by `projectFast`: the exact HLR grows too slow (a 57-part engine ran 20+ min). */
+export const FAST_EDGES = 4000;
+
+/** How many edges a shape has. */
+export function edgeCount(oc: any, shape: any): number {
+  const m = new oc.TopTools_IndexedMapOfShape_1();
+  oc.TopExp.MapShapes_1(shape, oc.TopAbs_ShapeEnum.TopAbs_EDGE, m);
+  return m.Extent();
+}
+
+/** The exact HLR, or `projectFast` (chord 1/1000 of the model's size) for models of `FAST_EDGES` edges or more. */
+export function projectAuto(oc: any, shape: any, view: ViewDir, tol = 0.02, fast = FAST_EDGES): Projection {
+  if (edgeCount(oc, shape) < fast) return project(oc, shape, view, tol);
+  const [lo, hi] = shapeInfo(oc, shape).box;
+  return projectFast(oc, shape, view, Math.max(0.01, Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 1000));
+}
+
+/** A circle seen end-on in a view: centre on the sheet (model mm) and radius. */
+export interface Circle2 { o: [number, number]; r: number }
+/** A straight model edge on the sheet: unit direction `u` (pointing right, or up) and offset `d` = point · (−u.y, u.x). */
+export interface Line2 { u: [number, number]; d: number }
+
+/** The shape's circles (and arcs) whose axis lies along the view direction and its straight edges, as they show on the sheet. */
+export function viewCurves(oc: any, shape: any, view: ViewDir): { circles: Circle2[]; lines: Line2[] } {
+  const { x, y, n } = viewAxes(view), T = oc.GeomAbs_CurveType, out: Circle2[] = [], lines: Line2[] = [], seen = new Set<string>();
+  const m = new oc.TopTools_IndexedMapOfShape_1();
+  oc.TopExp.MapShapes_1(shape, oc.TopAbs_ShapeEnum.TopAbs_EDGE, m);
+  for (let i = 1; i <= m.Extent(); i++) {
+    let ad: any;
+    try { ad = new oc.BRepAdaptor_Curve_2(oc.TopoDS.Edge_1(m.FindKey(i))); } catch { continue; }
+    const ty = ad.GetType();
+    if (ty === T.GeomAbs_Line) {
+      const a = ad.Value(ad.FirstParameter()), b = ad.Value(ad.LastParameter());
+      const A: V3 = [a.X(), a.Y(), a.Z()], B: V3 = [b.X(), b.Y(), b.Z()];
+      const ax = dot(A, x), ay = dot(A, y);
+      let ux = dot(B, x) - ax, uy = dot(B, y) - ay;
+      const l = Math.hypot(ux, uy);
+      if (l < 1e-9) continue;
+      ux /= l; uy /= l;
+      if (ux < -1e-9 || (Math.abs(ux) <= 1e-9 && uy < 0)) { ux = -ux; uy = -uy; }
+      lines.push({ u: [ux, uy], d: ax * -uy + ay * ux });
+      continue;
+    }
+    if (ty !== T.GeomAbs_Circle) continue;
+    const c = ad.Circle(), a = c.Axis().Direction(), p = c.Location();
+    if (Math.abs(a.X() * n[0] + a.Y() * n[1] + a.Z() * n[2]) < 0.9999) continue;
+    const P: V3 = [p.X(), p.Y(), p.Z()], o: [number, number] = [dot(P, x), dot(P, y)], r = c.Radius();
+    const k = `${o[0].toFixed(4)},${o[1].toFixed(4)},${r.toFixed(4)}`;
+    if (!seen.has(k)) { seen.add(k); out.push({ o, r }); }
+  }
+  return { circles: out, lines };
+}
+
+/**
+ * Fast hidden-line removal for big models (drawings exam: a 57-part assembly never finished the exact HLR):
+ * OCCT's polygonal HLR on a fine mesh, then each polyline is rebuilt from what it really is. Mesh nodes on an
+ * edge lie on the exact curve, so straight runs become lines with exact ends, and runs on an end-on circle of the
+ * model become exact arcs of it (centre and radius from the B-rep, not fitted), so dimensions, centre marks and
+ * picking work as on an exact view. Other curves stay polylines within `lin` mm.
+ */
+export function projectFast(oc: any, shape: any, view: ViewDir, lin: number): Projection {
+  const t0 = Date.now();
+  const p = projectPoly(oc, shape, view, lin, 0.1);
+  const { circles, lines } = viewCurves(oc, shape, view);
+  const vis = exactify(p.vis, circles, lin, lines), hid = underLines(exactify(p.hid, circles, lin, lines), vis, Math.max(1e-4, lin * 1.5));
+  return { vis, hid: unhide(hid, vis), box: bounds(vis.length ? vis : hid), ms: Date.now() - t0, fast: true };
+}
+
+/** Polylines (and chords) of a polygonal HLR turned into lines, exact arcs of `circles` and leftover polylines (see `projectFast`). */
+export function exactify(segs: Seg2[], circles: Circle2[], lin: number, lines: Line2[] = []): Seg2[] {
+  // Mesh nodes lie on the exact curves, so straight runs are straight to rounding (sTol); a cut where a line goes
+  // behind something can be off by up to the chord error (tol).
+  // A chord of a straight edge lies on it exactly, also where it is cut (lTol).
+  const tol = Math.max(1e-4, lin * 1.5), sTol = Math.max(1e-5, lin * 0.01), lTol = Math.max(1e-3, lin * 0.02), cell = Math.max(1, lin * 20);
+  // Straight model edges by direction (buckets of 0.1°): a chord on one of them is that edge, not a piece of a curve.
+  const AB = Math.PI / 1800, byAng = new Map<number, Line2[]>();
+  const bucket = (ux: number, uy: number) => Math.round(Math.atan2(uy, ux) / AB);
+  for (const L of lines) { const b = bucket(L.u[0], L.u[1]); (byAng.get(b) ?? byAng.set(b, []).get(b)!).push(L); }
+  const onLine = (x0: number, y0: number, x1: number, y1: number) => {
+    let ux = x1 - x0, uy = y1 - y0;
+    const l = Math.hypot(ux, uy);
+    if (l < 1e-9) return false;
+    ux /= l; uy /= l;
+    if (ux < -1e-9 || (Math.abs(ux) <= 1e-9 && uy < 0)) { ux = -ux; uy = -uy; }
+    const b0 = bucket(ux, uy), span = Math.ceil(Math.atan2(2 * lTol, l) / AB) + 1;
+    for (let b = b0 - span; b <= b0 + span; b++) for (const L of byAng.get(b) ?? [])
+      if (Math.abs(x0 * -L.u[1] + y0 * L.u[0] - L.d) <= lTol && Math.abs(x1 * -L.u[1] + y1 * L.u[0] - L.d) <= lTol) return true;
+    // Vertical lines sit at both ends of the angle range.
+    if (Math.abs(b0) > 900 - span) for (let b = -b0 - span; b <= -b0 + span; b++) for (const L of byAng.get(b) ?? [])
+      if (Math.abs(x0 * -L.u[1] + y0 * L.u[0] - L.d) <= lTol && Math.abs(x1 * -L.u[1] + y1 * L.u[0] - L.d) <= lTol) return true;
+    return false;
+  };
+  const grid = new Map<string, Circle2[]>();
+  const gk = (u: number, v: number) => `${Math.floor(u / cell)},${Math.floor(v / cell)}`;
+  for (const c of circles) { const k = gk(c.o[0], c.o[1]); (grid.get(k) ?? grid.set(k, []).get(k)!).push(c); }
+  const near = (o: [number, number], r: number): Circle2 | null => {
+    const i0 = Math.floor(o[0] / cell), j0 = Math.floor(o[1] / cell);
+    let best: Circle2 | null = null, bd = Infinity;
+    for (let i = i0 - 1; i <= i0 + 1; i++) for (let j = j0 - 1; j <= j0 + 1; j++) for (const c of grid.get(`${i},${j}`) ?? []) {
+      const d = Math.hypot(c.o[0] - o[0], c.o[1] - o[1]) + Math.abs(c.r - r);
+      if (d < bd) { bd = d; best = c; }
+    }
+    return best && bd < Math.max(tol * 4, best.r * 0.02) ? best : null;
+  };
+  const on = (c: Circle2, x: number, y: number) => Math.abs(Math.hypot(x - c.o[0], y - c.o[1]) - c.r) <= tol;
+  const out: Seg2[] = [];
+  for (const s0 of chains(segs, Math.min(1e-4, tol / 10))) {
+    if (s0.k === "a") { out.push(s0); continue; }
+    const s = { k: "p" as const, c: s0.c, p: s0.p as number[] };
+    const P = s.p, n = P.length / 2, X = (i: number) => P[2 * i], Y = (i: number) => P[2 * i + 1], cls = s.c;
+    let poly: number[] = [];
+    const flushPoly = () => { if (poly.length >= 4) out.push(poly.length === 4 ? { k: "l", c: cls, p: [poly[0], poly[1], poly[2], poly[3]] } : { k: "p", c: cls, p: poly }); poly = []; };
+    const addPoly = (i: number) => { if (!poly.length || poly[poly.length - 2] !== X(i) || poly[poly.length - 1] !== Y(i)) poly.push(X(i), Y(i)); };
+    let i = 0;
+    while (i < n - 1) {
+      // An end-on circle of the model through three points in a row: follow it as far as the points stay on it.
+      let arc: { c: Circle2; j: number } | null = null;
+      if (i + 2 < n) {
+        const f = circle3(X(i), Y(i), X(i + 1), Y(i + 1), X(i + 2), Y(i + 2));
+        const c = f && near(f.o, f.r);
+        if (c && on(c, X(i), Y(i)) && on(c, X(i + 1), Y(i + 1)) && on(c, X(i + 2), Y(i + 2))) {
+          let j = i + 2;
+          while (j + 1 < n && on(c, X(j + 1), Y(j + 1))) j++;
+          arc = { c, j };
+        }
+      }
+      if (arc) {
+        flushPoly();
+        const { c, j } = arc;
+        let a = Math.atan2(Y(i) - c.o[1], X(i) - c.o[0]), sw = 0;
+        const a0 = a;
+        for (let k = i + 1; k <= j; k++) {
+          const b = Math.atan2(Y(k) - c.o[1], X(k) - c.o[0]);
+          let d = b - a;
+          while (d > Math.PI) d -= 2 * Math.PI;
+          while (d < -Math.PI) d += 2 * Math.PI;
+          sw += d; a = b;
+        }
+        const full = Math.abs(sw) > 2 * Math.PI - 1e-3;
+        const s0 = full ? a0 : sw >= 0 ? a0 : a0 + sw, s1 = full ? a0 + 2 * Math.PI : s0 + Math.abs(sw);
+        out.push({ k: "a", c: cls, o: [c.o[0], c.o[1]], r: c.r, a0: s0, a1: s1 });
+        i = j;
+        continue;
+      }
+      // A straight run: as many points as stay within the tolerance of the chord from i.
+      let j = i + 1;
+      while (j + 1 < n && straight(P, i, j + 1, sTol)) j++;
+      const len = Math.hypot(X(j) - X(i), Y(j) - Y(i));
+      // A chord alone may be a piece of a curve: it is a line when it lies on a straight model edge, or is an outline
+      // (a cylinder seen side-on), or the run is too long for one chord of a curve.
+      if ((j - i >= 2 && len > 4 * tol) || (cls === 2 && len > 4 * tol) || (len > 20 * lTol && onLine(X(i), Y(i), X(j), Y(j))) || (!lines.length && len > 8 * tol)) { flushPoly(); out.push({ k: "l", c: cls, p: [X(i), Y(i), X(j), Y(j)] }); }
+      else { addPoly(i); addPoly(j); }
+      i = j;
+    }
+    flushPoly();
+  }
+  return mergeLines(out, tol);
+}
+
+/** Joins lines of one class that lie on one line and touch or overlap (the mesh gives an edge as many short pieces). */
+export function mergeLines(segs: Seg2[], tol: number): Seg2[] {
+  const rest: Seg2[] = [], groups = new Map<string, { c: EdgeClass; u: [number, number]; t: number[][]; d: number }>();
+  const aq = 1e-3, dq = Math.max(tol * 2, 1e-3);
+  for (const s of segs) {
+    if (s.k !== "l") { rest.push(s); continue; }
+    let [x0, y0, x1, y1] = s.p;
+    let dx = x1 - x0, dy = y1 - y0;
+    const l = Math.hypot(dx, dy);
+    if (l < 1e-12) continue;
+    dx /= l; dy /= l;
+    if (dx < -1e-9 || (Math.abs(dx) <= 1e-9 && dy < 0)) { dx = -dx; dy = -dy; }
+    const d = x0 * -dy + y0 * dx, ang = Math.atan2(dy, dx);
+    const key = `${s.c}|${Math.round(ang / aq)}|${Math.round(d / dq)}`;
+    const g = groups.get(key) ?? groups.set(key, { c: s.c, u: [dx, dy], t: [], d }).get(key)!;
+    const ta = x0 * g.u[0] + y0 * g.u[1], tb = x1 * g.u[0] + y1 * g.u[1];
+    g.t.push([Math.min(ta, tb), Math.max(ta, tb)]);
+  }
+  const out = rest;
+  for (const g of groups.values()) {
+    g.t.sort((a, b) => a[0] - b[0]);
+    const n: [number, number] = [-g.u[1], g.u[0]];
+    let cur = g.t[0].slice();
+    const emit = () => out.push({ k: "l", c: g.c, p: [n[0] * g.d + g.u[0] * cur[0], n[1] * g.d + g.u[1] * cur[0], n[0] * g.d + g.u[0] * cur[1], n[1] * g.d + g.u[1] * cur[1]] });
+    for (let i = 1; i < g.t.length; i++) {
+      if (g.t[i][0] <= cur[1] + tol) cur[1] = Math.max(cur[1], g.t[i][1]);
+      else { emit(); cur = g.t[i].slice(); }
+    }
+    emit();
+  }
+  return out;
+}
+
+/**
+ * Chords and polylines of one class joined end to end into the longest runs (the mesh HLR gives each mesh edge on
+ * its own and in no order); a run stops where three or more pieces meet. Arcs pass through.
+ */
+export function chains(segs: Seg2[], eps: number): Seg2[] {
+  const out: Seg2[] = [];
+  const byClass = new Map<EdgeClass, number[][]>();
+  for (const s of segs) {
+    if (s.k === "a") { out.push(s); continue; }
+    (byClass.get(s.c) ?? byClass.set(s.c, []).get(s.c)!).push(s.k === "l" ? [...s.p] : [...s.p]);
+  }
+  const key = (x: number, y: number) => `${Math.round(x / eps)},${Math.round(y / eps)}`;
+  for (const [c, runs] of byClass) {
+    const ends = new Map<string, number[]>(); // node → run ends at it (2·run + 0 start / 1 end)
+    const at = (r: number[], e: number) => e ? key(r[r.length - 2], r[r.length - 1]) : key(r[0], r[1]);
+    runs.forEach((r, i) => { for (const e of [0, 1]) { const k = at(r, e); (ends.get(k) ?? ends.set(k, []).get(k)!).push(2 * i + e); } });
+    const used = new Uint8Array(runs.length);
+    // From run i's end e, the one other run meeting there (only when exactly two meet).
+    const next = (i: number, e: number): number | null => {
+      const l = ends.get(at(runs[i], e))!;
+      if (l.length !== 2) return null;
+      const o = l[0] >> 1 === i && (l[0] & 1) === e ? l[1] : l[0];
+      return (o >> 1) === i || used[o >> 1] ? null : o;
+    };
+    const rev = (r: number[]) => { const o: number[] = []; for (let k = r.length - 2; k >= 0; k -= 2) o.push(r[k], r[k + 1]); return o; };
+    for (let i = 0; i < runs.length; i++) {
+      if (used[i]) continue;
+      used[i] = 1;
+      let pts = runs[i].slice();
+      // Grow forward from the end, then backward from the start.
+      for (let cur = i, e = 1; ;) {
+        const o = next(cur, e);
+        if (o === null) break;
+        const j = o >> 1, r = (o & 1) === 0 ? runs[j] : rev(runs[j]);
+        used[j] = 1; pts.push(...r.slice(2)); cur = j; e = (o & 1) === 0 ? 1 : 0;
+      }
+      for (let cur = i, e = 0; ;) {
+        const o = next(cur, e);
+        if (o === null) break;
+        const j = o >> 1, r = (o & 1) === 1 ? runs[j] : rev(runs[j]);
+        used[j] = 1; pts = [...r.slice(0, -2), ...pts]; cur = j; e = (o & 1) === 1 ? 0 : 1;
+      }
+      out.push(pts.length === 4 ? { k: "l", c, p: [pts[0], pts[1], pts[2], pts[3]] } : { k: "p", c, p: pts });
+    }
+  }
+  return out;
+}
+
+/** Hidden polylines left out where every point lies on a visible line (an edge-on circle seen behind an outline). */
+function underLines(hid: Seg2[], vis: Seg2[], tol: number): Seg2[] {
+  const ls = vis.filter(s => s.k === "l");
+  if (!ls.length) return hid;
+  const b = bounds(ls), cell = Math.max(1e-3, Math.max(b[2] - b[0], b[3] - b[1]) / 50), grid = new Map<string, number[]>();
+  ls.forEach((s, i) => {
+    const [x0, y0, x1, y1] = s.p;
+    for (let gx = Math.floor((Math.min(x0, x1) - tol) / cell); gx <= Math.floor((Math.max(x0, x1) + tol) / cell); gx++)
+      for (let gy = Math.floor((Math.min(y0, y1) - tol) / cell); gy <= Math.floor((Math.max(y0, y1) + tol) / cell); gy++) {
+        const k = `${gx},${gy}`;
+        (grid.get(k) ?? grid.set(k, []).get(k)!).push(i);
+      }
+  });
+  const onVis = (x: number, y: number) => (grid.get(`${Math.floor(x / cell)},${Math.floor(y / cell)}`) ?? []).some(i => {
+    const [ax, ay, bx, by] = ls[i].p, dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+    const t = l2 > 0 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l2)) : 0;
+    return Math.hypot(x - ax - t * dx, y - ay - t * dy) <= tol;
+  });
+  return hid.filter(s => s.k !== "p" || !s.p.every((v, i) => i % 2 === 1 || onVis(v, s.p[i + 1])));
+}
+
+/** Circle through three points (null when they are in a line). */
+function circle3(ax: number, ay: number, bx: number, by: number, cx: number, cy: number): { o: [number, number]; r: number } | null {
+  const d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
+  if (Math.abs(d) < 1e-12) return null;
+  const a2 = ax * ax + ay * ay, b2 = bx * bx + by * by, c2 = cx * cx + cy * cy;
+  const ox = (a2 * (by - cy) + b2 * (cy - ay) + c2 * (ay - by)) / d, oy = (a2 * (cx - bx) + b2 * (ax - cx) + c2 * (bx - ax)) / d;
+  return { o: [ox, oy], r: Math.hypot(ax - ox, ay - oy) };
+}
+
+/** Whether the points i..j of a flat point list all lie within `tol` of the chord from i to j. */
+function straight(P: number[], i: number, j: number, tol: number): boolean {
+  const ax = P[2 * i], ay = P[2 * i + 1], dx = P[2 * j] - ax, dy = P[2 * j + 1] - ay, l = Math.hypot(dx, dy);
+  if (l < 1e-12) return false;
+  for (let k = i + 1; k < j; k++) {
+    const ex = P[2 * k] - ax, ey = P[2 * k + 1] - ay;
+    if (Math.abs(ex * dy - ey * dx) / l > tol) return false;
+    const t = (ex * dx + ey * dy) / (l * l);
+    if (t < -1e-6 || t > 1 + 1e-6) return false;
+  }
+  return true;
 }
 
 /** The straight pieces of a polygonal HLR result (its edges are lines between mesh points), joined end to end. */
@@ -303,7 +588,7 @@ function shapeList(oc: any, l: any): any[] {
  * spanned by `e` and `m`, run through the model square to that plane; values of 1e8 or more stand for "beyond the
  * model". Cut faces lying on any of `planes` (n · p) are hatched. `keep` is drawn whole (components left uncut).
  */
-export function section(oc: any, shape: any, view: ViewDir, p: V3, tol = 0.02, poly?: number[], opts: { stair?: { o: V3; e: V3; m: V3; pts: number[]; planes: number[] }; keep?: any; namer?: (face: any) => string | null } = {}): Projection {
+export function section(oc: any, shape: any, view: ViewDir, p: V3, tol = 0.02, poly?: number[], opts: { stair?: { o: V3; e: V3; m: V3; pts: number[]; planes: number[] }; keep?: any; namer?: (face: any) => string | null; fast?: number } = {}): Projection {
   const { x, y, n } = viewAxes(view);
   const info = shapeInfo(oc, shape);
   const [lo, hi] = info.box;
@@ -367,7 +652,7 @@ export function section(oc: any, shape: any, view: ViewDir, p: V3, tol = 0.02, p
     b.MakeCompound(c); b.Add(c, rest); b.Add(c, opts.keep);
     drawn = c;
   }
-  const proj = project(oc, drawn, view, tol);
+  const proj = projectAuto(oc, drawn, view, tol, opts.fast);
   // Faces on the cutting plane: their wires, flattened into the view's axes.
   const cut: number[][] = [], cutOf: number[] = [];
   const A = oc.TopAbs_ShapeEnum, d0 = dot(p, n);
