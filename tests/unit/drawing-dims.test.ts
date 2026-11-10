@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { MEdge, Projection, Topo, V3 } from "../../src/kernel/drawing";
-import { bendRows, cutCols, cutDesc, cutRows, edgeItem, weldItem, stackItem, weldRows, dimGeo, dimPrims, dimText, holeEdges, holeRows, viewAnnots, type AnnotCtx } from "../../src/drawing/annot";
+import { bendRows, cutCols, cutDesc, cutRows, edgeItem, weldItem, stackItem, weldRows, dimGeo, dimPrims, dimText, holeEdges, holeRows, useStyle, viewAnnots, type AnnotCtx } from "../../src/drawing/annot";
 import { placement } from "../../src/drawing/compose";
 import type { DimAnnot, DrawingView, GeoRef, Sheet } from "../../src/drawing/types";
 
@@ -110,6 +110,9 @@ test("hole table on a solid: one row per hole (its drill), counterbore in the si
   const ctx: AnnotCtx = { topo: ht, holes: [], items: [], box: null, dec: ".", label: s => s };
   const a = { id: "t", t: "htable" as const, view: "v", origin: { pt: [0, 0, 0] as V3 }, holes: holes.map(e => ({ e: e.k, h: e.m, p: "e" as const })), pos: [0, -40] as [number, number], prec: 1 };
   assert.deepEqual(holeRows(a, P, ctx).rows, [["A1", "30.0", "20.0", "Ø6.6 THRU ⌴Ø11 ↧6.4"]]);
+  // Drawings exam #41: dual dimensions leave the hole table in one unit (its X/Y columns are mm only).
+  useStyle({ dual: "in" });
+  try { assert.deepEqual(holeRows(a, P, ctx).rows, [["A1", "30.0", "20.0", "Ø6.6 THRU ⌴Ø11 ↧6.4"]]); } finally { useStyle(undefined); }
   assert.deepEqual(holeEdges({ ...ht, holes: undefined }, P, [0, 0, 1]), [], "a solid without hole stacks has no holes");
 });
 

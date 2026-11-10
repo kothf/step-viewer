@@ -3127,7 +3127,7 @@ export class DrawingWorkspace {
     const lib = loadFormats(), cur = sh.tb ? `user:${sh.tb.id}` : sh.format;
     const users = sh.tb && !lib.some(f => f.id === sh.tb!.id) ? [sh.tb, ...lib] : lib;
     const opt = (v: string, label: string, tr = false) => `<option value="${esc(v)}"${v === cur ? " selected" : ""}${tr ? ' translate="no"' : ""}>${esc(label)}</option>`;
-    return opt("iso", "ISO 7200") + opt("ansi", "ANSI Y14.1") + opt("gost", "GOST 2.104")
+    return opt("iso", "ISO 7200") + opt("ansi", "ANSI Y14.1") + opt("gost", t("GOST 2.104"))
       + (users.length ? `<optgroup label="${esc(t("My formats"))}">${users.map(f => opt(`user:${f.id}`, f.name, true)).join("")}</optgroup>` : "");
   }
 
@@ -3403,7 +3403,7 @@ function kernelError(err: unknown): string {
 
 const STYLE_NAMES: Record<DisplayStyle, string> = { hlv: "Hidden lines visible", hlr: "Hidden lines removed", wire: "Wireframe", shaded: "Shaded", shadedEdges: "Shaded with edges" };
 const KIND_NAMES: Record<NonNullable<DrawingView["kind"]>, string> = { section: "Section", detail: "Detail", aux: "Auxiliary" };
-const ARROW_NAMES: Record<NonNullable<DraftStyle["arrow"]>, string> = { filled: "Filled", open: "Open", dot: "Dot", tick: "Oblique stroke" };
+const ARROW_NAMES: Record<NonNullable<DraftStyle["arrow"]>, string> = { filled: "Filled", open: "Open arrow", dot: "Dot", tick: "Oblique stroke" };
 const TAN_NAMES: Record<TangentEdges, string> = { visible: "Visible", thin: "Thin", hidden: "Removed" };
 const round = (v: number) => Math.round(v * 100) / 100;
 function sheetName(s: Sheet) { const m = /^Sheet(\d+)$/.exec(s.name); return m ? t("Sheet {n}", { n: m[1] }) : s.name; }
