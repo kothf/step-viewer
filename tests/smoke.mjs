@@ -4862,6 +4862,22 @@ try {
       const t2 = await tabs();
       check(t0 === 1 && t1 === 2 && same && t2 === 2, `drawing: Model on a drawing opened alone opens its part in a tab, once (${JSON.stringify({ t0, t1, t2, same })})`);
     }
+    // File ▸ Open drawing on that part: its drawing (in a tab and in the recent documents, offered once) comes back; hidden over a drawing.
+    {
+      const tabs = () => dp2.$$eval("#doc-tabs [data-dt]", els => els.length);
+      await dp2.click("#file-btn");
+      await dp2.waitForFunction(() => !document.querySelector("#file-menu").hidden);
+      const has = await dp2.evaluate(() => !!document.querySelector('#file-menu [data-f="open-drawing"]'));
+      await dp2.click('#file-menu [data-f="open-drawing"]');
+      await dp2.waitForFunction(() => !document.querySelector("#drw").hidden && window.__sv.drw.doc()?.sheets[0].views.length === 5, null, { timeout: 60000 });
+      const picker = await dp2.evaluate(() => !!document.querySelector("#drw-pick-dlg[open]"));
+      const t3 = await tabs();
+      await dp2.click('#drw [data-a="file"]');
+      await dp2.waitForFunction(() => !document.querySelector("#file-menu").hidden);
+      const over = await dp2.evaluate(() => !!document.querySelector('#file-menu [data-f="open-drawing"]'));
+      await dp2.keyboard.press("Escape");
+      check(has && !picker && t3 === 2 && !over, `drawing: File ▸ Open drawing opens the part's drawing from its tab, without a second tab (${JSON.stringify({ has, picker, t3, over })})`);
+    }
     await ctx.close();
   }
 

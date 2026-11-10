@@ -865,6 +865,8 @@ input.drop-val { outline: 2px solid var(--accent) !important; background: var(--
 .file-btn { display: inline-flex; align-items: center; gap: 6px; }
 #pack-dlg .pack-list { display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; margin: 8px 0; max-height: 40vh; overflow-y: auto; }
 #pack-dlg .pm-field { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; }
+#drw-pick-dlg .drw-pick-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 12px; max-height: 50vh; overflow-y: auto; }
+#drw-pick-dlg .drw-pick-list .btn { justify-content: space-between; text-align: left; gap: 12px; }
 .mc-empty { position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%); z-index: 3; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 14px 18px; text-align: center; }
 .mc-empty p { margin: 0 0 10px; font-weight: 600; }
 .mc-empty .row { gap: 6px; }

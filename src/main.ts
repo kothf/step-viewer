@@ -61,7 +61,8 @@ import { MotionManager } from "./motion/manager";
 import { flattenSubs } from "./asm/patterns";
 import { makeGrip, rememberDialogSizes } from "./resize";
 import { FileMenu, type LiveKind, type PackDoc } from "./fileMenu";
-import { recentAdd } from "./recent";
+import { recentAdd, recentFiles, recentList } from "./recent";
+import { drawingOf, peekDrawing, uniqueDrawings, type FoundDrawing, type ModelKey } from "./drawing/findDrawing";
 import { packAsm, ASM_EXT } from "./asm/file";
 import { bindValueDrops, dragValue } from "./valueDrop";
 import { bindLongPress } from "./longPress";
@@ -468,6 +469,84 @@ $("#new-drawing").addEventListener("click", () => {
   drawing.modelKey = key;
   void drawing.newFromModel();
 });
+
+/** The open 3D document a drawing can belong to (File ▸ Open drawing), or null. */
+function liveModelKey(): { key: ModelKey; name: string } | null {
+  if (drawing.open) return null;
+  if (modeller.active && modeller.store) return { key: { part: modeller.store.doc.id }, name: plainLabel(modeller.partName) || modeller.store.doc.name };
+  if (asm.active && asm.doc) return { key: { asm: asm.doc.id }, name: asm.doc.name };
+  if (viewer.parts.length && !isPcbMode() && state.fileName) return { key: { file: state.fileName }, name: state.fileName };
+  return null;
+}
+
+/**
+ * File ▸ Open drawing: the drawing of the open part, assembly or model file, from the drawing workspace, a
+ * document tab, the open vault or the recent documents. Several: the user picks one; none: offers New drawing.
+ */
+async function openDrawingOf() {
+  const live = liveModelKey();
+  if (!live) return;
+  const { key, name } = live, found: FoundDrawing[] = [];
+  const cur = drawing.current;
+  if (cur && drawingOf(cur.source, key)) found.push({ id: cur.id, label: cur.name, where: "open", open: () => drawing.show() });
+  for (const tab of docs?.tabs ?? []) {
+    const st = tab.kind === "drawing" ? tab.state as DrawingTab | null : null;
+    if (st && drawingOf(st.store.doc.source, key)) found.push({ id: st.store.doc.id, label: plainLabel(tab.label), where: "tab", open: () => docs!.activate(tab.id) });
+  }
+  const v = vaultPanel.vault;
+  if (v) {
+    try {
+      for (const f of await v.files()) {
+        if (f.deleted || !isDrawingName(f.path)) continue;
+        const bytes = await v.working(f.path) ?? await v.versionBytes(f.id, v.latest(f).n);
+        const d = await peekDrawing(bytes.slice().buffer as ArrayBuffer);
+        if (d && drawingOf(d.source, key)) found.push({ id: d.id, label: f.path, where: "vault", open: () => vaultPanel.openFile(f.id) });
+      }
+    } catch { /* the vault folder went away: the other places still count */ }
+  }
+  const recent = await recentList();
+  for (let i = 0; i < recent.length; i++) {
+    if (!isDrawingName(recent[i].name)) continue;
+    const fs = await recentFiles(i), file = fs?.find(x => isDrawingName(x.name));
+    const d = file && await peekDrawing(await file.arrayBuffer());
+    if (d && drawingOf(d.source, key)) found.push({ id: d.id, label: file!.name, where: "recent", open: () => openFiles(fs!) });
+  }
+  const list = uniqueDrawings(found);
+  if (list.length === 1) { await list[0].open(); return; }
+  if (!list.length) {
+    if (await confirmModal(t("No drawing of {name} is open, in the vault or in the recent documents. Make a new drawing of it?", { name }), t("New drawing"), t("Open drawing"))) $("#new-drawing").click();
+    return;
+  }
+  const pick = await pickDrawing(list, name);
+  if (pick) await pick.open();
+}
+
+/** Lets the user pick one of several drawings of the model. */
+function pickDrawing(list: FoundDrawing[], name: string): Promise<FoundDrawing | null> {
+  let d = document.getElementById("drw-pick-dlg") as HTMLDialogElement | null;
+  if (!d) {
+    d = document.createElement("dialog");
+    d.id = "drw-pick-dlg";
+    d.className = "modal v-dlg";
+    d.setAttribute("aria-labelledby", "drw-pick-title");
+    document.body.appendChild(d);
+    trapFocus(d, () => d!.open);
+  }
+  const dlg = d, where = { open: t("Open"), tab: t("In a tab"), vault: t("In the vault"), recent: t("Recent document") };
+  const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+  dlg.innerHTML = `<h3 id="drw-pick-title">${esc(t("Open drawing"))}</h3>`
+    + `<p class="muted">${esc(t("Drawings of {name}:", { name }))}</p>`
+    + `<div class="drw-pick-list">${list.map((x, i) => `<button class="btn" data-dp="${i}"><span translate="no">${esc(x.label)}</span> <span class="muted">${esc(where[x.where])}</span></button>`).join("")}</div>`
+    + `<div class="row end"><button class="btn" data-a="cancel">${esc(t("Cancel"))}</button></div>`;
+  return new Promise(res => {
+    let picked: FoundDrawing | null = null;
+    dlg.querySelectorAll<HTMLButtonElement>("[data-dp]").forEach(b => b.addEventListener("click", () => { picked = list[+b.dataset.dp!]; dlg.close(); }));
+    dlg.querySelector("[data-a=cancel]")!.addEventListener("click", () => dlg.close());
+    dlg.addEventListener("close", () => res(picked), { once: true });
+    dlg.showModal();
+    dlg.querySelector<HTMLButtonElement>("[data-dp]")?.focus();
+  });
+}
 
 // ---------- document tabs (FR-DOC-003, FR-UI-120) ----------
 /** The model file shown now (STEP/IGES/BREP/mesh), so its tab can open it again. */
@@ -3035,6 +3114,7 @@ const fileMenu = new FileMenu({
   newPart: () => $("#new-part").click(),
   newAsm: () => $("#new-asm").click(),
   newDrawing: () => $("#new-drawing").click(),
+  get openDrawing() { return liveModelKey() ? () => void openDrawingOf() : null; },
   get asmFromPart() { return modeller.active && !drawing.open ? () => $("#new-asm-part").click() : null; },
   async close() { const a = docs?.active; if (a) await docs!.close(a.id); },
   async closeAll() {

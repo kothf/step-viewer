@@ -224,6 +224,8 @@ export class DrawingWorkspace {
 
   get open() { return !this.el.hidden; }
   get hasDrawing() { return !!this.store; }
+  /** The drawing's document id, name and model (File ▸ Open drawing), or null. */
+  get current(): { id: string; name: string; source: DrawingDoc["source"] } | null { return this.store ? { id: this.doc.id, name: this.title, source: this.doc.source } : null; }
   private get doc() { return this.store!.doc; }
   private get sheet() { return this.doc.sheets[Math.min(this.sheetIdx, this.doc.sheets.length - 1)]; }
 
