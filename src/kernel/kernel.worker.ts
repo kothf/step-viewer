@@ -39,6 +39,8 @@ export type KernelRequest =
   | { id: number; type: "asmPrime"; doc: AsmDoc; key: string; quality: number }
   | { id: number; type: "prebuild"; doc: PartDoc; quality: number }
   | { id: number; type: "ping" }
+  /** Drops the document state so the worker can serve another document as the page's spare. */
+  | { id: number; type: "reset" }
   | { id: number; type: "asmInterfere"; doc: AsmDoc; touch?: boolean }
   | { id: number; type: "asmClearance"; doc: AsmDoc; min: number }
   | { id: number; type: "asmStep"; doc: AsmDoc }
@@ -63,6 +65,7 @@ let shared: WeakMap<object, { quality: number; data: PartData }> | null = null;
 /** The last evaluated body, for STEP export. */
 let lastBody: { shape: unknown; faces: unknown[] } | null = null;
 let heap: () => number = () => 0;
+let occ: unknown = null;
 const post = (msg: unknown, transfer: Transferable[] = []) => (self as DedicatedWorkerGlobalScope).postMessage(msg, transfer);
 
 async function init(base: string, module: WebAssembly.Module) {
@@ -76,6 +79,7 @@ async function init(base: string, module: WebAssembly.Module) {
       return {};
     },
   });
+  occ = oc;
   kernel = new Kernel(oc);
   heap = () => oc.HEAPU8?.length ?? 0;
 }
@@ -96,6 +100,12 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
     if (r.type === "init") { await init(r.base, r.module); post({ id: r.id, ok: true }); return; }
     if (!kernel) throw new Error("Kernel not started");
     if (r.type === "ping") { post({ id: r.id, ok: true }); return; }
+    if (r.type === "reset") {
+      modeller = null; assembler = null; shared = null; lastBody = null;
+      kernel = new Kernel(occ as ConstructorParameters<typeof Kernel>[0]);
+      post({ id: r.id, ok: true, heap: heap() });
+      return;
+    }
     if (r.type === "load") post({ id: r.id, ok: true, counts: kernel.load(new Uint8Array(r.buffer), r.name), heap: heap() });
     else if (r.type === "exact") post({ id: r.id, ok: true, patches: r.probes.map((p, i) => (p ? kernel!.exact(i, p) : null)) });
     else if (r.type === "step") {

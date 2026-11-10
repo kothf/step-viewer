@@ -3,8 +3,7 @@
 // coalesce: while one runs, only the newest request waits (FR-ARC-013). A worker
 // whose heap grew too big, or that crashed, is replaced and rebuilds from the
 // document (FR-ARC-011/012).
-import { compile } from "../kernel/client";
-import KernelWorker from "../kernel/kernel.worker?worker";
+import { giveBack, takeWorker } from "../kernel/spare";
 import type { Prebuilt } from "../kernel/kernel.worker";
 import { kernelPool, type KernelPool } from "../kernel/pool";
 import type { PartData } from "../topology";
@@ -61,7 +60,8 @@ export class ModelKernel {
 
   private start() {
     if (this.ready) return this.ready;
-    const w = new KernelWorker();
+    // The page's spare worker when there is one: its seconds of set-up are already done (or under way).
+    const { w, ready } = takeWorker(this.base);
     w.onmessage = (e: MessageEvent) => {
       const d = e.data, p = this.pending.get(d.id);
       if (!p) return;
@@ -70,23 +70,27 @@ export class ModelKernel {
     };
     w.onerror = e => this.crash(e.message || "The geometry kernel stopped");
     this.worker = w;
-    this.ready = compile(this.base).then(module => this.call<void>({ type: "init", base: this.base, module }));
-    this.ready.catch(() => this.stop());
+    this.ready = ready;
+    this.ready.catch(() => this.stop(false));
     return this.ready;
   }
 
   private crash(msg: string) {
     for (const p of this.pending.values()) p.reject(new Error(msg));
     this.pending.clear();
-    this.stop();
+    this.stop(false);
     this.onCrash?.(msg);
   }
 
-  stop() {
+  /** Stops the worker; `reuse`: an idle, healthy one becomes the page's spare for the next document. */
+  stop(reuse = true) {
     // Calls in flight end now: a parked document's rebuild must not wait for ever (it held "Rebuilding…").
+    const idle = !this.pending.size;
     for (const p of this.pending.values()) p.reject(new Error(STOPPED));
     this.pending.clear();
-    this.worker?.terminate();
+    const w = this.worker, ready = this.ready;
+    if (w && ready && reuse && idle && this.heap > 0) giveBack(w, this.base, this.heap);
+    else w?.terminate();
     this.worker = null;
     this.ready = null;
     this.heap = 0;
@@ -119,7 +123,7 @@ export class ModelKernel {
       const job = this.queued;
       this.queued = null;
       try {
-        if (this.heap > RECYCLE_HEAP) this.stop();
+        if (this.heap > RECYCLE_HEAP) this.stop(false);
         await this.start();
         const r = await this.call<Rebuild & { heap: number }>({ type: "model", doc: job.doc, color: job.color, quality: job.quality, previewAt: job.previewAt, verify: job.verify });
         this.heap = r.heap;

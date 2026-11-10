@@ -46,6 +46,7 @@ import { bindCommandBar, onCmTab, relabelCmTabs, setCmTabs, type CmTabId } from 
 import { renderHelp } from "./help";
 import { hint, relocalizeHint, setTips, tipsOn } from "./hints";
 import { initTutorial } from "./tutorialUi";
+import { warmSpare } from "./kernel/spare";
 import { KernelClient, type KernelStatus } from "./kernel/client";
 import { isMeshName, parseMesh } from "./meshLoad";
 import { isSolidWorksName } from "./sw/container";
@@ -633,6 +634,9 @@ let loadToken = 0;
   const saveData = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData;
   const warm = () => { if (!loadToken) worker.postMessage({ kind: "warm", occtBase: new URL("occt/", document.baseURI).href }); };
   if (!saveData) "requestIdleCallback" in window ? requestIdleCallback(warm, { timeout: 3000 }) : setTimeout(warm, 1500);
+  // Then the full kernel (50 MB, 3–5 s to set up): parts, assemblies and the exact pass of a STEP file
+  // take this spare worker, so even the first document opens without waiting for that set-up.
+  if (!new URLSearchParams(location.search).has("nokernel")) setTimeout(() => warmSpare(new URL("occt/", document.baseURI).href), 2000);
 }
 
 /**

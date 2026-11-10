@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.454.0] - 2026-11-10
+
+### Changed
+
+- **Parts open in a fraction of a second**: opening a part used to start a new geometry kernel (OpenCASCADE, 3–5 s to set itself up) every time, even for a part that rebuilds in 0.1 s. The app now sets one kernel up in the background after it starts, and a closed part's kernel is cleared and kept for the next document. Measured on a 4-core machine: a two-feature part 4.3 s → 0.45 s the first time, 3.3 s → 0.1–0.5 s for the next ones; the exact geometry of the first STEP file is ready after 0.8 s instead of 5 s. Devices with 4 GB of memory or less, and `?nospare`, keep the old behaviour.
+
 ## [1.453.0] - 2026-11-10
 
 ### Added
@@ -2724,7 +2730,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.453.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.454.0...HEAD
+[1.454.0]: https://github.com/kothf/step-viewer/compare/v1.453.0...v1.454.0
 [1.453.0]: https://github.com/kothf/step-viewer/compare/v1.452.0...v1.453.0
 [1.452.0]: https://github.com/kothf/step-viewer/compare/v1.451.0...v1.452.0
 [1.451.0]: https://github.com/kothf/step-viewer/compare/v1.450.0...v1.451.0

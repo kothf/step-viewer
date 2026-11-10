@@ -3,8 +3,7 @@
 // compiled module is shared). An assembly build hands its distinct parts to these helpers while
 // its own worker takes a share too. Helpers start on demand and stop after a while idle, so the
 // memory each instance holds goes back.
-import { compile } from "./client";
-import KernelWorker from "./kernel.worker?worker";
+import { takeWorker } from "./spare";
 
 /** Helpers stop after this long without work. */
 const IDLE_MS = 30_000;
@@ -73,8 +72,8 @@ export class KernelPool {
   }
 
   private spawn(): Helper {
-    const w = new KernelWorker();
-    const h: Helper = { w, ready: Promise.resolve(), busy: false, heap: 0, pending: new Map() };
+    const { w, ready } = takeWorker(this.base);
+    const h: Helper = { w, ready, busy: false, heap: 0, pending: new Map() };
     w.onmessage = (e: MessageEvent) => {
       const d = e.data, p = h.pending.get(d.id);
       if (!p) return;
@@ -83,7 +82,6 @@ export class KernelPool {
       if (d.ok) p.resolve(d); else p.reject(new Error(d.error));
     };
     w.onerror = e => this.kill(h, e.message || "The geometry kernel stopped");
-    h.ready = compile(this.base).then(module => this.send<void>(h, { type: "init", base: this.base, module }));
     this.helpers.push(h);
     return h;
   }
