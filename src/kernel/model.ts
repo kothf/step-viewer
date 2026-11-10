@@ -68,6 +68,8 @@ export const STD_FRAMES: Record<"XY" | "XZ" | "YZ", Frame> = {
 
 const add = (a: V3, b: V3): V3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 const mul = (a: V3, s: number): V3 => [a[0] * s, a[1] * s, a[2] * s];
+/** Gap within which touching material is joined when a plain fuse leaves it apart (mm). */
+const FUSE_FUZZ = 1e-5;
 const d3 = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 const dot = (a: V3, b: V3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const sub3 = (a: V3, b: V3): V3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -316,7 +318,7 @@ export class Modeller {
     if (ad.GetType() !== oc.GeomAbs_SurfaceType.GeomAbs_Plane) throw new FeatureError("E-FT-NOTPLANAR", "A sketch needs a flat face or a plane.");
     const pos = ad.Plane().Position();
     let n = this.xyz(pos.Direction());
-    const x = this.xyz(pos.XDirection());
+    let x = this.xyz(pos.XDirection());
     // The face's own normal is du × dv of its surface; a plane made by revolving a straight edge (a revolve's
     // flat end or web face) is a surface of revolution whose du × dv can point against the plane's axis.
     {
@@ -327,6 +329,11 @@ export class Modeller {
     }
     const reversed = face.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED;
     if (reversed) { n = mul(n, -1); }
+    if (ref.ax === 1) {
+      // Stable in-plane X (exam #85): the part's X laid onto the face, or its Y on a face square to X.
+      const px: V3 = Math.abs(n[0]) > 0.99 ? [0, 1, 0] : [1, 0, 0];
+      x = add(px, mul(n, -dot(px, n)));
+    }
     let o: V3 = mul(n, dot(this.xyz(pos.Location()), n));
     if (ref.offset) o = add(o, mul(n, ref.offset));
     return frameFrom(o, x, n);
@@ -909,6 +916,21 @@ export class Modeller {
       : kind === "cut" ? new oc.BRepAlgoAPI_Cut_3(a.shape, b.shape, pr)
       : new oc.BRepAlgoAPI_Common_3(a.shape, b.shape, pr);
     if (!mk.IsDone() || mk.HasErrors()) throw new FeatureError("E-FT-BOOL", kind === "fuse" ? "The new material could not be joined to the body." : "The cut failed.");
+    if (kind === "fuse" && !glue) {
+      // Material that only touches the body, with a gap of sketch round-off (a few 1e-6 mm, e.g. a boss
+      // drawn on a snapped edge), stayed a separate solid (Leuenberger exam #82). When the plain fuse
+      // joins nothing, fuse again with a fuzzy value of 1e-5 mm, about SolidWorks' modelling tolerance.
+      const n = this.solids(mk.Shape());
+      if (n > 1 && n >= this.solids(a.shape) + this.solids(b.shape)) {
+        const fz = new oc.BRepAlgoAPI_Fuse_1();
+        const A = new oc.TopTools_ListOfShape_1(), B = new oc.TopTools_ListOfShape_1();
+        A.Append_1(a.shape); B.Append_1(b.shape);
+        fz.SetArguments(A); fz.SetTools(B);
+        fz.SetFuzzyValue(FUSE_FUZZ);
+        fz.Build(new oc.Message_ProgressRange_1());
+        if (fz.IsDone() && !fz.HasErrors() && this.solids(fz.Shape()) < n) return this.carry(fz, [a, b], fz.Shape(), fid);
+      }
+    }
     return this.carry(mk, [a, b], mk.Shape(), fid);
   }
 

@@ -219,6 +219,10 @@ export interface SmConvertFeature {
   k?: number;
   /** Rip gap at corners (default 0.1 mm). */
   gap?: Num;
+  /** Auto relief at corners where two converted walls' bends meet (absent = none; new features: rect). */
+  relief?: ReliefKind;
+  /** Auto relief ratio × thickness (default 0.5). */
+  reliefRatio?: number;
 }
 
 /**
@@ -232,6 +236,10 @@ export interface SmInsertFeature {
   radius: Num;
   k?: number;
   gap?: Num;
+  /** Auto relief at corners where two converted walls' bends meet (absent = none; new features: rect). */
+  relief?: ReliefKind;
+  /** Auto relief ratio × thickness (default 0.5). */
+  reliefRatio?: number;
 }
 
 /**

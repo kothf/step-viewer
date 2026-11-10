@@ -1789,3 +1789,19 @@ test("an arc's side face keeps its own name next to a smaller concentric hole (e
   const old = run(new Modeller(await occ()), doc(feats)).body!.names;
   assert.ok(old.includes("e:side:dhole:1") && !old.includes("e:side:darc"), old.join(" "));
 });
+
+test("a boss that touches the body across sketch round-off joins it (exam #82)", async () => {
+  const m = new Modeller(await occ());
+  // Front-plane sketches like the shaft bracket: base 37 × 7 drawn 3.4e-6 low, upright 16 × 16 from 7.0000006.
+  const s1 = rect("s1", 0, 3.5 - 3.4e-6, 37, 7, { std: "XZ" });
+  const e1: Feature = { id: "e1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "mid", depth: { v: 12 } };
+  const s2 = rect("s2", 0, 15.0000006, 16, 16, { std: "XZ" });
+  const e2: Feature = { id: "e2", type: "extrude", name: "Extrude2", sketch: "s2", op: "boss", end: "mid", depth: { v: 12 } };
+  const r = run(m, doc([s1, e1, s2, e2]));
+  assert.equal(r.props!.bodies, 1);
+  close(r.props!.volume, 37 * 7 * 12 + 16 * 16 * 12, 1e-5);
+  // Bodies a real gap apart stay apart.
+  const s3 = rect("s3", 0, 23.01 + 2, 8, 4, { std: "XZ" });
+  const e3: Feature = { id: "e3", type: "extrude", name: "Extrude3", sketch: "s3", op: "boss", end: "mid", depth: { v: 12 } };
+  assert.equal(run(m, doc([s1, e1, s2, e2, s3, e3])).props!.bodies, 2);
+});

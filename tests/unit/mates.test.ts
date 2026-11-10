@@ -427,3 +427,27 @@ test("a screw mate turns its shaft when the nut is moved by a distance (exam #75
     assert.ok(Math.abs(turned - want) < 1e-3, `${move}: turned ${turned}, expected ${want}`);
   }
 });
+
+test("a slot mate keeps the pin between the slot's rounded ends (exam #81)", () => {
+  // Slot 10 wide in y (faces y = 30 and 40) with end caps r 5 at x = 0 and x = 20, axes along z.
+  const g2: Record<string, Record<string, Geo>> = { ...geos, plate: { ...geos.plate,
+    slotA: { k: "plane", p: [10, 30, 0], n: [0, -1, 0] }, slotB: { k: "plane", p: [10, 40, 0], n: [0, 1, 0] },
+    cap0: { k: "axis", p: [0, 35, 3], d: [0, 0, 1], r: 5 }, cap1: { k: "axis", p: [20, 35, -2], d: [0, 0, -1], r: 5 } } };
+  const gg = (p: string, f: string) => g2[p]?.[f] ?? null;
+  const faces = (p: string) => Object.values(g2[p] ?? {});
+  const at = (x: number): AsmDoc => ({ ...doc([{ id: "sl", name: "Slot1", type: "slot", a: { comp: "p", face: "slotA" }, b: { comp: "q", face: "shank" }, c: { comp: "p", face: "slotB" } }]),
+    components: [{ id: "p", name: "plate<1>", part: "plate", tf: IDENTITY, fixed: true }, { id: "q", name: "pin<1>", part: "pin", tf: translation([x, 36, 0]) }] });
+  // Inside the slot the pin stays where it is along it.
+  const s1 = solve({ doc: at(12), geo: gg, faces, size: 100 });
+  assert.ok(s1.ok);
+  assert.ok(Math.abs(applyPoint(s1.tfs.q, [0, 0, 0])[0] - 12) < 1e-6 && Math.abs(applyPoint(s1.tfs.q, [0, 0, 0])[1] - 35) < 1e-6);
+  // Past an end it is brought back to that end (measured where the cap axes are, z = 3: the pin may lean along the slot); without the faces (older callers) it may stay out.
+  const s2 = solve({ doc: at(31), geo: gg, faces, size: 100 });
+  assert.ok(s2.ok && Math.abs(applyPoint(s2.tfs.q, [0, 0, 3])[0] - 20) < 1e-5, String(applyPoint(s2.tfs.q, [0, 0, 3])));
+  const s3 = solve({ doc: at(-7), geo: gg, faces, size: 100 });
+  assert.ok(s3.ok && Math.abs(applyPoint(s3.tfs.q, [0, 0, 3])[0]) < 1e-5);
+  assert.ok(Math.abs(applyPoint(solve({ doc: at(31), geo: gg, size: 100 }).tfs.q, [0, 0, 0])[0] - 31) < 1e-6);
+  // The ends take no freedom away, even with the pin at one.
+  const free = solve({ doc: at(20), geo: gg, faces, size: 100 }).dof.q, plain = solve({ doc: at(20), geo: gg, size: 100 }).dof.q;
+  assert.equal(free, plain);
+});

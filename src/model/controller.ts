@@ -5,6 +5,7 @@
 // The document (DocStore) is the source of truth; every rebuild sends it to the
 // kernel worker and shows the returned body with the viewer's own pipeline, so
 // the measuring tools work on modelled parts unchanged.
+import type { VaultTie } from "../pdm/panel";
 import type { NamedView, V2 } from "./types";
 import type { NamedViews } from "../viewer/navigation";
 import * as THREE from "three";
@@ -285,7 +286,7 @@ export class ModelController {
    * The open part came from a vault (FR-PDM-010/081): saving writes the working copy there, only while it is
    * checked out here; the title shows the version and a read-only bar offers Check out.
    */
-  vault: { label: string; readOnly: boolean; save(bytes: Uint8Array): Promise<void>; checkOut(): Promise<void> } | null = null;
+  vault: VaultTie | null = null;
 
   /** Ties (or unties) the open part to a vault file and refreshes the title and read-only bar. */
   setVault(v: ModelController["vault"]) {
@@ -834,7 +835,7 @@ export class ModelController {
     const face = this.host.viewer.parts[0]?.data.faces[faceId];
     if (!name || !face) return null;
     if (face.type !== "plane") { toast(t("Pick a flat face or a plane: this one is curved."), true); return null; }
-    return { face: { name, hint: face.centroid } };
+    return { face: { name, hint: face.centroid }, ax: 1 };
   }
 
   private async createSketch(plane: PlaneRef) {
@@ -2285,6 +2286,8 @@ export class ModelController {
 
   private key(e: KeyboardEvent) {
     if (!this.store) return;
+    // An open drawing owns the keyboard: Ctrl+Z there undid the part's last feature (drawings exam #1).
+    if (document.getElementById("app")?.classList.contains("drawing")) return;
     const tg = e.target as HTMLElement;
     if (tg.matches?.("input, select, textarea") || tg.closest?.("dialog")) return;
     const k = e.key.toLowerCase();
@@ -5542,7 +5545,7 @@ export class ModelController {
 
   private command(c: string) {
     const m = this.mode;
-    if (c.startsWith("sk:") && m.kind === "sketch") { m.editor.setTool(c.slice(3) as SkTool); this.renderBar(); return; }
+    if (c.startsWith("sk:") && m.kind === "sketch") { m.editor.setTool(c.slice(3) as SkTool); this.renderBar(); this.renderPanel(); return; } // the panel shows the tool's fields (fillet radius, exam #89)
     switch (c) {
       case "cons": if (m.kind === "sketch") m.editor.toggleConstruction(); break;
       case "skmirror": if (m.kind === "sketch") { m.editor.mirrorSelection(); this.renderPanel(); } break;
