@@ -108,4 +108,5 @@ CI runs the smoke test as 6 parallel jobs (`SMOKE_SHARD=i/6 npm test` runs one; 
 - STEP circles often arrive as two 180° arcs; use `circlesOf`/`faceCircle` in `measure.ts` rather than checking `type === "circle"`.
 - `computeBoundsTree({ indirect: true })` keeps triangle order matching B-rep faces; don't drop `indirect`.
 - Debug handle: `window.__sv` in dev or with `?debug` in the URL.
+- Face naming is part of a part file's contract: mates, drawings and features store face names. `PartDoc.naming` 2 (new parts, 1.410.0) matches sweep side faces to sketch curves by a point on the edge (`Modeller.edgeOnPoint`); older files keep the centre-of-mass match. Never change how existing files name faces without such a version switch.
 - MIT licence; the `occt/` folder in builds ships occt-import-js/OCCT under LGPL-2.1, unmodified.

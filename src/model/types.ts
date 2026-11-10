@@ -910,6 +910,12 @@ export interface PartDoc {
   features: Feature[];
   /** Features after this index are not evaluated (rollback bar); null: all. */
   rollback: number | null;
+  /**
+   * Face naming version: 2 = sweep side faces are matched to sketch curves by a point on each edge (exam #77). Absent (files from
+   * before 1.410.0): by the edge's centre of mass, which can give an arc's face the name of a smaller concentric curve; kept so the
+   * faces their mates and references name stay the same.
+   */
+  naming?: 2;
   /** Global variables (Equations). */
   vars?: GlobalVar[];
   /** Configurations; absent: only the default one. */

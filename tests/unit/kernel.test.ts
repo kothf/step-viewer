@@ -1772,3 +1772,20 @@ test("a boss standing on the body is glued on, one standing in it is fused (name
   const r3 = run(m, doc([s1, ex, pads, { ...ex2, flip: true } as Feature]));
   close(r3.props!.volume, 120000);
 });
+
+test("an arc's side face keeps its own name next to a smaller concentric hole (exam #77)", async () => {
+  const m = new Modeller(await occ());
+  const P = (id: string, x: number, y: number): SkEnt => ({ id, t: "point", x, y });
+  const sk: SketchFeature = { id: "d", type: "sketch", name: "d", plane: { std: "XY" }, rels: [], dims: [], ents: [
+    P("p1", 0, -3.5), P("p2", 30, -3.5), P("p3", 30, 3.5), P("p4", 0, 3.5), P("pc", 30, 0),
+    { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "darc", t: "arc", c: "pc", a: "p2", b: "p3" },
+    { id: "l2", t: "line", a: "p3", b: "p4" }, { id: "l3", t: "line", a: "p4", b: "p1" },
+    { id: "dhole", t: "circle", c: "pc", r: 1.25 },
+  ] };
+  const feats: Feature[] = [sk, { id: "e", type: "extrude", name: "Extrude1", sketch: "d", op: "boss", end: "blind", depth: { v: 3 } }];
+  const names = run(m, { ...doc(feats), naming: 2 }).body!.names;
+  assert.ok(names.includes("e:side:darc") && names.includes("e:side:dhole") && !names.some(n => n.endsWith(":1")), names.join(" "));
+  // Files from before the fix keep the names their references were made with.
+  const old = run(new Modeller(await occ()), doc(feats)).body!.names;
+  assert.ok(old.includes("e:side:dhole:1") && !old.includes("e:side:darc"), old.join(" "));
+});
