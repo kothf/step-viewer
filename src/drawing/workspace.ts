@@ -1719,8 +1719,12 @@ export class DrawingWorkspace {
     // Balloons keep clear of the annotations already on the sheet (dimension texts, notes, tables): drawings exam round 2.
     const pl = this.placements.get(v.id), R = BALLOON_R + 1;
     const boxes = [...this.annotHits.filter(h => !h.ring).map(h => h.box), ...this.sheet.views.flatMap(w => { const q = this.placements.get(w.id); return q ? [viewRect(q)] : []; })];
-    const taken = (p: Pt) => { if (!pl) return false; const [x, y] = toSheet(pl, p[0], p[1]); return boxes.some(([x0, y0, x1, y1]) => x > x0 - R && x < x1 + R && y > y0 - R && y < y1 + R); };
-    const add = autoBalloons(this.sheet, v, this.facts.topo, projector(viewDir(this.sheet, v)).P, proj, viewScale(this.sheet, v), this.balloonItems(), () => uid("a_"), 12, taken);
+    // Drawings exam #39: nor outside the drawing frame, nor on the title block.
+    const [fx0, fy0, fx1, fy1] = frameOf(this.sheet), [tbx, tby] = titleBlockAt(this.sheet), tbh = tbSize(this.sheet)[1];
+    const off = (x: number, y: number) => x < fx0 + R || x > fx1 - R || y < fy0 + R || y > fy1 - R || (x > tbx - R && y < tby + tbh + R);
+    const outside = (p: Pt) => { if (!pl) return false; const [x, y] = toSheet(pl, p[0], p[1]); return off(x, y); };
+    const taken = (p: Pt) => { if (!pl) return false; const [x, y] = toSheet(pl, p[0], p[1]); return off(x, y) || boxes.some(([x0, y0, x1, y1]) => x > x0 - R && x < x1 + R && y > y0 - R && y < y1 + R); };
+    const add = autoBalloons(this.sheet, v, this.facts.topo, projector(viewDir(this.sheet, v)).P, proj, viewScale(this.sheet, v), this.balloonItems(), () => uid("a_"), 12, taken, outside);
     if (!add.length) { toast(t("Every item already has a balloon in the view.")); return; }
     this.store!.change("Auto balloon", d => { const S = d.sheets[this.sheetIdx]; (S.annots ??= []).push(...add); });
     toast(t("{n} balloon added|{n} balloons added", { n: add.length }), "success");
@@ -2777,8 +2781,12 @@ export class DrawingWorkspace {
       for (const c of sh.views) if (c.parent === v.id) s += item(c, depth + 1);
       return s;
     };
+    // Rebuilding the rows drops the focus a row click gave the tree; keep it there, on the selected row, so Delete
+    // (and the arrow keys) still reach the tree, as after a click in SolidWorks' FeatureManager.
+    const hadFocus = host.contains(document.activeElement);
     host.innerHTML = `<div role="treeitem" tabindex="${this.sel ? -1 : 0}" aria-selected="${!this.sel}" class="drw-ti sheet${this.sel ? "" : " on"}" data-sel="">${ICON.hlr}<span>${esc(sheetName(sh))}</span><small>${esc(sh.size === "custom" ? t("Custom") : sh.size)} · ${scaleText(sh.scale)}</small></div>`
       + sh.views.filter(v => !v.parent || !findView(sh, v.parent)).map(v => item(v, 1)).join("");
+    if (hadFocus) host.querySelector<HTMLElement>(".drw-ti.on")?.focus({ preventScroll: true });
   }
 
   /** The Custom… scale box being typed into ("v" view, "s" sheet): kept across re-renders of the panel. */
@@ -3346,6 +3354,7 @@ export class DrawingWorkspace {
       dxf: () => (this.store ? (() => { const sh = this.sheet, [W, H] = sheetSize(sh); return sheetDxf(this.composed(sh).prims, W, H); })() : ""),
       sheetPt: (x: number, y: number) => { const rc = this.svg.getBoundingClientRect(), H = sheetSize(this.sheet)[1]; return [rc.left + (x - this.vb.x) / this.vb.w * rc.width, rc.top + (H - y - this.vb.y) / this.vb.h * rc.height]; },
       placement: (id: string) => this.placements.get(id) ?? null,
+      frame: () => ({ frame: frameOf(this.sheet), tb: [...titleBlockAt(this.sheet), ...tbSize(this.sheet)] }),
       mode: () => this.mode.kind,
       fields: () => (this.store ? this.fields() : null),
       helper: () => this.kernel.helperState(),
