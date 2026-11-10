@@ -1509,3 +1509,18 @@ test("offset section: the cutter's steps are no lines in the view (drawings exam
   assert.ok(ps[0][0] === -15 && ps[0][2] === -15 && Math.abs(ps[0][1] - 15) < 0.3 && ps[0][3] === 35, `the step stays only where it borders the uncut boss (${ps[0]})`);
   assert.equal(proj.hid.length, 0, "between two cut faces it goes");
 });
+
+test("half section: hatched even when the stored line is a hair off the rounded path (drawings exam #13)", async () => {
+  const { section } = await import("../../src/kernel/drawing");
+  const { viewReq } = await import("../../src/drawing/views");
+  const { oc, shape } = await block();
+  const parent = { id: "t", name: "Top", orient: "top", x: 100, y: 200 };
+  for (const look of [1, -1]) {
+    // The first point snapped to the block's edge: the line keeps 1.6e-5 of drift, the path is rounded.
+    const v = { id: "s", name: "A", kind: "section", parent: "t", line: [20.0000162, -30.000004, 20, 0], path: [20, -30, 20, 0, 50, 0], look, x: 100, y: 80 };
+    const sheet = { id: "sh", name: "S", size: "A3", scale: [1, 1], projection: "first", views: [parent, v], annots: [] } as never;
+    const req = viewReq(sheet, v as never);
+    const s = section(oc, shape, req.view, req.p!, 0.02, undefined, { stair: req.stair });
+    assert.ok(s.cut!.length >= 1, `look ${look}: ${s.cut!.length} cut faces`);
+  }
+});

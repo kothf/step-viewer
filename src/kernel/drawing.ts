@@ -376,9 +376,9 @@ export function section(oc: any, shape: any, view: ViewDir, p: V3, tol = 0.02, p
     const f = oc.TopoDS.Face_1(ex.Current());
     const ad = new oc.BRepAdaptor_Surface_2(f, true);
     if (ad.GetType() !== oc.GeomAbs_SurfaceType.GeomAbs_Plane) continue;
-    const pl = ad.Plane(), dn = pl.Axis().Direction(), lp = pl.Location();
-    if (Math.abs(Math.abs(dn.X() * n[0] + dn.Y() * n[1] + dn.Z() * n[2]) - 1) > 1e-7) continue;
-    const ld = lp.X() * n[0] + lp.Y() * n[1] + lp.Z() * n[2];
+    const pl = ad.Plane(), dn = pl.Axis().Direction(), lp = pl.Location(), N = st ? st.m : n;
+    if (Math.abs(Math.abs(dn.X() * N[0] + dn.Y() * N[1] + dn.Z() * N[2]) - 1) > 1e-7) continue;
+    const ld = lp.X() * N[0] + lp.Y() * N[1] + lp.Z() * N[2];
     if (!(st ? st.planes : [d0]).some(d => Math.abs(ld - d) <= 1e-5)) continue;
     const owner = owned.find(o => o.f.IsSame(f))?.i ?? -1;
     if (opts.namer) oc.TopExp.MapShapes_1(f, A.TopAbs_EDGE, capEdges);
