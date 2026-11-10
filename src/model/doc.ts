@@ -15,6 +15,7 @@ export function newPart(name = "Part1"): PartDoc {
     props: {},
     features: [],
     rollback: null,
+    naming: 2,
   };
 }
 
