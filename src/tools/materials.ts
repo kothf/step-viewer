@@ -443,7 +443,7 @@ export const CHECKED: Record<string, string> = {
   "PEEK": "www.curbellplastics.com/wp-content/uploads/2022/11/TECAPEEK-Natural-Data-Sheet.pdf",
   "PET (PET-P)": "plasticsintl.com/media/ocglsyfe/pet-tecapet-data-sheet.pdf",
   "OSB/3": "forest.one/media/sparsh/product_attachment/EGGER_-_OSB_TDS.pdf",
-  // 1.406.0: PA66 stock shapes and the PLEXIGLAS GS/XT sheet.
+  // 1.407.0: PA66 stock shapes and the PLEXIGLAS GS/XT sheet.
   "Nylon PA66": "www.polymershapes.com/wp-content/uploads/2020/04/Polymershapes_Ensigner_DataSheet-TECAMID-66-natural.pdf",
   "PMMA (acrylic)": "www.voskunststoffen.nl/files/166151/datasheet%20plexiglas%20XT%20GS.pdf",
 };

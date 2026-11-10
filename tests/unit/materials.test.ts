@@ -127,7 +127,7 @@ test("fifth pass (1.405.0): POM-H, PEEK, PET-P and OSB/3 checked against makers'
   assert.equal(findMaterial("OSB/3")!.density, 0.6);
 });
 
-test("sixth pass (1.406.0): PA66 and PMMA checked against makers' sheets", () => {
+test("sixth pass (1.407.0): PA66 and PMMA checked against makers' sheets", () => {
   const checked = LIBRARY.filter((m) => m.ref);
   assert.ok(checked.length >= 139, `${checked.length} checked`);
   assert.ok(LIBRARY.length - checked.length <= 31);
