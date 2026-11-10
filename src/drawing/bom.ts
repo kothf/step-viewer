@@ -125,7 +125,7 @@ export const bomCells = (b: Bom): string[][] => b.rows.map(r => [String(r.item),
 
 /** Balloon outlines (SolidWorks' balloon styles): the plain circle, a circle split for the quantity, or a polygon; "none" = the number alone, underlined. */
 export type BalloonShape = "split" | "tri" | "hex" | "box" | "none";
-const BALLOON_R = 5;
+export const BALLOON_R = 5;
 
 /** The corners of a polygon balloon about `o`, ccw (every shape is 2R tall, so stacked balloons touch). */
 export function balloonOutline(o: P2, shape: BalloonShape | undefined, R = BALLOON_R): P2[] | null {
@@ -230,7 +230,7 @@ export function bomItems(bom: Bom): BalloonItems {
   return { edge: k => { const c = compOfKey(k); return c ? bom.itemOf(c) : null; }, stack: s => bom.itemOf(s) };
 }
 
-export function autoBalloons(sheet: Sheet, v: DrawingView, topo: Topo, P: (p: V3) => P2, proj: Projection, s: number, items: BalloonItems, uid: () => string, gap = 12): BalloonAnnot[] {
+export function autoBalloons(sheet: Sheet, v: DrawingView, topo: Topo, P: (p: V3) => P2, proj: Projection, s: number, items: BalloonItems, uid: () => string, gap = 12, taken?: (p: P2) => boolean): BalloonAnnot[] {
   const have = new Set<number>();
   for (const a of sheet.annots ?? []) if (a.t === "balloon" && a.view === v.id && (items.mine?.(a) ?? true)) {
     for (const i of ["e" in a.ref ? items.edge(a.ref.e) : null, ...(a.stack ?? []).map(x => items.stack(x))]) if (i) have.add(i);
@@ -266,6 +266,22 @@ export function autoBalloons(sheet: Sheet, v: DrawingView, topo: Topo, P: (p: V3
       if (side) q.pos[1] += (q.pos[1] >= p.pos[1] ? 1 : -1) * (minD - d + 1e-6);
       else q.pos[0] += (q.pos[0] >= p.pos[0] ? 1 : -1) * (minD - d + 1e-6);
     }
+  }
+  // A balloon on top of something already there (a dimension's text, a note, another view) takes the nearest free place
+  // further out or along the side it sits on, in 3 mm steps; with none free it stays where it was.
+  // Balloons still on top of each other after the spread (many items round a small view) are moved the same way.
+  const done: typeof placed = [];
+  for (const p of placed) {
+    const clear = (q: P2) => done.every(o => Math.hypot(o.pos[0] - q[0], o.pos[1] - q[1]) >= minD);
+    if (!taken?.(p.pos) && clear(p.pos)) { done.push(p); continue; }
+    const onSide = Math.abs(Math.abs(p.pos[0] - cx) - ((x1 - x0) / 2 + g)) < 1e-6;
+    const out: P2 = onSide ? [Math.sign(p.pos[0] - cx) || 1, 0] : [0, Math.sign(p.pos[1] - cy) || 1], along: P2 = onSide ? [0, 1] : [1, 0], st = 3 / s;
+    const cands: { q: P2; d: number }[] = [];
+    for (let k = 0; k <= 20; k++) for (let j = -16; j <= 16; j++) if (k || j) cands.push({ q: [p.pos[0] + (out[0] * k + along[0] * j) * st, p.pos[1] + (out[1] * k + along[1] * j) * st], d: Math.hypot(k, j) });
+    cands.sort((a, b) => a.d - b.d);
+    const free = cands.find(c => !taken?.(c.q) && clear(c.q));
+    if (free) p.pos = free.q;
+    done.push(p);
   }
   return placed.map(p => ({ id: uid(), t: "balloon" as const, view: v.id, ref: { e: p.b.e.k, h: p.b.e.m, p: "e" as const }, pos: [Math.round(p.pos[0] * 100) / 100, Math.round(p.pos[1] * 100) / 100] as P2 }));
 }

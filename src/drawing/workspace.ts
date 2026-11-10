@@ -9,7 +9,7 @@ import type { MEdge, Projection, ViewDir } from "../kernel/drawing";
 import { AUTO_LAYERS, arrowOutside, withCut, wholeCircle, edgeOnSeg, outlineSeg, clineSegs, cloudPrims, dimGeo, factsCtx, holeEdges, ringDist, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, stackItem, edgeItem, weldItem, cutDesc, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
 import type { PartDoc } from "../model/types";
 import type { AsmDoc } from "../asm/types";
-import { BOM_COLS, autoBalloons, compOfKey, sheetBom, subsOf, type BalloonItems, type Bom } from "./bom";
+import { BALLOON_R, BOM_COLS, autoBalloons, compOfKey, sheetBom, subsOf, type BalloonItems, type Bom } from "./bom";
 import { t, onLangChange, lang } from "../i18n";
 import { toast, confirmModal } from "../ui";
 import { DrawingKernel, type ModelFacts } from "./client";
@@ -105,7 +105,11 @@ type AnnotMode =
   /** Smart dimension (FR-DRW-021): pick one or two entities, then place. */
   | { kind: "dim"; view: string | null; picks: Pick[]; at: Pt | null }
   /** Chain, baseline or ordinate dimensions (FR-DRW-021): the first point is the base, each further point adds dimensions at once. */
-  | { kind: "dimset"; how: "chain" | "base" | "ord"; view: string | null; picks: GeoRef[]; axis: "h" | "v" | null; at: Pt | null }
+  | { kind: "dimset"; how: "chain" | "base" | "ord"; view: string | null; picks: GeoRef[]; axis: "h" | "v" | null; at: Pt | null;
+      /** Where the set's first row runs (view model axes), fixed by the placement click after the second point. */
+      row?: number;
+      /** The second point while the set waits for its placement click. */
+      pend?: GeoRef | null }
   /** Hole table (FR-DRW-024): click the origin on a view (its end-on holes are taken), then place the table. */
   | { kind: "htable"; view: string | null; origin: GeoRef | null; holes: GeoRef[]; at: Pt | null }
   /** Bend table (FR-FT-120): click a flat pattern view, then place the table. */
@@ -267,6 +271,8 @@ export class DrawingWorkspace {
   private get bom(): Bom | null { return this.bomFor(this.sheet); }
   /** A weldment part's cut list, which balloons number when the drawing has no BOM. */
   private get cuts() { return this.bom ? null : this.facts?.cuts?.length ? this.facts.cuts : null; }
+  /** A part drawing with no cut list: balloons are item 1 (SolidWorks numbers a part drawing's balloon 1). */
+  private get single() { return this.doc.source.kind !== "asm" && !this.facts?.cuts?.length; }
   /** What balloons number on this sheet: BOM items (assembly) or cut list items (weldment part). */
   private balloonItems(): BalloonItems { const c = this.ctx(); return { edge: k => edgeItem(k, c), stack: x => stackItem(x, c), mine: a => !a.weld }; }
   /** What weld tags number: the bead's row in the weld table. */
@@ -584,7 +590,7 @@ export class DrawingWorkspace {
     else if (m.kind === "brokenout") s = m.pts.length < 3 ? t("Click the corners of the area to cut away on the view.") : t("Click more corners; click the first corner or press Enter to cut.");
     else if (m.kind === "break") s = m.a != null ? t("Click where the break ends.") : t("Click where the break starts on the view.");
     else if (m.kind === "dim") s = !m.picks.length ? t("Click an edge, a circle or a point of a view. Esc ends.") : t("Click a second edge or point, or click where the dimension goes. Esc ends.");
-    else if (m.kind === "dimset") s = !m.picks.length ? t("Click the base point: a corner or a circle centre.") : t("Click the next point. Enter or Esc ends.");
+    else if (m.kind === "dimset") s = !m.picks.length ? t("Click the base point: a corner or a circle centre.") : m.pend ? t("Click where the dimensions go.") : t("Click the next point. Enter or Esc ends.");
     else if (m.kind === "htable") s = m.origin ? t("Click where the hole table goes.") : t("Click the origin of the hole table on a view: a corner or a circle centre.");
     else if (m.kind === "btable") s = m.view ? t("Click where the bend table goes.") : t("Click a flat pattern view.");
     else if (m.kind === "wtable") s = m.view ? t("Click where the weld table goes.") : t("Click a view of the weldment.");
@@ -1128,7 +1134,7 @@ export class DrawingWorkspace {
   private ctx(sh: Sheet = this.sheet): AnnotCtx {
     const f = this.facts;
     if (this.store) { useStyle(this.doc.style); useProps(this.fields(sh) as unknown as Record<string, string>); }
-    return { ...factsCtx(f), dec: lang() === "ru" ? "," : ".", label: (s, p) => t(s, p), bom: this.bomFor(sh), forView: v => { const c = viewConfig(sh, v), g = (c && this.kernel.configs.get(c)) || null, pr = this.kernel.cache.get(viewReq(sh, v).key); return pr?.cutEdges?.length ? factsCtx(withCut(g ?? f, pr)) : g ? factsCtx(g) : null; } };
+    return { ...factsCtx(f), dec: lang() === "ru" ? "," : ".", label: (s, p) => t(s, p), bom: this.bomFor(sh), single: this.single, forView: v => { const c = viewConfig(sh, v), g = (c && this.kernel.configs.get(c)) || null, pr = this.kernel.cache.get(viewReq(sh, v).key); return pr?.cutEdges?.length ? factsCtx(withCut(g ?? f, pr)) : g ? factsCtx(g) : null; } };
   }
 
   /** The model facts a view draws on: its part configuration's (FR-DRW-010) once built, else the loaded model's. */
@@ -1171,7 +1177,7 @@ export class DrawingWorkspace {
 
   private startAnnot(kind: AnnotMode["kind"] | "cmark" | "skline" | "skrect" | "skcircle" | "skpoly", how: "chain" | "base" | "ord" = "chain") {
     const free = kind === "note" || kind === "gtol" || kind === "surf" || kind === "cloud" || kind === "weld" || kind === "dtarget" || kind.startsWith("sk");
-    if (kind === "balloon" && !this.bom && !this.cuts) { toast(t("Balloons are for drawings of an assembly or of a weldment part."), true); return; }
+    if (kind === "balloon" && this.facts && !this.bom && !this.cuts && !this.single) { toast(t("Balloons are for drawings of an assembly or of a weldment part."), true); return; }
     if (!free && !this.facts) { toast(t("The drawing's model is still loading.")); return; }
     if (!free && !this.sheet.views.length) { toast(t("Place a model view first."), true); return; }
     if (kind === "cloud") this.mode = { kind, view: null, pts: [], at: null };
@@ -1334,26 +1340,36 @@ export class DrawingWorkspace {
 
   /** The dimensions one more point adds to a chain, baseline or ordinate set (FR-DRW-021), placed clear of the view:
    *  horizontal ones above it, vertical ones to its right, baseline ones stacked 7 mm apart. The axis comes from the first step. */
-  private dimSetNext(m: Extract<AnnotMode, { kind: "dimset" }>, ref: GeoRef): { dims: DimAnnot[]; axis: "h" | "v" } | null {
+  private dimSetNext(m: Extract<AnnotMode, { kind: "dimset" }>, ref: GeoRef, at?: Pt): { dims: DimAnnot[]; axis: "h" | "v"; row: number } | null {
     const vid = m.view, v = vid ? findView(this.sheet, vid) : undefined, pl = vid ? this.placements.get(vid) : undefined, topo = (vid ? this.factsOf(vid) : this.facts)?.topo ?? null;
     if (!vid || !v || !pl || !m.picks.length) return null;
     const { P } = projector(viewDir(this.sheet, v));
     const pt = (r: GeoRef) => { const q = refPoint(r, topo); return q ? P(q) : null; };
     const q0 = pt(m.picks[0]), ql = pt(m.picks[m.picks.length - 1]), q = pt(ref);
     if (!q0 || !ql || !q || Math.hypot(q[0] - ql[0], q[1] - ql[1]) < 1e-6) return null;
-    const axis = m.axis ?? (Math.abs(q[0] - q0[0]) >= Math.abs(q[1] - q0[1]) ? "h" : "v");
-    const n = m.picks.length - 1, gap = 8 / pl.s, step = 7 / pl.s, [, , bx1, by1] = pl.box;
-    const pos = (a: [number, number], b: [number, number], k: number): Pt => axis === "h" ? [round((a[0] + b[0]) / 2), round(by1 + gap + k * step)] : [round(bx1 + gap + k * step), round((a[1] + b[1]) / 2)];
+    const [bx0, by0, bx1, by1] = pl.box, w: Pt | null = at ? fromSheet(pl, at[0], at[1]) : null;
+    // The placement side decides the direction, as for Smart dimension: above or below the view horizontal, beside it vertical.
+    const offY = !!w && (w[1] > by1 || w[1] < by0), offX = !!w && (w[0] > bx1 || w[0] < bx0);
+    const axis = m.axis ?? (offY && !offX ? "h" : offX && !offY ? "v" : Math.abs(q[0] - q0[0]) >= Math.abs(q[1] - q0[1]) ? "h" : "v");
+    const n = m.picks.length - 1, gap = 8 / pl.s, j = axis === "h" ? 1 : 0;
+    // The row is where the placement click put it (SolidWorks: the set goes where you click); before that it follows the pointer,
+    // or sits clear of the view's dimensions above it / to its right. Baseline dimensions stack 7 mm further out, away from the view.
+    const ks = axis === "h" ? ["h", "oh"] : ["v", "ov"], edge = axis === "h" ? by1 : bx1;
+    const row = m.row ?? (w ? round(w[j]) : (this.sheet.annots ?? []).reduce((r, a) => a.t === "dim" && a.view === vid && ks.includes(a.k) && a.pos[j] > edge ? Math.max(r, round(a.pos[j] + 7 / pl.s)) : r, round(edge + gap)));
+    const step = (row >= (axis === "h" ? (by0 + by1) / 2 : (bx0 + bx1) / 2) ? 7 : -7) / pl.s;
+    const pos = (a: [number, number], b: [number, number], k: number): Pt => axis === "h" ? [round((a[0] + b[0]) / 2), round(row + k * step)] : [round(row + k * step), round((a[1] + b[1]) / 2)];
     const dim = (refs: GeoRef[], k: DimAnnot["k"], at: Pt): DimAnnot => ({ id: uid("a_"), t: "dim", view: vid, k, refs, pos: at });
     const dims: DimAnnot[] = [];
     if (m.how === "chain") dims.push(dim([m.picks[n], ref], axis, pos(ql, q, 0)));
     else if (m.how === "base") dims.push(dim([m.picks[0], ref], axis, pos(q0, q, n)));
     else {
-      const k = axis === "h" ? "oh" : "ov", at = (w: [number, number]): Pt => axis === "h" ? [round(w[0]), round(by1 + gap)] : [round(bx1 + gap), round(w[1])];
+      const k = axis === "h" ? "oh" : "ov", at = (w: [number, number]): Pt => axis === "h" ? [round(w[0]), row] : [row, round(w[1])];
       if (!n) dims.push(dim([m.picks[0], m.picks[0]], k, at(q0)));
-      dims.push(dim([m.picks[0], ref], k, at(q)));
+      // A point level with one already in the set would print its value again on top of it.
+      const same = m.picks.some(r => { const w = pt(r); return !!w && Math.abs(w[j ^ 1] - q[j ^ 1]) < 1e-6; });
+      if (!same) dims.push(dim([m.picks[0], ref], k, at(q)));
     }
-    return { dims, axis };
+    return { dims, axis, row };
   }
 
   private annotClick(m: AnnotMode, p: Pt) {
@@ -1422,10 +1438,20 @@ export class DrawingWorkspace {
         this.mode = { kind: "none" };
       }
     } else if (m.kind === "dimset") {
+      if (m.pend) {
+        // The placement click: the set's row goes through it.
+        const next = this.dimSetNext(m, m.pend, p);
+        if (!next) return;
+        m.axis = next.axis; m.row = next.row; m.picks.push(m.pend); m.pend = null;
+        this.store!.change(m.how === "ord" ? "Ordinate dimension" : m.how === "base" ? "Baseline dimension" : "Chain dimension", d => { (d.sheets[this.sheetIdx].annots ??= []).push(...next.dims); });
+        this.renderStatus();
+        return;
+      }
       if (!vid) return;
-      const ref = this.pointAt(vid, p);
+      const ref = this.pointAt(m.view ?? vid, p);
       if (!ref) { toast(t("Click a point: a corner or a circle centre.")); return; }
       if (!m.picks.length) { m.view = vid; m.picks = [ref]; this.renderStatus(); return; }
+      if (m.row == null) { if (this.dimSetNext(m, ref)) { m.pend = ref; this.renderStatus(); } return; }
       const next = this.dimSetNext(m, ref);
       if (!next) return;
       m.axis = next.axis; m.picks.push(ref);
@@ -1527,10 +1553,17 @@ export class DrawingWorkspace {
     return clineSegs(a, projector(viewDir(this.sheet, v)).P, this.factsOf(vid)?.topo ?? null, pl) ? a : null;
   }
 
+  /** A centreline pick: like Smart dimension's, so a cylinder's outline (a hole's hidden lines) and a circle seen edge-on are lines. */
+  private clinePick(vid: string, p: Pt, how: "line" | "mark"): Pick | null {
+    if (how === "mark") return this.pickAt(vid, p, "circle");
+    const pk = this.pickAt(vid, p, undefined, false, true);
+    return pk?.kind === "circle" && pk.side ? { ...pk, kind: "line", ref: { ...edgeRef(pk.e, "e"), s: pk.side } } : pk;
+  }
+
   private clineClick(m: Extract<AnnotMode, { kind: "cline" }>, p: Pt) {
     const vid = m.view ?? this.viewAt(p);
     if (!vid) return;
-    const pick = this.pickAt(vid, p, m.how === "mark" ? "circle" : undefined);
+    const pick = this.clinePick(vid, p, m.how);
     if (!pick) { toast(t(m.how === "mark" ? "Click a round edge seen end-on: a circle or an arc. Esc ends." : "Click a straight edge or a point (a circle's centre) of a view. Esc ends.")); return; }
     m.view = vid;
     if (m.how === "mark" || m.picks.length) {
@@ -1642,6 +1675,7 @@ export class DrawingWorkspace {
 
   /** A BOM table (FR-DRW-030) on top of the title block, header at the bottom, items upwards; its rows follow the assembly. */
   private insertBom() {
+    if (!this.facts) { toast(t("The drawing's model is still loading.")); return; }
     if (!this.bom) { toast(t("Balloons and the bill of materials are for drawings of an assembly."), true); return; }
     if ((this.sheet.annots ?? []).some(a => a.t === "table" && a.kind === "bom")) { toast(t("The sheet has a bill of materials already.")); return; }
     const [bx, by] = titleBlockAt(this.sheet), [tw, th] = tbSize(this.sheet);
@@ -1650,12 +1684,17 @@ export class DrawingWorkspace {
 
   /** Auto balloon (FR-DRW-030): one balloon per BOM item in the selected view (or the first view), around it. */
   private async autoBalloon() {
-    if ((!this.bom && !this.cuts) || !this.facts) { toast(t("Balloons are for drawings of an assembly or of a weldment part."), true); return; }
+    if (!this.facts) { toast(t("The drawing's model is still loading.")); return; }
+    if (!this.bom && !this.cuts && !this.single) { toast(t("Balloons are for drawings of an assembly or of a weldment part."), true); return; }
     const v = this.sheet.views.find(x => x.id === this.sel) ?? this.sheet.views.find(x => x.kind !== "detail");
     if (!v) { toast(t("Place a model view first."), true); return; }
     const proj = await this.kernel.request(viewReq(this.sheet, v)).catch(() => null);
     if (!proj || !this.facts) return;
-    const add = autoBalloons(this.sheet, v, this.facts.topo, projector(viewDir(this.sheet, v)).P, proj, viewScale(this.sheet, v), this.balloonItems(), () => uid("a_"));
+    // Balloons keep clear of the annotations already on the sheet (dimension texts, notes, tables): drawings exam round 2.
+    const pl = this.placements.get(v.id), R = BALLOON_R + 1;
+    const boxes = [...this.annotHits.filter(h => !h.ring).map(h => h.box), ...this.sheet.views.flatMap(w => { const q = this.placements.get(w.id); return q ? [viewRect(q)] : []; })];
+    const taken = (p: Pt) => { if (!pl) return false; const [x, y] = toSheet(pl, p[0], p[1]); return boxes.some(([x0, y0, x1, y1]) => x > x0 - R && x < x1 + R && y > y0 - R && y < y1 + R); };
+    const add = autoBalloons(this.sheet, v, this.facts.topo, projector(viewDir(this.sheet, v)).P, proj, viewScale(this.sheet, v), this.balloonItems(), () => uid("a_"), 12, taken);
     if (!add.length) { toast(t("Every item already has a balloon in the view.")); return; }
     this.store!.change("Auto balloon", d => { const S = d.sheets[this.sheetIdx]; (S.annots ??= []).push(...add); });
     toast(t("{n} balloon added|{n} balloons added", { n: add.length }), "success");
@@ -1728,9 +1767,10 @@ export class DrawingWorkspace {
     } else if (m.kind === "dimset") {
       const topo = this.factsOf(vid)?.topo ?? null;
       for (const r of m.picks) { const q = refPoint(r, topo); if (q) { const w = S(q); s += `<circle class="drw-snap" cx="${w[0]}" cy="${H - w[1]}" r="${this.snapTol() / 2.5}"/>`; } }
-      const ref = this.pointAt(vid, at), q = ref && refPoint(ref, topo);
+      if (m.pend) { const q = refPoint(m.pend, topo); if (q) { const w = S(q); s += `<circle class="drw-snap" cx="${w[0]}" cy="${H - w[1]}" r="${this.snapTol() / 2.5}"/>`; } }
+      const ref = m.pend ? null : this.pointAt(vid, at), q = ref && refPoint(ref, topo);
       if (q) { const w = S(q); s += `<circle class="drw-snap" cx="${w[0]}" cy="${H - w[1]}" r="${this.snapTol() / 2.5}"/>`; }
-      const next = ref && this.dimSetNext(m, ref);
+      const next = m.pend ? this.dimSetNext(m, m.pend, at) : ref && this.dimSetNext(m, ref);
       if (next) s += `<g class="drw-preview">${svgBody(next.dims.flatMap(d => { const g = dimGeo(d, P, topo); return g ? dimPrims(d, g, pl, this.ctx().dec).prims : []; }), H, "currentColor")}</g>`;
     } else if (m.kind === "hole") {
       if (!m.e) { const hov = this.pickAt(vid, at, "circle"); if (hov) s += show(hov, "drw-edge"); }
@@ -1781,7 +1821,7 @@ export class DrawingWorkspace {
       const c = S(pk.e.c!); return `<circle class="${cls}" cx="${c[0]}" cy="${H - c[1]}" r="${pk.e.r! * pl.s}" fill="none"/>`;
     };
     let s = m.picks.map(pk => show(pk, "drw-edge on")).join("");
-    const hov = at ? this.pickAt(vid, at, m.how === "mark" ? "circle" : undefined) : null;
+    const hov = at ? this.clinePick(vid, at, m.how) : null;
     if (hov) {
       s += show(hov, "drw-edge");
       const a = m.how === "mark" ? this.buildCline({ ...m, view: vid }, [hov]) : m.picks.length ? this.buildCline(m, [m.picks[0], hov]) : null;

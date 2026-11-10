@@ -35,7 +35,7 @@ import type { CtxRef, SkEnt, SketchPatternFeature, FeatureFolder, ThreadFeature,
 } from "./types";
 import { hexRgb, toRef, type MatRef } from "../tools/materials";
 import { pickMaterial } from "../materialPicker";
-import { ISO_METRIC, HEAT_INSERTS, holeSize, insertSize, type HoleSize } from "./holes";
+import { ISO_METRIC, HEAT_INSERTS, holeSize, insertSize, recognizedHoleFeatures, type HoleSize } from "./holes";
 
 /** What a hole favourite keeps: the definition, not the placement. */
 /** Drag data of a Features tree row (FR-HIS-014: Ctrl+drag onto a face or plane pastes a copy). */
@@ -1732,20 +1732,12 @@ export class ModelController {
     catch (err) { toast(t("Feature recognition failed: {msg}", { msg: (err as Error).message }), true); return; }
     finally { this.setBusy(-1); }
     if (!rec.holes.length) { toast(t("No holes were found to recognise.")); return; }
-    // One Hole feature per opening face and size.
-    const groups = new Map<string, { h: RecognizedHole; pts: [number, number][] }>();
-    for (const h of rec.holes) {
-      const k = `${"face" in h.plane ? h.plane.face.name : ""}|${h.diameter.toFixed(6)}|${h.end}|${h.end === "blind" ? h.depth.toFixed(6) : ""}|${h.flat}`;
-      const g = groups.get(k);
-      if (g) g.pts.push(h.pt); else groups.set(k, { h, pts: [h.pt] });
-    }
+    const holes = recognizedHoleFeatures(rec.holes, () => uid("f_"));
     this.store.change("Recognize holes", d => {
       let at = d.rollback ?? d.features.length;
       const add = (f: Feature) => { d.features.splice(at++, 0, f); if (d.rollback != null) d.rollback++; };
       add({ id: uid("f_"), type: "delface", name: nextName(d, "delface"), faces: rec.faces } satisfies DeleteFaceFeature);
-      for (const { h, pts } of groups.values()) {
-        add({ id: uid("f_"), type: "hole", name: nextName(d, "hole"), plane: h.plane, pts, kind: "simple", diameter: { v: h.diameter }, end: h.end, depth: { v: h.end === "blind" ? h.depth : 10 }, ...(h.flat && h.end === "blind" ? { flat: true } : {}) } satisfies HoleFeature);
-      }
+      for (const h of holes) add({ ...h, name: nextName(d, "hole") });
     });
     toast(t("{n} hole recognised|{n} holes recognised", { n: rec.holes.length }));
   }
@@ -1802,6 +1794,32 @@ export class ModelController {
       }
     });
     toast(rev ? t("{n} feature recognised|{n} features recognised", { n }) : t("{n} extrude recognised|{n} extrudes recognised", { n }));
+  }
+
+  /**
+   * Recognize Features (FR-FT-102), like FeatureWorks' automatic mode: the base, pockets and bosses, holes,
+   * fillets and chamfers all at once, added as one undo step in modelling order.
+   */
+  async recognizeFeatures() {
+    if (!this.store) return;
+    if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
+    if (this.mode.kind !== "none") this.exitMode(false);
+    this.setBusy(1);
+    let feats: Feature[];
+    try { feats = await this.kernel.recognizeFeatures(this.doc); }
+    catch (err) { toast(t("Feature recognition failed: {msg}", { msg: (err as Error).message }), true); return; }
+    finally { this.setBusy(-1); }
+    const n = feats.filter(f => f.type !== "sketch" && f.type !== "delface" && f.type !== "delbody").length;
+    if (!n) { toast(t("No features were found to recognise.")); return; }
+    this.store.change("Recognize features", d => {
+      let at = d.rollback ?? d.features.length;
+      for (const f of feats) {
+        f.name = nextName(d, f.type, f.type === "extrude" && f.op === "cut");
+        d.features.splice(at++, 0, f);
+        if (d.rollback != null) d.rollback++;
+      }
+    });
+    toast(t("{n} feature recognised|{n} features recognised", { n }));
   }
 
   /** Configurations (FR-CFG-001/002): list, switch, add, rename, delete. */
@@ -2545,11 +2563,21 @@ export class ModelController {
     const fr = this.frameOf(cr.sk);
     if (picking) this.lines(sketchSegments(cr.sk, fr), dark ? 0x8ab4ff : 0x1d4ed8, 1.4);
     const picked = new Set((f.contours ?? []).map(q => regionAt(cr.regions, q)).filter(i => i >= 0));
+    // A cut's regions take the cut preview's yellow, so a picked region never reads as material being added.
+    const cut = f.type !== "planesurf" && f.op === "cut";
+    const [fill, edge] = cut ? CONTOUR_CUT : CONTOUR_BOSS;
+    const outline: number[] = [];
+    const at = (p: [number, number]) => [0, 1, 2].map(k => fr.o[k] + fr.x[k] * p[0] + fr.y[k] * p[1]);
     for (const i of picked) {
-      const mesh = this.regionMesh(cr.regions[i], fr, 0xf08c00, picking ? 0.35 : 0.18);
+      const rg = cr.regions[i];
+      const mesh = this.regionMesh(rg, fr, fill, picking ? 0.35 : 0.18);
       mesh.userData.contour = i;
+      mesh.userData.contourCut = cut;
       this.decor.add(mesh);
+      // Its outline in a darker shade, so neighbouring picked regions stay apart.
+      for (const loop of [rg.outer, ...rg.holes]) loop.forEach((p, k) => outline.push(...at(p), ...at(loop[(k + 1) % loop.length])));
     }
+    this.lines(outline, edge, picking ? 2 : 1.4);
   }
 
   /** The Selected Contours box (FR-FT-010): how many regions are picked, or that the whole sketch is used. */
@@ -5597,6 +5625,7 @@ export class ModelController {
       case "recognize": if (m.kind === "sketch") this.ok(); void this.recognizeHoles(); break;
       case "recblend": if (m.kind === "sketch") this.ok(); void this.recognizeBlends(); break;
       case "recext": if (m.kind === "sketch") this.ok(); void this.recognizeExtrudes(); break;
+      case "recall": if (m.kind === "sketch") this.ok(); void this.recognizeFeatures(); break;
       case "extrefs": if (m.kind === "sketch") this.ok(); this.showExtRefs(); break;
       case "undo": this.undo(); break;
       case "redo": this.redo(); break;
@@ -8135,6 +8164,9 @@ const sketchProfileOk = (s: SketchFeature) => !sketchProfile(s).error;
 const sketchRegionsOk = (s: SketchFeature) => sketchProfileOk(s) || sketchRegions(s).length > 0;
 /** Features with Selected Contours (FR-FT-010). */
 type ContourFeature = ExtrudeFeature | RevolveFeature | PlaneSurfFeature;
+/** Fill and outline of picked Selected Contours: orange for material added, the cut preview's yellow for a cut. */
+const CONTOUR_BOSS = [0xf08c00, 0xd9480f] as const;
+const CONTOUR_CUT = [0xffd43b, 0xe8a800] as const;
 const hasContours = (f: Feature): f is ContourFeature => f.type === "extrude" || f.type === "revolve" || f.type === "planesurf";
 /** A sketch that is one open chain of curves (a rib line). */
 const sketchOpenOk = (s: SketchFeature) => { const p = sketchPath(s); return !p.error && !p.closed; };
@@ -8151,7 +8183,7 @@ const CM_FLY: Record<string, string[]> = {
   plane: ["plane", "axis", "point", "csys", "extrefs"],
   curves: ["helix", "sketch3d", "xyzcurve", "compcurve", "projcurve", "split"],
   bodies: ["import", "heal", "combine", "indent", "intersect", "bsplit", "movebody", "delbody", "scale"],
-  direct: ["moveface", "delface", "recognize", "recblend", "recext"],
+  direct: ["moveface", "delface", "recall", "recognize", "recblend", "recext"],
 };
 
 const P3_TOOLS = (): [string, string, string][] => [
@@ -8177,6 +8209,7 @@ const P3_TOOLS = (): [string, string, string][] => [
   ["scale", t("Scale"), t("Scale bodies: uniform or per axis, about the centroid or the origin")],
   ["moveface", t("Move Face"), t("Move face: push flat faces out or in along their normals, on any body")],
   ["delface", t("Delete Face"), t("Delete face: remove faces and heal the gap, on any body")],
+  ["recall", t("Recognize Features"), t("Recognize features: the body's base, pockets, bosses, holes, fillets and chamfers become features you can edit, in modelling order")],
   ["recognize", t("Recognize Holes"), t("Recognize holes: round holes in the body become Hole features you can edit")],
   ["recblend", t("Recognize Fillets"), t("Recognize fillets and chamfers: the body's fillets and chamfers become Fillet and Chamfer features you can edit")],
   ["recext", t("Recognize Extrudes"), t("Recognize extrudes: pockets and bosses of the body become sketches with Extrude features you can edit")],
@@ -8236,6 +8269,7 @@ const ICON_SVG: Record<string, string> = {
   heal: S('<path d="M3 13l7-7 3 3-7 7H3z"/><path d="M9 3l4 4M12 2l2 2"/>'),
   recognize: S('<path d="M2 5h12v8H2z"/><circle cx="8" cy="9" r="2.2"/><path d="M5 2l-2 2M11 2l2 2"/>'),
   recblend: S('<path d="M2 13V7a5 5 0 0 1 5-5h7v11z"/><path d="M5 2l-2 2M11 2l2 2"/>'),
+  recall: S('<path d="M2 7h12v7H2z"/><path d="M6 7V4h4v3"/><circle cx="5" cy="10.5" r="1.3"/><path d="M8 1.5l1 1.6 1.8.3-1.3 1.3.3 1.8L8 5.6 6.2 6.5l.3-1.8-1.3-1.3 1.8-.3z"/>'),
   recext: S('<path d="M2 6h12v7H2z"/><path d="M6 6V3h4v3"/><path d="M5 1l-2 2M11 1l2 2"/>'),
   delface: S('<path d="M2 6h9v8H2z"/><path d="M2 6l3-3h9l-3 3M14 3v8l-3 3"/><path d="M12 1l3 3M15 1l-3 3"/>'),
   split: S('<path d="M2 4h12v9H2z"/><path d="M8 1v14" stroke-dasharray="2 1.5"/>'),

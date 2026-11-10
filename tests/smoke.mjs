@@ -5436,19 +5436,21 @@ try {
     tx = await texts();
     const scaleNote = tx.find(s => s.startsWith("SCALE "));
     check(scaleNote && !scaleNote.includes("$PRP") && /^SCALE \d+:\d+$/.test(scaleNote), `drawing: a note's $PRP:"Scale" link shows the sheet scale (${scaleNote})`);
-    // Ordinate and chain dimensions (FR-DRW-021): base corner, hole centre, far corner; one click adds each dimension.
+    // Ordinate and chain dimensions (FR-DRW-021): base corner, hole centre, a click where the set goes (drawings exam #15:
+    // like SolidWorks, so it doesn't land on the dimensions already there), far corner; each later click adds its dimension.
     const clicks = async (id, pts) => { for (const [u, w] of pts) { const [cx, cy] = await at(id, u, w); await dp.mouse.move(cx + 2, cy); await dp.mouse.move(cx, cy); await dp.mouse.click(cx, cy); } };
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="ord"]');
-    await clicks(top.id, [[-50, -30], [10, 0], [50, -30]]);
+    await clicks(top.id, [[-50, -30], [10, 0], [0, -45], [50, -30]]);
     await dp.keyboard.press("Escape");
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="chain"]');
-    await clicks(top.id, [[-50, 30], [10, 0], [50, 30]]);
+    await clicks(top.id, [[-50, 30], [10, 0], [0, 47], [50, 30]]);
     await dp.keyboard.press("Escape");
     an = await annots();
     tx = await texts();
     const ords = an.filter(a => a.k === "oh").length, chain = an.filter(a => !a.src && a.k === "h" && a.view === top.id).length;
-    check(ords === 3 && chain === 2 && tx.includes("0") && tx.includes("40") && tx.filter(s => s === "60").length >= 3,
-      `drawing: ordinate dimensions 0 / 60 / 100 from the base corner and a chain 60 + 40 along the top edge (${ords} ordinates, ${chain} chain; ${tx.join(" ")})`);
+    const rows = [...new Set(an.filter(a => a.k === "oh").map(a => a.pos[1]))].join() + "/" + [...new Set(an.filter(a => !a.src && a.k === "h" && a.view === top.id).map(a => a.pos[1]))].join();
+    check(ords === 3 && chain === 2 && rows === "-45/47" && tx.includes("0") && tx.includes("40") && tx.filter(s => s === "60").length >= 3,
+      `drawing: ordinate dimensions 0 / 60 / 100 from the base corner and a chain 60 + 40 along the top edge, each in the row clicked (${ords} ordinates, ${chain} chain, rows ${rows}; ${tx.join(" ")})`);
     // Hole table (FR-DRW-024): origin at the corner, the Ø16 hole tagged A1 at X 60 / Y 30, the table placed below the view.
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="htable"]');
     await clicks(top.id, [[-50, -30], [-50, -60]]);
@@ -5658,6 +5660,15 @@ try {
     const auto = an.filter(a => a.t === "balloon");
     const autoNums = (await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "ANNOT" && p.h === 5).map(p => p.s))).sort().join();
     check(src === "asm" && bomOk && auto.length === 2 && auto.every(a => a.view === front) && autoNums === "1,2", `drawing: assembly drawing with a BOM (Plate ×1, PN-7 ×2) and auto balloons 1 and 2 (${src}; ${auto.length} balloons ${autoNums}; ${tx.join(" ")})`);
+    // Auto balloons keep clear of each other and of every view and annotation on the sheet (drawings exam round 2).
+    const clearOk = await dp.evaluate(ids => {
+      const d = window.__sv.drw, sh = d.doc().sheets[0], bs = (sh.annots ?? []).filter(a => ids.includes(a.id));
+      const at = a => { const p = d.placement(a.view); return [p.x + (a.pos[0] - p.uc) * p.s, p.y + (a.pos[1] - p.vc) * p.s]; };
+      const rects = sh.views.map(v => { const p = d.placement(v.id), hw = (p.box[2] - p.box[0]) / 2 * p.s, hh = (p.box[3] - p.box[1]) / 2 * p.s; return [p.x - hw, p.y - hh, p.x + hw, p.y + hh]; });
+      const q = bs.map(at);
+      return q.every((a, i) => q.every((b, j) => i === j || Math.hypot(a[0] - b[0], a[1] - b[1]) >= 10) && rects.every(r => !(a[0] > r[0] - 5 && a[0] < r[2] + 5 && a[1] > r[1] - 5 && a[1] < r[3] + 5)));
+    }, auto.map(a => a.id));
+    check(clearOk, `drawing: auto balloons sit clear of each other and of the views (${JSON.stringify(auto.map(a => a.pos))})`);
     // A balloon by hand on a pin's circle in the top view reads 2.
     await tool("balloon");
     let [x, y] = await at(top, 34, 0);
@@ -9016,6 +9027,19 @@ try {
     const ps1 = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(x => x.type === "planesurf"); const l = window.__sv.model.last(); return { contours: f?.contours?.length, sheetFaces: l.sheetFaces, bad: l.statuses.filter(s => !s.ok).map(s => s.code).join() }; });
     check(ps0.type === "planesurf" && ps0.sketch === "s" && ps0.focus === "contours" && ps1.contours === 1 && ps1.sheetFaces === 1 && !ps1.bad,
       `model 1.428: Planar Surface on a sketch with a line across picks a region with Selected Contours (FR-FT-010) (${JSON.stringify({ ps0, ps1 })})`);
+    // 1.463: a cut's picked regions are drawn in the cut preview's yellow, a boss's in orange.
+    const fills = () => mp.evaluate(() => { const c = []; window.__sv.viewer.scene.traverse(o => { if (o.userData.contour !== undefined && o.visible) c.push({ hex: o.material.color.getHex(), cut: o.userData.contourCut }); }); return c; });
+    await mp.evaluate(() => window.__sv.modeller.startFeature("extrude"));
+    await settle();
+    await mp.mouse.click(left.x, left.y);
+    await settle();
+    const boss = await fills();
+    await mp.evaluate(() => { const m = window.__sv.model.mode(); if (m.kind === "feature") { m.draft.op = "cut"; m.draft.end = "through"; } window.__sv.modeller.draftChanged?.(); });
+    await settle();
+    const cutFills = await fills();
+    const cutPv = await mp.evaluate(() => { let n = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData.cutPreview) n++; }); return n; });
+    check(boss.length === 1 && boss[0].hex === 0xf08c00 && !boss[0].cut && cutFills.length === 1 && cutFills[0].hex === 0xffd43b && cutFills[0].cut === true,
+      `model 1.463: picked contours are orange for a boss and the cut preview's yellow for a cut (${JSON.stringify({ boss, cutFills, cutPv })})`);
     await ctx.close();
   }
 
@@ -9226,6 +9250,28 @@ try {
     const t1 = await state();
     check(!t0.bad && t0.v > 1000 && Math.abs(t1.v - t0.v) < 0.05 && !t1.bad && t1.types === "import,sketch,revolve,delbody",
       `model: Recognize Extrudes makes an imported turned shaft again as a sketch with a revolve (FR-FT-102) (${JSON.stringify({ t0, t1 })})`);
+    // 1.465: Recognize Features: a block with filleted corners, a pocket and a through hole comes back in modelling order.
+    await mp.evaluate(() => window.__sv.model.store.change("Block", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      const R = (id, plane, x, y, w, h) => ({ id, type: "sketch", name: id, plane, rels: [], dims: [], ents: [P(id + 1, x, y), P(id + 2, x + w, y), P(id + 3, x + w, y + h), P(id + 4, x, y + h), Ln(id + "a", id + 1, id + 2), Ln(id + "b", id + 2, id + 3), Ln(id + "c", id + 3, id + 4), Ln(id + "d", id + 4, id + 1)] });
+      d.features = [R("s", { std: "XY" }, -30, -20, 60, 40), { id: "e", type: "extrude", name: "Boss-Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } },
+        { id: "f", type: "fillet", name: "Fillet1", radius: { v: 5 }, edges: ["a", "b", "c", "d"].map((k, i) => ({ faces: ["e:side:s" + k, "e:side:s" + "abcd"[(i + 1) % 4]] })) },
+        R("pk", { face: { name: "e:end" } }, -25, -5, 20, 10), { id: "ec", type: "extrude", name: "Cut-Extrude1", sketch: "pk", op: "cut", end: "blind", depth: { v: 5 } },
+        { id: "o", type: "sketch", name: "o", plane: { face: { name: "e:end" } }, rels: [], dims: [], ents: [P("oc", 15, 5), { id: "ok", t: "circle", c: "oc", r: 4 }] },
+        { id: "eo", type: "extrude", name: "Cut-Extrude2", sketch: "o", op: "cut", end: "through", depth: { v: 10 } }];
+    }));
+    await settle();
+    const rf0 = await state();
+    const brepRf = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "block.brep", brep }]; }), brepRf);
+    await settle();
+    await runCmd(mp, "Recognize Features");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.some(f => f.type === "hole"), null, { timeout: 120000 });
+    await settle();
+    const rf1 = await state();
+    const names = await mp.evaluate(() => window.__sv.model.store.doc.features.map(f => f.name).join(","));
+    check(!rf0.bad && rf0.v > 40000 && Math.abs(rf1.v - rf0.v) < 0.05 && !rf1.bad && rf1.types === "import,sketch,extrude,delbody,sketch,extrude,hole,fillet" && names.split(",")[5] === "Cut1" && names.split(",")[7] === "Fillet1",
+      `model 1.465: Recognize Features makes an imported filleted block with a pocket and a hole again as base, cut, hole and fillet (FR-FT-102) (${JSON.stringify({ rf0, rf1, names })})`);
     await ctx.close();
   }
 
@@ -12274,6 +12320,22 @@ try {
     const c3 = await centre();
     const longer = c3.some(q => Math.abs(q[1] - midY) < 0.05 && Math.abs(Math.min(q[0], q[2]) - (fr.box[0] - 5)) < 0.05);
     check(sel && ext === 5 && longer, `drawing: select a centreline on its line and change its extension (${JSON.stringify({ sel, ext, longer })})`);
+    // Drawings exam #16: the hole's two hidden outline lines in the front view (x = 17 and 33) give its centreline at x = 25.
+    await dp.keyboard.press("Escape");
+    const fq = (u, w) => dp.evaluate(([id, u, w]) => { const p = window.__sv.drw.placement(id); return [p.x + (u - p.uc) * p.s, p.y + (w - p.vc) * p.s]; }, [fr.id, u, w]);
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="cline"]');
+    for (const u of [17, 33]) { const q = await fq(u, 10); await clickSheet(q[0], q[1]); }
+    await dp.waitForTimeout(150);
+    const hl = await dp.evaluate(() => (window.__sv.drw.doc().sheets[0].annots ?? []).filter(a => a.t === "cline" && a.k === "line").map(a => a.refs.map(r => r.s ?? 0).join()));
+    const x25 = (await fq(25, 0))[0], c4 = await centre();
+    const onAxis = c4.filter(q => Math.abs(q[0] - x25) < 0.05 && Math.abs(q[2] - x25) < 0.05).length > c3.filter(q => Math.abs(q[0] - x25) < 0.05 && Math.abs(q[2] - x25) < 0.05).length;
+    check(hl.length === 2 && ["-1,1", "1,-1"].includes(hl[1]) && onAxis, `drawing: centreline between a hole's two hidden outline lines (${JSON.stringify({ hl, onAxis, x25 })})`);
+    // Balloons on a part drawing (drawings exam): item 1, as in SolidWorks, no longer refused.
+    await dp.keyboard.press("Escape");
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="auto"]');
+    await dp.waitForFunction(() => (window.__sv.drw.doc().sheets[0].annots ?? []).some(a => a.t === "balloon"), null, { timeout: 10000 }).catch(() => {});
+    const bal = await dp.evaluate(() => ({ n: (window.__sv.drw.doc().sheets[0].annots ?? []).filter(a => a.t === "balloon").length, one: window.__sv.drw.prims().some(p => p.t === "t" && p.layer === "ANNOT" && p.s === "1") }));
+    check(bal.n === 1 && bal.one, `drawing: Auto balloon on a part drawing numbers the part 1 (${JSON.stringify(bal)})`);
     await ctx.close();
   }
 
