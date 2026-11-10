@@ -5,10 +5,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.388.0] - 2026-11-10
+## [1.391.0] - 2026-11-10
 
 ### Added
 - Tab and Slot (FR-FT-120): tabs grow out of a straight edge of a sheet face, in its plane, through the face they meet (on another body or the sheet itself), which gets matching slots with a clearance all round. Set the tab length and height, the number of tabs with an edge offset or a fixed spacing, and optionally round the slot corners. The tabs are part of the flat pattern, and slots cut in the sheet show in it like any cut.
+
+## [1.390.0] - 2026-11-10
+
+### Added
+
+- **Recognize Fillets (FR-FT-102)**: the new command beside Recognize Holes finds the fillets and chamfers of a body, an imported one above all, removes them with Delete Face and makes them again as Fillet and Chamfer features, one per size. After that you can change a radius, or delete the fillet, on a STEP part. It finds fillets on straight and round edges with their corner patches, and equal-distance chamfers on straight edges. A fillet that runs round other fillets is taken off first and put back last. Only finds that rebuild to exactly the same solid are kept.
+
+## [1.389.0] - 2026-11-10
+
+### Changed
+- Hole callouts in drawings follow the drafting style (FR-DRW-022): their sizes take the drawing's default decimals and, with dual dimensions on, show inches in brackets, as in `Ø5.0 [0.20] ↧12.0 [0.47]`. Angles and thread sizes stay as they are.
+
+## [1.388.0] - 2026-11-10
+
+### Added
+
+- **Cutting plan in the cut list (FR-FT-121)**: with a stock bar length typed, **Cutting plan** under the weldment cut list's Stock lengths table lists the pieces to cut from each bar and what is left of it, equal bars put together. The CSV export ends with the same plan.
 
 ## [1.387.0] - 2026-11-10
 
@@ -2284,7 +2301,10 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.388.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.391.0...HEAD
+[1.391.0]: https://github.com/kothf/step-viewer/compare/v1.390.0...v1.391.0
+[1.390.0]: https://github.com/kothf/step-viewer/compare/v1.389.0...v1.390.0
+[1.389.0]: https://github.com/kothf/step-viewer/compare/v1.388.0...v1.389.0
 [1.388.0]: https://github.com/kothf/step-viewer/compare/v1.387.0...v1.388.0
 [1.387.0]: https://github.com/kothf/step-viewer/compare/v1.386.0...v1.387.0
 [1.386.0]: https://github.com/kothf/step-viewer/compare/v1.385.0...v1.386.0
