@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.403.0] - 2026-11-10
+
+### Added
+
+- Move component: a "Turn by" box turns the component by a typed angle about the axis of its concentric, hinge or screw mate, and the parts mated to it follow (typed rotations used to be about the world axes only).
+
+### Changed
+
+- Mate: two flat faces that cannot be made Coincident either way round, but can be Parallel (side faces of a part its other mates already hold), start as Parallel instead of showing "over-defined".
+
 ## [1.402.0] - 2026-11-10
 
 ### Added
@@ -2363,7 +2373,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.402.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.403.0...HEAD
+[1.403.0]: https://github.com/kothf/step-viewer/compare/v1.402.0...v1.403.0
 [1.402.0]: https://github.com/kothf/step-viewer/compare/v1.401.0...v1.402.0
 [1.401.0]: https://github.com/kothf/step-viewer/compare/v1.400.0...v1.401.0
 [1.400.0]: https://github.com/kothf/step-viewer/compare/v1.399.0...v1.400.0
