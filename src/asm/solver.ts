@@ -512,13 +512,23 @@ function nullSpace(J: number[][], n: number): number[][] {
   };
   const big = Math.max(1e-30, ...J.map(row => Math.sqrt(dot(row, row))));
   const rows: number[][] = [];
-  // Longest rows first, so a nearly dependent row is the one judged against the others.
-  for (const row of [...J].sort((a, b) => dot(b, b) - dot(a, a))) {
-    const v = row.slice(), l0 = Math.sqrt(dot(v, v));
-    if (l0 < 1e-9 * big) continue;
-    off(v, rows);
-    const l = Math.sqrt(dot(v, v));
-    if (l > 3e-5 * big) rows.push(v.map(x => x / l));
+  // The row that stands out most from the ones taken so far goes next (pivoting), so what is left at the end is
+  // only what the others already say. In any fixed order a mate repeated with a slightly different direction
+  // (a Lock stored 1e-5 rad off) could come last, look independent by that 1e-5 and take a real freedom away (exam #94).
+  const left = J.map(row => row.slice()).filter(v => Math.sqrt(dot(v, v)) >= 1e-9 * big);
+  while (left.length && rows.length < n) {
+    let bi = 0, bl = -1;
+    for (let i = 0; i < left.length; i++) { const l = dot(left[i], left[i]); if (l > bl) { bl = l; bi = i; } }
+    if (Math.sqrt(bl) <= 3e-5 * big) break;
+    const q = left[bi];
+    left[bi] = left[left.length - 1];
+    left.pop();
+    off(q, rows);
+    const l = Math.sqrt(dot(q, q));
+    if (l <= 3e-5 * big) continue;
+    for (let i = 0; i < q.length; i++) q[i] /= l;
+    rows.push(q);
+    for (const v of left) { const d = dot(v, q); if (d) for (let i = 0; i < v.length; i++) v[i] -= d * q[i]; }
   }
   const out: number[][] = [];
   for (let k = 0; k < n && rows.length + out.length < n; k++) {

@@ -15,6 +15,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - **Fast views of big assemblies came out empty (drawings exam round three)**: an older engine copy got Standard 3 views with only centre lines, because the polygonal hidden-line pass returned no lines. A fast view without visible lines now tries again on a fresh, coarser mesh and then falls back to the exact hidden-line removal, and the console says why.
 - A view that OpenCASCADE fails on no longer shows a bare "OpenCASCADE error 24": the toast gives the kernel's own message when it has one, else says the model may be too big for the browser's memory.
+## [1.475.0] - 2026-11-10
+
+### Fixed
+
+- **Assembly degrees of freedom (Leuenberger exam #94)**: an engine that turned freely could show **Fully defined** in the status bar. Mates that say the same thing twice with directions stored a hair apart (a Lock beside Concentric + Coincident) could be counted as a separate constraint and take the one real freedom away. The count now takes the most independent mate first, so repeats are seen as repeats; a 57-part engine with 148 mates shows its 1 DOF again, and the handwheel's fine screw still counts.
+- **Interference detection (exam #95)**: closing the panel while the clearance rows were still being worked out, then opening a part, showed "Interference detection failed: The geometry kernel was stopped." Nothing had failed; the message is no longer shown once the panel is closed.
 
 ## [1.474.0] - 2026-11-10
 
@@ -2903,7 +2909,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.476.0...HEAD
-[1.476.0]: https://github.com/kothf/step-viewer/compare/v1.474.0...v1.476.0
+[1.476.0]: https://github.com/kothf/step-viewer/compare/v1.475.0...v1.476.0
+[1.475.0]: https://github.com/kothf/step-viewer/compare/v1.474.0...v1.475.0
 [1.474.0]: https://github.com/kothf/step-viewer/compare/v1.473.0...v1.474.0
 [1.473.0]: https://github.com/kothf/step-viewer/compare/v1.472.0...v1.473.0
 [1.472.0]: https://github.com/kothf/step-viewer/compare/v1.471.0...v1.472.0
