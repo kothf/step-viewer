@@ -9778,6 +9778,25 @@ try {
     const vfr = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(x => x.type === "fillet"); return f && { v: !!f.variable, r: [f.edges[0].r, f.edges[0].r2].sort((a, b) => a - b) }; });
     check(!vf0.bad && Math.abs(vf1.v - vf0.v) < 0.1 && !vf1.bad && vf1.types === "import,sketch,extrude,delbody,fillet" && vfr?.v && Math.abs(vfr.r[0] - 3) < 1e-3 && Math.abs(vfr.r[1] - 8) < 1e-3,
       `model 1.489.0: Recognize Features makes a variable radius fillet again with its end radii (FR-FT-102) (${JSON.stringify({ vf0, vf1, vfr })})`);
+    // 1.493.0: a bent tube comes back as a path sketch, a profile sketch on its end and a Sweep (FR-FT-102).
+    await mp.evaluate(() => window.__sv.model.store.change("Tube", d => {
+      d.features = [{ id: "pt", type: "sketch", name: "Sketch1", plane: { std: "XZ" }, rels: [], dims: [], ents: [
+        { id: "q1", t: "point", x: 0, y: 0 }, { id: "q2", t: "point", x: 0, y: 40 }, { id: "q3", t: "point", x: 20, y: 60 }, { id: "q4", t: "point", x: 60, y: 60 }, { id: "qc", t: "point", x: 20, y: 40 },
+        { id: "w1", t: "line", a: "q1", b: "q2" }, { id: "w2", t: "arc", c: "qc", a: "q3", b: "q2" }, { id: "w3", t: "line", a: "q3", b: "q4" }] },
+        { id: "pr", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "pc", t: "point", x: 0, y: 0 }, { id: "pk", t: "circle", c: "pc", r: 5 }, { id: "pi", t: "circle", c: "pc", r: 3 }] },
+        { id: "sw", type: "sweep", name: "Sweep1", op: "boss", profile: "pr", path: { sketch: "pt" } }];
+    }));
+    await settle();
+    const tb0 = await state();
+    const brepTb = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "tube.brep", brep }]; }), brepTb);
+    await settle();
+    await runCmd(mp, "Recognize Features");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.length > 1, null, { timeout: 120000 });
+    await settle();
+    const tb1 = await state();
+    check(!tb0.bad && tb0.v > 3000 && Math.abs(tb1.v - tb0.v) < tb0.v * 1e-5 && !tb1.bad && tb1.types === "import,sketch,sketch,sweep,delbody",
+      `model 1.493.0: Recognize Features makes a bent tube again as path and profile sketches and a Sweep (FR-FT-102) (${JSON.stringify({ tb0, tb1 })})`);
     // 1.492.0 (FR-UI-100): a middle click on a straight edge turns the view about the edge's line; empty space clears it and puts Z up again.
     await mp.evaluate(() => window.__sv.model.store.change("Block", d => {
       const xy = [[-30, -20], [30, -20], [30, 20], [-30, 20]];

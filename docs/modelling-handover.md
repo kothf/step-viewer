@@ -4,8 +4,8 @@ State of the part modelling work. Current thread: "Recognize angled cross holes"
 
 ## Where things stand
 
-- `main` has 1.491.0; the edge pivot (FR-UI-100) is 1.492.0 (PR #409). Every row of the FRS gap table (section 13.13 and the feature tables) is Done except one that is partial on purpose:
-  - **FR-FT-102** feature recognition on imported bodies. Done: Recognize Holes (1.116.0), Recognize Fillets with chamfers on round edges and two-distance chamfers (1.390.0, 1.398.0), Recognize Extrudes with nested rounds, cuts open to the side, through notches at the outline (1.402.0 to 1.411.0), the base of a prism as sketch + Extrude (1.414.0) and the base of a body of revolution as sketch + Revolve (1.415.0). Left: lofted or swept bases (skew-axis revolves done in 1.488.0, variable fillets in 1.489.0). All are rare in real imports.
+- `main` has 1.492.0 (PR #409: edge pivot, FR-UI-100); swept-base recognition is 1.493.0. Every row of the FRS gap table (section 13.13 and the feature tables) is Done except one that is partial on purpose:
+  - **FR-FT-102** feature recognition on imported bodies. Done: Recognize Holes (1.116.0), Recognize Fillets with chamfers on round edges and two-distance chamfers (1.390.0, 1.398.0), Recognize Extrudes with nested rounds, cuts open to the side, through notches at the outline (1.402.0 to 1.411.0), the base of a prism as sketch + Extrude (1.414.0) and the base of a body of revolution as sketch + Revolve (1.415.0). Bent rods and tubes as path + profile sketches and a Sweep (1.493.0, `baseSweep`). Left: lofted bases and swept bases with other profiles or non-planar paths (skew-axis revolves done in 1.488.0, variable fillets in 1.489.0). All are rare in real imports.
 - Last slices: PR #336 (1.421.0 Selected Contours, FR-FT-010), #344 (1.428.0 contour hover, Planar Surface contours), #354 (1.451.0 Extrude/Cut/Revolve from the sketch being edited, FR-SK-004), #371 (1.456.0 extrude Direction 2 with any end condition, FR-FT-011), #377 (1.460.0 draft angle for each extrude direction, FR-FT-014).
 
 ## Extrude Direction 2 (1.456.0)
