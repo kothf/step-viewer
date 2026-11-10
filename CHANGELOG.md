@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.438.0] - 2026-11-10
+
+### Added
+
+- **Extension line gap and overshoot (FR-DRW-025)**: a drawing's Drafting style sets the gap extension lines leave at the outline (0 to 2 mm; 0 for drawings that touch the outline as ISO 129 allows) and how far they run past the dimension line (1 to 3 mm).
+
 ## [1.437.0] - 2026-11-10
 
 ### Added
@@ -2599,7 +2605,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.437.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.438.0...HEAD
+[1.438.0]: https://github.com/kothf/step-viewer/compare/v1.437.0...v1.438.0
 [1.437.0]: https://github.com/kothf/step-viewer/compare/v1.436.0...v1.437.0
 [1.436.0]: https://github.com/kothf/step-viewer/compare/v1.435.0...v1.436.0
 [1.435.0]: https://github.com/kothf/step-viewer/compare/v1.434.0...v1.435.0

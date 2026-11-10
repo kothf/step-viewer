@@ -5135,6 +5135,20 @@ try {
     await dp.selectOption('.drw-props [data-st="lin"]', "");
     const plainHole = await texts();
     check(dualHole.includes("Ø16.0 [0.630] THRU") && plainHole.includes("Ø16 THRU"), `drawing: a hole callout shows inches and the default decimals with the drawing (${dualHole.filter(s => /THRU/.test(s)).join(" / ")})`);
+    // Extension lines follow the drafting style (FR-DRW-025): no gap and 3 mm past the dimension line make the thin lines longer; the defaults bring them back.
+    {
+      const thinLen = () => dp.evaluate(() => window.__sv.drw.prims().filter(q => q.t === "l" && q.layer === "ANNOT" && q.pen === "thin").reduce((s, q) => s + Math.hypot(q.p[2] - q.p[0], q.p[3] - q.p[1]), 0));
+      const e0 = await thinLen();
+      await dp.selectOption('.drw-props [data-st="extGap"]', "0");
+      const e1 = await thinLen();
+      await dp.selectOption('.drw-props [data-st="extOver"]', "3");
+      const e2 = await thinLen(), st = await dp.evaluate(() => window.__sv.drw.doc().style);
+      await dp.selectOption('.drw-props [data-st="extGap"]', "");
+      await dp.selectOption('.drw-props [data-st="extOver"]', "");
+      const e3 = await thinLen(), st3 = await dp.evaluate(() => window.__sv.drw.doc().style ?? {});
+      check(e1 > e0 + 1.9 && e2 > e1 + 1.9 && st?.extGap === 0 && st?.extOver === 3 && Math.abs(e3 - e0) < 1e-6 && st3.extGap == null && st3.extOver == null,
+        `drawing: extension lines take the style's gap and overshoot and go back (${[e0, e1, e2, e3].map(v => v.toFixed(1)).join(" → ")})`);
+    }
     // Property link in a note (FR-DRW-023): $PRP:"Scale" shows the sheet scale.
     dp.once("dialog", d => d.accept('SCALE $PRP:"Scale"'));
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="note"]');

@@ -2885,6 +2885,8 @@ export const RU: Record<string, string> = {
   "Text height": "Высота текста",
   "Arrowheads": "Стрелки",
   "Line group": "Группа линий",
+  "Extension line gap": "Зазор выносных линий",
+  "Extension past the dimension line": "Выход выносных за размерную",
   "Linear decimals": "Знаков у линейных размеров",
   "Angle decimals": "Знаков у угловых размеров",
   "Default tolerance (±)": "Допуск по умолчанию (±)",

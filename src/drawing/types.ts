@@ -296,7 +296,9 @@ export interface DraftStyle { text?: 2.5 | 3.5 | 5; arrow?: "filled" | "open" | 
   /** Default symmetric tolerance (±) of dimensions with none of their own: linear in mm, angular in degrees. */
   tol?: number; atol?: number;
   /** Dual dimensions: lengths also shown in inches in brackets, with `dualPrec` decimals (3 when absent). */
-  dual?: "in"; dualPrec?: number }
+  dual?: "in"; dualPrec?: number;
+  /** Extension lines (sheet mm): the gap left at the outline (1 when absent; ISO 129 allows 0) and how far they run past the dimension line (2 when absent). */
+  extGap?: number; extOver?: number }
 
 /** Model facts for the title block. */
 export interface ModelInfo { title: string; number?: string; revision?: string; author?: string; material?: string; mass?: number; box: [V3, V3] }

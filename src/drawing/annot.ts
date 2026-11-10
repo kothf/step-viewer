@@ -36,6 +36,8 @@ let PREC_LIN: number | undefined, PREC_ANG: number | undefined;
 /** The drawing's default ± tolerance (mm, degrees) for dimensions without their own, set by `useStyle`. */
 let TOL_LIN: number | undefined, TOL_ANG: number | undefined;
 let DUAL = false, DUAL_PREC = 3;
+/** Extension lines: gap at the outline and run past the dimension line (sheet mm), set by `useStyle`. */
+let EXT_GAP = 1, EXT_OVER = 2;
 
 /** Applies a drawing's drafting style: text height (arrow length follows it), arrowhead kind and the ISO 128 line group. */
 export function useStyle(st: DraftStyle | undefined) {
@@ -45,6 +47,7 @@ export function useStyle(st: DraftStyle | undefined) {
   PREC_LIN = st?.lin; PREC_ANG = st?.ang;
   TOL_LIN = st?.tol; TOL_ANG = st?.atol;
   DUAL = st?.dual === "in"; DUAL_PREC = st?.dualPrec ?? 3;
+  EXT_GAP = st?.extGap ?? 1; EXT_OVER = st?.extOver ?? 2;
   const thick = st?.lines ?? 0.35, thin = { 0.25: 0.13, 0.35: 0.18, 0.5: 0.25, 0.7: 0.35 }[thick] ?? thick / 2;
   Object.assign(PEN_W, { thick, thin, hidden: thin, center: thin, phantom: thin, frame: Math.max(0.5, thick * 1.4) });
 }
@@ -443,7 +446,7 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
     out.push(arrow(...tip(a1), -Math.sin(a1), Math.cos(a1)));
     for (const [an, k] of [[a0, "a"], [a1, "b"]] as [number, "a" | "b"][]) {
       if (a.noExt === k || a.noExt === "both") continue;
-      const e: P2 = [Math.cos(an), Math.sin(an)]; out.push(thin(add2(C, e, R0 + 1), add2(C, e, R + 2)));
+      const e: P2 = [Math.cos(an), Math.sin(an)]; out.push(thin(add2(C, e, R0 + EXT_GAP), add2(C, e, R + EXT_OVER)));
     }
     const mid = a0 + g.sw! / 2, tp: P2 = [C[0] + (R + 1.5) * Math.cos(mid), C[1] + (R + 1.5) * Math.sin(mid)];
     const box = writeText([tp[0], tp[1] - (Math.sin(mid) < 0 ? h : 0)], 0, Math.cos(mid) > 0.3 ? "l" : Math.cos(mid) < -0.3 ? "r" : "c");
@@ -463,7 +466,7 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
     const Q = S(g.pts[1]), hor = g.k === "oh";
     const end: P2 = hor ? [Q[0], T[1]] : [T[0], Q[1]];
     const L = d2(Q, end), dir = unit2([end[0] - Q[0], end[1] - Q[1]], hor ? [0, 1] : [1, 0]);
-    if (L > 1.5) out.push(thin(add2(Q, dir, 1), end));
+    if (L > EXT_GAP + 0.5) out.push(thin(add2(Q, dir, EXT_GAP), end));
     const box = hor ? writeText([end[0] + h * 0.35, end[1] + dir[1]], 90, dir[1] > 0 ? "l" : "r")
       : writeText([end[0] + dir[0], end[1] - h * 0.35], 0, dir[0] > 0 ? "l" : "r");
     return { prims: out, box };
@@ -501,7 +504,7 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
   for (const [s, e, k] of [[S1, D1, "a"], [S2, D2, "b"]] as [P2, P2, "a" | "b"][]) {
     if (a.noExt === k || a.noExt === "both") continue;
     const v: P2 = [e[0] - s[0], e[1] - s[1]], L = len2(v);
-    if (L > 1.5) { const u: P2 = [v[0] / L, v[1] / L]; out.push(thin(add2(s, u, 1), add2(e, u, 2))); }
+    if (L > EXT_GAP + 0.5) { const u: P2 = [v[0] / L, v[1] / L]; out.push(thin(add2(s, u, EXT_GAP), add2(e, u, EXT_OVER))); }
   }
   const al = (p: P2) => p[0] * d[0] + p[1] * d[1];
   let [lo, hi] = [D1, D2];
