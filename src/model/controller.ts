@@ -5,7 +5,7 @@
 // The document (DocStore) is the source of truth; every rebuild sends it to the
 // kernel worker and shows the returned body with the viewer's own pipeline, so
 // the measuring tools work on modelled parts unchanged.
-import type { NamedView } from "./types";
+import type { NamedView, V2 } from "./types";
 import type { NamedViews } from "../viewer/navigation";
 import * as THREE from "three";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
@@ -56,10 +56,11 @@ import { SketchEditor, REL_NAME, relName, trimNum, type SkTool } from "../sketch
 import { SNAP_KINDS, parseSnaps, type SnapKind } from "../sketch/snaps";
 import { ORIGIN, repairs, solve } from "../sketch/solver";
 import { sketchPath, sketchProfile, textPath } from "../sketch/profile";
+import { regionAt, regionPoint, sketchRegions, type Region } from "../sketch/regions";
 import { SEL_FILTER } from "../tools/Snapper";
 import { units, UNITS } from "../tools/units";
 import { csys } from "../tools/csys";
-import { confirmModal, toast, trapFocus } from "../ui";
+import { askFileName, confirmModal, toast, trapFocus } from "../ui";
 import { cmTab, onCmTab, selectCmTab } from "../commandBar";
 import { rememberWeld } from "../weldments/defaults";
 import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, cornerSpots, cutListRows, locateSpots, isWeldFeature, showCutList, weldChange, weldSymbols, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
@@ -135,7 +136,7 @@ type Mode =
   | { kind: "cfg" };
 
 /** Which selection box of the feature panel the next click in the view fills. */
-type Focus = "wbodies" | "wbound" | "wfaces" | "wf1" | "wf2" | "tsurf" | "ttool" | "keep" | "fs1" | "fs2" | "fc" | "main" | "bodies" | "base" | "axis" | "upto" | "start" | "origin" | "cx" | "cz" | "seeds" | "psketch" | "hupto" | "upbody" | "mthick" | "dir" | "dir2" | "mplane" | "faces" | "hplane" | "pts" | "nplane" | "sbv";
+type Focus = "wbodies" | "wbound" | "wfaces" | "wf1" | "wf2" | "tsurf" | "ttool" | "keep" | "fs1" | "fs2" | "fc" | "main" | "bodies" | "base" | "axis" | "upto" | "start" | "origin" | "cx" | "cz" | "seeds" | "psketch" | "hupto" | "upbody" | "mthick" | "dir" | "dir2" | "mplane" | "faces" | "hplane" | "pts" | "nplane" | "sbv" | "contours";
 type CopyFeature = MirrorFeature | LinearPatternFeature | CircularPatternFeature | SketchPatternFeature;
 type BodyFeature = IntersectFeature | CombineFeature | IndentFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ScaleFeature;
 /** A fillet or chamfer has what it needs to preview: edges, or the face sets of a face fillet / full round. */
@@ -1776,7 +1777,8 @@ export class ModelController {
     try { feats = await this.kernel.recognizeExtrudes(this.doc); }
     catch (err) { toast(t("Feature recognition failed: {msg}", { msg: (err as Error).message }), true); return; }
     finally { this.setBusy(-1); }
-    const n = feats.filter(f => f.type === "extrude").length;
+    const rev = feats.some(f => f.type === "revolve");
+    const n = feats.filter(f => f.type === "extrude" || f.type === "revolve").length;
     if (!n) { toast(t("No pockets or bosses were found to recognise.")); return; }
     this.store.change("Recognize extrudes", d => {
       let at = d.rollback ?? d.features.length;
@@ -1786,7 +1788,7 @@ export class ModelController {
         if (d.rollback != null) d.rollback++;
       }
     });
-    toast(t("{n} extrude recognised|{n} extrudes recognised", { n }));
+    toast(rev ? t("{n} feature recognised|{n} features recognised", { n }) : t("{n} extrude recognised|{n} extrudes recognised", { n }));
   }
 
   /** Configurations (FR-CFG-001/002): list, switch, add, rename, delete. */
@@ -1965,9 +1967,12 @@ export class ModelController {
         await out.close();
         this.fileName = this.handle.name;
       } else {
-        await named(suggested);
-        downloadBlob(blob, suggested);
-        this.fileName = suggested;
+        // No save dialog in this browser: ask for the name on the first save and on Save as (exam #9).
+        const file = this.fileName && !as ? this.fileName : await askFileName(suggested, PART_EXT);
+        if (!file) return;
+        await named(file);
+        downloadBlob(blob, file);
+        this.fileName = file;
       }
     } catch (err) {
       if ((err as Error).name === "AbortError") return;
@@ -2204,6 +2209,7 @@ export class ModelController {
       else if (m.kind === "feature" && (m.draft.type === "smconvert" || m.draft.type === "sminsert")) this.pickConvert(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "curve" && m.draft.kind === "projected") this.pickCopy(e);
       else if (m.kind === "feature" && m.draft.type === "sketch3d") this.pick3d(e, m.draft);
+      else if (m.kind === "feature" && (m.draft.type === "extrude" || m.draft.type === "revolve") && m.focus === "contours") this.pickContour(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "plane") {
         if (m.focus === "axis") this.pickAxis(e);
         else { const r = this.pickRef(e); if (r) { m.draft.base = r; if (m.draft.mode === "angle" && !m.draft.axis) m.focus = "axis"; this.draftChanged(); } }
@@ -2432,6 +2438,73 @@ export class ModelController {
    * FR-UI-109: the required selection boxes of a panel in order. `one` = the box is done with one item (a plane, an
    * edge, a body), so focus moves on by itself once it has it; boxes that take many items keep focus.
    */
+  /** The sketch regions an extrude or revolve can pick from (FR-FT-010): the axis of a revolve left out when it is construction. */
+  private contourRegions(f: ExtrudeFeature | RevolveFeature): { sk: SketchFeature; regions: Region[] } | null {
+    const sk = this.store?.feature(f.sketch);
+    if (sk?.type !== "sketch") return null;
+    const ax = f.type === "revolve" ? sk.ents.find(e => e.id === f.axis) : undefined;
+    return { sk, regions: sketchRegions(sk, new Set(ax?.cons ? [ax.id] : [])) };
+  }
+
+  /** The sketch does not make plain closed regions (crossing or branching curves), but its curves still bound some: the contours must be picked. */
+  private needsContours(f: ExtrudeFeature | RevolveFeature): boolean {
+    const sk = this.store?.feature(f.sketch);
+    if (sk?.type !== "sketch" || !sketchProfile(sk).error) return false;
+    return !!this.contourRegions(f)?.regions.length;
+  }
+
+  /** A click while Selected Contours has focus: the region under the pointer is added, or taken off when picked already. */
+  private pickContour(e: PointerEvent, f: ExtrudeFeature | RevolveFeature) {
+    const cr = this.contourRegions(f);
+    if (!cr) return;
+    const fr = this.frameOf(cr.sk);
+    const v = this.host.viewer, r = v.renderer.domElement.getBoundingClientRect();
+    const rc = new THREE.Raycaster();
+    rc.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), v.camera);
+    const n = new THREE.Vector3(...fr.n), o = new THREE.Vector3(...fr.o);
+    const hit = rc.ray.intersectPlane(new THREE.Plane().setFromNormalAndCoplanarPoint(n, o), new THREE.Vector3());
+    const at: V2 | null = hit ? [hit.clone().sub(o).dot(new THREE.Vector3(...fr.x)), hit.clone().sub(o).dot(new THREE.Vector3(...fr.y))] : null;
+    const i = at ? regionAt(cr.regions, at) : -1;
+    if (i < 0) { toast(t("Click inside a closed region of the sketch.")); return; }
+    const list = (f.contours ?? []).filter(q => regionAt(cr.regions, q) >= 0);
+    const k = list.findIndex(q => regionAt(cr.regions, q) === i);
+    if (k >= 0) list.splice(k, 1); else list.push(regionPoint(cr.regions[i]));
+    if (list.length) f.contours = list; else delete f.contours;
+    this.draftChanged();
+  }
+
+  /** Selected contours on the sketch plane: the sketch while they are picked, and the picked regions filled. */
+  private drawContours(f: ExtrudeFeature | RevolveFeature, picking: boolean, dark: boolean) {
+    if (!picking && !f.contours?.length) return;
+    const cr = this.contourRegions(f);
+    if (!cr) return;
+    const fr = this.frameOf(cr.sk);
+    if (picking) this.lines(sketchSegments(cr.sk, fr), dark ? 0x8ab4ff : 0x1d4ed8, 1.4);
+    const mtx = new THREE.Matrix4().makeBasis(new THREE.Vector3(...fr.x), new THREE.Vector3(...fr.y), new THREE.Vector3(...fr.n)).setPosition(...fr.o);
+    const picked = new Set((f.contours ?? []).map(q => regionAt(cr.regions, q)).filter(i => i >= 0));
+    for (const i of picked) {
+      const rg = cr.regions[i];
+      const shape = new THREE.Shape(rg.outer.map(p => new THREE.Vector2(p[0], p[1])));
+      shape.holes = rg.holes.map(h => new THREE.Path(h.map(p => new THREE.Vector2(p[0], p[1]))));
+      const mesh = new THREE.Mesh(new THREE.ShapeGeometry(shape), new THREE.MeshBasicMaterial({ color: 0xf08c00, transparent: true, opacity: picking ? 0.35 : 0.18, side: THREE.DoubleSide, depthTest: false, depthWrite: false }));
+      mesh.applyMatrix4(mtx);
+      mesh.renderOrder = 2400;
+      mesh.userData.contour = i;
+      this.decor.add(mesh);
+    }
+  }
+
+  /** The Selected Contours box (FR-FT-010): how many regions are picked, or that the whole sketch is used. */
+  private contoursGroup(f: ExtrudeFeature | RevolveFeature, focus: Focus | undefined): string {
+    const n = f.contours?.length ?? 0, need = this.needsContours(f), on = focus === "contours";
+    const label = n ? t("{n} region|{n} regions", { n }) : t("All regions");
+    return `<fieldset class="pm-group"><legend>${esc(t("Selected Contours"))}</legend>`
+      + `<div class="pm-field"><span>${esc(t("Contours"))}</span><button class="pm-box${on ? " focus" : ""}" data-focus="contours" data-k="focus-contours" aria-label="${esc(t("Selected Contours"))}: ${esc(label)}">${esc(label)}</button></div>`
+      + (on || need ? `<p class="pm-help muted">${esc(need && !n ? t("The sketch's curves cross or branch: click the regions to use in the view.") : t("Click regions of the sketch in the view; click a picked one again to take it off."))}</p>` : "")
+      + (n ? `<button class="btn small" data-k="clearContours">${esc(t("Use all regions"))}</button>` : "")
+      + `</fieldset>`;
+  }
+
   private boxFlow(d: Feature): { focus: Focus; filled: boolean; one: boolean }[] {
     const seeds = (f: CopyFeature) => f.copy === "faces" ? !!f.faces?.length : f.copy === "bodies" ? !!f.bodies?.length : f.features.length > 0;
     switch (d.type) {
@@ -2444,7 +2517,9 @@ export class ModelController {
       case "csys": return [{ focus: "origin", filled: !!d.origin, one: true }, { focus: "cz", filled: !!d.z, one: true }, { focus: "cx", filled: !!d.x, one: true }];
       case "combine": case "indent": return [{ focus: "main", filled: !!d.main, one: true }, { focus: "bodies", filled: d.tools.length > 0, one: false }];
       case "trimsurf": return [{ focus: "tsurf", filled: !!d.surface, one: true }, { focus: "ttool", filled: !!d.tool, one: true }];
+      case "revolve": return this.needsContours(d) ? [{ focus: "contours", filled: !!d.contours?.length, one: false }] : [];
       case "extrude": return [
+        ...(this.needsContours(d) ? [{ focus: "contours" as Focus, filled: !!d.contours?.length, one: false }] : []),
         ...(d.start === "surface" ? [{ focus: "start" as Focus, filled: !!d.startRef, one: true }] : d.start === "vertex" ? [{ focus: "start" as Focus, filled: !!d.startVertex, one: true }] : []),
         ...(d.end === "upto" || d.end === "offset" ? [{ focus: "upto" as Focus, filled: !!d.upTo, one: true }] : d.end === "vertex" ? [{ focus: "upto" as Focus, filled: !!d.upToVertex, one: true }] : d.end === "body" ? [{ focus: "upbody" as Focus, filled: !!d.upToBody, one: true }] : [])];
       default: return [];
@@ -3610,6 +3685,7 @@ export class ModelController {
       const g = moving ? { ...f, plane: m.edit!.plane } : f;
       this.lines(sketchSegments(g, this.frameOf(g)), moving ? 0xf08c00 : dark ? 0x8ab4ff : 0x1d4ed8, moving ? 2.2 : 1.4);
     });
+    if (m.kind === "feature" && (m.draft.type === "extrude" || m.draft.type === "revolve")) this.drawContours(m.draft, m.focus === "contours", dark);
     // Helix and 3D curves (FR-FT-083, FR-FT-085): drawn like sketch curves; the one being edited highlighted.
     for (const [id, pts] of Object.entries(this.last?.curves ?? {})) {
       const hf = this.doc.features.find(x => x.id === id);
@@ -6054,7 +6130,9 @@ export class ModelController {
       const endSel = `<label class="pm-field"><span>${esc(t("End condition"))}</span><select data-k="end">${ends.map(([v, l]) => `<option value="${v}"${f.end === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;
       const upto = f.end === "upto" || f.end === "offset";
       const thinSel = f.thin ? `<label class="pm-field"><span>${esc(t("Type"))}</span><select data-k="thinMode">${([["inside", t("Inside the profile")], ["outside", t("Outside the profile")], ["mid", t("Mid-plane")]] as const).map(([v, l]) => `<option value="${v}"${f.thin!.mode === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>` + numField("thin.t", t("Thickness"), f.thin.t, "length") : "";
-      body = group(t("From"), sketchSel(f.sketch) + opSel(f.op) + (f.op === "boss" && this.last?.data ? chk("merge", f.merge !== false, t("Merge result")) : "") + startSel)
+      // Selected Contours comes first when the sketch needs it, as SolidWorks opens that box.
+      const needCt = this.needsContours(f);
+      body = (needCt ? this.contoursGroup(f, m.focus) : "") + group(t("From"), sketchSel(f.sketch) + opSel(f.op) + (f.op === "boss" && this.last?.data ? chk("merge", f.merge !== false, t("Merge result")) : "") + startSel)
         + group(t("Direction 1"), endSel
           + (upto ? `<div class="pm-field"><span>${esc(t("Up to"))}</span><button class="pm-box${tg === "upto" ? " focus" : ""}" data-k="focus-upto" data-focus="upto" aria-label="${esc(t("Up to"))}: ${esc(this.refLabel(f.upTo))}" translate="no">${esc(this.refLabel(f.upTo))}</button></div><p class="pm-help muted">${esc(t("Click a flat face or a plane in the view or the tree."))}</p>` : "")
           + (f.end === "vertex" ? `<div class="pm-field"><span>${esc(t("Up to"))}</span><button class="pm-box${tg === "vertex" ? " focus" : ""}" data-focus="upto" translate="no">${esc(this.vertexLabel(f.upToVertex))}</button></div><p class="pm-help muted">${esc(t("Click near the end of an edge, or a reference point in the tree."))}</p>` : "")
@@ -6067,7 +6145,8 @@ export class ModelController {
           + (f.end === "blind" || f.end === "mid" ? chk("draftOn", !!f.draft, t("Draft on/off")) + (f.draft ? numField("draft.angle", t("Draft angle"), f.draft.angle, "angle") + chk("draftOut", f.draft.outward, t("Draft outward")) : "") : "")
           + (f.end === "blind" || f.end === "mid" ? `<p class="pm-help muted">${esc(t("Or drag the orange arrow in the view."))}</p>` : ""))
         + (f.end === "blind" ? group(t("Direction 2"), chk("dir2", !!(f.depth2 && f.depth2.v > 0), t("Direction 2")) + (f.depth2 && f.depth2.v > 0 ? numField("depth2", t("Depth 2"), f.depth2, "length") : "")) : "")
-        + group(t("Thin feature"), chk("thinOn", !!f.thin, t("Thin feature")) + thinSel);
+        + group(t("Thin feature"), chk("thinOn", !!f.thin, t("Thin feature")) + thinSel)
+        + (needCt ? "" : this.contoursGroup(f, m.focus));
     } else if (f.type === "revolve") {
       title = t("Revolve");
       const sk = this.store.feature(f.sketch) as SketchFeature | undefined;
@@ -6080,7 +6159,8 @@ export class ModelController {
           + chk("flip", f.flip, t("Reverse direction")) + (rvEnd === "upto" ? "" : `<p class="pm-help muted">${esc(t("Or drag the orange handle in the view."))}</p>`))
         + (rvEnd === "blind" ? group(t("Direction 2"), chk("dir2", !!(f.angle2 && f.angle2.v > 0), t("Direction 2")) + (f.angle2 && f.angle2.v > 0 ? numField("angle2", t("Angle 2"), f.angle2, "angle") : "")) : "")
         + group(t("Profile"), sketchSel(f.sketch) + opSel(f.op) + (f.op === "boss" && this.last?.data ? chk("merge", f.merge !== false, t("Merge result")) : ""))
-        + group(t("Thin feature"), chk("thinOn", !!f.thin, t("Thin feature")) + (f.thin ? `<label class="pm-field"><span>${esc(t("Type"))}</span><select data-k="thinMode">${([["inside", t("Inside the profile")], ["outside", t("Outside the profile")], ["mid", t("Mid-plane")]] as const).map(([v, l]) => `<option value="${v}"${f.thin!.mode === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>` + numField("thin.t", t("Thickness"), f.thin.t, "length") : ""));
+        + group(t("Thin feature"), chk("thinOn", !!f.thin, t("Thin feature")) + (f.thin ? `<label class="pm-field"><span>${esc(t("Type"))}</span><select data-k="thinMode">${([["inside", t("Inside the profile")], ["outside", t("Outside the profile")], ["mid", t("Mid-plane")]] as const).map(([v, l]) => `<option value="${v}"${f.thin!.mode === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>` + numField("thin.t", t("Thickness"), f.thin.t, "length") : ""))
+        + this.contoursGroup(f, m.focus);
     } else if (f.type === "fillet" || f.type === "chamfer") {
       title = f.type === "fillet" ? t("Fillet") : t("Chamfer");
       const cm = f.type === "chamfer" ? f.mode ?? "equal" : "equal";
@@ -6699,6 +6779,7 @@ export class ModelController {
     }));
     if (isWeldFeature(f)) bindWeldPanel(pm, f, this.weldCtx(m.index));
     pm.querySelector<HTMLInputElement>("[data-ui=tangent]")?.addEventListener("change", e => { this.tangentProp = (e.target as HTMLInputElement).checked; });
+    pm.querySelector("[data-k=clearContours]")?.addEventListener("click", () => { if (f.type === "extrude" || f.type === "revolve") { delete f.contours; this.draftChanged(); } });
     pm.querySelector("[data-k=clear]")?.addEventListener("click", () => { if (f.type === "fillet" || f.type === "chamfer") { f.edges = []; this.drawDecor(); this.renderPanel(); void this.rebuild(); } });
     pm.querySelector("[data-k=focus-base]")?.addEventListener("click", () => { if (m.kind === "feature") { m.focus = "base"; this.renderPanel(); this.drawDecor(); } });
     pm.querySelector("[data-k=focus-axis]")?.addEventListener("click", () => { if (m.kind === "feature") { m.focus = "axis"; this.renderPanel(); this.drawDecor(); } });

@@ -1644,7 +1644,16 @@ try {
     check(near(hole, 10, 1e-6), `model: Smart measure data on the body: hole radius ${hole}`);
     // Save as .mcadprt (download fallback), STEP export, reopen.
     await mp.evaluate(() => { window.showSaveFilePicker = undefined; });
-    const [dlPart] = await Promise.all([mp.waitForEvent("download"), mp.click('[data-c="save"]')]);
+    // Without the save dialog the first save asks for the file name (exam #9); Cancel writes nothing.
+    await mp.click('[data-c="save"]');
+    await mp.waitForSelector("#name-dlg[open]");
+    const askName = await mp.evaluate(() => ({ v: document.querySelector("#name-dlg-in").value, ext: document.querySelector(".name-dlg-ext").textContent, focus: document.activeElement?.id }));
+    await mp.click("#name-dlg [data-a=cancel]");
+    const cancelled = await mp.evaluate(() => ({ open: document.querySelector("#name-dlg").open, dirty: window.__sv.model.store.dirty }));
+    check(askName.v === "Part1" && askName.ext === ".mcadprt" && askName.focus === "name-dlg-in" && !cancelled.open && cancelled.dirty, `model: first Save without a save dialog asks for the name, Cancel keeps it unsaved (${JSON.stringify({ askName, cancelled })})`);
+    await mp.click('[data-c="save"]');
+    await mp.waitForSelector("#name-dlg[open]");
+    const [dlPart] = await Promise.all([mp.waitForEvent("download"), mp.keyboard.press("Enter")]);
     const partBytes = await readFile(await dlPart.path());
     const saved = await mp.evaluate(() => ({ dirty: window.__sv.model.store.dirty, doc: document.querySelector("#doc-name").textContent }));
     check(/Part1\.mcadprt$/.test(dlPart.suggestedFilename()) && partBytes.readUInt32LE(0) === 0x04034b50 && !saved.dirty && !/•/.test(saved.doc), `model: Save writes ${dlPart.suggestedFilename()} (${partBytes.length} bytes, a zip) and clears the unsaved mark`);
@@ -2005,7 +2014,7 @@ try {
       `model 1.375: a checked material shows the page its values were checked against (${JSON.stringify(refLink)})`);
     // 1.382.0: a material without a checked reference says so.
     const refNote = await mp.evaluate(() => !!document.querySelector("#mat-dlg .mat-unver"));
-    await mp.fill("#mat-q", "teak");
+    await mp.fill("#mat-q", "kevlar");
     const unver = await mp.evaluate(() => ({ note: document.querySelector("#mat-dlg .mat-unver")?.textContent ?? "", link: !!document.querySelector("#mat-dlg .mat-src a") }));
     check(!refNote && unver.note === "Not checked against a public reference yet." && !unver.link,
       `model 1.382: a material with no checked reference is marked as not checked (${refNote}, ${JSON.stringify(unver)})`);
@@ -4907,6 +4916,15 @@ try {
     await dp.selectOption('.drw-props [data-d="nborder"]', "");
     const nb2 = { arcs: await arcsOf(), has: "border" in (await annots()).find(a => a.t === "note" && !a.view) };
     check(nb1.border === "circle" && nb1.arcs === arcs0 + 1 && nb2.arcs === arcs0 && !nb2.has, `drawing: a note takes a circle border and loses it again (${JSON.stringify([arcs0, nb1, nb2])})`);
+    // Note justification (FR-DRW-023): centred text keeps the block, the lines move to its middle.
+    const noteText = () => dp.evaluate(() => { const p = window.__sv.drw.prims().find(p => p.t === "t" && p.s === "BREAK SHARP EDGES"); return p && { x: p.x, al: p.al }; });
+    const nt0 = await noteText();
+    await dp.selectOption('.drw-props [data-d="nal"]', "c");
+    const nt1 = await noteText(), nal1 = (await annots()).find(a => a.t === "note" && !a.view)?.al;
+    await dp.selectOption('.drw-props [data-d="nal"]', "");
+    const nt2 = await noteText(), nal2 = "al" in (await annots()).find(a => a.t === "note" && !a.view);
+    check(nt0?.al === "l" && nt1?.al === "c" && nt1.x > nt0.x + 5 && nal1 === "c" && nt2?.al === "l" && Math.abs(nt2.x - nt0.x) < 1e-6 && !nal2,
+      `drawing: a note's text is centred and set left again (${JSON.stringify([nt0?.x, nt1?.x, nt1?.al, nal1, nal2])})`);
     // The worker reads holes from the geometry too (FR-DRW-022): the Ø16 cut is a one-piece stack open at both ends.
     const geoHoles = await dp.evaluate(() => window.__sv.drw.holes());
     check(geoHoles.some(h => h.segs === 1 && h.open[0] && h.open[1]), `drawing: holes read from the geometry (${JSON.stringify(geoHoles)})`);
@@ -5018,6 +5036,18 @@ try {
     const g = an.find(a => a.t === "gtol"), ds = an.filter(a => a.t === "datum").map(a => a.letter).join(""), sf = an.find(a => a.t === "surf");
     check(g?.leader && g.view === front.id && g.rows[0].sym === "perp" && ds === "AB" && sf?.ref && tx.includes("0.05") && tx.includes("A") && tx.includes("B") && tx.includes("Ra 3.2"),
       `drawing: tolerance frame with a leader, datums A and B, surface finish on an edge (${JSON.stringify({ g: g?.rows, ds, sf: !!sf?.ref })}; ${tx.join(" ")})`);
+    // Surface finish options (the new symbol is selected): second requirement, lay, allowance, all around.
+    const ssel = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-d="st2"]'));
+    if (ssel) {
+      await dp.fill('#drw [data-d="st2"]', "Rz 6.3"); await dp.dispatchEvent('#drw [data-d="st2"]', "change");
+      await dp.selectOption('#drw [data-d="slay"]', "⊥");
+      await dp.fill('#drw [data-d="sallow"]', "0.5"); await dp.dispatchEvent('#drw [data-d="sallow"]', "change");
+      await dp.check('#drw [data-d="saround"]');
+    }
+    an = await annots(); tx = await texts();
+    const sf2 = an.find(a => a.t === "surf");
+    check(ssel && sf2.text2 === "Rz 6.3" && sf2.lay === "⊥" && sf2.allow === "0.5" && sf2.around === true && tx.includes("Rz 6.3") && tx.includes("⊥") && tx.includes("0.5"),
+      `drawing: surface finish with a second requirement, lay, allowance and all around (${JSON.stringify(sf2)}; ${tx.join(" ")})`);
     // The frame's properties: a Ø zone, (M) and a second row.
     await dp.mouse.move(gx + 8, gy + 4); await dp.mouse.click(gx + 8, gy + 4);
     const gsel = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-grow="+"]'));
@@ -5143,6 +5173,19 @@ try {
     const circles = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "a" && p.layer === "ANNOT" && p.r === 5 && p.a1 - p.a0 > 6).length);
     const nums2 = (await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "ANNOT" && p.h === 5).map(p => p.s))).sort().join();
     check(JSON.stringify(stacked?.stack) === '["c1"]' && circles === 4 && nums2 === "1,1,2,2", `drawing: stacked balloon adds item 1 under item 2 (${JSON.stringify(stacked?.stack)}; ${circles} circles; ${nums2})`);
+    // Balloon style (FR-DRW-023): a split circle shows each item's quantity below; a hexagon has no circle; Circular puts it back.
+    const balloonLook = () => dp.evaluate(() => { const p = window.__sv.drw.prims().filter(q => q.layer === "ANNOT"); return { circles: p.filter(q => q.t === "a" && q.r === 5 && q.a1 - q.a0 > 6).length, qty: p.filter(q => q.t === "t" && q.h === 3).map(q => q.s).sort().join() }; });
+    await dp.selectOption('#drw [data-d="bshape"]', "split");
+    await dp.waitForTimeout(150);
+    const bl1 = await balloonLook(), bs1 = (await annots()).find(a => a.t === "balloon" && a.view === top)?.shape;
+    await dp.selectOption('#drw [data-d="bshape"]', "hex");
+    await dp.waitForTimeout(150);
+    const bl2 = await balloonLook();
+    await dp.selectOption('#drw [data-d="bshape"]', "");
+    await dp.waitForTimeout(150);
+    const bl3 = await balloonLook(), bs3 = "shape" in (await annots()).find(a => a.t === "balloon" && a.view === top);
+    check(bs1 === "split" && bl1.circles === 4 && bl1.qty === "1,2" && bl2.circles === 2 && bl2.qty === "" && bl3.circles === 4 && !bs3,
+      `drawing: a balloon turns into a split circle with quantities, a hexagon and back (${JSON.stringify([bs1, bl1, bl2, bl3, bs3])})`);
     await dp.keyboard.press("Escape");
     // 1.99.0 alternate position (FR-DRW-015): select the top view, pick Pin<1>'s circle, drop that point 30 mm higher: the pin is drawn again in phantom lines.
     [x, y] = await at(top, -45, -25);
@@ -8323,6 +8366,45 @@ try {
     await ctx.close();
   }
 
+  // --- 1.421: Selected Contours: extrude regions of a sketch whose lines cross or branch (FR-FT-010) ---
+  if (inShard(5)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // A 100 × 60 rectangle with a line across it at x = 20: two regions, no plain profile.
+    await mp.evaluate(() => window.__sv.model.store.change("Crossed", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", -50, -30), P("p2", 50, -30), P("p3", 50, 30), P("p4", -50, 30), P("q1", 20, -30), P("q2", 20, 30), Ln("l1", "p1", "p2"), Ln("l2", "p2", "p3"), Ln("l3", "p3", "p4"), Ln("l4", "p4", "p1"), Ln("l5", "q1", "q2")] });
+    }));
+    await settle();
+    await mp.evaluate(() => window.__sv.modeller.startFeature("extrude"));
+    await settle();
+    const open0 = await mp.evaluate(() => ({ box: document.querySelector('#mc-pm [data-focus="contours"]')?.className, help: document.querySelector("#mc-pm .pm-box.focus")?.dataset.focus, fills: 0 }));
+    // Click the right region (x 20..50) in the view.
+    const at = await mp.evaluate(() => {
+      const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect();
+      const q = new v.camera.position.constructor(35, 0, 0).project(v.camera);
+      return { x: r.left + ((q.x + 1) / 2) * r.width, y: r.top + ((1 - q.y) / 2) * r.height };
+    });
+    await mp.mouse.click(at.x, at.y);
+    await settle();
+    const one = await mp.evaluate(() => ({ n: window.__sv.model.mode().draft?.contours?.length, box: document.querySelector('#mc-pm [data-focus="contours"]')?.textContent, v: Math.round(window.__sv.model.last().props?.volume ?? 0), bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.code).join() }));
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await settle();
+    const done = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(x => x.type === "extrude"); return { contours: f.contours?.length, v: Math.round(window.__sv.model.last().props?.volume ?? 0), faces: window.__sv.model.last().data?.faces?.length ?? 0 }; });
+    check(/focus/.test(open0.box ?? "") && open0.help === "contours" && one.n === 1 && !one.bad && one.v === 18000 && done.contours === 1 && done.v === 18000,
+      `model 1.421: Extrude on a sketch with a line across opens Selected Contours, a click in the view picks one region (FR-FT-010) (${JSON.stringify({ open0, one, done })})`);
+    await ctx.close();
+  }
+
   // --- 1.116: Recognize Holes turns the holes of a body into Hole features (FR-FT-102) ---
   if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -8403,6 +8485,26 @@ try {
     const x2 = await state();
     check(!x0.bad && Math.abs(x0.v - (48000 - 1000 + 504)) < 0.05 && Math.abs(x1.v - x0.v) < 0.05 && !x1.bad && x1.types === "import,sketch,extrude,delbody,sketch,extrude,sketch,extrude" && exts === "boss:blind:20 boss:blind:7 cut:blind:5" && !x2.bad && Math.abs(x2.v - (x1.v - 800)) < 0.05,
       `model: Recognize Extrudes makes an imported block with a pocket and a boss again as a base extrude and sketches with extrudes (FR-FT-102) (${JSON.stringify({ x0, x1, x2, exts })})`);
+    // 1.415: a turned shaft (a step and a cone, about Z) comes back as a sketch with a revolve.
+    await mp.evaluate(() => window.__sv.model.store.change("Shaft", d => {
+      const xy = [[0, 0], [10, 0], [10, 20], [6, 26], [6, 40], [0, 40]];
+      const ents = xy.map(([x, y], i) => ({ id: "rp" + i, t: "point", x, y }));
+      xy.forEach((_, i) => ents.push({ id: "rl" + i, t: "line", a: "rp" + i, b: "rp" + (i + 1) % xy.length }));
+      ents.push({ id: "ra", t: "point", x: 0, y: -5 }, { id: "rb", t: "point", x: 0, y: 45 }, { id: "rax", t: "line", a: "ra", b: "rb", cons: true });
+      d.features = [{ id: "r", type: "sketch", name: "r", plane: { std: "XZ" }, ents, rels: [], dims: [] },
+        { id: "v", type: "revolve", name: "Revolve1", sketch: "r", op: "boss", axis: "rax", angle: { v: Math.PI * 2 } }];
+    }));
+    await settle();
+    const t0 = await state();
+    const brep3 = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "shaft.brep", brep }]; }), brep3);
+    await settle();
+    await runCmd(mp, "Recognize Extrudes");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.some(f => f.type === "revolve"), null, { timeout: 120000 });
+    await settle();
+    const t1 = await state();
+    check(!t0.bad && t0.v > 1000 && Math.abs(t1.v - t0.v) < 0.05 && !t1.bad && t1.types === "import,sketch,revolve,delbody",
+      `model: Recognize Extrudes makes an imported turned shaft again as a sketch with a revolve (FR-FT-102) (${JSON.stringify({ t0, t1 })})`);
     await ctx.close();
   }
 
@@ -9139,7 +9241,7 @@ try {
     await ap.click('#drw-pane-annot [data-an="note"]');
     const mode = await ap.evaluate(() => window.__sv.drw.mode());
     await ap.keyboard.press("Escape");
-    check(tab.views && !tab.annot && tab.n === 27 && mode === "note", `drawing: annotation tab shows the 27 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
+    check(tab.views && !tab.annot && tab.n === 28 && mode === "note", `drawing: annotation tab shows the 28 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
     // 1.82.0 break view (FR-DRW-015): select the first front view, leave out u = −25…15 mm; it closes up to a 6 mm gap.
     const fv = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views[0]; const pl = window.__sv.drw.placement(v.id); return { id: v.id, x: v.x, y: v.y, s: pl.s, w: pl.box[2] - pl.box[0], uc: pl.uc }; });
     const clickAt = async (x, y) => { const q = await ap.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await ap.mouse.click(q[0], q[1]); };
@@ -11304,6 +11406,21 @@ try {
     const loop = (4 * (40 - 12) + 2 * Math.PI * 6).toFixed(2).replace(/\.?0+$/, "");
     check(wt.n === 1 && ["Item", "Weld", "Leg", "Length", "Qty", "Continuous", "z4", loop].every(s => wt.tx.includes(s)),
       `drawing: weld table lists the weldment's fillet bead with its leg and length (${JSON.stringify({ n: wt.n, loop, tx: wt.tx.filter(s => /^(Item|Weld|Leg|Continuous|z\d|1\d\d)/.test(s)), note: wt.note })})`);
+    // Cut list table under the same view: the tube (300 - 10 mm long, square ends), then the bead; Weld beads unticked leaves it out.
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="ctable"]');
+    for (const [x, y] of [[vp.x, vp.y], [vp.x - vp.w / 2, vp.y - vp.w / 2 - 20]]) {
+      const [cx, cy] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]);
+      await dp.mouse.click(cx, cy);
+    }
+    await ready();
+    const ct = await dp.evaluate(() => ({ n: window.__sv.drw.doc().sheets[0].annots.filter(a => a.t === "ctable").length, tx: [...document.querySelectorAll(".drw-svg text")].map(t => t.textContent),
+      beads: !!document.querySelector('#drw .drw-props [data-d="cbeads"]') }));
+    check(ct.n === 1 && ct.beads && ["Description", "Angle 1", "Angle 2", "SHS 40x40x3", "290", "0°", "Fillet weld, leg 4"].every(s => ct.tx.includes(s)),
+      `drawing: cut list table lists the tube with its length and end angles and the bead (${JSON.stringify({ n: ct.n, tx: ct.tx.filter(s => /^(Item|Qty|Desc|Angle|SHS|Fillet|29\d|0°)/.test(s)) })})`);
+    await dp.click('#drw .drw-props [data-d="cbeads"]');
+    await ready();
+    const ct2 = await dp.evaluate(() => [...document.querySelectorAll(".drw-svg text")].map(t => t.textContent));
+    check(!ct2.includes("Fillet weld, leg 4") && ct2.includes("SHS 40x40x3"), `drawing: unticking Weld beads leaves the bead out of the cut list table`);
     await ctx.close();
   }
 

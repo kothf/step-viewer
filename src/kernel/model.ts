@@ -416,7 +416,8 @@ export class Modeller {
   // ---------- profiles ----------
 
   /** OCCT faces of a sketch's regions, plus which sketch curve each edge came from. */
-  private profileFaces(sk: SketchFeature, frame: Frame, off: V3 = [0, 0, 0], skip?: Set<string>) {
+  private profileFaces(sk: SketchFeature, frame: Frame, off: V3 = [0, 0, 0], skip?: Set<string>, contours?: V2[]) {
+    if (contours?.length) return this.contourFaces(sk, frame, off, skip, contours);
     const oc = this.oc;
     const prof = sketchProfile(sk, skip);
     if (prof.error) throw new FeatureError(prof.error.code, prof.error.message);
@@ -451,6 +452,78 @@ export class Modeller {
       return face;
     });
     return { faces, edgeEnt };
+  }
+
+  /** Ends and extremes of the outer loops of a sketch's regions (to find the profile's middle). */
+  private profilePts(sk: SketchFeature): V2[] {
+    const prof = sketchProfile(sk);
+    if (prof.error) throw new FeatureError(prof.error.code, prof.error.message);
+    return prof.faces.flatMap(pf => pf.outer.flatMap(sg => (sg.kind === "circle" ? [[sg.c[0] - sg.r, sg.c[1]], [sg.c[0] + sg.r, sg.c[1]]] : sg.kind === "ellipse" ? [sg.el.c] : sg.kind === "spline" ? [sg.bz[0], sg.bz[sg.bz.length - 1]] : [sg.a, sg.b]))) as V2[];
+  }
+
+  /**
+   * Selected contours (FR-FT-010): the sketch plane split by every curve of the sketch (crossing and
+   * branching curves allowed), keeping the pieces that hold the picked points. Pieces next to each other
+   * stay separate faces; the feature's fuse of their tools joins them.
+   */
+  private contourFaces(sk: SketchFeature, frame: Frame, off: V3, skip: Set<string> | undefined, contours: V2[]) {
+    const oc = this.oc;
+    const segs = sketchCurves(sk).filter(sg => !skip?.has(sg.ent));
+    if (!segs.length) throw new FeatureError("E-SK-EMPTY", "The sketch has no closed region.");
+    let span = 10;
+    for (const sg of segs) for (const q of loopPolygon([sg], 8)) span = Math.max(span, Math.abs(q[0]), Math.abs(q[1]));
+    for (const q of contours) span = Math.max(span, Math.abs(q[0]), Math.abs(q[1]));
+    span = span * 2 + 10;
+    const poly = new oc.BRepBuilderAPI_MakePolygon_1();
+    for (const [u, v] of [[-span, -span], [span, -span], [span, span], [-span, span]] as V2[]) poly.Add_1(this.P(this.w(frame, [u, v], off)));
+    poly.Close();
+    const plane = new oc.BRepBuilderAPI_MakeFace_15(poly.Wire(), true).Face();
+    const sp = new oc.BRepAlgoAPI_Splitter_1();
+    const args = new oc.TopTools_ListOfShape_1(), tools = new oc.TopTools_ListOfShape_1();
+    args.Append_1(plane);
+    for (const sg of segs) tools.Append_1(this.segEdge(sg, frame, off));
+    sp.SetArguments(args);
+    sp.SetTools(tools);
+    sp.SetFuzzyValue(1e-7 * span);
+    sp.Build(new oc.Message_ProgressRange_1());
+    if (!sp.IsDone() || sp.HasErrors()) throw new FeatureError("E-SK-CONTOUR", "The sketch's regions could not be found.");
+    const pieces = this.sub(sp.Shape(), "FACE").map((x: any) => oc.TopoDS.Face_1(x));
+    const inside = (face: any, q: V2) => {
+      const cl = new oc.BRepClass_FaceClassifier_4(face, this.P(this.w(frame, q, off)), 1e-7 * span, false, 0);
+      return cl.State() === oc.TopAbs_State.TopAbs_IN;
+    };
+    const corner: V2 = [span * 0.999, span * 0.999];
+    const picked: any[] = [];
+    for (const q of contours) {
+      const face = pieces.find(x => inside(x, q));
+      if (!face || inside(face, corner)) throw new FeatureError("E-SK-CONTOUR", "A selected contour is no longer a closed region: pick the contours again.");
+      if (!picked.some(x => x.IsSame(face))) picked.push(face);
+    }
+    // Each edge is a piece of one curve: the nearest curve to its middle, measured along the whole curve.
+    const lines = segs.map(sg => {
+      const q = loopPolygon([sg], 64);
+      if (sg.kind === "line" || sg.kind === "arc" || sg.kind === "earc") q.push(sg.b);
+      else if (sg.kind === "spline") q.push(sg.bz[sg.bz.length - 1]);
+      else q.push(q[0]);
+      return q;
+    });
+    const o = add(frame.o, off);
+    const edgeEnt: [any, string][] = [];
+    for (const face of picked) for (const e of this.sub(face, "EDGE")) {
+      const m3 = add(this.edgeMid(e), mul(o, -1));
+      const u = dot(m3, frame.x), v = dot(m3, frame.y);
+      let best = 0, bd = Infinity;
+      lines.forEach((q, k) => {
+        for (let i = 0; i + 1 < q.length; i++) {
+          const a = q[i], b = q[i + 1], vx = b[0] - a[0], vy = b[1] - a[1], L = vx * vx + vy * vy || 1;
+          const t = Math.max(0, Math.min(1, ((u - a[0]) * vx + (v - a[1]) * vy) / L));
+          const d = Math.hypot(u - a[0] - t * vx, v - a[1] - t * vy);
+          if (d < bd) { bd = d; best = k; }
+        }
+      });
+      edgeEnt.push([e, segs[best].ent]);
+    }
+    return { faces: picked, edgeEnt };
   }
 
   /** One B-spline edge through cubic Bézier poles (3n + 1): joined with triple knots at the chord lengths, then the interior knots dropped (the interpolant is C2). */
@@ -584,7 +657,7 @@ export class Modeller {
       }
       if (!(d1 + d2 > 1e-6)) throw new FeatureError("E-FT-ZERO", "The depth must be more than 0.");
       const off = add(so, mul(frame.n, -d2 * dir));
-      const { faces, edgeEnt } = this.profileFaces(sk, frame, off);
+      const { faces, edgeEnt } = this.profileFaces(sk, frame, off, undefined, f.contours);
       for (const face0 of faces) {
         const face = f.thin ? this.thinFace(face0, f.thin) : face0;
         const mk = new oc.BRepPrimAPI_MakePrism_1(face, this.V(mul(frame.n, (d1 + d2) * dir)), false, true);
@@ -621,8 +694,8 @@ export class Modeller {
       // A solid profile line may be the axis too (SolidWorks allows it): leave the axis out only when the
       // profile closes without it, so a stand-alone line or centreline still works as before.
       const axSkip = new Set([ax.id]);
-      const skip = ax.cons || !sketchProfile(sk, axSkip).error ? axSkip : undefined;
-      const { faces, edgeEnt } = this.profileFaces(sk, frame, [0, 0, 0], skip);
+      const skip = ax.cons || (!f.contours?.length && !sketchProfile(sk, axSkip).error) ? axSkip : undefined;
+      const { faces, edgeEnt } = this.profileFaces(sk, frame, [0, 0, 0], skip, f.contours);
       for (let face0 of faces) {
         let face = f.thin ? this.thinFace(face0, f.thin) : face0;
         if (back > 1e-9 && angle < Math.PI * 2 - 1e-9) {
@@ -640,8 +713,10 @@ export class Modeller {
         tools.push(this.nameSweep(mk, f.id, edgeEnt, mk.Shape()));
       }
     }
-    // Several regions: fuse the tools first, in one operation.
-    const tool = this.fuseAll(tools, f.id);
+    // Several regions: fuse the tools first, in one operation. Picked contours next to each other leave
+    // their shared curve as split faces; those halves (same name) are joined again, as one profile would give.
+    let tool = this.fuseAll(tools, f.id);
+    if (tools.length > 1 && f.contours?.length) tool = this.unifyAlike(tool);
     if (!(f.type === "extrude" && f.outside)) this.tools.set(f.id, [{ shape: tool, op: f.op === "boss" ? "fuse" : "cut" }]);
     if (f.op === "boss" && prev && f.merge === false) return this.compoundOf([...this.bodyList(prev), tool]);
     if (f.op === "boss" && prev && f.type === "extrude") {
@@ -675,10 +750,8 @@ export class Modeller {
       if (err instanceof FeatureError && err.code === "E-FT-NOTPLANAR") throw new FeatureError("E-FT-UPTO", "Up to face needs a flat face or a plane.");
       throw err;
     }
-    const prof = sketchProfile(sk);
-    if (prof.error) throw new FeatureError(prof.error.code, prof.error.message);
-    // Where the profile's middle meets the target along the sketch normal.
-    const pts = prof.faces.flatMap(pf => pf.outer.flatMap(sg => (sg.kind === "circle" ? [[sg.c[0] - sg.r, sg.c[1]], [sg.c[0] + sg.r, sg.c[1]]] : sg.kind === "ellipse" ? [sg.el.c] : sg.kind === "spline" ? [sg.bz[0], sg.bz[sg.bz.length - 1]] : [sg.a, sg.b]))) as [number, number][];
+    // Where the profile's middle (or the picked contours' middle) meets the target along the sketch normal.
+    const pts = f.contours?.length ? f.contours : this.profilePts(sk);
     const mid: [number, number] = [pts.reduce((a, p) => a + p[0], 0) / pts.length, pts.reduce((a, p) => a + p[1], 0) / pts.length];
     const c = add(this.w(frame, mid), so);
     const den = dot(frame.n, target.n);
@@ -695,7 +768,7 @@ export class Modeller {
     }
     const dir = Math.sign(s);
     const big = Math.abs(s) * 2 + (prev ? this.size(prev.shape) : 0) * 2 + 10;
-    const { faces, edgeEnt } = this.profileFaces(sk, frame, so);
+    const { faces, edgeEnt } = this.profileFaces(sk, frame, so, undefined, f.contours);
     const tools: Named[] = [];
     for (const face of faces) {
       const mk = new oc.BRepPrimAPI_MakePrism_1(face, this.V(mul(frame.n, big * dir)), false, true);
@@ -1915,6 +1988,29 @@ export class Modeller {
     return this.mergeSides(this.compoundOf(keep), f.id);
   }
 
+  /** Joins neighbouring faces that carry the same name and lie on one surface (UnifySameDomain across those edges only). */
+  private unifyAlike(b: Named): Named {
+    const oc = this.oc;
+    const edges = b.faces.map(x => this.sub(x, "EDGE"));
+    const u = new oc.ShapeUpgrade_UnifySameDomain_2(b.shape, true, true, false);
+    let any = false;
+    for (const e of this.sub(b.shape, "EDGE")) {
+      const by = b.faces.map((_x, i) => i).filter(i => edges[i].some((x: any) => x.IsSame(e)));
+      if (by.length === 2 && b.names[by[0]] === b.names[by[1]]) any = true;
+      else u.KeepShape(e);
+    }
+    if (!any) return b;
+    try { u.Build(); } catch { return b; }
+    const shape = u.Shape(), h = u.History_1().get();
+    const faces = this.sub(shape, "FACE");
+    const names: string[] = faces.map(() => "");
+    b.faces.forEach((f, i) => {
+      const mods = this.list(h.Modified(f));
+      for (const m of mods.length ? mods : [f]) { const j = faces.findIndex(x => x.IsSame(m)); if (j >= 0 && !names[j]) names[j] = b.names[i]; }
+    });
+    return { shape, faces, names: names.map((n, i) => n || `${b.names[0]?.split(":")[0]}:new:${i}`) };
+  }
+
   /**
    * Merges the new side faces `fid:side:*` into the coplanar faces next to them (ShapeUpgrade_UnifySameDomain,
    * only across their edges, so split lines and other seams stay). A merged face keeps the older name.
@@ -2011,9 +2107,7 @@ export class Modeller {
     }
     const n = unit(target.n);
     if (Math.abs(dot(n, u)) > 1e-6 || Math.abs(dot(n, add(A, mul(target.o, -1)))) > 1e-4) throw new FeatureError("E-RV-UPTO", "Up to face for a revolve needs a flat face or plane through the axis.");
-    const prof = sketchProfile(sk);
-    if (prof.error) throw new FeatureError(prof.error.code, prof.error.message);
-    const pts = prof.faces.flatMap(pf => pf.outer.flatMap(sg => (sg.kind === "circle" ? [[sg.c[0] - sg.r, sg.c[1]], [sg.c[0] + sg.r, sg.c[1]]] : sg.kind === "ellipse" ? [sg.el.c] : sg.kind === "spline" ? [sg.bz[0], sg.bz[sg.bz.length - 1]] : [sg.a, sg.b]))) as [number, number][];
+    const pts = f.contours?.length ? f.contours : this.profilePts(sk);
     const c = this.w(frame, [pts.reduce((a, p) => a + p[0], 0) / pts.length, pts.reduce((a, p) => a + p[1], 0) / pts.length]);
     const w = add(c, mul(A, -1));
     const r0 = add(w, mul(u, -dot(w, u)));
@@ -3334,6 +3428,7 @@ export class Modeller {
     }
     if (base) {
       try { const b = this.baseExtrude(upto, at, dels, rounds); if (b) return b; } catch { /* without the base */ }
+      try { const b = this.baseRevolve(upto, at, dels, rounds); if (b) return b; } catch { /* without the base */ }
     }
     if (rounds.length < 2) return first;
     try {
@@ -3443,6 +3538,123 @@ export class Modeller {
     return best;
   }
 
+  /** Sketch entities in frame `fr` for curves given in 3D; `pt` adds (or finds) the point at a place. */
+  private loopEnts(sid: string, fr: Frame, segs: ExtrudeFind["segs"]): { ents: SkEnt[]; pt: (p: V3) => string } {
+    const ents: SkEnt[] = [], pts = new Map<string, string>();
+    const pt = (p: V3): string => {
+      const q = sub3(p, fr.o), x = dot(q, fr.x), y = dot(q, fr.y), k = `${x.toFixed(5)},${y.toFixed(5)}`;
+      let pid = pts.get(k);
+      if (!pid) { pid = `${sid}p${pts.size + 1}`; pts.set(k, pid); ents.push({ id: pid, t: "point", x, y }); }
+      return pid;
+    };
+    segs.forEach((sg, k) => {
+      const eid = `${sid}e${k + 1}`;
+      if ("line" in sg) ents.push({ id: eid, t: "line", a: pt(sg.line[0]), b: pt(sg.line[1]) });
+      else if ("circle" in sg) ents.push({ id: eid, t: "circle", c: pt(sg.circle.c), r: sg.circle.r });
+      else {
+        const { c: cc, a, b, m } = sg.arc;
+        const ccw = dot(cross(sub3(a, cc), sub3(m, cc)), fr.n) > 0;
+        ents.push({ id: eid, t: "arc", c: pt(cc), a: pt(ccw ? a : b), b: pt(ccw ? b : a) });
+      }
+    });
+    return { ents, pt };
+  }
+
+  /**
+   * The base of an imported body of revolution (FR-FT-102): when every face of the body without its pockets and
+   * bosses turns about one axis (flat faces square to it, cylinders, cones and tori on it, spheres centred on it)
+   * and the axis lies in a standard plane or parallel to one, the half section in that plane becomes a sketch
+   * with a centreline, a Revolve makes a new body from it and the imported body is deleted.
+   */
+  private baseRevolve(upto: Feature[], at: (fs: Feature[]) => PartDoc, dels: Feature[], rounds: ExtrudeFind[][]): Feature[] | null {
+    const oc = this.oc;
+    const imports = upto.filter(f => f.type === "import" && !f.suppressed).map(f => `${f.id}:`);
+    if (!imports.length) return null;
+    const start = this.evaluate(at([]));
+    const body = dels.length ? this.evaluate(at(dels)).body : start.body;
+    if (!start.body || !body || this.solids(start.body.shape) !== 1 || this.solids(body.shape) !== 1) return null;
+    if (body.names.some(n => !imports.some(p => n.startsWith(p)))) return null;
+    const v0 = this.volume(start.body.shape), size = this.size(body.shape);
+    const tol = Math.max(1e-4, size * 1e-6) * 10;
+    const S = oc.GeomAbs_SurfaceType, C = oc.GeomAbs_CurveType;
+    // What each face says about the axis: a direction (flat), a line (cylinder, cone, torus) or a point (sphere).
+    const says = body.faces.map(face => {
+      const ad = new oc.BRepAdaptor_Surface_2(face, true), ty = ad.GetType();
+      const ax = (a: any) => ({ p: this.xyz(a.Location()), d: unit(this.xyz(a.Direction())) });
+      if (ty === S.GeomAbs_Plane) return { n: this.faceNormalAt(face) };
+      if (ty === S.GeomAbs_Cylinder) return { ax: ax(ad.Cylinder().Axis()) };
+      if (ty === S.GeomAbs_Cone) return { ax: ax(ad.Cone().Axis()) };
+      if (ty === S.GeomAbs_Torus) return { ax: ax(ad.Torus().Axis()) };
+      if (ty === S.GeomAbs_Sphere) return { c: this.xyz(ad.Sphere().Location()) };
+      return null;
+    }) as ({ n?: V3; ax?: { p: V3; d: V3 }; c?: V3 } | null)[];
+    if (says.some(q => !q)) return null;
+    const lead = says.find(q => q!.ax)?.ax;
+    if (!lead) return null;
+    const A = lead.p, d = lead.d;
+    const off = (p: V3): number => { const q = sub3(p, A); return Math.hypot(...sub3(q, mul(d, dot(q, d)))); };
+    for (const q of says) {
+      if (q!.n && Math.abs(Math.abs(dot(q!.n, d)) - 1) > 1e-6) return null;
+      if (q!.ax && (Math.abs(Math.abs(dot(q!.ax.d, d)) - 1) > 1e-6 || off(q!.ax.p) > tol)) return null;
+      if (q!.c && off(q!.c) > tol) return null;
+    }
+    // The sketch plane: a standard plane that holds the axis, or one moved along its normal up to the axis.
+    const id = () => `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
+    let plane: PlaneRef | null = null, fr: Frame | null = null, ref: Feature | null = null;
+    for (const std of ["XY", "XZ", "YZ"] as const) {
+      const F = STD_FRAMES[std];
+      if (Math.abs(dot(d, F.n)) > 1e-9) continue;
+      const h = dot(A, F.n);
+      if (Math.abs(h) <= tol) { plane = { std }; fr = F; break; }
+      if (!ref) {
+        ref = { id: id(), type: "plane", name: "", base: { std }, mode: "offset", offset: { v: Math.abs(h) }, flip: h < 0 } as Feature;
+        plane = { plane: ref.id };
+        fr = { o: mul(F.n, h), x: F.x, y: F.y, n: F.n };
+      }
+    }
+    if (!plane || !fr) return null;
+    // Half of the section through the axis: the body cut by a big rectangle that starts on the axis.
+    const u = unit(cross(fr.n, d)), L = size * 4 + 1;
+    const corner = (a: number, b: number) => this.P(add(add(A, mul(d, a * L)), mul(u, b * L)));
+    const poly = new oc.BRepBuilderAPI_MakePolygon_1();
+    poly.Add_1(corner(-1, 0)); poly.Add_1(corner(1, 0)); poly.Add_1(corner(1, 1)); poly.Add_1(corner(-1, 1));
+    poly.Close();
+    const half = new oc.BRepBuilderAPI_MakeFace_15(poly.Wire(), true).Face();
+    const cut = new oc.BRepAlgoAPI_Common_3(half, body.shape, new oc.Message_ProgressRange_1());
+    if (!cut.IsDone() || cut.HasErrors()) return null;
+    const segs: ExtrudeFind["segs"] = [];
+    let lo = Infinity, hi = -Infinity;
+    for (const e of this.sub(cut.Shape(), "EDGE")) {
+      const ca = new oc.BRepAdaptor_Curve_2(e), t0 = ca.FirstParameter(), t1 = ca.LastParameter(), ct = ca.GetType();
+      const a = this.xyz(ca.Value(t0)), b = this.xyz(ca.Value(t1)), m = this.xyz(ca.Value((t0 + t1) / 2));
+      for (const p of [a, b, m]) { const t = dot(sub3(p, A), d); lo = Math.min(lo, t); hi = Math.max(hi, t); }
+      if (ct === C.GeomAbs_Line) segs.push({ line: [a, b] });
+      else if (ct === C.GeomAbs_Circle) {
+        const c = this.xyz(ca.Circle().Location()), r = ca.Circle().Radius();
+        if (Math.abs(Math.abs(t1 - t0) - 2 * Math.PI) < 1e-9) segs.push({ circle: { c, r } });
+        else segs.push({ arc: { c, a, b, m } });
+      } else return null;
+    }
+    if (!segs.length || !(hi - lo > tol)) return null;
+    const sid = id(), { ents, pt } = this.loopEnts(sid, fr, segs);
+    // The centreline runs a little past the profile, so it shares no point with it.
+    const pad = Math.max(1, (hi - lo) * 0.1), axis = `${sid}ax`;
+    ents.push({ id: axis, t: "line", a: pt(add(A, mul(d, lo - pad))), b: pt(add(A, mul(d, hi + pad))), cons: true });
+    const out: Feature[] = [...(ref ? [ref] : []),
+      { id: sid, type: "sketch", name: "", plane, ents, rels: [], dims: [] } as Feature,
+      { id: id(), type: "revolve", name: "", sketch: sid, op: "boss", merge: false, axis, angle: { v: Math.PI * 2 } } as Feature,
+      { id: id(), type: "delbody", name: "", bodies: [{ name: start.body.names[0], hint: this.centroid(start.body.faces[0]) }] } as Feature];
+    for (let k = rounds.length - 1; k >= 0; k--) {
+      const r = this.evaluate(at(out));
+      const fs = r.body && !r.statuses.slice(-out.length).some(s => s.ok === false) ? this.extrudeFeatures(rounds[k], r.body, r.frames) : null;
+      if (!fs) return null;
+      out.push(...fs);
+    }
+    const fin = this.evaluate(at(out));
+    if (!fin.body || this.solids(fin.body.shape) !== 1 || fin.statuses.slice(-out.length).some(s => s.ok === false)) return null;
+    return Math.abs(this.volume(fin.body.shape) - v0) <= 1e-6 * Math.abs(v0) + 1e-9 ? out : null;
+  }
+
   /** Sketch + extrude pairs for finds, each on the flat face of `body` its loop lies on. */
   private extrudeFeatures(finds: ExtrudeFind[], body: Named, frames: Record<string, Frame>): Feature[] | null {
     const id = () => `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
@@ -3453,23 +3665,7 @@ export class Modeller {
       if (fi < 0) return null;
       const plane: PlaneRef = { face: { name: body.names[fi], hint: this.centroid(body.faces[fi]) } };
       const fr = this.planeFrame(plane, body, frames);
-      const sid = id(), ents: SkEnt[] = [], pts = new Map<string, string>();
-      const pt = (p: V3): string => {
-        const q = sub3(p, fr.o), x = dot(q, fr.x), y = dot(q, fr.y), k = `${x.toFixed(5)},${y.toFixed(5)}`;
-        let pid = pts.get(k);
-        if (!pid) { pid = `${sid}p${pts.size + 1}`; pts.set(k, pid); ents.push({ id: pid, t: "point", x, y }); }
-        return pid;
-      };
-      c.segs.forEach((sg, k) => {
-        const eid = `${sid}e${k + 1}`;
-        if ("line" in sg) ents.push({ id: eid, t: "line", a: pt(sg.line[0]), b: pt(sg.line[1]) });
-        else if ("circle" in sg) ents.push({ id: eid, t: "circle", c: pt(sg.circle.c), r: sg.circle.r });
-        else {
-          const { c: cc, a, b, m } = sg.arc;
-          const ccw = dot(cross(sub3(a, cc), sub3(m, cc)), fr.n) > 0;
-          ents.push({ id: eid, t: "arc", c: pt(cc), a: pt(ccw ? a : b), b: pt(ccw ? b : a) });
-        }
-      });
+      const sid = id(), { ents } = this.loopEnts(sid, fr, c.segs);
       feats.push({ id: sid, type: "sketch", name: "", plane, ents, rels: [], dims: [] } as Feature,
         { id: id(), type: "extrude", name: "", sketch: sid, op: c.op, end: c.end, depth: { v: c.depth } } as Feature);
     }

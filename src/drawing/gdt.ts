@@ -104,20 +104,34 @@ export function datumPrims(a: DatumAnnot, base: P2 | null, d: P2, at: P2): { pri
   return { prims: out, box: [at[0] - s, at[1] - s, at[0] + s, at[1] + s] };
 }
 
-/** ISO 1302 surface texture symbol with its base at `base`: short leg 5 mm, long leg 10 mm, 60°. */
+/** Lay symbols of ISO 1302 (direction of the surface pattern). */
+export const SURF_LAYS = ["=", "⊥", "X", "M", "C", "R", "P"] as const;
+
+/**
+ * ISO 1302 surface texture symbol with its base at `base`: short leg 5 mm, long leg 10 mm (14 mm with a second
+ * requirement), 60°. The requirements sit under the long leg's line, the method above it, the lay symbol beside
+ * the long leg, the machining allowance left of the short leg and the all-around circle where leg and line meet.
+ */
 export function surfPrims(a: SurfAnnot, base: P2, dec: string): { prims: Prim[]; box: Box } {
   const out: Prim[] = [];
   const c = Math.cos(Math.PI / 3), s = Math.sin(Math.PI / 3);
-  const p1: P2 = [base[0] - 5 * c, base[1] + 5 * s], p2: P2 = [base[0] + 10 * c, base[1] + 10 * s];
+  const comma = (x: string) => (dec === "." ? x : x.replace(/(\d)\.(\d)/g, `$1${dec}$2`));
+  const text = comma(a.text), text2 = a.text2 ? comma(a.text2) : "", allow = a.allow ? comma(a.allow) : "";
+  const long = text2 ? 14 : 10;
+  const p1: P2 = [base[0] - 5 * c, base[1] + 5 * s], p2: P2 = [base[0] + long * c, base[1] + long * s];
   out.push(L(base, p1), L(base, p2));
   if (a.proc === "removal") out.push(L(p1, [base[0] + 5 * c, base[1] + 5 * s]));
   if (a.proc === "none") out.push(C([base[0], base[1] + 5 * s * 0.55], 5 * s * 0.55 * Math.tan(Math.PI / 6) / 1.1));
-  const text = dec === "." ? a.text : a.text.replace(/(\d)\.(\d)/g, `$1${dec}$2`);
-  const w = Math.max(8, tw(text, 2.5) + 2, a.method ? tw(a.method, 2.5) + 2 : 0);
+  const w = Math.max(8, tw(text, 2.5) + 2, text2 ? tw(text2, 2.5) + 2 : 0, a.method ? tw(a.method, 2.5) + 2 : 0);
   out.push(L(p2, [p2[0] + w, p2[1]]));
   if (text) out.push(T(p2[0] + 1, p2[1] - 3.6, text, 2.5, "l"));
+  if (text2) out.push(T(p2[0] + 1, p2[1] - 7.2, text2, 2.5, "l"));
   if (a.method) out.push(T(p2[0] + 1, p2[1] + 1, a.method, 2.5, "l"));
-  return { prims: out, box: [p1[0], base[1], p2[0] + w, p2[1] + (a.method ? 4 : 0.5)] };
+  if (a.lay) out.push(T(base[0] + 3.2, base[1] + 0.6, a.lay, 2.5, "l"));
+  if (allow) out.push(T(base[0] - 2.6, base[1] + 0.6, allow, 2.5, "r"));
+  if (a.around) out.push(C(p2, 1));
+  const left = allow ? base[0] - 2.6 - tw(allow, 2.5) : p1[0];
+  return { prims: out, box: [Math.min(p1[0], left), base[1], p2[0] + w, p2[1] + (a.method ? 4 : a.around ? 1 : 0.5)] };
 }
 
 /** A table header or title as shown: new columns are "Column n" until renamed; other English keys translate. */

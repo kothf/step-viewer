@@ -183,5 +183,23 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - id: deployment
+      # A deployment normally takes under a minute. GitHub's side sometimes sits at "syncing_files"
+      # until the action's 10-minute timeout (runs 245 and 246, with the status page green), so the
+      # first try gives up after 4 minutes and a second one starts afresh. The release itself is
+      # already published by now: a failure here only leaves the github.io copy one version behind.
+      - id: first
         uses: actions/deploy-pages@v5
+        continue-on-error: true
+        with:
+          timeout: 240000
+
+      - id: retry
+        if: steps.first.outcome == 'failure'
+        uses: actions/deploy-pages@v5
+        with:
+          timeout: 600000
+
+      - id: deployment
+        env:
+          URL: ${{ steps.first.outputs.page_url || steps.retry.outputs.page_url }}
+        run: echo "page_url=$URL" >> "$GITHUB_OUTPUT"
