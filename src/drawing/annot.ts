@@ -106,6 +106,44 @@ export function edgeRef(e: MEdge, p: "a" | "b" | "c" | "e"): GeoRef {
   return { e: e.k, h: e.m, p, ...(p === "a" ? { q: e.a } : p === "b" ? { q: e.b } : {}) };
 }
 
+/** A circle seen edge-on (its axis in the view plane) as the line it looks like, in view axes; null when it is not edge-on.
+ *  A whole circle spans its diameter; an arc spans what its ends and middle cover. */
+export function edgeOnSeg(e: MEdge, P: (p: V3) => P2, topo: Topo | null = null): [P2, P2] | null {
+  if (e.t !== "c" || !e.c || !e.r || !e.ax) return null;
+  const o = P([0, 0, 0]), q = P(e.ax), ad: P2 = [q[0] - o[0], q[1] - o[1]];
+  if (Math.abs(len2(ad) - 1) > 1e-6) return null;
+  const dl: P2 = [-ad[1], ad[0]], c = P(e.c);
+  let t0 = -e.r, t1 = e.r;
+  if (!wholeCircle(e, topo)) {
+    const ts = [e.a, e.b, e.m].map(w => { const p = P(w); return (p[0] - c[0]) * dl[0] + (p[1] - c[1]) * dl[1]; });
+    t0 = Math.min(...ts); t1 = Math.max(...ts);
+  }
+  return [[c[0] + dl[0] * t0, c[1] + dl[1] * t0], [c[0] + dl[0] * t1, c[1] + dl[1] * t1]];
+}
+
+/** One outline line of a cylinder seen from the side, in view axes: `o` = its origin projected, `ad` = its axis in the view (unit),
+ *  `v0`..`v1` along the axis, `s` = which side (+1 = left of the axis direction). */
+export function outlineSeg(o: P2, ad: P2, r: number, v0: number, v1: number, s: 1 | -1): [P2, P2] {
+  const dl: P2 = [-ad[1] * r * s, ad[0] * r * s];
+  return [[o[0] + ad[0] * v0 + dl[0], o[1] + ad[1] * v0 + dl[1]], [o[0] + ad[0] * v1 + dl[0], o[1] + ad[1] * v1 + dl[1]]];
+}
+
+/** The cylinder outline a `GeoRef` with `s` names: the side line of the cylinder the circle bounds (a short piece when none is found). */
+function outlineOf(e: MEdge, s: 1 | -1, P: (p: V3) => P2, topo: Topo | null): [P2, P2] | null {
+  if (e.t !== "c" || !e.c || !e.r || !e.ax) return null;
+  const o = P([0, 0, 0]), q = P(e.ax), ad: P2 = [q[0] - o[0], q[1] - o[1]];
+  if (Math.abs(len2(ad) - 1) > 1e-6) return null;
+  const tol = 1e-6 * Math.max(1, e.r);
+  for (const cy of topo?.cyls ?? []) {
+    if (Math.abs(cy.r - e.r) > tol || Math.abs(Math.abs(dot3(cy.ax, e.ax)) - 1) > 1e-6) continue;
+    const dq = sub3(e.c, cy.o), t = dot3(dq, cy.ax);
+    if (Math.hypot(dq[0] - cy.ax[0] * t, dq[1] - cy.ax[1] * t, dq[2] - cy.ax[2] * t) > tol) continue;
+    const p0 = P(cy.o), q1 = P(cy.ax), a2: P2 = [q1[0] - o[0], q1[1] - o[1]];
+    return outlineSeg(p0, a2, cy.r, cy.v0, cy.v1, s);
+  }
+  return outlineSeg(P(e.c), ad, e.r, 0, 1e-3, s);
+}
+
 /** Projects model points into a view's axes. */
 export function projector(vd: ViewDir) {
   const { x, y, n } = viewAxes(vd);
@@ -115,7 +153,23 @@ export function projector(vd: ViewDir) {
 // ---------- dimension geometry ----------
 
 /** `a0`/`sw`: an arc's start angle and sweep in view axes; `ang`: a chamfer's angle in degrees. */
-export interface DimGeo { k: DimAnnot["k"]; pts: P2[]; c?: P2; r?: number; lines?: [P2, P2][]; value: number; a0?: number; sw?: number; ang?: number }
+/** `dl`: a circle seen side-on (as a line): the direction of that line in the view, along which its diameter is dimensioned. */
+/** `segs`: for each of a linear dimension's two points, the measured straight edge it may slide along (null for a plain point). */
+export interface DimGeo { k: DimAnnot["k"]; pts: P2[]; c?: P2; r?: number; lines?: [P2, P2][]; value: number; a0?: number; sw?: number; ang?: number; segs?: ([P2, P2] | null)[]; dl?: P2 }
+
+/**
+ * Whether a round edge is a whole circle: by itself, or with the other arcs on its centre and radius
+ * (STEP files split a circle into two halves). A new dimension on it is a diameter, on any other arc a radius.
+ */
+export function wholeCircle(e: MEdge, topo: Topo | null): boolean {
+  if (e.t !== "c" || !e.c || !e.r) return false;
+  const full = TAU - 1e-3;
+  if ((e.sp ?? 0) >= full) return true;
+  const c = e.c, tol = 1e-6 * Math.max(1, e.r);
+  let sum = 0;
+  for (const o of topo?.edges ?? []) if (o.t === "c" && o.c && o.r && Math.abs(o.r - e.r) < tol && Math.hypot(o.c[0] - c[0], o.c[1] - c[1], o.c[2] - c[2]) < tol) sum += o.sp ?? 0;
+  return sum >= full;
+}
 
 const TAU = 2 * Math.PI;
 const normA = (v: number) => { v %= TAU; return v < 0 ? v + TAU : v; };
@@ -134,7 +188,10 @@ export function dimGeo(a: DimAnnot, P: (p: V3) => P2, topo: Topo | null): DimGeo
     }
     const e = refEdge(r0, topo);
     if (!e || e.t !== "c" || !e.c || !e.r) return null;
-    return { k: kind, pts: [], c: P(e.c), r: e.r, value: kind === "rad" ? e.r : 2 * e.r };
+    // Seen side-on the circle is a line square to its axis: its diameter is then a linear dimension along that line.
+    const o = P([0, 0, 0]), q = e.ax ? P(e.ax) : null, ax: P2 | null = q ? [q[0] - o[0], q[1] - o[1]] : null;
+    const dl: P2 | undefined = ax && Math.abs(len2(ax) - 1) < 1e-6 ? [-ax[1], ax[0]] : undefined;
+    return { k: kind, pts: [], c: P(e.c), r: e.r, value: kind === "rad" ? e.r : 2 * e.r, dl };
   }
   if (kind === "arc") {
     // The arc runs from one end through its middle to the other, whichever way that is in the view.
@@ -165,21 +222,29 @@ export function dimGeo(a: DimAnnot, P: (p: V3) => P2, topo: Topo | null): DimGeo
   }
   // Linear: two points, or the two ends of one line; a line and a point or two parallel lines: the square distance.
   const pts: P2[] = [];
-  const lineOf = (r: GeoRef): [P2, P2] | null => { if ("pt" in r || r.p !== "e") return null; const e = refEdge(r, topo); return e && e.t === "l" ? [P(e.a), P(e.b)] : null; };
+  let segs: ([P2, P2] | null)[] | undefined;
+  const lineOf = (r: GeoRef): [P2, P2] | null => {
+    if ("pt" in r || r.p !== "e") return null;
+    const e = refEdge(r, topo);
+    if (!e) return null;
+    if (e.t === "l") return [P(e.a), P(e.b)];
+    // A cylinder's outline seen from the side, or a circle seen edge-on: both are lines in the view.
+    return r.s ? outlineOf(e, r.s, P, topo) : edgeOnSeg(e, P, topo);
+  };
   const foot = (p: P2, l: [P2, P2]): P2 => { const [u, v] = l, dx = v[0] - u[0], dy = v[1] - u[1], L2 = dx * dx + dy * dy || 1, t = ((p[0] - u[0]) * dx + (p[1] - u[1]) * dy) / L2; return [u[0] + dx * t, u[1] + dy * t]; };
   if (a.refs.length === 1) { const l = lineOf(a.refs[0]); if (!l) return null; pts.push(l[0], l[1]); }
   else {
     const l0 = lineOf(a.refs[0]), l1 = lineOf(a.refs[1]);
     const p0 = l0 ? null : refPoint(a.refs[0], topo), p1 = l1 ? null : refPoint(a.refs[1], topo);
-    if (l0 && l1) { const m: P2 = [(l0[0][0] + l0[1][0]) / 2, (l0[0][1] + l0[1][1]) / 2]; pts.push(m, foot(m, l1)); }
-    else if (l0 && p1) { const q = P(p1); pts.push(foot(q, l0), q); }
-    else if (p0 && l1) { const q = P(p0); pts.push(q, foot(q, l1)); }
+    if (l0 && l1) { const m: P2 = [(l0[0][0] + l0[1][0]) / 2, (l0[0][1] + l0[1][1]) / 2]; pts.push(m, foot(m, l1)); segs = [l0, l1]; }
+    else if (l0 && p1) { const q = P(p1); pts.push(foot(q, l0), q); segs = [l0, null]; }
+    else if (p0 && l1) { const q = P(p0); pts.push(q, foot(q, l1)); segs = [null, l1]; }
     else if (p0 && p1) pts.push(P(p0), P(p1));
     else return null;
   }
   const [s, t] = pts;
   const value = kind === "h" ? Math.abs(t[0] - s[0]) : kind === "v" ? Math.abs(t[1] - s[1]) : d2(s, t);
-  return { k: kind, pts, value };
+  return { k: kind, pts, value, segs };
 }
 
 /** The sector of two lines that holds `t`: intersection, start angle and sweep (radians), or null for parallel lines. */
@@ -412,7 +477,7 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
     const bb = textBox(sb[0], sb[1], "x".repeat(Math.max(1, Math.round(wb / (h * 0.85)))), h, "l", rot);
     return [Math.min(box[0], bb[0]), Math.min(box[1], bb[1]), Math.max(box[2], bb[2]), Math.max(box[3], bb[3])];
   };
-  const diaLin = g.k === "dia" && !!a.lin;
+  const diaLin = g.k === "dia" && (!!a.lin || !!g.dl);
   if ((g.k === "rad" || g.k === "dia") && !diaLin) {
     const C = S(g.c!), R = g.r! * pl.s;
     const u = unit2([T[0] - C[0], T[1] - C[1]], [Math.SQRT1_2, Math.SQRT1_2]);
@@ -512,13 +577,24 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
   }
   // Linear.
   // A diameter shown as a linear dimension: between the rim's two ends along the sheet's horizontal or vertical.
-  const dl: P2 = a.lin === "v" ? [0, 1] : [1, 0];
+  const dl: P2 = g.dl ?? (a.lin === "v" ? [0, 1] : [1, 0]);
   const [S1, S2] = diaLin ? [add2(S(g.c!), dl, -g.r! * pl.s), add2(S(g.c!), dl, g.r! * pl.s)] : g.pts.map(S);
   const d: P2 = diaLin ? dl : g.k === "h" ? [1, 0] : g.k === "v" ? [0, 1] : unit2([S2[0] - S1[0], S2[1] - S1[1]]);
   const nrm: P2 = [-d[1], d[0]];
   const off = (p: P2) => (T[0] - p[0]) * nrm[0] + (T[1] - p[1]) * nrm[1];
   const D1 = add2(S1, nrm, off(S1)), D2 = add2(S2, nrm, off(S2));
-  for (const [s, e, k] of [[S1, D1, "a"], [S2, D2, "b"]] as [P2, P2, "a" | "b"][]) {
+  // An extension line leaves a measured edge at its end nearest the dimension line (or where the line crosses the edge),
+  // so it never runs along the edge or across the part from the edge's middle.
+  const extFrom = (s: P2, D: P2, i: number): P2 => {
+    const sg = !diaLin && g.segs?.[i];
+    if (!sg) return s;
+    const [p, q] = sg.map(S), w: P2 = [q[0] - p[0], q[1] - p[1]], L = len2(w);
+    if (L < 1e-9 || Math.abs(w[0] * d[0] + w[1] * d[1]) > 1e-6 * L) return s;
+    const t = Math.max(0, Math.min(1, ((D[0] - p[0]) * w[0] + (D[1] - p[1]) * w[1]) / (L * L)));
+    return [p[0] + w[0] * t, p[1] + w[1] * t];
+  };
+  const E1 = extFrom(S1, D1, 0), E2 = extFrom(S2, D2, 1);
+  for (const [s, e, k] of [[E1, D1, "a"], [E2, D2, "b"]] as [P2, P2, "a" | "b"][]) {
     if (a.noExt === k || a.noExt === "both") continue;
     const v: P2 = [e[0] - s[0], e[1] - s[1]], L = len2(v);
     if (L > EXT_GAP + 0.5) { const u: P2 = [v[0] / L, v[1] / L]; out.push(thin(add2(s, u, EXT_GAP), add2(e, u, EXT_OVER))); }
@@ -632,13 +708,26 @@ export const HOLE_COLS = ["Tag", "X LOC", "Y LOC", "Size"];
 /** Whether a circle edge is seen end-on along the view normal `n`. */
 export const endOnCircle = (e: MEdge, n: V3) => e.t === "c" && !!e.ax && !!e.c && !!e.r && Math.abs(Math.abs(dot3(e.ax, n)) - 1) < 1e-6;
 
-/** The holes a view shows end-on: full circles, one per centre and radius (a through hole's two rims are one hole). */
+/**
+ * The holes a view shows end-on: full circles, one per centre and radius (a through hole's two rims are one hole).
+ * With the geometry's hole stacks known (a modelled or imported solid), only circles on a hole count, one per hole (its
+ * drill, the smallest circle): a boss's rim or a chamfer's circle is no hole, and a counterbore is not a second hole (drawings exam #5).
+ */
 export function holeEdges(topo: Topo | null, P: (p: V3) => P2, n: V3, keep: (c: P2) => boolean = () => true): MEdge[] {
   const out: MEdge[] = [], seen: [P2, number][] = [];
+  const stacks = topo?.holes ?? (topo?.cyls.length ? [] : null), slot = new Map<MHole, number>();
   for (const e of topo?.edges ?? []) {
     if (!endOnCircle(e, n) || (e.sp ?? 2 * Math.PI) < 2 * Math.PI - 1e-3) continue;
     const c = P(e.c!);
-    if (!keep(c) || seen.some(([q, r]) => d2(q, c) < 1e-4 && Math.abs(r - e.r!) < 1e-6)) continue;
+    if (!keep(c)) continue;
+    if (stacks) {
+      const h = stacks.length ? stackAt(e.c!, e.ax!, e.r!, topo) : null;
+      if (!h) continue;
+      const i = slot.get(h);
+      if (i === undefined) { slot.set(h, out.length); out.push(e); } else if (e.r! < out[i].r! - 1e-6) out[i] = e;
+      continue;
+    }
+    if (seen.some(([q, r]) => d2(q, c) < 1e-4 && Math.abs(r - e.r!) < 1e-6)) continue;
     seen.push([c, e.r!]); out.push(e);
   }
   return out;
@@ -652,7 +741,7 @@ export function holeRows(a: HoleTableAnnot, P: (p: V3) => P2, ctx: AnnotCtx): { 
   for (const ref of a.holes) {
     const e = refEdge(ref, ctx.topo);
     if (!e || e.t !== "c" || !e.c || !e.r) { missing = true; continue; }
-    hs.push({ c: P(e.c), r: e.r, size: holeText(e, ctx, false)[0] ?? "" });
+    hs.push({ c: P(e.c), r: e.r, size: holeText(e, ctx, false).join(" ") });
   }
   const o0 = o ?? [0, 0];
   const sizes = [...new Map(hs.map(h => [h.size, h.r])).entries()].sort((x, y) => x[1] - y[1] || x[0].localeCompare(y[0])).map(([s]) => s);

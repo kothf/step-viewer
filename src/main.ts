@@ -418,6 +418,31 @@ const drawing = new DrawingWorkspace({
     const name = `${baseName()}.step`;
     return { name, file: { name, bytes }, info: { title: baseName() } };
   },
+  // A drawing opened by itself carries its model: Model opens that copy in its own tab (or shows its parked tab).
+  async openModel(m) {
+    const tabOf = (kind: "part" | "asm", id: string) => docs?.tabs.find(x => x.kind === kind && x.state && (kind === "part" ? (x.state as PartTab).store.doc.id : (x.state as AsmTab).doc.id) === id);
+    const ext = (name: string, e: string) => (name.toLowerCase().endsWith(e) ? name : `${name.replace(/\.[^.]+$/, "")}${e}`);
+    if (m.part) {
+      if (modeller.active && modeller.store?.doc.id === m.part.id) return false;
+      const tab = tabOf("part", m.part.id);
+      if (tab) await docs!.activate(tab.id);
+      else { const b = await packPart(m.part, `MöbiusCAD ${__APP_VERSION__}`); await modeller.openFile({ name: ext(m.name, PART_EXT), data: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer }); }
+      return true;
+    }
+    if (m.asm) {
+      if (asm.active && asm.doc?.id === m.asm.id) return false;
+      const tab = tabOf("asm", m.asm.id);
+      if (tab) await docs!.activate(tab.id);
+      else { const b = await packAsm(m.asm, `MöbiusCAD ${__APP_VERSION__}`); await asm.openFile({ name: ext(m.name, ASM_EXT), data: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer }); }
+      return true;
+    }
+    if (m.file) {
+      if (viewer.parts.length && !modeller.active && !asm.active && state.fileName === m.file.name) return false;
+      await openFiles([new File([m.file.bytes as BlobPart], m.file.name)]);
+      return true;
+    }
+    return false;
+  },
   livePart: id => (modeller.store?.doc.id === id ? modeller.store.doc : null),
   liveAsm: id => (asm.active && asm.doc?.id === id ? { doc: asm.doc, flat: asm.expanded?.doc ?? flattenSubs(asm.doc) } : null),
   onPartChange: fn => { partListeners.push(fn); },

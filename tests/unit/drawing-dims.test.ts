@@ -97,6 +97,22 @@ test("hole table: end-on holes once each, tagged by size from the smallest, X/Y 
   assert.deepEqual(gone.dangling, ["t"]);
 });
 
+test("hole table on a solid: one row per hole (its drill), counterbore in the size, a boss rim is no hole (drawings exam #5)", () => {
+  const circ = (k: string, c: V3, r: number): MEdge => ({ k, t: "c", a: [c[0] + r, c[1], c[2]], b: [c[0] + r, c[1], c[2]], m: [c[0] - r, c[1], c[2]], c, ax: [0, 0, 1], r, sp: 2 * Math.PI });
+  const ht: Topo = {
+    edges: [circ("cb-top", [30, 20, 15], 5.5), circ("cb-floor", [30, 20, 8.6], 5.5), circ("dr-top", [30, 20, 8.6], 3.3), circ("dr-bot", [30, 20, 0], 3.3),
+      circ("boss", [0, 0, 35], 20), circ("boss-ch", [0, 0, 35], 18)],
+    cyls: [{ o: [0, 0, 15], ax: [0, 0, 1], r: 20, v0: 0, v1: 18, sp: 2 * Math.PI, f: "boss" }],
+    holes: [{ o: [30, 20, 0], ax: [0, 0, 1], segs: [{ k: "cyl", v0: 0, v1: 8.6, r0: 3.3, r1: 3.3 }, { k: "cyl", v0: 8.6, v1: 15, r0: 5.5, r1: 5.5 }], open: [true, true] }],
+  };
+  const holes = holeEdges(ht, P, [0, 0, 1]);
+  assert.deepEqual(holes.map(e => e.k), ["dr-top"]);
+  const ctx: AnnotCtx = { topo: ht, holes: [], items: [], box: null, dec: ".", label: s => s };
+  const a = { id: "t", t: "htable" as const, view: "v", origin: { pt: [0, 0, 0] as V3 }, holes: holes.map(e => ({ e: e.k, h: e.m, p: "e" as const })), pos: [0, -40] as [number, number], prec: 1 };
+  assert.deepEqual(holeRows(a, P, ctx).rows, [["A1", "30.0", "20.0", "Ø6.6 THRU ⌴Ø11 ↧6.4"]]);
+  assert.deepEqual(holeEdges({ ...ht, holes: undefined }, P, [0, 0, 1]), [], "a solid without hole stacks has no holes");
+});
+
 test("bend table: bends tagged top to bottom then left to right, the tags replace the notes on the view", () => {
   const bends = [
     { a: [0, 10, 2] as V3, b: [100, 10, 2] as V3, up: true, angle: Math.PI / 2, r: 2 },

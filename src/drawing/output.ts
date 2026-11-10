@@ -2,6 +2,7 @@
 // export, print), PDF (vector, sheet size, embedded font) and DXF (R12, mm, one
 // layer per line type with its linetype).
 import { PEN_DASH, PEN_W, type Prim } from "./prims";
+import { textWidth } from "./textWidth";
 
 const f = (v: number) => (Math.round(v * 1000) / 1000).toString();
 const escXml = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
@@ -43,6 +44,34 @@ export function svgBody(prims: Prim[], H: number, color = "#000"): string {
   return parts.join("");
 }
 
+/** Hole symbols the embedded font (DejaVu Sans) has no glyph for: the PDF dropped them, so "⌴Ø11" read "Ø11" (drawings exam #7). */
+const DRAWN = /[⌴⌵]/;
+/**
+ * Text holding ⌴ (counterbore / spotface) or ⌵ (countersink) split into plain runs with the symbol drawn in thin lines
+ * (ASME Y14.5 shapes: an open square cup, a 90° V), for the outputs that draw text in the embedded font or a CAD font.
+ */
+export function drawnSymbols(prims: Prim[]): Prim[] {
+  if (!prims.some(p => p.t === "t" && DRAWN.test(p.s))) return prims;
+  const out: Prim[] = [];
+  for (const p of prims) {
+    if (p.t !== "t" || !DRAWN.test(p.s)) { out.push(p); continue; }
+    const h = p.h, sw = 0.95 * h, runs = p.s.split(/([⌴⌵])/).filter(Boolean);
+    const width = runs.reduce((w, r) => w + (DRAWN.test(r) ? sw : textWidth(r, h, p.bold)), 0);
+    const a = (p.rot ?? 0) * Math.PI / 180, c = Math.cos(a), sn = Math.sin(a);
+    let x = -(p.al === "c" ? width / 2 : p.al === "r" ? width : 0);
+    const at = (u: number, v: number): [number, number] => [p.x + u * c - v * sn, p.y + u * sn + v * c];
+    const seg = (u0: number, v0: number, u1: number, v1: number) => { const [x0, y0] = at(u0, v0), [x1, y1] = at(u1, v1); out.push({ t: "l", p: [x0, y0, x1, y1], pen: "thin", layer: p.layer }); };
+    for (const r of runs) {
+      if (r === "⌴") { const l = x + 0.12 * h, R = x + sw - 0.12 * h; seg(l, 0.7 * h, l, 0); seg(l, 0, R, 0); seg(R, 0, R, 0.7 * h); x += sw; continue; }
+      if (r === "⌵") { const l = x + 0.08 * h, R = x + sw - 0.08 * h, m = (l + R) / 2; seg(l, 0.8 * h, m, 0.8 * h - (R - l) / 2); seg(m, 0.8 * h - (R - l) / 2, R, 0.8 * h); x += sw; continue; }
+      const [tx, ty] = at(x, 0);
+      out.push({ ...p, x: tx, y: ty, s: r, al: "l" });
+      x += textWidth(r, h, p.bold);
+    }
+  }
+  return out;
+}
+
 /** A standalone SVG file of one sheet, at its real size in mm. */
 export function sheetSvg(prims: Prim[], W: number, H: number): string {
   return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${f(W)}mm" height="${f(H)}mm" viewBox="0 0 ${f(W)} ${f(H)}" font-family="${FONT.replace(/'/g, "")}" stroke-linecap="round">\n<rect width="${f(W)}" height="${f(H)}" fill="#fff"/>\n${svgBody(prims, H)}\n</svg>\n`;
@@ -54,6 +83,7 @@ export function sheetSvg(prims: Prim[], W: number, H: number): string {
  * the dpi that keeps the image under ~120 megapixels (browser canvas limits); `dpi` in the result says which.
  */
 export async function sheetPng(prims: Prim[], W: number, H: number, font: ArrayBuffer, dpi = 300): Promise<{ blob: Blob; dpi: number }> {
+  prims = drawnSymbols(prims);
   const maxPx = 120e6, px = (d: number) => (W / 25.4 * d) * (H / 25.4 * d);
   while (dpi > 72 && px(dpi) > maxPx) dpi -= 25;
   const w = Math.round(W / 25.4 * dpi), h = Math.round(H / 25.4 * dpi);
@@ -112,6 +142,7 @@ const LAYERS: Record<string, { color: number; lt: string }> = {
 
 /** DXF R12 in millimetres, one layer per line type. */
 export function sheetDxf(prims: Prim[], W: number, H: number): string {
+  prims = drawnSymbols(prims);
   const o: (string | number)[] = [];
   const g = (code: number, v: string | number) => o.push(code, typeof v === "number" ? f(v) : v);
   g(0, "SECTION"); g(2, "HEADER");
@@ -156,7 +187,7 @@ export function sheetDxf(prims: Prim[], W: number, H: number): string {
     } else if (p.t === "i") {
       continue;
     } else {
-      g(0, "TEXT"); g(8, p.layer); g(10, p.x); g(20, p.y); g(30, 0); g(40, p.h); g(1, p.s.replace(/[\r\n]+/g, " ")); if (p.rot) g(50, p.rot);
+      g(0, "TEXT"); g(8, p.layer); g(10, p.x); g(20, p.y); g(30, 0); g(40, p.h); g(1, dxfText(p.s)); if (p.rot) g(50, p.rot);
       if (p.al !== "l") { o.push(72, p.al === "c" ? 1 : 2); g(11, p.x); g(21, p.y); g(31, 0); }
     }
   }
@@ -164,7 +195,7 @@ export function sheetDxf(prims: Prim[], W: number, H: number): string {
   return o.join("\n") + "\n";
 }
 
-/** Text for DXF: one line, characters outside ASCII as \U+XXXX (AutoCAD reads them in any code page). */
+/** Text for DXF (R12 and 2000): one line, characters outside ASCII as \U+XXXX (AutoCAD reads them in any code page; R12 wrote raw UTF-8, which reads as Ã˜ in ANSI code pages, drawings exam #8). */
 const dxfText = (s: string) => s.replace(/[\r\n]+/g, " ").replace(/[^\x20-\x7e]/gu, ch => { const c = ch.codePointAt(0)!; return c > 0xffff ? "?" : `\\U+${c.toString(16).toUpperCase().padStart(4, "0")}`; });
 
 /**
@@ -172,6 +203,7 @@ const dxfText = (s: string) => s.replace(/[\r\n]+/g, " ").replace(/[^\x20-\x7e]/
  * AutoCAD expects, model and paper space block records, the root dictionary; polylines as LWPOLYLINE.
  */
 export function sheetDxf2000(prims: Prim[], W: number, H: number): string {
+  prims = drawnSymbols(prims);
   const o: (string | number)[] = [];
   const g = (code: number, v: string | number) => o.push(code, typeof v === "number" ? f(v) : v);
   const n = (code: number, v: number) => o.push(code, v);
@@ -289,7 +321,7 @@ export async function sheetsPdf(sheets: { prims: Prim[]; W: number; H: number }[
   doc.addFont("DejaVuSans.ttf", "DejaVu", "normal");
   doc.setFont("DejaVu", "normal");
   doc.setProperties({ title, creator: "MöbiusCAD" });
-  sheets.forEach((sh, i) => {
+  sheets.map(sh => ({ ...sh, prims: drawnSymbols(sh.prims) })).forEach((sh, i) => {
     if (i) doc.addPage([sh.W, sh.H], sh.W >= sh.H ? "landscape" : "portrait");
     const H = sh.H;
     doc.setLineCap("round");

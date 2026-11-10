@@ -136,7 +136,10 @@ async function runCmd(pg, label) {
       const texts = await pg.$$eval(sel, els => els.map(e => (e.querySelector(".mc-l") ?? e).textContent.trim()));
       return exact ? texts.indexOf(label) : texts.findIndex(x => x.startsWith(label));
     };
-    for (const tab of ["features", "surfaces", "sheetmetal", "weldments", "sketch"]) {
+    // In a sketch the Sketch tab's tools come first: the other tabs' commands would exit the sketch (FR-SK-004).
+    const sketching = await pg.evaluate(() => document.getElementById("app").classList.contains("sketching"));
+    const tabs = sketching ? ["sketch"] : ["features", "surfaces", "sheetmetal", "weldments", "sketch"];
+    for (const tab of tabs) {
       if (!(await pg.$(`#cm-t-${tab}`))) continue;
       await pg.click(`#cm-t-${tab}`);
       const i = await pick("#mc-tools [data-c]");
@@ -2199,6 +2202,10 @@ try {
     await mp.click("#mc-menu button:nth-child(2)");
     const flyTool = await mp.evaluate(() => ({ tool: window.__sv.model.editor().tool, shown: document.querySelector('#mc-tools [data-c^="sk:"][data-c="sk:extend"]')?.textContent?.trim() }));
     check(fly.join("|") === "Trim|Extend|Split" && flyTool.tool === "extend" && flyTool.shown === "Extend", `model 1.20: the sketch bar groups Trim, Extend and Split in a flyout (${fly.join("|")}, ${JSON.stringify(flyTool)})`);
+    // A tool picked on the sketch bar shows its fields in the panel at once (exam #89: Fillet came without its radius).
+    await mp.click('#mc-tools [data-c="sk:fillet"]');
+    const frBox = await mp.evaluate(() => ({ tool: window.__sv.model.editor().tool, box: !!document.querySelector('#mc-pm input[data-a="fr"]') }));
+    check(frBox.tool === "fillet" && frBox.box, `exam #89: Fillet picked on the sketch bar shows its radius box in the panel (${JSON.stringify(frBox)})`);
     // Offset the rectangle 5 mm inwards: a closed chain of four parallel lines.
     await tool("offset");
     await mp.evaluate(() => { window.__sv.model.editor().offsetDist = 5; });
@@ -4135,7 +4142,9 @@ try {
     // Focus (20, -8), vertex (20, -12): f = 4; ends over x = 10 and x = 35 → (10, -5.75), (35, 2.0625); tangents meet at (22.5, -21.375).
     await click([20, -8]); await click([20, -12]); await click([10, -15]); await click([35, -15]);
     const par = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id), c = sk.ents.find(e => e.kind === "parabola"); return c ? c.pts.map(id => [P(id).x, P(id).y].map(v => Math.round(v * 1000) / 1000).join(",")).join(" ") : ""; });
-    check(par === "10,-5.75 22.5,-21.375 35,2.063", `model 1.157: parabola from focus, vertex and two ends (${par})`);
+    // 35, 2.0625 sits on a rounding edge: compare within 0.002 (pixel snapping of the clicks).
+    const parWant = [10, -5.75, 22.5, -21.375, 35, 2.0625], parGot = par.split(/[ ,]/).map(Number);
+    check(parGot.length === 6 && parGot.every((v, i) => Math.abs(v - parWant[i]) < 0.002), `model 1.157: parabola from focus, vertex and two ends (${par})`);
     await mp.click('#mc-tools [data-fly="line"]');
     const lfly = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
     await mp.click("#mc-menu button:nth-child(4)");
@@ -4754,9 +4763,12 @@ try {
     const flat = (a, b) => Math.abs(b.y - a.y) < 1e-9;
     check(d(v3[0], moved[0]) === "-20,15" && d(v3[1], moved[1]) === "-20,15" && d(v3[2], moved[2]) === "-20,15" && d(moved[2], slid[2]) === "10,0" && flat(moved[2], slid[2]),
       `drawing: dragging the parent moves its projected views; a side view only slides sideways (${d(v3[0], moved[0])} ${d(v3[1], moved[1])} ${d(v3[2], moved[2])}, side ${d(moved[2], slid[2])})`);
+    // The part behind the drawing has an undo step of its own; Ctrl+Z on the drawing must leave it alone (drawings exam #1).
+    await dp.evaluate(() => window.__sv.modeller.store.change("Revision", d => { d.props.revision = "B"; }));
+    await ready();
     await dp.keyboard.press("Control+z"); await dp.keyboard.press("Control+z");
-    const undone = await views();
-    check(undone.length === 3 && d(v3[0], undone[0]) === "0,0" && d(v3[2], undone[2]) === "0,0", "drawing: Ctrl+Z undoes the moves");
+    const undone = await views(), rev = await dp.evaluate(() => window.__sv.modeller.store.doc.props.revision);
+    check(undone.length === 3 && d(v3[0], undone[0]) === "0,0" && d(v3[2], undone[2]) === "0,0" && rev === "B", `drawing: Ctrl+Z undoes the moves and not the part's last step (revision ${rev})`);
     // Model view ▾ Isometric: the preview follows the cursor; the click places it, then projected views come off it.
     await dp.click('#drw [data-a="model"]');
     await dp.click('#drw [data-orient="iso"]');
@@ -4821,6 +4833,21 @@ try {
     await dp2.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 5 && window.__sv.drw.ready(), null, { timeout: 90000 });
     const reb = await dp2.evaluate(() => ({ open: !document.querySelector("#drw").hidden, name: document.querySelector("#drw .drw-name").textContent }));
     check(reb.open && reb.name === "Block.mcaddrw", `drawing: a saved .mcaddrw opens with its views (${JSON.stringify(reb)})`);
+    // Model on a drawing opened by itself opens the part it carries in its own tab; the drawing's tab then has the part under it.
+    {
+      const tabs = () => dp2.$$eval("#doc-tabs [data-dt]", els => els.length);
+      const t0 = await tabs();
+      await dp2.click('#drw [data-a="back"]');
+      await dp2.waitForFunction(() => window.__sv.modeller.active && window.__sv.viewer.parts.length > 0 && document.querySelector("#drw").hidden, null, { timeout: 60000 });
+      const t1 = await tabs(), pid = await dp2.evaluate(() => window.__sv.modeller.store.doc.id);
+      await dp2.evaluate(() => [...document.querySelectorAll("#doc-tabs [data-dt]")].find(e => /mcaddrw/.test(e.textContent))?.click());
+      await dp2.waitForFunction(() => !document.querySelector("#drw").hidden && window.__sv.drw.doc()?.sheets[0].views.length === 5, null, { timeout: 60000 });
+      const same = await dp2.evaluate(id => window.__sv.drw.doc().source.doc.id === id && window.__sv.modeller.active, pid);
+      await dp2.click('#drw [data-a="back"]');
+      await dp2.waitForFunction(() => document.querySelector("#drw").hidden, null, { timeout: 20000 });
+      const t2 = await tabs();
+      check(t0 === 1 && t1 === 2 && same && t2 === 2, `drawing: Model on a drawing opened alone opens its part in a tab, once (${JSON.stringify({ t0, t1, t2, same })})`);
+    }
     await ctx.close();
   }
 
@@ -5101,6 +5128,52 @@ try {
       }
       check(!!made && has && st && gone && s0 > Math.PI / 2 + 1 && Math.abs(s1 - Math.PI / 2) < 1e-6, `drawing: a tight angle dimension has its arrows outside, Inside puts them back (${JSON.stringify({ made: !!made, has, st, gone, s0, s1, tp: !!tp, ks: (await annots()).map(q => q.k).join() })})`);
     }
+    // Extension lines (Andrey, 2026-11-10): a distance between the top and bottom edges placed right of the view starts
+    // both extension lines at the edges' right ends, not at their middles across the part. Undone afterwards.
+    {
+      const bx = await dp.evaluate(id => { const p = window.__sv.drw.placement(id); return { b: p.box, right: p.x + (p.box[2] - p.uc) * p.s, s: p.s }; }, front.id);
+      const level = () => dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "l" && p.layer === "ANNOT" && Math.abs(p.p[1] - p.p[3]) < 1e-6).map(p => [Math.min(p.p[0], p.p[2]), Math.max(p.p[0], p.p[2]), p.p[1]].map(v => Math.round(v * 1000) / 1000).join()));
+      const before = new Set(await level()), n0 = (await annots()).length;
+      await dp.click('#drw [data-a="dim"]');
+      [x, y] = await at(front.id, -20, bx.b[3]); await dp.mouse.move(x, y + 3); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+      [x, y] = await at(front.id, -20, bx.b[1]); await dp.mouse.move(x, y - 3); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+      [x, y] = await at(front.id, bx.b[2] + 14 / bx.s, (bx.b[1] + bx.b[3]) / 2); await dp.mouse.move(x - 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+      await dp.keyboard.press("Escape");
+      const made = (await annots()).slice(n0).map(a => a.k).join(), added = (await level()).filter(s => !before.has(s)).map(s => s.split(",").map(Number));
+      await dp.keyboard.press("Control+z");
+      const back = (await annots()).length === n0;
+      check(made === "al" && back && added.length === 2 && added.every(l => l[0] > bx.right + 0.5 && l[0] < bx.right + 1.5), `drawing: extension lines start at the edge ends nearest the dimension line (${JSON.stringify({ made, back, right: bx.right, added })})`);
+    }
+    // Diameter from the side (Andrey, 2026-11-10): in the front view the Ø16 hole shows as two hidden lines; a click on
+    // one gives its diameter as a linear dimension with Ø. Undone afterwards.
+    {
+      const bx = await dp.evaluate(id => { const p = window.__sv.drw.placement(id); return { b: p.box, s: p.s }; }, front.id);
+      const n0 = (await annots()).length, c0 = (await texts()).filter(s => s === "Ø16").length;
+      let made = null, c1 = 0, upright = 0;
+      for (const u of [18, -18, 2, -2]) {
+        await dp.click('#drw [data-a="dim"]');
+        [x, y] = await at(front.id, u, (bx.b[1] + bx.b[3]) / 2); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+        [x, y] = await at(front.id, u, bx.b[1] - 14 / bx.s); await dp.mouse.move(x, y + 2); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+        await dp.keyboard.press("Escape");
+        const an2 = await annots();
+        if (an2.length > n0) {
+          made = an2[an2.length - 1]; c1 = (await texts()).filter(s => s === "Ø16").length;
+          upright = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "l" && p.layer === "ANNOT" && Math.abs(p.p[0] - p.p[2]) < 1e-6).length);
+          await dp.keyboard.press("Control+z");
+          break;
+        }
+      }
+      const back = (await annots()).length === n0;
+      check(made && made.k === "dia" && made.view === front.id && c1 === c0 + 1 && upright >= 2 && back, `drawing: a hole's hidden line in a side view gives its diameter as a linear dimension (${JSON.stringify({ k: made?.k, c0, c1, upright, back })})`);
+      // Both hidden lines of the hole, one after the other: the distance between the two lines (exam #14), not between circle centres.
+      await dp.click('#drw [data-a="dim"]');
+      for (const u of [2, 18]) { [x, y] = await at(front.id, u, (bx.b[1] + bx.b[3]) / 2); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); }
+      [x, y] = await at(front.id, 10, bx.b[1] - 14 / bx.s); await dp.mouse.move(x, y + 2); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+      await dp.keyboard.press("Escape");
+      const two = (await annots()).slice(n0), t16 = (await texts()).includes("16");
+      if (two.length) await dp.keyboard.press("Control+z");
+      check(two.length === 1 && two[0].k === "al" && two[0].refs.every(r => r.s) && t16, `drawing: two outline lines of a hole give the distance between them (${JSON.stringify(two.map(a => ({ k: a.k, refs: a.refs })))}, 16 shown ${t16})`);
+    }
     // Select the 100 by its text and give it a ± tolerance.
     [x, y] = await at(front.id, 0, 40.5);
     await dp.mouse.click(x, y);
@@ -5247,10 +5320,12 @@ try {
       }
       check(r && r.below && r.stored && r.back, `drawing: a hole callout takes a line below and leaves the number of holes out (${JSON.stringify(r)})`);
     }
-    dp.once("dialog", d => d.accept("BREAK SHARP EDGES"));
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="note"]');
     [x, y] = await dp.evaluate(() => window.__sv.drw.sheetPt(40, 60));
     await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    // The new note's text box has the focus with its text selected (drawings exam #9): type, Tab commits.
+    await dp.waitForFunction(() => document.activeElement?.matches?.("textarea[data-d=ntxt]"));
+    await dp.keyboard.type("BREAK SHARP EDGES"); await dp.keyboard.press("Tab");
     await dp.waitForTimeout(150);
     tx = await texts();
     an = await annots();
@@ -5300,10 +5375,12 @@ try {
         `drawing: extension lines take the style's gap and overshoot and go back (${[e0, e1, e2, e3].map(v => v.toFixed(1)).join(" → ")})`);
     }
     // Property link in a note (FR-DRW-023): $PRP:"Scale" shows the sheet scale.
-    dp.once("dialog", d => d.accept('SCALE $PRP:"Scale"'));
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="note"]');
     [x, y] = await dp.evaluate(() => window.__sv.drw.sheetPt(40, 75));
     await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    // The new note's text box has the focus with its text selected (drawings exam #9): type, Tab commits.
+    await dp.waitForFunction(() => document.activeElement?.matches?.("textarea[data-d=ntxt]"));
+    await dp.keyboard.type('SCALE $PRP:"Scale"'); await dp.keyboard.press("Tab");
     await dp.waitForTimeout(150);
     tx = await texts();
     const scaleNote = tx.find(s => s.startsWith("SCALE "));
@@ -6597,9 +6674,11 @@ try {
       // Insert the plate's document under another file name: <1>, standing in the view.
       const ins = await mp.evaluate(() => {
         const a = window.__sv.asm, v = window.__sv.viewer, pd = JSON.parse(JSON.stringify(a.doc.parts[a.doc.components[0].part].doc));
+        const k0 = Object.keys(a.doc.parts).length;
         a.insertPart(pd, "other.mcadprt");
         const c = a.doc.components.at(-1), p = new v.camera.position.constructor(c.tf[3], c.tf[7], c.tf[11]).project(v.camera);
-        return { name: c.name, inView: Math.abs(p.x) < 1 && Math.abs(p.y) < 1 };
+        // Another file is another part, even with the same content (exam #87): editing it leaves the plate alone.
+        return { name: c.name, inView: Math.abs(p.x) < 1 && Math.abs(p.y) < 1, own: Object.keys(a.doc.parts).length === k0 + 1 && c.part !== a.doc.components[0].part };
       });
       await shown(3);
       await mp.evaluate(() => window.__sv.asm.undo());
@@ -6655,7 +6734,7 @@ try {
       await shown(2);
       check(par.pinTop && par.seated === n0 + 1 && par.type === "parallel" && !par.problem, `asm: flat faces that cannot be Coincident start as Parallel (exam #27) (${JSON.stringify(par)})`);
       check(/^Undo: .+ \(Ctrl\+Z\)$/.test(undoTip) && delKey.n === n0 - 1 && /^Undo: Delete Concentric1 \(Ctrl\+Z\)$/.test(delKey.tip)
-        && menu.open && menu.inside && enter.next === "y" && enter.open && ins.name === "other<1>" && ins.inView && neg.flipped && neg.value === 5,
+        && menu.open && menu.inside && enter.next === "y" && enter.open && ins.name === "other<1>" && ins.inView && ins.own && neg.flipped && neg.value === 5,
         `asm 1.339: Delete key, menus inside the window, Enter through Move, inserts in view numbered by file, negative distance flips, undo tips (${JSON.stringify({ undoTip, delKey, n0, menu, enter, ins, neg })})`);
     }
     const re = await mp.evaluate(async () => { const b = await window.__sv.asm.bytes(); await window.__sv.asm.openFile({ name: "m.mcadasm", data: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) }); return window.__sv.asm.doc.mates?.map(m => m.type).join(); });
@@ -8819,6 +8898,49 @@ try {
     const ps1 = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(x => x.type === "planesurf"); const l = window.__sv.model.last(); return { contours: f?.contours?.length, sheetFaces: l.sheetFaces, bad: l.statuses.filter(s => !s.ok).map(s => s.code).join() }; });
     check(ps0.type === "planesurf" && ps0.sketch === "s" && ps0.focus === "contours" && ps1.contours === 1 && ps1.sheetFaces === 1 && !ps1.bad,
       `model 1.428: Planar Surface on a sketch with a line across picks a region with Selected Contours (FR-FT-010) (${JSON.stringify({ ps0, ps1 })})`);
+    await ctx.close();
+  }
+
+  // --- 1.451: features straight from the sketch being edited (FR-SK-004) ---
+  if (inShard(5)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Rect", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", -50, -30), P("p2", 50, -30), P("p3", 50, 30), P("p4", -50, 30), Ln("l1", "p1", "p2"), Ln("l2", "p2", "p3"), Ln("l3", "p3", "p4"), Ln("l4", "p4", "p1")] });
+    }));
+    await settle();
+    // In the sketch, the Sketch tab offers Extrude: it exits the sketch and opens the extrude on it with a preview.
+    await mp.evaluate(() => window.__sv.modeller.editSketch("s"));
+    await mp.waitForTimeout(200);
+    const inSk = await mp.evaluate(() => ({ mode: window.__sv.model.mode().kind, ext: !!document.querySelector('#mc-tools [data-c="extrude"]'), line: !!document.querySelector('#mc-tools [data-c="sk:line"]') }));
+    await mp.click('#mc-tools [data-c="extrude"]');
+    await settle();
+    const ext = await mp.evaluate(() => { const m = window.__sv.model.mode(); return { mode: m.kind, type: m.draft?.type, sketch: m.draft?.sketch, v: Math.round(window.__sv.model.last().props?.volume ?? 0), sk: !document.getElementById("app").classList.contains("sketching") }; });
+    await mp.evaluate(() => window.__sv.modeller.cancel());
+    await settle();
+    // Another tab while sketching shows its own commands: Surfaces → Planar Surface uses the open sketch too.
+    await mp.evaluate(() => window.__sv.modeller.editSketch("s"));
+    await mp.waitForTimeout(200);
+    await mp.click("#cm-t-surfaces");
+    const surfTab = await mp.evaluate(() => ({ ps: !!document.querySelector('#mc-tools [data-c="planesurf"]'), line: !!document.querySelector('#mc-tools [data-c="sk:line"]'), mode: window.__sv.model.mode().kind }));
+    await mp.click('#mc-tools [data-c="planesurf"]');
+    await settle();
+    const ps = await mp.evaluate(() => { const m = window.__sv.model.mode(); return { mode: m.kind, type: m.draft?.type, sketch: m.draft?.sketch }; });
+    await mp.evaluate(() => window.__sv.modeller.cancel());
+    await settle();
+    check(inSk.mode === "sketch" && inSk.ext && inSk.line && ext.mode === "feature" && ext.type === "extrude" && ext.sketch === "s" && ext.v === 60000 && ext.sk
+      && surfTab.ps && !surfTab.line && surfTab.mode === "sketch" && ps.mode === "feature" && ps.type === "planesurf" && ps.sketch === "s",
+      `model 1.451: Extrude or Planar Surface picked while editing a sketch exits it and opens the feature on it with a preview (FR-SK-004) (${JSON.stringify({ inSk, ext, surfTab, ps })})`);
     await ctx.close();
   }
 

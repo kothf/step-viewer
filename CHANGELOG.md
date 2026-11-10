@@ -5,6 +5,51 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.451.0] - 2026-11-10
+
+### Added
+
+- **Features from the sketch you are editing (FR-SK-004)**: there is no need to exit the sketch first. The Sketch tab ends with **Extrude**, **Cut** and **Revolve**, the sketch's right-click menu has them too, and the Features, Surfaces, Sheet Metal and Weldments tabs keep their commands while you sketch (Ctrl+K finds them as well). Picking one exits the sketch and opens the feature on it with its live preview, as in SolidWorks.
+
+## [1.450.0] - 2026-11-10
+
+### Fixed
+
+- Drawings: a round edge seen edge-on (the top of a boss, the end of a shaft in a side view) can be picked for a dimension as the line it looks like, so a boss height or a shaft's overall length can be dimensioned (drawings exam #3, #10).
+- Drawings: two cylinder outline lines picked one after the other give the distance between the lines (a step of 2 between Ø20 and Ø24), not between the centres of the circles at their ends (drawings exam #14).
+
+## [1.449.0] - 2026-11-10
+
+### Fixed
+
+- Drawings: **Ctrl+Z** on a drawing undoes the last drawing step only. It used to undo the last feature of the part behind the drawing as well (drawings exam #1).
+- Hole table: one row per hole, with its whole callout as the size (Ø6.6 THRU ⌴Ø11 ↧6.4). A counterbored hole was listed twice, and a boss's rim or a chamfer's circle was listed as a hole (drawings exam #5).
+- A datum feature no longer takes a letter that a section, detail or auxiliary view already uses, and new view letters skip datum letters (drawings exam #6).
+- PDF, PNG and DXF exports draw the counterbore ⌴ and countersink ⌵ symbols in lines; the embedded font has no glyph for them, so they were missing (drawings exam #7).
+- DXF R12 writes Ø, ±, ° and Cyrillic as \U+ codes like DXF 2000, so AutoCAD no longer shows "Ã˜" (drawings exam #8).
+- A new note is typed straight into its text box, several lines included, instead of a one-line browser prompt (drawings exam #9).
+- Offset and half sections: no line where the cutting plane steps between cut faces, and a half section started on the part's edge is hatched again (drawings exam #12, #13).
+
+## [1.448.0] - 2026-11-10
+
+### Added
+
+- **Open the model from a drawing (FR-DRW-001)**: a drawing file opened by itself carries its part, assembly or STEP model. **Model** in the drawing bar now opens that model in its own tab (or shows its tab when it is open already); back on the drawing's tab, the views follow the model as usual.
+- **Diameter from a side view (FR-DRW-021)**: with Dimension, click either outline line of a cylinder seen from the side (a disc's or shaft's side, a hole's hidden line) and place the text: the diameter is drawn as a linear dimension with Ø, the same value as on the round view.
+
+### Fixed
+
+- Drawing dimensions between two edges no longer run their extension lines along the edges or across the part: each extension line starts at the end of its edge nearest the dimension line.
+- A new dimension on a hole is a diameter also when the model file stores the circle as two half circles (STEP); a radius stays the default for fillets and other arcs.
+
+## [1.447.0] - 2026-11-10
+
+### Fixed
+
+- Assemblies: inserting or replacing a component with another file makes it its own part, even when the file holds the same content as a part already in the assembly, so editing one no longer changes the other (exam #87).
+- Replace component counts mates that lost their faces only once the new part is built, so it no longer warns about mates that solve (exam #88).
+- Sketches: a tool picked on the sketch command bar shows its options in the panel at once, such as the Fillet radius (exam #89).
+
 ## [1.446.0] - 2026-11-10
 
 ### Added
@@ -2666,7 +2711,12 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.446.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.451.0...HEAD
+[1.451.0]: https://github.com/kothf/step-viewer/compare/v1.450.0...v1.451.0
+[1.450.0]: https://github.com/kothf/step-viewer/compare/v1.449.0...v1.450.0
+[1.449.0]: https://github.com/kothf/step-viewer/compare/v1.448.0...v1.449.0
+[1.448.0]: https://github.com/kothf/step-viewer/compare/v1.447.0...v1.448.0
+[1.447.0]: https://github.com/kothf/step-viewer/compare/v1.446.0...v1.447.0
 [1.446.0]: https://github.com/kothf/step-viewer/compare/v1.445.0...v1.446.0
 [1.445.0]: https://github.com/kothf/step-viewer/compare/v1.444.0...v1.445.0
 [1.444.0]: https://github.com/kothf/step-viewer/compare/v1.443.0...v1.444.0
