@@ -16,7 +16,7 @@ export type BomMode = "top" | "parts";
 
 /** Default BOM columns (English keys; the sheet shows them in the interface language). */
 export const BOM_COLS = ["Item", "Part number", "Description", "Qty", "Material"];
-/** The column the Material cell goes in (BOMs made before 1.466.0 have only the first four). */
+/** The column the Material cell goes in (BOMs made before 1.470.0 have only the first four). */
 export const BOM_MAT_COL = 4;
 
 /** Body materials by part key (from the drawing worker's components): what a BOM row shows in place of the part's material. */

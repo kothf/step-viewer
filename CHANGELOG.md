@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.466.0] - 2026-11-10
+## [1.470.0] - 2026-11-10
 
 ### Added
 - Drawings: the bill of materials has a Material column (FR-MAT-001). It shows each part's material, or the materials of its bodies when they have their own; a sub-assembly row stays empty. New BOMs get the column, and a tick box in the BOM's properties adds it to older ones or takes it off.
@@ -13,6 +13,35 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Changed
 - Drawings: when a part's bodies have their own materials, the title block lists them all and weighs each body with its own density, instead of the part's material alone.
+
+## [1.469.0] - 2026-11-10
+
+### Changed
+
+- **Drawings of big assemblies (drawings exam)**: a model of 4000 edges or more is drawn by a fast hidden-line removal on a fine mesh, then each line is rebuilt from the model: straight edges become exact lines and circles seen end-on become exact arcs (true centre and radius), so dimensions, centre marks and picking work as before; other curves stay polylines within 1/1000 of the model's size. A 57-part engine whose top view never finished now takes seconds per view, and the views queued behind it (alternate positions, sections) no longer wait.
+- **Standard 3 views** picks its scale by placing the three views around the title block, using the free room beside it, so a 430 mm engine on A3 is drawn at 1:2 instead of 1:5.
+
+## [1.468.0] - 2026-11-10
+
+### Added
+
+- **Right-click menu on vault files (FR-PDM-080)**: right-click (or long press) a file in the Vault tab for Open, Check out, Check in…, Undo check-out, Get latest, the state changes, History, Where used, Contains, Data card, PDF, Rename / move…, Copy tree… and Delete. The menu key and Shift+F10 open it from the keyboard.
+- **Several vault files at once**: Ctrl+click adds or removes a file, Shift+click selects a run, Ctrl+A selects every file shown and Esc goes back to one. With several files selected, the foot of the panel and the right-click menu offer Check out, Check in (one comment for all, files the others use go first), Undo check-out, Get latest, the state changes they have in common, Request change… and Delete (files that use others go to the recycle bin first).
+
+### Changed
+
+- **Slimmer Vault tab top**: Add files…, Add files in this folder…, Save to vault and the search stay; Notifications, Change orders, Release packages, Audit trail, Integrity check, Storage, Export ZIP, Recycle bin, Vault settings, Workflow and the user name moved into a **⋯** menu next to the vault's name (the notification count shows on it). The file list starts about 200 px higher.
+
+## [1.467.0] - 2026-11-10
+
+### Added
+
+- **Recognised sketches are fully defined (FR-FT-102, FR-SK-045)**: Recognize Features and Recognize Extrudes now run Fully define sketch on every sketch they make, as FeatureWorks gives its sketches dimensions. Lines along the axes get horizontal and vertical relations, circles and arcs their diameters and radii, and the points dimensions from the sketch origin, so the base, pocket and revolve sketches can be edited by their dimensions at once. Nothing moves and the body stays the same.
+
+## [1.466.0] - 2026-11-10
+
+### Fixed (drawings exam, round 2)
+- The GOST 2.104 title block writes the date as DD.MM.YY (10.11.26), so it fits its 10 mm cell; an ISO date ran over the cell border.
 
 ## [1.465.0] - 2026-11-10
 
@@ -2822,7 +2851,11 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.466.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.470.0...HEAD
+[1.470.0]: https://github.com/kothf/step-viewer/compare/v1.469.0...v1.470.0
+[1.469.0]: https://github.com/kothf/step-viewer/compare/v1.468.0...v1.469.0
+[1.468.0]: https://github.com/kothf/step-viewer/compare/v1.467.0...v1.468.0
+[1.467.0]: https://github.com/kothf/step-viewer/compare/v1.466.0...v1.467.0
 [1.466.0]: https://github.com/kothf/step-viewer/compare/v1.465.0...v1.466.0
 [1.465.0]: https://github.com/kothf/step-viewer/compare/v1.464.0...v1.465.0
 [1.464.0]: https://github.com/kothf/step-viewer/compare/v1.463.0...v1.464.0

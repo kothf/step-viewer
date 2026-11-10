@@ -339,6 +339,38 @@ export function parseScale(text: string): [number, number] | null {
   const a = +m[1], b = +m[2];
   return a > 0 && b > 0 ? [a, b] : null;
 }
+type Box = [number, number, number, number];
+/** Standard 3 views layout: the largest standard scale and the group's bottom-left corner at which front (dx × dz), top (dx × dy) and side (dy × dz)
+ *  fit inside `area` with `pad` round each view, clear of the title block `tb` (all sheet mm, y up). The group's empty corner may sit over the
+ *  title block, so a big model is not shrunk to the strip above it. Null when nothing fits. */
+export function std3Layout(dx: number, dy: number, dz: number, area: Box, tb: Box, third: boolean, gap = 25, pad = 8): { scale: [number, number]; gx: number; gy: number } | null {
+  const [x0, y0, x1, y1] = area;
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+  const hit = (a: Box, b: Box) => a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];
+  for (const s of SCALES) {
+    const k = s[0] / s[1];
+    const W = k * (dx + dy) + gap, H = k * (dz + dy) + gap;
+    // Views fill at most 85 % of the room left by the gaps and margins, as before (a small part stays at 1:1).
+    if (k * (dx + dy) > (x1 - x0 - gap - 20) * 0.85 || k * (dz + dy) > (y1 - y0 - gap - 20) * 0.85) continue;
+    const rects = (gx: number, gy: number): Box[] => {
+      const fy = third ? gy : gy + k * dy + gap, ty = third ? gy + k * dz + gap : gy;
+      return [[gx, fy, gx + k * dx, fy + k * dz], [gx, ty, gx + k * dx, ty + k * dy], [gx + k * dx + gap, fy, gx + k * dx + gap + k * dy, fy + k * dz]];
+    };
+    const xs = [cx - W / 2, x0 + pad, x1 - pad - W, tb[0] - pad - W], ys = [cy - H / 2, y1 - pad - H, y0 + pad, tb[3] + pad, (tb[3] + y1 - H) / 2];
+    const cands: [number, number][] = [];
+    for (const gx of xs) for (const gy of ys) cands.push([gx, gy]);
+    cands.sort((a, b) => Math.hypot(a[0] + W / 2 - cx, a[1] + H / 2 - cy) - Math.hypot(b[0] + W / 2 - cx, b[1] + H / 2 - cy));
+    for (const [gx, gy] of cands) {
+      const ok = rects(gx, gy).every(r => {
+        const g: Box = [r[0] - pad, r[1] - pad, r[2] + pad, r[3] + pad];
+        return g[0] >= x0 - 1e-6 && g[1] >= y0 - 1e-6 && g[2] <= x1 + 1e-6 && g[3] <= y1 + 1e-6 && !hit(g, tb);
+      });
+      if (ok) return { scale: s, gx, gy };
+    }
+  }
+  return null;
+}
+
 /** The largest standard scale at which a w × h (model mm) layout fits into W × H (sheet mm). */
 export function fitScale(w: number, h: number, W: number, H: number): [number, number] {
   for (const s of SCALES) if (w * s[0] / s[1] <= W && h * s[0] / s[1] <= H) return s;

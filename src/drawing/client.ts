@@ -51,7 +51,7 @@ export class DrawingKernel {
     };
     w.onerror = e => { for (const p of this.pending.values()) p.reject(new Error(e.message || "The drawing kernel stopped")); this.pending.clear(); this.stop(); };
     this.worker = w;
-    this.ready = compile(this.base).then(module => this.call<void>({ type: "init", base: this.base, module }));
+    this.ready = compile(this.base).then(module => this.call<void>({ type: "init", base: this.base, module, fast: typeof location !== "undefined" && new URLSearchParams(location.search).has("fasthlr") ? 0 : undefined }));
     this.ready.catch(() => this.stop());
     return this.ready;
   }
