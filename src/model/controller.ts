@@ -5535,7 +5535,7 @@ export class ModelController {
 
   private command(c: string) {
     const m = this.mode;
-    if (c.startsWith("sk:") && m.kind === "sketch") { m.editor.setTool(c.slice(3) as SkTool); this.renderBar(); return; }
+    if (c.startsWith("sk:") && m.kind === "sketch") { m.editor.setTool(c.slice(3) as SkTool); this.renderBar(); this.renderPanel(); return; } // the panel shows the tool's fields (fillet radius, exam #89)
     switch (c) {
       case "cons": if (m.kind === "sketch") m.editor.toggleConstruction(); break;
       case "skmirror": if (m.kind === "sketch") { m.editor.mirrorSelection(); this.renderPanel(); } break;

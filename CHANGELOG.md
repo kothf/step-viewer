@@ -5,6 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.447.0] - 2026-11-10
+
+### Fixed
+
+- Assemblies: inserting or replacing a component with another file makes it its own part, even when the file holds the same content as a part already in the assembly, so editing one no longer changes the other (exam #87).
+- Replace component counts mates that lost their faces only once the new part is built, so it no longer warns about mates that solve (exam #88).
+- Sketches: a tool picked on the sketch command bar shows its options in the panel at once, such as the Fillet radius (exam #89).
+
 ## [1.446.0] - 2026-11-10
 
 ### Added
@@ -2666,7 +2674,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.446.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.447.0...HEAD
+[1.447.0]: https://github.com/kothf/step-viewer/compare/v1.446.0...v1.447.0
 [1.446.0]: https://github.com/kothf/step-viewer/compare/v1.445.0...v1.446.0
 [1.445.0]: https://github.com/kothf/step-viewer/compare/v1.444.0...v1.445.0
 [1.444.0]: https://github.com/kothf/step-viewer/compare/v1.443.0...v1.444.0
