@@ -5031,6 +5031,16 @@ try {
       fore = { j0, j1, stored, r8: txR.includes("R8"), back: (await annots()).some(a => a.k === "dia" && !a.fore) && !(await dp.$('#drw .drw-props [data-d="fore"]')) };
     }
     check(fore && fore.j1 === fore.j0 + 1 && fore.stored && fore.r8 && fore.back, `drawing: a radius dimension is foreshortened with a jog and goes back to a diameter (${selR}; ${JSON.stringify(fore)})`);
+    // Arrow outside the circle (the Ø16 is still selected): stored, never more prims than before, and off again.
+    {
+      const nAn = () => dp.evaluate(() => window.__sv.drw.prims().filter(q => q.layer === "ANNOT").length);
+      const n0 = await nAn(), has = !!(await dp.$('#drw .drw-props [data-d="rout"]'));
+      if (has) await dp.check('#drw .drw-props [data-d="rout"]');
+      const n1 = await nAn(), st = (await annots()).some(a => a.k === "dia" && a.outside === true);
+      if (has) await dp.uncheck('#drw .drw-props [data-d="rout"]');
+      const n2 = await nAn(), off = !(await annots()).some(a => a.outside);
+      check(has && st && off && n1 <= n0 && n2 === n0, `drawing: a diameter's arrow goes outside the circle and back (${JSON.stringify({ has, st, off, n0, n1, n2 })})`);
+    }
     // A diameter displayed as a linear dimension (the Ø16 is still selected), then back.
     {
       const has = !!(await dp.$('#drw .drw-props [data-d="dlin"]'));
@@ -5097,6 +5107,24 @@ try {
     await dp.mouse.move(x, y); await dp.mouse.click(x, y);
     [x, y] = await at(top.id, 40, -45);
     await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    // Hole callout options (FR-DRW-022): a line under the automatic text, and the number of holes left out.
+    {
+      await dp.waitForTimeout(150);
+      let r = null;
+      if (await dp.$('#drw .drw-props [data-d="hbelow"]')) {
+        await dp.fill('#drw .drw-props [data-d="hbelow"]', "EQ SP");
+        await dp.dispatchEvent('#drw .drw-props [data-d="hbelow"]', "change");
+        const t1 = await texts();
+        await dp.uncheck('#drw .drw-props [data-d="hcount"]');
+        const h1 = (await annots()).find(a => a.t === "hole");
+        await dp.check('#drw .drw-props [data-d="hcount"]');
+        await dp.fill('#drw .drw-props [data-d="hbelow"]', "");
+        await dp.dispatchEvent('#drw .drw-props [data-d="hbelow"]', "change");
+        const t2 = await texts(), h2 = (await annots()).find(a => a.t === "hole");
+        r = { below: t1.includes("EQ SP") && t1.includes("Ø16 THRU"), stored: h1?.below === "EQ SP" && h1?.count === false, back: !t2.includes("EQ SP") && h2 && h2.below == null && h2.count == null };
+      }
+      check(r && r.below && r.stored && r.back, `drawing: a hole callout takes a line below and leaves the number of holes out (${JSON.stringify(r)})`);
+    }
     dp.once("dialog", d => d.accept("BREAK SHARP EDGES"));
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="note"]');
     [x, y] = await dp.evaluate(() => window.__sv.drw.sheetPt(40, 60));
@@ -11035,12 +11063,12 @@ try {
       await mp.mouse.click(x, y);
       await settle();
     }
-    const cv0 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { title: document.querySelector("#mc-pm h3")?.textContent, face: d?.face?.name, edges: d?.edges?.map(e => [...e.faces].sort().join("|")) }; });
+    const cv0 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { title: document.querySelector("#mc-pm h3")?.textContent, face: d?.face?.name, edges: d?.edges?.map(e => [...e.faces].sort().join("|")), relief: d?.relief, rsel: document.querySelector('#mc-pm [data-sm="arelief"]')?.value }; });
     await mp.click("#mc-ok");
     await settle();
     const cv1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, bends: l.sheet?.bends.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
     const cvWant = 100 * (60 - 8 + 2 * (36 + 1.5 * Math.PI)) * 2;
-    check(cv0.title === "Convert to Sheet Metal" && cv0.face === "ce:end" && cv0.edges?.length === 2 && !cv1.bad && cv1.bends === 2 && Math.abs(cv1.v - cvWant) < 1e-2,
+    check(cv0.title === "Convert to Sheet Metal" && cv0.face === "ce:end" && cv0.edges?.length === 2 && cv0.relief === "rect" && cv0.rsel === "rect" && !cv1.bad && cv1.bends === 2 && Math.abs(cv1.v - cvWant) < 1e-2,
       `sheet metal: Convert to Sheet Metal turns the box into a U channel from the clicked face and edges (${JSON.stringify({ cv0, cv1, cvWant })})`);
     // Insert Bends: a thin U section (walls 3) opening towards +Y, extruded 100; click its outside bottom (y = 0, seen from the default view), ✓: two bends, thickness 3.
     await mp.evaluate(() => window.__sv.model.store.change("U section", d => {
@@ -11106,6 +11134,21 @@ try {
     const lpf = await mp.evaluate(() => window.__sv.model.last().props?.volume ?? 0);
     check(!lp.bad && lp.bends === 8 && !lp.out.length && Math.abs(lpf / lp.v - 1) < 6e-3,
       `sheet metal: Convert gives each wall its own lip off a shared rim, mitred at the corners (${JSON.stringify({ lp, lpf })})`);
+    // A tray (all four walls of the 100 × 60 × 40 box) with Auto relief: the walls meet on the corners' bisector planes
+    // and each corner gets a rectangular relief, so the flat pattern has the part's volume; without relief, more.
+    const trayDoc = ([relief, flat]) => window.__sv.model.store.change("Tray", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), L = (id, a, b) => ({ id, t: "line", a, b });
+      d.features = [
+        { id: "s", type: "sketch", name: "s", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", 0, 0), P("p2", 100, 0), P("p3", 100, 60), P("p4", 0, 60), L("l1", "p1", "p2"), L("l2", "p2", "p3"), L("l3", "p3", "p4"), L("l4", "p4", "p1")] },
+        { id: "e", type: "extrude", name: "Boss-Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 40 } },
+        { id: "c", type: "smconvert", name: "Convert-Solid1", face: { name: "e:start" }, edges: ["l1", "l2", "l3", "l4"].map(l => ({ faces: ["e:start", `e:side:${l}`] })), thickness: { v: 2 }, radius: { v: 2 }, k: 0.5, ...(relief ? { relief: "rect" } : {}) },
+        ...(flat ? [{ id: "fp", type: "smflat", name: "Flat-Pattern1" }] : []),
+      ];
+    });
+    const trayVol = async (args) => { await mp.evaluate(trayDoc, args); await settle(); return mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; }); };
+    const tr0 = await trayVol([false, false]), tr1 = await trayVol([true, false]), tr1f = await trayVol([true, true]);
+    check(!tr0.bad && !tr1.bad && !tr1f.bad && tr1.v < tr0.v - 1 && Math.abs(tr1f.v / tr1.v - 1) < 1e-6,
+      `sheet metal: Convert's Auto relief cuts the tray's corners, and the flat pattern keeps the part's volume (${JSON.stringify({ tr0, tr1, tr1f })})`);
     // Tab and Slot: a 100 × 50 plate and a separate 3 mm block 1 mm past one end (on the side away from the camera, so
     // its face towards the plate shows above it). Click the plate's top edge there, then that block face, ✓: two tabs
     // 10 × (1 + 2) into slots 0.1 bigger all round (2.1 deep: the default height is the thickness).
@@ -11673,6 +11716,15 @@ try {
     const loop = (4 * (40 - 12) + 2 * Math.PI * 6).toFixed(2).replace(/\.?0+$/, "");
     check(wt.n === 1 && ["Item", "Weld", "Leg", "Length", "Qty", "Continuous", "z4", loop].every(s => wt.tx.includes(s)),
       `drawing: weld table lists the weldment's fillet bead with its leg and length (${JSON.stringify({ n: wt.n, loop, tx: wt.tx.filter(s => /^(Item|Weld|Leg|Continuous|z\d|1\d\d)/.test(s)), note: wt.note })})`);
+    // Placing the weld table tags the bead seen in its view with a box holding its weld table row; Tag the beads adds no second one.
+    await dp.waitForFunction(() => window.__sv.drw.doc().sheets[0].annots.some(a => a.t === "balloon" && a.weld), null, { timeout: 30000 }).catch(() => {});
+    await ready();
+    const tg = await dp.evaluate(() => { const ws = window.__sv.drw.doc().sheets[0].annots.filter(a => a.t === "balloon" && a.weld);
+      return { n: ws.length, shape: ws[0]?.shape, btn: !!document.querySelector('#drw .drw-props [data-a="wtags"]'), dangle: document.querySelectorAll("#drw .drw-dangle").length }; });
+    if (tg.btn) { await dp.click('#drw .drw-props [data-a="wtags"]'); await dp.waitForTimeout(500); }
+    const tg2 = await dp.evaluate(() => window.__sv.drw.doc().sheets[0].annots.filter(a => a.t === "balloon" && a.weld).length);
+    check(tg.n === 1 && tg.shape === "box" && tg.btn && tg.dangle === 0 && tg2 === 1,
+      `drawing: placing the weld table tags its view's bead once, numbered by its row (${JSON.stringify({ ...tg, again: tg2 })})`);
     // Cut list table under the same view: the tube (300 - 10 mm long, square ends), then the bead; Weld beads unticked leaves it out.
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="ctable"]');
     for (const [x, y] of [[vp.x, vp.y], [vp.x - vp.w / 2, vp.y - vp.w / 2 - 20]]) {

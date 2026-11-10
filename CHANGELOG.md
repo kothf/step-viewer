@@ -5,6 +5,39 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.443.0] - 2026-11-10
+
+### Added
+
+- Sheet metal Convert to Sheet Metal and Insert Bends have Auto relief (FR-FT-120): corners where two walls' bends meet get a rectangular, obround, circular or tear relief at once, sized by a relief ratio. New features start with Rectangular, 0.5.
+
+### Fixed
+
+- Mitred sheet metal corners (edge flanges, miter flanges, Convert to Sheet Metal) now meet on the corner's bisector plane, as in SolidWorks. Before, the two walls were cut square and overlapped in a thin strip along the inside of the seam, so the flat pattern had slightly more material than the part.
+
+
+## [1.442.0] - 2026-11-10
+
+### Added
+
+- **Arrow outside the circle (FR-DRW-021)**: a radius or diameter dimension whose text is outside the circle can stop its leader at the rim, with one arrow pointing at it from outside, instead of crossing the circle.
+
+## [1.441.0] - 2026-11-10
+
+### Added
+
+- **Weld tags on weldment drawings (FR-FT-121)**: placing a **Weld table** on a drawing of a weldment part also tags each fillet bead seen in that view with a box holding the bead's item number in the table, so the beads on the view and the rows of the table match. **Tag the beads** in the table's panel tags beads added later; a tag's panel names its weld table row. Weld tags and cut list balloons number their own lists and don't count against each other in Auto balloon.
+
+## [1.440.0] - 2026-11-10
+
+### Added
+
+- **Hole callout options (FR-DRW-022)**: a hole callout on a drawing can leave the number of equal holes (4×) out of its automatic text and take a line of text below it, such as EQ SP.
+
+### Fixed
+
+- A hole table no longer repeats the number of holes in the size of a Hole feature.
+
 ## [1.439.0] - 2026-11-10
 
 ### Added
@@ -2613,7 +2646,11 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.439.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.443.0...HEAD
+[1.443.0]: https://github.com/kothf/step-viewer/compare/v1.442.0...v1.443.0
+[1.442.0]: https://github.com/kothf/step-viewer/compare/v1.441.0...v1.442.0
+[1.441.0]: https://github.com/kothf/step-viewer/compare/v1.440.0...v1.441.0
+[1.440.0]: https://github.com/kothf/step-viewer/compare/v1.439.0...v1.440.0
 [1.439.0]: https://github.com/kothf/step-viewer/compare/v1.438.0...v1.439.0
 [1.438.0]: https://github.com/kothf/step-viewer/compare/v1.437.0...v1.438.0
 [1.437.0]: https://github.com/kothf/step-viewer/compare/v1.436.0...v1.437.0

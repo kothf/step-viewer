@@ -23,7 +23,7 @@ export type Label = (s: string, p?: Record<string, string>) => string;
 
 /** What annotations need from the model and the UI. */
 export interface AnnotCtx {
-  topo: Topo | null; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; bends?: FlatBend[]; welds?: WeldInfo[]; cuts?: CutInfo[]; cutFaces?: Record<string, number>; items: ModelItem[]; box: [V3, V3] | null; dec: string; label: Label; bom?: Bom | null;
+  topo: Topo | null; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; bends?: FlatBend[]; welds?: WeldInfo[]; cuts?: CutInfo[]; cutFaces?: Record<string, number>; weldFaces?: Record<string, number>; items: ModelItem[]; box: [V3, V3] | null; dec: string; label: Label; bom?: Bom | null;
   /** A view that shows another part configuration (FR-DRW-010) gets that configuration's topology and model items. */
   forView?: (v: DrawingView) => Partial<AnnotCtx> | null;
 }
@@ -249,7 +249,7 @@ export function holeText(e: MEdge, ctx: AnnotCtx, count = true): string[] {
       if (Math.abs(Math.abs(dot3(h.n, ax)) - 1) > 1e-6) continue;
       const on = h.pts.some(p => { const w = sub3(c, p), along = dot3(w, h.n); return Math.hypot(w[0] - h.n[0] * along, w[1] - h.n[1] * along, w[2] - h.n[2] * along) < 1e-3; });
       if (!on) continue;
-      const H = h.f, n = h.pts.length > 1 ? `${h.pts.length}× ` : "";
+      const H = h.f, n = count && h.pts.length > 1 ? `${h.pts.length}× ` : "";
       const depth = H.end === "through" ? ` ${ctx.label("THRU")}` : H.end === "blind" ? ` ↧${f(H.depth.v)}` : "";
       const lines: string[] = [];
       if (H.kind === "tapped" && H.size) {
@@ -418,15 +418,21 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
     const u = unit2([T[0] - C[0], T[1] - C[1]], [Math.SQRT1_2, Math.SQRT1_2]);
     const outside = d2(T, C) > R;
     const far = outside ? T : add2(C, u, R);
+    const lead = !!a.outside && outside && !(g.k === "rad" && a.fore);
     if (g.k === "rad" && a.fore) {
       // Foreshortened radius: the centre is far away (or off the sheet), so the line stops short of it with a jog.
       const A = add2(C, u, R), n: P2 = [-u[1], u[0]], len = Math.min(R * 0.6, FORE_LEN);
       const B = add2(A, u, -len / 2), B2 = add2(add2(B, u, -FORE_JOG / 2), n, FORE_JOG), E = add2(B2, u, -len / 2);
       out.push({ t: "p", p: [...E, ...B2, ...B, ...A], pen: "thin", layer: "ANNOT" });
       if (outside) out.push(thin(A, T));
-    } else out.push(thin(g.k === "dia" ? add2(C, u, -R) : C, far));
-    out.push(arrow(...add2(C, u, R), u[0], u[1]));
-    if (g.k === "dia") out.push(arrow(...add2(C, u, -R), -u[0], -u[1]));
+    } else if (lead) out.push(thin(add2(C, u, R), T));
+    else out.push(thin(g.k === "dia" ? add2(C, u, -R) : C, far));
+    // A leader from outside points at the rim; otherwise the arrows touch the rim from inside.
+    if (lead) out.push(arrow(...add2(C, u, R), -u[0], -u[1]));
+    else {
+      out.push(arrow(...add2(C, u, R), u[0], u[1]));
+      if (g.k === "dia") out.push(arrow(...add2(C, u, -R), -u[0], -u[1]));
+    }
     // A short horizontal shoulder at the text, which sits on it.
     const sx = u[0] >= 0 ? 1 : -1;
     let box: [number, number, number, number];
@@ -534,7 +540,8 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
 /** Draws a hole callout: a leader to the circle, a shoulder and the lines of text. */
 function holePrims(a: HoleAnnot, e: MEdge, P: (p: V3) => P2, pl: Placement, ctx: AnnotCtx): { prims: Prim[]; box: [number, number, number, number] } {
   const out: Prim[] = [];
-  const lines = a.txt ? a.txt.split("\n") : holeText(e, ctx);
+  const lines = a.txt ? a.txt.split("\n") : holeText(e, ctx, a.count !== false);
+  if (a.below) lines.push(...a.below.split("\n"));
   const C = toSheet(pl, ...P(e.c ?? e.m)), R = (e.r ?? 0) * pl.s, T = toSheet(pl, a.pos[0], a.pos[1]);
   const u = unit2([T[0] - C[0], T[1] - C[1]], [Math.SQRT1_2, Math.SQRT1_2]);
   const tip = add2(C, u, R);
@@ -670,8 +677,8 @@ function holeTablePrims(a: HoleTableAnnot, P: (p: V3) => P2, pl: Placement, ctx:
 
 /** Everything annotated on one view: its dimensions, callouts and notes, plus the automatic centre marks. */
 /** The model facts annotations draw on (topology, holes, threads, sketches, model items, box). */
-export function factsCtx(f: { topo: Topo; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; bends?: FlatBend[]; welds?: WeldInfo[]; cuts?: CutInfo[]; cutFaces?: Record<string, number>; items: ModelItem[]; box: [V3, V3] } | null): Pick<AnnotCtx, "topo" | "holes" | "threads" | "sketches" | "bends" | "welds" | "cuts" | "cutFaces" | "items" | "box"> {
-  return { topo: f?.topo ?? null, holes: f?.holes ?? [], threads: f?.threads ?? [], sketches: f?.sketches ?? [], bends: f?.bends ?? [], welds: f?.welds ?? [], cuts: f?.cuts ?? [], cutFaces: f?.cutFaces ?? {}, items: f?.items ?? [], box: f?.box ?? null };
+export function factsCtx(f: { topo: Topo; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; bends?: FlatBend[]; welds?: WeldInfo[]; cuts?: CutInfo[]; cutFaces?: Record<string, number>; weldFaces?: Record<string, number>; items: ModelItem[]; box: [V3, V3] } | null): Pick<AnnotCtx, "topo" | "holes" | "threads" | "sketches" | "bends" | "welds" | "cuts" | "cutFaces" | "weldFaces" | "items" | "box"> {
+  return { topo: f?.topo ?? null, holes: f?.holes ?? [], threads: f?.threads ?? [], sketches: f?.sketches ?? [], bends: f?.bends ?? [], welds: f?.welds ?? [], cuts: f?.cuts ?? [], cutFaces: f?.cutFaces ?? {}, weldFaces: f?.weldFaces ?? {}, items: f?.items ?? [], box: f?.box ?? null };
 }
 
 /** A section view's facts (FR-DRW-021): the model's plus the cut faces' edges from its projection, so the section can be dimensioned. */
@@ -726,9 +733,10 @@ export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: Ann
     } else if (a.t === "balloon") {
       // The tip stays on the edge's middle; the number is the component's item in the BOM (assembly) or the
       // body's item in the cut list (weldment part).
-      const e = refEdge(a.ref, ctx.topo), item = "e" in a.ref ? edgeItem(a.ref.e, ctx) : null;
+      // A weld tag numbers the bead's row in the weld table.
+      const e = refEdge(a.ref, ctx.topo), item = "e" in a.ref ? (a.weld ? weldItem(a.ref.e, ctx) : edgeItem(a.ref.e, ctx)) : null;
       const more = (a.stack ?? []).map(sc => String(stackItem(sc, ctx) ?? "?"));
-      const qty = (n: number | null) => !n ? "" : ctx.bom ? String(ctx.bom.rows.find(x => x.item === n)?.qty ?? "") : String(ctx.cuts?.find(x => x.item === n)?.qty ?? "");
+      const qty = (n: number | null) => !n ? "" : a.weld ? String(ctx.welds?.[n - 1]?.qty ?? "") : ctx.bom ? String(ctx.bom.rows.find(x => x.item === n)?.qty ?? "") : String(ctx.cuts?.find(x => x.item === n)?.qty ?? "");
       r = balloonPrims(toSheet(pl, a.pos[0], a.pos[1]), e ? toSheet(pl, ...P(e.m)) : null, a.txt || (item ? String(item) : "?"), more, { shape: a.shape, lower: a.shape === "split" ? [item, ...(a.stack ?? []).map(k => stackItem(k, ctx))].map(qty) : undefined });
       if (!e || (!a.txt && !item)) out.dangling.push(a.id);
     } else if (a.t === "btable") {
@@ -1363,9 +1371,16 @@ export function edgeItem(k: string, ctx: Pick<AnnotCtx, "bom" | "cutFaces">): nu
   return null;
 }
 
-/** A stacked balloon's item: a component id (assembly) or `cut:<item>` (weldment cut list). */
-export function stackItem(s: string, ctx: Pick<AnnotCtx, "bom" | "cuts">): number | null {
+/** The weld table row a weld tag on edge `k` numbers: the bead the edge's faces belong to. */
+export function weldItem(k: string, ctx: Pick<AnnotCtx, "weldFaces">): number | null {
+  for (const f of k.split("|")) { const n = ctx.weldFaces?.[f]; if (n) return n; }
+  return null;
+}
+
+/** A stacked balloon's item: a component id (assembly), `cut:<item>` (weldment cut list) or `weld:<row>` (weld table). */
+export function stackItem(s: string, ctx: Pick<AnnotCtx, "bom" | "cuts" | "welds">): number | null {
   if (s.startsWith("cut:")) { const n = +s.slice(4); return ctx.cuts?.some(c => c.item === n) ? n : null; }
+  if (s.startsWith("weld:")) { const n = +s.slice(5); return n >= 1 && n <= (ctx.welds?.length ?? 0) ? n : null; }
   return ctx.bom?.itemOf(s) ?? null;
 }
 

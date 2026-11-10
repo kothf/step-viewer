@@ -6,7 +6,7 @@
 import type { VaultTie } from "../pdm/panel";
 import fontUrl from "dejavu-fonts-ttf/ttf/DejaVuSans.ttf?url";
 import type { MEdge, Projection, ViewDir } from "../kernel/drawing";
-import { AUTO_LAYERS, withCut, clineSegs, cloudPrims, dimGeo, factsCtx, holeEdges, ringDist, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, stackItem, edgeItem, cutDesc, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
+import { AUTO_LAYERS, withCut, clineSegs, cloudPrims, dimGeo, factsCtx, holeEdges, ringDist, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, stackItem, edgeItem, weldItem, cutDesc, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
 import type { PartDoc } from "../model/types";
 import type { AsmDoc } from "../asm/types";
 import { BOM_COLS, autoBalloons, compOfKey, sheetBom, subsOf, type BalloonItems, type Bom } from "./bom";
@@ -259,7 +259,9 @@ export class DrawingWorkspace {
   /** A weldment part's cut list, which balloons number when the drawing has no BOM. */
   private get cuts() { return this.bom ? null : this.facts?.cuts?.length ? this.facts.cuts : null; }
   /** What balloons number on this sheet: BOM items (assembly) or cut list items (weldment part). */
-  private balloonItems(): BalloonItems { const c = this.ctx(); return { edge: k => edgeItem(k, c), stack: x => stackItem(x, c) }; }
+  private balloonItems(): BalloonItems { const c = this.ctx(); return { edge: k => edgeItem(k, c), stack: x => stackItem(x, c), mine: a => !a.weld }; }
+  /** What weld tags number: the bead's row in the weld table. */
+  private weldItems(): BalloonItems { const c = this.ctx(); return { edge: k => weldItem(k, c), stack: x => stackItem(x, c), mine: a => !!a.weld }; }
 
   private load(doc: DrawingDoc, model: Uint8Array | undefined, fileName: string) {
     this.host.beforeOpen?.();
@@ -1340,6 +1342,7 @@ export class DrawingWorkspace {
       } else {
         const pl = this.placements.get(m.view)!, pos = fromSheet(pl, p[0], p[1]);
         this.addAnnot({ id: uid("a_"), t: "wtable", view: m.view, pos: [round(pos[0]), round(pos[1])] }, "Weld table");
+        void this.tagBeads(m.view, true);
         this.mode = { kind: "none" };
       }
     } else if (m.kind === "ctable") {
@@ -1590,6 +1593,19 @@ export class DrawingWorkspace {
     toast(t("{n} balloon added|{n} balloons added", { n: add.length }), "success");
   }
 
+  /** Weld tags (FR-FT-121): a rectangle balloon on each bead seen in the view that has none, numbered like the weld table. */
+  private async tagBeads(vid: string, quiet = false) {
+    const v = this.sheet.views.find(x => x.id === vid);
+    if (!v || !this.facts?.welds?.length) return;
+    const proj = await this.kernel.request(viewReq(this.sheet, v)).catch(() => null);
+    if (!proj || !this.facts || !this.sheet.views.includes(v)) return;
+    const add = autoBalloons(this.sheet, v, this.facts.topo, projector(viewDir(this.sheet, v)).P, proj, viewScale(this.sheet, v), this.weldItems(), () => uid("a_"))
+      .map(a => ({ ...a, weld: true as const, shape: "box" as const }));
+    if (!add.length) { if (!quiet) toast(t("Every bead already has a tag in the view.")); return; }
+    this.store!.change("Tag the beads", d => { const S = d.sheets[this.sheetIdx]; (S.annots ??= []).push(...add); });
+    toast(t("{n} bead tagged|{n} beads tagged", { n: add.length }), "success");
+  }
+
   /** What an annotation command shows before it is placed: the hovered entity, the picks and the preview. */
   private annotPreview(H: number): string {
     const m = this.mode;
@@ -1748,7 +1764,7 @@ export class DrawingWorkspace {
   /** The same on a weldment part drawing: stacked entries are `cut:<item>`. */
   private cutStackRows(a: BalloonAnnot): string {
     const cuts = this.cuts;
-    if (!cuts) return "";
+    if (!cuts || a.weld) return "";
     const it = this.balloonItems();
     const used = new Set([..."e" in a.ref ? [it.edge(a.ref.e)] : [], ...(a.stack ?? []).map(x => it.stack(x))]);
     const rows = (a.stack ?? []).map((c, i) => `<div class="row drw-stack"><span>${esc(t("item {n}", { n: it.stack(c) ?? "?" }))}</span><button class="btn small" data-unstack="${i}" aria-label="${esc(t("Remove from the stack"))}">✕</button></div>`).join("");
@@ -1815,6 +1831,7 @@ export class DrawingWorkspace {
         ${lin || a.k === "arc" ? `<label class="drw-f">${esc(t("Extension lines"))}<select data-d="noext">${([["", "Both shown"], ["a", "First hidden"], ["b", "Second hidden"], ["both", "Both hidden"]] as const).map(([k, l]) => `<option value="${k}"${(a.noExt ?? "") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : ""}
         <label class="drw-f">${esc(t("Arrowheads"))}<select data-d="ends"><option value="">${esc(t("Document"))}</option>${(["filled", "open", "dot", "tick"] as const).map(k => `<option value="${k}"${a.ends === k ? " selected" : ""}>${esc(t(ARROW_NAMES[k]))}</option>`).join("")}</select></label>
         ${a.k === "dia" ? `<label class="drw-f">${esc(t("Display"))}<select data-d="dlin">${([["", "Diameter"], ["h", "Linear, horizontal"], ["v", "Linear, vertical"]] as const).map(([k, l]) => `<option value="${k}"${(a.lin ?? "") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : ""}
+        ${(a.k === "rad" && !a.fore) || (a.k === "dia" && !a.lin) ? `<label class="drw-chk"><input type="checkbox" data-d="rout"${a.outside ? " checked" : ""}> ${esc(t("Arrow outside the circle"))}</label>` : ""}
         ${a.k === "rad" ? `<label class="drw-chk"><input type="checkbox" data-d="fore"${a.fore ? " checked" : ""}> ${esc(t("Foreshortened radius"))}</label>` : ""}
         ${lin ? `<label class="drw-chk"><input type="checkbox" data-d="horiz"${a.horiz ? " checked" : ""}> ${esc(t("Horizontal text in the dimension line"))}</label>` : ""}
         <label class="drw-f">${esc(t("Decimals"))}<select data-d="prec"><option value="">${esc(t("Auto"))}</option>${[0, 1, 2, 3].map(n => `<option value="${n}"${a.prec === n ? " selected" : ""}>${n}</option>`).join("")}</select></label>
@@ -1877,10 +1894,12 @@ export class DrawingWorkspace {
       </fieldset><div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
     }
     if (a.t === "hole") {
-      const e = refEdge(a.ref, this.factsOf(a.view)?.topo ?? null), auto = e ? holeText(e, this.ctx()).join("\n") : "";
+      const e = refEdge(a.ref, this.factsOf(a.view)?.topo ?? null), auto = e ? holeText(e, this.ctx(), a.count !== false).join("\n") : "";
       return `<fieldset class="pm-group"><legend>${esc(t("Hole callout"))}</legend>
         <label class="drw-f">${esc(t("Text"))}<textarea data-d="htxt" rows="3" translate="no" placeholder="${esc(auto)}">${esc(a.txt ?? "")}</textarea></label>
         <p class="drw-note">${esc(t("Empty: the text comes from the hole."))}</p>
+        <label class="drw-chk"><input type="checkbox" data-d="hcount"${a.count !== false ? " checked" : ""}> ${esc(t("Show the number of holes"))}</label>
+        <label class="drw-f">${esc(t("Text below"))}<input data-d="hbelow" value="${esc(a.below ?? "")}" translate="no"></label>
       </fieldset><div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
     }
     const del = `<div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
@@ -1918,10 +1937,12 @@ export class DrawingWorkspace {
       </fieldset>${del}`;
     }
     if (a.t === "balloon") {
-      const c = "e" in a.ref ? compOfKey(a.ref.e) : null, item = "e" in a.ref ? edgeItem(a.ref.e, this.ctx()) : null;
+      const c = "e" in a.ref ? compOfKey(a.ref.e) : null, item = "e" in a.ref ? (a.weld ? weldItem(a.ref.e, this.ctx()) : edgeItem(a.ref.e, this.ctx())) : null;
       const comp = c ? this.facts?.comps?.find(x => x.id === c)?.name ?? c : "";
-      const cut = !this.bom && item ? this.cuts?.find(x => x.item === item) : undefined;
-      return `<fieldset class="pm-group"><legend>${esc(t("Balloon"))}</legend>
+      const cut = !this.bom && item && !a.weld ? this.cuts?.find(x => x.item === item) : undefined;
+      const weld = a.weld && item ? this.facts?.welds?.[item - 1] : undefined;
+      return `<fieldset class="pm-group"><legend>${esc(t(a.weld ? "Weld tag" : "Balloon"))}</legend>
+        ${weld ? `<p class="drw-note">${esc(t("Weld table"))}: <b translate="no">z${esc(weld.legs)}</b> · ${esc(t("item {n}", { n: item! }))}</p>` : ""}
         ${comp ? `<p class="drw-note">${esc(t("Component"))}: <b translate="no">${esc(comp)}</b>${item ? ` · ${esc(t("item {n}", { n: item }))}` : ""}</p>` : ""}
         ${cut ? `<p class="drw-note">${esc(t("Cut list"))}: <b translate="no">${esc(this.cutLabel(cut))}</b> · ${esc(t("item {n}", { n: item! }))}</p>` : ""}
         <label class="drw-f">${esc(t("Text instead of the item number"))}<input data-d="btxt" value="${esc(a.txt ?? "")}" translate="no"></label>
@@ -1956,6 +1977,7 @@ export class DrawingWorkspace {
       const n = this.factsOf(a.view, sh)?.welds?.reduce((s, w) => s + w.qty, 0) ?? 0;
       return `<fieldset class="pm-group"><legend>${esc(t("Weld table"))}</legend>
         <p class="drw-note">${esc(t("Fillet beads: {n}, from the part's cut list.", { n }))}</p>
+        <button class="btn small" data-a="wtags">${esc(t("Tag the beads"))}</button>
         <label class="drw-f">${esc(t("Decimals"))}<select data-d="wprec"><option value="">${esc(t("Auto"))}</option>${[0, 1, 2, 3].map(k => `<option value="${k}"${a.prec === k ? " selected" : ""}>${k}</option>`).join("")}</select></label>
       </fieldset>${del}`;
     }
@@ -1993,7 +2015,8 @@ export class DrawingWorkspace {
     const num = (s: string) => { const v = parseFloat(s.replace(",", ".")); return isFinite(v) ? v : undefined; };
     this.setAnnot(k === "ntxt" || k === "htxt" ? "Text" : "Annotation property", a => {
       if (a.t === "dim") {
-        if (k === "k") { a.k = val as DimAnnot["k"]; if (a.k !== "dia") delete a.lin; if (a.k !== "rad") delete a.fore; }
+        if (k === "k") { a.k = val as DimAnnot["k"]; if (a.k !== "dia") delete a.lin; if (a.k !== "rad") delete a.fore; if (a.k !== "rad" && a.k !== "dia") delete a.outside; }
+        else if (k === "rout") { if ((el as HTMLInputElement).checked) a.outside = true; else delete a.outside; }
         else if (k === "dlin") { if (val === "h" || val === "v") a.lin = val; else delete a.lin; }
         else if (k === "ends") { if (val === "filled" || val === "open" || val === "dot" || val === "tick") a.ends = val; else delete a.ends; }
         else if (k === "arrows") { if (val === "in" || val === "out") a.arrows = val; else delete a.arrows; }
@@ -2009,6 +2032,8 @@ export class DrawingWorkspace {
         else if (a.tol && k === "fit") a.tol.fit = val.trim();
         else if (a.tol && k === "fshow") { if (val === "code") delete a.tol.show; else a.tol.show = val as Tol["show"]; }
       } else if (a.t === "hole" && k === "htxt") { if (val.trim()) a.txt = val; else delete a.txt; }
+      else if (a.t === "hole" && k === "hcount") { if ((el as HTMLInputElement).checked) delete a.count; else a.count = false; }
+      else if (a.t === "hole" && k === "hbelow") { if (val.trim()) a.below = val; else delete a.below; }
       else if (a.t === "note" && k === "nprop") { if (val) a.text += `$PRP:"${val}"`; }
       else if (a.t === "sk") {
         const v = num(val);
@@ -2764,6 +2789,7 @@ export class DrawingWorkspace {
       case "align": this.realign(); break;
       case "dim": this.startAnnot("dim"); break;
       case "adel": this.deleteAnnot(); break;
+      case "wtags": { const a = this.selA ? this.annot(this.selA) : null; if (a?.t === "wtable") void this.tagBeads(a.view); break; }
       case "hupd": { const a = this.selA ? this.annot(this.selA) : null; if (a?.t === "htable") { const holes = this.viewHoleRefs(a.view); this.setAnnot("Update holes", x => { if (x.t === "htable") x.holes = holes; }); } break; }
       case "undo": this.store.undo(); break;
       case "redo": this.store.redo(); break;

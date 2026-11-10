@@ -85,7 +85,7 @@ function buildPart(doc: PartDoc): { shape: any; mat: string | null; names: strin
   // Cut list table: every item in the dialog's order (sub-weldments after the loose items), numbered the same way.
   // Cut list balloons: every face of an item's bodies names its item number.
   let welds: WeldInfo[] = [], cuts: CutInfo[] = [];
-  const cutFaces: Record<string, number> = {};
+  const cutFaces: Record<string, number> = {}, weldFaces: Record<string, number> = {};
   const WELD_TYPES = new Set(["member", "endcap", "gusset", "weldbead"]);
   if (doc.features.some(f => WELD_TYPES.has(f.type) && !f.suppressed)) {
     try {
@@ -103,11 +103,13 @@ function buildPart(doc: PartDoc): { shape: any; mat: string | null; names: strin
           ...(c.length != null ? { length: c.length } : {}), ...(c.kind === "member" ? { a1: c.angle1 ?? 0, a2: c.angle2 ?? 0 } : {}),
           ...(c.plate ? { plate: c.plate } : {}), ...(c.inter ? { inter: c.inter } : {}) });
       }
-      welds = raw.filter(c => c.kind === "bead" && !doc.cutProps?.[cutKey(c)]?.excl)
-        .map(c => ({ legs: c.desc, length: c.length ?? 0, qty: c.qty, ...(c.inter ? { inter: c.inter } : {}) }));
+      const beads = raw.filter(c => c.kind === "bead" && !doc.cutProps?.[cutKey(c)]?.excl);
+      // Weld tags: every face of a bead's bodies names its weld table row.
+      beads.forEach((c, i) => { for (const k of c.bodies) for (const nm of namesOf.get(k) ?? []) weldFaces[nm] ??= i + 1; });
+      welds = beads.map(c => ({ legs: c.desc, length: c.length ?? 0, qty: c.qty, ...(c.inter ? { inter: c.inter } : {}) }));
     } catch { /* no weld or cut list table rows */ }
   }
-  return { shape, mat: doc.material?.name ?? null, names: body.names, extra: { topo: topology(oc, shape, body.names), ...mi, welds, cuts, cutFaces } };
+  return { shape, mat: doc.material?.name ?? null, names: body.names, extra: { topo: topology(oc, shape, body.names), ...mi, welds, cuts, cutFaces, weldFaces } };
 }
 
 /** The shape (and material) a request draws: the loaded model, or one of the part's configurations. */

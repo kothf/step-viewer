@@ -792,13 +792,18 @@ test("sheet metal: convert a solid box to sheet metal (FR-FT-120)", async () => 
   const uf = run(doc([s, box, conv({ edges: [edge("l1"), edge("l3")] }), flat]));
   close(uf.props.volume, 100 * flatW * 2, 1e-5);
   close(uf.size[1], flatW, 1e-6);
-  // A tray: all four walls, ripped and mitred at the corners; the flat pattern keeps the volume (K = 0.5) but for the
-  // corners, where the two bends overlap in the folded part until a corner relief takes them out.
+  // A tray: all four walls, ripped and mitred at the corners; the walls meet on the corners' bisector planes, so the
+  // flat pattern keeps the volume (K = 0.5).
   const tr = run(doc([s, box, conv({ edges: ["l1", "l2", "l3", "l4"].map(edge) })]));
   close(tr.size[0], 100, 1e-6); close(tr.size[1], 60, 1e-6); close(tr.size[2], 40, 1e-6);
   assert.equal(tr.props.bodies, 1);
   const tf = run(doc([s, box, conv({ edges: ["l1", "l2", "l3", "l4"].map(edge) }), flat]));
-  close(tf.props.volume, tr.props.volume, 5e-3);
+  close(tf.props.volume, tr.props.volume, 1e-6);
+  // Auto relief: the four corners get rectangular reliefs, in the part and in its flat pattern alike.
+  const ar = run(doc([s, box, conv({ edges: ["l1", "l2", "l3", "l4"].map(edge), relief: "rect" })]));
+  const af = run(doc([s, box, conv({ edges: ["l1", "l2", "l3", "l4"].map(edge), relief: "rect" }), flat]));
+  assert.ok(ar.props.volume < tr.props.volume - 1, "the reliefs take material out");
+  close(af.props.volume, ar.props.volume, 1e-6);
   // A hole through both long walls before converting carries over to the sheet and its flat pattern.
   const hs: SketchFeature = { id: "h", type: "sketch", name: "h", plane: { std: "XZ" }, rels: [], dims: [], ents: [{ id: "hc0", t: "point", x: 50, y: 20 }, { id: "hc", t: "circle", c: "hc0", r: 5 }] };
   const hole: Feature = { id: "hx", type: "extrude", name: "Cut1", sketch: "h", op: "cut", end: "through2", depth: { v: 0 } };

@@ -118,12 +118,12 @@ export function smDraft(type: "smrip" | "smtabslot" | "smbase" | "smloft" | "smf
   if (type === "sminsert") {
     if (base) return t("This part already has a base flange.");
     if (!c.hasBody) return t("Make a solid to convert first.");
-    return { id: c.id, type: "sminsert", name: c.name("sminsert"), face: c.face ?? { name: "" }, radius: { v: 2 }, k: 0.5 } satisfies SmInsertFeature;
+    return { id: c.id, type: "sminsert", name: c.name("sminsert"), face: c.face ?? { name: "" }, radius: { v: 2 }, k: 0.5, relief: "rect" } satisfies SmInsertFeature;
   }
   if (type === "smconvert") {
     if (base) return t("This part already has a base flange.");
     if (!c.hasBody) return t("Make a solid to convert first.");
-    return { id: c.id, type: "smconvert", name: c.name("smconvert"), face: c.face ?? { name: "" }, edges: [], thickness: { v: 2 }, radius: { v: 2 }, k: 0.5 } satisfies SmConvertFeature;
+    return { id: c.id, type: "smconvert", name: c.name("smconvert"), face: c.face ?? { name: "" }, edges: [], thickness: { v: 2 }, radius: { v: 2 }, k: 0.5, relief: "rect" } satisfies SmConvertFeature;
   }
   if (type === "smloft") {
     if (base) return t("This part already has a base flange.");
@@ -299,6 +299,9 @@ export function smPanel(f: SheetFeature, k: PanelKit): { title: string; body: st
   const { esc, group, numField, chk } = k;
   const help = (s: string) => `<p class="pm-help muted">${esc(s)}</p>`;
   const sel = (key: string, label: string, opts: [string, string][], cur: string | undefined) => `<label class="pm-field"><span>${esc(label)}</span><select data-sm="${key}">${opts.map(([v, l]) => opt(esc, v, cur, l)).join("")}</select></label>`;
+  const autoRelief = (f: SmConvertFeature | SmInsertFeature) => group(t("Auto relief"), sel("arelief", t("Type"), [["none", t("None")], ["rect", t("Rectangular")], ["obround", t("Obround")], ["circle", t("Circular")], ["tear", t("Tear")]], f.relief ?? "none")
+    + (f.relief ? `<label class="pm-field"><span>${esc(t("Relief ratio"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-sm="aratio" value="${esc(String(f.reliefRatio ?? 0.5))}" spellcheck="false" /></span></label>` : "")
+    + help(t("Corners where two walls' bends meet get this relief, so the bends don't overlap there.")));
   const edgeList = (edges: EdgeRef[]) => `<p class="pm-count" data-sm-edges>${esc(edges.length ? t("{n} edge|{n} edges", { n: edges.length }) : t("click straight edges of the sheet in the view"))}</p>`
     + (edges.length ? `<button class="btn small" data-sm="clear">${esc(t("Clear edges"))}</button>` : "");
   if (f.type === "smbase") {
@@ -485,7 +488,8 @@ export function smPanel(f: SheetFeature, k: PanelKit): { title: string; body: st
         + help(t("The sharp edges of the fixed face to other flat walls become bends; the thickness is the walls' own. Corners between walls are ripped.")))
         + group(t("Bend parameters"), numField("radius", t("Bend radius"), f.radius, "length")
           + `<label class="pm-field"><span>${esc(t("K-factor"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-sm="k" value="${esc(String(f.k ?? 0.5))}" spellcheck="false" /></span></label>`)
-        + group(t("Rip"), numField("gap", t("Gap distance"), f.gap ?? { v: 0.1 }, "length")),
+        + group(t("Rip"), numField("gap", t("Gap distance"), f.gap ?? { v: 0.1 }, "length"))
+        + autoRelief(f),
     };
   }
   if (f.type === "smconvert") {
@@ -498,7 +502,8 @@ export function smPanel(f: SheetFeature, k: PanelKit): { title: string; body: st
           + help(t("Pick a wall's far edge too to bend the face across it as one more wall.")))
         + group(t("Sheet metal parameters"), numField("thickness", t("Thickness"), f.thickness, "length") + numField("radius", t("Bend radius"), f.radius, "length")
           + `<label class="pm-field"><span>${esc(t("K-factor"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-sm="k" value="${esc(String(f.k ?? 0.5))}" spellcheck="false" /></span></label>`)
-        + group(t("Rip"), numField("gap", t("Gap distance"), f.gap ?? { v: 0.1 }, "length")),
+        + group(t("Rip"), numField("gap", t("Gap distance"), f.gap ?? { v: 0.1 }, "length"))
+        + autoRelief(f),
     };
   }
   if (f.type === "smcut") {
@@ -683,6 +688,13 @@ export function bindSmPanel(pm: HTMLElement, f: SheetFeature, upd: (fn: () => vo
         return;
       }
       if (f.type === "smconvert" || f.type === "sminsert") {
+        if (key === "arelief") upd(() => { if (val === "none") delete f.relief; else f.relief = val === "obround" ? "obround" : val === "circle" ? "circle" : val === "tear" ? "tear" : "rect"; }, true);
+        if (key === "aratio") {
+          const v = Number(String(val).replace(",", "."));
+          if (!Number.isFinite(v) || !(v > 0 && v <= 10)) { el.setAttribute("aria-invalid", "true"); toastBad(t("The value must be more than 0.")); return; }
+          el.removeAttribute("aria-invalid");
+          upd(() => { if (v === 0.5) delete f.reliefRatio; else f.reliefRatio = v; });
+        }
         if (key === "k") {
           const v = Number(String(val).replace(",", "."));
           if (!Number.isFinite(v) || !(v >= 0 && v <= 1)) { el.setAttribute("aria-invalid", "true"); toastBad(t("The K-factor must be between 0 and 1.")); return; }
