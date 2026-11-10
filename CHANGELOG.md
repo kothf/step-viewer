@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.441.0] - 2026-11-10
+
+### Added
+
+- **Arrow outside the circle (FR-DRW-021)**: a radius or diameter dimension whose text is outside the circle can stop its leader at the rim, with one arrow pointing at it from outside, instead of crossing the circle.
+
 ## [1.440.0] - 2026-11-10
 
 ### Added
@@ -2623,7 +2629,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.440.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.441.0...HEAD
+[1.441.0]: https://github.com/kothf/step-viewer/compare/v1.440.0...v1.441.0
 [1.440.0]: https://github.com/kothf/step-viewer/compare/v1.439.0...v1.440.0
 [1.439.0]: https://github.com/kothf/step-viewer/compare/v1.438.0...v1.439.0
 [1.438.0]: https://github.com/kothf/step-viewer/compare/v1.437.0...v1.438.0

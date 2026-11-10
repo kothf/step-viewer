@@ -418,15 +418,21 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
     const u = unit2([T[0] - C[0], T[1] - C[1]], [Math.SQRT1_2, Math.SQRT1_2]);
     const outside = d2(T, C) > R;
     const far = outside ? T : add2(C, u, R);
+    const lead = !!a.outside && outside && !(g.k === "rad" && a.fore);
     if (g.k === "rad" && a.fore) {
       // Foreshortened radius: the centre is far away (or off the sheet), so the line stops short of it with a jog.
       const A = add2(C, u, R), n: P2 = [-u[1], u[0]], len = Math.min(R * 0.6, FORE_LEN);
       const B = add2(A, u, -len / 2), B2 = add2(add2(B, u, -FORE_JOG / 2), n, FORE_JOG), E = add2(B2, u, -len / 2);
       out.push({ t: "p", p: [...E, ...B2, ...B, ...A], pen: "thin", layer: "ANNOT" });
       if (outside) out.push(thin(A, T));
-    } else out.push(thin(g.k === "dia" ? add2(C, u, -R) : C, far));
-    out.push(arrow(...add2(C, u, R), u[0], u[1]));
-    if (g.k === "dia") out.push(arrow(...add2(C, u, -R), -u[0], -u[1]));
+    } else if (lead) out.push(thin(add2(C, u, R), T));
+    else out.push(thin(g.k === "dia" ? add2(C, u, -R) : C, far));
+    // A leader from outside points at the rim; otherwise the arrows touch the rim from inside.
+    if (lead) out.push(arrow(...add2(C, u, R), -u[0], -u[1]));
+    else {
+      out.push(arrow(...add2(C, u, R), u[0], u[1]));
+      if (g.k === "dia") out.push(arrow(...add2(C, u, -R), -u[0], -u[1]));
+    }
     // A short horizontal shoulder at the text, which sits on it.
     const sx = u[0] >= 0 ? 1 : -1;
     let box: [number, number, number, number];

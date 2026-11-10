@@ -5031,6 +5031,16 @@ try {
       fore = { j0, j1, stored, r8: txR.includes("R8"), back: (await annots()).some(a => a.k === "dia" && !a.fore) && !(await dp.$('#drw .drw-props [data-d="fore"]')) };
     }
     check(fore && fore.j1 === fore.j0 + 1 && fore.stored && fore.r8 && fore.back, `drawing: a radius dimension is foreshortened with a jog and goes back to a diameter (${selR}; ${JSON.stringify(fore)})`);
+    // Arrow outside the circle (the Ø16 is still selected): stored, never more prims than before, and off again.
+    {
+      const nAn = () => dp.evaluate(() => window.__sv.drw.prims().filter(q => q.layer === "ANNOT").length);
+      const n0 = await nAn(), has = !!(await dp.$('#drw .drw-props [data-d="rout"]'));
+      if (has) await dp.check('#drw .drw-props [data-d="rout"]');
+      const n1 = await nAn(), st = (await annots()).some(a => a.k === "dia" && a.outside === true);
+      if (has) await dp.uncheck('#drw .drw-props [data-d="rout"]');
+      const n2 = await nAn(), off = !(await annots()).some(a => a.outside);
+      check(has && st && off && n1 <= n0 && n2 === n0, `drawing: a diameter's arrow goes outside the circle and back (${JSON.stringify({ has, st, off, n0, n1, n2 })})`);
+    }
     // A diameter displayed as a linear dimension (the Ø16 is still selected), then back.
     {
       const has = !!(await dp.$('#drw .drw-props [data-d="dlin"]'));
