@@ -899,6 +899,8 @@ export interface PartDoc {
   massOverride?: { mass?: number; com?: V3 };
   /** Weldment cut list item properties (FR-FT-121), keyed by `cutKey` of the item: own description, part number, notes. */
   cutProps?: Record<string, { desc?: string; part?: string; note?: string; /** Material name from `MATERIALS` for this item's cut list mass (unset = the part's material). */ mat?: string; /** Excluded from the cut list (SolidWorks' Exclude from cut list): no item number, mass or CSV row. */ excl?: boolean }>;
+  /** Stock bar for the weldment cut list (FR-FT-121): bar length and saw kerf in mm; the Stock lengths table then counts the bars to buy. */
+  stock?: { len?: number; kerf?: number };
   /** Sub-weldments (SolidWorks' sub-weldment folders in the cut list): named groups of body keys; a body sits in at most one. */
   subWelds?: { id: string; name: string; bodies: string[] }[];
   color?: V3;

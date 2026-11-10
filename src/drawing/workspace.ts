@@ -1742,7 +1742,7 @@ export class DrawingWorkspace {
     const sh = this.sheet;
     if (a.t === "dim") {
       const v = findView(sh, a.view), g = v ? dimGeo(a.src ? { ...a, refs: (() => { const it = this.factsOf(a.view)?.items.find(i => i.src === a.src); return it ? [{ pt: it.p[0] }, { pt: it.p[1] }] : a.refs; })() } : a, projector(viewDir(sh, v)).P, this.factsOf(a.view)?.topo ?? null) : null;
-      const val = g ? (g.k === "ang" ? null : dimText({ ...a, tol: { t: "none" }, txt: undefined, dual: false }, g, this.ctx().dec).main) : "?";
+      const val = g ? (g.k === "ang" ? null : dimText({ ...a, tol: { t: "none" }, txt: undefined, dual: false, show: undefined }, g, this.ctx().dec).main) : "?";
       // With a drawing default tolerance, no tolerance of its own reads "Document" and "None" turns the default off.
       const dflt = a.k === "ang" ? this.doc.style?.atol : a.k === "chamfer" ? undefined : this.doc.style?.tol;
       const tol = a.tol?.t ?? "";
@@ -1760,6 +1760,7 @@ export class DrawingWorkspace {
         <label class="drw-f">${esc(t("Prefix"))}<input data-d="pre" value="${esc(a.pre ?? "")}" translate="no"></label>
         <label class="drw-f">${esc(t("Suffix"))}<input data-d="suf" value="${esc(a.suf ?? "")}" translate="no"></label>
         <label class="drw-f">${esc(t("Text instead of the value"))}<input data-d="txt" value="${esc(a.txt ?? "")}" translate="no"></label>
+        <label class="drw-f">${esc(t("Display"))}<select data-d="show">${([["", "As measured"], ["ref", "Reference (in parentheses)"], ["basic", "Basic (boxed)"]] as const).map(([k, l]) => `<option value="${k}"${(a.show ?? "") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>
         <label class="drw-chk"><input type="checkbox" data-d="insp"${a.insp ? " checked" : ""}> ${esc(t("Inspection dimension"))}</label>
         ${a.k !== "ang" ? `<label class="drw-chk"><input type="checkbox" data-d="dual"${a.dual ?? this.doc.style?.dual === "in" ? " checked" : ""}> ${esc(t("Dual dimension (inches in brackets)"))}</label>` : ""}
       </fieldset>
@@ -1900,6 +1901,7 @@ export class DrawingWorkspace {
     this.setAnnot(k === "ntxt" || k === "htxt" ? "Text" : "Annotation property", a => {
       if (a.t === "dim") {
         if (k === "k") a.k = val as DimAnnot["k"];
+        else if (k === "show") { if (val === "ref" || val === "basic") a.show = val; else delete a.show; }
         else if (k === "insp") { if ((el as HTMLInputElement).checked) a.insp = true; else delete a.insp; }
         else if (k === "dual") { const on = (el as HTMLInputElement).checked; if (on === (this.doc.style?.dual === "in")) delete a.dual; else a.dual = on; }
         else if (k === "prec") { if (val === "") delete a.prec; else a.prec = +val; }

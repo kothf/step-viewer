@@ -5,11 +5,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.383.0] - 2026-11-10
+## [1.385.0] - 2026-11-10
 
 ### Added
 
 - **Selection box colours in more panels (FR-SEL-011)**: Extrude's Start at, Up to and Body boxes, Revolve's Up to, the Hole Wizard's Face and Up to, Mirror's Plane, the faces to mirror or pattern and Split's plane now have their own colours too. The picked face is drawn in its box's colour with a small tag naming the box, so you see which pick went where.
+
+## [1.384.0] - 2026-11-10
+
+### Added
+
+- **Bars to buy in the cut list (FR-FT-121)**: type a **Stock bar length** (and the **Saw kerf**) under the weldment cut list's Stock lengths table, and each section shows how many bars to buy and what is left of them; members longer than a bar are counted apart. The values are saved with the part and go into the CSV export.
+
+## [1.383.0] - 2026-11-10
+
+### Added
+- Reference and basic dimensions in drawings (FR-DRW-021): a dimension's **Display** can be **Reference**, which puts the whole value in parentheses, or **Basic**, which boxes it as a theoretically exact value and leaves out any tolerance, the drawing's default included.
 
 ## [1.382.0] - 2026-11-10
 
@@ -2257,7 +2268,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.383.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.385.0...HEAD
+[1.385.0]: https://github.com/kothf/step-viewer/compare/v1.384.0...v1.385.0
+[1.384.0]: https://github.com/kothf/step-viewer/compare/v1.383.0...v1.384.0
 [1.383.0]: https://github.com/kothf/step-viewer/compare/v1.382.0...v1.383.0
 [1.382.0]: https://github.com/kothf/step-viewer/compare/v1.381.0...v1.382.0
 [1.381.0]: https://github.com/kothf/step-viewer/compare/v1.380.0...v1.381.0

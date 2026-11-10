@@ -3406,6 +3406,11 @@ export const RU: Record<string, string> = {
   "Weld both sides": "Шов с обеих сторон",
   "Stock lengths": "Заготовки по сечениям",
   "Pieces": "Штук",
+  "Bars": "Прутков",
+  "Left over": "Остаток",
+  "+ {n} too long": "+ {n} длиннее прутка",
+  "Stock bar length": "Длина прутка",
+  "Saw kerf": "Ширина пропила",
   "Each flat face of set 1 also brings the face on the other side of its plate, so a plate standing on another is welded along both sides.": "Каждая плоская грань набора 1 добавляет грань с другой стороны своей пластины, поэтому пластина, стоящая на другой, приваривается с обеих сторон.",
   "Merge arc segment bodies": "Объединять тела с дугами",
   "Merge miter trimmed bodies": "Объединять тела, обрезанные на ус",
@@ -4266,4 +4271,8 @@ export const RU: Record<string, string> = {
   "Inches in brackets": "Дюймы в скобках",
   "Inch decimals": "Знаков в дюймах",
   "Dual dimension (inches in brackets)": "Двойной размер (дюймы в скобках)",
+  // FR-DRW-021: reference and basic dimensions
+  "As measured": "Как измерено",
+  "Reference (in parentheses)": "Справочный (в скобках)",
+  "Basic (boxed)": "Теоретический (в рамке)",
 };
