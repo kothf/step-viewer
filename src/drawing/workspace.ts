@@ -1887,6 +1887,7 @@ export class DrawingWorkspace {
       return `<fieldset class="pm-group"><legend>${esc(t("Balloon"))}</legend>
         ${comp ? `<p class="drw-note">${esc(t("Component"))}: <b translate="no">${esc(comp)}</b>${item ? ` · ${esc(t("item {n}", { n: item }))}` : ""}</p>` : ""}
         <label class="drw-f">${esc(t("Text instead of the item number"))}<input data-d="btxt" value="${esc(a.txt ?? "")}" translate="no"></label>
+        <label class="drw-f">${esc(t("Style"))}<select data-d="bshape">${([["", "Circle"], ["split", "Circular split line"], ["tri", "Triangle"], ["hex", "Hexagon"], ["box", "Rectangle"], ["none", "Underline"]] as const).map(([v, l]) => `<option value="${v}"${(a.shape ?? "") === v ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>
         ${this.stackRows(a)}
       </fieldset>${del}`;
     }
@@ -1942,6 +1943,9 @@ export class DrawingWorkspace {
       <label class="drw-f">${esc(t("Text"))}<textarea data-d="ntxt" rows="4" translate="no">${esc(a.text)}</textarea></label>
       <label class="drw-f">${esc(t("Link to property"))}<select data-d="nprop"><option value="">—</option>${NOTE_PROP_KEYS.map(([k, l]) => `<option value="${k}">${esc(t(l))}</option>`).join("")}</select></label>
       <label class="drw-f">${esc(t("Border"))}<select data-d="nborder">${([["", "None"], ["box", "Rectangle"], ["round", "Rounded"], ["circle", "Circle"]] as const).map(([v, l]) => `<option value="${v}"${(a.border ?? "") === v ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>
+      <label class="drw-f">${esc(t("Justify"))}<select data-d="nal">${([["", "Left"], ["c", "Centre"], ["r", "Right"]] as const).map(([v, l]) => `<option value="${v}"${(a.al ?? "") === v ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>
+      ${a.leader ? `<label class="drw-f">${esc(t("Leader end"))}<select data-d="nend">${([["", "Arrow"], ["dot", "Dot"], ["none", "None"]] as const).map(([v, l]) => `<option value="${v}"${(a.end ?? "") === v ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>
+      <label class="drw-chk"><input type="checkbox" data-d="nbent"${a.bent ? " checked" : ""}> ${esc(t("Bent leader"))}</label>` : ""}
       <label class="drw-f">${esc(t("Text height (mm)"))}<select data-d="nh">${[2.5, 3.5, 5, 7].map(h => `<option value="${h}"${(a.h ?? 3.5) === h ? " selected" : ""}>${h}</option>`).join("")}</select></label>
     </fieldset><div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
   }
@@ -1990,7 +1994,7 @@ export class DrawingWorkspace {
       }
       else if (a.t === "cline" && k === "cext") { const v = num(val); if (v != null && v >= 0 && v <= 50) a.ext = v; }
       else if (a.t === "cloud") { if (k === "carc") { const v = num(val); if (v && v >= 1) a.arc = v; } else if (k === "crev") { if (val.trim()) a.rev = val.trim(); else delete a.rev; } }
-      else if (a.t === "note") { if (k === "ntxt" && val.trim()) a.text = val; else if (k === "nh") a.h = +val; else if (k === "nborder") { if (val === "box" || val === "round" || val === "circle") a.border = val; else delete a.border; } }
+      else if (a.t === "note") { if (k === "ntxt" && val.trim()) a.text = val; else if (k === "nh") a.h = +val; else if (k === "nal") { if (val === "c" || val === "r") a.al = val; else delete a.al; } else if (k === "nend") { if (val === "dot" || val === "none") a.end = val; else delete a.end; } else if (k === "nbent") { if ((el as HTMLInputElement).checked) a.bent = true; else delete a.bent; } else if (k === "nborder") { if (val === "box" || val === "round" || val === "circle") a.border = val; else delete a.border; } }
       else if (a.t === "htable" && k === "hprec") { if (val === "") delete a.prec; else a.prec = +val; }
       else if (a.t === "btable" && k === "bprec") { if (val === "") delete a.prec; else a.prec = +val; }
       else if (a.t === "wtable" && k === "wprec") { if (val === "") delete a.prec; else a.prec = +val; }
@@ -2010,6 +2014,7 @@ export class DrawingWorkspace {
         else if (f[0] === "d") { const d = [0, 1, 2].map(j => r.datums[j] ?? ""); d[+f[1]] = val.trim().toUpperCase(); while (d.length && !d[d.length - 1]) d.pop(); r.datums = d; }
       } else if (a.t === "gtol" && k === "gall") { if ((el as HTMLInputElement).checked) a.around = true; else delete a.around; }
       else if (a.t === "datum" && k === "dl" && val.trim()) a.letter = val.trim().toUpperCase();
+      else if (a.t === "balloon" && k === "bshape") { if (val === "split" || val === "tri" || val === "hex" || val === "box" || val === "none") a.shape = val; else delete a.shape; }
       else if (a.t === "balloon" && k === "btxt") { if (val.trim()) a.txt = val.trim(); else delete a.txt; }
       else if (a.t === "balloon" && k === "bstack") { if (val) a.stack = [...(a.stack ?? []), val]; }
       else if (a.t === "table" && a.kind === "bom" && k === "bsub") { if (val) a.sub = val; else delete a.sub; }

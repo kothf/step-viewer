@@ -148,7 +148,8 @@ export interface DimAnnot {
 
 /** A note: on the sheet (sheet mm) or on a view (its model axes, so it moves with the view), with an optional leader to the model. */
 /** `border`: a frame round the text (box, obround or circle); the leader starts on it. */
-export interface NoteAnnot { id: string; t: "note"; view?: string; pos: [number, number]; text: string; h?: number; leader?: GeoRef; border?: "box" | "round" | "circle" }
+/** `al`: lines centred or set to the right within the text block (absent = left). `end`: the leader ends in a dot (pointing into a face) or plain, instead of an arrow. `bent`: the leader leaves the text along a short horizontal shoulder (ISO 128 reference line). */
+export interface NoteAnnot { id: string; t: "note"; view?: string; pos: [number, number]; text: string; h?: number; leader?: GeoRef; border?: "box" | "round" | "circle"; al?: "c" | "r"; end?: "dot" | "none"; bent?: boolean }
 
 /** A hole callout (FR-DRW-022) on a round edge, from the hole feature when there is one. */
 export interface HoleAnnot { id: string; t: "hole"; view: string; ref: GeoRef; pos: [number, number]; txt?: string }
@@ -173,7 +174,7 @@ export interface TableAnnot { id: string; t: "table"; view?: undefined; kind: "r
  * start with `<component id>@`), the number is that part's item in the BOM unless `txt` overrides it.
  * `stack` lists more components whose items are stacked under it (one leader for all).
  */
-export interface BalloonAnnot { id: string; t: "balloon"; view: string; ref: GeoRef; pos: [number, number]; txt?: string; stack?: string[] }
+export interface BalloonAnnot { id: string; t: "balloon"; view: string; ref: GeoRef; pos: [number, number]; txt?: string; stack?: string[]; /** Outline other than the plain circle; "split" shows the BOM quantity in the lower half. */ shape?: "split" | "tri" | "hex" | "box" | "none" }
 
 /**
  * A hole table (FR-DRW-024): the holes seen end-on in a view, tagged on the view (A1, A2, B1: one letter per size) and listed

@@ -359,6 +359,35 @@ test("assembly BOM: items in first-use order, pattern and sub-assembly instances
   assert.ok(onVisible(proj, [5, 0.001], 0.01) && onVisible(proj, [20, 5], 0.01) && !onVisible(proj, [20, -5], 0.01));
 });
 
+test("balloon styles: split circle with quantities, triangle, hexagon, box and underline (FR-DRW-023)", async () => {
+  const { balloonPrims, balloonOutline } = await import("../../src/drawing/bom");
+  type L = { t: "l"; p: number[] }; type T = { t: "t"; s: string; y: number };
+  const n = (r: { prims: { t: string }[] }, t: string) => r.prims.filter(q => q.t === t).length;
+  const plain = balloonPrims([0, 0], null, "7");
+  assert.deepEqual([n(plain, "a"), n(plain, "l")], [1, 0]);
+  // Split: the circle stays, a line across it, the item above and the quantity below.
+  const split = balloonPrims([0, 0], null, "7", ["8"], { shape: "split", lower: ["2", "12"] });
+  assert.deepEqual([n(split, "a"), n(split, "l")], [2, 2]);
+  const st = split.prims.filter(q => q.t === "t") as unknown as T[];
+  assert.deepEqual(st.map(q => q.s), ["7", "2", "8", "12"]);
+  assert.ok(st[0].y > 0 && st[1].y < 0 && st[2].y > -10 && st[3].y < -10, "item above the line, quantity below, per balloon");
+  // Polygons: sides instead of the circle, all 2R tall so a stack touches.
+  for (const [shape, sides] of [["tri", 3], ["hex", 6], ["box", 4]] as const) {
+    const r = balloonPrims([0, 0], null, "7", [], { shape });
+    assert.deepEqual([n(r, "a"), n(r, "l")], [0, sides], shape);
+    const ys = balloonOutline([0, 0], shape)!.map(q => q[1]);
+    assert.ok(Math.abs(Math.min(...ys) + 5) < 1e-9 && Math.abs(Math.max(...ys) - 5) < 1e-9, `${shape} is 10 mm tall`);
+  }
+  const none = balloonPrims([0, 0], null, "7", [], { shape: "none" });
+  assert.deepEqual([n(none, "a"), n(none, "l")], [0, 1], "underline only");
+  // The leader starts on the outline: on a box side to the right, on the hexagon's corner.
+  const lead = (shape: "box" | "hex" | "tri") => (balloonPrims([0, 0], [30, 0], "7", [], { shape }).prims.filter(q => q.t === "l") as unknown as L[]).find(q => q.p[2] === 30 && q.p[3] === 0)!;
+  assert.ok(Math.abs(lead("box").p[0] - 5) < 1e-9 && Math.abs(lead("hex").p[0] - 10 / Math.sqrt(3)) < 1e-9);
+  // Triangle: a level ray from the centre meets the sloping side half way up, at w/2.
+  assert.ok(Math.abs(lead("tri").p[0] - 5 / Math.sqrt(3)) < 1e-9, String(lead("tri").p[0]));
+  assert.ok(balloonPrims([0, 0], null, "7", [], { shape: "hex" }).box[2] > plain.box[2], "the hit box takes the wider outline in");
+});
+
 test("parts-only BOM, stacked balloons, surface symbol on a slanted edge, GOST signature cells", async () => {
   const { bomOf, bomCells, bomMode, balloonPrims } = await import("../../src/drawing/bom");
   const { rotatePrims, rotateBox } = await import("../../src/drawing/prims");
@@ -1186,6 +1215,35 @@ test("a note can have a border; the leader starts on it (FR-DRW-023)", async () 
     assert.ok(Math.abs(lead.p[0] - r.box[2]) < 1e-6 || b === "circle", `${b}: leader from the frame edge`);
     if (b === "circle") { const cx = (r.box[0] + r.box[2]) / 2, cy = (r.box[1] + r.box[3]) / 2; assert.ok(Math.abs(Math.hypot(lead.p[0] - cx, lead.p[1] - cy) - (r.box[2] - r.box[0]) / 2) < 1e-6, "leader from the circle"); }
   }
+});
+
+test("a note's lines can be centred or set right, and its leader bent or ended in a dot (FR-DRW-023)", async () => {
+  const { notePrims, NOTE_SHOULDER, textW } = await import("../../src/drawing/annot");
+  const note = { id: "n", t: "note" as const, pos: [0, 0] as [number, number], text: "LONG LINE\nAB" };
+  type T = { t: "t"; x: number; al: string };
+  const texts = (r: { prims: { t: string }[] }) => r.prims.filter(q => q.t === "t") as unknown as T[];
+  const w = textW("LONG LINE", 3.5);
+  const left = notePrims(note, [10, 10], null), mid = notePrims({ ...note, al: "c" }, [10, 10], null), right = notePrims({ ...note, al: "r" }, [10, 10], null);
+  assert.deepEqual(texts(left).map(q => [q.x, q.al]), [[10, "l"], [10, "l"]]);
+  assert.ok(texts(mid).every(q => Math.abs(q.x - (10 + w / 2)) < 1e-9 && q.al === "c"), "centred on the block");
+  assert.ok(texts(right).every(q => Math.abs(q.x - (10 + w)) < 1e-9 && q.al === "r"), "set to the block's right side");
+  assert.deepEqual(mid.box, left.box, "the block stays where it was");
+  // Leader: straight with an arrow by default; bent adds a horizontal shoulder; a dot or nothing replaces the arrow.
+  const lines = (r: { prims: { t: string }[] }) => r.prims.filter(q => q.t === "l") as unknown as { p: number[] }[];
+  const fills = (r: { prims: { t: string }[] }) => (r.prims.filter(q => q.t === "p") as unknown as { fill?: boolean; p: number[] }[]).filter(q => q.fill);
+  const plain = notePrims(note, [10, 10], [60, 40]), bent = notePrims({ ...note, bent: true }, [10, 10], [60, 40]);
+  assert.equal(lines(bent).length, lines(plain).length + 1, "one more line: the shoulder");
+  const sh = lines(bent)[0], lead = lines(bent)[1];
+  assert.ok(Math.abs(sh.p[1] - sh.p[3]) < 1e-9 && Math.abs(sh.p[2] - sh.p[0] - NOTE_SHOULDER) < 1e-9, "shoulder runs level, towards the point");
+  assert.deepEqual([lead.p[0], lead.p[1], lead.p[2], lead.p[3]], [sh.p[2], sh.p[3], 60, 40], "the leader goes on from the shoulder to the point");
+  const toLeft = lines(notePrims({ ...note, bent: true }, [10, 10], [-30, 40]))[0];
+  assert.ok(Math.abs(toLeft.p[2] - toLeft.p[0] + NOTE_SHOULDER) < 1e-9, "a point on the left: the shoulder runs left");
+  const dot = notePrims({ ...note, end: "dot" }, [10, 10], [60, 40]), none = notePrims({ ...note, end: "none" }, [10, 10], [60, 40]);
+  assert.equal(fills(none).length, 0, "no arrow head");
+  assert.equal(fills(dot).length, 1);
+  const dp = fills(dot)[0].p; let cx = 0, cy = 0; for (let i = 0; i < dp.length; i += 2) { cx += dp[i]; cy += dp[i + 1]; }
+  assert.ok(Math.abs(cx / (dp.length / 2) - 60) < 1e-9 && Math.abs(cy / (dp.length / 2) - 40) < 1e-9 && dp.length === 24, "a dot centred on the point");
+  assert.equal(lines(dot).length, lines(plain).length, "the leader line stays");
 });
 
 test("a linear dimension's arrows can be put outside or inside by hand (FR-DRW-021)", async () => {

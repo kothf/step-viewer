@@ -2005,7 +2005,7 @@ try {
       `model 1.375: a checked material shows the page its values were checked against (${JSON.stringify(refLink)})`);
     // 1.382.0: a material without a checked reference says so.
     const refNote = await mp.evaluate(() => !!document.querySelector("#mat-dlg .mat-unver"));
-    await mp.fill("#mat-q", "teak");
+    await mp.fill("#mat-q", "kevlar");
     const unver = await mp.evaluate(() => ({ note: document.querySelector("#mat-dlg .mat-unver")?.textContent ?? "", link: !!document.querySelector("#mat-dlg .mat-src a") }));
     check(!refNote && unver.note === "Not checked against a public reference yet." && !unver.link,
       `model 1.382: a material with no checked reference is marked as not checked (${refNote}, ${JSON.stringify(unver)})`);
@@ -4907,6 +4907,15 @@ try {
     await dp.selectOption('.drw-props [data-d="nborder"]', "");
     const nb2 = { arcs: await arcsOf(), has: "border" in (await annots()).find(a => a.t === "note" && !a.view) };
     check(nb1.border === "circle" && nb1.arcs === arcs0 + 1 && nb2.arcs === arcs0 && !nb2.has, `drawing: a note takes a circle border and loses it again (${JSON.stringify([arcs0, nb1, nb2])})`);
+    // Note justification (FR-DRW-023): centred text keeps the block, the lines move to its middle.
+    const noteText = () => dp.evaluate(() => { const p = window.__sv.drw.prims().find(p => p.t === "t" && p.s === "BREAK SHARP EDGES"); return p && { x: p.x, al: p.al }; });
+    const nt0 = await noteText();
+    await dp.selectOption('.drw-props [data-d="nal"]', "c");
+    const nt1 = await noteText(), nal1 = (await annots()).find(a => a.t === "note" && !a.view)?.al;
+    await dp.selectOption('.drw-props [data-d="nal"]', "");
+    const nt2 = await noteText(), nal2 = "al" in (await annots()).find(a => a.t === "note" && !a.view);
+    check(nt0?.al === "l" && nt1?.al === "c" && nt1.x > nt0.x + 5 && nal1 === "c" && nt2?.al === "l" && Math.abs(nt2.x - nt0.x) < 1e-6 && !nal2,
+      `drawing: a note's text is centred and set left again (${JSON.stringify([nt0?.x, nt1?.x, nt1?.al, nal1, nal2])})`);
     // The worker reads holes from the geometry too (FR-DRW-022): the Ø16 cut is a one-piece stack open at both ends.
     const geoHoles = await dp.evaluate(() => window.__sv.drw.holes());
     check(geoHoles.some(h => h.segs === 1 && h.open[0] && h.open[1]), `drawing: holes read from the geometry (${JSON.stringify(geoHoles)})`);
@@ -5143,6 +5152,19 @@ try {
     const circles = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "a" && p.layer === "ANNOT" && p.r === 5 && p.a1 - p.a0 > 6).length);
     const nums2 = (await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "ANNOT" && p.h === 5).map(p => p.s))).sort().join();
     check(JSON.stringify(stacked?.stack) === '["c1"]' && circles === 4 && nums2 === "1,1,2,2", `drawing: stacked balloon adds item 1 under item 2 (${JSON.stringify(stacked?.stack)}; ${circles} circles; ${nums2})`);
+    // Balloon style (FR-DRW-023): a split circle shows each item's quantity below; a hexagon has no circle; Circular puts it back.
+    const balloonLook = () => dp.evaluate(() => { const p = window.__sv.drw.prims().filter(q => q.layer === "ANNOT"); return { circles: p.filter(q => q.t === "a" && q.r === 5 && q.a1 - q.a0 > 6).length, qty: p.filter(q => q.t === "t" && q.h === 3).map(q => q.s).sort().join() }; });
+    await dp.selectOption('#drw [data-d="bshape"]', "split");
+    await dp.waitForTimeout(150);
+    const bl1 = await balloonLook(), bs1 = (await annots()).find(a => a.t === "balloon" && a.view === top)?.shape;
+    await dp.selectOption('#drw [data-d="bshape"]', "hex");
+    await dp.waitForTimeout(150);
+    const bl2 = await balloonLook();
+    await dp.selectOption('#drw [data-d="bshape"]', "");
+    await dp.waitForTimeout(150);
+    const bl3 = await balloonLook(), bs3 = "shape" in (await annots()).find(a => a.t === "balloon" && a.view === top);
+    check(bs1 === "split" && bl1.circles === 4 && bl1.qty === "1,2" && bl2.circles === 2 && bl2.qty === "" && bl3.circles === 4 && !bs3,
+      `drawing: a balloon turns into a split circle with quantities, a hexagon and back (${JSON.stringify([bs1, bl1, bl2, bl3, bs3])})`);
     await dp.keyboard.press("Escape");
     // 1.99.0 alternate position (FR-DRW-015): select the top view, pick Pin<1>'s circle, drop that point 30 mm higher: the pin is drawn again in phantom lines.
     [x, y] = await at(top, -45, -25);
@@ -8403,6 +8425,26 @@ try {
     const x2 = await state();
     check(!x0.bad && Math.abs(x0.v - (48000 - 1000 + 504)) < 0.05 && Math.abs(x1.v - x0.v) < 0.05 && !x1.bad && x1.types === "import,sketch,extrude,delbody,sketch,extrude,sketch,extrude" && exts === "boss:blind:20 boss:blind:7 cut:blind:5" && !x2.bad && Math.abs(x2.v - (x1.v - 800)) < 0.05,
       `model: Recognize Extrudes makes an imported block with a pocket and a boss again as a base extrude and sketches with extrudes (FR-FT-102) (${JSON.stringify({ x0, x1, x2, exts })})`);
+    // 1.415: a turned shaft (a step and a cone, about Z) comes back as a sketch with a revolve.
+    await mp.evaluate(() => window.__sv.model.store.change("Shaft", d => {
+      const xy = [[0, 0], [10, 0], [10, 20], [6, 26], [6, 40], [0, 40]];
+      const ents = xy.map(([x, y], i) => ({ id: "rp" + i, t: "point", x, y }));
+      xy.forEach((_, i) => ents.push({ id: "rl" + i, t: "line", a: "rp" + i, b: "rp" + (i + 1) % xy.length }));
+      ents.push({ id: "ra", t: "point", x: 0, y: -5 }, { id: "rb", t: "point", x: 0, y: 45 }, { id: "rax", t: "line", a: "ra", b: "rb", cons: true });
+      d.features = [{ id: "r", type: "sketch", name: "r", plane: { std: "XZ" }, ents, rels: [], dims: [] },
+        { id: "v", type: "revolve", name: "Revolve1", sketch: "r", op: "boss", axis: "rax", angle: { v: Math.PI * 2 } }];
+    }));
+    await settle();
+    const t0 = await state();
+    const brep3 = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "shaft.brep", brep }]; }), brep3);
+    await settle();
+    await runCmd(mp, "Recognize Extrudes");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.some(f => f.type === "revolve"), null, { timeout: 120000 });
+    await settle();
+    const t1 = await state();
+    check(!t0.bad && t0.v > 1000 && Math.abs(t1.v - t0.v) < 0.05 && !t1.bad && t1.types === "import,sketch,revolve,delbody",
+      `model: Recognize Extrudes makes an imported turned shaft again as a sketch with a revolve (FR-FT-102) (${JSON.stringify({ t0, t1 })})`);
     await ctx.close();
   }
 
