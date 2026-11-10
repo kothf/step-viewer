@@ -2751,6 +2751,25 @@ try {
     await idle();
     check(bx.plane && bx.faces && bx.plane !== bx.faces && bx.mesh && bx.tag === "Faces to draft" && bx.tagC === bx.faces,
       `model 1.351: Draft's selection boxes have their own colours and the picked face is drawn in the faces box's colour with a "Faces to draft" tag (${JSON.stringify(bx)})`);
+    // 1.387 (FR-SEL-011, AT-UX-6): the other panels' boxes: the Hole Wizard's face is drawn in the Face box's colour with its tag, and an extrude's Start at / Up to faces get one box each.
+    await mp.evaluate(() => window.__sv.modeller.command("hole"));
+    await mp.waitForSelector('#mc-pm .pm-box[data-focus="hplane"]');
+    await mp.evaluate(() => {
+      const m = window.__sv.modeller, d = m.mode.draft, names = window.__sv.model.last().faceNames;
+      d.plane = { face: { name: names.find(n => n.startsWith("cpe:")) } }; m.draftChanged();
+    });
+    await idle();
+    await mp.waitForTimeout(100);
+    const bx2 = await mp.evaluate(() => {
+      const m = window.__sv.modeller, names = window.__sv.model.last().faceNames;
+      const tag = document.querySelector('#mc-layer .mc-boxtag[data-box="hplane"]');
+      const ex = m.boxPicks({ type: "extrude", end: "upto", upTo: { face: { name: names[0] } }, start: "surface", startRef: { face: { name: names[1] } } });
+      return { c: getComputedStyle(document.querySelector('#mc-pm .pm-box[data-focus="hplane"]')).getPropertyValue("--box-c").trim(), mesh: m.decor.children.some(o => o.userData.boxPick === "hplane"), tag: tag?.textContent, tagC: tag && getComputedStyle(tag).getPropertyValue("--box-c").trim(), ex: ex.map(g => `${g.focus}:${g.label}:${g.faces.length}`).join() };
+    });
+    await mp.evaluate(() => window.__sv.modeller.exitMode(false));
+    await idle();
+    check(bx2.c && bx2.mesh && bx2.tag === "Face" && bx2.tagC === bx2.c && bx2.ex === "start:Start at:1,upto:Up to:1",
+      `model 1.387: the Hole Wizard's face is drawn in the Face box's colour with a "Face" tag, and an extrude's Start at and Up to faces have their own boxes (${JSON.stringify(bx2)})`);
     // 1.354 (FR-UI-109): selection box flow: a one-item box that has just been filled hands focus to the next empty required box, also an earlier one; a panel opens on its first empty box.
     await mp.evaluate(() => window.__sv.modeller.command("lpattern"));
     await mp.waitForSelector('#mc-pm .pm-box[data-focus="dir"]');
