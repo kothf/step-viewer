@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { MEdge, Projection, Topo, V3 } from "../../src/kernel/drawing";
-import { bendRows, cutCols, cutDesc, cutRows, edgeItem, stackItem, weldRows, dimGeo, dimPrims, dimText, holeEdges, holeRows, viewAnnots, type AnnotCtx } from "../../src/drawing/annot";
+import { bendRows, cutCols, cutDesc, cutRows, edgeItem, weldItem, stackItem, weldRows, dimGeo, dimPrims, dimText, holeEdges, holeRows, viewAnnots, type AnnotCtx } from "../../src/drawing/annot";
 import { placement } from "../../src/drawing/compose";
 import type { DimAnnot, DrawingView, GeoRef, Sheet } from "../../src/drawing/types";
 
@@ -182,4 +182,25 @@ test("cut list balloons: a weldment part drawing numbers bodies by their cut lis
   assert.deepEqual(out.dangling, []);
   const lost = { ...b, ref: { ...b.ref, e: edges[2].k }, stack: [] };
   assert.deepEqual(viewAnnots({ ...sh, annots: [lost] } as unknown as Sheet, view, pl, ctx).dangling, ["b"], "an edge of no cut list body dangles");
+});
+
+test("weld tags: a tag on a bead edge shows the bead's row in the weld table, apart from cut list balloons (FR-FT-121)", () => {
+  const welds = [{ legs: "4", length: 160, qty: 1 }, { legs: "6", length: 400, qty: 2 }];
+  const weldFaces = { "w:b0:leg1": 1, "w:b0:leg2": 1, "w:b1:face": 2 };
+  const cutFaces = { "w:b0:leg1": 3, "w:b0:leg2": 3, "w:b1:face": 4, "m:e1:side:0": 1 };
+  const edges = [line("w:b0:leg1|w:b0:leg2", [0, 0, 0], [40, 0, 0]), line("w:b1:face|m:e1:side:0", [0, 20, 0], [40, 20, 0]), line("m:e1:side:0|m:e1:side:1", [0, 30, 0], [40, 30, 0])];
+  const ctx: AnnotCtx = { topo: { edges, cyls: [] }, holes: [], welds, weldFaces, cutFaces, cuts: [], items: [], box: null, dec: ".", label: (s, p) => s.replace(/\{(\w+)\}/g, (_m, k) => p?.[k] ?? "") };
+  assert.equal(weldItem(edges[0].k, ctx), 1);
+  assert.equal(weldItem(edges[1].k, ctx), 2, "a bead face on either side of the edge names the bead");
+  assert.equal(weldItem(edges[2].k, ctx), null);
+  assert.equal(edgeItem(edges[0].k, ctx), 3, "a plain balloon still numbers the cut list item");
+  assert.equal(stackItem("weld:2", ctx), 2);
+  assert.equal(stackItem("weld:3", ctx), null, "a row the weld table no longer has");
+  const tag = { id: "w", t: "balloon" as const, view: "v", ref: { e: edges[1].k, h: edges[1].m, p: "e" as const }, pos: [20, -20] as [number, number], weld: true as const, shape: "split" as const };
+  const sh = { ...sheet, views: [view], annots: [tag] } as unknown as Sheet;
+  const out = viewAnnots(sh, view, pl, ctx), tx = out.prims.filter(p => p.t === "t").map(p => (p as { s: string }).s);
+  assert.ok(tx.includes("2") && !tx.includes("4"), `the weld row and its bead count, not the cut list item: ${tx.join(" ")}`);
+  assert.deepEqual(out.dangling, []);
+  const lost = { ...tag, ref: { ...tag.ref, e: edges[2].k } };
+  assert.deepEqual(viewAnnots({ ...sh, annots: [lost] } as unknown as Sheet, view, pl, ctx).dangling, ["w"], "an edge of no bead dangles");
 });

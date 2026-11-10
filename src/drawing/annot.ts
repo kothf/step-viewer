@@ -23,7 +23,7 @@ export type Label = (s: string, p?: Record<string, string>) => string;
 
 /** What annotations need from the model and the UI. */
 export interface AnnotCtx {
-  topo: Topo | null; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; bends?: FlatBend[]; welds?: WeldInfo[]; cuts?: CutInfo[]; cutFaces?: Record<string, number>; items: ModelItem[]; box: [V3, V3] | null; dec: string; label: Label; bom?: Bom | null;
+  topo: Topo | null; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; bends?: FlatBend[]; welds?: WeldInfo[]; cuts?: CutInfo[]; cutFaces?: Record<string, number>; weldFaces?: Record<string, number>; items: ModelItem[]; box: [V3, V3] | null; dec: string; label: Label; bom?: Bom | null;
   /** A view that shows another part configuration (FR-DRW-010) gets that configuration's topology and model items. */
   forView?: (v: DrawingView) => Partial<AnnotCtx> | null;
 }
@@ -671,8 +671,8 @@ function holeTablePrims(a: HoleTableAnnot, P: (p: V3) => P2, pl: Placement, ctx:
 
 /** Everything annotated on one view: its dimensions, callouts and notes, plus the automatic centre marks. */
 /** The model facts annotations draw on (topology, holes, threads, sketches, model items, box). */
-export function factsCtx(f: { topo: Topo; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; bends?: FlatBend[]; welds?: WeldInfo[]; cuts?: CutInfo[]; cutFaces?: Record<string, number>; items: ModelItem[]; box: [V3, V3] } | null): Pick<AnnotCtx, "topo" | "holes" | "threads" | "sketches" | "bends" | "welds" | "cuts" | "cutFaces" | "items" | "box"> {
-  return { topo: f?.topo ?? null, holes: f?.holes ?? [], threads: f?.threads ?? [], sketches: f?.sketches ?? [], bends: f?.bends ?? [], welds: f?.welds ?? [], cuts: f?.cuts ?? [], cutFaces: f?.cutFaces ?? {}, items: f?.items ?? [], box: f?.box ?? null };
+export function factsCtx(f: { topo: Topo; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; bends?: FlatBend[]; welds?: WeldInfo[]; cuts?: CutInfo[]; cutFaces?: Record<string, number>; weldFaces?: Record<string, number>; items: ModelItem[]; box: [V3, V3] } | null): Pick<AnnotCtx, "topo" | "holes" | "threads" | "sketches" | "bends" | "welds" | "cuts" | "cutFaces" | "weldFaces" | "items" | "box"> {
+  return { topo: f?.topo ?? null, holes: f?.holes ?? [], threads: f?.threads ?? [], sketches: f?.sketches ?? [], bends: f?.bends ?? [], welds: f?.welds ?? [], cuts: f?.cuts ?? [], cutFaces: f?.cutFaces ?? {}, weldFaces: f?.weldFaces ?? {}, items: f?.items ?? [], box: f?.box ?? null };
 }
 
 /** A section view's facts (FR-DRW-021): the model's plus the cut faces' edges from its projection, so the section can be dimensioned. */
@@ -727,9 +727,10 @@ export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: Ann
     } else if (a.t === "balloon") {
       // The tip stays on the edge's middle; the number is the component's item in the BOM (assembly) or the
       // body's item in the cut list (weldment part).
-      const e = refEdge(a.ref, ctx.topo), item = "e" in a.ref ? edgeItem(a.ref.e, ctx) : null;
+      // A weld tag numbers the bead's row in the weld table.
+      const e = refEdge(a.ref, ctx.topo), item = "e" in a.ref ? (a.weld ? weldItem(a.ref.e, ctx) : edgeItem(a.ref.e, ctx)) : null;
       const more = (a.stack ?? []).map(sc => String(stackItem(sc, ctx) ?? "?"));
-      const qty = (n: number | null) => !n ? "" : ctx.bom ? String(ctx.bom.rows.find(x => x.item === n)?.qty ?? "") : String(ctx.cuts?.find(x => x.item === n)?.qty ?? "");
+      const qty = (n: number | null) => !n ? "" : a.weld ? String(ctx.welds?.[n - 1]?.qty ?? "") : ctx.bom ? String(ctx.bom.rows.find(x => x.item === n)?.qty ?? "") : String(ctx.cuts?.find(x => x.item === n)?.qty ?? "");
       r = balloonPrims(toSheet(pl, a.pos[0], a.pos[1]), e ? toSheet(pl, ...P(e.m)) : null, a.txt || (item ? String(item) : "?"), more, { shape: a.shape, lower: a.shape === "split" ? [item, ...(a.stack ?? []).map(k => stackItem(k, ctx))].map(qty) : undefined });
       if (!e || (!a.txt && !item)) out.dangling.push(a.id);
     } else if (a.t === "btable") {
@@ -1364,9 +1365,16 @@ export function edgeItem(k: string, ctx: Pick<AnnotCtx, "bom" | "cutFaces">): nu
   return null;
 }
 
-/** A stacked balloon's item: a component id (assembly) or `cut:<item>` (weldment cut list). */
-export function stackItem(s: string, ctx: Pick<AnnotCtx, "bom" | "cuts">): number | null {
+/** The weld table row a weld tag on edge `k` numbers: the bead the edge's faces belong to. */
+export function weldItem(k: string, ctx: Pick<AnnotCtx, "weldFaces">): number | null {
+  for (const f of k.split("|")) { const n = ctx.weldFaces?.[f]; if (n) return n; }
+  return null;
+}
+
+/** A stacked balloon's item: a component id (assembly), `cut:<item>` (weldment cut list) or `weld:<row>` (weld table). */
+export function stackItem(s: string, ctx: Pick<AnnotCtx, "bom" | "cuts" | "welds">): number | null {
   if (s.startsWith("cut:")) { const n = +s.slice(4); return ctx.cuts?.some(c => c.item === n) ? n : null; }
+  if (s.startsWith("weld:")) { const n = +s.slice(5); return n >= 1 && n <= (ctx.welds?.length ?? 0) ? n : null; }
   return ctx.bom?.itemOf(s) ?? null;
 }
 

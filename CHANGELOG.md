@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.441.0] - 2026-11-10
+
+### Added
+
+- **Weld tags on weldment drawings (FR-FT-121)**: placing a **Weld table** on a drawing of a weldment part also tags each fillet bead seen in that view with a box holding the bead's item number in the table, so the beads on the view and the rows of the table match. **Tag the beads** in the table's panel tags beads added later; a tag's panel names its weld table row. Weld tags and cut list balloons number their own lists and don't count against each other in Auto balloon.
+
 ## [1.440.0] - 2026-11-10
 
 ### Added
@@ -2623,7 +2629,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.440.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.441.0...HEAD
+[1.441.0]: https://github.com/kothf/step-viewer/compare/v1.440.0...v1.441.0
 [1.440.0]: https://github.com/kothf/step-viewer/compare/v1.439.0...v1.440.0
 [1.439.0]: https://github.com/kothf/step-viewer/compare/v1.438.0...v1.439.0
 [1.438.0]: https://github.com/kothf/step-viewer/compare/v1.437.0...v1.438.0

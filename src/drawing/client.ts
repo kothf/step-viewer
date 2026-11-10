@@ -13,9 +13,9 @@ import { dirKey, type Align, type Stair } from "./views";
 
 /** An assembly's placed component (FR-DRW-030): its edges' face names start with `<id>@`. */
 export interface CompInfo { id: string; part: string; name: string }
-export interface ModelFacts { box: [V3, V3]; volume: number; topo: Topo; items: ModelItem[]; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; comps?: CompInfo[]; /** Flat pattern view: its bend lines. */ bends?: FlatBend[]; /** Weldment part: its fillet beads (weld table). */ welds?: WeldInfo[]; /** Weldment part: its cut list (cut list table). */ cuts?: CutInfo[]; /** Weldment part: face name → cut list item number (balloons). */ cutFaces?: Record<string, number> }
+export interface ModelFacts { box: [V3, V3]; volume: number; topo: Topo; items: ModelItem[]; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; comps?: CompInfo[]; /** Flat pattern view: its bend lines. */ bends?: FlatBend[]; /** Weldment part: its fillet beads (weld table). */ welds?: WeldInfo[]; /** Weldment part: its cut list (cut list table). */ cuts?: CutInfo[]; /** Weldment part: face name → cut list item number (balloons). */ cutFaces?: Record<string, number>; /** Weldment part: face name → weld table row (weld tags). */ weldFaces?: Record<string, number> }
 
-const facts = (r: ModelFacts): ModelFacts => ({ box: r.box, volume: r.volume, topo: r.topo, items: r.items, holes: r.holes, threads: r.threads ?? [], sketches: r.sketches ?? [], comps: r.comps, bends: r.bends, welds: r.welds, cuts: r.cuts, cutFaces: r.cutFaces });
+const facts = (r: ModelFacts): ModelFacts => ({ box: r.box, volume: r.volume, topo: r.topo, items: r.items, holes: r.holes, threads: r.threads ?? [], sketches: r.sketches ?? [], comps: r.comps, bends: r.bends, welds: r.welds, cuts: r.cuts, cutFaces: r.cutFaces, weldFaces: r.weldFaces });
 
 export class DrawingKernel {
   private worker: Worker | null = null;
