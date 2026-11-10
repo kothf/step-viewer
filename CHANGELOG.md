@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.389.0] - 2026-11-10
+
+### Added
+
+- **Weldment defaults (FR-FT-121)**: a new Structural Member starts with the profile, size, corner treatment, weld gap and butt end used last, as in SolidWorks; a new End Cap with the last thickness, inset, direction and corner; a new Gusset with the last leg lengths, thickness, profile, chamfers and location; a new Fillet Bead with the last leg sizes. They are remembered in this browser; picks, paths, positions and descriptions always start empty, and a custom sketch profile is never carried to another part.
+
 ## [1.388.0] - 2026-11-10
 
 ### Added
@@ -2285,7 +2291,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.388.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.389.0...HEAD
+[1.389.0]: https://github.com/kothf/step-viewer/compare/v1.388.0...v1.389.0
 [1.388.0]: https://github.com/kothf/step-viewer/compare/v1.387.0...v1.388.0
 [1.387.0]: https://github.com/kothf/step-viewer/compare/v1.386.0...v1.387.0
 [1.386.0]: https://github.com/kothf/step-viewer/compare/v1.385.0...v1.386.0
