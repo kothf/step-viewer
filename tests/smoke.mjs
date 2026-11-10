@@ -5078,6 +5078,14 @@ try {
       }
       const back = (await annots()).length === n0;
       check(made && made.k === "dia" && made.view === front.id && c1 === c0 + 1 && upright >= 2 && back, `drawing: a hole's hidden line in a side view gives its diameter as a linear dimension (${JSON.stringify({ k: made?.k, c0, c1, upright, back })})`);
+      // Both hidden lines of the hole, one after the other: the distance between the two lines (exam #14), not between circle centres.
+      await dp.click('#drw [data-a="dim"]');
+      for (const u of [2, 18]) { [x, y] = await at(front.id, u, (bx.b[1] + bx.b[3]) / 2); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); }
+      [x, y] = await at(front.id, 10, bx.b[1] - 14 / bx.s); await dp.mouse.move(x, y + 2); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+      await dp.keyboard.press("Escape");
+      const two = (await annots()).slice(n0), t16 = (await texts()).includes("16");
+      if (two.length) await dp.keyboard.press("Control+z");
+      check(two.length === 1 && two[0].k === "al" && two[0].refs.every(r => r.s) && t16, `drawing: two outline lines of a hole give the distance between them (${JSON.stringify(two.map(a => ({ k: a.k, refs: a.refs })))}, 16 shown ${t16})`);
     }
     // Select the 100 by its text and give it a ± tolerance.
     [x, y] = await at(front.id, 0, 40.5);
@@ -8806,7 +8814,7 @@ try {
     await ctx.close();
   }
 
-  // --- 1.450: features straight from the sketch being edited (FR-SK-004) ---
+  // --- 1.451: features straight from the sketch being edited (FR-SK-004) ---
   if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
@@ -8845,7 +8853,7 @@ try {
     await settle();
     check(inSk.mode === "sketch" && inSk.ext && inSk.line && ext.mode === "feature" && ext.type === "extrude" && ext.sketch === "s" && ext.v === 60000 && ext.sk
       && surfTab.ps && !surfTab.line && surfTab.mode === "sketch" && ps.mode === "feature" && ps.type === "planesurf" && ps.sketch === "s",
-      `model 1.450: Extrude or Planar Surface picked while editing a sketch exits it and opens the feature on it with a preview (FR-SK-004) (${JSON.stringify({ inSk, ext, surfTab, ps })})`);
+      `model 1.451: Extrude or Planar Surface picked while editing a sketch exits it and opens the feature on it with a preview (FR-SK-004) (${JSON.stringify({ inSk, ext, surfTab, ps })})`);
     await ctx.close();
   }
 
