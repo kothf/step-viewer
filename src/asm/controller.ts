@@ -2407,6 +2407,8 @@ export class AsmController {
     document.getElementById("new-asm-part")?.addEventListener("click", () => { shut(); this.fromPart(); });
     document.getElementById("empty-asm")?.addEventListener("click", () => this.newAssembly());
     document.addEventListener("keydown", e => {
+      // An open drawing owns the keyboard: its Ctrl+Z / Delete must not reach the assembly behind it (drawings exam #1).
+      if (document.getElementById("app")?.classList.contains("drawing")) return;
       if (this.doc && this.picking && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.target as HTMLElement).closest("input, textarea, select, dialog[open]")) {
         if (e.key === "Enter") { e.preventDefault(); if (this.mating) this.okMate(); else if (this.patterning) this.okPattern(); else if (this.exploding) this.okExplode(); else if (this.refing) this.okMateRef(); else if (this.featuring) this.okFeature(); else this.closeTools(); return; }
         if (e.key === "Escape") { e.preventDefault(); this.closeTools(); return; }

@@ -4671,9 +4671,12 @@ try {
     const flat = (a, b) => Math.abs(b.y - a.y) < 1e-9;
     check(d(v3[0], moved[0]) === "-20,15" && d(v3[1], moved[1]) === "-20,15" && d(v3[2], moved[2]) === "-20,15" && d(moved[2], slid[2]) === "10,0" && flat(moved[2], slid[2]),
       `drawing: dragging the parent moves its projected views; a side view only slides sideways (${d(v3[0], moved[0])} ${d(v3[1], moved[1])} ${d(v3[2], moved[2])}, side ${d(moved[2], slid[2])})`);
+    // The part behind the drawing has an undo step of its own; Ctrl+Z on the drawing must leave it alone (drawings exam #1).
+    await dp.evaluate(() => window.__sv.modeller.store.change("Revision", d => { d.props.revision = "B"; }));
+    await ready();
     await dp.keyboard.press("Control+z"); await dp.keyboard.press("Control+z");
-    const undone = await views();
-    check(undone.length === 3 && d(v3[0], undone[0]) === "0,0" && d(v3[2], undone[2]) === "0,0", "drawing: Ctrl+Z undoes the moves");
+    const undone = await views(), rev = await dp.evaluate(() => window.__sv.modeller.store.doc.props.revision);
+    check(undone.length === 3 && d(v3[0], undone[0]) === "0,0" && d(v3[2], undone[2]) === "0,0" && rev === "B", `drawing: Ctrl+Z undoes the moves and not the part's last step (revision ${rev})`);
     // Model view ▾ Isometric: the preview follows the cursor; the click places it, then projected views come off it.
     await dp.click('#drw [data-a="model"]');
     await dp.click('#drw [data-orient="iso"]');
@@ -5225,10 +5228,12 @@ try {
       }
       check(r && r.below && r.stored && r.back, `drawing: a hole callout takes a line below and leaves the number of holes out (${JSON.stringify(r)})`);
     }
-    dp.once("dialog", d => d.accept("BREAK SHARP EDGES"));
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="note"]');
     [x, y] = await dp.evaluate(() => window.__sv.drw.sheetPt(40, 60));
     await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    // The new note's text box has the focus with its text selected (drawings exam #9): type, Tab commits.
+    await dp.waitForFunction(() => document.activeElement?.matches?.("textarea[data-d=ntxt]"));
+    await dp.keyboard.type("BREAK SHARP EDGES"); await dp.keyboard.press("Tab");
     await dp.waitForTimeout(150);
     tx = await texts();
     an = await annots();
@@ -5278,10 +5283,12 @@ try {
         `drawing: extension lines take the style's gap and overshoot and go back (${[e0, e1, e2, e3].map(v => v.toFixed(1)).join(" → ")})`);
     }
     // Property link in a note (FR-DRW-023): $PRP:"Scale" shows the sheet scale.
-    dp.once("dialog", d => d.accept('SCALE $PRP:"Scale"'));
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="note"]');
     [x, y] = await dp.evaluate(() => window.__sv.drw.sheetPt(40, 75));
     await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    // The new note's text box has the focus with its text selected (drawings exam #9): type, Tab commits.
+    await dp.waitForFunction(() => document.activeElement?.matches?.("textarea[data-d=ntxt]"));
+    await dp.keyboard.type('SCALE $PRP:"Scale"'); await dp.keyboard.press("Tab");
     await dp.waitForTimeout(150);
     tx = await texts();
     const scaleNote = tx.find(s => s.startsWith("SCALE "));
