@@ -5,6 +5,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.455.0] - 2026-11-10
+
+### Fixed
+
+- Sketch fillet rounds a corner where a line meets an arc, or two arcs meet, as SolidWorks does. It used to accept only two lines (exam #90).
+- **Ctrl+A** in a sketch selects every sketch entity instead of the page's text (exam #91).
+- A centre-point arc runs the way the mouse went round its centre, so a clockwise arc no longer comes out as the long way round (exam #92).
+- While an early sketch of a finished part is edited, Properties says there are no bodies before that feature instead of "This part is empty" (exam #93).
+
 ## [1.454.0] - 2026-11-10
 
 ### Changed
