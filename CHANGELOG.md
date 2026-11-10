@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.420.0] - 2026-11-10
+
+### Changed
+
+- **Teak, mahogany and balsa checked (FR-MAT-001)**: these three woods now show **Checked against:** with a link to the USDA Wood Handbook chapter on mechanical properties (modulus 10 700, 10 300 and 3 400 MPa at 12 % moisture). The rows already matched. 146 of 170 materials are checked; the other 24 still say they are not.
+
 ## [1.419.0] - 2026-11-10
 
 ### Added
@@ -2476,7 +2482,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.419.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.420.0...HEAD
+[1.420.0]: https://github.com/kothf/step-viewer/compare/v1.419.0...v1.420.0
 [1.419.0]: https://github.com/kothf/step-viewer/compare/v1.418.0...v1.419.0
 [1.418.0]: https://github.com/kothf/step-viewer/compare/v1.417.0...v1.418.0
 [1.417.0]: https://github.com/kothf/step-viewer/compare/v1.416.0...v1.417.0
