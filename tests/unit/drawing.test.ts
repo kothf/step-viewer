@@ -1141,6 +1141,25 @@ test("hole callout adds a cosmetic thread; drafting style sets default decimals 
   assert.equal(dimText(lin, { k: "h", pts: [], value: 100 }, ".").main, "100");
 });
 
+test("dual dimensions add inches in brackets; a dimension can opt in or out (FR-DRW-021)", async () => {
+  const { dimText, useStyle } = await import("../../src/drawing/annot");
+  const lin = { id: "a", t: "dim" as const, view: "v", k: "h" as const, refs: [], pos: [0, 0] as [number, number] };
+  const g = { k: "h" as const, pts: [], value: 25.4 };
+  assert.equal(dimText({ ...lin, dual: true }, g, ".").main, "25.4 [1.000]", "one dimension, three decimals by default");
+  try {
+    useStyle({ dual: "in", dualPrec: 2 });
+    assert.equal(dimText(lin, g, ",").main, "25,4 [1,00]");
+    assert.equal(dimText({ ...lin, dual: false }, g, ".").main, "25.4", "turned off for one dimension");
+    assert.equal(dimText({ ...lin, k: "dia" as const, suf: " H7" }, { k: "dia", pts: [], value: 50.8 }, ".").main, "Ø50.8 H7 [2.00]");
+    assert.equal(dimText({ ...lin, tol: { t: "sym", up: 0.254 } }, g, ".").main, "25.4±0.25 [1.00±0.01]");
+    assert.deepEqual(dimText({ ...lin, tol: { t: "limit", up: 25.4, lo: 0 } }, g, "."), { main: "", up: "50.8 [2.00]", lo: "25.4 [1.00]" });
+    assert.deepEqual(dimText({ ...lin, tol: { t: "dev", up: 0.2, lo: 0 } }, g, "."), { main: "25.4 [1.00]", up: "+0.2", lo: "0" });
+    assert.equal(dimText({ ...lin, k: "ang" as const }, { k: "ang", pts: [], value: 30 }, ".").main, "30°", "angles have no inch value");
+    assert.equal(dimText({ ...lin, txt: "REF" }, g, ".").main, "REF", "typed text stays as typed");
+  } finally { useStyle(undefined); }
+  assert.equal(dimText(lin, g, ".").main, "25.4");
+});
+
 test("drafting style sets a default ± tolerance; a dimension's own tolerance or None wins (FR-DRW-025)", async () => {
   const { dimText, useStyle } = await import("../../src/drawing/annot");
   const lin = { id: "a", t: "dim" as const, view: "v", k: "h" as const, refs: [], pos: [0, 0] as [number, number] };

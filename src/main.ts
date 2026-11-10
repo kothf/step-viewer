@@ -43,6 +43,7 @@ import { lang, onLangChange, setLang, startI18n, t, withLang } from "./i18n";
 import { bindCommandBar, onCmTab, relabelCmTabs, setCmTabs, type CmTabId } from "./commandBar";
 import { renderHelp } from "./help";
 import { hint, relocalizeHint, setTips, tipsOn } from "./hints";
+import { initTutorial } from "./tutorialUi";
 import { KernelClient, type KernelStatus } from "./kernel/client";
 import { isMeshName, parseMesh } from "./meshLoad";
 import { isSolidWorksName } from "./sw/container";
@@ -383,6 +384,12 @@ bindGerberPanel(gerber, {
   openBody: openBoardModel,
   exportStep: () => exportBoardStep(),
   panels,
+});
+
+// Tutorial "Bracket in 10 steps" (FR-HLP-003): a new part with a self-ticking step list in the right panel.
+const tutorial = initTutorial({
+  doc: () => (modeller.active ? modeller.store?.doc ?? null : null),
+  start: name => modeller.newPart(name),
 });
 
 // Drawings (FRS section 11): sheets of the open part or STEP model, in their own workspace.
@@ -3070,4 +3077,4 @@ refreshMeasurements();
 // Orthographic by default (true dimensions on screen); the last choice is remembered.
 setProjection(storage.get("sv:proj") === "perspective" ? "perspective" : "orthographic");
 
-if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { surfAna, modeller, asm, motion, drawing, drw: drawing.debug(), vault: vaultPanel, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, csys, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, timings: () => Object.assign(timings, kernel.timing) } });
+if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { tutorial, surfAna, modeller, asm, motion, drawing, drw: drawing.debug(), vault: vaultPanel, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, csys, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, timings: () => Object.assign(timings, kernel.timing) } });
