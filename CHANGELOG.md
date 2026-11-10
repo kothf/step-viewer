@@ -9,7 +9,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Fixed
 
-- **Drawings of big assemblies ran out of memory (drawings exam round three)**: OpenCASCADE's fast hidden-line pass keeps about 100 MB per view of an engine assembly, so an alternate position after Standard 3 views failed with "malloc failed". The drawing worker is now started over with the same model once its memory passes 1.2 GB (the views already made stay), and a view that still runs out is tried once more on a fresh worker. If even that fails, the message says there was not enough memory for the view instead of quoting OpenCASCADE.
+- **Drawings of big assemblies ran out of memory (drawings exam round three)**: OpenCASCADE's fast hidden-line pass keeps about 100 MB per view of an engine assembly, so an alternate position after Standard 3 views failed with "malloc failed". The drawing worker is now started over with the same model once its memory passes 1.2 GB (the views already made stay), and a view that still runs out is tried once more on a fresh worker. If even that fails, the message says there was not enough memory for the view instead of quoting OpenCASCADE. The restart loads the model without working out its edges and holes again (the drawing already has them), so it takes less time.
+
+### Changed
+
+- **Drawings say when views are on their way**: while exact views or an alternate position are being projected, the status line under the sheet says "Projecting the views… n to go", and "Freeing the drawing kernel's memory, then projecting…" while the worker starts over, so a slow big-assembly sheet no longer looks stuck.
 
 ## [1.476.0] - 2026-11-10
 

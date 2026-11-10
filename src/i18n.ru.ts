@@ -1466,6 +1466,8 @@ export const RU: Record<string, string> = {
   "Click model faces: the curves where the sketch plane cuts them are added": "Щёлкайте грани модели: добавляются кривые, по которым их пересекает плоскость эскиза",
   // Drawings (FRS section 11)
   "A view could not be projected: {err}": "Вид не удалось спроецировать: {err}",
+  "Projecting the views… {n} to go": "Проецирование видов… осталось {n}",
+  "Freeing the drawing kernel's memory, then projecting… {n} to go": "Освобождение памяти ядра чертежа, затем проецирование… осталось {n}",
   "not enough memory for this view. Close other tabs, or draw the big assembly with fewer views per sheet.": "для этого вида не хватило памяти. Закройте другие вкладки или разместите большую сборку на листе меньшим числом видов.",
   "the geometry kernel failed (error {n}). The model may be too big for the browser's memory: close other tabs or draw fewer views.": "геометрическое ядро дало сбой (ошибка {n}). Возможно, модели не хватает памяти браузера: закройте другие вкладки или постройте меньше видов.",
   "Add sheet": "Добавить лист",

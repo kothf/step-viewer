@@ -128,6 +128,9 @@ export class DrawingKernel {
   private recycling: Promise<void> | null = null;
   /** Times the main worker was started over (for tests). */
   recycles = 0;
+  /** Told when a restart (`recycle`) starts and ends, so the status line can say so. */
+  onRestart: (() => void) | null = null;
+  get restarting() { return !!this.recycling; }
 
   constructor(private base: string) {}
 
@@ -179,10 +182,12 @@ export class DrawingKernel {
     // Configurations are built inside the worker: build them again when asked.
     this.configs.clear();
     this.cfgLoading.clear();
+    // Loaded lite: the facts (topology, items, tables) are known already, and skipping them saves a good part
+    // of the restart on a big assembly.
     const gen = this.gen;
-    const done = this.start().then(() => this.call<ModelFacts>({ type: "load", ...src })).then(facts);
-    this.loaded = done;
-    this.recycling = done.then(() => undefined, () => undefined).then(() => { this.recycling = null; if (gen === this.gen) this.pump(); });
+    const done = this.start().then(() => this.call<void>({ type: "load", ...src, lite: true }));
+    this.recycling = done.then(() => undefined, () => undefined).then(() => { this.recycling = null; this.onRestart?.(); if (gen === this.gen) this.pump(); });
+    this.onRestart?.();
     return this.recycling;
   }
 
