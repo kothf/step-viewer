@@ -11514,6 +11514,14 @@ try {
     await ready();
     const ct2 = await dp.evaluate(() => [...document.querySelectorAll(".drw-svg text")].map(t => t.textContent));
     check(!ct2.includes("Fillet weld, leg 4") && ct2.includes("SHS 40x40x3"), `drawing: unticking Weld beads leaves the bead out of the cut list table`);
+    // Auto balloon on a weldment part: one balloon per cut list item seen in the view, numbered as in the cut list.
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="auto"]');
+    await dp.waitForFunction(() => window.__sv.drw.doc().sheets[0].annots.some(a => a.t === "balloon"), null, { timeout: 30000 }).catch(() => {});
+    await ready();
+    const bl = await dp.evaluate(() => { const bs = window.__sv.drw.doc().sheets[0].annots.filter(a => a.t === "balloon");
+      return { n: bs.length, tx: [...document.querySelectorAll(".drw-svg text")].map(t => t.textContent), dangle: document.querySelectorAll("#drw .drw-dangle").length }; });
+    check(bl.n >= 2 && bl.tx.includes("1") && bl.tx.includes("2") && !bl.tx.includes("?") && bl.dangle === 0,
+      `drawing: auto balloon numbers a weldment part's bodies by their cut list items (${JSON.stringify({ n: bl.n, dangle: bl.dangle, nums: bl.tx.filter(s => /^\d$|^\?$/.test(s)) })})`);
     await ctx.close();
   }
 
