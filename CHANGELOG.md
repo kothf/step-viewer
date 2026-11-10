@@ -5,11 +5,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.436.0] - 2026-11-10
+## [1.437.0] - 2026-11-10
 
 ### Added
 
 - **Arrowheads per dimension (FR-DRW-021)**: a drawing dimension has an **Arrowheads** choice of its own: Document (the drafting style's), Filled, Open, Dot or Oblique stroke, so a tight chain can use dots while the rest keeps arrows.
+
+## [1.436.0] - 2026-11-10
+
+### Added
+
+- **Vault menu** (FR-PDM-002, FR-PDM-080): a **Vault** button in the header, also **File ▸ Vault…** and so reachable from a drawing. With no vault open it offers **New vault in a folder…**, **Open vault folder…**, the vault folders used before and the vaults kept in the browser. With a vault open it has the commands for the document on screen: **Save to vault**, **Check out**, **Check in…**, **Undo check-out**, **Get latest** and **History…**, then Add files, search, the file list, settings and Close vault. The button is lit while a vault is open. Until now the vault was only a small tab in the side panel.
+- **Vault folders are remembered**: a vault made or opened in a folder on disk is listed in the Vault menu and on the Vault tab, so it opens again with one click (the browser asks for access to the folder once per session). Keep one vault per project folder and switch between them from the menu. Open vault folder… on a folder without a vault offers to create one there. Folder vaults need Chrome or Edge on a computer; other browsers say so and keep browser vaults with Export ZIP.
+- **Assemblies and drawings in the vault** (FR-PDM-010, FR-PDM-081): Save to vault takes the open part, assembly or drawing. An assembly or drawing opened from the vault is tied to its vault file like a part: the title shows version, state and lock, **Save** writes the vault's working copy while it is checked out to you and is refused otherwise, and Check in stores the edits on screen as the next version. Before, only parts could be saved back.
+- With the side panel folded away, on a phone or over a drawing, the vault's file list opens in a window.
 
 ## [1.435.0] - 2026-11-10
 
@@ -2590,7 +2599,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.436.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.437.0...HEAD
+[1.437.0]: https://github.com/kothf/step-viewer/compare/v1.436.0...v1.437.0
 [1.436.0]: https://github.com/kothf/step-viewer/compare/v1.435.0...v1.436.0
 [1.435.0]: https://github.com/kothf/step-viewer/compare/v1.434.0...v1.435.0
 [1.434.0]: https://github.com/kothf/step-viewer/compare/v1.433.0...v1.434.0

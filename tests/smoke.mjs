@@ -4445,7 +4445,7 @@ try {
     await mp.waitForFunction(() => window.__sv.model?.store);
     await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("Block", d => { d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -10, -10), P("b", 10, -10), P("c", 10, 10), P("d", -10, 10), L("l1", "a", "b"), L("l2", "b", "c"), L("l3", "c", "d"), L("l4", "d", "a")] }, { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } }); }); });
     await idle();
-    // A new vault in the browser workspace, then Save part to vault.
+    // A new vault in the browser workspace, then Save to vault.
     await mp.click("#t-vault");
     await mp.fill("#v-name", "Smoke vault");
     await mp.click('#vault-panel [data-a="new-ws"]');
@@ -4484,6 +4484,84 @@ try {
     const chk = await mp.evaluate(async () => { const r = await window.__sv.vault.vault.verify(); return `${r.files}/${r.objects}/${r.missing.length + r.corrupt.length}`; });
     check(/Part1\.mcadprt/.test(row1) && /v1/.test(row1) && /Andrey/.test(row1) && /v1 · .*checked out/.test(title1) && dirty === true && hist === "v2:Twice as deep|v1:Added" && Math.abs(vBack - 4000) < 1e-3, `vault 1.39: save to vault, check in, read-only, history and roll back (${row1}, ${title1}, ${dirty}, ${hist}, ${vBack})`);
     check(audit === "create vault,add,check out,check in,roll back" && chk === "1/2/0", `vault 1.39: audit trail and integrity check (${audit}, ${chk})`);
+    await ctx.close();
+  }
+
+  // --- Vault menu (1.436.0) in the header, a vault in a picked folder that is remembered, an assembly saved back into the vault (FR-PDM-002/010/080) ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    // The folder picker cannot be driven: it hands out a folder of the origin's private file system instead.
+    await mp.addInitScript(() => { window.showDirectoryPicker = async () => (await navigator.storage.getDirectory()).getDirectoryHandle("Picked folder", { create: true }); });
+    await mp.goto(`${origin}/index.html?debug&nokernel`);
+    await mp.evaluate(() => { localStorage.setItem("sv:tips", "off"); localStorage.setItem("mc:vaultUser", "Andrey"); });
+    await mp.goto(`${origin}/index.html?debug&nokernel`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.evaluate(() => window.__sv.vaultFolders.useMemory());
+    const menu = async id => { await mp.click("#vault-btn"); await mp.waitForSelector("#vault-menu:not([hidden])"); if (id) await mp.click(`#vault-menu [data-v="${id}"]`); };
+    const items = () => mp.evaluate(() => [...document.querySelectorAll("#vault-menu button")].map(b => `${b.dataset.v.replace(/^folder:.*/, "folder")}${b.disabled ? "-" : ""}`).join(","));
+    // No vault: the menu offers the folder and the browser vaults; File ▸ Vault… opens the same menu.
+    const btnShown = await mp.evaluate(() => { const r = document.querySelector("#vault-btn").getBoundingClientRect(); return r.width > 20 && r.height > 20; });
+    await menu();
+    const closed = await items();
+    await mp.keyboard.press("Escape");
+    await mp.click("#file-btn");
+    await mp.click('#file-menu [data-f="vault"]');
+    await mp.waitForSelector("#vault-menu:not([hidden])");
+    // New vault in a folder: the vault opens, its file list shows, the button is lit.
+    await mp.click('#vault-menu [data-v="new-dir"]');
+    await mp.waitForSelector('#vault-panel [data-a="add"]');
+    const lit = await mp.evaluate(() => document.querySelector("#vault-btn").classList.contains("on") && document.querySelector("#t-vault").getAttribute("aria-selected") === "true" && window.__sv.vault.vault.info.name);
+    // An assembly goes in with Save to vault, checked out; Save then writes the working copy, Check in makes v2.
+    await mp.click("#empty-asm");
+    await mp.waitForFunction(() => window.__sv.asm.doc);
+    await menu("save");
+    await mp.waitForSelector("#vault-panel .v-row", { state: "attached" });
+    await mp.waitForFunction(() => /v1/.test(document.querySelector("#doc-name").textContent));
+    const title1 = await mp.evaluate(() => document.querySelector("#doc-name").textContent);
+    await mp.evaluate(() => window.__sv.asm.change(d => { d.name = "Frame"; }));
+    await mp.evaluate(() => window.__sv.asm.save());
+    const saved = await mp.evaluate(async () => { const v = window.__sv.vault.vault, f = (await v.files())[0]; return `${window.__sv.asm.dirty}/${(await v.status(f)).modified}`; });
+    await menu();
+    const opened = await items();
+    await mp.click('#vault-menu [data-v="ci"]');
+    await mp.fill('#vault-dlg textarea[name="comment"]', "Renamed");
+    await mp.click('#vault-dlg button[value="ok"]');
+    await mp.waitForFunction(() => /v2/.test(document.querySelector("#vault-panel .v-row")?.textContent ?? ""));
+    // Checked in: saving is refused until it is checked out again from the menu.
+    await mp.evaluate(() => window.__sv.asm.change(d => { d.name = "Frame 2"; }));
+    await mp.evaluate(() => window.__sv.asm.save());
+    const refused = await mp.evaluate(() => window.__sv.asm.dirty);
+    await menu("co");
+    await mp.waitForFunction(() => /checked out/.test(document.querySelector("#doc-name").textContent));
+    await mp.evaluate(() => window.__sv.asm.save());
+    const savedAgain = await mp.evaluate(() => window.__sv.asm.dirty);
+    await menu("hist");
+    await mp.waitForSelector("#vault-dlg tbody tr");
+    const hist = await mp.evaluate(() => [...document.querySelectorAll("#vault-dlg tbody tr")].map(r => r.cells[0].textContent + ":" + r.cells[3].textContent).join("|"));
+    await mp.click('#vault-dlg button[value="cancel"]');
+    // Close vault: the folder is remembered in the menu and opens again without the picker.
+    await menu("close");
+    await mp.waitForFunction(() => !document.querySelector("#vault-btn").classList.contains("on"));
+    await mp.evaluate(() => { window.showDirectoryPicker = async () => { throw new Error("picker used"); }; });
+    await menu();
+    const again = await items();
+    const folderName = await mp.evaluate(() => document.querySelector('#vault-menu [data-v^="folder:"]')?.textContent ?? "");
+    await mp.click('#vault-menu [data-v^="folder:"]');
+    await mp.waitForSelector("#vault-panel .v-row");
+    const row = await mp.evaluate(() => document.querySelector("#vault-panel .v-row").textContent.replace(/\s+/g, " ").trim());
+    // With the side panel folded away the file list comes in a window.
+    await mp.click("#nav-toggle");
+    await menu("panel");
+    await mp.waitForSelector("#vault-win[open] .v-row");
+    await mp.click('#vault-win [data-a="close"]');
+    await mp.waitForFunction(() => document.querySelector("#vault-panel").parentElement.id === "tab-vault", null, { timeout: 5000 }).catch(() => {});
+    const home = await mp.evaluate(() => document.querySelector("#vault-panel").parentElement.id);
+    check(btnShown && closed === "new-dir,open-dir,new-ws,panel" && lit === "Picked folder", `vault menu: Vault button and menu, new vault in a picked folder (${btnShown}, ${closed}, ${lit})`);
+    check(/v1 · .*checked out/.test(title1) && saved === "false/true" && opened === "save-,co-,ci,undo,latest,hist,add,search,panel,settings,close" && refused === true && savedAgain === false && hist === "v2:Renamed|v1:Added", `vault menu: an assembly saved to the vault, saved into the working copy, checked in and out from the menu (${title1}, ${saved}, ${opened}, ${refused}, ${savedAgain}, ${hist})`);
+    check(again === "new-dir,open-dir,folder,new-ws,panel" && folderName === "Picked folder" && /\.mcadasm/.test(row) && /v2/.test(row) && home === "tab-vault", `vault menu: the vault folder is remembered and reopens; the file list opens in a window without the side panel (${again}, ${folderName}, ${row}, ${home})`);
     await ctx.close();
   }
 

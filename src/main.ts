@@ -20,6 +20,8 @@ import { profileDrawing, toDxf, toSvg } from "./tools/profileExport";
 import { quadrants, virtualCorners, Snapper, SNAP_FILTERS, SEL_FILTER, type Snap } from "./tools/Snapper";
 import { Annotations } from "./tools/Annotations";
 import { VaultPanel } from "./pdm/panel";
+import { VaultMenu } from "./pdm/menu";
+import { useMemoryFolders } from "./pdm/folders";
 import {
   CIRCLE_MODES, describeEntity, entityFromSnap, formatMeasurement, makeNote, measure, measureBBox, MeasureError, smartBody, smartMeasure, TOOL_INFO, tx,
   type CircleMode,
@@ -38,7 +40,7 @@ import ImportWorker from "./worker/import.worker?worker";
 import { GerberView } from "./gerber/GerberView";
 import { bindGerberPanel } from "./gerber/panel";
 import { isPcbName, sniff } from "./gerber/load";
-import { bindModal, bindTabs, busy, confirmModal, emptyState, initConfirmCorners, initModals, initPanels, storage, toast } from "./ui";
+import { bindModal, bindTabs, busy, confirmModal, emptyState, initConfirmCorners, initModals, initPanels, storage, toast, trapFocus } from "./ui";
 import { lang, onLangChange, setLang, startI18n, t, withLang } from "./i18n";
 import { bindCommandBar, onCmTab, relabelCmTabs, setCmTabs, type CmTabId } from "./commandBar";
 import { renderHelp } from "./help";
@@ -2028,10 +2030,51 @@ const vaultPanel = new VaultPanel($("#vault-panel"), {
     else if (asm.isAsmName(name)) await asm.openFile({ name, data: buf });
     else await openFiles([new File([buf], name)]);
   },
-  part: () => (modeller.active ? { name: modeller.partName, bytes: () => modeller.partBytes() } : null),
-  setVault: v => modeller.setVault(v),
-  markSaved: () => modeller.markSaved(),
+  doc: () => {
+    const k = fileMenuLive();
+    if (k === "drawing") return { name: drawing.title, kind: "drawing", tie: drawing.vault, bytes: async () => (await drawing.packed())?.data ?? null, setVault: v => drawing.setVault(v), markSaved: () => drawing.markSaved() };
+    if (k === "part" && modeller.active) return { name: plainLabel(modeller.partName), kind: "part", tie: modeller.vault, bytes: () => modeller.partBytes(), setVault: v => modeller.setVault(v), markSaved: () => modeller.markSaved() };
+    if (k === "asm" && asm.active) return { name: asm.title, kind: "assembly", tie: asm.vault, bytes: async () => asm.bytes(), setVault: v => asm.setVault(v), markSaved: () => asm.markSaved() };
+    return null;
+  },
 });
+/**
+ * Shows the vault's file list: the Vault tab of the side panel, or, when that panel is not on screen (a
+ * drawing, a PCB, a phone, the panel folded away), the same list in a window.
+ */
+function showVault() {
+  const panel = $("#vault-panel"), home = $("#tab-vault");
+  const win = document.getElementById("vault-win") as HTMLDialogElement | null;
+  if (win?.open) return;
+  const side = $("#tree-panel");
+  if (!drawing.open && side.offsetParent !== null && side.getBoundingClientRect().width > 150) { showLeftTab("vault"); return; }
+  let d = win;
+  if (!d) {
+    d = document.createElement("dialog");
+    d.id = "vault-win";
+    d.className = "modal v-dlg vault-win";
+    d.setAttribute("aria-labelledby", "vault-win-title");
+    d.innerHTML = `<div class="vault-win-h"><h3 id="vault-win-title">${t("Vault")}</h3><button class="btn small" data-a="close">${t("Close")}</button></div><div class="vault-win-b"></div>`;
+    document.body.appendChild(d);
+    trapFocus(d, () => d!.open);
+    d.querySelector("[data-a=close]")!.addEventListener("click", () => d!.close());
+    d.addEventListener("close", () => home.appendChild(panel));
+  }
+  d.querySelector(".vault-win-b")!.appendChild(panel);
+  void vaultPanel.render();
+  d.showModal();
+}
+const vaultMenu = new VaultMenu({ panel: vaultPanel, showPanel: showVault });
+/** The Vault button says which vault is open. */
+function syncVaultButton() {
+  const b = $("#vault-btn"), v = vaultPanel.vault;
+  b.classList.toggle("on", !!v);
+  b.title = v ? t("Vault {name}: check out, check in, history, versions", { name: v.info.name }) : t("Vault: keep every version of your files, in a folder or in the browser");
+  b.setAttribute("aria-label", b.title);
+}
+vaultPanel.onChange = syncVaultButton;
+onLangChange(syncVaultButton);
+$("#vault-btn").addEventListener("click", e => vaultMenu.toggle(e.currentTarget as HTMLElement));
 
 // ---------- display / views ----------
 function setMode(m: DisplayMode) {
@@ -2926,7 +2969,7 @@ const plainLabel = (s: string) => s.replace(/\s*•$/, "");
 /** Saves the live document (File ▸ Save / Save as). A model file has no document of ours: Save as keeps a copy of it. */
 async function saveLive(as: boolean) {
   const k = fileMenuLive();
-  if (k === "drawing") await drawing.save();
+  if (k === "drawing") await drawing.save(as);
   else if (k === "part") await modeller.save(as);
   else if (k === "asm") await asm.save(as);
   else if (k === "model" && modelSrc && as) download(new Blob([modelSrc.data]), modelSrc.name);
@@ -3009,6 +3052,7 @@ const fileMenu = new FileMenu({
     if (drawing.open) void drawing.exportAs("print");
     else print3d();
   },
+  vault: btn => vaultMenu.toggle(btn),
   properties() {
     if (drawing.open) drawing.sheetProperties();
     else if (fileMenuLive() === "part") modeller.editProps();
@@ -3086,4 +3130,4 @@ refreshMeasurements();
 // Orthographic by default (true dimensions on screen); the last choice is remembered.
 setProjection(storage.get("sv:proj") === "perspective" ? "perspective" : "orthographic");
 
-if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { tutorial, surfAna, modeller, asm, motion, drawing, drw: drawing.debug(), vault: vaultPanel, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, csys, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, timings: () => Object.assign(timings, kernel.timing) } });
+if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { tutorial, surfAna, modeller, asm, motion, drawing, drw: drawing.debug(), vault: vaultPanel, vaultFolders: { useMemory: useMemoryFolders }, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, csys, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, timings: () => Object.assign(timings, kernel.timing) } });
