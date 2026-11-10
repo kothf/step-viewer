@@ -136,7 +136,10 @@ async function runCmd(pg, label) {
       const texts = await pg.$$eval(sel, els => els.map(e => (e.querySelector(".mc-l") ?? e).textContent.trim()));
       return exact ? texts.indexOf(label) : texts.findIndex(x => x.startsWith(label));
     };
-    for (const tab of ["features", "surfaces", "sheetmetal", "weldments", "sketch"]) {
+    // In a sketch the Sketch tab's tools come first: the other tabs' commands would exit the sketch (FR-SK-004).
+    const sketching = await pg.evaluate(() => document.getElementById("app").classList.contains("sketching"));
+    const tabs = sketching ? ["sketch"] : ["features", "surfaces", "sheetmetal", "weldments", "sketch"];
+    for (const tab of tabs) {
       if (!(await pg.$(`#cm-t-${tab}`))) continue;
       await pg.click(`#cm-t-${tab}`);
       const i = await pick("#mc-tools [data-c]");
@@ -8481,6 +8484,49 @@ try {
     const ps1 = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(x => x.type === "planesurf"); const l = window.__sv.model.last(); return { contours: f?.contours?.length, sheetFaces: l.sheetFaces, bad: l.statuses.filter(s => !s.ok).map(s => s.code).join() }; });
     check(ps0.type === "planesurf" && ps0.sketch === "s" && ps0.focus === "contours" && ps1.contours === 1 && ps1.sheetFaces === 1 && !ps1.bad,
       `model 1.428: Planar Surface on a sketch with a line across picks a region with Selected Contours (FR-FT-010) (${JSON.stringify({ ps0, ps1 })})`);
+    await ctx.close();
+  }
+
+  // --- 1.432: features straight from the sketch being edited (FR-SK-004) ---
+  if (inShard(5)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Rect", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", -50, -30), P("p2", 50, -30), P("p3", 50, 30), P("p4", -50, 30), Ln("l1", "p1", "p2"), Ln("l2", "p2", "p3"), Ln("l3", "p3", "p4"), Ln("l4", "p4", "p1")] });
+    }));
+    await settle();
+    // In the sketch, the Sketch tab offers Extrude: it exits the sketch and opens the extrude on it with a preview.
+    await mp.evaluate(() => window.__sv.modeller.editSketch("s"));
+    await mp.waitForTimeout(200);
+    const inSk = await mp.evaluate(() => ({ mode: window.__sv.model.mode().kind, ext: !!document.querySelector('#mc-tools [data-c="extrude"]'), line: !!document.querySelector('#mc-tools [data-c="sk:line"]') }));
+    await mp.click('#mc-tools [data-c="extrude"]');
+    await settle();
+    const ext = await mp.evaluate(() => { const m = window.__sv.model.mode(); return { mode: m.kind, type: m.draft?.type, sketch: m.draft?.sketch, v: Math.round(window.__sv.model.last().props?.volume ?? 0), sk: !document.getElementById("app").classList.contains("sketching") }; });
+    await mp.evaluate(() => window.__sv.modeller.cancel());
+    await settle();
+    // Another tab while sketching shows its own commands: Surfaces → Planar Surface uses the open sketch too.
+    await mp.evaluate(() => window.__sv.modeller.editSketch("s"));
+    await mp.waitForTimeout(200);
+    await mp.click("#cm-t-surfaces");
+    const surfTab = await mp.evaluate(() => ({ ps: !!document.querySelector('#mc-tools [data-c="planesurf"]'), line: !!document.querySelector('#mc-tools [data-c="sk:line"]'), mode: window.__sv.model.mode().kind }));
+    await mp.click('#mc-tools [data-c="planesurf"]');
+    await settle();
+    const ps = await mp.evaluate(() => { const m = window.__sv.model.mode(); return { mode: m.kind, type: m.draft?.type, sketch: m.draft?.sketch }; });
+    await mp.evaluate(() => window.__sv.modeller.cancel());
+    await settle();
+    check(inSk.mode === "sketch" && inSk.ext && inSk.line && ext.mode === "feature" && ext.type === "extrude" && ext.sketch === "s" && ext.v === 60000 && ext.sk
+      && surfTab.ps && !surfTab.line && surfTab.mode === "sketch" && ps.mode === "feature" && ps.type === "planesurf" && ps.sketch === "s",
+      `model 1.432: Extrude or Planar Surface picked while editing a sketch exits it and opens the feature on it with a preview (FR-SK-004) (${JSON.stringify({ inSk, ext, surfTab, ps })})`);
     await ctx.close();
   }
 

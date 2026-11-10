@@ -698,6 +698,7 @@ export const RU: Record<string, string> = {
   "Discard the changes made to this sketch?": "Отменить изменения в этом эскизе?",
   "Discard": "Отменить изменения",
   "Exit sketch": "Выйти из эскиза",
+  "Features from this sketch": "Элементы из этого эскиза",
   "Exit sketch (Enter)": "Выйти из эскиза (Enter)",
   "{name} is used by {list}. Delete them too?": "{name} используется в: {list}. Удалить и их?",
   "Delete feature": "Удалить элемент",
