@@ -959,6 +959,9 @@ input.drop-val { outline: 2px solid var(--accent) !important; background: var(--
 .v-lock { white-space: nowrap; }
 .v-lock.mine { color: var(--accent-text); }
 .v-acts { padding: 8px 10px; }
+/* The selected file's commands stay in view at the foot of the panel, however long the file list. */
+#vault-panel > .v-acts { position: sticky; bottom: 0; z-index: 2; background: var(--panel); border-top: 1px solid var(--line); box-shadow: 0 -4px 10px rgba(0, 0, 0, 0.08); max-height: 48vh; overflow: auto; }
+.v-acts-h { font-weight: 600; overflow-wrap: anywhere; }
 .v-dlg { max-width: min(760px, 94vw); }
 .v-scroll { max-height: 50vh; overflow: auto; }
 .v-table { border-collapse: collapse; width: 100%; font-size: var(--fs-caption); }
@@ -1071,6 +1074,8 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 /* Vault geometry compare and check-in with references (1.80.0) */
 .v-geo3d { border: 1px solid var(--line); border-radius: 6px; background: var(--bg); min-height: 120px; }
 .v-geo3d canvas { display: block; max-width: 100%; height: auto; }
+.v-pick { display: grid; gap: 2px; max-height: min(50vh, 420px); overflow: auto; border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; margin: 6px 0; }
+.v-pick .chk { display: flex; white-space: normal; overflow-wrap: anywhere; }
 .v-refs { border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; margin: 8px 0 0; display: grid; gap: 4px; }
 .v-refs legend { font-size: 12px; padding: 0 4px; }
 /* View navigation (FR-UI-103/104): Zoom to area box and the Space orientation picker. */
