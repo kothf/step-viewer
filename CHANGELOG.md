@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.411.0] - 2026-11-10
+
+### Added
+
+- **Recognize Extrudes takes notches cut right through at an edge (FR-FT-102)**: a notch, a cut-off corner or a half-round cut-out in the outline of an imported body that goes through its whole thickness is removed and made again as a sketch on the face with a **Through all** Extruded Cut. When a cut can be read two ways (through from one face, blind from the next), the sketch goes on the larger face.
+
 ## [1.410.0] - 2026-11-10
 
 ### Added
@@ -2416,7 +2422,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.410.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.411.0...HEAD
+[1.411.0]: https://github.com/kothf/step-viewer/compare/v1.410.0...v1.411.0
 [1.410.0]: https://github.com/kothf/step-viewer/compare/v1.409.0...v1.410.0
 [1.409.0]: https://github.com/kothf/step-viewer/compare/v1.408.0...v1.409.0
 [1.408.0]: https://github.com/kothf/step-viewer/compare/v1.407.0...v1.408.0

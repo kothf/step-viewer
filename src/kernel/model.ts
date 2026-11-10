@@ -3426,8 +3426,9 @@ export class Modeller {
       return { a: this.xyz(ca.Value(t0)), b: this.xyz(ca.Value(t1)), m: this.xyz(ca.Value((t0 + t1) / 2)), ca };
     };
     type Seg = ExtrudeFind["segs"][0];
-    type Cand = ExtrudeFind & { face: number; del: number[]; key: string };
+    type Cand = ExtrudeFind & { face: number; del: number[]; key: string; rank?: number };
     const cands: Cand[] = [];
+    const areaOf = (i: number): number => { const g = new oc.GProp_GProps_1(); oc.BRepGProp.SurfaceProperties_1(body.faces[i], g, false, false); return g.Mass(); };
     body.faces.forEach((face, i) => {
       const n = kinds[i].pln;
       if (!n) return;
@@ -3519,11 +3520,86 @@ export class Modeller {
         : "arc" in sg ? { arc: { c: up(sg.arc.c), a: up(sg.arc.a), b: up(sg.arc.b), m: up(sg.arc.m) } } : sg);
       const key = [i, ...walls].sort((a, b) => a - b).join(",") + "|open";
       const top = edges[tops[0]].map(x => across(tops[0], x.k)).some(j => walls.includes(j)) ? ends(edges[tops[0]].find(x => walls.includes(across(tops[0], x.k)))!.e).m : up(P);
-      cands.push({ face: tops[0], p: top, n, op: "cut", end: "blind", depth: h, del: [i, ...walls], segs, key });
+      cands.push({ face: tops[0], p: top, n, op: "cut", end: "blind", depth: h, del: [i, ...walls], segs, key, rank: tops.reduce((a, j) => a + areaOf(j), 0) });
+    });
+    // Notches cut right through at the outline of a flat face: a run of side walls joined by inside corners
+    // (or round inside walls), reaching the opposite face. The run, closed along the outline the neighbours
+    // would have without it, is the sketch of a through cut.
+    const near = (p: V3, q: V3) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) < tol;
+    body.faces.forEach((face, i) => {
+      const n = kinds[i].pln;
+      if (!n) return;
+      type OE = { j: number; a: V3; b: V3; m: V3; seg: Seg | null; line: boolean; wall: boolean; inCyl: boolean };
+      const raw: OE[] = [];
+      for (const e of this.sub(oc.BRepTools.OuterWire(face), "EDGE")) {
+        const j = across(i, emap.FindIndex(e));
+        if (j < 0) return;
+        const x = ends(e), ct = x.ca.GetType(), k = kinds[j];
+        let seg: Seg | null = null;
+        if (ct === C.GeomAbs_Line) seg = { line: [x.a, x.b] };
+        else if (ct === C.GeomAbs_Circle && Math.abs(Math.abs(x.ca.LastParameter() - x.ca.FirstParameter()) - 2 * Math.PI) > 1e-9) seg = { arc: { c: this.xyz(x.ca.Circle().Location()), a: x.a, b: x.b, m: x.m } };
+        const wall = !!seg && (!!(k.pln && Math.abs(dot(k.pln, n)) < 1e-6) || !!(k.cyl && Math.abs(Math.abs(dot(k.cyl.d, n)) - 1) < 1e-6));
+        // A round wall with the material outside it.
+        const inCyl = wall && !!k.cyl && dot(this.normalNear(body.faces[j], x.m), sub3(x.m, k.cyl.o)) - dot(this.normalNear(body.faces[j], x.m), k.cyl.d) * dot(sub3(x.m, k.cyl.o), k.cyl.d) < 0;
+        raw.push({ j, a: x.a, b: x.b, m: x.m, seg, line: ct === C.GeomAbs_Line, wall, inCyl });
+      }
+      if (raw.length < 4) return;
+      // In order round the outline, each edge running a → b.
+      const ord: OE[] = [raw[0]], left = raw.slice(1);
+      if (!left.some(e => near(e.a, raw[0].b) || near(e.b, raw[0].b))) ord[0] = { ...raw[0], a: raw[0].b, b: raw[0].a };
+      while (left.length) {
+        const last = ord[ord.length - 1];
+        const k = left.findIndex(e => near(e.a, last.b) || near(e.b, last.b));
+        if (k < 0) return;
+        const e = left.splice(k, 1)[0];
+        ord.push(near(e.a, last.b) ? e : { ...e, a: e.b, b: e.a });
+      }
+      const N = ord.length;
+      // The corner after edge k: inside (the walls close on each other), smooth onto a round inside wall, or outside.
+      const inside = ord.map((e, k) => {
+        const f = ord[(k + 1) % N];
+        if (!e.wall || !f.wall || e.j === f.j) return e.wall && f.wall && e.j === f.j && e.inCyl;
+        const d = dot(this.normalNear(body.faces[f.j], e.b), sub3(e.m, e.b));
+        if (d > tol * 1e-2 && d > 1e-6 * Math.hypot(...sub3(e.m, e.b))) return true;
+        return Math.abs(d) <= 1e-6 * Math.hypot(...sub3(e.m, e.b)) + tol * 1e-2 && (e.inCyl || f.inCyl);
+      });
+      if (inside.every(Boolean)) return;
+      const start = inside.findIndex((v, k) => !v && (inside[(k + 1) % N] || ord[(k + 1) % N].inCyl));
+      if (start < 0) return;
+      for (let s = 1; s <= N; s++) {
+        const k0 = (start + s) % N;
+        if (inside[(k0 - 1 + N) % N] || !(inside[k0] || ord[k0].inCyl)) continue;
+        let len = 1;
+        while (len < N && inside[(k0 + len - 1) % N]) len++;
+        const run = Array.from({ length: len }, (_, q) => ord[(k0 + q) % N]);
+        if (len >= N - 1 || run.some(e => !e.wall || !e.seg)) continue;
+        const walls = [...new Set(run.map(e => e.j))];
+        const P = run[0].a;
+        const reach = (j: number) => { let m = 0, up = 0; for (const { e } of edges[j]) { const x = ends(e); for (const p of [x.a, x.b]) { const h = dot(sub3(p, P), n); m = Math.max(m, -h); up = Math.max(up, h); } } return up > tol ? -1 : m; };
+        const depth = reach(walls[0]);
+        if (!(depth > tol) || walls.some(j => Math.abs(reach(j) - depth) > tol)) continue;
+        const far = [...new Set(walls.flatMap(neighbours))].filter(j => j !== i && !walls.includes(j));
+        const bottoms = far.filter(j => kinds[j].pln && dot(kinds[j].pln!, n) < -1 + 1e-6);
+        if (bottoms.length !== 1 || far.some(j => kinds[j].pln && dot(kinds[j].pln!, n) > 1 - 1e-6) || walls.some(j => !neighbours(j).includes(bottoms[0]))) continue;
+        // Closing the run: along the neighbours' lines to where they meet, else straight across.
+        const S = run[0].a, T = run[len - 1].b, prev = ord[(k0 - 1 + N) % N], next = ord[(k0 + len) % N];
+        const segs: Seg[] = run.map(e => e.seg!);
+        let X: V3 | null = null;
+        if (prev.line && next.line) {
+          const u = unit(sub3(prev.b, prev.a)), v = unit(sub3(next.b, next.a)), w = sub3(T, S), cuv = cross(u, v), den = dot(cuv, cuv);
+          if (den > 1e-12) { const t = dot(cross(w, v), cuv) / den; X = [S[0] + u[0] * t, S[1] + u[1] * t, S[2] + u[2] * t]; }
+        }
+        if (X && !near(X, S) && !near(X, T)) segs.push({ line: [T, X] }, { line: [X, S] });
+        else segs.push({ line: [T, S] });
+        const key = [...walls].sort((a, b) => a - b).join(",");
+        if (!cands.some(c => c.key === key)) cands.push({ face: i, p: run[0].m, n, op: "cut", end: "through", depth, del: walls, segs, key, rank: areaOf(i) });
+      }
     });
     // A face two finds would delete, or one a find stands on, goes to one of them only.
+    // A notch reads two ways (through from one face, blind and open from the next): the larger sketch face wins.
+    const order = [...cands.filter(c => c.rank === undefined), ...cands.filter(c => c.rank !== undefined).sort((a, b) => b.rank! - a.rank!)];
     const picked: Cand[] = [];
-    for (const c of cands) if (!picked.some(p => p.del.some(j => c.del.includes(j) || j === c.face) || c.del.includes(p.face))) picked.push(c);
+    for (const c of order) if (!picked.some(p => p.del.some(j => c.del.includes(j) || j === c.face) || c.del.includes(p.face))) picked.push(c);
     if (!picked.length) return null;
     const ref = (i: number): FaceRef => ({ name: body.names[i], hint: this.centroid(body.faces[i]) });
     const attempt = (cs: Cand[]): Feature[] | null => {
