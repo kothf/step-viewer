@@ -151,3 +151,27 @@ test("feature recognition: round holes and plain blocks give no extrudes (FR-FT-
   assert.equal(up.map(f => f.type).join(), "delface,sketch,extrude");
   assert.ok((up[1] as SketchFeature).ents.some(e => e.t === "circle" && Math.abs(e.r - 4) < 1e-9));
 });
+
+test("feature recognition: a pocket in the floor of a pocket and a hole-shaped cut in a boss come back in order (FR-FT-102)", async () => {
+  const m = new Modeller(await occ());
+  const outer = on(rect("q", 30, 20), "e:end"), inner = { ...rect("r", 10, 6), plane: { face: { name: "c1:end" } } } as SketchFeature;
+  const bs = on(rect("b", 12, 6), "e:end");
+  bs.ents = bs.ents.map(e => e.t === "point" ? { ...e, x: e.x + 22, y: e.y } : e);
+  const stepped = imported(m, [...base(), outer, cut("c1", "q", 6), inner, cut("c2", "r", 4)]);
+  const v0 = vol(m, stepped);
+  close(v0, 60 * 40 * 20 - 30 * 20 * 6 - 10 * 6 * 4);
+  const feats = m.recognizeExtrudes(stepped);
+  assert.equal(feats.map(f => f.type).join(), "delface,delface,sketch,extrude,sketch,extrude");
+  const ex = feats.filter(f => f.type === "extrude") as any[];
+  close(ex[0].depth.v, 6); close(ex[1].depth.v, 4);
+  close(vol(m, doc([...stepped.features, feats[0], feats[1]])), 60 * 40 * 20);
+  close(vol(m, doc([...stepped.features, ...feats])), v0);
+  // A boss with a square pocket in its top: the pocket comes off first and goes back on last.
+  const top = { ...rect("t", 4, 3), plane: { face: { name: "b1:end" } } } as SketchFeature;
+  top.ents = top.ents.map(e => e.t === "point" ? { ...e, x: e.x + 22, y: e.y } : e);
+  const bossed = imported(m, [...base(), bs, boss("b1", "b", 7), top, cut("c3", "t", 5)]);
+  const v1 = vol(m, bossed);
+  const fb = m.recognizeExtrudes(bossed);
+  assert.equal(fb.map(f => f.type === "extrude" ? (f as any).op : f.type).join(), "delface,delface,sketch,boss,sketch,cut");
+  close(vol(m, doc([...bossed.features, ...fb])), v1);
+});
