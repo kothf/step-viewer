@@ -2003,6 +2003,12 @@ try {
     const refLink = await mp.evaluate(() => { const l = document.querySelector("#mat-dlg .mat-src a"); return l && { href: l.href, text: l.textContent, rel: l.rel }; });
     check(!!refLink && /^https:\/\/shop\.macsteel\.co\.za\//.test(refLink.href) && refLink.text === "shop.macsteel.co.za" && /noopener/.test(refLink.rel),
       `model 1.375: a checked material shows the page its values were checked against (${JSON.stringify(refLink)})`);
+    // 1.382.0: a material without a checked reference says so.
+    const refNote = await mp.evaluate(() => !!document.querySelector("#mat-dlg .mat-unver"));
+    await mp.fill("#mat-q", "PEEK");
+    const unver = await mp.evaluate(() => ({ note: document.querySelector("#mat-dlg .mat-unver")?.textContent ?? "", link: !!document.querySelector("#mat-dlg .mat-src a") }));
+    check(!refNote && unver.note === "Not checked against a public reference yet." && !unver.link,
+      `model 1.382: a material with no checked reference is marked as not checked (${refNote}, ${JSON.stringify(unver)})`);
     await mp.fill("#mat-q", "6061");
     await mp.keyboard.press("ArrowDown");
     await mp.keyboard.press("ArrowUp");
@@ -2745,7 +2751,7 @@ try {
     await idle();
     check(bx.plane && bx.faces && bx.plane !== bx.faces && bx.mesh && bx.tag === "Faces to draft" && bx.tagC === bx.faces,
       `model 1.351: Draft's selection boxes have their own colours and the picked face is drawn in the faces box's colour with a "Faces to draft" tag (${JSON.stringify(bx)})`);
-    // 1.382 (FR-SEL-011, AT-UX-6): the other panels' boxes: the Hole Wizard's face is drawn in the Face box's colour with its tag, and an extrude's Start at / Up to faces get one box each.
+    // 1.383 (FR-SEL-011, AT-UX-6): the other panels' boxes: the Hole Wizard's face is drawn in the Face box's colour with its tag, and an extrude's Start at / Up to faces get one box each.
     await mp.evaluate(() => window.__sv.modeller.command("hole"));
     await mp.waitForSelector('#mc-pm .pm-box[data-focus="hplane"]');
     await mp.evaluate(() => {
@@ -2763,7 +2769,7 @@ try {
     await mp.evaluate(() => window.__sv.modeller.exitMode(false));
     await idle();
     check(bx2.c && bx2.mesh && bx2.tag === "Face" && bx2.tagC === bx2.c && bx2.ex === "start:Start at:1,upto:Up to:1",
-      `model 1.382: the Hole Wizard's face is drawn in the Face box's colour with a "Face" tag, and an extrude's Start at and Up to faces have their own boxes (${JSON.stringify(bx2)})`);
+      `model 1.383: the Hole Wizard's face is drawn in the Face box's colour with a "Face" tag, and an extrude's Start at and Up to faces have their own boxes (${JSON.stringify(bx2)})`);
     // 1.354 (FR-UI-109): selection box flow: a one-item box that has just been filled hands focus to the next empty required box, also an earlier one; a panel opens on its first empty box.
     await mp.evaluate(() => window.__sv.modeller.command("lpattern"));
     await mp.waitForSelector('#mc-pm .pm-box[data-focus="dir"]');

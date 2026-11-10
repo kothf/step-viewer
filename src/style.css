@@ -1292,6 +1292,7 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .mat-props .mat-table th { font-weight: 400; }
 .mat-props .mat-table td { font-family: inherit; font-size: inherit; white-space: nowrap; text-align: right; padding-right: 0; }
 .mat-props .mat-src { font-size: var(--fs-caption); margin: 6px 0; }
+.mat-props .mat-unver { color: var(--warn-text); font-weight: 600; }
 .mat-f { display: grid; grid-template-columns: minmax(0, 1fr) 96px 62px; align-items: center; gap: 6px; margin: 4px 0; font-size: var(--fs-caption); }
 .mat-f input { width: 100%; min-width: 0; }
 .mat-f input[type=color] { padding: 0; height: 26px; }
