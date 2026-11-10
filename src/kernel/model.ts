@@ -57,6 +57,9 @@ export interface ModelResult {
   com: V3;
 }
 
+/** A pocket or boss found on a body: the loop (3D), the face point and normal it lies on, and how far it runs. */
+type ExtrudeFind = { p: V3; n: V3; op: "boss" | "cut"; end: "blind" | "through"; depth: number; segs: ({ line: [V3, V3] } | { circle: { c: V3; r: number } } | { arc: { c: V3; a: V3; b: V3; m: V3 } })[] };
+
 export const STD_FRAMES: Record<"XY" | "XZ" | "YZ", Frame> = {
   XY: { o: [0, 0, 0], x: [1, 0, 0], y: [0, 1, 0], n: [0, 0, 1] },
   XZ: { o: [0, 0, 0], x: [1, 0, 0], y: [0, 0, 1], n: [0, -1, 0] },
@@ -3316,11 +3319,92 @@ export class Modeller {
    * pockets are left to Recognize Holes. A find counts only when the body comes back with the same volume.
    */
   recognizeExtrudes(doc: PartDoc): Feature[] {
-    const oc = this.oc;
     const upto = doc.features.slice(0, doc.rollback ?? doc.features.length);
     const at = (fs: Feature[]): PartDoc => ({ ...doc, rollback: null, features: [...upto, ...fs] });
-    const body = this.evaluate(at([])).body;
-    if (!body || this.solids(body.shape) < 1) return [];
+    // A pocket in the floor of another pocket (or in a boss) comes off first; the one around it is found in the
+    // next round, on the body without it. They go back on from the last round to the first.
+    const rounds: ExtrudeFind[][] = [], dels: Feature[] = [];
+    let first: Feature[] = [];
+    for (let k = 0; k < 6; k++) {
+      const r = this.extrudeRound(at(dels));
+      if (!r) break;
+      rounds.push(r.finds);
+      dels.push(r.feats[0]);
+      if (!k) first = r.feats;
+    }
+    if (rounds.length < 2) return first;
+    try {
+      const start = this.evaluate(at([])).body;
+      if (!start) return [];
+      const v0 = this.volume(start.shape);
+      const out = [...dels];
+      for (let k = rounds.length - 1; k >= 0; k--) {
+        const r = this.evaluate(at(out));
+        const fs = r.body ? this.extrudeFeatures(rounds[k], r.body, r.frames) : null;
+        if (!fs) return first;
+        out.push(...fs);
+      }
+      const fin = this.evaluate(at(out));
+      if (fin.body && !fin.statuses.slice(-out.length).some(s => s.ok === false) && Math.abs(this.volume(fin.body.shape) - v0) <= 1e-6 * Math.abs(v0) + 1e-9) return out;
+    } catch { /* the first round alone */ }
+    // The rounds do not go back together: the first one alone is still a good find.
+    return first;
+  }
+
+  /** The flat face of a body that holds point `p` and faces along `n`. */
+  private flatFaceAt(body: Named, p: V3, n: V3, tol: number): number {
+    const oc = this.oc;
+    const v = new oc.BRepBuilderAPI_MakeVertex(this.P(p)).Vertex();
+    let best = -1, bd = tol;
+    body.faces.forEach((face, i) => {
+      const ad = new oc.BRepAdaptor_Surface_2(face, true);
+      if (ad.GetType() !== oc.GeomAbs_SurfaceType.GeomAbs_Plane) return;
+      if (dot(this.faceNormalAt(face), n) < 1 - 1e-6 || Math.abs(dot(sub3(p, this.xyz(ad.Plane().Location())), n)) > tol) return;
+      const d = new oc.BRepExtrema_DistShapeShape_2(v, face, oc.Extrema_ExtFlag.Extrema_ExtFlag_MIN, oc.Extrema_ExtAlgo.Extrema_ExtAlgo_Grad, new oc.Message_ProgressRange_1());
+      if (d.IsDone() && d.Value() < bd) { bd = d.Value(); best = i; }
+    });
+    return best;
+  }
+
+  /** Sketch + extrude pairs for finds, each on the flat face of `body` its loop lies on. */
+  private extrudeFeatures(finds: ExtrudeFind[], body: Named, frames: Record<string, Frame>): Feature[] | null {
+    const id = () => `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
+    const tol = Math.max(1e-4, this.size(body.shape) * 1e-6) * 10;
+    const feats: Feature[] = [];
+    for (const c of finds) {
+      const fi = this.flatFaceAt(body, c.p, c.n, tol);
+      if (fi < 0) return null;
+      const plane: PlaneRef = { face: { name: body.names[fi], hint: this.centroid(body.faces[fi]) } };
+      const fr = this.planeFrame(plane, body, frames);
+      const sid = id(), ents: SkEnt[] = [], pts = new Map<string, string>();
+      const pt = (p: V3): string => {
+        const q = sub3(p, fr.o), x = dot(q, fr.x), y = dot(q, fr.y), k = `${x.toFixed(5)},${y.toFixed(5)}`;
+        let pid = pts.get(k);
+        if (!pid) { pid = `${sid}p${pts.size + 1}`; pts.set(k, pid); ents.push({ id: pid, t: "point", x, y }); }
+        return pid;
+      };
+      c.segs.forEach((sg, k) => {
+        const eid = `${sid}e${k + 1}`;
+        if ("line" in sg) ents.push({ id: eid, t: "line", a: pt(sg.line[0]), b: pt(sg.line[1]) });
+        else if ("circle" in sg) ents.push({ id: eid, t: "circle", c: pt(sg.circle.c), r: sg.circle.r });
+        else {
+          const { c: cc, a, b, m } = sg.arc;
+          const ccw = dot(cross(sub3(a, cc), sub3(m, cc)), fr.n) > 0;
+          ents.push({ id: eid, t: "arc", c: pt(cc), a: pt(ccw ? a : b), b: pt(ccw ? b : a) });
+        }
+      });
+      feats.push({ id: sid, type: "sketch", name: "", plane, ents, rels: [], dims: [] } as Feature,
+        { id: id(), type: "extrude", name: "", sketch: sid, op: c.op, end: c.end, depth: { v: c.depth } } as Feature);
+    }
+    return feats;
+  }
+
+  /** One round of Recognize Extrudes on the body at the end of `doc`: the Delete Face, then the sketch + extrude pairs, checked by volume. */
+  private extrudeRound(doc: PartDoc): { feats: Feature[]; finds: ExtrudeFind[] } | null {
+    const oc = this.oc;
+    const at = (fs: Feature[]): PartDoc => ({ ...doc, features: [...doc.features, ...fs] });
+    const body = this.evaluate(doc).body;
+    if (!body || this.solids(body.shape) < 1) return null;
     const v0 = this.volume(body.shape);
     const tol = Math.max(1e-4, this.size(body.shape) * 1e-6) * 10;
     const S = oc.GeomAbs_SurfaceType, C = oc.GeomAbs_CurveType;
@@ -3341,8 +3425,8 @@ export class Modeller {
       const ca = new oc.BRepAdaptor_Curve_2(e), t0 = ca.FirstParameter(), t1 = ca.LastParameter();
       return { a: this.xyz(ca.Value(t0)), b: this.xyz(ca.Value(t1)), m: this.xyz(ca.Value((t0 + t1) / 2)), ca };
     };
-    type Seg = { line: [V3, V3] } | { circle: { c: V3; r: number } } | { arc: { c: V3; a: V3; b: V3; m: V3 } };
-    type Cand = { face: number; op: "boss" | "cut"; end: "blind" | "through"; depth: number; del: number[]; segs: Seg[]; key: string };
+    type Seg = ExtrudeFind["segs"][0];
+    type Cand = ExtrudeFind & { face: number; del: number[]; key: string };
     const cands: Cand[] = [];
     body.faces.forEach((face, i) => {
       const n = kinds[i].pln;
@@ -3383,8 +3467,8 @@ export class Modeller {
         const enclosed = far.every(j => kinds[j].pln && dot(kinds[j].pln!, n) > 1 - 1e-6 && neighbours(j).every(q => walls.includes(q)));
         let cand: Cand | null = null;
         const key = [...walls].sort((a, b) => a - b).join(",");
-        if (enclosed) cand = { face: i, op: up ? "boss" : "cut", end: "blind", depth, del: [...walls, ...far], segs, key };
-        else if (!up && far.length === 1 && kinds[far[0]].pln && dot(kinds[far[0]].pln!, n) < -1 + 1e-6) cand = { face: i, op: "cut", end: "through", depth, del: walls, segs, key };
+        if (enclosed) cand = { face: i, p: P, n, op: up ? "boss" : "cut", end: "blind", depth, del: [...walls, ...far], segs, key };
+        else if (!up && far.length === 1 && kinds[far[0]].pln && dot(kinds[far[0]].pln!, n) < -1 + 1e-6) cand = { face: i, p: P, n, op: "cut", end: "through", depth, del: walls, segs, key };
         if (!cand) continue;
         // A round pocket is a hole: Recognize Holes makes it a Hole feature.
         const c0 = kinds[walls[0]].cyl;
@@ -3392,52 +3476,76 @@ export class Modeller {
         if (!cands.some(c => c.key === key)) cands.push(cand);
       }
     });
+    // Cuts open to the side (a step, a slot across a face, a notch at an edge): a flat floor with one outline,
+    // some of its edges under walls that stand square to it up to one flat top, the others on the outside of
+    // the body. The floor's outline, lifted to the top, is the sketch of a blind cut.
+    body.faces.forEach((face, i) => {
+      const n = kinds[i].pln;
+      if (!n) return;
+      const wmap = new oc.TopTools_IndexedMapOfShape_1();
+      oc.TopExp.MapShapes_1(face, oc.TopAbs_ShapeEnum.TopAbs_WIRE, wmap);
+      if (wmap.Extent() !== 1) return;
+      const raw: Seg[] = [], walls: number[] = [];
+      let P: V3 | null = null, open = 0, h = 0;
+      for (const e of this.sub(wmap.FindKey(1), "EDGE")) {
+        const j = across(i, emap.FindIndex(e));
+        if (j < 0) return;
+        const x = ends(e), ct = x.ca.GetType();
+        P ??= x.a;
+        if (ct === C.GeomAbs_Line) raw.push({ line: [x.a, x.b] });
+        else if (ct === C.GeomAbs_Circle) {
+          if (Math.abs(Math.abs(x.ca.LastParameter() - x.ca.FirstParameter()) - 2 * Math.PI) < 1e-9) return;
+          raw.push({ arc: { c: this.xyz(x.ca.Circle().Location()), a: x.a, b: x.b, m: x.m } });
+        } else return;
+        const k = kinds[j];
+        let lo = 0, hi = 0;
+        for (const { e: we } of edges[j]) { const y = ends(we); for (const p of [y.a, y.b, y.m]) { const d = dot(sub3(p, P), n); lo = Math.min(lo, d); hi = Math.max(hi, d); } }
+        const square = (k.pln && Math.abs(dot(k.pln, n)) < 1e-6) || (k.cyl && Math.abs(Math.abs(dot(k.cyl.d, n)) - 1) < 1e-6);
+        if (square && hi > tol && lo > -tol) {
+          if (h && Math.abs(hi - h) > tol) return;
+          h = hi;
+          if (!walls.includes(j)) walls.push(j);
+        } else if (lo < -tol) open++;
+        else return;
+      }
+      if (!P || !walls.length || !open || walls.includes(i)) return;
+      // Every wall ends under a flat top at that height.
+      const isTop = (j: number) => j !== i && !walls.includes(j) && !!kinds[j].pln && dot(kinds[j].pln!, n) > 1 - 1e-6
+        && Math.abs(dot(sub3(ends(edges[j][0].e).a, P!), n) - h) < tol;
+      const tops = [...new Set(walls.flatMap(neighbours))].filter(isTop);
+      if (!tops.length || walls.some(j => !neighbours(j).some(q => tops.includes(q)))) return;
+      const up = (p: V3): V3 => [p[0] + n[0] * h, p[1] + n[1] * h, p[2] + n[2] * h];
+      const segs: Seg[] = raw.map(sg => "line" in sg ? { line: [up(sg.line[0]), up(sg.line[1])] }
+        : "arc" in sg ? { arc: { c: up(sg.arc.c), a: up(sg.arc.a), b: up(sg.arc.b), m: up(sg.arc.m) } } : sg);
+      const key = [i, ...walls].sort((a, b) => a - b).join(",") + "|open";
+      const top = edges[tops[0]].map(x => across(tops[0], x.k)).some(j => walls.includes(j)) ? ends(edges[tops[0]].find(x => walls.includes(across(tops[0], x.k)))!.e).m : up(P);
+      cands.push({ face: tops[0], p: top, n, op: "cut", end: "blind", depth: h, del: [i, ...walls], segs, key });
+    });
     // A face two finds would delete, or one a find stands on, goes to one of them only.
     const picked: Cand[] = [];
     for (const c of cands) if (!picked.some(p => p.del.some(j => c.del.includes(j) || j === c.face) || c.del.includes(p.face))) picked.push(c);
-    if (!picked.length) return [];
-    const id = () => `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
+    if (!picked.length) return null;
     const ref = (i: number): FaceRef => ({ name: body.names[i], hint: this.centroid(body.faces[i]) });
     const attempt = (cs: Cand[]): Feature[] | null => {
       try {
-        const del: Feature = { id: id(), type: "delface", name: "", faces: cs.flatMap(c => c.del).map(ref) } as Feature;
+        const del: Feature = { id: `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`, type: "delface", name: "", faces: cs.flatMap(c => c.del).map(ref) } as Feature;
         const after = this.evaluate(at([del]));
         if (after.statuses.at(-1)?.ok === false || !after.body) return null;
-        const feats: Feature[] = [del];
-        for (const c of cs) {
-          const plane: PlaneRef = { face: { name: body.names[c.face], hint: this.centroid(this.resolveFace(after.body, { name: body.names[c.face], hint: this.centroid(body.faces[c.face]) })) } };
-          const fr = this.planeFrame(plane, after.body, after.frames);
-          const sid = id(), ents: SkEnt[] = [], pts = new Map<string, string>();
-          const pt = (p: V3): string => {
-            const q = sub3(p, fr.o), x = dot(q, fr.x), y = dot(q, fr.y), k = `${x.toFixed(5)},${y.toFixed(5)}`;
-            let pid = pts.get(k);
-            if (!pid) { pid = `${sid}p${pts.size + 1}`; pts.set(k, pid); ents.push({ id: pid, t: "point", x, y }); }
-            return pid;
-          };
-          c.segs.forEach((sg, k) => {
-            const eid = `${sid}e${k + 1}`;
-            if ("line" in sg) ents.push({ id: eid, t: "line", a: pt(sg.line[0]), b: pt(sg.line[1]) });
-            else if ("circle" in sg) ents.push({ id: eid, t: "circle", c: pt(sg.circle.c), r: sg.circle.r });
-            else {
-              const { c: cc, a, b, m } = sg.arc;
-              const ccw = dot(cross(sub3(a, cc), sub3(m, cc)), fr.n) > 0;
-              ents.push({ id: eid, t: "arc", c: pt(cc), a: pt(ccw ? a : b), b: pt(ccw ? b : a) });
-            }
-          });
-          feats.push({ id: sid, type: "sketch", name: "", plane, ents, rels: [], dims: [] } as Feature,
-            { id: id(), type: "extrude", name: "", sketch: sid, op: c.op, end: c.end, depth: { v: c.depth } } as Feature);
-        }
+        const made = this.extrudeFeatures(cs, after.body, after.frames);
+        if (!made) return null;
+        const feats = [del, ...made];
         const fin = this.evaluate(at(feats));
         if (!fin.body || fin.statuses.slice(-feats.length).some(s => s.ok === false)) return null;
         return Math.abs(this.volume(fin.body.shape) - v0) <= 1e-6 * Math.abs(v0) + 1e-9 ? feats : null;
       } catch { return null; }
     };
     const whole = attempt(picked);
-    if (whole || picked.length === 1) return whole ?? [];
+    if (whole) return { feats: whole, finds: picked };
+    if (picked.length === 1) return null;
     // Not all of them: the ones that come back the same on their own are added one at a time.
-    let got: Cand[] = [], out: Feature[] = [];
+    let got: Cand[] = [], out: Feature[] | null = null;
     for (const c of picked.slice(0, 40)) { const r = attempt([...got, c]); if (r) { got = [...got, c]; out = r; } }
-    return out;
+    return out ? { feats: out, finds: got } : null;
   }
 
   private blendFeatures(r: RecognizedBlends, id: () => string): Feature[] {
