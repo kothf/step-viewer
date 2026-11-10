@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.477.0] - 2026-11-10
+
+### Added
+
+- **Cross holes through a shaft are recognised (FR-FT-102)**: a round hole right across an imported shaft or round bar, coming out on its curved faces, comes back from Recognize Holes and Recognize Features as a circle sketched on the standard plane square to the hole with an Extruded Cut Through All in both directions, when the hole runs along X, Y or Z. Before, such holes were left in the imported body.
+
+### Fixed
+
+- **Edit sketch shows the whole sketch (Leuenberger exam #96)**: turning normal to a sketch framed only the body, so a sketch reaching past it opened mostly off screen. The view now frames the body and the whole sketch; sketches with one point or none open as before.
+
 ## [1.476.0] - 2026-11-10
 
 ### Changed
@@ -2908,7 +2918,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.476.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.477.0...HEAD
+[1.477.0]: https://github.com/kothf/step-viewer/compare/v1.476.0...v1.477.0
 [1.476.0]: https://github.com/kothf/step-viewer/compare/v1.475.0...v1.476.0
 [1.475.0]: https://github.com/kothf/step-viewer/compare/v1.474.0...v1.475.0
 [1.474.0]: https://github.com/kothf/step-viewer/compare/v1.473.0...v1.474.0

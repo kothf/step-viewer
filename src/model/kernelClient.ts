@@ -166,9 +166,9 @@ export class ModelKernel {
   }
 
   /** Feature recognition (FR-FT-102): the round holes of the part's body, as hole features would make them. */
-  async recognizeHoles(doc: PartDoc): Promise<{ faces: FaceRef[]; holes: RecognizedHole[] }> {
+  async recognizeHoles(doc: PartDoc): Promise<{ faces: FaceRef[]; holes: RecognizedHole[]; cuts?: Feature[] }> {
     await this.start();
-    return this.call<{ faces: FaceRef[]; holes: RecognizedHole[] }>({ type: "recognize", doc });
+    return this.call<{ faces: FaceRef[]; holes: RecognizedHole[]; cuts?: Feature[] }>({ type: "recognize", doc });
   }
 
   /** Feature recognition (FR-FT-102): fillets and chamfers that can be deleted and made again as features. */
