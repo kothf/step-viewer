@@ -6703,8 +6703,10 @@ try {
       `drawing 1.476: exact views run on two drawing workers at once, with the same model (${h0} → ${h1}; ${same.join(" | ")})`);
     // 1.478: this page runs with `drwheap=1`, so the main drawing worker is started over (same model, cache kept)
     // after every projection; all the checks above ran through such restarts.
-    const rc = await mp.evaluate(() => window.__sv.drw.helper().recycles);
+    const { recycles: rc, snap } = await mp.evaluate(() => window.__sv.drw.helper());
     check(rc >= 2, `drawing 1.478: a drawing worker past its heap limit starts over with the same model between views (${rc} restarts)`);
+    // 1.482: the restarts and the helper read the full load's BREP snapshot instead of building the model again.
+    check(snap > 1000, `drawing 1.482: the drawing workers restart from a BREP snapshot of the model (${snap} characters)`);
     await ctx.close();
   }
 

@@ -4,7 +4,7 @@
 // document through the Modeller; STEP / IGES / BREP files are read as they are.
 import { FLAT_CONFIG, type Align, type Stair } from "./views";
 import { flatBends, flatPatternDoc, flatToXY } from "../sheetmetal/sheet";
-import { geometryDiff, projectAuto, FAST_EDGES, projectPoly, readShape, alignedShape, section, shadeTris, shapeInfo, topology, type V3, type ViewDir } from "../kernel/drawing";
+import { geometryDiff, projectAuto, FAST_EDGES, projectPoly, readShape, shapeBrep, childShapes, alignedShape, section, shadeTris, shapeInfo, topology, type V3, type ViewDir } from "../kernel/drawing";
 import { Assembler } from "../kernel/assembly";
 import { Modeller } from "../kernel/model";
 import type { AsmDoc } from "../asm/types";
@@ -18,7 +18,7 @@ import { activate } from "../model/configs";
 export type DrawingRequest =
   | { id: number; type: "init"; base: string; module: WebAssembly.Module; fast?: number }
   /** `lite`: a helper worker that only projects; no topology, model items or tables. */
-  | { id: number; type: "load"; part?: PartDoc; asm?: AsmDoc; file?: { name: string; bytes: Uint8Array }; lite?: boolean }
+  | { id: number; type: "load"; part?: PartDoc; asm?: AsmDoc; file?: { name: string; bytes: Uint8Array }; lite?: boolean; snap?: ModelSnap }
   | { id: number; type: "project"; view: ViewDir; shade?: boolean; cfg?: string; only?: string[] }
   /** A quick polygonal preview of a view (FR-DRW-016) while the exact one is computed. */
   | { id: number; type: "preview"; view: ViewDir; cfg?: string; only?: string[] }
@@ -28,6 +28,34 @@ export type DrawingRequest =
   | { id: number; type: "alt"; view: ViewDir; moves: { comp: string; tf: number[] }[] }
   /** Two versions of a part or an assembly compared by booleans (FR-PDM-050); the loaded model stays. */
   | { id: number; type: "diff"; a: DiffSrc; b: DiffSrc };
+
+/**
+ * The loaded model's shape as BREP text with what a lite load needs besides it (names, materials, component ids),
+ * sent back by a full load so a restart or the helper reads it (~0.2 s) instead of building the model again
+ * (an engine assembly: ~10 s).
+ */
+export interface ModelSnap { brep: string; names?: string[]; mat: string | null; mats: (string | null)[] | null; placed?: { id: string; mat: string | null; mats?: (string | null)[] | null }[] }
+
+/** Snapshots past this many characters are not made (they would cost more memory than the rebuild time saved). */
+const SNAP_MAX = 64 * 1048576;
+
+function writeSnap(): ModelSnap | undefined {
+  try {
+    const brep = shapeBrep(oc, shape);
+    if (brep.length > SNAP_MAX) return undefined;
+    return { brep, names: shapeNames, mat: modelMat, mats: modelMats, placed: placedShapes.length ? placedShapes.map(p => ({ id: p.id, mat: p.mat, mats: p.mats })) : undefined };
+  } catch { return undefined; }
+}
+
+function readSnap(snap: ModelSnap) {
+  const s = readShape(oc, new TextEncoder().encode(snap.brep), "snap.brep");
+  if (snap.placed) {
+    const kids = childShapes(oc, s);
+    if (kids.length !== snap.placed.length) throw new Error("The model snapshot does not match its components");
+    placedShapes = snap.placed.map((p, i) => ({ ...p, shape: kids[i] }));
+  }
+  shape = s; shapeNames = snap.names; modelMat = snap.mat; modelMats = snap.mats;
+}
 
 export type DiffSrc = { part?: PartDoc; asm?: AsmDoc };
 
@@ -201,6 +229,13 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
       let extra = {};
       partDoc = null;
       variants.clear();
+      if (r.lite && r.snap) {
+        // A restart or the helper: the shape from the full load's snapshot, no rebuild.
+        readSnap(r.snap);
+        partDoc = r.part ?? null;
+        post({ id: r.id, ok: true });
+        return;
+      }
       if (r.part) {
         const b = buildPart(r.part, r.lite);
         shape = b.shape; modelMat = b.mat; modelMats = b.mats; extra = b.extra; shapeNames = b.names;
@@ -220,7 +255,7 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
       } else if (r.file) { shape = readShape(oc, r.file.bytes, r.file.name); extra = r.lite ? {} : { topo: topology(oc, shape), items: [], holes: [] }; }
       else throw new Error("Nothing to load");
       if (r.lite) { post({ id: r.id, ok: true }); return; }
-      post({ id: r.id, ok: true, ...shapeInfo(oc, shape), ...extra });
+      post({ id: r.id, ok: true, ...shapeInfo(oc, shape), ...extra, snap: writeSnap() });
     } else if (r.type === "config" && r.name === FLAT_CONFIG) {
       // Flat pattern (FR-FT-120): the part with its flat pattern shown, laid on XY with the top face up.
       const d = partDoc && flatPatternDoc(partDoc);
