@@ -112,3 +112,32 @@ test("recognize features: counterbored and countersunk holes come back as Hole W
   assert.equal(kinds, "cbore:1,cbore:2,csink:1,csink:1");
   close(vol(m, doc([...imp.features, ...fs])), v0);
 });
+
+test("recognize features: a cross hole through a shaft comes back as a Through All cut on a standard plane (FR-FT-102)", async () => {
+  const m = new Modeller(await occ());
+  const xy: [number, number][] = [[0, 0], [10, 0], [10, 20], [6, 26], [6, 40], [0, 40]];
+  const ents: SkEnt[] = xy.map(([x, y], i) => ({ id: `rp${i}`, t: "point", x, y }) as SkEnt);
+  xy.forEach((_, i) => ents.push({ id: `rl${i}`, t: "line", a: `rp${i}`, b: `rp${(i + 1) % xy.length}` }));
+  ents.push({ id: "ra", t: "point", x: 0, y: -5 }, { id: "rb", t: "point", x: 0, y: 45 }, { id: "rax", t: "line", a: "ra", b: "rb", cons: true });
+  // Ø4 across the Ø20 part at z = 10 (along Y) and Ø3 across the Ø12 part at z = 33 (along X).
+  const xh: SketchFeature = { id: "o", type: "sketch", name: "o", plane: { std: "XZ" }, rels: [], dims: [],
+    ents: [{ id: "oc", t: "point", x: 0, y: 10 }, { id: "ok", t: "circle", c: "oc", r: 2 } as SkEnt] };
+  const yh: SketchFeature = { id: "p", type: "sketch", name: "p", plane: { std: "YZ" }, rels: [], dims: [],
+    ents: [{ id: "pc", t: "point", x: 0, y: 33 }, { id: "pk", t: "circle", c: "pc", r: 1.5 } as SkEnt] };
+  const imp = imported(m, [{ id: "r", type: "sketch", name: "r", plane: { std: "XZ" }, ents, rels: [], dims: [] },
+    { id: "v", type: "revolve", name: "V", sketch: "r", op: "boss", axis: "rax", angle: { v: Math.PI * 2 } } as Feature,
+    xh, { id: "c", type: "extrude", name: "C", sketch: "o", op: "cut", end: "through2", depth: { v: 10 } } as Feature,
+    yh, { id: "c2", type: "extrude", name: "C2", sketch: "p", op: "cut", end: "through2", depth: { v: 10 } } as Feature]);
+  const v0 = vol(m, imp);
+  const H = m.recognizeHoles(imp);
+  assert.equal(H.holes.length, 0);
+  assert.equal(types(H.cuts ?? []), "sketch,extrude,sketch,extrude");
+  close(vol(m, doc([...imp.features, { id: "d", type: "delface", name: "", faces: H.faces } as Feature, ...H.cuts!])), v0, 1e-5);
+  const fs = m.recognizeFeatures(imp);
+  assert.equal(types(fs), "sketch,revolve,delbody,sketch,extrude,sketch,extrude");
+  close(vol(m, doc([...imp.features, ...fs])), v0, 1e-5); // quick volumes are ~4e-6 off on the saddles
+  // The cuts are plain sketches with one circle each: a bigger cross hole takes more material.
+  const big = fs.map(f => f.type === "sketch" && (f as SketchFeature).ents.some(e => e.t === "circle" && (e as any).r === 2)
+    ? { ...f, ents: (f as SketchFeature).ents.map(e => e.t === "circle" ? { ...e, r: 3 } : e) } as Feature : f);
+  assert.ok(vol(m, doc([...imp.features, ...big])) < v0 - 100);
+});
