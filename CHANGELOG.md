@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.417.0] - 2026-11-10
+## [1.418.0] - 2026-11-10
 
 ### Added
 
@@ -14,6 +14,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Changed
 
 - **Release workflow**: the GitHub Pages deployment gives up a stuck first try after 4 minutes and tries once more, instead of failing the run after 10.
+
+## [1.417.0] - 2026-11-10
+
+### Changed
+
+- **PA66-GF30 checked (FR-MAT-001)**: Nylon PA66-GF30 now shows **Checked against:** with a link to a BASF Ultramid A3WG6 data sheet (density 1.36 g/cm³, modulus 10 GPa, 190 MPa, dry as moulded). The row already matched. 143 of 170 materials are checked; the other 27 still say they are not.
 
 ## [1.416.0] - 2026-11-10
 
@@ -2464,7 +2470,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.417.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.418.0...HEAD
+[1.418.0]: https://github.com/kothf/step-viewer/compare/v1.417.0...v1.418.0
 [1.417.0]: https://github.com/kothf/step-viewer/compare/v1.416.0...v1.417.0
 [1.416.0]: https://github.com/kothf/step-viewer/compare/v1.415.0...v1.416.0
 [1.415.0]: https://github.com/kothf/step-viewer/compare/v1.414.0...v1.415.0

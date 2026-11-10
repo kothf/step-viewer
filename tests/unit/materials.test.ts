@@ -133,7 +133,6 @@ test("sixth pass (1.407.0): PA66 and PMMA checked against makers' sheets", () =>
   assert.ok(LIBRARY.length - checked.length <= 31);
   assert.ok(findMaterial("Nylon PA66")?.ref && findMaterial("PMMA (acrylic)")?.ref);
   assert.equal(findMaterial("Nylon PA66")!.E, 2.4);
-  assert.ok(!findMaterial("Nylon PA66-GF30")!.ref);
 });
 
 test("seventh pass (1.413.0): Douglas fir and water checked", () => {
@@ -150,4 +149,11 @@ test("eighth pass (1.416.0): PE-LD checked against a stock shape sheet", () => {
   const pe = findMaterial("Polyethylene PE-LD")!;
   assert.ok(pe.ref);
   assert.equal(pe.density, 0.92);
+});
+
+test("ninth pass (1.417.0): PA66-GF30 checked against a maker's sheet", () => {
+  assert.ok(LIBRARY.filter((m) => m.ref).length >= 143);
+  const pa = findMaterial("Nylon PA66-GF30")!;
+  assert.ok(pa.ref);
+  assert.equal(pa.density, 1.36);
 });
