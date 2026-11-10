@@ -10633,6 +10633,34 @@ try {
     check(ts0.title === "Tab and Slot" && ts0.edge === (tsS > 0 ? "b:p0:sl2|b:p0:top" : "b:p0:sl4|b:p0:top") && ts0.face === (tsS > 0 ? "x:side:kl4" : "x:side:kl2")
       && !ts1.bad && ts1.panels === 3 && Math.abs(ts1.v - tsWant) < 1e-2,
       `sheet metal: Tab and Slot grows tabs from the clicked edge through slots in the clicked face (${JSON.stringify({ tsS, ts0, ts1, tsWant })})`);
+    // Rip: a 60 × 40 × 30 box shelled 2 thick, open at the top. Click the inside corner edge at the far corner (seen
+    // through the opening), ✓: a 0.1 slot on the corner's bisector takes √2·2·0.1 per mm of the 28 mm inside edge.
+    await mp.evaluate(() => window.__sv.model.store.change("Shelled box", d => {
+      const q = [[0, 0], [60, 0], [60, 40], [0, 40]];
+      d.features = [
+        { id: "rs", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [...q.map((p, i) => ({ id: `rq${i}`, t: "point", x: p[0], y: p[1] })), ...q.map((_p, i) => ({ id: `rl${i + 1}`, t: "line", a: `rq${i}`, b: `rq${(i + 1) % 4}` }))] },
+        { id: "re", type: "extrude", name: "Boss-Extrude1", sketch: "rs", op: "boss", end: "blind", depth: { v: 30 } },
+        { id: "rh", type: "shell", name: "Shell1", thickness: { v: 2 }, faces: [{ name: "re:end" }] },
+      ];
+    }));
+    await settle();
+    await mp.evaluate(() => window.__sv.viewer.fit(false));
+    await mp.waitForTimeout(300);
+    const rv0 = await mp.evaluate(() => window.__sv.model.last().props?.volume ?? 0);
+    const far = await mp.evaluate(() => { const c = window.__sv.viewer.camera.position; return [c.x > 30 ? 2 : 58, c.y > 20 ? 2 : 38]; });
+    await smMenu("Rip");
+    {
+      const [x, y] = await scr([far[0], far[1], 24]);
+      await mp.mouse.click(x, y);
+      await settle();
+    }
+    const rp0 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { title: document.querySelector("#mc-pm h3")?.textContent, edges: d?.edges?.map(e => [...e.faces].sort().join("|")) }; });
+    await mp.click("#mc-ok");
+    await settle();
+    const rp1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    const rpEdge = ({ "2,2": "rl1|rl4", "58,2": "rl1|rl2", "58,38": "rl2|rl3", "2,38": "rl3|rl4" })[far.join(",")].split("|").map(n => `rh:off:re:side:${n}`).join("|");
+    check(rp0.title === "Rip" && rp0.edges?.length === 1 && rp0.edges[0] === rpEdge && !rp1.bad && Math.abs(rv0 - rp1.v - Math.SQRT2 * 2 * 0.1 * 28) < 1e-3,
+      `sheet metal: Rip cuts a slot along the clicked inside corner edge (${JSON.stringify({ far, rp0, rp1, rv0, rpEdge })})`);
     await ctx.close();
   }
 

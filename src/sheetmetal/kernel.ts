@@ -5,7 +5,7 @@ import type { EdgeRef, FaceRef, Frame, PartDoc, SketchFeature, SkEnt, V2, V3 } f
 import type { Named } from "../kernel/model";
 import { inPolygon, loopPolygon, polyArea, sketchProfile, type Seg } from "../sketch/profile";
 import { tabSlot, type SlotCut, convertFlanges, type ConvertLevel, gussetSheet, type GussetMark, cornerRelief, apply, applyDir, bendStrip, sheetPlace, unfoldSheet, type SheetPlace, baseFlange, crossBreak, formTools, obroundLoop, type FormItem, ventLayout, ventPanel, loftedBend, type SheetMesh, breakCorner, closedCorner, miterFlange, miterProfile, sweptProfile, type FlatEdge, bendSketchLine, edgeFlange, flatLoops, hem, jog, sketchedBend, tab, SheetError, type Bend, type Mat, type Panel, type SheetOp, type SheetState } from "./sheet";
-import type { SheetFeature, SmBaseFeature, SmConvertFeature, SmInsertFeature, SmCutFeature, SmFormFeature, SmVentFeature } from "./types";
+import type { SmRipFeature, SheetFeature, SmBaseFeature, SmConvertFeature, SmInsertFeature, SmCutFeature, SmFormFeature, SmVentFeature } from "./types";
 
 /** The few Modeller helpers the sheet metal code needs. */
 export interface SheetApi {
@@ -44,6 +44,11 @@ export function evalSheet(api: SheetApi, f: SheetFeature, doc: PartDoc, body: Na
     if (sm) throw new SheetError("E-SM-BASE2", "This part already has a base flange.");
     if (!body) throw new SheetError("E-SM-CONVBODY", "Make a solid to convert first.");
     return convertSolid(api, body, f);
+  }
+  if (f.type === "smrip") {
+    if (!body) throw new SheetError("E-SM-RIPBODY", "Make a thin-walled solid to rip first.");
+    if (sm?.unfold) throw new SheetError("E-SM-UNFOLDED", "Fold the bends back before adding sheet metal features.");
+    return { body: ripCut(api, body, f), sm };
   }
   if (!sm) throw new SheetError("E-SM-NOBASE", "Make a base flange first.");
   if (f.type === "smunfold" || f.type === "smfold") {
@@ -126,6 +131,76 @@ export function evalSheet(api: SheetApi, f: SheetFeature, doc: PartDoc, body: Na
   const { state, ops } = res;
   if (!body) throw new SheetError("E-SM-NOBASE", "Make a base flange first.");
   return { body: applyOps(api, body, ops, state.T, f.id), sm: state };
+}
+
+/**
+ * Rip: for each straight edge between two flat faces, a box `gap` wide is cut along it. Both directions: on the
+ * bisector of the faces, from just outside the edge across the corner until it leaves the material. One direction
+ * (inside corners only): along the chosen face's plane, on the other wall's side, through that wall's thickness.
+ */
+function ripCut(api: SheetApi, body: Named, f: SmRipFeature): Named {
+  const oc = api.oc;
+  const g = f.gap.v;
+  if (!(g > 0)) throw new SheetError("E-SM-RIPGAP", "The rip gap must be more than zero.");
+  if (!f.edges.length) throw new SheetError("E-SM-RIPEDGE", "Pick the corner edges to rip.");
+  const add = (a: V3, b: V3, k = 1): V3 => [a[0] + b[0] * k, a[1] + b[1] * k, a[2] + b[2] * k];
+  const inside = (p: V3) => new oc.BRepClass3d_SolidClassifier_3(body.shape, new oc.gp_Pnt_3(p[0], p[1], p[2]), 1e-7).State() === oc.TopAbs_State.TopAbs_IN;
+  // Where a ray from p along d leaves the material (marching, then bisecting), within `far`.
+  const exit = (p: V3, d: V3, far: number): number => {
+    const step = Math.max(g, far / 400);
+    let s = step / 4;
+    if (!inside(add(p, d, s))) return 0;
+    while (s < far && inside(add(p, d, s + step))) s += step;
+    let lo = s, hi = s + step;
+    for (let i = 0; i < 40; i++) { const mid = (lo + hi) / 2; if (inside(add(p, d, mid))) lo = mid; else hi = mid; }
+    return hi;
+  };
+  const bb = new oc.Bnd_Box_1();
+  oc.BRepBndLib.Add(body.shape, bb, false);
+  const far = Math.sqrt(bb.SquareExtent());
+  let out = body;
+  f.edges.forEach((ref, i) => {
+    const ed = api.edge(out, ref);
+    if (!ed) throw new SheetError("E-SM-RIPEDGE", "A rip edge is gone; pick it again.");
+    const cu = new oc.BRepAdaptor_Curve_2(ed);
+    if (cu.GetType() !== oc.GeomAbs_CurveType.GeomAbs_Line) throw new SheetError("E-SM-RIPLINE", "Rip straight edges only.");
+    const P = (q: any): V3 => [q.X(), q.Y(), q.Z()];
+    const a = P(cu.Value(cu.FirstParameter())), b = P(cu.Value(cu.LastParameter()));
+    const mid: V3 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2];
+    const e = unit3(sub3(b, a));
+    const pl = ref.faces.map(name => { const fc = api.face(out, { name, hint: mid }); return fc ? facePlane(api, fc) : null; });
+    if (!pl[0] || !pl[1]) throw new SheetError("E-SM-RIPFLAT", "Rip edges between two flat faces.");
+    const nA = pl[0].n, nB = pl[1].n;
+    if (Math.hypot(...cross3(nA, nB)) < 1e-6) throw new SheetError("E-SM-RIPFLAT", "Rip edges between two flat faces.");
+    // Inside corner: a point just off the edge towards A's material and B's open side lies in A's wall.
+    const eps = Math.min(g, far * 1e-4);
+    const concave = inside(add(mid, unit3(sub3(nB, nA)), eps));
+    let w: V3, d: V3, off0: number;
+    if (!f.side) {
+      d = unit3([-(nA[0] + nB[0]), -(nA[1] + nB[1]), -(nA[2] + nB[2])]);
+      w = unit3(cross3(e, d));
+      off0 = -g / 2;
+    } else {
+      if (!concave) throw new SheetError("E-SM-RIPSIDE", "One-direction rips need an inside corner edge; pick the inside edge or rip both ways.");
+      const [keep, other] = f.side === "a" ? [nA, nB] : [nB, nA];
+      // The slot lies on the kept face's plane, on its open side, and runs through the other wall.
+      w = keep; d = [-other[0], -other[1], -other[2]];
+      off0 = 0;
+    }
+    const depth = exit(add(mid, w, off0 + g / 2), d, far);
+    if (!(depth > 0)) throw new SheetError("E-SM-RIPMISS", "There is no wall behind a rip edge.");
+    // A rectangle across the edge at its start, swept along it.
+    const o = add(add(a, w, off0), d, -g);
+    const fr: Frame = { o, x: w, y: d, n: e };
+    const seg = (p: V2, q: V2): Seg => ({ ent: "", kind: "line", a: p, b: q });
+    const L = depth + 2 * g;
+    const loop: Seg[] = [seg([0, 0], [g, 0]), seg([g, 0], [g, L]), seg([g, L], [0, L]), seg([0, L], [0, 0])];
+    const len = Math.hypot(...sub3(b, a));
+    const shape = prism(api, faceOf(api, loop, [], fr), [e[0] * len, e[1] * len, e[2] * len]);
+    const faces = api.sub(shape, "FACE");
+    out = api.bool("cut", out, { shape, faces, names: faces.map((_f, k) => `${f.id}:r${i}:${k}`) }, f.id);
+  });
+  return out;
 }
 
 /** A flat face's plane with its outward normal (null when it isn't flat). */
