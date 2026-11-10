@@ -2014,7 +2014,7 @@ try {
       `model 1.375: a checked material shows the page its values were checked against (${JSON.stringify(refLink)})`);
     // 1.382.0: a material without a checked reference says so.
     const refNote = await mp.evaluate(() => !!document.querySelector("#mat-dlg .mat-unver"));
-    await mp.fill("#mat-q", "teak");
+    await mp.fill("#mat-q", "kevlar");
     const unver = await mp.evaluate(() => ({ note: document.querySelector("#mat-dlg .mat-unver")?.textContent ?? "", link: !!document.querySelector("#mat-dlg .mat-src a") }));
     check(!refNote && unver.note === "Not checked against a public reference yet." && !unver.link,
       `model 1.382: a material with no checked reference is marked as not checked (${refNote}, ${JSON.stringify(unver)})`);
@@ -8354,7 +8354,7 @@ try {
     await ctx.close();
   }
 
-  // --- 1.420: Selected Contours: extrude regions of a sketch whose lines cross or branch (FR-FT-010) ---
+  // --- 1.421: Selected Contours: extrude regions of a sketch whose lines cross or branch (FR-FT-010) ---
   if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
@@ -8389,7 +8389,7 @@ try {
     await settle();
     const done = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(x => x.type === "extrude"); return { contours: f.contours?.length, v: Math.round(window.__sv.model.last().props?.volume ?? 0), faces: window.__sv.model.last().data?.faces?.length ?? 0 }; });
     check(/focus/.test(open0.box ?? "") && open0.help === "contours" && one.n === 1 && !one.bad && one.v === 18000 && done.contours === 1 && done.v === 18000,
-      `model 1.420: Extrude on a sketch with a line across opens Selected Contours, a click in the view picks one region (FR-FT-010) (${JSON.stringify({ open0, one, done })})`);
+      `model 1.421: Extrude on a sketch with a line across opens Selected Contours, a click in the view picks one region (FR-FT-010) (${JSON.stringify({ open0, one, done })})`);
     await ctx.close();
   }
 
