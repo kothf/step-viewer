@@ -11661,6 +11661,81 @@ try {
     check(again.n === 3 && closed, `tutorial 1.381: the list follows the bracket's tab and ✕ closes it (${JSON.stringify({ again, closed })})`);
     await ctx.close();
   }
+  // 1.394 (FR-UI-091): touch: a finger held still opens the right-click menus, one finger orbits, two zoom.
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true });
+    const tp = await ctx.newPage();
+    tp.on("pageerror", e => errors.push(e.message));
+    tp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await tp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await tp.goto(`${origin}/index.html?debug&nokernel`);
+    await tp.waitForFunction(() => window.__sv);
+    await tp.click("#new-part");
+    await tp.waitForFunction(() => window.__sv.modeller.store?.doc);
+    await tp.evaluate(() => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), L = (id, a, b) => ({ id, t: "line", a, b });
+      window.__sv.modeller.store.change("Block", d => {
+        d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", 0, 0), P("b", 80, 0), P("c", 80, 50), P("d", 0, 50), L("l1", "a", "b"), L("l2", "b", "c"), L("l3", "c", "d"), L("l4", "d", "a")] });
+        d.features.push({ id: "e", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } });
+      });
+    });
+    await tp.waitForFunction(() => window.__sv.viewer.parts.length > 0 && window.__sv.modeller.last?.faceNames?.length, null, { timeout: 60000 });
+    await tp.waitForTimeout(600);
+    const cdp = await ctx.newCDPSession(tp);
+    const touch = (type, pts) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints: pts.map(([x, y], id) => ({ x, y, id })) });
+    const menuOpen = () => tp.evaluate(() => { const m = document.querySelector("#mc-menu"); return m && !m.hidden ? [...m.querySelectorAll("button")].map(b => b.textContent.trim()) : null; });
+    const row = await tp.evaluate(() => { const r = document.querySelector('#mc-tree .ft-row[data-id="e"]').getBoundingClientRect(); return [Math.round(r.left + 40), Math.round(r.top + r.height / 2)]; });
+    // A short tap opens no menu.
+    await touch("touchStart", [row]);
+    await tp.waitForTimeout(120);
+    await touch("touchEnd", []);
+    await tp.waitForTimeout(700);
+    const tapMenu = await menuOpen();
+    // Held still: the feature's menu; tapping Suppress in it suppresses the feature.
+    await touch("touchStart", [row]);
+    await tp.waitForFunction(() => { const m = document.querySelector("#mc-menu"); return m && !m.hidden; }, null, { timeout: 5000 });
+    const held = await menuOpen();
+    await touch("touchEnd", []);
+    await tp.waitForTimeout(500);
+    const still = await menuOpen();
+    const sup = await tp.evaluate(() => { const b = [...document.querySelectorAll("#mc-menu button")].find(b => b.textContent.trim() === "Suppress"); const r = b.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; });
+    await tp.touchscreen.tap(sup[0], sup[1]);
+    await tp.waitForFunction(() => window.__sv.modeller.store.doc.features.find(f => f.id === "e").suppressed === true, null, { timeout: 5000 });
+    check(tapMenu === null && held?.includes("Suppress") && still?.length === held.length, `touch 1.394: a finger held on a tree row opens its menu, a tap does not, and the menu stays when the finger lifts (${JSON.stringify({ tapMenu, held: held?.length, still: still?.length })})`);
+    await tp.evaluate(() => window.__sv.modeller.undo());
+    await tp.waitForFunction(() => !window.__sv.modeller.store.doc.features.find(f => f.id === "e").suppressed && window.__sv.viewer.parts.length > 0, null, { timeout: 30000 });
+    await tp.waitForTimeout(800);
+    // A finger that moves drops the press; it orbits instead. Two fingers moving apart zoom.
+    const cam = () => tp.evaluate(() => { const c = window.__sv.viewer.camera; return { p: c.position.toArray(), z: c.zoom, d: c.position.distanceTo(window.__sv.viewer.controls.target) }; });
+    const box = await tp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; });
+    const c0 = await cam();
+    await touch("touchStart", [box]);
+    for (let i = 1; i <= 8; i++) { await touch("touchMove", [[box[0] + i * 12, box[1] + i * 4]]); await tp.waitForTimeout(30); }
+    await tp.waitForTimeout(700);
+    const dragMenu = await menuOpen();
+    await touch("touchEnd", []);
+    await tp.waitForTimeout(300);
+    const c1 = await cam();
+    await touch("touchStart", [[box[0] - 40, box[1]], [box[0] + 40, box[1]]]);
+    for (let i = 1; i <= 8; i++) { await touch("touchMove", [[box[0] - 40 - i * 10, box[1]], [box[0] + 40 + i * 10, box[1]]]); await tp.waitForTimeout(30); }
+    await touch("touchEnd", []);
+    await tp.waitForTimeout(300);
+    const c2 = await cam();
+    const moved = Math.hypot(...c1.p.map((v, i) => v - c0.p[i])), dist = c => c.d / c.z;
+    check(dragMenu === null && moved > 1 && Math.abs(c1.z - c0.z) < 1e-9 && dist(c2) < dist(c1) * 0.9, `touch 1.394: one finger orbits and two fingers moving apart zoom in, with no menu (${JSON.stringify({ dragMenu, moved: +moved.toFixed(1), z: [c1.z, c2.z], d: [+dist(c1).toFixed(1), +dist(c2).toFixed(1)] })})`);
+    // Held on a face: the context toolbar, and lifting the finger leaves it there.
+    const mid = await tp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; });
+    await tp.evaluate(() => document.getElementById("mc-cbar")?.remove());
+    await touch("touchStart", [mid]);
+    await tp.waitForTimeout(350);
+    const early = await tp.evaluate(() => !!document.getElementById("mc-cbar"));
+    await tp.waitForFunction(() => !!document.getElementById("mc-cbar"), null, { timeout: 5000 });
+    await touch("touchEnd", []);
+    await tp.waitForTimeout(400);
+    const bar = await tp.evaluate(() => document.querySelectorAll("#mc-cbar button").length);
+    check(!early && bar > 0, `touch 1.394: a finger held on a face shows the context toolbar (${JSON.stringify({ early, bar })})`);
+    await ctx.close();
+  }
 } catch (err) {
   console.error(err);
   failures++;

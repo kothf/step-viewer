@@ -74,6 +74,7 @@ import { ModifyBox } from "../modifyBox";
 import { checkSketch, SKETCH_USES, type CheckResult, type SketchUse } from "../sketch/check";
 import { lang, onLangChange, t, withLang } from "../i18n";
 import { gestureSlot, loadGestures, GESTURE_SHOW, type GestureMode } from "../gestures";
+import { isLongPress } from "../longPress";
 import { gestureGuide } from "../gestureUi";
 import { autosaveDelay, getPref, loadPrefs, onPrefs, qualityFactor, stepFor, type Prefs } from "../prefs";
 
@@ -2215,6 +2216,15 @@ export class ModelController {
     vp.addEventListener("contextmenu", e => {
       // The edge helpers open on the button going up without a drag (a right-drag pans).
       const m = this.mode;
+      // A finger held still (FR-UI-091) opens what a right-click without a drag opens; lifting it then picks nothing.
+      if (isLongPress(e) && onCanvas(e) && this.active) {
+        e.preventDefault();
+        this.down = null;
+        if (m.kind === "sketch") this.sketchMenu(e);
+        else if (m.kind === "none") this.showContextBar({ x: e.clientX, y: e.clientY }, false);
+        else { this.rightHit = m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer") ? this.host.edgeAt(e.clientX, e.clientY) : null; if (!this.edgeMenu(e)) this.commandMenu(e); }
+        return;
+      }
       if (onCanvas(e) && (m.kind === "sketch" || (m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer")))) e.preventDefault();
     }, true);
     vp.addEventListener("dblclick", e => {

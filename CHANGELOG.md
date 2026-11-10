@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.394.0] - 2026-11-10
+
+### Added
+
+- **Touch gestures (FR-UI-091)**: on a tablet, holding a finger still for about half a second opens the menu a right-click opens: on a Features tree row, an assembly component, a selection breadcrumb, the rollback bar or a motion study lane. Held on a face it shows the context toolbar, and while a command runs it gives OK and Cancel, the fillet edge helpers or the sketch menu. One finger turns the view and two fingers pan and zoom it, as before; a finger that moves never opens a menu.
+
 ## [1.393.0] - 2026-11-10
 
 ### Added
@@ -2312,7 +2318,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.393.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.394.0...HEAD
+[1.394.0]: https://github.com/kothf/step-viewer/compare/v1.393.0...v1.394.0
 [1.393.0]: https://github.com/kothf/step-viewer/compare/v1.392.0...v1.393.0
 [1.392.0]: https://github.com/kothf/step-viewer/compare/v1.391.0...v1.392.0
 [1.391.0]: https://github.com/kothf/step-viewer/compare/v1.390.0...v1.391.0
