@@ -284,7 +284,7 @@ function okHead(title: string, o: { ok?: string; okKey?: string; cancelKey?: str
 function defineRecognised(feats: Feature[]) {
   feats.forEach((f, i) => {
     if (f.type !== "sketch") return;
-    try { feats[i] = fullyDefineSketch(f).sketch; } catch { /* keep it as found */ }
+    try { feats[i] = fullyDefineSketch(f, { sizes: true }).sketch; } catch { /* keep it as found */ }
   });
 }
 

@@ -29,9 +29,12 @@ export function nextDimName(sk: SketchFeature): string {
  * Adds horizontal/vertical relations to lines within 1° of the axes, diameters of circles and radii of arcs, then
  * horizontal and vertical dimensions from the origin to each point (centres first, then curve points, then free
  * points; nearest the origin first in each), keeping only items that remove freedom, until nothing is free.
+ * With `sizes` (feature recognition, as FeatureWorks dimensions a sketch) the lengths of horizontal and vertical
+ * lines come before the origin dimensions, longest first, so a rectangle gets its width and height and one corner's
+ * place instead of four distances from the origin.
  * The sketch passed in is left alone; `added` = how many items the returned copy has more.
  */
-export function fullyDefineSketch(sk0: SketchFeature): { sketch: SketchFeature; added: number } {
+export function fullyDefineSketch(sk0: SketchFeature, opts: { sizes?: boolean } = {}): { sketch: SketchFeature; added: number } {
   const start = solve(sk0);
   if (start.status !== "ok" || start.dof === 0) return { sketch: sk0, added: 0 };
   let sk = sk0, dof = start.dof, added = 0;
@@ -74,6 +77,22 @@ export function fullyDefineSketch(sk0: SketchFeature): { sketch: SketchFeature; 
     if (sk.dims.some(d => (d.t === "radius" || d.t === "diameter") && d.e[0] === e.id)) continue;
     const c = P(e.c), r = e.t === "circle" ? e.r : Math.hypot(P(e.a)[0] - c[0], P(e.a)[1] - c[1]);
     dim(e.t === "circle" ? "diameter" : "radius", [e.id], [c[0] + r * 0.9, c[1] + r * 0.9]);
+  }
+  if (opts.sizes) {
+    const cx = (x0 + Math.max(...xs)) / 2, cy = (y0 + Math.max(...ys)) / 2;
+    const hv = new Set(sk.rels.filter(r => (r.t === "horizontal" || r.t === "vertical") && r.e.length === 1).map(r => r.e[0]));
+    const lines = sk0.ents.filter((e): e is SkEnt & { t: "line" } => e.t === "line" && !e.cons && hv.has(e.id))
+      .map(e => { const a = P(e.a), b = P(e.b); return { e, a, b, L: Math.hypot(b[0] - a[0], b[1] - a[1]) }; })
+      .sort((p, q) => q.L - p.L);
+    for (const { e, a, b, L } of lines) {
+      if (dof === 0) break;
+      if (sk.dims.some(d => d.t === "distance" && d.e.length === 1 && d.e[0] === e.id)) continue;
+      // Text beside the line's middle, on the side away from the middle of the sketch.
+      const m: V2 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      let n: V2 = [-(b[1] - a[1]) / L, (b[0] - a[0]) / L];
+      if (n[0] * (m[0] - cx) + n[1] * (m[1] - cy) < 0) n = [-n[0], -n[1]];
+      dim("distance", [e.id], [m[0] + n[0] * gap, m[1] + n[1] * gap]);
+    }
   }
   // Defining points first, as SolidWorks does: arc and circle centres and the ends of construction lines
   // (a slot's centreline), then other curve points, then free points; nearest the origin first in each.

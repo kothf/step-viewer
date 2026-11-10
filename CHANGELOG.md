@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.470.0] - 2026-11-10
+
+### Changed
+
+- **Recognised sketches dimensioned the way FeatureWorks does (FR-FT-102)**: the sketches that Recognize Features and Recognize Extrudes make now get the lengths of their horizontal and vertical edges first, longest first, and only then the distances from the origin that are still needed. A rectangle gets its width and height and one corner's place, instead of four distances from the origin. Fully Define Sketch in the sketcher keeps dimensioning from the origin, as SolidWorks does by default.
+
 ## [1.469.0] - 2026-11-10
 
 ### Changed
@@ -2843,6 +2849,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.469.0...HEAD
+[1.470.0]: https://github.com/kothf/step-viewer/compare/v1.469.0...v1.470.0
 [1.469.0]: https://github.com/kothf/step-viewer/compare/v1.468.0...v1.469.0
 [1.468.0]: https://github.com/kothf/step-viewer/compare/v1.467.0...v1.468.0
 [1.467.0]: https://github.com/kothf/step-viewer/compare/v1.466.0...v1.467.0
