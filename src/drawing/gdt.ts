@@ -82,7 +82,12 @@ export function gtolPrims(a: GtolAnnot, at: P2, to: P2 | null, dec: string): { p
     out.push(L(s, knee), L(knee, to), arrowHead(to[0], to[1], (to[0] - knee[0]) / dl, (to[1] - knee[1]) / dl, 3, 1));
     if (a.around) out.push(C(knee, 1.5));
   }
-  return { prims: out, box: [at[0], at[1] - a.rows.length * ROW, at[0] + wMax, at[1]] };
+  // Text above the frame ("2×", "4× Ø6 H7") and below it ("SEP REQT"), left-aligned with it.
+  const hb = 2.5, yb = at[1] - a.rows.length * ROW;
+  if (a.above) out.push(T(at[0], at[1] + 1, a.above, hb, "l"));
+  if (a.below) out.push(T(at[0], yb - hb - 1, a.below, hb, "l"));
+  const wText = Math.max(a.above ? tw(a.above, hb) : 0, a.below ? tw(a.below, hb) : 0);
+  return { prims: out, box: [at[0], yb - (a.below ? hb + 1.5 : 0), at[0] + Math.max(wMax, wText), at[1] + (a.above ? hb + 1.5 : 0)] };
 }
 
 /** A datum feature (`base` null: its edge is gone): a filled triangle on the edge at `base` (edge direction `d`), a line to the framed letter at `at`. */
