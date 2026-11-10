@@ -9592,6 +9592,33 @@ try {
     check(!kw0.bad && kw0.v > 9000 && kw0.v < 9300 && Math.abs(kw1.v - kw0.v) < 0.1 && !kw1.bad && kw1.types === "import,sketch,extrude,delbody,plane,sketch,extrude"
       && kwCut?.op === "cut" && kwCut.depth === 3.5,
       `model 1.484.0: Recognize Features makes a keyway in an imported shaft again as a tangent plane, sketch and blind cut (FR-FT-102) (${JSON.stringify({ kw0, kw1, kwCut })})`);
+    // 1.485.0: a keyway running out through the shaft's end (round end at z = 20, open at z = 30).
+    await mp.evaluate(() => window.__sv.model.store.change("Open keyway", d => {
+      const xy = [[0, 0], [10, 0], [10, 30], [0, 30]];
+      const ents = xy.map(([x, y], i) => ({ id: "rp" + i, t: "point", x, y }));
+      xy.forEach((_, i) => ents.push({ id: "rl" + i, t: "line", a: "rp" + i, b: "rp" + ((i + 1) % 4) }));
+      ents.push({ id: "ra", t: "point", x: 0, y: -5 }, { id: "rb", t: "point", x: 0, y: 35 }, { id: "rax", t: "line", a: "ra", b: "rb", cons: true });
+      const P = (id, x, y) => ({ id, t: "point", x, y });
+      d.features = [{ id: "r", type: "sketch", name: "Sketch1", plane: { std: "XZ" }, ents, rels: [], dims: [] },
+        { id: "v", type: "revolve", name: "Revolve1", sketch: "r", op: "boss", axis: "rax", angle: { v: Math.PI * 2 } },
+        { id: "p", type: "plane", name: "Plane1", base: { std: "XZ" }, mode: "offset", offset: { v: 10 } },
+        { id: "k", type: "sketch", name: "Sketch2", plane: { plane: "p" }, rels: [], dims: [], ents: [P("c", 0, 20), P("a1", 3, 20), P("a2", 3, 35), P("b2", -3, 35), P("b1", -3, 20),
+          { id: "l1", t: "line", a: "a1", b: "a2" }, { id: "l2", t: "line", a: "a2", b: "b2" }, { id: "l3", t: "line", a: "b2", b: "b1" }, { id: "q", t: "arc", c: "c", a: "b1", b: "a1" }] },
+        { id: "c", type: "extrude", name: "Cut-Extrude1", sketch: "k", op: "cut", end: "blind", depth: { v: 3 } }];
+    }));
+    await settle();
+    const ok0 = await state();
+    const brepOk = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "keyway2.brep", brep }]; }), brepOk);
+    await settle();
+    await runCmd(mp, "Recognize Features");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.length > 1, null, { timeout: 120000 });
+    await settle();
+    const ok1 = await state();
+    const okCut = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.filter(f => f.type === "extrude").at(-1); return f && { op: f.op, depth: +f.depth.v.toFixed(4) }; });
+    check(!ok0.bad && ok0.v > 9000 && ok0.v < 9400 && Math.abs(ok1.v - ok0.v) < 0.1 && !ok1.bad && ok1.types === "import,sketch,extrude,delbody,plane,sketch,extrude"
+      && okCut?.op === "cut" && okCut.depth === 3,
+      `model 1.485.0: Recognize Features makes a keyway running out through an imported shaft's end again as a tangent plane, sketch and blind cut (FR-FT-102) (${JSON.stringify({ ok0, ok1, okCut })})`);
     await ctx.close();
   }
 

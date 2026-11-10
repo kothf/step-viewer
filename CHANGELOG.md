@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.485.0] - 2026-11-10
+
+### Added
+
+- Recognize Extrudes and Recognize Features also bring back a keyway that runs out through the end of a shaft (FR-FT-102): the outline's open side lies on the shaft's end face, so it is sketched there and the blind Extruded Cut leaves the end open as before. Before, only keyways closed all round were recognised.
+
 ## [1.484.0] - 2026-11-10
 
 ### Added
@@ -2972,7 +2978,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.484.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.485.0...HEAD
+[1.485.0]: https://github.com/kothf/step-viewer/compare/v1.484.0...v1.485.0
 [1.484.0]: https://github.com/kothf/step-viewer/compare/v1.483.0...v1.484.0
 [1.483.0]: https://github.com/kothf/step-viewer/compare/v1.482.0...v1.483.0
 [1.482.0]: https://github.com/kothf/step-viewer/compare/v1.481.0...v1.482.0
