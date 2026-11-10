@@ -4045,7 +4045,28 @@ export class Modeller {
         fr = { o: mul(F.n, h), x: F.x, y: F.y, n: F.n };
       }
     }
-    if (!plane || !fr) return null;
+    const lead2: Feature[] = [];
+    if (!plane || !fr) {
+      // A skew axis (FR-FT-102): a plane at an angle about Z that holds the axis's direction (its normal is the
+      // horizontal square to it), moved along its normal up to the axis when it misses it.
+      const Z: V3 = [0, 0, 1], hz = sub3(d, mul(Z, d[2]));
+      if (Math.hypot(...hz) < 1e-9) return null;
+      const m = unit(cross(Z, unit(hz)));
+      const base = Math.abs(m[0]) >= Math.abs(m[1]) ? "YZ" as const : "XZ" as const, n0 = STD_FRAMES[base].n;
+      const mm = dot(n0, m) < 0 ? mul(m, -1) : m, ang = Math.atan2(dot(mm, cross(Z, n0)), dot(mm, n0));
+      const p1 = { id: id(), type: "plane", name: "", base: { std: base }, mode: "angle", offset: { v: 0 }, angle: { v: Math.abs(ang) }, about: { std: "Z" }, ...(ang < 0 ? { flip: true } : {}) } as PlaneFeature;
+      const f1 = this.refPlane(p1, body, {});
+      if (Math.abs(dot(f1.n, d)) > 1e-9) return null;
+      lead2.push(p1);
+      const h = dot(sub3(A, f1.o), f1.n);
+      if (Math.abs(h) <= tol) { plane = { plane: p1.id }; fr = f1; }
+      else {
+        const p2 = { id: id(), type: "plane", name: "", base: { plane: p1.id }, mode: "offset", offset: { v: Math.abs(h) }, ...(h < 0 ? { flip: true } : {}) } as PlaneFeature;
+        fr = this.refPlane(p2, body, { [p1.id]: f1 });
+        lead2.push(p2);
+        plane = { plane: p2.id };
+      }
+    }
     // Half of the section through the axis: the body cut by a big rectangle that starts on the axis.
     const u = unit(cross(fr.n, d)), L = size * 4 + 1;
     const corner = (a: number, b: number) => this.P(add(add(A, mul(d, a * L)), mul(u, b * L)));
@@ -4073,7 +4094,7 @@ export class Modeller {
     // The centreline runs a little past the profile, so it shares no point with it.
     const pad = Math.max(1, (hi - lo) * 0.1), axis = `${sid}ax`;
     ents.push({ id: axis, t: "line", a: pt(add(A, mul(d, lo - pad))), b: pt(add(A, mul(d, hi + pad))), cons: true });
-    const out: Feature[] = [...(ref ? [ref] : []),
+    const out: Feature[] = [...(lead2.length ? lead2 : ref ? [ref] : []),
       { id: sid, type: "sketch", name: "", plane, ents, rels: [], dims: [] } as Feature,
       { id: id(), type: "revolve", name: "", sketch: sid, op: "boss", merge: false, axis, angle: { v: Math.PI * 2 } } as Feature,
       { id: id(), type: "delbody", name: "", bodies: [{ name: start.body.names[0], hint: this.centroid(start.body.faces[0]) }] } as Feature];

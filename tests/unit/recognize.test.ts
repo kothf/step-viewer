@@ -283,11 +283,13 @@ test("feature recognition: the base of an imported prism comes back as a sketch 
 test("feature recognition: the base of an imported body of revolution comes back as a sketch with a revolve (FR-FT-102)", async () => {
   const m = new Modeller(await occ());
   // A stepped shaft with a cone, turned about Z; `x0` moves the axis, `bore` keeps the profile off it.
-  const shaft = (plane: SketchFeature["plane"], x0 = 0, bore = 0): Feature[] => {
+  const shaft = (plane: SketchFeature["plane"], x0 = 0, bore = 0, tilt = 0): Feature[] => {
     const xy: [number, number][] = [[bore, 0], [10, 0], [10, 20], [6, 26], [6, 40], [bore, 40]];
-    const ents: SkEnt[] = xy.map(([x, y], i) => ({ id: `rp${i}`, t: "point", x: x + x0, y }) as SkEnt);
+    // `tilt` turns the whole profile and its axis in the sketch plane.
+    const c = Math.cos(tilt), s = Math.sin(tilt), at = (x: number, y: number) => ({ x: x0 + x * c - y * s, y: x * s + y * c });
+    const ents: SkEnt[] = xy.map(([x, y], i) => ({ id: `rp${i}`, t: "point", ...at(x, y) }) as SkEnt);
     xy.forEach((_, i) => ents.push({ id: `rl${i}`, t: "line", a: `rp${i}`, b: `rp${(i + 1) % xy.length}` }));
-    ents.push({ id: "ra", t: "point", x: x0, y: -5 }, { id: "rb", t: "point", x: x0, y: 45 }, { id: "rax", t: "line", a: "ra", b: "rb", cons: true });
+    ents.push({ id: "ra", t: "point", ...at(0, -5) }, { id: "rb", t: "point", ...at(0, 45) }, { id: "rax", t: "line", a: "ra", b: "rb", cons: true });
     return [{ id: "r", type: "sketch", name: "r", plane, ents, rels: [], dims: [] },
       { id: "v", type: "revolve", name: "V", sketch: "r", op: "boss", axis: "rax", angle: { v: Math.PI * 2 } } as Feature];
   };
@@ -314,6 +316,12 @@ test("feature recognition: the base of an imported body of revolution comes back
   const pl = { id: "pl", type: "plane", name: "pl", base: { std: "XZ" }, mode: "offset", offset: { v: 20 } } as Feature;
   const f3 = back(imported(m, [pl, ...shaft({ plane: "pl" }, 30)]), "plane,sketch,revolve,delbody");
   close((f3[0] as any).offset.v, 20);
+  // A skew axis (tilted out of every standard plane): a plane about Z holding its direction, offset up to it.
+  const pa = { id: "pa", type: "plane", name: "pa", base: { std: "YZ" }, mode: "angle", offset: { v: 0 }, angle: { v: Math.PI / 6 }, about: { std: "Z" } } as Feature;
+  const pb = { id: "pb", type: "plane", name: "pb", base: { plane: "pa" }, mode: "offset", offset: { v: 7 } } as Feature;
+  const f6 = back(imported(m, [pa, pb, ...shaft({ plane: "pb" }, 3, 0, 25 * Math.PI / 180)]), "plane,plane,sketch,revolve,delbody");
+  assert.equal((f6[0] as any).about?.std, "Z");
+  close((f6[1] as any).offset.v, 7);
   // A pocket in the end face goes back on the new body.
   const top = { id: "pt", type: "plane", name: "pt", base: { std: "XY" }, mode: "offset", offset: { v: 40 } } as Feature;
   const q = { ...rect("q", 4, 3), plane: { plane: "pt" } } as SketchFeature;

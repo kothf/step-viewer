@@ -9682,6 +9682,29 @@ try {
     const cp1 = await state();
     check(!!cpF && !cp0.bad && cp0.v > 9000 && cp0.v < 9300 && Math.abs(cp1.v - cp0.v) < 0.1 && !cp1.bad && cp1.types === "import,sketch,extrude,delbody,plane,axis,plane,sketch,extrude",
       `model 1.488.0: Recognize Features makes a cross hole at a compound angle again on a plane about an axis (FR-FT-102) (${JSON.stringify({ cp0, cp1, cpXY })})`);
+    // 1.488.0: a shaft turned about a skew axis comes back as a plane about Z, an offset plane, a sketch and a revolve.
+    await mp.evaluate(() => window.__sv.model.store.change("Skew shaft", d => {
+      const c = Math.cos(25 * Math.PI / 180), s = Math.sin(25 * Math.PI / 180), at = (x, y) => ({ x: 3 + x * c - y * s, y: x * s + y * c });
+      const xy = [[0, 0], [10, 0], [10, 20], [6, 26], [6, 40], [0, 40]];
+      const ents = xy.map(([x, y], i) => ({ id: "rp" + i, t: "point", ...at(x, y) }));
+      xy.forEach((_, i) => ents.push({ id: "rl" + i, t: "line", a: "rp" + i, b: "rp" + ((i + 1) % xy.length) }));
+      ents.push({ id: "ra", t: "point", ...at(0, -5) }, { id: "rb", t: "point", ...at(0, 45) }, { id: "rax", t: "line", a: "ra", b: "rb", cons: true });
+      d.features = [{ id: "pa", type: "plane", name: "Plane1", base: { std: "YZ" }, mode: "angle", offset: { v: 0 }, angle: { v: Math.PI / 6 }, about: { std: "Z" } },
+        { id: "pb", type: "plane", name: "Plane2", base: { plane: "pa" }, mode: "offset", offset: { v: 7 } },
+        { id: "r", type: "sketch", name: "Sketch1", plane: { plane: "pb" }, ents, rels: [], dims: [] },
+        { id: "v", type: "revolve", name: "Revolve1", sketch: "r", op: "boss", axis: "rax", angle: { v: Math.PI * 2 } }];
+    }));
+    await settle();
+    const sw0 = await state();
+    const brepSw = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "skew.brep", brep }]; }), brepSw);
+    await settle();
+    await runCmd(mp, "Recognize Features");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.length > 1, null, { timeout: 120000 });
+    await settle();
+    const sw1 = await state();
+    check(!sw0.bad && sw0.v > 8000 && Math.abs(sw1.v - sw0.v) < 0.1 && !sw1.bad && sw1.types === "import,plane,plane,sketch,revolve,delbody",
+      `model 1.488.0: Recognize Features makes a shaft turned about a skew axis again as a sketch on a plane about Z and a revolve (FR-FT-102) (${JSON.stringify({ sw0, sw1 })})`);
     await ctx.close();
   }
 

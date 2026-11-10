@@ -11,6 +11,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - Recognize Holes and Recognize Features also bring back cross holes at a compound angle, tilted in two directions at once (FR-FT-102): the plane square to the hole is built the way it is in SolidWorks, a Plane at an angle about Z, a reference Axis where that plane meets XY, and a Plane at an angle about that axis. Before, such holes stayed part of the imported body.
 
+- Recognize Extrudes and Recognize Features bring back turned bases whose axis is skew, tilted out of every standard plane (FR-FT-102): the half section is sketched on a Plane at an angle about Z that holds the axis's direction, offset up to the axis when needed, then revolved. Before, such bodies stayed imported.
+
 ### Fixed
 
 - Recognize Holes counted cross holes and keyways wrongly in its message (each was counted by its number of features).
