@@ -9540,11 +9540,13 @@ try {
     await mp.dispatchEvent('#wld-cut input[data-wbar="len"]', "change");
     await settle();
     const bars = await mp.evaluate(() => [...document.querySelectorAll("#wld-cut tr[data-stock]")].map(tr => [...tr.children].map(td => td.textContent)));
+    const plan = await mp.evaluate(() => [...document.querySelectorAll("#wld-cut .wld-plan li[data-wplan]")].map(li => li.textContent));
     await mp.fill('#wld-cut input[data-wbar="len"]', "");
     await mp.dispatchEvent('#wld-cut input[data-wbar="len"]', "change");
     await settle();
     const bars0 = await mp.evaluate(() => document.querySelectorAll("#wld-cut tr[data-stock] [data-wbars]").length);
     check(bars.length === stock.length && bars.every(r => r.length === 5 && Number(r[3]) >= 1) && bars0 === 0, `weldments: bars to buy from a stock bar length (${JSON.stringify({ bars, bars0 })})`);
+    check(plan.length >= 1 && plan.every(x => /\d/.test(x)), `weldments: cutting plan under the stock lengths (${JSON.stringify(plan)})`);
     await mp.check('#wld-cut input[data-cp="excl"][data-ci="1"]');
     await settle();
     const ex = await mp.evaluate(() => { const tr = document.querySelectorAll("#wld-cut tbody tr")[1]; return { item: tr.querySelector("[data-witem]")?.textContent, cls: tr.classList.contains("wld-excl"), excl: Object.values(window.__sv.model.store.doc.cutProps ?? {}).some(p => p.excl) }; });
