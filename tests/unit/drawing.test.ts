@@ -314,6 +314,16 @@ test("GD&T, datums, surface finish, tables, GOST title block, dangling annotatio
   const s = surfPrims({ id: "s", t: "surf", pos: [0, 0], proc: "removal", text: "Ra 3.2" }, [0, 0], ",");
   assert.equal(s.prims.filter(p => p.t === "l").length, 4);
   assert.ok(s.prims.some(p => p.t === "t" && p.s === "Ra 3,2"));
+  // Options: a second requirement lengthens the long leg, the lay symbol and the allowance sit by the legs, the circle = all around.
+  const s2 = surfPrims({ id: "s", t: "surf", pos: [0, 0], proc: "removal", text: "Ra 3.2", text2: "Rz 6.3", lay: "⊥", allow: "0.5", around: true }, [0, 0], ",");
+  const st = s2.prims.filter(p => p.t === "t") as { s: string; x: number; y: number; al?: string }[];
+  assert.deepEqual(st.map(p => p.s), ["Ra 3,2", "Rz 6,3", "⊥", "0,5"]);
+  const top = 14 * Math.sin(Math.PI / 3);
+  assert.ok(Math.abs(st[0].y - (top - 3.6)) < 1e-9 && Math.abs(st[1].y - (top - 7.2)) < 1e-9 && st[1].y > 3.1);
+  assert.ok(st[2].x > 0 && st[3].x < 0 && st[3].al === "r");
+  const ring = s2.prims.find(p => p.t === "a" && p.r === 1) as { o: number[] };
+  assert.ok(Math.abs(ring.o[0] - 7) < 1e-9 && Math.abs(ring.o[1] - top) < 1e-9);
+  assert.ok(s2.box[0] < s.box[0] && s2.box[3] > s.box[3]);
   // A revision table anchored at its top-right corner grows to the left; headers are translated.
   const tb = tablePrims({ id: "t", t: "table", kind: "rev", anchor: "tr", pos: [400, 287], title: "REVISIONS", cols: ["Rev.", "Column 2"], rows: [["A", "x"]] }, (k, p) => (k === "Column {n}" ? `C${p!.n}` : k.toLowerCase()));
   assert.equal(tb.box[2], 400);

@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.422.0] - 2026-11-10
+## [1.424.0] - 2026-11-10
 
 ### Fixed
 
@@ -17,6 +17,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Added
 
 - **Rename mates** (#80): **Rename** in a mate's menu in the assembly tree.
+
+## [1.423.0] - 2026-11-10
+
+### Added
+
+- **Surface finish options (FR-DRW-023)**: a drawing's surface finish symbol can carry a **Second requirement** under the first, a **Lay** symbol (=, ⊥, X, M, C, R, P), a **Machining allowance** and the **All around** circle, laid out as in ISO 1302.
+
+## [1.422.0] - 2026-11-10
+
+### Added
+
+- **Cut list table on drawings (FR-FT-121)**: Annotate ▾ **Cut list table** puts a weldment's cut list on the sheet, like SolidWorks' Weldment Cut List table: click a view of the weldment, then place the table. It lists each item with the number it has in the Cut List dialog, its quantity, its description (the one typed for the item, else the profile, plate size or weld), the length and both end angles of each member. Select it to leave out the weld beads (they have the weld table) or add a mass column; excluded items are left out, and the table follows the part.
 
 ## [1.421.0] - 2026-11-10
 
@@ -2505,7 +2517,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.422.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.424.0...HEAD
+[1.424.0]: https://github.com/kothf/step-viewer/compare/v1.423.0...v1.424.0
+[1.423.0]: https://github.com/kothf/step-viewer/compare/v1.422.0...v1.423.0
 [1.422.0]: https://github.com/kothf/step-viewer/compare/v1.421.0...v1.422.0
 [1.421.0]: https://github.com/kothf/step-viewer/compare/v1.420.0...v1.421.0
 [1.420.0]: https://github.com/kothf/step-viewer/compare/v1.419.0...v1.420.0

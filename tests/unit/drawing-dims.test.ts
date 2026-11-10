@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { MEdge, Projection, Topo, V3 } from "../../src/kernel/drawing";
-import { bendRows, weldRows, dimGeo, dimPrims, dimText, holeEdges, holeRows, viewAnnots, type AnnotCtx } from "../../src/drawing/annot";
+import { bendRows, cutCols, cutRows, weldRows, dimGeo, dimPrims, dimText, holeEdges, holeRows, viewAnnots, type AnnotCtx } from "../../src/drawing/annot";
 import { placement } from "../../src/drawing/compose";
 import type { DimAnnot, DrawingView, GeoRef, Sheet } from "../../src/drawing/types";
 
@@ -134,4 +134,29 @@ test("weld table: one row per kind of bead (continuous, intermittent, staggered,
   const tx = viewAnnots(sh, view, pl, ctx).prims.filter(p => p.t === "t").map(p => (p as { s: string }).s);
   assert.ok(["Item", "Weld", "Leg", "Length", "Qty", "z5×8", "Total"].every(s => tx.includes(s)), tx.join(" "));
   assert.deepEqual(viewAnnots(sh, view, pl, { ...ctx, welds: [] }).dangling, ["w"]);
+});
+
+test("cut list table: the cut list's items with their numbers, typed descriptions, lengths and end angles (FR-FT-121)", () => {
+  const cuts = [
+    { item: 1, kind: "member" as const, desc: "SHS 40x40x3", length: 300.25, a1: 45, a2: 0, qty: 4, kg: 1.0512 },
+    { item: 2, kind: "plate" as const, desc: "10", plate: [200, 150, 10] as [number, number, number], qty: 1, kg: 2.356 },
+    { item: 3, kind: "member" as const, desc: "Leg", own: true, length: 500, a1: 0, a2: 0, qty: 2, kg: 1.75 },
+    { item: 4, kind: "bead" as const, desc: "4.5", length: 149.7, qty: 1, kg: 0.01 },
+    { item: 5, kind: "bead" as const, desc: "3", length: 60, qty: 1, kg: 0.005, inter: [20, 50, 1] as [number, number, 1] },
+  ];
+  const ctx: AnnotCtx = { topo: { edges: [], cyls: [] }, holes: [], cuts, items: [], box: null, dec: ",", label: (s, p) => s.replace(/\{(\w+)\}/g, (_m, k) => p?.[k] ?? "") };
+  const a = { id: "c", t: "ctable" as const, view: "v", pos: [0, -40] as [number, number] };
+  assert.deepEqual(cutCols(a), ["Item", "Qty", "Description", "Length", "Angle 1", "Angle 2"]);
+  assert.deepEqual(cutRows(a, cuts, ctx), [
+    ["1", "4", "SHS 40x40x3", "300,25", "45°", "0°"], ["2", "1", "Plate 10 × 200 × 150", "", "", ""],
+    ["3", "2", "Leg", "500", "0°", "0°"], ["4", "1", "Fillet weld, leg 4,5", "149,7", "", ""],
+    ["5", "1", "Staggered fillet weld, leg 3, 20 every 50", "60", "", ""],
+  ]);
+  const m = { ...a, beads: false, mass: true };
+  assert.deepEqual(cutCols(m).at(-1), "Mass (kg)");
+  assert.deepEqual(cutRows(m, cuts, ctx).map(r => [r[0], r[6]]), [["1", "1,05"], ["2", "2,36"], ["3", "1,75"]], "beads left out, numbers kept, mass each");
+  const sh = { ...sheet, views: [view], annots: [a] } as unknown as Sheet;
+  const out = viewAnnots(sh, view, pl, ctx), tx = out.prims.filter(p => p.t === "t").map(p => (p as { s: string }).s);
+  assert.ok(["Item", "Qty", "Description", "Angle 1", "SHS 40x40x3", "Plate 10 × 200 × 150"].every(s => tx.includes(s)), tx.join(" "));
+  assert.deepEqual(viewAnnots(sh, view, pl, { ...ctx, cuts: [] }).dangling, ["c"]);
 });
