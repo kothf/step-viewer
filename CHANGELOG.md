@@ -5,11 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.395.0] - 2026-11-10
+## [1.396.0] - 2026-11-10
 
 ### Added
 
 - **Recognize Fillets finds more chamfers (FR-FT-102)**: chamfers on round edges, such as the broken edge of a shaft end or a boss, and chamfers with two different distances now come back as Chamfer features too, with their distances, so they can be changed or deleted on an imported body.
+
+## [1.395.0] - 2026-11-10
+
+### Changed
+
+- CI: on main the run in progress finishes and only the newest commit pushed meanwhile waits for a run, so main CI no longer queues behind every merge. A newer push to a PR still cancels its older run.
 
 ## [1.394.0] - 2026-11-10
 
@@ -2324,7 +2330,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.395.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.396.0...HEAD
+[1.396.0]: https://github.com/kothf/step-viewer/compare/v1.395.0...v1.396.0
 [1.395.0]: https://github.com/kothf/step-viewer/compare/v1.394.0...v1.395.0
 [1.394.0]: https://github.com/kothf/step-viewer/compare/v1.393.0...v1.394.0
 [1.393.0]: https://github.com/kothf/step-viewer/compare/v1.392.0...v1.393.0
