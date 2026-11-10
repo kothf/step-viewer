@@ -386,12 +386,13 @@ export function edgeFlange(prev: SheetState, f: SmFlangeFeature): { state: Sheet
   // Picked edges meeting at a corner of the same face: their flanges run on past it and are mitred (SolidWorks).
   const corners = off0 > 1e-9 || off1 > 1e-9 ? [] : flangeCorners(st, f.edges.map(x => x.faces));
   const E = 2 * (s + d + bendAllowance(st, angle, r) + 2 * st.T);
+  const mids = f.edges.map(x => edgeMid(st, x.faces));
   f.edges.forEach((ref, i) => ops.push(...addFlange(st, ref.faces, {
     angle, r, s, d, off0, off1, flip: !!f.flip,
     ext0: corners.some(c => c[1] === i) ? E : 0, ext1: corners.some(c => c[0] === i) ? E : 0,
   }, `${f.id}:p${i}`, `${f.id}:b${i}`)));
   const gap = Math.max(f.gap?.v ?? 0.1, 0);
-  for (const [i, j] of corners) mitre(st, `${f.id}:p${i}`, `${f.id}:p${j}`, gap);
+  for (const [i, j] of corners) mitre(st, `${f.id}:p${i}`, `${f.id}:p${j}`, gap, [mids[i], mids[j]]);
   return { state: st, ops };
 }
 
@@ -405,10 +406,9 @@ export function convertFlanges(prev: SheetState, items: { faces: [string, string
   const r = st.R, T = st.T;
   const corners = flangeCorners(st, items.map(x => x.faces));
   const ops: SheetOp[] = [];
-  let extra = 0;
-  items.forEach((it, i) => {
-    // Every wall in the chain: the first one's length runs from the fixed face's edge, as do the later lines, all on
-    // the first bend's outside; later bends turning the same way have it outside too, the others inside.
+  // Every wall in each chain: the first one's length runs from the fixed face's edge, as do the later lines, all on
+  // the first bend's outside; later bends turning the same way have it outside too, the others inside.
+  const chains = items.map(it => {
     const levels: ConvertLevel[] = [{ angle: it.angle, L: it.length, same: true, up: true }, ...(it.more ?? [])];
     for (const x of levels) if (!(x.angle > 1e-6 && x.angle < Math.PI - 1e-3)) throw new SheetError("E-SM-CONVANGLE", "The faces at a bend edge must meet at an angle between 0° and 180°.");
     const back = levels.map(x => x.same ? outerSetback(T, x.angle, r) : innerSetback(x.angle, r));
@@ -416,22 +416,52 @@ export function convertFlanges(prev: SheetState, items: { faces: [string, string
     levels.forEach((_x, k) => {
       if (!(flat[k] - (back[k + 1] ?? 0) > 1e-6)) throw new SheetError("E-SM-CONVSHORT", "A wall is too short for its bends.");
     });
-    const E = 2 * (flat[0] + back[0] + bendAllowance(st, it.angle, r) + 2 * T);
-    let pid = `${fid}:p${i + 1}`;
-    ops.push(...addFlange(st, it.faces, {
-      angle: it.angle, r, s: flat[0], d: back[0], off0: 0, off1: 0, flip: false,
-      ext0: corners.some(c => c[1] === i) ? E : 0, ext1: corners.some(c => c[0] === i) ? E : 0,
-    }, pid, `${fid}:b${i}`));
-    for (let k = 1; k < levels.length; k++) {
-      const x = levels[k];
-      const next = `${fid}:p${items.length + 1 + extra}`;
-      // On the tip, the panel's top is the side the first bend turned to.
-      ops.push(...addFlange(st, [`${pid}:tip`, `${pid}:top`], { angle: x.angle, r, s: flat[k], d: back[k], off0: 0, off1: 0, flip: !x.up }, next, `${fid}:b${items.length + extra}`));
-      extra++;
-      pid = next;
-    }
+    return { levels, back, flat };
   });
-  for (const [i, j] of corners) mitre(st, `${fid}:p${i + 1}`, `${fid}:p${j + 1}`, gap);
+  // Panel and bend numbers: the first walls first, then each chain's later walls in turn (as before the levels were
+  // built level by level, so names stay put).
+  const firstMore: number[] = [];
+  chains.reduce((n, c, i) => { firstMore[i] = n; return n + c.levels.length - 1; }, 0);
+  const pid = (i: number, k: number) => k ? `${fid}:p${items.length + 1 + firstMore[i] + k - 1}` : `${fid}:p${i + 1}`;
+  const bid = (i: number, k: number) => k ? `${fid}:b${items.length + firstMore[i] + k - 1}` : `${fid}:b${i}`;
+  const depth = Math.max(...chains.map(c => c.levels.length));
+  const E = 2 * Math.max(...chains.flatMap(c => c.levels.map((x, k) => c.flat[k] + c.back[k] + bendAllowance(st, x.angle, r) + 2 * T)));
+  // A corner's walls at level k meet in the plane through the fixed face's corner bisecting the two edges when both
+  // chains have the same walls up to there; otherwise where the walls' mid-planes meet (not for walls in one plane).
+  const planes = corners.map(([i, j]) => {
+    const a = findEdge(st, items[i].faces), c = findEdge(st, items[j].faces);
+    const sa = a.panel.outer[a.index], sc = c.panel.outer[c.index];
+    if (sa.kind !== "line" || sc.kind !== "line") return null;
+    const ua = applyDir(a.panel.M, [sa.b[0] - sa.a[0], sa.b[1] - sa.a[1], 0]), uc = applyDir(a.panel.M, [sc.b[0] - sc.a[0], sc.b[1] - sc.a[1], 0]);
+    const n = add(mul(ua, 1 / Math.hypot(...ua)), mul(uc, 1 / Math.hypot(...uc))), nl = Math.hypot(...n);
+    return nl < 1e-9 ? null : { V: apply(a.panel.M, [sa.b[0], sa.b[1], T / 2]), n: mul(n, 1 / nl) };
+  });
+  const tol = 1e-6 * (1 + Math.max(...chains.flatMap(c => c.levels.map(x => x.L))));
+  const sameUpTo = (i: number, j: number, k: number) => chains[i].levels.slice(0, k + 1).every((x, q) => {
+    const y = chains[j].levels[q];
+    return y && Math.abs(x.angle - y.angle) < 1e-9 && Math.abs(x.L - y.L) < tol && x.same === y.same && x.up === y.up;
+  });
+  const has = (i: number, k: number) => k < chains[i].levels.length;
+  const mids = items.map(x => edgeMid(st, x.faces));
+  for (let k = 0; k < depth; k++) {
+    items.forEach((it, i) => {
+      if (!has(i, k)) return;
+      const c = chains[i], x = c.levels[k];
+      // Run on past a corner whose other wall has this level too, to be mitred there.
+      const ext0 = corners.some(([a, b]) => b === i && has(a, k)) ? E : 0, ext1 = corners.some(([a, b]) => a === i && has(b, k)) ? E : 0;
+      // On the tip, the panel's top is the side the first bend turned to.
+      const faces: [string, string] = k ? [`${pid(i, k - 1)}:tip`, `${pid(i, k - 1)}:top`] : it.faces;
+      ops.push(...addFlange(st, faces, { angle: x.angle, r, s: c.flat[k], d: c.back[k], off0: 0, off1: 0, flip: k ? !x.up : false, ext0, ext1 }, pid(i, k), bid(i, k)));
+    });
+    corners.forEach(([i, j], q) => {
+      if (!has(i, k) || !has(j, k)) return;
+      const A = st.panels.find(p => p.id === pid(i, k)), B = st.panels.find(p => p.id === pid(j, k));
+      const parallel = !A || !B || Math.hypot(A.M.z[1] * B.M.z[2] - A.M.z[2] * B.M.z[1], A.M.z[2] * B.M.z[0] - A.M.z[0] * B.M.z[2], A.M.z[0] * B.M.z[1] - A.M.z[1] * B.M.z[0]) < 1e-6;
+      const pl = planes[q];
+      if (k === 0 || (!sameUpTo(i, j, k) && !parallel) || !pl) mitre(st, pid(i, k), pid(j, k), gap, [mids[i], mids[j]]);
+      else { planeCut(st, pid(i, k), pl.V, pl.n, -1, gap); planeCut(st, pid(j, k), pl.V, pl.n, 1, gap); }
+    });
+  }
   return { state: st, ops };
 }
 
@@ -452,8 +482,19 @@ function flangeCorners(st: SheetState, picks: [string, string][]): [number, numb
   return out;
 }
 
-/** Mitres two flanges that run past a shared corner: each is cut where the flanges' mid-planes meet, gap/2 back. */
-function mitre(st: SheetState, ida: string, idb: string, gap: number) {
+/** The middle of a panel's outline edge named by two faces, at mid-thickness, or null when it isn't one. */
+function edgeMid(st: SheetState, faces: [string, string]): V3 | null {
+  try {
+    const { panel, index } = findEdge(st, faces);
+    const sg = panel.outer[index];
+    return sg.kind === "line" ? apply(panel.M, [(sg.a[0] + sg.b[0]) / 2, (sg.a[1] + sg.b[1]) / 2, st.T / 2]) : null;
+  } catch { return null; }
+}
+
+/** Mitres two flanges that run past a shared corner: each is cut where the flanges' mid-planes meet, gap/2 back.
+ * `mids` = the middles of the edges they stand on: each flange keeps the side its edge's middle projects to (the
+ * edge's own ends do not reach past the corner, unlike the run-on flange's). */
+function mitre(st: SheetState, ida: string, idb: string, gap: number, mids?: [V3 | null, V3 | null]) {
   const A = st.panels.find(p => p.id === ida), B = st.panels.find(p => p.id === idb);
   if (!A || !B) return;
   const T = st.T;
@@ -476,7 +517,8 @@ function mitre(st: SheetState, ida: string, idb: string, gap: number) {
     const att = P.outer.find(x => x.ent === "att");
     const bendSide = P.id === ida ? "s0" : "s1";
     const ref = P.outer.find(x => x.ent === bendSide);
-    const q = ref && ref.kind === "line" ? [(ref.a[0] + ref.b[0]) / 2, (ref.a[1] + ref.b[1]) / 2] as V2 : att && att.kind === "line" ? att.a : p0;
+    const mid = mids?.[P.id === ida ? 0 : 1];
+    const q = mid ? to2(mid) : ref && ref.kind === "line" ? [(ref.a[0] + ref.b[0]) / 2, (ref.a[1] + ref.b[1]) / 2] as V2 : att && att.kind === "line" ? att.a : p0;
     const keep: 1 | -1 = n[0] * q[0] + n[1] * q[1] - k >= 0 ? 1 : -1;
     k += keep * gap / 2;
     try { P.outer = clipOuter(P.outer, n, k, keep, "miter", 1e-7 * (1 + st.T)); } catch { /* the cut misses: leave the flange */ }

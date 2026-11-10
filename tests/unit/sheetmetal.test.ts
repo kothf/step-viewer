@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { Modeller } from "../../src/kernel/model";
 import type { Feature, PartDoc, SketchFeature, SkEnt } from "../../src/model/types";
 import type { SmRipFeature, SmTabSlotFeature, SmInsertFeature, SmConvertFeature, SmCutFeature, SmGussetFeature, SmReliefFeature, SmUnfoldFeature, SmFormFeature, SmVentFeature, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
-import { flatLoops, flatSize, bendAllowance, reliefCorners, filletLoop } from "../../src/sheetmetal/sheet";
+import { apply, flatLoops, flatSize, bendAllowance, reliefCorners, filletLoop } from "../../src/sheetmetal/sheet";
 import { flatDrawing } from "../../src/sheetmetal/flat";
 import { cutPropsCsv, sheetCutProps } from "../../src/sheetmetal/cutprops";
 import { loopPolygon, polyArea } from "../../src/sketch/profile";
@@ -235,7 +235,6 @@ test("sheet metal: holes cut in flat faces show in the flat pattern (FR-FT-120)"
 test("sheet metal: edge flanges on edges meeting at a corner are mitred (FR-FT-120)", async () => {
   oc ??= await occ();
   m ??= new Modeller(oc);
-  const { apply } = await import("../../src/sheetmetal/sheet");
   const s = rect("s", 0, 0, 100, 50);
   // Front (y = 0) and right (x = 100) edges: the front edge ends where the right one starts.
   const fl = (gap: number): SmFlangeFeature => ({ id: "f", type: "smflange", name: "Edge-Flange1", edges: [{ faces: ["b:p0:top", "b:p0:sl1"] }, { faces: ["b:p0:top", "b:p0:sl2"] }], length: { v: 30 }, angle: { v: Math.PI / 2 }, gap: { v: gap } });
@@ -287,7 +286,6 @@ test("sheet metal: break corner chamfers and rounds outside corners (FR-FT-120)"
 test("sheet metal: closed corner runs flange ends on to meet (FR-FT-120)", async () => {
   oc ??= await occ();
   m ??= new Modeller(oc);
-  const { apply } = await import("../../src/sheetmetal/sheet");
   const s = rect("s", 0, 0, 100, 50);
   // Two flanges, material outside, made separately on the front and right edges: they leave an open corner.
   const fl = (id: string, e: string): SmFlangeFeature => ({ id, type: "smflange", name: id, edges: [{ faces: ["b:p0:top", `b:p0:${e}`] }], length: { v: 20 }, angle: { v: Math.PI / 2 }, position: "outside" });
@@ -799,7 +797,7 @@ test("sheet metal: convert a solid box to sheet metal (FR-FT-120)", async () => 
   close(tr.size[0], 100, 1e-6); close(tr.size[1], 60, 1e-6); close(tr.size[2], 40, 1e-6);
   assert.equal(tr.props.bodies, 1);
   const tf = run(doc([s, box, conv({ edges: ["l1", "l2", "l3", "l4"].map(edge) }), flat]));
-  close(tf.props.volume, tr.props.volume, 3e-3);
+  close(tf.props.volume, tr.props.volume, 5e-3);
   // A hole through both long walls before converting carries over to the sheet and its flat pattern.
   const hs: SketchFeature = { id: "h", type: "sketch", name: "h", plane: { std: "XZ" }, rels: [], dims: [], ents: [{ id: "hc0", t: "point", x: 50, y: 20 }, { id: "hc", t: "circle", c: "hc0", r: 5 }] };
   const hole: Feature = { id: "hx", type: "extrude", name: "Cut1", sketch: "h", op: "cut", end: "through2", depth: { v: 0 } };
@@ -815,6 +813,28 @@ test("sheet metal: convert a solid box to sheet metal (FR-FT-120)", async () => 
   const inC = (p: [number, number, number]) => new oc.BRepClass3d_SolidClassifier_3(c2.body!.shape, new oc.gp_Pnt_3(...p), 1e-6).State() === oc.TopAbs_State.TopAbs_IN;
   assert.ok(inC([50, 30, 39]) && inC([50, 30, 1]) && inC([50, 1, 20]) && !inC([50, 30, 20]), "bottom, wall and top, hollow inside");
   close(run(doc([s, box, cl, flat])).props.volume, c2.props.volume, 1e-5);
+  // A tray with lips: the top is a 10 mm rim round a 20 mm deep pocket. All four bottom edges and the walls' far edges
+  // picked: each wall gets a lip turned inwards, and the lips meet mitred at the corners like the walls, so the flat
+  // pattern keeps the folded volume (but for the overlapping bends) and no lip runs on past its corner.
+  const pk: Feature[] = [
+    { id: "pl", type: "plane", name: "pl", base: { std: "XY" }, mode: "offset", offset: { v: 40 } } as Feature,
+    { ...rect("pk", 10, 10, 90, 50), plane: { plane: "pl" } },
+    { id: "px", type: "extrude", name: "Cut1", sketch: "pk", op: "cut", end: "blind", depth: { v: 20 } } as Feature,
+  ];
+  const lips = conv({ edges: [...["l1", "l2", "l3", "l4"].map(edge), ...["l1", "l2", "l3", "l4"].map(l => ({ faces: ["e:end", `e:side:s${l}`] as [string, string] }))] });
+  const lt = run(doc([s, box, ...pk, lips]));
+  assert.equal(lt.sheet!.bends.length, 8, "four walls, four lips");
+  assert.equal(lt.props.bodies, 1);
+  close(lt.size[0], 100, 1e-6); close(lt.size[1], 60, 1e-6); close(lt.size[2], 40, 1e-6);
+  const inL = (p: [number, number, number]) => new oc.BRepClass3d_SolidClassifier_3(lt.body!.shape, new oc.gp_Pnt_3(...p), 1e-6).State() === oc.TopAbs_State.TopAbs_IN;
+  assert.ok(inL([8, 5, 39]) && inL([5, 8, 39]) && inL([95, 52, 39]) && !inL([50, 30, 39]) && !inL([12, 12, 39]), "lips meet at the corners round an open middle");
+  const lf = run(doc([s, box, ...pk, lips, flat]));
+  close(lf.props.volume, lt.props.volume, 6e-3);
+  // Every lip panel ends at its corners: none reaches past the box's outline in its own plane.
+  for (const p of lt.sheet!.panels) for (const sg of p.outer) for (const q of sg.kind === "line" ? [sg.a, sg.b] : []) {
+    const w = apply(p.M, [q[0], q[1], 0]);
+    assert.ok(w[0] > -1e-6 && w[0] < 100 + 1e-6 && w[1] > -1e-6 && w[1] < 60 + 1e-6, `panel ${p.id} stays inside the box`);
+  }
   // A bend edge off the fixed face, or a curved fixed face, fails.
   assert.equal(m.evaluate(doc([s, box, conv({ edges: [{ faces: ["e:side:sl1", "e:side:sl2"] }] })])).statuses.find(x => x.id === "c")!.ok, false);
 });

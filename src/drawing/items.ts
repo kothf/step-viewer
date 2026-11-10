@@ -33,6 +33,8 @@ export interface HoleInfo { id: string; pts: V3[]; n: V3; f: HoleFeature }
 export interface ThreadInfo { id: string; c: V3; ax: V3; r: number; d: number; L: number | null; internal: boolean; size?: string }
 
 /** A sketch shown in the model, as 3D polylines for views that show sketches (FR-DRW-017). */
+/** A weldment part's fillet beads alike (FR-FT-121): leg size(s) ("5" or "5×8"), intermittent length/pitch(/1 = staggered), summed root length and how many beads. */
+export interface WeldInfo { legs: string; inter?: [number, number] | [number, number, 1]; length: number; qty: number }
 export interface SketchInfo { id: string; name: string; lines: V3[][] }
 
 /** The round edge a thread starts at, from the kernel. */

@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { MEdge, Projection, Topo, V3 } from "../../src/kernel/drawing";
-import { bendRows, dimGeo, dimPrims, dimText, holeEdges, holeRows, viewAnnots, type AnnotCtx } from "../../src/drawing/annot";
+import { bendRows, weldRows, dimGeo, dimPrims, dimText, holeEdges, holeRows, viewAnnots, type AnnotCtx } from "../../src/drawing/annot";
 import { placement } from "../../src/drawing/compose";
 import type { DimAnnot, DrawingView, GeoRef, Sheet } from "../../src/drawing/types";
 
@@ -113,4 +113,25 @@ test("bend table: bends tagged top to bottom then left to right, the tags replac
   assert.ok(!tx.some(s => /^(UP|DOWN) /.test(s)), "no bend notes beside a bend table");
   const none = viewAnnots(sh, view, pl, { ...ctx, bends: [] });
   assert.deepEqual(none.dangling, ["b"]);
+});
+
+test("weld table: one row per kind of bead (continuous, intermittent, staggered, by leg), then a total (FR-FT-121)", () => {
+  const welds = [
+    { legs: "4", length: 149.7, qty: 2 },
+    { legs: "5×8", length: 151.75, qty: 1 },
+    { legs: "3.5", length: 80, qty: 1, inter: [20, 40] as [number, number] },
+    { legs: "3", length: 60, qty: 1, inter: [20, 50, 1] as [number, number, 1] },
+  ];
+  const ctx: AnnotCtx = { topo: { edges: [], cyls: [] }, holes: [], welds, items: [], box: null, dec: ",", label: (s, p) => s.replace(/\{(\w+)\}/g, (_m, k) => p?.[k] ?? "") };
+  const a = { id: "w", t: "wtable" as const, view: "v", pos: [0, -40] as [number, number] };
+  assert.deepEqual(weldRows(a, welds, ctx), [
+    ["1", "Continuous", "z4", "149,7", "2"], ["2", "Continuous", "z5×8", "151,75", "1"],
+    ["3", "Intermittent 20 / 40", "z3,5", "80", "1"], ["4", "Staggered 20 / 50", "z3", "60", "1"],
+    ["", "Total", "", "441,45", "5"],
+  ]);
+  assert.deepEqual(weldRows({ ...a, prec: 1 }, welds.slice(0, 1), ctx), [["1", "Continuous", "z4", "149,7", "2"]], "no total under one row");
+  const sh = { ...sheet, views: [view], annots: [a] } as unknown as Sheet;
+  const tx = viewAnnots(sh, view, pl, ctx).prims.filter(p => p.t === "t").map(p => (p as { s: string }).s);
+  assert.ok(["Item", "Weld", "Leg", "Length", "Qty", "z5×8", "Total"].every(s => tx.includes(s)), tx.join(" "));
+  assert.deepEqual(viewAnnots(sh, view, pl, { ...ctx, welds: [] }).dangling, ["w"]);
 });
