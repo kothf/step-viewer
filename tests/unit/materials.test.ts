@@ -109,3 +109,12 @@ test("third pass (1.385.0): tool steels, titanium and two more steels have a ref
   assert.ok(findMaterial("Tool steel X153CrMoV12")!.ref);
   assert.ok(un.includes("Titanium Grade 1"));
 });
+
+test("fourth pass (1.386.0): four plastics checked against makers' sheets", () => {
+  assert.ok(Object.keys(CHECKED).length >= 133, `${Object.keys(CHECKED).length} checked`);
+  assert.ok(LIBRARY.filter(m => !m.ref).length <= 37);
+  for (const n of ["PLA", "PETG", "PEI (Ultem 1000)", "Polyethylene PE-HD"]) assert.ok(findMaterial(n)!.ref, n);
+  assert.equal(findMaterial("PEI (Ultem 1000)")!.E, 3.6);
+  assert.equal(findMaterial("Polyethylene PE-HD")!.E, 1.1);
+  assert.ok(!findMaterial("Nylon PA66")!.ref);
+});
