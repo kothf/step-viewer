@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.445.0] - 2026-11-10
+
+### Added
+
+- **Angle dimension arrows (FR-DRW-021)**: a small angle whose arc has no room for two arrowheads gets them outside the sector, on short tails of the arc, the way narrow linear dimensions do. **Arrows** (Auto, Inside, Outside) and **Extension lines** (hide the first, the second or both) in the dimension panel now work for angles as well.
+
 ## [1.444.0] - 2026-11-10
 
 ### Added
@@ -2652,7 +2658,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.444.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.445.0...HEAD
+[1.445.0]: https://github.com/kothf/step-viewer/compare/v1.444.0...v1.445.0
 [1.444.0]: https://github.com/kothf/step-viewer/compare/v1.443.0...v1.444.0
 [1.443.0]: https://github.com/kothf/step-viewer/compare/v1.442.0...v1.443.0
 [1.442.0]: https://github.com/kothf/step-viewer/compare/v1.441.0...v1.442.0

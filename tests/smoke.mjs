@@ -4989,7 +4989,7 @@ try {
     tx = await texts();
     check(hov >= 1 && pv >= 1 && smart.length === 2 && smart[0].k === "h" && smart[0].view === front.id && smart[1].k === "dia" && tx.filter(s => s === "100").length === 2 && tx.filter(s => s === "Ø16").length === 2,
       `drawing: Smart dimension: an edge placed above it gives a horizontal 100, a circle gives Ø16, with a live preview (${JSON.stringify(smart.map(a => a.k))}, ${tx.join(" ")})`);
-    // 1.444.0 angle arrows: an angle placed tight in the corner gets its arrows outside (the arc grows tails); Inside takes them off; then deleted.
+    // 1.445.0 angle arrows: an angle placed tight in the corner gets its arrows outside (the arc grows tails); Inside takes them off; then deleted.
     {
       const sc = await dp.evaluate(() => { const s = window.__sv.drw.doc().sheets[0].scale; return s[0] / s[1]; });
       await dp.click('#drw [data-a="dim"]');
