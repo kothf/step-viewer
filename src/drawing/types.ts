@@ -144,6 +144,8 @@ export interface DimAnnot {
   noExt?: "a" | "b" | "both";
   /** Linear dimensions: the text stays horizontal and sits in a gap of the dimension line (ISO 129 method 2, ASME unidirectional). */
   horiz?: boolean;
+  /** Radius dimensions: foreshortened (the dimension line stops short of the centre with a jog), for a centre far away or off the sheet. */
+  fore?: boolean;
 }
 
 /** A note: on the sheet (sheet mm) or on a view (its model axes, so it moves with the view), with an optional leader to the model. */

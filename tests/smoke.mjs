@@ -4860,6 +4860,25 @@ try {
     await dp.selectOption('#drw .drw-props [data-d="arrows"]', "");
     const len2b = await dimLine();
     check(len1 > len0 + 5 && Math.abs(len2b - len0) < 1e-6, `drawing: a linear dimension's arrows go outside by hand and back (${[len0, len1, len2b].map(v => v.toFixed(1)).join(" → ")})`);
+    // Foreshortened radius (FR-DRW-021): the Ø16 as a radius whose line stops short of the centre with a jog; then back.
+    [x, y] = await at(top.id, 30, 25);
+    await dp.mouse.click(x + 12, y - 5);
+    const selR = await dp.evaluate(() => document.querySelector('#drw .drw-props [data-d="k"]')?.value);
+    let fore = null;
+    if (selR === "dia") {
+      await dp.selectOption('#drw .drw-props [data-d="k"]', "rad");
+      const jog = () => dp.evaluate(() => window.__sv.drw.prims().filter(q => q.t === "p" && q.layer === "ANNOT" && !q.closed && q.p.length === 8).length);
+      const j0 = await jog();
+      await dp.check('#drw .drw-props [data-d="fore"]');
+      const j1 = await jog(), stored = (await annots()).some(a => a.k === "rad" && a.fore === true), txR = await texts();
+      await dp.uncheck('#drw .drw-props [data-d="fore"]');
+      await dp.selectOption('#drw .drw-props [data-d="k"]', "dia");
+      fore = { j0, j1, stored, r8: txR.includes("R8"), back: (await annots()).some(a => a.k === "dia" && !a.fore) && !(await dp.$('#drw .drw-props [data-d="fore"]')) };
+    }
+    check(fore && fore.j1 === fore.j0 + 1 && fore.stored && fore.r8 && fore.back, `drawing: a radius dimension is foreshortened with a jog and goes back to a diameter (${selR}; ${JSON.stringify(fore)})`);
+    // Back to the 100, which the next checks work on.
+    [x, y] = await at(front.id, 0, 40.5);
+    await dp.mouse.click(x, y);
     // Text below (FR-DRW-021): a second line under the dimension line, gone again when cleared.
     await dp.fill('#drw .drw-props [data-d="below"]', "2 PLACES"); await dp.dispatchEvent('#drw .drw-props [data-d="below"]', "change");
     await dp.waitForTimeout(100);
