@@ -13,7 +13,7 @@ export interface VaultMenuHost {
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
-interface Item { id: string; label: string; on?: boolean; title?: string; name?: boolean }
+interface Item { id: string; label: string; on?: boolean; title?: string; name?: boolean; note?: string }
 
 export class VaultMenu {
   readonly el: HTMLElement;
@@ -64,11 +64,17 @@ export class VaultMenu {
         { head: t("Vaults in this browser") },
         ...names.map((n): Item => ({ id: `ws:${n}`, label: n, name: true })),
         { id: "new-ws", label: t("New browser vault…"), title: t("Kept in this browser's own storage; Export ZIP makes a backup") },
+        { id: "import", label: t("Import vault ZIP…"), title: t("A vault backup (Export ZIP) becomes a vault in this browser") },
         "-",
         { id: "panel", label: t("Vault panel") },
       ];
     }
     const doc = p.docName, st = p.openFileState;
+    // Switch to another vault (one vault per project folder) without closing this one first.
+    const others: Item[] = [
+      ...(p.foldersOk ? await vaultFolders() : []).filter(f => !(p.where === "folder" && f.name === v.root.name)).map((f): Item => ({ id: `folder:${f.key}`, label: f.name, name: true, title: t("Open the vault in this folder") })),
+      ...(await p.browserVaults()).filter(n => !(p.where === "browser" && n === v.root.name)).map((n): Item => ({ id: `ws:${n}`, label: n, name: true, note: t("in this browser"), title: t("A vault in this browser") })),
+    ];
     return [
       { head: t("Vault"), name: v.info.name },
       { id: "save", label: t("Save to vault"), on: !!doc && !st, title: t("The open part, assembly or drawing becomes a vault file, checked out to you") },
@@ -79,10 +85,12 @@ export class VaultMenu {
       { id: "hist", label: t("History…"), on: !!st, title: t("Every version: open an older one, compare or roll back") },
       "-",
       { id: "add", label: t("Add files…") },
+      { id: "addfolder", label: t("Add files in this folder…"), title: t("Files already in the vault folder go in where they are, subfolders and all") },
       { id: "search", label: t("Search the vault…") },
       { id: "panel", label: t("Vault files") },
       { id: "settings", label: t("Vault settings") },
       "-",
+      ...(others.length ? [{ head: t("Switch to") }, ...others, "-" as const] : []),
       { id: "close", label: t("Close vault") },
     ];
   }
@@ -93,7 +101,7 @@ export class VaultMenu {
     this.el.innerHTML = items.map(it => {
       if (it === "-") return "<hr />";
       if ("head" in it) return `<div class="vm-h">${esc(it.head)}${it.name ? `: <b translate="no">${esc(it.name)}</b>` : ""}</div>`;
-      return `<button role="menuitem" data-v="${esc(it.id)}"${it.on === false ? " disabled" : ""}${it.title ? ` title="${esc(it.title)}"` : ""}><span class="fm-l"${it.name ? ' translate="no"' : ""}>${esc(it.label)}</span></button>`;
+      return `<button role="menuitem" data-v="${esc(it.id)}"${it.on === false ? " disabled" : ""}${it.title ? ` title="${esc(it.title)}"` : ""}><span class="fm-l"${it.name ? ' translate="no"' : ""}>${esc(it.label)}</span>${it.note ? `<span class="fm-k">${esc(it.note)}</span>` : ""}</button>`;
     }).join("");
     this.el.hidden = false;
     btn.setAttribute("aria-expanded", "true");
@@ -134,6 +142,7 @@ export class VaultMenu {
     switch (id) {
       case "new-dir": case "open-dir": await p.pickFolder(id === "new-dir"); if (p.vault) this.host.showPanel(); break;
       case "new-ws": this.host.showPanel(); await p.render(); p.focusName(); break;
+      case "import": this.host.showPanel(); await p.render(); p.pickZip(); break;
       case "panel": this.host.showPanel(); break;
       case "save": await p.saveOpenDoc(); break;
       case "co": if (open) await p.checkOut(open); break;
@@ -142,6 +151,7 @@ export class VaultMenu {
       case "latest": if (open) await p.getLatest(open); break;
       case "hist": if (open) await p.history(open); break;
       case "add": this.host.showPanel(); await p.render(); p.pickFiles(); break;
+      case "addfolder": this.host.showPanel(); await p.addFolderFiles(); break;
       case "search": await p.searchDlg(); this.host.showPanel(); break;
       case "settings": await p.settingsDlg(); break;
       case "close": p.close(); break;
