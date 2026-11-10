@@ -4883,6 +4883,15 @@ try {
     // The worker reads holes from the geometry too (FR-DRW-022): the Ø16 cut is a one-piece stack open at both ends.
     const geoHoles = await dp.evaluate(() => window.__sv.drw.holes());
     check(geoHoles.some(h => h.segs === 1 && h.open[0] && h.open[1]), `drawing: holes read from the geometry (${JSON.stringify(geoHoles)})`);
+    // Hole callouts follow the drawing's dual dimensions and default decimals (FR-DRW-022).
+    await dp.keyboard.press("Escape");
+    await dp.selectOption('.drw-props [data-st="dual"]', "in");
+    await dp.selectOption('.drw-props [data-st="lin"]', "1");
+    const dualHole = await texts();
+    await dp.selectOption('.drw-props [data-st="dual"]', "");
+    await dp.selectOption('.drw-props [data-st="lin"]', "");
+    const plainHole = await texts();
+    check(dualHole.includes("Ø16.0 [0.630] THRU") && plainHole.includes("Ø16 THRU"), `drawing: a hole callout shows inches and the default decimals with the drawing (${dualHole.filter(s => /THRU/.test(s)).join(" / ")})`);
     // Property link in a note (FR-DRW-023): $PRP:"Scale" shows the sheet scale.
     dp.once("dialog", d => d.accept('SCALE $PRP:"Scale"'));
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="note"]');
@@ -8281,7 +8290,7 @@ try {
     const r1 = await state();
     check(Math.abs(r1.v - r0.v) < 0.05 && !r1.bad && r1.types === "sketch,extrude,hole,hole,delface,hole,hole" && r1.holes === "blind:1:8 blind:1:8 through:2:10 through:2:10",
       `model 1.116: Recognize Holes fills the holes and makes them again as Hole features (FR-FT-102) (${JSON.stringify({ r0, r1 })})`);
-    // 1.388 (FR-FT-102): Recognize Fillets on an imported body: a block with two R5 corners and a 2 mm chamfer.
+    // 1.390 (FR-FT-102): Recognize Fillets on an imported body: a block with two R5 corners and a 2 mm chamfer.
     await mp.evaluate(() => window.__sv.model.store.change("Blends", d => {
       const S = k => `e:side:s${k}`;
       d.features = d.features.filter(f => f.id === "s" || f.id === "e");
@@ -8304,7 +8313,7 @@ try {
     await settle();
     const b3 = await state();
     check(!b0.bad && Math.abs(b1.v - b0.v) < 0.05 && Math.abs(b2.v - b0.v) < 0.05 && !b2.bad && b2.types === "import,delface,chamfer,fillet" && blends === "Chamfer1:2:1 Fillet1:5:2" && !b3.bad && b3.v < b2.v - 100,
-      `model 1.388: Recognize Fillets removes the fillets and chamfers of an imported body and makes them again as features (FR-FT-102) (${JSON.stringify({ b0, b1, b2, b3, blends })})`);
+      `model 1.390: Recognize Fillets removes the fillets and chamfers of an imported body and makes them again as features (FR-FT-102) (${JSON.stringify({ b0, b1, b2, b3, blends })})`);
     await ctx.close();
   }
 
@@ -9564,11 +9573,13 @@ try {
     await mp.dispatchEvent('#wld-cut input[data-wbar="len"]', "change");
     await settle();
     const bars = await mp.evaluate(() => [...document.querySelectorAll("#wld-cut tr[data-stock]")].map(tr => [...tr.children].map(td => td.textContent)));
+    const plan = await mp.evaluate(() => [...document.querySelectorAll("#wld-cut .wld-plan li[data-wplan]")].map(li => li.textContent));
     await mp.fill('#wld-cut input[data-wbar="len"]', "");
     await mp.dispatchEvent('#wld-cut input[data-wbar="len"]', "change");
     await settle();
     const bars0 = await mp.evaluate(() => document.querySelectorAll("#wld-cut tr[data-stock] [data-wbars]").length);
     check(bars.length === stock.length && bars.every(r => r.length === 5 && Number(r[3]) >= 1) && bars0 === 0, `weldments: bars to buy from a stock bar length (${JSON.stringify({ bars, bars0 })})`);
+    check(plan.length >= 1 && plan.every(x => /\d/.test(x)), `weldments: cutting plan under the stock lengths (${JSON.stringify(plan)})`);
     await mp.check('#wld-cut input[data-cp="excl"][data-ci="1"]');
     await settle();
     const ex = await mp.evaluate(() => { const tr = document.querySelectorAll("#wld-cut tbody tr")[1]; return { item: tr.querySelector("[data-witem]")?.textContent, cls: tr.classList.contains("wld-excl"), excl: Object.values(window.__sv.model.store.doc.cutProps ?? {}).some(p => p.excl) }; });
