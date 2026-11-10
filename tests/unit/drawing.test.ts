@@ -188,6 +188,7 @@ test("detail clipping and section hatching", async () => {
   const sh = (letters: string[]) => [{ id: "s", name: "S", size: "A3" as const, scale: [1, 1] as [number, number], projection: "first" as const, format: "iso" as const, views: letters.map((l, i) => ({ id: `v${i}`, name: "", x: 0, y: 0, letter: l })) }];
   assert.equal(nextLetter(sh([])), "A");
   assert.equal(nextLetter(sh(["A", "B", "C", "D", "E", "F", "G", "H"])), "J");
+  assert.equal(nextLetter([{ ...sh(["A"])[0], annots: [{ id: "d", t: "datum", view: "v0", ref: { e: "x", h: [0, 0, 0], p: "e" }, pos: [0, 0], letter: "B" }] }] as never), "C", "a datum letter is taken (drawings exam #6)");
 });
 
 test("annotations: topology names, centre marks, dimensions, hole callout, model items", async () => {

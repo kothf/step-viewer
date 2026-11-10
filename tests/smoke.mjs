@@ -5160,10 +5160,12 @@ try {
       }
       check(r && r.below && r.stored && r.back, `drawing: a hole callout takes a line below and leaves the number of holes out (${JSON.stringify(r)})`);
     }
-    dp.once("dialog", d => d.accept("BREAK SHARP EDGES"));
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="note"]');
     [x, y] = await dp.evaluate(() => window.__sv.drw.sheetPt(40, 60));
     await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    // The new note's text box has the focus with its text selected (drawings exam #9): type, Tab commits.
+    await dp.waitForFunction(() => document.activeElement?.matches?.("textarea[data-d=ntxt]"));
+    await dp.keyboard.type("BREAK SHARP EDGES"); await dp.keyboard.press("Tab");
     await dp.waitForTimeout(150);
     tx = await texts();
     an = await annots();
@@ -5213,10 +5215,12 @@ try {
         `drawing: extension lines take the style's gap and overshoot and go back (${[e0, e1, e2, e3].map(v => v.toFixed(1)).join(" → ")})`);
     }
     // Property link in a note (FR-DRW-023): $PRP:"Scale" shows the sheet scale.
-    dp.once("dialog", d => d.accept('SCALE $PRP:"Scale"'));
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="note"]');
     [x, y] = await dp.evaluate(() => window.__sv.drw.sheetPt(40, 75));
     await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    // The new note's text box has the focus with its text selected (drawings exam #9): type, Tab commits.
+    await dp.waitForFunction(() => document.activeElement?.matches?.("textarea[data-d=ntxt]"));
+    await dp.keyboard.type('SCALE $PRP:"Scale"'); await dp.keyboard.press("Tab");
     await dp.waitForTimeout(150);
     tx = await texts();
     const scaleNote = tx.find(s => s.startsWith("SCALE "));
