@@ -1860,7 +1860,13 @@ export class SketchEditor {
     const dim = (t: SkDim["t"], e: string[], pos: V2) => {
       const d: SkDim = { id: uid("d"), name: "", t, e, val: { v: 0 }, pos };
       d.val.v = measureDim(sk, d);
-      if (!isFinite(d.val.v) || d.val.v < 1e-9) return;
+      if (!isFinite(d.val.v)) return;
+      // A point level with (or plumb over) the origin to round-off gets a horizontal (vertical) relation, not a
+      // 0.0000004 mm dimension that shows as 0 and cannot be typed to 0 (exam #86), as SolidWorks does.
+      if (d.val.v < 1e-5 * size) {
+        if (t === "hdistance" || t === "vdistance") take({ rel: { id: uid("r"), t: t === "hdistance" ? "vertical" : "horizontal", e: [e[0], e[1]] } });
+        return;
+      }
       d.name = this.nextDimName(sk);
       take({ dim: d });
     };

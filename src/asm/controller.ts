@@ -1274,12 +1274,39 @@ export class AsmController {
         if (f.type === "plane" && f.normal) m.set(name, { k: "plane", p: applyPoint(inv, f.centroid), n: unit(applyDir(inv, f.normal)) });
         else if (f.type === "cylinder" && f.axis) m.set(name, { k: "axis", p: applyPoint(inv, f.center), d: unit(applyDir(inv, f.axis)), r: f.radius ?? 0 });
       });
+      if (!again) this.keepMateFaces(doc, c.part, this.geo.get(c.part), m);
       this.geo.set(c.part, m);
       if (again) continue;
       this.volumes.set(c.part, p.data.volume);
       const b0 = p.data.bboxMin, b1 = p.data.bboxMax;
       this.centres.set(c.part, applyPoint(inv, [(b0[0] + b1[0]) / 2, (b0[1] + b1[1]) / 2, (b0[2] + b1[2]) / 2]));
     }
+  }
+
+  /**
+   * Mates keep their faces through a part edit (exam #84): a face whose name went away but whose surface is
+   * still there under another, new name (adding a concentric circle renamed an old part's outer face) is
+   * followed to that name, as SolidWorks keeps a mate on the same face after a sketch edit.
+   */
+  private keepMateFaces(doc: AsmDoc, part: string, prev: Map<string, Geo> | undefined, now: Map<string, Geo>) {
+    if (!prev?.size) return;
+    const sub = (a: V3, b: V3): V3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], dot = (a: V3, b: V3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const len = (a: V3) => Math.hypot(a[0], a[1], a[2]), cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    const near = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) < 1e-5;
+    const same = (g: Geo, h: Geo) => {
+      if (g.k === "plane" && h.k === "plane") return near(g.n, h.n) && Math.abs(dot(g.n, sub(h.p, g.p))) < 1e-5;
+      if (g.k === "axis" && h.k === "axis") return Math.abs(Math.abs(dot(g.d, h.d)) - 1) < 1e-9 && Math.abs(g.r - h.r) < 1e-5 && len(cross(sub(h.p, g.p), g.d)) < 1e-5;
+      return false;
+    };
+    const moved = new Map<string, string>();
+    for (const [name, g] of prev) {
+      if (now.has(name)) continue;
+      const fresh = [...now].filter(([n, h]) => !prev.has(n) && same(g, h));
+      if (fresh.length === 1) moved.set(name, fresh[0][0]);
+    }
+    if (!moved.size) return;
+    const comps = new Set(doc.components.filter(x => x.part === part).map(x => x.id));
+    for (const mt of doc.mates ?? []) for (const r of [mt.a, mt.b, mt.c, mt.d]) if (r && comps.has(r.comp) && moved.has(r.face)) r.face = moved.get(r.face)!;
   }
 
   private size() { return Math.max(10, this.host.viewer.parts.length ? this.host.viewer.modelSize : 100); }
@@ -2032,7 +2059,10 @@ export class AsmController {
     const parked = { doc, fileName: this.fileName, handle: this.handle, undo: this.undoStack, savedAt: this.savedAt, key: c.part, sel: id };
     const file = entry.file?.toLowerCase().endsWith(PART_EXT) ? entry.file : `${entry.name}${PART_EXT}`;
     this.host.editPart(JSON.parse(JSON.stringify(entry.doc)) as PartDoc, file, this.label().replace(/ •$/, ""), pd => {
+      // The faces as they were, so mates can follow a face the edit renamed (exam #84).
+      const faces = new Map(this.geo);
       this.load(parked.doc, parked.fileName, parked.handle);
+      for (const [k, g] of faces) this.geo.set(k, g);
       this.undoStack = parked.undo;
       this.savedAt = parked.savedAt;
       this.selected = parked.sel;
