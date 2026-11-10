@@ -3699,6 +3699,19 @@ export class ModelController {
       case "shell": return [{ focus: "faces", label: t("Faces to remove"), faces: d.faces }, ...(d.multi?.length ? [{ focus: "mthick", label: t("Multi-thickness settings"), faces: d.multi.map(x => ({ name: x.name, ...(x.hint ? { hint: x.hint } : {}) })) }] : [])];
       case "delface": case "moveface": case "offsurf": case "replaceface": case "split":
         return [{ focus: "faces", label: t("Faces"), faces: d.faces }];
+      // End and start references (AT-UX-6): the target face in the Up to box's colour, named by its tag.
+      case "extrude": return [
+        ...(d.start === "surface" ? [{ focus: "start", label: t("Start at"), faces: pf(d.startRef) }] : []),
+        ...(d.end === "upto" || d.end === "offset" ? [{ focus: "upto", label: t("Up to"), faces: pf(d.upTo) }] : []),
+        ...(d.end === "body" ? [{ focus: "upbody", label: t("Body"), faces: d.upToBody ? [d.upToBody] : [] }] : [])];
+      case "revolve": return d.end === "upto" ? [{ focus: "upto", label: t("Up to"), faces: pf(d.upTo), sel: '.pm-box[data-k="focus-upto"]' }] : [];
+      case "hole": return [{ focus: "hplane", label: t("Face"), faces: pf(d.plane) },
+        ...(d.end === "upto" ? [{ focus: "hupto", label: t("Up to"), faces: pf(d.upTo) }] : [])];
+      case "mirror": return [{ focus: "mplane", label: t("Plane"), faces: pf(d.plane) },
+        ...(d.copy === "faces" ? [{ focus: "faces", label: t("Faces"), faces: d.faces ?? [] }] : [])];
+      case "lpattern": case "cpattern": case "spattern":
+        return d.copy === "faces" ? [{ focus: "faces", label: t("Faces"), faces: d.faces ?? [] }] : [];
+      case "bsplit": return [{ focus: "mplane", label: t("Plane"), faces: pf(d.plane) }];
       default: return [];
     }
   }

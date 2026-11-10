@@ -5,10 +5,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.385.0] - 2026-11-10
+## [1.388.0] - 2026-11-10
 
 ### Added
 - Tab and Slot (FR-FT-120): tabs grow out of a straight edge of a sheet face, in its plane, through the face they meet (on another body or the sheet itself), which gets matching slots with a clearance all round. Set the tab length and height, the number of tabs with an edge offset or a fixed spacing, and optionally round the slot corners. The tabs are part of the flat pattern, and slots cut in the sheet show in it like any cut.
+
+## [1.387.0] - 2026-11-10
+
+### Added
+
+- **Selection box colours in more panels (FR-SEL-011)**: Extrude's Start at, Up to and Body boxes, Revolve's Up to, the Hole Wizard's Face and Up to, Mirror's Plane, the faces to mirror or pattern and Split's plane now have their own colours too. The picked face is drawn in its box's colour with a small tag naming the box, so you see which pick went where.
+
+## [1.386.0] - 2026-11-10
+
+### Added
+- Dimension arrows by hand in drawings (FR-DRW-021): a linear dimension's **Arrows** can be set to **Inside** or **Outside** the extension lines, instead of following the room there is.
+
+## [1.385.0] - 2026-11-10
+
+### Changed
+
+- **More material values checked (FR-MAT-001)**: ten more library materials now show **Checked against:** with a link (tool steels X153CrMoV12, X40CrMoV5-1 and 90MnCrV8, high speed steel HS6-5-2, bearing steel 100Cr6, stainless 1.4125, titanium Grade 4 and Ti-6Al-4V, ASTM A500 Grade B, C22). 129 of 170 materials are checked; the other 41 still say they are not. One value changed: HS6-5-2 density 8.10 → 8.12 g/cm³.
 
 ## [1.384.0] - 2026-11-10
 
@@ -2267,7 +2284,10 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.385.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.388.0...HEAD
+[1.388.0]: https://github.com/kothf/step-viewer/compare/v1.387.0...v1.388.0
+[1.387.0]: https://github.com/kothf/step-viewer/compare/v1.386.0...v1.387.0
+[1.386.0]: https://github.com/kothf/step-viewer/compare/v1.385.0...v1.386.0
 [1.385.0]: https://github.com/kothf/step-viewer/compare/v1.384.0...v1.385.0
 [1.384.0]: https://github.com/kothf/step-viewer/compare/v1.383.0...v1.384.0
 [1.383.0]: https://github.com/kothf/step-viewer/compare/v1.382.0...v1.383.0

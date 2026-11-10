@@ -1756,6 +1756,7 @@ export class DrawingWorkspace {
         ${val != null ? `<p class="drw-note">${esc(t("Value"))}: <b translate="no">${esc(val)}</b>${a.src ? ` · ${esc(t("model item"))}` : ""}</p>` : ""}
         ${kinds ? `<label class="drw-f">${esc(t("Type"))}<select data-d="k">${kinds.map(([k, l]) => `<option value="${k}"${a.k === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : ""}
         ${lin ? `<label class="drw-f">${esc(t("Direction"))}<select data-d="k">${(["h", "v", "al"] as const).map(k => `<option value="${k}"${a.k === k ? " selected" : ""}>${esc(t(k === "h" ? "Horizontal" : k === "v" ? "Vertical" : "Aligned"))}</option>`).join("")}</select></label>` : ""}
+        ${lin ? `<label class="drw-f">${esc(t("Arrows"))}<select data-d="arrows">${([["", "Auto"], ["in", "Inside"], ["out", "Outside"]] as const).map(([k, l]) => `<option value="${k}"${(a.arrows ?? "") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : ""}
         <label class="drw-f">${esc(t("Decimals"))}<select data-d="prec"><option value="">${esc(t("Auto"))}</option>${[0, 1, 2, 3].map(n => `<option value="${n}"${a.prec === n ? " selected" : ""}>${n}</option>`).join("")}</select></label>
         <label class="drw-f">${esc(t("Prefix"))}<input data-d="pre" value="${esc(a.pre ?? "")}" translate="no"></label>
         <label class="drw-f">${esc(t("Suffix"))}<input data-d="suf" value="${esc(a.suf ?? "")}" translate="no"></label>
@@ -1901,6 +1902,7 @@ export class DrawingWorkspace {
     this.setAnnot(k === "ntxt" || k === "htxt" ? "Text" : "Annotation property", a => {
       if (a.t === "dim") {
         if (k === "k") a.k = val as DimAnnot["k"];
+        else if (k === "arrows") { if (val === "in" || val === "out") a.arrows = val; else delete a.arrows; }
         else if (k === "show") { if (val === "ref" || val === "basic") a.show = val; else delete a.show; }
         else if (k === "insp") { if ((el as HTMLInputElement).checked) a.insp = true; else delete a.insp; }
         else if (k === "dual") { const on = (el as HTMLInputElement).checked; if (on === (this.doc.style?.dual === "in")) delete a.dual; else a.dual = on; }
