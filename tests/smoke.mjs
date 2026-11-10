@@ -12876,7 +12876,8 @@ try {
     dp.on("pageerror", e => errors.push(e.message));
     dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
     await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
-    await dp.goto(`${origin}/index.html?debug`);
+    // One drawing worker: with the helper, the exact views of this small part can land before any preview is drawn.
+    await dp.goto(`${origin}/index.html?debug&drwhelper=0`);
     await dp.waitForFunction(() => window.__sv);
     // A plate with 25 holes: over the edge count that turns quick previews on.
     const P = (id, x, y) => ({ id, t: "point", x, y });
