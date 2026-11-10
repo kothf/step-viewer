@@ -11,6 +11,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - **Note justification and leader options (FR-DRW-023)**: a drawing note's lines can be centred or set to the right (**Justify**), its leader can end in a dot or plainly instead of an arrow (**Leader end**), and **Bent leader** gives it a short level shoulder at the text.
 
+### Changed
+
+- **Release workflow**: the GitHub Pages deployment gives up a stuck first try after 4 minutes and tries once more, instead of failing the run after 10.
+
 ## [1.416.0] - 2026-11-10
 
 ### Changed
