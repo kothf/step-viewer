@@ -125,7 +125,7 @@ test("feature recognition: a pocket, a through cut and a boss come back as extru
   const src = [...base(), slot, cut("c1", "k", 5), sq, cut("c2", "q", 10, "through"), bs, boss("b1", "b", 7)];
   const imp = imported(m, src);
   const v0 = vol(m, imp);
-  const feats = m.recognizeExtrudes(imp);
+  const feats = m.recognizeExtrudes(imp, false);
   assert.equal(feats.map(f => f.type).join(), "delface,sketch,extrude,sketch,extrude,sketch,extrude");
   const ex = feats.filter(f => f.type === "extrude") as any[];
   assert.deepEqual(ex.map(f => `${f.op}:${f.end}`).sort(), ["boss:blind", "cut:blind", "cut:through"]);
@@ -142,12 +142,12 @@ test("feature recognition: a pocket, a through cut and a boss come back as extru
 
 test("feature recognition: round holes and plain blocks give no extrudes (FR-FT-102)", async () => {
   const m = new Modeller(await occ());
-  assert.equal(m.recognizeExtrudes(imported(m, base())).length, 0);
+  assert.equal(m.recognizeExtrudes(imported(m, base()), false).length, 0);
   const circle: SketchFeature = { id: "o", type: "sketch", name: "o", plane: { face: { name: "e:end" } }, rels: [], dims: [],
     ents: [{ id: "oc", t: "point", x: 5, y: 5 }, { id: "ok", t: "circle", c: "oc", r: 4 } as SkEnt] };
-  assert.equal(m.recognizeExtrudes(imported(m, [...base(), circle, cut("c", "o", 6)])).length, 0);
+  assert.equal(m.recognizeExtrudes(imported(m, [...base(), circle, cut("c", "o", 6)]), false).length, 0);
   // A round boss is an extrude.
-  const up = m.recognizeExtrudes(imported(m, [...base(), circle, boss("b", "o", 6)]));
+  const up = m.recognizeExtrudes(imported(m, [...base(), circle, boss("b", "o", 6)]), false);
   assert.equal(up.map(f => f.type).join(), "delface,sketch,extrude");
   assert.ok((up[1] as SketchFeature).ents.some(e => e.t === "circle" && Math.abs(e.r - 4) < 1e-9));
 });
@@ -160,7 +160,7 @@ test("feature recognition: a pocket in the floor of a pocket and a hole-shaped c
   const stepped = imported(m, [...base(), outer, cut("c1", "q", 6), inner, cut("c2", "r", 4)]);
   const v0 = vol(m, stepped);
   close(v0, 60 * 40 * 20 - 30 * 20 * 6 - 10 * 6 * 4);
-  const feats = m.recognizeExtrudes(stepped);
+  const feats = m.recognizeExtrudes(stepped, false);
   assert.equal(feats.map(f => f.type).join(), "delface,delface,sketch,extrude,sketch,extrude");
   const ex = feats.filter(f => f.type === "extrude") as any[];
   close(ex[0].depth.v, 6); close(ex[1].depth.v, 4);
@@ -171,7 +171,7 @@ test("feature recognition: a pocket in the floor of a pocket and a hole-shaped c
   top.ents = top.ents.map(e => e.t === "point" ? { ...e, x: e.x + 22, y: e.y } : e);
   const bossed = imported(m, [...base(), bs, boss("b1", "b", 7), top, cut("c3", "t", 5)]);
   const v1 = vol(m, bossed);
-  const fb = m.recognizeExtrudes(bossed);
+  const fb = m.recognizeExtrudes(bossed, false);
   assert.equal(fb.map(f => f.type === "extrude" ? (f as any).op : f.type).join(), "delface,delface,sketch,boss,sketch,cut");
   close(vol(m, doc([...bossed.features, ...fb])), v1);
 });
@@ -183,7 +183,7 @@ test("feature recognition: a step and a slot open to the side come back as blind
   const slotted = imported(m, [...base(), across, cut("c1", "q", 5)]);
   const v0 = vol(m, slotted);
   close(v0, 60 * 40 * 20 - 12 * 40 * 5);
-  const fs = m.recognizeExtrudes(slotted);
+  const fs = m.recognizeExtrudes(slotted, false);
   assert.equal(fs.map(f => f.type === "extrude" ? `${(f as any).op}:${(f as any).end}` : f.type).join(), "delface,sketch,cut:blind");
   close((fs[2] as any).depth.v, 5);
   close(vol(m, doc([...slotted.features, fs[0]])), 60 * 40 * 20);
@@ -196,10 +196,136 @@ test("feature recognition: a step and a slot open to the side come back as blind
     { id: "ka1", t: "arc", c: "k0", a: "kd", b: "ka" }] as SkEnt[] };
   const notched = imported(m, [...base(), notch, cut("c2", "k", 7)]);
   const v1 = vol(m, notched);
-  const fn = m.recognizeExtrudes(notched);
+  const fn = m.recognizeExtrudes(notched, false);
   assert.equal(fn.map(f => f.type).join(), "delface,sketch,extrude");
   close((fn[2] as any).depth.v, 7);
   assert.equal((fn[1] as SketchFeature).ents.filter(e => e.t === "arc").length, 1);
   close(vol(m, doc([...notched.features, fn[0]])), 60 * 40 * 20);
   close(vol(m, doc([...notched.features, ...fn])), v1);
+});
+
+test("feature recognition: notches cut right through at an edge come back as through cuts (FR-FT-102)", async () => {
+  const m = new Modeller(await occ());
+  const types = (fs: Feature[]) => fs.map(f => f.type === "extrude" ? `${(f as any).op}:${(f as any).end}` : f.type).join();
+  const moved = (sk: SketchFeature, dx: number, dy: number) => ({ ...sk, ents: sk.ents.map(e => e.t === "point" ? { ...e, x: e.x + dx, y: e.y + dy } : e) }) as SketchFeature;
+  // A square notch in the middle of one side.
+  const notched = imported(m, [...base(), moved(on(rect("q", 10, 12), "e:end"), 0, 20), cut("c1", "q", 30, "through")]);
+  const v0 = vol(m, notched);
+  close(v0, 60 * 40 * 20 - 10 * 6 * 20);
+  const fs = m.recognizeExtrudes(notched, false);
+  assert.equal(types(fs), "delface,sketch,cut:through");
+  close(vol(m, doc([...notched.features, fs[0]])), 60 * 40 * 20);
+  close(vol(m, doc([...notched.features, ...fs])), v0);
+  // A corner cut away: the sketch closes at the corner the sides would meet in.
+  const corner = imported(m, [...base(), moved(on(rect("q", 20, 20), "e:end"), 30, 20), cut("c1", "q", 30, "through")]);
+  const v1 = vol(m, corner);
+  close(v1, 60 * 40 * 20 - 10 * 10 * 20);
+  const fc = m.recognizeExtrudes(corner, false);
+  assert.equal(types(fc), "delface,sketch,cut:through");
+  assert.equal((fc[1] as SketchFeature).ents.filter(e => e.t === "line").length, 4);
+  close(vol(m, doc([...corner.features, fc[0]])), 60 * 40 * 20);
+  close(vol(m, doc([...corner.features, ...fc])), v1);
+  // A half-round notch.
+  const round: SketchFeature = { id: "o", type: "sketch", name: "o", plane: { face: { name: "e:end" } }, rels: [], dims: [],
+    ents: [{ id: "oc", t: "point", x: 0, y: 20 }, { id: "ok", t: "circle", c: "oc", r: 6 } as SkEnt] };
+  const scooped = imported(m, [...base(), round, cut("c1", "o", 30, "through")]);
+  const v2 = vol(m, scooped);
+  const fr = m.recognizeExtrudes(scooped, false);
+  assert.equal(types(fr), "delface,sketch,cut:through");
+  assert.equal((fr[1] as SketchFeature).ents.filter(e => e.t === "arc").length, 1);
+  close(vol(m, doc([...scooped.features, ...fr])), v2);
+});
+
+test("feature recognition: the base of an imported prism comes back as a sketch with an extrude (FR-FT-102)", async () => {
+  const m = new Modeller(await occ());
+  // A plain block: one sketch, one extrude as a new body, and the imported body deleted.
+  const block = imported(m, base());
+  const fb = m.recognizeExtrudes(block);
+  assert.equal(fb.map(f => f.type).join(), "sketch,extrude,delbody");
+  assert.equal((fb[0] as SketchFeature).ents.filter(e => e.t === "line").length, 4);
+  assert.equal((fb[1] as any).merge, false);
+  const rb = m.evaluate(doc([...block.features, ...fb]));
+  assert.deepEqual(rb.statuses.filter(s => !s.ok), []);
+  assert.equal(m.props(rb.body!).bodies, 1);
+  close(m.props(rb.body!).volume, 60 * 40 * 20);
+  // Editable: the block's depth is the new extrude's.
+  close(vol(m, doc([...block.features, ...fb.map(f => f.type === "extrude" ? { ...f, depth: { v: 10 } } as Feature : f)])), 60 * 40 * 10);
+  // With a pocket, a round hole and a notch: no Delete Face, the finds go on the new body.
+  const pocket = on(rect("q", 20, 10), "e:end");
+  const hole: SketchFeature = { id: "o", type: "sketch", name: "o", plane: { face: { name: "e:end" } }, rels: [], dims: [],
+    ents: [{ id: "oc", t: "point", x: 20, y: 10 }, { id: "ok", t: "circle", c: "oc", r: 4 } as SkEnt] };
+  const notch = on(rect("n", 10, 12), "e:end");
+  notch.ents = notch.ents.map(e => e.t === "point" ? { ...e, x: e.x, y: e.y + 20 } : e);
+  const part = imported(m, [...base(), pocket, cut("c1", "q", 5), hole, cut("c2", "o", 10, "through"), notch, cut("c3", "n", 10, "through")]);
+  const v0 = vol(m, part);
+  const fp = m.recognizeExtrudes(part);
+  assert.equal(fp.slice(0, 3).map(f => f.type).join(), "sketch,extrude,delbody");
+  assert.ok(!fp.some(f => f.type === "delface"));
+  // The round hole stays in the base sketch as a circle.
+  assert.equal((fp[0] as SketchFeature).ents.filter(e => e.t === "circle").length, 1);
+  assert.deepEqual((fp.filter(f => f.type === "extrude") as any[]).slice(1).map(f => `${f.op}:${f.end}`).sort(), ["cut:blind", "cut:through"]);
+  const rp = m.evaluate(doc([...part.features, ...fp]));
+  assert.deepEqual(rp.statuses.filter(s => !s.ok), []);
+  assert.equal(m.props(rp.body!).bodies, 1);
+  close(m.props(rp.body!).volume, v0);
+  // A chamfer along one edge still leaves a prism (seen from the side); chamfers along two directions do not,
+  // and such a body keeps the Delete Face way.
+  const ch = (id: string, k: number) => ({ id, type: "chamfer", name: id, distance: { v: 3 }, edges: [{ faces: ["e:end", S(k)] }] }) as Feature;
+  const one = imported(m, [...base(), ch("h1", 1), pocket, cut("c1", "q", 5)]);
+  const f1 = m.recognizeExtrudes(one);
+  assert.equal(f1.map(f => f.type).join(), "sketch,extrude,delbody,sketch,extrude");
+  assert.equal((f1[0] as SketchFeature).ents.filter(e => e.t === "line").length, 5);
+  close(vol(m, doc([...one.features, ...f1])), vol(m, one));
+  const odd = imported(m, [...base(), ch("h1", 1), ch("h2", 2), pocket, cut("c1", "q", 5)]);
+  assert.equal(m.recognizeExtrudes(odd).map(f => f.type).join(), "delface,sketch,extrude");
+});
+
+test("feature recognition: the base of an imported body of revolution comes back as a sketch with a revolve (FR-FT-102)", async () => {
+  const m = new Modeller(await occ());
+  // A stepped shaft with a cone, turned about Z; `x0` moves the axis, `bore` keeps the profile off it.
+  const shaft = (plane: SketchFeature["plane"], x0 = 0, bore = 0): Feature[] => {
+    const xy: [number, number][] = [[bore, 0], [10, 0], [10, 20], [6, 26], [6, 40], [bore, 40]];
+    const ents: SkEnt[] = xy.map(([x, y], i) => ({ id: `rp${i}`, t: "point", x: x + x0, y }) as SkEnt);
+    xy.forEach((_, i) => ents.push({ id: `rl${i}`, t: "line", a: `rp${i}`, b: `rp${(i + 1) % xy.length}` }));
+    ents.push({ id: "ra", t: "point", x: x0, y: -5 }, { id: "rb", t: "point", x: x0, y: 45 }, { id: "rax", t: "line", a: "ra", b: "rb", cons: true });
+    return [{ id: "r", type: "sketch", name: "r", plane, ents, rels: [], dims: [] },
+      { id: "v", type: "revolve", name: "V", sketch: "r", op: "boss", axis: "rax", angle: { v: Math.PI * 2 } } as Feature];
+  };
+  const back = (d: PartDoc, want: string) => {
+    const v0 = vol(m, d), fs = m.recognizeExtrudes(d);
+    assert.equal(fs.map(f => f.type).join(), want);
+    const r = m.evaluate(doc([...d.features, ...fs]));
+    assert.deepEqual(r.statuses.filter(s => !s.ok), []);
+    assert.equal(m.props(r.body!).bodies, 1);
+    close(m.props(r.body!).volume, v0);
+    return fs;
+  };
+  // On the axis of a standard plane: the half section with its line on the axis, and a centreline.
+  const f1 = back(imported(m, shaft({ std: "XZ" })), "sketch,revolve,delbody");
+  const sk = f1[0] as SketchFeature;
+  assert.deepEqual(sk.plane, { std: "XZ" });
+  assert.equal(sk.ents.filter(e => e.t === "line" && !e.cons).length, 6);
+  assert.equal(sk.ents.filter(e => e.t === "line" && e.cons).length, 1);
+  assert.equal((f1[1] as any).merge, false);
+  // With a bore the profile stays off the axis.
+  const f2 = back(imported(m, shaft({ std: "XZ" }, 0, 4)), "sketch,revolve,delbody");
+  assert.equal((f2[0] as SketchFeature).ents.filter(e => e.t === "line" && !e.cons).length, 6);
+  // An axis beside the standard planes gets a reference plane through it.
+  const pl = { id: "pl", type: "plane", name: "pl", base: { std: "XZ" }, mode: "offset", offset: { v: 20 } } as Feature;
+  const f3 = back(imported(m, [pl, ...shaft({ plane: "pl" }, 30)]), "plane,sketch,revolve,delbody");
+  close((f3[0] as any).offset.v, 20);
+  // A pocket in the end face goes back on the new body.
+  const top = { id: "pt", type: "plane", name: "pt", base: { std: "XY" }, mode: "offset", offset: { v: 40 } } as Feature;
+  const q = { ...rect("q", 4, 3), plane: { plane: "pt" } } as SketchFeature;
+  const f4 = back(imported(m, [...shaft({ std: "XZ" }), top, q, { id: "c", type: "extrude", name: "C", sketch: "q", op: "cut", end: "blind", depth: { v: 5 } } as Feature]),
+    "sketch,revolve,delbody,sketch,extrude");
+  assert.equal((f4[4] as any).op, "cut");
+  // A pin with a ball end: the arc of the sphere stays an arc.
+  const P = (id: string, x: number, y: number): SkEnt => ({ id, t: "point", x, y });
+  const pin: Feature[] = [{ id: "r", type: "sketch", name: "r", plane: { std: "XZ" }, rels: [], dims: [], ents: [P("a", 0, 0), P("b", 5, 0), P("c", 5, 20), P("d", 0, 25), P("o", 0, 20),
+    { id: "l1", t: "line", a: "a", b: "b" }, { id: "l2", t: "line", a: "b", b: "c" }, { id: "ar", t: "arc", c: "o", a: "c", b: "d" }, { id: "l3", t: "line", a: "d", b: "a" },
+    P("u", 0, -5), P("w", 0, 30), { id: "rax", t: "line", a: "u", b: "w", cons: true }] } as Feature,
+    { id: "v", type: "revolve", name: "V", sketch: "r", op: "boss", axis: "rax", angle: { v: Math.PI * 2 } } as Feature];
+  const f5 = back(imported(m, pin), "sketch,revolve,delbody");
+  assert.equal((f5[0] as SketchFeature).ents.filter(e => e.t === "arc").length, 1);
 });

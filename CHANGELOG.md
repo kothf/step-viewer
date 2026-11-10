@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.410.0] - 2026-11-10
+## [1.419.0] - 2026-11-10
 
 ### Fixed
 
@@ -18,6 +18,66 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Added
 
 - **Rename mates** (#80): **Rename** in a mate's menu in the assembly tree.
+
+## [1.418.0] - 2026-11-10
+
+### Added
+
+- **Note justification and leader options (FR-DRW-023)**: a drawing note's lines can be centred or set to the right (**Justify**), its leader can end in a dot or plainly instead of an arrow (**Leader end**), and **Bent leader** gives it a short level shoulder at the text.
+
+### Changed
+
+- **Release workflow**: the GitHub Pages deployment gives up a stuck first try after 4 minutes and tries once more, instead of failing the run after 10.
+
+## [1.417.0] - 2026-11-10
+
+### Changed
+
+- **PA66-GF30 checked (FR-MAT-001)**: Nylon PA66-GF30 now shows **Checked against:** with a link to a BASF Ultramid A3WG6 data sheet (density 1.36 g/cm³, modulus 10 GPa, 190 MPa, dry as moulded). The row already matched. 143 of 170 materials are checked; the other 27 still say they are not.
+
+## [1.416.0] - 2026-11-10
+
+### Changed
+
+- **PE-LD checked (FR-MAT-001)**: Polyethylene PE-LD now shows **Checked against:** with a link to a maker's stock shape data sheet (density 0.92 g/cm³, modulus 207 MPa, 9.8 MPa at yield). The row already matched. 142 of 170 materials are checked; the other 28 still say they are not.
+
+## [1.415.0] - 2026-11-10
+
+### Added
+
+- **Recognize Extrudes makes turned bases (FR-FT-102)**: an imported body of revolution (a stepped shaft, a bush, a flange, with cones, rounded grooves and ball ends) comes back as a sketch of its half section with a centreline and a Revolve that makes a new body; the imported body is deleted, and recognised pockets and bosses go on the new one. It works when the axis lies in a standard plane or runs parallel to one (a reference plane through the axis is added then). Bodies with a skew axis are handled as before.
+
+## [1.414.0] - 2026-11-10
+
+### Added
+
+- **Recognize Extrudes makes the base too (FR-FT-102)**: when an imported body without its pockets and bosses is a plain prism (a plate, a block, a profile with straight sides, also with round holes through it), it comes back as a sketch on one end with an Extrude, the imported body is deleted, and the recognised cuts and bosses go on the new body. The whole part is then made of sketches and extrudes you can edit, with no Delete Face. Other bodies are handled as before.
+
+## [1.413.0] - 2026-11-10
+
+### Changed
+
+- **Douglas fir and water checked (FR-MAT-001)**: Wood (Douglas fir) and Water now show **Checked against:** with a link. Douglas fir is compared with Oregon State University's table from the USDA Wood Handbook (air-dry weight 545 kg/m³, modulus 13 400 MPa), water with the USGS density table. 141 of 170 materials are checked; the other 29 still say they are not.
+
+## [1.412.0] - 2026-11-10
+
+### Added
+- Convert to Sheet Metal (FR-FT-120): a lip ring round an opening (one face shared by several walls) now gives each picked wall its own lip, straight across to the ring's inner edge, and the lips meet mitred at the corners like the walls. Every further wall at a corner is mitred too: in the plane bisecting the two bend edges when both chains have the same walls, else where the walls' mid-planes meet.
+
+### Fixed
+- Convert to Sheet Metal: with four walls round a face, a wall's second mitre could keep the wrong side and leave the wall running on past its corner (hidden in the part, where the solid trimmed it, but not in the panel outlines). Each mitre now keeps the side the wall's own bend edge lies on.
+
+## [1.411.0] - 2026-11-10
+
+### Added
+
+- **Recognize Extrudes takes notches cut right through at an edge (FR-FT-102)**: a notch, a cut-off corner or a half-round cut-out in the outline of an imported body that goes through its whole thickness is removed and made again as a sketch on the face with a **Through all** Extruded Cut. When a cut can be read two ways (through from one face, blind from the next), the sketch goes on the larger face.
+
+## [1.410.0] - 2026-11-10
+
+### Added
+
+- **Weld table on drawings (FR-FT-121)**: in a drawing of a weldment part, Annotate ▾ Weld table lists the part's fillet beads: click a view, then place the table. Each kind of bead (continuous, intermittent or staggered, by leg size) gets a row with its item number, ISO 2553 leg (z4, z5×8), total length along the root and how many beads, then a total row. Cut list items marked Exclude are left out, and the table follows the part when it changes.
 
 ## [1.409.0] - 2026-11-10
 
@@ -2424,7 +2484,16 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.410.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.419.0...HEAD
+[1.419.0]: https://github.com/kothf/step-viewer/compare/v1.418.0...v1.419.0
+[1.418.0]: https://github.com/kothf/step-viewer/compare/v1.417.0...v1.418.0
+[1.417.0]: https://github.com/kothf/step-viewer/compare/v1.416.0...v1.417.0
+[1.416.0]: https://github.com/kothf/step-viewer/compare/v1.415.0...v1.416.0
+[1.415.0]: https://github.com/kothf/step-viewer/compare/v1.414.0...v1.415.0
+[1.414.0]: https://github.com/kothf/step-viewer/compare/v1.413.0...v1.414.0
+[1.413.0]: https://github.com/kothf/step-viewer/compare/v1.412.0...v1.413.0
+[1.412.0]: https://github.com/kothf/step-viewer/compare/v1.411.0...v1.412.0
+[1.411.0]: https://github.com/kothf/step-viewer/compare/v1.410.0...v1.411.0
 [1.410.0]: https://github.com/kothf/step-viewer/compare/v1.409.0...v1.410.0
 [1.409.0]: https://github.com/kothf/step-viewer/compare/v1.408.0...v1.409.0
 [1.408.0]: https://github.com/kothf/step-viewer/compare/v1.407.0...v1.408.0

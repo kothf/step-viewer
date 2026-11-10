@@ -6,11 +6,11 @@
 import { viewAxes, type MCyl, type MEdge, type MHole, type Seg2, type Topo, type V3, type ViewDir } from "../kernel/drawing";
 import type { FlatBend } from "../sheetmetal/sheet";
 import { arrowHead, clipToCircle, decorPrims, toSheet, type Placement } from "./compose";
-import type { HoleInfo, ModelItem, SketchInfo, ThreadInfo } from "./items";
+import type { HoleInfo, ModelItem, SketchInfo, ThreadInfo, WeldInfo } from "./items";
 import { PEN_W, rotateBox, rotatePrims, type Prim } from "./prims";
 import { balloonPrims, bomCells, compOfKey, type Bom } from "./bom";
 import { datumPrims, gtolPrims, surfPrims, tablePrims } from "./gdt";
-import type { BendTableAnnot, CLineAnnot, CloudAnnot, DimAnnot, DraftStyle, DrawingView, GeoRef, HoleAnnot, HoleTableAnnot, NoteAnnot, Sheet, SurfAnnot, Tol } from "./types";
+import type { BendTableAnnot, CLineAnnot, CloudAnnot, DimAnnot, DraftStyle, DrawingView, GeoRef, HoleAnnot, HoleTableAnnot, NoteAnnot, Sheet, SurfAnnot, Tol, WeldTableAnnot } from "./types";
 import { topoOnly, viewDir, viewOnly } from "./views";
 import { fitLimits } from "./iso286";
 import { weldPrims } from "./weld";
@@ -23,7 +23,7 @@ export type Label = (s: string, p?: Record<string, string>) => string;
 
 /** What annotations need from the model and the UI. */
 export interface AnnotCtx {
-  topo: Topo | null; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; bends?: FlatBend[]; items: ModelItem[]; box: [V3, V3] | null; dec: string; label: Label; bom?: Bom | null;
+  topo: Topo | null; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; bends?: FlatBend[]; welds?: WeldInfo[]; items: ModelItem[]; box: [V3, V3] | null; dec: string; label: Label; bom?: Bom | null;
   /** A view that shows another part configuration (FR-DRW-010) gets that configuration's topology and model items. */
   forView?: (v: DrawingView) => Partial<AnnotCtx> | null;
 }
@@ -533,10 +533,14 @@ function holePrims(a: HoleAnnot, e: MEdge, P: (p: V3) => P2, pl: Placement, ctx:
 }
 
 /** Draws a note (multi-line text) and its leader. */
+/** Length of a bent note leader's horizontal shoulder, sheet mm. */
+export const NOTE_SHOULDER = 4;
 export function notePrims(a: NoteAnnot, at: P2, leaderTo: P2 | null): { prims: Prim[]; box: [number, number, number, number] } {
   const out: Prim[] = [], h = a.h ?? TEXT_H, lines = expandProps(a.text).split("\n");
-  lines.forEach((s, i) => out.push({ t: "t", x: at[0], y: at[1] - i * h * 1.5, s, h, al: "l", layer: "ANNOT" }));
   const w = Math.max(1, ...lines.map(s => textW(s, h)));
+  // Justification: the block keeps its place, the lines move inside it.
+  const tx = a.al === "c" ? at[0] + w / 2 : a.al === "r" ? at[0] + w : at[0];
+  lines.forEach((s, i) => out.push({ t: "t", x: tx, y: at[1] - i * h * 1.5, s, h, al: a.al ?? "l", layer: "ANNOT" }));
   let box: [number, number, number, number] = [at[0] - 0.5, at[1] - (lines.length - 1) * h * 1.5 - 0.3 * h, at[0] + w + 0.5, at[1] + h * 1.1];
   // Border (FR-DRW-023): a box, an obround or a circle round the text; the leader then starts on it.
   const cx = (box[0] + box[2]) / 2, cy = (box[1] + box[3]) / 2, cr = Math.hypot(box[2] - box[0], box[3] - box[1]) / 2 + 0.3;
@@ -550,8 +554,15 @@ export function notePrims(a: NoteAnnot, at: P2, leaderTo: P2 | null): { prims: P
     let start: P2 = [leaderTo[0] < at[0] ? at[0] - 1 : at[0] + w + 1, at[1] + h * 0.35];
     if (a.border === "circle") { const d = unit2([leaderTo[0] - cx, leaderTo[1] - cy], [1, 0]); start = [cx + d[0] * cr, cy + d[1] * cr]; }
     else if (a.border === "box" || a.border === "round") start = [leaderTo[0] < at[0] ? fr[0] : fr[2], (fr[1] + fr[3]) / 2];
+    // A bent leader leaves the text along a horizontal shoulder (not from a circle, which it leaves radially).
+    if (a.bent && a.border !== "circle") {
+      const left = leaderTo[0] < at[0], knee: P2 = [start[0] + (left ? -NOTE_SHOULDER : NOTE_SHOULDER), start[1]];
+      out.push(thin(start, knee)); start = knee;
+    }
     const u = unit2([leaderTo[0] - start[0], leaderTo[1] - start[1]]);
-    out.push(thin(start, leaderTo), arrow(leaderTo[0], leaderTo[1], u[0], u[1]));
+    out.push(thin(start, leaderTo));
+    if (a.end === "dot") { const r = 0.6, p: number[] = []; for (let i = 0; i < 12; i++) p.push(leaderTo[0] + r * Math.cos(i * Math.PI / 6), leaderTo[1] + r * Math.sin(i * Math.PI / 6)); out.push({ t: "p", p, pen: "thin", layer: "ANNOT", closed: true, fill: true }); }
+    else if (a.end !== "none") out.push(arrow(leaderTo[0], leaderTo[1], u[0], u[1]));
   }
   if (a.border === "circle") box = [cx - cr, cy - cr, cx + cr, cy + cr];
   else if (a.border) box = fr;
@@ -642,8 +653,8 @@ function holeTablePrims(a: HoleTableAnnot, P: (p: V3) => P2, pl: Placement, ctx:
 
 /** Everything annotated on one view: its dimensions, callouts and notes, plus the automatic centre marks. */
 /** The model facts annotations draw on (topology, holes, threads, sketches, model items, box). */
-export function factsCtx(f: { topo: Topo; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; bends?: FlatBend[]; items: ModelItem[]; box: [V3, V3] } | null): Pick<AnnotCtx, "topo" | "holes" | "threads" | "sketches" | "bends" | "items" | "box"> {
-  return { topo: f?.topo ?? null, holes: f?.holes ?? [], threads: f?.threads ?? [], sketches: f?.sketches ?? [], bends: f?.bends ?? [], items: f?.items ?? [], box: f?.box ?? null };
+export function factsCtx(f: { topo: Topo; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; bends?: FlatBend[]; welds?: WeldInfo[]; items: ModelItem[]; box: [V3, V3] } | null): Pick<AnnotCtx, "topo" | "holes" | "threads" | "sketches" | "bends" | "welds" | "items" | "box"> {
+  return { topo: f?.topo ?? null, holes: f?.holes ?? [], threads: f?.threads ?? [], sketches: f?.sketches ?? [], bends: f?.bends ?? [], welds: f?.welds ?? [], items: f?.items ?? [], box: f?.box ?? null };
 }
 
 /** A section view's facts (FR-DRW-021): the model's plus the cut faces' edges from its projection, so the section can be dimensioned. */
@@ -705,6 +716,10 @@ export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: Ann
       const bends = ctx.bends ?? [];
       r = tablePrims({ id: a.id, t: "table", kind: "general", pos: toSheet(pl, a.pos[0], a.pos[1]), cols: BEND_COLS, rows: bendRows(a, bends, P, ctx) }, ctx.label);
       if (!bends.length) out.dangling.push(a.id);
+    } else if (a.t === "wtable") {
+      const welds = ctx.welds ?? [];
+      r = tablePrims({ id: a.id, t: "table", kind: "general", pos: toSheet(pl, a.pos[0], a.pos[1]), cols: WELD_COLS, rows: weldRows(a, welds, ctx) }, ctx.label);
+      if (!welds.length) out.dangling.push(a.id);
     } else if (a.t === "htable") {
       const ht = holeTablePrims(a, P, pl, ctx);
       r = ht;
@@ -1301,6 +1316,21 @@ export function bendRows(a: BendTableAnnot, bends: FlatBend[], P: (p: V3) => P2,
   const tags = bendTags(bends, P), f = (v: number) => fmtNum(v, a.prec, ctx.dec);
   return bends.map((b, i) => ({ b, tag: tags[i] })).sort((x, y) => (x.tag.length - y.tag.length) || x.tag.localeCompare(y.tag))
     .map(({ b, tag }) => [tag, ctx.label(b.up ? "UP" : "DOWN"), `${f(b.angle * 180 / Math.PI)}°`, f(b.r)]);
+}
+
+export const WELD_COLS = ["Item", "Weld", "Leg", "Length", "Qty"];
+
+/**
+ * The rows of a weld table: one per kind of bead in cut list order (item, continuous / intermittent l / e /
+ * staggered, ISO 2553 leg "z5" or "z5×8", summed root length, number of beads), then a total row.
+ */
+export function weldRows(a: WeldTableAnnot, welds: WeldInfo[], ctx: AnnotCtx): string[][] {
+  const f = (v: number) => fmtNum(v, a.prec, ctx.dec);
+  const kind = (w: WeldInfo) => !w.inter ? ctx.label("Continuous")
+    : ctx.label(w.inter[2] ? "Staggered {l} / {e}" : "Intermittent {l} / {e}", { l: f(w.inter[0]), e: f(w.inter[1]) });
+  const rows = welds.map((w, i) => [String(i + 1), kind(w), `z${ctx.dec === "." ? w.legs : w.legs.split(".").join(ctx.dec)}`, f(w.length), String(w.qty)]);
+  if (welds.length > 1) rows.push(["", ctx.label("Total"), "", f(welds.reduce((t, w) => t + w.length, 0)), String(welds.reduce((t, w) => t + w.qty, 0))]);
+  return rows;
 }
 
 // ---------- model items ----------

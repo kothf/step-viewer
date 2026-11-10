@@ -446,6 +446,13 @@ export const CHECKED: Record<string, string> = {
   // 1.407.0: PA66 stock shapes and the PLEXIGLAS GS/XT sheet.
   "Nylon PA66": "www.polymershapes.com/wp-content/uploads/2020/04/Polymershapes_Ensigner_DataSheet-TECAMID-66-natural.pdf",
   "PMMA (acrylic)": "www.voskunststoffen.nl/files/166151/datasheet%20plexiglas%20XT%20GS.pdf",
+  // 1.413.0: Oregon State's table from the USDA Wood Handbook, USGS water density.
+  "Wood (Douglas fir)": "owic.oregonstate.edu/node/68",
+  "Water (20 °C)": "www.usgs.gov/special-topics/water-science-school/science/water-density",
+  // 1.416.0: Ensinger TECAFINE LDPE stock shapes (0.92 g/cm³, 30 000 psi, 1 420 psi at yield).
+  "Polyethylene PE-LD": "www.modernplastics.com/wp-content/uploads/2015/04/TECAFINE-LDPE.pdf",
+  // 1.417.0: BASF Ultramid A3WG6, dry as moulded (1.36 g/cm³, 10.0 GPa, 190 MPa).
+  "Nylon PA66-GF30": "salesplastics.com/wp-content/uploads/2025/09/BASF-Ultramid%C2%AE-A3WG6-.pdf",
 };
 
 export const LIBRARY: Material[] = ROWS.map(([cat, name, , eq, [density, E, nu, sy, su, k, cp, alpha], src, color]) =>

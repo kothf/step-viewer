@@ -3328,7 +3328,7 @@ export class Modeller {
    * removed with Delete Face and each loop comes back as a sketch on the face with an Extrude. Round
    * pockets are left to Recognize Holes. A find counts only when the body comes back with the same volume.
    */
-  recognizeExtrudes(doc: PartDoc): Feature[] {
+  recognizeExtrudes(doc: PartDoc, base = true): Feature[] {
     const upto = doc.features.slice(0, doc.rollback ?? doc.features.length);
     const at = (fs: Feature[]): PartDoc => ({ ...doc, rollback: null, features: [...upto, ...fs] });
     // A pocket in the floor of another pocket (or in a boss) comes off first; the one around it is found in the
@@ -3341,6 +3341,10 @@ export class Modeller {
       rounds.push(r.finds);
       dels.push(r.feats[0]);
       if (!k) first = r.feats;
+    }
+    if (base) {
+      try { const b = this.baseExtrude(upto, at, dels, rounds); if (b) return b; } catch { /* without the base */ }
+      try { const b = this.baseRevolve(upto, at, dels, rounds); if (b) return b; } catch { /* without the base */ }
     }
     if (rounds.length < 2) return first;
     try {
@@ -3361,6 +3365,80 @@ export class Modeller {
     return first;
   }
 
+  /**
+   * The base of an imported body (FR-FT-102): when the body without its pockets and bosses is one plain prism
+   * (two flat ends, every other face a flat wall square to them or a cylinder along their normal), it is made
+   * again as a sketch on one end with an Extrude that adds a new body, the imported body is deleted, and the
+   * finds go back on the new one. No Delete Face is needed then.
+   */
+  private baseExtrude(upto: Feature[], at: (fs: Feature[]) => PartDoc, dels: Feature[], rounds: ExtrudeFind[][]): Feature[] | null {
+    const oc = this.oc;
+    const imports = upto.filter(f => f.type === "import" && !f.suppressed).map(f => `${f.id}:`);
+    if (!imports.length) return null;
+    const start = this.evaluate(at([]));
+    const body = dels.length ? this.evaluate(at(dels)).body : start.body;
+    if (!start.body || !body || this.solids(start.body.shape) !== 1 || this.solids(body.shape) !== 1) return null;
+    if (body.names.some(n => !imports.some(p => n.startsWith(p)))) return null;
+    const v0 = this.volume(start.body.shape);
+    const tol = Math.max(1e-4, this.size(body.shape) * 1e-6) * 10;
+    const S = oc.GeomAbs_SurfaceType, C = oc.GeomAbs_CurveType;
+    const kinds = body.faces.map(face => {
+      const ad = new oc.BRepAdaptor_Surface_2(face, true), ty = ad.GetType();
+      if (ty === S.GeomAbs_Plane) return { pln: this.faceNormalAt(face) };
+      if (ty === S.GeomAbs_Cylinder) return { cyl: unit(this.xyz(ad.Cylinder().Axis().Direction())) };
+      return {} as { pln?: V3; cyl?: V3 };
+    }) as { pln?: V3; cyl?: V3 }[];
+    const area = (i: number): number => { const g = new oc.GProp_GProps_1(); oc.BRepGProp.SurfaceProperties_1(body.faces[i], g, false, false); return g.Mass(); };
+    let best = -1, far = -1, ba = 0;
+    kinds.forEach((k, i) => {
+      const n = k.pln;
+      if (!n) return;
+      let j = -1, ok = true;
+      kinds.forEach((q, x) => {
+        if (x === i || !ok) return;
+        if (q.pln && dot(q.pln, n) < -1 + 1e-6 && j < 0) j = x;
+        else if (!(q.pln && Math.abs(dot(q.pln, n)) < 1e-6) && !(q.cyl && Math.abs(Math.abs(dot(q.cyl, n)) - 1) < 1e-6)) ok = false;
+      });
+      if (!ok || j < 0) return;
+      const a = area(i);
+      if (a > ba * (1 + 1e-9)) { ba = a; best = i; far = j; }
+    });
+    if (best < 0) return null;
+    const n = kinds[best].pln!;
+    const depth = Math.abs(dot(sub3(this.centroid(body.faces[far]), this.centroid(body.faces[best])), n));
+    if (depth < tol) return null;
+    const segs: ExtrudeFind["segs"] = [], pts: V3[] = [];
+    for (const e of this.sub(body.faces[best], "EDGE")) {
+      const ca = new oc.BRepAdaptor_Curve_2(e), t0 = ca.FirstParameter(), t1 = ca.LastParameter(), ct = ca.GetType();
+      const a = this.xyz(ca.Value(t0)), b = this.xyz(ca.Value(t1)), m = this.xyz(ca.Value((t0 + t1) / 2));
+      pts.push(a, m);
+      if (ct === C.GeomAbs_Line) segs.push({ line: [a, b] });
+      else if (ct === C.GeomAbs_Circle) {
+        const c = this.xyz(ca.Circle().Location()), r = ca.Circle().Radius();
+        if (Math.abs(Math.abs(t1 - t0) - 2 * Math.PI) < 1e-9) segs.push({ circle: { c, r } });
+        else segs.push({ arc: { c, a, b, m } });
+      } else return null;
+    }
+    // The sketch goes on the imported body as it is: the end face is found there by place.
+    const p = pts.find(q => this.flatFaceAt(start.body!, q, n, tol) >= 0);
+    if (!p) return null;
+    const made = this.extrudeFeatures([{ p, n, op: "boss", end: "blind", depth, segs }], start.body, start.frames);
+    if (!made) return null;
+    const fi = this.flatFaceAt(start.body, p, n, tol);
+    const id = `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
+    const out: Feature[] = [made[0], { ...made[1], merge: false, flip: true } as Feature,
+      { id, type: "delbody", name: "", bodies: [{ name: start.body.names[fi], hint: this.centroid(start.body.faces[fi]) }] } as Feature];
+    for (let k = rounds.length - 1; k >= 0; k--) {
+      const r = this.evaluate(at(out));
+      const fs = r.body && !r.statuses.slice(-out.length).some(s => s.ok === false) ? this.extrudeFeatures(rounds[k], r.body, r.frames) : null;
+      if (!fs) return null;
+      out.push(...fs);
+    }
+    const fin = this.evaluate(at(out));
+    if (!fin.body || this.solids(fin.body.shape) !== 1 || fin.statuses.slice(-out.length).some(s => s.ok === false)) return null;
+    return Math.abs(this.volume(fin.body.shape) - v0) <= 1e-6 * Math.abs(v0) + 1e-9 ? out : null;
+  }
+
   /** The flat face of a body that holds point `p` and faces along `n`. */
   private flatFaceAt(body: Named, p: V3, n: V3, tol: number): number {
     const oc = this.oc;
@@ -3376,6 +3454,123 @@ export class Modeller {
     return best;
   }
 
+  /** Sketch entities in frame `fr` for curves given in 3D; `pt` adds (or finds) the point at a place. */
+  private loopEnts(sid: string, fr: Frame, segs: ExtrudeFind["segs"]): { ents: SkEnt[]; pt: (p: V3) => string } {
+    const ents: SkEnt[] = [], pts = new Map<string, string>();
+    const pt = (p: V3): string => {
+      const q = sub3(p, fr.o), x = dot(q, fr.x), y = dot(q, fr.y), k = `${x.toFixed(5)},${y.toFixed(5)}`;
+      let pid = pts.get(k);
+      if (!pid) { pid = `${sid}p${pts.size + 1}`; pts.set(k, pid); ents.push({ id: pid, t: "point", x, y }); }
+      return pid;
+    };
+    segs.forEach((sg, k) => {
+      const eid = `${sid}e${k + 1}`;
+      if ("line" in sg) ents.push({ id: eid, t: "line", a: pt(sg.line[0]), b: pt(sg.line[1]) });
+      else if ("circle" in sg) ents.push({ id: eid, t: "circle", c: pt(sg.circle.c), r: sg.circle.r });
+      else {
+        const { c: cc, a, b, m } = sg.arc;
+        const ccw = dot(cross(sub3(a, cc), sub3(m, cc)), fr.n) > 0;
+        ents.push({ id: eid, t: "arc", c: pt(cc), a: pt(ccw ? a : b), b: pt(ccw ? b : a) });
+      }
+    });
+    return { ents, pt };
+  }
+
+  /**
+   * The base of an imported body of revolution (FR-FT-102): when every face of the body without its pockets and
+   * bosses turns about one axis (flat faces square to it, cylinders, cones and tori on it, spheres centred on it)
+   * and the axis lies in a standard plane or parallel to one, the half section in that plane becomes a sketch
+   * with a centreline, a Revolve makes a new body from it and the imported body is deleted.
+   */
+  private baseRevolve(upto: Feature[], at: (fs: Feature[]) => PartDoc, dels: Feature[], rounds: ExtrudeFind[][]): Feature[] | null {
+    const oc = this.oc;
+    const imports = upto.filter(f => f.type === "import" && !f.suppressed).map(f => `${f.id}:`);
+    if (!imports.length) return null;
+    const start = this.evaluate(at([]));
+    const body = dels.length ? this.evaluate(at(dels)).body : start.body;
+    if (!start.body || !body || this.solids(start.body.shape) !== 1 || this.solids(body.shape) !== 1) return null;
+    if (body.names.some(n => !imports.some(p => n.startsWith(p)))) return null;
+    const v0 = this.volume(start.body.shape), size = this.size(body.shape);
+    const tol = Math.max(1e-4, size * 1e-6) * 10;
+    const S = oc.GeomAbs_SurfaceType, C = oc.GeomAbs_CurveType;
+    // What each face says about the axis: a direction (flat), a line (cylinder, cone, torus) or a point (sphere).
+    const says = body.faces.map(face => {
+      const ad = new oc.BRepAdaptor_Surface_2(face, true), ty = ad.GetType();
+      const ax = (a: any) => ({ p: this.xyz(a.Location()), d: unit(this.xyz(a.Direction())) });
+      if (ty === S.GeomAbs_Plane) return { n: this.faceNormalAt(face) };
+      if (ty === S.GeomAbs_Cylinder) return { ax: ax(ad.Cylinder().Axis()) };
+      if (ty === S.GeomAbs_Cone) return { ax: ax(ad.Cone().Axis()) };
+      if (ty === S.GeomAbs_Torus) return { ax: ax(ad.Torus().Axis()) };
+      if (ty === S.GeomAbs_Sphere) return { c: this.xyz(ad.Sphere().Location()) };
+      return null;
+    }) as ({ n?: V3; ax?: { p: V3; d: V3 }; c?: V3 } | null)[];
+    if (says.some(q => !q)) return null;
+    const lead = says.find(q => q!.ax)?.ax;
+    if (!lead) return null;
+    const A = lead.p, d = lead.d;
+    const off = (p: V3): number => { const q = sub3(p, A); return Math.hypot(...sub3(q, mul(d, dot(q, d)))); };
+    for (const q of says) {
+      if (q!.n && Math.abs(Math.abs(dot(q!.n, d)) - 1) > 1e-6) return null;
+      if (q!.ax && (Math.abs(Math.abs(dot(q!.ax.d, d)) - 1) > 1e-6 || off(q!.ax.p) > tol)) return null;
+      if (q!.c && off(q!.c) > tol) return null;
+    }
+    // The sketch plane: a standard plane that holds the axis, or one moved along its normal up to the axis.
+    const id = () => `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
+    let plane: PlaneRef | null = null, fr: Frame | null = null, ref: Feature | null = null;
+    for (const std of ["XY", "XZ", "YZ"] as const) {
+      const F = STD_FRAMES[std];
+      if (Math.abs(dot(d, F.n)) > 1e-9) continue;
+      const h = dot(A, F.n);
+      if (Math.abs(h) <= tol) { plane = { std }; fr = F; break; }
+      if (!ref) {
+        ref = { id: id(), type: "plane", name: "", base: { std }, mode: "offset", offset: { v: Math.abs(h) }, flip: h < 0 } as Feature;
+        plane = { plane: ref.id };
+        fr = { o: mul(F.n, h), x: F.x, y: F.y, n: F.n };
+      }
+    }
+    if (!plane || !fr) return null;
+    // Half of the section through the axis: the body cut by a big rectangle that starts on the axis.
+    const u = unit(cross(fr.n, d)), L = size * 4 + 1;
+    const corner = (a: number, b: number) => this.P(add(add(A, mul(d, a * L)), mul(u, b * L)));
+    const poly = new oc.BRepBuilderAPI_MakePolygon_1();
+    poly.Add_1(corner(-1, 0)); poly.Add_1(corner(1, 0)); poly.Add_1(corner(1, 1)); poly.Add_1(corner(-1, 1));
+    poly.Close();
+    const half = new oc.BRepBuilderAPI_MakeFace_15(poly.Wire(), true).Face();
+    const cut = new oc.BRepAlgoAPI_Common_3(half, body.shape, new oc.Message_ProgressRange_1());
+    if (!cut.IsDone() || cut.HasErrors()) return null;
+    const segs: ExtrudeFind["segs"] = [];
+    let lo = Infinity, hi = -Infinity;
+    for (const e of this.sub(cut.Shape(), "EDGE")) {
+      const ca = new oc.BRepAdaptor_Curve_2(e), t0 = ca.FirstParameter(), t1 = ca.LastParameter(), ct = ca.GetType();
+      const a = this.xyz(ca.Value(t0)), b = this.xyz(ca.Value(t1)), m = this.xyz(ca.Value((t0 + t1) / 2));
+      for (const p of [a, b, m]) { const t = dot(sub3(p, A), d); lo = Math.min(lo, t); hi = Math.max(hi, t); }
+      if (ct === C.GeomAbs_Line) segs.push({ line: [a, b] });
+      else if (ct === C.GeomAbs_Circle) {
+        const c = this.xyz(ca.Circle().Location()), r = ca.Circle().Radius();
+        if (Math.abs(Math.abs(t1 - t0) - 2 * Math.PI) < 1e-9) segs.push({ circle: { c, r } });
+        else segs.push({ arc: { c, a, b, m } });
+      } else return null;
+    }
+    if (!segs.length || !(hi - lo > tol)) return null;
+    const sid = id(), { ents, pt } = this.loopEnts(sid, fr, segs);
+    // The centreline runs a little past the profile, so it shares no point with it.
+    const pad = Math.max(1, (hi - lo) * 0.1), axis = `${sid}ax`;
+    ents.push({ id: axis, t: "line", a: pt(add(A, mul(d, lo - pad))), b: pt(add(A, mul(d, hi + pad))), cons: true });
+    const out: Feature[] = [...(ref ? [ref] : []),
+      { id: sid, type: "sketch", name: "", plane, ents, rels: [], dims: [] } as Feature,
+      { id: id(), type: "revolve", name: "", sketch: sid, op: "boss", merge: false, axis, angle: { v: Math.PI * 2 } } as Feature,
+      { id: id(), type: "delbody", name: "", bodies: [{ name: start.body.names[0], hint: this.centroid(start.body.faces[0]) }] } as Feature];
+    for (let k = rounds.length - 1; k >= 0; k--) {
+      const r = this.evaluate(at(out));
+      const fs = r.body && !r.statuses.slice(-out.length).some(s => s.ok === false) ? this.extrudeFeatures(rounds[k], r.body, r.frames) : null;
+      if (!fs) return null;
+      out.push(...fs);
+    }
+    const fin = this.evaluate(at(out));
+    if (!fin.body || this.solids(fin.body.shape) !== 1 || fin.statuses.slice(-out.length).some(s => s.ok === false)) return null;
+    return Math.abs(this.volume(fin.body.shape) - v0) <= 1e-6 * Math.abs(v0) + 1e-9 ? out : null;
+  }
+
   /** Sketch + extrude pairs for finds, each on the flat face of `body` its loop lies on. */
   private extrudeFeatures(finds: ExtrudeFind[], body: Named, frames: Record<string, Frame>): Feature[] | null {
     const id = () => `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
@@ -3386,23 +3581,7 @@ export class Modeller {
       if (fi < 0) return null;
       const plane: PlaneRef = { face: { name: body.names[fi], hint: this.centroid(body.faces[fi]) } };
       const fr = this.planeFrame(plane, body, frames);
-      const sid = id(), ents: SkEnt[] = [], pts = new Map<string, string>();
-      const pt = (p: V3): string => {
-        const q = sub3(p, fr.o), x = dot(q, fr.x), y = dot(q, fr.y), k = `${x.toFixed(5)},${y.toFixed(5)}`;
-        let pid = pts.get(k);
-        if (!pid) { pid = `${sid}p${pts.size + 1}`; pts.set(k, pid); ents.push({ id: pid, t: "point", x, y }); }
-        return pid;
-      };
-      c.segs.forEach((sg, k) => {
-        const eid = `${sid}e${k + 1}`;
-        if ("line" in sg) ents.push({ id: eid, t: "line", a: pt(sg.line[0]), b: pt(sg.line[1]) });
-        else if ("circle" in sg) ents.push({ id: eid, t: "circle", c: pt(sg.circle.c), r: sg.circle.r });
-        else {
-          const { c: cc, a, b, m } = sg.arc;
-          const ccw = dot(cross(sub3(a, cc), sub3(m, cc)), fr.n) > 0;
-          ents.push({ id: eid, t: "arc", c: pt(cc), a: pt(ccw ? a : b), b: pt(ccw ? b : a) });
-        }
-      });
+      const sid = id(), { ents } = this.loopEnts(sid, fr, c.segs);
       feats.push({ id: sid, type: "sketch", name: "", plane, ents, rels: [], dims: [] } as Feature,
         { id: id(), type: "extrude", name: "", sketch: sid, op: c.op, end: c.end, depth: { v: c.depth } } as Feature);
     }
@@ -3436,8 +3615,9 @@ export class Modeller {
       return { a: this.xyz(ca.Value(t0)), b: this.xyz(ca.Value(t1)), m: this.xyz(ca.Value((t0 + t1) / 2)), ca };
     };
     type Seg = ExtrudeFind["segs"][0];
-    type Cand = ExtrudeFind & { face: number; del: number[]; key: string };
+    type Cand = ExtrudeFind & { face: number; del: number[]; key: string; rank?: number };
     const cands: Cand[] = [];
+    const areaOf = (i: number): number => { const g = new oc.GProp_GProps_1(); oc.BRepGProp.SurfaceProperties_1(body.faces[i], g, false, false); return g.Mass(); };
     body.faces.forEach((face, i) => {
       const n = kinds[i].pln;
       if (!n) return;
@@ -3529,11 +3709,86 @@ export class Modeller {
         : "arc" in sg ? { arc: { c: up(sg.arc.c), a: up(sg.arc.a), b: up(sg.arc.b), m: up(sg.arc.m) } } : sg);
       const key = [i, ...walls].sort((a, b) => a - b).join(",") + "|open";
       const top = edges[tops[0]].map(x => across(tops[0], x.k)).some(j => walls.includes(j)) ? ends(edges[tops[0]].find(x => walls.includes(across(tops[0], x.k)))!.e).m : up(P);
-      cands.push({ face: tops[0], p: top, n, op: "cut", end: "blind", depth: h, del: [i, ...walls], segs, key });
+      cands.push({ face: tops[0], p: top, n, op: "cut", end: "blind", depth: h, del: [i, ...walls], segs, key, rank: tops.reduce((a, j) => a + areaOf(j), 0) });
+    });
+    // Notches cut right through at the outline of a flat face: a run of side walls joined by inside corners
+    // (or round inside walls), reaching the opposite face. The run, closed along the outline the neighbours
+    // would have without it, is the sketch of a through cut.
+    const near = (p: V3, q: V3) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) < tol;
+    body.faces.forEach((face, i) => {
+      const n = kinds[i].pln;
+      if (!n) return;
+      type OE = { j: number; a: V3; b: V3; m: V3; seg: Seg | null; line: boolean; wall: boolean; inCyl: boolean };
+      const raw: OE[] = [];
+      for (const e of this.sub(oc.BRepTools.OuterWire(face), "EDGE")) {
+        const j = across(i, emap.FindIndex(e));
+        if (j < 0) return;
+        const x = ends(e), ct = x.ca.GetType(), k = kinds[j];
+        let seg: Seg | null = null;
+        if (ct === C.GeomAbs_Line) seg = { line: [x.a, x.b] };
+        else if (ct === C.GeomAbs_Circle && Math.abs(Math.abs(x.ca.LastParameter() - x.ca.FirstParameter()) - 2 * Math.PI) > 1e-9) seg = { arc: { c: this.xyz(x.ca.Circle().Location()), a: x.a, b: x.b, m: x.m } };
+        const wall = !!seg && (!!(k.pln && Math.abs(dot(k.pln, n)) < 1e-6) || !!(k.cyl && Math.abs(Math.abs(dot(k.cyl.d, n)) - 1) < 1e-6));
+        // A round wall with the material outside it.
+        const inCyl = wall && !!k.cyl && dot(this.normalNear(body.faces[j], x.m), sub3(x.m, k.cyl.o)) - dot(this.normalNear(body.faces[j], x.m), k.cyl.d) * dot(sub3(x.m, k.cyl.o), k.cyl.d) < 0;
+        raw.push({ j, a: x.a, b: x.b, m: x.m, seg, line: ct === C.GeomAbs_Line, wall, inCyl });
+      }
+      if (raw.length < 4) return;
+      // In order round the outline, each edge running a → b.
+      const ord: OE[] = [raw[0]], left = raw.slice(1);
+      if (!left.some(e => near(e.a, raw[0].b) || near(e.b, raw[0].b))) ord[0] = { ...raw[0], a: raw[0].b, b: raw[0].a };
+      while (left.length) {
+        const last = ord[ord.length - 1];
+        const k = left.findIndex(e => near(e.a, last.b) || near(e.b, last.b));
+        if (k < 0) return;
+        const e = left.splice(k, 1)[0];
+        ord.push(near(e.a, last.b) ? e : { ...e, a: e.b, b: e.a });
+      }
+      const N = ord.length;
+      // The corner after edge k: inside (the walls close on each other), smooth onto a round inside wall, or outside.
+      const inside = ord.map((e, k) => {
+        const f = ord[(k + 1) % N];
+        if (!e.wall || !f.wall || e.j === f.j) return e.wall && f.wall && e.j === f.j && e.inCyl;
+        const d = dot(this.normalNear(body.faces[f.j], e.b), sub3(e.m, e.b));
+        if (d > tol * 1e-2 && d > 1e-6 * Math.hypot(...sub3(e.m, e.b))) return true;
+        return Math.abs(d) <= 1e-6 * Math.hypot(...sub3(e.m, e.b)) + tol * 1e-2 && (e.inCyl || f.inCyl);
+      });
+      if (inside.every(Boolean)) return;
+      const start = inside.findIndex((v, k) => !v && (inside[(k + 1) % N] || ord[(k + 1) % N].inCyl));
+      if (start < 0) return;
+      for (let s = 1; s <= N; s++) {
+        const k0 = (start + s) % N;
+        if (inside[(k0 - 1 + N) % N] || !(inside[k0] || ord[k0].inCyl)) continue;
+        let len = 1;
+        while (len < N && inside[(k0 + len - 1) % N]) len++;
+        const run = Array.from({ length: len }, (_, q) => ord[(k0 + q) % N]);
+        if (len >= N - 1 || run.some(e => !e.wall || !e.seg)) continue;
+        const walls = [...new Set(run.map(e => e.j))];
+        const P = run[0].a;
+        const reach = (j: number) => { let m = 0, up = 0; for (const { e } of edges[j]) { const x = ends(e); for (const p of [x.a, x.b]) { const h = dot(sub3(p, P), n); m = Math.max(m, -h); up = Math.max(up, h); } } return up > tol ? -1 : m; };
+        const depth = reach(walls[0]);
+        if (!(depth > tol) || walls.some(j => Math.abs(reach(j) - depth) > tol)) continue;
+        const far = [...new Set(walls.flatMap(neighbours))].filter(j => j !== i && !walls.includes(j));
+        const bottoms = far.filter(j => kinds[j].pln && dot(kinds[j].pln!, n) < -1 + 1e-6);
+        if (bottoms.length !== 1 || far.some(j => kinds[j].pln && dot(kinds[j].pln!, n) > 1 - 1e-6) || walls.some(j => !neighbours(j).includes(bottoms[0]))) continue;
+        // Closing the run: along the neighbours' lines to where they meet, else straight across.
+        const S = run[0].a, T = run[len - 1].b, prev = ord[(k0 - 1 + N) % N], next = ord[(k0 + len) % N];
+        const segs: Seg[] = run.map(e => e.seg!);
+        let X: V3 | null = null;
+        if (prev.line && next.line) {
+          const u = unit(sub3(prev.b, prev.a)), v = unit(sub3(next.b, next.a)), w = sub3(T, S), cuv = cross(u, v), den = dot(cuv, cuv);
+          if (den > 1e-12) { const t = dot(cross(w, v), cuv) / den; X = [S[0] + u[0] * t, S[1] + u[1] * t, S[2] + u[2] * t]; }
+        }
+        if (X && !near(X, S) && !near(X, T)) segs.push({ line: [T, X] }, { line: [X, S] });
+        else segs.push({ line: [T, S] });
+        const key = [...walls].sort((a, b) => a - b).join(",");
+        if (!cands.some(c => c.key === key)) cands.push({ face: i, p: run[0].m, n, op: "cut", end: "through", depth, del: walls, segs, key, rank: areaOf(i) });
+      }
     });
     // A face two finds would delete, or one a find stands on, goes to one of them only.
+    // A notch reads two ways (through from one face, blind and open from the next): the larger sketch face wins.
+    const order = [...cands.filter(c => c.rank === undefined), ...cands.filter(c => c.rank !== undefined).sort((a, b) => b.rank! - a.rank!)];
     const picked: Cand[] = [];
-    for (const c of cands) if (!picked.some(p => p.del.some(j => c.del.includes(j) || j === c.face) || c.del.includes(p.face))) picked.push(c);
+    for (const c of order) if (!picked.some(p => p.del.some(j => c.del.includes(j) || j === c.face) || c.del.includes(p.face))) picked.push(c);
     if (!picked.length) return null;
     const ref = (i: number): FaceRef => ({ name: body.names[i], hint: this.centroid(body.faces[i]) });
     const attempt = (cs: Cand[]): Feature[] | null => {
