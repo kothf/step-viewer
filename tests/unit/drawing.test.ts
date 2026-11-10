@@ -1335,7 +1335,7 @@ test("a dimension can hide extension lines and keep its text horizontal in the l
 });
 
 test("a dimension can carry a second line of text under its line (FR-DRW-021)", async () => {
-  const { dimPrims } = await import("../../src/drawing/annot");
+  const { dimPrims, dimGeo, wholeCircle } = await import("../../src/drawing/annot");
   const lin = { id: "a", t: "dim" as const, view: "v", k: "h" as const, refs: [], pos: [20, 15] as [number, number] };
   const pl = { s: 1, uc: 0, vc: 0, x: 0, y: 0 } as never;
   const geo = { k: "h" as const, pts: [[0, 0], [40, 0]] as [number, number][], value: 40 };
@@ -1361,6 +1361,53 @@ test("a dimension can carry a second line of text under its line (FR-DRW-021)", 
     // Text inside the circle: nothing to lead from, so the option changes nothing.
     const inn = { id: "d", t: "dim", view: "v", k: "dia", refs: [], pos: [3, 0] } as never;
     assert.deepEqual(dimPrims({ ...(inn as object), outside: true } as never, dg, pl, ".").prims, dimPrims(inn, dg, pl, ".").prims);
+  }
+  {
+    // Extension lines leave a measured edge at its end nearest the dimension line, not at the point the distance was taken from.
+    const segs = [[[-50, -30], [-50, -10]], [[50, 10], [50, 30]]];
+    const dg = (s?: unknown) => ({ k: "al", pts: [[-50, -20], [50, -20]], value: 100, segs: s }) as never;
+    const dim = (pos: number[]) => ({ id: "d", t: "dim", view: "v", k: "al", refs: [], pos }) as never;
+    const vert = (o: { prims: { t: string }[] }) => o.prims.filter(q => q.t === "l").map(q => (q as never as { p: number[] }).p).filter(p => Math.abs(p[0] - p[2]) < 1e-9).map(p => [p[0], Math.min(p[1], p[3]), Math.max(p[1], p[3])]);
+    const plain = vert(dimPrims(dim([0, 40]), dg(), pl, ".")), slid = vert(dimPrims(dim([0, 40]), dg(segs), pl, "."));
+    assert.deepEqual(plain.map(v => v[1]), [-19, -19], "without the edges both start at the measured points");
+    assert.deepEqual(slid.map(v => [v[0], v[1]]), [[-50, -9], [50, 31]], "with them: 1 mm past each edge's upper end");
+    assert.ok(slid.every(v => Math.abs(v[2] - 42) < 1e-9), "and 2 mm past the dimension line");
+    // Below the part the lower ends are used; a dimension line crossing an edge needs no extension line there.
+    assert.deepEqual(vert(dimPrims(dim([0, -40]), dg(segs), pl, ".")).map(v => v[2]), [-31, 9]);
+    assert.equal(vert(dimPrims(dim([0, 20]), dg(segs), pl, ".")).length, 1);
+    assert.equal(dimPrims(dim([0, 40]), dg(segs), pl, ".").prims.length, dimPrims(dim([0, 40]), dg(), pl, ".").prims.length);
+    // dimGeo hands the edges over for two parallel lines.
+    const E = (k: string, a: number[], b: number[]) => ({ k, t: "l", a, b, m: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, 0] });
+    const topo = { edges: [E("a|b", [-50, -30, 0], [-50, -10, 0]), E("c|d", [50, 10, 0], [50, 30, 0])], cyls: [] } as never;
+    const g = dimGeo({ id: "d", t: "dim", view: "v", k: "al", refs: [{ e: "a|b", h: [-50, -20, 0], p: "e" }, { e: "c|d", h: [50, 20, 0], p: "e" }], pos: [0, 40] } as never, (p: number[]) => [p[0], p[1]], topo)!;
+    assert.equal(g.value, 100);
+    assert.equal(g.segs!.length, 2);
+    assert.deepEqual(g.segs![1], [[50, 10], [50, 30]]);
+  }
+  {
+    // A circle seen side-on (its axis in the view plane) is a line: its diameter is a linear dimension along that line, Ø kept.
+    const circ = { k: "s|t", t: "c", a: [10, 0, 0], b: [10, 0, 0], m: [-10, 0, 0], c: [0, 0, 5], ax: [0, 0, 1], r: 10, sp: 2 * Math.PI };
+    const topo = { edges: [circ], cyls: [] } as never, ref = { e: "s|t", h: [-10, 0, 0], p: "e" };
+    const front = (p: number[]) => [p[0], p[2]], top = (p: number[]) => [p[0], p[1]];
+    const side = dimGeo({ id: "d", t: "dim", view: "v", k: "dia", refs: [ref], pos: [0, 20] } as never, front, topo)!;
+    assert.ok(side.dl && Math.abs(Math.abs(side.dl[0]) - 1) < 1e-9 && Math.abs(side.dl[1]) < 1e-9, "the line runs along X");
+    assert.equal(dimGeo({ id: "d", t: "dim", view: "v", k: "dia", refs: [ref], pos: [0, 20] } as never, top, topo)!.dl, undefined, "end-on: an ordinary diameter");
+    const o = dimPrims({ id: "d", t: "dim", view: "v", k: "dia", refs: [ref], pos: [0, 20] } as never, side, pl, ".");
+    const ls = o.prims.filter(q => q.t === "l").map(q => (q as never as { p: number[] }).p);
+    assert.ok(ls.some(p => Math.abs(p[0] + 10) < 1e-9 && Math.abs(p[2] + 10) < 1e-9) && ls.some(p => Math.abs(p[0] - 10) < 1e-9 && Math.abs(p[2] - 10) < 1e-9), "extension lines at both ends of the line");
+    assert.ok(ls.some(p => Math.abs(p[1] - 20) < 1e-9 && Math.abs(p[3] - 20) < 1e-9 && Math.abs(Math.abs(p[2] - p[0]) - 20) < 1e-9), "a level dimension line 20 long");
+    assert.ok(o.prims.some(q => q.t === "t" && (q as never as { s: string }).s === "Ø20"));
+  }
+  {
+    // A hole is dimensioned by its diameter: a whole circle, also when the file gives it as two half circles; other arcs by radius.
+    const C = (k: string, c: number[], r: number, sp: number) => ({ k, t: "c", a: [0, 0, 0], b: [0, 0, 0], m: [0, 0, 0], c, r, sp });
+    const whole = C("w", [0, 0, 0], 5, 2 * Math.PI), h1 = C("h1", [20, 0, 0], 3, Math.PI), h2 = C("h2", [20, 0, 0], 3, Math.PI), fil = C("f", [40, 0, 0], 3, Math.PI / 2), half = C("s", [60, 0, 0], 3, Math.PI);
+    const topo = { edges: [whole, h1, h2, fil, half, C("o", [60, 0, 0], 4, Math.PI)], cyls: [] } as never;
+    assert.equal(wholeCircle(whole as never, topo), true);
+    assert.equal(wholeCircle(h1 as never, topo), true, "two halves on one centre and radius");
+    assert.equal(wholeCircle(fil as never, topo), false, "a fillet arc");
+    assert.equal(wholeCircle(half as never, topo), false, "a lone half circle (the other arc there has another radius)");
+    assert.equal(wholeCircle(h1 as never, null), false);
   }
   {
     // Text along the leader: turned to the leader's angle, no level shoulder; the leader runs on under the text.

@@ -6,7 +6,7 @@
 import type { VaultTie } from "../pdm/panel";
 import fontUrl from "dejavu-fonts-ttf/ttf/DejaVuSans.ttf?url";
 import type { MEdge, Projection, ViewDir } from "../kernel/drawing";
-import { AUTO_LAYERS, withCut, clineSegs, cloudPrims, dimGeo, factsCtx, holeEdges, ringDist, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, stackItem, edgeItem, weldItem, cutDesc, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
+import { AUTO_LAYERS, withCut, wholeCircle, clineSegs, cloudPrims, dimGeo, factsCtx, holeEdges, ringDist, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, stackItem, edgeItem, weldItem, cutDesc, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
 import type { PartDoc } from "../model/types";
 import type { AsmDoc } from "../asm/types";
 import { BOM_COLS, autoBalloons, compOfKey, sheetBom, subsOf, type BalloonItems, type Bom } from "./bom";
@@ -51,6 +51,11 @@ export interface DrawingHost {
   occtBase: string;
   /** The model open now (a part, or the STEP of the open file), or null. */
   currentModel(): Promise<DrawingModel | null>;
+  /**
+   * The Model button of a drawing whose model is not the 3D document shown under it: opens the drawing's own copy
+   * (a parked tab of that part or assembly, else a new tab) and answers true; false when the model is already there.
+   */
+  openModel?(m: { part?: PartDoc; asm?: AsmDoc; file?: { name: string; bytes: Uint8Array }; name: string }): Promise<boolean>;
   /** The part document with this id open in the modeller now, if any. */
   livePart(id: string): PartDoc | null;
   /** The assembly with this id open now, if any (with patterns and sub-assemblies expanded). */
@@ -365,6 +370,18 @@ export class DrawingWorkspace {
     })();
     this.partChanged();
     requestAnimationFrame(() => this.svg?.focus({ preventScroll: true }));
+  }
+
+  /** Model: back to the 3D document under the drawing; a drawing opened by itself opens the model it carries. */
+  private async backToModel() {
+    const src = this.store ? this.doc.source : null;
+    if (src && this.host.openModel) {
+      this.cancelMode();
+      const m = src.kind === "part" ? { part: src.doc, name: src.name } : src.kind === "asm" ? { asm: src.doc, name: src.name } : this.model ? { file: { name: src.name, bytes: this.model }, name: src.name } : null;
+      // The model gets its own copy of the document: the drawing's stays as it is until the model changes.
+      if (m && await this.host.openModel("file" in m ? m : JSON.parse(JSON.stringify(m)))) return;
+    }
+    this.hide();
   }
 
   hide() {
@@ -1212,6 +1229,35 @@ export class DrawingWorkspace {
         if ((d < bd - 1e-6 || tie) && inDetail(fromSheet(pl, p[0], p[1]))) { bd = Math.min(bd, d); best = { kind: "circle", ref: edgeRef(e, "e"), e }; }
       }
     }
+    // A cylinder seen from the side: either of its outline lines stands for the whole circle at its end, so a click
+    // gives the diameter as a linear dimension (a hole's hidden lines, a shaft's or a disc's sides).
+    // A section's cut edge on top of such a line stays itself: two cut walls give a linear dimension.
+    for (const cy of topo.cyls) {
+      const ax = cy.ax, dn = ax[0] * n[0] + ax[1] * n[1] + ax[2] * n[2];
+      if (Math.abs(dn) > 1e-6 || cy.v1 - cy.v0 < 1e-9) continue;
+      const w: [number, number, number] = [n[1] * ax[2] - n[2] * ax[1], n[2] * ax[0] - n[0] * ax[2], n[0] * ax[1] - n[1] * ax[0]];
+      const tolr = 1e-6 * Math.max(1, cy.r);
+      // The whole circle on this cylinder nearest the click along the axis.
+      let ce: MEdge | null = null, cd = Infinity;
+      const pm = fromSheet(pl, p[0], p[1]), o2 = P(cy.o), a2 = P(ax), a0 = P([0, 0, 0]), ad: Pt = [a2[0] - a0[0], a2[1] - a0[1]], along = (pm[0] - o2[0]) * ad[0] + (pm[1] - o2[1]) * ad[1];
+      for (const e of topo.edges) {
+        if (e.t !== "c" || !e.c || !e.r || !e.ax || Math.abs(e.r - cy.r) > tolr) continue;
+        if (Math.abs(Math.abs(e.ax[0] * ax[0] + e.ax[1] * ax[1] + e.ax[2] * ax[2]) - 1) > 1e-6) continue;
+        const dq = [e.c[0] - cy.o[0], e.c[1] - cy.o[1], e.c[2] - cy.o[2]], t = dq[0] * ax[0] + dq[1] * ax[1] + dq[2] * ax[2];
+        if (Math.hypot(dq[0] - ax[0] * t, dq[1] - ax[1] * t, dq[2] - ax[2] * t) > tolr || !wholeCircle(e, topo)) continue;
+        const dd = Math.abs(t - along);
+        if (dd < cd) { cd = dd; ce = e; }
+      }
+      if (!ce) continue;
+      for (const sgn of [1, -1]) {
+        const at = (v: number): [number, number, number] => [cy.o[0] + ax[0] * v + w[0] * cy.r * sgn, cy.o[1] + ax[1] * v + w[1] * cy.r * sgn, cy.o[2] + ax[2] * v + w[2] * cy.r * sgn];
+        const a = S(at(cy.v0)), b = S(at(cy.v1)), dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy;
+        if (L2 < 1e-6) continue;
+        const k = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2));
+        const q: Pt = [a[0] + dx * k, a[1] + dy * k], d = Math.hypot(q[0] - p[0], q[1] - p[1]);
+        if (d < bd + (best?.kind === "line" && !best.e.k.endsWith("|§") ? 1e-6 : -1e-6) && inDetail(fromSheet(pl, q[0], q[1]))) { bd = d; best = { kind: "circle", ref: edgeRef(ce, "e"), e: ce }; }
+      }
+    }
     // A first dimension pick on a circle takes the circle even when another edge ends on it there (a cross hole's
     // intersection curve on a shaft): a lone point makes no dimension.
     const onCircle = best?.kind === "circle" && bd < tol * 0.3;
@@ -1228,7 +1274,7 @@ export class DrawingWorkspace {
     const base = { id: "_pd", t: "dim" as const, view: viewId, pos: [round(pos[0]), round(pos[1])] as Pt };
     const [p0, p1] = picks;
     if (picks.length === 1) {
-      if (p0.kind === "circle") return { ...base, k: (p0.e.sp ?? 0) >= 2 * Math.PI - 1e-3 ? "dia" : "rad", refs: [p0.ref] };
+      if (p0.kind === "circle") return { ...base, k: wholeCircle(p0.e, this.factsOf(viewId)?.topo ?? null) ? "dia" : "rad", refs: [p0.ref] };
       if (p0.kind === "pt") return null;
     }
     if (p0.kind === "line" && p1?.kind === "line") {
@@ -1823,7 +1869,7 @@ export class DrawingWorkspace {
       const lin = a.k === "h" || a.k === "v" || a.k === "al";
       // A round edge can be dimensioned as radius, diameter or (an arc) its length; two lines as an angle or a chamfer.
       const e0 = a.refs[0] && !("pt" in a.refs[0]) ? refEdge(a.refs[0], this.factsOf(a.view)?.topo ?? null) : null;
-      const kinds: [DimAnnot["k"], string][] | null = (a.k === "rad" || a.k === "dia" || a.k === "arc") && e0?.t === "c"
+      const kinds: [DimAnnot["k"], string][] | null = (a.k === "rad" || a.k === "dia" || a.k === "arc") && e0?.t === "c" && !g?.dl
         ? [["rad", "Radius"], ["dia", "Diameter"], ...((e0.sp ?? 2 * Math.PI) < 2 * Math.PI - 1e-3 ? [["arc", "Arc length"] as [DimAnnot["k"], string]] : [])]
         : a.k === "ang" || a.k === "chamfer" ? [["ang", "Angle"], ["chamfer", "Chamfer"]] : null;
       return `<fieldset class="pm-group"><legend>${esc(t("Dimension"))}</legend>
@@ -1833,9 +1879,9 @@ export class DrawingWorkspace {
         ${lin || a.k === "ang" ? `<label class="drw-f">${esc(t("Arrows"))}<select data-d="arrows">${([["", "Auto"], ["in", "Inside"], ["out", "Outside"]] as const).map(([k, l]) => `<option value="${k}"${(a.arrows ?? "") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : ""}
         ${lin || a.k === "arc" || a.k === "ang" ? `<label class="drw-f">${esc(t("Extension lines"))}<select data-d="noext">${([["", "Both shown"], ["a", "First hidden"], ["b", "Second hidden"], ["both", "Both hidden"]] as const).map(([k, l]) => `<option value="${k}"${(a.noExt ?? "") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : ""}
         <label class="drw-f">${esc(t("Arrowheads"))}<select data-d="ends"><option value="">${esc(t("Document"))}</option>${(["filled", "open", "dot", "tick"] as const).map(k => `<option value="${k}"${a.ends === k ? " selected" : ""}>${esc(t(ARROW_NAMES[k]))}</option>`).join("")}</select></label>
-        ${a.k === "dia" ? `<label class="drw-f">${esc(t("Display"))}<select data-d="dlin">${([["", "Diameter"], ["h", "Linear, horizontal"], ["v", "Linear, vertical"]] as const).map(([k, l]) => `<option value="${k}"${(a.lin ?? "") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : ""}
-        ${(a.k === "rad" && !a.fore) || (a.k === "dia" && !a.lin) ? `<label class="drw-chk"><input type="checkbox" data-d="rout"${a.outside ? " checked" : ""}> ${esc(t("Arrow outside the circle"))}</label>` : ""}
-        ${a.k === "rad" || (a.k === "dia" && !a.lin) ? `<label class="drw-chk"><input type="checkbox" data-d="ralong"${a.along ? " checked" : ""}> ${esc(t("Text along the leader"))}</label>` : ""}
+        ${a.k === "dia" && !g?.dl ? `<label class="drw-f">${esc(t("Display"))}<select data-d="dlin">${([["", "Diameter"], ["h", "Linear, horizontal"], ["v", "Linear, vertical"]] as const).map(([k, l]) => `<option value="${k}"${(a.lin ?? "") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : ""}
+        ${!g?.dl && ((a.k === "rad" && !a.fore) || (a.k === "dia" && !a.lin)) ? `<label class="drw-chk"><input type="checkbox" data-d="rout"${a.outside ? " checked" : ""}> ${esc(t("Arrow outside the circle"))}</label>` : ""}
+        ${!g?.dl && (a.k === "rad" || (a.k === "dia" && !a.lin)) ? `<label class="drw-chk"><input type="checkbox" data-d="ralong"${a.along ? " checked" : ""}> ${esc(t("Text along the leader"))}</label>` : ""}
         ${a.k === "rad" ? `<label class="drw-chk"><input type="checkbox" data-d="fore"${a.fore ? " checked" : ""}> ${esc(t("Foreshortened radius"))}</label>` : ""}
         ${lin ? `<label class="drw-chk"><input type="checkbox" data-d="horiz"${a.horiz ? " checked" : ""}> ${esc(t("Horizontal text in the dimension line"))}</label>` : ""}
         <label class="drw-f">${esc(t("Decimals"))}<select data-d="prec"><option value="">${esc(t("Auto"))}</option>${[0, 1, 2, 3].map(n => `<option value="${n}"${a.prec === n ? " selected" : ""}>${n}</option>`).join("")}</select></label>
@@ -2766,7 +2812,7 @@ export class DrawingWorkspace {
     if (b.dataset.style) { this.setView("Display style", v => { v.style = b.dataset.style as DisplayStyle; }); return; }
     if (b.dataset.orientation) { this.setSheet("Sheet orientation", s => { s.portrait = b.dataset.orientation === "port" || undefined; }); this.fit(); return; }
     switch (a) {
-      case "back": this.hide(); break;
+      case "back": void this.backToModel(); break;
       case "file": this.cancelMode(); this.closeMenus(); this.host.fileMenu?.(b); break;
       case "std3": this.cancelMode(); this.standard3(); break;
       case "model": case "export": case "section": case "annot": case "detail": {

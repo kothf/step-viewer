@@ -115,7 +115,23 @@ export function projector(vd: ViewDir) {
 // ---------- dimension geometry ----------
 
 /** `a0`/`sw`: an arc's start angle and sweep in view axes; `ang`: a chamfer's angle in degrees. */
-export interface DimGeo { k: DimAnnot["k"]; pts: P2[]; c?: P2; r?: number; lines?: [P2, P2][]; value: number; a0?: number; sw?: number; ang?: number }
+/** `dl`: a circle seen side-on (as a line): the direction of that line in the view, along which its diameter is dimensioned. */
+/** `segs`: for each of a linear dimension's two points, the measured straight edge it may slide along (null for a plain point). */
+export interface DimGeo { k: DimAnnot["k"]; pts: P2[]; c?: P2; r?: number; lines?: [P2, P2][]; value: number; a0?: number; sw?: number; ang?: number; segs?: ([P2, P2] | null)[]; dl?: P2 }
+
+/**
+ * Whether a round edge is a whole circle: by itself, or with the other arcs on its centre and radius
+ * (STEP files split a circle into two halves). A new dimension on it is a diameter, on any other arc a radius.
+ */
+export function wholeCircle(e: MEdge, topo: Topo | null): boolean {
+  if (e.t !== "c" || !e.c || !e.r) return false;
+  const full = TAU - 1e-3;
+  if ((e.sp ?? 0) >= full) return true;
+  const c = e.c, tol = 1e-6 * Math.max(1, e.r);
+  let sum = 0;
+  for (const o of topo?.edges ?? []) if (o.t === "c" && o.c && o.r && Math.abs(o.r - e.r) < tol && Math.hypot(o.c[0] - c[0], o.c[1] - c[1], o.c[2] - c[2]) < tol) sum += o.sp ?? 0;
+  return sum >= full;
+}
 
 const TAU = 2 * Math.PI;
 const normA = (v: number) => { v %= TAU; return v < 0 ? v + TAU : v; };
@@ -134,7 +150,10 @@ export function dimGeo(a: DimAnnot, P: (p: V3) => P2, topo: Topo | null): DimGeo
     }
     const e = refEdge(r0, topo);
     if (!e || e.t !== "c" || !e.c || !e.r) return null;
-    return { k: kind, pts: [], c: P(e.c), r: e.r, value: kind === "rad" ? e.r : 2 * e.r };
+    // Seen side-on the circle is a line square to its axis: its diameter is then a linear dimension along that line.
+    const o = P([0, 0, 0]), q = e.ax ? P(e.ax) : null, ax: P2 | null = q ? [q[0] - o[0], q[1] - o[1]] : null;
+    const dl: P2 | undefined = ax && Math.abs(len2(ax) - 1) < 1e-6 ? [-ax[1], ax[0]] : undefined;
+    return { k: kind, pts: [], c: P(e.c), r: e.r, value: kind === "rad" ? e.r : 2 * e.r, dl };
   }
   if (kind === "arc") {
     // The arc runs from one end through its middle to the other, whichever way that is in the view.
@@ -165,21 +184,22 @@ export function dimGeo(a: DimAnnot, P: (p: V3) => P2, topo: Topo | null): DimGeo
   }
   // Linear: two points, or the two ends of one line; a line and a point or two parallel lines: the square distance.
   const pts: P2[] = [];
+  let segs: ([P2, P2] | null)[] | undefined;
   const lineOf = (r: GeoRef): [P2, P2] | null => { if ("pt" in r || r.p !== "e") return null; const e = refEdge(r, topo); return e && e.t === "l" ? [P(e.a), P(e.b)] : null; };
   const foot = (p: P2, l: [P2, P2]): P2 => { const [u, v] = l, dx = v[0] - u[0], dy = v[1] - u[1], L2 = dx * dx + dy * dy || 1, t = ((p[0] - u[0]) * dx + (p[1] - u[1]) * dy) / L2; return [u[0] + dx * t, u[1] + dy * t]; };
   if (a.refs.length === 1) { const l = lineOf(a.refs[0]); if (!l) return null; pts.push(l[0], l[1]); }
   else {
     const l0 = lineOf(a.refs[0]), l1 = lineOf(a.refs[1]);
     const p0 = l0 ? null : refPoint(a.refs[0], topo), p1 = l1 ? null : refPoint(a.refs[1], topo);
-    if (l0 && l1) { const m: P2 = [(l0[0][0] + l0[1][0]) / 2, (l0[0][1] + l0[1][1]) / 2]; pts.push(m, foot(m, l1)); }
-    else if (l0 && p1) { const q = P(p1); pts.push(foot(q, l0), q); }
-    else if (p0 && l1) { const q = P(p0); pts.push(q, foot(q, l1)); }
+    if (l0 && l1) { const m: P2 = [(l0[0][0] + l0[1][0]) / 2, (l0[0][1] + l0[1][1]) / 2]; pts.push(m, foot(m, l1)); segs = [l0, l1]; }
+    else if (l0 && p1) { const q = P(p1); pts.push(foot(q, l0), q); segs = [l0, null]; }
+    else if (p0 && l1) { const q = P(p0); pts.push(q, foot(q, l1)); segs = [null, l1]; }
     else if (p0 && p1) pts.push(P(p0), P(p1));
     else return null;
   }
   const [s, t] = pts;
   const value = kind === "h" ? Math.abs(t[0] - s[0]) : kind === "v" ? Math.abs(t[1] - s[1]) : d2(s, t);
-  return { k: kind, pts, value };
+  return { k: kind, pts, value, segs };
 }
 
 /** The sector of two lines that holds `t`: intersection, start angle and sweep (radians), or null for parallel lines. */
@@ -412,7 +432,7 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
     const bb = textBox(sb[0], sb[1], "x".repeat(Math.max(1, Math.round(wb / (h * 0.85)))), h, "l", rot);
     return [Math.min(box[0], bb[0]), Math.min(box[1], bb[1]), Math.max(box[2], bb[2]), Math.max(box[3], bb[3])];
   };
-  const diaLin = g.k === "dia" && !!a.lin;
+  const diaLin = g.k === "dia" && (!!a.lin || !!g.dl);
   if ((g.k === "rad" || g.k === "dia") && !diaLin) {
     const C = S(g.c!), R = g.r! * pl.s;
     const u = unit2([T[0] - C[0], T[1] - C[1]], [Math.SQRT1_2, Math.SQRT1_2]);
@@ -512,13 +532,24 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
   }
   // Linear.
   // A diameter shown as a linear dimension: between the rim's two ends along the sheet's horizontal or vertical.
-  const dl: P2 = a.lin === "v" ? [0, 1] : [1, 0];
+  const dl: P2 = g.dl ?? (a.lin === "v" ? [0, 1] : [1, 0]);
   const [S1, S2] = diaLin ? [add2(S(g.c!), dl, -g.r! * pl.s), add2(S(g.c!), dl, g.r! * pl.s)] : g.pts.map(S);
   const d: P2 = diaLin ? dl : g.k === "h" ? [1, 0] : g.k === "v" ? [0, 1] : unit2([S2[0] - S1[0], S2[1] - S1[1]]);
   const nrm: P2 = [-d[1], d[0]];
   const off = (p: P2) => (T[0] - p[0]) * nrm[0] + (T[1] - p[1]) * nrm[1];
   const D1 = add2(S1, nrm, off(S1)), D2 = add2(S2, nrm, off(S2));
-  for (const [s, e, k] of [[S1, D1, "a"], [S2, D2, "b"]] as [P2, P2, "a" | "b"][]) {
+  // An extension line leaves a measured edge at its end nearest the dimension line (or where the line crosses the edge),
+  // so it never runs along the edge or across the part from the edge's middle.
+  const extFrom = (s: P2, D: P2, i: number): P2 => {
+    const sg = !diaLin && g.segs?.[i];
+    if (!sg) return s;
+    const [p, q] = sg.map(S), w: P2 = [q[0] - p[0], q[1] - p[1]], L = len2(w);
+    if (L < 1e-9 || Math.abs(w[0] * d[0] + w[1] * d[1]) > 1e-6 * L) return s;
+    const t = Math.max(0, Math.min(1, ((D[0] - p[0]) * w[0] + (D[1] - p[1]) * w[1]) / (L * L)));
+    return [p[0] + w[0] * t, p[1] + w[1] * t];
+  };
+  const E1 = extFrom(S1, D1, 0), E2 = extFrom(S2, D2, 1);
+  for (const [s, e, k] of [[E1, D1, "a"], [E2, D2, "b"]] as [P2, P2, "a" | "b"][]) {
     if (a.noExt === k || a.noExt === "both") continue;
     const v: P2 = [e[0] - s[0], e[1] - s[1]], L = len2(v);
     if (L > EXT_GAP + 0.5) { const u: P2 = [v[0] / L, v[1] / L]; out.push(thin(add2(s, u, EXT_GAP), add2(e, u, EXT_OVER))); }
