@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.401.0] - 2026-11-10
+
+### Added
+- Rip (FR-FT-120): cut a narrow gap along straight edges where two flat walls of a thin-walled solid meet, so Insert Bends can unfold the walls apart. Rip both directions (the gap on the corner's bisector, also on outside edges) or along one wall only, so the other wall keeps the corner (inside corner edges), with a gap of your choice (0.1 mm by default). It works on any solid, before or after the sheet metal base.
+
 ## [1.400.0] - 2026-11-10
 
 ### Fixed
@@ -2352,7 +2357,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.400.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.401.0...HEAD
+[1.401.0]: https://github.com/kothf/step-viewer/compare/v1.400.0...v1.401.0
 [1.400.0]: https://github.com/kothf/step-viewer/compare/v1.399.0...v1.400.0
 [1.399.0]: https://github.com/kothf/step-viewer/compare/v1.398.0...v1.399.0
 [1.398.0]: https://github.com/kothf/step-viewer/compare/v1.397.0...v1.398.0
