@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.382.0] - 2026-11-10
+
+### Added
+- Reference and basic dimensions in drawings (FR-DRW-021): a dimension's **Display** can be **Reference**, which puts the whole value in parentheses, or **Basic**, which boxes it as a theoretically exact value and leaves out any tolerance, the drawing's default included.
+
 ## [1.381.0] - 2026-11-10
 
 ### Added
@@ -2244,7 +2249,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.381.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.382.0...HEAD
+[1.382.0]: https://github.com/kothf/step-viewer/compare/v1.381.0...v1.382.0
 [1.381.0]: https://github.com/kothf/step-viewer/compare/v1.380.0...v1.381.0
 [1.380.0]: https://github.com/kothf/step-viewer/compare/v1.379.0...v1.380.0
 [1.379.0]: https://github.com/kothf/step-viewer/compare/v1.378.0...v1.379.0
