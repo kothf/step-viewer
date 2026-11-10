@@ -2370,6 +2370,8 @@ export const RU: Record<string, string> = {
   "Click where the balloon goes.": "Щёлкните, где разместить позицию.",
   "Click an edge of a component.": "Щёлкните ребро компонента.",
   "Balloons and the bill of materials are for drawings of an assembly.": "Позиции и спецификация — для чертежей сборок.",
+  "Balloons are for drawings of an assembly or of a weldment part.": "Позиции — для чертежей сборок и сварных деталей.",
+  "Click an edge of a cut list body.": "Щёлкните ребро тела из списка вырезов.",
   "The sheet has a bill of materials already.": "На листе уже есть спецификация.",
   "Every item already has a balloon in the view.": "У каждой позиции на этом виде уже есть выноска.",
   "{n} balloon added|{n} balloons added": "Добавлена {n} позиция|Добавлено {n} позиции|Добавлено {n} позиций",
