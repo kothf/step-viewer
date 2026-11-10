@@ -9347,6 +9347,10 @@ try {
     const names = await mp.evaluate(() => window.__sv.model.store.doc.features.map(f => f.name).join(","));
     check(!rf0.bad && rf0.v > 40000 && Math.abs(rf1.v - rf0.v) < 0.05 && !rf1.bad && rf1.types === "import,sketch,extrude,delbody,sketch,extrude,hole,fillet" && names.split(",")[5] === "Cut1" && names.split(",")[7] === "Fillet1",
       `model 1.465: Recognize Features makes an imported filleted block with a pocket and a hole again as base, cut, hole and fillet (FR-FT-102) (${JSON.stringify({ rf0, rf1, names })})`);
+    // 1.467: the recognised sketches come back fully defined (H/V relations and dimensions from the sketch origin).
+    const rdef = await mp.evaluate(() => window.__sv.model.store.doc.features.filter(f => f.type === "sketch").map(f => ({ dims: f.dims.length, hv: f.rels.filter(r => r.t === "horizontal" || r.t === "vertical").length, names: f.dims.map(d => d.name).join() })));
+    check(rdef.length === 2 && rdef.every(r => r.dims >= 4 && r.hv >= 4) && rdef[0].names.startsWith("D1,D2"),
+      `model 1.467: recognised sketches are fully defined with dimensions (FR-FT-102, FR-SK-045) (${JSON.stringify(rdef)})`);
     await ctx.close();
   }
 

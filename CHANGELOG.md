@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.467.0] - 2026-11-10
+## [1.468.0] - 2026-11-10
 
 ### Added
 
@@ -15,6 +15,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Changed
 
 - **Slimmer Vault tab top**: Add files…, Add files in this folder…, Save to vault and the search stay; Notifications, Change orders, Release packages, Audit trail, Integrity check, Storage, Export ZIP, Recycle bin, Vault settings, Workflow and the user name moved into a **⋯** menu next to the vault's name (the notification count shows on it). The file list starts about 200 px higher.
+
+## [1.467.0] - 2026-11-10
+
+### Added
+
+- **Recognised sketches are fully defined (FR-FT-102, FR-SK-045)**: Recognize Features and Recognize Extrudes now run Fully define sketch on every sketch they make, as FeatureWorks gives its sketches dimensions. Lines along the axes get horizontal and vertical relations, circles and arcs their diameters and radii, and the points dimensions from the sketch origin, so the base, pocket and revolve sketches can be edited by their dimensions at once. Nothing moves and the body stays the same.
 
 ## [1.466.0] - 2026-11-10
 
@@ -2829,7 +2835,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.467.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.468.0...HEAD
+[1.468.0]: https://github.com/kothf/step-viewer/compare/v1.467.0...v1.468.0
 [1.467.0]: https://github.com/kothf/step-viewer/compare/v1.466.0...v1.467.0
 [1.466.0]: https://github.com/kothf/step-viewer/compare/v1.465.0...v1.466.0
 [1.465.0]: https://github.com/kothf/step-viewer/compare/v1.464.0...v1.465.0
