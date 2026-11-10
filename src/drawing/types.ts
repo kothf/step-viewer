@@ -163,7 +163,7 @@ export type GSym = "straight" | "flat" | "circ" | "cyl" | "pline" | "psurf" | "p
 export interface GRow { sym: GSym; tol: string; dia?: boolean; mod?: "M" | "L"; datums: string[]; composite?: boolean }
 /** Geometric tolerance (FR-DRW-023): a feature control frame with a leader to the model (or free). */
 /** `around`: the all-around circle at the leader's bend (the tolerance applies all around the profile). */
-export interface GtolAnnot { id: string; t: "gtol"; view?: string; pos: [number, number]; rows: GRow[]; leader?: GeoRef; around?: boolean }
+export interface GtolAnnot { id: string; t: "gtol"; view?: string; pos: [number, number]; rows: GRow[]; leader?: GeoRef; around?: boolean; /** Text above the frame (e.g. "2×") and below it. */ above?: string; below?: string }
 /** Datum feature symbol: a filled triangle on an edge and a framed letter. */
 export interface DatumAnnot { id: string; t: "datum"; view: string; ref: GeoRef; pos: [number, number]; letter: string }
 /** Surface finish (ISO 1302 / 21920): the tick on an edge, any process, material removed or not removed, with the roughness above. */
