@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.493.0] - 2026-11-10
+
+### Added
+
+- Recognize Features (FR-FT-102): a bent round rod or tube (solid or hollow, straight runs and bends in one plane) comes back as a path sketch of lines and arcs on the standard plane holding it, a profile sketch on its first end and a Sweep, so its bends and diameters can be changed. Sweep has a Merge result option for this (off = a new body).
+
 ## [1.492.0] - 2026-11-10
 
 ### Added
@@ -3034,7 +3040,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.492.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.493.0...HEAD
+[1.493.0]: https://github.com/kothf/step-viewer/compare/v1.492.0...v1.493.0
 [1.492.0]: https://github.com/kothf/step-viewer/compare/v1.491.0...v1.492.0
 [1.491.0]: https://github.com/kothf/step-viewer/compare/v1.490.0...v1.491.0
 [1.490.0]: https://github.com/kothf/step-viewer/compare/v1.489.0...v1.490.0

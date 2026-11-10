@@ -7674,7 +7674,8 @@ export class ModelController {
           + (f.startTangent ? `<p class="pm-help muted">${esc(t("The profile is turned square to the path where the path starts."))}</p>` : "")
           + `<label class="pm-field"><span>${esc(t("End tangency"))}</span><select data-k="endTan"><option value=""${f.endTangent ? "" : " selected"}>${esc(t("None"))}</option><option value="path"${f.endTangent ? " selected" : ""}>${esc(t("Path tangent"))}</option></select></label>`
           + (f.endTangent ? `<p class="pm-help muted">${esc(t("The sweep ends with the profile square to the path. Not with a guide curve or a closed path."))}</p>` : "")))
-        + group(t("Options"), (f.guide ? "" : orient(f.orient)) + (f.guide || f.orient === "normal" ? "" : chk("twistOn", !!f.twist, t("Twist along path")) + (f.twist ? numField("twist", t("Twist angle"), f.twist, "angle") : "")))
+        + group(t("Options"), (f.guide ? "" : orient(f.orient)) + (f.guide || f.orient === "normal" ? "" : chk("twistOn", !!f.twist, t("Twist along path")) + (f.twist ? numField("twist", t("Twist angle"), f.twist, "angle") : ""))
+          + (f.op === "boss" && this.last?.data ? chk("merge", f.merge !== false, t("Merge result")) : ""))
         + `<p class="pm-help muted">${esc(t("The profile moves along the path. A circular profile needs no sketch: it is centred on the start of the path, square to it."))}</p>` };
     }
     const closed = sketches.filter(sketchProfileOk);

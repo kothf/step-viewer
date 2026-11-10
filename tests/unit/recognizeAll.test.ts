@@ -310,3 +310,19 @@ test("recognize features: a block with a variable radius fillet comes back as ba
   close(Math.min(f.edges[0].r!, f.edges[0].r2!), 2, 1e-4); close(Math.max(f.edges[0].r!, f.edges[0].r2!), 6, 1e-4);
   close(vol(m, doc([...imp.features, ...fs])), v0);
 });
+
+test("recognize features: a bent tube comes back as path and profile sketches and a Sweep (FR-FT-102)", async () => {
+  const m = new Modeller(await occ());
+  const path: SketchFeature = { id: "pt", type: "sketch", name: "pt", plane: { std: "XZ" }, rels: [], dims: [], ents: [
+    { id: "q1", t: "point", x: 0, y: 0 }, { id: "q2", t: "point", x: 0, y: 40 }, { id: "q3", t: "point", x: 20, y: 60 }, { id: "q4", t: "point", x: 60, y: 60 }, { id: "qc", t: "point", x: 20, y: 40 },
+    { id: "w1", t: "line", a: "q1", b: "q2" }, { id: "w2", t: "arc", c: "qc", a: "q3", b: "q2" } as SkEnt, { id: "w3", t: "line", a: "q3", b: "q4" }] };
+  for (const inner of [0, 3]) {
+    const prof: SketchFeature = { id: "pr", type: "sketch", name: "pr", plane: { std: "XY" }, rels: [], dims: [], ents: [
+      { id: "pc", t: "point", x: 0, y: 0 }, { id: "pk", t: "circle", c: "pc", r: 5 } as SkEnt, ...(inner ? [{ id: "pi", t: "circle", c: "pc", r: inner } as SkEnt] : [])] };
+    const imp = imported(m, [path, prof, { id: "sw", type: "sweep", name: "S", op: "boss", profile: "pr", path: { sketch: "pt" } } as Feature]);
+    const v0 = vol(m, imp);
+    const fs = m.recognizeFeatures(imp);
+    assert.equal(types(fs), "sketch,sketch,sweep,delbody", `inner ${inner}`);
+    close(vol(m, { ...imp, features: [...imp.features, ...fs] }), v0, 1e-5);
+  }
+});

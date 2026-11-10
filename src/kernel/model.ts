@@ -3666,6 +3666,7 @@ export class Modeller {
     if (base) {
       try { const b = this.baseExtrude(upto, at, dels, rounds, K.feats); if (b) return b; } catch { /* without the base */ }
       try { const b = this.baseRevolve(upto, at, dels, rounds, K.feats); if (b) return b; } catch { /* without the base */ }
+      try { const b = rounds.length || K.feats.length ? null : this.baseSweep(upto, at); if (b) return b; } catch { /* without the base */ }
     }
     if (rounds.length < 2) return [...kDel, ...first, ...K.feats];
     try {
@@ -4109,6 +4110,125 @@ export class Modeller {
     if (!fin.body || this.solids(fin.body.shape) !== 1 || fin.statuses.slice(-out.length).some(s => s.ok === false)) return null;
     // Keyways (tail) put back on curved faces need the adaptive volume (the quick one is a few 1e-6 off there).
     return Math.abs(this.volume(fin.body.shape) - v0) <= 1e-6 * Math.abs(v0) + 1e-9 || (tail.length && this.sameVolume(fin.body.shape, start.body.shape)) ? out : null;
+  }
+
+  /**
+   * The base of a bent tube or rod (FR-FT-102): two flat end faces bounded by circles (one, or two concentric for
+   * a tube) and between them only cylinders and tori of those radii, whose circle edges' centres chain from one
+   * end to the other along straight runs and bends, all in one plane. Like FeatureWorks it comes back as a
+   * path sketch (lines and arcs) on the standard plane holding it (or an offset plane), a profile sketch on the
+   * first end face, a Sweep making a new body and a Delete Body of the import. Kept only at the same volume.
+   */
+  private baseSweep(upto: Feature[], at: (fs: Feature[]) => PartDoc): Feature[] | null {
+    const oc = this.oc;
+    const imports = upto.filter(f => f.type === "import" && !f.suppressed).map(f => `${f.id}:`);
+    if (!imports.length) return null;
+    const start = this.evaluate(at([]));
+    const body = start.body;
+    if (!body || this.solids(body.shape) !== 1 || body.names.some(n => !imports.some(p => n.startsWith(p)))) return null;
+    const size = this.size(body.shape), tol = Math.max(1e-4, size * 1e-6) * 10;
+    const S = oc.GeomAbs_SurfaceType, C = oc.GeomAbs_CurveType;
+    const key = (p: V3) => p.map(x => Math.round(x / tol)).join(",");
+    /** Centres and radii of a face's circle edges. */
+    const circles = (face: any) => {
+      const out: { c: V3; r: number; n: V3 }[] = [];
+      for (const e of this.sub(face, "EDGE")) {
+        const ca = new oc.BRepAdaptor_Curve_2(e);
+        if (ca.GetType() !== C.GeomAbs_Circle) continue;
+        const ci = ca.Circle();
+        out.push({ c: this.xyz(ci.Location()), r: ci.Radius(), n: unit(this.xyz(ci.Axis().Direction())) });
+      }
+      return out;
+    };
+    const caps: { i: number; c: V3; n: V3; rs: number[] }[] = [];
+    type Seg = { line: [V3, V3] } | { arc: { c: V3; a: V3; b: V3; m: V3 } };
+    const segs = new Map<string, { a: V3; b: V3; seg: Seg; r: Set<number> }>();
+    for (let i = 0; i < body.faces.length; i++) {
+      const face = body.faces[i], ad = new oc.BRepAdaptor_Surface_2(face, true), ty = ad.GetType();
+      const cs = circles(face);
+      if (ty === S.GeomAbs_Plane) {
+        // An end face: only circle edges, all on one centre.
+        if (cs.length !== this.sub(face, "EDGE").length || !cs.length || cs.some(q => Math.hypot(...sub3(q.c, cs[0].c)) > tol)) return null;
+        caps.push({ i, c: cs[0].c, n: this.faceNormalAt(face), rs: [...new Set(cs.map(q => +q.r.toFixed(6)))] });
+        continue;
+      }
+      // The section circles (a torus' seam is a circle about its axis: left out by radius).
+      const minor = ty === S.GeomAbs_Cylinder ? ad.Cylinder().Radius() : ty === S.GeomAbs_Torus ? ad.Torus().MinorRadius() : NaN;
+      const cen: V3[] = [];
+      for (const q of cs) if (Math.abs(q.r - minor) <= tol && !cen.some(p => Math.hypot(...sub3(p, q.c)) <= tol)) cen.push(q.c);
+      if (cen.length !== 2) return null;
+      const [a, b] = cen, k = [key(a), key(b)].sort().join("|");
+      let r: number, seg: Seg;
+      if (ty === S.GeomAbs_Cylinder) {
+        const d = unit(this.xyz(ad.Cylinder().Axis().Direction())), ab = sub3(b, a);
+        if (Math.hypot(...cross(d, ab)) > tol) return null;
+        r = ad.Cylinder().Radius();
+        seg = { line: [a, b] };
+      } else if (ty === S.GeomAbs_Torus) {
+        const T = ad.Torus(), O = this.xyz(T.Location()), d = unit(this.xyz(T.Axis().Direction())), R = T.MajorRadius();
+        r = T.MinorRadius();
+        if (Math.abs(Math.hypot(...sub3(a, O)) - R) > tol || Math.abs(Math.hypot(...sub3(b, O)) - R) > tol || Math.abs(dot(sub3(a, O), d)) > tol) return null;
+        // The bend's middle: the face's middle major angle, put on the centre circle.
+        const sp = ad.Value((ad.FirstUParameter() + ad.LastUParameter()) / 2, (ad.FirstVParameter() + ad.LastVParameter()) / 2);
+        const q = sub3(this.xyz(sp), O), h = sub3(q, mul(d, dot(q, d)));
+        if (Math.hypot(...h) < tol) return null;
+        seg = { arc: { c: O, a, b, m: add(O, mul(unit(h), R)) } };
+      } else return null;
+      const got = segs.get(k);
+      if (got) got.r.add(+r.toFixed(6));
+      else segs.set(k, { a, b, seg, r: new Set([+r.toFixed(6)]) });
+    }
+    if (caps.length !== 2 || !segs.size || caps[0].rs.length > 2) return null;
+    if (caps[0].rs.join() !== caps[1].rs.join()) return null;
+    const radii = new Set(caps[0].rs);
+    for (const g of segs.values()) for (const r of g.r) if (![...radii].some(x => Math.abs(x - r) <= tol)) return null;
+    // Chain the runs from the first end's centre to the other's.
+    const chain: Seg[] = [], left = [...segs.values()];
+    let cur = caps[0].c;
+    while (left.length) {
+      const k = left.findIndex(g => Math.hypot(...sub3(g.a, cur)) <= tol || Math.hypot(...sub3(g.b, cur)) <= tol);
+      if (k < 0) return null;
+      const g = left.splice(k, 1)[0], next = Math.hypot(...sub3(g.a, cur)) <= tol ? g.b : g.a;
+      chain.push(g.seg);
+      cur = next;
+    }
+    if (Math.hypot(...sub3(cur, caps[1].c)) > tol || chain.every(g => "line" in g)) return null;
+    // The path's plane: from the points and bend centres.
+    const P: V3[] = [caps[0].c];
+    for (const g of chain) if ("line" in g) P.push(g.line[1], g.line[0]); else P.push(g.arc.a, g.arc.b, g.arc.c, g.arc.m);
+    let n: V3 | null = null;
+    for (let i = 1; i < P.length && !n; i++) for (let j = i + 1; j < P.length && !n; j++) {
+      const c = cross(sub3(P[i], P[0]), sub3(P[j], P[0]));
+      if (Math.hypot(...c) > tol * size) n = unit(c);
+    }
+    if (!n || P.some(p => Math.abs(dot(sub3(p, P[0]), n!)) > tol)) return null;
+    const id = () => `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
+    let plane: PlaneRef | null = null, fr: Frame | null = null;
+    const lead: Feature[] = [];
+    for (const std of ["XY", "XZ", "YZ"] as const) {
+      const F = STD_FRAMES[std];
+      if (Math.abs(Math.abs(dot(n, F.n)) - 1) > 1e-9) continue;
+      const h = dot(P[0], F.n);
+      if (Math.abs(h) <= tol) { plane = { std }; fr = F; break; }
+      const ref = { id: id(), type: "plane", name: "", base: { std }, mode: "offset", offset: { v: Math.abs(h) }, ...(h < 0 ? { flip: true } : {}) } as PlaneFeature;
+      fr = this.refPlane(ref, body, {});
+      lead.push(ref);
+      plane = { plane: ref.id };
+      break;
+    }
+    if (!plane || !fr) return null;
+    const pathId = id(), { ents: pathEnts } = this.loopEnts(pathId, fr, chain);
+    const cap = caps[0], capPlane: PlaneRef = { face: { name: body.names[cap.i], hint: this.centroid(body.faces[cap.i]) } };
+    const cfr = this.planeFrame(capPlane, body, {});
+    const profId = id(), { ents: profEnts } = this.loopEnts(profId, cfr, cap.rs.map(r => ({ circle: { c: cap.c, r } })));
+    const out: Feature[] = [...lead,
+      { id: pathId, type: "sketch", name: "", plane, ents: pathEnts, rels: [], dims: [] } as Feature,
+      { id: profId, type: "sketch", name: "", plane: capPlane, ents: profEnts, rels: [], dims: [] } as Feature,
+      { id: id(), type: "sweep", name: "", op: "boss", merge: false, profile: profId, path: { sketch: pathId } } as Feature,
+      { id: id(), type: "delbody", name: "", bodies: [{ name: body.names[0], hint: this.centroid(body.faces[0]) }] } as Feature];
+    const fin = this.evaluate(at(out));
+    if (!fin.body || this.solids(fin.body.shape) !== 1 || fin.statuses.slice(-out.length).some(st => st.ok === false)) return null;
+    return this.sameVolume(fin.body.shape, body.shape) ? out : null;
   }
 
   /** Sketch + extrude pairs for finds, each on the flat face of `body` its loop lies on. */
@@ -4768,9 +4888,11 @@ export class Modeller {
   }
 
   /** Boss or cut with a feature's tool solids; the tools are kept for mirror and patterns. */
-  private applyTool(f: { id: string; op: "boss" | "cut" }, tools: Named[], prev: Named | null): Named {
+  private applyTool(f: { id: string; op: "boss" | "cut"; merge?: boolean }, tools: Named[], prev: Named | null): Named {
     const tool = this.fuseAll(tools, f.id);
     this.tools.set(f.id, [{ shape: tool, op: f.op === "boss" ? "fuse" : "cut" }]);
+    // Merge result off (sweep, loft): the tool is a new body.
+    if (f.op === "boss" && prev && f.merge === false) return this.compoundOf([...this.bodyList(prev), tool]);
     if (f.op === "boss") return prev ? this.bool("fuse", prev, tool, f.id) : tool;
     if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body to cut yet.");
     const out = this.bool("cut", prev, tool, f.id);

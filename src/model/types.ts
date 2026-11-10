@@ -671,6 +671,8 @@ export interface SweepFeature {
   startTangent?: boolean;
   /** End tangency "path tangent" (P5): the sweep ends with the profile square to the path's end. */
   endTangent?: boolean;
+  /** Merge result off: a boss makes a new body (like extrude/revolve). */
+  merge?: boolean;
 }
 
 /** Loft (FR-FT-082): through two or more closed profiles in order. */
