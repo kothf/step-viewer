@@ -9027,6 +9027,19 @@ try {
     const ps1 = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(x => x.type === "planesurf"); const l = window.__sv.model.last(); return { contours: f?.contours?.length, sheetFaces: l.sheetFaces, bad: l.statuses.filter(s => !s.ok).map(s => s.code).join() }; });
     check(ps0.type === "planesurf" && ps0.sketch === "s" && ps0.focus === "contours" && ps1.contours === 1 && ps1.sheetFaces === 1 && !ps1.bad,
       `model 1.428: Planar Surface on a sketch with a line across picks a region with Selected Contours (FR-FT-010) (${JSON.stringify({ ps0, ps1 })})`);
+    // 1.463: a cut's picked regions are drawn in the cut preview's yellow, a boss's in orange.
+    const fills = () => mp.evaluate(() => { const c = []; window.__sv.viewer.scene.traverse(o => { if (o.userData.contour !== undefined && o.visible) c.push({ hex: o.material.color.getHex(), cut: o.userData.contourCut }); }); return c; });
+    await mp.evaluate(() => window.__sv.modeller.startFeature("extrude"));
+    await settle();
+    await mp.mouse.click(left.x, left.y);
+    await settle();
+    const boss = await fills();
+    await mp.evaluate(() => { const m = window.__sv.model.mode(); if (m.kind === "feature") { m.draft.op = "cut"; m.draft.end = "through"; } window.__sv.modeller.draftChanged?.(); });
+    await settle();
+    const cutFills = await fills();
+    const cutPv = await mp.evaluate(() => { let n = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData.cutPreview) n++; }); return n; });
+    check(boss.length === 1 && boss[0].hex === 0xf08c00 && !boss[0].cut && cutFills.length === 1 && cutFills[0].hex === 0xffd43b && cutFills[0].cut === true,
+      `model 1.463: picked contours are orange for a boss and the cut preview's yellow for a cut (${JSON.stringify({ boss, cutFills, cutPv })})`);
     await ctx.close();
   }
 

@@ -1662,7 +1662,7 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 
 | ID | Requirement | 1.87.0 | Class |
 | --- | --- | --- | --- |
-| FR-FT-010 | Extrude/revolve from **selected regions** of a sketch | 1.421.0: Selected Contours (regions of crossing or branching curves, picked in the view; `src/sketch/regions.ts`, kernel `contourFaces`); 1.428.0: hover pre-highlight, Planar Surface | Done |
+| FR-FT-010 | Extrude/revolve from **selected regions** of a sketch | 1.421.0: Selected Contours (regions of crossing or branching curves, picked in the view; `src/sketch/regions.ts`, kernel `contourFaces`); 1.428.0: hover pre-highlight, Planar Surface; 1.463.0: cut regions in the cut preview colour | Done |
 | FR-FT-011 | Extrude **Direction 2** with any end condition (SolidWorks offers all but mid plane) | 1.456.0: `end2` Blind / Through all / Up to next / Up to vertex / Up to face / Offset from surface / Up to body with any Direction 1 but Mid plane; its own drag arrow when blind | Done |
 | FR-FT-014 | Extrude **draft per direction** | 1.460.0: `draft2` (Direction 2 blind) with its own angle and outward; each direction tapers from the sketch plane, Direction 2 side faces `fid:side2:<ent>`; older two-way drafts keep their shape | Done |
 | FR-FT-012 | Extrude end condition **Up to body** | 1.100.0: Up to body | Done |

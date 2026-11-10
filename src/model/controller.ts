@@ -2545,11 +2545,21 @@ export class ModelController {
     const fr = this.frameOf(cr.sk);
     if (picking) this.lines(sketchSegments(cr.sk, fr), dark ? 0x8ab4ff : 0x1d4ed8, 1.4);
     const picked = new Set((f.contours ?? []).map(q => regionAt(cr.regions, q)).filter(i => i >= 0));
+    // A cut's regions take the cut preview's yellow, so a picked region never reads as material being added.
+    const cut = f.type !== "planesurf" && f.op === "cut";
+    const [fill, edge] = cut ? CONTOUR_CUT : CONTOUR_BOSS;
+    const outline: number[] = [];
+    const at = (p: [number, number]) => [0, 1, 2].map(k => fr.o[k] + fr.x[k] * p[0] + fr.y[k] * p[1]);
     for (const i of picked) {
-      const mesh = this.regionMesh(cr.regions[i], fr, 0xf08c00, picking ? 0.35 : 0.18);
+      const rg = cr.regions[i];
+      const mesh = this.regionMesh(rg, fr, fill, picking ? 0.35 : 0.18);
       mesh.userData.contour = i;
+      mesh.userData.contourCut = cut;
       this.decor.add(mesh);
+      // Its outline in a darker shade, so neighbouring picked regions stay apart.
+      for (const loop of [rg.outer, ...rg.holes]) loop.forEach((p, k) => outline.push(...at(p), ...at(loop[(k + 1) % loop.length])));
     }
+    this.lines(outline, edge, picking ? 2 : 1.4);
   }
 
   /** The Selected Contours box (FR-FT-010): how many regions are picked, or that the whole sketch is used. */
@@ -8135,6 +8145,9 @@ const sketchProfileOk = (s: SketchFeature) => !sketchProfile(s).error;
 const sketchRegionsOk = (s: SketchFeature) => sketchProfileOk(s) || sketchRegions(s).length > 0;
 /** Features with Selected Contours (FR-FT-010). */
 type ContourFeature = ExtrudeFeature | RevolveFeature | PlaneSurfFeature;
+/** Fill and outline of picked Selected Contours: orange for material added, the cut preview's yellow for a cut. */
+const CONTOUR_BOSS = [0xf08c00, 0xd9480f] as const;
+const CONTOUR_CUT = [0xffd43b, 0xe8a800] as const;
 const hasContours = (f: Feature): f is ContourFeature => f.type === "extrude" || f.type === "revolve" || f.type === "planesurf";
 /** A sketch that is one open chain of curves (a rib line). */
 const sketchOpenOk = (s: SketchFeature) => { const p = sketchPath(s); return !p.error && !p.closed; };
