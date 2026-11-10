@@ -31,6 +31,8 @@ export interface FileHost {
   newPart(): void;
   newAsm(): void;
   newDrawing(): void;
+  /** File ▸ Open drawing: the drawing of the open part, assembly or model; absent when none is open. */
+  openDrawing: (() => void) | null;
   /** Make assembly from part; absent when no part is open. */
   asmFromPart: (() => void) | null;
   close(): Promise<void>;
@@ -101,6 +103,7 @@ export class FileMenu {
       { id: "asm-part", label: t("Make assembly from part"), on: true, hidden: !h.asmFromPart },
       "-",
       { id: "open", label: t("Open…"), key: "Ctrl+O", on: true },
+      { id: "open-drawing", label: t("Open drawing"), on: true, hidden: !h.openDrawing, title: t("The drawing of this part or assembly: open, in a tab, in the vault or in the recent documents") },
       { id: "close", label: t("Close"), key: "Ctrl+Alt+W", on: h.docCount() > 0 },
       { id: "close-all", label: t("Close all"), on: h.docCount() > 0 },
       "-",
@@ -194,6 +197,7 @@ export class FileMenu {
       case "new-drawing": h.newDrawing(); break;
       case "asm-part": h.asmFromPart?.(); break;
       case "open": h.open(); break;
+      case "open-drawing": h.openDrawing?.(); break;
       case "close": await h.close(); break;
       case "close-all": await h.closeAll(); break;
       case "save": await h.save(false); break;

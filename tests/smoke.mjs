@@ -4862,6 +4862,22 @@ try {
       const t2 = await tabs();
       check(t0 === 1 && t1 === 2 && same && t2 === 2, `drawing: Model on a drawing opened alone opens its part in a tab, once (${JSON.stringify({ t0, t1, t2, same })})`);
     }
+    // File ▸ Open drawing on that part: its drawing (in a tab and in the recent documents, offered once) comes back; hidden over a drawing.
+    {
+      const tabs = () => dp2.$$eval("#doc-tabs [data-dt]", els => els.length);
+      await dp2.click("#file-btn");
+      await dp2.waitForFunction(() => !document.querySelector("#file-menu").hidden);
+      const has = await dp2.evaluate(() => !!document.querySelector('#file-menu [data-f="open-drawing"]'));
+      await dp2.click('#file-menu [data-f="open-drawing"]');
+      await dp2.waitForFunction(() => !document.querySelector("#drw").hidden && window.__sv.drw.doc()?.sheets[0].views.length === 5, null, { timeout: 60000 });
+      const picker = await dp2.evaluate(() => !!document.querySelector("#drw-pick-dlg[open]"));
+      const t3 = await tabs();
+      await dp2.click('#drw [data-a="file"]');
+      await dp2.waitForFunction(() => !document.querySelector("#file-menu").hidden);
+      const over = await dp2.evaluate(() => !!document.querySelector('#file-menu [data-f="open-drawing"]'));
+      await dp2.keyboard.press("Escape");
+      check(has && !picker && t3 === 2 && !over, `drawing: File ▸ Open drawing opens the part's drawing from its tab, without a second tab (${JSON.stringify({ has, picker, t3, over })})`);
+    }
     await ctx.close();
   }
 
@@ -6848,7 +6864,7 @@ try {
     await shown(2);
     const bodyMat0 = await mp.evaluate(() => ({ none: window.__sv.asm.partMasses(0, 1), kg: window.__sv.asm.bom()[0].mass }));
     check(Math.abs(bodyMat.g - 14.26) < 0.01 && bodyMat.com.join() === "20.033,0,5" && bodyMat.dens?.join() === "2.7,4.43" && bodyMat.kg === 0.00713 && bodyMat0.none === null && Math.abs(bodyMat0.kg - 0.0027) < 1e-9,
-      `asm 1.456.0: a body's own material counts in the assembly's mass properties and the BOM (${JSON.stringify({ bodyMat, bodyMat0 })})`);
+      `asm 1.458.0: a body's own material counts in the assembly's mass properties and the BOM (${JSON.stringify({ bodyMat, bodyMat0 })})`);
     // STEP of the assembly reopens with the same names and placements (AT-P4-6).
     const step = [...await mp.evaluate(async () => [...await window.__sv.asm.stepBytes()])];
     await mp.setInputFiles("#file-input", { name: "rig.step", mimeType: "model/step", buffer: Buffer.from(step) });
@@ -8992,6 +9008,52 @@ try {
     check(inSk.mode === "sketch" && inSk.ext && inSk.line && ext.mode === "feature" && ext.type === "extrude" && ext.sketch === "s" && ext.v === 60000 && ext.sk
       && surfTab.ps && !surfTab.line && surfTab.mode === "sketch" && ps.mode === "feature" && ps.type === "planesurf" && ps.sketch === "s",
       `model 1.451: Extrude or Planar Surface picked while editing a sketch exits it and opens the feature on it with a preview (FR-SK-004) (${JSON.stringify({ inSk, ext, surfTab, ps })})`);
+    await ctx.close();
+  }
+
+  // --- 1.456: extrude Direction 2 with its own end condition (FR-FT-011) ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // A 100 × 60 × 20 block, a plane 30 above XY and a 10 × 10 pad on it extruded 5 up.
+    await mp.evaluate(() => window.__sv.model.store.change("Pad", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      const rect = (id, cx, cy, w, h, plane) => ({ id, type: "sketch", name: id, plane, rels: [], dims: [], ents: [P(id + "1", cx - w / 2, cy - h / 2), P(id + "2", cx + w / 2, cy - h / 2), P(id + "3", cx + w / 2, cy + h / 2), P(id + "4", cx - w / 2, cy + h / 2), Ln(id + "a", id + "1", id + "2"), Ln(id + "b", id + "2", id + "3"), Ln(id + "c", id + "3", id + "4"), Ln(id + "d", id + "4", id + "1")] });
+      d.features.push(rect("s", 0, 0, 100, 60, { std: "XY" }), { id: "e", type: "extrude", name: "Boss-Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } },
+        { id: "pl", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 30 } }, rect("k", -30, 0, 10, 10, { plane: "pl" }),
+        { id: "f", type: "extrude", name: "Boss-Extrude2", sketch: "k", op: "boss", end: "blind", depth: { v: 5 } });
+    }));
+    await settle();
+    await mp.evaluate(() => window.__sv.modeller.editFeature("f"));
+    await settle();
+    await mp.check('#mc-pm input[data-k="dir2"]');
+    await settle();
+    const handles = () => mp.evaluate(() => document.querySelectorAll("#mc-layer .mc-handle").length);
+    const blind = { arrows: await handles(), v: await mp.evaluate(() => Math.round(window.__sv.model.last().props?.volume ?? 0)) };
+    await mp.selectOption('#mc-pm select[data-k="end2"]', "next");
+    await settle();
+    const next = await mp.evaluate(() => ({ end2: window.__sv.model.mode().draft?.end2, v: Math.round(window.__sv.model.last().props?.volume ?? 0), bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.code).join() }));
+    next.arrows = await handles();
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(200);
+    const ru = await mp.evaluate(() => [...document.querySelectorAll('#mc-pm select[data-k="end2"] option')].map(o => o.textContent).join("|"));
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(200);
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await settle();
+    const done = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(x => x.id === "f"); return { end2: f.end2, v: Math.round(window.__sv.model.last().props?.volume ?? 0) }; });
+    // Blind both ways: 120000 + 100 × (5 + 5); up to next: down to the block, 100 × (5 + 10).
+    check(blind.arrows === 2 && blind.v === 121000 && next.end2 === "next" && !next.bad && next.v === 121500 && next.arrows === 1 && done.end2 === "next" && done.v === 121500 && !/[A-Za-z]{3}/.test(ru),
+      `model 1.456: extrude Direction 2 with its own end condition (up to next) and its own drag arrow (FR-FT-011) (${JSON.stringify({ blind, next, done, ru })})`);
     await ctx.close();
   }
 
