@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.440.0] - 2026-11-10
+
+### Added
+
+- **Hole callout options (FR-DRW-022)**: a hole callout on a drawing can leave the number of equal holes (4×) out of its automatic text and take a line of text below it, such as EQ SP.
+
+### Fixed
+
+- A hole table no longer repeats the number of holes in the size of a Hole feature.
+
 ## [1.439.0] - 2026-11-10
 
 ### Added
@@ -2613,7 +2623,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.439.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.440.0...HEAD
+[1.440.0]: https://github.com/kothf/step-viewer/compare/v1.439.0...v1.440.0
 [1.439.0]: https://github.com/kothf/step-viewer/compare/v1.438.0...v1.439.0
 [1.438.0]: https://github.com/kothf/step-viewer/compare/v1.437.0...v1.438.0
 [1.437.0]: https://github.com/kothf/step-viewer/compare/v1.436.0...v1.437.0

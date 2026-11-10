@@ -2241,6 +2241,7 @@ export const RU: Record<string, string> = {
   "Text height (mm)": "Высота текста (мм)",
   "Text instead of the value": "Текст вместо значения",
   "Text below": "Текст снизу",
+  "Show the number of holes": "Показывать число отверстий",
   "Text": "Текст",
   "The model has no dimensions to import: model items come from a part's sketches and extrudes.": "У модели нет размеров для вставки: размеры модели берутся из эскизов и вытягиваний детали.",
   "Value": "Значение",

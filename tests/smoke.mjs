@@ -5097,6 +5097,24 @@ try {
     await dp.mouse.move(x, y); await dp.mouse.click(x, y);
     [x, y] = await at(top.id, 40, -45);
     await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    // Hole callout options (FR-DRW-022): a line under the automatic text, and the number of holes left out.
+    {
+      await dp.waitForTimeout(150);
+      let r = null;
+      if (await dp.$('#drw .drw-props [data-d="hbelow"]')) {
+        await dp.fill('#drw .drw-props [data-d="hbelow"]', "EQ SP");
+        await dp.dispatchEvent('#drw .drw-props [data-d="hbelow"]', "change");
+        const t1 = await texts();
+        await dp.uncheck('#drw .drw-props [data-d="hcount"]');
+        const h1 = (await annots()).find(a => a.t === "hole");
+        await dp.check('#drw .drw-props [data-d="hcount"]');
+        await dp.fill('#drw .drw-props [data-d="hbelow"]', "");
+        await dp.dispatchEvent('#drw .drw-props [data-d="hbelow"]', "change");
+        const t2 = await texts(), h2 = (await annots()).find(a => a.t === "hole");
+        r = { below: t1.includes("EQ SP") && t1.includes("Ø16 THRU"), stored: h1?.below === "EQ SP" && h1?.count === false, back: !t2.includes("EQ SP") && h2 && h2.below == null && h2.count == null };
+      }
+      check(r && r.below && r.stored && r.back, `drawing: a hole callout takes a line below and leaves the number of holes out (${JSON.stringify(r)})`);
+    }
     dp.once("dialog", d => d.accept("BREAK SHARP EDGES"));
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="note"]');
     [x, y] = await dp.evaluate(() => window.__sv.drw.sheetPt(40, 60));
