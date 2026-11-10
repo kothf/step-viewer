@@ -5,11 +5,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.460.0] - 2026-11-10
+## [1.462.0] - 2026-11-10
 
 ### Added
 
 - **Body materials in drawings (FR-MAT-001)**: in a section view of a multibody part, each body's cut faces are hatched by its own material (steel, aluminium, titanium and so on get their own pattern), and the bodies of an assembly component are told apart the same way. The cut list table on a weldment drawing weighs an item by its bodies' own materials when the item has no material of its own.
+
+## [1.461.0] - 2026-11-10
+
+### Fixed
+
+- Sketch fillet rounds a corner where a line meets an arc, or two arcs meet, as SolidWorks does. It used to accept only two lines (exam #90).
+- **Ctrl+A** in a sketch selects every sketch entity instead of the page's text (exam #91).
+- A centre-point arc runs the way the mouse went round its centre, so a clockwise arc no longer comes out as the long way round (exam #92).
+- While an early sketch of a finished part is edited, Properties says there are no bodies before that feature instead of "This part is empty" (exam #93).
+
+## [1.460.0] - 2026-11-10
+
+### Added
+
+- **Draft for each extrude direction (FR-FT-014)**: as in SolidWorks, a blind Direction 2 has its own Draft on/off, angle and Draft outward. Each direction now tapers away from the sketch plane on its own: drafting Direction 1 leaves Direction 2 straight, or each gets its own angle. Two-way extrudes drafted before keep their shape and face names.
 
 ## [1.459.0] - 2026-11-10
 

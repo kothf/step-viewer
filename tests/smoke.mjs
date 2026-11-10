@@ -1989,6 +1989,25 @@ try {
     await click([-15, -5]);
     const fl = await mp.evaluate(() => { const e = window.__sv.model.editor(); const sk = e.sk; return { arcs: sk.ents.filter(x => x.t === "arc").length, tan: sk.rels.filter(r => r.t === "tangent").length, dim: sk.dims.some(d => d.t === "radius" && Math.abs(d.val.v - 2) < 1e-9), ok: e.info.status }; });
     check(fl.arcs === 1 && fl.tan === 2 && fl.dim && fl.ok === "ok", `model 1.19: sketch fillet rounds the corner with a tangent R2 arc (${JSON.stringify(fl)})`);
+    // Exam #90-#93: a clockwise centre-point arc, a fillet where a line meets an arc, Ctrl+A, the rolled-back part's note.
+    {
+      const had = await mp.evaluate(() => window.__sv.model.editor().sk.ents.map(e => e.id));
+      const hover = async q => { const [x, y] = await toPage(q, true); await mp.mouse.move(x, y, { steps: 4 }); await mp.waitForTimeout(40); };
+      await mp.click('#mc-tools [data-c="sk:arc"]');
+      await click([10, -22]); await click([16, -22]); await hover([14, -26]); await hover([10, -28]); await hover([6, -26]); await click([4, -22]);
+      await mp.keyboard.press("Escape");
+      const cw = await mp.evaluate(had => { const sk = window.__sv.model.editor().sk, P = id => sk.ents.find(e => e.id === id); const a = sk.ents.find(e => e.t === "arc" && !had.includes(e.id)); return a && { a: [P(a.a).x, P(a.a).y], b: [P(a.b).x, P(a.b).y] }; }, had);
+      check(cw && near(cw.a[0], 4, 0.3) && near(cw.b[0], 16, 0.3), `exam #92: a centre-point arc drawn clockwise keeps the side the mouse went round (${JSON.stringify(cw)})`);
+      await mp.click('#mc-tools [data-c="sk:line"]'); await click([16, -22]); await click([24, -22]); await mp.keyboard.press("Escape"); await mp.keyboard.press("Escape");
+      await mp.click('#mc-tools [data-c="sk:fillet"]'); await click([16, -22]);
+      const la = await mp.evaluate(had => { const e = window.__sv.model.editor(), sk = e.sk; const mine = sk.ents.filter(x => !had.includes(x.id)); return { arcs: mine.filter(x => x.t === "arc").length, tan: sk.rels.filter(r => r.t === "tangent" && r.e.some(id => mine.some(m => m.id === id))).length, ok: e.info.status }; }, had);
+      check(la.arcs === 2 && la.tan === 2 && la.ok === "ok", `exam #90: sketch fillet rounds a corner where a line meets an arc (${JSON.stringify(la)})`);
+      await mp.keyboard.press("Escape"); await mp.keyboard.press("Escape");
+      await mp.keyboard.press("Control+a");
+      const all = await mp.evaluate(() => { const e = window.__sv.model.editor(); return { sel: e.selection.size, n: e.sk.ents.length, text: (window.getSelection()?.toString() ?? "").length }; });
+      check(all.sel === all.n && all.n > 0 && all.text === 0, `exam #91: Ctrl+A in a sketch selects every sketch entity, not the page text (${JSON.stringify(all)})`);
+      await mp.evaluate(had => { const ed = window.__sv.model.editor(); ed.selection.clear(); ed.deleteItems(ed.sk.ents.filter(e => !had.includes(e.id) && e.t !== "point").map(e => e.id)); }, had);
+    }
     // RU and accessibility with the sketch panel (relations list) open.
     await mp.addScriptTag({ content: await readFile(createRequire(import.meta.url).resolve("axe-core/axe.min.js"), "utf8") });
     const axe = () => mp.evaluate(async () => (await window.axe.run(document, { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] }, resultTypes: ["violations"] })).violations.map(v => `${v.id}: ${v.nodes.slice(0, 2).map(n => n.target.join(" ")).join(", ")}`));
@@ -6428,7 +6447,7 @@ try {
     await ctx.close();
   }
 
-  // --- 1.460: a body's own material in drawings (FR-MAT-001): section hatching per body ---
+  // --- 1.462: a body's own material in drawings (FR-MAT-001): section hatching per body ---
   if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
@@ -6456,7 +6475,7 @@ try {
     const cut = await mp.evaluate(() => window.__sv.drw.section([0, 1, 0], [0, 0, 1], [0, 0, 5]));
     const pairs = cut.keys.map((k, i) => `${k}=${cut.mats[i]}`).sort().join();
     check(pairs === "body0=Steel S235,body1=Titanium Ti-6Al-4V",
-      `drawing 1.460: a section hatches each body by its own material, the part's for the rest (FR-MAT-001) (${pairs})`);
+      `drawing 1.462: a section hatches each body by its own material, the part's for the rest (FR-MAT-001) (${pairs})`);
     await ctx.close();
   }
 
@@ -9086,6 +9105,24 @@ try {
     // Blind both ways: 120000 + 100 × (5 + 5); up to next: down to the block, 100 × (5 + 10).
     check(blind.arrows === 2 && blind.v === 121000 && next.end2 === "next" && !next.bad && next.v === 121500 && next.arrows === 1 && done.end2 === "next" && done.v === 121500 && !/[A-Za-z]{3}/.test(ru),
       `model 1.456: extrude Direction 2 with its own end condition (up to next) and its own drag arrow (FR-FT-011) (${JSON.stringify({ blind, next, done, ru })})`);
+    // A draft for each direction (FR-FT-014): the block 20 up and 20 down, Direction 1 drafted 5°, then Direction 2 too.
+    await mp.evaluate(() => window.__sv.modeller.editFeature("e"));
+    await settle();
+    await mp.check('#mc-pm input[data-k="dir2"]');
+    await settle();
+    await mp.check('#mc-pm input[data-k="draftOn"]');
+    await settle();
+    const vol = () => mp.evaluate(() => Math.round(window.__sv.model.last().props?.volume ?? 0));
+    const d1 = { v: await vol(), box: await mp.locator('#mc-pm input[data-k="draft2On"]').count() };
+    await mp.check('#mc-pm input[data-k="draft2On"]');
+    await settle();
+    const d2 = { v: await vol(), angle: await mp.locator('#mc-pm input[data-num="draft2.angle"]').count() };
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await settle();
+    const dd = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(x => x.id === "e"); return { a2: Math.round((f.draft2?.angle.v ?? 0) * 1800 / Math.PI), side2: window.__sv.model.last().faceNames?.filter(n => n.startsWith("e:side2:")).length }; });
+    // Frustum 20 high, 5° in: 120000 − 160·tan5°·400 + 4/3·tan²5°·8000 = 114482 (the pad comes after the edited feature, so it is not built).
+    check(Math.abs(d1.v - 234482) < 4 && d1.box === 1 && Math.abs(d2.v - 228964) < 4 && d2.angle === 1 && dd.a2 === 50 && dd.side2 === 4,
+      `model 1.460: a draft angle for each extrude direction (FR-FT-014) (${JSON.stringify({ d1, d2, dd })})`);
     await ctx.close();
   }
 

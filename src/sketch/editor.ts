@@ -152,6 +152,20 @@ export class SketchEditor {
   private lastEv: PointerEvent | null = null;
   /** Model snapping while drawing (SolidWorks inferencing to model geometry); off with the panel switch. */
   modelSnap = true;
+  /** Centre-point arc: how far (radians, + counter-clockwise) the mouse has gone round the centre since the start point. */
+  private arcTurn = 0;
+  private arcLast: number | null = null;
+  private trackArc(p: V2) {
+    const c = this.draft.pts[0];
+    if (!c || this.arcLast == null) return;
+    const a = Math.atan2(p[1] - c[1], p[0] - c[0]);
+    let d = a - this.arcLast;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d <= -Math.PI) d += Math.PI * 2;
+    this.arcTurn += d;
+    this.arcLast = a;
+  }
+
   private draft: { pts: V2[]; ids: (string | null)[]; cursor: V2 | null; snap: string | null; chainStart?: string; snapCurve?: string | null; snapOrigin?: boolean; curves?: (string | null)[]; hoverCurve?: string | null } = { pts: [], ids: [], cursor: null, snap: null };
   private dimDraft: { picks: Hit[]; dim: SkDim | null; lock?: boolean } = { picks: [], dim: null };
   /** Instant 2D (FR-SK-067): the round handle on a selected driving dimension and its drag. */
@@ -459,6 +473,7 @@ export class SketchEditor {
       : this.tool === "fillet" || this.tool === "chamfer" ? this.hits(p, { curves: false }).find(h => h.kind === "point") ?? null : null;
     this.offsetPreview = this.tool === "offset" ? this.offsetAt(p, false) : [];
     this.draft.cursor = snap.p;
+    if (this.tool === "arc" && this.draft.pts.length === 2) this.trackArc(snap.p);
     this.draft.snap = snap.id;
     this.draft.hoverCurve = snap.id ? null : snap.curve;
     this.showInfer(pick || ["select", "fillet", "chamfer", "convert", "intersect", "dim", "hord", "vord"].includes(this.tool) ? null : snap);
@@ -1489,13 +1504,20 @@ export class SketchEditor {
       return;
     }
     if (this.tool === "arc") {
-      if (d.pts.length < 2) { d.pts.push(p); d.ids.push(s.id); this.render(); return; }
+      if (d.pts.length < 2) {
+        d.pts.push(p); d.ids.push(s.id);
+        if (d.pts.length === 2) { this.arcTurn = 0; this.arcLast = Math.atan2(p[1] - d.pts[0][1], p[0] - d.pts[0][0]); }
+        this.render(); return;
+      }
       const [c, a] = d.pts;
       const r = Math.hypot(a[0] - c[0], a[1] - c[1]);
       const ang = Math.atan2(p[1] - c[1], p[0] - c[0]);
       const b: V2 = s.id ? p : [c[0] + r * Math.cos(ang), c[1] + r * Math.sin(ang)];
       const cId = this.usePoint(c, d.ids[0], null, rels), aId = this.usePoint(a, d.ids[1], null, rels), bId = this.usePoint(b, s.id, null, rels);
-      this.sk.ents.push({ id: uid("a"), t: "arc", c: cId, a: aId, b: bId });
+      // The arc runs the way the mouse went round the centre (SolidWorks), clockwise as well as counter-clockwise (exam #92).
+      this.trackArc(p);
+      const cw = this.arcTurn < 0;
+      this.sk.ents.push({ id: uid("a"), t: "arc", c: cId, a: cw ? bId : aId, b: cw ? aId : bId });
       finish("Add arc");
       this.draft = { pts: [], ids: [], cursor: null, snap: null };
       this.render();
@@ -1959,6 +1981,13 @@ export class SketchEditor {
     if (n) { this.commit("Toggle construction"); this.render(); }
   }
 
+  /** Ctrl+A: every sketch curve and point (the origin is not an entity). */
+  selectAll() {
+    this.selection = new Set(this.sk.ents.map(e => e.id));
+    this.render();
+    this.emitSel();
+  }
+
   deleteSelection() {
     if (!this.selection.size) return false;
     const del = new Set(this.selection);
@@ -2139,6 +2168,7 @@ export class SketchEditor {
     // Construction lines at the corner (a centre rectangle's diagonals) stay on the sharp corner, as in SolidWorks.
     const lines = this.sk.ents.filter(e => e.t === "line" && !e.cons && (e.a === V || e.b === V)) as (SkEnt & { t: "line" })[];
     const curves = this.sk.ents.filter(e => !("cons" in e && e.cons) && ((e.t === "arc" && (e.a === V || e.b === V)) || (e.t === "line" && (e.a === V || e.b === V))));
+    if (curves.length === 2 && lines.length !== 2) { this.filletCurves(V, curves as (SkEnt & { t: "line" | "arc" })[]); return; }
     if (lines.length !== 2 || curves.length !== 2) { this.host.toast(t("Click a corner where two lines meet."), "warn"); return; }
     const v = this.pt(V);
     const far = lines.map(l => this.pt(l.a === V ? l.b : l.a));
@@ -2164,6 +2194,64 @@ export class SketchEditor {
     this.sk.rels.push({ id: uid("r"), t: "tangent", e: [lines[0].id, arc] }, { id: uid("r"), t: "tangent", e: [lines[1].id, arc] });
     // The corner point goes when nothing else uses it; else it stays as a virtual sharp.
     this.settleCorner(V, lines);
+    const dim: SkDim = { id: uid("d"), name: this.nextDimName(), t: "radius", e: [arc], val: { v: r }, pos: [C[0] + (v[0] - C[0]) * 1.6, C[1] + (v[1] - C[1]) * 1.6] };
+    const res = tryAdd(this.sk, { dim });
+    if (res.ok && !res.redundant) { this.sk = res.sketch; this.info = res.result; }
+    else { dim.driven = true; this.sk.dims.push(dim); }
+    this.commit("Sketch fillet");
+    this.render();
+  }
+
+  /**
+   * Rounds a corner where an arc meets a line or another arc (SolidWorks' sketch fillet does any two curves): the
+   * fillet's centre is where the curves' offsets by the radius cross, taking the one whose touching points lie on
+   * both curves nearest the corner.
+   */
+  private filletCurves(V: string, curves: (SkEnt & { t: "line" | "arc" })[]) {
+    const r = this.filletRadius;
+    const v = this.pt(V);
+    const gs = curves.map(e => curveOf(e, q => this.pt(q))!);
+    // Each curve's offsets at distance r: lines move sideways, circles grow or shrink.
+    type Loc = { kind: "line"; a: V2; b: V2 } | { kind: "circle"; c: V2; r: number };
+    const offsets = (g: Curve): Loc[] => {
+      if (g.kind === "line") {
+        const u = norm2(sub2(g.b, g.a)), n: V2 = [-u[1], u[0]];
+        return [1, -1].map(k => ({ kind: "line" as const, a: [g.a[0] + n[0] * r * k, g.a[1] + n[1] * r * k] as V2, b: [g.b[0] + n[0] * r * k, g.b[1] + n[1] * r * k] as V2 }));
+      }
+      const c = (g as { c: V2 }).c, R = (g as { r: number }).r;
+      return [R + r, R - r].filter(x => x > 1e-9).map(x => ({ kind: "circle" as const, c, r: x }));
+    };
+    const touch = (g: Curve, C: V2): V2 => {
+      if (g.kind === "line") { const u = norm2(sub2(g.b, g.a)); const k = dot2(sub2(C, g.a), u); return [g.a[0] + u[0] * k, g.a[1] + u[1] * k]; }
+      const c = (g as { c: V2 }).c, R = (g as { r: number }).r, w = norm2(sub2(C, c));
+      return [c[0] + w[0] * R, c[1] + w[1] * R];
+    };
+    let best: { C: V2; T: V2[]; d: number } | null = null;
+    for (const o0 of offsets(gs[0])) for (const o1 of offsets(gs[1])) {
+      for (const C of intersectCurves(o0 as Curve, o1 as Curve)) {
+        const T = gs.map(g => touch(g, C));
+        if (!T.every((q, i) => onCurve(gs[i], q, 1e-6))) continue;
+        const d = T.reduce((s, q) => s + Math.hypot(q[0] - v[0], q[1] - v[1]), 0);
+        if (d < 1e-7) continue;
+        if (!best || d < best.d) best = { C, T, d };
+      }
+    }
+    if (!best) { this.host.toast(t("The radius is too large for these curves."), "error"); return; }
+    const lines = curves.filter(e => e.t === "line") as (SkEnt & { t: "line" })[];
+    this.keepSharpDims(V, lines);
+    const tIds = best.T.map(q => { const id = uid("p"); this.sk.ents.push({ id, t: "point", x: q[0], y: q[1] }); return id; });
+    curves.forEach((e, i) => { if (e.a === V) e.a = tIds[i]; else e.b = tIds[i]; });
+    const C = best.C, T = best.T;
+    const cId = uid("p");
+    this.sk.ents.push({ id: cId, t: "point", x: C[0], y: C[1] });
+    // The fillet runs the short way between its touching points.
+    const ccw = (T[0][0] - C[0]) * (T[1][1] - C[1]) - (T[0][1] - C[1]) * (T[1][0] - C[0]) > 0;
+    const arc = uid("a");
+    this.sk.ents.push({ id: arc, t: "arc", c: cId, a: ccw ? tIds[0] : tIds[1], b: ccw ? tIds[1] : tIds[0] });
+    this.sk.rels.push({ id: uid("r"), t: "tangent", e: [curves[0].id, arc] }, { id: uid("r"), t: "tangent", e: [curves[1].id, arc] });
+    const used = this.sk.dims.some(d => d.e.includes(V)) || this.sk.rels.some(q => q.e.includes(V)) || this.sk.ents.some(o => refPts(o).includes(V));
+    if (used) this.sk.rels.push({ id: uid("r"), t: "onCurve", e: [V, curves[0].id] }, { id: uid("r"), t: "onCurve", e: [V, curves[1].id] });
+    else this.dropLoosePoints(new Set([V]));
     const dim: SkDim = { id: uid("d"), name: this.nextDimName(), t: "radius", e: [arc], val: { v: r }, pos: [C[0] + (v[0] - C[0]) * 1.6, C[1] + (v[1] - C[1]) * 1.6] };
     const res = tryAdd(this.sk, { dim });
     if (res.ok && !res.redundant) { this.sk = res.sketch; this.info = res.result; }
@@ -3151,7 +3239,7 @@ export class SketchEditor {
       arc3: "Click the start, the end, then a point on the arc",
       polygon: "Click the centre, then a corner; set the sides in the panel",
       trim: "Click the piece of a curve to remove, up to where it crosses others",
-      fillet: "Click a corner where two lines meet; set the radius in the panel",
+      fillet: "Click a corner where two curves meet; set the radius in the panel",
       chamfer: "Click a corner where two lines meet; set the distance in the panel",
       extend: "Click a line or arc near the end to extend it to the next curve",
       split: "Click a line or arc where it should be split in two",
@@ -3376,7 +3464,8 @@ export class SketchEditor {
           const a0 = Math.atan2(s[1] - a[1], s[0] - a[0]);
           let a1 = Math.atan2(p[1] - a[1], p[0] - a[0]);
           while (a1 <= a0) a1 += Math.PI * 2;
-          poly(arcPts(a, r, a0, a1), C.pre);
+          if (this.arcTurn < 0) poly(arcPts(a, r, a1 - Math.PI * 2, a0), C.pre);
+          else poly(arcPts(a, r, a0, a1), C.pre);
         }
       }
     }
