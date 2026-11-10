@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.490.0] - 2026-11-10
+## [1.491.0] - 2026-11-10
 
 ### Fixed
 
@@ -13,6 +13,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Deleting a view that is still being projected stops its projection, so the next views no longer wait behind a view that is gone.
 - A view switched to another display style (for example Shaded with edges) keeps showing its lines until the new style arrives, instead of an empty frame.
 - Auto balloon on a view whose lines are still coming says so instead of placing no balloons without a word.
+
+## [1.490.0] - 2026-11-10
+
+### Fixed
+
+- Drawings: a view clicked in the drawing tree keeps the focus there, so Delete deletes it (drawings exam #36).
+- Drawings: Auto balloon keeps the balloons inside the drawing frame and off the title block; with no free room they move in between the view and the frame, clear of each other (drawings exam #39).
+- Drawings: with dual dimensions on, a hole table stays in one unit (its Size column took inches while X/Y stayed mm, and the wider table ran over the frame) (drawings exam #41).
+- Russian UI: the open arrowhead reads "Открытые" (it said "Открыть"), and the GOST sheet format "ГОСТ 2.104" (drawings exam #42).
 
 ## [1.489.0] - 2026-11-10
 
@@ -3019,7 +3028,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.490.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.491.0...HEAD
+[1.491.0]: https://github.com/kothf/step-viewer/compare/v1.490.0...v1.491.0
 [1.490.0]: https://github.com/kothf/step-viewer/compare/v1.489.0...v1.490.0
 [1.489.0]: https://github.com/kothf/step-viewer/compare/v1.488.0...v1.489.0
 [1.488.0]: https://github.com/kothf/step-viewer/compare/v1.487.0...v1.488.0
