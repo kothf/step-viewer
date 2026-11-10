@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.388.0] - 2026-11-10
+
+### Added
+
+- **Recognize Fillets (FR-FT-102)**: the new command beside Recognize Holes finds the fillets and chamfers of a body, an imported one above all, removes them with Delete Face and makes them again as Fillet and Chamfer features, one per size. After that you can change a radius, or delete the fillet, on a STEP part. It finds fillets on straight and round edges with their corner patches, and equal-distance chamfers on straight edges. A fillet that runs round other fillets is taken off first and put back last. Only finds that rebuild to exactly the same solid are kept.
+
 ## [1.387.0] - 2026-11-10
 
 ### Added
@@ -2279,7 +2285,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.387.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.388.0...HEAD
+[1.388.0]: https://github.com/kothf/step-viewer/compare/v1.387.0...v1.388.0
 [1.387.0]: https://github.com/kothf/step-viewer/compare/v1.386.0...v1.387.0
 [1.386.0]: https://github.com/kothf/step-viewer/compare/v1.385.0...v1.386.0
 [1.385.0]: https://github.com/kothf/step-viewer/compare/v1.384.0...v1.385.0
