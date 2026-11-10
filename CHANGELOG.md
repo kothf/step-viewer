@@ -5,11 +5,32 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.455.0] - 2026-11-10
+## [1.457.0] - 2026-11-10
 
 ### Changed
 
 - **Parts open in a fraction of a second**: opening a part used to start a new geometry kernel (OpenCASCADE, 3–5 s to set itself up) every time, even for a part that rebuilds in 0.1 s. The app now sets one kernel up in the background after it starts, and a closed part's kernel is cleared and kept for the next document. Measured on a 4-core machine: a two-feature part 4.3 s → 0.45 s the first time, 3.3 s → 0.1–0.5 s for the next ones; the exact geometry of the first STEP file is ready after 0.8 s instead of 5 s. Devices with 4 GB of memory or less, and `?nospare`, keep the old behaviour.
+
+## [1.456.0] - 2026-11-10
+
+### Added
+
+- **Extrude Direction 2 with any end condition (FR-FT-011)**: as in SolidWorks, Direction 2 has its own end condition (Blind, Through all, Up to next, Up to vertex, Up to face or plane, Offset from surface, Up to body) and works with every Direction 1 end condition except Mid plane and Through all - both. A blind Direction 2 gets its own orange drag arrow pointing the other way. Extrudes made before keep their shape and face names.
+
+## [1.455.0] - 2026-11-10
+
+### Added
+
+- **Vault in a project folder takes the files already there** (FR-PDM-003): **Add files in this folder…** (Vault tab and Vault menu) lists the files in the vault folder that are not vault files yet, with their subfolders, and adds them where they are: parts, then assemblies, then drawings. A new vault made in a folder that holds files offers this straight away. Before, Add files… put copies at the top of the folder.
+- **Switch to** in the Vault menu (FR-PDM-002): with a vault open, the other vault folders used before and the browser vaults are listed, so one vault per project folder is one click away. **Import vault ZIP…** is in the menu too.
+- Opening an assembly from the vault lists the components that have newer versions before you choose As checked in, Latest or Latest released.
+
+### Fixed
+
+- Vault: a drawing now references its model (found by the document id its copy of the model carries), and an assembly finds its parts in a subfolder such as `parts/` by name. **Where used** goes part → assembly → drawing and marks a parent that uses an older version. Files added before the file they use are tied to it when it comes in (vault exam V1-V3).
+- Vault: a document tab left open while the vault moved on (a roll back, an approval) showed the new version number over the old content. The title now says `v2 · newer v3 in the vault`, and Check out loads the latest first (V7).
+- Vault: roll back, undo check-out, get latest, a state change and a double-click on a file already open opened the file in a second tab; it is now reloaded or shown in its own tab (V8).
+- Vault: the selected file's commands stay in view at the foot of the panel, however long the file list (V4); the data card of a file not checked out has a **Check out** button (V9); delete and restore say what they did (V10); adding many files shows a progress message (V12); the list of an assembly's parts to add shows one file per line (V2).
 
 ## [1.454.0] - 2026-11-10
 
@@ -2736,7 +2757,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.455.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.457.0...HEAD
+[1.457.0]: https://github.com/kothf/step-viewer/compare/v1.456.0...v1.457.0
+[1.456.0]: https://github.com/kothf/step-viewer/compare/v1.455.0...v1.456.0
 [1.455.0]: https://github.com/kothf/step-viewer/compare/v1.454.0...v1.455.0
 [1.454.0]: https://github.com/kothf/step-viewer/compare/v1.453.0...v1.454.0
 [1.453.0]: https://github.com/kothf/step-viewer/compare/v1.452.0...v1.453.0
