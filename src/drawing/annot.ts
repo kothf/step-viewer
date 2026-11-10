@@ -106,6 +106,44 @@ export function edgeRef(e: MEdge, p: "a" | "b" | "c" | "e"): GeoRef {
   return { e: e.k, h: e.m, p, ...(p === "a" ? { q: e.a } : p === "b" ? { q: e.b } : {}) };
 }
 
+/** A circle seen edge-on (its axis in the view plane) as the line it looks like, in view axes; null when it is not edge-on.
+ *  A whole circle spans its diameter; an arc spans what its ends and middle cover. */
+export function edgeOnSeg(e: MEdge, P: (p: V3) => P2, topo: Topo | null = null): [P2, P2] | null {
+  if (e.t !== "c" || !e.c || !e.r || !e.ax) return null;
+  const o = P([0, 0, 0]), q = P(e.ax), ad: P2 = [q[0] - o[0], q[1] - o[1]];
+  if (Math.abs(len2(ad) - 1) > 1e-6) return null;
+  const dl: P2 = [-ad[1], ad[0]], c = P(e.c);
+  let t0 = -e.r, t1 = e.r;
+  if (!wholeCircle(e, topo)) {
+    const ts = [e.a, e.b, e.m].map(w => { const p = P(w); return (p[0] - c[0]) * dl[0] + (p[1] - c[1]) * dl[1]; });
+    t0 = Math.min(...ts); t1 = Math.max(...ts);
+  }
+  return [[c[0] + dl[0] * t0, c[1] + dl[1] * t0], [c[0] + dl[0] * t1, c[1] + dl[1] * t1]];
+}
+
+/** One outline line of a cylinder seen from the side, in view axes: `o` = its origin projected, `ad` = its axis in the view (unit),
+ *  `v0`..`v1` along the axis, `s` = which side (+1 = left of the axis direction). */
+export function outlineSeg(o: P2, ad: P2, r: number, v0: number, v1: number, s: 1 | -1): [P2, P2] {
+  const dl: P2 = [-ad[1] * r * s, ad[0] * r * s];
+  return [[o[0] + ad[0] * v0 + dl[0], o[1] + ad[1] * v0 + dl[1]], [o[0] + ad[0] * v1 + dl[0], o[1] + ad[1] * v1 + dl[1]]];
+}
+
+/** The cylinder outline a `GeoRef` with `s` names: the side line of the cylinder the circle bounds (a short piece when none is found). */
+function outlineOf(e: MEdge, s: 1 | -1, P: (p: V3) => P2, topo: Topo | null): [P2, P2] | null {
+  if (e.t !== "c" || !e.c || !e.r || !e.ax) return null;
+  const o = P([0, 0, 0]), q = P(e.ax), ad: P2 = [q[0] - o[0], q[1] - o[1]];
+  if (Math.abs(len2(ad) - 1) > 1e-6) return null;
+  const tol = 1e-6 * Math.max(1, e.r);
+  for (const cy of topo?.cyls ?? []) {
+    if (Math.abs(cy.r - e.r) > tol || Math.abs(Math.abs(dot3(cy.ax, e.ax)) - 1) > 1e-6) continue;
+    const dq = sub3(e.c, cy.o), t = dot3(dq, cy.ax);
+    if (Math.hypot(dq[0] - cy.ax[0] * t, dq[1] - cy.ax[1] * t, dq[2] - cy.ax[2] * t) > tol) continue;
+    const p0 = P(cy.o), q1 = P(cy.ax), a2: P2 = [q1[0] - o[0], q1[1] - o[1]];
+    return outlineSeg(p0, a2, cy.r, cy.v0, cy.v1, s);
+  }
+  return outlineSeg(P(e.c), ad, e.r, 0, 1e-3, s);
+}
+
 /** Projects model points into a view's axes. */
 export function projector(vd: ViewDir) {
   const { x, y, n } = viewAxes(vd);
@@ -185,7 +223,14 @@ export function dimGeo(a: DimAnnot, P: (p: V3) => P2, topo: Topo | null): DimGeo
   // Linear: two points, or the two ends of one line; a line and a point or two parallel lines: the square distance.
   const pts: P2[] = [];
   let segs: ([P2, P2] | null)[] | undefined;
-  const lineOf = (r: GeoRef): [P2, P2] | null => { if ("pt" in r || r.p !== "e") return null; const e = refEdge(r, topo); return e && e.t === "l" ? [P(e.a), P(e.b)] : null; };
+  const lineOf = (r: GeoRef): [P2, P2] | null => {
+    if ("pt" in r || r.p !== "e") return null;
+    const e = refEdge(r, topo);
+    if (!e) return null;
+    if (e.t === "l") return [P(e.a), P(e.b)];
+    // A cylinder's outline seen from the side, or a circle seen edge-on: both are lines in the view.
+    return r.s ? outlineOf(e, r.s, P, topo) : edgeOnSeg(e, P, topo);
+  };
   const foot = (p: P2, l: [P2, P2]): P2 => { const [u, v] = l, dx = v[0] - u[0], dy = v[1] - u[1], L2 = dx * dx + dy * dy || 1, t = ((p[0] - u[0]) * dx + (p[1] - u[1]) * dy) / L2; return [u[0] + dx * t, u[1] + dy * t]; };
   if (a.refs.length === 1) { const l = lineOf(a.refs[0]); if (!l) return null; pts.push(l[0], l[1]); }
   else {

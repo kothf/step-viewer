@@ -5,11 +5,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.450.0] - 2026-11-10
+## [1.452.0] - 2026-11-10
 
 ### Added
 
 - **Material per body (FR-MAT-001)**: in a part with several bodies, right-click a body in the **Solid Bodies** folder and choose **Material…** to give it its own material from the library; **None** gives it the part's material again. Mass properties then weigh each body with its own density (mass, centre of mass and moments of inertia), and the Density row says "from part materials". One undo step. An assembly still weighs such a part with the part's material.
+
+## [1.451.0] - 2026-11-10
+
+### Added
+
+- **Features from the sketch you are editing (FR-SK-004)**: there is no need to exit the sketch first. The Sketch tab ends with **Extrude**, **Cut** and **Revolve**, the sketch's right-click menu has them too, and the Features, Surfaces, Sheet Metal and Weldments tabs keep their commands while you sketch (Ctrl+K finds them as well). Picking one exits the sketch and opens the feature on it with its live preview, as in SolidWorks.
+
+## [1.450.0] - 2026-11-10
+
+### Fixed
+
+- Drawings: a round edge seen edge-on (the top of a boss, the end of a shaft in a side view) can be picked for a dimension as the line it looks like, so a boss height or a shaft's overall length can be dimensioned (drawings exam #3, #10).
+- Drawings: two cylinder outline lines picked one after the other give the distance between the lines (a step of 2 between Ø20 and Ø24), not between the centres of the circles at their ends (drawings exam #14).
 
 ## [1.449.0] - 2026-11-10
 
@@ -2704,7 +2717,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.450.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.452.0...HEAD
+[1.452.0]: https://github.com/kothf/step-viewer/compare/v1.451.0...v1.452.0
+[1.451.0]: https://github.com/kothf/step-viewer/compare/v1.450.0...v1.451.0
 [1.450.0]: https://github.com/kothf/step-viewer/compare/v1.449.0...v1.450.0
 [1.449.0]: https://github.com/kothf/step-viewer/compare/v1.448.0...v1.449.0
 [1.448.0]: https://github.com/kothf/step-viewer/compare/v1.447.0...v1.448.0
