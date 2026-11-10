@@ -5040,6 +5040,16 @@ try {
       const menuOpen = await dp2.evaluate(() => document.querySelector('#drw [data-a="annot"]').getAttribute("aria-expanded") === "true");
       await dp2.keyboard.press("Escape");
       check(menuOpen, "drawing: after Model and back, the Annotate menu still opens");
+      // Drawings exam #36: a click on a view's tree row keeps the focus in the tree (the rows are rebuilt), so Delete deletes it.
+      const leaf = await dp2.evaluate(() => { const vs = window.__sv.drw.doc().sheets[0].views; return vs.find(v => !vs.some(c => c.parent === v.id))?.id; });
+      await dp2.click(`#drw .drw-tree [data-sel="${leaf}"]`);
+      const treeFocus = await dp2.evaluate(() => !!document.activeElement?.closest(".drw-tree"));
+      await dp2.keyboard.press("Delete");
+      await dp2.waitForFunction(() => window.__sv.drw.doc().sheets[0].views.length === 4, null, { timeout: 5000 }).catch(() => {});
+      const afterDel = await dp2.evaluate(() => window.__sv.drw.doc().sheets[0].views.length);
+      await dp2.keyboard.press("Control+z");
+      await dp2.waitForFunction(() => window.__sv.drw.doc().sheets[0].views.length === 5, null, { timeout: 5000 }).catch(() => {});
+      check(treeFocus && afterDel === 4, `drawing: a view clicked in the tree is deleted by the Delete key (exam #36) (${JSON.stringify({ treeFocus, afterDel })})`);
       await dp2.click('#drw [data-a="back"]');
       await dp2.waitForFunction(() => document.querySelector("#drw").hidden, null, { timeout: 20000 });
       const t2 = await tabs();
@@ -5866,6 +5876,34 @@ try {
       return q.every((a, i) => q.every((b, j) => i === j || Math.hypot(a[0] - b[0], a[1] - b[1]) >= 10) && rects.every(r => !(a[0] > r[0] - 5 && a[0] < r[2] + 5 && a[1] > r[1] - 5 && a[1] < r[3] + 5)));
     }, auto.map(a => a.id));
     check(clearOk, `drawing: auto balloons sit clear of each other and of the views (${JSON.stringify(auto.map(a => a.pos))})`);
+    // Drawings exam #39: a view pushed against the top of the frame still gets its balloons inside the frame, off the title block.
+    {
+      await dp.keyboard.press("Escape");
+      await dp.keyboard.press("Control+z");
+      await dp.waitForFunction(() => !(window.__sv.drw.doc().sheets[0].annots ?? []).some(a => a.t === "balloon"));
+      const { frame } = await dp.evaluate(() => window.__sv.drw.frame());
+      const pf = await dp.evaluate(id => window.__sv.drw.placement(id), front);
+      const [px, py] = await dp.evaluate(([x, y]) => window.__sv.drw.sheetPt(x, y), [pf.x, pf.y]);
+      const [tx2, ty2] = await dp.evaluate(([x, y]) => window.__sv.drw.sheetPt(x, y), [pf.x, frame[3] - (pf.box[3] - pf.box[1]) / 2 * pf.s - 2]);
+      await dp.mouse.move(px, py); await dp.mouse.down(); await dp.mouse.move(tx2, ty2, { steps: 6 }); await dp.mouse.up();
+      await dp.waitForTimeout(300);
+      await tool("auto");
+      await dp.waitForTimeout(300);
+      const inFrame = await dp.evaluate(fid => {
+        const d = window.__sv.drw, sh = d.doc().sheets[0], { frame: f, tb } = d.frame(), bs = (sh.annots ?? []).filter(a => a.t === "balloon" && a.view === fid);
+        const p = d.placement(fid), at = a => [p.x + (a.pos[0] - p.uc) * p.s, p.y + (a.pos[1] - p.vc) * p.s];
+        return { n: bs.length, moved: Math.round(p.y), ok: bs.map(at).every(([x, y]) => x > f[0] + 4 && x < f[2] - 4 && y > f[1] + 4 && y < f[3] - 4 && !(x > tb[0] - 4 && y < tb[1] + tb[3] + 4)) };
+      }, front);
+      check(inFrame.n === 2 && inFrame.ok, `drawing: auto balloons stay inside the frame and off the title block (exam #39) (${JSON.stringify(inFrame)})`);
+      // Back as it was: undo the balloons and the move, then Auto balloon again where the view was.
+      await dp.keyboard.press("Escape");
+      await dp.keyboard.press("Control+z"); await dp.keyboard.press("Control+z");
+      await dp.waitForTimeout(400);
+      const [bx2, by2] = await at(front, 0, 10);
+      await dp.mouse.click(bx2, by2);
+      await tool("auto");
+      await dp.waitForFunction(() => (window.__sv.drw.doc().sheets[0].annots ?? []).filter(a => a.t === "balloon").length === 2);
+    }
     // A balloon by hand on a pin's circle in the top view reads 2.
     await tool("balloon");
     let [x, y] = await at(top, 34, 0);

@@ -2924,6 +2924,8 @@ export const RU: Record<string, string> = {
   "Document": "Документ",
   "mm": "мм",
   "Filled": "Залитые",
+  "Open arrow": "Открытые",
+  "GOST 2.104": "ГОСТ 2.104",
   "Dot": "Точка",
   "Oblique stroke": "Засечка",
   // View navigation (FR-UI-101..104)

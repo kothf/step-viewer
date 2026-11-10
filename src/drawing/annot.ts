@@ -745,6 +745,16 @@ export function holeEdges(topo: Topo | null, P: (p: V3) => P2, n: V3, keep: (c: 
 }
 
 /** The rows of a hole table and where its tags go: sizes get letters A, B, … from the smallest, holes in a size are numbered by X then Y. */
+/**
+ * `f` with dual dimensions off: a hole table is in one unit, like its X/Y columns (drawings exam #41: with inches in
+ * brackets the Size column doubled in width and the table ran over the frame).
+ */
+function noDual<T>(f: () => T): T {
+  const d = DUAL;
+  DUAL = false;
+  try { return f(); } finally { DUAL = d; }
+}
+
 export function holeRows(a: HoleTableAnnot, P: (p: V3) => P2, ctx: AnnotCtx): { rows: string[][]; tags: { tag: string; c: P2; r: number }[]; o: P2 | null; missing: boolean } {
   const op = refPoint(a.origin, ctx.topo), o = op ? P(op) : null;
   let missing = !o;
@@ -752,7 +762,7 @@ export function holeRows(a: HoleTableAnnot, P: (p: V3) => P2, ctx: AnnotCtx): { 
   for (const ref of a.holes) {
     const e = refEdge(ref, ctx.topo);
     if (!e || e.t !== "c" || !e.c || !e.r) { missing = true; continue; }
-    hs.push({ c: P(e.c), r: e.r, size: holeText(e, ctx, false).join(" ") });
+    hs.push({ c: P(e.c), r: e.r, size: noDual(() => holeText(e, ctx, false).join(" ")) });
   }
   const o0 = o ?? [0, 0];
   const sizes = [...new Map(hs.map(h => [h.size, h.r])).entries()].sort((x, y) => x[1] - y[1] || x[0].localeCompare(y[0])).map(([s]) => s);

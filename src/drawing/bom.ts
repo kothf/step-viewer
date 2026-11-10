@@ -244,7 +244,7 @@ export function bomItems(bom: Bom): BalloonItems {
   return { edge: k => { const c = compOfKey(k); return c ? bom.itemOf(c) : null; }, stack: s => bom.itemOf(s) };
 }
 
-export function autoBalloons(sheet: Sheet, v: DrawingView, topo: Topo, P: (p: V3) => P2, proj: Projection, s: number, items: BalloonItems, uid: () => string, gap = 12, taken?: (p: P2) => boolean): BalloonAnnot[] {
+export function autoBalloons(sheet: Sheet, v: DrawingView, topo: Topo, P: (p: V3) => P2, proj: Projection, s: number, items: BalloonItems, uid: () => string, gap = 12, taken?: (p: P2) => boolean, outside?: (p: P2) => boolean): BalloonAnnot[] {
   const have = new Set<number>();
   for (const a of sheet.annots ?? []) if (a.t === "balloon" && a.view === v.id && (items.mine?.(a) ?? true)) {
     for (const i of ["e" in a.ref ? items.edge(a.ref.e) : null, ...(a.stack ?? []).map(x => items.stack(x))]) if (i) have.add(i);
@@ -291,9 +291,11 @@ export function autoBalloons(sheet: Sheet, v: DrawingView, topo: Topo, P: (p: V3
     const onSide = Math.abs(Math.abs(p.pos[0] - cx) - ((x1 - x0) / 2 + g)) < 1e-6;
     const out: P2 = onSide ? [Math.sign(p.pos[0] - cx) || 1, 0] : [0, Math.sign(p.pos[1] - cy) || 1], along: P2 = onSide ? [0, 1] : [1, 0], st = 3 / s;
     const cands: { q: P2; d: number }[] = [];
-    for (let k = 0; k <= 20; k++) for (let j = -16; j <= 16; j++) if (k || j) cands.push({ q: [p.pos[0] + (out[0] * k + along[0] * j) * st, p.pos[1] + (out[1] * k + along[1] * j) * st], d: Math.hypot(k, j) });
+    // Inwards too (k < 0): a view near the sheet's edge has its ring outside the frame, and the room is between them.
+    for (let k = -20; k <= 20; k++) for (let j = -16; j <= 16; j++) if (k || j) cands.push({ q: [p.pos[0] + (out[0] * k + along[0] * j) * st, p.pos[1] + (out[1] * k + along[1] * j) * st], d: Math.hypot(k, j) });
     cands.sort((a, b) => a.d - b.d);
-    const free = cands.find(c => !taken?.(c.q) && clear(c.q));
+    // No room free of everything: clear of the other balloons and on the sheet (over a view's empty corner) beats on top of one.
+    const free = cands.find(c => !taken?.(c.q) && clear(c.q)) ?? (outside ? cands.find(c => !outside(c.q) && clear(c.q)) : undefined);
     if (free) p.pos = free.q;
     done.push(p);
   }
