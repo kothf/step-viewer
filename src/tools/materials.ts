@@ -422,7 +422,7 @@ export const CHECKED: Record<string, string> = {
   "Wood (western red cedar)": "www.wood-database.com/western-red-cedar/",
   "Plywood (birch)": "en.wikipedia.org/wiki/Plywood",
   "Concrete C25/30": "eurocodeapplied.com/design/en1992/concrete-design-properties",
-  // 1.383.0: tool and bearing steels, titanium, A500, C22.
+  // 1.385.0: tool and bearing steels, titanium, A500, C22.
   "Steel 100Cr6 (bearing)": "lucefin.com/oaleekso/files_mf/1523536908100Cr6.pdf",
   "Tool steel X153CrMoV12": "xometry.pro/wp-content/uploads/2023/09/Steel-1.2379-X153CrMo12-SKD11-annealed.pdf",
   "Tool steel X40CrMoV5-1": "www.oberste-beulmann.de/Dateien/Datenblaetter/1.2344.efs.en.pdf",

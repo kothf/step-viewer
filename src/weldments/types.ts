@@ -235,15 +235,41 @@ export function cornerKey(ents: string[]): string {
   return [...ents].sort().join("+");
 }
 
-/** Stock to buy for a cut list: per profile (member description), the number of pieces and their summed length in mm; `skip` leaves items out (excluded ones). */
-export function stockTotals(items: CutItem[], skip?: (c: CutItem) => boolean): { desc: string; pieces: number; length: number }[] {
-  const out = new Map<string, { desc: string; pieces: number; length: number }>();
+/** Bars of length `bar` needed to cut `lengths` (mm) with a saw `kerf` between cuts: first fit, longest first. Pieces longer than a bar are counted in `over` and left out. */
+export function barsNeeded(lengths: number[], bar: number, kerf = 0): { bars: number; over: number } {
+  const free: number[] = [];
+  let over = 0;
+  for (const l of [...lengths].sort((a, b) => b - a)) {
+    if (l > bar + 1e-6) { over++; continue; }
+    // A bar holds its pieces plus a kerf between them: sizes l + kerf fit a capacity of bar + kerf.
+    const i = free.findIndex(f => f + 1e-6 >= l + kerf);
+    if (i >= 0) free[i] -= l + kerf; else free.push(bar + kerf - (l + kerf));
+  }
+  return { bars: free.length, over };
+}
+
+/** A stock lengths row: profile, pieces, summed length in mm and, with a stock bar length, the bars to buy, what is left of them and the pieces too long for a bar. */
+export interface StockRow { desc: string; pieces: number; length: number; bars?: number; left?: number; over?: number }
+
+/** Stock to buy for a cut list: per profile (member description), the number of pieces and their summed length in mm; `skip` leaves items out (excluded ones); `stock` (bar length and saw kerf in mm) adds the bars needed. */
+export function stockTotals(items: CutItem[], skip?: (c: CutItem) => boolean, stock?: { len?: number; kerf?: number }): StockRow[] {
+  const out = new Map<string, { desc: string; pieces: number; length: number; all: number[] }>();
   for (const c of items) {
     if (c.kind !== "member" || skip?.(c)) continue;
-    const r = out.get(c.desc) ?? { desc: c.desc, pieces: 0, length: 0 };
+    const r = out.get(c.desc) ?? { desc: c.desc, pieces: 0, length: 0, all: [] };
     r.pieces += c.qty;
     r.length += (c.length ?? 0) * c.qty;
+    for (let i = 0; i < c.qty; i++) r.all.push(c.length ?? 0);
     out.set(c.desc, r);
   }
-  return [...out.values()].map(r => ({ ...r, length: Math.round(r.length * 10) / 10 }));
+  const r1 = (v: number) => Math.round(v * 10) / 10;
+  return [...out.values()].map(({ all, ...r }) => {
+    const row: StockRow = { ...r, length: r1(r.length) };
+    if (stock?.len && stock.len > 0) {
+      const b = barsNeeded(all, stock.len, Math.max(0, stock.kerf ?? 0));
+      const fit = all.filter(l => l <= stock.len! + 1e-6).reduce((s, l) => s + l, 0);
+      row.bars = b.bars; row.left = r1(b.bars * stock.len - fit); row.over = b.over;
+    }
+    return row;
+  });
 }

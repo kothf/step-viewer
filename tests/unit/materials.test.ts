@@ -101,7 +101,7 @@ test("second pass (1.382.0): most of the library has a checked reference, the re
   assert.equal(findMaterial("Bronze CuSn8 (phosphor bronze)")!.E, 115);
 });
 
-test("third pass (1.383.0): tool steels, titanium and two more steels have a reference", () => {
+test("third pass (1.385.0): tool steels, titanium and two more steels have a reference", () => {
   const un = LIBRARY.filter(m => !m.ref).map(m => m.name);
   assert.ok(Object.keys(CHECKED).length >= 129, `${Object.keys(CHECKED).length} checked`);
   assert.ok(un.length <= 41, `${un.length} unchecked`);
