@@ -165,3 +165,13 @@ test("tenth pass (1.420.0): teak, mahogany and balsa checked against the Wood Ha
     assert.equal(m.E, e);
   }
 });
+
+test("eleventh pass (1.426.0): CuBe2 follows the maker's sheet for the age hardened state", () => {
+  assert.ok(LIBRARY.filter((m) => m.ref).length >= 147);
+  const m = findMaterial("Beryllium copper CuBe2 (age hardened)")!;
+  assert.ok(m.ref);
+  assert.equal(m.density, 8.36);
+  assert.equal(m.E, 131);
+  assert.equal(m.sy, 965);
+  assert.equal(m.su, 1140);
+});
