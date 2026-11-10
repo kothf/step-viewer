@@ -5152,9 +5152,12 @@ try {
       await dp.check('#drw [data-d="g:0:dia"]');
       await dp.selectOption('#drw [data-d="g:0:mod"]', "M");
       await dp.click('#drw [data-grow="+"]');
+      await dp.fill('#drw [data-d="gabove"]', "2×"); await dp.dispatchEvent('#drw [data-d="gabove"]', "change");
+      await dp.fill('#drw [data-d="gbelow"]', "SEP REQT"); await dp.dispatchEvent('#drw [data-d="gbelow"]', "change");
     }
     an = await annots(); tx = await texts();
     const g2 = an.find(a => a.t === "gtol");
+    check(gsel && g2.above === "2×" && g2.below === "SEP REQT" && tx.includes("2×") && tx.includes("SEP REQT"), `drawing: text above and below the tolerance frame (${g2?.above} / ${g2?.below}; ${tx.join(" ")})`);
     check(gsel && g2.rows.length === 2 && g2.rows[0].sym === "pos" && g2.rows[0].dia && tx.includes("Ø0.05") && tx.includes("M"), `drawing: tolerance frame edited: position, Ø, (M), second row (${JSON.stringify(g2?.rows)})`);
     // Revision table at the frame's top-right corner, then a second revision B.
     await tool("rev");

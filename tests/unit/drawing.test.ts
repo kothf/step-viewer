@@ -310,6 +310,17 @@ test("GD&T, datums, surface finish, tables, GOST title block, dangling annotatio
   const tri = d.prims.find(p => p.t === "p" && p.fill) as { p: number[] };
   assert.equal(tri.p[5], 3);
   assert.deepEqual(d.box, [6.5, 11.5, 13.5, 18.5]);
+  {
+    // Text above and below a tolerance frame: left-aligned with it, and inside the hit box.
+    const row = { sym: "pos" as const, tol: "0.1", datums: ["A"] };
+    const g0 = gtolPrims({ id: "g", t: "gtol", pos: [0, 0], rows: [row] }, [10, 20], null, ".");
+    const g1 = gtolPrims({ id: "g", t: "gtol", pos: [0, 0], rows: [row], above: "2×", below: "SEP REQT" }, [10, 20], null, ".");
+    const tt = g1.prims.filter(p => p.t === "t") as { s: string; x: number; y: number }[];
+    const up = tt.find(p => p.s === "2×")!, dn = tt.find(p => p.s === "SEP REQT")!;
+    assert.ok(up.x === 10 && up.y > 20 && dn.x === 10 && dn.y < 20 - 7 - 2.5 + 1e-9);
+    assert.ok(g1.box[3] > g0.box[3] && g1.box[1] < g0.box[1] && g1.box[0] === g0.box[0]);
+    assert.equal(g1.prims.length, g0.prims.length + 2);
+  }
   // Surface finish: the removal bar and the roughness under the long leg's line, decimal comma.
   const s = surfPrims({ id: "s", t: "surf", pos: [0, 0], proc: "removal", text: "Ra 3.2" }, [0, 0], ",");
   assert.equal(s.prims.filter(p => p.t === "l").length, 4);
