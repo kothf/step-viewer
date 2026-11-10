@@ -57,17 +57,20 @@ Written for whoever continues drawing work (FRS section 11, `FR-DRW-…`). The C
    - Otherwise wait for CI on main's latest commit and run `release.yml` on `main` (`actions_run_trigger`).
    - Then check `https://aerocat.tech/tools/mobiuscad/VERSION`.
 
-## State on 2026-11-10 (end of the "Continue drawings polish" thread)
+## State on 2026-11-10 (thread "Continue drawings polish further")
 
-- Released through 1.469.0. PR #391 (FAST_EDGES 4000 → 1500, `std3Layout` 85 % margin only when enlarging) was open; if it is not merged, finish it first (renumber to main + 1).
+- Released through 1.473.0 (#391: `FAST_EDGES` 1500, `std3Layout` 85 % margin only when enlarging). 1.476.0 (this thread's first PR): two drawing workers and the empty fast view fallback below.
 - Big assemblies (drawings exam round two): `projectAuto` in `src/kernel/drawing.ts` picks `projectFast` from `FAST_EDGES` edges up. `projectFast` = `projectPoly` at diag/1000 and 0.1 rad, then `exactify` (chords chained by `chains`, straight runs → lines snapped to `viewCurves` model lines, runs on end-on circles → exact arcs, the rest polylines), `mergeLines`, `underLines`, `unhide`. `?fasthlr` forces it (smoke block in shard 3). Known look: a shaft end seen at a slant can come out dotted (the mesh HLR flickers along it); a "speck makes the hidden curve visible" rule was tried and made hidden lines visible, so it was dropped.
-- Open question from the exam: an older engine copy (desktop Projects/drawings-exam/parts/engine.mcadasm) stayed slow under 4000 edges. If 1500 is still not enough, switch by time instead (e.g. run exact with a budget, or count solids too) rather than lowering the edge count further.
+- Exam round three (1.474.0): the older engine copy (desktop Projects/drawings-exam/parts/engine.mcadasm) got Standard 3 views at 1:2 in ~2 min, but every view came back with vis = hid = 0 from `projectFast` (only centre lines on the sheet). Cause not found (the file is only on the desktop; the newer project-files copy works). 1.476.0 guards it: no visible lines → `BRepTools.Clean` + a diag/300, 0.5 rad mesh (what previews use, which worked on that file) → else exact `project`. `projectPoly` now collects getter exceptions in `Projection.fail` and `projectFast` logs them with `console.warn`, so the exam can report the real reason. If the exact fallback is then too slow, the doc's earlier idea stands: switch by time, not by edge count.
+- Parallel views (1.476.0): `DrawingKernel` runs exact requests through `exact`/`pump`, one at a time on the main worker and one on a helper `Lane` (same model, `lite` load). Previews and `config`/`diff`/`load` stay on the main worker. Smoke check "drawing 1.476" (shard 6, the body-materials drawing block, `?drwhelper=1`).
+- Exam retest of #394 on the older engine: works; only Front needed the exact fallback (15.8 s), Top/Right fast. The helper starts only for models under `FAST_EDGES` (memory: an engine2 tab crashed after Standard 3 views on 1.474.0).
+- Open (exam, 1.474.0, engine2.mcadasm): Alternate position on Front (component c_hco8zi9c9, du 20, dv 49) failed with "OpenCASCADE error 24", no phantom, and the tab later fell back to the 3D assembly (likely out of memory). Next: reproduce with the project-files engine (`alt` request in a unit test: Assembler + the worker's alt steps), see whether the moved compound or `projectAuto` throws; the exam script is desktop drawings-exam/link/talt.js.
 - Standard 3 views: `std3Layout(dx, dy, dz, area, tb, third)` in `views.ts` tries scales from the largest, placing the L-shaped group centred, at the frame edges, left of or above the title block; null falls back to the old `fitScale`.
 
 ## Ideas for next slices (none started)
 
 - **Centre marks on views at an angle**: end-on tests use `|ax·n| ≈ 1` (1e-6). Isometric views get no marks at all, which matches SolidWorks, so leave them unless asked.
-- **Performance**: big models now get `projectFast`; projecting views in parallel across the kernel pool (`src/kernel/pool.ts`) would still help mid-size models under `FAST_EDGES`.
+- **Performance**: done in 1.476.0 with two drawing workers. More than two would cost one more model copy each; measure before adding.
 - Check the FRS (`docs/FRS-modelling.md`, FR-DRW-001..031) and Appendix G for drawing items marked partial.
 
 ## Gotchas

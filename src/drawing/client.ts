@@ -10,12 +10,79 @@ import type { PartDoc } from "../model/types";
 import type { AsmDoc } from "../asm/types";
 import DrawingWorker from "./drawing.worker?worker";
 import { dirKey, type Align, type Stair } from "./views";
+import { FAST_EDGES } from "../kernel/drawing";
 
 /** An assembly's placed component (FR-DRW-030): its edges' face names start with `<id>@`. */
 export interface CompInfo { id: string; part: string; name: string; /** Its part's body materials, when its bodies have their own (FR-MAT-001). */ mats?: string[] }
 export interface ModelFacts { box: [V3, V3]; volume: number; topo: Topo; items: ModelItem[]; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; comps?: CompInfo[]; /** Flat pattern view: its bend lines. */ bends?: FlatBend[]; /** Weldment part: its fillet beads (weld table). */ welds?: WeldInfo[]; /** Weldment part: its cut list (cut list table). */ cuts?: CutInfo[]; /** Weldment part: face name → cut list item number (balloons). */ cutFaces?: Record<string, number>; /** Weldment part: face name → weld table row (weld tags). */ weldFaces?: Record<string, number>; /** Part whose bodies have their own materials: the distinct ones in body order (title block). */ mats?: string[]; /** Such a part's mass in kg with each body's own density. */ kg?: number }
 
+/** `?fasthlr`: every exact view takes the fast path. */
+const fastFlag = () => (typeof location !== "undefined" && new URLSearchParams(location.search).has("fasthlr") ? 0 : undefined);
+
 const facts = (r: ModelFacts): ModelFacts => ({ box: r.box, volume: r.volume, topo: r.topo, items: r.items, holes: r.holes, threads: r.threads ?? [], sketches: r.sketches ?? [], comps: r.comps, bends: r.bends, welds: r.welds, cuts: r.cuts, cutFaces: r.cutFaces, weldFaces: r.weldFaces, mats: r.mats, kg: r.kg });
+
+/**
+ * Whether a drawing may use a second drawing worker for exact projections: four or more threads and
+ * a device that does not say it is short of memory. `?drwhelper=0|1` turns it off or on.
+ */
+function helperWanted(): boolean {
+  if (typeof location !== "undefined") {
+    const q = new URLSearchParams(location.search).get("drwhelper");
+    if (q === "0") return false;
+    if (q === "1") return true;
+  }
+  if (typeof navigator === "undefined") return false;
+  const nav = navigator as Navigator & { deviceMemory?: number; connection?: { saveData?: boolean } };
+  if ((nav.hardwareConcurrency ?? 2) < 4) return false;
+  if (nav.deviceMemory !== undefined && nav.deviceMemory <= 4) return false;
+  return !nav.connection?.saveData;
+}
+
+/** A helper drawing worker idle this long is stopped (its model is loaded again at the next load). */
+const HELPER_IDLE_MS = 60_000;
+
+/** One drawing worker and its calls in flight. */
+class Lane {
+  readonly worker: Worker;
+  readonly ready: Promise<void>;
+  private seq = 0;
+  private pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
+  /** The model is loaded (for the generation in `gen`). */
+  loaded = false;
+  gen = -1;
+  busy = false;
+  dead = false;
+  constructor(base: string, fast: number | undefined, onDead: (l: Lane) => void) {
+    const w = new DrawingWorker();
+    w.onmessage = (e: MessageEvent) => {
+      const d = e.data, p = this.pending.get(d.id);
+      if (!p) return;
+      this.pending.delete(d.id);
+      if (d.ok) p.resolve(d); else p.reject(new Error(d.error));
+    };
+    w.onerror = e => { this.stop(new Error(e.message || "The drawing kernel stopped")); onDead(this); };
+    this.worker = w;
+    this.ready = compile(base).then(module => this.call<void>({ type: "init", base, module, fast }));
+  }
+  call<T>(msg: Record<string, unknown>): Promise<T> {
+    if (this.dead) return Promise.reject(new Error("The drawing kernel stopped"));
+    const id = ++this.seq;
+    return new Promise<T>((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
+      this.worker.postMessage({ ...msg, id });
+    });
+  }
+  stop(err = new Error("The drawing kernel stopped")) {
+    if (this.dead) return;
+    this.dead = true;
+    this.worker.terminate();
+    for (const p of this.pending.values()) p.reject(err);
+    this.pending.clear();
+  }
+}
+
+/** An exact projection waiting for a worker. */
+interface Job { msg: Record<string, unknown>; resolve: (v: any) => void; reject: (e: Error) => void; tries: number }
 
 export class DrawingKernel {
   private worker: Worker | null = null;
@@ -37,6 +104,16 @@ export class DrawingKernel {
   slowest = 0;
   /** Previews made so far (for the smoke test). */
   previewsMade = 0;
+  /**
+   * Exact projections run on the drawing's worker and, with enough threads, on a helper worker
+   * holding the same model, one at a time each, so a sheet's views are projected two at a time.
+   */
+  private jobs: Job[] = [];
+  private mainBusy = false;
+  private helper: Lane | null = null;
+  private helperIdle: ReturnType<typeof setTimeout> | null = null;
+  /** Exact projections the helper worker made (for the smoke test). */
+  helped = 0;
 
   constructor(private base: string) {}
 
@@ -51,7 +128,7 @@ export class DrawingKernel {
     };
     w.onerror = e => { for (const p of this.pending.values()) p.reject(new Error(e.message || "The drawing kernel stopped")); this.pending.clear(); this.stop(); };
     this.worker = w;
-    this.ready = compile(this.base).then(module => this.call<void>({ type: "init", base: this.base, module, fast: typeof location !== "undefined" && new URLSearchParams(location.search).has("fasthlr") ? 0 : undefined }));
+    this.ready = compile(this.base).then(module => this.call<void>({ type: "init", base: this.base, module, fast: fastFlag() }));
     this.ready.catch(() => this.stop());
     return this.ready;
   }
@@ -65,6 +142,9 @@ export class DrawingKernel {
   }
 
   stop() {
+    this.stopHelper();
+    for (const j of this.jobs.splice(0)) j.reject(new Error("The drawing kernel stopped"));
+    this.mainBusy = false;
     this.worker?.terminate();
     this.worker = null;
     this.ready = null;
@@ -88,8 +168,74 @@ export class DrawingKernel {
     this.slowest = 0;
     this.configs.clear();
     this.cfgLoading.clear();
-    this.loaded = this.start().then(() => this.call<ModelFacts>({ type: "load", ...src })).then(facts);
+    // The helper only for models under FAST_EDGES: a second copy of a big assembly can run the tab out of memory
+    // (drawings exam: an engine tab crashed after Standard 3 views); big ones take the fast path anyway.
+    const gen = this.gen;
+    this.loaded = this.start().then(() => this.call<ModelFacts>({ type: "load", ...src })).then(facts).then(f => {
+      if (gen === this.gen) { if (f.topo.edges.length < FAST_EDGES) this.loadHelper(src); else this.stopHelper(); }
+      return f;
+    });
     return this.loaded;
+  }
+
+  /** Starts (or reuses) the helper worker and loads the same model into it, without its facts. */
+  private loadHelper(src: { part?: PartDoc; asm?: AsmDoc; file?: { name: string; bytes: Uint8Array } }) {
+    if (!helperWanted()) return;
+    const h = this.helper ?? (this.helper = new Lane(this.base, fastFlag(), l => { if (this.helper === l) this.helper = null; }));
+    const gen = this.gen;
+    h.loaded = false;
+    h.gen = gen;
+    h.ready.then(() => h.call({ type: "load", ...src, lite: true })).then(() => {
+      if (h.gen !== gen || h.dead) return;
+      h.loaded = true;
+      this.pump();
+      this.idleHelper();
+    }, () => { if (this.helper === h) this.stopHelper(); });
+  }
+
+  private stopHelper() {
+    if (this.helperIdle) clearTimeout(this.helperIdle);
+    this.helperIdle = null;
+    this.helper?.stop();
+    this.helper = null;
+  }
+
+  /** Stops the helper after a while without work. */
+  private idleHelper() {
+    if (this.helperIdle) clearTimeout(this.helperIdle);
+    this.helperIdle = setTimeout(() => { if (this.helper && !this.helper.busy) this.stopHelper(); }, HELPER_IDLE_MS);
+  }
+
+  /** For tests: whether the helper worker is up and has the model, and how many projections it made. */
+  helperState() { return { on: !!this.helper, loaded: !!this.helper?.loaded, helped: this.helped }; }
+
+  /** An exact projection or section, run by whichever worker is free first. */
+  private exact<T>(msg: Record<string, unknown>): Promise<T> {
+    return new Promise<T>((resolve, reject) => { this.jobs.push({ msg, resolve, reject, tries: 0 }); this.pump(); });
+  }
+
+  private pump() {
+    if (!this.worker) return;
+    while (this.jobs.length) {
+      if (!this.mainBusy) {
+        const j = this.jobs.shift()!;
+        this.mainBusy = true;
+        this.call(j.msg).then(j.resolve, j.reject).finally(() => { this.mainBusy = false; this.pump(); });
+        continue;
+      }
+      // The helper takes plain jobs of the loaded model (configurations are built on the main worker only).
+      const h = this.helper;
+      if (!h || !h.loaded || h.busy || h.gen !== this.gen) break;
+      const i = this.jobs.findIndex(j => !j.msg.cfg && j.tries === 0);
+      if (i < 0) break;
+      const j = this.jobs.splice(i, 1)[0];
+      h.busy = true;
+      h.call(j.msg).then(r => { this.helped++; j.resolve(r); }, () => {
+        // The helper failed (out of memory, stopped): the main worker does it.
+        j.tries++;
+        this.jobs.unshift(j);
+      }).finally(() => { h.busy = false; this.idleHelper(); this.pump(); });
+    }
   }
 
   /** Builds another configuration of the loaded part (once) and gives its facts. */
@@ -127,7 +273,7 @@ export class DrawingKernel {
     if (!p) {
       if (!this.loaded) return Promise.reject(new Error("No model loaded"));
       const gen = this.gen;
-      p = this.loaded.then(() => this.call<{ proj: Projection }>({ type: "alt", view: req.view, moves: req.moves })).then(r => {
+      p = this.loaded.then(() => this.exact<{ proj: Projection }>({ type: "alt", view: req.view, moves: req.moves })).then(r => {
         if (gen === this.gen) this.cache.set(req.key, r.proj);
         this.inflight.delete(req.key);
         return r.proj;
@@ -150,7 +296,7 @@ export class DrawingKernel {
       if (!this.loaded) return Promise.reject(new Error("No model loaded"));
       const gen = this.gen;
       const cfg = req.cfg;
-      p = (cfg ? this.config(cfg) : this.loaded).then(() => this.call<{ proj: Projection }>(req.p ? { type: "section", view, p: req.p, poly: req.poly, stair: req.stair, align: req.align, exclude: req.exclude, cfg, only: req.only } : { type: "project", view, shade: req.shade, cfg, only: req.only })).then(r => {
+      p = (cfg ? this.config(cfg) : this.loaded).then(() => this.exact<{ proj: Projection }>(req.p ? { type: "section", view, p: req.p, poly: req.poly, stair: req.stair, align: req.align, exclude: req.exclude, cfg, only: req.only } : { type: "project", view, shade: req.shade, cfg, only: req.only })).then(r => {
         if (gen === this.gen) { this.cache.set(key, r.proj); this.previews.delete(key); this.slowest = Math.max(this.slowest, r.proj.ms); }
         this.inflight.delete(key);
         return r.proj;
