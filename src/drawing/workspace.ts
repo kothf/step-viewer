@@ -12,7 +12,7 @@ import type { AsmDoc } from "../asm/types";
 import { BALLOON_R, BOM_COLS, BOM_MAT_COL, autoBalloons, bomMats, compOfKey, sheetBom, subsOf, type BalloonItems, type Bom } from "./bom";
 import { t, onLangChange, lang } from "../i18n";
 import { toast, confirmModal } from "../ui";
-import { OUT_OF_MEMORY, DrawingKernel, type ModelFacts } from "./client";
+import { DROPPED, OUT_OF_MEMORY, DrawingKernel, type ModelFacts } from "./client";
 import { BREAK_GAP, composeSheet, fromSheet, HATCH_PATTERNS, hatchOf, inPoly, nextLetter, polyBox, placement, toSheet, viewBody, viewPrims, viewRect, type Placement } from "./compose";
 import { DrawingStore, newSheet, uid } from "./doc";
 import { DRAWING_EXT, packDrawing, unpackDrawing } from "./file";
@@ -286,7 +286,8 @@ export class DrawingWorkspace {
   private load(doc: DrawingDoc, model: Uint8Array | undefined, fileName: string) {
     this.host.beforeOpen?.();
     this.store = new DrawingStore(doc);
-    this.store.onChange(() => this.renderAll());
+    this.store.onChange(() => { this.renderAll(); this.dropGone(); });
+    this.lastShown.clear();
     this.model = model;
     this.fileName = fileName;
     this.vault = null;
@@ -656,12 +657,27 @@ export class DrawingWorkspace {
       // Asked once: every render while it is on the way would otherwise add one more redraw when it lands.
       const ask = () => {
         if (this.projecting.has(req.key)) return;
-        void this.track(req.key, this.kernel.request(req)).then(() => this.renderSheetSoon(), err => toast(t("A view could not be projected: {err}", { err: kernelError(err) }), true));
+        void this.track(req.key, this.kernel.request(req)).then(() => this.renderSheetSoon(), err => viewFailed(err));
       };
       // With previews on, the exact requests go after this render's previews (the worker answers in order).
       if (this.previewsOn()) void Promise.resolve().then(ask); else void ask();
     }
     return p;
+  }
+
+  /**
+   * Exact projections no view of this drawing wants any more (a view deleted, or restyled while its lines were
+   * on the way) are dropped, so later views do not wait behind them.
+   */
+  private dropGone(always = false) {
+    if (!this.store || (!this.projecting.size && !always)) return;
+    const want = new Set<string>();
+    for (const sh of this.store.doc.sheets) for (const v of sh.views) {
+      want.add(viewReq(sh, v).key);
+      const a = altReq(sh, v);
+      if (a) want.add(a.key);
+    }
+    this.kernel.drop(k => want.has(k));
   }
 
   /** How many times a view was drawn from its quick preview (for the smoke test). */
@@ -702,10 +718,12 @@ export class DrawingWorkspace {
     const req = altReq(sheet, v);
     if (!req) return undefined;
     const p = this.kernel.cache.get(req.key);
-    if (!p && this.facts && !this.projecting.has(req.key)) void this.track(req.key, this.kernel.alt(req)).then(() => this.renderSheetSoon(), err => toast(t("A view could not be projected: {err}", { err: kernelError(err) }), true));
+    if (!p && this.facts && !this.projecting.has(req.key)) void this.track(req.key, this.kernel.alt(req)).then(() => this.renderSheetSoon(), err => viewFailed(err));
     return p;
   }
 
+  /** The lines each view was last drawn with (exact), and from which direction: shown while a restyle comes in. */
+  private lastShown = new Map<string, { dir: string; proj: Projection }>();
   /** Previews asked for and not back yet (asked once, like `projecting`). */
   private previewAsked = new Set<string>();
   private sheetSoon = false;
@@ -729,7 +747,10 @@ export class DrawingWorkspace {
     this.dangling.clear();
     let html = `<rect class="drw-paper" x="0" y="0" width="${W}" height="${H}"/><g class="drw-fmt">${svgBody(formatPrims(sh, this.fields(), s => t(s)), H)}</g>`;
     for (const v of sh.views) {
-      const pre = this.previewFor(sh, v), proj = this.projFor(sh, v), shown = proj ?? pre;
+      // Until a restyled view's new lines land, its last ones stay up (drawn like a preview), not an empty box.
+      const proj = this.projFor(sh, v), dir = JSON.stringify(viewReq(sh, v).view), last = this.lastShown.get(v.id);
+      const pre = this.previewFor(sh, v) ?? (!proj && last?.dir === dir ? last.proj : undefined), shown = proj ?? pre;
+      if (proj) this.lastShown.set(v.id, { dir, proj });
       const pl = placement(sh, v, shown, this.facts?.box ?? null);
       this.placements.set(v.id, pl);
       const r = viewRect(pl);
@@ -1740,13 +1761,20 @@ export class DrawingWorkspace {
     if (!this.bom && !this.cuts && !this.single) { toast(t("Balloons are for drawings of an assembly or of a weldment part."), true); return; }
     const v = this.sheet.views.find(x => x.id === this.sel) ?? this.sheet.views.find(x => x.kind !== "detail");
     if (!v) { toast(t("Place a model view first."), true); return; }
-    const proj = await this.kernel.request(viewReq(this.sheet, v)).catch(() => null);
-    if (!proj || !this.facts) return;
+    // A view whose lines are still coming (or a big assembly's slow section ahead of it) is waited for, and says so.
+    const req = viewReq(this.sheet, v);
+    if (!this.kernel.cache.has(req.key)) toast(t("Waiting for the view's lines to be projected…"));
+    const proj = await this.kernel.request(req).catch((err: unknown) => { viewFailed(err); return null; });
+    if (!proj || !this.facts || !this.sheet.views.some(x => x.id === v.id)) return;
     // Balloons keep clear of the annotations already on the sheet (dimension texts, notes, tables): drawings exam round 2.
     const pl = this.placements.get(v.id), R = BALLOON_R + 1;
     const boxes = [...this.annotHits.filter(h => !h.ring).map(h => h.box), ...this.sheet.views.flatMap(w => { const q = this.placements.get(w.id); return q ? [viewRect(q)] : []; })];
-    const taken = (p: Pt) => { if (!pl) return false; const [x, y] = toSheet(pl, p[0], p[1]); return boxes.some(([x0, y0, x1, y1]) => x > x0 - R && x < x1 + R && y > y0 - R && y < y1 + R); };
-    const add = autoBalloons(this.sheet, v, this.facts.topo, projector(viewDir(this.sheet, v)).P, proj, viewScale(this.sheet, v), this.balloonItems(), () => uid("a_"), 12, taken);
+    // Drawings exam #39: nor outside the drawing frame, nor on the title block.
+    const [fx0, fy0, fx1, fy1] = frameOf(this.sheet), [tbx, tby] = titleBlockAt(this.sheet), tbh = tbSize(this.sheet)[1];
+    const off = (x: number, y: number) => x < fx0 + R || x > fx1 - R || y < fy0 + R || y > fy1 - R || (x > tbx - R && y < tby + tbh + R);
+    const outside = (p: Pt) => { if (!pl) return false; const [x, y] = toSheet(pl, p[0], p[1]); return off(x, y); };
+    const taken = (p: Pt) => { if (!pl) return false; const [x, y] = toSheet(pl, p[0], p[1]); return off(x, y) || boxes.some(([x0, y0, x1, y1]) => x > x0 - R && x < x1 + R && y > y0 - R && y < y1 + R); };
+    const add = autoBalloons(this.sheet, v, this.facts.topo, projector(viewDir(this.sheet, v)).P, proj, viewScale(this.sheet, v), this.balloonItems(), () => uid("a_"), 12, taken, outside);
     if (!add.length) { toast(t("Every item already has a balloon in the view.")); return; }
     this.store!.change("Auto balloon", d => { const S = d.sheets[this.sheetIdx]; (S.annots ??= []).push(...add); });
     toast(t("{n} balloon added|{n} balloons added", { n: add.length }), "success");
@@ -2803,8 +2831,12 @@ export class DrawingWorkspace {
       for (const c of sh.views) if (c.parent === v.id) s += item(c, depth + 1);
       return s;
     };
+    // Rebuilding the rows drops the focus a row click gave the tree; keep it there, on the selected row, so Delete
+    // (and the arrow keys) still reach the tree, as after a click in SolidWorks' FeatureManager.
+    const hadFocus = host.contains(document.activeElement);
     host.innerHTML = `<div role="treeitem" tabindex="${this.sel ? -1 : 0}" aria-selected="${!this.sel}" class="drw-ti sheet${this.sel ? "" : " on"}" data-sel="">${ICON.hlr}<span>${esc(sheetName(sh))}</span><small>${esc(sh.size === "custom" ? t("Custom") : sh.size)} · ${scaleText(sh.scale)}</small></div>`
       + sh.views.filter(v => !v.parent || !findView(sh, v.parent)).map(v => item(v, 1)).join("");
+    if (hadFocus) host.querySelector<HTMLElement>(".drw-ti.on")?.focus({ preventScroll: true });
   }
 
   /** The Custom… scale box being typed into ("v" view, "s" sheet): kept across re-renders of the panel. */
@@ -3119,7 +3151,7 @@ export class DrawingWorkspace {
     const lib = loadFormats(), cur = sh.tb ? `user:${sh.tb.id}` : sh.format;
     const users = sh.tb && !lib.some(f => f.id === sh.tb!.id) ? [sh.tb, ...lib] : lib;
     const opt = (v: string, label: string, tr = false) => `<option value="${esc(v)}"${v === cur ? " selected" : ""}${tr ? ' translate="no"' : ""}>${esc(label)}</option>`;
-    return opt("iso", "ISO 7200") + opt("ansi", "ANSI Y14.1") + opt("gost", "GOST 2.104")
+    return opt("iso", "ISO 7200") + opt("ansi", "ANSI Y14.1") + opt("gost", t("GOST 2.104"))
       + (users.length ? `<optgroup label="${esc(t("My formats"))}">${users.map(f => opt(`user:${f.id}`, f.name, true)).join("")}</optgroup>` : "");
   }
 
@@ -3372,17 +3404,25 @@ export class DrawingWorkspace {
       dxf: () => (this.store ? (() => { const sh = this.sheet, [W, H] = sheetSize(sh); return sheetDxf(this.composed(sh).prims, W, H); })() : ""),
       sheetPt: (x: number, y: number) => { const rc = this.svg.getBoundingClientRect(), H = sheetSize(this.sheet)[1]; return [rc.left + (x - this.vb.x) / this.vb.w * rc.width, rc.top + (H - y - this.vb.y) / this.vb.h * rc.height]; },
       placement: (id: string) => this.placements.get(id) ?? null,
+      frame: () => ({ frame: frameOf(this.sheet), tb: [...titleBlockAt(this.sheet), ...tbSize(this.sheet)] }),
       mode: () => this.mode.kind,
       fields: () => (this.store ? this.fields() : null),
       helper: () => this.kernel.helperState(),
       previews: () => ({ shown: this.previewsShown, made: this.kernel.previewsMade, left: this.svg.querySelectorAll(".drw-preview").length }),
       renders: () => this.sheetRenders,
+      drop: () => this.dropGone(true),
       holes: () => (this.facts?.topo?.holes ?? []).map(h => ({ segs: h.segs.length, open: h.open })),
       proj: (id: string) => { const sh = this.sheet, v = findView(sh, id); return v ? this.kernel.cache.get(viewReq(sh, v).key) ?? null : null; },
       /** A section of the loaded model through `p` looking along `dir` (tests: who and what each cut loop is). */
       section: (dir: [number, number, number], up: [number, number, number], p: [number, number, number], tag = "") => this.kernel.request({ view: { dir, up }, p, key: `debug|${tag}|${[dir, up, p].join("|")}` }).then(pr => ({ keys: pr.cutKey ?? [], mats: pr.cutMat ?? [] })),
     };
   }
+}
+
+/** A view's projection failed: say why, unless its view went away first (`DrawingKernel.drop`). */
+function viewFailed(err: unknown) {
+  if (err instanceof Error && err.message === DROPPED) return;
+  toast(t("A view could not be projected: {err}", { err: kernelError(err) }), true);
 }
 
 /** A drawing worker error for a toast: a bare OCCT exception number becomes a sentence. */
@@ -3394,7 +3434,7 @@ function kernelError(err: unknown): string {
 
 const STYLE_NAMES: Record<DisplayStyle, string> = { hlv: "Hidden lines visible", hlr: "Hidden lines removed", wire: "Wireframe", shaded: "Shaded", shadedEdges: "Shaded with edges" };
 const KIND_NAMES: Record<NonNullable<DrawingView["kind"]>, string> = { section: "Section", detail: "Detail", aux: "Auxiliary" };
-const ARROW_NAMES: Record<NonNullable<DraftStyle["arrow"]>, string> = { filled: "Filled", open: "Open", dot: "Dot", tick: "Oblique stroke" };
+const ARROW_NAMES: Record<NonNullable<DraftStyle["arrow"]>, string> = { filled: "Filled", open: "Open arrow", dot: "Dot", tick: "Oblique stroke" };
 const TAN_NAMES: Record<TangentEdges, string> = { visible: "Visible", thin: "Thin", hidden: "Removed" };
 const round = (v: number) => Math.round(v * 100) / 100;
 function sheetName(s: Sheet) { const m = /^Sheet(\d+)$/.exec(s.name); return m ? t("Sheet {n}", { n: m[1] }) : s.name; }

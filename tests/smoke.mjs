@@ -5040,6 +5040,16 @@ try {
       const menuOpen = await dp2.evaluate(() => document.querySelector('#drw [data-a="annot"]').getAttribute("aria-expanded") === "true");
       await dp2.keyboard.press("Escape");
       check(menuOpen, "drawing: after Model and back, the Annotate menu still opens");
+      // Drawings exam #36: a click on a view's tree row keeps the focus in the tree (the rows are rebuilt), so Delete deletes it.
+      const leaf = await dp2.evaluate(() => { const vs = window.__sv.drw.doc().sheets[0].views; return vs.find(v => !vs.some(c => c.parent === v.id))?.id; });
+      await dp2.click(`#drw .drw-tree [data-sel="${leaf}"]`);
+      const treeFocus = await dp2.evaluate(() => !!document.activeElement?.closest(".drw-tree"));
+      await dp2.keyboard.press("Delete");
+      await dp2.waitForFunction(() => window.__sv.drw.doc().sheets[0].views.length === 4, null, { timeout: 5000 }).catch(() => {});
+      const afterDel = await dp2.evaluate(() => window.__sv.drw.doc().sheets[0].views.length);
+      await dp2.keyboard.press("Control+z");
+      await dp2.waitForFunction(() => window.__sv.drw.doc().sheets[0].views.length === 5, null, { timeout: 5000 }).catch(() => {});
+      check(treeFocus && afterDel === 4, `drawing: a view clicked in the tree is deleted by the Delete key (exam #36) (${JSON.stringify({ treeFocus, afterDel })})`);
       await dp2.click('#drw [data-a="back"]');
       await dp2.waitForFunction(() => document.querySelector("#drw").hidden, null, { timeout: 20000 });
       const t2 = await tabs();
@@ -5866,6 +5876,34 @@ try {
       return q.every((a, i) => q.every((b, j) => i === j || Math.hypot(a[0] - b[0], a[1] - b[1]) >= 10) && rects.every(r => !(a[0] > r[0] - 5 && a[0] < r[2] + 5 && a[1] > r[1] - 5 && a[1] < r[3] + 5)));
     }, auto.map(a => a.id));
     check(clearOk, `drawing: auto balloons sit clear of each other and of the views (${JSON.stringify(auto.map(a => a.pos))})`);
+    // Drawings exam #39: a view pushed against the top of the frame still gets its balloons inside the frame, off the title block.
+    {
+      await dp.keyboard.press("Escape");
+      await dp.keyboard.press("Control+z");
+      await dp.waitForFunction(() => !(window.__sv.drw.doc().sheets[0].annots ?? []).some(a => a.t === "balloon"));
+      const { frame } = await dp.evaluate(() => window.__sv.drw.frame());
+      const pf = await dp.evaluate(id => window.__sv.drw.placement(id), front);
+      const [px, py] = await dp.evaluate(([x, y]) => window.__sv.drw.sheetPt(x, y), [pf.x, pf.y]);
+      const [tx2, ty2] = await dp.evaluate(([x, y]) => window.__sv.drw.sheetPt(x, y), [pf.x, frame[3] - (pf.box[3] - pf.box[1]) / 2 * pf.s - 2]);
+      await dp.mouse.move(px, py); await dp.mouse.down(); await dp.mouse.move(tx2, ty2, { steps: 6 }); await dp.mouse.up();
+      await dp.waitForTimeout(300);
+      await tool("auto");
+      await dp.waitForTimeout(300);
+      const inFrame = await dp.evaluate(fid => {
+        const d = window.__sv.drw, sh = d.doc().sheets[0], { frame: f, tb } = d.frame(), bs = (sh.annots ?? []).filter(a => a.t === "balloon" && a.view === fid);
+        const p = d.placement(fid), at = a => [p.x + (a.pos[0] - p.uc) * p.s, p.y + (a.pos[1] - p.vc) * p.s];
+        return { n: bs.length, moved: Math.round(p.y), ok: bs.map(at).every(([x, y]) => x > f[0] + 4 && x < f[2] - 4 && y > f[1] + 4 && y < f[3] - 4 && !(x > tb[0] - 4 && y < tb[1] + tb[3] + 4)) };
+      }, front);
+      check(inFrame.n === 2 && inFrame.ok, `drawing: auto balloons stay inside the frame and off the title block (exam #39) (${JSON.stringify(inFrame)})`);
+      // Back as it was: undo the balloons and the move, then Auto balloon again where the view was.
+      await dp.keyboard.press("Escape");
+      await dp.keyboard.press("Control+z"); await dp.keyboard.press("Control+z");
+      await dp.waitForTimeout(400);
+      const [bx2, by2] = await at(front, 0, 10);
+      await dp.mouse.click(bx2, by2);
+      await tool("auto");
+      await dp.waitForFunction(() => (window.__sv.drw.doc().sheets[0].annots ?? []).filter(a => a.t === "balloon").length === 2);
+    }
     // A balloon by hand on a pin's circle in the top view reads 2.
     await tool("balloon");
     let [x, y] = await at(top, 34, 0);
@@ -6704,6 +6742,17 @@ try {
     const same = two.map(c => c.keys.map((k, i) => `${k}=${c.mats[i]}`).sort().join());
     check(h1 > h0 && same.every(x => x === pairs),
       `drawing 1.476: exact views run on two drawing workers at once, with the same model (${h0} → ${h1}; ${same.join(" | ")})`);
+    // 1.491: a projection no view wants any more (a deleted view's) is dropped, even while a worker runs it,
+    // and the next view is made as before.
+    const dropped = await mp.evaluate(async () => {
+      const p = window.__sv.drw.section([0, 1, 0], [0, 0, 1], [0, 0, 4], "gone").then(() => "made", e => e.message);
+      // The job is handed to a worker a few microtasks later (after the model's load promise), never later than the next task.
+      for (let i = 0; i < 4; i++) await Promise.resolve();
+      window.__sv.drw.drop();
+      return p;
+    });
+    const after = await mp.evaluate(() => window.__sv.drw.section([0, 1, 0], [0, 0, 1], [0, 0, 5], "after").then(c => c.keys.length, e => e.message));
+    check(dropped === "The view is gone" && after === 2, `drawing 1.491: a deleted view's projection is dropped and the next view still comes (${dropped}; ${after})`);
     // 1.478: this page runs with `drwheap=1`, so the main drawing worker is started over (same model, cache kept)
     // after every projection; all the checks above ran through such restarts.
     const { recycles: rc, snap } = await mp.evaluate(() => window.__sv.drw.helper());
@@ -9729,7 +9778,7 @@ try {
     const vfr = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(x => x.type === "fillet"); return f && { v: !!f.variable, r: [f.edges[0].r, f.edges[0].r2].sort((a, b) => a - b) }; });
     check(!vf0.bad && Math.abs(vf1.v - vf0.v) < 0.1 && !vf1.bad && vf1.types === "import,sketch,extrude,delbody,fillet" && vfr?.v && Math.abs(vfr.r[0] - 3) < 1e-3 && Math.abs(vfr.r[1] - 8) < 1e-3,
       `model 1.489.0: Recognize Features makes a variable radius fillet again with its end radii (FR-FT-102) (${JSON.stringify({ vf0, vf1, vfr })})`);
-    // 1.490.0 (FR-UI-100): a middle click on a straight edge turns the view about the edge's line; empty space clears it and puts Z up again.
+    // 1.492.0 (FR-UI-100): a middle click on a straight edge turns the view about the edge's line; empty space clears it and puts Z up again.
     await mp.evaluate(() => window.__sv.model.store.change("Block", d => {
       const xy = [[-30, -20], [30, -20], [30, 20], [-30, 20]];
       const ents = xy.map(([x, y], i) => ({ id: "bp" + i, t: "point", x, y }));
@@ -9760,7 +9809,7 @@ try {
     const still = k => Math.hypot(line1[k][0] - line0[k][0], line1[k][1] - line0[k][1]);
     check(ex0.axis && Math.abs(Math.abs(ex0.axis[0]) - 1) < 1e-3 && ex0.line && !ex0.rot && still(0) < 1.5 && still(1) < 1.5 && still(2) > 10
       && ex1.pivot === null && ex1.axis === null && !ex1.line && ex1.rot && Math.abs(ex1.up[2] - 1) < 1e-9,
-      `model 1.490.0: a middle click on a straight edge turns the view about the edge's line (both ends stay put, the far corner moves); empty space clears it and puts Z up (FR-UI-100) (${JSON.stringify({ ex0, line0, line1, ex1 })})`);
+      `model 1.492.0: a middle click on a straight edge turns the view about the edge's line (both ends stay put, the far corner moves); empty space clears it and puts Z up (FR-UI-100) (${JSON.stringify({ ex0, line0, line1, ex1 })})`);
     await ctx.close();
   }
 

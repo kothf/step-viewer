@@ -1557,6 +1557,7 @@ export const RU: Record<string, string> = {
   "View scale": "Масштаб вида",
   "Visible": "Видимые",
   "Waiting for the views…": "Ожидание видов…",
+  "Waiting for the view's lines to be projected…": "Ожидание линий вида…",
   "No room left on the sheet: the views went on {name}.": "На листе нет места: виды размещены на листе «{name}».",
   "Wireframe": "Каркас",
   "Third angle projection": "Проецирование по третьему углу",
@@ -2924,6 +2925,8 @@ export const RU: Record<string, string> = {
   "Document": "Документ",
   "mm": "мм",
   "Filled": "Залитые",
+  "Open arrow": "Открытые",
+  "GOST 2.104": "ГОСТ 2.104",
   "Dot": "Точка",
   "Oblique stroke": "Засечка",
   // View navigation (FR-UI-101..104)
