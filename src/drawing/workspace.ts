@@ -191,6 +191,10 @@ export class DrawingWorkspace {
   private model: Uint8Array | undefined;
   private fileName = "";
   private sheetIdx = 0;
+  /** The listeners on `el` itself are on (see `build`). */
+  private bound = false;
+  /** The palette view being dragged onto the sheet. */
+  private palDragged: Orient | null = null;
   private sel: string | null = null;
   private hover: string | null = null;
   private mode: Mode = { kind: "none" };
@@ -533,20 +537,26 @@ export class DrawingWorkspace {
       </div>
       <div class="drw-status" role="status"></div>`;
     this.svg = this.el.querySelector(".drw-svg")!;
-    this.el.addEventListener("click", e => this.onClick(e));
-    this.el.addEventListener("change", e => this.onInput(e as Event, true));
-    this.el.addEventListener("input", e => this.onInput(e as Event, false));
+    // `build` runs again for every drawing opened or brought back from its tab, but `el` stays: its listeners go on once,
+    // else each click ran twice after a trip to the model and back, and the menus opened and closed at once (drawings exam #29).
+    const first = !this.bound;
+    this.bound = true;
+    if (first) {
+      this.el.addEventListener("click", e => this.onClick(e));
+      this.el.addEventListener("change", e => this.onInput(e as Event, true));
+      this.el.addEventListener("input", e => this.onInput(e as Event, false));
+      document.addEventListener("pointerdown", e => { if (!(e.target as HTMLElement).closest?.(".drw-dd")) this.closeMenus(); });
+    }
     this.svg.addEventListener("pointerdown", e => this.onDown(e));
     this.svg.addEventListener("pointermove", e => this.onMove(e));
     this.svg.addEventListener("pointerup", e => this.onUp(e));
     this.svg.addEventListener("dblclick", e => this.onDbl(e));
     this.svg.addEventListener("wheel", e => this.onWheel(e), { passive: false });
     this.svg.addEventListener("contextmenu", e => e.preventDefault());
-    this.bindPalette();
+    this.bindPalette(first);
     // The side panel resizes from its edge and keeps its width (FR-UI-002).
     const side = this.el.querySelector<HTMLElement>(".drw-side")!;
     side.after(makeGrip({ key: "drw-side", axis: "x", sign: 1, def: 280, min: 200, max: () => Math.min(640, window.innerWidth * 0.45), apply: px => { side.style.width = px == null ? "" : `${px}px`; }, label: "Resize the side panel" }));
-    document.addEventListener("pointerdown", e => { if (!(e.target as HTMLElement).closest?.(".drw-dd")) this.closeMenus(); });
     new ResizeObserver(() => this.applyViewBox()).observe(this.svg);
     this.renderAll();
   }
@@ -1052,26 +1062,25 @@ export class DrawingWorkspace {
   }
 
   /** Dragging a palette view over the sheet previews it under the cursor; dropping places it. */
-  private bindPalette() {
-    let dragged: Orient | null = null;
+  private bindPalette(first: boolean) {
     this.el.querySelector(".drw-pal-grid")!.addEventListener("dragstart", e => {
       const b = (e.target as HTMLElement).closest<HTMLElement>("[data-pal]"), de = e as DragEvent;
       if (!b || !de.dataTransfer) return;
       if (!this.facts) { e.preventDefault(); toast(t("The drawing's model is still loading.")); return; }
       const flat = b.dataset.pal === "flat";
-      dragged = flat ? "top" : b.dataset.pal as Orient;
+      this.palDragged = flat ? "top" : b.dataset.pal as Orient;
       de.dataTransfer.setData(PALETTE_MIME, b.dataset.pal!);
       de.dataTransfer.effectAllowed = "copy";
       this.cancelMode();
-      this.mode = { kind: "model", orient: dragged, dir: ORIENTS[dragged as Exclude<Orient, "current">], at: null, cfg: flat ? FLAT_CONFIG : undefined };
+      this.mode = { kind: "model", orient: this.palDragged, dir: ORIENTS[this.palDragged as Exclude<Orient, "current">], at: null, cfg: flat ? FLAT_CONFIG : undefined };
       this.renderStatus();
     });
-    this.el.addEventListener("dragend", () => {
-      if (dragged && this.mode.kind === "model" && this.mode.orient === dragged) this.cancelMode();
-      dragged = null;
+    if (first) this.el.addEventListener("dragend", () => {
+      if (this.palDragged && this.mode.kind === "model" && this.mode.orient === this.palDragged) this.cancelMode();
+      this.palDragged = null;
     });
     this.svg.addEventListener("dragover", e => {
-      if (!dragged || this.mode.kind !== "model") return;
+      if (!this.palDragged || this.mode.kind !== "model") return;
       e.preventDefault();
       e.dataTransfer!.dropEffect = "copy";
       const s = this.infer(this.sheetPt(e), new Set());
@@ -1081,10 +1090,10 @@ export class DrawingWorkspace {
     });
     this.svg.addEventListener("dragleave", () => { if (this.mode.kind === "model") { this.mode.at = null; this.renderOverlay(); } });
     this.svg.addEventListener("drop", e => {
-      if (!dragged || this.mode.kind !== "model") return;
+      if (!this.palDragged || this.mode.kind !== "model") return;
       e.preventDefault();
       const m = this.mode;
-      dragged = null;
+      this.palDragged = null;
       this.placeModel(m, this.sheetPt(e));
       this.svg.focus({ preventScroll: true });
     });
