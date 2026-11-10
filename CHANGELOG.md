@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.407.0] - 2026-11-10
+
+### Changed
+
+- **Two more plastics checked (FR-MAT-001)**: Nylon PA66 and PMMA (acrylic) now show **Checked against:** with a link to a maker's data sheet. 139 of 170 materials are checked; the other 31 still say they are not. Nylon PA66 follows the stock shape sheet: modulus 3.3 → 2.4 GPa, strength 85 → 83 MPa. PMMA already matched its sheet.
+
 ## [1.406.0] - 2026-11-10
 
 ### Added
@@ -2393,7 +2399,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.406.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.407.0...HEAD
+[1.407.0]: https://github.com/kothf/step-viewer/compare/v1.406.0...v1.407.0
 [1.406.0]: https://github.com/kothf/step-viewer/compare/v1.405.0...v1.406.0
 [1.405.0]: https://github.com/kothf/step-viewer/compare/v1.404.0...v1.405.0
 [1.404.0]: https://github.com/kothf/step-viewer/compare/v1.403.0...v1.404.0
