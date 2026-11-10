@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.453.0] - 2026-11-10
+## [1.454.0] - 2026-11-10
 
 ### Added
 
@@ -19,6 +19,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Vault: a document tab left open while the vault moved on (a roll back, an approval) showed the new version number over the old content. The title now says `v2 · newer v3 in the vault`, and Check out loads the latest first (V7).
 - Vault: roll back, undo check-out, get latest, a state change and a double-click on a file already open opened the file in a second tab; it is now reloaded or shown in its own tab (V8).
 - Vault: the selected file's commands stay in view at the foot of the panel, however long the file list (V4); the data card of a file not checked out has a **Check out** button (V9); delete and restore say what they did (V10); adding many files shows a progress message (V12); the list of an assembly's parts to add shows one file per line (V2).
+
+## [1.453.0] - 2026-11-10
+
+### Added
+
+- **Material per body (FR-MAT-001)**: in a part with several bodies, right-click a body in the **Solid Bodies** folder and choose **Material…** to give it its own material from the library; **None** gives it the part's material again. Mass properties then weigh each body with its own density (mass, centre of mass and moments of inertia), and the Density row says "from part materials". One undo step. An assembly still weighs such a part with the part's material.
 
 ## [1.452.0] - 2026-11-10
 
@@ -2733,7 +2739,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.453.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.454.0...HEAD
+[1.454.0]: https://github.com/kothf/step-viewer/compare/v1.453.0...v1.454.0
 [1.453.0]: https://github.com/kothf/step-viewer/compare/v1.452.0...v1.453.0
 [1.452.0]: https://github.com/kothf/step-viewer/compare/v1.451.0...v1.452.0
 [1.451.0]: https://github.com/kothf/step-viewer/compare/v1.450.0...v1.451.0
