@@ -96,7 +96,7 @@ test("second pass (1.382.0): most of the library has a checked reference, the re
   const un = LIBRARY.filter(m => !m.ref).map(m => m.name);
   assert.ok(Object.keys(CHECKED).length >= 119, `${Object.keys(CHECKED).length} checked`);
   assert.ok(un.length <= 51, `${un.length} unchecked`);
-  assert.ok(un.includes("PEEK") && un.includes("Wood (teak)"));
+  assert.ok(un.includes("Wood (teak)"));
   assert.equal(findMaterial("Stainless steel 1.4404 (X2CrNiMo17-12-2)")!.ref, "www.thyssenkrupp-materials.co.uk/stainless-steel-316l-14404.html");
   assert.equal(findMaterial("Bronze CuSn8 (phosphor bronze)")!.E, 115);
 });
@@ -117,4 +117,13 @@ test("fourth pass (1.399.0): four plastics checked against makers' sheets", () =
   assert.equal(findMaterial("PEI (Ultem 1000)")!.E, 3.6);
   assert.equal(findMaterial("Polyethylene PE-HD")!.E, 1.1);
   assert.ok(!findMaterial("Nylon PA66")!.ref);
+});
+
+test("fifth pass (1.405.0): POM-H, PEEK, PET-P and OSB/3 checked against makers' sheets", () => {
+  const checked = LIBRARY.filter((m) => m.ref);
+  assert.ok(checked.length >= 137, `${checked.length} checked`);
+  assert.ok(LIBRARY.length - checked.length <= 33);
+  for (const n of ["POM (Delrin)", "PEEK", "PET (PET-P)", "OSB/3"]) assert.ok(findMaterial(n)?.ref, n);
+  assert.equal(findMaterial("PEEK")!.E, 4.5);
+  assert.equal(findMaterial("OSB/3")!.density, 0.6);
 });
