@@ -4734,6 +4734,21 @@ try {
     await dp2.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 5 && window.__sv.drw.ready(), null, { timeout: 90000 });
     const reb = await dp2.evaluate(() => ({ open: !document.querySelector("#drw").hidden, name: document.querySelector("#drw .drw-name").textContent }));
     check(reb.open && reb.name === "Block.mcaddrw", `drawing: a saved .mcaddrw opens with its views (${JSON.stringify(reb)})`);
+    // Model on a drawing opened by itself opens the part it carries in its own tab; the drawing's tab then has the part under it.
+    {
+      const tabs = () => dp2.$$eval("#doc-tabs [data-dt]", els => els.length);
+      const t0 = await tabs();
+      await dp2.click('#drw [data-a="back"]');
+      await dp2.waitForFunction(() => window.__sv.modeller.active && window.__sv.viewer.parts.length > 0 && document.querySelector("#drw").hidden, null, { timeout: 60000 });
+      const t1 = await tabs(), pid = await dp2.evaluate(() => window.__sv.modeller.store.doc.id);
+      await dp2.evaluate(() => [...document.querySelectorAll("#doc-tabs [data-dt]")].find(e => /mcaddrw/.test(e.textContent))?.click());
+      await dp2.waitForFunction(() => !document.querySelector("#drw").hidden && window.__sv.drw.doc()?.sheets[0].views.length === 5, null, { timeout: 60000 });
+      const same = await dp2.evaluate(id => window.__sv.drw.doc().source.doc.id === id && window.__sv.modeller.active, pid);
+      await dp2.click('#drw [data-a="back"]');
+      await dp2.waitForFunction(() => document.querySelector("#drw").hidden, null, { timeout: 20000 });
+      const t2 = await tabs();
+      check(t0 === 1 && t1 === 2 && same && t2 === 2, `drawing: Model on a drawing opened alone opens its part in a tab, once (${JSON.stringify({ t0, t1, t2, same })})`);
+    }
     await ctx.close();
   }
 
@@ -5013,6 +5028,44 @@ try {
         }
       }
       check(!!made && has && st && gone && s0 > Math.PI / 2 + 1 && Math.abs(s1 - Math.PI / 2) < 1e-6, `drawing: a tight angle dimension has its arrows outside, Inside puts them back (${JSON.stringify({ made: !!made, has, st, gone, s0, s1, tp: !!tp, ks: (await annots()).map(q => q.k).join() })})`);
+    }
+    // Extension lines (Andrey, 2026-11-10): a distance between the top and bottom edges placed right of the view starts
+    // both extension lines at the edges' right ends, not at their middles across the part. Undone afterwards.
+    {
+      const bx = await dp.evaluate(id => { const p = window.__sv.drw.placement(id); return { b: p.box, right: p.x + (p.box[2] - p.uc) * p.s, s: p.s }; }, front.id);
+      const level = () => dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "l" && p.layer === "ANNOT" && Math.abs(p.p[1] - p.p[3]) < 1e-6).map(p => [Math.min(p.p[0], p.p[2]), Math.max(p.p[0], p.p[2]), p.p[1]].map(v => Math.round(v * 1000) / 1000).join()));
+      const before = new Set(await level()), n0 = (await annots()).length;
+      await dp.click('#drw [data-a="dim"]');
+      [x, y] = await at(front.id, -20, bx.b[3]); await dp.mouse.move(x, y + 3); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+      [x, y] = await at(front.id, -20, bx.b[1]); await dp.mouse.move(x, y - 3); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+      [x, y] = await at(front.id, bx.b[2] + 14 / bx.s, (bx.b[1] + bx.b[3]) / 2); await dp.mouse.move(x - 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+      await dp.keyboard.press("Escape");
+      const made = (await annots()).slice(n0).map(a => a.k).join(), added = (await level()).filter(s => !before.has(s)).map(s => s.split(",").map(Number));
+      await dp.keyboard.press("Control+z");
+      const back = (await annots()).length === n0;
+      check(made === "al" && back && added.length === 2 && added.every(l => l[0] > bx.right + 0.5 && l[0] < bx.right + 1.5), `drawing: extension lines start at the edge ends nearest the dimension line (${JSON.stringify({ made, back, right: bx.right, added })})`);
+    }
+    // Diameter from the side (Andrey, 2026-11-10): in the front view the Ø16 hole shows as two hidden lines; a click on
+    // one gives its diameter as a linear dimension with Ø. Undone afterwards.
+    {
+      const bx = await dp.evaluate(id => { const p = window.__sv.drw.placement(id); return { b: p.box, s: p.s }; }, front.id);
+      const n0 = (await annots()).length, c0 = (await texts()).filter(s => s === "Ø16").length;
+      let made = null, c1 = 0, upright = 0;
+      for (const u of [18, -18, 2, -2]) {
+        await dp.click('#drw [data-a="dim"]');
+        [x, y] = await at(front.id, u, (bx.b[1] + bx.b[3]) / 2); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+        [x, y] = await at(front.id, u, bx.b[1] - 14 / bx.s); await dp.mouse.move(x, y + 2); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+        await dp.keyboard.press("Escape");
+        const an2 = await annots();
+        if (an2.length > n0) {
+          made = an2[an2.length - 1]; c1 = (await texts()).filter(s => s === "Ø16").length;
+          upright = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "l" && p.layer === "ANNOT" && Math.abs(p.p[0] - p.p[2]) < 1e-6).length);
+          await dp.keyboard.press("Control+z");
+          break;
+        }
+      }
+      const back = (await annots()).length === n0;
+      check(made && made.k === "dia" && made.view === front.id && c1 === c0 + 1 && upright >= 2 && back, `drawing: a hole's hidden line in a side view gives its diameter as a linear dimension (${JSON.stringify({ k: made?.k, c0, c1, upright, back })})`);
     }
     // Select the 100 by its text and give it a ± tolerance.
     [x, y] = await at(front.id, 0, 40.5);
