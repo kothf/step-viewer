@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.400.0] - 2026-11-10
+
+### Added
+
+- **Recognize Extrudes (FR-FT-102)**: a new command in the Direct flyout, beside Recognize Holes and Recognize Fillets. Pockets and bosses with straight walls on a flat face (blind pockets with a flat floor, cuts through the body, bosses with a flat top; lines and arcs in the outline) are removed with Delete Face and made again as a sketch on that face with an Extruded Cut or Boss, so the outline and the depth of an imported body can be edited. Round pockets stay with Recognize Holes. Only finds that rebuild to the same solid are kept.
+
 ## [1.399.0] - 2026-11-10
 
 ### Changed
@@ -2347,7 +2353,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.399.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.400.0...HEAD
+[1.400.0]: https://github.com/kothf/step-viewer/compare/v1.399.0...v1.400.0
 [1.399.0]: https://github.com/kothf/step-viewer/compare/v1.398.0...v1.399.0
 [1.398.0]: https://github.com/kothf/step-viewer/compare/v1.397.0...v1.398.0
 [1.397.0]: https://github.com/kothf/step-viewer/compare/v1.396.0...v1.397.0
