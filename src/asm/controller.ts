@@ -31,6 +31,7 @@ import { applySolved, autoExplode, expandPatterns, explodeAt, explodeOffsets, fl
 import { STOPPED, type AsmFeatureStatus } from "../model/kernelClient";
 import type { AsmComponentStatus, AsmDoc, AsmFeature, CompPattern, Component, ExplodeStep, ExplodeView, Mate, MateRef, MateType, Tf } from "./types";
 import type { BodyProps, PartDoc, V3 } from "../model/types";
+import { bodyMasses, type MassBody, type OwnBody } from "../tools/inertia";
 import type { PartData, TreeNode } from "../topology";
 import type { Viewer } from "../viewer/Viewer";
 
@@ -135,6 +136,10 @@ export class AsmController {
   expanded: Expanded | null = null;
   /** Volume (mm³) of each part, from its shown mesh, for the BOM. */
   private volumes = new Map<string, number>();
+  /** Bodies of the shown components whose part has a body with its own material (FR-MAT-001), as built, by shown id. */
+  private ownBodies = new Map<string, OwnBody[]>();
+  /** The same per part key (volumes only matter there: the BOM). */
+  private partBodies = new Map<string, OwnBody[]>();
   private mateDown: { x: number; y: number } | null = null;
   /** The last Select Other pick in the Mate panel: where, which face, and the draft before it. */
   private mateOther: { x: number; y: number; i: number; before: MateDraft; draft: MateDraft } | null = null;
@@ -531,6 +536,30 @@ export class AsmController {
     return e?.doc?.material?.density ?? null;
   }
 
+  /**
+   * Shown part `i` as bodies with their own densities, when a body of its part has its own material
+   * (FR-MAT-001): the others take the part's material, else `fallback`. Null for every other part.
+   */
+  partMasses(i: number, fallback: number): MassBody[] | null {
+    const id = this.shownIds[i], own = id ? this.ownBodies.get(id) : undefined, c = this.anyComp(id ?? null);
+    if (!own || !c) return null;
+    const d = (this.expanded?.doc.parts[c.part] ?? this.doc?.parts[c.part])?.doc;
+    return d ? bodyMasses(own, k => d.bodies?.[k]?.material?.density, d.material?.density ?? fallback) : null;
+  }
+
+  /** Mass in kg of one instance of part `k` from its bodies' own materials; undefined when it has none, null when a body has no material at all. */
+  private bodiesKg(k: string, d: PartDoc | undefined): number | null | undefined {
+    const own = this.partBodies.get(k);
+    if (!own || !d) return undefined;
+    let kg = 0;
+    for (const b of own) {
+      const rho = d.bodies?.[b.key]?.material?.density ?? d.material?.density;
+      if (rho === undefined) return null;
+      kg += (b.volume / 1e6) * rho;
+    }
+    return kg;
+  }
+
   /** BOM rows (FR-ASM-024): one per part, in the order first used, with quantity and mass. */
   /** BOM type: top level (sub-assemblies as one row) or parts only (flattened, FR-ASM-024). */
   bomMode: "top" | "parts" = "top";
@@ -549,12 +578,17 @@ export class AsmController {
         for (const [fk, fp] of Object.entries(flat.parts)) {
           if (!fk.startsWith(`${k}/`)) continue;
           const n = flat.components.filter(c => c.part === fk && !c.suppressed && c.id.split("/").length > 1).length / Math.max(1, top.components.filter(c => c.part === k && !c.suppressed).length);
+          const own = this.bodiesKg(fk, fp.doc);
+          if (own === null) return null;
+          if (own !== undefined) { sum += n * own; continue; }
           const v = this.volumes.get(fk);
           if (v === undefined || !fp.doc.material) return null;
           sum += n * (v / 1e6) * fp.doc.material.density;
         }
         return sum;
       }
+      const own = this.bodiesKg(k, p.doc);
+      if (own !== undefined) return own;
       const v = this.volumes.get(k);
       return v !== undefined && p.doc.material ? (v / 1e6) * p.doc.material.density : null;
     };
@@ -1255,8 +1289,10 @@ export class AsmController {
   // ---------- mates (FR-MATE-003/008) ----------
 
   /** Records each part's face geometry in part coordinates from the first shown instance. */
-  private learn(doc: AsmDoc, parts: { id: string; data: PartData; faces: string[] }[]) {
+  private learn(doc: AsmDoc, parts: { id: string; data: PartData; faces: string[]; bodies?: OwnBody[] }[]) {
     this.faceNames = parts.map(p => p.faces);
+    this.ownBodies.clear();
+    this.partBodies.clear();
     this.shownTf = {};
     this.builtTf = {};
     for (const c of this.doc?.components ?? []) this.builtTf[c.id] = c.tf.slice();
@@ -1265,6 +1301,7 @@ export class AsmController {
       const c = doc.components.find(x => x.id === p.id);
       if (!c) continue;
       this.shownTf[c.id] = c.tf.slice();
+      if (p.bodies) { this.ownBodies.set(p.id, p.bodies); this.partBodies.set(c.part, p.bodies); }
       const again = seen.has(c.part);
       seen.add(c.part);
       const inv = invert(c.tf), m = again ? this.geo.get(c.part) ?? new Map<string, Geo>() : new Map<string, Geo>();
