@@ -632,13 +632,26 @@ export const HOLE_COLS = ["Tag", "X LOC", "Y LOC", "Size"];
 /** Whether a circle edge is seen end-on along the view normal `n`. */
 export const endOnCircle = (e: MEdge, n: V3) => e.t === "c" && !!e.ax && !!e.c && !!e.r && Math.abs(Math.abs(dot3(e.ax, n)) - 1) < 1e-6;
 
-/** The holes a view shows end-on: full circles, one per centre and radius (a through hole's two rims are one hole). */
+/**
+ * The holes a view shows end-on: full circles, one per centre and radius (a through hole's two rims are one hole).
+ * With the geometry's hole stacks known (a modelled or imported solid), only circles on a hole count, one per hole (its
+ * drill, the smallest circle): a boss's rim or a chamfer's circle is no hole, and a counterbore is not a second hole (drawings exam #5).
+ */
 export function holeEdges(topo: Topo | null, P: (p: V3) => P2, n: V3, keep: (c: P2) => boolean = () => true): MEdge[] {
   const out: MEdge[] = [], seen: [P2, number][] = [];
+  const stacks = topo?.holes ?? (topo?.cyls.length ? [] : null), slot = new Map<MHole, number>();
   for (const e of topo?.edges ?? []) {
     if (!endOnCircle(e, n) || (e.sp ?? 2 * Math.PI) < 2 * Math.PI - 1e-3) continue;
     const c = P(e.c!);
-    if (!keep(c) || seen.some(([q, r]) => d2(q, c) < 1e-4 && Math.abs(r - e.r!) < 1e-6)) continue;
+    if (!keep(c)) continue;
+    if (stacks) {
+      const h = stacks.length ? stackAt(e.c!, e.ax!, e.r!, topo) : null;
+      if (!h) continue;
+      const i = slot.get(h);
+      if (i === undefined) { slot.set(h, out.length); out.push(e); } else if (e.r! < out[i].r! - 1e-6) out[i] = e;
+      continue;
+    }
+    if (seen.some(([q, r]) => d2(q, c) < 1e-4 && Math.abs(r - e.r!) < 1e-6)) continue;
     seen.push([c, e.r!]); out.push(e);
   }
   return out;
@@ -652,7 +665,7 @@ export function holeRows(a: HoleTableAnnot, P: (p: V3) => P2, ctx: AnnotCtx): { 
   for (const ref of a.holes) {
     const e = refEdge(ref, ctx.topo);
     if (!e || e.t !== "c" || !e.c || !e.r) { missing = true; continue; }
-    hs.push({ c: P(e.c), r: e.r, size: holeText(e, ctx, false)[0] ?? "" });
+    hs.push({ c: P(e.c), r: e.r, size: holeText(e, ctx, false).join(" ") });
   }
   const o0 = o ?? [0, 0];
   const sizes = [...new Map(hs.map(h => [h.size, h.r])).entries()].sort((x, y) => x[1] - y[1] || x[0].localeCompare(y[0])).map(([s]) => s);
