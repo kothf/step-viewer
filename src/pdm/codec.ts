@@ -116,6 +116,32 @@ export async function embedDocs(bytes: Uint8Array, parts: Map<string, unknown>, 
   return rezip(m);
 }
 
+/**
+ * A drawing with its copy of the model replaced (FR-PDM-022): `doc` is the part or assembly document now in force,
+ * `flat` an assembly's placed parts. A drawing of a STEP file or of the other kind is left alone. Null when
+ * nothing changed.
+ */
+export async function embedModel(bytes: Uint8Array, doc: Record<string, unknown>, flat?: (old: Record<string, unknown> | null) => Record<string, unknown>): Promise<Uint8Array | null> {
+  const m = await entries(bytes);
+  const d = m && readJson(m, "drawing.json") as { source?: { kind?: string; doc?: unknown; flat?: Record<string, unknown> } } | null;
+  const src = d?.source;
+  if (!m || !src || (src.kind !== "part" && src.kind !== "asm")) return null;
+  const asm = doc.kind === "assembly" || Array.isArray(doc.components);
+  if ((src.kind === "asm") !== asm) return null;
+  if (JSON.stringify(src.doc) === JSON.stringify(doc)) return null;
+  src.doc = doc;
+  if (src.kind === "asm" && flat) src.flat = flat(src.flat ?? null);
+  m.set("drawing.json", new TextEncoder().encode(toJson(d)));
+  return rezip(m);
+}
+
+/** The model document a drawing keeps a copy of, or null. */
+export async function drawingModel(bytes: Uint8Array): Promise<Record<string, unknown> | null> {
+  const m = await entries(bytes);
+  const src = m && (readJson(m, "drawing.json") as { source?: { kind?: string; doc?: Record<string, unknown> } } | null)?.source;
+  return src && (src.kind === "part" || src.kind === "asm") && src.doc ? src.doc : null;
+}
+
 const TEXTY = /\.(txt|md|csv|json|xml|html?|dxf|svg|step|stp|igs|iges|gbr|drl|nc)$/i;
 /** Keys whose string values are words a person typed (notes, tables, names, properties), not ids or geometry. */
 const WORDS = new Set(["text", "txt", "title", "name", "description", "partNumber", "author", "revision", "material", "company", "checked", "approved", "date", "method", "letter", "pre", "suf", "tcontrol", "ncontrol", "litera", "comment", "note", "label"]);
