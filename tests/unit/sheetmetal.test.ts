@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Modeller } from "../../src/kernel/model";
 import type { Feature, PartDoc, SketchFeature, SkEnt } from "../../src/model/types";
-import type { SmTabSlotFeature, SmInsertFeature, SmConvertFeature, SmCutFeature, SmGussetFeature, SmReliefFeature, SmUnfoldFeature, SmFormFeature, SmVentFeature, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
+import type { SmRipFeature, SmTabSlotFeature, SmInsertFeature, SmConvertFeature, SmCutFeature, SmGussetFeature, SmReliefFeature, SmUnfoldFeature, SmFormFeature, SmVentFeature, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
 import { flatLoops, flatSize, bendAllowance, reliefCorners, filletLoop } from "../../src/sheetmetal/sheet";
 import { flatDrawing } from "../../src/sheetmetal/flat";
 import { loopPolygon, polyArea } from "../../src/sketch/profile";
@@ -890,4 +890,34 @@ test("sheet metal: tab and slot through another body (FR-FT-120)", async () => {
   assert.equal(bad(ts({ count: 4, length: { v: 15 } })).code, "E-SM-TSOVER");
   assert.equal(bad(ts({ offset: { v: 30 }, count: 1 })).ok, true);
   assert.equal(bad(ts({ count: 2, spacing: { v: 60 } })).code, "E-SM-TSFIT");
+});
+
+test("sheet metal: rip the corners of a shelled box (FR-FT-120)", async () => {
+  oc ??= await occ();
+  m ??= new Modeller(oc);
+  // A 60 × 40 × 30 box shelled 2 thick, open at the top.
+  const box: Feature[] = [rect("s", 0, 0, 60, 40), { id: "e", type: "extrude", name: "Boss1", sketch: "s", op: "boss", end: "blind", depth: { v: 30 } } as Feature, { id: "sh", type: "shell", name: "Shell1", thickness: { v: 2 }, faces: [{ name: "e:end" }] } as Feature];
+  const inEdge = (a: string, b: string) => ({ faces: [`sh:off:e:side:${a}`, `sh:off:e:side:${b}`] as [string, string] });
+  const rip = (over: Partial<SmRipFeature> = {}): SmRipFeature => ({ id: "r", type: "smrip", name: "Rip1", edges: [inEdge("sl1", "sl2")], gap: { v: 0.5 }, ...over });
+  const T = 2, H = 30, g = 0.5;
+  const v0 = run(doc(box)).props.volume;
+  // Both ways: a slot on the bisector across the corner, √2·T·g per mm of the inside edge (it starts on the floor).
+  close(v0 - run(doc([...box, rip()])).props.volume, Math.SQRT2 * T * g * (H - T), 1e-6);
+  // One way: along the first wall's plane, through the second wall.
+  close(v0 - run(doc([...box, rip({ side: "a" })])).props.volume, g * T * (H - T), 1e-6);
+  close(v0 - run(doc([...box, rip({ side: "b" })])).props.volume, g * T * (H - T), 1e-6);
+  // The walls really part: a point in the slot is outside.
+  const r = run(doc([...box, rip()]));
+  const at = (p: [number, number, number]) => new oc.BRepClass3d_SolidClassifier_3(r.body!.shape, new oc.gp_Pnt_3(...p), 1e-7).State() === oc.TopAbs_State.TopAbs_IN;
+  assert.ok(!at([59, 1, 20]) && at([59, 5, 20]) && at([55, 1, 20]), "the corner at x = 60, y = 0 is split");
+  // All four corners ripped, then Insert Bends makes a tray with four bends.
+  const all = rip({ edges: [inEdge("sl1", "sl2"), inEdge("sl2", "sl3"), inEdge("sl3", "sl4"), inEdge("sl4", "sl1")] });
+  close(v0 - run(doc([...box, all])).props.volume, 4 * Math.SQRT2 * T * g * (H - T), 1e-6);
+  const ins: SmInsertFeature = { id: "i", type: "sminsert", name: "Insert-Bends1", face: { name: "e:start" }, radius: { v: 2 }, k: 0.5 };
+  assert.equal(run(doc([...box, all, ins])).sheet!.bends.length, 4);
+  // Errors: one-way rip on an outside edge, a zero gap.
+  const bad = (f: SmRipFeature) => m.evaluate(doc([...box, f])).statuses.find(x => x.id === "r")!;
+  assert.equal(bad(rip({ edges: [{ faces: ["e:side:sl1", "e:side:sl2"] }], side: "a" })).code, "E-SM-RIPSIDE");
+  assert.equal(bad(rip({ edges: [{ faces: ["e:side:sl1", "e:side:sl2"] }] })).ok, true);
+  assert.equal(bad(rip({ gap: { v: 0 } })).code, "E-SM-RIPGAP");
 });
