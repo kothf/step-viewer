@@ -1351,9 +1351,14 @@ test("a dimension can carry a second line of text under its line (FR-DRW-021)", 
     assert.equal(short.prims.filter(q => q.t === "t").length, full.prims.filter(q => q.t === "t").length);
   }
   {
-    // Arrow outside: with the text outside the circle the leader stops at the rim (one arrow, nothing crosses the circle).
+    // Arrow outside: with the text outside the circle a diameter's leader stops at the rim (one arrow, nothing crosses the
+    // circle) unless `outside` is false (1.452.0: the default, so leaders no longer run over the part).
     const dia = { id: "d", t: "dim", view: "v", k: "dia", refs: [], pos: [30, 0] } as never, dg = { k: "dia", pts: [], c: [0, 0], r: 10, value: 20 } as never;
-    const through = dimPrims(dia, dg, pl, "."), lead = dimPrims({ ...(dia as object), outside: true } as never, dg, pl, ".");
+    const through = dimPrims({ ...(dia as object), outside: false } as never, dg, pl, "."), lead = dimPrims(dia, dg, pl, ".");
+    assert.deepEqual(dimPrims({ ...(dia as object), outside: true } as never, dg, pl, ".").prims, lead.prims, "true is the default");
+    // A radius keeps its line from the centre unless asked.
+    const rd = { ...(dia as object), k: "rad" } as never, rgo = { k: "rad", pts: [], c: [0, 0], r: 10, value: 10 } as never;
+    assert.ok(dimPrims(rd, rgo, pl, ".").prims.some(q => q.t === "l" && Math.hypot((q as { p: number[] }).p[0], (q as { p: number[] }).p[1]) < 1e-9), "radius from the centre");
     const xs = (o: { prims: { t: string }[] }) => o.prims.filter(q => q.t === "l").flatMap(q => [(q as never as { p: number[] }).p[0], (q as never as { p: number[] }).p[2]]);
     assert.ok(Math.min(...xs(through)) < -9.99, "the plain diameter crosses the circle");
     assert.ok(Math.min(...xs(lead)) > 9.99, "the leader stays outside it");
