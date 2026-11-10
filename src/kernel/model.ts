@@ -11,7 +11,7 @@
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { V2 } from "../model/types";
-import type { HealFeature, RecognizedHole, SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, ChamferFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
+import type { HealFeature, RecognizedHole, RecognizedBlends, SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, ChamferFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { ctxFrame } from "../model/context";
 import { loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
@@ -3249,6 +3249,182 @@ export class Modeller {
       return { plane, pt: [dot(q, fr.x), dot(q, fr.y)], diameter: 2 * h.r, end: h.end, depth: h.depth, flat: h.flat };
     });
     return { faces, holes };
+  }
+
+  /**
+   * Feature recognition (FR-FT-102): fillets and chamfers on the body at the end of the document. A
+   * fillet is a cylinder face (straight edge) or a torus face (round edge) tangent to its neighbour
+   * across each of its two long edges; a chamfer is a narrow flat face leaning the same way against
+   * the two faces along its long edges. Corner patches (spheres) between fillets go with them. A find
+   * counts only when deleting the faces and making the fillets and chamfers again gives the same solid.
+   * A blend that runs over another one (a fillet round a filleted corner) is found first; the one under
+   * it comes in the next round, on the body without the first. The features come back in the order
+   * to add them: the Delete Faces of each round, then the blends from the last round to the first.
+   */
+  recognizeBlends(doc: PartDoc): Feature[] {
+    const rounds: RecognizedBlends[] = [];
+    const upto = doc.features.slice(0, doc.rollback ?? doc.features.length);
+    const id = () => `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
+    const at = (fs: Feature[]): PartDoc => ({ ...doc, rollback: null, features: [...upto, ...fs] });
+    const dels: Feature[] = [];
+    for (let k = 0; k < 8; k++) {
+      const r = this.blendRound(at(dels));
+      if (!r.faces.length) break;
+      rounds.push(r);
+      dels.push({ id: id(), type: "delface", name: "", faces: r.faces } as Feature);
+    }
+    if (rounds.length < 2) return rounds.length ? [dels[0], ...this.blendFeatures(rounds[0], id)] : [];
+    // The blends go back on from the last round to the first. A blend of an earlier round may end on a
+    // face a later round deleted and made again under another name: its edges are found again by place.
+    const start = this.evaluate(at([])).body;
+    if (!start) return [];
+    const v0 = this.volume(start.shape), tol = Math.max(1e-4, this.size(start.shape) * 1e-6) * 100;
+    const out = [...dels];
+    for (let k = rounds.length - 1; k >= 0; k--) {
+      const body = this.evaluate(at(out)).body;
+      if (!body) return [];
+      const es = this.sub(body.shape, "EDGE").map(e => ({ e, m: this.edgeMid(e) }));
+      const again = (r: EdgeRef): EdgeRef | null => {
+        let best: typeof es[0] | null = null, bd = tol;
+        for (const x of es) { const d = d3(x.m, r.hint!); if (d < bd) { bd = d; best = x; } }
+        const names = best ? this.edgeKey(body, best.e).split("|") : [];
+        return names.length === 2 ? { faces: [names[0], names[1]], hint: best!.m } : null;
+      };
+      const r = rounds[k];
+      const fix = <T extends { edges: EdgeRef[] }>(g: T): T => ({ ...g, edges: g.edges.map(again).filter((x): x is EdgeRef => !!x) });
+      const fixed: RecognizedBlends = { faces: r.faces, fillets: r.fillets.map(fix), chamfers: r.chamfers.map(fix) };
+      if ([...fixed.fillets, ...fixed.chamfers].some((g, n) => g.edges.length !== [...r.fillets, ...r.chamfers][n].edges.length)) return [];
+      out.push(...this.blendFeatures(fixed, id));
+    }
+    const fin = this.evaluate(at(out));
+    if (!fin.body || fin.statuses.slice(-out.length).some(s => s.ok === false)) return [];
+    return Math.abs(this.volume(fin.body.shape) - v0) <= 1e-6 * Math.abs(v0) + 1e-9 ? out : [];
+  }
+
+  private blendFeatures(r: RecognizedBlends, id: () => string): Feature[] {
+    return [
+      ...r.chamfers.map(g => ({ id: id(), type: "chamfer", name: "", distance: { v: g.distance }, edges: g.edges }) as Feature),
+      ...r.fillets.map(g => ({ id: id(), type: "fillet", name: "", radius: { v: g.radius }, edges: g.edges }) as Feature)];
+  }
+
+  private blendRound(doc: PartDoc): RecognizedBlends {
+    const oc = this.oc;
+    const none: RecognizedBlends = { faces: [], fillets: [], chamfers: [] };
+    const body = this.evaluate(doc).body;
+    if (!body || this.solids(body.shape) < 1) return none;
+    const v0 = this.volume(body.shape);
+    const tol = Math.max(1e-4, this.size(body.shape) * 1e-6);
+    const emap = new oc.TopTools_IndexedMapOfShape_1();
+    oc.TopExp.MapShapes_1(body.shape, oc.TopAbs_ShapeEnum.TopAbs_EDGE, emap);
+    const users: number[][] = Array.from({ length: emap.Extent() + 1 }, () => []);
+    const edges = body.faces.map((f, i) => this.sub(f, "EDGE").map(e => { const k = emap.FindIndex(e); if (k > 0) users[k].push(i); return { e, k }; }));
+    const across = (i: number, k: number) => users[k]?.find(j => j !== i) ?? -1;
+    const area = (x: any) => { const g = new oc.GProp_GProps_1(); oc.BRepGProp.SurfaceProperties_1(x, g, false, false); return Math.abs(g.Mass()); };
+    type Cand = { i: number; kind: "fillet" | "chamfer"; r: number; sides: [number, number]; mid: V3 };
+    const cands: Cand[] = [], spheres: number[] = [];
+    const S = oc.GeomAbs_SurfaceType, C = oc.GeomAbs_CurveType;
+    body.faces.forEach((face, i) => {
+      const ad = new oc.BRepAdaptor_Surface_2(face, true);
+      const ty = ad.GetType();
+      if (ty === S.GeomAbs_Sphere) { spheres.push(i); return; }
+      const cyl = ty === S.GeomAbs_Cylinder, tor = ty === S.GeomAbs_Torus, pln = ty === S.GeomAbs_Plane;
+      if (!cyl && !tor && !pln) return;
+      const axis = cyl ? unit(this.xyz(ad.Cylinder().Axis().Direction())) : tor ? unit(this.xyz(ad.Torus().Axis().Direction())) : null;
+      // The long edges: straight along the axis (cylinder), circles about the axis (torus), straight (flat).
+      const sides: { j: number; m: V3; d: V3; nj: V3; ni: V3 }[] = [];
+      for (const { e, k } of edges[i]) {
+        const j = across(i, k);
+        if (j < 0) continue;
+        const ca = new oc.BRepAdaptor_Curve_2(e), ct = ca.GetType();
+        let d: V3;
+        if (tor) {
+          if (ct !== C.GeomAbs_Circle) continue;
+          d = unit(this.xyz(ca.Circle().Axis().Direction()));
+          if (Math.abs(Math.abs(dot(d, axis!)) - 1) > 1e-6) continue;
+        } else {
+          if (ct !== C.GeomAbs_Line) continue;
+          d = unit(this.xyz(ca.Line().Direction()));
+          if (cyl && Math.abs(Math.abs(dot(d, axis!)) - 1) > 1e-6) continue;
+        }
+        const m = this.xyz(ca.Value((ca.FirstParameter() + ca.LastParameter()) / 2));
+        sides.push({ j, m, d, nj: this.normalNear(body.faces[j], m), ni: this.normalNear(face, m) });
+      }
+      if (!pln) {
+        const tang = sides.filter(s => dot(s.ni, s.nj) > 1 - 1e-5);
+        if (tang.length !== 2 || tang[0].j === tang[1].j) return;
+        const span = tor ? Math.abs(ad.LastVParameter() - ad.FirstVParameter()) : Math.abs(ad.LastUParameter() - ad.FirstUParameter());
+        if (span > Math.PI - 1e-3) return;
+        cands.push({ i, kind: "fillet", r: cyl ? ad.Cylinder().Radius() : ad.Torus().MinorRadius(), sides: [tang[0].j, tang[1].j], mid: this.centroid(face) });
+        return;
+      }
+      // A chamfer leans equally against both neighbours and is the small face of the three.
+      const pairs: [typeof sides[0], typeof sides[0]][] = [];
+      for (let a = 0; a < sides.length; a++) for (let b = a + 1; b < sides.length; b++) {
+        const A = sides[a], B = sides[b];
+        if (A.j === B.j || Math.abs(Math.abs(dot(A.d, B.d)) - 1) > 1e-6) continue;
+        const ca = dot(A.ni, A.nj), cb = dot(B.ni, B.nj);
+        if (Math.abs(ca - cb) > 1e-6 || ca < 0.05 || ca > 0.999) continue;
+        pairs.push([A, B]);
+      }
+      if (pairs.length !== 1) return;
+      const [A, B] = pairs[0];
+      const a0 = area(face);
+      if (a0 > 0.5 * Math.min(area(body.faces[A.j]), area(body.faces[B.j]))) return;
+      const q = sub3(B.m, A.m), w = Math.hypot(...sub3(q, mul(A.d, dot(q, A.d))));
+      const th = Math.acos(Math.max(-1, Math.min(1, dot(A.nj, B.nj))));
+      const dist = w / (2 * Math.cos(th / 2));
+      if (!(dist > tol)) return;
+      cands.push({ i, kind: "chamfer", r: dist, sides: [A.j, B.j], mid: this.centroid(face) });
+    });
+    // A blend another blend ends on waits for the next round.
+    const under = new Set(cands.flatMap(c => c.sides));
+    for (let k = cands.length - 1; k >= 0; k--) if (under.has(cands[k].i)) cands.splice(k, 1);
+    if (!cands.length) return none;
+    // Corner patches: spheres with fillets on every side.
+    const isFillet = new Set(cands.filter(c => c.kind === "fillet").map(c => c.i));
+    const corners = spheres.filter(i => { const ns = edges[i].map(x => across(i, x.k)).filter(j => j >= 0); return ns.length > 0 && ns.every(j => isFillet.has(j)); });
+    // Groups of blends that touch each other are tried together.
+    const all = [...cands.map(c => c.i), ...corners];
+    const parent = new Map(all.map(i => [i, i]));
+    const root = (i: number): number => { let p = parent.get(i)!; while (p !== parent.get(p)!) p = parent.get(p)!; parent.set(i, p); return p; };
+    for (const i of all) for (const { k } of edges[i]) { const j = across(i, k); if (j >= 0 && parent.has(j)) parent.set(root(i), root(j)); }
+    const upto = doc.features.slice(0, doc.rollback ?? doc.features.length);
+    const ref = (i: number): FaceRef => ({ name: body.names[i], hint: this.centroid(body.faces[i]) });
+    const attempt = (cs: Cand[], extra: number[]): RecognizedBlends | null => {
+      const faces = [...cs.map(c => c.i), ...extra].map(ref);
+      const del: Feature = { id: "__rb", type: "delface", name: "", faces };
+      try {
+        const after = this.evaluate({ ...doc, rollback: null, features: [...upto, del] });
+        if (after.statuses.at(-1)?.ok === false || !after.body) return null;
+        const fil = new Map<string, { radius: number; edges: EdgeRef[] }>(), ch = new Map<string, { distance: number; edges: EdgeRef[] }>();
+        for (const c of cs) {
+          const pair: [string, string] = [body.names[c.sides[0]], body.names[c.sides[1]]];
+          const er: EdgeRef = { faces: pair, hint: this.edgeMid(this.resolveEdge(after.body, { faces: pair, hint: c.mid })) };
+          const key = c.r.toFixed(5);
+          if (c.kind === "fillet") { const g = fil.get(key); if (g) g.edges.push(er); else fil.set(key, { radius: c.r, edges: [er] }); }
+          else { const g = ch.get(key); if (g) g.edges.push(er); else ch.set(key, { distance: c.r, edges: [er] }); }
+        }
+        const out: RecognizedBlends = { faces, fillets: [...fil.values()], chamfers: [...ch.values()] };
+        const feats: Feature[] = [
+          ...out.chamfers.map((g, k) => ({ id: `__rc${k}`, type: "chamfer", name: "", distance: { v: g.distance }, edges: g.edges }) as Feature),
+          ...out.fillets.map((g, k) => ({ id: `__rf${k}`, type: "fillet", name: "", radius: { v: g.radius }, edges: g.edges }) as Feature)];
+        const fin = this.evaluate({ ...doc, rollback: null, features: [...upto, del, ...feats] });
+        if (!fin.body || fin.statuses.slice(-feats.length).some(s => s.ok === false)) return null;
+        return Math.abs(this.volume(fin.body.shape) - v0) <= 1e-6 * Math.abs(v0) + 1e-9 ? out : null;
+      } catch { return null; }
+    };
+    const whole = attempt(cands, corners);
+    if (whole) return whole;
+    // Not all of them: keep the groups that come back the same on their own, then try those together.
+    const groups = new Map<number, { cs: Cand[]; extra: number[] }>();
+    const groupOf = (i: number) => { const r = root(i); let g = groups.get(r); if (!g) groups.set(r, g = { cs: [], extra: [] }); return g; };
+    for (const c of cands) groupOf(c.i).cs.push(c);
+    for (const i of corners) groupOf(i).extra.push(i);
+    const good: { g: { cs: Cand[]; extra: number[] }; out: RecognizedBlends }[] = [];
+    for (const g of [...groups.values()].slice(0, 60)) { const out = g.cs.length ? attempt(g.cs, g.extra) : null; if (out) good.push({ g, out }); }
+    if (!good.length) return none;
+    if (good.length === 1) return good[0].out;
+    return attempt(good.flatMap(x => x.g.cs), good.flatMap(x => x.g.extra)) ?? good.sort((a, b) => b.out.faces.length - a.out.faces.length)[0].out;
   }
 
   brepText(body: Named): { brep: string; solids: number; faces: number } {

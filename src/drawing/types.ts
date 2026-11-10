@@ -141,7 +141,8 @@ export interface DimAnnot {
 }
 
 /** A note: on the sheet (sheet mm) or on a view (its model axes, so it moves with the view), with an optional leader to the model. */
-export interface NoteAnnot { id: string; t: "note"; view?: string; pos: [number, number]; text: string; h?: number; leader?: GeoRef }
+/** `border`: a frame round the text (box, obround or circle); the leader starts on it. */
+export interface NoteAnnot { id: string; t: "note"; view?: string; pos: [number, number]; text: string; h?: number; leader?: GeoRef; border?: "box" | "round" | "circle" }
 
 /** A hole callout (FR-DRW-022) on a round edge, from the hole feature when there is one. */
 export interface HoleAnnot { id: string; t: "hole"; view: string; ref: GeoRef; pos: [number, number]; txt?: string }

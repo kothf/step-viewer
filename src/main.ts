@@ -61,6 +61,7 @@ import { FileMenu, type LiveKind, type PackDoc } from "./fileMenu";
 import { recentAdd } from "./recent";
 import { packAsm, ASM_EXT } from "./asm/file";
 import { bindValueDrops, dragValue } from "./valueDrop";
+import { bindLongPress } from "./longPress";
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 const $$ = <T extends HTMLElement = HTMLElement>(sel: string) => [...document.querySelectorAll(sel)] as T[];
@@ -2107,6 +2108,7 @@ function selectionBox(): THREE.Box3 | null {
   return parts.length ? b : null;
 }
 bindValueDrops();
+bindLongPress();
 const nav = bindNavigation({
   viewer,
   views: VIEWS,

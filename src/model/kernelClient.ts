@@ -11,7 +11,7 @@ import type { PartData } from "../topology";
 import type { AsmDoc, AsmComponentStatus } from "../asm/types";
 import type { SheetState } from "../sheetmetal/sheet";
 import type { CutItem } from "../weldments/types";
-import type { FaceRef, RecognizedHole, BodyProps, FeatureStatus, Frame, IntersectRegion, PartDoc, SketchFeature, V3 } from "./types";
+import type { FaceRef, RecognizedHole, Feature, BodyProps, FeatureStatus, Frame, IntersectRegion, PartDoc, SketchFeature, V3 } from "./types";
 
 export interface Rebuild {
   statuses: FeatureStatus[];
@@ -157,6 +157,12 @@ export class ModelKernel {
   async recognizeHoles(doc: PartDoc): Promise<{ faces: FaceRef[]; holes: RecognizedHole[] }> {
     await this.start();
     return this.call<{ faces: FaceRef[]; holes: RecognizedHole[] }>({ type: "recognize", doc });
+  }
+
+  /** Feature recognition (FR-FT-102): fillets and chamfers that can be deleted and made again as features. */
+  async recognizeBlends(doc: PartDoc): Promise<Feature[]> {
+    await this.start();
+    return (await this.call<{ features: Feature[] }>({ type: "recognizeBlends", doc })).features;
   }
 
   /** Evaluates an assembly: one mesh per shown component, placed (FRS 10). */

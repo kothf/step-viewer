@@ -4880,6 +4880,14 @@ try {
     an = await annots();
     check(tx.includes("Ø16 THRU") && tx.includes("BREAK SHARP EDGES") && an.some(a => a.t === "hole") && an.some(a => a.t === "note" && !a.view),
       `drawing: hole callout from the model (Ø16 THRU) and a note on the sheet (${tx.filter(s => /THRU|BREAK/.test(s)).join(" / ")})`);
+    // Note border (FR-DRW-023): the placed note is selected; a circle frames it, None takes it away.
+    const arcsOf = async () => (await prims()).filter(p => p.t === "a" && p.layer === "ANNOT").length;
+    const arcs0 = await arcsOf();
+    await dp.selectOption('.drw-props [data-d="nborder"]', "circle");
+    const nb1 = { arcs: await arcsOf(), border: (await annots()).find(a => a.t === "note" && !a.view)?.border };
+    await dp.selectOption('.drw-props [data-d="nborder"]', "");
+    const nb2 = { arcs: await arcsOf(), has: "border" in (await annots()).find(a => a.t === "note" && !a.view) };
+    check(nb1.border === "circle" && nb1.arcs === arcs0 + 1 && nb2.arcs === arcs0 && !nb2.has, `drawing: a note takes a circle border and loses it again (${JSON.stringify([arcs0, nb1, nb2])})`);
     // The worker reads holes from the geometry too (FR-DRW-022): the Ø16 cut is a one-piece stack open at both ends.
     const geoHoles = await dp.evaluate(() => window.__sv.drw.holes());
     check(geoHoles.some(h => h.segs === 1 && h.open[0] && h.open[1]), `drawing: holes read from the geometry (${JSON.stringify(geoHoles)})`);
@@ -8290,6 +8298,30 @@ try {
     const r1 = await state();
     check(Math.abs(r1.v - r0.v) < 0.05 && !r1.bad && r1.types === "sketch,extrude,hole,hole,delface,hole,hole" && r1.holes === "blind:1:8 blind:1:8 through:2:10 through:2:10",
       `model 1.116: Recognize Holes fills the holes and makes them again as Hole features (FR-FT-102) (${JSON.stringify({ r0, r1 })})`);
+    // 1.390 (FR-FT-102): Recognize Fillets on an imported body: a block with two R5 corners and a 2 mm chamfer.
+    await mp.evaluate(() => window.__sv.model.store.change("Blends", d => {
+      const S = k => `e:side:s${k}`;
+      d.features = d.features.filter(f => f.id === "s" || f.id === "e");
+      d.features.push({ id: "bf", type: "fillet", name: "Fillet1", radius: { v: 5 }, edges: [{ faces: [S("a"), S("b")] }, { faces: [S("b"), S("c")] }] },
+        { id: "bc", type: "chamfer", name: "Chamfer1", distance: { v: 2 }, edges: [{ faces: ["e:end", S("d")] }] });
+    }));
+    await settle();
+    const b0 = await state();
+    const brep = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "block.brep", brep }]; }), brep);
+    await settle();
+    const b1 = await state();
+    await runCmd(mp, "Recognize Fillets");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.some(f => f.type === "fillet"), null, { timeout: 120000 });
+    await settle();
+    const b2 = await state();
+    const blends = await mp.evaluate(() => window.__sv.model.store.doc.features.filter(f => f.type === "fillet" || f.type === "chamfer").map(f => `${f.name}:${Math.round((f.radius ?? f.distance).v * 100) / 100}:${f.edges.length}`).join(" "));
+    // The recognised fillet can be edited like any other.
+    await mp.evaluate(() => window.__sv.model.store.change("Edit", d => { d.features.find(f => f.type === "fillet").radius.v = 8; }));
+    await settle();
+    const b3 = await state();
+    check(!b0.bad && Math.abs(b1.v - b0.v) < 0.05 && Math.abs(b2.v - b0.v) < 0.05 && !b2.bad && b2.types === "import,delface,chamfer,fillet" && blends === "Chamfer1:2:1 Fillet1:5:2" && !b3.bad && b3.v < b2.v - 100,
+      `model 1.390: Recognize Fillets removes the fillets and chamfers of an imported body and makes them again as features (FR-FT-102) (${JSON.stringify({ b0, b1, b2, b3, blends })})`);
     await ctx.close();
   }
 
@@ -9896,10 +9928,12 @@ try {
     await settle();
     await runCmd(mp, "Structural Member");
     await settle();
-    const bl = await mp.evaluate(() => ({ segs: window.__sv.model.mode().draft?.segs?.map(s => s.ent), labels: [...document.querySelectorAll("#mc-pm input[data-wseg]")].map(e => e.closest("label")?.textContent?.trim()) }));
+    const bl = await mp.evaluate(() => ({ size: window.__sv.model.mode().draft?.size, segs: window.__sv.model.mode().draft?.segs?.map(s => s.ent), labels: [...document.querySelectorAll("#mc-pm input[data-wseg]")].map(e => e.closest("label")?.textContent?.trim()) }));
     await mp.click("#mc-ok");
     await settle();
     const bend = await mp.evaluate(() => { const l = window.__sv.model.last(), id = window.__sv.model.store.doc.features.at(-1).id; return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), arc: (l.cutList ?? []).some(c => c.length === 157.1), faces: (l.faceNames ?? []).filter(n => n.startsWith(id + ":j2:")).length }; });
+    // The new member starts with the size the first one was given (weldment defaults: the settings used last).
+    check(bl.size === "50x50x4", `weldments: a new member starts with the profile used last (${bl.size})`);
     check(JSON.stringify(bl.segs) === '["j1","j2","j3"]' && JSON.stringify(bl.labels) === '["Line 1","Arc 2","Line 3"]' && bend.faces > 0 && !bend.bad && bend.arc, `weldments: a member along a line, an arc and a line (${JSON.stringify({ bl, bend })})`);
     // Merge arc segment bodies: the line, arc and line become one body, one cut list item of the whole bent length (300 + 157.1 + 300).
     const bendId = await mp.evaluate(() => window.__sv.model.store.doc.features.at(-1).id);
@@ -10578,6 +10612,37 @@ try {
     const hb = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, bends: l.sheet?.bends.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
     const hbWant = 100 * 3 * (154 + 4 * ((Math.PI / 2 - 2) * 3.5));
     check(!hb.bad && hb.bends === 4 && Math.abs(hb.v - hbWant) < 1e-2, `sheet metal: Insert Bends follows a hat section's walls to the brims (${JSON.stringify({ hb, hbWant })})`);
+    // Tab and Slot: a 100 × 50 plate and a separate 3 mm block 1 mm past one end (on the side away from the camera, so
+    // its face towards the plate shows above it). Click the plate's top edge there, then that block face, ✓: two tabs
+    // 10 × (1 + 2) into slots 0.1 bigger all round (2.1 deep: the default height is the thickness).
+    const tsS = await mp.evaluate(() => { const v = window.__sv.viewer; return v.camera.position.x > v.controls.target.x ? -1 : 1; });
+    await mp.evaluate(S => window.__sv.model.store.change("Plate and block", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), L = (id, a, b) => ({ id, t: "line", a, b });
+      const rect = (id, x0, y0, x1, y1) => ({ id, type: "sketch", name: id, plane: { std: "XY" }, rels: [], dims: [], ents: [P(`${id}p1`, x0, y0), P(`${id}p2`, x1, y0), P(`${id}p3`, x1, y1), P(`${id}p4`, x0, y1), L(`${id}l1`, `${id}p1`, `${id}p2`), L(`${id}l2`, `${id}p2`, `${id}p3`), L(`${id}l3`, `${id}p3`, `${id}p4`), L(`${id}l4`, `${id}p4`, `${id}p1`)] });
+      d.features = [
+        rect("s", -50, 0, 50, 50),
+        { id: "b", type: "smbase", name: "Base-Flange1", sketch: "s", thickness: { v: 2 }, radius: { v: 2 }, depth: { v: 20 }, k: 0.5 },
+        S > 0 ? rect("k", 51, -10, 54, 60) : rect("k", -54, -10, -51, 60),
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "k", op: "boss", end: "mid", depth: { v: 20 }, merge: false },
+      ];
+    }), tsS);
+    await settle();
+    await mp.evaluate(() => window.__sv.viewer.fit(false));
+    await mp.waitForTimeout(300);
+    await smMenu("Tab and Slot");
+    for (const p of [[50 * tsS, 25, 2], [51 * tsS, 25, 7]]) {
+      const [x, y] = await scr(p);
+      await mp.mouse.click(x, y);
+      await settle();
+    }
+    const ts0 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { title: document.querySelector("#mc-pm h3")?.textContent, edge: d?.edge ? [...d.edge.faces].sort().join("|") : null, face: d?.face?.name }; });
+    await mp.click("#mc-ok");
+    await settle();
+    const ts1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, panels: l.sheet?.panels.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    const tsWant = 100 * 50 * 2 + 3 * 70 * 20 + 2 * 10 * 3 * 2 - 2 * 10.2 * 2.2 * 2.1;
+    check(ts0.title === "Tab and Slot" && ts0.edge === (tsS > 0 ? "b:p0:sl2|b:p0:top" : "b:p0:sl4|b:p0:top") && ts0.face === (tsS > 0 ? "x:side:kl4" : "x:side:kl2")
+      && !ts1.bad && ts1.panels === 3 && Math.abs(ts1.v - tsWant) < 1e-2,
+      `sheet metal: Tab and Slot grows tabs from the clicked edge through slots in the clicked face (${JSON.stringify({ tsS, ts0, ts1, tsWant })})`);
     await ctx.close();
   }
 
@@ -11594,6 +11659,81 @@ try {
     await tp.waitForTimeout(600);
     const closed = await tp.evaluate(() => document.querySelector("#tutorial").hidden);
     check(again.n === 3 && closed, `tutorial 1.381: the list follows the bracket's tab and ✕ closes it (${JSON.stringify({ again, closed })})`);
+    await ctx.close();
+  }
+  // 1.394 (FR-UI-091): touch: a finger held still opens the right-click menus, one finger orbits, two zoom.
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true });
+    const tp = await ctx.newPage();
+    tp.on("pageerror", e => errors.push(e.message));
+    tp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await tp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await tp.goto(`${origin}/index.html?debug&nokernel`);
+    await tp.waitForFunction(() => window.__sv);
+    await tp.click("#new-part");
+    await tp.waitForFunction(() => window.__sv.modeller.store?.doc);
+    await tp.evaluate(() => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), L = (id, a, b) => ({ id, t: "line", a, b });
+      window.__sv.modeller.store.change("Block", d => {
+        d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", 0, 0), P("b", 80, 0), P("c", 80, 50), P("d", 0, 50), L("l1", "a", "b"), L("l2", "b", "c"), L("l3", "c", "d"), L("l4", "d", "a")] });
+        d.features.push({ id: "e", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } });
+      });
+    });
+    await tp.waitForFunction(() => window.__sv.viewer.parts.length > 0 && window.__sv.modeller.last?.faceNames?.length, null, { timeout: 60000 });
+    await tp.waitForTimeout(600);
+    const cdp = await ctx.newCDPSession(tp);
+    const touch = (type, pts) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints: pts.map(([x, y], id) => ({ x, y, id })) });
+    const menuOpen = () => tp.evaluate(() => { const m = document.querySelector("#mc-menu"); return m && !m.hidden ? [...m.querySelectorAll("button")].map(b => b.textContent.trim()) : null; });
+    const row = await tp.evaluate(() => { const r = document.querySelector('#mc-tree .ft-row[data-id="e"]').getBoundingClientRect(); return [Math.round(r.left + 40), Math.round(r.top + r.height / 2)]; });
+    // A short tap opens no menu.
+    await touch("touchStart", [row]);
+    await tp.waitForTimeout(120);
+    await touch("touchEnd", []);
+    await tp.waitForTimeout(700);
+    const tapMenu = await menuOpen();
+    // Held still: the feature's menu; tapping Suppress in it suppresses the feature.
+    await touch("touchStart", [row]);
+    await tp.waitForFunction(() => { const m = document.querySelector("#mc-menu"); return m && !m.hidden; }, null, { timeout: 5000 });
+    const held = await menuOpen();
+    await touch("touchEnd", []);
+    await tp.waitForTimeout(500);
+    const still = await menuOpen();
+    const sup = await tp.evaluate(() => { const b = [...document.querySelectorAll("#mc-menu button")].find(b => b.textContent.trim() === "Suppress"); const r = b.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; });
+    await tp.touchscreen.tap(sup[0], sup[1]);
+    await tp.waitForFunction(() => window.__sv.modeller.store.doc.features.find(f => f.id === "e").suppressed === true, null, { timeout: 5000 });
+    check(tapMenu === null && held?.includes("Suppress") && still?.length === held.length, `touch 1.394: a finger held on a tree row opens its menu, a tap does not, and the menu stays when the finger lifts (${JSON.stringify({ tapMenu, held: held?.length, still: still?.length })})`);
+    await tp.evaluate(() => window.__sv.modeller.undo());
+    await tp.waitForFunction(() => !window.__sv.modeller.store.doc.features.find(f => f.id === "e").suppressed && window.__sv.viewer.parts.length > 0, null, { timeout: 30000 });
+    await tp.waitForTimeout(800);
+    // A finger that moves drops the press; it orbits instead. Two fingers moving apart zoom.
+    const cam = () => tp.evaluate(() => { const c = window.__sv.viewer.camera; return { p: c.position.toArray(), z: c.zoom, d: c.position.distanceTo(window.__sv.viewer.controls.target) }; });
+    const box = await tp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; });
+    const c0 = await cam();
+    await touch("touchStart", [box]);
+    for (let i = 1; i <= 8; i++) { await touch("touchMove", [[box[0] + i * 12, box[1] + i * 4]]); await tp.waitForTimeout(30); }
+    await tp.waitForTimeout(700);
+    const dragMenu = await menuOpen();
+    await touch("touchEnd", []);
+    await tp.waitForTimeout(300);
+    const c1 = await cam();
+    await touch("touchStart", [[box[0] - 40, box[1]], [box[0] + 40, box[1]]]);
+    for (let i = 1; i <= 8; i++) { await touch("touchMove", [[box[0] - 40 - i * 10, box[1]], [box[0] + 40 + i * 10, box[1]]]); await tp.waitForTimeout(30); }
+    await touch("touchEnd", []);
+    await tp.waitForTimeout(300);
+    const c2 = await cam();
+    const moved = Math.hypot(...c1.p.map((v, i) => v - c0.p[i])), dist = c => c.d / c.z;
+    check(dragMenu === null && moved > 1 && Math.abs(c1.z - c0.z) < 1e-9 && dist(c2) < dist(c1) * 0.9, `touch 1.394: one finger orbits and two fingers moving apart zoom in, with no menu (${JSON.stringify({ dragMenu, moved: +moved.toFixed(1), z: [c1.z, c2.z], d: [+dist(c1).toFixed(1), +dist(c2).toFixed(1)] })})`);
+    // Held on a face: the context toolbar, and lifting the finger leaves it there.
+    const mid = await tp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; });
+    await tp.evaluate(() => document.getElementById("mc-cbar")?.remove());
+    await touch("touchStart", [mid]);
+    await tp.waitForTimeout(350);
+    const early = await tp.evaluate(() => !!document.getElementById("mc-cbar"));
+    await tp.waitForFunction(() => !!document.getElementById("mc-cbar"), null, { timeout: 5000 });
+    await touch("touchEnd", []);
+    await tp.waitForTimeout(400);
+    const bar = await tp.evaluate(() => document.querySelectorAll("#mc-cbar button").length);
+    check(!early && bar > 0, `touch 1.394: a finger held on a face shows the context toolbar (${JSON.stringify({ early, bar })})`);
     await ctx.close();
   }
 } catch (err) {

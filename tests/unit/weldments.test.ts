@@ -9,6 +9,7 @@ import type { Feature, PartDoc, SketchFeature, SkEnt, V2, V3, Sketch3dFeature } 
 import type { GussetFeature, MemberFeature } from "../../src/weldments/types";
 import { barPlan, barsNeeded, cutKey, planGroups, splitSubs, stockTotals } from "../../src/weldments/types";
 import { occ } from "./occ";
+import { applyWeldMemory, weldMemory } from "../../src/weldments/defaults";
 
 const doc = (features: Feature[]): PartDoc => ({ schema: 1, kind: "part", id: "d", name: "t", units: { length: "mm", decimals: 2 }, props: {}, features, rollback: null });
 /** A polyline sketch on XY (closed: back to the first point). */
@@ -580,4 +581,43 @@ test("stock lengths of a cut list (FR-FT-121)", () => {
   // A piece longer than the bar is reported, not cut.
   const short = stockTotals(items, undefined, { len: 400 });
   assert.deepEqual([short[0].bars, short[0].over, short[0].left], [1, 3, 249.8]);
+});
+
+test("weldment defaults: a new feature starts with the settings used last, checked one by one", () => {
+  const used = { id: "m1", type: "member", name: "M1", profile: "ipe", size: "IPE 200", segs: [{ sketch: "s", ent: "a" }], corner: "butt1", gap: { v: 2, expr: "g" }, coped: true, desc: "Rail", anchor: "tl" } as unknown as Feature;
+  const mem = weldMemory(used)!;
+  // Sizes keep their value but not the expression; picked geometry, names and positions are never carried over.
+  assert.deepEqual(mem, { profile: "ipe", size: "IPE 200", corner: "butt1", gap: { v: 2 }, coped: true });
+  const fresh = (): MemberFeature => ({ id: "m2", type: "member", name: "M2", profile: "shs", size: "40x40x3", segs: [{ sketch: "t", ent: "b" }], corner: "miter" });
+  const ipeSizes = profileSizes("ipe");
+  const d = applyWeldMemory(fresh(), JSON.parse(JSON.stringify(mem))) as MemberFeature;
+  assert.equal(d.profile, "ipe");
+  assert.equal(d.size, ipeSizes.includes("IPE 200") ? "IPE 200" : d.size);
+  assert.ok(ipeSizes.includes(d.size));
+  assert.equal(d.corner, "butt1");
+  assert.deepEqual(d.gap, { v: 2 });
+  assert.equal(d.coped, true);
+  assert.deepEqual(d.segs, [{ sketch: "t", ent: "b" }]);
+  // Bad stored values are skipped: an unknown profile, a size of another profile, a corner that does not exist.
+  const bad = applyWeldMemory(fresh(), { profile: "zz", size: "IPE 200", corner: "weird", gap: { v: -1 }, coped: "yes" }) as MemberFeature;
+  assert.equal(bad.profile, "shs");
+  assert.ok(profileSizes("shs").includes(bad.size));
+  assert.equal(bad.corner, "miter");
+  assert.equal(bad.gap, undefined);
+  assert.equal(bad.coped, undefined);
+  // A sketch profile belongs to its part: the next member starts with the library profile.
+  assert.deepEqual(weldMemory({ ...fresh(), profile: "sketch", psketch: "p" } as Feature), { corner: "miter" });
+  // Nothing stored: the draft is unchanged.
+  assert.deepEqual(applyWeldMemory(fresh(), null), fresh());
+  // A gusset: a polygonal profile gets its corner cut, a triangle drops it; a mid gusset has no thickness side.
+  const g0 = (): GussetFeature => ({ id: "g", type: "gusset", name: "G", d1: { v: 50 }, d2: { v: 50 }, thickness: { v: 5 }, shape: "tri", loc: "mid" });
+  const gp = applyWeldMemory(g0(), { d1: { v: 80 }, d2: { v: 60 }, thickness: { v: 8 }, shape: "poly", loc: "start", side: "both" }) as GussetFeature;
+  assert.deepEqual([gp.d1.v, gp.d2.v, gp.thickness.v, gp.shape, gp.d3?.v, gp.loc, gp.side], [80, 60, 8, "poly", 15, "start", "both"]);
+  const gt = applyWeldMemory(g0(), { shape: "tri", d3: { v: 9 }, loc: "mid", side: "out", chamfer2: { v: 4 } }) as GussetFeature;
+  assert.deepEqual([gt.d3, gt.side, gt.chamfer2], [undefined, undefined, undefined]);
+  // A bead and an end cap.
+  const b = applyWeldMemory({ id: "b", type: "weldbead", name: "B", faces1: [], faces2: [], size: { v: 4 } } as Feature, weldMemory({ id: "x", type: "weldbead", name: "X", faces1: [{ name: "f" }], faces2: [], size: { v: 6 }, size2: { v: 8 }, tangent: false } as Feature)) as Feature & { size: { v: number }; size2?: { v: number }; tangent?: boolean; faces1: unknown[] };
+  assert.deepEqual([b.size.v, b.size2?.v, b.tangent, b.faces1.length], [6, 8, false, 0]);
+  const c = applyWeldMemory({ id: "c", type: "endcap", name: "C", faces: [], thickness: { v: 5 }, inset: { v: 0 } } as Feature, { thickness: { v: 10 }, inset: { v: 0 }, ratio: { v: 0.5 }, dir: "in" }) as Feature & { thickness: { v: number }; ratio?: unknown; dir?: string };
+  assert.deepEqual([c.thickness.v, c.ratio, c.dir], [10, undefined, "in"]);
 });
