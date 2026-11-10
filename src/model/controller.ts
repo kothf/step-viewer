@@ -2305,6 +2305,8 @@ export class ModelController {
     if (mod && !e.shiftKey && !e.altKey && k === "v" && this.mode.kind === "none" && this.clip) { stop(); this.pasteFeature(); return; }
     // Ctrl+Enter: OK and the same command again in a feature; leaves a sketch (FR-UI-044, FR-UI-106).
     if (mod && k === "enter" && !e.altKey && (this.mode.kind === "feature" || this.mode.kind === "sketch")) { stop(); this.ok(this.mode.kind === "feature"); return; }
+    // Ctrl+A in a sketch selects every sketch entity, as in SolidWorks, not the page's text (exam #91).
+    if (mod && k === "a" && !e.shiftKey && !e.altKey && this.mode.kind === "sketch") { stop(); this.mode.editor.selectAll(); this.renderPanel(); return; }
     if (mod || e.altKey) return;
     if (e.key === "F5") { stop(); this.toggleFilterBar(); return; }
     // Esc closes the magnifying glass first (FR-SEL-010; its own listener takes it).

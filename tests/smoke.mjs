@@ -1986,6 +1986,25 @@ try {
     await click([-15, -5]);
     const fl = await mp.evaluate(() => { const e = window.__sv.model.editor(); const sk = e.sk; return { arcs: sk.ents.filter(x => x.t === "arc").length, tan: sk.rels.filter(r => r.t === "tangent").length, dim: sk.dims.some(d => d.t === "radius" && Math.abs(d.val.v - 2) < 1e-9), ok: e.info.status }; });
     check(fl.arcs === 1 && fl.tan === 2 && fl.dim && fl.ok === "ok", `model 1.19: sketch fillet rounds the corner with a tangent R2 arc (${JSON.stringify(fl)})`);
+    // Exam #90-#93: a clockwise centre-point arc, a fillet where a line meets an arc, Ctrl+A, the rolled-back part's note.
+    {
+      const had = await mp.evaluate(() => window.__sv.model.editor().sk.ents.map(e => e.id));
+      const hover = async q => { const [x, y] = await toPage(q, true); await mp.mouse.move(x, y, { steps: 4 }); await mp.waitForTimeout(40); };
+      await mp.keyboard.press("a");
+      await click([-60, -30]); await click([-50, -30]); await hover([-55, -38]); await hover([-60, -40]); await hover([-66, -37]); await click([-70, -30]);
+      await mp.keyboard.press("Escape");
+      const cw = await mp.evaluate(had => { const sk = window.__sv.model.editor().sk, P = id => sk.ents.find(e => e.id === id); const a = sk.ents.find(e => e.t === "arc" && !had.includes(e.id)); return a && { a: [P(a.a).x, P(a.a).y], b: [P(a.b).x, P(a.b).y] }; }, had);
+      check(cw && near(cw.a[0], -70, 0.3) && near(cw.b[0], -50, 0.3), `exam #92: a centre-point arc drawn clockwise keeps the side the mouse went round (${JSON.stringify(cw)})`);
+      await mp.keyboard.press("l"); await click([-50, -30]); await click([-30, -30]); await mp.keyboard.press("Escape"); await mp.keyboard.press("Escape");
+      await mp.keyboard.press("f"); await click([-50, -30]);
+      const la = await mp.evaluate(had => { const e = window.__sv.model.editor(), sk = e.sk; const mine = sk.ents.filter(x => !had.includes(x.id)); return { arcs: mine.filter(x => x.t === "arc").length, tan: sk.rels.filter(r => r.t === "tangent" && r.e.some(id => mine.some(m => m.id === id))).length, ok: e.info.status }; }, had);
+      check(la.arcs === 2 && la.tan === 2 && la.ok === "ok", `exam #90: sketch fillet rounds a corner where a line meets an arc (${JSON.stringify(la)})`);
+      await mp.keyboard.press("Escape"); await mp.keyboard.press("Escape");
+      await mp.keyboard.press("Control+a");
+      const all = await mp.evaluate(() => { const e = window.__sv.model.editor(); return { sel: e.selection.size, n: e.sk.ents.length, text: (window.getSelection()?.toString() ?? "").length }; });
+      check(all.sel === all.n && all.n > 0 && all.text === 0, `exam #91: Ctrl+A in a sketch selects every sketch entity, not the page text (${JSON.stringify(all)})`);
+      await mp.evaluate(had => { const ed = window.__sv.model.editor(); ed.selection.clear(); ed.deleteItems(ed.sk.ents.filter(e => !had.includes(e.id) && e.t !== "point").map(e => e.id)); }, had);
+    }
     // RU and accessibility with the sketch panel (relations list) open.
     await mp.addScriptTag({ content: await readFile(createRequire(import.meta.url).resolve("axe-core/axe.min.js"), "utf8") });
     const axe = () => mp.evaluate(async () => (await window.axe.run(document, { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] }, resultTypes: ["violations"] })).violations.map(v => `${v.id}: ${v.nodes.slice(0, 2).map(n => n.target.join(" ")).join(", ")}`));

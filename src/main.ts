@@ -1197,7 +1197,9 @@ function renderProps() {
   if (!viewer.parts.length) {
     // A new part has nothing to show yet: say how to start, not "open a model" (exam #11).
     const part = $("#app").classList.contains("model");
-    el.innerHTML = `<p class="muted">${t(part ? "This part is empty. Start a sketch on a plane to begin." : "Open a model to begin.")}</p>`;
+    // Editing an early sketch rolls the bodies back: the part is not empty then (exam #93).
+    const feats = part && (modeller.store?.doc.features.length ?? 0) > 0;
+    el.innerHTML = `<p class="muted">${t(feats ? "No bodies before the feature being edited." : part ? "This part is empty. Start a sketch on a plane to begin." : "Open a model to begin.")}</p>`;
     return;
   }
   const e = state.selection;

@@ -164,6 +164,7 @@ export const RU: Record<string, string> = {
   // ---------- right panel (3D) ----------
   "Properties and tools": "Свойства и инструменты",
   "Properties": "Свойства",
+  "No bodies before the feature being edited.": "До редактируемого элемента тел нет.",
   "This part is empty. Start a sketch on a plane to begin.": "Деталь пуста. Начните эскиз на плоскости.",
   "Open a model to begin.": "Откройте модель, чтобы начать.",
   "Smart measure: click one entity for its size, a second for the distance, pitch or angle between them (Esc clears)": "Умное измерение: щёлкните элемент, чтобы узнать его размер, второй — расстояние, шаг или угол между ними (Esc сбрасывает)",
@@ -1073,6 +1074,8 @@ export const RU: Record<string, string> = {
   "Relations of the selection:": "Взаимосвязи выбранного:",
   "conflicting": "конфликт",
   "The three points are on one line.": "Три точки лежат на одной прямой.",
+  "Click a corner where two curves meet; set the radius in the panel": "Щёлкните угол, где сходятся две кривые; радиус задаётся на панели",
+  "The radius is too large for these curves.": "Радиус слишком велик для этих кривых.",
   "Click a corner where two lines meet.": "Щёлкните угол, где сходятся два отрезка.",
   "The lines are in line: there is no corner to round.": "Отрезки на одной прямой: скруглять нечего.",
   "The radius is too large for these lines.": "Радиус слишком велик для этих отрезков.",
