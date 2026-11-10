@@ -1203,6 +1203,35 @@ test("a linear dimension's arrows can be put outside or inside by hand (FR-DRW-0
   assert.ok(line(3, { arrows: "in" }) < line(3, {}) - 5, "inside by hand: no arrow tails");
 });
 
+test("a dimension can hide extension lines and keep its text horizontal in the line (FR-DRW-021)", async () => {
+  const { dimPrims } = await import("../../src/drawing/annot");
+  const pl = { s: 1, uc: 0, vc: 0, x: 0, y: 0 } as never;
+  const mk = (k: "h" | "v", a: object) => {
+    const pts = (k === "h" ? [[0, 0], [40, 0]] : [[0, 0], [0, 40]]) as [number, number][];
+    const r = dimPrims({ id: "a", t: "dim", view: "v", k, refs: [], pos: k === "h" ? [20, 15] : [15, 20], ...a } as never, { k, pts, value: 40 } as never, pl, ".");
+    return { ls: (r.prims.filter(q => q.t === "l") as { p: number[] }[]).map(q => q.p), tx: r.prims.filter(q => q.t === "t") as { x: number; y: number; rot?: number; s: string }[], box: r.box };
+  };
+  // Extension lines of a horizontal dimension are the vertical lines at x = 0 and x = 40.
+  const ext = (a: object) => mk("h", a).ls.filter(p => Math.abs(p[0] - p[2]) < 1e-9).map(p => p[0]).sort((x, y) => x - y);
+  assert.deepEqual(ext({}), [0, 40]);
+  assert.deepEqual(ext({ noExt: "a" }), [40]);
+  assert.deepEqual(ext({ noExt: "b" }), [0]);
+  assert.deepEqual(ext({ noExt: "both" }), []);
+  // A vertical dimension: the text is turned 90° beside the line; with `horiz` it is level and the line has a gap round it.
+  const v0 = mk("v", {}), v1 = mk("v", { horiz: true });
+  const dimLs = (r: typeof v0) => r.ls.filter(p => Math.abs(p[0] - 15) < 1e-9 && Math.abs(p[2] - 15) < 1e-9).map(p => [Math.min(p[1], p[3]), Math.max(p[1], p[3])]).sort((a, b) => a[0] - b[0]);
+  assert.equal(v0.tx[0].rot, 90);
+  assert.deepEqual(dimLs(v0), [[0, 40]]);
+  assert.equal(v1.tx[0].rot, undefined);
+  const g = dimLs(v1);
+  assert.equal(g.length, 2);
+  assert.ok(Math.abs(g[0][0]) < 1e-9 && Math.abs(g[1][1] - 40) < 1e-9 && g[0][1] < 20 && g[1][0] > 20 && Math.abs(g[0][1] + g[1][0] - 40) < 1e-9, "the gap is centred on the text");
+  assert.ok(v1.box[1] >= g[0][1] - 1e-9 && v1.box[3] <= g[1][0] + 1e-9 && v1.box[0] < 15 && v1.box[2] > 15, "the text box sits in the gap, across the line");
+  // A horizontal one too: the line stops either side of the text.
+  const h1 = mk("h", { horiz: true }).ls.filter(p => Math.abs(p[1] - 15) < 1e-9 && Math.abs(p[3] - 15) < 1e-9);
+  assert.equal(h1.length, 2);
+});
+
 test("a dimension can carry a second line of text under its line (FR-DRW-021)", async () => {
   const { dimPrims } = await import("../../src/drawing/annot");
   const lin = { id: "a", t: "dim" as const, view: "v", k: "h" as const, refs: [], pos: [20, 15] as [number, number] };

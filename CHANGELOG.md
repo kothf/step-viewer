@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.409.0] - 2026-11-10
+
+### Added
+- Drawings: a linear or arc length dimension can hide its first, second or both extension lines (**Extension lines** in the dimension's panel), for a dimension taken to an edge that already draws the line. **Horizontal text in the dimension line** keeps a linear dimension's text level and puts it in a gap of the dimension line, as ISO 129 method 2 and ASME drawings do (FR-DRW-021).
+
 ## [1.408.0] - 2026-11-10
 
 ### Added
@@ -2405,7 +2410,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.408.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.409.0...HEAD
+[1.409.0]: https://github.com/kothf/step-viewer/compare/v1.408.0...v1.409.0
 [1.408.0]: https://github.com/kothf/step-viewer/compare/v1.407.0...v1.408.0
 [1.407.0]: https://github.com/kothf/step-viewer/compare/v1.406.0...v1.407.0
 [1.406.0]: https://github.com/kothf/step-viewer/compare/v1.405.0...v1.406.0
