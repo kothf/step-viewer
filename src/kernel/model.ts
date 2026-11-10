@@ -10,8 +10,8 @@
 //
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import type { V2 } from "../model/types";
-import type { HealFeature, RecognizedHole, SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, ChamferFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
+import type { V2, SkEnt } from "../model/types";
+import type { HealFeature, RecognizedHole, RecognizedBlends, SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, ChamferFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { ctxFrame } from "../model/context";
 import { loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
@@ -3249,6 +3249,344 @@ export class Modeller {
       return { plane, pt: [dot(q, fr.x), dot(q, fr.y)], diameter: 2 * h.r, end: h.end, depth: h.depth, flat: h.flat };
     });
     return { faces, holes };
+  }
+
+  /**
+   * Feature recognition (FR-FT-102): fillets and chamfers on the body at the end of the document. A
+   * fillet is a cylinder face (straight edge) or a torus face (round edge) tangent to its neighbour
+   * across each of its two long edges; a chamfer is a narrow flat face leaning the same way against
+   * the two faces along its long edges. Corner patches (spheres) between fillets go with them. A find
+   * counts only when deleting the faces and making the fillets and chamfers again gives the same solid.
+   * A blend that runs over another one (a fillet round a filleted corner) is found first; the one under
+   * it comes in the next round, on the body without the first. The features come back in the order
+   * to add them: the Delete Faces of each round, then the blends from the last round to the first.
+   */
+  recognizeBlends(doc: PartDoc): Feature[] {
+    const rounds: RecognizedBlends[] = [];
+    const upto = doc.features.slice(0, doc.rollback ?? doc.features.length);
+    const id = () => `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
+    const at = (fs: Feature[]): PartDoc => ({ ...doc, rollback: null, features: [...upto, ...fs] });
+    const dels: Feature[] = [];
+    for (let k = 0; k < 8; k++) {
+      const r = this.blendRound(at(dels));
+      if (!r.faces.length) break;
+      rounds.push(r);
+      dels.push({ id: id(), type: "delface", name: "", faces: r.faces } as Feature);
+    }
+    if (rounds.length < 2) return rounds.length ? [dels[0], ...this.blendFeatures(rounds[0], id)] : [];
+    // The blends go back on from the last round to the first. A blend of an earlier round may end on a
+    // face a later round deleted and made again under another name: its edges are found again by place.
+    const start = this.evaluate(at([])).body;
+    if (!start) return [];
+    const v0 = this.volume(start.shape), tol = Math.max(1e-4, this.size(start.shape) * 1e-6) * 100;
+    const out = [...dels];
+    for (let k = rounds.length - 1; k >= 0; k--) {
+      const body = this.evaluate(at(out)).body;
+      if (!body) return [];
+      const es = this.sub(body.shape, "EDGE").map(e => ({ e, m: this.edgeMid(e) }));
+      const again = (r: EdgeRef, first?: V3): EdgeRef | null => {
+        let best: typeof es[0] | null = null, bd = tol;
+        for (const x of es) { const d = d3(x.m, r.hint!); if (d < bd) { bd = d; best = x; } }
+        const names = best ? this.edgeKey(body, best.e).split("|") : [];
+        if (names.length !== 2) return null;
+        // A two-distance chamfer measures its first distance on the first face: keep that face first.
+        if (first) {
+          const lean = (n: string) => { const i = body.names.indexOf(n); return i < 0 ? -2 : dot(this.normalNear(body.faces[i], best!.m), first); };
+          if (lean(names[1]) > lean(names[0])) names.reverse();
+        }
+        return { faces: [names[0], names[1]], hint: best!.m };
+      };
+      const r = rounds[k];
+      const fix = <T extends { edges: EdgeRef[]; first?: V3[] }>(g: T): T => ({ ...g, edges: g.edges.map((e, n) => again(e, g.first?.[n])).filter((x): x is EdgeRef => !!x) });
+      const fixed: RecognizedBlends = { faces: r.faces, fillets: r.fillets.map(fix), chamfers: r.chamfers.map(fix) };
+      if ([...fixed.fillets, ...fixed.chamfers].some((g, n) => g.edges.length !== [...r.fillets, ...r.chamfers][n].edges.length)) return [];
+      out.push(...this.blendFeatures(fixed, id));
+    }
+    const fin = this.evaluate(at(out));
+    if (!fin.body || fin.statuses.slice(-out.length).some(s => s.ok === false)) return [];
+    return Math.abs(this.volume(fin.body.shape) - v0) <= 1e-6 * Math.abs(v0) + 1e-9 ? out : [];
+  }
+
+  /**
+   * Feature recognition (FR-FT-102): prismatic pockets and bosses on the body at the end of the document.
+   * An inner loop of a flat face whose side faces all run square to it (flat faces and cylinders along the
+   * normal) is a cut when the sides go into the material, down to a flat floor (blind) or out through a
+   * face on the other side (through all), and a boss when they stand up to a flat top. The faces are
+   * removed with Delete Face and each loop comes back as a sketch on the face with an Extrude. Round
+   * pockets are left to Recognize Holes. A find counts only when the body comes back with the same volume.
+   */
+  recognizeExtrudes(doc: PartDoc): Feature[] {
+    const oc = this.oc;
+    const upto = doc.features.slice(0, doc.rollback ?? doc.features.length);
+    const at = (fs: Feature[]): PartDoc => ({ ...doc, rollback: null, features: [...upto, ...fs] });
+    const body = this.evaluate(at([])).body;
+    if (!body || this.solids(body.shape) < 1) return [];
+    const v0 = this.volume(body.shape);
+    const tol = Math.max(1e-4, this.size(body.shape) * 1e-6) * 10;
+    const S = oc.GeomAbs_SurfaceType, C = oc.GeomAbs_CurveType;
+    const emap = new oc.TopTools_IndexedMapOfShape_1();
+    oc.TopExp.MapShapes_1(body.shape, oc.TopAbs_ShapeEnum.TopAbs_EDGE, emap);
+    const users: number[][] = Array.from({ length: emap.Extent() + 1 }, () => []);
+    const edges = body.faces.map((f, i) => this.sub(f, "EDGE").map(e => { const k = emap.FindIndex(e); if (k > 0 && !users[k].includes(i)) users[k].push(i); return { e, k }; }));
+    const across = (i: number, k: number) => users[k]?.find(j => j !== i) ?? -1;
+    const neighbours = (i: number) => [...new Set(edges[i].map(x => across(i, x.k)).filter(j => j >= 0))];
+    type Kind = { pln?: V3; cyl?: { o: V3; d: V3; r: number } };
+    const kinds: Kind[] = body.faces.map(face => {
+      const ad = new oc.BRepAdaptor_Surface_2(face, true), ty = ad.GetType();
+      if (ty === S.GeomAbs_Plane) return { pln: this.faceNormalAt(face) };
+      if (ty === S.GeomAbs_Cylinder) { const ax = ad.Cylinder().Axis(); return { cyl: { o: this.xyz(ax.Location()), d: unit(this.xyz(ax.Direction())), r: ad.Cylinder().Radius() } }; }
+      return {};
+    });
+    const ends = (e: any): { a: V3; b: V3; m: V3; ca: any } => {
+      const ca = new oc.BRepAdaptor_Curve_2(e), t0 = ca.FirstParameter(), t1 = ca.LastParameter();
+      return { a: this.xyz(ca.Value(t0)), b: this.xyz(ca.Value(t1)), m: this.xyz(ca.Value((t0 + t1) / 2)), ca };
+    };
+    type Seg = { line: [V3, V3] } | { circle: { c: V3; r: number } } | { arc: { c: V3; a: V3; b: V3; m: V3 } };
+    type Cand = { face: number; op: "boss" | "cut"; end: "blind" | "through"; depth: number; del: number[]; segs: Seg[]; key: string };
+    const cands: Cand[] = [];
+    body.faces.forEach((face, i) => {
+      const n = kinds[i].pln;
+      if (!n) return;
+      const wmap = new oc.TopTools_IndexedMapOfShape_1();
+      oc.TopExp.MapShapes_1(face, oc.TopAbs_ShapeEnum.TopAbs_WIRE, wmap);
+      if (wmap.Extent() < 2) return;
+      const outer = oc.BRepTools.OuterWire(face);
+      for (let w = 1; w <= wmap.Extent(); w++) {
+        const wire = wmap.FindKey(w);
+        if (wire.IsSame(outer)) continue;
+        const segs: Seg[] = [], walls: number[] = [];
+        let ok = true, P: V3 | null = null;
+        for (const e of this.sub(wire, "EDGE")) {
+          const j = across(i, emap.FindIndex(e));
+          const k = j >= 0 ? kinds[j] : {};
+          if (!(k.pln && Math.abs(dot(k.pln, n)) < 1e-6) && !(k.cyl && Math.abs(Math.abs(dot(k.cyl.d, n)) - 1) < 1e-6)) { ok = false; break; }
+          const x = ends(e), ct = x.ca.GetType();
+          P ??= x.a;
+          if (ct === C.GeomAbs_Line) segs.push({ line: [x.a, x.b] });
+          else if (ct === C.GeomAbs_Circle) {
+            const c = this.xyz(x.ca.Circle().Location()), r = x.ca.Circle().Radius();
+            if (Math.abs(Math.abs(x.ca.LastParameter() - x.ca.FirstParameter()) - 2 * Math.PI) < 1e-9) segs.push({ circle: { c, r } });
+            else segs.push({ arc: { c, a: x.a, b: x.b, m: x.m } });
+          } else { ok = false; break; }
+          if (!walls.includes(j)) walls.push(j);
+        }
+        if (!ok || !P || !walls.length) continue;
+        // How far the side faces run from the face, and which way.
+        let lo = 0, hi = 0;
+        for (const j of walls) for (const { e } of edges[j]) { const x = ends(e); for (const p of [x.a, x.b, x.m]) { const h = dot(sub3(p, P), n); lo = Math.min(lo, h); hi = Math.max(hi, h); } }
+        if ((lo < -tol) === (hi > tol)) continue;
+        const up = hi > tol, depth = up ? hi : -lo;
+        const reach = (j: number) => { let m = 0; for (const { e } of edges[j]) { const x = ends(e); for (const p of [x.a, x.b]) m = Math.max(m, Math.abs(dot(sub3(p, P!), n))); } return m; };
+        if (walls.some(j => Math.abs(reach(j) - depth) > tol)) continue;
+        const far = [...new Set(walls.flatMap(neighbours))].filter(j => j !== i && !walls.includes(j));
+        if (!far.length) continue;
+        const enclosed = far.every(j => kinds[j].pln && dot(kinds[j].pln!, n) > 1 - 1e-6 && neighbours(j).every(q => walls.includes(q)));
+        let cand: Cand | null = null;
+        const key = [...walls].sort((a, b) => a - b).join(",");
+        if (enclosed) cand = { face: i, op: up ? "boss" : "cut", end: "blind", depth, del: [...walls, ...far], segs, key };
+        else if (!up && far.length === 1 && kinds[far[0]].pln && dot(kinds[far[0]].pln!, n) < -1 + 1e-6) cand = { face: i, op: "cut", end: "through", depth, del: walls, segs, key };
+        if (!cand) continue;
+        // A round pocket is a hole: Recognize Holes makes it a Hole feature.
+        const c0 = kinds[walls[0]].cyl;
+        if (cand.op === "cut" && c0 && walls.every(j => { const c = kinds[j].cyl; return !!c && Math.abs(c.r - c0.r) < tol && Math.hypot(...cross(sub3(c.o, c0.o), c0.d)) < tol; })) continue;
+        if (!cands.some(c => c.key === key)) cands.push(cand);
+      }
+    });
+    // A face two finds would delete, or one a find stands on, goes to one of them only.
+    const picked: Cand[] = [];
+    for (const c of cands) if (!picked.some(p => p.del.some(j => c.del.includes(j) || j === c.face) || c.del.includes(p.face))) picked.push(c);
+    if (!picked.length) return [];
+    const id = () => `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
+    const ref = (i: number): FaceRef => ({ name: body.names[i], hint: this.centroid(body.faces[i]) });
+    const attempt = (cs: Cand[]): Feature[] | null => {
+      try {
+        const del: Feature = { id: id(), type: "delface", name: "", faces: cs.flatMap(c => c.del).map(ref) } as Feature;
+        const after = this.evaluate(at([del]));
+        if (after.statuses.at(-1)?.ok === false || !after.body) return null;
+        const feats: Feature[] = [del];
+        for (const c of cs) {
+          const plane: PlaneRef = { face: { name: body.names[c.face], hint: this.centroid(this.resolveFace(after.body, { name: body.names[c.face], hint: this.centroid(body.faces[c.face]) })) } };
+          const fr = this.planeFrame(plane, after.body, after.frames);
+          const sid = id(), ents: SkEnt[] = [], pts = new Map<string, string>();
+          const pt = (p: V3): string => {
+            const q = sub3(p, fr.o), x = dot(q, fr.x), y = dot(q, fr.y), k = `${x.toFixed(5)},${y.toFixed(5)}`;
+            let pid = pts.get(k);
+            if (!pid) { pid = `${sid}p${pts.size + 1}`; pts.set(k, pid); ents.push({ id: pid, t: "point", x, y }); }
+            return pid;
+          };
+          c.segs.forEach((sg, k) => {
+            const eid = `${sid}e${k + 1}`;
+            if ("line" in sg) ents.push({ id: eid, t: "line", a: pt(sg.line[0]), b: pt(sg.line[1]) });
+            else if ("circle" in sg) ents.push({ id: eid, t: "circle", c: pt(sg.circle.c), r: sg.circle.r });
+            else {
+              const { c: cc, a, b, m } = sg.arc;
+              const ccw = dot(cross(sub3(a, cc), sub3(m, cc)), fr.n) > 0;
+              ents.push({ id: eid, t: "arc", c: pt(cc), a: pt(ccw ? a : b), b: pt(ccw ? b : a) });
+            }
+          });
+          feats.push({ id: sid, type: "sketch", name: "", plane, ents, rels: [], dims: [] } as Feature,
+            { id: id(), type: "extrude", name: "", sketch: sid, op: c.op, end: c.end, depth: { v: c.depth } } as Feature);
+        }
+        const fin = this.evaluate(at(feats));
+        if (!fin.body || fin.statuses.slice(-feats.length).some(s => s.ok === false)) return null;
+        return Math.abs(this.volume(fin.body.shape) - v0) <= 1e-6 * Math.abs(v0) + 1e-9 ? feats : null;
+      } catch { return null; }
+    };
+    const whole = attempt(picked);
+    if (whole || picked.length === 1) return whole ?? [];
+    // Not all of them: the ones that come back the same on their own are added one at a time.
+    let got: Cand[] = [], out: Feature[] = [];
+    for (const c of picked.slice(0, 40)) { const r = attempt([...got, c]); if (r) { got = [...got, c]; out = r; } }
+    return out;
+  }
+
+  private blendFeatures(r: RecognizedBlends, id: () => string): Feature[] {
+    return [
+      ...r.chamfers.map(g => ({ id: id(), type: "chamfer", name: "", distance: { v: g.distance }, ...(g.distance2 ? { mode: "two", distance2: { v: g.distance2 } } : {}), edges: g.edges }) as Feature),
+      ...r.fillets.map(g => ({ id: id(), type: "fillet", name: "", radius: { v: g.radius }, edges: g.edges }) as Feature)];
+  }
+
+  private blendRound(doc: PartDoc): RecognizedBlends {
+    const oc = this.oc;
+    const none: RecognizedBlends = { faces: [], fillets: [], chamfers: [] };
+    const body = this.evaluate(doc).body;
+    if (!body || this.solids(body.shape) < 1) return none;
+    const v0 = this.volume(body.shape);
+    const tol = Math.max(1e-4, this.size(body.shape) * 1e-6);
+    const emap = new oc.TopTools_IndexedMapOfShape_1();
+    oc.TopExp.MapShapes_1(body.shape, oc.TopAbs_ShapeEnum.TopAbs_EDGE, emap);
+    const users: number[][] = Array.from({ length: emap.Extent() + 1 }, () => []);
+    const edges = body.faces.map((f, i) => this.sub(f, "EDGE").map(e => { const k = emap.FindIndex(e); if (k > 0) users[k].push(i); return { e, k }; }));
+    const across = (i: number, k: number) => users[k]?.find(j => j !== i) ?? -1;
+    const area = (x: any) => { const g = new oc.GProp_GProps_1(); oc.BRepGProp.SurfaceProperties_1(x, g, false, false); return Math.abs(g.Mass()); };
+    type Cand = { i: number; kind: "fillet" | "chamfer"; r: number; r2?: number; first?: V3; sides: [number, number]; mid: V3 };
+    const cands: Cand[] = [], spheres: number[] = [];
+    const S = oc.GeomAbs_SurfaceType, C = oc.GeomAbs_CurveType;
+    body.faces.forEach((face, i) => {
+      const ad = new oc.BRepAdaptor_Surface_2(face, true);
+      const ty = ad.GetType();
+      if (ty === S.GeomAbs_Sphere) { spheres.push(i); return; }
+      const cyl = ty === S.GeomAbs_Cylinder, tor = ty === S.GeomAbs_Torus, pln = ty === S.GeomAbs_Plane, cone = ty === S.GeomAbs_Cone;
+      if (!cyl && !tor && !pln && !cone) return;
+      const axis = cyl ? unit(this.xyz(ad.Cylinder().Axis().Direction())) : tor ? unit(this.xyz(ad.Torus().Axis().Direction())) : cone ? unit(this.xyz(ad.Cone().Axis().Direction())) : null;
+      // The long edges: straight along the axis (cylinder), circles about the axis (torus), straight (flat).
+      const sides: { j: number; m: V3; d: V3; nj: V3; ni: V3; r?: number; z?: number }[] = [];
+      for (const { e, k } of edges[i]) {
+        const j = across(i, k);
+        if (j < 0) continue;
+        const ca = new oc.BRepAdaptor_Curve_2(e), ct = ca.GetType();
+        let d: V3, r: number | undefined, z: number | undefined;
+        if (tor || cone) {
+          if (ct !== C.GeomAbs_Circle) continue;
+          d = unit(this.xyz(ca.Circle().Axis().Direction()));
+          if (Math.abs(Math.abs(dot(d, axis!)) - 1) > 1e-6) continue;
+          r = ca.Circle().Radius();
+          z = dot(this.xyz(ca.Circle().Location()), axis!);
+        } else {
+          if (ct !== C.GeomAbs_Line) continue;
+          d = unit(this.xyz(ca.Line().Direction()));
+          if (cyl && Math.abs(Math.abs(dot(d, axis!)) - 1) > 1e-6) continue;
+        }
+        const m = this.xyz(ca.Value((ca.FirstParameter() + ca.LastParameter()) / 2));
+        sides.push({ j, m, d, nj: this.normalNear(body.faces[j], m), ni: this.normalNear(face, m), r, z });
+      }
+      if (cone) {
+        // A chamfer on a round edge: a cone leaning equally on the faces across its two circles (several arcs of one circle count once).
+        const rings: typeof sides = [];
+        for (const sd of sides) if (!rings.some(q => q.j === sd.j && Math.abs(q.r! - sd.r!) < tol && Math.abs(q.z! - sd.z!) < tol)) rings.push(sd);
+        if (rings.length !== 2 || rings[0].j === rings[1].j) return;
+        const [A, B] = rings, ca = dot(A.ni, A.nj), cb = dot(B.ni, B.nj);
+        if (Math.abs(ca - cb) > 1e-6 || ca < 0.05 || ca > 0.999) return;
+        const dist = Math.hypot(A.r! - B.r!, A.z! - B.z!) / (2 * ca);
+        if (!(dist > tol)) return;
+        cands.push({ i, kind: "chamfer", r: dist, sides: [A.j, B.j], mid: this.centroid(face) });
+        return;
+      }
+      if (!pln) {
+        const tang = sides.filter(s => dot(s.ni, s.nj) > 1 - 1e-5);
+        if (tang.length !== 2 || tang[0].j === tang[1].j) return;
+        const span = tor ? Math.abs(ad.LastVParameter() - ad.FirstVParameter()) : Math.abs(ad.LastUParameter() - ad.FirstUParameter());
+        if (span > Math.PI - 1e-3) return;
+        cands.push({ i, kind: "fillet", r: cyl ? ad.Cylinder().Radius() : ad.Torus().MinorRadius(), sides: [tang[0].j, tang[1].j], mid: this.centroid(face) });
+        return;
+      }
+      // A chamfer leans against both neighbours along parallel edges and is the smallest face of the three.
+      const pairs: [typeof sides[0], typeof sides[0]][] = [];
+      for (let a = 0; a < sides.length; a++) for (let b = a + 1; b < sides.length; b++) {
+        const A = sides[a], B = sides[b];
+        if (A.j === B.j || Math.abs(Math.abs(dot(A.d, B.d)) - 1) > 1e-6) continue;
+        const ca = dot(A.ni, A.nj), cb = dot(B.ni, B.nj);
+        if (ca < 0.05 || ca > 0.999 || cb < 0.05 || cb > 0.999) continue;
+        pairs.push([A, B]);
+      }
+      if (pairs.length !== 1) return;
+      const [A, B] = pairs[0];
+      const a0 = area(face);
+      if (a0 > 0.9 * Math.min(area(body.faces[A.j]), area(body.faces[B.j]))) return;
+      const q = sub3(B.m, A.m), w = Math.hypot(...sub3(q, mul(A.d, dot(q, A.d))));
+      // In the section square to the edge the chamfer, of width w, closes a triangle with the two faces: it turns
+      // by a from the first face and by b from the second, so the distances along them are w·sin b and w·sin a over sin(a + b).
+      const a = Math.acos(dot(A.ni, A.nj)), b = Math.acos(dot(B.ni, B.nj));
+      if (a + b > Math.PI - 0.05) return;
+      const d1 = w * Math.sin(b) / Math.sin(a + b), d2 = w * Math.sin(a) / Math.sin(a + b);
+      if (!(d1 > tol) || !(d2 > tol)) return;
+      if (Math.abs(d1 - d2) <= 1e-6 * Math.max(d1, d2)) cands.push({ i, kind: "chamfer", r: d1, sides: [A.j, B.j], mid: this.centroid(face) });
+      else cands.push({ i, kind: "chamfer", r: d1, r2: d2, first: A.nj, sides: [A.j, B.j], mid: this.centroid(face) });
+    });
+    // A blend another blend ends on waits for the next round.
+    const under = new Set(cands.flatMap(c => c.sides));
+    for (let k = cands.length - 1; k >= 0; k--) if (under.has(cands[k].i)) cands.splice(k, 1);
+    if (!cands.length) return none;
+    // Corner patches: spheres with fillets on every side.
+    const isFillet = new Set(cands.filter(c => c.kind === "fillet").map(c => c.i));
+    const corners = spheres.filter(i => { const ns = edges[i].map(x => across(i, x.k)).filter(j => j >= 0); return ns.length > 0 && ns.every(j => isFillet.has(j)); });
+    // Groups of blends that touch each other are tried together.
+    const all = [...cands.map(c => c.i), ...corners];
+    const parent = new Map(all.map(i => [i, i]));
+    const root = (i: number): number => { let p = parent.get(i)!; while (p !== parent.get(p)!) p = parent.get(p)!; parent.set(i, p); return p; };
+    for (const i of all) for (const { k } of edges[i]) { const j = across(i, k); if (j >= 0 && parent.has(j)) parent.set(root(i), root(j)); }
+    const upto = doc.features.slice(0, doc.rollback ?? doc.features.length);
+    const ref = (i: number): FaceRef => ({ name: body.names[i], hint: this.centroid(body.faces[i]) });
+    const attempt = (cs: Cand[], extra: number[]): RecognizedBlends | null => {
+      const faces = [...cs.map(c => c.i), ...extra].map(ref);
+      const del: Feature = { id: "__rb", type: "delface", name: "", faces };
+      try {
+        const after = this.evaluate({ ...doc, rollback: null, features: [...upto, del] });
+        if (after.statuses.at(-1)?.ok === false || !after.body) return null;
+        const fil = new Map<string, { radius: number; edges: EdgeRef[] }>(), ch = new Map<string, RecognizedBlends["chamfers"][0]>();
+        for (const c of cs) {
+          const pair: [string, string] = [body.names[c.sides[0]], body.names[c.sides[1]]];
+          const er: EdgeRef = { faces: pair, hint: this.edgeMid(this.resolveEdge(after.body, { faces: pair, hint: c.mid })) };
+          const key = c.r.toFixed(5) + (c.r2 ? `|${c.r2.toFixed(5)}` : "");
+          if (c.kind === "fillet") { const g = fil.get(key); if (g) g.edges.push(er); else fil.set(key, { radius: c.r, edges: [er] }); }
+          else {
+            let g = ch.get(key);
+            if (!g) ch.set(key, g = c.r2 ? { distance: c.r, distance2: c.r2, edges: [], first: [] } : { distance: c.r, edges: [] });
+            g.edges.push(er);
+            if (c.first) g.first!.push(c.first);
+          }
+        }
+        const out: RecognizedBlends = { faces, fillets: [...fil.values()], chamfers: [...ch.values()] };
+        const feats: Feature[] = [
+          ...out.chamfers.map((g, k) => ({ id: `__rc${k}`, type: "chamfer", name: "", distance: { v: g.distance }, ...(g.distance2 ? { mode: "two", distance2: { v: g.distance2 } } : {}), edges: g.edges }) as Feature),
+          ...out.fillets.map((g, k) => ({ id: `__rf${k}`, type: "fillet", name: "", radius: { v: g.radius }, edges: g.edges }) as Feature)];
+        const fin = this.evaluate({ ...doc, rollback: null, features: [...upto, del, ...feats] });
+        if (!fin.body || fin.statuses.slice(-feats.length).some(s => s.ok === false)) return null;
+        return Math.abs(this.volume(fin.body.shape) - v0) <= 1e-6 * Math.abs(v0) + 1e-9 ? out : null;
+      } catch { return null; }
+    };
+    const whole = attempt(cands, corners);
+    if (whole) return whole;
+    // Not all of them: keep the groups that come back the same on their own, then try those together.
+    const groups = new Map<number, { cs: Cand[]; extra: number[] }>();
+    const groupOf = (i: number) => { const r = root(i); let g = groups.get(r); if (!g) groups.set(r, g = { cs: [], extra: [] }); return g; };
+    for (const c of cands) groupOf(c.i).cs.push(c);
+    for (const i of corners) groupOf(i).extra.push(i);
+    const good: { g: { cs: Cand[]; extra: number[] }; out: RecognizedBlends }[] = [];
+    for (const g of [...groups.values()].slice(0, 60)) { const out = g.cs.length ? attempt(g.cs, g.extra) : null; if (out) good.push({ g, out }); }
+    if (!good.length) return none;
+    if (good.length === 1) return good[0].out;
+    return attempt(good.flatMap(x => x.g.cs), good.flatMap(x => x.g.extra)) ?? good.sort((a, b) => b.out.faces.length - a.out.faces.length)[0].out;
   }
 
   brepText(body: Named): { brep: string; solids: number; faces: number } {

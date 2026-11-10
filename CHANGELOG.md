@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.385.0] - 2026-11-10
+## [1.403.0] - 2026-11-10
 
 ### Added
 
@@ -14,6 +14,107 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Changed
 
 - Mate: two flat faces that cannot be made Coincident either way round, but can be Parallel (side faces of a part its other mates already hold), start as Parallel instead of showing "over-defined".
+
+## [1.402.0] - 2026-11-10
+
+### Added
+
+- **Recognize Extrudes (FR-FT-102)**: a new command in the Direct flyout, beside Recognize Holes and Recognize Fillets. Pockets and bosses with straight walls on a flat face (blind pockets with a flat floor, cuts through the body, bosses with a flat top; lines and arcs in the outline) are removed with Delete Face and made again as a sketch on that face with an Extruded Cut or Boss, so the outline and the depth of an imported body can be edited. Round pockets stay with Recognize Holes. Only finds that rebuild to the same solid are kept.
+
+## [1.401.0] - 2026-11-10
+
+### Added
+- Rip (FR-FT-120): cut a narrow gap along straight edges where two flat walls of a thin-walled solid meet, so Insert Bends can unfold the walls apart. Rip both directions (the gap on the corner's bisector, also on outside edges) or along one wall only, so the other wall keeps the corner (inside corner edges), with a gap of your choice (0.1 mm by default). It works on any solid, before or after the sheet metal base.
+
+## [1.400.0] - 2026-11-10
+
+### Fixed
+- Releases were cancelled when main CI had no result for the commit: the Release workflow then ran the whole smoke test in one job, which no longer fits in its 20 minutes. It now runs the smoke test in the same 6 parallel shards as CI, waits only for a CI run that has really started, and publishes in a separate job.
+
+## [1.399.0] - 2026-11-10
+
+### Changed
+
+- **Four plastics checked (FR-MAT-001)**: PLA, PETG, PEI (Ultem 1000) and PE-HD now show **Checked against:** with a link to a maker's or stockist's data sheet. 133 of 170 materials are checked; the other 37 still say they are not. Values changed to match the sheets: PEI modulus 3.2 → 3.6 GPa and strength 105 → 110 MPa, PE-HD modulus 1.0 → 1.1 GPa.
+
+## [1.398.0] - 2026-11-10
+
+### Added
+
+- **Recognize Fillets finds more chamfers (FR-FT-102)**: chamfers on round edges, such as the broken edge of a shaft end or a boss, and chamfers with two different distances now come back as Chamfer features too, with their distances, so they can be changed or deleted on an imported body.
+
+## [1.397.0] - 2026-11-10
+
+### Added
+- Text below a dimension (FR-DRW-021): **Text below** in a drawing dimension's panel adds a second line under the dimension line, centred under the value (2 PLACES, for instance).
+
+## [1.396.0] - 2026-11-10
+
+### Added
+
+- **Fillet beads along curved edges (FR-FT-121)**: a Fillet Bead now follows any edge where its two face sets meet, not only straight and round ones: the ellipse where a round tube stands tilted on a plate, the saddle where a tube meets another tube, and edges between curved faces such as cones. The bead's cross-section follows the changing angle between the faces along the edge; a closed run (all round a tube) becomes one ring-shaped bead, and From/to length and intermittent welds work along these edges too. Edges where the faces become tangent are still skipped, with a warning.
+
+## [1.395.0] - 2026-11-10
+
+### Changed
+
+- CI: on main the run in progress finishes and only the newest commit pushed meanwhile waits for a run, so main CI no longer queues behind every merge. A newer push to a PR still cancels its older run.
+
+## [1.394.0] - 2026-11-10
+
+### Added
+
+- **Touch gestures (FR-UI-091)**: on a tablet, holding a finger still for about half a second opens the menu a right-click opens: on a Features tree row, an assembly component, a selection breadcrumb, the rollback bar or a motion study lane. Held on a face it shows the context toolbar, and while a command runs it gives OK and Cancel, the fillet edge helpers or the sketch menu. One finger turns the view and two fingers pan and zoom it, as before; a finger that moves never opens a menu.
+
+## [1.393.0] - 2026-11-10
+
+### Added
+
+- **Weldment defaults (FR-FT-121)**: a new Structural Member starts with the profile, size, corner treatment, weld gap and butt end used last, as in SolidWorks; a new End Cap with the last thickness, inset, direction and corner; a new Gusset with the last leg lengths, thickness, profile, chamfers and location; a new Fillet Bead with the last leg sizes. They are remembered in this browser; picks, paths, positions and descriptions always start empty, and a custom sketch profile is never carried to another part.
+
+## [1.392.0] - 2026-11-10
+
+### Added
+- Note borders in drawings (FR-DRW-023): **Border** in the note panel frames the text with a rectangle, a rounded frame or a circle, and the leader starts on the frame.
+
+## [1.391.0] - 2026-11-10
+
+### Added
+- Tab and Slot (FR-FT-120): tabs grow out of a straight edge of a sheet face, in its plane, through the face they meet (on another body or the sheet itself), which gets matching slots with a clearance all round. Set the tab length and height, the number of tabs with an edge offset or a fixed spacing, and optionally round the slot corners. The tabs are part of the flat pattern, and slots cut in the sheet show in it like any cut.
+
+## [1.390.0] - 2026-11-10
+
+### Added
+
+- **Recognize Fillets (FR-FT-102)**: the new command beside Recognize Holes finds the fillets and chamfers of a body, an imported one above all, removes them with Delete Face and makes them again as Fillet and Chamfer features, one per size. After that you can change a radius, or delete the fillet, on a STEP part. It finds fillets on straight and round edges with their corner patches, and equal-distance chamfers on straight edges. A fillet that runs round other fillets is taken off first and put back last. Only finds that rebuild to exactly the same solid are kept.
+
+## [1.389.0] - 2026-11-10
+
+### Changed
+- Hole callouts in drawings follow the drafting style (FR-DRW-022): their sizes take the drawing's default decimals and, with dual dimensions on, show inches in brackets, as in `Ø5.0 [0.20] ↧12.0 [0.47]`. Angles and thread sizes stay as they are.
+
+## [1.388.0] - 2026-11-10
+
+### Added
+
+- **Cutting plan in the cut list (FR-FT-121)**: with a stock bar length typed, **Cutting plan** under the weldment cut list's Stock lengths table lists the pieces to cut from each bar and what is left of it, equal bars put together. The CSV export ends with the same plan.
+
+## [1.387.0] - 2026-11-10
+
+### Added
+
+- **Selection box colours in more panels (FR-SEL-011)**: Extrude's Start at, Up to and Body boxes, Revolve's Up to, the Hole Wizard's Face and Up to, Mirror's Plane, the faces to mirror or pattern and Split's plane now have their own colours too. The picked face is drawn in its box's colour with a small tag naming the box, so you see which pick went where.
+
+## [1.386.0] - 2026-11-10
+
+### Added
+- Dimension arrows by hand in drawings (FR-DRW-021): a linear dimension's **Arrows** can be set to **Inside** or **Outside** the extension lines, instead of following the room there is.
+
+## [1.385.0] - 2026-11-10
+
+### Changed
+
+- **More material values checked (FR-MAT-001)**: ten more library materials now show **Checked against:** with a link (tool steels X153CrMoV12, X40CrMoV5-1 and 90MnCrV8, high speed steel HS6-5-2, bearing steel 100Cr6, stainless 1.4125, titanium Grade 4 and Ti-6Al-4V, ASTM A500 Grade B, C22). 129 of 170 materials are checked; the other 41 still say they are not. One value changed: HS6-5-2 density 8.10 → 8.12 g/cm³.
 
 ## [1.384.0] - 2026-11-10
 
@@ -2272,7 +2373,25 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.385.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.403.0...HEAD
+[1.403.0]: https://github.com/kothf/step-viewer/compare/v1.402.0...v1.403.0
+[1.402.0]: https://github.com/kothf/step-viewer/compare/v1.401.0...v1.402.0
+[1.401.0]: https://github.com/kothf/step-viewer/compare/v1.400.0...v1.401.0
+[1.400.0]: https://github.com/kothf/step-viewer/compare/v1.399.0...v1.400.0
+[1.399.0]: https://github.com/kothf/step-viewer/compare/v1.398.0...v1.399.0
+[1.398.0]: https://github.com/kothf/step-viewer/compare/v1.397.0...v1.398.0
+[1.397.0]: https://github.com/kothf/step-viewer/compare/v1.396.0...v1.397.0
+[1.396.0]: https://github.com/kothf/step-viewer/compare/v1.395.0...v1.396.0
+[1.395.0]: https://github.com/kothf/step-viewer/compare/v1.394.0...v1.395.0
+[1.394.0]: https://github.com/kothf/step-viewer/compare/v1.393.0...v1.394.0
+[1.393.0]: https://github.com/kothf/step-viewer/compare/v1.392.0...v1.393.0
+[1.392.0]: https://github.com/kothf/step-viewer/compare/v1.391.0...v1.392.0
+[1.391.0]: https://github.com/kothf/step-viewer/compare/v1.390.0...v1.391.0
+[1.390.0]: https://github.com/kothf/step-viewer/compare/v1.389.0...v1.390.0
+[1.389.0]: https://github.com/kothf/step-viewer/compare/v1.388.0...v1.389.0
+[1.388.0]: https://github.com/kothf/step-viewer/compare/v1.387.0...v1.388.0
+[1.387.0]: https://github.com/kothf/step-viewer/compare/v1.386.0...v1.387.0
+[1.386.0]: https://github.com/kothf/step-viewer/compare/v1.385.0...v1.386.0
 [1.385.0]: https://github.com/kothf/step-viewer/compare/v1.384.0...v1.385.0
 [1.384.0]: https://github.com/kothf/step-viewer/compare/v1.383.0...v1.384.0
 [1.383.0]: https://github.com/kothf/step-viewer/compare/v1.382.0...v1.383.0

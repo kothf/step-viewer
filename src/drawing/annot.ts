@@ -237,7 +237,9 @@ export function dimText(a: DimAnnot, g: DimGeo, dec: string): { main: string; up
 
 /** Hole callout lines (ISO style) for a round edge: from the hole feature at that place, else from the cylinder. */
 export function holeText(e: MEdge, ctx: AnnotCtx, count = true): string[] {
-  const f = (v: number) => fmtNum(v, undefined, ctx.dec);
+  // Sizes follow the drawing's default decimals and dual dimensions (inches in brackets); angles and thread sizes do not.
+  const fa = (v: number) => fmtNum(v, undefined, ctx.dec);
+  const f = (v: number) => fmtNum(v, PREC_LIN, ctx.dec) + (DUAL ? ` [${fmtNum(v / 25.4, DUAL_PREC, ctx.dec)}]` : "");
   const c = e.c, ax = e.ax, r = e.r ?? 0;
   if (c && ax) {
     for (const h of ctx.holes) {
@@ -252,16 +254,16 @@ export function holeText(e: MEdge, ctx: AnnotCtx, count = true): string[] {
         lines.push(`${H.size}-6H${H.threadDepth ? ` ↧${f(H.threadDepth.v)}` : H.end === "through" ? ` ${ctx.label("THRU")}` : ""}`);
       } else lines.push(`${n}Ø${f(H.diameter.v)}${depth}`);
       if (H.kind === "cbore" && H.cbDia) lines.push(`⌴Ø${f(H.cbDia.v)}${H.cbDepth ? ` ↧${f(H.cbDepth.v)}` : ""}`);
-      if (H.kind === "cdrill" && H.cdDia) lines.push(`⌴Ø${f(H.cdDia.v)}${H.cdDepth ? ` ↧${f(H.cdDepth.v)}` : ""} × ${f((H.cdAngle?.v ?? (118 * Math.PI) / 180) * 180 / Math.PI)}°`);
-      if (H.kind === "csink" && H.csDia) lines.push(`⌵Ø${f(H.csDia.v)} × ${f((H.csAngle?.v ?? Math.PI / 2) * 180 / Math.PI)}°`);
+      if (H.kind === "cdrill" && H.cdDia) lines.push(`⌴Ø${f(H.cdDia.v)}${H.cdDepth ? ` ↧${f(H.cdDepth.v)}` : ""} × ${fa((H.cdAngle?.v ?? (118 * Math.PI) / 180) * 180 / Math.PI)}°`);
+      if (H.kind === "csink" && H.csDia) lines.push(`⌵Ø${f(H.csDia.v)} × ${fa((H.csAngle?.v ?? Math.PI / 2) * 180 / Math.PI)}°`);
       return lines;
     }
   }
   // No hole feature: read the hole from the geometry (count, counterbore, countersink, depth or THRU).
-  const st = c && ax && r ? stackAt(c, ax, r, ctx.topo) : null, g = st && geoHole(st, f, ctx.threads);
+  const st = c && ax && r ? stackAt(c, ax, r, ctx.topo) : null, g = st && geoHole(st, f, ctx.threads, fa);
   if (g) {
     const words = (h: GeoHole) => h.lines.map(s => s.replace(/ THRU$/, ` ${ctx.label("THRU")}`));
-    const n = count ? ctx.topo!.holes!.filter(h => { const o = geoHole(h, f, ctx.threads); return !!o && o.key === g.key && (g.free ? Math.abs(Math.abs(dot3(o.dir, g.dir)) - 1) < 1e-6 : dot3(o.dir, g.dir) > 1 - 1e-6); }).length : 1;
+    const n = count ? ctx.topo!.holes!.filter(h => { const o = geoHole(h, f, ctx.threads, fa); return !!o && o.key === g.key && (g.free ? Math.abs(Math.abs(dot3(o.dir, g.dir)) - 1) < 1e-6 : dot3(o.dir, g.dir) > 1 - 1e-6); }).length : 1;
     const lines = words(g);
     if (n > 1) lines[0] = `${n}× ${lines[0]}`;
     return lines;
@@ -295,7 +297,7 @@ export function stackAt(c: V3, ax: V3, r: number, topo: Topo | null): MHole | nu
  * the entry face or THRU, then ⌴ counterbore Ø and depth or ⌵ countersink Ø × angle. The entry is the open end (for a
  * through hole, the wider one). Null when the hole has no cylinder to call the drill or no open end.
  */
-export function geoHole(h: MHole, f: (v: number) => string = v => fmtNum(v, undefined), threads: ThreadInfo[] = []): GeoHole | null {
+export function geoHole(h: MHole, f: (v: number) => string = v => fmtNum(v, undefined), threads: ThreadInfo[] = [], fa: (v: number) => string = f): GeoHole | null {
   const [o0, o1] = h.open;
   if (!o0 && !o1) return null;
   const s = h.segs, first = s[0], last = s[s.length - 1];
@@ -306,7 +308,7 @@ export function geoHole(h: MHole, f: (v: number) => string = v => fmtNum(v, unde
     : { k: g.k, a: e0 - g.v1, b: e0 - g.v0, ra: g.r1, rb: g.r0 });
   let i = 0, extra = "";
   if (W[0].k === "cone" && W[0].ra > W[0].rb + 1e-6 && W[1]?.k === "cyl") {
-    extra = `⌵Ø${f(2 * W[0].ra)} × ${f(Math.round(2 * Math.atan((W[0].ra - W[0].rb) / (W[0].b - W[0].a)) * 180 / Math.PI * 100) / 100)}°`;
+    extra = `⌵Ø${f(2 * W[0].ra)} × ${fa(Math.round(2 * Math.atan((W[0].ra - W[0].rb) / (W[0].b - W[0].a)) * 180 / Math.PI * 100) / 100)}°`;
     i = 1;
   } else if (W[0].k === "cyl" && W[1]?.k === "cyl" && W[1].ra < W[0].ra - 1e-6) {
     extra = `⌴Ø${f(2 * W[0].ra)} ↧${f(W[0].b - W[0].a)}`;
@@ -322,7 +324,7 @@ export function geoHole(h: MHole, f: (v: number) => string = v => fmtNum(v, unde
     const w = sub3(t.c, h.o), v = dot3(w, h.ax);
     return Math.hypot(w[0] - h.ax[0] * v, w[1] - h.ax[1] * v, w[2] - h.ax[2] * v) < 1e-3;
   });
-  if (th) lines.push(`${th.size ?? `M${f(th.d)}`}-6H ${th.L == null ? (thru ? "THRU" : `↧${f(d.b)}`) : `↧${f(th.L)}`}`);
+  if (th) lines.push(`${th.size ?? `M${fa(th.d)}`}-6H ${th.L == null ? (thru ? "THRU" : `↧${f(d.b)}`) : `↧${f(th.L)}`}`);
   if (extra) lines.push(extra);
   // The rest past the drill (a drill point) is part of the key, so a flat-bottomed hole is not counted with a pointed one.
   const rest = W.slice(i + 1).map(g => `${g.k}:${f(g.b - g.a)}:${f(g.ra)}:${f(g.rb)}`).join(",");
@@ -396,7 +398,13 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
       if (txt.up) { const p = add2(s0, up, big ? h * 0.55 : h * 0.6); out.push({ t: "t", x: p[0], y: p[1], s: txt.up, h: hh, al: "l", layer: "ANNOT", rot: rot || undefined }); }
       if (txt.lo) { const p = add2(s0, up, big ? -h * 0.45 : -h * 0.25); out.push({ t: "t", x: p[0], y: p[1], s: txt.lo, h: hh, al: "l", layer: "ANNOT", rot: rot || undefined }); }
     }
-    return textBox(start[0], start[1], "x".repeat(Math.max(1, Math.round(totalW / (h * 0.85)))), h, "l", rot);
+    const box = textBox(start[0], start[1], "x".repeat(Math.max(1, Math.round(totalW / (h * 0.85)))), h, "l", rot);
+    if (!a.below) return box;
+    // A second line under the dimension line (the value sits 0.8 above it), centred under the value.
+    const wb = textW(a.below, h), sb = add2(add2(start, dir, (totalW - wb) / 2), up, -(h + 1.6));
+    out.push({ t: "t", x: sb[0], y: sb[1], s: a.below, h, al: "l", layer: "ANNOT", rot: rot || undefined });
+    const bb = textBox(sb[0], sb[1], "x".repeat(Math.max(1, Math.round(wb / (h * 0.85)))), h, "l", rot);
+    return [Math.min(box[0], bb[0]), Math.min(box[1], bb[1]), Math.max(box[2], bb[2]), Math.max(box[3], bb[3])];
   };
   if (g.k === "rad" || g.k === "dia") {
     const C = S(g.c!), R = g.r! * pl.s;
@@ -490,7 +498,7 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
   const base = add2(lo, d, st - al(lo));
   // The dimension line runs under the text when the text is outside the arrows.
   const tLo = st - totalW / 2 - 1, tHi = st + totalW / 2 + 1;
-  const inside = span >= 2 * ARROW + 2;
+  const inside = a.arrows ? a.arrows === "in" : span >= 2 * ARROW + 2;
   const from = Math.min(al(lo) - (inside ? 0 : ARROW + 2), tLo < al(lo) ? tLo : Infinity), to = Math.max(al(hi) + (inside ? 0 : ARROW + 2), tHi > al(hi) ? tHi : -Infinity);
   out.push(thin(add2(lo, d, from - al(lo)), add2(lo, d, to - al(lo))));
   if (inside) { out.push(arrow(lo[0], lo[1], -d[0], -d[1])); out.push(arrow(hi[0], hi[1], d[0], d[1])); }
@@ -520,12 +528,25 @@ export function notePrims(a: NoteAnnot, at: P2, leaderTo: P2 | null): { prims: P
   const out: Prim[] = [], h = a.h ?? TEXT_H, lines = expandProps(a.text).split("\n");
   lines.forEach((s, i) => out.push({ t: "t", x: at[0], y: at[1] - i * h * 1.5, s, h, al: "l", layer: "ANNOT" }));
   const w = Math.max(1, ...lines.map(s => textW(s, h)));
+  let box: [number, number, number, number] = [at[0] - 0.5, at[1] - (lines.length - 1) * h * 1.5 - 0.3 * h, at[0] + w + 0.5, at[1] + h * 1.1];
+  // Border (FR-DRW-023): a box, an obround or a circle round the text; the leader then starts on it.
+  const cx = (box[0] + box[2]) / 2, cy = (box[1] + box[3]) / 2, cr = Math.hypot(box[2] - box[0], box[3] - box[1]) / 2 + 0.3;
+  const fr: [number, number, number, number] = [box[0] - 0.6, box[1] - 0.4, box[2] + 0.6, box[3] + 0.2];
+  // The round ends of an obround stand out of the frame box on its short sides.
+  if (a.border === "round") { const fw = fr[2] - fr[0], fh = fr[3] - fr[1]; if (fw >= fh) { fr[0] -= fh / 2; fr[2] += fh / 2; } else { fr[1] -= fw / 2; fr[3] += fw / 2; } }
+  if (a.border === "box") out.push(thin([fr[0], fr[1]], [fr[2], fr[1]]), thin([fr[2], fr[1]], [fr[2], fr[3]]), thin([fr[2], fr[3]], [fr[0], fr[3]]), thin([fr[0], fr[3]], [fr[0], fr[1]]));
+  else if (a.border === "round") out.push(...obround(box));
+  else if (a.border === "circle") out.push({ t: "a", o: [cx, cy], r: cr, a0: 0, a1: 2 * Math.PI, pen: "thin", layer: "ANNOT" });
   if (leaderTo) {
-    const start: P2 = [leaderTo[0] < at[0] ? at[0] - 1 : at[0] + w + 1, at[1] + h * 0.35];
+    let start: P2 = [leaderTo[0] < at[0] ? at[0] - 1 : at[0] + w + 1, at[1] + h * 0.35];
+    if (a.border === "circle") { const d = unit2([leaderTo[0] - cx, leaderTo[1] - cy], [1, 0]); start = [cx + d[0] * cr, cy + d[1] * cr]; }
+    else if (a.border === "box" || a.border === "round") start = [leaderTo[0] < at[0] ? fr[0] : fr[2], (fr[1] + fr[3]) / 2];
     const u = unit2([leaderTo[0] - start[0], leaderTo[1] - start[1]]);
     out.push(thin(start, leaderTo), arrow(leaderTo[0], leaderTo[1], u[0], u[1]));
   }
-  return { prims: out, box: [at[0] - 0.5, at[1] - (lines.length - 1) * h * 1.5 - 0.3 * h, at[0] + w + 0.5, at[1] + h * 1.1] };
+  if (a.border === "circle") box = [cx - cr, cy - cr, cx + cr, cy + cr];
+  else if (a.border) box = fr;
+  return { prims: out, box };
 }
 
 // ---------- property links in notes (FR-DRW-023) ----------

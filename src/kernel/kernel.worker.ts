@@ -32,6 +32,8 @@ export type KernelRequest =
   /** Modelling: evaluate a part document and return its body (FRS 6.3). */
   | { id: number; type: "partBody"; doc: PartDoc }
   | { id: number; type: "recognize"; doc: PartDoc }
+  | { id: number; type: "recognizeBlends"; doc: PartDoc }
+  | { id: number; type: "recognizeExtrudes"; doc: PartDoc }
   /** Assemblies (FRS 10): place the components and return one mesh per shown component. */
   | { id: number; type: "asm"; doc: AsmDoc; quality: number; pre?: Record<string, Prebuilt> }
   | { id: number; type: "asmPrime"; doc: AsmDoc; key: string; quality: number }
@@ -263,6 +265,10 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
     } else if (r.type === "recognize") {
       // Feature recognition (FR-FT-102) in its own modeller, so the part's feature cache stays as it is.
       post({ id: r.id, ok: true, ...new Modeller(kernel.module).recognizeHoles(r.doc) });
+    } else if (r.type === "recognizeBlends") {
+      post({ id: r.id, ok: true, features: new Modeller(kernel.module).recognizeBlends(r.doc) });
+    } else if (r.type === "recognizeExtrudes") {
+      post({ id: r.id, ok: true, features: new Modeller(kernel.module).recognizeExtrudes(r.doc) });
     } else if (r.type === "importBody") {
       kernel.load(new Uint8Array(r.buffer), r.name);
       post({ id: r.id, ok: true, ...kernel.brepText() });

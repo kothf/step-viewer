@@ -329,8 +329,48 @@ export interface SmGussetFeature {
   fillet?: Num;
 }
 
-export type SheetFeature = SmInsertFeature | SmConvertFeature | SmCutFeature | SmGussetFeature | SmReliefFeature | SmUnfoldFeature | SmFormFeature | SmVentFeature | SmCrossFeature | SmLoftFeature | SmBaseFeature | SmFlangeFeature | SmHemFeature | SmSketchBendFeature | SmJogFeature | SmTabFeature | SmCornerFeature | SmClosedFeature | SmMiterFeature | SmFlatFeature;
-export const SHEET_TYPES: ReadonlySet<string> = new Set(["smloft", "smbase", "smconvert", "sminsert", "smflange", "smhem", "smbend", "smjog", "smtab", "smcross", "smvent", "smcut", "smform", "smunfold", "smfold", "smrelief", "smgusset", "smcorner", "smclosed", "smmiter", "smswept", "smflat"]);
+/**
+ * Rip (SolidWorks' Rip): a thin gap cut along corner edges of a thin-walled solid (a shelled box) so its walls part
+ * there before Insert Bends or Convert. Both directions = a slot `gap` wide on the bisector of the two faces; one
+ * direction (inside edges only) = the cut lies along the chosen face, so that wall runs on past the other.
+ */
+export interface SmRipFeature {
+  id: string; type: "smrip"; name: string; suppressed?: boolean;
+  edges: EdgeRef[];
+  /** Gap width (default 0.1 mm). */
+  gap: Num;
+  /** "a" / "b" = along the edge's first / second face (absent = both directions). */
+  side?: "a" | "b";
+}
+
+/**
+ * Tab and slot (SolidWorks' Tab and Slot): tabs grow out of a straight edge of a flat face, in its plane, and pass
+ * through the face they meet (any body, the sheet too), which gets slots `clearance` bigger all round. Tabs are panels,
+ * so the flat pattern has them; slots in the sheet reach it like any cut.
+ */
+export interface SmTabSlotFeature {
+  id: string; type: "smtabslot"; name: string; suppressed?: boolean;
+  /** The tab edge: an outline edge of a panel (its top or bottom face and the side face). */
+  edge: EdgeRef | null;
+  /** The face the tabs go through, square to them and facing the edge. */
+  face: FaceRef | null;
+  /** Tab length along the edge. */
+  length: Num;
+  /** How far each tab stands past the slot face (default the thickness). */
+  height: Num;
+  count: number;
+  /** Distance from the edge's ends to the outer tabs (equal spacing between them). */
+  offset: Num;
+  /** Fixed centre-to-centre spacing instead, the group centred on the edge. */
+  spacing?: Num;
+  /** Gap left all round a tab in its slot. */
+  clearance: Num;
+  /** Slot corner radius (absent = sharp). */
+  round?: Num;
+}
+
+export type SheetFeature = SmRipFeature | SmTabSlotFeature | SmInsertFeature | SmConvertFeature | SmCutFeature | SmGussetFeature | SmReliefFeature | SmUnfoldFeature | SmFormFeature | SmVentFeature | SmCrossFeature | SmLoftFeature | SmBaseFeature | SmFlangeFeature | SmHemFeature | SmSketchBendFeature | SmJogFeature | SmTabFeature | SmCornerFeature | SmClosedFeature | SmMiterFeature | SmFlatFeature;
+export const SHEET_TYPES: ReadonlySet<string> = new Set(["smrip", "smtabslot", "smloft", "smbase", "smconvert", "sminsert", "smflange", "smhem", "smbend", "smjog", "smtab", "smcross", "smvent", "smcut", "smform", "smunfold", "smfold", "smrelief", "smgusset", "smcorner", "smclosed", "smmiter", "smswept", "smflat"]);
 /** The feature that starts a sheet metal part: a base flange, a lofted bend or a solid converted to sheet metal. */
 export const isSheetBase = (f: { type: string; suppressed?: boolean }) => (f.type === "smbase" || f.type === "smloft" || f.type === "smconvert" || f.type === "sminsert") && !f.suppressed;
 export const isSheet = (f: { type: string }): f is SheetFeature => SHEET_TYPES.has(f.type);

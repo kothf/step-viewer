@@ -128,10 +128,14 @@ export interface DimAnnot {
   suf?: string;
   /** Text typed over the value. */
   txt?: string;
+  /** A second line of text under the dimension line, e.g. "2 PLACES". */
+  below?: string;
   /** Model item it was imported from (`<feature>:<dimension>`): its points are rebuilt from the part. */
   src?: string;
   /** Inspection dimension (FR-DRW-021): the text sits in an obround frame. */
   insp?: boolean;
+  /** Linear dimensions: arrows between the extension lines ("in") or outside them pointing in ("out"); absent = by the room there is. */
+  arrows?: "in" | "out";
   /** Reference dimension (in parentheses) or basic dimension (theoretically exact: boxed, never toleranced). */
   show?: "ref" | "basic";
   /** Dual dimension: the inch value follows in brackets. Absent = as the drawing's style says (`DraftStyle.dual`). */
@@ -139,7 +143,8 @@ export interface DimAnnot {
 }
 
 /** A note: on the sheet (sheet mm) or on a view (its model axes, so it moves with the view), with an optional leader to the model. */
-export interface NoteAnnot { id: string; t: "note"; view?: string; pos: [number, number]; text: string; h?: number; leader?: GeoRef }
+/** `border`: a frame round the text (box, obround or circle); the leader starts on it. */
+export interface NoteAnnot { id: string; t: "note"; view?: string; pos: [number, number]; text: string; h?: number; leader?: GeoRef; border?: "box" | "round" | "circle" }
 
 /** A hole callout (FR-DRW-022) on a round edge, from the hole feature when there is one. */
 export interface HoleAnnot { id: string; t: "hole"; view: string; ref: GeoRef; pos: [number, number]; txt?: string }

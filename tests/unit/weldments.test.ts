@@ -7,8 +7,9 @@ import { cutList, gussetEnds, pierceSpots, type WeldHost } from "../../src/weldm
 import { PROFILE_TYPES, profileArea, profileShape, profileSizes } from "../../src/weldments/profiles";
 import type { Feature, PartDoc, SketchFeature, SkEnt, V2, V3, Sketch3dFeature } from "../../src/model/types";
 import type { GussetFeature, MemberFeature } from "../../src/weldments/types";
-import { barsNeeded, cutKey, splitSubs, stockTotals } from "../../src/weldments/types";
+import { barPlan, barsNeeded, cutKey, planGroups, splitSubs, stockTotals } from "../../src/weldments/types";
 import { occ } from "./occ";
+import { applyWeldMemory, weldMemory } from "../../src/weldments/defaults";
 
 const doc = (features: Feature[]): PartDoc => ({ schema: 1, kind: "part", id: "d", name: "t", units: { length: "mm", decimals: 2 }, props: {}, features, rollback: null });
 /** A polyline sketch on XY (closed: back to the first point). */
@@ -566,9 +567,13 @@ test("stock lengths of a cut list (FR-FT-121)", () => {
   assert.deepEqual(stockTotals(items, c => c.qty === 3), [{ desc: "SHS 40x40x3", pieces: 1, length: 150.3 }, { desc: "CHS 33.7x2.6", pieces: 2, length: 200 }]);
   // Bars to buy: 3 × 420 + 150.25 fit two 1000 mm bars (420 + 420 + 150.25, then 420); a 4 mm kerf still fits (998.25).
   assert.deepEqual(stockTotals(items, undefined, { len: 1000 }), [
-    { desc: "SHS 40x40x3", pieces: 4, length: 1410.3, bars: 2, left: 589.8, over: 0 },
-    { desc: "CHS 33.7x2.6", pieces: 2, length: 200, bars: 1, left: 800, over: 0 },
+    { desc: "SHS 40x40x3", pieces: 4, length: 1410.3, bars: 2, left: 589.8, over: 0, plan: [{ pieces: [420, 420, 150.25], left: 9.8 }, { pieces: [420], left: 580 }] },
+    { desc: "CHS 33.7x2.6", pieces: 2, length: 200, bars: 1, left: 800, over: 0, plan: [{ pieces: [100, 100], left: 800 }] },
   ]);
+  // The cutting plan: the kerf between cuts comes off what is left, and equal bars are put together.
+  assert.deepEqual(barPlan([420, 420, 150.25, 420], 1000, 4), { bars: [{ pieces: [420, 420, 150.25], left: 1.8 }, { pieces: [420], left: 580 }], over: [] });
+  assert.deepEqual(barPlan([300, 700, 300, 700, 1200], 1000), { bars: [{ pieces: [700, 300], left: 0 }, { pieces: [700, 300], left: 0 }], over: [1200] });
+  assert.deepEqual(planGroups(barPlan([300, 700, 300, 700], 1000).bars), [{ n: 2, pieces: [700, 300], left: 0 }]);
   assert.deepEqual(barsNeeded([420, 420, 150.25, 420], 1000, 4), { bars: 2, over: 0 });
   // The kerf between cuts counts: two 500 mm pieces fill a 1000 mm bar exactly, but not with a saw cut between them.
   assert.deepEqual(barsNeeded([500, 500], 1000), { bars: 1, over: 0 });
@@ -577,3 +582,96 @@ test("stock lengths of a cut list (FR-FT-121)", () => {
   const short = stockTotals(items, undefined, { len: 400 });
   assert.deepEqual([short[0].bars, short[0].over, short[0].left], [1, 3, 249.8]);
 });
+
+test("weldment defaults: a new feature starts with the settings used last, checked one by one", () => {
+  const used = { id: "m1", type: "member", name: "M1", profile: "ipe", size: "IPE 200", segs: [{ sketch: "s", ent: "a" }], corner: "butt1", gap: { v: 2, expr: "g" }, coped: true, desc: "Rail", anchor: "tl" } as unknown as Feature;
+  const mem = weldMemory(used)!;
+  // Sizes keep their value but not the expression; picked geometry, names and positions are never carried over.
+  assert.deepEqual(mem, { profile: "ipe", size: "IPE 200", corner: "butt1", gap: { v: 2 }, coped: true });
+  const fresh = (): MemberFeature => ({ id: "m2", type: "member", name: "M2", profile: "shs", size: "40x40x3", segs: [{ sketch: "t", ent: "b" }], corner: "miter" });
+  const ipeSizes = profileSizes("ipe");
+  const d = applyWeldMemory(fresh(), JSON.parse(JSON.stringify(mem))) as MemberFeature;
+  assert.equal(d.profile, "ipe");
+  assert.equal(d.size, ipeSizes.includes("IPE 200") ? "IPE 200" : d.size);
+  assert.ok(ipeSizes.includes(d.size));
+  assert.equal(d.corner, "butt1");
+  assert.deepEqual(d.gap, { v: 2 });
+  assert.equal(d.coped, true);
+  assert.deepEqual(d.segs, [{ sketch: "t", ent: "b" }]);
+  // Bad stored values are skipped: an unknown profile, a size of another profile, a corner that does not exist.
+  const bad = applyWeldMemory(fresh(), { profile: "zz", size: "IPE 200", corner: "weird", gap: { v: -1 }, coped: "yes" }) as MemberFeature;
+  assert.equal(bad.profile, "shs");
+  assert.ok(profileSizes("shs").includes(bad.size));
+  assert.equal(bad.corner, "miter");
+  assert.equal(bad.gap, undefined);
+  assert.equal(bad.coped, undefined);
+  // A sketch profile belongs to its part: the next member starts with the library profile.
+  assert.deepEqual(weldMemory({ ...fresh(), profile: "sketch", psketch: "p" } as Feature), { corner: "miter" });
+  // Nothing stored: the draft is unchanged.
+  assert.deepEqual(applyWeldMemory(fresh(), null), fresh());
+  // A gusset: a polygonal profile gets its corner cut, a triangle drops it; a mid gusset has no thickness side.
+  const g0 = (): GussetFeature => ({ id: "g", type: "gusset", name: "G", d1: { v: 50 }, d2: { v: 50 }, thickness: { v: 5 }, shape: "tri", loc: "mid" });
+  const gp = applyWeldMemory(g0(), { d1: { v: 80 }, d2: { v: 60 }, thickness: { v: 8 }, shape: "poly", loc: "start", side: "both" }) as GussetFeature;
+  assert.deepEqual([gp.d1.v, gp.d2.v, gp.thickness.v, gp.shape, gp.d3?.v, gp.loc, gp.side], [80, 60, 8, "poly", 15, "start", "both"]);
+  const gt = applyWeldMemory(g0(), { shape: "tri", d3: { v: 9 }, loc: "mid", side: "out", chamfer2: { v: 4 } }) as GussetFeature;
+  assert.deepEqual([gt.d3, gt.side, gt.chamfer2], [undefined, undefined, undefined]);
+  // A bead and an end cap.
+  const b = applyWeldMemory({ id: "b", type: "weldbead", name: "B", faces1: [], faces2: [], size: { v: 4 } } as Feature, weldMemory({ id: "x", type: "weldbead", name: "X", faces1: [{ name: "f" }], faces2: [], size: { v: 6 }, size2: { v: 8 }, tangent: false } as Feature)) as Feature & { size: { v: number }; size2?: { v: number }; tangent?: boolean; faces1: unknown[] };
+  assert.deepEqual([b.size.v, b.size2?.v, b.tangent, b.faces1.length], [6, 8, false, 0]);
+  const c = applyWeldMemory({ id: "c", type: "endcap", name: "C", faces: [], thickness: { v: 5 }, inset: { v: 0 } } as Feature, { thickness: { v: 10 }, inset: { v: 0 }, ratio: { v: 0.5 }, dir: "in" }) as Feature & { thickness: { v: number }; ratio?: unknown; dir?: string };
+  assert.deepEqual([c.thickness.v, c.ratio, c.dir], [10, undefined, "in"]);
+});
+
+test("fillet beads along curved roots: a tilted tube on a plate (ellipse), a tube on a tube (saddle) (FR-FT-121)", async () => {
+  const m = new Modeller(await occ());
+  const sk = poly("s", [[-150, -150], [150, -150], [150, 150], [-150, 150]], true);
+  const plate: Feature = { id: "p", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } };
+  const R = 48.3 / 2;
+  // A post tilted by θ through the plate: its outside meets the plate's top in an ellipse of semi-axes R and R / cos θ.
+  const k: Sketch3dFeature = { id: "k", type: "sketch3d", name: "3DSketch1", rels: [], dims: [], pts: [{ id: "A", p: [0, -30, -60], fixed: true }, { id: "B", p: [0, 120, 290] }], segs: [{ id: "post", t: "line", pts: ["A", "B"] }] };
+  const mem: MemberFeature = { id: "m", type: "member", name: "Structural Member1", profile: "chs", size: "48.3x3.2", segs: [{ sketch: "k", ent: "post" }], corner: "none" };
+  const base = run(m, doc([sk, plate, k, mem]));
+  const axis = unit3([0, 150, 350]), ctr: V3 = [0, -30, -60];
+  const fromAxis = (c: V3) => { const q = [c[0] - ctr[0], c[1] - ctr[1], c[2] - ctr[2]] as V3; const t = q[0] * axis[0] + q[1] * axis[1] + q[2] * axis[2]; return Math.hypot(q[0] - t * axis[0], q[1] - t * axis[1], q[2] - t * axis[2]); };
+  const outer = base.body!.names.filter((n, i) => n.startsWith("m:post:side:") && fromAxis(centroid(m, base.body!.faces[i])) > 2 * (R - 1.6) / Math.PI + 0.5);
+  assert.equal(outer.length, 2);
+  const bead: Feature = { id: "w", type: "weldbead", name: "Fillet Bead1", faces1: [{ name: "p:end" }], faces2: outer.map(name => ({ name })), size: { v: 5 } };
+  const r = run(m, doc([sk, plate, k, mem, bead]));
+  const b = r.cut.find(c => c.kind === "bead")!;
+  const a = R / (350 / Math.hypot(150, 350)), e = R;
+  // Ramanujan's ellipse perimeter.
+  const per = Math.PI * (3 * (a + e) - Math.sqrt((3 * a + e) * (a + 3 * e)));
+  near(b.length!, per, 5e-3);
+  assert.ok(r.volume > base.volume + 0.8 * 12.5 * per, `bead volume ${r.volume - base.volume}`);
+  assert.ok(r.body!.names.some(n => n.startsWith("w:") && n.endsWith(":face")));
+  // All round: one closed bead, no end caps.
+  assert.equal(r.cut.filter(c => c.kind === "bead").length, 1);
+  assert.ok(!r.body!.names.some(n => n.startsWith("w:") && n.endsWith(":cap")));
+  // From/to length on the curved root: 50 mm of it.
+  const part = run(m, doc([sk, plate, k, mem, { ...bead, span: { start: { v: 10 }, len: { v: 50 } } } as Feature]));
+  near(part.cut.find(c => c.kind === "bead")!.length!, 50, 5e-3);
+
+  // A post standing on a horizontal tube: the root is the saddle x = r cos φ, y = r sin φ, z = √(Rh² − r² sin² φ).
+  const h: Sketch3dFeature = { id: "h", type: "sketch3d", name: "3DSketch2", rels: [], dims: [], pts: [{ id: "C", p: [-200, 0, 400], fixed: true }, { id: "D", p: [200, 0, 400] }, { id: "E", p: [0, 0, 400] }, { id: "F", p: [0, 0, 600] }], segs: [{ id: "rail", t: "line", pts: ["C", "D"] }, { id: "up", t: "line", pts: ["E", "F"] }] };
+  const rail: MemberFeature = { id: "r", type: "member", name: "Rail", profile: "chs", size: "88.9x4", segs: [{ sketch: "h", ent: "rail" }], corner: "none" };
+  const up: MemberFeature = { id: "u", type: "member", name: "Up", profile: "chs", size: "48.3x3.2", segs: [{ sketch: "h", ent: "up" }], corner: "none" };
+  const b2 = run(m, doc([h, rail, up]));
+  const Rh = 88.9 / 2;
+  const outR = b2.body!.names.filter((n, i) => n.startsWith("r:rail:side:") && Math.hypot(centroid(m, b2.body!.faces[i])[1], centroid(m, b2.body!.faces[i])[2] - 400) > 2 * (Rh - 2) / Math.PI + 0.5);
+  const outU = b2.body!.names.filter((n, i) => n.startsWith("u:up:side:") && Math.hypot(centroid(m, b2.body!.faces[i])[0], centroid(m, b2.body!.faces[i])[1]) > 2 * (R - 1.6) / Math.PI + 0.5);
+  assert.equal(outR.length, 2);
+  assert.equal(outU.length, 2);
+  const saddle: Feature = { id: "w2", type: "weldbead", name: "Fillet Bead2", faces1: outR.map(name => ({ name })), faces2: outU.map(name => ({ name })), size: { v: 4 } };
+  const r2 = run(m, doc([h, rail, up, saddle]));
+  const sb = r2.cut.find(c => c.kind === "bead")!;
+  let L = 0, prev: V3 | null = null;
+  for (let i = 0; i <= 2000; i++) {
+    const f = (2 * Math.PI * i) / 2000, p: V3 = [R * Math.cos(f), R * Math.sin(f), Math.sqrt(Rh * Rh - R * R * Math.sin(f) ** 2)];
+    if (prev) L += Math.hypot(p[0] - prev[0], p[1] - prev[1], p[2] - prev[2]);
+    prev = p;
+  }
+  near(sb.length!, L, 5e-3);
+  assert.ok(r2.volume > b2.volume);
+});
+
+function unit3(v: V3): V3 { const l = Math.hypot(...v); return [v[0] / l, v[1] / l, v[2] / l]; }

@@ -27,19 +27,19 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  # The tag, and whether CI already tested this commit.
+  check:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      tested: ${{ steps.ci.outputs.tested }}
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-
       # TAG: the pushed tag, or for Run workflow v<version> (the typed one, else package.json's)
       - name: Tag must match package.json version
+        id: tag
         env:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
@@ -55,46 +55,88 @@ jobs:
             echo "::error::Tag $tag does not match package.json version $pkg"
             exit 1
           fi
-          echo "TAG=$tag" >> "$GITHUB_ENV"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-      - run: npm ci
-
-      # CI on main packages and smoke-tests every commit, and is running the moment a merge
-      # lands: wait for that run and use its result instead of testing again. Only when the
-      # commit has no CI run (or it was cancelled) is the smoke test run here.
+      # CI on main packages and smoke-tests commits, but not every one (see ci.yml: of the commits pushed
+      # while a run is going only the newest gets one, and a run can sit behind the account's job limit).
+      # A passed run is used as it is; a run whose jobs have started is waited for (up to 25 minutes);
+      # a run that has not started, was cancelled or does not exist means the smoke job below tests here.
       - name: CI result for this commit
+        id: ci
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          for i in $(seq 1 90); do
+          for i in $(seq 1 150); do
             # one look per round, so a run that finishes between two looks is not taken for "no run"
             s="$(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$GITHUB_SHA" --json status,conclusion \
-              --jq '[(map(select(.conclusion == "success")) | length), (map(select(.conclusion == "failure")) | length), (map(select(.status != "completed")) | length)] | map(tostring) | join(" ")')"
-            read -r ok failed pending <<< "$s"
-            if [ "$ok" -gt 0 ]; then echo "CI passed on $GITHUB_SHA"; echo "TESTED=1" >> "$GITHUB_ENV"; exit 0; fi
+              --jq '[(map(select(.conclusion == "success")) | length), (map(select(.conclusion == "failure")) | length), (map(select(.status == "in_progress")) | length)] | map(tostring) | join(" ")')"
+            read -r ok failed running <<< "$s"
+            if [ "$ok" -gt 0 ]; then echo "CI passed on $GITHUB_SHA"; echo "tested=1" >> "$GITHUB_OUTPUT"; exit 0; fi
             if [ "$failed" -gt 0 ]; then echo "::error::CI failed on $GITHUB_SHA: fix main (or re-run the failed CI job), then release again"; exit 1; fi
-            if [ "$pending" -eq 0 ] && [ "$i" -gt 6 ]; then break; fi
+            if [ "$running" -eq 0 ] && [ "$i" -gt 6 ]; then break; fi
             sleep 10
           done
           echo "::notice::No finished CI run on $GITHUB_SHA: testing here"
 
+  # Only when CI has no result for the commit: the smoke test in the same 6 shards as CI (in one job
+  # it takes longer than the release job used to be allowed, which cancelled two releases in a row).
+  smoke:
+    name: smoke ${{ matrix.shard }}/6
+    needs: check
+    if: needs.check.outputs.tested != '1'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: true
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
       - name: Cache Playwright's browser
-        if: env.TESTED != '1'
         uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-shell-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
 
       - name: Browser for the tests
-        if: env.TESTED != '1'
         run: npx playwright install --only-shell chromium || npx playwright install --with-deps --only-shell chromium
 
       - name: Package
-        run: npm run package -- "${TAG#v}"
+        run: npm run package
 
-      - name: Smoke test (packaged build)
-        if: env.TESTED != '1'
+      - name: Smoke test (packaged build), shard ${{ matrix.shard }}/6
+        env:
+          SMOKE_SHARD: ${{ matrix.shard }}/6
         run: npm test
+
+  release:
+    needs: [check, smoke]
+    # smoke is skipped when CI already passed
+    if: ${{ !cancelled() && needs.check.result == 'success' && (needs.smoke.result == 'success' || needs.smoke.result == 'skipped') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      TAG: ${{ needs.check.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Package
+        run: npm run package -- "${TAG#v}"
 
       - name: Release notes from CHANGELOG.md
         run: npm run --silent release-notes -- "$TAG" > release-notes.md
@@ -135,6 +177,7 @@ jobs:
 
   pages:
     needs: release
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
     runs-on: ubuntu-24.04
     environment:
       name: github-pages

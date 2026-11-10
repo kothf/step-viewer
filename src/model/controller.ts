@@ -61,11 +61,12 @@ import { units, UNITS } from "../tools/units";
 import { csys } from "../tools/csys";
 import { confirmModal, toast, trapFocus } from "../ui";
 import { cmTab, onCmTab, selectCmTab } from "../commandBar";
+import { rememberWeld } from "../weldments/defaults";
 import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, cornerSpots, cutListRows, locateSpots, isWeldFeature, showCutList, weldChange, weldSymbols, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
 import type { EndCapFeature, GussetFeature } from "../weldments/types";
 import { capDir, splitSubs } from "../weldments/types";
 import { bindSmPanel, smCheck, smDraft, smPanel, SM_BASES, SM_ICONS, SM_TOOLS, SM_TREE_ICONS } from "../sheetmetal/ui";
-import { isSheet, isSheetBase, type SmFlangeFeature, type SmFormFeature, type SmUnfoldFeature, type SmReliefFeature, type SmGussetFeature, type SmConvertFeature, type SmInsertFeature } from "../sheetmetal/types";
+import { isSheet, isSheetBase, type SmFlangeFeature, type SmFormFeature, type SmUnfoldFeature, type SmReliefFeature, type SmGussetFeature, type SmConvertFeature, type SmInsertFeature, type SmTabSlotFeature } from "../sheetmetal/types";
 import { apply as smApply, applyDir as smApplyDir, bendOfFace, reliefCorners, crossBreakLines, flatBendLines, flatPointOn, panelOfFace, placedState, unfoldBendLines } from "../sheetmetal/sheet";
 import { flatDxf } from "../sheetmetal/flat";
 import { modelItems, type ModelItem } from "../drawing/items";
@@ -73,6 +74,7 @@ import { ModifyBox } from "../modifyBox";
 import { checkSketch, SKETCH_USES, type CheckResult, type SketchUse } from "../sketch/check";
 import { lang, onLangChange, t, withLang } from "../i18n";
 import { gestureSlot, loadGestures, GESTURE_SHOW, type GestureMode } from "../gestures";
+import { isLongPress } from "../longPress";
 import { gestureGuide } from "../gestureUi";
 import { autosaveDelay, getPref, loadPrefs, onPrefs, qualityFactor, stepFor, type Prefs } from "../prefs";
 
@@ -911,7 +913,7 @@ export class ModelController {
   }
 
   /** Extrude / Cut / Revolve / Fillet / Chamfer: opens the property panel with a draft. */
-  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "spattern" | "tpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "rib" | "split" | "combine" | "indent" | "intersect" | "bsplit" | "delbody" | "movebody" | "scale" | "delface" | "moveface" | "heal" | "smbase" | "smloft" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smrelief" | "smgusset" | "smcross" | "smvent" | "smcut" | "smconvert" | "sminsert" | "smform" | "smunfold" | "smfold" | "smmiter" | "smswept" | CurveTool | SurfTool | WeldTool) {
+  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "spattern" | "tpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "rib" | "split" | "combine" | "indent" | "intersect" | "bsplit" | "delbody" | "movebody" | "scale" | "delface" | "moveface" | "heal" | "smbase" | "smloft" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smrelief" | "smgusset" | "smcross" | "smvent" | "smcut" | "smconvert" | "sminsert" | "smform" | "smunfold" | "smfold" | "smmiter" | "smswept" | "smtabslot" | "smrip" | CurveTool | SurfTool | WeldTool) {
     if (!this.store) return;
     // Starting a feature from inside a sketch exits the sketch and uses it (FR-SK-004).
     const fromSketch = this.mode.kind === "sketch" ? this.mode.id : null;
@@ -919,7 +921,7 @@ export class ModelController {
     // Pre-selected edges for fillet and chamfer (FR-SEL-006): the edge picked with Smart measure.
     const selEdge = (type === "fillet" || type === "chamfer") ? this.pickedEdge() : null;
     const threadEdge = type === "thread" ? this.pickedEdge() : null;
-    const smEdge = type === "smflange" || type === "smhem" || type === "smcorner" || type === "smmiter" || type === "smswept" ? this.pickedEdge() : null;
+    const smEdge = type === "smflange" || type === "smhem" || type === "smcorner" || type === "smmiter" || type === "smswept" || type === "smtabslot" || type === "smrip" ? this.pickedEdge() : null;
     const pre = selEdge ? this.refOfEdge(selEdge) : null;
     const preFace = type === "plane" ? this.pickedFace() : null;
     // Axis and point take a picked edge or face too.
@@ -1012,9 +1014,9 @@ export class ModelController {
       const sel = this.selected ? sketches.find(s => s.id === this.selected && sketchOpenOk(s)) : undefined;
       const sk = sel ?? sketches.filter(s => !used.has(s.id) && sketchOpenOk(s)).at(-1);
       draft = { id, type: "rib", name: nextName(d, "rib"), sketch: sk?.id ?? "", thickness: { v: 5 }, side: "mid", dir: "parallel" } satisfies RibFeature;
-    } else if (type === "smbase" || type === "smloft" || type === "smflange" || type === "smhem" || type === "smbend" || type === "smjog" || type === "smcorner" || type === "smclosed" || type === "smrelief" || type === "smgusset" || type === "smcross" || type === "smvent" || type === "smcut" || type === "smconvert" || type === "sminsert" || type === "smform" || type === "smunfold" || type === "smfold" || type === "smmiter" || type === "smswept") {
+    } else if (type === "smbase" || type === "smloft" || type === "smflange" || type === "smhem" || type === "smbend" || type === "smjog" || type === "smcorner" || type === "smclosed" || type === "smrelief" || type === "smgusset" || type === "smcross" || type === "smvent" || type === "smcut" || type === "smconvert" || type === "sminsert" || type === "smform" || type === "smunfold" || type === "smfold" || type === "smmiter" || type === "smswept" || type === "smtabslot" || type === "smrip") {
       // Sheet metal (FR-FT-120): src/sheetmetal/ui.ts makes the draft.
-      const smFace = type === "smconvert" || type === "sminsert" || type === "smclosed" || type === "smgusset" || type === "smcross" || type === "smform" || type === "smunfold" || type === "smfold" ? this.pickedFace() : null;
+      const smFace = type === "smtabslot" || type === "smconvert" || type === "sminsert" || type === "smclosed" || type === "smgusset" || type === "smcross" || type === "smform" || type === "smunfold" || type === "smfold" ? this.pickedFace() : null;
       const sm = smDraft(type, { id, doc: d, sketches, used, selected: this.selected, name: ty => nextName(d, ty), edge: smEdge ? this.refOfEdge(smEdge) : null, face: smFace != null ? this.faceRef(smFace) : null, hasBody: !!this.last?.data, sheet: this.last?.sheet });
       if (typeof sm === "string") { toast(sm, true); return; }
       draft = sm;
@@ -1281,6 +1283,7 @@ export class ModelController {
     this.renderAll();
     // Pushpin or Ctrl+Enter: the same command again once the part has rebuilt (FR-UI-106).
     if (m.isNew && this.activeCmd) this.rememberOptions(this.activeCmd, f);
+    if (m.isNew && isWeldFeature(f)) rememberWeld(f);
     const again = m.isNew && (repeat || this.pinned) ? this.activeCmd : null;
     void Promise.resolve(this.rebuild()).then(() => { if (again && this.mode.kind === "none") this.command(again); });
   }
@@ -1732,6 +1735,59 @@ export class ModelController {
     toast(t("{n} hole recognised|{n} holes recognised", { n: rec.holes.length }));
   }
 
+  /**
+   * Feature recognition (FR-FT-102): the body's fillets and chamfers are removed with Delete Face and
+   * made again as Fillet and Chamfer features, so their sizes can be edited or the features deleted.
+   */
+  async recognizeBlends() {
+    if (!this.store) return;
+    if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
+    if (this.mode.kind !== "none") this.exitMode(false);
+    this.setBusy(1);
+    let feats: Feature[];
+    try { feats = await this.kernel.recognizeBlends(this.doc); }
+    catch (err) { toast(t("Feature recognition failed: {msg}", { msg: (err as Error).message }), true); return; }
+    finally { this.setBusy(-1); }
+    const made = feats.filter(f => f.type === "fillet" || f.type === "chamfer");
+    if (!made.length) { toast(t("No fillets or chamfers were found to recognise.")); return; }
+    this.store.change("Recognize fillets", d => {
+      let at = d.rollback ?? d.features.length;
+      for (const f of feats) {
+        f.name = nextName(d, f.type);
+        d.features.splice(at++, 0, f);
+        if (d.rollback != null) d.rollback++;
+      }
+    });
+    const n = made.reduce((a, f) => a + (f as FilletFeature | ChamferFeature).edges.length, 0);
+    toast(t("Fillets and chamfers recognised: {n} edge|Fillets and chamfers recognised: {n} edges", { n }));
+  }
+
+  /**
+   * Feature recognition (FR-FT-102): prismatic pockets and bosses are removed with Delete Face and made
+   * again as sketches with Extruded Cut / Boss features, so their shape and depth can be edited.
+   */
+  async recognizeExtrudes() {
+    if (!this.store) return;
+    if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
+    if (this.mode.kind !== "none") this.exitMode(false);
+    this.setBusy(1);
+    let feats: Feature[];
+    try { feats = await this.kernel.recognizeExtrudes(this.doc); }
+    catch (err) { toast(t("Feature recognition failed: {msg}", { msg: (err as Error).message }), true); return; }
+    finally { this.setBusy(-1); }
+    const n = feats.filter(f => f.type === "extrude").length;
+    if (!n) { toast(t("No pockets or bosses were found to recognise.")); return; }
+    this.store.change("Recognize extrudes", d => {
+      let at = d.rollback ?? d.features.length;
+      for (const f of feats) {
+        f.name = nextName(d, f.type);
+        d.features.splice(at++, 0, f);
+        if (d.rollback != null) d.rollback++;
+      }
+    });
+    toast(t("{n} extrude recognised|{n} extrudes recognised", { n }));
+  }
+
   /** Configurations (FR-CFG-001/002): list, switch, add, rename, delete. */
   editConfigs() {
     if (!this.store) return;
@@ -2137,12 +2193,13 @@ export class ModelController {
       else if (m.kind === "feature" && m.draft.type === "chamfer" && m.draft.mode === "vertex") this.pickChamferVertex(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "fillet" && m.focus === "sbv") this.pickSetback(e, m.draft);
       else if (m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer" || (m.draft.type === "curve" && m.draft.kind === "composite"))) this.pickEdge(e);
-      else if (m.kind === "feature" && (m.draft.type === "smflange" || m.draft.type === "smhem" || m.draft.type === "smcorner" || m.draft.type === "smmiter" || m.draft.type === "smswept")) this.pickSmEdge(e, m.draft);
+      else if (m.kind === "feature" && (m.draft.type === "smflange" || m.draft.type === "smhem" || m.draft.type === "smcorner" || m.draft.type === "smrip" || m.draft.type === "smmiter" || m.draft.type === "smswept")) this.pickSmEdge(e, m.draft);
       else if (m.kind === "feature" && (m.draft.type === "smclosed" || m.draft.type === "smcross")) this.pickSmFace(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "smform") this.placeForm(e, m.draft);
       else if (m.kind === "feature" && (m.draft.type === "smunfold" || m.draft.type === "smfold")) this.pickUnfold(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "smrelief") this.pickRelief(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "smgusset") this.pickGusset(e, m.draft);
+      else if (m.kind === "feature" && m.draft.type === "smtabslot") this.pickTabSlot(e, m.draft);
       else if (m.kind === "feature" && (m.draft.type === "smconvert" || m.draft.type === "sminsert")) this.pickConvert(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "curve" && m.draft.kind === "projected") this.pickCopy(e);
       else if (m.kind === "feature" && m.draft.type === "sketch3d") this.pick3d(e, m.draft);
@@ -2185,6 +2242,15 @@ export class ModelController {
     vp.addEventListener("contextmenu", e => {
       // The edge helpers open on the button going up without a drag (a right-drag pans).
       const m = this.mode;
+      // A finger held still (FR-UI-091) opens what a right-click without a drag opens; lifting it then picks nothing.
+      if (isLongPress(e) && onCanvas(e) && this.active) {
+        e.preventDefault();
+        this.down = null;
+        if (m.kind === "sketch") this.sketchMenu(e);
+        else if (m.kind === "none") this.showContextBar({ x: e.clientX, y: e.clientY }, false);
+        else { this.rightHit = m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer") ? this.host.edgeAt(e.clientX, e.clientY) : null; if (!this.edgeMenu(e)) this.commandMenu(e); }
+        return;
+      }
       if (onCanvas(e) && (m.kind === "sketch" || (m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer")))) e.preventDefault();
     }, true);
     vp.addEventListener("dblclick", e => {
@@ -2532,6 +2598,22 @@ export class ModelController {
     this.draftChanged();
   }
 
+  /** Tab and slot: a click on a straight outline edge of a flat sheet face sets the tab edge; a click on a face sets the slot face. */
+  private pickTabSlot(e: PointerEvent, f: SmTabSlotFeature) {
+    const ed = this.host.edgeAt(e.clientX, e.clientY)?.edge;
+    const ref = ed && ed.type === "line" ? this.edgeRefs([ed])[0] : undefined;
+    if (ref && !ref.faces.some(n => n.startsWith(`${f.id}:`)) && ref.faces.some(n => /:p\d+:(top|bot)$/.test(n)) && ref.faces.some(n => /:p\d+:(?!top$|bot$)[^:]+$/.test(n))) {
+      f.edge = ref;
+      this.draftChanged();
+      return;
+    }
+    const hit = this.host.faceAt(e.clientX, e.clientY);
+    const fr = hit ? this.faceRef(hit.faceId) : null;
+    if (!fr || fr.name.startsWith(`${f.id}:`)) { toast(f.edge ? t("Pick the face the tabs go through.") : t("Pick a straight edge of the sheet for the tabs.")); return; }
+    f.face = fr;
+    this.draftChanged();
+  }
+
   /** Convert to Sheet Metal: the first click picks the fixed face; then clicks on its straight edges toggle bend edges
    * (a click on another face makes that the fixed face). Picks are on the solid before the feature. */
   private pickConvert(e: PointerEvent, f: SmConvertFeature | SmInsertFeature) {
@@ -2588,7 +2670,7 @@ export class ModelController {
   private pickSmEdge(e: PointerEvent, f: { id: string; type: string; edges: EdgeRef[] }) {
     // Break corner takes the short edges across the thickness, between two side faces.
     const corner = f.type === "smcorner";
-    const msg = corner ? t("Pick an edge across the thickness at an outside corner.") : t("Pick a straight edge of the sheet.");
+    const msg = corner ? t("Pick an edge across the thickness at an outside corner.") : f.type === "smrip" ? t("Pick a straight edge where two flat walls meet.") : t("Pick a straight edge of the sheet.");
     const hit = this.host.edgeAt(e.clientX, e.clientY);
     if (!hit?.edge || hit.edge.type !== "line") { toast(msg); return; }
     const ref = this.edgeRefs([hit.edge])[0];
@@ -3682,6 +3764,19 @@ export class ModelController {
       case "shell": return [{ focus: "faces", label: t("Faces to remove"), faces: d.faces }, ...(d.multi?.length ? [{ focus: "mthick", label: t("Multi-thickness settings"), faces: d.multi.map(x => ({ name: x.name, ...(x.hint ? { hint: x.hint } : {}) })) }] : [])];
       case "delface": case "moveface": case "offsurf": case "replaceface": case "split":
         return [{ focus: "faces", label: t("Faces"), faces: d.faces }];
+      // End and start references (AT-UX-6): the target face in the Up to box's colour, named by its tag.
+      case "extrude": return [
+        ...(d.start === "surface" ? [{ focus: "start", label: t("Start at"), faces: pf(d.startRef) }] : []),
+        ...(d.end === "upto" || d.end === "offset" ? [{ focus: "upto", label: t("Up to"), faces: pf(d.upTo) }] : []),
+        ...(d.end === "body" ? [{ focus: "upbody", label: t("Body"), faces: d.upToBody ? [d.upToBody] : [] }] : [])];
+      case "revolve": return d.end === "upto" ? [{ focus: "upto", label: t("Up to"), faces: pf(d.upTo), sel: '.pm-box[data-k="focus-upto"]' }] : [];
+      case "hole": return [{ focus: "hplane", label: t("Face"), faces: pf(d.plane) },
+        ...(d.end === "upto" ? [{ focus: "hupto", label: t("Up to"), faces: pf(d.upTo) }] : [])];
+      case "mirror": return [{ focus: "mplane", label: t("Plane"), faces: pf(d.plane) },
+        ...(d.copy === "faces" ? [{ focus: "faces", label: t("Faces"), faces: d.faces ?? [] }] : [])];
+      case "lpattern": case "cpattern": case "spattern":
+        return d.copy === "faces" ? [{ focus: "faces", label: t("Faces"), faces: d.faces ?? [] }] : [];
+      case "bsplit": return [{ focus: "mplane", label: t("Plane"), faces: pf(d.plane) }];
       default: return [];
     }
   }
@@ -5328,10 +5423,12 @@ export class ModelController {
       case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "spattern": case "tpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "indent": case "intersect": case "bsplit": case "delbody": case "movebody": case "scale": case "delface": case "moveface": case "heal": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": case "revsurf": case "loftsurf": case "trimsurf": case "fillsurf": case "extendsurf": case "untrimsurf": case "sweepsurf": case "xyzcurve": case "compcurve": case "projcurve": case "sketch3d": case "member": case "trimext": case "endcap": case "gusset": case "weldbead": this.lastCmd = this.activeCmd = c; this.startFeature(c); break;
       case "cutlist": this.cutList(); break;
       case "import": this.importBodyFile(); break;
-      case "smbase": case "smloft": case "smflange": case "smhem": case "smbend": case "smjog": case "smcorner": case "smclosed": case "smrelief": case "smgusset": case "smcross": case "smvent": case "smcut": case "smconvert": case "sminsert": case "smform": case "smunfold": case "smfold": case "smmiter": case "smswept": this.startFeature(c); break;
+      case "smbase": case "smloft": case "smflange": case "smhem": case "smbend": case "smjog": case "smcorner": case "smclosed": case "smrelief": case "smgusset": case "smcross": case "smvent": case "smcut": case "smconvert": case "sminsert": case "smform": case "smunfold": case "smfold": case "smmiter": case "smswept": case "smtabslot": case "smrip": this.startFeature(c); break;
       case "smflat": this.toggleFlat(); break;
       case "smdxf": this.exportFlatDxf(); break;
       case "recognize": void this.recognizeHoles(); break;
+      case "recblend": void this.recognizeBlends(); break;
+      case "recext": void this.recognizeExtrudes(); break;
       case "extrefs": this.showExtRefs(); break;
       case "undo": this.undo(); break;
       case "redo": this.redo(); break;
@@ -7808,7 +7905,7 @@ const CM_FLY: Record<string, string[]> = {
   plane: ["plane", "axis", "point", "csys", "extrefs"],
   curves: ["helix", "sketch3d", "xyzcurve", "compcurve", "projcurve", "split"],
   bodies: ["import", "heal", "combine", "indent", "intersect", "bsplit", "movebody", "delbody", "scale"],
-  direct: ["moveface", "delface", "recognize"],
+  direct: ["moveface", "delface", "recognize", "recblend", "recext"],
 };
 
 const P3_TOOLS = (): [string, string, string][] => [
@@ -7835,6 +7932,8 @@ const P3_TOOLS = (): [string, string, string][] => [
   ["moveface", t("Move Face"), t("Move face: push flat faces out or in along their normals, on any body")],
   ["delface", t("Delete Face"), t("Delete face: remove faces and heal the gap, on any body")],
   ["recognize", t("Recognize Holes"), t("Recognize holes: round holes in the body become Hole features you can edit")],
+  ["recblend", t("Recognize Fillets"), t("Recognize fillets and chamfers: the body's fillets and chamfers become Fillet and Chamfer features you can edit")],
+  ["recext", t("Recognize Extrudes"), t("Recognize extrudes: pockets and bosses of the body become sketches with Extrude features you can edit")],
 ];
 
 /** The surface flyout's commands (FRS 9.11). */
@@ -7890,6 +7989,8 @@ const ICON_SVG: Record<string, string> = {
   moveface: S('<path d="M2 8h9v6H2z"/><path d="M6 8V3M4 5l2-2 2 2"/><path d="M2 8l3-3h9l-3 3M14 5v6l-3 3"/>'),
   heal: S('<path d="M3 13l7-7 3 3-7 7H3z"/><path d="M9 3l4 4M12 2l2 2"/>'),
   recognize: S('<path d="M2 5h12v8H2z"/><circle cx="8" cy="9" r="2.2"/><path d="M5 2l-2 2M11 2l2 2"/>'),
+  recblend: S('<path d="M2 13V7a5 5 0 0 1 5-5h7v11z"/><path d="M5 2l-2 2M11 2l2 2"/>'),
+  recext: S('<path d="M2 6h12v7H2z"/><path d="M6 6V3h4v3"/><path d="M5 1l-2 2M11 1l2 2"/>'),
   delface: S('<path d="M2 6h9v8H2z"/><path d="M2 6l3-3h9l-3 3M14 3v8l-3 3"/><path d="M12 1l3 3M15 1l-3 3"/>'),
   split: S('<path d="M2 4h12v9H2z"/><path d="M8 1v14" stroke-dasharray="2 1.5"/>'),
   rib: S('<path d="M2 14h12M3 14V3"/><path d="M3 5l9 9" stroke-width="2.6"/>'),
