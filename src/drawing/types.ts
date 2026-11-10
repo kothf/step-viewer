@@ -152,6 +152,8 @@ export interface DimAnnot {
   ends?: "filled" | "open" | "dot" | "tick";
   /** Radius and diameter dimensions with the text outside the circle: the leader stops at the rim with one arrow pointing at it from outside, instead of crossing the circle. */
   outside?: boolean;
+  /** Radius and diameter dimensions: the text lies along the leader (ISO aligned), not on a level shoulder. */
+  along?: boolean;
 }
 
 /** A note: on the sheet (sheet mm) or on a view (its model axes, so it moves with the view), with an optional leader to the model. */
