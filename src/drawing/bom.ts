@@ -216,15 +216,27 @@ export function onVisible(proj: Projection, q: P2, tol: number): boolean {
  * on the longest visible edge of its first component, placed around the view `gap` mm outside it
  * and spread so balloons do not overlap. Positions are in the view's model axes.
  */
-export function autoBalloons(sheet: Sheet, v: DrawingView, topo: Topo, P: (p: V3) => P2, proj: Projection, s: number, bom: Bom, uid: () => string, gap = 12): BalloonAnnot[] {
+export interface BalloonItems {
+  /** The item an edge (by its key) belongs to: a BOM item, or a cut list item on a weldment part. */
+  edge(k: string): number | null;
+  /** The item a stacked entry names. */
+  stack(s: string): number | null;
+}
+
+/** Items from a BOM: the component an edge key names. */
+export function bomItems(bom: Bom): BalloonItems {
+  return { edge: k => { const c = compOfKey(k); return c ? bom.itemOf(c) : null; }, stack: s => bom.itemOf(s) };
+}
+
+export function autoBalloons(sheet: Sheet, v: DrawingView, topo: Topo, P: (p: V3) => P2, proj: Projection, s: number, items: BalloonItems, uid: () => string, gap = 12): BalloonAnnot[] {
   const have = new Set<number>();
   for (const a of sheet.annots ?? []) if (a.t === "balloon" && a.view === v.id) {
-    for (const c of ["e" in a.ref ? compOfKey(a.ref.e) : null, ...(a.stack ?? [])]) { const i = c ? bom.itemOf(c) : null; if (i) have.add(i); }
+    for (const i of ["e" in a.ref ? items.edge(a.ref.e) : null, ...(a.stack ?? []).map(x => items.stack(x))]) if (i) have.add(i);
   }
   const size = Math.max(proj.box[2] - proj.box[0], proj.box[3] - proj.box[1], 1), tol = size * 2e-3;
   const best = new Map<number, { e: MEdge; m: P2; len: number }>();
   for (const e of topo.edges) {
-    const c = compOfKey(e.k), item = c ? bom.itemOf(c) : null;
+    const item = items.edge(e.k);
     if (!item || have.has(item)) continue;
     const a = P(e.a), b = P(e.b), m = P(e.m);
     const len = e.t === "c" && Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-9 ? 2 * Math.PI * (e.r ?? 0) * 0.5 : Math.hypot(a[0] - m[0], a[1] - m[1]) + Math.hypot(m[0] - b[0], m[1] - b[1]);

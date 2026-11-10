@@ -5,6 +5,31 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.423.0] - 2026-11-10
+
+### Added
+
+- **Balloons on weldment part drawings (FR-FT-121)**: a balloon on a drawing of a weldment part now shows the body's cut list item number, as in SolidWorks: click an edge of a member, plate or weld bead and place the balloon. **Auto balloon** puts one balloon on each cut list item seen in the view, and the balloon's panel names the item and stacks other items under it. The numbers match the Cut List dialog and the cut list table, and follow the part.
+
+## [1.424.0] - 2026-11-10
+
+### Fixed
+
+- **Sketch Trim on circles that lines only touch** (Leuenberger exam #76): a circle with tangent lines ending on it was deleted whole ("no crossings"), with its dimensions and relations, and where it was cut the new arc ends were loose points on the lines instead of the lines' own ends. A line end held On curve now cuts the circle there, tangent touches count within the solver's tolerance, and the cut uses the other curve's end, so the outline stays one closed, fully defined loop.
+- **Face names of arcs next to a smaller concentric curve** (#77): an extruded arc's side face could take the name of a hole or slot end sharing its centre (and the hole became "…:1"), so mates and references named the wrong face. New parts match each face to its sketch curve by a point on the edge; parts saved before keep their face names, so their mates still find them.
+- **Arrow keys after a heads-up view button** (#78): after a click on Front, Top… in the view bar the arrow keys did nothing; they turn the view again.
+- **Mate names** (#79): a new mate no longer repeats the name of one still in the assembly after another of its type was deleted.
+
+### Added
+
+- **Rename mates** (#80): **Rename** in a mate's menu in the assembly tree.
+
+## [1.423.0] - 2026-11-10
+
+### Added
+
+- **Surface finish options (FR-DRW-023)**: a drawing's surface finish symbol can carry a **Second requirement** under the first, a **Lay** symbol (=, ⊥, X, M, C, R, P), a **Machining allowance** and the **All around** circle, laid out as in ISO 1302.
+
 ## [1.422.0] - 2026-11-10
 
 ### Added
@@ -2498,7 +2523,10 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.422.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.423.0...HEAD
+[1.423.0]: https://github.com/kothf/step-viewer/compare/v1.424.0...v1.423.0
+[1.424.0]: https://github.com/kothf/step-viewer/compare/v1.423.0...v1.424.0
+[1.423.0]: https://github.com/kothf/step-viewer/compare/v1.422.0...v1.423.0
 [1.422.0]: https://github.com/kothf/step-viewer/compare/v1.421.0...v1.422.0
 [1.421.0]: https://github.com/kothf/step-viewer/compare/v1.420.0...v1.421.0
 [1.420.0]: https://github.com/kothf/step-viewer/compare/v1.419.0...v1.420.0

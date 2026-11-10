@@ -5,10 +5,10 @@
 // with their parent. Lines come from the drawing worker (exact HLR).
 import fontUrl from "dejavu-fonts-ttf/ttf/DejaVuSans.ttf?url";
 import type { MEdge, Projection, ViewDir } from "../kernel/drawing";
-import { AUTO_LAYERS, withCut, clineSegs, cloudPrims, dimGeo, factsCtx, holeEdges, ringDist, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
+import { AUTO_LAYERS, withCut, clineSegs, cloudPrims, dimGeo, factsCtx, holeEdges, ringDist, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, stackItem, edgeItem, cutDesc, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
 import type { PartDoc } from "../model/types";
 import type { AsmDoc } from "../asm/types";
-import { BOM_COLS, autoBalloons, compOfKey, sheetBom, subsOf, type Bom } from "./bom";
+import { BOM_COLS, autoBalloons, compOfKey, sheetBom, subsOf, type BalloonItems, type Bom } from "./bom";
 import { t, onLangChange, lang } from "../i18n";
 import { toast, confirmModal } from "../ui";
 import { DrawingKernel, type ModelFacts } from "./client";
@@ -255,6 +255,10 @@ export class DrawingWorkspace {
   /** The BOM a sheet's balloons and parts list follow (its BOM table's mode). */
   private bomFor(sh: Sheet): Bom | null { const src = this.doc.source; return this.boms && src.kind === "asm" ? sheetBom(sh, src.doc, src.flat, this.boms) : null; }
   private get bom(): Bom | null { return this.bomFor(this.sheet); }
+  /** A weldment part's cut list, which balloons number when the drawing has no BOM. */
+  private get cuts() { return this.bom ? null : this.facts?.cuts?.length ? this.facts.cuts : null; }
+  /** What balloons number on this sheet: BOM items (assembly) or cut list items (weldment part). */
+  private balloonItems(): BalloonItems { const c = this.ctx(); return { edge: k => edgeItem(k, c), stack: x => stackItem(x, c) }; }
 
   private load(doc: DrawingDoc, model: Uint8Array | undefined, fileName: string) {
     this.host.beforeOpen?.();
@@ -1140,7 +1144,7 @@ export class DrawingWorkspace {
 
   private startAnnot(kind: AnnotMode["kind"] | "cmark" | "skline" | "skrect" | "skcircle" | "skpoly", how: "chain" | "base" | "ord" = "chain") {
     const free = kind === "note" || kind === "gtol" || kind === "surf" || kind === "cloud" || kind === "weld" || kind === "dtarget" || kind.startsWith("sk");
-    if (kind === "balloon" && !this.bom) { toast(t("Balloons and the bill of materials are for drawings of an assembly."), true); return; }
+    if (kind === "balloon" && !this.bom && !this.cuts) { toast(t("Balloons are for drawings of an assembly or of a weldment part."), true); return; }
     if (!free && !this.facts) { toast(t("The drawing's model is still loading.")); return; }
     if (!free && !this.sheet.views.length) { toast(t("Place a model view first."), true); return; }
     if (kind === "cloud") this.mode = { kind, view: null, pts: [], at: null };
@@ -1398,7 +1402,7 @@ export class DrawingWorkspace {
       if (!m.ref) {
         const pick = vid ? this.pickAt(vid, p) : null;
         const e = pick?.e;
-        if (!e || !compOfKey(e.k)) { toast(t("Click an edge of a component.")); return; }
+        if (!e || !edgeItem(e.k, this.ctx())) { toast(t(this.bom ? "Click an edge of a component." : "Click an edge of a cut list body.")); return; }
         m.view = vid; m.ref = edgeRef(e, "e");
         this.renderStatus(); this.renderOverlay(); return;
       }
@@ -1571,12 +1575,12 @@ export class DrawingWorkspace {
 
   /** Auto balloon (FR-DRW-030): one balloon per BOM item in the selected view (or the first view), around it. */
   private async autoBalloon() {
-    if (!this.bom || !this.facts) { toast(t("Balloons and the bill of materials are for drawings of an assembly."), true); return; }
+    if ((!this.bom && !this.cuts) || !this.facts) { toast(t("Balloons are for drawings of an assembly or of a weldment part."), true); return; }
     const v = this.sheet.views.find(x => x.id === this.sel) ?? this.sheet.views.find(x => x.kind !== "detail");
     if (!v) { toast(t("Place a model view first."), true); return; }
     const proj = await this.kernel.request(viewReq(this.sheet, v)).catch(() => null);
     if (!proj || !this.facts) return;
-    const add = autoBalloons(this.sheet, v, this.facts.topo, projector(viewDir(this.sheet, v)).P, proj, viewScale(this.sheet, v), this.bom, () => uid("a_"));
+    const add = autoBalloons(this.sheet, v, this.facts.topo, projector(viewDir(this.sheet, v)).P, proj, viewScale(this.sheet, v), this.balloonItems(), () => uid("a_"));
     if (!add.length) { toast(t("Every item already has a balloon in the view.")); return; }
     this.store!.change("Auto balloon", d => { const S = d.sheets[this.sheetIdx]; (S.annots ??= []).push(...add); });
     toast(t("{n} balloon added|{n} balloons added", { n: add.length }), "success");
@@ -1648,7 +1652,7 @@ export class DrawingWorkspace {
         s += `<g class="drw-preview">${svgBody(viewAnnots(sh, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: this.factsOf(vid)?.topo.cyls ?? [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
       }
     } else if (m.kind === "balloon") {
-      if (!m.ref) { const hov = this.pickAt(vid, at); if (hov && compOfKey(hov.e.k)) s += show(hov.kind === "pt" ? { ...hov, kind: hov.e.t === "c" && hov.e.c ? "circle" : "line" } : hov, "drw-edge"); }
+      if (!m.ref) { const hov = this.pickAt(vid, at); if (hov && edgeItem(hov.e.k, this.ctx())) s += show(hov.kind === "pt" ? { ...hov, kind: hov.e.t === "c" && hov.e.c ? "circle" : "line" } : hov, "drw-edge"); }
       else {
         const pa: Annot = { id: "_pb", t: "balloon", view: vid, ref: m.ref, pos: fromSheet(pl, at[0], at[1]) };
         s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
@@ -1727,7 +1731,7 @@ export class DrawingWorkspace {
   /** A balloon's stacked items (FR-DRW-030): each with a remove button, and a list of the items not shown yet. */
   private stackRows(a: BalloonAnnot): string {
     const bom = this.bom;
-    if (!bom) return "";
+    if (!bom) return this.cutStackRows(a);
     const item = (c: string) => bom.itemOf(c);
     const own = "e" in a.ref ? compOfKey(a.ref.e) : null;
     const used = new Set([own, ...(a.stack ?? [])].map(c => (c ? item(c) : null)));
@@ -1735,6 +1739,23 @@ export class DrawingWorkspace {
     const free = bom.rows.filter(r => !used.has(r.item) && r.comp);
     const add = free.length ? `<label class="drw-f">${esc(t("Stack another item"))}<select data-d="bstack"><option value="">—</option>${free.map(r => `<option value="${esc(r.comp)}">${r.item} · ${esc(r.part)}</option>`).join("")}</select></label>` : "";
     return rows || add ? `<p class="drw-note">${esc(t("Stacked balloons"))}</p>${rows}${add}` : "";
+  }
+
+  /** The same on a weldment part drawing: stacked entries are `cut:<item>`. */
+  private cutStackRows(a: BalloonAnnot): string {
+    const cuts = this.cuts;
+    if (!cuts) return "";
+    const it = this.balloonItems();
+    const used = new Set([..."e" in a.ref ? [it.edge(a.ref.e)] : [], ...(a.stack ?? []).map(x => it.stack(x))]);
+    const rows = (a.stack ?? []).map((c, i) => `<div class="row drw-stack"><span>${esc(t("item {n}", { n: it.stack(c) ?? "?" }))}</span><button class="btn small" data-unstack="${i}" aria-label="${esc(t("Remove from the stack"))}">✕</button></div>`).join("");
+    const free = cuts.filter(c => !used.has(c.item));
+    const add = free.length ? `<label class="drw-f">${esc(t("Stack another item"))}<select data-d="bstack"><option value="">—</option>${free.map(c => `<option value="cut:${c.item}">${c.item} · ${esc(this.cutLabel(c))}</option>`).join("")}</select></label>` : "";
+    return rows || add ? `<p class="drw-note">${esc(t("Stacked balloons"))}</p>${rows}${add}` : "";
+  }
+
+  /** A cut list item's name for pickers, as the cut list table writes it. */
+  private cutLabel(c: NonNullable<ModelFacts["cuts"]>[number]): string {
+    return cutDesc(c, this.ctx());
   }
 
   private setAnnot(label: string, fn: (a: Annot) => void) {
@@ -1882,10 +1903,12 @@ export class DrawingWorkspace {
       </fieldset>${del}`;
     }
     if (a.t === "balloon") {
-      const c = "e" in a.ref ? compOfKey(a.ref.e) : null, item = c && this.bom ? this.bom.itemOf(c) : null;
+      const c = "e" in a.ref ? compOfKey(a.ref.e) : null, item = "e" in a.ref ? edgeItem(a.ref.e, this.ctx()) : null;
       const comp = c ? this.facts?.comps?.find(x => x.id === c)?.name ?? c : "";
+      const cut = !this.bom && item ? this.cuts?.find(x => x.item === item) : undefined;
       return `<fieldset class="pm-group"><legend>${esc(t("Balloon"))}</legend>
         ${comp ? `<p class="drw-note">${esc(t("Component"))}: <b translate="no">${esc(comp)}</b>${item ? ` · ${esc(t("item {n}", { n: item }))}` : ""}</p>` : ""}
+        ${cut ? `<p class="drw-note">${esc(t("Cut list"))}: <b translate="no">${esc(this.cutLabel(cut))}</b> · ${esc(t("item {n}", { n: item! }))}</p>` : ""}
         <label class="drw-f">${esc(t("Text instead of the item number"))}<input data-d="btxt" value="${esc(a.txt ?? "")}" translate="no"></label>
         <label class="drw-f">${esc(t("Style"))}<select data-d="bshape">${([["", "Circle"], ["split", "Circular split line"], ["tri", "Triangle"], ["hex", "Hexagon"], ["box", "Rectangle"], ["none", "Underline"]] as const).map(([v, l]) => `<option value="${v}"${(a.shape ?? "") === v ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>
         ${this.stackRows(a)}
