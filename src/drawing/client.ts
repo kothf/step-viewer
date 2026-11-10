@@ -90,7 +90,11 @@ class Lane {
 }
 
 /** An exact projection waiting for a worker. */
-interface Job { msg: Record<string, unknown>; resolve: (v: any) => void; reject: (e: Error) => void; tries: number }
+/** `key`: the projection's cache key; `dropped`: its view is gone, so it is not run (again). */
+interface Job { msg: Record<string, unknown>; resolve: (v: any) => void; reject: (e: Error) => void; tries: number; key?: string; dropped?: boolean }
+
+/** The message a projection fails with when its view went away before it was made (see `DrawingKernel.drop`). */
+export const DROPPED = "The view is gone";
 
 export class DrawingKernel {
   private worker: Worker | null = null;
@@ -118,6 +122,9 @@ export class DrawingKernel {
    */
   private jobs: Job[] = [];
   private mainBusy = false;
+  /** The exact job on the main worker, and on the helper. */
+  private mainJob: Job | null = null;
+  private helperJob: Job | null = null;
   private helper: Lane | null = null;
   private helperIdle: ReturnType<typeof setTimeout> | null = null;
   /** Exact projections the helper worker made (for the smoke test). */
@@ -273,8 +280,20 @@ export class DrawingKernel {
   helperState() { return { on: !!this.helper, loaded: !!this.helper?.loaded, helped: this.helped, recycles: this.recycles, snap: this.snap?.bin.length ?? 0, snapMesh: !!this.snap?.mesh }; }
 
   /** An exact projection or section, run by whichever worker is free first. */
-  private exact<T>(msg: Record<string, unknown>): Promise<T> {
-    return new Promise<T>((resolve, reject) => { this.jobs.push({ msg, resolve, reject, tries: 0 }); this.pump(); });
+  private exact<T>(msg: Record<string, unknown>, key?: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => { this.jobs.push({ msg, resolve, reject, tries: 0, key }); this.pump(); });
+  }
+
+  /**
+   * Drops the exact projections no view wants any more (`keep(key)` false): waiting ones are taken off the queue,
+   * and a running one stops its worker, which starts over with the model (drawings exam round four: a deleted
+   * section through a big assembly kept the worker busy, and every later view waited behind it). They fail with `DROPPED`.
+   */
+  drop(keep: (key: string) => boolean) {
+    const gone = (j: Job | null) => !!j && !!j.key && !j.dropped && !keep(j.key);
+    for (const j of this.jobs.filter(gone)) { j.dropped = true; this.jobs.splice(this.jobs.indexOf(j), 1); j.reject(new Error(DROPPED)); }
+    if (gone(this.helperJob)) { this.helperJob!.dropped = true; this.stopHelper(); }
+    if (gone(this.mainJob)) { this.mainJob!.dropped = true; void this.recycle(); }
   }
 
   private pump() {
@@ -283,8 +302,10 @@ export class DrawingKernel {
       if (!this.mainBusy && !this.recycling) {
         const j = this.jobs.shift()!;
         this.mainBusy = true;
+        this.mainJob = j;
         const gen = this.gen;
         this.call(j.msg).then(j.resolve, (err: Error) => {
+          if (j.dropped) { j.reject(new Error(DROPPED)); return; }
           // Out of memory: start the worker over and try once more.
           if (gen === this.gen && j.tries < 2 && OUT_OF_MEMORY.test(err.message) && this.src) {
             j.tries = 2;
@@ -295,6 +316,7 @@ export class DrawingKernel {
           j.reject(err);
         }).finally(() => {
           this.mainBusy = false;
+          if (this.mainJob === j) this.mainJob = null;
           if (this.wantRecycle && !this.pending.size) void this.recycle();
           else this.pump();
         });
@@ -308,11 +330,13 @@ export class DrawingKernel {
       if (i < 0) break;
       const j = this.jobs.splice(i, 1)[0];
       h.busy = true;
+      this.helperJob = j;
       h.call(j.msg).then(r => { this.helped++; j.resolve(r); }, () => {
+        if (j.dropped) { j.reject(new Error(DROPPED)); return; }
         // The helper failed (out of memory, stopped): the main worker does it.
         j.tries++;
         this.jobs.unshift(j);
-      }).finally(() => { h.busy = false; this.idleHelper(); this.pump(); });
+      }).finally(() => { h.busy = false; if (this.helperJob === j) this.helperJob = null; this.idleHelper(); this.pump(); });
     }
   }
 
@@ -351,7 +375,7 @@ export class DrawingKernel {
     if (!p) {
       if (!this.loaded) return Promise.reject(new Error("No model loaded"));
       const gen = this.gen;
-      p = this.loaded.then(() => this.exact<{ proj: Projection }>({ type: "alt", view: req.view, moves: req.moves })).then(r => {
+      p = this.loaded.then(() => this.exact<{ proj: Projection }>({ type: "alt", view: req.view, moves: req.moves }, req.key)).then(r => {
         if (gen === this.gen) this.cache.set(req.key, r.proj);
         this.inflight.delete(req.key);
         return r.proj;
@@ -374,7 +398,7 @@ export class DrawingKernel {
       if (!this.loaded) return Promise.reject(new Error("No model loaded"));
       const gen = this.gen;
       const cfg = req.cfg;
-      p = (cfg ? this.config(cfg) : this.loaded).then(() => this.exact<{ proj: Projection }>(req.p ? { type: "section", view, p: req.p, poly: req.poly, stair: req.stair, align: req.align, exclude: req.exclude, cfg, only: req.only } : { type: "project", view, shade: req.shade, cfg, only: req.only })).then(r => {
+      p = (cfg ? this.config(cfg) : this.loaded).then(() => this.exact<{ proj: Projection }>(req.p ? { type: "section", view, p: req.p, poly: req.poly, stair: req.stair, align: req.align, exclude: req.exclude, cfg, only: req.only } : { type: "project", view, shade: req.shade, cfg, only: req.only }, key)).then(r => {
         if (gen === this.gen) { this.cache.set(key, r.proj); this.previews.delete(key); this.slowest = Math.max(this.slowest, r.proj.ms); }
         this.inflight.delete(key);
         return r.proj;

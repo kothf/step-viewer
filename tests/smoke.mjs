@@ -6742,6 +6742,17 @@ try {
     const same = two.map(c => c.keys.map((k, i) => `${k}=${c.mats[i]}`).sort().join());
     check(h1 > h0 && same.every(x => x === pairs),
       `drawing 1.476: exact views run on two drawing workers at once, with the same model (${h0} → ${h1}; ${same.join(" | ")})`);
+    // 1.491: a projection no view wants any more (a deleted view's) is dropped, even while a worker runs it,
+    // and the next view is made as before.
+    const dropped = await mp.evaluate(async () => {
+      const p = window.__sv.drw.section([0, 1, 0], [0, 0, 1], [0, 0, 4], "gone").then(() => "made", e => e.message);
+      // The job is handed to a worker a few microtasks later (after the model's load promise), never later than the next task.
+      for (let i = 0; i < 4; i++) await Promise.resolve();
+      window.__sv.drw.drop();
+      return p;
+    });
+    const after = await mp.evaluate(() => window.__sv.drw.section([0, 1, 0], [0, 0, 1], [0, 0, 5], "after").then(c => c.keys.length, e => e.message));
+    check(dropped === "The view is gone" && after === 2, `drawing 1.491: a deleted view's projection is dropped and the next view still comes (${dropped}; ${after})`);
     // 1.478: this page runs with `drwheap=1`, so the main drawing worker is started over (same model, cache kept)
     // after every projection; all the checks above ran through such restarts.
     const { recycles: rc, snap } = await mp.evaluate(() => window.__sv.drw.helper());
