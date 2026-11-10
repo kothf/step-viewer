@@ -5161,6 +5161,19 @@ try {
     const circles = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "a" && p.layer === "ANNOT" && p.r === 5 && p.a1 - p.a0 > 6).length);
     const nums2 = (await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "ANNOT" && p.h === 5).map(p => p.s))).sort().join();
     check(JSON.stringify(stacked?.stack) === '["c1"]' && circles === 4 && nums2 === "1,1,2,2", `drawing: stacked balloon adds item 1 under item 2 (${JSON.stringify(stacked?.stack)}; ${circles} circles; ${nums2})`);
+    // Balloon style (FR-DRW-023): a split circle shows each item's quantity below; a hexagon has no circle; Circular puts it back.
+    const balloonLook = () => dp.evaluate(() => { const p = window.__sv.drw.prims().filter(q => q.layer === "ANNOT"); return { circles: p.filter(q => q.t === "a" && q.r === 5 && q.a1 - q.a0 > 6).length, qty: p.filter(q => q.t === "t" && q.h === 3).map(q => q.s).sort().join() }; });
+    await dp.selectOption('#drw [data-d="bshape"]', "split");
+    await dp.waitForTimeout(150);
+    const bl1 = await balloonLook(), bs1 = (await annots()).find(a => a.t === "balloon" && a.view === top)?.shape;
+    await dp.selectOption('#drw [data-d="bshape"]', "hex");
+    await dp.waitForTimeout(150);
+    const bl2 = await balloonLook();
+    await dp.selectOption('#drw [data-d="bshape"]', "");
+    await dp.waitForTimeout(150);
+    const bl3 = await balloonLook(), bs3 = "shape" in (await annots()).find(a => a.t === "balloon" && a.view === top);
+    check(bs1 === "split" && bl1.circles === 4 && bl1.qty === "1,2" && bl2.circles === 2 && bl2.qty === "" && bl3.circles === 4 && !bs3,
+      `drawing: a balloon turns into a split circle with quantities, a hexagon and back (${JSON.stringify([bs1, bl1, bl2, bl3, bs3])})`);
     await dp.keyboard.press("Escape");
     // 1.99.0 alternate position (FR-DRW-015): select the top view, pick Pin<1>'s circle, drop that point 30 mm higher: the pin is drawn again in phantom lines.
     [x, y] = await at(top, -45, -25);
@@ -8341,7 +8354,7 @@ try {
     await ctx.close();
   }
 
-  // --- 1.419: Selected Contours: extrude regions of a sketch whose lines cross or branch (FR-FT-010) ---
+  // --- 1.420: Selected Contours: extrude regions of a sketch whose lines cross or branch (FR-FT-010) ---
   if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
@@ -8376,7 +8389,7 @@ try {
     await settle();
     const done = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(x => x.type === "extrude"); return { contours: f.contours?.length, v: Math.round(window.__sv.model.last().props?.volume ?? 0), faces: window.__sv.model.last().data?.faces?.length ?? 0 }; });
     check(/focus/.test(open0.box ?? "") && open0.help === "contours" && one.n === 1 && !one.bad && one.v === 18000 && done.contours === 1 && done.v === 18000,
-      `model 1.419: Extrude on a sketch with a line across opens Selected Contours, a click in the view picks one region (FR-FT-010) (${JSON.stringify({ open0, one, done })})`);
+      `model 1.420: Extrude on a sketch with a line across opens Selected Contours, a click in the view picks one region (FR-FT-010) (${JSON.stringify({ open0, one, done })})`);
     await ctx.close();
   }
 
