@@ -72,6 +72,17 @@ export class Assembler {
     return s.own;
   }
 
+  /**
+   * Each solid's material name (TopExp order) of a part source whose bodies have their own material
+   * (FR-MAT-001): the body's, else the part's. Null when no body has one, or `src` is not the source.
+   */
+  bodyMats(key: string, doc: AsmDoc, src: object): (string | null)[] | null {
+    const s = this.sources.get(key), pd = doc.parts[key]?.doc;
+    if (!s || s !== src || !s.body || !pd || !Object.values(pd.bodies ?? {}).some(b => b.material)) return null;
+    try { return s.modeller.bodyInfo(s.body, pd).map(b => pd.bodies?.[b.key]?.material?.name ?? pd.material?.name ?? null); }
+    catch { return null; }
+  }
+
   /** A part's evaluated body in its own coordinates (null when it has none). */
   sourceBody(key: string, doc: AsmDoc): Named | null { return this.source(key, doc).body; }
 

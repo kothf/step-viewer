@@ -12,7 +12,7 @@ import type { EdgeRef, PartDoc } from "../model/types";
 import { modelItems, type CutInfo, type WeldInfo } from "./items";
 import { cutList, type WeldHost } from "../weldments/kernel";
 import { cutKey, splitSubs } from "../weldments/types";
-import { findMaterial } from "../tools/materials";
+import { bodiesDensity, findMaterial } from "../tools/materials";
 import { activate } from "../model/configs";
 
 export type DrawingRequest =
@@ -49,24 +49,37 @@ let shape: any = null;
 /** The loaded shape's face names in TopExp order (absent for files: faces are then f<i>, as `topology` names them). */
 let shapeNames: string[] | undefined;
 /** An assembly's placed component shapes by id, for alternate positions. */
-let placedShapes: { id: string; shape: any; mat: string | null }[] = [];
+let placedShapes: Owner[] = [];
 /** The loaded model's material (a part) for section hatching. */
 let modelMat: string | null = null;
+/** A shape a section cuts: whose it is, its material and, when its bodies have their own (FR-MAT-001), each solid's in TopExp order. */
+type Owner = { id: string; shape: any; mat: string | null; mats?: (string | null)[] | null };
 /** Who each solid of a shape belongs to (TopExp order), for hatching each component or body on its own (FR-DRW-012). */
-function solidOwners(list: { id: string; shape: any; mat: string | null }[]): { key: string; mat: string | null }[] {
+function solidOwners(list: Owner[]): { key: string; mat: string | null }[] {
   const A = oc.TopAbs_ShapeEnum, out: { key: string; mat: string | null }[] = [];
   for (const pc of list) {
-    let k = 0;
-    for (const ex = new oc.TopExp_Explorer_2(pc.shape, A.TopAbs_SOLID, A.TopAbs_SHAPE); ex.More(); ex.Next(), k++) out.push({ key: pc.id || `body${k}`, mat: pc.mat });
+    const solids: any[] = [];
+    for (const ex = new oc.TopExp_Explorer_2(pc.shape, A.TopAbs_SOLID, A.TopAbs_SHAPE); ex.More(); ex.Next()) solids.push(ex.Current());
+    // Body materials only while the solids are still the bodies one to one (an aligned section may split one).
+    const mats = pc.mats && pc.mats.length === solids.length ? pc.mats : null;
+    solids.forEach((_, k) => out.push({ key: pc.id ? (mats && solids.length > 1 ? `${pc.id}#${k}` : pc.id) : `body${k}`, mat: mats?.[k] ?? pc.mat }));
   }
   return out;
 }
+/** Each solid's material of a part whose bodies have their own (FR-MAT-001), else null. */
+function bodyMats(md: Modeller, body: any, doc: PartDoc): (string | null)[] | null {
+  if (!Object.values(doc.bodies ?? {}).some(b => b.material)) return null;
+  try { return md.bodyInfo(body, doc).map(b => doc.bodies?.[b.key]?.material?.name ?? doc.material?.name ?? null); }
+  catch { return null; }
+}
 /** The loaded part's document, for its other configurations, and those built so far by name. */
 let partDoc: PartDoc | null = null;
-const variants = new Map<string, { shape: any; mat: string | null; names?: string[] }>();
+const variants = new Map<string, { shape: any; mat: string | null; mats?: (string | null)[] | null; names?: string[] }>();
+/** The loaded part's solid materials (see `bodyMats`). */
+let modelMats: (string | null)[] | null = null;
 
 /** A part's solid with its topology and model items (dimensions, holes, threads, sketches). */
-function buildPart(doc: PartDoc): { shape: any; mat: string | null; names: string[]; extra: Record<string, unknown> } {
+function buildPart(doc: PartDoc): { shape: any; mat: string | null; mats: (string | null)[] | null; names: string[]; extra: Record<string, unknown> } {
   const md = new Modeller(oc), res = md.evaluate(doc);
   if (!res.body) throw new Error("The part has no body yet.");
   const body = res.body, shape = body.shape;
@@ -96,7 +109,7 @@ function buildPart(doc: PartDoc): { shape: any; mat: string | null; names: strin
       for (const c of items) {
         const p = doc.cutProps?.[cutKey(c)];
         if (p?.excl) continue;
-        const kg = c.volume * (findMaterial(p?.mat)?.density ?? density) / 1e6;
+        const kg = c.volume * (findMaterial(p?.mat)?.density ?? bodiesDensity(c.bodies, doc.bodies, density)) / 1e6;
         ++n;
         for (const k of c.bodies) for (const nm of namesOf.get(k) ?? []) cutFaces[nm] ??= n;
         cuts.push({ item: n, kind: c.kind, desc: p?.desc || c.desc, ...(p?.desc ? { own: true } : {}), qty: c.kind === "bead" ? 1 : c.qty, kg,
@@ -109,7 +122,7 @@ function buildPart(doc: PartDoc): { shape: any; mat: string | null; names: strin
       welds = beads.map(c => ({ legs: c.desc, length: c.length ?? 0, qty: c.qty, ...(c.inter ? { inter: c.inter } : {}) }));
     } catch { /* no weld or cut list table rows */ }
   }
-  return { shape, mat: doc.material?.name ?? null, names: body.names, extra: { topo: topology(oc, shape, body.names), ...mi, welds, cuts, cutFaces, weldFaces } };
+  return { shape, mat: doc.material?.name ?? null, mats: bodyMats(md, body, doc), names: body.names, extra: { topo: topology(oc, shape, body.names), ...mi, welds, cuts, cutFaces, weldFaces } };
 }
 
 /** The shape (and material) a request draws: the loaded model, or one of the part's configurations. */
@@ -123,8 +136,8 @@ function onlyOf(ids: string[]): { shape: any; list: typeof placedShapes } {
   return { shape: c, list };
 }
 
-function shapeOf(cfg?: string): { shape: any; mat: string | null; names?: string[] } {
-  if (!cfg || !partDoc || cfg === partDoc.config) return { shape, mat: modelMat, names: shapeNames };
+function shapeOf(cfg?: string): { shape: any; mat: string | null; mats?: (string | null)[] | null; names?: string[] } {
+  if (!cfg || !partDoc || cfg === partDoc.config) return { shape, mat: modelMat, mats: modelMats, names: shapeNames };
   const v = variants.get(cfg);
   if (!v) throw new Error(`Configuration "${cfg}" is not loaded`);
   return v;
@@ -152,6 +165,7 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
     } else if (r.type === "load") {
       placedShapes = [];
       modelMat = null;
+      modelMats = null;
       shapeNames = undefined;
       if (!oc) throw new Error("Kernel not started");
       let extra = {};
@@ -159,17 +173,17 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
       variants.clear();
       if (r.part) {
         const b = buildPart(r.part);
-        shape = b.shape; modelMat = b.mat; extra = b.extra; shapeNames = b.names;
+        shape = b.shape; modelMat = b.mat; modelMats = b.mats; extra = b.extra; shapeNames = b.names;
         partDoc = r.part;
       } else if (r.asm) {
         // An assembly (FR-DRW-030): the shown components placed into one compound; face names get
         // the component id in front (`<comp>@<face>`) so an edge says which component it is on.
-        const { placed } = new Assembler(oc).evaluate({ ...r.asm, components: r.asm.components.filter(c => !c.hidden) });
+        const asm = new Assembler(oc), { placed } = asm.evaluate({ ...r.asm, components: r.asm.components.filter(c => !c.hidden) });
         if (!placed.length) throw new Error("The assembly has no components to draw.");
         const b = new oc.BRep_Builder(), comp = new oc.TopoDS_Compound();
         b.MakeCompound(comp);
         const names: string[] = [], comps: { id: string; part: string; name: string }[] = [];
-        placedShapes = placed.map(pc => ({ id: pc.id, shape: pc.body.shape, mat: r.asm!.parts[pc.part]?.doc?.material?.name ?? null }));
+        placedShapes = placed.map(pc => ({ id: pc.id, shape: pc.body.shape, mat: r.asm!.parts[pc.part]?.doc?.material?.name ?? null, mats: asm.bodyMats(pc.part, r.asm!, pc.src) }));
         for (const pc of placed) { b.Add(comp, pc.body.shape); names.push(...pc.body.names.map(n => `${pc.id}@${n}`)); comps.push({ id: pc.id, part: pc.part, name: pc.name }); }
         shape = comp; shapeNames = names;
         extra = { topo: topology(oc, shape, names), items: [], holes: [], comps };
@@ -193,7 +207,7 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
       const d: PartDoc = structuredClone(partDoc);
       activate(d, r.name);
       const b = buildPart(d);
-      variants.set(r.name, { shape: b.shape, mat: b.mat, names: b.names });
+      variants.set(r.name, { shape: b.shape, mat: b.mat, mats: b.mats, names: b.names });
       post({ id: r.id, ok: true, ...shapeInfo(oc, b.shape), ...b.extra });
     } else if (r.type === "project") {
       if (!shape) throw new Error("No model loaded");
@@ -231,7 +245,7 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
       const own0 = shapeOf(r.cfg), modelMat = own0.mat;
       // Components left whole (FR-DRW-012) are drawn but not cut; a top-level id takes its sub-components along.
       const only = r.only?.length && placedShapes.length ? onlyOf(r.only) : null, base = only ? only.list : placedShapes;
-      let cutShape = only ? only.shape : own0.shape, keep: any, cutList = base.length ? base : [{ id: "", shape: own0.shape, mat: modelMat }];
+      let cutShape = only ? only.shape : own0.shape, keep: any, cutList: Owner[] = base.length ? base : [{ id: "", shape: own0.shape, mat: modelMat, mats: own0.mats }];
       if (r.exclude?.length && placedShapes.length) {
         const out = (id: string) => r.exclude!.some(x => id === x || id.startsWith(`${x}/`));
         const b = new oc.BRep_Builder(), a = new oc.TopoDS_Compound(), k = new oc.TopoDS_Compound();

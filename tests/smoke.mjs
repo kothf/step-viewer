@@ -6447,6 +6447,38 @@ try {
     await ctx.close();
   }
 
+  // --- 1.462: a body's own material in drawings (FR-MAT-001): section hatching per body ---
+  if (inShard(6)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Two bodies", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -20, -10), P("b", 20, -10), P("c", 20, 10), P("d", -20, 10), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } },
+        { id: "k", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "c0", t: "point", x: 40, y: 0 }, { id: "cc", t: "circle", c: "c0", r: 5 }] },
+        { id: "e", type: "extrude", name: "Extrude2", sketch: "k", op: "boss", end: "blind", depth: { v: 10 }, merge: false });
+      d.material = { name: "Steel S235", density: 7.85 };
+      d.bodies = { e: { material: { name: "Titanium Ti-6Al-4V", density: 4.43 } } };
+    }));
+    await mp.waitForTimeout(300); await idle();
+    await mp.click("#new-more"); await mp.click("#new-drawing");
+    await mp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
+    const cut = await mp.evaluate(() => window.__sv.drw.section([0, 1, 0], [0, 0, 1], [0, 0, 5]));
+    const pairs = cut.keys.map((k, i) => `${k}=${cut.mats[i]}`).sort().join();
+    check(pairs === "body0=Steel S235,body1=Titanium Ti-6Al-4V",
+      `drawing 1.462: a section hatches each body by its own material, the part's for the rest (FR-MAT-001) (${pairs})`);
+    await ctx.close();
+  }
+
   // --- 1.62: assemblies (FRS 10, FR-ASM-001..005, FR-MATE-001/002): new assembly, insert parts and a STEP model, move, hide, undo, save and reopen ---
   if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -8984,7 +9016,7 @@ try {
     const ps1 = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(x => x.type === "planesurf"); const l = window.__sv.model.last(); return { contours: f?.contours?.length, sheetFaces: l.sheetFaces, bad: l.statuses.filter(s => !s.ok).map(s => s.code).join() }; });
     check(ps0.type === "planesurf" && ps0.sketch === "s" && ps0.focus === "contours" && ps1.contours === 1 && ps1.sheetFaces === 1 && !ps1.bad,
       `model 1.428: Planar Surface on a sketch with a line across picks a region with Selected Contours (FR-FT-010) (${JSON.stringify({ ps0, ps1 })})`);
-    // 1.462: a cut's picked regions are drawn in the cut preview's yellow, a boss's in orange.
+    // 1.463: a cut's picked regions are drawn in the cut preview's yellow, a boss's in orange.
     const fills = () => mp.evaluate(() => { const c = []; window.__sv.viewer.scene.traverse(o => { if (o.userData.contour !== undefined && o.visible) c.push({ hex: o.material.color.getHex(), cut: o.userData.contourCut }); }); return c; });
     await mp.evaluate(() => window.__sv.modeller.startFeature("extrude"));
     await settle();
@@ -8996,7 +9028,7 @@ try {
     const cutFills = await fills();
     const cutPv = await mp.evaluate(() => { let n = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData.cutPreview) n++; }); return n; });
     check(boss.length === 1 && boss[0].hex === 0xf08c00 && !boss[0].cut && cutFills.length === 1 && cutFills[0].hex === 0xffd43b && cutFills[0].cut === true,
-      `model 1.462: picked contours are orange for a boss and the cut preview's yellow for a cut (${JSON.stringify({ boss, cutFills, cutPv })})`);
+      `model 1.463: picked contours are orange for a boss and the cut preview's yellow for a cut (${JSON.stringify({ boss, cutFills, cutPv })})`);
     await ctx.close();
   }
 

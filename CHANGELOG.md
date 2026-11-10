@@ -5,11 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.462.0] - 2026-11-10
+## [1.463.0] - 2026-11-10
 
 ### Changed
 
 - **Selected Contours look like the feature they make**: in a cut (Extrude Cut, Revolve Cut) the picked regions are filled in the cut preview's yellow instead of the boss orange, so a picked region no longer reads as material being added. Each picked region also gets a darker outline, so two picked neighbours stay apart.
+
+## [1.462.0] - 2026-11-10
+
+### Added
+
+- **Body materials in drawings (FR-MAT-001)**: in a section view of a multibody part, each body's cut faces are hatched by its own material (steel, aluminium, titanium and so on get their own pattern), and the bodies of an assembly component are told apart the same way. The cut list table on a weldment drawing weighs an item by its bodies' own materials when the item has no material of its own.
 
 ## [1.461.0] - 2026-11-10
 
@@ -2790,7 +2796,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.462.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.463.0...HEAD
+[1.463.0]: https://github.com/kothf/step-viewer/compare/v1.462.0...v1.463.0
 [1.462.0]: https://github.com/kothf/step-viewer/compare/v1.461.0...v1.462.0
 [1.461.0]: https://github.com/kothf/step-viewer/compare/v1.460.0...v1.461.0
 [1.460.0]: https://github.com/kothf/step-viewer/compare/v1.459.0...v1.460.0

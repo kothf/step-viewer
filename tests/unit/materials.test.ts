@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CATEGORIES, CHECKED, LIBRARY, MATERIAL_RU, SOURCES, findMaterial, parseCustom, resolveRef, searchMaterials, toRef, validMaterial } from "../../src/tools/materials";
+import { bodiesDensity, CATEGORIES, CHECKED, LIBRARY, MATERIAL_RU, SOURCES, findMaterial, parseCustom, resolveRef, searchMaterials, toRef, validMaterial } from "../../src/tools/materials";
 import { RU } from "../../src/i18n.ru";
 import { materialPattern } from "../../src/drawing/compose";
 
@@ -184,4 +184,12 @@ test("twelfth pass (1.429.0): ASA and PC/ABS follow named grades' sheets", () =>
   const p = findMaterial("PC/ABS")!;
   assert.ok(p.ref);
   assert.deepEqual([p.density, p.E, p.sy], [1.13, 2.35, 54]);
+});
+
+test("a cut list item's density follows its bodies' own materials (FR-MAT-001)", () => {
+  const bodies = { a: { material: { name: "Titanium Ti-6Al-4V", density: 4.43 } }, b: {} };
+  assert.equal(bodiesDensity(["a"], bodies, 7.85), 4.43);
+  assert.equal(bodiesDensity(["b", "c"], bodies, 7.85), 7.85);
+  assert.ok(Math.abs(bodiesDensity(["a", "b"], bodies, 7.85) - (4.43 + 7.85) / 2) < 1e-12);
+  assert.equal(bodiesDensity([], undefined, 2.7), 2.7);
 });
