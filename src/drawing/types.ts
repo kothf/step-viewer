@@ -128,6 +128,8 @@ export interface DimAnnot {
   suf?: string;
   /** Text typed over the value. */
   txt?: string;
+  /** A second line of text under the dimension line, e.g. "2 PLACES". */
+  below?: string;
   /** Model item it was imported from (`<feature>:<dimension>`): its points are rebuilt from the part. */
   src?: string;
   /** Inspection dimension (FR-DRW-021): the text sits in an obround frame. */
