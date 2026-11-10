@@ -157,7 +157,7 @@ test("ninth pass (1.417.0): PA66-GF30 checked against a maker's sheet", () => {
   assert.equal(pa.density, 1.36);
 });
 
-test("tenth pass (1.419.0): teak, mahogany and balsa checked against the Wood Handbook", () => {
+test("tenth pass (1.420.0): teak, mahogany and balsa checked against the Wood Handbook", () => {
   assert.ok(LIBRARY.filter((m) => m.ref).length >= 146);
   for (const [n, e] of [["Wood (teak)", 10.7], ["Wood (mahogany)", 10.3], ["Wood (balsa)", 3.4]] as const) {
     const m = findMaterial(n)!;
