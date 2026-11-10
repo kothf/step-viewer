@@ -1763,6 +1763,32 @@ export class ModelController {
     toast(t("Fillets and chamfers recognised: {n} edge|Fillets and chamfers recognised: {n} edges", { n }));
   }
 
+  /**
+   * Feature recognition (FR-FT-102): prismatic pockets and bosses are removed with Delete Face and made
+   * again as sketches with Extruded Cut / Boss features, so their shape and depth can be edited.
+   */
+  async recognizeExtrudes() {
+    if (!this.store) return;
+    if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
+    if (this.mode.kind !== "none") this.exitMode(false);
+    this.setBusy(1);
+    let feats: Feature[];
+    try { feats = await this.kernel.recognizeExtrudes(this.doc); }
+    catch (err) { toast(t("Feature recognition failed: {msg}", { msg: (err as Error).message }), true); return; }
+    finally { this.setBusy(-1); }
+    const n = feats.filter(f => f.type === "extrude").length;
+    if (!n) { toast(t("No pockets or bosses were found to recognise.")); return; }
+    this.store.change("Recognize extrudes", d => {
+      let at = d.rollback ?? d.features.length;
+      for (const f of feats) {
+        f.name = nextName(d, f.type);
+        d.features.splice(at++, 0, f);
+        if (d.rollback != null) d.rollback++;
+      }
+    });
+    toast(t("{n} extrude recognised|{n} extrudes recognised", { n }));
+  }
+
   /** Configurations (FR-CFG-001/002): list, switch, add, rename, delete. */
   editConfigs() {
     if (!this.store) return;
@@ -5410,6 +5436,7 @@ export class ModelController {
       case "smprops": this.sheetProps(); break;
       case "recognize": void this.recognizeHoles(); break;
       case "recblend": void this.recognizeBlends(); break;
+      case "recext": void this.recognizeExtrudes(); break;
       case "extrefs": this.showExtRefs(); break;
       case "undo": this.undo(); break;
       case "redo": this.redo(); break;
@@ -7886,7 +7913,7 @@ const CM_FLY: Record<string, string[]> = {
   plane: ["plane", "axis", "point", "csys", "extrefs"],
   curves: ["helix", "sketch3d", "xyzcurve", "compcurve", "projcurve", "split"],
   bodies: ["import", "heal", "combine", "indent", "intersect", "bsplit", "movebody", "delbody", "scale"],
-  direct: ["moveface", "delface", "recognize", "recblend"],
+  direct: ["moveface", "delface", "recognize", "recblend", "recext"],
 };
 
 const P3_TOOLS = (): [string, string, string][] => [
@@ -7914,6 +7941,7 @@ const P3_TOOLS = (): [string, string, string][] => [
   ["delface", t("Delete Face"), t("Delete face: remove faces and heal the gap, on any body")],
   ["recognize", t("Recognize Holes"), t("Recognize holes: round holes in the body become Hole features you can edit")],
   ["recblend", t("Recognize Fillets"), t("Recognize fillets and chamfers: the body's fillets and chamfers become Fillet and Chamfer features you can edit")],
+  ["recext", t("Recognize Extrudes"), t("Recognize extrudes: pockets and bosses of the body become sketches with Extrude features you can edit")],
 ];
 
 /** The surface flyout's commands (FRS 9.11). */
@@ -7970,6 +7998,7 @@ const ICON_SVG: Record<string, string> = {
   heal: S('<path d="M3 13l7-7 3 3-7 7H3z"/><path d="M9 3l4 4M12 2l2 2"/>'),
   recognize: S('<path d="M2 5h12v8H2z"/><circle cx="8" cy="9" r="2.2"/><path d="M5 2l-2 2M11 2l2 2"/>'),
   recblend: S('<path d="M2 13V7a5 5 0 0 1 5-5h7v11z"/><path d="M5 2l-2 2M11 2l2 2"/>'),
+  recext: S('<path d="M2 6h12v7H2z"/><path d="M6 6V3h4v3"/><path d="M5 1l-2 2M11 1l2 2"/>'),
   delface: S('<path d="M2 6h9v8H2z"/><path d="M2 6l3-3h9l-3 3M14 3v8l-3 3"/><path d="M12 1l3 3M15 1l-3 3"/>'),
   split: S('<path d="M2 4h12v9H2z"/><path d="M8 1v14" stroke-dasharray="2 1.5"/>'),
   rib: S('<path d="M2 14h12M3 14V3"/><path d="M3 5l9 9" stroke-width="2.6"/>'),

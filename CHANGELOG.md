@@ -5,13 +5,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.402.0] - 2026-11-10
+## [1.403.0] - 2026-11-10
 
 ### Added
 - Sheet Metal Properties (FR-FT-120): a new command on the Sheet Metal tab lists the cut-list values of the flat pattern: the smallest bounding box round it (length, width, area), sheet thickness, bend radius and K-factor, the flat pattern's area, the cutting length round the outside and round the openings, the number of cut outs and bends, and the mass when the part has a material. Export CSV saves them in millimetres and kilograms.
 
 ### Fixed
 - A circle inside a base flange's closed sketch now cuts a hole in the plate; it used to add the disc back on.
+
+## [1.402.0] - 2026-11-10
+
+### Added
+
+- **Recognize Extrudes (FR-FT-102)**: a new command in the Direct flyout, beside Recognize Holes and Recognize Fillets. Pockets and bosses with straight walls on a flat face (blind pockets with a flat floor, cuts through the body, bosses with a flat top; lines and arcs in the outline) are removed with Delete Face and made again as a sketch on that face with an Extruded Cut or Boss, so the outline and the depth of an imported body can be edited. Round pockets stay with Recognize Holes. Only finds that rebuild to the same solid are kept.
 
 ## [1.401.0] - 2026-11-10
 
@@ -2365,7 +2371,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.402.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.403.0...HEAD
+[1.403.0]: https://github.com/kothf/step-viewer/compare/v1.402.0...v1.403.0
 [1.402.0]: https://github.com/kothf/step-viewer/compare/v1.401.0...v1.402.0
 [1.401.0]: https://github.com/kothf/step-viewer/compare/v1.400.0...v1.401.0
 [1.400.0]: https://github.com/kothf/step-viewer/compare/v1.399.0...v1.400.0
