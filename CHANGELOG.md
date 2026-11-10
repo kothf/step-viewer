@@ -5,6 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.412.0] - 2026-11-10
+
+### Added
+- Convert to Sheet Metal (FR-FT-120): a lip ring round an opening (one face shared by several walls) now gives each picked wall its own lip, straight across to the ring's inner edge, and the lips meet mitred at the corners like the walls. Every further wall at a corner is mitred too: in the plane bisecting the two bend edges when both chains have the same walls, else where the walls' mid-planes meet.
+
+### Fixed
+- Convert to Sheet Metal: with four walls round a face, a wall's second mitre could keep the wrong side and leave the wall running on past its corner (hidden in the part, where the solid trimmed it, but not in the panel outlines). Each mitre now keeps the side the wall's own bend edge lies on.
+
 ## [1.411.0] - 2026-11-10
 
 ### Added
@@ -2422,7 +2430,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.411.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.412.0...HEAD
+[1.412.0]: https://github.com/kothf/step-viewer/compare/v1.411.0...v1.412.0
 [1.411.0]: https://github.com/kothf/step-viewer/compare/v1.410.0...v1.411.0
 [1.410.0]: https://github.com/kothf/step-viewer/compare/v1.409.0...v1.410.0
 [1.409.0]: https://github.com/kothf/step-viewer/compare/v1.408.0...v1.409.0
