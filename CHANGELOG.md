@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.383.0] - 2026-11-10
+
+### Changed
+
+- **More material values checked (FR-MAT-001)**: ten more library materials now show **Checked against:** with a link (tool steels X153CrMoV12, X40CrMoV5-1 and 90MnCrV8, high speed steel HS6-5-2, bearing steel 100Cr6, stainless 1.4125, titanium Grade 4 and Ti-6Al-4V, ASTM A500 Grade B, C22). 129 of 170 materials are checked; the other 41 still say they are not. One value changed: HS6-5-2 density 8.10 → 8.12 g/cm³.
+
 ## [1.382.0] - 2026-11-10
 
 ### Changed
@@ -2251,7 +2257,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.382.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.383.0...HEAD
+[1.383.0]: https://github.com/kothf/step-viewer/compare/v1.382.0...v1.383.0
 [1.382.0]: https://github.com/kothf/step-viewer/compare/v1.381.0...v1.382.0
 [1.381.0]: https://github.com/kothf/step-viewer/compare/v1.380.0...v1.381.0
 [1.380.0]: https://github.com/kothf/step-viewer/compare/v1.379.0...v1.380.0

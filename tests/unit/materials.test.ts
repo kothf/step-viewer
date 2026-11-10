@@ -100,3 +100,12 @@ test("second pass (1.382.0): most of the library has a checked reference, the re
   assert.equal(findMaterial("Stainless steel 1.4404 (X2CrNiMo17-12-2)")!.ref, "www.thyssenkrupp-materials.co.uk/stainless-steel-316l-14404.html");
   assert.equal(findMaterial("Bronze CuSn8 (phosphor bronze)")!.E, 115);
 });
+
+test("third pass (1.383.0): tool steels, titanium and two more steels have a reference", () => {
+  const un = LIBRARY.filter(m => !m.ref).map(m => m.name);
+  assert.ok(Object.keys(CHECKED).length >= 129, `${Object.keys(CHECKED).length} checked`);
+  assert.ok(un.length <= 41, `${un.length} unchecked`);
+  assert.equal(findMaterial("High speed steel HS6-5-2")!.density, 8.12);
+  assert.ok(findMaterial("Tool steel X153CrMoV12")!.ref);
+  assert.ok(un.includes("Titanium Grade 1"));
+});

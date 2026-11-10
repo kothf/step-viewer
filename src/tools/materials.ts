@@ -128,7 +128,7 @@ const ROWS: Row[] = [
   ["steel", "Tool steel X153CrMoV12", "Инструментальная сталь X153CrMoV12", "1.2379 · AISI D2 · Х12МФ", [7.7, 210, 0.3, _, _, 20, 460, 10.5], "tool"],
   ["steel", "Tool steel X40CrMoV5-1", "Инструментальная сталь X40CrMoV5-1", "1.2344 · AISI H13 · 4Х5МФ1С", [7.8, 210, 0.3, _, _, 24.3, 460, 10.4], "tool"],
   ["steel", "Tool steel 90MnCrV8", "Инструментальная сталь 90MnCrV8", "1.2842 · AISI O2 · 9Г2Ф", [7.85, 210, 0.3, _, _, 33, 460, 12.2], "tool"],
-  ["steel", "High speed steel HS6-5-2", "Быстрорежущая сталь HS6-5-2", "1.3343 · AISI M2 · Р6М5", [8.1, 217, 0.3, _, _, 19, 460, 11.5], "tool"],
+  ["steel", "High speed steel HS6-5-2", "Быстрорежущая сталь HS6-5-2", "1.3343 · AISI M2 · Р6М5", [8.12, 217, 0.3, _, _, 19, 460, 11.5], "tool"],
 
   // ---------- stainless steels ----------
   ["stainless", "Stainless steel 304", "Нержавеющая сталь 304", "AISI 304 · UNS S30400", [8.0, 193, 0.29, 215, 505, 16.2, 500, 17.3], "asm1"],
@@ -422,6 +422,17 @@ export const CHECKED: Record<string, string> = {
   "Wood (western red cedar)": "www.wood-database.com/western-red-cedar/",
   "Plywood (birch)": "en.wikipedia.org/wiki/Plywood",
   "Concrete C25/30": "eurocodeapplied.com/design/en1992/concrete-design-properties",
+  // 1.383.0: tool and bearing steels, titanium, A500, C22.
+  "Steel 100Cr6 (bearing)": "lucefin.com/oaleekso/files_mf/1523536908100Cr6.pdf",
+  "Tool steel X153CrMoV12": "xometry.pro/wp-content/uploads/2023/09/Steel-1.2379-X153CrMo12-SKD11-annealed.pdf",
+  "Tool steel X40CrMoV5-1": "www.oberste-beulmann.de/Dateien/Datenblaetter/1.2344.efs.en.pdf",
+  "Tool steel 90MnCrV8": "www.oberste-beulmann.de/Dateien/Datenblaetter/1.2842.en.pdf",
+  "High speed steel HS6-5-2": "www.materialhub.de/en/materials/key-to-metals-hs6-5-2c-en",
+  "Stainless steel 1.4125 (X105CrMo17)": "lucefin.com/oaleekso/files_mf/15235415301.4125A440C.pdf",
+  "Titanium Grade 4": "sd-metals.bibus.com/de-en/materials/itm/Titanium-Grade-4/",
+  "Titanium Ti-6Al-4V": "www.ulbrich.com/alloys/ti-6-al-4-v-uns-r56400/",
+  "Steel ASTM A500 Grade B (shaped tube)": "major-metals-website.pages.dev/welded-steel-tubing/astm-a500",
+  "Steel C22 (normalized)": "en.saarstahl.com/app/uploads/2024/03/20160401100253-0402_C22.pdf",
 };
 
 export const LIBRARY: Material[] = ROWS.map(([cat, name, , eq, [density, E, nu, sy, su, k, cp, alpha], src, color]) =>
