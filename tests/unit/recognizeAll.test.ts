@@ -202,3 +202,29 @@ test("recognize features: keyways in a shaft come back as a tangent plane, a slo
   const deep = fs.map(f => f.type === "extrude" && (f as any).op === "cut" ? { ...f, depth: { v: (f as any).depth.v + 1 } } as Feature : f);
   assert.ok(vol(m, doc([...imp.features, ...deep])) < v0 - 50);
 });
+
+test("recognize features: a keyway running out through the shaft's end comes back as plane + sketch + blind cut (FR-FT-102)", async () => {
+  const m = new Modeller(await occ());
+  const xy: [number, number][] = [[0, 0], [10, 0], [10, 40], [0, 40]];
+  const ents: SkEnt[] = xy.map(([x, y], i) => ({ id: `rp${i}`, t: "point", x, y }) as SkEnt);
+  xy.forEach((_, i) => ents.push({ id: `rl${i}`, t: "line", a: `rp${i}`, b: `rp${(i + 1) % xy.length}` }));
+  ents.push({ id: "ra", t: "point", x: 0, y: -5 }, { id: "rb", t: "point", x: 0, y: 45 }, { id: "rax", t: "line", a: "ra", b: "rb", cons: true });
+  // A 6 wide keyway with a round end at z = 28 that runs out past the shaft's end at z = 40.
+  const P = (k: string, x: number, y: number): SkEnt => ({ id: `k${k}`, t: "point", x, y });
+  const key: SketchFeature = { id: "k", type: "sketch", name: "k", plane: { plane: "pa" }, rels: [], dims: [], ents: [
+    P("c", 0, 28), P("a1", 3, 28), P("a2", 3, 45), P("b2", -3, 45), P("b1", -3, 28),
+    { id: "kl1", t: "line", a: "ka1", b: "ka2" }, { id: "kl2", t: "line", a: "ka2", b: "kb2" }, { id: "kl3", t: "line", a: "kb2", b: "kb1" },
+    { id: "kr", t: "arc", c: "kc", a: "kb1", b: "ka1" }] as SkEnt[] };
+  const imp = imported(m, [{ id: "r", type: "sketch", name: "r", plane: { std: "XZ" }, ents, rels: [], dims: [] },
+    { id: "v", type: "revolve", name: "V", sketch: "r", op: "boss", axis: "rax", angle: { v: Math.PI * 2 } } as Feature,
+    { id: "pa", type: "plane", name: "PA", base: { std: "XZ" }, mode: "offset", offset: { v: 10 } } as Feature, key,
+    { id: "ca", type: "extrude", name: "CA", sketch: "k", op: "cut", end: "blind", depth: { v: 3.5 } } as Feature]);
+  const v0 = vol(m, imp);
+  const E = m.recognizeExtrudes(imp);
+  assert.equal(types(E), "sketch,extrude,delbody,plane,sketch,extrude");
+  assert.deepEqual(E.filter(f => f.type === "extrude" && (f as any).op === "cut").map(f => +(f as any).depth.v.toFixed(6)), [3.5]);
+  close(vol(m, doc([...imp.features, ...E])), v0, 1e-5);
+  const fs = m.recognizeFeatures(imp);
+  assert.equal(types(fs), "sketch,extrude,delbody,plane,sketch,extrude");
+  close(vol(m, doc([...imp.features, ...fs])), v0, 1e-5);
+});
