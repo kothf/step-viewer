@@ -1,6 +1,7 @@
 // Mate solver (FR-MATE-003/008, AT-P4-1..3): pure geometry, no kernel.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { solve, mateTypes, mateDefaults, type Geo } from "../../src/asm/solver";
 import { IDENTITY, applyPoint, applyDir, translation, rotation, compose } from "../../src/asm/math";
 import type { AsmDoc, Mate } from "../../src/asm/types";
@@ -450,4 +451,21 @@ test("a slot mate keeps the pin between the slot's rounded ends (exam #81)", () 
   // The ends take no freedom away, even with the pin at one.
   const free = solve({ doc: at(20), geo: gg, faces, size: 100 }).dof.q, plain = solve({ doc: at(20), geo: gg, size: 100 }).dof.q;
   assert.equal(free, plain);
+});
+
+test("a 57-part engine with repeated, slightly inexact mates still shows its one freedom (exam #94)", () => {
+  // The Leuenberger engine as saved from the app: 148 mates, many of them saying the same thing twice (a Lock beside
+  // Concentric + Coincident) with directions stored about 1e-5 off. Only the crank train may move.
+  const f = JSON.parse(readFileSync("tests/fixtures/engine-dof.json", "utf8")) as { size: number; centres: [string, [number, number, number]][]; geo: [string, [string, Geo][]][]; components: AsmDoc["components"]; mates: Mate[] };
+  const gm = new Map(f.geo.map(([p, fs]) => [p, new Map(fs)])), cm = new Map(f.centres);
+  const d: AsmDoc = { ...doc([]), components: f.components, mates: f.mates };
+  const r = solve({ doc: d, geo: (p, face) => gm.get(p)?.get(face) ?? null, faces: p => gm.get(p)?.values() ?? [], centre: p => cm.get(p) ?? [0, 0, 0], size: f.size });
+  assert.ok(r.ok);
+  assert.equal(r.free, 1);
+  const name = (n: string) => f.components.find(c => c.name.startsWith(n))!.id;
+  assert.equal(r.dof[name("2-01.1-flywheel")], 1);
+  assert.equal(r.dof[name("2-07.1-spool-valve")], 1);
+  assert.equal(r.dof[name("1-03.1-cylinder")], 0);
+  // The handwheel's screw (0.5 mm a turn) is a weak row, but a real one: the reverser stays put.
+  assert.equal(r.dof[name("2-05.4-handwheel")], 0);
 });
