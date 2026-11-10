@@ -898,7 +898,8 @@ export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: Ann
       r = surfOn(a, T, f, ctx.dec);
       if (a.ref && !f) out.dangling.push(a.id);
     }
-    if (r) { out.prims.push(...r.prims); out.hits.push({ id: a.id, box: r.box }); }
+    // A split parts list is picked on its blocks, not on the empty corner between them.
+    if (r) { out.prims.push(...r.prims); const bx = (r as { boxes?: [number, number, number, number][] }).boxes; for (const box of bx && bx.length > 1 ? bx : [r.box]) out.hits.push({ id: a.id, box }); }
   }
   return out;
 }
@@ -1048,7 +1049,8 @@ export function sheetNotes(sheet: Sheet, label: Label = s => s, dec = ".", bom?:
     }
     const r = a.t === "weld" ? weldPrims(a, a.pos, null) : a.t === "dtarget" ? dtargetPrims(a, a.pos, null) : a.t === "note" ? notePrims(a, a.pos, null) : a.t === "gtol" ? gtolPrims(a, a.pos, null, dec)
       : a.t === "surf" ? surfPrims(a, a.pos, dec) : a.t === "table" ? tablePrims(a.kind === "bom" ? { ...a, rows: bom ? bomCells(bom) : [] } : a, label, a.anchor === "br" ? frameOf(sheet)[3] - a.pos[1] : Infinity) : null;
-    if (r) { out.prims.push(...r.prims); out.hits.push({ id: a.id, box: r.box }); }
+    // A split parts list is picked on its blocks, not on the empty corner between them.
+    if (r) { out.prims.push(...r.prims); const bx = (r as { boxes?: [number, number, number, number][] }).boxes; for (const box of bx && bx.length > 1 ? bx : [r.box]) out.hits.push({ id: a.id, box }); }
   }
   return out;
 }

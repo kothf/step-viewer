@@ -153,7 +153,7 @@ export function cellLabel(c: string, label: (s: string, p?: Record<string, strin
 }
 
 /** A table: optional title row, a header row and the rows, column widths from their contents. */
-export function tablePrims(a: TableAnnot, label: (s: string, p?: Record<string, string>) => string, maxH = Infinity): { prims: Prim[]; box: Box } {
+export function tablePrims(a: TableAnnot, label: (s: string, p?: Record<string, string>) => string, maxH = Infinity): { prims: Prim[]; box: Box; boxes: Box[] } {
   const out: Prim[] = [];
   const h = 2.5, rh = 6;
   const head = a.cols.map(c => cellLabel(c, label));
@@ -166,6 +166,7 @@ export function tablePrims(a: TableAnnot, label: (s: string, p?: Record<string, 
   for (let i = 0; i < Math.max(1, a.rows.length); i += per === Infinity ? Math.max(1, a.rows.length) : per) blocks.push(a.rows.slice(i, per === Infinity ? undefined : i + per));
   const xr = a.anchor === "tr" || a.anchor === "br" ? a.pos[0] - W : a.pos[0];
   let top = -Infinity, bottom = Infinity;
+  const boxes: Box[] = [];
   blocks.forEach((block, bi) => {
     const title = bi === 0 && a.title;
     const nRows = (title ? 1 : 0) + 1 + block.length;
@@ -194,6 +195,7 @@ export function tablePrims(a: TableAnnot, label: (s: string, p?: Record<string, 
       y = y0;
     }
     bottom = Math.min(bottom, y);
+    boxes.push(a.anchor === "br" ? [x0, y, x0 + W, a.pos[1] + nRows * rh] : [x0, y, x0 + W, a.pos[1]]);
   });
-  return { prims: out, box: [xr - (blocks.length - 1) * W, bottom, xr + W, top] };
+  return { prims: out, box: [xr - (blocks.length - 1) * W, bottom, xr + W, top], boxes };
 }
