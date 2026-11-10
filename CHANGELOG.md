@@ -5,11 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.427.0] - 2026-11-10
+## [1.428.0] - 2026-11-10
 
 ### Added
 
 - **Selected Contours: hover highlight and Planar Surface** (FR-FT-010): while the Selected Contours box has focus, the sketch region under the pointer lights up blue before you click, as in SolidWorks. Planar Surface takes Selected Contours too, so a sketch whose lines cross or branch can fill just the regions you pick.
+
+## [1.427.0] - 2026-11-10
+
+### Added
+
+- **Foreshortened radius (FR-DRW-021)**: a drawing's radius dimension can be **Foreshortened**: its line starts on the arc and stops short of the centre with a jog, for a centre far away or off the sheet.
 
 ## [1.426.0] - 2026-11-10
 
@@ -2534,7 +2540,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.427.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.428.0...HEAD
+[1.428.0]: https://github.com/kothf/step-viewer/compare/v1.427.0...v1.428.0
 [1.427.0]: https://github.com/kothf/step-viewer/compare/v1.426.0...v1.427.0
 [1.426.0]: https://github.com/kothf/step-viewer/compare/v1.425.0...v1.426.0
 [1.425.0]: https://github.com/kothf/step-viewer/compare/v1.424.0...v1.425.0

@@ -1305,6 +1305,17 @@ test("a dimension can carry a second line of text under its line (FR-DRW-021)", 
   const lin = { id: "a", t: "dim" as const, view: "v", k: "h" as const, refs: [], pos: [20, 15] as [number, number] };
   const pl = { s: 1, uc: 0, vc: 0, x: 0, y: 0 } as never;
   const geo = { k: "h" as const, pts: [[0, 0], [40, 0]] as [number, number][], value: 40 };
+  {
+    // Foreshortened radius: the line from the rim stops short of the centre with a jog; the arrow stays on the rim.
+    const rad = { id: "r", t: "dim", view: "v", k: "rad", refs: [], pos: [30, 40] } as never, rg = { k: "rad", pts: [], c: [0, 0], r: 100, value: 100 } as never;
+    const full = dimPrims(rad, rg, pl, "."), short = dimPrims({ ...(rad as object), fore: true } as never, rg, pl, ".");
+    assert.ok(full.prims.some(q => q.t === "l" && Math.hypot((q as { p: number[] }).p[0], (q as { p: number[] }).p[1]) < 1e-9), "the plain radius starts at the centre");
+    const zig = short.prims.find(q => q.t === "p" && (q as { p: number[] }).p.length === 8) as { p: number[] };
+    assert.ok(zig && Math.abs(Math.hypot(zig.p[6], zig.p[7]) - 100) < 1e-9, "the jogged line ends on the rim");
+    assert.ok(Math.hypot(zig.p[0], zig.p[1]) > 70 && Math.hypot(zig.p[0], zig.p[1]) < 80, "and starts about 24 mm inside it");
+    assert.ok(!short.prims.some(q => q.t === "l" && Math.hypot((q as { p: number[] }).p[0], (q as { p: number[] }).p[1]) < 1e-9));
+    assert.equal(short.prims.filter(q => q.t === "t").length, full.prims.filter(q => q.t === "t").length);
+  }
   const plain = dimPrims(lin as never, geo as never, pl, ".");
   const r = dimPrims({ ...lin, below: "2 PLACES" } as never, geo as never, pl, ".");
   const ts = r.prims.filter(q => q.t === "t") as { s: string; x: number; y: number; h: number }[];

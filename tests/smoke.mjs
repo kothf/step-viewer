@@ -4894,6 +4894,25 @@ try {
     await dp.selectOption('#drw .drw-props [data-d="arrows"]', "");
     const len2b = await dimLine();
     check(len1 > len0 + 5 && Math.abs(len2b - len0) < 1e-6, `drawing: a linear dimension's arrows go outside by hand and back (${[len0, len1, len2b].map(v => v.toFixed(1)).join(" → ")})`);
+    // Foreshortened radius (FR-DRW-021): the Ø16 as a radius whose line stops short of the centre with a jog; then back.
+    [x, y] = await at(top.id, 30, 25);
+    await dp.mouse.click(x + 12, y - 5);
+    const selR = await dp.evaluate(() => document.querySelector('#drw .drw-props [data-d="k"]')?.value);
+    let fore = null;
+    if (selR === "dia") {
+      await dp.selectOption('#drw .drw-props [data-d="k"]', "rad");
+      const jog = () => dp.evaluate(() => window.__sv.drw.prims().filter(q => q.t === "p" && q.layer === "ANNOT" && !q.closed && q.p.length === 8).length);
+      const j0 = await jog();
+      await dp.check('#drw .drw-props [data-d="fore"]');
+      const j1 = await jog(), stored = (await annots()).some(a => a.k === "rad" && a.fore === true), txR = await texts();
+      await dp.uncheck('#drw .drw-props [data-d="fore"]');
+      await dp.selectOption('#drw .drw-props [data-d="k"]', "dia");
+      fore = { j0, j1, stored, r8: txR.includes("R8"), back: (await annots()).some(a => a.k === "dia" && !a.fore) && !(await dp.$('#drw .drw-props [data-d="fore"]')) };
+    }
+    check(fore && fore.j1 === fore.j0 + 1 && fore.stored && fore.r8 && fore.back, `drawing: a radius dimension is foreshortened with a jog and goes back to a diameter (${selR}; ${JSON.stringify(fore)})`);
+    // Back to the 100, which the next checks work on.
+    [x, y] = await at(front.id, 0, 40.5);
+    await dp.mouse.click(x, y);
     // Text below (FR-DRW-021): a second line under the dimension line, gone again when cleared.
     await dp.fill('#drw .drw-props [data-d="below"]', "2 PLACES"); await dp.dispatchEvent('#drw .drw-props [data-d="below"]', "change");
     await dp.waitForTimeout(100);
@@ -8428,7 +8447,7 @@ try {
       const q = new v.camera.position.constructor(35, 0, 0).project(v.camera);
       return { x: r.left + ((q.x + 1) / 2) * r.width, y: r.top + ((1 - q.y) / 2) * r.height };
     });
-    // 1.427: hovering a region lights it up before the click (SolidWorks' pre-highlight).
+    // 1.428: hovering a region lights it up before the click (SolidWorks' pre-highlight).
     const hoverN = () => mp.evaluate(() => { let n = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData.contourHover !== undefined && o.visible) n++; }); return n; });
     await mp.mouse.move(at.x - 30, at.y - 30);
     await mp.mouse.move(at.x, at.y);
@@ -8443,7 +8462,7 @@ try {
     one.hov = hov;
     check(/focus/.test(open0.box ?? "") && open0.help === "contours" && hov === 1 && one.n === 1 && !one.bad && one.v === 18000 && done.contours === 1 && done.v === 18000,
       `model 1.421: Extrude on a sketch with a line across opens Selected Contours, hovering lights a region, a click in the view picks it (FR-FT-010) (${JSON.stringify({ open0, one, done })})`);
-    // 1.427: Planar Surface takes Selected Contours too: the left region (x -50..20) becomes one flat face.
+    // 1.428: Planar Surface takes Selected Contours too: the left region (x -50..20) becomes one flat face.
     await mp.evaluate(() => { window.__sv.modeller.startFeature("planesurf"); });
     await settle();
     const ps0 = await mp.evaluate(() => ({ type: window.__sv.model.mode().draft?.type, sketch: window.__sv.model.mode().draft?.sketch, focus: document.querySelector("#mc-pm .pm-box.focus")?.dataset.focus }));
@@ -8458,7 +8477,7 @@ try {
     await settle();
     const ps1 = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(x => x.type === "planesurf"); const l = window.__sv.model.last(); return { contours: f?.contours?.length, sheetFaces: l.sheetFaces, bad: l.statuses.filter(s => !s.ok).map(s => s.code).join() }; });
     check(ps0.type === "planesurf" && ps0.sketch === "s" && ps0.focus === "contours" && ps1.contours === 1 && ps1.sheetFaces === 1 && !ps1.bad,
-      `model 1.427: Planar Surface on a sketch with a line across picks a region with Selected Contours (FR-FT-010) (${JSON.stringify({ ps0, ps1 })})`);
+      `model 1.428: Planar Surface on a sketch with a line across picks a region with Selected Contours (FR-FT-010) (${JSON.stringify({ ps0, ps1 })})`);
     await ctx.close();
   }
 
