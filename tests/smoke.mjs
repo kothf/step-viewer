@@ -2846,6 +2846,25 @@ try {
       check(hud?.shown && hud.views && hud.mode && hud.proj && hud.centred && !hud.inHeader && dir[2] > 0.99,
         `model 1.371: the heads-up view bar holds the view groups at the top centre of the view and Previous view goes back (${JSON.stringify({ hud, dir })})`);
     }
+    // 1.377 (FR-UI-022): Section view in the heads-up bar cuts the model, a second click turns the cut off (the plane stays), a third on again; the bar keeps clear of the ✓ ✕ corner.
+    {
+      const st = () => mp.evaluate(() => { const b = document.querySelector('#hud [data-hud="section"]'), ps = window.__sv.section.planes; return { n: ps.length, on: ps.filter(p => p.enabled).length, pressed: b.getAttribute("aria-pressed") }; });
+      await mp.click('#hud [data-hud="section"]');
+      const s1 = await st();
+      await mp.click('#hud [data-hud="section"]');
+      const s2 = await st();
+      await mp.click('#hud [data-hud="section"]');
+      const s3 = await st();
+      await mp.evaluate(() => document.querySelector("#sec-clear").click());
+      const s4 = await st();
+      // While a command is open the bar keeps clear of the ✓ ✕ corner.
+      await runCmd(mp, "Shell");
+      await mp.waitForSelector("#mc-confirm:not([hidden])");
+      const clear = await mp.evaluate(() => { const h = document.querySelector("#hud").getBoundingClientRect(), c = document.querySelector("#mc-confirm").getBoundingClientRect(); return { hud: Math.round(h.right), ok: Math.round(c.left), free: h.right <= c.left || h.bottom <= c.top }; });
+      await mp.click("#mc-cancel");
+      check(s1.n === 1 && s1.on === 1 && s1.pressed === "true" && s2.n === 1 && s2.on === 0 && s2.pressed === "false" && s3.on === 1 && s3.pressed === "true" && s4.n === 0 && s4.pressed === "false" && clear.free,
+        `model 1.377: Section view in the heads-up bar turns the cut on and off, and the bar keeps clear of the confirmation corner (${JSON.stringify({ s1, s2, s3, s4, clear })})`);
+    }
     // 1.371 (FR-UI-104): named views: Space → Save view stores the camera in the part; the picker brings it back.
     {
       const vb = await mp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); document.activeElement?.blur(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
@@ -4753,6 +4772,14 @@ try {
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="items"]');
     await dp.waitForTimeout(150);
     check((await annots()).length === 4, "drawing: model items are not inserted twice");
+    {
+      // Their dimension lines sit 10 mm from the view on the sheet, whatever its scale.
+      const sc = await dp.evaluate(() => { const s = window.__sv.drw.doc().sheets[0].scale; return s[0] / s[1]; });
+      const near = (x, cands) => Math.min(...cands.map(c => Math.abs(Math.abs(x - c) - 10 / sc)));
+      const hd = an.find(a => a.src === "s1:d1"), vd = an.find(a => a.src === "s1:d2");
+      const eh = near(hd.pos[1], [-30, 30, 0, 60, -60]), ev = near(vd.pos[0], [-50, 50, 0, 100, -100]);
+      check(eh < 0.02 && ev < 0.02, `drawing: model items sit 10 mm outside the view on the sheet (scale ${sc}; off by ${eh.toFixed(3)} / ${ev.toFixed(3)})`);
+    }
     // Smart dimension: the front view's top edge, placed above it, is a horizontal 100; the hole's circle gives Ø16.
     await dp.click('#drw [data-a="dim"]');
     let [x, y] = await at(front.id, -20, 20);
@@ -9689,6 +9716,13 @@ try {
     await mp.click('#mc-pm input[data-k="wField"]');
     await settle();
     const symFlags = await mp.evaluate(() => document.querySelector('#mc-layer .wld-sym[data-weld="w5"]')?.textContent);
+    // Weld both sides: the symbol doubles its triangle; the plate's far side meets nothing here, so the bead stays valid.
+    await mp.click('#mc-pm input[data-k="wBoth"]');
+    await settle();
+    const bothSym = await mp.evaluate(() => ({ t: document.querySelector('#mc-layer .wld-sym[data-weld="w5"]')?.textContent, bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";") }));
+    check(!!bothSym.t?.includes("◺◹") && !bothSym.bad, `weldments: weld both sides shows on the symbol (${JSON.stringify(bothSym)})`);
+    await mp.click('#mc-pm input[data-k="wBoth"]');
+    await settle();
     // Unequal legs: unticking Equal leg lengths gives a second leg (1.5 × the first) and the symbol shows both.
     await mp.click('#mc-pm input[data-k="wEqual"]');
     await settle();
@@ -10682,6 +10716,31 @@ try {
       seen.push(i ? `${s.name}:${s.w}${s.step ? "+step" : ""}` : "step");
     }
     check(seen.join() === "Part1:40,Part2:80,step,Part1:40,Part2:80,Part1:40", `tabs: switching between two part tabs and a STEP tab shows each part's own body, without the STEP header (${seen})`);
+    // 1.377 (FR-DOC-003): a tab comes back with the camera and the selected row it was left with.
+    {
+      const go = async i => {
+        await dp.click(`#doc-tabs .dt >> nth=${i} >> .dt-b`);
+        if (i === 0) await dp.waitForFunction(() => !window.__sv.model.store && window.__sv.viewer.parts.length > 1 && document.querySelector("#loading").hidden, null, { timeout: 60000 });
+        else { await dp.waitForFunction(n => window.__sv.model.store?.doc.name === n, i === 1 ? "Part1" : "Part2"); await idle(); }
+        await dp.waitForTimeout(150);
+      };
+      const cam = () => dp.evaluate(() => { const v = window.__sv.viewer.getView(); return [...v.t, ...v.p, v.h].map(x => Math.round(x * 100) / 100); });
+      await treeClick(dp, '#mc-tree .ft-row[data-id="x"]');
+      await dp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(0.3, -0.2, 1), false); v.camera.zoom *= 1.7; v.camera.updateProjectionMatrix(); v.invalidate(); });
+      const c1 = await cam();
+      await go(0);
+      await dp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(-1, 0.4, 0.2), false); v.invalidate(); });
+      const c0 = await cam();
+      await go(2);
+      const c2 = await cam();
+      await go(1);
+      const b1 = await cam(), sel = await dp.evaluate(() => document.querySelector("#mc-tree .ft-row.sel")?.dataset.id ?? null);
+      await go(0);
+      const b0 = await cam();
+      await go(1);
+      const same = (a, b) => a.every((x, k) => Math.abs(x - b[k]) < 0.02 * Math.max(1, Math.abs(x)));
+      check(same(c1, b1) && same(c0, b0) && !same(c1, c2) && sel === "x", `tabs 1.377: a tab comes back with its camera and its selected row (${JSON.stringify({ c1, b1, c0, b0, c2, sel })})`);
+    }
     // A lost WebGL context (GPU reset) blanks the view; once the browser gives it back the view draws again.
     const lost = await dp.evaluate(async () => {
       const v = window.__sv.viewer, gl = v.renderer.getContext(), ext = gl.getExtension("WEBGL_lose_context");

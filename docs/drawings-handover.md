@@ -1,6 +1,6 @@
 # Drawings thread: handover
 
-Written for whoever continues drawing work (FRS section 11, `FR-DRW-…`). The CLAUDE.md "Drawings" line is the code map. It gives every release from 1.64.0 to 1.341.0 with its functions and fields. This file covers how the work runs, what is left, and the traps.
+Written for whoever continues drawing work (FRS section 11, `FR-DRW-…`). The CLAUDE.md "Drawings" line is the code map. It gives every release from 1.64.0 to 1.374.0 with its functions and fields. This file covers how the work runs, what is left, and the traps.
 
 ## Scope
 
@@ -59,12 +59,7 @@ Written for whoever continues drawing work (FRS section 11, `FR-DRW-…`). The C
 
 ## Ideas for next slices (none started)
 
-- **Side-on slots and partial cylinders**: a straight slot seen from the side shows two half cylinders. `centreMarks` draws axis lines only when one axis' faces of one radius add up to 2π. SolidWorks draws the slot's end axes; decide by looking at a real slot.
-- **Spheres**: a ball end seen from any side. A centre mark at the centre is probably enough (`MRev` doesn't hold spheres; add `k: "sphere"`).
 - **Centre marks on views at an angle**: end-on tests use `|ax·n| ≈ 1` (1e-6). Isometric views get no marks at all, which matches SolidWorks, so leave them unless asked.
-- **Auto-dimension / Model items placement**: `placeItems` stacks items beside the view. A smarter layout (no overlaps across views, staggered by size) would help big parts.
-- **Hole callouts from geometry** (no Hole feature, e.g. STEP files or cut-extrudes): `holeText` already gives Ø and ↧ depth / THRU from the cylinder, but no count and no head. It could count same-size holes in the view ("4× Ø6") and read a countersink or counterbore from the neighbouring `topo.revs` cone or larger coaxial cylinder.
-- **Linked dimension text / tolerance styles per document** (FR-DRW-025 leftovers): the document style has text height, arrows and lines, but no default tolerance or decimals per dimension type.
 - **Performance**: big assemblies spend most time in `HLRBRep_Algo`. Previews (`projectPoly`) already cover the wait; projecting views in parallel across the kernel pool (`src/kernel/pool.ts`) is the next step.
 - Check the FRS (`docs/FRS-modelling.md`, FR-DRW-001..031) and Appendix G for drawing items marked partial.
 
