@@ -5,6 +5,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.448.0] - 2026-11-10
+
+### Added
+
+- **Open the model from a drawing (FR-DRW-001)**: a drawing file opened by itself carries its part, assembly or STEP model. **Model** in the drawing bar now opens that model in its own tab (or shows its tab when it is open already); back on the drawing's tab, the views follow the model as usual.
+- **Diameter from a side view (FR-DRW-021)**: with Dimension, click either outline line of a cylinder seen from the side (a disc's or shaft's side, a hole's hidden line) and place the text: the diameter is drawn as a linear dimension with Ø, the same value as on the round view.
+
+### Fixed
+
+- Drawing dimensions between two edges no longer run their extension lines along the edges or across the part: each extension line starts at the end of its edge nearest the dimension line.
+- A new dimension on a hole is a diameter also when the model file stores the circle as two half circles (STEP); a radius stays the default for fillets and other arcs.
+
 ## [1.447.0] - 2026-11-10
 
 ### Fixed
@@ -2674,7 +2686,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.447.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.448.0...HEAD
+[1.448.0]: https://github.com/kothf/step-viewer/compare/v1.447.0...v1.448.0
 [1.447.0]: https://github.com/kothf/step-viewer/compare/v1.446.0...v1.447.0
 [1.446.0]: https://github.com/kothf/step-viewer/compare/v1.445.0...v1.446.0
 [1.445.0]: https://github.com/kothf/step-viewer/compare/v1.444.0...v1.445.0
