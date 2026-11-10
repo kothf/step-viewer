@@ -17,8 +17,11 @@ export interface NavHost {
   normalTo(): void;
   /** World box of the current selection, or null when nothing is picked. */
   selectionBox(): THREE.Box3 | null;
-  /** The model point under the screen point (a vertex, an edge or a face), for the rotation centre (FR-UI-100). */
-  pointAt?(x: number, y: number): THREE.Vector3 | null;
+  /**
+   * The model point under the screen point (a vertex, an edge or a face), for the rotation centre (FR-UI-100);
+   * `axis` = the direction of a straight edge picked along its length, which the view then turns about.
+   */
+  pointAt?(x: number, y: number): { p: THREE.Vector3; axis?: THREE.Vector3 } | null;
   /** Named views of the open document (FR-UI-104); absent = none can be stored. */
   namedViews?(): NamedViews | null;
 }
@@ -142,9 +145,9 @@ export function bindNavigation(host: NavHost): Navigation {
     const d = midDown;
     midDown = null;
     if (!d || e.button !== 1 || performance.now() - d.t > 500 || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
-    const p = host.pointAt?.(e.clientX, e.clientY) ?? null;
-    if (!p && !viewer.pivot) return;
-    viewer.setPivot(p);
+    const hit = host.pointAt?.(e.clientX, e.clientY) ?? null;
+    if (!hit && !viewer.pivot) return;
+    viewer.setPivot(hit?.p ?? null, hit?.axis ?? null);
   });
 
   // ---------- orientation picker (Space) ----------

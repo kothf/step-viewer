@@ -96,9 +96,10 @@ export class Viewer {
       const cam = this.controls.object;
       const q0 = this.pivot && !this.anim ? cam.quaternion.clone() : null;
       const moved = update(dt);
-      if (q0 && moved) this.turnAboutPivot(q0);
+      if (q0 && moved && !this.pivotAxis) this.turnAboutPivot(q0);
       return moved;
     };
+    this.bindAxisTurn();
     // A drag or wheel zoom starts from a camera Previous view can return to.
     this.controls.addEventListener("start", () => { const now = performance.now(); if (now - this.lastStart > 600) this.pushView(); this.lastStart = now; });
 
@@ -378,6 +379,7 @@ export class Viewer {
     const dir = this.camera.position.clone().sub(this.controls.target);
     if (dir.lengthSq() < 1e-12) dir.set(1, -1, 0.8);
     dir.normalize();
+    this.upright();
     const dist = sphere.radius / Math.sin(THREE.MathUtils.degToRad(this.persp.fov / 2)) * 1.05;
     this.animateTo(sphere.center, sphere.center.clone().addScaledVector(dir, dist), animate, sphere.radius * 2.2);
   }
@@ -386,6 +388,7 @@ export class Viewer {
   viewFrom(dir: THREE.Vector3, animate = true, extra?: THREE.Box3 | null) {
     const d = dir.clone().normalize();
     if (Math.abs(d.z) > 0.9999) d.y -= 1e-4;
+    this.upright();
     const b = this.computeBounds().clone();
     if (extra && !extra.isEmpty()) b.union(extra);
     const sphere = b.getBoundingSphere(new THREE.Sphere());
@@ -403,6 +406,7 @@ export class Viewer {
 
   /** Turns the view about the target: `h` about the world up axis, `v` about the screen's horizontal axis (degrees). */
   rotateView(h: number, v: number, animate = true) {
+    this.upright();
     const end = this.viewEnd(), tgt = end.t;
     const r = end.p.clone().sub(tgt);
     const up = THREE.Object3D.DEFAULT_UP;
@@ -472,8 +476,31 @@ export class Viewer {
   pivot: THREE.Vector3 | null = null;
   private pivotMark: THREE.Sprite | null = null;
 
-  setPivot(p: THREE.Vector3 | null) {
+  /**
+   * Edge pivot (FR-UI-100): with a straight edge picked, the rotate button turns the view about the edge's line
+   * (through `pivot`) instead of orbiting. That turn may roll the camera, which the Z-up orbit cannot: the orbit's
+   * own rotation is off meanwhile, `camera.up` turns along (pan and zoom keep it), and `upright()` puts Z up again
+   * when the pivot goes or a standard view, rotate key or stored view moves the camera.
+   */
+  pivotAxis: THREE.Vector3 | null = null;
+  private pivotLine: THREE.Line | null = null;
+
+  setPivot(p: THREE.Vector3 | null, axis: THREE.Vector3 | null = null) {
+    const hadAxis = !!this.pivotAxis;
     this.pivot = p ? p.clone() : null;
+    this.pivotAxis = p && axis && axis.lengthSq() > 1e-12 ? axis.clone().normalize() : null;
+    this.controls.enableRotate = !this.pivotAxis;
+    if (hadAxis && !this.pivotAxis) this.upright();
+    if (this.pivotLine) { this.scene.remove(this.pivotLine); this.pivotLine.geometry.dispose(); (this.pivotLine.material as THREE.Material).dispose(); this.pivotLine = null; }
+    if (p && this.pivotAxis) {
+      const L = this.modelSize * 0.6, a = this.pivotAxis;
+      const g = new THREE.BufferGeometry().setFromPoints([p.clone().addScaledVector(a, -L), p.clone().addScaledVector(a, L)]);
+      this.pivotLine = new THREE.Line(g, new THREE.LineDashedMaterial({ color: 0x0b6bcb, dashSize: L / 30, gapSize: L / 45, depthTest: false, transparent: true, opacity: 0.85 }));
+      this.pivotLine.computeLineDistances();
+      this.pivotLine.renderOrder = 998;
+      this.pivotLine.userData.pivot = "axis";
+      this.scene.add(this.pivotLine);
+    }
     if (!p) { if (this.pivotMark) { this.scene.remove(this.pivotMark); this.pivotMark.material.map?.dispose(); this.pivotMark.material.dispose(); this.pivotMark = null; } this.invalidate(); return; }
     if (!this.pivotMark) {
       const c = document.createElement("canvas");
@@ -492,6 +519,73 @@ export class Viewer {
     }
     this.pivotMark.position.copy(p);
     this.invalidate();
+  }
+
+  /** Puts world Z up again after an edge pivot turn rolled the camera. */
+  upright() {
+    const up = THREE.Object3D.DEFAULT_UP;
+    if (this.camera.up.distanceToSquared(up) < 1e-12 && this.persp.up.distanceToSquared(up) < 1e-12 && this.ortho.up.distanceToSquared(up) < 1e-12) return;
+    this.persp.up.copy(up);
+    this.ortho.up.copy(up);
+    this.camera.lookAt(this.controls.target);
+    this.invalidate();
+  }
+
+  /** Turns the camera by `ang` (radians) about the pivot edge's line: the model seems to turn by −ang. */
+  turnAboutAxis(ang: number) {
+    if (!this.pivot || !this.pivotAxis || !ang) return;
+    const R = new THREE.Quaternion().setFromAxisAngle(this.pivotAxis, ang);
+    const P = this.pivot, cam = this.camera, t = this.controls.target;
+    cam.position.sub(P).applyQuaternion(R).add(P);
+    t.sub(P).applyQuaternion(R).add(P);
+    cam.up.applyQuaternion(R);
+    cam.quaternion.premultiply(R);
+    this.invalidate();
+  }
+
+  /**
+   * Drag angle for an edge pivot: the model under the pointer follows the drag across the edge's line, a full
+   * view height = one turn; an edge seen end-on rolls with the horizontal drag.
+   */
+  private axisAngle(dx: number, dy: number) {
+    const a = this.pivotAxis!.clone().applyQuaternion(this.camera.quaternion.clone().invert());
+    const h = Math.max(this.size.y, 1), turn = (2 * Math.PI) / h;
+    const toward = new THREE.Vector3(0, 0, 1).addScaledVector(a, -a.z);
+    if (toward.length() < 0.2) return -turn * dx * Math.sign(a.z || 1);
+    // Velocity of the model point between the line and the camera when the model turns by +ang: a × toward.
+    const w = new THREE.Vector3().crossVectors(a, toward.normalize());
+    const u = new THREE.Vector2(w.x, -w.y);
+    if (u.lengthSq() < 1e-12) return 0;
+    u.normalize();
+    return -turn * (dx * u.x + dy * u.y);
+  }
+
+  private bindAxisTurn() {
+    const el = this.renderer.domElement;
+    let drag: { x: number; y: number; id: number; on: boolean } | null = null;
+    const ROT = THREE.MOUSE.ROTATE;
+    el.addEventListener("pointerdown", e => {
+      if (!this.pivotAxis || e.pointerType === "touch" || !this.controls.enabled) return;
+      const mb = this.controls.mouseButtons;
+      const b = e.button === 0 ? mb.LEFT : e.button === 1 ? mb.MIDDLE : e.button === 2 ? mb.RIGHT : -1;
+      // The orbit controls pan instead of rotating with Ctrl, Meta or Shift held.
+      if (b !== ROT || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      drag = { x: e.clientX, y: e.clientY, id: e.pointerId, on: false };
+    });
+    window.addEventListener("pointermove", e => {
+      if (!drag || e.pointerId !== drag.id) return;
+      if (!this.pivotAxis || !this.controls.enabled) { drag = null; return; }
+      const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+      if (!drag.on && Math.hypot(dx, dy) < 2) return;
+      if (!drag.on) { drag.on = true; this.pushView(); }
+      drag.x = e.clientX; drag.y = e.clientY;
+      this.anim = null;
+      this.turnAboutAxis(this.axisAngle(dx, dy) * this.controls.rotateSpeed);
+      this.controls.dispatchEvent({ type: "change" });
+    });
+    const end = (e: PointerEvent) => { if (drag && e.pointerId === drag.id) drag = null; };
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
   }
 
   private turnAboutPivot(q0: THREE.Quaternion) {
@@ -519,6 +613,7 @@ export class Viewer {
   }
   /** Goes to a stored camera (Previous view comes back from it). */
   setView(v: { t: [number, number, number]; p: [number, number, number]; h: number }, animate = true) {
+    this.upright();
     this.animateTo(new THREE.Vector3(...v.t), new THREE.Vector3(...v.p), animate, v.h);
   }
   /** A camera move is still running. */
@@ -528,6 +623,7 @@ export class Viewer {
   previousView() {
     const v = this.views.pop();
     if (!v) return false;
+    this.upright();
     this.animateTo(v.t, v.p, true, v.h, false);
     return true;
   }

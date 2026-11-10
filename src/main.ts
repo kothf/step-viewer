@@ -2289,7 +2289,18 @@ const nav = bindNavigation({
   selectionBox,
   pointAt: (x, y) => {
     const r = viewer.renderer.domElement.getBoundingClientRect();
-    return snapper.pick(x - r.left, y - r.top)?.point.clone() ?? faceUnder(x - r.left, y - r.top)?.point ?? null;
+    const s = snapper.pick(x - r.left, y - r.top);
+    if (s) {
+      // A straight edge picked along its length (not at an end): the view turns about its line.
+      const e = s.edge;
+      if (e && e.type === "line" && !s.section && (s.kind === "onEdge" || s.kind === "midpoint")) {
+        const axis = viewer.toWorld(s.part, e.end).sub(viewer.toWorld(s.part, e.start));
+        if (axis.lengthSq() > 1e-12) return { p: s.point.clone(), axis };
+      }
+      return { p: s.point.clone() };
+    }
+    const f = faceUnder(x - r.left, y - r.top);
+    return f ? { p: f.point.clone() } : null;
   },
   // Named views (FR-UI-104): a part or an assembly keeps them in its document; a model file for this session.
   namedViews: () => {

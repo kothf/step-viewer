@@ -1574,7 +1574,7 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | --- | --- | --- | --- |
 | Middle-drag rotate, Ctrl+middle pan, Shift+middle zoom | FR-UI-020 | 1.329.0: Preferences → Mouse sets the middle button (rotate or pan) and the wheel direction | Done |
 | Snapping to model geometry and automatic relations while sketching | FR-SK-042, FR-SK-052 | 1.89.0 model snapping; 1.251.0 automatic relations while drawing; 1.303.0 alignment inference | Done |
-| Middle click sets the rotation centre | FR-UI-100 | 1.351.0: middle click on a vertex/edge/face sets the pivot with a marker, empty space clears; an edge pivots about the clicked point, not its line (Z-up orbit) | Partly |
+| Middle click sets the rotation centre | FR-UI-100 | 1.351.0: middle click on a vertex/edge/face sets the pivot with a marker, empty space clears; 1.490.0: a straight edge turns the view about its line (dashed), the camera may roll until the pivot goes | Done |
 | Double middle click fits; wheel direction preference | FR-UI-101 | 1.107.0: double middle click fits; 1.329.0: wheel direction in Preferences | Done |
 | Arrow keys rotate/pan/roll, Z / Shift+Z zoom | FR-UI-102 (was only in Appendix A) | 1.107.0: arrows 15°, Shift 90°, Ctrl pan, Z / Shift+Z, Alt+Z previous view | Done |
 | Zoom to selection, zoom to area, previous view | FR-UI-103 (FR-UI-022 named them) | 1.107.0: Zoom to selection, Zoom to area, Previous view (Space picker, Alt+Z) | Done |
