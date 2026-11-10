@@ -16,7 +16,7 @@ import { DrawingKernel, type ModelFacts } from "./client";
 import { BREAK_GAP, composeSheet, fromSheet, HATCH_PATTERNS, hatchOf, inPoly, nextLetter, polyBox, placement, toSheet, viewBody, viewPrims, viewRect, type Placement } from "./compose";
 import { DrawingStore, newSheet, uid } from "./doc";
 import { DRAWING_EXT, packDrawing, unpackDrawing } from "./file";
-import { sheetDxf, sheetDxf2000, sheetPng, sheetSvg, sheetsPdf, svgBody, FONT } from "./output";
+import { printHtml, sheetDxf, sheetDxf2000, sheetPng, sheetSvg, sheetsPdf, svgBody, FONT } from "./output";
 import type { Prim } from "./prims";
 import { editTitleBlock } from "./tbEditor";
 import { loadFormats } from "./formats";
@@ -3332,8 +3332,7 @@ function printSheets(sheets: { prims: Prim[]; W: number; H: number }[], title: s
   fr.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0";
   fr.setAttribute("aria-hidden", "true");
   document.body.appendChild(fr);
-  const first = sheets[0];
-  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>@page{size:${first.W}mm ${first.H}mm;margin:0}html,body{margin:0}svg{display:block;page-break-after:always;break-after:page}@font-face{font-family:"DejaVu Sans";src:url(${new URL(fontUrl, location.href).href})}</style></head><body>${sheets.map(s => sheetSvg(s.prims, s.W, s.H).replace(/^<\?xml[^>]*>\n/, "")).join("")}</body></html>`;
+  const html = printHtml(sheets, title, new URL(fontUrl, location.href).href);
   const d = fr.contentDocument!;
   d.open(); d.write(html); d.close();
   const go = () => { try { fr.contentWindow!.focus(); fr.contentWindow!.print(); } finally { setTimeout(() => fr.remove(), 60_000); } };
