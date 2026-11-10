@@ -209,6 +209,37 @@ test("recognize features: cross holes at an angle come back on a plane at an ang
   close(vol(m, doc([...imp.features, ...fs])), v0, 1e-5);
 });
 
+test("recognize features: a cross hole at a compound angle comes back on a plane about an axis where a plane about Z meets XY (FR-FT-102)", async () => {
+  const m = new Modeller(await occ());
+  const xy: [number, number][] = [[0, 0], [10, 0], [10, 30], [0, 30]];
+  const ents: SkEnt[] = xy.map(([x, y], i) => ({ id: `rp${i}`, t: "point", x, y }) as SkEnt);
+  xy.forEach((_, i) => ents.push({ id: `rl${i}`, t: "line", a: `rp${i}`, b: `rp${(i + 1) % xy.length}` }));
+  ents.push({ id: "ra", t: "point", x: 0, y: -5 }, { id: "rb", t: "point", x: 0, y: 35 }, { id: "rax", t: "line", a: "ra", b: "rb", cons: true });
+  const shaft: Feature[] = [{ id: "r", type: "sketch", name: "r", plane: { std: "XZ" }, ents, rels: [], dims: [] },
+    { id: "v", type: "revolve", name: "V", sketch: "r", op: "boss", axis: "rax", angle: { v: Math.PI * 2 } } as Feature];
+  // Ø4 through (0, 0, 15): 35° round the shaft and 20° up from square to it.
+  const p1 = { id: "p1", type: "plane", name: "P1", base: { std: "YZ" }, mode: "angle", offset: { v: 0 }, angle: { v: 35 * Math.PI / 180 }, about: { std: "Z" } } as Feature;
+  const a1 = { id: "a1", type: "axis", name: "A1", mode: "planes", planes: [{ std: "XY" }, { plane: "p1" }] } as Feature;
+  const p2 = { id: "p2", type: "plane", name: "P2", base: { plane: "p1" }, mode: "angle", offset: { v: 0 }, angle: { v: 20 * Math.PI / 180 }, about: { axis: "a1" } } as Feature;
+  const F = m.evaluate(doc([...shaft, p1, a1, p2])).frames.p2;
+  const n = F.n;
+  assert.ok(Math.abs(n[2]) > 0.2 && Math.abs(n[0]) > 0.2 && Math.abs(n[1]) > 0.2, `compound normal ${n}`);
+  const q = [0, 0, 15].map((v, i) => v - F.o[i]);
+  const dt = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const xh: SketchFeature = { id: "o", type: "sketch", name: "o", plane: { plane: "p2" }, rels: [], dims: [],
+    ents: [{ id: "oc", t: "point", x: dt(q, F.x), y: dt(q, F.y) }, { id: "ok", t: "circle", c: "oc", r: 2 } as SkEnt] };
+  const plain = vol(m, doc(shaft));
+  const imp = imported(m, [...shaft, p1, a1, p2, xh, { id: "c", type: "extrude", name: "C", sketch: "o", op: "cut", end: "through2", depth: { v: 10 } } as Feature]);
+  const v0 = vol(m, imp);
+  assert.ok(v0 < plain - 200);
+  const H = m.recognizeHoles(imp);
+  assert.equal(types(H.cuts ?? []), "plane,axis,plane,sketch,extrude");
+  close(vol(m, doc([...imp.features, { id: "d", type: "delface", name: "", faces: H.faces } as Feature, ...H.cuts!])), v0, 1e-5);
+  const fs = m.recognizeFeatures(imp);
+  assert.equal(types(fs), "sketch,extrude,delbody,plane,axis,plane,sketch,extrude");
+  close(vol(m, doc([...imp.features, ...fs])), v0, 1e-5);
+});
+
 test("recognize features: keyways in a shaft come back as a tangent plane, a slot sketch and a blind cut (FR-FT-102)", async () => {
   const m = new Modeller(await occ());
   const xy: [number, number][] = [[0, 0], [10, 0], [10, 40], [0, 40]];
