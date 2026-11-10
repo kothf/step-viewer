@@ -12,6 +12,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - **Drawings of big assemblies (drawings exam retest)**: the fast hidden-line views now start at 1500 edges instead of 4000, so an older 57-part engine whose Top and Right views stayed previews for 8+ minutes gets exact-looking views in seconds too.
 - **Standard 3 views** reduces only as far as needed: the views may now fill the room beside the title block (the 85 % margin applies only to enlarged views), so the engine (430 × 187 × 184 mm) gets 1:2 on A3 instead of 1:5.
 
+## [1.472.0] - 2026-11-10
+
+### Changed
+
+- **Recognised sketches dimensioned the way FeatureWorks does (FR-FT-102)**: the sketches that Recognize Features and Recognize Extrudes make now get the lengths of their horizontal and vertical edges first, longest first, and only then the distances from the origin that are still needed. A rectangle gets its width and height and one corner's place, instead of four distances from the origin. Fully Define Sketch in the sketcher keeps dimensioning from the origin, as SolidWorks does by default.
+
 ## [1.471.0] - 2026-11-10
 
 ### Added
@@ -2876,7 +2882,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.473.0...HEAD
-[1.473.0]: https://github.com/kothf/step-viewer/compare/v1.471.0...v1.473.0
+[1.473.0]: https://github.com/kothf/step-viewer/compare/v1.472.0...v1.473.0
+[1.472.0]: https://github.com/kothf/step-viewer/compare/v1.471.0...v1.472.0
 [1.471.0]: https://github.com/kothf/step-viewer/compare/v1.470.0...v1.471.0
 [1.470.0]: https://github.com/kothf/step-viewer/compare/v1.469.0...v1.470.0
 [1.469.0]: https://github.com/kothf/step-viewer/compare/v1.468.0...v1.469.0
