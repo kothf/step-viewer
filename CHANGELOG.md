@@ -5,6 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.431.0] - 2026-11-10
+
+### Fixed
+
+- **File ▸ Export ▸ STEP for parts and assemblies**: the STEP button in the Export panel said "STEP export needs a STEP, IGES or BREP model" for a part you model or an assembly. It now saves them like the command bar's STEP button does.
+- **DXF 2000 of a big drawing sheet**: export failed with "Maximum call stack size exceeded" on sheets with many lines (the Leuenberger engine drawing). It now saves.
+- **Export on an empty part**: PNG, mesh and PDF report buttons did nothing when there was no body yet; they now say so.
+
 ## [1.430.0] - 2026-11-10
 
 ### Added
@@ -2552,7 +2560,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.430.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.431.0...HEAD
+[1.431.0]: https://github.com/kothf/step-viewer/compare/v1.430.0...v1.431.0
 [1.430.0]: https://github.com/kothf/step-viewer/compare/v1.429.0...v1.430.0
 [1.429.0]: https://github.com/kothf/step-viewer/compare/v1.428.0...v1.429.0
 [1.428.0]: https://github.com/kothf/step-viewer/compare/v1.427.0...v1.428.0

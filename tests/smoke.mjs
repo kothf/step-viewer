@@ -3882,7 +3882,7 @@ try {
     await ctx.close();
   }
 
-  // --- 1.429.0: File ▸ Export ▸ STEP for a modelled part and an assembly (it said "needs a STEP, IGES or BREP model") ---
+  // --- 1.431.0: File ▸ Export ▸ STEP for a modelled part and an assembly (it said "needs a STEP, IGES or BREP model") ---
   if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const mp = await ctx.newPage();
@@ -3919,9 +3919,9 @@ try {
     await mp.click("#file-btn");
     await mp.click("#file-menu [data-f=export]");
     const asmStep = await stepOf();
-    check(empty, "export 1.429: Export on an empty part says there is no body yet");
-    check(part.iso && part.solid && /\.step$/.test(part.name), `export 1.429: File ▸ Export ▸ STEP saves a modelled part (${JSON.stringify(part)})`);
-    check(asmStep.iso && asmStep.solid && /\.step$/.test(asmStep.name), `export 1.429: File ▸ Export ▸ STEP saves an assembly (${JSON.stringify(asmStep)})`);
+    check(empty, "export 1.431: Export on an empty part says there is no body yet");
+    check(part.iso && part.solid && /\.step$/.test(part.name), `export 1.431: File ▸ Export ▸ STEP saves a modelled part (${JSON.stringify(part)})`);
+    check(asmStep.iso && asmStep.solid && /\.step$/.test(asmStep.name), `export 1.431: File ▸ Export ▸ STEP saves an assembly (${JSON.stringify(asmStep)})`);
     await ctx.close();
   }
 
