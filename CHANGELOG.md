@@ -13,9 +13,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [1.444.0] - 2026-11-10
 
-### Added
+### Fixed
 
-- **Angle dimension arrows (FR-DRW-021)**: a small angle whose arc has no room for two arrowheads gets them outside the sector, on short tails of the arc, the way narrow linear dimensions do. **Arrows** (Auto, Inside, Outside) and **Extension lines** (hide the first, the second or both) in the dimension panel now work for angles as well.
+- Assemblies: after a part is edited, a mate on a face whose name went away follows the same surface under its new name (exam #84).
+- New sketches and holes on a flat face take their X direction from the part's X laid onto the face, so it stays the same across rebuilds (exam #85).
+- **Fully define sketch** adds horizontal and vertical relations instead of near-zero dimensions (exam #86).
 
 ## [1.443.0] - 2026-11-10
 
