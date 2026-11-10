@@ -99,10 +99,17 @@ export function datumPrims(a: DatumAnnot, base: P2 | null, d: P2, at: P2): { pri
   let n: P2 = [-d[1], d[0]];
   if ((at[0] - base[0]) * n[0] + (at[1] - base[1]) * n[1] < 0) n = [-n[0], -n[1]];
   const b1: P2 = [base[0] - d[0] * 2, base[1] - d[1] * 2], b2: P2 = [base[0] + d[0] * 2, base[1] + d[1] * 2], apex: P2 = [base[0] + n[0] * 3, base[1] + n[1] * 3];
-  out.push({ t: "p", p: [...b1, ...b2, ...apex], pen: "thin", layer: "ANNOT", fill: true, closed: true });
-  // Line from the apex to the frame's edge.
-  const v: P2 = [apex[0] - at[0], apex[1] - at[1]], m = Math.max(Math.abs(v[0]), Math.abs(v[1]));
-  if (m > s) out.push(L(apex, [at[0] + v[0] * s / m, at[1] + v[1] * s / m]));
+  out.push({ t: "p", p: [...b1, ...b2, ...apex], pen: "thin", layer: "ANNOT", closed: true, ...(a.open ? {} : { fill: true }) });
+  // Line from the apex to the frame's edge; bent = square to the edge first, then along it.
+  let from = apex;
+  const along = (at[0] - apex[0]) * d[0] + (at[1] - apex[1]) * d[1], up = (at[0] - apex[0]) * n[0] + (at[1] - apex[1]) * n[1];
+  if (a.bent && Math.abs(along) > s + 0.5 && up > 0.5) {
+    const knee: P2 = [apex[0] + n[0] * up, apex[1] + n[1] * up];
+    out.push(L(apex, knee));
+    from = knee;
+  }
+  const v: P2 = [from[0] - at[0], from[1] - at[1]], m = Math.max(Math.abs(v[0]), Math.abs(v[1]));
+  if (m > s) out.push(L(from, [at[0] + v[0] * s / m, at[1] + v[1] * s / m]));
   }
   out.push({ t: "p", p: [at[0] - s, at[1] - s, at[0] + s, at[1] - s, at[0] + s, at[1] + s, at[0] - s, at[1] + s], pen: "thin", layer: "ANNOT", closed: true });
   out.push(T(at[0], at[1] - H / 2 + 0.2, a.letter));
