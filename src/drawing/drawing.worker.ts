@@ -17,7 +17,8 @@ import { activate } from "../model/configs";
 
 export type DrawingRequest =
   | { id: number; type: "init"; base: string; module: WebAssembly.Module; fast?: number }
-  | { id: number; type: "load"; part?: PartDoc; asm?: AsmDoc; file?: { name: string; bytes: Uint8Array } }
+  /** `lite`: a helper worker that only projects; no topology, model items or tables. */
+  | { id: number; type: "load"; part?: PartDoc; asm?: AsmDoc; file?: { name: string; bytes: Uint8Array }; lite?: boolean }
   | { id: number; type: "project"; view: ViewDir; shade?: boolean; cfg?: string; only?: string[] }
   /** A quick polygonal preview of a view (FR-DRW-016) while the exact one is computed. */
   | { id: number; type: "preview"; view: ViewDir; cfg?: string; only?: string[] }
@@ -97,10 +98,11 @@ const variants = new Map<string, { shape: any; mat: string | null; mats?: (strin
 let modelMats: (string | null)[] | null = null;
 
 /** A part's solid with its topology and model items (dimensions, holes, threads, sketches). */
-function buildPart(doc: PartDoc): { shape: any; mat: string | null; mats: (string | null)[] | null; names: string[]; extra: Record<string, unknown> } {
+function buildPart(doc: PartDoc, lite = false): { shape: any; mat: string | null; mats: (string | null)[] | null; names: string[]; extra: Record<string, unknown> } {
   const md = new Modeller(oc), res = md.evaluate(doc);
   if (!res.body) throw new Error("The part has no body yet.");
   const body = res.body, shape = body.shape;
+  if (lite) return { shape, mat: doc.material?.name ?? null, mats: bodyMats(md, body, doc), names: body.names, extra: {} };
   // A cosmetic thread's round edge, found by its persistent name.
   const edgeCircle = (ref: EdgeRef) => {
     try {
@@ -192,7 +194,7 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
       partDoc = null;
       variants.clear();
       if (r.part) {
-        const b = buildPart(r.part);
+        const b = buildPart(r.part, r.lite);
         shape = b.shape; modelMat = b.mat; modelMats = b.mats; extra = b.extra; shapeNames = b.names;
         partDoc = r.part;
       } else if (r.asm) {
@@ -206,9 +208,10 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
         placedShapes = placed.map(pc => ({ id: pc.id, shape: pc.body.shape, mat: r.asm!.parts[pc.part]?.doc?.material?.name ?? null, mats: asm.bodyMats(pc.part, r.asm!, pc.src) }));
         placed.forEach((pc, i) => { b.Add(comp, pc.body.shape); names.push(...pc.body.names.map(n => `${pc.id}@${n}`)); comps.push({ id: pc.id, part: pc.part, name: pc.name, mats: usedMats(placedShapes[i].mats) }); });
         shape = comp; shapeNames = names;
-        extra = { topo: topology(oc, shape, names), items: [], holes: [], comps };
-      } else if (r.file) { shape = readShape(oc, r.file.bytes, r.file.name); extra = { topo: topology(oc, shape), items: [], holes: [] }; }
+        extra = r.lite ? {} : { topo: topology(oc, shape, names), items: [], holes: [], comps };
+      } else if (r.file) { shape = readShape(oc, r.file.bytes, r.file.name); extra = r.lite ? {} : { topo: topology(oc, shape), items: [], holes: [] }; }
       else throw new Error("Nothing to load");
+      if (r.lite) { post({ id: r.id, ok: true }); return; }
       post({ id: r.id, ok: true, ...shapeInfo(oc, shape), ...extra });
     } else if (r.type === "config" && r.name === FLAT_CONFIG) {
       // Flat pattern (FR-FT-120): the part with its flat pattern shown, laid on XY with the top face up.

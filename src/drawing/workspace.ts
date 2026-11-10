@@ -3306,11 +3306,12 @@ export class DrawingWorkspace {
       placement: (id: string) => this.placements.get(id) ?? null,
       mode: () => this.mode.kind,
       fields: () => (this.store ? this.fields() : null),
+      helper: () => this.kernel.helperState(),
       previews: () => ({ shown: this.previewsShown, made: this.kernel.previewsMade, left: this.svg.querySelectorAll(".drw-preview").length }),
       holes: () => (this.facts?.topo?.holes ?? []).map(h => ({ segs: h.segs.length, open: h.open })),
       proj: (id: string) => { const sh = this.sheet, v = findView(sh, id); return v ? this.kernel.cache.get(viewReq(sh, v).key) ?? null : null; },
       /** A section of the loaded model through `p` looking along `dir` (tests: who and what each cut loop is). */
-      section: (dir: [number, number, number], up: [number, number, number], p: [number, number, number]) => this.kernel.request({ view: { dir, up }, p, key: `debug|${[dir, up, p].join("|")}` }).then(pr => ({ keys: pr.cutKey ?? [], mats: pr.cutMat ?? [] })),
+      section: (dir: [number, number, number], up: [number, number, number], p: [number, number, number], tag = "") => this.kernel.request({ view: { dir, up }, p, key: `debug|${tag}|${[dir, up, p].join("|")}` }).then(pr => ({ keys: pr.cutKey ?? [], mats: pr.cutMat ?? [] })),
     };
   }
 }

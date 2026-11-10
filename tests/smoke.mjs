@@ -6663,7 +6663,7 @@ try {
     mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
     await mp.goto(`${origin}/index.html?debug`);
     await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
-    await mp.goto(`${origin}/index.html?debug`);
+    await mp.goto(`${origin}/index.html?debug&drwhelper=1`);
     await mp.waitForFunction(() => window.__sv);
     const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
     await mp.click("#new-part");
@@ -6688,6 +6688,14 @@ try {
     const tb = await mp.evaluate(() => window.__sv.drw.fields());
     check(tb.material === "Steel S235, Titanium Ti-6Al-4V" && tb.mass === "0.066 kg",
       `drawing 1.471: the title block's material and mass follow each body's material (FR-MAT-001) (${tb.material}; ${tb.mass})`);
+    // 1.476: a second drawing worker holds the same model; two sections asked at once run one on each.
+    await mp.waitForFunction(() => window.__sv.drw.helper().loaded, null, { timeout: 60000 });
+    const h0 = await mp.evaluate(() => window.__sv.drw.helper().helped);
+    const two = await mp.evaluate(() => Promise.all(["a", "b"].map(tag => window.__sv.drw.section([0, 1, 0], [0, 0, 1], [0, 0, 5], tag))));
+    const h1 = await mp.evaluate(() => window.__sv.drw.helper().helped);
+    const same = two.map(c => c.keys.map((k, i) => `${k}=${c.mats[i]}`).sort().join());
+    check(h1 > h0 && same.every(x => x === pairs),
+      `drawing 1.476: exact views run on two drawing workers at once, with the same model (${h0} → ${h1}; ${same.join(" | ")})`);
     await ctx.close();
   }
 
