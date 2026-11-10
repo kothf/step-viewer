@@ -1361,6 +1361,19 @@ test("a dimension can carry a second line of text under its line (FR-DRW-021)", 
     assert.ok(v.some(p => Math.abs(p[0] - 30) < 1e-9 && Math.abs(p[2] - 30) < 1e-9 && Math.abs(Math.abs(p[3] - p[1]) - 20) < 1e-9), "vertical dimension line at x = 30");
   }
   {
+    // The drawing's extension line gap and overshoot: with gap 0 and 3 past, the Ø20's lines start on the rim (y = 0) and end 3 above the dimension line.
+    const { useStyle } = await import("../../src/drawing/annot");
+    const dia = { id: "d", t: "dim", view: "v", k: "dia", refs: [], pos: [3, 30], lin: "h" } as never, dg = { k: "dia", pts: [], c: [0, 0], r: 10, value: 20 } as never;
+    const ext = () => dimPrims(dia, dg, pl, ".").prims.filter(q => q.t === "l").map(q => (q as { p: number[] }).p).filter(p => Math.abs(p[0] - p[2]) < 1e-9 && Math.abs(Math.abs(p[0]) - 10) < 1e-9);
+    const std = ext();
+    assert.ok(std.length === 2 && std.every(p => Math.abs(Math.min(p[1], p[3]) - 1) < 1e-9 && Math.abs(Math.max(p[1], p[3]) - 32) < 1e-9), JSON.stringify(std));
+    try {
+      useStyle({ extGap: 0, extOver: 3 });
+      const own = ext();
+      assert.ok(own.length === 2 && own.every(p => Math.abs(Math.min(p[1], p[3])) < 1e-9 && Math.abs(Math.max(p[1], p[3]) - 33) < 1e-9), JSON.stringify(own));
+    } finally { useStyle(undefined); }
+  }
+  {
     // Arrowheads of its own: oblique strokes are two thick lines in place of the two filled heads, and the next dimension is back to the style's.
     const base = dimPrims(lin as never, geo as never, pl, ".").prims, tick = dimPrims({ ...lin, ends: "tick" } as never, geo as never, pl, ".").prims;
     const thick = (ps: typeof base) => ps.filter(q => q.t === "l" && (q as { pen?: string }).pen === "thick").length;
