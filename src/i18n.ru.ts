@@ -3340,6 +3340,7 @@ export const RU: Record<string, string> = {
   "Machining allowance": "Припуск на обработку",
   "Foreshortened radius": "Радиус с изломом",
   "Arrow outside the circle": "Стрелка снаружи окружности",
+  "Text along the leader": "Текст вдоль выноски",
   "Linear, horizontal": "Линейный, горизонтально",
   "Linear, vertical": "Линейный, вертикально",
   "Text above the frame": "Текст над рамкой",

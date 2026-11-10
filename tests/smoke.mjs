@@ -5070,6 +5070,16 @@ try {
       const n2 = await nAn(), off = !(await annots()).some(a => a.outside);
       check(has && st && off && n1 <= n0 && n2 === n0, `drawing: a diameter's arrow goes outside the circle and back (${JSON.stringify({ has, st, off, n0, n1, n2 })})`);
     }
+    // 1.446.0 text along the leader (the Ø16 is still selected): the text turns to the leader's angle and back.
+    {
+      const rot = () => dp.evaluate(() => { const q = window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "ANNOT" && p.s === "Ø16").pop(); return q ? q.rot ?? 0 : null; });
+      const r0 = await rot(), has = !!(await dp.$('#drw .drw-props [data-d="ralong"]'));
+      if (has) await dp.check('#drw .drw-props [data-d="ralong"]');
+      const r1 = await rot(), st = (await annots()).some(a => a.k === "dia" && a.along === true);
+      if (has) await dp.uncheck('#drw .drw-props [data-d="ralong"]');
+      const r2 = await rot(), off = !(await annots()).some(a => a.along);
+      check(has && st && off && r0 === 0 && r2 === 0 && r1 !== null && Math.abs(r1) > 1, `drawing: a diameter's text lies along its leader and goes back (${JSON.stringify({ has, st, off, r0, r1, r2 })})`);
+    }
     // A diameter displayed as a linear dimension (the Ø16 is still selected), then back.
     {
       const has = !!(await dp.$('#drw .drw-props [data-d="dlin"]'));

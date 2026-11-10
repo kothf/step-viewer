@@ -1362,6 +1362,20 @@ test("a dimension can carry a second line of text under its line (FR-DRW-021)", 
     assert.deepEqual(dimPrims({ ...(inn as object), outside: true } as never, dg, pl, ".").prims, dimPrims(inn, dg, pl, ".").prims);
   }
   {
+    // Text along the leader: turned to the leader's angle, no level shoulder; the leader runs on under the text.
+    const dia = { id: "d", t: "dim", view: "v", k: "dia", refs: [], pos: [20, 20] } as never, dg = { k: "dia", pts: [], c: [0, 0], r: 10, value: 20 } as never;
+    const flat = dimPrims(dia, dg, pl, "."), al = dimPrims({ ...(dia as object), along: true } as never, dg, pl, ".");
+    const tx = (o: { prims: { t: string }[] }) => o.prims.find(q => q.t === "t") as never as { rot?: number; x: number; y: number };
+    assert.ok(!tx(flat).rot && Math.abs(tx(al).rot! - 45) < 1e-9, "text at the leader's 45°");
+    const level = (o: { prims: { t: string }[] }) => o.prims.filter(q => q.t === "l").map(q => (q as never as { p: number[] }).p).filter(p => Math.abs(p[1] - p[3]) < 1e-9).length;
+    assert.equal(level(flat), 1, "the plain one has a level shoulder");
+    assert.equal(level(al), 0, "the aligned one has none");
+    assert.equal(al.prims.length, flat.prims.length);
+    // On the left the text still reads from the bottom (rot within -90..90).
+    const left = tx(dimPrims({ ...(dia as object), pos: [-20, 20], along: true } as never, dg, pl, "."));
+    assert.ok(Math.abs(left.rot! + 45) < 1e-9);
+  }
+  {
     // Angle arrows: a wide sector keeps them inside; a narrow one gets them outside on tails of the arc; the choice can be forced.
     const lines = [[[0, 0], [40, 0]], [[0, 0], [0, 40]]];
     const ang = (pos: number[], more: object = {}) => dimPrims({ id: "d", t: "dim", view: "v", k: "ang", refs: [], pos, ...more } as never, { k: "ang", pts: [], lines, value: 0 } as never, pl, ".");
