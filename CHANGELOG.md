@@ -7,10 +7,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [1.489.0] - 2026-11-10
 
-### Fixed
+### Added
 
-- Drawings: a view clicked in the drawing tree keeps the focus there, so Delete deletes it (drawings exam #36).
-- Drawings: Auto balloon keeps the balloons inside the drawing frame and off the title block; with no free room they move in between the view and the frame, clear of each other (drawings exam #39).
+- Recognize Fillets and Recognize Features bring back variable radius fillets (FR-FT-102, FR-FT-032): the blend face is removed with Delete Face and comes back as a variable radius Fillet with the radius measured at each end of the edge. Before, such a fillet stayed part of the imported body.
 
 ## [1.488.0] - 2026-11-10
 
