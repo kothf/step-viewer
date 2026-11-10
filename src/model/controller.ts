@@ -61,6 +61,7 @@ import { units, UNITS } from "../tools/units";
 import { csys } from "../tools/csys";
 import { confirmModal, toast, trapFocus } from "../ui";
 import { cmTab, onCmTab, selectCmTab } from "../commandBar";
+import { rememberWeld } from "../weldments/defaults";
 import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, cornerSpots, cutListRows, locateSpots, isWeldFeature, showCutList, weldChange, weldSymbols, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
 import type { EndCapFeature, GussetFeature } from "../weldments/types";
 import { capDir, splitSubs } from "../weldments/types";
@@ -1281,6 +1282,7 @@ export class ModelController {
     this.renderAll();
     // Pushpin or Ctrl+Enter: the same command again once the part has rebuilt (FR-UI-106).
     if (m.isNew && this.activeCmd) this.rememberOptions(this.activeCmd, f);
+    if (m.isNew && isWeldFeature(f)) rememberWeld(f);
     const again = m.isNew && (repeat || this.pinned) ? this.activeCmd : null;
     void Promise.resolve(this.rebuild()).then(() => { if (again && this.mode.kind === "none") this.command(again); });
   }

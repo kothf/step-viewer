@@ -2,6 +2,7 @@
 // picking in the view, and the cut list dialog. The controller calls these through a small context.
 import type { FaceRef, Feature, Num, PartDoc, SketchFeature, Sketch3dFeature, V3 } from "../model/types";
 import type { Rebuild } from "../model/kernelClient";
+import { recallWeld } from "./defaults";
 import { t } from "../i18n";
 import { toast } from "../ui";
 import { featureLabel } from "../model/controller";
@@ -170,7 +171,7 @@ function profileSketches(ctx: WeldCtx, path?: string): SketchFeature[] {
   return ctx.before.filter((x): x is SketchFeature => x.type === "sketch" && x.id !== path && !x.suppressed && sketchProfile(x).faces.length > 0);
 }
 
-/** A new weldment feature with sensible picks (FR-FT-121). */
+/** A new weldment feature with sensible picks and the settings used last for its type (FR-FT-121, `defaults.ts`). */
 export function weldDraft(ctx: WeldCtx, type: WeldTool, id: string, name: string, face: number | null): Feature | null {
   const fr = face != null ? ctx.faceRef(face) : null;
   if (type === "member") {
@@ -178,14 +179,14 @@ export function weldDraft(ctx: WeldCtx, type: WeldTool, id: string, name: string
     // The selected sketch, else the last 3D sketch or sketch with lines (SolidWorks: sketch the frame, then Structural Member).
     const sk = paths.find(s => s.id === ctx.selected) ?? paths.at(-1);
     if (!sk) { toast(t("Draw a sketch or a 3D sketch with lines first: the members run along them."), true); return null; }
-    return { id, type, name, profile: "shs", size: "40x40x3", segs: pathLines(sk).map(ent => ({ sketch: sk.id, ent })), corner: "miter" } satisfies MemberFeature;
+    return recallWeld({ id, type, name, profile: "shs", size: "40x40x3", segs: pathLines(sk).map(ent => ({ sketch: sk.id, ent })), corner: "miter" } satisfies MemberFeature);
   }
   if (!ctx.last?.data) { toast(t("There is no body yet."), true); return null; }
   if (type === "trimext") return { id, type, name, bodies: fr && memberFace(ctx, fr.name) ? [fr] : [], kind: "face" } satisfies TrimExtendFeature;
   const flat = fr && face != null && ctx.faceType(face) === "plane" ? fr : null;
-  if (type === "endcap") return { id, type, name, faces: flat ? [flat] : [], thickness: { v: 5 }, inset: { v: 0 } } satisfies EndCapFeature;
-  if (type === "gusset") return { id, type, name, face1: flat ?? undefined, d1: { v: 50 }, d2: { v: 50 }, thickness: { v: 5 }, shape: "tri", loc: "mid" } satisfies GussetFeature;
-  return { id, type, name, faces1: flat ? [flat] : [], faces2: [], size: { v: 4 } } satisfies WeldBeadFeature;
+  if (type === "endcap") return recallWeld({ id, type, name, faces: flat ? [flat] : [], thickness: { v: 5 }, inset: { v: 0 } } satisfies EndCapFeature);
+  if (type === "gusset") return recallWeld({ id, type, name, face1: flat ?? undefined, d1: { v: 50 }, d2: { v: 50 }, thickness: { v: 5 }, shape: "tri", loc: "mid" } satisfies GussetFeature);
+  return recallWeld({ id, type, name, faces1: flat ? [flat] : [], faces2: [], size: { v: 4 } } satisfies WeldBeadFeature);
 }
 
 /** Which box a new weldment feature's view clicks fill first. */

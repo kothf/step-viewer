@@ -9936,10 +9936,12 @@ try {
     await settle();
     await runCmd(mp, "Structural Member");
     await settle();
-    const bl = await mp.evaluate(() => ({ segs: window.__sv.model.mode().draft?.segs?.map(s => s.ent), labels: [...document.querySelectorAll("#mc-pm input[data-wseg]")].map(e => e.closest("label")?.textContent?.trim()) }));
+    const bl = await mp.evaluate(() => ({ size: window.__sv.model.mode().draft?.size, segs: window.__sv.model.mode().draft?.segs?.map(s => s.ent), labels: [...document.querySelectorAll("#mc-pm input[data-wseg]")].map(e => e.closest("label")?.textContent?.trim()) }));
     await mp.click("#mc-ok");
     await settle();
     const bend = await mp.evaluate(() => { const l = window.__sv.model.last(), id = window.__sv.model.store.doc.features.at(-1).id; return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), arc: (l.cutList ?? []).some(c => c.length === 157.1), faces: (l.faceNames ?? []).filter(n => n.startsWith(id + ":j2:")).length }; });
+    // The new member starts with the size the first one was given (weldment defaults: the settings used last).
+    check(bl.size === "50x50x4", `weldments: a new member starts with the profile used last (${bl.size})`);
     check(JSON.stringify(bl.segs) === '["j1","j2","j3"]' && JSON.stringify(bl.labels) === '["Line 1","Arc 2","Line 3"]' && bend.faces > 0 && !bend.bad && bend.arc, `weldments: a member along a line, an arc and a line (${JSON.stringify({ bl, bend })})`);
     // Merge arc segment bodies: the line, arc and line become one body, one cut list item of the whole bent length (300 + 157.1 + 300).
     const bendId = await mp.evaluate(() => window.__sv.model.store.doc.features.at(-1).id);
