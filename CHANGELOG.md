@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.407.0] - 2026-11-10
+
+### Added
+
+- **Recognize Extrudes takes cuts open to the side (FR-FT-102)**: a step, a slot running across a face or a notch at an edge of an imported body (a flat floor under straight walls that reach one flat top, open where the floor meets the outside) is removed and made again as a sketch on the top face with a blind Extruded Cut, so its outline and depth can be edited.
+
 ## [1.406.0] - 2026-11-10
 
 ### Added
@@ -2393,7 +2399,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.406.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.407.0...HEAD
+[1.407.0]: https://github.com/kothf/step-viewer/compare/v1.406.0...v1.407.0
 [1.406.0]: https://github.com/kothf/step-viewer/compare/v1.405.0...v1.406.0
 [1.405.0]: https://github.com/kothf/step-viewer/compare/v1.404.0...v1.405.0
 [1.404.0]: https://github.com/kothf/step-viewer/compare/v1.403.0...v1.404.0

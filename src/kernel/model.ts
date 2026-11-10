@@ -3476,6 +3476,51 @@ export class Modeller {
         if (!cands.some(c => c.key === key)) cands.push(cand);
       }
     });
+    // Cuts open to the side (a step, a slot across a face, a notch at an edge): a flat floor with one outline,
+    // some of its edges under walls that stand square to it up to one flat top, the others on the outside of
+    // the body. The floor's outline, lifted to the top, is the sketch of a blind cut.
+    body.faces.forEach((face, i) => {
+      const n = kinds[i].pln;
+      if (!n) return;
+      const wmap = new oc.TopTools_IndexedMapOfShape_1();
+      oc.TopExp.MapShapes_1(face, oc.TopAbs_ShapeEnum.TopAbs_WIRE, wmap);
+      if (wmap.Extent() !== 1) return;
+      const raw: Seg[] = [], walls: number[] = [];
+      let P: V3 | null = null, open = 0, h = 0;
+      for (const e of this.sub(wmap.FindKey(1), "EDGE")) {
+        const j = across(i, emap.FindIndex(e));
+        if (j < 0) return;
+        const x = ends(e), ct = x.ca.GetType();
+        P ??= x.a;
+        if (ct === C.GeomAbs_Line) raw.push({ line: [x.a, x.b] });
+        else if (ct === C.GeomAbs_Circle) {
+          if (Math.abs(Math.abs(x.ca.LastParameter() - x.ca.FirstParameter()) - 2 * Math.PI) < 1e-9) return;
+          raw.push({ arc: { c: this.xyz(x.ca.Circle().Location()), a: x.a, b: x.b, m: x.m } });
+        } else return;
+        const k = kinds[j];
+        let lo = 0, hi = 0;
+        for (const { e: we } of edges[j]) { const y = ends(we); for (const p of [y.a, y.b, y.m]) { const d = dot(sub3(p, P), n); lo = Math.min(lo, d); hi = Math.max(hi, d); } }
+        const square = (k.pln && Math.abs(dot(k.pln, n)) < 1e-6) || (k.cyl && Math.abs(Math.abs(dot(k.cyl.d, n)) - 1) < 1e-6);
+        if (square && hi > tol && lo > -tol) {
+          if (h && Math.abs(hi - h) > tol) return;
+          h = hi;
+          if (!walls.includes(j)) walls.push(j);
+        } else if (lo < -tol) open++;
+        else return;
+      }
+      if (!P || !walls.length || !open || walls.includes(i)) return;
+      // Every wall ends under a flat top at that height.
+      const isTop = (j: number) => j !== i && !walls.includes(j) && !!kinds[j].pln && dot(kinds[j].pln!, n) > 1 - 1e-6
+        && Math.abs(dot(sub3(ends(edges[j][0].e).a, P!), n) - h) < tol;
+      const tops = [...new Set(walls.flatMap(neighbours))].filter(isTop);
+      if (!tops.length || walls.some(j => !neighbours(j).some(q => tops.includes(q)))) return;
+      const up = (p: V3): V3 => [p[0] + n[0] * h, p[1] + n[1] * h, p[2] + n[2] * h];
+      const segs: Seg[] = raw.map(sg => "line" in sg ? { line: [up(sg.line[0]), up(sg.line[1])] }
+        : "arc" in sg ? { arc: { c: up(sg.arc.c), a: up(sg.arc.a), b: up(sg.arc.b), m: up(sg.arc.m) } } : sg);
+      const key = [i, ...walls].sort((a, b) => a - b).join(",") + "|open";
+      const top = edges[tops[0]].map(x => across(tops[0], x.k)).some(j => walls.includes(j)) ? ends(edges[tops[0]].find(x => walls.includes(across(tops[0], x.k)))!.e).m : up(P);
+      cands.push({ face: tops[0], p: top, n, op: "cut", end: "blind", depth: h, del: [i, ...walls], segs, key });
+    });
     // A face two finds would delete, or one a find stands on, goes to one of them only.
     const picked: Cand[] = [];
     for (const c of cands) if (!picked.some(p => p.del.some(j => c.del.includes(j) || j === c.face) || c.del.includes(p.face))) picked.push(c);
