@@ -102,6 +102,44 @@ export class VaultPanel {
   private stale: { id: string; path: string; version: number; latest: number }[] = [];
   /** Notifications since the last visit (FR-PDM-061). */
   private unseen = 0;
+  /** Files picked with Ctrl/Shift+click besides `sel` (the anchor); empty = only `sel`. */
+  private picked = new Set<string>();
+  /** The selected files: the Ctrl/Shift picks, else the one selected file. */
+  get selected(): string[] {
+    const live = new Set(this.files.map(f => f.id));
+    if (this.picked.size > 1) return this.files.filter(f => this.picked.has(f.id)).map(f => f.id);
+    return this.sel && live.has(this.sel) ? [this.sel] : [];
+  }
+  /** The rows in the order shown (search results or all files). */
+  private get shownFiles() { return this.found ? this.files.filter(f => this.found!.ids.has(f.id)) : this.files; }
+
+  /** A click on a row: plain = that file, Ctrl/Cmd = add or remove it, Shift = the run from the anchor (FR-PDM-080). */
+  pick(id: string, how: { ctrl?: boolean; shift?: boolean } = {}) {
+    const order = this.shownFiles.map(f => f.id);
+    if (how.shift && this.sel && order.includes(this.sel)) {
+      const a = order.indexOf(this.sel), b = order.indexOf(id);
+      const run = order.slice(Math.min(a, b), Math.max(a, b) + 1);
+      this.picked = new Set(how.ctrl ? [...this.selected, ...run] : run);
+    } else if (how.ctrl) {
+      const now = new Set(this.selected);
+      if (now.has(id)) now.delete(id); else now.add(id);
+      this.picked = now;
+      this.sel = now.has(id) ? id : [...now][0] ?? null;
+    } else {
+      this.picked = new Set();
+      this.sel = id;
+    }
+    if (this.picked.size <= 1) { if (this.picked.size === 1) this.sel = [...this.picked][0]; this.picked = new Set(); }
+    this.conflicts = [];
+    this.stale = [];
+  }
+
+  /** Every file shown (Ctrl+A in the list), or none. */
+  pickAll(on = true) {
+    const ids = on ? this.shownFiles.map(f => f.id) : [];
+    this.picked = ids.length > 1 ? new Set(ids) : new Set();
+    this.sel = on ? (this.sel && ids.includes(this.sel) ? this.sel : ids[0] ?? null) : null;
+  }
 
   constructor(private host: HTMLElement, private app: VaultHost) {
     void this.render();
@@ -638,17 +676,22 @@ export class VaultPanel {
    * Change state (FR-PDM-082): lists the file and its referenced files that can take the same transition, with
    * problems and warnings, before anything is written.
    */
-  async transitionDlg(id: string, name: string, comment?: string, withRefs?: string[], notify = "") {
+  /** A state change of one file, or of several selected files with the same transition (FR-PDM-080). */
+  async transitionDlg(which: string | string[], name: string, comment?: string, withRefs?: string[], notify = "") {
     const v = this.vault;
     if (!v) return;
+    const base = Array.isArray(which) ? which : [which];
+    const id = base[0];
     const f = this.rec(id);
     const tr = v.transitionsOf(f).find(x => x.name === name);
     if (!tr) return;
     // Referenced files in the same state can go along (release an assembly with its parts).
-    const tree = await v.contains(id, undefined, "latest");
     const refs: FileRec[] = [];
-    const walk = (n: TreeNode) => { for (const c of n.children) { const r = this.files.find(x => x.id === c.id); if (r && r.state === f.state && !refs.includes(r) && r.id !== id) refs.push(r); if (!c.cycle) walk(c); } };
-    walk(tree);
+    for (const b of base) {
+      const bf = this.rec(b);
+      const walk = (n: TreeNode) => { for (const c of n.children) { const r = this.files.find(x => x.id === c.id); if (r && r.state === bf.state && !refs.includes(r) && !base.includes(r.id)) refs.push(r); if (!c.cycle) walk(c); } };
+      walk(await v.contains(b, undefined, "latest"));
+    }
     if (comment === undefined) {
       const render = async (ids: string[]) => {
         const chk = await v.checkTransition(ids, name, "x");
@@ -656,11 +699,11 @@ export class VaultPanel {
       };
       const d = this.dialog(t("{name}: {from} → {to}", { name: tn(name), from: tn(tr.from), to: tn(tr.to) }), `
         ${refs.length ? `<p>${esc(t("Referenced files in the same state:"))}</p>${refs.map(r => `<label class="chk" translate="no"><input type="checkbox" name="ref" value="${r.id}" checked /> ${esc(r.path)}</label>`).join("")}` : ""}
-        <ul class="v-log v-check">${await render([id, ...refs.map(r => r.id)])}</ul>
+        <ul class="v-log v-check">${await render([...base, ...refs.map(r => r.id)])}</ul>
         <label class="v-lbl">${esc(tr.comment ? t("Comment (required)") : t("Comment"))}<textarea name="comment" rows="2" maxlength="500"></textarea></label>
         ${v.info.shared ? `<label class="v-lbl">${esc(t("Notify"))}<select name="to"><option value=""></option>${[...v.info.users, ...ROLES].map(u => `<option value="${esc(u)}">${esc(ROLES.includes(u as Role) ? tn(u) : u)}</option>`).join("")}</select></label>` : ""}`, [[t("Cancel"), "cancel"], [tn(name), "ok"]]);
       d.el.querySelectorAll<HTMLInputElement>('[name="ref"]').forEach(c => c.addEventListener("change", async () => {
-        const ids = [id, ...[...d.el.querySelectorAll<HTMLInputElement>('[name="ref"]:checked')].map(x => x.value)];
+        const ids = [...base, ...[...d.el.querySelectorAll<HTMLInputElement>('[name="ref"]:checked')].map(x => x.value)];
         d.el.querySelector(".v-check")!.innerHTML = await render(ids);
       }));
       if (await d.done !== "ok") return;
@@ -668,11 +711,12 @@ export class VaultPanel {
       withRefs = [...d.el.querySelectorAll<HTMLInputElement>('[name="ref"]:checked')].map(x => x.value);
       notify = d.el.querySelector<HTMLSelectElement>('[name="to"]')?.value ?? "";
     }
-    const ids = [id, ...(withRefs ?? [])];
+    const ids = [...base, ...(withRefs ?? [])];
     await this.run(async () => {
       const labels = await v.transition(ids, name, comment!, notify);
       const rev = labels[id];
-      toast(rev ? t("{name}: {state}, revision {rev}", { name: f.path, state: tn(tr.to), rev }) : t("{name}: {state}", { name: f.path, state: tn(tr.to) }), "success");
+      if (base.length > 1) toast(t("{n} files: {state}", { n: ids.length, state: tn(tr.to) }), "success");
+      else toast(rev ? t("{name}: {state}, revision {rev}", { name: f.path, state: tn(tr.to), rev }) : t("{name}: {state}", { name: f.path, state: tn(tr.to) }), "success");
     });
     // FR-PDM-036: the release's PDF / STEP files, made after the state change so a failure there undoes nothing.
     if (v.info.outputs !== false && v.stateOf(tr.to).released) {
@@ -879,6 +923,235 @@ export class VaultPanel {
     if (this.sel === id) this.sel = null;
     if (this.openId === id) this.app.doc()?.setVault(null);
     await this.render();
+  }
+
+  // ---------- several files at once (FR-PDM-080) ----------
+
+  /** The selected files that can be checked out / are checked out here. */
+  private canCheckOut(id: string) { const f = this.rec(id); return !f.checkout && !!this.vault?.stateOf(f.state).checkout; }
+  private isMine(id: string) { return !!this.state.get(id)?.mine; }
+  /** Transitions every one of the files has (by name). */
+  private commonTransitions(ids: string[]) {
+    const v = this.vault!;
+    const lists = ids.map(id => v.transitionsOf(this.rec(id)).map(x => x.name));
+    return lists.length ? lists[0].filter(n => lists.every(l => l.includes(n))) : [];
+  }
+  private pathList(ids: string[]) { return `<ul class="v-log" translate="no">${ids.map(id => `<li>${esc(this.rec(id).path)}</li>`).join("")}</ul>`; }
+  /** After a change to several files: the open one comes in again when the vault moved on under it. */
+  private async reopenIfIn(ids: string[]) {
+    const o = this.openId, v = this.vault;
+    if (o && v && ids.includes(o) && (this.shown.get(o) ?? 0) < v.latest(this.rec(o)).n) await this.reopen(o);
+  }
+
+  async checkOutMany(ids: string[]) {
+    const v = this.vault;
+    if (!v) return;
+    const go = ids.filter(id => this.canCheckOut(id));
+    if (!go.length) { toast(t("None of the selected files can be checked out."), true); return; }
+    await this.run(async () => {
+      for (const id of go) await v.checkOut(id);
+      toast(t("Checked out {n} file|Checked out {n} files", { n: go.length }), "success");
+    });
+    await this.reopenIfIn(go);
+  }
+
+  /** Check in several files with one comment; files the others use go first, so they are checked in against the new versions. */
+  async checkInMany(ids: string[]) {
+    const v = this.vault;
+    if (!v) return;
+    const mine = ids.filter(id => this.isMine(id));
+    if (!mine.length) { toast(t("None of the selected files is checked out to you."), true); return; }
+    const r = await this.form(t("Check in {n} files", { n: mine.length }), `${this.pathList(mine)}<label class="v-lbl">${esc(t("Comment"))}<textarea name="comment" rows="3" maxlength="500" autofocus></textarea></label><label class="chk"><input type="checkbox" name="keep" /> ${esc(t("Keep checked out"))}</label>`, t("Check in"));
+    if (!r) return;
+    const order: string[] = [];
+    for (const id of mine) {
+      for (const x of await v.checkInWith(id).catch(() => [])) if (mine.includes(x.id) && !order.includes(x.id)) order.push(x.id);
+      if (!order.includes(id)) order.push(id);
+    }
+    let made = 0;
+    for (const id of order) {
+      try {
+        await this.flushOpen(id);
+        const n = await v.checkIn(id, r.comment as string, !!r.keep);
+        if (n) { made++; if (this.shown.has(id)) this.shown.set(id, n); }
+      } catch (e) {
+        if (e instanceof VaultError && e.key === MOVED_ON) await this.movedOn(id, e);
+        else toast(`${this.rec(id).path}: ${errText(e)}`, true);
+      }
+    }
+    toast(!made ? t("No changes: no new version") : t("Checked in {n} file|Checked in {n} files", { n: made }) + (made < order.length ? ` · ${t("{n} without changes", { n: order.length - made })}` : ""), "success");
+    await this.refresh();
+  }
+
+  async undoMany(ids: string[]) {
+    const v = this.vault;
+    if (!v) return;
+    const mine = ids.filter(id => this.isMine(id));
+    if (!mine.length) { toast(t("None of the selected files is checked out to you."), true); return; }
+    if (!await confirmModal(t("Throw away the local changes to {n} files and release them?", { n: mine.length }), t("Undo check-out"))) return;
+    await this.run(async () => { for (const id of mine) await v.undoCheckOut(id); });
+    const o = this.openId;
+    if (o && mine.includes(o)) await this.reopen(o);
+  }
+
+  async latestMany(ids: string[]) {
+    const v = this.vault;
+    if (!v) return;
+    const changed = ids.filter(id => this.state.get(id)?.modified);
+    if (changed.length && !await confirmModal(t("{n} of the files have local changes that are not checked in. Replace them with the latest versions?", { n: changed.length }), t("Get latest"))) return;
+    await this.run(async () => {
+      for (const id of ids) await v.getLatest(id, true);
+      toast(t("Got the latest version of {n} file|Got the latest versions of {n} files", { n: ids.length }), "success");
+    });
+    const o = this.openId;
+    if (o && ids.includes(o)) await this.reopen(o);
+  }
+
+  /** Delete several files: the ones using others go first; files used from outside the selection stop it. */
+  async deleteMany(ids: string[]) {
+    const v = this.vault;
+    if (!v) return;
+    const set = new Set(ids);
+    const blocked: string[] = [];
+    for (const id of ids) {
+      const outside = (await v.usersOf(id)).filter(u => !set.has(u.id));
+      if (outside.length) blocked.push(`${this.rec(id).path} ← ${outside.map(u => u.path).join(", ")}`);
+    }
+    if (blocked.length) {
+      this.dialog(t("Cannot delete these files"), `<p>${esc(t("Other files use them:"))}</p><ul class="v-log" translate="no">${blocked.map(b => `<li>${esc(b)}</li>`).join("")}</ul>`, [[t("Close"), "cancel"]]);
+      return;
+    }
+    if (!await confirmModal(t("Move {n} files to the recycle bin?", { n: ids.length }), t("Delete"))) return;
+    await this.run(async () => {
+      const left = [...ids];
+      while (left.length) {
+        // A file no remaining selected file uses can go now.
+        let k = 0;
+        for (; k < left.length; k++) if (!(await v.usersOf(left[k])).some(u => left.includes(u.id))) break;
+        const id = left.splice(k < left.length ? k : 0, 1)[0];
+        await v.remove(id);
+      }
+      toast(t("{n} files are in the recycle bin", { n: ids.length }), "success");
+    });
+    if (this.openId && set.has(this.openId)) this.app.doc()?.setVault(null);
+    this.picked = new Set();
+    if (this.sel && set.has(this.sel)) this.sel = null;
+    await this.render();
+  }
+
+  // ---------- row menu (FR-PDM-080) ----------
+
+  private menuEl(): HTMLElement {
+    let m = document.getElementById("v-menu");
+    if (!m) {
+      m = document.createElement("div");
+      m.id = "v-menu";
+      m.className = "mc-menu";
+      m.setAttribute("role", "menu");
+      m.hidden = true;
+    }
+    // Inside the vault window when the panel is shown as a dialog, so the menu is above it.
+    const home = this.host.closest("dialog") ?? document.body;
+    if (m.parentElement !== home) home.appendChild(m);
+    return m;
+  }
+
+  closeMenu() {
+    const m = document.getElementById("v-menu");
+    if (m && !m.hidden) { m.hidden = true; m.innerHTML = ""; }
+    document.removeEventListener("pointerdown", this.menuAway, true);
+  }
+  private menuAway = (e: Event) => { if (!(e.target as HTMLElement).closest?.("#v-menu")) this.closeMenu(); };
+
+  /** A small menu at x, y; `back` gets the focus after Esc. */
+  private showMenu(items: ([string, () => void, boolean?, string?] | null)[], x: number, y: number, back?: HTMLElement | null) {
+    const menu = this.menuEl();
+    // No separators at the ends or twice in a row.
+    const list = items.filter((it, k, a) => it || (k > 0 && k < a.length - 1 && a[k - 1] && a.slice(k + 1).some(Boolean)));
+    menu.innerHTML = list.map((it, k) => (it ? `<button role="menuitem" tabindex="-1" data-k="${k}"${it[3] ? ` data-v="${it[3]}"` : ""}${it[2] ? ' class="v-menu-main"' : ""}>${esc(it[0])}</button>` : `<hr role="separator" />`)).join("");
+    menu.hidden = false;
+    const r = menu.getBoundingClientRect();
+    menu.style.left = `${Math.max(4, Math.min(x, innerWidth - r.width - 8))}px`;
+    menu.style.top = `${Math.max(4, Math.min(y, innerHeight - r.height - 8))}px`;
+    const btns = [...menu.querySelectorAll<HTMLButtonElement>("button")];
+    btns.forEach(b => b.addEventListener("click", () => { this.closeMenu(); list[+b.dataset.k!]![1](); }));
+    menu.onkeydown = e => {
+      const k = btns.indexOf(document.activeElement as HTMLButtonElement);
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); btns[(k + (e.key === "ArrowDown" ? 1 : -1) + btns.length) % btns.length].focus(); }
+      else if (e.key === "Home" || e.key === "End") { e.preventDefault(); btns[e.key === "Home" ? 0 : btns.length - 1].focus(); }
+      else if (e.key === "Escape" || e.key === "Tab") { e.preventDefault(); e.stopPropagation(); this.closeMenu(); back?.focus(); }
+    };
+    setTimeout(() => document.addEventListener("pointerdown", this.menuAway, true));
+    btns[0]?.focus();
+  }
+
+  /** The ⋯ menu: the vault's own commands, kept out of the panel's top. */
+  private moreMenu(x: number, y: number, back: HTMLElement) {
+    this.showMenu([
+      [t("Notifications") + (this.unseen ? ` (${this.unseen})` : ""), () => void this.notificationsDlg(), false, "notes"],
+      [t("Change orders"), () => void this.changesDlg(), false, "changes"],
+      [t("Release packages"), () => void this.packagesDlg(), false, "packages"],
+      null,
+      [t("Audit trail"), () => void this.auditTrail(), false, "audit"],
+      [t("Integrity check"), () => void this.verify(), false, "verify"],
+      [t("Storage"), () => void this.storage(), false, "storage"],
+      [t("Export ZIP"), () => void this.exportZip(), false, "export"],
+      [t("Recycle bin"), () => void this.recycleBinDlg(), false, "bin"],
+      null,
+      [t("Vault settings"), () => void this.settingsDlg(), false, "settings"],
+      [t("Workflow"), () => void this.workflowDlg(), false, "workflow"],
+      [t("User: {name}…", { name: this.user }), () => void this.userDlg(), false, "user"],
+    ], x, y, back);
+  }
+
+  /** Who works in the vault (stored per browser). */
+  async userDlg() {
+    const r = await this.form(t("User"), `<label class="v-lbl">${esc(t("Your name in the vault"))}<input name="user" value="${esc(this.user)}" maxlength="40" autocomplete="name" autofocus translate="no" /></label>`, t("OK"));
+    const u = typeof r?.user === "string" ? r.user.trim() : "";
+    if (!u) return;
+    storage.set("mc:vaultUser", u);
+    if (this.vault) this.vault.user = u;
+    await this.refresh();
+  }
+
+  /** The right-click menu of the selected file(s). */
+  private rowMenu(x: number, y: number) {
+    const v = this.vault;
+    const ids = this.selected;
+    if (!v || !ids.length) return;
+    const back = () => this.host.querySelector<HTMLElement>(`.v-row[data-id="${ids[0]}"]`);
+    const trs = this.commonTransitions(ids).map(n => [`${t("Change state")}: ${tn(n)}`, () => void this.transitionDlg(ids, n)] as [string, () => void]);
+    if (ids.length > 1) {
+      this.showMenu([
+        ids.some(id => this.canCheckOut(id)) ? [t("Check out"), () => void this.checkOutMany(ids)] : null,
+        ids.some(id => this.isMine(id)) ? [t("Check in…"), () => void this.checkInMany(ids)] : null,
+        ids.some(id => this.isMine(id)) ? [t("Undo check-out"), () => void this.undoMany(ids)] : null,
+        [t("Get latest"), () => void this.latestMany(ids)],
+        null, ...trs, null,
+        [t("Request change…"), () => void this.newChange(ids)],
+        [t("Delete"), () => void this.deleteMany(ids)],
+      ], x, y, back());
+      return;
+    }
+    const id = ids[0], f = this.rec(id), st = this.state.get(id);
+    this.showMenu([
+      [t("Open"), () => void this.openFile(id), true],
+      null,
+      this.canCheckOut(id) ? [t("Check out"), () => void this.checkOut(id)] : null,
+      st?.mine ? [t("Check in…"), () => void this.checkIn(id)] : null,
+      st?.mine ? [t("Undo check-out"), () => void this.undoCheckOut(id)] : null,
+      [t("Get latest"), () => void this.getLatest(id)],
+      null, ...trs, null,
+      [t("History"), () => void this.history(id)],
+      [t("Where used"), () => void this.whereUsedDlg(id)],
+      f.kind === "assembly" || f.kind === "drawing" ? [t("Contains"), () => void this.containsDlg(id)] : null,
+      [t("Data card"), () => void this.dataCard(id)],
+      f.kind === "drawing" ? [t("PDF"), () => void this.pdfOf(id)] : null,
+      null,
+      [t("Rename / move…"), () => void this.renameDlg(id)],
+      [t("Copy tree…"), () => void this.copyTreeDlg(id)],
+      [t("Delete"), () => void this.deleteFile(id)],
+    ], x, y, back());
   }
 
   async recycleBinDlg() {
@@ -1210,14 +1483,16 @@ export class VaultPanel {
           : `<p class="muted v-nofsa">${esc(t("A vault in a folder needs Chrome or Edge on a computer. In this browser, use a browser vault and Export ZIP for backups."))}</p>`}
       </div>`;
     } else {
-      const sel = this.sel ? this.files.find(f => f.id === this.sel) ?? null : null;
+      const many = this.selected, picked = new Set(many);
+      const sel = many.length === 1 ? this.rec(many[0]) : null;
       const st = sel ? this.state.get(sel.id) : undefined;
       const row = (f: FileRec) => {
         const s = this.state.get(f.id) ?? { mine: false, by: null, modified: false, missing: false };
         const lock = f.checkout ? `<span class="v-lock${s.mine ? " mine" : ""}" title="${esc(t("Checked out by {user}", { user: f.checkout.user }))}">🔒 <span translate="no">${esc(f.checkout.user)}</span></span>` : "";
         const color = v.stateOf(f.state).color;
         const pn = f.card?.[PART_NUMBER];
-        return `<button class="v-row${f.id === this.sel ? " sel" : ""}" data-id="${f.id}" aria-pressed="${f.id === this.sel}"><span class="v-name" translate="no">${esc(f.path)}</span><span class="v-meta"><span class="v-state"><i style="background:${esc(color)}"></i>${esc(tn(f.state))}</span>${f.revision ? ` · ${esc(t("Rev {rev}", { rev: f.revision }))}` : ""} · ${esc(t(f.kind))} · v${v.latest(f).n}${pn ? ` · <span translate="no">${esc(pn)}</span>` : ""}${s.modified ? ` · <b>${esc(t("modified"))}</b>` : ""}${s.missing ? ` · ${esc(t("no local copy"))}` : ""} ${lock}</span></button>`;
+        const on = picked.has(f.id);
+        return `<button class="v-row${on ? " sel" : ""}" data-id="${f.id}" aria-pressed="${on}" aria-haspopup="menu"><span class="v-name" translate="no">${esc(f.path)}</span><span class="v-meta"><span class="v-state"><i style="background:${esc(color)}"></i>${esc(tn(f.state))}</span>${f.revision ? ` · ${esc(t("Rev {rev}", { rev: f.revision }))}` : ""} · ${esc(t(f.kind))} · v${v.latest(f).n}${pn ? ` · <span translate="no">${esc(pn)}</span>` : ""}${s.modified ? ` · <b>${esc(t("modified"))}</b>` : ""}${s.missing ? ` · ${esc(t("no local copy"))}` : ""} ${lock}</span></button>`;
       };
       const trs = sel ? v.transitionsOf(sel) : [];
       const acts = sel ? `<div class="v-acts" aria-label="${esc(t("Selected file"))}">
@@ -1245,17 +1520,27 @@ export class VaultPanel {
         ${this.stale.length ? `<div class="v-warn v-stale"><p>${esc(t("Linked components with newer versions in the vault:"))}</p><ul>${this.stale.map(x => `<li translate="no">${esc(x.path)} · v${x.version} → v${x.latest}</li>`).join("")}</ul>${st?.mine ? `<button class="btn small" data-a="links">${esc(t("Update links"))}</button>` : `<p class="muted">${esc(t("Check the assembly out to update its links."))}</p>`}</div>` : ""}
         ${this.cardSummary(sel)}
       </div>` : "";
-      const shown = this.found ? this.files.filter(f => this.found!.ids.has(f.id)) : this.files;
-      h.innerHTML = `<div class="pad v-top"><div class="v-title"><b translate="no">${esc(v.info.name)}</b><button class="btn small" data-a="close">${esc(t("Close vault"))}</button></div>${user}
+      const multi = many.length > 1 ? (() => {
+        const trsM = this.commonTransitions(many);
+        return `<div class="v-acts v-multi" aria-label="${esc(t("Selected files"))}">
+        <div class="v-acts-h">${esc(t("{n} files selected", { n: many.length }))} <button class="btn small ghost" data-a="selnone">${esc(t("Clear selection"))}</button></div>
+        <div class="row">
+        ${many.some(id => this.canCheckOut(id)) ? `<button class="btn small" data-a="mco">${esc(t("Check out"))}</button>` : ""}
+        ${many.some(id => this.isMine(id)) ? `<button class="btn small" data-a="mci">${esc(t("Check in"))}</button><button class="btn small" data-a="mundo">${esc(t("Undo check-out"))}</button>` : ""}
+        <button class="btn small" data-a="mlatest">${esc(t("Get latest"))}</button>
+        <button class="btn small" data-a="mdel">${esc(t("Delete"))}</button>
+        </div>
+        ${trsM.length ? `<div class="row v-trs"><span class="muted">${esc(t("Change state"))}:</span>${trsM.map(x => `<button class="btn small" data-mtr="${esc(x)}">${esc(tn(x))}</button>`).join("")}</div>` : `<p class="muted">${esc(t("The selected files have no state change in common."))}</p>`}
+        </div>`;
+      })() : "";
+      const shown = this.shownFiles;
+      h.innerHTML = `<div class="pad v-top"><div class="v-title"><b translate="no">${esc(v.info.name)}</b><span class="v-who muted" title="${esc(t("User"))}" translate="no">${esc(this.user)}</span><button class="btn small v-more" data-a="more" aria-haspopup="menu" title="${esc(t("More vault commands"))}" aria-label="${esc(t("More vault commands"))}">⋯${this.unseen ? ` <span class="v-badge">${this.unseen}</span>` : ""}</button><button class="btn small" data-a="close">${esc(t("Close vault"))}</button></div>
         <div class="row"><button class="btn small" data-a="add">${esc(t("Add files…"))}</button><button class="btn small" data-a="addfolder" title="${esc(t("Files already in the vault folder go in where they are, subfolders and all"))}">${esc(t("Add files in this folder…"))}</button><button class="btn small" data-a="savepart"${this.app.doc() && !this.openId ? "" : " disabled"} title="${esc(t("The open part, assembly or drawing becomes a vault file, checked out to you"))}">${esc(t("Save to vault"))}</button></div>
-        <div class="row"><button class="btn small" data-a="audit">${esc(t("Audit trail"))}</button><button class="btn small" data-a="verify">${esc(t("Integrity check"))}</button><button class="btn small" data-a="storage">${esc(t("Storage"))}</button><button class="btn small" data-a="export">${esc(t("Export ZIP"))}</button></div>
-        <div class="row"><button class="btn small" data-a="changes">${esc(t("Change orders"))}</button><button class="btn small" data-a="packages">${esc(t("Release packages"))}</button><button class="btn small" data-a="notes">${esc(t("Notifications"))}${this.unseen ? ` <span class="v-badge">${this.unseen}</span>` : ""}</button></div>
-        <div class="row"><button class="btn small" data-a="bin">${esc(t("Recycle bin"))}</button><button class="btn small" data-a="settings">${esc(t("Vault settings"))}</button><button class="btn small" data-a="workflow">${esc(t("Workflow"))}</button></div>
         <div class="row v-search"><input id="v-q" type="search" value="${esc(this.found?.label ?? "")}" placeholder="${esc(t("Search the vault"))}" aria-label="${esc(t("Search the vault"))}" /><button class="btn small" data-a="search">${esc(t("Advanced…"))}</button>${this.found ? `<button class="btn small" data-a="clearq">${esc(t("Clear"))}</button>` : ""}</div>
         <input type="file" id="v-files" multiple hidden /></div>
         ${this.found ? `<p class="muted pad v-found">${esc(t("{n} file found|{n} files found", { n: shown.length }))}</p>` : ""}
         <div class="v-files" role="list" aria-label="${esc(t("Vault files"))}">${shown.length ? shown.map(row).join("") : `<p class="muted pad">${esc(this.found ? t("Nothing found.") : t("No files yet: add files or save the open part to the vault."))}</p>`}</div>
-        ${acts}`;
+        ${multi || acts}`;
     }
     this.wire();
   }
@@ -1269,8 +1554,42 @@ export class VaultPanel {
     h.querySelectorAll<HTMLElement>("[data-openws]").forEach(b => b.addEventListener("click", () => void this.openInBrowser(b.dataset.openws!).catch(e => toast(t((e as Error).message), true))));
     h.querySelectorAll<HTMLElement>("[data-openfolder]").forEach(b => b.addEventListener("click", () => void this.openFolder(b.dataset.openfolder!)));
     h.querySelectorAll<HTMLElement>(".v-row").forEach(b => {
-      b.addEventListener("click", () => { this.sel = b.dataset.id!; this.conflicts = []; this.stale = []; void this.render().then(() => this.loadConflicts()); });
-      b.addEventListener("dblclick", () => void this.openFile(b.dataset.id!));
+      b.addEventListener("click", e => {
+        this.pick(b.dataset.id!, { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey });
+        void this.render().then(() => { h.querySelector<HTMLElement>(`.v-row[data-id="${b.dataset.id}"]`)?.focus(); return this.loadConflicts(); });
+      });
+      b.addEventListener("dblclick", e => { if (!e.ctrlKey && !e.metaKey && !e.shiftKey) void this.openFile(b.dataset.id!); });
+      // Right-click (or long press, or the menu key): the menu of the selection, or of this row when it is not selected.
+      b.addEventListener("contextmenu", e => {
+        e.preventDefault();
+        const id = b.dataset.id!;
+        if (!this.selected.includes(id)) this.pick(id);
+        const r = b.getBoundingClientRect();
+        const x = e.clientX || r.left + 24, y = e.clientY || r.bottom;
+        void this.render().then(() => this.rowMenu(x, y));
+      });
+      b.addEventListener("keydown", e => {
+        const rows = [...h.querySelectorAll<HTMLElement>(".v-row")], k = rows.indexOf(b);
+        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+          e.preventDefault();
+          const to = rows[k + (e.key === "ArrowDown" ? 1 : -1)];
+          if (!to) return;
+          if (e.shiftKey) { this.pick(to.dataset.id!, { shift: true }); void this.render().then(() => h.querySelector<HTMLElement>(`.v-row[data-id="${to.dataset.id}"]`)?.focus()); }
+          else to.focus();
+        } else if ((e.key === "a" || e.key === "A") && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault();
+          this.pickAll();
+          void this.render().then(() => h.querySelector<HTMLElement>(`.v-row[data-id="${b.dataset.id}"]`)?.focus());
+        } else if (e.key === "Escape" && this.selected.length > 1) {
+          e.preventDefault();
+          this.pick(b.dataset.id!);
+          void this.render().then(() => h.querySelector<HTMLElement>(`.v-row[data-id="${b.dataset.id}"]`)?.focus());
+        } else if (e.key === "Delete" && this.selected.length) {
+          e.preventDefault();
+          const ids = this.selected;
+          void (ids.length > 1 ? this.deleteMany(ids) : this.deleteFile(ids[0]));
+        }
+      });
     });
     const zipIn = h.querySelector<HTMLInputElement>("#v-zip");
     zipIn?.addEventListener("change", () => { const f = zipIn.files?.[0]; zipIn.value = ""; if (f) void this.importZip(f); });
@@ -1314,10 +1633,18 @@ export class VaultPanel {
         case "notes": void this.notificationsDlg(); break;
         case "workflow": void this.workflowDlg(); break;
         case "eco": if (id) void this.newChange([id]); break;
+        case "more": { const r = b.getBoundingClientRect(); this.moreMenu(r.left, r.bottom + 4, b); break; }
+        case "selnone": if (this.sel) this.pick(this.sel); void this.render(); break;
+        case "mco": void this.checkOutMany(this.selected); break;
+        case "mci": void this.checkInMany(this.selected); break;
+        case "mundo": void this.undoMany(this.selected); break;
+        case "mlatest": void this.latestMany(this.selected); break;
+        case "mdel": void this.deleteMany(this.selected); break;
         case "break": if (id) void this.breakLock(id); break;
       }
     }));
     h.querySelectorAll<HTMLElement>("[data-tr]").forEach(b => b.addEventListener("click", () => { if (this.sel) void this.transitionDlg(this.sel, b.dataset.tr!); }));
+    h.querySelectorAll<HTMLElement>("[data-mtr]").forEach(b => b.addEventListener("click", () => void this.transitionDlg(this.selected, b.dataset.mtr!)));
     const q = h.querySelector<HTMLInputElement>("#v-q");
     q?.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); void this.find(q.value.trim() ? { text: q.value } : null, q.value.trim()); } });
     q?.addEventListener("search", () => { if (!q.value.trim()) void this.find(null, ""); });

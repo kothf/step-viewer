@@ -947,7 +947,12 @@ input.drop-val { outline: 2px solid var(--accent) !important; background: var(--
 #vault-panel .row { flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 #vault-panel .v-start .row input, .v-user input { flex: 1; min-width: 0; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); }
 .v-user { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: var(--fs-caption); color: var(--muted); }
-.v-title { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.v-title { display: flex; align-items: center; gap: 8px; }
+.v-title b { flex: 0 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.v-who { flex: 1; min-width: 0; font-size: var(--fs-caption); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.v-more { min-width: 34px; }
+.mc-menu .v-menu-main { font-weight: 600; }
+.v-multi .v-acts-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .v-h { margin: 12px 0 4px; font-size: var(--fs-caption); color: var(--muted); }
 .v-list { display: flex; flex-wrap: wrap; gap: 6px; }
 .v-files { border-top: 1px solid var(--line); }

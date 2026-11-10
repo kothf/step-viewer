@@ -119,6 +119,12 @@ const inShard = k => {
 };
 // A click on a Features tree row. While a command panel is open the tree is the folded fly-out over the view
 // (FR-UI-003): open it for the click and fold it again, so later clicks in the view are not covered.
+/** A command of the vault panel's ⋯ menu (FR-PDM-080). */
+async function vaultMore(pg, key) {
+  await pg.click('#vault-panel [data-a="more"]');
+  await pg.click(`#v-menu [data-v="${key}"]`);
+}
+
 async function treeClick(pg, sel, opts) {
   const folded = await pg.evaluate(() => !!document.querySelector("#mc-treefly") && document.querySelector("#mc-tree").hidden);
   if (folded) await pg.click("#mc-treefly .mc-treefly-h");
@@ -4651,7 +4657,7 @@ try {
     await mp.click('#confirm [data-a="ok"]');
     await mp.waitForFunction(() => /recycle bin/.test(document.querySelector("#toasts")?.textContent ?? ""));
     const deleted = await toastText();
-    await mp.click('#vault-panel [data-a="bin"]');
+    await vaultMore(mp, "bin");
     await mp.click("#vault-dlg [data-restore]");
     await mp.waitForFunction(() => /restored/.test(document.querySelector("#toasts")?.textContent ?? ""));
     const restored = await toastText();
@@ -4680,6 +4686,75 @@ try {
     await ctx.close();
   }
 
+  // --- Vault UI round: right-click menu on vault rows, Ctrl/Shift multi-select with check-in / state change / delete
+  // for all of them, and the vault's own commands in a ⋯ menu (FR-PDM-080) ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug&nokernel`);
+    await mp.evaluate(() => { localStorage.setItem("sv:tips", "off"); localStorage.setItem("mc:vaultUser", "Andrey"); });
+    await mp.goto(`${origin}/index.html?debug&nokernel`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.evaluate(async () => {
+      const p = window.__sv.vault;
+      await p.createInBrowser("Multi");
+      await p.addFiles(["a.txt", "b.txt", "c.txt", "d.txt"].map(n => new File([n], n)));
+    });
+    await mp.click("#t-vault");
+    await mp.waitForFunction(() => document.querySelectorAll("#vault-panel .v-row").length === 4);
+    const rows = mp.locator("#vault-panel .v-row");
+    const selNames = () => mp.evaluate(() => [...document.querySelectorAll("#vault-panel .v-row.sel .v-name")].map(x => x.textContent).join(","));
+    const menuText = () => mp.evaluate(() => [...document.querySelectorAll("#v-menu:not([hidden]) button")].map(b => b.textContent).join("|"));
+    // The panel top: Add, Add in folder, Save, search; the rest sits in ⋯.
+    const top = await mp.evaluate(() => [...document.querySelectorAll("#vault-panel .v-top [data-a]")].map(b => b.dataset.a).join(","));
+    await mp.click('#vault-panel [data-a="more"]');
+    const more = await mp.evaluate(() => [...document.querySelectorAll("#v-menu button")].map(b => b.dataset.v).join(","));
+    await mp.keyboard.press("Escape");
+    const back = await mp.evaluate(() => document.activeElement?.dataset.a + ":" + document.querySelector("#v-menu").hidden);
+    // Click, Ctrl+click, Shift+click.
+    await rows.nth(0).click();
+    await rows.nth(2).click({ modifiers: ["Control"] });
+    const ctrlSel = await selNames();
+    await rows.nth(3).click({ modifiers: ["Shift"] });
+    const shiftSel = await selNames();
+    // Right-click a selected row: the menu acts on all of them; Check out both.
+    await rows.nth(2).click({ button: "right" });
+    const multiMenu = await menuText();
+    await mp.click('#v-menu button:has-text("Check out")');
+    await mp.waitForFunction(() => document.querySelectorAll("#vault-panel .v-lock").length === 2);
+    // One changed working copy, then Check in from the multi-select bar: one comment for both.
+    await mp.evaluate(async () => { const p = window.__sv.vault, f = p.files.find(x => x.path === "d.txt"); await p.vault.saveWorking(f.id, new TextEncoder().encode("d2")); await p.refresh(); });
+    await mp.click('#vault-panel [data-a="mci"]');
+    await mp.fill("#vault-dlg textarea", "both");
+    await mp.click('#vault-dlg button[value="ok"]');
+    await mp.waitForFunction(() => !document.querySelector("#vault-panel .v-lock"));
+    const versions = await mp.evaluate(() => window.__sv.vault.files.map(f => `${f.path}:${f.versions.length}:${f.versions.at(-1).comment}`).sort().join(","));
+    // Change state of both from the bar.
+    await mp.click('#vault-panel [data-mtr="Submit for review"]');
+    await mp.click('#vault-dlg button[value="ok"]');
+    await mp.waitForFunction(() => window.__sv.vault.files.filter(f => f.state === "In review").length === 2);
+    // A plain right-click on an unselected row selects it alone and shows the one-file menu.
+    await rows.nth(0).click({ button: "right" });
+    const oneMenu = await menuText();
+    const oneSel = await selNames();
+    await mp.keyboard.press("Escape");
+    // Ctrl+A in the list, then Delete: all four to the recycle bin after one question.
+    await rows.nth(0).focus();
+    await mp.keyboard.press("Control+a");
+    const allSel = await selNames();
+    await mp.keyboard.press("Delete");
+    await mp.click('#confirm [data-a="ok"]');
+    await mp.waitForFunction(() => window.__sv.vault.files.length === 0);
+    check(top === "more,close,add,addfolder,savepart,search" && more === "notes,changes,packages,audit,verify,storage,export,bin,settings,workflow,user" && back === "more:true",
+      `vault UI: a slim panel top with the vault's commands in ⋯ (${top} | ${more} | ${back})`);
+    check(ctrlSel === "a.txt,c.txt" && shiftSel === "c.txt,d.txt" && /^Check out\|Get latest\|Change state: Submit for review\|Request change…\|Delete$/.test(multiMenu)
+      && versions === "a.txt:1:Added,b.txt:1:Added,c.txt:1:Added,d.txt:2:both" && /^Open\|Check out\|Get latest\|.*History\|Where used\|Data card\|Rename/.test(oneMenu) && oneSel === "a.txt" && allSel === "a.txt,b.txt,c.txt,d.txt",
+      `vault UI: Ctrl/Shift multi-select, row menu, check-in / state change / delete for several files (${ctrlSel} | ${shiftSel} | ${multiMenu} | ${versions} | ${oneMenu} | ${oneSel} | ${allSel})`);
+    await ctx.close();
+  }
+
   // --- 1.40.0: vault export to ZIP and import, storage report and purge (FR-PDM-007/008) ---
   if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
@@ -4698,7 +4773,7 @@ try {
     await mp.waitForTimeout(100);
     if (await mp.inputValue("#v-name") !== "Backup test") await mp.fill("#v-name", "Backup test");
     await mp.click('#vault-panel [data-a="new-ws"]');
-    await mp.waitForSelector('#vault-panel [data-a="export"]');
+    await mp.waitForSelector('#vault-panel [data-a="more"]');
     // Three versions of one file and a PDF.
     await mp.evaluate(async () => {
       const p = window.__sv.vault, v = p.vault, b = s => new TextEncoder().encode(s);
@@ -4708,7 +4783,7 @@ try {
       await p.refresh();
     });
     // Export ZIP from the tab (all versions) and import it as a second vault.
-    await mp.click('#vault-panel [data-a="export"]');
+    await vaultMore(mp, "export");
     const [dl] = await Promise.all([mp.waitForEvent("download"), mp.click('#vault-dlg button[value="ok"]')]);
     const zipPath = await dl.path();
     const name = dl.suggestedFilename();
@@ -4718,7 +4793,7 @@ try {
     await mp.waitForFunction(() => window.__sv.vault.vault?.root.name === "Backup test (2)", null, { timeout: 10000 }).catch(() => {});
     const imported = await mp.evaluate(async () => { const v = window.__sv.vault.vault; const fs = await v.files(); const f = fs.find(x => x.path === "note.txt"); return { root: v.root.name, n: fs.length, v1: new TextDecoder().decode(await v.versionBytes(f.id, 1)), ok: (await v.verify()).missing.length === 0 }; });
     // Storage report and purge from the tab.
-    await mp.click('#vault-panel [data-a="storage"]');
+    await vaultMore(mp, "storage");
     await mp.waitForSelector("#vault-dlg tbody tr");
     const rep = await mp.evaluate(() => [...document.querySelectorAll("#vault-dlg tbody tr")].map(r => [...r.cells].map(c => c.textContent).join(":")).join("|"));
     await mp.fill('#vault-dlg [name="keep"]', "1");
@@ -5843,7 +5918,7 @@ try {
     await vp.waitForSelector("#v-name");
     await vp.fill("#v-name", "Compare test");
     await vp.click('#vault-panel [data-a="new-ws"]');
-    await vp.waitForSelector('#vault-panel [data-a="settings"]');
+    await vp.waitForSelector('#vault-panel [data-a="more"]');
     // The assembly with its embedded part: the part goes in as a file first and the assembly references it.
     const refs = await vp.evaluate(async b => {
       const p = window.__sv.vault;
@@ -5903,7 +5978,7 @@ try {
     await mp.waitForTimeout(100);
     if (await mp.inputValue("#v-name") !== "Lifecycle test") await mp.fill("#v-name", "Lifecycle test");
     await mp.click('#vault-panel [data-a="new-ws"]');
-    await mp.waitForSelector('#vault-panel [data-a="settings"]');
+    await mp.waitForSelector('#vault-panel [data-a="more"]');
     await mp.evaluate(async () => { await window.__sv.vault.addFiles([new File(["bracket"], "bracket.txt"), new File(["spare"], "spare.txt")]); });
     const rowText = n => mp.evaluate(i => document.querySelectorAll("#vault-panel .v-row")[i]?.textContent.replace(/\s+/g, " ").trim() ?? "", n);
     await mp.waitForFunction(() => document.querySelectorAll("#vault-panel .v-row").length === 2);
@@ -5951,7 +6026,7 @@ try {
     await mp.waitForSelector("#confirm[open]");
     await mp.click('#confirm [data-a="ok"]');
     await mp.waitForFunction(() => document.querySelectorAll("#vault-panel .v-row").length === 1);
-    await mp.click('#vault-panel [data-a="bin"]');
+    await vaultMore(mp, "bin");
     await mp.waitForSelector("#vault-dlg [data-restore]");
     await mp.click("#vault-dlg [data-restore]");
     await mp.waitForFunction(() => document.querySelectorAll("#vault-panel .v-row").length === 2);
@@ -5984,7 +6059,7 @@ try {
     await mp.waitForTimeout(100);
     if (await mp.inputValue("#v-name") !== "Team test") await mp.fill("#v-name", "Team test");
     await mp.click('#vault-panel [data-a="new-ws"]');
-    await mp.waitForSelector('#vault-panel [data-a="changes"]');
+    await mp.waitForSelector('#vault-panel [data-a="more"]');
     // Two released files (one transition on both: a release package).
     await mp.evaluate(async () => {
       const p = window.__sv.vault, v = p.vault;
@@ -6003,7 +6078,7 @@ try {
     // Waits for an async condition in the page (waitForFunction treats a promise as truthy).
     const until = async (fn, ms = 10000) => { for (let t0 = Date.now(); Date.now() - t0 < ms; await mp.waitForTimeout(100)) if (await mp.evaluate(fn)) return true; return false; };
     await until(async () => (await window.__sv.vault.vault.changes()).length === 1);
-    await mp.click('#vault-panel [data-a="changes"]');
+    await vaultMore(mp, "changes");
     await mp.waitForSelector("#vault-dlg [data-eco-ok]");
     await mp.click("#vault-dlg [data-eco-ok]");
     await mp.waitForSelector("#vault-dlg [data-eco-close]");
@@ -6016,14 +6091,14 @@ try {
     const after = await mp.evaluate(async () => (await window.__sv.vault.vault.files()).map(f => `${f.path}:${f.state}:${f.revision}`).join("|"));
     await mp.evaluate(() => document.querySelector("#vault-dlg")?.open && document.querySelector("#vault-dlg").close());
     // Release packages: two (the joint release and the change order), exported as a ZIP.
-    await mp.click('#vault-panel [data-a="packages"]');
+    await vaultMore(mp, "packages");
     await mp.waitForSelector("#vault-dlg [data-zip]");
     const pkgs = await mp.$$eval("#vault-dlg [data-zip]", x => x.length);
     const [dl] = await Promise.all([mp.waitForEvent("download"), mp.click("#vault-dlg [data-zip] >> nth=0")]);
     const zipName = dl.suggestedFilename();
     await mp.click('#vault-dlg button[value="cancel"]');
     // Workflow editor: add a state, save; it is in the settings.
-    await mp.click('#vault-panel [data-a="workflow"]');
+    await vaultMore(mp, "workflow");
     await mp.waitForSelector("#vault-dlg [data-add-s]");
     await mp.click("#vault-dlg [data-add-s]");
     await mp.waitForSelector('#vault-dlg [data-s="5"]');
@@ -6040,8 +6115,8 @@ try {
       v.user = "Andrey";
       await p.refresh();
     });
-    const badge = await mp.evaluate(() => document.querySelector('#vault-panel [data-a="notes"] .v-badge')?.textContent ?? "");
-    await mp.click('#vault-panel [data-a="notes"]');
+    const badge = await mp.evaluate(() => document.querySelector('#vault-panel [data-a="more"] .v-badge')?.textContent ?? "");
+    await vaultMore(mp, "notes");
     await mp.waitForSelector("#vault-dlg .v-log li");
     const note = await mp.textContent("#vault-dlg .v-log li");
     check(/arm\.txt:Change pending/.test(pending) && /pin\.txt:Released/.test(pending) && after === "arm.txt:Released:B|pin.txt:Released:A", `vault P5: change request, approve, close and release (${pending} → ${after})`);
@@ -10139,7 +10214,7 @@ try {
     await vp.waitForSelector("#v-name");
     await vp.fill("#v-name", "Geometry test");
     await vp.click('#vault-panel [data-a="new-ws"]');
-    await vp.waitForSelector('#vault-panel [data-a="settings"]');
+    await vp.waitForSelector('#vault-panel [data-a="more"]');
     // The plate 10 mm thick, then 15 mm: 80 × 50 × 5 mm more material.
     const ids = await vp.evaluate(async ([a, b, asm]) => {
       const p = window.__sv.vault, v = p.vault;
