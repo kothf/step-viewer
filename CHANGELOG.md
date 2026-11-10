@@ -5,6 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.404.0] - 2026-11-10
+
+### Added
+- Sheet Metal Properties (FR-FT-120): a new command on the Sheet Metal tab lists the cut-list values of the flat pattern: the smallest bounding box round it (length, width, area), sheet thickness, bend radius and K-factor, the flat pattern's area, the cutting length round the outside and round the openings, the number of cut outs and bends, and the mass when the part has a material. Export CSV saves them in millimetres and kilograms.
+
+### Fixed
+- A circle inside a base flange's closed sketch now cuts a hole in the plate; it used to add the disc back on.
+
 ## [1.403.0] - 2026-11-10
 
 ### Added
@@ -2373,7 +2381,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.403.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.404.0...HEAD
+[1.404.0]: https://github.com/kothf/step-viewer/compare/v1.403.0...v1.404.0
 [1.403.0]: https://github.com/kothf/step-viewer/compare/v1.402.0...v1.403.0
 [1.402.0]: https://github.com/kothf/step-viewer/compare/v1.401.0...v1.402.0
 [1.401.0]: https://github.com/kothf/step-viewer/compare/v1.400.0...v1.401.0

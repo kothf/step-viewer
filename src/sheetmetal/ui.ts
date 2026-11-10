@@ -9,7 +9,7 @@ import { bendOfFace, flatSize, panelOfFace, reliefCorners, ventLayout, type Shee
 import { loopPolygon } from "../sketch/profile";
 import { GAUGE_TABLES, gaugeRow, type SheetFeature, type SmLoftFeature, type SmBaseFeature, type SmClosedFeature, type SmCornerFeature, type SmReliefFeature, type SmGussetFeature, type SmCrossFeature, type SmVentFeature, type SmCutFeature, type SmConvertFeature, type SmInsertFeature, type SmFormFeature, type SmUnfoldFeature, type FormTool, type SmFlangeFeature, type SmHemFeature, type SmJogFeature, type SmMiterFeature, type SmSketchBendFeature, type SmTabFeature, type SmTabSlotFeature, type SmRipFeature } from "./types";
 
-export type SmTool = "smrip" | "smtabslot" | "smbase" | "smloft" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smrelief" | "smgusset" | "smcross" | "smvent" | "smcut" | "smconvert" | "sminsert" | "smform" | "smunfold" | "smfold" | "smmiter" | "smswept" | "smflat" | "smdxf";
+export type SmTool = "smrip" | "smtabslot" | "smbase" | "smloft" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smrelief" | "smgusset" | "smcross" | "smvent" | "smcut" | "smconvert" | "sminsert" | "smform" | "smunfold" | "smfold" | "smmiter" | "smswept" | "smflat" | "smdxf" | "smprops";
 
 
 /** The Sheet metal flyout's commands. */
@@ -38,6 +38,7 @@ export const SM_TOOLS = (): [SmTool, string, string][] => [
   ["smfold", t("Fold"), t("Fold: bend unfolded bends back; cuts made across them wrap onto the bends")],
   ["smflat", t("Flatten"), t("Flatten: show the flat pattern, or fold it back")],
   ["smdxf", t("Flat pattern DXF"), t("Export the flat pattern with its bend lines as DXF")],
+  ["smprops", t("Sheet Metal Properties"), t("Sheet metal properties: the cut-list values of the flat pattern (bounding box, thickness, cutting lengths, cut outs, bends, mass)")],
 ];
 
 /** Default feature names (translated in the tree like the others). */
@@ -69,6 +70,7 @@ export const SM_ICONS: Record<string, string> = {
   smflat: S('<path d="M1.5 11h13M4 5h8"/><path d="M8 5v6" stroke-dasharray="1.6 1.4"/><path d="M4 5 1.5 11M12 5l2.5 6"/>'),
   smrip: S('<path d="M2 13V3h5"/><path d="M9 3h5v10"/><path d="M2 13h12"/><path d="M7 3l1 4M9 3L8 7" stroke-dasharray="1.6 1.4"/>'),
   smtabslot: S('<path d="M1.5 9h4V6h3v3h6"/><path d="M1.5 11h13"/><path d="M5 3.5h4" stroke-dasharray="1.6 1.4"/>'),
+  smprops: S('<path d="M2.5 2.5h11v11h-11z"/><path d="M5 6h6M5 8.5h6M5 11h4"/>'),
   smdxf: S('<path d="M3 2h7l3 3v9H3z"/><path d="M5 9h6M8 6v6" stroke-dasharray="1.6 1.4"/>'),
 };
 

@@ -10736,6 +10736,27 @@ try {
     const rpEdge = ({ "2,2": "rl1|rl4", "58,2": "rl1|rl2", "58,38": "rl2|rl3", "2,38": "rl3|rl4" })[far.join(",")].split("|").map(n => `rh:off:re:side:${n}`).join("|");
     check(rp0.title === "Rip" && rp0.edges?.length === 1 && rp0.edges[0] === rpEdge && !rp1.bad && Math.abs(rv0 - rp1.v - Math.SQRT2 * 2 * 0.1 * 28) < 1e-3,
       `sheet metal: Rip cuts a slot along the clicked inside corner edge (${JSON.stringify({ far, rp0, rp1, rv0, rpEdge })})`);
+    // Sheet Metal Properties: a 100 × 50 plate with a Ø10 hole and a 30 flange, aluminium; the dialog lists the cut-list values.
+    await mp.evaluate(() => window.__sv.model.store.change("Props plate", d => {
+      const q = [[0, 0], [100, 0], [100, 50], [0, 50]];
+      d.features = [
+        { id: "ps", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [...q.map((p, i) => ({ id: `pq${i}`, t: "point", x: p[0], y: p[1] })), ...q.map((_p, i) => ({ id: `pl${i + 1}`, t: "line", a: `pq${i}`, b: `pq${(i + 1) % 4}` })), { id: "pc0", t: "point", x: 70, y: 30 }, { id: "pc", t: "circle", c: "pc0", r: 5 }] },
+        { id: "pb", type: "smbase", name: "Base-Flange1", sketch: "ps", thickness: { v: 2 }, radius: { v: 2 }, depth: { v: 20 }, k: 0.5 },
+        { id: "pf", type: "smflange", name: "Edge-Flange1", edges: [{ faces: ["pb:p0:top", "pb:p0:pl1"] }], length: { v: 30 }, angle: { v: Math.PI / 2 } },
+      ];
+      d.material = { name: "Aluminium 6061", density: 2.7 };
+    }));
+    await settle();
+    await smMenu("Sheet Metal Properties");
+    await mp.waitForSelector("#sm-props[open]");
+    const sp = await mp.evaluate(() => Object.fromEntries([...document.querySelectorAll("#sm-props tr[data-prop]")].map(r => [r.dataset.prop, r.querySelector("td").textContent])));
+    const spH = 50 - 4 + (Math.PI / 2) * 3 + 26, spV = await mp.evaluate(() => window.__sv.model.last().props?.volume ?? 0);
+    const num = s => parseFloat(String(s).replace(",", "."));
+    check(Math.abs(num(sp["Bounding box length"]) - 100) < 0.01 && Math.abs(num(sp["Bounding box width"]) - spH) < 0.01 && num(sp["Sheet metal thickness"]) === 2
+      && sp["Cut outs"] === "1" && sp["Bends"] === "1" && Math.abs(num(sp["Cutting length - outer"]) - 2 * (100 + spH)) < 0.01 && Math.abs(num(sp["Cutting length - inner"]) - 10 * Math.PI) < 0.01
+      && Math.abs(spV - 2 * (100 * spH - 25 * Math.PI)) < 0.01 && /g$/.test(sp.Mass),
+      `sheet metal: Sheet Metal Properties lists the flat pattern's cut-list values (${JSON.stringify({ sp, spH, spV })})`);
+    await mp.click("#sm-props [data-a=close]");
     await ctx.close();
   }
 
