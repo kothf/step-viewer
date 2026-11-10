@@ -3,6 +3,7 @@
 // components (src/kernel/assembly.ts) and the viewer shows one part per component, so the measuring
 // tools work across components as for an imported assembly.
 import type { NamedViews } from "../viewer/navigation";
+import { MATE_LABEL, mateName } from "./mateName";
 import type { NamedView } from "../model/types";
 import * as THREE from "three";
 import { ModelKernel } from "../model/kernelClient";
@@ -63,7 +64,6 @@ const FOREIGN = /\.(step|stp|iges|igs|brep)$/i;
 const MATE_TYPES: MateType[] = ["coincident", "parallel", "perpendicular", "tangent", "concentric", "lock", "distance", "angle"];
 const ADV_TYPES: MateType[] = ["symmetric", "width", "limitdist", "limitangle"];
 const MECH_TYPES: MateType[] = ["hinge", "slot", "gear", "screw"];
-const MATE_LABEL: Record<MateType, string> = { coincident: "Coincident", parallel: "Parallel", perpendicular: "Perpendicular", tangent: "Tangent", concentric: "Concentric", lock: "Lock", distance: "Distance", angle: "Angle", symmetric: "Symmetric", width: "Width", limitdist: "Limit distance", limitangle: "Limit angle", hinge: "Hinge", slot: "Slot", gear: "Gear", screw: "Screw" };
 const MATE_ICON: Record<MateType, string> = { coincident: "⊼", parallel: "∥", perpendicular: "⊥", tangent: "◠", concentric: "◎", lock: "🔒", distance: "↔", angle: "∠", symmetric: "⧓", width: "⇹", limitdist: "⟷", limitangle: "⦣", hinge: "⌒", slot: "⊂", gear: "⚙", screw: "⫰" };
 /** The advanced mate types that fit two references (FR-MATE-004). */
 const mechFits = (a: Geo["k"], b: Geo["k"]): MateType[] => (a === "axis" && b === "axis" ? ["hinge", "gear", "screw"] : a === "plane" && b === "axis" ? ["slot"] : []);
@@ -835,8 +835,8 @@ export class AsmController {
   private addAutoMates(): boolean {
     if (!this.doc) return false;
     const mates: Mate[] = [], left: typeof this.autoMates = [];
-    const count: Record<string, number> = {};
-    const named = (type: MateType) => { count[type] = (count[type] ?? (this.doc!.mates ?? []).filter(m => m.type === type).length) + 1; return `${MATE_LABEL[type]}${count[type]}`; };
+    const used = new Set<string>();
+    const named = (type: MateType) => { const name = mateName(this.doc!.mates ?? [], type, used); used.add(name); return name; };
     const pair = (a: MateRef, b: MateRef, ga: Geo, gb: Geo, align: "anti" | "aligned" = "anti") => {
       const type: MateType = ga.k === "axis" && gb.k === "axis" ? "concentric" : "coincident";
       mates.push({ id: uid("m_"), name: named(type), type, a, b, ...(type === "coincident" && ga.k === "plane" && gb.k === "plane" ? { align } : {}) });
@@ -1303,8 +1303,7 @@ export class AsmController {
     const ga = this.worldGeo(target), gb = this.worldGeo(grab);
     if (!ga || !gb || ga.k !== gb.k) return false;
     const type: MateType = ga.k === "axis" ? "concentric" : "coincident";
-    const n = (this.doc.mates ?? []).filter(x => x.type === type).length + 1;
-    const mate: Mate = { id: uid("m_"), name: `${MATE_LABEL[type]}${n}`, type, a: target, b: grab, ...(type === "coincident" ? { align: "anti" as const } : {}) };
+    const mate: Mate = { id: uid("m_"), name: mateName(this.doc.mates ?? [], type), type, a: target, b: grab, ...(type === "coincident" ? { align: "anti" as const } : {}) };
     const start = { ...dropped };
     const r = this.solveDoc(this.doc, [mate], start);
     if (!r.ok) { toast(t("This mate cannot be solved with the others: the assembly would be over-defined."), true); return false; }
@@ -1456,9 +1455,8 @@ export class AsmController {
   private draftMate(): Mate | null {
     const m = this.mating;
     if (!m?.a || !m.b || !m.type || !this.doc) return null;
-    const n = (this.doc.mates ?? []).filter(x => x.type === m.type).length + 1;
     const old = m.edit ? this.doc.mates?.find(x => x.id === m.edit) : undefined;
-    const mate: Mate = { id: m.edit ?? uid("m_"), name: old && old.type === m.type ? old.name : `${MATE_LABEL[m.type].replace(/ (\w)/g, (_, c: string) => c.toUpperCase())}${n}`, type: m.type, a: m.a, b: m.b };
+    const mate: Mate = { id: m.edit ?? uid("m_"), name: old && old.type === m.type ? old.name : mateName((this.doc.mates ?? []).filter(x => x.id !== m.edit), m.type), type: m.type, a: m.a, b: m.b };
     if (m.align) mate.align = m.align;
     if (m.type === "distance" || m.type === "angle") { mate.value = m.value ?? 0; if (m.flip) mate.flip = true; }
     // Angle: signed about a × b as the faces stand now (kept when edited), so +θ and −θ differ (exam #72).
@@ -1519,7 +1517,7 @@ export class AsmController {
     // Two flat faces start as Coincident; when the parts are already held so that it cannot be solved either way but
     // Parallel can (two side faces of a part held by its other mates), start with Parallel (exam #27).
     if (!r.ok && mate.type === "coincident" && mate.align && !m.typeSet && !m.alignSet && !m.edit) {
-      const par: Mate = { id: mate.id, name: mate.name.replace(/^Coincident/, "Parallel"), type: "parallel", a: mate.a, b: mate.b };
+      const par: Mate = { id: mate.id, name: mateName(this.doc?.mates ?? [], "parallel"), type: "parallel", a: mate.a, b: mate.b };
       const r3 = this.solveMate(this.withoutEdited(), par);
       if (r3.ok) { m.type = "parallel"; m.align = undefined; r = r3; }
     }
@@ -1981,7 +1979,8 @@ export class AsmController {
   }
   private renameState(id: string) {
     const row = $("#asm-tree").querySelector<HTMLElement>(`.ft-row[data-id="${CSS.escape(id)}"]`), name = row?.querySelector<HTMLElement>(".ft-name");
-    const st = this.doc?.states?.find(s => s.id === id) ?? this.doc?.configs?.find(s => s.id === id);
+    // Display states, configurations and (exam #80) mates.
+    const st = this.doc?.states?.find(s => s.id === id) ?? this.doc?.configs?.find(s => s.id === id) ?? this.doc?.mates?.find(s => s.id === id);
     if (!row || !name || !st) return;
     const inp = document.createElement("input");
     inp.className = "ft-ren";
@@ -1996,7 +1995,7 @@ export class AsmController {
       if (done) return;
       done = true;
       const v = inp.value.trim();
-      if (apply && v && v !== st.name) this.change(d => { const s2 = d.states?.find(x => x.id === id) ?? d.configs?.find(x => x.id === id); if (s2) s2.name = v; });
+      if (apply && v && v !== st.name) this.change(d => { const s2 = d.states?.find(x => x.id === id) ?? d.configs?.find(x => x.id === id) ?? d.mates?.find(x => x.id === id); if (s2) s2.name = v; });
       else this.renderTree();
     };
     inp.addEventListener("keydown", e => { e.stopPropagation(); if (e.key === "Enter") { e.preventDefault(); finish(true); } else if (e.key === "Escape") { e.preventDefault(); finish(false); } });
@@ -2702,6 +2701,7 @@ export class AsmController {
         else if (xv) this.popup([[this.exploded === id ? t("Collapse") : t("Explode"), () => this.toggleExplode(id)], [t("Edit exploded view"), () => this.startExplode(xv)], [t("Delete"), () => this.deleteExplode(id)]], e.clientX, e.clientY);
         else if (mt) this.popup([
           [t("Edit mate"), () => this.startMate(mt)],
+          [t("Rename"), () => this.renameState(mt.id)],
           ...(mt.align ? [[t("Flip mate alignment"), () => this.setMate(mt.id, { align: mt.align === "aligned" ? "anti" : "aligned" })] as [string, () => void]] : []),
           [mt.suppressed ? t("Unsuppress") : t("Suppress"), () => this.setMate(mt.id, { suppressed: mt.suppressed ? undefined : true })],
           [t("Delete"), () => void this.deleteMate(mt.id)],
