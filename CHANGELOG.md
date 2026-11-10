@@ -5,11 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.466.0] - 2026-11-10
+## [1.467.0] - 2026-11-10
 
 ### Added
 
 - **Recognised sketches are fully defined (FR-FT-102, FR-SK-045)**: Recognize Features and Recognize Extrudes now run Fully define sketch on every sketch they make, as FeatureWorks gives its sketches dimensions. Lines along the axes get horizontal and vertical relations, circles and arcs their diameters and radii, and the points dimensions from the sketch origin, so the base, pocket and revolve sketches can be edited by their dimensions at once. Nothing moves and the body stays the same.
+
+## [1.466.0] - 2026-11-10
+
+### Fixed (drawings exam, round 2)
+- The GOST 2.104 title block writes the date as DD.MM.YY (10.11.26), so it fits its 10 mm cell; an ISO date ran over the cell border.
 
 ## [1.465.0] - 2026-11-10
 
@@ -2819,7 +2824,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.465.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.466.0...HEAD
+[1.467.0]: https://github.com/kothf/step-viewer/compare/v1.466.0...v1.467.0
 [1.466.0]: https://github.com/kothf/step-viewer/compare/v1.465.0...v1.466.0
 [1.465.0]: https://github.com/kothf/step-viewer/compare/v1.464.0...v1.465.0
 [1.464.0]: https://github.com/kothf/step-viewer/compare/v1.463.0...v1.464.0
