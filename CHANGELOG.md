@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.400.0] - 2026-11-10
+
+### Changed
+
+- **Four more materials checked (FR-MAT-001)**: POM (Delrin), PEEK, PET (PET-P) and OSB/3 now show **Checked against:** with a link to a stock shape or board maker's data sheet. 137 of 170 materials are checked; the other 33 still say they are not. Values changed to match the sheets: POM (Delrin) modulus 3.1 → 2.4 GPa, strength 70 → 76 MPa and expansion 110 → 120; PEEK modulus 4.0 → 4.5 GPa and strength 98 → 110 MPa; PET density 1.39 → 1.38, modulus 3.5 → 3.2 GPa, strength 90 → 69 MPa, expansion 60 → 70, specific heat added; OSB/3 density 0.65 → 0.6.
+
 ## [1.399.0] - 2026-11-10
 
 ### Changed
@@ -2347,7 +2353,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.399.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.400.0...HEAD
+[1.400.0]: https://github.com/kothf/step-viewer/compare/v1.399.0...v1.400.0
 [1.399.0]: https://github.com/kothf/step-viewer/compare/v1.398.0...v1.399.0
 [1.398.0]: https://github.com/kothf/step-viewer/compare/v1.397.0...v1.398.0
 [1.397.0]: https://github.com/kothf/step-viewer/compare/v1.396.0...v1.397.0

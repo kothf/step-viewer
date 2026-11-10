@@ -223,7 +223,7 @@ const ROWS: Row[] = [
   ["plastic", "ASA", "ASA", "", [1.07, 2.3, _, 48, 48, 0.17, 1300, 95], "plastic", "#e9e4d4"],
   ["plastic", "PLA", "PLA", "", [1.24, 3.6, 0.36, 60, 60, 0.13, 1800, 68], "plastic", "#dfe3e6"],
   ["plastic", "PETG", "PETG", "", [1.27, 2.1, _, 50, 50, 0.21, 1300, 51], "plastic", "#dfe6ea"],
-  ["plastic", "PET (PET-P)", "PET (ПЭТ)", "", [1.39, 3.5, _, 90, 90, 0.29, _, 60], "plastic", "#f1f1ee"],
+  ["plastic", "PET (PET-P)", "PET (ПЭТ)", "", [1.38, 3.2, _, 69, 69, 0.29, 1170, 70], "plastic", "#f1f1ee"],
   ["plastic", "Nylon PA6", "Нейлон PA6", "ПА6 · капролон", [1.14, 3.0, 0.39, 80, 80, 0.25, 1700, 80], "plastic", "#efece2"],
   ["plastic", "Nylon PA66", "Нейлон PA66", "ПА66", [1.14, 3.3, 0.39, 85, 85, 0.25, 1700, 80], "plastic", "#efece2"],
   ["plastic", "Nylon PA66-GF30", "Нейлон PA66-GF30", "ПА66-СВ30", [1.36, 10, 0.35, _, 190, 0.35, 1500, 25], "plastic", "#3a3d42"],
@@ -231,9 +231,9 @@ const ROWS: Row[] = [
   ["plastic", "Nylon PA12 (laser sintered)", "Нейлон PA12 (лазерное спекание)", "PA 2200 · SLS", [0.93, 1.65, _, _, 48, _, _, _], "plastic", "#f4f4f1"],
   ["plastic", "Polycarbonate", "Поликарбонат", "PC · ПК", [1.2, 2.4, 0.37, 65, 65, 0.2, 1200, 65], "plastic", "#dfe9ee"],
   ["plastic", "PC/ABS", "PC/ABS", "", [1.13, 2.2, _, 52, 52, 0.2, _, 80], "plastic", "#3a3d42"],
-  ["plastic", "POM (Delrin)", "POM (Delrin, полиацеталь)", "POM-H", [1.41, 3.1, 0.35, 70, 70, 0.33, 1470, 110], "plastic", "#f4f4f1"],
+  ["plastic", "POM (Delrin)", "POM (Delrin, полиацеталь)", "POM-H", [1.41, 2.4, 0.35, 76, 76, 0.33, 1470, 120], "plastic", "#f4f4f1"],
   ["plastic", "POM-C (acetal copolymer)", "POM-C (полиацеталь, сополимер)", "ПОМ", [1.41, 2.8, 0.35, 64, 64, 0.31, 1470, 110], "plastic", "#f4f4f1"],
-  ["plastic", "PEEK", "PEEK", "ПЭЭК", [1.32, 4.0, 0.4, 98, 98, 0.29, 2200, 45], "plastic", "#cdbf9f"],
+  ["plastic", "PEEK", "PEEK", "ПЭЭК", [1.32, 4.5, 0.4, 110, 110, 0.29, 2200, 45], "plastic", "#cdbf9f"],
   ["plastic", "PEI (Ultem 1000)", "PEI (Ultem 1000)", "ПЭИ", [1.27, 3.6, 0.36, 110, 110, 0.22, _, 56], "plastic", "#c79a3c"],
   ["plastic", "PMMA (acrylic)", "PMMA (оргстекло)", "ПММА", [1.19, 3.3, 0.37, _, 80, 0.19, 1470, 70], "plastic", "#e6eef2"],
   ["plastic", "PVC-U (rigid PVC)", "PVC-U (жёсткий ПВХ)", "ПВХ", [1.4, 3.0, 0.38, 55, 55, 0.16, 900, 80], "plastic", "#8a8e93"],
@@ -287,7 +287,7 @@ const ROWS: Row[] = [
   ["wood", "Plywood (birch)", "Фанера (берёзовая)", "EN 636 · ФК · ФСФ", [0.68, _, _, _, _, 0.17, 1600, _], "panel", "#d9c19a"],
   ["wood", "MDF", "МДФ", "EN 622-5", [0.75, 2.5, _, _, _, _, 1700, _], "panel", "#b89a6c"],
   ["wood", "Particleboard P2", "ДСП P2", "EN 312 · chipboard", [0.65, 1.6, _, _, _, 0.14, 1700, _], "panel", "#c6a877"],
-  ["wood", "OSB/3", "OSB/3 (ОСП-3)", "EN 300", [0.65, 3.5, _, _, _, 0.13, 1700, _], "panel", "#c9a05a"],
+  ["wood", "OSB/3", "OSB/3 (ОСП-3)", "EN 300", [0.6, 3.5, _, _, _, 0.13, 1700, _], "panel", "#c9a05a"],
 
   // ---------- other ----------
   ["other", "Concrete C25/30", "Бетон C25/30", "B30", [2.4, 31, 0.2, _, 2.6, 2, 1000, 10], "ec2"],
@@ -438,6 +438,11 @@ export const CHECKED: Record<string, string> = {
   "PETG": "protolabs.com/media/pzub5tfo/eastar-6763.pdf",
   "PEI (Ultem 1000)": "cdn.shopify.com/s/files/1/0260/7421/files/ULTEM_1000_DATA_SHEET.pdf",
   "Polyethylene PE-HD": "www.oadbyplastics.co.uk/wp-content/uploads/2025/11/PE-HD-300-Technical-Datasheet.pdf",
+  // 1.400.0: stock shape and board makers' data sheets.
+  "POM (Delrin)": "polymershapes.com/wp-content/uploads/2025/07/DELRIN_150_Series_Nat_Acetal_Homopolymer_14.pdf",
+  "PEEK": "www.curbellplastics.com/wp-content/uploads/2022/11/TECAPEEK-Natural-Data-Sheet.pdf",
+  "PET (PET-P)": "plasticsintl.com/media/ocglsyfe/pet-tecapet-data-sheet.pdf",
+  "OSB/3": "forest.one/media/sparsh/product_attachment/EGGER_-_OSB_TDS.pdf",
 };
 
 export const LIBRARY: Material[] = ROWS.map(([cat, name, , eq, [density, E, nu, sy, su, k, cp, alpha], src, color]) =>
