@@ -395,8 +395,15 @@ test("assembly BOM: items in first-use order, pattern and sub-assembly instances
   // Flattened: a pattern instance of the pin and two parts of the sub-assembly.
   const flat = { ...top, components: [top.components[0], top.components[1], { id: "pt~c2~1", name: "pin<3>", part: "pin", tf: I }, { id: "c3/x", name: "x", part: "sub/x", tf: I }, { id: "c3/y", name: "y", part: "sub/y", tf: I }] };
   const b = bomOf(top, flat);
-  assert.deepEqual(bomCells(b), [["1", "plate", "", "1"], ["2", "PN-7", "", "2"], ["3", "sub", "", "1"]]);
+  assert.deepEqual(bomCells(b), [["1", "plate", "", "1", ""], ["2", "PN-7", "", "2", ""], ["3", "sub", "", "1", ""]]);
   assert.equal(b.itemOf("pt~c2~1"), 2);
+  // Material column (FR-MAT-001): the part's material, or its bodies' own ones as the drawing worker reports them; none for a sub-assembly.
+  const { bomMats } = await import("../../src/drawing/bom");
+  const steel = { name: "Steel S235", density: 7.85 };
+  const top2 = { ...top, parts: { ...top.parts, plate: { ...top.parts.plate, doc: { ...top.parts.plate.doc, material: steel } }, pin: { ...top.parts.pin, doc: { ...top.parts.pin.doc, material: steel } } } };
+  const mats = bomMats([{ part: "pin", mats: ["Steel S235", "Titanium Ti-6Al-4V"] }, { part: "plate" }]);
+  assert.deepEqual(bomOf(top2, { ...flat, parts: top2.parts }, "top", undefined, mats).rows.map(r => r.material), ["Steel S235", "Steel S235, Titanium Ti-6Al-4V", ""]);
+  assert.equal(bomMats([{ part: "plate" }]), undefined);
   assert.equal(b.itemOf("c3/y"), 3);
   assert.equal(compOfKey("c3/y@f1:end|c3/y@f1:side0"), "c3/y");
   const bp = balloonPrims([0, 20], [0, 0], "2");
@@ -448,7 +455,7 @@ test("parts-only BOM, stacked balloons, surface symbol on a slanted edge, GOST s
     components: [top.components[0], top.components[1], { id: "c3/p", name: "p", part: "sub/p", tf: I }, { id: "c3/w", name: "w", part: "sub/w", tf: I }] };
   const b = bomOf(top, flat, "parts");
   assert.equal(b.mode, "parts");
-  assert.deepEqual(bomCells(b), [["1", "plate", "", "1"], ["2", "PN-7", "", "2"], ["3", "W-3", "", "1"]]);
+  assert.deepEqual(bomCells(b), [["1", "plate", "", "1", ""], ["2", "PN-7", "", "2", ""], ["3", "W-3", "", "1", ""]]);
   assert.equal(b.itemOf("c3/p"), 2);
   assert.equal(b.itemOf("c3/w"), 3);
   assert.equal(b.rows[2].comp, "c3/w");
@@ -512,7 +519,7 @@ test("composite feature control frame, all around, and the BOM of one sub-assemb
   const flat = { ...top, parts: { plate: top.parts.plate, "sub/p": part("pin", "PN-7"), "sub/l": part("leaf", "LF-2") },
     components: [top.components[0], { id: "c3/a", name: "a", part: "sub/l", tf: I }, { id: "c3/b", name: "b", part: "sub/l", tf: I }, { id: "c3/p", name: "p", part: "sub/p", tf: I }] };
   assert.deepEqual(subsOf(top), [{ id: "c3", name: "Hinge<1>" }]);
-  assert.deepEqual(bomCells(bomOf(top, flat, "top", "c3")), [["1", "LF-2", "", "2"], ["2", "PN-7", "", "1"]]);
+  assert.deepEqual(bomCells(bomOf(top, flat, "top", "c3")), [["1", "LF-2", "", "2", ""], ["2", "PN-7", "", "1", ""]]);
   const sheet = { annots: [{ id: "t", t: "table", kind: "bom", pos: [0, 0], cols: [], rows: [], sub: "c3" }] };
   const b = sheetBom(sheet as never, top, flat);
   assert.equal(b.itemOf("c3/p"), 2);
