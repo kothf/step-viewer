@@ -189,7 +189,7 @@ const ROWS: Row[] = [
   ["copper", "Cast bronze CuSn12-C", "Литейная бронза CuSn12-C", "CC483K · C90800 · БрО10Ф1", [8.7, 97, 0.34, 140, 260, 55, 376, 18.5], "cda", "#a9793d"],
   ["copper", "Gunmetal CuSn5Zn5Pb5-C", "Бронза CuSn5Zn5Pb5-C (литейная)", "CC491K · C83600 · БрО5Ц5С5", [8.7, 83, 0.34, 90, 200, 72, 376, 18], "cda", "#a9793d"],
   ["copper", "Aluminium bronze CuAl10Ni5Fe4", "Алюминиевая бронза CuAl10Ni5Fe4", "CW307G · C63000 · БрАЖН10-4-4", [7.58, 120, 0.33, _, 680, 39, 377, 16.2], "cda", "#b08d57"],
-  ["copper", "Beryllium copper CuBe2 (age hardened)", "Бериллиевая бронза CuBe2 (состаренная)", "CW101C · C17200 · БрБ2", [8.25, 131, 0.3, 965, 1140, 105, 420, 16.7], "cda", "#b08d57"],
+  ["copper", "Beryllium copper CuBe2 (age hardened)", "Бериллиевая бронза CuBe2 (состаренная)", "CW101C · C17200 · БрБ2", [8.36, 131, 0.3, 965, 1140, 97, 440, 17.5], "cda", "#b08d57"],
 
   // ---------- titanium ----------
   ["titanium", "Titanium Ti-6Al-4V", "Титан Ti-6Al-4V", "Grade 5 · 3.7165 · ВТ6", [4.43, 113.8, 0.342, 828, 895, 6.7, 526, 8.6], "astmTi"],
@@ -458,6 +458,10 @@ export const CHECKED: Record<string, string> = {
   "Wood (teak)": "research.fs.usda.gov/download/treesearch/62244.pdf",
   "Wood (mahogany)": "research.fs.usda.gov/download/treesearch/62244.pdf",
   "Wood (balsa)": "research.fs.usda.gov/download/treesearch/62244.pdf",
+  // 1.426.0: IBC Advanced Alloys C17200 sheet, AT (TF00) plate: 0.302 lb/in³ (8.36 g/cm³), 19 Msi (131 GPa),
+  // tensile 165-200 ksi, yield 140-175 ksi (the row keeps the lower ends), 56 Btu/ft·h·°F (97 W/m·K),
+  // 0.44 J/g·K, 9.7e-6 /°F (17.5e-6 /K). The row's density was 8.25, the value before age hardening.
+  "Beryllium copper CuBe2 (age hardened)": "ibcadvancedalloys.com/wp-content/uploads/2017/11/C17200_Copper_Alloy_Product_Data_Sheet.pdf",
 };
 
 export const LIBRARY: Material[] = ROWS.map(([cat, name, , eq, [density, E, nu, sy, su, k, cp, alpha], src, color]) =>

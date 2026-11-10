@@ -3303,6 +3303,7 @@ export const RU: Record<string, string> = {
   "Second requirement": "Второе требование",
   "Lay": "Направление неровностей",
   "Machining allowance": "Припуск на обработку",
+  "Foreshortened radius": "Радиус с изломом",
   "Fillet the edges": "Скруглить кромки",
   "Edge fillet radius": "Радиус скругления кромок",
   "The gusset's edge fillet must be less than half its width.": "Радиус скругления кромок ребра должен быть меньше половины его ширины.",

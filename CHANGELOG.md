@@ -5,6 +5,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.428.0] - 2026-11-10
+
+### Added
+
+- Sheet metal Convert to Sheet Metal and Insert Bends have Auto relief (FR-FT-120): corners where two walls' bends meet get a rectangular, obround, circular or tear relief at once, sized by a relief ratio. New features start with Rectangular, 0.5.
+
+### Fixed
+
+- Mitred sheet metal corners (edge flanges, miter flanges, Convert to Sheet Metal) now meet on the corner's bisector plane, as in SolidWorks. Before, the two walls were cut square and overlapped in a thin strip along the inside of the seam, so the flat pattern had slightly more material than the part.
+
+
+## [1.427.0] - 2026-11-10
+
+### Added
+
+- **Foreshortened radius (FR-DRW-021)**: a drawing's radius dimension can be **Foreshortened**: its line starts on the arc and stops short of the centre with a jog, for a centre far away or off the sheet.
+
+## [1.426.0] - 2026-11-10
+
+### Fixed
+
+- **Beryllium copper CuBe2 (FR-MAT-001)**: the density of the age hardened alloy is 8.36 g/cm³ (8.25 was the value before hardening), thermal conductivity 97 W/(m·K), specific heat 440 J/(kg·K) and expansion 17.5 · 10⁻⁶/K, after a maker's data sheet. Modulus and strengths already matched, and the material now shows **Checked against:**. 147 of 170 materials are checked; the other 23 still say they are not.
+
 ## [1.425.0] - 2026-11-10
 
 ### Added
@@ -2522,7 +2545,10 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.425.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.428.0...HEAD
+[1.428.0]: https://github.com/kothf/step-viewer/compare/v1.427.0...v1.428.0
+[1.427.0]: https://github.com/kothf/step-viewer/compare/v1.426.0...v1.427.0
+[1.426.0]: https://github.com/kothf/step-viewer/compare/v1.425.0...v1.426.0
 [1.425.0]: https://github.com/kothf/step-viewer/compare/v1.424.0...v1.425.0
 [1.424.0]: https://github.com/kothf/step-viewer/compare/v1.423.0...v1.424.0
 [1.423.0]: https://github.com/kothf/step-viewer/compare/v1.422.0...v1.423.0
