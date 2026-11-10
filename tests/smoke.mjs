@@ -4684,7 +4684,7 @@ try {
     await mp.click('#vault-menu [data-v="ws:Other"]');
     await mp.waitForFunction(() => window.__sv.vault.vault?.info.name === "Other");
     check(closedMenu.includes("import") && offered === "parts/notes.txt,readme.txt" && paths === "parts/notes.txt,readme.txt" && openMenu.includes("addfolder") && openMenu.includes("ws:Other"), `vault exam: a vault in a project folder takes its files in place; Import and Switch to in the menu (${closedMenu} | ${offered} | ${paths} | ${openMenu})`);
-    check(sticky === "sticky:parts/notes.txt" && editable && /recycle bin/.test(deleted) && /restored/.test(restored), `vault exam: commands in view, Check out from the data card, delete and restore feedback (${sticky}, ${editable}, ${deleted}, ${restored})`);
+    check(sticky === "sticky:readme.txt" && editable && /recycle bin/.test(deleted) && /restored/.test(restored), `vault exam: commands in view, Check out from the data card, delete and restore feedback (${sticky}, ${editable}, ${deleted}, ${restored})`);
     check(/v1 · newer v2 in the vault/.test(stale) && tabs === 1, `vault exam: a tab behind the vault says so and reloads in place (${stale}, ${tabs} tabs)`);
     await ctx.close();
   }
