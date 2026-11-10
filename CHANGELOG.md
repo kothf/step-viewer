@@ -5,11 +5,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.408.0] - 2026-11-10
+## [1.410.0] - 2026-11-10
 
 ### Changed
 
 - **Douglas fir checked (FR-MAT-001)**: Wood (Douglas fir) now shows **Checked against:** with a link to Oregon State University's table from the USDA Wood Handbook (air-dry weight 545 kg/m³, modulus 13 400 MPa). 140 of 170 materials are checked; the other 30 still say they are not.
+
+## [1.409.0] - 2026-11-10
+
+### Added
+- Drawings: a linear or arc length dimension can hide its first, second or both extension lines (**Extension lines** in the dimension's panel), for a dimension taken to an edge that already draws the line. **Horizontal text in the dimension line** keeps a linear dimension's text level and puts it in a gap of the dimension line, as ISO 129 method 2 and ASME drawings do (FR-DRW-021).
+
+## [1.408.0] - 2026-11-10
+
+### Added
+
+- **Recognize Extrudes takes cuts open to the side (FR-FT-102)**: a step, a slot running across a face or a notch at an edge of an imported body (a flat floor under straight walls that reach one flat top, open where the floor meets the outside) is removed and made again as a sketch on the top face with a blind Extruded Cut, so its outline and depth can be edited.
 
 ## [1.407.0] - 2026-11-10
 
@@ -2405,7 +2416,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.408.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.410.0...HEAD
+[1.410.0]: https://github.com/kothf/step-viewer/compare/v1.409.0...v1.410.0
+[1.409.0]: https://github.com/kothf/step-viewer/compare/v1.408.0...v1.409.0
 [1.408.0]: https://github.com/kothf/step-viewer/compare/v1.407.0...v1.408.0
 [1.407.0]: https://github.com/kothf/step-viewer/compare/v1.406.0...v1.407.0
 [1.406.0]: https://github.com/kothf/step-viewer/compare/v1.405.0...v1.406.0

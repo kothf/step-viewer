@@ -431,7 +431,10 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
     const tip = (an: number): P2 => [C[0] + R * Math.cos(an), C[1] + R * Math.sin(an)];
     out.push(arrow(...tip(a0), Math.sin(a0), -Math.cos(a0)));
     out.push(arrow(...tip(a1), -Math.sin(a1), Math.cos(a1)));
-    for (const an of [a0, a1]) { const e: P2 = [Math.cos(an), Math.sin(an)]; out.push(thin(add2(C, e, R0 + 1), add2(C, e, R + 2))); }
+    for (const [an, k] of [[a0, "a"], [a1, "b"]] as [number, "a" | "b"][]) {
+      if (a.noExt === k || a.noExt === "both") continue;
+      const e: P2 = [Math.cos(an), Math.sin(an)]; out.push(thin(add2(C, e, R0 + 1), add2(C, e, R + 2)));
+    }
     const mid = a0 + g.sw! / 2, tp: P2 = [C[0] + (R + 1.5) * Math.cos(mid), C[1] + (R + 1.5) * Math.sin(mid)];
     const box = writeText([tp[0], tp[1] - (Math.sin(mid) < 0 ? h : 0)], 0, Math.cos(mid) > 0.3 ? "l" : Math.cos(mid) < -0.3 ? "r" : "c");
     return { prims: out, box };
@@ -483,7 +486,8 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
   const nrm: P2 = [-d[1], d[0]];
   const off = (p: P2) => (T[0] - p[0]) * nrm[0] + (T[1] - p[1]) * nrm[1];
   const D1 = add2(S1, nrm, off(S1)), D2 = add2(S2, nrm, off(S2));
-  for (const [s, e] of [[S1, D1], [S2, D2]] as [P2, P2][]) {
+  for (const [s, e, k] of [[S1, D1, "a"], [S2, D2, "b"]] as [P2, P2, "a" | "b"][]) {
+    if (a.noExt === k || a.noExt === "both") continue;
     const v: P2 = [e[0] - s[0], e[1] - s[1]], L = len2(v);
     if (L > 1.5) { const u: P2 = [v[0] / L, v[1] / L]; out.push(thin(add2(s, u, 1), add2(e, u, 2))); }
   }
@@ -500,10 +504,15 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
   const tLo = st - totalW / 2 - 1, tHi = st + totalW / 2 + 1;
   const inside = a.arrows ? a.arrows === "in" : span >= 2 * ARROW + 2;
   const from = Math.min(al(lo) - (inside ? 0 : ARROW + 2), tLo < al(lo) ? tLo : Infinity), to = Math.max(al(hi) + (inside ? 0 : ARROW + 2), tHi > al(hi) ? tHi : -Infinity);
-  out.push(thin(add2(lo, d, from - al(lo)), add2(lo, d, to - al(lo))));
+  if (a.horiz) {
+    // Horizontal text in a gap of the dimension line: the line stops where it would enter the text's box.
+    const hw = totalW / 2 + 1, hh = h / 2 + 0.8, gap = Math.min(hw / Math.max(Math.abs(d[0]), 1e-9), hh / Math.max(Math.abs(d[1]), 1e-9));
+    if (st - gap > from) out.push(thin(add2(lo, d, from - al(lo)), add2(lo, d, st - gap - al(lo))));
+    if (to > st + gap) out.push(thin(add2(lo, d, st + gap - al(lo)), add2(lo, d, to - al(lo))));
+  } else out.push(thin(add2(lo, d, from - al(lo)), add2(lo, d, to - al(lo))));
   if (inside) { out.push(arrow(lo[0], lo[1], -d[0], -d[1])); out.push(arrow(hi[0], hi[1], d[0], d[1])); }
   else { out.push(arrow(lo[0], lo[1], d[0], d[1])); out.push(arrow(hi[0], hi[1], -d[0], -d[1])); }
-  const box = writeText(add2(base, up, 1), rot, "c");
+  const box = a.horiz ? writeText([base[0], base[1] - h * 0.4], 0, "c") : writeText(add2(base, up, 1), rot, "c");
   return { prims: out, box };
 }
 

@@ -136,7 +136,7 @@ test("sixth pass (1.407.0): PA66 and PMMA checked against makers' sheets", () =>
   assert.ok(!findMaterial("Nylon PA66-GF30")!.ref);
 });
 
-test("seventh pass (1.408.0): Douglas fir checked against the Wood Handbook table", () => {
+test("seventh pass (1.410.0): Douglas fir checked against the Wood Handbook table", () => {
   const checked = LIBRARY.filter((m) => m.ref);
   assert.ok(checked.length >= 140, `${checked.length} checked`);
   const fir = findMaterial("Wood (Douglas fir)")!;
