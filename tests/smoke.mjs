@@ -4095,7 +4095,9 @@ try {
     // Focus (20, -8), vertex (20, -12): f = 4; ends over x = 10 and x = 35 → (10, -5.75), (35, 2.0625); tangents meet at (22.5, -21.375).
     await click([20, -8]); await click([20, -12]); await click([10, -15]); await click([35, -15]);
     const par = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id), c = sk.ents.find(e => e.kind === "parabola"); return c ? c.pts.map(id => [P(id).x, P(id).y].map(v => Math.round(v * 1000) / 1000).join(",")).join(" ") : ""; });
-    check(par === "10,-5.75 22.5,-21.375 35,2.063", `model 1.157: parabola from focus, vertex and two ends (${par})`);
+    // 35, 2.0625 sits on a rounding edge: compare within 0.002 (pixel snapping of the clicks).
+    const parWant = [10, -5.75, 22.5, -21.375, 35, 2.0625], parGot = par.split(/[ ,]/).map(Number);
+    check(parGot.length === 6 && parGot.every((v, i) => Math.abs(v - parWant[i]) < 0.002), `model 1.157: parabola from focus, vertex and two ends (${par})`);
     await mp.click('#mc-tools [data-fly="line"]');
     const lfly = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
     await mp.click("#mc-menu button:nth-child(4)");
