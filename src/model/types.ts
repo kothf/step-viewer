@@ -739,6 +739,8 @@ export interface HealFeature {
 export interface PlaneSurfFeature {
   id: string; type: "planesurf"; name: string; suppressed?: boolean;
   sketch: string;
+  /** Selected Contours (FR-FT-010): a point (sketch coordinates) inside each region to fill; absent = every closed profile. */
+  contours?: V2[];
 }
 
 /** Extruded surface: each sketch curve (open or closed) swept along the sketch normal into a sheet (`<id>:side:<entity>`). */
