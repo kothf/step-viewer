@@ -1644,7 +1644,11 @@ try {
     check(near(hole, 10, 1e-6), `model: Smart measure data on the body: hole radius ${hole}`);
     // Save as .mcadprt (download fallback), STEP export, reopen.
     await mp.evaluate(() => { window.showSaveFilePicker = undefined; });
+    // With no save dialog the first save asks for the file name (exam #9); keep the suggested one.
+    let askedName = null;
+    mp.once("dialog", d => { askedName = d.defaultValue(); void d.accept(); });
     const [dlPart] = await Promise.all([mp.waitForEvent("download"), mp.click('[data-c="save"]')]);
+    check(askedName === "Part1.mcadprt", `exam #9: the first save without a save dialog asks for the file name (suggested ${askedName})`);
     const partBytes = await readFile(await dlPart.path());
     const saved = await mp.evaluate(() => ({ dirty: window.__sv.model.store.dirty, doc: document.querySelector("#doc-name").textContent }));
     check(/Part1\.mcadprt$/.test(dlPart.suggestedFilename()) && partBytes.readUInt32LE(0) === 0x04034b50 && !saved.dirty && !/•/.test(saved.doc), `model: Save writes ${dlPart.suggestedFilename()} (${partBytes.length} bytes, a zip) and clears the unsaved mark`);
