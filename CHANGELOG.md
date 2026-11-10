@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.415.0] - 2026-11-10
+
+### Added
+- Bend tables for sheet metal (FR-FT-120): the Base Flange's Bend allowance type has a new choice, Bend table, with K-factors, bend allowances or bend deductions by inside radius (rows) and bend angle (columns), typed or pasted into the panel. Each bend reads its value from the table, interpolated between rows and columns; outside the table the nearest row or column is used. A button fills in DIN 6935 K-factors for the thickness. Sheet Metal Properties shows a K-factor table's value at the default radius.
+
 ## [1.414.0] - 2026-11-10
 
 ### Added
@@ -2442,7 +2447,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.414.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.415.0...HEAD
+[1.415.0]: https://github.com/kothf/step-viewer/compare/v1.414.0...v1.415.0
 [1.414.0]: https://github.com/kothf/step-viewer/compare/v1.413.0...v1.414.0
 [1.413.0]: https://github.com/kothf/step-viewer/compare/v1.412.0...v1.413.0
 [1.412.0]: https://github.com/kothf/step-viewer/compare/v1.411.0...v1.412.0
