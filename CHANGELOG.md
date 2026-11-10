@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.450.0] - 2026-11-10
+
+### Fixed
+
+- Drawings: a round edge seen edge-on (the top of a boss, the end of a shaft in a side view) can be picked for a dimension as the line it looks like, so a boss height or a shaft's overall length can be dimensioned (drawings exam #3, #10).
+- Drawings: two cylinder outline lines picked one after the other give the distance between the lines (a step of 2 between Ø20 and Ø24), not between the centres of the circles at their ends (drawings exam #14).
+
 ## [1.449.0] - 2026-11-10
 
 ### Fixed
@@ -2698,7 +2705,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.449.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.450.0...HEAD
+[1.450.0]: https://github.com/kothf/step-viewer/compare/v1.449.0...v1.450.0
 [1.449.0]: https://github.com/kothf/step-viewer/compare/v1.448.0...v1.449.0
 [1.448.0]: https://github.com/kothf/step-viewer/compare/v1.447.0...v1.448.0
 [1.447.0]: https://github.com/kothf/step-viewer/compare/v1.446.0...v1.447.0
