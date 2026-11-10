@@ -5,6 +5,7 @@
 // The document (DocStore) is the source of truth; every rebuild sends it to the
 // kernel worker and shows the returned body with the viewer's own pipeline, so
 // the measuring tools work on modelled parts unchanged.
+import type { VaultTie } from "../pdm/panel";
 import type { NamedView, V2 } from "./types";
 import type { NamedViews } from "../viewer/navigation";
 import * as THREE from "three";
@@ -285,7 +286,7 @@ export class ModelController {
    * The open part came from a vault (FR-PDM-010/081): saving writes the working copy there, only while it is
    * checked out here; the title shows the version and a read-only bar offers Check out.
    */
-  vault: { label: string; readOnly: boolean; save(bytes: Uint8Array): Promise<void>; checkOut(): Promise<void> } | null = null;
+  vault: VaultTie | null = null;
 
   /** Ties (or unties) the open part to a vault file and refreshes the title and read-only bar. */
   setVault(v: ModelController["vault"]) {
@@ -412,6 +413,9 @@ export class ModelController {
   private decor = new THREE.Group();
   /** Hover link (FR-UI-061): the feature whose faces are lit because the pointer is on its tree row or on one of its faces. */
   private hoverGroup = new THREE.Group();
+  /** The sketch region under the pointer while Selected Contours has focus, and its index (-1 none, -2 = redraw). */
+  private ctHoverGroup = new THREE.Group();
+  private ctHover = -1;
   private hoverId: string | null = null;
   private hoverFrom: "tree" | "view" | null = null;
   private hoverRaf = 0;
@@ -434,7 +438,7 @@ export class ModelController {
     document.getElementById("ft-search")?.addEventListener("input", () => this.renderTree());
     this.kernel.onCrash = () => toast(t("The geometry kernel stopped; it was restarted."), "warn");
     host.viewer.scene.add(this.decor);
-    host.viewer.scene.add(this.hoverGroup);
+    host.viewer.scene.add(this.hoverGroup, this.ctHoverGroup);
     this.ghostGroup.visible = false;
     host.viewer.scene.add(this.ghostGroup);
     this.bindHover();
@@ -2209,7 +2213,7 @@ export class ModelController {
       else if (m.kind === "feature" && (m.draft.type === "smconvert" || m.draft.type === "sminsert")) this.pickConvert(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "curve" && m.draft.kind === "projected") this.pickCopy(e);
       else if (m.kind === "feature" && m.draft.type === "sketch3d") this.pick3d(e, m.draft);
-      else if (m.kind === "feature" && (m.draft.type === "extrude" || m.draft.type === "revolve") && m.focus === "contours") this.pickContour(e, m.draft);
+      else if (m.kind === "feature" && hasContours(m.draft) && m.focus === "contours") this.pickContour(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "plane") {
         if (m.focus === "axis") this.pickAxis(e);
         else { const r = this.pickRef(e); if (r) { m.draft.base = r; if (m.draft.mode === "angle" && !m.draft.axis) m.focus = "axis"; this.draftChanged(); } }
@@ -2439,7 +2443,7 @@ export class ModelController {
    * edge, a body), so focus moves on by itself once it has it; boxes that take many items keep focus.
    */
   /** The sketch regions an extrude or revolve can pick from (FR-FT-010): the axis of a revolve left out when it is construction. */
-  private contourRegions(f: ExtrudeFeature | RevolveFeature): { sk: SketchFeature; regions: Region[] } | null {
+  private contourRegions(f: ContourFeature): { sk: SketchFeature; regions: Region[] } | null {
     const sk = this.store?.feature(f.sketch);
     if (sk?.type !== "sketch") return null;
     const ax = f.type === "revolve" ? sk.ents.find(e => e.id === f.axis) : undefined;
@@ -2447,55 +2451,91 @@ export class ModelController {
   }
 
   /** The sketch does not make plain closed regions (crossing or branching curves), but its curves still bound some: the contours must be picked. */
-  private needsContours(f: ExtrudeFeature | RevolveFeature): boolean {
+  private needsContours(f: ContourFeature): boolean {
     const sk = this.store?.feature(f.sketch);
     if (sk?.type !== "sketch" || !sketchProfile(sk).error) return false;
     return !!this.contourRegions(f)?.regions.length;
   }
 
-  /** A click while Selected Contours has focus: the region under the pointer is added, or taken off when picked already. */
-  private pickContour(e: PointerEvent, f: ExtrudeFeature | RevolveFeature) {
+  /** The sketch region under a screen point (FR-FT-010), -1 when the pointer is outside every region. */
+  private contourAt(x: number, y: number, f: ContourFeature): { cr: { sk: SketchFeature; regions: Region[] }; i: number } | null {
     const cr = this.contourRegions(f);
-    if (!cr) return;
+    if (!cr) return null;
     const fr = this.frameOf(cr.sk);
     const v = this.host.viewer, r = v.renderer.domElement.getBoundingClientRect();
     const rc = new THREE.Raycaster();
-    rc.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), v.camera);
+    rc.setFromCamera(new THREE.Vector2(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1), v.camera);
     const n = new THREE.Vector3(...fr.n), o = new THREE.Vector3(...fr.o);
     const hit = rc.ray.intersectPlane(new THREE.Plane().setFromNormalAndCoplanarPoint(n, o), new THREE.Vector3());
     const at: V2 | null = hit ? [hit.clone().sub(o).dot(new THREE.Vector3(...fr.x)), hit.clone().sub(o).dot(new THREE.Vector3(...fr.y))] : null;
-    const i = at ? regionAt(cr.regions, at) : -1;
+    return { cr, i: at ? regionAt(cr.regions, at) : -1 };
+  }
+
+  /** A click while Selected Contours has focus: the region under the pointer is added, or taken off when picked already. */
+  private pickContour(e: PointerEvent, f: ContourFeature) {
+    const hit = this.contourAt(e.clientX, e.clientY, f);
+    if (!hit) return;
+    const { cr, i } = hit;
     if (i < 0) { toast(t("Click inside a closed region of the sketch.")); return; }
     const list = (f.contours ?? []).filter(q => regionAt(cr.regions, q) >= 0);
     const k = list.findIndex(q => regionAt(cr.regions, q) === i);
     if (k >= 0) list.splice(k, 1); else list.push(regionPoint(cr.regions[i]));
     if (list.length) f.contours = list; else delete f.contours;
+    this.ctHover = -2;
     this.draftChanged();
   }
 
+  /** Hovering while Selected Contours has focus (SolidWorks' region pre-highlight): the region under the pointer lights up blue. */
+  private hoverContour(x: number | null, y = 0) {
+    const m = this.mode;
+    const f = m.kind === "feature" && m.focus === "contours" && hasContours(m.draft) ? m.draft : null;
+    const hit = f && x !== null ? this.contourAt(x, y, f) : null;
+    const i = hit?.i ?? -1;
+    if (i === this.ctHover) return;
+    this.ctHover = i;
+    for (const c of [...this.ctHoverGroup.children]) {
+      this.ctHoverGroup.remove(c);
+      (c as THREE.Mesh).geometry?.dispose();
+      ((c as THREE.Mesh).material as THREE.Material | undefined)?.dispose();
+    }
+    if (hit && i >= 0) {
+      const fr = this.frameOf(hit.cr.sk);
+      const mesh = this.regionMesh(hit.cr.regions[i], fr, 0x339af0, 0.3);
+      mesh.userData.contourHover = i;
+      this.ctHoverGroup.add(mesh);
+    }
+    this.host.viewer.renderer.domElement.style.cursor = f && i >= 0 ? "pointer" : "";
+    this.host.viewer.invalidate();
+  }
+
+  /** A sketch region as a flat see-through fill on its sketch plane, drawn over the model. */
+  private regionMesh(rg: Region, fr: Frame, color: number, opacity: number): THREE.Mesh {
+    const mtx = new THREE.Matrix4().makeBasis(new THREE.Vector3(...fr.x), new THREE.Vector3(...fr.y), new THREE.Vector3(...fr.n)).setPosition(...fr.o);
+    const shape = new THREE.Shape(rg.outer.map(p => new THREE.Vector2(p[0], p[1])));
+    shape.holes = rg.holes.map(h => new THREE.Path(h.map(p => new THREE.Vector2(p[0], p[1]))));
+    const mesh = new THREE.Mesh(new THREE.ShapeGeometry(shape), new THREE.MeshBasicMaterial({ color, transparent: true, opacity, side: THREE.DoubleSide, depthTest: false, depthWrite: false }));
+    mesh.applyMatrix4(mtx);
+    mesh.renderOrder = 2400;
+    return mesh;
+  }
+
   /** Selected contours on the sketch plane: the sketch while they are picked, and the picked regions filled. */
-  private drawContours(f: ExtrudeFeature | RevolveFeature, picking: boolean, dark: boolean) {
+  private drawContours(f: ContourFeature, picking: boolean, dark: boolean) {
     if (!picking && !f.contours?.length) return;
     const cr = this.contourRegions(f);
     if (!cr) return;
     const fr = this.frameOf(cr.sk);
     if (picking) this.lines(sketchSegments(cr.sk, fr), dark ? 0x8ab4ff : 0x1d4ed8, 1.4);
-    const mtx = new THREE.Matrix4().makeBasis(new THREE.Vector3(...fr.x), new THREE.Vector3(...fr.y), new THREE.Vector3(...fr.n)).setPosition(...fr.o);
     const picked = new Set((f.contours ?? []).map(q => regionAt(cr.regions, q)).filter(i => i >= 0));
     for (const i of picked) {
-      const rg = cr.regions[i];
-      const shape = new THREE.Shape(rg.outer.map(p => new THREE.Vector2(p[0], p[1])));
-      shape.holes = rg.holes.map(h => new THREE.Path(h.map(p => new THREE.Vector2(p[0], p[1]))));
-      const mesh = new THREE.Mesh(new THREE.ShapeGeometry(shape), new THREE.MeshBasicMaterial({ color: 0xf08c00, transparent: true, opacity: picking ? 0.35 : 0.18, side: THREE.DoubleSide, depthTest: false, depthWrite: false }));
-      mesh.applyMatrix4(mtx);
-      mesh.renderOrder = 2400;
+      const mesh = this.regionMesh(cr.regions[i], fr, 0xf08c00, picking ? 0.35 : 0.18);
       mesh.userData.contour = i;
       this.decor.add(mesh);
     }
   }
 
   /** The Selected Contours box (FR-FT-010): how many regions are picked, or that the whole sketch is used. */
-  private contoursGroup(f: ExtrudeFeature | RevolveFeature, focus: Focus | undefined): string {
+  private contoursGroup(f: ContourFeature, focus: Focus | undefined): string {
     const n = f.contours?.length ?? 0, need = this.needsContours(f), on = focus === "contours";
     const label = n ? t("{n} region|{n} regions", { n }) : t("All regions");
     return `<fieldset class="pm-group"><legend>${esc(t("Selected Contours"))}</legend>`
@@ -2517,7 +2557,7 @@ export class ModelController {
       case "csys": return [{ focus: "origin", filled: !!d.origin, one: true }, { focus: "cz", filled: !!d.z, one: true }, { focus: "cx", filled: !!d.x, one: true }];
       case "combine": case "indent": return [{ focus: "main", filled: !!d.main, one: true }, { focus: "bodies", filled: d.tools.length > 0, one: false }];
       case "trimsurf": return [{ focus: "tsurf", filled: !!d.surface, one: true }, { focus: "ttool", filled: !!d.tool, one: true }];
-      case "revolve": return this.needsContours(d) ? [{ focus: "contours", filled: !!d.contours?.length, one: false }] : [];
+      case "revolve": case "planesurf": return this.needsContours(d) ? [{ focus: "contours", filled: !!d.contours?.length, one: false }] : [];
       case "extrude": return [
         ...(this.needsContours(d) ? [{ focus: "contours" as Focus, filled: !!d.contours?.length, one: false }] : []),
         ...(d.start === "surface" ? [{ focus: "start" as Focus, filled: !!d.startRef, one: true }] : d.start === "vertex" ? [{ focus: "start" as Focus, filled: !!d.startVertex, one: true }] : []),
@@ -3232,7 +3272,7 @@ export class ModelController {
     const sel = this.selected ? sketches.find(s => s.id === this.selected) : undefined;
     const curves = (s: SketchFeature) => s.ents.some(e => !e.cons && e.t !== "point");
     if (type === "planesurf" || type === "extsurf") {
-      const ok = type === "planesurf" ? sketchProfileOk : curves;
+      const ok = type === "planesurf" ? sketchRegionsOk : curves;
       const sk = (sel && ok(sel) ? sel : undefined) ?? sketches.filter(s => !used.has(s.id) && !this.doc.features.some(g => absorbs(g, s.id)) && ok(s)).at(-1) ?? sketches.filter(ok).at(-1);
       if (!sk) { toast(t(type === "planesurf" ? "Draw a closed sketch first." : "Draw a sketch first."), true); return null; }
       return type === "planesurf" ? { id, type, name: nm, sketch: sk.id } satisfies PlaneSurfFeature
@@ -3286,8 +3326,9 @@ export class ModelController {
     const skOpts = (list: SketchFeature[], cur: string) => list.map(s => `<option value="${esc(s.id)}"${s.id === cur ? " selected" : ""} translate="no">${esc(featureLabel(s.name))}</option>`).join("");
     const help = (s: string) => `<p class="pm-help muted">${esc(s)}</p>`;
     if (f.type === "planesurf") {
-      const list = sketches.filter(s => sketchProfileOk(s) || s.id === f.sketch);
-      return { title: t("Planar Surface"), body: group(t("Bounding entities"), sel("sketch", t("Sketch"), skOpts(list, f.sketch))) + help(t("A closed sketch becomes a flat surface body: no volume, ready to knit or thicken.")) };
+      const list = sketches.filter(s => sketchRegionsOk(s) || s.id === f.sketch);
+      const ct = this.contoursGroup(f, this.mode.kind === "feature" ? this.mode.focus : undefined);
+      return { title: t("Planar Surface"), body: (this.needsContours(f) ? ct : "") + group(t("Bounding entities"), sel("sketch", t("Sketch"), skOpts(list, f.sketch))) + (this.needsContours(f) ? "" : ct) + help(t("A closed sketch becomes a flat surface body: no volume, ready to knit or thicken.")) };
     }
     if (f.type === "extsurf") {
       const list = sketches.filter(s => s.ents.some(e => !e.cons && e.t !== "point") || s.id === f.sketch);
@@ -3685,7 +3726,8 @@ export class ModelController {
       const g = moving ? { ...f, plane: m.edit!.plane } : f;
       this.lines(sketchSegments(g, this.frameOf(g)), moving ? 0xf08c00 : dark ? 0x8ab4ff : 0x1d4ed8, moving ? 2.2 : 1.4);
     });
-    if (m.kind === "feature" && (m.draft.type === "extrude" || m.draft.type === "revolve")) this.drawContours(m.draft, m.focus === "contours", dark);
+    if (m.kind === "feature" && hasContours(m.draft)) this.drawContours(m.draft, m.focus === "contours", dark);
+    if (!(m.kind === "feature" && m.focus === "contours") && this.ctHover !== -1) this.hoverContour(null);
     // Helix and 3D curves (FR-FT-083, FR-FT-085): drawn like sketch curves; the one being edited highlighted.
     for (const [id, pts] of Object.entries(this.last?.curves ?? {})) {
       const hf = this.doc.features.find(x => x.id === id);
@@ -4605,13 +4647,14 @@ export class ModelController {
     tree?.addEventListener("pointerleave", () => { if (this.hoverFrom === "tree") this.setHover(null, "tree"); });
     const canvas = this.host.viewer.renderer.domElement;
     canvas.addEventListener("pointermove", e => {
-      if (e.buttons || e.pointerType === "touch") { if (this.hoverFrom === "view") this.setHover(null, "view"); return; }
+      if (e.buttons || e.pointerType === "touch") { if (this.hoverFrom === "view") this.setHover(null, "view"); this.hoverContour(null); return; }
       const x = e.clientX, y = e.clientY;
       if (this.hoverRaf) cancelAnimationFrame(this.hoverRaf);
-      this.hoverRaf = requestAnimationFrame(() => { this.hoverRaf = 0; this.setHover(this.featureAt(x, y), "view"); });
+      this.hoverRaf = requestAnimationFrame(() => { this.hoverRaf = 0; this.setHover(this.featureAt(x, y), "view"); this.hoverContour(x, y); });
     });
     canvas.addEventListener("pointerleave", () => {
       if (this.hoverRaf) { cancelAnimationFrame(this.hoverRaf); this.hoverRaf = 0; }
+      this.hoverContour(null);
       if (this.hoverFrom === "view") this.setHover(null, "view");
     });
   }
@@ -6779,7 +6822,7 @@ export class ModelController {
     }));
     if (isWeldFeature(f)) bindWeldPanel(pm, f, this.weldCtx(m.index));
     pm.querySelector<HTMLInputElement>("[data-ui=tangent]")?.addEventListener("change", e => { this.tangentProp = (e.target as HTMLInputElement).checked; });
-    pm.querySelector("[data-k=clearContours]")?.addEventListener("click", () => { if (f.type === "extrude" || f.type === "revolve") { delete f.contours; this.draftChanged(); } });
+    pm.querySelector("[data-k=clearContours]")?.addEventListener("click", () => { if (hasContours(f)) { delete f.contours; this.draftChanged(); } });
     pm.querySelector("[data-k=clear]")?.addEventListener("click", () => { if (f.type === "fillet" || f.type === "chamfer") { f.edges = []; this.drawDecor(); this.renderPanel(); void this.rebuild(); } });
     pm.querySelector("[data-k=focus-base]")?.addEventListener("click", () => { if (m.kind === "feature") { m.focus = "base"; this.renderPanel(); this.drawDecor(); } });
     pm.querySelector("[data-k=focus-axis]")?.addEventListener("click", () => { if (m.kind === "feature") { m.focus = "axis"; this.renderPanel(); this.drawDecor(); } });
@@ -7982,6 +8025,11 @@ function absorbs(g: Feature, sketch: string): boolean {
 
 /** A sketch with closed regions (usable as a sweep or loft profile). */
 const sketchProfileOk = (s: SketchFeature) => !sketchProfile(s).error;
+/** A sketch a Planar Surface can use: closed profiles, or curves that cross or branch but still bound regions to pick (FR-FT-010). */
+const sketchRegionsOk = (s: SketchFeature) => sketchProfileOk(s) || sketchRegions(s).length > 0;
+/** Features with Selected Contours (FR-FT-010). */
+type ContourFeature = ExtrudeFeature | RevolveFeature | PlaneSurfFeature;
+const hasContours = (f: Feature): f is ContourFeature => f.type === "extrude" || f.type === "revolve" || f.type === "planesurf";
 /** A sketch that is one open chain of curves (a rib line). */
 const sketchOpenOk = (s: SketchFeature) => { const p = sketchPath(s); return !p.error && !p.closed; };
 

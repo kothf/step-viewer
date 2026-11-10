@@ -82,7 +82,12 @@ export function gtolPrims(a: GtolAnnot, at: P2, to: P2 | null, dec: string): { p
     out.push(L(s, knee), L(knee, to), arrowHead(to[0], to[1], (to[0] - knee[0]) / dl, (to[1] - knee[1]) / dl, 3, 1));
     if (a.around) out.push(C(knee, 1.5));
   }
-  return { prims: out, box: [at[0], at[1] - a.rows.length * ROW, at[0] + wMax, at[1]] };
+  // Text above the frame ("2×", "4× Ø6 H7") and below it ("SEP REQT"), left-aligned with it.
+  const hb = 2.5, yb = at[1] - a.rows.length * ROW;
+  if (a.above) out.push(T(at[0], at[1] + 1, a.above, hb, "l"));
+  if (a.below) out.push(T(at[0], yb - hb - 1, a.below, hb, "l"));
+  const wText = Math.max(a.above ? tw(a.above, hb) : 0, a.below ? tw(a.below, hb) : 0);
+  return { prims: out, box: [at[0], yb - (a.below ? hb + 1.5 : 0), at[0] + Math.max(wMax, wText), at[1] + (a.above ? hb + 1.5 : 0)] };
 }
 
 /** A datum feature (`base` null: its edge is gone): a filled triangle on the edge at `base` (edge direction `d`), a line to the framed letter at `at`. */
@@ -94,10 +99,17 @@ export function datumPrims(a: DatumAnnot, base: P2 | null, d: P2, at: P2): { pri
   let n: P2 = [-d[1], d[0]];
   if ((at[0] - base[0]) * n[0] + (at[1] - base[1]) * n[1] < 0) n = [-n[0], -n[1]];
   const b1: P2 = [base[0] - d[0] * 2, base[1] - d[1] * 2], b2: P2 = [base[0] + d[0] * 2, base[1] + d[1] * 2], apex: P2 = [base[0] + n[0] * 3, base[1] + n[1] * 3];
-  out.push({ t: "p", p: [...b1, ...b2, ...apex], pen: "thin", layer: "ANNOT", fill: true, closed: true });
-  // Line from the apex to the frame's edge.
-  const v: P2 = [apex[0] - at[0], apex[1] - at[1]], m = Math.max(Math.abs(v[0]), Math.abs(v[1]));
-  if (m > s) out.push(L(apex, [at[0] + v[0] * s / m, at[1] + v[1] * s / m]));
+  out.push({ t: "p", p: [...b1, ...b2, ...apex], pen: "thin", layer: "ANNOT", closed: true, ...(a.open ? {} : { fill: true }) });
+  // Line from the apex to the frame's edge; bent = square to the edge first, then along it.
+  let from = apex;
+  const along = (at[0] - apex[0]) * d[0] + (at[1] - apex[1]) * d[1], up = (at[0] - apex[0]) * n[0] + (at[1] - apex[1]) * n[1];
+  if (a.bent && Math.abs(along) > s + 0.5 && up > 0.5) {
+    const knee: P2 = [apex[0] + n[0] * up, apex[1] + n[1] * up];
+    out.push(L(apex, knee));
+    from = knee;
+  }
+  const v: P2 = [from[0] - at[0], from[1] - at[1]], m = Math.max(Math.abs(v[0]), Math.abs(v[1]));
+  if (m > s) out.push(L(from, [at[0] + v[0] * s / m, at[1] + v[1] * s / m]));
   }
   out.push({ t: "p", p: [at[0] - s, at[1] - s, at[0] + s, at[1] - s, at[0] + s, at[1] + s, at[0] - s, at[1] + s], pen: "thin", layer: "ANNOT", closed: true });
   out.push(T(at[0], at[1] - H / 2 + 0.2, a.letter));

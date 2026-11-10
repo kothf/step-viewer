@@ -3,12 +3,13 @@
 // lines as a live preview, then projected views come off it as the cursor moves
 // around (Esc or ✓ ends); views drag on the sheet and projected ones stay lined up
 // with their parent. Lines come from the drawing worker (exact HLR).
+import type { VaultTie } from "../pdm/panel";
 import fontUrl from "dejavu-fonts-ttf/ttf/DejaVuSans.ttf?url";
 import type { MEdge, Projection, ViewDir } from "../kernel/drawing";
-import { AUTO_LAYERS, withCut, clineSegs, cloudPrims, dimGeo, factsCtx, holeEdges, ringDist, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
+import { AUTO_LAYERS, withCut, clineSegs, cloudPrims, dimGeo, factsCtx, holeEdges, ringDist, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, stackItem, edgeItem, weldItem, cutDesc, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
 import type { PartDoc } from "../model/types";
 import type { AsmDoc } from "../asm/types";
-import { BOM_COLS, autoBalloons, compOfKey, sheetBom, subsOf, type Bom } from "./bom";
+import { BOM_COLS, autoBalloons, compOfKey, sheetBom, subsOf, type BalloonItems, type Bom } from "./bom";
 import { t, onLangChange, lang } from "../i18n";
 import { toast, confirmModal } from "../ui";
 import { DrawingKernel, type ModelFacts } from "./client";
@@ -168,7 +169,7 @@ const ICON = {
 };
 
 /** A drawing kept in a document tab while another document is shown. */
-export interface DrawingTab { store: DrawingStore; model: Uint8Array | undefined; fileName: string; info: DrawingModel["info"]; modelKey: string; sheetIdx: number }
+export interface DrawingTab { store: DrawingStore; model: Uint8Array | undefined; fileName: string; info: DrawingModel["info"]; modelKey: string; sheetIdx: number; vault: VaultTie | null }
 
 export class DrawingWorkspace {
   readonly el: HTMLElement;
@@ -255,6 +256,12 @@ export class DrawingWorkspace {
   /** The BOM a sheet's balloons and parts list follow (its BOM table's mode). */
   private bomFor(sh: Sheet): Bom | null { const src = this.doc.source; return this.boms && src.kind === "asm" ? sheetBom(sh, src.doc, src.flat, this.boms) : null; }
   private get bom(): Bom | null { return this.bomFor(this.sheet); }
+  /** A weldment part's cut list, which balloons number when the drawing has no BOM. */
+  private get cuts() { return this.bom ? null : this.facts?.cuts?.length ? this.facts.cuts : null; }
+  /** What balloons number on this sheet: BOM items (assembly) or cut list items (weldment part). */
+  private balloonItems(): BalloonItems { const c = this.ctx(); return { edge: k => edgeItem(k, c), stack: x => stackItem(x, c), mine: a => !a.weld }; }
+  /** What weld tags number: the bead's row in the weld table. */
+  private weldItems(): BalloonItems { const c = this.ctx(); return { edge: k => weldItem(k, c), stack: x => stackItem(x, c), mine: a => !!a.weld }; }
 
   private load(doc: DrawingDoc, model: Uint8Array | undefined, fileName: string) {
     this.host.beforeOpen?.();
@@ -262,6 +269,7 @@ export class DrawingWorkspace {
     this.store.onChange(() => this.renderAll());
     this.model = model;
     this.fileName = fileName;
+    this.vault = null;
     this.sheetIdx = 0;
     this.sel = null;
     this.mode = { kind: "none" };
@@ -294,7 +302,8 @@ export class DrawingWorkspace {
   park(): DrawingTab | null {
     if (!this.store) return null;
     this.cancelMode();
-    const tab: DrawingTab = { store: this.store, model: this.model, fileName: this.fileName, info: this.info, modelKey: this.modelKey, sheetIdx: this.sheetIdx };
+    const tab: DrawingTab = { store: this.store, model: this.model, fileName: this.fileName, info: this.info, modelKey: this.modelKey, sheetIdx: this.sheetIdx, vault: this.vault };
+    this.vault = null;
     this.hide();
     this.store = null;
     return tab;
@@ -307,6 +316,7 @@ export class DrawingWorkspace {
     this.fileName = tab.fileName;
     this.info = tab.info;
     this.modelKey = tab.modelKey;
+    this.vault = tab.vault;
     this.sheetIdx = tab.sheetIdx;
     this.sel = null;
     this.mode = { kind: "none" };
@@ -527,7 +537,7 @@ export class DrawingWorkspace {
     this.renderTabs();
     this.renderStatus();
     const name = this.el.querySelector(".drw-name")!;
-    name.textContent = `${this.fileName || `${this.doc.name}${DRAWING_EXT}`}${this.store.dirty ? " •" : ""}`;
+    name.textContent = `${this.fileName || `${this.doc.name}${DRAWING_EXT}`}${this.vault ? ` · ${this.vault.label}` : ""}${this.store.dirty ? " •" : ""}`;
     const u = this.el.querySelector<HTMLButtonElement>('[data-a="undo"]')!, r = this.el.querySelector<HTMLButtonElement>('[data-a="redo"]')!;
     u.disabled = !this.store.undoLabel; r.disabled = !this.store.redoLabel;
     u.title = this.store.undoLabel ? t("Undo {what} (Ctrl+Z)", { what: t(this.store.undoLabel) }) : t("Undo (Ctrl+Z)");
@@ -1140,7 +1150,7 @@ export class DrawingWorkspace {
 
   private startAnnot(kind: AnnotMode["kind"] | "cmark" | "skline" | "skrect" | "skcircle" | "skpoly", how: "chain" | "base" | "ord" = "chain") {
     const free = kind === "note" || kind === "gtol" || kind === "surf" || kind === "cloud" || kind === "weld" || kind === "dtarget" || kind.startsWith("sk");
-    if (kind === "balloon" && !this.bom) { toast(t("Balloons and the bill of materials are for drawings of an assembly."), true); return; }
+    if (kind === "balloon" && !this.bom && !this.cuts) { toast(t("Balloons are for drawings of an assembly or of a weldment part."), true); return; }
     if (!free && !this.facts) { toast(t("The drawing's model is still loading.")); return; }
     if (!free && !this.sheet.views.length) { toast(t("Place a model view first."), true); return; }
     if (kind === "cloud") this.mode = { kind, view: null, pts: [], at: null };
@@ -1332,6 +1342,7 @@ export class DrawingWorkspace {
       } else {
         const pl = this.placements.get(m.view)!, pos = fromSheet(pl, p[0], p[1]);
         this.addAnnot({ id: uid("a_"), t: "wtable", view: m.view, pos: [round(pos[0]), round(pos[1])] }, "Weld table");
+        void this.tagBeads(m.view, true);
         this.mode = { kind: "none" };
       }
     } else if (m.kind === "ctable") {
@@ -1398,7 +1409,7 @@ export class DrawingWorkspace {
       if (!m.ref) {
         const pick = vid ? this.pickAt(vid, p) : null;
         const e = pick?.e;
-        if (!e || !compOfKey(e.k)) { toast(t("Click an edge of a component.")); return; }
+        if (!e || !edgeItem(e.k, this.ctx())) { toast(t(this.bom ? "Click an edge of a component." : "Click an edge of a cut list body.")); return; }
         m.view = vid; m.ref = edgeRef(e, "e");
         this.renderStatus(); this.renderOverlay(); return;
       }
@@ -1571,15 +1582,28 @@ export class DrawingWorkspace {
 
   /** Auto balloon (FR-DRW-030): one balloon per BOM item in the selected view (or the first view), around it. */
   private async autoBalloon() {
-    if (!this.bom || !this.facts) { toast(t("Balloons and the bill of materials are for drawings of an assembly."), true); return; }
+    if ((!this.bom && !this.cuts) || !this.facts) { toast(t("Balloons are for drawings of an assembly or of a weldment part."), true); return; }
     const v = this.sheet.views.find(x => x.id === this.sel) ?? this.sheet.views.find(x => x.kind !== "detail");
     if (!v) { toast(t("Place a model view first."), true); return; }
     const proj = await this.kernel.request(viewReq(this.sheet, v)).catch(() => null);
     if (!proj || !this.facts) return;
-    const add = autoBalloons(this.sheet, v, this.facts.topo, projector(viewDir(this.sheet, v)).P, proj, viewScale(this.sheet, v), this.bom, () => uid("a_"));
+    const add = autoBalloons(this.sheet, v, this.facts.topo, projector(viewDir(this.sheet, v)).P, proj, viewScale(this.sheet, v), this.balloonItems(), () => uid("a_"));
     if (!add.length) { toast(t("Every item already has a balloon in the view.")); return; }
     this.store!.change("Auto balloon", d => { const S = d.sheets[this.sheetIdx]; (S.annots ??= []).push(...add); });
     toast(t("{n} balloon added|{n} balloons added", { n: add.length }), "success");
+  }
+
+  /** Weld tags (FR-FT-121): a rectangle balloon on each bead seen in the view that has none, numbered like the weld table. */
+  private async tagBeads(vid: string, quiet = false) {
+    const v = this.sheet.views.find(x => x.id === vid);
+    if (!v || !this.facts?.welds?.length) return;
+    const proj = await this.kernel.request(viewReq(this.sheet, v)).catch(() => null);
+    if (!proj || !this.facts || !this.sheet.views.includes(v)) return;
+    const add = autoBalloons(this.sheet, v, this.facts.topo, projector(viewDir(this.sheet, v)).P, proj, viewScale(this.sheet, v), this.weldItems(), () => uid("a_"))
+      .map(a => ({ ...a, weld: true as const, shape: "box" as const }));
+    if (!add.length) { if (!quiet) toast(t("Every bead already has a tag in the view.")); return; }
+    this.store!.change("Tag the beads", d => { const S = d.sheets[this.sheetIdx]; (S.annots ??= []).push(...add); });
+    toast(t("{n} bead tagged|{n} beads tagged", { n: add.length }), "success");
   }
 
   /** What an annotation command shows before it is placed: the hovered entity, the picks and the preview. */
@@ -1648,7 +1672,7 @@ export class DrawingWorkspace {
         s += `<g class="drw-preview">${svgBody(viewAnnots(sh, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: this.factsOf(vid)?.topo.cyls ?? [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
       }
     } else if (m.kind === "balloon") {
-      if (!m.ref) { const hov = this.pickAt(vid, at); if (hov && compOfKey(hov.e.k)) s += show(hov.kind === "pt" ? { ...hov, kind: hov.e.t === "c" && hov.e.c ? "circle" : "line" } : hov, "drw-edge"); }
+      if (!m.ref) { const hov = this.pickAt(vid, at); if (hov && edgeItem(hov.e.k, this.ctx())) s += show(hov.kind === "pt" ? { ...hov, kind: hov.e.t === "c" && hov.e.c ? "circle" : "line" } : hov, "drw-edge"); }
       else {
         const pa: Annot = { id: "_pb", t: "balloon", view: vid, ref: m.ref, pos: fromSheet(pl, at[0], at[1]) };
         s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
@@ -1727,7 +1751,7 @@ export class DrawingWorkspace {
   /** A balloon's stacked items (FR-DRW-030): each with a remove button, and a list of the items not shown yet. */
   private stackRows(a: BalloonAnnot): string {
     const bom = this.bom;
-    if (!bom) return "";
+    if (!bom) return this.cutStackRows(a);
     const item = (c: string) => bom.itemOf(c);
     const own = "e" in a.ref ? compOfKey(a.ref.e) : null;
     const used = new Set([own, ...(a.stack ?? [])].map(c => (c ? item(c) : null)));
@@ -1735,6 +1759,23 @@ export class DrawingWorkspace {
     const free = bom.rows.filter(r => !used.has(r.item) && r.comp);
     const add = free.length ? `<label class="drw-f">${esc(t("Stack another item"))}<select data-d="bstack"><option value="">—</option>${free.map(r => `<option value="${esc(r.comp)}">${r.item} · ${esc(r.part)}</option>`).join("")}</select></label>` : "";
     return rows || add ? `<p class="drw-note">${esc(t("Stacked balloons"))}</p>${rows}${add}` : "";
+  }
+
+  /** The same on a weldment part drawing: stacked entries are `cut:<item>`. */
+  private cutStackRows(a: BalloonAnnot): string {
+    const cuts = this.cuts;
+    if (!cuts || a.weld) return "";
+    const it = this.balloonItems();
+    const used = new Set([..."e" in a.ref ? [it.edge(a.ref.e)] : [], ...(a.stack ?? []).map(x => it.stack(x))]);
+    const rows = (a.stack ?? []).map((c, i) => `<div class="row drw-stack"><span>${esc(t("item {n}", { n: it.stack(c) ?? "?" }))}</span><button class="btn small" data-unstack="${i}" aria-label="${esc(t("Remove from the stack"))}">✕</button></div>`).join("");
+    const free = cuts.filter(c => !used.has(c.item));
+    const add = free.length ? `<label class="drw-f">${esc(t("Stack another item"))}<select data-d="bstack"><option value="">—</option>${free.map(c => `<option value="cut:${c.item}">${c.item} · ${esc(this.cutLabel(c))}</option>`).join("")}</select></label>` : "";
+    return rows || add ? `<p class="drw-note">${esc(t("Stacked balloons"))}</p>${rows}${add}` : "";
+  }
+
+  /** A cut list item's name for pickers, as the cut list table writes it. */
+  private cutLabel(c: NonNullable<ModelFacts["cuts"]>[number]): string {
+    return cutDesc(c, this.ctx());
   }
 
   private setAnnot(label: string, fn: (a: Annot) => void) {
@@ -1788,6 +1829,9 @@ export class DrawingWorkspace {
         ${lin ? `<label class="drw-f">${esc(t("Direction"))}<select data-d="k">${(["h", "v", "al"] as const).map(k => `<option value="${k}"${a.k === k ? " selected" : ""}>${esc(t(k === "h" ? "Horizontal" : k === "v" ? "Vertical" : "Aligned"))}</option>`).join("")}</select></label>` : ""}
         ${lin ? `<label class="drw-f">${esc(t("Arrows"))}<select data-d="arrows">${([["", "Auto"], ["in", "Inside"], ["out", "Outside"]] as const).map(([k, l]) => `<option value="${k}"${(a.arrows ?? "") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : ""}
         ${lin || a.k === "arc" ? `<label class="drw-f">${esc(t("Extension lines"))}<select data-d="noext">${([["", "Both shown"], ["a", "First hidden"], ["b", "Second hidden"], ["both", "Both hidden"]] as const).map(([k, l]) => `<option value="${k}"${(a.noExt ?? "") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : ""}
+        <label class="drw-f">${esc(t("Arrowheads"))}<select data-d="ends"><option value="">${esc(t("Document"))}</option>${(["filled", "open", "dot", "tick"] as const).map(k => `<option value="${k}"${a.ends === k ? " selected" : ""}>${esc(t(ARROW_NAMES[k]))}</option>`).join("")}</select></label>
+        ${a.k === "dia" ? `<label class="drw-f">${esc(t("Display"))}<select data-d="dlin">${([["", "Diameter"], ["h", "Linear, horizontal"], ["v", "Linear, vertical"]] as const).map(([k, l]) => `<option value="${k}"${(a.lin ?? "") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : ""}
+        ${(a.k === "rad" && !a.fore) || (a.k === "dia" && !a.lin) ? `<label class="drw-chk"><input type="checkbox" data-d="rout"${a.outside ? " checked" : ""}> ${esc(t("Arrow outside the circle"))}</label>` : ""}
         ${a.k === "rad" ? `<label class="drw-chk"><input type="checkbox" data-d="fore"${a.fore ? " checked" : ""}> ${esc(t("Foreshortened radius"))}</label>` : ""}
         ${lin ? `<label class="drw-chk"><input type="checkbox" data-d="horiz"${a.horiz ? " checked" : ""}> ${esc(t("Horizontal text in the dimension line"))}</label>` : ""}
         <label class="drw-f">${esc(t("Decimals"))}<select data-d="prec"><option value="">${esc(t("Auto"))}</option>${[0, 1, 2, 3].map(n => `<option value="${n}"${a.prec === n ? " selected" : ""}>${n}</option>`).join("")}</select></label>
@@ -1850,10 +1894,12 @@ export class DrawingWorkspace {
       </fieldset><div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
     }
     if (a.t === "hole") {
-      const e = refEdge(a.ref, this.factsOf(a.view)?.topo ?? null), auto = e ? holeText(e, this.ctx()).join("\n") : "";
+      const e = refEdge(a.ref, this.factsOf(a.view)?.topo ?? null), auto = e ? holeText(e, this.ctx(), a.count !== false).join("\n") : "";
       return `<fieldset class="pm-group"><legend>${esc(t("Hole callout"))}</legend>
         <label class="drw-f">${esc(t("Text"))}<textarea data-d="htxt" rows="3" translate="no" placeholder="${esc(auto)}">${esc(a.txt ?? "")}</textarea></label>
         <p class="drw-note">${esc(t("Empty: the text comes from the hole."))}</p>
+        <label class="drw-chk"><input type="checkbox" data-d="hcount"${a.count !== false ? " checked" : ""}> ${esc(t("Show the number of holes"))}</label>
+        <label class="drw-f">${esc(t("Text below"))}<input data-d="hbelow" value="${esc(a.below ?? "")}" translate="no"></label>
       </fieldset><div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
     }
     const del = `<div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
@@ -1867,12 +1913,16 @@ export class DrawingWorkspace {
         <div class="drw-datums">${[0, 1, 2].map(k => `<label class="drw-f">${esc(t(["Primary datum", "Secondary datum", "Tertiary datum"][k]))}<input data-d="g:${i}:d${k}" value="${esc(r.datums[k] ?? "")}" maxlength="6" translate="no"></label>`).join("")}</div>
         ${a.rows.length > 1 ? `<div class="row"><button class="btn small" data-grow="-${i}">${esc(t("Remove row"))}</button></div>` : ""}
       </fieldset>`).join("");
-      return `<fieldset class="pm-group"><legend>${esc(t("Geometric tolerance"))}</legend>${a.leader ? `<p class="drw-note">${esc(t("With a leader to the model."))}</p><label class="drw-chk"><input type="checkbox" data-d="gall"${a.around ? " checked" : ""}> ${esc(t("All around"))}</label>` : ""}</fieldset>${rows}
+      return `<fieldset class="pm-group"><legend>${esc(t("Geometric tolerance"))}</legend>${a.leader ? `<p class="drw-note">${esc(t("With a leader to the model."))}</p><label class="drw-chk"><input type="checkbox" data-d="gall"${a.around ? " checked" : ""}> ${esc(t("All around"))}</label>` : ""}
+        <label class="drw-f">${esc(t("Text above the frame"))}<input data-d="gabove" value="${esc(a.above ?? "")}" translate="no" placeholder="2×"></label>
+        <label class="drw-f">${esc(t("Text below the frame"))}<input data-d="gbelow" value="${esc(a.below ?? "")}" translate="no"></label></fieldset>${rows}
         <div class="row"><button class="btn small" data-grow="+">${esc(t("Add row"))}</button></div>${del}`;
     }
     if (a.t === "datum") {
       return `<fieldset class="pm-group"><legend>${esc(t("Datum feature"))}</legend>
         <label class="drw-f">${esc(t("Letter"))}<input data-d="dl" value="${esc(a.letter)}" maxlength="2" translate="no"></label>
+        <label class="drw-chk"><input type="checkbox" data-d="dopen"${a.open ? " checked" : ""}> ${esc(t("Open triangle"))}</label>
+        <label class="drw-chk"><input type="checkbox" data-d="dbent"${a.bent ? " checked" : ""}> ${esc(t("Bent leader"))}</label>
       </fieldset>${del}`;
     }
     if (a.t === "surf") {
@@ -1887,10 +1937,14 @@ export class DrawingWorkspace {
       </fieldset>${del}`;
     }
     if (a.t === "balloon") {
-      const c = "e" in a.ref ? compOfKey(a.ref.e) : null, item = c && this.bom ? this.bom.itemOf(c) : null;
+      const c = "e" in a.ref ? compOfKey(a.ref.e) : null, item = "e" in a.ref ? (a.weld ? weldItem(a.ref.e, this.ctx()) : edgeItem(a.ref.e, this.ctx())) : null;
       const comp = c ? this.facts?.comps?.find(x => x.id === c)?.name ?? c : "";
-      return `<fieldset class="pm-group"><legend>${esc(t("Balloon"))}</legend>
+      const cut = !this.bom && item && !a.weld ? this.cuts?.find(x => x.item === item) : undefined;
+      const weld = a.weld && item ? this.facts?.welds?.[item - 1] : undefined;
+      return `<fieldset class="pm-group"><legend>${esc(t(a.weld ? "Weld tag" : "Balloon"))}</legend>
+        ${weld ? `<p class="drw-note">${esc(t("Weld table"))}: <b translate="no">z${esc(weld.legs)}</b> · ${esc(t("item {n}", { n: item! }))}</p>` : ""}
         ${comp ? `<p class="drw-note">${esc(t("Component"))}: <b translate="no">${esc(comp)}</b>${item ? ` · ${esc(t("item {n}", { n: item }))}` : ""}</p>` : ""}
+        ${cut ? `<p class="drw-note">${esc(t("Cut list"))}: <b translate="no">${esc(this.cutLabel(cut))}</b> · ${esc(t("item {n}", { n: item! }))}</p>` : ""}
         <label class="drw-f">${esc(t("Text instead of the item number"))}<input data-d="btxt" value="${esc(a.txt ?? "")}" translate="no"></label>
         <label class="drw-f">${esc(t("Style"))}<select data-d="bshape">${([["", "Circle"], ["split", "Circular split line"], ["tri", "Triangle"], ["hex", "Hexagon"], ["box", "Rectangle"], ["none", "Underline"]] as const).map(([v, l]) => `<option value="${v}"${(a.shape ?? "") === v ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>
         ${this.stackRows(a)}
@@ -1923,6 +1977,7 @@ export class DrawingWorkspace {
       const n = this.factsOf(a.view, sh)?.welds?.reduce((s, w) => s + w.qty, 0) ?? 0;
       return `<fieldset class="pm-group"><legend>${esc(t("Weld table"))}</legend>
         <p class="drw-note">${esc(t("Fillet beads: {n}, from the part's cut list.", { n }))}</p>
+        <button class="btn small" data-a="wtags">${esc(t("Tag the beads"))}</button>
         <label class="drw-f">${esc(t("Decimals"))}<select data-d="wprec"><option value="">${esc(t("Auto"))}</option>${[0, 1, 2, 3].map(k => `<option value="${k}"${a.prec === k ? " selected" : ""}>${k}</option>`).join("")}</select></label>
       </fieldset>${del}`;
     }
@@ -1960,7 +2015,10 @@ export class DrawingWorkspace {
     const num = (s: string) => { const v = parseFloat(s.replace(",", ".")); return isFinite(v) ? v : undefined; };
     this.setAnnot(k === "ntxt" || k === "htxt" ? "Text" : "Annotation property", a => {
       if (a.t === "dim") {
-        if (k === "k") a.k = val as DimAnnot["k"];
+        if (k === "k") { a.k = val as DimAnnot["k"]; if (a.k !== "dia") delete a.lin; if (a.k !== "rad") delete a.fore; if (a.k !== "rad" && a.k !== "dia") delete a.outside; }
+        else if (k === "rout") { if ((el as HTMLInputElement).checked) a.outside = true; else delete a.outside; }
+        else if (k === "dlin") { if (val === "h" || val === "v") a.lin = val; else delete a.lin; }
+        else if (k === "ends") { if (val === "filled" || val === "open" || val === "dot" || val === "tick") a.ends = val; else delete a.ends; }
         else if (k === "arrows") { if (val === "in" || val === "out") a.arrows = val; else delete a.arrows; }
         else if (k === "noext") { if (val === "a" || val === "b" || val === "both") a.noExt = val; else delete a.noExt; }
         else if (k === "fore") { if ((el as HTMLInputElement).checked) a.fore = true; else delete a.fore; }
@@ -1974,6 +2032,8 @@ export class DrawingWorkspace {
         else if (a.tol && k === "fit") a.tol.fit = val.trim();
         else if (a.tol && k === "fshow") { if (val === "code") delete a.tol.show; else a.tol.show = val as Tol["show"]; }
       } else if (a.t === "hole" && k === "htxt") { if (val.trim()) a.txt = val; else delete a.txt; }
+      else if (a.t === "hole" && k === "hcount") { if ((el as HTMLInputElement).checked) delete a.count; else a.count = false; }
+      else if (a.t === "hole" && k === "hbelow") { if (val.trim()) a.below = val; else delete a.below; }
       else if (a.t === "note" && k === "nprop") { if (val) a.text += `$PRP:"${val}"`; }
       else if (a.t === "sk") {
         const v = num(val);
@@ -2018,8 +2078,10 @@ export class DrawingWorkspace {
         else if (f === "comp") { if ((el as HTMLInputElement).checked) { r.composite = true; r.sym = a.rows[+si - 1]?.sym ?? r.sym; } else delete r.composite; }
         else if (f === "mod") { if (val === "M" || val === "L") r.mod = val; else delete r.mod; }
         else if (f[0] === "d") { const d = [0, 1, 2].map(j => r.datums[j] ?? ""); d[+f[1]] = val.trim().toUpperCase(); while (d.length && !d[d.length - 1]) d.pop(); r.datums = d; }
-      } else if (a.t === "gtol" && k === "gall") { if ((el as HTMLInputElement).checked) a.around = true; else delete a.around; }
+      } else if (a.t === "gtol" && (k === "gabove" || k === "gbelow")) { const key = k === "gabove" ? "above" : "below"; if (val.trim()) a[key] = val.trim(); else delete a[key]; }
+      else if (a.t === "gtol" && k === "gall") { if ((el as HTMLInputElement).checked) a.around = true; else delete a.around; }
       else if (a.t === "datum" && k === "dl" && val.trim()) a.letter = val.trim().toUpperCase();
+      else if (a.t === "datum" && (k === "dopen" || k === "dbent")) { const key = k === "dopen" ? "open" : "bent"; if ((el as HTMLInputElement).checked) a[key] = true; else delete a[key]; }
       else if (a.t === "balloon" && k === "bshape") { if (val === "split" || val === "tri" || val === "hex" || val === "box" || val === "none") a.shape = val; else delete a.shape; }
       else if (a.t === "balloon" && k === "btxt") { if (val.trim()) a.txt = val.trim(); else delete a.txt; }
       else if (a.t === "balloon" && k === "bstack") { if (val) a.stack = [...(a.stack ?? []), val]; }
@@ -2628,6 +2690,8 @@ export class DrawingWorkspace {
         <label class="drw-f">${esc(t("Line group"))}<select data-st="lines">${[0.25, 0.35, 0.5, 0.7].map(w => `<option value="${w}"${(this.doc.style?.lines ?? 0.35) === w ? " selected" : ""}>${String(w).replace(".", lang() === "ru" ? "," : ".")} ${esc(t("mm"))}</option>`).join("")}</select></label>
         <label class="drw-f">${esc(t("Linear decimals"))}<select data-st="lin"><option value=""${this.doc.style?.lin == null ? " selected" : ""}>${esc(t("Auto"))}</option>${[0, 1, 2, 3, 4].map(n => `<option value="${n}"${this.doc.style?.lin === n ? " selected" : ""}>${n}</option>`).join("")}</select></label>
         <label class="drw-f">${esc(t("Angle decimals"))}<select data-st="ang"><option value=""${this.doc.style?.ang == null ? " selected" : ""}>${esc(t("Auto"))}</option>${[0, 1, 2, 3, 4].map(n => `<option value="${n}"${this.doc.style?.ang === n ? " selected" : ""}>${n}</option>`).join("")}</select></label>
+        <label class="drw-f">${esc(t("Extension line gap"))}<select data-st="extGap">${[0, 0.5, 1, 1.5, 2].map(v => `<option value="${v === 1 ? "" : v}"${(this.doc.style?.extGap ?? 1) === v ? " selected" : ""}>${String(v).replace(".", lang() === "ru" ? "," : ".")} ${esc(t("mm"))}</option>`).join("")}</select></label>
+        <label class="drw-f">${esc(t("Extension past the dimension line"))}<select data-st="extOver">${[1, 1.5, 2, 3].map(v => `<option value="${v === 2 ? "" : v}"${(this.doc.style?.extOver ?? 2) === v ? " selected" : ""}>${String(v).replace(".", lang() === "ru" ? "," : ".")} ${esc(t("mm"))}</option>`).join("")}</select></label>
         <label class="drw-f">${esc(t("Default tolerance (±)"))}<input data-st="tol" inputmode="decimal" value="${this.doc.style?.tol ?? ""}" placeholder="${esc(t("None"))}"></label>
         <label class="drw-f">${esc(t("Default angle tolerance (±°)"))}<input data-st="atol" inputmode="decimal" value="${this.doc.style?.atol ?? ""}" placeholder="${esc(t("None"))}"></label>
         <label class="drw-f">${esc(t("Dual dimensions"))}<select data-st="dual"><option value=""${this.doc.style?.dual ? "" : " selected"}>${esc(t("Off"))}</option><option value="in"${this.doc.style?.dual === "in" ? " selected" : ""}>${esc(t("Inches in brackets"))}</option></select></label>
@@ -2725,6 +2789,7 @@ export class DrawingWorkspace {
       case "align": this.realign(); break;
       case "dim": this.startAnnot("dim"); break;
       case "adel": this.deleteAnnot(); break;
+      case "wtags": { const a = this.selA ? this.annot(this.selA) : null; if (a?.t === "wtable") void this.tagBeads(a.view); break; }
       case "hupd": { const a = this.selA ? this.annot(this.selA) : null; if (a?.t === "htable") { const holes = this.viewHoleRefs(a.view); this.setAnnot("Update holes", x => { if (x.t === "htable") x.holes = holes; }); } break; }
       case "undo": this.store.undo(); break;
       case "redo": this.store.redo(); break;
@@ -3013,10 +3078,37 @@ export class DrawingWorkspace {
 
   // ---------- saving and output ----------
 
-  async save() {
+  /**
+   * The open drawing came from a vault (FR-PDM-010/081): Save writes the working copy there, only while it is
+   * checked out here; the title shows the version and the lock.
+   */
+  vault: VaultTie | null = null;
+  setVault(v: VaultTie | null) {
+    this.vault = v;
+    if (this.store) this.renderAll();
+  }
+  /** Marks the open drawing saved (the vault wrote it). */
+  markSaved() {
+    if (!this.store) return;
+    this.store.markSaved();
+    this.renderAll();
+  }
+
+  /** Saves the drawing; `as` = a copy outside the vault. */
+  async save(as = false) {
     if (!this.store) return;
     const bytes = await packDrawing(this.doc, `MöbiusCAD ${this.host.appVersion}`, this.model);
     const name = this.fileName || `${this.doc.name}${DRAWING_EXT}`;
+    if (this.vault && !as) {
+      if (this.vault.readOnly) { toast(t("This file is read-only: check it out to save, or use Save as."), true); return; }
+      try { await this.vault.save(bytes); }
+      catch (err) { toast(t("Could not save: {err}", { err: t((err as Error).message) }), true); return; }
+      this.store.markSaved();
+      this.renderAll();
+      toast(t("Saved {name}", { name }), "success");
+      return;
+    }
+    if (as && this.vault) this.setVault(null);
     this.host.download(new Blob([bytes], { type: "application/zip" }), name);
     this.fileName = name;
     this.store.markSaved();

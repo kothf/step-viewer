@@ -3882,6 +3882,49 @@ try {
     await ctx.close();
   }
 
+  // --- 1.433.0: File ▸ Export ▸ STEP for a modelled part and an assembly (it said "needs a STEP, IGES or BREP model") ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // An empty part: the panel's buttons say why nothing is saved.
+    await mp.click("#file-btn");
+    await mp.click("#file-menu [data-f=export]");
+    await mp.waitForFunction(() => document.querySelector("#rt-export").getAttribute("aria-selected") === "true");
+    await mp.click("#png");
+    const empty = await mp.waitForFunction(() => [...document.querySelectorAll(".toast")].some(t => /no body to export/.test(t.textContent)), null, { timeout: 5000 }).then(() => true, () => false);
+    await mp.evaluate(() => window.__sv.model.store.change("Plate", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -20, -10), P("b", 20, -10), P("c", 20, 10), P("d", -20, 10), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } });
+    }));
+    await mp.waitForTimeout(150);
+    await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.data, null, { timeout: 120000 });
+    const stepOf = async () => {
+      const [dl] = await Promise.all([mp.waitForEvent("download", { timeout: 120000 }), mp.click("#step-export")]);
+      const text = (await readFile(await dl.path())).toString();
+      return { name: dl.suggestedFilename(), iso: text.startsWith("ISO-10303-21"), solid: /MANIFOLD_SOLID_BREP/.test(text) };
+    };
+    const part = await stepOf();
+    await mp.click("#new-more");
+    await mp.click("#new-asm-part");
+    await mp.waitForFunction(() => window.__sv.asm.doc?.components.length === 1 && !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === 1, null, { timeout: 120000 });
+    await mp.click("#file-btn");
+    await mp.click("#file-menu [data-f=export]");
+    const asmStep = await stepOf();
+    check(empty, "export 1.433: Export on an empty part says there is no body yet");
+    check(part.iso && part.solid && /\.step$/.test(part.name), `export 1.433: File ▸ Export ▸ STEP saves a modelled part (${JSON.stringify(part)})`);
+    check(asmStep.iso && asmStep.solid && /\.step$/.test(asmStep.name), `export 1.433: File ▸ Export ▸ STEP saves an assembly (${JSON.stringify(asmStep)})`);
+    await ctx.close();
+  }
+
   // --- Part modelling 1.144.0: arc and centrepoint slot tools with the Modify box (FR-SK-017) ---
   if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -4402,7 +4445,7 @@ try {
     await mp.waitForFunction(() => window.__sv.model?.store);
     await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("Block", d => { d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -10, -10), P("b", 10, -10), P("c", 10, 10), P("d", -10, 10), L("l1", "a", "b"), L("l2", "b", "c"), L("l3", "c", "d"), L("l4", "d", "a")] }, { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } }); }); });
     await idle();
-    // A new vault in the browser workspace, then Save part to vault.
+    // A new vault in the browser workspace, then Save to vault.
     await mp.click("#t-vault");
     await mp.fill("#v-name", "Smoke vault");
     await mp.click('#vault-panel [data-a="new-ws"]');
@@ -4441,6 +4484,84 @@ try {
     const chk = await mp.evaluate(async () => { const r = await window.__sv.vault.vault.verify(); return `${r.files}/${r.objects}/${r.missing.length + r.corrupt.length}`; });
     check(/Part1\.mcadprt/.test(row1) && /v1/.test(row1) && /Andrey/.test(row1) && /v1 · .*checked out/.test(title1) && dirty === true && hist === "v2:Twice as deep|v1:Added" && Math.abs(vBack - 4000) < 1e-3, `vault 1.39: save to vault, check in, read-only, history and roll back (${row1}, ${title1}, ${dirty}, ${hist}, ${vBack})`);
     check(audit === "create vault,add,check out,check in,roll back" && chk === "1/2/0", `vault 1.39: audit trail and integrity check (${audit}, ${chk})`);
+    await ctx.close();
+  }
+
+  // --- Vault menu (1.436.0) in the header, a vault in a picked folder that is remembered, an assembly saved back into the vault (FR-PDM-002/010/080) ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    // The folder picker cannot be driven: it hands out a folder of the origin's private file system instead.
+    await mp.addInitScript(() => { window.showDirectoryPicker = async () => (await navigator.storage.getDirectory()).getDirectoryHandle("Picked folder", { create: true }); });
+    await mp.goto(`${origin}/index.html?debug&nokernel`);
+    await mp.evaluate(() => { localStorage.setItem("sv:tips", "off"); localStorage.setItem("mc:vaultUser", "Andrey"); });
+    await mp.goto(`${origin}/index.html?debug&nokernel`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.evaluate(() => window.__sv.vaultFolders.useMemory());
+    const menu = async id => { await mp.click("#vault-btn"); await mp.waitForSelector("#vault-menu:not([hidden])"); if (id) await mp.click(`#vault-menu [data-v="${id}"]`); };
+    const items = () => mp.evaluate(() => [...document.querySelectorAll("#vault-menu button")].map(b => `${b.dataset.v.replace(/^folder:.*/, "folder")}${b.disabled ? "-" : ""}`).join(","));
+    // No vault: the menu offers the folder and the browser vaults; File ▸ Vault… opens the same menu.
+    const btnShown = await mp.evaluate(() => { const r = document.querySelector("#vault-btn").getBoundingClientRect(); return r.width > 20 && r.height > 20; });
+    await menu();
+    const closed = await items();
+    await mp.keyboard.press("Escape");
+    await mp.click("#file-btn");
+    await mp.click('#file-menu [data-f="vault"]');
+    await mp.waitForSelector("#vault-menu:not([hidden])");
+    // New vault in a folder: the vault opens, its file list shows, the button is lit.
+    await mp.click('#vault-menu [data-v="new-dir"]');
+    await mp.waitForSelector('#vault-panel [data-a="add"]');
+    const lit = await mp.evaluate(() => document.querySelector("#vault-btn").classList.contains("on") && document.querySelector("#t-vault").getAttribute("aria-selected") === "true" && window.__sv.vault.vault.info.name);
+    // An assembly goes in with Save to vault, checked out; Save then writes the working copy, Check in makes v2.
+    await mp.click("#empty-asm");
+    await mp.waitForFunction(() => window.__sv.asm.doc);
+    await menu("save");
+    await mp.waitForSelector("#vault-panel .v-row", { state: "attached" });
+    await mp.waitForFunction(() => /v1/.test(document.querySelector("#doc-name").textContent));
+    const title1 = await mp.evaluate(() => document.querySelector("#doc-name").textContent);
+    await mp.evaluate(() => window.__sv.asm.change(d => { d.name = "Frame"; }));
+    await mp.evaluate(() => window.__sv.asm.save());
+    const saved = await mp.evaluate(async () => { const v = window.__sv.vault.vault, f = (await v.files())[0]; return `${window.__sv.asm.dirty}/${(await v.status(f)).modified}`; });
+    await menu();
+    const opened = await items();
+    await mp.click('#vault-menu [data-v="ci"]');
+    await mp.fill('#vault-dlg textarea[name="comment"]', "Renamed");
+    await mp.click('#vault-dlg button[value="ok"]');
+    await mp.waitForFunction(() => /v2/.test(document.querySelector("#vault-panel .v-row")?.textContent ?? ""));
+    // Checked in: saving is refused until it is checked out again from the menu.
+    await mp.evaluate(() => window.__sv.asm.change(d => { d.name = "Frame 2"; }));
+    await mp.evaluate(() => window.__sv.asm.save());
+    const refused = await mp.evaluate(() => window.__sv.asm.dirty);
+    await menu("co");
+    await mp.waitForFunction(() => /checked out/.test(document.querySelector("#doc-name").textContent));
+    await mp.evaluate(() => window.__sv.asm.save());
+    const savedAgain = await mp.evaluate(() => window.__sv.asm.dirty);
+    await menu("hist");
+    await mp.waitForSelector("#vault-dlg tbody tr");
+    const hist = await mp.evaluate(() => [...document.querySelectorAll("#vault-dlg tbody tr")].map(r => r.cells[0].textContent + ":" + r.cells[3].textContent).join("|"));
+    await mp.click('#vault-dlg button[value="cancel"]');
+    // Close vault: the folder is remembered in the menu and opens again without the picker.
+    await menu("close");
+    await mp.waitForFunction(() => !document.querySelector("#vault-btn").classList.contains("on"));
+    await mp.evaluate(() => { window.showDirectoryPicker = async () => { throw new Error("picker used"); }; });
+    await menu();
+    const again = await items();
+    const folderName = await mp.evaluate(() => document.querySelector('#vault-menu [data-v^="folder:"]')?.textContent ?? "");
+    await mp.click('#vault-menu [data-v^="folder:"]');
+    await mp.waitForSelector("#vault-panel .v-row");
+    const row = await mp.evaluate(() => document.querySelector("#vault-panel .v-row").textContent.replace(/\s+/g, " ").trim());
+    // With the side panel folded away the file list comes in a window.
+    await mp.click("#nav-toggle");
+    await menu("panel");
+    await mp.waitForSelector("#vault-win[open] .v-row");
+    await mp.click('#vault-win [data-a="close"]');
+    await mp.waitForFunction(() => document.querySelector("#vault-panel").parentElement.id === "tab-vault", null, { timeout: 5000 }).catch(() => {});
+    const home = await mp.evaluate(() => document.querySelector("#vault-panel").parentElement.id);
+    check(btnShown && closed === "new-dir,open-dir,new-ws,panel" && lit === "Picked folder", `vault menu: Vault button and menu, new vault in a picked folder (${btnShown}, ${closed}, ${lit})`);
+    check(/v1 · .*checked out/.test(title1) && saved === "false/true" && opened === "save-,co-,ci,undo,latest,hist,add,search,panel,settings,close" && refused === true && savedAgain === false && hist === "v2:Renamed|v1:Added", `vault menu: an assembly saved to the vault, saved into the working copy, checked in and out from the menu (${title1}, ${saved}, ${opened}, ${refused}, ${savedAgain}, ${hist})`);
+    check(again === "new-dir,open-dir,folder,new-ws,panel" && folderName === "Picked folder" && /\.mcadasm/.test(row) && /v2/.test(row) && home === "tab-vault", `vault menu: the vault folder is remembered and reopens; the file list opens in a window without the side panel (${again}, ${folderName}, ${row}, ${home})`);
     await ctx.close();
   }
 
@@ -4910,6 +5031,40 @@ try {
       fore = { j0, j1, stored, r8: txR.includes("R8"), back: (await annots()).some(a => a.k === "dia" && !a.fore) && !(await dp.$('#drw .drw-props [data-d="fore"]')) };
     }
     check(fore && fore.j1 === fore.j0 + 1 && fore.stored && fore.r8 && fore.back, `drawing: a radius dimension is foreshortened with a jog and goes back to a diameter (${selR}; ${JSON.stringify(fore)})`);
+    // Arrow outside the circle (the Ø16 is still selected): stored, never more prims than before, and off again.
+    {
+      const nAn = () => dp.evaluate(() => window.__sv.drw.prims().filter(q => q.layer === "ANNOT").length);
+      const n0 = await nAn(), has = !!(await dp.$('#drw .drw-props [data-d="rout"]'));
+      if (has) await dp.check('#drw .drw-props [data-d="rout"]');
+      const n1 = await nAn(), st = (await annots()).some(a => a.k === "dia" && a.outside === true);
+      if (has) await dp.uncheck('#drw .drw-props [data-d="rout"]');
+      const n2 = await nAn(), off = !(await annots()).some(a => a.outside);
+      check(has && st && off && n1 <= n0 && n2 === n0, `drawing: a diameter's arrow goes outside the circle and back (${JSON.stringify({ has, st, off, n0, n1, n2 })})`);
+    }
+    // A diameter displayed as a linear dimension (the Ø16 is still selected), then back.
+    {
+      const has = !!(await dp.$('#drw .drw-props [data-d="dlin"]'));
+      const count = () => dp.evaluate(() => window.__sv.drw.prims().filter(q => q.t === "l" && q.layer === "ANNOT").length);
+      let r = null;
+      if (has) {
+        const n0 = await count();
+        await dp.selectOption('#drw .drw-props [data-d="dlin"]', "h");
+        const n1 = await count(), stored = (await annots()).some(a => a.k === "dia" && a.lin === "h"), txD = await texts();
+        await dp.selectOption('#drw .drw-props [data-d="dlin"]', "");
+        r = { n0, n1, stored, dia: txD.includes("Ø16"), back: await count() === n0 && !(await annots()).some(a => a.lin) };
+      }
+      check(r && r.n1 > r.n0 && r.stored && r.dia && r.back, `drawing: a diameter is displayed as a linear dimension with extension lines and goes back (${JSON.stringify(r)})`);
+    }
+    // Arrowheads of its own (the Ø16 is still selected): oblique strokes are thick lines; Document goes back.
+    {
+      const thick = () => dp.evaluate(() => window.__sv.drw.prims().filter(q => q.t === "l" && q.layer === "ANNOT" && q.pen === "thick").length);
+      const k0 = await thick();
+      await dp.selectOption('#drw .drw-props [data-d="ends"]', "tick");
+      const k1 = await thick(), stored = (await annots()).some(a => a.ends === "tick");
+      await dp.selectOption('#drw .drw-props [data-d="ends"]', "");
+      const k2 = await thick();
+      check(k1 === k0 + 2 && stored && k2 === k0 && !(await annots()).some(a => a.ends), `drawing: a dimension takes its own arrowheads and goes back to the document's (${k0} → ${k1} → ${k2})`);
+    }
     // Back to the 100, which the next checks work on.
     [x, y] = await at(front.id, 0, 40.5);
     await dp.mouse.click(x, y);
@@ -4952,6 +5107,24 @@ try {
     await dp.mouse.move(x, y); await dp.mouse.click(x, y);
     [x, y] = await at(top.id, 40, -45);
     await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    // Hole callout options (FR-DRW-022): a line under the automatic text, and the number of holes left out.
+    {
+      await dp.waitForTimeout(150);
+      let r = null;
+      if (await dp.$('#drw .drw-props [data-d="hbelow"]')) {
+        await dp.fill('#drw .drw-props [data-d="hbelow"]', "EQ SP");
+        await dp.dispatchEvent('#drw .drw-props [data-d="hbelow"]', "change");
+        const t1 = await texts();
+        await dp.uncheck('#drw .drw-props [data-d="hcount"]');
+        const h1 = (await annots()).find(a => a.t === "hole");
+        await dp.check('#drw .drw-props [data-d="hcount"]');
+        await dp.fill('#drw .drw-props [data-d="hbelow"]', "");
+        await dp.dispatchEvent('#drw .drw-props [data-d="hbelow"]', "change");
+        const t2 = await texts(), h2 = (await annots()).find(a => a.t === "hole");
+        r = { below: t1.includes("EQ SP") && t1.includes("Ø16 THRU"), stored: h1?.below === "EQ SP" && h1?.count === false, back: !t2.includes("EQ SP") && h2 && h2.below == null && h2.count == null };
+      }
+      check(r && r.below && r.stored && r.back, `drawing: a hole callout takes a line below and leaves the number of holes out (${JSON.stringify(r)})`);
+    }
     dp.once("dialog", d => d.accept("BREAK SHARP EDGES"));
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="note"]');
     [x, y] = await dp.evaluate(() => window.__sv.drw.sheetPt(40, 60));
@@ -4990,6 +5163,20 @@ try {
     await dp.selectOption('.drw-props [data-st="lin"]', "");
     const plainHole = await texts();
     check(dualHole.includes("Ø16.0 [0.630] THRU") && plainHole.includes("Ø16 THRU"), `drawing: a hole callout shows inches and the default decimals with the drawing (${dualHole.filter(s => /THRU/.test(s)).join(" / ")})`);
+    // Extension lines follow the drafting style (FR-DRW-025): no gap and 3 mm past the dimension line make the thin lines longer; the defaults bring them back.
+    {
+      const thinLen = () => dp.evaluate(() => window.__sv.drw.prims().filter(q => q.t === "l" && q.layer === "ANNOT" && q.pen === "thin").reduce((s, q) => s + Math.hypot(q.p[2] - q.p[0], q.p[3] - q.p[1]), 0));
+      const e0 = await thinLen();
+      await dp.selectOption('.drw-props [data-st="extGap"]', "0");
+      const e1 = await thinLen();
+      await dp.selectOption('.drw-props [data-st="extOver"]', "3");
+      const e2 = await thinLen(), st = await dp.evaluate(() => window.__sv.drw.doc().style);
+      await dp.selectOption('.drw-props [data-st="extGap"]', "");
+      await dp.selectOption('.drw-props [data-st="extOver"]', "");
+      const e3 = await thinLen(), st3 = await dp.evaluate(() => window.__sv.drw.doc().style ?? {});
+      check(e1 > e0 + 1.9 && e2 > e1 + 1.9 && st?.extGap === 0 && st?.extOver === 3 && Math.abs(e3 - e0) < 1e-6 && st3.extGap == null && st3.extOver == null,
+        `drawing: extension lines take the style's gap and overshoot and go back (${[e0, e1, e2, e3].map(v => v.toFixed(1)).join(" → ")})`);
+    }
     // Property link in a note (FR-DRW-023): $PRP:"Scale" shows the sheet scale.
     dp.once("dialog", d => d.accept('SCALE $PRP:"Scale"'));
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="note"]');
@@ -5109,10 +5296,27 @@ try {
       await dp.check('#drw [data-d="g:0:dia"]');
       await dp.selectOption('#drw [data-d="g:0:mod"]', "M");
       await dp.click('#drw [data-grow="+"]');
+      await dp.fill('#drw [data-d="gabove"]', "2×"); await dp.dispatchEvent('#drw [data-d="gabove"]', "change");
+      await dp.fill('#drw [data-d="gbelow"]', "SEP REQT"); await dp.dispatchEvent('#drw [data-d="gbelow"]', "change");
     }
     an = await annots(); tx = await texts();
     const g2 = an.find(a => a.t === "gtol");
+    check(gsel && g2.above === "2×" && g2.below === "SEP REQT" && tx.includes("2×") && tx.includes("SEP REQT"), `drawing: text above and below the tolerance frame (${g2?.above} / ${g2?.below}; ${tx.join(" ")})`);
     check(gsel && g2.rows.length === 2 && g2.rows[0].sym === "pos" && g2.rows[0].dia && tx.includes("Ø0.05") && tx.includes("M"), `drawing: tolerance frame edited: position, Ø, (M), second row (${JSON.stringify(g2?.rows)})`);
+    // Datum feature options: open triangle and bent leader (datum B in the top view).
+    {
+      const [bx, by] = await at(top.id, 35, 20);
+      await dp.mouse.move(bx + 1, by); await dp.mouse.click(bx, by);
+      const dsel = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-d="dopen"]'));
+      const fills = () => dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "p" && p.layer === "ANNOT" && p.fill && p.p.length === 6).length);
+      const f0 = await fills();
+      if (dsel) { await dp.check('#drw [data-d="dopen"]'); await dp.check('#drw [data-d="dbent"]'); }
+      an = await annots();
+      const db = an.find(a => a.t === "datum" && a.letter === "B");
+      const f1 = await fills();
+      check(dsel && db?.open === true && db.bent === true && f1 === f0 - 1, `drawing: datum with an open triangle and a bent leader (${JSON.stringify(db)}; filled triangles ${f0} → ${f1})`);
+      await dp.keyboard.press("Escape");
+    }
     // Revision table at the frame's top-right corner, then a second revision B.
     await tool("rev");
     await dp.waitForTimeout(100);
@@ -6378,6 +6582,21 @@ try {
     await mp.click('#asm-tools [data-ac="bom"]');
     const bom = await mp.evaluate(() => ({ open: document.querySelector("#asm-bom").open, cells: [...document.querySelectorAll("#asm-bom tbody td")].map(e => e.textContent), csv: window.__sv.asm.bomCsvText() }));
     await mp.click('#asm-bom [data-a="close"]');
+    // Material… on a component sets its part's material for every instance; undo brings the old one back.
+    await mp.evaluate(() => { const a = window.__sv.asm; void a.pickPartMaterial(a.doc.components[1].id); });
+    await mp.waitForSelector("#mat-dlg[open]");
+    await mp.fill("#mat-q", "Ti-6Al-4V");
+    await mp.keyboard.press("ArrowDown");
+    await mp.keyboard.press("ArrowUp");
+    await mp.keyboard.press("Enter");
+    await mp.waitForSelector("#mat-dlg", { state: "detached" });
+    await shown(2);
+    const cmat = await mp.evaluate(() => { const a = window.__sv.asm, r = a.bom()[0]; return { mat: r.material, mass: Math.round(r.mass * 1e5) / 1e5, dens: [a.partDensity(0), a.partDensity(1)] }; });
+    await mp.evaluate(() => window.__sv.asm.undo());
+    await shown(2);
+    const cmat0 = await mp.evaluate(() => window.__sv.asm.bom()[0].material);
+    check(cmat.mat === "Titanium Ti-6Al-4V" && cmat.mass === 0.00443 && cmat.dens.join() === "4.43,4.43" && cmat0 === "Aluminium 6061",
+      `asm 1.434.0: Material… on a component sets the part's material for all its instances (${JSON.stringify(cmat)}, ${cmat0})`);
     // STEP of the assembly reopens with the same names and placements (AT-P4-6).
     const step = [...await mp.evaluate(async () => [...await window.__sv.asm.stepBytes()])];
     await mp.setInputFiles("#file-input", { name: "rig.step", mimeType: "model/step", buffer: Buffer.from(step) });
@@ -8447,14 +8666,37 @@ try {
       const q = new v.camera.position.constructor(35, 0, 0).project(v.camera);
       return { x: r.left + ((q.x + 1) / 2) * r.width, y: r.top + ((1 - q.y) / 2) * r.height };
     });
+    // 1.428: hovering a region lights it up before the click (SolidWorks' pre-highlight).
+    const hoverN = () => mp.evaluate(() => { let n = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData.contourHover !== undefined && o.visible) n++; }); return n; });
+    await mp.mouse.move(at.x - 30, at.y - 30);
+    await mp.mouse.move(at.x, at.y);
+    await mp.waitForTimeout(200);
+    const hov = await hoverN();
     await mp.mouse.click(at.x, at.y);
     await settle();
-    const one = await mp.evaluate(() => ({ n: window.__sv.model.mode().draft?.contours?.length, box: document.querySelector('#mc-pm [data-focus="contours"]')?.textContent, v: Math.round(window.__sv.model.last().props?.volume ?? 0), bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.code).join() }));
+    const one = await mp.evaluate(() => ({ hov: 0, n: window.__sv.model.mode().draft?.contours?.length, box: document.querySelector('#mc-pm [data-focus="contours"]')?.textContent, v: Math.round(window.__sv.model.last().props?.volume ?? 0), bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.code).join() }));
     await mp.evaluate(() => window.__sv.modeller.ok());
     await settle();
     const done = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(x => x.type === "extrude"); return { contours: f.contours?.length, v: Math.round(window.__sv.model.last().props?.volume ?? 0), faces: window.__sv.model.last().data?.faces?.length ?? 0 }; });
-    check(/focus/.test(open0.box ?? "") && open0.help === "contours" && one.n === 1 && !one.bad && one.v === 18000 && done.contours === 1 && done.v === 18000,
-      `model 1.421: Extrude on a sketch with a line across opens Selected Contours, a click in the view picks one region (FR-FT-010) (${JSON.stringify({ open0, one, done })})`);
+    one.hov = hov;
+    check(/focus/.test(open0.box ?? "") && open0.help === "contours" && hov === 1 && one.n === 1 && !one.bad && one.v === 18000 && done.contours === 1 && done.v === 18000,
+      `model 1.421: Extrude on a sketch with a line across opens Selected Contours, hovering lights a region, a click in the view picks it (FR-FT-010) (${JSON.stringify({ open0, one, done })})`);
+    // 1.428: Planar Surface takes Selected Contours too: the left region (x -50..20) becomes one flat face.
+    await mp.evaluate(() => { window.__sv.modeller.startFeature("planesurf"); });
+    await settle();
+    const ps0 = await mp.evaluate(() => ({ type: window.__sv.model.mode().draft?.type, sketch: window.__sv.model.mode().draft?.sketch, focus: document.querySelector("#mc-pm .pm-box.focus")?.dataset.focus }));
+    const left = await mp.evaluate(() => {
+      const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect();
+      const q = new v.camera.position.constructor(-15, 0, 0).project(v.camera);
+      return { x: r.left + ((q.x + 1) / 2) * r.width, y: r.top + ((1 - q.y) / 2) * r.height };
+    });
+    await mp.mouse.click(left.x, left.y);
+    await settle();
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await settle();
+    const ps1 = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(x => x.type === "planesurf"); const l = window.__sv.model.last(); return { contours: f?.contours?.length, sheetFaces: l.sheetFaces, bad: l.statuses.filter(s => !s.ok).map(s => s.code).join() }; });
+    check(ps0.type === "planesurf" && ps0.sketch === "s" && ps0.focus === "contours" && ps1.contours === 1 && ps1.sheetFaces === 1 && !ps1.bad,
+      `model 1.428: Planar Surface on a sketch with a line across picks a region with Selected Contours (FR-FT-010) (${JSON.stringify({ ps0, ps1 })})`);
     await ctx.close();
   }
 
@@ -11474,6 +11716,15 @@ try {
     const loop = (4 * (40 - 12) + 2 * Math.PI * 6).toFixed(2).replace(/\.?0+$/, "");
     check(wt.n === 1 && ["Item", "Weld", "Leg", "Length", "Qty", "Continuous", "z4", loop].every(s => wt.tx.includes(s)),
       `drawing: weld table lists the weldment's fillet bead with its leg and length (${JSON.stringify({ n: wt.n, loop, tx: wt.tx.filter(s => /^(Item|Weld|Leg|Continuous|z\d|1\d\d)/.test(s)), note: wt.note })})`);
+    // Placing the weld table tags the bead seen in its view with a box holding its weld table row; Tag the beads adds no second one.
+    await dp.waitForFunction(() => window.__sv.drw.doc().sheets[0].annots.some(a => a.t === "balloon" && a.weld), null, { timeout: 30000 }).catch(() => {});
+    await ready();
+    const tg = await dp.evaluate(() => { const ws = window.__sv.drw.doc().sheets[0].annots.filter(a => a.t === "balloon" && a.weld);
+      return { n: ws.length, shape: ws[0]?.shape, btn: !!document.querySelector('#drw .drw-props [data-a="wtags"]'), dangle: document.querySelectorAll("#drw .drw-dangle").length }; });
+    if (tg.btn) { await dp.click('#drw .drw-props [data-a="wtags"]'); await dp.waitForTimeout(500); }
+    const tg2 = await dp.evaluate(() => window.__sv.drw.doc().sheets[0].annots.filter(a => a.t === "balloon" && a.weld).length);
+    check(tg.n === 1 && tg.shape === "box" && tg.btn && tg.dangle === 0 && tg2 === 1,
+      `drawing: placing the weld table tags its view's bead once, numbered by its row (${JSON.stringify({ ...tg, again: tg2 })})`);
     // Cut list table under the same view: the tube (300 - 10 mm long, square ends), then the bead; Weld beads unticked leaves it out.
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="ctable"]');
     for (const [x, y] of [[vp.x, vp.y], [vp.x - vp.w / 2, vp.y - vp.w / 2 - 20]]) {
@@ -11489,6 +11740,14 @@ try {
     await ready();
     const ct2 = await dp.evaluate(() => [...document.querySelectorAll(".drw-svg text")].map(t => t.textContent));
     check(!ct2.includes("Fillet weld, leg 4") && ct2.includes("SHS 40x40x3"), `drawing: unticking Weld beads leaves the bead out of the cut list table`);
+    // Auto balloon on a weldment part: one balloon per cut list item seen in the view, numbered as in the cut list.
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="auto"]');
+    await dp.waitForFunction(() => window.__sv.drw.doc().sheets[0].annots.some(a => a.t === "balloon"), null, { timeout: 30000 }).catch(() => {});
+    await ready();
+    const bl = await dp.evaluate(() => { const bs = window.__sv.drw.doc().sheets[0].annots.filter(a => a.t === "balloon");
+      return { n: bs.length, tx: [...document.querySelectorAll(".drw-svg text")].map(t => t.textContent), dangle: document.querySelectorAll("#drw .drw-dangle").length }; });
+    check(bl.n >= 2 && bl.tx.includes("1") && bl.tx.includes("2") && !bl.tx.includes("?") && bl.dangle === 0,
+      `drawing: auto balloon numbers a weldment part's bodies by their cut list items (${JSON.stringify({ n: bl.n, dangle: bl.dangle, nums: bl.tx.filter(s => /^\d$|^\?$/.test(s)) })})`);
     await ctx.close();
   }
 

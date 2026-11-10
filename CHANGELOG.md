@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.428.0] - 2026-11-10
+## [1.443.0] - 2026-11-10
 
 ### Added
 
@@ -15,6 +15,107 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - Mitred sheet metal corners (edge flanges, miter flanges, Convert to Sheet Metal) now meet on the corner's bisector plane, as in SolidWorks. Before, the two walls were cut square and overlapped in a thin strip along the inside of the seam, so the flat pattern had slightly more material than the part.
 
+
+## [1.442.0] - 2026-11-10
+
+### Added
+
+- **Arrow outside the circle (FR-DRW-021)**: a radius or diameter dimension whose text is outside the circle can stop its leader at the rim, with one arrow pointing at it from outside, instead of crossing the circle.
+
+## [1.441.0] - 2026-11-10
+
+### Added
+
+- **Weld tags on weldment drawings (FR-FT-121)**: placing a **Weld table** on a drawing of a weldment part also tags each fillet bead seen in that view with a box holding the bead's item number in the table, so the beads on the view and the rows of the table match. **Tag the beads** in the table's panel tags beads added later; a tag's panel names its weld table row. Weld tags and cut list balloons number their own lists and don't count against each other in Auto balloon.
+
+## [1.440.0] - 2026-11-10
+
+### Added
+
+- **Hole callout options (FR-DRW-022)**: a hole callout on a drawing can leave the number of equal holes (4×) out of its automatic text and take a line of text below it, such as EQ SP.
+
+### Fixed
+
+- A hole table no longer repeats the number of holes in the size of a Hole feature.
+
+## [1.439.0] - 2026-11-10
+
+### Added
+
+- **Extension line gap and overshoot (FR-DRW-025)**: a drawing's Drafting style sets the gap extension lines leave at the outline (0 to 2 mm; 0 for drawings that touch the outline as ISO 129 allows) and how far they run past the dimension line (1 to 3 mm).
+
+## [1.438.0] - 2026-11-10
+
+### Fixed
+
+- **Slot mate ends (Leuenberger exam #81)**: a Slot mate now keeps the pin between the slot's rounded ends, like SolidWorks' free slot mate, instead of letting it run past them. The ends are found from the slot's two end cylinders; inside the slot the pin still slides freely, so the mate takes no extra freedom away.
+- **Touching boss joins the body (exam #82)**: a boss extrude standing on the body with a gap of sketch round-off (a few millionths of a millimetre, e.g. from a snapped edge) became a second solid body. When a plain join leaves the new material apart, it is joined again with a 0.00001 mm tolerance.
+- **Interference detection (exam #83)**: coincident faces, such as a shaft in a bore of its own size or a foot on a plate, no longer show as interferences of "0 mm³": an overlap thinner than 0.0001 mm on average counts as touching, and shows only with **Treat coincidence as interference**.
+
+## [1.437.0] - 2026-11-10
+
+### Added
+
+- **Arrowheads per dimension (FR-DRW-021)**: a drawing dimension has an **Arrowheads** choice of its own: Document (the drafting style's), Filled, Open, Dot or Oblique stroke, so a tight chain can use dots while the rest keeps arrows.
+
+## [1.436.0] - 2026-11-10
+
+### Added
+
+- **Vault menu** (FR-PDM-002, FR-PDM-080): a **Vault** button in the header, also **File ▸ Vault…** and so reachable from a drawing. With no vault open it offers **New vault in a folder…**, **Open vault folder…**, the vault folders used before and the vaults kept in the browser. With a vault open it has the commands for the document on screen: **Save to vault**, **Check out**, **Check in…**, **Undo check-out**, **Get latest** and **History…**, then Add files, search, the file list, settings and Close vault. The button is lit while a vault is open. Until now the vault was only a small tab in the side panel.
+- **Vault folders are remembered**: a vault made or opened in a folder on disk is listed in the Vault menu and on the Vault tab, so it opens again with one click (the browser asks for access to the folder once per session). Keep one vault per project folder and switch between them from the menu. Open vault folder… on a folder without a vault offers to create one there. Folder vaults need Chrome or Edge on a computer; other browsers say so and keep browser vaults with Export ZIP.
+- **Assemblies and drawings in the vault** (FR-PDM-010, FR-PDM-081): Save to vault takes the open part, assembly or drawing. An assembly or drawing opened from the vault is tied to its vault file like a part: the title shows version, state and lock, **Save** writes the vault's working copy while it is checked out to you and is refused otherwise, and Check in stores the edits on screen as the next version. Before, only parts could be saved back.
+- With the side panel folded away, on a phone or over a drawing, the vault's file list opens in a window.
+
+## [1.435.0] - 2026-11-10
+
+### Added
+
+- **Diameter as a linear dimension (FR-DRW-021)**: a drawing's diameter dimension has a **Display** choice: Diameter, or a linear dimension across the circle, horizontal or vertical, with extension lines from the rim and the Ø kept.
+
+## [1.434.0] - 2026-11-10
+
+### Added
+
+- **Material from the assembly (FR-MAT-001)**: right-click a component and choose **Material…** to pick its part's material from the library without opening the part. Every instance of that part follows, and the BOM and mass properties update. It is one undo step.
+
+## [1.433.0] - 2026-11-10
+
+### Fixed
+
+- **File ▸ Export ▸ STEP for parts and assemblies**: the STEP button in the Export panel said "STEP export needs a STEP, IGES or BREP model" for a part you model or an assembly. It now saves them like the command bar's STEP button does.
+- **DXF 2000 of a big drawing sheet**: export failed with "Maximum call stack size exceeded" on sheets with many lines (the Leuenberger engine drawing). It now saves.
+- **Export on an empty part**: PNG, mesh and PDF report buttons did nothing when there was no body yet; they now say so.
+
+## [1.432.0] - 2026-11-10
+
+### Added
+
+- **Datum feature options (FR-DRW-023)**: a drawing's datum feature can have an **Open triangle** (an outline instead of the filled one) and a **Bent leader**, which leaves the edge square to it and then runs level to the letter's frame.
+
+## [1.431.0] - 2026-11-10
+
+### Added
+
+- **Balloons on weldment part drawings (FR-FT-121)**: a balloon on a drawing of a weldment part now shows the body's cut list item number, as in SolidWorks: click an edge of a member, plate or weld bead and place the balloon. **Auto balloon** puts one balloon on each cut list item seen in the view, and the balloon's panel names the item and stacks other items under it. The numbers match the Cut List dialog and the cut list table, and follow the part.
+
+## [1.430.0] - 2026-11-10
+
+### Added
+
+- **Tolerance frame text (FR-DRW-023)**: a drawing's geometric tolerance has **Text above the frame** (such as 2×) and **Text below the frame** boxes; the text is written left-aligned over and under the feature control frame and moves with it.
+
+## [1.429.0] - 2026-11-10
+
+### Fixed
+
+- **ASA and PC/ABS (FR-MAT-001)**: both now follow a named general purpose grade's data sheet and show **Checked against:**. ASA (Luran S 778T): modulus 2.5 GPa, yield 54 MPa (were 2.3 GPa and 48 MPa). PC/ABS (Bayblend T65 XF): modulus 2.35 GPa, yield 54 MPa (were 2.2 GPa and 52 MPa). 149 of 170 materials are checked; the other 21 still say they are not.
+
+## [1.428.0] - 2026-11-10
+
+### Added
+
+- **Selected Contours: hover highlight and Planar Surface** (FR-FT-010): while the Selected Contours box has focus, the sketch region under the pointer lights up blue before you click, as in SolidWorks. Planar Surface takes Selected Contours too, so a sketch whose lines cross or branch can fill just the regions you pick.
 
 ## [1.427.0] - 2026-11-10
 
@@ -2545,7 +2646,22 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.428.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.443.0...HEAD
+[1.443.0]: https://github.com/kothf/step-viewer/compare/v1.442.0...v1.443.0
+[1.442.0]: https://github.com/kothf/step-viewer/compare/v1.441.0...v1.442.0
+[1.441.0]: https://github.com/kothf/step-viewer/compare/v1.440.0...v1.441.0
+[1.440.0]: https://github.com/kothf/step-viewer/compare/v1.439.0...v1.440.0
+[1.439.0]: https://github.com/kothf/step-viewer/compare/v1.438.0...v1.439.0
+[1.438.0]: https://github.com/kothf/step-viewer/compare/v1.437.0...v1.438.0
+[1.437.0]: https://github.com/kothf/step-viewer/compare/v1.436.0...v1.437.0
+[1.436.0]: https://github.com/kothf/step-viewer/compare/v1.435.0...v1.436.0
+[1.435.0]: https://github.com/kothf/step-viewer/compare/v1.434.0...v1.435.0
+[1.434.0]: https://github.com/kothf/step-viewer/compare/v1.433.0...v1.434.0
+[1.433.0]: https://github.com/kothf/step-viewer/compare/v1.432.0...v1.433.0
+[1.432.0]: https://github.com/kothf/step-viewer/compare/v1.431.0...v1.432.0
+[1.431.0]: https://github.com/kothf/step-viewer/compare/v1.430.0...v1.431.0
+[1.430.0]: https://github.com/kothf/step-viewer/compare/v1.429.0...v1.430.0
+[1.429.0]: https://github.com/kothf/step-viewer/compare/v1.428.0...v1.429.0
 [1.428.0]: https://github.com/kothf/step-viewer/compare/v1.427.0...v1.428.0
 [1.427.0]: https://github.com/kothf/step-viewer/compare/v1.426.0...v1.427.0
 [1.426.0]: https://github.com/kothf/step-viewer/compare/v1.425.0...v1.426.0

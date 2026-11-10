@@ -146,6 +146,12 @@ export interface DimAnnot {
   horiz?: boolean;
   /** Radius dimensions: foreshortened (the dimension line stops short of the centre with a jog), for a centre far away or off the sheet. */
   fore?: boolean;
+  /** Diameter dimensions: shown as a linear dimension across the circle, measured horizontally or vertically on the sheet (extension lines from the rim). */
+  lin?: "h" | "v";
+  /** Arrowheads of this dimension; absent = as the drawing's style says (`DraftStyle.arrow`). */
+  ends?: "filled" | "open" | "dot" | "tick";
+  /** Radius and diameter dimensions with the text outside the circle: the leader stops at the rim with one arrow pointing at it from outside, instead of crossing the circle. */
+  outside?: boolean;
 }
 
 /** A note: on the sheet (sheet mm) or on a view (its model axes, so it moves with the view), with an optional leader to the model. */
@@ -154,7 +160,8 @@ export interface DimAnnot {
 export interface NoteAnnot { id: string; t: "note"; view?: string; pos: [number, number]; text: string; h?: number; leader?: GeoRef; border?: "box" | "round" | "circle"; al?: "c" | "r"; end?: "dot" | "none"; bent?: boolean }
 
 /** A hole callout (FR-DRW-022) on a round edge, from the hole feature when there is one. */
-export interface HoleAnnot { id: string; t: "hole"; view: string; ref: GeoRef; pos: [number, number]; txt?: string }
+/** `count` false leaves the number of equal holes ("4×") out of the automatic text; `below` adds a line under it (e.g. "EQUALLY SPACED"). */
+export interface HoleAnnot { id: string; t: "hole"; view: string; ref: GeoRef; pos: [number, number]; txt?: string; count?: boolean; below?: string }
 
 /** Geometric characteristics (ISO 1101 / ASME Y14.5). */
 export type GSym = "straight" | "flat" | "circ" | "cyl" | "pline" | "psurf" | "par" | "perp" | "ang" | "pos" | "conc" | "sym" | "runout" | "trunout";
@@ -163,9 +170,9 @@ export type GSym = "straight" | "flat" | "circ" | "cyl" | "pline" | "psurf" | "p
 export interface GRow { sym: GSym; tol: string; dia?: boolean; mod?: "M" | "L"; datums: string[]; composite?: boolean }
 /** Geometric tolerance (FR-DRW-023): a feature control frame with a leader to the model (or free). */
 /** `around`: the all-around circle at the leader's bend (the tolerance applies all around the profile). */
-export interface GtolAnnot { id: string; t: "gtol"; view?: string; pos: [number, number]; rows: GRow[]; leader?: GeoRef; around?: boolean }
+export interface GtolAnnot { id: string; t: "gtol"; view?: string; pos: [number, number]; rows: GRow[]; leader?: GeoRef; around?: boolean; /** Text above the frame (e.g. "2×") and below it. */ above?: string; below?: string }
 /** Datum feature symbol: a filled triangle on an edge and a framed letter. */
-export interface DatumAnnot { id: string; t: "datum"; view: string; ref: GeoRef; pos: [number, number]; letter: string }
+export interface DatumAnnot { id: string; t: "datum"; view: string; ref: GeoRef; pos: [number, number]; letter: string; /** Outline triangle instead of the filled one (ISO 1101 allows both). */ open?: boolean; /** The leader leaves the triangle square to the edge, then runs level along the edge to the frame. */ bent?: boolean }
 /** Surface finish (ISO 1302 / 21920): the tick on an edge, any process, material removed or not removed, with the roughness above. */
 /** `text2`: a second requirement under the first (the long leg grows). `lay`: the lay symbol beside the long leg. `allow`: machining allowance in mm, left of the short leg. `around`: the circle that makes it apply to every surface round the outline. */
 export type SurfLay = "=" | "⊥" | "X" | "M" | "C" | "R" | "P";
@@ -178,7 +185,7 @@ export interface TableAnnot { id: string; t: "table"; view?: undefined; kind: "r
  * start with `<component id>@`), the number is that part's item in the BOM unless `txt` overrides it.
  * `stack` lists more components whose items are stacked under it (one leader for all).
  */
-export interface BalloonAnnot { id: string; t: "balloon"; view: string; ref: GeoRef; pos: [number, number]; txt?: string; stack?: string[]; /** Outline other than the plain circle; "split" shows the BOM quantity in the lower half. */ shape?: "split" | "tri" | "hex" | "box" | "none" }
+export interface BalloonAnnot { id: string; t: "balloon"; view: string; ref: GeoRef; pos: [number, number]; txt?: string; stack?: string[]; /** Outline other than the plain circle; "split" shows the BOM quantity in the lower half. */ shape?: "split" | "tri" | "hex" | "box" | "none"; /** Weld tag (weldment part): the number is the bead's row in the weld table, stacked entries are `weld:<row>`. */ weld?: true }
 
 /**
  * A hole table (FR-DRW-024): the holes seen end-on in a view, tagged on the view (A1, A2, B1: one letter per size) and listed
@@ -292,7 +299,9 @@ export interface DraftStyle { text?: 2.5 | 3.5 | 5; arrow?: "filled" | "open" | 
   /** Default symmetric tolerance (±) of dimensions with none of their own: linear in mm, angular in degrees. */
   tol?: number; atol?: number;
   /** Dual dimensions: lengths also shown in inches in brackets, with `dualPrec` decimals (3 when absent). */
-  dual?: "in"; dualPrec?: number }
+  dual?: "in"; dualPrec?: number;
+  /** Extension lines (sheet mm): the gap left at the outline (1 when absent; ISO 129 allows 0) and how far they run past the dimension line (2 when absent). */
+  extGap?: number; extOver?: number }
 
 /** Model facts for the title block. */
 export interface ModelInfo { title: string; number?: string; revision?: string; author?: string; material?: string; mass?: number; box: [V3, V3] }

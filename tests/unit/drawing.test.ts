@@ -310,6 +310,29 @@ test("GD&T, datums, surface finish, tables, GOST title block, dangling annotatio
   const tri = d.prims.find(p => p.t === "p" && p.fill) as { p: number[] };
   assert.equal(tri.p[5], 3);
   assert.deepEqual(d.box, [6.5, 11.5, 13.5, 18.5]);
+  {
+    // Open triangle: an outline, no fill. Bent leader: up from the apex square to the edge, then level to the frame.
+    const o = datumPrims({ id: "d", t: "datum", view: "v", ref: { pt: [0, 0, 0] }, pos: [0, 0], letter: "A", open: true, bent: true }, [10, 0], [1, 0], [30, 15]);
+    assert.ok(!o.prims.some(p => p.t === "p" && p.fill), "no filled triangle");
+    const ls = o.prims.filter(p => p.t === "l") as unknown as { p: number[] }[];
+    assert.equal(ls.length, 2);
+    assert.deepEqual(ls[0].p, [10, 3, 10, 15]);
+    assert.deepEqual(ls[1].p, [10, 15, 26.5, 15]);
+    // Straight above the edge point there is nothing to bend.
+    const st = datumPrims({ id: "d", t: "datum", view: "v", ref: { pt: [0, 0, 0] }, pos: [0, 0], letter: "A", bent: true }, [10, 0], [1, 0], [10, 15]);
+    assert.equal(st.prims.filter(p => p.t === "l").length, 1);
+  }
+  {
+    // Text above and below a tolerance frame: left-aligned with it, and inside the hit box.
+    const row = { sym: "pos" as const, tol: "0.1", datums: ["A"] };
+    const g0 = gtolPrims({ id: "g", t: "gtol", pos: [0, 0], rows: [row] }, [10, 20], null, ".");
+    const g1 = gtolPrims({ id: "g", t: "gtol", pos: [0, 0], rows: [row], above: "2×", below: "SEP REQT" }, [10, 20], null, ".");
+    const tt = g1.prims.filter(p => p.t === "t") as { s: string; x: number; y: number }[];
+    const up = tt.find(p => p.s === "2×")!, dn = tt.find(p => p.s === "SEP REQT")!;
+    assert.ok(up.x === 10 && up.y > 20 && dn.x === 10 && dn.y < 20 - 7 - 2.5 + 1e-9);
+    assert.ok(g1.box[3] > g0.box[3] && g1.box[1] < g0.box[1] && g1.box[0] === g0.box[0]);
+    assert.equal(g1.prims.length, g0.prims.length + 2);
+  }
   // Surface finish: the removal bar and the roughness under the long leg's line, decimal comma.
   const s = surfPrims({ id: "s", t: "surf", pos: [0, 0], proc: "removal", text: "Ra 3.2" }, [0, 0], ",");
   assert.equal(s.prims.filter(p => p.t === "l").length, 4);
@@ -725,6 +748,15 @@ test("DXF 2000: handles, owners, model space records, LWPOLYLINE, Unicode text (
   assert.ok(Math.max(...hs) < seed);
   assert.ok(d.includes("LWPOLYLINE") && d.includes("*Model_Space") && d.includes("ACAD_GROUP"));
   assert.ok(d.includes("\\U+041C\\U+0430") && d.includes("\\U+00D8") && !/[^\x00-\x7f]/.test(d));
+});
+
+test("DXF 2000 of a big sheet: no call stack overflow (File ▸ Export on the Leuenberger engine drawing)", async () => {
+  const { sheetDxf2000 } = await import("../../src/drawing/output");
+  const prims: any[] = [];
+  for (let i = 0; i < 60000; i++) prims.push({ t: "l", p: [i % 400, 0, i % 400, 10], pen: "thin", layer: "VISIBLE" });
+  const d = sheetDxf2000(prims, 420, 297);
+  assert.ok(d.startsWith("0\nSECTION\n2\nHEADER") && d.trimEnd().endsWith("EOF"));
+  assert.equal(d.split("\nLINE\n").length - 1, 60000);
 });
 
 test("note property links: $PRP:\"name\" takes the title block field, SolidWorks names too (FR-DRW-023)", async () => {
@@ -1152,6 +1184,7 @@ test("hole callouts read from the geometry: count, counterbore, countersink, bli
   const ctx = { topo, holes: [], items: [], box: [[-50, -30, 0], [50, 30, 20]] as [V3, V3], dec: ".", label: (s: string) => s };
   const at = (x: number, y: number, r: number) => topo.edges.find(e => e.t === "c" && Math.abs(e.r! - r) < 1e-6 && Math.abs(e.c![0] - x) < 1e-6 && Math.abs(e.c![1] - y) < 1e-6)!;
   assert.deepEqual(holeText(at(-30, 15, 3.3), ctx), ["4× Ø6.6 THRU", "⌴Ø11 ↧6.4"]);
+  assert.deepEqual(holeText(at(-30, 15, 3.3), ctx, false), ["Ø6.6 THRU", "⌴Ø11 ↧6.4"], "without the number of holes");
   assert.deepEqual(holeText(at(10, 15, 5.5), ctx), ["4× Ø6.6 THRU", "⌴Ø11 ↧6.4"], "the counterbore's own circle gives the same callout");
   assert.deepEqual(holeText(at(0, -15, 6.72), ctx), ["2× Ø6.6 THRU", "⌵Ø13.44 × 90°"]);
   assert.deepEqual(holeText(at(30, -15, 2.5), ctx), ["Ø5 ↧12"]);
@@ -1315,6 +1348,52 @@ test("a dimension can carry a second line of text under its line (FR-DRW-021)", 
     assert.ok(Math.hypot(zig.p[0], zig.p[1]) > 70 && Math.hypot(zig.p[0], zig.p[1]) < 80, "and starts about 24 mm inside it");
     assert.ok(!short.prims.some(q => q.t === "l" && Math.hypot((q as { p: number[] }).p[0], (q as { p: number[] }).p[1]) < 1e-9));
     assert.equal(short.prims.filter(q => q.t === "t").length, full.prims.filter(q => q.t === "t").length);
+  }
+  {
+    // Arrow outside: with the text outside the circle the leader stops at the rim (one arrow, nothing crosses the circle).
+    const dia = { id: "d", t: "dim", view: "v", k: "dia", refs: [], pos: [30, 0] } as never, dg = { k: "dia", pts: [], c: [0, 0], r: 10, value: 20 } as never;
+    const through = dimPrims(dia, dg, pl, "."), lead = dimPrims({ ...(dia as object), outside: true } as never, dg, pl, ".");
+    const xs = (o: { prims: { t: string }[] }) => o.prims.filter(q => q.t === "l").flatMap(q => [(q as never as { p: number[] }).p[0], (q as never as { p: number[] }).p[2]]);
+    assert.ok(Math.min(...xs(through)) < -9.99, "the plain diameter crosses the circle");
+    assert.ok(Math.min(...xs(lead)) > 9.99, "the leader stays outside it");
+    assert.equal(lead.prims.length, through.prims.length - 1, "one arrow instead of two");
+    // Text inside the circle: nothing to lead from, so the option changes nothing.
+    const inn = { id: "d", t: "dim", view: "v", k: "dia", refs: [], pos: [3, 0] } as never;
+    assert.deepEqual(dimPrims({ ...(inn as object), outside: true } as never, dg, pl, ".").prims, dimPrims(inn, dg, pl, ".").prims);
+  }
+  {
+    // A diameter displayed as a linear dimension: extension lines from the rim's left and right ends, arrows on a level line, Ø kept.
+    const dia = { id: "d", t: "dim", view: "v", k: "dia", refs: [], pos: [3, 30], lin: "h" } as never, dg = { k: "dia", pts: [], c: [0, 0], r: 10, value: 20 } as never;
+    const o = dimPrims(dia, dg, pl, ".");
+    const ls = o.prims.filter(q => q.t === "l").map(q => (q as { p: number[] }).p);
+    assert.ok(ls.some(p => Math.abs(p[0] + 10) < 1e-9 && Math.abs(p[2] + 10) < 1e-9 && p[3] > 30), "extension line at x = -10");
+    assert.ok(ls.some(p => Math.abs(p[0] - 10) < 1e-9 && Math.abs(p[2] - 10) < 1e-9 && p[3] > 30), "extension line at x = 10");
+    assert.ok(ls.some(p => Math.abs(p[1] - 30) < 1e-9 && Math.abs(p[3] - 30) < 1e-9 && Math.abs(Math.abs(p[2] - p[0]) - 20) < 1e-9), "dimension line 20 long at y = 30");
+    assert.ok(o.prims.some(q => q.t === "t" && (q as { s: string }).s === "Ø20"));
+    const v = dimPrims({ ...(dia as object), lin: "v", pos: [30, 3] } as never, dg, pl, ".").prims.filter(q => q.t === "l").map(q => (q as { p: number[] }).p);
+    assert.ok(v.some(p => Math.abs(p[0] - 30) < 1e-9 && Math.abs(p[2] - 30) < 1e-9 && Math.abs(Math.abs(p[3] - p[1]) - 20) < 1e-9), "vertical dimension line at x = 30");
+  }
+  {
+    // The drawing's extension line gap and overshoot: with gap 0 and 3 past, the Ø20's lines start on the rim (y = 0) and end 3 above the dimension line.
+    const { useStyle } = await import("../../src/drawing/annot");
+    const dia = { id: "d", t: "dim", view: "v", k: "dia", refs: [], pos: [3, 30], lin: "h" } as never, dg = { k: "dia", pts: [], c: [0, 0], r: 10, value: 20 } as never;
+    const ext = () => dimPrims(dia, dg, pl, ".").prims.filter(q => q.t === "l").map(q => (q as { p: number[] }).p).filter(p => Math.abs(p[0] - p[2]) < 1e-9 && Math.abs(Math.abs(p[0]) - 10) < 1e-9);
+    const std = ext();
+    assert.ok(std.length === 2 && std.every(p => Math.abs(Math.min(p[1], p[3]) - 1) < 1e-9 && Math.abs(Math.max(p[1], p[3]) - 32) < 1e-9), JSON.stringify(std));
+    try {
+      useStyle({ extGap: 0, extOver: 3 });
+      const own = ext();
+      assert.ok(own.length === 2 && own.every(p => Math.abs(Math.min(p[1], p[3])) < 1e-9 && Math.abs(Math.max(p[1], p[3]) - 33) < 1e-9), JSON.stringify(own));
+    } finally { useStyle(undefined); }
+  }
+  {
+    // Arrowheads of its own: oblique strokes are two thick lines in place of the two filled heads, and the next dimension is back to the style's.
+    const base = dimPrims(lin as never, geo as never, pl, ".").prims, tick = dimPrims({ ...lin, ends: "tick" } as never, geo as never, pl, ".").prims;
+    const thick = (ps: typeof base) => ps.filter(q => q.t === "l" && (q as { pen?: string }).pen === "thick").length;
+    const filled = (ps: typeof base) => ps.filter(q => q.t === "p" && (q as { fill?: boolean }).fill).length;
+    assert.equal(thick(tick), thick(base) + 2);
+    assert.equal(filled(tick), filled(base) - 2);
+    assert.deepEqual(dimPrims(lin as never, geo as never, pl, ".").prims, base);
   }
   const plain = dimPrims(lin as never, geo as never, pl, ".");
   const r = dimPrims({ ...lin, below: "2 PLACES" } as never, geo as never, pl, ".");
