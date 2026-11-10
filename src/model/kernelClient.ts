@@ -7,6 +7,7 @@ import { giveBack, takeWorker } from "../kernel/spare";
 import type { Prebuilt } from "../kernel/kernel.worker";
 import { kernelPool, type KernelPool } from "../kernel/pool";
 import type { PartData } from "../topology";
+import type { OwnBody } from "../tools/inertia";
 import type { AsmDoc, AsmComponentStatus } from "../asm/types";
 import type { SheetState } from "../sheetmetal/sheet";
 import type { CutItem } from "../weldments/types";
@@ -183,7 +184,7 @@ export class ModelKernel {
   }
 
   /** Evaluates an assembly: one mesh per shown component, placed (FRS 10). */
-  async assembly(doc: AsmDoc): Promise<{ parts: { id: string; data: PartData; faces: string[] }[]; statuses: AsmComponentStatus[]; features?: AsmFeatureStatus[]; props: BodyProps | null }> {
+  async assembly(doc: AsmDoc): Promise<{ parts: { id: string; data: PartData; faces: string[]; bodies?: OwnBody[] }[]; statuses: AsmComponentStatus[]; features?: AsmFeatureStatus[]; props: BodyProps | null }> {
     let t = performance.now();
     const todo = this.unbuilt(doc);
     const pool = todo.length > 1 ? kernelPool(this.base) : null;
@@ -194,7 +195,7 @@ export class ModelKernel {
     const start = lap();
     const pre = pool ? await this.prebuild(doc, todo, pool) : undefined;
     const pb = lap();
-    const r = await this.call<{ parts: { id: string; data: PartData; faces: string[] }[]; statuses: AsmComponentStatus[]; features?: AsmFeatureStatus[]; props: BodyProps | null }>({ type: "asm", doc, quality: 1, pre });
+    const r = await this.call<{ parts: { id: string; data: PartData; faces: string[]; bodies?: OwnBody[] }[]; statuses: AsmComponentStatus[]; features?: AsmFeatureStatus[]; props: BodyProps | null }>({ type: "asm", doc, quality: 1, pre });
     // The worker now holds these part sources; a new worker (after a crash) knows none.
     this.timing = { start, prebuild: pb, asm: lap(), worker: Math.round((r as any).ms) };
     if (this.worker === worker) this.known = new Map(Object.entries(doc.parts).map(([k, p]) => [k, JSON.stringify(p.doc)]));

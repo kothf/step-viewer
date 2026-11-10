@@ -15,6 +15,7 @@ import { analyzeMesh } from "../topology";
 import { applyPatch, probe } from "./patch";
 import { transformPart } from "../asm/light";
 import { invert } from "../asm/math";
+import { moveBodies } from "../tools/inertia";
 import type { PartData } from "../topology";
 import type { PartDoc } from "../model/types";
 import parasolidWasm from "../sw/parasolid.wasm?url";
@@ -246,7 +247,8 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
           shared.set(p.src, { quality: r.quality, data: transformPart(data, invert(p.tf)) });
         }
         data.color = color;
-        parts.push({ id: p.id, data, faces: p.body.names });
+        const own = assembler.ownBodies(p.part, r.doc, p.src);
+        parts.push({ id: p.id, data, faces: p.body.names, ...(own ? { bodies: moveBodies(own, p.tf) } : {}) });
       }
       post({ id: r.id, ok: true, parts, statuses, features: assembler.featureStatus, props: assembler.props(placed), heap: heap(), ms: performance.now() - t0 });
     } else if (r.type === "asmClearance") {
