@@ -170,3 +170,35 @@ test("recognize features: blind cross holes in a shaft come back as Hole Wizard 
   const deep = fs.map(f => f.type === "hole" ? { ...f, depth: { v: (f as any).depth.v + 2 } } as Feature : f);
   assert.ok(vol(m, doc([...imp.features, ...deep])) < v0 - 5);
 });
+
+test("recognize features: keyways in a shaft come back as a tangent plane, a slot sketch and a blind cut (FR-FT-102)", async () => {
+  const m = new Modeller(await occ());
+  const xy: [number, number][] = [[0, 0], [10, 0], [10, 40], [0, 40]];
+  const ents: SkEnt[] = xy.map(([x, y], i) => ({ id: `rp${i}`, t: "point", x, y }) as SkEnt);
+  xy.forEach((_, i) => ents.push({ id: `rl${i}`, t: "line", a: `rp${i}`, b: `rp${(i + 1) % xy.length}` }));
+  ents.push({ id: "ra", t: "point", x: 0, y: -5 }, { id: "rb", t: "point", x: 0, y: 45 }, { id: "rax", t: "line", a: "ra", b: "rb", cons: true });
+  // A 6 wide slot with round ends, centres 14 apart (z 13 to 27), in the frame of the plane it is sketched on.
+  const slot = (id: string, pl: string, x0: number): SketchFeature => ({ id, type: "sketch", name: id, plane: { plane: pl }, rels: [], dims: [], ents: [
+    { id: `${id}c1`, t: "point", x: x0, y: 13 }, { id: `${id}c2`, t: "point", x: x0, y: 27 },
+    { id: `${id}a1`, t: "point", x: x0 + 3, y: 13 }, { id: `${id}a2`, t: "point", x: x0 + 3, y: 27 }, { id: `${id}b1`, t: "point", x: x0 - 3, y: 13 }, { id: `${id}b2`, t: "point", x: x0 - 3, y: 27 },
+    { id: `${id}l1`, t: "line", a: `${id}a1`, b: `${id}a2` }, { id: `${id}l2`, t: "line", a: `${id}b2`, b: `${id}b1` },
+    { id: `${id}r1`, t: "arc", c: `${id}c2`, a: `${id}a2`, b: `${id}b2` }, { id: `${id}r2`, t: "arc", c: `${id}c1`, a: `${id}b1`, b: `${id}a1` }] as SkEnt[] });
+  // One keyway 3.5 deep from the plane tangent at y = -10, one 3 deep from x = -10 (that cut reversed).
+  const imp = imported(m, [{ id: "r", type: "sketch", name: "r", plane: { std: "XZ" }, ents, rels: [], dims: [] },
+    { id: "v", type: "revolve", name: "V", sketch: "r", op: "boss", axis: "rax", angle: { v: Math.PI * 2 } } as Feature,
+    { id: "pa", type: "plane", name: "PA", base: { std: "XZ" }, mode: "offset", offset: { v: 10 } } as Feature, slot("ka", "pa", 0),
+    { id: "ca", type: "extrude", name: "CA", sketch: "ka", op: "cut", end: "blind", depth: { v: 3.5 } } as Feature,
+    { id: "pb", type: "plane", name: "PB", base: { std: "YZ" }, mode: "offset", offset: { v: 10 }, flip: true } as Feature, slot("kb", "pb", 0),
+    { id: "cb", type: "extrude", name: "CB", sketch: "kb", op: "cut", end: "blind", depth: { v: 3 }, flip: true } as Feature]);
+  const v0 = vol(m, imp);
+  const E = m.recognizeExtrudes(imp);
+  assert.equal(types(E), "sketch,extrude,delbody,plane,sketch,extrude,plane,sketch,extrude");
+  assert.deepEqual(E.filter(f => f.type === "extrude" && (f as any).op === "cut").map(f => +(f as any).depth.v.toFixed(6)).sort(), [3, 3.5]);
+  close(vol(m, doc([...imp.features, ...E])), v0, 1e-5);
+  const fs = m.recognizeFeatures(imp);
+  assert.equal(types(fs), "sketch,extrude,delbody,plane,sketch,extrude,plane,sketch,extrude");
+  close(vol(m, doc([...imp.features, ...fs])), v0, 1e-5);
+  // The keyway stays editable: deeper takes more material.
+  const deep = fs.map(f => f.type === "extrude" && (f as any).op === "cut" ? { ...f, depth: { v: (f as any).depth.v + 1 } } as Feature : f);
+  assert.ok(vol(m, doc([...imp.features, ...deep])) < v0 - 50);
+});

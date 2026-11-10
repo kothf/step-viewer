@@ -3606,7 +3606,11 @@ export class Modeller {
     const at = (fs: Feature[]): PartDoc => ({ ...doc, rollback: null, features: [...upto, ...fs] });
     // A pocket in the floor of another pocket (or in a boss) comes off first; the one around it is found in the
     // next round, on the body without it. They go back on from the last round to the first.
-    const rounds: ExtrudeFind[][] = [], dels: Feature[] = [];
+    // Keyways in a shaft have no flat face to sketch on: they come off first and go back last, on reference planes.
+    let K = { faces: [] as FaceRef[], feats: [] as Feature[] };
+    try { K = this.keyways(at([])); } catch { /* none */ }
+    const kDel: Feature[] = K.faces.length ? [{ id: `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`, type: "delface", name: "", faces: K.faces } as Feature] : [];
+    const rounds: ExtrudeFind[][] = [], dels: Feature[] = [...kDel];
     let first: Feature[] = [];
     for (let k = 0; k < 6; k++) {
       const r = this.extrudeRound(at(dels));
@@ -3616,10 +3620,10 @@ export class Modeller {
       if (!k) first = r.feats;
     }
     if (base) {
-      try { const b = this.baseExtrude(upto, at, dels, rounds); if (b) return b; } catch { /* without the base */ }
-      try { const b = this.baseRevolve(upto, at, dels, rounds); if (b) return b; } catch { /* without the base */ }
+      try { const b = this.baseExtrude(upto, at, dels, rounds, K.feats); if (b) return b; } catch { /* without the base */ }
+      try { const b = this.baseRevolve(upto, at, dels, rounds, K.feats); if (b) return b; } catch { /* without the base */ }
     }
-    if (rounds.length < 2) return first;
+    if (rounds.length < 2) return [...kDel, ...first, ...K.feats];
     try {
       const start = this.evaluate(at([])).body;
       if (!start) return [];
@@ -3628,14 +3632,104 @@ export class Modeller {
       for (let k = rounds.length - 1; k >= 0; k--) {
         const r = this.evaluate(at(out));
         const fs = r.body ? this.extrudeFeatures(rounds[k], r.body, r.frames) : null;
-        if (!fs) return first;
+        if (!fs) return [...kDel, ...first, ...K.feats];
         out.push(...fs);
       }
+      out.push(...K.feats);
       const fin = this.evaluate(at(out));
       if (fin.body && !fin.statuses.slice(-out.length).some(s => s.ok === false) && Math.abs(this.volume(fin.body.shape) - v0) <= 1e-6 * Math.abs(v0) + 1e-9) return out;
     } catch { /* the first round alone */ }
     // The rounds do not go back together: the first one alone is still a good find.
-    return first;
+    return [...kDel, ...first, ...K.feats];
+  }
+
+  /**
+   * Keyways and other closed pockets in a curved face (FR-FT-102): a flat floor with one outline whose every
+   * edge is under a wall square to it (planes, cylinders along its normal) rising into curved faces only, so
+   * there is no flat face to sketch on. Like FeatureWorks it comes back as a reference plane square to the
+   * floor through the walls' farthest point (tangent to a shaft) with the floor's outline sketched on it and a
+   * blind cut down to the floor. The floor must face a standard axis. Each find is kept only when Delete Face
+   * plus the cut gives the same volume.
+   */
+  private keyways(doc: PartDoc): { faces: FaceRef[]; feats: Feature[] } {
+    const oc = this.oc;
+    const none = { faces: [] as FaceRef[], feats: [] as Feature[] };
+    const body = this.evaluate(doc).body;
+    if (!body || this.solids(body.shape) < 1) return none;
+    const at = (fs: Feature[]): PartDoc => ({ ...doc, rollback: null, features: [...doc.features.slice(0, doc.rollback ?? doc.features.length), ...fs] });
+    const v0 = this.volume(body.shape);
+    const tol = Math.max(1e-4, this.size(body.shape) * 1e-6) * 10;
+    const S = oc.GeomAbs_SurfaceType, C = oc.GeomAbs_CurveType;
+    const emap = new oc.TopTools_IndexedMapOfShape_1();
+    oc.TopExp.MapShapes_1(body.shape, oc.TopAbs_ShapeEnum.TopAbs_EDGE, emap);
+    const users: number[][] = Array.from({ length: emap.Extent() + 1 }, () => []);
+    const edges = body.faces.map((f, i) => this.sub(f, "EDGE").map(e => { const k = emap.FindIndex(e); if (k > 0 && !users[k].includes(i)) users[k].push(i); return { e, k }; }));
+    const across = (i: number, k: number) => users[k]?.find(j => j !== i) ?? -1;
+    const kinds = body.faces.map(face => {
+      const ad = new oc.BRepAdaptor_Surface_2(face, true), ty = ad.GetType();
+      if (ty === S.GeomAbs_Plane) return { pln: this.faceNormalAt(face) };
+      if (ty === S.GeomAbs_Cylinder) return { cyl: unit(this.xyz(ad.Cylinder().Axis().Direction())) };
+      return {};
+    }) as { pln?: V3; cyl?: V3 }[];
+    const id = () => `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
+    const ref = (i: number): FaceRef => ({ name: body.names[i], hint: this.centroid(body.faces[i]) });
+    const out = { faces: [] as FaceRef[], feats: [] as Feature[] };
+    body.faces.forEach((face, i) => {
+      const n = kinds[i].pln;
+      if (!n) return;
+      const std = (["XY", "XZ", "YZ"] as const).find(k => Math.abs(Math.abs(dot(STD_FRAMES[k].n, n)) - 1) < 1e-9);
+      if (!std) return;
+      const wmap = new oc.TopTools_IndexedMapOfShape_1();
+      oc.TopExp.MapShapes_1(face, oc.TopAbs_ShapeEnum.TopAbs_WIRE, wmap);
+      if (wmap.Extent() !== 1) return;
+      const segs: ExtrudeFind["segs"] = [], walls: number[] = [];
+      let P: V3 | null = null;
+      for (const e of this.sub(wmap.FindKey(1), "EDGE")) {
+        const j = across(i, emap.FindIndex(e)), k = j >= 0 ? kinds[j] : {} as { pln?: V3; cyl?: V3 };
+        if (!(k.pln && Math.abs(dot(k.pln, n)) < 1e-6) && !(k.cyl && Math.abs(Math.abs(dot(k.cyl, n)) - 1) < 1e-6)) return;
+        const ca = new oc.BRepAdaptor_Curve_2(e), t0 = ca.FirstParameter(), t1 = ca.LastParameter(), ct = ca.GetType();
+        const a = this.xyz(ca.Value(t0)), b = this.xyz(ca.Value(t1)), m = this.xyz(ca.Value((t0 + t1) / 2));
+        P ??= a;
+        if (ct === C.GeomAbs_Line) segs.push({ line: [a, b] });
+        else if (ct === C.GeomAbs_Circle) {
+          const c = this.xyz(ca.Circle().Location());
+          if (Math.abs(Math.abs(t1 - t0) - 2 * Math.PI) < 1e-9) segs.push({ circle: { c, r: ca.Circle().Radius() } });
+          else segs.push({ arc: { c, a, b, m } });
+        } else return;
+        if (!walls.includes(j)) walls.push(j);
+      }
+      if (!P || !walls.length) return;
+      // The walls rise from the floor into curved faces only (a flat top is an ordinary pocket), over air.
+      for (const j of walls) for (const { e } of edges[j]) {
+        const ca = new oc.BRepAdaptor_Curve_2(e);
+        for (const t of [ca.FirstParameter(), ca.LastParameter()]) if (dot(sub3(this.xyz(ca.Value(t)), P), n) < -tol) return;
+      }
+      const far = [...new Set(walls.flatMap(j => edges[j].map(x => across(j, x.k))))].filter(j => j >= 0 && j !== i && !walls.includes(j));
+      if (!far.length || far.some(j => kinds[j].pln)) return;
+      const c = this.centroid(face);
+      if (new oc.BRepClass3d_SolidClassifier_3(body.shape, this.P(add(c, mul(n, tol * 10))), 1e-7).State() !== oc.TopAbs_State.TopAbs_OUT) return;
+      const h = Math.max(...walls.map(j => this.reachAlong(body.faces[j], P!, n)));
+      if (!(h > tol)) return;
+      const F = STD_FRAMES[std], top = add(P, mul(n, h)), hs = dot(sub3(top, F.o), F.n);
+      const fr: Frame = { o: mul(F.n, hs), x: F.x, y: F.y, n: F.n };
+      const up = (p: V3) => add(p, mul(n, h - dot(sub3(p, P!), n)));
+      const lifted = segs.map(sg => "line" in sg ? { line: [up(sg.line[0]), up(sg.line[1])] as [V3, V3] }
+        : "circle" in sg ? { circle: { c: up(sg.circle.c), r: sg.circle.r } } : { arc: { c: up(sg.arc.c), a: up(sg.arc.a), b: up(sg.arc.b), m: up(sg.arc.m) } });
+      const pid = id(), sid = id();
+      const feats: Feature[] = [
+        { id: pid, type: "plane", name: "", base: { std }, mode: "offset", offset: { v: Math.abs(hs) }, ...(hs < 0 ? { flip: true } : {}) } as Feature,
+        { id: sid, type: "sketch", name: "", plane: { plane: pid }, ents: this.loopEnts(sid, fr, lifted).ents, rels: [], dims: [] } as Feature,
+        { id: id(), type: "extrude", name: "", sketch: sid, op: "cut", end: "blind", depth: { v: h }, ...(dot(n, F.n) < 0 ? { flip: true } : {}) } as Feature];
+      const faces = [i, ...walls].map(ref);
+      try {
+        const r = this.evaluate(at([{ id: "__key", type: "delface", name: "", faces } as Feature, ...feats]));
+        if (!r.body || r.statuses.slice(-4).some(x => x.ok === false)) return;
+        if (Math.abs(this.volume(r.body.shape) - v0) > 1e-6 * Math.abs(v0) + 1e-9 && !this.sameVolume(r.body.shape, body.shape)) return;
+      } catch { return; }
+      out.faces.push(...faces);
+      out.feats.push(...feats);
+    });
+    return out;
   }
 
   /**
@@ -3734,7 +3828,7 @@ export class Modeller {
    * again as a sketch on one end with an Extrude that adds a new body, the imported body is deleted, and the
    * finds go back on the new one. No Delete Face is needed then.
    */
-  private baseExtrude(upto: Feature[], at: (fs: Feature[]) => PartDoc, dels: Feature[], rounds: ExtrudeFind[][]): Feature[] | null {
+  private baseExtrude(upto: Feature[], at: (fs: Feature[]) => PartDoc, dels: Feature[], rounds: ExtrudeFind[][], tail: Feature[] = []): Feature[] | null {
     const oc = this.oc;
     const imports = upto.filter(f => f.type === "import" && !f.suppressed).map(f => `${f.id}:`);
     if (!imports.length) return null;
@@ -3797,9 +3891,11 @@ export class Modeller {
       if (!fs) return null;
       out.push(...fs);
     }
+    out.push(...tail);
     const fin = this.evaluate(at(out));
     if (!fin.body || this.solids(fin.body.shape) !== 1 || fin.statuses.slice(-out.length).some(s => s.ok === false)) return null;
-    return Math.abs(this.volume(fin.body.shape) - v0) <= 1e-6 * Math.abs(v0) + 1e-9 ? out : null;
+    // Keyways (tail) put back on curved faces need the adaptive volume (the quick one is a few 1e-6 off there).
+    return Math.abs(this.volume(fin.body.shape) - v0) <= 1e-6 * Math.abs(v0) + 1e-9 || (tail.length && this.sameVolume(fin.body.shape, start.body.shape)) ? out : null;
   }
 
   /** The flat face of a body that holds point `p` and faces along `n`. */
@@ -3845,7 +3941,7 @@ export class Modeller {
    * and the axis lies in a standard plane or parallel to one, the half section in that plane becomes a sketch
    * with a centreline, a Revolve makes a new body from it and the imported body is deleted.
    */
-  private baseRevolve(upto: Feature[], at: (fs: Feature[]) => PartDoc, dels: Feature[], rounds: ExtrudeFind[][]): Feature[] | null {
+  private baseRevolve(upto: Feature[], at: (fs: Feature[]) => PartDoc, dels: Feature[], rounds: ExtrudeFind[][], tail: Feature[] = []): Feature[] | null {
     const oc = this.oc;
     const imports = upto.filter(f => f.type === "import" && !f.suppressed).map(f => `${f.id}:`);
     if (!imports.length) return null;
@@ -3929,9 +4025,11 @@ export class Modeller {
       if (!fs) return null;
       out.push(...fs);
     }
+    out.push(...tail);
     const fin = this.evaluate(at(out));
     if (!fin.body || this.solids(fin.body.shape) !== 1 || fin.statuses.slice(-out.length).some(s => s.ok === false)) return null;
-    return Math.abs(this.volume(fin.body.shape) - v0) <= 1e-6 * Math.abs(v0) + 1e-9 ? out : null;
+    // Keyways (tail) put back on curved faces need the adaptive volume (the quick one is a few 1e-6 off there).
+    return Math.abs(this.volume(fin.body.shape) - v0) <= 1e-6 * Math.abs(v0) + 1e-9 || (tail.length && this.sameVolume(fin.body.shape, start.body.shape)) ? out : null;
   }
 
   /** Sketch + extrude pairs for finds, each on the flat face of `body` its loop lies on. */
