@@ -533,10 +533,14 @@ function holePrims(a: HoleAnnot, e: MEdge, P: (p: V3) => P2, pl: Placement, ctx:
 }
 
 /** Draws a note (multi-line text) and its leader. */
+/** Length of a bent note leader's horizontal shoulder, sheet mm. */
+export const NOTE_SHOULDER = 4;
 export function notePrims(a: NoteAnnot, at: P2, leaderTo: P2 | null): { prims: Prim[]; box: [number, number, number, number] } {
   const out: Prim[] = [], h = a.h ?? TEXT_H, lines = expandProps(a.text).split("\n");
-  lines.forEach((s, i) => out.push({ t: "t", x: at[0], y: at[1] - i * h * 1.5, s, h, al: "l", layer: "ANNOT" }));
   const w = Math.max(1, ...lines.map(s => textW(s, h)));
+  // Justification: the block keeps its place, the lines move inside it.
+  const tx = a.al === "c" ? at[0] + w / 2 : a.al === "r" ? at[0] + w : at[0];
+  lines.forEach((s, i) => out.push({ t: "t", x: tx, y: at[1] - i * h * 1.5, s, h, al: a.al ?? "l", layer: "ANNOT" }));
   let box: [number, number, number, number] = [at[0] - 0.5, at[1] - (lines.length - 1) * h * 1.5 - 0.3 * h, at[0] + w + 0.5, at[1] + h * 1.1];
   // Border (FR-DRW-023): a box, an obround or a circle round the text; the leader then starts on it.
   const cx = (box[0] + box[2]) / 2, cy = (box[1] + box[3]) / 2, cr = Math.hypot(box[2] - box[0], box[3] - box[1]) / 2 + 0.3;
@@ -550,8 +554,15 @@ export function notePrims(a: NoteAnnot, at: P2, leaderTo: P2 | null): { prims: P
     let start: P2 = [leaderTo[0] < at[0] ? at[0] - 1 : at[0] + w + 1, at[1] + h * 0.35];
     if (a.border === "circle") { const d = unit2([leaderTo[0] - cx, leaderTo[1] - cy], [1, 0]); start = [cx + d[0] * cr, cy + d[1] * cr]; }
     else if (a.border === "box" || a.border === "round") start = [leaderTo[0] < at[0] ? fr[0] : fr[2], (fr[1] + fr[3]) / 2];
+    // A bent leader leaves the text along a horizontal shoulder (not from a circle, which it leaves radially).
+    if (a.bent && a.border !== "circle") {
+      const left = leaderTo[0] < at[0], knee: P2 = [start[0] + (left ? -NOTE_SHOULDER : NOTE_SHOULDER), start[1]];
+      out.push(thin(start, knee)); start = knee;
+    }
     const u = unit2([leaderTo[0] - start[0], leaderTo[1] - start[1]]);
-    out.push(thin(start, leaderTo), arrow(leaderTo[0], leaderTo[1], u[0], u[1]));
+    out.push(thin(start, leaderTo));
+    if (a.end === "dot") { const r = 0.6, p: number[] = []; for (let i = 0; i < 12; i++) p.push(leaderTo[0] + r * Math.cos(i * Math.PI / 6), leaderTo[1] + r * Math.sin(i * Math.PI / 6)); out.push({ t: "p", p, pen: "thin", layer: "ANNOT", closed: true, fill: true }); }
+    else if (a.end !== "none") out.push(arrow(leaderTo[0], leaderTo[1], u[0], u[1]));
   }
   if (a.border === "circle") box = [cx - cr, cy - cr, cx + cr, cy + cr];
   else if (a.border) box = fr;
