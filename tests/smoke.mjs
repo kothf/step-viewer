@@ -9462,7 +9462,7 @@ try {
     // Cut List… opens a table: two member rows and the total mass (steel assumed).
     await runCmd(mp, "Cut List");
     await mp.waitForSelector("#wld-cut[open]");
-    const cl = await mp.evaluate(() => ({ rows: document.querySelectorAll("#wld-cut tbody tr").length, total: document.querySelector("#wld-cut [data-wtotal]")?.textContent }));
+    const cl = await mp.evaluate(() => ({ rows: document.querySelectorAll("#wld-cut tbody tr:not([data-stock])").length, total: document.querySelector("#wld-cut [data-wtotal]")?.textContent }));
     // Item properties typed in the dialog are kept with the part and rename the item in the tree and the CSV.
     await mp.fill('#wld-cut input[data-cp="desc"][data-ci="0"]', "Top rail");
     await mp.press('#wld-cut input[data-cp="desc"][data-ci="0"]', "Tab");
@@ -9481,6 +9481,9 @@ try {
     // Exclude from cut list: the row stays (struck through) without an item number, and the total drops its mass; unticked it comes back.
     const sumOf = () => mp.evaluate(() => document.querySelector("#wld-cut [data-wsum]")?.textContent ?? "");
     const tot0 = num(await sumOf());
+    // Stock lengths under the list: one row per section with its pieces and summed length.
+    const stock = await mp.evaluate(() => [...document.querySelectorAll("#wld-cut tr[data-stock]")].map(tr => [...tr.children].map(td => td.textContent)));
+    check(stock.length >= 1 && stock.every(r => r[0] && Number(r[1]) >= 1 && num(r[2]) > 0), `weldments: stock lengths under the cut list (${JSON.stringify(stock)})`);
     await mp.check('#wld-cut input[data-cp="excl"][data-ci="1"]');
     await settle();
     const ex = await mp.evaluate(() => { const tr = document.querySelectorAll("#wld-cut tbody tr")[1]; return { item: tr.querySelector("[data-witem]")?.textContent, cls: tr.classList.contains("wld-excl"), excl: Object.values(window.__sv.model.store.doc.cutProps ?? {}).some(p => p.excl) }; });
