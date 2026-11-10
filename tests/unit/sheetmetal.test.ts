@@ -9,6 +9,7 @@ import type { SmRipFeature, SmTabSlotFeature, SmInsertFeature, SmConvertFeature,
 import { apply, flatLoops, flatSize, bendAllowance, reliefCorners, filletLoop } from "../../src/sheetmetal/sheet";
 import { flatDrawing } from "../../src/sheetmetal/flat";
 import { cutPropsCsv, sheetCutProps } from "../../src/sheetmetal/cutprops";
+import { bendTableText, defaultTable, dinTable, parseBendTable, tableValue } from "../../src/sheetmetal/bendTable";
 import { loopPolygon, polyArea } from "../../src/sketch/profile";
 import { occ } from "./occ";
 
@@ -973,4 +974,48 @@ test("sheet metal: cut-list properties from the flat pattern (FR-FT-120)", async
   // CSV in mm.
   const csv = cutPropsCsv(p, 1234.5);
   assert.ok(csv.startsWith("Property,Value,Unit\nBounding box length,100,mm\n") && csv.includes("Cut outs,1,") && csv.includes("Mass,1.2345,kg"), csv);
+});
+
+test("sheet metal: bend tables (FR-FT-120)", async () => {
+  oc ??= await occ();
+  m ??= new Modeller(oc);
+  const deg = Math.PI / 180;
+  // Bilinear between rows and columns, ends held.
+  const tb = { kind: "ba" as const, radii: [1, 3], angles: [45, 90], v: [[1, 2], [3, 6]] };
+  close(tableValue(tb, 2, 67.5 * deg), (1.5 + 4.5) / 2);
+  close(tableValue(tb, 0, 30 * deg), 1);
+  close(tableValue(tb, 9, 120 * deg), 6);
+  // Text round trip, decimal commas with semicolons, and refusals.
+  assert.deepEqual(parseBendTable(bendTableText(tb), "ba"), tb);
+  assert.deepEqual(parseBendTable("r;45;90\n1;1,5;2\n3;3;6", "ba"), { kind: "ba", radii: [1, 3], angles: [45, 90], v: [[1.5, 2], [3, 6]] });
+  assert.equal(typeof parseBendTable("r 90\n3 1\n1 2", "k"), "string", "radii must go up");
+  assert.equal(typeof parseBendTable("r 90\n1 1.2", "k"), "string", "K above 1");
+  assert.equal(typeof parseBendTable("r 45 90\n1 0.4", "k"), "string", "a value missing");
+  // DIN 6935: K = (0.65 + 0.5·lg(r/T)) / 2, 0.5 from r = 5T.
+  const din = dinTable(2);
+  close(tableValue(din, 2, Math.PI / 2), 0.325);
+  close(tableValue(din, 10, Math.PI / 2), 0.5);
+  // A deduction table made from a K table gives the same allowances.
+  const bd = defaultTable("bd", 2);
+  const sb = (2 + 2) * 1; // tan 45° · (r + T)
+  close(2 * sb - tableValue(bd, 2, Math.PI / 2), Math.PI / 2 * (2 + 0.325 * 2), 1e-3);
+
+  // On the kernel: a 90° flange with an allowance table; the flat pattern grows by the table's value.
+  const s = rect("s", 0, 0, 100, 50);
+  const fl: SmFlangeFeature = { id: "f", type: "smflange", name: "Edge-Flange1", edges: [{ faces: ["b:p0:top", "b:p0:sl1"] }], length: { v: 30 }, angle: { v: Math.PI / 2 } };
+  const table = { kind: "ba" as const, radii: [1, 4], angles: [60, 120], v: [[2, 3], [5, 7]] };
+  const r = run(doc([s, base({ calc: "table", table }), fl]));
+  // r = 2 is a third of the way from 1 to 4; at 90° (half way) the rows read 2.5 and 6.
+  const want = tableValue(table, 2, Math.PI / 2);
+  close(want, 2.5 + (6 - 2.5) / 3);
+  close(flatSize(r.sheet!).h, 50 - 4 + want + 26, 1e-6);
+  close(r.props.volume, 100 * 2 * (46 + 26) + 100 * Math.PI / 4 * ((4 * 4) - (2 * 2)), 1e-5);
+  // A K table on the kernel matches the same K given directly.
+  const kt = { kind: "k" as const, radii: [2], angles: [90], v: [[0.3]] };
+  const rk = run(doc([s, base({ calc: "table", table: kt }), fl]));
+  const rd = run(doc([s, base({ k: 0.3 }), fl]));
+  close(flatSize(rk.sheet!).h, flatSize(rd.sheet!).h, 1e-9);
+  // A broken table is a feature error.
+  const bad = m.evaluate(doc([s, base({ calc: "table", table: { kind: "k", radii: [], angles: [], v: [] } })]));
+  assert.ok(bad.statuses.some(x => !x.ok && /bend table/i.test(x.message)), JSON.stringify(bad.statuses));
 });

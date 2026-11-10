@@ -10817,6 +10817,25 @@ try {
       && Math.abs(spV - 2 * (100 * spH - 25 * Math.PI)) < 0.01 && /g$/.test(sp.Mass),
       `sheet metal: Sheet Metal Properties lists the flat pattern's cut-list values (${JSON.stringify({ sp, spH, spV })})`);
     await mp.click("#sm-props [data-a=close]");
+    // Bend table: the base flange's allowance from a radius × angle table typed into the panel.
+    await mp.evaluate(() => window.__sv.modeller.editFeature("pb"));
+    await settle();
+    await mp.selectOption("#mc-pm [data-sm=calc]", "table");
+    await settle();
+    await mp.selectOption("#mc-pm [data-sm=tkind]", "ba");
+    await settle();
+    await mp.evaluate(() => { const ta = document.querySelector("#mc-pm textarea[data-sm=table]"); ta.value = "r\t60\t120\n1\t2\t3\n4\t5\t7"; ta.dispatchEvent(new Event("change", { bubbles: true })); });
+    await settle();
+    const bt0 = await mp.evaluate(() => ({ tb: window.__sv.model.mode().draft?.table, ta: !!document.querySelector("#mc-pm textarea[data-sm=table]") }));
+    await mp.click("#mc-ok");
+    await settle();
+    await smMenu("Sheet Metal Properties");
+    await mp.waitForSelector("#sm-props[open]");
+    const bt1 = await mp.evaluate(() => ({ w: document.querySelector('#sm-props tr[data-prop="Bounding box width"] td')?.textContent, bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";") }));
+    const btW = 50 - 4 + (2.5 + 3.5 / 3) + 26;
+    check(bt0.ta && bt0.tb?.kind === "ba" && bt0.tb.v?.[1]?.[1] === 7 && !bt1.bad && Math.abs(num(bt1.w) - btW) < 0.01,
+      `sheet metal: a bend allowance table sets the flat pattern length (${JSON.stringify({ bt0, bt1, btW })})`);
+    await mp.click("#sm-props [data-a=close]");
     await ctx.close();
   }
 

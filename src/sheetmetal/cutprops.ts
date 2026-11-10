@@ -1,6 +1,7 @@
 // Sheet metal cut-list properties (FR-FT-120): what SolidWorks lists for a sheet metal cut-list item,
 // worked out from the flat pattern. Pure: no DOM, no OCCT.
 import type { V2 } from "../model/types";
+import { tableValue } from "./bendTable";
 import { loopPolygon, polyArea, type Seg } from "../sketch/profile";
 import { flatLoops, type FlatEdge, type SheetState } from "./sheet";
 
@@ -130,7 +131,9 @@ export function sheetCutProps(st: SheetState): SheetCutProps {
     if (depth[i] % 2) { area -= a; inner += l.len; cutouts++; } else { area += a; outer += l.len; }
   });
   const box = minBox(loops.filter((_l, i) => depth[i] === 0).flatMap(l => l.poly));
-  return { T: st.T, R: st.R, k: st.k, bends: st.bends.length + (st.folds?.length ?? 0), ...box, boxArea: box.length * box.width, area, outer, inner, cutouts };
+  // A K-factor table: its K at the default radius and a right angle.
+  const k = st.calc === "table" && st.table?.kind === "k" ? tableValue(st.table, st.R, Math.PI / 2) : st.k;
+  return { T: st.T, R: st.R, k, bends: st.bends.length + (st.folds?.length ?? 0), ...box, boxArea: box.length * box.width, area, outer, inner, cutouts };
 }
 
 /** The rows shown and exported (English labels, translated when shown). */
