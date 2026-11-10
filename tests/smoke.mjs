@@ -5116,6 +5116,20 @@ try {
     const g2 = an.find(a => a.t === "gtol");
     check(gsel && g2.above === "2×" && g2.below === "SEP REQT" && tx.includes("2×") && tx.includes("SEP REQT"), `drawing: text above and below the tolerance frame (${g2?.above} / ${g2?.below}; ${tx.join(" ")})`);
     check(gsel && g2.rows.length === 2 && g2.rows[0].sym === "pos" && g2.rows[0].dia && tx.includes("Ø0.05") && tx.includes("M"), `drawing: tolerance frame edited: position, Ø, (M), second row (${JSON.stringify(g2?.rows)})`);
+    // Datum feature options: open triangle and bent leader (datum B in the top view).
+    {
+      const [bx, by] = await at(top.id, 35, 20);
+      await dp.mouse.move(bx + 1, by); await dp.mouse.click(bx, by);
+      const dsel = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-d="dopen"]'));
+      const fills = () => dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "p" && p.layer === "ANNOT" && p.fill && p.p.length === 6).length);
+      const f0 = await fills();
+      if (dsel) { await dp.check('#drw [data-d="dopen"]'); await dp.check('#drw [data-d="dbent"]'); }
+      an = await annots();
+      const db = an.find(a => a.t === "datum" && a.letter === "B");
+      const f1 = await fills();
+      check(dsel && db?.open === true && db.bent === true && f1 === f0 - 1, `drawing: datum with an open triangle and a bent leader (${JSON.stringify(db)}; filled triangles ${f0} → ${f1})`);
+      await dp.keyboard.press("Escape");
+    }
     // Revision table at the frame's top-right corner, then a second revision B.
     await tool("rev");
     await dp.waitForTimeout(100);

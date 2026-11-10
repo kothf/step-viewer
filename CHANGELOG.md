@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.431.0] - 2026-11-10
+
+### Added
+
+- **Datum feature options (FR-DRW-023)**: a drawing's datum feature can have an **Open triangle** (an outline instead of the filled one) and a **Bent leader**, which leaves the edge square to it and then runs level to the letter's frame.
+
 ## [1.430.0] - 2026-11-10
 
 ### Added
@@ -2552,7 +2558,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.430.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.431.0...HEAD
+[1.431.0]: https://github.com/kothf/step-viewer/compare/v1.430.0...v1.431.0
 [1.430.0]: https://github.com/kothf/step-viewer/compare/v1.429.0...v1.430.0
 [1.429.0]: https://github.com/kothf/step-viewer/compare/v1.428.0...v1.429.0
 [1.428.0]: https://github.com/kothf/step-viewer/compare/v1.427.0...v1.428.0
