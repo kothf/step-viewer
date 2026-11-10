@@ -8,13 +8,14 @@ on:
 permissions:
   contents: read
 
-# A newer push cancels the older run of the same branch or PR, queued or running, on main too: with many
-# merges a few minutes apart, only the newest main commit is tested (each run takes 7 of the account's
-# 20 concurrent jobs). Releasing an older main commit whose run was cancelled tests it in the Release
-# workflow instead (see "CI result for this commit" there).
+# A newer push to a PR cancels its older run. On main the run in progress always finishes, and of the
+# commits pushed meanwhile only the newest one waits (GitHub drops older pending runs of the group): with
+# merges a few minutes apart main is not tested commit by commit (each run takes 7 of the account's 20
+# concurrent jobs). Releasing a main commit that got no CI run tests it in the Release workflow instead
+# (see "CI result for this commit" there).
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   unit:
