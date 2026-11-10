@@ -3,8 +3,21 @@
 // later sheet metal features use them unless they override the radius.
 import type { EdgeRef, FaceRef, Num } from "../model/types";
 
-/** How bend allowance is worked out: K-factor, a bend allowance or a bend deduction per bend. */
-export type BendCalc = "k" | "ba" | "bd";
+/** How bend allowance is worked out: K-factor, a bend allowance or a bend deduction per bend, or a bend table. */
+export type BendCalc = "k" | "ba" | "bd" | "table";
+
+/**
+ * Bend table: K-factors, bend allowances or bend deductions (mm) by inside radius (rows, mm) and
+ * bend angle (columns, degrees), for the part's thickness. Values between the rows and columns are
+ * interpolated linearly; outside them the nearest row or column is used.
+ */
+export interface BendTable {
+  kind: "k" | "ba" | "bd";
+  radii: number[];
+  angles: number[];
+  /** v[i][j] = value at radii[i], angles[j]. */
+  v: number[][];
+}
 
 /** Base flange / tab: a closed sketch becomes a flat plate, an open sketch of lines a bent flange of `depth`. */
 export interface SmBaseFeature {
@@ -28,6 +41,8 @@ export interface SmBaseFeature {
   ba?: Num;
   /** Bend deduction per bend when calc is "bd". */
   bd?: Num;
+  /** Bend table when calc is "table". */
+  table?: BendTable;
   /** Gauge table row ("steel:16") the thickness, radius and K-factor came from. */
   gauge?: string;
   /** Bend relief where a bend stops short of the panel's edge: rectangular (default), obround or none. */
