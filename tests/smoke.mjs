@@ -2751,7 +2751,7 @@ try {
     await idle();
     check(bx.plane && bx.faces && bx.plane !== bx.faces && bx.mesh && bx.tag === "Faces to draft" && bx.tagC === bx.faces,
       `model 1.351: Draft's selection boxes have their own colours and the picked face is drawn in the faces box's colour with a "Faces to draft" tag (${JSON.stringify(bx)})`);
-    // 1.385 (FR-SEL-011, AT-UX-6): the other panels' boxes: the Hole Wizard's face is drawn in the Face box's colour with its tag, and an extrude's Start at / Up to faces get one box each.
+    // 1.387 (FR-SEL-011, AT-UX-6): the other panels' boxes: the Hole Wizard's face is drawn in the Face box's colour with its tag, and an extrude's Start at / Up to faces get one box each.
     await mp.evaluate(() => window.__sv.modeller.command("hole"));
     await mp.waitForSelector('#mc-pm .pm-box[data-focus="hplane"]');
     await mp.evaluate(() => {
@@ -2769,7 +2769,7 @@ try {
     await mp.evaluate(() => window.__sv.modeller.exitMode(false));
     await idle();
     check(bx2.c && bx2.mesh && bx2.tag === "Face" && bx2.tagC === bx2.c && bx2.ex === "start:Start at:1,upto:Up to:1",
-      `model 1.385: the Hole Wizard's face is drawn in the Face box's colour with a "Face" tag, and an extrude's Start at and Up to faces have their own boxes (${JSON.stringify(bx2)})`);
+      `model 1.387: the Hole Wizard's face is drawn in the Face box's colour with a "Face" tag, and an extrude's Start at and Up to faces have their own boxes (${JSON.stringify(bx2)})`);
     // 1.354 (FR-UI-109): selection box flow: a one-item box that has just been filled hands focus to the next empty required box, also an earlier one; a panel opens on its first empty box.
     await mp.evaluate(() => window.__sv.modeller.command("lpattern"));
     await mp.waitForSelector('#mc-pm .pm-box[data-focus="dir"]');
@@ -4843,6 +4843,14 @@ try {
     tx = await texts();
     check(txRef.includes("(100±0.1)") && !txBasic.some(s => /±/.test(s)) && thin1 === thin0 + 4 && tx.includes("100±0.1"),
       `drawing: a reference dimension is in parentheses, a basic one boxed without tolerance (${txRef.filter(s => /\(/.test(s)).join(" ")}; ${thin0} → ${thin1} lines)`);
+    // Arrows outside by hand (FR-DRW-021): the dimension line grows past both extension lines; Auto puts them back.
+    const dimLine = () => dp.evaluate(() => Math.max(...window.__sv.drw.prims().filter(q => q.t === "l" && q.layer === "ANNOT" && Math.abs(q.p[1] - q.p[3]) < 1e-6).map(q => Math.abs(q.p[2] - q.p[0]))));
+    const len0 = await dimLine();
+    await dp.selectOption('#drw .drw-props [data-d="arrows"]', "out");
+    const len1 = await dimLine();
+    await dp.selectOption('#drw .drw-props [data-d="arrows"]', "");
+    const len2b = await dimLine();
+    check(len1 > len0 + 5 && Math.abs(len2b - len0) < 1e-6, `drawing: a linear dimension's arrows go outside by hand and back (${[len0, len1, len2b].map(v => v.toFixed(1)).join(" → ")})`);
     // ISO 286 fit (FR-DRW-021): the Ø16 takes H7, shown with its deviations from the table (+0.018 / 0).
     const dia = await dp.evaluate(() => { const p = window.__sv.drw.prims().find(q => q.t === "t" && q.layer === "ANNOT" && q.s === "Ø16"); return p && [p.x, p.y + p.h / 2]; });
     [x, y] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), dia);

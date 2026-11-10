@@ -132,6 +132,8 @@ export interface DimAnnot {
   src?: string;
   /** Inspection dimension (FR-DRW-021): the text sits in an obround frame. */
   insp?: boolean;
+  /** Linear dimensions: arrows between the extension lines ("in") or outside them pointing in ("out"); absent = by the room there is. */
+  arrows?: "in" | "out";
   /** Reference dimension (in parentheses) or basic dimension (theoretically exact: boxed, never toleranced). */
   show?: "ref" | "basic";
   /** Dual dimension: the inch value follows in brackets. Absent = as the drawing's style says (`DraftStyle.dual`). */
