@@ -1350,6 +1350,18 @@ test("a dimension can carry a second line of text under its line (FR-DRW-021)", 
     assert.equal(short.prims.filter(q => q.t === "t").length, full.prims.filter(q => q.t === "t").length);
   }
   {
+    // Arrow outside: with the text outside the circle the leader stops at the rim (one arrow, nothing crosses the circle).
+    const dia = { id: "d", t: "dim", view: "v", k: "dia", refs: [], pos: [30, 0] } as never, dg = { k: "dia", pts: [], c: [0, 0], r: 10, value: 20 } as never;
+    const through = dimPrims(dia, dg, pl, "."), lead = dimPrims({ ...(dia as object), outside: true } as never, dg, pl, ".");
+    const xs = (o: { prims: { t: string }[] }) => o.prims.filter(q => q.t === "l").flatMap(q => [(q as never as { p: number[] }).p[0], (q as never as { p: number[] }).p[2]]);
+    assert.ok(Math.min(...xs(through)) < -9.99, "the plain diameter crosses the circle");
+    assert.ok(Math.min(...xs(lead)) > 9.99, "the leader stays outside it");
+    assert.equal(lead.prims.length, through.prims.length - 1, "one arrow instead of two");
+    // Text inside the circle: nothing to lead from, so the option changes nothing.
+    const inn = { id: "d", t: "dim", view: "v", k: "dia", refs: [], pos: [3, 0] } as never;
+    assert.deepEqual(dimPrims({ ...(inn as object), outside: true } as never, dg, pl, ".").prims, dimPrims(inn, dg, pl, ".").prims);
+  }
+  {
     // A diameter displayed as a linear dimension: extension lines from the rim's left and right ends, arrows on a level line, Ø kept.
     const dia = { id: "d", t: "dim", view: "v", k: "dia", refs: [], pos: [3, 30], lin: "h" } as never, dg = { k: "dia", pts: [], c: [0, 0], r: 10, value: 20 } as never;
     const o = dimPrims(dia, dg, pl, ".");

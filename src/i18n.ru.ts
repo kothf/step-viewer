@@ -3339,6 +3339,7 @@ export const RU: Record<string, string> = {
   "Lay": "Направление неровностей",
   "Machining allowance": "Припуск на обработку",
   "Foreshortened radius": "Радиус с изломом",
+  "Arrow outside the circle": "Стрелка снаружи окружности",
   "Linear, horizontal": "Линейный, горизонтально",
   "Linear, vertical": "Линейный, вертикально",
   "Text above the frame": "Текст над рамкой",

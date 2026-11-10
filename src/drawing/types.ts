@@ -150,6 +150,8 @@ export interface DimAnnot {
   lin?: "h" | "v";
   /** Arrowheads of this dimension; absent = as the drawing's style says (`DraftStyle.arrow`). */
   ends?: "filled" | "open" | "dot" | "tick";
+  /** Radius and diameter dimensions with the text outside the circle: the leader stops at the rim with one arrow pointing at it from outside, instead of crossing the circle. */
+  outside?: boolean;
 }
 
 /** A note: on the sheet (sheet mm) or on a view (its model axes, so it moves with the view), with an optional leader to the model. */
