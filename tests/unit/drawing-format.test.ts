@@ -75,3 +75,9 @@ test("counterbore and countersink symbols are drawn in lines for PDF, PNG and DX
   assert.equal(drawnSymbols(plain), plain);
   assert.ok(!/⌴/.test(sheetDxf([{ t: "t", x: 10, y: 20, s: "⌴Ø11", h: 3.5, al: "l", layer: "ANNOT" }], 420, 297)));
 });
+
+test("DXF R12 writes text outside ASCII as \\U+XXXX, like DXF 2000 (drawings exam #8)", () => {
+  const dxf = sheetDxf([{ t: "t", x: 10, y: 20, s: "Ø20 ±0.1 Вид А", h: 3.5, al: "l", layer: "ANNOT" }], 420, 297);
+  assert.ok(dxf.includes("\\U+00D820 \\U+00B10.1 \\U+0412\\U+0438\\U+0434 \\U+0410"), dxf.split("\n").find(l => l.includes("20 ")));
+  assert.ok(!/[^\x00-\x7e]/.test(dxf), "pure ASCII file");
+});

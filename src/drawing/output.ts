@@ -187,7 +187,7 @@ export function sheetDxf(prims: Prim[], W: number, H: number): string {
     } else if (p.t === "i") {
       continue;
     } else {
-      g(0, "TEXT"); g(8, p.layer); g(10, p.x); g(20, p.y); g(30, 0); g(40, p.h); g(1, p.s.replace(/[\r\n]+/g, " ")); if (p.rot) g(50, p.rot);
+      g(0, "TEXT"); g(8, p.layer); g(10, p.x); g(20, p.y); g(30, 0); g(40, p.h); g(1, dxfText(p.s)); if (p.rot) g(50, p.rot);
       if (p.al !== "l") { o.push(72, p.al === "c" ? 1 : 2); g(11, p.x); g(21, p.y); g(31, 0); }
     }
   }
@@ -195,7 +195,7 @@ export function sheetDxf(prims: Prim[], W: number, H: number): string {
   return o.join("\n") + "\n";
 }
 
-/** Text for DXF: one line, characters outside ASCII as \U+XXXX (AutoCAD reads them in any code page). */
+/** Text for DXF (R12 and 2000): one line, characters outside ASCII as \U+XXXX (AutoCAD reads them in any code page; R12 wrote raw UTF-8, which reads as Ã˜ in ANSI code pages, drawings exam #8). */
 const dxfText = (s: string) => s.replace(/[\r\n]+/g, " ").replace(/[^\x20-\x7e]/gu, ch => { const c = ch.codePointAt(0)!; return c > 0xffff ? "?" : `\\U+${c.toString(16).toUpperCase().padStart(4, "0")}`; });
 
 /**
