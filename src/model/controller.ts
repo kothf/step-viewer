@@ -835,7 +835,7 @@ export class ModelController {
     const face = this.host.viewer.parts[0]?.data.faces[faceId];
     if (!name || !face) return null;
     if (face.type !== "plane") { toast(t("Pick a flat face or a plane: this one is curved."), true); return null; }
-    return { face: { name, hint: face.centroid } };
+    return { face: { name, hint: face.centroid }, ax: 1 };
   }
 
   private async createSketch(plane: PlaneRef) {

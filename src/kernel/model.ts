@@ -318,7 +318,7 @@ export class Modeller {
     if (ad.GetType() !== oc.GeomAbs_SurfaceType.GeomAbs_Plane) throw new FeatureError("E-FT-NOTPLANAR", "A sketch needs a flat face or a plane.");
     const pos = ad.Plane().Position();
     let n = this.xyz(pos.Direction());
-    const x = this.xyz(pos.XDirection());
+    let x = this.xyz(pos.XDirection());
     // The face's own normal is du × dv of its surface; a plane made by revolving a straight edge (a revolve's
     // flat end or web face) is a surface of revolution whose du × dv can point against the plane's axis.
     {
@@ -329,6 +329,11 @@ export class Modeller {
     }
     const reversed = face.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED;
     if (reversed) { n = mul(n, -1); }
+    if (ref.ax === 1) {
+      // Stable in-plane X (exam #85): the part's X laid onto the face, or its Y on a face square to X.
+      const px: V3 = Math.abs(n[0]) > 0.99 ? [0, 1, 0] : [1, 0, 0];
+      x = add(px, mul(n, -dot(px, n)));
+    }
     let o: V3 = mul(n, dot(this.xyz(pos.Location()), n));
     if (ref.offset) o = add(o, mul(n, ref.offset));
     return frameFrom(o, x, n);
