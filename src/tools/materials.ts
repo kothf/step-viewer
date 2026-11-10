@@ -349,7 +349,7 @@ export const CHECKED: Record<string, string> = {
   "Wood (ash)": "amesweb.info/Materials/Youngs-Modulus-of-Wood.aspx",
   "Wood (walnut)": "www.engineeringtoolbox.com/timber-mechanical-properties-d_1789.html",
   "Steel (carbon)": "steelcalculator.pages.dev/reference/eu-steel-fy-fu/",
-  // 1.379.0: second pass over the rows that had no reference.
+  // 1.382.0: second pass over the rows that had no reference.
   "Steel S960QL": "www.ssab.com/en/brands-and-products/strenx/product-offer/960/e-f",
   "Steel ASTM A36": "en.wikipedia.org/wiki/A36_steel",
   "Steel ASTM A572 Grade 50": "en.wikipedia.org/wiki/A572_steel",

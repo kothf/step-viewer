@@ -132,6 +132,8 @@ export interface DimAnnot {
   src?: string;
   /** Inspection dimension (FR-DRW-021): the text sits in an obround frame. */
   insp?: boolean;
+  /** Dual dimension: the inch value follows in brackets. Absent = as the drawing's style says (`DraftStyle.dual`). */
+  dual?: boolean;
 }
 
 /** A note: on the sheet (sheet mm) or on a view (its model axes, so it moves with the view), with an optional leader to the model. */
@@ -267,7 +269,9 @@ export interface DrawingDoc {
 /** `lin`/`ang`: decimals of linear and angular dimensions that set none themselves (absent = up to 2, trailing zeros dropped). */
 export interface DraftStyle { text?: 2.5 | 3.5 | 5; arrow?: "filled" | "open" | "dot" | "tick"; lines?: 0.25 | 0.35 | 0.5 | 0.7; lin?: number; ang?: number;
   /** Default symmetric tolerance (±) of dimensions with none of their own: linear in mm, angular in degrees. */
-  tol?: number; atol?: number }
+  tol?: number; atol?: number;
+  /** Dual dimensions: lengths also shown in inches in brackets, with `dualPrec` decimals (3 when absent). */
+  dual?: "in"; dualPrec?: number }
 
 /** Model facts for the title block. */
 export interface ModelInfo { title: string; number?: string; revision?: string; author?: string; material?: string; mass?: number; box: [V3, V3] }

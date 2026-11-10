@@ -92,7 +92,7 @@ test("checked references name library materials and are plain https pages; corre
   assert.equal(findMaterial("Gold")!.E, 78);
 });
 
-test("second pass (1.379.0): most of the library has a checked reference, the rest is known", () => {
+test("second pass (1.382.0): most of the library has a checked reference, the rest is known", () => {
   const un = LIBRARY.filter(m => !m.ref).map(m => m.name);
   assert.ok(Object.keys(CHECKED).length >= 119, `${Object.keys(CHECKED).length} checked`);
   assert.ok(un.length <= 51, `${un.length} unchecked`);

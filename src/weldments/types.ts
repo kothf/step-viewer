@@ -234,3 +234,16 @@ export function splitSubs(items: CutItem[], subs: SubWeld[] | undefined): CutIte
 export function cornerKey(ents: string[]): string {
   return [...ents].sort().join("+");
 }
+
+/** Stock to buy for a cut list: per profile (member description), the number of pieces and their summed length in mm; `skip` leaves items out (excluded ones). */
+export function stockTotals(items: CutItem[], skip?: (c: CutItem) => boolean): { desc: string; pieces: number; length: number }[] {
+  const out = new Map<string, { desc: string; pieces: number; length: number }>();
+  for (const c of items) {
+    if (c.kind !== "member" || skip?.(c)) continue;
+    const r = out.get(c.desc) ?? { desc: c.desc, pieces: 0, length: 0 };
+    r.pieces += c.qty;
+    r.length += (c.length ?? 0) * c.qty;
+    out.set(c.desc, r);
+  }
+  return [...out.values()].map(r => ({ ...r, length: Math.round(r.length * 10) / 10 }));
+}

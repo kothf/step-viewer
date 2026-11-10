@@ -35,6 +35,7 @@ let ARROW = 3, ARROW_KIND: NonNullable<DraftStyle["arrow"]> = "filled";
 let PREC_LIN: number | undefined, PREC_ANG: number | undefined;
 /** The drawing's default ± tolerance (mm, degrees) for dimensions without their own, set by `useStyle`. */
 let TOL_LIN: number | undefined, TOL_ANG: number | undefined;
+let DUAL = false, DUAL_PREC = 3;
 
 /** Applies a drawing's drafting style: text height (arrow length follows it), arrowhead kind and the ISO 128 line group. */
 export function useStyle(st: DraftStyle | undefined) {
@@ -43,6 +44,7 @@ export function useStyle(st: DraftStyle | undefined) {
   ARROW_KIND = st?.arrow ?? "filled";
   PREC_LIN = st?.lin; PREC_ANG = st?.ang;
   TOL_LIN = st?.tol; TOL_ANG = st?.atol;
+  DUAL = st?.dual === "in"; DUAL_PREC = st?.dualPrec ?? 3;
   const thick = st?.lines ?? 0.35, thin = { 0.25: 0.13, 0.35: 0.18, 0.5: 0.25, 0.7: 0.35 }[thick] ?? thick / 2;
   Object.assign(PEN_W, { thick, thin, hidden: thin, center: thin, phantom: thin, frame: Math.max(0.5, thick * 1.4) });
 }
@@ -206,20 +208,23 @@ export function dimText(a: DimAnnot, g: DimGeo, dec: string): { main: string; up
   const dt = g.k === "ang" ? TOL_ANG : TOL_LIN;
   const tol: Tol | undefined = a.tol ?? (dt ? { t: "sym", up: dt } : undefined);
   if (a.txt) return { main: a.txt };
-  if (g.k === "chamfer") return { main: `${pre}${f(g.value)} × ${fa(g.ang ?? 0)}°${suf}` };
+  // Dual dimension: the same length in inches, in brackets after the millimetres (angles have none).
+  const dual = g.k !== "ang" && (a.dual ?? DUAL);
+  const fi = (x: number) => fmtNum(x / 25.4, DUAL_PREC, dec), inch = (x: number, more = "") => (dual ? ` [${fi(x)}${more}]` : "");
+  if (g.k === "chamfer") return { main: `${pre}${f(g.value)}${inch(g.value)} × ${fa(g.ang ?? 0)}°${suf}` };
   const v = g.value;
-  if (tol?.t === "limit") return { main: "", up: pre + f(v + (tol.up ?? 0)) + suf, lo: pre + f(v - (tol.lo ?? 0)) + suf };
+  if (tol?.t === "limit") { const hi = v + (tol.up ?? 0), low = v - (tol.lo ?? 0); return { main: "", up: pre + f(hi) + suf + inch(hi), lo: pre + f(low) + suf + inch(low) }; }
   let main = pre + f(v);
-  if (tol?.t === "sym") return { main: `${main}±${f(tol.up ?? 0)}${suf}` };
+  if (tol?.t === "sym") return { main: `${main}±${f(tol.up ?? 0)}${suf}${inch(v, `±${fi(tol.up ?? 0)}`)}` };
   const sg = (x: number) => (x > 0 ? `+${f(x)}` : x < 0 ? `−${f(-x)}` : "0");
   if (tol?.t === "fit") {
     const code = tol.fit ?? "", lim = tol.show && tol.show !== "code" && !code.includes("/") ? fitLimits(code, v) : null;
-    if (!lim) return { main: `${main}${code}${suf}` };
+    if (!lim) return { main: `${main}${code}${suf}${inch(v)}` };
     // Deviations to the fit's own precision (µm), never rounded away by the dimension's.
     const fd = (x: number) => (x > 0 ? "+" : x < 0 ? "−" : "") + (x === 0 ? "0" : fmtNum(Math.abs(x), Math.max(prec ?? 0, 3), dec));
-    return { main: tol.show === "both" ? `${main}${code}${suf}` : main + suf, up: fd(lim.up), lo: fd(lim.lo) };
+    return { main: (tol.show === "both" ? `${main}${code}${suf}` : main + suf) + inch(v), up: fd(lim.up), lo: fd(lim.lo) };
   }
-  main += suf;
+  main += suf + inch(v);
   if (tol?.t === "dev") return { main, up: sg(tol.up ?? 0), lo: sg(-(tol.lo ?? 0)) };
   return { main };
 }
