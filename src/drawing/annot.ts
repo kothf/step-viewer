@@ -237,7 +237,9 @@ export function dimText(a: DimAnnot, g: DimGeo, dec: string): { main: string; up
 
 /** Hole callout lines (ISO style) for a round edge: from the hole feature at that place, else from the cylinder. */
 export function holeText(e: MEdge, ctx: AnnotCtx, count = true): string[] {
-  const f = (v: number) => fmtNum(v, undefined, ctx.dec);
+  // Sizes follow the drawing's default decimals and dual dimensions (inches in brackets); angles and thread sizes do not.
+  const fa = (v: number) => fmtNum(v, undefined, ctx.dec);
+  const f = (v: number) => fmtNum(v, PREC_LIN, ctx.dec) + (DUAL ? ` [${fmtNum(v / 25.4, DUAL_PREC, ctx.dec)}]` : "");
   const c = e.c, ax = e.ax, r = e.r ?? 0;
   if (c && ax) {
     for (const h of ctx.holes) {
@@ -252,16 +254,16 @@ export function holeText(e: MEdge, ctx: AnnotCtx, count = true): string[] {
         lines.push(`${H.size}-6H${H.threadDepth ? ` ↧${f(H.threadDepth.v)}` : H.end === "through" ? ` ${ctx.label("THRU")}` : ""}`);
       } else lines.push(`${n}Ø${f(H.diameter.v)}${depth}`);
       if (H.kind === "cbore" && H.cbDia) lines.push(`⌴Ø${f(H.cbDia.v)}${H.cbDepth ? ` ↧${f(H.cbDepth.v)}` : ""}`);
-      if (H.kind === "cdrill" && H.cdDia) lines.push(`⌴Ø${f(H.cdDia.v)}${H.cdDepth ? ` ↧${f(H.cdDepth.v)}` : ""} × ${f((H.cdAngle?.v ?? (118 * Math.PI) / 180) * 180 / Math.PI)}°`);
-      if (H.kind === "csink" && H.csDia) lines.push(`⌵Ø${f(H.csDia.v)} × ${f((H.csAngle?.v ?? Math.PI / 2) * 180 / Math.PI)}°`);
+      if (H.kind === "cdrill" && H.cdDia) lines.push(`⌴Ø${f(H.cdDia.v)}${H.cdDepth ? ` ↧${f(H.cdDepth.v)}` : ""} × ${fa((H.cdAngle?.v ?? (118 * Math.PI) / 180) * 180 / Math.PI)}°`);
+      if (H.kind === "csink" && H.csDia) lines.push(`⌵Ø${f(H.csDia.v)} × ${fa((H.csAngle?.v ?? Math.PI / 2) * 180 / Math.PI)}°`);
       return lines;
     }
   }
   // No hole feature: read the hole from the geometry (count, counterbore, countersink, depth or THRU).
-  const st = c && ax && r ? stackAt(c, ax, r, ctx.topo) : null, g = st && geoHole(st, f, ctx.threads);
+  const st = c && ax && r ? stackAt(c, ax, r, ctx.topo) : null, g = st && geoHole(st, f, ctx.threads, fa);
   if (g) {
     const words = (h: GeoHole) => h.lines.map(s => s.replace(/ THRU$/, ` ${ctx.label("THRU")}`));
-    const n = count ? ctx.topo!.holes!.filter(h => { const o = geoHole(h, f, ctx.threads); return !!o && o.key === g.key && (g.free ? Math.abs(Math.abs(dot3(o.dir, g.dir)) - 1) < 1e-6 : dot3(o.dir, g.dir) > 1 - 1e-6); }).length : 1;
+    const n = count ? ctx.topo!.holes!.filter(h => { const o = geoHole(h, f, ctx.threads, fa); return !!o && o.key === g.key && (g.free ? Math.abs(Math.abs(dot3(o.dir, g.dir)) - 1) < 1e-6 : dot3(o.dir, g.dir) > 1 - 1e-6); }).length : 1;
     const lines = words(g);
     if (n > 1) lines[0] = `${n}× ${lines[0]}`;
     return lines;
@@ -295,7 +297,7 @@ export function stackAt(c: V3, ax: V3, r: number, topo: Topo | null): MHole | nu
  * the entry face or THRU, then ⌴ counterbore Ø and depth or ⌵ countersink Ø × angle. The entry is the open end (for a
  * through hole, the wider one). Null when the hole has no cylinder to call the drill or no open end.
  */
-export function geoHole(h: MHole, f: (v: number) => string = v => fmtNum(v, undefined), threads: ThreadInfo[] = []): GeoHole | null {
+export function geoHole(h: MHole, f: (v: number) => string = v => fmtNum(v, undefined), threads: ThreadInfo[] = [], fa: (v: number) => string = f): GeoHole | null {
   const [o0, o1] = h.open;
   if (!o0 && !o1) return null;
   const s = h.segs, first = s[0], last = s[s.length - 1];
@@ -306,7 +308,7 @@ export function geoHole(h: MHole, f: (v: number) => string = v => fmtNum(v, unde
     : { k: g.k, a: e0 - g.v1, b: e0 - g.v0, ra: g.r1, rb: g.r0 });
   let i = 0, extra = "";
   if (W[0].k === "cone" && W[0].ra > W[0].rb + 1e-6 && W[1]?.k === "cyl") {
-    extra = `⌵Ø${f(2 * W[0].ra)} × ${f(Math.round(2 * Math.atan((W[0].ra - W[0].rb) / (W[0].b - W[0].a)) * 180 / Math.PI * 100) / 100)}°`;
+    extra = `⌵Ø${f(2 * W[0].ra)} × ${fa(Math.round(2 * Math.atan((W[0].ra - W[0].rb) / (W[0].b - W[0].a)) * 180 / Math.PI * 100) / 100)}°`;
     i = 1;
   } else if (W[0].k === "cyl" && W[1]?.k === "cyl" && W[1].ra < W[0].ra - 1e-6) {
     extra = `⌴Ø${f(2 * W[0].ra)} ↧${f(W[0].b - W[0].a)}`;
@@ -322,7 +324,7 @@ export function geoHole(h: MHole, f: (v: number) => string = v => fmtNum(v, unde
     const w = sub3(t.c, h.o), v = dot3(w, h.ax);
     return Math.hypot(w[0] - h.ax[0] * v, w[1] - h.ax[1] * v, w[2] - h.ax[2] * v) < 1e-3;
   });
-  if (th) lines.push(`${th.size ?? `M${f(th.d)}`}-6H ${th.L == null ? (thru ? "THRU" : `↧${f(d.b)}`) : `↧${f(th.L)}`}`);
+  if (th) lines.push(`${th.size ?? `M${fa(th.d)}`}-6H ${th.L == null ? (thru ? "THRU" : `↧${f(d.b)}`) : `↧${f(th.L)}`}`);
   if (extra) lines.push(extra);
   // The rest past the drill (a drill point) is part of the key, so a flat-bottomed hole is not counted with a pointed one.
   const rest = W.slice(i + 1).map(g => `${g.k}:${f(g.b - g.a)}:${f(g.ra)}:${f(g.rb)}`).join(",");

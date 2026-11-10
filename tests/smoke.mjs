@@ -4883,6 +4883,15 @@ try {
     // The worker reads holes from the geometry too (FR-DRW-022): the Ø16 cut is a one-piece stack open at both ends.
     const geoHoles = await dp.evaluate(() => window.__sv.drw.holes());
     check(geoHoles.some(h => h.segs === 1 && h.open[0] && h.open[1]), `drawing: holes read from the geometry (${JSON.stringify(geoHoles)})`);
+    // Hole callouts follow the drawing's dual dimensions and default decimals (FR-DRW-022).
+    await dp.keyboard.press("Escape");
+    await dp.selectOption('.drw-props [data-st="dual"]', "in");
+    await dp.selectOption('.drw-props [data-st="lin"]', "1");
+    const dualHole = await texts();
+    await dp.selectOption('.drw-props [data-st="dual"]', "");
+    await dp.selectOption('.drw-props [data-st="lin"]', "");
+    const plainHole = await texts();
+    check(dualHole.includes("Ø16.0 [0.630] THRU") && plainHole.includes("Ø16 THRU"), `drawing: a hole callout shows inches and the default decimals with the drawing (${dualHole.filter(s => /THRU/.test(s)).join(" / ")})`);
     // Property link in a note (FR-DRW-023): $PRP:"Scale" shows the sheet scale.
     dp.once("dialog", d => d.accept('SCALE $PRP:"Scale"'));
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="note"]');
