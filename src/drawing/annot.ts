@@ -1263,12 +1263,21 @@ export function bendRows(a: BendTableAnnot, bends: FlatBend[], P: (p: V3) => P2,
 /**
  * Model items (FR-DRW-020): each item goes to the first view where it reads best (looking along its
  * plane's normal, or for a depth, square to it), once per sheet; its dimension line sits outside the view.
+ * On each side of a view the shorter dimensions sit nearer the outline (so extension lines do not cross
+ * dimension lines), the stack starts beyond the dimensions already on that side, and the gaps are sheet
+ * millimetres whatever the view's scale. Radius and diameter texts that would land on another one turn aside.
  */
-export function placeItems(sheet: Sheet, items: ModelItem[], boxOf: (v: DrawingView) => [number, number, number, number] | null, uid: () => string): DimAnnot[] {
+export function placeItems(sheet: Sheet, items: ModelItem[], boxOf: (v: DrawingView) => [number, number, number, number] | null, uid: () => string,
+  scaleOf: (v: DrawingView) => number = () => 1): DimAnnot[] {
   const have = new Set((sheet.annots ?? []).map(a => (a.t === "dim" ? a.src : undefined)).filter(Boolean));
   const out: DimAnnot[] = [];
-  const stack = new Map<string, number>();
   const order = [...sheet.views].sort((a, b) => (a.kind ? 1 : 0) - (b.kind ? 1 : 0) || (a.parent ? 1 : 0) - (b.parent ? 1 : 0));
+  const r2 = (x: number) => Math.round(x * 100) / 100;
+  /** Dimensions waiting for a place in a stack: view + side → entries with the measured length. */
+  const stacks = new Map<string, { v: DrawingView; side: string; box: [number, number, number, number]; list: { d: DimAnnot; len: number; mid: P2 }[] }>();
+  /** Radius/diameter texts placed so far, per view (existing ones included). */
+  const round = new Map<string, P2[]>();
+  for (const a of sheet.annots ?? []) if (a.t === "dim" && (a.k === "rad" || a.k === "dia") && a.pos) (round.get(a.view) ?? round.set(a.view, []).get(a.view)!).push(a.pos);
   for (const it of items) {
     if (have.has(it.src)) continue;
     for (const v of order) {
@@ -1277,6 +1286,7 @@ export function placeItems(sheet: Sheet, items: ModelItem[], boxOf: (v: DrawingV
       if (it.side ? c > 1e-6 : c < 1 - 1e-6) continue;
       const box = boxOf(v);
       if (!box) continue;
+      const g = 1 / (scaleOf(v) || 1);
       const [a, b] = it.p.map(P);
       let k: DimAnnot["k"] = it.k === "lin" ? "al" : it.k;
       if (it.k === "lin") {
@@ -1284,22 +1294,48 @@ export function placeItems(sheet: Sheet, items: ModelItem[], boxOf: (v: DrawingV
         k = Math.abs(dd[1]) < 1e-6 * (Math.abs(dd[0]) || 1) ? "h" : Math.abs(dd[0]) < 1e-6 * (Math.abs(dd[1]) || 1) ? "v" : "al";
         if (Math.abs(k === "h" ? b[0] - a[0] : k === "v" ? b[1] - a[1] : Math.hypot(b[0] - a[0], b[1] - a[1])) < 1e-6) break;
       }
-      let pos: P2;
+      const d: DimAnnot = { id: uid(), t: "dim", view: v.id, k, refs: [{ pt: it.p[0] }, { pt: it.p[1] }], pos: [0, 0], src: it.src };
+      const mid: P2 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
       if (k === "rad" || k === "dia") {
-        const c2 = a, r = Math.hypot(b[0] - a[0], b[1] - a[1]), dirv = unit2([b[0] - a[0], b[1] - a[1]], [Math.SQRT1_2, Math.SQRT1_2]);
-        pos = [c2[0] + dirv[0] * (r + 8), c2[1] + dirv[1] * (r + 8)];
+        const r = Math.hypot(b[0] - a[0], b[1] - a[1]), d0 = unit2([b[0] - a[0], b[1] - a[1]], [Math.SQRT1_2, Math.SQRT1_2]);
+        const taken = round.get(v.id) ?? round.set(v.id, []).get(v.id)!;
+        let pos: P2 = [a[0] + d0[0] * (r + 8 * g), a[1] + d0[1] * (r + 8 * g)];
+        // Turn aside in 30° steps while another radius/diameter text sits within 7 mm on the sheet.
+        for (let i = 1; i < 12 && taken.some(q => Math.hypot(q[0] - pos[0], q[1] - pos[1]) < 7 * g); i++) {
+          const t = (i % 2 ? 1 : -1) * Math.ceil(i / 2) * Math.PI / 6, cs = Math.cos(t), sn = Math.sin(t);
+          pos = [a[0] + (d0[0] * cs - d0[1] * sn) * (r + 8 * g), a[1] + (d0[0] * sn + d0[1] * cs) * (r + 8 * g)];
+        }
+        d.pos = [r2(pos[0]), r2(pos[1])];
+        taken.push(d.pos);
+      } else if (k === "h" || k === "v") {
+        // Outside the view on the side nearer the measured points; the place in the stack comes later.
+        const cx = (box[0] + box[2]) / 2, cy = (box[1] + box[3]) / 2;
+        const side = k === "h" ? (mid[1] >= cy ? "t" : "b") : (mid[0] >= cx ? "r" : "l"), key = `${v.id}|${side}`;
+        const st = stacks.get(key) ?? stacks.set(key, { v, side, box, list: [] }).get(key)!;
+        st.list.push({ d, len: Math.abs(k === "h" ? b[0] - a[0] : b[1] - a[1]), mid });
       } else {
-        // Outside the view on the side nearer the measured points, stacked 8 mm apart.
-        const mid: P2 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], cx = (box[0] + box[2]) / 2, cy = (box[1] + box[3]) / 2;
-        let side: string, p: P2;
-        if (k === "h") { side = mid[1] >= cy ? "t" : "b"; const s = stack.get(v.id + side) ?? 0; p = [mid[0], side === "t" ? box[3] + 10 + 8 * s : box[1] - 10 - 8 * s]; stack.set(v.id + side, s + 1); }
-        else if (k === "v") { side = mid[0] >= cx ? "r" : "l"; const s = stack.get(v.id + side) ?? 0; p = [side === "r" ? box[2] + 10 + 8 * s : box[0] - 10 - 8 * s, mid[1]]; stack.set(v.id + side, s + 1); }
-        else { const d = unit2([b[0] - a[0], b[1] - a[1]]), nn: P2 = [-d[1], d[0]]; p = [mid[0] + nn[0] * 10, mid[1] + nn[1] * 10]; }
-        pos = p;
+        const dd = unit2([b[0] - a[0], b[1] - a[1]]), nn: P2 = [-dd[1], dd[0]];
+        d.pos = [r2(mid[0] + nn[0] * 10 * g), r2(mid[1] + nn[1] * 10 * g)];
       }
-      out.push({ id: uid(), t: "dim", view: v.id, k, refs: [{ pt: it.p[0] }, { pt: it.p[1] }], pos: [Math.round(pos[0] * 100) / 100, Math.round(pos[1] * 100) / 100], src: it.src });
+      out.push(d);
       break;
     }
+  }
+  for (const { v, side, box, list } of stacks.values()) {
+    const g = 1 / (scaleOf(v) || 1), hz = side === "t" || side === "b", sg = side === "t" || side === "r" ? 1 : -1;
+    const edge = side === "t" ? box[3] : side === "b" ? box[1] : side === "r" ? box[2] : box[0];
+    // Start beyond the dimensions of this kind already outside this side of the view.
+    let from = 10 * g;
+    for (const a of sheet.annots ?? []) {
+      if (a.t !== "dim" || a.view !== v.id || a.k !== (hz ? "h" : "v") || !a.pos) continue;
+      const o = sg * ((hz ? a.pos[1] : a.pos[0]) - edge);
+      if (o > 0) from = Math.max(from, o + 8 * g);
+    }
+    list.sort((x, y) => x.len - y.len);
+    list.forEach((e, i) => {
+      const o = edge + sg * (from + 8 * g * i);
+      e.d.pos = hz ? [r2(e.mid[0]), r2(o)] : [r2(o), r2(e.mid[1])];
+    });
   }
   return out;
 }

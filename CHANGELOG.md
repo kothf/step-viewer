@@ -5,11 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.378.0] - 2026-11-10
+## [1.379.0] - 2026-11-10
 
 ### Added
 
 - **Tutorial "Bracket in 10 steps" (FR-HLP-003)**: the start screen has a tutorial button. It opens a new part named Bracket with a step list at the top of the right panel: sketch the base, size it, extrude it, add the wall, a fillet, a hole, chamfers and a material. Each step ticks itself when the part has it and unticks on undo, the next step shows what to click, and any step can be opened again. The list follows the bracket's document tab and closes with ✕.
+
+## [1.378.0] - 2026-11-10
+
+### Changed
+- Model items layout (FR-DRW-020): imported model dimensions are stacked outside the view with the shorter ones nearer the outline, so extension lines no longer cross dimension lines. The gaps (10 mm from the view, 8 mm apart) are sheet millimetres at any view scale, a later import starts beyond the dimensions already on that side, and radius or diameter texts on one centre turn aside instead of sharing a place.
 
 ## [1.377.0] - 2026-11-10
 
@@ -2228,7 +2233,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.378.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.379.0...HEAD
+[1.379.0]: https://github.com/kothf/step-viewer/compare/v1.378.0...v1.379.0
 [1.378.0]: https://github.com/kothf/step-viewer/compare/v1.377.0...v1.378.0
 [1.377.0]: https://github.com/kothf/step-viewer/compare/v1.376.0...v1.377.0
 [1.376.0]: https://github.com/kothf/step-viewer/compare/v1.375.0...v1.376.0
