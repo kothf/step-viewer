@@ -4576,8 +4576,11 @@ try {
     await mp.waitForSelector("#vault-dlg tbody tr");
     const hist = await mp.evaluate(() => [...document.querySelectorAll("#vault-dlg tbody tr")].map(r => r.cells[0].textContent + ":" + r.cells[3].textContent).join("|"));
     await mp.click('#vault-dlg button[value="cancel"]');
-    // Close vault: the folder is remembered in the menu and opens again without the picker.
+    // Close vault: the folder is remembered in the menu and opens again without the picker. The assembly is still
+    // checked out with changes, so the check-in reminder comes first.
     await menu("close");
+    await mp.waitForSelector('#vault-dlg[open] button[value="close"]');
+    await mp.click('#vault-dlg button[value="close"]');
     await mp.waitForFunction(() => !document.querySelector("#vault-btn").classList.contains("on"));
     await mp.evaluate(() => { window.showDirectoryPicker = async () => { throw new Error("picker used"); }; });
     await menu();
@@ -6122,7 +6125,7 @@ try {
     await mp.click('#vault-panel [data-a="rename"]');
     await mp.fill('#vault-dlg [name="path"]', "parts/bracket.txt");
     await mp.click('#vault-dlg button[value="ok"]');
-    await mp.waitForFunction(() => [...document.querySelectorAll("#vault-panel .v-name")].some(x => x.textContent === "parts/bracket.txt"));
+    await mp.waitForFunction(() => document.querySelector('#vault-panel .v-folder[data-folder="parts"]') && [...document.querySelectorAll("#vault-panel .v-name")].some(x => x.textContent === "bracket.txt"));
     // Delete the spare file to the recycle bin and restore it.
     await mp.click('#vault-panel .v-row:has-text("spare.txt")');
     await mp.click('#vault-panel [data-a="del"]');
@@ -6136,8 +6139,10 @@ try {
     const audit = await mp.evaluate(async () => (await window.__sv.vault.vault.auditTrail()).map(e => e.action).filter(a => /transition|data card|move|rename|delete|restore/.test(a)).join(","));
     // Russian: state and revision are translated.
     await mp.click("#lang-btn");
-    await mp.waitForFunction(() => /Выпущен/.test(document.querySelector("#vault-panel .v-row")?.textContent ?? ""), null, { timeout: 5000 }).catch(() => {});
-    const ruRow = await rowText(0);
+    // The released file is in parts/ now, under the loose spare.txt.
+    const bracketRow = () => [...document.querySelectorAll("#vault-panel .v-row")].find(r => /bracket/.test(r.textContent))?.textContent.replace(/\s+/g, " ").trim() ?? "";
+    await mp.waitForFunction(f => /Выпущен/.test(eval(f)()), bracketRow.toString(), { timeout: 5000 }).catch(() => {});
+    const ruRow = await mp.evaluate(f => eval(f)(), bracketRow.toString());
     await mp.click("#lang-btn");
     check(/Work in progress/.test(row0) && checks && /Approve/.test(dlgTitle) && /Released/.test(row1) && /Rev A/.test(row1) && /BR-001/.test(row1) && !canCheckOut, `vault P4: data card, Submit for review and Approve give revision A (${row0} → ${row1}; ${dlgTitle})`);
     check(found === "bracket.txt" && audit === "data card,transition,transition,move,delete,restore", `vault P4: search, move, recycle bin and audit (${found}; ${audit})`);

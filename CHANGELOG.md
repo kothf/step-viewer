@@ -15,9 +15,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - The state change dialog says which revision each file will get (**becomes revision B**) before you approve.
 - **Reopen vault** on the start card: while no vault is open, the start card offers the vault used last (its folder, or the browser vault).
 - **Check-in reminders**: closing a document tab that is checked out to you asks whether to check it in (or, with no changes, to undo the check-out), keep it checked out, or cancel. **Close vault** lists the files with changes not checked in first, and leaving the page with such files makes the browser ask.
+- **Details of the selected vault file (FR-PDM-080)**: under its commands, a foldable Details section shows the latest version (who, when, comment), the files it uses (with newer versions marked), the files that use it and its release files. Each is a link that selects that file in the list.
 
 ### Changed
 
+- **Release files belong to their part (FR-PDM-036)**: the STEP and PDF a release makes are stored in the released state with the part's revision (they were Work in progress files before), are listed right under the part, assembly or drawing they came from ("Release file of arm.mcadprt · Rev A"), and are made again without a check-out. When the part is made obsolete, its release files of that revision go with it; a change in work leaves them Released.
 - The selected assembly's box "Linked components with newer versions" became the general "Uses older versions of:" box, which covers embedded parts and drawings too.
 
 ## [1.469.0] - 2026-11-10
