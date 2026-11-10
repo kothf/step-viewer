@@ -6,7 +6,7 @@ import type { PartData, V3 } from "../topology";
 import type { PartPatch } from "./occ";
 import { applyPatch, probe } from "./patch";
 import type { SwReport } from "./solidworks";
-import KernelWorker from "./kernel.worker?worker";
+import { takeWorker } from "./spare";
 
 export type KernelStatus = "off" | "loading" | "ready" | "partial" | "error";
 
@@ -30,6 +30,7 @@ const RECYCLE_HEAP = 1024 * 1024 * 1024;
 export class KernelClient {
   private worker: Worker | null = null;
   private ready: Promise<void> | null = null;
+  private abortReady: ((err: Error) => void) | null = null;
   private pending = new Map<number, Pending>();
   private seq = 0;
   /** WASM heap size of the current worker after its last file. */
@@ -55,6 +56,9 @@ export class KernelClient {
 
   private stop() {
     this.worker?.terminate();
+    // An open waiting for this worker's set-up ends as cancelled instead of waiting for ever.
+    this.abortReady?.(new Error("cancelled"));
+    this.abortReady = null;
     this.worker = null;
     this.ready = null;
     this.file = null;
@@ -71,7 +75,10 @@ export class KernelClient {
   private take() {
     if (this.worker && this.ready && !this.pending.size && this.heap < RECYCLE_HEAP) return this.ready;
     this.stop();
-    const w = new KernelWorker();
+    const t = performance.now();
+    // The page's spare worker when there is one (its set-up done or under way).
+    const { w, ready, abort } = takeWorker(this.base);
+    this.abortReady = abort;
     w.onmessage = (e: MessageEvent) => {
       const d = e.data, p = this.pending.get(d.id);
       if (!p) return;
@@ -80,9 +87,7 @@ export class KernelClient {
     };
     w.onerror = e => { for (const p of this.pending.values()) p.reject(new Error(e.message || "kernel worker failed")); this.pending.clear(); };
     this.worker = w;
-    const t = performance.now();
-    const ready = compile(this.base)
-      .then(module => { this.timing.compile = performance.now() - t; return this.call<void>({ type: "init", base: this.base, module }); });
+    void ready.then(() => { this.timing.start = performance.now() - t; }, () => {});
     // A worker that failed to start is not reused.
     ready.catch(() => { if (this.ready === ready) this.stop(); });
     this.ready = ready;
