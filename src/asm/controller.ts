@@ -742,8 +742,23 @@ export class AsmController {
    * seats on (the one facing out of the hole there). The fastener goes in along the axis from that face.
    */
   private pickHole(x: number, y: number) {
-    const hit = this.host.partAt(x, y);
+    const hit = this.holeNear(x, y) ?? this.host.partAt(x, y);
     if (hit) this.fastenHole(hit.idx, hit.face, hit.point);
+  }
+
+  /**
+   * The hole under (x, y), or one whose wall is within 8 px of it (a pointer on the rim, on the face round
+   * the hole), as a hit on its cylinder that `holeSpot` can place the panel's part on.
+   */
+  private holeNear(x: number, y: number): { idx: number; face: number; point: V3 } | null {
+    const ok = (h: { idx: number; face: number; point: V3 } | null) => !!h && this.host.viewer.parts[h.idx]?.data.faces[h.face]?.type === "cylinder" && !("err" in this.holeSpot(h.idx, h.face, h.point));
+    const h0 = this.host.partAt(x, y);
+    if (ok(h0)) return h0;
+    for (const r of [3, 6, 8]) for (let k = 0; k < 8; k++) {
+      const a = (k * Math.PI) / 4, h = this.host.partAt(x + r * Math.cos(a), y + r * Math.sin(a));
+      if (ok(h)) return h;
+    }
+    return null;
   }
 
   /** Inserts the panel's fastener on the hole whose cylinder is face `face` of shown part `idx`; `point` picks the end. */
@@ -826,7 +841,7 @@ export class AsmController {
   /** Shows the panel's part on the hole under (x, y), sized as it would be placed; false when there is no hole there. */
   previewAt(x: number, y: number): boolean {
     const f = this.fastening;
-    const hit = f && this.host.partAt(x, y);
+    const hit = f && this.holeNear(x, y);
     const spot = hit ? this.holeSpot(hit.idx, hit.face, hit.point) : null;
     if (!f || !spot || "err" in spot) { this.hideGhost(); this.fastenStatus(); return false; }
     const L = lengthFor(f.kind, spot.size, f.length);
@@ -909,9 +924,9 @@ export class AsmController {
     this.toolboxDragOver(x, y);
     this.dragKind = null;
     this.hideGhost();
+    const near = this.holeNear(x, y);
+    if (near) { this.fastenHole(near.idx, near.face, near.point); return; }
     const hit = this.host.partAt(x, y);
-    const spot = hit ? this.holeSpot(hit.idx, hit.face, hit.point) : null;
-    if (hit && spot && !("err" in spot)) { this.fastenHole(hit.idx, hit.face, hit.point); return; }
     this.insertFastener(hit ? translation(hit.point) : undefined);
   }
 
