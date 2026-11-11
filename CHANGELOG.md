@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.520.0] - 2026-11-11
+
+### Added
+
+- Sketch **Jog line** (Trim ▾ menu, like SolidWorks): click a line where the jog starts, then where it ends and how far it steps out; the line becomes five lines, the step parallel to it and its sides square to it, with a live preview.
+
 ## [1.519.0] - 2026-11-11
 
 ### Added
@@ -3227,7 +3233,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.519.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.520.0...HEAD
+[1.520.0]: https://github.com/kothf/step-viewer/compare/v1.519.0...v1.520.0
 [1.519.0]: https://github.com/kothf/step-viewer/compare/v1.518.0...v1.519.0
 [1.518.0]: https://github.com/kothf/step-viewer/compare/v1.517.0...v1.518.0
 [1.517.0]: https://github.com/kothf/step-viewer/compare/v1.516.0...v1.517.0
