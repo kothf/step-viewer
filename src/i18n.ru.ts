@@ -2746,6 +2746,8 @@ export const RU: Record<string, string> = {
   "The part has no body yet.": "У детали ещё нет тела.",
   "Palettes": "Палитры",
   "Annotation": "Обозначения",
+  "Annotations": "Обозначения",
+  "Sheet annotations": "Обозначения листа",
   // Drawing Annotation tab: groups and tool tooltips
   "Fold the palette": "Свернуть палитру",
   "Show the palette": "Показать палитру",

@@ -2486,7 +2486,7 @@ try {
         `model 1.523: Jog line steps a line out with parallel and square sides (FR-SK-030) (${JSON.stringify(jg)})`);
       await tool("select");
     }
-    // 1.526.0 (FR-SK-032): Segment divides a line into equal collinear lines, and a circle by points on it.
+    // 1.527.0 (FR-SK-032): Segment divides a line into equal collinear lines, and a circle by points on it.
     {
       await tool("segment");
       const sg = await mp.evaluate(() => {
@@ -2507,10 +2507,10 @@ try {
         return { chain, lineRels, on, status: ed.info.status };
       });
       check(sg.chain.join("|") === "300-310|310-320|320-330" && sg.lineRels === "collinear,collinear,equal,equal" && sg.on.join("|") === "310 400|300 410|290 400|300 390" && sg.status === "ok",
-        `model 1.526: Segment divides a line into equal lines and a circle by points (FR-SK-032) (${JSON.stringify(sg)})`);
+        `model 1.527: Segment divides a line into equal lines and a circle by points (FR-SK-032) (${JSON.stringify(sg)})`);
       await tool("select");
     }
-    // 1.526.0 (FR-UI-052): Add dimensions on creation: a new circle gets its diameter and the Modify box at once,
+    // 1.527.0 (FR-UI-052): Add dimensions on creation: a new circle gets its diameter and the Modify box at once,
     // a new line its length; a typed value drives it, and a click elsewhere keeps the drawn size.
     {
       const known = await mp.evaluate(() => { const ed = window.__sv.model.editor(); ed.addDims = true; return ed.sk.ents.map(e => e.id); });
@@ -2533,7 +2533,7 @@ try {
         return { r: circ && r(circ.r), cd: circ && dimOf(circ.id)?.t, cv: circ && r(dimOf(circ.id)?.val.v ?? 0), ld: line && dimOf(line.id)?.t, status: ed.info.status };
       }, known);
       check(ad.r === 5 && ad.cd === "diameter" && ad.cv === 10 && lineBox && ad.ld === "distance" && ad.status === "ok",
-        `model 1.526: Add dimensions gives a new circle its diameter and a new line its length, with the Modify box (FR-UI-052) (${JSON.stringify({ ...ad, lineBox })})`);
+        `model 1.527: Add dimensions gives a new circle its diameter and a new line its length, with the Modify box (FR-UI-052) (${JSON.stringify({ ...ad, lineBox })})`);
       await tool("select");
     }
     // 1.266.0 (FR-SK-043/044/047): dragging the last line's start onto the free end of the Ctrl line merges them
@@ -5958,6 +5958,31 @@ try {
     an = await annots();
     check(tx.includes("Ø16 THRU") && tx.includes("BREAK SHARP EDGES") && an.some(a => a.t === "hole") && an.some(a => a.t === "note" && !a.view),
       `drawing: hole callout from the model (Ø16 THRU) and a note on the sheet (${tx.filter(s => /THRU|BREAK/.test(s)).join(" / ")})`);
+    // Drawing tree (1.522.0): annotations are listed under their view and under Sheet annotations; the new note's group
+    // opened for it; another group opens on a click; a row selects its annotation; hovering a row outlines it on the sheet;
+    // Left from an annotation row goes to its group.
+    {
+      const ho = await dp.evaluate(() => window.__sv.drw.doc().sheets[0].annots.find(a => a.t === "hole"));
+      const tr0 = await dp.evaluate(v => ({ sheetGrp: document.querySelector('.drw-tree [data-tw=""]')?.getAttribute("aria-expanded"), on: document.querySelector(".drw-tree .drw-ti.ann.on small")?.textContent,
+        viewGrp: document.querySelector(`.drw-tree [data-tw="${v}"]`)?.getAttribute("aria-expanded") }), ho.view);
+      // The hole's group opened when the callout was selected above: a click folds it, another opens it.
+      const grp = `.drw-tree [data-tw="${ho.view}"]`;
+      await dp.click(grp);
+      const folded = await dp.evaluate(g => document.querySelector(g)?.getAttribute("aria-expanded"), grp);
+      if (folded === "true") await dp.click(grp);
+      await dp.click(grp);
+      await dp.click(`.drw-tree [data-sela="${ho.id}"]`);
+      const tr1 = await dp.evaluate(() => ({ head: document.querySelector(".drw-pm-head b")?.textContent, on: document.querySelector(".drw-tree .drw-ti.ann.on")?.textContent }));
+      await dp.hover('.drw-tree [data-tw=""] + [role=group] [data-sela]');
+      const hov = await dp.evaluate(() => document.querySelectorAll(".drw-ovl .drw-hov").length);
+      await dp.focus('.drw-tree .drw-ti.ann.on');
+      await dp.keyboard.press("ArrowLeft");
+      const up = await dp.evaluate(v => document.activeElement?.getAttribute("data-tw") === v, ho.view);
+      await dp.click('.drw-tree [data-tw=""] + [role=group] [data-sela]');
+      const tr2 = await dp.evaluate(() => document.querySelector(".drw-pm-head b")?.textContent);
+      check(tr0.sheetGrp === "true" && tr0.on === "BREAK SHARP EDGES" && tr0.viewGrp === "true" && folded === "false" && tr1.head === "Hole callout" && /Hole callout/.test(tr1.on ?? "") && hov >= 1 && up && tr2 === "Note",
+        `drawing tree lists annotations by view, selects them and outlines the hovered one (${JSON.stringify([tr0, folded, tr1, hov, up, tr2])})`);
+    }
     // Note border (FR-DRW-023): the placed note is selected; a circle frames it, None takes it away.
     const arcsOf = async () => (await prims()).filter(p => p.t === "a" && p.layer === "ANNOT").length;
     const arcs0 = await arcsOf();
