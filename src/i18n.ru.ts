@@ -1474,6 +1474,7 @@ export const RU: Record<string, string> = {
   "A view could not be projected: {err}": "Вид не удалось спроецировать: {err}",
   "Projecting the views… {n} to go": "Проецирование видов… осталось {n}",
   "Freeing the drawing kernel's memory, then projecting… {n} to go": "Освобождение памяти ядра чертежа, затем проецирование… осталось {n}",
+  "the model is too big for an exact view and its quick projection came back empty. Try another view direction, or show fewer components in this view.": "модель слишком велика для точного вида, а его быстрая проекция оказалась пустой. Попробуйте другое направление вида или покажите в этом виде меньше компонентов.",
   "not enough memory for this view. Close other tabs, or draw the big assembly with fewer views per sheet.": "для этого вида не хватило памяти. Закройте другие вкладки или разместите большую сборку на листе меньшим числом видов.",
   "the geometry kernel failed (error {n}). The model may be too big for the browser's memory: close other tabs or draw fewer views.": "геометрическое ядро дало сбой (ошибка {n}). Возможно, модели не хватает памяти браузера: закройте другие вкладки или постройте меньше видов.",
   "Add sheet": "Добавить лист",

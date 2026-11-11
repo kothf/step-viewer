@@ -17,6 +17,7 @@ export interface CompInfo { id: string; part: string; name: string; /** Its part
 export interface ModelFacts { box: [V3, V3]; volume: number; topo: Topo; items: ModelItem[]; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; comps?: CompInfo[]; /** Flat pattern view: its bend lines. */ bends?: FlatBend[]; /** Weldment part: its fillet beads (weld table). */ welds?: WeldInfo[]; /** Weldment part: its cut list (cut list table). */ cuts?: CutInfo[]; /** Weldment part: face name → cut list item number (balloons). */ cutFaces?: Record<string, number>; /** Weldment part: face name → weld table row (weld tags). */ weldFaces?: Record<string, number>; /** Part whose bodies have their own materials: the distinct ones in body order (title block). */ mats?: string[]; /** Such a part's mass in kg with each body's own density. */ kg?: number }
 
 /** `?fasthlr`: every exact view takes the fast path. */
+const angleFlag = () => { const v = typeof location !== "undefined" ? Number(new URLSearchParams(location.search).get("drwangle")) : NaN; return v > 0 ? v : undefined; };
 const fastFlag = () => (typeof location !== "undefined" && new URLSearchParams(location.search).has("fasthlr") ? 0 : undefined);
 
 const facts = (r: ModelFacts): ModelFacts => ({ box: r.box, volume: r.volume, topo: r.topo, items: r.items, holes: r.holes, threads: r.threads ?? [], sketches: r.sketches ?? [], comps: r.comps, bends: r.bends, welds: r.welds, cuts: r.cuts, cutFaces: r.cutFaces, weldFaces: r.weldFaces, mats: r.mats, kg: r.kg });
@@ -70,7 +71,7 @@ class Lane {
     };
     w.onerror = e => { this.stop(new Error(e.message || "The drawing kernel stopped")); onDead(this); };
     this.worker = w;
-    this.ready = compile(base).then(module => this.call<void>({ type: "init", base, module, fast }));
+    this.ready = compile(base).then(module => this.call<void>({ type: "init", base, module, fast, angle: angleFlag() }));
   }
   call<T>(msg: Record<string, unknown>): Promise<T> {
     if (this.dead) return Promise.reject(new Error("The drawing kernel stopped"));
@@ -164,7 +165,7 @@ export class DrawingKernel {
     };
     w.onerror = e => { for (const p of this.pending.values()) p.reject(new Error(e.message || "The drawing kernel stopped")); this.pending.clear(); this.stop(); };
     this.worker = w;
-    this.ready = compile(this.base).then(module => this.call<void>({ type: "init", base: this.base, module, fast: fastFlag() }));
+    this.ready = compile(this.base).then(module => this.call<void>({ type: "init", base: this.base, module, fast: fastFlag(), angle: angleFlag() }));
     this.ready.catch(() => this.stop());
     return this.ready;
   }
