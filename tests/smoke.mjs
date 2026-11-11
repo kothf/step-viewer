@@ -119,7 +119,7 @@ const inShard = k => {
 };
 // A click on a Features tree row. While a command panel is open the tree is the folded fly-out over the view
 // (FR-UI-003): open it for the click and fold it again, so later clicks in the view are not covered.
-/** A new drawing of the open model with Standard 3 views (since 1.510.0 a new drawing starts with an empty sheet). */
+/** A new drawing of the open model with Standard 3 views (since 1.513.0 a new drawing starts with an empty sheet). */
 async function newDrawing3(pg) {
   await pg.click("#new-more"); await pg.click("#new-drawing");
   await pg.waitForFunction(() => window.__sv.drw.loaded(), null, { timeout: 120000 });
@@ -5288,6 +5288,34 @@ try {
     const auxBox = aux && await dp.evaluate(i => window.__sv.drw.placement(i).box.map(v => Math.round(v * 1000) / 1000), aux.id);
     check(edgeHi === 1 && aux && aux.letter === "C" && aux.look === -1 && Math.abs(aux.x - front.x) < 0.02 && aux.y > front.y && auxBox && Math.round(auxBox[2] - auxBox[0]) === 100 && Math.round(auxBox[3] - auxBox[1]) === 60,
       `drawing: auxiliary view C square to a picked edge, lined up with its parent (${JSON.stringify(aux && { x: aux.x, y: aux.y, look: aux.look })}, box ${auxBox})`);
+    // 1.512.0: an auxiliary view from a line drawn with Annotate ▸ Line over the top view (SolidWorks' sketched line), then undone.
+    {
+      const viewsBefore = vs.length;
+      await dp.keyboard.press("Escape");
+      await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="skline"]');
+      for (const [u, w] of [[-30, -20], [30, 20]]) { [x, y] = await at(top.id, u, w); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); }
+      await dp.keyboard.press("Escape");
+      const drawnN = await dp.evaluate(() => (window.__sv.drw.doc().sheets[0].annots ?? []).filter(a => a.t === "sk").length);
+      await dp.click('#drw [data-a="aux"]');
+      [x, y] = await at(top.id, 15, 10);
+      await dp.mouse.move(x, y + 2); await dp.mouse.move(x, y);
+      const lineHi = await dp.evaluate(() => document.querySelectorAll("#drw .drw-edge").length);
+      await dp.mouse.click(x, y);
+      [x, y] = await scr(top.x + 60, top.y - 40);
+      await dp.mouse.move(x, y + 3); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+      await ready();
+      vs = await views();
+      const aux2 = vs.find(v => v.kind === "aux" && v.id !== aux?.id);
+      const dir = aux2 && (aux2.line[3] - aux2.line[1]) / (aux2.line[2] - aux2.line[0]);
+      const box2 = aux2 && await dp.evaluate(i => window.__sv.drw.placement(i)?.box ?? null, aux2.id);
+      check(drawnN === 1 && lineHi === 1 && aux2 && aux2.parent === top.id && Math.abs(dir - 2 / 3) < 0.02 && box2,
+        `drawing: auxiliary view folded about a line drawn on the top view (${JSON.stringify({ drawnN, lineHi, line: aux2?.line, parent: aux2?.parent === top.id })})`);
+      await dp.keyboard.press("Escape");
+      await dp.keyboard.press("Control+z"); await ready();
+      await dp.keyboard.press("Control+z"); await ready();
+      const left = await dp.evaluate(() => ({ v: window.__sv.drw.doc().sheets[0].views.length, sk: (window.__sv.drw.doc().sheets[0].annots ?? []).filter(a => a.t === "sk").length }));
+      check(left.v === viewsBefore && left.sk === 0, `drawing: undo takes the drawn-line auxiliary view and the line back off (${JSON.stringify(left)})`);
+    }
     // 1.114.0 offset section (FR-DRW-012): a path on the top view at y = 10 left of x = 0, a step down to y = 0, then through the hole.
     await dp.click('#drw [data-a="section"]'); await dp.click('#drw [data-cut="off"]');
     for (const [u, w] of [[-45, 10], [0, 10], [0, 0], [45, 0]]) { [x, y] = await at(top.id, u, w); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); }
@@ -10775,7 +10803,7 @@ try {
     check(/Полосы/.test(ruAna) && !/[A-Za-z]{3}/.test(ruAna) && off.hidden && off.own, `analysis: panel in Russian; turning it off restores the parts (${JSON.stringify([ruAna.slice(0, 60), off])})`);
 
     // Drawing view palette: every standard view drawn; drag the isometric one onto the sheet.
-    // 1.510: a new drawing starts with an empty sheet and the palette (SolidWorks); Standard 3 views stays a command.
+    // 1.513: a new drawing starts with an empty sheet and the palette (SolidWorks); Standard 3 views stays a command.
     await ap.click("#new-more"); await ap.click("#new-drawing");
     await ap.waitForFunction(() => window.__sv.drw.loaded(), null, { timeout: 120000 });
     const fresh = await ap.evaluate(() => ({ n: window.__sv.drw.doc().sheets[0].views.length, st: document.querySelector(".drw-status").textContent }));
@@ -10789,7 +10817,7 @@ try {
     await ap.waitForFunction(() => window.__sv.drw.doc().sheets[0].views.length === 4, null, { timeout: 10000 });
     await ap.keyboard.press("Escape");
     const iso = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views.at(-1); return { orient: v.orient, style: v.style, x: v.x, y: v.y, parent: v.parent ?? null }; });
-    // 1.510: the palette's pictures run behind the views and are never dropped as unwanted, so placing views
+    // 1.513: the palette's pictures run behind the views and are never dropped as unwanted, so placing views
     // while they are made neither blanks them nor starts the drawing worker over (that cost a cold start per view).
     const recycles = await ap.evaluate(() => window.__sv.drw.helper().recycles);
     check(tiles === "front,top,right,iso,back,bottom,left" && iso.orient === "iso" && iso.style === "hlr" && !iso.parent && iso.x > 200 && iso.y > 150 && recycles === 0,

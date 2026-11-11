@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.512.0] - 2026-11-11
+## [1.513.0] - 2026-11-11
 
 ### Changed
 
@@ -15,6 +15,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - Drawings: placing a view from the View palette while its pictures were still being drawn restarted the drawing kernel, so the view took seconds to appear (and a palette picture stayed blank). The pictures now wait behind the views and are never thrown away, so a palette view shows at once.
 - Drawings: the drawing kernel starts a few seconds after a model opens, so a new drawing's palette and first view no longer wait about 3 s (longer on slower computers) for OpenCASCADE to set itself up.
+
+## [1.512.0] - 2026-11-11
+
+### Added
+
+- Auxiliary view from a drawn line (FR-DRW-014), as in SolidWorks from a sketched line: with Auxiliary, click a line drawn with Annotate ▸ Line (or a side of a drawn rectangle or polyline) over a view, and the view folds about it, square to that line.
 
 ## [1.511.0] - 2026-11-11
 
@@ -3176,7 +3182,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.512.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.513.0...HEAD
+[1.513.0]: https://github.com/kothf/step-viewer/compare/v1.512.0...v1.513.0
 [1.512.0]: https://github.com/kothf/step-viewer/compare/v1.511.0...v1.512.0
 [1.511.0]: https://github.com/kothf/step-viewer/compare/v1.510.0...v1.511.0
 [1.510.0]: https://github.com/kothf/step-viewer/compare/v1.509.0...v1.510.0
