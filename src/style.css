@@ -1118,6 +1118,8 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .v-refs legend { font-size: 12px; padding: 0 4px; }
 /* View navigation (FR-UI-103/104): Zoom to area box and the Space orientation picker. */
 .nav-area { position: fixed; z-index: 80; pointer-events: none; border: 1.5px dashed var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.mc-selbox { position: fixed; z-index: 80; pointer-events: none; border: 1.5px solid #1c7ed6; background: color-mix(in srgb, #1c7ed6 10%, transparent); }
+.mc-selbox.cross { border: 1.5px dashed #2f9e44; background: color-mix(in srgb, #2f9e44 10%, transparent); }
 .nav-pick { position: fixed; z-index: 75; padding: 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); font-size: 12px; color: var(--text); }
 .nav-pick-t { color: var(--muted); margin: 0 2px 6px; }
 .nav-cube { display: grid; grid-template-columns: repeat(4, 64px); gap: 3px; }

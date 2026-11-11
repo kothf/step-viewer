@@ -7171,6 +7171,48 @@ try {
       await settle();
       check(mc1.faces + mc1.edges >= 2 && /selected/.test(hint) && mc0.faces + mc0.edges === 0 && mc2.faces + mc2.edges >= 2 && taken === (byEdges ? mc2.edges : mc2.faces),
         `model 1.537: Ctrl+click selects several faces/edges, Esc clears them, the command takes them all (FR-SEL-007) (${JSON.stringify({ spots: spots.length, mc1, hint, mc0, mc2, byEdges, taken })})`);
+      // 1.538: a left drag from empty space draws a box: left to right takes what lies inside, right to left what it
+      // crosses; the view does not turn; a click on empty space clears (FR-SEL-008).
+      {
+        await mp.evaluate(() => window.__sv.viewer.fit(false));
+        await mp.waitForTimeout(400);
+        const geom = await mp.evaluate(() => {
+          const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect();
+          let x0 = 1, x1 = 0, y0 = 1, y1 = 0;
+          for (let k = 0; k < 1600; k++) {
+            const fx = (k % 40 + 0.5) / 40, fy = (Math.floor(k / 40) + 0.5) / 40;
+            if (v.pickMeshes({ x: fx * 2 - 1, y: -(fy * 2 - 1) })) { x0 = Math.min(x0, fx); x1 = Math.max(x1, fx); y0 = Math.min(y0, fy); y1 = Math.max(y1, fy); }
+          }
+          return { r: { left: r.left, top: r.top, width: r.width, height: r.height }, x0, x1, y0, y1, cam: v.camera.position.toArray() };
+        });
+        const px = (fx, fy) => [geom.r.left + fx * geom.r.width, geom.r.top + fy * geom.r.height];
+        const drag = async (a, b) => {
+          await mp.mouse.move(a[0], a[1]);
+          await mp.mouse.down();
+          for (let i = 1; i <= 6; i++) await mp.mouse.move(a[0] + (b[0] - a[0]) * i / 6, a[1] + (b[1] - a[1]) * i / 6);
+          const cls = await mp.evaluate(() => document.querySelector(".mc-selbox")?.className ?? "");
+          await mp.mouse.up();
+          await mp.waitForTimeout(200);
+          return cls;
+        };
+        const m0 = Math.max(0.02, geom.x0 - 0.06), m1 = Math.min(0.98, geom.x1 + 0.06), n0 = Math.max(0.02, geom.y0 - 0.06), n1 = Math.min(0.98, geom.y1 + 0.06);
+        const winCls = await drag(px(m0, n0), px(m1, n1));
+        const win = await mp.evaluate(() => ({ ...window.__sv.modeller.multiCount, hint: document.getElementById("st-hint")?.textContent ?? "", cam: window.__sv.viewer.camera.position.toArray(), box: !!document.querySelector(".mc-selbox") }));
+        await mp.mouse.click(...px(m0, n0));
+        await mp.waitForTimeout(200);
+        const cleared = await mp.evaluate(() => window.__sv.modeller.multiCount);
+        // A crossing box from the right over the middle of the part.
+        const crCls = await drag(px(m1, (geom.y0 + geom.y1) / 2), px((geom.x0 + geom.x1) / 2, (geom.y0 + geom.y1) / 2 + 0.02));
+        const cross = await mp.evaluate(() => window.__sv.modeller.multiCount);
+        // A window strip of the same height from the left: only what lies wholly inside it, so fewer.
+        await drag(px(m0, (geom.y0 + geom.y1) / 2), px((geom.x0 + geom.x1) / 2, (geom.y0 + geom.y1) / 2 + 0.02));
+        const half = await mp.evaluate(() => window.__sv.modeller.multiCount);
+        await mp.keyboard.press("Escape");
+        const moved = Math.hypot(...win.cam.map((c, i) => c - geom.cam[i]));
+        check(win.faces >= 3 && win.edges >= 6 && /selected/.test(win.hint) && !win.box && moved < 1e-6 && !/cross/.test(winCls) && /cross/.test(crCls)
+          && cleared.faces + cleared.edges === 0 && cross.faces >= 1 && cross.edges >= 1 && half.faces + half.edges < cross.faces + cross.edges,
+          `model 1.538: box selection in the part, window and crossing, the view stays put, an empty click clears (FR-SEL-008) (${JSON.stringify({ geom: [geom.x0, geom.x1, geom.y0, geom.y1], winCls, win, moved, cleared, crCls, cross, half })})`);
+      }
       await mp.evaluate(() => window.__sv.model.store.undo());
       await settle();
       await mp.evaluate(() => window.__sv.model.store.undo());
