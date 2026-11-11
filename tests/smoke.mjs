@@ -4952,6 +4952,7 @@ try {
     // Custom sheet scale (drawings exam #17): a box under the list takes it, no browser prompt.
     {
       await dp.keyboard.press("Escape");
+      await ready();
       await dp.selectOption('#drw .drw-props [data-s="scale"]', "custom");
       const box = dp.locator("#drw .drw-props input.drw-cscale");
       const focused = await dp.evaluate(() => document.activeElement?.classList.contains("drw-cscale"));

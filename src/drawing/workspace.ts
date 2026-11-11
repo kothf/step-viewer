@@ -2855,10 +2855,16 @@ export class DrawingWorkspace {
     if (keep && box0) { keep.val = box0.value; keep.focus = document.activeElement === box0; }
     this.renderPropsOnly();
     const sel = keep && this.el.querySelector<HTMLSelectElement>(`.drw-props select[data-${keep.k}="scale"]`);
-    if (keep && sel) { sel.value = "custom"; this.addScaleBox(sel, keep); } else this.cscale = null;
+    if (keep && sel) { sel.value = "custom"; this.addScaleBox(sel, keep, box0?.dataset[keep.k] === "scale" ? box0 : null); } else this.cscale = null;
   }
 
-  private addScaleBox(sel: HTMLSelectElement, c: { k: "v" | "s"; val: string; focus: boolean }) {
+  /** Puts the Custom… box under the scale list; `reuse` = the box already there, moved over so the element typed into stays the same. */
+  private addScaleBox(sel: HTMLSelectElement, c: { k: "v" | "s"; val: string; focus: boolean }, reuse: HTMLInputElement | null = null) {
+    if (reuse) {
+      sel.closest("label")?.after(reuse);
+      if (c.focus && document.activeElement !== reuse) reuse.focus();
+      return;
+    }
     const box = document.createElement("input");
     box.dataset[c.k] = "scale";
     box.className = "drw-cscale";

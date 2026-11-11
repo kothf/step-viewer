@@ -11,6 +11,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - A drawing of the assembly open in 3D takes its shape from the parts the assembly has built already instead of building every part again: on the steam engine that step takes about 1.5 s instead of 12 s.
 
+### Fixed
+
+- The Custom… scale box stays the same box while the drawing panel redraws, so typing into it is no longer cut off when a view arrives.
+
 ## [1.500.0] - 2026-11-11
 
 ### Added
