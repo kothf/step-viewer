@@ -382,9 +382,15 @@ test("recognize features: a coil spring comes back as a circle sketch, a Helix a
   const lift = { id: "pl", type: "plane", name: "P", base: { std: "XY" }, mode: "offset", offset: { v: 8 } } as Feature;
   const cases: [string, Feature[], Record<string, unknown>, string][] = [
     ["right-handed, from a plane 8 mm up", [lift], { plane: "pl" }, "plane,sketch,helix,sweep,delbody"],
-    ["left-handed about X, reversed, starting at 1 rad", [], { std: "YZ" }, "sketch,helix,sweep,delbody"]];
+    ["left-handed about X, reversed, starting at 1 rad", [], { std: "YZ" }, "sketch,helix,sweep,delbody"],
+    // Skew axes: tilted 30° about X, 6 mm up from that plane; a compound angle (25° about Z, then 40° about where it meets XY).
+    ["tilted in a standard plane", [{ id: "t1", type: "plane", name: "T", base: { std: "XY" }, mode: "angle", offset: { v: 0 }, angle: { v: Math.PI / 6 }, about: { std: "X" } } as Feature,
+      { id: "t2", type: "plane", name: "U", base: { plane: "t1" }, mode: "offset", offset: { v: 6 } } as Feature], { plane: "t2" }, "plane,plane,sketch,helix,sweep,delbody"],
+    ["at a compound angle", [{ id: "q1", type: "plane", name: "Q", base: { std: "YZ" }, mode: "angle", offset: { v: 0 }, angle: { v: (25 * Math.PI) / 180 }, about: { std: "Z" } } as Feature,
+      { id: "qa", type: "axis", name: "A", mode: "planes", planes: [{ std: "XY" }, { plane: "q1" }] } as Feature,
+      { id: "q2", type: "plane", name: "R", base: { plane: "q1" }, mode: "angle", offset: { v: 0 }, angle: { v: (40 * Math.PI) / 180 }, about: { axis: "qa" } } as Feature], { plane: "q2" }, "plane,axis,plane,sketch,helix,sweep,delbody"]];
   for (const [name, lead, plane, want] of cases) {
-    const left = "std" in plane;
+    const left = "std" in plane || name.startsWith("at a");
     const s1: SketchFeature = { id: "s1", type: "sketch", name: "s1", plane: plane as SketchFeature["plane"], rels: [], dims: [], ents: [{ id: "c", t: "point", x: 3, y: 2 }, { id: "k", t: "circle", c: "c", r: 10 } as SkEnt] };
     const hx = { id: "h1", type: "helix", name: "H", sketch: "s1", mode: "pitchRev", pitch: { v: 5 }, revs: { v: 3.5 }, height: { v: 15 }, ...(left ? { cw: true, reverse: true, start: { v: 1 } } : {}) } as Feature;
     const imp = imported(m, [...lead, s1, hx, { id: "w1", type: "sweep", name: "S", op: "boss", circular: { v: 2 }, path: { helix: "h1" } } as Feature]);

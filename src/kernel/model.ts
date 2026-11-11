@@ -3504,45 +3504,8 @@ export class Modeller {
       crossFaces.push(...fs);
     };
     const newId = () => `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
-    // The plane square to a hole's axis `d` through the origin: a standard plane; else a plane at an angle to
-    // one about the standard axis square to `d` (a hole tilted in a standard plane); else (a compound angle)
-    // a plane about Z through the hole's direction, the axis where it meets XY, and a plane about that axis.
-    const turned = (base: PlaneRef, n: V3, about: LineRef, u: V3, d: V3): { pf: PlaneFeature; fr: Frame } => {
-      const dd = dot(n, d) < 0 ? mul(d, -1) : d, a = Math.atan2(dot(dd, cross(u, n)), dot(dd, n));
-      const pf = { id: newId(), type: "plane", name: "", base, mode: "angle", offset: { v: 0 }, angle: { v: Math.abs(a) }, about, ...(a < 0 ? { flip: true } : {}) } as PlaneFeature;
-      return { pf, fr: this.refPlane(pf, body, frames) };
-    };
     const frames: Record<string, Frame> = {};
-    const squareTo = (d: V3): { feats: Feature[]; ref: PlaneRef; fr: Frame } | null => {
-      const STD = ["XY", "XZ", "YZ"] as const;
-      const std = STD.find(k => Math.abs(Math.abs(dot(STD_FRAMES[k].n, d)) - 1) < 1e-9);
-      if (std) return { feats: [], ref: { std }, fr: STD_FRAMES[std] };
-      const axes = [["X", [1, 0, 0]], ["Y", [0, 1, 0]], ["Z", [0, 0, 1]]] as [("X" | "Y" | "Z"), V3][];
-      const ax = axes.find(([, A]) => Math.abs(dot(A, d)) < 1e-9);
-      let out: { feats: Feature[]; ref: PlaneRef; fr: Frame };
-      if (ax) {
-        // Of the two standard planes holding the axis, the one nearer square to the hole.
-        const base = STD.filter(k => Math.abs(dot(STD_FRAMES[k].n, ax[1])) < 1e-9)
-          .sort((a, b) => Math.abs(dot(STD_FRAMES[b].n, d)) - Math.abs(dot(STD_FRAMES[a].n, d)))[0];
-        const { pf, fr } = turned({ std: base }, STD_FRAMES[base].n, { std: ax[0] }, ax[1], d);
-        out = { feats: [pf], ref: { plane: pf.id }, fr };
-      } else {
-        const Z: V3 = [0, 0, 1], h = unit(sub3(d, mul(Z, d[2])));
-        // Plane 1 is square to the hole's direction seen from above (turned about Z from YZ or XZ); it meets XY
-        // along the horizontal line square to the hole, which plane 2 turns about until it is square to it.
-        const base = Math.abs(h[0]) >= Math.abs(h[1]) ? "YZ" as const : "XZ" as const;
-        const p1 = turned({ std: base }, STD_FRAMES[base].n, { std: "Z" }, Z, h);
-        frames[p1.pf.id] = p1.fr;
-        const aid = newId();
-        const axis = { id: aid, type: "axis", name: "", mode: "planes", planes: [{ std: "XY" }, { plane: p1.pf.id }] } as AxisFeature;
-        const af = this.refAxis(axis, body, frames);
-        frames[aid] = af;
-        const p2 = turned({ plane: p1.pf.id }, p1.fr.n, { axis: aid }, unit(af.n), d);
-        frames[p2.pf.id] = p2.fr;
-        out = { feats: [p1.pf, axis, p2.pf], ref: { plane: p2.pf.id }, fr: p2.fr };
-      }
-      return Math.abs(Math.abs(dot(out.fr.n, d)) - 1) < 1e-9 ? out : null;
-    };
+    const squareTo = (d: V3) => this.squarePlane(d, body, frames);
     // Blind cross holes: a reference plane offset from the plane square to the hole, through the rim's
     // farthest point, and a Hole Wizard hole on it (reversed when it runs along the plane's normal).
     for (const c of crossB) {
@@ -4387,6 +4350,47 @@ export class Modeller {
    * a Helix, a circular-profile Sweep with Merge result off and Delete Body of the import; kept when its helix runs
    * through the centreline turning the same way and the volume matches.
    */
+  /** Features for a plane square to `d`: a standard plane; else a plane at an angle to one about the standard axis square
+   * to `d`; else (a compound angle) a plane about Z, the axis where it meets XY and a plane about that axis. Frames of the
+   * new features go into `frames`. `snapAng` rounds a measured angle; with `angTol` (radians) `d` is a measured direction. */
+  private squarePlane(d: V3, body: Named | null, frames: Record<string, Frame>, snapAng: (a: number) => number = a => a, angTol?: number): { feats: Feature[]; ref: PlaneRef; fr: Frame } | null {
+    const newId = () => `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
+    const turned = (base: PlaneRef, n: V3, about: LineRef, u: V3, d: V3): { pf: PlaneFeature; fr: Frame } => {
+      const dd = dot(n, d) < 0 ? mul(d, -1) : d, a = Math.atan2(dot(dd, cross(u, n)), dot(dd, n));
+      const pf = { id: newId(), type: "plane", name: "", base, mode: "angle", offset: { v: 0 }, angle: { v: snapAng(Math.abs(a)) }, about, ...(a < 0 ? { flip: true } : {}) } as PlaneFeature;
+      return { pf, fr: this.refPlane(pf, body, frames) };
+    };
+    const along = (n: V3, v: V3) => angTol ? Math.hypot(...cross(n, v)) < angTol : Math.abs(Math.abs(dot(n, v)) - 1) < 1e-9;
+    const STD = ["XY", "XZ", "YZ"] as const;
+    const std = STD.find(k => along(STD_FRAMES[k].n, d));
+    if (std) return { feats: [], ref: { std }, fr: STD_FRAMES[std] };
+    const axes = [["X", [1, 0, 0]], ["Y", [0, 1, 0]], ["Z", [0, 0, 1]]] as [("X" | "Y" | "Z"), V3][];
+    const ax = axes.find(([, A]) => Math.abs(dot(A, d)) < (angTol ?? 1e-9));
+    let out: { feats: Feature[]; ref: PlaneRef; fr: Frame };
+    if (ax) {
+      // Of the two standard planes holding the axis, the one nearer square to the hole.
+      const base = STD.filter(k => Math.abs(dot(STD_FRAMES[k].n, ax[1])) < 1e-9)
+        .sort((a, b) => Math.abs(dot(STD_FRAMES[b].n, d)) - Math.abs(dot(STD_FRAMES[a].n, d)))[0];
+      const { pf, fr } = turned({ std: base }, STD_FRAMES[base].n, { std: ax[0] }, ax[1], d);
+      out = { feats: [pf], ref: { plane: pf.id }, fr };
+    } else {
+      const Z: V3 = [0, 0, 1], h = unit(sub3(d, mul(Z, d[2])));
+      // Plane 1 is square to the hole's direction seen from above (turned about Z from YZ or XZ); it meets XY
+      // along the horizontal line square to the hole, which plane 2 turns about until it is square to it.
+      const base = Math.abs(h[0]) >= Math.abs(h[1]) ? "YZ" as const : "XZ" as const;
+      const p1 = turned({ std: base }, STD_FRAMES[base].n, { std: "Z" }, Z, h);
+      frames[p1.pf.id] = p1.fr;
+      const aid = newId();
+      const axis = { id: aid, type: "axis", name: "", mode: "planes", planes: [{ std: "XY" }, { plane: p1.pf.id }] } as AxisFeature;
+      const af = this.refAxis(axis, body, frames);
+      frames[aid] = af;
+      const p2 = turned({ plane: p1.pf.id }, p1.fr.n, { axis: aid }, unit(af.n), d);
+      frames[p2.pf.id] = p2.fr;
+      out = { feats: [p1.pf, axis, p2.pf], ref: { plane: p2.pf.id }, fr: p2.fr };
+    }
+    return along(out.fr.n, d) ? out : null;
+  }
+
   private baseHelix(upto: Feature[], at: (fs: Feature[]) => PartDoc): Feature[] | null {
     const oc = this.oc;
     const imports = upto.filter(f => f.type === "import" && !f.suppressed).map(f => `${f.id}:`);
@@ -4449,11 +4453,15 @@ export class Modeller {
     }
     if (!ax || best < 1e-3) return null;
     if (dot(ax, sub3(cen[K], cen[0])) < 0) ax = mul(ax, -1);
-    const std = (["XY", "XZ", "YZ"] as const).find(k => Math.abs(Math.abs(dot(STD_FRAMES[k].n, ax!)) - 1) < 1e-6);
-    if (!std) return null;
-    const F = STD_FRAMES[std], d = mul(F.n, Math.sign(dot(F.n, ax)));
+    // The plane square to the axis: a standard plane, else reference planes turned to it (angles to 0.01° taken as meant).
+    const frames: Record<string, Frame> = {};
+    const degSnap = (a: number) => { const g = (a * 180) / Math.PI, k = Math.round(g * 100) / 100; return Math.abs(g - k) <= 2e-3 ? (k * Math.PI) / 180 : a; };
+    const sq = this.squarePlane(ax, body, frames, degSnap, 1e-4);
+    if (!sq) return null;
+    const F = sq.fr, d = mul(F.n, Math.sign(dot(F.n, ax)));
+    if (sq.feats.length) frames[sq.feats[sq.feats.length - 1].id] ??= F;
     // The circle the centreline lies on, seen along the axis (least squares).
-    const xy = cen.map(c => [dot(c, F.x), dot(c, F.y)] as [number, number]);
+    const xy = cen.map(c => [dot(sub3(c, F.o), F.x), dot(sub3(c, F.o), F.y)] as [number, number]);
     const A = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], b = [0, 0, 0];
     for (const [x, y] of xy) {
       const row = [x, y, 1], z = -(x * x + y * y);
@@ -4478,17 +4486,17 @@ export class Modeller {
     // Measured values carry the spline fit's noise: whole ten-thousandths are taken as meant.
     const snap = (x: number) => { const k = Math.round(x * 1e4) / 1e4; return Math.abs(x - k) <= 1e-5 * Math.max(1, Math.abs(x)) ? k : x; };
     const id = () => `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
-    const h0 = dot(cen[0], F.n);
-    const lead: Feature[] = [];
-    let plane: PlaneRef = { std };
+    const h0 = dot(sub3(cen[0], F.o), F.n);
+    const lead: Feature[] = [...sq.feats];
+    let plane: PlaneRef = sq.ref, fr = F;
     if (Math.abs(h0) > tol) {
-      const ref = { id: id(), type: "plane", name: "", base: { std }, mode: "offset", offset: { v: snap(Math.abs(h0)) }, ...(h0 < 0 ? { flip: true } : {}) } as PlaneFeature;
+      const ref = { id: id(), type: "plane", name: "", base: sq.ref, mode: "offset", offset: { v: snap(Math.abs(h0)) }, ...(h0 < 0 ? { flip: true } : {}) } as PlaneFeature;
       lead.push(ref);
       plane = { plane: ref.id };
+      fr = this.refPlane(ref, body, frames);
     }
-    const fr = lead.length ? this.refPlane(lead[0] as PlaneFeature, body, {}) : F;
     // The sketch circle in the plane's own frame (an offset plane may turn it).
-    const o3 = add(add(mul(F.x, ox), mul(F.y, oy)), mul(F.n, h0)), q = sub3(o3, fr.o);
+    const o3 = add(F.o, add(add(mul(F.x, ox), mul(F.y, oy)), mul(F.n, h0))), q = sub3(o3, fr.o);
     const sid = id(), hid = id();
     const sk = { id: sid, type: "sketch", name: "", plane, rels: [], dims: [], ents: [
       { id: `${sid}c`, t: "point", x: snap(dot(q, fr.x)), y: snap(dot(q, fr.y)) }, { id: `${sid}k`, t: "circle", c: `${sid}c`, r: snap(R) }] } as unknown as Feature;
@@ -4506,7 +4514,7 @@ export class Modeller {
       // It turns the same way as it climbs (a mirror image ends in the same place only after whole half turns).
       let pa = th[0], bad = false;
       for (const p of pts) {
-        let a = Math.atan2(dot(p, F.y) - oy, dot(p, F.x) - ox);
+        let a = Math.atan2(dot(sub3(p, F.o), F.y) - oy, dot(sub3(p, F.o), F.x) - ox);
         while (a - pa > Math.PI) a -= 2 * Math.PI;
         while (a - pa < -Math.PI) a += 2 * Math.PI;
         pa = a;
