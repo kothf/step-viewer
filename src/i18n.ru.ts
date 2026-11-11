@@ -4204,6 +4204,7 @@ export const RU: Record<string, string> = {
   "Click the opposite corner.": "Щёлкните противоположный угол.",
   "Click the first corner of the rectangle.": "Щёлкните первый угол прямоугольника.",
   "Click the end of the line.": "Щёлкните конец отрезка.",
+  "Click the end of the line; the next line starts there. Double-click or Esc ends.": "Щёлкните конец отрезка; следующий отрезок начнётся оттуда. Двойной щелчок или Esc — завершить.",
   "Click the start of the line.": "Щёлкните начало отрезка.",
   "Click the points of the polyline.": "Щёлкайте точки ломаной.",
   "Click more points; click the first point to close it, or press Enter to end it.": "Щёлкайте следующие точки; щелчок по первой точке замыкает ломаную, Enter завершает её.",
