@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Changed
 
 - Vault: the header shows a vault file's status (version, lifecycle state such as Work in progress, checked out to you) in its own chip beside the file name, so it is no longer cut off, and its tooltip explains each part.
+- Vault: a file's first lifecycle state is shown as Draft (Черновик) instead of Work in progress, which read as if something was still running; stored vaults keep their state names.
 - Vault: Save on a drawing whose part or assembly is in the open vault puts the drawing in the vault beside it, checked out to you, instead of downloading it; Save to vault on a part or assembly takes its open drawings along.
 
 ### Fixed

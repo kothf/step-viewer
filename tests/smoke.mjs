@@ -4650,7 +4650,7 @@ try {
     await mp.waitForFunction(() => document.querySelectorAll("#vault-panel .v-row").length >= 4, null, { timeout: 15000 }).catch(() => {});
     const r2 = await rows();
     const n2 = await mp.evaluate(() => document.querySelectorAll("#vault-panel .v-row").length);
-    check(/^Part1\.mcadprt$/.test(head.name.trim()) && /^v1 · Work in progress · checked out to you$/.test(head.chip) && /version 1/.test(head.tip) && /Lifecycle state: Work in progress/.test(head.tip) && /Checked out to you/.test(head.tip),
+    check(/^Part1\.mcadprt$/.test(head.name.trim()) && /^v1 · Draft · checked out to you$/.test(head.chip) && /version 1/.test(head.tip) && /Lifecycle state: Draft/.test(head.tip) && /Checked out to you/.test(head.tip),
       `vault 1.512: the header shows the vault status in its own chip with a tooltip that explains it (${JSON.stringify(head)})`);
     check(/Part1\.mcaddrw/.test(r1) && tied && downloads === 0 && n2 === 4 && /Part2\.mcadprt/.test(r2) && /Part2\.mcaddrw/.test(r2),
       `vault 1.512: a drawing of a vault part saves into the vault, and Save to vault takes the part's open drawing along (${r1}; ${tied}, ${downloads}; ${n2}: ${r2})`);
@@ -6326,7 +6326,7 @@ try {
     await mp.waitForFunction(f => /Выпущен/.test(eval(f)()), bracketRow.toString(), { timeout: 5000 }).catch(() => {});
     const ruRow = await mp.evaluate(f => eval(f)(), bracketRow.toString());
     await mp.click("#lang-btn");
-    check(/Work in progress/.test(row0) && checks && /Approve/.test(dlgTitle) && /Released/.test(row1) && /Rev A/.test(row1) && /BR-001/.test(row1) && !canCheckOut, `vault P4: data card, Submit for review and Approve give revision A (${row0} → ${row1}; ${dlgTitle})`);
+    check(/Draft/.test(row0) && checks && /Approve/.test(dlgTitle) && /Released/.test(row1) && /Rev A/.test(row1) && /BR-001/.test(row1) && !canCheckOut, `vault P4: data card, Submit for review and Approve give revision A (${row0} → ${row1}; ${dlgTitle})`);
     check(found === "bracket.txt" && audit === "data card,transition,transition,move,delete,restore", `vault P4: search, move, recycle bin and audit (${found}; ${audit})`);
     check(/Выпущен/.test(ruRow) && /Ред\. A/.test(ruRow), `vault P4: lifecycle in Russian (${ruRow})`);
     await ctx.close();

@@ -1366,6 +1366,7 @@ export const RU: Record<string, string> = {
   "vault closed": "хранилище закрыто",
   "Vault: versions, check-out and check-in": "Хранилище: версии, извлечение и регистрация",
   "Work in progress": "В работе",
+  "Draft (lifecycle state)": "Черновик",
   "add": "добавление",
   "check out": "извлечение",
   "check in": "регистрация",

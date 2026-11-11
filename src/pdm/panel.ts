@@ -1,7 +1,7 @@
 // The Vault tab (FR-PDM-002, 080): create or open a vault, list its files with their state, version and lock,
 // and the commands Check out, Check in, Undo check-out, Get latest, History (open a version, roll back),
 // Add files, Save the open part to the vault, the audit trail and the integrity check.
-import { onLangChange, t } from "../i18n";
+import { onLangChange, t, tAs } from "../i18n";
 import { confirmModal, storage, toast } from "../ui";
 import { unzipLimited, zip } from "../model/zip";
 import { packPart } from "../model/file";
@@ -10,7 +10,7 @@ import { embeddedParts, resolveRel } from "./codec";
 import { geomComparable, geometryCompare, geomRows, mountDiffView } from "./geomCompare";
 import { folderHandle, forgetFolder, rememberFolder, vaultFolders } from "./folders";
 import { fsaDir, MOVED_ON, Vault, VaultError, type FileRec, type Msg, type RefRec, type Resolve, type SearchQuery, type TreeNode, type VDir, STORE } from "./vault";
-import { defaultWorkflow, PART_NUMBER, ROLES, type CardField, type Role, type Workflow } from "./workflow";
+import { defaultWorkflow, PART_NUMBER, ROLES, WIP, type CardField, type Role, type Workflow } from "./workflow";
 
 /**
  * What ties an open document to its vault file: Save writes the working copy through it, only while the file
@@ -53,7 +53,7 @@ const fmtDate = (iso: string) => new Date(iso).toLocaleString(undefined, { dateS
 /** A vault message in the interface language. */
 const tm = (m: Msg) => t(m.key, m.p);
 /** State, transition and role names: the default workflow's are translated, a user's own are shown as typed (FR-PDM-083). */
-const tn = (s: string) => t(s);
+const tn = (s: string) => (s === WIP ? tAs("Draft", "Draft (lifecycle state)") : t(s));
 const errText = (e: unknown) => (e instanceof VaultError ? t(e.key, e.params) : t("Vault error: {err}", { err: (e as Error).message }));
 const download = (name: string, data: BlobPart, type: string) => {
   const a = document.createElement("a");
