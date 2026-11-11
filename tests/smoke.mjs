@@ -1146,7 +1146,7 @@ try {
     const waitModel = () => pg.waitForFunction(() => window.__sv?.viewer.parts.length > 0 && document.querySelector("#loading").hidden, null, { timeout: 60000 });
     // Visible text and labels with English words left in Russian mode (file names, formats and units excepted).
     const untranslated = () => pg.evaluate(() => {
-      const OK = /^(MöbiusCAD|STEP|DXF|IGES|BREP|SolidWorks|Parasolid|sldprt|sldasm|Gerber|Excellon|PCB|PNG|SVG|CSV|JSON|PDF|STL|OBJ|MF|DXF|opencascade|glTF|GLB|HLR|AO|EN|RU|mm|cm|in|ft|mil|fps|PTH|NPTH|ANSI31|XY|YZ|XZ|Ctrl|Alt|Esc|Shift|Enter|Tab|Del|Backspace|macOS|OpenCASCADE|occt|import|js|WebAssembly|RS|X2|AP\d+|rep|B|size|vol|zip|F1|SMD|PMI|GD|T|ComponentPad|SMDPad|ViaPad|GND|ambient|occlusion|Delrin|ABS|PLA|PEEK|POM|PA6|Ti|Al|V|D\d+|J\d+)$/;
+      const OK = /^(MöbiusCAD|STEP|DXF|IGES|BREP|SLDPRT|SLDASM|CAD|Parasolid|sldprt|sldasm|Gerber|Excellon|PCB|PNG|SVG|CSV|JSON|PDF|STL|OBJ|MF|DXF|opencascade|glTF|GLB|HLR|AO|EN|RU|mm|cm|in|ft|mil|fps|PTH|NPTH|ANSI31|XY|YZ|XZ|Ctrl|Alt|Esc|Shift|Enter|Tab|Del|Backspace|macOS|OpenCASCADE|occt|import|js|WebAssembly|RS|X2|AP\d+|rep|B|size|vol|zip|F1|SMD|PMI|GD|T|ComponentPad|SMDPad|ViaPad|GND|ambient|occlusion|Delrin|ABS|PLA|PEEK|POM|PA6|Ti|Al|V|D\d+|J\d+)$/;
       const skip = e => !e || e.closest('[translate="no"], script, style, [hidden]') || getComputedStyle(e).display === "none";
       const bad = new Set();
       const test = (s, where) => { if (s.split(/[^A-Za-zö0-9]+/).map(w => w.replace(/^\d+/, "")).some(w => /[A-Za-z]{2,}/.test(w) && !OK.test(w))) bad.add(`${where}: ${s.trim().slice(0, 60)}`); };
@@ -1322,7 +1322,7 @@ try {
     check(/-parts\.step$/.test(dl.suggestedFilename()) && back.ok && back.meshes === 3, `STEP export: only the 3 visible parts (${dl.suggestedFilename()}, ${back.meshes} read back)`);
   }
 
-  // --- SolidWorks: a generated block part (Parasolid X_T inside) and an assembly placing it twice ---
+  // --- a CAD app: a generated block part (Parasolid X_T inside) and an assembly placing it twice ---
   {
     const sw = resolve("tests/fixtures/sw");
     const swLoad = async (files, title) => {
@@ -1341,16 +1341,16 @@ try {
     await swLoad(["block.SLDPRT"], "block.SLDPRT");
     const part = await swState();
     check(part.n === 1 && near(part.vol[0], 24000, 1e-6) && part.planes[0] === 6 && part.closed && part.size.join() === "40,30,20",
-      `SolidWorks part: the block opens as one closed solid, 6 planes, 40 x 30 x 20 mm, V=${part.vol[0]} (${JSON.stringify(part)})`);
+      `SLDPRT part: the block opens as one closed solid, 6 planes, 40 x 30 x 20 mm, V=${part.vol[0]} (${JSON.stringify(part)})`);
     await swLoad(["pair.SLDASM", "block.SLDPRT"], "pair.SLDASM");
     const asm = await swState();
     check(asm.n === 2 && asm.vol.every(v => near(v, 24000, 1e-6)) && asm.size.join() === "100,40,20",
-      `SolidWorks assembly: two blocks, the second turned 90° and moved 100 mm, overall ${asm.size.join(" x ")} mm`);
-    check(asm.toasts.some(t => /^warn: .*lid\.SLDPRT/.test(t)), `SolidWorks assembly: the missing part is named (${asm.toasts})`);
+      `SLDASM assembly: two blocks, the second turned 90° and moved 100 mm, overall ${asm.size.join(" x ")} mm`);
+    check(asm.toasts.some(t => /^warn: .*lid\.SLDPRT/.test(t)), `SLDASM assembly: the missing part is named (${asm.toasts})`);
     await swLoad(["pair.SLDASM"]);
     await page.waitForSelector("#empty img.sw-preview", { timeout: 60000 });
     const alone = await page.evaluate(() => ({ toasts: [...document.querySelectorAll("#toasts .toast")].map(t => t.dataset.kind), img: document.querySelector("#empty img.sw-preview").naturalWidth }));
-    check(alone.toasts.includes("error") && alone.img === 1, `SolidWorks assembly without its parts: error toast and SolidWorks' own preview (${JSON.stringify(alone)})`);
+    check(alone.toasts.includes("error") && alone.img === 1, `SLDASM assembly without its parts: error toast and the file's own preview (${JSON.stringify(alone)})`);
   }
 
   // --- opening speed: the import engine warms up while idle, and the kernel worker is kept for the next file ---
@@ -3650,7 +3650,7 @@ try {
       check(dots === "1,2,3" && Math.abs(vSkip - (120000 - 3 * hole)) < 1 && off[0] === true && off[1] === "2" && Math.abs(vBack - vLp) < 1, `model 1.502: Instances to skip clicked in the view (${dots}, ${Math.round(vSkip)}, ${off}, ${Math.round(vBack)})`);
     }
     // Mirror the pattern about Right (YZ): three mirrored holes land on existing ones and are skipped with a warning.
-    // Nothing stays selected after OK (FR-SEL-012), so the pattern is picked in the tree first, as in SolidWorks.
+    // Nothing stays selected after OK (FR-SEL-012), so the pattern is picked in the tree first, as in other CAD apps.
     const lpId = await mp.evaluate(() => window.__sv.model.store.doc.features.filter(f => f.type === "lpattern").at(-1)?.id);
     await treeClick(mp, `#mc-tree .ft-row[data-id="${lpId}"]`);
     await mp.click('#mc-tools [data-fly="pattern"]');
@@ -5833,7 +5833,7 @@ try {
     const auxBox = aux && await dp.evaluate(i => window.__sv.drw.placement(i).box.map(v => Math.round(v * 1000) / 1000), aux.id);
     check(edgeHi === 1 && aux && aux.letter === "C" && aux.look === -1 && Math.abs(aux.x - front.x) < 0.02 && aux.y > front.y && auxBox && Math.round(auxBox[2] - auxBox[0]) === 100 && Math.round(auxBox[3] - auxBox[1]) === 60,
       `drawing: auxiliary view C square to a picked edge, lined up with its parent (${JSON.stringify(aux && { x: aux.x, y: aux.y, look: aux.look })}, box ${auxBox})`);
-    // 1.512.0: an auxiliary view from a line drawn with Annotate ▸ Line over the top view (SolidWorks' sketched line), then undone.
+    // 1.512.0: an auxiliary view from a line drawn with Annotate ▸ Line over the top view (a CAD app's sketched line), then undone.
     {
       const viewsBefore = vs.length;
       await dp.keyboard.press("Escape");
@@ -6322,7 +6322,7 @@ try {
     const scaleNote = tx.find(s => s.startsWith("SCALE "));
     check(scaleNote && !scaleNote.includes("$PRP") && /^SCALE \d+:\d+$/.test(scaleNote), `drawing: a note's $PRP:"Scale" link shows the sheet scale (${scaleNote})`);
     // Ordinate and chain dimensions (FR-DRW-021): base corner, hole centre, a click where the set goes (drawings exam #15:
-    // like SolidWorks, so it doesn't land on the dimensions already there), far corner; each later click adds its dimension.
+    // like a CAD app, so it doesn't land on the dimensions already there), far corner; each later click adds its dimension.
     const clicks = async (id, pts) => { for (const [u, w] of pts) { const [cx, cy] = await at(id, u, w); await dp.mouse.move(cx + 2, cy); await dp.mouse.move(cx, cy); await dp.mouse.click(cx, cy); } };
     await drwTool(dp, "ord");
     await clicks(top.id, [[-50, -30], [10, 0], [0, -45], [50, -30]]);
@@ -10573,7 +10573,7 @@ try {
       const q = new v.camera.position.constructor(35, 0, 0).project(v.camera);
       return { x: r.left + ((q.x + 1) / 2) * r.width, y: r.top + ((1 - q.y) / 2) * r.height };
     });
-    // 1.428: hovering a region lights it up before the click (SolidWorks' pre-highlight).
+    // 1.428: hovering a region lights it up before the click (a CAD app's pre-highlight).
     const hoverN = () => mp.evaluate(() => { let n = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData.contourHover !== undefined && o.visible) n++; }); return n; });
     await mp.mouse.move(at.x - 30, at.y - 30);
     await mp.mouse.move(at.x, at.y);
@@ -11962,7 +11962,7 @@ try {
     check(/Полосы/.test(ruAna) && !/[A-Za-z]{3}/.test(ruAna) && off.hidden && off.own, `analysis: panel in Russian; turning it off restores the parts (${JSON.stringify([ruAna.slice(0, 60), off])})`);
 
     // Drawing view palette: every standard view drawn; drag the isometric one onto the sheet.
-    // 1.518: a new drawing starts with an empty sheet and the palette (SolidWorks); Standard 3 views stays a command.
+    // 1.518: a new drawing starts with an empty sheet and the palette (a CAD app); Standard 3 views stays a command.
     await ap.click("#new-more"); await ap.click("#new-drawing");
     await ap.waitForFunction(() => window.__sv.drw.loaded(), null, { timeout: 120000 });
     const fresh = await ap.evaluate(() => ({ n: window.__sv.drw.doc().sheets[0].views.length, st: document.querySelector(".drw-status").textContent }));
@@ -12539,7 +12539,7 @@ try {
     await mp.click('#mc-pm input[data-wseg="l4"]');
     await settle();
     const p1 = await mp.evaluate(() => ({ bodies: window.__sv.model.last().bodies?.length, size: window.__sv.model.mode().draft.size }));
-    // Clicking the line in the view ticks it again (SolidWorks picks path segments in the graphics area).
+    // Clicking the line in the view ticks it again (a CAD app picks path segments in the graphics area).
     const l4At = await mp.evaluate(() => { const v = window.__sv.viewer; v.controls.target.set(300, 200, 0); v.camera.up.set(0, 1, 0); v.camera.position.set(300, 200, 1600); v.camera.lookAt(300, 200, 0); v.controls.update(); v.fit(false); v.camera.updateMatrixWorld(); const r = v.renderer.domElement.getBoundingClientRect(), q = new v.camera.position.constructor(0, 200, 0).project(v.camera); return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height]; });
     await mp.mouse.click(l4At[0] + 2, l4At[1] + 1);
     await settle();
@@ -13153,7 +13153,7 @@ try {
     const f1 = await mp.evaluate(() => ({ v: window.__sv.model.last().props?.volume ?? 0, bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";"), names: window.__sv.model.store.doc.features.map(f => f.name).join(",") }));
     check(f0.title === "Edge Flange" && f0.edges.length === 1 && /b?.*:p0:top/.test(f0.edges[0]) && f0.bends === 1 && f0.v > b1.v && !f1.bad && Math.abs(f1.v - want) / want < 1e-6 && /Base-Flange1,Edge-Flange1$/.test(f1.names),
       `sheet metal: Edge Flange on an edge clicked in the view, live preview, length typed (${JSON.stringify({ f0, f1, want })})`);
-    // The flange's length arrow (SolidWorks handle): at the flange tip, dragging it 10 mm further lengthens the flange live.
+    // The flange's length arrow (CAD app handle): at the flange tip, dragging it 10 mm further lengthens the flange live.
     await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "smflange").id));
     await settle();
     const fa = await mp.evaluate(() => {
@@ -14382,7 +14382,7 @@ try {
     const x25 = (await fq(25, 0))[0], c4 = await centre();
     const onAxis = c4.filter(q => Math.abs(q[0] - x25) < 0.05 && Math.abs(q[2] - x25) < 0.05).length > c3.filter(q => Math.abs(q[0] - x25) < 0.05 && Math.abs(q[2] - x25) < 0.05).length;
     check(hl.length === 2 && ["-1,1", "1,-1"].includes(hl[1]) && onAxis, `drawing: centreline between a hole's two hidden outline lines (${JSON.stringify({ hl, onAxis, x25 })})`);
-    // Balloons on a part drawing (drawings exam): item 1, as in SolidWorks, no longer refused.
+    // Balloons on a part drawing (drawings exam): item 1, as in other CAD apps, no longer refused.
     await dp.keyboard.press("Escape");
     await drwTool(dp, "auto");
     await dp.waitForFunction(() => (window.__sv.drw.doc().sheets[0].annots ?? []).some(a => a.t === "balloon"), null, { timeout: 10000 }).catch(() => {});

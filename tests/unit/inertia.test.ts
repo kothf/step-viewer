@@ -1,4 +1,4 @@
-// Mass properties (FR-MAT-002): mesh second moments, OCCT's inertia matrix, combining bodies and the SolidWorks-style report.
+// Mass properties (FR-MAT-002): mesh second moments, OCCT's inertia matrix, combining bodies and the CAD-app-style report.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
@@ -63,7 +63,7 @@ test("turning a body turns its covariance; principal moments do not change", () 
   nearAll(principal(r.cov).moments, principal(a.cov).moments, 1e-5);
 });
 
-test("report: a 10 kg box seen from a frame at its corner (SolidWorks' Lxx and Ixx)", () => {
+test("report: a 10 kg box seen from a frame at its corner (a CAD app's Lxx and Ixx)", () => {
   // 100 × 50 × 20 mm, density 10 g/cm³ → 1000 g.
   const c = combine([{ volume: 1e5, area: 0, com: [50, 25, 10], cov: boxCov(100, 50, 20), density: 10 }]);
   near(c.mass, 1000);

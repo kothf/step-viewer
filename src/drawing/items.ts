@@ -125,7 +125,7 @@ export function modelItems(doc: PartDoc, frames: Record<string, Frame>, sketches
     } else if (f0.type === "hole" && fr) {
       const h: HoleInfo = { id: f0.id, pts: f0.pts.map(([x, y]) => at(fr, x, y)), n: f0.flip ? [-fr.n[0], -fr.n[1], -fr.n[2]] : fr.n, f: f0 };
       holes.push(h);
-      // A tapped hole carries its cosmetic thread (as SolidWorks' Hole Wizard does): the major diameter over the
+      // A tapped hole carries its cosmetic thread (as a CAD app's Hole Wizard does): the major diameter over the
       // thread depth, or the whole drill when it has none.
       const major = f0.kind === "tapped" && !f0.threadMode ? f0.major ?? (f0.size ? parseFloat(f0.size.replace(/^M/i, "")) : NaN) : NaN;
       if (major > f0.diameter.v) h.pts.forEach((c, i) => threads.push({ id: `${f0.id}:${i}`, c, ax: h.n, r: f0.diameter.v / 2, d: major, L: f0.threadDepth && !threadThrough(f0) ? f0.threadDepth.v : null, internal: true, ...(f0.size ? { size: f0.size } : {}) }));

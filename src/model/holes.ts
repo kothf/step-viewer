@@ -19,7 +19,7 @@ export interface HoleSize {
   csAng?: number;
 }
 
-/** Hole standards (FR-FT-051), as in SolidWorks' Standard box. */
+/** Hole standards (FR-FT-051), as in a CAD app's Standard box. */
 export type HoleStandard = "iso" | "isofine" | "unc" | "unf";
 
 export const ISO_METRIC: HoleSize[] = [
@@ -144,7 +144,7 @@ export function recognizedHoleFeatures(holes: import("./types").RecognizedHole[]
 }
 
 /**
- * Screw types a counterbore or countersink is sized for (FR-FT-051), as in SolidWorks' Type box. Heads as [dk, k]
+ * Screw types a counterbore or countersink is sized for (FR-FT-051), as in a CAD app's Type box. Heads as [dk, k]
  * (head Ø, head height) per size, from the screw standards: ISO 4762 / DIN 7984 / ISO 7380 / ISO 1207 maximum
  * head sizes; ISO 10642 and ISO 2009 / 7046 theoretical countersunk head Ø (ISO 7721). A counterbore for a head
  * keeps the clearance DIN 974-1 gives the ISO 4762 head of that size (Ø and depth over the head); a countersink is
@@ -200,7 +200,7 @@ export function headPocket(size: string | undefined, screw: ScrewType | undefine
 export const threadClasses = (s: string | undefined) => (s && / UN[CF]$/.test(s) ? ["2B", "1B", "3B"] : ["6H", "4H", "5H", "7H", "6G"]);
 
 /**
- * Tapered pipe threads (FR-FT-051, SolidWorks' Tapered Tap): NPT (ASME B1.20.1) and Rc / BSPT (ISO 7-1). The
+ * Tapered pipe threads (FR-FT-051, a CAD app's Tapered Tap): NPT (ASME B1.20.1) and Rc / BSPT (ISO 7-1). The
  * internal thread narrows into the hole by 1:16 on the diameter; `major`/`minor` are its diameters at the face,
  * `len` the thread length (NPT: effective thread L2; Rc: useful thread) and `tap` the drill. Sizes in millimetres.
  */

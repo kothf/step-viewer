@@ -14,7 +14,7 @@
 ## Contents
 
 1. [Introduction](#1-introduction)
-2. [Reference product analysis (SolidWorks)](#2-reference-product-analysis-solidworks)
+2. [Reference product analysis (a CAD app)](#2-reference-product-analysis-a-cad-app)
 3. [Baseline: what MöbiusCAD already has](#3-baseline-what-möbiuscad-already-has)
 4. [Product overview](#4-product-overview)
 5. [Phases and release plan](#5-phases-and-release-plan)
@@ -58,11 +58,11 @@ Out of scope for this FRS (may get their own documents later): simulation/FEA, C
 
 ### 1.3 Product principle
 
-MöbiusCAD uses the workflow that mechanical engineers already know from history-based CAD (SolidWorks, Onshape, Inventor, FreeCAD): sketch, feature, history tree, mates, drawings. SolidWorks is the functional benchmark used to judge completeness (section 2).
+MöbiusCAD uses the workflow that mechanical engineers already know from history-based CAD apps (Onshape, Inventor, FreeCAD and others): sketch, feature, history tree, mates, drawings. A leading CAD app is the functional benchmark used to judge completeness (section 2).
 
-For the user interface Andrey chose (2026-11-06) to **combine** SolidWorks' interaction model with MöbiusCAD's existing interface: a SolidWorks user should find the same layout and habits (feature tree on the left, a feature editing panel that takes the tree's place, tabbed command bar, OK/Cancel in the corner of the view, S-key shortcut bar, right-drag mouse gestures, heads-up view toolbar, drag handles on the model, Enter/Esc behaviour), while the look stays MöbiusCAD's own: header, colour tokens, light/dark themes, icons, panels, toasts, dialogs, EN/RU text and accessibility rules from the 1.8.0 UI/UX standards. Section 13 specifies this.
+For the user interface Andrey chose (2026-11-06) to **combine** a CAD app's interaction model with MöbiusCAD's existing interface: a CAD app user should find the same layout and habits (feature tree on the left, a feature editing panel that takes the tree's place, tabbed command bar, OK/Cancel in the corner of the view, S-key shortcut bar, right-drag mouse gestures, heads-up view toolbar, drag handles on the model, Enter/Esc behaviour), while the look stays MöbiusCAD's own: header, colour tokens, light/dark themes, icons, panels, toasts, dialogs, EN/RU text and accessibility rules from the 1.8.0 UI/UX standards. Section 13 specifies this.
 
-MöbiusCAD is an **original product**: its own name, icons, artwork, wording and file format. Layout conventions and interaction patterns shared across CAD tools are adopted; SolidWorks' icons, bitmaps, help text, templates and file formats are not reproduced. Reading SLDPRT/SLDASM as geometry (shipped in 1.16.0) is interoperability, not imitation.
+MöbiusCAD is an **original product**: its own name, icons, artwork, wording and file format. Layout conventions and interaction patterns shared across CAD tools are adopted; a CAD app's icons, bitmaps, help text, templates and file formats are not reproduced. Reading SLDPRT/SLDASM as geometry (shipped in 1.16.0) is interoperability, not imitation.
 
 ### 1.4 Definitions and abbreviations
 
@@ -104,25 +104,25 @@ Each requirement has an identifier, a priority and a phase:
 - `CLAUDE.md` (code map and conventions), `README.md`, `CHANGELOG.md`.
 - UI/UX standards (1.8.0): contrast, focus, breakpoints 1280/768, toasts, dialogs. Enforced by axe-core in `tests/smoke.mjs`.
 - Exact geometry kernel (1.13.0): `src/kernel/occ.ts`, `client.ts`, `kernel.worker.ts`.
-- SolidWorks import (1.16.0): `src/sw/`, `src/kernel/parasolid.ts`, `src/kernel/solidworks.ts`.
+- SLDPRT/SLDASM import (1.16.0): `src/sw/`, `src/kernel/parasolid.ts`, `src/kernel/solidworks.ts`.
 
 ---
 
-## 2. Reference product analysis (SolidWorks)
+## 2. Reference product analysis (a CAD app)
 
-SolidWorks (Dassault Systèmes) is the most used mechanical CAD in small and medium engineering companies, and the benchmark Andrey chose. This section lists its functionality by area, so each MöbiusCAD requirement can be traced to a capability users expect. The column "MöbiusCAD" gives the phase in which an equivalent arrives, or "—" when it is out of scope. Product names are trademarks of their owners and are used here only for reference.
+The reference CAD app is the most used mechanical CAD in small and medium engineering companies, and the benchmark Andrey chose. This section lists its functionality by area, so each MöbiusCAD requirement can be traced to a capability users expect. The column "MöbiusCAD" gives the phase in which an equivalent arrives, or "—" when it is out of scope. Product names are trademarks of their owners and are used here only for reference.
 
-> **Trademark notice.** SOLIDWORKS is a registered trademark of Dassault Systèmes SolidWorks Corporation; Onshape is a trademark of PTC Inc.; other names belong to their owners. They are named in this document only to describe and compare functionality. MöbiusCAD is not affiliated with, endorsed or sponsored by them. Product rule: the app itself does not use these names in its branding or UI labels, nor their logos, icons, artwork or help text; factual mentions such as "Open SolidWorks parts (.sldprt)" in file-format lists are allowed.
+> **Trademark notice.** Onshape is a trademark of PTC Inc.; other names belong to their owners. They are named in this document only to describe and compare functionality. MöbiusCAD is not affiliated with, endorsed or sponsored by them. Product rule: the app itself does not use these names in its branding or UI labels, nor their logos, icons, artwork or help text; factual mentions such as "Open SLDPRT parts (.sldprt)" in file-format lists are allowed.
 
 ### 2.1 Workflow model
 
-SolidWorks is history-based and parametric: a **part** is a sequence of features in the FeatureManager design tree, each feature driven by sketches and dimensions; changing a dimension rebuilds the part. Parts are inserted into **assemblies** and positioned by mates; **drawings** are 2D views projected from the 3D models and stay associative (a model change updates the drawing). Three document types (`.sldprt`, `.sldasm`, `.slddrw`) reference each other by file path. UI elements: CommandManager (tabbed ribbon), FeatureManager tree, PropertyManager (left panel to edit a feature), Heads-up View toolbar, shortcut bar (S key), mouse gestures, confirmation corner (OK/Cancel in the graphics area), Instant3D (drag arrows to change sizes), rollback bar.
+A CAD app is history-based and parametric: a **part** is a sequence of features in the FeatureManager design tree, each feature driven by sketches and dimensions; changing a dimension rebuilds the part. Parts are inserted into **assemblies** and positioned by mates; **drawings** are 2D views projected from the 3D models and stay associative (a model change updates the drawing). Three document types (`.sldprt`, `.sldasm`, `.slddrw`) reference each other by file path. UI elements: CommandManager (tabbed ribbon), FeatureManager tree, PropertyManager (left panel to edit a feature), Heads-up View toolbar, shortcut bar (S key), mouse gestures, confirmation corner (OK/Cancel in the graphics area), Instant3D (drag arrows to change sizes), rollback bar.
 
 MöbiusCAD keeps the same workflow model (history-based parts, mated assemblies, associative drawings) and the same interaction habits, mapped onto its existing interface (section 13), with one native container format with an extension per document kind (section 12).
 
 ### 2.2 Sketching
 
-| SolidWorks capability | Notes | MöbiusCAD |
+| CAD app capability | Notes | MöbiusCAD |
 | --- | --- | --- |
 | Sketch on plane or planar face | Front/Top/Right planes, any planar face, reference planes | P1 |
 | Line, centerline, midpoint line | Chained lines with tangent arc switching | P1 |
@@ -149,7 +149,7 @@ MöbiusCAD keeps the same workflow model (history-based parts, mated assemblies,
 
 ### 2.3 Part features
 
-| SolidWorks capability | Notes | MöbiusCAD |
+| CAD app capability | Notes | MöbiusCAD |
 | --- | --- | --- |
 | Extruded Boss/Base, Extruded Cut | End conditions: Blind, Through All, Up To Next, Up To Vertex, Up To Surface, Offset From Surface, Up To Body, Mid Plane; Direction 2; draft; thin feature; start from plane/surface/offset | P1 (Blind, Through All, Mid Plane, Up To Face, both directions, cut/boss), P2 (others, draft, thin) |
 | Revolved Boss/Cut | One/two directions, thin | P1 |
@@ -182,7 +182,7 @@ MöbiusCAD keeps the same workflow model (history-based parts, mated assemblies,
 
 ### 2.4 Assemblies
 
-| SolidWorks capability | Notes | MöbiusCAD |
+| CAD app capability | Notes | MöbiusCAD |
 | --- | --- | --- |
 | Insert components, fixed/floating, sub-assemblies (rigid/flexible) | | P4 |
 | Standard mates: coincident, parallel, perpendicular, tangent, concentric, lock, distance, angle | Flip alignment | P4 |
@@ -201,7 +201,7 @@ MöbiusCAD keeps the same workflow model (history-based parts, mated assemblies,
 
 ### 2.5 Drawings
 
-| SolidWorks capability | Notes | MöbiusCAD |
+| CAD app capability | Notes | MöbiusCAD |
 | --- | --- | --- |
 | Sheets, sheet formats, templates, title block with properties | ISO, ANSI, GOST templates | P5 |
 | Standard 3 views, model view, projected, isometric | First/third angle | P5 |
@@ -215,7 +215,7 @@ MöbiusCAD keeps the same workflow model (history-based parts, mated assemblies,
 
 ### 2.6 Files, data and other
 
-| SolidWorks capability | MöbiusCAD |
+| CAD app capability | MöbiusCAD |
 | --- | --- |
 | Native files referencing each other by path; Pack and Go | P0 (one container, `.mcadprt`/`.mcadasm`/`.mcaddrw`, embedded or linked parts), P4 (pack) |
 | Import STEP, IGES, Parasolid, ACIS, DXF/DWG, STL, 3MF; Import Diagnostics | already (STEP, IGES, BREP, SLDPRT, STL, OBJ, 3MF), P2 (DXF to sketch), P3 (heal imported bodies) |
@@ -227,7 +227,7 @@ MöbiusCAD keeps the same workflow model (history-based parts, mated assemblies,
 | PDM Standard / Professional (EPDM): vault, check-in/out, versions, revisions, workflows and transitions, data cards, numbering, search, where-used, version-aware BOMs, copy tree, ECO, notifications, audit | P2 (vault, versions, audit), P4 (revisions, workflow, references, data cards, search, BOM per revision), P5 (workflow editor, ECO, shared vault), P7 (server) |
 | PDM replication, cold storage, web portal, ERP integration | — |
 
-### 2.7 What SolidWorks users value and expect (inputs for UX)
+### 2.7 What CAD app users value and expect (inputs for UX)
 
 - Predictable rebuilds: editing an early dimension keeps fillets and holes on the "same" edges (topological naming).
 - Fast sketching with automatic relations and clear defined/undefined colouring.
@@ -260,7 +260,7 @@ The modeller builds on version 1.17.0. Reusing these parts is a requirement (NFR
 | UI kit | `src/ui.ts` (toasts, dialogs with focus trap, tabs, panels, sheets, busy buttons, empty states), `style.css` tokens | All new panels and dialogs. |
 | i18n | `src/i18n.ts`, `src/i18n.ru.ts`, DOM translation by MutationObserver | Every new string, EN and RU. |
 | Help and tips | `src/help.ts`, `src/hints.ts` | New Help sections for modelling, first-use tips for sketcher and features. |
-| SolidWorks import | `src/sw/*`, `parasolid.ts`, `solidworks.ts` | SLDPRT/SLDASM open as dumb solids that can be used as base bodies or assembly components. |
+| SLDPRT/SLDASM import | `src/sw/*`, `parasolid.ts`, `solidworks.ts` | SLDPRT/SLDASM open as dumb solids that can be used as base bodies or assembly components. |
 | Tests | `tests/smoke.mjs` (packaged build, headless Chromium, axe-core, layout checks) | Extended with modelling checks; a unit test runner is added for the solver and data model (NFR-QA-001). |
 
 Gaps the modeller must fill: no editable document model, no undo/redo, no persistence except measurements in localStorage, no sketch solver, no feature evaluation, no persistent kernel session, no topological naming, no drawing generator.
@@ -379,7 +379,7 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 
 ### 7.1 Documents and modes
 
-- **FR-DOC-001** (P0, M) The app shall support document kinds **Part**, **Assembly** (P4) and **Drawing** (P5), plus the existing read-only **Imported model** (STEP/IGES/BREP/mesh/SolidWorks) and **PCB** views.
+- **FR-DOC-001** (P0, M) The app shall support document kinds **Part**, **Assembly** (P4) and **Drawing** (P5), plus the existing read-only **Imported model** (STEP/IGES/BREP/mesh/SLDPRT/SLDASM) and **PCB** views.
 - **FR-DOC-002** (P0, M) A **New** menu shall create a Part (P0), Assembly (P4) or Drawing (P5) from a template: units (mm, cm, m, in, ft), angle unit (deg/rad), decimals, standard planes and origin, default material (none), drawing standard (ISO/ANSI) where relevant.
 - **FR-DOC-003** (P0, M) Several documents may be open at once in tabs; each tab has its own undo stack, kernel worker, selection and view. Switching tabs keeps camera and selection. Memory limit: at most 4 part/assembly kernels alive at once (LRU, others are rebuilt on activation).
 - **FR-DOC-004** (P1, M) An imported model shall offer **Edit as part**: it becomes a new Part whose first feature is an *Imported body* (exact B-rep from the kernel, names and colours kept); later features can cut, fillet or add to it. The original file is not changed.
@@ -830,7 +830,7 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 
 ### 12.5 Product data management: vault, versions, revisions
 
-Reference: SolidWorks PDM Professional (formerly Enterprise PDM, "EPDM") and PDM Standard. They keep CAD files in a **vault**: users check files out (lock) and in (new **version**), files move through a **workflow** of lifecycle states, a **revision** label is assigned on release, data cards hold metadata, and the vault knows which assemblies and drawings use which parts (where-used), so references never break. MöbiusCAD provides the same concepts without a server (C-1): the vault lives in a folder the user chooses, or in browser storage, and every operation runs in the browser. A server vault for teams with real access control is out of scope here (P7, separate FRS).
+Reference: the PDM systems that come with commercial CAD apps. They keep CAD files in a **vault**: users check files out (lock) and in (new **version**), files move through a **workflow** of lifecycle states, a **revision** label is assigned on release, data cards hold metadata, and the vault knows which assemblies and drawings use which parts (where-used), so references never break. MöbiusCAD provides the same concepts without a server (C-1): the vault lives in a folder the user chooses, or in browser storage, and every operation runs in the browser. A server vault for teams with real access control is out of scope here (P7, separate FRS).
 
 **Terms used in this section**
 
@@ -934,7 +934,7 @@ Reference: SolidWorks PDM Professional (formerly Enterprise PDM, "EPDM") and PDM
 
 ## 13. Functional requirements: user interface
 
-The modelling UI combines SolidWorks' interaction model with MöbiusCAD's existing interface (section 1.3). Each requirement below names the habit it keeps ("SW habit") and where it lives in MöbiusCAD.
+The modelling UI combines a CAD app's interaction model with MöbiusCAD's existing interface (section 1.3). Each requirement below names the habit it keeps ("SW habit") and where it lives in MöbiusCAD.
 
 ### 13.1 Layout
 
@@ -975,7 +975,7 @@ The modelling UI combines SolidWorks' interaction model with MöbiusCAD's existi
 
 ### 13.3 Graphics area interaction
 
-- **FR-UI-020** (P0, M) Mouse: existing orbit (left drag in view mode), pan, zoom to cursor; in modelling the SolidWorks mapping is available as a preference and default for new users of modelling: **middle drag rotates, Ctrl+middle pans, wheel zooms to cursor, Shift+middle zooms, Alt+middle rolls**, left button selects and drags handles. Preference "Mouse: MöbiusCAD (left-drag orbit) / Middle-drag orbit (as in most mechanical CAD)" in Display ▾; the UI does not name other products.
+- **FR-UI-020** (P0, M) Mouse: existing orbit (left drag in view mode), pan, zoom to cursor; in modelling the CAD app mapping is available as a preference and default for new users of modelling: **middle drag rotates, Ctrl+middle pans, wheel zooms to cursor, Shift+middle zooms, Alt+middle rolls**, left button selects and drags handles. Preference "Mouse: MöbiusCAD (left-drag orbit) / Middle-drag orbit (as in most mechanical CAD)" in Display ▾; the UI does not name other products.
 - **FR-UI-021** (P1, M) **Confirmation corner** (SW habit): ✓ and ✕ buttons in the top-right of the graphics area while a command or sketch is active, mirroring the panel's OK/Cancel; in a sketch it shows "exit sketch" and "discard".
 - **FR-UI-022** (P1, M) **Heads-up view bar** (SW habit), floating top centre: zoom to fit, zoom to area, previous view, section view toggle, view orientation ▾ (standard views + normal to), display style ▾, hide/show items ▾ (planes, axes, origins, sketches, sketch relations, dimensions), appearance, perspective toggle. It reuses existing view commands; in the viewer-only mode the same functions stay in the header as today.
 - **FR-UI-023** (P1, M) **Shortcut bar** (SW habit: S key): pressing S shows a small floating toolbar at the cursor with the commands relevant to the current mode (sketch: line, rectangle, circle, arc, trim, dimension, relation; part: sketch, extrude, revolve, fillet, chamfer, hole, plane; assembly: insert, mate, move). Customisable in Preferences (P2).
@@ -1002,7 +1002,7 @@ The modelling UI combines SolidWorks' interaction model with MöbiusCAD's existi
 
 - **FR-UI-050** (P1, M) Sketch status in the status bar and a badge in the graphics area: "Under defined (3 DOF) / Fully defined / Over defined"; colours per FR-SLV-002 with a legend in Help.
 - **FR-UI-051** (P1, M) Cursor feedback: the tool icon next to the cursor, inference glyphs (coincident, horizontal, tangent ...), the live length/angle/radius beside the cursor, dotted inference lines.
-- **FR-UI-052** (P1, M) Typing a number while drawing an entity opens the value box for its next size (length, then angle), so lines can be drawn fully by keyboard. Add dimensions on creation (1.527.0): new lines, rectangles, parallelograms, polygons, circles and arcs get their sizes as dimensions and the Modify box opens on each, as SolidWorks with Add dimensions on (quick bar, sketch panel and Preferences switch).
+- **FR-UI-052** (P1, M) Typing a number while drawing an entity opens the value box for its next size (length, then angle), so lines can be drawn fully by keyboard. Add dimensions on creation (1.527.0): new lines, rectangles, parallelograms, polygons, circles and arcs get their sizes as dimensions and the Modify box opens on each, as a CAD app with Add dimensions on (quick bar, sketch panel and Preferences switch).
 - **FR-UI-053** (P1, M) Dimension value boxes appear at the dimension (SW habit: Modify box) with ✓, ✕, rebuild and spin; Esc keeps the previous value.
 - **FR-UI-054** (P1, M) Sketch keyboard: L line, R rectangle, C circle, A arc (tangent arc while drawing), P point, G polygon, T trim, E extend, F sketch fillet, O offset, W slot, D dimension, K add relation, Q construction toggle (letters as built in 1.85.0, plus K), Esc ends the current tool then exits selection, Ctrl+Enter exits the sketch; letters are rebindable (P2) and do not collide with viewer letters while the sketch is active (viewer measure letters move under the Evaluate tab in modelling).
 - **FR-UI-055** (P1, S) Grid and inference toggles in the heads-up bar while sketching. *Done in 1.310.0 (quick access bar: Grid, Snap to grid, Inferences).*
@@ -1056,7 +1056,7 @@ The modelling UI combines SolidWorks' interaction model with MöbiusCAD's existi
 
 ### 13.13 Everyday interaction parity (audit 2026-11-08)
 
-An audit of SolidWorks' basic, everyday behaviours against this FRS and MöbiusCAD 1.85.0 (Appendix F) found habits that were missing here or described too loosely to build or test. The requirements below close those gaps; each has an acceptance test in section 16.2 (AT-UX-*). Sketch inference and snapping to model geometry (FR-SK-042, FR-SK-052) and middle-drag rotation in sketch mode (FR-UI-020) are being reworked in 1.89.0 and are not repeated here.
+An audit of a CAD app's basic, everyday behaviours against this FRS and MöbiusCAD 1.85.0 (Appendix F) found habits that were missing here or described too loosely to build or test. The requirements below close those gaps; each has an acceptance test in section 16.2 (AT-UX-*). Sketch inference and snapping to model geometry (FR-SK-042, FR-SK-052) and middle-drag rotation in sketch mode (FR-UI-020) are being reworked in 1.89.0 and are not repeated here.
 
 **Mouse and view**
 
@@ -1119,7 +1119,7 @@ An audit of SolidWorks' basic, everyday behaviours against this FRS and MöbiusC
 **Menus and toolbars (review 2026-11-08, Andrey: "reorganize all menus/buttons")**
 
 - **FR-UI-117** (P1, M) **One command bar for everything** (completes FR-UI-010..013): every 3D document has one tabbed command bar, a full-width row under the header; no tool gets its own row of buttons. The tabs follow what is open: a model file shows **Evaluate**; a part shows **Features**, **Sketch**, **Surfaces**, **Weldments**, **Evaluate** (and **Sheet Metal** once it lands); an assembly shows **Assembly** and **Evaluate**. The bar remembers the last tab per document type. Features groups related commands behind split buttons (Sweep ▾ Loft, Cut-Sweep ▾ Cut-Loft, Pattern ▾, Plane ▾ Axis/Point/Coordinate system, Curves ▾ Helix/3D sketch/XYZ/Composite/Projected/Split line, Bodies ▾, Direct editing ▾); Surfaces and Weldments list their commands as buttons. Entering a sketch selects Sketch; leaving it selects Features.
-- **FR-UI-118** (P1, M) **Header = document and application**: the header holds the menu, Open, New ▾, the document name, the view controls (display mode, projection, standard views, Display ▾), language, theme, help and the panel toggles. Measuring tools live in the Evaluate tab; the right panel's pages (Properties, Section, Explode, Mass, Export) are tabs at the top of the right panel; Filter, Undo ▾, Redo, Save ▾ and STEP sit at the right end of the tab row, like SolidWorks' menu bar. Every keyboard shortcut works whichever tab is shown.
+- **FR-UI-118** (P1, M) **Header = document and application**: the header holds the menu, Open, New ▾, the document name, the view controls (display mode, projection, standard views, Display ▾), language, theme, help and the panel toggles. Measuring tools live in the Evaluate tab; the right panel's pages (Properties, Section, Explode, Mass, Export) are tabs at the top of the right panel; Filter, Undo ▾, Redo, Save ▾ and STEP sit at the right end of the tab row, like a CAD app's menu bar. Every keyboard shortcut works whichever tab is shown.
 - **FR-UI-119** (P1, M) **Rule for new modules**: a new module (sheet metal, motion, drawings, PCB) adds a tab or a group in an existing tab, never a floating bar of its own, and its buttons use the shared `mc-b` icon + label style with its own SVG icons (FR-UI-015). A tab whose buttons do not fit folds labels into icons with tooltips before it scrolls.
 - **FR-UI-120** (P1, M) **Document tabs** (completes FR-DOC-003): open parts, assemblies and drawings show as tabs along the bottom of the window above the status bar, each with its type icon, name, modified dot and ✕; a click switches to it, keeping its own undo, selection and camera; Ctrl+Tab cycles; closing a modified document asks to save. Opening a part from an assembly opens a new tab instead of replacing the assembly.
 
@@ -1170,7 +1170,7 @@ Reference machine: 4-core laptop CPU (2020 or newer), 8 GB RAM, integrated GPU, 
 
 - **NFR-USE-001** (P1, M) WCAG 2.1 AA for all panels and dialogs: 0 axe-core violations in light and dark (existing smoke-test gate); 4.5:1 text contrast, 3:1 for UI glyphs and sketch status colours against the background.
 - **NFR-USE-002** (P1, M) Every command reachable by keyboard; focus order logical; visible focus rings.
-- **NFR-USE-003** (P1, S) A SolidWorks user can make the AT-P1 bracket without reading Help in ≤ 10 minutes (hallway test with 3 users before P1 release).
+- **NFR-USE-003** (P1, S) A CAD app user can make the AT-P1 bracket without reading Help in ≤ 10 minutes (hallway test with 3 users before P1 release).
 - **NFR-USE-004** (P1, M) Every error message says what failed and what to do next, in EN and RU.
 
 ### 14.5 Compatibility
@@ -1273,7 +1273,7 @@ Reference machine: 4-core laptop CPU (2020 or newer), 8 GB RAM, integrated GPU, 
 }
 ```
 
-Transforms are column-major 4×4 in mm (same convention as three.js and the verified SolidWorks import, but in mm instead of metres).
+Transforms are column-major 4×4 in mm (same convention as three.js and the verified SLDPRT/SLDASM import, but in mm instead of metres).
 
 ### 15.4 Drawing document (schema sketch)
 
@@ -1439,7 +1439,7 @@ Each test is scripted in the smoke test where it can be (synthetic pointer and k
 | R-3 | opencascade.js build lacks needed classes or is too old/buggy (beta build) | Medium | High | P0 spike; custom opencascade.js build with only needed modules (smaller too); fallback to occt 7.8 build via emsdk |
 | R-4 | Sketch solver quality (flips, slow convergence, wrong DOF) | Medium | High | Proven PlaneGCS where licence allows, continuation steps, test set 16.3 |
 | R-5 | Kernel operations slow in WASM (booleans/fillets 3–5× slower than native) | Medium | Medium | Shape cache per feature, preview at coarse tolerance, cancel/restart, client-side instant extrude preview |
-| R-6 | Scope creep towards full SolidWorks parity | High | Medium | Phases with exit criteria; P5+ features are S/C; this FRS is the scope reference |
+| R-6 | Scope creep towards full CAD app parity | High | Medium | Phases with exit criteria; P5+ features are S/C; this FRS is the scope reference |
 | R-7 | Storage limits/quota in browsers, Safari OPFS eviction | Medium | Medium | Save to real files encouraged, quota warnings, recovery journal small, export reminders |
 | R-8 | Licence conflict of the solver (PlaneGCS port listed under MulanPSL-2.0 on npm, FreeCAD solver is LGPL) | Medium | Medium | D-2 licence review before bundling; own solver fallback |
 | R-9 | UI complexity hurts the simple viewer users | Medium | Medium | Lazy-loaded modelling mode; viewer layout unchanged until a model is created; smoke test on viewer layout |
@@ -1447,7 +1447,7 @@ Each test is scripted in the smoke test where it can be (synthetic pointer and k
 | R-11 | Drawing HLR quality/speed for complex parts | Medium | Medium | PolyAlgo preview, exact HLR in background, per-view caching |
 | R-13 | Shared vault on a synced folder corrupts data or loses locks (sync delay, conflict copies) | Medium | High | Append-only records, content-addressed objects, sequence numbers, conflict detection on check-in (FR-PDM-071), integrity check, clear documentation of supported folders |
 | R-14 | Users mistake vault roles for security | Medium | Medium | Settings and Help state that a folder vault identifies users but does not protect files (FR-PDM-037); real permissions only with a server vault (P7) |
-| R-12 | Trademark/look-alike concerns from adopting SolidWorks habits | Low | Medium | Own icons, names, artwork, help text; only generic interaction patterns adopted (section 1.3) |
+| R-12 | Trademark/look-alike concerns from adopting CAD app habits | Low | Medium | Own icons, names, artwork, help text; only generic interaction patterns adopted (section 1.3) |
 
 ---
 
@@ -1458,7 +1458,7 @@ Each test is scripted in the smoke test where it can be (synthetic pointer and k
 | D-1 | Product scope name: keep "MöbiusCAD" for viewer + modeller in one app | one app with modes / separate app | One app with modes (shared code and URL) |
 | D-2 | Sketch solver | PlaneGCS WASM (`@salusoft89/planegcs`, licence to verify) / own TypeScript solver | Spike both in P0; prefer PlaneGCS if the licence allows a separate replaceable WASM, else own |
 | D-3 | Topological naming strategy depth | history + signatures (proposed) / full OCAF TNaming | History + signatures in P1, revisit OCAF in P3 if failures |
-| D-4 | Default mouse mapping in modelling | keep MöbiusCAD left-drag orbit / SolidWorks middle-drag | Ask on first modelling start, remember the choice |
+| D-4 | Default mouse mapping in modelling | keep MöbiusCAD left-drag orbit / CAD app middle-drag | Ask on first modelling start, remember the choice |
 | D-5 | Native extensions | **Decided 2026-11-06:** separate `.mcadprt`, `.mcadasm`, `.mcaddrw`, same ZIP+JSON container | Kind visible in folders, Open/Insert dialogs filter by kind, own icon per kind |
 | D-6 | Standard plane names | XY/XZ/YZ / Top/Front/Right / both | Show "Front (XZ)" style with both |
 | D-7 | Phase order after P2 | assemblies before advanced parts / as listed | As listed (P3 parts, P4 assemblies), revisit after P2 user feedback |
@@ -1560,17 +1560,15 @@ All messages have Russian translations in `i18n.ru.ts`.
 | STEP | `STEPCAFControl_Writer/Reader`, `XCAFDoc_ShapeTool/ColorTool` (as in `occ.ts`) |
 | Defeaturing | `BRepAlgoAPI_Defeaturing` |
 
-### Appendix E. Sources consulted for the SolidWorks reference
+### Appendix E. Sources consulted for the CAD app reference
 
-- SolidWorks Help, Types of Mates (standard, advanced, mechanical): <https://help.solidworks.com/2021/english/SolidWorks/sldworks/r_Types_of_Mates_SWassy.htm>
-- GoEngineer, Introduction to SolidWorks Mates: <https://www.goengineer.com/blog/introduction-to-solidworks-mates>
-- SolidWorks 2026 what's new summaries (Hawk Ridge Systems, Javelin, SolidProfessor): <https://hawkridgesys.com/whats-new-in-solidworks-2026>, <https://www.javelin-tech.com/3d/assembly-modeling-whats-new-in-solidworks-2026/>, <https://solidprofessor.com/?p=9936793>
+- The reference CAD app's online help on mate types, and resellers' introductions to mates and what's-new summaries for its 2026 release.
 - PlaneGCS for the web: <https://github.com/Salusoft89/planegcs>, <https://npmjs.com/package/@salusoft89/planegcs>
-- Remaining SolidWorks functionality is from general product knowledge of SolidWorks 2020–2026 and should be checked against the official help where a detail matters.
+- Remaining CAD app functionality is from general product knowledge of its 2020–2026 releases and should be checked against the official help where a detail matters.
 
-### Appendix F. SolidWorks everyday UI/UX parity audit (2026-11-08, MöbiusCAD 1.85.0)
+### Appendix F. CAD app everyday UI/UX parity audit (2026-11-08, MöbiusCAD 1.85.0)
 
-Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 does (checked in `src/main.ts`, `src/model/controller.ts`, `src/sketch/editor.ts`, `src/viewer/Viewer.ts`). **New** = was missing from the FRS, added in 13.13. **Weaker** = in the FRS, implemented partly or differently. **Done** = matches. Items the modelling thread is reworking in 1.87.0 are marked so.
+Each row is a basic CAD app habit, where this FRS covers it, and what 1.85.0 does (checked in `src/main.ts`, `src/model/controller.ts`, `src/sketch/editor.ts`, `src/viewer/Viewer.ts`). **New** = was missing from the FRS, added in 13.13. **Weaker** = in the FRS, implemented partly or differently. **Done** = matches. Items the modelling thread is reworking in 1.87.0 are marked so.
 
 | Habit | FRS | 1.85.0 | Class |
 | --- | --- | --- | --- |
@@ -1670,7 +1668,7 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 | ID | Requirement | 1.87.0 | Class |
 | --- | --- | --- | --- |
 | FR-FT-010 | Extrude/revolve from **selected regions** of a sketch | 1.421.0: Selected Contours (regions of crossing or branching curves, picked in the view; `src/sketch/regions.ts`, kernel `contourFaces`); 1.428.0: hover pre-highlight, Planar Surface; 1.463.0: cut regions in the cut preview colour | Done |
-| FR-FT-011 | Extrude **Direction 2** with any end condition (SolidWorks offers all but mid plane) | 1.456.0: `end2` Blind / Through all / Up to next / Up to vertex / Up to face / Offset from surface / Up to body with any Direction 1 but Mid plane; its own drag arrow when blind | Done |
+| FR-FT-011 | Extrude **Direction 2** with any end condition (a CAD app offers all but mid plane) | 1.456.0: `end2` Blind / Through all / Up to next / Up to vertex / Up to face / Offset from surface / Up to body with any Direction 1 but Mid plane; its own drag arrow when blind | Done |
 | FR-FT-014 | Extrude **draft per direction** | 1.460.0: `draft2` (Direction 2 blind) with its own angle and outward; each direction tapers from the sketch plane, Direction 2 side faces `fid:side2:<ent>`; older two-way drafts keep their shape | Done |
 | FR-FT-007 | Feature scope for cuts and bosses in multibody parts | 1.505.0: extrude and revolve (cut, or boss with Merge result): All bodies or the bodies picked in the view; 1.506.0: sweep, loft and Hole Wizard too | Done |
 | FR-FT-012 | Extrude end condition **Up to body** | 1.100.0: Up to body | Done |

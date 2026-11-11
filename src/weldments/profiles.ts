@@ -277,7 +277,7 @@ export function profileArea(s: ProfileShape): number {
   return a(s.outer) - s.holes.reduce((t, h) => t + a(h), 0);
 }
 
-/** Where a profile sits on its path (SolidWorks' pierce point): a corner, an edge middle or the centre of its box. */
+/** Where a profile sits on its path (a CAD app's pierce point): a corner, an edge middle or the centre of its box. */
 export type Anchor = "c" | "t" | "b" | "l" | "r" | "tl" | "tr" | "bl" | "br";
 export const ANCHORS: Anchor[] = ["tl", "t", "tr", "l", "c", "r", "bl", "b", "br"];
 /** The profile point that goes on the path, in profile coordinates. */

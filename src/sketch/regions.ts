@@ -1,5 +1,5 @@
 // Selected contours (FR-FT-010): the closed regions a sketch's curves divide the plane into, even when
-// they cross or branch (a rectangle with a line across it, two overlapping circles). SolidWorks lets the
+// they cross or branch (a rectangle with a line across it, two overlapping circles). A CAD app lets the
 // user click the regions an extrude or revolve uses; the feature stores one point inside each region,
 // and the kernel splits its plane by the exact curves and keeps the pieces holding those points.
 //

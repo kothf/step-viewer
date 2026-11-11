@@ -104,7 +104,7 @@ const COLORS = {
   light: { free: 0x1d4ed8, defined: 0x111827, cons: 0x7c8594, sel: 0xf08c00, hover: 0xf59f00, bad: 0xd32f2f, dim: 0x334155, pre: 0x2f9e44 },
   dark: { free: 0x6ea8ff, defined: 0xe8ecf2, cons: 0x8a94a6, sel: 0xffa94d, hover: 0xffc078, bad: 0xff6b5e, dim: 0xcbd5e1, pre: 0x51cf66 },
 };
-/** Curves whose model edge is gone (FR-SK-064): olive brown, as dangling items in SolidWorks. */
+/** Curves whose model edge is gone (FR-SK-064): olive brown, as dangling items in CAD apps. */
 const DANGLING = { light: 0x8f6a00, dark: 0xd8b13a };
 
 const REL_GLYPH: Record<RelKind, string> = {
@@ -152,7 +152,7 @@ export class SketchEditor {
   /** In-progress entity: its points so far, and the live cursor point. */
   /** The last pointer event, for model snapping (the snap works in sketch coordinates). */
   private lastEv: PointerEvent | null = null;
-  /** Model snapping while drawing (SolidWorks inferencing to model geometry); off with the panel switch. */
+  /** Model snapping while drawing (CAD app inferencing to model geometry); off with the panel switch. */
   modelSnap = true;
   /** Centre-point arc: how far (radians, + counter-clockwise) the mouse has gone round the centre since the start point. */
   private arcTurn = 0;
@@ -230,7 +230,7 @@ export class SketchEditor {
   private alignObj: THREE.LineSegments | null = null;
   /** The points the last snap lined up with: [source, snapped point]. */
   aligned: [V2, V2][] = [];
-  /** Points the cursor passed over while drawing ("woken", as in SolidWorks): the ones alignment looks at. */
+  /** Points the cursor passed over while drawing ("woken", as in other CAD apps): the ones alignment looks at. */
   private woke: V2[] = [];
   private dark = false;
 
@@ -808,7 +808,7 @@ export class SketchEditor {
     }
   }
 
-  /** Adds a picture (a data URL of `wpx` × `hpx` pixels) at 96 dpi, its lower left corner on the origin (SolidWorks). */
+  /** Adds a picture (a data URL of `wpx` × `hpx` pixels) at 96 dpi, its lower left corner on the origin (a CAD app). */
   addPicture(src: string, wpx: number, hpx: number, name?: string): string {
     const pics = (this.sk.pictures ??= []);
     let k = pics.length + 1;
@@ -958,7 +958,7 @@ export class SketchEditor {
     }
     const c = this.hits(q, { points: false })[0];
     if (c && !hv) {
-      // A line hovered while drawing a line becomes the parallel/perpendicular reference (SolidWorks inference).
+      // A line hovered while drawing a line becomes the parallel/perpendicular reference (CAD app inference).
       if (this.lineTool && this.sk.ents.find(x => x.id === c.id)?.t === "line") this.inferLine = c.id;
       if (!on.has("nearest")) return { p: q, id: null, curve: null, hv };
       const proj = this.project(q, c.id); this.showMarker(proj); return { p: proj, id: null, curve: c.id, hv: null };
@@ -1087,7 +1087,7 @@ export class SketchEditor {
     return { p: [last[0] + u[0] * s, last[1] + u[1] * s], id: null, curve: null, hv: null, rel: { t: "parallel", ref: ref.id } };
   }
 
-  /** Ctrl suppresses automatic relations while drawing, as in SolidWorks (FR-SK-052). */
+  /** Ctrl suppresses automatic relations while drawing, as in other CAD apps (FR-SK-052). */
   private suppressed(): boolean {
     return !this.autoRels || !!(this.lastEv && (this.lastEv.ctrlKey || this.lastEv.metaKey));
   }
@@ -1279,7 +1279,7 @@ export class SketchEditor {
 
   /**
    * Adds an equation driven curve in sketch coordinates (FR-SK-021): its two end points are fixed, so it is
-   * fully defined, as in SolidWorks. Returns an error message key, or null.
+   * fully defined, as in other CAD apps. Returns an error message key, or null.
    */
   addEquation(eq: CurveEq): string | null {
     let bz: V2[];
@@ -1436,7 +1436,7 @@ export class SketchEditor {
     const prev = d.prev ?? this.sk.ents.find(x => !x.cons && x.id !== id && (x.t === "line" || x.t === "arc") && (x.a === aId || x.b === aId))?.id;
     if (prev) rels.push({ id: uid("r"), t: "tangent", e: [prev, id] });
     finish("Add tangent arc");
-    // Back to lines, chaining on from the arc's end (SolidWorks), unless the loop closed.
+    // Back to lines, chaining on from the arc's end (a CAD app), unless the loop closed.
     const closed = !!s.id && (s.id !== ORIGIN || d.chainStart === ORIGIN);
     // The Tangent Arc tool chains arcs; the line tool goes back to lines.
     if (closed || e.detail >= 2) this.draft = { pts: [], ids: [], cursor: null, snap: null };
@@ -1495,7 +1495,7 @@ export class SketchEditor {
       return;
     }
     if (this.tool === "mline") {
-      // Midpoint line (SolidWorks): the first click is the middle, the second one end; the other end mirrors it.
+      // Midpoint line (a CAD app): the first click is the middle, the second one end; the other end mirrors it.
       if (!d.pts.length) { d.pts = [p]; d.ids = [s.id]; d.snapCurve = s.curve; this.render(); return; }
       const m = d.pts[0];
       if (!exact && Math.hypot(p[0] - m[0], p[1] - m[1]) < this.px(p) * 2) return;
@@ -1781,7 +1781,7 @@ export class SketchEditor {
       const ang = Math.atan2(p[1] - c[1], p[0] - c[0]);
       const b: V2 = s.id ? p : [c[0] + r * Math.cos(ang), c[1] + r * Math.sin(ang)];
       const cId = this.usePoint(c, d.ids[0], null, rels), aId = this.usePoint(a, d.ids[1], null, rels), bId = this.usePoint(b, s.id, null, rels);
-      // The arc runs the way the mouse went round the centre (SolidWorks), clockwise as well as counter-clockwise (exam #92).
+      // The arc runs the way the mouse went round the centre (a CAD app), clockwise as well as counter-clockwise (exam #92).
       this.trackArc(p);
       const cw = this.arcTurn < 0;
       this.sk.ents.push({ id: uid("a"), t: "arc", c: cId, a: cw ? bId : aId, b: cw ? aId : bId });
@@ -1796,10 +1796,10 @@ export class SketchEditor {
   private dimClick(p: V2, e: PointerEvent) {
     const dd = this.dimDraft;
     // With one item picked, a click on another item (in the sketch or on the model) dimensions the pair.
-    // Smart Dimension takes a model edge whole, as SolidWorks does: its midpoint is not offered.
+    // Smart Dimension takes a model edge whole, as a CAD app does: its midpoint is not offered.
     const modelPick = () => { const ms = this.modelSnapAt(p, false); return ms?.at === "mid" ? { ...ms, p, at: "on" as const } : ms; };
     const other = dd.dim && dd.picks.length === 1 ? this.hits(p).find(x => x.id !== dd.picks[0].id) ?? (this.hits(p).length ? undefined : modelPick()) : undefined;
-    // An arc and one of its ends picked: its other end makes an arc length (SolidWorks: the arc and both ends).
+    // An arc and one of its ends picked: its other end makes an arc length (a CAD app: the arc and both ends).
     const third = dd.dim && dd.picks.length === 2 ? this.hits(p).find(x => this.arcLenSet([...dd.picks.map(q => q.id), x.id])) : undefined;
     if (other || third) dd.dim = null;
     if (dd.dim) {
@@ -2166,7 +2166,7 @@ export class SketchEditor {
   }
 
   /**
-   * Fully define sketch (FR-SK-045, SolidWorks' Fully Define Sketch): adds horizontal/vertical relations to lines
+   * Fully define sketch (FR-SK-045, a CAD app's Fully Define Sketch): adds horizontal/vertical relations to lines
    * within 1° of the axes, diameters of circles and radii of arcs, then horizontal and vertical dimensions from the
    * origin to each point (curve points first, nearest the origin first), keeping only items that remove freedom,
    * until nothing is free. Returns how many items were added (one undo step).
@@ -2493,7 +2493,7 @@ export class SketchEditor {
 
   /**
    * Before a corner is rounded or chamfered: a length dimension on either line becomes the distance from the
-   * corner to the line's other end, so the sizes keep meaning the sharp corner (SolidWorks' virtual sharp).
+   * corner to the line's other end, so the sizes keep meaning the sharp corner (a CAD app's virtual sharp).
    */
   private keepSharpDims(V: string, lines: (SkEnt & { t: "line" })[]) {
     for (const d of this.sk.dims) {
@@ -2517,7 +2517,7 @@ export class SketchEditor {
     const h = this.hits(p, { curves: false }).find(x => x.kind === "point");
     if (!h) { this.host.toast(t("Click a corner where two lines meet.")); return; }
     const V = h.id;
-    // Construction lines at the corner (a centre rectangle's diagonals) stay on the sharp corner, as in SolidWorks.
+    // Construction lines at the corner (a centre rectangle's diagonals) stay on the sharp corner, as in other CAD apps.
     const lines = this.sk.ents.filter(e => e.t === "line" && !e.cons && (e.a === V || e.b === V)) as (SkEnt & { t: "line" })[];
     const curves = this.sk.ents.filter(e => !("cons" in e && e.cons) && ((e.t === "arc" && (e.a === V || e.b === V)) || (e.t === "line" && (e.a === V || e.b === V))));
     if (curves.length === 2 && lines.length !== 2) { this.filletCurves(V, curves as (SkEnt & { t: "line" | "arc" })[]); return; }
@@ -2555,7 +2555,7 @@ export class SketchEditor {
   }
 
   /**
-   * Rounds a corner where an arc meets a line or another arc (SolidWorks' sketch fillet does any two curves): the
+   * Rounds a corner where an arc meets a line or another arc (a CAD app's sketch fillet does any two curves): the
    * fillet's centre is where the curves' offsets by the radius cross, taking the one whose touching points lie on
    * both curves nearest the corner.
    */
@@ -2667,7 +2667,7 @@ export class SketchEditor {
     return this.tool === "aslot" ? centreArcAxis(a, b, c) : threePointArcAxis(a, b, c);
   }
 
-  /** Slot tools add their sizes as dimensions (SolidWorks' "Add dimensions"), unless turned off. */
+  /** Slot tools add their sizes as dimensions (a CAD app's "Add dimensions"), unless turned off. */
   slotDims = true;
   /** Lines, rectangles, circles, arcs and polygons add their sizes as dimensions and open the Modify box on each (FR-UI-052). */
   addDims = true;
@@ -2757,7 +2757,7 @@ export class SketchEditor {
     this.emitSel();
   }
 
-  // ---------- segment (SolidWorks Segment) ----------
+  // ---------- segment (CAD app Segment) ----------
 
   /** Segment: divides the clicked line, arc or circle into `segCount` equal pieces, marked by points on it or cut into that many curves. */
   segmentAt(p: V2) {
@@ -2817,7 +2817,7 @@ export class SketchEditor {
     this.emitSel();
   }
 
-  // ---------- jog line (SolidWorks Jog Line) ----------
+  // ---------- jog line (CAD app Jog Line) ----------
 
   /** The jog that the second click at `p` would make on the line picked first: two cuts along it and a step of `h` square to it. */
   private jogShape(p: V2): { line: string; a: V2; b: V2; u: V2; n: V2; t0: number; t1: number; h: number; poly: V2[] } | null {
@@ -2928,7 +2928,7 @@ export class SketchEditor {
   /**
    * Offsets the clicked circle, or the chain of lines and arcs through the clicked curve, by `offsetDist` to the cursor's side
    * (and the other side too with `offsetBoth`, open chains then closed by `offsetCap` arcs or lines).
-   * Corners are re-joined where the offset curves meet; arcs keep their centres (concentric). With `offsetLink` (SolidWorks'
+   * Corners are re-joined where the offset curves meet; arcs keep their centres (concentric). With `offsetLink` (a CAD app's
    * default) the copies keep offset relations and one distance dimension, so they follow the source; otherwise a static copy.
    * With apply false it only returns the preview polylines.
    */
@@ -3418,7 +3418,7 @@ export class SketchEditor {
   }
 
   /**
-   * Stretch entities (SolidWorks Stretch Entities): the selected points move by the delta, so curves ending on
+   * Stretch entities (CAD app Stretch Entities): the selected points move by the delta, so curves ending on
    * them stretch. Driving dimensions spanning moved and unmoved points take their new values (ones typed as an
    * expression keep it, and the solver pulls against them); relations stay.
    */
@@ -3789,7 +3789,7 @@ export class SketchEditor {
   }
 
   /**
-   * Add dimensions on creation (SolidWorks' "Add dimensions"): the sizes of what the click just made.
+   * Add dimensions on creation (a CAD app's "Add dimensions"): the sizes of what the click just made.
    * Rectangles and parallelograms get width and height, a polygon its circle's diameter, circles a diameter,
    * arcs a radius and lines a length; ones the sketch already fixes are dropped by `addTypedDims`.
    */
@@ -4209,7 +4209,7 @@ export class SketchEditor {
     v.invalidate();
   }
 
-  /** The live size beside the cursor while drawing (SolidWorks shows length, radius, angle). */
+  /** The live size beside the cursor while drawing (a CAD app shows length, radius, angle). */
   private cursorLabel() {
     let el = this.host.layer.querySelector<HTMLElement>(".sk-cursor");
     const d = this.draft, p = d.cursor, a = d.pts[0];

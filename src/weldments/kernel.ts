@@ -561,7 +561,7 @@ function shifted(h: WeldHost, b: Named, d: V3): Named {
 }
 
 /**
- * End miter (SolidWorks Trim/Extend corner type): the picked member and the boundary member are both
+ * End miter (CAD app Trim/Extend corner type): the picked member and the boundary member are both
  * lengthened to the point where their axes meet (the middle of the shortest join for skew axes) and cut
  * on the plane that halves the corner, so their end faces meet flush.
  */

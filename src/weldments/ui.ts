@@ -108,7 +108,7 @@ function cornerOpts(n: number): [string, string][] {
   return [...(n === 2 ? [["miter", t("End miter")] as [string, string]] : []), ["butt1", t("End butt 1")], ["butt2", t("End butt 2")], ["none", t("None")]];
 }
 
-/** A corner of a structural member as the view shows it (SolidWorks' corner callouts). */
+/** A corner of a structural member as the view shows it (a CAD app's corner callouts). */
 export interface CornerSpot {
   key: string;
   /** Where the segments meet, world mm. */
@@ -176,7 +176,7 @@ export function weldDraft(ctx: WeldCtx, type: WeldTool, id: string, name: string
   const fr = face != null ? ctx.faceRef(face) : null;
   if (type === "member") {
     const paths = pathSketches(ctx);
-    // The selected sketch, else the last 3D sketch or sketch with lines (SolidWorks: sketch the frame, then Structural Member).
+    // The selected sketch, else the last 3D sketch or sketch with lines (a CAD app: sketch the frame, then Structural Member).
     const sk = paths.find(s => s.id === ctx.selected) ?? paths.at(-1);
     if (!sk) { toast(t("Draw a sketch or a 3D sketch with lines first: the members run along them."), true); return null; }
     return recallWeld({ id, type, name, profile: "shs", size: "40x40x3", segs: pathLines(sk).map(ent => ({ sketch: sk.id, ent })), corner: "miter" } satisfies MemberFeature);
@@ -508,7 +508,7 @@ export function segmentAt(ctx: WeldCtx, x: number, y: number, f: MemberFeature):
 }
 
 /**
- * A click while a structural member is open (SolidWorks-style): a path segment near the click, or a face
+ * A click while a structural member is open (CAD-app-style): a path segment near the click, or a face
  * of the member's own preview, is ticked or unticked. A segment of another sketch starts over with it.
  */
 function pickSegment(ctx: WeldCtx, e: PointerEvent, f: MemberFeature) {
@@ -628,7 +628,7 @@ function rowsOf(items: CutItem[], density: number, props?: CutProps) {
 }
 
 /**
- * The Cut list folder of the Features tree (SolidWorks' "Cut list"): one row per item with its quantity;
+ * The Cut list folder of the Features tree (a CAD app's "Cut list"): one row per item with its quantity;
  * a click selects `cut:<i>`, which lights up the item's bodies.
  */
 export function cutListRows(items: CutItem[] | undefined, open: boolean, row: (id: string, icon: string, label: string, extra?: string, cls?: string, aria?: string) => string, props?: CutProps, subs?: SubWeld[]): string {
@@ -642,7 +642,7 @@ export function cutListRows(items: CutItem[] | undefined, open: boolean, row: (i
     return row(`cut:${i}`, c.kind === "member" ? "▭" : c.kind === "plate" ? "▱" : "◣", `${r.desc}${len} (${r.qty})${r.excl ? ` · ${t("excluded")}` : ""}`, "", ` infolder ft-body${c.sub ? " child" : ""}${r.excl ? " wld-excl" : ""}`);
   };
   items.forEach((c, i) => { if (!c.sub) html += item(i); });
-  // Sub-weldment folders (SolidWorks): each with its items under it; one with no current items still shows, so it can be dissolved.
+  // Sub-weldment folders (a CAD app): each with its items under it; one with no current items still shows, so it can be dissolved.
   for (const sw of subs ?? []) {
     const mine = items.map((c, i) => c.sub === sw.id ? i : -1).filter(i => i >= 0);
     html += row(`wsub:${sw.id}`, "▣", t("{name} ({n})", { name: sw.name, n: mine.length }), "", " infolder ft-bodies wld-sub");
@@ -698,7 +698,7 @@ function stockHtml(items: CutItem[], props: CutProps, bar: StockBar, edit: boole
 
 /**
  * Opens the cut list dialog for the part's current cut list. Description, part number and notes of each item can be
- * typed (SolidWorks' cut list item properties); `onProps` stores them in `PartDoc.cutProps`.
+ * typed (a CAD app's cut list item properties); `onProps` stores them in `PartDoc.cutProps`.
  */
 export function showCutList(items: CutItem[] | undefined, doc: PartDoc, onProps?: (key: string, p: { desc?: string; part?: string; note?: string; mat?: string; excl?: boolean }) => void, onStock?: (s: StockBar) => void) {
   const dlg = document.querySelector<HTMLDialogElement>("#wld-cut");

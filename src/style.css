@@ -388,7 +388,7 @@ details > :last-child { margin-bottom: 12px; }
 .snaps { display: flex; gap: 8px; align-items: center; color: var(--muted); }
 .st-snap { color: var(--warn-text); font-weight: 600; min-width: 70px; }
 .st-kernel { color: var(--muted); white-space: nowrap; }
-/* Smart measure's prompt lives here, SolidWorks style, never over the model. */
+/* Smart measure's prompt lives here, CAD app style, never over the model. */
 .st-hint { color: var(--muted); min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
 .st-hint b { color: var(--text); font-weight: 600; }
 #app.sketching .st-hint, #app.mc-cmd .st-hint { display: none; }
@@ -699,7 +699,7 @@ input.drop-val { outline: 2px solid var(--accent) !important; background: var(--
 .mc-line { display: flex; gap: 8px; align-items: center; }
 .mc-status:not(:empty), .mc-busy { pointer-events: none; background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 3px 9px; font-size: 12px; box-shadow: var(--shadow); }
 .mc-busy { color: var(--muted); }
-/* Confirmation corner (SolidWorks): ✓/✕ at the top right of the view, left of the nav cube, whenever a command is open. */
+/* Confirmation corner (a CAD app): ✓/✕ at the top right of the view, left of the nav cube, whenever a command is open. */
 .mc-confirm { position: absolute; right: 132px; top: 10px; z-index: 4; display: flex; gap: 6px; }
 #viewport:has(.mc-confirm:not([hidden])) .mc-bar { right: 228px; }
 .mc-confirm button { width: 40px; height: 40px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); box-shadow: var(--shadow); font-size: 20px; cursor: pointer; display: grid; place-items: center; }
@@ -1158,7 +1158,7 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .mc-wrong-l button.bad { border-left: 3px solid var(--danger); }
 .mc-wrong-l button.warn { border-left: 3px solid #c08400; }
 
-/* Motion study pane (FR-FT-122): SolidWorks' MotionManager under the view. */
+/* Motion study pane (FR-FT-122): a CAD app's MotionManager under the view. */
 .motion { position: absolute; left: 0; right: 0; bottom: 0; z-index: 6; max-height: 46%; display: flex; flex-direction: column; background: var(--panel); border-top: 1px solid var(--line); box-shadow: var(--shadow); font-size: var(--fs-caption); color: var(--text); }
 .motion .mo-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 5px 8px; border-bottom: 1px solid var(--line); }
 .motion .mo-title { font-size: var(--fs-body); margin: 0 6px 0 0; font-weight: 600; }

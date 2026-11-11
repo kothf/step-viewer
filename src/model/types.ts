@@ -171,7 +171,7 @@ export interface SketchFeature {
   editBlock?: { insert: string; known: string[] };
 }
 
-/** A sketch block definition (SolidWorks' Make Block): entities and the relations among them, the insertion point at 0, 0. */
+/** A sketch block definition (a CAD app's Make Block): entities and the relations among them, the insertion point at 0, 0. */
 export interface SketchBlock { id: string; name: string; ents: SkEnt[]; rels: SkRel[]; dims?: SkDim[] }
 /** A placed block: its insertion point, angle (rad) and scale. */
 export interface BlockInsert { id: string; block: string; x: number; y: number; ang?: number; scale?: number }
@@ -258,7 +258,7 @@ export interface ExtrudeFeature {
   /** Second direction depth (its blind depth); 0 or absent: one direction. */
   depth2?: Num;
   /**
-   * Direction 2's end condition (FR-FT-011, as SolidWorks): absent = blind by `depth2`. Set whenever
+   * Direction 2's end condition (FR-FT-011, as a CAD app): absent = blind by `depth2`. Set whenever
    * Direction 1 is not blind, so older files whose end changed with a stale `depth2` keep one direction.
    */
   end2?: Dir2End;
@@ -294,7 +294,7 @@ export interface ExtrudeFeature {
   /** Draft while extruding (FR-FT-014): the side faces taper by this angle (outward: they flare). */
   draft?: { angle: Num; outward?: boolean };
   /**
-   * Direction 2's draft (FR-FT-014, as SolidWorks). Present (0° = off) means each direction tapers on its
+   * Direction 2's draft (FR-FT-014, as a CAD app). Present (0° = off) means each direction tapers on its
    * own about the sketch plane, `draft` being Direction 1's; the panel sets it once Direction 2 is on.
    * Absent (older files): one `draft` tapers the whole two-way prism from its far end, as before.
    */
@@ -505,7 +505,7 @@ export interface MirrorFeature extends CopySource {
   id: string; type: "mirror"; name: string; suppressed?: boolean;
   plane?: PlaneRef;
   features: string[];
-  /** Bodies: join each mirrored body to its original (SolidWorks "Merge solids"). */
+  /** Bodies: join each mirrored body to its original (a CAD app's "Merge solids"). */
   merge?: boolean;
 }
 
@@ -622,7 +622,7 @@ export interface HoleFeature {
   capThread?: Num;
   ringDia?: Num;
   ringT?: Num;
-  /** Advanced Hole (SolidWorks' Advanced Hole): elements stacked from the face down (`near`, the last one is the
+  /** Advanced Hole (a CAD app's Advanced Hole): elements stacked from the face down (`near`, the last one is the
    *  main hole and runs to the end condition, `diameter` mirrors it) and from the far face in (`far`, holes that
    *  leave the material only). */
   near?: HoleElem[];
@@ -650,7 +650,7 @@ export interface HoleFeature {
   /** Slot: centre-to-centre length and its angle from the plane's X axis. */
   slotLen?: Num;
   slotAngle?: Num;
-  /** Slot: Counterbored slot / Countersunk slot (SolidWorks' slot types), with `cbDia`/`cbDepth` or `csDia`/`csAngle`. */
+  /** Slot: Counterbored slot / Countersunk slot (a CAD app's slot types), with `cbDia`/`cbDepth` or `csDia`/`csAngle`. */
   slotHead?: "cbore" | "csink";
   /** Flat bottom instead of a 118° drill point. */
   flat?: boolean;
@@ -660,7 +660,7 @@ export interface HoleFeature {
   cbDepth?: Num;
   csDia?: Num;
   csAngle?: Num;
-  /** Options (FR-FT-051, as in SolidWorks' Hole Wizard): a countersink on the near side (at the top of the hole or
+  /** Options (FR-FT-051, as in a CAD app's Hole Wizard): a countersink on the near side (at the top of the hole or
    *  its counterbore), under the counterbore's head, and on the far side where a hole that is not blind leaves the
    *  material; head clearance deepens a counterbore or puts a cylinder of the countersink's width above the cone. */
   nearCs?: HoleSink;
@@ -671,7 +671,7 @@ export interface HoleFeature {
   taperDia?: Num;
   /** Tapped: thread depth (cosmetic thread) and nominal diameter. */
   threadDepth?: Num;
-  /** Tapped, hole end not blind: "through" = the thread runs the whole drill (SolidWorks' thread Through All); absent = `threadDepth`. */
+  /** Tapped, hole end not blind: "through" = the thread runs the whole drill (a CAD app's thread Through All); absent = `threadDepth`. */
   threadEnd?: "through";
   major?: number;
   pitch?: number;
@@ -679,7 +679,7 @@ export interface HoleFeature {
   screw?: "iso4762" | "din7984" | "iso7380" | "iso1207" | "iso10642" | "iso2009";
   /** Tapped: thread tolerance class in the callout (absent = 6H, or 2B for inch). */
   tclass?: string;
-  /** Tapped (and tapered tap: "remove" only): "remove" cuts the threaded length to the major diameter (SolidWorks' Remove thread), "none" drops the
+  /** Tapped (and tapered tap: "remove" only): "remove" cuts the threaded length to the major diameter (a CAD app's Remove thread), "none" drops the
    *  cosmetic thread; absent = cosmetic thread on the tap drill. */
   threadMode?: "remove" | "none";
 }
@@ -908,7 +908,7 @@ export interface WrapFeature {
 /**
  * Indent (FR-BODY-007, P5): the target body takes the shape of the tool bodies. The tools grown by
  * `clearance` are cut out; unless `cut`, a wall `thickness` thick around them is added on the side the
- * tools press into (the target swept that way), like SolidWorks' Indent. The tool bodies stay.
+ * tools press into (the target swept that way), like a CAD app's Indent. The tool bodies stay.
  */
 export interface IndentFeature {
   id: string; type: "indent"; name: string; suppressed?: boolean;
@@ -1177,10 +1177,10 @@ export interface PartDoc {
   /** Mass property override (FR-MAT-004), e.g. for a purchased part: mass in kg, centre of mass in mm; each absent one is calculated. */
   massOverride?: { mass?: number; com?: V3 };
   /** Weldment cut list item properties (FR-FT-121), keyed by `cutKey` of the item: own description, part number, notes. */
-  cutProps?: Record<string, { desc?: string; part?: string; note?: string; /** Material name from `MATERIALS` for this item's cut list mass (unset = the part's material). */ mat?: string; /** Excluded from the cut list (SolidWorks' Exclude from cut list): no item number, mass or CSV row. */ excl?: boolean }>;
+  cutProps?: Record<string, { desc?: string; part?: string; note?: string; /** Material name from `MATERIALS` for this item's cut list mass (unset = the part's material). */ mat?: string; /** Excluded from the cut list (a CAD app's Exclude from cut list): no item number, mass or CSV row. */ excl?: boolean }>;
   /** Stock bar for the weldment cut list (FR-FT-121): bar length and saw kerf in mm; the Stock lengths table then counts the bars to buy. */
   stock?: { len?: number; kerf?: number };
-  /** Sub-weldments (SolidWorks' sub-weldment folders in the cut list): named groups of body keys; a body sits in at most one. */
+  /** Sub-weldments (a CAD app's sub-weldment folders in the cut list): named groups of body keys; a body sits in at most one. */
   subWelds?: { id: string; name: string; bodies: string[] }[];
   color?: V3;
   features: Feature[];

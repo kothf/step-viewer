@@ -185,7 +185,7 @@ export function residuals(m: Mate, ga: Geo, gb: Geo, L: number, tfa?: Tf, tfb?: 
       const sa = dot(da, ga.p), sc = dot(da, gc.p), wm = (sa + sc) / 2;
       if (gb.k === "axis") {
         out.push(dot(da, gb.d) * L, dot(da, gb.p) - wm);
-        // A slot's pin stays between the end centres (SolidWorks' Free slot mate, exam #81); zero inside, like a limit.
+        // A slot's pin stays between the end centres (a CAD app's Free slot mate, exam #81); zero inside, like a limit.
         if (m.type === "slot" && ends) {
           const [e0, e1] = ends, run = sub(e1, e0), Ls = len(run), u = scale(run, 1 / Math.max(Ls, 1e-12));
           const mid = scale(add(e0, e1), 0.5), q = add(gb.p, scale(gb.d, dot(sub(mid, gb.p), gb.d)));
@@ -555,7 +555,7 @@ function rank(vs: number[][]): number {
   return Math.min(6, basis.length);
 }
 
-/** Default alignment and side for a new mate, from where the references are now (as SolidWorks picks the nearer one). */
+/** Default alignment and side for a new mate, from where the references are now (as a CAD app picks the nearer one). */
 export function mateDefaults(type: MateType, ga: Geo, gb: Geo): Partial<Mate> {
   const da = dirOf(ga), db = dirOf(gb);
   const out: Partial<Mate> = {};

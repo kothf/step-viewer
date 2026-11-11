@@ -138,7 +138,7 @@ export function smDraft(type: "smrip" | "smtabslot" | "smbase" | "smloft" | "smf
   }
   if (type === "smbase") {
     if (base) {
-      // With a base flange, a closed sketch on a face of the sheet makes a tab (SolidWorks' Base Flange/Tab).
+      // With a base flange, a closed sketch on a face of the sheet makes a tab (a CAD app's Base Flange/Tab).
       const closed = (s: SketchFeature) => !sketchProfile(s).error;
       const sel = c.selected ? c.sketches.find(s => s.id === c.selected && closed(s)) : undefined;
       const sk = sel ?? c.sketches.filter(s => !c.used.has(s.id) && closed(s)).at(-1);
@@ -186,7 +186,7 @@ export function smDraft(type: "smrip" | "smtabslot" | "smbase" | "smloft" | "smf
     return { id: c.id, type: "smcut", name: c.name("smcut"), sketch: sk.id } satisfies SmCutFeature;
   }
   if (type === "smunfold") {
-    // A flat face picked first stays fixed; every bend unfolds until bends are picked (SolidWorks: Collect All Bends).
+    // A flat face picked first stays fixed; every bend unfolds until bends are picked (a CAD app: Collect All Bends).
     const face = c.face && c.sheet && /:(top|bot)$/.test(c.face.name) && panelOfFace(c.sheet, c.face.name) ? c.face : undefined;
     return { id: c.id, type: "smunfold", name: c.name("smunfold"), ...(face ? { face } : {}), bends: [] } satisfies SmUnfoldFeature;
   }
@@ -195,7 +195,7 @@ export function smDraft(type: "smrip" | "smtabslot" | "smbase" | "smloft" | "smf
     return { id: c.id, type: "smfold", name: c.name("smfold"), bends: [] } satisfies SmUnfoldFeature;
   }
   if (type === "smform") {
-    // A face picked first gets one tool at the middle of its panel (SolidWorks: drop the tool on a face).
+    // A face picked first gets one tool at the middle of its panel (a CAD app: drop the tool on a face).
     const face = c.face && /:p\d+:(top|bot)$/.test(c.face.name) ? c.face : null;
     const pid = face ? face.name.replace(/:(top|bot)$/, "") : "";
     const panel = c.sheet?.panels.find(p => p.id === pid);
@@ -208,14 +208,14 @@ export function smDraft(type: "smrip" | "smtabslot" | "smbase" | "smloft" | "smf
     return { id: c.id, type: "smform", name: c.name("smform"), face: face ?? { name: "" }, ...formSizes("dimple", c.sheet?.T ?? 1), pts } satisfies SmFormFeature;
   }
   if (type === "smgusset") {
-    // A bend face picked first holds the gusset (SolidWorks: pick the bend, the rib goes across it).
+    // A bend face picked first holds the gusset (a CAD app: pick the bend, the rib goes across it).
     const b = c.face && c.sheet ? bendOfFace(c.sheet, c.face.name) : undefined;
     const T = c.sheet?.T ?? 1;
     const set = b ? b.r * Math.tan(Math.min(b.angle, 3) / 2) : 0;
     return { id: c.id, type: "smgusset", name: c.name("smgusset"), bend: b?.id ?? "", depth: { v: Math.round(set + 2.5 * ((b?.r ?? T) + T)) }, width: { v: Math.round(30 * T) / 10 } } satisfies SmGussetFeature;
   }
   if (type === "smrelief") {
-    // Every two-bend corner until corners are picked (SolidWorks: Collect all corners).
+    // Every two-bend corner until corners are picked (a CAD app: Collect all corners).
     if (c.sheet && !c.sheet.faceted && !reliefCorners(c.sheet).length) return t("The sheet has no corners where two bends meet.");
     return { id: c.id, type: "smrelief", name: c.name("smrelief"), corners: [], kind: "rect" } satisfies SmReliefFeature;
   }
