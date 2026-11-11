@@ -3649,7 +3649,7 @@ try {
     check(cap1.k === "captive" && cap1.s === "M6" && cap1.d === 6.6 && cap1.end === "through" && cap1.callout.includes("M6-6H") && cap1.ok
       && cap2.r === true && cap2.hold === 4.8 && cap2.lt === 12 && cap2.cb === 11 && cap2.need && cap2.box && cap2.callout.includes("⌴Ø11") && cap2.callout.includes("M6-6H ↧4.8") && cap2.ok
       && cback2.k === "tapped" && cback2.r === null && cback2.s === "M6",
-      `model 1.535: Hole Wizard captive screw (${JSON.stringify({ cap1, cap2, cback2 })})`);
+      `model 1.536: Hole Wizard captive screw (${JSON.stringify({ cap1, cap2, cback2 })})`);
     // Options: Near side countersink defaults to the hole + 1 mm at 90°; unticking takes it away.
     await mp.check('#mc-pm input[data-k="optNear"]').catch(() => {});
     await idle();
@@ -7117,6 +7117,26 @@ try {
       await mp.keyboard.press("Escape");
       check(holeScope && recent.shown && recent.head === "Recent commands" && recent.items[0] === "Hole" && recent.items[1] === "Cut" && recent.items.includes("Zoom to fit"),
         `model 1.506: Hole has Feature scope; right-click on empty space lists Recent commands (FR-FT-007, FR-UI-113) (${holeScope}, ${JSON.stringify(recent)})`);
+      // 1.535: a right-click on a face lists its feature's commands at the pointer, with the context toolbar above (FR-UI-025).
+      const onFace = await mp.evaluate(() => {
+        const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect();
+        for (let k = 0; k < 400; k++) {
+          const fx = 0.5 + ((k % 20) - 10) / 40, fy = 0.5 + (Math.floor(k / 20) - 10) / 40;
+          const ndc = new (v.camera.position.constructor)(fx * 2 - 1, -(fy * 2 - 1), 0);
+          if (v.pickMeshes({ x: ndc.x, y: ndc.y })) return { x: r.left + fx * r.width, y: r.top + fy * r.height };
+        }
+        return null;
+      });
+      let geo = null;
+      if (onFace) {
+        await mp.mouse.click(onFace.x, onFace.y, { button: "right" });
+        await mp.waitForTimeout(250);
+        geo = await mp.evaluate(() => { const m = document.getElementById("mc-menu"); return { shown: !m.hidden, head: m.querySelector(".mc-menu-h")?.textContent ?? "", items: [...m.querySelectorAll("button")].map(b => b.textContent), bar: document.querySelectorAll("#mc-cbar button").length }; });
+        await mp.keyboard.press("Escape");
+        await mp.evaluate(() => window.__sv.modeller.hideShortcutBar());
+      }
+      check(!!geo && geo.shown && geo.head !== "" && geo.items[0] === "Edit feature" && geo.items.includes("Suppress") && geo.items.includes("Delete") && geo.items.includes("Zoom to fit") && geo.bar > 0,
+        `model 1.535: right-click on a face lists its feature's commands under the context toolbar (FR-UI-025) (${JSON.stringify(geo)})`);
       await mp.evaluate(() => window.__sv.model.store.undo());
       await settle();
       await mp.evaluate(() => window.__sv.model.store.undo());

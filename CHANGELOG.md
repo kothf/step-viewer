@@ -5,10 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.535.0] - 2026-11-11
+## [1.536.0] - 2026-11-11
 
 ### Added
 - Hole Wizard **Captive screw**: a hole for a screw that stays in its cover. Held by a thread in the cover (the screw is turned through it) or by a retaining ring under the cover (a recess is cut for the ring). **Retracted screw** leaves room for the screw's thread inside the cover, so with the screw pulled up the cover sits flat on the box: a short retaining thread over a clearance bore, or a deeper ring recess; the panel shows the cover thickness this needs, and a cover that is too thin gets a warning saying by how much. Optional head counterbore; sizes from the ISO table.
+
+
+## [1.535.0] - 2026-11-11
+
+### Added
+
+- Right-click menu on geometry (FR-UI-025): a right-click on a face or an edge of the part, with no command running, shows the context toolbar above the pointer and a menu at it headed by the feature that made the face: Edit feature, Edit sketch, Suppress, Hide body, Normal to (flat faces), Zoom to fit and Delete.
 
 ## [1.534.0] - 2026-11-11
 
@@ -3329,7 +3336,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.535.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.536.0...HEAD
+[1.536.0]: https://github.com/kothf/step-viewer/compare/v1.535.0...v1.536.0
 [1.535.0]: https://github.com/kothf/step-viewer/compare/v1.534.0...v1.535.0
 [1.534.0]: https://github.com/kothf/step-viewer/compare/v1.533.0...v1.534.0
 [1.533.0]: https://github.com/kothf/step-viewer/compare/v1.532.0...v1.533.0
