@@ -9592,6 +9592,29 @@ try {
     const wedge = 100 * 3600 * Math.tan(Math.PI / 18) / 2;
     check(Math.abs(tr.v - 100 * 60 * 25) < 1 && !tr.bad && focus === "axis" && Math.abs(rot.v - (120000 + wedge)) < 1 && !rot.bad && fin.mode === "rotate" && fin.type === "moveface",
       `model: Move Face translate (normal part only) and rotate about an edge (FR-FT-101) (${JSON.stringify({ tr, focus, rot, mode: fin.mode })})`);
+    // Dome (FR-FT-103, 1.547), from the Bodies menu: the top bulges 4 mm with a live preview; Reverse makes a dent.
+    await mp.evaluate(() => window.__sv.model.store.change("Undo move", d => { d.features.pop(); }));
+    await settle();
+    await runCmd(mp, "Dome");
+    await settle();
+    await mp.evaluate(() => { const m = window.__sv.model; m.mode().draft.faces = [{ name: "f1:end" }]; m.panel(); void m.rebuild(); });
+    await settle();
+    await mp.fill('#mc-pm input[data-num="distance"]', "4");
+    await mp.press('#mc-pm input[data-num="distance"]', "Tab");
+    await settle();
+    const dm = await vol();
+    const dpm = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm .pm-head h3")?.textContent ?? "", count: document.querySelector("#mc-pm .pm-count")?.textContent ?? "", ell: !!document.querySelector('#mc-pm input[data-k="elliptical"]') }));
+    await mp.check('#mc-pm input[data-k="flip"]');
+    await settle();
+    const dent = await vol();
+    await mp.uncheck('#mc-pm input[data-k="flip"]');
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const dfin = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.at(-1); return { type: f.type, name: f.name, d: f.distance.v }; });
+    check(dm.v > 120000 + 0.3 * 6000 * 4 && dm.v < 120000 + 6000 * 4 && !dm.bad && Math.abs(dent.v - (240000 - dm.v)) < 1 && !dent.bad && /Dome/.test(dpm.title) && dpm.count === "1 face" && dpm.ell
+      && dfin.type === "dome" && dfin.name === "Dome1" && dfin.d === 4,
+      `model 1.547: Dome bulges the top with a live preview, Reverse direction dents it (FR-FT-103) (${JSON.stringify({ dm, dent, dpm, dfin })})`);
     // Replace Face (Surface ▾): the top replaced by a flat surface 5 mm above it.
     await mp.evaluate(() => window.__sv.model.store.change("Surface", d => {
       d.features.pop();

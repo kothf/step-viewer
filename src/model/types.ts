@@ -849,6 +849,19 @@ export interface CombineFeature {
   tools: FaceRef[];
 }
 /**
+ * Dome (FR-FT-110, P5): each picked flat face bulges out by `distance` at its middle (into the body with
+ * `flip`, a dent). A round face gets an exact spherical cap, or half an ellipsoid with `elliptical`
+ * (semi-axes = the face radius and the distance); any other outline gets a smooth patch through its
+ * edges and the peak above the face's centroid. The dome face is named `<id>:dome:<k>`.
+ */
+export interface DomeFeature {
+  id: string; type: "dome"; name: string; suppressed?: boolean;
+  faces: FaceRef[];
+  distance: Num;
+  flip?: boolean;
+  elliptical?: boolean;
+}
+/**
  * Indent (FR-BODY-007, P5): the target body takes the shape of the tool bodies. The tools grown by
  * `clearance` are cut out; unless `cut`, a wall `thickness` thick around them is added on the side the
  * tools press into (the target swept that way), like SolidWorks' Indent. The tool bodies stay.
@@ -1049,7 +1062,7 @@ export interface IntersectRegion { c: V3; v: number; out: boolean; /** Indexes o
 export type Feature = SheetFeature | SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature | CsysFeature
   | ShellFeature | DraftFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | SketchPatternFeature | HoleFeature | ThreadFeature
   | HelixFeature | SweepFeature | LoftFeature | RibFeature | SplitFeature | CurveFeature | SweepSurfFeature | Sketch3dFeature
-  | CombineFeature | IndentFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ImportFeature | HealFeature | ScaleFeature | DeleteFaceFeature | MoveFaceFeature
+  | CombineFeature | IndentFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ImportFeature | HealFeature | ScaleFeature | DeleteFaceFeature | MoveFaceFeature | DomeFeature
   | PlaneSurfFeature | ExtrudeSurfFeature | OffsetSurfFeature | KnitFeature | ThickenFeature | ReplaceFaceFeature | RevolveSurfFeature | LoftSurfFeature | TrimSurfFeature | FillSurfFeature | ExtendSurfFeature | UntrimSurfFeature | IntersectFeature
   | WeldFeature;
 export type FeatureType = Feature["type"];

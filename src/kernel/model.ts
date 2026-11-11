@@ -11,7 +11,7 @@
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { V2, SkEnt } from "../model/types";
-import type { HealFeature, RecognizedHole, RecognizedBlends, SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, PatternSpot, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, ChamferFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, HoleSink, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
+import type { DomeFeature, HealFeature, RecognizedHole, RecognizedBlends, SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, PatternSpot, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, ChamferFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, HoleSink, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
 import { dir2Apart, dir2Feature, threadThrough, holeExits, headKind } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { recognizedHoleFeatures, TAPER } from "../model/holes";
@@ -977,8 +977,8 @@ export class Modeller {
     const oc = this.oc;
     const pr = new oc.Message_ProgressRange_1();
     let mk: any;
-    if (glue && kind === "fuse") {
-      mk = new oc.BRepAlgoAPI_Fuse_1();
+    if (glue && kind !== "common") {
+      mk = kind === "fuse" ? new oc.BRepAlgoAPI_Fuse_1() : new oc.BRepAlgoAPI_Cut_1();
       const A = new oc.TopTools_ListOfShape_1(), B = new oc.TopTools_ListOfShape_1();
       A.Append_1(a.shape); B.Append_1(b.shape);
       mk.SetArguments(A); mk.SetTools(B);
@@ -1538,6 +1538,99 @@ export class Modeller {
       const pull = unit(cross(ax.d, pl.n));
       body = this.applyDraft(body, [face], pull, f.flip ? -a : a, ax.o, f.id);
     }
+    return body;
+  }
+
+  /**
+   * Dome (FR-FT-103): each flat face bulges out by the distance at its middle, or in with `flip`. A round
+   * face gets an exact spherical cap (or half an ellipsoid of revolution with `elliptical`) revolved about
+   * its axis; any other outline a patch (BRepOffsetAPI_MakeFilling) through its outer edges and the peak
+   * above its centroid, closed by the face into a solid. The tool is fused on (cut for a dent).
+   */
+  private dome(f: DomeFeature, prev: Named | null): Named {
+    const oc = this.oc;
+    if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
+    if (!f.faces.length) throw new FeatureError("E-FT-NOFACES", "Click the faces to dome.");
+    const h = f.distance.v;
+    if (!(h > 1e-6)) throw new FeatureError("E-FT-ZERO", "The distance must be more than 0.");
+    let body = prev;
+    f.faces.forEach((r, k) => {
+      const face = this.resolveFace(body, r), pl = this.facePlane(face);
+      if (!pl) throw new FeatureError("E-DOME-FLAT", "Dome works on flat faces.");
+      const dn = mul(pl.n, f.flip ? -1 : 1);
+      const outer = oc.BRepTools.OuterWire(face);
+      const edges = this.sub(outer, "EDGE");
+      // A round face: every outer edge on one circle.
+      let circ: { c: V3; a: number } | null = null;
+      for (const e of edges) {
+        const ca = new oc.BRepAdaptor_Curve_2(e);
+        if (ca.GetType() !== oc.GeomAbs_CurveType.GeomAbs_Circle) { circ = null; break; }
+        const ci = ca.Circle(), c = this.xyz(ci.Location()), a = ci.Radius();
+        if (circ && (d3(circ.c, c) > 1e-6 * (1 + a) || Math.abs(circ.a - a) > 1e-6 * (1 + a))) { circ = null; break; }
+        circ = { c, a };
+      }
+      if (f.elliptical && !circ) throw new FeatureError("E-DOME-ELLIPSE", "An elliptical dome needs a round face.");
+      let tool: any;
+      if (circ) {
+        const { c, a } = circ;
+        // The profile in the plane through the axis: rim P0, apex A, centre c; turned about the axis.
+        const ref = Math.abs(dn[0]) < 0.9 ? [1, 0, 0] as V3 : [0, 1, 0] as V3;
+        const u = unit(cross(cross(dn, ref), dn));
+        const P0 = add(c, mul(u, a)), A = add(c, mul(dn, h));
+        let arc: any;
+        if (f.elliptical) {
+          // gp_Elips wants the major radius on X; the arc runs counter-clockwise from angle 0 to π/2.
+          const major = a >= h;
+          const ax = major ? new oc.gp_Ax2_2(this.P(c), this.D(cross(u, dn)), this.D(u)) : new oc.gp_Ax2_2(this.P(c), this.D(cross(dn, u)), this.D(dn));
+          const el = new oc.gp_Elips_2(ax, Math.max(a, h), Math.min(a, h));
+          arc = major ? new oc.BRepBuilderAPI_MakeEdge_14(el, this.P(P0), this.P(A)).Edge() : new oc.BRepBuilderAPI_MakeEdge_14(el, this.P(A), this.P(P0)).Edge();
+        } else {
+          // Sphere through the rim and the apex: R = (a² + h²) / 2h, centre on the axis h − R above the face.
+          const R = (a * a + h * h) / (2 * h), O = add(c, mul(dn, h - R));
+          const ci = new oc.gp_Circ_2(new oc.gp_Ax2_2(this.P(O), this.D(cross(u, dn)), this.D(u)), R);
+          arc = new oc.BRepBuilderAPI_MakeEdge_10(ci, this.P(P0), this.P(A)).Edge();
+        }
+        const w = new oc.BRepBuilderAPI_MakeWire_1();
+        w.Add_1(arc);
+        w.Add_1(new oc.BRepBuilderAPI_MakeEdge_3(this.P(A), this.P(c)).Edge());
+        w.Add_1(new oc.BRepBuilderAPI_MakeEdge_3(this.P(c), this.P(P0)).Edge());
+        if (!w.IsDone()) throw new FeatureError("E-DOME-FAIL", "The dome could not be made.");
+        const prof = new oc.BRepBuilderAPI_MakeFace_15(w.Wire(), true).Face();
+        const mk = new oc.BRepPrimAPI_MakeRevol_1(prof, new oc.gp_Ax1_2(this.P(c), this.D(dn)), 2 * Math.PI, false);
+        mk.Build(new oc.Message_ProgressRange_1());
+        if (!mk.IsDone()) throw new FeatureError("E-DOME-FAIL", "The dome could not be made.");
+        tool = mk.Shape();
+      } else {
+        // Any outline: a smooth patch through the outer edges and the peak, closed by a copy of the face.
+        const mk = new oc.BRepOffsetAPI_MakeFilling(3, 15, 2, false, 1e-5, 1e-4, 1e-2, 0.1, 8, 9);
+        for (const e of edges) mk.Add_1(e, oc.GeomAbs_Shape.GeomAbs_C0, true);
+        mk.Add_4(this.P(add(this.centroid(face), mul(dn, h))));
+        try { mk.Build(new oc.Message_ProgressRange_1()); } catch { /* reported below */ }
+        if (!mk.IsDone()) throw new FeatureError("E-DOME-FAIL", "The dome could not be made.");
+        const base = new oc.BRepBuilderAPI_MakeFace_15(outer, true).Face();
+        const sew = new oc.BRepBuilderAPI_Sewing(1e-4, true, true, true, false);
+        sew.Add(base);
+        for (const x of this.sub(mk.Shape(), "FACE")) sew.Add(x);
+        sew.Perform(new oc.Message_ProgressRange_1());
+        const sewn = sew.SewedShape();
+        let shell: any = null;
+        for (const ex = new oc.TopExp_Explorer_2(sewn, oc.TopAbs_ShapeEnum.TopAbs_SHELL, oc.TopAbs_ShapeEnum.TopAbs_SHAPE); ex.More(); ex.Next()) shell = oc.TopoDS.Shell_1(ex.Current());
+        if (!shell) throw new FeatureError("E-DOME-FAIL", "The dome could not be made.");
+        tool = new oc.ShapeFix_Solid_1().SolidFromShell(shell);
+      }
+      if (this.volume(tool) < 0) tool = tool.Reversed();
+      const faces = this.sub(tool, "FACE");
+      const tol = 1e-5 * (1 + this.size(face));
+      let q = 0;
+      const named: Named = { shape: tool, faces, names: faces.map(x => {
+        const fp = this.facePlane(x);
+        const onBase = fp && Math.abs(dot(add(fp.p, mul(pl.p, -1)), pl.n)) < tol && Math.abs(Math.abs(dot(fp.n, pl.n)) - 1) < 1e-9;
+        return onBase ? `${f.id}:base:${k}` : `${f.id}:dome:${k}${q++ ? `:${q - 1}` : ""}`;
+      }) };
+      const rest: Named = { shape: body.shape, faces: body.faces, names: body.names.map((n, i) => (body.faces[i].IsSame(face) ? `${f.id}:old:${k}` : n)) };
+      // The patch's edges are the face's own, so the tool shares the face exactly: GlueShift handles that.
+      body = this.bool(f.flip ? "cut" : "fuse", rest, named, f.id, !circ);
+    });
     return body;
   }
 
@@ -5915,6 +6008,7 @@ export class Modeller {
           else if (f.type === "untrimsurf") sheets = this.untrimSurf(f, sheets);
           else if (f.type === "intersect") ({ body, sheets } = this.intersect(f, body, sheets));
           else if (f.type === "moveface") body = this.moveFaces(f, body, frames);
+          else if (f.type === "dome") body = this.dome(f, body);
           else if (f.type === "planesurf") sheets = this.planeSurf(f, doc, body, sheets, frames);
           else if (f.type === "extsurf") sheets = this.extSurf(f, doc, body, sheets, frames);
           else if (f.type === "offsurf") sheets = this.offSurf(f, body, sheets);

@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.547.0] - 2026-11-11
+
+### Added
+
+- Dome (FR-FT-103, in the Bodies menu with Indent): pick flat faces and a distance; each face bulges out by it at its middle, with a live preview and the distance on the model. A round face gets an exact spherical cap, or half an ellipsoid with Elliptical dome; any other outline a smooth surface through its edges, highest over the middle. Reverse direction makes a dent.
+
 ## [1.546.0] - 2026-11-11
 
 ### Added
@@ -3399,7 +3405,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.546.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.547.0...HEAD
+[1.547.0]: https://github.com/kothf/step-viewer/compare/v1.546.0...v1.547.0
 [1.546.0]: https://github.com/kothf/step-viewer/compare/v1.545.0...v1.546.0
 [1.545.0]: https://github.com/kothf/step-viewer/compare/v1.544.0...v1.545.0
 [1.544.0]: https://github.com/kothf/step-viewer/compare/v1.543.0...v1.544.0
