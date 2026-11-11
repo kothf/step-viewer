@@ -20,7 +20,7 @@ export default defineConfig({
       { dir: "node_modules/opencascade.js", entry: { author: "Sebastian Alff" },
         files: ["node_modules/opencascade.js/LICENSE"], note: "Full OpenCASCADE build for exact geometry and STEP export. Loaded in the background from the occt/ folder, unmodified." },
       { entry: { name: "parasolid-kit (parasolid-core)", version: "0.3.15", license: "MIT AND Apache-2.0", author: "parasolid-kit contributors", url: "https://github.com/monozukuri-ai/parasolid-kit" },
-        files: ["native/parasolid-wasm/licenses/parasolid-kit-MIT.txt", "native/parasolid-wasm/licenses/parasolid-kit-Apache-2.0.txt"], note: "Parasolid reader for SolidWorks files: parasolid-core is copied into native/parasolid-core and compiled to WebAssembly (src/sw/parasolid.wasm) from native/parasolid-wasm." },
+        files: ["native/parasolid-wasm/licenses/parasolid-kit-MIT.txt", "native/parasolid-wasm/licenses/parasolid-kit-Apache-2.0.txt"], note: "Parasolid reader for SLDPRT/SLDASM files: parasolid-core is copied into native/parasolid-core and compiled to WebAssembly (src/sw/parasolid.wasm) from native/parasolid-wasm." },
     ],
     // package.json names one maintainer; the licence names the copyright holders
     overrides: { three: { author: "three.js authors" }, jspdf: { author: "James Hall, yWorks GmbH" }, "dejavu-fonts-ttf": { license: "Bitstream Vera Fonts License (DejaVu changes: public domain)", author: "Bitstream, DejaVu fonts team" } },

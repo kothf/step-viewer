@@ -156,7 +156,7 @@ export class KernelClient {
   }
 
   /**
-   * Converts SolidWorks files (a part, or an assembly with its part files) to
+   * Converts SLDPRT/SLDASM files (a part, or an assembly with its part files) to
    * STEP in the worker. Resolves with the STEP (null when no geometry could be
    * read) and what happened.
    */

@@ -1,7 +1,7 @@
 import { threadThrough, type HoleFeature } from "./types";
 
 /**
- * Blind tap drill depth vs thread depth (SolidWorks' Automatically Calculate Depth): a tap cannot cut full
+ * Blind tap drill depth vs thread depth (a CAD app's Automatically Calculate Depth): a tap cannot cut full
  * thread to the bottom of its drill, so the drill runs on past the thread. The automatic drill depth is the
  * thread depth plus half the thread's major diameter (M5: thread 10, drill 12.5); a drill shallower than
  * the thread plus two pitches (the tap's lead) is flagged.

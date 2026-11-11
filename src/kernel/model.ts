@@ -708,7 +708,7 @@ export class Modeller {
       const back = upto ? 0 : f.mid ? angle / 2 : Math.max(0, Math.min(f.angle2?.v ?? 0, Math.PI * 2 - angle));
       if (!(angle > 1e-9)) throw new FeatureError("E-FT-ZERO", "The angle must be more than 0.");
       if (!f.mid) angle += back;
-      // A solid profile line may be the axis too (SolidWorks allows it): leave the axis out only when the
+      // A solid profile line may be the axis too (a CAD app allows it): leave the axis out only when the
       // profile closes without it, so a stand-alone line or centreline still works as before.
       const axSkip = new Set([ax.id]);
       const skip = ax.cons || (!f.contours?.length && !sketchProfile(sk, axSkip).error) ? axSkip : undefined;
@@ -993,7 +993,7 @@ export class Modeller {
     if (kind === "fuse" && !glue) {
       // Material that only touches the body, with a gap of sketch round-off (a few 1e-6 mm, e.g. a boss
       // drawn on a snapped edge), stayed a separate solid (Leuenberger exam #82). When the plain fuse
-      // joins nothing, fuse again with a fuzzy value of 1e-5 mm, about SolidWorks' modelling tolerance.
+      // joins nothing, fuse again with a fuzzy value of 1e-5 mm, about a CAD app's modelling tolerance.
       const n = this.solids(mk.Shape());
       if (n > 1 && n >= this.solids(a.shape) + this.solids(b.shape)) {
         const fz = new oc.BRepAlgoAPI_Fuse_1();

@@ -2,7 +2,7 @@
 import type { Projection, Seg2 } from "../kernel/drawing";
 import type { Orient } from "./types";
 
-/** The views the palette offers, in the order SolidWorks lists them. */
+/** The views the palette offers, in the order a CAD app lists them. */
 export const PALETTE: Exclude<Orient, "current">[] = ["front", "top", "right", "iso", "back", "bottom", "left"];
 
 /** The drag data type of a palette tile. */

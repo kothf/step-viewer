@@ -83,7 +83,7 @@ Written for whoever continues drawing work (FRS section 11, `FR-DRW-…`). The C
 
 ## Ideas for next slices (none started)
 
-- **Centre marks on views at an angle**: end-on tests use `|ax·n| ≈ 1` (1e-6). Isometric views get no marks at all, which matches SolidWorks, so leave them unless asked.
+- **Centre marks on views at an angle**: end-on tests use `|ax·n| ≈ 1` (1e-6). Isometric views get no marks at all, which matches a CAD app, so leave them unless asked.
 - **Performance**: done in 1.476.0 with two drawing workers. More than two would cost one more model copy each; measure before adding.
 - Check the FRS (`docs/FRS-modelling.md`, FR-DRW-001..031) and Appendix G for drawing items marked partial.
 

@@ -5,25 +5,31 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.555.0] - 2026-11-11
+
+### Changed
+
+- The app, its Help (English and Russian), the changelog, the docs and the code comments no longer name another CAD vendor's product: comparisons now say "a CAD app" or "other CAD apps", and the native part and assembly formats are called by their file types, SLDPRT and SLDASM (Help, start page, loading messages, Preferences → Mouse "Rotate (CAD app style)").
+
 ## [1.554.0] - 2026-11-11
 
 ### Added
 
-- Sketch blocks (FRS 2.2): **Make Block** on the Sketch tab turns the selected entities into one block instance, placed at the middle of their box; the relations among them go into the block definition and the instance moves as one fixed piece (it adds no degrees of freedom). Drag an instance or set its X, Y, angle and scale in the sketch panel; relations and dimensions to its points stay. **Insert Block** places another instance of any block in the part, or one from a `.mcadblk` file (**Save block** writes it). **Edit block** frees one instance in place with the block's relations and dimensions on it; drag, dimension or draw more, and **Finish editing block** (or Exit sketch) updates every copy. **Explode block** gives plain entities back with the block's relations. Trim, fillet, offset and the other editing tools ask to explode a block first, as in SolidWorks.
-- Flex: the triad has a drag arrow along each axis while the Flex is open; dragging one moves the triad (and unticks **Triad at the centre of the bodies**), as dragging SolidWorks' triad does.
-- Sketch dimensions (FR-SK-060): **arc length**: with Dimension, click an arc and both its end points (in any order), then place the value (◠); it drives the arc's sweep. **Arc conditions**: Shift+click a circle or arc for a distance to its near side (clicked on the side towards the other item) or far side (away from it) instead of its centre, as in SolidWorks; right-click the dimension to switch each circle between Centre, Near side (min) and Far side (max), keeping the geometry where it is.
+- Sketch blocks (FRS 2.2): **Make Block** on the Sketch tab turns the selected entities into one block instance, placed at the middle of their box; the relations among them go into the block definition and the instance moves as one fixed piece (it adds no degrees of freedom). Drag an instance or set its X, Y, angle and scale in the sketch panel; relations and dimensions to its points stay. **Insert Block** places another instance of any block in the part, or one from a `.mcadblk` file (**Save block** writes it). **Edit block** frees one instance in place with the block's relations and dimensions on it; drag, dimension or draw more, and **Finish editing block** (or Exit sketch) updates every copy. **Explode block** gives plain entities back with the block's relations. Trim, fillet, offset and the other editing tools ask to explode a block first, as in other CAD apps.
+- Flex: the triad has a drag arrow along each axis while the Flex is open; dragging one moves the triad (and unticks **Triad at the centre of the bodies**), as dragging a CAD app's triad does.
+- Sketch dimensions (FR-SK-060): **arc length**: with Dimension, click an arc and both its end points (in any order), then place the value (◠); it drives the arc's sweep. **Arc conditions**: Shift+click a circle or arc for a distance to its near side (clicked on the side towards the other item) or far side (away from it) instead of its centre, as in other CAD apps; right-click the dimension to switch each circle between Centre, Near side (min) and Far side (max), keeping the geometry where it is.
 
 ## [1.553.0] - 2026-11-11
 
 ### Added
 
-- Flex: each trim plane has a drag arrow in the view, pointing in from the end of the bodies; dragging it sets the plane's offset (from 0 up to the other plane), as SolidWorks' trim plane handles do. The selected Flex in the tree shows the arrows too and edits in place. The Triad group can place the triad anywhere: untick **Triad at the centre of the bodies** and type its X, Y and Z (it starts where it was, so nothing jumps); the bend and twist keep that point still.
+- Flex: each trim plane has a drag arrow in the view, pointing in from the end of the bodies; dragging it sets the plane's offset (from 0 up to the other plane), as a CAD app's trim plane handles do. The selected Flex in the tree shows the arrows too and edits in place. The Triad group can place the triad anywhere: untick **Triad at the centre of the bodies** and type its X, Y and Z (it starts where it was, so nothing jumps); the bend and twist keep that point still.
 
 ## [1.552.0] - 2026-11-11
 
 ### Added
 
-- Flex (FR-FT-105, in the Bodies menu after Scale): bend, twist, taper or stretch bodies between two trim planes, as SolidWorks' Flex does. The trim planes (shown in orange, with the triad) start at the ends of the bodies and move in by their offsets; past them the bodies move along as solid pieces. Bending turns the region through an angle towards a chosen axis about a neutral line through the middle of the bodies (the panel shows the bend radius), twisting turns each section about the flex axis, tapering scales the sections to a factor at the second plane, stretching lengthens the region. Hard edges (on) splits the faces at the trim planes; the moved faces are B-splines fitted to the exact map, so a bent bar keeps its volume to about 1e-6.
+- Flex (FR-FT-105, in the Bodies menu after Scale): bend, twist, taper or stretch bodies between two trim planes, as a CAD app's Flex does. The trim planes (shown in orange, with the triad) start at the ends of the bodies and move in by their offsets; past them the bodies move along as solid pieces. Bending turns the region through an angle towards a chosen axis about a neutral line through the middle of the bodies (the panel shows the bend radius), twisting turns each section about the flex axis, tapering scales the sections to a factor at the second plane, stretching lengthens the region. Hard edges (on) splits the faces at the trim planes; the moved faces are B-splines fitted to the exact map, so a bent bar keeps its volume to about 1e-6.
 
 ## [1.551.0] - 2026-11-11
 
@@ -40,7 +46,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Fixed
 
-- Hole Wizard, tapped and tapered tap holes: the blind drill now always goes deeper than the thread, as SolidWorks' automatically calculated depth does. A tapped hole made through and then set to Blind kept the through hole's 10 mm depth, equal to the M5 thread depth, which cannot be made (the tap needs room for its lead). The drill depth is now the thread depth plus half the thread diameter (M5: thread 10, drill 12.5; M6: 12 and 15), it follows the thread depth and size while it is at that value, and a typed drill depth shorter than the thread plus two pitches shows a warning under the thread depth. Saved parts keep their values.
+- Hole Wizard, tapped and tapered tap holes: the blind drill now always goes deeper than the thread, as a CAD app's automatically calculated depth does. A tapped hole made through and then set to Blind kept the through hole's 10 mm depth, equal to the M5 thread depth, which cannot be made (the tap needs room for its lead). The drill depth is now the thread depth plus half the thread diameter (M5: thread 10, drill 12.5; M6: 12 and 15), it follows the thread depth and size while it is at that value, and a typed drill depth shorter than the thread plus two pitches shows a warning under the thread depth. Saved parts keep their values.
 
 ## [1.549.0] - 2026-11-11
 
@@ -70,7 +76,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Changed
 
-- After OK or Cancel of a feature nothing stays selected (FR-SEL-012), as in SolidWorks: the new or edited feature's faces are no longer lit blue and its tree row is not highlighted.
+- After OK or Cancel of a feature nothing stays selected (FR-SEL-012), as in other CAD apps: the new or edited feature's faces are no longer lit blue and its tree row is not highlighted.
 
 ## [1.544.0] - 2026-11-11
 
@@ -104,7 +110,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- Sketch dimensions draw arrowheads instead of ticks, outside by themselves when the dimension is short (FR-SK-068). A selected dimension shows a dot at its first end (a diameter at its far rim): clicking it flips the arrows inside or outside, as in SolidWorks; Flip arrows is also in the sketch right-click menu.
+- Sketch dimensions draw arrowheads instead of ticks, outside by themselves when the dimension is short (FR-SK-068). A selected dimension shows a dot at its first end (a diameter at its far rim): clicking it flips the arrows inside or outside, as in other CAD apps; Flip arrows is also in the sketch right-click menu.
 
 ## [1.539.0] - 2026-11-11
 
@@ -199,7 +205,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [1.524.0] - 2026-11-11
 
 ### Added
-- Hole Wizard panel: a picture of the hole cut in a plate (half section with the counterbore, countersinks, drill point and thread drawn to scale) and the callout it will get on a drawing, both updating as you change the values; the hole types are picture buttons; the panel has Type and Positions tabs as in SolidWorks (clicks in the view place holes from either tab), and Favourites fold away.
+- Hole Wizard panel: a picture of the hole cut in a plate (half section with the counterbore, countersinks, drill point and thread drawn to scale) and the callout it will get on a drawing, both updating as you change the values; the hole types are picture buttons; the panel has Type and Positions tabs as in other CAD apps (clicks in the view place holes from either tab), and Favourites fold away.
 
 
 
@@ -207,7 +213,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [1.523.0] - 2026-11-11
 
 ### Added
-- Sketch **Jog line** (Trim ▾ menu, like SolidWorks): click a line where the jog starts, then where it ends and how far it steps out; the line becomes five lines, the step parallel to it and its sides square to it, with a live preview.
+- Sketch **Jog line** (Trim ▾ menu, like a CAD app): click a line where the jog starts, then where it ends and how far it steps out; the line becomes five lines, the step parallel to it and its sides square to it, with a live preview.
 
 ## [1.522.0] - 2026-11-11
 
@@ -223,26 +229,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Changed
 
-- Drawings: the side panel reads like SolidWorks' PropertyManager. A title row with the item's icon, name and kind (Model view, Section view, Note…) stays at the top while the panel scrolls, with ✕ (Esc) to go back to the sheet. Every group (Scale, Display style, Text…) folds by its heading, and the panel remembers which ones you folded for each kind of item. The view palette folds away with the arrow beside its tabs, and its tiles are smaller, so a view's properties start higher.
+- Drawings: the side panel reads like a CAD app's PropertyManager. A title row with the item's icon, name and kind (Model view, Section view, Note…) stays at the top while the panel scrolls, with ✕ (Esc) to go back to the sheet. Every group (Scale, Display style, Text…) folds by its heading, and the panel remembers which ones you folded for each kind of item. The view palette folds away with the arrow beside its tabs, and its tiles are smaller, so a view's properties start higher.
 
 ## [1.520.0] - 2026-11-11
 
 ### Added
 - Hole Wizard sizes and standards: a Standard box (ISO metric, ISO metric fine, ANSI inch UNC, ANSI inch UNF) above Size. ISO metric now runs from M1.6 to M64 (clearance holes to ISO 273, counterbores for ISO 4762 cap screws, countersinks for ISO 10642 / DIN 7991), ISO fine has 20 common fine pitches (M8x1 to M64x4), and the inch tables have #2 to 1" with 75 % tap drills, close/free/loose clearance, socket head counterbores and 82° flat-head countersinks. Switching the standard keeps the nearest size. Drawing callouts give inch threads the class 2B ("1/4-20 UNC-2B").
-- Hole Wizard Options box, as in SolidWorks: Head clearance (deepens a counterbore, or puts a cylinder of the countersink's width above the cone), Near side countersink (at the top of the hole or its counterbore), Under head countersink (from the counterbore's floor into the hole) and Far side countersink (where a hole that is not blind leaves the material). Each countersink has its own diameter and angle; drawing callouts list them ("⌵Ø9 × 90° FAR SIDE").
+- Hole Wizard Options box, as in other CAD apps: Head clearance (deepens a counterbore, or puts a cylinder of the countersink's width above the cone), Near side countersink (at the top of the hole or its counterbore), Under head countersink (from the counterbore's floor into the hole) and Far side countersink (where a hole that is not blind leaves the material). Each countersink has its own diameter and angle; drawing callouts list them ("⌵Ø9 × 90° FAR SIDE").
 - Hole end conditions Up to vertex (pick a model corner or a sketch point; the hole stops at its depth) and Offset from surface (a face or plane plus a distance, with Reverse offset), and a Drill angle for blind holes with a drill point (118° by default, any angle up to 180°).
 
 ## [1.519.0] - 2026-11-11
 
 ### Added
 
-- Sketch: Stretch entities (FR-SK-039), as in SolidWorks. Pick the points at one end of a shape (a box over that end, or points and curves), click Stretch and give Delta X/Y. The picked points move, and the lines and arcs ending on them stretch. A curve picked without any of its points moves whole. Driving dimensions that span moved and fixed points take their new sizes; dimensions typed as an expression keep their expression. Relations stay.
+- Sketch: Stretch entities (FR-SK-039), as in other CAD apps. Pick the points at one end of a shape (a box over that end, or points and curves), click Stretch and give Delta X/Y. The picked points move, and the lines and arcs ending on them stretch. A curve picked without any of its points moves whole. Driving dimensions that span moved and fixed points take their new sizes; dimensions typed as an expression keep their expression. Relations stay.
 
 ## [1.518.0] - 2026-11-11
 
 ### Changed
 
-- Drawings: a new drawing opens with an empty sheet and the View palette, as in SolidWorks: drag the views you want onto the sheet, or use Standard 3 views for front, top and side lined up.
+- Drawings: a new drawing opens with an empty sheet and the View palette, as in other CAD apps: drag the views you want onto the sheet, or use Standard 3 views for front, top and side lined up.
 
 ### Fixed
 
@@ -253,12 +259,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Changed
 
-- Drawings: the commands above the sheet are a command bar like the 3D one and SolidWorks' CommandManager: icon-over-label buttons in a Views group (Standard 3 views, Model view, Projected, Section, Detail, Auxiliary) and an Annotation group (Smart dimension, Model items, Note, Balloon, Hole callout, Surface finish, Geometric tolerance, Datum, Centerline, Center mark, and Annotate ▾ for the rest), all in one row; the running tool shows pressed, and each button has the rich tooltip. Undo, Redo, Fit, Save and Export moved up to the file name's row. Under 1280 px only the icons show.
+- Drawings: the commands above the sheet are a command bar like the 3D one and a CAD app's CommandManager: icon-over-label buttons in a Views group (Standard 3 views, Model view, Projected, Section, Detail, Auxiliary) and an Annotation group (Smart dimension, Model items, Note, Balloon, Hole callout, Surface finish, Geometric tolerance, Datum, Centerline, Center mark, and Annotate ▾ for the rest), all in one row; the running tool shows pressed, and each button has the rich tooltip. Undo, Redo, Fit, Save and Export moved up to the file name's row. Under 1280 px only the icons show.
 
 ## [1.516.0] - 2026-11-11
 
 ### Added
-- Hole: a tapped hole that is not blind (Through all, Up to next, Up to face or plane) has a Thread end choice, Blind or Through all, as in SolidWorks' Hole Wizard. Through all runs the cosmetic thread the whole length of the drill in the 3D view and in drawings, and the drawing callout reads "M6-6H THRU" (or no depth for an up-to hole) instead of a thread depth. The Thread rows now sit under End condition.
+- Hole: a tapped hole that is not blind (Through all, Up to next, Up to face or plane) has a Thread end choice, Blind or Through all, as in a CAD app's Hole Wizard. Through all runs the cosmetic thread the whole length of the drill in the 3D view and in drawings, and the drawing callout reads "M6-6H THRU" (or no depth for an up-to hole) instead of a thread depth. The Thread rows now sit under End condition.
 
 ## [1.515.0] - 2026-11-11
 
@@ -284,21 +290,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- Centerline and Midpoint line tools in the Line ▾ flyout (FR-SK-012), as in SolidWorks: Centerline chains construction lines; Midpoint line takes the middle first, then one end, and keeps a midpoint relation.
+- Centerline and Midpoint line tools in the Line ▾ flyout (FR-SK-012), as in other CAD apps: Centerline chains construction lines; Midpoint line takes the middle first, then one end, and keeps a midpoint relation.
 - Dynamic mirror in the sketcher (FR-SK-037): select a line, click Dynamic mirror, then draw; each new entity gets its mirror image about the line with symmetric relations at once, and mirrored chains stay joined.
-- Tangent Arc tool in the Arc ▾ flyout (FR-SK-015), as in SolidWorks: click the end of a line or arc, then the arc's end; the arc is tangent to that curve and the next click adds another tangent arc on from it, until Esc or a double-click.
+- Tangent Arc tool in the Arc ▾ flyout (FR-SK-015), as in other CAD apps: click the end of a line or arc, then the arc's end; the arc is tangent to that curve and the next click adds another tangent arc on from it, until Esc or a double-click.
 
 ## [1.512.0] - 2026-11-11
 
 ### Added
 
-- Auxiliary view from a drawn line (FR-DRW-014), as in SolidWorks from a sketched line: with Auxiliary, click a line drawn with Annotate ▸ Line (or a side of a drawn rectangle or polyline) over a view, and the view folds about it, square to that line.
+- Auxiliary view from a drawn line (FR-DRW-014), as in other CAD apps from a sketched line: with Auxiliary, click a line drawn with Annotate ▸ Line (or a side of a drawn rectangle or polyline) over a view, and the view folds about it, square to that line.
 
 ## [1.511.0] - 2026-11-11
 
 ### Changed
 
-- Drawings: the Annotation tab beside the sheet shows its 28 tools as icon buttons in groups (Dimensions, Notes and symbols, Geometric tolerancing, Centerlines, Tables, Sheet sketch), like SolidWorks' Annotation tab. Hovering a button shows its name, its shortcut and what to click; the running tool stays highlighted. The Annotate ▾ menu has the same icons, grouped with separators.
+- Drawings: the Annotation tab beside the sheet shows its 28 tools as icon buttons in groups (Dimensions, Notes and symbols, Geometric tolerancing, Centerlines, Tables, Sheet sketch), like a CAD app's Annotation tab. Hovering a button shows its name, its shortcut and what to click; the running tool stays highlighted. The Annotate ▾ menu has the same icons, grouped with separators.
 
 ## [1.510.0] - 2026-11-11
 
@@ -324,7 +330,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- Tangent arc from the Line tool (FR-SK-011), as in SolidWorks: while a line chain is open, press A, or move back onto its last point and away, to draw an arc tangent to the last line or arc; the next click places its end and the chain goes on as lines. A chain started on the end of an existing line or arc can begin with a tangent arc too.
+- Tangent arc from the Line tool (FR-SK-011), as in other CAD apps: while a line chain is open, press A, or move back onto its last point and away, to draw an arc tangent to the last line or arc; the next click places its end and the chain goes on as lines. A chain started on the end of an existing line or arc can begin with a tangent arc too.
 
 ## [1.506.0] - 2026-11-11
 
@@ -337,13 +343,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- Feature scope (FR-FT-007), as in SolidWorks: in a part with several bodies, an extruded or revolved cut, or a boss that merges, can act on picked bodies only. Untick All bodies in the Feature scope group and click a face of each body to cut or merge with; the other bodies are left as they are.
+- Feature scope (FR-FT-007), as in other CAD apps: in a part with several bodies, an extruded or revolved cut, or a boss that merges, can act on picked bodies only. Untick All bodies in the Feature scope group and click a face of each body to cut or merge with; the other bodies are left as they are.
 
 ## [1.504.0] - 2026-11-11
 
 ### Changed
 
-- Section and auxiliary views on a first-angle sheet (ISO, GOST) follow first-angle placement: the view goes on the side the arrows point to, as in ESKD and ISO first angle. Third-angle sheets keep the SolidWorks/ANSI rule (the view on the side it looks from). Views already on a sheet keep their direction.
+- Section and auxiliary views on a first-angle sheet (ISO, GOST) follow first-angle placement: the view goes on the side the arrows point to, as in ESKD and ISO first angle. Third-angle sheets keep the ANSI rule (the view on the side it looks from). Views already on a sheet keep their direction.
 
 ### Fixed
 
@@ -353,13 +359,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- Linear pattern (FR-FT-070): Up to reference, as in SolidWorks. Pick a plane or flat face across the direction and the instances spread from the seed's centre so the last one stops at it, or an offset distance short of it; the spacing follows when the reference moves. Each direction has its own reference.
+- Linear pattern (FR-FT-070): Up to reference, as in other CAD apps. Pick a plane or flat face across the direction and the instances spread from the seed's centre so the last one stops at it, or an offset distance short of it; the spacing follows when the reference moves. Each direction has its own reference.
 
 ## [1.502.0] - 2026-11-11
 
 ### Added
 
-- Linear and Circular pattern (FR-FT-070/071): Instances to skip are picked in the view, as in SolidWorks. Click the Instances to skip box and a dot appears at every instance; a click on a filled dot skips that instance (the preview drops it and the dot turns hollow), a click on a hollow one brings it back. The dot sits on the material the instance changes, so a through-all hole's dot is half way down the plate, not out in space along the cut. Typing instance numbers still works.
+- Linear and Circular pattern (FR-FT-070/071): Instances to skip are picked in the view, as in other CAD apps. Click the Instances to skip box and a dot appears at every instance; a click on a filled dot skips that instance (the preview drops it and the dot turns hollow), a click on a hollow one brings it back. The dot sits on the material the instance changes, so a through-all hole's dot is half way down the plate, not out in space along the cut. Typing instance numbers still works.
 - Linear pattern (FR-FT-070): each direction can be set by Up to distance (the distance from the seed to the last instance, shared out equally) instead of the spacing, and Direction 2 has Pattern seed only (it copies the seed alone, not the instances of direction 1).
 - Circular pattern (FR-FT-071): Direction 2 turns copies the other way about the same axis, Symmetric (direction 1's count and angle) or with its own count, angle and equal spacing. Its instances are -1, -2… in Instances to skip, and copies that land on direction 1's are left out.
 
@@ -429,7 +435,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- Rotation centre on an edge (FR-UI-100): a middle click on a straight edge, away from its ends, makes the view turn about the edge's line, shown dashed, as in SolidWorks. Before, the view turned about the clicked point only. A middle click on empty space goes back to turning about the view centre and puts Z up again.
+- Rotation centre on an edge (FR-UI-100): a middle click on a straight edge, away from its ends, makes the view turn about the edge's line, shown dashed, as in other CAD apps. Before, the view turned about the clicked point only. A middle click on empty space goes back to turning about the view centre and puts Z up again.
 
 ## [1.491.0] - 2026-11-10
 
@@ -459,7 +465,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- Recognize Holes and Recognize Features also bring back cross holes at a compound angle, tilted in two directions at once (FR-FT-102): the plane square to the hole is built the way it is in SolidWorks, a Plane at an angle about Z, a reference Axis where that plane meets XY, and a Plane at an angle about that axis. Before, such holes stayed part of the imported body.
+- Recognize Holes and Recognize Features also bring back cross holes at a compound angle, tilted in two directions at once (FR-FT-102): the plane square to the hole is built the way it is in CAD apps, a Plane at an angle about Z, a reference Axis where that plane meets XY, and a Plane at an angle about that axis. Before, such holes stayed part of the imported body.
 
 - Recognize Extrudes and Recognize Features bring back turned bases whose axis is skew, tilted out of every standard plane (FR-FT-102): the half section is sketched on a Plane at an angle about Z that holds the axis's direction, offset up to the axis when needed, then revolved. Before, such bodies stayed imported.
 
@@ -589,7 +595,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Changed
 
-- **Recognised sketches dimensioned the way FeatureWorks does (FR-FT-102)**: the sketches that Recognize Features and Recognize Extrudes make now get the lengths of their horizontal and vertical edges first, longest first, and only then the distances from the origin that are still needed. A rectangle gets its width and height and one corner's place, instead of four distances from the origin. Fully Define Sketch in the sketcher keeps dimensioning from the origin, as SolidWorks does by default.
+- **Recognised sketches dimensioned the way FeatureWorks does (FR-FT-102)**: the sketches that Recognize Features and Recognize Extrudes make now get the lengths of their horizontal and vertical edges first, longest first, and only then the distances from the origin that are still needed. A rectangle gets its width and height and one corner's place, instead of four distances from the origin. Fully Define Sketch in the sketcher keeps dimensioning from the origin, as a CAD app does by default.
 
 ## [1.471.0] - 2026-11-10
 
@@ -655,9 +661,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [1.464.0] - 2026-11-10
 
 ### Fixed (drawings exam, round 2)
-- Chain, baseline and ordinate dimensions take a placement click after the second point, like SolidWorks: the row goes where you click, its side sets horizontal or vertical, baseline rows stack outwards, and a point level with one already in an ordinate set no longer prints its value twice. Before, the set was dropped beside the view on top of the dimensions already there (#15).
+- Chain, baseline and ordinate dimensions take a placement click after the second point, like a CAD app: the row goes where you click, its side sets horizontal or vertical, baseline rows stack outwards, and a point level with one already in an ordinate set no longer prints its value twice. Before, the set was dropped beside the view on top of the dimensions already there (#15).
 - Centerline accepts a hole's hidden outline lines (cylinder silhouettes) and circles seen edge-on, as Smart dimension does (#16).
-- Balloons work on part drawings: the part is item 1, as in SolidWorks (they were refused).
+- Balloons work on part drawings: the part is item 1, as in other CAD apps (they were refused).
 - Auto balloon keeps balloons clear of each other, of the views and of the annotations already on the sheet (on the 57-component Leuenberger engine many balloons were drawn on top of one another and over dimension texts).
 - A bill of materials taller than the room above the title block splits into blocks side by side, each with its header, instead of running off the sheet.
 - Centre marks and centrelines follow a crop, a profile detail and breaks like the view's edges (a cropped section still drew the axis of a hole the crop left out).
@@ -679,7 +685,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Fixed
 
-- Sketch fillet rounds a corner where a line meets an arc, or two arcs meet, as SolidWorks does. It used to accept only two lines (exam #90).
+- Sketch fillet rounds a corner where a line meets an arc, or two arcs meet, as a CAD app does. It used to accept only two lines (exam #90).
 - **Ctrl+A** in a sketch selects every sketch entity instead of the page's text (exam #91).
 - A centre-point arc runs the way the mouse went round its centre, so a clockwise arc no longer comes out as the long way round (exam #92).
 - While an early sketch of a finished part is edited, Properties says there are no bodies before that feature instead of "This part is empty" (exam #93).
@@ -688,7 +694,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- **Draft for each extrude direction (FR-FT-014)**: as in SolidWorks, a blind Direction 2 has its own Draft on/off, angle and Draft outward. Each direction now tapers away from the sketch plane on its own: drafting Direction 1 leaves Direction 2 straight, or each gets its own angle. Two-way extrudes drafted before keep their shape and face names.
+- **Draft for each extrude direction (FR-FT-014)**: as in other CAD apps, a blind Direction 2 has its own Draft on/off, angle and Draft outward. Each direction now tapers away from the sketch plane on its own: drafting Direction 1 leaves Direction 2 straight, or each gets its own angle. Two-way extrudes drafted before keep their shape and face names.
 
 ## [1.459.0] - 2026-11-10
 
@@ -712,7 +718,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- **Extrude Direction 2 with any end condition (FR-FT-011)**: as in SolidWorks, Direction 2 has its own end condition (Blind, Through all, Up to next, Up to vertex, Up to face or plane, Offset from surface, Up to body) and works with every Direction 1 end condition except Mid plane and Through all - both. A blind Direction 2 gets its own orange drag arrow pointing the other way. Extrudes made before keep their shape and face names.
+- **Extrude Direction 2 with any end condition (FR-FT-011)**: as in other CAD apps, Direction 2 has its own end condition (Blind, Through all, Up to next, Up to vertex, Up to face or plane, Offset from surface, Up to body) and works with every Direction 1 end condition except Mid plane and Through all - both. A blind Direction 2 gets its own orange drag arrow pointing the other way. Extrudes made before keep their shape and face names.
 
 ## [1.455.0] - 2026-11-10
 
@@ -733,7 +739,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Changed
 
-- Drawings: a diameter dimension whose text is outside the circle now stops its leader at the near rim, with one arrow pointing at the circle from outside, as in SolidWorks. Before, the line ran across the whole circle and on to the text, so hole diameters drew long diagonals over the part. Untick **Arrow outside the circle** in the dimension panel for the old line across the circle with two arrows; radius dimensions are unchanged.
+- Drawings: a diameter dimension whose text is outside the circle now stops its leader at the near rim, with one arrow pointing at the circle from outside, as in other CAD apps. Before, the line ran across the whole circle and on to the text, so hole diameters drew long diagonals over the part. Untick **Arrow outside the circle** in the dimension panel for the old line across the circle with two arrows; radius dimensions are unchanged.
 
 ## [1.453.0] - 2026-11-10
 
@@ -752,7 +758,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- **Features from the sketch you are editing (FR-SK-004)**: there is no need to exit the sketch first. The Sketch tab ends with **Extrude**, **Cut** and **Revolve**, the sketch's right-click menu has them too, and the Features, Surfaces, Sheet Metal and Weldments tabs keep their commands while you sketch (Ctrl+K finds them as well). Picking one exits the sketch and opens the feature on it with its live preview, as in SolidWorks.
+- **Features from the sketch you are editing (FR-SK-004)**: there is no need to exit the sketch first. The Sketch tab ends with **Extrude**, **Cut** and **Revolve**, the sketch's right-click menu has them too, and the Features, Surfaces, Sheet Metal and Weldments tabs keep their commands while you sketch (Ctrl+K finds them as well). Picking one exits the sketch and opens the feature on it with its live preview, as in other CAD apps.
 
 ## [1.450.0] - 2026-11-10
 
@@ -821,7 +827,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Fixed
 
-- Mitred sheet metal corners (edge flanges, miter flanges, Convert to Sheet Metal) now meet on the corner's bisector plane, as in SolidWorks. Before, the two walls were cut square and overlapped in a thin strip along the inside of the seam, so the flat pattern had slightly more material than the part.
+- Mitred sheet metal corners (edge flanges, miter flanges, Convert to Sheet Metal) now meet on the corner's bisector plane, as in other CAD apps. Before, the two walls were cut square and overlapped in a thin strip along the inside of the seam, so the flat pattern had slightly more material than the part.
 
 
 ## [1.442.0] - 2026-11-10
@@ -856,7 +862,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Fixed
 
-- **Slot mate ends (Leuenberger exam #81)**: a Slot mate now keeps the pin between the slot's rounded ends, like SolidWorks' free slot mate, instead of letting it run past them. The ends are found from the slot's two end cylinders; inside the slot the pin still slides freely, so the mate takes no extra freedom away.
+- **Slot mate ends (Leuenberger exam #81)**: a Slot mate now keeps the pin between the slot's rounded ends, like a CAD app's free slot mate, instead of letting it run past them. The ends are found from the slot's two end cylinders; inside the slot the pin still slides freely, so the mate takes no extra freedom away.
 - **Touching boss joins the body (exam #82)**: a boss extrude standing on the body with a gap of sketch round-off (a few millionths of a millimetre, e.g. from a snapped edge) became a second solid body. When a plain join leaves the new material apart, it is joined again with a 0.00001 mm tolerance.
 - **Interference detection (exam #83)**: coincident faces, such as a shaft in a bore of its own size or a foot on a plate, no longer show as interferences of "0 mm³": an overlap thinner than 0.0001 mm on average counts as touching, and shows only with **Treat coincidence as interference**.
 
@@ -905,7 +911,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- **Balloons on weldment part drawings (FR-FT-121)**: a balloon on a drawing of a weldment part now shows the body's cut list item number, as in SolidWorks: click an edge of a member, plate or weld bead and place the balloon. **Auto balloon** puts one balloon on each cut list item seen in the view, and the balloon's panel names the item and stacks other items under it. The numbers match the Cut List dialog and the cut list table, and follow the part.
+- **Balloons on weldment part drawings (FR-FT-121)**: a balloon on a drawing of a weldment part now shows the body's cut list item number, as in other CAD apps: click an edge of a member, plate or weld bead and place the balloon. **Auto balloon** puts one balloon on each cut list item seen in the view, and the balloon's panel names the item and stacks other items under it. The numbers match the Cut List dialog and the cut list table, and follow the part.
 
 ## [1.430.0] - 2026-11-10
 
@@ -923,7 +929,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- **Selected Contours: hover highlight and Planar Surface** (FR-FT-010): while the Selected Contours box has focus, the sketch region under the pointer lights up blue before you click, as in SolidWorks. Planar Surface takes Selected Contours too, so a sketch whose lines cross or branch can fill just the regions you pick.
+- **Selected Contours: hover highlight and Planar Surface** (FR-FT-010): while the Selected Contours box has focus, the sketch region under the pointer lights up blue before you click, as in other CAD apps. Planar Surface takes Selected Contours too, so a sketch whose lines cross or branch can fill just the regions you pick.
 
 ## [1.427.0] - 2026-11-10
 
@@ -965,13 +971,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- **Cut list table on drawings (FR-FT-121)**: Annotate ▾ **Cut list table** puts a weldment's cut list on the sheet, like SolidWorks' Weldment Cut List table: click a view of the weldment, then place the table. It lists each item with the number it has in the Cut List dialog, its quantity, its description (the one typed for the item, else the profile, plate size or weld), the length and both end angles of each member. Select it to leave out the weld beads (they have the weld table) or add a mass column; excluded items are left out, and the table follows the part.
+- **Cut list table on drawings (FR-FT-121)**: Annotate ▾ **Cut list table** puts a weldment's cut list on the sheet, like a CAD app's Weldment Cut List table: click a view of the weldment, then place the table. It lists each item with the number it has in the Cut List dialog, its quantity, its description (the one typed for the item, else the profile, plate size or weld), the length and both end angles of each member. Select it to leave out the weld beads (they have the weld table) or add a mass column; excluded items are left out, and the table follows the part.
 
 ## [1.421.0] - 2026-11-10
 
 ### Added
 
-- **Selected Contours for Extrude and Revolve (FR-FT-010)**: a feature can use only some regions of its sketch, as in SolidWorks, and sketches whose lines cross or branch (a rectangle with a line across it, two overlapping circles, a circle inside a shape) now work. Click in the **Selected Contours** box and click the regions in the view: picked ones are filled orange, a second click takes one off, **Use all regions** goes back to the whole sketch. When the sketch has no plain closed outline, the box opens first by itself. Neighbouring regions picked together give one clean body with no seam.
+- **Selected Contours for Extrude and Revolve (FR-FT-010)**: a feature can use only some regions of its sketch, as in other CAD apps, and sketches whose lines cross or branch (a rectangle with a line across it, two overlapping circles, a circle inside a shape) now work. Click in the **Selected Contours** box and click the regions in the view: picked ones are filled orange, a second click takes one off, **Use all regions** goes back to the whole sketch. When the sketch has no plain closed outline, the box opens first by itself. Neighbouring regions picked together give one clean body with no seam.
 
 ### Fixed
 
@@ -1151,7 +1157,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- **Weldment defaults (FR-FT-121)**: a new Structural Member starts with the profile, size, corner treatment, weld gap and butt end used last, as in SolidWorks; a new End Cap with the last thickness, inset, direction and corner; a new Gusset with the last leg lengths, thickness, profile, chamfers and location; a new Fillet Bead with the last leg sizes. They are remembered in this browser; picks, paths, positions and descriptions always start empty, and a custom sketch profile is never carried to another part.
+- **Weldment defaults (FR-FT-121)**: a new Structural Member starts with the profile, size, corner treatment, weld gap and butt end used last, as in other CAD apps; a new End Cap with the last thickness, inset, direction and corner; a new Gusset with the last leg lengths, thickness, profile, chamfers and location; a new Fillet Bead with the last leg sizes. They are remembered in this browser; picks, paths, positions and descriptions always start empty, and a custom sketch profile is never carried to another part.
 
 ## [1.392.0] - 2026-11-10
 
@@ -1262,7 +1268,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- **Gusset profile options (FR-FT-121)**: a polygonal weldment gusset can now have different flats at its two ends, as SolidWorks' polygonal profile does. **Other end** in the Gusset panel takes the same width as before, **Its own width** (the flat at face 2), or **By profile angle**, where the sloping edge's angle from face 1 sets it (it starts at the angle the profile already has, so nothing jumps). The inner corner's chamfer can take a **Different distance along face 2**, for a chamfer that clears an unequal leg weld. An angle too shallow for the legs fails the feature with a message saying what to change.
+- **Gusset profile options (FR-FT-121)**: a polygonal weldment gusset can now have different flats at its two ends, as a CAD app's polygonal profile does. **Other end** in the Gusset panel takes the same width as before, **Its own width** (the flat at face 2), or **By profile angle**, where the sloping edge's angle from face 1 sets it (it starts at the angle the profile already has, so nothing jumps). The inner corner's chamfer can take a **Different distance along face 2**, for a chamfer that clears an unequal leg weld. An angle too shallow for the legs fails the feature with a message saying what to change.
 
 ## [1.373.0] - 2026-11-10
 
@@ -1287,7 +1293,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Added
 
 - **Named views (FR-UI-104)**: the Space orientation picker has a Named views row: type a name and press Save view (or Enter) to store the camera; a click on a named view goes back to it, ✕ deletes it. Parts and assemblies keep their named views in the document (saved with it, left alone by undo and redo); model files keep them for the session.
-- **Heads-up view bar (FR-UI-022)**: with a part or an assembly open, the view commands float at the top centre of the view, as in SolidWorks: Zoom to area, Previous view, the standard views, projection and display style. For model files they stay in the header.
+- **Heads-up view bar (FR-UI-022)**: with a part or an assembly open, the view commands float at the top centre of the view, as in other CAD apps: Zoom to area, Previous view, the standard views, projection and display style. For model files they stay in the header.
 - **Assembly selection breadcrumbs (FR-SEL-009)**: a click on a component in an assembly shows the chain face › part feature › component › its sub-assemblies › assembly at the top left of the view; a crumb selects that component as in the tree, a right-click opens its menu, Shift+D brings the bar to the cursor and Esc hides it.
 - **Feature values on the model (FR-UI-115)**: a click on a feature in the Features tree shows its dimensions on the model, as a double click on its face does, and both now show the feature's own values too (angle, radius, distance, thickness, spacing, instance count…) in blue labels beside its faces; a click on one opens the Modify box and ✓ changes the feature as one undo step.
 - **Modify box options (FR-UI-114)**: the box has an increment field that sets the step of the arrows, ↑/↓ and the wheel (remembered for lengths, angles and counts); a sketch dimension's name in the title can be retyped to rename it; ⇄ Reverse direction flips an extrude depth or another feature value that has a direction, together with the value, as one undo step.
@@ -1322,7 +1328,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- **Sub-weldments in the cut list (FR-FT-121)**: right-click a cut list item or a weldment body in the Features tree and pick **Create sub-weldment** to list that part of the weldment on its own, as SolidWorks does. The sub-weldment is a folder in the Cut list with its items under it; rename it with a double-click or F2, add more items or bodies to it with **Add to Sub-weldment1** (or take them out with **Remove from sub-weldment**), and **Dissolve sub-weldment** puts its items back. An item whose bodies sit in different places is split, each part with its own quantity (a weld bead's length and mass share out by its bodies); item properties typed in the Cut List dialog stay shared. Clicking a sub-weldment highlights its bodies, the Cut List dialog heads each one's rows with its name, and the CSV gets a Sub-weldment column.
+- **Sub-weldments in the cut list (FR-FT-121)**: right-click a cut list item or a weldment body in the Features tree and pick **Create sub-weldment** to list that part of the weldment on its own, as a CAD app does. The sub-weldment is a folder in the Cut list with its items under it; rename it with a double-click or F2, add more items or bodies to it with **Add to Sub-weldment1** (or take them out with **Remove from sub-weldment**), and **Dissolve sub-weldment** puts its items back. An item whose bodies sit in different places is split, each part with its own quantity (a weld bead's length and mass share out by its bodies); item properties typed in the Cut List dialog stay shared. Clicking a sub-weldment highlights its bodies, the Cut List dialog heads each one's rows with its name, and the CSV gets a Sub-weldment column.
 
 ## [1.356.0] - 2026-11-09
 
@@ -1344,29 +1350,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - **Magnifying glass (FR-SEL-010)**: press G over the view for a round inset showing the area round the cursor magnified 4× (the wheel inside it changes the factor from 2× to 16×). Hovering, snapping and clicks inside the lens act on the magnified point, so small edges and vertices are easy to pick. G or Esc closes it; Esc does not leave the command that is open.
 - **Selection box flow (FR-UI-109)**: once a selection box that takes one item (a plane, an axis, an edge, a body) has it, focus moves to the next empty required box of the panel by itself, also back to an earlier one left empty (a linear pattern's direction picked before its seeds); boxes that take many items (fillet edges, faces to draft) keep focus. A panel opens on its first empty required box, also when an existing feature is edited.
 - **Selection breadcrumbs (FR-SEL-009)**: after picking a face or an edge of a part, a bar at the top left of the view shows the chain up to the part (face or edge → feature → its sketch → body → part; a picked plane → part). Hovering a crumb lights it up in the view, a click selects it as in the Features tree, a right-click opens its tree menu. Shift+D brings the breadcrumbs, or the ✓/✕ corner while a command is open, to the cursor (D stays the distance tool); Esc hides them.
-- **Value callouts (FR-UI-110)**: while a feature panel is open, its main values (thickness, distance, offset, angle, spacing, instances, pitch, height…) show in small labels on the model by the feature's result, as in SolidWorks. A click opens the Modify box; the value goes through the panel field, so the panel and the callout always agree, and a ⇄ beside the first callout reverses the direction when the feature has one. Extrude, revolve, fillet, chamfer, end caps, gussets and flanges keep their drag handles and callouts.
+- **Value callouts (FR-UI-110)**: while a feature panel is open, its main values (thickness, distance, offset, angle, spacing, instances, pitch, height…) show in small labels on the model by the feature's result, as in other CAD apps. A click opens the Modify box; the value goes through the panel field, so the panel and the callout always agree, and a ⇄ beside the first callout reverses the direction when the feature has one. Extrude, revolve, fillet, chamfer, end caps, gussets and flanges keep their drag handles and callouts.
 
 ## [1.353.0] - 2026-11-09
 
 ### Changed
 
-- **Smart measure's hint no longer covers the model**: the "Smart measure: click a point, edge or face…" prompt moved from the banner over the top of the view into the status bar, as SolidWorks shows its prompts. Tools you pick on purpose (Distance, Angle, Section…) still show their pick count banner.
+- **Smart measure's hint no longer covers the model**: the "Smart measure: click a point, edge or face…" prompt moved from the banner over the top of the view into the status bar, as a CAD app shows its prompts. Tools you pick on purpose (Distance, Angle, Section…) still show their pick count banner.
 
 ## [1.352.0] - 2026-11-09
 
 ### Added
 
-- **Corner callouts and Locate profile for structural members (FR-FT-121)**: while a Structural Member is open, each corner where its segments meet shows a callout in the view with its treatment (End miter, End butt 1, End butt 2 or None), as SolidWorks' corner spheres do. Click one to pick a treatment for that corner alone, or *As set for the member*; a corner with its own treatment is shown in bold, and the Corners group in the panel follows. **Profile position** of a custom (sketch) profile now also lists every point of the profile sketch, so any of them can sit on the path, for group 1 and for each group. **Locate profile** beside it zooms to the start of the path and shows the profile's points there (sketch points and the box's anchors); click one and the profile moves so that point lies on the path, as in SolidWorks.
+- **Corner callouts and Locate profile for structural members (FR-FT-121)**: while a Structural Member is open, each corner where its segments meet shows a callout in the view with its treatment (End miter, End butt 1, End butt 2 or None), as a CAD app's corner spheres do. Click one to pick a treatment for that corner alone, or *As set for the member*; a corner with its own treatment is shown in bold, and the Corners group in the panel follows. **Profile position** of a custom (sketch) profile now also lists every point of the profile sketch, so any of them can sit on the path, for group 1 and for each group. **Locate profile** beside it zooms to the start of the path and shows the profile's points there (sketch points and the box's anchors); click one and the profile moves so that point lies on the path, as in other CAD apps.
 
 ## [1.351.0] - 2026-11-09
 
 ### Added
 
-- **Rotation centre (FR-UI-100)**: a middle click without a drag on a vertex, an edge or a face sets the point the view turns about, as in SolidWorks, with a small blue marker; a middle click on empty space goes back to the view centre. Opening another model clears it. An edge gives the clicked point on it (the view still orbits with Z up, so it does not turn about the edge's line).
+- **Rotation centre (FR-UI-100)**: a middle click without a drag on a vertex, an edge or a face sets the point the view turns about, as in other CAD apps, with a small blue marker; a middle click on empty space goes back to the view centre. Opening another model clears it. An edge gives the clicked point on it (the view still orbits with Z up, so it does not turn about the edge's line).
 - **Undo inside a command (FR-UI-108)**: while a feature panel is open, Ctrl+Z / Ctrl+Y and the Undo / Redo buttons step through the panel's own changes (picks, values, options, the box in focus) without leaving it. The document's undo list is not touched until ✓.
 - **Units in the status bar (FR-UI-116)**: the unit and decimals show at the right of the status bar; a click picks millimetres, centimetres, metres, inches or feet and the decimals. With a part open the unit is the part's own, saved with it and changed as one undo step (values stay stored in mm), and opening a part shows its unit. Mass still shows in g/kg.
 - **Command tooltips (FR-UI-112)**: hovering a command bar button (or focusing it from the keyboard) shows its name, its shortcut key and a one-line description; a disabled button says why (Undo in a command with nothing to undo, Undo while a command runs elsewhere). Inside a feature command the Undo and Redo buttons step the panel's own changes.
-- **Hide and show under the cursor (FR-UI-105)**: with the pointer over the view, Tab hides the body (in a part) or the component (in an assembly) under it, Shift+Tab shows a hidden one under it again, and holding Ctrl+Shift+Tab draws the hidden ones see-through so a click shows one, as in SolidWorks. Each is one undo step. Items hidden from the tree work the same way once hidden in this session.
+- **Hide and show under the cursor (FR-UI-105)**: with the pointer over the view, Tab hides the body (in a part) or the component (in an assembly) under it, Shift+Tab shows a hidden one under it again, and holding Ctrl+Shift+Tab draws the hidden ones see-through so a click shows one, as in other CAD apps. Each is one undo step. Items hidden from the tree work the same way once hidden in this session.
 - **Colour-coded selection boxes (FR-SEL-011)**: the selection boxes of a feature panel each have their own colour (orange, blue, green, purple), shown on the box's left edge; the picks of each box are drawn in the view in its colour, with a small tag naming the box ("Faces to draft", "Neutral plane", "Face set 1"…) when a panel has several. Fillet and chamfer edges, face fillet and full round face sets, draft, shell, delete/move/offset/replace face and split line use it.
 
 ## [1.350.0] - 2026-11-09
@@ -1374,7 +1380,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Added
 
 - **Rollback commands (FR-HIS-012)**: the Features tree's right-click menu has Roll back to here, Roll to previous (back to where the rollback bar was before its last move), Roll forward past this and Roll to end, and right-clicking the rollback bar gives Roll to previous and Roll to end. A part saved rolled back reopens rolled back with a notice above the tree, "The part is rolled back: N features are not shown", and a Roll to end button (AT-UX-14).
-- **Tree housekeeping (FR-HIS-013)**: Shift+C folds the whole Features tree (folders, Solid Bodies, the cut list and the sketches under their extrudes and revolves; the ▸ beside a feature or ←/→ unfold it again). Hovering a sketch, plane, axis, point, coordinate system, curve or body row shows an eye button that hides or shows it, and hidden items have an outlined icon, as in SolidWorks.
+- **Tree housekeeping (FR-HIS-013)**: Shift+C folds the whole Features tree (folders, Solid Bodies, the cut list and the sketches under their extrudes and revolves; the ▸ beside a feature or ←/→ unfold it again). Hovering a sketch, plane, axis, point, coordinate system, curve or body row shows an eye button that hides or shows it, and hidden items have an outlined icon, as in other CAD apps.
 
 ### Changed
 
@@ -1389,11 +1395,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- Sheet Metal → Normal Cut (FR-FT-120): SolidWorks' Extruded Cut with Normal cut. A closed sketch is projected along its normal onto the sheet, and every panel and bend it lands on is cut square to the sheet there (radially through bends), so the flat pattern gets clean openings with no slanted walls. End condition Link to thickness (default), Blind or Through all, with Reverse direction.
-- Sheet Metal → Convert to Sheet Metal (FR-FT-120): turn a solid into a sheet metal part, as SolidWorks' Convert to Sheet Metal. Click the face that stays fixed, then the straight edges of it to bend along; each face across a bend edge becomes a flange as long and at the angle the solid has, with the thickness inside the solid, so the part keeps its outside size. Edges between converted faces are ripped and mitred (Rip gap). Holes and shaped ends of the converted faces carry over, in the flat pattern too. It starts a sheet metal part like a base flange.
+- Sheet Metal → Normal Cut (FR-FT-120): a CAD app's Extruded Cut with Normal cut. A closed sketch is projected along its normal onto the sheet, and every panel and bend it lands on is cut square to the sheet there (radially through bends), so the flat pattern gets clean openings with no slanted walls. End condition Link to thickness (default), Blind or Through all, with Reverse direction.
+- Sheet Metal → Convert to Sheet Metal (FR-FT-120): turn a solid into a sheet metal part, as a CAD app's Convert to Sheet Metal. Click the face that stays fixed, then the straight edges of it to bend along; each face across a bend edge becomes a flange as long and at the angle the solid has, with the thickness inside the solid, so the part keeps its outside size. Edges between converted faces are ripped and mitred (Rip gap). Holes and shaped ends of the converted faces carry over, in the flat pattern too. It starts a sheet metal part like a base flange.
 - Corner Relief options (FR-FT-120): an Obround relief (rounded as far as it goes, keeping the clearance round the face's own corner) and Add fillet corners with a radius for rectangular reliefs; both follow into the flat pattern.
 - Sheet Metal Gusset options (FR-FT-120): a different profile length on the second face, and several gussets along the bend, spaced centre to centre about the position.
-- Sheet Metal → Insert Bends (FR-FT-120): turn a thin-walled solid (a shelled box, a bent section) into sheet metal, as SolidWorks' Insert Bends. Click an outside face to stay fixed; its sharp edges to other flat walls become bends of the given radius, the thickness is the walls' own, and corners between walls are ripped. Holes in the walls carry over.
+- Sheet Metal → Insert Bends (FR-FT-120): turn a thin-walled solid (a shelled box, a bent section) into sheet metal, as a CAD app's Insert Bends. Click an outside face to stay fixed; its sharp edges to other flat walls become bends of the given radius, the thickness is the walls' own, and corners between walls are ripped. Holes in the walls carry over.
 
 ## [1.346.0] - 2026-11-09
 
@@ -1405,26 +1411,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- **Evaluate ▸ Mass properties**, like SolidWorks' Mass Properties: a panel beside the view with mass, volume, surface area, centre of mass, the principal axes and principal moments of inertia at the centre of mass (drawn in the view as red, green and blue lines through the centre of mass), the moments and products of inertia at the centre of mass aligned with the output coordinate system (Lxx…) and at its origin (Ixx…), in kg·mm² or g·mm² (following the display unit). Products use positive notation (Lxy = ∫xy dm). It follows the selection, visibility, units and coordinate system while open; **Include hidden bodies**, **Recalculate** and **Copy to clipboard** (FR-MAT-002).
+- **Evaluate ▸ Mass properties**, like a CAD app's Mass Properties: a panel beside the view with mass, volume, surface area, centre of mass, the principal axes and principal moments of inertia at the centre of mass (drawn in the view as red, green and blue lines through the centre of mass), the moments and products of inertia at the centre of mass aligned with the output coordinate system (Lxx…) and at its origin (Ixx…), in kg·mm² or g·mm² (following the display unit). Products use positive notation (Lxy = ∫xy dm). It follows the selection, visibility, units and coordinate system while open; **Include hidden bodies**, **Recalculate** and **Copy to clipboard** (FR-MAT-002).
 - Your own output axes: **Pick axes** and click a flat face, straight edge, circle, cylinder or point, or **Type axes…** with an origin and the X and Z directions; a part's coordinate system features and the active CSYS are listed too, and the chosen axes are drawn while the panel is open.
 - Moments of inertia for every model, not only modelled parts: exact from the B-rep (OpenCASCADE) once the kernel has read the file, from the mesh until then and for STL/OBJ/3MF. Assemblies add their components with each part's own material (the density field for parts without one), like the BOM. The Mass tab and the PDF report list the principal moments and axes and the moments at the centre of mass and at the origin.
 
 ### Changed
 
-- A mass override on a modelled part scales the moments of inertia with the mass, as SolidWorks does.
+- A mass override on a modelled part scales the moments of inertia with the mass, as a CAD app does.
 - Multibody modelled parts get exact volume and centre of mass too (only single solids did).
 
 ## [1.343.0] - 2026-11-09
 
 ### Added
 
-- **Coped cuts on structural members (FR-FT-121)**: Structural Member gets SolidWorks' choice for butted ends. **Simple cut** keeps the flat end square to the face the member stops at; **Coped cut** makes the end follow the shape of the member it stops at, so a round tube meeting another gets its saddle (fish-mouth) end, ready to weld. A weld gap moves the coped end back along the member.
+- **Coped cuts on structural members (FR-FT-121)**: Structural Member gets a CAD app's choice for butted ends. **Simple cut** keeps the flat end square to the face the member stops at; **Coped cut** makes the end follow the shape of the member it stops at, so a round tube meeting another gets its saddle (fish-mouth) end, ready to weld. A weld gap moves the coped end back along the member.
 
 ## [1.342.0] - 2026-11-09
 
 ### Added
 
-- **Copy and paste features (FR-HIS-014)**: as in SolidWorks, Ctrl+C on a sketch, an extrude, a revolve or a hole in the Features tree and Ctrl+V with a flat face or a plane selected puts a copy on it (an extrude or revolve brings a copy of its sketch). Ctrl+dragging the tree row onto a face or plane does the same, and the tree's right-click menu has Copy and Paste. The paste is one undo step. References that cannot follow are listed: On edge relations become fixed points, pierce relations are removed, the sketch X axis follows the new plane, and Up to … ends go back to Blind.
+- **Copy and paste features (FR-HIS-014)**: as in other CAD apps, Ctrl+C on a sketch, an extrude, a revolve or a hole in the Features tree and Ctrl+V with a flat face or a plane selected puts a copy on it (an extrude or revolve brings a copy of its sketch). Ctrl+dragging the tree row onto a face or plane does the same, and the tree's right-click menu has Copy and Paste. The paste is one undo step. References that cannot follow are listed: On edge relations become fixed points, pierce relations are removed, the sketch X axis follows the new plane, and Up to … ends go back to Blind.
 
 ## [1.341.0] - 2026-11-09
 
@@ -1435,7 +1441,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- Sheet Metal → Sheet Metal Gusset (FR-FT-120): a stiffening rib pressed across a bend, as SolidWorks' Sheet Metal Gusset (flat type). Click the bend to place it, centred or at a distance from the bend's end; the profile length runs along each face from the inside virtual sharp, and the width is the rib's outside width. The rib keeps the sheet's thickness, with the matching groove outside, and the flat pattern leaves it out. Bends with gussets can't be unfolded.
+- Sheet Metal → Sheet Metal Gusset (FR-FT-120): a stiffening rib pressed across a bend, as a CAD app's Sheet Metal Gusset (flat type). Click the bend to place it, centred or at a distance from the bend's end; the profile length runs along each face from the inside virtual sharp, and the width is the rib's outside width. The rib keeps the sheet's thickness, with the matching groove outside, and the flat pattern leaves it out. Bends with gussets can't be unfolded.
 
 ## [1.339.0] - 2026-11-09
 
@@ -1464,7 +1470,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- Motion studies: **Key all** adds a key at the playhead to every track that is on, each holding what it shows there, as SolidWorks Place key does, and selects them together so they move as one. Right-clicking the ruler or an empty part of a track offers it at that time (FR-FT-122).
+- Motion studies: **Key all** adds a key at the playhead to every track that is on, each holding what it shows there, as a CAD app's Place key does, and selects them together so they move as one. Right-clicking the ruler or an empty part of a track offers it at that time (FR-FT-122).
 
 ### Fixed
 
@@ -1480,12 +1486,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- **Structural member alignment (FR-FT-121)**: Structural Member gets SolidWorks' Alignment. Pick a straight sketch line (any 2D or 3D sketch line, construction lines too) and choose whether the profile's vertical or horizontal axis points along it: every segment turns its profile that way, square to the segment, and the rotation angle turns it on from there. Members of a 3D sketch can now all face one way instead of following world Z.
+- **Structural member alignment (FR-FT-121)**: Structural Member gets a CAD app's Alignment. Pick a straight sketch line (any 2D or 3D sketch line, construction lines too) and choose whether the profile's vertical or horizontal axis points along it: every segment turns its profile that way, square to the segment, and the rotation angle turns it on from there. Members of a 3D sketch can now all face one way instead of following world Z.
 ## [1.335.0] - 2026-11-09
 
 ### Added
 
-- **Fly-out feature tree (FR-UI-003)**: while a feature, sketch or plane command is open its panel fills the Features tab (as SolidWorks' PropertyManager replaces the FeatureManager), and the feature tree flies out at the top left of the view, so planes, sketches and features can still be picked from it. As in SolidWorks it shows folded to the part name: click the name to open it (remembered). It is see-through until the pointer is over it, and has no suppress or delete buttons, so a click in the view can't remove a feature. Starting a command brings the Features tab forward. On phones the tree stays under the panel.
+- **Fly-out feature tree (FR-UI-003)**: while a feature, sketch or plane command is open its panel fills the Features tab (as a CAD app's PropertyManager replaces the FeatureManager), and the feature tree flies out at the top left of the view, so planes, sketches and features can still be picked from it. As in CAD apps it shows folded to the part name: click the name to open it (remembered). It is see-through until the pointer is over it, and has no suppress or delete buttons, so a click in the view can't remove a feature. Starting a command brings the Features tab forward. On phones the tree stays under the panel.
 
 ## [1.334.0] - 2026-11-09
 
@@ -1496,19 +1502,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- Sheet Metal → Corner Relief (FR-FT-120): cuts a relief where two bends meet at a corner of one face, as SolidWorks' Corner Relief for two-bend corners. Rectangular covers both bend zones with a clearance past them, Circular is centred where the bend centre lines cross, Tear is a small round at the inside corner; the size is the relief ratio × thickness or a typed value. Every corner is relieved until some are picked, by ticking them in the panel or clicking near them in the view. The relief comes off the panels and is wrapped onto the bends, so the flat pattern and its DXF show it too.
+- Sheet Metal → Corner Relief (FR-FT-120): cuts a relief where two bends meet at a corner of one face, as a CAD app's Corner Relief for two-bend corners. Rectangular covers both bend zones with a clearance past them, Circular is centred where the bend centre lines cross, Tear is a small round at the inside corner; the size is the relief ratio × thickness or a typed value. Every corner is relieved until some are picked, by ticking them in the panel or clicking near them in the view. The relief comes off the panels and is wrapped onto the bends, so the flat pattern and its DXF show it too.
 
 ## [1.332.0] - 2026-11-09
 
 ### Added
 
-- Motion studies: appearance keys can carry a **colour**. Tick **Colour** on a key and pick one: the component wears it from that key and blends to the next coloured key, as SolidWorks appearance keys do. Coloured keys show their colour on the timeline, and the component gets its own colour back when the track goes (FR-FT-122).
+- Motion studies: appearance keys can carry a **colour**. Tick **Colour** on a key and pick one: the component wears it from that key and blends to the next coloured key, as appearance keys do in a CAD app. Coloured keys show their colour on the timeline, and the component gets its own colour back when the track goes (FR-FT-122).
 
 ## [1.331.0] - 2026-11-09
 
 ### Added
 
-- **From/to length fillet beads (FR-FT-121)**: Fillet Bead gets SolidWorks' Bead length choice. **From/to length** welds only part of each run of edges: from the Start offset for the Length you type, or measured from the other end with Start from the other end. The weld symbol shows the length (◺ z4 50), the cut list gives the welded length, and an intermittent weld fills just that stretch.
+- **From/to length fillet beads (FR-FT-121)**: Fillet Bead gets a CAD app's Bead length choice. **From/to length** welds only part of each run of edges: from the Start offset for the Length you type, or measured from the other end with Start from the other end. The weld symbol shows the length (◺ z4 50), the cut list gives the welded length, and an intermittent weld fills just that stretch.
 
 ## [1.330.0] - 2026-11-09
 
@@ -1528,7 +1534,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- **Preferences (FR-UI-080)**: Display ▾ → Preferences… opens one dialog for the settings that were spread over panels and menus, as SolidWorks' System Options. **Modelling**: units and decimals, image quality (Coarse rebuilds faster, Fine draws smoother; the exact geometry is the same), **Verification on rebuild** (each feature's body is checked, and a feature that leaves it invalid gets a warning in the tree and What's wrong), how soon unsaved work is kept for recovery (after each change, 10 s … 5 min, or off), and the ↑/↓ and spin arrow steps for lengths and angles. **Sketch**: rotate the view to the sketch plane on opening, automatic relations, relation glyphs, model edge snapping, slot dimensions, grid and grid snap, and a legend of the sketch colours. **Mouse**: middle button pans or rotates (SolidWorks), wheel zoom direction, and Mouse gestures. Defaults resets the open page; the sketch panel and quick bar toggles stay in step.
+- **Preferences (FR-UI-080)**: Display ▾ → Preferences… opens one dialog for the settings that were spread over panels and menus, as a CAD app's System Options. **Modelling**: units and decimals, image quality (Coarse rebuilds faster, Fine draws smoother; the exact geometry is the same), **Verification on rebuild** (each feature's body is checked, and a feature that leaves it invalid gets a warning in the tree and What's wrong), how soon unsaved work is kept for recovery (after each change, 10 s … 5 min, or off), and the ↑/↓ and spin arrow steps for lengths and angles. **Sketch**: rotate the view to the sketch plane on opening, automatic relations, relation glyphs, model edge snapping, slot dimensions, grid and grid snap, and a legend of the sketch colours. **Mouse**: middle button pans or rotates (a CAD app), wheel zoom direction, and Mouse gestures. Defaults resets the open page; the sketch panel and quick bar toggles stay in step.
 
 ## [1.328.0] - 2026-11-09
 
@@ -1539,7 +1545,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [1.327.0] - 2026-11-09
 
 ### Added
-- **File menu like SolidWorks (FR-UI-010)**: the blue Open file button is now **File ▾**, and drawings have the same button. It has New part / assembly / drawing, Make assembly from part, Open (Ctrl+O), Close (Ctrl+Alt+W), Close all, Save (Ctrl+S), Save as (Ctrl+Shift+S; for a STEP or mesh model it saves a copy of the file), Save all (Ctrl+Alt+S), Pack and Go, Export, Print (Ctrl+P: the drawing, or the 3D view as shown), Properties, the recent documents and Exit. Commands that don't apply are greyed out.
+- **File menu like a CAD app (FR-UI-010)**: the blue Open file button is now **File ▾**, and drawings have the same button. It has New part / assembly / drawing, Make assembly from part, Open (Ctrl+O), Close (Ctrl+Alt+W), Close all, Save (Ctrl+S), Save as (Ctrl+Shift+S; for a STEP or mesh model it saves a copy of the file), Save all (Ctrl+Alt+S), Pack and Go, Export, Print (Ctrl+P: the drawing, or the 3D view as shown), Properties, the recent documents and Exit. Commands that don't apply are greyed out.
 - **Pack and Go**: the chosen open documents in one .zip, with each assembly's parts as separate files under `parts/` if you like.
 - **Recent documents**: the last 8 files you opened or saved are listed at the bottom of the File menu (numbered, so 1–8 open them from the keyboard) and open again without the file picker.
 
@@ -1562,25 +1568,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- **Hover link between the Features tree and the view (FR-UI-061)**: point at a feature, body or cut list item in the Features tree and its faces light up see-through blue in the view; point at a face in the view and the tree marks the row of the feature that made it. It works while no command is open, as in SolidWorks.
+- **Hover link between the Features tree and the view (FR-UI-061)**: point at a feature, body or cut list item in the Features tree and its faces light up see-through blue in the view; point at a face in the view and the tree marks the row of the feature that made it. It works while no command is open, as in other CAD apps.
 
 ## [1.323.0] - 2026-11-09
 
 ### Added
 
-- Motion studies: a motor's panel now plots its **Displacement**, **Velocity** or **Acceleration** over the study, with the playhead, like the SolidWorks motor graph. It works for every profile, so you can check a data point or segments motor for jumps before you play it (FR-FT-122).
+- Motion studies: a motor's panel now plots its **Displacement**, **Velocity** or **Acceleration** over the study, with the playhead, like a CAD app's motor graph. It works for every profile, so you can check a data point or segments motor for jumps before you play it (FR-FT-122).
 
 ## [1.322.0] - 2026-11-09
 
 ### Added
 
-- **End cap thickness ratio (FR-FT-121)**: Weldments → End Cap → Offset has SolidWorks' Use thickness ratio: the inset is a multiple of the capped member's wall thickness (0.5 on an SHS 40×40×3 = 1.5 mm in from the edges), so caps on tubes of different walls follow them. On a solid section the wall is taken as 2 × area / perimeter (a flat bar's or a channel leg's thickness); Internal caps keep their clearance.
+- **End cap thickness ratio (FR-FT-121)**: Weldments → End Cap → Offset has a CAD app's Use thickness ratio: the inset is a multiple of the capped member's wall thickness (0.5 on an SHS 40×40×3 = 1.5 mm in from the edges), so caps on tubes of different walls follow them. On a solid section the wall is taken as 2 × area / perimeter (a flat bar's or a channel leg's thickness); Internal caps keep their clearance.
 
 ## [1.321.0] - 2026-11-09
 
 ### Added
 
-- **Forming tools (FR-FT-120)**: Sheet Metal → Forming Tool presses a library form into a flat face of the sheet, like dropping a SolidWorks forming tool on a face: a **Dimple** (round, with drafted walls), an **Embossed rib** (a long rounded rib), a **Louver** (a hood open on one side) or an **Extruded hole** (a hole with a collar). Click the face to place a tool, and click again for more; the positions can also be typed. The form keeps the sheet's thickness and stands out of the picked face, or the other one with Reverse direction. The flat pattern leaves forms out, as SolidWorks does: their outlines go on a FORM_TOOL layer in the DXF, and an extruded hole leaves its pre-pierce hole.
+- **Forming tools (FR-FT-120)**: Sheet Metal → Forming Tool presses a library form into a flat face of the sheet, like dropping a CAD app forming tool on a face: a **Dimple** (round, with drafted walls), an **Embossed rib** (a long rounded rib), a **Louver** (a hood open on one side) or an **Extruded hole** (a hole with a collar). Click the face to place a tool, and click again for more; the positions can also be typed. The form keeps the sheet's thickness and stands out of the picked face, or the other one with Reverse direction. The flat pattern leaves forms out, as a CAD app does: their outlines go on a FORM_TOOL layer in the DXF, and an extruded hole leaves its pre-pierce hole.
 
 ## [1.320.0] - 2026-11-09
 
@@ -1600,7 +1606,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- Motion studies: a **Motion segments** motor profile, like SolidWorks' segments motor. Each row is a segment with its end time, end value and shape (linear, cubic, quintic, harmonic or cycloid), and each segment starts where the last one ended, so a cam-like rise, dwell and return takes three rows (FR-FT-122).
+- Motion studies: a **Motion segments** motor profile, like a CAD app's segments motor. Each row is a segment with its end time, end value and shape (linear, cubic, quintic, harmonic or cycloid), and each segment starts where the last one ended, so a cam-like rise, dwell and return takes three rows (FR-FT-122).
 
 ## [1.317.0] - 2026-11-09
 
@@ -1621,13 +1627,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- **Unequal leg fillet beads (FR-FT-121).** Fillet Bead gets SolidWorks' **Equal leg lengths** box: untick it to give the bead a **Leg on set 1** and a **Leg on set 2** of their own, for a fillet weld that runs further up a tube than along the plate, say. The weld symbol shows both legs (◺ z6×8), and the cut list groups such welds by both legs.
+- **Unequal leg fillet beads (FR-FT-121).** Fillet Bead gets a CAD app's **Equal leg lengths** box: untick it to give the bead a **Leg on set 1** and a **Leg on set 2** of their own, for a fillet weld that runs further up a tube than along the plate, say. The weld symbol shows both legs (◺ z6×8), and the cut list groups such welds by both legs.
 
 ## [1.314.0] - 2026-11-09
 
 ### Added
 
-- **Vent (FR-FT-120)**: Sheet Metal → Vent cuts ventilation openings through a flat face of the sheet from one sketch on it, like SolidWorks' Vent. The largest closed loop is the boundary; lines that end on it are ribs and circles inside it are spars, both kept as material of the width you set (Rib width, Spar width). The openings show in the flattened part and its DXF like any other cut.
+- **Vent (FR-FT-120)**: Sheet Metal → Vent cuts ventilation openings through a flat face of the sheet from one sketch on it, like a CAD app's Vent. The largest closed loop is the boundary; lines that end on it are ribs and circles inside it are spars, both kept as material of the width you set (Rib width, Spar width). The openings show in the flattened part and its DXF like any other cut.
 
 ## [1.313.0] - 2026-11-09
 
@@ -1638,7 +1644,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- Motion studies: a **Data points** motor chooses how its rows are joined, like SolidWorks: **Linear** (as before), **Cubic spline** (a smooth curve through every row) or **Akima** (smooth too, but it keeps flat runs flat next to a step instead of overshooting) (FR-FT-122).
+- Motion studies: a **Data points** motor chooses how its rows are joined, like a CAD app: **Linear** (as before), **Cubic spline** (a smooth curve through every row) or **Akima** (smooth too, but it keeps flat runs flat next to a step instead of overshooting) (FR-FT-122).
 
 ## [1.311.0] - 2026-11-09
 
@@ -1671,19 +1677,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- **Cross Break (FR-FT-120)**: Sheet Metal → Cross Break marks flat faces of the sheet with two crossed lines from corner to corner, the shallow stiffening break used on large panels, like SolidWorks' Cross-Break. Click the top or bottom faces, set the break radius and angle, and Reverse direction to raise it the other way. The lines are drawn on the model and on the flattened part, and the flat pattern DXF gets them on a CROSS_BREAK layer; the solid itself stays flat, as in SolidWorks.
+- **Cross Break (FR-FT-120)**: Sheet Metal → Cross Break marks flat faces of the sheet with two crossed lines from corner to corner, the shallow stiffening break used on large panels, like a CAD app's Cross-Break. Click the top or bottom faces, set the break radius and angle, and Reverse direction to raise it the other way. The lines are drawn on the model and on the flattened part, and the flat pattern DXF gets them on a CROSS_BREAK layer; the solid itself stays flat, as in other CAD apps.
 
 ## [1.306.0] - 2026-11-09
 
 ### Added
 
-- Motion studies: motors get SolidWorks' **Expression** profile. The angle (degrees) or distance (mm) is typed as a formula in `t`, the seconds after the motor start, such as `30*sin(2*pi*t)` (sin and cos take radians). Text that doesn't give a number is refused with the reason (FR-FT-122).
+- Motion studies: motors get a CAD app's **Expression** profile. The angle (degrees) or distance (mm) is typed as a formula in `t`, the seconds after the motor start, such as `30*sin(2*pi*t)` (sin and cos take radians). Text that doesn't give a number is refused with the reason (FR-FT-122).
 
 ## [1.305.0] - 2026-11-09
 
 ### Added
 
-- **Merge miter trimmed bodies (FR-FT-121).** Structural Member adds **Merge miter trimmed bodies**, as in SolidWorks: the members at each mitred corner are fused into one body, so a welded frame of four mitred tubes is one body, listed once in the cut list with the lengths of its segments added up. With a weld gap the mitred ends don't touch and stay separate bodies. The box shows when a corner of the member is mitred.
+- **Merge miter trimmed bodies (FR-FT-121).** Structural Member adds **Merge miter trimmed bodies**, as in other CAD apps: the members at each mitred corner are fused into one body, so a welded frame of four mitred tubes is one body, listed once in the cut list with the lengths of its segments added up. With a weld gap the mitred ends don't touch and stay separate bodies. The box shows when a corner of the member is mitred.
 ## [1.304.0] - 2026-11-09
 
 ### Added
@@ -1695,19 +1701,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Added
 
 - **Sketch grid and Snap to grid (FR-SK-041)**: the sketch panel's new Grid section shows a grid on the sketch plane (every fifth line and the lines through the origin stronger) and can snap points to it. The spacing follows the zoom in 1-2-5 steps unless you type one. With Snap to grid on, a point that snaps to nothing else (no end point, curve or inference) goes to the nearest grid node; a horizontal or vertical inference keeps its line and snaps the other coordinate; hold Ctrl to place freely. Both are off by default and remembered.
-- **Alignment inference (FR-SK-042)**: while drawing, a point whose x or y comes within a few pixels of a sketch point's that the cursor passed over (SolidWorks' woken points, the last four) lines up with it exactly, shown by a dotted line from that point, as in SolidWorks. No relation is added. It follows the Horizontal/vertical snap preference, and Ctrl turns it off with the other inferences.
+- **Alignment inference (FR-SK-042)**: while drawing, a point whose x or y comes within a few pixels of a sketch point's that the cursor passed over (a CAD app's woken points, the last four) lines up with it exactly, shown by a dotted line from that point, as in other CAD apps. No relation is added. It follows the Horizontal/vertical snap preference, and Ctrl turns it off with the other inferences.
 
 ## [1.302.0] - 2026-11-09
 
 ### Added
 
-- **Lofted Bend (FR-FT-120)**: Sheet Metal → Lofted Bend joins two open profiles of lines and arcs, each sketched on its own plane, with a sheet of thickness, like SolidWorks' Lofted-Bend with the Bent method. The sheet is made of flat facets with sharp folds between them (Facets per arc sets how finely arcs are split), so it unfolds exactly: Flatten and the flat pattern DXF show the developed outline with every fold as a bend line (up or down), and drawings get the flat pattern view and bend table. Facets lying in one plane stay one face. Typical uses are transitions such as square-to-round ducts and hoppers.
+- **Lofted Bend (FR-FT-120)**: Sheet Metal → Lofted Bend joins two open profiles of lines and arcs, each sketched on its own plane, with a sheet of thickness, like a CAD app's Lofted-Bend with the Bent method. The sheet is made of flat facets with sharp folds between them (Facets per arc sets how finely arcs are split), so it unfolds exactly: Flatten and the flat pattern DXF show the developed outline with every fold as a bend line (up or down), and drawings get the flat pattern view and bend table. Facets lying in one plane stay one face. Typical uses are transitions such as square-to-round ducts and hoppers.
 
 ## [1.300.0] - 2026-11-09
 
 ### Added
 
-- **Exclude from cut list (FR-FT-121).** Each item in the weldment Cut List dialog has an Exclude box, as in SolidWorks: an excluded item stays in the list, struck through, but gets no item number, adds nothing to the total mass and is left out of the CSV. The Cut list folder in the Features tree marks it as excluded.
+- **Exclude from cut list (FR-FT-121).** Each item in the weldment Cut List dialog has an Exclude box, as in other CAD apps: an excluded item stays in the list, struck through, but gets no item number, adds nothing to the total mass and is left out of the CSV. The Cut list folder in the Features tree marks it as excluded.
 
 ## [1.298.0] - 2026-11-09
 
@@ -1719,18 +1725,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- **Centre of mass on drawings**: tick Centre of mass in a view's panel to mark the model's centre of mass with the quartered circle symbol, as SolidWorks' Center of Mass model item does. It follows the model when it changes, and Dimension picks it like a corner, so you can dimension from the centre of mass to an edge or another point. The symbol prints and exports with the sheet.
+- **Centre of mass on drawings**: tick Centre of mass in a view's panel to mark the model's centre of mass with the quartered circle symbol, as a CAD app's Center of Mass model item does. It follows the model when it changes, and Dimension picks it like a corner, so you can dimension from the centre of mass to an edge or another point. The symbol prints and exports with the sheet.
 ## [1.296.0] - 2026-11-09
 
 ### Added
 
-- **Swept Flange (FR-FT-120)**: Sheet Metal → Swept Flange runs a sketched profile of lines and tangent arcs along the clicked edges of the sheet, like SolidWorks' Swept Flange. Each arc becomes a bend of its own radius (the profile is the outside of the first bend, so an arc on the outside of a bend gives an inner radius of the arc minus the thickness), sharp corners use the bend radius, and flanges on edges meeting at a corner are mitred as in Miter Flange. The flat pattern unrolls every bend.
+- **Swept Flange (FR-FT-120)**: Sheet Metal → Swept Flange runs a sketched profile of lines and tangent arcs along the clicked edges of the sheet, like a CAD app's Swept Flange. Each arc becomes a bend of its own radius (the profile is the outside of the first bend, so an arc on the outside of a bend gives an inner radius of the arc minus the thickness), sharp corners use the bend radius, and flanges on edges meeting at a corner are mitred as in Miter Flange. The flat pattern unrolls every bend.
 
 ## [1.295.0] - 2026-11-09
 
 ### Added
 
-- **Cut list item material (FR-FT-121).** Each item in the weldment Cut List dialog can have its own material, as in SolidWorks: its mass, the total and the CSV (new Material column) follow that material's density. Items left on Part material use the part's material, as before.
+- **Cut list item material (FR-FT-121).** Each item in the weldment Cut List dialog can have its own material, as in other CAD apps: its mass, the total and the CSV (new Material column) follow that material's density. Items left on Part material use the part's material, as before.
 
 ## [1.290.0] - 2026-11-09
 
@@ -1743,13 +1749,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- Motion studies: **⧉** next to New duplicates the shown study with all its tracks, keys and results, so a variant can be tried without losing the original (SolidWorks: Duplicate on the study tab) (FR-FT-122).
+- Motion studies: **⧉** next to New duplicates the shown study with all its tracks, keys and results, so a variant can be tried without losing the original (a CAD app: Duplicate on the study tab) (FR-FT-122).
 
 ## [1.284.0] - 2026-11-09
 
 ### Added
 
-- **Bend table on flat pattern drawing views (FR-FT-120)**: Annotate ▾ → Bend table, click a flat pattern view and place the table. The bend lines get tags A, B, … (top to bottom, then left to right) in place of their notes, and the table lists each bend's direction, angle and inner radius, like SolidWorks' Bend Table. The table follows the model and the interface language.
+- **Bend table on flat pattern drawing views (FR-FT-120)**: Annotate ▾ → Bend table, click a flat pattern view and place the table. The bend lines get tags A, B, … (top to bottom, then left to right) in place of their notes, and the table lists each bend's direction, angle and inner radius, like a CAD app's Bend Table. The table follows the model and the interface language.
 
 ## [1.282.0] - 2026-11-09
 
@@ -1762,13 +1768,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- **Trim/Extend planar trim (FR-FT-121).** Trimming a member against another body now offers SolidWorks' **Planar trim** next to **Body trim**: the member gets a flat end square to its axis where it first meets the body, instead of an end shaped like the body. Weld gap works with it too.
+- **Trim/Extend planar trim (FR-FT-121).** Trimming a member against another body now offers a CAD app's **Planar trim** next to **Body trim**: the member gets a flat end square to its axis where it first meets the body, instead of an end shaped like the body. Weld gap works with it too.
 
 ## [1.276.0] - 2026-11-09
 
 ### Added
 
-- **Sketch on the drawing sheet**: Line, Rectangle, Circle and Polyline on the Annotation tab (and in Annotate ▾) draw on the sheet itself, as SolidWorks lets you sketch in a drawing. Clicks snap to the model's corners and circle centres in a view, and run horizontal or vertical when close to it; a polyline ends with Enter or closes on its first point. Select an entity to give it an ISO 128 line type (thin, visible, centre, hidden or phantom) or type its length, width and height, or diameter. Entities export to PDF, SVG and DXF on the layer of their line type.
+- **Sketch on the drawing sheet**: Line, Rectangle, Circle and Polyline on the Annotation tab (and in Annotate ▾) draw on the sheet itself, as a CAD app lets you sketch in a drawing. Clicks snap to the model's corners and circle centres in a view, and run horizontal or vertical when close to it; a polyline ends with Enter or closes on its first point. Select an entity to give it an ISO 128 line type (thin, visible, centre, hidden or phantom) or type its length, width and height, or diameter. Entities export to PDF, SVG and DXF on the layer of their line type.
 ## [1.275.0] - 2026-11-09
 
 ### Added
@@ -1780,7 +1786,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- Motion studies: two more motor profiles, as in SolidWorks. **Distance** turns or moves the mate by a set angle or distance between the motor's start and end, starting and stopping smoothly. **Data points** follows rows of time after the motor start and value, typed or pasted from a spreadsheet, in straight lines between them (the motor ends at the last row) (FR-FT-122).
+- Motion studies: two more motor profiles, as in other CAD apps. **Distance** turns or moves the mate by a set angle or distance between the motor's start and end, starting and stopping smoothly. **Data points** follows rows of time after the motor start and value, typed or pasted from a spreadsheet, in straight lines between them (the motor ends at the last row) (FR-FT-122).
 
 ## [1.271.0] - 2026-11-09
 
@@ -1798,7 +1804,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- **Trim/Extend weld gap (FR-FT-121).** Trim/Extend gets SolidWorks' **Weld gap**: the trimmed members stop that far short of the face, plane or body they are trimmed to. With End butt the stopping member ends short of the other's side, and an End miter splits the gap between the two ends.
+- **Trim/Extend weld gap (FR-FT-121).** Trim/Extend gets a CAD app's **Weld gap**: the trimmed members stop that far short of the face, plane or body they are trimmed to. With End butt the stopping member ends short of the other's side, and an End miter splits the gap between the two ends.
 
 ## [1.266.0] - 2026-11-08
 
@@ -1817,19 +1823,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- **Miter flange (FR-FT-120)**: Sheet Metal → **Miter Flange** runs an open profile of lines, sketched on a plane square to an edge and starting at it, along the edges clicked in the view. Each line of the profile becomes a bend and a flat flange, with lengths to the virtual sharps on the profile's side, and flanges on edges that meet at a corner of the face are mitred at every level with the corner gap between them, as in SolidWorks. The flat pattern unfolds them like any other flange.
+- **Miter flange (FR-FT-120)**: Sheet Metal → **Miter Flange** runs an open profile of lines, sketched on a plane square to an edge and starting at it, along the edges clicked in the view. Each line of the profile becomes a bend and a flat flange, with lengths to the virtual sharps on the profile's side, and flanges on edges that meet at a corner of the face are mitred at every level with the corner gap between them, as in other CAD apps. The flat pattern unfolds them like any other flange.
 
 ## [1.256.0] - 2026-11-08
 
 ### Added
 
-- Motion studies: **Images** saves every frame of the study at its frame rate as numbered PNG images (up to 1920 px wide) in a ZIP, like SolidWorks' Save Animation as a series of images, for editing in a video program (FR-FT-122).
+- Motion studies: **Images** saves every frame of the study at its frame rate as numbered PNG images (up to 1920 px wide) in a ZIP, like a CAD app's Save Animation as a series of images, for editing in a video program (FR-FT-122).
 
 ## [1.253.0] - 2026-11-08
 
 ### Added
 
-- **Trim/Extend to a plane (FR-FT-121).** With *Face or plane*, the Trimming boundary's new **Plane** list takes Top, Front, Right or any reference plane above the feature, so members can be cut at, or lengthened up to, a plane that isn't a face of the model, as in SolidWorks. Picking a face again goes back to the face.
+- **Trim/Extend to a plane (FR-FT-121).** With *Face or plane*, the Trimming boundary's new **Plane** list takes Top, Front, Right or any reference plane above the feature, so members can be cut at, or lengthened up to, a plane that isn't a face of the model, as in other CAD apps. Picking a face again goes back to the face.
 
 ## [1.252.0] - 2026-11-08
 
@@ -1841,20 +1847,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- **Automatic relations while drawing (FR-SK-052)**: besides horizontal and vertical, a line now snaps perpendicular to the line the chain came from, tangent to the arc it came from, and parallel or perpendicular to a line hovered on the way, and keeps that relation. A glyph by the cursor shows the relation the next click adds (also coincident and on curve). Hold Ctrl to place a point with no snapping or relations, as in SolidWorks; **Automatic relations** in the sketch panel turns them off.
+- **Automatic relations while drawing (FR-SK-052)**: besides horizontal and vertical, a line now snaps perpendicular to the line the chain came from, tangent to the arc it came from, and parallel or perpendicular to a line hovered on the way, and keeps that relation. A glyph by the cursor shows the relation the next click adds (also coincident and on curve). Hold Ctrl to place a point with no snapping or relations, as in other CAD apps; **Automatic relations** in the sketch panel turns them off.
 - **Relation glyphs (FR-SK-053)**: hovering a relation glyph lights up the entities it ties, and **Show relations** in the sketch panel hides the glyphs (a relation selected in the list still shows its own).
 
 ## [1.250.0] - 2026-11-08
 
 ### Added
 
-- **Flat pattern views in drawings (FR-FT-120)**: a sheet metal part's drawing now offers a Flat pattern tile in the View palette, and Flat pattern in a model view's Configuration list. The view shows the unfolded part, with each bend line drawn as a centre line and a bend note along it ("UP 90° R2", in the sheet's language), as SolidWorks does. Either can be turned off in the view's properties.
+- **Flat pattern views in drawings (FR-FT-120)**: a sheet metal part's drawing now offers a Flat pattern tile in the View palette, and Flat pattern in a model view's Configuration list. The view shows the unfolded part, with each bend line drawn as a centre line and a bend note along it ("UP 90° R2", in the sheet's language), as a CAD app does. Either can be turned off in the view's properties.
 
 ## [1.248.0] - 2026-11-08
 
 ### Added
 
-- Weld symbols on drawings (ISO 2553 system A, FR-DRW-023, SolidWorks' Weld Symbol): Annotation → **Weld symbol** points an arrow at the joint you click (or stands alone) and draws the reference line. The panel sets the arrow-side and other-side welds (fillet, square butt, single V, single bevel, plug, spot) with their size and length, all around, field weld and a tail note; a weld on the other side alone adds the dashed identification line, and a symmetric weld sits across the line. The symbols are drawn from lines, so PDF, SVG and DXF show them the same, and the symbol follows the model like the other annotations.
+- Weld symbols on drawings (ISO 2553 system A, FR-DRW-023, a CAD app's Weld Symbol): Annotation → **Weld symbol** points an arrow at the joint you click (or stands alone) and draws the reference line. The panel sets the arrow-side and other-side welds (fillet, square butt, single V, single bevel, plug, spot) with their size and length, all around, field weld and a tail note; a weld on the other side alone adds the dashed identification line, and a symmetric weld sits across the line. The symbols are drawn from lines, so PDF, SVG and DXF show them the same, and the symbol follows the model like the other annotations.
 
 ## [1.247.0] - 2026-11-08
 
@@ -1865,7 +1871,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- Motion studies: **Proximity** (in Add track…) plots the smallest distance between two components over the study, or how fast it changes, like SolidWorks' proximity sensor. Pick the two components in its panel; the values save as CSV, and Alert below/above with Stop playback work on it as on the other results (FR-FT-122).
+- Motion studies: **Proximity** (in Add track…) plots the smallest distance between two components over the study, or how fast it changes, like a CAD app's proximity sensor. Pick the two components in its panel; the values save as CSV, and Alert below/above with Stop playback work on it as on the other results (FR-FT-122).
 
 ## [1.241.0] - 2026-11-08
 
@@ -1877,13 +1883,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- **Linked sketch offsets (FR-SK-034)**: Offset entities now works as in SolidWorks. By default the copy keeps offset relations to its source and gets one distance dimension, so editing that dimension or moving the source moves the copy with it (turn off **Follow the source** for a static copy, as before). **Both sides** offsets to both sides at once, and for an open chain **Cap ends** closes the two copies with arcs about the source ends or with straight lines. Offsets of arcs and circles are dimensioned as the gap between the concentric curves. The relation glyph is ⇉.
+- **Linked sketch offsets (FR-SK-034)**: Offset entities now works as in other CAD apps. By default the copy keeps offset relations to its source and gets one distance dimension, so editing that dimension or moving the source moves the copy with it (turn off **Follow the source** for a static copy, as before). **Both sides** offsets to both sides at once, and for an open chain **Cap ends** closes the two copies with arcs about the source ends or with straight lines. Offsets of arcs and circles are dimensioned as the gap between the concentric curves. The relation glyph is ⇉.
 
 ## [1.239.0] - 2026-11-08
 
 ### Added
 
-- Motion studies: the Interference panel has a **Stop playback** box. With it ticked, playing pauses at the frame where an interference from the last check starts, as a SolidWorks interference sensor does (FR-FT-122).
+- Motion studies: the Interference panel has a **Stop playback** box. With it ticked, playing pauses at the frame where an interference from the last check starts, as a CAD app's interference sensor does (FR-FT-122).
 
 ## [1.237.0] - 2026-11-08
 
@@ -1897,13 +1903,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- **Closed Corner for sheet metal (FR-FT-120)**: a new Closed Corner command on the Sheet Metal tab closes the open corner between two flanges made separately, like SolidWorks' Closed Corner. Click a flange's end face and choose Overlap (it runs over the other flange's end) or Underlap (it stops at the other flange, a gap short of it). The other flange's end moves to meet it, and the flat pattern follows.
+- **Closed Corner for sheet metal (FR-FT-120)**: a new Closed Corner command on the Sheet Metal tab closes the open corner between two flanges made separately, like a CAD app's Closed Corner. Click a flange's end face and choose Overlap (it runs over the other flange's end) or Underlap (it stops at the other flange, a gap short of it). The other flange's end moves to meet it, and the flat pattern follows.
 
 ## [1.234.0] - 2026-11-08
 
 ### Added
 
-- **Pierce relation (FR-SK-051)**: select one sketch point and the relations list offers Pierce, as in SolidWorks. Click a model edge that crosses the sketch plane and the point moves to where the edge pierces the plane, then stays there: when the model changes, the point follows the edge. Straight edges count as infinite lines and arcs as whole circles; when an edge crosses the plane more than once, the point takes the crossing nearest to it. If the edge later disappears or no longer reaches the plane, the relation is marked dangling and can be re-attached to another edge. The relation glyph is ⊕.
+- **Pierce relation (FR-SK-051)**: select one sketch point and the relations list offers Pierce, as in other CAD apps. Click a model edge that crosses the sketch plane and the point moves to where the edge pierces the plane, then stays there: when the model changes, the point follows the edge. Straight edges count as infinite lines and arcs as whole circles; when an edge crosses the plane more than once, the point takes the crossing nearest to it. If the edge later disappears or no longer reaches the plane, the relation is marked dangling and can be re-attached to another edge. The relation glyph is ⊕.
 
 ## [1.233.0] - 2026-11-08
 
@@ -1921,7 +1927,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- Motion studies: trace paths and mate value results work as **sensors**, like SolidWorks' motion study sensors. Set **Alert below** and/or **Alert above** on the plotted quantity: the out-of-range times show as orange bands in the result's timeline row and the readout says Out of range; with **Stop playback** ticked, playing stops at the frame where the value goes out of range (FR-FT-122).
+- Motion studies: trace paths and mate value results work as **sensors**, like a CAD app's motion study sensors. Set **Alert below** and/or **Alert above** on the plotted quantity: the out-of-range times show as orange bands in the result's timeline row and the readout says Out of range; with **Stop playback** ticked, playing stops at the frame where the value goes out of range (FR-FT-122).
 
 ## [1.229.0] - 2026-11-08
 
@@ -1934,27 +1940,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- Motion studies: explode steps can run **one after another**, as SolidWorks' animation wizard does. With several steps in the exploded view the Explode wizard moves them in turn (Collapse brings them back in reverse); the **Step by step** box on an explode key turns it on or off for that track (FR-FT-122).
+- Motion studies: explode steps can run **one after another**, as a CAD app's animation wizard does. With several steps in the exploded view the Explode wizard moves them in turn (Collapse brings them back in reverse); the **Step by step** box on an explode key turns it on or off for that track (FR-FT-122).
 
 ## [1.219.0] - 2026-11-08
 
 ### Changed
 
 - **✓ and ✕ are always in reach.** The title row of every PropertyManager panel (features, sheet metal, weldments, surfaces, assembly commands) stays pinned at the top while the panel scrolls, so accepting no longer needs a scroll back up. The sketch panel, sketch pattern/move/rotate/scale, Sketch plane and Part properties moved their OK/Cancel (and Exit sketch) from the bottom into that row.
-- Confirmation corner (FR-UI-021): the ✓/✕ in the view now sit at the top right, beside the view cube, as in SolidWorks, and assembly commands (Mate, Explode, patterns, Toolbox, Interference, assembly features) get one too. In a sketch pattern the corner applies the pattern instead of leaving the sketch.
+- Confirmation corner (FR-UI-021): the ✓/✕ in the view now sit at the top right, beside the view cube, as in other CAD apps, and assembly commands (Mate, Explode, patterns, Toolbox, Interference, assembly features) get one too. In a sketch pattern the corner applies the pattern instead of leaving the sketch.
 
 ## [1.215.0] - 2026-11-08
 
 ### Added
 
-- **Spline tangent and Equal curvature (FR-SK-050, FR-SK-051)**: select a spline and a line, arc or another spline that meet at an end, and the relations list offers Tangent and Equal curvature, as in SolidWorks. Tangent turns the spline's end along the other curve; Equal curvature also matches the bend on both sides of the joint (a smooth G2 blend), which suits style splines and conics. Ends joined by a coincident relation count as meeting. The relation glyph is κ.
+- **Spline tangent and Equal curvature (FR-SK-050, FR-SK-051)**: select a spline and a line, arc or another spline that meet at an end, and the relations list offers Tangent and Equal curvature, as in other CAD apps. Tangent turns the spline's end along the other curve; Equal curvature also matches the bend on both sides of the joint (a smooth G2 blend), which suits style splines and conics. Ends joined by a coincident relation count as meeting. The relation glyph is κ.
 - **Sketch orientation (FR-SK-002)**: Edit sketch plane has an X axis box. Click it, then click a straight model edge, and the sketch turns so its X axis runs along that edge (projected onto the plane); Reverse X axis turns it round, and Use the plane direction goes back. If the edge later disappears or ends up square to the plane, the sketch keeps the plane's own direction and shows a warning.
 
 ## [1.211.0] - 2026-11-08
 
 ### Added
 
-- Centrelines and centre marks put in by hand on drawings (FR-DRW-023, SolidWorks' Centerline and Center Mark). Annotation → **Centerline** takes two parallel edges (the line halfway between them, over the length of both) or two points such as hole centres; **Center mark** puts a cross on a circle or an arc seen end-on, so rounded corners and slot ends can be marked too (the automatic marks cover full circles only). Both follow the model when it changes, are drawn on the CENTER layer in every export, and can be selected on their lines to change how far they run past the geometry.
+- Centrelines and centre marks put in by hand on drawings (FR-DRW-023, a CAD app's Centerline and Center Mark). Annotation → **Centerline** takes two parallel edges (the line halfway between them, over the length of both) or two points such as hole centres; **Center mark** puts a cross on a circle or an arc seen end-on, so rounded corners and slot ends can be marked too (the automatic marks cover full circles only). Both follow the model when it changes, are drawn on the CENTER layer in every export, and can be selected on their lines to change how far they run past the geometry.
 
 ## [1.208.0] - 2026-11-08
 
@@ -1964,19 +1970,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Fixed
 
-- Switching a drawing between first and third angle projection left the views where they were, so the view under the front view silently became a bottom view. Each projected view now stays the same view and moves across its parent, and a projected view dragged across its parent stops on its own side (as in SolidWorks).
+- Switching a drawing between first and third angle projection left the views where they were, so the view under the front view silently became a bottom view. Each projected view now stays the same view and moves across its parent, and a projected view dragged across its parent stops on its own side (as in other CAD apps).
 
 ## [1.206.0] - 2026-11-08
 
 ### Added
 
-- **Break Corner for sheet metal (FR-FT-120)**: a new Break Corner command on the Sheet Metal tab chamfers or rounds outside corners of the sheet through its thickness, like SolidWorks' Break-Corner/Corner-Trim. Click the short edges across the thickness at the corners, pick Chamfer (distance) or Fillet (radius), and the corner is cut in the face's outline, so the flat pattern and its DXF show it too. A flange can then go on the new chamfer edge.
+- **Break Corner for sheet metal (FR-FT-120)**: a new Break Corner command on the Sheet Metal tab chamfers or rounds outside corners of the sheet through its thickness, like a CAD app's Break-Corner/Corner-Trim. Click the short edges across the thickness at the corners, pick Chamfer (distance) or Fillet (radius), and the corner is cut in the face's outline, so the flat pattern and its DXF show it too. A flange can then go on the new chamfer edge.
 
 ## [1.205.0] - 2026-11-08
 
 ### Added
 
-- Motion studies: **Interference** check, as SolidWorks' Results → Interference Detection. It poses every frame of the study and lists the pairs of components that enter one another with the times (click a time to go there), marks those times in red on the ruler and saves the list as CSV. Pairs that already touch at the start, such as a pin in its hole, are left out unless **Treat coincidence as interference** is ticked (FR-FT-122).
+- Motion studies: **Interference** check, as a CAD app's Results → Interference Detection. It poses every frame of the study and lists the pairs of components that enter one another with the times (click a time to go there), marks those times in red on the ruler and saves the list as CSV. Pairs that already touch at the start, such as a pin in its hole, are left out unless **Treat coincidence as interference** is ticked (FR-FT-122).
 
 ## [1.202.0] - 2026-11-08
 
@@ -1994,7 +2000,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- Motion studies: **Mate value** results (Add track… → Mate value), as SolidWorks' Results → Plot of a mate. The distance or the angle between a mate's two faces is plotted over the study, or how fast it changes; the angle keeps counting past full turns, so a crank's angle reads 360, 720 and so on. The values save as CSV (FR-FT-122).
+- Motion studies: **Mate value** results (Add track… → Mate value), as a CAD app's Results → Plot of a mate. The distance or the angle between a mate's two faces is plotted over the study, or how fast it changes; the angle keeps counting past full turns, so a crank's angle reads 360, 720 and so on. The values save as CSV (FR-FT-122).
 
 ## [1.197.0] - 2026-11-08
 
@@ -2012,13 +2018,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- **Mitred edge flange corners (FR-FT-120)**: when an edge flange is put on edges that meet at a corner of the same face, the flanges now run on past the corner and are mitred where they meet, like SolidWorks. A new Corner gap setting, 0.1 mm by default, sets the gap left between them. It works for every flange position and shows in the flat pattern.
+- **Mitred edge flange corners (FR-FT-120)**: when an edge flange is put on edges that meet at a corner of the same face, the flanges now run on past the corner and are mitred where they meet, like a CAD app. A new Corner gap setting, 0.1 mm by default, sets the gap left between them. It works for every flange position and shows in the flat pattern.
 
 ## [1.191.0] - 2026-11-08
 
 ### Added
 
-- Motion studies: a trace path can be traced **Relative to** another component, as in SolidWorks' Trace Path. The path is then the one seen from that component (the shape a cam or slot would need), drawn moving with it, and its plots and CSV are in that component's coordinates (FR-FT-122).
+- Motion studies: a trace path can be traced **Relative to** another component, as in a CAD app's Trace Path. The path is then the one seen from that component (the shape a cam or slot would need), drawn moving with it, and its plots and CSV are in that component's coordinates (FR-FT-122).
 
 ## [1.190.0] - 2026-11-08
 
@@ -2036,49 +2042,49 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- Motion studies: trace path results plot more, as SolidWorks' Results → Plot. Besides the distance, speed and X/Y/Z of the picked point, the plot shows its **Acceleration** and the component's **angle** (how far it has turned since the start, counted on past a full turn, about the axis it turns most about) and **angular speed**. The CSV gains acceleration and angle columns (FR-FT-122).
+- Motion studies: trace path results plot more, as a CAD app's Results → Plot. Besides the distance, speed and X/Y/Z of the picked point, the plot shows its **Acceleration** and the component's **angle** (how far it has turned since the start, counted on past a full turn, about the axis it turns most about) and **angular speed**. The CSV gains acceleration and angle columns (FR-FT-122).
 
 ## [1.184.0] - 2026-11-08
 
 ### Added
 
-- **Gusset offset and thickness side (FR-FT-121).** Gusset's location gets an **Offset** (in from the start or end, or from the middle towards the end) and, at a start or end location, the thickness goes on the **Inner side**, **Both sides** or the **Outer side**, as in SolidWorks.
+- **Gusset offset and thickness side (FR-FT-121).** Gusset's location gets an **Offset** (in from the start or end, or from the middle towards the end) and, at a start or end location, the thickness goes on the **Inner side**, **Both sides** or the **Outer side**, as in other CAD apps.
 
 ## [1.183.0] - 2026-11-08
 
 ### Added
 
-- **Detail view by profile (FR-DRW-013).** Detail ▾ Profile frames a detail view by corners you click on a view (click the first corner again or press Enter to close it) instead of a circle, as SolidWorks' profile detail. The view's lines, hatching and shading are trimmed to the profile, the profile is drawn on the parent with the letter at its top-right corner and around the detail view, and picks inside it work as in a circle detail. Detail ▾ Circle is the circle detail as before.
+- **Detail view by profile (FR-DRW-013).** Detail ▾ Profile frames a detail view by corners you click on a view (click the first corner again or press Enter to close it) instead of a circle, as a CAD app's profile detail. The view's lines, hatching and shading are trimmed to the profile, the profile is drawn on the parent with the letter at its top-right corner and around the detail view, and picks inside it work as in a circle detail. Detail ▾ Circle is the circle detail as before.
 
 ## [1.181.0] - 2026-11-08
 
 ### Added
 
-- **Fit deviations from ISO 286 (FR-DRW-021).** A drawing dimension with a Fit tolerance (H7, g6, js6, K7, P7, s6 and so on) can show the code, its deviations from the ISO 286 tables or both, as SolidWorks does ("Ø16H7 +0.018/0"). The panel lists the limits the code gives at that size; letters D to S (d to s for shafts), grades IT3 to IT14, sizes up to 500 mm. A hole/shaft pair such as H7/g6 shows its code.
+- **Fit deviations from ISO 286 (FR-DRW-021).** A drawing dimension with a Fit tolerance (H7, g6, js6, K7, P7, s6 and so on) can show the code, its deviations from the ISO 286 tables or both, as a CAD app does ("Ø16H7 +0.018/0"). The panel lists the limits the code gives at that size; letters D to S (d to s for shafts), grades IT3 to IT14, sizes up to 500 mm. A hole/shaft pair such as H7/g6 shows its code.
 
 ## [1.180.0] - 2026-11-08
 
 ### Added
 
-- **Edge flange length arrow (FR-FT-120)**: an edge flange shows a drag arrow on the tip of its flange, like the SolidWorks handle. Dragging it changes the flange length with a live preview, and clicking its label lets you type the length. It also works on a flange selected in the Features tree, which applies the change on release. While the flat pattern shows, the arrow is hidden.
+- **Edge flange length arrow (FR-FT-120)**: an edge flange shows a drag arrow on the tip of its flange, like a CAD app's handle. Dragging it changes the flange length with a live preview, and clicking its label lets you type the length. It also works on a flange selected in the Features tree, which applies the change on release. While the flat pattern shows, the arrow is hidden.
 
 ## [1.178.0] - 2026-11-08
 
 ### Added
 
-- **Aligned section (FR-DRW-012).** Section ▾ Aligned section takes the end of the first leg, the centre and the end of the second leg on a view. The material on the second leg's side is turned about the centre into the first leg's plane before the cut, so spokes and holes on a bolt circle show at their true distance from the centre, as in SolidWorks. The cutting line shows both legs with arrows at each end, and each component keeps its own hatching.
+- **Aligned section (FR-DRW-012).** Section ▾ Aligned section takes the end of the first leg, the centre and the end of the second leg on a view. The material on the second leg's side is turned about the centre into the first leg's plane before the cut, so spokes and holes on a bolt circle show at their true distance from the centre, as in other CAD apps. The cutting line shows both legs with arrows at each end, and each component keeps its own hatching.
 
 ## [1.177.0] - 2026-11-08
 
 ### Added
 
-- **End cap thickness direction (FR-FT-121).** End Cap chooses **Outward** (the plate past the end), **Inward** (the overall length stays: the member is cut back by the plate's thickness, its new end face keeps its name) or **Internal** (the plate fits inside a tube's inner outline with a clearance, flush with the end), as in SolidWorks. The thickness arrow follows the plate.
+- **End cap thickness direction (FR-FT-121).** End Cap chooses **Outward** (the plate past the end), **Inward** (the overall length stays: the member is cut back by the plate's thickness, its new end face keeps its name) or **Internal** (the plate fits inside a tube's inner outline with a clearance, flush with the end), as in other CAD apps. The thickness arrow follows the plate.
 
 ## [1.176.0] - 2026-11-08
 
 ### Added
 
-- **End cap corner fillets (FR-FT-121).** End Cap's corner treatment can round the plate's corners (Fillet, with a radius) as well as chamfer them, as in SolidWorks.
+- **End cap corner fillets (FR-FT-121).** End Cap's corner treatment can round the plate's corners (Fillet, with a radius) as well as chamfer them, as in other CAD apps.
 
 ### Fixed
 
@@ -2088,7 +2094,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- Motion studies: trace paths, as SolidWorks' Results → Trace Path. **Add track… → Trace path…** asks for a click on a moving component; the path of that point over the study is drawn in the view with a marker that follows the playhead. Its row (show/hide, delete) opens a panel that plots the distance from the start, the speed or X/Y/Z against time with the playhead on the plot, shows the position and speed at the playhead and the path length, and saves the points as CSV (time, X, Y, Z, speed) (FR-FT-122).
+- Motion studies: trace paths, as a CAD app's Results → Trace Path. **Add track… → Trace path…** asks for a click on a moving component; the path of that point over the study is drawn in the view with a marker that follows the playhead. Its row (show/hide, delete) opens a panel that plots the distance from the start, the speed or X/Y/Z against time with the playhead on the plot, shows the position and speed at the playhead and the path length, and saves the points as CSV (time, X, Y, Z, speed) (FR-FT-122).
 
 ## [1.174.0] - 2026-11-08
 
@@ -2103,7 +2109,7 @@ More from modelling the Leuenberger steam engine through the UI:
 
 ### Added
 
-- **Merge arc segment bodies (FR-FT-121).** Structural Member adds **Merge arc segment bodies**, as in SolidWorks: an arc of the path and the segments that run on tangent from it become one bent body, listed once in the cut list with its whole length along the centreline.
+- **Merge arc segment bodies (FR-FT-121).** Structural Member adds **Merge arc segment bodies**, as in other CAD apps: an arc of the path and the segments that run on tangent from it become one bent body, listed once in the cut list with its whole length along the centreline.
 
 ## [1.169.0] - 2026-11-08
 
@@ -2121,7 +2127,7 @@ More from modelling the Leuenberger steam engine through the UI:
 
 ### Added
 
-- **Perimeter circle (FR-SK-014)**: the Circle ▾ menu adds Perimeter circle, as in SolidWorks. Click three points or curves: the circle passes through the points and touches the lines, circles and arcs you click, with tangent relations, so three sides of a triangle give its inscribed circle (or an outside one, depending on where you click). The preview follows the pointer before the third click.
+- **Perimeter circle (FR-SK-014)**: the Circle ▾ menu adds Perimeter circle, as in other CAD apps. Click three points or curves: the circle passes through the points and touches the lines, circles and arcs you click, with tangent relations, so three sides of a triangle give its inscribed circle (or an outside one, depending on where you click). The preview follows the pointer before the third click.
 
 ## [1.166.0] - 2026-11-08
 
@@ -2133,13 +2139,13 @@ More from modelling the Leuenberger steam engine through the UI:
 
 ### Added
 
-- **Style spline (FR-SK-019)**: the Line ▾ menu adds Style spline, as in SolidWorks. Click its control points: the curve starts and ends at the first and last ones and is pulled towards the others without passing through them, with the control polygon drawn while you sketch and when it is selected. Drag a control point to reshape it. The kernel gets the same B-spline (cubic, clamped, uniform knots) as one exact edge, so extrudes, cuts and revolves follow it exactly.
+- **Style spline (FR-SK-019)**: the Line ▾ menu adds Style spline, as in other CAD apps. Click its control points: the curve starts and ends at the first and last ones and is pulled towards the others without passing through them, with the control polygon drawn while you sketch and when it is selected. Drag a control point to reshape it. The kernel gets the same B-spline (cubic, clamped, uniform knots) as one exact edge, so extrudes, cuts and revolves follow it exactly.
 
 ## [1.163.0] - 2026-11-08
 
 ### Added
 
-- **Intermittent fillet beads (FR-FT-121).** Fillet Bead gets SolidWorks' Intermittent weld option: welds of a set length every pitch (centre to centre) from the start of each run of edges, following round corners; **Staggered** starts every other run half a pitch on, so welds on two sides of a joint alternate. The cut list lists intermittent and staggered welds as their own rows with the weld length and pitch, and the length is the total weld actually laid.
+- **Intermittent fillet beads (FR-FT-121).** Fillet Bead gets a CAD app's Intermittent weld option: welds of a set length every pitch (centre to centre) from the start of each run of edges, following round corners; **Staggered** starts every other run half a pitch on, so welds on two sides of a joint alternate. The cut list lists intermittent and staggered welds as their own rows with the weld length and pitch, and the length is the total weld actually laid.
 
 ## [1.161.0] - 2026-11-08
 
@@ -2152,7 +2158,7 @@ More from modelling the Leuenberger steam engine through the UI:
 Found while modelling the Leuenberger steam engine through the UI only:
 
 - Assemblies: placed parts never got exact geometry (their faces lost the face type when moved), so axes and radii came from the mesh and valid mates were refused as "over-defined". Parts now get exact faces again, and a solve that stalls within 1e-5 of the model size (mesh-only components) counts as solved.
-- Revolve accepts a profile line lying on the axis as the axis, as SolidWorks does.
+- Revolve accepts a profile line lying on the axis as the axis, as a CAD app does.
 - Hole: counterbore, countersink and counterdrill sizes still at their automatic values follow a typed diameter (a Ø3.2 countersink kept the M6 head). Clicking a curved face says "Pick a flat face or a plane: this one is curved."
 - Sketcher: a typed line chain ending on the sketch origin joins it; typed sizes place dimensions clear of the geometry; sketch fillets work on construction corners and virtual sharps; tangency at a shared end counts once, so a fully dimensioned slot shows 0 DOF.
 - The arrow keys turn the view while a command button has focus (they did nothing after clicking Mate or Insert).
@@ -2161,7 +2167,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 
 ### Added
 
-- **Cut list item properties (FR-FT-121).** In the weldment Cut List dialog each item's description, part number and notes can be typed, like SolidWorks' cut list item properties. They are kept with the part (and survive rebuilds while the item stays the same size), rename the item in the Features tree's Cut list folder and go into the CSV as extra columns.
+- **Cut list item properties (FR-FT-121).** In the weldment Cut List dialog each item's description, part number and notes can be typed, like a CAD app's cut list item properties. They are kept with the part (and survive rebuilds while the item stays the same size), rename the item in the Features tree's Cut list folder and go into the CSV as extra columns.
 
 ## [1.158.0] - 2026-11-08
 
@@ -2180,13 +2186,13 @@ Found while modelling the Leuenberger steam engine through the UI only:
 
 ### Added
 
-- Motion studies: stretch and copy key points by dragging, as in SolidWorks. Alt+drag a key to stretch the timing: several selected keys stretch about the key at the other end of the selection, and a single key stretches the whole study (keys and motors) from 0 so that key lands where you drop it. Keys stop at the study's ends and never pass keys that are not stretched. With several keys selected, the panel's **Time scale** (%) does the same from the keyboard. Ctrl+drag a key, or one of several selected keys, to copy it (them) to the drop point; dashed copies follow the pointer while you drag (FR-FT-122).
+- Motion studies: stretch and copy key points by dragging, as in other CAD apps. Alt+drag a key to stretch the timing: several selected keys stretch about the key at the other end of the selection, and a single key stretches the whole study (keys and motors) from 0 so that key lands where you drop it. Keys stop at the study's ends and never pass keys that are not stretched. With several keys selected, the panel's **Time scale** (%) does the same from the keyboard. Ctrl+drag a key, or one of several selected keys, to copy it (them) to the drop point; dashed copies follow the pointer while you drag (FR-FT-122).
 
 ## [1.153.0] - 2026-11-08
 
 ### Added
 
-- **Trim/Extend End miter and End butt (FR-FT-121).** Trim/Extend has an End miter type, as in SolidWorks: pick a face of one member, then a face of the other. Both are lengthened (or shortened) to where their axes meet and cut on the plane that halves the corner, so two members from separate sketches or features meet in a clean mitre. Members that run parallel are refused with a message. **End butt 1** and **End butt 2** join the same two members square: one stops at the other's side and the other runs on to its far side.
+- **Trim/Extend End miter and End butt (FR-FT-121).** Trim/Extend has an End miter type, as in other CAD apps: pick a face of one member, then a face of the other. Both are lengthened (or shortened) to where their axes meet and cut on the plane that halves the corner, so two members from separate sketches or features meet in a clean mitre. Members that run parallel are refused with a message. **End butt 1** and **End butt 2** join the same two members square: one stops at the other's side and the other runs on to its far side.
 
 ## [1.152.0] - 2026-11-08
 
@@ -2198,20 +2204,20 @@ Found while modelling the Leuenberger steam engine through the UI only:
 
 ### Added
 
-- **Cut list folder (FR-FT-121).** A weldment part's Features tree has a Cut list folder under Solid Bodies, as in SolidWorks: one row per cut list item (profile, length and quantity, plates and welds too). Clicking an item highlights its bodies in the view; a double click or the context menu opens the Cut List dialog. Selecting a body in Solid Bodies now highlights it as well.
+- **Cut list folder (FR-FT-121).** A weldment part's Features tree has a Cut list folder under Solid Bodies, as in other CAD apps: one row per cut list item (profile, length and quantity, plates and welds too). Clicking an item highlights its bodies in the view; a double click or the context menu opens the Cut List dialog. Selecting a body in Solid Bodies now highlights it as well.
 
 ## [1.150.0] - 2026-11-08
 
 ### Added
 
-- Motion studies: select several keys at once, as in SolidWorks. Ctrl+click or Shift+click adds a key to the selection, dragging on an empty part of the tracks draws a box that selects the keys it touches, and Ctrl+A selects every key (Esc clears). Selected keys move together (drag one of them, or Alt+←/→), take an interpolation from the key menu or the panel, delete together, and copy together: keys copied from one track paste onto any track of the same kind at the playhead, keys from several tracks paste back onto their own tracks, keeping their spacing (FR-FT-122).
+- Motion studies: select several keys at once, as in other CAD apps. Ctrl+click or Shift+click adds a key to the selection, dragging on an empty part of the tracks draws a box that selects the keys it touches, and Ctrl+A selects every key (Esc clears). Selected keys move together (drag one of them, or Alt+←/→), take an interpolation from the key menu or the panel, delete together, and copy together: keys copied from one track paste onto any track of the same kind at the playhead, keys from several tracks paste back onto their own tracks, keeping their spacing (FR-FT-122).
 
 ## [1.147.0] - 2026-11-08
 
 ### Added
 
 - **Structural member groups (FR-FT-121).** Each segment in the Structural Member panel has a group list. Segments moved to a new group get their own profile position, rotation angle and mirror, so a frame's rails and posts can face different ways within one feature. Group 1 keeps the settings above.
-- **Pick member path segments in the view (FR-FT-121).** While a Structural Member is open, clicking a line or arc of the path sketch (or a face of the member's preview) ticks or unticks that segment, as in SolidWorks; a segment of another sketch starts the selection over with that sketch.
+- **Pick member path segments in the view (FR-FT-121).** While a Structural Member is open, clicking a line or arc of the path sketch (or a face of the member's preview) ticks or unticks that segment, as in other CAD apps; a segment of another sketch starts the selection over with that sketch.
 
 ## [1.146.0] - 2026-11-08
 
@@ -2256,7 +2262,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 
 ### Added
 
-- **Modify box** (FR-UI-114): placing or double-clicking a sketch dimension opens a small box next to it with the dimension name, the value (expressions allowed), spin arrows, ✓, ✕ and ⟲ Rebuild, as in SolidWorks. The sketch follows the value as you type; Enter or ✓ keeps it, Esc or ✕ puts the old value back. ↑/↓ and the mouse wheel step the value (Shift ×10, Alt ×0.1).
+- **Modify box** (FR-UI-114): placing or double-clicking a sketch dimension opens a small box next to it with the dimension name, the value (expressions allowed), spin arrows, ✓, ✕ and ⟲ Rebuild, as in other CAD apps. The sketch follows the value as you type; Enter or ✓ keeps it, Esc or ✕ puts the old value back. ↑/↓ and the mouse wheel step the value (Shift ×10, Alt ×0.1).
 - **Feature dimensions on the model** (FR-UI-115): double-click a face to show the dimensions of the feature that made it (its sketch dimensions and extrude depth) on the model. Click one to change it in the Modify box: ⟲ rebuilds with the typed value, ✓ keeps it as one undo step, ✕ goes back. Esc or a click elsewhere hides them.
 - **Resizable panels** (FR-UI-002): drag the inner edge of the left and right panels, the drawing side panel or the top of the motion study timeline to resize them; the sizes are remembered, a double-click on the edge restores the default, and the edge also works from the keyboard (arrow keys). Dialogs resize from their corner and open at the size you left them.
 
@@ -2319,7 +2325,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 
 ### Added
 
-- **Document tabs** (FR-DOC-003, FR-UI-120): every part, assembly, drawing and model file you open or make gets a tab at the bottom of the window, as in SolidWorks.
+- **Document tabs** (FR-DOC-003, FR-UI-120): every part, assembly, drawing and model file you open or make gets a tab at the bottom of the window, as in other CAD apps.
   - A click switches documents; each keeps its undo history.
   - A drawing's tab shows the sheet over the model it was made from, and the model's tab takes you back to it.
   - ✕ or a middle click closes a tab and asks first when it has unsaved changes.
@@ -2337,7 +2343,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 
 ### Added
 
-- Motion studies: zoom the timeline in and out (⊕ / ⊖, the + and − keys, or Ctrl+wheel about the pointer) to place keys a frame apart in long studies, and ⤢ fits the whole study again, as SolidWorks' timeline zoom buttons do. The ruler ticks follow the zoom, and the zoomed timeline scrolls to keep the playhead in view while it plays (FR-FT-122).
+- Motion studies: zoom the timeline in and out (⊕ / ⊖, the + and − keys, or Ctrl+wheel about the pointer) to place keys a frame apart in long studies, and ⤢ fits the whole study again, as a CAD app's timeline zoom buttons do. The ruler ticks follow the zoom, and the zoomed timeline scrolls to keep the playhead in view while it plays (FR-FT-122).
 
 ## [1.122.0] - 2026-11-08
 
@@ -2349,7 +2355,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 
 ### Added
 
-- **Command bar** (FRS 13.2, FR-UI-010 to FR-UI-013, FR-UI-117 to FR-UI-119): one tabbed bar under the header holds every 3D command, as in SolidWorks' CommandManager.
+- **Command bar** (FRS 13.2, FR-UI-010 to FR-UI-013, FR-UI-117 to FR-UI-119): one tabbed bar under the header holds every 3D command, as in a CAD app's CommandManager.
   - A part shows the tabs **Features**, **Sketch**, **Surfaces**, **Weldments** and **Evaluate**. An assembly shows **Assembly** and **Evaluate**. A plain model shows **Evaluate**.
   - The measuring tools, which had their own row in the header, are now on the **Evaluate** tab.
   - Undo ▾, Redo, Save ▾ and STEP sit at the right end of the tab strip.
@@ -2375,27 +2381,27 @@ Found while modelling the Leuenberger steam engine through the UI only:
 
 ### Added
 
-- **Loft guide curves (FR-FT-082).** The Loft panel has a Guide curves group: pick open sketches or curves that touch every profile, and the loft's sections grow and shrink to pass through them, like SolidWorks. One guide scales the sections evenly; two or more stretch them towards each guide, so two guides on the sides of a rectangle widen it without making it taller. A guide that misses a profile is reported.
+- **Loft guide curves (FR-FT-082).** The Loft panel has a Guide curves group: pick open sketches or curves that touch every profile, and the loft's sections grow and shrink to pass through them, like a CAD app. One guide scales the sections evenly; two or more stretch them towards each guide, so two guides on the sides of a rectangle widen it without making it taller. A guide that misses a profile is reported.
 
 ## [1.118.0] - 2026-11-08
 
 ### Added
 
-- Motion studies: the key point menu (right-click a key, the menu key or Shift+F10) sets how the motion runs into the key, as in SolidWorks: Linear, Snap (jump: the value holds, then jumps at the key), Ease in, Ease out or Ease in/out. Keys show it by their shape (FR-FT-122).
+- Motion studies: the key point menu (right-click a key, the menu key or Shift+F10) sets how the motion runs into the key, as in other CAD apps: Linear, Snap (jump: the value holds, then jumps at the key), Ease in, Ease out or Ease in/out. Keys show it by their shape (FR-FT-122).
 - Copy and paste keys: Ctrl+C copies the selected key, Ctrl+V pastes it onto the selected track at the playhead; right-clicking an empty part of a track offers Add key here and Paste here. Keys paste onto tracks of the same kind (a distance key onto distance mates, an angle key onto angle mates).
 
 ## [1.116.0] - 2026-11-08
 
 ### Added
 
-- **Recognize Holes (FR-FT-102).** Sweep ▾ → Recognize Holes finds the round holes in the body, through or blind with a flat or drilled bottom, like SolidWorks FeatureWorks. A Delete Face fills them, and they come back as Hole features, one per face and size. An imported STEP body gets holes you can resize, move or delete, and the solid stays the same.
+- **Recognize Holes (FR-FT-102).** Sweep ▾ → Recognize Holes finds the round holes in the body, through or blind with a flat or drilled bottom, like a CAD app's feature recognition. A Delete Face fills them, and they come back as Hole features, one per face and size. An imported STEP body gets holes you can resize, move or delete, and the solid stays the same.
 
 ## [1.115.0] - 2026-11-08
 
 ### Added
 
 - **Weldments** (FR-FT-121), Structural Member:
-  - **Corners**: each corner where the member's lines meet can have its own treatment (mitre, butt 1, butt 2 or none), kept when the member's corner treatment changes, like picking a corner in SolidWorks.
+  - **Corners**: each corner where the member's lines meet can have its own treatment (mitre, butt 1, butt 2 or none), kept when the member's corner treatment changes, like picking a corner in CAD apps.
   - **Weld gap**: a gap at every corner, split between the two ends of a mitre; a butted member stops that far short of the one running through. The cut list lengths follow.
   - **Description** for the cut list, in place of the profile's name.
 
@@ -2426,7 +2432,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 
 ### Added
 
-- **Indent (FR-BODY-007).** Pick a target body and the tool bodies pressed into it. The tools are cut out of the target, grown by the clearance, and a wall of the given thickness follows their shape on the side they press into, like SolidWorks' Indent on a stamped plate. **Cut** leaves only the pocket. The tool bodies stay. Find it in Sweep ▾ next to Combine.
+- **Indent (FR-BODY-007).** Pick a target body and the tool bodies pressed into it. The tools are cut out of the target, grown by the clearance, and a wall of the given thickness follows their shape on the side they press into, like a CAD app's Indent on a stamped plate. **Cut** leaves only the pocket. The tool bodies stay. Find it in Sweep ▾ next to Combine.
 - **Sweep start tangency (FR-FT-080).** Start and End Tangency → **Path tangent** turns a profile that is not square to the path so that it starts square to it.
 
 ## [1.107.0] - 2026-11-08
@@ -2462,7 +2468,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 
 ### Added
 
-- Motion studies: placement tracks move and turn a component that no mate holds over the study (keys with a move along X/Y/Z in mm and turns about X/Y/Z in degrees about its own origin), as dragging a component at a time in SolidWorks' animator (FR-FT-122).
+- Motion studies: placement tracks move and turn a component that no mate holds over the study (keys with a move along X/Y/Z in mm and turns about X/Y/Z in degrees about its own origin), as dragging a component at a time in a CAD app's animator (FR-FT-122).
 - Camera keys keep the orthographic zoom, which changes smoothly between keys.
 
 ## [1.104.0] - 2026-11-08
@@ -2478,7 +2484,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 
 ### Added
 
-- **Relations to model edges in sketches (FR-SK-064).** In the sketcher, click a model edge in the view (not a sketch item) and it is referenced into the sketch as a construction copy that follows the edge. It joins the selection, so Parallel, Coincident, Equal, Tangent, Concentric and the other relations work straight against model geometry, like picking an edge in SolidWorks' Add Relations.
+- **Relations to model edges in sketches (FR-SK-064).** In the sketcher, click a model edge in the view (not a sketch item) and it is referenced into the sketch as a construction copy that follows the edge. It joins the selection, so Parallel, Coincident, Equal, Tangent, Concentric and the other relations work straight against model geometry, like picking an edge in a CAD app's Add Relations.
 
 ## [1.100.0] - 2026-11-08
 
@@ -2513,7 +2519,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 
 ### Added
 
-- Motion studies: appearance tracks fade a component in or out, or hide and show it, over the study (opacity keys 0–100 %, **Hidden** / **Shown** set a key), as SolidWorks' component visibility and transparency keys (FR-FT-122).
+- Motion studies: appearance tracks fade a component in or out, or hide and show it, over the study (opacity keys 0–100 %, **Hidden** / **Shown** set a key), as a CAD app's component visibility and transparency keys (FR-FT-122).
 - Motion timeline: Alt+←/→ moves the selected key one frame (Shift: ten), without passing its neighbours.
 
 ## [1.97.0] - 2026-11-08
@@ -2537,7 +2543,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 
 ### Added
 
-- **Motion studies** (FR-FT-122, FRS P6): **Motion study** on the assembly bar opens a timeline under the view, as SolidWorks' MotionManager does.
+- **Motion studies** (FR-FT-122, FRS P6): **Motion study** on the assembly bar opens a timeline under the view, as a CAD app's MotionManager does.
   - Key tracks on distance and angle mates; select a key to type its time, value and interpolation (linear or ease in/out), drag keys along the timeline, double-click a track to add one.
   - Motors on mates: rotary (rpm) or linear (mm/s), constant speed or oscillating, from a start to an end time, on distance, angle, concentric, hinge and screw mates. The other components follow through the mate solver, frame by frame from the one before, so linkages keep their branch; frames that cannot be solved are reported.
   - Exploded view and camera tracks, and the animation wizard: Explode, Collapse and Rotate model fill a track over the study.
@@ -2807,7 +2813,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 
 ### Added
 
-- **Dimensions on drawings** (FR-DRW-021): **Dimension** (D) works like SolidWorks' Smart Dimension. Click a line for its length, a circle for its diameter (an arc for its radius), two points (corners or circle centres) for the distance between them, a point and a line or two parallel lines for the square distance, or two lines at an angle for the angle; the dimension follows the cursor as a preview, and the side you move to makes it horizontal, vertical or aligned. Edges highlight under the cursor and corners snap.
+- **Dimensions on drawings** (FR-DRW-021): **Dimension** (D) works like a CAD app's Smart Dimension. Click a line for its length, a circle for its diameter (an arc for its radius), two points (corners or circle centres) for the distance between them, a point and a line or two parallel lines for the square distance, or two lines at an angle for the angle; the dimension follows the cursor as a preview, and the side you move to makes it horizontal, vertical or aligned. Edges highlight under the cursor and corners snap.
 - Dimensions are drawn to ISO 129: thin extension lines with a gap, filled arrows (outside when there is no room), 3.5 mm text above the line, reading from the bottom or the right. Select a dimension by its text to drag it, change its direction, decimals, prefix and suffix, type text over the value, or give it a tolerance: ±, deviations (stacked), limits, or an ISO 286 fit such as H7.
 - Dimensions are associative (AT-P5-3): they hold on to the model's edges by the names of the faces they join, so after the part changes they find their edges again and show the new values.
 - **Model items** (FR-DRW-020, Annotate ▾): the part's driving sketch dimensions and extrude depths go into the view where each reads best (looking square at its sketch, or for a depth, from the side), once each, outside the view.
@@ -2850,7 +2856,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 
 ### Added
 - **Drawings** (FRS section 11, FR-DRW-001/002/003/010/011/016/030/031). **New drawing** in the New ▾ menu opens a drawing of the open part or STEP / IGES / BREP model in its own workspace. It starts with the **standard 3 views** (front, top and side, lined up) at a standard scale that fits the sheet.
-- **Model view ▾** places any orientation (the six sides, isometric, or the current 3D view). The view follows the cursor with its real lines as a preview, as in SolidWorks. After the click, moving around it and clicking adds **projected views** in first or third angle (diagonal ones give isometric views); Esc or ✓ ends.
+- **Model view ▾** places any orientation (the six sides, isometric, or the current 3D view). The view follows the cursor with its real lines as a preview, as in other CAD apps. After the click, moving around it and clicking adds **projected views** in first or third angle (diagonal ones give isometric views); Esc or ✓ ends.
 - Views are computed by OpenCASCADE's exact hidden-line removal in a worker. Lines and arcs stay exact, hidden edges are dashed, and back edges that lie under visible ones are left out. Per view: scale (sheet, parent's or own), display style (hidden lines dashed, removed, or wireframe), tangent edges (visible, thin or removed) and an optional label.
 - Drag views to move them: projected views follow their parent, and a side or top view only slides along its alignment.
 - **Sheets**: A4–A0 and ANSI A–E, landscape or portrait, first angle (ISO) or third angle (ANSI), with a frame, zone marks and an ISO 7200 or ANSI title block. The title block fills itself from the part (title, part number, revision, author, material, mass from the part's material) and from the sheet (scale, size, sheet n/m); every field can be typed over. Double-click the title block to edit it. More sheets go in tabs below the sheet.
@@ -2875,7 +2881,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 ## [1.61.0] - 2026-11-07
 
 ### Added
-- **Insert part** (FR-BODY-005): **Insert body** also takes a MöbiusCAD part (`.mcadprt`). The part is rebuilt on its own and its result goes in as a body, kept in this part's file (a broken link, as in SolidWorks), with Check and heal available.
+- **Insert part** (FR-BODY-005): **Insert body** also takes a MöbiusCAD part (`.mcadprt`). The part is rebuilt on its own and its result goes in as a body, kept in this part's file (a broken link, as in other CAD apps), with Check and heal available.
 
 ### Fixed
 - Parts that use reference geometry, holes, patterns, sweeps, body features or any feature beyond sketches, extrudes, revolves, fillets and chamfers can be opened again from `.mcadprt` files. Before this, opening them stopped with "Unknown feature type".
@@ -2951,7 +2957,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 ## [1.51.0] - 2026-11-07
 
 ### Added
-- **Ordinate and centerline diameter dimensions** in the sketcher (FR-SK-063). Horizontal and Vertical ordinate, in the Dimension ▾ menu, dimension a row of points from one base: click the base, where the values go, then each point. The base shows 0. A dimension from a centerline to a point or a parallel line, placed on the far side of the centerline, becomes a ⌀ diameter (twice the distance), as SolidWorks does for revolve profiles.
+- **Ordinate and centerline diameter dimensions** in the sketcher (FR-SK-063). Horizontal and Vertical ordinate, in the Dimension ▾ menu, dimension a row of points from one base: click the base, where the values go, then each point. The base shows 0. A dimension from a centerline to a point or a parallel line, placed on the far side of the centerline, becomes a ⌀ diameter (twice the distance), as a CAD app does for revolve profiles.
 
 ### Changed
 - Polygon moved into the Rectangle ▾ menu of the sketch toolbar (still on G), so the toolbar keeps to two rows with the new Dimension ▾ menu.
@@ -3036,12 +3042,12 @@ Found while modelling the Leuenberger steam engine through the UI only:
 
 ### Added
 - **Main planes in the view.** The Top, Front and Right planes are now always drawn, faintly, so you can pick them in the view as well as in the tree. Click one away from the model to select it; the context toolbar offers Sketch and Normal to. Hide or show each one from its right-click menu in the tree.
-- **Show sketches used by features.** A sketch that an extrude or revolve uses is still hidden by default, as in SolidWorks, but Show in its right-click menu draws it over the body again (Hide puts it away).
+- **Show sketches used by features.** A sketch that an extrude or revolve uses is still hidden by default, as in other CAD apps, but Show in its right-click menu draws it over the body again (Hide puts it away).
 - **Normal to button and N shortcut.** Normal to, next to the standard views, and the **N** key turn the view square to the selected flat face, the selected plane or the open sketch; pressing again shows the other side. The point/normal measurement moved from N to **V**.
-- **Centre and midpoint inference.** Hovering a circle or arc edge shows its centre, and hovering a straight edge its midpoint, as a faint marker (as in SolidWorks). Move onto the marker to pick it, even when the model hides that point, as at the far end of a hole.
+- **Centre and midpoint inference.** Hovering a circle or arc edge shows its centre, and hovering a straight edge its midpoint, as a faint marker (as in other CAD apps). Move onto the marker to pick it, even when the model hides that point, as at the far end of a hole.
 
-- **Shaded cosmetic threads** (FR-FT-054). Cosmetic threads and tapped holes now show a helical thread texture on the cylinder over the thread's length, as SolidWorks' shaded cosmetic threads do, as well as the dashed circles. The stripes follow the thread's pitch.
-- **Pinned measurements follow the model.** In a part you are modelling, a pinned measurement remembers the faces and edges it was taken on, by their persistent names, and measures them again after every rebuild, like a SolidWorks reference dimension. Widen the block, and the pinned edge length changes with it. If the geometry is gone, the measurement keeps its old value and is marked "out of date".
+- **Shaded cosmetic threads** (FR-FT-054). Cosmetic threads and tapped holes now show a helical thread texture on the cylinder over the thread's length, as a CAD app's shaded cosmetic threads do, as well as the dashed circles. The stripes follow the thread's pitch.
+- **Pinned measurements follow the model.** In a part you are modelling, a pinned measurement remembers the faces and edges it was taken on, by their persistent names, and measures them again after every rebuild, like a CAD app's reference dimension. Widen the block, and the pinned edge length changes with it. If the geometry is gone, the measurement keeps its old value and is marked "out of date".
 
 ### Fixed
 - **Hole wizard snapping.** A hole clicked near the origin now lands exactly on it (the origin projected onto the hole's face), and clicks also snap to model vertices, arc centres, midpoints and quadrant points lying on the face. Before, the point was rounded from wherever the cursor hit, so it was a little off.
@@ -3077,7 +3083,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 ## [1.31.0] - 2026-11-07
 
 ### Added
-- **Tangent propagation** for Fillet and Chamfer (FR-SEL-005): clicking an edge also picks the edges that run on smoothly from it, such as the whole rounded outline of a plate. It is on by default, as in SolidWorks, and there is a checkbox for it in the panel.
+- **Tangent propagation** for Fillet and Chamfer (FR-SEL-005): clicking an edge also picks the edges that run on smoothly from it, such as the whole rounded outline of a plate. It is on by default, as in other CAD apps, and there is a checkbox for it in the panel.
 - **Feature tree filter** (FR-HIS-011): type in the box above the Features tree to show only the features whose name matches. A folder stays visible while any of its features match.
 
 ## [1.30.0] - 2026-11-07
@@ -3151,7 +3157,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 ## [1.22.0] - 2026-11-07
 
 ### Added
-- **Context toolbar** (FR-UI-026): clicking a face or an edge of a part opens a small bar by the cursor, as in SolidWorks: Sketch and Normal to on a flat face, Fillet and Chamfer on an edge (they start with that edge), and Edit sketch / Edit feature for the feature that made it. It fades as the pointer moves away.
+- **Context toolbar** (FR-UI-026): clicking a face or an edge of a part opens a small bar by the cursor, as in other CAD apps: Sketch and Normal to on a flat face, Fillet and Chamfer on an edge (they start with that edge), and Edit sketch / Edit feature for the feature that made it. It fades as the pointer moves away.
 - **Selection filter** (FR-SEL-003): F5 or the Filter button turns faces, edges or vertices off so clicks pick only what is wanted, in measuring and modelling alike; Clear resets it.
 - **Select other** (FR-SEL-004): Alt+click picks the face hidden behind the one under the cursor; Alt+click again at the same spot for the next.
 
@@ -3175,13 +3181,13 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - **Convert entities** (FR-SK-035): copies the model edges you click, or all edges of a face, into the sketch as fixed lines, circles and arcs.
 
 ### Changed
-- The sketch toolbar groups related tools behind a ▾ flyout, as in SolidWorks (Rectangle, Circle, Arc, Trim/Extend/Split, Fillet/Chamfer, Offset/Convert); each button shows the last tool picked from it, and Dimension sits next to Select. The bar wraps instead of running under the view cube.
+- The sketch toolbar groups related tools behind a ▾ flyout, as in other CAD apps (Rectangle, Circle, Arc, Trim/Extend/Split, Fillet/Chamfer, Offset/Convert); each button shows the last tool picked from it, and Dimension sits next to Select. The bar wraps instead of running under the view cube.
 
 ## [1.19.4] - 2026-11-07
 
 ### Added
 - Revolve angle handle: an orange arc about the axis with a grip at the end angle. Drag it round the axis to set the angle (1° steps, Shift for 0.1°, up to a full turn; Mid plane sweeps both ways). Selecting a revolve in the tree and dragging its grip edits it at once as one undo step, like the extrude arrow.
-- Cut preview: while a cut (extrude or revolve) is open, the material it removes is shown as a see-through yellow body with its outline, as in SolidWorks.
+- Cut preview: while a cut (extrude or revolve) is open, the material it removes is shown as a see-through yellow body with its outline, as in other CAD apps.
 
 ### Fixed
 - Dragging a handle keeps working when the pointer leaves the 3D view; the release is no longer lost.
@@ -3189,7 +3195,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 ## [1.19.3] - 2026-11-07
 
 ### Changed
-- Feature panels are laid out like SolidWorks' PropertyManager: ✓/✕ at the top, then titled groups (Extrude: From, Direction 1, Direction 2; Revolve: Axis of revolution, Direction 1, Profile; Fillet and Chamfer: Items, Parameters, Options; Plane: First reference, Placement).
+- Feature panels are laid out like a CAD app's PropertyManager: ✓/✕ at the top, then titled groups (Extrude: From, Direction 1, Direction 2; Revolve: Axis of revolution, Direction 1, Profile; Fillet and Chamfer: Items, Parameters, Options; Plane: First reference, Placement).
 - Fillet and Chamfer list the picked edges ("Edge 1", "Edge 2"…) with a remove button on each, and show the whole new rounded or bevelled face as a see-through yellow ghost over the body.
 - An extrude or revolve being edited shows its new faces tinted yellow, as a preview.
 - While drawing in a sketch, a label at the cursor gives the live size (length and angle, radius, width × height).
@@ -3200,7 +3206,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 ## [1.19.2] - 2026-11-06
 
 ### Fixed
-- Fillet and Chamfer preview live again, SolidWorks style: while edges are picked on the body, the new faces show in see-through yellow and a callout at the first edge gives the radius or distances; it follows every change of edges or size. A size that does not fit shows its error in the panel at once.
+- Fillet and Chamfer preview live again, CAD app style: while edges are picked on the body, the new faces show in see-through yellow and a callout at the first edge gives the radius or distances; it follows every change of edges or size. A size that does not fit shows its error in the panel at once.
 
 ## [1.19.1] - 2026-11-06
 
@@ -3228,7 +3234,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 ## [1.18.0] - 2026-11-06
 
 ### Added
-- Part modelling, the first slice of the parametric modeller in [docs/FRS-modelling.md](docs/FRS-modelling.md) (phases P0 and P1). **New part** (the page icon next to Open, or on the start screen) starts a part with a feature history; the **Features** tab lists the origin planes, sketches and features, and a command bar over the view holds the commands, SolidWorks style, with ✓ / ✕ in the corner of the view.
+- Part modelling, the first slice of the parametric modeller in [docs/FRS-modelling.md](docs/FRS-modelling.md) (phases P0 and P1). **New part** (the page icon next to Open, or on the start screen) starts a part with a feature history; the **Features** tab lists the origin planes, sketches and features, and a command bar over the view holds the commands, CAD app style, with ✓ / ✕ in the corner of the view.
 - Sketcher on Top (XY), Front (XZ), Right (YZ) or any flat face: lines, corner and centre rectangles, circles, arcs and points, with snapping and automatic horizontal, vertical and coincident relations. Smart dimensions take units and arithmetic (`25.4 mm`, `1in`, `100/3`, `30deg`). Relations: coincident, horizontal, vertical, parallel, perpendicular, collinear, equal, tangent, concentric, midpoint, symmetric, fix, plus construction geometry. A constraint solver shows free (blue), fully defined (black) and over-defined (red) geometry and the degrees of freedom left, and geometry can be dragged.
 - Features: Extrude and Cut (blind, mid plane, through all, second direction, reverse), Revolve (boss or cut, any angle, around a sketch line), Fillet and Chamfer on edges picked in the view (a face picks all its edges). The view previews the result while values are typed. Faces and edges keep their names through edits, so changing an early feature rebuilds the later ones on the moved faces.
 - Edit any feature by double-clicking it, suppress or delete it (dependent features are named first), undo and redo every step (Ctrl+Z / Ctrl+Y, 200 steps).
@@ -3249,10 +3255,10 @@ Found while modelling the Leuenberger steam engine through the UI only:
 ## [1.16.0] - 2026-11-06
 
 ### Added
-- SolidWorks parts (.sldprt) and assemblies (.sldasm) open directly, with no SolidWorks needed. MöbiusCAD reads the Parasolid model stored inside each part and rebuilds it as exact geometry (planes, cylinders, cones, spheres, tori, fillets, B-splines and intersection curves), so measurements, sections, mass properties and STEP export all work as on a STEP file. Parts made from imported STEP bodies and files from before SolidWorks 2015 open too.
+- SLDPRT parts (.sldprt) and assemblies (.sldasm) open directly, with no other CAD app needed. MöbiusCAD reads the Parasolid model stored inside each part and rebuilds it as exact geometry (planes, cylinders, cones, spheres, tori, fillets, B-splines and intersection curves), so measurements, sections, mass properties and STEP export all work as on a STEP file. Parts made from imported STEP bodies and files from before 2015 open too.
 - Assemblies are put together from their component list with each part's placement, sub-assemblies included, and keep their tree and part names. Drop the assembly with its part files, or drag the whole folder onto the window; parts that are missing are named in a notice and left out.
-- When a file has no geometry that can be read, SolidWorks' own preview picture is shown instead.
-- The Parasolid reader is parasolid-kit (MIT / Apache-2.0), compiled to WebAssembly (about 190 KB compressed) and loaded only when a SolidWorks file is opened.
+- When a file has no geometry that can be read, the file's own preview picture is shown instead.
+- The Parasolid reader is parasolid-kit (MIT / Apache-2.0), compiled to WebAssembly (about 190 KB compressed) and loaded only when an SLDPRT/SLDASM file is opened.
 
 ## [1.15.0] - 2026-11-06
 
@@ -3454,7 +3460,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.554.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.555.0...HEAD
+[1.555.0]: https://github.com/kothf/step-viewer/compare/v1.554.0...v1.555.0
 [1.554.0]: https://github.com/kothf/step-viewer/compare/v1.553.0...v1.554.0
 [1.553.0]: https://github.com/kothf/step-viewer/compare/v1.552.0...v1.553.0
 [1.552.0]: https://github.com/kothf/step-viewer/compare/v1.551.0...v1.552.0

@@ -740,7 +740,7 @@ function pcbStats() {
 
 const is3dName = (n: string) => /\.(step|stp|p21|iges|igs|brep|stl|obj|3mf|sldprt|sldasm)$/i.test(n);
 
-/** Opens dropped or chosen files: one 3D model, a SolidWorks assembly with its parts, or any number of PCB layers / zips. */
+/** Opens dropped or chosen files: one 3D model, an SLDASM assembly with its parts, or any number of PCB layers / zips. */
 async function openFiles(files: File[]) {
   if (!files.length) return;
   // File ▸ recent documents: the main file first (a drawing, part or assembly, else the biggest 3D model).
@@ -782,7 +782,7 @@ let loadToken = 0;
 }
 
 /**
- * SolidWorks: the kernel worker reads the Parasolid model inside each part,
+ * SLDPRT / SLDASM: the kernel worker reads the Parasolid model inside each part,
  * places an assembly's parts and hands back STEP, which then opens as usual.
  * An assembly needs its part files dropped with it (or its whole folder).
  */
@@ -790,12 +790,12 @@ async function openSolidWorks(files: File[]) {
   const asm = files.filter(f => /\.sldasm$/i.test(f.name)).sort((a, b) => b.size - a.size);
   const main = asm[0] ?? files[0];
   const name = main.name;
-  if (kernelOff) { toast(t("SolidWorks files need the geometry kernel, which is turned off (?nokernel)."), true); return; }
+  if (kernelOff) { toast(t("SLDPRT/SLDASM files need the geometry kernel, which is turned off (?nokernel)."), true); return; }
   ++loadToken;
   const token = loadToken;
   restoreEmpty();
   setDoc(name, "loading");
-  setLoading(true, t("Reading the SolidWorks model in {name}…", { name }), 5);
+  setLoading(true, t("Reading the SLDPRT/SLDASM model in {name}…", { name }), 5);
   const parts = asm.length ? files : [main];
   if (!asm.length && files.length > 1) toast(t("Opening {name}. Open one part at a time, or drop the assembly with its parts.", { name }));
   let res: Awaited<ReturnType<typeof kernel.solidworks>>;
@@ -823,11 +823,11 @@ async function openSolidWorks(files: File[]) {
   if (loadToken !== token + 1) return;
   if (report.missing.length) toast(t("{n} part file is missing and left out: {list}. Drop the assembly together with its parts, or the whole folder.|{n} part files are missing and left out: {list}. Drop the assembly together with its parts, or the whole folder.|{n} part files are missing and left out: {list}. Drop the assembly together with its parts, or the whole folder.", { n: report.missing.length, list: listNames(report.missing) }), "warn");
   else if (report.failedFaces) toast(t("{n} face could not be rebuilt and is left out.|{n} faces could not be rebuilt and are left out.|{n} faces could not be rebuilt and are left out.", { n: report.failedFaces }), "warn");
-  if (report.notes.length) console.info("SolidWorks import notes:", report.notes);
+  if (report.notes.length) console.info("SLDPRT/SLDASM import notes:", report.notes);
 }
 const listNames = (a: string[]) => (a.length > 4 ? `${a.slice(0, 4).join(", ")} (+${a.length - 4})` : a.join(", "));
 
-/** SolidWorks' own thumbnail of a file whose geometry could not be read. */
+/** The authoring CAD app's own thumbnail of a file whose geometry could not be read. */
 let emptyHtml = "";
 function showPreview(png: Uint8Array, name: string) {
   const card = $("#empty .empty-card");
@@ -841,7 +841,7 @@ function showPreview(png: Uint8Array, name: string) {
   img.src = url;
   img.alt = t("Preview of {name}", { name });
   const p = document.createElement("p");
-  p.textContent = t("This is the picture SolidWorks saved in the file. Its geometry could not be read, so nothing can be measured.");
+  p.textContent = t("This is the picture the CAD app saved in the file. Its geometry could not be read, so nothing can be measured.");
   const b = document.createElement("button");
   b.className = "btn primary";
   b.textContent = t("Choose files…");
@@ -1626,7 +1626,7 @@ function nextColor() {
   return c;
 }
 
-// ---------- associative measurements (modelling): re-measured after every rebuild, like SolidWorks reference dimensions ----------
+// ---------- associative measurements (modelling): re-measured after every rebuild, like a CAD app's reference dimensions ----------
 /** Picks by persistent face and edge names, or null when one cannot be named (then the measurement stays fixed). */
 function pickRefs(picks: Entity[]): PickRef[] | null {
   if (!modeller.active || !picks.length) return null;
@@ -2088,7 +2088,7 @@ function hover() {
   const snap = snapper.pick(lastPointer.x - r.left, lastPointer.y - r.top);
   state.lastSnap = snap;
   hoverGlyph(snap?.kind ?? null);
-  // The hovered edge's centre or midpoint, shown faintly so it can be picked (SolidWorks-style inference).
+  // The hovered edge's centre or midpoint, shown faintly so it can be picked (CAD-app-style inference).
   const hint = snapper.hint, hintEl = $("#snap-hint");
   hintEl.hidden = !hint || (!!snap && snap.point.distanceTo(hint.point) < 1e-9);
   if (hint && !hintEl.hidden) {
@@ -2412,14 +2412,14 @@ const nav = bindNavigation({
 });
 const sessionViews = new Map<string, NamedView[]>();
 // Heads-up view bar (FR-UI-022): with a part or an assembly open, the view commands float at the top centre of the
-// view (as in SolidWorks): Zoom to area, Previous view, the standard views, projection and display style. The
+// view (as in other CAD apps): Zoom to area, Previous view, the standard views, projection and display style. The
 // header's own groups are moved there (their buttons and handlers stay the same) and go back for model files.
 {
   const hud = document.createElement("div");
   hud.id = "hud";
   hud.className = "hud";
   // A plain group, not role=toolbar: a toolbar's arrow keys would move focus along it, so after a click on Front the
-  // arrows did nothing at all; here they turn the view, as in SolidWorks (exam #78).
+  // arrows did nothing at all; here they turn the view, as in other CAD apps (exam #78).
   hud.setAttribute("role", "group");
   hud.setAttribute("aria-label", t("View"));
   hud.hidden = true;
@@ -3059,7 +3059,7 @@ function showMassMarks() {
   viewer.invalidate();
 }
 $("#mass-run").addEventListener("click", e => busy(e.currentTarget as HTMLElement, runMass));
-// Mass properties panel (FR-MAT-002): Evaluate ▸ Mass properties, like SolidWorks' dialog but beside the view,
+// Mass properties panel (FR-MAT-002): Evaluate ▸ Mass properties, like a CAD app's dialog but beside the view,
 // following the selection, visibility, units and coordinate system while it is open.
 const mpPanel = $("#mp-panel"), mpBtn = $("#mp-btn");
 function massView(): MassView | null {

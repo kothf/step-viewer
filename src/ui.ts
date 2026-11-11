@@ -118,7 +118,7 @@ export function confirmModal(text: string, ok = "Delete", title = "Are you sure?
 
 /**
  * Asks for a file name before a document is downloaded (exam #9): browsers without the save dialog
- * would otherwise write "Part1.mcadprt" with no chance to name it, where SolidWorks shows Save As on the
+ * would otherwise write "Part1.mcadprt" with no chance to name it, where a CAD app shows Save As on the
  * first save. Returns the name with `ext`, or null when cancelled.
  */
 export function askFileName(suggested: string, ext: string): Promise<string | null> {

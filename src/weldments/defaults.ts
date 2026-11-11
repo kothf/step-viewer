@@ -1,5 +1,5 @@
 // Weldment defaults (FR-FT-121): a new Structural Member, End Cap, Gusset or Fillet Bead starts with the
-// profile, sizes and options used last, as SolidWorks' weldment PropertyManagers do. Kept per browser in
+// profile, sizes and options used last, as a CAD app's weldment PropertyManagers do. Kept per browser in
 // localStorage `mc:weldLast:<type>`; pure apart from the two storage helpers at the end.
 import type { Feature, Num } from "../model/types";
 import { PROFILE_TYPES, profileSizes, type ProfileType } from "./profiles";

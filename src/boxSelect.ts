@@ -9,7 +9,7 @@ export function rectOf(ax: number, ay: number, bx: number, by: number): Rect {
   return { x0: Math.min(ax, bx), y0: Math.min(ay, by), x1: Math.max(ax, bx), y1: Math.max(ay, by) };
 }
 
-/** A box dragged from right to left selects by crossing (SolidWorks). */
+/** A box dragged from right to left selects by crossing (a CAD app). */
 export const isCrossing = (startX: number, endX: number) => endX < startX;
 
 export const inRect = (r: Rect, x: number, y: number) => x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1;

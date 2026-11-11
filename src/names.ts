@@ -1,7 +1,7 @@
 // Repairs names that OpenCASCADE decoded with the wrong character set.
 //
 // STEP strings should carry non-ASCII text as \X2\…\X0\ escapes, but many Russian CAD
-// exports (KOMPAS, older SolidWorks, Inventor with a Russian locale) write raw Windows-1251
+// exports (KOMPAS, older CAD apps, Inventor with a Russian locale) write raw Windows-1251
 // bytes. OCCT reads every raw byte as one Latin-1 character, so "ПЛ31а-п_черн" arrives as
 // "ÏË31à-ï_÷åðí". That mapping is lossless (byte b → U+00b), so the bytes can be recovered
 // and decoded again. The same holds for UTF-8 written through \X\ escapes ("Ð\u009fÐ\u009b"),

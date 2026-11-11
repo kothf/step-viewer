@@ -105,7 +105,7 @@ export interface Mate {
   ratio?: number;
   /** Gear, screw and a concentric with `lockRot`: a's and b's transforms when the mate was made (their motion is measured from there). */
   t0?: [Tf, Tf];
-  /** Concentric: b may not turn about the shared axis relative to a (SolidWorks' Lock rotation). */
+  /** Concentric: b may not turn about the shared axis relative to a (a CAD app's Lock rotation). */
   lockRot?: boolean;
   /**
    * Angle: the direction (in a's part coordinates) the angle turns about, a × b when the mate was made. With it the

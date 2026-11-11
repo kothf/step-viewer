@@ -1,5 +1,5 @@
 // Document tabs (FRS 7, FR-DOC-003, FR-UI-120): every open part, assembly, drawing and model file gets a tab
-// at the bottom of the window, as in SolidWorks. Only one document is live at a time; the others are parked
+// at the bottom of the window, as in other CAD apps. Only one document is live at a time; the others are parked
 // with their undo history (`park`) and come back on a click (`resume`). A drawing is shown over the 3D view,
 // so while a drawing tab is active the 3D document under it stays live (`under`).
 import { t } from "./i18n";

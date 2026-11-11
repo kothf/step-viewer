@@ -1,4 +1,4 @@
-// Sketch entities on the drawing sheet (SolidWorks' sketch in a drawing): lines, rectangles, circles and polylines in
+// Sketch entities on the drawing sheet (a CAD app's sketch in a drawing): lines, rectangles, circles and polylines in
 // sheet millimetres, drawn with an ISO 128 line type, for marking up a sheet beside the projected views.
 import type { Pen, Prim, Layer } from "./prims";
 import type { SketchAnnot, SkPen } from "./types";
@@ -34,7 +34,7 @@ export function skPrims(a: SketchAnnot): { prims: Prim[]; box: [number, number, 
   return { prims, box: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)], ring: P.flat(), open: !closed };
 }
 
-/** The point to use for a click at `p` after `prev`: horizontal or vertical when within 3° of it (SolidWorks' inference). */
+/** The point to use for a click at `p` after `prev`: horizontal or vertical when within 3° of it (a CAD app's inference). */
 export function orthoSnap(prev: P2 | undefined, p: P2): { p: P2; hv: "h" | "v" | null } {
   if (!prev) return { p, hv: null };
   const dx = p[0] - prev[0], dy = p[1] - prev[1], L = Math.hypot(dx, dy);

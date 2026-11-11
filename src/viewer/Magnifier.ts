@@ -1,4 +1,4 @@
-// Magnifying glass (FR-SEL-010, SolidWorks' G): a round inset over the view shows the area around the point where it
+// Magnifying glass (FR-SEL-010, a CAD app's G): a round inset over the view shows the area around the point where it
 // was opened, magnified. Pointer events inside it are passed on to what lies under the magnified point, so hovering,
 // snapping and picks work at that zoom. The wheel inside changes the factor; G or Esc closes it.
 import * as THREE from "three";

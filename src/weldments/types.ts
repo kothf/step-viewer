@@ -5,7 +5,7 @@ import type { Anchor, ProfileType } from "./profiles";
 
 /**
  * Where a member's profile sits on its path: a library anchor (box corners, edge middles, centre), "o" the
- * profile sketch's origin, or `p:<point id>` any point of the profile sketch (SolidWorks' Locate profile).
+ * profile sketch's origin, or `p:<point id>` any point of the profile sketch (a CAD app's Locate profile).
  */
 export type Pierce = Anchor | "o" | `p:${string}`;
 
@@ -53,7 +53,7 @@ export interface MemberFeature {
   /** Coped cut: a butted member's end follows the shape of the member it stops at (a saddle on a round tube) instead of a flat cut square to its face. */
   coped?: boolean;
   /**
-   * Alignment (SolidWorks' Align): the profile's vertical (`axis` "v") or horizontal ("h") axis points along this
+   * Alignment (a CAD app's Align): the profile's vertical (`axis` "v") or horizontal ("h") axis points along this
    * straight sketch line, square to each segment, before the rotation angle; for every group. Absent: a 2D path
    * sketch's normal (else world Z) is up.
    */
@@ -102,7 +102,7 @@ export interface EndCapFeature {
   /** Old files: true = `dir` "in". */
   inward?: boolean;
   /**
-   * Thickness direction (SolidWorks): "out" adds the plate past the end; "in" keeps the overall length
+   * Thickness direction (a CAD app): "out" adds the plate past the end; "in" keeps the overall length
    * (the member is cut back by the thickness); "internal" fits the plate inside a hollow profile's
    * inner outline, flush with the end, `inset` = clearance.
    */
@@ -203,7 +203,7 @@ export function cutKey(c: CutItem): string {
 export interface SubWeld { id: string; name: string; bodies: string[] }
 
 /**
- * The cut list as shown (SolidWorks' sub-weldment folders): items whose bodies sit in different sub-weldments are split,
+ * The cut list as shown (a CAD app's sub-weldment folders): items whose bodies sit in different sub-weldments are split,
  * the quantity following the body count (a bead's volume and length share out by its bodies). Items outside every sub-weldment
  * come first, then each sub-weldment's in `subs` order; `cutKey` ignores `sub`, so item properties stay shared.
  */
