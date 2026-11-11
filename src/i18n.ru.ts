@@ -2731,6 +2731,8 @@ export const RU: Record<string, string> = {
   "Palettes": "Палитры",
   "Annotation": "Обозначения",
   // Drawing Annotation tab: groups and tool tooltips
+  "Fold the palette": "Свернуть палитру",
+  "Show the palette": "Показать палитру",
   "Edit and file": "Правка и файл",
   "Every annotation: dimensions, notes, symbols, tolerances, centre lines, tables and sheet sketch": "Все обозначения: размеры, примечания, знаки, допуски, осевые линии, таблицы и эскиз на листе",
   "Views": "Виды",
