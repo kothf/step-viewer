@@ -236,7 +236,7 @@ export function featureLabel(name: string) {
 
 /** The sketch editor settings from Preferences (FR-UI-080). */
 function sketchPrefs(ed: SketchEditor, p: Prefs) {
-  ed.modelSnap = p.modelSnap; ed.autoRels = p.autoRels; ed.showRels = p.showRels; ed.slotDims = p.slotDims;
+  ed.modelSnap = p.modelSnap; ed.autoRels = p.autoRels; ed.showRels = p.showRels; ed.slotDims = p.slotDims; ed.addDims = p.addDims;
   ed.setGrid({ show: p.grid, snap: p.gridSnap, spacing: p.gridStep });
 }
 
@@ -474,7 +474,7 @@ export class ModelController {
         sketchPrefs(ed, p);
         const pm = document.getElementById("mc-pm");
         const box = (a: string, v: boolean) => { const i = pm?.querySelector<HTMLInputElement>(`[data-a=${a}]`); if (i) i.checked = v; };
-        box("grid", ed.grid); box("gridsnap", ed.gridSnap); box("autorels", ed.autoRels); box("showrels", ed.showRels); box("slotdims", ed.slotDims); box("modelsnap", ed.modelSnap);
+        box("grid", ed.grid); box("gridsnap", ed.gridSnap); box("autorels", ed.autoRels); box("showrels", ed.showRels); box("slotdims", ed.slotDims); box("adddims", ed.addDims); box("modelsnap", ed.modelSnap);
         const gs = pm?.querySelector<HTMLInputElement>("[data-a=gridstep]");
         if (gs) gs.value = ed.gridSpacing ? String(ed.gridSpacing) : "";
         ed.render();
@@ -5097,7 +5097,7 @@ export class ModelController {
       + (sk ? "" : `<div class="mc-sep"></div><span class="mc-fly">${btn("save", t("Save"), t("Save the part as .mcadprt (Ctrl+S)"))}<button class="mc-caret" data-fly="save" aria-haspopup="menu" title="${esc(t("More save options"))}" aria-label="${esc(t("More save options"))}">▾</button></span>` + btn("step", t("STEP"), t("Export the body as STEP")));
     q.querySelectorAll<HTMLButtonElement>("[data-c]").forEach(b => b.addEventListener("click", () => this.command(b.dataset.c!)));
     q.querySelector<HTMLElement>('[data-fly="undo"]')?.addEventListener("click", e => this.historyMenu(e.currentTarget as HTMLElement));
-    q.querySelectorAll<HTMLButtonElement>("[data-qt]").forEach(b => b.addEventListener("click", () => this.sketchToggle(b.dataset.qt as "grid" | "gridsnap" | "autorels")));
+    q.querySelectorAll<HTMLButtonElement>("[data-qt]").forEach(b => b.addEventListener("click", () => this.sketchToggle(b.dataset.qt as "grid" | "gridsnap" | "autorels" | "adddims")));
     q.querySelector<HTMLElement>('[data-fly="qsnap"]')?.addEventListener("click", e => {
       const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
       this.quickSnapMenu(r.left, r.bottom + 4, () => $("#mc-quick").querySelector<HTMLElement>('[data-fly="qsnap"]')?.focus());
@@ -5122,25 +5122,28 @@ export class ModelController {
       `<button class="mc-b mc-qt${on ? " on" : ""}" data-qt="${k}" title="${esc(title)}" aria-pressed="${on}"><span class="mc-i" aria-hidden="true">${icon}</span><span class="mc-l">${esc(label)}</span></button>`;
     return tg("grid", "#", t("Grid"), t("Show grid"), ed.grid)
       + tg("gridsnap", "⌗", t("Snap to grid"), t("Points that snap to nothing else go to the nearest grid point; hold Ctrl to place freely."), ed.gridSnap)
-      + tg("autorels", "⊥", t("Inferences"), t("Lines snap horizontal, vertical, perpendicular, parallel or tangent and keep that relation; hold Ctrl to draw without them."), ed.autoRels);
+      + tg("autorels", "⊥", t("Inferences"), t("Lines snap horizontal, vertical, perpendicular, parallel or tangent and keep that relation; hold Ctrl to draw without them."), ed.autoRels)
+      + tg("adddims", "↔", t("Add dimensions"), t("New lines, rectangles, circles and arcs get their sizes as dimensions and the Modify box opens on each."), ed.addDims);
   }
 
   /** Flips one sketch toggle, remembers it, and keeps the quick bar and the sketch panel in step. */
-  private sketchToggle(k: "grid" | "gridsnap" | "autorels") {
+  private sketchToggle(k: "grid" | "gridsnap" | "autorels" | "adddims") {
     const m = this.mode;
     if (m.kind !== "sketch") return;
     const ed = m.editor;
     if (k === "grid") ed.setGrid({ show: !ed.grid });
     else if (k === "gridsnap") ed.setGrid({ snap: !ed.gridSnap, show: ed.gridSnap ? undefined : true });
+    else if (k === "adddims") ed.addDims = !ed.addDims;
     else ed.autoRels = !ed.autoRels;
     try {
+      localStorage.setItem("mc:skAddDims", ed.addDims ? "1" : "0");
       localStorage.setItem("mc:skGrid", ed.grid ? "1" : "0");
       localStorage.setItem("mc:skGridSnap", ed.gridSnap ? "1" : "0");
       localStorage.setItem("mc:autoRels", ed.autoRels ? "1" : "0");
     } catch { /* private mode */ }
     const pm = document.getElementById("mc-pm");
     const box = (a: string, v: boolean) => { const i = pm?.querySelector<HTMLInputElement>(`[data-a=${a}]`); if (i) i.checked = v; };
-    box("grid", ed.grid); box("gridsnap", ed.gridSnap); box("autorels", ed.autoRels);
+    box("grid", ed.grid); box("gridsnap", ed.gridSnap); box("autorels", ed.autoRels); box("adddims", ed.addDims);
     this.renderQuick();
     $("#mc-quick").querySelector<HTMLElement>(`[data-qt="${k}"]`)?.focus();
   }
@@ -5233,14 +5236,14 @@ export class ModelController {
         ["cslot", t("Centre slot"), t("Centerpoint straight slot: the centre, one end, then the width")], ["aslot", t("Arc slot"), t("Centerpoint arc slot: the arc's centre, start, end, then the width")],
         ["aslot3", t("3-pt arc slot"), t("3-point arc slot: start, end, a point on the arc, then the width")],
         ["spline", t("Spline"), t("Spline: click points it passes through; double-click ends it")], ["sspline", t("Style spline"), t("Style spline: click its control points; double-click ends it")], ["ellipse", t("Ellipse"), t("Ellipse: centre, end of the major axis, then a point on it")], ["earc", t("Partial ellipse"), t("Partial ellipse: centre, major axis, start, then end")], ["parabola", t("Parabola"), t("Parabola: focus, vertex, then the start and the end")], ["conic", t("Conic"), t("Conic: start, end, the top vertex, then a point that sets rho")], ["eqn", t("Equation curve"), t("Equation driven curve: y = f(x), or x(t) and y(t)")], ["point", t("Point"), t("Point (P)")], ["text", t("Text"), t("Text: letters for embossing or engraving, from the bundled fonts")],
-        ["trim", t("Trim"), t("Trim: click the piece of a curve to remove (T)")], ["extend", t("Extend"), t("Extend a line or arc to the next curve (E)")], ["split", t("Split"), t("Split a line or arc where you click")], ["jog", t("Jog line"), t("Jog line: click a line where the jog starts, then where it ends and how far it steps out")],
+        ["trim", t("Trim"), t("Trim: click the piece of a curve to remove (T)")], ["extend", t("Extend"), t("Extend a line or arc to the next curve (E)")], ["split", t("Split"), t("Split a line or arc where you click")], ["jog", t("Jog line"), t("Jog line: click a line where the jog starts, then where it ends and how far it steps out")], ["segment", t("Segment"), t("Segment: divide a line, arc or circle into equal pieces")],
         ["fillet", t("Fillet"), t("Sketch fillet: click a corner where two lines meet")], ["chamfer", t("Chamfer"), t("Sketch chamfer: click a corner where two lines meet")],
         ["offset", t("Offset"), t("Offset entities: a curve or a chain, to the cursor's side (O)")], ["convert", t("Convert"), t("Convert entities: copy model edges into the sketch")], ["intersect", t("Intersection curve"), t("Intersection curve: where the sketch plane cuts model faces")],
         ["dim", t("Dimension"), t("Smart dimension (D)")],
         ["hord", t("Horizontal ordinate"), t("Horizontal ordinate dimensions: X distances from one base")], ["vord", t("Vertical ordinate"), t("Vertical ordinate dimensions: Y distances from one base")],
       ];
       // Related tools share one button with a flyout (SolidWorks-style): the button shows the last one used.
-      const groups: SkTool[][] = [["select"], ["dim", "hord", "vord"], ["line", "cline", "mline", "spline", "sspline", "eqn"], ["rect", "crect", "rect3", "crect3", "pgram", "polygon"], ["circle", "circle3", "pcircle", "ellipse", "earc", "parabola", "conic"], ["arc", "arc3", "tarc"], ["slot", "cslot", "aslot", "aslot3"], ["point", "text"], ["trim", "extend", "split", "jog"], ["fillet", "chamfer"], ["offset", "convert", "intersect"]];
+      const groups: SkTool[][] = [["select"], ["dim", "hord", "vord"], ["line", "cline", "mline", "spline", "sspline", "eqn"], ["rect", "crect", "rect3", "crect3", "pgram", "polygon"], ["circle", "circle3", "pcircle", "ellipse", "earc", "parabola", "conic"], ["arc", "arc3", "tarc"], ["slot", "cslot", "aslot", "aslot3"], ["point", "text"], ["trim", "extend", "split", "jog", "segment"], ["fillet", "chamfer"], ["offset", "convert", "intersect"]];
       const info = new Map(tools.map(x => [x[0], x]));
       html = `<div class="mc-g" role="group" aria-label="${esc(t("Sketch"))}">${groups.map(g => {
         const cur = g.includes(tool) ? tool : (this.flyLast.get(g[0]) as SkTool | undefined) ?? g[0];
@@ -5294,8 +5297,8 @@ export class ModelController {
         return;
       }
       if (mm.kind !== "sketch" || cmTab() !== "sketch") return;
-      const g = ({ line: ["line", "cline", "mline", "spline", "sspline", "eqn"], rect: ["rect", "crect", "rect3", "crect3", "pgram", "polygon"], circle: ["circle", "circle3", "pcircle", "ellipse", "earc", "parabola", "conic"], arc: ["arc", "arc3", "tarc"], slot: ["slot", "cslot", "aslot", "aslot3"], trim: ["trim", "extend", "split", "jog"], fillet: ["fillet", "chamfer"], offset: ["offset", "convert", "intersect"], dim: ["dim", "hord", "vord"], point: ["point", "text"] } as Record<string, SkTool[]>)[key];
-      const label: Record<string, string> = { point: t("Point"), text: t("Text"), line: t("Line"), cline: t("Centerline"), mline: t("Midpoint line"), spline: t("Spline"), sspline: t("Style spline"), rect: t("Corner rectangle"), crect: t("Centre rectangle"), rect3: t("3-point corner rectangle"), crect3: t("3-point centre rectangle"), pgram: t("Parallelogram"), polygon: t("Polygon"), circle: t("Circle"), circle3: t("3-point circle"), pcircle: t("Perimeter circle"), arc: t("Centre-point arc"), arc3: t("3-point arc"), tarc: t("Tangent arc"), slot: t("Straight slot"), cslot: t("Centerpoint straight slot"), aslot: t("Centerpoint arc slot"), aslot3: t("3-point arc slot"), ellipse: t("Ellipse"), earc: t("Partial ellipse"), parabola: t("Parabola"), conic: t("Conic"), eqn: t("Equation driven curve"), trim: t("Trim"), extend: t("Extend"), split: t("Split"), jog: t("Jog line"), fillet: t("Sketch fillet"), chamfer: t("Sketch chamfer"), offset: t("Offset entities"), convert: t("Convert entities"), intersect: t("Intersection curve"), dim: t("Smart dimension"), hord: t("Horizontal ordinate"), vord: t("Vertical ordinate") };
+      const g = ({ line: ["line", "cline", "mline", "spline", "sspline", "eqn"], rect: ["rect", "crect", "rect3", "crect3", "pgram", "polygon"], circle: ["circle", "circle3", "pcircle", "ellipse", "earc", "parabola", "conic"], arc: ["arc", "arc3", "tarc"], slot: ["slot", "cslot", "aslot", "aslot3"], trim: ["trim", "extend", "split", "jog", "segment"], fillet: ["fillet", "chamfer"], offset: ["offset", "convert", "intersect"], dim: ["dim", "hord", "vord"], point: ["point", "text"] } as Record<string, SkTool[]>)[key];
+      const label: Record<string, string> = { point: t("Point"), text: t("Text"), line: t("Line"), cline: t("Centerline"), mline: t("Midpoint line"), spline: t("Spline"), sspline: t("Style spline"), rect: t("Corner rectangle"), crect: t("Centre rectangle"), rect3: t("3-point corner rectangle"), crect3: t("3-point centre rectangle"), pgram: t("Parallelogram"), polygon: t("Polygon"), circle: t("Circle"), circle3: t("3-point circle"), pcircle: t("Perimeter circle"), arc: t("Centre-point arc"), arc3: t("3-point arc"), tarc: t("Tangent arc"), slot: t("Straight slot"), cslot: t("Centerpoint straight slot"), aslot: t("Centerpoint arc slot"), aslot3: t("3-point arc slot"), ellipse: t("Ellipse"), earc: t("Partial ellipse"), parabola: t("Parabola"), conic: t("Conic"), eqn: t("Equation driven curve"), trim: t("Trim"), extend: t("Extend"), split: t("Split"), jog: t("Jog line"), segment: t("Segment"), fillet: t("Sketch fillet"), chamfer: t("Sketch chamfer"), offset: t("Offset entities"), convert: t("Convert entities"), intersect: t("Intersection curve"), dim: t("Smart dimension"), hord: t("Horizontal ordinate"), vord: t("Vertical ordinate") };
       const r = b.getBoundingClientRect();
       this.showMenu(g.map(id => [label[id], () => { this.flyLast.set(g[0], id); mm.editor.setTool(id); this.renderBar(); this.renderPanel(); }, ICON_SVG[`sk:${id}`]] as [string, () => void, string]), r.left - 40, r.bottom + 4,
         () => $("#mc-tools").querySelector<HTMLElement>(`[data-fly="${b.dataset.fly}"]`)?.focus());
@@ -7579,9 +7582,12 @@ export class ModelController {
       + `</div>`
       + this.textBox(ed)
       + this.curveBox(ed)
+      + (["line", "cline", "mline", "tarc", "rect", "crect", "rect3", "crect3", "pgram", "circle", "circle3", "pcircle", "arc", "arc3", "polygon"].includes(ed.tool) ? `<label class="chk pm-chk" title="${esc(t("New lines, rectangles, circles and arcs get their sizes as dimensions and the Modify box opens on each."))}"><input type="checkbox" data-a="adddims"${ed.addDims ? " checked" : ""} />${esc(t("Add dimensions"))}</label>` : "")
       + (["slot", "cslot", "aslot", "aslot3"].includes(ed.tool) ? `<label class="chk pm-chk" title="${esc(t("Slots get width and length (or radius) dimensions, and the Modify box opens on them."))}"><input type="checkbox" data-a="slotdims"${ed.slotDims ? " checked" : ""} />${esc(t("Add dimensions"))}</label>` : "")
       + (ed.tool === "polygon" ? `<label class="pm-field"><span>${esc(t("Sides"))}</span><input type="text" inputmode="numeric" class="pm-n" data-a="sides" value="${ed.polySides}" /></label>` : "")
       + (ed.tool === "fillet" ? `<label class="pm-field"><span>${esc(t("Radius"))}</span><span class="pm-in"><input type="text" inputmode="decimal" class="pm-n" data-a="fr" value="${trimNum(ed.filletRadius * UNITS[units.current].f, 4)}" /><span class="muted">${units.current}</span></span></label>` : "")
+      + (ed.tool === "segment" ? `<label class="pm-field"><span>${esc(t("Number of pieces"))}</span><input type="text" inputmode="numeric" class="pm-n" data-a="segn" value="${ed.segCount}" /></label>`
+        + `<label class="pm-field"><span>${esc(t("Mark with"))}</span><select data-a="segmode">${(["points", "segments"] as const).map(k => `<option value="${k}"${ed.segMode === k ? " selected" : ""}>${esc(t(k === "points" ? "Sketch points" : "Sketch segments"))}</option>`).join("")}</select></label>` : "")
       + (ed.tool === "chamfer" ? `<label class="pm-field"><span>${esc(t("Distance"))}</span><span class="pm-in"><input type="text" inputmode="decimal" class="pm-n" data-a="cd" value="${trimNum(ed.chamferDist * UNITS[units.current].f, 4)}" /><span class="muted">${units.current}</span></span></label>` : "")
       + (ed.tool === "offset" ? `<label class="pm-field"><span>${esc(t("Distance"))}</span><span class="pm-in"><input type="text" inputmode="decimal" class="pm-n" data-a="od" value="${trimNum(ed.offsetDist * UNITS[units.current].f, 4)}" /><span class="muted">${units.current}</span></span></label>`
         + `<label class="chk pm-chk"><input type="checkbox" data-a="oboth"${ed.offsetBoth ? " checked" : ""} />${esc(t("Both sides"))}</label>`
@@ -7605,6 +7611,7 @@ export class ModelController {
     pm.querySelector("[data-a=deldangling]")?.addEventListener("click", () => { ed.deleteItems(ed.danglingRels().map(r => r.id)); this.renderPanel(); });
     pm.querySelector<HTMLInputElement>("[data-a=shownames]")?.addEventListener("change", e => { ed.showNames = (e.target as HTMLInputElement).checked; ed.render(); });
     pm.querySelector<HTMLInputElement>("[data-a=slotdims]")?.addEventListener("change", e => { ed.slotDims = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:slotDims", ed.slotDims ? "1" : "0"); } catch { /* private mode */ } });
+    pm.querySelector<HTMLInputElement>("[data-a=adddims]")?.addEventListener("change", e => { ed.addDims = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:skAddDims", ed.addDims ? "1" : "0"); } catch { /* private mode */ } this.renderQuick(); });
     pm.querySelector<HTMLInputElement>("[data-a=autorels]")?.addEventListener("change", e => { ed.autoRels = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:autoRels", ed.autoRels ? "1" : "0"); } catch { /* private mode */ } this.renderQuick(); });
     pm.querySelector<HTMLInputElement>("[data-a=showrels]")?.addEventListener("change", e => { ed.showRels = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:skRels", ed.showRels ? "1" : "0"); } catch { /* private mode */ } ed.render(); });
     const saveGrid = () => { try { localStorage.setItem("mc:skGrid", ed.grid ? "1" : "0"); localStorage.setItem("mc:skGridSnap", ed.gridSnap ? "1" : "0"); localStorage.setItem("mc:skGridStep", String(ed.gridSpacing || "")); } catch { /* private mode */ } };
@@ -7641,6 +7648,11 @@ export class ModelController {
         catch (err) { toast(t((err as Error).message), true); }
       });
     }
+    pm.querySelector<HTMLInputElement>("[data-a=segn]")?.addEventListener("change", e => {
+      const n = Math.round(+(e.target as HTMLInputElement).value);
+      if (n >= 2 && n <= 100) ed.segCount = n; else { toast(t("Divide into 2 to 100 pieces."), true); (e.target as HTMLInputElement).value = String(ed.segCount); }
+    });
+    pm.querySelector<HTMLSelectElement>("[data-a=segmode]")?.addEventListener("change", e => { ed.segMode = (e.target as HTMLSelectElement).value as typeof ed.segMode; });
     pm.querySelector<HTMLInputElement>("[data-a=oboth]")?.addEventListener("change", e => { ed.offsetBoth = (e.target as HTMLInputElement).checked; this.renderPanel(); });
     pm.querySelector<HTMLSelectElement>("[data-a=ocap]")?.addEventListener("change", e => { ed.offsetCap = (e.target as HTMLSelectElement).value as typeof ed.offsetCap; });
     pm.querySelector<HTMLInputElement>("[data-a=olink]")?.addEventListener("change", e => { ed.offsetLink = (e.target as HTMLInputElement).checked; });
@@ -8631,6 +8643,7 @@ const ICON_SVG: Record<string, string> = {
   "sk:aslot3": S('<path d="M2.5 12.5a5.5 5.5 0 0 1 11 0M5.5 12.5a2.5 2.5 0 0 1 5 0M2.5 12.5a1.5 1.5 0 0 0 3 0M10.5 12.5a1.5 1.5 0 0 0 3 0"/><circle cx="4" cy="12.5" r="1" fill="currentColor"/><circle cx="12" cy="12.5" r="1" fill="currentColor"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/>'),
   "sk:extend": S('<path d="M2 12 9 5"/><path d="M9 5l3.5-3.5" stroke-dasharray="1.5 1.5"/><path d="M10 14 14 2"/>'),
   "sk:split": S('<path d="M2 12 7 7M9 5l5-5"/><circle cx="8" cy="6" r="1.4"/>'),
+  "sk:segment": S('<path d="M1.5 12.5l13-9"/><circle cx="5.8" cy="9.5" r="1.2" fill="currentColor"/><circle cx="10.2" cy="6.5" r="1.2" fill="currentColor"/><path d="M1.5 14.5v-2M14.5 5.5v-2"/>'),
   "sk:jog": S('<path d="M1.5 11.5h4v-6h5v6h4"/><circle cx="5.5" cy="11.5" r="1" fill="currentColor"/><circle cx="10.5" cy="11.5" r="1" fill="currentColor"/>'),
   "sk:chamfer": S('<path d="M2.5 13.5V7l4.5-4.5h6.5"/>'),
   "sk:offset": S('<path d="M2.5 13.5V5.5a3 3 0 0 1 3-3h8"/><path d="M6 13.5V8a2 2 0 0 1 2-2h5.5" stroke-dasharray="1.5 1.5"/>'),

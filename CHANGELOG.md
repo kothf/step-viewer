@@ -5,11 +5,30 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.525.0] - 2026-11-11
+## [1.528.0] - 2026-11-11
 
 ### Added
 - Hole Wizard screw types: counterbores and counterdrills can be sized for ISO 4762 socket head, DIN 7984 low head, ISO 7380 button head or ISO 1207 cheese head screws, and countersinks for ISO 10642 socket or ISO 2009 / 7046 slotted and cross countersunk screws (each metric size offers the types that have a head of that size).
 - Tapped holes: Thread class (6H, 4H, 5H, 7H, 6G; 2B, 1B, 3B for inch) goes into the callout, and Thread display can be Remove thread (the threaded length is cut to the major diameter) or no cosmetic thread.
+
+
+## [1.527.0] - 2026-11-11
+
+### Added
+
+- Sketch **Segment** (Trim ▾ menu, FR-SK-032): divides a line, arc or circle into equal pieces, marked by sketch points on it or cut into that many lines or arcs; the number of pieces and the mode are set in the panel.
+- Sketch **Add dimensions** on creation (FR-UI-052): a new line, rectangle, parallelogram, polygon, circle or arc gets its sizes as dimensions at once and the Modify box opens on each; type a value, or click on to keep the drawn size. On by default; switch it in the sketch quick bar, the sketch panel or Preferences.
+
+## [1.526.0] - 2026-11-11
+
+### Changed
+
+- Drawings: the drawing tree lists the annotations too. Each view has an Annotations group (folded until you open it) under it, and notes, tables and revision clouds on the sheet go under Sheet annotations; each row shows the tool's icon and name, with a note's first line, a datum letter or a balloon's text beside it, and "Dangling" when its model edge is gone. Clicking a row selects the annotation (its properties open and Delete removes it), and selecting one on the sheet opens its group and scrolls to it. Hovering a row outlines the view or annotation on the sheet, and the arrow keys walk the tree (up/down select, right/left open and fold groups).
+
+## [1.525.0] - 2026-11-11
+
+### Added
+- Toolbox: Spacers (hex standoffs female-female and male-female M2 to M8 with cosmetic threads, round spacers M2 to M10) and Retaining rings (DIN 471 for shafts 8 to 60 mm, DIN 472 for bores 10 to 80 mm, drawn from above with the opening and the lug holes). Washers add DIN 127 B spring lock washers M3 to M20.
 
 ## [1.524.0] - 2026-11-11
 
@@ -22,7 +41,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [1.523.0] - 2026-11-11
 
 ### Added
-
 - Sketch **Jog line** (Trim ▾ menu, like SolidWorks): click a line where the jog starts, then where it ends and how far it steps out; the line becomes five lines, the step parallel to it and its sides square to it, with a live preview.
 
 ## [1.522.0] - 2026-11-11
@@ -3270,7 +3288,10 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.525.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.528.0...HEAD
+[1.528.0]: https://github.com/kothf/step-viewer/compare/v1.527.0...v1.528.0
+[1.527.0]: https://github.com/kothf/step-viewer/compare/v1.526.0...v1.527.0
+[1.526.0]: https://github.com/kothf/step-viewer/compare/v1.525.0...v1.526.0
 [1.525.0]: https://github.com/kothf/step-viewer/compare/v1.524.0...v1.525.0
 [1.524.0]: https://github.com/kothf/step-viewer/compare/v1.523.0...v1.524.0
 [1.523.0]: https://github.com/kothf/step-viewer/compare/v1.522.0...v1.523.0
