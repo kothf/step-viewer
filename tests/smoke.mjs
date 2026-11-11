@@ -119,7 +119,7 @@ const inShard = k => {
 };
 // A click on a Features tree row. While a command panel is open the tree is the folded fly-out over the view
 // (FR-UI-003): open it for the click and fold it again, so later clicks in the view are not covered.
-/** A new drawing of the open model with Standard 3 views (since 1.517.0 a new drawing starts with an empty sheet). */
+/** A new drawing of the open model with Standard 3 views (since 1.518.0 a new drawing starts with an empty sheet). */
 async function newDrawing3(pg) {
   await pg.click("#new-more"); await pg.click("#new-drawing");
   await pg.waitForFunction(() => window.__sv.drw.loaded(), null, { timeout: 120000 });
@@ -4686,7 +4686,7 @@ try {
     const rows = () => mp.evaluate(() => [...document.querySelectorAll("#vault-panel .v-row")].map(r => r.textContent.replace(/\s+/g, " ").trim()).join(" | "));
     const newDrawing = async () => {
       await mp.evaluate(() => document.querySelector("#new-drawing").click());
-      // Since 1.517.0 a new drawing starts empty: add Standard 3 views once the model is in.
+      // Since 1.518.0 a new drawing starts empty: add Standard 3 views once the model is in.
       await mp.waitForFunction(() => window.__sv.drw.loaded(), null, { timeout: 90000 });
       await mp.evaluate(() => document.querySelector('#drw [data-a="std3"]').click());
       await mp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length > 0, null, { timeout: 90000 });
@@ -10986,7 +10986,7 @@ try {
     check(/Полосы/.test(ruAna) && !/[A-Za-z]{3}/.test(ruAna) && off.hidden && off.own, `analysis: panel in Russian; turning it off restores the parts (${JSON.stringify([ruAna.slice(0, 60), off])})`);
 
     // Drawing view palette: every standard view drawn; drag the isometric one onto the sheet.
-    // 1.517: a new drawing starts with an empty sheet and the palette (SolidWorks); Standard 3 views stays a command.
+    // 1.518: a new drawing starts with an empty sheet and the palette (SolidWorks); Standard 3 views stays a command.
     await ap.click("#new-more"); await ap.click("#new-drawing");
     await ap.waitForFunction(() => window.__sv.drw.loaded(), null, { timeout: 120000 });
     const fresh = await ap.evaluate(() => ({ n: window.__sv.drw.doc().sheets[0].views.length, st: document.querySelector(".drw-status").textContent }));
@@ -11000,7 +11000,7 @@ try {
     await ap.waitForFunction(() => window.__sv.drw.doc().sheets[0].views.length === 4, null, { timeout: 10000 });
     await ap.keyboard.press("Escape");
     const iso = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views.at(-1); return { orient: v.orient, style: v.style, x: v.x, y: v.y, parent: v.parent ?? null }; });
-    // 1.517: the palette's pictures run behind the views and are never dropped as unwanted, so placing views
+    // 1.518: the palette's pictures run behind the views and are never dropped as unwanted, so placing views
     // while they are made neither blanks them nor starts the drawing worker over (that cost a cold start per view).
     const recycles = await ap.evaluate(() => window.__sv.drw.helper().recycles);
     check(tiles === "front,top,right,iso,back,bottom,left" && iso.orient === "iso" && iso.style === "hlr" && !iso.parent && iso.x > 200 && iso.y > 150 && recycles === 0,
@@ -11034,6 +11034,18 @@ try {
     const unpressed = await ap.evaluate(() => document.querySelectorAll("#drw-pane-annot .drw-at.on").length);
     check(tab.views && !tab.annot && tab.n === 28 && tab.icons === 28 && tab.groups === 6 && tab.menuIcons === 27 && mode.m === "note" && mode.on === "note" && mode.pressed === "true" && unpressed === 0 && /Hole callout/.test(tip) && /round edge/.test(tip),
       `drawing: annotation tab shows the 28 annotation tools as icon tiles in 6 groups (Annotate ▾ rows have icons too); Note starts the note command and shows pressed; tooltips (${JSON.stringify([tab, mode, unpressed, tip])})`);
+    // Command bar: icon-over-label buttons in a Views and an Annotation group, one row at 1440 px; the running tool is
+    // pressed there too; under 1280 px only the icons show. Undo, Save and Export sit on the file row above.
+    await ap.click('.drw-cmds [data-an="balloon"]');
+    const bar = await ap.evaluate(() => { const bs = [...document.querySelectorAll(".drw-cmds .drw-cb")], tops = new Set(bs.map(b => Math.round(b.getBoundingClientRect().top)));
+      return { n: bs.length, groups: document.querySelectorAll(".drw-cmds .drw-cg").length, rows: tops.size, on: [...document.querySelectorAll(".drw-cmds .drw-cb.on")].map(b => b.dataset.tool).join(), labels: bs.every(b => b.querySelector(".mc-l").offsetWidth > 0),
+        file: ["undo", "save", "export"].every(a => document.querySelector(`.drw-top [data-a="${a}"]`)), mode: window.__sv.drw.mode() }; });
+    await ap.keyboard.press("Escape");
+    await ap.setViewportSize({ width: 1100, height: 900 });
+    const narrow = await ap.evaluate(() => { const bs = [...document.querySelectorAll(".drw-cmds .drw-cb")]; return { labels: bs.filter(b => b.querySelector(".mc-l").offsetWidth > 0).length, rows: new Set(bs.map(b => Math.round(b.getBoundingClientRect().top))).size }; });
+    await ap.setViewportSize({ width: 1440, height: 900 });
+    check(bar.n === 17 && bar.groups === 2 && bar.rows === 1 && bar.on === "balloon" && bar.mode === "balloon" && bar.labels && bar.file && narrow.labels === 0 && narrow.rows === 1,
+      `drawing: command bar shows 17 icon commands in two groups in one row, the running tool pressed; icons only under 1280 px (${JSON.stringify([bar, narrow])})`);
     // 1.82.0 break view (FR-DRW-015): select the first front view, leave out u = −25…15 mm; it closes up to a 6 mm gap.
     const fv = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views[0]; const pl = window.__sv.drw.placement(v.id); return { id: v.id, x: v.x, y: v.y, s: pl.s, w: pl.box[2] - pl.box[0], uc: pl.uc }; });
     const clickAt = async (x, y) => { const q = await ap.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await ap.mouse.click(q[0], q[1]); };
