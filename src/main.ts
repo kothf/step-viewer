@@ -137,6 +137,7 @@ const modeller = new ModelController({
   view: v => { if (v === "fit") viewer.fit(); else if (v === "normal") normalTo(); else if (VIEWS[v]) viewer.viewFrom(VIEWS[v]); },
   setCsys: (c, quiet) => setCsys(c ? { ...makeCsys(c.name, c.o, c.z, c.x), src: c.src } : null, true, quiet),
   clearPick: () => { if (state.tool !== "select") setTool("select"); handlePick(null); },
+  measureTool: () => state.tool,
   setDoc: label => setDoc(label, "ready"),
   selectLeftTab: tab => showLeftTab(tab),
   sketchSection: pl => {
