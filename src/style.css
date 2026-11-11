@@ -1435,7 +1435,6 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .vault-win-b { overflow-y: auto; min-height: 0; }
 .v-nofsa { margin-top: 6px; }
 
-<<<<<<< HEAD
 /* Hole Wizard panel (FR-FT-051 UX): Type/Positions tabs, type pictograms, section diagram and callout preview. */
 .pm-htabs { margin: 0 0 4px; }
 .pm-hpreview { display: flex; flex-direction: column; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 8px; padding: 8px; margin: 8px 0; background: var(--panel-2); }
@@ -1455,7 +1454,7 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .pm-hkind:hover { border-color: var(--accent); }
 .pm-hkind.on { border-color: var(--accent); background: var(--accent-soft); }
 .pm-favs > summary { font-size: 12px; font-weight: 600; cursor: pointer; padding: 4px 0; }
-=======
+
 /* Toolbox design library (FR-ASM-028) */
 #asm-pm[data-id="fastener"] { max-height: 80%; }
 #asm-pm .tb-q { width: 100%; box-sizing: border-box; margin: 2px 0 8px; }
@@ -1488,4 +1487,3 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .tb-desig { margin: 6px 0 2px; font-size: 12px; display: flex; gap: 6px; flex-wrap: wrap; align-items: baseline; }
 .tb-desig > span { color: var(--muted); }
 .tb-desig > b { font-family: var(--mono); }
->>>>>>> origin/main
