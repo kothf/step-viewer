@@ -116,7 +116,8 @@ export type PlaneRef =
 export interface CtxRef { comp: string; face: string; host: string; label?: string; p: V3; n: V3; locked?: boolean }
 
 /** World frame of a sketch plane: origin, x and y directions, normal. */
-/** `len` (Hole only): each hole's thread length when the thread runs through all (`HoleFeature.threadEnd`). */
+/** `len` (Hole only): each hole's thread length when the thread runs through all (`HoleFeature.threadEnd`);
+ *  for an Advanced Hole that leaves the material, each hole's depth to the far face. */
 export interface Frame { o: V3; x: V3; y: V3; n: V3; len?: number[] }
 
 export interface SketchFeature {
@@ -563,7 +564,12 @@ export interface HoleFeature {
   /** clear = ISO 273 clearance hole for the size and fit; cdrill = counterdrilled; slot = an obround of `slotLen`;
    *  ptap = tapered tap (pipe thread, NPT or Rc): a 1:16 cone from `taperDia` at the face over the thread depth,
    *  never narrower than the tap drill `diameter`. */
-  kind: "simple" | "cbore" | "csink" | "tapped" | "insert" | "clear" | "cdrill" | "slot" | "ptap";
+  kind: "simple" | "cbore" | "csink" | "tapped" | "insert" | "clear" | "cdrill" | "slot" | "ptap" | "adv";
+  /** Advanced Hole (SolidWorks' Advanced Hole): elements stacked from the face down (`near`, the last one is the
+   *  main hole and runs to the end condition, `diameter` mirrors it) and from the far face in (`far`, holes that
+   *  leave the material only). */
+  near?: HoleElem[];
+  far?: HoleElem[];
   /** Size ("M6", "M8x1", "1/4-20 UNC") the values were taken from; absent for a custom hole. */
   size?: string;
   /** Size table (FR-FT-051): absent = ISO metric coarse. */
@@ -626,6 +632,11 @@ export interface HoleSink { dia: Num; angle: Num }
 
 /** The tapped hole's thread runs the whole drill (thread end Through all; only for holes that are not blind). */
 /** The head pocket a hole is cut with: a counterbored or countersunk slot cuts like a counterbore or countersink. */
+/** An Advanced Hole element: counterbore / straight / tapped = a cylinder of `dia` over `depth` (tapped: `dia` is
+ *  the tap drill, `major`/`pitch` the thread; on the main hole `depth` is the thread depth), countersink = a cone
+ *  from `dia` at its top down to the next element at `angle`. `size` = the table size the values came from. */
+export interface HoleElem { t: "cbore" | "csink" | "straight" | "tapped"; size?: string; dia: Num; depth?: Num; angle?: Num; major?: number; pitch?: number }
+
 export function headKind(f: HoleFeature): HoleFeature["kind"] { return f.kind === "slot" && f.slotHead ? f.slotHead : f.kind; }
 export function threadThrough(f: HoleFeature): boolean { return f.kind === "tapped" && f.threadEnd === "through" && holeExits(f); }
 /** The hole's end is where it leaves the material or meets a face (through, up to next, up to face): far side options apply. */

@@ -3,6 +3,7 @@
 
 import { headKind, holeExits, threadThrough, type HoleFeature, type HoleSink } from "./types";
 import { TAPER, threadClass } from "./holes";
+import { advCallout, advProfile, advStack } from "./advHole";
 
 const DRILL = (118 * Math.PI) / 180;
 
@@ -15,6 +16,7 @@ const DRILL = (118 * Math.PI) / 180;
 export function holeCallout(H: HoleFeature, f: (v: number) => string, fa: (v: number) => string, label: (s: string) => string, count = 1, drillThru = false): string[] {
   const n = count > 1 ? `${count}× ` : "";
   const depth = H.end === "through" ? ` ${label("THRU")}` : H.end === "blind" ? ` ↧${f(H.depth.v)}` : "";
+  if (H.kind === "adv") return advCallout(H, f, fa, label, n, depth);
   const lines: string[] = [];
   lines.push(`${n}Ø${f(H.diameter.v)}${depth}`);
   if (H.kind === "tapped" && H.size) {
@@ -46,6 +48,8 @@ export interface HoleSection {
   half: number;
   /** Tapped: thread radius and its z range; `r1` = radius at z1 for a tapered thread. */
   thread?: { r: number; z0: number; z1: number; r1?: number };
+  /** Advanced Hole: the threads of its tapped elements. */
+  threads?: { r: number; z0: number; z1: number }[];
   /** The hole leaves the plate at the bottom. */
   open: boolean;
   /** The depth is not known here (up to a face, vertex or the next face): drawn schematically. */
@@ -54,6 +58,7 @@ export interface HoleSection {
 
 /** The hole's half section as the kernel cuts it (no lift above the face), null when the values do not make a hole. */
 export function holeSection(H: HoleFeature): HoleSection | null {
+  if (H.kind === "adv") return advSection(H);
   const r = H.diameter.v / 2;
   if (!(r > 1e-6)) return null;
   const ok = (x: number | undefined) => x != null && isFinite(x);
@@ -143,6 +148,24 @@ export function holeSection(H: HoleFeature): HoleSection | null {
   return { prof, plate, half, thread, open, rough };
 }
 
+/** Advanced Hole: its element stack in a plate (blind: the hole's own depth; else deep enough to show both stacks). */
+function advSection(H: HoleFeature): HoleSection | null {
+  const near = H.near ?? [], main = near[near.length - 1];
+  if (!main || !(main.dia.v > 1e-6)) return null;
+  const r = main.dia.v / 2, blind = H.end === "blind", open = holeExits(H), rough = !blind && H.end !== "through";
+  const tipA = H.drillAngle?.v ?? DRILL;
+  const tip = blind && !H.flat && tipA > 0.1 && tipA < Math.PI - 0.1 ? r / Math.tan(tipA / 2) : 0;
+  try {
+    const st = advStack(near, open ? H.far ?? [] : []);
+    const depth = blind ? H.depth.v : st.top + st.bottom + Math.max(4 * r, 2 * r + 0.5 * (st.top + st.bottom));
+    const a = advProfile(near, H.far, depth, open, tip);
+    const plate = open ? depth : depth + tip + Math.max(1.5 * r, 0.25 * depth);
+    const threads = a.threads.map(t => ({ r: t.R, z0: t.z0, z1: t.z1 }));
+    const half = Math.max(a.outer, ...threads.map(t => t.r)) * 1.7 + r * 0.6;
+    return { prof: a.prof, plate, half, open, rough, ...(threads.length ? { threads } : {}) };
+  } catch { return null; }
+}
+
 /** Number for SVG coordinates. */
 const n2 = (v: number) => (Math.round(v * 100) / 100).toString();
 
@@ -159,7 +182,7 @@ export function holeDiagram(s: HoleSection, w = 220, h = 120, icon = false): str
   const holeD = [...right, ...left].map(([r, z], i) => `${i ? "L" : "M"}${X(r)} ${Y(z)}`).join("") + "Z";
   const plateD = `M${X(-s.half)} ${Y(0)}H${X(s.half)}V${Y(s.plate)}H${X(-s.half)}Z`;
   const line = (r: number, z0: number, z1: number, r1 = r) => `M${X(r)} ${Y(z0)}L${X(r1)} ${Y(z1)}`;
-  const th = s.thread ? `<path class="hd-thread" d="${line(s.thread.r, s.thread.z0, s.thread.z1, s.thread.r1)}${line(-s.thread.r, s.thread.z0, s.thread.z1, s.thread.r1 == null ? undefined : -s.thread.r1)}"/>` : "";
+  const th = (s.threads ?? []).map(t => `<path class="hd-thread" d="${line(t.r, t.z0, t.z1)}${line(-t.r, t.z0, t.z1)}"/>`).join("") + (s.thread ? `<path class="hd-thread" d="${line(s.thread.r, s.thread.z0, s.thread.z1, s.thread.r1)}${line(-s.thread.r, s.thread.z0, s.thread.z1, s.thread.r1 == null ? undefined : -s.thread.r1)}"/>` : "");
   // A schematic depth (up to something) gets a wavy break line across the bottom.
   const wave = s.rough ? (() => { const z = s.plate, a = s.plate * 0.04, steps = 8; let d = ""; for (let i = 0; i <= steps; i++) { const r = -s.half + (2 * s.half * i) / steps; d += `${i ? "L" : "M"}${X(r)} ${Y(z + (i % 2 ? a : -a))}`; } return `<path class="hd-break" d="${d}"/>`; })() : "";
   return `<svg class="${icon ? "hole-icon" : "hole-diagram"}" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" aria-hidden="true">`
@@ -170,7 +193,7 @@ export function holeDiagram(s: HoleSection, w = 220, h = 120, icon = false): str
 }
 
 /** Kinds in the order the panel shows them. */
-export const HOLE_KINDS: HoleFeature["kind"][] = ["simple", "clear", "cbore", "csink", "cdrill", "tapped", "ptap", "slot", "insert"];
+export const HOLE_KINDS: HoleFeature["kind"][] = ["simple", "clear", "cbore", "csink", "cdrill", "tapped", "ptap", "slot", "insert", "adv"];
 
 /** A small pictogram of a hole kind: a typical one of that kind (through or blind), drawn like the section. */
 export function holeIcon(kind: HoleFeature["kind"], w = 34, h = 26): string {
@@ -189,6 +212,12 @@ export function holeIcon(kind: HoleFeature["kind"], w = 34, h = 26): string {
     if (i > 0) s.prof[i] = [1.6, 3.4];
     if (s.thread) s.thread.r1 = 1.9;
     return holeDiagram(s, w, h, true);
+  }
+  // Advanced Hole: a counterbore over the hole with a countersink on the far side.
+  if (kind === "adv") {
+    H.end = "through";
+    H.near = [{ t: "cbore", dia: { v: 5.6 }, depth: { v: 1.4 } }, { t: "straight", dia: { v: 3 } }];
+    H.far = [{ t: "csink", dia: { v: 5.4 }, angle: { v: Math.PI / 2 } }];
   }
   // A slot reads best from above: an obround in a plate.
   if (kind === "slot") return `<svg class="hole-icon" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" aria-hidden="true"><path class="hd-mat" fill-rule="evenodd" d="M2 2H${w - 2}V${h - 2}H2ZM${w / 2 - 7} ${h / 2 - 4}H${w / 2 + 7}A4 4 0 0 1 ${w / 2 + 7} ${h / 2 + 4}H${w / 2 - 7}A4 4 0 0 1 ${w / 2 - 7} ${h / 2 - 4}Z"/>`

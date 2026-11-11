@@ -3607,6 +3607,28 @@ try {
     const cback = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { k: d.kind, h: d.slotHead ?? null, s: d.size }; });
     check(cslot.h === "cbore" && cslot.cb === 11 && cslot.cd === 6.4 && cslot.box && cslot.callout.includes("⌴Ø11") && cslot.ok && cback.k === "tapped" && cback.h === null && cback.s === "M6",
       `model 1.532: Hole Wizard counterbored slot (${JSON.stringify({ cslot, cback })})`);
+    // 1.534 (FR-FT-051): Advanced Hole: M6 counterbore over the clearance hole, a far side countersink added, then
+    // the counterbore turned into a countersink; back to tapped M6.
+    await mp.selectOption('#mc-pm select[data-k="kind"]', "adv");
+    await idle();
+    await mp.selectOption('#mc-pm select[data-k="end"]', "through");
+    await idle();
+    await mp.click('#mc-pm [data-aeadd="far"]');
+    await idle();
+    const adv = await mp.evaluate(() => { const d = window.__sv.model.mode().draft, l = window.__sv.model.last(); return { near: d.near?.map(e => e.t + ":" + (e.size ?? "") + ":" + e.dia.v).join(","), far: d.far?.map(e => e.t + ":" + e.dia.v).join(","), d: d.diameter.v, rows: document.querySelectorAll("#mc-pm .pm-aelem").length, callout: document.querySelector('#mc-pm .pm-hcallout')?.textContent ?? "", ok: l.statuses.every(s => s.ok), warn: !!document.querySelector("#mc-pm .pm-warn") }; });
+    await mp.selectOption('#mc-pm select[data-ae="near:0:t"]', "csink");
+    await idle();
+    const adv2 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft, l = window.__sv.model.last(); return { near: d.near?.map(e => e.t + ":" + e.dia.v).join(","), callout: document.querySelector('#mc-pm .pm-hcallout')?.textContent ?? "", ok: l.statuses.every(s => s.ok) }; });
+    await mp.selectOption('#mc-pm select[data-k="kind"]', "tapped");
+    await idle();
+    await mp.selectOption('#mc-pm select[data-k="size"]', "M6");
+    await idle();
+    await mp.selectOption('#mc-pm select[data-k="threadEnd"]', "through").catch(() => {});
+    await idle();
+    const aback = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { k: d.kind, near: d.near ?? null, s: d.size }; });
+    check(adv.near === "cbore:M6:11,straight:M6:6.6" && adv.far === "csink:13.44" && adv.d === 6.6 && adv.rows === 3 && adv.callout.includes("⌴Ø11") && adv.callout.includes("FAR SIDE") && adv.ok && !adv.warn
+      && adv2.near === "csink:13.44,straight:6.6" && adv2.callout.includes("⌵Ø13.44 × 90°") && adv2.ok && aback.k === "tapped" && aback.near === null && aback.s === "M6",
+      `model 1.534: Hole Wizard advanced hole (${JSON.stringify({ adv, adv2, aback })})`);
     // Options: Near side countersink defaults to the hole + 1 mm at 90°; unticking takes it away.
     await mp.check('#mc-pm input[data-k="optNear"]').catch(() => {});
     await idle();
@@ -3903,7 +3925,7 @@ try {
     await idle();
     await mp.selectOption('#mc-pm select[data-k="size"]', "M8");
     await idle();
-    check(hux.svg && hux.callout.includes("⌴Ø15") && hux.icons === 9 && hux.on === "cbore" && hux.tabs === "type:true,pos:false" && hux.favOpen === false
+    check(hux.svg && hux.callout.includes("⌴Ø15") && hux.icons === 10 && hux.on === "cbore" && hux.tabs === "type:true,pos:false" && hux.favOpen === false
       && huxK.kind === "csink" && huxK.callout.includes("⌵Ø") && huxP.pos && !huxP.type && huxP.face,
       `model 1.524: Hole Wizard panel preview, type pictograms and Type/Positions tabs (${JSON.stringify({ hux, huxK, huxP })})`);
     // 1.528 (FR-FT-051): the counterbore follows the screw type: DIN 7984 low head M8 = Ø15 × 5.6 (ISO 4762's Ø15 × 8.6 with a 3 mm lower head).
@@ -7074,7 +7096,7 @@ try {
       await mp.keyboard.press("Escape");
       check(holeScope && recent.shown && recent.head === "Recent commands" && recent.items[0] === "Hole" && recent.items[1] === "Cut" && recent.items.includes("Zoom to fit"),
         `model 1.506: Hole has Feature scope; right-click on empty space lists Recent commands (FR-FT-007, FR-UI-113) (${holeScope}, ${JSON.stringify(recent)})`);
-      // 1.534: a right-click on a face lists its feature's commands at the pointer, with the context toolbar above (FR-UI-025).
+      // 1.535: a right-click on a face lists its feature's commands at the pointer, with the context toolbar above (FR-UI-025).
       const onFace = await mp.evaluate(() => {
         const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect();
         for (let k = 0; k < 400; k++) {
@@ -7093,7 +7115,7 @@ try {
         await mp.evaluate(() => window.__sv.modeller.hideShortcutBar());
       }
       check(!!geo && geo.shown && geo.head !== "" && geo.items[0] === "Edit feature" && geo.items.includes("Suppress") && geo.items.includes("Delete") && geo.items.includes("Zoom to fit") && geo.bar > 0,
-        `model 1.534: right-click on a face lists its feature's commands under the context toolbar (FR-UI-025) (${JSON.stringify(geo)})`);
+        `model 1.535: right-click on a face lists its feature's commands under the context toolbar (FR-UI-025) (${JSON.stringify(geo)})`);
       await mp.evaluate(() => window.__sv.model.store.undo());
       await settle();
       await mp.evaluate(() => window.__sv.model.store.undo());
