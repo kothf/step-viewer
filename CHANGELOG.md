@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.525.0] - 2026-11-11
+
+### Added
+- Hole Wizard screw types: counterbores and counterdrills can be sized for ISO 4762 socket head, DIN 7984 low head, ISO 7380 button head or ISO 1207 cheese head screws, and countersinks for ISO 10642 socket or ISO 2009 / 7046 slotted and cross countersunk screws (each metric size offers the types that have a head of that size).
+- Tapped holes: Thread class (6H, 4H, 5H, 7H, 6G; 2B, 1B, 3B for inch) goes into the callout, and Thread display can be Remove thread (the threaded length is cut to the major diameter) or no cosmetic thread.
+
 ## [1.524.0] - 2026-11-11
 
 ### Added
@@ -3264,7 +3270,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.524.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.525.0...HEAD
+[1.525.0]: https://github.com/kothf/step-viewer/compare/v1.524.0...v1.525.0
 [1.524.0]: https://github.com/kothf/step-viewer/compare/v1.523.0...v1.524.0
 [1.523.0]: https://github.com/kothf/step-viewer/compare/v1.522.0...v1.523.0
 [1.522.0]: https://github.com/kothf/step-viewer/compare/v1.521.0...v1.522.0
