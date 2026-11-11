@@ -587,6 +587,8 @@ export interface HoleFeature {
   /** Slot: centre-to-centre length and its angle from the plane's X axis. */
   slotLen?: Num;
   slotAngle?: Num;
+  /** Slot: Counterbored slot / Countersunk slot (SolidWorks' slot types), with `cbDia`/`cbDepth` or `csDia`/`csAngle`. */
+  slotHead?: "cbore" | "csink";
   /** Flat bottom instead of a 118° drill point. */
   flat?: boolean;
   /** Reverse direction: the holes run along the plane's normal (Hole Wizard on a plane in the air, e.g. a plane tangent to a shaft). */
@@ -623,6 +625,8 @@ export interface HoleFeature {
 export interface HoleSink { dia: Num; angle: Num }
 
 /** The tapped hole's thread runs the whole drill (thread end Through all; only for holes that are not blind). */
+/** The head pocket a hole is cut with: a counterbored or countersunk slot cuts like a counterbore or countersink. */
+export function headKind(f: HoleFeature): HoleFeature["kind"] { return f.kind === "slot" && f.slotHead ? f.slotHead : f.kind; }
 export function threadThrough(f: HoleFeature): boolean { return f.kind === "tapped" && f.threadEnd === "through" && holeExits(f); }
 /** The hole's end is where it leaves the material or meets a face (through, up to next, up to face): far side options apply. */
 export function holeExits(f: HoleFeature): boolean { return f.end === "through" || f.end === "next" || f.end === "upto"; }

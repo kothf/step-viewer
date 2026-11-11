@@ -69,3 +69,13 @@ test("tapered tap: callout without a class, 1:16 cone in the section, tapered co
   assert.deepEqual(rm.prof[0], [13.89 / 2, 0]);
   assert.equal(rm.thread, undefined);
 });
+
+test("counterbored and countersunk slots get the head pocket in the callout and the section", () => {
+  const cb = hole({ kind: "slot", slotLen: { v: 20 }, slotHead: "cbore", cbDia: { v: 11 }, cbDepth: { v: 6 }, end: "through" });
+  assert.deepEqual(holeCallout(cb, f, fa, label), ["Ø6 THRU", "⌴Ø11 ↧6"]);
+  assert.deepEqual(holeSection(cb)!.prof.slice(0, 3), [[5.5, 0], [5.5, 6], [3, 6]]);
+  const cs = hole({ kind: "slot", slotLen: { v: 20 }, slotHead: "csink", csDia: { v: 12 }, end: "through" });
+  assert.deepEqual(holeCallout(cs, f, fa, label), ["Ø6 THRU", "⌵Ø12 × 90°"]);
+  // A straight slot keeps the plain profile even with stale pocket values.
+  assert.deepEqual(holeCallout(hole({ kind: "slot", cbDia: { v: 11 }, cbDepth: { v: 6 } }), f, fa, label), ["Ø6 ↧10"]);
+});

@@ -1,7 +1,7 @@
 // Hole Wizard panel pictures (FR-FT-051 UX): the callout a hole gets on drawings and a half-section diagram of
 // the hole in a plate. Pure: no DOM and no kernel, so the drawing callout and the panel share one wording.
 
-import { holeExits, threadThrough, type HoleFeature, type HoleSink } from "./types";
+import { headKind, holeExits, threadThrough, type HoleFeature, type HoleSink } from "./types";
 import { TAPER, threadClass } from "./holes";
 
 const DRILL = (118 * Math.PI) / 180;
@@ -26,12 +26,12 @@ export function holeCallout(H: HoleFeature, f: (v: number) => string, fa: (v: nu
   // Tapered tap: the pipe thread (no tolerance class) and its length.
   if (H.kind === "ptap" && H.size) lines.push(`${H.size}${H.threadDepth ? ` ↧${f(H.threadDepth.v)}` : ""}`);
   // Head clearance deepens the counterbore; the callout gives the depth as cut.
-  if (H.kind === "cbore" && H.cbDia) lines.push(`⌴Ø${f(H.cbDia.v)}${H.cbDepth ? ` ↧${f(H.cbDepth.v + (H.headClear?.v ?? 0))}` : ""}`);
+  if (headKind(H) === "cbore" && H.cbDia) lines.push(`⌴Ø${f(H.cbDia.v)}${H.cbDepth ? ` ↧${f(H.cbDepth.v + (H.headClear?.v ?? 0))}` : ""}`);
   const sink = (s: HoleSink, tail: string) => `⌵Ø${f(s.dia.v)} × ${fa(s.angle.v * 180 / Math.PI)}°${tail ? ` ${label(tail)}` : ""}`;
-  if (H.kind === "cbore" && H.underCs) lines.push(sink(H.underCs, "UNDER HEAD"));
-  if (H.nearCs && H.kind !== "csink" && H.kind !== "insert") lines.push(sink(H.nearCs, ""));
+  if (headKind(H) === "cbore" && H.underCs) lines.push(sink(H.underCs, "UNDER HEAD"));
+  if (H.nearCs && headKind(H) !== "csink" && H.kind !== "insert") lines.push(sink(H.nearCs, ""));
   if (H.kind === "cdrill" && H.cdDia) lines.push(`⌴Ø${f(H.cdDia.v)}${H.cdDepth ? ` ↧${f(H.cdDepth.v)}` : ""} × ${fa((H.cdAngle?.v ?? DRILL) * 180 / Math.PI)}°`);
-  if (H.kind === "csink" && H.csDia) lines.push(`⌵Ø${f(H.csDia.v)} × ${fa((H.csAngle?.v ?? Math.PI / 2) * 180 / Math.PI)}°`);
+  if (headKind(H) === "csink" && H.csDia) lines.push(`⌵Ø${f(H.csDia.v)} × ${fa((H.csAngle?.v ?? Math.PI / 2) * 180 / Math.PI)}°`);
   if (H.farCs && holeExits(H) && H.kind !== "slot" && H.kind !== "insert") lines.push(sink(H.farCs, "FAR SIDE"));
   return lines;
 }
@@ -63,14 +63,14 @@ export function holeSection(H: HoleFeature): HoleSection | null {
     if (!(R > inner) || !(a > 0.1 && a < Math.PI - 0.1)) return null;
     return { R, h: (R - inner) / Math.tan(a / 2) };
   };
-  const clear = H.kind === "cbore" || H.kind === "csink" ? Math.max(0, H.headClear?.v ?? 0) : 0;
+  const clear = headKind(H) === "cbore" || headKind(H) === "csink" ? Math.max(0, H.headClear?.v ?? 0) : 0;
   const prof: [number, number][] = [];
   const top = (rTop: number) => {
-    const s = H.kind === "csink" || H.kind === "insert" ? null : sinkOf(H.nearCs, rTop);
+    const s = headKind(H) === "csink" || H.kind === "insert" ? null : sinkOf(H.nearCs, rTop);
     if (s) prof.push([s.R, 0], [rTop, s.h]); else prof.push([rTop, 0]);
   };
   let outer = r;
-  if (H.kind === "cbore") {
+  if (headKind(H) === "cbore") {
     const R = (H.cbDia?.v ?? 0) / 2, d = (H.cbDepth?.v ?? 0) + clear;
     if (!(R > r) || !(d > 0)) return null;
     top(R);
@@ -84,7 +84,7 @@ export function holeSection(H: HoleFeature): HoleSection | null {
     top(R);
     prof.push([R, d], [r, d + (R - r) / Math.tan(a / 2)]);
     outer = R;
-  } else if (H.kind === "csink") {
+  } else if (headKind(H) === "csink") {
     const R = (H.csDia?.v ?? 0) / 2, a = H.csAngle?.v ?? Math.PI / 2;
     if (!(R > r) || !(a > 0.1 && a < Math.PI - 0.1)) return null;
     const h = (R - r) / Math.tan(a / 2);

@@ -12,7 +12,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { V2, SkEnt } from "../model/types";
 import type { HealFeature, RecognizedHole, RecognizedBlends, SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, PatternSpot, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, ChamferFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, HoleSink, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
-import { dir2Apart, dir2Feature, threadThrough, holeExits } from "../model/types";
+import { dir2Apart, dir2Feature, threadThrough, holeExits, headKind } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { recognizedHoleFeatures, TAPER } from "../model/holes";
 import { ctxFrame } from "../model/context";
@@ -2320,11 +2320,11 @@ export class Modeller {
       const t = Math.tan(a / 2);
       return { R, h: (R - inner) / t, t };
     };
-    const clear = f.kind === "cbore" || f.kind === "csink" ? f.headClear?.v ?? 0 : 0;
+    const clear = headKind(f) === "cbore" || headKind(f) === "csink" ? f.headClear?.v ?? 0 : 0;
     if (f.headClear && !(clear >= 0)) throw new FeatureError("E-FT-ZERO", "The head clearance must not be negative.");
     // The top of the hole (or its counterbore) gets the near side countersink: start at its rim above the face.
     const top = (prof: [number, number][], rTop: number) => {
-      const s = f.kind === "csink" || f.kind === "insert" ? null : sinkOf(f.nearCs, rTop);
+      const s = headKind(f) === "csink" || f.kind === "insert" ? null : sinkOf(f.nearCs, rTop);
       if (s) prof.push([s.R + lift * s.t, lift], [rTop, -s.h]); else prof.push([rTop, lift]);
       return s?.h ?? 0;
     };
@@ -2334,7 +2334,7 @@ export class Modeller {
       if (!(depth > 1e-6)) throw new FeatureError("E-FT-ZERO", "The depth must be more than 0.");
       // Profile from the axis outward, starting above the face so the top is cut cleanly.
       const prof: [number, number][] = [[0, lift]];
-      if (f.kind === "cbore") {
+      if (headKind(f) === "cbore") {
         const R = (f.cbDia?.v ?? 0) / 2, d = (f.cbDepth?.v ?? 0) + clear;
         if (!(R > r) || !(d > 0) || d >= depth) throw new FeatureError("E-HOLE-CBORE", "The counterbore must be wider than the hole and less deep.");
         const hn = top(prof, R);
@@ -2352,7 +2352,7 @@ export class Modeller {
         if (!(R > r) || !(d > 0) || d + h >= depth) throw new FeatureError("E-HOLE-CDRILL", "The counterdrill must be wider than the hole and less deep, at an angle between 6° and 174°.");
         top(prof, R);
         prof.push([R, -d], [r, -d - h]);
-      } else if (f.kind === "csink") {
+      } else if (headKind(f) === "csink") {
         const R = (f.csDia?.v ?? 0) / 2, a = f.csAngle?.v ?? Math.PI / 2;
         if (!(R > r) || !(a > 0.1 && a < Math.PI - 0.1)) throw new FeatureError("E-HOLE-CSINK", "The countersink must be wider than the hole, at an angle between 6° and 174°.");
         const h = (R - r) / Math.tan(a / 2);

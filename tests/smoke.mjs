@@ -3575,6 +3575,21 @@ try {
     check(npt.k === "ptap" && npt.s === "1/4-18 NPT" && Math.abs(npt.d - 11.1125) < 2e-3 && Math.abs(npt.td - 11.635) < 0.01 && Math.abs(npt.len - 10.206) < 0.01 && npt.box && !npt.cls && npt.callout.includes("1/4-18 NPT") && npt.ok
       && rc.s === "Rc 1/4" && rc.d === 11.2 && rc.ok && back.k === "tapped" && back.s === "M6" && back.d === 5 && back.std === null && back.td === null,
       `model 1.531: Hole Wizard tapered tap NPT and Rc (${JSON.stringify({ npt, rc, back })})`);
+    // 1.532 (FR-FT-051): Counterbored slot: the M6 socket head counterbore swept along the slot; back to tapped M6.
+    await mp.selectOption('#mc-pm select[data-k="kind"]', "slot");
+    await idle();
+    await mp.selectOption('#mc-pm select[data-k="slotHead"]', "cbore");
+    await idle();
+    const cslot = await mp.evaluate(() => { const d = window.__sv.model.mode().draft, l = window.__sv.model.last(); return { h: d.slotHead, cb: d.cbDia?.v, cd: d.cbDepth?.v, callout: document.querySelector('#mc-pm .pm-hcallout')?.textContent ?? "", ok: l.statuses.every(s => s.ok), box: !!document.querySelector('#mc-pm input[data-num="cbDia"]') }; });
+    await mp.selectOption('#mc-pm select[data-k="kind"]', "tapped");
+    await idle();
+    await mp.selectOption('#mc-pm select[data-k="size"]', "M6");
+    await idle();
+    await mp.selectOption('#mc-pm select[data-k="threadEnd"]', "through").catch(() => {});
+    await idle();
+    const cback = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { k: d.kind, h: d.slotHead ?? null, s: d.size }; });
+    check(cslot.h === "cbore" && cslot.cb === 11 && cslot.cd === 6.4 && cslot.box && cslot.callout.includes("⌴Ø11") && cslot.ok && cback.k === "tapped" && cback.h === null && cback.s === "M6",
+      `model 1.532: Hole Wizard counterbored slot (${JSON.stringify({ cslot, cback })})`);
     // Options: Near side countersink defaults to the hole + 1 mm at 90°; unticking takes it away.
     await mp.check('#mc-pm input[data-k="optNear"]').catch(() => {});
     await idle();
