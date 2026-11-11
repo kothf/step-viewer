@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.537.0] - 2026-11-11
+
+### Added
+
+- Ctrl+click selection in parts (FR-SEL-007): Ctrl+click faces and edges to select several (shown in blue; Ctrl+click again removes one, a plain click or Esc clears them). Fillet and Chamfer start with every selected edge; Shell, Delete Face and Move Face with every selected face.
+
 ## [1.536.0] - 2026-11-11
 
 ### Added
@@ -3336,7 +3342,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.536.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.537.0...HEAD
+[1.537.0]: https://github.com/kothf/step-viewer/compare/v1.536.0...v1.537.0
 [1.536.0]: https://github.com/kothf/step-viewer/compare/v1.535.0...v1.536.0
 [1.535.0]: https://github.com/kothf/step-viewer/compare/v1.534.0...v1.535.0
 [1.534.0]: https://github.com/kothf/step-viewer/compare/v1.533.0...v1.534.0

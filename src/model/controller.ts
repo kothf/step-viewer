@@ -740,6 +740,7 @@ export class ModelController {
     if (!quiet) this.setBusy(-1);
     if (!r || !this.store) return;
     this.last = r;
+    this.multi = null;
     this.followEdges(r);
     this.rebuildMs = r.ms.eval + r.ms.mesh;
     this.syncCsys();
@@ -975,6 +976,11 @@ export class ModelController {
     const threadEdge = type === "thread" ? this.pickedEdge() : null;
     const smEdge = type === "smflange" || type === "smhem" || type === "smcorner" || type === "smmiter" || type === "smswept" || type === "smtabslot" || type === "smrip" ? this.pickedEdge() : null;
     const pre = selEdge ? this.refOfEdge(selEdge) : null;
+    // Ctrl+click selections (FR-SEL-007): every picked edge for fillet/chamfer, every picked face for face commands.
+    const multi = this.multi;
+    const multiEdges = (type === "fillet" || type === "chamfer") && multi?.edges.length ? multi.edges.map(ed => this.refOfEdge(ed)).filter((r): r is EdgeRef => !!r) : null;
+    const multiFaces = multi?.faces.length ? multi.faces.map(f => this.faceRef(f)).filter((r): r is FaceRef => !!r) : null;
+    this.multi = null;
     const preFace = type === "plane" ? this.pickedFace() : null;
     // Axis and point take a picked edge or face too.
     const refEdge = type === "axis" || type === "point" ? this.pickedEdge() : null;
@@ -1116,11 +1122,12 @@ export class ModelController {
       const seeds = seedSel ? [seedSel] : [];
       if (type === "delface" || type === "moveface") {
         const fr = shellFace != null ? this.faceRef(shellFace) : null;
-        draft = type === "delface" ? { id, type, name: nextName(d, type), faces: fr ? [fr] : [] } satisfies DeleteFaceFeature
-          : { id, type, name: nextName(d, type), faces: fr ? [fr] : [], distance: { v: 5 } } satisfies MoveFaceFeature;
+        const fs = multiFaces ?? (fr ? [fr] : []);
+        draft = type === "delface" ? { id, type, name: nextName(d, type), faces: fs } satisfies DeleteFaceFeature
+          : { id, type, name: nextName(d, type), faces: fs, distance: { v: 5 } } satisfies MoveFaceFeature;
       } else if (type === "shell") {
         const fr = shellFace != null ? this.faceRef(shellFace) : null;
-        draft = { id, type: "shell", name: nextName(d, "shell"), thickness: { v: 2 }, faces: fr ? [fr] : [] } satisfies ShellFeature;
+        draft = { id, type: "shell", name: nextName(d, "shell"), thickness: { v: 2 }, faces: multiFaces ?? (fr ? [fr] : []) } satisfies ShellFeature;
       } else if (type === "mirror") draft = { id, type: "mirror", name: nextName(d, "mirror"), features: seeds } satisfies MirrorFeature;
       else if (type === "lpattern") draft = { id, type: "lpattern", name: nextName(d, "lpattern"), features: seeds, spacing: { v: 10 }, count: 3 } satisfies LinearPatternFeature;
       else if (type === "spattern" || type === "tpattern") {
@@ -1135,7 +1142,8 @@ export class ModelController {
       draft = type === "fillet"
         ? { id, type: "fillet", name: nextName(d, "fillet"), radius: { v: 2 }, edges: [] } satisfies FilletFeature
         : { id, type: "chamfer", name: nextName(d, "chamfer"), distance: { v: 1 }, edges: [] } satisfies ChamferFeature;
-      if (pre) (draft as FilletFeature).edges = [pre];
+      if (multiEdges?.length) (draft as FilletFeature).edges = multiEdges;
+      else if (pre) (draft as FilletFeature).edges = [pre];
     }
     this.recallOptions(type, draft);
     // The flat pattern stays last (SolidWorks): new features go in before it.
@@ -2277,6 +2285,7 @@ export class ModelController {
       if (e.button === 2 && d && Math.hypot(e.clientX - d.x, e.clientY - d.y) <= 4) { if (!this.edgeMenu(e)) this.commandMenu(e); return; }
       if (e.button !== 0 || !d || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
       // Not stopped: the orbit controls must see the button go up. Smart measure skips these clicks (`picking`).
+      if (m.kind === "none" && this.multi && !e.ctrlKey && !e.metaKey) { this.multi = null; this.drawDecor(); }
       if (m.kind === "none") { if (e.detail < 2) this.hideInstant(); const at = { x: e.clientX, y: e.clientY }, alt = e.altKey; setTimeout(() => this.showContextBar(at, alt), 0); }
       else if (m.kind === "plane") this.pickPlane(e);
       else if (m.kind === "feature" && m.draft.type === "fillet" && m.draft.kind) this.pickFaceSet(e, m.draft);
@@ -2399,7 +2408,7 @@ export class ModelController {
     if (k === "escape" && document.querySelector(".mag-lens")) return;
     // Shift+D: breadcrumbs and the confirmation corner to the cursor (FR-SEL-009; D stays the distance tool).
     if (k === "d" && e.shiftKey && this.pointerIn && (document.getElementById("mc-crumbs") || this.mode.kind !== "none")) { stop(); this.crumbsToCursor(); return; }
-    if (k === "escape" && this.mode.kind === "none") this.hideCrumbs();
+    if (k === "escape" && this.mode.kind === "none") { this.hideCrumbs(); if (this.multi) { this.multi = null; this.drawDecor(); } }
     if (k === "escape" && document.querySelector("#mc-sbar, #mc-cbar")) { stop(); this.hideShortcutBar(); return; }
     if (k === "escape" && this.instant && this.mode.kind === "none" && !document.querySelector("#mc-menu:not([hidden])")) { stop(); this.hideInstant(); return; }
     const m = this.mode;
@@ -3223,6 +3232,76 @@ export class ModelController {
     const menu = document.getElementById("mc-menu");
     if (menu && this.recent.length) menu.insertAdjacentHTML("afterbegin", `<div class="mc-menu-h" role="presentation">${esc(t("Recent commands"))}</div>`);
     return true;
+  }
+
+  /** Ctrl+click selection (FR-SEL-007): faces and edges picked one by one with no command running. */
+  private multi: { faces: number[]; edges: EdgeInfo[] } | null = null;
+  /** The Ctrl+click selection: how many faces and edges (tests). */
+  get multiCount() { return { faces: this.multi?.faces.length ?? 0, edges: this.multi?.edges.length ?? 0 }; }
+
+  /**
+   * Ctrl+click on the part with no command running (FR-SEL-007): adds the face or edge under the pointer to the
+   * selection, or takes it out again. The Smart measure pick made before is the first item. True when handled.
+   */
+  ctrlPick(e: MouseEvent): boolean {
+    if (!this.active || !this.store || !this.last || this.mode.kind !== "none") return false;
+    const hit = this.host.edgeAt(e.clientX, e.clientY);
+    if (!hit || (!hit.edge && hit.faceId == null)) return true;
+    if (!this.multi) {
+      const m = { faces: [] as number[], edges: [] as EdgeInfo[] };
+      const se = this.host.selectedEdge?.() ?? null, sf = se ? null : this.host.selectedFace();
+      if (se) m.edges.push(se);
+      else if (sf != null) m.faces.push(sf);
+      this.multi = m;
+    }
+    const m = this.multi;
+    if (hit.edge) {
+      const i = m.edges.indexOf(hit.edge);
+      if (i >= 0) m.edges.splice(i, 1); else m.edges.push(hit.edge);
+    } else {
+      const i = m.faces.indexOf(hit.faceId!);
+      if (i >= 0) m.faces.splice(i, 1); else m.faces.push(hit.faceId!);
+    }
+    this.host.clearPick();
+    if (!m.faces.length && !m.edges.length) this.multi = null;
+    this.drawDecor();
+    const n = m.faces.length + m.edges.length;
+    const st = document.getElementById("st-hint");
+    if (st && n) st.textContent = t("{n} selected: Ctrl+click adds or removes, Esc clears", { n });
+    return true;
+  }
+
+  /** The Ctrl+click selection in the view: edges as thick lines, faces as a see-through overlay. */
+  private drawMulti() {
+    const m = this.multi;
+    if (!m || this.mode.kind !== "none") return;
+    const col = 0x1c7ed6;
+    if (m.edges.length) {
+      const pos: number[] = [];
+      for (const ed of m.edges) pushEdge(pos, ed);
+      this.lines(pos, col, 4);
+    }
+    const part = this.host.viewer.parts[0];
+    if (!m.faces.length || !part) return;
+    const geo = part.mesh.geometry as THREE.BufferGeometry, pos = geo.getAttribute("position"), idx = geo.getIndex();
+    const out: number[] = [];
+    for (const i of m.faces) {
+      const fc = part.data.faces[i];
+      if (!fc) continue;
+      for (let tri = fc.triStart; tri < fc.triStart + fc.triCount; tri++) for (let q = 0; q < 3; q++) {
+        const vi = idx ? idx.getX(tri * 3 + q) : tri * 3 + q;
+        out.push(pos.getX(vi), pos.getY(vi), pos.getZ(vi));
+      }
+    }
+    if (!out.length) return;
+    const gm = new THREE.BufferGeometry();
+    gm.setAttribute("position", new THREE.Float32BufferAttribute(out, 3));
+    const mesh = new THREE.Mesh(gm, new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.42, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3, side: THREE.DoubleSide }));
+    mesh.applyMatrix4(part.mesh.matrixWorld);
+    mesh.renderOrder = 2310;
+    mesh.raycast = () => {};
+    mesh.userData.multi = true;
+    this.decor.add(mesh);
   }
 
   /**
@@ -4087,6 +4166,7 @@ export class ModelController {
     this.drawArrow();
     this.drawFeatureFaces();
     this.drawBoxPicks();
+    this.drawMulti();
     this.drawValueCallouts();
     this.host.viewer.invalidate();
   }
