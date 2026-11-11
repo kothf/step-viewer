@@ -139,7 +139,7 @@ type Mode =
   | { kind: "cfg" };
 
 /** Which selection box of the feature panel the next click in the view fills. */
-type Focus = "wbodies" | "wbound" | "wfaces" | "wf1" | "wf2" | "tsurf" | "ttool" | "keep" | "fs1" | "fs2" | "fc" | "main" | "bodies" | "base" | "axis" | "upto" | "start" | "origin" | "cx" | "cz" | "seeds" | "psketch" | "hupto" | "upbody" | "upto2" | "upbody2" | "mthick" | "dir" | "dir2" | "mplane" | "faces" | "hplane" | "pts" | "nplane" | "sbv" | "contours" | "skip";
+type Focus = "wbodies" | "wbound" | "wfaces" | "wf1" | "wf2" | "tsurf" | "ttool" | "keep" | "fs1" | "fs2" | "fc" | "main" | "bodies" | "base" | "axis" | "upto" | "start" | "origin" | "cx" | "cz" | "seeds" | "psketch" | "hupto" | "upbody" | "upto2" | "upbody2" | "mthick" | "dir" | "dir2" | "mplane" | "faces" | "hplane" | "pts" | "nplane" | "sbv" | "contours" | "skip" | "pref" | "pref2";
 type CopyFeature = MirrorFeature | LinearPatternFeature | CircularPatternFeature | SketchPatternFeature;
 type BodyFeature = IntersectFeature | CombineFeature | IndentFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ScaleFeature;
 /** A fillet or chamfer has what it needs to preview: edges, or the face sets of a face fillet / full round. */
@@ -3240,6 +3240,13 @@ export class ModelController {
     }
     if (!isCopy(f)) return;
     if (m.focus === "skip") { toast(t("Click the dots to skip instances, or another box to pick again.")); return; }
+    if ((m.focus === "pref" || m.focus === "pref2") && f.type === "lpattern") {
+      const r = this.pickRef(e);
+      if (!r || ("face" in r && own(r.face.name))) return;
+      if (m.focus === "pref2") f.upTo2 = r; else f.upTo = r;
+      this.draftChanged();
+      return;
+    }
     if (m.focus === "mplane" && f.type === "mirror") {
       const r = this.pickRef(e);
       if (!r) return;
@@ -3850,7 +3857,7 @@ export class ModelController {
         if (pos.length) this.lines(pos, up ? 0x2f9e44 : 0xc2255c, 1.6);
       }
     }
-    const picksPlanes = m.kind === "plane" || (m.kind === "feature" && ((m.draft.type === "plane" && m.focus !== "axis") || (m.draft.type === "extrude" && ["upto", "upto2", "start-surface"].includes(this.extrudeTarget(m.draft, m.focus) ?? "")) || (m.draft.type === "revolve" && m.draft.end === "upto")));
+    const picksPlanes = m.kind === "plane" || (m.kind === "feature" && ((m.draft.type === "plane" && m.focus !== "axis") || (m.draft.type === "extrude" && ["upto", "upto2", "start-surface"].includes(this.extrudeTarget(m.draft, m.focus) ?? "")) || (m.draft.type === "revolve" && m.draft.end === "upto") || (m.draft.type === "lpattern" && (m.focus === "pref" || m.focus === "pref2"))));
     this.drawPlanes(picksPlanes);
     this.drawHoles();
     this.drawThreads();
@@ -5930,6 +5937,7 @@ export class ModelController {
         if (mm.kind === "feature" && mm.draft.type === "hole" && asRef && mm.focus === "hupto" && mm.draft.end === "upto") { mm.draft.upTo = asRef; mm.focus = "pts"; this.draftChanged(); return; }
         if (mm.kind === "feature" && mm.draft.type === "hole" && asRef && (mm.focus === "hplane" || !mm.draft.plane)) { mm.draft.plane = asRef; mm.draft.pts = []; mm.focus = "pts"; this.draftChanged(); return; }
         if (mm.kind === "feature" && mm.draft.type === "draft" && asRef && (mm.focus === "nplane" || !mm.draft.plane)) { mm.draft.plane = asRef; mm.focus = "faces"; this.draftChanged(); return; }
+        if (mm.kind === "feature" && mm.draft.type === "lpattern" && asRef && (mm.focus === "pref" || mm.focus === "pref2")) { if (mm.focus === "pref2") mm.draft.upTo2 = asRef; else mm.draft.upTo = asRef; this.draftChanged(); return; }
         if (mm.kind === "feature" && mm.draft.type === "mirror" && asRef && (mm.focus === "mplane" || !mm.draft.plane)) { mm.draft.plane = asRef; if (!mm.draft.features.length) mm.focus = "seeds"; this.draftChanged(); return; }
         if (mm.kind === "feature" && (mm.draft.type === "lpattern" || mm.draft.type === "cpattern") && (mm.focus === "dir" || mm.focus === "dir2") && this.store!.feature(id)?.type === "axis") {
           const ref: LineRef = { axis: id };
@@ -6549,10 +6557,17 @@ export class ModelController {
       } else if (f.type === "lpattern") {
         title = t("Linear pattern");
         // Spacing and instances, or Up to distance (the distance from the seed to the last instance), per direction.
-        const how = (k: "total" | "total2", on: boolean | undefined) => `<label class="pm-field"><span>${esc(t("Spacing"))}</span><select data-k="${k}">${([["", t("Spacing and instances")], ["1", t("Up to distance")]] as const).map(([v, l]) => `<option value="${v}"${(on ? "1" : "") === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;
-        body = group(t("Direction 1"), box("dir", t("Direction"), this.lineLabel(f.dir)) + how("total", f.total) + numField("spacing", f.total ? t("Distance") : t("Spacing"), f.spacing, "length") + intField("count", t("Instances"), f.count) + chk("flip", f.flip, t("Reverse direction")))
+        const how = (k: "total" | "total2", cur: string) => `<label class="pm-field"><span>${esc(t("Spacing"))}</span><select data-k="${k}">${([["", t("Spacing and instances")], ["1", t("Up to distance")], ["ref", t("Up to reference")]] as const).map(([v, l]) => `<option value="${v}"${cur === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;
+        // Up to reference: a plane or flat face to stop at, an offset short of it, and the spacing that follows.
+        const refPart = (two: boolean) => {
+          const ref = two ? f.upTo2 : f.upTo, off = (two ? f.upToOffset2 : f.upToOffset) ?? { v: 0 };
+          return box(two ? "pref2" : "pref", t("Reference"), this.refLabel(ref)) + numField(two ? "upToOffset2" : "upToOffset", t("Offset distance"), off, "length")
+            + `<p class="pm-help muted">${esc(t("Click a plane or flat face across the direction: the last instance stops the offset short of it, measured from the seed's centre."))}</p>`;
+        };
+        const mode1 = f.upTo || m.focus === "pref" ? "ref" : f.total ? "1" : "", mode2 = f.upTo2 || m.focus === "pref2" ? "ref" : f.total2 ? "1" : "";
+        body = group(t("Direction 1"), box("dir", t("Direction"), this.lineLabel(f.dir)) + how("total", mode1) + (mode1 === "ref" ? refPart(false) : numField("spacing", f.total ? t("Distance") : t("Spacing"), f.spacing, "length")) + intField("count", t("Instances"), f.count) + chk("flip", f.flip, t("Reverse direction")))
           + group(t("Direction 2"), chk("useDir2", !!f.dir2 || m.focus === "dir2", t("Direction 2"))
-            + (f.dir2 || m.focus === "dir2" ? box("dir2", t("Direction"), this.lineLabel(f.dir2)) + how("total2", f.total2) + numField("spacing2", f.total2 ? t("Distance") : t("Spacing"), f.spacing2 ?? { v: f.spacing.v }, "length") + intField("count2", t("Instances"), f.count2 ?? 2) + chk("flip2", f.flip2, t("Reverse direction"))
+            + (f.dir2 || m.focus === "dir2" ? box("dir2", t("Direction"), this.lineLabel(f.dir2)) + how("total2", mode2) + (mode2 === "ref" ? refPart(true) : numField("spacing2", f.total2 ? t("Distance") : t("Spacing"), f.spacing2 ?? { v: f.spacing.v }, "length")) + intField("count2", t("Instances"), f.count2 ?? 2) + chk("flip2", f.flip2, t("Reverse direction"))
               + chk("seedOnly", f.seedOnly, t("Pattern seed only")) : ""))
           + seedGroup + skip
           + `<p class="pm-help muted">${esc(t("For a direction, click a straight edge, a flat face (its normal) or a reference axis in the tree."))}</p>`;
@@ -6775,7 +6790,15 @@ export class ModelController {
           upd(() => { if (list.length) f.skip = list; else delete f.skip; });
           return;
         }
-        if ((k === "total" || k === "total2") && f.type === "lpattern") { upd(() => { if (val) f[k] = true; else delete f[k]; }, true); return; }
+        if ((k === "total" || k === "total2") && f.type === "lpattern") {
+          const two = k === "total2";
+          upd(() => {
+            if (val === "1") f[k] = true; else delete f[k];
+            if (val !== "ref") { if (two) { delete f.upTo2; delete f.upToOffset2; } else { delete f.upTo; delete f.upToOffset; } if (m.focus === (two ? "pref2" : "pref")) m.focus = undefined; }
+            else m.focus = two ? "pref2" : "pref";
+          }, true);
+          return;
+        }
         if (k === "cdir2" && f.type === "cpattern") {
           upd(() => { if (val) { f.dir2 = true; f.sym = true; } else { delete f.dir2; delete f.sym; delete f.count2; delete f.angle2; delete f.equal2; if (f.skip) { f.skip = f.skip.filter(x => !x.startsWith("-")); if (!f.skip.length) delete f.skip; } } }, true);
           return;

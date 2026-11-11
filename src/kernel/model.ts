@@ -5500,13 +5500,23 @@ export class Modeller {
     const n1 = Math.max(1, Math.round(f.count)), n2 = f.dir2 ? Math.max(1, Math.round(f.count2 ?? 1)) : 1;
     const d2 = f.dir2 ? mul(this.lineOf(f.dir2, prev, frames, "the second direction").d, f.flip2 ? -1 : 1) : [0, 0, 0] as V3;
     if (n1 * n2 < 2) throw new FeatureError("E-PAT-COUNT", "The pattern needs at least 2 instances.");
-    if (!(f.spacing.v > 1e-6) || (f.dir2 && n2 > 1 && !((f.spacing2?.v ?? 0) > 1e-6))) throw new FeatureError("E-FT-ZERO", "The spacing must be more than 0.");
+    if ((!f.upTo && !(f.spacing.v > 1e-6)) || (f.dir2 && n2 > 1 && !f.upTo2 && !((f.spacing2?.v ?? 0) > 1e-6))) throw new FeatureError("E-FT-ZERO", "The spacing must be more than 0.");
     const skip = new Set(f.skip ?? []);
     const xfs: { trsf: any; tag: (k: number) => string; label: string }[] = [];
     const c = this.spotCentre(set, prev), spots: PatternSpot[] = [];
     // Up to distance: the typed distance reaches the last instance.
-    const s1 = f.total ? f.spacing.v / Math.max(1, n1 - 1) : f.spacing.v;
-    const s2 = f.total2 ? (f.spacing2?.v ?? 0) / Math.max(1, n2 - 1) : (f.spacing2?.v ?? 0);
+    // Up to reference: the reach from the seed's centre along the direction to the plane, less the offset.
+    const reach = (ref: PlaneRef, d: V3, off: number) => {
+      let pf: Frame;
+      try { pf = this.planeFrame(ref, prev, frames); } catch { throw new FeatureError("E-FT-PARENT", "A sketch or plane this feature uses has an error."); }
+      const den = dot(d, pf.n);
+      if (!c || Math.abs(den) < 1e-9) throw new FeatureError("E-PAT-REFPAR", "The reference must cross the pattern direction (not lie along it).");
+      const t = dot(sub3(pf.o, c), pf.n) / den - off;
+      if (!(t > 1e-6)) throw new FeatureError("E-PAT-REFBACK", "The reference lies behind the seed: reverse the direction.");
+      return t;
+    };
+    const s1 = f.upTo ? reach(f.upTo, d1, f.upToOffset?.v ?? 0) / Math.max(1, n1 - 1) : f.total ? f.spacing.v / Math.max(1, n1 - 1) : f.spacing.v;
+    const s2 = f.dir2 && f.upTo2 ? reach(f.upTo2, d2, f.upToOffset2?.v ?? 0) / Math.max(1, n2 - 1) : f.total2 ? (f.spacing2?.v ?? 0) / Math.max(1, n2 - 1) : (f.spacing2?.v ?? 0);
     for (let j = 0; j < n2; j++) for (let i = 0; i < n1; i++) {
       if (i === 0 && j === 0) continue;
       if (f.seedOnly && i > 0 && j > 0) continue;

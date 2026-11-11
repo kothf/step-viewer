@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.503.0] - 2026-11-11
+## [1.504.0] - 2026-11-11
 
 ### Changed
 
@@ -14,6 +14,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Fixed
 
 - The thick ends of a cutting line now lie wholly outside the view, 2 mm clear of the outline (ISO 128-44), instead of running over the part's edge.
+
+## [1.503.0] - 2026-11-11
+
+### Added
+
+- Linear pattern (FR-FT-070): Up to reference, as in SolidWorks. Pick a plane or flat face across the direction and the instances spread from the seed's centre so the last one stops at it, or an offset distance short of it; the spacing follows when the reference moves. Each direction has its own reference.
 
 ## [1.502.0] - 2026-11-11
 
@@ -3114,7 +3120,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.503.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.504.0...HEAD
+[1.504.0]: https://github.com/kothf/step-viewer/compare/v1.503.0...v1.504.0
 [1.503.0]: https://github.com/kothf/step-viewer/compare/v1.502.0...v1.503.0
 [1.502.0]: https://github.com/kothf/step-viewer/compare/v1.501.0...v1.502.0
 [1.501.0]: https://github.com/kothf/step-viewer/compare/v1.500.0...v1.501.0
