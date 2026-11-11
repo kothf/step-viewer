@@ -3590,7 +3590,7 @@ try {
     const cback = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { k: d.kind, h: d.slotHead ?? null, s: d.size }; });
     check(cslot.h === "cbore" && cslot.cb === 11 && cslot.cd === 6.4 && cslot.box && cslot.callout.includes("⌴Ø11") && cslot.ok && cback.k === "tapped" && cback.h === null && cback.s === "M6",
       `model 1.532: Hole Wizard counterbored slot (${JSON.stringify({ cslot, cback })})`);
-    // 1.533 (FR-FT-051): Advanced Hole: M6 counterbore over the clearance hole, a far side countersink added, then
+    // 1.534 (FR-FT-051): Advanced Hole: M6 counterbore over the clearance hole, a far side countersink added, then
     // the counterbore turned into a countersink; back to tapped M6.
     await mp.selectOption('#mc-pm select[data-k="kind"]', "adv");
     await idle();
@@ -3611,7 +3611,7 @@ try {
     const aback = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { k: d.kind, near: d.near ?? null, s: d.size }; });
     check(adv.near === "cbore:M6:11,straight:M6:6.6" && adv.far === "csink:13.44" && adv.d === 6.6 && adv.rows === 3 && adv.callout.includes("⌴Ø11") && adv.callout.includes("FAR SIDE") && adv.ok && !adv.warn
       && adv2.near === "csink:13.44,straight:6.6" && adv2.callout.includes("⌵Ø13.44 × 90°") && adv2.ok && aback.k === "tapped" && aback.near === null && aback.s === "M6",
-      `model 1.533: Hole Wizard advanced hole (${JSON.stringify({ adv, adv2, aback })})`);
+      `model 1.534: Hole Wizard advanced hole (${JSON.stringify({ adv, adv2, aback })})`);
     // Options: Near side countersink defaults to the hole + 1 mm at 90°; unticking takes it away.
     await mp.check('#mc-pm input[data-k="optNear"]').catch(() => {});
     await idle();

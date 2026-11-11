@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.534.0] - 2026-11-11
+
+### Added
+- Hole Wizard **Advanced hole**: build a hole from elements stacked from the face down (counterbore, countersink, straight, tapped) and, for holes that come out of the part, from the far face in. Each element takes a size from the ISO table or custom values, can be moved up or down, removed or added; the last near side element is the main hole and runs to the end condition. The callout lists every element (far side ones marked FAR SIDE), the panel picture shows the whole stack, and tapped elements get cosmetic threads.
+
 ## [1.532.0] - 2026-11-11
 
 ### Added
@@ -3312,7 +3317,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.532.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.534.0...HEAD
+[1.534.0]: https://github.com/kothf/step-viewer/compare/v1.532.0...v1.534.0
 [1.532.0]: https://github.com/kothf/step-viewer/compare/v1.531.0...v1.532.0
 [1.531.0]: https://github.com/kothf/step-viewer/compare/v1.530.0...v1.531.0
 [1.530.0]: https://github.com/kothf/step-viewer/compare/v1.529.0...v1.530.0
