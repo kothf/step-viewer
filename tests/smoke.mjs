@@ -2536,7 +2536,7 @@ try {
         `model 1.527: Add dimensions gives a new circle its diameter and a new line its length, with the Modify box (FR-UI-052) (${JSON.stringify({ ...ad, lineBox })})`);
       await tool("select");
     }
-    // 1.532.0 (FR-UI-054): K opens Add relation at the cursor: the relations valid for the selection.
+    // 1.533.0 (FR-UI-054): K opens Add relation at the cursor: the relations valid for the selection.
     {
       await mp.evaluate(() => { const ed = window.__sv.model.editor(); ed.selection = new Set(["sgo", "sgl"]); ed.render(); });
       await mp.evaluate(() => window.__sv.viewer.renderer.domElement.focus());
@@ -2550,7 +2550,7 @@ try {
       await mp.waitForTimeout(150);
       const kr = await mp.evaluate(() => { const ed = window.__sv.model.editor(); return { tangent: ed.sk.rels.some(r => r.t === "tangent" && r.e.includes("sgo") && r.e.includes("sgl")), status: ed.info.status }; });
       check(km.shown && km.head === "Add relation" && tan >= 0 && kr.tangent,
-        `model 1.532: K opens Add relation with the relations valid for the selection (FR-UI-054) (${JSON.stringify({ ...km, ...kr })})`);
+        `model 1.533: K opens Add relation with the relations valid for the selection (FR-UI-054) (${JSON.stringify({ ...km, ...kr })})`);
       await mp.evaluate(() => { const ed = window.__sv.model.editor(); ed.selection = new Set(); ed.render(); });
     }
     // 1.266.0 (FR-SK-043/044/047): dragging the last line's start onto the free end of the Ctrl line merges them
@@ -3592,6 +3592,21 @@ try {
     check(npt.k === "ptap" && npt.s === "1/4-18 NPT" && Math.abs(npt.d - 11.1125) < 2e-3 && Math.abs(npt.td - 11.635) < 0.01 && Math.abs(npt.len - 10.206) < 0.01 && npt.box && !npt.cls && npt.callout.includes("1/4-18 NPT") && npt.ok
       && rc.s === "Rc 1/4" && rc.d === 11.2 && rc.ok && back.k === "tapped" && back.s === "M6" && back.d === 5 && back.std === null && back.td === null,
       `model 1.531: Hole Wizard tapered tap NPT and Rc (${JSON.stringify({ npt, rc, back })})`);
+    // 1.532 (FR-FT-051): Counterbored slot: the M6 socket head counterbore swept along the slot; back to tapped M6.
+    await mp.selectOption('#mc-pm select[data-k="kind"]', "slot");
+    await idle();
+    await mp.selectOption('#mc-pm select[data-k="slotHead"]', "cbore");
+    await idle();
+    const cslot = await mp.evaluate(() => { const d = window.__sv.model.mode().draft, l = window.__sv.model.last(); return { h: d.slotHead, cb: d.cbDia?.v, cd: d.cbDepth?.v, callout: document.querySelector('#mc-pm .pm-hcallout')?.textContent ?? "", ok: l.statuses.every(s => s.ok), box: !!document.querySelector('#mc-pm input[data-num="cbDia"]') }; });
+    await mp.selectOption('#mc-pm select[data-k="kind"]', "tapped");
+    await idle();
+    await mp.selectOption('#mc-pm select[data-k="size"]', "M6");
+    await idle();
+    await mp.selectOption('#mc-pm select[data-k="threadEnd"]', "through").catch(() => {});
+    await idle();
+    const cback = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { k: d.kind, h: d.slotHead ?? null, s: d.size }; });
+    check(cslot.h === "cbore" && cslot.cb === 11 && cslot.cd === 6.4 && cslot.box && cslot.callout.includes("⌴Ø11") && cslot.ok && cback.k === "tapped" && cback.h === null && cback.s === "M6",
+      `model 1.532: Hole Wizard counterbored slot (${JSON.stringify({ cslot, cback })})`);
     // Options: Near side countersink defaults to the hole + 1 mm at 90°; unticking takes it away.
     await mp.check('#mc-pm input[data-k="optNear"]').catch(() => {});
     await idle();
