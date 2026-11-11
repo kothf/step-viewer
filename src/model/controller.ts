@@ -266,6 +266,8 @@ function statusText(s: FeatureStatus) {
     if (m) return t("{n} of {m} edges could not be rounded and were skipped.", { n: m[1], m: m[2] });
     const h = s.warning.match(/^Check and heal: (\d+) free edges before, (\d+) after; (valid|not valid) before, (valid|not valid) after; (\d+) solid bodies\.$/);
     if (h) return t("Check and heal: {a} free edges before, {b} after; {v0} before, {v1} after; {n} solid bodies.", { a: h[1], b: h[2], v0: t(h[3]), v1: t(h[4]), n: h[5] });
+    const cv = s.warning.match(/^The cover is ([\d.]+) mm too thin to hide the retracted screw's thread/);
+    if (cv) return t("The cover is {d} mm too thin to hide the retracted screw's thread: add a boss under the hole or use a shorter screw.", { d: cv[1] });
     const c = s.warning.match(/^(\d+) of (\d+) copies fall outside the body and were skipped: (.*)\.$/);
     return c ? t("{n} of {m} copies fall outside the body and were skipped (instances {list}).", { n: c[1], m: c[2], list: c[3] }) : t(s.warning);
   }

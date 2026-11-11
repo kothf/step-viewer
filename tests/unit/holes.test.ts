@@ -90,6 +90,19 @@ test("hole options: near/far side and under head countersinks, head clearance cu
   near(run({ kind: "adv", end: "blind", depth: { v: 12 }, drillAngle: { v: PI / 2 }, near: [el("straight", 14, 4), { ...el("tapped", 10, 8), major: 12 }], far: [el("csink", 14)] } as Partial<HoleFeature>),
     PI * 49 * 4 + PI * 25 * 8 + cone(5, 0, 5), "advanced hole blind (far side left out)");
   near(run({ kind: "adv", near: [el("csink", 20), el("straight", 10)], far: [el("csink", 14)] } as Partial<HoleFeature>), cone(10, 5, 5) + PI * 25 * 13 + cone(7, 5, 2), "advanced hole countersunk both sides");
+  // Captive screw (M6: tap drill 5, clearance 6.6): thread through the cover; Retracted screw = a short retaining
+  // thread over a clearance bore; ring style = a recess for the ring under the cover; head counterbore on top.
+  const cap = (o: Partial<HoleFeature>) => ({ kind: "captive", size: "M6", diameter: { v: 6.6 }, major: 6, pitch: 1, ...o } as Partial<HoleFeature>);
+  near(run(cap({})), PI * 6.25 * 20, "captive, thread through");
+  near(run(cap({ retract: true, capHold: { v: 5 }, capThread: { v: 12 } })), PI * 6.25 * 5 + PI * 10.89 * 15, "captive, retracted screw");
+  near(run(cap({ capStyle: "ring", ringDia: { v: 13 }, ringT: { v: 1 } })), PI * 10.89 * 18.8 + PI * 49 * 1.2, "captive, retaining ring");
+  near(run(cap({ retract: true, capHold: { v: 5 }, capThread: { v: 8 }, cbDia: { v: 11 }, cbDepth: { v: 6.4 } })), PI * 30.25 * 6.4 + PI * 6.25 * 5 + PI * 10.89 * 8.6, "captive with head counterbore");
+  {
+    const r = m.evaluate(doc([rect("s1", 100, 60), { id: "f1", type: "extrude", name: "E", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
+      { id: "h", type: "hole", name: "Hole1", plane: { face: { name: "f1:end" } }, pts: [[0, 0]], end: "through", depth: { v: 10 }, ...cap({ retract: true, capHold: { v: 5 }, capThread: { v: 16 } }) } as Feature]));
+    const st = r.statuses.at(-1)!;
+    assert.ok(st.ok && st.code === "warning" && /^The cover is 1\.5 mm too thin/.test(st.warning ?? ""), JSON.stringify(st));
+  }
   const badAdv = m.evaluate(doc([rect("s1", 100, 60), { id: "f1", type: "extrude", name: "E", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
     { id: "h", type: "hole", name: "Hole1", plane: { face: { name: "f1:end" } }, pts: [[0, 0]], kind: "adv", diameter: { v: 10 }, end: "through", depth: { v: 10 }, near: [el("csink", 8), el("straight", 10)] } as unknown as Feature]));
   assert.equal(badAdv.statuses.at(-1)?.code, "E-HOLE-ADV");
