@@ -28,7 +28,7 @@ import { GSYMS, GSYM_NAMES, SURF_LAYS, cellLabel } from "./gdt";
 import { WELD_SYMS, WELD_SYM_NAMES } from "./weld";
 import { SK_PENS, SK_PEN_NAMES, orthoSnap, skPoints, skPrims } from "./sheetSketch";
 import { fitLimits, splitFit } from "./iso286";
-import { FLAT_CONFIG, ORIENTS, ORIENT_NAMES, SCALES, viewConfig, viewOnly, topoOnly, altReq, alignAxis, alignedLegs, cutLegs, findView, fitScale, std3Layout, lookDir, parseScale, projectedDir, scaleText, sideOf, switchProjection, viewDir, viewReq, viewScale } from "./views";
+import { FLAT_CONFIG, ORIENTS, ORIENT_NAMES, SCALES, viewConfig, viewOnly, topoOnly, altReq, alignAxis, alignedLegs, cutLegs, dirKey, findView, fitScale, std3Layout, lookDir, parseScale, projectedDir, scaleText, sideOf, switchProjection, viewDir, viewReq, viewScale } from "./views";
 import { PALETTE, PALETTE_MIME, thumbPath } from "./palette";
 import "./drawing.css";
 import { makeGrip } from "../resize";
@@ -236,6 +236,11 @@ const ANNOT_GROUPS: { name: string; tools: [string, string, string][] }[] = [
     ["skpoly", "Polyline", "Click each corner; Enter ends it"],
   ] },
 ];
+/** The annotation tools that also sit on the command bar (the rest are under Annotate ▾), as in SolidWorks' Annotation tab. */
+const BAR_TOOLS = ["items", "note", "balloon", "hole", "surf", "gtol", "datum", "cline", "cmark"];
+/** A command bar button: icon over its label, like the 3D command bar's `.mc-b`; `title` feeds the rich tooltip. */
+const cmdButton = (attrs: string, icon: string, label: string, tip: string, menu = false) =>
+  `<button class="drw-cb" ${attrs}${menu ? ' aria-haspopup="menu" aria-expanded="false"' : ""} title="${esc(t(tip))}">${icon}<span class="mc-l">${menu ? `<span>${esc(t(label))}</span> ▾` : esc(t(label))}</span></button>`;
 /** An annotation tool button: an icon tile in the Annotation tab, an icon menu row in Annotate ▾. */
 const annotButton = ([k, label, tip]: [string, string, string], menu: boolean) => {
   const act = k === "dim" ? 'data-a="dim"' : `data-an="${k}"`;
@@ -327,7 +332,10 @@ export class DrawingWorkspace {
 
   // ---------- opening ----------
 
-  /** A new drawing of the model open now, with the standard 3 views. */
+  /**
+   * A new drawing of the model open now: an empty sheet beside the view palette, as in SolidWorks; views are
+   * dragged from the palette, or placed with Standard 3 views.
+   */
   async newFromModel() {
     const m = await this.host.currentModel();
     if (!m) { toast(t("Open a part, an assembly or a STEP, IGES or BREP model first."), true); return; }
@@ -339,9 +347,11 @@ export class DrawingWorkspace {
     };
     this.info = m.info;
     this.load(doc, m.file?.bytes, "");
-    const facts = await this.loadModel();
-    if (facts) this.standard3(true);
+    await this.loadModel();
   }
+
+  /** Sets the drawing kernel up ahead of the first drawing (main.ts calls it once a model is shown). */
+  warm() { this.kernel.warm(); }
 
   async openFile(file: File | { name: string; data: ArrayBuffer }) {
     const buf = file instanceof File ? await file.arrayBuffer() : file.data;
@@ -535,33 +545,7 @@ export class DrawingWorkspace {
         <button class="btn small" data-a="back" title="${esc(t("Back to the 3D model"))}">${ICON.back}<span>${esc(t("Model"))}</span></button>
         ${this.host.fileMenu ? `<button class="btn small drw-file" data-a="file" aria-haspopup="menu" aria-expanded="false" aria-controls="file-menu" title="${esc(t("File: new, open, save, Pack and Go, export, print, recent documents"))}"><span>${esc(t("File"))}</span> ▾</button>` : ""}
         <span class="drw-name" translate="no"></span>
-        <div class="drw-cmds" role="toolbar" aria-label="${esc(t("Drawing commands"))}">
-          <button class="btn small" data-a="std3" title="${esc(t("Standard 3 views: front, top and side, lined up"))}">${ICON.std3}<span>${esc(t("Standard 3 views"))}</span></button>
-          <div class="drw-dd"><button class="btn small" data-a="model" aria-haspopup="menu" aria-expanded="false" title="${esc(t("Model view: pick an orientation, then place it on the sheet"))}">${ICON.model}<span>${esc(t("Model view"))}</span> ▾</button>
-            <div class="drw-menu" role="menu" hidden>${(Object.keys(ORIENT_NAMES) as Orient[]).map(o => `<button role="menuitem" data-orient="${o}">${esc(t(ORIENT_NAMES[o]))}</button>`).join("")}</div></div>
-          <button class="btn small" data-a="proj" title="${esc(t("Projected view: move the cursor around a view and click"))}">${ICON.proj}<span>${esc(t("Projected view"))}</span></button>
-          <div class="drw-dd"><button class="btn small" data-a="section" aria-haspopup="menu" aria-expanded="false" title="${esc(t("Section view: draw the cutting line on a view, then place the section"))}">${ICON.section}<span>${esc(t("Section"))}</span> ▾</button>
-            <div class="drw-menu" role="menu" hidden>
-              <button role="menuitem" data-cut="h">${esc(t("Horizontal cutting line"))}</button>
-              <button role="menuitem" data-cut="v">${esc(t("Vertical cutting line"))}</button>
-              <button role="menuitem" data-cut="2p">${esc(t("Cutting line through two points"))}</button>
-              <button role="menuitem" data-cut="off">${esc(t("Offset section"))}</button>
-              <button role="menuitem" data-cut="half">${esc(t("Half section"))}</button>
-              <button role="menuitem" data-cut="aligned">${esc(t("Aligned section"))}</button>
-            </div></div>
-          <div class="drw-dd"><button class="btn small" data-a="detail" aria-haspopup="menu" aria-expanded="false" title="${esc(t("Detail view: click the centre of the circle on a view, then its radius, then place the view"))}">${ICON.detail}<span>${esc(t("Detail"))}</span> ▾</button>
-            <div class="drw-menu" role="menu" hidden>
-              <button role="menuitem" data-det="circle">${esc(t("Circle"))}</button>
-              <button role="menuitem" data-det="profile">${esc(t("Profile"))}</button>
-            </div></div>
-          <button class="btn small" data-a="aux" title="${esc(t("Auxiliary view: click a straight edge or a drawn line, then place the view square to it"))}">${ICON.aux}<span>${esc(t("Auxiliary"))}</span></button>
-          <span class="drw-sep"></span>
-          <button class="btn small" data-a="dim" title="${esc(t("Smart dimension (D): click an edge, a circle or two points, then place the dimension"))}">${AICON.dim}<span>${esc(t("Dimension"))}</span></button>
-          <div class="drw-dd"><button class="btn small" data-a="annot" aria-haspopup="menu" aria-expanded="false" title="${esc(t("Model items, hole callouts, notes, geometric tolerances, datums, surface finish, tables, balloons and the bill of materials"))}">${ICON.annot}<span>${esc(t("Annotate"))}</span> ▾</button>
-            <div class="drw-menu" role="menu" hidden>
-              ${ANNOT_GROUPS.map((g, i) => `${i ? '<div class="drw-menu-sep" role="separator"></div>' : ""}${g.tools.filter(x => x[0] !== "dim").map(x => annotButton(x, true)).join("")}`).join("")}
-            </div></div>
-          <span class="drw-sep"></span>
+        <div class="drw-right" role="toolbar" aria-label="${esc(t("Edit and file"))}">
           <button class="icon" data-a="undo" aria-label="${esc(t("Undo (Ctrl+Z)"))}" title="${esc(t("Undo (Ctrl+Z)"))}">${ICON.undo}</button>
           <button class="icon" data-a="redo" aria-label="${esc(t("Redo (Ctrl+Y)"))}" title="${esc(t("Redo (Ctrl+Y)"))}">${ICON.redo}</button>
           <button class="icon" data-a="fit" aria-label="${esc(t("Fit the sheet (F)"))}" title="${esc(t("Fit the sheet (F)"))}">${ICON.fit}</button>
@@ -576,6 +560,38 @@ export class DrawingWorkspace {
               <button role="menuitem" data-x="dxf2000">${esc(t("DXF 2000 (this sheet)"))}</button>
               <button role="menuitem" data-x="png">${esc(t("PNG 300 dpi (this sheet)"))}</button>
               <button role="menuitem" data-x="print">${esc(t("Print… (Ctrl+P)"))}</button>
+            </div></div>
+        </div>
+      </div>
+      <div class="drw-cmds" role="toolbar" aria-label="${esc(t("Drawing commands"))}">
+        <div class="drw-cg" role="group" aria-label="${esc(t("Views"))}">
+          ${cmdButton('data-a="std3"', ICON.std3, "Standard 3 views", "Standard 3 views: front, top and side, lined up")}
+          <div class="drw-dd">${cmdButton('data-a="model"', ICON.model, "Model view", "Model view: pick an orientation, then place it on the sheet", true)}
+            <div class="drw-menu" role="menu" hidden>${(Object.keys(ORIENT_NAMES) as Orient[]).map(o => `<button role="menuitem" data-orient="${o}">${esc(t(ORIENT_NAMES[o]))}</button>`).join("")}</div></div>
+          ${cmdButton('data-a="proj"', ICON.proj, "Projected view", "Projected view: move the cursor around a view and click")}
+          <div class="drw-dd">${cmdButton('data-a="section"', ICON.section, "Section", "Section view: draw the cutting line on a view, then place the section", true)}
+            <div class="drw-menu" role="menu" hidden>
+              <button role="menuitem" data-cut="h">${esc(t("Horizontal cutting line"))}</button>
+              <button role="menuitem" data-cut="v">${esc(t("Vertical cutting line"))}</button>
+              <button role="menuitem" data-cut="2p">${esc(t("Cutting line through two points"))}</button>
+              <button role="menuitem" data-cut="off">${esc(t("Offset section"))}</button>
+              <button role="menuitem" data-cut="half">${esc(t("Half section"))}</button>
+              <button role="menuitem" data-cut="aligned">${esc(t("Aligned section"))}</button>
+            </div></div>
+          <div class="drw-dd">${cmdButton('data-a="detail"', ICON.detail, "Detail", "Detail view: click the centre of the circle on a view, then its radius, then place the view", true)}
+            <div class="drw-menu" role="menu" hidden>
+              <button role="menuitem" data-det="circle">${esc(t("Circle"))}</button>
+              <button role="menuitem" data-det="profile">${esc(t("Profile"))}</button>
+            </div></div>
+          ${cmdButton('data-a="aux"', ICON.aux, "Auxiliary", "Auxiliary view: click a straight edge or a drawn line, then place the view square to it")}
+        </div>
+        <span class="drw-sep"></span>
+        <div class="drw-cg" role="group" aria-label="${esc(t("Annotation"))}">
+          ${cmdButton('data-a="dim" data-tool="dim"', AICON.dim, "Dimension", "Smart dimension: click an edge, a circle or two points, then place the dimension (D)")}
+          ${BAR_TOOLS.map(k => { const x = ANNOT_GROUPS.flatMap(g => g.tools).find(y => y[0] === k)!; return cmdButton(`data-an="${k}" data-tool="${k}"`, AICON[k], x[1], x[2]); }).join("")}
+          <div class="drw-dd">${cmdButton('data-a="annot"', ICON.annot, "Annotate", "Every annotation: dimensions, notes, symbols, tolerances, centre lines, tables and sheet sketch", true)}
+            <div class="drw-menu right" role="menu" hidden>
+              ${ANNOT_GROUPS.map((g, i) => `${i ? '<div class="drw-menu-sep" role="separator"></div>' : ""}${g.tools.filter(x => x[0] !== "dim").map(x => annotButton(x, true)).join("")}`).join("")}
             </div></div>
         </div>
       </div>
@@ -613,7 +629,7 @@ export class DrawingWorkspace {
       this.el.addEventListener("input", e => this.onInput(e as Event, false));
       document.addEventListener("pointerdown", e => { if (!(e.target as HTMLElement).closest?.(".drw-dd")) this.closeMenus(); });
       // Annotation tiles get the command bar's tooltips: name, shortcut and what to click.
-      bindCommandTips(this.el, ".drw-at");
+      bindCommandTips(this.el, ".drw-at, .drw-cb");
     }
     this.svg.addEventListener("pointerdown", e => this.onDown(e));
     this.svg.addEventListener("pointermove", e => this.onMove(e));
@@ -662,7 +678,7 @@ export class DrawingWorkspace {
 
   private renderStatus() {
     const tool = this.activeTool();
-    for (const b of this.el.querySelectorAll<HTMLElement>(".drw-at")) { const on = b.dataset.tool === tool; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); }
+    for (const b of this.el.querySelectorAll<HTMLElement>(".drw-at, .drw-cb[data-tool]")) { const on = b.dataset.tool === tool; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); }
     const st = this.el.querySelector<HTMLElement>(".drw-status");
     if (!st || !this.store) return;
     const m = this.mode;
@@ -704,6 +720,7 @@ export class DrawingWorkspace {
     else if (this.stale) s = t("The model changed: the views are out of date. Updating…");
     else if (this.projecting.size && this.kernel.restarting) s = t("Freeing the drawing kernel's memory, then projecting… {n} to go", { n: this.projecting.size });
     else if (this.projecting.size) s = t("Projecting the views… {n} to go", { n: this.projecting.size });
+    else if (!this.sheet.views.length) s = t("Drag a view from the View palette onto the sheet, or use Standard 3 views.");
     else s = t("Drag a view to move it. Double-click the title block to fill it in.");
     st.textContent = s;
     st.classList.toggle("warn", this.stale && !this.loading);
@@ -747,7 +764,8 @@ export class DrawingWorkspace {
    */
   private dropGone(always = false) {
     if (!this.store || (!this.projecting.size && !always)) return;
-    const want = new Set<string>();
+    // The view palette's pictures are wanted too (they run behind the views).
+    const want = new Set<string>([...PALETTE.map(o => dirKey(ORIENTS[o])), "palette:flat"]);
     for (const sh of this.store.doc.sheets) for (const v of sh.views) {
       want.add(viewReq(sh, v).key);
       const a = altReq(sh, v);
@@ -1181,12 +1199,13 @@ export class DrawingWorkspace {
   /** Draws the palette's pictures from the model's projections (the kernel keeps them for the views). */
   private async renderPalette() {
     const run = ++this.palRun;
-    for (const o of PALETTE) {
+    // In the background: a view placed meanwhile has its projection made first (and shares these when the same).
+    await Promise.all(PALETTE.map(async o => {
       let d = "";
-      try { d = thumbPath(await this.kernel.project(ORIENTS[o])); } catch { /* left blank */ }
-      if (run !== this.palRun) return;
-      this.el.querySelector(`[data-pal="${o}"] path`)?.setAttribute("d", d);
-    }
+      try { d = thumbPath(await this.kernel.project(ORIENTS[o], true)); } catch { /* left blank */ }
+      if (run === this.palRun) this.el.querySelector(`[data-pal="${o}"] path`)?.setAttribute("d", d);
+    }));
+    if (run !== this.palRun) return;
     // A sheet metal part also offers its flat pattern (FR-FT-120).
     // The drawing may have closed while the thumbnails were drawn.
     if (run !== this.palRun || !this.store) return;
@@ -1198,7 +1217,7 @@ export class DrawingWorkspace {
       tile = this.el.querySelector<HTMLElement>('[data-pal="flat"]')!;
     }
     let d = "";
-    try { d = thumbPath(await this.kernel.request({ view: ORIENTS.top, cfg: FLAT_CONFIG, key: "palette:flat" })); } catch { /* left blank */ }
+    try { d = thumbPath(await this.kernel.request({ view: ORIENTS.top, cfg: FLAT_CONFIG, key: "palette:flat" }, true)); } catch { /* left blank */ }
     if (run === this.palRun) tile.querySelector("path")?.setAttribute("d", d);
   }
 
@@ -3589,6 +3608,7 @@ export class DrawingWorkspace {
     return {
       doc: () => this.store?.doc ?? null,
       prims: () => (this.store ? this.composed(this.sheet).prims : []),
+      loaded: () => !!this.store && !this.loading && !!this.facts,
       ready: () => !!this.store && !this.loading && this.sheet.views.every(v => this.kernel.cache.has(viewReq(this.sheet, v).key) && (!altReq(this.sheet, v) || this.kernel.cache.has(altReq(this.sheet, v)!.key))),
       svg: () => (this.store ? (() => { const sh = this.sheet, [W, H] = sheetSize(sh); return sheetSvg(this.composed(sh).prims, W, H); })() : ""),
       dxf: () => (this.store ? (() => { const sh = this.sheet, [W, H] = sheetSize(sh); return sheetDxf(this.composed(sh).prims, W, H); })() : ""),
@@ -3598,6 +3618,8 @@ export class DrawingWorkspace {
       mode: () => this.mode.kind,
       fields: () => (this.store ? this.fields() : null),
       helper: () => this.kernel.helperState(),
+      /** Exact projections made so far: key and worker ms (tests and timing). */
+      projMs: () => [...this.kernel.cache].map(([k, p]) => [k, Math.round(p.ms)] as [string, number]),
       previews: () => ({ shown: this.previewsShown, made: this.kernel.previewsMade, sections: this.kernel.sectionPreviewsMade, errs: this.kernel.previewErrors.slice(0, 3), on: this.previewsOn(), asked: this.previewAsked.size, left: this.svg.querySelectorAll(".drw-preview").length }),
       renders: () => this.sheetRenders,
       drop: () => this.dropGone(true),

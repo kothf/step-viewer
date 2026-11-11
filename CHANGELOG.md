@@ -5,19 +5,35 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.517.0] - 2026-11-11
+## [1.519.0] - 2026-11-11
 
 ### Added
 - Hole Wizard sizes and standards: a Standard box (ISO metric, ISO metric fine, ANSI inch UNC, ANSI inch UNF) above Size. ISO metric now runs from M1.6 to M64 (clearance holes to ISO 273, counterbores for ISO 4762 cap screws, countersinks for ISO 10642 / DIN 7991), ISO fine has 20 common fine pitches (M8x1 to M64x4), and the inch tables have #2 to 1" with 75 % tap drills, close/free/loose clearance, socket head counterbores and 82° flat-head countersinks. Switching the standard keeps the nearest size. Drawing callouts give inch threads the class 2B ("1/4-20 UNC-2B").
 - Hole Wizard Options box, as in SolidWorks: Head clearance (deepens a counterbore, or puts a cylinder of the countersink's width above the cone), Near side countersink (at the top of the hole or its counterbore), Under head countersink (from the counterbore's floor into the hole) and Far side countersink (where a hole that is not blind leaves the material). Each countersink has its own diameter and angle; drawing callouts list them ("⌵Ø9 × 90° FAR SIDE").
 - Hole end conditions Up to vertex (pick a model corner or a sketch point; the hole stops at its depth) and Offset from surface (a face or plane plus a distance, with Reverse offset), and a Drill angle for blind holes with a drill point (118° by default, any angle up to 180°).
 
+
+## [1.518.0] - 2026-11-11
+
+### Changed
+
+- Drawings: a new drawing opens with an empty sheet and the View palette, as in SolidWorks: drag the views you want onto the sheet, or use Standard 3 views for front, top and side lined up.
+
+### Fixed
+
+- Drawings: placing a view from the View palette while its pictures were still being drawn restarted the drawing kernel, so the view took seconds to appear (and a palette picture stayed blank). The pictures now wait behind the views and are never thrown away, so a palette view shows at once.
+- Drawings: the drawing kernel starts a few seconds after a model opens, so a new drawing's palette and first view no longer wait about 3 s (longer on slower computers) for OpenCASCADE to set itself up.
+
+## [1.517.0] - 2026-11-11
+
+### Changed
+
+- Drawings: the commands above the sheet are a command bar like the 3D one and SolidWorks' CommandManager: icon-over-label buttons in a Views group (Standard 3 views, Model view, Projected, Section, Detail, Auxiliary) and an Annotation group (Smart dimension, Model items, Note, Balloon, Hole callout, Surface finish, Geometric tolerance, Datum, Centerline, Center mark, and Annotate ▾ for the rest), all in one row; the running tool shows pressed, and each button has the rich tooltip. Undo, Redo, Fit, Save and Export moved up to the file name's row. Under 1280 px only the icons show.
+
 ## [1.516.0] - 2026-11-11
 
 ### Added
 - Hole: a tapped hole that is not blind (Through all, Up to next, Up to face or plane) has a Thread end choice, Blind or Through all, as in SolidWorks' Hole Wizard. Through all runs the cosmetic thread the whole length of the drill in the 3D view and in drawings, and the drawing callout reads "M6-6H THRU" (or no depth for an up-to hole) instead of a thread depth. The Thread rows now sit under End condition.
-
-
 
 ## [1.515.0] - 2026-11-11
 
@@ -3213,7 +3229,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.517.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.519.0...HEAD
+[1.519.0]: https://github.com/kothf/step-viewer/compare/v1.518.0...v1.519.0
+[1.518.0]: https://github.com/kothf/step-viewer/compare/v1.517.0...v1.518.0
 [1.517.0]: https://github.com/kothf/step-viewer/compare/v1.516.0...v1.517.0
 [1.516.0]: https://github.com/kothf/step-viewer/compare/v1.515.0...v1.516.0
 [1.515.0]: https://github.com/kothf/step-viewer/compare/v1.514.0...v1.515.0
