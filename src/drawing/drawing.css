@@ -8,6 +8,11 @@
 /* Command bar: icon-over-label buttons in groups, like the 3D command bar (.mc-b). */
 .drw-cmds { display: flex; align-items: stretch; gap: 4px; padding: 3px 8px; background: var(--panel); border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: thin; }
 .drw-cg { display: flex; align-items: stretch; gap: 2px; }
+.drw-cg[hidden] { display: none; }
+.drw-cg > .drw-sep { align-self: center; height: 34px; margin: 0 4px; }
+.drw-cb.on[aria-haspopup] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text); }
+.drw-cfoot { display: flex; align-items: flex-end; padding: 0 8px; min-height: 26px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.drw-pal-h { flex: 1; margin: 0; padding: 8px 12px 6px; font-size: 12px; font-weight: 600; color: var(--text); }
 .drw-cg > .drw-dd { display: flex; }
 .drw-cb { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 2px; min-width: 50px; max-width: 92px; padding: 4px 5px 3px; border: 1px solid transparent; border-radius: 7px; background: none; color: var(--text); font: inherit; cursor: pointer; }
 .drw-cb svg { width: 20px; height: 20px; flex: none; }
@@ -102,22 +107,9 @@ circle.drw-edge { fill: none; }
 .drw-stack { align-items: center; justify-content: space-between; font-size: 12px; }
 
 /* View palette (FR-UI-072) */
-.drw-ptabs { display: flex; gap: 2px; padding: 6px 10px 0; border-bottom: 1px solid var(--line); }
-.drw-ptabs button { flex: 1; padding: 6px 4px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--muted); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
-.drw-ptabs button.on { color: var(--text); border-bottom-color: var(--accent); }
 .drw-pal { border-bottom: 1px solid var(--line); padding: 8px 10px; }
 .drw-pal[hidden] { display: none; }
 /* Annotation tab: icon tiles in groups, like the 3D command bar's buttons (.mc-b). */
-#drw-pane-annot { flex: none; max-height: 50vh; overflow-y: auto; }
-.drw-atg + .drw-atg { margin-top: 8px; }
-.drw-atg-h { font-size: 11px; font-weight: 600; color: var(--muted); margin: 0 2px 3px; }
-.drw-at-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(60px, 1fr)); gap: 2px; }
-.drw-at { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 3px; min-height: 48px; padding: 4px 2px 3px; border: 1px solid transparent; border-radius: 7px; background: none; color: var(--text); font: inherit; cursor: pointer; }
-.drw-at svg { width: 20px; height: 20px; flex: none; }
-.drw-at .mc-l { white-space: normal; text-align: center; line-height: 1.15; font-size: 11px; }
-.drw-at:hover { background: var(--panel-2); border-color: var(--line); }
-.drw-at:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
-.drw-at.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text); }
 .drw-menu button:has(> svg) { display: flex; align-items: center; gap: 8px; padding: 5px 10px; }
 .drw-menu button > svg { flex: none; }
 .drw-menu-sep { height: 1px; margin: 3px 6px; background: var(--line); flex: none; }
@@ -142,7 +134,6 @@ circle.drw-edge { fill: none; }
 .drw-exlist { max-height: 160px; overflow-y: auto; }
 /* Side panel (FeatureManager + PropertyManager): the palette folds away; the properties get a title row and fold by group. */
 .drw-ptabs-row { display: flex; align-items: flex-end; border-bottom: 1px solid var(--line); }
-.drw-ptabs-row .drw-ptabs { flex: 1; border-bottom: 0; }
 .drw-palfold { flex: none; display: grid; place-items: center; width: 28px; height: 28px; margin: 0 6px 3px 0; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; }
 .drw-palfold:hover { background: var(--panel-2); color: var(--text); }
 .drw-palfold:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }

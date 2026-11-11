@@ -164,7 +164,7 @@ MöbiusCAD keeps the same workflow model (history-based parts, mated assemblies,
 | Draft | Neutral plane, parting line, step | P2 (neutral plane) |
 | Rib | | P3 |
 | Linear, circular, mirror pattern; curve-driven, sketch-driven, table-driven, fill, variable patterns | Features, faces or bodies | P2 (linear, circular, mirror), P3 (sketch-driven), P5 (others) |
-| Dome, wrap, deform, flex, indent, scale | | P5 (dome 1.547.0, FR-FT-103; wrap 1.548.0, FR-FT-104; flex 1.551.0, FR-FT-105; indent, scale) |
+| Dome, wrap, deform, flex, indent, scale | | P5 (dome 1.547.0, FR-FT-103; wrap 1.548.0, FR-FT-104; flex 1.552.0, FR-FT-105; indent, scale) |
 | Reference geometry: plane, axis, coordinate system, point, mate reference | | P1 (plane, axis, point), P2 (coordinate system) |
 | Curves: split line, projected, composite, helix/spiral, curve through points | | P3 (helix, split line), P5 (others) |
 | Multibody: combine, intersect, split, delete/keep body, move/copy body, insert part | | P3 |

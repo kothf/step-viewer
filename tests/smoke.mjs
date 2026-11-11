@@ -123,7 +123,23 @@ const inShard = k => {
 async function newDrawing3(pg) {
   await pg.click("#new-more"); await pg.click("#new-drawing");
   await pg.waitForFunction(() => window.__sv.drw.loaded(), null, { timeout: 120000 });
-  await pg.click('#drw [data-a="std3"]');
+  await drwCmd(pg, "std3");
+}
+
+/** Clicks a drawing command bar button by its `data-a` (std3, model, section, detail, aux, dim…), on whichever tab holds it. */
+async function drwCmd(pg, a) {
+  const tab = await pg.evaluate(a => document.querySelector(`#drw .drw-cmds [data-a="${a}"]`)?.closest("[data-cpane]")?.dataset.cpane ?? null, a);
+  if (tab) await pg.click(`#drw [data-ctab="${tab}"]`);
+  await pg.click(`#drw .drw-cmds [data-a="${a}"]`);
+}
+
+/** Starts a drawing annotation tool by its `data-an`: its tab first, then the ▾ it sits under, if any. */
+async function drwTool(pg, k) {
+  const at = await pg.evaluate(k => { const b = document.querySelector(`#drw .drw-cmds [data-an="${k}"]`); return b ? { tab: b.closest("[data-cpane]").dataset.cpane, menu: b.closest(".drw-menu") ? b.closest(".drw-dd").querySelector("button").dataset.a : null } : null; }, k);
+  if (!at) throw new Error(`no drawing tool ${k}`);
+  await pg.click(`#drw [data-ctab="${at.tab}"]`);
+  if (at.menu) await pg.click(`#drw .drw-cmds [data-a="${at.menu}"]`);
+  await pg.click(`#drw .drw-cmds [data-an="${k}"]`);
 }
 
 /** A command of the vault panel's ⋯ menu (FR-PDM-080). */
@@ -5479,7 +5495,7 @@ try {
       check(focused && sc === "1:3" && back === "1:1", `drawing: Custom… scale is typed into a box under the list (${focused}, ${sc}, back ${back})`);
     }
     // Model view ▾ Isometric: the preview follows the cursor; the click places it, then projected views come off it.
-    await dp.click('#drw [data-a="model"]');
+    await drwCmd(dp, "model");
     await dp.click('#drw [data-orient="iso"]');
     [sx, sy] = await pt(330, 220);
     await dp.mouse.move(sx, sy); await dp.mouse.move(sx + 3, sy + 3);
@@ -5553,10 +5569,10 @@ try {
       await dp2.waitForFunction(() => !document.querySelector("#drw").hidden && window.__sv.drw.doc()?.sheets[0].views.length === 5, null, { timeout: 60000 });
       const same = await dp2.evaluate(id => window.__sv.drw.doc().source.doc.id === id && window.__sv.modeller.active, pid);
       // Back on the drawing its menus still open (drawings exam #29: each return added the toolbar listeners again, so a click toggled twice).
-      await dp2.click('#drw [data-a="annot"]');
-      const menuOpen = await dp2.evaluate(() => document.querySelector('#drw [data-a="annot"]').getAttribute("aria-expanded") === "true");
+      await drwCmd(dp2, "tables");
+      const menuOpen = await dp2.evaluate(() => document.querySelector('#drw [data-a="tables"]').getAttribute("aria-expanded") === "true");
       await dp2.keyboard.press("Escape");
-      check(menuOpen, "drawing: after Model and back, the Annotate menu still opens");
+      check(menuOpen, "drawing: after Model and back, the Tables menu still opens");
       // Drawings exam #36: a click on a view's tree row keeps the focus in the tree (the rows are rebuilt), so Delete deletes it.
       const leaf = await dp2.evaluate(() => { const vs = window.__sv.drw.doc().sheets[0].views; return vs.find(v => !vs.some(c => c.parent === v.id))?.id; });
       await dp2.click(`#drw .drw-tree [data-sel="${leaf}"]`);
@@ -5654,7 +5670,7 @@ try {
     const at = (id, u, w) => dp.evaluate(([i, a, b]) => { const p = window.__sv.drw.placement(i); return window.__sv.drw.sheetPt(p.x + (a - p.uc) * p.s, p.y + (b - p.vc) * p.s); }, [id, u, w]);
     const scr = (x, y) => dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]);
     // Section ▾ Vertical: the cutting line follows the cursor over the front view; click through the hole, place the view on the left.
-    await dp.click('#drw [data-a="section"]'); await dp.click('#drw [data-cut="v"]');
+    await drwCmd(dp, "section"); await dp.click('#drw [data-cut="v"]');
     let [x, y] = await at(front.id, 10, 5);
     await dp.mouse.move(x - 5, y); await dp.mouse.move(x, y);
     const cutPreview = await dp.evaluate(() => document.querySelectorAll("#drw .drw-cut").length);
@@ -5692,7 +5708,7 @@ try {
     // Smart dimension on the section's cut faces (FR-DRW-021): the hole's two cut walls are 16 apart.
     {
       const cutN = await dp.evaluate(i => (window.__sv.drw.proj(i)?.cutEdges ?? []).filter(e => e.k.endsWith("|§")).length, sec.id);
-      await dp.click('#drw [data-a="dim"]');
+      await drwCmd(dp, "dim");
       for (const u of [8, -8]) { const [cx, cy] = await at(sec.id, u, 10); await dp.mouse.move(cx, cy + 2); await dp.mouse.move(cx, cy); await dp.mouse.click(cx, cy); }
       const [px, py] = await at(sec.id, 0, 32);
       await dp.mouse.move(px + 3, py); await dp.mouse.move(px, py); await dp.mouse.click(px, py);
@@ -5705,7 +5721,7 @@ try {
       await ready();
     }
     // Detail: centre on the hole in the top view (it snaps to the circle's centre), radius 15, then place: 2:1, clipped, with its circle and label.
-    await dp.click('#drw [data-a="detail"]'); await dp.click('#drw [data-det="circle"]');
+    await drwCmd(dp, "detail"); await dp.click('#drw [data-det="circle"]');
     [x, y] = await at(top.id, 10.6, 0.5);
     await dp.mouse.move(x, y); await dp.mouse.click(x, y);
     [x, y] = await at(top.id, 25, 0);
@@ -5720,7 +5736,7 @@ try {
     check(det && det.letter === "B" && det.parent === top.id && det.c.join(",") === "10,0" && Math.abs(det.r - 15) < 0.05 && prims.some(p => p.t === "a" && p.layer === "VISIBLE" && Math.abs(p.r - 16) < 1e-6) && detTexts.includes("DETAIL B") && detTexts.includes("Scale 2:1") && detTexts.includes("B"),
       `drawing: detail view B of the hole at 2:1 (centre snapped, circle Ø32 on the sheet, label and circle on the parent) (${JSON.stringify(det && { c: det.c, r: det.r })})`);
     // Auxiliary: click the front view's top edge, place the view above it, square to the edge.
-    await dp.click('#drw [data-a="aux"]');
+    await drwCmd(dp, "aux");
     [x, y] = await at(front.id, -30, 20);
     await dp.mouse.move(x, y + 2); await dp.mouse.move(x, y);
     const edgeHi = await dp.evaluate(() => document.querySelectorAll("#drw .drw-edge").length);
@@ -5737,11 +5753,11 @@ try {
     {
       const viewsBefore = vs.length;
       await dp.keyboard.press("Escape");
-      await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="skline"]');
+      await drwTool(dp, "skline");
       for (const [u, w] of [[-30, -20], [30, 20]]) { [x, y] = await at(top.id, u, w); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); }
       await dp.keyboard.press("Escape");
       const drawnN = await dp.evaluate(() => (window.__sv.drw.doc().sheets[0].annots ?? []).filter(a => a.t === "sk").length);
-      await dp.click('#drw [data-a="aux"]');
+      await drwCmd(dp, "aux");
       [x, y] = await at(top.id, 15, 10);
       await dp.mouse.move(x, y + 2); await dp.mouse.move(x, y);
       const lineHi = await dp.evaluate(() => document.querySelectorAll("#drw .drw-edge").length);
@@ -5762,7 +5778,7 @@ try {
       check(left.v === viewsBefore && left.sk === 0, `drawing: undo takes the drawn-line auxiliary view and the line back off (${JSON.stringify(left)})`);
     }
     // 1.114.0 offset section (FR-DRW-012): a path on the top view at y = 10 left of x = 0, a step down to y = 0, then through the hole.
-    await dp.click('#drw [data-a="section"]'); await dp.click('#drw [data-cut="off"]');
+    await drwCmd(dp, "section"); await dp.click('#drw [data-cut="off"]');
     for (const [u, w] of [[-45, 10], [0, 10], [0, 0], [45, 0]]) { [x, y] = await at(top.id, u, w); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); }
     const pathPreview = await dp.evaluate(() => document.querySelectorAll("#drw polyline.drw-cut").length);
     await dp.mouse.click(x, y);
@@ -5779,7 +5795,7 @@ try {
     check(pathPreview === 1 && off && off.path.length === 8 && off.letter === "D" && Math.abs(offArea - (50 * 20 + (50 - 16) * 20)) < 0.5 && prims.filter(p => p.t === "t" && p.layer === "ANNOT" && p.s === "D").length === 2,
       `drawing: offset section D through two planes, both hatched (area ${offArea.toFixed(2)} mm² = 50×20 + 34×20; path ${JSON.stringify(off?.path)})`);
     // Aligned section (FR-DRW-012): first leg along −x on the top view, centre at the origin, second leg up +y; it turns into the first leg's plane.
-    await dp.click('#drw [data-a="section"]'); await dp.click('#drw [data-cut="aligned"]');
+    await drwCmd(dp, "section"); await dp.click('#drw [data-cut="aligned"]');
     for (const [u, w] of [[-45, 0], [0, 0], [0, 25]]) { [x, y] = await at(top.id, u, w); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); }
     [x, y] = await scr(top.x, top.y - 75);
     await dp.mouse.move(x + 5, y); await dp.mouse.move(x, y);
@@ -5794,7 +5810,7 @@ try {
     check(alv && alv.path.length === 6 && alv.letter === "E" && Math.abs(alArea - (50 * 20 + 30 * 20)) < 0.5 && prims.filter(p => p.t === "t" && p.layer === "ANNOT" && p.s === "E").length === 2,
       `drawing: aligned section E, the second leg turned into the first leg's plane (area ${alArea.toFixed(2)} mm² = 50×20 + 30×20; path ${JSON.stringify(alv?.path)})`);
     // Detail profile (FR-DRW-013): four corners round the hole on the top view, closed by clicking the first again.
-    await dp.click('#drw [data-a="detail"]'); await dp.click('#drw [data-det="profile"]');
+    await drwCmd(dp, "detail"); await dp.click('#drw [data-det="profile"]');
     for (const [u, w] of [[0, -12], [22, -12], [22, 12], [5, 12], [0, -12]]) { [x, y] = await at(top.id, u, w); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); }
     [x, y] = await scr(330, 170);
     await dp.mouse.move(x + 4, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
@@ -5866,14 +5882,14 @@ try {
     const centre = pr.filter(p => p.layer === "CENTER" && p.pen === "center").length;
     check(centre === 4, `drawing: centre marks on the hole seen end-on and centrelines on it from the front and the side (${centre} centre lines)`);
     // Model items: the sketch's 100 and 60 and the Ø16 go to the top view, the extrude depth 20 to the front.
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="items"]');
+    await drwTool(dp, "items");
     await dp.waitForTimeout(150);
     let an = await annots();
     let tx = await texts();
     const where = an.map(a => `${a.src}@${a.view === front.id ? "front" : a.view === top.id ? "top" : "?"}`).sort().join(" ");
     check(an.length === 4 && where === "f1:depth@front s1:d1@top s1:d2@top s2:d3@top" && ["100", "60", "Ø16", "20"].every(s => tx.includes(s)),
       `drawing: model items imported once each into the view where they read best (${where}; ${tx.join(" ")})`);
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="items"]');
+    await drwTool(dp, "items");
     await dp.waitForTimeout(150);
     check((await annots()).length === 4, "drawing: model items are not inserted twice");
     {
@@ -5885,7 +5901,7 @@ try {
       check(eh < 0.02 && ev < 0.02, `drawing: model items sit 10 mm outside the view on the sheet (scale ${sc}; off by ${eh.toFixed(3)} / ${ev.toFixed(3)})`);
     }
     // Smart dimension: the front view's top edge, placed above it, is a horizontal 100; the hole's circle gives Ø16.
-    await dp.click('#drw [data-a="dim"]');
+    await drwCmd(dp, "dim");
     let [x, y] = await at(front.id, -20, 20);
     await dp.mouse.move(x, y + 3); await dp.mouse.move(x, y);
     const hov = await dp.evaluate(() => document.querySelectorAll("#drw .drw-edge").length);
@@ -5907,7 +5923,7 @@ try {
     // 1.445.0 angle arrows: an angle placed tight in the corner gets its arrows outside (the arc grows tails); Inside takes them off; then deleted.
     {
       const sc = await dp.evaluate(() => { const s = window.__sv.drw.doc().sheets[0].scale; return s[0] / s[1]; });
-      await dp.click('#drw [data-a="dim"]');
+      await drwCmd(dp, "dim");
       [x, y] = await at(front.id, -20, 20); await dp.mouse.move(x, y + 3); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
       [x, y] = await at(front.id, 50, 7); await dp.mouse.move(x + 3, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
       [x, y] = await at(front.id, 50 - 2 / sc, 20 - 2 / sc); await dp.mouse.move(x - 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
@@ -5935,7 +5951,7 @@ try {
       const bx = await dp.evaluate(id => { const p = window.__sv.drw.placement(id); return { b: p.box, right: p.x + (p.box[2] - p.uc) * p.s, s: p.s }; }, front.id);
       const level = () => dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "l" && p.layer === "ANNOT" && Math.abs(p.p[1] - p.p[3]) < 1e-6).map(p => [Math.min(p.p[0], p.p[2]), Math.max(p.p[0], p.p[2]), p.p[1]].map(v => Math.round(v * 1000) / 1000).join()));
       const before = new Set(await level()), n0 = (await annots()).length;
-      await dp.click('#drw [data-a="dim"]');
+      await drwCmd(dp, "dim");
       [x, y] = await at(front.id, -20, bx.b[3]); await dp.mouse.move(x, y + 3); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
       [x, y] = await at(front.id, -20, bx.b[1]); await dp.mouse.move(x, y - 3); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
       [x, y] = await at(front.id, bx.b[2] + 14 / bx.s, (bx.b[1] + bx.b[3]) / 2); await dp.mouse.move(x - 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
@@ -5952,7 +5968,7 @@ try {
       const n0 = (await annots()).length, c0 = (await texts()).filter(s => s === "Ø16").length;
       let made = null, c1 = 0, upright = 0;
       for (const u of [18, -18, 2, -2]) {
-        await dp.click('#drw [data-a="dim"]');
+        await drwCmd(dp, "dim");
         [x, y] = await at(front.id, u, (bx.b[1] + bx.b[3]) / 2); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
         [x, y] = await at(front.id, u, bx.b[1] - 14 / bx.s); await dp.mouse.move(x, y + 2); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
         await dp.keyboard.press("Escape");
@@ -5967,7 +5983,7 @@ try {
       const back = (await annots()).length === n0;
       check(made && made.k === "dia" && made.view === front.id && c1 === c0 + 1 && upright >= 2 && back, `drawing: a hole's hidden line in a side view gives its diameter as a linear dimension (${JSON.stringify({ k: made?.k, c0, c1, upright, back })})`);
       // Both hidden lines of the hole, one after the other: the distance between the two lines (exam #14), not between circle centres.
-      await dp.click('#drw [data-a="dim"]');
+      await drwCmd(dp, "dim");
       for (const u of [2, 18]) { [x, y] = await at(front.id, u, (bx.b[1] + bx.b[3]) / 2); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); }
       [x, y] = await at(front.id, 10, bx.b[1] - 14 / bx.s); await dp.mouse.move(x, y + 2); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
       await dp.keyboard.press("Escape");
@@ -6100,7 +6116,7 @@ try {
     const devGap = await dp.evaluate(() => { const els = [...document.querySelectorAll("#drw svg text")], r = s => els.find(e => e.textContent === s)?.getBoundingClientRect(); const m = r("Ø16H7"), u = r("+0.018"), l = [...els].filter(e => e.textContent === "0").map(e => e.getBoundingClientRect()).find(q => m && Math.abs(q.left - u.left) < 2); return m && u ? { gap: +(u.left - m.right).toFixed(1), lo: l ? +(l.left - m.right).toFixed(1) : null, h: +m.height.toFixed(1) } : null; });
     check(devGap && devGap.gap > -0.15 * devGap.h && (devGap.lo === null || devGap.lo > -0.15 * devGap.h), `drawing: fit deviations clear the dimension text (${JSON.stringify(devGap)})`);
     // Hole callout and a note.
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="hole"]');
+    await drwTool(dp, "hole");
     [x, y] = await at(top.id, 10, -8);
     await dp.mouse.move(x, y); await dp.mouse.click(x, y);
     [x, y] = await at(top.id, 40, -45);
@@ -6123,7 +6139,7 @@ try {
       }
       check(r && r.below && r.stored && r.back, `drawing: a hole callout takes a line below and leaves the number of holes out (${JSON.stringify(r)})`);
     }
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="note"]');
+    await drwTool(dp, "note");
     [x, y] = await dp.evaluate(() => window.__sv.drw.sheetPt(40, 60));
     await dp.mouse.move(x, y); await dp.mouse.click(x, y);
     // The new note's text box has the focus with its text selected (drawings exam #9): type, Tab commits.
@@ -6211,7 +6227,7 @@ try {
         `drawing: extension lines take the style's gap and overshoot and go back (${[e0, e1, e2, e3].map(v => v.toFixed(1)).join(" → ")})`);
     }
     // Property link in a note (FR-DRW-023): $PRP:"Scale" shows the sheet scale.
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="note"]');
+    await drwTool(dp, "note");
     [x, y] = await dp.evaluate(() => window.__sv.drw.sheetPt(40, 75));
     await dp.mouse.move(x, y); await dp.mouse.click(x, y);
     // The new note's text box has the focus with its text selected (drawings exam #9): type, Tab commits.
@@ -6224,10 +6240,10 @@ try {
     // Ordinate and chain dimensions (FR-DRW-021): base corner, hole centre, a click where the set goes (drawings exam #15:
     // like SolidWorks, so it doesn't land on the dimensions already there), far corner; each later click adds its dimension.
     const clicks = async (id, pts) => { for (const [u, w] of pts) { const [cx, cy] = await at(id, u, w); await dp.mouse.move(cx + 2, cy); await dp.mouse.move(cx, cy); await dp.mouse.click(cx, cy); } };
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="ord"]');
+    await drwTool(dp, "ord");
     await clicks(top.id, [[-50, -30], [10, 0], [0, -45], [50, -30]]);
     await dp.keyboard.press("Escape");
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="chain"]');
+    await drwTool(dp, "chain");
     await clicks(top.id, [[-50, 30], [10, 0], [0, 47], [50, 30]]);
     await dp.keyboard.press("Escape");
     an = await annots();
@@ -6237,7 +6253,7 @@ try {
     check(ords === 3 && chain === 2 && rows === "-45/47" && tx.includes("0") && tx.includes("40") && tx.filter(s => s === "60").length >= 3,
       `drawing: ordinate dimensions 0 / 60 / 100 from the base corner and a chain 60 + 40 along the top edge, each in the row clicked (${ords} ordinates, ${chain} chain, rows ${rows}; ${tx.join(" ")})`);
     // Hole table (FR-DRW-024): origin at the corner, the Ø16 hole tagged A1 at X 60 / Y 30, the table placed below the view.
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="htable"]');
+    await drwTool(dp, "htable");
     await clicks(top.id, [[-50, -30], [-50, -60]]);
     tx = await texts();
     const htab = (await annots()).find(a => a.t === "htable");
@@ -6296,7 +6312,7 @@ try {
     const sheetX = u => geo.x + (u - geo.uc) * geo.s;
     const at = (u, w) => dp.evaluate(([i, a, b]) => { const p = window.__sv.drw.placement(i); return window.__sv.drw.sheetPt(p.x + (a - p.uc) * p.s, p.y + (b - p.vc) * p.s); }, [front, u, w]);
     const click = async (u, w) => { const [x, y] = await at(u, w); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); };
-    const tool = async an => { await dp.click('#drw [data-a="annot"]'); await dp.click(`#drw [data-an="${an}"]`); };
+    const tool = an => drwTool(dp, an);
     const annots = () => dp.evaluate(() => (window.__sv.drw.doc().sheets[0].annots ?? []).map(a => JSON.parse(JSON.stringify(a))));
     const [u0, v0, u1, v1] = geo.box, vm = (v0 + v1) / 2, hu = geo.hid.length ? geo.hid.reduce((a, b) => Math.abs(a) < Math.abs(b) ? a : b) : null;
     // Datum A on the left outline, datum B on the top face (a circle seen edge-on), a hole callout and a position tolerance
@@ -6318,6 +6334,82 @@ try {
     check(hu != null && kinds === "datum,datum,hole,gtol,surf,note" && !!da?.ref?.s && !!db && !!ho?.ref?.s && res.dangle === 0 && touches(u0) && touches(u1) && touches(hu)
       && res.prims.some(p => p.t === "t" && /Ø10/.test(p.s)),
       `drawing: on a round part's side view datums, hole callouts, tolerances, surface finish and notes pick its outlines, face lines and hidden lines and land on them (${JSON.stringify({ kinds, hu, a: da?.ref, ho: ho?.ref, dangle: res.dangle, u0: touches(u0), u1: touches(u1), h: hu != null && touches(hu) })})`);
+    await ctx.close();
+  }
+
+  // --- Drawings: a cross hole drilled through a round shaft (Andrey, 2026-11-11). Its rim on the shaft is a saddle curve,
+  // not a circle, but seen along the hole it draws as one: dimension, hole callout, datum and centre mark take it; seen
+  // from the side the hole's hidden lines give its diameter. ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    const part = { schema: 1, kind: "part", id: "d_drwcross", name: "Shaft", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "o", t: "point", x: 0, y: 0 }, { id: "c", t: "circle", c: "o", r: 16 }] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 80 } },
+      { id: "s2", type: "sketch", name: "Sketch2", plane: { std: "XZ" }, rels: [], dims: [], ents: [{ id: "h0", t: "point", x: 0, y: 50 }, { id: "h1", t: "circle", c: "h0", r: 4 }] },
+      { id: "f2", type: "extrude", name: "Cut1", sketch: "s2", op: "cut", end: "through2", depth: { v: 0 } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-11T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "Shaft.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await newDrawing3(dp);
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
+    await dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
+    // The view that shows the hole as a circle (a visible Ø8 arc or circle), and one that shows its two hidden lines.
+    const found = await dp.evaluate(() => {
+      const d = window.__sv.drw, vs = d.doc().sheets[0].views, out = { circ: null, side: null };
+      for (const v of vs) {
+        const p = d.placement(v.id), inBox = (x, y) => { const u = p.uc + (x - p.x) / p.s, w = p.vc + (y - p.y) / p.s; return u > p.box[0] - 1 && u < p.box[2] + 1 && w > p.box[1] - 1 && w < p.box[3] + 1; };
+        const ps = d.prims();
+        // The rim is drawn as an arc or as a polyline: take the circle through three of its points.
+        const ring = q => {
+          if (q.layer !== "VISIBLE") return null;
+          if (q.t === "a") return Math.abs(q.r - 4 * p.s) < 1e-3 && inBox(q.o[0], q.o[1]) ? { c: q.o, r: q.r } : null;
+          if (q.t !== "p" || q.p.length < 10) return null;
+          const n = q.p.length / 2, at = i => [q.p[2 * i], q.p[2 * i + 1]], [a, b, e] = [at(0), at(Math.floor(n / 3)), at(Math.floor(2 * n / 3))];
+          const dd = 2 * (a[0] * (b[1] - e[1]) + b[0] * (e[1] - a[1]) + e[0] * (a[1] - b[1]));
+          if (Math.abs(dd) < 1e-9) return null;
+          const sq = v => v[0] * v[0] + v[1] * v[1];
+          const o = [(sq(a) * (b[1] - e[1]) + sq(b) * (e[1] - a[1]) + sq(e) * (a[1] - b[1])) / dd, (sq(a) * (e[0] - b[0]) + sq(b) * (a[0] - e[0]) + sq(e) * (b[0] - a[0])) / dd];
+          for (let i = 0; i < n; i++) if (Math.abs(Math.hypot(at(i)[0] - o[0], at(i)[1] - o[1]) - 4 * p.s) > 0.02) return null;
+          return inBox(o[0], o[1]) ? { c: o, r: 4 * p.s } : null;
+        };
+        const c = ps.map(ring).find(Boolean);
+        if (c && !out.circ) out.circ = { id: v.id, c: c.c, r: c.r, s: p.s };
+        const hid = ps.filter(q => q.t === "l" && q.layer === "HIDDEN" && inBox(q.p[0], q.p[1]) && inBox(q.p[2], q.p[3]) && Math.hypot(q.p[2] - q.p[0], q.p[3] - q.p[1]) > 20 * p.s);
+        if (!c && hid.length >= 2 && !out.side) out.side = { id: v.id, l: hid[0].p, s: p.s };
+      }
+      return out;
+    });
+    const px = (x, y) => dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]);
+    const clickS = async (x, y) => { const [a, b] = await px(x, y); await dp.mouse.move(a + 2, b); await dp.mouse.move(a, b); await dp.mouse.click(a, b); };
+    const annots = () => dp.evaluate(() => (window.__sv.drw.doc().sheets[0].annots ?? []).map(a => JSON.parse(JSON.stringify(a))));
+    let ok = !!found.circ && !!found.side, got = {};
+    if (ok) {
+      const { c, r } = found.circ, k = Math.SQRT1_2;
+      // The hole has its centre mark already, before any annotation.
+      got.mark = await dp.evaluate(([cx, cy]) => window.__sv.drw.prims().some(q => q.t === "l" && q.layer === "CENTER" && Math.abs((q.p[0] + q.p[2]) / 2 - cx) < 0.01 && Math.abs((q.p[1] + q.p[3]) / 2 - cy) < 0.01 && Math.hypot(q.p[2] - q.p[0], q.p[3] - q.p[1]) < 30), c);
+      await drwCmd(dp, "dim"); await clickS(c[0] + r * k, c[1] + r * k); await clickS(c[0] + 25, c[1] + 25); await dp.keyboard.press("Escape");
+      await drwTool(dp, "hole"); await clickS(c[0] - r * k, c[1] + r * k); await clickS(c[0] - 30, c[1] + 30); await dp.keyboard.press("Escape");
+      await drwTool(dp, "datum"); await clickS(c[0] + r * k, c[1] - r * k); await clickS(c[0] + 20, c[1] - 20); await dp.keyboard.press("Escape");
+      // A distance from the hole's centre to the shaft's end: the centre is a point to pick.
+      const l = found.side.l, mx = (l[0] + l[2]) / 2, my = (l[1] + l[3]) / 2, horiz = Math.abs(l[3] - l[1]) < 1e-6;
+      await drwCmd(dp, "dim"); await clickS(mx, my); await clickS(mx + (horiz ? 0 : 30), my + (horiz ? 30 : 0)); await dp.keyboard.press("Escape");
+      await dp.waitForTimeout(150);
+      const an = await annots();
+      const txt = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.layer === "ANNOT" && p.t === "t").map(p => p.s));
+      got.kinds = an.map(a => a.t + (a.k ? ":" + a.k : "")).join();
+      got.txt = txt; got.dangle = await dp.evaluate(() => document.querySelectorAll("#drw .drw-dangle").length);
+      got.side = an.filter(a => a.t === "dim").map(a => a.view === found.side.id).join();
+      ok = got.mark && got.kinds === "dim:dia,hole,datum,dim:dia" && got.dangle === 0 && txt.filter(s => /^Ø8$/.test(s)).length === 2 && txt.some(s => /Ø8.*THRU/.test(s)) && got.side === "false,true";
+    }
+    check(ok, `drawing: a cross hole in a round shaft takes a diameter, a hole callout and a datum on its rim, has its centre mark, and gives Ø8 from its hidden lines in the side view (${JSON.stringify({ found, got })})`);
+    if (process.env.SMOKE_SHOTS) await dp.screenshot({ path: `${process.env.SMOKE_SHOTS}/drawing-crosshole.png` });
     await ctx.close();
   }
 
@@ -6349,7 +6441,7 @@ try {
     const at = (id, u, w) => dp.evaluate(([i, a, b]) => { const p = window.__sv.drw.placement(i); return window.__sv.drw.sheetPt(p.x + (a - p.uc) * p.s, p.y + (b - p.vc) * p.s); }, [id, u, w]);
     const texts = async () => (await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "ANNOT").map(p => p.s)));
     const annots = () => dp.evaluate(() => (window.__sv.drw.doc().sheets[0].annots ?? []).map(a => JSON.parse(JSON.stringify(a))));
-    const tool = async an => { await dp.click('#drw [data-a="annot"]'); await dp.click(`#drw [data-an="${an}"]`); };
+    const tool = an => drwTool(dp, an);
     const click = async (id, u, w) => { const [x, y] = await at(id, u, w); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); };
     // Geometric tolerance with a leader to the front view's top edge: a perpendicularity frame to datum A.
     await tool("gtol");
@@ -6486,7 +6578,7 @@ try {
     const at = (id, u, w) => dp.evaluate(([i, a, b]) => { const p = window.__sv.drw.placement(i); return window.__sv.drw.sheetPt(p.x + (a - p.uc) * p.s, p.y + (b - p.vc) * p.s); }, [id, u, w]);
     const texts = async () => (await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "ANNOT").map(p => p.s)));
     const annots = () => dp.evaluate(() => (window.__sv.drw.doc().sheets[0].annots ?? []).map(a => JSON.parse(JSON.stringify(a))));
-    const tool = async an => { await dp.click('#drw [data-a="annot"]'); await dp.click(`#drw [data-an="${an}"]`); };
+    const tool = an => drwTool(dp, an);
     const src = await dp.evaluate(() => window.__sv.drw.doc().source.kind);
     // The drawing read the open assembly's own build instead of building the parts again (engine: 11 s → 0.1 s).
     const preLoads = await dp.evaluate(() => window.__sv.drw.helper().preLoads);
@@ -6605,7 +6697,7 @@ try {
     check(phc2 && left === 0, `drawing: an alternate position can be turned and removed (${JSON.stringify([phc2?.o, left])})`);
     // 1.114.0 (FR-DRW-012): a section through both pins cuts them; Don't cut Pin<1> draws it whole.
     await dp.keyboard.press("Escape");
-    await dp.click('#drw [data-a="section"]'); await dp.click('#drw [data-cut="h"]');
+    await drwCmd(dp, "section"); await dp.click('#drw [data-cut="h"]');
     [x, y] = await at(top, -45, 0);
     await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
     [x, y] = await at(top, 0, -95);
@@ -9712,7 +9804,7 @@ try {
     const ffin = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.at(-1); return { type: f.type, kind: f.kind, name: f.name }; });
     check(fpm.title === "Flex" && fpm.axis === "x" && fpm.radius && Math.abs(fb.v - 20000) < 20 && fb.hz > 15 && !fb.bad && fb.planes === 2
       && Math.abs(ft.v - 20000) < 20 && !ft.bad && ffin.type === "flex" && ffin.kind === "twist" && ffin.name === "Flex1",
-      `model 1.551: Flex bends and twists a bar between trim planes (FR-FT-105) (${JSON.stringify({ fpm, fb, ft, ffin })})`);
+      `model 1.552: Flex bends and twists a bar between trim planes (FR-FT-105) (${JSON.stringify({ fpm, fb, ft, ffin })})`);
     await ctx.close();
   }
 
@@ -11756,7 +11848,7 @@ try {
     await ap.waitForFunction(() => window.__sv.drw.loaded(), null, { timeout: 120000 });
     const fresh = await ap.evaluate(() => ({ n: window.__sv.drw.doc().sheets[0].views.length, st: document.querySelector(".drw-status").textContent }));
     check(fresh.n === 0 && /View palette/.test(fresh.st), `drawing: a new drawing opens with an empty sheet and the view palette (${JSON.stringify(fresh)})`);
-    await ap.click('#drw [data-a="std3"]');
+    await drwCmd(ap, "std3");
     await ap.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
     await ap.waitForFunction(() => [...document.querySelectorAll(".drw-pt path")].every(p => p.getAttribute("d")), null, { timeout: 60000 });
     const tiles = await ap.evaluate(() => [...document.querySelectorAll(".drw-pt")].map(b => b.dataset.pal).join(","));
@@ -11786,31 +11878,50 @@ try {
     await ap.keyboard.press("Escape");
     const placed = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views.at(-1); return [v.orient, v.x, v.y]; });
     check(guide >= 1 && placed[0] === "front" && placed[1] === front[0], `drawing: inference line lines a new view up with another view's centre (${guide} guide, ${JSON.stringify([placed, front])})`);
-    // Annotation tab: the tools beside the sheet start the same commands.
-    await ap.click('[data-ptab="annot"]');
-    const tab = await ap.evaluate(() => ({ views: document.querySelector("#drw-pane-views").hidden, annot: document.querySelector("#drw-pane-annot").hidden, n: document.querySelectorAll("#drw-pane-annot button").length,
-      icons: document.querySelectorAll("#drw-pane-annot .drw-at > svg").length, groups: document.querySelectorAll("#drw-pane-annot .drw-atg").length, menuIcons: document.querySelectorAll('#drw [data-a="annot"] + .drw-menu [data-an] > svg').length }));
-    await ap.click('#drw-pane-annot [data-an="note"]');
-    const mode = await ap.evaluate(() => ({ m: window.__sv.drw.mode(), on: [...document.querySelectorAll("#drw-pane-annot .drw-at.on")].map(b => b.dataset.tool).join(), pressed: document.querySelector('#drw-pane-annot [data-an="note"]').getAttribute("aria-pressed") }));
-    // 1.508.0: hovering a tile shows the command bar's tooltip with what to click.
-    await ap.hover('#drw-pane-annot [data-an="hole"]');
+    // One place for the tools (1.551.0): the command bar has View Layout / Annotation / Sketch tabs; the side panel keeps
+    // the view palette, the tree and the properties, with no tool buttons of its own.
+    const once = await ap.evaluate(() => { const ks = [...document.querySelectorAll("#drw [data-an]")].map(b => b.dataset.an);
+      return { n: ks.length, uniq: new Set(ks).size, dim: document.querySelectorAll('#drw [data-a="dim"]').length, side: document.querySelectorAll(".drw-side [data-an], .drw-side [data-a=dim], .drw-side [role=tab]").length,
+        tabs: [...document.querySelectorAll("#drw [data-ctab]")].map(b => b.dataset.ctab + (b.classList.contains("on") ? "*" : "")).join(), pal: !!document.querySelector(".drw-side #drw-pane-views .drw-pt") }; });
+    // The Section ▾ menu shows whole: its last row is on top at its own middle (it used to be cut off at the bar's edge).
+    const menuWhole = async a => { await drwCmd(ap, a); const r = await ap.evaluate(a => { const m = document.querySelector(`#drw [data-a="${a}"] + .drw-menu`), bs = [...m.querySelectorAll("button")];
+      return bs.every(b => { const q = b.getBoundingClientRect(); return q.bottom <= innerHeight && document.elementFromPoint(q.left + q.width / 2, q.top + q.height / 2)?.closest("button") === b; }) ? bs.length : -1; }, a); await ap.keyboard.press("Escape"); return r; };
+    const menus = [await menuWhole("section"), await menuWhole("model"), await menuWhole("detail"), await menuWhole("dims"), await menuWhole("tables")];
+    const exportWhole = await (async () => { await ap.click('#drw .drw-top [data-a="export"]'); const r = await ap.evaluate(() => [...document.querySelectorAll('#drw [data-a="export"] + .drw-menu button')].every(b => { const q = b.getBoundingClientRect(); return q.right <= innerWidth && document.elementFromPoint(q.left + q.width / 2, q.top + q.height / 2)?.closest("button") === b; })); await ap.keyboard.press("Escape"); return r; })();
+    check(once.n === 27 && once.uniq === 27 && once.dim === 1 && once.side === 0 && once.pal && once.tabs.replace("*", "") === "layout,annot,sketch" && menus.join() === "6,8,2,3,7" && exportWhole,
+      `drawing: every annotation tool has one button, on the command bar's tabs, none in the side panel; the ▾ menus show whole (${JSON.stringify([once, menus, exportWhole])})`);
+    await drwTool(ap, "note");
+    const mode = await ap.evaluate(() => ({ m: window.__sv.drw.mode(), on: [...document.querySelectorAll(".drw-cmds .drw-cb.on")].map(b => b.dataset.tool).join(), pressed: document.querySelector('.drw-cmds [data-an="note"]').getAttribute("aria-pressed"),
+      panes: [...document.querySelectorAll(".drw-cmds [data-cpane]")].map(g => g.dataset.cpane + (g.hidden ? "" : "*")).join() }));
+    // 1.508.0: hovering a button shows the command bar's tooltip with what to click.
+    await ap.hover('.drw-cmds [data-an="hole"]');
     const tip = await ap.waitForSelector("#cm-tip", { timeout: 3000 }).then(e => e.textContent()).catch(() => "");
     await ap.keyboard.press("Escape");
-    const unpressed = await ap.evaluate(() => document.querySelectorAll("#drw-pane-annot .drw-at.on").length);
-    check(tab.views && !tab.annot && tab.n === 28 && tab.icons === 28 && tab.groups === 6 && tab.menuIcons === 27 && mode.m === "note" && mode.on === "note" && mode.pressed === "true" && unpressed === 0 && /Hole callout/.test(tip) && /round edge/.test(tip),
-      `drawing: annotation tab shows the 28 annotation tools as icon tiles in 6 groups (Annotate ▾ rows have icons too); Note starts the note command and shows pressed; tooltips (${JSON.stringify([tab, mode, unpressed, tip])})`);
-    // Command bar: icon-over-label buttons in a Views and an Annotation group, one row at 1440 px; the running tool is
-    // pressed there too; under 1280 px only the icons show. Undo, Save and Export sit on the file row above.
-    await ap.click('.drw-cmds [data-an="balloon"]');
-    const bar = await ap.evaluate(() => { const bs = [...document.querySelectorAll(".drw-cmds .drw-cb")], tops = new Set(bs.map(b => Math.round(b.getBoundingClientRect().top)));
-      return { n: bs.length, groups: document.querySelectorAll(".drw-cmds .drw-cg").length, rows: tops.size, on: [...document.querySelectorAll(".drw-cmds .drw-cb.on")].map(b => b.dataset.tool).join(), labels: bs.every(b => b.querySelector(".mc-l").offsetWidth > 0),
+    const unpressed = await ap.evaluate(() => document.querySelectorAll(".drw-cmds .drw-cb.on").length);
+    // A tool started from the keyboard shows on its own tab; a tool under a ▾ lights the ▾ up.
+    await ap.click('#drw [data-ctab="layout"]');
+    await ap.evaluate(() => document.querySelector(".drw-svg").focus());
+    await ap.keyboard.press("d");
+    const byKey = await ap.evaluate(() => ({ m: window.__sv.drw.mode(), tab: document.querySelector("#drw [data-ctab].on")?.dataset.ctab }));
+    await ap.keyboard.press("Escape");
+    await drwTool(ap, "chain");
+    const under = await ap.evaluate(() => document.querySelector('.drw-cmds [data-a="dims"]').classList.contains("on"));
+    await ap.keyboard.press("Escape");
+    check(mode.m === "note" && mode.on === "note" && mode.pressed === "true" && mode.panes === "layout,annot*,sketch" && unpressed === 0 && /Hole callout/.test(tip) && /round edge/.test(tip) && byKey.m === "dim" && byKey.tab === "annot" && under,
+      `drawing: Annotation tab: Note starts the note command and shows pressed; tooltips; D opens the Annotation tab; a tool under ▾ lights it (${JSON.stringify([mode, unpressed, tip, byKey, under])})`);
+    // Command bar: icon-over-label buttons in one row at 1440 px without scrolling; the running tool is pressed;
+    // under 1280 px only the icons show. Undo, Save and Export sit on the file row above.
+    await drwTool(ap, "balloon");
+    const bar = await ap.evaluate(() => { const bs = [...document.querySelectorAll(".drw-cmds .drw-cb")].filter(b => b.offsetWidth > 0), tops = new Set(bs.map(b => Math.round(b.getBoundingClientRect().top))), c = document.querySelector(".drw-cmds");
+      return { n: bs.length, fits: c.scrollWidth <= c.clientWidth + 1, rows: tops.size, on: [...document.querySelectorAll(".drw-cmds .drw-cb.on")].map(b => b.dataset.tool).join(), labels: bs.every(b => b.querySelector(".mc-l").offsetWidth > 0),
         file: ["undo", "save", "export"].every(a => document.querySelector(`.drw-top [data-a="${a}"]`)), mode: window.__sv.drw.mode() }; });
     await ap.keyboard.press("Escape");
     await ap.setViewportSize({ width: 1100, height: 900 });
-    const narrow = await ap.evaluate(() => { const bs = [...document.querySelectorAll(".drw-cmds .drw-cb")]; return { labels: bs.filter(b => b.querySelector(".mc-l").offsetWidth > 0).length, rows: new Set(bs.map(b => Math.round(b.getBoundingClientRect().top))).size }; });
+    const narrow = await ap.evaluate(() => { const bs = [...document.querySelectorAll(".drw-cmds .drw-cb")].filter(b => b.offsetWidth > 0), c = document.querySelector(".drw-cmds"); return { labels: bs.filter(b => b.querySelector(".mc-l").offsetWidth > 0).length, rows: new Set(bs.map(b => Math.round(b.getBoundingClientRect().top))).size, fits: c.scrollWidth <= c.clientWidth + 1 }; });
     await ap.setViewportSize({ width: 1440, height: 900 });
-    check(bar.n === 17 && bar.groups === 2 && bar.rows === 1 && bar.on === "balloon" && bar.mode === "balloon" && bar.labels && bar.file && narrow.labels === 0 && narrow.rows === 1,
-      `drawing: command bar shows 17 icon commands in two groups in one row, the running tool pressed; icons only under 1280 px (${JSON.stringify([bar, narrow])})`);
+    check(bar.n === 16 && bar.fits && bar.rows === 1 && bar.on === "balloon" && bar.mode === "balloon" && bar.labels && bar.file && narrow.labels === 0 && narrow.rows === 1 && narrow.fits,
+      `drawing: the Annotation tab shows its 16 icon commands in one row without scrolling, the running tool pressed; icons only under 1280 px (${JSON.stringify([bar, narrow])})`);
+    await ap.click('#drw [data-ctab="layout"]');
     // Side panel as FeatureManager + PropertyManager: the palette folds away; a selected view's properties get a title
     // row (icon, name, kind, ✕ back to the sheet) and their groups fold on the title, remembered.
     await ap.click('.drw-tree [data-sel]:not([data-sel=""])');
@@ -13960,7 +14071,7 @@ try {
     // Bend table: click the flat view, then place the table under it; the bend's note turns into its tag.
     const fp = await dp.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views.find(x => x.config === "@flat"), p = window.__sv.drw.placement(v.id); return { x: p.x, y: p.y, w: (p.box[2] - p.box[0]) * p.s, h: (p.box[3] - p.box[1]) * p.s }; });
     const aBefore = await dp.evaluate(() => [...document.querySelectorAll(".drw-svg text")].filter(t => t.textContent === "A").length);
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="btable"]');
+    await drwTool(dp, "btable");
     for (const [x, y] of [[fp.x, fp.y], [fp.x - fp.w / 2 - 70, fp.y + fp.h / 2]]) {
       const [cx, cy] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]);
       await dp.mouse.click(cx, cy);
@@ -14000,7 +14111,7 @@ try {
     await ready();
     // Click the first view, then place the table beside it.
     const vp = await dp.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views[0], p = window.__sv.drw.placement(v.id); return { x: p.x, y: p.y, w: (p.box[2] - p.box[0]) * p.s }; });
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="wtable"]');
+    await drwTool(dp, "wtable");
     for (const [x, y] of [[vp.x, vp.y], [vp.x + vp.w / 2 + 20, vp.y]]) {
       const [cx, cy] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]);
       await dp.mouse.click(cx, cy);
@@ -14021,7 +14132,7 @@ try {
     check(tg.n === 1 && tg.shape === "box" && tg.btn && tg.dangle === 0 && tg2 === 1,
       `drawing: placing the weld table tags its view's bead once, numbered by its row (${JSON.stringify({ ...tg, again: tg2 })})`);
     // Cut list table under the same view: the tube (300 - 10 mm long, square ends), then the bead; Weld beads unticked leaves it out.
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="ctable"]');
+    await drwTool(dp, "ctable");
     for (const [x, y] of [[vp.x, vp.y], [vp.x - vp.w / 2, vp.y - vp.w / 2 - 20]]) {
       const [cx, cy] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]);
       await dp.mouse.click(cx, cy);
@@ -14036,7 +14147,7 @@ try {
     const ct2 = await dp.evaluate(() => [...document.querySelectorAll(".drw-svg text")].map(t => t.textContent));
     check(!ct2.includes("Fillet weld, leg 4") && ct2.includes("SHS 40x40x3"), `drawing: unticking Weld beads leaves the bead out of the cut list table`);
     // Auto balloon on a weldment part: one balloon per cut list item seen in the view, numbered as in the cut list.
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="auto"]');
+    await drwTool(dp, "auto");
     await dp.waitForFunction(() => window.__sv.drw.doc().sheets[0].annots.some(a => a.t === "balloon"), null, { timeout: 30000 }).catch(() => {});
     await ready();
     const bl = await dp.evaluate(() => { const bs = window.__sv.drw.doc().sheets[0].annots.filter(a => a.t === "balloon");
@@ -14067,7 +14178,7 @@ try {
     await newDrawing3(dp);
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
     const clickSheet = async (x, y) => { const [cx, cy] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await dp.mouse.move(cx, cy); await dp.mouse.click(cx, cy); };
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="cloud"]');
+    await drwTool(dp, "cloud");
     for (const [x, y] of [[30, 30], [90, 30], [90, 70], [30, 70], [30, 30]]) await clickSheet(x, y);
     await dp.waitForTimeout(150);
     const cl = await dp.evaluate(() => { const a = (window.__sv.drw.doc().sheets[0].annots ?? []).find(x => x.t === "cloud"); return { a: a && JSON.parse(JSON.stringify(a)), arcs: window.__sv.drw.prims().filter(p => p.t === "a" && p.layer === "ANNOT").length, mode: window.__sv.drw.mode(), panel: !!document.querySelector('#drw .drw-props [data-d="carc"]') }; });
@@ -14112,7 +14223,7 @@ try {
     const boxOf = i => dp.evaluate(k => { const v = window.__sv.drw.doc().sheets[0].views[k], p = window.__sv.drw.placement(v.id), S = (u, w) => [p.x + (u - p.uc) * p.s, p.y + (w - p.vc) * p.s]; return { id: v.id, box: [...S(p.box[0], p.box[1]), ...S(p.box[2], p.box[3])], s: p.s }; }, i);
     const centre = () => dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "l" && p.layer === "CENTER").map(p => p.p.map(v => Math.round(v * 100) / 100)));
     const fr = await boxOf(0), c0 = await centre();
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="cline"]');
+    await drwTool(dp, "cline");
     const xq = fr.box[0] + (fr.box[2] - fr.box[0]) * 0.2;
     await clickSheet(xq, fr.box[3]); await clickSheet(xq, fr.box[1]);
     await dp.waitForTimeout(150);
@@ -14126,7 +14237,7 @@ try {
     // Centre mark on the hole seen end-on in the top view: a cross 2 mm past the circle.
     const tp = await boxOf(1);
     const hc = await dp.evaluate(id => { const p = window.__sv.drw.placement(id); return [p.x + (25 - p.uc) * p.s, p.y + (0 - p.vc) * p.s]; }, tp.id);
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="cmark"]');
+    await drwTool(dp, "cmark");
     await clickSheet(hc[0] + 8 * tp.s, hc[1]);
     await dp.waitForTimeout(150);
     const c2 = await centre(), marks = await dp.evaluate(() => (window.__sv.drw.doc().sheets[0].annots ?? []).filter(a => a.t === "cline" && a.k === "mark").length);
@@ -14145,7 +14256,7 @@ try {
     // Drawings exam #16: the hole's two hidden outline lines in the front view (x = 17 and 33) give its centreline at x = 25.
     await dp.keyboard.press("Escape");
     const fq = (u, w) => dp.evaluate(([id, u, w]) => { const p = window.__sv.drw.placement(id); return [p.x + (u - p.uc) * p.s, p.y + (w - p.vc) * p.s]; }, [fr.id, u, w]);
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="cline"]');
+    await drwTool(dp, "cline");
     for (const u of [17, 33]) { const q = await fq(u, 10); await clickSheet(q[0], q[1]); }
     await dp.waitForTimeout(150);
     const hl = await dp.evaluate(() => (window.__sv.drw.doc().sheets[0].annots ?? []).filter(a => a.t === "cline" && a.k === "line").map(a => a.refs.map(r => r.s ?? 0).join()));
@@ -14154,7 +14265,7 @@ try {
     check(hl.length === 2 && ["-1,1", "1,-1"].includes(hl[1]) && onAxis, `drawing: centreline between a hole's two hidden outline lines (${JSON.stringify({ hl, onAxis, x25 })})`);
     // Balloons on a part drawing (drawings exam): item 1, as in SolidWorks, no longer refused.
     await dp.keyboard.press("Escape");
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="auto"]');
+    await drwTool(dp, "auto");
     await dp.waitForFunction(() => (window.__sv.drw.doc().sheets[0].annots ?? []).some(a => a.t === "balloon"), null, { timeout: 10000 }).catch(() => {});
     const bal = await dp.evaluate(() => ({ n: (window.__sv.drw.doc().sheets[0].annots ?? []).filter(a => a.t === "balloon").length, one: window.__sv.drw.prims().some(p => p.t === "t" && p.layer === "ANNOT" && p.s === "1") }));
     check(bal.n === 1 && bal.one, `drawing: Auto balloon on a part drawing numbers the part 1 (${JSON.stringify(bal)})`);
@@ -14377,7 +14488,7 @@ try {
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
     const clickSheet = async (x, y) => { const [cx, cy] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await dp.mouse.move(cx, cy); await dp.mouse.click(cx, cy); };
     const fr = await dp.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views[0], p = window.__sv.drw.placement(v.id), S = (u, w) => [p.x + (u - p.uc) * p.s, p.y + (w - p.vc) * p.s]; return [...S(p.box[0], p.box[1]), ...S(p.box[2], p.box[3])]; });
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="weld"]');
+    await drwTool(dp, "weld");
     const ex = fr[0] + (fr[2] - fr[0]) * 0.3;
     await clickSheet(ex, fr[3]);
     await clickSheet(ex + 15, fr[3] + 15);
@@ -14398,7 +14509,7 @@ try {
     check(w2.other?.sym === "v" && w2.around === true && dash === 1 && ring, `drawing: other-side V adds the dashed identification line; all around draws the circle (${JSON.stringify({ other: w2.other, dash, ring, ru })})`);
     // Datum target (ISO 5459): click a point on the bottom edge, place the frame below; then make it a hatched area.
     await dp.keyboard.press("Escape");
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="dtarget"]');
+    await drwTool(dp, "dtarget");
     const tx = fr[0] + (fr[2] - fr[0]) * 0.6;
     await clickSheet(tx, fr[1]);
     await clickSheet(tx - 12, fr[1] - 14);
@@ -14415,7 +14526,7 @@ try {
     // Sheet sketch: a line drawn off the views snaps horizontal; a centre line type and a typed length.
     await dp.keyboard.press("Escape");
     const sk = () => dp.evaluate(() => (window.__sv.drw.doc().sheets[0].annots ?? []).filter(x => x.t === "sk").map(x => JSON.parse(JSON.stringify(x))));
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="skline"]');
+    await drwTool(dp, "skline");
     await clickSheet(30, 30);
     await clickSheet(70, 30.6);
     await dp.waitForTimeout(150);
@@ -14428,7 +14539,7 @@ try {
     }
     const s2 = await sk(), q3 = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.layer === "CENTER" && p.t === "l" && Math.abs(p.p[1] - p.p[3]) < 1e-6 && Math.abs(Math.abs(p.p[2] - p.p[0]) - 50) < 0.01).length);
     // Rectangle: two corners, picked again by clicking its edge.
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="skrect"]');
+    await drwTool(dp, "skrect");
     await clickSheet(30, 50); await clickSheet(60, 70);
     await dp.waitForTimeout(150);
     await dp.keyboard.press("Escape"); await clickSheet(45, 70.3); await dp.waitForTimeout(150);
@@ -14444,7 +14555,7 @@ try {
     if (comBox) { await dp.check('#drw .drw-props [data-v="com"]'); await dp.waitForTimeout(300); }
     const sym = await dp.evaluate(([x, y]) => window.__sv.drw.prims().filter(p => p.layer === "ANNOT" && ((p.t === "a" && Math.abs(p.r - 2) < 1e-9 && Math.hypot(p.o[0] - x, p.o[1] - y) < 0.05) || (p.t === "p" && p.fill && Math.hypot(p.p[0] - x, p.p[1] - y) < 0.05))).length, [cxm, cym]);
     await dp.keyboard.press("Escape");
-    await dp.click('#drw [data-a="dim"]');
+    await drwCmd(dp, "dim");
     await clickSheet(cxm + 0.3, cym + 0.2);
     await clickSheet(cxm + 15, fr[1]);
     await clickSheet(cxm + 30, cym - 3);
@@ -14488,7 +14599,7 @@ try {
     // 1.494: a section view gets a quick preview too (its cut, projected polygonally, with the cut loops hatched).
     const front = await dp.evaluate(() => JSON.parse(JSON.stringify(window.__sv.drw.doc().sheets[0].views[0])));
     const at = (u, w) => dp.evaluate(([a, b]) => { const p = window.__sv.drw.placement(window.__sv.drw.doc().sheets[0].views[0].id); return window.__sv.drw.sheetPt(p.x + (a - p.uc) * p.s, p.y + (b - p.vc) * p.s); }, [u, w]);
-    await dp.click('#drw [data-a="section"]'); await dp.click('#drw [data-cut="v"]');
+    await drwCmd(dp, "section"); await dp.click('#drw [data-cut="v"]');
     let [sx, sy] = await at(10, 5);
     await dp.mouse.move(sx - 5, sy); await dp.mouse.move(sx, sy);
     await dp.mouse.click(sx, sy);

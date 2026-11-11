@@ -111,10 +111,40 @@ export function edgeRef(e: MEdge, p: "a" | "b" | "c" | "e"): GeoRef {
   return { e: e.k, h: e.m, p, ...(p === "a" ? { q: e.a } : p === "b" ? { q: e.b } : {}) };
 }
 
+const ringMemo = new WeakMap<Topo, Map<string, Topo>>();
+/**
+ * A view's topology with the curves that lie on a cylinder (a cross hole's rim on a shaft, `MEdge.rg`) standing in as
+ * circles: seen along the cylinder's axis the curve is its circle, so it is picked, dimensioned, centre-marked and called
+ * out like one; seen from the side (`rim`) it only names the cylinder, whose outline lines give the diameter.
+ */
+export function ringTopo(topo: Topo, n: V3): Topo {
+  const key = n.map(v => v.toFixed(9)).join(",");
+  let m = ringMemo.get(topo);
+  const had = m?.get(key);
+  if (had) return had;
+  let out = topo;
+  if (topo.edges.some(e => e.rg)) {
+    let changed = false;
+    const edges = topo.edges.map(e => {
+      if (e.t !== "o" || !e.rg) return e;
+      const end = e.rg.find(g => Math.abs(Math.abs(dot3(g.ax, n)) - 1) < 1e-6);
+      const side = end ? undefined : e.rg.find(g => Math.abs(dot3(g.ax, n)) < 1e-6);
+      const g = end ?? side;
+      if (!g) return e;
+      changed = true;
+      return { ...e, t: "c" as const, c: g.c, ax: g.ax, r: g.r, sp: g.sp, ...(side ? { rim: true } : {}) };
+    });
+    if (changed) out = { ...topo, edges };
+  }
+  if (!m) ringMemo.set(topo, m = new Map());
+  m.set(key, out);
+  return out;
+}
+
 /** A circle seen edge-on (its axis in the view plane) as the line it looks like, in view axes; null when it is not edge-on.
  *  A whole circle spans its diameter; an arc spans what its ends and middle cover. */
 export function edgeOnSeg(e: MEdge, P: (p: V3) => P2, topo: Topo | null = null): [P2, P2] | null {
-  if (e.t !== "c" || !e.c || !e.r || !e.ax) return null;
+  if (e.t !== "c" || e.rim || !e.c || !e.r || !e.ax) return null;
   const o = P([0, 0, 0]), q = P(e.ax), ad: P2 = [q[0] - o[0], q[1] - o[1]];
   if (Math.abs(len2(ad) - 1) > 1e-6) return null;
   const dl: P2 = [-ad[1], ad[0]], c = P(e.c);
@@ -870,6 +900,7 @@ export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: Ann
   if (only && ctx.topo) ctx = { ...ctx, topo: topoOnly(ctx.topo, only) };
   const out: AnnotOut = { prims: [], hits: [], dangling: [] };
   const vd = viewDir(sheet, v), { P, n } = projector(vd);
+  if (ctx.topo) ctx = { ...ctx, topo: ringTopo(ctx.topo, n) };
   // A plain section leaves out the centre marks and cosmetic threads of what its cut took away.
   const kept = v.kind === "section" && ctx.topo ? cutAway(sheet, v, ctx.topo) : ctx.topo;
   if (v.marks !== false && kept) out.prims.push(...centreMarks(v, pl, kept, P, n));

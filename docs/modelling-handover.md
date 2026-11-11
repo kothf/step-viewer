@@ -19,7 +19,7 @@ State of the part modelling work. Current thread: "Continue matching SolidWorks 
 
 - **Dome** done in 1.547.0 (FR-FT-103). Left: domes on curved faces, the Continuous option for polygons.
 - **Wrap** done in 1.548.0 (FR-FT-104: emboss/deboss on cylinders, shafts and holes). Left: Scribe (split line), cones, a sketch plane tangent to the face as a choice of start angle.
-- **Flex** done in 1.551.0 (FR-FT-105: bend/twist/taper/stretch between trim planes, hard and soft edges; `src/model/flex.ts` + `Modeller.flexBody`/`flexFace`). Left: dragging the triad and the trim planes in the view, triad position in the panel (`origin` exists, no UI), trim planes by a picked reference.
+- **Flex** done in 1.552.0 (FR-FT-105: bend/twist/taper/stretch between trim planes, hard and soft edges; `src/model/flex.ts` + `Modeller.flexBody`/`flexFace`). Left: dragging the triad and the trim planes in the view, triad position in the panel (`origin` exists, no UI), trim planes by a picked reference.
 - **Flex** (bend / twist / taper / stretch a body between two trim planes): `gp_GTrsf` for stretch/taper is easy; bending needs a mesh-free approach (sample and refit) and is the hard one.
 - **Deform** (point / curve-to-curve): rare in everyday use; last.
 - **Boundary Boss/Cut**: today Loft with guide curves covers most uses; a boundary feature with two directions of curves would map onto `GeomFill`/`BRepOffsetAPI_MakeFilling`.

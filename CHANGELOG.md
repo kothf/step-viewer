@@ -5,11 +5,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.551.0] - 2026-11-11
+## [1.552.0] - 2026-11-11
 
 ### Added
 
 - Flex (FR-FT-105, in the Bodies menu after Scale): bend, twist, taper or stretch bodies between two trim planes, as SolidWorks' Flex does. The trim planes (shown in orange, with the triad) start at the ends of the bodies and move in by their offsets; past them the bodies move along as solid pieces. Bending turns the region through an angle towards a chosen axis about a neutral line through the middle of the bodies (the panel shows the bend radius), twisting turns each section about the flex axis, tapering scales the sections to a factor at the second plane, stretching lengthens the region. Hard edges (on) splits the faces at the trim planes; the moved faces are B-splines fitted to the exact map, so a bent bar keeps its volume to about 1e-6.
+
+## [1.551.0] - 2026-11-11
+
+### Changed
+
+- Drawings: every tool is in one place. The command bar has tabs under it, **View Layout** (Model view, Standard 3 views, Section, Detail, Auxiliary), **Annotation** (every annotation tool as its own icon button; chain, baseline and ordinate dimensions under Dimensions ▾, the tables under Tables ▾) and **Sketch** (line, rectangle, circle, polyline). The side panel no longer repeats the annotation tools: it keeps the view palette, the drawing tree and the properties. Starting a tool from the keyboard switches to its tab, and the tab used last is remembered.
+
+### Fixed
+
+- Drawings: the Section ▾ menu (and Model view ▾, Detail ▾) showed only its first row, the rest was cut off by the command bar. The menus now open over the sheet in full, stay inside the window and scroll when the window is too low.
+- Drawings: a hole drilled across a round part (a cross hole in a shaft, also off the axis or blind) could not be dimensioned or annotated where it shows as a circle, because its rim on the cylinder is a saddle curve. Seen along the hole it is now a circle for everything: diameter and location dimensions, hole callout (Ø8 THRU), datum, geometric tolerance, note, hole table and its automatic centre mark; seen from the side, its two lines give the diameter.
 
 ## [1.550.0] - 2026-11-11
 
@@ -3429,7 +3440,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.551.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.552.0...HEAD
+[1.552.0]: https://github.com/kothf/step-viewer/compare/v1.551.0...v1.552.0
 [1.551.0]: https://github.com/kothf/step-viewer/compare/v1.550.0...v1.551.0
 [1.550.0]: https://github.com/kothf/step-viewer/compare/v1.549.0...v1.550.0
 [1.549.0]: https://github.com/kothf/step-viewer/compare/v1.548.0...v1.549.0
