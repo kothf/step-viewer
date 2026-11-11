@@ -4,6 +4,7 @@
 // so the points always follow the part.
 import type { V3 } from "../kernel/drawing";
 import type { EdgeRef, Frame, HoleFeature, PartDoc, SketchFeature, SkEnt } from "../model/types";
+import { threadThrough } from "../model/types";
 import { loopPolygon, sketchCurves, type Seg } from "../sketch/profile";
 
 /** A model dimension in 3D: linear between two points (along `dir`, or aligned), or radial on a circle. */
@@ -126,7 +127,7 @@ export function modelItems(doc: PartDoc, frames: Record<string, Frame>, sketches
       // A tapped hole carries its cosmetic thread (as SolidWorks' Hole Wizard does): the major diameter over the
       // thread depth, or the whole drill when it has none.
       const major = f0.kind === "tapped" ? f0.major ?? (f0.size ? parseFloat(f0.size.replace(/^M/i, "")) : NaN) : NaN;
-      if (major > f0.diameter.v) h.pts.forEach((c, i) => threads.push({ id: `${f0.id}:${i}`, c, ax: h.n, r: f0.diameter.v / 2, d: major, L: f0.threadDepth ? f0.threadDepth.v : null, internal: true, ...(f0.size ? { size: f0.size } : {}) }));
+      if (major > f0.diameter.v) h.pts.forEach((c, i) => threads.push({ id: `${f0.id}:${i}`, c, ax: h.n, r: f0.diameter.v / 2, d: major, L: f0.threadDepth && !threadThrough(f0) ? f0.threadDepth.v : null, internal: true, ...(f0.size ? { size: f0.size } : {}) }));
     } else if (f0.type === "thread" && !f0.modelled && f0.edge && edgeCircle) {
       const e = edgeCircle(f0.edge);
       if (e) threads.push({ id: f0.id, ...e, d: f0.diameter.v, L: f0.upToEnd ? null : f0.length.v, internal: !!f0.internal, ...(f0.size ? { size: f0.size } : {}) });

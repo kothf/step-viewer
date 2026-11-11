@@ -12,7 +12,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { V2, SkEnt } from "../model/types";
 import type { HealFeature, RecognizedHole, RecognizedBlends, SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, PatternSpot, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, ChamferFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
-import { dir2Apart, dir2Feature } from "../model/types";
+import { dir2Apart, dir2Feature, threadThrough } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { recognizedHoleFeatures } from "../model/holes";
 import { ctxFrame } from "../model/context";
@@ -2341,9 +2341,24 @@ export class Modeller {
       if (!mk.IsDone()) throw new FeatureError("E-FT-FAIL", "The hole could not be made.");
       return mk.Shape();
     };
+    // Thread end Through all: the thread runs as far as the drill meets material, measured on the axis before
+    // drilling (through: to where the material last ends, so a cross gap does not stop it).
+    const reach = (o: V3): number => {
+      if (f.end !== "through") return depthAt(o);
+      const inside = (s: number) => new oc.BRepClass3d_SolidClassifier_3(prev.shape, this.P(add(o, mul(down, s))), 1e-7).State() === oc.TopAbs_State.TopAbs_IN;
+      const step = Math.max(big / 800, 0.05);
+      let last = -1;
+      for (let s = step / 4; s < big; s += step) if (inside(s)) last = s;
+      if (last < 0) return 0;
+      let lo = last, hi = last + step;
+      for (let k = 0; k < 30; k++) { const mid = (lo + hi) / 2; if (inside(mid)) lo = mid; else hi = mid; }
+      return hi;
+    };
+    const len: number[] = [];
     const tools: Named[] = [];
     f.pts.forEach((p, i) => {
       const o = add(add(fr.o, mul(fr.x, p[0])), mul(fr.y, p[1]));
+      if (threadThrough(f)) len.push(reach(o));
       let shape = revolve(o, profile(depthAt(o)));
       if (f.kind === "slot") {
         // Slot: the hole at both ends of the centre line, joined by the profile swept along it.
@@ -2376,7 +2391,10 @@ export class Modeller {
     let out = this.bool("cut", sc.target!, tool, f.id);
     if (sc.keep.length) out = this.compoundOf([...sc.keep, ...this.bodyList(out)]);
     if (Math.abs(this.volume(out.shape) - this.volume(prev.shape)) < 1e-9) throw new FeatureError("E-FT-NOCHANGE", "The holes do not touch the body.");
-    return { body: out, frame: fr0 };
+    if (!len.length) return { body: out, frame: fr0 };
+    const frame = { ...fr0, len };
+    frames[f.id] = frame;
+    return { body: out, frame };
   }
 
   /**

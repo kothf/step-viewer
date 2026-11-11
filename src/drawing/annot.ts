@@ -18,6 +18,7 @@ import { frameOf } from "./sheet";
 import { dtargetPrims } from "./dtarget";
 import { skPrims } from "./sheetSketch";
 import { textWidth } from "./textWidth";
+import { threadThrough } from "../model/types";
 
 type P2 = [number, number];
 export type Label = (s: string, p?: Record<string, string>) => string;
@@ -326,8 +327,9 @@ export function holeText(e: MEdge, ctx: AnnotCtx, count = true): string[] {
         lines.push(`${n}Ø${f(H.diameter.v)}${depth}`);
         // A thread at least as deep as a through drill is long runs through too.
         const drill = H.end === "through" ? ctx.topo?.cyls.find(y => Math.abs(y.r - H.diameter.v / 2) < 1e-4 && Math.abs(Math.abs(dot3(y.ax, ax)) - 1) < 1e-6 && (() => { const w = sub3(c, y.o), al = dot3(w, y.ax); return Math.hypot(w[0] - y.ax[0] * al, w[1] - y.ax[1] * al, w[2] - y.ax[2] * al) < 1e-3; })()) : undefined;
-        const thru = H.end === "through" && (!H.threadDepth || (!!drill && H.threadDepth.v >= drill.v1 - drill.v0 - 1e-6));
-        lines.push(`${H.size}-6H${thru ? ` ${ctx.label("THRU")}` : H.threadDepth ? ` ↧${f(H.threadDepth.v)}` : ""}`);
+        const thru = H.end === "through" && (H.threadEnd === "through" || !H.threadDepth || (!!drill && H.threadDepth.v >= drill.v1 - drill.v0 - 1e-6));
+        // Thread end Through all on an Up to next / up to face hole: the thread runs the whole drill, no depth.
+        lines.push(`${H.size}-6H${thru ? ` ${ctx.label("THRU")}` : H.threadDepth && !threadThrough(H) ? ` ↧${f(H.threadDepth.v)}` : ""}`);
       } else lines.push(`${n}Ø${f(H.diameter.v)}${depth}`);
       if (H.kind === "cbore" && H.cbDia) lines.push(`⌴Ø${f(H.cbDia.v)}${H.cbDepth ? ` ↧${f(H.cbDepth.v)}` : ""}`);
       if (H.kind === "cdrill" && H.cdDia) lines.push(`⌴Ø${f(H.cdDia.v)}${H.cdDepth ? ` ↧${f(H.cdDepth.v)}` : ""} × ${fa((H.cdAngle?.v ?? (118 * Math.PI) / 180) * 180 / Math.PI)}°`);
