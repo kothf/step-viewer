@@ -72,7 +72,9 @@
 .drw-tabs button { border: 0; background: transparent; padding: 0 14px; cursor: pointer; border-top: 2px solid transparent; white-space: nowrap; }
 .drw-tabs button.on { border-top-color: var(--accent); color: var(--accent-text); font-weight: 600; }
 .drw-tabs button:hover { background: var(--panel-2); }
-.drw-status { padding: 5px 12px; background: var(--panel); border-top: 1px solid var(--line); color: var(--muted); min-height: 28px; }
+.drw-status { display: flex; align-items: center; gap: 16px; padding: 5px 12px; background: var(--panel); border-top: 1px solid var(--line); color: var(--muted); min-height: 28px; }
+.drw-st-msg { flex: 1; min-width: 0; }
+.drw-xy { flex: none; font-variant-numeric: tabular-nums; white-space: pre; }
 .drw-status.warn { color: var(--warn-text); }
 @media (max-width: 767px) {
   .drw-body { flex-direction: column-reverse; }

@@ -3564,6 +3564,16 @@ try {
     await idle();
     const iso = await mp.evaluate(() => ({ s: document.querySelector('#mc-pm select[data-k="size"]')?.value, d: parseFloat(document.querySelector('#mc-pm input[data-num="diameter"]')?.value), n: document.querySelectorAll('#mc-pm select[data-k="size"] option').length }));
     check(unc.s === "1/4-20 UNC" && Math.abs(unc.d - 5.105) < 1e-3 && unc.n === 14 && iso.s === "M6" && iso.d === 5 && iso.n === 25, `model 1.520: hole Standard ANSI inch UNC and back to ISO metric (${JSON.stringify(unc)}, ${JSON.stringify(iso)})`);
+    // 1.528 (FR-FT-051): Thread class goes into the callout; Remove thread cuts the threaded length to the major diameter.
+    await mp.selectOption('#mc-pm select[data-k="tclass"]', "6G");
+    await idle();
+    await mp.selectOption('#mc-pm select[data-k="threadMode"]', "remove");
+    await idle();
+    const tcl = await mp.evaluate(() => { const d = window.__sv.model.mode().draft, l = window.__sv.model.last(); return { tc: d.tclass, tm: d.threadMode, callout: document.querySelector('#mc-pm .pm-hcallout')?.textContent ?? "", ok: l.statuses.every(s => s.ok), shade: window.__sv.modeller.decor.children.some(o => o.userData.threadShade) }; });
+    await mp.selectOption('#mc-pm select[data-k="threadMode"]', "");
+    await mp.selectOption('#mc-pm select[data-k="tclass"]', "6H");
+    await idle();
+    check(tcl.tc === "6G" && tcl.tm === "remove" && tcl.callout.includes("M6-6G") && tcl.ok && !tcl.shade, `model 1.528: Hole Wizard thread class and Remove thread (${JSON.stringify(tcl)})`);
     // Options: Near side countersink defaults to the hole + 1 mm at 90°; unticking takes it away.
     await mp.check('#mc-pm input[data-k="optNear"]').catch(() => {});
     await idle();
@@ -3863,6 +3873,15 @@ try {
     check(hux.svg && hux.callout.includes("⌴Ø15") && hux.icons === 8 && hux.on === "cbore" && hux.tabs === "type:true,pos:false" && hux.favOpen === false
       && huxK.kind === "csink" && huxK.callout.includes("⌵Ø") && huxP.pos && !huxP.type && huxP.face,
       `model 1.524: Hole Wizard panel preview, type pictograms and Type/Positions tabs (${JSON.stringify({ hux, huxK, huxP })})`);
+    // 1.528 (FR-FT-051): the counterbore follows the screw type: DIN 7984 low head M8 = Ø15 × 5.6 (ISO 4762's Ø15 × 8.6 with a 3 mm lower head).
+    await mp.selectOption('#mc-pm select[data-k="screw"]', "din7984");
+    await idle();
+    const scr = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { screw: d.screw, cb: [d.cbDia?.v, d.cbDepth?.v], types: [...document.querySelectorAll('#mc-pm select[data-k="screw"] option')].map(o => o.value).join() }; });
+    await mp.selectOption('#mc-pm select[data-k="screw"]', "iso4762");
+    await idle();
+    const scr0 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { screw: d.screw ?? null, cb: [d.cbDia?.v, d.cbDepth?.v] }; });
+    check(scr.screw === "din7984" && scr.cb[0] === 15 && scr.cb[1] === 5.6 && scr.types === "iso4762,din7984,iso7380,iso1207" && scr0.screw === null && scr0.cb[1] === 8.6,
+      `model 1.528: Hole Wizard screw types size the counterbore (${JSON.stringify({ scr, scr0 })})`);
     await mp.click('#mc-pm [data-ui="favs"] > summary');
     await mp.fill('#mc-pm input[data-ui="favName"]', "M8 cbore");
     await mp.click('#mc-pm [data-ui="favSave"]');
@@ -5999,6 +6018,14 @@ try {
       const tr2 = await dp.evaluate(() => document.querySelector(".drw-pm-head b")?.textContent);
       check(tr0.sheetGrp === "true" && tr0.on === "BREAK SHARP EDGES" && tr0.viewGrp === "true" && folded === "false" && tr1.head === "Hole callout" && /Hole callout/.test(tr1.on ?? "") && hov >= 1 && up && tr2 === "Note",
         `drawing tree lists annotations by view, selects them and outlines the hovered one (${JSON.stringify([tr0, folded, tr1, hov, up, tr2])})`);
+      // 1.527: the status bar says what the selection takes and shows the pointer's sheet position; an annotation
+      // under the pointer on the sheet is outlined before it is pressed.
+      const nt = await dp.evaluate(() => { const q = window.__sv.drw.prims().find(p => p.t === "t" && p.s === "BREAK SHARP EDGES"); return q ? window.__sv.drw.sheetPt(q.x + 2, q.y + 1) : null; });
+      await dp.mouse.move(10, 10);
+      await dp.mouse.move(nt[0], nt[1]);
+      const sb = await dp.evaluate(() => ({ msg: document.querySelector(".drw-st-msg")?.textContent, xy: document.querySelector(".drw-xy")?.textContent, hov: document.querySelectorAll(".drw-ovl .drw-hov").length, cur: document.querySelector(".drw-svg").style.cursor }));
+      check(/Drag the annotation/.test(sb.msg ?? "") && /^X \d+\.\d  Y \d+\.\d mm$/.test(sb.xy ?? "") && sb.cur === "move",
+        `drawing status bar: selection hint and pointer position on the sheet; the annotation under the pointer is pickable (${JSON.stringify(sb)})`);
     }
     // Note border (FR-DRW-023): the placed note is selected; a circle frames it, None takes it away.
     const arcsOf = async () => (await prims()).filter(p => p.t === "a" && p.layer === "ANNOT").length;
@@ -8094,9 +8121,9 @@ try {
     await fp.waitForFunction(() => window.__sv.asm.doc.mates?.length === 6 && !window.__sv.asm.building, null, { timeout: 120000 });
     await shown(5);
     const auto = await fp.evaluate(() => { const a = window.__sv.asm, c = a.doc.components, t = c[4].tf, r = v => Math.round(v * 1e3) / 1e3; return { mates: a.doc.mates.slice(4).map(m => [m.type, m.a.comp === c[0].id, m.b.comp === c[4].id]), at: [t[3], t[7], t[11]].map(r) }; });
-    check(panel.kinds === 6 && panel.sizes === 11 && panel.len === "12"
+    check(panel.kinds === 8 && panel.sizes === 20 && panel.len === "12"
       && /^ISO 4762 M6 x 12<1>$/.test(fast.names[1]) && /^ISO 4032 M6<1>$/.test(fast.names[2]) && JSON.stringify(fast.mates) === '["concentric","coincident","concentric","coincident"]'
-      && JSON.stringify(fast.screw) === "[10,10,5,1]" && JSON.stringify(fast.nut) === "[10,10,0,-1]" && JSON.stringify(fast.dof) === "[1,1]" && /2 parts placed/.test(fast.status ?? "") && fast.configs === 11
+      && JSON.stringify(fast.screw) === "[10,10,5,1]" && JSON.stringify(fast.nut) === "[10,10,0,-1]" && JSON.stringify(fast.dof) === "[1,1]" && /2 parts placed/.test(fast.status ?? "") && fast.configs === 20
       && refs.title === "Mate reference" && refs.plate === 2 && refs.pin === 2
       && JSON.stringify(auto.mates) === '[["concentric",true,true],["coincident",true,true]]' && JSON.stringify(auto.at) === "[30,10,5]",
       `asm 1.79: ISO fasteners placed on a hole with concentric + coincident mates; mate references mate a part on insert (FR-ASM-028, FR-MATE-011) (${JSON.stringify({ panel, fast, refs, auto })})`);
@@ -8188,10 +8215,32 @@ try {
       q.dispatchEvent(new Event("input"));
       const found = [...document.querySelectorAll("#asm-pm [data-kind]")].map(b => b.dataset.kind);
       window.__sv.asm.setFastener({ kind: "din471", size: "20" });
-      return { found, cat: document.querySelector("#asm-pm .tb-cat.on")?.dataset.cat ?? null, desig: document.querySelector("#asm-pm .tb-desig b")?.textContent, dims: [...document.querySelectorAll("#asm-pm .tb-view .tb-dt")].map(x => x.textContent) };
+      const out = { found, cat: document.querySelector("#asm-pm .tb-cat.on")?.dataset.cat ?? null, desig: document.querySelector("#asm-pm .tb-desig b")?.textContent, dims: [...document.querySelectorAll("#asm-pm .tb-view .tb-dt")].map(x => x.textContent) };
+      // Bearing series: "lm8" finds the linear bearing by its size; a flanged bearing shows its flange.
+      q.value = "lm8";
+      q.dispatchEvent(new Event("input"));
+      out.lm = [...document.querySelectorAll("#asm-pm [data-kind]")].map(b => b.dataset.kind);
+      q.value = "";
+      q.dispatchEvent(new Event("input"));
+      window.__sv.asm.setFastener({ kind: "bearingf", size: "F608" });
+      out.brg = [document.querySelectorAll('#asm-pm [data-kind]').length, document.querySelector("#asm-pm .tb-desig b")?.textContent, [...document.querySelectorAll("#asm-pm .tb-view .tb-dt")].map(x => x.textContent).join(",")];
+      // Inch: "unc" finds the ASME parts; a 1/4-20 cap screw lists its lengths in inches.
+      q.value = "unc";
+      q.dispatchEvent(new Event("input"));
+      out.unc = [...document.querySelectorAll("#asm-pm [data-kind]")].map(b => b.dataset.kind);
+      q.value = "";
+      q.dispatchEvent(new Event("input"));
+      window.__sv.asm.setFastener({ kind: "b183", size: "1/4-20" });
+      const len = document.querySelector('#asm-pm [data-f="length"]');
+      out.inch = [document.querySelector("#asm-pm .tb-desig b")?.textContent, len?.selectedOptions[0]?.textContent, document.querySelectorAll('#asm-pm [data-size]').length];
+      window.__sv.asm.setFastener({ kind: "iso4762", size: "M64" });
+      out.big = document.querySelector("#asm-pm .tb-desig b")?.textContent;
+      return out;
     });
-    check(JSON.stringify(sp.found) === '["standoff","standoffm"]' && sp.desig === "DIN 471 20" && JSON.stringify(sp.dims) === '["d3 18.5","d1 20"]',
-      `asm toolbox 2: Toolbox standoffs, spacers and retaining rings (FR-ASM-028) (${JSON.stringify(sp)})`);
+    check(JSON.stringify(sp.found) === '["standoff","standoffm"]' && sp.desig === "DIN 471 20" && JSON.stringify(sp.dims) === '["d3 18.5","d1 20"]'
+      && JSON.stringify(sp.lm) === '["linear"]' && JSON.stringify(sp.brg) === '[5,"Flanged ball bearing F608","D1 25,d 8,B 7"]'
+      && JSON.stringify(sp.unc) === '["b183","b1821","b1822","b1822m","b1822w"]' && /^ASME B18\.3 1\/4-20 x [\d/-]+$/.test(sp.inch[0] ?? "") && sp.inch[1] === `${sp.inch[0].split(" x ")[1]} in` && sp.inch[2] === 13 && /^ISO 4762 M64 x \d+$/.test(sp.big ?? ""),
+      `asm toolbox 2: Toolbox standoffs, spacers, retaining rings, bearing series, M1.6 to M64 and ANSI inch (FR-ASM-028) (${JSON.stringify(sp)})`);
     await tp.evaluate(() => window.__sv.asm.closeTools());
     // McMaster-Carr: a downloaded STEP named "<part number>_<description>.STEP" keeps its part number and a buy link.
     const cube = [...await readFile(join(fixtures, "cube-10x10mm/Cube 10x10.stp"))];

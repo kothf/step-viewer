@@ -1,7 +1,7 @@
 // Toolbox pictures (FR-ASM-028): a standard part as a few simple solids in its own axes (Z = the part's
 // axis, as `fastenerPart` builds it), used for the panel's side views with dimensions, the cards'
 // pictograms, the mass estimate and the see-through preview on a hole. Pure: no DOM, no three.js.
-import { fastenerInfo, type FastenerKind } from "./fasteners";
+import { fastenerInfo, shapeKind, type FastenerKind } from "./fasteners";
 
 /** A solid of revolution about Z: the closed profile in (r, z), r ≥ 0. */
 export interface RevSolid { t: "rev"; pts: [number, number][]; neg?: boolean }
@@ -25,6 +25,7 @@ const ring = (ro: number, ri: number, z0: number, z1: number): RevSolid => ({ t:
 /** The part of `kind`, size row `size`, length `L` (screws, pins, keys) as simple solids plus its main dimensions. */
 export function fastenerShape(kind: FastenerKind, size: string, L = 0): ToolShape {
   const info = fastenerInfo(kind), r = info.table[size];
+  kind = shapeKind(kind);
   const s: ShapeSolid[] = [], dims: ShapeDim[] = [];
   let plan: RingPlan | undefined;
   const hd = (sym: string, val: number, at: number) => dims.push({ sym, val, axis: "h", a: -val / 2, b: val / 2, at });
@@ -104,9 +105,24 @@ export function fastenerShape(kind: FastenerKind, size: string, L = 0): ToolShap
       dims.push({ sym: "L", val: L, axis: "h", a: -L / 2, b: L / 2, at: 0 });
       vd("h", r.hk!, 0, r.hk!, L / 2 * 1.08);
       break;
-    case "bearing":
+    case "bearing": case "needle":
       s.push(ring(r.D! / 2, d / 2, -r.B!, 0));
-      hd("D", r.D!, 0); hd("d", d, -r.B!); vd("B", r.B!, -r.B!, 0, r.D! / 2 * 1.12);
+      hd("D", r.D!, 0); hd(kind === "needle" ? "Fw" : "d", d, -r.B!); vd(kind === "needle" ? "C" : "B", r.B!, -r.B!, 0, r.D! / 2 * 1.12);
+      break;
+    case "linear":
+      s.push(ring(r.D! / 2, d / 2, -r.B!, 0));
+      hd("D", r.D!, 0); hd("dr", d, -r.B!); vd("L", r.B!, -r.B!, 0, r.D! / 2 * 1.12);
+      break;
+    case "thrust": {
+      // Shaft washer below, housing washer above, the cage between them.
+      const h = r.B! * 0.35, m = (d + r.D!) / 4, w = (r.D! - d) / 2;
+      s.push(ring(r.D! / 2, d / 2, -r.B!, -r.B! + h), ring(m + 0.15 * w, m - 0.15 * w, -r.B! + h, -h), ring(r.D! / 2, d / 2, -h, 0));
+      hd("D", r.D!, 0); hd("d", d, -r.B!); vd("H", r.B!, -r.B!, 0, r.D! / 2 * 1.12);
+      break;
+    }
+    case "bearingf":
+      s.push(ring(r.D! / 2, d / 2, r.c! - r.B!, 0), ring(r.dc! / 2, d / 2, 0, r.c!));
+      hd("D1", r.dc!, r.c!); hd("d", d, r.c! - r.B!); vd("B", r.B!, r.c! - r.B!, r.c!, r.dc! / 2 * 1.12);
       break;
   }
   return { solids: s, dims, ...(plan ? { plan } : {}) };
