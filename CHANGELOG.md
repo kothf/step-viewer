@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.511.0] - 2026-11-11
+
+### Changed
+
+- Drawings: the Annotation tab beside the sheet shows its 28 tools as icon buttons in groups (Dimensions, Notes and symbols, Geometric tolerancing, Centerlines, Tables, Sheet sketch), like SolidWorks' Annotation tab. Hovering a button shows its name, its shortcut and what to click; the running tool stays highlighted. The Annotate ▾ menu has the same icons, grouped with separators.
+
 ## [1.510.0] - 2026-11-11
 
 ### Fixed
@@ -3159,7 +3165,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.510.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.511.0...HEAD
+[1.511.0]: https://github.com/kothf/step-viewer/compare/v1.510.0...v1.511.0
 [1.510.0]: https://github.com/kothf/step-viewer/compare/v1.509.0...v1.510.0
 [1.509.0]: https://github.com/kothf/step-viewer/compare/v1.508.0...v1.509.0
 [1.508.0]: https://github.com/kothf/step-viewer/compare/v1.507.0...v1.508.0
