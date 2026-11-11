@@ -39,9 +39,10 @@ export function projectedDir(parent: ViewDir, side: [number, number], proj: Proj
 /**
  * Changes a sheet between first and third angle (FR-DRW-011) keeping every projected view the same view:
  * its side flips and it moves across its parent (a Top view goes from under the front view to above it),
- * as SolidWorks does. Views placed off a view that moved follow it.
+ * as SolidWorks does. Views placed off a view that moved follow it. `ext` gives a view's extent about its centre
+ * (sheet mm: left, bottom, right, top) and `frame` the drawing frame, to keep the layout on the sheet.
  */
-export function switchProjection(sheet: Sheet, proj: Projection) {
+export function switchProjection(sheet: Sheet, proj: Projection, ext?: (v: DrawingView) => [number, number, number, number] | null, frame?: [number, number, number, number]) {
   if (sheet.projection === proj) return;
   sheet.projection = proj;
   const old = new Map(sheet.views.map(v => [v.id, [v.x, v.y] as [number, number]]));
@@ -59,6 +60,19 @@ export function switchProjection(sheet: Sheet, proj: Projection) {
     } else { v.x = par.x + (ox - px); v.y = par.y + (oy - py); }
   };
   for (const v of sheet.views) place(v);
+  // The swap mirrors views about their parents and can push them off the sheet (a top view under a front view
+  // high on the sheet goes above it): move the whole layout back inside the frame, keeping it lined up.
+  if (!ext || !frame) return;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const v of sheet.views) {
+    const e = ext(v);
+    if (!e) continue;
+    x0 = Math.min(x0, v.x + e[0]); y0 = Math.min(y0, v.y + e[1]); x1 = Math.max(x1, v.x + e[2]); y1 = Math.max(y1, v.y + e[3]);
+  }
+  if (!(x1 > x0)) return;
+  const shift = (a: number, b: number, f0: number, f1: number) => a < f0 ? f0 - a : b > f1 ? Math.max(f1 - b, f0 - a) : 0;
+  const dx = shift(x0, x1, frame[0], frame[2]), dy = shift(y0, y1, frame[1], frame[3]);
+  if (dx || dy) for (const v of sheet.views) { v.x += dx; v.y += dy; }
 }
 
 /**

@@ -619,7 +619,7 @@ export class DrawingWorkspace {
     else if (m.kind === "cline") s = m.how === "mark" ? t("Click a round edge seen end-on: a circle or an arc. Esc ends.") : !m.picks.length ? t("Click a straight edge or a point (a circle's centre) of a view. Esc ends.") : t("Click a parallel edge, or a second point. Esc ends.");
     else if (m.kind === "sk") s = m.k === "circle" ? t(m.pts.length ? "Click a point on the circle." : "Click the centre of the circle.")
       : m.k === "rect" ? t(m.pts.length ? "Click the opposite corner." : "Click the first corner of the rectangle.")
-      : m.k === "line" ? t(m.pts.length ? "Click the end of the line." : "Click the start of the line.")
+      : m.k === "line" ? t(m.pts.length ? "Click the end of the line; the next line starts there. Double-click or Esc ends." : "Click the start of the line.")
       : t(m.pts.length < 2 ? "Click the points of the polyline." : "Click more points; click the first point to close it, or press Enter to end it.");
     else if (m.kind === "cloud") s = m.pts.length < 3 ? t("Click the corners of the area to mark with a revision cloud.") : t("Click more corners; click the first corner or press Enter to close the cloud.");
     else if (m.kind === "note") s = m.leader ? t("Click where the note goes.") : t("Click where the note goes, or first click an edge for a leader.");
@@ -1056,6 +1056,8 @@ export class DrawingWorkspace {
   }
 
   private onDbl(e: MouseEvent) {
+    // A double-click ends a chain of lines (its second click added nothing: same point).
+    if (this.mode.kind === "sk" && this.mode.k === "line") { this.mode = { kind: "none" }; this.renderStatus(); this.renderOverlay(); return; }
     const p = this.sheetPt(e);
     const f = fieldAt(this.sheet, p[0], p[1]);
     if (f) {
@@ -1682,7 +1684,14 @@ export class DrawingWorkspace {
     const last = m.pts[m.pts.length - 1];
     if (last && Math.hypot(last[0] - p[0], last[1] - p[1]) < 1e-6) return;
     m.pts.push(p);
-    if (m.k !== "poly" && m.pts.length === 2) { this.finishSk(m); return; }
+    if (m.k !== "poly" && m.pts.length === 2) {
+      // As in SolidWorks the tool stays on: a line chains on from its end, a rectangle or circle starts afresh. Esc (or a double-click) ends.
+      const names = { line: "Line", rect: "Rectangle", circle: "Circle" } as const;
+      this.addAnnot(this.skOf(m, m.pts), names[m.k]);
+      this.mode = { ...m, pts: m.k === "line" ? [p] : [] };
+      this.renderStatus(); this.renderOverlay();
+      return;
+    }
     this.renderStatus(); this.renderOverlay();
   }
 
@@ -3293,7 +3302,10 @@ export class DrawingWorkspace {
       });
     }
     else if (sk === "size") { this.setSheet("Sheet size", sh => { sh.size = val as SheetSize; }); this.fit(); }
-    else if (sk === "projection") this.setSheet("Projection type", sh => switchProjection(sh, val as Sheet["projection"]));
+    else if (sk === "projection") this.setSheet("Projection type", sh => switchProjection(sh, val as Sheet["projection"], v => {
+      const p = this.placements.get(v.id);
+      return p ? [(p.box[0] - p.uc) * p.s, (p.box[1] - p.vc) * p.s, (p.box[2] - p.uc) * p.s, (p.box[3] - p.vc) * p.s] : null;
+    }, (([a, b, c, d]) => [a + 5, b + 5, c - 5, d - 5] as [number, number, number, number])(frameOf(sh))));
     else if (sk === "format") {
       if (val.startsWith("user:")) {
         const id = val.slice(5), f = this.sheet.tb?.id === id ? this.sheet.tb : loadFormats().find(x => x.id === id);
