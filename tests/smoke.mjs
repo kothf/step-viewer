@@ -2406,6 +2406,25 @@ try {
         `model 1.510: dynamic mirror copies each new line about the picked line, joined (FR-SK-037) (${JSON.stringify(axis)}, ${JSON.stringify(dm)})`);
       await tool("select");
     }
+    // 1.510.0 (FR-SK-012): Centerline draws construction lines; Midpoint line puts its middle on the first click.
+    {
+      const before = await mp.evaluate(() => window.__sv.model.editor().sk.ents.filter(e => e.t === "line").map(e => e.id));
+      await tool("cline");
+      await click([130, 44]); await click([136, 44]); await mp.keyboard.press("Escape");
+      await tool("mline");
+      await click([132, 58]); await click([136, 58]);
+      const ml = await mp.evaluate(old => {
+        const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id);
+        const fresh = sk.ents.filter(e => e.t === "line" && !old.includes(e.id));
+        const c = fresh.find(l => l.cons), m = fresh.find(l => !l.cons);
+        const mid = m && sk.rels.find(r => r.t === "midpoint" && r.e[1] === m.id);
+        return { n: fresh.length, cons: !!c, ends: m ? [P(m.a).x, P(m.a).y, P(m.b).x, P(m.b).y].map(v => Math.round(v * 100) / 100) : null,
+          mid: mid ? [P(mid.e[0]).x, P(mid.e[0]).y].map(v => Math.round(v * 100) / 100) : null, status: ed.info.status };
+      }, before);
+      check(ml.n === 2 && ml.cons && ml.ends && Math.abs(ml.ends[0] - 128) < 0.05 && Math.abs(ml.ends[2] - 136) < 0.05 && Math.abs(ml.ends[1] - 58) < 0.05 && ml.mid && Math.abs(ml.mid[0] - 132) < 0.05 && ml.status === "ok",
+        `model 1.510: Centerline makes a construction line, Midpoint line spans both ways from its middle (FR-SK-012) (${JSON.stringify(ml)})`);
+      await tool("select");
+    }
     // 1.266.0 (FR-SK-043/044/047): dragging the last line's start onto the free end of the Ctrl line merges them
     // (coincident relation); Ctrl+drag of that line copies it; the status bar shows the cursor position.
     await tool("select");

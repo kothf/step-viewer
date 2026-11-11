@@ -54,7 +54,7 @@ export type SketchPattern =
   | { kind: "rotate"; c: V2; centre: string | null; angle: number; copy: boolean; keep: boolean }
   | { kind: "scale"; c: V2; centre: string | null; k: number; copy: boolean; keep: boolean };
 
-export type SkTool = "select" | "line" | "rect" | "crect" | "rect3" | "crect3" | "pgram" | "circle" | "circle3" | "pcircle" | "arc" | "arc3" | "tarc" | "polygon" | "slot" | "cslot" | "aslot" | "aslot3" | "ellipse" | "earc" | "spline" | "sspline" | "conic" | "parabola" | "eqn" | "point" | "text" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "intersect" | "dim" | "hord" | "vord";
+export type SkTool = "select" | "line" | "cline" | "mline" | "rect" | "crect" | "rect3" | "crect3" | "pgram" | "circle" | "circle3" | "pcircle" | "arc" | "arc3" | "tarc" | "polygon" | "slot" | "cslot" | "aslot" | "aslot3" | "ellipse" | "earc" | "spline" | "sspline" | "conic" | "parabola" | "eqn" | "point" | "text" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "intersect" | "dim" | "hord" | "vord";
 
 export interface SketchHost {
   viewer: Viewer;
@@ -468,7 +468,7 @@ export class SketchEditor {
     this.offsetPreview = this.tool === "offset" ? this.offsetAt(p, false) : [];
     this.draft.cursor = snap.p;
     if (this.tool === "arc" && this.draft.pts.length === 2) this.trackArc(snap.p);
-    if (this.tool === "line") this.trackBack(snap.p);
+    if (this.lineTool) this.trackBack(snap.p);
     this.draft.snap = snap.id;
     this.draft.hoverCurve = snap.id ? null : snap.curve;
     this.showInfer(pick || ["select", "fillet", "chamfer", "convert", "intersect", "dim", "hord", "vord"].includes(this.tool) ? null : snap);
@@ -521,7 +521,7 @@ export class SketchEditor {
   }
 
   doubleClick(): boolean {
-    if (this.tool === "line" && this.draft.pts.length) { this.draft = { pts: [], ids: [], cursor: null, snap: null }; this.render(); return true; }
+    if (this.lineTool && this.draft.pts.length) { this.draft = { pts: [], ids: [], cursor: null, snap: null }; this.render(); return true; }
     if (this.tool === "select") {
       // Double-click a dimension label edits it; on geometry: nothing yet.
       return false;
@@ -536,7 +536,7 @@ export class SketchEditor {
    */
   contextMenu(e: { clientX: number; clientY: number }): ([string, () => void, string?] | null)[] | null {
     const d = this.draft;
-    if (this.tool === "line" && d.pts.length) { this.doubleClick(); this.statusHint(); return null; }
+    if (this.lineTool && d.pts.length) { this.doubleClick(); this.statusHint(); return null; }
     // Placing a dimension: a right-click locks (or frees) its orientation, so the text can go anywhere (FR-SK-068).
     if (this.tool === "dim" && this.dimDraft.dim) { this.dimDraft.lock = !this.dimDraft.lock; this.render(); this.statusHint(); return null; }
     const rows: ([string, () => void, string?] | null)[] = [];
@@ -812,7 +812,7 @@ export class SketchEditor {
     let q = p;
     let hv: "horizontal" | "vertical" | null = null;
     const last = this.draft.pts.at(-1);
-    if (last && this.tool === "line" && !this.draft.arc) {
+    if (last && (this.lineTool || this.tool === "mline") && !this.draft.arc) {
       const a = Math.atan2(p[1] - last[1], p[0] - last[0]);
       if (!on.has("hv")) { /* off in the preferences */ }
       else if (Math.abs(Math.sin(a)) < Math.sin(HV_TOL)) { q = [p[0], last[1]]; hv = "horizontal"; }
@@ -825,7 +825,7 @@ export class SketchEditor {
     const c = this.hits(q, { points: false })[0];
     if (c && !hv) {
       // A line hovered while drawing a line becomes the parallel/perpendicular reference (SolidWorks inference).
-      if (this.tool === "line" && this.sk.ents.find(x => x.id === c.id)?.t === "line") this.inferLine = c.id;
+      if (this.lineTool && this.sk.ents.find(x => x.id === c.id)?.t === "line") this.inferLine = c.id;
       if (!on.has("nearest")) return { p: q, id: null, curve: null, hv };
       const proj = this.project(q, c.id); this.showMarker(proj); return { p: proj, id: null, curve: c.id, hv: null };
     }
@@ -1285,7 +1285,10 @@ export class SketchEditor {
   }
 
   /** Whether the line tool is drawing a tangent arc now. */
-  get arcMode() { return (this.tool === "line" || this.tool === "tarc") && !!this.draft.arc; }
+  /** Line or Centerline (FR-SK-012): both chain, take typed sizes and switch to tangent arcs. */
+  private get lineTool() { return this.tool === "line" || this.tool === "cline"; }
+
+  get arcMode() { return (this.lineTool || this.tool === "tarc") && !!this.draft.arc; }
 
   private tangentArcClick(p: V2, s: Snap, rels: SkRel[], finish: (label: string) => void, e: { detail: number }) {
     const d = this.draft;
@@ -1351,7 +1354,24 @@ export class SketchEditor {
       this.statusHint();
       return;
     }
-    if (this.tool === "line") {
+    if (this.tool === "mline") {
+      // Midpoint line (SolidWorks): the first click is the middle, the second one end; the other end mirrors it.
+      if (!d.pts.length) { d.pts = [p]; d.ids = [s.id]; d.snapCurve = s.curve; this.render(); return; }
+      const m = d.pts[0];
+      if (!exact && Math.hypot(p[0] - m[0], p[1] - m[1]) < this.px(p) * 2) return;
+      const mId = this.usePoint(m, d.ids[0], d.snapCurve ?? null, rels);
+      const aId = this.usePoint([2 * m[0] - p[0], 2 * m[1] - p[1]], null, null, rels);
+      const bId = this.usePoint(p, s.id, s.curve, rels);
+      const lid = uid("l");
+      this.sk.ents.push({ id: lid, t: "line", a: aId, b: bId });
+      rels.push({ id: uid("r"), t: "midpoint", e: [mId, lid] });
+      if (s.hv) rels.push({ id: uid("r"), t: s.hv, e: [lid] });
+      finish("Add midpoint line");
+      this.draft = { pts: [], ids: [], cursor: null, snap: null };
+      this.render();
+      return;
+    }
+    if (this.lineTool) {
       if (!d.pts.length) { this.inferLine = null; d.pts = [p]; d.ids = [s.id && s.id !== ORIGIN ? s.id : null]; d.chainStart = s.id ?? undefined; d.snapCurve = s.curve; d.snapOrigin = s.id === ORIGIN; d.back = 0; this.render(); return; }
       const a0 = d.pts.at(-1)!;
       if (!exact && Math.hypot(p[0] - a0[0], p[1] - a0[1]) < this.px(p) * 2) return;
@@ -1359,7 +1379,7 @@ export class SketchEditor {
       const aId = d.ids.at(-1) ?? this.usePoint(a0, d.snapOrigin ? ORIGIN : null, d.snapCurve ?? null, rels);
       const bId = this.usePoint(p, s.id, s.curve, rels);
       const lid = uid("l");
-      this.sk.ents.push({ id: lid, t: "line", a: aId, b: bId });
+      this.sk.ents.push({ id: lid, t: "line", a: aId, b: bId, ...(this.tool === "cline" ? { cons: true } : {}) });
       if (s.hv) rels.push({ id: uid("r"), t: s.hv, e: [lid] });
       else if (s.rel) rels.push({ id: uid("r"), t: s.rel.t, e: [s.rel.ref, lid] });
       finish("Add line");
@@ -3171,8 +3191,8 @@ export class SketchEditor {
     const a = d.pts.at(-1);
     if (!a || !c) return null;
     const dx = c[0] - a[0], dy = c[1] - a[1];
-    if ((this.tool === "line" || this.tool === "tarc") && d.arc) return null;
-    if (this.tool === "line") return [{ name: "Length", q: "length", now: Math.hypot(dx, dy) }, { name: "Angle", q: "angle", now: (Math.atan2(dy, dx) + 2 * Math.PI) % (2 * Math.PI) }];
+    if ((this.lineTool || this.tool === "tarc") && d.arc) return null;
+    if (this.lineTool) return [{ name: "Length", q: "length", now: Math.hypot(dx, dy) }, { name: "Angle", q: "angle", now: (Math.atan2(dy, dx) + 2 * Math.PI) % (2 * Math.PI) }];
     if ((this.tool === "rect" || this.tool === "crect") && d.pts.length === 1) {
       const k = this.tool === "crect" ? 2 : 1;
       return [{ name: "Width", q: "length", now: Math.abs(dx) * k }, { name: "Height", q: "length", now: Math.abs(dy) * k }];
@@ -3235,9 +3255,9 @@ export class SketchEditor {
     const d = this.draft, a = d.pts.at(-1), c = d.cursor;
     if (!a || !c) return;
     const sx = c[0] < a[0] ? -1 : 1, sy = c[1] < a[1] ? -1 : 1;
-    const lineOf = (made: SkEnt[]) => made.filter((x): x is SkEnt & { t: "line" } => x.t === "line" && !x.cons);
+    const lineOf = (made: SkEnt[]) => made.filter((x): x is SkEnt & { t: "line" } => x.t === "line" && (!x.cons || this.tool === "cline"));
     const dim = (t: SkDim["t"], e: string[], val: number): SkDim => ({ id: uid("d"), name: "", t, e, val: { v: val } });
-    if (this.tool === "line") {
+    if (this.lineTool) {
       const [len, ang] = v;
       const deg = ((((ang * 180) / Math.PI) % 360) + 360) % 360;
       const hv = Math.abs(deg % 180) < 1e-9 || Math.abs((deg % 180) - 180) < 1e-9 ? "horizontal" : Math.abs(deg - 90) < 1e-9 || Math.abs(deg - 270) < 1e-9 ? "vertical" : null;
@@ -3295,7 +3315,7 @@ export class SketchEditor {
     }
     if (k === "delete" || k === "backspace") return this.deleteSelection();
     if (/^[0-9.]$/.test(e.key) && this.typedFields()) { this.openTyped(e.key); return true; }
-    if (k === "a" && this.tool === "line" && this.draft.pts.length) return this.toggleTangentArc();
+    if (k === "a" && this.lineTool && this.draft.pts.length) return this.toggleTangentArc();
     const tools: Record<string, SkTool> = { l: "line", r: "rect", c: "circle", a: "arc", d: "dim", p: "point", t: "trim", g: "polygon", f: "fillet", e: "extend", o: "offset", w: "slot" };
     if (tools[k]) { this.setTool(tools[k]); return true; }
     if (k === "q") { this.toggleConstruction(); return true; }
@@ -3308,6 +3328,8 @@ export class SketchEditor {
     const hints: Record<SkTool, string> = {
       select: "Click to select, drag to move; Delete removes",
       line: "Click points; double-click or Esc ends the chain",
+      cline: "Click points; double-click or Esc ends the chain of construction lines",
+      mline: "Click the middle of the line, then one end",
       rect: "Click two opposite corners",
       crect: "Click the centre, then a corner",
       circle: "Click the centre, then a point on the circle",
@@ -3349,7 +3371,7 @@ export class SketchEditor {
     const u = this.host.unit(), c = this.cursorUV;
     const at = c ? ` · x ${trimNum(c[0] / u.mm, u.decimals)}, y ${trimNum(c[1] / u.mm, u.decimals)} ${u.name}` : "";
     const qs = this.quickSnap ? ` · ${t("Quick snap")}: ${t(SNAP_KINDS.find(k => k[0] === this.quickSnap)![1])}` : "";
-    const hint = this.tool === "tarc" && this.draft.pts.length ? "Tangent arc: click its end; the next arc goes on from it; Esc ends" : this.arcMode ? "Tangent arc: click its end; A goes back to lines" : this.tool === "line" && this.draft.pts.length ? "Click points; double-click or Esc ends the chain; A or moving back to the end point draws a tangent arc" : hints[this.tool];
+    const hint = this.tool === "tarc" && this.draft.pts.length ? "Tangent arc: click its end; the next arc goes on from it; Esc ends" : this.arcMode ? "Tangent arc: click its end; A goes back to lines" : this.lineTool && this.draft.pts.length ? "Click points; double-click or Esc ends the chain; A or moving back to the end point draws a tangent arc" : hints[this.tool];
     const dm = this.dynMirror ? ` · ${t("Dynamic mirror on")}` : "";
     this.host.status(`${def} · ${t(hint)}${dm}${qs}${at}`);
   }
@@ -3476,8 +3498,9 @@ export class SketchEditor {
     const d = this.draft;
     if (d.pts.length && d.cursor) {
       const p = d.cursor, a = d.pts[0];
-      if ((this.tool === "line" || this.tool === "tarc") && d.arc) { const g = this.tangentArc(p); if (g) poly(arcPts(g.c, g.r, g.a0, g.a0 + g.sweep, 48), C.pre); else push(d.pts.at(-1)!, p, C.pre); }
-      else if (this.tool === "line") push(d.pts.at(-1)!, p, C.pre);
+      if ((this.lineTool || this.tool === "tarc") && d.arc) { const g = this.tangentArc(p); if (g) poly(arcPts(g.c, g.r, g.a0, g.a0 + g.sweep, 48), C.pre); else push(d.pts.at(-1)!, p, C.pre); }
+      else if (this.lineTool) push(d.pts.at(-1)!, p, C.pre);
+      else if (this.tool === "mline") push([2 * a[0] - p[0], 2 * a[1] - p[1]], p, C.pre);
       else if (this.tool === "circle") poly(arcPts(a, Math.hypot(p[0] - a[0], p[1] - a[1]), 0, Math.PI * 2, 72), C.pre);
       else if (this.tool === "rect" || this.tool === "crect") {
         const [x0, y0] = this.tool === "rect" ? a : [2 * a[0] - p[0], 2 * a[1] - p[1]];
@@ -3631,8 +3654,9 @@ export class SketchEditor {
     let text = "";
     if (p && a) {
       const last = d.pts.at(-1)!;
-      if ((this.tool === "line" || this.tool === "tarc") && d.arc) { const g = this.tangentArc(p); text = g ? `R ${L(g.r)} · ${trimNum((Math.abs(g.sweep) * 180) / Math.PI, 1)}°` : ""; }
-      else if (this.tool === "line") { const dx = p[0] - last[0], dy = p[1] - last[1]; text = `L ${L(Math.hypot(dx, dy))} · ${trimNum((((Math.atan2(dy, dx) * 180) / Math.PI) + 360) % 360, 1)}°`; }
+      if ((this.lineTool || this.tool === "tarc") && d.arc) { const g = this.tangentArc(p); text = g ? `R ${L(g.r)} · ${trimNum((Math.abs(g.sweep) * 180) / Math.PI, 1)}°` : ""; }
+      else if (this.tool === "mline") text = `L ${L(2 * Math.hypot(p[0] - a[0], p[1] - a[1]))}`;
+      else if (this.lineTool) { const dx = p[0] - last[0], dy = p[1] - last[1]; text = `L ${L(Math.hypot(dx, dy))} · ${trimNum((((Math.atan2(dy, dx) * 180) / Math.PI) + 360) % 360, 1)}°`; }
       else if (this.tool === "circle" || this.tool === "polygon") text = `R ${L(Math.hypot(p[0] - a[0], p[1] - a[1]))}`;
       else if ((this.tool === "ellipse" || this.tool === "earc") && d.pts.length < 3) {
         const E = d.pts.length === 2 ? this.draftEll(a, d.pts[1], p) : null;
