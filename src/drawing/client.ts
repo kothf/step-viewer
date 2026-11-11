@@ -118,6 +118,8 @@ export class DrawingKernel {
   previewsMade = 0;
   /** Of those, section previews (with their cut loops). */
   sectionPreviewsMade = 0;
+  /** Previews that failed (for the smoke test). */
+  readonly previewErrors: string[] = [];
   /**
    * Exact projections run on the drawing's worker and, with enough threads, on a helper worker
    * holding the same model, one at a time each, so a sheet's views are projected two at a time.
@@ -430,7 +432,7 @@ export class DrawingKernel {
         if (gen === this.gen && !this.cache.has(key)) this.previews.set(key, r.proj);
         this.previewing.delete(key);
         return r.proj;
-      }, err => { this.previewing.delete(key); throw err; });
+      }, err => { this.previewing.delete(key); this.previewErrors.push(String(err?.message ?? err)); throw err; });
       this.previewing.set(key, p);
     }
     return p;

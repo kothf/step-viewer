@@ -13278,7 +13278,7 @@ try {
     await dp.mouse.move(sx + 5, sy); await dp.mouse.move(sx, sy);
     await dp.mouse.click(sx, sy);
     await dp.waitForFunction(() => window.__sv.drw.doc().sheets[0].views.some(v => v.kind === "section") && window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 120000 });
-    await dp.waitForTimeout(200);
+    await dp.waitForFunction(() => window.__sv.drw.previews().sections >= 1, null, { timeout: 15000 }).catch(() => {});
     const spv = await dp.evaluate(() => window.__sv.drw.previews());
     const sexact = await dp.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views.find(x => x.kind === "section"), p = window.__sv.drw.proj(v.id); return !!p && p.vis.length > 0 && (p.cut?.length ?? 0) > 0; });
     check(spv.sections >= 1 && spv.left === 0 && sexact, `drawing: a section view shows a quick preview with its cut first, then the exact lines (${JSON.stringify(spv)}, exact ${sexact})`);
