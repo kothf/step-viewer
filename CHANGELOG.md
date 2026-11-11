@@ -5,11 +5,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.508.0] - 2026-11-11
+## [1.509.0] - 2026-11-11
 
 ### Added
 
 - Auxiliary view from a drawn line (FR-DRW-014), as in SolidWorks from a sketched line: with Auxiliary, click a line drawn with Annotate ▸ Line (or a side of a drawn rectangle or polyline) over a view, and the view folds about it, square to that line.
+
+## [1.508.0] - 2026-11-11
+
+### Fixed
+- Drawings: a tapped Hole Wizard hole shows its cosmetic thread in the views (thin ¾ circle end-on, dashed major-diameter lines from the side, solid in a section), and its callout reads THRU when the thread is as deep as a through hole.
+- Drawings: a plain section view no longer draws the cosmetic threads of material its cut took away.
+- Drawings: Line (Annotation tab) chains on from each end and Rectangle and Circle stay on for the next shape, until Esc; a double-click also ends a chain of lines.
+- Drawings: switching a sheet between first and third angle keeps the views on the sheet: the swapped layout moves back inside the frame, still lined up.
 
 ## [1.507.0] - 2026-11-11
 
@@ -3145,7 +3153,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.508.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.509.0...HEAD
+[1.509.0]: https://github.com/kothf/step-viewer/compare/v1.508.0...v1.509.0
 [1.508.0]: https://github.com/kothf/step-viewer/compare/v1.507.0...v1.508.0
 [1.507.0]: https://github.com/kothf/step-viewer/compare/v1.506.0...v1.507.0
 [1.506.0]: https://github.com/kothf/step-viewer/compare/v1.505.0...v1.506.0

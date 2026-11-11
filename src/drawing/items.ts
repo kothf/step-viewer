@@ -121,7 +121,12 @@ export function modelItems(doc: PartDoc, frames: Record<string, Frame>, sketches
       const a = at(sfr, p.x, p.y), depth = f0.depth.v;
       items.push({ src: `${f0.id}:depth`, name: `${f0.name} depth`, k: "lin", p: [a, add(a, sfr.n, s * depth)], dir: sfr.n, n: sfr.n, side: true, value: depth });
     } else if (f0.type === "hole" && fr) {
-      holes.push({ id: f0.id, pts: f0.pts.map(([x, y]) => at(fr, x, y)), n: f0.flip ? [-fr.n[0], -fr.n[1], -fr.n[2]] : fr.n, f: f0 });
+      const h: HoleInfo = { id: f0.id, pts: f0.pts.map(([x, y]) => at(fr, x, y)), n: f0.flip ? [-fr.n[0], -fr.n[1], -fr.n[2]] : fr.n, f: f0 };
+      holes.push(h);
+      // A tapped hole carries its cosmetic thread (as SolidWorks' Hole Wizard does): the major diameter over the
+      // thread depth, or the whole drill when it has none.
+      const major = f0.kind === "tapped" ? f0.major ?? (f0.size ? parseFloat(f0.size.replace(/^M/i, "")) : NaN) : NaN;
+      if (major > f0.diameter.v) h.pts.forEach((c, i) => threads.push({ id: `${f0.id}:${i}`, c, ax: h.n, r: f0.diameter.v / 2, d: major, L: f0.threadDepth ? f0.threadDepth.v : null, internal: true, ...(f0.size ? { size: f0.size } : {}) }));
     } else if (f0.type === "thread" && !f0.modelled && f0.edge && edgeCircle) {
       const e = edgeCircle(f0.edge);
       if (e) threads.push({ id: f0.id, ...e, d: f0.diameter.v, L: f0.upToEnd ? null : f0.length.v, internal: !!f0.internal, ...(f0.size ? { size: f0.size } : {}) });
