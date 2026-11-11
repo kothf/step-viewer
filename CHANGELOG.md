@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.510.0] - 2026-11-11
+## [1.511.0] - 2026-11-11
 
 ### Changed
 
@@ -15,6 +15,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Fixed
 
 - Vault: a browser vault asks the browser to keep the site's storage (persistent storage), since Firefox and Safari may otherwise clear it when space runs short; when the browser refuses, a new vault says how to keep a backup (Export ZIP).
+
+## [1.510.0] - 2026-11-11
+
+### Fixed
+
+- Standard 3 views of a big assembly (the engine) finish again, in about 45 s: the quick views mesh at 0.1 rad as before 1.497.0, since at 0.3 rad OCCT's polygonal hidden-line removal never returned on some view directions.
 
 ## [1.509.0] - 2026-11-11
 
@@ -3164,7 +3170,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.510.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.511.0...HEAD
+[1.511.0]: https://github.com/kothf/step-viewer/compare/v1.510.0...v1.511.0
 [1.510.0]: https://github.com/kothf/step-viewer/compare/v1.509.0...v1.510.0
 [1.509.0]: https://github.com/kothf/step-viewer/compare/v1.508.0...v1.509.0
 [1.508.0]: https://github.com/kothf/step-viewer/compare/v1.507.0...v1.508.0
