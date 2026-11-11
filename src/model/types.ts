@@ -202,6 +202,11 @@ export interface ExtrudeFeature {
   op: "boss" | "cut";
   /** Boss only: false makes a new body instead of joining the ones it touches (FR-FT-006). */
   merge?: boolean;
+  /**
+   * Feature scope (FR-FT-007): the bodies a cut, or a boss with Merge result, acts on, each named by one
+   * of its faces; absent or empty = all bodies. The other bodies are left as they are.
+   */
+  scope?: FaceRef[];
   end: EndKind;
   depth: Num;
   /** Second direction depth (its blind depth); 0 or absent: one direction. */
@@ -261,6 +266,8 @@ export interface RevolveFeature {
   op: "boss" | "cut";
   /** Boss only: false makes a new body (FR-FT-006). */
   merge?: boolean;
+  /** Feature scope (FR-FT-007), as on an extrude. */
+  scope?: FaceRef[];
   /** A line of the sketch (usually construction) used as the axis. */
   axis: string;
   angle: Num;

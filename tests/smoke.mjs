@@ -6550,6 +6550,37 @@ try {
     await mp.click("#mc-ok");
     await settle();
     check(on === true && mb.merge === false && mb.bodies === 2, `model 1.57: Extrude with Merge result off makes a new body (FR-FT-006) (${on}, ${JSON.stringify(mb)})`);
+    // 1.504 (FR-FT-007): Feature scope: a Through all - both cut on the boss's axis takes both bodies; with only
+    // the first body picked, the boss keeps its material.
+    {
+      await mp.evaluate(() => window.__sv.model.store.change("Circle", d => { d.features.push({ id: "ks", type: "sketch", name: "SketchScope", plane: { face: { name: "x:end" } }, rels: [], dims: [], ents: [{ id: "o", t: "point", x: 0, y: 0 }, { id: "c", t: "circle", c: "o", r: 2 }] }); }));
+      await settle();
+      const v0 = await mp.evaluate(() => window.__sv.model.last().props.volume);
+      const optsCut = await mp.evaluate(() => localStorage.getItem("mc:opts:cut"));
+      await mp.evaluate(() => window.__sv.modeller.command("cut"));
+      await settle();
+      await mp.selectOption('#mc-pm select[data-k="end"]', "through2");
+      await settle();
+      const vAll = await mp.evaluate(() => window.__sv.model.last().props.volume);
+      const allOn = await mp.evaluate(() => document.querySelector('#mc-pm input[data-k="scopeAll"]')?.checked);
+      await mp.click('#mc-pm input[data-k="scopeAll"]');
+      await settle();
+      const focusScope = await mp.evaluate(() => !!document.querySelector('#mc-pm [data-focus="scope"].focus'));
+      await mp.evaluate(() => { window.__sv.model.mode().draft.scope.push({ name: "x:end" }); window.__sv.modeller.draftChanged(); });
+      await settle();
+      const sc = await mp.evaluate(() => ({ v: window.__sv.model.last().props.volume, box: document.querySelector('#mc-pm [data-focus="scope"]')?.textContent }));
+      await mp.click("#mc-ok");
+      await settle();
+      const kept = await mp.evaluate(() => ({ scope: window.__sv.model.store.doc.features.at(-1).scope?.length, bodies: window.__sv.model.last().props.bodies }));
+      check(allOn === true && focusScope && sc.box === "1 body" && sc.v - vAll > 1 && v0 - sc.v > 1 && kept.scope === 1 && kept.bodies === 2,
+        `model 1.504: Feature scope cuts only the picked body (FR-FT-007) (${allOn}, ${focusScope}, ${JSON.stringify(sc)}, ${(v0 - vAll).toFixed(2)}, ${JSON.stringify(kept)})`);
+      await mp.evaluate(() => window.__sv.model.store.undo());
+      await settle();
+      await mp.evaluate(() => window.__sv.model.store.undo());
+      await settle();
+      // The cut panel remembers Through all - both; later checks expect what was remembered before.
+      await mp.evaluate(o => { if (o == null) localStorage.removeItem("mc:opts:cut"); else localStorage.setItem("mc:opts:cut", o); }, optsCut);
+    }
     // 1.363 (exam #7, #8, #11, #12, #24): Overall size comes from the exact box; a cut sketched on a plane under the
     // part starts towards the part; Extrude seen straight on turns the view.
     {

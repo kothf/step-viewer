@@ -731,6 +731,23 @@ export class Modeller {
     if (tools.length > 1 && (f.contours?.length || (f.type === "extrude" && dir2Apart(f)))) tool = this.unifyAlike(tool);
     if (!(f.type === "extrude" && f.outside)) this.tools.set(f.id, [{ shape: tool, op: f.op === "boss" ? "fuse" : "cut" }]);
     if (f.op === "boss" && prev && f.merge === false) return this.compoundOf([...this.bodyList(prev), tool]);
+    // Feature scope (FR-FT-007): only the picked bodies are cut or merged with; the others stay as they are.
+    const sc = this.scoped(f, prev);
+    if (sc.keep.length) return this.compoundOf([...sc.keep, ...this.bodyList(this.applySwept(f, tool, sc.target, frame, so))]);
+    return this.applySwept(f, tool, prev, frame, so);
+  }
+
+  /** Feature scope: the picked bodies as one target, and the bodies left alone. */
+  private scoped(f: { scope?: FaceRef[] }, prev: Named | null): { target: Named | null; keep: Named[] } {
+    if (!prev || !f.scope?.length) return { target: prev, keep: [] };
+    const list = this.bodyList(prev);
+    if (list.length < 2) return { target: prev, keep: [] };
+    const idx = this.pickedBodies(list, prev, f.scope);
+    return { target: this.compoundOf(list.filter((_, i) => idx.includes(i))), keep: list.filter((_, i) => !idx.includes(i)) };
+  }
+
+  /** Joins an extrude or revolve tool to the body, or cuts it out. */
+  private applySwept(f: Feature & { type: "extrude" | "revolve" }, tool: Named, prev: Named | null, frame: Frame, so: V3): Named {
     if (f.op === "boss" && prev && f.type === "extrude") {
       // A boss standing on the body (embossed text, a pad on a face): when the body lies wholly behind
       // the plane the tool starts from, the two only touch, and gluing skips the slow intersection of
@@ -5237,11 +5254,13 @@ export class Modeller {
   }
 
   /** Boss or cut with a feature's tool solids; the tools are kept for mirror and patterns. */
-  private applyTool(f: { id: string; op: "boss" | "cut"; merge?: boolean }, tools: Named[], prev: Named | null): Named {
+  private applyTool(f: { id: string; op: "boss" | "cut"; merge?: boolean; scope?: FaceRef[] }, tools: Named[], prev: Named | null): Named {
     const tool = this.fuseAll(tools, f.id);
     this.tools.set(f.id, [{ shape: tool, op: f.op === "boss" ? "fuse" : "cut" }]);
     // Merge result off (sweep, loft): the tool is a new body.
     if (f.op === "boss" && prev && f.merge === false) return this.compoundOf([...this.bodyList(prev), tool]);
+    const sc = this.scoped(f, prev);
+    if (sc.keep.length) return this.compoundOf([...sc.keep, ...this.bodyList(this.applyTool({ ...f, scope: undefined }, [tool], sc.target))]);
     if (f.op === "boss") return prev ? this.bool("fuse", prev, tool, f.id) : tool;
     if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body to cut yet.");
     const out = this.bool("cut", prev, tool, f.id);

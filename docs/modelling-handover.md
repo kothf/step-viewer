@@ -11,7 +11,7 @@ State of the part modelling work. Current thread: "Match SolidWorks in everyday 
 ## SolidWorks-fidelity pass on everyday workflows (from 1.502.0)
 
 - **1.502.0: Instances to skip in the view** (FR-FT-070/071 "click to skip"): see the CLAUDE.md line. Unit test `tests/unit/patternSpots.test.ts`, smoke "model 1.501".
-- Also 1.502.0: linear Up to distance and Pattern seed only, circular Direction 2. 1.503.0: linear pattern Up to reference (plane or flat face + offset). Next ideas: fillet/shell/sketch fidelity checks, FRS 13.13 rows.
+- Also 1.502.0: linear Up to distance and Pattern seed only, circular Direction 2. 1.503.0: linear pattern Up to reference (plane or flat face + offset). 1.504.0: Feature scope on extrude/revolve (FR-FT-007). Next ideas: fillet/shell/sketch fidelity checks, FRS 13.13 rows.
 
 ## Extrude Direction 2 (1.456.0)
 
