@@ -2425,7 +2425,7 @@ try {
         `model 1.513: Centerline makes a construction line, Midpoint line spans both ways from its middle (FR-SK-012) (${JSON.stringify(ml)})`);
       await tool("select");
     }
-    // 1.516.0 (FR-SK-039): Stretch entities moves only the picked end of a rectangle (a crossing pick of its right
+    // 1.517.0 (FR-SK-039): Stretch entities moves only the picked end of a rectangle (a crossing pick of its right
     // side: the two right corners plus the lines crossing the box); the width dimension takes the new size.
     {
       await tool("select");
@@ -2453,7 +2453,7 @@ try {
         return out;
       });
       check(/Stretch/.test(stTitle ?? "") && st.pts === "200,100 225,100 225,110 200,110" && Math.abs(st.w - 25) < 1e-6 && st.h === 10 && st.status === "ok",
-        `model 1.516: Stretch entities moves the picked end of a rectangle and its width dimension follows (FR-SK-039) (${stTitle}, ${JSON.stringify(st)})`);
+        `model 1.517: Stretch entities moves the picked end of a rectangle and its width dimension follows (FR-SK-039) (${stTitle}, ${JSON.stringify(st)})`);
     }
     // 1.266.0 (FR-SK-043/044/047): dragging the last line's start onto the free end of the Ctrl line merges them
     // (coincident relation); Ctrl+drag of that line copies it; the status bar shows the cursor position.
@@ -3452,6 +3452,12 @@ try {
     await mp.selectOption('#mc-pm select[data-k="kind"]', "tapped");
     await idle();
     const holePanel = await mp.evaluate(() => ({ n: document.querySelector('#mc-pm [data-focus="pts"]')?.textContent, d: document.querySelector('#mc-pm input[data-num="diameter"]')?.value, td: document.querySelector('#mc-pm input[data-num="threadDepth"]')?.value }));
+    // 1.516: a through tapped hole's thread can run through all too: the depth box goes, the 3D thread is the plate's 20 mm.
+    const thrSel = await mp.evaluate(() => document.querySelector('#mc-pm select[data-k="threadEnd"]')?.value ?? null);
+    await mp.selectOption('#mc-pm select[data-k="threadEnd"]', "through").catch(() => {});
+    await idle();
+    const thrAll = await mp.evaluate(() => ({ box: !!document.querySelector('#mc-pm input[data-num="threadDepth"]'), len: Object.values(window.__sv.model.last()?.frames ?? {}).find(f => f.len)?.len ?? null }));
+    check(thrSel === "blind" && !thrAll.box && Array.isArray(thrAll.len) && thrAll.len.length === 2 && thrAll.len.every(x => Math.abs(x - 20) < 0.01), `model 1.516: tapped hole thread end Through all (${thrSel}, ${JSON.stringify(thrAll)})`);
     await mp.click("#mc-ok");
     await idle();
     const vHole = await vol(), stHole = await lastSt();
