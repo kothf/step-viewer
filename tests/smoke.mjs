@@ -2367,7 +2367,7 @@ try {
         `model 1.507: A in the line tool draws a tangent arc, then lines go on tangent to it (FR-SK-011) (${arcMode}, ${back}, ${JSON.stringify(ta)})`);
       await tool("select");
     }
-    // 1.512.0 (FR-SK-015): the Tangent Arc tool starts on the end of that last line and chains tangent arcs.
+    // 1.513.0 (FR-SK-015): the Tangent Arc tool starts on the end of that last line and chains tangent arcs.
     {
       await tool("tarc");
       const arcsBefore = await mp.evaluate(() => window.__sv.model.editor().sk.ents.filter(e => e.t === "arc").map(e => e.id));
@@ -2382,10 +2382,10 @@ try {
           tan: arcs.map(a => sk.rels.filter(r => r.t === "tangent" && r.e.includes(a.id)).length), status: ed.info.status };
       }, arcsBefore);
       check(on === true && tr.n === 2 && tr.rs.every(r => Math.abs(r - 2) < 0.05) && Math.abs(tr.cs[0][0] - 106) < 0.05 && Math.abs(tr.cs[1][0] - 110) < 0.05 && tr.tan.every(k => k >= 1) && tr.status === "ok",
-        `model 1.512: Tangent Arc tool chains arcs tangent to the line it starts on (FR-SK-015) (${on}, ${JSON.stringify(tr)})`);
+        `model 1.513: Tangent Arc tool chains arcs tangent to the line it starts on (FR-SK-015) (${on}, ${JSON.stringify(tr)})`);
       await tool("select");
     }
-    // 1.512.0 (FR-SK-037): dynamic mirror about a line mirrors each new line at once, and the mirrored chain stays joined.
+    // 1.513.0 (FR-SK-037): dynamic mirror about a line mirrors each new line at once, and the mirrored chain stays joined.
     {
       await tool("line");
       await click([120, 30]); await click([120, 50]); await mp.keyboard.press("Escape");
@@ -2403,10 +2403,10 @@ try {
         return { n: fresh.length, xs, joined, sym, off: ed.dynMirror === null, status: ed.info.status };
       }, linesBefore);
       check(axis.on && axis.dm === axis.id && dm.n === 4 && Math.abs(dm.xs[0] - 114) < 0.05 && Math.abs(dm.xs.at(-1) - 126) < 0.05 && dm.joined && dm.sym >= 3 && dm.off && dm.status === "ok",
-        `model 1.512: dynamic mirror copies each new line about the picked line, joined (FR-SK-037) (${JSON.stringify(axis)}, ${JSON.stringify(dm)})`);
+        `model 1.513: dynamic mirror copies each new line about the picked line, joined (FR-SK-037) (${JSON.stringify(axis)}, ${JSON.stringify(dm)})`);
       await tool("select");
     }
-    // 1.512.0 (FR-SK-012): Centerline draws construction lines; Midpoint line puts its middle on the first click.
+    // 1.513.0 (FR-SK-012): Centerline draws construction lines; Midpoint line puts its middle on the first click.
     {
       const before = await mp.evaluate(() => window.__sv.model.editor().sk.ents.filter(e => e.t === "line").map(e => e.id));
       await tool("cline");
@@ -2422,7 +2422,7 @@ try {
           mid: mid ? [P(mid.e[0]).x, P(mid.e[0]).y].map(v => Math.round(v * 100) / 100) : null, status: ed.info.status };
       }, before);
       check(ml.n === 2 && ml.cons && ml.ends && Math.abs(ml.ends[0] - 128) < 0.05 && Math.abs(ml.ends[2] - 136) < 0.05 && Math.abs(ml.ends[1] - 58) < 0.05 && ml.mid && Math.abs(ml.mid[0] - 132) < 0.05 && ml.status === "ok",
-        `model 1.512: Centerline makes a construction line, Midpoint line spans both ways from its middle (FR-SK-012) (${JSON.stringify(ml)})`);
+        `model 1.513: Centerline makes a construction line, Midpoint line spans both ways from its middle (FR-SK-012) (${JSON.stringify(ml)})`);
       await tool("select");
     }
     // 1.266.0 (FR-SK-043/044/047): dragging the last line's start onto the free end of the Ctrl line merges them
@@ -5339,6 +5339,34 @@ try {
     const auxBox = aux && await dp.evaluate(i => window.__sv.drw.placement(i).box.map(v => Math.round(v * 1000) / 1000), aux.id);
     check(edgeHi === 1 && aux && aux.letter === "C" && aux.look === -1 && Math.abs(aux.x - front.x) < 0.02 && aux.y > front.y && auxBox && Math.round(auxBox[2] - auxBox[0]) === 100 && Math.round(auxBox[3] - auxBox[1]) === 60,
       `drawing: auxiliary view C square to a picked edge, lined up with its parent (${JSON.stringify(aux && { x: aux.x, y: aux.y, look: aux.look })}, box ${auxBox})`);
+    // 1.512.0: an auxiliary view from a line drawn with Annotate ▸ Line over the top view (SolidWorks' sketched line), then undone.
+    {
+      const viewsBefore = vs.length;
+      await dp.keyboard.press("Escape");
+      await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="skline"]');
+      for (const [u, w] of [[-30, -20], [30, 20]]) { [x, y] = await at(top.id, u, w); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); }
+      await dp.keyboard.press("Escape");
+      const drawnN = await dp.evaluate(() => (window.__sv.drw.doc().sheets[0].annots ?? []).filter(a => a.t === "sk").length);
+      await dp.click('#drw [data-a="aux"]');
+      [x, y] = await at(top.id, 15, 10);
+      await dp.mouse.move(x, y + 2); await dp.mouse.move(x, y);
+      const lineHi = await dp.evaluate(() => document.querySelectorAll("#drw .drw-edge").length);
+      await dp.mouse.click(x, y);
+      [x, y] = await scr(top.x + 60, top.y - 40);
+      await dp.mouse.move(x, y + 3); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+      await ready();
+      vs = await views();
+      const aux2 = vs.find(v => v.kind === "aux" && v.id !== aux?.id);
+      const dir = aux2 && (aux2.line[3] - aux2.line[1]) / (aux2.line[2] - aux2.line[0]);
+      const box2 = aux2 && await dp.evaluate(i => window.__sv.drw.placement(i)?.box ?? null, aux2.id);
+      check(drawnN === 1 && lineHi === 1 && aux2 && aux2.parent === top.id && Math.abs(dir - 2 / 3) < 0.02 && box2,
+        `drawing: auxiliary view folded about a line drawn on the top view (${JSON.stringify({ drawnN, lineHi, line: aux2?.line, parent: aux2?.parent === top.id })})`);
+      await dp.keyboard.press("Escape");
+      await dp.keyboard.press("Control+z"); await ready();
+      await dp.keyboard.press("Control+z"); await ready();
+      const left = await dp.evaluate(() => ({ v: window.__sv.drw.doc().sheets[0].views.length, sk: (window.__sv.drw.doc().sheets[0].annots ?? []).filter(a => a.t === "sk").length }));
+      check(left.v === viewsBefore && left.sk === 0, `drawing: undo takes the drawn-line auxiliary view and the line back off (${JSON.stringify(left)})`);
+    }
     // 1.114.0 offset section (FR-DRW-012): a path on the top view at y = 10 left of x = 0, a step down to y = 0, then through the hole.
     await dp.click('#drw [data-a="section"]'); await dp.click('#drw [data-cut="off"]');
     for (const [u, w] of [[-45, 10], [0, 10], [0, 0], [45, 0]]) { [x, y] = await at(top.id, u, w); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); }

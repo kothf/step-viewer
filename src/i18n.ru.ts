@@ -2192,10 +2192,10 @@ export const RU: Record<string, string> = {
   // Drawings: section, detail and auxiliary views
   "Another view already uses the letter {a}.": "Буква {a} уже занята другим видом.",
   "Auxiliary View": "Дополнительный вид",
-  "Auxiliary view: click a straight edge, then place the view square to it": "Дополнительный вид: щёлкните прямое ребро, затем разместите вид перпендикулярно ему",
   "Auxiliary": "Доп. вид",
-  "Click a straight edge of a view.": "Щёлкните прямое ребро вида.",
-  "Click a straight edge of the view.": "Щёлкните прямое ребро вида.",
+  "Click a straight edge of the view or a line drawn on it.": "Щёлкните прямое ребро вида или нарисованную на нём линию.",
+  "Click a straight edge of a view or a line drawn on it.": "Щёлкните прямое ребро вида или нарисованную на нём линию.",
+  "Auxiliary view: click a straight edge or a drawn line, then place the view square to it": "Дополнительный вид: щёлкните прямое ребро или нарисованную линию, затем разместите вид перпендикулярно ей",
   "Click on a view to place the cutting line. It snaps to circle centres, line ends and midpoints.": "Щёлкните на виде, чтобы задать линию сечения. Она привязывается к центрам окружностей, концам и серединам линий.",
   "Click on the sheet to place the detail view. Esc cancels.": "Щёлкните на листе, чтобы разместить выносной элемент. Esc — отмена.",
   "Click the centre of the detail circle on a view.": "Щёлкните центр окружности выносного элемента на виде.",
