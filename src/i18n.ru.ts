@@ -1693,6 +1693,7 @@ export const RU: Record<string, string> = {
   "Drawings need the geometry kernel, which is turned off (?nokernel).": "Чертежам нужно геометрическое ядро, а оно отключено (?nokernel).",
   "Drawings need a STEP, IGES or BREP model; mesh files have no B-rep.": "Для чертежа нужна модель STEP, IGES или BREP; в сеточных файлах нет B-rep.",
   "Merge points": "Объединить точки",
+  "{n} selected: Ctrl+click adds or removes, Esc clears": "Выбрано: {n}. Ctrl+щелчок добавляет или убирает, Esc снимает выбор",
   "Add relation": "Добавить взаимосвязь",
   "Select sketch items first, then press K to add a relation.": "Сначала выберите элементы эскиза, затем нажмите K, чтобы добавить взаимосвязь.",
   "No relation fits the selection.": "Для выбранного нет подходящих взаимосвязей.",

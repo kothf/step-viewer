@@ -3662,7 +3662,7 @@ try {
       const sp = await mp.evaluate(() => { const d = window.__sv.model.mode().draft, l = window.__sv.model.last(), fr = l.frames[d.id]; return { n: d.spots?.length ?? 0, face: d.spots?.[0]?.face.name ?? null, sp: fr?.sp?.length ?? 0, box: document.querySelector('#mc-pm [data-focus="pts"]')?.textContent ?? "", ok: l.statuses.every(s => s.ok) }; });
       if (side) { await mp.evaluate(() => document.querySelector('#mc-pm [data-rms="0"]')?.click()); await idle(); }
       const sp2 = await mp.evaluate(() => window.__sv.model.mode().draft.spots?.length ?? 0);
-      check(side && sp.n === 1 && sp.face === side.name && sp.sp === 1 && sp.box === "3 holes" && sp.ok && sp2 === 0, `model 1.537: Hole Wizard hole on another face (${JSON.stringify({ side, sp, sp2 })})`);
+      check(side && sp.n === 1 && sp.face === side.name && sp.sp === 1 && sp.box === "3 holes" && sp.ok && sp2 === 0, `model 1.538: Hole Wizard hole on another face (${JSON.stringify({ side, sp, sp2 })})`);
     }
     // Options: Near side countersink defaults to the hole + 1 mm at 90°; unticking takes it away.
     await mp.check('#mc-pm input[data-k="optNear"]').catch(() => {});
@@ -7151,6 +7151,40 @@ try {
       }
       check(!!geo && geo.shown && geo.head !== "" && geo.items[0] === "Edit feature" && geo.items.includes("Suppress") && geo.items.includes("Delete") && geo.items.includes("Zoom to fit") && geo.bar > 0,
         `model 1.535: right-click on a face lists its feature's commands under the context toolbar (FR-UI-025) (${JSON.stringify(geo)})`);
+      // 1.537: Ctrl+click builds a selection of faces and edges that commands take; Esc clears it (FR-SEL-007).
+      const spots = await mp.evaluate(() => {
+        const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(), out = [];
+        for (let k = 0; k < 64; k++) {
+          const fx = 0.2 + (k % 8) * 0.6 / 7, fy = 0.2 + Math.floor(k / 8) * 0.6 / 7;
+          if (v.pickMeshes({ x: fx * 2 - 1, y: -(fy * 2 - 1) })) out.push({ x: r.left + fx * r.width, y: r.top + fy * r.height });
+        }
+        return out;
+      });
+      const ctrlBuild = async () => {
+        for (const p of spots) {
+          await mp.keyboard.down("Control");
+          await mp.mouse.click(p.x, p.y);
+          await mp.keyboard.up("Control");
+          await mp.waitForTimeout(60);
+          const c = await mp.evaluate(() => window.__sv.modeller.multiCount);
+          if (c.faces + c.edges >= 2) return c;
+        }
+        return await mp.evaluate(() => window.__sv.modeller.multiCount);
+      };
+      const mc1 = await ctrlBuild();
+      const hint = await mp.evaluate(() => document.getElementById("st-hint")?.textContent ?? "");
+      await mp.evaluate(() => window.__sv.modeller.hideShortcutBar());
+      await mp.keyboard.press("Escape");
+      const mc0 = await mp.evaluate(() => window.__sv.modeller.multiCount);
+      const mc2 = await ctrlBuild();
+      const byEdges = mc2.edges > 0;
+      await mp.evaluate(c => { window.__sv.modeller.hideShortcutBar(); window.__sv.modeller.command(c); }, byEdges ? "fillet" : "shell");
+      await settle();
+      const taken = await mp.evaluate(k => window.__sv.model.mode().draft?.[k]?.length ?? -1, byEdges ? "edges" : "faces");
+      await mp.click("#mc-cancel");
+      await settle();
+      check(mc1.faces + mc1.edges >= 2 && /selected/.test(hint) && mc0.faces + mc0.edges === 0 && mc2.faces + mc2.edges >= 2 && taken === (byEdges ? mc2.edges : mc2.faces),
+        `model 1.537: Ctrl+click selects several faces/edges, Esc clears them, the command takes them all (FR-SEL-007) (${JSON.stringify({ spots: spots.length, mc1, hint, mc0, mc2, byEdges, taken })})`);
       await mp.evaluate(() => window.__sv.model.store.undo());
       await settle();
       await mp.evaluate(() => window.__sv.model.store.undo());
