@@ -64,6 +64,8 @@ import { SketchEditor, REL_NAME, relName, trimNum, type SkTool } from "../sketch
 import { SNAP_KINDS, parseSnaps, type SnapKind } from "../sketch/snaps";
 import { ORIGIN, repairs, solve } from "../sketch/solver";
 import { sketchPath, sketchProfile, textPath } from "../sketch/profile";
+import { blockFile, readBlockFile } from "../sketch/blocks";
+import type { SketchBlock } from "./types";
 import { regionAt, regionPoint, sketchRegions, type Region } from "../sketch/regions";
 import { SEL_FILTER } from "../tools/Snapper";
 import { lassoMode, mergeSel, rectRegion, regionInside, regionProbe, regionTaken, type Rect, type Region as SelArea } from "../boxSelect";
@@ -1320,6 +1322,7 @@ export class ModelController {
   ok(repeat = false) {
     const m = this.mode;
     if (m.kind === "sketch") {
+      if (m.editor.sk.editBlock) m.editor.finishEditBlock();
       const sk = this.store!.feature(m.id);
       this.exitMode(true);
       if (sk) this.store!.collapse(this.sketchMark, m.isNew ? `Add ${sk.name}` : `Edit ${sk.name}`);
@@ -1838,6 +1841,99 @@ export class ModelController {
     inp.accept = "image/png,image/jpeg,image/gif,image/bmp,image/webp,image/svg+xml";
     inp.addEventListener("change", () => { const f = inp.files?.[0]; if (f) void run(f); });
     inp.click();
+  }
+
+  /** Blocks of every sketch of the part, one per name and contents (the open sketch's own first). */
+  private partBlocks(ed: SketchEditor): SketchBlock[] {
+    const out: SketchBlock[] = [], seen = new Set<string>();
+    const sketches = [ed.sk, ...this.doc.features.filter((f): f is SketchFeature => f.type === "sketch" && f.id !== ed.sk.id)];
+    for (const sk of sketches) for (const b of sk.blocks ?? []) {
+      const key = `${b.name}|${JSON.stringify(b.ents)}`;
+      if (!seen.has(key)) { seen.add(key); out.push(b); }
+    }
+    return out;
+  }
+
+  /** Insert Block (FRS 2.2): a menu of the part's blocks and From file…; the copy lands on the sketch origin. */
+  insertBlockMenu(file?: File) {
+    const m = this.mode;
+    if (m.kind !== "sketch") return;
+    const ed = m.editor;
+    const fromFile = (f: File) => void f.text().then(txt => {
+      let def: SketchBlock;
+      try { def = readBlockFile(txt); } catch { toast(t("This is not a MöbiusCAD block file."), true); return; }
+      if (this.mode !== m) return;
+      ed.insertBlock(def);
+      toast(t("Block inserted at the sketch origin; drag it into place."), "success");
+      this.renderPanel();
+    });
+    if (file) { fromFile(file); return; }
+    const pick = () => {
+      const inp = document.createElement("input");
+      inp.type = "file";
+      inp.accept = ".mcadblk,application/json";
+      inp.addEventListener("change", () => { const f = inp.files?.[0]; if (f) fromFile(f); });
+      inp.click();
+    };
+    const defs = this.partBlocks(ed);
+    if (!defs.length) { pick(); return; }
+    const b = document.querySelector<HTMLElement>('#mc-tools [data-c="skinsblk"]')?.getBoundingClientRect();
+    this.showMenu([...defs.map(d => [d.name, () => { ed.insertBlock(d); toast(t("Block inserted at the sketch origin; drag it into place."), "success"); this.renderPanel(); }] as [string, () => void]), null, [t("From file…"), pick]], b ? b.left : innerWidth / 2, b ? b.bottom + 4 : innerHeight / 3, () => {});
+  }
+
+  /** The selected block instance: definition name, place, angle, scale, Explode, Save to a file. */
+  private blockBox(ed: SketchEditor): string {
+    const eb = ed.sk.editBlock;
+    if (eb) {
+      const ins = ed.sk.inserts?.find(i => i.id === eb.insert), def = ins && ed.sk.blocks?.find(b => b.id === ins.block);
+      return `<div class="pm-sec pm-block pm-blkedit" role="status"><h4>${esc(t("Editing block"))} <span translate="no">${esc(def?.name ?? "")}</span></h4>`
+        + `<p class="pm-help muted">${esc(t("Drag, dimension and relate the block's entities, or draw new ones; they join the block. Every copy follows when you finish."))}</p>`
+        + `<div class="pm-rels"><button class="btn small primary" data-blk="finish">${esc(t("Finish editing block"))}</button></div></div>`;
+    }
+    const ins = ed.selectedInsert();
+    const def = ins && ed.sk.blocks?.find(b => b.id === ins.block);
+    if (!ins || !def) return "";
+    const f = UNITS[units.current].f, u: string = units.current;
+    const num = (k: string, label: string, v: number, unit: string) => `<label class="pm-field"><span>${esc(label)}</span><span class="pm-in"><input type="text" inputmode="decimal" class="pm-n" data-blk="${k}" value="${trimNum(v, 4)}" /><span class="muted">${esc(unit)}</span></span></label>`;
+    const count = (ed.sk.inserts ?? []).filter(i => i.block === def.id).length;
+    return `<div class="pm-sec pm-block"><h4>${esc(t("Block"))}</h4>`
+      + `<label class="pm-field"><span>${esc(t("Name"))}</span><input type="text" data-blk="name" value="${esc(def.name)}" spellcheck="false" translate="no" /></label>`
+      + num("x", "X", ins.x * f, u) + num("y", "Y", ins.y * f, u)
+      + num("ang", t("Angle"), ((ins.ang ?? 0) * 180) / Math.PI, "°") + num("scale", t("Scale"), ins.scale ?? 1, "×")
+      + `<p class="pm-help muted">${esc(t("{n} copies of this block in the sketch. Drag the block to move it; relations and dimensions can tie it to other geometry.", { n: count }))}</p>`
+      + `<div class="pm-rels"><button class="btn small" data-blk="edit" title="${esc(t("Change the block's entities in place; every copy follows"))}">${esc(t("Edit block"))}</button><button class="btn small" data-blk="explode" title="${esc(t("Turn this copy back into ordinary sketch entities"))}">${esc(t("Explode block"))}</button><button class="btn small" data-blk="save">${esc(t("Save block…"))}</button></div></div>`;
+  }
+
+  private bindBlockBox(pm: HTMLElement, ed: SketchEditor) {
+    const f = UNITS[units.current].f;
+    pm.querySelectorAll<HTMLInputElement | HTMLButtonElement>("[data-blk]").forEach(el => {
+      const k = el.dataset.blk!;
+      const ins = () => ed.selectedInsert();
+      if (el instanceof HTMLButtonElement) {
+        el.addEventListener("click", () => {
+          if (k === "finish") { ed.finishEditBlock(); this.renderPanel(); return; }
+          const i = ins();
+          if (!i) return;
+          if (k === "edit") { ed.editBlock(i.id); this.renderPanel(); return; }
+          if (k === "explode") { ed.explodeBlock(i.id); this.renderPanel(); return; }
+          const def = ed.sk.blocks?.find(b => b.id === i.block);
+          if (def) downloadBlob(new Blob([blockFile(def)], { type: "application/json" }), `${def.name.replace(/[\\/:*?"<>|]+/g, "_") || "block"}.mcadblk`);
+        });
+        return;
+      }
+      el.addEventListener("change", () => {
+        const i = ins();
+        if (!i) return;
+        if (k === "name") { const v = el.value.trim(); if (v) ed.renameBlock(i.block, v); this.renderPanel(); return; }
+        const v = parseFloat(el.value.replace(",", "."));
+        if (!isFinite(v)) { this.renderPanel(); return; }
+        if (k === "x") ed.setInsert(i.id, { x: v / f });
+        else if (k === "y") ed.setInsert(i.id, { y: v / f });
+        else if (k === "ang") ed.setInsert(i.id, { ang: (v * Math.PI) / 180 });
+        else if (k === "scale") { if (v > 0) ed.setInsert(i.id, { scale: v }); else toast(t("The value must be more than 0."), true); }
+        this.renderPanel();
+      });
+    });
   }
 
   /** DXF into the open sketch (FR-SK-040, AT-P2-5): lines, circles, arcs and polylines, in the file's units. */
@@ -5131,6 +5227,13 @@ export class ModelController {
     this.handleLabel(f.id, "trim1", t("Drag the arrow to move trim plane 1; click to type it"));
     this.placeArrow(o.clone().addScaledVector(n, fr.len[5]), n.clone().negate(), f.trim2?.v ?? 0, false, "trim2");
     this.handleLabel(f.id, "trim2", t("Drag the arrow to move trim plane 2; click to type it"));
+    // Triad handles (SolidWorks drags the triad): one short arrow per world axis from the triad's point.
+    if (this.mode.kind !== "feature") return;
+    const at = f.origin ?? fr.o;
+    (["x", "y", "z"] as const).forEach((c, i) => {
+      const dir = new THREE.Vector3(i === 0 ? 1 : 0, i === 1 ? 1 : 0, i === 2 ? 1 : 0);
+      this.placeArrow(o.clone().addScaledVector(dir, -at[i]), dir, at[i], false, `o${c}`);
+    });
   }
 
   /** A straight drag arrow from `base` along `dir`, its tip at `value` (Mid plane: half of it), dragging the number `key`. */
@@ -5289,7 +5392,9 @@ export class ModelController {
     }
     this.arrowDrag = f.type === "revolve"
       ? { start: 0, depth: f.angle.v, moved: false, raw: this.pointerAngle(e), key }
-      : { start: this.axisParam(e), depth: (f as unknown as Record<string, Num | undefined>)[key]?.v ?? 0, moved: false, key };
+      : f.type === "flex" && /^o[xyz]$/.test(key)
+        ? { start: this.axisParam(e), depth: (f.origin ?? this.last?.frames[f.id]?.o ?? [0, 0, 0])["xyz".indexOf(key[1])], moved: false, key }
+        : { start: this.axisParam(e), depth: (f as unknown as Record<string, Num | undefined>)[key]?.v ?? 0, moved: false, key };
     const canvas = this.host.viewer.renderer.domElement;
     canvas.style.cursor = "grabbing";
     // Keep getting the moves and the release when the pointer leaves the view.
@@ -5308,6 +5413,23 @@ export class ModelController {
     const step = 10 ** Math.floor(Math.log10(Math.max(px, 1e-6)));
     const fu = UNITS[units.current].f;
     v = (Math.round((v * fu) / step) * step) / fu;
+    if (m.draft.type === "flex" && /^o[xyz]$/.test(key)) {
+      // The triad's point moves along a world axis; the box stops following the bodies' centre.
+      const f = m.draft, i = "xyz".indexOf(key[1]);
+      const o: V3 = [...(f.origin ?? this.last?.frames[f.id]?.o ?? [0, 0, 0])];
+      if (Math.abs(v - o[i]) < 1e-12) return;
+      d.moved = true;
+      o[i] = v;
+      f.origin = o;
+      const pm = $("#mc-pm");
+      const box = pm.querySelector<HTMLInputElement>("input[data-k=tcentre]");
+      if (box?.checked) { this.renderPanel(); }
+      else { const inp = pm.querySelector<HTMLInputElement>(`input[data-k=${key}]`); if (inp) inp.value = trimNum(v * fu, 6); }
+      a.obj.position.copy(a.base).addScaledVector(a.dir, v);
+      this.sizeArrow();
+      void this.rebuild();
+      return;
+    }
     if (m.draft.type === "flex") {
       // Trim offsets run from 0 (the bodies' end) up to leaving a step between the planes.
       const len = this.last?.frames[m.draft.id]?.len;
@@ -5816,7 +5938,7 @@ export class ModelController {
         if (g.length === 1) return btn(`sk:${id}`, l, ti, tool === id);
         return `<span class="mc-fly">${btn(`sk:${id}`, l, ti, tool === id)}<button class="mc-caret" data-fly="${g[0]}" aria-haspopup="menu" title="${esc(t("More tools like this"))}" aria-label="${esc(t("More tools like this"))}: ${esc(l)}">▾</button></span>`;
       }).join("")}</div>`
-        + `<div class="mc-sep"></div><div class="mc-g">${btn("cons", t("Construction"), t("Construction geometry on/off for the selection (Q)"))}${btn("skmirror", t("Mirror"), t("Mirror entities: select them and a line to mirror about, then click"))}${btn("skdynmirror", t("Dynamic mirror"), t("Dynamic mirror: select a line, click, then draw; each new entity is mirrored about it"), !!m.editor.dynMirror)}${btn("skdxf", t("DXF"), t("Import a DXF drawing into the sketch"))}${btn("skpic", t("Sketch Picture"), t("Sketch picture: an image on the sketch plane to trace over"))}${btn("sksec", t("Section"), t("Section view at the sketch plane: hides the material in front of it"), this.skSection)}</div>`
+        + `<div class="mc-sep"></div><div class="mc-g">${btn("cons", t("Construction"), t("Construction geometry on/off for the selection (Q)"))}${btn("skmirror", t("Mirror"), t("Mirror entities: select them and a line to mirror about, then click"))}${btn("skdynmirror", t("Dynamic mirror"), t("Dynamic mirror: select a line, click, then draw; each new entity is mirrored about it"), !!m.editor.dynMirror)}${btn("skdxf", t("DXF"), t("Import a DXF drawing into the sketch"))}${btn("skpic", t("Sketch Picture"), t("Sketch picture: an image on the sketch plane to trace over"))}${btn("skblock", t("Make Block"), t("Make block: the selected entities become one block you can insert again, move, turn and scale"))}${btn("skinsblk", t("Insert Block"), t("Insert block: another copy of a block of this part, or one saved to a file"))}${btn("sksec", t("Section"), t("Section view at the sketch plane: hides the material in front of it"), this.skSection)}</div>`
         + `<div class="mc-sep"></div><div class="mc-g">${btn("sklpat", t("Linear pattern"), t("Linear sketch pattern: select entities, then set count and spacing"))}${btn("skcpat", t("Circular pattern"), t("Circular sketch pattern: select entities (and a centre point), then set count and angle"))}${btn("skmove", t("Move"), t("Move or copy entities by a distance"))}${btn("skrot", t("Rotate"), t("Rotate entities about a point"))}${btn("skscale", t("Scale"), t("Scale entities about a point"))}${btn("skstretch", t("Stretch"), t("Stretch entities: select points or one end of a shape, then move them; lines ending there stretch"))}</div>`
         + `<div class="mc-sep"></div><div class="mc-g" role="group" aria-label="${esc(t("Features from this sketch"))}">${(["extrude", "cut", "revolve"] as const).map(id => { const [l, ti] = this.cmdInfo(id); return btn(id, l, ti); }).join("")}</div>`
         + `<div class="mc-sep"></div><div class="mc-g">${btn("exit", t("Exit sketch"), t("Exit sketch (Enter)"))}</div>`;
@@ -6336,6 +6458,8 @@ export class ModelController {
       case "skdynmirror": if (m.kind === "sketch") { m.editor.toggleDynMirror(); this.renderBar(); this.renderPanel(); } break;
       case "skdxf": if (m.kind === "sketch") this.importDxf(); break;
       case "skpic": if (m.kind === "sketch") this.insertPicture(); break;
+      case "skblock": if (m.kind === "sketch") { const err = m.editor.makeBlock(); if (err) toast(t(err), true); else toast(t("Block made; drag it to move it, or set its place in the panel."), "success"); this.renderPanel(); } break;
+      case "skinsblk": if (m.kind === "sketch") this.insertBlockMenu(); break;
       case "sksec": if (m.kind === "sketch") { this.skSection = !this.skSection; this.renderBar(); } break;
       case "sklpat": case "skcpat": case "skmove": case "skrot": case "skscale": case "skstretch":
         if (m.kind === "sketch" && m.editor.startPattern(({ sklpat: "linear", skcpat: "circular", skmove: "move", skrot: "rotate", skscale: "scale", skstretch: "stretch" } as const)[c])) this.renderPanel();
@@ -8293,6 +8417,7 @@ export class ModelController {
       + this.textBox(ed)
       + this.curveBox(ed)
       + this.pictureBox(ed)
+      + this.blockBox(ed)
       + (["line", "cline", "mline", "tarc", "rect", "crect", "rect3", "crect3", "pgram", "circle", "circle3", "pcircle", "arc", "arc3", "polygon"].includes(ed.tool) ? `<label class="chk pm-chk" title="${esc(t("New lines, rectangles, circles and arcs get their sizes as dimensions and the Modify box opens on each."))}"><input type="checkbox" data-a="adddims"${ed.addDims ? " checked" : ""} />${esc(t("Add dimensions"))}</label>` : "")
       + (["slot", "cslot", "aslot", "aslot3"].includes(ed.tool) ? `<label class="chk pm-chk" title="${esc(t("Slots get width and length (or radius) dimensions, and the Modify box opens on them."))}"><input type="checkbox" data-a="slotdims"${ed.slotDims ? " checked" : ""} />${esc(t("Add dimensions"))}</label>` : "")
       + (ed.tool === "polygon" ? `<label class="pm-field"><span>${esc(t("Sides"))}</span><input type="text" inputmode="numeric" class="pm-n" data-a="sides" value="${ed.polySides}" /></label>` : "")
@@ -8329,6 +8454,7 @@ export class ModelController {
     pm.querySelector<HTMLInputElement>("[data-a=grid]")?.addEventListener("change", e => { ed.setGrid({ show: (e.target as HTMLInputElement).checked }); saveGrid(); this.renderQuick(); });
     pm.querySelector<HTMLInputElement>("[data-a=gridsnap]")?.addEventListener("change", e => { ed.setGrid({ snap: (e.target as HTMLInputElement).checked }); saveGrid(); this.renderQuick(); });
     this.bindPictureBox(pm, ed);
+    this.bindBlockBox(pm, ed);
     pm.querySelector<HTMLInputElement>("[data-a=gridstep]")?.addEventListener("change", e => { const v = Number((e.target as HTMLInputElement).value); ed.setGrid({ spacing: isFinite(v) && v > 0 ? v : 0 }); saveGrid(); });
     pm.querySelectorAll<HTMLInputElement>("[data-snap]").forEach(i => i.addEventListener("change", () => {
       const k = i.dataset.snap as SnapKind;
@@ -9115,7 +9241,8 @@ export class ModelController {
   private relationList(ed: SketchEditor) {
     const sk = ed.sk;
     const bad = new Set(ed.info.conflicting ?? []);
-    const rels = sk.rels;
+    // A block instance's holding fix is not the user's relation.
+    const rels = sk.rels.filter(r => !(r.t === "fix" && r.id.includes("~") && sk.inserts?.some(i => r.id === `${i.id}~fix`)));
     if (!rels.length) return `<p class="muted">${esc(t("None yet."))}</p>`;
     const sel = ed.selection;
     const shown = sel.size ? rels.filter(r => sel.has(r.id) || r.e.some(x => sel.has(x))) : rels;
@@ -9399,6 +9526,8 @@ const ICON_SVG: Record<string, string> = {
   skscale: S('<rect x="1.5" y="8.5" width="6" height="6"/><rect x="1.5" y="1.5" width="13" height="13" stroke-dasharray="1.6 1.4"/><path d="M8.5 7.5l4-4M9.5 3.5h3v3"/>'),
   skstretch: S('<path d="M1.5 3.5h6l3 4.5-3 4.5h-6z" stroke-dasharray="1.6 1.4"/><path d="M1.5 3.5h9l3 4.5-3 4.5h-9z"/><path d="M9 8h5M12 6l2 2-2 2"/>'),
   sksec: S('<path d="M2 12 8 9l6 3-6 3z"/><path d="M8 1.5v7.5M3 6.5l5-2.5 5 2.5"/>'),
+  skblock: S('<path d="M2.5 2.5h11v11h-11z" stroke-dasharray="2 1.5"/><path d="M5 10l3-5 3 5z"/>'),
+  skinsblk: S('<path d="M5.5 5.5h8v8h-8z"/><path d="M8 11.5l1.5-3 1.5 3z"/><path d="M2.5 10.5v-8h8"/>'),
   skpic: S('<path d="M1.5 2.5h13v11h-13z"/><path d="M1.5 11.5l4-4 3 3 2-2 4 4"/><circle cx="11" cy="5.5" r="1.2"/>'),
   skdxf: S('<path d="M3.5 1.5h6l3 3v10h-9z"/><path d="M9.5 1.5v3h3"/><path d="M5.5 9.5h5M5.5 12h5"/>'),
   cons: S('<path d="M2 14 14 2" stroke-dasharray="2.2 1.8"/>'),

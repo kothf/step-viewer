@@ -5,6 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.554.0] - 2026-11-11
+
+### Added
+
+- Sketch blocks (FRS 2.2): **Make Block** on the Sketch tab turns the selected entities into one block instance, placed at the middle of their box; the relations among them go into the block definition and the instance moves as one fixed piece (it adds no degrees of freedom). Drag an instance or set its X, Y, angle and scale in the sketch panel; relations and dimensions to its points stay. **Insert Block** places another instance of any block in the part, or one from a `.mcadblk` file (**Save block** writes it). **Edit block** frees one instance in place with the block's relations and dimensions on it; drag, dimension or draw more, and **Finish editing block** (or Exit sketch) updates every copy. **Explode block** gives plain entities back with the block's relations. Trim, fillet, offset and the other editing tools ask to explode a block first, as in SolidWorks.
+- Flex: the triad has a drag arrow along each axis while the Flex is open; dragging one moves the triad (and unticks **Triad at the centre of the bodies**), as dragging SolidWorks' triad does.
+- Sketch dimensions (FR-SK-060): **arc length**: with Dimension, click an arc and both its end points (in any order), then place the value (◠); it drives the arc's sweep. **Arc conditions**: Shift+click a circle or arc for a distance to its near side (clicked on the side towards the other item) or far side (away from it) instead of its centre, as in SolidWorks; right-click the dimension to switch each circle between Centre, Near side (min) and Far side (max), keeping the geometry where it is.
+
 ## [1.553.0] - 2026-11-11
 
 ### Added
@@ -3446,7 +3454,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.553.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.554.0...HEAD
+[1.554.0]: https://github.com/kothf/step-viewer/compare/v1.553.0...v1.554.0
 [1.553.0]: https://github.com/kothf/step-viewer/compare/v1.552.0...v1.553.0
 [1.552.0]: https://github.com/kothf/step-viewer/compare/v1.551.0...v1.552.0
 [1.551.0]: https://github.com/kothf/step-viewer/compare/v1.550.0...v1.551.0

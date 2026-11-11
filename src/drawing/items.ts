@@ -90,7 +90,8 @@ export function modelItems(doc: PartDoc, frames: Record<string, Frame>, sketches
           items.push({ src: `${sk.id}:${d.id}`, name: d.name, k: d.t === "radius" ? "rad" : "dia", p: [at(fr, c[0], c[1]), at(fr, c[0] + r * Math.cos(ang), c[1] + r * Math.sin(ang))], n: fr.n, value: d.t === "radius" ? r : 2 * r });
           continue;
         }
-        if (d.t === "angle") continue;
+        // Angles, arc lengths and distances to the side of a circle (FR-SK-060) are not shown as model items.
+        if (d.t === "angle" || d.t === "arclen" || d.cond?.some(c => c === "min" || c === "max")) continue;
         let a: [number, number] | null = null, b: [number, number] | null = null;
         if (d.off) {
           // Offset of concentric curves: along a ray from the centre, rim to rim.

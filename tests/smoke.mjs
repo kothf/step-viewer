@@ -2591,6 +2591,51 @@ try {
       check(p0.w === 25.4 && p0.h === 12.7 && p0.c.join() === "12.7,6.35" && p0.mesh && p1.w === 50 && p1.h === 25 && p1.alpha === 0.4 && p1.opacity === 0.6 && p2.gone && !p2.mesh,
         `model 1.549: Sketch Picture adds an image, resizes it with the aspect locked, fades and deletes it (FRS 2.2) (${JSON.stringify({ p0, p1, p2 })})`);
     }
+    // 1.554.0 (FRS 2.2 blocks): Make Block turns a selected square into a fixed instance; the panel moves it,
+    // Insert Block adds a copy from the part's blocks, Explode gives plain entities back.
+    {
+      const before = await mp.evaluate(() => {
+        const ed = window.__sv.model.editor(), sk = ed.sk;
+        const keep = sk.ents.map(e => e.id);
+        const P = (id, x, y) => ({ id, t: "point", x, y });
+        sk.ents.push(P("bkA", 200, 200), P("bkB", 210, 200), P("bkC", 210, 210), P("bkD", 200, 210),
+          { id: "bkL1", t: "line", a: "bkA", b: "bkB" }, { id: "bkL2", t: "line", a: "bkB", b: "bkC" }, { id: "bkL3", t: "line", a: "bkC", b: "bkD" }, { id: "bkL4", t: "line", a: "bkD", b: "bkA" });
+        ed.select(["bkL1", "bkL2", "bkL3", "bkL4"]);
+        return keep;
+      });
+      await mp.click('#mc-tools [data-c="skblock"]');
+      await mp.waitForSelector("#mc-pm .pm-block");
+      const b0 = await mp.evaluate(() => { const sk = window.__sv.model.editor().sk; return { ins: sk.inserts?.map(i => [i.x, i.y]), name: document.querySelector('#mc-pm [data-blk="name"]')?.value, n: sk.ents.filter(e => e.id.startsWith("bi1~")).length }; });
+      await mp.fill('#mc-pm [data-blk="x"]', "300"); await mp.press('#mc-pm [data-blk="x"]', "Tab"); await mp.waitForTimeout(150);
+      const b1 = await mp.evaluate(() => { const sk = window.__sv.model.editor().sk, a = sk.ents.find(e => e.id === "bi1~bkA"); return { a: a && [a.x, a.y], status: window.__sv.model.editor().info.status }; });
+      await mp.click('#mc-tools [data-c="skinsblk"]');
+      await mp.waitForSelector("#mc-menu:not([hidden]) button");
+      const rows = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent.trim()));
+      await mp.click('#mc-menu button[data-k="0"]');
+      await mp.waitForTimeout(150);
+      const b2 = await mp.evaluate(() => { const sk = window.__sv.model.editor().sk; return { ins: sk.inserts?.length, blocks: sk.blocks?.length }; });
+      // Edit Block on the copy: widen it by 5; the first instance follows when the edit ends.
+      await mp.click('#mc-pm [data-blk="edit"]'); await mp.waitForSelector("#mc-pm .pm-blkedit");
+      const be = await mp.evaluate(() => {
+        const ed = window.__sv.model.editor(), sk = ed.sk, id = sk.editBlock?.insert;
+        for (const e of sk.ents) if (e.t === "point" && (e.id === `${id}~bkB` || e.id === `${id}~bkC`)) e.x += 5;
+        return { id, free: !sk.rels.some(r => r.id === `${id}~fix`) };
+      });
+      await mp.click('#mc-pm [data-blk="finish"]'); await mp.waitForTimeout(150);
+      const b2e = await mp.evaluate(() => { const sk = window.__sv.model.editor().sk, b = sk.ents.find(e => e.id === "bi1~bkB"); return { b: b && [b.x, b.y], editing: !!sk.editBlock, box: !!document.querySelector("#mc-pm [data-blk=explode]") }; });
+      await mp.click('#mc-pm [data-blk="explode"]'); await mp.waitForTimeout(150);
+      const b3 = await mp.evaluate(keep => {
+        const ed = window.__sv.model.editor(), sk = ed.sk;
+        const r = { ins: sk.inserts?.length ?? 0, plain: sk.ents.filter(e => !keep.includes(e.id) && !e.id.includes("~")).length };
+        ed.select(["bi1~bkL1"]); ed.deleteSelection();
+        ed.deleteItems(sk.ents.filter(e => !keep.includes(e.id)).map(e => e.id));
+        return { ...r, left: ed.sk.ents.filter(e => !keep.includes(e.id)).length, blocks: ed.sk.blocks?.length ?? 0 };
+      }, before);
+      check(b0.ins?.join() === "205,205" && b0.name === "Block1" && b0.n === 8 && b1.a?.join() === "295,200" && b1.status === "ok" && rows[0] === "Block1" && b2.ins === 2 && b2.blocks === 1
+        && be.id === "bi2" && be.free && b2e.b?.join() === "310,200" && !b2e.editing && b2e.box
+        && b3.ins === 1 && b3.plain === 8 && b3.left === 0 && b3.blocks === 0,
+        `model 1.554: Make Block, move it in the panel, Insert Block a copy, Edit Block, Explode one (FRS 2.2 blocks) (${JSON.stringify({ b0, b1, rows, b2, be, b2e, b3 })})`);
+    }
     // 1.266.0 (FR-SK-043/044/047): dragging the last line's start onto the free end of the Ctrl line merges them
     // (coincident relation); Ctrl+drag of that line copies it; the status bar shows the cursor position.
     await tool("select");
@@ -2694,6 +2739,45 @@ try {
     const flip2 = await mp.evaluate(id => window.__sv.model.editor().sk.dims.find(x => x.id === id)?.arrows ?? null, placed.id);
     check(flip0.auto === "in" && flip0.dot && flip0.mesh && flip1 === "out" && flip2 === null,
       `model 1.540: sketch dimension arrowheads flip inside/outside from the dot on the selected dimension, one undo step (FR-SK-068) (${JSON.stringify({ flip0, flip1, flip2 })})`);
+    // 1.555: Shift+click a circle's near side and the other's far side for a min/max distance, switch one back to
+    // its centre from the right-click menu; an arc and both its ends give an arc length (FR-SK-060).
+    await tool("circle");
+    await click([-60, -70]); await click([-55, -70]);
+    await click([-30, -70]); await click([-27, -70]);
+    await tool("dim");
+    await mp.keyboard.down("Shift");
+    await click([-55, -70]); await click([-27, -70]);
+    await mp.keyboard.up("Shift");
+    await click([-42, -55]);
+    await mp.waitForTimeout(150);
+    await mp.keyboard.press("Escape");
+    await mp.waitForTimeout(100);
+    const condDim = () => mp.evaluate(() => { const d = window.__sv.model.editor().sk.dims.at(-1); return d && { id: d.id, t: d.t, cond: d.cond ?? null, v: d.val.v }; });
+    const cd0 = await condDim();
+    await tool("select");
+    await mp.evaluate(id => window.__sv.model.editor().select([id]), cd0?.id);
+    await mp.waitForTimeout(80);
+    // On empty space the right-click menu keeps the selected dimension.
+    await rclick([-90, -40]);
+    const condMenu = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent));
+    await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].find(b => b.textContent.includes("Second arc condition: Centre"))?.click());
+    await mp.waitForTimeout(150);
+    const cd1 = await condDim();
+    await mp.keyboard.press("Escape");
+    await tool("arc");
+    await click([-60, -100]); await click([-50, -100]); await click([-60, -90]);
+    await tool("dim");
+    await click([-60 + 7.0711, -100 + 7.0711]); await click([-50, -100]); await click([-60, -90]);
+    await click([-45, -85]);
+    await mp.waitForTimeout(150);
+    await mp.keyboard.press("Escape");
+    await mp.waitForTimeout(100);
+    const al = await condDim();
+    await tool("select");
+    check(cd0?.t === "distance" && JSON.stringify(cd0.cond) === '["min","max"]' && near(cd0.v, 28, 0.05)
+      && condMenu.some(m => m.includes("First arc condition")) && JSON.stringify(cd1?.cond) === '["min","c"]' && near(cd1?.v, 25, 0.05)
+      && al?.t === "arclen" && near(al.v, 5 * Math.PI, 0.05),
+      `model 1.555: Shift+click near/far side distances to circles, arc condition menu, arc length from an arc and both ends (FR-SK-060) (${JSON.stringify({ cd0, condMenu, cd1, al })})`);
     // Quick snaps (FR-SK-046): Tangent from the quick access bar ends the next line on the circle, tangent to it;
     // Intersection from the right-click menu puts a point where a line crosses the circle, with an intersection relation.
     await tool("circle");
@@ -9821,6 +9905,19 @@ try {
     await settle();
     const ftri = await mp.evaluate(() => ({ o: window.__sv.model.mode().draft.origin, n: document.querySelectorAll('#mc-pm input[data-k^="o"]').length, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length }));
     check(ftri.n === 3 && JSON.stringify(ftri.o) === "[10,0,0]" && !ftri.bad, `model 1.553: Flex triad position from the panel (${JSON.stringify(ftri)})`);
+    // 1.554: the triad has a drag arrow per world axis; dragging the X one 10 mm moves the triad to x = 20.
+    const tri = await mp.evaluate(() => { const a = window.__sv.modeller.arrows.find(x => x.key === "ox"); if (!a) return null; const p = a.pick.getWorldPosition(a.obj.position.clone()); return { p: [p.x, p.y, p.z], keys: window.__sv.modeller.arrows.map(x => x.key) }; });
+    if (tri) {
+      const g0 = await toScr(tri.p), g1 = await toScr([tri.p[0] + 10, tri.p[1], tri.p[2]]);
+      await mp.mouse.move(g0[0], g0[1]);
+      await mp.mouse.down();
+      for (let i = 1; i <= 6; i++) { await mp.mouse.move(g0[0] + ((g1[0] - g0[0]) * i) / 6, g0[1] + ((g1[1] - g0[1]) * i) / 6); await mp.waitForTimeout(40); }
+      await mp.mouse.up();
+      await settle();
+    }
+    const ftd = await mp.evaluate(() => ({ o: window.__sv.model.mode().draft.origin, x: document.querySelector('#mc-pm input[data-k="ox"]')?.value, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length }));
+    check(tri && ["ox", "oy", "oz"].every(k => tri.keys.includes(k)) && Math.abs(ftd.o[0] - 20) < 2.5 && ftd.o[1] === 0 && ftd.o[2] === 0 && Math.abs(parseFloat(ftd.x) - ftd.o[0]) < 1e-6 && !ftd.bad,
+      `model 1.554: dragging the Flex triad's X arrow moves the triad (${JSON.stringify({ tri, ftd })})`);
     await mp.click("#mc-ok");
     await settle();
     const ffin = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.at(-1); return { type: f.type, kind: f.kind, name: f.name }; });

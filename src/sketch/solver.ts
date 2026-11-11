@@ -371,14 +371,14 @@ function jointTerms(sys: System, ents: Map<string, SkEnt>, r: SkRel, curvature: 
 }
 
 /** Current value of a dimension (for driven ones, and to start new ones). */
-export function measureDim(sk: SketchFeature, d: Pick<SkDim, "t" | "e" | "flip" | "dia" | "off">): number {
+export function measureDim(sk: SketchFeature, d: Pick<SkDim, "t" | "e" | "flip" | "dia" | "off" | "cond">): number {
   const sys = build({ ...sk, rels: [], dims: [] });
   const ents = new Map(sk.ents.map(e => [e.id, e] as const));
   const f = dimFn(sys, ents, d);
   return f ? f(sys.x) : NaN;
 }
 
-function dimFn(sys: System, ents: Map<string, SkEnt>, d: Pick<SkDim, "t" | "e" | "flip" | "dia" | "off">): Sc | null {
+function dimFn(sys: System, ents: Map<string, SkEnt>, d: Pick<SkDim, "t" | "e" | "flip" | "dia" | "off" | "cond">): Sc | null {
   const kind = (i: number) => (d.e[i] === ORIGIN ? "point" : ents.get(d.e[i])?.t);
   const mk = (parts: { vars: number[] }[], f: (x: Float64Array) => number) => { const g = f as Sc; g.vars = [...new Set(parts.flatMap(p => p.vars))]; return g; };
   switch (d.t) {
@@ -391,6 +391,31 @@ function dimFn(sys: System, ents: Map<string, SkEnt>, d: Pick<SkDim, "t" | "e" |
         return Math.abs(Math.atan2(cross([u[0] * s1, u[1] * s1], [v[0] * s2, v[1] * s2]), dot([u[0] * s1, u[1] * s1], [v[0] * s2, v[1] * s2])));
       });
     }
+    case "arclen": {
+      const e = ents.get(d.e[0]);
+      if (e?.t !== "arc") return null;
+      const C = P(sys, e.c), A = P(sys, e.a), B = P(sys, e.b);
+      return mk([C, A, B], x => {
+        const c = C(x), u = sub(A(x), c), v = sub(B(x), c);
+        let s = Math.atan2(cross(u, v), dot(u, v));
+        if (s <= 1e-12) s += 2 * Math.PI;
+        return nrm(u) * s;
+      });
+    }
+    case "distance": case "hdistance": case "vdistance": {
+      const base = distFn(sys, ents, d, kind, mk);
+      if (!base || !d.cond?.some(c => c === "min" || c === "max")) return base;
+      // Arc conditions: each circle/arc measured from its near side takes its radius off, from its far side adds it.
+      const adj: { s: number; r: Sc }[] = [];
+      d.cond.forEach((c, i) => { const k = kind(i); if ((c === "min" || c === "max") && (k === "circle" || k === "arc")) adj.push({ s: c === "min" ? -1 : 1, r: R(sys, ents, d.e[i]) }); });
+      return mk([base, ...adj.map(a => a.r)], x => adj.reduce((v, a) => v + a.s * a.r(x), base(x)));
+    }
+  }
+  return null;
+}
+
+function distFn(sys: System, ents: Map<string, SkEnt>, d: Pick<SkDim, "t" | "e" | "flip" | "dia" | "off" | "cond">, kind: (i: number) => string | undefined, mk: (parts: { vars: number[] }[], f: (x: Float64Array) => number) => Sc): Sc | null {
+  switch (d.t) {
     case "distance": case "hdistance": case "vdistance": {
       let A: Pt, B: Pt;
       if (d.e.length === 1 && kind(0) === "line") [A, B] = ends(sys, ents, d.e[0]);

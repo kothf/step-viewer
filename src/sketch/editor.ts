@@ -9,7 +9,7 @@ import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import type { Viewer } from "../viewer/Viewer";
-import type { EdgeRef, Frame, RelKind, SkDim, SkEnt, SketchFeature, SketchPicture, SkRel, TextFont, TextOutline, V2 } from "../model/types";
+import type { ArcCond, EdgeRef, Frame, RelKind, SkDim, SkEnt, SketchFeature, SketchPicture, SkRel, TextFont, TextOutline, V2 } from "../model/types";
 import { applyExt, piercePoint, projectEdge, uvOf, type ExtGeo, type ModelEdge } from "./external";
 import { renameIn } from "../model/params";
 export { refPts } from "./define";
@@ -29,6 +29,8 @@ import { quadCorners, perimeterCircle, type PerimItem } from "./shapes";
 import { conicBezier, conicShoulder, entBezier, eqBezier, hasControl, parabolaFrom, rhoAt, styleBezier, type CurveEq } from "./conic";
 import { DEFAULT_SNAPS, SNAP_KINDS, arcCurve, intersections, perpendicularFoot, quadrants, tangentPoints, type SnapCurve, type SnapKind } from "./snaps";
 import { gridLines, gridStep, snapToGrid } from "./grid";
+import { beginEditBlock, explodeInsert, finishEditBlock, insertBlock, insertEnts, insertOf, makeBlock, moveInsert, removeInserts, renameBlock } from "./blocks";
+import type { BlockInsert, SketchBlock } from "../model/types";
 import { stepFor } from "../prefs";
 import { arcSlotCorners, arcSlotEnts, arcSlotHalfWidth, arcSlotOutline, centreArcAxis, threePointArcAxis, type ArcSlotAxis } from "./slots";
 
@@ -169,7 +171,8 @@ export class SketchEditor {
   private draft: { pts: V2[]; ids: (string | null)[]; cursor: V2 | null; snap: string | null; chainStart?: string; snapCurve?: string | null; snapOrigin?: boolean; curves?: (string | null)[]; hoverCurve?: string | null;
     /** Line tool (FR-SK-011): the next click makes a tangent arc; `prev` = the chain's last curve; `back` = 0 just clicked, 1 moved away, 2 came back to the end point. */
     arc?: boolean; prev?: string; back?: 0 | 1 | 2 } = { pts: [], ids: [], cursor: null, snap: null };
-  private dimDraft: { picks: Hit[]; dim: SkDim | null; lock?: boolean } = { picks: [], dim: null };
+  /** `side`: where a circle/arc was Shift+clicked, so the distance takes its near or far side (FR-SK-060). */
+  private dimDraft: { picks: Hit[]; dim: SkDim | null; lock?: boolean; side?: Map<string, V2> } = { picks: [], dim: null };
   /** Instant 2D (FR-SK-067): the round handle on a selected driving dimension and its drag. */
   private grip: HTMLButtonElement | null = null;
   /** The arrow flip dot of the selected dimension (FR-SK-068). */
@@ -184,7 +187,7 @@ export class SketchEditor {
    * join on release); `copy` = Ctrl+drag copies the selection (FR-SK-044), `untoggle` = a Ctrl+click without a move
    * deselects it.
    */
-  private drag: { ids: string[]; start: V2; orig: Map<string, V2>; circle?: string; moved: boolean; base: SketchFeature; point?: string; target?: { t: "coincident" | "onCurve"; id: string } | null; copy?: boolean; untoggle?: string | null; made?: string[] } | null = null;
+  private drag: { ids: string[]; start: V2; orig: Map<string, V2>; circle?: string; moved: boolean; base: SketchFeature; point?: string; target?: { t: "coincident" | "onCurve"; id: string } | null; copy?: boolean; untoggle?: string | null; made?: string[]; ins?: { id: string; x: number; y: number } } | null = null;
   /** The cursor in sketch coordinates, shown in the status bar (FR-SK-047). */
   private cursorUV: V2 | null = null;
   private labels = new Map<string, HTMLElement>();
@@ -405,6 +408,17 @@ export class SketchEditor {
       }
       // Ctrl+drag copies (FR-SK-044): a Ctrl+click on a selected item still deselects it, on release without a move.
       const ctrl = e.ctrlKey || e.metaKey;
+      // A block instance is picked whole and dragged by its insertion point (FRS 2.2 blocks).
+      const blk = this.lockedInsert(h.id);
+      if (blk) {
+        const ids = insertEnts(this.sk, blk.id), was = ids.every(x => this.selection.has(x));
+        if (ctrl || e.shiftKey) { for (const x of ids) if (was) this.selection.delete(x); else this.selection.add(x); }
+        else if (!was) this.selection = new Set(ids);
+        this.emitSel();
+        if (!ctrl && !e.shiftKey) this.drag = { ids: [], start: p, orig: new Map(), moved: false, base: structuredClone(this.sk), ins: { id: blk.id, x: blk.x, y: blk.y } };
+        this.render();
+        return true;
+      }
       const was = this.selection.has(h.id);
       if (ctrl) { if (!was) this.selection.add(h.id); }
       else if (e.shiftKey) { if (was) this.selection.delete(h.id); else this.selection.add(h.id); }
@@ -426,6 +440,10 @@ export class SketchEditor {
     }
     if (this.tool === "dim") { this.dimClick(p, e); return true; }
     if (this.tool === "hord" || this.tool === "vord") { this.ordClick(p); return true; }
+    if (["trim", "fillet", "chamfer", "extend", "split", "segment", "jog", "offset"].includes(this.tool)) {
+      const h = this.hits(p)[0];
+      if (h && this.lockedInsert(h.id)) { this.host.toast(t("Explode the block to change its entities."), "warn"); return true; }
+    }
     if (this.tool === "trim") { this.trimAt(p); return true; }
     if (this.tool === "fillet") { this.filletAt(p); return true; }
     if (this.tool === "chamfer") { this.chamferAt(p); return true; }
@@ -459,6 +477,12 @@ export class SketchEditor {
       d.moved = true;
       const dx = p[0] - d.start[0], dy = p[1] - d.start[1];
       this.sk = structuredClone(d.base);
+      if (d.ins) {
+        this.sk = moveInsert(this.sk, d.ins.id, { x: d.ins.x + dx, y: d.ins.y + dy });
+        this.info = solve(this.sk);
+        this.render();
+        return true;
+      }
       if (d.copy) {
         d.made = this.copyItems([dx, dy]);
         this.info = solve(this.sk);
@@ -537,7 +561,7 @@ export class SketchEditor {
         const r = tryAdd(this.sk, { rel });
         if (r.ok) { this.sk = r.sketch; this.info = r.result; this.commit(d.target.t === "coincident" ? "Merge points" : "Add relation"); this.render(); return true; }
       }
-      if (d.moved) this.commit("Drag sketch geometry");
+      if (d.moved) this.commit(d.ins ? "Move block" : "Drag sketch geometry");
       return true;
     }
     return true;
@@ -579,7 +603,9 @@ export class SketchEditor {
     sep();
     const ids = [...this.selection];
     const oneDim = ids.length === 1 ? this.sk.dims.find(x => x.id === ids[0]) : undefined;
-    if (oneDim && oneDim.t !== "angle" && !oneDim.ord) rows.push([t("Flip arrows"), () => this.flipArrows(oneDim.id), "⇄"]);
+    if (oneDim && oneDim.t !== "angle" && oneDim.t !== "arclen" && !oneDim.ord) rows.push([t("Flip arrows"), () => this.flipArrows(oneDim.id), "⇄"]);
+    const conds = oneDim ? this.arcCondRows(oneDim) : [];
+    if (conds.length) { sep(); rows.push(...conds); sep(); }
     const one = ids.length === 1 ? this.ent(ids[0]) : undefined;
     if (one && (one.t === "line" || one.t === "arc") && !one.cons) rows.push([t("Select chain"), () => this.select(this.chainOf(one.id).segs.map(s => s.id))]);
     const curves = ids.map(id => this.ent(id)).filter(x => x && x.t !== "point");
@@ -1773,7 +1799,9 @@ export class SketchEditor {
     // Smart Dimension takes a model edge whole, as SolidWorks does: its midpoint is not offered.
     const modelPick = () => { const ms = this.modelSnapAt(p, false); return ms?.at === "mid" ? { ...ms, p, at: "on" as const } : ms; };
     const other = dd.dim && dd.picks.length === 1 ? this.hits(p).find(x => x.id !== dd.picks[0].id) ?? (this.hits(p).length ? undefined : modelPick()) : undefined;
-    if (other) dd.dim = null;
+    // An arc and one of its ends picked: its other end makes an arc length (SolidWorks: the arc and both ends).
+    const third = dd.dim && dd.picks.length === 2 ? this.hits(p).find(x => this.arcLenSet([...dd.picks.map(q => q.id), x.id])) : undefined;
+    if (other || third) dd.dim = null;
     if (dd.dim) {
       // Otherwise the next click places the dimension and asks for its value.
       this.placeDimDraft(p);
@@ -1782,7 +1810,7 @@ export class SketchEditor {
       this.addDimension(dim);
       return;
     }
-    let h = this.hits(p)[0];
+    let h = third ?? this.hits(p)[0];
     if (!h) {
       // A model vertex or edge: converted as construction geometry with an On edge relation, then dimensioned.
       const ms = modelPick();
@@ -1795,6 +1823,7 @@ export class SketchEditor {
     }
     if (!h) { this.selection.clear(); dd.picks = []; this.render(); return; }
     if (!dd.picks.some(x => x.id === h!.id)) dd.picks.push(h);
+    if (e.shiftKey && (h.kind === "circle" || h.kind === "arc")) (dd.side ??= new Map()).set(h.id, p);
     this.selection = new Set(dd.picks.map(x => x.id));
     const kinds = dd.picks.map(x => (x.kind === "origin" ? "point" : x.kind));
     const ids = dd.picks.map(x => x.id);
@@ -1807,7 +1836,10 @@ export class SketchEditor {
       else if (kinds[0] === "arc") dim = mk("radius", ids);
     } else if (ids.length === 2) {
       if (kinds[0] === "line" && kinds[1] === "line") dim = this.parallel(ids[0], ids[1]) ? mk("distance", ids) : mk("angle", ids);
-      else dim = mk("distance", ids);
+      else { dim = mk("distance", ids); this.shiftConds(dim, dd.side); }
+    } else if (ids.length === 3) {
+      const arc = this.arcLenSet(ids);
+      if (arc) dim = mk("arclen", [arc]);
     }
     if (dim) { dd.dim = dim; this.placeDimDraft(p); }
     else if (ids.length > 2) { dd.picks = [h]; this.selection = new Set([h.id]); }
@@ -1842,6 +1874,55 @@ export class SketchEditor {
     const dim: SkDim = { id: uid("d"), name: this.nextDimName(), t: this.tool === "hord" ? "hdistance" : "vdistance", e: [od.base, h.id], val: { v: 0 }, pos, ord: true };
     this.selection = new Set([od.base]);
     this.addDimension(dim);
+  }
+
+  /** The arc when the ids are an arc and both its end points, in any order (an arc length dimension). */
+  private arcLenSet(ids: string[]): string | null {
+    if (ids.length !== 3 || new Set(ids).size !== 3) return null;
+    for (const id of ids) {
+      const e = this.ent(id);
+      if (e?.t === "arc" && ids.includes(e.a) && ids.includes(e.b)) return id;
+    }
+    return null;
+  }
+
+  /**
+   * Arc conditions from Shift+clicks (FR-SK-060): a circle or arc clicked with Shift on the side towards the
+   * other item is measured from its near side (min), on the side away from it from its far side (max).
+   */
+  private shiftConds(dim: SkDim, side: Map<string, V2> | undefined) {
+    if (!side?.size) return;
+    const cond: ArcCond[] = dim.e.map(() => "c");
+    dim.e.forEach((id, i) => {
+      const at = side.get(id), e = this.ent(id);
+      if (!at || (e?.t !== "circle" && e?.t !== "arc")) return;
+      const c = this.pt(e.c), o = dim.e[1 - i], oe = o === ORIGIN ? undefined : this.ent(o);
+      // Towards the other item: its centre or point, or its foot on a line.
+      let q = this.centreOf(o);
+      if (oe?.t === "line") { const a = this.pt(oe.a), u = sub2(this.pt(oe.b), a), t0 = dot2(sub2(c, a), u) / (dot2(u, u) || 1); q = [a[0] + u[0] * t0, a[1] + u[1] * t0]; }
+      cond[i] = dot2(sub2(at, c), sub2(q, c)) >= 0 ? "min" : "max";
+    });
+    if (cond.some(c => c !== "c")) dim.cond = cond;
+  }
+
+  /** Sets where a distance meets one of its circles/arcs (FR-SK-060), keeping the geometry where it is. */
+  setArcCond(id: string, i: number, c: ArcCond) {
+    const d = this.sk.dims.find(x => x.id === id);
+    if (!d || (d.t !== "distance" && d.t !== "hdistance" && d.t !== "vdistance") || d.off || d.ord) return;
+    const cond: ArcCond[] = d.e.map((_, k) => d.cond?.[k] ?? "c");
+    cond[i] = c;
+    if (cond.every(x => x === "c")) delete d.cond; else d.cond = cond;
+    if (!d.val.expr) d.val.v = measureDim(this.sk, d);
+    this.commit("Arc condition");
+  }
+
+  /** Context menu rows for the arc conditions of one selected distance (FR-SK-060). */
+  private arcCondRows(d: SkDim): [string, () => void, string?][] {
+    if ((d.t !== "distance" && d.t !== "hdistance" && d.t !== "vdistance") || d.off || d.ord || d.e.length !== 2) return [];
+    const round = d.e.map((id, i) => ({ id, i })).filter(x => { const e = x.id === ORIGIN ? undefined : this.ent(x.id); return e?.t === "circle" || e?.t === "arc"; });
+    const head = (i: number) => (round.length < 2 ? "Arc condition" : i === round[0].i ? "First arc condition" : "Second arc condition");
+    const name: Record<ArcCond, string> = { c: "Centre", min: "Near side (min)", max: "Far side (max)" };
+    return round.flatMap(({ i }) => (["c", "min", "max"] as ArcCond[]).map(c => [`${t(head(i))}: ${t(name[c])}`, () => this.setArcCond(d.id, i, c), (d.cond?.[i] ?? "c") === c ? "✓" : undefined] as [string, () => void, string?]));
   }
 
   private centreOf(id: string): V2 {
@@ -2160,6 +2241,92 @@ export class SketchEditor {
   }
 
   /** Ctrl+A: every sketch curve and point (the origin is not an entity). */
+  // ---------- blocks (FRS 2.2) ----------
+
+  /** The block instance an id belongs to, unless that instance is being edited (Edit Block). */
+  private lockedInsert(id: string): BlockInsert | null {
+    const ins = insertOf(this.sk, id);
+    return ins && ins.id !== this.sk.editBlock?.insert ? ins : null;
+  }
+
+  /** The one block instance the selection is, when it is exactly one instance's entities. */
+  selectedInsert(): BlockInsert | null {
+    const sel = [...this.selection];
+    if (!sel.length) return null;
+    const ins = this.lockedInsert(sel[0]);
+    if (!ins || !sel.every(id => insertOf(this.sk, id)?.id === ins.id)) return null;
+    return ins;
+  }
+
+  /** Make Block from the selection; returns an English message key when it cannot. */
+  makeBlock(): string | null {
+    const r = makeBlock(this.sk, this.selection);
+    if (r === "NOTHING") return "Select the sketch entities for the block first.";
+    if (r === "TEXT") return "Text cannot go into a block.";
+    if (r === "INSERT") return "A block cannot hold another block; explode it first.";
+    this.sk = r.sk;
+    this.selection = new Set(insertEnts(this.sk, r.insert.id));
+    this.commit("Make block");
+    this.render();
+    this.emitSel();
+    return null;
+  }
+
+  /** Insert Block: another instance at `at` (sketch coordinates), selected. */
+  insertBlock(def: SketchBlock, at: V2 = [0, 0]) {
+    const r = insertBlock(this.sk, def, at);
+    this.sk = r.sk;
+    this.selection = new Set(insertEnts(this.sk, r.insert.id));
+    this.commit("Insert block");
+    this.render();
+    this.emitSel();
+  }
+
+  /** Places an instance again: position (mm), angle (rad), scale. */
+  setInsert(id: string, patch: Partial<Pick<BlockInsert, "x" | "y" | "ang" | "scale">>) {
+    if (patch.scale !== undefined && !(patch.scale > 0)) return;
+    this.sk = moveInsert(this.sk, id, patch);
+    this.selection = new Set(insertEnts(this.sk, id));
+    this.commit("Move block");
+    this.render();
+  }
+
+  /** Edit Block: the instance's entities come free with the block's relations and dimensions on them. */
+  editBlock(id: string) {
+    if (this.sk.editBlock) return;
+    this.sk = beginEditBlock(this.sk, id);
+    this.selection.clear();
+    this.info = solve(this.sk);
+    this.commit("Edit block");
+    this.render();
+    this.emitSel();
+  }
+
+  /** Ends Edit Block: the definition takes the edited entities and every instance follows. */
+  finishEditBlock() {
+    const id = this.sk.editBlock?.insert;
+    if (!id) return;
+    this.sk = finishEditBlock(this.sk);
+    this.selection = new Set(insertEnts(this.sk, id));
+    this.info = solve(this.sk);
+    this.commit("Finish editing block");
+    this.render();
+    this.emitSel();
+  }
+
+  explodeBlock(id: string) {
+    this.sk = explodeInsert(this.sk, id, k => uid(k));
+    this.selection.clear();
+    this.commit("Explode block");
+    this.render();
+    this.emitSel();
+  }
+
+  renameBlock(id: string, name: string) {
+    this.sk = renameBlock(this.sk, id, name);
+    this.commit("Rename block");
+  }
+
   selectAll() {
     this.selection = new Set(this.sk.ents.map(e => e.id));
     this.render();
@@ -2168,6 +2335,13 @@ export class SketchEditor {
 
   deleteSelection() {
     if (!this.selection.size) return false;
+    // Block instances go whole (their entities are the definition's).
+    const ins = new Set([...this.selection].map(id => this.lockedInsert(id)?.id).filter((x): x is string => !!x));
+    if (ins.size) {
+      this.sk = removeInserts(this.sk, ins);
+      for (const id of [...this.selection]) if (!this.sk.ents.some(e => e.id === id) && !this.sk.rels.some(r => r.id === id) && !this.sk.dims.some(d => d.id === id)) this.selection.delete(id);
+      if (!this.selection.size) { this.info = solve(this.sk); this.commit("Delete block"); this.render(); this.emitSel(); return true; }
+    }
     const del = new Set(this.selection);
     // Curves take their unshared points with them.
     for (const id of [...del]) {
@@ -3732,6 +3906,28 @@ export class SketchEditor {
   }
 
   private dimPoints(d: SkDim): [V2, V2] | null {
+    const pts = this.dimPoints0(d);
+    if (!pts || !d.cond?.some(c => c !== "c") || d.e.length !== 2 || d.off) return pts;
+    // Arc conditions (FR-SK-060): a circle/arc end moves from its centre to its near or far side along the measure.
+    const [a, b] = pts;
+    let u: V2 = d.t === "hdistance" ? [Math.sign(b[0] - a[0]) || 1, 0] : d.t === "vdistance" ? [0, Math.sign(b[1] - a[1]) || 1] : norm2(sub2(b, a));
+    if (!(Math.hypot(...u) > 1e-12)) u = [1, 0];
+    const out: [V2, V2] = [a, b];
+    // With a line, the circle's centre is always the second point (the first is its foot on the line).
+    const withLine = d.e.some(id => id !== ORIGIN && this.ent(id)?.t === "line");
+    for (const i of [0, 1]) {
+      const c = d.cond[i], e = d.e[i] === ORIGIN ? undefined : this.ent(d.e[i]);
+      if ((c !== "min" && c !== "max") || (e?.t !== "circle" && e?.t !== "arc")) continue;
+      const r = e.t === "circle" ? e.r : Math.hypot(this.pt(e.a)[0] - this.pt(e.c)[0], this.pt(e.a)[1] - this.pt(e.c)[1]);
+      const k = withLine ? 1 : i;
+      // The first end moves along u for its near side, the second against it.
+      const s = (c === "min" ? 1 : -1) * (k === 0 ? 1 : -1);
+      out[k] = [out[k][0] + u[0] * r * s, out[k][1] + u[1] * r * s];
+    }
+    return out;
+  }
+
+  private dimPoints0(d: SkDim): [V2, V2] | null {
     const kind = (id: string) => (id === ORIGIN ? "point" : this.ent(id)?.t);
     const centreOf = (id: string): V2 => { const e = this.ent(id); return e && (e.t === "circle" || e.t === "arc") ? this.pt(e.c) : this.pt(id); };
     if (d.e.length === 1 && kind(d.e[0]) === "line") { const l = this.ent(d.e[0]) as SkEnt & { t: "line" }; return [this.pt(l.a), this.pt(l.b)]; }
@@ -4056,7 +4252,7 @@ export class SketchEditor {
 
   /** The ends of a linear dimension's line (on the extension lines from the measured points a and b). */
   private linearEnds(dm: SkDim): { a: V2; b: V2; fa: V2; fb: V2; dir: V2 } | null {
-    if (dm.t === "radius" || dm.t === "diameter" || dm.t === "angle" || dm.ord) return null;
+    if (dm.t === "radius" || dm.t === "diameter" || dm.t === "angle" || dm.t === "arclen" || dm.ord) return null;
     const pts = this.dimPoints(dm);
     if (!pts) return null;
     const pos = dm.pos ?? [0, 0];
@@ -4083,7 +4279,7 @@ export class SketchEditor {
   /** Flips a dimension's arrowheads between inside and outside (FR-SK-068): one undo step. */
   flipArrows(id: string) {
     const dm = this.sk.dims.find(x => x.id === id);
-    if (!dm || dm.t === "angle" || dm.ord) return;
+    if (!dm || dm.t === "angle" || dm.t === "arclen" || dm.ord) return;
     dm.arrows = this.arrowsOf(dm) === "in" ? "out" : "in";
     this.commit("Flip dimension arrows");
   }
@@ -4114,6 +4310,23 @@ export class SketchEditor {
       if (l1?.t !== "line" || l2?.t !== "line") return;
       const I = intersect(this.pt(l1.a), this.pt(l1.b), this.pt(l2.a), this.pt(l2.b));
       if (I) line(I, pos);
+      return;
+    }
+    if (dm.t === "arclen") {
+      // Arc length: radial extension lines from the arc's ends out to a concentric dimension arc through the text.
+      const e = this.ent(dm.e[0]);
+      if (e?.t !== "arc") return;
+      const c = this.pt(e.c), A = this.pt(e.a), B = this.pt(e.b);
+      const a0 = Math.atan2(A[1] - c[1], A[0] - c[0]);
+      let sw = Math.atan2(B[1] - c[1], B[0] - c[0]) - a0;
+      while (sw <= 1e-12) sw += Math.PI * 2;
+      const R = Math.max(Math.hypot(pos[0] - c[0], pos[1] - c[1]), 1e-9);
+      const at = (a: number): V2 => [c[0] + R * Math.cos(a), c[1] + R * Math.sin(a)];
+      line(A, at(a0)); line(B, at(a0 + sw));
+      const n = Math.max(8, Math.ceil(sw / 0.08));
+      for (let k = 0; k < n; k++) line(at(a0 + (sw * k) / n), at(a0 + (sw * (k + 1)) / n));
+      arrow(at(a0), [Math.sin(a0), -Math.cos(a0)]);
+      arrow(at(a0 + sw), [-Math.sin(a0 + sw), Math.cos(a0 + sw)]);
       return;
     }
     const pts = this.dimPoints(dm);
@@ -4182,7 +4395,7 @@ export class SketchEditor {
     };
     for (const d of dims) {
       const el = mk(d.id, "sk-dim");
-      const v = d.t === "angle" ? `${trimNum((d.val.v * 180) / Math.PI, 2)}°` : `${d.t === "diameter" ? "⌀" : d.t === "radius" ? "R" : ""}${trimNum((d.driven ? measureDim(this.sk, d) : d.val.v) / u.mm, u.decimals)}`;
+      const v = d.t === "angle" ? `${trimNum((d.val.v * 180) / Math.PI, 2)}°` : `${d.t === "diameter" ? "⌀" : d.t === "radius" ? "R" : d.t === "arclen" ? "◠" : ""}${trimNum((d.driven ? measureDim(this.sk, d) : d.val.v) / u.mm, u.decimals)}`;
       el.textContent = d.driven ? `(${v})` : v;
       if (d.dia && !d.driven) el.textContent = `⌀${v}`;
       else if (d.dia) el.textContent = `(⌀${v})`;
@@ -4210,7 +4423,7 @@ export class SketchEditor {
     // Relation glyphs next to the first entity of each relation (points: beside the point).
     const per = new Map<string, number>();
     for (const r of this.sk.rels) {
-      if (r.t === "coincident" || r.t === "onCurve") continue;
+      if (r.t === "coincident" || r.t === "onCurve" || this.lockedInsert(r.id)) continue;
       // Hidden glyphs (FR-SK-053) still show while selected, so a relation picked in the list can be seen.
       if (!this.showRels && !this.selection.has(r.id)) continue;
       const el = mk(r.id, "sk-rel");
@@ -4288,7 +4501,7 @@ export class SketchEditor {
    * value (k = value change per unit of pointer travel: 2 for diameters).
    */
   private gripGeo(d: SkDim): { at: V2; dir: V2; k: number } | null {
-    if (d.driven || d.ord || d.off || d.t === "angle" || d.val.expr) return null;
+    if (d.driven || d.ord || d.off || d.t === "angle" || d.t === "arclen" || d.val.expr) return null;
     const pos = d.pos ?? [0, 0];
     if (d.t === "radius" || d.t === "diameter") {
       const e = this.ent(d.e[0]);

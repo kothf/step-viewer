@@ -73,7 +73,11 @@ export interface SkRel {
   dangling?: boolean;
 }
 
-export type DimKind = "distance" | "hdistance" | "vdistance" | "radius" | "diameter" | "angle";
+/** `arclen`: the length of an arc (e = [arc]) along it, counter-clockwise from its start to its end (FR-SK-060). */
+export type DimKind = "distance" | "hdistance" | "vdistance" | "radius" | "diameter" | "angle" | "arclen";
+
+/** Where a distance meets a circle or arc (FR-SK-060): its centre, its near side (min) or its far side (max). */
+export type ArcCond = "c" | "min" | "max";
 
 export interface SkDim {
   id: string;
@@ -95,6 +99,11 @@ export interface SkDim {
   off?: boolean;
   /** Arrowheads inside or outside the extension lines / rim (FR-SK-068); absent = automatic. */
   arrows?: "in" | "out";
+  /**
+   * Arc conditions of a distance, one per entry of `e` (FR-SK-060): a circle or arc measured from its near side
+   * (min) or far side (max) instead of its centre; entries that are not circles/arcs are ignored.
+   */
+  cond?: ArcCond[];
 }
 
 /** Plane of a sketch or a reference: a standard plane, a planar face of the model, a reference plane feature, or a face of another component (in-context). */
@@ -147,7 +156,25 @@ export interface SketchFeature {
   dims: SkDim[];
   /** Sketch pictures (FRS 2.2): images to trace over, drawn under the curves while the sketch is edited. */
   pictures?: SketchPicture[];
+  /** Block definitions (FRS 2.2 blocks): entities in their own coordinates, the insertion point at 0, 0. */
+  blocks?: SketchBlock[];
+  /**
+   * Block instances: each is placed as fixed entities `<insert id>~<entity id>` held by one fix relation
+   * `<insert id>~fix` (`src/sketch/blocks.ts` `placeInserts`), so profiles and the kernel need nothing new.
+   */
+  inserts?: BlockInsert[];
+  /**
+   * Edit Block: the insert being edited in place. Its entities are free (no fix), its definition's relations
+   * and dimensions are on them (ids `<insert>~<id>`); `known` = the other entity ids when the edit began, so
+   * entities drawn meanwhile join the block when it finishes (`src/sketch/blocks.ts` `finishEditBlock`).
+   */
+  editBlock?: { insert: string; known: string[] };
 }
+
+/** A sketch block definition (SolidWorks' Make Block): entities and the relations among them, the insertion point at 0, 0. */
+export interface SketchBlock { id: string; name: string; ents: SkEnt[]; rels: SkRel[]; dims?: SkDim[] }
+/** A placed block: its insertion point, angle (rad) and scale. */
+export interface BlockInsert { id: string; block: string; x: number; y: number; ang?: number; scale?: number }
 
 /** An image on the sketch plane: `src` a data URL, centre `c`, size `w` × `h` (mm), `ang` (rad), `alpha` transparency 0..1, `flip` mirrored left-right, `free` = width and height change apart. */
 export interface SketchPicture { id: string; name?: string; src: string; c: V2; w: number; h: number; ang?: number; alpha?: number; flip?: boolean; free?: boolean }

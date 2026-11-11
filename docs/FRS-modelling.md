@@ -144,7 +144,7 @@ MöbiusCAD keeps the same workflow model (history-based parts, mated assemblies,
 | Display/Delete Relations, SketchXpert (conflict resolution) | | P1 (list/delete), P2 (assistant) |
 | Shaded sketch contours, contour selection, regions | Pick regions for extrude | P1 |
 | 3D sketch | Lines/splines in space | P5 |
-| Blocks (sketch blocks), sketch picture, DXF/DWG import into sketch | | P2 (DXF import), P5 (blocks; picture done 1.549.0) |
+| Blocks (sketch blocks), sketch picture, DXF/DWG import into sketch | | P2 (DXF import), P5 (picture done 1.549.0, blocks done 1.554.0) |
 | Layout sketch driving several features | Shared sketches | P1 (sketch reuse) |
 
 ### 2.3 Part features
@@ -525,7 +525,7 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 
 ### 8.5 Dimensions
 
-- **FR-SK-060** (P1, M) One smart dimension tool infers the type from the selection: length of a line; distance point–point, point–line, line–line (parallel); horizontal/vertical distance (by cursor position); angle between two lines (four quadrants by cursor); radius/diameter of arcs/circles (toggle); arc length (arc + both end points); distance from a circle's centre, near side or far side (Shift).
+- **FR-SK-060** (P1, M) One smart dimension tool infers the type from the selection: length of a line; distance point–point, point–line, line–line (parallel); horizontal/vertical distance (by cursor position); angle between two lines (four quadrants by cursor); radius/diameter of arcs/circles (toggle); arc length (arc + both end points); distance from a circle's centre, near side or far side (Shift). **Arc length and arc conditions done (1.554.0).**
 - **FR-SK-061** (P1, M) Placing a dimension opens an inline value box at the dimension (Enter to apply, Esc to keep the current value); the box accepts expressions (FR-PAR-004).
 - **FR-SK-062** (P1, M) Driving vs driven: a dimension that would over-define the sketch is offered as driven (reference, shown in grey, in parentheses) or rejected.
 - **FR-SK-063** (P2, M) Ordinate dimensions (horizontal/vertical chains from a base) and symmetric/diameter dimensions about a centerline (for revolve profiles).
