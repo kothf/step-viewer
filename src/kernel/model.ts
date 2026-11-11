@@ -2273,12 +2273,13 @@ export class Modeller {
     frames[f.id] = fr0;
     // Reverse direction: the holes go along the plane's normal instead of against it (x, y stay, so do the points).
     const fr: Frame = f.flip ? { ...fr0, n: mul(fr0.n, -1) } : fr0;
-    if (!f.pts.length) throw new FeatureError("E-HOLE-PTS", "Click on the face to place the holes.");
+    if (!f.pts.length && !f.spots?.length) throw new FeatureError("E-HOLE-PTS", "Click on the face to place the holes.");
     const r = f.diameter.v / 2;
     if (!(r > 1e-6)) throw new FeatureError("E-FT-ZERO", "The diameter must be more than 0.");
     const through = f.end === "through";
     const big = this.size(prev.shape) * 2 + 1;
-    const down = mul(fr.n, -1);
+    // The hole being made: the plane's frame, or a spot's own frame on another (or curved) face.
+    let hf: Frame = fr, down = mul(fr.n, -1);
     // The depth at a hole centre: as set, through, to a plane (along the axis) or until the material ends.
     const depthAt = (o: V3): number => {
       if (through) return big;
@@ -2395,10 +2396,10 @@ export class Modeller {
     const revolve = (o: V3, prof: [number, number][]) => {
       // The profile lies in the plane through the axis and the frame's x: (r, z) → o + x·r + n·z.
       const poly = new oc.BRepBuilderAPI_MakePolygon_1();
-      for (const [rr, z] of prof) poly.Add_1(this.P(add(add(o, mul(fr.x, rr)), mul(fr.n, z))));
+      for (const [rr, z] of prof) poly.Add_1(this.P(add(add(o, mul(hf.x, rr)), mul(hf.n, z))));
       poly.Close();
       const face = new oc.BRepBuilderAPI_MakeFace_15(poly.Wire(), true).Face();
-      const mk = new oc.BRepPrimAPI_MakeRevol_1(face, new oc.gp_Ax1_2(this.P(o), this.D(fr.n)), 2 * Math.PI, false);
+      const mk = new oc.BRepPrimAPI_MakeRevol_1(face, new oc.gp_Ax1_2(this.P(o), this.D(hf.n)), 2 * Math.PI, false);
       mk.Build(new oc.Message_ProgressRange_1());
       if (!mk.IsDone()) throw new FeatureError("E-FT-FAIL", "The hole could not be made.");
       return mk.Shape();
@@ -2442,13 +2443,23 @@ export class Modeller {
       return out;
     };
     const tools: Named[] = [];
-    f.pts.forEach((p, i) => {
-      const o = add(add(fr.o, mul(fr.x, p[0])), mul(fr.y, p[1]));
+    // Holes on other faces (FR-FT-052): each spot is projected onto its face and drilled square to it there.
+    const spots = (f.spots ?? []).map(sp => {
+      const face = this.resolveFace(prev, sp.face);
+      const uv = new oc.ShapeAnalysis_Surface(oc.BRep_Tool.Surface_2(face)).ValueOfUV(this.P(sp.p), 1e-6);
+      const q = this.xyz(new oc.BRepAdaptor_Surface_2(face, true).Value(uv.X(), uv.Y()));
+      const n = this.normalNear(face, q);
+      const a: V3 = Math.abs(n[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0], x = unit(cross(a, n));
+      return { o: q, F: { o: q, x, y: cross(n, x), n } as Frame };
+    });
+    const holes = [...f.pts.map(p => ({ o: add(add(fr.o, mul(fr.x, p[0])), mul(fr.y, p[1])), F: fr })), ...spots];
+    holes.forEach(({ o, F }, i) => {
+      hf = F; down = mul(F.n, -1);
       if (threadThrough(f)) len.push(reach(o));
       const exit = f.farCs && holeExits(f) ? (f.end === "through" ? reachAt(o) : depthAt(o)) : undefined;
       const td = f.kind === "ptap" ? f.threadDepth?.v ?? 0 : !M ? 0 : threadThrough(f) ? len[len.length - 1] : f.threadDepth?.v ?? (f.end === "blind" ? f.depth.v : 2 * f.diameter.v);
       let shape = revolve(o, f.kind === "adv" || f.kind === "captive" ? advK(o) : profile(depthAt(o), exit, td));
-      if (f.kind === "slot") {
+      if (f.kind === "slot" && F === fr) {
         // Slot: the hole at both ends of the centre line, joined by the profile swept along it.
         const L = f.slotLen?.v ?? 0;
         if (!(L > 1e-6)) throw new FeatureError("E-HOLE-SLOT", "The slot length must be more than 0.");
@@ -2481,8 +2492,8 @@ export class Modeller {
     if (Math.abs(this.volume(out.shape) - this.volume(prev.shape)) < 1e-9) throw new FeatureError("E-FT-NOCHANGE", "The holes do not touch the body.");
     // Retracted screw: the thread hangs below the retaining section and must stay inside the cover.
     if (short > 0) this.warning = `The cover is ${Math.round(short * 100) / 100} mm too thin to hide the retracted screw's thread: add a boss under the hole or use a shorter screw.`;
-    if (!len.length) return { body: out, frame: fr0 };
-    const frame = { ...fr0, len };
+    if (!len.length && !spots.length) return { body: out, frame: fr0 };
+    const frame: Frame = { ...fr0, ...(len.length ? { len } : {}), ...(spots.length ? { sp: spots.map(s => [s.F.o, s.F.n] as [V3, V3]) } : {}) };
     frames[f.id] = frame;
     return { body: out, frame };
   }

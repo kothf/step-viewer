@@ -5,11 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.538.0] - 2026-11-11
+## [1.539.0] - 2026-11-11
 
 ### Added
 
 - Box selection in parts (FR-SEL-008): a left drag from empty space beside the part draws a box. Left to right (solid blue) selects the faces and edges wholly inside it, right to left (dashed green) those it crosses; only what is seen and what the selection filter allows; Ctrl adds to the selection. Commands take the boxed items as they take a Ctrl+click selection. A drag that starts on the part still orbits.
+
+## [1.538.0] - 2026-11-11
+### Added
+- Hole Wizard: holes on other faces. With the hole open, a click on another face of the part, flat or curved, adds a hole square to that face at the click; the positions list shows them and a × removes one. Threads, callout counts and the Positions box include them.
+
 
 ## [1.537.0] - 2026-11-11
 
@@ -3348,7 +3353,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.538.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.539.0...HEAD
+[1.539.0]: https://github.com/kothf/step-viewer/compare/v1.538.0...v1.539.0
 [1.538.0]: https://github.com/kothf/step-viewer/compare/v1.537.0...v1.538.0
 [1.537.0]: https://github.com/kothf/step-viewer/compare/v1.536.0...v1.537.0
 [1.536.0]: https://github.com/kothf/step-viewer/compare/v1.535.0...v1.536.0

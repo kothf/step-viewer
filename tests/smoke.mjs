@@ -3650,6 +3650,20 @@ try {
       && cap2.r === true && cap2.hold === 4.8 && cap2.lt === 12 && cap2.cb === 11 && cap2.need && cap2.box && cap2.callout.includes("⌴Ø11") && cap2.callout.includes("M6-6H ↧4.8") && cap2.ok
       && cback2.k === "tapped" && cback2.r === null && cback2.s === "M6",
       `model 1.536: Hole Wizard captive screw (${JSON.stringify({ cap1, cap2, cback2 })})`);
+    // 1.538 (FR-FT-052): a click on another face of the plate (a side face we can see) adds a hole square to it there.
+    {
+      let side = null;
+      for (const w of [[0, -30, 10], [50, 0, 10], [0, 30, 10], [-50, 0, 10]]) {
+        const at = await world(w);
+        const name = await mp.evaluate(([x, y]) => window.__sv.model.faceName(x, y), at);
+        if (name && /:side:/.test(name)) { side = { at, name }; break; }
+      }
+      if (side) { await mp.mouse.click(side.at[0], side.at[1]); await idle(); }
+      const sp = await mp.evaluate(() => { const d = window.__sv.model.mode().draft, l = window.__sv.model.last(), fr = l.frames[d.id]; return { n: d.spots?.length ?? 0, face: d.spots?.[0]?.face.name ?? null, sp: fr?.sp?.length ?? 0, box: document.querySelector('#mc-pm [data-focus="pts"]')?.textContent ?? "", ok: l.statuses.every(s => s.ok) }; });
+      if (side) { await mp.evaluate(() => document.querySelector('#mc-pm [data-rms="0"]')?.click()); await idle(); }
+      const sp2 = await mp.evaluate(() => window.__sv.model.mode().draft.spots?.length ?? 0);
+      check(side && sp.n === 1 && sp.face === side.name && sp.sp === 1 && sp.box === "3 holes" && sp.ok && sp2 === 0, `model 1.538: Hole Wizard hole on another face (${JSON.stringify({ side, sp, sp2 })})`);
+    }
     // Options: Near side countersink defaults to the hole + 1 mm at 90°; unticking takes it away.
     await mp.check('#mc-pm input[data-k="optNear"]').catch(() => {});
     await idle();
@@ -7171,7 +7185,7 @@ try {
       await settle();
       check(mc1.faces + mc1.edges >= 2 && /selected/.test(hint) && mc0.faces + mc0.edges === 0 && mc2.faces + mc2.edges >= 2 && taken === (byEdges ? mc2.edges : mc2.faces),
         `model 1.537: Ctrl+click selects several faces/edges, Esc clears them, the command takes them all (FR-SEL-007) (${JSON.stringify({ spots: spots.length, mc1, hint, mc0, mc2, byEdges, taken })})`);
-      // 1.538: a left drag from empty space draws a box: left to right takes what lies inside, right to left what it
+      // 1.539: a left drag from empty space draws a box: left to right takes what lies inside, right to left what it
       // crosses; the view does not turn; a click on empty space clears (FR-SEL-008).
       {
         await mp.evaluate(() => window.__sv.viewer.fit(false));
@@ -7211,7 +7225,7 @@ try {
         const moved = Math.hypot(...win.cam.map((c, i) => c - geom.cam[i]));
         check(win.faces >= 3 && win.edges >= 6 && /selected/.test(win.hint) && !win.box && moved < 1e-6 && !/cross/.test(winCls) && /cross/.test(crCls)
           && cleared.faces + cleared.edges === 0 && cross.faces >= 1 && cross.edges >= 1 && half.faces + half.edges < cross.faces + cross.edges,
-          `model 1.538: box selection in the part, window and crossing, the view stays put, an empty click clears (FR-SEL-008) (${JSON.stringify({ geom: [geom.x0, geom.x1, geom.y0, geom.y1], winCls, win, moved, cleared, crCls, cross, half })})`);
+          `model 1.539: box selection in the part, window and crossing, the view stays put, an empty click clears (FR-SEL-008) (${JSON.stringify({ geom: [geom.x0, geom.x1, geom.y0, geom.y1], winCls, win, moved, cleared, crCls, cross, half })})`);
       }
       await mp.evaluate(() => window.__sv.model.store.undo());
       await settle();

@@ -24,7 +24,7 @@ import { evaluate, ExprError, isPlain } from "./expr";
 import { journalDrop, journalList, journalSave, packPart, unpackPart, PART_EXT, type JournalEntry } from "./file";
 import { snapshotList, snapshotRead, snapshotSave, SNAPSHOT_KEEP } from "./snapshots";
 import { ModelKernel, type Rebuild } from "./kernelClient";
-import { pathId, hasDir2, dir2Apart, dir2Blind, clearDir2, threadThrough, holeExits, headKind, DIR2_ENDS, type Dir2End } from "./types";
+import { pathId, hasDir2, dir2Apart, dir2Blind, clearDir2, threadThrough, holeExits, headKind, holeCount, DIR2_ENDS, type Dir2End } from "./types";
 import { parseXyz } from "./curves";
 import { textPolys, TEXT_FONTS } from "../sketch/text";
 import { ctxRefs, type PartContext } from "./context";
@@ -1304,7 +1304,7 @@ export class ModelController {
       if (e2 === "vertex" && !f.upToVertex2) { toast(t("Pick the vertex direction 2 goes up to."), true); return; }
       if (e2 === "body" && !f.upToBody2) { toast(t("Pick the body direction 2 goes up to."), true); return; }
     }
-    if (f.type === "hole" && (!f.plane || !f.pts.length)) { toast(t(f.plane ? "Click on the face to place the holes." : "Pick a flat face or a plane for the holes."), true); return; }
+    if (f.type === "hole" && (!f.plane || !holeCount(f))) { toast(t(f.plane ? "Click on the face to place the holes." : "Pick a flat face or a plane for the holes."), true); return; }
     if (f.type === "mirror" && !f.plane) { toast(t("Pick a plane or a flat face to mirror about."), true); return; }
     if ((f.type === "lpattern" || f.type === "cpattern" || f.type === "spattern") && (f.copy ?? "features") === "features" && !f.features.length) { toast(t("Pick the features to copy."), true); return; }
     if (isCopy(f) && f.copy === "faces" && !f.faces?.length) { toast(t("Pick the faces to copy."), true); return; }
@@ -2707,7 +2707,7 @@ export class ModelController {
     switch (d.type) {
       case "plane": return [{ focus: "base", filled: !!d.base, one: true }, ...(d.mode === "angle" ? [{ focus: "axis" as Focus, filled: !!(d.axis || d.about), one: true }] : [])];
       case "draft": return [{ focus: "nplane", filled: !!d.plane, one: true }, { focus: "faces", filled: d.kind === "parting" ? !!d.parting?.length : d.faces.length > 0, one: false }];
-      case "hole": return [{ focus: "hplane", filled: !!d.plane, one: true }, ...(d.end === "upto" || d.end === "offset" ? [{ focus: "hupto" as Focus, filled: !!d.upTo, one: true }] : d.end === "vertex" ? [{ focus: "hupto" as Focus, filled: !!d.upToVertex, one: true }] : []), { focus: "pts", filled: d.pts.length > 0, one: false }];
+      case "hole": return [{ focus: "hplane", filled: !!d.plane, one: true }, ...(d.end === "upto" || d.end === "offset" ? [{ focus: "hupto" as Focus, filled: !!d.upTo, one: true }] : d.end === "vertex" ? [{ focus: "hupto" as Focus, filled: !!d.upToVertex, one: true }] : []), { focus: "pts", filled: holeCount(d) > 0, one: false }];
       case "mirror": return [{ focus: "mplane", filled: !!d.plane, one: true }, { focus: "seeds", filled: seeds(d), one: false }];
       case "lpattern": return [{ focus: "seeds", filled: seeds(d), one: false }, { focus: "dir", filled: !!d.dir, one: true }];
       case "cpattern": return [{ focus: "seeds", filled: seeds(d), one: false }, { focus: "dir", filled: !!d.axis, one: true }];
@@ -3930,6 +3930,9 @@ export class ModelController {
     const hit = this.host.faceAt(e.clientX, e.clientY);
     const fr = this.last?.frames[f.id];
     if (!hit) return;
+    // A face other than the hole's face (FR-FT-052): a hole there, square to that face where it was clicked (curved faces too).
+    const other = f.plane && "face" in f.plane ? this.faceRef(hit.faceId) : null;
+    if (other && !other.name.startsWith(`${f.id}:`) && "face" in f.plane! && other.name !== f.plane.face.name) { this.toggleSpot(f, other, hit.point); return; }
     // Clicks made before the plane's frame arrives are placed once it does.
     if (!fr || this.pendingHole.length) { this.pendingHole.push({ p: hit.point, at: { clientX: e.clientX, clientY: e.clientY } }); return; }
     this.placeHole(f, this.holeSnap(e, fr) ?? hit.point, fr);
@@ -3986,7 +3989,7 @@ export class ModelController {
   private holePreview(f: HoleFeature): string {
     const fu = UNITS[units.current].f, dec = units.decimals ?? this.doc.units.decimals;
     const len = (v: number) => trimNum(v * fu, Math.max(dec, 2)), ang = (v: number) => trimNum(v, 2);
-    const s = holeSection(f), lines = holeCallout(f, len, ang, x => t(x), f.pts.length);
+    const s = holeSection(f), lines = holeCallout(f, len, ang, x => t(x), holeCount(f));
     return `<div class="pm-hpreview" data-hpreview>${s ? holeDiagram(s) : ""}<div class="pm-hcallout" translate="no" aria-label="${esc(t("Callout"))}">${lines.map(l => `<div>${esc(l)}</div>`).join("")}</div>`
       + `<p class="pm-help muted">${esc(f.plane ? t("Click on the face to place holes; click a hole again to remove it.") : t("Click the flat face (or a plane) for the holes."))}</p></div>`;
   }
@@ -4012,6 +4015,16 @@ export class ModelController {
 
   /** A first hole waiting for the hole's plane frame (it comes with the next rebuild). */
   private pendingHole: { p: V3; at: { clientX: number; clientY: number } }[] = [];
+
+  /** A hole on another face: added where clicked, or removed when the click is on one already there. */
+  private toggleSpot(f: HoleFeature, face: FaceRef, w: V3) {
+    const list = f.spots ?? [];
+    const q = (x: number) => Math.round(x * 1000) / 1000;
+    const i = list.findIndex(s => Math.hypot(s.p[0] - w[0], s.p[1] - w[1], s.p[2] - w[2]) < Math.max(f.diameter.v * 0.75, 1));
+    if (i >= 0) list.splice(i, 1); else list.push({ face: { name: face.name, ...(face.hint ? { hint: face.hint } : {}) }, p: [q(w[0]), q(w[1]), q(w[2])] });
+    if (list.length) f.spots = list; else delete f.spots;
+    this.draftChanged();
+  }
 
   private placeHole(f: HoleFeature, w: V3, fr: Frame) {
     const d: V3 = [w[0] - fr.o[0], w[1] - fr.o[1], w[2] - fr.o[2]];
@@ -4756,6 +4769,19 @@ export class ModelController {
           const c = Math.max(h.diameter.v * 0.8, 1.5);
           marks.push(...at(p, -c, 0), ...at(p, c, 0), ...at(p, 0, -c), ...at(p, 0, c));
         }
+      });
+      // Holes on other faces: their own point and normal from the rebuild; a tapped one gets its thread ring and shading.
+      (fr.sp ?? []).forEach(([o, n]) => {
+        const a: V3 = Math.abs(n[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0];
+        const xr = new THREE.Vector3(...a).cross(new THREE.Vector3(...n)).normalize(), yr = new THREE.Vector3(...n).cross(xr);
+        const P = (dx: number, dy: number) => [0, 1, 2].map(k => o[k] + xr.getComponent(k) * dx + yr.getComponent(k) * dy);
+        if (h.kind === "tapped" && h.major && !h.threadMode) {
+          const td = h.threadDepth?.v ?? (h.end === "through" ? 0 : h.depth.v);
+          if (td > 0) this.threadShade(o, [-n[0], -n[1], -n[2]], h.diameter.v / 2, td, h.pitch ?? Math.max(0.25, h.major * 0.15), true);
+          const r = h.major / 2, k = 48;
+          for (let j = 0; j < k; j++) { const a0 = (j / k) * Math.PI * 2, a1 = ((j + 1) / k) * Math.PI * 2; thread.push(...P(r * Math.cos(a0), r * Math.sin(a0)), ...P(r * Math.cos(a1), r * Math.sin(a1))); }
+        }
+        if (m.kind === "feature" && m.draft === h) { const c = Math.max(h.diameter.v * 0.8, 1.5); marks.push(...P(-c, 0), ...P(c, 0), ...P(0, -c), ...P(0, c)); }
       });
     }
     if (thread.length) this.lines(thread, 0x2b8a3e, 1.6, true);
@@ -6949,13 +6975,15 @@ export class ModelController {
           + (headKind(f) !== "csink" ? chk("optNear", !!f.nearCs, t("Near side countersink")) + (f.nearCs ? numField("nearCs.dia", t("Diameter"), f.nearCs.dia, "length") + numField("nearCs.angle", t("Angle"), f.nearCs.angle, "angle") : "") : "")
           + (headKind(f) === "cbore" ? chk("optUnder", !!f.underCs, t("Under head countersink")) + (f.underCs ? numField("underCs.dia", t("Diameter"), f.underCs.dia, "length") + numField("underCs.angle", t("Angle"), f.underCs.angle, "angle") : "") : "")
           + (holeExits(f) && f.kind !== "slot" ? chk("optFar", !!f.farCs, t("Far side countersink")) + (f.farCs ? numField("farCs.dia", t("Diameter"), f.farCs.dia, "length") + numField("farCs.angle", t("Angle"), f.farCs.angle, "angle") : "") : "")));
-      const posTab = group(t("Positions"), hbox("hplane", t("Face"), this.refLabel(f.plane)) + hbox("pts", t("Hole positions"), t("{n} hole|{n} holes", { n: f.pts.length }))
+      const posTab = group(t("Positions"), hbox("hplane", t("Face"), this.refLabel(f.plane)) + hbox("pts", t("Hole positions"), t("{n} hole|{n} holes", { n: holeCount(f) }))
           + (f.pts.length ? `<ul class="pm-items pm-hpts" aria-label="${esc(t("Hole positions"))}">${f.pts.map((p, i) => `<li><span>${i + 1}</span>${holeAxes(this.last?.frames[f.id]).names.map((ax, j) => `<span class="pm-in"><span class="muted">${ax}</span><input type="text" inputmode="decimal" data-hp="${i}:${j}" value="${esc(trimNum(holeAxes(this.last?.frames[f.id]).show(p)[j] * UNITS[unit].f, 6))}" aria-label="${esc(t("Hole {n}", { n: i + 1 }))} ${ax}" spellcheck="false" /></span>`).join("")}<button class="icon" data-rmh="${i}" title="${esc(t("Remove"))}" aria-label="${esc(t("Remove"))} ${esc(t("Hole {n}", { n: i + 1 }))}">✕</button></li>`).join("")}</ul>` : "")
           + (f.plane ? `<button class="btn small" data-k="addPt">${esc(t("Add hole"))}</button> ` : "")
-          + (f.pts.length ? `<button class="btn small" data-k="clearPts">${esc(t("Clear holes"))}</button>` : "")
-          + `<p class="pm-help muted">${esc(f.plane ? t("Click on the face to place holes; click a hole again to remove it.") : t("Click the flat face (or a plane) for the holes."))}</p>`);
+          + (f.spots?.length ? `<ul class="pm-items pm-hpts" aria-label="${esc(t("Holes on other faces"))}">${f.spots.map((sp, i) => `<li><span>${f.pts.length + i + 1}</span><span class="muted" translate="no">${esc(this.refLabel({ face: sp.face }))}</span><button class="icon" data-rms="${i}" title="${esc(t("Remove"))}" aria-label="${esc(t("Remove"))} ${esc(t("Hole {n}", { n: f.pts.length + i + 1 }))}">✕</button></li>`).join("")}</ul>` : "")
+          + (holeCount(f) ? `<button class="btn small" data-k="clearPts">${esc(t("Clear holes"))}</button>` : "")
+          + `<p class="pm-help muted">${esc(f.plane ? t("Click on the face to place holes; click a hole again to remove it.") : t("Click the flat face (or a plane) for the holes."))}</p>`
+          + (f.plane && "face" in f.plane ? `<p class="pm-help muted">${esc(t("Click another face, flat or curved, for a hole square to it there."))}</p>` : ""));
       const tabBtn = (k: "type" | "pos", label: string) => `<button type="button" role="tab" data-tab="${k}" data-htab="${k}" class="${tab === k ? "on" : ""}" aria-selected="${tab === k}" tabindex="${tab === k ? 0 : -1}">${esc(label)}</button>`;
-      body = `<div class="tabs pm-htabs" role="tablist" aria-label="${esc(t("Hole"))}">${tabBtn("type", t("Type"))}${tabBtn("pos", f.pts.length ? `${t("Positions")} (${f.pts.length})` : t("Positions"))}</div>`
+      body = `<div class="tabs pm-htabs" role="tablist" aria-label="${esc(t("Hole"))}">${tabBtn("type", t("Type"))}${tabBtn("pos", holeCount(f) ? `${t("Positions")} (${holeCount(f)})` : t("Positions"))}</div>`
         + `<div class="pm-htab" data-hpane="type"${tab === "type" ? "" : " hidden"}>${typeTab}</div><div class="pm-htab" data-hpane="pos"${tab === "pos" ? "" : " hidden"}>${posTab}</div>`;
     }
     if (f.type === "draft") {
@@ -7722,7 +7750,8 @@ export class ModelController {
     }
     if (f.type === "sketch3d") this.bindSk3Panel(pm, f, unit);
     pm.querySelector("[data-k=clearSets]")?.addEventListener("click", () => { if (f.type === "fillet") { f.faces1 = []; f.faces2 = []; if (f.kind === "full") f.center = []; if (m.kind === "feature") m.focus = "fs1"; this.draftChanged(); } });
-    pm.querySelector("[data-k=clearPts]")?.addEventListener("click", () => { if (f.type === "hole") { f.pts = []; this.draftChanged(); } });
+    pm.querySelector("[data-k=clearPts]")?.addEventListener("click", () => { if (f.type === "hole") { f.pts = []; delete f.spots; this.draftChanged(); } });
+    pm.querySelectorAll<HTMLButtonElement>("[data-rms]").forEach(b => b.addEventListener("click", () => { if (f.type === "hole" && f.spots) { f.spots.splice(+b.dataset.rms!, 1); if (!f.spots.length) delete f.spots; this.draftChanged(); } }));
     // Hole positions typed as X/Y in the face's sketch axes (FR-FT-052): a clicked position can be made exact.
     pm.querySelector("[data-k=addPt]")?.addEventListener("click", () => {
       if (f.type !== "hole") return;
@@ -8813,7 +8842,8 @@ export class ModelController {
   /** Test and debug handle. */
   debug() {
     const self = this;
-    return { get store() { return self.store; }, last: () => this.last, mode: () => this.mode, editor: () => (this.mode.kind === "sketch" ? this.mode.editor : null), rebuild: () => this.rebuild(), panel: () => this.renderPanel(), kernel: this.kernel };
+    return { get store() { return self.store; }, last: () => this.last, mode: () => this.mode, editor: () => (this.mode.kind === "sketch" ? this.mode.editor : null), rebuild: () => this.rebuild(), panel: () => this.renderPanel(), kernel: this.kernel,
+      faceName: (x: number, y: number) => { const h = this.host.faceAt(x, y); return h ? this.faceRef(h.faceId)?.name ?? null : null; } };
   }
 }
 
