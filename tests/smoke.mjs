@@ -3572,6 +3572,18 @@ try {
     await idle();
     const thrAll = await mp.evaluate(() => ({ box: !!document.querySelector('#mc-pm input[data-num="threadDepth"]'), len: Object.values(window.__sv.model.last()?.frames ?? {}).find(f => f.len)?.len ?? null }));
     check(thrSel === "blind" && !thrAll.box && Array.isArray(thrAll.len) && thrAll.len.length === 2 && thrAll.len.every(x => Math.abs(x - 20) < 0.01), `model 1.516: tapped hole thread end Through all (${thrSel}, ${JSON.stringify(thrAll)})`);
+    // 1.549: a tapped hole turned blind drills past its 12 mm thread (M6: 15 mm, not the through hole's 10);
+    // a typed drill depth short of the thread plus the tap's lead is flagged.
+    await mp.selectOption('#mc-pm select[data-k="end"]', "blind");
+    await idle();
+    const tapD = await mp.evaluate(() => ({ d: window.__sv.model.mode().draft.depth.v, td: window.__sv.model.mode().draft.threadDepth?.v, warn: !!document.querySelector('#mc-pm [data-warn="tapdepth"]') }));
+    await mp.fill('#mc-pm input[data-num="depth"]', "12");
+    await mp.press('#mc-pm input[data-num="depth"]', "Tab");
+    await idle();
+    const tapW = await mp.evaluate(() => ({ d: window.__sv.model.mode().draft.depth.v, warn: !!document.querySelector('#mc-pm [data-warn="tapdepth"]') }));
+    await mp.selectOption('#mc-pm select[data-k="end"]', "through");
+    await idle();
+    check(tapD.d === 15 && tapD.td === 12 && !tapD.warn && tapW.d === 12 && tapW.warn, `model 1.549: blind tapped hole drills past its thread (${JSON.stringify({ tapD, tapW })})`);
     // Hole standards: ANSI inch UNC takes the size nearest M6 (1/4-20, tap drill #7 = 5.105 mm), ISO metric brings M6 back.
     await mp.selectOption('#mc-pm select[data-k="standard"]', "unc").catch(() => {});
     await idle();
