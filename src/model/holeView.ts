@@ -2,7 +2,7 @@
 // the hole in a plate. Pure: no DOM and no kernel, so the drawing callout and the panel share one wording.
 
 import { holeExits, threadThrough, type HoleFeature, type HoleSink } from "./types";
-import { threadClass } from "./holes";
+import { TAPER, threadClass } from "./holes";
 
 const DRILL = (118 * Math.PI) / 180;
 
@@ -23,6 +23,8 @@ export function holeCallout(H: HoleFeature, f: (v: number) => string, fa: (v: nu
     // Thread end Through all on an Up to next / up to face hole: the thread runs the whole drill, no depth.
     lines.push(`${H.size}-${H.tclass ?? threadClass(H.size)}${thru ? ` ${label("THRU")}` : H.threadDepth && !threadThrough(H) ? ` ↧${f(H.threadDepth.v)}` : ""}`);
   }
+  // Tapered tap: the pipe thread (no tolerance class) and its length.
+  if (H.kind === "ptap" && H.size) lines.push(`${H.size}${H.threadDepth ? ` ↧${f(H.threadDepth.v)}` : ""}`);
   // Head clearance deepens the counterbore; the callout gives the depth as cut.
   if (H.kind === "cbore" && H.cbDia) lines.push(`⌴Ø${f(H.cbDia.v)}${H.cbDepth ? ` ↧${f(H.cbDepth.v + (H.headClear?.v ?? 0))}` : ""}`);
   const sink = (s: HoleSink, tail: string) => `⌵Ø${f(s.dia.v)} × ${fa(s.angle.v * 180 / Math.PI)}°${tail ? ` ${label(tail)}` : ""}`;
@@ -42,8 +44,8 @@ export interface HoleSection {
   plate: number;
   /** Plate half width. */
   half: number;
-  /** Tapped: thread radius and its z range. */
-  thread?: { r: number; z0: number; z1: number };
+  /** Tapped: thread radius and its z range; `r1` = radius at z1 for a tapered thread. */
+  thread?: { r: number; z0: number; z1: number; r1?: number };
   /** The hole leaves the plate at the bottom. */
   open: boolean;
   /** The depth is not known here (up to a face, vertex or the next face): drawn schematically. */
@@ -93,6 +95,11 @@ export function holeSection(H: HoleFeature): HoleSection | null {
     const M = H.major! / 2;
     top(M);
     outer = M;
+  } else if (H.kind === "ptap") {
+    const Rt = (H.threadMode === "remove" && H.major ? H.major : H.taperDia?.v ?? 0) / 2;
+    if (!(Rt > r)) return null;
+    top(Rt);
+    outer = Rt;
   } else top(r);
   outer = Math.max(outer, prof[0][0]);
   const head = prof[prof.length - 1][1];
@@ -111,6 +118,14 @@ export function holeSection(H: HoleFeature): HoleSection | null {
     if (td >= (open ? plate : depth) - 1e-6) { prof.push([M, open ? plate : depth]); if (!open) prof.push([0, depth]); return { prof, plate, half: M * 1.7 + r * 0.6, open, rough }; }
     prof.push([M, td], [r, td]);
   }
+  // Tapered tap: the 1:16 cone over the thread length, then the tap drill.
+  if (H.kind === "ptap") {
+    const Rt = prof[prof.length - 1][0], end = open ? plate : depth;
+    const L = Math.min(H.threadDepth?.v ?? 0, end), zc = Math.min(L, (Rt - r) / (TAPER / 2)), Re = Rt - zc * (TAPER / 2);
+    if (zc >= end - 1e-6) { prof.push([Re, end]); if (!open) prof.push([0, end]); return { prof, plate, half: Rt * 1.7 + r * 0.6, open, rough }; }
+    prof.push([Re, zc]);
+    if (Re > r) prof.push([r, zc]);
+  }
   if (fs && plate - fs.h > head) prof.push([r, plate - fs.h], [fs.R, plate]);
   else if (open) prof.push([r, plate]);
   else prof.push([r, depth], [0, depth + tip]);
@@ -119,6 +134,10 @@ export function holeSection(H: HoleFeature): HoleSection | null {
     const M = (H.major ?? 0) / 2 || r * 1.18;
     const z1 = threadThrough(H) || (H.end === "through" && !H.threadDepth) ? plate : Math.min(H.threadDepth?.v ?? 2 * H.diameter.v, open ? plate : depth);
     if (z1 > head) thread = { r: M, z0: head, z1 };
+  }
+  if (H.kind === "ptap" && !H.threadMode && H.major) {
+    const M = H.major / 2, z1 = Math.min(H.threadDepth?.v ?? 0, open ? plate : depth);
+    if (z1 > head) thread = { r: M, z0: head, z1, r1: M - z1 * (TAPER / 2) };
   }
   const half = Math.max(outer, fs?.R ?? 0, thread?.r ?? 0) * 1.7 + r * 0.6;
   return { prof, plate, half, thread, open, rough };
@@ -139,8 +158,8 @@ export function holeDiagram(s: HoleSection, w = 220, h = 120, icon = false): str
   const right = s.prof, left = [...s.prof].reverse().map(([r, z]) => [-r, z] as [number, number]);
   const holeD = [...right, ...left].map(([r, z], i) => `${i ? "L" : "M"}${X(r)} ${Y(z)}`).join("") + "Z";
   const plateD = `M${X(-s.half)} ${Y(0)}H${X(s.half)}V${Y(s.plate)}H${X(-s.half)}Z`;
-  const line = (r: number, z0: number, z1: number) => `M${X(r)} ${Y(z0)}V${Y(z1)}`;
-  const th = s.thread ? `<path class="hd-thread" d="${line(s.thread.r, s.thread.z0, s.thread.z1)}${line(-s.thread.r, s.thread.z0, s.thread.z1)}"/>` : "";
+  const line = (r: number, z0: number, z1: number, r1 = r) => `M${X(r)} ${Y(z0)}L${X(r1)} ${Y(z1)}`;
+  const th = s.thread ? `<path class="hd-thread" d="${line(s.thread.r, s.thread.z0, s.thread.z1, s.thread.r1)}${line(-s.thread.r, s.thread.z0, s.thread.z1, s.thread.r1 == null ? undefined : -s.thread.r1)}"/>` : "";
   // A schematic depth (up to something) gets a wavy break line across the bottom.
   const wave = s.rough ? (() => { const z = s.plate, a = s.plate * 0.04, steps = 8; let d = ""; for (let i = 0; i <= steps; i++) { const r = -s.half + (2 * s.half * i) / steps; d += `${i ? "L" : "M"}${X(r)} ${Y(z + (i % 2 ? a : -a))}`; } return `<path class="hd-break" d="${d}"/>`; })() : "";
   return `<svg class="${icon ? "hole-icon" : "hole-diagram"}" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" aria-hidden="true">`
@@ -151,7 +170,7 @@ export function holeDiagram(s: HoleSection, w = 220, h = 120, icon = false): str
 }
 
 /** Kinds in the order the panel shows them. */
-export const HOLE_KINDS: HoleFeature["kind"][] = ["simple", "clear", "cbore", "csink", "cdrill", "tapped", "slot", "insert"];
+export const HOLE_KINDS: HoleFeature["kind"][] = ["simple", "clear", "cbore", "csink", "cdrill", "tapped", "ptap", "slot", "insert"];
 
 /** A small pictogram of a hole kind: a typical one of that kind (through or blind), drawn like the section. */
 export function holeIcon(kind: HoleFeature["kind"], w = 34, h = 26): string {
@@ -161,6 +180,16 @@ export function holeIcon(kind: HoleFeature["kind"], w = 34, h = 26): string {
   if (kind === "cdrill") { H.cdDia = { v: 4.8 }; H.cdDepth = { v: 1.4 }; }
   if (kind === "clear") H.end = "through";
   if (kind === "tapped") { H.threadDepth = { v: 3.5 }; H.size = "M"; H.major = 3.8; }
+  // Tapered tap: drawn with an exaggerated taper (1:16 would not show at icon size).
+  if (kind === "ptap") {
+    H.taperDia = { v: 4.4 }; H.major = 5; H.threadDepth = { v: 3.4 };
+    const s = holeSection(H);
+    if (!s) return "";
+    const i = s.prof.findIndex(([, z]) => Math.abs(z - 3.4) < 1e-9);
+    if (i > 0) s.prof[i] = [1.6, 3.4];
+    if (s.thread) s.thread.r1 = 1.9;
+    return holeDiagram(s, w, h, true);
+  }
   // A slot reads best from above: an obround in a plate.
   if (kind === "slot") return `<svg class="hole-icon" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" aria-hidden="true"><path class="hd-mat" fill-rule="evenodd" d="M2 2H${w - 2}V${h - 2}H2ZM${w / 2 - 7} ${h / 2 - 4}H${w / 2 + 7}A4 4 0 0 1 ${w / 2 + 7} ${h / 2 + 4}H${w / 2 - 7}A4 4 0 0 1 ${w / 2 - 7} ${h / 2 - 4}Z"/>`
     + `<path class="hd-edge" d="M${w / 2 - 7} ${h / 2 - 4}H${w / 2 + 7}A4 4 0 0 1 ${w / 2 + 7} ${h / 2 + 4}H${w / 2 - 7}A4 4 0 0 1 ${w / 2 - 7} ${h / 2 - 4}Z"/></svg>`;

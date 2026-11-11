@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ANSI_UNC, ANSI_UNF, HOLE_STANDARDS, ISO_FINE, ISO_METRIC, headPocket, holeSize, majorOf, screwTypes, standardOf, threadClass, threadClasses } from "../../src/model/holes";
+import { ANSI_UNC, ANSI_UNF, HOLE_STANDARDS, ISO_FINE, ISO_METRIC, headPocket, holeSize, majorOf, screwTypes, standardOf, threadClass, threadClasses, ANSI_NPT, ISO_RC, TAPER_STANDARDS, taperSize, taperStandardOf } from "../../src/model/holes";
 
 test("hole sizes: ISO M1.6 to M64 coarse, fine pitches, ANSI inch UNC/UNF, each row consistent (FR-FT-051)", () => {
   assert.equal(ISO_METRIC[0].size, "M1.6");
@@ -74,6 +74,10 @@ test("hole options: near/far side and under head countersinks, head clearance cu
   near(run({ kind: "tapped", size: "M12", major: 12, threadDepth: { v: 8 }, threadMode: "remove" }), PI * 36 * 8 + PI * 25 * 12, "remove thread");
   near(run({ kind: "tapped", size: "M12", major: 12, threadEnd: "through", threadMode: "remove" }), PI * 36 * 20, "remove thread through");
   near(run({ kind: "tapped", size: "M12", major: 12, threadDepth: { v: 8 }, threadMode: "none" }), PI * 25 * 20, "no cosmetic thread");
+  // Tapered tap: a 1:16 cone (radius 1:32) from the face over the thread length, never narrower than the drill.
+  near(run({ kind: "ptap", taperDia: { v: 12 }, threadDepth: { v: 16 } }), cone(6, 5.5, 16) + PI * 25 * 4, "tapered tap");
+  near(run({ kind: "ptap", taperDia: { v: 10.5 }, threadDepth: { v: 16 } }), cone(5.25, 5, 8) + PI * 25 * 12, "tapered tap meets the drill");
+  near(run({ kind: "ptap", taperDia: { v: 12 }, major: 13, threadDepth: { v: 16 }, threadMode: "remove" }), cone(6.5, 6, 16) + PI * 25 * 4, "tapered tap, remove thread");
   near(run({ end: "vertex", upToVertex: { edge: { faces: ["f1:side:s1l1", "f1:side:s1l2"] }, at: [50, -30, 0] } }), PI * 25 * 20, "up to vertex");
   // An option countersink narrower than what it opens is refused.
   const bad = m.evaluate(doc([rect("s1", 100, 60), { id: "f1", type: "extrude", name: "E", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
@@ -96,4 +100,22 @@ test("screw types size the head pocket; thread classes (FR-FT-051)", () => {
   assert.deepEqual(headPocket("1/4-20 UNC", "din7984", "cbore"), headPocket("1/4-20 UNC", undefined, "cbore"));
   assert.equal(threadClasses("M6")[0], "6H");
   assert.equal(threadClasses("1/4-20 UNC")[0], "2B");
+});
+
+test("tapered pipe threads: NPT and Rc rows (FR-FT-051 Tapered Tap)", () => {
+  for (const list of [ANSI_NPT, ISO_RC]) {
+    assert.equal(list.length, 10);
+    for (const h of list) {
+      assert.ok(h.major > h.minor && h.minor > h.tap && h.len > 0 && h.pitch > 0, JSON.stringify(h));
+      assert.equal(taperSize(h.size), h);
+    }
+  }
+  // 1/4-18 NPT: E0 0.47739 + L2 0.4018/16, ±0.8p; Rc 1/4: gauge Ø13.157, thread 0.640327p deep.
+  const n = taperSize("1/4-18 NPT")!;
+  assert.ok(Math.abs(n.major - 13.891) < 0.01 && Math.abs(n.minor - 11.633) < 0.01 && Math.abs(n.len - 10.206) < 0.01, JSON.stringify(n));
+  const rc = taperSize("Rc 1/4")!;
+  assert.ok(Math.abs(rc.minor - 11.445) < 0.01 && rc.tap === 11.2, JSON.stringify(rc));
+  assert.equal(taperStandardOf("Rc 1/2"), "bspt");
+  assert.equal(taperStandardOf("1/2-14 NPT"), "npt");
+  assert.equal(TAPER_STANDARDS.bspt, ISO_RC);
 });

@@ -5,11 +5,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.531.0] - 2026-11-11
+## [1.532.0] - 2026-11-11
 
 ### Added
 
 - Sketch **K** key (FR-UI-054, FR-SK-054): with sketch items selected, K opens **Add relation** at the cursor, listing only the relations valid for the selection (and Merge points when it fits).
+
+## [1.531.0] - 2026-11-11
+
+### Added
+- Hole Wizard **Tapered tap**: pipe threads ANSI NPT (1/16 to 2) and ISO 7 Rc / BSPT (1/16 to 2). The hole is cut as a 1:16 cone from the thread's diameter at the face over the thread length, never narrower than the tap drill; Remove thread cuts the cone at the major diameter. The callout reads e.g. "1/4-18 NPT ↧10.21", and the panel picture shows the tapered thread.
+
+
 
 ## [1.530.0] - 2026-11-11
 
@@ -3306,7 +3313,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.531.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.532.0...HEAD
+[1.532.0]: https://github.com/kothf/step-viewer/compare/v1.531.0...v1.532.0
 [1.531.0]: https://github.com/kothf/step-viewer/compare/v1.530.0...v1.531.0
 [1.530.0]: https://github.com/kothf/step-viewer/compare/v1.529.0...v1.530.0
 [1.529.0]: https://github.com/kothf/step-viewer/compare/v1.528.0...v1.529.0

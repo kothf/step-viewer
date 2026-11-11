@@ -14,7 +14,7 @@ import type { V2, SkEnt } from "../model/types";
 import type { HealFeature, RecognizedHole, RecognizedBlends, SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, PatternSpot, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, ChamferFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, HoleSink, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
 import { dir2Apart, dir2Feature, threadThrough, holeExits } from "../model/types";
 import { featureRefs } from "../model/doc";
-import { recognizedHoleFeatures } from "../model/holes";
+import { recognizedHoleFeatures, TAPER } from "../model/holes";
 import { ctxFrame } from "../model/context";
 import { loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 import { splineBezierN } from "../sketch/spline";
@@ -2359,6 +2359,18 @@ export class Modeller {
         // Head clearance: a cylinder of the countersink's width above the cone.
         if (clear > 0) prof.push([R, lift], [R, -clear], [r, -clear - h]);
         else prof.push([R + lift * Math.tan(a / 2), lift], [r, -h]);
+      } else if (f.kind === "ptap") {
+        // Tapered tap (pipe thread): a 1:16 cone from the face over the thread length, never narrower than the
+        // tap drill (the drill goes in first); Remove thread cuts the cone at the major diameter instead.
+        const Rt = (f.threadMode === "remove" && f.major ? f.major : f.taperDia?.v ?? 0) / 2, L = Math.min(td, depth);
+        if (!(Rt > r + 1e-9) || !(L > 1e-6)) throw new FeatureError("E-HOLE-TAPER", "The tapered diameter must be wider than the tap drill, with a thread length more than 0.");
+        top(prof, Rt);
+        // The cone is Rt at the face itself, not at the lift above it.
+        if (prof[prof.length - 1][1] > 0) prof.push([Rt, 0]);
+        const zc = Math.min(L, (Rt - r) / (TAPER / 2)), Re = Rt - zc * (TAPER / 2);
+        if (zc >= depth - 1e-6) { prof.push([Re, -depth], [0, -depth]); return prof; }
+        prof.push([Re, -zc]);
+        if (Re > r + 1e-9) prof.push([r, -zc]);
       } else if (M && td > 1e-6) {
         top(prof, M);
         if (td >= depth - 1e-6) { prof.push([M, -depth], [0, -depth]); return prof; }
@@ -2409,7 +2421,7 @@ export class Modeller {
       const o = add(add(fr.o, mul(fr.x, p[0])), mul(fr.y, p[1]));
       if (threadThrough(f)) len.push(reach(o));
       const exit = f.farCs && holeExits(f) ? (f.end === "through" ? reachAt(o) : depthAt(o)) : undefined;
-      const td = !M ? 0 : threadThrough(f) ? len[len.length - 1] : f.threadDepth?.v ?? (f.end === "blind" ? f.depth.v : 2 * f.diameter.v);
+      const td = f.kind === "ptap" ? f.threadDepth?.v ?? 0 : !M ? 0 : threadThrough(f) ? len[len.length - 1] : f.threadDepth?.v ?? (f.end === "blind" ? f.depth.v : 2 * f.diameter.v);
       let shape = revolve(o, profile(depthAt(o), exit, td));
       if (f.kind === "slot") {
         // Slot: the hole at both ends of the centre line, joined by the profile swept along it.
