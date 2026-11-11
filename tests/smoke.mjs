@@ -4362,7 +4362,8 @@ try {
     await mp.waitForFunction(() => window.__sv);
     const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 60000 });
     const world = w => mp.evaluate(w => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(); const s = new (v.camera.position.constructor)(...w).project(v.camera); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; }, w);
-    const settle = () => mp.waitForFunction(() => { const p = window.__sv.viewer.camera.position.toArray().join(); const same = window.__camLast === p; window.__camLast = p; return same; }, null, { polling: 250, timeout: 10000 });
+    // A camera move starts on the next frame: wait a little, then for no animation and the same position twice.
+    const settle = async () => { await mp.waitForTimeout(100); await mp.waitForFunction(() => { const v = window.__sv.viewer, p = v.camera.position.toArray().join(); const same = !v.animating && window.__camLast === p; window.__camLast = p; return same; }, null, { polling: 250, timeout: 10000 }); };
     const camDir = () => mp.evaluate(() => { const v = window.__sv.viewer; return v.camera.position.clone().sub(v.controls.target).normalize().toArray(); });
     await mp.click("#new-part");
     await mp.waitForFunction(() => window.__sv.model?.store);
