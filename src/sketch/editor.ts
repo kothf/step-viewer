@@ -54,7 +54,7 @@ export type SketchPattern =
   | { kind: "rotate"; c: V2; centre: string | null; angle: number; copy: boolean; keep: boolean }
   | { kind: "scale"; c: V2; centre: string | null; k: number; copy: boolean; keep: boolean };
 
-export type SkTool = "select" | "line" | "rect" | "crect" | "rect3" | "crect3" | "pgram" | "circle" | "circle3" | "pcircle" | "arc" | "arc3" | "polygon" | "slot" | "cslot" | "aslot" | "aslot3" | "ellipse" | "earc" | "spline" | "sspline" | "conic" | "parabola" | "eqn" | "point" | "text" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "intersect" | "dim" | "hord" | "vord";
+export type SkTool = "select" | "line" | "rect" | "crect" | "rect3" | "crect3" | "pgram" | "circle" | "circle3" | "pcircle" | "arc" | "arc3" | "tarc" | "polygon" | "slot" | "cslot" | "aslot" | "aslot3" | "ellipse" | "earc" | "spline" | "sspline" | "conic" | "parabola" | "eqn" | "point" | "text" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "intersect" | "dim" | "hord" | "vord";
 
 export interface SketchHost {
   viewer: Viewer;
@@ -1285,7 +1285,7 @@ export class SketchEditor {
   }
 
   /** Whether the line tool is drawing a tangent arc now. */
-  get arcMode() { return this.tool === "line" && !!this.draft.arc; }
+  get arcMode() { return (this.tool === "line" || this.tool === "tarc") && !!this.draft.arc; }
 
   private tangentArcClick(p: V2, s: Snap, rels: SkRel[], finish: (label: string) => void, e: { detail: number }) {
     const d = this.draft;
@@ -1301,8 +1301,9 @@ export class SketchEditor {
     finish("Add tangent arc");
     // Back to lines, chaining on from the arc's end (SolidWorks), unless the loop closed.
     const closed = !!s.id && (s.id !== ORIGIN || d.chainStart === ORIGIN);
+    // The Tangent Arc tool chains arcs; the line tool goes back to lines.
     if (closed || e.detail >= 2) this.draft = { pts: [], ids: [], cursor: null, snap: null };
-    else { d.pts.push(p); d.ids.push(bId); d.snapCurve = null; d.snapOrigin = false; d.prev = id; d.arc = false; d.back = 0; }
+    else { d.pts.push(p); d.ids.push(bId); d.snapCurve = null; d.snapOrigin = false; d.prev = id; d.arc = this.tool === "tarc"; d.back = 0; }
     this.render();
   }
 
@@ -1335,6 +1336,20 @@ export class SketchEditor {
     if (this.tool === "eqn") return;
     if (this.tool === "point") { this.usePoint(p, s.id, s.curve, rels); finish("Add point"); return; }
     if (this.tool === "text") { void this.placeText(p, s.id, s.curve, rels); return; }
+    if (this.tool === "tarc") {
+      // Tangent Arc tool (FR-SK-015): starts at the end of a line or arc, tangent to it.
+      if (!d.pts.length) {
+        const ends = s.id && s.id !== ORIGIN ? this.sk.ents.filter(x => !x.cons && (x.t === "line" || x.t === "arc") && (x.a === s.id || x.b === s.id)) : [];
+        if (ends.length !== 1) { this.host.toast(t("Click the end of a line or arc to start the tangent arc.")); return; }
+        d.pts = [p]; d.ids = [s.id]; d.chainStart = s.id!; d.prev = ends[0].id; d.arc = true; d.back = 0;
+        this.statusHint(); this.render(); return;
+      }
+      const a0 = d.pts.at(-1)!;
+      if (!exact && Math.hypot(p[0] - a0[0], p[1] - a0[1]) < this.px(p) * 2) return;
+      this.tangentArcClick(p, s, rels, finish, e);
+      this.statusHint();
+      return;
+    }
     if (this.tool === "line") {
       if (!d.pts.length) { this.inferLine = null; d.pts = [p]; d.ids = [s.id && s.id !== ORIGIN ? s.id : null]; d.chainStart = s.id ?? undefined; d.snapCurve = s.curve; d.snapOrigin = s.id === ORIGIN; d.back = 0; this.render(); return; }
       const a0 = d.pts.at(-1)!;
@@ -3121,7 +3136,7 @@ export class SketchEditor {
     const a = d.pts.at(-1);
     if (!a || !c) return null;
     const dx = c[0] - a[0], dy = c[1] - a[1];
-    if (this.tool === "line" && d.arc) return null;
+    if ((this.tool === "line" || this.tool === "tarc") && d.arc) return null;
     if (this.tool === "line") return [{ name: "Length", q: "length", now: Math.hypot(dx, dy) }, { name: "Angle", q: "angle", now: (Math.atan2(dy, dx) + 2 * Math.PI) % (2 * Math.PI) }];
     if ((this.tool === "rect" || this.tool === "crect") && d.pts.length === 1) {
       const k = this.tool === "crect" ? 2 : 1;
@@ -3267,6 +3282,7 @@ export class SketchEditor {
       circle3: "Click three points on the circle",
       pcircle: "Click three points or curves; the circle passes through the points and touches the lines, circles and arcs",
       arc3: "Click the start, the end, then a point on the arc",
+      tarc: "Click the end of a line or arc, then the arc's end",
       polygon: "Click the centre, then a corner; set the sides in the panel",
       trim: "Click the piece of a curve to remove, up to where it crosses others",
       fillet: "Click a corner where two curves meet; set the radius in the panel",
@@ -3298,7 +3314,7 @@ export class SketchEditor {
     const u = this.host.unit(), c = this.cursorUV;
     const at = c ? ` · x ${trimNum(c[0] / u.mm, u.decimals)}, y ${trimNum(c[1] / u.mm, u.decimals)} ${u.name}` : "";
     const qs = this.quickSnap ? ` · ${t("Quick snap")}: ${t(SNAP_KINDS.find(k => k[0] === this.quickSnap)![1])}` : "";
-    const hint = this.arcMode ? "Tangent arc: click its end; A goes back to lines" : this.tool === "line" && this.draft.pts.length ? "Click points; double-click or Esc ends the chain; A or moving back to the end point draws a tangent arc" : hints[this.tool];
+    const hint = this.tool === "tarc" && this.draft.pts.length ? "Tangent arc: click its end; the next arc goes on from it; Esc ends" : this.arcMode ? "Tangent arc: click its end; A goes back to lines" : this.tool === "line" && this.draft.pts.length ? "Click points; double-click or Esc ends the chain; A or moving back to the end point draws a tangent arc" : hints[this.tool];
     this.host.status(`${def} · ${t(hint)}${qs}${at}`);
   }
 
@@ -3424,7 +3440,7 @@ export class SketchEditor {
     const d = this.draft;
     if (d.pts.length && d.cursor) {
       const p = d.cursor, a = d.pts[0];
-      if (this.tool === "line" && d.arc) { const g = this.tangentArc(p); if (g) poly(arcPts(g.c, g.r, g.a0, g.a0 + g.sweep, 48), C.pre); else push(d.pts.at(-1)!, p, C.pre); }
+      if ((this.tool === "line" || this.tool === "tarc") && d.arc) { const g = this.tangentArc(p); if (g) poly(arcPts(g.c, g.r, g.a0, g.a0 + g.sweep, 48), C.pre); else push(d.pts.at(-1)!, p, C.pre); }
       else if (this.tool === "line") push(d.pts.at(-1)!, p, C.pre);
       else if (this.tool === "circle") poly(arcPts(a, Math.hypot(p[0] - a[0], p[1] - a[1]), 0, Math.PI * 2, 72), C.pre);
       else if (this.tool === "rect" || this.tool === "crect") {
@@ -3579,7 +3595,7 @@ export class SketchEditor {
     let text = "";
     if (p && a) {
       const last = d.pts.at(-1)!;
-      if (this.tool === "line" && d.arc) { const g = this.tangentArc(p); text = g ? `R ${L(g.r)} · ${trimNum((Math.abs(g.sweep) * 180) / Math.PI, 1)}°` : ""; }
+      if ((this.tool === "line" || this.tool === "tarc") && d.arc) { const g = this.tangentArc(p); text = g ? `R ${L(g.r)} · ${trimNum((Math.abs(g.sweep) * 180) / Math.PI, 1)}°` : ""; }
       else if (this.tool === "line") { const dx = p[0] - last[0], dy = p[1] - last[1]; text = `L ${L(Math.hypot(dx, dy))} · ${trimNum((((Math.atan2(dy, dx) * 180) / Math.PI) + 360) % 360, 1)}°`; }
       else if (this.tool === "circle" || this.tool === "polygon") text = `R ${L(Math.hypot(p[0] - a[0], p[1] - a[1]))}`;
       else if ((this.tool === "ellipse" || this.tool === "earc") && d.pts.length < 3) {

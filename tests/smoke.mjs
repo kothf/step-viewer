@@ -2367,6 +2367,24 @@ try {
         `model 1.507: A in the line tool draws a tangent arc, then lines go on tangent to it (FR-SK-011) (${arcMode}, ${back}, ${JSON.stringify(ta)})`);
       await tool("select");
     }
+    // 1.508.0 (FR-SK-015): the Tangent Arc tool starts on the end of that last line and chains tangent arcs.
+    {
+      await tool("tarc");
+      const arcsBefore = await mp.evaluate(() => window.__sv.model.editor().sk.ents.filter(e => e.t === "arc").map(e => e.id));
+      await click([104, 45]);
+      const on = await mp.evaluate(() => window.__sv.model.editor().arcMode);
+      await click([108, 45]); await click([112, 45]);
+      await mp.keyboard.press("Escape");
+      const tr = await mp.evaluate(old => {
+        const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id);
+        const arcs = sk.ents.filter(e => e.t === "arc" && !old.includes(e.id));
+        return { n: arcs.length, rs: arcs.map(a => { const c = P(a.c), q = P(a.a); return Math.hypot(q.x - c.x, q.y - c.y); }), cs: arcs.map(a => [P(a.c).x, P(a.c).y]),
+          tan: arcs.map(a => sk.rels.filter(r => r.t === "tangent" && r.e.includes(a.id)).length), status: ed.info.status };
+      }, arcsBefore);
+      check(on === true && tr.n === 2 && tr.rs.every(r => Math.abs(r - 2) < 0.05) && Math.abs(tr.cs[0][0] - 106) < 0.05 && Math.abs(tr.cs[1][0] - 110) < 0.05 && tr.tan.every(k => k >= 1) && tr.status === "ok",
+        `model 1.508: Tangent Arc tool chains arcs tangent to the line it starts on (FR-SK-015) (${on}, ${JSON.stringify(tr)})`);
+      await tool("select");
+    }
     // 1.266.0 (FR-SK-043/044/047): dragging the last line's start onto the free end of the Ctrl line merges them
     // (coincident relation); Ctrl+drag of that line copies it; the status bar shows the cursor position.
     await tool("select");
