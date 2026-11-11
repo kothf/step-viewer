@@ -9866,6 +9866,19 @@ try {
     await settle();
     const ftri = await mp.evaluate(() => ({ o: window.__sv.model.mode().draft.origin, n: document.querySelectorAll('#mc-pm input[data-k^="o"]').length, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length }));
     check(ftri.n === 3 && JSON.stringify(ftri.o) === "[10,0,0]" && !ftri.bad, `model 1.553: Flex triad position from the panel (${JSON.stringify(ftri)})`);
+    // 1.554: the triad has a drag arrow per world axis; dragging the X one 10 mm moves the triad to x = 20.
+    const tri = await mp.evaluate(() => { const a = window.__sv.modeller.arrows.find(x => x.key === "ox"); if (!a) return null; const p = a.pick.getWorldPosition(a.obj.position.clone()); return { p: [p.x, p.y, p.z], keys: window.__sv.modeller.arrows.map(x => x.key) }; });
+    if (tri) {
+      const g0 = await toScr(tri.p), g1 = await toScr([tri.p[0] + 10, tri.p[1], tri.p[2]]);
+      await mp.mouse.move(g0[0], g0[1]);
+      await mp.mouse.down();
+      for (let i = 1; i <= 6; i++) { await mp.mouse.move(g0[0] + ((g1[0] - g0[0]) * i) / 6, g0[1] + ((g1[1] - g0[1]) * i) / 6); await mp.waitForTimeout(40); }
+      await mp.mouse.up();
+      await settle();
+    }
+    const ftd = await mp.evaluate(() => ({ o: window.__sv.model.mode().draft.origin, x: document.querySelector('#mc-pm input[data-k="ox"]')?.value, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length }));
+    check(tri && ["ox", "oy", "oz"].every(k => tri.keys.includes(k)) && Math.abs(ftd.o[0] - 20) < 2.5 && ftd.o[1] === 0 && ftd.o[2] === 0 && Math.abs(parseFloat(ftd.x) - ftd.o[0]) < 1e-6 && !ftd.bad,
+      `model 1.554: dragging the Flex triad's X arrow moves the triad (${JSON.stringify({ tri, ftd })})`);
     await mp.click("#mc-ok");
     await settle();
     const ffin = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.at(-1); return { type: f.type, kind: f.kind, name: f.name }; });

@@ -23,7 +23,7 @@ State of the part modelling work. Current thread: "Continue matching SolidWorks 
 - **Flex** (bend / twist / taper / stretch a body between two trim planes): `gp_GTrsf` for stretch/taper is easy; bending needs a mesh-free approach (sample and refit) and is the hard one.
 - **Deform** (point / curve-to-curve): rare in everyday use; last.
 - **Boundary Boss/Cut**: today Loft with guide curves covers most uses; a boundary feature with two directions of curves would map onto `GeomFill`/`BRepOffsetAPI_MakeFilling`.
-- **Sketch picture** done in 1.549.0 (FRS 2.2). Left: showing pictures outside sketch editing, dragging/scaling handles in the view, background removal. **Sketch blocks** done in 1.554.0 (`src/sketch/blocks.ts`: definitions per sketch, instances materialised as fixed entities `<insert>~<ent>`). Edit Block in place too. Left: part-level block definitions shared across sketches, relations driving an instance's position.
+- **Sketch picture** done in 1.549.0 (FRS 2.2). Left: showing pictures outside sketch editing, dragging/scaling handles in the view, background removal. **Sketch blocks** done in 1.554.0 (`src/sketch/blocks.ts`: definitions per sketch, instances materialised as fixed entities `<insert>~<ent>`). Edit Block in place too; Flex triad drag arrows also in 1.554.0. Left: part-level block definitions shared across sketches, relations driving an instance's position.
 - FR-FT-102 left: non-round profiles along free 3D curves (rare).
 
 ## Extrude Direction 2 (1.456.0)

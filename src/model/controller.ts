@@ -5227,6 +5227,13 @@ export class ModelController {
     this.handleLabel(f.id, "trim1", t("Drag the arrow to move trim plane 1; click to type it"));
     this.placeArrow(o.clone().addScaledVector(n, fr.len[5]), n.clone().negate(), f.trim2?.v ?? 0, false, "trim2");
     this.handleLabel(f.id, "trim2", t("Drag the arrow to move trim plane 2; click to type it"));
+    // Triad handles (SolidWorks drags the triad): one short arrow per world axis from the triad's point.
+    if (this.mode.kind !== "feature") return;
+    const at = f.origin ?? fr.o;
+    (["x", "y", "z"] as const).forEach((c, i) => {
+      const dir = new THREE.Vector3(i === 0 ? 1 : 0, i === 1 ? 1 : 0, i === 2 ? 1 : 0);
+      this.placeArrow(o.clone().addScaledVector(dir, -at[i]), dir, at[i], false, `o${c}`);
+    });
   }
 
   /** A straight drag arrow from `base` along `dir`, its tip at `value` (Mid plane: half of it), dragging the number `key`. */
@@ -5385,7 +5392,9 @@ export class ModelController {
     }
     this.arrowDrag = f.type === "revolve"
       ? { start: 0, depth: f.angle.v, moved: false, raw: this.pointerAngle(e), key }
-      : { start: this.axisParam(e), depth: (f as unknown as Record<string, Num | undefined>)[key]?.v ?? 0, moved: false, key };
+      : f.type === "flex" && /^o[xyz]$/.test(key)
+        ? { start: this.axisParam(e), depth: (f.origin ?? this.last?.frames[f.id]?.o ?? [0, 0, 0])["xyz".indexOf(key[1])], moved: false, key }
+        : { start: this.axisParam(e), depth: (f as unknown as Record<string, Num | undefined>)[key]?.v ?? 0, moved: false, key };
     const canvas = this.host.viewer.renderer.domElement;
     canvas.style.cursor = "grabbing";
     // Keep getting the moves and the release when the pointer leaves the view.
@@ -5404,6 +5413,23 @@ export class ModelController {
     const step = 10 ** Math.floor(Math.log10(Math.max(px, 1e-6)));
     const fu = UNITS[units.current].f;
     v = (Math.round((v * fu) / step) * step) / fu;
+    if (m.draft.type === "flex" && /^o[xyz]$/.test(key)) {
+      // The triad's point moves along a world axis; the box stops following the bodies' centre.
+      const f = m.draft, i = "xyz".indexOf(key[1]);
+      const o: V3 = [...(f.origin ?? this.last?.frames[f.id]?.o ?? [0, 0, 0])];
+      if (Math.abs(v - o[i]) < 1e-12) return;
+      d.moved = true;
+      o[i] = v;
+      f.origin = o;
+      const pm = $("#mc-pm");
+      const box = pm.querySelector<HTMLInputElement>("input[data-k=tcentre]");
+      if (box?.checked) { this.renderPanel(); }
+      else { const inp = pm.querySelector<HTMLInputElement>(`input[data-k=${key}]`); if (inp) inp.value = trimNum(v * fu, 6); }
+      a.obj.position.copy(a.base).addScaledVector(a.dir, v);
+      this.sizeArrow();
+      void this.rebuild();
+      return;
+    }
     if (m.draft.type === "flex") {
       // Trim offsets run from 0 (the bodies' end) up to leaving a step between the planes.
       const len = this.last?.frames[m.draft.id]?.len;
