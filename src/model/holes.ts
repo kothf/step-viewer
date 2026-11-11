@@ -198,3 +198,40 @@ export function headPocket(size: string | undefined, screw: ScrewType | undefine
 
 /** Internal thread tolerance classes offered for a size (ISO 965 / ASME B1.1), the usual one first. */
 export const threadClasses = (s: string | undefined) => (s && / UN[CF]$/.test(s) ? ["2B", "1B", "3B"] : ["6H", "4H", "5H", "7H", "6G"]);
+
+/**
+ * Tapered pipe threads (FR-FT-051, SolidWorks' Tapered Tap): NPT (ASME B1.20.1) and Rc / BSPT (ISO 7-1). The
+ * internal thread narrows into the hole by 1:16 on the diameter; `major`/`minor` are its diameters at the face,
+ * `len` the thread length (NPT: effective thread L2; Rc: useful thread) and `tap` the drill. Sizes in millimetres.
+ */
+export interface TaperSize { size: string; pitch: number; tap: number; major: number; minor: number; len: number }
+export type TaperStandard = "npt" | "bspt";
+/** Diameter change per unit depth of a pipe taper (1:16 on the diameter). */
+export const TAPER = 1 / 16;
+const r3 = (v: number) => Math.round(v * 1000) / 1000;
+// NPT rows (inches): size, threads per inch, E0 (pitch diameter at the small end), L2, tap drill.
+const NPT: [string, number, number, number, number][] = [
+  ["1/16", 27, 0.27118, 0.2611, 0.246], ["1/8", 27, 0.36351, 0.2639, 0.339], ["1/4", 18, 0.47739, 0.4018, 0.4375],
+  ["3/8", 18, 0.61201, 0.4078, 0.5781], ["1/2", 14, 0.75843, 0.5337, 0.7188], ["3/4", 14, 0.96768, 0.5457, 0.9219],
+  ["1", 11.5, 1.21363, 0.6828, 1.1562], ["1-1/4", 11.5, 1.55713, 0.7068, 1.5], ["1-1/2", 11.5, 1.79609, 0.7235, 1.7344],
+  ["2", 11.5, 2.26902, 0.7565, 2.2188],
+];
+export const ANSI_NPT: TaperSize[] = NPT.map(([s, tpi, e0, l2, tap]) => {
+  // Pitch diameter at the face = E0 + L2/16; the NPT thread is 0.8p deep.
+  const p = 1 / tpi, e = e0 + l2 * TAPER;
+  return { size: `${s}-${tpi} NPT`, pitch: r3(p * IN), tap: mm(tap), major: mm(e + 0.8 * p), minor: mm(e - 0.8 * p), len: mm(l2) };
+});
+// Rc rows (ISO 7-1): size, threads per inch, gauge (major) diameter at the face mm, useful thread length mm, tap drill mm.
+const RC: [string, number, number, number, number][] = [
+  ["1/16", 28, 7.723, 6.5, 6.2], ["1/8", 28, 9.728, 6.5, 8.4], ["1/4", 19, 13.157, 9.7, 11.2], ["3/8", 19, 16.662, 10.1, 14.75],
+  ["1/2", 14, 20.955, 13.2, 18.25], ["3/4", 14, 26.441, 14.5, 23.75], ["1", 11, 33.249, 16.8, 30], ["1-1/4", 11, 41.91, 19.1, 38.5],
+  ["1-1/2", 11, 47.803, 19.1, 44.5], ["2", 11, 59.614, 23.4, 56],
+];
+export const ISO_RC: TaperSize[] = RC.map(([s, tpi, D, len, tap]) => {
+  // Whitworth form: thread height 0.640327p.
+  const p = IN / tpi;
+  return { size: `Rc ${s}`, pitch: r3(p), tap, major: D, minor: r3(D - 2 * 0.640327 * p), len };
+});
+export const TAPER_STANDARDS: Record<TaperStandard, TaperSize[]> = { npt: ANSI_NPT, bspt: ISO_RC };
+export const taperSize = (s: string | undefined) => [...ANSI_NPT, ...ISO_RC].find(h => h.size === s);
+export const taperStandardOf = (s: string | undefined): TaperStandard => (s && /^Rc /.test(s) ? "bspt" : "npt");
