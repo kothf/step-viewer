@@ -119,7 +119,7 @@ const inShard = k => {
 };
 // A click on a Features tree row. While a command panel is open the tree is the folded fly-out over the view
 // (FR-UI-003): open it for the click and fold it again, so later clicks in the view are not covered.
-/** A new drawing of the open model with Standard 3 views (since 1.516.0 a new drawing starts with an empty sheet). */
+/** A new drawing of the open model with Standard 3 views (since 1.517.0 a new drawing starts with an empty sheet). */
 async function newDrawing3(pg) {
   await pg.click("#new-more"); await pg.click("#new-drawing");
   await pg.waitForFunction(() => window.__sv.drw.loaded(), null, { timeout: 120000 });
@@ -3429,6 +3429,12 @@ try {
     await mp.selectOption('#mc-pm select[data-k="kind"]', "tapped");
     await idle();
     const holePanel = await mp.evaluate(() => ({ n: document.querySelector('#mc-pm [data-focus="pts"]')?.textContent, d: document.querySelector('#mc-pm input[data-num="diameter"]')?.value, td: document.querySelector('#mc-pm input[data-num="threadDepth"]')?.value }));
+    // 1.516: a through tapped hole's thread can run through all too: the depth box goes, the 3D thread is the plate's 20 mm.
+    const thrSel = await mp.evaluate(() => document.querySelector('#mc-pm select[data-k="threadEnd"]')?.value ?? null);
+    await mp.selectOption('#mc-pm select[data-k="threadEnd"]', "through").catch(() => {});
+    await idle();
+    const thrAll = await mp.evaluate(() => ({ box: !!document.querySelector('#mc-pm input[data-num="threadDepth"]'), len: Object.values(window.__sv.model.last()?.frames ?? {}).find(f => f.len)?.len ?? null }));
+    check(thrSel === "blind" && !thrAll.box && Array.isArray(thrAll.len) && thrAll.len.length === 2 && thrAll.len.every(x => Math.abs(x - 20) < 0.01), `model 1.516: tapped hole thread end Through all (${thrSel}, ${JSON.stringify(thrAll)})`);
     await mp.click("#mc-ok");
     await idle();
     const vHole = await vol(), stHole = await lastSt();
@@ -4680,7 +4686,7 @@ try {
     const rows = () => mp.evaluate(() => [...document.querySelectorAll("#vault-panel .v-row")].map(r => r.textContent.replace(/\s+/g, " ").trim()).join(" | "));
     const newDrawing = async () => {
       await mp.evaluate(() => document.querySelector("#new-drawing").click());
-      // Since 1.516.0 a new drawing starts empty: add Standard 3 views once the model is in.
+      // Since 1.517.0 a new drawing starts empty: add Standard 3 views once the model is in.
       await mp.waitForFunction(() => window.__sv.drw.loaded(), null, { timeout: 90000 });
       await mp.evaluate(() => document.querySelector('#drw [data-a="std3"]').click());
       await mp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length > 0, null, { timeout: 90000 });
@@ -10980,7 +10986,7 @@ try {
     check(/Полосы/.test(ruAna) && !/[A-Za-z]{3}/.test(ruAna) && off.hidden && off.own, `analysis: panel in Russian; turning it off restores the parts (${JSON.stringify([ruAna.slice(0, 60), off])})`);
 
     // Drawing view palette: every standard view drawn; drag the isometric one onto the sheet.
-    // 1.516: a new drawing starts with an empty sheet and the palette (SolidWorks); Standard 3 views stays a command.
+    // 1.517: a new drawing starts with an empty sheet and the palette (SolidWorks); Standard 3 views stays a command.
     await ap.click("#new-more"); await ap.click("#new-drawing");
     await ap.waitForFunction(() => window.__sv.drw.loaded(), null, { timeout: 120000 });
     const fresh = await ap.evaluate(() => ({ n: window.__sv.drw.doc().sheets[0].views.length, st: document.querySelector(".drw-status").textContent }));
@@ -10994,7 +11000,7 @@ try {
     await ap.waitForFunction(() => window.__sv.drw.doc().sheets[0].views.length === 4, null, { timeout: 10000 });
     await ap.keyboard.press("Escape");
     const iso = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views.at(-1); return { orient: v.orient, style: v.style, x: v.x, y: v.y, parent: v.parent ?? null }; });
-    // 1.516: the palette's pictures run behind the views and are never dropped as unwanted, so placing views
+    // 1.517: the palette's pictures run behind the views and are never dropped as unwanted, so placing views
     // while they are made neither blanks them nor starts the drawing worker over (that cost a cold start per view).
     const recycles = await ap.evaluate(() => window.__sv.drw.helper().recycles);
     check(tiles === "front,top,right,iso,back,bottom,left" && iso.orient === "iso" && iso.style === "hlr" && !iso.parent && iso.x > 200 && iso.y > 150 && recycles === 0,

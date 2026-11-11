@@ -1816,6 +1816,41 @@ test("1.483: a model snapshot (binary BREP) reads back with its components in or
   assert.equal(JSON.stringify(poly(oc, m, view, 0.05, 0.1).vis), JSON.stringify(p0.vis));
 });
 
+test("thread end Through all: the thread runs the whole drill in the model, the drawing and the callout", async () => {
+  const { topology } = await import("../../src/kernel/drawing");
+  const { modelItems } = await import("../../src/drawing/items");
+  const { threadPrims, projector, holeText } = await import("../../src/drawing/annot");
+  const { ORIENTS } = await import("../../src/drawing/views");
+  const oc = await occ(), m = new Modeller(oc);
+  const top = { face: { name: "f1:end" } };
+  // A 20 mm plate: M8 through all with its thread through all (the stale 10 mm depth is ignored), and an M6
+  // up to next with its thread through all.
+  const d = doc([rect("s1", 100, 60), { id: "f1", type: "extrude", name: "E", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
+    { id: "h1", type: "hole", name: "Hole1", plane: top, pts: [[20, 0], [30, 10]], kind: "tapped", size: "M8", diameter: { v: 6.8 }, end: "through", depth: { v: 0 }, threadDepth: { v: 10 }, threadEnd: "through", major: 8, pitch: 1.25 },
+    { id: "h2", type: "hole", name: "Hole2", plane: top, pts: [[-20, 0]], kind: "tapped", size: "M6", diameter: { v: 5 }, end: "next", depth: { v: 12 }, threadDepth: { v: 10 }, threadEnd: "through", major: 6, pitch: 1 }]);
+  const r = m.evaluate(d), body = r.body!;
+  assert.deepEqual(r.statuses.map(s => s.ok), [true, true, true, true]);
+  assert.deepEqual(r.frames.h1.len!.map(x => Math.round(x * 1000) / 1000), [20, 20], "the 3D thread is as long as the plate");
+  assert.deepEqual(r.frames.h2.len!.map(x => Math.round(x * 1000) / 1000), [20]);
+  const mi = modelItems(d, r.frames, r.sketches);
+  assert.deepEqual(mi.threads.map(t => t.L), [null, null, null], "drawing threads run the whole drill");
+  const topo = topology(oc, body.shape, body.names);
+  const pl = { s: 1, uc: 0, vc: 0, x: 0, y: 0, box: [-50, -30, 50, 30] as [number, number, number, number], ready: true };
+  const front = projector(ORIENTS.front);
+  const pf = threadPrims({ id: "front", name: "front", orient: "front", x: 0, y: 0 }, pl, mi.threads, topo, front.P, front.n);
+  const lims = [...new Set(pf.filter(p => p.t === "l" && Math.abs(p.p[1] - p.p[3]) < 1e-9).map(p => p.t === "l" ? Math.round(p.p[1] * 1000) / 1000 : NaN))].sort((a, b) => a - b);
+  assert.deepEqual(lims, [0], "every thread stops at the bottom face");
+  const ctx = { topo, holes: mi.holes, threads: mi.threads, items: [], box: null, dec: ".", label: (s: string) => s } as never;
+  assert.deepEqual(holeText({ t: "c", c: [20, 0, 20], ax: [0, 0, 1], r: 3.4 } as never, ctx), ["2× Ø6.8 THRU", "M8-6H THRU"]);
+  assert.deepEqual(holeText({ t: "c", c: [-20, 0, 20], ax: [0, 0, 1], r: 2.5 } as never, ctx), ["Ø5", "M6-6H"], "up to next: the thread is as deep as the drill");
+  // Blind again: the typed depth is back.
+  const d2 = structuredClone(d);
+  delete (d2.features[2] as { threadEnd?: string }).threadEnd;
+  const r2 = m.evaluate(d2);
+  assert.equal(r2.frames.h1.len, undefined);
+  assert.deepEqual(modelItems(d2, r2.frames, r2.sketches).threads.map(t => t.L), [10, 10, null]);
+});
+
 test("a tapped Hole Wizard hole draws its cosmetic thread; a section leaves out threads its cut took away (drawings exam #44, #45)", async () => {
   const { topology } = await import("../../src/kernel/drawing");
   const { modelItems } = await import("../../src/drawing/items");

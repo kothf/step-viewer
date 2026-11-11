@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.516.0] - 2026-11-11
+## [1.517.0] - 2026-11-11
 
 ### Changed
 
@@ -15,6 +15,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - Drawings: placing a view from the View palette while its pictures were still being drawn restarted the drawing kernel, so the view took seconds to appear (and a palette picture stayed blank). The pictures now wait behind the views and are never thrown away, so a palette view shows at once.
 - Drawings: the drawing kernel starts a few seconds after a model opens, so a new drawing's palette and first view no longer wait about 3 s (longer on slower computers) for OpenCASCADE to set itself up.
+
+## [1.516.0] - 2026-11-11
+
+### Added
+- Hole: a tapped hole that is not blind (Through all, Up to next, Up to face or plane) has a Thread end choice, Blind or Through all, as in SolidWorks' Hole Wizard. Through all runs the cosmetic thread the whole length of the drill in the 3D view and in drawings, and the drawing callout reads "M6-6H THRU" (or no depth for an up-to hole) instead of a thread depth. The Thread rows now sit under End condition.
+
+
 
 ## [1.515.0] - 2026-11-11
 
@@ -3210,7 +3217,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.516.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.517.0...HEAD
+[1.517.0]: https://github.com/kothf/step-viewer/compare/v1.516.0...v1.517.0
 [1.516.0]: https://github.com/kothf/step-viewer/compare/v1.515.0...v1.516.0
 [1.515.0]: https://github.com/kothf/step-viewer/compare/v1.514.0...v1.515.0
 [1.514.0]: https://github.com/kothf/step-viewer/compare/v1.513.0...v1.514.0
