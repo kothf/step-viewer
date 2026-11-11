@@ -24,8 +24,8 @@ const BASE: Record<FeatureType, string> = { sketch: "Sketch", extrude: "Extrude"
 /** Every feature type this version knows: a file with another one needs a newer app. */
 export const FEATURE_TYPES: readonly string[] = Object.keys(BASE);
 
-export function nextName(doc: PartDoc, type: FeatureType, cut = false) {
-  const base = cut ? (type === "revolve" ? "Revolve cut" : type === "sweep" ? "Cut-Sweep" : type === "loft" ? "Cut-Loft" : "Cut") : BASE[type];
+export function nextName(doc: PartDoc, type: FeatureType, cut = false, own?: string) {
+  const base = own ?? (cut ? (type === "revolve" ? "Revolve cut" : type === "sweep" ? "Cut-Sweep" : type === "loft" ? "Cut-Loft" : "Cut") : BASE[type]);
   let n = 1;
   const names = new Set(doc.features.map(f => f.name));
   while (names.has(`${base}${n}`)) n++;

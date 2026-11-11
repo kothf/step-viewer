@@ -837,6 +837,12 @@ export interface LoftFeature {
   endLen?: number;
   /** Merge result off: the lofted body is added as a new body (boss only). */
   merge?: boolean;
+  /**
+   * Boundary Boss/Cut (FRS P5): `profiles` are Direction 1 and `guides` Direction 2; with two or more
+   * Direction 2 curves the body is filled cell by cell with Coons patches through both directions'
+   * curves exactly. Ruled, close, centreline, connectors and the start/end constraints do not apply.
+   */
+  boundary?: true;
 }
 
 /**
