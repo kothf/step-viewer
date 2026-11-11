@@ -424,9 +424,16 @@ export class DrawingKernel {
     if (!p) {
       if (!this.loaded) return Promise.reject(new Error("No model loaded"));
       const gen = this.gen, cfg = req.cfg;
-      p = (cfg ? this.config(cfg) : this.loaded).then(() => this.call<{ proj: Projection }>(req.p
+      const ask = () => this.call<{ proj: Projection }>(req.p
         ? { type: "secpreview", view: req.view, p: req.p, poly: req.poly, stair: req.stair, align: req.align, exclude: req.exclude, cfg, only: req.only }
-        : { type: "preview", view: req.view, cfg, only: req.only })).then(r => {
+        : { type: "preview", view: req.view, cfg, only: req.only });
+      // A worker started over (a dropped exact job, memory) fails the calls waiting on it: ask once more on the new
+      // one, unless the exact lines came first (CI: a section placed while the other side's exact cut ran got none).
+      const again = (err: Error) => gen === this.gen && this.recycling && !this.cache.has(key) ? this.recycling.then(() => {
+        if (gen !== this.gen || this.cache.has(key)) throw err;
+        return (cfg ? this.config(cfg) : Promise.resolve()).then(ask);
+      }) : Promise.reject(err);
+      p = (cfg ? this.config(cfg) : this.loaded).then(ask).catch(again).then(r => {
         this.previewsMade++;
         if (r.proj.cut) this.sectionPreviewsMade++;
         if (gen === this.gen && !this.cache.has(key)) this.previews.set(key, r.proj);

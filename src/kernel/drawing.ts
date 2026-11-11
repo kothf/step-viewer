@@ -245,6 +245,14 @@ export function viewCurves(oc: any, shape: any, view: ViewDir): { circles: Circl
 }
 
 /**
+ * Angular deflection of the fast views' mesh (rad). The chord error (1/1000 of the model) already bounds every
+ * chord's sag; the angle only refines small round features below it (sag r·a²/8). 0.1 made them ~10 times finer than
+ * needed: on the engine assembly 0.3 meshes in 1.8 s instead of 5.9 s and each polygonal HLR takes 1.0 s instead of
+ * 2.2 s, and the Front view's visible lines agree within 0.6 mm (1.2 chord errors) for all but 0.1 % of their length.
+ */
+export const FAST_ANGLE = 0.3;
+
+/**
  * Fast hidden-line removal for big models (drawings exam: a 57-part assembly never finished the exact HLR):
  * OCCT's polygonal HLR on a fine mesh, then each polyline is rebuilt from what it really is. Mesh nodes on an
  * edge lie on the exact curve, so straight runs become lines with exact ends, and runs on an end-on circle of the
@@ -256,7 +264,7 @@ export function projectFast(oc: any, shape: any, view: ViewDir, lin: number): Pr
   const poly = (l: number, a: number): Projection => {
     try { return projectPoly(oc, shape, view, l, a); } catch (e) { return { vis: [], hid: [], box: [0, 0, 0, 0], ms: 0, fail: e instanceof Error ? e.message : String(e) }; }
   };
-  let p = poly(lin, 0.1);
+  let p = poly(lin, FAST_ANGLE);
   // The polygonal HLR can come back empty (drawings exam round three: an engine assembly got views with no
   // lines at all). Try again on a fresh, coarser mesh (what the previews use), then fall back to the exact HLR.
   if (!p.vis.length) {

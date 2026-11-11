@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.497.0] - 2026-11-11
+
+### Changed
+
+- Big assembly drawings get their first view about 4 seconds sooner and every later view about a second sooner: the mesh that the fast views of big models are drawn from is no longer refined on small round features far below its own accuracy (the engine assembly: mesh 5.9 s → 1.8 s, each view's hidden-line pass 2.2 s → 1.0 s, with the same lines to within the mesh accuracy).
+
+### Fixed
+
+- A drawing view's quick preview no longer goes missing when the drawing kernel starts over while it is asked for (for example when a section is placed while the exact lines of the other side are being made): it is asked again from the restarted kernel.
+
 ## [1.496.0] - 2026-11-11
 
 ### Added
@@ -3058,7 +3068,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.496.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.497.0...HEAD
+[1.497.0]: https://github.com/kothf/step-viewer/compare/v1.496.0...v1.497.0
 [1.496.0]: https://github.com/kothf/step-viewer/compare/v1.495.0...v1.496.0
 [1.495.0]: https://github.com/kothf/step-viewer/compare/v1.494.0...v1.495.0
 [1.494.0]: https://github.com/kothf/step-viewer/compare/v1.493.0...v1.494.0
