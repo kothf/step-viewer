@@ -1434,3 +1434,23 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .vault-win-h h3 { margin: 0; }
 .vault-win-b { overflow-y: auto; min-height: 0; }
 .v-nofsa { margin-top: 6px; }
+
+/* Hole Wizard panel (FR-FT-051 UX): Type/Positions tabs, type pictograms, section diagram and callout preview. */
+.pm-htabs { margin: 0 0 4px; }
+.pm-hpreview { display: flex; flex-direction: column; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 8px; padding: 8px; margin: 8px 0; background: var(--panel-2); }
+.pm-hpreview .pm-help { align-self: stretch; margin: 0; }
+.pm-hcallout { font-family: var(--mono); font-size: var(--fs-caption); line-height: 1.5; color: var(--text); text-align: center; }
+.hole-diagram, .hole-icon { display: block; max-width: 100%; height: auto; }
+.hole-diagram .hd-mat { fill: url(#hd-hatch); stroke: var(--muted); stroke-width: 1; }
+.hole-diagram .hd-hl { stroke: var(--muted); stroke-width: 0.8; }
+.hole-icon .hd-mat { fill: var(--muted); fill-opacity: 0.35; stroke: none; }
+.hd-edge { fill: none; stroke: var(--text); stroke-width: 1.4; stroke-linejoin: round; }
+.hole-icon .hd-edge { stroke-width: 1.2; }
+.hd-thread { fill: none; stroke: var(--accent); stroke-width: 1.2; stroke-dasharray: 3 2; }
+.hd-break { fill: none; stroke: var(--muted); stroke-width: 1; }
+.hd-axis { fill: none; stroke: var(--accent); stroke-width: 0.8; stroke-dasharray: 8 2 2 2; }
+.pm-hkinds { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin: 4px 0 6px; }
+.pm-hkind { display: flex; align-items: center; justify-content: center; min-height: 34px; padding: 3px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); cursor: pointer; }
+.pm-hkind:hover { border-color: var(--accent); }
+.pm-hkind.on { border-color: var(--accent); background: var(--accent-soft); }
+.pm-favs > summary { font-size: 12px; font-weight: 600; cursor: pointer; padding: 4px 0; }

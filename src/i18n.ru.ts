@@ -941,6 +941,7 @@ export const RU: Record<string, string> = {
   "ANSI inch UNF": "ANSI дюймовая UNF",
   "Flat bottom (no drill point)": "Плоское дно (без конуса сверла)",
   "Positions": "Расположение",
+  "Callout": "Обозначение",
   "Hole positions": "Положения отверстий",
   "{n} hole|{n} holes": "{n} отверстие|{n} отверстия|{n} отверстий",
   "Clear holes": "Убрать отверстия",
