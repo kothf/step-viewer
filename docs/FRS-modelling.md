@@ -164,7 +164,7 @@ MöbiusCAD keeps the same workflow model (history-based parts, mated assemblies,
 | Draft | Neutral plane, parting line, step | P2 (neutral plane) |
 | Rib | | P3 |
 | Linear, circular, mirror pattern; curve-driven, sketch-driven, table-driven, fill, variable patterns | Features, faces or bodies | P2 (linear, circular, mirror), P3 (sketch-driven), P5 (others) |
-| Dome, wrap, deform, flex, indent, scale | | P5 (dome 1.547.0, FR-FT-103; indent, scale) |
+| Dome, wrap, deform, flex, indent, scale | | P5 (dome 1.547.0, FR-FT-103; wrap 1.548.0, FR-FT-104; indent, scale) |
 | Reference geometry: plane, axis, coordinate system, point, mate reference | | P1 (plane, axis, point), P2 (coordinate system) |
 | Curves: split line, projected, composite, helix/spiral, curve through points | | P3 (helix, split line), P5 (others) |
 | Multibody: combine, intersect, split, delete/keep body, move/copy body, insert part | | P3 |
@@ -657,6 +657,7 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 - **FR-FT-101** (P5, S) Direct editing on any body, including imported ones: **Move face** (offset / translate / rotate), **Delete face** (heal), **Replace face**. Kernel: `BRepOffsetAPI_MakeOffsetShape` / `BRepAlgoAPI_Defeaturing`.
 - **FR-FT-102** (P5, C) Feature recognition on imported bodies: holes (cylinders through), fillets, chamfers, extrusions, turning them into editable features.
 - **FR-FT-103** (P5, S) **Dome** on flat faces: a distance at the face's middle, Reverse direction (a dent), Elliptical for round faces; round faces get an exact spherical or ellipsoidal cap, other outlines a smooth patch through the edges. Done in 1.547.0 (`Modeller.dome`). Left: domes on curved faces and the Continuous dome option for polygons.
+- **FR-FT-104** (P5, S) **Wrap**: a closed sketch on a plane parallel to a cylinder's axis wrapped onto a cylindrical face without stretching, Emboss (out by a depth) or Deboss (in); shafts and holes. Done 1.548.0.
 
 ### 9.12 Specialist features (P6)
 

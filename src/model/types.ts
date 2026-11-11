@@ -862,6 +862,18 @@ export interface DomeFeature {
   elliptical?: boolean;
 }
 /**
+ * Wrap (FR-FT-104, P5): the closed regions of `sketch` (on a plane parallel to the axis) wrapped round the
+ * cylinder `face` without stretching (arc length = sketch distance across the axis) and raised by `depth`
+ * (emboss) or sunk into it (deboss). Faces `<id>:top|base|side:<k>`.
+ */
+export interface WrapFeature {
+  id: string; type: "wrap"; name: string; suppressed?: boolean;
+  sketch: string;
+  face?: FaceRef;
+  kind: "emboss" | "deboss";
+  depth: Num;
+}
+/**
  * Indent (FR-BODY-007, P5): the target body takes the shape of the tool bodies. The tools grown by
  * `clearance` are cut out; unless `cut`, a wall `thickness` thick around them is added on the side the
  * tools press into (the target swept that way), like SolidWorks' Indent. The tool bodies stay.
@@ -1062,7 +1074,7 @@ export interface IntersectRegion { c: V3; v: number; out: boolean; /** Indexes o
 export type Feature = SheetFeature | SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature | CsysFeature
   | ShellFeature | DraftFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | SketchPatternFeature | HoleFeature | ThreadFeature
   | HelixFeature | SweepFeature | LoftFeature | RibFeature | SplitFeature | CurveFeature | SweepSurfFeature | Sketch3dFeature
-  | CombineFeature | IndentFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ImportFeature | HealFeature | ScaleFeature | DeleteFaceFeature | MoveFaceFeature | DomeFeature
+  | CombineFeature | IndentFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ImportFeature | HealFeature | ScaleFeature | DeleteFaceFeature | MoveFaceFeature | DomeFeature | WrapFeature
   | PlaneSurfFeature | ExtrudeSurfFeature | OffsetSurfFeature | KnitFeature | ThickenFeature | ReplaceFaceFeature | RevolveSurfFeature | LoftSurfFeature | TrimSurfFeature | FillSurfFeature | ExtendSurfFeature | UntrimSurfFeature | IntersectFeature
   | WeldFeature;
 export type FeatureType = Feature["type"];

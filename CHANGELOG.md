@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.548.0] - 2026-11-11
+
+### Added
+
+- Wrap (FR-FT-104, in the Bodies menu after Dome): a closed sketch on a plane parallel to a cylinder's axis wraps round the picked cylindrical face without stretching (distance across the axis becomes arc length), then stands out of it by the depth (Emboss) or sinks into it (Deboss). Lines, arcs, circles, ellipses and splines map exactly as B-splines on the cylinder; holes work too (Emboss grows into the hole). Picks the selected or last unused closed sketch and a picked round face, with a live preview.
+
 ## [1.547.0] - 2026-11-11
 
 ### Added
@@ -3405,7 +3411,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.547.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.548.0...HEAD
+[1.548.0]: https://github.com/kothf/step-viewer/compare/v1.547.0...v1.548.0
 [1.547.0]: https://github.com/kothf/step-viewer/compare/v1.546.0...v1.547.0
 [1.546.0]: https://github.com/kothf/step-viewer/compare/v1.545.0...v1.546.0
 [1.545.0]: https://github.com/kothf/step-viewer/compare/v1.544.0...v1.545.0
