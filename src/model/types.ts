@@ -73,7 +73,11 @@ export interface SkRel {
   dangling?: boolean;
 }
 
-export type DimKind = "distance" | "hdistance" | "vdistance" | "radius" | "diameter" | "angle";
+/** `arclen`: the length of an arc (e = [arc]) along it, counter-clockwise from its start to its end (FR-SK-060). */
+export type DimKind = "distance" | "hdistance" | "vdistance" | "radius" | "diameter" | "angle" | "arclen";
+
+/** Where a distance meets a circle or arc (FR-SK-060): its centre, its near side (min) or its far side (max). */
+export type ArcCond = "c" | "min" | "max";
 
 export interface SkDim {
   id: string;
@@ -95,6 +99,11 @@ export interface SkDim {
   off?: boolean;
   /** Arrowheads inside or outside the extension lines / rim (FR-SK-068); absent = automatic. */
   arrows?: "in" | "out";
+  /**
+   * Arc conditions of a distance, one per entry of `e` (FR-SK-060): a circle or arc measured from its near side
+   * (min) or far side (max) instead of its centre; entries that are not circles/arcs are ignored.
+   */
+  cond?: ArcCond[];
 }
 
 /** Plane of a sketch or a reference: a standard plane, a planar face of the model, a reference plane feature, or a face of another component (in-context). */

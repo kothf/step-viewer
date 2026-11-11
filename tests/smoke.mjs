@@ -2739,6 +2739,45 @@ try {
     const flip2 = await mp.evaluate(id => window.__sv.model.editor().sk.dims.find(x => x.id === id)?.arrows ?? null, placed.id);
     check(flip0.auto === "in" && flip0.dot && flip0.mesh && flip1 === "out" && flip2 === null,
       `model 1.540: sketch dimension arrowheads flip inside/outside from the dot on the selected dimension, one undo step (FR-SK-068) (${JSON.stringify({ flip0, flip1, flip2 })})`);
+    // 1.555: Shift+click a circle's near side and the other's far side for a min/max distance, switch one back to
+    // its centre from the right-click menu; an arc and both its ends give an arc length (FR-SK-060).
+    await tool("circle");
+    await click([-60, -70]); await click([-55, -70]);
+    await click([-30, -70]); await click([-27, -70]);
+    await tool("dim");
+    await mp.keyboard.down("Shift");
+    await click([-55, -70]); await click([-27, -70]);
+    await mp.keyboard.up("Shift");
+    await click([-42, -55]);
+    await mp.waitForTimeout(150);
+    await mp.keyboard.press("Escape");
+    await mp.waitForTimeout(100);
+    const condDim = () => mp.evaluate(() => { const d = window.__sv.model.editor().sk.dims.at(-1); return d && { id: d.id, t: d.t, cond: d.cond ?? null, v: d.val.v }; });
+    const cd0 = await condDim();
+    await tool("select");
+    await mp.evaluate(id => window.__sv.model.editor().select([id]), cd0?.id);
+    await mp.waitForTimeout(80);
+    // On empty space the right-click menu keeps the selected dimension.
+    await rclick([-90, -40]);
+    const condMenu = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent));
+    await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].find(b => b.textContent.includes("Second arc condition: Centre"))?.click());
+    await mp.waitForTimeout(150);
+    const cd1 = await condDim();
+    await mp.keyboard.press("Escape");
+    await tool("arc");
+    await click([-60, -100]); await click([-50, -100]); await click([-60, -90]);
+    await tool("dim");
+    await click([-60 + 7.0711, -100 + 7.0711]); await click([-50, -100]); await click([-60, -90]);
+    await click([-45, -85]);
+    await mp.waitForTimeout(150);
+    await mp.keyboard.press("Escape");
+    await mp.waitForTimeout(100);
+    const al = await condDim();
+    await tool("select");
+    check(cd0?.t === "distance" && JSON.stringify(cd0.cond) === '["min","max"]' && near(cd0.v, 28, 0.05)
+      && condMenu.some(m => m.includes("First arc condition")) && JSON.stringify(cd1?.cond) === '["min","c"]' && near(cd1?.v, 25, 0.05)
+      && al?.t === "arclen" && near(al.v, 5 * Math.PI, 0.05),
+      `model 1.555: Shift+click near/far side distances to circles, arc condition menu, arc length from an arc and both ends (FR-SK-060) (${JSON.stringify({ cd0, condMenu, cd1, al })})`);
     // Quick snaps (FR-SK-046): Tangent from the quick access bar ends the next line on the circle, tangent to it;
     // Intersection from the right-click menu puts a point where a line crosses the circle, with an intersection relation.
     await tool("circle");
