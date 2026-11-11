@@ -3650,7 +3650,7 @@ try {
       && cap2.r === true && cap2.hold === 4.8 && cap2.lt === 12 && cap2.cb === 11 && cap2.need && cap2.box && cap2.callout.includes("⌴Ø11") && cap2.callout.includes("M6-6H ↧4.8") && cap2.ok
       && cback2.k === "tapped" && cback2.r === null && cback2.s === "M6",
       `model 1.536: Hole Wizard captive screw (${JSON.stringify({ cap1, cap2, cback2 })})`);
-    // 1.537 (FR-FT-052): a click on another face of the plate (a side face we can see) adds a hole square to it there.
+    // 1.538 (FR-FT-052): a click on another face of the plate (a side face we can see) adds a hole square to it there.
     {
       let side = null;
       for (const w of [[0, -30, 10], [50, 0, 10], [0, 30, 10], [-50, 0, 10]]) {
