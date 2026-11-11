@@ -473,7 +473,7 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 - **FR-SK-012** (P1, M) Construction line (centerline): any entity can be toggled construction (Q key, or a property). Construction entities do not form profiles.
 - **FR-SK-013** (P1, M) Rectangle: corner-corner, centre-corner; produces 4 lines with horizontal/vertical and coincident relations. P2: 3-point corner, 3-point centre, parallelogram. **Done (1.152.0).**
 - **FR-SK-014** (P1, M) Circle: centre-radius, 3-point (P2: perimeter tangent circle). **Done (perimeter circle 1.167.0).**
-- **FR-SK-015** (P1, M) Arc: centre-start-end, 3-point, tangent arc from an endpoint. **Tangent Arc tool done (1.509.0).**
+- **FR-SK-015** (P1, M) Arc: centre-start-end, 3-point, tangent arc from an endpoint. **Tangent Arc tool done (1.510.0).**
 - **FR-SK-016** (P1, M) Polygon: n sides (3–64), inscribed/circumscribed, centre + vertex; adds construction circle and equal relations.
 - **FR-SK-017** (P2, M) Slot: straight (overall/centre-to-centre), centre straight, 3-point arc slot, centre arc slot; with width dimension. **Done (1.144.0)**: `slot`/`cslot`/`aslot`/`aslot3` tools, live preview, width + length/radius dims with the Modify box.
 - **FR-SK-018** (P2, M) Ellipse and elliptical arc.
@@ -491,7 +491,7 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 - **FR-SK-034** (P1, M) Offset entities: selected chain or loop, distance, side, both sides, cap ends (arc/line); keeps an offset relation so the result follows the source (P2) or is static (P1). *Done: static copy (1.20.0); both sides, arc/line caps and linked offsets (offset relations + one dimension) in 1.240.0.*
 - **FR-SK-035** (P1, M) Convert entities (project model edges, loops of a face, or other sketches' entities into this sketch) with an "on edge" relation that follows the model.
 - **FR-SK-036** (P2, M) Intersection curve: intersection of the sketch plane with selected faces/bodies.
-- **FR-SK-037** (P2, M) Mirror entities about a line (adds symmetric relations); dynamic mirror while drawing. **Dynamic mirror done (1.509.0).**
+- **FR-SK-037** (P2, M) Mirror entities about a line (adds symmetric relations); dynamic mirror while drawing. **Dynamic mirror done (1.510.0).**
 - **FR-SK-038** (P2, M) Linear and circular sketch patterns with count and spacing as dimensions; instances keep equal relations to the seed.
 - **FR-SK-039** (P2, M) Move, copy, rotate, scale entities (numeric and by drag; relations to unselected geometry are kept or removed by choice).
 - **FR-SK-040** (P2, M) Import DXF (R12–2018 lines, arcs, circles, polylines with bulges, splines, ellipses; layers selectable; units) into the active sketch, reusing the parser for profile export where possible.
