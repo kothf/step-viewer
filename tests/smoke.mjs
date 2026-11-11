@@ -971,7 +971,8 @@ try {
       }
       if (w === 375) {
         await pg.click("#g-bottomnav [data-sheet=layers]");
-        await pg.waitForTimeout(250);
+        // The sheet slides in (200 ms `sheet-in`): wait for it to finish, not a fixed time (main CI on 1.497.0 read it 12 px low).
+        await pg.waitForFunction(() => { const e = document.querySelector("#g-left"); return getComputedStyle(e).display !== "none" && e.getAnimations().every(a => a.playState === "finished"); }, null, { timeout: 3000 }).catch(() => {});
         const sh = await pg.evaluate(() => { const e = document.querySelector("#g-left"), b = e.getBoundingClientRect(); return { full: b.left <= 0 && b.width >= innerWidth - 1 && b.top <= 0, role: e.getAttribute("role"), modal: e.getAttribute("aria-modal"), focus: e.contains(document.activeElement) }; });
         await pg.keyboard.press("Escape");
         await pg.waitForTimeout(100);
