@@ -2970,7 +2970,7 @@ try {
       `model 1.351: Draft's selection boxes have their own colours and the picked face is drawn in the faces box's colour with a "Faces to draft" tag (${JSON.stringify(bx)})`);
     // 1.387 (FR-SEL-011, AT-UX-6): the other panels' boxes: the Hole Wizard's face is drawn in the Face box's colour with its tag, and an extrude's Start at / Up to faces get one box each.
     await mp.evaluate(() => window.__sv.modeller.command("hole"));
-    await mp.waitForSelector('#mc-pm .pm-box[data-focus="hplane"]');
+    await mp.waitForSelector('#mc-pm .pm-box[data-focus="hplane"]', { state: "attached" });
     await mp.evaluate(() => {
       const m = window.__sv.modeller, d = m.mode.draft, names = window.__sv.model.last().faceNames;
       d.plane = { face: { name: names.find(n => n.startsWith("cpe:")) } }; m.draftChanged();
@@ -3781,6 +3781,22 @@ try {
     await idle();
     await mp.selectOption('#mc-pm select[data-k="size"]', "M8");
     await idle();
+    // 1.524 (FR-FT-051 UX): the panel shows the hole's half section and its drawing callout, types as pictograms, Type/Positions tabs; favourites fold.
+    const hux = await mp.evaluate(() => ({ svg: !!document.querySelector('#mc-pm [data-hpreview] svg.hole-diagram path.hd-edge'), callout: document.querySelector('#mc-pm .pm-hcallout')?.textContent ?? "", icons: document.querySelectorAll('#mc-pm [data-hkind] svg').length, on: document.querySelector('#mc-pm [data-hkind].on')?.dataset.hkind, tabs: [...document.querySelectorAll('#mc-pm .pm-htabs [role=tab]')].map(b => b.dataset.htab + ":" + b.getAttribute("aria-selected")).join(), favOpen: document.querySelector('#mc-pm [data-ui=favs]')?.open }));
+    await mp.click('#mc-pm [data-hkind="csink"]');
+    await idle();
+    const huxK = await mp.evaluate(() => ({ kind: window.__sv.model.mode().draft.kind, callout: document.querySelector('#mc-pm .pm-hcallout')?.textContent ?? "" }));
+    await mp.click('#mc-pm [data-htab="pos"]');
+    const huxP = await mp.evaluate(() => ({ pos: !document.querySelector('#mc-pm [data-hpane="pos"]').hidden, type: !document.querySelector('#mc-pm [data-hpane="type"]').hidden, face: !!document.querySelector('#mc-pm [data-hpane="pos"] .pm-box[data-focus="hplane"]') }));
+    await mp.click('#mc-pm [data-htab="type"]');
+    await mp.click('#mc-pm [data-hkind="cbore"]');
+    await idle();
+    await mp.selectOption('#mc-pm select[data-k="size"]', "M8");
+    await idle();
+    check(hux.svg && hux.callout.includes("⌴Ø15") && hux.icons === 8 && hux.on === "cbore" && hux.tabs === "type:true,pos:false" && hux.favOpen === false
+      && huxK.kind === "csink" && huxK.callout.includes("⌵Ø") && huxP.pos && !huxP.type && huxP.face,
+      `model 1.524: Hole Wizard panel preview, type pictograms and Type/Positions tabs (${JSON.stringify({ hux, huxK, huxP })})`);
+    await mp.click('#mc-pm [data-ui="favs"] > summary');
     await mp.fill('#mc-pm input[data-ui="favName"]', "M8 cbore");
     await mp.click('#mc-pm [data-ui="favSave"]');
     await mp.selectOption('#mc-pm select[data-k="kind"]', "simple");
@@ -8098,6 +8114,17 @@ try {
     check(JSON.stringify(lib.found) === '["iso4032","iso4035","iso7040","iso4161"]' && lib.view && /^ISO 2338 6 x \d+$/.test(lib.desig ?? "") && hover.ghost && hover.comps === 3
       && /^ISO 4032 M6<1>$/.test(dropped.name) && JSON.stringify(dropped.at) === "[48,7,10,1]" && dropped.kind === "iso4032" && dropped.thread,
       `asm 1.517: design library search, hover preview on a hole, card dropped on the hole is sized and mated (FR-ASM-028) (${JSON.stringify({ lib, hover, dropped })})`);
+    // Spacers and retaining rings: search finds the standoffs; a DIN 471 ring is drawn from above with its opening.
+    const sp = await tp.evaluate(() => {
+      const q = document.querySelector('#asm-pm [data-f="q"]');
+      q.value = "standoff";
+      q.dispatchEvent(new Event("input"));
+      const found = [...document.querySelectorAll("#asm-pm [data-kind]")].map(b => b.dataset.kind);
+      window.__sv.asm.setFastener({ kind: "din471", size: "20" });
+      return { found, cat: document.querySelector("#asm-pm .tb-cat.on")?.dataset.cat ?? null, desig: document.querySelector("#asm-pm .tb-desig b")?.textContent, dims: [...document.querySelectorAll("#asm-pm .tb-view .tb-dt")].map(x => x.textContent) };
+    });
+    check(JSON.stringify(sp.found) === '["standoff","standoffm"]' && sp.desig === "DIN 471 20" && JSON.stringify(sp.dims) === '["d3 18.5","d1 20"]',
+      `asm toolbox 2: Toolbox standoffs, spacers and retaining rings (FR-ASM-028) (${JSON.stringify(sp)})`);
     await tp.evaluate(() => window.__sv.asm.closeTools());
     // McMaster-Carr: a downloaded STEP named "<part number>_<description>.STEP" keeps its part number and a buy link.
     const cube = [...await readFile(join(fixtures, "cube-10x10mm/Cube 10x10.stp"))];
@@ -8111,7 +8138,7 @@ try {
       document.querySelector("#asm-bom [data-a=close]").click();
       return { pn: pd.props?.partNumber, desc: pd.props?.description, vendor: pd.props?.custom?.Vendor, href: link?.getAttribute("href"), target: link?.getAttribute("target"), row, csv: a.bomCsvText().split("\r\n").slice(0, 1)[0], csvRow: a.bomCsvText().split("\r\n").find(l => l.includes("91290A115")) };
     });
-    check(panel.title === "Toolbox" && panel.groups === 6 && panel.auto
+    check(panel.title === "Toolbox" && panel.groups === 8 && panel.auto
       && /^Ball bearing 6201<1>$/.test(tb.names[1]) && /^ISO 2338 6 x \d+<1>$/.test(tb.names[2])
       && JSON.stringify(tb.mates) === '[["concentric",""],["coincident","aligned"],["concentric",""],["coincident","aligned"]]'
       && JSON.stringify(tb.brg) === "[20,20,10,1]" && JSON.stringify(tb.pin) === "[48,20,10,1]" && JSON.stringify(tb.dof) === "[1,1]"

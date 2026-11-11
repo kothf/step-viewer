@@ -14,7 +14,10 @@ export type ShapeSolid = RevSolid | HexSolid | BoxSolid;
 /** A dimension on the side view (X across, Z up): horizontal between x = a and b at z = at, or vertical between z = a and b at x = at. */
 export interface ShapeDim { sym: string; val: number; axis: "h" | "v"; a: number; b: number; at: number }
 
-export interface ToolShape { solids: ShapeSolid[]; dims: ShapeDim[] }
+/** A split ring seen from above (Z): inside/outside radius, the opening's width on +X, and the shaft or bore radius drawn dashed. */
+export interface RingPlan { ri: number; ro: number; g: number; rd: number }
+
+export interface ToolShape { solids: ShapeSolid[]; dims: ShapeDim[]; plan?: RingPlan }
 
 const rect = (r0: number, r1: number, z0: number, z1: number): [number, number][] => [[r0, z0], [r1, z0], [r1, z1], [r0, z1]];
 const ring = (ro: number, ri: number, z0: number, z1: number): RevSolid => ({ t: "rev", pts: rect(ri, ro, z0, z1) });
@@ -23,6 +26,7 @@ const ring = (ro: number, ri: number, z0: number, z1: number): RevSolid => ({ t:
 export function fastenerShape(kind: FastenerKind, size: string, L = 0): ToolShape {
   const info = fastenerInfo(kind), r = info.table[size];
   const s: ShapeSolid[] = [], dims: ShapeDim[] = [];
+  let plan: RingPlan | undefined;
   const hd = (sym: string, val: number, at: number) => dims.push({ sym, val, axis: "h", a: -val / 2, b: val / 2, at });
   const vd = (sym: string, val: number, a: number, b: number, at: number) => dims.push({ sym, val, axis: "v", a, b, at });
   const d = r.d;
@@ -68,6 +72,29 @@ export function fastenerShape(kind: FastenerKind, size: string, L = 0): ToolShap
       s.push(ring(r.d2! / 2, r.d1! / 2, 0, r.h!));
       hd("d2", r.d2!, 0); hd("d1", r.d1!, r.h!); vd("h", r.h!, 0, r.h!, r.d2! / 2 * 1.15);
       break;
+    case "din127":
+      // Seen from above, with its split.
+      s.push(ring(r.d2! / 2, r.d1! / 2, 0, r.h!));
+      plan = { ri: r.d1! / 2, ro: r.d2! / 2, g: r.g!, rd: 0 };
+      dims.push({ sym: "d2", val: r.d2!, axis: "h", a: -r.d2! / 2, b: r.d2! / 2, at: -r.d2! / 2 }, { sym: "d1", val: r.d1!, axis: "h", a: -r.d1! / 2, b: r.d1! / 2, at: r.d2! / 2 });
+      break;
+    case "din471": case "din472":
+      s.push(ring(r.d2! / 2, r.d1! / 2, -r.h!, 0));
+      plan = { ri: r.d1! / 2, ro: r.d2! / 2, g: r.g!, rd: d / 2 };
+      // Plan view dimensions (X across, the second axis up): d3 and the shaft or bore d1.
+      dims.push({ sym: "d3", val: kind === "din471" ? r.d1! : r.d2!, axis: "h", a: -(kind === "din471" ? r.d1! : r.d2!) / 2, b: (kind === "din471" ? r.d1! : r.d2!) / 2, at: r.d2! / 2 },
+        { sym: "d1", val: d, axis: "h", a: -d / 2, b: d / 2, at: -r.d2! / 2 });
+      break;
+    case "standoff": case "standoffm":
+      s.push({ t: "hex", s: r.s!, z0: 0, z1: L, ri: kind === "standoff" ? d / 2 : 0 });
+      if (kind === "standoffm") s.push({ t: "rev", pts: rect(0, d / 2, -r.ls!, 0) }, { t: "rev", pts: rect(0, d / 2, L - r.bd!, L), neg: true });
+      hd("s", r.s!, L); vd("L", L, 0, L, r.s! / 2 * 1.15);
+      if (kind === "standoffm") { hd("d", d, -r.ls!); vd("l", r.ls!, -r.ls!, 0, -r.s! / 2 * 1.15); }
+      break;
+    case "spacer":
+      s.push(ring(r.d2! / 2, r.d1! / 2, 0, L));
+      hd("D", r.d2!, L); hd("d", r.d1!, 0); vd("L", L, 0, L, r.d2! / 2 * 1.15);
+      break;
     case "iso2338": case "iso8752":
       s.push(r.d1 ? ring(d / 2, r.d1 / 2, -L, 0) : { t: "rev", pts: rect(0, d / 2, -L, 0) });
       hd("d", d, 0); vd("L", L, -L, 0, d * 0.6 + 0.02 * L);
@@ -82,7 +109,7 @@ export function fastenerShape(kind: FastenerKind, size: string, L = 0): ToolShap
       hd("D", r.D!, 0); hd("d", d, -r.B!); vd("B", r.B!, -r.B!, 0, r.D! / 2 * 1.12);
       break;
   }
-  return { solids: s, dims };
+  return { solids: s, dims, ...(plan ? { plan } : {}) };
 }
 
 /** Volume of the solids in mm³ (sockets taken off). */
@@ -115,7 +142,14 @@ const fmt = (v: number) => String(+v.toFixed(2));
 export function shapeSvg(sh: ToolShape, o: { w: number; h: number; dims?: boolean; cls?: string; label?: string }): string {
   // Outlines in model units: each solid's silhouette seen along Y.
   const solid: [number, number][][] = [], hidden: [number, number][][] = [];
-  for (const s of sh.solids) {
+  if (sh.plan) {
+    // Seen from above: the ring as one closed outline round the opening on +X, the shaft or bore dashed.
+    const { ri, ro, g, rd } = sh.plan, ai = Math.asin(Math.min(1, g / 2 / ri)), ao = Math.asin(Math.min(1, g / 2 / ro)), n = 72;
+    const arc = (r: number, a0: number, a1: number) => Array.from({ length: n + 1 }, (_, i) => { const a = a0 + ((a1 - a0) * i) / n; return [r * Math.cos(a), r * Math.sin(a)] as [number, number]; });
+    solid.push([...arc(ro, ao, 2 * Math.PI - ao), ...arc(ri, 2 * Math.PI - ai, ai)]);
+    if (rd) hidden.push(arc(rd, 0, 2 * Math.PI));
+  }
+  for (const s of sh.plan ? [] : sh.solids) {
     if (s.t === "rev") {
       const pts = s.pts.filter(p => p[0] > 1e-9);
       const rmin = Math.min(...s.pts.map(p => p[0]));
