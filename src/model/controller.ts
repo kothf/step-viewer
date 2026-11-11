@@ -2340,7 +2340,7 @@ export class ModelController {
         e.preventDefault();
         this.down = null;
         if (m.kind === "sketch") this.sketchMenu(e);
-        else if (m.kind === "none") this.showContextBar({ x: e.clientX, y: e.clientY }, false);
+        else if (m.kind === "none") { if (!this.geometryMenu(e)) this.showContextBar({ x: e.clientX, y: e.clientY }, false); }
         else { this.rightHit = m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer") ? this.host.edgeAt(e.clientX, e.clientY) : null; if (!this.edgeMenu(e)) this.commandMenu(e); }
         return;
       }
@@ -3198,7 +3198,7 @@ export class ModelController {
   /** Right-click without a drag while a feature or plane pick runs: OK and Cancel. */
   private commandMenu(e: MouseEvent) {
     const m = this.mode;
-    if (m.kind === "none") return this.emptyMenu(e);
+    if (m.kind === "none") return this.emptyMenu(e) || this.geometryMenu(e);
     if (m.kind !== "feature" && m.kind !== "plane") return false;
     const items = this.okItems();
     items.pop();
@@ -3218,6 +3218,41 @@ export class ModelController {
     this.showMenu(items, e.clientX, e.clientY, () => this.host.viewer.renderer.domElement.focus());
     const menu = document.getElementById("mc-menu");
     if (menu && this.recent.length) menu.insertAdjacentHTML("afterbegin", `<div class="mc-menu-h" role="presentation">${esc(t("Recent commands"))}</div>`);
+    return true;
+  }
+
+  /**
+   * Right-click on a face or an edge with no command running (FR-UI-025): the context toolbar's icons above the
+   * pointer and a text menu at it, headed by the feature that made the face: Edit feature, Edit sketch, Suppress,
+   * Hide body, Normal to (flat faces), Zoom to fit, Delete.
+   */
+  private geometryMenu(e: MouseEvent) {
+    if (!this.store || !this.last) return false;
+    const hit = this.host.edgeAt(e.clientX, e.clientY);
+    if (!hit || (hit.faceId == null && !hit.edge)) return false;
+    this.showContextBar({ x: e.clientX, y: e.clientY }, false);
+    const pick = this.ctxPick;
+    const names = this.last.faceNames;
+    const fid = hit.edge ? hit.edge.faces[0] : hit.faceId!;
+    const fRaw = names[fid]?.split(":")[0];
+    const f = fRaw ? this.store.feature(fRaw) : undefined;
+    const items: ([string, () => void, string?] | null)[] = [];
+    if (f) {
+      const sk = "sketch" in f && typeof f.sketch === "string" ? this.store.feature(f.sketch) : undefined;
+      items.push([t("Edit feature"), () => this.editFeature(f.id)]);
+      if (sk) items.push([t("Edit sketch"), () => this.editFeature(sk.id)]);
+      items.push([f.suppressed ? t("Unsuppress") : t("Suppress"), () => this.toggleSuppress(f.id)]);
+      items.push(null);
+    }
+    const body = this.bodyAt(e.clientX, e.clientY);
+    if (body) items.push([t("Hide body"), () => this.setBody(body, { hidden: true })]);
+    const face = !hit.edge && hit.faceId != null ? this.host.viewer.parts[0]?.data.faces[hit.faceId] : undefined;
+    if (face?.type === "plane") items.push([t("Normal to"), () => { this.ctxPick = pick; this.command("normal"); this.ctxPick = null; }]);
+    items.push([t("Zoom to fit"), () => this.host.view?.("fit")]);
+    if (f) items.push(null, [t("Delete"), () => void this.deleteFeature(f.id)]);
+    this.showMenu(items, e.clientX, e.clientY, () => this.host.viewer.renderer.domElement.focus());
+    const menu = document.getElementById("mc-menu");
+    if (menu && f) menu.insertAdjacentHTML("afterbegin", `<div class="mc-menu-h" role="presentation" translate="no">${esc(featureLabel(f.name))}</div>`);
     return true;
   }
 

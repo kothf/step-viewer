@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.534.0] - 2026-11-11
+
+### Added
+
+- Right-click menu on geometry (FR-UI-025): a right-click on a face or an edge of the part, with no command running, shows the context toolbar above the pointer and a menu at it headed by the feature that made the face: Edit feature, Edit sketch, Suppress, Hide body, Normal to (flat faces), Zoom to fit and Delete.
+
 ## [1.533.0] - 2026-11-11
 
 ### Added
@@ -3318,7 +3324,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.533.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.534.0...HEAD
+[1.534.0]: https://github.com/kothf/step-viewer/compare/v1.533.0...v1.534.0
 [1.533.0]: https://github.com/kothf/step-viewer/compare/v1.532.0...v1.533.0
 [1.532.0]: https://github.com/kothf/step-viewer/compare/v1.531.0...v1.532.0
 [1.531.0]: https://github.com/kothf/step-viewer/compare/v1.530.0...v1.531.0

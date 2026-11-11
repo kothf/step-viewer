@@ -1592,7 +1592,7 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | Confirmation corner | FR-UI-021 | ✓/✕ in the view | Done |
 | Shortcut bar on S | FR-UI-023 | Done (part and sketch) | Done |
 | Context toolbar on selection | FR-UI-026 | Done | Done |
-| Right-click menu on geometry | FR-UI-025 | Browser menu suppressed; only fillet/chamfer edge helpers | Weaker |
+| Right-click menu on geometry | FR-UI-025 | 1.534.0: right-click on a face or edge shows the context toolbar above and a menu (Edit feature, Edit sketch, Suppress, Hide body, Normal to, Zoom to fit, Delete) for the feature that made it | Done |
 | Right-click during a command: OK / Cancel / Clear selections | FR-UI-107 | 1.107.0: right-click without drag offers OK and Cancel | Done |
 | Mouse gestures | FR-UI-024 (P2, S) | 1.316.0: right-drag radial guide in parts and sketches, 4 or 8 configurable directions, opt-in | Done |
 | Heads-up view bar | FR-UI-022 | View buttons sit in the header | Weaker |
