@@ -142,3 +142,59 @@ export function recognizedHoleFeatures(holes: import("./types").RecognizedHole[]
     ...(h.cb ? { cbDia: { v: h.cb.dia }, cbDepth: { v: h.cb.depth } } : {}),
     ...(h.cs ? { csDia: { v: h.cs.dia }, csAngle: { v: h.cs.angle } } : {}) }));
 }
+
+/**
+ * Screw types a counterbore or countersink is sized for (FR-FT-051), as in SolidWorks' Type box. Heads as [dk, k]
+ * (head Ø, head height) per size, from the screw standards: ISO 4762 / DIN 7984 / ISO 7380 / ISO 1207 maximum
+ * head sizes; ISO 10642 and ISO 2009 / 7046 theoretical countersunk head Ø (ISO 7721). A counterbore for a head
+ * keeps the clearance DIN 974-1 gives the ISO 4762 head of that size (Ø and depth over the head); a countersink is
+ * the head's theoretical Ø at 90°. Inch sizes have the one type their table is for.
+ */
+export type ScrewType = NonNullable<import("./types").HoleFeature["screw"]>;
+type Head = [number, number];
+const HEADS: Record<ScrewType, Record<string, Head>> = {
+  iso4762: { "M1.6": [3, 1.6], M2: [3.8, 2], "M2.5": [4.5, 2.5], M3: [5.5, 3], M4: [7, 4], M5: [8.5, 5], M6: [10, 6], M8: [13, 8], M10: [16, 10], M12: [18, 12], M14: [21, 14], M16: [24, 16], M20: [30, 20], M24: [36, 24] },
+  din7984: { M3: [5.5, 2], M4: [7, 2.8], M5: [8.5, 3.5], M6: [10, 4], M8: [13, 5], M10: [16, 6], M12: [18, 7], M14: [21, 8], M16: [24, 9], M20: [30, 11], M24: [36, 13] },
+  iso7380: { M3: [5.7, 1.65], M4: [7.6, 2.2], M5: [9.5, 2.75], M6: [10.5, 3.3], M8: [14, 4.4], M10: [17.5, 5.5], M12: [21, 6.6], M16: [28, 8.8] },
+  iso1207: { "M1.6": [3, 1.1], M2: [3.8, 1.4], "M2.5": [4.5, 1.8], M3: [5.5, 2], M4: [7, 2.6], M5: [8.5, 3.3], M6: [10, 3.9], M8: [13, 5], M10: [16, 6] },
+  iso10642: {},
+  iso2009: { "M1.6": [3.6, 1], M2: [4.4, 1.2], "M2.5": [5.5, 1.5], M3: [6.3, 1.65], M4: [9.4, 2.7], M5: [10.4, 2.7], M6: [12.6, 3.3], M8: [17.3, 4.65], M10: [20, 5] },
+};
+export const SCREW_TYPES: { key: ScrewType; pocket: "cbore" | "csink"; label: string }[] = [
+  { key: "iso4762", pocket: "cbore", label: "Socket head cap screw (ISO 4762)" },
+  { key: "din7984", pocket: "cbore", label: "Low head cap screw (DIN 7984)" },
+  { key: "iso7380", pocket: "cbore", label: "Button head screw (ISO 7380)" },
+  { key: "iso1207", pocket: "cbore", label: "Slotted cheese head screw (ISO 1207)" },
+  { key: "iso10642", pocket: "csink", label: "Countersunk socket screw (ISO 10642)" },
+  { key: "iso2009", pocket: "csink", label: "Countersunk slotted or cross screw (ISO 2009 / 7046)" },
+];
+/** The screw type a pocket is sized for when none is chosen. */
+export const defaultScrew = (pocket: "cbore" | "csink"): ScrewType => (pocket === "cbore" ? "iso4762" : "iso10642");
+const metric = (h: HoleSize) => /^M/.test(h.size);
+/** Screw types offered for a size and pocket: every type with a head of that size (metric), else the default. */
+export function screwTypes(size: string | undefined, pocket: "cbore" | "csink"): ScrewType[] {
+  const h = holeSize(size);
+  const all = SCREW_TYPES.filter(s => s.pocket === pocket).map(s => s.key);
+  if (!h || !metric(h)) return [defaultScrew(pocket)];
+  const nom = h.major ? `M${h.major}` : h.size;
+  return all.filter(k => k === defaultScrew(pocket) || HEADS[k][nom]);
+}
+/**
+ * The pocket for a screw type and size: counterbore [Ø, depth] or countersink [Ø, angle in degrees]; null when that
+ * type has no head of that size.
+ */
+export function headPocket(size: string | undefined, screw: ScrewType | undefined, pocket: "cbore" | "csink"): [number, number] | null {
+  const h = holeSize(size);
+  if (!h) return null;
+  const k = screw ?? defaultScrew(pocket);
+  if (k === defaultScrew(pocket) || !metric(h)) return pocket === "cbore" ? [h.cbore[0], h.cbore[1]] : [h.csink, h.csAng ?? 90];
+  const nom = h.major ? `M${h.major}` : h.size, head = HEADS[k]?.[nom], ref = HEADS.iso4762[nom];
+  if (!head) return null;
+  if (pocket === "csink") return [head[0], 90];
+  if (!ref) return null;
+  const r2 = (v: number) => Math.round(v * 100) / 100;
+  return [r2(head[0] + h.cbore[0] - ref[0]), r2(head[1] + h.cbore[1] - ref[1])];
+}
+
+/** Internal thread tolerance classes offered for a size (ISO 965 / ASME B1.1), the usual one first. */
+export const threadClasses = (s: string | undefined) => (s && / UN[CF]$/.test(s) ? ["2B", "1B", "3B"] : ["6H", "4H", "5H", "7H", "6G"]);

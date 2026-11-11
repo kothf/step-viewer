@@ -21,7 +21,7 @@ export function holeCallout(H: HoleFeature, f: (v: number) => string, fa: (v: nu
     // A thread at least as deep as a through drill is long runs through too.
     const thru = H.end === "through" && (H.threadEnd === "through" || !H.threadDepth || drillThru);
     // Thread end Through all on an Up to next / up to face hole: the thread runs the whole drill, no depth.
-    lines.push(`${H.size}-${threadClass(H.size)}${thru ? ` ${label("THRU")}` : H.threadDepth && !threadThrough(H) ? ` ↧${f(H.threadDepth.v)}` : ""}`);
+    lines.push(`${H.size}-${H.tclass ?? threadClass(H.size)}${thru ? ` ${label("THRU")}` : H.threadDepth && !threadThrough(H) ? ` ↧${f(H.threadDepth.v)}` : ""}`);
   }
   // Head clearance deepens the counterbore; the callout gives the depth as cut.
   if (H.kind === "cbore" && H.cbDia) lines.push(`⌴Ø${f(H.cbDia.v)}${H.cbDepth ? ` ↧${f(H.cbDepth.v + (H.headClear?.v ?? 0))}` : ""}`);
@@ -88,6 +88,11 @@ export function holeSection(H: HoleFeature): HoleSection | null {
     const h = (R - r) / Math.tan(a / 2);
     if (clear > 0) prof.push([R, 0], [R, clear], [r, clear + h]); else prof.push([R, 0], [r, h]);
     outer = R;
+  } else if (H.kind === "tapped" && H.threadMode === "remove" && (H.major ?? 0) / 2 > r) {
+    // Remove thread: the threaded length cut to the major diameter.
+    const M = H.major! / 2;
+    top(M);
+    outer = M;
   } else top(r);
   outer = Math.max(outer, prof[0][0]);
   const head = prof[prof.length - 1][1];
@@ -99,11 +104,18 @@ export function holeSection(H: HoleFeature): HoleSection | null {
   if (!ok(depth) || !(depth > head + 1e-6)) return null;
   const plate = open ? depth : depth + tip + Math.max(1.5 * r, 0.25 * depth);
   const fs = open && H.kind !== "slot" && H.kind !== "insert" ? sinkOf(H.farCs, r) : null;
+  // Remove thread: the major diameter down the thread depth, then the tap drill.
+  if (H.kind === "tapped" && H.threadMode === "remove" && outer > r && prof[prof.length - 1][0] > r) {
+    const M = prof[prof.length - 1][0];
+    const td = threadThrough(H) || (H.end === "through" && !H.threadDepth) ? plate : Math.min(H.threadDepth?.v ?? 2 * H.diameter.v, open ? plate : depth);
+    if (td >= (open ? plate : depth) - 1e-6) { prof.push([M, open ? plate : depth]); if (!open) prof.push([0, depth]); return { prof, plate, half: M * 1.7 + r * 0.6, open, rough }; }
+    prof.push([M, td], [r, td]);
+  }
   if (fs && plate - fs.h > head) prof.push([r, plate - fs.h], [fs.R, plate]);
   else if (open) prof.push([r, plate]);
   else prof.push([r, depth], [0, depth + tip]);
   let thread: HoleSection["thread"];
-  if (H.kind === "tapped") {
+  if (H.kind === "tapped" && !H.threadMode) {
     const M = (H.major ?? 0) / 2 || r * 1.18;
     const z1 = threadThrough(H) || (H.end === "through" && !H.threadDepth) ? plate : Math.min(H.threadDepth?.v ?? 2 * H.diameter.v, open ? plate : depth);
     if (z1 > head) thread = { r: M, z0: head, z1 };
