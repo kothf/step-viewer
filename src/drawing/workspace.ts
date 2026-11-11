@@ -32,6 +32,7 @@ import { FLAT_CONFIG, ORIENTS, ORIENT_NAMES, SCALES, viewConfig, viewOnly, topoO
 import { PALETTE, PALETTE_MIME, thumbPath } from "./palette";
 import "./drawing.css";
 import { makeGrip } from "../resize";
+import { bindCommandTips } from "../tooltip";
 import { isSheetBase } from "../sheetmetal/types";
 
 export interface DrawingModel {
@@ -159,11 +160,89 @@ const SVGNS = "http://www.w3.org/2000/svg";
 const PREVIEW_EDGES = 80, PREVIEW_MS = 400;
 const SIZE_LIST = Object.keys(SIZES) as Exclude<SheetSize, "custom">[];
 const I = (d: string) => `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
-/** The annotation palette's tools (FR-UI-072), the same commands as Dimension and Annotate ▾. */
-const ANNOT_TOOLS: [string, string][] = [
-  ["dim", "Dimension"], ["chain", "Chain dimension"], ["base", "Baseline dimension"], ["ord", "Ordinate dimension"], ["items", "Model items"], ["hole", "Hole callout"], ["htable", "Hole table"], ["btable", "Bend table"], ["wtable", "Weld table"], ["ctable", "Cut list table"], ["note", "Note"], ["gtol", "Geometric tolerance"], ["datum", "Datum feature"], ["dtarget", "Datum target"],
-  ["surf", "Surface finish"], ["cline", "Centerline"], ["cmark", "Center mark"], ["weld", "Weld symbol"], ["cloud", "Revision cloud"], ["skline", "Line"], ["skrect", "Rectangle"], ["skcircle", "Circle"], ["skpoly", "Polyline"], ["balloon", "Balloon"], ["auto", "Auto balloon"], ["bom", "Bill of materials"], ["rev", "Revision table"], ["table", "General table"],
+/** Annotation tool icons (16 × 16, stroke = currentColor), one per tool in `ANNOT_GROUPS`. */
+const TBL = '<rect x="1.5" y="2.5" width="13" height="11"/><path d="M1.5 5.8h13"/>';
+const AICON: Record<string, string> = {
+  dim: I('<path d="M2 4v8M14 4v8M2 8h12"/><path d="m4.5 6.5-2.5 1.5 2.5 1.5M11.5 6.5 14 8l-2.5 1.5"/>'),
+  chain: I('<path d="M1.5 4v8M8 4v8M14.5 4v8M1.5 8h13"/><path d="m3.5 7-2 1 2 1M6 7l2 1-2 1M10 7 8 8l2 1M12.5 7l2 1-2 1"/>'),
+  base: I('<path d="M2 2.5v11M8.5 7v6.5M14 2.5v11M2 10h6.5M2 5h12"/><path d="m4 9-2 1 2 1M6.5 9l2 1-2 1M12 4l2 1-2 1"/>'),
+  ord: I('<path d="M2 14.5h12.5M3 13V4M8 13V7M13 13V9.5"/><path d="M3 2.5v.01M8 5.5v.01M13 8v.01" stroke-width="2"/>'),
+  items: I('<path d="M2 6.5 5 4.5h7l-3 2zM2 6.5v7h7v-7M9 6.5l3-2v7l-3 2"/><path d="M14.5 2.5v4" stroke-dasharray="1.2 1"/>'),
+  hole: I('<circle cx="5" cy="10.5" r="3.5"/><path d="M7.6 8 11 4.5h3.5"/><path d="M3.8 11.8 6.2 9.2"/>'),
+  note: I('<path d="m2 13 3-8.5 3 8.5M3.1 10h3.8"/><path d="M10 5.5h4.5M10 8.5h4.5M10 11.5h3"/>'),
+  balloon: I('<circle cx="10" cy="6" r="4.5"/><path d="M6.8 9.2 2 14"/><path d="M9.2 4.6 10.2 3.8v4.4"/>'),
+  auto: I('<circle cx="5" cy="5" r="3"/><circle cx="11.5" cy="11" r="3"/><path d="M7 7.3 9.6 9.4"/><path d="M14 2v3M12.5 3.5h3"/>'),
+  surf: I('<path d="m1.5 8.5 3 5 5.5-11h4.5"/><path d="M1.5 8.5h5.5"/>'),
+  weld: I('<path d="M1.5 14 6 6.5h8.5"/><path d="M9 6.5v-3l3 3"/>'),
+  cloud: I('<path d="M4.2 12.5a2.2 2.2 0 0 1-1.6-3.6 2.2 2.2 0 0 1 2.2-3.4 2.4 2.4 0 0 1 4.2-1.3 2.2 2.2 0 0 1 3.6 1.6 2.2 2.2 0 0 1 .6 4.1 2.2 2.2 0 0 1-2.7 2.6 2.4 2.4 0 0 1-3.6.4 2.2 2.2 0 0 1-2.9-.4z"/>'),
+  gtol: I('<rect x="1.5" y="5" width="13" height="6"/><path d="M6 5v6M10.5 5v6"/><path d="m2.8 9.8 1.4-3.6M4.3 9.8l1.4-3.6" stroke-width="1"/>'),
+  datum: I('<rect x="4" y="1.5" width="8" height="6"/><path d="M8 7.5v3"/><path d="M5.5 14.5h5L8 10.5z" fill="currentColor"/>'),
+  dtarget: I('<circle cx="9.5" cy="6" r="4.5"/><path d="M5 6h9M6.3 9.2 2 14"/>'),
+  cline: I('<path d="M1.5 3.5h13M1.5 12.5h13"/><path d="M1 8h14" stroke-dasharray="4 1.4 1 1.4"/>'),
+  cmark: I('<circle cx="8" cy="8" r="4.5"/><path d="M8 1v4.5M8 10.5V15M1 8h4.5M10.5 8H15M7 8h2M8 7v2"/>'),
+  htable: I(`${TBL}<path d="M6 5.8v7.7"/><circle cx="10.3" cy="9.6" r="2"/>`),
+  btable: I(`${TBL}<path d="M6 5.8v7.7"/><path d="M8.5 12V10a2 2 0 0 1 2-2h2" stroke-dasharray="1.4 1"/>`),
+  wtable: I(`${TBL}<path d="M6 5.8v7.7"/><path d="M8.5 12h4.5L8.5 8z"/>`),
+  ctable: I(`${TBL}<path d="M6 5.8v7.7"/><path d="M8.5 8h4.5M8.5 12h4.5M10.8 8v4"/>`),
+  bom: I(`${TBL}<path d="M5 5.8v7.7M1.5 9.7h13"/><path d="M3.2 7v1.6M3.2 10.9v1.6"/>`),
+  rev: I(`${TBL}<path d="M1.5 9.7h13M6 5.8v7.7"/><path d="M2.4 8.6h2.7L3.75 6.6z"/>`),
+  table: I(`${TBL}<path d="M1.5 9.7h13M6 5.8v7.7M10.3 5.8v7.7"/>`),
+  skline: I('<path d="M3 13 13 3"/><circle cx="3" cy="13" r="1.2"/><circle cx="13" cy="3" r="1.2"/>'),
+  skrect: I('<rect x="2" y="3.5" width="12" height="9"/>'),
+  skcircle: I('<circle cx="8" cy="8" r="6"/><path d="M8 8h.01" stroke-width="2"/>'),
+  skpoly: I('<path d="M2 13 5 5l4.5 5.5L14 3"/>'),
+};
+/** The annotation tools (FR-UI-072, the same commands as Dimension and Annotate ▾), grouped as in SolidWorks'
+ *  Annotation tab: [key, label, tooltip]. Key "dim" is the Smart dimension button (`data-a="dim"`), the rest `data-an`. */
+const ANNOT_GROUPS: { name: string; tools: [string, string, string][] }[] = [
+  { name: "Dimensions", tools: [
+    ["dim", "Dimension", "Smart dimension: click an edge, a circle or two points, then place the dimension (D)"],
+    ["chain", "Chain dimension", "Dimensions from point to point: click the base point, then each next point"],
+    ["base", "Baseline dimension", "Dimensions from one base point: click the base, then each point"],
+    ["ord", "Ordinate dimension", "Ordinate dimensions from a zero point: click the zero, then each point"],
+    ["items", "Model items", "Bring the model's sketch dimensions and depths onto the views"],
+  ] },
+  { name: "Notes and symbols", tools: [
+    ["note", "Note", "Text on the sheet; click an edge first to give it a leader"],
+    ["hole", "Hole callout", "Click a round edge of a hole, then place its size and depth"],
+    ["balloon", "Balloon", "Click a component's edge, then place its item number"],
+    ["auto", "Auto balloon", "Balloon every item of the selected view"],
+    ["surf", "Surface finish", "Click an edge, then place the surface texture symbol"],
+    ["weld", "Weld symbol", "Optionally click the joint's edge, then place the weld symbol"],
+    ["cloud", "Revision cloud", "Click the corners round a change; the first corner or Enter closes it"],
+  ] },
+  { name: "Geometric tolerancing", tools: [
+    ["gtol", "Geometric tolerance", "Feature control frame: optionally click an edge for the leader, then place it"],
+    ["datum", "Datum feature", "Click an edge, then place the datum letter"],
+    ["dtarget", "Datum target", "Optionally click the target on an edge, then place the frame circle"],
+  ] },
+  { name: "Centerlines", tools: [
+    ["cline", "Centerline", "Click two parallel edges or two points"],
+    ["cmark", "Center mark", "Click a round edge seen end-on"],
+  ] },
+  { name: "Tables", tools: [
+    ["bom", "Bill of materials", "Insert the assembly's bill of materials"],
+    ["htable", "Hole table", "Click the origin on a view, then place the table of its holes"],
+    ["rev", "Revision table", "Insert a revision table at the top right corner"],
+    ["table", "General table", "Insert a table you fill in"],
+    ["btable", "Bend table", "Click a flat pattern view, then place its bend table"],
+    ["wtable", "Weld table", "Click a view of a weldment, then place its weld table"],
+    ["ctable", "Cut list table", "Click a view of a weldment, then place its cut list"],
+  ] },
+  { name: "Sheet sketch", tools: [
+    ["skline", "Line", "Two clicks on the sheet"],
+    ["skrect", "Rectangle", "Two opposite corners"],
+    ["skcircle", "Circle", "The centre, then a point on the circle"],
+    ["skpoly", "Polyline", "Click each corner; Enter ends it"],
+  ] },
 ];
+/** An annotation tool button: an icon tile in the Annotation tab, an icon menu row in Annotate ▾. */
+const annotButton = ([k, label, tip]: [string, string, string], menu: boolean) => {
+  const act = k === "dim" ? 'data-a="dim"' : `data-an="${k}"`;
+  return menu
+    ? `<button role="menuitem" ${act}>${AICON[k]}<span>${esc(t(label))}</span></button>`
+    : `<button class="drw-at" ${act} data-tool="${k}" aria-pressed="false" title="${esc(t(tip))}">${AICON[k]}<span class="mc-l">${esc(t(label))}</span></button>`;
+};
 
 const ICON = {
   std3: I('<rect x="1.5" y="1.5" width="6" height="5"/><rect x="1.5" y="9.5" width="6" height="5"/><rect x="9.5" y="1.5" width="5" height="5"/>'),
@@ -183,7 +262,6 @@ const ICON = {
   ok: I('<path d="m3 8.5 3.2 3L13 4.5"/>'),
   section: I('<rect x="3" y="3.5" width="10" height="9"/><path d="M3 12.5l4-9M6.5 12.5l4-9M10 12.5l3-6.5" stroke-width="1"/><path d="M1 8h14" stroke-dasharray="3 1.2 1 1.2"/>'),
   detail: I('<circle cx="6.5" cy="6.5" r="4"/><path d="m9.5 9.5 4 4"/>'),
-  dim: I('<path d="M2 4v8M14 4v8M2 8h12"/><path d="m4.5 6.5-2.5 1.5 2.5 1.5M11.5 6.5 14 8l-2.5 1.5"/>'),
   annot: I('<path d="M2.5 3h11M2.5 6.5h11M2.5 10h7"/><path d="m11 13 2-2"/>'),
   aux: I('<path d="M2 12 9 3"/><path d="m7.5 9.5 4 3.2M11.5 12.7l-.4-2.6M11.5 12.7l-2.5.3"/>'),
 };
@@ -478,36 +556,10 @@ export class DrawingWorkspace {
             </div></div>
           <button class="btn small" data-a="aux" title="${esc(t("Auxiliary view: click a straight edge, then place the view square to it"))}">${ICON.aux}<span>${esc(t("Auxiliary"))}</span></button>
           <span class="drw-sep"></span>
-          <button class="btn small" data-a="dim" title="${esc(t("Smart dimension (D): click an edge, a circle or two points, then place the dimension"))}">${ICON.dim}<span>${esc(t("Dimension"))}</span></button>
+          <button class="btn small" data-a="dim" title="${esc(t("Smart dimension (D): click an edge, a circle or two points, then place the dimension"))}">${AICON.dim}<span>${esc(t("Dimension"))}</span></button>
           <div class="drw-dd"><button class="btn small" data-a="annot" aria-haspopup="menu" aria-expanded="false" title="${esc(t("Model items, hole callouts, notes, geometric tolerances, datums, surface finish, tables, balloons and the bill of materials"))}">${ICON.annot}<span>${esc(t("Annotate"))}</span> ▾</button>
             <div class="drw-menu" role="menu" hidden>
-              <button role="menuitem" data-an="chain">${esc(t("Chain dimension"))}</button>
-              <button role="menuitem" data-an="base">${esc(t("Baseline dimension"))}</button>
-              <button role="menuitem" data-an="ord">${esc(t("Ordinate dimension"))}</button>
-              <button role="menuitem" data-an="items">${esc(t("Model items"))}</button>
-              <button role="menuitem" data-an="hole">${esc(t("Hole callout"))}</button>
-              <button role="menuitem" data-an="htable">${esc(t("Hole table"))}</button>
-              <button role="menuitem" data-an="btable">${esc(t("Bend table"))}</button>
-              <button role="menuitem" data-an="wtable">${esc(t("Weld table"))}</button>
-              <button role="menuitem" data-an="ctable">${esc(t("Cut list table"))}</button>
-              <button role="menuitem" data-an="note">${esc(t("Note"))}</button>
-              <button role="menuitem" data-an="gtol">${esc(t("Geometric tolerance"))}</button>
-              <button role="menuitem" data-an="datum">${esc(t("Datum feature"))}</button>
-              <button role="menuitem" data-an="dtarget">${esc(t("Datum target"))}</button>
-              <button role="menuitem" data-an="surf">${esc(t("Surface finish"))}</button>
-              <button role="menuitem" data-an="cline">${esc(t("Centerline"))}</button>
-              <button role="menuitem" data-an="cmark">${esc(t("Center mark"))}</button>
-              <button role="menuitem" data-an="weld">${esc(t("Weld symbol"))}</button>
-              <button role="menuitem" data-an="cloud">${esc(t("Revision cloud"))}</button>
-              <button role="menuitem" data-an="skline">${esc(t("Line"))}</button>
-              <button role="menuitem" data-an="skrect">${esc(t("Rectangle"))}</button>
-              <button role="menuitem" data-an="skcircle">${esc(t("Circle"))}</button>
-              <button role="menuitem" data-an="skpoly">${esc(t("Polyline"))}</button>
-              <button role="menuitem" data-an="rev">${esc(t("Revision table"))}</button>
-              <button role="menuitem" data-an="table">${esc(t("General table"))}</button>
-              <button role="menuitem" data-an="balloon">${esc(t("Balloon"))}</button>
-              <button role="menuitem" data-an="auto">${esc(t("Auto balloon"))}</button>
-              <button role="menuitem" data-an="bom">${esc(t("Bill of materials"))}</button>
+              ${ANNOT_GROUPS.map((g, i) => `${i ? '<div class="drw-menu-sep" role="separator"></div>' : ""}${g.tools.filter(x => x[0] !== "dim").map(x => annotButton(x, true)).join("")}`).join("")}
             </div></div>
           <span class="drw-sep"></span>
           <button class="icon" data-a="undo" aria-label="${esc(t("Undo (Ctrl+Z)"))}" title="${esc(t("Undo (Ctrl+Z)"))}">${ICON.undo}</button>
@@ -538,7 +590,7 @@ export class DrawingWorkspace {
             <div class="drw-pal-grid">${PALETTE.map(o => `<button class="drw-pt" draggable="true" data-orient="${o}" data-pal="${o}" title="${esc(t("Drag this view onto the sheet"))}"><svg viewBox="0 0 64 64" aria-hidden="true"><path d=""/></svg><span>${esc(t(ORIENT_NAMES[o]))}</span></button>`).join("")}</div>
           </div>
           <div class="drw-pal" id="drw-pane-annot" role="tabpanel" aria-labelledby="drw-pt-annot" hidden>
-            <div class="drw-at-grid">${ANNOT_TOOLS.map(([k, label]) => `<button class="btn small drw-at" ${k === "dim" ? 'data-a="dim"' : `data-an="${k}"`}>${esc(t(label))}</button>`).join("")}</div>
+            ${ANNOT_GROUPS.map(g => `<div class="drw-atg" role="group" aria-label="${esc(t(g.name))}"><div class="drw-atg-h">${esc(t(g.name))}</div><div class="drw-at-grid">${g.tools.map(x => annotButton(x, false)).join("")}</div></div>`).join("")}
           </div>
           <div class="drw-tree" role="tree" aria-label="${esc(t("Drawing tree"))}"></div>
           <div class="drw-props"></div>
@@ -560,6 +612,8 @@ export class DrawingWorkspace {
       this.el.addEventListener("change", e => this.onInput(e as Event, true));
       this.el.addEventListener("input", e => this.onInput(e as Event, false));
       document.addEventListener("pointerdown", e => { if (!(e.target as HTMLElement).closest?.(".drw-dd")) this.closeMenus(); });
+      // Annotation tiles get the command bar's tooltips: name, shortcut and what to click.
+      bindCommandTips(this.el, ".drw-at");
     }
     this.svg.addEventListener("pointerdown", e => this.onDown(e));
     this.svg.addEventListener("pointermove", e => this.onMove(e));
@@ -597,7 +651,18 @@ export class DrawingWorkspace {
     r.title = this.store.redoLabel ? t("Redo {what} (Ctrl+Y)", { what: t(this.store.redoLabel) }) : t("Redo (Ctrl+Y)");
   }
 
+  /** The annotation tool of the running command, for the tile shown pressed (same keys as `ANNOT_GROUPS`). */
+  private activeTool(): string | null {
+    const m = this.mode;
+    if (m.kind === "dimset") return m.how;
+    if (m.kind === "cline") return m.how === "mark" ? "cmark" : "cline";
+    if (m.kind === "sk") return `sk${m.k}`;
+    return isAnnotMode(m) ? m.kind : null;
+  }
+
   private renderStatus() {
+    const tool = this.activeTool();
+    for (const b of this.el.querySelectorAll<HTMLElement>(".drw-at")) { const on = b.dataset.tool === tool; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); }
     const st = this.el.querySelector<HTMLElement>(".drw-status");
     if (!st || !this.store) return;
     const m = this.mode;

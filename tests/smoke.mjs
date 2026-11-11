@@ -4599,7 +4599,7 @@ try {
     await ctx.close();
   }
 
-  // --- 1.511.0: vault status chip in the header with a tooltip; a drawing of a vault part goes into the vault ---
+  // --- 1.512.0: vault status chip in the header with a tooltip; a drawing of a vault part goes into the vault ---
   if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
@@ -4651,9 +4651,9 @@ try {
     const r2 = await rows();
     const n2 = await mp.evaluate(() => document.querySelectorAll("#vault-panel .v-row").length);
     check(/^Part1\.mcadprt$/.test(head.name.trim()) && /^v1 · Work in progress · checked out to you$/.test(head.chip) && /version 1/.test(head.tip) && /Lifecycle state: Work in progress/.test(head.tip) && /Checked out to you/.test(head.tip),
-      `vault 1.511: the header shows the vault status in its own chip with a tooltip that explains it (${JSON.stringify(head)})`);
+      `vault 1.512: the header shows the vault status in its own chip with a tooltip that explains it (${JSON.stringify(head)})`);
     check(/Part1\.mcaddrw/.test(r1) && tied && downloads === 0 && n2 === 4 && /Part2\.mcadprt/.test(r2) && /Part2\.mcaddrw/.test(r2),
-      `vault 1.511: a drawing of a vault part saves into the vault, and Save to vault takes the part's open drawing along (${r1}; ${tied}, ${downloads}; ${n2}: ${r2})`);
+      `vault 1.512: a drawing of a vault part saves into the vault, and Save to vault takes the part's open drawing along (${r1}; ${tied}, ${downloads}; ${n2}: ${r2})`);
     await ctx.close();
   }
 
@@ -10855,11 +10855,17 @@ try {
     check(guide >= 1 && placed[0] === "front" && placed[1] === front[0], `drawing: inference line lines a new view up with another view's centre (${guide} guide, ${JSON.stringify([placed, front])})`);
     // Annotation tab: the tools beside the sheet start the same commands.
     await ap.click('[data-ptab="annot"]');
-    const tab = await ap.evaluate(() => ({ views: document.querySelector("#drw-pane-views").hidden, annot: document.querySelector("#drw-pane-annot").hidden, n: document.querySelectorAll("#drw-pane-annot button").length }));
+    const tab = await ap.evaluate(() => ({ views: document.querySelector("#drw-pane-views").hidden, annot: document.querySelector("#drw-pane-annot").hidden, n: document.querySelectorAll("#drw-pane-annot button").length,
+      icons: document.querySelectorAll("#drw-pane-annot .drw-at > svg").length, groups: document.querySelectorAll("#drw-pane-annot .drw-atg").length, menuIcons: document.querySelectorAll('#drw [data-a="annot"] + .drw-menu [data-an] > svg').length }));
     await ap.click('#drw-pane-annot [data-an="note"]');
-    const mode = await ap.evaluate(() => window.__sv.drw.mode());
+    const mode = await ap.evaluate(() => ({ m: window.__sv.drw.mode(), on: [...document.querySelectorAll("#drw-pane-annot .drw-at.on")].map(b => b.dataset.tool).join(), pressed: document.querySelector('#drw-pane-annot [data-an="note"]').getAttribute("aria-pressed") }));
+    // 1.508.0: hovering a tile shows the command bar's tooltip with what to click.
+    await ap.hover('#drw-pane-annot [data-an="hole"]');
+    const tip = await ap.waitForSelector("#cm-tip", { timeout: 3000 }).then(e => e.textContent()).catch(() => "");
     await ap.keyboard.press("Escape");
-    check(tab.views && !tab.annot && tab.n === 28 && mode === "note", `drawing: annotation tab shows the 28 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
+    const unpressed = await ap.evaluate(() => document.querySelectorAll("#drw-pane-annot .drw-at.on").length);
+    check(tab.views && !tab.annot && tab.n === 28 && tab.icons === 28 && tab.groups === 6 && tab.menuIcons === 27 && mode.m === "note" && mode.on === "note" && mode.pressed === "true" && unpressed === 0 && /Hole callout/.test(tip) && /round edge/.test(tip),
+      `drawing: annotation tab shows the 28 annotation tools as icon tiles in 6 groups (Annotate ▾ rows have icons too); Note starts the note command and shows pressed; tooltips (${JSON.stringify([tab, mode, unpressed, tip])})`);
     // 1.82.0 break view (FR-DRW-015): select the first front view, leave out u = −25…15 mm; it closes up to a 6 mm gap.
     const fv = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views[0]; const pl = window.__sv.drw.placement(v.id); return { id: v.id, x: v.x, y: v.y, s: pl.s, w: pl.box[2] - pl.box[0], uc: pl.uc }; });
     const clickAt = async (x, y) => { const q = await ap.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await ap.mouse.click(q[0], q[1]); };
