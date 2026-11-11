@@ -13,6 +13,7 @@ import { journalDrop, packPart, PART_EXT } from "./model/file";
 import type { PartTab } from "./model/controller";
 import type { AsmTab } from "./asm/controller";
 import type { DrawingTab } from "./drawing/workspace";
+import type { DrawingDoc } from "./drawing/types";
 import { bindNavigation } from "./viewer/navigation";
 import { SurfaceAnalysis } from "./viewer/Analysis";
 import { SectionManager, type SectionPlane } from "./viewer/Section";
@@ -402,6 +403,10 @@ const partListeners: (() => void)[] = [];
 const drawing = new DrawingWorkspace({
   appVersion: __APP_VERSION__,
   saved: (name, bytes) => void recentAdd([{ name, data: bytes }]),
+  intoVault: async (name, bytes, src): Promise<VaultTie | null> => {
+    const id = modelVaultId(src);
+    return id ? vaultPanel.addBeside(id, name, bytes) : null;
+  },
   fileMenu: btn => fileMenu.toggle(btn),
   occtBase: new URL("occt/", document.baseURI).href,
   async currentModel() {
@@ -470,6 +475,41 @@ $("#new-drawing").addEventListener("click", () => {
   drawing.modelKey = key;
   void drawing.newFromModel();
 });
+
+/**
+ * The open vault's file id of a drawing's part or assembly: the live document's or a parked tab's tie, when that
+ * document is the drawing's model; else null.
+ */
+function modelVaultId(src: DrawingDoc["source"] | null | undefined): string | null {
+  if (!src || src.kind === "file" || !(vaultPanel as VaultPanel).vault) return null;
+  const id = src.doc?.id;
+  const ok = (tie: VaultTie | null | undefined) => (tie && vaultPanel.has(tie.id) ? tie.id : null);
+  if (src.kind === "part" && modeller.store?.doc.id === id && ok(modeller.vault)) return modeller.vault!.id;
+  if (src.kind === "asm" && asm.doc?.id === id && ok(asm.vault)) return asm.vault!.id;
+  for (const tab of docs?.tabs ?? []) {
+    if (!tab.state) continue;
+    if (src.kind === "part" && tab.kind === "part" && (tab.state as PartTab).store.doc.id === id && ok((tab.state as PartTab).vault)) return (tab.state as PartTab).vault!.id;
+    if (src.kind === "asm" && tab.kind === "asm" && (tab.state as AsmTab).doc.id === id && ok((tab.state as AsmTab).vault)) return (tab.state as AsmTab).vault!.id;
+  }
+  return null;
+}
+
+/** A part or assembly just saved to the vault takes its open drawings along (the drawing workspace and drawing tabs). */
+async function drawingsIntoVault(modelId: string): Promise<void> {
+  const cur = drawing.current;
+  if (cur && !drawing.vault && modelVaultId(cur.source) === modelId) {
+    const p = await drawing.packed();
+    const tie = p && await vaultPanel.addBeside(modelId, p.name, p.data);
+    if (tie) { drawing.setVault(tie); drawing.markSaved(); }
+  }
+  for (const tab of docs?.tabs ?? []) {
+    const st = tab.kind === "drawing" ? tab.state as DrawingTab | null : null;
+    if (!st || st.vault || modelVaultId(st.store.doc.source) !== modelId) continue;
+    const p = await drawing.packed(st);
+    const tie = p && await vaultPanel.addBeside(modelId, p.name, p.data);
+    if (tie) { st.vault = tie; st.store.markSaved(); docs?.render(); }
+  }
+}
 
 /** The open 3D document a drawing can belong to (File ▸ Open drawing), or null. */
 function liveModelKey(): { key: ModelKey; name: string } | null {
@@ -624,12 +664,24 @@ let docState: [string, "idle" | "loading" | "ready" | "error"] = ["", "idle"];
 function setDoc(name: string, st: "idle" | "loading" | "ready" | "error") {
   docState = [name, st];
   const label = t({ idle: "no file open", loading: "loading", ready: "open", error: "could not open" }[st]);
-  $("#doc-name").textContent = name || t("No file open");
-  $("#doc").title = name ? `${name} (${label})` : t("No file open");
+  // A vault file's status (version, lifecycle state, check-out) goes in its own chip with a tooltip that spells it out.
+  let tie: VaultTie | null = null;
+  try { tie = st === "ready" ? liveVaultTie() : null; } catch { /* the controllers are not made yet */ }
+  const at = tie ? name.indexOf(` · ${tie.label}`) : -1;
+  const chip = $("#doc-vault");
+  $("#doc-name").textContent = (at >= 0 ? name.slice(0, at) + name.slice(at + 3 + tie!.label.length) : name) || t("No file open");
+  chip.hidden = at < 0;
+  chip.textContent = at >= 0 ? tie!.label : "";
+  $("#doc").title = name ? (at >= 0 ? `${$("#doc-name").textContent}\n${tie!.hint ?? tie!.label}` : `${name} (${label})`) : t("No file open");
   $("#doc").dataset.state = st;
   $("#doc-status").dataset.state = st;
   $("#doc-status").setAttribute("aria-label", t("Status: {s}", { s: label }));
   docs?.render();
+}
+/** The vault tie of the document shown in the header, if any. */
+function liveVaultTie(): VaultTie | null {
+  const k = fileMenuLive();
+  return k === "drawing" ? drawing.vault : k === "part" && modeller.active ? modeller.vault : k === "asm" && asm.active ? asm.vault : null;
 }
 function setPcbMode(on: boolean) {
   $("#app").classList.toggle("gerber", on);
@@ -2157,6 +2209,7 @@ const vaultPanel = new VaultPanel($("#vault-panel"), {
     await docs!.activate(tab.id);
     return true;
   },
+  added: (id: string): Promise<void> => drawingsIntoVault(id).catch(e => toast(t("Could not save: {err}", { err: t((e as Error).message) }), true)),
   doc: () => {
     const k = fileMenuLive();
     if (k === "drawing") return { name: drawing.title, kind: "drawing", tie: drawing.vault, bytes: async () => (await drawing.packed())?.data ?? null, setVault: v => drawing.setVault(v), markSaved: () => drawing.markSaved() };

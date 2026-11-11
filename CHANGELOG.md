@@ -5,11 +5,31 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.513.0] - 2026-11-11
+## [1.515.0] - 2026-11-11
 
 ### Changed
 
 - Drawings: the commands above the sheet are a command bar like the 3D one and SolidWorks' CommandManager: icon-over-label buttons in a Views group (Standard 3 views, Model view, Projected, Section, Detail, Auxiliary) and an Annotation group (Smart dimension, Model items, Note, Balloon, Hole callout, Surface finish, Geometric tolerance, Datum, Centerline, Center mark, and Annotate ▾ for the rest), all in one row; the running tool shows pressed, and each button has the rich tooltip. Undo, Redo, Fit, Save and Export moved up to the file name's row. Under 1280 px only the icons show.
+
+## [1.514.0] - 2026-11-11
+
+### Changed
+
+- Vault: the header shows a vault file's status (version, lifecycle state, checked out to you) in its own chip beside the file name, so it is no longer cut off, and its tooltip explains each part.
+- Vault: a file's first lifecycle state is shown as Draft (Черновик) instead of Work in progress, which read as if something was still running; stored vaults keep their state names.
+- Vault: Save on a drawing whose part or assembly is in the open vault puts the drawing in the vault beside it, checked out to you, instead of downloading it; Save to vault on a part or assembly takes its open drawings along.
+
+### Fixed
+
+- Vault: a browser vault asks the browser to keep the site's storage (persistent storage), since Firefox and Safari may otherwise clear it when space runs short; when the browser refuses, a new vault says how to keep a backup (Export ZIP).
+
+## [1.513.0] - 2026-11-11
+
+### Added
+
+- Centerline and Midpoint line tools in the Line ▾ flyout (FR-SK-012), as in SolidWorks: Centerline chains construction lines; Midpoint line takes the middle first, then one end, and keeps a midpoint relation.
+- Dynamic mirror in the sketcher (FR-SK-037): select a line, click Dynamic mirror, then draw; each new entity gets its mirror image about the line with symmetric relations at once, and mirrored chains stay joined.
+- Tangent Arc tool in the Arc ▾ flyout (FR-SK-015), as in SolidWorks: click the end of a line or arc, then the arc's end; the arc is tangent to that curve and the next click adds another tangent arc on from it, until Esc or a double-click.
 
 ## [1.512.0] - 2026-11-11
 
@@ -3177,7 +3197,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.513.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.515.0...HEAD
+[1.515.0]: https://github.com/kothf/step-viewer/compare/v1.514.0...v1.515.0
+[1.514.0]: https://github.com/kothf/step-viewer/compare/v1.513.0...v1.514.0
 [1.513.0]: https://github.com/kothf/step-viewer/compare/v1.512.0...v1.513.0
 [1.512.0]: https://github.com/kothf/step-viewer/compare/v1.511.0...v1.512.0
 [1.511.0]: https://github.com/kothf/step-viewer/compare/v1.510.0...v1.511.0
