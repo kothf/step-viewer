@@ -56,7 +56,7 @@ export type SketchPattern =
   /** Stretch entities (FR-SK-039): the selected points (and the points of selected curves) move, curves ending on them stretch. */
   | { kind: "stretch"; dx: number; dy: number };
 
-export type SkTool = "select" | "line" | "cline" | "mline" | "rect" | "crect" | "rect3" | "crect3" | "pgram" | "circle" | "circle3" | "pcircle" | "arc" | "arc3" | "tarc" | "polygon" | "slot" | "cslot" | "aslot" | "aslot3" | "ellipse" | "earc" | "spline" | "sspline" | "conic" | "parabola" | "eqn" | "point" | "text" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "intersect" | "dim" | "hord" | "vord";
+export type SkTool = "select" | "line" | "cline" | "mline" | "rect" | "crect" | "rect3" | "crect3" | "pgram" | "circle" | "circle3" | "pcircle" | "arc" | "arc3" | "tarc" | "polygon" | "slot" | "cslot" | "aslot" | "aslot3" | "ellipse" | "earc" | "spline" | "sspline" | "conic" | "parabola" | "eqn" | "point" | "text" | "trim" | "extend" | "split" | "jog" | "fillet" | "chamfer" | "offset" | "convert" | "intersect" | "dim" | "hord" | "vord";
 
 export interface SketchHost {
   viewer: Viewer;
@@ -420,6 +420,7 @@ export class SketchEditor {
     if (this.tool === "chamfer") { this.chamferAt(p); return true; }
     if (this.tool === "extend") { this.extendAt(p); return true; }
     if (this.tool === "split") { this.splitAt(p); return true; }
+    if (this.tool === "jog") { this.jogClick(p); return true; }
     if (this.tool === "offset") { this.offsetAt(p, true); return true; }
     if (this.tool === "convert") { this.convertAt(e); return true; }
     if (this.tool === "intersect") { this.intersectAt(e); return true; }
@@ -463,17 +464,17 @@ export class SketchEditor {
       return true;
     }
     if (this.tool === "dim" && this.dimDraft.dim) { this.placeDimDraft(p); this.render(); return true; }
-    const pick = ["trim", "extend", "split", "offset"].includes(this.tool);
-    const snap = this.snapPoint(p, !pick && !["select", "fillet", "chamfer", "convert", "intersect"].includes(this.tool));
+    const pick = ["trim", "extend", "split", "offset"].includes(this.tool) || (this.tool === "jog" && !this.draft.pts.length);
+    const snap = this.snapPoint(p, !pick && !["select", "fillet", "chamfer", "convert", "intersect", "jog"].includes(this.tool));
     this.hover = this.tool === "select" || this.tool === "dim" || pick ? this.hits(p, { points: !pick })[0] ?? null
       : this.tool === "fillet" || this.tool === "chamfer" ? this.hits(p, { curves: false }).find(h => h.kind === "point") ?? null : null;
-    this.offsetPreview = this.tool === "offset" ? this.offsetAt(p, false) : [];
+    this.offsetPreview = this.tool === "offset" ? this.offsetAt(p, false) : this.tool === "jog" ? [this.jogShape(p)?.poly ?? []].filter(x => x.length) : [];
     this.draft.cursor = snap.p;
     if (this.tool === "arc" && this.draft.pts.length === 2) this.trackArc(snap.p);
     if (this.lineTool) this.trackBack(snap.p);
     this.draft.snap = snap.id;
     this.draft.hoverCurve = snap.id ? null : snap.curve;
-    this.showInfer(pick || ["select", "fillet", "chamfer", "convert", "intersect", "dim", "hord", "vord"].includes(this.tool) ? null : snap);
+    this.showInfer(pick || ["select", "fillet", "chamfer", "convert", "intersect", "dim", "hord", "vord", "jog"].includes(this.tool) ? null : snap);
     this.render();
     return true;
   }
@@ -836,7 +837,7 @@ export class SketchEditor {
 
   /** Is a tool that places points running (quick snaps apply)? */
   get drawing(): boolean {
-    return !["select", "fillet", "chamfer", "convert", "intersect", "trim", "extend", "split", "offset", "dim", "hord", "vord", "eqn"].includes(this.tool);
+    return !["select", "fillet", "chamfer", "convert", "intersect", "trim", "extend", "split", "jog", "offset", "dim", "hord", "vord", "eqn"].includes(this.tool);
   }
 
   /** Sets (or with null cancels) the quick snap for the next point (FR-SK-046). */
@@ -2469,6 +2470,62 @@ export class SketchEditor {
     this.emitSel();
   }
 
+  // ---------- jog line (SolidWorks Jog Line) ----------
+
+  /** The jog that the second click at `p` would make on the line picked first: two cuts along it and a step of `h` square to it. */
+  private jogShape(p: V2): { line: string; a: V2; b: V2; u: V2; n: V2; t0: number; t1: number; h: number; poly: V2[] } | null {
+    const d = this.draft, id = d.ids[0];
+    const e = id ? this.ent(id) : null;
+    if (!d.pts.length || !e || e.t !== "line") return null;
+    const a = this.pt(e.a), b = this.pt(e.b), len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (len < 1e-9) return null;
+    const u: V2 = [(b[0] - a[0]) / len, (b[1] - a[1]) / len], n: V2 = [-u[1], u[0]];
+    const along = (q: V2) => (q[0] - a[0]) * u[0] + (q[1] - a[1]) * u[1];
+    const s0 = along(d.pts[0]), s1 = along(p), h = (p[0] - a[0]) * n[0] + (p[1] - a[1]) * n[1];
+    const eps = this.px(p) * 3;
+    const t0 = Math.min(s0, s1), t1 = Math.max(s0, s1);
+    if (t0 < eps || t1 > len - eps || t1 - t0 < eps || Math.abs(h) < eps) return null;
+    const at = (s: number, k: number): V2 => [a[0] + u[0] * s + n[0] * k, a[1] + u[1] * s + n[1] * k];
+    return { line: e.id, a, b, u, n, t0, t1, h, poly: [at(t0, 0), at(t0, h), at(t1, h), at(t1, 0)] };
+  }
+
+  /** Jog line: the first click picks the line and where the jog starts, the second where it ends and how far it steps out. */
+  private jogClick(p: V2) {
+    const d = this.draft;
+    if (!d.pts.length) {
+      const h = this.hits(p, { points: false })[0];
+      const e = h && this.ent(h.id);
+      if (!e || e.t !== "line") { this.host.toast(t("Click a line to jog.")); return; }
+      const q = this.project(p, e.id);
+      const ends = [this.pt(e.a), this.pt(e.b)];
+      if (ends.some(x => Math.hypot(x[0] - q[0], x[1] - q[1]) < this.px(q) * 3)) { this.host.toast(t("Click away from the ends to jog."), "warn"); return; }
+      this.draft = { pts: [q], ids: [e.id], cursor: q, snap: null };
+      this.render();
+      return;
+    }
+    const g = this.jogShape(p);
+    if (!g) { this.host.toast(t("Move along the line and to the side: the jog must stay inside the line."), "warn"); return; }
+    const e = this.ent(g.line) as SkEnt & { t: "line" };
+    const ids = g.poly.map(q => { const id = uid("p"); this.sk.ents.push({ id, t: "point", x: q[0], y: q[1] }); return id; });
+    const oldEnd = e.b, cons = e.cons ? { cons: true } : {};
+    e.b = ids[0];
+    const line = (a: string, b: string) => { const id = uid("l"); this.sk.ents.push({ id, t: "line", a, b, ...cons }); return id; };
+    const side0 = line(ids[0], ids[1]), top = line(ids[1], ids[2]), side1 = line(ids[2], ids[3]), rest = line(ids[3], oldEnd);
+    const rel = (t: RelKind, ...e: string[]) => this.sk.rels.push({ id: uid("r"), t, e });
+    rel("collinear", e.id, rest);
+    rel("parallel", e.id, top);
+    rel("perpendicular", e.id, side0);
+    rel("perpendicular", e.id, side1);
+    for (const r of [...this.sk.rels]) if (r.e.length === 1 && r.e[0] === e.id && (r.t === "horizontal" || r.t === "vertical" || r.t === "fix")) rel(r.t, rest);
+    this.sk.dims = this.sk.dims.filter(x => !(x.e.length === 1 && x.e[0] === e.id));
+    this.draft = { pts: [], ids: [], cursor: null, snap: null };
+    this.offsetPreview = [];
+    this.selection = new Set([top]);
+    this.commit("Jog line");
+    this.render();
+    this.emitSel();
+  }
+
   private chamferAt(p: V2) {
     const h = this.hits(p, { curves: false }).find(x => x.kind === "point");
     if (!h) { this.host.toast(t("Click a corner where two lines meet.")); return; }
@@ -3417,6 +3474,7 @@ export class SketchEditor {
       chamfer: "Click a corner where two lines meet; set the distance in the panel",
       extend: "Click a line or arc near the end to extend it to the next curve",
       split: "Click a line or arc where it should be split in two",
+      jog: "Click a line where the jog starts, then where it ends and how far it steps out",
       offset: "Move to the side to offset to, then click the curve or chain; set the distance in the panel",
       convert: "Click model edges (or a face for all its edges) to copy them into the sketch",
       intersect: "Click model faces: the curves where the sketch plane cuts them are added",
@@ -3567,7 +3625,7 @@ export class SketchEditor {
     } else this.freeArrows = 0;
     // Preview of the entity being drawn.
     const d = this.draft;
-    if (d.pts.length && d.cursor) {
+    if (d.pts.length && d.cursor && this.tool !== "jog") {
       const p = d.cursor, a = d.pts[0];
       if ((this.lineTool || this.tool === "tarc") && d.arc) { const g = this.tangentArc(p); if (g) poly(arcPts(g.c, g.r, g.a0, g.a0 + g.sweep, 48), C.pre); else push(d.pts.at(-1)!, p, C.pre); }
       else if (this.lineTool) push(d.pts.at(-1)!, p, C.pre);
@@ -3703,7 +3761,7 @@ export class SketchEditor {
     const addPt = (p: V2, c: number) => { const w = this.w(p); pp.push(w.x, w.y, w.z); const k = new THREE.Color(c); pc.push(k.r, k.g, k.b); };
     addPt([0, 0], this.selection.has(ORIGIN) ? color(ORIGIN) : 0xd9480f);
     for (const e of this.sk.ents) if (e.t === "point") addPt([e.x, e.y], color(e.id));
-    if (d.cursor && !["select", "dim", "hord", "vord", "trim", "fillet", "chamfer", "extend", "split", "offset", "convert", "intersect", "eqn"].includes(this.tool)) addPt(d.cursor, C.pre);
+    if (d.cursor && !["select", "dim", "hord", "vord", "trim", "fillet", "chamfer", "extend", "split", "jog", "offset", "convert", "intersect", "eqn"].includes(this.tool)) addPt(d.cursor, C.pre);
     const pg = new THREE.BufferGeometry();
     pg.setAttribute("position", new THREE.Float32BufferAttribute(pp, 3));
     pg.setAttribute("color", new THREE.Float32BufferAttribute(pc, 3));

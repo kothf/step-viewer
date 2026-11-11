@@ -2248,7 +2248,7 @@ try {
     const fly = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent));
     await mp.click("#mc-menu button:nth-child(2)");
     const flyTool = await mp.evaluate(() => ({ tool: window.__sv.model.editor().tool, shown: document.querySelector('#mc-tools [data-c^="sk:"][data-c="sk:extend"]')?.textContent?.trim() }));
-    check(fly.join("|") === "Trim|Extend|Split" && flyTool.tool === "extend" && flyTool.shown === "Extend", `model 1.20: the sketch bar groups Trim, Extend and Split in a flyout (${fly.join("|")}, ${JSON.stringify(flyTool)})`);
+    check(fly.join("|") === "Trim|Extend|Split|Jog line" && flyTool.tool === "extend" && flyTool.shown === "Extend", `model 1.20: the sketch bar groups Trim, Extend and Split in a flyout (${fly.join("|")}, ${JSON.stringify(flyTool)})`);
     // A tool picked on the sketch bar shows its fields in the panel at once (exam #89: Fillet came without its radius).
     await mp.click('#mc-tools [data-c="sk:fillet"]');
     const frBox = await mp.evaluate(() => ({ tool: window.__sv.model.editor().tool, box: !!document.querySelector('#mc-pm input[data-a="fr"]') }));
@@ -2461,6 +2461,30 @@ try {
       });
       check(/Stretch/.test(stTitle ?? "") && st.pts === "200,100 225,100 225,110 200,110" && Math.abs(st.w - 25) < 1e-6 && st.h === 10 && st.status === "ok",
         `model 1.519: Stretch entities moves the picked end of a rectangle and its width dimension follows (FR-SK-039) (${stTitle}, ${JSON.stringify(st)})`);
+    }
+    // 1.523.0 (FR-SK-030): Jog line steps the middle of a line out: four new lines, parallel and square to it.
+    {
+      const jl = await mp.evaluate(() => {
+        const ed = window.__sv.model.editor();
+        ed.sk.ents.push({ id: "jg1", t: "point", x: 90, y: 56 }, { id: "jg2", t: "point", x: 110, y: 56 }, { id: "jgl", t: "line", a: "jg1", b: "jg2" });
+        ed.sk.rels.push({ id: "jgr", t: "horizontal", e: ["jgl"] });
+        ed.render();
+        return "jgl";
+      });
+      await tool("jog");
+      await click([95, 56]); await click([103, 53]);
+      const jg = await mp.evaluate(id => {
+        const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id);
+        const r = v => Math.round(v * 100) / 100;
+        const chain = [];
+        let l = sk.ents.find(e => e.id === id);
+        while (l && chain.length < 6) { chain.push([P(l.a).x, P(l.a).y, P(l.b).x, P(l.b).y].map(r).join(" ")); const b = l.b; l = sk.ents.find(e => e.t === "line" && e.a === b); }
+        const rels = sk.rels.filter(x => x.e.includes(id)).map(x => x.t).sort().join(",");
+        return { chain, rels, status: ed.info.status };
+      }, jl);
+      check(jg.chain.join("|") === "90 56 95 56|95 56 95 53|95 53 103 53|103 53 103 56|103 56 110 56" && /collinear/.test(jg.rels) && /parallel/.test(jg.rels) && (jg.rels.match(/perpendicular/g) ?? []).length === 2 && jg.status === "ok",
+        `model 1.523: Jog line steps a line out with parallel and square sides (FR-SK-030) (${JSON.stringify(jg)})`);
+      await tool("select");
     }
     // 1.266.0 (FR-SK-043/044/047): dragging the last line's start onto the free end of the Ctrl line merges them
     // (coincident relation); Ctrl+drag of that line copies it; the status bar shows the cursor position.
@@ -3771,7 +3795,7 @@ try {
     await idle();
     check(hux.svg && hux.callout.includes("⌴Ø15") && hux.icons === 8 && hux.on === "cbore" && hux.tabs === "type:true,pos:false" && hux.favOpen === false
       && huxK.kind === "csink" && huxK.callout.includes("⌵Ø") && huxP.pos && !huxP.type && huxP.face,
-      `model 1.523: Hole Wizard panel preview, type pictograms and Type/Positions tabs (${JSON.stringify({ hux, huxK, huxP })})`);
+      `model 1.524: Hole Wizard panel preview, type pictograms and Type/Positions tabs (${JSON.stringify({ hux, huxK, huxP })})`);
     await mp.click('#mc-pm [data-ui="favs"] > summary');
     await mp.fill('#mc-pm input[data-ui="favName"]', "M8 cbore");
     await mp.click('#mc-pm [data-ui="favSave"]');
