@@ -49,3 +49,15 @@ test("feature scope: a boss merges only with the picked body", async () => {
   r = m.evaluate(doc([...base, { ...pad, scope: [{ name: "f1:end" }] } as Feature]));
   assert.equal(m.props(r.body!).bodies, 2);
 });
+
+test("feature scope: a through hole drills only the picked body", async () => {
+  const m = new Modeller(await occ());
+  const h: Feature = { id: "h1", type: "hole", name: "Hole1", plane: { face: { name: "f1:end" } }, pts: [[30, 0]], kind: "simple", diameter: { v: 8 }, end: "through", depth: { v: 0 } } as Feature;
+  let r = m.evaluate(doc([...base.slice(0, 4), h]));
+  assert.ok(r.statuses.every(s => s.ok), JSON.stringify(r.statuses));
+  assert.ok(Math.abs(m.props(r.body!).volume - (400000 - 2 * hole)) < 1e-2, `${m.props(r.body!).volume}`);
+  r = m.evaluate(doc([...base.slice(0, 4), { ...h, scope: [{ name: "f1:start" }] } as Feature]));
+  assert.ok(r.statuses.every(s => s.ok), JSON.stringify(r.statuses));
+  assert.equal(m.props(r.body!).bodies, 2);
+  assert.ok(Math.abs(m.props(r.body!).volume - (400000 - hole)) < 1e-2, `${m.props(r.body!).volume}`);
+});
