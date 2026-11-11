@@ -3655,7 +3655,7 @@ try {
       let side = null;
       for (const w of [[0, -30, 10], [50, 0, 10], [0, 30, 10], [-50, 0, 10]]) {
         const at = await world(w);
-        const name = await mp.evaluate(([x, y]) => { const c = window.__sv.model, h = c.host.faceAt(x, y); return h ? c.faceRef(h.faceId)?.name ?? null : null; }, at);
+        const name = await mp.evaluate(([x, y]) => window.__sv.model.faceName(x, y), at);
         if (name && /:side:/.test(name)) { side = { at, name }; break; }
       }
       if (side) { await mp.mouse.click(side.at[0], side.at[1]); await idle(); }

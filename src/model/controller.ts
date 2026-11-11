@@ -8623,7 +8623,8 @@ export class ModelController {
   /** Test and debug handle. */
   debug() {
     const self = this;
-    return { get store() { return self.store; }, last: () => this.last, mode: () => this.mode, editor: () => (this.mode.kind === "sketch" ? this.mode.editor : null), rebuild: () => this.rebuild(), panel: () => this.renderPanel(), kernel: this.kernel };
+    return { get store() { return self.store; }, last: () => this.last, mode: () => this.mode, editor: () => (this.mode.kind === "sketch" ? this.mode.editor : null), rebuild: () => this.rebuild(), panel: () => this.renderPanel(), kernel: this.kernel,
+      faceName: (x: number, y: number) => { const h = this.host.faceAt(x, y); return h ? this.faceRef(h.faceId)?.name ?? null : null; } };
   }
 }
 
