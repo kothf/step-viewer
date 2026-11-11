@@ -1003,7 +1003,8 @@ export interface MEdge { k: string; t: "l" | "c" | "o"; a: V3; b: V3; m: V3; c?:
 export interface MCyl { o: V3; ax: V3; r: number; v0: number; v1: number; sp: number; f?: string; in?: boolean }
 /** A cone, torus or surface of revolution: its axis like a cylinder's, extent along it from `o`, angle swept (FR-DRW-023 centrelines). */
 /** A cone, torus, revolved face or sphere (`o` = its centre, `r` = its radius) and the span of its axis it covers. */
-export interface MRev { k: "cone" | "torus" | "rev" | "sphere"; o: V3; ax: V3; v0: number; v1: number; sp: number; r?: number; f?: string }
+/** `r0`/`r1`: a cone's radius at `v0` and `v1` (its outline seen from the side). */
+export interface MRev { k: "cone" | "torus" | "rev" | "sphere"; o: V3; ax: V3; v0: number; v1: number; sp: number; r?: number; r0?: number; r1?: number; f?: string }
 /** `com`: the shape's centre of mass (uniform density), for a drawing's centre of mass point; absent for sheets. */
 export interface Topo { edges: MEdge[]; cyls: MCyl[]; revs?: MRev[]; com?: V3; holes?: MHole[] }
 /** One piece of a hole: a cylinder (r0 = r1) or a cone, from v0 to v1 along the hole's axis. */
@@ -1085,11 +1086,13 @@ export function topology(oc: any, shape: any, names?: string[]): Topo {
         for (const p of [me.a, me.b, me.m]) { const v = dot([p[0] - o[0], p[1] - o[1], p[2] - o[2]], ax); v0 = Math.min(v0, v); v1 = Math.max(v1, v); }
       }
       const sp = Math.min(2 * Math.PI, sa.LastUParameter() - sa.FirstUParameter());
+      let rr: { r0: number; r1: number } | null = null;
       if (v1 > v0 && st === S.GeomAbs_Cone) {
         const cn = sa.Cone(), R = cn.RefRadius(), ta = Math.tan(cn.SemiAngle());
-        if (inward(f, cn.Position())) bores.push({ o, ax, k: "cone", v0, v1, r0: R + v0 * ta, r1: R + v1 * ta, sp, f: names?.[i - 1] ?? `f${i - 1}`, s: faceSolid[i] });
+        rr = { r0: R + v0 * ta, r1: R + v1 * ta };
+        if (inward(f, cn.Position())) bores.push({ o, ax, k: "cone", v0, v1, ...rr, sp, f: names?.[i - 1] ?? `f${i - 1}`, s: faceSolid[i] });
       }
-      if (v1 > v0) revs.push({ k: st === S.GeomAbs_Cone ? "cone" : st === S.GeomAbs_Torus ? "torus" : "rev", o, ax, v0, v1, sp, f: names?.[i - 1] ?? `f${i - 1}` });
+      if (v1 > v0) revs.push({ k: st === S.GeomAbs_Cone ? "cone" : st === S.GeomAbs_Torus ? "torus" : "rev", o, ax, v0, v1, sp, ...(rr ?? {}), f: names?.[i - 1] ?? `f${i - 1}` });
       continue;
     }
     if (st === S.GeomAbs_Sphere) {

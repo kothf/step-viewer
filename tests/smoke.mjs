@@ -1001,7 +1001,7 @@ try {
     check(col.cls && col.w > w0 + 200 && col.exp === "false" && kept && back && dur > 0 && dur < 200, `ui: Ctrl+[ / hamburger collapse the layer panel (${dur} ms), state kept after reload`);
 
     // Header: active file name and a status badge with a text alternative.
-    const hdr = await pg.evaluate(() => ({ name: document.querySelector("#doc-name").textContent, st: document.querySelector("#doc-status").dataset.state, label: document.querySelector("#doc-status").getAttribute("aria-label") }));
+    const hdr = await pg.evaluate(() => ({ name: document.querySelector("#doc").textContent, st: document.querySelector("#doc-status").dataset.state, label: document.querySelector("#doc-status").getAttribute("aria-label") }));
     check(/board/.test(hdr.name) && hdr.st === "ready" && /Status/.test(hdr.label), `ui: header shows the open file and its status (${JSON.stringify(hdr)})`);
 
     // Pin a measurement so the list, the readout card and all controls are on screen for the audits.
@@ -1665,7 +1665,7 @@ try {
     await mp.waitForSelector("#name-dlg[open]");
     const [dlPart] = await Promise.all([mp.waitForEvent("download"), mp.keyboard.press("Enter")]);
     const partBytes = await readFile(await dlPart.path());
-    const saved = await mp.evaluate(() => ({ dirty: window.__sv.model.store.dirty, doc: document.querySelector("#doc-name").textContent }));
+    const saved = await mp.evaluate(() => ({ dirty: window.__sv.model.store.dirty, doc: document.querySelector("#doc").textContent }));
     check(/Part1\.mcadprt$/.test(dlPart.suggestedFilename()) && partBytes.readUInt32LE(0) === 0x04034b50 && !saved.dirty && !/•/.test(saved.doc), `model: Save writes ${dlPart.suggestedFilename()} (${partBytes.length} bytes, a zip) and clears the unsaved mark`);
     const [dlStep] = await Promise.all([mp.waitForEvent("download"), mp.click('[data-c="step"]')]);
     const stepBack = readStep(await readFile(await dlStep.path()));
@@ -1675,7 +1675,7 @@ try {
       const prev = window.showSaveFilePicker;
       window.showSaveFilePicker = async () => ({ name: "bracket.mcadprt", createWritable: async () => ({ write: async () => {}, close: async () => {} }) });
       try { await window.__sv.modeller.save(true); } finally { window.showSaveFilePicker = prev; }
-      return { name: window.__sv.model.store.doc.name, dirty: window.__sv.model.store.dirty, title: document.querySelector("#doc-name").textContent };
+      return { name: window.__sv.model.store.doc.name, dirty: window.__sv.model.store.dirty, title: document.querySelector("#doc").textContent };
     });
     check(saveAs.name === "bracket" && !saveAs.dirty && /bracket\.mcadprt$/.test(saveAs.title), `model: Save as names the part after its file (${JSON.stringify(saveAs)})`);
     await mp.goto(`${origin}/index.html?debug`);
@@ -1706,7 +1706,7 @@ try {
     await mp.click('#mc-snaps [data-snap-copy="0"]');
     await mp.waitForFunction(id => window.__sv.model.store.doc.id !== id, idBefore);
     await idle();
-    const copy = await mp.evaluate(() => ({ name: document.querySelector("#doc-name").textContent, n: window.__sv.model.store.doc.features.length }));
+    const copy = await mp.evaluate(() => ({ name: document.querySelector("#doc").textContent, n: window.__sv.model.store.doc.features.length }));
     check(snapRows >= 1 && near(restored.v, v30, 1e-3) && restored.n === 5 && /\(copy\)/.test(copy.name) && copy.n === 5, `model 1.44: save snapshots, Restore and Open as copy (${snapRows} rows, ${restored.v}, ${JSON.stringify(copy)})`);
     // Autosave journal: an unsaved change is offered after a reload.
     await mp.evaluate(() => { const ex = window.__sv.model.store.doc.features.find(f => f.type === "extrude"); window.__sv.model.store.change("Rename", d => { d.features.find(f => f.id === ex.id).name = "Base"; }); });
@@ -4623,7 +4623,7 @@ try {
     await mp.click('#vault-panel [data-a="savepart"]');
     await mp.waitForSelector("#vault-panel .v-row");
     const row1 = await mp.evaluate(() => document.querySelector("#vault-panel .v-row").textContent.replace(/\s+/g, " ").trim());
-    const title1 = await mp.evaluate(() => document.querySelector("#doc-name").textContent);
+    const title1 = await mp.evaluate(() => document.querySelector("#doc").textContent);
     // Edit, save (into the working copy), check in with a comment: version 2.
     await mp.evaluate(() => window.__sv.model.store.change("Depth", d => { d.features[1].depth = { v: 20 }; }));
     await idle();
@@ -4654,6 +4654,64 @@ try {
     const chk = await mp.evaluate(async () => { const r = await window.__sv.vault.vault.verify(); return `${r.files}/${r.objects}/${r.missing.length + r.corrupt.length}`; });
     check(/Part1\.mcadprt/.test(row1) && /v1/.test(row1) && /Andrey/.test(row1) && /v1 · .*checked out/.test(title1) && dirty === true && hist === "v2:Twice as deep|v1:Added" && Math.abs(vBack - 4000) < 1e-3, `vault 1.39: save to vault, check in, read-only, history and roll back (${row1}, ${title1}, ${dirty}, ${hist}, ${vBack})`);
     check(audit === "create vault,add,check out,check in,roll back" && chk === "1/2/0", `vault 1.39: audit trail and integrity check (${audit}, ${chk})`);
+    await ctx.close();
+  }
+
+  // --- 1.514.0: vault status chip in the header with a tooltip; a drawing of a vault part goes into the vault ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    mp.on("dialog", d => d.accept());
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => { localStorage.setItem("sv:tips", "off"); localStorage.setItem("mc:vaultUser", "Andrey"); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 60000 });
+    const block = () => mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("Block", d => { d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -10, -10), P("b", 10, -10), P("c", 10, 10), P("d", -10, 10), L("l1", "a", "b"), L("l2", "b", "c"), L("l3", "c", "d"), L("l4", "d", "a")] }, { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } }); }); });
+    const rows = () => mp.evaluate(() => [...document.querySelectorAll("#vault-panel .v-row")].map(r => r.textContent.replace(/\s+/g, " ").trim()).join(" | "));
+    const newDrawing = async () => {
+      await mp.evaluate(() => document.querySelector("#new-drawing").click());
+      await mp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length > 0, null, { timeout: 90000 });
+    };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await block();
+    await idle();
+    await mp.click("#t-vault");
+    await mp.fill("#v-name", "Chip vault");
+    await mp.click('#vault-panel [data-a="new-ws"]');
+    await mp.waitForSelector('#vault-panel [data-a="savepart"]:not([disabled])');
+    await mp.click('#vault-panel [data-a="savepart"]');
+    await mp.waitForSelector("#vault-panel .v-row");
+    await mp.waitForFunction(() => !document.querySelector("#doc-vault").hidden);
+    const head = await mp.evaluate(() => ({ name: document.querySelector("#doc-name").textContent, chip: document.querySelector("#doc-vault").textContent, tip: document.querySelector("#doc").title }));
+    // A new drawing of the vault part: Save puts it in the vault beside the part, checked out, no download.
+    await newDrawing();
+    let downloads = 0;
+    mp.on("download", () => downloads++);
+    await mp.evaluate(() => window.__sv.drawing.save());
+    await mp.waitForFunction(() => /\.mcaddrw/.test(document.querySelector("#vault-panel")?.textContent ?? ""), null, { timeout: 15000 }).catch(() => {});
+    const r1 = await rows();
+    const tied = await mp.evaluate(() => !!window.__sv.drawing.vault && !window.__sv.drawing.dirty);
+    // A second part with an open drawing: Save to vault takes the drawing along.
+    await mp.evaluate(() => window.__sv.drawing.hide());
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.some(f => f.id === "x"));
+    await block();
+    await idle();
+    await newDrawing();
+    await mp.evaluate(() => window.__sv.drawing.hide());
+    await mp.waitForFunction(() => window.__sv.modeller.active);
+    await mp.evaluate(() => window.__sv.vault.saveOpenDoc());
+    await mp.waitForFunction(() => document.querySelectorAll("#vault-panel .v-row").length >= 4, null, { timeout: 15000 }).catch(() => {});
+    const r2 = await rows();
+    const n2 = await mp.evaluate(() => document.querySelectorAll("#vault-panel .v-row").length);
+    check(/^Part1\.mcadprt$/.test(head.name.trim()) && /^v1 · Draft · checked out to you$/.test(head.chip) && /version 1/.test(head.tip) && /Lifecycle state: Draft/.test(head.tip) && /Checked out to you/.test(head.tip),
+      `vault 1.514: the header shows the vault status in its own chip with a tooltip that explains it (${JSON.stringify(head)})`);
+    check(/Part1\.mcaddrw/.test(r1) && tied && downloads === 0 && n2 === 4 && /Part2\.mcadprt/.test(r2) && /Part2\.mcaddrw/.test(r2),
+      `vault 1.514: a drawing of a vault part saves into the vault, and Save to vault takes the part's open drawing along (${r1}; ${tied}, ${downloads}; ${n2}: ${r2})`);
     await ctx.close();
   }
 
@@ -4689,8 +4747,8 @@ try {
     await mp.waitForFunction(() => window.__sv.asm.doc);
     await menu("save");
     await mp.waitForSelector("#vault-panel .v-row", { state: "attached" });
-    await mp.waitForFunction(() => /v1/.test(document.querySelector("#doc-name").textContent));
-    const title1 = await mp.evaluate(() => document.querySelector("#doc-name").textContent);
+    await mp.waitForFunction(() => /v1/.test(document.querySelector("#doc").textContent));
+    const title1 = await mp.evaluate(() => document.querySelector("#doc").textContent);
     await mp.evaluate(() => window.__sv.asm.change(d => { d.name = "Frame"; }));
     await mp.evaluate(() => window.__sv.asm.save());
     const saved = await mp.evaluate(async () => { const v = window.__sv.vault.vault, f = (await v.files())[0]; return `${window.__sv.asm.dirty}/${(await v.status(f)).modified}`; });
@@ -4705,7 +4763,7 @@ try {
     await mp.evaluate(() => window.__sv.asm.save());
     const refused = await mp.evaluate(() => window.__sv.asm.dirty);
     await menu("co");
-    await mp.waitForFunction(() => /checked out/.test(document.querySelector("#doc-name").textContent));
+    await mp.waitForFunction(() => /checked out/.test(document.querySelector("#doc").textContent));
     await mp.evaluate(() => window.__sv.asm.save());
     const savedAgain = await mp.evaluate(() => window.__sv.asm.dirty);
     await menu("hist");
@@ -4804,14 +4862,14 @@ try {
     await mp.click("#empty-asm");
     await mp.waitForFunction(() => window.__sv.asm.doc);
     await menu("save");
-    await mp.waitForFunction(() => /v1/.test(document.querySelector("#doc-name").textContent));
+    await mp.waitForFunction(() => /v1/.test(document.querySelector("#doc").textContent));
     await mp.evaluate(async () => { const p = window.__sv.vault, v = p.vault, f = p.files.find(x => x.kind === "assembly"); await v.undoCheckOut(f.id); await v.rollBack(f.id, 1); await p.refresh(); });
-    await mp.waitForFunction(() => /newer v2/.test(document.querySelector("#doc-name").textContent));
-    const stale = await mp.evaluate(() => document.querySelector("#doc-name").textContent);
+    await mp.waitForFunction(() => /newer v2/.test(document.querySelector("#doc").textContent));
+    const stale = await mp.evaluate(() => document.querySelector("#doc").textContent);
     // Opening it again from the list reloads it in its own tab instead of a second one.
     await menu("panel");
     await mp.evaluate(() => [...document.querySelectorAll("#vault-panel .v-row")].find(r => /\.mcadasm/.test(r.textContent)).dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
-    await mp.waitForFunction(() => /v2/.test(document.querySelector("#doc-name").textContent) && !/newer/.test(document.querySelector("#doc-name").textContent));
+    await mp.waitForFunction(() => /v2/.test(document.querySelector("#doc").textContent) && !/newer/.test(document.querySelector("#doc").textContent));
     await mp.evaluate(() => [...document.querySelectorAll("#vault-panel .v-row")].find(r => /\.mcadasm/.test(r.textContent)).dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
     await mp.waitForTimeout(500);
     const tabs = await mp.evaluate(() => document.querySelectorAll("#doc-tabs [data-dt]").length);
@@ -5836,6 +5894,64 @@ try {
     await ctx.close();
   }
 
+  // --- Drawings: annotations on the side view of a round part (Andrey, 2026-11-11): a Ø100 × 10 disc with a Ø10 hole seen
+  // from the front is lines only (cylinder outlines, face rims edge-on, the hole's hidden lines); every leader tool picks
+  // them and its leader lands on the line clicked. ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    const part = { schema: 1, kind: "part", id: "d_drwside", name: "Disc", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "o", t: "point", x: 0, y: 0 }, { id: "c", t: "circle", c: "o", r: 50 }] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 10 } },
+      { id: "s2", type: "sketch", name: "Sketch2", plane: { face: { name: "f1:end" } }, rels: [], dims: [], ents: [{ id: "h0", t: "point", x: 30, y: 0 }, { id: "h1", t: "circle", c: "h0", r: 5 }] },
+      { id: "f2", type: "extrude", name: "Cut1", sketch: "s2", op: "cut", end: "through", depth: { v: 0 } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-11T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "Disc.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
+    await dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
+    const front = await dp.evaluate(() => window.__sv.drw.doc().sheets[0].views[0].id);
+    // View axes ↔ sheet: the front view's box, its scale, and where the hole's hidden lines are (u).
+    const geo = await dp.evaluate(id => {
+      const p = window.__sv.drw.placement(id), u = sx => p.uc + (sx - p.x) / p.s;
+      const hid = window.__sv.drw.prims().filter(q => q.t === "l" && q.layer === "HIDDEN" && Math.abs(q.p[0] - q.p[2]) < 1e-6).map(q => u(q.p[0]));
+      return { box: p.box, s: p.s, x: p.x, uc: p.uc, hid };
+    }, front);
+    const sheetX = u => geo.x + (u - geo.uc) * geo.s;
+    const at = (u, w) => dp.evaluate(([i, a, b]) => { const p = window.__sv.drw.placement(i); return window.__sv.drw.sheetPt(p.x + (a - p.uc) * p.s, p.y + (b - p.vc) * p.s); }, [front, u, w]);
+    const click = async (u, w) => { const [x, y] = await at(u, w); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); };
+    const tool = async an => { await dp.click('#drw [data-a="annot"]'); await dp.click(`#drw [data-an="${an}"]`); };
+    const annots = () => dp.evaluate(() => (window.__sv.drw.doc().sheets[0].annots ?? []).map(a => JSON.parse(JSON.stringify(a))));
+    const [u0, v0, u1, v1] = geo.box, vm = (v0 + v1) / 2, hu = geo.hid.length ? geo.hid.reduce((a, b) => Math.abs(a) < Math.abs(b) ? a : b) : null;
+    // Datum A on the left outline, datum B on the top face (a circle seen edge-on), a hole callout and a position tolerance
+    // on the hole's hidden line, surface finish on the top face, a note to the right outline.
+    await tool("datum"); await click(u0, vm); await click(u0 - 20, vm);
+    await tool("datum"); await click((u0 + u1) / 2 - 20, v1); await click((u0 + u1) / 2 - 20, v1 + 15);
+    if (hu != null) { await tool("hole"); await click(hu, vm); await click(hu + 30, v1 + 25); }
+    if (hu != null) { await tool("gtol"); await click(hu, vm); await click(hu + 20, v0 - 20); }
+    await tool("surf"); await click((u0 + u1) / 2 + 20, v1); await click((u0 + u1) / 2 + 20, v1 + 10);
+    await tool("note"); await click(u1, vm); await click(u1 + 25, vm + 15);
+    await dp.keyboard.press("Escape");
+    await dp.waitForTimeout(150);
+    const an = await annots();
+    const res = await dp.evaluate(() => ({ dangle: document.querySelectorAll("#drw .drw-dangle").length, prims: window.__sv.drw.prims().filter(p => p.layer === "ANNOT").map(p => ({ t: p.t, p: p.p, fill: p.fill, s: p.s })) }));
+    const ends = res.prims.filter(p => p.t === "l" || p.t === "p").flatMap(p => { const o = []; for (let i = 0; i + 1 < p.p.length; i += 2) o.push(p.p[i]); return o; });
+    const touches = u => ends.some(x => Math.abs(x - sheetX(u)) < 0.02);
+    const kinds = an.map(a => a.t).join();
+    const da = an.find(a => a.t === "datum" && a.letter === "A"), db = an.find(a => a.t === "datum" && a.letter === "B"), ho = an.find(a => a.t === "hole");
+    check(hu != null && kinds === "datum,datum,hole,gtol,surf,note" && !!da?.ref?.s && !!db && !!ho?.ref?.s && res.dangle === 0 && touches(u0) && touches(u1) && touches(hu)
+      && res.prims.some(p => p.t === "t" && /Ø10/.test(p.s)),
+      `drawing: on a round part's side view datums, hole callouts, tolerances, surface finish and notes pick its outlines, face lines and hidden lines and land on them (${JSON.stringify({ kinds, hu, a: da?.ref, ho: ho?.ref, dangle: res.dangle, u0: touches(u0), u1: touches(u1), h: hu != null && touches(hu) })})`);
+    await ctx.close();
+  }
+
   // --- Drawings: GD&T, datums, surface finish, tables, GOST, PNG, dangling warning (FR-DRW-023/024/026/031) ---
   if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
@@ -6354,7 +6470,7 @@ try {
     await mp.waitForFunction(f => /Выпущен/.test(eval(f)()), bracketRow.toString(), { timeout: 5000 }).catch(() => {});
     const ruRow = await mp.evaluate(f => eval(f)(), bracketRow.toString());
     await mp.click("#lang-btn");
-    check(/Work in progress/.test(row0) && checks && /Approve/.test(dlgTitle) && /Released/.test(row1) && /Rev A/.test(row1) && /BR-001/.test(row1) && !canCheckOut, `vault P4: data card, Submit for review and Approve give revision A (${row0} → ${row1}; ${dlgTitle})`);
+    check(/Draft/.test(row0) && checks && /Approve/.test(dlgTitle) && /Released/.test(row1) && /Rev A/.test(row1) && /BR-001/.test(row1) && !canCheckOut, `vault P4: data card, Submit for review and Approve give revision A (${row0} → ${row1}; ${dlgTitle})`);
     check(found === "bracket.txt" && audit === "data card,transition,transition,move,delete,restore", `vault P4: search, move, recycle bin and audit (${found}; ${audit})`);
     check(/Выпущен/.test(ruRow) && /Ред\. A/.test(ruRow), `vault P4: lifecycle in Russian (${ruRow})`);
     await ctx.close();

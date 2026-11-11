@@ -3,7 +3,7 @@
 // changes they find their edges again and measure them anew (AT-P5-3). Drawn as sheet primitives
 // in mm, ISO 129 style: thin extension lines with a 1 mm gap and 2 mm overshoot, filled arrows,
 // 3.5 mm text above the dimension line, reading from the bottom or the right.
-import { viewAxes, type MCyl, type MEdge, type MHole, type Seg2, type Topo, type V3, type ViewDir } from "../kernel/drawing";
+import { viewAxes, type MCyl, type MEdge, type MHole, type MRev, type Seg2, type Topo, type V3, type ViewDir } from "../kernel/drawing";
 import type { FlatBend } from "../sheetmetal/sheet";
 import { arrowHead, decorPrims, toSheet, type Placement } from "./compose";
 import type { CutInfo, HoleInfo, ModelItem, SketchInfo, ThreadInfo, WeldInfo } from "./items";
@@ -134,10 +134,40 @@ export function outlineSeg(o: P2, ad: P2, r: number, v0: number, v1: number, s: 
 /** The line a `GeoRef` stands for in the view: a straight edge, a cylinder's outline seen from the side (`s`), or a circle seen edge-on. */
 export function refLine(r: GeoRef, P: (p: V3) => P2, topo: Topo | null): [P2, P2] | null {
   if ("pt" in r || r.p !== "e") return null;
+  if (r.rv) return r.s ? coneOutline(r.e, r.h, r.s, P, topo) : null;
   const e = refEdge(r, topo);
   if (!e) return null;
   if (e.t === "l") return [P(e.a), P(e.b)];
   return r.s ? outlineOf(e, r.s, P, topo) : edgeOnSeg(e, P, topo);
+}
+
+/** The middle of a cone's axis span: what a cone outline reference keeps as its hint. */
+export function coneMid(q: MRev): V3 { const v = (q.v0 + q.v1) / 2; return [q.o[0] + q.ax[0] * v, q.o[1] + q.ax[1] * v, q.o[2] + q.ax[2] * v]; }
+
+/** One outline line of a cone seen from the side, in view axes (`s` as for a cylinder): the cone face `f` nearest the hint `h`;
+ *  null when it is gone or its axis does not lie in the view plane. */
+export function coneOutline(f: string, h: V3, s: 1 | -1, P: (p: V3) => P2, topo: Topo | null): [P2, P2] | null {
+  let q: MRev | null = null, bd = Infinity;
+  for (const r of topo?.revs ?? []) {
+    if (r.k !== "cone" || r.f !== f || r.r0 == null || r.r1 == null) continue;
+    const d = Math.hypot(...sub3(coneMid(r), h));
+    if (d < bd) { bd = d; q = r; }
+  }
+  if (!q) return null;
+  const o = P([0, 0, 0]), a = P(q.ax), ad: P2 = [a[0] - o[0], a[1] - o[1]];
+  if (Math.abs(len2(ad) - 1) > 1e-6) return null;
+  const c = P(q.o), dl: P2 = [-ad[1] * s, ad[0] * s];
+  const at = (v: number, r: number): P2 => [c[0] + ad[0] * v + dl[0] * r, c[1] + ad[1] * v + dl[1] * r];
+  return [at(q.v0, q.r0!), at(q.v1, q.r1!)];
+}
+
+/** Where a leader to a reference ends, in view axes: the middle of the line it stands for (a straight edge, a cylinder's
+ *  outline, a circle seen edge-on), else its point (a circle's centre seen end-on, a corner). */
+export function leaderEnd(r: GeoRef, P: (p: V3) => P2, topo: Topo | null): P2 | null {
+  const seg = refLine(r, P, topo);
+  if (seg) return [(seg[0][0] + seg[1][0]) / 2, (seg[0][1] + seg[1][1]) / 2];
+  const q = refPoint(r, topo);
+  return q ? P(q) : null;
 }
 
 /** The cylinder outline a `GeoRef` with `s` names: the side line of the cylinder the circle bounds (a short piece when none is found). */
@@ -223,7 +253,9 @@ export function dimGeo(a: DimAnnot, P: (p: V3) => P2, topo: Topo | null): DimGeo
   }
   if (kind === "ang" || kind === "chamfer") {
     const lines: [P2, P2][] = [];
-    for (const r of a.refs) { const e = refEdge(r, topo); if (!e || e.t !== "l") return null; lines.push([P(e.a), P(e.b)]); }
+    // Straight edges, and on a side view a cylinder's or a cone's outline or a circle seen edge-on (exam #50: a turned
+    // part's chamfer against its end face gives 45° / 2 × 45°).
+    for (const r of a.refs) { const l = refLine(r, P, topo); if (!l || d2(l[0], l[1]) < 1e-9) return null; lines.push(l); }
     if (lines.length !== 2) return null;
     if (kind === "ang") return { k: kind, pts: [], lines, value: 0 };
     // The chamfer is the shorter line: its run along the other one, and the angle between them.
@@ -639,13 +671,22 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
 }
 
 /** Draws a hole callout: a leader to the circle, a shoulder and the lines of text. */
-function holePrims(a: HoleAnnot, e: MEdge, P: (p: V3) => P2, pl: Placement, ctx: AnnotCtx): { prims: Prim[]; box: [number, number, number, number] } {
+/** `side`: the line the hole shows as from the side (its outline, or its rim edge-on), where the leader then ends. */
+function holePrims(a: HoleAnnot, e: MEdge, P: (p: V3) => P2, pl: Placement, ctx: AnnotCtx, side: [P2, P2] | null = null): { prims: Prim[]; box: [number, number, number, number] } {
   const out: Prim[] = [];
   const lines = a.txt ? a.txt.split("\n") : holeText(e, ctx, a.count !== false);
   if (a.below) lines.push(...a.below.split("\n"));
   const C = toSheet(pl, ...P(e.c ?? e.m)), R = (e.r ?? 0) * pl.s, T = toSheet(pl, a.pos[0], a.pos[1]);
-  const u = unit2([T[0] - C[0], T[1] - C[1]], [Math.SQRT1_2, Math.SQRT1_2]);
-  const tip = add2(C, u, R);
+  let u = unit2([T[0] - C[0], T[1] - C[1]], [Math.SQRT1_2, Math.SQRT1_2]), tip = add2(C, u, R);
+  if (side) {
+    // Seen from the side the hole is no circle: the arrow lands on the nearest point of its line (not R off its axis in the air).
+    const sa = toSheet(pl, ...side[0]), sb = toSheet(pl, ...side[1]), L = d2(sa, sb);
+    if (L > 1e-9) {
+      const d = unit2([sb[0] - sa[0], sb[1] - sa[1]]), k = Math.max(0, Math.min(L, (T[0] - sa[0]) * d[0] + (T[1] - sa[1]) * d[1]));
+      tip = add2(sa, d, k);
+      u = unit2([T[0] - tip[0], T[1] - tip[1]], [-d[1], d[0]]);
+    }
+  }
   out.push(thin(tip, T), arrow(tip[0], tip[1], -u[0], -u[1]));
   const sx = u[0] >= 0 ? 1 : -1, w = Math.max(...lines.map(s => textW(s))) + 1;
   out.push(thin(T, [T[0] + sx * w, T[1]]));
@@ -855,11 +896,11 @@ export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: Ann
       else { const T = toSheet(pl, a.pos[0], a.pos[1]); r = { prims: [{ t: "t", x: T[0], y: T[1], s: "?", h: TEXT_H, al: "c", layer: "ANNOT" }], box: textBox(T[0], T[1], "?", TEXT_H, "c") }; out.dangling.push(a.id); }
     } else if (a.t === "hole") {
       const e = refEdge(a.ref, ctx.topo);
-      if (e && e.t === "c") r = holePrims(a, e, P, pl, ctx);
+      if (e && e.t === "c") r = holePrims(a, e, P, pl, ctx, refLine(a.ref, P, ctx.topo));
       else { const T = toSheet(pl, a.pos[0], a.pos[1]); r = { prims: [{ t: "t", x: T[0], y: T[1], s: "?", h: TEXT_H, al: "c", layer: "ANNOT" }], box: textBox(T[0], T[1], "?", TEXT_H, "c") }; out.dangling.push(a.id); }
     } else if (a.t === "note") {
-      const pt = a.leader ? refPoint(a.leader, ctx.topo) : null;
-      r = notePrims(a, toSheet(pl, a.pos[0], a.pos[1]), pt ? toSheet(pl, ...P(pt)) : null);
+      const pt = a.leader ? leaderEnd(a.leader, P, ctx.topo) : null;
+      r = notePrims(a, toSheet(pl, a.pos[0], a.pos[1]), pt ? toSheet(pl, ...pt) : null);
     } else if (a.t === "weld") {
       const f = a.leader ? edgeFoot(a.leader, ctx.topo, P, pl, toSheet(pl, a.pos[0], a.pos[1])) : null;
       r = weldPrims(a, toSheet(pl, a.pos[0], a.pos[1]), f?.at ?? null);
@@ -869,8 +910,8 @@ export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: Ann
       r = dtargetPrims(a, at, f?.at ?? null, f?.d ?? [1, 0], pl.s);
       if (a.leader && !f) out.dangling.push(a.id);
     } else if (a.t === "gtol") {
-      const pt = a.leader ? refPoint(a.leader, ctx.topo) : null;
-      r = gtolPrims(a, toSheet(pl, a.pos[0], a.pos[1]), pt ? toSheet(pl, ...P(pt)) : null, ctx.dec);
+      const pt = a.leader ? leaderEnd(a.leader, P, ctx.topo) : null;
+      r = gtolPrims(a, toSheet(pl, a.pos[0], a.pos[1]), pt ? toSheet(pl, ...pt) : null, ctx.dec);
     } else if (a.t === "datum") {
       const f = edgeFoot(a.ref, ctx.topo, P, pl, toSheet(pl, a.pos[0], a.pos[1]));
       r = datumPrims(a, f?.at ?? null, f?.d ?? [1, 0], toSheet(pl, a.pos[0], a.pos[1]));
@@ -882,7 +923,8 @@ export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: Ann
       const e = refEdge(a.ref, ctx.topo), item = "e" in a.ref ? (a.weld ? weldItem(a.ref.e, ctx) : edgeItem(a.ref.e, ctx)) : null;
       const more = (a.stack ?? []).map(sc => String(stackItem(sc, ctx) ?? "?"));
       const qty = (n: number | null) => !n ? "" : a.weld ? String(ctx.welds?.[n - 1]?.qty ?? "") : ctx.bom ? String(ctx.bom.rows.find(x => x.item === n)?.qty ?? "") : ctx.single ? "1" : String(ctx.cuts?.find(x => x.item === n)?.qty ?? "");
-      r = balloonPrims(toSheet(pl, a.pos[0], a.pos[1]), e ? toSheet(pl, ...P(e.m)) : null, a.txt || (item ? String(item) : "?"), more, { shape: a.shape, lower: a.shape === "split" ? [item, ...(a.stack ?? []).map(k => stackItem(k, ctx))].map(qty) : undefined });
+      const bl = e?.t === "c" || ("e" in a.ref && a.ref.rv) ? refLine(a.ref, P, ctx.topo) : null, tip: P2 | null = bl ? [(bl[0][0] + bl[1][0]) / 2, (bl[0][1] + bl[1][1]) / 2] : e ? P(e.m) : null;
+      r = balloonPrims(toSheet(pl, a.pos[0], a.pos[1]), tip ? toSheet(pl, ...tip) : null, a.txt || (item ? String(item) : "?"), more, { shape: a.shape, lower: a.shape === "split" ? [item, ...(a.stack ?? []).map(k => stackItem(k, ctx))].map(qty) : undefined });
       if (!e || (!a.txt && !item)) out.dangling.push(a.id);
     } else if (a.t === "btable") {
       const bends = ctx.bends ?? [];
@@ -971,12 +1013,23 @@ export function clineSegs(a: CLineAnnot, P: (p: V3) => P2, topo: Topo | null, pl
 
 /** The point of a referenced edge nearest to `T` on the sheet, and the edge's direction there. */
 export function edgeFoot(ref: GeoRef, topo: Topo | null, P: (p: V3) => P2, pl: Placement, T: P2): { at: P2; d: P2 } | null {
-  const e = refEdge(ref, topo);
+  const e = !("pt" in ref) && ref.rv ? (refLine(ref, P, topo) ? { k: ref.e, t: "c" as const, a: ref.h, b: ref.h, m: ref.h } : null) : refEdge(ref, topo);
   if (!e) { if ("pt" in ref) { const p = toSheet(pl, ...P(refPoint(ref, topo)!)); return { at: p, d: [1, 0] }; } return null; }
   const A = toSheet(pl, ...P(e.a)), B = toSheet(pl, ...P(e.b));
   if (e.t === "l" && d2(A, B) > 1e-6) {
     const d = unit2([B[0] - A[0], B[1] - A[1]]), k = Math.max(0, Math.min(d2(A, B), (T[0] - A[0]) * d[0] + (T[1] - A[1]) * d[1]));
     return { at: add2(A, d, k), d };
+  }
+  // A circle seen from the side (FR-DRW-022): the cylinder outline the reference names (`s`), or the line the circle
+  // itself makes edge-on (a disc's face, a shaft's end). Its middle point projected anywhere along that line would leave
+  // a datum or a surface symbol floating off the part.
+  const seg = e.t === "c" ? refLine(ref, P, topo) : null;
+  if (seg) {
+    const a = toSheet(pl, ...seg[0]), b = toSheet(pl, ...seg[1]), L = d2(a, b);
+    if (L > 1e-9) {
+      const d = unit2([b[0] - a[0], b[1] - a[1]]), k = Math.max(0, Math.min(L, (T[0] - a[0]) * d[0] + (T[1] - a[1]) * d[1]));
+      return { at: add2(a, d, k), d };
+    }
   }
   if (e.t === "c" && e.c && e.r) {
     // A circle seen end-on: the point towards T; seen edge-on it projects to a line through A and B.
