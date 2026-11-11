@@ -493,7 +493,7 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 - **FR-SK-036** (P2, M) Intersection curve: intersection of the sketch plane with selected faces/bodies.
 - **FR-SK-037** (P2, M) Mirror entities about a line (adds symmetric relations); dynamic mirror while drawing. **Dynamic mirror done (1.513.0).**
 - **FR-SK-038** (P2, M) Linear and circular sketch patterns with count and spacing as dimensions; instances keep equal relations to the seed.
-- **FR-SK-039** (P2, M) Move, copy, rotate, scale entities (numeric and by drag; relations to unselected geometry are kept or removed by choice). Stretch entities (1.517.0): the picked points move, curves ending on them stretch, dimensions across take the new sizes.
+- **FR-SK-039** (P2, M) Move, copy, rotate, scale entities (numeric and by drag; relations to unselected geometry are kept or removed by choice). Stretch entities (1.519.0): the picked points move, curves ending on them stretch, dimensions across take the new sizes.
 - **FR-SK-040** (P2, M) Import DXF (R12–2018 lines, arcs, circles, polylines with bulges, splines, ellipses; layers selectable; units) into the active sketch, reusing the parser for profile export where possible.
 - **FR-SK-041** (P1, S) Grid (optional), with snap to grid (off by default). *Done in 1.303.0 (sketch panel Grid section: show, snap, spacing; automatic 1-2-5 spacing from the zoom).*
 - **FR-SK-042** (P1, M) Sketch inference while drawing: snap to end points, mid points, centres, quadrants, intersections, nearest on curve, model vertices/edges/face centres projected to the sketch plane (reuse Snapper). Dotted inference lines for horizontal/vertical alignment with existing points.

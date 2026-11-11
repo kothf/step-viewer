@@ -5,11 +5,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.517.0] - 2026-11-11
+## [1.519.0] - 2026-11-11
 
 ### Added
 
 - Sketch: Stretch entities (FR-SK-039), as in SolidWorks. Pick the points at one end of a shape (a box over that end, or points and curves), click Stretch and give Delta X/Y. The picked points move, and the lines and arcs ending on them stretch. A curve picked without any of its points moves whole. Driving dimensions that span moved and fixed points take their new sizes; dimensions typed as an expression keep their expression. Relations stay.
+
+## [1.518.0] - 2026-11-11
+
+### Changed
+
+- Drawings: a new drawing opens with an empty sheet and the View palette, as in SolidWorks: drag the views you want onto the sheet, or use Standard 3 views for front, top and side lined up.
+
+### Fixed
+
+- Drawings: placing a view from the View palette while its pictures were still being drawn restarted the drawing kernel, so the view took seconds to appear (and a palette picture stayed blank). The pictures now wait behind the views and are never thrown away, so a palette view shows at once.
+- Drawings: the drawing kernel starts a few seconds after a model opens, so a new drawing's palette and first view no longer wait about 3 s (longer on slower computers) for OpenCASCADE to set itself up.
+
+## [1.517.0] - 2026-11-11
+
+### Changed
+
+- Drawings: the commands above the sheet are a command bar like the 3D one and SolidWorks' CommandManager: icon-over-label buttons in a Views group (Standard 3 views, Model view, Projected, Section, Detail, Auxiliary) and an Annotation group (Smart dimension, Model items, Note, Balloon, Hole callout, Surface finish, Geometric tolerance, Datum, Centerline, Center mark, and Annotate ▾ for the rest), all in one row; the running tool shows pressed, and each button has the rich tooltip. Undo, Redo, Fit, Save and Export moved up to the file name's row. Under 1280 px only the icons show.
 
 ## [1.516.0] - 2026-11-11
 
@@ -3210,7 +3227,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.517.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.519.0...HEAD
+[1.519.0]: https://github.com/kothf/step-viewer/compare/v1.518.0...v1.519.0
+[1.518.0]: https://github.com/kothf/step-viewer/compare/v1.517.0...v1.518.0
 [1.517.0]: https://github.com/kothf/step-viewer/compare/v1.516.0...v1.517.0
 [1.516.0]: https://github.com/kothf/step-viewer/compare/v1.515.0...v1.516.0
 [1.515.0]: https://github.com/kothf/step-viewer/compare/v1.514.0...v1.515.0

@@ -92,7 +92,8 @@ class Lane {
 
 /** An exact projection waiting for a worker. */
 /** `key`: the projection's cache key; `dropped`: its view is gone, so it is not run (again). */
-interface Job { msg: Record<string, unknown>; resolve: (v: any) => void; reject: (e: Error) => void; tries: number; key?: string; dropped?: boolean }
+/** `low`: a background job (the view palette's pictures) that waits while a view's own projection is queued. */
+interface Job { msg: Record<string, unknown>; resolve: (v: any) => void; reject: (e: Error) => void; tries: number; key?: string; dropped?: boolean; low?: boolean }
 
 /** The message a projection fails with when its view went away before it was made (see `DrawingKernel.drop`). */
 export const DROPPED = "The view is gone";
@@ -126,6 +127,8 @@ export class DrawingKernel {
    * holding the same model, one at a time each, so a sheet's views are projected two at a time.
    */
   private jobs: Job[] = [];
+  /** Keys of background projections a view asked for while they were on the way (they run as a view's). */
+  private urgent = new Set<string>();
   private mainBusy = false;
   /** The exact job on the main worker, and on the helper. */
   private mainJob: Job | null = null;
@@ -169,6 +172,12 @@ export class DrawingKernel {
     this.ready.catch(() => this.stop());
     return this.ready;
   }
+
+  /**
+   * Starts the worker and sets OpenCASCADE up in it ahead of the first drawing: that set-up takes ~3 s (more on
+   * a slow machine), and a new drawing waited for it before its palette or first view could show.
+   */
+  warm() { void this.start().catch(() => {}); }
 
   private call<T>(msg: Record<string, unknown>): Promise<T> {
     // While the worker starts over, everything but its own set-up waits for the model to be back.
@@ -222,6 +231,7 @@ export class DrawingKernel {
     this.loaded = null;
     this.cache.clear();
     this.inflight.clear();
+    this.urgent.clear();
     this.previews.clear();
     this.previewing.clear();
     this.slowest = 0;
@@ -237,6 +247,7 @@ export class DrawingKernel {
     this.gen++;
     this.cache.clear();
     this.inflight.clear();
+    this.urgent.clear();
     this.previews.clear();
     this.previewing.clear();
     this.slowest = 0;
@@ -291,8 +302,14 @@ export class DrawingKernel {
   helperState() { return { on: !!this.helper, loaded: !!this.helper?.loaded, helped: this.helped, recycles: this.recycles, preLoads: this.preLoads, snap: this.snap?.bin.length ?? 0, snapMesh: !!this.snap?.mesh }; }
 
   /** An exact projection or section, run by whichever worker is free first. */
-  private exact<T>(msg: Record<string, unknown>, key?: string): Promise<T> {
-    return new Promise<T>((resolve, reject) => { this.jobs.push({ msg, resolve, reject, tries: 0, key }); this.pump(); });
+  private exact<T>(msg: Record<string, unknown>, key?: string, low = false): Promise<T> {
+    return new Promise<T>((resolve, reject) => { this.jobs.push({ msg, resolve, reject, tries: 0, key, low: low && !(key && this.urgent.has(key)) }); this.pump(); });
+  }
+
+  /** The next job to run: the first one a view waits for, else the first background one. */
+  private nextJob(ok: (j: Job) => boolean = () => true): number {
+    const i = this.jobs.findIndex(j => !j.low && ok(j));
+    return i >= 0 ? i : this.jobs.findIndex(ok);
   }
 
   /**
@@ -311,7 +328,7 @@ export class DrawingKernel {
     if (!this.worker) return;
     while (this.jobs.length) {
       if (!this.mainBusy && !this.recycling) {
-        const j = this.jobs.shift()!;
+        const j = this.jobs.splice(this.nextJob(), 1)[0];
         this.mainBusy = true;
         this.mainJob = j;
         const gen = this.gen;
@@ -337,7 +354,7 @@ export class DrawingKernel {
       // The helper takes plain jobs of the loaded model (configurations are built on the main worker only).
       const h = this.helper;
       if (!h || !h.loaded || h.busy || h.gen !== this.gen) break;
-      const i = this.jobs.findIndex(j => !j.msg.cfg && j.tries === 0);
+      const i = this.nextJob(j => !j.msg.cfg && j.tries === 0);
       if (i < 0) break;
       const j = this.jobs.splice(i, 1)[0];
       h.busy = true;
@@ -397,19 +414,21 @@ export class DrawingKernel {
   }
 
   /** The view's lines (cached by direction). */
-  project(view: ViewDir): Promise<Projection> { return this.request({ view, key: dirKey(view) }); }
+  project(view: ViewDir, low = false): Promise<Projection> { return this.request({ view, key: dirKey(view) }, low); }
 
   /** A projection, or a section when `p` is set (cached by `key`). */
-  request(req: { view: ViewDir; p?: V3; poly?: number[]; stair?: Stair; align?: Align; exclude?: string[]; shade?: boolean; cfg?: string; only?: string[]; key: string }): Promise<Projection> {
+  request(req: { view: ViewDir; p?: V3; poly?: number[]; stair?: Stair; align?: Align; exclude?: string[]; shade?: boolean; cfg?: string; only?: string[]; key: string }, low = false): Promise<Projection> {
     const { view, key } = req;
     const have = this.cache.get(key);
     if (have) return Promise.resolve(have);
     let p = this.inflight.get(key);
+    // A view now waits for a projection the palette asked for in the background: it goes first.
+    if (p && !low) { this.urgent.add(key); for (const j of this.jobs) if (j.key === key) j.low = false; }
     if (!p) {
       if (!this.loaded) return Promise.reject(new Error("No model loaded"));
       const gen = this.gen;
       const cfg = req.cfg;
-      p = (cfg ? this.config(cfg) : this.loaded).then(() => this.exact<{ proj: Projection }>(req.p ? { type: "section", view, p: req.p, poly: req.poly, stair: req.stair, align: req.align, exclude: req.exclude, cfg, only: req.only } : { type: "project", view, shade: req.shade, cfg, only: req.only }, key)).then(r => {
+      p = (cfg ? this.config(cfg) : this.loaded).then(() => this.exact<{ proj: Projection }>(req.p ? { type: "section", view, p: req.p, poly: req.poly, stair: req.stair, align: req.align, exclude: req.exclude, cfg, only: req.only } : { type: "project", view, shade: req.shade, cfg, only: req.only }, key, low)).then(r => {
         if (gen === this.gen) { this.cache.set(key, r.proj); this.previews.delete(key); this.slowest = Math.max(this.slowest, r.proj.ms); }
         this.inflight.delete(key);
         return r.proj;
