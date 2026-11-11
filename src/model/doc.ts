@@ -177,7 +177,7 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
   if (f.type === "mirror" || f.type === "lpattern" || f.type === "cpattern" || f.type === "spattern") faces.push(...(f.faces ?? []).map(x => x.name), ...(f.bodies ?? []).map(x => x.name));
   if (f.type === "spattern") { features.push(...f.features); if (f.sketch) features.push(f.sketch); if (f.csys) features.push(f.csys); }
   if (f.type === "mirror") { plane(f.plane); features.push(...f.features); }
-  if (f.type === "lpattern") { line(f.dir); line(f.dir2); features.push(...f.features); }
+  if (f.type === "lpattern") { line(f.dir); line(f.dir2); plane(f.upTo); plane(f.upTo2); features.push(...f.features); }
   if (f.type === "cpattern") { line(f.axis); features.push(...f.features); }
   if (f.type === "helix") features.push(f.sketch);
   if (f.type === "sweep") { if (f.profile) features.push(f.profile); if (f.path) features.push(pathId(f.path)); if (f.guide) features.push(pathId(f.guide)); }

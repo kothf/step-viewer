@@ -4606,4 +4606,8 @@ export const RU: Record<string, string> = {
   "Pattern seed only": "Только исходный элемент",
   "Copies turned the other way about the same axis.": "Копии, повёрнутые в другую сторону вокруг той же оси.",
   "Instance numbers from 0 (the seed is 0), direction 2 as -1, -2…, separated by semicolons.": "Номера экземпляров с 0 (исходный — 0), направление 2 — -1, -2…, через точку с запятой.",
+  "Up to reference": "До ссылки",
+  "Click a plane or flat face across the direction: the last instance stops the offset short of it, measured from the seed's centre.": "Щёлкните плоскость или плоскую грань поперёк направления: последний экземпляр останавливается, не доходя до неё на смещение (отсчёт от центра исходного элемента).",
+  "The reference must cross the pattern direction (not lie along it).": "Ссылка должна пересекать направление массива (а не лежать вдоль него).",
+  "The reference lies behind the seed: reverse the direction.": "Ссылка лежит позади исходного элемента: смените направление.",
 };

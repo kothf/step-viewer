@@ -3290,6 +3290,17 @@ try {
       await idle();
       const vBack2 = await vol();
       check(upTo[0] === "Distance" && Math.abs(vUp - vLp) > 1 && Math.abs(vBack2 - vLp) < 1, `model 1.502: linear pattern Up to distance (${upTo}, ${Math.round(vUp)}, ${Math.round(vBack2)})`);
+      // 1.503: Up to reference: Right (x = 0) picked in the tree; the last instance lands on it, then back to spacing.
+      await mp.selectOption('#mc-pm select[data-k="total"]', "ref");
+      await idle();
+      const refFocus = await mp.evaluate(() => !!document.querySelector('#mc-pm [data-focus="pref"]'));
+      await treeClick(mp, '#mc-tree .ft-row[data-id="std:YZ"]');
+      await idle();
+      const refX = await mp.evaluate(id => { const sp = window.__sv.model.last().spots?.[id] ?? []; return [document.querySelector('#mc-pm [data-focus="pref"]')?.textContent, Math.max(...sp.map(s => s.p[0]))]; }, pid);
+      await mp.selectOption('#mc-pm select[data-k="total"]', "");
+      await idle();
+      const vBack3 = await vol();
+      check(refFocus && /Right/.test(refX[0] ?? "") && Math.abs(refX[1]) < 1e-3 && Math.abs(vBack3 - vLp) < 1, `model 1.503: linear pattern Up to reference stops on Right (${refFocus}, ${refX}, ${Math.round(vBack3)})`);
       await mp.click("#mc-ok");
       await idle();
       check(dots === "1,2,3" && Math.abs(vSkip - (120000 - 3 * hole)) < 1 && off[0] === true && off[1] === "2" && Math.abs(vBack - vLp) < 1, `model 1.502: Instances to skip clicked in the view (${dots}, ${Math.round(vSkip)}, ${off}, ${Math.round(vBack)})`);
