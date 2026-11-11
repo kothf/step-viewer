@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.549.0] - 2026-11-11
+
+### Added
+
+- Sketch Picture (FRS 2.2, on the Sketch tab beside DXF): an image (PNG, JPEG, GIF, BMP, WebP, SVG) on the sketch plane under the curves, to trace over. It comes in at 96 dpi with its lower left corner on the origin; the sketch panel sets its X, Y, width and height (aspect ratio locked unless unticked), angle, transparency and flip, or deletes it. Images over 2048 px are scaled down; the picture is saved in the part file and shows while the sketch is edited.
+
 ## [1.548.0] - 2026-11-11
 
 ### Added
@@ -3411,7 +3417,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.548.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.549.0...HEAD
+[1.549.0]: https://github.com/kothf/step-viewer/compare/v1.548.0...v1.549.0
 [1.548.0]: https://github.com/kothf/step-viewer/compare/v1.547.0...v1.548.0
 [1.547.0]: https://github.com/kothf/step-viewer/compare/v1.546.0...v1.547.0
 [1.546.0]: https://github.com/kothf/step-viewer/compare/v1.545.0...v1.546.0

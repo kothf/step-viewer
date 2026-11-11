@@ -1807,6 +1807,36 @@ export class ModelController {
     this.renderAll();
   }
 
+  /** Sketch picture (FRS 2.2): an image into the open sketch, at most 2048 px on its longer side. */
+  insertPicture(file?: File) {
+    const m = this.mode;
+    if (m.kind !== "sketch") return;
+    const run = async (f: File) => {
+      if (f.size > 30 * 1024 * 1024) { toast(t("The image is too large (over 30 MB)."), true); return; }
+      const url = await new Promise<string>((ok, bad) => { const r = new FileReader(); r.onload = () => ok(String(r.result)); r.onerror = () => bad(r.error); r.readAsDataURL(f); });
+      const img = new Image();
+      try { img.src = url; await img.decode(); } catch { toast(t("The image could not be read."), true); return; }
+      let src = url, w = img.naturalWidth, h = img.naturalHeight;
+      const k = Math.min(1, 2048 / Math.max(w, h));
+      if (k < 1 || f.size > 2 * 1024 * 1024) {
+        const c = document.createElement("canvas");
+        c.width = Math.max(1, Math.round(w * k)); c.height = Math.max(1, Math.round(h * k));
+        c.getContext("2d")!.drawImage(img, 0, 0, c.width, c.height);
+        src = f.type === "image/png" || f.type === "image/gif" ? c.toDataURL("image/png") : c.toDataURL("image/jpeg", 0.9);
+      }
+      if (this.mode !== m) return;
+      m.editor.addPicture(src, w, h, f.name);
+      toast(t("Picture added; set its size and place in the panel."), "success");
+      this.renderPanel();
+    };
+    if (file) { void run(file); return; }
+    const inp = document.createElement("input");
+    inp.type = "file";
+    inp.accept = "image/png,image/jpeg,image/gif,image/bmp,image/webp,image/svg+xml";
+    inp.addEventListener("change", () => { const f = inp.files?.[0]; if (f) void run(f); });
+    inp.click();
+  }
+
   /** DXF into the open sketch (FR-SK-040, AT-P2-5): lines, circles, arcs and polylines, in the file's units. */
   importDxf(file?: File) {
     const m = this.mode;
@@ -5737,7 +5767,7 @@ export class ModelController {
         if (g.length === 1) return btn(`sk:${id}`, l, ti, tool === id);
         return `<span class="mc-fly">${btn(`sk:${id}`, l, ti, tool === id)}<button class="mc-caret" data-fly="${g[0]}" aria-haspopup="menu" title="${esc(t("More tools like this"))}" aria-label="${esc(t("More tools like this"))}: ${esc(l)}">▾</button></span>`;
       }).join("")}</div>`
-        + `<div class="mc-sep"></div><div class="mc-g">${btn("cons", t("Construction"), t("Construction geometry on/off for the selection (Q)"))}${btn("skmirror", t("Mirror"), t("Mirror entities: select them and a line to mirror about, then click"))}${btn("skdynmirror", t("Dynamic mirror"), t("Dynamic mirror: select a line, click, then draw; each new entity is mirrored about it"), !!m.editor.dynMirror)}${btn("skdxf", t("DXF"), t("Import a DXF drawing into the sketch"))}${btn("sksec", t("Section"), t("Section view at the sketch plane: hides the material in front of it"), this.skSection)}</div>`
+        + `<div class="mc-sep"></div><div class="mc-g">${btn("cons", t("Construction"), t("Construction geometry on/off for the selection (Q)"))}${btn("skmirror", t("Mirror"), t("Mirror entities: select them and a line to mirror about, then click"))}${btn("skdynmirror", t("Dynamic mirror"), t("Dynamic mirror: select a line, click, then draw; each new entity is mirrored about it"), !!m.editor.dynMirror)}${btn("skdxf", t("DXF"), t("Import a DXF drawing into the sketch"))}${btn("skpic", t("Sketch Picture"), t("Sketch picture: an image on the sketch plane to trace over"))}${btn("sksec", t("Section"), t("Section view at the sketch plane: hides the material in front of it"), this.skSection)}</div>`
         + `<div class="mc-sep"></div><div class="mc-g">${btn("sklpat", t("Linear pattern"), t("Linear sketch pattern: select entities, then set count and spacing"))}${btn("skcpat", t("Circular pattern"), t("Circular sketch pattern: select entities (and a centre point), then set count and angle"))}${btn("skmove", t("Move"), t("Move or copy entities by a distance"))}${btn("skrot", t("Rotate"), t("Rotate entities about a point"))}${btn("skscale", t("Scale"), t("Scale entities about a point"))}${btn("skstretch", t("Stretch"), t("Stretch entities: select points or one end of a shape, then move them; lines ending there stretch"))}</div>`
         + `<div class="mc-sep"></div><div class="mc-g" role="group" aria-label="${esc(t("Features from this sketch"))}">${(["extrude", "cut", "revolve"] as const).map(id => { const [l, ti] = this.cmdInfo(id); return btn(id, l, ti); }).join("")}</div>`
         + `<div class="mc-sep"></div><div class="mc-g">${btn("exit", t("Exit sketch"), t("Exit sketch (Enter)"))}</div>`;
@@ -6256,6 +6286,7 @@ export class ModelController {
       case "skmirror": if (m.kind === "sketch") { m.editor.mirrorSelection(); this.renderPanel(); } break;
       case "skdynmirror": if (m.kind === "sketch") { m.editor.toggleDynMirror(); this.renderBar(); this.renderPanel(); } break;
       case "skdxf": if (m.kind === "sketch") this.importDxf(); break;
+      case "skpic": if (m.kind === "sketch") this.insertPicture(); break;
       case "sksec": if (m.kind === "sketch") { this.skSection = !this.skSection; this.renderBar(); } break;
       case "sklpat": case "skcpat": case "skmove": case "skrot": case "skscale": case "skstretch":
         if (m.kind === "sketch" && m.editor.startPattern(({ sklpat: "linear", skcpat: "circular", skmove: "move", skrot: "rotate", skscale: "scale", skstretch: "stretch" } as const)[c])) this.renderPanel();
@@ -8180,6 +8211,7 @@ export class ModelController {
       + `</div>`
       + this.textBox(ed)
       + this.curveBox(ed)
+      + this.pictureBox(ed)
       + (["line", "cline", "mline", "tarc", "rect", "crect", "rect3", "crect3", "pgram", "circle", "circle3", "pcircle", "arc", "arc3", "polygon"].includes(ed.tool) ? `<label class="chk pm-chk" title="${esc(t("New lines, rectangles, circles and arcs get their sizes as dimensions and the Modify box opens on each."))}"><input type="checkbox" data-a="adddims"${ed.addDims ? " checked" : ""} />${esc(t("Add dimensions"))}</label>` : "")
       + (["slot", "cslot", "aslot", "aslot3"].includes(ed.tool) ? `<label class="chk pm-chk" title="${esc(t("Slots get width and length (or radius) dimensions, and the Modify box opens on them."))}"><input type="checkbox" data-a="slotdims"${ed.slotDims ? " checked" : ""} />${esc(t("Add dimensions"))}</label>` : "")
       + (ed.tool === "polygon" ? `<label class="pm-field"><span>${esc(t("Sides"))}</span><input type="text" inputmode="numeric" class="pm-n" data-a="sides" value="${ed.polySides}" /></label>` : "")
@@ -8215,6 +8247,7 @@ export class ModelController {
     const saveGrid = () => { try { localStorage.setItem("mc:skGrid", ed.grid ? "1" : "0"); localStorage.setItem("mc:skGridSnap", ed.gridSnap ? "1" : "0"); localStorage.setItem("mc:skGridStep", String(ed.gridSpacing || "")); } catch { /* private mode */ } };
     pm.querySelector<HTMLInputElement>("[data-a=grid]")?.addEventListener("change", e => { ed.setGrid({ show: (e.target as HTMLInputElement).checked }); saveGrid(); this.renderQuick(); });
     pm.querySelector<HTMLInputElement>("[data-a=gridsnap]")?.addEventListener("change", e => { ed.setGrid({ snap: (e.target as HTMLInputElement).checked }); saveGrid(); this.renderQuick(); });
+    this.bindPictureBox(pm, ed);
     pm.querySelector<HTMLInputElement>("[data-a=gridstep]")?.addEventListener("change", e => { const v = Number((e.target as HTMLInputElement).value); ed.setGrid({ spacing: isFinite(v) && v > 0 ? v : 0 }); saveGrid(); });
     pm.querySelectorAll<HTMLInputElement>("[data-snap]").forEach(i => i.addEventListener("change", () => {
       const k = i.dataset.snap as SnapKind;
@@ -8269,6 +8302,46 @@ export class ModelController {
    * Sketch text (FR-SK-020): with the Text tool, what the next click places; with one text selected, its
    * own text, font, height and angle (each change remakes the outline as one undo step).
    */
+  /** The sketch's pictures: place, size, angle, transparency, flip, delete (FRS 2.2). */
+  private pictureBox(ed: SketchEditor): string {
+    const pics = ed.sk.pictures ?? [];
+    if (!pics.length) return "";
+    const f = UNITS[units.current].f, u: string = units.current;
+    const num = (id: string, k: string, label: string, v: number, unit: string) => `<label class="pm-field"><span>${esc(label)}</span><span class="pm-in"><input type="text" inputmode="decimal" class="pm-n" data-pic="${esc(id)}:${k}" value="${trimNum(v, 4)}" /><span class="muted">${esc(unit)}</span></span></label>`;
+    return `<div class="pm-sec pm-pics"><h4>${esc(t("Sketch pictures"))}</h4>${pics.map((p, i) => `<details class="pm-pic"${i === pics.length - 1 ? " open" : ""}><summary translate="no">${esc(p.name ?? `${t("Picture")} ${i + 1}`)}</summary>`
+      + num(p.id, "x", "X", p.c[0] * f, u) + num(p.id, "y", "Y", p.c[1] * f, u)
+      + num(p.id, "w", t("Width"), p.w * f, u) + num(p.id, "h", t("Height"), p.h * f, u)
+      + `<label class="chk pm-chk"><input type="checkbox" data-pic="${esc(p.id)}:lock"${p.free ? "" : " checked"} />${esc(t("Lock aspect ratio"))}</label>`
+      + num(p.id, "ang", t("Angle"), ((p.ang ?? 0) * 180) / Math.PI, "°")
+      + num(p.id, "alpha", t("Transparency"), (p.alpha ?? 0) * 100, "%")
+      + `<label class="chk pm-chk"><input type="checkbox" data-pic="${esc(p.id)}:flip"${p.flip ? " checked" : ""} />${esc(t("Flip horizontal"))}</label>`
+      + `<button class="btn small" data-pic="${esc(p.id)}:del">${esc(t("Delete picture"))}</button></details>`).join("")}</div>`;
+  }
+
+  private bindPictureBox(pm: HTMLElement, ed: SketchEditor) {
+    const f = UNITS[units.current].f;
+    pm.querySelectorAll<HTMLInputElement | HTMLButtonElement>("[data-pic]").forEach(el => {
+      const [id, k] = el.dataset.pic!.split(":");
+      if (el instanceof HTMLButtonElement) { el.addEventListener("click", () => { ed.removePicture(id); this.renderPanel(); }); return; }
+      el.addEventListener("change", () => {
+        const p = ed.sk.pictures?.find(x => x.id === id);
+        if (!p) return;
+        if (k === "lock") ed.setPicture(id, { free: !el.checked });
+        else if (k === "flip") ed.setPicture(id, { flip: el.checked });
+        else {
+          const v = parseFloat(el.value.replace(",", "."));
+          if (!isFinite(v)) { this.renderPanel(); return; }
+          if (k === "x") ed.setPicture(id, { c: [v / f, p.c[1]] });
+          else if (k === "y") ed.setPicture(id, { c: [p.c[0], v / f] });
+          else if (k === "w" || k === "h") { if (v > 0) ed.setPicture(id, { [k]: v / f }); }
+          else if (k === "ang") ed.setPicture(id, { ang: (v * Math.PI) / 180 });
+          else if (k === "alpha") ed.setPicture(id, { alpha: Math.min(1, Math.max(0, v / 100)) });
+        }
+        this.renderPanel();
+      });
+    });
+  }
+
   private textBox(ed: SketchEditor): string {
     const sel = ed.selection.size === 1 ? ed.sk.ents.find(e => e.id === [...ed.selection][0] && e.t === "text") as Extract<SkEnt, { t: "text" }> | undefined : undefined;
     if (ed.tool !== "text" && !sel) return "";
@@ -9208,6 +9281,7 @@ const ICON_SVG: Record<string, string> = {
   skscale: S('<rect x="1.5" y="8.5" width="6" height="6"/><rect x="1.5" y="1.5" width="13" height="13" stroke-dasharray="1.6 1.4"/><path d="M8.5 7.5l4-4M9.5 3.5h3v3"/>'),
   skstretch: S('<path d="M1.5 3.5h6l3 4.5-3 4.5h-6z" stroke-dasharray="1.6 1.4"/><path d="M1.5 3.5h9l3 4.5-3 4.5h-9z"/><path d="M9 8h5M12 6l2 2-2 2"/>'),
   sksec: S('<path d="M2 12 8 9l6 3-6 3z"/><path d="M8 1.5v7.5M3 6.5l5-2.5 5 2.5"/>'),
+  skpic: S('<path d="M1.5 2.5h13v11h-13z"/><path d="M1.5 11.5l4-4 3 3 2-2 4 4"/><circle cx="11" cy="5.5" r="1.2"/>'),
   skdxf: S('<path d="M3.5 1.5h6l3 3v10h-9z"/><path d="M9.5 1.5v3h3"/><path d="M5.5 9.5h5M5.5 12h5"/>'),
   cons: S('<path d="M2 14 14 2" stroke-dasharray="2.2 1.8"/>'),
   "sk:select": S('<path d="M3 2l9 5-4 1.2L6.5 13z"/>'),
