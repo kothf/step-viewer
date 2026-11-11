@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.543.0] - 2026-11-11
+
+### Added
+
+- Hover cursor glyphs (FR-SEL-012): the pointer over the graphics area shows a small icon beside the arrow for what lies under it: a face, an edge, a vertex, another snap point (midpoint, centre, quadrant…), a plane, or in a sketch a sketch curve or point. Drag handles and view tools keep their own cursors.
+
+### Fixed
+
+- After a box or lasso selection drag the hover highlight and snap marks came back only after the next click.
+
 ## [1.542.0] - 2026-11-11
 
 ### Added
@@ -3371,7 +3381,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.542.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.543.0...HEAD
+[1.543.0]: https://github.com/kothf/step-viewer/compare/v1.542.0...v1.543.0
 [1.542.0]: https://github.com/kothf/step-viewer/compare/v1.541.0...v1.542.0
 [1.541.0]: https://github.com/kothf/step-viewer/compare/v1.540.0...v1.541.0
 [1.540.0]: https://github.com/kothf/step-viewer/compare/v1.539.0...v1.540.0

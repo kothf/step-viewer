@@ -1,5 +1,6 @@
 import "./style.css";
 import { lassoMode, setLassoMode } from "./boxSelect";
+import { installHoverCursors, setHoverKind, hoverKindOfSnap } from "./hoverCursor";
 import type { NamedView } from "./model/types";
 import { bindCommandTips } from "./tooltip";
 import * as THREE from "three";
@@ -2050,30 +2051,43 @@ function selectOther(x: number, y: number) {
 }
 canvas.addEventListener("pointermove", e => {
   lastPointer.x = e.clientX; lastPointer.y = e.clientY;
-  if (moveQueued || !viewer.parts.length) return;
+  // A box or lasso drag stops its pointerup, so a press left over is dropped once no button is held.
+  if (!e.buttons) downAt = null;
+  if (moveQueued) return;
   moveQueued = true;
-  requestAnimationFrame(() => { moveQueued = false; hover(); });
+  requestAnimationFrame(() => { moveQueued = false; if (viewer.parts.length) hover(); else hoverGlyph(null); });
 });
-canvas.addEventListener("pointerleave", () => { hideSnapMarks(); showEntity(hl.hoverFace, hl.hoverEdge, null); });
+canvas.addEventListener("pointerleave", () => { hideSnapMarks(); showEntity(hl.hoverFace, hl.hoverEdge, null); setHoverKind(canvas, null); });
+installHoverCursors();
+/**
+ * The hover glyph beside the cursor (FR-SEL-012): the sketch entity or plane the part controller reports,
+ * else the kind of the model snap under the cursor. None while orbiting or another view tool owns the pointer.
+ */
+function hoverGlyph(snapKind: string | null) {
+  const own = modeller.hoverGlyph(lastPointer.x, lastPointer.y);
+  setHoverKind(canvas, own ?? hoverKindOfSnap(snapKind));
+}
 canvas.addEventListener("contextmenu", e => e.preventDefault());
 
 function hideSnapMarks() { $("#snap-marker").hidden = true; $("#snap-hint").hidden = true; }
 
 function hover() {
   if (downAt && (Math.abs(lastPointer.x - downAt.x) > 4 || Math.abs(lastPointer.y - downAt.y) > 4)) {
-    hideSnapMarks(); return; // orbiting
+    hideSnapMarks(); setHoverKind(canvas, null); return; // orbiting
   }
-  if (section.arrowHot) { hideSnapMarks(); showEntity(hl.hoverFace, hl.hoverEdge, null); return; }
+  if (section.arrowHot) { hideSnapMarks(); showEntity(hl.hoverFace, hl.hoverEdge, null); setHoverKind(canvas, null); return; }
   const r = canvas.getBoundingClientRect();
   if (state.tool === "sectionFace") {
     // Picking a face to cut on: light up the whole face under the cursor, no point snapping.
     hideSnapMarks();
     const f = faceUnder(lastPointer.x - r.left, lastPointer.y - r.top);
     showEntity(hl.hoverFace, hl.hoverEdge, f ? { part: f.part, face: f.face, kind: "face" } : null);
+    setHoverKind(canvas, f ? "face" : null);
     return;
   }
   const snap = snapper.pick(lastPointer.x - r.left, lastPointer.y - r.top);
   state.lastSnap = snap;
+  hoverGlyph(snap?.kind ?? null);
   // The hovered edge's centre or midpoint, shown faintly so it can be picked (SolidWorks-style inference).
   const hint = snapper.hint, hintEl = $("#snap-hint");
   hintEl.hidden = !hint || (!!snap && snap.point.distanceTo(hint.point) < 1e-9);

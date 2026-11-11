@@ -7263,6 +7263,22 @@ try {
         const lassoOff = await mp.evaluate(() => [document.querySelector('#hud [data-hud="lasso"]').getAttribute("aria-pressed"), localStorage.getItem("mc:lasso")]);
         check(lassoOn === "true" && /mc-lasso/.test(lwCls) && !/cross/.test(lwCls) && lw.faces >= 3 && lw.edges >= 6 && lw.gone && /cross/.test(lcCls) && lc.faces + lc.edges >= 1 && lassoOff[0] === "false" && lassoOff[1] === null,
           `model 1.542: lasso selection in the part, clockwise inside, anticlockwise touching (FR-SEL-008) (${JSON.stringify({ lassoOn, lwCls, lw, lcCls, lc, lassoOff })})`);
+        // 1.543 (FR-SEL-012): the cursor shows a glyph for what lies under it: on the part a face, edge or point
+        // kind with an SVG cursor; over empty space none (or a plane); leaving the canvas clears it.
+        const glyphAt = async (fx, fy) => {
+          await mp.mouse.move(...px(fx, fy), { steps: 3 });
+          await mp.waitForTimeout(120);
+          return mp.evaluate(() => { const c = window.__sv.viewer.renderer.domElement; return { k: c.dataset.hover ?? null, cur: getComputedStyle(c).cursor.slice(0, 30) }; });
+        };
+        const gPart = [];
+        for (const f of [0.5, 0.35, 0.65]) gPart.push(await glyphAt(geom.x0 + (geom.x1 - geom.x0) * f, geom.y0 + (geom.y1 - geom.y0) * f));
+        const gEmpty = await glyphAt(m0 * 0.5, n0 * 0.5 + 0.01);
+        await mp.mouse.move(geom.r.left + geom.r.width + 40, geom.r.top + 10);
+        await mp.waitForTimeout(120);
+        const gLeft = await mp.evaluate(() => window.__sv.viewer.renderer.domElement.dataset.hover ?? null);
+        check(gPart.every(g => ["face", "edge", "vertex", "point"].includes(g.k) && /^url\("data:image\/svg/.test(g.cur)) && gPart.some(g => g.k === "face")
+          && (gEmpty.k === null || gEmpty.k === "plane") && gLeft === null,
+          `model 1.543: hover cursor glyph for the entity under the pointer (FR-SEL-012) (${JSON.stringify({ gPart, gEmpty, gLeft })})`);
       }
       await mp.evaluate(() => window.__sv.model.store.undo());
       await settle();

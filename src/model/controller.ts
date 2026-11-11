@@ -56,6 +56,7 @@ import { STD_FRAMES } from "../kernel/model";
 import { ellOf, ellParam, ellPts, ellSweep } from "../sketch/ellipse";
 import { entBezier } from "../sketch/conic";
 import { bezPts } from "../sketch/spline";
+import { hoverKindOfSketch, type HoverKind } from "../hoverCursor";
 import { SketchEditor, REL_NAME, relName, trimNum, type SkTool } from "../sketch/editor";
 import { SNAP_KINDS, parseSnaps, type SnapKind } from "../sketch/snaps";
 import { ORIGIN, repairs, solve } from "../sketch/solver";
@@ -3291,6 +3292,23 @@ export class ModelController {
     if (this.emptyAt(e.clientX, e.clientY) === false) return;
     v.controls.enabled = false;
     this.boxDrag = new SelDrag(e.clientX, e.clientY, e.ctrlKey || e.metaKey, lassoMode());
+  }
+
+  /**
+   * The hover glyph (FR-SEL-012) this controller decides: in a sketch the sketch entity under the cursor
+   * ("sketch"/"point", undefined when none, so model snaps still show), else "plane" over a shown plane
+   * with no part in front, else undefined.
+   */
+  hoverGlyph(x: number, y: number): HoverKind | undefined {
+    if (this.mode.kind === "sketch") return hoverKindOfSketch(this.mode.editor.hoverHitKind()) ?? undefined;
+    if (!this.store) return undefined;
+    const v = this.host.viewer, r = v.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1);
+    const planes = this.planeMeshes.filter(m => m.visible);
+    if (!planes.length || v.pickMeshes(ndc)) return undefined;
+    const rc = new THREE.Raycaster();
+    rc.setFromCamera(ndc, v.camera);
+    return rc.intersectObjects(planes, false).length ? "plane" : undefined;
   }
 
   /** True when nothing of the part or a plane lies under a screen point. */
