@@ -1327,10 +1327,11 @@ export class SketchEditor {
     const p = s.p;
     const d = this.draft;
     const rels: SkRel[] = [];
-    const before = exact ? new Set(this.sk.ents.map(x => x.id)) : null;
+    const before = exact || this.dynMirror ? new Set(this.sk.ents.map(x => x.id)) : null;
     const finish = (label: string) => {
       this.sk.rels.push(...rels);
       if (exact && before) { const made = this.sk.ents.filter(x => !before.has(x.id)); this.addTypedDims(exact.dims(made), made); }
+      if (this.dynMirror && before) this.mirrorNew(before);
       this.commit(label);
     };
     if (this.tool === "eqn") return;
@@ -2679,21 +2680,59 @@ export class SketchEditor {
     const axis = lines.find(l => l.cons) ?? lines.at(-1);
     const items = sel.filter(x => x !== axis);
     if (!axis || !items.length) { this.host.toast(t("Select the entities to mirror and the line to mirror about (Ctrl+click), then click Mirror.")); return false; }
+    const made = this.mirrorItems(axis, items, new Map());
+    if (!made) return false;
+    this.selection = new Set(made);
+    this.commit("Mirror entities");
+    this.render();
+    this.emitSel();
+    return true;
+  }
+
+  /** Dynamic mirror (FR-SK-037): the line new entities are mirrored about while drawing, and the points mirrored so far. */
+  dynMirror: string | null = null;
+  private dynMap = new Map<string, string>();
+
+  /** Turns dynamic mirror on about the selected line, or off. */
+  toggleDynMirror(): boolean {
+    if (this.dynMirror) { this.dynMirror = null; this.dynMap.clear(); this.statusHint(); this.render(); return true; }
+    const lines = [...this.selection].map(id => this.ent(id)).filter((x): x is Extract<SkEnt, { t: "line" }> => x?.t === "line");
+    const axis = lines.find(l => l.cons) ?? lines[0];
+    if (!axis || lines.length !== 1) { this.host.toast(t("Select one line to mirror about, then click Dynamic mirror.")); return false; }
+    this.dynMirror = axis.id; this.dynMap.clear();
+    this.selection.clear(); this.emitSel();
+    if (this.tool === "select") this.setTool("line");
+    this.statusHint(); this.render();
+    return true;
+  }
+
+  /** Mirrors the entities a drawing click just made (not in `before`) about the dynamic mirror line. */
+  private mirrorNew(before: Set<string>) {
+    const axis = this.dynMirror ? this.ent(this.dynMirror) : undefined;
+    if (!axis || axis.t !== "line") { this.dynMirror = null; this.dynMap.clear(); return; }
+    const fresh = this.sk.ents.filter(x => !before.has(x.id) && x.id !== axis.id);
+    const used = new Set<string>();
+    for (const e of fresh) if (e.t !== "point") for (const q of refPts(e)) used.add(q);
+    const items = fresh.filter(e => e.t !== "point" || !used.has(e.id));
+    if (items.length) this.mirrorItems(axis, items, this.dynMap);
+  }
+
+  /** Adds the mirror images of `items` about `axis` with symmetric relations; `map` = points already mirrored. */
+  private mirrorItems(axis: Extract<SkEnt, { t: "line" }>, items: SkEnt[], map: Map<string, string>): string[] | null {
     const A = this.pt(axis.a), B = this.pt(axis.b);
     const d: V2 = [B[0] - A[0], B[1] - A[1]];
     const L = Math.hypot(d[0], d[1]);
-    if (!(L > 1e-9)) return false;
+    if (!(L > 1e-9)) return null;
     const u: V2 = [d[0] / L, d[1] / L];
     const reflect = (q: V2): V2 => {
       const w: V2 = [q[0] - A[0], q[1] - A[1]];
       const k = w[0] * u[0] + w[1] * u[1];
       return [2 * (A[0] + u[0] * k) - q[0], 2 * (A[1] + u[1] * k) - q[1]];
     };
-    const map = new Map<string, string>();
     const point = (id: string) => {
       if (id === axis.a || id === axis.b) return id;
       const got = map.get(id);
-      if (got) return got;
+      if (got && this.ent(got)) return got;
       const q = this.pt(id), r = reflect(q);
       if (Math.hypot(r[0] - q[0], r[1] - q[1]) < 1e-9) { map.set(id, id); return id; }
       const nid = uid("p");
@@ -2713,11 +2752,7 @@ export class SketchEditor {
       else if (e.t === "text") { const id = uid("t"); this.sk.ents.push({ ...structuredClone(e), id, p: point(e.p) }); made.push(id); }
       else { const id = uid("a"); this.sk.ents.push({ id, t: "arc", c: point(e.c), a: point(e.b), b: point(e.a), ...(e.cons ? { cons: true } : {}) }); made.push(id); }
     }
-    this.selection = new Set(made);
-    this.commit("Mirror entities");
-    this.render();
-    this.emitSel();
-    return true;
+    return made;
   }
 
   // ---------- linear and circular sketch patterns (FR-SK-038) ----------
@@ -3315,7 +3350,8 @@ export class SketchEditor {
     const at = c ? ` · x ${trimNum(c[0] / u.mm, u.decimals)}, y ${trimNum(c[1] / u.mm, u.decimals)} ${u.name}` : "";
     const qs = this.quickSnap ? ` · ${t("Quick snap")}: ${t(SNAP_KINDS.find(k => k[0] === this.quickSnap)![1])}` : "";
     const hint = this.tool === "tarc" && this.draft.pts.length ? "Tangent arc: click its end; the next arc goes on from it; Esc ends" : this.arcMode ? "Tangent arc: click its end; A goes back to lines" : this.tool === "line" && this.draft.pts.length ? "Click points; double-click or Esc ends the chain; A or moving back to the end point draws a tangent arc" : hints[this.tool];
-    this.host.status(`${def} · ${t(hint)}${qs}${at}`);
+    const dm = this.dynMirror ? ` · ${t("Dynamic mirror on")}` : "";
+    this.host.status(`${def} · ${t(hint)}${dm}${qs}${at}`);
   }
 
   // ---------- drawing the sketch ----------

@@ -9,6 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
+- Dynamic mirror in the sketcher (FR-SK-037): select a line, click Dynamic mirror, then draw; each new entity gets its mirror image about the line with symmetric relations at once, and mirrored chains stay joined.
 - Tangent Arc tool in the Arc ▾ flyout (FR-SK-015), as in SolidWorks: click the end of a line or arc, then the arc's end; the arc is tangent to that curve and the next click adds another tangent arc on from it, until Esc or a double-click.
 
 ## [1.508.0] - 2026-11-11

@@ -491,7 +491,7 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 - **FR-SK-034** (P1, M) Offset entities: selected chain or loop, distance, side, both sides, cap ends (arc/line); keeps an offset relation so the result follows the source (P2) or is static (P1). *Done: static copy (1.20.0); both sides, arc/line caps and linked offsets (offset relations + one dimension) in 1.240.0.*
 - **FR-SK-035** (P1, M) Convert entities (project model edges, loops of a face, or other sketches' entities into this sketch) with an "on edge" relation that follows the model.
 - **FR-SK-036** (P2, M) Intersection curve: intersection of the sketch plane with selected faces/bodies.
-- **FR-SK-037** (P2, M) Mirror entities about a line (adds symmetric relations); dynamic mirror while drawing.
+- **FR-SK-037** (P2, M) Mirror entities about a line (adds symmetric relations); dynamic mirror while drawing. **Dynamic mirror done (1.509.0).**
 - **FR-SK-038** (P2, M) Linear and circular sketch patterns with count and spacing as dimensions; instances keep equal relations to the seed.
 - **FR-SK-039** (P2, M) Move, copy, rotate, scale entities (numeric and by drag; relations to unselected geometry are kept or removed by choice).
 - **FR-SK-040** (P2, M) Import DXF (R12–2018 lines, arcs, circles, polylines with bulges, splines, ellipses; layers selectable; units) into the active sketch, reusing the parser for profile export where possible.

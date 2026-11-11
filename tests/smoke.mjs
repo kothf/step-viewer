@@ -2385,6 +2385,27 @@ try {
         `model 1.509: Tangent Arc tool chains arcs tangent to the line it starts on (FR-SK-015) (${on}, ${JSON.stringify(tr)})`);
       await tool("select");
     }
+    // 1.509.0 (FR-SK-037): dynamic mirror about a line mirrors each new line at once, and the mirrored chain stays joined.
+    {
+      await tool("line");
+      await click([120, 30]); await click([120, 50]); await mp.keyboard.press("Escape");
+      const axis = await mp.evaluate(() => { const ed = window.__sv.model.editor(); const l = ed.sk.ents.filter(e => e.t === "line").at(-1); ed.selection = new Set([l.id]); return { id: l.id, on: ed.toggleDynMirror(), dm: ed.dynMirror }; });
+      const linesBefore = await mp.evaluate(() => window.__sv.model.editor().sk.ents.filter(e => e.t === "line").map(e => e.id));
+      await click([123, 32]); await click([126, 36]); await click([126, 41]); await mp.keyboard.press("Escape");
+      const dm = await mp.evaluate(old => {
+        const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id);
+        const fresh = sk.ents.filter(e => e.t === "line" && !old.includes(e.id));
+        const xs = fresh.flatMap(l => [P(l.a).x, P(l.b).x]).map(x => Math.round(x * 100) / 100).sort((a, b) => a - b);
+        const left = fresh.filter(l => P(l.a).x < 120);
+        const joined = left.length === 2 && [left[0].a, left[0].b].some(q => q === left[1].a || q === left[1].b);
+        const sym = sk.rels.filter(r => r.t === "symmetric").length;
+        ed.toggleDynMirror();
+        return { n: fresh.length, xs, joined, sym, off: ed.dynMirror === null, status: ed.info.status };
+      }, linesBefore);
+      check(axis.on && axis.dm === axis.id && dm.n === 4 && Math.abs(dm.xs[0] - 114) < 0.05 && Math.abs(dm.xs.at(-1) - 126) < 0.05 && dm.joined && dm.sym >= 3 && dm.off && dm.status === "ok",
+        `model 1.509: dynamic mirror copies each new line about the picked line, joined (FR-SK-037) (${JSON.stringify(axis)}, ${JSON.stringify(dm)})`);
+      await tool("select");
+    }
     // 1.266.0 (FR-SK-043/044/047): dragging the last line's start onto the free end of the Ctrl line merges them
     // (coincident relation); Ctrl+drag of that line copies it; the status bar shows the cursor position.
     await tool("select");

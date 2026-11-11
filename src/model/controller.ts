@@ -5220,7 +5220,7 @@ export class ModelController {
         if (g.length === 1) return btn(`sk:${id}`, l, ti, tool === id);
         return `<span class="mc-fly">${btn(`sk:${id}`, l, ti, tool === id)}<button class="mc-caret" data-fly="${g[0]}" aria-haspopup="menu" title="${esc(t("More tools like this"))}" aria-label="${esc(t("More tools like this"))}: ${esc(l)}">▾</button></span>`;
       }).join("")}</div>`
-        + `<div class="mc-sep"></div><div class="mc-g">${btn("cons", t("Construction"), t("Construction geometry on/off for the selection (Q)"))}${btn("skmirror", t("Mirror"), t("Mirror entities: select them and a line to mirror about, then click"))}${btn("skdxf", t("DXF"), t("Import a DXF drawing into the sketch"))}${btn("sksec", t("Section"), t("Section view at the sketch plane: hides the material in front of it"), this.skSection)}</div>`
+        + `<div class="mc-sep"></div><div class="mc-g">${btn("cons", t("Construction"), t("Construction geometry on/off for the selection (Q)"))}${btn("skmirror", t("Mirror"), t("Mirror entities: select them and a line to mirror about, then click"))}${btn("skdynmirror", t("Dynamic mirror"), t("Dynamic mirror: select a line, click, then draw; each new entity is mirrored about it"), !!m.editor.dynMirror)}${btn("skdxf", t("DXF"), t("Import a DXF drawing into the sketch"))}${btn("sksec", t("Section"), t("Section view at the sketch plane: hides the material in front of it"), this.skSection)}</div>`
         + `<div class="mc-sep"></div><div class="mc-g">${btn("sklpat", t("Linear pattern"), t("Linear sketch pattern: select entities, then set count and spacing"))}${btn("skcpat", t("Circular pattern"), t("Circular sketch pattern: select entities (and a centre point), then set count and angle"))}${btn("skmove", t("Move"), t("Move or copy entities by a distance"))}${btn("skrot", t("Rotate"), t("Rotate entities about a point"))}${btn("skscale", t("Scale"), t("Scale entities about a point"))}</div>`
         + `<div class="mc-sep"></div><div class="mc-g" role="group" aria-label="${esc(t("Features from this sketch"))}">${(["extrude", "cut", "revolve"] as const).map(id => { const [l, ti] = this.cmdInfo(id); return btn(id, l, ti); }).join("")}</div>`
         + `<div class="mc-sep"></div><div class="mc-g">${btn("exit", t("Exit sketch"), t("Exit sketch (Enter)"))}</div>`;
@@ -5737,6 +5737,7 @@ export class ModelController {
     switch (c) {
       case "cons": if (m.kind === "sketch") m.editor.toggleConstruction(); break;
       case "skmirror": if (m.kind === "sketch") { m.editor.mirrorSelection(); this.renderPanel(); } break;
+      case "skdynmirror": if (m.kind === "sketch") { m.editor.toggleDynMirror(); this.renderBar(); this.renderPanel(); } break;
       case "skdxf": if (m.kind === "sketch") this.importDxf(); break;
       case "sksec": if (m.kind === "sketch") { this.skSection = !this.skSection; this.renderBar(); } break;
       case "sklpat": case "skcpat": case "skmove": case "skrot": case "skscale":
@@ -8485,6 +8486,7 @@ const ICON_SVG: Record<string, string> = {
   "sel:faces": S('<path d="M2.5 5.5 8 2.5l5.5 3v6L8 14.5l-5.5-3z" fill="currentColor" fill-opacity=".35"/>'),
   "sel:edges": S('<path d="M2.5 5.5 8 2.5l5.5 3v6L8 14.5l-5.5-3z" opacity=".35"/><path d="M8 8.5v6" stroke-width="2.4"/>'),
   "sel:vertices": S('<path d="M2.5 5.5 8 2.5l5.5 3v6L8 14.5l-5.5-3z" opacity=".35"/><circle cx="8" cy="8.5" r="2" fill="currentColor"/>'),
+  skdynmirror: S('<path d="M8 1.5v13" stroke-dasharray="1.6 1.4"/><path d="M2.5 12 6 4"/><path d="M13.5 12 10 4" opacity=".55"/><circle cx="6" cy="4" r="1.1" fill="currentColor"/>'),
   skmirror: S('<path d="M8 1.5v13" stroke-dasharray="1.6 1.4"/><path d="M6 4 2.5 12H6z"/><path d="M10 4l3.5 8H10z" opacity=".55"/>'),
   sklpat: S('<rect x="1.5" y="6" width="3" height="4"/><rect x="6.5" y="6" width="3" height="4" opacity=".6"/><rect x="11.5" y="6" width="3" height="4" opacity=".35"/>'),
   skcpat: S('<circle cx="8" cy="8" r="1"/><circle cx="8" cy="2.8" r="1.6"/><circle cx="12.5" cy="10.6" r="1.6" opacity=".6"/><circle cx="3.5" cy="10.6" r="1.6" opacity=".35"/>'),
