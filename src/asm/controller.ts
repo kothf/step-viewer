@@ -27,7 +27,7 @@ import { folderPath, hashBytes, planLinks, type LinkFile } from "./links";
 import { MCMASTER, mcmasterPart, tagVendor, vendorOf } from "./vendor";
 import { pickMaterial } from "../materialPicker";
 import { toRef } from "../tools/materials";
-import { FASTENERS, TOOLBOX_GROUPS, defaultLength, fastenerInfo, fastenerLengths, fastenerName, fastenerPart, fastenerSizes, lengthFor, searchFasteners, sizeForHole, type FastenerKind, type ToolboxGroup } from "./fasteners";
+import { FASTENERS, TOOLBOX_GROUPS, defaultLength, fastenerInfo, fastenerLengths, fastenerName, fastenerPart, fastenerSizes, lengthFor, lengthLabel, searchFasteners, sizeForHole, type FastenerKind, type ToolboxGroup } from "./fasteners";
 import { fastenerShape, shapeSvg, shapeVolume, type ToolShape } from "./toolboxShape";
 import { applySolved, autoExplode, expandPatterns, explodeAt, explodeOffsets, flattenSubs, patternSteps, solveView, topOf, type Expanded } from "./patterns";
 import { STOPPED, type AsmFeatureStatus } from "../model/kernelClient";
@@ -955,7 +955,7 @@ export class AsmController {
       + `<fieldset class="pm-group tb-pick"><legend>${esc(t(info.label))}</legend>`
       + `<div class="tb-view">${shapeSvg(shape, { w: 248, h: 150, dims: true, cls: "tb-svg", label: esc(fastenerName(f.kind, f.size, f.length)) })}</div>`
       + `<div class="tb-sizes" role="group" aria-label="${esc(t("Size"))}" translate="no">${fastenerSizes(f.kind).map(x => `<button class="tb-size${x === f.size ? " on" : ""}" data-size="${esc(x)}" aria-pressed="${x === f.size}">${esc(x)}</button>`).join("")}</div>`
-      + (info.screw ? `<label class="pm-field"><span>${esc(t("Length"))}</span><select data-f="length" translate="no">${fastenerLengths(f.kind, f.size).map(x => opt(String(x), `${x} mm`, x === f.length)).join("")}</select></label>` : "")
+      + (info.screw ? `<label class="pm-field"><span>${esc(t("Length"))}</span><select data-f="length" translate="no">${fastenerLengths(f.kind, f.size).map(x => opt(String(x), lengthLabel(f.kind, x), x === f.length)).join("")}</select></label>` : "")
       + (info.fit ? `<label class="pm-field pm-check"><input type="checkbox" data-a="auto"${f.auto ? " checked" : ""} /> ${esc(t("Size from the hole"))}</label>` : "")
       + `<p class="tb-desig"><span>${esc(t("Designation"))}</span> <b translate="no">${esc(fastenerName(f.kind, f.size, f.length))}</b></p>`
       + `<p class="pm-help muted">${esc(t("Steel, about {g} g", { g: grams < 10 ? +grams.toFixed(2) : +grams.toFixed(1) }))}</p></fieldset>`

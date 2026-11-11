@@ -12,7 +12,8 @@ import type { ExtrudeFeature, Feature, GlobalVar, Num, PartDoc, SketchFeature, S
 
 export type FastenerKind = "iso4762" | "iso4017" | "iso4014" | "iso7380" | "iso10642" | "iso4026"
   | "iso4032" | "iso4035" | "iso7040" | "iso4161" | "iso7089" | "iso7092" | "iso7093"
-  | "iso2338" | "iso8752" | "din6885" | "bearing" | "standoff" | "standoffm" | "spacer" | "din127" | "din471" | "din472";
+  | "iso2338" | "iso8752" | "din6885" | "bearing" | "bearingf" | "thrust" | "linear" | "needle" | "standoff" | "standoffm" | "spacer" | "din127" | "din471" | "din472"
+  | "b183" | "b1821" | "b1822" | "b1822m" | "b1822w";
 
 /**
  * Per size: d nominal (pin Ø, key width, bearing bore), dk head Ø, k head height, s key (hex socket or
@@ -25,22 +26,31 @@ interface Row {
   ch?: number; hc?: number; tl?: number; td?: number; si?: number; so?: number; sd?: number;
   /** Male standoff: stud length; its internal thread depth. Split rings and spring washers: the opening's width. */
   ls?: number; bd?: number; g?: number;
+  /** Inch sizes: thread pitch (mm), from the threads per inch. */
+  p?: number;
 }
 
 /** ISO 261 coarse pitches by nominal Ø (the thread drawn on screws and nuts). */
-export const COARSE_PITCH: Record<number, number> = { 1.6: 0.35, 2: 0.4, 2.5: 0.45, 3: 0.5, 4: 0.7, 5: 0.8, 6: 1, 8: 1.25, 10: 1.5, 12: 1.75, 14: 2, 16: 2, 20: 2.5, 24: 3, 30: 3.5, 36: 4 };
+export const COARSE_PITCH: Record<number, number> = { 1.6: 0.35, 2: 0.4, 2.5: 0.45, 3: 0.5, 4: 0.7, 5: 0.8, 6: 1, 8: 1.25, 10: 1.5, 12: 1.75, 14: 2, 16: 2, 20: 2.5, 24: 3, 30: 3.5, 36: 4, 42: 4.5, 48: 5, 56: 5.5, 64: 6 };
 const r2 = (v: number) => Math.round(v * 100) / 100;
 
 const T4762: Record<string, Row> = {
+  "M1.6": { d: 1.6, dk: 3, k: 1.6, s: 1.5, t: 0.7 },
   M2: { d: 2, dk: 3.8, k: 2, s: 1.5, t: 1 }, "M2.5": { d: 2.5, dk: 4.5, k: 2.5, s: 2, t: 1.1 }, M3: { d: 3, dk: 5.5, k: 3, s: 2.5, t: 1.3 },
   M4: { d: 4, dk: 7, k: 4, s: 3, t: 2 }, M5: { d: 5, dk: 8.5, k: 5, s: 4, t: 2.5 }, M6: { d: 6, dk: 10, k: 6, s: 5, t: 3 },
   M8: { d: 8, dk: 13, k: 8, s: 6, t: 4 }, M10: { d: 10, dk: 16, k: 10, s: 8, t: 5 }, M12: { d: 12, dk: 18, k: 12, s: 10, t: 6 },
-  M16: { d: 16, dk: 24, k: 16, s: 14, t: 8 }, M20: { d: 20, dk: 30, k: 20, s: 17, t: 10 },
+  M14: { d: 14, dk: 21, k: 14, s: 12, t: 7 }, M16: { d: 16, dk: 24, k: 16, s: 14, t: 8 }, M20: { d: 20, dk: 30, k: 20, s: 17, t: 10 },
+  M24: { d: 24, dk: 36, k: 24, s: 19, t: 12 }, M30: { d: 30, dk: 45, k: 30, s: 22, t: 15.5 },
+  M36: { d: 36, dk: 54, k: 36, s: 27, t: 19 }, M42: { d: 42, dk: 63, k: 42, s: 32, t: 24 }, M48: { d: 48, dk: 72, k: 48, s: 36, t: 28 },
+  M56: { d: 56, dk: 84, k: 56, s: 41, t: 34 }, M64: { d: 64, dk: 96, k: 64, s: 46, t: 38 },
 };
 const T4017: Record<string, Row> = {
+  "M1.6": { d: 1.6, s: 3.2, k: 1.1 },
   M2: { d: 2, s: 4, k: 1.4 }, "M2.5": { d: 2.5, s: 5, k: 1.7 }, M3: { d: 3, s: 5.5, k: 2 }, M4: { d: 4, s: 7, k: 2.8 },
   M5: { d: 5, s: 8, k: 3.5 }, M6: { d: 6, s: 10, k: 4 }, M8: { d: 8, s: 13, k: 5.3 }, M10: { d: 10, s: 16, k: 6.4 },
-  M12: { d: 12, s: 18, k: 7.5 }, M16: { d: 16, s: 24, k: 10 }, M20: { d: 20, s: 30, k: 12.5 },
+  M12: { d: 12, s: 18, k: 7.5 }, M14: { d: 14, s: 21, k: 8.8 }, M16: { d: 16, s: 24, k: 10 }, M20: { d: 20, s: 30, k: 12.5 },
+  M24: { d: 24, s: 36, k: 15 }, M30: { d: 30, s: 46, k: 18.7 }, M36: { d: 36, s: 55, k: 22.5 },
+  M42: { d: 42, s: 65, k: 26 }, M48: { d: 48, s: 75, k: 30 }, M56: { d: 56, s: 85, k: 35 }, M64: { d: 64, s: 95, k: 40 },
 };
 const T7380: Record<string, Row> = {
   M3: { d: 3, dk: 5.7, k: 1.65, s: 2, t: 1.04 }, M4: { d: 4, dk: 7.6, k: 2.2, s: 2.5, t: 1.3 }, M5: { d: 5, dk: 9.5, k: 2.75, s: 3, t: 1.56 },
@@ -48,15 +58,21 @@ const T7380: Record<string, Row> = {
   M12: { d: 12, dk: 21, k: 6.6, s: 8, t: 4.16 }, M16: { d: 16, dk: 28, k: 8.8, s: 10, t: 5.2 },
 };
 const T4032: Record<string, Row> = {
+  "M1.6": { d: 1.6, s: 3.2, m: 1.3 },
   M2: { d: 2, s: 4, m: 1.6 }, "M2.5": { d: 2.5, s: 5, m: 2 }, M3: { d: 3, s: 5.5, m: 2.4 }, M4: { d: 4, s: 7, m: 3.2 },
   M5: { d: 5, s: 8, m: 4.7 }, M6: { d: 6, s: 10, m: 5.2 }, M8: { d: 8, s: 13, m: 6.8 }, M10: { d: 10, s: 16, m: 8.4 },
-  M12: { d: 12, s: 18, m: 10.8 }, M16: { d: 16, s: 24, m: 14.8 }, M20: { d: 20, s: 30, m: 18 },
+  M12: { d: 12, s: 18, m: 10.8 }, M14: { d: 14, s: 21, m: 12.8 }, M16: { d: 16, s: 24, m: 14.8 }, M20: { d: 20, s: 30, m: 18 },
+  M24: { d: 24, s: 36, m: 21.5 }, M30: { d: 30, s: 46, m: 25.6 }, M36: { d: 36, s: 55, m: 31 },
+  M42: { d: 42, s: 65, m: 34 }, M48: { d: 48, s: 75, m: 38 }, M56: { d: 56, s: 85, m: 45 }, M64: { d: 64, s: 95, m: 51 },
 };
 const T7089: Record<string, Row> = {
+  "M1.6": { d: 1.6, d1: 1.7, d2: 4, h: 0.3 },
   M2: { d: 2, d1: 2.2, d2: 5, h: 0.3 }, "M2.5": { d: 2.5, d1: 2.7, d2: 6, h: 0.5 }, M3: { d: 3, d1: 3.2, d2: 7, h: 0.5 },
   M4: { d: 4, d1: 4.3, d2: 9, h: 0.8 }, M5: { d: 5, d1: 5.3, d2: 10, h: 1 }, M6: { d: 6, d1: 6.4, d2: 12, h: 1.6 },
   M8: { d: 8, d1: 8.4, d2: 16, h: 1.6 }, M10: { d: 10, d1: 10.5, d2: 20, h: 2 }, M12: { d: 12, d1: 13, d2: 24, h: 2.5 },
-  M16: { d: 16, d1: 17, d2: 30, h: 3 }, M20: { d: 20, d1: 21, d2: 37, h: 3 },
+  M14: { d: 14, d1: 15, d2: 28, h: 2.5 }, M16: { d: 16, d1: 17, d2: 30, h: 3 }, M20: { d: 20, d1: 21, d2: 37, h: 3 },
+  M24: { d: 24, d1: 25, d2: 44, h: 4 }, M30: { d: 30, d1: 31, d2: 56, h: 4 }, M36: { d: 36, d1: 37, d2: 66, h: 5 },
+  M42: { d: 42, d1: 45, d2: 78, h: 8 }, M48: { d: 48, d1: 52, d2: 92, h: 8 }, M56: { d: 56, d1: 62, d2: 105, h: 10 }, M64: { d: 64, d1: 70, d2: 115, h: 10 },
 };
 
 // ISO 10642: theoretical head Ø with a 90° countersink, so k = (dk - d) / 2.
@@ -108,10 +124,34 @@ const T6885: Record<string, Row> = Object.fromEntries(([[2, 2, 6, 20], [3, 3, 6,
   .map(([b, h, lmin, lmax]) => [`${b}x${h}`, { d: b, b, hk: h, lmin, lmax }]));
 // Deep groove ball bearings (ISO 15), shown as one ring: bore d, outside D, width B.
 const TBRG: Record<string, Row> = Object.fromEntries(([
-  ["625", 5, 16, 5], ["626", 6, 19, 6], ["608", 8, 22, 7],
+  ["623", 3, 10, 4], ["624", 4, 13, 5], ["625", 5, 16, 5], ["626", 6, 19, 6], ["608", 8, 22, 7], ["627", 7, 22, 7], ["628", 8, 24, 8], ["609", 9, 24, 7], ["629", 9, 26, 8],
   ["6000", 10, 26, 8], ["6001", 12, 28, 8], ["6002", 15, 32, 9], ["6003", 17, 35, 10], ["6004", 20, 42, 12], ["6005", 25, 47, 12], ["6006", 30, 55, 13],
+  ["6007", 35, 62, 14], ["6008", 40, 68, 15], ["6009", 45, 75, 16], ["6010", 50, 80, 16],
   ["6200", 10, 30, 9], ["6201", 12, 32, 10], ["6202", 15, 35, 11], ["6203", 17, 40, 12], ["6204", 20, 47, 14], ["6205", 25, 52, 15], ["6206", 30, 62, 16],
+  ["6207", 35, 72, 17], ["6208", 40, 80, 18], ["6209", 45, 85, 19], ["6210", 50, 90, 20],
   ["6300", 10, 35, 11], ["6301", 12, 37, 12], ["6302", 15, 42, 13], ["6303", 17, 47, 14], ["6304", 20, 52, 15], ["6305", 25, 62, 17], ["6306", 30, 72, 19],
+  ["6307", 35, 80, 21], ["6308", 40, 90, 23], ["6309", 45, 100, 25], ["6310", 50, 110, 27],
+  ["6800", 10, 19, 5], ["6801", 12, 21, 5], ["6802", 15, 24, 5], ["6803", 17, 26, 5], ["6804", 20, 32, 7], ["6805", 25, 37, 7], ["6806", 30, 42, 7],
+  ["6900", 10, 22, 6], ["6901", 12, 24, 6], ["6902", 15, 28, 7], ["6903", 17, 30, 7], ["6904", 20, 37, 9], ["6905", 25, 42, 9], ["6906", 30, 47, 9],
+] as const).map(([n, d, D, B]) => [n, { d, D, B }]));
+// Flanged miniature ball bearings: d, D, B and the flange Ø dc × width c (NSK / Koyo catalogue values).
+const TBRGF: Record<string, Row> = Object.fromEntries(([
+  ["F623", 3, 10, 4, 11.5, 1], ["F624", 4, 13, 5, 15, 1], ["F625", 5, 16, 5, 18, 1], ["F626", 6, 19, 6, 22, 1.5], ["F608", 8, 22, 7, 25, 1.5],
+] as const).map(([n, d, D, B, dc, c]) => [n, { d, D, B, dc, c }]));
+// Single direction thrust ball bearings (ISO 104, 511 series): bore d, outside D, height B.
+const TTHRUST: Record<string, Row> = Object.fromEntries(([
+  ["51100", 10, 24, 9], ["51101", 12, 26, 9], ["51102", 15, 28, 9], ["51103", 17, 30, 9], ["51104", 20, 35, 10], ["51105", 25, 42, 11],
+  ["51106", 30, 47, 11], ["51107", 35, 52, 12], ["51108", 40, 60, 13], ["51110", 50, 70, 14],
+] as const).map(([n, d, D, B]) => [n, { d, D, B }]));
+// Linear ball bearings LM..UU (both ends sealed): shaft d, outside D, length B.
+const TLINEAR: Record<string, Row> = Object.fromEntries(([
+  ["LM6UU", 6, 12, 19], ["LM8UU", 8, 15, 24], ["LM10UU", 10, 19, 29], ["LM12UU", 12, 21, 30], ["LM13UU", 13, 23, 32], ["LM16UU", 16, 28, 37],
+  ["LM20UU", 20, 32, 42], ["LM25UU", 25, 40, 59], ["LM30UU", 30, 45, 64],
+] as const).map(([n, d, D, B]) => [n, { d, D, B }]));
+// Drawn cup needle roller bearings HK (ISO 3245): roller set bore d (Fw), outside D, width B (C).
+const TNEEDLE: Record<string, Row> = Object.fromEntries(([
+  ["HK0408", 4, 8, 8], ["HK0509", 5, 9, 9], ["HK0609", 6, 10, 9], ["HK0808", 8, 12, 8], ["HK1010", 10, 14, 10], ["HK1210", 12, 16, 10],
+  ["HK1512", 15, 21, 12], ["HK2010", 20, 26, 10], ["HK2512", 25, 32, 12],
 ] as const).map(([n, d, D, B]) => [n, { d, D, B }]));
 
 // Hex standoffs (common catalogue sizes): across flats s, male stud length ls, internal thread depth bd of the male-female one.
@@ -142,6 +182,34 @@ const T472: Record<string, Row> = Object.fromEntries(([[10, 1, 10.8, 3.2, 1.4, 1
   [72, 2.5, 76.6, 7.8, 6.4, 75, 2.7], [80, 2.5, 85.5, 8.5, 7, 83.5, 2.7]] as const)
   .map(([d, s, d3, a, b, gd, m]) => [String(d), { d, h: s, d1: +(d3 - 2 * b).toFixed(2), d2: d3, b, g: +(0.6 * a).toFixed(2), D: gd, m }]));
 
+// ---------- ANSI inch (UNC) ----------
+const IN = 25.4, inMm = (v: number) => Math.round(v * IN * 1000) / 1000;
+/** Inch rows: size ("1/4-20"), major Ø and the other values in inches; stored in mm with the pitch from the tpi. */
+const inchRows = (rows: (readonly [string, number, ...number[]])[], keys: (keyof Row)[]): Record<string, Row> =>
+  Object.fromEntries(rows.map(([n, d, ...vs]) => {
+    const r: Row = { d: inMm(d), p: +(IN / +n.split("-")[1]).toFixed(4) };
+    keys.forEach((k, i) => { (r as unknown as Record<string, number>)[k] = inMm(vs[i]); });
+    return [n, r];
+  }));
+// ASME B18.3 socket head cap screws: head Ø A, height H = D, hex key J, key engagement T.
+const TB183 = inchRows([["#2-56", 0.086, 0.14, 0.086, 0.0781, 0.038], ["#4-40", 0.112, 0.183, 0.112, 0.0938, 0.051], ["#6-32", 0.138, 0.226, 0.138, 0.1094, 0.064],
+  ["#8-32", 0.164, 0.27, 0.164, 0.1406, 0.077], ["#10-24", 0.19, 0.312, 0.19, 0.1562, 0.09], ["1/4-20", 0.25, 0.375, 0.25, 0.1875, 0.12],
+  ["5/16-18", 0.3125, 0.469, 0.3125, 0.25, 0.151], ["3/8-16", 0.375, 0.562, 0.375, 0.3125, 0.182], ["7/16-14", 0.4375, 0.656, 0.4375, 0.375, 0.213],
+  ["1/2-13", 0.5, 0.75, 0.5, 0.375, 0.245], ["5/8-11", 0.625, 0.938, 0.625, 0.5, 0.307], ["3/4-10", 0.75, 1.125, 0.75, 0.625, 0.37], ["1-8", 1, 1.5, 1, 0.75, 0.495]], ["dk", "k", "s", "t"]);
+// ASME B18.2.1 hex cap screws: across flats F, head height H.
+const TB1821 = inchRows([["1/4-20", 0.25, 0.4375, 0.1562], ["5/16-18", 0.3125, 0.5, 0.2031], ["3/8-16", 0.375, 0.5625, 0.2344], ["7/16-14", 0.4375, 0.625, 0.2812],
+  ["1/2-13", 0.5, 0.75, 0.3125], ["5/8-11", 0.625, 0.9375, 0.3906], ["3/4-10", 0.75, 1.125, 0.4688], ["1-8", 1, 1.5, 0.6094]], ["s", "k"]);
+// ASME B18.2.2 hex nuts: across flats F, height H.
+const TB1822 = inchRows([["1/4-20", 0.25, 0.4375, 0.2188], ["5/16-18", 0.3125, 0.5, 0.2656], ["3/8-16", 0.375, 0.5625, 0.3281], ["7/16-14", 0.4375, 0.6875, 0.375],
+  ["1/2-13", 0.5, 0.75, 0.4375], ["5/8-11", 0.625, 0.9375, 0.5469], ["3/4-10", 0.75, 1.125, 0.6406], ["1-8", 1, 1.5, 0.8594]], ["s", "m"]);
+// ASME B18.6.3 hex machine screw nuts: across flats F, height H.
+const TB1822M = inchRows([["#2-56", 0.086, 0.1875, 0.0625], ["#4-40", 0.112, 0.25, 0.0938], ["#6-32", 0.138, 0.3125, 0.1094], ["#8-32", 0.164, 0.3438, 0.125],
+  ["#10-24", 0.19, 0.375, 0.125]], ["s", "m"]);
+// ASME B18.22.1 plain washers, type A narrow (SAE): inside Ø, outside Ø, thickness.
+const TB1822W = inchRows([["#6-32", 0.138, 0.156, 0.375, 0.049], ["#8-32", 0.164, 0.188, 0.438, 0.049], ["#10-24", 0.19, 0.219, 0.5, 0.049],
+  ["1/4-20", 0.25, 0.281, 0.625, 0.065], ["5/16-18", 0.3125, 0.344, 0.688, 0.065], ["3/8-16", 0.375, 0.406, 0.812, 0.065], ["7/16-14", 0.4375, 0.469, 0.922, 0.065],
+  ["1/2-13", 0.5, 0.531, 1.062, 0.095], ["5/8-11", 0.625, 0.656, 1.312, 0.095], ["3/4-10", 0.75, 0.812, 1.469, 0.134], ["1-8", 1, 1.062, 2, 0.134]], ["d1", "d2", "h"]);
+
 export type ToolboxGroup = "Screws" | "Nuts" | "Washers" | "Spacers" | "Pins" | "Keys" | "Retaining rings" | "Bearings";
 /** How a part sits on a hole: on its z = 0 face facing -Z ("under" the head, a nut or washer), or flush with its top (+Z on z = 0). */
 export type SeatKind = "under" | "flush";
@@ -156,6 +224,10 @@ export interface FastenerInfo {
   lengths?: number[];
   /** How the size follows a clicked hole: "clear" = largest d that fits, "d" = d matches, "D" = outside Ø (else bore) matches, absent = never. */
   fit?: "clear" | "d" | "D";
+  /** Built like this metric standard (the inch ones). */
+  like?: FastenerKind;
+  /** Inch sizes: lengths in inches, names "1/4-20 x 1-1/2". */
+  inch?: boolean;
 }
 
 /** The standards, in the order the panel lists them; `screw` ones take a length. */
@@ -166,13 +238,18 @@ export const FASTENERS: FastenerInfo[] = [
   { kind: "iso7380", label: "Button head screw (ISO 7380)", name: "ISO 7380", group: "Screws", seat: "under", screw: true, table: T7380, len: [1.5, 6], fit: "clear" },
   { kind: "iso10642", label: "Countersunk socket screw (ISO 10642)", name: "ISO 10642", group: "Screws", seat: "flush", screw: true, table: T10642, fit: "clear" },
   { kind: "iso4026", label: "Set screw, flat point (ISO 4026)", name: "ISO 4026", group: "Screws", seat: "flush", screw: true, table: T4026, len: [1, 5], fit: "clear" },
+  { kind: "b183", label: "Socket head cap screw, inch (ASME B18.3)", name: "ASME B18.3", group: "Screws", seat: "under", screw: true, table: TB183, fit: "clear", like: "iso4762", inch: true },
+  { kind: "b1821", label: "Hex cap screw, inch (ASME B18.2.1)", name: "ASME B18.2.1", group: "Screws", seat: "under", screw: true, table: TB1821, len: [2, 12], fit: "clear", like: "iso4014", inch: true },
   { kind: "iso4032", label: "Hex nut (ISO 4032)", name: "ISO 4032", group: "Nuts", seat: "under", screw: false, table: T4032, fit: "clear" },
   { kind: "iso4035", label: "Thin hex nut (ISO 4035)", name: "ISO 4035", group: "Nuts", seat: "under", screw: false, table: T4035, fit: "clear" },
   { kind: "iso7040", label: "Nylon insert lock nut (ISO 7040)", name: "ISO 7040", group: "Nuts", seat: "under", screw: false, table: T7040, fit: "clear" },
+  { kind: "b1822", label: "Hex nut, inch (ASME B18.2.2)", name: "ASME B18.2.2", group: "Nuts", seat: "under", screw: false, table: TB1822, fit: "clear", like: "iso4032", inch: true },
+  { kind: "b1822m", label: "Machine screw nut, inch (ASME B18.6.3)", name: "ASME B18.6.3", group: "Nuts", seat: "under", screw: false, table: TB1822M, fit: "clear", like: "iso4032", inch: true },
   { kind: "iso4161", label: "Flange nut (ISO 4161)", name: "ISO 4161", group: "Nuts", seat: "under", screw: false, table: T4161, fit: "clear" },
   { kind: "iso7089", label: "Plain washer (ISO 7089)", name: "ISO 7089", group: "Washers", seat: "under", screw: false, table: T7089, fit: "clear" },
   { kind: "iso7092", label: "Small washer (ISO 7092)", name: "ISO 7092", group: "Washers", seat: "under", screw: false, table: T7092, fit: "clear" },
   { kind: "iso7093", label: "Large washer (ISO 7093)", name: "ISO 7093", group: "Washers", seat: "under", screw: false, table: T7093, fit: "clear" },
+  { kind: "b1822w", label: "Plain washer, inch (ASME B18.22.1 A)", name: "ASME B18.22.1", group: "Washers", seat: "under", screw: false, table: TB1822W, fit: "clear", like: "iso7089", inch: true },
   { kind: "din127", label: "Spring lock washer (DIN 127 B)", name: "DIN 127 B", group: "Washers", seat: "under", screw: false, table: T127, fit: "clear" },
   { kind: "standoff", label: "Hex standoff, female-female", name: "Standoff F-F", group: "Spacers", seat: "under", screw: true, table: TSTANDOFF, lengths: [5, 6, 8, 10, 12, 15, 20, 25, 30, 35, 40, 45, 50, 60], fit: "clear" },
   { kind: "standoffm", label: "Hex standoff, male-female", name: "Standoff M-F", group: "Spacers", seat: "under", screw: true, table: TSTANDOFF, lengths: [5, 6, 8, 10, 12, 15, 20, 25, 30, 35, 40, 45, 50, 60], fit: "clear" },
@@ -183,14 +260,32 @@ export const FASTENERS: FastenerInfo[] = [
   { kind: "din471", label: "Retaining ring for shafts (DIN 471)", name: "DIN 471", group: "Retaining rings", seat: "flush", screw: false, table: T471, fit: "d" },
   { kind: "din472", label: "Retaining ring for bores (DIN 472)", name: "DIN 472", group: "Retaining rings", seat: "flush", screw: false, table: T472, fit: "d" },
   { kind: "bearing", label: "Deep groove ball bearing (ISO 15)", name: "Ball bearing", group: "Bearings", seat: "flush", screw: false, table: TBRG, fit: "D" },
+  { kind: "bearingf", label: "Flanged ball bearing", name: "Flanged ball bearing", group: "Bearings", seat: "under", screw: false, table: TBRGF, fit: "D" },
+  { kind: "needle", label: "Drawn cup needle roller bearing (HK)", name: "Needle roller bearing", group: "Bearings", seat: "flush", screw: false, table: TNEEDLE, fit: "D" },
+  { kind: "linear", label: "Linear ball bearing (LM..UU)", name: "Linear bearing", group: "Bearings", seat: "flush", screw: false, table: TLINEAR, fit: "D" },
+  { kind: "thrust", label: "Thrust ball bearing (ISO 104)", name: "Thrust ball bearing", group: "Bearings", seat: "flush", screw: false, table: TTHRUST, fit: "D" },
 ];
 export const TOOLBOX_GROUPS: ToolboxGroup[] = ["Screws", "Nuts", "Washers", "Spacers", "Pins", "Keys", "Retaining rings", "Bearings"];
 
-const LENGTHS = [3, 4, 5, 6, 8, 10, 12, 16, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 180, 200];
+const LENGTHS = [3, 4, 5, 6, 8, 10, 12, 16, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 180, 200, 220, 240, 260, 280, 300];
+/** Inch screw lengths, in inches. */
+const INCH_LENGTHS = [0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3, 3.5, 4, 4.5, 5, 5.5, 6, 7, 8];
 const KEY_LENGTHS = [6, 8, 10, 12, 14, 16, 18, 20, 22, 25, 28, 32, 36, 40, 45, 50, 56, 63, 70, 80, 90, 100, 110, 125, 140, 160, 180, 200];
 
 export const fastenerInfo = (kind: FastenerKind) => FASTENERS.find(f => f.kind === kind)!;
 export const fastenerSizes = (kind: FastenerKind) => Object.keys(fastenerInfo(kind).table);
+/** The metric standard whose geometry `kind` uses (itself, or the one an inch standard is built like). */
+export const shapeKind = (kind: FastenerKind): FastenerKind => fastenerInfo(kind).like ?? kind;
+
+const FRAC: [number, string][] = [[0.125, "1/8"], [0.25, "1/4"], [0.375, "3/8"], [0.5, "1/2"], [0.625, "5/8"], [0.75, "3/4"], [0.875, "7/8"]];
+/** A length as shown: "20" (mm) or "1-1/2" (inches) for inch standards. */
+export function lengthText(kind: FastenerKind, L: number): string {
+  if (!fastenerInfo(kind).inch) return `${+L.toFixed(2)}`;
+  const v = L / IN, w = Math.floor(v + 1e-6), f = FRAC.find(([x]) => Math.abs(v - w - x) < 1e-4)?.[1];
+  return f ? (w ? `${w}-${f}` : f) : Math.abs(v - w) < 1e-4 ? `${w}` : `${+v.toFixed(3)}`;
+}
+/** A length with its unit, for the panel: "20 mm", "1-1/2 in". */
+export const lengthLabel = (kind: FastenerKind, L: number) => `${lengthText(kind, L)} ${fastenerInfo(kind).inch ? "in" : "mm"}`;
 
 /** Preferred lengths for a size: from about 1.5 d to 10 d by default (ISO 4014 bolts start at 5 d, as their shank is partly plain). */
 export function fastenerLengths(kind: FastenerKind, size: string): number[] {
@@ -200,6 +295,7 @@ export function fastenerLengths(kind: FastenerKind, size: string): number[] {
   if (row?.lmin !== undefined) return KEY_LENGTHS.filter(l => l >= row.lmin! && l <= row.lmax!);
   const d = row?.d ?? 6, [a, b] = info.len ?? [1.5, 10];
   const lo = Math.max(3, a * d), hi = b * d;
+  if (info.inch) return INCH_LENGTHS.map(inMm).filter(l => l >= lo - 1e-9 && l <= hi + 1e-9);
   return LENGTHS.filter(l => l >= lo - 1e-9 && l <= hi + 1e-9);
 }
 export function defaultLength(kind: FastenerKind, size: string): number {
@@ -221,16 +317,18 @@ export function searchFasteners(q: string, shown: (label: string) => string = x 
   const words = q.toLowerCase().split(/\s+/).filter(Boolean);
   if (!words.length) return FASTENERS;
   return FASTENERS.filter(f => {
-    const text = `${f.name} ${f.label} ${shown(f.label)} ${f.group} ${shown(f.group)} ${f.kind}`.toLowerCase();
+    const text = `${f.name} ${f.label} ${shown(f.label)} ${f.group} ${shown(f.group)} ${f.kind}${f.inch ? " inch unc ansi" : " metric"}`.toLowerCase();
     const sizes = Object.keys(f.table).map(x => x.toLowerCase());
-    return words.every(w => text.includes(w) || sizes.includes(w) || (w.length > 3 && text.includes(w.replace(/s$/, ""))));
+    // A size matches whole, or by its start from three characters with a digit ("lm8" → LM8UU, "hk10" → HK1010).
+    const sizeHit = (w: string) => sizes.includes(w) || (w.length >= 3 && /\d/.test(w) && sizes.some(x => x.startsWith(w)));
+    return words.every(w => text.includes(w) || sizeHit(w) || (w.length > 3 && text.includes(w.replace(/s$/, ""))));
   });
 }
 
 /** The part name, as in SolidWorks Toolbox: "ISO 4762 M6 x 20", "ISO 4032 M6", "Ball bearing 6201". */
 export function fastenerName(kind: FastenerKind, size: string, length?: number) {
   const f = fastenerInfo(kind);
-  return f.screw ? `${f.name} ${size} x ${length ?? defaultLength(kind, size)}` : `${f.name} ${size}`;
+  return f.screw ? `${f.name} ${size} x ${lengthText(kind, length ?? defaultLength(kind, size))}` : `${f.name} ${size}`;
 }
 
 /**
@@ -266,6 +364,9 @@ export function sizeForHole(kind: FastenerKind, dia: number, current?: string): 
 
 /** Thread length b of partly threaded screws (ISO 4762 / ISO 4014, L ≤ 125 mm; longer ones a little more); absent = threaded to the head. */
 function threadRun(kind: FastenerKind, d: number, L: number): number | undefined {
+  // ASME B18.3: 2 D + 1/2 in; ASME B18.2.1 up to 6 in: 2 D + 1/4 in, longer 2 D + 1/2 in.
+  if (kind === "b183") return 2 * d + 12.7;
+  if (kind === "b1821") return L <= 152.4 ? 2 * d + 6.35 : 2 * d + 12.7;
   if (kind === "iso4762") return 2 * d + 12;
   if (kind === "iso4014") return L <= 125 ? 2 * d + 6 : 2 * d + 12;
   return undefined;
@@ -277,12 +378,12 @@ function threadRun(kind: FastenerKind, d: number, L: number): number | undefined
  * countersink each side and a thread between them; pins chamfered ends; bearings chamfered rings and a
  * shield recess each side.
  */
-export function detailRow(kind: FastenerKind, row: Row, L: number): Row {
-  const r: Row = { ...row }, info = fastenerInfo(kind), P = COARSE_PITCH[row.d] ?? 0.15 * row.d;
+export function detailRow(std: FastenerKind, row: Row, L: number): Row {
+  const kind = shapeKind(std), r: Row = { ...row }, info = fastenerInfo(kind), P = row.p ?? COARSE_PITCH[row.d] ?? 0.15 * row.d;
   if (info.group === "Screws") {
     const shank = kind === "iso10642" ? L - row.k! : L;
     r.ch = r2(Math.max(0.2, 0.7 * P));
-    r.tl = r2(Math.min(threadRun(kind, row.d, L) ?? shank, shank) - r.ch);
+    r.tl = r2(Math.min(threadRun(std, row.d, L) ?? shank, shank) - r.ch);
     r.td = r2(row.d - 1.2269 * P);
     if (kind === "iso4762") r.hc = r2(0.06 * row.dk!);
   } else if (info.group === "Nuts") {
@@ -299,19 +400,27 @@ export function detailRow(kind: FastenerKind, row: Row, L: number): Row {
     if (kind === "standoffm") { r.hc = r2(Math.max(0.2, 0.7 * P0)); r.si = r2(row.ls! - r.hc); r.so = r2(row.d - 1.2269 * P0); }
   } else if (info.group === "Pins") {
     r.ch = r2(Math.min(0.1 * row.d, row.d1 ? 0.4 * (row.d - row.d1) / 2 : Infinity));
-  } else if (kind === "bearing") {
+  } else if (info.group === "Bearings") {
     const w = (row.D! - row.d) / 2;
-    r.ch = r2(Math.min(row.D! < 30 ? 0.3 : row.D! < 55 ? 0.6 : 1, 0.15 * w));
-    r.si = r2(row.d + 0.7 * w);
-    r.so = r2(row.D! - 0.5 * w);
-    r.sd = r2(Math.max(0.2, 0.03 * row.B!));
+    r.ch = r2(Math.min(row.D! < 30 ? 0.3 : row.D! < 55 ? 0.6 : 1, 0.15 * w, kind === "bearingf" ? 0.4 * row.c! : Infinity));
+    if (kind === "bearing") {
+      r.si = r2(row.d + 0.7 * w);
+      r.so = r2(row.D! - 0.5 * w);
+      r.sd = r2(Math.max(0.2, 0.03 * row.B!));
+    } else if (kind === "thrust") {
+      // The gap between the shaft and housing washers, cut in from the bore and from the outside, leaving the cage.
+      const m = (row.d + row.D!) / 2;
+      r.si = r2(m - 0.3 * w);
+      r.so = r2(m + 0.3 * w);
+      r.sd = r2(0.3 * row.B!);
+    }
   }
   return r;
 }
 
 const VAR_NAMES: Record<keyof Row | "L", string> = {
   ch: "Chamfer", hc: "HeadChamfer", tl: "ThreadL", td: "ThreadDia", si: "ShieldIn", so: "ShieldOut", sd: "ShieldDepth",
-  ls: "StudL", bd: "ThreadDepth", g: "Gap",
+  ls: "StudL", bd: "ThreadDepth", g: "Gap", p: "Pitch",
   d: "Dia", dk: "HeadDia", k: "HeadH", s: "Key", t: "KeyDepth", m: "NutH", d1: "HoleDia", d2: "OuterDia", h: "WasherH", L: "Length",
   dc: "CollarDia", c: "CollarH", b: "KeyW", hk: "KeyH", D: "OutsideDia", B: "Width", lmin: "MinLength", lmax: "MaxLength",
 };
@@ -381,12 +490,14 @@ type Key = keyof Row | "L";
  * Chamfers and cosmetic threads (see `detailRow`) added after the body features; returns the variables they use.
  * Face names are the extrudes' (`<id>:side:c`, `<id>:start|end`); a one-edge chamfer's face is `<id>:chamfer:0`.
  */
-function detailFeatures(kind: FastenerKind, row: Row, feats: Feature[], v: (k: Key) => string, val: (k: Key) => number): Key[] {
-  const info = fastenerInfo(kind), P = COARSE_PITCH[row.d] ?? 0.15 * row.d;
+function detailFeatures(std: FastenerKind, row: Row, feats: Feature[], v: (k: Key) => string, val: (k: Key) => number): Key[] {
+  const kind = shapeKind(std), info = fastenerInfo(kind), P = row.p ?? COARSE_PITCH[row.d] ?? 0.15 * row.d;
+  // The thread's size as the Hole Wizard writes it: "M6", "1/4-20 UNC".
+  const own = fastenerInfo(std), tsize = own.inch ? `${Object.keys(own.table).find(k => Math.abs(own.table[k].d - row.d) < 1e-6)} UNC` : `M${row.d}`;
   const chamfer = (id: string, name: string, edges: [string, string][], k: Key): Feature =>
     ({ id, type: "chamfer", name, distance: num(val(k), v(k)), edges: edges.map(faces => ({ faces })) });
   const thread = (faces: [string, string], internal: boolean): Feature =>
-    ({ id: "t1", type: "thread", name: "Cosmetic Thread1", edge: { faces }, size: `M${row.d}`, diameter: num(val("td"), v("td")), length: num(val("tl"), v("tl")), pitch: P, ...(internal ? { internal: true } : {}) });
+    ({ id: "t1", type: "thread", name: "Cosmetic Thread1", edge: { faces }, size: tsize, diameter: num(val("td"), v("td")), length: num(val("tl"), v("tl")), pitch: P, ...(internal ? { internal: true } : {}) });
   if (info.group === "Screws") {
     const sh = kind === "iso10642" ? "e2" : "e1";
     feats.push(chamfer("c1", "Chamfer1", [[`${sh}:side:c`, `${sh}:end`]], "ch"));
@@ -411,7 +522,11 @@ function detailFeatures(kind: FastenerKind, row: Row, feats: Feature[], v: (k: K
     return ["ch", "tl", "td", "hc", "si", "so"];
   }
   if (info.group === "Pins") { feats.push(chamfer("c1", "Chamfer1", [["e1:side:c", "e1:start"], ["e1:side:c", "e1:end"]], "ch")); return ["ch"]; }
-  if (kind === "bearing") {
+  if (kind === "bearingf") {
+    feats.push(chamfer("c1", "Chamfer1", [["e1:side:c", "e1:end"], ["e2:side:c", "e2:end"], ["e3:side:c", "e2:end"], ["e3:side:c", "e1:end"]], "ch"));
+    return ["ch"];
+  }
+  if (info.group === "Bearings") {
     feats.push(chamfer("c1", "Chamfer1", [["e1:side:c", "e1:start"], ["e1:side:c", "e1:end"], ["e2:side:c", "e1:start"], ["e2:side:c", "e1:end"]], "ch"));
     return ["ch"];
   }
@@ -422,12 +537,12 @@ function detailFeatures(kind: FastenerKind, row: Row, feats: Feature[], v: (k: K
  * A fastener part of one standard with every size as a configuration; `size` is active, screws get
  * `length` (default: the preferred length nearest 3 d) in each configuration.
  */
-export function fastenerPart(kind: FastenerKind, size: string, length?: number, opts: { detail?: boolean } = {}): PartDoc {
-  const info = fastenerInfo(kind), detail = opts.detail !== false;
+export function fastenerPart(std: FastenerKind, size: string, length?: number, opts: { detail?: boolean } = {}): PartDoc {
+  const info = fastenerInfo(std), detail = opts.detail !== false, kind = shapeKind(std);
   if (!info.table[size]) throw new Error(`No ${info.name} size ${size}`);
-  const L = length ?? defaultLength(kind, size);
-  const row = detail ? detailRow(kind, info.table[size], L) : info.table[size];
-  const pd = newPart(fastenerName(kind, size, L));
+  const L = length ?? defaultLength(std, size);
+  const row = detail ? detailRow(std, info.table[size], L) : info.table[size];
+  const pd = newPart(fastenerName(std, size, L));
   const feats: Feature[] = [];
   const v = (k: keyof Row | "L") => VAR_NAMES[k];
   const val = (k: keyof Row | "L") => (k === "L" ? L : row[k] ?? 0);
@@ -497,6 +612,31 @@ export function fastenerPart(kind: FastenerKind, size: string, length?: number, 
     const s1 = sketch("s1", "Sketch1"); rectangle(s1, v("L"), L, v("b"), row.b!);
     feats.push(s1, ext("e1", "Key", "s1", "hk"));
     used.push("L", "b", "hk");
+  } else if (kind === "bearingf") {
+    // Flange on top of z = 0 (its underside is the seat), the ring below it, the bore through both.
+    const s1 = sketch("s1", "Sketch1"); circle(s1, v("D"), row.D!);
+    const s2 = sketch("s2", "Sketch2"); circle(s2, v("dc"), row.dc!);
+    const s3 = sketch("s3", "Sketch3"); circle(s3, v("d"), row.d);
+    feats.push(s1, ext("e1", "Ring", "s1", "B", { flip: true, depth: num(row.B! - row.c!, `${v("B")} - ${v("c")}`) }), s2, ext("e2", "Flange", "s2", "c"),
+      s3, cut("e3", "Bore", "s3", num(row.B!, v("B")), num(row.c!, v("c"))));
+    used.push("D", "dc", "c", "B", "d");
+  } else if (kind === "needle" || kind === "linear" || kind === "thrust") {
+    const s1 = sketch("s1", "Sketch1"); circle(s1, v("D"), row.D!);
+    const s2 = sketch("s2", "Sketch2"); circle(s2, v("d"), row.d);
+    feats.push(s1, ext("e1", "Ring", "s1", "B", { flip: true }), s2, cut("e2", "Bore", "s2", num(row.B!, v("B"))));
+    used.push("D", "B", "d");
+    if (detail && kind === "thrust") {
+      // Two ring grooves halfway down, one in from the bore and one in from the outside: the gap between the washers.
+      const s3 = sketch("s3", "Sketch3");
+      s3.ents.push({ id: "c1", t: "circle", c: "o", r: row.d / 2 - 1 }, { id: "c2", t: "circle", c: "o", r: row.si! / 2 },
+        { id: "c3", t: "circle", c: "o", r: row.so! / 2 }, { id: "c4", t: "circle", c: "o", r: row.D! / 2 + 1 });
+      s3.dims.push({ id: "d1", name: "D1@Sketch3", t: "diameter", e: ["c1"], val: num(row.d - 2, `${v("d")} - 2`) },
+        { id: "d2", name: "D2@Sketch3", t: "diameter", e: ["c2"], val: num(row.si!, v("si")) },
+        { id: "d3", name: "D3@Sketch3", t: "diameter", e: ["c3"], val: num(row.so!, v("so")) },
+        { id: "d4", name: "D4@Sketch3", t: "diameter", e: ["c4"], val: num(row.D! + 2, `${v("D")} + 2`) });
+      feats.push(s3, cut("e3", "Gap", "s3", num(row.sd!, v("sd")), num(-(row.B! - row.sd!) / 2, `-(${v("B")} - ${v("sd")}) / 2`)));
+      used.push("si", "so", "sd");
+    }
   } else if (kind === "bearing") {
     const s1 = sketch("s1", "Sketch1"); circle(s1, v("D"), row.D!);
     const s2 = sketch("s2", "Sketch2"); circle(s2, v("d"), row.d);
@@ -541,23 +681,23 @@ export function fastenerPart(kind: FastenerKind, size: string, length?: number, 
       used.push("g");
     }
   }
-  if (detail) used.push(...detailFeatures(kind, row, feats, v, val));
+  if (detail) used.push(...detailFeatures(std, row, feats, v, val));
   pd.features = feats;
   pd.material = { name: "Steel", density: 7.85 };
   const vars = (r0: Row, len: number): GlobalVar[] => {
-    const r = detail ? detailRow(kind, r0, len) : r0;
+    const r = detail ? detailRow(std, r0, len) : r0;
     return used.map(k => ({ name: VAR_NAMES[k], expr: `${+(k === "L" ? len : r[k] ?? 0).toFixed(4)}`, kind: "length" }));
   };
   // Every size as a configuration (its variables), then the asked one made active.
   pd.configs = [];
   for (const [name, r] of Object.entries(info.table)) {
-    pd.vars = vars(r, name === size ? L : defaultLength(kind, name));
+    pd.vars = vars(r, name === size ? L : defaultLength(std, name));
     refreshExprs(pd);
     pd.configs.push({ name, state: captureState(pd) });
   }
   pd.config = Object.keys(info.table).at(-1);
   activate(pd, size);
   refreshExprs(pd);
-  pd.props = { ...pd.props, partNumber: fastenerName(kind, size, L), description: info.label };
+  pd.props = { ...pd.props, partNumber: fastenerName(std, size, L), description: info.label };
   return pd;
 }
