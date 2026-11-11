@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.507.0] - 2026-11-11
+
+### Fixed
+
+- Big assembly drawings no longer stall at "Projecting the views… n to go". When a quick view comes back empty, it is tried again on the mesh used before 1.497.0, then on a coarser one. On a model too big for the exact view, the view now fails with a message instead of holding up every view behind it for 20+ minutes.
+
 ## [1.506.0] - 2026-11-11
 
 ### Added
@@ -3133,7 +3139,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.506.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.507.0...HEAD
+[1.507.0]: https://github.com/kothf/step-viewer/compare/v1.506.0...v1.507.0
 [1.506.0]: https://github.com/kothf/step-viewer/compare/v1.505.0...v1.506.0
 [1.505.0]: https://github.com/kothf/step-viewer/compare/v1.504.0...v1.505.0
 [1.504.0]: https://github.com/kothf/step-viewer/compare/v1.503.0...v1.504.0

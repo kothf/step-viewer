@@ -13,6 +13,7 @@ import { BALLOON_R, BOM_COLS, BOM_MAT_COL, autoBalloons, bomMats, compOfKey, she
 import { t, onLangChange, lang } from "../i18n";
 import { toast, confirmModal } from "../ui";
 import { DROPPED, OUT_OF_MEMORY, DrawingKernel, type ModelFacts } from "./client";
+import { NO_FAST_LINES } from "../kernel/drawing";
 import type { ModelSnap } from "./drawing.worker";
 import { BREAK_GAP, composeSheet, fromSheet, HATCH_PATTERNS, hatchOf, inPoly, nextLetter, polyBox, placement, toSheet, viewBody, viewPrims, viewRect, type Placement } from "./compose";
 import { DrawingStore, newSheet, uid } from "./doc";
@@ -3445,6 +3446,7 @@ function viewFailed(err: unknown) {
 /** A drawing worker error for a toast: a bare OCCT exception number becomes a sentence. */
 function kernelError(err: unknown): string {
   const m = err instanceof Error ? err.message : String(err), n = /^OpenCASCADE error (\d+)$/.exec(m);
+  if (m === NO_FAST_LINES) return t("the model is too big for an exact view and its quick projection came back empty. Try another view direction, or show fewer components in this view.");
   if (OUT_OF_MEMORY.test(m)) return t("not enough memory for this view. Close other tabs, or draw the big assembly with fewer views per sheet.");
   return n ? t("the geometry kernel failed (error {n}). The model may be too big for the browser's memory: close other tabs or draw fewer views.", { n: n[1] }) : m;
 }
