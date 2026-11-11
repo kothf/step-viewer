@@ -214,8 +214,8 @@ function occtMessage(err: number): string {
 }
 
 /** Every projection reply carries the heap size, so the client can start a worker over before it runs out. */
-/** A section cut made for a preview, kept for its exact request (the worker answers in order). */
-let stash: { key: string; sc: SectionCut } | null = null;
+/** Section cuts made for previews, kept for their exact requests (the worker answers in order), by request fields. */
+const stash = new Map<string, SectionCut>();
 
 /** A preview's mesh chord error: 1/300 of the shape's size (the preview only has to look right). */
 function previewLin(sh: any): number {
@@ -237,7 +237,8 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
       if (r.fast !== undefined) fastEdges = r.fast;
       post({ id: r.id, ok: true });
     } else if (r.type === "load") {
-      if (stash) { freeSection(stash.sc); stash = null; }
+      for (const sc of stash.values()) freeSection(sc);
+      stash.clear();
       placedShapes = [];
       snapMeshed = false;
       modelMat = null;
@@ -328,8 +329,8 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
       if (!shape) throw new Error("No model loaded");
       // A preview's cut is kept for the exact request of the same section, which comes next (FR-DRW-016).
       const skey = JSON.stringify([r.view, r.p, r.poly, r.stair, r.align, r.exclude, r.cfg, r.only]);
-      const stashed = stash?.key === skey ? stash : null;
-      if (stash && !stashed) { freeSection(stash.sc); stash = null; }
+      const stashed = stash.get(skey) ?? null;
+      stash.delete(skey);
       const own0 = shapeOf(r.cfg), modelMat = own0.mat;
       // Components left whole (FR-DRW-012) are drawn but not cut; a top-level id takes its sub-components along.
       const only = r.only?.length && placedShapes.length ? onlyOf(r.only) : null, base = only ? only.list : placedShapes;
@@ -354,13 +355,14 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
         cutShape = c;
         if (keep) keep = alignedShape(oc, keep, r.align);
       }
-      const sc = stashed?.sc ?? sectionCut(oc, cutShape, r.view, r.p, r.poly, { stair: r.stair, keep });
+      const sc = stashed ?? sectionCut(oc, cutShape, r.view, r.p, r.poly, { stair: r.stair, keep });
       let proj: Projection;
       if (r.type === "secpreview") {
-        stash = { key: skey, sc };
+        stash.set(skey, sc);
+        // At most two kept (both sides of a section line being placed): the oldest goes.
+        for (const [k, old] of stash) { if (stash.size <= 2) break; freeSection(old); stash.delete(k); }
         proj = sectionPreview(oc, sc, r.view, previewLin(sc.drawn));
       } else {
-        stash = null;
         proj = sectionFinish(oc, sc, r.view, 0.02, { namer: namer(own0.shape, own0.names), fast: fastEdges });
       }
       const own = solidOwners(cutList);
