@@ -3528,6 +3528,9 @@ try {
       check(dots === "1,2,3" && Math.abs(vSkip - (120000 - 3 * hole)) < 1 && off[0] === true && off[1] === "2" && Math.abs(vBack - vLp) < 1, `model 1.502: Instances to skip clicked in the view (${dots}, ${Math.round(vSkip)}, ${off}, ${Math.round(vBack)})`);
     }
     // Mirror the pattern about Right (YZ): three mirrored holes land on existing ones and are skipped with a warning.
+    // Nothing stays selected after OK (FR-SEL-012), so the pattern is picked in the tree first, as in SolidWorks.
+    const lpId = await mp.evaluate(() => window.__sv.model.store.doc.features.filter(f => f.type === "lpattern").at(-1)?.id);
+    await treeClick(mp, `#mc-tree .ft-row[data-id="${lpId}"]`);
     await mp.click('#mc-tools [data-fly="pattern"]');
     await mp.click("#mc-menu button:nth-child(3)");
     await treeClick(mp, '#mc-tree .ft-row[data-id="std:YZ"]');
