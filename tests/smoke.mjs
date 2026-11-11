@@ -3629,7 +3629,7 @@ try {
     check(adv.near === "cbore:M6:11,straight:M6:6.6" && adv.far === "csink:13.44" && adv.d === 6.6 && adv.rows === 3 && adv.callout.includes("⌴Ø11") && adv.callout.includes("FAR SIDE") && adv.ok && !adv.warn
       && adv2.near === "csink:13.44,straight:6.6" && adv2.callout.includes("⌵Ø13.44 × 90°") && adv2.ok && aback.k === "tapped" && aback.near === null && aback.s === "M6",
       `model 1.534: Hole Wizard advanced hole (${JSON.stringify({ adv, adv2, aback })})`);
-    // 1.535 (FR-FT-051): Captive screw: the M6 kept, its thread through the cover, then Retracted screw (short retaining thread over
+    // 1.536 (FR-FT-051): Captive screw: the M6 kept, its thread through the cover, then Retracted screw (short retaining thread over
     // the clearance bore, cover thickness shown) and a head counterbore; back to tapped M6.
     await mp.selectOption('#mc-pm select[data-k="kind"]', "captive");
     await idle();
