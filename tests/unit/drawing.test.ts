@@ -876,6 +876,13 @@ test("switching first/third angle keeps each projected view the same view and mo
   assert.deepEqual(sheet.views.map(v => [v.x, v.y]), [[100, 150], [100, 220], [0, 150], [-80, 150]]);
   assert.equal(sheet.projection, "third");
   void projectedDir;
+  // With extents and the A3 frame (20..410 × 10..287): the swapped layout (here 40 × 40 views) runs off the left,
+  // so it moves right as one, still lined up (drawings exam #48).
+  const s2 = structuredClone(sheet);
+  s2.projection = "first";
+  s2.views.forEach((v, i) => { v.x = [100, 100, 200, 280][i]; v.y = [150, 80, 150, 150][i]; if (v.side) v.side = [-v.side[0] || 0, -v.side[1] || 0] as [number, number]; });
+  switchProjection(s2 as any, "third", () => [-20, -20, 20, 20], [20, 10, 410, 287]);
+  assert.deepEqual(s2.views.map(v => [v.x, v.y]), [[220, 150], [220, 220], [120, 150], [40, 150]]);
 });
 
 
@@ -1807,4 +1814,39 @@ test("1.483: a model snapshot (binary BREP) reads back with its components in or
     if (oc.BRep_Tool.Triangulation(oc.TopoDS.Face_1(ex.Current()), new oc.TopLoc_Location_1(), 0).IsNull()) bare++;
   assert.equal(bare, 0);
   assert.equal(JSON.stringify(poly(oc, m, view, 0.05, 0.1).vis), JSON.stringify(p0.vis));
+});
+
+test("a tapped Hole Wizard hole draws its cosmetic thread; a section leaves out threads its cut took away (drawings exam #44, #45)", async () => {
+  const { topology } = await import("../../src/kernel/drawing");
+  const { modelItems } = await import("../../src/drawing/items");
+  const { threadPrims, projector, holeText, viewAnnots } = await import("../../src/drawing/annot");
+  const { ORIENTS } = await import("../../src/drawing/views");
+  const oc = await occ(), m = new Modeller(oc);
+  const top = { face: { name: "f1:end" } };
+  // M8 through a 20 mm plate with a 25 mm thread (deeper than the plate), and a blind M6: drill 12, thread 10.
+  const d = doc([rect("s1", 100, 60), { id: "f1", type: "extrude", name: "E", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
+    { id: "h1", type: "hole", name: "Hole1", plane: top, pts: [[20, 0]], kind: "tapped", size: "M8", diameter: { v: 6.8 }, end: "through", depth: { v: 0 }, threadDepth: { v: 25 }, major: 8, pitch: 1.25 },
+    { id: "h2", type: "hole", name: "Hole2", plane: top, pts: [[-20, 0]], kind: "tapped", size: "M6", diameter: { v: 5 }, end: "blind", depth: { v: 12 }, threadDepth: { v: 10 }, major: 6, pitch: 1 }]);
+  const r = m.evaluate(d), body = r.body!;
+  const mi = modelItems(d, r.frames, r.sketches);
+  assert.deepEqual(mi.threads.map(t => [t.size, t.d, t.internal]), [["M8", 8, true], ["M6", 6, true]]);
+  const topo = topology(oc, body.shape, body.names);
+  const pl = { s: 1, uc: 0, vc: 0, x: 0, y: 0, box: [-50, -30, 50, 30] as [number, number, number, number], ready: true };
+  const front = projector(ORIENTS.front);
+  const pf = threadPrims({ id: "front", name: "front", orient: "front", x: 0, y: 0 }, pl, mi.threads, topo, front.P, front.n);
+  const lims = pf.filter(p => p.t === "l" && Math.abs(p.p[1] - p.p[3]) < 1e-9).map(p => p.t === "l" ? Math.round(p.p[1] * 1000) / 1000 : NaN).sort((a, b) => a - b);
+  assert.deepEqual(lims, [0, 10], "the M8 thread stops at the bottom face, the M6 one 10 deep");
+  assert.ok(pf.every(p => p.pen === "hidden"), "inside the part: dashed");
+  const ctx = { topo, holes: mi.holes, threads: mi.threads, items: [], box: null, dec: ".", label: (s: string) => s } as never;
+  assert.deepEqual(holeText({ t: "c", c: [20, 0, 20], ax: [0, 0, 1], r: 3.4 } as never, ctx), ["Ø6.8 THRU", "M8-6H THRU"], "a thread deeper than the plate runs through");
+  assert.deepEqual(holeText({ t: "c", c: [-20, 0, 20], ax: [0, 0, 1], r: 2.5 } as never, ctx), ["Ø5 ↧12", "M6-6H ↧10"]);
+  // Section on x = 0 from the top view: one side keeps only the M8 hole's thread, the other only the M6's.
+  const parent = { id: "t", name: "Top", orient: "top", x: 100, y: 200 };
+  const kept = (look: 1 | -1) => {
+    const v = { id: "s", name: "A", kind: "section", parent: "t", line: [0, -40, 0, 40], look, x: 250, y: 200, marks: false };
+    const sheet = { id: "sh", name: "S", size: "A3", scale: [1, 1], projection: "first", views: [parent, v], annots: [] } as never;
+    // The thread's lines along the axis lie at its major radius: 4 for the M8, 3 for the M6 (the view runs the axis across).
+    return [...new Set(viewAnnots(sheet, v as never, pl, ctx).prims.flatMap(p => p.layer === "THREAD" && p.t === "l" && Math.abs(p.p[1] - p.p[3]) < 1e-9 ? [Math.abs(Math.round(p.p[1]))] : []))].join(",");
+  };
+  assert.deepEqual([kept(1), kept(-1)].sort(), ["3", "4"], "each side keeps the thread of its own hole only");
 });
