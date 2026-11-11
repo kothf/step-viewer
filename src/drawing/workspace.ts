@@ -6,7 +6,7 @@
 import type { VaultTie } from "../pdm/panel";
 import fontUrl from "dejavu-fonts-ttf/ttf/DejaVuSans.ttf?url";
 import type { MEdge, Projection, ViewDir } from "../kernel/drawing";
-import { AUTO_LAYERS, arrowOutside, withCut, wholeCircle, edgeOnSeg, outlineSeg, clineSegs, cloudPrims, dimGeo, factsCtx, holeEdges, ringDist, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, stackItem, edgeItem, weldItem, cutDesc, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
+import { AUTO_LAYERS, arrowOutside, withCut, coneMid, coneOutline, wholeCircle, edgeOnSeg, outlineSeg, clineSegs, cloudPrims, dimGeo, factsCtx, holeEdges, ringDist, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, stackItem, edgeItem, weldItem, cutDesc, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
 import type { PartDoc } from "../model/types";
 import type { AsmDoc } from "../asm/types";
 import { BALLOON_R, BOM_COLS, BOM_MAT_COL, autoBalloons, bomMats, compOfKey, sheetBom, subsOf, type BalloonItems, type Bom } from "./bom";
@@ -122,7 +122,7 @@ type AnnotMode =
   /** Cut list table (FR-FT-121): click a view of a weldment part, then place the table. */
   | { kind: "ctable"; view: string | null; at: Pt | null }
   /** Hole callout (FR-DRW-022): pick a round edge, then place. */
-  | { kind: "hole"; view: string | null; e: MEdge | null; at: Pt | null }
+  | { kind: "hole"; view: string | null; e: MEdge | null; at: Pt | null; s?: 1 | -1 }
   /** Note: click the place (first clicking an edge gives it a leader). */
   | { kind: "note"; view: string | null; leader: GeoRef | null; at: Pt | null }
   /** Centreline (two parallel edges or two points) or centre mark (a round edge), placed at the last click (FR-DRW-023). */
@@ -1276,6 +1276,13 @@ export class DrawingWorkspace {
     this.renderStatus(); this.renderProps(); this.renderOverlay();
   }
 
+  /** A leader or symbol pick (notes, datums, tolerances, surface, weld, datum target, balloon): like Smart dimension's, so on a
+   *  side view a round part's lines can be picked: a circle seen edge-on (a disc's face) and a cylinder's outline. */
+  private annotPick(viewId: string, p: Pt): Pick | null { return this.pickAt(viewId, p, undefined, false, true); }
+
+  /** The reference a pick stands for: a cylinder outline keeps its side (`s`), so leaders end on the line clicked. */
+  private pickRef(pk: Pick): GeoRef { return pk.side ? { ...edgeRef(pk.e, "e"), s: pk.side } : pk.ref; }
+
   /** The point, line or circle of a view's model under a sheet point (points first), within the snap distance. */
   private pickAt(viewId: string, p: Pt, only?: "circle", first = false, edgeOn = false): Pick | null {
     const v = findView(this.sheet, viewId), pl = this.placements.get(viewId), topo = this.factsOf(viewId)?.topo;
@@ -1285,8 +1292,13 @@ export class DrawingWorkspace {
     const S = (q: [number, number, number]) => toSheet(pl, ...P(q));
     const inDetail = (q: Pt) => v.kind !== "detail" || (v.outline && v.outline.length >= 6 ? inPoly(v.outline, q[0], q[1]) : !v.c || !v.r || Math.hypot(q[0] - v.c[0], q[1] - v.c[1]) <= v.r);
     const endOn = (e: MEdge) => e.t === "c" && !!e.ax && Math.abs(Math.abs(e.ax[0] * n[0] + e.ax[1] * n[1] + e.ax[2] * n[2]) - 1) < 1e-6;
+    // A straight edge on one round face alone is its seam: the view does not draw it, so it is no line or corner to pick
+    // (on a side view it ran across a disc's or a hole's side and took the click from the line under it).
+    const round = new Set([...topo.cyls.map(c => c.f), ...(topo.revs ?? []).map(q => q.f)].filter((f): f is string => !!f));
+    const seam = (e: MEdge) => e.t === "l" && round.has(e.k);
     let best: Pick | null = null, bd = tol;
     if (!only) for (const e of topo.edges) {
+      if (seam(e)) continue;
       // Ends of an edge seen end-on (a cylinder's seam) are not corners of the view.
       if (e.t !== "c") { const a = P(e.a), b = P(e.b); if (Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-6) continue; }
       const cands: [Pick["ref"], [number, number, number]][] = e.t === "c" ? (endOn(e) && e.c ? [[edgeRef(e, "c"), e.c]] : []) : [[edgeRef(e, "a"), e.a], [edgeRef(e, "b"), e.b]];
@@ -1308,6 +1320,7 @@ export class DrawingWorkspace {
     best = null; bd = tol;
     for (const e of topo.edges) {
       if (e.t === "l" && !only) {
+        if (seam(e)) continue;
         const a = S(e.a), b = S(e.b), dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy;
         if (L2 < 1e-6) continue;
         const k = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2));
@@ -1358,6 +1371,20 @@ export class DrawingWorkspace {
         if (d < bd + (best?.kind === "line" && !best.e.k.endsWith("|§") && !best.seg ? 1e-6 : -1e-6) && inDetail(fromSheet(pl, q[0], q[1]))) { bd = d; best = { kind: "circle", ref: edgeRef(ce, "e"), e: ce, seg, side: sgn }; }
       }
     }
+    // A cone seen from the side (a chamfer or a taper on a turned part): its outline lines are lines of their own (exam #50).
+    for (const q of topo.revs ?? []) {
+      if (only || q.k !== "cone" || q.r0 == null || q.r1 == null || !q.f || Math.abs(q.ax[0] * n[0] + q.ax[1] * n[1] + q.ax[2] * n[2]) > 1e-6) continue;
+      const h = coneMid(q);
+      for (const sgn of [1, -1] as const) {
+        const seg = coneOutline(q.f, h, sgn, P, topo);
+        if (!seg) continue;
+        const a = toSheet(pl, ...seg[0]), b = toSheet(pl, ...seg[1]), dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy;
+        if (L2 < 1e-6) continue;
+        const k = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2));
+        const qq: Pt = [a[0] + dx * k, a[1] + dy * k], d = Math.hypot(qq[0] - p[0], qq[1] - p[1]);
+        if (d < bd - 1e-6 && inDetail(fromSheet(pl, qq[0], qq[1]))) { bd = d; best = { kind: "line", ref: { e: q.f, h, p: "e", s: sgn, rv: true }, e: { k: q.f, t: "l", a: h, b: h, m: h }, seg }; }
+      }
+    }
     // A first dimension pick on a circle takes the circle even when another edge ends on it there (a cross hole's
     // intersection curve on a shaft): a lone point makes no dimension.
     const onCircle = best?.kind === "circle" && bd < tol * 0.3;
@@ -1384,8 +1411,8 @@ export class DrawingWorkspace {
       const d = (pk: Pick) => { const [a, b] = pk.seg ?? [P(pk.e.a), P(pk.e.b)]; const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1; return [(b[0] - a[0]) / L, (b[1] - a[1]) / L]; };
       const u = d(p0), w = d(p1!);
       const par = Math.abs(u[0] * w[1] - u[1] * w[0]) < 1e-6;
-      // The angle of two lines needs straight edges; an outline or an edge-on circle with a slanted line gives no angle.
-      if (!par && (p0.seg || p1!.seg)) return null;
+      // Not parallel: the angle between them, also between outlines and circles seen edge-on (exam #50: a chamfer's cone
+      // outline and the end face give 45°, which the panel can show as 2 × 45°).
       return { ...base, k: par ? "al" : "ang", refs: [l0, l1] };
     }
     const asPoint = (pk: Pick): GeoRef => (pk.kind === "circle" ? edgeRef(pk.e, "c") : pk.ref);
@@ -1542,16 +1569,16 @@ export class DrawingWorkspace {
         if (!vid) return;
         const pick = this.pickAt(vid, p, "circle");
         if (!pick) { toast(t("Click the edge of a hole.")); return; }
-        m.view = vid; m.e = pick.e;
+        m.view = vid; m.e = pick.e; m.s = pick.side;
       } else {
         const pl = this.placements.get(m.view!)!, pos = fromSheet(pl, p[0], p[1]);
-        this.addAnnot({ id: uid("a_"), t: "hole", view: m.view!, ref: edgeRef(m.e, "e"), pos: [round(pos[0]), round(pos[1])] }, "Hole callout");
+        this.addAnnot({ id: uid("a_"), t: "hole", view: m.view!, ref: { ...edgeRef(m.e, "e"), ...(m.s ? { s: m.s } : {}) }, pos: [round(pos[0]), round(pos[1])] }, "Hole callout");
         this.mode = { kind: "none" };
       }
     } else if (m.kind === "dtarget") {
       if (!m.leader && vid && this.facts) {
-        const pick = this.pickAt(vid, p);
-        if (pick) { const pl = this.placements.get(vid)!; m.view = vid; m.leader = pick.kind === "pt" ? pick.ref : { ...pick.ref, p: "e" }; m.tp = fromSheet(pl, p[0], p[1]); this.renderStatus(); this.renderOverlay(); return; }
+        const pick = this.annotPick(vid, p);
+        if (pick) { const pl = this.placements.get(vid)!; m.view = vid; m.leader = pick.kind === "pt" ? pick.ref : { ...this.pickRef(pick), p: "e" }; m.tp = fromSheet(pl, p[0], p[1]); this.renderStatus(); this.renderOverlay(); return; }
       }
       const view = m.view ?? vid ?? undefined, pl = view ? this.placements.get(view) : undefined;
       const pos: Pt = pl ? fromSheet(pl, p[0], p[1]) : p;
@@ -1559,8 +1586,8 @@ export class DrawingWorkspace {
       this.mode = { kind: "none" };
     } else if (m.kind === "weld") {
       if (!m.leader && vid && this.facts) {
-        const pick = this.pickAt(vid, p);
-        if (pick) { m.view = vid; m.leader = pick.kind === "pt" ? pick.ref : { ...pick.ref, p: "e" }; this.renderStatus(); this.renderOverlay(); return; }
+        const pick = this.annotPick(vid, p);
+        if (pick) { m.view = vid; m.leader = pick.kind === "pt" ? pick.ref : { ...this.pickRef(pick), p: "e" }; this.renderStatus(); this.renderOverlay(); return; }
       }
       const view = m.view ?? vid ?? undefined, pl = view ? this.placements.get(view) : undefined;
       const pos: Pt = pl ? fromSheet(pl, p[0], p[1]) : p;
@@ -1568,8 +1595,8 @@ export class DrawingWorkspace {
       this.mode = { kind: "none" };
     } else if (m.kind === "gtol") {
       if (!m.leader && vid && this.facts) {
-        const pick = this.pickAt(vid, p);
-        if (pick) { m.view = vid; m.circle = pick.kind === "circle"; m.leader = pick.kind === "circle" ? { ...pick.ref, p: "e" } : pick.kind === "line" ? { ...pick.ref, p: "e" } : pick.ref; this.renderStatus(); this.renderOverlay(); return; }
+        const pick = this.annotPick(vid, p);
+        if (pick) { m.view = vid; m.circle = pick.kind === "circle"; m.leader = pick.kind === "pt" ? pick.ref : { ...this.pickRef(pick), p: "e" }; this.renderStatus(); this.renderOverlay(); return; }
       }
       const view = m.view ?? vid ?? undefined, pl = view ? this.placements.get(view) : undefined;
       const pos: Pt = pl ? fromSheet(pl, p[0], p[1]) : p;
@@ -1579,10 +1606,10 @@ export class DrawingWorkspace {
       this.mode = { kind: "none" };
     } else if (m.kind === "balloon") {
       if (!m.ref) {
-        const pick = vid ? this.pickAt(vid, p) : null;
+        const pick = vid ? this.annotPick(vid, p) : null;
         const e = pick?.e;
         if (!e || !edgeItem(e.k, this.ctx())) { toast(t(this.bom ? "Click an edge of a component." : "Click an edge of a cut list body.")); return; }
-        m.view = vid; m.ref = edgeRef(e, "e");
+        m.view = vid; m.ref = pick.kind === "pt" ? edgeRef(e, "e") : this.pickRef(pick);
         this.renderStatus(); this.renderOverlay(); return;
       }
       const pl = this.placements.get(m.view!)!, pos = fromSheet(pl, p[0], p[1]);
@@ -1590,8 +1617,8 @@ export class DrawingWorkspace {
       m.ref = null; m.view = null;
     } else if (m.kind === "datum" || m.kind === "surf") {
       if (!m.ref) {
-        const pick = vid && this.facts ? this.pickAt(vid, p) : null;
-        if (pick && pick.kind !== "pt") { m.view = vid; m.ref = pick.ref; this.renderStatus(); this.renderOverlay(); return; }
+        const pick = vid && this.facts ? this.annotPick(vid, p) : null;
+        if (pick && pick.kind !== "pt") { m.view = vid; m.ref = this.pickRef(pick); this.renderStatus(); this.renderOverlay(); return; }
         if (m.kind === "datum") { toast(t("Click an edge of a view.")); return; }
         // A surface symbol on its own: on the view under the cursor, or on the sheet.
         const pl = vid ? this.placements.get(vid) : undefined, pos: Pt = pl ? fromSheet(pl, p[0], p[1]) : p;
@@ -1608,8 +1635,8 @@ export class DrawingWorkspace {
       }
     } else {
       if (!m.leader && vid) {
-        const pick = this.pickAt(vid, p);
-        if (pick) { m.view = vid; m.leader = pick.kind === "circle" ? edgeRef(pick.e, "c") : pick.kind === "line" ? { ...pick.ref, p: "e" } : pick.ref; this.renderStatus(); this.renderOverlay(); return; }
+        const pick = this.annotPick(vid, p);
+        if (pick) { m.view = vid; m.leader = pick.kind === "circle" && !pick.side ? edgeRef(pick.e, "c") : pick.kind === "pt" ? pick.ref : { ...this.pickRef(pick), p: "e" }; this.renderStatus(); this.renderOverlay(); return; }
       }
       // The note goes down at once and its text box takes the typing (several lines), like SolidWorks; a browser
       // prompt took one line and covered the sheet (drawings exam #9).
@@ -1871,35 +1898,35 @@ export class DrawingWorkspace {
       if (!m.e) { const hov = this.pickAt(vid, at, "circle"); if (hov) s += show(hov, "drw-edge"); }
       else {
         const pos = fromSheet(pl, at[0], at[1]);
-        const sh = { ...this.sheet, annots: [{ id: "_ph", t: "hole" as const, view: vid, ref: edgeRef(m.e, "e"), pos }] };
+        const sh = { ...this.sheet, annots: [{ id: "_ph", t: "hole" as const, view: vid, ref: { ...edgeRef(m.e, "e"), ...(m.s ? { s: m.s } : {}) }, pos }] };
         s += `<g class="drw-preview">${svgBody(viewAnnots(sh, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: this.factsOf(vid)?.topo.cyls ?? [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
       }
     } else if (m.kind === "balloon") {
-      if (!m.ref) { const hov = this.pickAt(vid, at); if (hov && edgeItem(hov.e.k, this.ctx())) s += show(hov.kind === "pt" ? { ...hov, kind: hov.e.t === "c" && hov.e.c ? "circle" : "line" } : hov, "drw-edge"); }
+      if (!m.ref) { const hov = this.annotPick(vid, at); if (hov && edgeItem(hov.e.k, this.ctx())) s += show(hov.kind === "pt" ? { ...hov, kind: hov.e.t === "c" && hov.e.c ? "circle" : "line" } : hov, "drw-edge"); }
       else {
         const pa: Annot = { id: "_pb", t: "balloon", view: vid, ref: m.ref, pos: fromSheet(pl, at[0], at[1]) };
-        s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
+        s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: this.factsOf(vid)?.topo.cyls ?? [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
       }
     } else if (m.kind === "dtarget") {
-      if (!m.leader) { const hov = this.pickAt(vid, at); if (hov) s += show(hov, "drw-edge"); }
+      if (!m.leader) { const hov = this.annotPick(vid, at); if (hov) s += show(hov, "drw-edge"); }
       else {
         const pa: Annot = { ...this.dtargetOf(m, vid, fromSheet(pl, at[0], at[1])), id: "_pt" };
-        s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
+        s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: this.factsOf(vid)?.topo.cyls ?? [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
       }
     } else if (m.kind === "weld") {
-      if (!m.leader) { const hov = this.pickAt(vid, at); if (hov) s += show(hov, "drw-edge"); }
+      if (!m.leader) { const hov = this.annotPick(vid, at); if (hov) s += show(hov, "drw-edge"); }
       else {
         const pa: Annot = { id: "_pw", t: "weld", view: vid, pos: fromSheet(pl, at[0], at[1]), leader: m.leader, arrow: { sym: "fillet", size: "a4" } };
-        s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
+        s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: this.factsOf(vid)?.topo.cyls ?? [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
       }
     } else if (m.kind === "datum" || m.kind === "surf") {
-      if (!m.ref) { const hov = this.pickAt(vid, at); if (hov && hov.kind !== "pt") s += show(hov, "drw-edge"); }
+      if (!m.ref) { const hov = this.annotPick(vid, at); if (hov && hov.kind !== "pt") s += show(hov, "drw-edge"); }
       else {
         const pos = fromSheet(pl, at[0], at[1]);
         const pa: Annot = m.kind === "datum" ? { id: "_pa", t: "datum", view: vid, ref: m.ref, pos, letter: this.nextDatum() } : { id: "_pa", t: "surf", view: vid, ref: m.ref, pos: (() => { const f = this.footAt(vid, m.ref!, at); return f && Math.hypot(f.at[0] - at[0], f.at[1] - at[1]) < this.snapTol() * 1.5 ? fromSheet(pl, ...f.at) : pos; })(), proc: "removal", text: "Ra 3.2" };
-        s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
+        s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: this.factsOf(vid)?.topo.cyls ?? [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
       }
-    } else if (!m.leader) { const hov = this.pickAt(vid, at); if (hov) s += show(hov, "drw-edge"); }
+    } else if (!m.leader) { const hov = this.annotPick(vid, at); if (hov) s += show(hov, "drw-edge"); }
     return s;
   }
 

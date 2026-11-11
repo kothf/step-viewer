@@ -105,7 +105,8 @@ export interface ViewBreak { axis: "u" | "v"; a: number; b: number }
  * model's centre of mass, which follows the model (`pt` = where it was last).
  */
 /** `s`: on a circle edge, one outline line (+1/−1) of the cylinder it bounds, seen from the side (a linear dimension's line). */
-export type GeoRef = { e: string; h: V3; p: "a" | "b" | "c" | "e"; q?: V3; s?: 1 | -1 } | { pt: V3; com?: true };
+/** `rv`: `e` names a cone face and `s` one of its outline lines seen from the side (a chamfer on a turned part); `h` = the middle of its axis. */
+export type GeoRef = { e: string; h: V3; p: "a" | "b" | "c" | "e"; q?: V3; s?: 1 | -1; rv?: true } | { pt: V3; com?: true };
 
 /** Tolerance (FR-DRW-021): symmetric ±up, deviations +up/−lo, limits, or an ISO 286 fit code. */
 /** A dimension tolerance; "none" turns the drawing's default tolerance (`DraftStyle.tol`/`atol`) off for one dimension. */
