@@ -11,8 +11,8 @@
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { V2, SkEnt } from "../model/types";
-import type { HealFeature, RecognizedHole, RecognizedBlends, SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, PatternSpot, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, ChamferFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
-import { dir2Apart, dir2Feature, threadThrough } from "../model/types";
+import type { HealFeature, RecognizedHole, RecognizedBlends, SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, PatternSpot, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, ChamferFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, HoleSink, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
+import { dir2Apart, dir2Feature, threadThrough, holeExits } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { recognizedHoleFeatures } from "../model/holes";
 import { ctxFrame } from "../model/context";
@@ -2281,13 +2281,21 @@ export class Modeller {
     // The depth at a hole centre: as set, through, to a plane (along the axis) or until the material ends.
     const depthAt = (o: V3): number => {
       if (through) return big;
-      if (f.end === "upto") {
+      if (f.end === "upto" || f.end === "offset") {
         if (!f.upTo) throw new FeatureError("E-HOLE-UPTO", "Pick the face or plane the hole goes up to.");
         const tp = this.planeFrame(f.upTo, prev, frames);
         const den = dot(tp.n, down);
         if (Math.abs(den) < 1e-9) throw new FeatureError("E-HOLE-UPTO", "The face or plane must not be parallel to the hole.");
-        const s = dot(sub3(tp.o, o), tp.n) / den;
+        let s = dot(sub3(tp.o, o), tp.n) / den;
+        // Offset from surface: measured along the hole, short of the face (past it when reversed).
+        if (f.end === "offset") s += (f.reverseOffset ? 1 : -1) * (f.upToOffset?.v ?? 0);
         if (!(s > 1e-6)) throw new FeatureError("E-HOLE-UPTO", "The face or plane is behind the hole's face.");
+        return s;
+      }
+      if (f.end === "vertex") {
+        if (!f.upToVertex) throw new FeatureError("E-HOLE-VERTEX", "Pick the vertex the hole goes up to.");
+        const s = dot(sub3(this.vertexPos(f.upToVertex, prev, frames), o), down);
+        if (!(s > 1e-6)) throw new FeatureError("E-HOLE-VERTEX", "The vertex is behind the hole's face.");
         return s;
       }
       if (f.end === "next") {
@@ -2304,29 +2312,64 @@ export class Modeller {
       return f.depth.v;
     };
     const lift = Math.max(0.01, r * 0.05);
-    const tan59 = Math.tan((118 * Math.PI) / 360);
-    const profile = (depth: number): [number, number][] => {
+    // Options: countersinks as (radius, height of the cone) from a diameter and included angle, wider than `inner`.
+    const sinkOf = (s: HoleSink | undefined, inner: number): { R: number; h: number; t: number } | null => {
+      if (!s) return null;
+      const R = s.dia.v / 2, a = s.angle.v;
+      if (!(R > inner + 1e-9) || !(a > 0.1 && a < Math.PI - 0.1)) throw new FeatureError("E-HOLE-OPTCS", "An option countersink must be wider than the hole under it, at an angle between 6° and 174°.");
+      const t = Math.tan(a / 2);
+      return { R, h: (R - inner) / t, t };
+    };
+    const clear = f.kind === "cbore" || f.kind === "csink" ? f.headClear?.v ?? 0 : 0;
+    if (f.headClear && !(clear >= 0)) throw new FeatureError("E-FT-ZERO", "The head clearance must not be negative.");
+    // The top of the hole (or its counterbore) gets the near side countersink: start at its rim above the face.
+    const top = (prof: [number, number][], rTop: number) => {
+      const s = f.kind === "csink" || f.kind === "insert" ? null : sinkOf(f.nearCs, rTop);
+      if (s) prof.push([s.R + lift * s.t, lift], [rTop, -s.h]); else prof.push([rTop, lift]);
+      return s?.h ?? 0;
+    };
+    const profile = (depth: number, exit?: number): [number, number][] => {
       if (!(depth > 1e-6)) throw new FeatureError("E-FT-ZERO", "The depth must be more than 0.");
       // Profile from the axis outward, starting above the face so the top is cut cleanly.
       const prof: [number, number][] = [[0, lift]];
       if (f.kind === "cbore") {
-        const R = (f.cbDia?.v ?? 0) / 2, d = f.cbDepth?.v ?? 0;
+        const R = (f.cbDia?.v ?? 0) / 2, d = (f.cbDepth?.v ?? 0) + clear;
         if (!(R > r) || !(d > 0) || d >= depth) throw new FeatureError("E-HOLE-CBORE", "The counterbore must be wider than the hole and less deep.");
-        prof.push([R, lift], [R, -d], [r, -d]);
+        const hn = top(prof, R);
+        if (hn >= d) throw new FeatureError("E-HOLE-OPTCS", "An option countersink must be wider than the hole under it, at an angle between 6° and 174°.");
+        prof.push([R, -d]);
+        // Under head countersink: a cone from the counterbore's floor into the hole.
+        const u = sinkOf(f.underCs, r);
+        if (u && !(u.R < R)) throw new FeatureError("E-HOLE-OPTCS", "An option countersink must be wider than the hole under it, at an angle between 6° and 174°.");
+        if (u) prof.push([u.R, -d], [r, -d - u.h]); else prof.push([r, -d]);
       } else if (f.kind === "cdrill") {
         // Counterdrill: a wider drill with a conical bottom down to the hole.
         const R = (f.cdDia?.v ?? 0) / 2, d = f.cdDepth?.v ?? 0, a = f.cdAngle?.v ?? (118 * Math.PI) / 180;
         if (!(a > 0.1 && a < Math.PI - 0.1)) throw new FeatureError("E-HOLE-CDRILL", "The counterdrill must be wider than the hole and less deep, at an angle between 6° and 174°.");
         const h = (R - r) / Math.tan(a / 2);
         if (!(R > r) || !(d > 0) || d + h >= depth) throw new FeatureError("E-HOLE-CDRILL", "The counterdrill must be wider than the hole and less deep, at an angle between 6° and 174°.");
-        prof.push([R, lift], [R, -d], [r, -d - h]);
+        top(prof, R);
+        prof.push([R, -d], [r, -d - h]);
       } else if (f.kind === "csink") {
         const R = (f.csDia?.v ?? 0) / 2, a = f.csAngle?.v ?? Math.PI / 2;
         if (!(R > r) || !(a > 0.1 && a < Math.PI - 0.1)) throw new FeatureError("E-HOLE-CSINK", "The countersink must be wider than the hole, at an angle between 6° and 174°.");
         const h = (R - r) / Math.tan(a / 2);
-        prof.push([R + lift * Math.tan(a / 2), lift], [r, -h]);
-      } else prof.push([r, lift]);
-      const tipH = f.flat || f.end !== "blind" ? 0 : r / tan59;
+        // Head clearance: a cylinder of the countersink's width above the cone.
+        if (clear > 0) prof.push([R, lift], [R, -clear], [r, -clear - h]);
+        else prof.push([R + lift * Math.tan(a / 2), lift], [r, -h]);
+      } else top(prof, r);
+      // Far side countersink: a cone opening onto the face where the hole leaves the material.
+      const fs = holeExits(f) ? sinkOf(f.farCs, r) : null;
+      if (fs && exit != null) {
+        if (!(exit - fs.h > (-prof[prof.length - 1][1]) + 1e-6)) throw new FeatureError("E-HOLE-OPTCS", "An option countersink must be wider than the hole under it, at an angle between 6° and 174°.");
+        prof.push([r, -(exit - fs.h)], [fs.R + lift * fs.t, -(exit + lift)]);
+        if (depth > exit + 2 * lift) prof.push([r, -(exit + lift)], [r, -depth], [0, -depth]);
+        else prof.push([0, -(exit + lift)]);
+        return prof;
+      }
+      const da = f.drillAngle?.v ?? (118 * Math.PI) / 180;
+      if (f.end === "blind" && !f.flat && !(da > 0.1 && da < Math.PI - 0.1)) throw new FeatureError("E-HOLE-DRILL", "The drill point angle must be between 6° and 174°.");
+      const tipH = f.flat || f.end !== "blind" ? 0 : r / Math.tan(da / 2);
       prof.push([r, -depth], [0, -depth - tipH]);
       return prof;
     };
@@ -2343,8 +2386,8 @@ export class Modeller {
     };
     // Thread end Through all: the thread runs as far as the drill meets material, measured on the axis before
     // drilling (through: to where the material last ends, so a cross gap does not stop it).
-    const reach = (o: V3): number => {
-      if (f.end !== "through") return depthAt(o);
+    const reach = (o: V3): number => f.end !== "through" ? depthAt(o) : reachAt(o);
+    const reachAt = (o: V3): number => {
       const inside = (s: number) => new oc.BRepClass3d_SolidClassifier_3(prev.shape, this.P(add(o, mul(down, s))), 1e-7).State() === oc.TopAbs_State.TopAbs_IN;
       const step = Math.max(big / 800, 0.05);
       let last = -1;
@@ -2359,7 +2402,8 @@ export class Modeller {
     f.pts.forEach((p, i) => {
       const o = add(add(fr.o, mul(fr.x, p[0])), mul(fr.y, p[1]));
       if (threadThrough(f)) len.push(reach(o));
-      let shape = revolve(o, profile(depthAt(o)));
+      const exit = f.farCs && holeExits(f) ? (f.end === "through" ? reachAt(o) : depthAt(o)) : undefined;
+      let shape = revolve(o, profile(depthAt(o), exit));
       if (f.kind === "slot") {
         // Slot: the hole at both ends of the centre line, joined by the profile swept along it.
         const L = f.slotLen?.v ?? 0;

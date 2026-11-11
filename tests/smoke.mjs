@@ -3465,6 +3465,30 @@ try {
     await idle();
     const thrAll = await mp.evaluate(() => ({ box: !!document.querySelector('#mc-pm input[data-num="threadDepth"]'), len: Object.values(window.__sv.model.last()?.frames ?? {}).find(f => f.len)?.len ?? null }));
     check(thrSel === "blind" && !thrAll.box && Array.isArray(thrAll.len) && thrAll.len.length === 2 && thrAll.len.every(x => Math.abs(x - 20) < 0.01), `model 1.516: tapped hole thread end Through all (${thrSel}, ${JSON.stringify(thrAll)})`);
+    // Hole standards: ANSI inch UNC takes the size nearest M6 (1/4-20, tap drill #7 = 5.105 mm), ISO metric brings M6 back.
+    await mp.selectOption('#mc-pm select[data-k="standard"]', "unc").catch(() => {});
+    await idle();
+    const unc = await mp.evaluate(() => ({ s: document.querySelector('#mc-pm select[data-k="size"]')?.value, d: parseFloat(document.querySelector('#mc-pm input[data-num="diameter"]')?.value), n: document.querySelectorAll('#mc-pm select[data-k="size"] option').length }));
+    await mp.selectOption('#mc-pm select[data-k="standard"]', "iso").catch(() => {});
+    await idle();
+    const iso = await mp.evaluate(() => ({ s: document.querySelector('#mc-pm select[data-k="size"]')?.value, d: parseFloat(document.querySelector('#mc-pm input[data-num="diameter"]')?.value), n: document.querySelectorAll('#mc-pm select[data-k="size"] option').length }));
+    check(unc.s === "1/4-20 UNC" && Math.abs(unc.d - 5.105) < 1e-3 && unc.n === 14 && iso.s === "M6" && iso.d === 5 && iso.n === 25, `model 1.520: hole Standard ANSI inch UNC and back to ISO metric (${JSON.stringify(unc)}, ${JSON.stringify(iso)})`);
+    // Options: Near side countersink defaults to the hole + 1 mm at 90°; unticking takes it away.
+    await mp.check('#mc-pm input[data-k="optNear"]').catch(() => {});
+    await idle();
+    const ncs = await mp.evaluate(() => ({ d: document.querySelector('#mc-pm input[data-num="nearCs.dia"]')?.value ?? null, a: document.querySelector('#mc-pm input[data-num="nearCs.angle"]')?.value ?? null, far: !!document.querySelector('#mc-pm input[data-k="optFar"]'), head: !!document.querySelector('#mc-pm input[data-k="optHead"]') }));
+    await mp.uncheck('#mc-pm input[data-k="optNear"]').catch(() => {});
+    await idle();
+    const ncsOff = await mp.evaluate(() => !document.querySelector('#mc-pm input[data-num="nearCs.dia"]'));
+    check(ncs.d === "6" && ncs.a === "90" && ncs.far && !ncs.head && ncsOff, `model 1.520: hole Options near side countersink on and off (${JSON.stringify(ncs)}, ${ncsOff})`);
+    // End conditions Up to vertex / Offset from surface are offered; a blind drilled hole shows its Drill angle (118°).
+    const ends = await mp.evaluate(() => [...document.querySelectorAll('#mc-pm select[data-k="end"] option')].map(o => o.value));
+    await mp.selectOption('#mc-pm select[data-k="end"]', "blind");
+    await idle();
+    const drill = await mp.evaluate(() => document.querySelector('#mc-pm input[data-num="drillAngle"]')?.value ?? null);
+    await mp.selectOption('#mc-pm select[data-k="end"]', "through");
+    await idle();
+    check(ends.includes("vertex") && ends.includes("offset") && drill === "118", `model 1.520: hole end Up to vertex / Offset from surface and Drill angle (${JSON.stringify(ends)}, ${drill})`);
     await mp.click("#mc-ok");
     await idle();
     const vHole = await vol(), stHole = await lastSt();
