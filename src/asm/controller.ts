@@ -27,7 +27,8 @@ import { folderPath, hashBytes, planLinks, type LinkFile } from "./links";
 import { MCMASTER, mcmasterPart, tagVendor, vendorOf } from "./vendor";
 import { pickMaterial } from "../materialPicker";
 import { toRef } from "../tools/materials";
-import { FASTENERS, TOOLBOX_GROUPS, defaultLength, fastenerInfo, fastenerLengths, fastenerName, fastenerPart, fastenerSizes, sizeForHole, type FastenerKind } from "./fasteners";
+import { FASTENERS, TOOLBOX_GROUPS, defaultLength, fastenerInfo, fastenerLengths, fastenerName, fastenerPart, fastenerSizes, lengthFor, searchFasteners, sizeForHole, type FastenerKind, type ToolboxGroup } from "./fasteners";
+import { fastenerShape, shapeSvg, shapeVolume, type ToolShape } from "./toolboxShape";
 import { applySolved, autoExplode, expandPatterns, explodeAt, explodeOffsets, flattenSubs, patternSteps, solveView, topOf, type Expanded } from "./patterns";
 import { STOPPED, type AsmFeatureStatus } from "../model/kernelClient";
 import type { AsmComponentStatus, AsmDoc, AsmFeature, CompPattern, Component, ExplodeStep, ExplodeView, Mate, MateRef, MateType, Tf } from "./types";
@@ -145,7 +146,12 @@ export class AsmController {
   /** The last Select Other pick in the Mate panel: where, which face, and the draft before it. */
   private mateOther: { x: number; y: number; i: number; before: MateDraft; draft: MateDraft } | null = null;
   /** Toolbox panel (FR-ASM-028): the standard part a click on a hole inserts; `auto` = its size follows the hole. */
-  fastening: { kind: FastenerKind; size: string; length: number; placed: number; auto: boolean } | null = null;
+  fastening: { kind: FastenerKind; size: string; length: number; placed: number; auto: boolean; cat: ToolboxGroup; q: string } | null = null;
+  /** The see-through part shown on the hole under the pointer (or a dragged card) while the Toolbox is open. */
+  private toolGhost = new THREE.Group();
+  private ghostKey = "";
+  /** The standard of the library card being dragged (dragover cannot read the drag data). */
+  dragKind: FastenerKind | null = null;
   /** Mate reference panel (FR-MATE-011): the component, the reference's name and its faces (up to three). */
   refing: { comp: string; name: string; faces: string[] } | null = null;
   /** Assembly feature panel (FR-ASM-027): the hole or cut being made or edited; `at`/`n`/`x` in `ref.comp`'s coordinates. */
@@ -162,7 +168,9 @@ export class AsmController {
     this.kernel.onCrash = () => toast(t("The geometry kernel stopped; it was restarted."), "warn");
     this.bindDom();
     host.viewer.scene.add(this.overlay);
+    host.viewer.scene.add(this.toolGhost);
     this.bindTabHide();
+    this.bindToolbox();
     onLangChange(() => { delete $("#asm-pm").dataset.id; if (this.doc) this.renderAll(); });
   }
 
@@ -695,7 +703,7 @@ export class AsmController {
   startFasteners() {
     if (!this.doc) return;
     this.closeTools();
-    this.fastening = { kind: "iso4762", size: "M6", length: defaultLength("iso4762", "M6"), placed: 0, auto: this.fastenAuto };
+    this.fastening = { kind: "iso4762", size: "M6", length: defaultLength("iso4762", "M6"), placed: 0, auto: this.fastenAuto, cat: "Screws", q: "" };
     this.renderAll();
   }
 
@@ -734,21 +742,50 @@ export class AsmController {
    * seats on (the one facing out of the hole there). The fastener goes in along the axis from that face.
    */
   private pickHole(x: number, y: number) {
-    const hit = this.host.partAt(x, y);
+    const hit = this.holeNear(x, y) ?? this.host.partAt(x, y);
     if (hit) this.fastenHole(hit.idx, hit.face, hit.point);
+  }
+
+  /**
+   * The hole under (x, y), or one whose wall is within 8 px of it (a pointer on the rim, on the face round
+   * the hole), as a hit on its cylinder that `holeSpot` can place the panel's part on.
+   */
+  private holeNear(x: number, y: number): { idx: number; face: number; point: V3 } | null {
+    const ok = (h: { idx: number; face: number; point: V3 } | null) => !!h && this.host.viewer.parts[h.idx]?.data.faces[h.face]?.type === "cylinder" && !("err" in this.holeSpot(h.idx, h.face, h.point));
+    const h0 = this.host.partAt(x, y);
+    if (ok(h0)) return h0;
+    for (const r of [3, 6, 8]) for (let k = 0; k < 8; k++) {
+      const a = (k * Math.PI) / 4, h = this.host.partAt(x + r * Math.cos(a), y + r * Math.sin(a));
+      if (ok(h)) return h;
+    }
+    return null;
   }
 
   /** Inserts the panel's fastener on the hole whose cylinder is face `face` of shown part `idx`; `point` picks the end. */
   fastenHole(idx: number, faceIdx: number, point: V3) {
-    const hit = { idx, face: faceIdx, point };
     if (!this.fastening) return;
-    const id = this.shownIds[hit.idx], face = this.faceNames[hit.idx]?.[hit.face], c = this.comp(id);
-    if (!c || !face) { toast(t("Click the cylindrical face of a hole."), true); return; }
+    const spot = this.holeSpot(idx, faceIdx, point);
+    if ("err" in spot) { toast(spot.err, true); return; }
+    if (spot.size !== this.fastening.size) this.setFastener({ size: spot.size });
+    this.hideGhost();
+    this.insertFastener(spot.tf, { axis: spot.axis, seat: spot.seat });
+  }
+
+  /**
+   * Where the panel's fastener goes on the hole whose cylinder is face `faceIdx` of shown part `idx`: its
+   * placement (Z out of the hole at the seat face of the end nearer `point`), the faces it mates to and its
+   * size (the hole's, with Size from the hole), or why it cannot go there.
+   */
+  private holeSpot(idx: number, faceIdx: number, point: V3): { tf: Tf; axis: MateRef; seat: MateRef; size: string; dia: number } | { err: string } {
+    const f = this.fastening!;
+    const id = this.shownIds[idx], face = this.faceNames[idx]?.[faceIdx], c = this.comp(id);
+    const notHole = { err: t("Click the cylindrical face of a hole.") };
+    if (!c || !face) return notHole;
     const g = this.worldGeo({ comp: id, face });
-    if (g?.k !== "axis") { toast(t("Click the cylindrical face of a hole."), true); return; }
+    if (g?.k !== "axis") return notHole;
     // How far the cylinder runs along its axis, from its triangles.
-    const data = this.host.viewer.parts[hit.idx]?.data, fi = data?.faces[hit.face];
-    if (!data || !fi) return;
+    const data = this.host.viewer.parts[idx]?.data, fi = data?.faces[faceIdx];
+    if (!data || !fi) return notHole;
     let lo = Infinity, hi = -Infinity;
     for (let i = fi.triStart * 3; i < (fi.triStart + fi.triCount) * 3; i++) {
       const v = data.index[i] * 3;
@@ -757,12 +794,8 @@ export class AsmController {
       if (s > hi) hi = s;
     }
     // The size follows the hole (or a bearing's bore), when the panel says so and one fits.
-    const f = this.fastening;
-    if (f.auto) {
-      const fit = sizeForHole(f.kind, 2 * g.r, f.size);
-      if (fit && fit !== f.size) this.setFastener({ size: fit });
-    }
-    const tc = (hit.point[0] - g.p[0]) * g.d[0] + (hit.point[1] - g.p[1]) * g.d[1] + (hit.point[2] - g.p[2]) * g.d[2];
+    const size = (f.auto ? sizeForHole(f.kind, 2 * g.r, f.size) : null) ?? f.size;
+    const tc = (point[0] - g.p[0]) * g.d[0] + (point[1] - g.p[1]) * g.d[1] + (point[2] - g.p[2]) * g.d[2];
     const ends = Math.abs(tc - hi) <= Math.abs(tc - lo) ? [hi, lo] : [lo, hi];
     const tol = Math.max(1e-3, this.size() * 1e-5);
     for (const end of ends) {
@@ -787,28 +820,148 @@ export class AsmController {
       const xa = (() => { const k = u[0] * out[0] + u[1] * out[1] + u[2] * out[2]; const v: V3 = [u[0] - k * out[0], u[1] - k * out[1], u[2] - k * out[2]]; const l = Math.hypot(...v); return v.map(q => q / l) as V3; })();
       const ya: V3 = [out[1] * xa[2] - out[2] * xa[1], out[2] * xa[0] - out[0] * xa[2], out[0] * xa[1] - out[1] * xa[0]];
       const tf: Tf = [xa[0], ya[0], out[0], at[0], xa[1], ya[1], out[1], at[1], xa[2], ya[2], out[2], at[2]];
-      this.insertFastener(tf, { axis: { comp: id, face }, seat: { comp: id, face: seat } });
-      return;
+      return { tf, axis: { comp: id, face }, seat: { comp: id, face: seat }, size, dia: 2 * g.r };
     }
-    toast(t("No flat face around the end of that hole to seat the fastener on."), true);
+    return { err: t("No flat face around the end of that hole to seat the fastener on.") };
   }
 
+  // ---------- library preview: the part on the hole under the pointer, and cards dragged onto the view ----------
+
+  private bindToolbox() {
+    const cv = this.host.viewer.renderer.domElement;
+    let raf = 0, at: { x: number; y: number } | null = null;
+    cv.addEventListener("pointermove", e => {
+      if (!this.fastening || e.buttons) { if (this.ghostKey) this.hideGhost(); return; }
+      at = { x: e.clientX, y: e.clientY };
+      if (!raf) raf = requestAnimationFrame(() => { raf = 0; if (at && this.fastening) this.previewAt(at.x, at.y); });
+    });
+    cv.addEventListener("pointerleave", () => { at = null; this.hideGhost(); });
+  }
+
+  /** Shows the panel's part on the hole under (x, y), sized as it would be placed; false when there is no hole there. */
+  previewAt(x: number, y: number): boolean {
+    const f = this.fastening;
+    const hit = f && this.holeNear(x, y);
+    const spot = hit ? this.holeSpot(hit.idx, hit.face, hit.point) : null;
+    if (!f || !spot || "err" in spot) { this.hideGhost(); this.fastenStatus(); return false; }
+    const L = lengthFor(f.kind, spot.size, f.length);
+    this.showGhost(spot.tf, fastenerShape(f.kind, spot.size, L), `${f.kind}|${spot.size}|${L}`);
+    this.fastenStatus(t("{name} on a Ø{d} hole: click to place it.", { name: fastenerName(f.kind, spot.size, L), d: +spot.dia.toFixed(2) }));
+    return true;
+  }
+
+  /** The status line of the Toolbox panel: `text`, else what to do next. */
+  private fastenStatus(text?: string) {
+    const f = this.fastening, el = document.querySelector<HTMLElement>("#asm-pm [data-fstatus]");
+    if (!f || !el) return;
+    el.textContent = text ?? (f.placed ? t("{n} part placed. Click more holes, or ✓ to finish.|{n} parts placed. Click more holes, or ✓ to finish.", { n: f.placed })
+      : fastenerInfo(f.kind).fit ? t("Click the cylindrical face of a hole near the end the part goes in, or drag a card onto it.") : t("Insert it without a hole, then mate it."));
+  }
+
+  private showGhost(tf: Tf, sh: ToolShape, key: string) {
+    const g = this.toolGhost;
+    if (key !== this.ghostKey) {
+      this.clearGhost();
+      const mat = new THREE.MeshStandardMaterial({ color: 0xf2b134, transparent: true, opacity: 0.6, roughness: 0.5, metalness: 0.1, side: THREE.DoubleSide, depthWrite: false });
+      // The part inside the hole shows faintly through the model.
+      const xray = new THREE.MeshBasicMaterial({ color: 0xf2b134, transparent: true, opacity: 0.22, depthTest: false, depthWrite: false });
+      for (const s of sh.solids) {
+        if ("neg" in s && s.neg) continue;
+        let geo: THREE.BufferGeometry;
+        if (s.t === "rev") {
+          geo = new THREE.LatheGeometry(s.pts.map(([r, z]) => new THREE.Vector2(r, z)).concat([new THREE.Vector2(s.pts[0][0], s.pts[0][1])]), 48);
+          geo.rotateX(Math.PI / 2);
+        } else if (s.t === "hex") {
+          const R = s.s / Math.sqrt(3), shp = new THREE.Shape();
+          for (let i = 0; i < 6; i++) { const a = Math.PI / 6 + (i * Math.PI) / 3; if (i) shp.lineTo(R * Math.cos(a), R * Math.sin(a)); else shp.moveTo(R * Math.cos(a), R * Math.sin(a)); }
+          if (s.ri) { const h = new THREE.Path(); h.absarc(0, 0, s.ri, 0, 2 * Math.PI, true); shp.holes.push(h); }
+          geo = new THREE.ExtrudeGeometry(shp, { depth: s.z1 - s.z0, bevelEnabled: false, curveSegments: 32 });
+          geo.translate(0, 0, s.z0);
+        } else { geo = new THREE.BoxGeometry(s.x, s.y, s.z1 - s.z0); geo.translate(0, 0, (s.z0 + s.z1) / 2); }
+        geo.computeVertexNormals();
+        const m = new THREE.Mesh(geo, mat), x = new THREE.Mesh(geo, xray);
+        m.renderOrder = 5;
+        x.renderOrder = 6;
+        g.add(m, x);
+      }
+      this.ghostKey = key;
+    }
+    g.matrixAutoUpdate = false;
+    g.matrix.set(tf[0], tf[1], tf[2], tf[3], tf[4], tf[5], tf[6], tf[7], tf[8], tf[9], tf[10], tf[11], 0, 0, 0, 1);
+    g.matrixWorldNeedsUpdate = true;
+    g.visible = true;
+    this.host.viewer.invalidate();
+  }
+
+  private clearGhost() {
+    const mats = new Set<THREE.Material>();
+    const geos = new Set<THREE.BufferGeometry>();
+    for (const o of [...this.toolGhost.children]) { this.toolGhost.remove(o); const m = o as THREE.Mesh; geos.add(m.geometry); mats.add(m.material as THREE.Material); }
+    for (const g of geos) g.dispose();
+    for (const m of mats) m.dispose();
+    this.ghostKey = "";
+  }
+
+  private hideGhost() {
+    if (!this.toolGhost.visible && !this.ghostKey) return;
+    this.toolGhost.visible = false;
+    this.host.viewer.invalidate();
+  }
+
+  /** A library card dragged over the view: picks its standard and previews it on the hole under the pointer. */
+  toolboxDragOver(x: number, y: number) {
+    if (!this.doc) return;
+    if (!this.fastening) this.startFasteners();
+    if (this.dragKind && this.fastening!.kind !== this.dragKind) this.setFastener({ kind: this.dragKind });
+    this.previewAt(x, y);
+  }
+
+  toolboxDragLeave() { this.hideGhost(); }
+
+  /** A library card dropped on the view: on a hole it is sized and mated there; elsewhere it is inserted where it was dropped. */
+  toolboxDrop(x: number, y: number) {
+    if (!this.doc) return;
+    this.toolboxDragOver(x, y);
+    this.dragKind = null;
+    this.hideGhost();
+    const near = this.holeNear(x, y);
+    if (near) { this.fastenHole(near.idx, near.face, near.point); return; }
+    const hit = this.host.partAt(x, y);
+    this.insertFastener(hit ? translation(hit.point) : undefined);
+  }
+
+  /**
+   * The Toolbox panel (FR-ASM-028), a design library: search, category tiles, a card per standard (with its
+   * side view; drag one onto a hole), then the picked standard's side view with dimensions, size chips,
+   * length, designation and mass.
+   */
   private renderFastenerPanel() {
     const pm = $("#asm-pm"), f = this.fastening!;
     pm.hidden = false;
     pm.dataset.id = "fastener";
     const info = fastenerInfo(f.kind);
     const opt = (v: string, label: string, on: boolean) => `<option value="${esc(v)}"${on ? " selected" : ""}>${esc(label)}</option>`;
-    const kinds = TOOLBOX_GROUPS.map(gr => `<optgroup label="${esc(t(gr))}">${FASTENERS.filter(x => x.group === gr).map(x => opt(x.kind, t(x.label), x.kind === f.kind)).join("")}</optgroup>`).join("");
+    const cats = TOOLBOX_GROUPS.map(gr => {
+      const ks = FASTENERS.filter(x => x.group === gr), k0 = ks[0], sz = fastenerSizes(k0.kind), mid = sz[Math.floor(sz.length / 2)];
+      const on = !f.q && f.cat === gr;
+      return `<button class="tb-cat${on ? " on" : ""}" data-cat="${gr}" role="tab" aria-selected="${on}">${shapeSvg(fastenerShape(k0.kind, mid, defaultLength(k0.kind, mid)), { w: 30, h: 24, cls: "tb-ico" })}<span>${esc(t(gr))}</span><span class="tb-n">${ks.length}</span></button>`;
+    }).join("");
+    const L = info.screw ? f.length : 0, shape = fastenerShape(f.kind, f.size, L);
+    const grams = shapeVolume(shape) * 7.85e-3;
     pm.innerHTML = `<div class="pm-head pm-top"><h3>${esc(t("Toolbox"))}</h3><span class="pm-okc"><button class="pm-ok" data-a="ok" title="${esc(t("OK (Enter)"))}" aria-label="${esc(t("OK (Enter)"))}">✓</button></span></div>`
-      + `<fieldset class="pm-group"><legend>${esc(t("Standard part"))}</legend>`
-      + `<label class="pm-field"><span>${esc(t("Standard"))}</span><select data-f="kind">${kinds}</select></label>`
-      + `<label class="pm-field"><span>${esc(t("Size"))}</span><select data-f="size" translate="no">${fastenerSizes(f.kind).map(x => opt(x, x, x === f.size)).join("")}</select></label>`
+      + `<input type="search" class="tb-q" data-f="q" value="${esc(f.q)}" placeholder="${esc(t("Search: M6 nut, 4762, 6201…"))}" aria-label="${esc(t("Search the library"))}" />`
+      + `<div class="tb-cats" role="tablist" aria-label="${esc(t("Categories"))}">${cats}</div>`
+      + `<div class="tb-cards" data-cards>${this.fastenerCards()}</div>`
+      + `<fieldset class="pm-group tb-pick"><legend>${esc(t(info.label))}</legend>`
+      + `<div class="tb-view">${shapeSvg(shape, { w: 248, h: 150, dims: true, cls: "tb-svg", label: esc(fastenerName(f.kind, f.size, f.length)) })}</div>`
+      + `<div class="tb-sizes" role="group" aria-label="${esc(t("Size"))}" translate="no">${fastenerSizes(f.kind).map(x => `<button class="tb-size${x === f.size ? " on" : ""}" data-size="${esc(x)}" aria-pressed="${x === f.size}">${esc(x)}</button>`).join("")}</div>`
       + (info.screw ? `<label class="pm-field"><span>${esc(t("Length"))}</span><select data-f="length" translate="no">${fastenerLengths(f.kind, f.size).map(x => opt(String(x), `${x} mm`, x === f.length)).join("")}</select></label>` : "")
       + (info.fit ? `<label class="pm-field pm-check"><input type="checkbox" data-a="auto"${f.auto ? " checked" : ""} /> ${esc(t("Size from the hole"))}</label>` : "")
-      + `<p class="pm-help muted" translate="no">${esc(fastenerName(f.kind, f.size, f.length))}</p></fieldset>`
-      + `<p class="pm-help" role="status" data-fstatus>${esc(f.placed ? t("{n} part placed. Click more holes, or ✓ to finish.|{n} parts placed. Click more holes, or ✓ to finish.", { n: f.placed }) : info.fit ? t("Click the cylindrical face of a hole near the end the part goes in.") : t("Insert it without a hole, then mate it."))}</p>`
+      + `<p class="tb-desig"><span>${esc(t("Designation"))}</span> <b translate="no">${esc(fastenerName(f.kind, f.size, f.length))}</b></p>`
+      + `<p class="pm-help muted">${esc(t("Steel, about {g} g", { g: grams < 10 ? +grams.toFixed(2) : +grams.toFixed(1) }))}</p></fieldset>`
+      + `<p class="pm-help" role="status" data-fstatus></p>`
       + `<button class="btn small" data-a="insert">${esc(t("Insert without a hole"))}</button>`;
+    this.fastenStatus();
     pm.querySelector("[data-a=ok]")!.addEventListener("click", () => this.closeTools());
     pm.querySelector("[data-a=insert]")!.addEventListener("click", () => this.insertFastener());
     pm.querySelector<HTMLInputElement>("[data-a=auto]")?.addEventListener("change", e => {
@@ -816,13 +969,59 @@ export class AsmController {
       try { localStorage.setItem("mc:toolboxAuto", f.auto ? "1" : "0"); } catch { /* per browser only */ }
     });
     pm.querySelectorAll<HTMLSelectElement>("select[data-f]").forEach(sel => sel.addEventListener("change", () => this.setFastener({ [sel.dataset.f!]: sel.dataset.f === "length" ? Number(sel.value) : sel.value })));
+    pm.querySelectorAll<HTMLButtonElement>("[data-size]").forEach(b => b.addEventListener("click", () => this.setFastener({ size: b.dataset.size })));
+    pm.querySelectorAll<HTMLButtonElement>("[data-cat]").forEach(b => b.addEventListener("click", () => {
+      f.cat = b.dataset.cat as ToolboxGroup;
+      f.q = "";
+      const first = FASTENERS.find(x => x.group === f.cat)!;
+      if (fastenerInfo(f.kind).group !== f.cat) this.setFastener({ kind: first.kind }); else this.renderPanel();
+    }));
+    const q = pm.querySelector<HTMLInputElement>("[data-f=q]")!;
+    q.addEventListener("input", () => {
+      f.q = q.value;
+      pm.querySelectorAll(".tb-cat").forEach(b => { const on = !f.q && (b as HTMLElement).dataset.cat === f.cat; b.classList.toggle("on", on); b.setAttribute("aria-selected", String(on)); });
+      pm.querySelector("[data-cards]")!.innerHTML = this.fastenerCards();
+      this.bindCards();
+    });
+    this.bindCards();
+  }
+
+  /** The cards of the panel's category, or of the search matches. */
+  private fastenerCards(): string {
+    const f = this.fastening!;
+    const list = f.q.trim() ? searchFasteners(f.q, t) : FASTENERS.filter(x => x.group === f.cat);
+    if (!list.length) return `<p class="pm-help muted">${esc(t("Nothing in the library matches that."))}</p>`;
+    return list.map(x => {
+      const sz = fastenerSizes(x.kind), size = sz.includes(f.size) ? f.size : sz[Math.floor(sz.length / 2)];
+      const label = t(x.label).replace(/\s*\([^)]*\)\s*$/, "");
+      return `<button class="tb-card${x.kind === f.kind ? " on" : ""}" data-kind="${x.kind}" draggable="true" aria-pressed="${x.kind === f.kind}" title="${esc(t(x.label))}">`
+        + `${shapeSvg(fastenerShape(x.kind, size, defaultLength(x.kind, size)), { w: 44, h: 34, cls: "tb-pic" })}`
+        + `<span class="tb-cn" translate="no">${esc(x.name.replace(/^(ISO|DIN) /, ""))}</span><span class="tb-cl">${esc(label)}</span></button>`;
+    }).join("");
+  }
+
+  private bindCards() {
+    $("#asm-pm").querySelectorAll<HTMLButtonElement>("[data-kind]").forEach(b => {
+      const kind = b.dataset.kind as FastenerKind;
+      b.addEventListener("click", () => { if (this.fastening && kind !== this.fastening.kind) this.setFastener({ kind }); });
+      b.addEventListener("dragstart", e => {
+        this.dragKind = kind;
+        e.dataTransfer?.setData(TOOLBOX_MIME, kind);
+        if (e.dataTransfer) e.dataTransfer.effectAllowed = "copy";
+      });
+      b.addEventListener("dragend", () => { this.dragKind = null; this.hideGhost(); });
+    });
   }
 
   /** Changes the panel's fastener; a size or standard without the length picks the nearest preferred one. */
   setFastener(v: { kind?: string; size?: string; length?: number }) {
     const f = this.fastening;
     if (!f) return;
-    if (v.kind) { f.kind = v.kind as FastenerKind; if (!fastenerSizes(f.kind).includes(f.size)) f.size = fastenerSizes(f.kind).includes("M6") ? "M6" : fastenerSizes(f.kind)[0]; }
+    if (v.kind) {
+      f.kind = v.kind as FastenerKind;
+      if (!f.q) f.cat = fastenerInfo(f.kind).group;
+      if (!fastenerSizes(f.kind).includes(f.size)) f.size = fastenerSizes(f.kind).includes("M6") ? "M6" : fastenerSizes(f.kind)[0];
+    }
     if (v.size) f.size = v.size;
     if (v.length) f.length = v.length;
     const ls = fastenerLengths(f.kind, f.size);
@@ -1077,6 +1276,7 @@ export class AsmController {
     if (this.refing) { this.refing = null; this.clearPicks(); }
     if (this.featuring) { this.featuring = null; this.clearOverlay(); }
     this.fastening = null;
+    this.hideGhost();
     this.moving = null;
     this.renderAll();
   }
@@ -3229,6 +3429,9 @@ function needsSolve(d: AsmDoc) {
 }
 
 /** Assembly command icons (FR-UI-015): MöbiusCAD's own stroke icons, 16 px, currentColor. */
+/** Drag data type of a Toolbox library card (its standard). */
+export const TOOLBOX_MIME = "application/x-mcad-toolbox";
+
 const AI = (d: string) => `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
 const ASM_ICONS: Record<string, string> = {
   insert: AI('<path d="M2.5 5.5 8 2.5l5.5 3v5L8 13.5l-5.5-3z"/><path d="M8 7v4M6 9h4"/>'),
