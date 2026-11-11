@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.526.0] - 2026-11-11
+
+### Changed
+
+- Drawings: the drawing tree lists the annotations too. Each view has an Annotations group (folded until you open it) under it, and notes, tables and revision clouds on the sheet go under Sheet annotations; each row shows the tool's icon and name, with a note's first line, a datum letter or a balloon's text beside it, and "Dangling" when its model edge is gone. Clicking a row selects the annotation (its properties open and Delete removes it), and selecting one on the sheet opens its group and scrolls to it. Hovering a row outlines the view or annotation on the sheet, and the arrow keys walk the tree (up/down select, right/left open and fold groups).
+
 ## [1.525.0] - 2026-11-11
 
 ### Added
@@ -3268,7 +3274,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.525.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.526.0...HEAD
+[1.526.0]: https://github.com/kothf/step-viewer/compare/v1.525.0...v1.526.0
 [1.525.0]: https://github.com/kothf/step-viewer/compare/v1.524.0...v1.525.0
 [1.524.0]: https://github.com/kothf/step-viewer/compare/v1.523.0...v1.524.0
 [1.523.0]: https://github.com/kothf/step-viewer/compare/v1.522.0...v1.523.0
