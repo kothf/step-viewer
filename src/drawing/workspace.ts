@@ -13,6 +13,7 @@ import { BALLOON_R, BOM_COLS, BOM_MAT_COL, autoBalloons, bomMats, compOfKey, she
 import { t, onLangChange, lang } from "../i18n";
 import { toast, confirmModal } from "../ui";
 import { DROPPED, OUT_OF_MEMORY, DrawingKernel, type ModelFacts } from "./client";
+import type { ModelSnap } from "./drawing.worker";
 import { BREAK_GAP, composeSheet, fromSheet, HATCH_PATTERNS, hatchOf, inPoly, nextLetter, polyBox, placement, toSheet, viewBody, viewPrims, viewRect, type Placement } from "./compose";
 import { DrawingStore, newSheet, uid } from "./doc";
 import { DRAWING_EXT, packDrawing, unpackDrawing } from "./file";
@@ -60,6 +61,8 @@ export interface DrawingHost {
   livePart(id: string): PartDoc | null;
   /** The assembly with this id open now, if any (with patterns and sub-assemblies expanded). */
   liveAsm?(id: string): { doc: AsmDoc; flat: AsmDoc } | null;
+  /** The shape of this flattened assembly from the open assembly's kernel, when it is the one built there; else null. */
+  asmSnap?(flat: AsmDoc): Promise<ModelSnap | null>;
   /** Runs after every change of the part open in the modeller. */
   onPartChange(fn: () => void): void;
   /** Direction of the 3D camera (for "Current 3D view"). */
@@ -307,7 +310,9 @@ export class DrawingWorkspace {
     this.loading++;
     this.renderStatus();
     try {
-      this.facts = await this.kernel.load(src.kind === "part" ? { part: src.doc } : src.kind === "asm" ? { asm: src.flat } : { file: { name: src.name, bytes: this.model! } });
+      // A drawing of the assembly open in 3D: its kernel has built the parts already (engine: 11 s → 0.1 s).
+      const pre = src.kind === "asm" ? await this.host.asmSnap?.(src.flat).catch(() => null) : null;
+      this.facts = await this.kernel.load(src.kind === "part" ? { part: src.doc } : src.kind === "asm" ? { asm: src.flat } : { file: { name: src.name, bytes: this.model! } }, pre);
       this.boms = src.kind === "asm" ? new Map() : null;
       this.stale = false;
       this.renderAll();

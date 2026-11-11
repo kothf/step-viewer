@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.499.0] - 2026-11-11
+
+### Changed
+
+- A drawing of the assembly open in 3D takes its shape from the parts the assembly has built already instead of building every part again: on the steam engine that step takes about 1.5 s instead of 12 s.
+
 ## [1.498.0] - 2026-11-11
 
 ### Added
@@ -3074,7 +3080,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.498.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.499.0...HEAD
+[1.499.0]: https://github.com/kothf/step-viewer/compare/v1.498.0...v1.499.0
 [1.498.0]: https://github.com/kothf/step-viewer/compare/v1.497.0...v1.498.0
 [1.497.0]: https://github.com/kothf/step-viewer/compare/v1.496.0...v1.497.0
 [1.496.0]: https://github.com/kothf/step-viewer/compare/v1.495.0...v1.496.0

@@ -8,6 +8,7 @@ import { MATE_LABEL, mateName } from "./mateName";
 import type { NamedView } from "../model/types";
 import * as THREE from "three";
 import { ModelKernel } from "../model/kernelClient";
+import type { ModelSnap } from "../drawing/drawing.worker";
 import { newPart, uid } from "../model/doc";
 import { PART_EXT, unpackPart } from "../model/file";
 import { t, onLangChange } from "../i18n";
@@ -179,6 +180,19 @@ export class AsmController {
     return e;
   }
   get dirty() { return !!this.doc && JSON.stringify(this.doc) !== this.savedAt; }
+
+  /**
+   * A drawing of this assembly (FR-DRW-030): the shown components' shape from this kernel, which has built the parts
+   * already, so the drawing worker need not build them again (engine: ~11 s → ~0.1 s). Null unless `flat` is what
+   * the kernel builds now (asking for another document would make it rebuild and lose its cache for the 3D view).
+   */
+  async drawingSnap(flat: AsmDoc): Promise<ModelSnap | null> {
+    if (flat.id !== this.doc?.id) return null;
+    do await this.idle; while (this.building);
+    const e = this.expanded;
+    if (!e || flat.id !== e.doc.id || (flat !== e.doc && JSON.stringify(flat) !== JSON.stringify(e.doc))) return null;
+    return this.kernel.drawingSnap(e.doc);
+  }
   isAsmName(name: string) { return name.toLowerCase().endsWith(ASM_EXT); }
 
   // ---------- open, new, close ----------
