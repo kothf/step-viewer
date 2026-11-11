@@ -3547,7 +3547,7 @@ try {
     await idle();
     const iso = await mp.evaluate(() => ({ s: document.querySelector('#mc-pm select[data-k="size"]')?.value, d: parseFloat(document.querySelector('#mc-pm input[data-num="diameter"]')?.value), n: document.querySelectorAll('#mc-pm select[data-k="size"] option').length }));
     check(unc.s === "1/4-20 UNC" && Math.abs(unc.d - 5.105) < 1e-3 && unc.n === 14 && iso.s === "M6" && iso.d === 5 && iso.n === 25, `model 1.520: hole Standard ANSI inch UNC and back to ISO metric (${JSON.stringify(unc)}, ${JSON.stringify(iso)})`);
-    // 1.525 (FR-FT-051): Thread class goes into the callout; Remove thread cuts the threaded length to the major diameter.
+    // 1.528 (FR-FT-051): Thread class goes into the callout; Remove thread cuts the threaded length to the major diameter.
     await mp.selectOption('#mc-pm select[data-k="tclass"]', "6G");
     await idle();
     await mp.selectOption('#mc-pm select[data-k="threadMode"]', "remove");
@@ -3856,7 +3856,7 @@ try {
     check(hux.svg && hux.callout.includes("⌴Ø15") && hux.icons === 8 && hux.on === "cbore" && hux.tabs === "type:true,pos:false" && hux.favOpen === false
       && huxK.kind === "csink" && huxK.callout.includes("⌵Ø") && huxP.pos && !huxP.type && huxP.face,
       `model 1.524: Hole Wizard panel preview, type pictograms and Type/Positions tabs (${JSON.stringify({ hux, huxK, huxP })})`);
-    // 1.525 (FR-FT-051): the counterbore follows the screw type: DIN 7984 low head M8 = Ø15 × 5.6 (ISO 4762's Ø15 × 8.6 with a 3 mm lower head).
+    // 1.528 (FR-FT-051): the counterbore follows the screw type: DIN 7984 low head M8 = Ø15 × 5.6 (ISO 4762's Ø15 × 8.6 with a 3 mm lower head).
     await mp.selectOption('#mc-pm select[data-k="screw"]', "din7984");
     await idle();
     const scr = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { screw: d.screw, cb: [d.cbDia?.v, d.cbDepth?.v], types: [...document.querySelectorAll('#mc-pm select[data-k="screw"] option')].map(o => o.value).join() }; });
