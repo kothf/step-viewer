@@ -56,6 +56,7 @@ export function openPrefs(host: PrefsHost, page: "modelling" | "sketch" | "mouse
     + chk("autoRels", "Automatic relations while drawing", "Lines snap horizontal, vertical, perpendicular, parallel or tangent and keep that relation; hold Ctrl to draw without them.")
     + chk("showRels", "Show relation glyphs")
     + chk("modelSnap", "Snap to model edges")
+    + chk("addDims", "Dimension new lines, rectangles, circles and arcs", "Their sizes become dimensions and the Modify box opens on each; click on to keep the drawn size.")
     + chk("slotDims", "Dimension new slots")
     + chk("grid", "Show grid")
     + chk("gridSnap", "Snap to grid")

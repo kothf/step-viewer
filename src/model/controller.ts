@@ -228,7 +228,7 @@ export function featureLabel(name: string) {
 
 /** The sketch editor settings from Preferences (FR-UI-080). */
 function sketchPrefs(ed: SketchEditor, p: Prefs) {
-  ed.modelSnap = p.modelSnap; ed.autoRels = p.autoRels; ed.showRels = p.showRels; ed.slotDims = p.slotDims;
+  ed.modelSnap = p.modelSnap; ed.autoRels = p.autoRels; ed.showRels = p.showRels; ed.slotDims = p.slotDims; ed.addDims = p.addDims;
   ed.setGrid({ show: p.grid, snap: p.gridSnap, spacing: p.gridStep });
 }
 
@@ -466,7 +466,7 @@ export class ModelController {
         sketchPrefs(ed, p);
         const pm = document.getElementById("mc-pm");
         const box = (a: string, v: boolean) => { const i = pm?.querySelector<HTMLInputElement>(`[data-a=${a}]`); if (i) i.checked = v; };
-        box("grid", ed.grid); box("gridsnap", ed.gridSnap); box("autorels", ed.autoRels); box("showrels", ed.showRels); box("slotdims", ed.slotDims); box("modelsnap", ed.modelSnap);
+        box("grid", ed.grid); box("gridsnap", ed.gridSnap); box("autorels", ed.autoRels); box("showrels", ed.showRels); box("slotdims", ed.slotDims); box("adddims", ed.addDims); box("modelsnap", ed.modelSnap);
         const gs = pm?.querySelector<HTMLInputElement>("[data-a=gridstep]");
         if (gs) gs.value = ed.gridSpacing ? String(ed.gridSpacing) : "";
         ed.render();
@@ -5077,7 +5077,7 @@ export class ModelController {
       + (sk ? "" : `<div class="mc-sep"></div><span class="mc-fly">${btn("save", t("Save"), t("Save the part as .mcadprt (Ctrl+S)"))}<button class="mc-caret" data-fly="save" aria-haspopup="menu" title="${esc(t("More save options"))}" aria-label="${esc(t("More save options"))}">▾</button></span>` + btn("step", t("STEP"), t("Export the body as STEP")));
     q.querySelectorAll<HTMLButtonElement>("[data-c]").forEach(b => b.addEventListener("click", () => this.command(b.dataset.c!)));
     q.querySelector<HTMLElement>('[data-fly="undo"]')?.addEventListener("click", e => this.historyMenu(e.currentTarget as HTMLElement));
-    q.querySelectorAll<HTMLButtonElement>("[data-qt]").forEach(b => b.addEventListener("click", () => this.sketchToggle(b.dataset.qt as "grid" | "gridsnap" | "autorels")));
+    q.querySelectorAll<HTMLButtonElement>("[data-qt]").forEach(b => b.addEventListener("click", () => this.sketchToggle(b.dataset.qt as "grid" | "gridsnap" | "autorels" | "adddims")));
     q.querySelector<HTMLElement>('[data-fly="qsnap"]')?.addEventListener("click", e => {
       const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
       this.quickSnapMenu(r.left, r.bottom + 4, () => $("#mc-quick").querySelector<HTMLElement>('[data-fly="qsnap"]')?.focus());
@@ -5102,25 +5102,28 @@ export class ModelController {
       `<button class="mc-b mc-qt${on ? " on" : ""}" data-qt="${k}" title="${esc(title)}" aria-pressed="${on}"><span class="mc-i" aria-hidden="true">${icon}</span><span class="mc-l">${esc(label)}</span></button>`;
     return tg("grid", "#", t("Grid"), t("Show grid"), ed.grid)
       + tg("gridsnap", "⌗", t("Snap to grid"), t("Points that snap to nothing else go to the nearest grid point; hold Ctrl to place freely."), ed.gridSnap)
-      + tg("autorels", "⊥", t("Inferences"), t("Lines snap horizontal, vertical, perpendicular, parallel or tangent and keep that relation; hold Ctrl to draw without them."), ed.autoRels);
+      + tg("autorels", "⊥", t("Inferences"), t("Lines snap horizontal, vertical, perpendicular, parallel or tangent and keep that relation; hold Ctrl to draw without them."), ed.autoRels)
+      + tg("adddims", "↔", t("Add dimensions"), t("New lines, rectangles, circles and arcs get their sizes as dimensions and the Modify box opens on each."), ed.addDims);
   }
 
   /** Flips one sketch toggle, remembers it, and keeps the quick bar and the sketch panel in step. */
-  private sketchToggle(k: "grid" | "gridsnap" | "autorels") {
+  private sketchToggle(k: "grid" | "gridsnap" | "autorels" | "adddims") {
     const m = this.mode;
     if (m.kind !== "sketch") return;
     const ed = m.editor;
     if (k === "grid") ed.setGrid({ show: !ed.grid });
     else if (k === "gridsnap") ed.setGrid({ snap: !ed.gridSnap, show: ed.gridSnap ? undefined : true });
+    else if (k === "adddims") ed.addDims = !ed.addDims;
     else ed.autoRels = !ed.autoRels;
     try {
+      localStorage.setItem("mc:skAddDims", ed.addDims ? "1" : "0");
       localStorage.setItem("mc:skGrid", ed.grid ? "1" : "0");
       localStorage.setItem("mc:skGridSnap", ed.gridSnap ? "1" : "0");
       localStorage.setItem("mc:autoRels", ed.autoRels ? "1" : "0");
     } catch { /* private mode */ }
     const pm = document.getElementById("mc-pm");
     const box = (a: string, v: boolean) => { const i = pm?.querySelector<HTMLInputElement>(`[data-a=${a}]`); if (i) i.checked = v; };
-    box("grid", ed.grid); box("gridsnap", ed.gridSnap); box("autorels", ed.autoRels);
+    box("grid", ed.grid); box("gridsnap", ed.gridSnap); box("autorels", ed.autoRels); box("adddims", ed.addDims);
     this.renderQuick();
     $("#mc-quick").querySelector<HTMLElement>(`[data-qt="${k}"]`)?.focus();
   }
@@ -7526,6 +7529,7 @@ export class ModelController {
       + `</div>`
       + this.textBox(ed)
       + this.curveBox(ed)
+      + (["line", "cline", "mline", "tarc", "rect", "crect", "rect3", "crect3", "pgram", "circle", "circle3", "pcircle", "arc", "arc3", "polygon"].includes(ed.tool) ? `<label class="chk pm-chk" title="${esc(t("New lines, rectangles, circles and arcs get their sizes as dimensions and the Modify box opens on each."))}"><input type="checkbox" data-a="adddims"${ed.addDims ? " checked" : ""} />${esc(t("Add dimensions"))}</label>` : "")
       + (["slot", "cslot", "aslot", "aslot3"].includes(ed.tool) ? `<label class="chk pm-chk" title="${esc(t("Slots get width and length (or radius) dimensions, and the Modify box opens on them."))}"><input type="checkbox" data-a="slotdims"${ed.slotDims ? " checked" : ""} />${esc(t("Add dimensions"))}</label>` : "")
       + (ed.tool === "polygon" ? `<label class="pm-field"><span>${esc(t("Sides"))}</span><input type="text" inputmode="numeric" class="pm-n" data-a="sides" value="${ed.polySides}" /></label>` : "")
       + (ed.tool === "fillet" ? `<label class="pm-field"><span>${esc(t("Radius"))}</span><span class="pm-in"><input type="text" inputmode="decimal" class="pm-n" data-a="fr" value="${trimNum(ed.filletRadius * UNITS[units.current].f, 4)}" /><span class="muted">${units.current}</span></span></label>` : "")
@@ -7554,6 +7558,7 @@ export class ModelController {
     pm.querySelector("[data-a=deldangling]")?.addEventListener("click", () => { ed.deleteItems(ed.danglingRels().map(r => r.id)); this.renderPanel(); });
     pm.querySelector<HTMLInputElement>("[data-a=shownames]")?.addEventListener("change", e => { ed.showNames = (e.target as HTMLInputElement).checked; ed.render(); });
     pm.querySelector<HTMLInputElement>("[data-a=slotdims]")?.addEventListener("change", e => { ed.slotDims = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:slotDims", ed.slotDims ? "1" : "0"); } catch { /* private mode */ } });
+    pm.querySelector<HTMLInputElement>("[data-a=adddims]")?.addEventListener("change", e => { ed.addDims = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:skAddDims", ed.addDims ? "1" : "0"); } catch { /* private mode */ } this.renderQuick(); });
     pm.querySelector<HTMLInputElement>("[data-a=autorels]")?.addEventListener("change", e => { ed.autoRels = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:autoRels", ed.autoRels ? "1" : "0"); } catch { /* private mode */ } this.renderQuick(); });
     pm.querySelector<HTMLInputElement>("[data-a=showrels]")?.addEventListener("change", e => { ed.showRels = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:skRels", ed.showRels ? "1" : "0"); } catch { /* private mode */ } ed.render(); });
     const saveGrid = () => { try { localStorage.setItem("mc:skGrid", ed.grid ? "1" : "0"); localStorage.setItem("mc:skGridSnap", ed.gridSnap ? "1" : "0"); localStorage.setItem("mc:skGridStep", String(ed.gridSpacing || "")); } catch { /* private mode */ } };

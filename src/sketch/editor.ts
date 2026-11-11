@@ -56,6 +56,9 @@ export type SketchPattern =
   /** Stretch entities (FR-SK-039): the selected points (and the points of selected curves) move, curves ending on them stretch. */
   | { kind: "stretch"; dx: number; dy: number };
 
+/** Tools whose new entities get dimensions and the Modify box when Add dimensions is on (slots have their own switch). */
+const AUTO_DIM_TOOLS = new Set<string>(["line", "cline", "mline", "tarc", "rect", "crect", "rect3", "crect3", "pgram", "circle", "circle3", "pcircle", "arc", "arc3", "polygon"]);
+
 export type SkTool = "select" | "line" | "cline" | "mline" | "rect" | "crect" | "rect3" | "crect3" | "pgram" | "circle" | "circle3" | "pcircle" | "arc" | "arc3" | "tarc" | "polygon" | "slot" | "cslot" | "aslot" | "aslot3" | "ellipse" | "earc" | "spline" | "sspline" | "conic" | "parabola" | "eqn" | "point" | "text" | "trim" | "extend" | "split" | "jog" | "segment" | "fillet" | "chamfer" | "offset" | "convert" | "intersect" | "dim" | "hord" | "vord";
 
 export interface SketchHost {
@@ -382,6 +385,7 @@ export class SketchEditor {
     const p = this.uv(e);
     if (!p) return true;
     this.closeInput(true);
+    this.syncDraft();
     if (this.tool === "select") {
       const h = this.hits(p)[0] ?? null;
       if (!h || h.kind === "origin") {
@@ -1337,12 +1341,18 @@ export class SketchEditor {
     const p = s.p;
     const d = this.draft;
     const rels: SkRel[] = [];
-    const before = exact || this.dynMirror ? new Set(this.sk.ents.map(x => x.id)) : null;
+    const auto = !exact && this.addDims && AUTO_DIM_TOOLS.has(this.tool);
+    const before = exact || auto || this.dynMirror ? new Set(this.sk.ents.map(x => x.id)) : null;
     const finish = (label: string) => {
       this.sk.rels.push(...rels);
-      if (exact && before) { const made = this.sk.ents.filter(x => !before.has(x.id)); this.addTypedDims(exact.dims(made), made); }
+      let sizes: string[] = [];
+      if (before && (exact || auto)) {
+        const made = this.sk.ents.filter(x => !before.has(x.id));
+        sizes = this.addTypedDims(exact ? exact.dims(made) : this.autoDims(made), made);
+      }
       if (this.dynMirror && before) this.mirrorNew(before);
       this.commit(label);
+      if (auto) this.openSizes(sizes);
     };
     if (this.tool === "eqn") return;
     if (this.tool === "point") { this.usePoint(p, s.id, s.curve, rels); finish("Add point"); return; }
@@ -2388,6 +2398,8 @@ export class SketchEditor {
 
   /** Slot tools add their sizes as dimensions (SolidWorks' "Add dimensions"), unless turned off. */
   slotDims = true;
+  /** Lines, rectangles, circles, arcs and polygons add their sizes as dimensions and open the Modify box on each (FR-UI-052). */
+  addDims = true;
 
   /** Adds the dimensions that tell something (a snapped end may already fix one); returns their ids. */
   private slotSizes(list: { t: SkDim["t"]; e: string[]; pos: V2 }[]): string[] {
@@ -3466,7 +3478,8 @@ export class SketchEditor {
   }
 
   /** Typed sizes become driving dimensions where they add information (no toast when they do not). */
-  private addTypedDims(dims: SkDim[], made: SkEnt[] = []) {
+  private addTypedDims(dims: SkDim[], made: SkEnt[] = []): string[] {
+    const added: string[] = [];
     // The new entities' centre: each label goes beside its line on the far side from it (not at the origin,
     // where a label without a place would sit and hide the origin from the next click).
     const pts = made.filter((x): x is SkEnt & { t: "point" } => x.t === "point").map(x => [x.x, x.y] as V2);
@@ -3484,13 +3497,52 @@ export class SketchEditor {
         } else if (ent?.t === "circle") {
           const c = this.pt(ent.c), k = ent.r + this.px(c) * 24;
           dim.pos = [c[0] + k * Math.SQRT1_2, c[1] + k * Math.SQRT1_2];
+        } else if (ent?.t === "arc") {
+          // Beside the middle of the arc, outside it.
+          const c = this.pt(ent.c), a = this.pt(ent.a), b = this.pt(ent.b);
+          const a0 = Math.atan2(a[1] - c[1], a[0] - c[0]);
+          let sw = Math.atan2(b[1] - c[1], b[0] - c[0]) - a0;
+          while (sw <= 0) sw += 2 * Math.PI;
+          const r = Math.hypot(a[0] - c[0], a[1] - c[1]), k = r + this.px(c) * 24, m = a0 + sw / 2;
+          dim.pos = [c[0] + k * Math.cos(m), c[1] + k * Math.sin(m)];
         }
       }
       const r = tryAdd(this.sk, { dim });
       if (!r.ok || r.redundant) continue;
       this.sk = r.sketch;
       this.info = r.result;
+      added.push(dim.id);
     }
+    return added;
+  }
+
+  /**
+   * Add dimensions on creation (SolidWorks' "Add dimensions"): the sizes of what the click just made.
+   * Rectangles and parallelograms get width and height, a polygon its circle's diameter, circles a diameter,
+   * arcs a radius and lines a length; ones the sketch already fixes are dropped by `addTypedDims`.
+   */
+  private autoDims(made: SkEnt[]): SkDim[] {
+    const dim = (t: SkDim["t"], e: string): SkDim => {
+      const d: SkDim = { id: uid("d"), name: "", t, e: [e], val: { v: 0 } };
+      d.val.v = measureDim(this.sk, d);
+      return d;
+    };
+    const lines = made.filter((x): x is SkEnt & { t: "line" } => x.t === "line" && (!x.cons || this.tool === "cline"));
+    if (["rect", "crect", "rect3", "crect3", "pgram"].includes(this.tool)) return lines.slice(0, 2).map(l => dim("distance", l.id));
+    if (this.tool === "polygon") return made.filter(x => x.t === "circle").slice(0, 1).map(x => dim("diameter", x.id));
+    const out: SkDim[] = [];
+    for (const x of made) {
+      if (x.t === "circle" && !x.cons) out.push(dim("diameter", x.id));
+      else if (x.t === "arc" && !x.cons) out.push(dim("radius", x.id));
+    }
+    for (const l of lines) out.push(dim("distance", l.id));
+    return out;
+  }
+
+  /** After a Modify box changes a size mid-chain, the chain's clicked points follow the solved sketch. */
+  private syncDraft() {
+    const d = this.draft;
+    d.ids.forEach((id, i) => { const e = id && id !== ORIGIN ? this.ent(id) : null; if (e?.t === "point" && d.pts[i]) d.pts[i] = [e.x, e.y]; });
   }
 
   key(e: KeyboardEvent): boolean {

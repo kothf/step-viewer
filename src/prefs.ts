@@ -4,7 +4,7 @@
 
 export type PrefKey =
   | "rotateToSketch" | "quality" | "verify" | "autosave" | "lenStep" | "angStep" | "middle" | "wheel"
-  | "autoRels" | "showRels" | "modelSnap" | "slotDims" | "grid" | "gridSnap" | "gridStep";
+  | "autoRels" | "showRels" | "modelSnap" | "slotDims" | "addDims" | "grid" | "gridSnap" | "gridStep";
 
 export interface Prefs {
   /** Turn the view normal to the sketch plane when a sketch opens. */
@@ -26,6 +26,8 @@ export interface Prefs {
   showRels: boolean;
   modelSnap: boolean;
   slotDims: boolean;
+  /** New lines, rectangles, circles, arcs and polygons get their sizes as dimensions and the Modify box. */
+  addDims: boolean;
   grid: boolean;
   gridSnap: boolean;
   /** Millimetres between grid lines; 0 follows the zoom. */
@@ -34,14 +36,17 @@ export interface Prefs {
 
 export const DEFAULT_PREFS: Prefs = {
   rotateToSketch: true, quality: "normal", verify: false, autosave: 1, lenStep: 1, angStep: 5, middle: "pan", wheel: "normal",
-  autoRels: true, showRels: true, modelSnap: true, slotDims: true, grid: false, gridSnap: false, gridStep: 0,
+  autoRels: true, showRels: true, modelSnap: true, slotDims: true,
+  // Off under webdriver, so the smoke test's click-drawn sketches stay as drawn; its own check turns it on.
+  addDims: typeof navigator === "undefined" || !navigator.webdriver,
+  grid: false, gridSnap: false, gridStep: 0,
 };
 
 /** localStorage key of each preference. Booleans that default to on are stored "0" when off, the others "1" when on. */
 export const PREF_STORE: Record<PrefKey, string> = {
   rotateToSketch: "mc:skRotate", quality: "mc:quality", verify: "mc:verify", autosave: "mc:autosave",
   lenStep: "mc:lenStep", angStep: "mc:angStep", middle: "mc:middle", wheel: "mc:wheel",
-  autoRels: "mc:autoRels", showRels: "mc:skRels", modelSnap: "mc:modelSnap", slotDims: "mc:slotDims",
+  autoRels: "mc:autoRels", showRels: "mc:skRels", modelSnap: "mc:modelSnap", slotDims: "mc:slotDims", addDims: "mc:skAddDims",
   grid: "mc:skGrid", gridSnap: "mc:skGridSnap", gridStep: "mc:skGridStep",
 };
 

@@ -2510,6 +2510,32 @@ try {
         `model 1.524: Segment divides a line into equal lines and a circle by points (FR-SK-032) (${JSON.stringify(sg)})`);
       await tool("select");
     }
+    // 1.526.0 (FR-UI-052): Add dimensions on creation: a new circle gets its diameter and the Modify box at once,
+    // a new line its length; a typed value drives it, and a click elsewhere keeps the drawn size.
+    {
+      const known = await mp.evaluate(() => { const ed = window.__sv.model.editor(); ed.addDims = true; return ed.sk.ents.map(e => e.id); });
+      await tool("circle");
+      await click([120, 20]); await click([124, 20]);
+      await mp.waitForSelector(".mod-box .mod-in", { timeout: 10000 });
+      await mp.fill(".mod-box .mod-in", "10"); await mp.keyboard.press("Enter"); await mp.waitForTimeout(200);
+      await tool("line");
+      await click([112, 40]); await click([128, 40]);
+      const lineBox = await mp.waitForSelector(".mod-box .mod-in", { timeout: 10000 }).then(() => true, () => false);
+      await mp.keyboard.press("Escape"); await mp.waitForTimeout(100);
+      await mp.keyboard.press("Escape"); await mp.waitForTimeout(100);
+      const ad = await mp.evaluate(old => {
+        const ed = window.__sv.model.editor(), sk = ed.sk;
+        const made = sk.ents.filter(e => !old.includes(e.id));
+        const circ = made.find(e => e.t === "circle"), line = made.find(e => e.t === "line");
+        const dimOf = id => sk.dims.find(d => d.e.length === 1 && d.e[0] === id);
+        const r = v => Math.round(v * 1000) / 1000;
+        ed.addDims = false;
+        return { r: circ && r(circ.r), cd: circ && dimOf(circ.id)?.t, cv: circ && r(dimOf(circ.id)?.val.v ?? 0), ld: line && dimOf(line.id)?.t, status: ed.info.status };
+      }, known);
+      check(ad.r === 5 && ad.cd === "diameter" && ad.cv === 10 && lineBox && ad.ld === "distance" && ad.status === "ok",
+        `model 1.526: Add dimensions gives a new circle its diameter and a new line its length, with the Modify box (FR-UI-052) (${JSON.stringify({ ...ad, lineBox })})`);
+      await tool("select");
+    }
     // 1.266.0 (FR-SK-043/044/047): dragging the last line's start onto the free end of the Ctrl line merges them
     // (coincident relation); Ctrl+drag of that line copies it; the status bar shows the cursor position.
     await tool("select");
