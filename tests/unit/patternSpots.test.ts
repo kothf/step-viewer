@@ -72,3 +72,16 @@ test("linear pattern up to distance and seed only; circular pattern direction 2 
   ({ v, r } = vol([{ ...cp, count: 4, angle: { v: 2 * Math.PI }, equal: true } as Feature]));
   assert.ok(Math.abs(v - (plate - 4 * hole)) < 1e-3, `${v}`);
 });
+
+test("linear pattern up to reference: the last instance stops the offset short of a face (FR-FT-070)", async () => {
+  const m = new Modeller(await occ());
+  const dir = { edge: { faces: ["f1:side:s1l2", "f1:end"] as [string, string] } };
+  const lp = { id: "p", type: "lpattern", name: "L", features: ["f2"], dir, spacing: { v: 5 }, count: 3, upTo: { face: { name: "f1:side:s1l3" } }, upToOffset: { v: 10 } } as Feature;
+  let r = m.evaluate(doc([...base, lp]));
+  assert.ok(r.statuses.every(s => s.ok), JSON.stringify(r.statuses));
+  const sp = r.spots.p;
+  assert.ok(Math.abs(Math.abs(sp[1].p[1]) - 40) < 1e-3 && Math.abs(Math.abs(sp[0].p[1]) - 20) < 1e-3, JSON.stringify(sp));
+  // Reversed, the face is behind the seed.
+  r = m.evaluate(doc([...base, { ...lp, flip: true } as Feature]));
+  assert.equal(r.statuses.at(-1)!.code, "E-PAT-REFBACK");
+});

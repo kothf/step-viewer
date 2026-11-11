@@ -473,6 +473,9 @@ export interface LinearPatternFeature extends CopySource {
   /** Up to distance (FR-FT-070): `spacing` is the distance from the seed to the last instance, shared out equally. */
   total?: boolean;
   total2?: boolean;
+  /** Up to reference (FR-FT-070): the last instance of a direction stops `offset` short of a plane or flat face, measured from the seed's centre; the spacing follows. */
+  upTo?: PlaneRef; upToOffset?: Num;
+  upTo2?: PlaneRef; upToOffset2?: Num;
   /** Pattern seed only: direction 2 copies the seed alone, not the instances of direction 1. */
   seedOnly?: boolean;
 }
