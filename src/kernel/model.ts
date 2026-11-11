@@ -2371,7 +2371,10 @@ export class Modeller {
     let tool = tools[0];
     for (const t of tools.slice(1)) tool = this.bool("fuse", tool, t, f.id);
     this.tools.set(f.id, [{ shape: tool, op: "cut" }]);
-    const out = this.bool("cut", prev, tool, f.id);
+    // Feature scope (FR-FT-007): only the picked bodies are drilled.
+    const sc = this.scoped(f, prev);
+    let out = this.bool("cut", sc.target!, tool, f.id);
+    if (sc.keep.length) out = this.compoundOf([...sc.keep, ...this.bodyList(out)]);
     if (Math.abs(this.volume(out.shape) - this.volume(prev.shape)) < 1e-9) throw new FeatureError("E-FT-NOCHANGE", "The holes do not touch the body.");
     return { body: out, frame: fr0 };
   }

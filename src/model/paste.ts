@@ -70,7 +70,7 @@ export function pasteClip(doc: PartDoc, clip: Clip, plane: PlaneRef, newId: (p: 
     } else if (f.type === "hole") {
       f.plane = plane;
       if (f.end === "upto") { f.end = "blind"; lost.add(LOST.end); }
-      delete f.upTo;
+      delete f.upTo; delete f.scope;
       f.name = nextName(names, "hole");
     }
     names.features.push(f);

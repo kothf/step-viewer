@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.506.0] - 2026-11-11
+
+### Added
+
+- Feature scope (FR-FT-007) on swept and lofted cuts and bosses and on Hole Wizard holes, as on extrudes and revolves.
+- Recent commands (FR-UI-113): a right-click on empty space in the view with no command running lists the last five commands, newest first, above Zoom to fit, Isometric and Normal to.
+
 ## [1.505.0] - 2026-11-11
 
 ### Added
@@ -3126,7 +3133,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.505.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.506.0...HEAD
+[1.506.0]: https://github.com/kothf/step-viewer/compare/v1.505.0...v1.506.0
 [1.505.0]: https://github.com/kothf/step-viewer/compare/v1.504.0...v1.505.0
 [1.504.0]: https://github.com/kothf/step-viewer/compare/v1.503.0...v1.504.0
 [1.503.0]: https://github.com/kothf/step-viewer/compare/v1.502.0...v1.503.0

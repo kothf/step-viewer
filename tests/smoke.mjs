@@ -6574,6 +6574,19 @@ try {
       const kept = await mp.evaluate(() => ({ scope: window.__sv.model.store.doc.features.at(-1).scope?.length, bodies: window.__sv.model.last().props.bodies }));
       check(allOn === true && focusScope && sc.box === "1 body" && sc.v - vAll > 1 && v0 - sc.v > 1 && kept.scope === 1 && kept.bodies === 2,
         `model 1.505: Feature scope cuts only the picked body (FR-FT-007) (${allOn}, ${focusScope}, ${JSON.stringify(sc)}, ${(v0 - vAll).toFixed(2)}, ${JSON.stringify(kept)})`);
+      // 1.506: the Hole panel has Feature scope too; a right-click on empty space lists the recent commands (FR-UI-113).
+      await mp.evaluate(() => window.__sv.modeller.command("hole"));
+      await settle();
+      const holeScope = await mp.evaluate(() => !!document.querySelector('#mc-pm input[data-k="scopeAll"]'));
+      await mp.click("#mc-cancel");
+      await settle();
+      const cv = await mp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return { x: r.left + 40, y: r.bottom - 40 }; });
+      await mp.mouse.click(cv.x, cv.y, { button: "right" });
+      await mp.waitForTimeout(200);
+      const recent = await mp.evaluate(() => { const m = document.getElementById("mc-menu"); return { shown: !m.hidden, head: m.querySelector(".mc-menu-h")?.textContent ?? "", items: [...m.querySelectorAll("button")].map(b => b.textContent) }; });
+      await mp.keyboard.press("Escape");
+      check(holeScope && recent.shown && recent.head === "Recent commands" && recent.items[0] === "Hole" && recent.items[1] === "Cut" && recent.items.includes("Zoom to fit"),
+        `model 1.506: Hole has Feature scope; right-click on empty space lists Recent commands (FR-FT-007, FR-UI-113) (${holeScope}, ${JSON.stringify(recent)})`);
       await mp.evaluate(() => window.__sv.model.store.undo());
       await settle();
       await mp.evaluate(() => window.__sv.model.store.undo());

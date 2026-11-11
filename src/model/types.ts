@@ -554,6 +554,8 @@ export interface RecognizedHole { plane: PlaneRef; pt: [number, number]; diamete
 
 export interface HoleFeature {
   id: string; type: "hole"; name: string; suppressed?: boolean;
+  /** Feature scope (FR-FT-007), as on an extrude: the bodies the holes cut. */
+  scope?: FaceRef[];
   plane?: PlaneRef;
   /** Hole centres in the plane's frame (x, y). */
   pts: [number, number][];
@@ -677,6 +679,8 @@ export interface SweepSurfFeature {
 export interface SweepFeature {
   id: string; type: "sweep"; name: string; suppressed?: boolean;
   op: "boss" | "cut";
+  /** Feature scope (FR-FT-007), as on an extrude. */
+  scope?: FaceRef[];
   /** Profile sketch; absent with `circular`. */
   profile?: string;
   /** Circular profile: diameter, centred on the start of the path and square to it. */
@@ -700,6 +704,8 @@ export interface SweepFeature {
 export interface LoftFeature {
   id: string; type: "loft"; name: string; suppressed?: boolean;
   op: "boss" | "cut";
+  /** Feature scope (FR-FT-007), as on an extrude. */
+  scope?: FaceRef[];
   profiles: string[];
   /** Straight (ruled) sections between profiles instead of a smooth surface. */
   ruled?: boolean;

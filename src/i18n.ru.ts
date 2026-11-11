@@ -993,6 +993,7 @@ export const RU: Record<string, string> = {
   "Close (F5)": "Закрыть (F5)",
   "Face {i} of {n} under the cursor (Alt+click for the next)": "Грань {i} из {n} под курсором (Alt+щелчок — следующая)",
   "Normal to": "Перпендикулярно",
+  "Recent commands": "Последние команды",
   "Reference axis: a straight edge, a round face's axis, or two planes": "Справочная ось: прямое ребро, ось круглой грани или две плоскости",
   "Reference point: a vertex, an arc centre, a face centre or an edge midpoint": "Справочная точка: вершина, центр дуги, центр грани или середина ребра",
   "Straight edge": "Прямое ребро",
