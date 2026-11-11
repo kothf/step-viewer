@@ -46,7 +46,7 @@ import { bindCommandBar, onCmTab, relabelCmTabs, setCmTabs, type CmTabId } from 
 import { renderHelp } from "./help";
 import { hint, relocalizeHint, setTips, tipsOn } from "./hints";
 import { initTutorial } from "./tutorialUi";
-import { warmSpare } from "./kernel/spare";
+import { sparesOn, warmSpare } from "./kernel/spare";
 import { KernelClient, type KernelStatus } from "./kernel/client";
 import { isMeshName, parseMesh } from "./meshLoad";
 import { isSolidWorksName } from "./sw/container";
@@ -978,6 +978,20 @@ function showModel(parts: PartData[], tree: TreeNode, name: string, key: string,
   pendingSrc = null;
   if (modelSrc) docs?.opened("model", name);
   hint("model");
+  warmDrawing();
+}
+
+let drawingWarm = false;
+/**
+ * Sets the drawing kernel up a few seconds after a model shows (once per page), so a new drawing's view palette
+ * and first view do not wait the ~3 s OpenCASCADE takes to start in a fresh worker. Not on small devices
+ * (`sparesOn`), with `?nokernel`, or under webdriver unless `?drwwarm` (the smoke test's pages stay light).
+ */
+function warmDrawing() {
+  const q = new URLSearchParams(location.search);
+  if (drawingWarm || !sparesOn() || q.has("nokernel") || (navigator.webdriver && !q.has("drwwarm"))) return;
+  drawingWarm = true;
+  setTimeout(() => drawing.warm(), 4000);
 }
 
 /** A modelled part's body after a rebuild: the first time like a newly opened file, later keeping the view and tools. */
@@ -1007,6 +1021,7 @@ function showModelled(parts: PartData[], tree: TreeNode, name: string, first: bo
   viewer.load(parts, tree, first && parts.length > 0);
   if (surfAna.kind) void surfAna.refresh();
   if (!first) remeasure();
+  if (parts.length) warmDrawing();
   state.fileName = name;
   state.fileKey = "";
   document.title = `${name} · MöbiusCAD`;

@@ -119,6 +119,13 @@ const inShard = k => {
 };
 // A click on a Features tree row. While a command panel is open the tree is the folded fly-out over the view
 // (FR-UI-003): open it for the click and fold it again, so later clicks in the view are not covered.
+/** A new drawing of the open model with Standard 3 views (since 1.510.0 a new drawing starts with an empty sheet). */
+async function newDrawing3(pg) {
+  await pg.click("#new-more"); await pg.click("#new-drawing");
+  await pg.waitForFunction(() => window.__sv.drw.loaded(), null, { timeout: 120000 });
+  await pg.click('#drw [data-a="std3"]');
+}
+
 /** A command of the vault panel's ⋯ menu (FR-PDM-080). */
 async function vaultMore(pg, key) {
   await pg.click('#vault-panel [data-a="more"]');
@@ -4977,7 +4984,7 @@ try {
     const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-07T00:00:00Z", units: "mm" };
     await dp.setInputFiles("#file-input", { name: "Block.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
     await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
-    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await newDrawing3(dp);
     const ready = () => dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
     await ready();
@@ -5159,7 +5166,7 @@ try {
     const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-10T00:00:00Z", units: "mm" };
     await dp.setInputFiles("#file-input", { name: "Block.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
     await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
-    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await newDrawing3(dp);
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
     await dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
     const prims = await dp.evaluate(() => {
@@ -5192,7 +5199,7 @@ try {
     const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-07T00:00:00Z", units: "mm" };
     await dp.setInputFiles("#file-input", { name: "Block.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
     await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
-    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await newDrawing3(dp);
     const ready = () => dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
     await ready();
@@ -5373,7 +5380,7 @@ try {
     const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-08T00:00:00Z", units: "mm" };
     await dp.setInputFiles("#file-input", { name: "Plate.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
     await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
-    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await newDrawing3(dp);
     const ready = () => dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
     await ready();
@@ -5770,7 +5777,7 @@ try {
     const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-08T00:00:00Z", units: "mm" };
     await dp.setInputFiles("#file-input", { name: "Plate.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
     await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
-    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await newDrawing3(dp);
     const ready = () => dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
     await ready();
@@ -5906,7 +5913,7 @@ try {
     const ab = zip(Object.entries({ "manifest.json": JSON.stringify(amf), "document.json": JSON.stringify(asmDoc) }));
     await dp.evaluate(b => window.__sv.asm.openFile({ name: "Fixture.mcadasm", data: new Uint8Array(b).buffer }), [...ab]);
     await dp.waitForFunction(() => window.__sv.viewer.parts.length === 3, null, { timeout: 90000 });
-    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await newDrawing3(dp);
     const ready = () => dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
     await ready();
@@ -6134,7 +6141,7 @@ try {
     // A drawing of it (standard 3 views); version 2 loses the side view.
     await vp.evaluate(b => window.__sv.asm.openFile({ name: "Base.mcadasm", data: new Uint8Array(b).buffer }), [...ab]);
     await vp.waitForFunction(() => window.__sv.viewer.parts.length === 1, null, { timeout: 90000 });
-    await vp.click("#new-more"); await vp.click("#new-drawing");
+    await newDrawing3(vp);
     await vp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
     const d1 = await vp.evaluate(() => JSON.parse(JSON.stringify(window.__sv.drw.doc())));
     const d2 = { ...d1, sheets: [{ ...d1.sheets[0], views: d1.sheets[0].views.slice(0, 2) }] };
@@ -6832,7 +6839,7 @@ try {
       d.bodies = { e: { material: { name: "Titanium Ti-6Al-4V", density: 4.43 } } };
     }));
     await mp.waitForTimeout(300); await idle();
-    await mp.click("#new-more"); await mp.click("#new-drawing");
+    await newDrawing3(mp);
     await mp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
     // 1.487: the sheet is drawn once per view that lands, not once more for every render that asked for it.
     const renders = await mp.evaluate(() => window.__sv.drw.renders());
@@ -10768,7 +10775,12 @@ try {
     check(/Полосы/.test(ruAna) && !/[A-Za-z]{3}/.test(ruAna) && off.hidden && off.own, `analysis: panel in Russian; turning it off restores the parts (${JSON.stringify([ruAna.slice(0, 60), off])})`);
 
     // Drawing view palette: every standard view drawn; drag the isometric one onto the sheet.
+    // 1.510: a new drawing starts with an empty sheet and the palette (SolidWorks); Standard 3 views stays a command.
     await ap.click("#new-more"); await ap.click("#new-drawing");
+    await ap.waitForFunction(() => window.__sv.drw.loaded(), null, { timeout: 120000 });
+    const fresh = await ap.evaluate(() => ({ n: window.__sv.drw.doc().sheets[0].views.length, st: document.querySelector(".drw-status").textContent }));
+    check(fresh.n === 0 && /View palette/.test(fresh.st), `drawing: a new drawing opens with an empty sheet and the view palette (${JSON.stringify(fresh)})`);
+    await ap.click('#drw [data-a="std3"]');
     await ap.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
     await ap.waitForFunction(() => [...document.querySelectorAll(".drw-pt path")].every(p => p.getAttribute("d")), null, { timeout: 60000 });
     const tiles = await ap.evaluate(() => [...document.querySelectorAll(".drw-pt")].map(b => b.dataset.pal).join(","));
@@ -10777,8 +10789,11 @@ try {
     await ap.waitForFunction(() => window.__sv.drw.doc().sheets[0].views.length === 4, null, { timeout: 10000 });
     await ap.keyboard.press("Escape");
     const iso = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views.at(-1); return { orient: v.orient, style: v.style, x: v.x, y: v.y, parent: v.parent ?? null }; });
-    check(tiles === "front,top,right,iso,back,bottom,left" && iso.orient === "iso" && iso.style === "hlr" && !iso.parent && iso.x > 200 && iso.y > 150,
-      `drawing palette: seven standard views, the isometric one dropped where it was let go (${tiles}, ${JSON.stringify(iso)})`);
+    // 1.510: the palette's pictures run behind the views and are never dropped as unwanted, so placing views
+    // while they are made neither blanks them nor starts the drawing worker over (that cost a cold start per view).
+    const recycles = await ap.evaluate(() => window.__sv.drw.helper().recycles);
+    check(tiles === "front,top,right,iso,back,bottom,left" && iso.orient === "iso" && iso.style === "hlr" && !iso.parent && iso.x > 200 && iso.y > 150 && recycles === 0,
+      `drawing palette: seven standard views, the isometric one dropped where it was let go, no worker restart (${tiles}, ${JSON.stringify(iso)}, recycles ${recycles})`);
     // Clicking a tile, then the sheet, places it too.
     await ap.click('[data-pal="bottom"]');
     await ap.locator(".drw-svg").click({ position: { x: svg.width * 0.75, y: svg.height * 0.75 } });
@@ -12864,7 +12879,7 @@ try {
     const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-08T00:00:00Z", units: "mm" };
     await dp.setInputFiles("#file-input", { name: "Block.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
     await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
-    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await newDrawing3(dp);
     const ready = () => dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
     await ready();
@@ -12908,7 +12923,7 @@ try {
     const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-08T00:00:00Z", units: "mm" };
     await dp.setInputFiles("#file-input", { name: "Bracket.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
     await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
-    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await newDrawing3(dp);
     const ready = () => dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
     await ready();
@@ -12965,7 +12980,7 @@ try {
     const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-10T00:00:00Z", units: "mm" };
     await dp.setInputFiles("#file-input", { name: "Post.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
     await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
-    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await newDrawing3(dp);
     const ready = () => dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
     await ready();
@@ -13035,7 +13050,7 @@ try {
     const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-08T00:00:00Z", units: "mm" };
     await dp.setInputFiles("#file-input", { name: "Plate.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
     await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
-    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await newDrawing3(dp);
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
     const clickSheet = async (x, y) => { const [cx, cy] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await dp.mouse.move(cx, cy); await dp.mouse.click(cx, cy); };
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="cloud"]');
@@ -13076,7 +13091,7 @@ try {
     const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-08T00:00:00Z", units: "mm" };
     await dp.setInputFiles("#file-input", { name: "Plate.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
     await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
-    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await newDrawing3(dp);
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
     const clickSheet = async (x, y) => { const [cx, cy] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await dp.mouse.move(cx, cy); await dp.mouse.click(cx, cy); };
     // View i's model box on the sheet (sheet mm): placement maps view axes u, v to x + (u - uc)·s, y + (v - vc)·s.
@@ -13152,7 +13167,7 @@ try {
     const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-09T00:00:00Z", units: "mm" };
     await dp.setInputFiles("#file-input", { name: "Flange.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
     await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
-    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await newDrawing3(dp);
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
     // The top view (views[1]) looks down on the holes: one centre-line circle through them, a radial line per hole, a cross on the bore.
     const marks = () => dp.evaluate(() => {
@@ -13198,7 +13213,7 @@ try {
     const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-09T00:00:00Z", units: "mm" };
     await dp.setInputFiles("#file-input", { name: "Slotted.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
     await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
-    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await newDrawing3(dp);
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
     // Top view (views[1]): centre-line segments within the slot's reach, in model mm about the plate centre.
     const sm = await dp.evaluate(() => {
@@ -13242,7 +13257,7 @@ try {
     const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-09T00:00:00Z", units: "mm" };
     await dp.setInputFiles("#file-input", { name: "ArcSlotted.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
     await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
-    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await newDrawing3(dp);
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
     // Top view (views[1]): centre-line prims in model mm about the plate centre.
     const am = await dp.evaluate(() => {
@@ -13278,7 +13293,7 @@ try {
     const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-09T00:00:00Z", units: "mm" };
     await dp.setInputFiles("#file-input", { name: "HoleRow.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
     await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
-    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await newDrawing3(dp);
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
     // Top view (views[1]): centre lines in model mm about the plate centre, inside the plate.
     const rowLines = () => dp.evaluate(() => {
@@ -13312,7 +13327,7 @@ try {
     const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-09T00:00:00Z", units: "mm" };
     await dp.setInputFiles("#file-input", { name: "Cone.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
     await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
-    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await newDrawing3(dp);
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
     // Front view (views[0]): the cone's axis runs vertically through the view, past both ends.
     const cl = await dp.evaluate(() => {
@@ -13344,7 +13359,7 @@ try {
     const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-08T00:00:00Z", units: "mm" };
     await dp.setInputFiles("#file-input", { name: "Plate.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
     await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
-    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await newDrawing3(dp);
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
     const clickSheet = async (x, y) => { const [cx, cy] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await dp.mouse.move(cx, cy); await dp.mouse.click(cx, cy); };
     const fr = await dp.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views[0], p = window.__sv.drw.placement(v.id), S = (u, w) => [p.x + (u - p.uc) * p.s, p.y + (w - p.vc) * p.s]; return [...S(p.box[0], p.box[1]), ...S(p.box[2], p.box[3])]; });
@@ -13450,7 +13465,7 @@ try {
     const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-09T00:00:00Z", units: "mm" };
     await dp.setInputFiles("#file-input", { name: "Grid.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
     await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
-    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await newDrawing3(dp);
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 120000 });
     await dp.waitForTimeout(200);
     const pv = await dp.evaluate(() => window.__sv.drw.previews());
