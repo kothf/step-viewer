@@ -326,3 +326,31 @@ test("recognize features: a bent tube comes back as path and profile sketches an
     close(vol(m, { ...imp, features: [...imp.features, ...fs] }), v0, 1e-5);
   }
 });
+
+test("recognize features: a bent bar of any line/arc profile comes back as a Sweep (FR-FT-102)", async () => {
+  const m = new Modeller(await occ());
+  const path: SketchFeature = { id: "pt", type: "sketch", name: "pt", plane: { std: "XZ" }, rels: [], dims: [], ents: [
+    { id: "q1", t: "point", x: 0, y: 0 }, { id: "q2", t: "point", x: 0, y: 40 }, { id: "q3", t: "point", x: 20, y: 60 }, { id: "q4", t: "point", x: 60, y: 60 }, { id: "qc", t: "point", x: 20, y: 40 },
+    { id: "w1", t: "line", a: "q1", b: "q2" }, { id: "w2", t: "arc", c: "qc", a: "q3", b: "q2" } as SkEnt, { id: "w3", t: "line", a: "q3", b: "q4" }] };
+  const poly = (pts: [number, number][]): SkEnt[] => [
+    ...pts.map(([x, y], k) => ({ id: `r${k}`, t: "point", x, y }) as SkEnt),
+    ...pts.map((_, k) => ({ id: `l${k}`, t: "line", a: `r${k}`, b: `r${(k + 1) % pts.length}` }) as SkEnt)];
+  // An obround: two lines and two half circles (the bends make tori).
+  const slot: SkEnt[] = [
+    { id: "s1", t: "point", x: -6, y: -3 }, { id: "s2", t: "point", x: 6, y: -3 }, { id: "s3", t: "point", x: 6, y: 3 }, { id: "s4", t: "point", x: -6, y: 3 },
+    { id: "c1", t: "point", x: 6, y: 0 }, { id: "c2", t: "point", x: -6, y: 0 },
+    { id: "m1", t: "line", a: "s1", b: "s2" }, { id: "m2", t: "arc", c: "c1", a: "s2", b: "s3" } as SkEnt, { id: "m3", t: "line", a: "s3", b: "s4" }, { id: "m4", t: "arc", c: "c2", a: "s4", b: "s1" } as SkEnt];
+  // A square on its corner (the bends make cones), and a flat bar, which is an L-shaped extrude with two fillets.
+  const cases: [string, SkEnt[], string][] = [
+    ["obround", slot, "sketch,sketch,sweep,delbody"],
+    ["diamond", poly([[0, -5], [5, 0], [0, 5], [-5, 0]]), "sketch,sketch,sweep,delbody"],
+    ["flat bar", poly([[-2, -8], [2, -8], [2, 8], [-2, 8]]), "sketch,extrude,delbody,sketch,extrude,fillet,fillet"]];
+  for (const [name, ents, want] of cases) {
+    const prof: SketchFeature = { id: "pr", type: "sketch", name: "pr", plane: { std: "XY" }, rels: [], dims: [], ents };
+    const imp = imported(m, [path, prof, { id: "sw", type: "sweep", name: "S", op: "boss", profile: "pr", path: { sketch: "pt" } } as Feature]);
+    const v0 = vol(m, imp);
+    const fs = m.recognizeFeatures(imp);
+    assert.equal(types(fs), want, name);
+    close(vol(m, { ...imp, features: [...imp.features, ...fs] }), v0, 1e-5);
+  }
+});

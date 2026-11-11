@@ -3666,7 +3666,7 @@ export class Modeller {
     if (base) {
       try { const b = this.baseExtrude(upto, at, dels, rounds, K.feats); if (b) return b; } catch { /* without the base */ }
       try { const b = this.baseRevolve(upto, at, dels, rounds, K.feats); if (b) return b; } catch { /* without the base */ }
-      try { const b = rounds.length || K.feats.length ? null : this.baseSweep(upto, at); if (b) return b; } catch { /* without the base */ }
+      try { const b = rounds.length || K.feats.length ? null : this.baseSweep(upto, at) ?? this.baseSweepAny(upto, at); if (b) return b; } catch { /* without the base */ }
     }
     if (rounds.length < 2) return [...kDel, ...first, ...K.feats];
     try {
@@ -4193,8 +4193,112 @@ export class Modeller {
       cur = next;
     }
     if (Math.hypot(...sub3(cur, caps[1].c)) > tol || chain.every(g => "line" in g)) return null;
+    return this.sweepOut(body, chain, caps[0].c, caps[0].i, caps[0].rs.map(r => ({ circle: { c: caps[0].c, r } })), at, tol, size);
+  }
+
+  /**
+   * The base of a bar or tube of any line/arc profile bent along lines and arcs in one plane (FR-FT-102): from a
+   * flat end face whose outline matches another flat face's, the section marches along the body. A run whose
+   * faces at the section all hold its direction (planes along it, cylinders along it) is straight, as far as the
+   * nearest of those faces reaches; a run with a cylinder, cone or torus whose axis lies across the direction is
+   * a bend about that axis, as far round as the nearest face turns. Done when the section lands on another flat
+   * face facing along it. Comes back like `baseSweep` (path through the end face's centroid), kept at the same volume.
+   */
+  private baseSweepAny(upto: Feature[], at: (fs: Feature[]) => PartDoc): Feature[] | null {
+    const oc = this.oc;
+    const imports = upto.filter(f => f.type === "import" && !f.suppressed).map(f => `${f.id}:`);
+    if (!imports.length) return null;
+    const start = this.evaluate(at([]));
+    const body = start.body;
+    if (!body || this.solids(body.shape) !== 1 || body.names.some(n => !imports.some(p => n.startsWith(p)))) return null;
+    const size = this.size(body.shape), tol = Math.max(1e-4, size * 1e-6) * 10;
+    const S = oc.GeomAbs_SurfaceType, C = oc.GeomAbs_CurveType;
+    type Prof = ExtrudeFind["segs"];
+    /** Sample points of each edge of each face, per edge. */
+    const samples = body.faces.map(face => this.sub(face, "EDGE").map(e => {
+      const ca = new oc.BRepAdaptor_Curve_2(e), t0 = ca.FirstParameter(), t1 = ca.LastParameter();
+      return [0, 0.25, 0.5, 0.75, 1].map(u => this.xyz(ca.Value(t0 + (t1 - t0) * u)));
+    }));
+    const surf = body.faces.map(face => {
+      const ad = new oc.BRepAdaptor_Surface_2(face, true), ty = ad.GetType();
+      if (ty === S.GeomAbs_Plane) return { pln: this.faceNormalAt(face), o: this.xyz(ad.Plane().Location()) };
+      const ax = ty === S.GeomAbs_Cylinder ? ad.Cylinder().Axis() : ty === S.GeomAbs_Cone ? ad.Cone().Axis() : ty === S.GeomAbs_Torus ? ad.Torus().Axis() : null;
+      return ax ? { ax: { o: this.xyz(ax.Location()), d: unit(this.xyz(ax.Direction())) } } : {};
+    }) as { pln?: V3; o?: V3; ax?: { o: V3; d: V3 } }[];
+    const area = (i: number): number => { const g = new oc.GProp_GProps_1(); oc.BRepGProp.SurfaceProperties_1(body.faces[i], g, false, false); return g.Mass(); };
+    const profile = (i: number): Prof | null => {
+      const segs: Prof = [];
+      for (const e of this.sub(body.faces[i], "EDGE")) {
+        const ca = new oc.BRepAdaptor_Curve_2(e), t0 = ca.FirstParameter(), t1 = ca.LastParameter(), ct = ca.GetType();
+        const a = this.xyz(ca.Value(t0)), b = this.xyz(ca.Value(t1)), m = this.xyz(ca.Value((t0 + t1) / 2));
+        if (ct === C.GeomAbs_Line) segs.push({ line: [a, b] });
+        else if (ct === C.GeomAbs_Circle) {
+          const c = this.xyz(ca.Circle().Location()), r = ca.Circle().Radius();
+          segs.push(Math.abs(Math.abs(t1 - t0) - 2 * Math.PI) < 1e-9 ? { circle: { c, r } } : { arc: { c, a, b, m } });
+        } else return null;
+      }
+      return segs;
+    };
+    const turn = (v: V3, d: V3, th: number): V3 => add(add(mul(v, Math.cos(th)), mul(cross(d, v), Math.sin(th))), mul(d, dot(d, v) * (1 - Math.cos(th))));
+    const flats = surf.map((q, i) => q.pln ? i : -1).filter(i => i >= 0);
+    const areas = new Map(flats.map(i => [i, area(i)]));
+    const cands = flats.filter(i => flats.some(j => j !== i && samples[j].length === samples[i].length && Math.abs(areas.get(j)! - areas.get(i)!) <= 1e-6 * areas.get(i)!))
+      .sort((a, b) => areas.get(a)! - areas.get(b)!);
+    for (const cap of cands) {
+      const prof = profile(cap);
+      if (!prof) continue;
+      const c0 = this.centroid(body.faces[cap]);
+      const reach = Math.max(...samples[cap].flat().map(p => Math.hypot(...sub3(p, c0)))) * 1.01 + tol;
+      let c = c0, n = mul(surf[cap].pln!, -1), done = false;
+      const chain: ({ line: [V3, V3] } | { arc: { c: V3; a: V3; b: V3; m: V3 } })[] = [];
+      for (let step = 0; step < 40 && !done; step++) {
+        if (chain.length && flats.some(j => j !== cap && dot(surf[j].pln!, n) > 1 - 1e-6 && Math.abs(dot(sub3(c, surf[j].o!), n)) <= tol
+          && samples[j].flat().some(p => Math.hypot(...sub3(p, c)) <= reach))) { done = true; break; }
+        // The faces leaving the section: an edge lying on it near the centre, and points in front.
+        const on = (p: V3) => Math.abs(dot(sub3(p, c), n)) <= tol && Math.hypot(...sub3(p, c)) <= reach;
+        const touch = body.faces.map((_, i) => i).filter(i => i !== cap && samples[i].some(es => es.every(on)) && samples[i].some(es => es.some(p => dot(sub3(p, c), n) > tol)));
+        if (!touch.length || touch.some(i => !surf[i].pln && !surf[i].ax)) break;
+        const bend = touch.map(i => surf[i].ax).find(ax => ax && Math.abs(dot(ax.d, n)) < 1 - 1e-6);
+        if (!bend) {
+          if (touch.some(i => surf[i].pln ? Math.abs(dot(surf[i].pln!, n)) > 1e-6 : Math.abs(dot(surf[i].ax!.d, n)) < 1 - 1e-6)) break;
+          const L = Math.min(...touch.map(i => Math.max(...samples[i].flat().map(p => dot(sub3(p, c), n)))));
+          if (!(L > tol)) break;
+          const e = add(c, mul(n, L));
+          chain.push({ line: [c, e] });
+          c = e;
+          continue;
+        }
+        if (Math.abs(dot(bend.d, n)) > 1e-6) break;
+        const coaxial = (ax: { o: V3; d: V3 }) => Math.abs(Math.abs(dot(ax.d, bend.d)) - 1) <= 1e-6 && Math.hypot(...cross(sub3(ax.o, bend.o), bend.d)) <= tol;
+        if (touch.some(i => surf[i].pln ? Math.abs(Math.abs(dot(surf[i].pln!, bend.d)) - 1) > 1e-6 : !coaxial(surf[i].ax!))) break;
+        const q = sub3(c, bend.o), O = add(bend.o, mul(bend.d, dot(q, bend.d))), h = sub3(c, O);
+        if (Math.hypot(...h) <= tol) break;
+        const d = dot(cross(bend.d, h), n) < 0 ? mul(bend.d, -1) : bend.d;
+        const ang = (p: V3) => {
+          const w = sub3(p, O), hp = sub3(w, mul(d, dot(w, d)));
+          let a = Math.atan2(dot(cross(h, hp), d), dot(h, hp));
+          if (a < 0) a += 2 * Math.PI;
+          return a > 2 * Math.PI - 1e-7 ? 0 : a;
+        };
+        const phi = Math.min(...touch.map(i => Math.max(...samples[i].flat().map(ang))));
+        if (!(phi > 1e-6) || phi >= 2 * Math.PI - 1e-6) break;
+        const e = add(O, turn(h, d, phi));
+        chain.push({ arc: { c: O, a: c, b: e, m: add(O, turn(h, d, phi / 2)) } });
+        c = e;
+        n = unit(turn(n, d, phi));
+      }
+      if (!done || chain.every(g => "line" in g)) continue;
+      const out = this.sweepOut(body, chain, c0, cap, prof, at, tol, size);
+      if (out) return out;
+    }
+    return null;
+  }
+
+  /** Path sketch (with its plane) + profile sketch on end face `capI` + a new-body Sweep + Delete Body of the import, kept at the same volume. */
+  private sweepOut(body: Named, chain: ({ line: [V3, V3] } | { arc: { c: V3; a: V3; b: V3; m: V3 } })[], c0: V3, capI: number, prof: ExtrudeFind["segs"],
+    at: (fs: Feature[]) => PartDoc, tol: number, size: number): Feature[] | null {
     // The path's plane: from the points and bend centres.
-    const P: V3[] = [caps[0].c];
+    const P: V3[] = [c0];
     for (const g of chain) if ("line" in g) P.push(g.line[1], g.line[0]); else P.push(g.arc.a, g.arc.b, g.arc.c, g.arc.m);
     let n: V3 | null = null;
     for (let i = 1; i < P.length && !n; i++) for (let j = i + 1; j < P.length && !n; j++) {
@@ -4218,9 +4322,9 @@ export class Modeller {
     }
     if (!plane || !fr) return null;
     const pathId = id(), { ents: pathEnts } = this.loopEnts(pathId, fr, chain);
-    const cap = caps[0], capPlane: PlaneRef = { face: { name: body.names[cap.i], hint: this.centroid(body.faces[cap.i]) } };
+    const capPlane: PlaneRef = { face: { name: body.names[capI], hint: this.centroid(body.faces[capI]) } };
     const cfr = this.planeFrame(capPlane, body, {});
-    const profId = id(), { ents: profEnts } = this.loopEnts(profId, cfr, cap.rs.map(r => ({ circle: { c: cap.c, r } })));
+    const profId = id(), { ents: profEnts } = this.loopEnts(profId, cfr, prof);
     const out: Feature[] = [...lead,
       { id: pathId, type: "sketch", name: "", plane, ents: pathEnts, rels: [], dims: [] } as Feature,
       { id: profId, type: "sketch", name: "", plane: capPlane, ents: profEnts, rels: [], dims: [] } as Feature,
