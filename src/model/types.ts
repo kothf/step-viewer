@@ -925,6 +925,27 @@ export interface ScaleFeature {
 }
 
 /**
+ * Flex (FR-FT-105, P5): picked bodies (all when none) bent, twisted, tapered or stretched between two
+ * trim planes square to `axis`. The planes sit `trim1`/`trim2` in from the bodies' ends along the axis;
+ * the triad `origin` (absent = the middle of the bodies' box) is the bend's neutral line, the twist and
+ * taper axis and the point that stays put; `toward` is the axis the bend turns to. `hard` false maps the
+ * faces whole (no split at the trim planes). Bend/twist take `angle`, taper `factor`, stretch `distance`.
+ */
+export interface FlexFeature {
+  id: string; type: "flex"; name: string; suppressed?: boolean;
+  bodies: FaceRef[];
+  kind: "bend" | "twist" | "taper" | "stretch";
+  axis: "x" | "y" | "z";
+  toward?: "x" | "y" | "z";
+  angle: Num;
+  factor?: Num;
+  distance?: Num;
+  trim1?: Num; trim2?: Num;
+  origin?: V3;
+  hard?: boolean;
+}
+
+/**
  * Imported body (FR-FT-130, FR-BODY-005): the exact B-rep of a STEP/IGES/BREP file, kept as BREP text
  * in the document. Faces are named `<id>:f<i>` in the file's order. `heal` (FR-FT-131) sews the faces
  * with `tol` and fixes the result into solids; the rebuild reports the check before and after.
@@ -1079,7 +1100,7 @@ export interface IntersectRegion { c: V3; v: number; out: boolean; /** Indexes o
 export type Feature = SheetFeature | SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature | CsysFeature
   | ShellFeature | DraftFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | SketchPatternFeature | HoleFeature | ThreadFeature
   | HelixFeature | SweepFeature | LoftFeature | RibFeature | SplitFeature | CurveFeature | SweepSurfFeature | Sketch3dFeature
-  | CombineFeature | IndentFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ImportFeature | HealFeature | ScaleFeature | DeleteFaceFeature | MoveFaceFeature | DomeFeature | WrapFeature
+  | CombineFeature | IndentFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ImportFeature | HealFeature | ScaleFeature | DeleteFaceFeature | MoveFaceFeature | DomeFeature | WrapFeature | FlexFeature
   | PlaneSurfFeature | ExtrudeSurfFeature | OffsetSurfFeature | KnitFeature | ThickenFeature | ReplaceFaceFeature | RevolveSurfFeature | LoftSurfFeature | TrimSurfFeature | FillSurfFeature | ExtendSurfFeature | UntrimSurfFeature | IntersectFeature
   | WeldFeature;
 export type FeatureType = Feature["type"];

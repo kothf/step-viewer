@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.552.0] - 2026-11-11
+
+### Added
+
+- Flex (FR-FT-105, in the Bodies menu after Scale): bend, twist, taper or stretch bodies between two trim planes, as SolidWorks' Flex does. The trim planes (shown in orange, with the triad) start at the ends of the bodies and move in by their offsets; past them the bodies move along as solid pieces. Bending turns the region through an angle towards a chosen axis about a neutral line through the middle of the bodies (the panel shows the bend radius), twisting turns each section about the flex axis, tapering scales the sections to a factor at the second plane, stretching lengthens the region. Hard edges (on) splits the faces at the trim planes; the moved faces are B-splines fitted to the exact map, so a bent bar keeps its volume to about 1e-6.
+
 ## [1.551.0] - 2026-11-11
 
 ### Changed
@@ -3434,7 +3440,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.551.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.552.0...HEAD
+[1.552.0]: https://github.com/kothf/step-viewer/compare/v1.551.0...v1.552.0
 [1.551.0]: https://github.com/kothf/step-viewer/compare/v1.550.0...v1.551.0
 [1.550.0]: https://github.com/kothf/step-viewer/compare/v1.549.0...v1.550.0
 [1.549.0]: https://github.com/kothf/step-viewer/compare/v1.548.0...v1.549.0
