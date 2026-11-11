@@ -5221,7 +5221,7 @@ export class ModelController {
         return `<span class="mc-fly">${btn(`sk:${id}`, l, ti, tool === id)}<button class="mc-caret" data-fly="${g[0]}" aria-haspopup="menu" title="${esc(t("More tools like this"))}" aria-label="${esc(t("More tools like this"))}: ${esc(l)}">▾</button></span>`;
       }).join("")}</div>`
         + `<div class="mc-sep"></div><div class="mc-g">${btn("cons", t("Construction"), t("Construction geometry on/off for the selection (Q)"))}${btn("skmirror", t("Mirror"), t("Mirror entities: select them and a line to mirror about, then click"))}${btn("skdynmirror", t("Dynamic mirror"), t("Dynamic mirror: select a line, click, then draw; each new entity is mirrored about it"), !!m.editor.dynMirror)}${btn("skdxf", t("DXF"), t("Import a DXF drawing into the sketch"))}${btn("sksec", t("Section"), t("Section view at the sketch plane: hides the material in front of it"), this.skSection)}</div>`
-        + `<div class="mc-sep"></div><div class="mc-g">${btn("sklpat", t("Linear pattern"), t("Linear sketch pattern: select entities, then set count and spacing"))}${btn("skcpat", t("Circular pattern"), t("Circular sketch pattern: select entities (and a centre point), then set count and angle"))}${btn("skmove", t("Move"), t("Move or copy entities by a distance"))}${btn("skrot", t("Rotate"), t("Rotate entities about a point"))}${btn("skscale", t("Scale"), t("Scale entities about a point"))}</div>`
+        + `<div class="mc-sep"></div><div class="mc-g">${btn("sklpat", t("Linear pattern"), t("Linear sketch pattern: select entities, then set count and spacing"))}${btn("skcpat", t("Circular pattern"), t("Circular sketch pattern: select entities (and a centre point), then set count and angle"))}${btn("skmove", t("Move"), t("Move or copy entities by a distance"))}${btn("skrot", t("Rotate"), t("Rotate entities about a point"))}${btn("skscale", t("Scale"), t("Scale entities about a point"))}${btn("skstretch", t("Stretch"), t("Stretch entities: select points or one end of a shape, then move them; lines ending there stretch"))}</div>`
         + `<div class="mc-sep"></div><div class="mc-g" role="group" aria-label="${esc(t("Features from this sketch"))}">${(["extrude", "cut", "revolve"] as const).map(id => { const [l, ti] = this.cmdInfo(id); return btn(id, l, ti); }).join("")}</div>`
         + `<div class="mc-sep"></div><div class="mc-g">${btn("exit", t("Exit sketch"), t("Exit sketch (Enter)"))}</div>`;
     } else {
@@ -5740,8 +5740,8 @@ export class ModelController {
       case "skdynmirror": if (m.kind === "sketch") { m.editor.toggleDynMirror(); this.renderBar(); this.renderPanel(); } break;
       case "skdxf": if (m.kind === "sketch") this.importDxf(); break;
       case "sksec": if (m.kind === "sketch") { this.skSection = !this.skSection; this.renderBar(); } break;
-      case "sklpat": case "skcpat": case "skmove": case "skrot": case "skscale":
-        if (m.kind === "sketch" && m.editor.startPattern(({ sklpat: "linear", skcpat: "circular", skmove: "move", skrot: "rotate", skscale: "scale" } as const)[c])) this.renderPanel();
+      case "sklpat": case "skcpat": case "skmove": case "skrot": case "skscale": case "skstretch":
+        if (m.kind === "sketch" && m.editor.startPattern(({ sklpat: "linear", skcpat: "circular", skmove: "move", skrot: "rotate", skscale: "scale", skstretch: "stretch" } as const)[c])) this.renderPanel();
         break;
       case "exit": this.ok(); break;
       case "sketch": this.noteRecent(c); this.startSketch(); break;
@@ -7700,10 +7700,13 @@ export class ModelController {
         + group(t("Direction 2"), len("d2", t("Spacing"), p.d2) + cnt("n2", t("Instances"), p.n2) + ang("angle2", t("Angle"), p.angle2))
       : p.kind === "circular" ? group(t("Parameters"), centre(p.c) + cnt("n", t("Instances"), p.n) + ang("total", t("Total angle"), p.total) + chkP("equal", p.equal, t("Equal spacing")))
       : p.kind === "move" ? group(t("Parameters"), len("dx", t("Delta X"), p.dx) + len("dy", t("Delta Y"), p.dy)) + opts(p.copy, p.keep)
+      : p.kind === "stretch" ? group(t("Parameters"), len("dx", t("Delta X"), p.dx) + len("dy", t("Delta Y"), p.dy))
       : p.kind === "rotate" ? group(t("Parameters"), centre(p.c) + ang("angle", t("Angle"), p.angle)) + opts(p.copy, p.keep)
       : group(t("Parameters"), centre(p.c) + `<label class="pm-field"><span>${esc(t("Scale factor"))}</span><input type="text" inputmode="decimal" class="pm-n" data-p="k" data-q="factor" value="${trimNum(p.k, 6)}" /></label>`) + opts(p.copy, p.keep);
-    const titles = { linear: "Linear sketch pattern", circular: "Circular sketch pattern", move: "Move entities", rotate: "Rotate entities", scale: "Scale entities" } as const;
-    const help = p.kind === "linear" || p.kind === "circular" ? "The green preview shows the instances. Copies keep equal relations to the selected entities." : "The green preview shows where the entities go.";
+    const titles = { linear: "Linear sketch pattern", circular: "Circular sketch pattern", move: "Move entities", rotate: "Rotate entities", scale: "Scale entities", stretch: "Stretch entities" } as const;
+    const help = p.kind === "linear" || p.kind === "circular" ? "The green preview shows the instances. Copies keep equal relations to the selected entities."
+      : p.kind === "stretch" ? "The selected points move; lines and arcs ending on them stretch. Dimensions across the stretch take the new sizes."
+      : "The green preview shows where the entities go.";
     pm.innerHTML = okHead(t(titles[p.kind]), { okKey: "pok", cancelKey: "pcancel" })
       + `<p class="pm-help muted">${esc(t(help))}</p>`
       + body;
@@ -8493,6 +8496,7 @@ const ICON_SVG: Record<string, string> = {
   skmove: S('<path d="M8 1.5v13M1.5 8h13"/><path d="M6 3.5 8 1.5l2 2M6 12.5l2 2 2-2M3.5 6 1.5 8l2 2M12.5 6l2 2-2 2"/>'),
   skrot: S('<path d="M13 8a5 5 0 1 1-1.5-3.5"/><path d="M12 1.8v2.9H9.1"/>'),
   skscale: S('<rect x="1.5" y="8.5" width="6" height="6"/><rect x="1.5" y="1.5" width="13" height="13" stroke-dasharray="1.6 1.4"/><path d="M8.5 7.5l4-4M9.5 3.5h3v3"/>'),
+  skstretch: S('<path d="M1.5 3.5h6l3 4.5-3 4.5h-6z" stroke-dasharray="1.6 1.4"/><path d="M1.5 3.5h9l3 4.5-3 4.5h-9z"/><path d="M9 8h5M12 6l2 2-2 2"/>'),
   sksec: S('<path d="M2 12 8 9l6 3-6 3z"/><path d="M8 1.5v7.5M3 6.5l5-2.5 5 2.5"/>'),
   skdxf: S('<path d="M3.5 1.5h6l3 3v10h-9z"/><path d="M9.5 1.5v3h3"/><path d="M5.5 9.5h5M5.5 12h5"/>'),
   cons: S('<path d="M2 14 14 2" stroke-dasharray="2.2 1.8"/>'),
