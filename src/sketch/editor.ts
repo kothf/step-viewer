@@ -1080,7 +1080,7 @@ export class SketchEditor {
    */
   private materialize(ms: { p: V2; ed: ModelEdge; g: ExtGeo; at: "a" | "b" | "mid" | "c" | "on" }): { id: string | null; curve: string | null } {
     const ref = this.host.edgeRef?.(ms.ed) ?? null;
-    const same = (r: EdgeRef) => !!ref && [...r.faces].sort().join("|") === [...ref.faces].sort().join("|")
+    const same = (r: EdgeRef) => !!ref && r.ctx?.comp === ref.ctx?.comp && [...r.faces].sort().join("|") === [...ref.faces].sort().join("|")
       && (!r.hint || !ref.hint || Math.hypot(r.hint[0] - ref.hint[0], r.hint[1] - ref.hint[1], r.hint[2] - ref.hint[2]) < 1e-3);
     let ent = ref ? this.sk.ents.find(x => this.sk.rels.some(r => r.ext && r.e[0] === x.id && same(r.ext))) : undefined;
     if (!ent) {
@@ -3311,6 +3311,7 @@ export class SketchEditor {
     if (!ed?.length || ed.length !== 1) { this.host.toast(t("Click one model edge.")); return false; }
     const p = this.ent(id);
     const ref = this.host.edgeRef?.(ed[0]) ?? null;
+    if (ref?.ctx) { this.host.toast(t("Pierce takes edges of this part only, not of other components."), "warn"); return false; }
     const q = p?.t === "point" ? piercePoint(ed[0], this.frame, [p.x, p.y]) : null;
     if (!q || !ref) { this.host.toast(t("That edge does not cross the sketch plane."), "warn"); return false; }
     const next = structuredClone(this.sk);

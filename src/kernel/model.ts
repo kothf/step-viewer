@@ -263,7 +263,9 @@ export class Modeller {
       const ent = out.ents.find(e => e.id === r.e[0]);
       let ok = false;
       try {
-        if (r.t === "pierce") ok = !!body && ent?.t === "point" && this.pierce(body, r.ext, frame, ent);
+        // An edge of another component (edit in context, FR-ASM-030): its last seen place, kept by the assembly.
+        if (r.ext.ctx) { const g = ent && r.t !== "pierce" ? projectEdge(r.ext.ctx.geo, frame) : null; ok = !!g && applyExt(out, ent!, g); }
+        else if (r.t === "pierce") ok = !!body && ent?.t === "point" && this.pierce(body, r.ext, frame, ent);
         else {
           const g = body && ent ? projectEdge(this.modelEdge(this.resolveEdge(body, r.ext)), frame) : null;
           ok = !!g && applyExt(out, ent!, g);

@@ -117,6 +117,16 @@ export type PlaneRef =
  */
 export interface CtxRef { comp: string; face: string; host: string; label?: string; p: V3; n: V3; locked?: boolean }
 
+/** An edge of another component as last seen, in this part's coordinates (lines, circles and arcs). */
+export interface CtxEdgeGeo { type: string; start: V3; end: V3; mid: V3; closed: boolean; center?: V3; axis?: V3; radius?: number }
+/**
+ * External reference (FR-ASM-030) on a converted sketch curve: an edge of component `comp`, between the faces
+ * named by the EdgeRef (with `hint` = its middle in that component's own part coordinates). `geo` is where the
+ * edge was last seen from the host component, so the part builds on its own; the assembly updates it unless
+ * `locked`.
+ */
+export interface CtxEdge { comp: string; host: string; label?: string; geo: CtxEdgeGeo; locked?: boolean }
+
 /** World frame of a sketch plane: origin, x and y directions, normal. */
 /** `len` (Hole only): each hole's thread length when the thread runs through all (`HoleFeature.threadEnd`);
  *  for an Advanced Hole that leaves the material, each hole's depth to the far face. */
@@ -142,7 +152,7 @@ export interface SketchFeature {
 /** A face by name (feature id + role), with its centroid when picked to choose between several. */
 export interface FaceRef { name: string; hint?: V3 }
 /** An edge between two named faces; the hint picks between several shared edges. */
-export interface EdgeRef { faces: [string, string]; hint?: V3 }
+export interface EdgeRef { faces: [string, string]; hint?: V3; /** An edge of another component (edit in context, sketch On edge relations only). */ ctx?: CtxEdge }
 
 // ---------- features ----------
 

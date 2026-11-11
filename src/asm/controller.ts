@@ -21,7 +21,7 @@ import { stepName } from "./steps";
 import { activateConfig, addConfig, deleteConfig, partUsed } from "./configs";
 import { activate as activatePartConfig } from "../model/configs";
 import { refreshExprs } from "../model/params";
-import { ctxRefs, syncCtx, type CtxComp, type PartContext } from "../model/context";
+import { ctxEdgeRefs, ctxRefs, findCtxEdge, moveEdgeGeo, syncCtx, type CtxComp, type CtxEdgeSeen, type PartContext } from "../model/context";
 import { mateDefaults, mateTypes, placeGeo, solve, type Geo, type SolveResult } from "./solver";
 import { folderPath, hashBytes, planLinks, type LinkFile } from "./links";
 import { MCMASTER, mcmasterPart, tagVendor, vendorOf } from "./vendor";
@@ -116,6 +116,8 @@ export class AsmController {
   collide = (() => { try { return localStorage.getItem("mc:asmCollide") === "1"; } catch { return false; } })();
   /** Mate geometry of each part's faces, in part coordinates, learnt from the shown meshes (by part key, face name). */
   private geo = new Map<string, Map<string, Geo>>();
+  /** Edges of parts whose edges a part edited in context converted (FR-ASM-030), in part coordinates, by part key. */
+  private edgeGeo = new Map<string, CtxEdgeSeen[]>();
   private centres = new Map<string, V3>();
   /** The transforms the shown meshes were made with, and their face names. */
   private shownTf: Record<string, Tf> = {};
@@ -1530,6 +1532,9 @@ export class AsmController {
     this.builtTf = {};
     for (const c of this.doc?.components ?? []) this.builtTf[c.id] = c.tf.slice();
     const seen = new Set<string>();
+    // Parts with an edge that an in-context part converted (only those are worth keeping edges for).
+    const edgeParts = new Set<string>();
+    for (const e of Object.values(doc.parts)) if (e.doc && !e.asm) for (const { ext } of ctxEdgeRefs(e.doc)) { const k = this.anyCompIn(doc, ext.ctx.comp)?.part; if (k) edgeParts.add(k); }
     for (const p of parts) {
       const c = doc.components.find(x => x.id === p.id);
       if (!c) continue;
@@ -1544,6 +1549,15 @@ export class AsmController {
         if (f.type === "plane" && f.normal) m.set(name, { k: "plane", p: applyPoint(inv, f.centroid), n: unit(applyDir(inv, f.normal)) });
         else if (f.type === "cylinder" && f.axis) m.set(name, { k: "axis", p: applyPoint(inv, f.center), d: unit(applyDir(inv, f.axis)), r: f.radius ?? 0 });
       });
+      if (!again && edgeParts.has(c.part)) {
+        const list: CtxEdgeSeen[] = [];
+        for (const e of p.data.edges) {
+          const a = p.faces[e.faces[0]], b = p.faces[e.faces[1]];
+          if (!a || !b || e.type === "curve") continue;
+          list.push({ faces: [a, b], geo: moveEdgeGeo(e, q => applyPoint(inv, q), q => applyDir(inv, q)) });
+        }
+        this.edgeGeo.set(c.part, list);
+      }
       if (!again) this.keepMateFaces(doc, c.part, this.geo.get(c.part), m);
       this.geo.set(c.part, m);
       if (again) continue;
@@ -2375,7 +2389,19 @@ export class AsmController {
         }
         return out;
       });
-      comps.push({ comp: sid, label: own?.name ?? sid, positions: pos, index: part.data.index.slice(), faces });
+      // Its edges (lines, circles, arcs) for Convert Entities in context, with the middle in its own part coordinates.
+      const w = (q: V3): V3 => { v.set(q[0], q[1], q[2]).applyMatrix4(m); return [v.x, v.y, v.z]; };
+      const wd = (q: V3): V3 => { const n = new THREE.Vector3(q[0], q[1], q[2]).applyMatrix3(nm).normalize(); return [n.x, n.y, n.z]; };
+      const back = own ? invert(own.tf) : null;
+      const edges: NonNullable<CtxComp["edges"]> = [];
+      for (const e of part.data.edges) {
+        const a = names[e.faces[0]], b = names[e.faces[1]];
+        if (!a || !b || e.type === "curve" || !back) continue;
+        const g = moveEdgeGeo(e, w, wd), pts = new Float32Array(e.pts.length);
+        for (let k = 0; k < e.pts.length; k += 3) pts.set(w([e.pts[k], e.pts[k + 1], e.pts[k + 2]]), k);
+        edges.push({ ...g, faces: [a, b], pts, hint: applyPoint(back, g.mid) });
+      }
+      comps.push({ comp: sid, label: own?.name ?? sid, positions: pos, index: part.data.index.slice(), faces, edges });
     });
     return { host: c.id, tf: c.tf.slice(), comps };
   }
@@ -2388,13 +2414,20 @@ export class AsmController {
   private syncContext(doc: AsmDoc): boolean {
     let any = false;
     for (const entry of Object.values(doc.parts)) {
-      if (!entry.doc || entry.asm || !ctxRefs(entry.doc).length) continue;
+      if (!entry.doc || entry.asm || (!ctxRefs(entry.doc).length && !ctxEdgeRefs(entry.doc).length)) continue;
       const r = syncCtx(entry.doc, ref => {
         const host = doc.components.find(x => x.id === ref.host), c = this.anyCompIn(doc, ref.comp);
         const g = c && this.geo.get(c.part)?.get(ref.face);
         if (!host || !c || !g || g.k !== "plane") return null;
         const inv = invert(host.tf), w = placeGeo(g, c.tf) as { p: V3; n: V3 };
         return { p: applyPoint(inv, w.p), n: unit(applyDir(inv, w.n)) };
+      }, ext => {
+        // A converted edge: found again on its component by faces and place, then seen from the host.
+        const host = doc.components.find(x => x.id === ext.ctx.host), c = this.anyCompIn(doc, ext.ctx.comp);
+        const list = c && this.edgeGeo.get(c.part), e = list && findCtxEdge(list, ext);
+        if (!host || !c || !e) return null;
+        const m = compose(invert(host.tf), c.tf);
+        return { geo: moveEdgeGeo(e.geo, q => applyPoint(m, q), q => applyDir(m, q)), hint: e.geo.mid };
       });
       if (r.changed) any = true;
     }
