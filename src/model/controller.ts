@@ -139,6 +139,9 @@ type Mode =
   | { kind: "cfg" };
 
 /** Which selection box of the feature panel the next click in the view fills. */
+/** Features that take a Feature scope (FR-FT-007). */
+type ScopedFeature = ExtrudeFeature | RevolveFeature | SweepFeature | LoftFeature | HoleFeature;
+const isScoped = (f: Feature): f is ScopedFeature => f.type === "extrude" || f.type === "revolve" || f.type === "sweep" || f.type === "loft" || f.type === "hole";
 type Focus = "wbodies" | "wbound" | "wfaces" | "wf1" | "wf2" | "tsurf" | "ttool" | "keep" | "fs1" | "fs2" | "fc" | "main" | "bodies" | "base" | "axis" | "upto" | "start" | "origin" | "cx" | "cz" | "seeds" | "psketch" | "hupto" | "upbody" | "upto2" | "upbody2" | "mthick" | "dir" | "dir2" | "mplane" | "faces" | "hplane" | "pts" | "nplane" | "sbv" | "contours" | "skip" | "pref" | "pref2" | "scope";
 type CopyFeature = MirrorFeature | LinearPatternFeature | CircularPatternFeature | SketchPatternFeature;
 type BodyFeature = IntersectFeature | CombineFeature | IndentFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ScaleFeature;
@@ -2258,7 +2261,7 @@ export class ModelController {
       else if (m.kind === "feature" && (m.draft.type === "smconvert" || m.draft.type === "sminsert")) this.pickConvert(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "curve" && m.draft.kind === "projected") this.pickCopy(e);
       else if (m.kind === "feature" && m.draft.type === "sketch3d") this.pick3d(e, m.draft);
-      else if (m.kind === "feature" && (m.draft.type === "extrude" || m.draft.type === "revolve") && m.focus === "scope") this.pickScope(e, m.draft);
+      else if (m.kind === "feature" && isScoped(m.draft) && m.focus === "scope") this.pickScope(e, m.draft);
       else if (m.kind === "feature" && hasContours(m.draft) && m.focus === "contours") this.pickContour(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "plane") {
         if (m.focus === "axis") this.pickAxis(e);
@@ -2615,20 +2618,21 @@ export class ModelController {
    * Feature scope (FR-FT-007): for a cut, or a boss with Merge result, in a part with several bodies,
    * All bodies or the bodies picked in the view.
    */
-  private scopeGroup(f: ExtrudeFeature | RevolveFeature, focus: Focus | undefined): string {
-    if (f.op === "boss" && f.merge === false) return "";
+  private scopeGroup(f: ScopedFeature, focus: Focus | undefined): string {
+    const op = f.type === "hole" ? "cut" : f.op;
+    if (f.type !== "hole" && f.op === "boss" && f.merge === false) return "";
     if ((this.last?.bodies?.length ?? 0) < 2 && f.scope === undefined) return "";
     const all = f.scope === undefined, n = f.scope?.length ?? 0, on = focus === "scope";
     const label = n ? t("{n} body|{n} bodies", { n }) : t("None");
     return `<fieldset class="pm-group"><legend>${esc(t("Feature scope"))}</legend>`
       + `<label class="chk pm-chk"><input type="checkbox" data-k="scopeAll"${all ? " checked" : ""} />${esc(t("All bodies"))}</label>`
       + (all ? "" : `<div class="pm-field"><span>${esc(t("Bodies"))}</span><button class="pm-box${on ? " focus" : ""}" data-focus="scope" aria-label="${esc(t("Feature scope"))}: ${esc(label)}" translate="no">${esc(label)}</button></div>`
-        + `<p class="pm-help muted">${esc(f.op === "cut" ? t("Click a face of each body to cut; the other bodies are left as they are.") : t("Click a face of each body to merge with; the other bodies are left as they are."))}</p>`)
+        + `<p class="pm-help muted">${esc(op === "cut" ? t("Click a face of each body to cut; the other bodies are left as they are.") : t("Click a face of each body to merge with; the other bodies are left as they are."))}</p>`)
       + `</fieldset>`;
   }
 
   /** Feature scope: a click on a body's face adds it, a click on a picked body takes it off. */
-  private pickScope(e: PointerEvent, f: ExtrudeFeature | RevolveFeature) {
+  private pickScope(e: PointerEvent, f: ScopedFeature) {
     const hit = this.host.faceAt(e.clientX, e.clientY);
     const fr = hit ? this.faceRef(hit.faceId) : null;
     if (!fr || fr.name.startsWith(`${f.id}:`)) { toast(t("Click a face of a body.")); return; }
@@ -3150,11 +3154,33 @@ export class ModelController {
   /** Right-click without a drag while a feature or plane pick runs: OK and Cancel. */
   private commandMenu(e: MouseEvent) {
     const m = this.mode;
+    if (m.kind === "none") return this.emptyMenu(e);
     if (m.kind !== "feature" && m.kind !== "plane") return false;
     const items = this.okItems();
     items.pop();
     this.showMenu(items, e.clientX, e.clientY, () => this.host.viewer.renderer.domElement.focus());
     return true;
+  }
+
+  /**
+   * Right-click on empty space with no command running (FR-UI-113): the last 5 commands ("Recent commands"),
+   * newest first, above Zoom to fit and the standard views.
+   */
+  private emptyMenu(e: MouseEvent) {
+    if (!this.store || this.host.faceAt(e.clientX, e.clientY)) return false;
+    const items: ([string, () => void, string?] | null)[] = this.recent.map(c => [this.cmdLabel(c), () => this.command(c), ICON_SVG[c]] as [string, () => void, string?]);
+    if (items.length) items.push(null);
+    items.push([t("Zoom to fit"), () => this.host.view?.("fit")], [t("Isometric"), () => this.host.view?.("iso")], [t("Normal to"), () => this.host.view?.("normal")]);
+    this.showMenu(items, e.clientX, e.clientY, () => this.host.viewer.renderer.domElement.focus());
+    const menu = document.getElementById("mc-menu");
+    if (menu && this.recent.length) menu.insertAdjacentHTML("afterbegin", `<div class="mc-menu-h" role="presentation">${esc(t("Recent commands"))}</div>`);
+    return true;
+  }
+
+  /** The last feature commands, newest first (FR-UI-113). */
+  private recent: string[] = [];
+  private noteRecent(c: string) {
+    this.recent = [c, ...this.recent.filter(x => x !== c)].slice(0, 5);
   }
 
   /** Adds edges to the fillet/chamfer list (the helpers only add). */
@@ -5717,8 +5743,8 @@ export class ModelController {
         if (m.kind === "sketch" && m.editor.startPattern(({ sklpat: "linear", skcpat: "circular", skmove: "move", skrot: "rotate", skscale: "scale" } as const)[c])) this.renderPanel();
         break;
       case "exit": this.ok(); break;
-      case "sketch": this.startSketch(); break;
-      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "spattern": case "tpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "indent": case "intersect": case "bsplit": case "delbody": case "movebody": case "scale": case "delface": case "moveface": case "heal": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": case "revsurf": case "loftsurf": case "trimsurf": case "fillsurf": case "extendsurf": case "untrimsurf": case "sweepsurf": case "xyzcurve": case "compcurve": case "projcurve": case "sketch3d": case "member": case "trimext": case "endcap": case "gusset": case "weldbead": this.lastCmd = this.activeCmd = c; this.startFeature(c); break;
+      case "sketch": this.noteRecent(c); this.startSketch(); break;
+      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "spattern": case "tpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "indent": case "intersect": case "bsplit": case "delbody": case "movebody": case "scale": case "delface": case "moveface": case "heal": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": case "revsurf": case "loftsurf": case "trimsurf": case "fillsurf": case "extendsurf": case "untrimsurf": case "sweepsurf": case "xyzcurve": case "compcurve": case "projcurve": case "sketch3d": case "member": case "trimext": case "endcap": case "gusset": case "weldbead": this.lastCmd = this.activeCmd = c; this.noteRecent(c); this.startFeature(c); break;
       case "cutlist": if (m.kind === "sketch") this.ok(); this.cutList(); break;
       case "import": if (m.kind === "sketch") this.ok(); this.importBodyFile(); break;
       case "smbase": case "smloft": case "smflange": case "smhem": case "smbend": case "smjog": case "smcorner": case "smclosed": case "smrelief": case "smgusset": case "smcross": case "smvent": case "smcut": case "smconvert": case "sminsert": case "smform": case "smunfold": case "smfold": case "smmiter": case "smswept": case "smtabslot": case "smrip": this.startFeature(c); break;
@@ -6633,6 +6659,7 @@ export class ModelController {
     }
     if (f.type === "sketch3d") ({ title, body } = this.sk3Panel(f, group));
     if (f.type === "helix" || f.type === "sweep" || f.type === "loft" || f.type === "rib" || f.type === "split" || f.type === "curve" || f.type === "sweepsurf") ({ title, body } = this.p3Panel(f, sketches, group, numField, chk));
+    if (f.type === "sweep" || f.type === "loft" || f.type === "hole") body += this.scopeGroup(f, m.focus);
     if (isBodyOp(f)) ({ title, body } = this.bodyPanel(f, m.focus, group, numField, chk));
     if (isSheet(f)) ({ title, body } = smPanel(f, { esc, group, numField, chk, sketches, label: featureLabel, sheet: this.last?.sheet, unit, f: UNITS[unit].f }));
     if (isWeldFeature(f)) ({ title, body } = weldPanel(f, this.weldCtx(m.index), m.focus, group, numField, chk));
@@ -6965,7 +6992,7 @@ export class ModelController {
         }
         if (isWeldFeature(f)) { const fn = weldChange(f, k, val, this.weldCtx(m.index)); if (fn) { upd(fn, true); return; } }
         if (k === "merge") { upd(() => { if (val) delete (f as ExtrudeFeature).merge; else (f as ExtrudeFeature).merge = false; }); return; }
-        if (k === "scopeAll" && (f.type === "extrude" || f.type === "revolve")) {
+        if (k === "scopeAll" && isScoped(f)) {
           upd(() => { if (val) { delete f.scope; if (m.focus === "scope") m.focus = undefined; } else { f.scope = []; m.focus = "scope"; } }, true);
           return;
         }
