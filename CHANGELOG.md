@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.523.0] - 2026-11-11
+
+### Added
+- Toolbox: Spacers (hex standoffs female-female and male-female M2 to M8 with cosmetic threads, round spacers M2 to M10) and Retaining rings (DIN 471 for shafts 8 to 60 mm, DIN 472 for bores 10 to 80 mm, drawn from above with the opening and the lug holes). Washers add DIN 127 B spring lock washers M3 to M20.
+
 ## [1.522.0] - 2026-11-11
 
 ### Added
@@ -3250,7 +3255,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.522.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.523.0...HEAD
+[1.523.0]: https://github.com/kothf/step-viewer/compare/v1.522.0...v1.523.0
 [1.522.0]: https://github.com/kothf/step-viewer/compare/v1.521.0...v1.522.0
 [1.521.0]: https://github.com/kothf/step-viewer/compare/v1.520.0...v1.521.0
 [1.520.0]: https://github.com/kothf/step-viewer/compare/v1.519.0...v1.520.0

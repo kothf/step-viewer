@@ -12,7 +12,7 @@ import type { ExtrudeFeature, Feature, GlobalVar, Num, PartDoc, SketchFeature, S
 
 export type FastenerKind = "iso4762" | "iso4017" | "iso4014" | "iso7380" | "iso10642" | "iso4026"
   | "iso4032" | "iso4035" | "iso7040" | "iso4161" | "iso7089" | "iso7092" | "iso7093"
-  | "iso2338" | "iso8752" | "din6885" | "bearing";
+  | "iso2338" | "iso8752" | "din6885" | "bearing" | "standoff" | "standoffm" | "spacer" | "din127" | "din471" | "din472";
 
 /**
  * Per size: d nominal (pin Ø, key width, bearing bore), dk head Ø, k head height, s key (hex socket or
@@ -23,6 +23,8 @@ interface Row {
   d: number; dk?: number; k?: number; s?: number; t?: number; m?: number; d1?: number; d2?: number; h?: number; dc?: number; c?: number; hk?: number; b?: number; D?: number; B?: number; lmin?: number; lmax?: number;
   /** Detail values `detailRow` works out per size and length: tip/edge chamfer, head chamfer, thread length and Ø, bearing shield radii and depth. */
   ch?: number; hc?: number; tl?: number; td?: number; si?: number; so?: number; sd?: number;
+  /** Male standoff: stud length; its internal thread depth. Split rings and spring washers: the opening's width. */
+  ls?: number; bd?: number; g?: number;
 }
 
 /** ISO 261 coarse pitches by nominal Ø (the thread drawn on screws and nuts). */
@@ -112,7 +114,35 @@ const TBRG: Record<string, Row> = Object.fromEntries(([
   ["6300", 10, 35, 11], ["6301", 12, 37, 12], ["6302", 15, 42, 13], ["6303", 17, 47, 14], ["6304", 20, 52, 15], ["6305", 25, 62, 17], ["6306", 30, 72, 19],
 ] as const).map(([n, d, D, B]) => [n, { d, D, B }]));
 
-export type ToolboxGroup = "Screws" | "Nuts" | "Washers" | "Pins" | "Keys" | "Bearings";
+// Hex standoffs (common catalogue sizes): across flats s, male stud length ls, internal thread depth bd of the male-female one.
+const TSTANDOFF: Record<string, Row> = Object.fromEntries(([["M2", 2, 4, 4], ["M2.5", 2.5, 5, 5], ["M3", 3, 5.5, 6], ["M4", 4, 7, 8], ["M5", 5, 8, 8], ["M6", 6, 10, 10], ["M8", 8, 13, 12]] as const)
+  .map(([n, d, s, ls]) => [n, { d, s, ls, bd: Math.min(2 * d, ls + 1) }]));
+// Round spacers for a screw: bore = ISO 273 medium clearance, outside Ø.
+const TSPACER: Record<string, Row> = Object.fromEntries(([["M2", 2, 2.4, 4], ["M2.5", 2.5, 2.9, 5], ["M3", 3, 3.4, 6], ["M4", 4, 4.5, 8], ["M5", 5, 5.5, 10], ["M6", 6, 6.6, 11], ["M8", 8, 9, 14], ["M10", 10, 11, 18]] as const)
+  .map(([n, d, d1, d2]) => [n, { d, d1, d2 }]));
+// DIN 127 B spring lock washers: d1, d2, thickness s (h), drawn flat with the split.
+const T127: Record<string, Row> = Object.fromEntries(([["M3", 3, 3.1, 6.2, 0.8], ["M4", 4, 4.1, 7.6, 0.9], ["M5", 5, 5.1, 9.2, 1.2], ["M6", 6, 6.1, 11.8, 1.6], ["M8", 8, 8.2, 14.8, 2],
+  ["M10", 10, 10.2, 18.1, 2.2], ["M12", 12, 12.2, 21.1, 2.5], ["M16", 16, 16.2, 27.4, 3.5], ["M20", 20, 20.2, 33.6, 4]] as const)
+  .map(([n, d, d1, d2, h]) => [n, { d, d1, d2, h, g: +(0.6 * h).toFixed(2) }]));
+// DIN 471 rings for shafts (normal type): shaft d1, thickness s, free Ø d3, lug width a, ring width b, groove d2 / m
+// (Westfield Fasteners' DIN 471 specification). Drawn as a split ring d3 … d3 + 2b, the opening 0.6 a wide.
+const T471: Record<string, Row> = Object.fromEntries(([[8, 0.8, 7.4, 3.2, 1.5, 7.6, 0.9], [10, 1, 9.3, 3.3, 1.8, 9.6, 1.1], [12, 1, 11, 3.3, 1.8, 11.5, 1.1], [14, 1, 12.9, 3.5, 2.1, 13.4, 1.1],
+  [15, 1, 13.8, 3.6, 2.2, 14.3, 1.1], [16, 1, 14.7, 3.7, 2.2, 15.2, 1.1], [17, 1, 15.7, 3.8, 2.3, 16.2, 1.1], [18, 1.2, 16.5, 3.9, 2.4, 17, 1.3], [20, 1.2, 18.5, 4, 2.6, 19, 1.3],
+  [22, 1.2, 20.5, 4.2, 2.8, 21, 1.3], [25, 1.2, 23.2, 4.4, 3, 23.9, 1.3], [28, 1.5, 25.9, 4.7, 3.2, 26.6, 1.6], [30, 1.5, 27.9, 5, 3.5, 28.6, 1.6], [32, 1.5, 29.6, 5.2, 3.6, 30.3, 1.6],
+  [35, 1.5, 32.2, 5.6, 3.9, 33, 1.6], [40, 1.75, 36.5, 6, 4.4, 37.5, 1.85], [45, 1.75, 41.5, 6.7, 4.7, 42.5, 1.85], [50, 2, 45.8, 6.9, 5.1, 47, 2.15], [55, 2, 50.8, 7.2, 5.4, 52, 2.15],
+  [60, 2, 55.8, 7.4, 5.8, 57, 2.15]] as const)
+  .map(([d, s, d3, a, b, gd, m]) => [String(d), { d, h: s, d1: d3, d2: +(d3 + 2 * b).toFixed(2), b, g: +(0.6 * a).toFixed(2), D: gd, m }]));
+// DIN 472 rings for bores (normal type): bore d1, s, free Ø d3, a, b, groove d2 / m (Aspen Fasteners' DIN 472 specification).
+// Drawn as a split ring d3 - 2b … d3. Sizes include the outside Ø of the 6xxx bearings.
+const T472: Record<string, Row> = Object.fromEntries(([[10, 1, 10.8, 3.2, 1.4, 10.4, 1.1], [12, 1, 13, 3.4, 1.7, 12.5, 1.1], [14, 1, 15.1, 3.7, 1.9, 14.6, 1.1], [15, 1, 16.2, 3.7, 2, 15.7, 1.1],
+  [16, 1, 17.3, 3.8, 2, 16.8, 1.1], [17, 1, 18.3, 3.9, 2.1, 17.8, 1.1], [18, 1, 19.5, 4.1, 2.2, 19, 1.1], [19, 1, 20.5, 4.1, 2.2, 20, 1.1], [20, 1, 21.5, 4.2, 2.3, 21, 1.1],
+  [22, 1, 23.5, 4.2, 2.5, 23, 1.1], [24, 1.2, 25.9, 4.4, 2.6, 25.2, 1.3], [25, 1.2, 26.9, 4.5, 2.7, 26.2, 1.3], [26, 1.2, 27.9, 4.7, 2.8, 27.2, 1.3], [28, 1.2, 30.1, 4.8, 2.9, 29.4, 1.3],
+  [30, 1.2, 32.1, 4.8, 3, 31.4, 1.3], [32, 1.2, 34.4, 5.4, 3.2, 33.7, 1.3], [35, 1.5, 37.8, 5.4, 3.4, 37, 1.6], [37, 1.5, 39.8, 5.5, 3.6, 39, 1.6], [40, 1.8, 43.5, 5.8, 3.9, 42.5, 1.9],
+  [42, 1.8, 45.5, 5.9, 4.1, 44.5, 1.9], [47, 1.8, 50.5, 6.4, 4.4, 49.5, 1.9], [52, 2, 56.2, 6.7, 4.7, 55, 2.2], [55, 2, 59.2, 6.8, 5, 58, 2.2], [62, 2, 66.2, 7.3, 5.5, 65, 2.2],
+  [72, 2.5, 76.6, 7.8, 6.4, 75, 2.7], [80, 2.5, 85.5, 8.5, 7, 83.5, 2.7]] as const)
+  .map(([d, s, d3, a, b, gd, m]) => [String(d), { d, h: s, d1: +(d3 - 2 * b).toFixed(2), d2: d3, b, g: +(0.6 * a).toFixed(2), D: gd, m }]));
+
+export type ToolboxGroup = "Screws" | "Nuts" | "Washers" | "Spacers" | "Pins" | "Keys" | "Retaining rings" | "Bearings";
 /** How a part sits on a hole: on its z = 0 face facing -Z ("under" the head, a nut or washer), or flush with its top (+Z on z = 0). */
 export type SeatKind = "under" | "flush";
 export interface FastenerInfo {
@@ -122,6 +152,8 @@ export interface FastenerInfo {
   table: Record<string, Row>;
   /** Preferred length range as multiples of d (default 1.5 d to 10 d), unless the row has lmin/lmax. */
   len?: [number, number];
+  /** Fixed preferred lengths (standoffs and spacers), instead of `len`. */
+  lengths?: number[];
   /** How the size follows a clicked hole: "clear" = largest d that fits, "d" = d matches, "D" = outside Ø (else bore) matches, absent = never. */
   fit?: "clear" | "d" | "D";
 }
@@ -141,12 +173,18 @@ export const FASTENERS: FastenerInfo[] = [
   { kind: "iso7089", label: "Plain washer (ISO 7089)", name: "ISO 7089", group: "Washers", seat: "under", screw: false, table: T7089, fit: "clear" },
   { kind: "iso7092", label: "Small washer (ISO 7092)", name: "ISO 7092", group: "Washers", seat: "under", screw: false, table: T7092, fit: "clear" },
   { kind: "iso7093", label: "Large washer (ISO 7093)", name: "ISO 7093", group: "Washers", seat: "under", screw: false, table: T7093, fit: "clear" },
+  { kind: "din127", label: "Spring lock washer (DIN 127 B)", name: "DIN 127 B", group: "Washers", seat: "under", screw: false, table: T127, fit: "clear" },
+  { kind: "standoff", label: "Hex standoff, female-female", name: "Standoff F-F", group: "Spacers", seat: "under", screw: true, table: TSTANDOFF, lengths: [5, 6, 8, 10, 12, 15, 20, 25, 30, 35, 40, 45, 50, 60], fit: "clear" },
+  { kind: "standoffm", label: "Hex standoff, male-female", name: "Standoff M-F", group: "Spacers", seat: "under", screw: true, table: TSTANDOFF, lengths: [5, 6, 8, 10, 12, 15, 20, 25, 30, 35, 40, 45, 50, 60], fit: "clear" },
+  { kind: "spacer", label: "Round spacer", name: "Spacer", group: "Spacers", seat: "under", screw: true, table: TSPACER, lengths: [2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 25, 30, 40, 50], fit: "clear" },
   { kind: "iso2338", label: "Dowel pin (ISO 2338)", name: "ISO 2338", group: "Pins", seat: "flush", screw: true, table: T2338, len: [2, 10], fit: "d" },
   { kind: "iso8752", label: "Spring pin (ISO 8752)", name: "ISO 8752", group: "Pins", seat: "flush", screw: true, table: T8752, len: [2, 10], fit: "d" },
   { kind: "din6885", label: "Parallel key, square ends (DIN 6885 B)", name: "DIN 6885 B", group: "Keys", seat: "under", screw: true, table: T6885 },
+  { kind: "din471", label: "Retaining ring for shafts (DIN 471)", name: "DIN 471", group: "Retaining rings", seat: "flush", screw: false, table: T471, fit: "d" },
+  { kind: "din472", label: "Retaining ring for bores (DIN 472)", name: "DIN 472", group: "Retaining rings", seat: "flush", screw: false, table: T472, fit: "d" },
   { kind: "bearing", label: "Deep groove ball bearing (ISO 15)", name: "Ball bearing", group: "Bearings", seat: "flush", screw: false, table: TBRG, fit: "D" },
 ];
-export const TOOLBOX_GROUPS: ToolboxGroup[] = ["Screws", "Nuts", "Washers", "Pins", "Keys", "Bearings"];
+export const TOOLBOX_GROUPS: ToolboxGroup[] = ["Screws", "Nuts", "Washers", "Spacers", "Pins", "Keys", "Retaining rings", "Bearings"];
 
 const LENGTHS = [3, 4, 5, 6, 8, 10, 12, 16, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 180, 200];
 const KEY_LENGTHS = [6, 8, 10, 12, 14, 16, 18, 20, 22, 25, 28, 32, 36, 40, 45, 50, 56, 63, 70, 80, 90, 100, 110, 125, 140, 160, 180, 200];
@@ -158,6 +196,7 @@ export const fastenerSizes = (kind: FastenerKind) => Object.keys(fastenerInfo(ki
 export function fastenerLengths(kind: FastenerKind, size: string): number[] {
   const info = fastenerInfo(kind), row = info.table[size];
   if (!info.screw) return [];
+  if (info.lengths) return info.lengths;
   if (row?.lmin !== undefined) return KEY_LENGTHS.filter(l => l >= row.lmin! && l <= row.lmax!);
   const d = row?.d ?? 6, [a, b] = info.len ?? [1.5, 10];
   const lo = Math.max(3, a * d), hi = b * d;
@@ -251,6 +290,13 @@ export function detailRow(kind: FastenerKind, row: Row, L: number): Row {
     r.ch = r2(0.1 * row.d);
     r.tl = r2(h - 2 * r.ch);
     r.td = row.d;
+  } else if (kind === "standoff" || kind === "standoffm") {
+    const P0 = P;
+    r.ch = r2(Math.max(0.2, 0.1 * row.d));
+    r.tl = r2(kind === "standoff" ? L - 2 * r.ch : row.bd! - r.ch);
+    r.td = row.d;
+    // The male stud: its tip chamfer and external thread (`hc` and `si` reused for them).
+    if (kind === "standoffm") { r.hc = r2(Math.max(0.2, 0.7 * P0)); r.si = r2(row.ls! - r.hc); r.so = r2(row.d - 1.2269 * P0); }
   } else if (info.group === "Pins") {
     r.ch = r2(Math.min(0.1 * row.d, row.d1 ? 0.4 * (row.d - row.d1) / 2 : Infinity));
   } else if (kind === "bearing") {
@@ -265,6 +311,7 @@ export function detailRow(kind: FastenerKind, row: Row, L: number): Row {
 
 const VAR_NAMES: Record<keyof Row | "L", string> = {
   ch: "Chamfer", hc: "HeadChamfer", tl: "ThreadL", td: "ThreadDia", si: "ShieldIn", so: "ShieldOut", sd: "ShieldDepth",
+  ls: "StudL", bd: "ThreadDepth", g: "Gap",
   d: "Dia", dk: "HeadDia", k: "HeadH", s: "Key", t: "KeyDepth", m: "NutH", d1: "HoleDia", d2: "OuterDia", h: "WasherH", L: "Length",
   dc: "CollarDia", c: "CollarH", b: "KeyW", hk: "KeyH", D: "OutsideDia", B: "Width", lmin: "MinLength", lmax: "MaxLength",
 };
@@ -310,6 +357,25 @@ function rectangle(sk: SketchFeature, vx: string, x: number, vy: string, y: numb
 }
 const num = (v: number, expr: string) => ({ v, expr });
 
+/**
+ * The opening of a split ring between Ø `d1` and Ø `d2`: a rectangle `g` wide across the ring on +X, running
+ * 1 mm past both edges, centred on a point on the X axis halfway across the ring.
+ */
+function split(sk: SketchFeature, v1: string, d1: number, v2: string, d2: number, vg: string, g: number) {
+  const w = (d2 - d1) / 2 + 2, mx = (d1 + d2) / 4;
+  sk.ents.push({ id: "m", t: "point", x: mx, y: 0 }, { id: "om", t: "line", a: "o", b: "m", cons: true });
+  sk.rels.push({ id: "hm", t: "horizontal", e: ["om"] });
+  sk.dims.push({ id: "dm", name: `D3@${sk.name}`, t: "hdistance", e: ["o", "m"], val: num(mx, `(${v1} + ${v2}) / 4`) });
+  const c = [[mx - w / 2, -g / 2], [mx + w / 2, -g / 2], [mx + w / 2, g / 2], [mx - w / 2, g / 2]];
+  c.forEach(([px, py], i) => sk.ents.push({ id: `r${i}`, t: "point", x: px, y: py }));
+  for (let i = 0; i < 4; i++) sk.ents.push({ id: `rl${i}`, t: "line", a: `r${i}`, b: `r${(i + 1) % 4}` });
+  sk.ents.push({ id: "rd", t: "line", a: "r0", b: "r2", cons: true });
+  sk.rels.push({ id: "h0", t: "horizontal", e: ["rl0"] }, { id: "v1", t: "vertical", e: ["rl1"] }, { id: "h2", t: "horizontal", e: ["rl2"] }, { id: "v3", t: "vertical", e: ["rl3"] },
+    { id: "mid", t: "midpoint", e: ["m", "rd"] });
+  sk.dims.push({ id: "dx", name: `D1@${sk.name}`, t: "hdistance", e: ["r0", "r1"], val: num(w, `(${v2} - ${v1}) / 2 + 2`) },
+    { id: "dy", name: `D2@${sk.name}`, t: "vdistance", e: ["r1", "r2"], val: num(g, vg) });
+}
+
 type Key = keyof Row | "L";
 /**
  * Chamfers and cosmetic threads (see `detailRow`) added after the body features; returns the variables they use.
@@ -332,6 +398,17 @@ function detailFeatures(kind: FastenerKind, row: Row, feats: Feature[], v: (k: K
     const bore = kind === "iso7040" || kind === "iso4161" ? "e3" : "e2", top = kind === "iso7040" || kind === "iso4161" ? "e2:end" : "e1:end";
     feats.push(chamfer("c1", "Chamfer1", [[`${bore}:side:c`, "e1:start"], [`${bore}:side:c`, top]], "ch"), thread([`${bore}:side:c`, "c1:chamfer:0"], true));
     return ["ch", "tl", "td"];
+  }
+  if (kind === "standoff") {
+    feats.push(chamfer("c1", "Chamfer1", [["e2:side:c", "e1:start"], ["e2:side:c", "e1:end"]], "ch"), thread(["e2:side:c", "c1:chamfer:0"], true));
+    return ["ch", "tl", "td"];
+  }
+  if (kind === "standoffm") {
+    feats.push(chamfer("c1", "Chamfer1", [["e2:side:c", "e1:end"]], "ch"), chamfer("c2", "Chamfer2", [["e3:side:c", "e3:end"]], "hc"));
+    // Internal thread from the bore's mouth down; external thread on the stud from its tip.
+    feats.push({ ...thread(["e2:side:c", "c1:chamfer:0"], true) },
+      { id: "t2", type: "thread", name: "Cosmetic Thread2", edge: { faces: ["e3:side:c", "c2:chamfer:0"] }, size: `M${row.d}`, diameter: num(row.so!, v("so")), length: num(row.si!, v("si")), pitch: P });
+    return ["ch", "tl", "td", "hc", "si", "so"];
   }
   if (info.group === "Pins") { feats.push(chamfer("c1", "Chamfer1", [["e1:side:c", "e1:start"], ["e1:side:c", "e1:end"]], "ch")); return ["ch"]; }
   if (kind === "bearing") {
@@ -434,11 +511,35 @@ export function fastenerPart(kind: FastenerKind, size: string, length?: number, 
         { ...cut("e4", "Shield", "s3", num(row.sd!, v("sd")), num(-row.B!, `-${v("B")}`)), flip: true });
       used.push("so", "si", "sd");
     }
-  } else {
+  } else if (kind === "standoff" || kind === "standoffm") {
+    // Hex body up from z = 0; F-F: a bore right through; M-F: a blind bore from the top and a stud below z = 0.
+    const s1 = sketch("s1", "Sketch1"); hexagon(s1, v("s"), row.s!);
+    const s2 = sketch("s2", "Sketch2"); circle(s2, v("d"), row.d);
+    feats.push(s1, ext("e1", "Body", "s1", "L"), s2, kind === "standoff" ? cut("e2", "Bore", "s2", num(L, v("L")), num(L, v("L"))) : cut("e2", "Bore", "s2", num(row.bd!, v("bd")), num(L, v("L"))));
+    used.push("s", "L", "d");
+    if (kind === "standoffm") {
+      const s3 = sketch("s3", "Sketch3"); circle(s3, v("d"), row.d);
+      feats.push(s3, ext("e3", "Stud", "s3", "ls", { flip: true }));
+      used.push("bd", "ls");
+    }
+  } else if (kind === "spacer") {
     const s1 = sketch("s1", "Sketch1"); circle(s1, v("d2"), row.d2!);
     const s2 = sketch("s2", "Sketch2"); circle(s2, v("d1"), row.d1!);
-    feats.push(s1, ext("e1", "Washer", "s1", "h"), s2, cut("e2", "Bore", "s2", num(row.h!, v("h")), num(row.h!, v("h"))));
+    feats.push(s1, ext("e1", "Spacer", "s1", "L"), s2, cut("e2", "Bore", "s2", num(L, v("L")), num(L, v("L"))));
+    used.push("d2", "L", "d1");
+  } else {
+    // Washers; DIN 127 and retaining rings are split (the opening on +X). Rings sit flush: z from -s to 0.
+    const ring = kind === "din471" || kind === "din472";
+    const s1 = sketch("s1", "Sketch1"); circle(s1, v("d2"), row.d2!);
+    const s2 = sketch("s2", "Sketch2"); circle(s2, v("d1"), row.d1!);
+    feats.push(s1, ext("e1", ring ? "Ring" : "Washer", "s1", "h", ring ? { flip: true } : {}), s2,
+      ring ? cut("e2", "Bore", "s2", num(row.h!, v("h"))) : cut("e2", "Bore", "s2", num(row.h!, v("h")), num(row.h!, v("h"))));
     used.push("d2", "h", "d1");
+    if (row.g) {
+      const s3 = sketch("s3", "Sketch3"); split(s3, v("d1"), row.d1!, v("d2"), row.d2!, v("g"), row.g);
+      feats.push(s3, ring ? cut("e3", "Opening", "s3", num(row.h!, v("h"))) : cut("e3", "Split", "s3", num(row.h!, v("h")), num(row.h!, v("h"))));
+      used.push("g");
+    }
   }
   if (detail) used.push(...detailFeatures(kind, row, feats, v, val));
   pd.features = feats;
