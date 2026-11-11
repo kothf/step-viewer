@@ -116,6 +116,16 @@ test("sheet output: SVG, DXF layers and linetypes, title block fields", async ()
   assert.match(svg, />BLK-1</);
 });
 
+test("shape boxes are found once per shape, and callers get their own copy", async () => {
+  const { shapeBox, shapeInfo } = await import("../../src/kernel/drawing");
+  const { oc, shape } = await block();
+  const a = shapeBox(oc, shape);
+  a[0][0] = 1e9;
+  const b = shapeBox(oc, shape), c = shapeInfo(oc, shape).box;
+  assert.ok(b[0][0] < 1e8);
+  assert.deepEqual(b, c);
+});
+
 test("section through the hole: the cut faces are the block's middle slice minus the hole", async () => {
   const { section } = await import("../../src/kernel/drawing");
   const { oc, shape } = await block();

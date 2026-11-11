@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.495.0] - 2026-11-11
+
+### Changed
+
+- Drawings of big assemblies project each view and each quick preview about a second sooner: the model's bounding box is now found once instead of for every view (on the engine assembly it took about a second each time, so a sheet with its three views, their previews and the view palette saves around ten seconds of work).
+
 ## [1.494.0] - 2026-11-11
 
 ### Changed
@@ -3046,7 +3052,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.494.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.495.0...HEAD
+[1.495.0]: https://github.com/kothf/step-viewer/compare/v1.494.0...v1.495.0
 [1.494.0]: https://github.com/kothf/step-viewer/compare/v1.493.0...v1.494.0
 [1.493.0]: https://github.com/kothf/step-viewer/compare/v1.492.0...v1.493.0
 [1.492.0]: https://github.com/kothf/step-viewer/compare/v1.491.0...v1.492.0

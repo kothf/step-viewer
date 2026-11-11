@@ -300,7 +300,7 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
       const proj = projectAuto(oc, sh, r.view, 0.02, fastEdges);
       if (r.shade) {
         // Mesh chord error: 1/400 of the model's size, so the shading stays light even for big models.
-        const [lo, hi] = shapeInfo(oc, sh).box;
+        const [lo, hi] = shapeBox(oc, sh);
         proj.shade = shadeTris(oc, sh, r.view, Math.max(0.01, Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 400));
       }
       // The first fast view of the whole model meshed it: send the snapshot again with that mesh (see `ModelSnap`).

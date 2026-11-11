@@ -76,6 +76,8 @@ Written for whoever continues drawing work (FRS section 11, `FR-DRW-…`). The C
 
 - Section previews (1.494.0): the old blank frame while a section's exact lines ran is gone. Measured in node on the project-files engine (centre, Front and Right sections): cut 2.0 / 2.8 s, preview (poly HLR of the cut) 0.4 / 0.5 s, exact finish 5.8 / 2.9 s. The preview's cut is stashed in the worker and reused by the exact request, so only the preview's ~0.4 s is added. When the exact job goes to the helper lane (small models), the helper cuts again.
 
+- Box cache (1.495.0), node on the engine: `AddOptimal` box 0.9 s, `shapeInfo` 1.2 s, called by every `projectAuto` and preview; now once per shape. Left on a sheet: the first fast view's diag/1000 mesh (5.3 s, BRepMesh, single-threaded wasm), and previews after that mesh are slower (0.7 s → 1.9 s: the poly HLR works on the finer mesh, which BRepMesh keeps).
+
 ## Ideas for next slices (none started)
 
 - **Centre marks on views at an angle**: end-on tests use `|ax·n| ≈ 1` (1e-6). Isometric views get no marks at all, which matches SolidWorks, so leave them unless asked.
