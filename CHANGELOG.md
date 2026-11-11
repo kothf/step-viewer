@@ -5,6 +5,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Changed
+
+- Drawings: the side panel reads like SolidWorks' PropertyManager. A title row with the item's icon, name and kind (Model view, Section view, Note…) stays at the top while the panel scrolls, with ✕ (Esc) to go back to the sheet. Every group (Scale, Display style, Text…) folds by its heading, and the panel remembers which ones you folded for each kind of item. The view palette folds away with the arrow beside its tabs, and its tiles are smaller, so a view's properties start higher.
+
 ## [1.517.0] - 2026-11-11
 
 ### Changed

@@ -130,3 +130,27 @@ circle.drw-edge { fill: none; }
 .drw-fs { border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px 6px; margin: 8px 0 0; }
 .drw-fs legend { font-size: 12px; padding: 0 4px; }
 .drw-exlist { max-height: 160px; overflow-y: auto; }
+/* Side panel (FeatureManager + PropertyManager): the palette folds away; the properties get a title row and fold by group. */
+.drw-ptabs-row { display: flex; align-items: flex-end; border-bottom: 1px solid var(--line); }
+.drw-ptabs-row .drw-ptabs { flex: 1; border-bottom: 0; }
+.drw-palfold { flex: none; display: grid; place-items: center; width: 28px; height: 28px; margin: 0 6px 3px 0; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; }
+.drw-palfold:hover { background: var(--panel-2); color: var(--text); }
+.drw-palfold:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+.drw-palfold svg { transition: transform .15s; }
+.drw-side.palfold .drw-palfold svg { transform: rotate(180deg); }
+.drw-side.palfold .drw-pal { display: none; }
+.drw-pal-grid { grid-template-columns: repeat(auto-fill, minmax(56px, 1fr)); gap: 4px; }
+.drw-pt svg { width: 40px; height: 40px; }
+.drw-pm-head { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px; margin: -8px -10px 8px; padding: 8px 10px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.drw-pm-ic { display: grid; place-items: center; width: 28px; height: 28px; flex: none; border-radius: 7px; background: var(--accent-soft); color: var(--accent-text); }
+.drw-pm-ic svg { width: 18px; height: 18px; }
+.drw-pm-t { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.drw-pm-t b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drw-pm-t small { color: var(--muted); font-size: 11px; }
+.drw-pm-x { flex: none; }
+.drw-fold { display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; background: none; color: inherit; font: inherit; font-weight: 600; cursor: pointer; }
+.drw-fold::before { content: ""; width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid currentColor; transition: transform .15s; }
+.drw-fold[aria-expanded="false"]::before { transform: rotate(-90deg); }
+.drw-fold:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+.drw-props .pm-group.folded { padding-bottom: 0; border-bottom-color: transparent; border-left-color: transparent; border-right-color: transparent; border-radius: 0; }
+.drw-props .pm-group.folded > :not(legend) { display: none !important; }

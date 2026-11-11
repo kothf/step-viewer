@@ -592,9 +592,12 @@ export class DrawingWorkspace {
       </div>
       <div class="drw-body">
         <aside class="drw-side" aria-label="${esc(t("Sheets and views"))}">
-          <div class="drw-ptabs" role="tablist" aria-label="${esc(t("Palettes"))}">
-            <button role="tab" id="drw-pt-views" aria-selected="true" aria-controls="drw-pane-views" data-ptab="views" class="on">${esc(t("View palette"))}</button>
-            <button role="tab" id="drw-pt-annot" aria-selected="false" aria-controls="drw-pane-annot" tabindex="-1" data-ptab="annot">${esc(t("Annotation"))}</button>
+          <div class="drw-ptabs-row">
+            <div class="drw-ptabs" role="tablist" aria-label="${esc(t("Palettes"))}">
+              <button role="tab" id="drw-pt-views" aria-selected="true" aria-controls="drw-pane-views" data-ptab="views" class="on">${esc(t("View palette"))}</button>
+              <button role="tab" id="drw-pt-annot" aria-selected="false" aria-controls="drw-pane-annot" tabindex="-1" data-ptab="annot">${esc(t("Annotation"))}</button>
+            </div>
+            <button class="drw-palfold" data-a="palfold" aria-expanded="true" aria-label="${esc(t("Fold the palette"))}" title="${esc(t("Fold the palette"))}">${CHEVRON}</button>
           </div>
           <div class="drw-pal" id="drw-pane-views" role="tabpanel" aria-labelledby="drw-pt-views">
             <p class="drw-pal-note">${esc(t("Drag a view onto the sheet, or click it and then click the sheet."))}</p>
@@ -636,6 +639,7 @@ export class DrawingWorkspace {
     // The side panel resizes from its edge and keeps its width (FR-UI-002).
     const side = this.el.querySelector<HTMLElement>(".drw-side")!;
     side.after(makeGrip({ key: "drw-side", axis: "x", sign: 1, def: 280, min: 200, max: () => Math.min(640, window.innerWidth * 0.45), apply: px => { side.style.width = px == null ? "" : `${px}px`; }, label: "Resize the side panel" }));
+    try { if (localStorage.getItem("mc:drwPalFold") === "1") this.foldPalette(true); } catch { /* storage off */ }
     new ResizeObserver(() => this.applyViewBox()).observe(this.svg);
     this.renderAll();
   }
@@ -3027,6 +3031,7 @@ export class DrawingWorkspace {
     const keep = this.cscale, box0 = this.el.querySelector<HTMLInputElement>(".drw-cscale");
     if (keep && box0) { keep.val = box0.value; keep.focus = document.activeElement === box0; }
     this.renderPropsOnly();
+    this.dressProps();
     const sel = keep && this.el.querySelector<HTMLSelectElement>(`.drw-props select[data-${keep.k}="scale"]`);
     if (keep && sel) { sel.value = "custom"; this.addScaleBox(sel, keep, box0?.dataset[keep.k] === "scale" ? box0 : null); } else this.cscale = null;
   }
@@ -3048,6 +3053,67 @@ export class DrawingWorkspace {
     sel.closest("label")?.after(box);
     if (c.focus) box.focus();
   }
+
+  /** Folds the palette panes away (or back), so the tree and the properties get the room; remembered. */
+  private foldPalette(fold: boolean) {
+    const side = this.el.querySelector<HTMLElement>(".drw-side")!, b = this.el.querySelector<HTMLElement>(".drw-palfold")!;
+    if (side.classList.contains("palfold") === fold) return;
+    side.classList.toggle("palfold", fold);
+    b.setAttribute("aria-expanded", String(!fold));
+    const tip = t(fold ? "Show the palette" : "Fold the palette");
+    b.setAttribute("aria-label", tip); b.title = tip;
+    try { localStorage.setItem("mc:drwPalFold", fold ? "1" : "0"); } catch { /* storage off */ }
+  }
+
+  private foldGroup(b: HTMLElement) {
+    const fs = b.closest("fieldset")!, fold = !fs.classList.contains("folded");
+    fs.classList.toggle("folded", fold);
+    b.setAttribute("aria-expanded", String(!fold));
+    const folded = readFolds();
+    if (fold) folded.add(b.dataset.fold!); else folded.delete(b.dataset.fold!);
+    try { localStorage.setItem("mc:drwFolds", JSON.stringify([...folded])); } catch { /* storage off */ }
+  }
+
+  /** What the properties show, as a PropertyManager title: icon, name and kind, and the key its folds are kept under. */
+  private pmTitle(): { icon: string; name: string; kind: string; key: string; own: boolean } {
+    const sa = this.selA ? this.annot(this.selA) : undefined;
+    if (sa) {
+      const tool = annotTool(sa);
+      return { icon: AICON[tool] ?? AICON.note, name: t(ANNOT_GROUPS.flatMap(g => g.tools).find(x => x[0] === tool)?.[1] ?? "Annotation"), kind: t("Annotation"), key: `a:${sa.t}`, own: false };
+    }
+    const v = this.sel ? findView(this.sheet, this.sel) : null;
+    if (v) return {
+      icon: v.kind ? ICON[v.kind === "section" ? "section" : v.kind === "detail" ? "detail" : "aux"] : v.parent ? ICON.proj : ICON.model,
+      name: v.name, kind: v.kind ? t(KIND_VIEW[v.kind]) : v.parent ? t("Projected view") : t("Model view"), key: `v:${v.kind ?? "model"}`, own: true,
+    };
+    return { icon: ICON.hlr, name: sheetName(this.sheet), kind: t("Sheet"), key: "s", own: true };
+  }
+
+  /** PropertyManager look: a title row (✕ goes back to the sheet) and groups that fold on their title, remembered per kind. */
+  private dressProps() {
+    const host = this.el.querySelector<HTMLElement>(".drw-props")!;
+    const h = this.pmTitle(), selected = !!(this.selA || this.sel);
+    const head = document.createElement("div");
+    head.className = "drw-pm-head";
+    head.innerHTML = `<span class="drw-pm-ic">${h.icon}</span><span class="drw-pm-t"><b${h.own ? ' translate="no"' : ""}>${esc(h.name)}</b><small>${esc(h.kind)}</small></span>`
+      + (selected ? `<button class="icon drw-pm-x" data-a="pmclose" aria-label="${esc(t("Close (Esc)"))}" title="${esc(t("Close (Esc)"))}">✕</button>` : "");
+    host.prepend(head);
+    const folded = readFolds();
+    host.querySelectorAll<HTMLElement>(":scope > fieldset.pm-group > legend").forEach((lg, i) => {
+      if (lg.children.length) return;
+      const key = `${h.key}:${i}`, fold = folded.has(key);
+      lg.innerHTML = `<button type="button" class="drw-fold" data-fold="${key}" aria-expanded="${!fold}">${lg.innerHTML}</button>`;
+      lg.parentElement!.classList.toggle("folded", fold);
+    });
+    // A new selection brings its properties into sight, as SolidWorks swaps in the PropertyManager.
+    const at = `${h.key}|${this.selA ?? this.sel ?? ""}`;
+    if (at !== this.pmAt) {
+      this.pmAt = at;
+      const side = this.el.querySelector<HTMLElement>(".drw-side")!;
+      if (selected && head.offsetTop > side.scrollTop + side.clientHeight - 120) side.scrollTop = head.offsetTop - 8;
+    }
+  }
+  private pmAt = "";
 
   private renderPropsOnly() {
     const host = this.el.querySelector<HTMLElement>(".drw-props")!;
@@ -3145,8 +3211,12 @@ export class DrawingWorkspace {
         x.classList.toggle("on", on); x.setAttribute("aria-selected", String(on)); x.tabIndex = on ? 0 : -1;
         this.el.querySelector<HTMLElement>(`#drw-pane-${x.dataset.ptab}`)!.hidden = !on;
       }
+      this.foldPalette(false);
       return;
     }
+    if (a === "palfold") { this.foldPalette(!this.el.querySelector(".drw-side")!.classList.contains("palfold")); return; }
+    if (a === "pmclose") { this.cancelMode(); this.selA = null; this.sel = null; this.renderTree(); this.renderProps(); this.renderOverlay(); return; }
+    if (b.dataset.fold) { this.foldGroup(b); return; }
     if (b.dataset.orient) { this.closeMenus(); this.startModel(b.dataset.orient as Orient); return; }
     if (b.dataset.flatview) { this.closeMenus(); this.startModel("top", FLAT_CONFIG); return; }
     if (b.dataset.cut) { this.closeMenus(); this.startKind("section", b.dataset.cut as "h"); return; }
@@ -3635,6 +3705,21 @@ function kernelError(err: unknown): string {
 }
 
 const STYLE_NAMES: Record<DisplayStyle, string> = { hlv: "Hidden lines visible", hlr: "Hidden lines removed", wire: "Wireframe", shaded: "Shaded", shadedEdges: "Shaded with edges" };
+const KIND_VIEW: Record<NonNullable<DrawingView["kind"]>, string> = { section: "Section view", detail: "Detail view", aux: "Auxiliary view" };
+const CHEVRON = '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10l4-4 4 4"/></svg>';
+/** The Annotation tool an annotation was made with, for its icon and name. */
+function annotTool(a: Annot): string {
+  switch (a.t) {
+    case "cline": return a.k === "mark" ? "cmark" : "cline";
+    case "sk": return `sk${a.k}`;
+    case "table": return a.kind === "bom" ? "bom" : a.kind === "rev" ? "rev" : "table";
+    default: return a.t;
+  }
+}
+/** Groups of the properties folded by the user, "<kind>:<index>". */
+function readFolds(): Set<string> {
+  try { const v = JSON.parse(localStorage.getItem("mc:drwFolds") ?? "[]"); return new Set(Array.isArray(v) ? v.filter(x => typeof x === "string") : []); } catch { return new Set(); }
+}
 const KIND_NAMES: Record<NonNullable<DrawingView["kind"]>, string> = { section: "Section", detail: "Detail", aux: "Auxiliary" };
 const ARROW_NAMES: Record<NonNullable<DraftStyle["arrow"]>, string> = { filled: "Filled", open: "Open arrow", dot: "Dot", tick: "Oblique stroke" };
 const TAN_NAMES: Record<TangentEdges, string> = { visible: "Visible", thin: "Thin", hidden: "Removed" };

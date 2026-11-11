@@ -11028,6 +11028,26 @@ try {
     await ap.setViewportSize({ width: 1440, height: 900 });
     check(bar.n === 17 && bar.groups === 2 && bar.rows === 1 && bar.on === "balloon" && bar.mode === "balloon" && bar.labels && bar.file && narrow.labels === 0 && narrow.rows === 1,
       `drawing: command bar shows 17 icon commands in two groups in one row, the running tool pressed; icons only under 1280 px (${JSON.stringify([bar, narrow])})`);
+    // Side panel as FeatureManager + PropertyManager: the palette folds away; a selected view's properties get a title
+    // row (icon, name, kind, ✕ back to the sheet) and their groups fold on the title, remembered.
+    await ap.click('.drw-tree [data-sel]:not([data-sel=""])');
+    await ap.click(".drw-palfold");
+    await ap.click('.drw-props [data-fold$=":1"]');
+    const pm = await ap.evaluate(() => { const fs = document.querySelector('.drw-props [data-fold$=":1"]').closest("fieldset");
+      return { head: document.querySelector(".drw-pm-head b")?.textContent, kind: document.querySelector(".drw-pm-head small")?.textContent, pal: [...document.querySelectorAll(".drw-pal")].reduce((h, e) => h + e.offsetHeight, 0),
+        folded: fs.classList.contains("folded"), inner: fs.querySelector("select")?.offsetHeight ?? -1, aria: fs.querySelector(".drw-fold").getAttribute("aria-expanded"),
+        kept: localStorage.getItem("mc:drwFolds"), palKept: localStorage.getItem("mc:drwPalFold") }; });
+    await ap.click(".drw-pm-x");
+    const pm2 = await ap.evaluate(() => ({ sel: window.__sv.drw.sel?.() ?? null, head: document.querySelector(".drw-pm-head small")?.textContent, x: !!document.querySelector(".drw-pm-x") }));
+    await ap.click('.drw-tree [data-sel]:not([data-sel=""])');
+    const again = await ap.evaluate(() => document.querySelector('.drw-props [data-fold$=":1"]').getAttribute("aria-expanded"));
+    await ap.click('.drw-props [data-fold$=":1"]');
+    await ap.click(".drw-palfold");
+    await ap.click(".drw-pm-x");
+    const pal = await ap.evaluate(() => [...document.querySelectorAll(".drw-pal")].reduce((h, e) => h + e.offsetHeight, 0));
+    check(pm.head === "Drawing View1" && pm.kind === "Model view" && pm.pal === 0 && pm.folded && pm.inner === 0 && pm.aria === "false" && /v:model:1/.test(pm.kept ?? "") && pm.palKept === "1"
+      && pm2.head === "Sheet" && !pm2.x && again === "false" && pal > 0,
+      `drawing: side panel: palette folds, view properties have a title row, groups fold and stay folded, ✕ goes back to the sheet (${JSON.stringify([pm, pm2, again, pal])})`);
     // 1.82.0 break view (FR-DRW-015): select the first front view, leave out u = −25…15 mm; it closes up to a 6 mm gap.
     const fv = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views[0]; const pl = window.__sv.drw.placement(v.id); return { id: v.id, x: v.x, y: v.y, s: pl.s, w: pl.box[2] - pl.box[0], uc: pl.uc }; });
     const clickAt = async (x, y) => { const q = await ap.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await ap.mouse.click(q[0], q[1]); };
