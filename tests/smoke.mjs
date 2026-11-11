@@ -3364,12 +3364,12 @@ try {
     await mp.selectOption('#mc-pm select[data-k="kind"]', "tapped");
     await idle();
     const holePanel = await mp.evaluate(() => ({ n: document.querySelector('#mc-pm [data-focus="pts"]')?.textContent, d: document.querySelector('#mc-pm input[data-num="diameter"]')?.value, td: document.querySelector('#mc-pm input[data-num="threadDepth"]')?.value }));
-    // 1.509: a through tapped hole's thread can run through all too: the depth box goes, the 3D thread is the plate's 20 mm.
+    // 1.511: a through tapped hole's thread can run through all too: the depth box goes, the 3D thread is the plate's 20 mm.
     const thrSel = await mp.evaluate(() => document.querySelector('#mc-pm select[data-k="threadEnd"]')?.value ?? null);
     await mp.selectOption('#mc-pm select[data-k="threadEnd"]', "through").catch(() => {});
     await idle();
     const thrAll = await mp.evaluate(() => ({ box: !!document.querySelector('#mc-pm input[data-num="threadDepth"]'), len: Object.values(window.__sv.model.last()?.frames ?? {}).find(f => f.len)?.len ?? null }));
-    check(thrSel === "blind" && !thrAll.box && Array.isArray(thrAll.len) && thrAll.len.length === 2 && thrAll.len.every(x => Math.abs(x - 20) < 0.01), `model 1.509: tapped hole thread end Through all (${thrSel}, ${JSON.stringify(thrAll)})`);
+    check(thrSel === "blind" && !thrAll.box && Array.isArray(thrAll.len) && thrAll.len.length === 2 && thrAll.len.every(x => Math.abs(x - 20) < 0.01), `model 1.511: tapped hole thread end Through all (${thrSel}, ${JSON.stringify(thrAll)})`);
     await mp.click("#mc-ok");
     await idle();
     const vHole = await vol(), stHole = await lastSt();
