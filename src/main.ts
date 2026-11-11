@@ -175,6 +175,7 @@ const asm = new AsmController({
   setDoc: label => setDoc(label, "ready"),
   selectLeftTab: tab => showLeftTab(tab),
   leaveOthers: () => { docs?.before3d(); ++loadToken; modeller.close(); },
+  measureTool: () => state.tool,
   opened: label => docs?.opened("asm", label),
   openParts: () => (docs?.tabs ?? []).filter(x => x.kind === "part" && x.state).map(x => { const st = x.state as PartTab; return { doc: st.store.doc, fileName: st.fileName || `${st.store.doc.name}.mcadprt` }; }),
   // Edit part in place: the part takes over the assembly's tab, and Return to assembly takes it back.
