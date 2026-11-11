@@ -24,7 +24,7 @@ import { evaluate, ExprError, isPlain } from "./expr";
 import { journalDrop, journalList, journalSave, packPart, unpackPart, PART_EXT, type JournalEntry } from "./file";
 import { snapshotList, snapshotRead, snapshotSave, SNAPSHOT_KEEP } from "./snapshots";
 import { ModelKernel, type Rebuild } from "./kernelClient";
-import { pathId, hasDir2, dir2Apart, dir2Blind, clearDir2, threadThrough, holeExits, DIR2_ENDS, type Dir2End } from "./types";
+import { pathId, hasDir2, dir2Apart, dir2Blind, clearDir2, threadThrough, holeExits, headKind, DIR2_ENDS, type Dir2End } from "./types";
 import { parseXyz } from "./curves";
 import { textPolys, TEXT_FONTS } from "../sketch/text";
 import { ctxRefs, type PartContext } from "./context";
@@ -215,12 +215,12 @@ function applyHoleSize(f: HoleFeature) {
     if (f.end === "blind" && f.depth.v < f.threadDepth.v + h.pitch * 2) f.depth = { v: Math.round((f.threadDepth.v + f.major * 0.5) * 10) / 10 };
   } else f.diameter = { v: h.clear[fit] };
   // The head pocket follows the screw type (FR-FT-051); a type without this size falls back to the default one.
-  const pocket = f.kind === "csink" ? "csink" : "cbore";
+  const pocket = headKind(f) === "csink" ? "csink" : "cbore";
   if (f.screw && !screwTypes(f.size, pocket).includes(f.screw)) delete f.screw;
-  if (f.screw === defaultScrew(pocket) || (f.kind !== "cbore" && f.kind !== "csink" && f.kind !== "cdrill")) delete f.screw;
+  if (f.screw === defaultScrew(pocket) || (headKind(f) !== "cbore" && headKind(f) !== "csink" && f.kind !== "cdrill")) delete f.screw;
   const hp = headPocket(f.size, f.screw, pocket) ?? headPocket(f.size, undefined, pocket)!;
-  if (f.kind === "cbore") { f.cbDia = { v: hp[0] }; f.cbDepth = { v: hp[1] }; }
-  if (f.kind === "csink") { f.csDia = { v: hp[0] }; f.csAngle = { v: (hp[1] * Math.PI) / 180 }; }
+  if (headKind(f) === "cbore") { f.cbDia = { v: hp[0] }; f.cbDepth = { v: hp[1] }; }
+  if (headKind(f) === "csink") { f.csDia = { v: hp[0] }; f.csAngle = { v: (hp[1] * Math.PI) / 180 }; }
   // Counterdrill: as wide as the screw head's counterbore, to the same depth, with a 118° bottom.
   if (f.kind === "cdrill") { f.cdDia = { v: hp[0] }; f.cdDepth = { v: hp[1] }; f.cdAngle = { v: (118 * Math.PI) / 180 }; }
   if (f.kind !== "tapped") { delete f.tclass; delete f.threadMode; }
@@ -6582,14 +6582,15 @@ export class ModelController {
             : f.kind !== "insert" ? sel("standard", t("Standard"), [["iso", t("ISO metric")], ["isofine", t("ISO metric fine")], ["unc", t("ANSI inch UNC")], ["unf", t("ANSI inch UNF")]], holeStd(f)) : "")
           + sel("size", t("Size"), [["", t("Custom")], ...(f.kind === "insert" ? HEAT_INSERTS : f.kind === "ptap" ? TAPER_STANDARDS[f.standard === "bspt" ? "bspt" : "npt"] : HOLE_STANDARDS[holeStd(f)]).map(h => [h.size, h.size] as [string, string])], f.size ?? "")
           + (f.kind === "insert" && insertSize(f.size) ? `<p class="pm-help muted" data-insert>${esc(t("Insert length {l} mm; keep at least {w} mm of wall around the hole (boss Ø {b} mm).", { l: trimNum(insertSize(f.size)!.length, 2), w: trimNum(insertSize(f.size)!.wall, 2), b: trimNum(insertSize(f.size)!.hole + 2 * insertSize(f.size)!.wall, 2) }))}</p>` : "")
-          + ((f.kind === "cbore" || f.kind === "csink" || f.kind === "cdrill") && f.size && screwTypes(f.size, f.kind === "csink" ? "csink" : "cbore").length > 1
-            ? sel("screw", t("Screw type"), screwTypes(f.size, f.kind === "csink" ? "csink" : "cbore").map(k => [k, t(SCREW_TYPES.find(x => x.key === k)!.label)] as [string, string]), f.screw ?? defaultScrew(f.kind === "csink" ? "csink" : "cbore")) : "")
+          + ((headKind(f) === "cbore" || headKind(f) === "csink" || f.kind === "cdrill") && f.size && screwTypes(f.size, headKind(f) === "csink" ? "csink" : "cbore").length > 1
+            ? sel("screw", t("Screw type"), screwTypes(f.size, headKind(f) === "csink" ? "csink" : "cbore").map(k => [k, t(SCREW_TYPES.find(x => x.key === k)!.label)] as [string, string]), f.screw ?? defaultScrew(headKind(f) === "csink" ? "csink" : "cbore")) : "")
           + (f.kind !== "tapped" && f.kind !== "ptap" && f.kind !== "insert" && f.size ? sel("fit", t("Clearance fit"), [["close", t("Close fit")], ["normal", t("Normal fit")], ["loose", t("Loose fit")]], f.fit ?? "normal") : ""))
         + group(t("Hole specification"), numField("diameter", f.kind === "tapped" || f.kind === "ptap" ? t("Tap drill diameter") : t("Diameter"), f.diameter, "length")
           + (f.kind === "ptap" ? numField("taperDia", t("Tapered diameter at the face"), f.taperDia ?? { v: f.diameter.v * 1.1 }, "length") : "")
-          + (f.kind === "cbore" ? numField("cbDia", t("Counterbore diameter"), f.cbDia ?? { v: f.diameter.v * 1.7 }, "length") + numField("cbDepth", t("Counterbore depth"), f.cbDepth ?? { v: f.diameter.v }, "length") : "")
-          + (f.kind === "csink" ? numField("csDia", t("Countersink diameter"), f.csDia ?? { v: f.diameter.v * 2 }, "length") + numField("csAngle", t("Countersink angle"), f.csAngle ?? { v: Math.PI / 2 }, "angle") : "")
+          + (headKind(f) === "cbore" ? numField("cbDia", t("Counterbore diameter"), f.cbDia ?? { v: f.diameter.v * 1.7 }, "length") + numField("cbDepth", t("Counterbore depth"), f.cbDepth ?? { v: f.diameter.v }, "length") : "")
+          + (headKind(f) === "csink" ? numField("csDia", t("Countersink diameter"), f.csDia ?? { v: f.diameter.v * 2 }, "length") + numField("csAngle", t("Countersink angle"), f.csAngle ?? { v: Math.PI / 2 }, "angle") : "")
           + (f.kind === "cdrill" ? numField("cdDia", t("Counterdrill diameter"), f.cdDia ?? { v: f.diameter.v * 1.7 }, "length") + numField("cdDepth", t("Counterdrill depth"), f.cdDepth ?? { v: f.diameter.v }, "length") + numField("cdAngle", t("Counterdrill angle"), f.cdAngle ?? { v: (118 * Math.PI) / 180 }, "angle") : "")
+          + (f.kind === "slot" ? sel("slotHead", t("Slot type"), [["", t("Straight slot")], ["cbore", t("Counterbored slot")], ["csink", t("Countersunk slot")]], f.slotHead ?? "") : "")
           + (f.kind === "slot" ? numField("slotLen", t("Slot length"), f.slotLen ?? { v: f.diameter.v * 2 }, "length") + numField("slotAngle", t("Slot angle"), f.slotAngle ?? { v: 0 }, "angle") : ""))
         + group(t("End condition"), sel("end", t("End condition"), [["blind", t("Blind")], ["through", t("Through all")], ["next", t("Up to next")], ["vertex", t("Up to vertex")], ["upto", t("Up to face or plane")], ["offset", t("Offset from surface")]], f.end)
           + (f.end === "upto" || f.end === "offset" ? hbox("hupto", t("Up to"), this.refLabel(f.upTo)) + `<p class="pm-help muted">${esc(t("Click a flat face or a plane in the view or the tree."))}</p>` : "")
@@ -6606,9 +6607,9 @@ export class ModelController {
           (f.kind === "ptap" ? sel("threadMode", t("Thread display"), [["", t("Cosmetic thread")], ["remove", t("Remove thread")]], f.threadMode ?? "") : "")
           + (f.kind === "tapped" ? sel("threadMode", t("Thread display"), [["", t("Cosmetic thread")], ["remove", t("Remove thread")], ["none", t("No cosmetic thread")]], f.threadMode ?? "")
             + (f.size ? sel("tclass", t("Thread class"), threadClasses(f.size).map(c => [c, c] as [string, string]), f.tclass ?? threadClasses(f.size)[0]) : "") : "")
-          + (f.kind === "cbore" || f.kind === "csink" ? chk("optHead", !!f.headClear, t("Head clearance")) + (f.headClear ? numField("headClear", t("Head clearance"), f.headClear, "length") : "") : "")
-          + (f.kind !== "csink" ? chk("optNear", !!f.nearCs, t("Near side countersink")) + (f.nearCs ? numField("nearCs.dia", t("Diameter"), f.nearCs.dia, "length") + numField("nearCs.angle", t("Angle"), f.nearCs.angle, "angle") : "") : "")
-          + (f.kind === "cbore" ? chk("optUnder", !!f.underCs, t("Under head countersink")) + (f.underCs ? numField("underCs.dia", t("Diameter"), f.underCs.dia, "length") + numField("underCs.angle", t("Angle"), f.underCs.angle, "angle") : "") : "")
+          + (headKind(f) === "cbore" || headKind(f) === "csink" ? chk("optHead", !!f.headClear, t("Head clearance")) + (f.headClear ? numField("headClear", t("Head clearance"), f.headClear, "length") : "") : "")
+          + (headKind(f) !== "csink" ? chk("optNear", !!f.nearCs, t("Near side countersink")) + (f.nearCs ? numField("nearCs.dia", t("Diameter"), f.nearCs.dia, "length") + numField("nearCs.angle", t("Angle"), f.nearCs.angle, "angle") : "") : "")
+          + (headKind(f) === "cbore" ? chk("optUnder", !!f.underCs, t("Under head countersink")) + (f.underCs ? numField("underCs.dia", t("Diameter"), f.underCs.dia, "length") + numField("underCs.angle", t("Angle"), f.underCs.angle, "angle") : "") : "")
           + (holeExits(f) && f.kind !== "slot" ? chk("optFar", !!f.farCs, t("Far side countersink")) + (f.farCs ? numField("farCs.dia", t("Diameter"), f.farCs.dia, "length") + numField("farCs.angle", t("Angle"), f.farCs.angle, "angle") : "") : "")));
       const posTab = group(t("Positions"), hbox("hplane", t("Face"), this.refLabel(f.plane)) + hbox("pts", t("Hole positions"), t("{n} hole|{n} holes", { n: f.pts.length }))
           + (f.pts.length ? `<ul class="pm-items pm-hpts" aria-label="${esc(t("Hole positions"))}">${f.pts.map((p, i) => `<li><span>${i + 1}</span>${holeAxes(this.last?.frames[f.id]).names.map((ax, j) => `<span class="pm-in"><span class="muted">${ax}</span><input type="text" inputmode="decimal" data-hp="${i}:${j}" value="${esc(trimNum(holeAxes(this.last?.frames[f.id]).show(p)[j] * UNITS[unit].f, 6))}" aria-label="${esc(t("Hole {n}", { n: i + 1 }))} ${ax}" spellcheck="false" /></span>`).join("")}<button class="icon" data-rmh="${i}" title="${esc(t("Remove"))}" aria-label="${esc(t("Remove"))} ${esc(t("Hole {n}", { n: i + 1 }))}">✕</button></li>`).join("")}</ul>` : "")
@@ -6883,7 +6884,7 @@ export class ModelController {
           upd(() => {
             // Defaults: 1 mm of head clearance; countersinks 1 mm wider than what they open, at 90°.
             const sink = (d: number): HoleSink => ({ dia: { v: Math.round((d + 1) * 100) / 100 }, angle: { v: Math.PI / 2 } });
-            const topDia = f.kind === "cbore" ? f.cbDia?.v ?? f.diameter.v : f.kind === "cdrill" ? f.cdDia?.v ?? f.diameter.v : f.diameter.v;
+            const topDia = headKind(f) === "cbore" ? f.cbDia?.v ?? f.diameter.v : f.kind === "cdrill" ? f.cdDia?.v ?? f.diameter.v : f.diameter.v;
             if (k === "optHead") { if (val) f.headClear = { v: 1 }; else delete f.headClear; }
             if (k === "optNear") { if (val) f.nearCs = sink(topDia); else delete f.nearCs; }
             if (k === "optUnder") { if (val) f.underCs = sink(f.diameter.v); else delete f.underCs; }
@@ -6910,6 +6911,17 @@ export class ModelController {
           }, true);
           return;
         }
+        if (f.type === "hole" && k === "slotHead") {
+          upd(() => {
+            if (val) f.slotHead = val as HoleFeature["slotHead"]; else { delete f.slotHead; delete f.screw; delete f.headClear; delete f.underCs; }
+            delete f.cbDia; delete f.cbDepth; delete f.csDia; delete f.csAngle;
+            if (f.slotHead === "csink") { delete f.nearCs; delete f.underCs; }
+            if (f.size) applyHoleSize(f);
+            if (f.slotHead === "cbore") { f.cbDia ??= { v: Math.round(f.diameter.v * 17) / 10 }; f.cbDepth ??= { v: f.diameter.v }; }
+            if (f.slotHead === "csink") { f.csDia ??= { v: f.diameter.v * 2 }; f.csAngle ??= { v: Math.PI / 2 }; }
+          }, true);
+          return;
+        }
         if (f.type === "hole" && (k === "screw" || k === "tclass" || k === "threadMode")) {
           upd(() => {
             if (k === "screw") { if (val) f.screw = val as HoleFeature["screw"]; else delete f.screw; if (f.size) applyHoleSize(f); }
@@ -6932,13 +6944,13 @@ export class ModelController {
             if (k === "fit") f.fit = val as HoleFeature["fit"];
             if (f.size) applyHoleSize(f);
             else {
-              if (f.kind === "cbore") { f.cbDia ??= { v: Math.round(f.diameter.v * 17) / 10 }; f.cbDepth ??= { v: f.diameter.v }; }
-              if (f.kind === "csink") { f.csDia ??= { v: f.diameter.v * 2 }; f.csAngle ??= { v: Math.PI / 2 }; }
+              if (headKind(f) === "cbore") { f.cbDia ??= { v: Math.round(f.diameter.v * 17) / 10 }; f.cbDepth ??= { v: f.diameter.v }; }
+              if (headKind(f) === "csink") { f.csDia ??= { v: f.diameter.v * 2 }; f.csAngle ??= { v: Math.PI / 2 }; }
               if (f.kind === "tapped") f.threadDepth ??= { v: f.diameter.v * 2 };
               if (f.kind === "ptap") { f.taperDia ??= { v: Math.round(f.diameter.v * 11) / 10 }; f.threadDepth ??= { v: f.diameter.v }; }
               if (f.kind === "cdrill") { f.cdDia ??= { v: Math.round(f.diameter.v * 17) / 10 }; f.cdDepth ??= { v: f.diameter.v }; f.cdAngle ??= { v: (118 * Math.PI) / 180 }; }
             }
-            if (f.kind === "slot") { f.slotLen ??= { v: Math.round(f.diameter.v * 20) / 10 }; f.slotAngle ??= { v: 0 }; } else { delete f.slotLen; delete f.slotAngle; }
+            if (f.kind === "slot") { f.slotLen ??= { v: Math.round(f.diameter.v * 20) / 10 }; f.slotAngle ??= { v: 0 }; } else { delete f.slotLen; delete f.slotAngle; delete f.slotHead; }
             if (f.kind === "clear" && !f.size) { f.size = "M6"; applyHoleSize(f); }
           }, true);
           return;

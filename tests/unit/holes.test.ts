@@ -78,6 +78,10 @@ test("hole options: near/far side and under head countersinks, head clearance cu
   near(run({ kind: "ptap", taperDia: { v: 12 }, threadDepth: { v: 16 } }), cone(6, 5.5, 16) + PI * 25 * 4, "tapered tap");
   near(run({ kind: "ptap", taperDia: { v: 10.5 }, threadDepth: { v: 16 } }), cone(5.25, 5, 8) + PI * 25 * 12, "tapered tap meets the drill");
   near(run({ kind: "ptap", taperDia: { v: 12 }, major: 13, threadDepth: { v: 16 }, threadMode: "remove" }), cone(6.5, 6, 16) + PI * 25 * 4, "tapered tap, remove thread");
+  // Counterbored and countersunk slots: the head pocket swept along the slot too (obround area = πρ² + 2ρL).
+  const ob = (rho: number) => PI * rho * rho + 2 * rho * 20;
+  near(run({ kind: "slot", slotLen: { v: 20 }, slotHead: "cbore", cbDia: { v: 18 }, cbDepth: { v: 6 } }), ob(9) * 6 + ob(5) * 14, "counterbored slot");
+  near(run({ kind: "slot", slotLen: { v: 20 }, slotHead: "csink", csDia: { v: 20 }, csAngle: { v: PI / 2 } }), cone(10, 5, 5) + 2 * 20 * 37.5 + ob(5) * 15, "countersunk slot");
   near(run({ end: "vertex", upToVertex: { edge: { faces: ["f1:side:s1l1", "f1:side:s1l2"] }, at: [50, -30, 0] } }), PI * 25 * 20, "up to vertex");
   // An option countersink narrower than what it opens is refused.
   const bad = m.evaluate(doc([rect("s1", 100, 60), { id: "f1", type: "extrude", name: "E", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },

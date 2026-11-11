@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.532.0] - 2026-11-11
+
+### Added
+- Hole Wizard **Slot type**: a slot can now be Straight, Counterbored or Countersunk. The counterbore or countersink for the chosen screw is swept along the slot like the slot itself, with the same sizes as a round counterbored or countersunk hole; the callout and the panel section show the head pocket.
+
 ## [1.531.0] - 2026-11-11
 
 ### Added
@@ -3307,7 +3312,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.531.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.532.0...HEAD
+[1.532.0]: https://github.com/kothf/step-viewer/compare/v1.531.0...v1.532.0
 [1.531.0]: https://github.com/kothf/step-viewer/compare/v1.530.0...v1.531.0
 [1.530.0]: https://github.com/kothf/step-viewer/compare/v1.529.0...v1.530.0
 [1.529.0]: https://github.com/kothf/step-viewer/compare/v1.528.0...v1.529.0
