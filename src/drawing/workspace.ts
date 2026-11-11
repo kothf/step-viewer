@@ -3066,7 +3066,12 @@ export class DrawingWorkspace {
       + annRows("", 1) + [...groups.keys()].filter(k => k && !findView(sh, k)).map(k => annRows(k, 1)).join("");
     const on = host.querySelector<HTMLElement>(".drw-ti.on");
     if (hadFocus) on?.focus({ preventScroll: true });
-    on?.scrollIntoView?.({ block: "nearest" });
+    // Bring the selected row into the side panel's view; only the panel scrolls (scrollIntoView would move the page too).
+    const pane = host.closest<HTMLElement>("aside");
+    if (on && pane && pane.scrollHeight > pane.clientHeight) {
+      const r = on.getBoundingClientRect(), b = pane.getBoundingClientRect();
+      if (r.top < b.top) pane.scrollTop -= b.top - r.top; else if (r.bottom > b.bottom) pane.scrollTop += r.bottom - b.bottom;
+    }
   }
 
   /** Opens or folds an annotation group of the tree. */
@@ -3100,8 +3105,9 @@ export class DrawingWorkspace {
   /** The pointer over a tree row outlines that view or annotation on the sheet. */
   private treeHover(e: PointerEvent, leave: boolean) {
     const r = leave ? null : (e.target as HTMLElement).closest?.<HTMLElement>(".drw-tree [data-sel], .drw-tree [data-sela]");
+    // Only the tree's own rows: the sheet keeps its hover from the pointer (onMove).
+    if (!r && !this.treeHov) return;
     const v = r?.dataset.sel || null, a = r?.dataset.sela || null;
-    if (leave && !this.hoverA && !this.treeHov) return;
     this.treeHov = !!r;
     if (v === this.hover && a === this.hoverA) return;
     this.hover = v; this.hoverA = a;
