@@ -194,9 +194,10 @@ export function edgeCount(oc: any, shape: any): number {
 
 /** The exact HLR, or `projectFast` (chord 1/1000 of the model's size) for models of `FAST_EDGES` edges or more. */
 export function projectAuto(oc: any, shape: any, view: ViewDir, tol = 0.02, fast = FAST_EDGES): Projection {
-  if (edgeCount(oc, shape) < fast) return project(oc, shape, view, tol);
+  const n = edgeCount(oc, shape);
+  if (n < fast) return project(oc, shape, view, tol);
   const [lo, hi] = shapeBox(oc, shape);
-  return projectFast(oc, shape, view, Math.max(0.01, Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 1000));
+  return projectFast(oc, shape, view, Math.max(0.01, Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 1000), n);
 }
 
 /** A circle seen end-on in a view: centre on the sheet (model mm) and radius. */
@@ -245,12 +246,16 @@ export function viewCurves(oc: any, shape: any, view: ViewDir): { circles: Circl
 }
 
 /**
- * Angular deflection of the fast views' mesh (rad). The chord error (1/1000 of the model) already bounds every
- * chord's sag; the angle only refines small round features below it (sag r·a²/8). 0.1 made them ~10 times finer than
- * needed: on the engine assembly 0.3 meshes in 1.8 s instead of 5.9 s and each polygonal HLR takes 1.0 s instead of
- * 2.2 s, and the Front view's visible lines agree within 0.6 mm (1.2 chord errors) for all but 0.1 % of their length.
+ * Angular deflection of the fast views' mesh (rad). 1.497.0 tried 0.3 (the chord error of 1/1000 of the model already
+ * bounds the sag, and the engine's Front view meshed 3 times faster), but OCCT's polygonal HLR then never returned on
+ * the engine's Top and Left views (drawings exam round five: Standard 3 views stuck at "2 to go"), so it is 0.1 again.
+ * `?drwangle=<rad>` still tries others.
  */
-export const FAST_ANGLE = 0.3;
+export const FAST_ANGLE = 0.1;
+
+/** The angle the fast views use: `FAST_ANGLE`, or `?drwangle=<rad>` sent by the client (to compare meshes on one build). */
+let fastAngle = FAST_ANGLE;
+export function setFastAngle(a: number): void { if (a > 0 && a < 1.6) fastAngle = a; }
 
 /**
  * Fast hidden-line removal for big models (drawings exam: a 57-part assembly never finished the exact HLR):
@@ -259,26 +264,41 @@ export const FAST_ANGLE = 0.3;
  * model become exact arcs of it (centre and radius from the B-rep, not fitted), so dimensions, centre marks and
  * picking work as on an exact view. Other curves stay polylines within `lin` mm.
  */
-export function projectFast(oc: any, shape: any, view: ViewDir, lin: number): Projection {
+/** Edges below which an empty fast view may fall back to the exact HLR (see `projectFast`). */
+export const EXACT_FALLBACK_EDGES = 4000;
+
+/** What `projectFast` fails with when no mesh gives visible lines and the model is too big for the exact HLR. */
+export const NO_FAST_LINES = "NO_FAST_LINES";
+
+export function projectFast(oc: any, shape: any, view: ViewDir, lin: number, edges?: number): Projection {
   const t0 = Date.now();
   const poly = (l: number, a: number): Projection => {
     try { return projectPoly(oc, shape, view, l, a); } catch (e) { return { vis: [], hid: [], box: [0, 0, 0, 0], ms: 0, fail: e instanceof Error ? e.message : String(e) }; }
   };
-  let p = poly(lin, FAST_ANGLE);
+  let p = poly(lin, fastAngle);
+  const t1 = Date.now();
   // The polygonal HLR can come back empty (drawings exam round three: an engine assembly got views with no
-  // lines at all). Try again on a fresh, coarser mesh (what the previews use), then fall back to the exact HLR.
-  if (!p.vis.length) {
-    console.warn(`Fast view: the polygonal HLR gave ${p.hid.length} hidden and no visible lines${p.fail ? ` (${p.fail})` : ""}; trying a coarser mesh.`);
+  // lines at all). Try again on a fresh mesh at a finer angle, then on a coarser one (what the previews use).
+  const retries: [number, number][] = [[lin, fastAngle === 0.1 ? 0.05 : 0.1], [lin * 10 / 3, 0.5]];
+  for (const [l, a] of retries) {
+    if (p.vis.length) break;
+    console.warn(`Fast view: the polygonal HLR gave ${p.hid.length} hidden and no visible lines${p.fail ? ` (${p.fail})` : ""}; trying a fresh mesh (${a} rad).`);
     try { oc.BRepTools.Clean(shape, true); } catch { /* keep the old mesh */ }
-    p = poly(lin * 10 / 3, 0.5);
+    p = poly(l, a);
   }
   if (!p.vis.length) {
-    console.warn(`Fast view: still no visible lines${p.fail ? ` (${p.fail})` : ""}; using the exact HLR.`);
-    return project(oc, shape, view, 0.02);
+    // The exact HLR only for models it can finish: on a big assembly it runs for 20+ minutes and holds the worker,
+    // so every later view waits behind it (exam round five: "Projecting the views… 2 to go" for ever).
+    const n = edges ?? edgeCount(oc, shape);
+    console.warn(`Fast view: still no visible lines${p.fail ? ` (${p.fail})` : ""}; ${n < EXACT_FALLBACK_EDGES ? "using the exact HLR" : `${n} edges is too many for the exact HLR`}.`);
+    if (n < EXACT_FALLBACK_EDGES) return project(oc, shape, view, 0.02);
+    throw new Error(NO_FAST_LINES);
   }
   const { circles, lines } = viewCurves(oc, shape, view);
   const vis = exactify(p.vis, circles, lin, lines), hid = underLines(exactify(p.hid, circles, lin, lines), vis, Math.max(1e-4, lin * 1.5));
-  return { vis, hid: unhide(hid, vis), box: bounds(vis.length ? vis : hid), ms: Date.now() - t0, fast: true };
+  const out = unhide(hid, vis), t2 = Date.now();
+  console.info(`Fast view [${view.dir.map(v => +v.toFixed(3))}]: mesh + polygonal HLR ${t1 - t0} ms (${fastAngle} rad, ${p.vis.length} + ${p.hid.length} segments), exact curves ${t2 - t1} ms.`);
+  return { vis, hid: out, box: bounds(vis.length ? vis : hid), ms: t2 - t0, fast: true };
 }
 
 /** Polylines (and chords) of a polygonal HLR turned into lines, exact arcs of `circles` and leftover polylines (see `projectFast`). */
