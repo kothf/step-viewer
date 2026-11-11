@@ -4611,4 +4611,6 @@ export const RU: Record<string, string> = {
   "Click a plane or flat face across the direction: the last instance stops the offset short of it, measured from the seed's centre.": "Щёлкните плоскость или плоскую грань поперёк направления: последний экземпляр останавливается, не доходя до неё на смещение (отсчёт от центра исходного элемента).",
   "The reference must cross the pattern direction (not lie along it).": "Ссылка должна пересекать направление массива (а не лежать вдоль него).",
   "The reference lies behind the seed: reverse the direction.": "Ссылка лежит позади исходного элемента: смените направление.",
+  "Click a face of each body to cut; the other bodies are left as they are.": "Щёлкните грань каждого тела, которое нужно вырезать; остальные тела не меняются.",
+  "Click a face of each body to merge with; the other bodies are left as they are.": "Щёлкните грань каждого тела, с которым нужно объединить; остальные тела не меняются.",
 };

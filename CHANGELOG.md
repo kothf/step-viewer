@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.505.0] - 2026-11-11
+
+### Added
+
+- Feature scope (FR-FT-007), as in SolidWorks: in a part with several bodies, an extruded or revolved cut, or a boss that merges, can act on picked bodies only. Untick All bodies in the Feature scope group and click a face of each body to cut or merge with; the other bodies are left as they are.
+
 ## [1.504.0] - 2026-11-11
 
 ### Changed
@@ -3120,7 +3126,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.504.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.505.0...HEAD
+[1.505.0]: https://github.com/kothf/step-viewer/compare/v1.504.0...v1.505.0
 [1.504.0]: https://github.com/kothf/step-viewer/compare/v1.503.0...v1.504.0
 [1.503.0]: https://github.com/kothf/step-viewer/compare/v1.502.0...v1.503.0
 [1.502.0]: https://github.com/kothf/step-viewer/compare/v1.501.0...v1.502.0

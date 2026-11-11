@@ -60,12 +60,12 @@ export function pasteClip(doc: PartDoc, clip: Clip, plane: PlaneRef, newId: (p: 
       if (f.end2 === "blind" && f.end === "blind") delete f.end2;
       delete f.upTo2; delete f.upToOffset2; delete f.reverseOffset2; delete f.upToVertex2; delete f.upToBody2;
       if (f.start === "surface" || f.start === "vertex") { delete f.start; lost.add(LOST.start); }
-      delete f.startRef; delete f.startVertex;
+      delete f.startRef; delete f.startVertex; delete f.scope;
       f.name = nextName(names, "extrude", f.op === "cut");
     } else if (f.type === "revolve") {
       f.sketch = ids.get(f.sketch) ?? f.sketch;
       if (f.end === "upto") { delete f.end; lost.add(LOST.end); }
-      delete f.upTo;
+      delete f.upTo; delete f.scope;
       f.name = nextName(names, "revolve");
     } else if (f.type === "hole") {
       f.plane = plane;

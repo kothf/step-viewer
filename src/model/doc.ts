@@ -139,6 +139,7 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
   };
   if (f.type === "extrude" || f.type === "revolve") features.push(f.sketch);
   if (f.type === "extrude" || f.type === "revolve") plane(f.upTo);
+  if (f.type === "extrude" || f.type === "revolve") faces.push(...(f.scope ?? []).map(x => x.name));
   if (f.type === "extrude") {
     const vtx = (v: VertexRef | undefined) => { if (v) { if ("point" in v) features.push(v.point); else faces.push(...v.edge.faces); } };
     if (f.end === "vertex") vtx(f.upToVertex);

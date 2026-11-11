@@ -139,7 +139,7 @@ type Mode =
   | { kind: "cfg" };
 
 /** Which selection box of the feature panel the next click in the view fills. */
-type Focus = "wbodies" | "wbound" | "wfaces" | "wf1" | "wf2" | "tsurf" | "ttool" | "keep" | "fs1" | "fs2" | "fc" | "main" | "bodies" | "base" | "axis" | "upto" | "start" | "origin" | "cx" | "cz" | "seeds" | "psketch" | "hupto" | "upbody" | "upto2" | "upbody2" | "mthick" | "dir" | "dir2" | "mplane" | "faces" | "hplane" | "pts" | "nplane" | "sbv" | "contours" | "skip" | "pref" | "pref2";
+type Focus = "wbodies" | "wbound" | "wfaces" | "wf1" | "wf2" | "tsurf" | "ttool" | "keep" | "fs1" | "fs2" | "fc" | "main" | "bodies" | "base" | "axis" | "upto" | "start" | "origin" | "cx" | "cz" | "seeds" | "psketch" | "hupto" | "upbody" | "upto2" | "upbody2" | "mthick" | "dir" | "dir2" | "mplane" | "faces" | "hplane" | "pts" | "nplane" | "sbv" | "contours" | "skip" | "pref" | "pref2" | "scope";
 type CopyFeature = MirrorFeature | LinearPatternFeature | CircularPatternFeature | SketchPatternFeature;
 type BodyFeature = IntersectFeature | CombineFeature | IndentFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ScaleFeature;
 /** A fillet or chamfer has what it needs to preview: edges, or the face sets of a face fillet / full round. */
@@ -2258,6 +2258,7 @@ export class ModelController {
       else if (m.kind === "feature" && (m.draft.type === "smconvert" || m.draft.type === "sminsert")) this.pickConvert(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "curve" && m.draft.kind === "projected") this.pickCopy(e);
       else if (m.kind === "feature" && m.draft.type === "sketch3d") this.pick3d(e, m.draft);
+      else if (m.kind === "feature" && (m.draft.type === "extrude" || m.draft.type === "revolve") && m.focus === "scope") this.pickScope(e, m.draft);
       else if (m.kind === "feature" && hasContours(m.draft) && m.focus === "contours") this.pickContour(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "plane") {
         if (m.focus === "axis") this.pickAxis(e);
@@ -2610,6 +2611,33 @@ export class ModelController {
   }
 
   /** The Selected Contours box (FR-FT-010): how many regions are picked, or that the whole sketch is used. */
+  /**
+   * Feature scope (FR-FT-007): for a cut, or a boss with Merge result, in a part with several bodies,
+   * All bodies or the bodies picked in the view.
+   */
+  private scopeGroup(f: ExtrudeFeature | RevolveFeature, focus: Focus | undefined): string {
+    if (f.op === "boss" && f.merge === false) return "";
+    if ((this.last?.bodies?.length ?? 0) < 2 && f.scope === undefined) return "";
+    const all = f.scope === undefined, n = f.scope?.length ?? 0, on = focus === "scope";
+    const label = n ? t("{n} body|{n} bodies", { n }) : t("None");
+    return `<fieldset class="pm-group"><legend>${esc(t("Feature scope"))}</legend>`
+      + `<label class="chk pm-chk"><input type="checkbox" data-k="scopeAll"${all ? " checked" : ""} />${esc(t("All bodies"))}</label>`
+      + (all ? "" : `<div class="pm-field"><span>${esc(t("Bodies"))}</span><button class="pm-box${on ? " focus" : ""}" data-focus="scope" aria-label="${esc(t("Feature scope"))}: ${esc(label)}" translate="no">${esc(label)}</button></div>`
+        + `<p class="pm-help muted">${esc(f.op === "cut" ? t("Click a face of each body to cut; the other bodies are left as they are.") : t("Click a face of each body to merge with; the other bodies are left as they are."))}</p>`)
+      + `</fieldset>`;
+  }
+
+  /** Feature scope: a click on a body's face adds it, a click on a picked body takes it off. */
+  private pickScope(e: PointerEvent, f: ExtrudeFeature | RevolveFeature) {
+    const hit = this.host.faceAt(e.clientX, e.clientY);
+    const fr = hit ? this.faceRef(hit.faceId) : null;
+    if (!fr || fr.name.startsWith(`${f.id}:`)) { toast(t("Click a face of a body.")); return; }
+    const list = f.scope ?? (f.scope = []);
+    const j = list.findIndex(x => x.name === fr.name);
+    if (j >= 0) list.splice(j, 1); else list.push(fr);
+    this.draftChanged();
+  }
+
   private contoursGroup(f: ContourFeature, focus: Focus | undefined): string {
     const n = f.contours?.length ?? 0, need = this.needsContours(f), on = focus === "contours";
     const label = n ? t("{n} region|{n} regions", { n }) : t("All regions");
@@ -6367,7 +6395,7 @@ export class ModelController {
           + (f.end === "blind" || f.end === "mid" ? `<p class="pm-help muted">${esc(t("Or drag the orange arrow in the view."))}</p>` : ""))
         + (f.end !== "mid" && f.end !== "through2" ? group(t("Direction 2"), chk("dir2", hasDir2(f), t("Direction 2")) + (hasDir2(f) ? dir2Body : "")) : "")
         + group(t("Thin feature"), chk("thinOn", !!f.thin, t("Thin feature")) + thinSel)
-        + (needCt ? "" : this.contoursGroup(f, m.focus));
+        + (needCt ? "" : this.contoursGroup(f, m.focus)) + this.scopeGroup(f, m.focus);
     } else if (f.type === "revolve") {
       title = t("Revolve");
       const sk = this.store.feature(f.sketch) as SketchFeature | undefined;
@@ -6381,7 +6409,7 @@ export class ModelController {
         + (rvEnd === "blind" ? group(t("Direction 2"), chk("dir2", !!(f.angle2 && f.angle2.v > 0), t("Direction 2")) + (f.angle2 && f.angle2.v > 0 ? numField("angle2", t("Angle 2"), f.angle2, "angle") : "")) : "")
         + group(t("Profile"), sketchSel(f.sketch) + opSel(f.op) + (f.op === "boss" && this.last?.data ? chk("merge", f.merge !== false, t("Merge result")) : ""))
         + group(t("Thin feature"), chk("thinOn", !!f.thin, t("Thin feature")) + (f.thin ? `<label class="pm-field"><span>${esc(t("Type"))}</span><select data-k="thinMode">${([["inside", t("Inside the profile")], ["outside", t("Outside the profile")], ["mid", t("Mid-plane")]] as const).map(([v, l]) => `<option value="${v}"${f.thin!.mode === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>` + numField("thin.t", t("Thickness"), f.thin.t, "length") : ""))
-        + this.contoursGroup(f, m.focus);
+        + this.contoursGroup(f, m.focus) + this.scopeGroup(f, m.focus);
     } else if (f.type === "fillet" || f.type === "chamfer") {
       title = f.type === "fillet" ? t("Fillet") : t("Chamfer");
       const cm = f.type === "chamfer" ? f.mode ?? "equal" : "equal";
@@ -6937,6 +6965,10 @@ export class ModelController {
         }
         if (isWeldFeature(f)) { const fn = weldChange(f, k, val, this.weldCtx(m.index)); if (fn) { upd(fn, true); return; } }
         if (k === "merge") { upd(() => { if (val) delete (f as ExtrudeFeature).merge; else (f as ExtrudeFeature).merge = false; }); return; }
+        if (k === "scopeAll" && (f.type === "extrude" || f.type === "revolve")) {
+          upd(() => { if (val) { delete f.scope; if (m.focus === "scope") m.focus = undefined; } else { f.scope = []; m.focus = "scope"; } }, true);
+          return;
+        }
         if (k === "dir2") {
           upd(() => {
             const x = f as ExtrudeFeature;
