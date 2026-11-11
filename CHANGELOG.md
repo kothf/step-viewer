@@ -5,10 +5,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.511.0] - 2026-11-11
+## [1.513.0] - 2026-11-11
 
 ### Added
 - Hole: a tapped hole that is not blind (Through all, Up to next, Up to face or plane) has a Thread end choice, Blind or Through all, as in SolidWorks' Hole Wizard. Through all runs the cosmetic thread the whole length of the drill in the 3D view and in drawings, and the drawing callout reads "M6-6H THRU" (or no depth for an up-to hole) instead of a thread depth. The Thread rows now sit under End condition.
+
+## [1.512.0] - 2026-11-11
+
+### Added
+
+- Auxiliary view from a drawn line (FR-DRW-014), as in SolidWorks from a sketched line: with Auxiliary, click a line drawn with Annotate ▸ Line (or a side of a drawn rectangle or polyline) over a view, and the view folds about it, square to that line.
+
+## [1.511.0] - 2026-11-11
+
+### Changed
+
+- Drawings: the Annotation tab beside the sheet shows its 28 tools as icon buttons in groups (Dimensions, Notes and symbols, Geometric tolerancing, Centerlines, Tables, Sheet sketch), like SolidWorks' Annotation tab. Hovering a button shows its name, its shortcut and what to click; the running tool stays highlighted. The Annotate ▾ menu has the same icons, grouped with separators.
 
 ## [1.510.0] - 2026-11-11
 
@@ -3164,7 +3176,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.511.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.513.0...HEAD
+[1.513.0]: https://github.com/kothf/step-viewer/compare/v1.512.0...v1.513.0
+[1.512.0]: https://github.com/kothf/step-viewer/compare/v1.511.0...v1.512.0
 [1.511.0]: https://github.com/kothf/step-viewer/compare/v1.510.0...v1.511.0
 [1.510.0]: https://github.com/kothf/step-viewer/compare/v1.509.0...v1.510.0
 [1.509.0]: https://github.com/kothf/step-viewer/compare/v1.508.0...v1.509.0
