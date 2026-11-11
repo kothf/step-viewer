@@ -9799,6 +9799,28 @@ try {
     await mp.selectOption('#mc-pm select[data-k="kind"]', "twist");
     await settle();
     const ft = await flexState();
+    // 1.553: an arrow on each trim plane; dragging the first one inwards sets its offset.
+    const toScr = p => mp.evaluate(p => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(); const q = new v.camera.position.constructor(...p).project(v.camera); return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height]; }, p);
+    const fh = await mp.evaluate(() => [...document.querySelectorAll("#mc-layer .mc-handle")].map(h => { const b = h.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2, title: h.title }; }).filter(h => /trim plane/.test(h.title)));
+    const b0 = await toScr([-50, 0, 0]), b1 = await toScr([-30, 0, 0]);
+    const grab = fh.length ? [(b0[0] * 0.45 + fh[0].x * 0.55), (b0[1] * 0.45 + fh[0].y * 0.55)] : b0;
+    await mp.mouse.move(grab[0], grab[1]);
+    await mp.mouse.down();
+    for (let i = 1; i <= 6; i++) { await mp.mouse.move(grab[0] + ((b1[0] - b0[0]) * i) / 6, grab[1] + ((b1[1] - b0[1]) * i) / 6); await mp.waitForTimeout(40); }
+    await mp.mouse.up();
+    await settle();
+    const ftrim = await mp.evaluate(() => window.__sv.model.mode().draft?.trim1?.v ?? 0);
+    const fdrag = await flexState();
+    check(fh.length === 2 && ftrim > 12 && ftrim < 28 && Math.abs(fdrag.v - 20000) < 20 && !fdrag.bad,
+      `model 1.553: dragging a Flex trim plane arrow sets its offset (${JSON.stringify({ n: fh.length, ftrim, fdrag })})`);
+    // Triad position: unticking "at the centre" keeps it where it was (0, 0, 0) and shows X/Y/Z; typing X moves it.
+    await mp.click('#mc-pm input[data-k="tcentre"]');
+    await settle();
+    await mp.fill('#mc-pm input[data-k="ox"]', "10");
+    await mp.press('#mc-pm input[data-k="ox"]', "Tab");
+    await settle();
+    const ftri = await mp.evaluate(() => ({ o: window.__sv.model.mode().draft.origin, n: document.querySelectorAll('#mc-pm input[data-k^="o"]').length, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length }));
+    check(ftri.n === 3 && JSON.stringify(ftri.o) === "[10,0,0]" && !ftri.bad, `model 1.553: Flex triad position from the panel (${JSON.stringify(ftri)})`);
     await mp.click("#mc-ok");
     await settle();
     const ffin = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.at(-1); return { type: f.type, kind: f.kind, name: f.name }; });

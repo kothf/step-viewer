@@ -1755,10 +1755,10 @@ export class Modeller {
     let m: FlexMap;
     try { m = flexMap(f, [this.xyz(bb.CornerMin()), this.xyz(bb.CornerMax())]); }
     catch (e) { if (e instanceof FlexError) throw new FeatureError(e.code, e.message); throw e; }
-    // The triad and trim planes for the view: n = flex axis, x = bend direction; len = s1, s2 and the box's half sizes across.
+    // The triad and trim planes for the view: n = flex axis, x = bend direction; len = s1, s2, the box's half sizes across, and its ends lo, hi along n.
     const lo = this.xyz(bb.CornerMin()), hi = this.xyz(bb.CornerMax());
     const half = (d: V3) => Math.abs(dot(add(hi, mul(lo, -1)), d)) / 2 + 1e-3 * (1 + this.size(prev.shape));
-    frames[f.id] = { o: m.o, x: m.b, y: m.c, n: m.a, len: [m.s1, m.s2, half(m.b), half(m.c)] };
+    frames[f.id] = { o: m.o, x: m.b, y: m.c, n: m.a, len: [m.s1, m.s2, half(m.b), half(m.c), m.s1 - (f.trim1?.v ?? 0), m.s2 + (f.trim2?.v ?? 0)] };
     if (flexIdle(m)) return prev;
     const out = list.map((b, i) => (picked.includes(i) ? this.flexBody(f, m, b) : b));
     return this.compoundOf(out);

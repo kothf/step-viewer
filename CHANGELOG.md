@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.553.0] - 2026-11-11
+
+### Added
+
+- Flex: each trim plane has a drag arrow in the view, pointing in from the end of the bodies; dragging it sets the plane's offset (from 0 up to the other plane), as SolidWorks' trim plane handles do. The selected Flex in the tree shows the arrows too and edits in place. The Triad group can place the triad anywhere: untick **Triad at the centre of the bodies** and type its X, Y and Z (it starts where it was, so nothing jumps); the bend and twist keep that point still.
+
 ## [1.552.0] - 2026-11-11
 
 ### Added
@@ -3440,7 +3446,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.552.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.553.0...HEAD
+[1.553.0]: https://github.com/kothf/step-viewer/compare/v1.552.0...v1.553.0
 [1.552.0]: https://github.com/kothf/step-viewer/compare/v1.551.0...v1.552.0
 [1.551.0]: https://github.com/kothf/step-viewer/compare/v1.550.0...v1.551.0
 [1.550.0]: https://github.com/kothf/step-viewer/compare/v1.549.0...v1.550.0
