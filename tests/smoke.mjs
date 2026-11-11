@@ -3422,12 +3422,12 @@ try {
     await mp.selectOption('#mc-pm select[data-k="kind"]', "tapped");
     await idle();
     const holePanel = await mp.evaluate(() => ({ n: document.querySelector('#mc-pm [data-focus="pts"]')?.textContent, d: document.querySelector('#mc-pm input[data-num="diameter"]')?.value, td: document.querySelector('#mc-pm input[data-num="threadDepth"]')?.value }));
-    // 1.515: a through tapped hole's thread can run through all too: the depth box goes, the 3D thread is the plate's 20 mm.
+    // 1.516: a through tapped hole's thread can run through all too: the depth box goes, the 3D thread is the plate's 20 mm.
     const thrSel = await mp.evaluate(() => document.querySelector('#mc-pm select[data-k="threadEnd"]')?.value ?? null);
     await mp.selectOption('#mc-pm select[data-k="threadEnd"]', "through").catch(() => {});
     await idle();
     const thrAll = await mp.evaluate(() => ({ box: !!document.querySelector('#mc-pm input[data-num="threadDepth"]'), len: Object.values(window.__sv.model.last()?.frames ?? {}).find(f => f.len)?.len ?? null }));
-    check(thrSel === "blind" && !thrAll.box && Array.isArray(thrAll.len) && thrAll.len.length === 2 && thrAll.len.every(x => Math.abs(x - 20) < 0.01), `model 1.515: tapped hole thread end Through all (${thrSel}, ${JSON.stringify(thrAll)})`);
+    check(thrSel === "blind" && !thrAll.box && Array.isArray(thrAll.len) && thrAll.len.length === 2 && thrAll.len.every(x => Math.abs(x - 20) < 0.01), `model 1.516: tapped hole thread end Through all (${thrSel}, ${JSON.stringify(thrAll)})`);
     await mp.click("#mc-ok");
     await idle();
     const vHole = await vol(), stHole = await lastSt();
@@ -5897,6 +5897,64 @@ try {
     await ready();
     tx = await texts();
     check(tx.includes("120±0.1") && tx.includes("120") && !tx.includes("?"), `drawing: after the part changes, the dimensions re-attach and update (${tx.filter(s => /^1[02]0/.test(s)).join(" ")})`);
+    await ctx.close();
+  }
+
+  // --- Drawings: annotations on the side view of a round part (Andrey, 2026-11-11): a Ø100 × 10 disc with a Ø10 hole seen
+  // from the front is lines only (cylinder outlines, face rims edge-on, the hole's hidden lines); every leader tool picks
+  // them and its leader lands on the line clicked. ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    const part = { schema: 1, kind: "part", id: "d_drwside", name: "Disc", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "o", t: "point", x: 0, y: 0 }, { id: "c", t: "circle", c: "o", r: 50 }] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 10 } },
+      { id: "s2", type: "sketch", name: "Sketch2", plane: { face: { name: "f1:end" } }, rels: [], dims: [], ents: [{ id: "h0", t: "point", x: 30, y: 0 }, { id: "h1", t: "circle", c: "h0", r: 5 }] },
+      { id: "f2", type: "extrude", name: "Cut1", sketch: "s2", op: "cut", end: "through", depth: { v: 0 } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-11T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "Disc.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
+    await dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
+    const front = await dp.evaluate(() => window.__sv.drw.doc().sheets[0].views[0].id);
+    // View axes ↔ sheet: the front view's box, its scale, and where the hole's hidden lines are (u).
+    const geo = await dp.evaluate(id => {
+      const p = window.__sv.drw.placement(id), u = sx => p.uc + (sx - p.x) / p.s;
+      const hid = window.__sv.drw.prims().filter(q => q.t === "l" && q.layer === "HIDDEN" && Math.abs(q.p[0] - q.p[2]) < 1e-6).map(q => u(q.p[0]));
+      return { box: p.box, s: p.s, x: p.x, uc: p.uc, hid };
+    }, front);
+    const sheetX = u => geo.x + (u - geo.uc) * geo.s;
+    const at = (u, w) => dp.evaluate(([i, a, b]) => { const p = window.__sv.drw.placement(i); return window.__sv.drw.sheetPt(p.x + (a - p.uc) * p.s, p.y + (b - p.vc) * p.s); }, [front, u, w]);
+    const click = async (u, w) => { const [x, y] = await at(u, w); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); };
+    const tool = async an => { await dp.click('#drw [data-a="annot"]'); await dp.click(`#drw [data-an="${an}"]`); };
+    const annots = () => dp.evaluate(() => (window.__sv.drw.doc().sheets[0].annots ?? []).map(a => JSON.parse(JSON.stringify(a))));
+    const [u0, v0, u1, v1] = geo.box, vm = (v0 + v1) / 2, hu = geo.hid.length ? geo.hid.reduce((a, b) => Math.abs(a) < Math.abs(b) ? a : b) : null;
+    // Datum A on the left outline, datum B on the top face (a circle seen edge-on), a hole callout and a position tolerance
+    // on the hole's hidden line, surface finish on the top face, a note to the right outline.
+    await tool("datum"); await click(u0, vm); await click(u0 - 20, vm);
+    await tool("datum"); await click((u0 + u1) / 2 - 20, v1); await click((u0 + u1) / 2 - 20, v1 + 15);
+    if (hu != null) { await tool("hole"); await click(hu, vm); await click(hu + 30, v1 + 25); }
+    if (hu != null) { await tool("gtol"); await click(hu, vm); await click(hu + 20, v0 - 20); }
+    await tool("surf"); await click((u0 + u1) / 2 + 20, v1); await click((u0 + u1) / 2 + 20, v1 + 10);
+    await tool("note"); await click(u1, vm); await click(u1 + 25, vm + 15);
+    await dp.keyboard.press("Escape");
+    await dp.waitForTimeout(150);
+    const an = await annots();
+    const res = await dp.evaluate(() => ({ dangle: document.querySelectorAll("#drw .drw-dangle").length, prims: window.__sv.drw.prims().filter(p => p.layer === "ANNOT").map(p => ({ t: p.t, p: p.p, fill: p.fill, s: p.s })) }));
+    const ends = res.prims.filter(p => p.t === "l" || p.t === "p").flatMap(p => { const o = []; for (let i = 0; i + 1 < p.p.length; i += 2) o.push(p.p[i]); return o; });
+    const touches = u => ends.some(x => Math.abs(x - sheetX(u)) < 0.02);
+    const kinds = an.map(a => a.t).join();
+    const da = an.find(a => a.t === "datum" && a.letter === "A"), db = an.find(a => a.t === "datum" && a.letter === "B"), ho = an.find(a => a.t === "hole");
+    check(hu != null && kinds === "datum,datum,hole,gtol,surf,note" && !!da?.ref?.s && !!db && !!ho?.ref?.s && res.dangle === 0 && touches(u0) && touches(u1) && touches(hu)
+      && res.prims.some(p => p.t === "t" && /Ø10/.test(p.s)),
+      `drawing: on a round part's side view datums, hole callouts, tolerances, surface finish and notes pick its outlines, face lines and hidden lines and land on them (${JSON.stringify({ kinds, hu, a: da?.ref, ho: ho?.ref, dangle: res.dangle, u0: touches(u0), u1: touches(u1), h: hu != null && touches(hu) })})`);
     await ctx.close();
   }
 

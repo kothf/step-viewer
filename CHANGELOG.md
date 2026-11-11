@@ -5,11 +5,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.515.0] - 2026-11-11
+## [1.516.0] - 2026-11-11
 
 ### Added
 - Hole: a tapped hole that is not blind (Through all, Up to next, Up to face or plane) has a Thread end choice, Blind or Through all, as in SolidWorks' Hole Wizard. Through all runs the cosmetic thread the whole length of the drill in the 3D view and in drawings, and the drawing callout reads "M6-6H THRU" (or no depth for an up-to hole) instead of a thread depth. The Thread rows now sit under End condition.
 
+
+
+## [1.515.0] - 2026-11-11
+
+### Fixed
+- Drawings: annotations on the side view of a round part. Notes, datums, geometric tolerances, surface finish, weld symbols, datum targets and balloons now pick a face seen edge-on (the top or bottom line of a disc or flange) as well as a cylinder's outline. Their leaders end on the line that was clicked. Before, a datum on an outline stood on the end face's rim, and one on a face line floated beside the part.
+- Drawings: a hole callout picked on a hole's hidden line from the side points at that line, not at a point in the air beside the hole.
+- Drawings: a cylinder's seam, which the view does not draw, no longer takes clicks from the lines under it.
+- Drawings: a chamfer or taper on a turned part, seen from the side, can be picked by its outline. Dimension it against the end face or the shaft's outline to get its angle (45°), or switch the dimension to Chamfer for 2 × 45°. Before, the click did nothing.
 
 ## [1.514.0] - 2026-11-11
 
@@ -3197,7 +3206,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.515.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.516.0...HEAD
+[1.516.0]: https://github.com/kothf/step-viewer/compare/v1.515.0...v1.516.0
 [1.515.0]: https://github.com/kothf/step-viewer/compare/v1.514.0...v1.515.0
 [1.514.0]: https://github.com/kothf/step-viewer/compare/v1.513.0...v1.514.0
 [1.513.0]: https://github.com/kothf/step-viewer/compare/v1.512.0...v1.513.0
