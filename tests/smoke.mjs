@@ -2344,6 +2344,29 @@ try {
     }, { id: inf.perpId, l1: inf.l1 });
     check(glyph === "perpendicular" && inf.n === 4 && inf.perp && inf.dot < 1e-6 && inf.ctrlFree && inf.par && inf.cross < 1e-6 && inf.status === "ok" && hot.lit && hot.cleared && hot.hidden,
       `model 1.251: automatic perpendicular/parallel relations while drawing, Ctrl suppresses them, relation glyphs light up their entities (${glyph}, ${JSON.stringify(inf)}, ${JSON.stringify(hot)})`);
+    // 1.507.0 (FR-SK-011): A while a line chain is open draws a tangent arc from its end; the chain then goes on as lines.
+    {
+      await tool("line");
+      const arcsBefore = await mp.evaluate(() => window.__sv.model.editor().sk.ents.filter(e => e.t === "arc").map(e => e.id));
+      await click([96, 38]); await click([101, 38]);
+      await mp.keyboard.press("a");
+      const arcMode = await mp.evaluate(() => window.__sv.model.editor().arcMode);
+      await click([104, 41]);
+      const back = await mp.evaluate(() => window.__sv.model.editor().arcMode);
+      await click([104, 45]);
+      await mp.keyboard.press("Escape");
+      const ta = await mp.evaluate(old => {
+        const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id);
+        const arc = sk.ents.find(e => e.t === "arc" && !old.includes(e.id));
+        if (!arc) return { arc: false };
+        const c = P(arc.c), a = P(arc.a), b = P(arc.b);
+        const tan = sk.rels.filter(r => r.t === "tangent" && r.e.includes(arc.id)).length;
+        return { arc: true, r: Math.hypot(a.x - c.x, a.y - c.y), r2: Math.hypot(b.x - c.x, b.y - c.y), c: [c.x, c.y], tan, tool: ed.tool, status: ed.info.status };
+      }, arcsBefore);
+      check(arcMode === true && back === false && ta.arc && Math.abs(ta.r - 3) < 0.05 && Math.abs(ta.r2 - 3) < 0.05 && Math.abs(ta.c[0] - 101) < 0.05 && Math.abs(ta.c[1] - 41) < 0.05 && ta.tan >= 1 && ta.status === "ok",
+        `model 1.507: A in the line tool draws a tangent arc, then lines go on tangent to it (FR-SK-011) (${arcMode}, ${back}, ${JSON.stringify(ta)})`);
+      await tool("select");
+    }
     // 1.266.0 (FR-SK-043/044/047): dragging the last line's start onto the free end of the Ctrl line merges them
     // (coincident relation); Ctrl+drag of that line copies it; the status bar shows the cursor position.
     await tool("select");

@@ -7,11 +7,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [1.507.0] - 2026-11-11
 
-### Fixed
-- Drawings: a tapped Hole Wizard hole shows its cosmetic thread in the views (thin ¾ circle end-on, dashed major-diameter lines from the side, solid in a section), and its callout reads THRU when the thread is as deep as a through hole.
-- Drawings: a plain section view no longer draws the cosmetic threads of material its cut took away.
-- Drawings: Line (Annotation tab) chains on from each end and Rectangle and Circle stay on for the next shape, until Esc; a double-click also ends a chain of lines.
-- Drawings: switching a sheet between first and third angle keeps the views on the sheet: the swapped layout moves back inside the frame, still lined up.
+### Added
+
+- Tangent arc from the Line tool (FR-SK-011), as in SolidWorks: while a line chain is open, press A, or move back onto its last point and away, to draw an arc tangent to the last line or arc; the next click places its end and the chain goes on as lines. A chain started on the end of an existing line or arc can begin with a tangent arc too.
 
 ## [1.506.0] - 2026-11-11
 

@@ -158,7 +158,9 @@ export class SketchEditor {
     this.arcLast = a;
   }
 
-  private draft: { pts: V2[]; ids: (string | null)[]; cursor: V2 | null; snap: string | null; chainStart?: string; snapCurve?: string | null; snapOrigin?: boolean; curves?: (string | null)[]; hoverCurve?: string | null } = { pts: [], ids: [], cursor: null, snap: null };
+  private draft: { pts: V2[]; ids: (string | null)[]; cursor: V2 | null; snap: string | null; chainStart?: string; snapCurve?: string | null; snapOrigin?: boolean; curves?: (string | null)[]; hoverCurve?: string | null;
+    /** Line tool (FR-SK-011): the next click makes a tangent arc; `prev` = the chain's last curve; `back` = 0 just clicked, 1 moved away, 2 came back to the end point. */
+    arc?: boolean; prev?: string; back?: 0 | 1 | 2 } = { pts: [], ids: [], cursor: null, snap: null };
   private dimDraft: { picks: Hit[]; dim: SkDim | null; lock?: boolean } = { picks: [], dim: null };
   /** Instant 2D (FR-SK-067): the round handle on a selected driving dimension and its drag. */
   private grip: HTMLButtonElement | null = null;
@@ -466,6 +468,7 @@ export class SketchEditor {
     this.offsetPreview = this.tool === "offset" ? this.offsetAt(p, false) : [];
     this.draft.cursor = snap.p;
     if (this.tool === "arc" && this.draft.pts.length === 2) this.trackArc(snap.p);
+    if (this.tool === "line") this.trackBack(snap.p);
     this.draft.snap = snap.id;
     this.draft.hoverCurve = snap.id ? null : snap.curve;
     this.showInfer(pick || ["select", "fillet", "chamfer", "convert", "intersect", "dim", "hord", "vord"].includes(this.tool) ? null : snap);
@@ -809,7 +812,7 @@ export class SketchEditor {
     let q = p;
     let hv: "horizontal" | "vertical" | null = null;
     const last = this.draft.pts.at(-1);
-    if (last && (this.tool === "line")) {
+    if (last && this.tool === "line" && !this.draft.arc) {
       const a = Math.atan2(p[1] - last[1], p[0] - last[0]);
       if (!on.has("hv")) { /* off in the preferences */ }
       else if (Math.abs(Math.sin(a)) < Math.sin(HV_TOL)) { q = [p[0], last[1]]; hv = "horizontal"; }
@@ -1216,6 +1219,93 @@ export class SketchEditor {
     this.render();
   }
 
+  /**
+   * The direction a line chain leaves its last point in (FR-SK-011): along the chain's last line or arc, or,
+   * at the chain's first point, along the one line or arc already ending there.
+   */
+  private chainTangent(): V2 | null {
+    const d = this.draft, at = d.ids.at(-1);
+    if (!at || at === ORIGIN) return null;
+    let e = d.prev ? this.ent(d.prev) : undefined;
+    if (!e) {
+      const ends = this.sk.ents.filter(x => !x.cons && (x.t === "line" || x.t === "arc") && (x.a === at || x.b === at));
+      if (ends.length !== 1) return null;
+      e = ends[0];
+    }
+    if (e.t === "line") {
+      const a = this.pt(e.a), b = this.pt(e.b), s = e.b === at ? 1 : -1;
+      const n = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      return n > 1e-9 ? [(s * (b[0] - a[0])) / n, (s * (b[1] - a[1])) / n] : null;
+    }
+    if (e.t === "arc") {
+      const c = this.pt(e.c), q = this.pt(at), s = e.b === at ? 1 : -1;
+      const n = Math.hypot(q[0] - c[0], q[1] - c[1]);
+      return n > 1e-9 ? [(-s * (q[1] - c[1])) / n, (s * (q[0] - c[0])) / n] : null;
+    }
+    return null;
+  }
+
+  /** The tangent arc from the chain's last point towards `p`: centre, radius and whether it runs counter-clockwise. */
+  private tangentArc(p: V2): { c: V2; r: number; ccw: boolean; a0: number; sweep: number } | null {
+    const d = this.draft, P0 = d.pts.at(-1), T = this.chainTangent();
+    if (!P0 || !T) return null;
+    const n: V2 = [-T[1], T[0]];
+    const w: V2 = [p[0] - P0[0], p[1] - P0[1]];
+    const side = w[0] * n[0] + w[1] * n[1], L2 = w[0] * w[0] + w[1] * w[1];
+    if (Math.abs(side) < 1e-9 * Math.max(1, Math.sqrt(L2))) return null;
+    const k = L2 / (2 * side);
+    const c: V2 = [P0[0] + n[0] * k, P0[1] + n[1] * k];
+    const ccw = side > 0;
+    const a0 = Math.atan2(P0[1] - c[1], P0[0] - c[0]), a1 = Math.atan2(p[1] - c[1], p[0] - c[0]);
+    let sweep = ccw ? a1 - a0 : a0 - a1;
+    sweep = ((sweep % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+    return { c, r: Math.abs(k), ccw, a0, sweep: ccw ? sweep : -sweep };
+  }
+
+  /** Moving back onto the chain's end point and away again switches the line tool to a tangent arc (SW habit). */
+  private trackBack(p: V2) {
+    const d = this.draft, last = d.pts.at(-1);
+    if (!last || !this.chainTangent()) return;
+    const dist = Math.hypot(p[0] - last[0], p[1] - last[1]) / this.px(p);
+    const back = d.back ?? 0;
+    if (back === 0 && dist > 14) d.back = 1;
+    else if (back === 1 && dist < 6) d.back = 2;
+    else if (back === 2 && dist > 14) { d.arc = !d.arc; d.back = 1; this.statusHint(); }
+  }
+
+  /** A switches the line tool between lines and a tangent arc while a chain is open (FR-SK-011). */
+  toggleTangentArc(): boolean {
+    const d = this.draft;
+    if (this.tool !== "line" || !d.pts.length) return false;
+    if (!d.arc && !this.chainTangent()) { this.host.toast(t("A tangent arc starts at the end of a line or arc.")); return true; }
+    d.arc = !d.arc;
+    this.statusHint();
+    this.render();
+    return true;
+  }
+
+  /** Whether the line tool is drawing a tangent arc now. */
+  get arcMode() { return this.tool === "line" && !!this.draft.arc; }
+
+  private tangentArcClick(p: V2, s: Snap, rels: SkRel[], finish: (label: string) => void, e: { detail: number }) {
+    const d = this.draft;
+    const g = this.tangentArc(p);
+    if (!g) { this.host.toast(t("The arc's end must not lie on the tangent line.")); return; }
+    const aId = d.ids.at(-1)!;
+    const bId = this.usePoint(p, s.id, s.curve, rels);
+    const cId = this.usePoint(g.c, null, null, rels);
+    const id = uid("a");
+    this.sk.ents.push({ id, t: "arc", c: cId, a: g.ccw ? aId : bId, b: g.ccw ? bId : aId });
+    const prev = d.prev ?? this.sk.ents.find(x => !x.cons && x.id !== id && (x.t === "line" || x.t === "arc") && (x.a === aId || x.b === aId))?.id;
+    if (prev) rels.push({ id: uid("r"), t: "tangent", e: [prev, id] });
+    finish("Add tangent arc");
+    // Back to lines, chaining on from the arc's end (SolidWorks), unless the loop closed.
+    const closed = !!s.id && (s.id !== ORIGIN || d.chainStart === ORIGIN);
+    if (closed || e.detail >= 2) this.draft = { pts: [], ids: [], cursor: null, snap: null };
+    else { d.pts.push(p); d.ids.push(bId); d.snapCurve = null; d.snapOrigin = false; d.prev = id; d.arc = false; d.back = 0; }
+    this.render();
+  }
+
   /** A point for a new entity: an existing point, the origin (fixed by a relation), or a new one. */
   private usePoint(p: V2, snapId: string | null, curve: string | null, rels: SkRel[]): string {
     if (snapId && snapId !== ORIGIN) return snapId;
@@ -1246,9 +1336,10 @@ export class SketchEditor {
     if (this.tool === "point") { this.usePoint(p, s.id, s.curve, rels); finish("Add point"); return; }
     if (this.tool === "text") { void this.placeText(p, s.id, s.curve, rels); return; }
     if (this.tool === "line") {
-      if (!d.pts.length) { this.inferLine = null; d.pts = [p]; d.ids = [s.id && s.id !== ORIGIN ? s.id : null]; d.chainStart = s.id ?? undefined; d.snapCurve = s.curve; d.snapOrigin = s.id === ORIGIN; this.render(); return; }
+      if (!d.pts.length) { this.inferLine = null; d.pts = [p]; d.ids = [s.id && s.id !== ORIGIN ? s.id : null]; d.chainStart = s.id ?? undefined; d.snapCurve = s.curve; d.snapOrigin = s.id === ORIGIN; d.back = 0; this.render(); return; }
       const a0 = d.pts.at(-1)!;
       if (!exact && Math.hypot(p[0] - a0[0], p[1] - a0[1]) < this.px(p) * 2) return;
+      if (d.arc) { this.tangentArcClick(p, s, rels, finish, e); return; }
       const aId = d.ids.at(-1) ?? this.usePoint(a0, d.snapOrigin ? ORIGIN : null, d.snapCurve ?? null, rels);
       const bId = this.usePoint(p, s.id, s.curve, rels);
       const lid = uid("l");
@@ -1259,7 +1350,7 @@ export class SketchEditor {
       // Chain on from the end, unless the loop closed on an existing point.
       const closed = !!s.id && (s.id !== ORIGIN || d.chainStart === ORIGIN) && d.ids.length > 0;
       if (closed || e.detail >= 2) { this.draft = { pts: [], ids: [], cursor: null, snap: null }; }
-      else { d.pts.push(p); d.ids.push(bId); d.snapCurve = null; d.snapOrigin = false; }
+      else { d.pts.push(p); d.ids.push(bId); d.snapCurve = null; d.snapOrigin = false; d.prev = lid; d.back = 0; }
       this.render();
       return;
     }
@@ -3030,6 +3121,7 @@ export class SketchEditor {
     const a = d.pts.at(-1);
     if (!a || !c) return null;
     const dx = c[0] - a[0], dy = c[1] - a[1];
+    if (this.tool === "line" && d.arc) return null;
     if (this.tool === "line") return [{ name: "Length", q: "length", now: Math.hypot(dx, dy) }, { name: "Angle", q: "angle", now: (Math.atan2(dy, dx) + 2 * Math.PI) % (2 * Math.PI) }];
     if ((this.tool === "rect" || this.tool === "crect") && d.pts.length === 1) {
       const k = this.tool === "crect" ? 2 : 1;
@@ -3153,6 +3245,7 @@ export class SketchEditor {
     }
     if (k === "delete" || k === "backspace") return this.deleteSelection();
     if (/^[0-9.]$/.test(e.key) && this.typedFields()) { this.openTyped(e.key); return true; }
+    if (k === "a" && this.tool === "line" && this.draft.pts.length) return this.toggleTangentArc();
     const tools: Record<string, SkTool> = { l: "line", r: "rect", c: "circle", a: "arc", d: "dim", p: "point", t: "trim", g: "polygon", f: "fillet", e: "extend", o: "offset", w: "slot" };
     if (tools[k]) { this.setTool(tools[k]); return true; }
     if (k === "q") { this.toggleConstruction(); return true; }
@@ -3205,7 +3298,8 @@ export class SketchEditor {
     const u = this.host.unit(), c = this.cursorUV;
     const at = c ? ` · x ${trimNum(c[0] / u.mm, u.decimals)}, y ${trimNum(c[1] / u.mm, u.decimals)} ${u.name}` : "";
     const qs = this.quickSnap ? ` · ${t("Quick snap")}: ${t(SNAP_KINDS.find(k => k[0] === this.quickSnap)![1])}` : "";
-    this.host.status(`${def} · ${t(hints[this.tool])}${qs}${at}`);
+    const hint = this.arcMode ? "Tangent arc: click its end; A goes back to lines" : this.tool === "line" && this.draft.pts.length ? "Click points; double-click or Esc ends the chain; A or moving back to the end point draws a tangent arc" : hints[this.tool];
+    this.host.status(`${def} · ${t(hint)}${qs}${at}`);
   }
 
   // ---------- drawing the sketch ----------
@@ -3330,7 +3424,8 @@ export class SketchEditor {
     const d = this.draft;
     if (d.pts.length && d.cursor) {
       const p = d.cursor, a = d.pts[0];
-      if (this.tool === "line") push(d.pts.at(-1)!, p, C.pre);
+      if (this.tool === "line" && d.arc) { const g = this.tangentArc(p); if (g) poly(arcPts(g.c, g.r, g.a0, g.a0 + g.sweep, 48), C.pre); else push(d.pts.at(-1)!, p, C.pre); }
+      else if (this.tool === "line") push(d.pts.at(-1)!, p, C.pre);
       else if (this.tool === "circle") poly(arcPts(a, Math.hypot(p[0] - a[0], p[1] - a[1]), 0, Math.PI * 2, 72), C.pre);
       else if (this.tool === "rect" || this.tool === "crect") {
         const [x0, y0] = this.tool === "rect" ? a : [2 * a[0] - p[0], 2 * a[1] - p[1]];
@@ -3484,7 +3579,8 @@ export class SketchEditor {
     let text = "";
     if (p && a) {
       const last = d.pts.at(-1)!;
-      if (this.tool === "line") { const dx = p[0] - last[0], dy = p[1] - last[1]; text = `L ${L(Math.hypot(dx, dy))} · ${trimNum((((Math.atan2(dy, dx) * 180) / Math.PI) + 360) % 360, 1)}°`; }
+      if (this.tool === "line" && d.arc) { const g = this.tangentArc(p); text = g ? `R ${L(g.r)} · ${trimNum((Math.abs(g.sweep) * 180) / Math.PI, 1)}°` : ""; }
+      else if (this.tool === "line") { const dx = p[0] - last[0], dy = p[1] - last[1]; text = `L ${L(Math.hypot(dx, dy))} · ${trimNum((((Math.atan2(dy, dx) * 180) / Math.PI) + 360) % 360, 1)}°`; }
       else if (this.tool === "circle" || this.tool === "polygon") text = `R ${L(Math.hypot(p[0] - a[0], p[1] - a[1]))}`;
       else if ((this.tool === "ellipse" || this.tool === "earc") && d.pts.length < 3) {
         const E = d.pts.length === 2 ? this.draftEll(a, d.pts[1], p) : null;
