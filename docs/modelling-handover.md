@@ -1,10 +1,10 @@
 # Part modelling: handover (2026-11-11)
 
-State of the part modelling work. Current thread: "Match SolidWorks in everyday part workflows" (from 2026-11-11 05:12Z, branch `claude/project-thread-bzboib`); before it "Recognize angled cross holes", "Continue modelling SolidWorks-fidelity pass", "Polish cut-extrude contour preview", "Add draft per extrude direction", "Polish modelling to match SolidWorks" and "Continue part modelling from FRS". The requirements are in `docs/FRS-modelling.md`; the code map is in `CLAUDE.md`.
+State of the part modelling work. Current thread: "Continue matching SolidWorks in modelling" (from 2026-11-11 16:41Z, branch `claude/project-thread-l67r91`); before it "Match SolidWorks in everyday part workflows", "Recognize angled cross holes", "Continue modelling SolidWorks-fidelity pass", "Polish cut-extrude contour preview", "Add draft per extrude direction", "Polish modelling to match SolidWorks" and "Continue part modelling from FRS". The requirements are in `docs/FRS-modelling.md`; the code map is in `CLAUDE.md`.
 
 ## Where things stand
 
-- `main` has 1.513.0 (modelling); 1.501.0 (1.502.0 adds Instances to skip picked in the view); swept-base recognition is 1.493.0 (round) and 1.496.0 (any line/arc profile, `baseSweepAny`), lofted bases 1.498.0 (`baseLoft`), coil springs 1.499.0 (`baseHelix`), on any axis 1.500.0 (`squarePlane`). Every row of the FRS gap table (section 13.13 and the feature tables) is Done except one that is partial on purpose:
+- `main` has 1.547.0 (1.544.0 convert edges of other components in context FR-ASM-030, 1.545.0 empty selection after OK/Cancel FR-SEL-012, 1.546.0 tubes along free 3D curves `baseCurve`, 1.547.0 Dome FR-FT-103); earlier 1.501.0 (1.502.0 adds Instances to skip picked in the view); swept-base recognition is 1.493.0 (round) and 1.496.0 (any line/arc profile, `baseSweepAny`), lofted bases 1.498.0 (`baseLoft`), coil springs 1.499.0 (`baseHelix`), on any axis 1.500.0 (`squarePlane`). Every row of the FRS gap table (section 13.13 and the feature tables) is Done except one that is partial on purpose:
   - **FR-FT-102** feature recognition on imported bodies. Done: Recognize Holes (1.116.0), Recognize Fillets with chamfers on round edges and two-distance chamfers (1.390.0, 1.398.0), Recognize Extrudes with nested rounds, cuts open to the side, through notches at the outline (1.402.0 to 1.411.0), the base of a prism as sketch + Extrude (1.414.0) and the base of a body of revolution as sketch + Revolve (1.415.0). Bent rods and tubes as path + profile sketches and a Sweep (1.493.0, `baseSweep`), bent bars of any line/arc profile (1.496.0, `baseSweepAny`). Left: swept bases with other non-planar paths and other non-planar sweep paths (lofted bases done in 1.498.0, coil springs 1.499.0, on skew axes 1.500.0) (skew-axis revolves done in 1.488.0, variable fillets in 1.489.0). All are rare in real imports.
 - Last slices: PR #336 (1.421.0 Selected Contours, FR-FT-010), #344 (1.428.0 contour hover, Planar Surface contours), #354 (1.451.0 Extrude/Cut/Revolve from the sketch being edited, FR-SK-004), #371 (1.456.0 extrude Direction 2 with any end condition, FR-FT-011), #377 (1.460.0 draft angle for each extrude direction, FR-FT-014).
 
@@ -14,6 +14,16 @@ State of the part modelling work. Current thread: "Match SolidWorks in everyday 
 - Also 1.502.0: linear Up to distance and Pattern seed only, circular Direction 2. 1.503.0: linear pattern Up to reference (plane or flat face + offset). 1.505.0: Feature scope on extrude/revolve (FR-FT-007).
 - 1.506.0: Feature scope on sweep/loft/hole, Recent commands on the empty-space right-click (FR-UI-113). 1.507.0: tangent arc inside the Line tool (A, or move back to the last point). 1.513.0: Tangent Arc tool (Arc ▾), dynamic mirror (beside Mirror), Centerline and Midpoint line (Line ▾). Gotcha: smoke checks that pick a flyout item by `nth-child` (Line ▾ in shards 3 and 4) break when a tool is added to that flyout; they now list "Line|Centerline|Midpoint line|Spline|…". A relation glyph (`.sk-rel`) under a test click swallows it: keep test clicks ~10 mm clear of the middles of lines drawn just before.
 - Next ideas: the remaining sketch rows of the FRS (grep `FR-SK-` lines without "done"), fillet/shell fidelity, FRS 13.13 rows.
+
+## SolidWorks gaps still open (2026-11-11 walk, shipped in this order)
+
+- **Dome** done in 1.547.0 (FR-FT-103). Left: domes on curved faces, the Continuous option for polygons.
+- **Wrap** (emboss / deboss / scribe a closed sketch onto a cylinder or cone face): FRS P5 row "Dome, wrap, deform, flex". Plan: `wrap` feature `sketch` + `face` + `kind` + `depth`; unroll the sketch onto the cylinder (u = x / r, v = y), `BRepFill`-style face on the surface, then prism along the normal (or `MakeThickSolid`) and fuse/cut; scribe = split line.
+- **Flex** (bend / twist / taper / stretch a body between two trim planes): `gp_GTrsf` for stretch/taper is easy; bending needs a mesh-free approach (sample and refit) and is the hard one.
+- **Deform** (point / curve-to-curve): rare in everyday use; last.
+- **Boundary Boss/Cut**: today Loft with guide curves covers most uses; a boundary feature with two directions of curves would map onto `GeomFill`/`BRepOffsetAPI_MakeFilling`.
+- Sketch: **sketch blocks** and **sketch picture** (FRS 2.2). Sketch picture = an image plane in the sketch with scale and opacity; cheap and useful for tracing.
+- FR-FT-102 left: non-round profiles along free 3D curves (rare).
 
 ## Extrude Direction 2 (1.456.0)
 
