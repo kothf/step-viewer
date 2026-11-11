@@ -8105,11 +8105,23 @@ try {
       q.dispatchEvent(new Event("input"));
       window.__sv.asm.setFastener({ kind: "bearingf", size: "F608" });
       out.brg = [document.querySelectorAll('#asm-pm [data-kind]').length, document.querySelector("#asm-pm .tb-desig b")?.textContent, [...document.querySelectorAll("#asm-pm .tb-view .tb-dt")].map(x => x.textContent).join(",")];
+      // Inch: "unc" finds the ASME parts; a 1/4-20 cap screw lists its lengths in inches.
+      q.value = "unc";
+      q.dispatchEvent(new Event("input"));
+      out.unc = [...document.querySelectorAll("#asm-pm [data-kind]")].map(b => b.dataset.kind);
+      q.value = "";
+      q.dispatchEvent(new Event("input"));
+      window.__sv.asm.setFastener({ kind: "b183", size: "1/4-20" });
+      const len = document.querySelector('#asm-pm [data-f="length"]');
+      out.inch = [document.querySelector("#asm-pm .tb-desig b")?.textContent, len?.selectedOptions[0]?.textContent, document.querySelectorAll('#asm-pm [data-size]').length];
+      window.__sv.asm.setFastener({ kind: "iso4762", size: "M64" });
+      out.big = document.querySelector("#asm-pm .tb-desig b")?.textContent;
       return out;
     });
     check(JSON.stringify(sp.found) === '["standoff","standoffm"]' && sp.desig === "DIN 471 20" && JSON.stringify(sp.dims) === '["d3 18.5","d1 20"]'
-      && JSON.stringify(sp.lm) === '["linear"]' && JSON.stringify(sp.brg) === '[5,"Flanged ball bearing F608","D1 25,d 8,B 7"]',
-      `asm toolbox 2: Toolbox standoffs, spacers, retaining rings and bearing series (FR-ASM-028) (${JSON.stringify(sp)})`);
+      && JSON.stringify(sp.lm) === '["linear"]' && JSON.stringify(sp.brg) === '[5,"Flanged ball bearing F608","D1 25,d 8,B 7"]'
+      && JSON.stringify(sp.unc) === '["b183","b1821","b1822","b1822m","b1822w"]' && /^ASME B18\.3 1\/4-20 x [\d/-]+$/.test(sp.inch[0] ?? "") && sp.inch[1] === `${sp.inch[0].split(" x ")[1]} in` && sp.inch[2] === 13 && /^ISO 4762 M64 x \d+$/.test(sp.big ?? ""),
+      `asm toolbox 2: Toolbox standoffs, spacers, retaining rings, bearing series, M1.6 to M64 and ANSI inch (FR-ASM-028) (${JSON.stringify(sp)})`);
     await tp.evaluate(() => window.__sv.asm.closeTools());
     // McMaster-Carr: a downloaded STEP named "<part number>_<description>.STEP" keeps its part number and a buy link.
     const cube = [...await readFile(join(fixtures, "cube-10x10mm/Cube 10x10.stp"))];

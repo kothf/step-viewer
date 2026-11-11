@@ -9,6 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 - Toolbox bearings: deep groove ball bearings now cover 56 sizes (miniatures 623 to 629, series 60, 62, 63 up to 50 mm bore, thin 68 and 69), plus flanged ball bearings F623 to F608, thrust ball bearings 51100 to 51110 (ISO 104), linear ball bearings LM6UU to LM30UU and drawn cup needle roller bearings HK0408 to HK2512, each with its own side view and dimensions. Search finds a size by its start ("lm8", "6204").
+- Toolbox sizes: socket head cap screws, hex screws and bolts, hex nuts and plain washers now run from M1.6 to M64 (M14, M24, M30, M36, M42, M48, M56, M64 added), with lengths up to 300 mm. New ANSI inch parts: socket head cap screws #2-56 to 1-8 (ASME B18.3), hex cap screws 1/4-20 to 1-8 (ASME B18.2.1), hex nuts (ASME B18.2.2), machine screw nuts #2 to #10 (ASME B18.6.3) and SAE plain washers (ASME B18.22.1 type A), with lengths in inches ("ASME B18.3 1/4-20 x 3/4") and UNC cosmetic threads. Search "inch" or "unc" lists them.
 
 ## [1.525.0] - 2026-11-11
 

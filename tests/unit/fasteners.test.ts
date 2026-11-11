@@ -5,18 +5,18 @@ import { occ } from "./occ";
 import { Modeller } from "../../src/kernel/model";
 import { activate } from "../../src/model/configs";
 import { refreshExprs } from "../../src/model/params";
-import { FASTENERS, defaultLength, detailRow, fastenerInfo, fastenerLengths, fastenerName, fastenerPart, fastenerSizes, lengthFor, searchFasteners, sizeForHole } from "../../src/asm/fasteners";
+import { FASTENERS, defaultLength, detailRow, fastenerInfo, fastenerLengths, fastenerName, fastenerPart, fastenerSizes, lengthFor, lengthLabel, searchFasteners, sizeForHole } from "../../src/asm/fasteners";
 import { fastenerShape, shapeSvg, shapeVolume } from "../../src/asm/toolboxShape";
 
 const PLAIN = { detail: false };
 const close = (a: number, b: number, tol = 1e-3) => assert.ok(Math.abs(a - b) <= tol * Math.max(1, Math.abs(b)), `${a} vs ${b}`);
 
 test("FR-ASM-028: sizes, lengths and names", () => {
-  assert.deepEqual(fastenerSizes("iso4762"), ["M2", "M2.5", "M3", "M4", "M5", "M6", "M8", "M10", "M12", "M16", "M20"]);
+  assert.deepEqual(fastenerSizes("iso4762"), ["M1.6", "M2", "M2.5", "M3", "M4", "M5", "M6", "M8", "M10", "M12", "M14", "M16", "M20", "M24", "M30", "M36", "M42", "M48", "M56", "M64"]);
   assert.ok(fastenerLengths("iso4762", "M6").includes(20) && !fastenerLengths("iso4762", "M6").includes(100));
   assert.equal(fastenerName("iso4762", "M6", 20), "ISO 4762 M6 x 20");
   assert.equal(fastenerName("iso4032", "M8"), "ISO 4032 M8");
-  assert.equal(FASTENERS.length, 27);
+  assert.equal(FASTENERS.length, 32);
   assert.equal(fastenerName("din6885", "8x7", 32), "DIN 6885 B 8x7 x 32");
   assert.equal(fastenerName("bearing", "6201"), "Ball bearing 6201");
   assert.deepEqual(fastenerLengths("din6885", "6x6"), [14, 16, 18, 20, 22, 25, 28, 32, 36, 40, 45, 50, 56, 63, 70]);
@@ -27,7 +27,9 @@ test("FR-ASM-028: the size follows the clicked hole", () => {
   assert.equal(sizeForHole("iso4762", 6.4), "M6");
   assert.equal(sizeForHole("iso4762", 9), "M8");
   assert.equal(sizeForHole("iso4032", 10.5), "M10");
-  assert.equal(sizeForHole("iso4762", 40), null);
+  assert.equal(sizeForHole("iso4762", 40), "M36");
+  assert.equal(sizeForHole("iso4762", 100), null);
+  assert.equal(sizeForHole("iso4032", 70), "M64");
   assert.equal(sizeForHole("iso2338", 6), "6");
   assert.equal(sizeForHole("iso2338", 7), null);
   assert.equal(sizeForHole("bearing", 32), "6002");
@@ -48,7 +50,7 @@ test("FR-ASM-028: every fastener builds; volumes match the ISO sizes; sizes swit
   // ISO 4762 M6 x 20: Ø6 × 20 shank, Ø10 × 6 head, hex 5 socket 3 deep.
   const cap = fastenerPart("iso4762", "M6", 20, PLAIN);
   assert.equal(cap.config, "M6");
-  assert.equal(cap.configs?.length, 11);
+  assert.equal(cap.configs?.length, 20);
   close(vol(cap), Math.PI * 9 * 20 + Math.PI * 25 * 6 - hex(5) * 3);
   // ISO 4017 M8 x 30: hex 13 × 5.3 head.
   close(vol(fastenerPart("iso4017", "M8", 30, PLAIN)), Math.PI * 16 * 30 + hex(13) * 5.3);
@@ -62,6 +64,11 @@ test("FR-ASM-028: every fastener builds; volumes match the ISO sizes; sizes swit
   activate(cap, "M10");
   refreshExprs(cap);
   close(vol(cap), Math.PI * 25 * 30 + Math.PI * 64 * 10 - hex(8) * 5);
+  // M1.6 to M64 (the Hole Wizard's ISO sizes): the large ones build too.
+  close(vol(fastenerPart("iso4762", "M48", 200, PLAIN)), Math.PI * 576 * 200 + Math.PI * 36 * 36 * 48 - hex(36) * 28);
+  close(vol(fastenerPart("iso4032", "M64", undefined, PLAIN)), (hex(95) - Math.PI * 32 * 32) * 51);
+  close(vol(fastenerPart("iso4017", "M1.6", 5, PLAIN)), Math.PI * 0.64 * 5 + hex(3.2) * 1.1);
+  assert.deepEqual(fastenerLengths("iso4762", "M64").slice(-2), [280, 300]);
 });
 
 test("FR-ASM-028: the toolbox parts build with the sizes of their standards", async () => {
@@ -136,7 +143,7 @@ test("FR-ASM-028: library pictures, mass estimate, search and lengths", () => {
   assert.deepEqual(searchFasteners("m6 nut").map(f => f.kind), ["iso4032", "iso4035", "iso7040", "iso4161"]);
   assert.deepEqual(searchFasteners("4762").map(f => f.kind), ["iso4762"]);
   assert.deepEqual(searchFasteners("6201").map(f => f.kind), ["bearing"]);
-  assert.deepEqual(searchFasteners("washers").map(f => f.kind), ["iso7089", "iso7092", "iso7093", "din127"]);
+  assert.deepEqual(searchFasteners("washers").map(f => f.kind), ["iso7089", "iso7092", "iso7093", "b1822w", "din127"]);
   assert.equal(searchFasteners("").length, FASTENERS.length);
   assert.equal(lengthFor("iso4762", "M3", 33), 30);
 });
@@ -200,4 +207,36 @@ test("FR-ASM-028: bearing series: flanged, needle, linear and thrust", async () 
   assert.deepEqual(searchFasteners("51104").map(f => f.kind), ["thrust"]);
   assert.equal(fastenerSizes("bearing").length, 56);
   close(shapeVolume(fastenerShape("bearingf", "F608")), cyl(22, 5.5) + cyl(25, 1.5) - cyl(8, 7));
+});
+
+test("FR-ASM-028: ANSI inch screws, nuts and washers", async () => {
+  assert.deepEqual(searchFasteners("unc").map(f => f.kind), ["b183", "b1821", "b1822", "b1822m", "b1822w"]);
+  assert.deepEqual(searchFasteners("1/4-20 nut").map(f => f.kind), ["b1822"]);
+  assert.equal(fastenerName("b183", "1/4-20"), "ASME B18.3 1/4-20 x 3/4");
+  assert.equal(fastenerName("b1821", "1/2-13", 38.1), "ASME B18.2.1 1/2-13 x 1-1/2");
+  assert.equal(lengthLabel("b183", 31.75), "1-1/4 in");
+  assert.equal(lengthLabel("iso4762", 20), "20 mm");
+  assert.deepEqual(fastenerLengths("b183", "1/4-20").slice(0, 3), [9.525, 12.7, 15.875]);
+  // A 17/64 in clearance hole (6.75 mm) takes the 1/4-20 cap screw; a Ø4.5 hole the #8 nut.
+  assert.equal(sizeForHole("b183", 6.75), "1/4-20");
+  assert.equal(sizeForHole("b1822m", 4.5), "#8-32");
+  const m = new Modeller(await occ());
+  const vol = (pd: ReturnType<typeof fastenerPart>) => {
+    const r = m.evaluate(pd);
+    assert.ok(r.statuses.every(s => s.ok), `${pd.name}: ${JSON.stringify(r.statuses)}`);
+    return m.props(r.body!).volume;
+  };
+  const hex = (s: number) => (Math.sqrt(3) / 2) * s * s, I = 25.4;
+  // 1/4-20 x 3/4 cap screw: head 0.375 x 0.25, 3/16 hex key 0.12 deep.
+  close(vol(fastenerPart("b183", "1/4-20", 0.75 * I, PLAIN)), Math.PI * (0.125 * I) ** 2 * 0.75 * I + Math.PI * (0.1875 * I) ** 2 * 0.25 * I - hex(0.1875 * I) * 0.12 * I);
+  close(vol(fastenerPart("b1822", "3/8-16", undefined, PLAIN)), (hex(0.5625 * I) - Math.PI * (0.1875 * I) ** 2) * 0.3281 * I);
+  // Detailed: the cosmetic thread is written the Hole Wizard's way, with the UNC pitch.
+  const pd = fastenerPart("b183", "1/4-20", 1.5 * I);
+  vol(pd);
+  const th = pd.features.find(f => f.type === "thread") as { size: string; pitch: number; length: { v: number } };
+  assert.equal(th.size, "1/4-20 UNC");
+  assert.equal(th.pitch, 1.27);
+  close(th.length.v + 0.89, 2 * 6.35 + 12.7);
+  for (const k of ["b183", "b1821", "b1822", "b1822m", "b1822w"] as const) for (const sz of fastenerSizes(k)) vol(fastenerPart(k, sz));
+  assert.deepEqual(fastenerShape("b183", "1/4-20", 19.05).dims.map(d => d.sym), ["d", "dk", "L", "k"]);
 });

@@ -1,7 +1,7 @@
 // Toolbox pictures (FR-ASM-028): a standard part as a few simple solids in its own axes (Z = the part's
 // axis, as `fastenerPart` builds it), used for the panel's side views with dimensions, the cards'
 // pictograms, the mass estimate and the see-through preview on a hole. Pure: no DOM, no three.js.
-import { fastenerInfo, type FastenerKind } from "./fasteners";
+import { fastenerInfo, shapeKind, type FastenerKind } from "./fasteners";
 
 /** A solid of revolution about Z: the closed profile in (r, z), r ≥ 0. */
 export interface RevSolid { t: "rev"; pts: [number, number][]; neg?: boolean }
@@ -25,6 +25,7 @@ const ring = (ro: number, ri: number, z0: number, z1: number): RevSolid => ({ t:
 /** The part of `kind`, size row `size`, length `L` (screws, pins, keys) as simple solids plus its main dimensions. */
 export function fastenerShape(kind: FastenerKind, size: string, L = 0): ToolShape {
   const info = fastenerInfo(kind), r = info.table[size];
+  kind = shapeKind(kind);
   const s: ShapeSolid[] = [], dims: ShapeDim[] = [];
   let plan: RingPlan | undefined;
   const hd = (sym: string, val: number, at: number) => dims.push({ sym, val, axis: "h", a: -val / 2, b: val / 2, at });
