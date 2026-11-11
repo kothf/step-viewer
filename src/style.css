@@ -827,6 +827,9 @@ input.drop-val { outline: 2px solid var(--accent) !important; background: var(--
 .sk-grip { position: absolute; pointer-events: auto; width: 12px; height: 12px; padding: 0; transform: translate(-50%, -50%); border-radius: 50%; border: 2px solid #f08c00; background: var(--panel); cursor: grab; touch-action: none; }
 .sk-grip:active { cursor: grabbing; background: #f08c00; }
 .sk-grip:focus-visible { outline: 2px solid var(--accent, #1971c2); outline-offset: 2px; }
+.sk-adot { position: absolute; pointer-events: auto; width: 10px; height: 10px; padding: 0; transform: translate(-50%, -50%); border-radius: 50%; border: 2px solid #1971c2; background: var(--panel); cursor: pointer; }
+.sk-adot:hover { background: #1971c2; }
+.sk-adot:focus-visible { outline: 2px solid var(--accent, #1971c2); outline-offset: 2px; }
 #app.mc-cmd .tool-hint { display: none !important; }
 #app.model .hint, #app.asm .hint { top: 100px; }
 #app.asm .tool-hint { top: 88px; }

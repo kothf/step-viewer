@@ -93,6 +93,8 @@ export interface SkDim {
   ord?: boolean;
   /** Offset between two concentric arcs/circles: the difference of their radii (FR-SK-034). */
   off?: boolean;
+  /** Arrowheads inside or outside the extension lines / rim (FR-SK-068); absent = automatic. */
+  arrows?: "in" | "out";
 }
 
 /** Plane of a sketch or a reference: a standard plane, a planar face of the model, a reference plane feature, or a face of another component (in-context). */

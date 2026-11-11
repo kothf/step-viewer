@@ -172,6 +172,8 @@ export class SketchEditor {
   private dimDraft: { picks: Hit[]; dim: SkDim | null; lock?: boolean } = { picks: [], dim: null };
   /** Instant 2D (FR-SK-067): the round handle on a selected driving dimension and its drag. */
   private grip: HTMLButtonElement | null = null;
+  /** The arrow flip dot of the selected dimension (FR-SK-068). */
+  private adot: HTMLButtonElement | null = null;
   private gripDrag: { id: string; base: SketchFeature; baseInfo: SolveResult; v0: number; p0: V2; dir: V2; k: number; from: V2; step: number; moved: boolean } | null = null;
   /** Ordinate dimensioning: the base picked first, then the row the values go on. */
   private ordDraft: { base: string | null; row: number | null } = { base: null, row: null };
@@ -253,6 +255,7 @@ export class SketchEditor {
     for (const l of this.labels.values()) l.remove();
     this.labels.clear();
     this.grip = null;
+    this.adot = null;
     this.gripDrag = null;
     this.host.layer.replaceChildren();
     this.host.viewer.invalidate();
@@ -566,6 +569,8 @@ export class SketchEditor {
     }
     sep();
     const ids = [...this.selection];
+    const oneDim = ids.length === 1 ? this.sk.dims.find(x => x.id === ids[0]) : undefined;
+    if (oneDim && oneDim.t !== "angle" && !oneDim.ord) rows.push([t("Flip arrows"), () => this.flipArrows(oneDim.id), "⇄"]);
     const one = ids.length === 1 ? this.ent(ids[0]) : undefined;
     if (one && (one.t === "line" || one.t === "arc") && !one.cons) rows.push([t("Select chain"), () => this.select(this.chainOf(one.id).segs.map(s => s.id))]);
     const curves = ids.map(id => this.ent(id)).filter(x => x && x.t !== "point");
@@ -3850,7 +3855,30 @@ export class SketchEditor {
     }
     // Dimension lines.
     const dims = [...this.sk.dims, ...(this.dimDraft.dim ? [this.dimDraft.dim] : [])];
-    for (const dm of dims) this.dimGeometry(dm, (a, b) => push(a, b, this.selection.has(dm.id) ? C.sel : C.dim, dimSegs, dimCols));
+    const triPos: number[] = [], triCol: number[] = [];
+    for (const dm of dims) {
+      const c = this.selection.has(dm.id) ? C.sel : C.dim;
+      this.dimGeometry(dm, (a, b) => push(a, b, c, dimSegs, dimCols), (tip, w) => {
+        const H = this.arrowLen(tip), q: V2 = [-w[1], w[0]];
+        const base: V2 = [tip[0] - w[0] * H, tip[1] - w[1] * H];
+        const k = new THREE.Color(c);
+        for (const p of [tip, [base[0] + q[0] * H * 0.3, base[1] + q[1] * H * 0.3], [base[0] - q[0] * H * 0.3, base[1] - q[1] * H * 0.3]] as V2[]) {
+          const W = this.w(p);
+          triPos.push(W.x, W.y, W.z);
+          triCol.push(k.r, k.g, k.b);
+        }
+      });
+    }
+    if (triPos.length) {
+      const tg = new THREE.BufferGeometry();
+      tg.setAttribute("position", new THREE.Float32BufferAttribute(triPos, 3));
+      tg.setAttribute("color", new THREE.Float32BufferAttribute(triCol, 3));
+      const tm = new THREE.Mesh(tg, new THREE.MeshBasicMaterial({ vertexColors: true, depthTest: false, transparent: true, side: THREE.DoubleSide }));
+      tm.renderOrder = 3000;
+      tm.raycast = () => {};
+      tm.userData.skArrows = true;
+      this.group.add(tm);
+    }
     // Instant 2D ruler: ticks every snap step along the drag, a longer one every fifth (FR-SK-067).
     const gd = this.gripDrag;
     if (gd) {
@@ -3927,16 +3955,70 @@ export class SketchEditor {
     el.style.top = `${y}px`;
   }
 
-  private dimGeometry(dm: SkDim, line: (a: V2, b: V2) => void) {
+  /** Arrowhead length in sketch units at a point (9 px). */
+  private arrowLen(p: V2) { return this.px(p) * 9; }
+
+  /** Inside or outside arrowheads of a dimension (FR-SK-068): as stored, else outside when the inside is too short. */
+  arrowsOf(dm: SkDim): "in" | "out" {
+    if (dm.arrows) return dm.arrows;
+    if (dm.t === "radius" || dm.t === "diameter") return "in";
+    const g = this.linearEnds(dm);
+    return g && Math.hypot(g.fb[0] - g.fa[0], g.fb[1] - g.fa[1]) < 3.2 * this.arrowLen(g.fa) ? "out" : "in";
+  }
+
+  /** The ends of a linear dimension's line (on the extension lines from the measured points a and b). */
+  private linearEnds(dm: SkDim): { a: V2; b: V2; fa: V2; fb: V2; dir: V2 } | null {
+    if (dm.t === "radius" || dm.t === "diameter" || dm.t === "angle" || dm.ord) return null;
+    const pts = this.dimPoints(dm);
+    if (!pts) return null;
+    const pos = dm.pos ?? [0, 0];
+    const [a, b] = pts;
+    let dir: V2 = dm.t === "hdistance" ? [1, 0] : dm.t === "vdistance" ? [0, 1] : norm2(sub2(b, a));
+    if (Math.hypot(...dir) < 1e-12) dir = [1, 0];
+    const nrm: V2 = [-dir[1], dir[0]];
+    const off = (p: V2) => dot2(sub2(pos, p), nrm);
+    return { a, b, dir, fa: [a[0] + nrm[0] * off(a), a[1] + nrm[1] * off(a)], fb: [b[0] + nrm[0] * off(b), b[1] + nrm[1] * off(b)] };
+  }
+
+  /** Where the arrow flip dot of a selected dimension sits: the first end of a linear one, the far rim of a diameter. */
+  private arrowDotAt(dm: SkDim): V2 | null {
+    if (dm.t === "diameter") {
+      const e = this.ent(dm.e[0]);
+      if (!e || (e.t !== "circle" && e.t !== "arc")) return null;
+      const pos = dm.pos ?? [0, 0], c = this.pt(e.c), r = e.t === "circle" ? e.r : Math.hypot(this.pt(e.a)[0] - c[0], this.pt(e.a)[1] - c[1]);
+      const a = Math.atan2(pos[1] - c[1], pos[0] - c[0]);
+      return [c[0] - r * Math.cos(a), c[1] - r * Math.sin(a)];
+    }
+    return this.linearEnds(dm)?.fa ?? null;
+  }
+
+  /** Flips a dimension's arrowheads between inside and outside (FR-SK-068): one undo step. */
+  flipArrows(id: string) {
+    const dm = this.sk.dims.find(x => x.id === id);
+    if (!dm || dm.t === "angle" || dm.ord) return;
+    dm.arrows = this.arrowsOf(dm) === "in" ? "out" : "in";
+    this.commit("Flip dimension arrows");
+  }
+
+  private dimGeometry(dm: SkDim, line: (a: V2, b: V2) => void, arrow: (tip: V2, dir: V2) => void = () => {}) {
     const pos = dm.pos ?? [0, 0];
     if (dm.t === "radius" || dm.t === "diameter") {
       const e = this.ent(dm.e[0]);
       if (!e || (e.t !== "circle" && e.t !== "arc")) return;
       const c = this.pt(e.c), r = e.t === "circle" ? e.r : Math.hypot(this.pt(e.a)[0] - c[0], this.pt(e.a)[1] - c[1]);
-      const a = Math.atan2(pos[1] - c[1], pos[0] - c[0]);
-      const rim: V2 = [c[0] + r * Math.cos(a), c[1] + r * Math.sin(a)];
-      line(dm.t === "diameter" ? [c[0] - r * Math.cos(a), c[1] - r * Math.sin(a)] : c, rim);
+      const a = Math.atan2(pos[1] - c[1], pos[0] - c[0]), u: V2 = [Math.cos(a), Math.sin(a)];
+      const rim: V2 = [c[0] + r * u[0], c[1] + r * u[1]];
+      line(dm.t === "diameter" ? [c[0] - r * u[0], c[1] - r * u[1]] : c, rim);
       line(rim, pos);
+      // Arrowheads on the rim (FR-SK-068): inside pointing out at it, or outside pointing in with a short tail.
+      const out = this.arrowsOf(dm) === "out", H = this.arrowLen(rim);
+      const rims: [V2, V2][] = [[rim, u]];
+      if (dm.t === "diameter") rims.push([[c[0] - r * u[0], c[1] - r * u[1]], [-u[0], -u[1]]]);
+      for (const [q, w] of rims) {
+        if (!out) { arrow(q, w); continue; }
+        arrow(q, [-w[0], -w[1]]);
+        line(q, [q[0] + w[0] * 2.2 * H, q[1] + w[1] * 2.2 * H]);
+      }
       return;
     }
     if (dm.t === "angle") {
@@ -3962,9 +4044,15 @@ export class SketchEditor {
     const off = (p: V2) => dot2(sub2(pos, p), nrm);
     const fa: V2 = [a[0] + nrm[0] * off(a), a[1] + nrm[1] * off(a)], fb: V2 = [b[0] + nrm[0] * off(b), b[1] + nrm[1] * off(b)];
     line(a, fa); line(b, fb); line(fa, fb);
-    // Small ticks at the ends.
-    const s = this.px(fa) * 5;
-    for (const f of [fa, fb]) line([f[0] - (dir[0] + nrm[0]) * s, f[1] - (dir[1] + nrm[1]) * s], [f[0] + (dir[0] + nrm[0]) * s, f[1] + (dir[1] + nrm[1]) * s]);
+    // Arrowheads at the ends (FR-SK-068): inside pointing out at the extension lines, or outside pointing in with tails.
+    const len = Math.hypot(fb[0] - fa[0], fb[1] - fa[1]);
+    const u: V2 = len > 1e-12 ? [(fb[0] - fa[0]) / len, (fb[1] - fa[1]) / len] : dir;
+    if (this.arrowsOf(dm) === "in") { arrow(fa, [-u[0], -u[1]]); arrow(fb, u); }
+    else {
+      const T = 2.2 * this.arrowLen(fa);
+      arrow(fa, u); arrow(fb, [-u[0], -u[1]]);
+      line([fa[0] - u[0] * T, fa[1] - u[1] * T], fa); line(fb, [fb[0] + u[0] * T, fb[1] + u[1] * T]);
+    }
   }
 
   // ---------- labels (dimension values, relation glyphs) ----------
@@ -4055,6 +4143,7 @@ export class SketchEditor {
     }
     for (const [id, el] of this.labels) if (!seen.has(id)) { el.remove(); this.labels.delete(id); if (this.hoverRel === id) this.hoverRel = null; }
     this.syncGrip();
+    this.syncArrowDot();
     this.placeLabels();
   }
 
@@ -4149,6 +4238,25 @@ export class SketchEditor {
     }
     this.grip.dataset.id = d.id;
     this.grip.dataset.pos = JSON.stringify(g.at);
+  }
+
+  /** The arrow flip dot (FR-SK-068) on the one selected dimension while the Select tool is on. */
+  private syncArrowDot() {
+    const ids = [...this.selection];
+    const d = !this.gripDrag && ids.length === 1 && this.tool === "select" && !this.input && !this.pattern ? this.sk.dims.find(x => x.id === ids[0]) : undefined;
+    const at = d ? this.arrowDotAt(d) : null;
+    if (!d || !at) { this.adot?.remove(); this.adot = null; return; }
+    if (!this.adot) {
+      const b = this.adot = document.createElement("button");
+      b.className = "sk-adot";
+      b.title = t("Flip arrows");
+      b.setAttribute("aria-label", t("Flip arrows"));
+      b.addEventListener("pointerdown", e => e.stopPropagation());
+      b.addEventListener("click", e => { e.stopPropagation(); if (b.dataset.id) this.flipArrows(b.dataset.id); });
+      this.host.layer.appendChild(b);
+    }
+    this.adot.dataset.id = d.id;
+    this.adot.dataset.pos = JSON.stringify(at);
   }
 
   private gripDown(e: PointerEvent) {
@@ -4257,7 +4365,7 @@ export class SketchEditor {
   private placeLabels() {
     if (this.disposed) return;
     this.syncGrid();
-    if (this.grip) { const [x, y] = this.screen(JSON.parse(this.grip.dataset.pos ?? "[0,0]") as V2); this.grip.style.left = `${x}px`; this.grip.style.top = `${y}px`; }
+    for (const g of [this.grip, this.adot]) if (g) { const [x, y] = this.screen(JSON.parse(g.dataset.pos ?? "[0,0]") as V2); g.style.left = `${x}px`; g.style.top = `${y}px`; }
     for (const el of this.labels.values()) {
       const p = JSON.parse(el.dataset.pos ?? "[0,0]") as V2;
       const [x, y] = this.screen(p);

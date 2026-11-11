@@ -2910,6 +2910,8 @@ export const RU: Record<string, string> = {
   "Quick snaps: pick one snap type for the next point": "Быстрые привязки: один тип привязки для следующей точки",
   "Snaps": "Привязки",
   "Drag to change the value": "Перетащите, чтобы изменить значение",
+  "Flip arrows": "Перевернуть стрелки",
+  "Flip dimension arrows": "Перевернуть стрелки размера",
   "Select chain": "Выбрать цепочку",
   "Normal geometry": "Обычная геометрия",
   "Construction geometry": "Вспомогательная геометрия",
