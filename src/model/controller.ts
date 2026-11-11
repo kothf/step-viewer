@@ -32,17 +32,18 @@ import { applyDir as tfDir, applyPoint as tfPoint, invert as tfInvert } from "..
 import { segPoints, solve3d } from "../sketch/sketch3d";
 import type { CtxRef, SkEnt, SketchPatternFeature, FeatureFolder, ThreadFeature, Sketch3dFeature, Sk3Rel, CurveFeature, SweepSurfFeature, SweepPath,
   AxisFeature, ChamferFeature, CsysFeature, CircularPatternFeature, EdgeRef, ExtrudeFeature, Feature, FeatureStatus, FilletFeature, ScaleFeature, Frame, LinearPatternFeature, LineRef,
-  GlobalVar, HelixFeature, LoftFeature, RibFeature, SplitFeature, FaceRef, RecognizedHole, ImportFeature, HealFeature, HoleSink, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, UntrimSurfFeature, IntersectFeature, SweepFeature, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3, VertexRef,
+  GlobalVar, HelixFeature, LoftFeature, RibFeature, SplitFeature, FaceRef, RecognizedHole, ImportFeature, HealFeature, HoleSink, HoleElem, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, UntrimSurfFeature, IntersectFeature, SweepFeature, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3, VertexRef,
 } from "./types";
 import { hexRgb, toRef, type MatRef } from "../tools/materials";
 import { pickMaterial } from "../materialPicker";
 import { holeCallout, holeDiagram, holeIcon, holeSection, HOLE_KINDS } from "./holeView";
+import { advDefault, advProfile, advSync, elemFor, ELEM_KINDS } from "./advHole";
 import { ISO_METRIC, HEAT_INSERTS, HOLE_STANDARDS, SCREW_TYPES, defaultScrew, headPocket, screwTypes, threadClasses, holeSize, insertSize, majorOf, recognizedHoleFeatures, standardOf, taperSize, taperStandardOf, TAPER_STANDARDS, type HoleStandard } from "./holes";
 
 /** What a hole favourite keeps: the definition, not the placement. */
 /** Drag data of a Features tree row (FR-HIS-014: Ctrl+drag onto a face or plane pastes a copy). */
 const FEATURE_DRAG = "application/x-mcad-feature";
-const HOLE_DEF_KEYS = ["kind", "standard", "size", "fit", "diameter", "end", "depth", "flat", "cbDia", "cbDepth", "csDia", "csAngle", "threadDepth", "threadEnd", "nearCs", "underCs", "farCs", "headClear", "drillAngle", "major", "pitch", "cdDia", "cdDepth", "cdAngle", "slotLen", "slotAngle"] as const;
+const HOLE_DEF_KEYS = ["kind", "standard", "size", "fit", "diameter", "end", "depth", "flat", "cbDia", "cbDepth", "csDia", "csAngle", "threadDepth", "threadEnd", "nearCs", "underCs", "farCs", "headClear", "drillAngle", "major", "pitch", "cdDia", "cdDepth", "cdAngle", "slotLen", "slotAngle", "slotHead", "taperDia", "screw", "tclass", "threadMode", "near", "far"] as const;
 interface HoleFav { name: string; def: Partial<HoleFeature> }
 function loadFavs(): HoleFav[] { try { const v = JSON.parse(localStorage.getItem("mc:holeFavs") ?? "[]"); return Array.isArray(v) ? v : []; } catch { return []; } }
 function saveFavs(list: HoleFav[]) { try { localStorage.setItem("mc:holeFavs", JSON.stringify(list)); } catch { /* storage blocked: kept for this page only */ } }
@@ -3679,6 +3680,37 @@ export class ModelController {
   }
 
   /** Hole panel preview (FR-FT-051 UX): the half section of the hole in a plate and the callout it gets on drawings. */
+  /** Advanced Hole (FR-FT-051): the near side and far side element lists, each element with its type, size and values. */
+  private advGroups(f: HoleFeature, numField: (key: string, label: string, n: Num, q: "length" | "angle") => string, group: (title: string, body: string) => string): string {
+    const names: Record<HoleElem["t"], string> = { cbore: t("Counterbore"), csink: t("Countersink"), straight: t("Straight"), tapped: t("Straight tap") };
+    const rows = (side: "near" | "far", list: HoleElem[]) => list.map((e, i) => {
+      const main = side === "near" && i === list.length - 1;
+      const kinds = main ? (["straight", "tapped"] as const) : ELEM_KINDS;
+      const opt = (v: string, l: string, cur: string) => `<option value="${v}"${v === cur ? " selected" : ""}>${esc(l)}</option>`;
+      const label = `${side === "near" ? t("Near side") : t("Far side")} ${i + 1}`;
+      // The main hole stays last on the near side: it neither moves nor goes away.
+      const up = !main && i > 0, down = !main && (side === "far" ? i < list.length - 1 : i < list.length - 2);
+      const btn = (a: string, sym: string, tip: string, on: boolean) => `<button type="button" class="icon" ${a} title="${esc(tip)}" aria-label="${esc(tip)}: ${esc(label)}"${on ? "" : " disabled"}>${sym}</button>`;
+      const diaLabel = e.t === "cbore" ? t("Counterbore diameter") : e.t === "csink" ? t("Countersink diameter") : e.t === "tapped" ? t("Tap drill diameter") : t("Diameter");
+      return `<div class="pm-aelem" data-aelem="${side}:${i}"><div class="pm-aehead"><span class="pm-aen">${i + 1}</span><span>${esc(main ? t("Main hole") : names[e.t])}</span>`
+        + btn(`data-aemv="${side}:${i}:-1"`, "↑", t("Move up"), up) + btn(`data-aemv="${side}:${i}:1"`, "↓", t("Move down"), down) + btn(`data-aerm="${side}:${i}"`, "✕", t("Remove"), !main) + `</div>`
+        + `<label class="pm-field"><span>${esc(t("Element"))}</span><select data-ae="${side}:${i}:t" aria-label="${esc(label)}">${kinds.map(k => opt(k, names[k], e.t)).join("")}</select></label>`
+        + `<label class="pm-field"><span>${esc(t("Size"))}</span><select data-ae="${side}:${i}:size" aria-label="${esc(label)} ${esc(t("Size"))}">${opt("", t("Custom"), e.size ?? "")}${ISO_METRIC.map(h => opt(h.size, h.size, e.size ?? "")).join("")}</select></label>`
+        + numField(`${side}.${i}.dia`, diaLabel, e.dia, "length")
+        + (e.t === "csink" ? numField(`${side}.${i}.angle`, t("Countersink angle"), e.angle ?? { v: Math.PI / 2 }, "angle")
+          : main && e.t === "straight" ? "" : numField(`${side}.${i}.depth`, main ? t("Thread depth") : t("Depth"), e.depth ?? { v: e.dia.v }, "length"))
+        + `</div>`;
+    }).join("");
+    const near = f.near ?? [], far = f.far ?? [];
+    let bad = "";
+    try { if (near.length) advProfile(near, far, f.end === "blind" ? f.depth.v : 1e6, holeExits(f)); } catch (e) { bad = (e as Error).message; }
+    return group(t("Near side"), rows("near", near) + `<button class="btn small" data-aeadd="near">${esc(t("Add element"))}</button>`
+        + `<p class="pm-help muted">${esc(t("Elements from the face down; the last one is the main hole and runs to the end condition."))}</p>`)
+      + (holeExits(f) ? group(t("Far side"), rows("far", far) + `<button class="btn small" data-aeadd="far">${esc(t("Add element"))}</button>`
+        + `<p class="pm-help muted">${esc(t("Elements from the face where the hole comes out, inwards."))}</p>`) : "")
+      + (bad ? `<p class="pm-help pm-warn" role="alert">${esc(t(bad))}</p>` : "");
+  }
+
   private holePreview(f: HoleFeature): string {
     const fu = UNITS[units.current].f, dec = units.decimals ?? this.doc.units.decimals;
     const len = (v: number) => trimNum(v * fu, Math.max(dec, 2)), ang = (v: number) => trimNum(v, 2);
@@ -4420,6 +4452,22 @@ export class ModelController {
       if (!fr) continue;
       const at = (p: [number, number], dx: number, dy: number) => [0, 1, 2].map(i => fr.o[i] + fr.x[i] * (p[0] + dx) + fr.y[i] * (p[1] + dy));
       h.pts.forEach((p, i) => {
+        // Advanced Hole: each tapped element's thread from its own depth down.
+        if (h.kind === "adv" && h.near?.length) {
+          const exits = holeExits(h), D = exits ? fr.len?.[i] ?? 1e5 : h.depth.v;
+          let threads: ReturnType<typeof advProfile>["threads"] = [];
+          try { threads = advProfile(h.near, h.far, D, exits).threads; } catch { /* the panel says what is wrong */ }
+          const dir = (h.flip ? fr.n : [-fr.n[0], -fr.n[1], -fr.n[2]]) as V3;
+          for (const th of threads) {
+            const o = at(p, 0, 0).map((x, k) => x + dir[k] * th.z0) as V3;
+            this.threadShade(o, dir, th.r, th.z1 - th.z0, th.pitch ?? Math.max(0.25, th.R * 0.3), true);
+            const n = 48;
+            for (let k = 0; k < n; k++) {
+              const a0 = (k / n) * Math.PI * 2, a1 = ((k + 1) / n) * Math.PI * 2;
+              thread.push(...at(p, th.R * Math.cos(a0), th.R * Math.sin(a0)).map((x, j) => x + dir[j] * th.z0), ...at(p, th.R * Math.cos(a1), th.R * Math.sin(a1)).map((x, j) => x + dir[j] * th.z0));
+            }
+          }
+        }
         if (h.kind === "tapped" && h.major && !h.threadMode) {
           const td = threadThrough(h) ? fr.len?.[i] ?? 0 : h.threadDepth?.v ?? (h.end === "through" ? 0 : h.depth.v);
           const o = at(p, 0, 0) as V3;
@@ -6587,27 +6635,27 @@ export class ModelController {
       // FR-FT-051 UX: Type and Positions tabs as in SolidWorks; view picks work on either tab.
       if (this.holeTabOf !== f) { this.holeTabOf = f; this.holeTab = "type"; }
       const tab = this.holeTab;
-      const kindNames: Record<HoleFeature["kind"], string> = { simple: t("Simple hole"), clear: t("Clearance hole"), cbore: t("Counterbore"), cdrill: t("Counterdrill"), csink: t("Countersink"), tapped: t("Tapped hole"), ptap: t("Tapered tap"), slot: t("Slot"), insert: t("Heat-set insert") };
+      const kindNames: Record<HoleFeature["kind"], string> = { simple: t("Simple hole"), clear: t("Clearance hole"), cbore: t("Counterbore"), cdrill: t("Counterdrill"), csink: t("Countersink"), tapped: t("Tapped hole"), ptap: t("Tapered tap"), slot: t("Slot"), insert: t("Heat-set insert"), adv: t("Advanced hole") };
       const favOpen = (() => { try { return localStorage.getItem("mc:holeFavOpen") === "1"; } catch { return false; } })();
       const typeTab = this.holePreview(f)
         + `<details class="pm-group pm-favs" data-ui="favs"${favOpen ? " open" : ""}><summary>${esc(t("Favourites"))}${favs.length ? ` <span class="muted">(${favs.length})</span>` : ""}</summary><label class="pm-field"><span>${esc(t("Favourite"))}</span><select data-ui="fav"><option value="">${esc(t("None"))}</option>${favs.map((x, i) => `<option value="${i}" translate="no">${esc(x.name)}</option>`).join("")}</select></label>`
           + `<label class="pm-field"><span>${esc(t("Name"))}</span><input type="text" data-ui="favName" value="${esc(holeTitle(f))}" spellcheck="false" translate="no" /></label>`
           + `<div class="pm-rels"><button class="btn small" data-ui="favSave">${esc(t("Save as favourite"))}</button>${favs.length ? `<button class="btn small" data-ui="favDel">${esc(t("Delete favourite"))}</button>` : ""}</div></details>`
-        + group(t("Hole type"), `<div class="pm-hkinds" role="group" aria-label="${esc(t("Hole type"))}">${HOLE_KINDS.map(k => `<button type="button" class="pm-hkind${f.kind === k ? " on" : ""}" data-hkind="${k}" aria-pressed="${f.kind === k}" title="${esc(kindNames[k])}" aria-label="${esc(kindNames[k])}">${holeIcon(k)}</button>`).join("")}</div>` + sel("kind", t("Type"), [["simple", t("Simple hole")], ["clear", t("Clearance hole")], ["cbore", t("Counterbore")], ["cdrill", t("Counterdrill")], ["csink", t("Countersink")], ["tapped", t("Tapped hole")], ["ptap", t("Tapered tap")], ["slot", t("Slot")], ["insert", t("Heat-set insert")]], f.kind)
-          + (f.kind === "ptap" ? sel("standard", t("Standard"), [["npt", t("ANSI NPT (pipe taper)")], ["bspt", t("ISO 7 Rc (BSPT)")]], f.standard === "bspt" ? "bspt" : "npt")
+        + group(t("Hole type"), `<div class="pm-hkinds" role="group" aria-label="${esc(t("Hole type"))}">${HOLE_KINDS.map(k => `<button type="button" class="pm-hkind${f.kind === k ? " on" : ""}" data-hkind="${k}" aria-pressed="${f.kind === k}" title="${esc(kindNames[k])}" aria-label="${esc(kindNames[k])}">${holeIcon(k)}</button>`).join("")}</div>` + sel("kind", t("Type"), [["simple", t("Simple hole")], ["clear", t("Clearance hole")], ["cbore", t("Counterbore")], ["cdrill", t("Counterdrill")], ["csink", t("Countersink")], ["tapped", t("Tapped hole")], ["ptap", t("Tapered tap")], ["slot", t("Slot")], ["insert", t("Heat-set insert")], ["adv", t("Advanced hole")]], f.kind)
+          + (f.kind === "adv" ? "" : f.kind === "ptap" ? sel("standard", t("Standard"), [["npt", t("ANSI NPT (pipe taper)")], ["bspt", t("ISO 7 Rc (BSPT)")]], f.standard === "bspt" ? "bspt" : "npt")
             : f.kind !== "insert" ? sel("standard", t("Standard"), [["iso", t("ISO metric")], ["isofine", t("ISO metric fine")], ["unc", t("ANSI inch UNC")], ["unf", t("ANSI inch UNF")]], holeStd(f)) : "")
-          + sel("size", t("Size"), [["", t("Custom")], ...(f.kind === "insert" ? HEAT_INSERTS : f.kind === "ptap" ? TAPER_STANDARDS[f.standard === "bspt" ? "bspt" : "npt"] : HOLE_STANDARDS[holeStd(f)]).map(h => [h.size, h.size] as [string, string])], f.size ?? "")
+          + (f.kind === "adv" ? "" : sel("size", t("Size"), [["", t("Custom")], ...(f.kind === "insert" ? HEAT_INSERTS : f.kind === "ptap" ? TAPER_STANDARDS[f.standard === "bspt" ? "bspt" : "npt"] : HOLE_STANDARDS[holeStd(f)]).map(h => [h.size, h.size] as [string, string])], f.size ?? ""))
           + (f.kind === "insert" && insertSize(f.size) ? `<p class="pm-help muted" data-insert>${esc(t("Insert length {l} mm; keep at least {w} mm of wall around the hole (boss Ø {b} mm).", { l: trimNum(insertSize(f.size)!.length, 2), w: trimNum(insertSize(f.size)!.wall, 2), b: trimNum(insertSize(f.size)!.hole + 2 * insertSize(f.size)!.wall, 2) }))}</p>` : "")
           + ((headKind(f) === "cbore" || headKind(f) === "csink" || f.kind === "cdrill") && f.size && screwTypes(f.size, headKind(f) === "csink" ? "csink" : "cbore").length > 1
             ? sel("screw", t("Screw type"), screwTypes(f.size, headKind(f) === "csink" ? "csink" : "cbore").map(k => [k, t(SCREW_TYPES.find(x => x.key === k)!.label)] as [string, string]), f.screw ?? defaultScrew(headKind(f) === "csink" ? "csink" : "cbore")) : "")
           + (f.kind !== "tapped" && f.kind !== "ptap" && f.kind !== "insert" && f.size ? sel("fit", t("Clearance fit"), [["close", t("Close fit")], ["normal", t("Normal fit")], ["loose", t("Loose fit")]], f.fit ?? "normal") : ""))
-        + group(t("Hole specification"), numField("diameter", f.kind === "tapped" || f.kind === "ptap" ? t("Tap drill diameter") : t("Diameter"), f.diameter, "length")
+        + (f.kind === "adv" ? this.advGroups(f, numField, group) : group(t("Hole specification"), numField("diameter", f.kind === "tapped" || f.kind === "ptap" ? t("Tap drill diameter") : t("Diameter"), f.diameter, "length")
           + (f.kind === "ptap" ? numField("taperDia", t("Tapered diameter at the face"), f.taperDia ?? { v: f.diameter.v * 1.1 }, "length") : "")
           + (headKind(f) === "cbore" ? numField("cbDia", t("Counterbore diameter"), f.cbDia ?? { v: f.diameter.v * 1.7 }, "length") + numField("cbDepth", t("Counterbore depth"), f.cbDepth ?? { v: f.diameter.v }, "length") : "")
           + (headKind(f) === "csink" ? numField("csDia", t("Countersink diameter"), f.csDia ?? { v: f.diameter.v * 2 }, "length") + numField("csAngle", t("Countersink angle"), f.csAngle ?? { v: Math.PI / 2 }, "angle") : "")
           + (f.kind === "cdrill" ? numField("cdDia", t("Counterdrill diameter"), f.cdDia ?? { v: f.diameter.v * 1.7 }, "length") + numField("cdDepth", t("Counterdrill depth"), f.cdDepth ?? { v: f.diameter.v }, "length") + numField("cdAngle", t("Counterdrill angle"), f.cdAngle ?? { v: (118 * Math.PI) / 180 }, "angle") : "")
           + (f.kind === "slot" ? sel("slotHead", t("Slot type"), [["", t("Straight slot")], ["cbore", t("Counterbored slot")], ["csink", t("Countersunk slot")]], f.slotHead ?? "") : "")
-          + (f.kind === "slot" ? numField("slotLen", t("Slot length"), f.slotLen ?? { v: f.diameter.v * 2 }, "length") + numField("slotAngle", t("Slot angle"), f.slotAngle ?? { v: 0 }, "angle") : ""))
+          + (f.kind === "slot" ? numField("slotLen", t("Slot length"), f.slotLen ?? { v: f.diameter.v * 2 }, "length") + numField("slotAngle", t("Slot angle"), f.slotAngle ?? { v: 0 }, "angle") : "")))
         + group(t("End condition"), sel("end", t("End condition"), [["blind", t("Blind")], ["through", t("Through all")], ["next", t("Up to next")], ["vertex", t("Up to vertex")], ["upto", t("Up to face or plane")], ["offset", t("Offset from surface")]], f.end)
           + (f.end === "upto" || f.end === "offset" ? hbox("hupto", t("Up to"), this.refLabel(f.upTo)) + `<p class="pm-help muted">${esc(t("Click a flat face or a plane in the view or the tree."))}</p>` : "")
           + (f.end === "offset" ? numField("upToOffset", t("Offset distance"), f.upToOffset ?? { v: 5 }, "length") + chk("reverseOffset", f.reverseOffset, t("Reverse offset")) : "")
@@ -6619,7 +6667,7 @@ export class ModelController {
           + (f.kind === "tapped" && !threadThrough(f) ? numField("threadDepth", t("Thread depth"), f.threadDepth ?? { v: f.diameter.v * 2 }, "length") : "")
           + (f.kind === "ptap" ? numField("threadDepth", t("Thread length"), f.threadDepth ?? { v: f.diameter.v }, "length") : "")
           + chk("flip", f.flip, t("Reverse direction")))
-        + (f.kind === "insert" ? "" : group(t("Options"),
+        + (f.kind === "insert" || f.kind === "adv" ? "" : group(t("Options"),
           (f.kind === "ptap" ? sel("threadMode", t("Thread display"), [["", t("Cosmetic thread")], ["remove", t("Remove thread")]], f.threadMode ?? "") : "")
           + (f.kind === "tapped" ? sel("threadMode", t("Thread display"), [["", t("Cosmetic thread")], ["remove", t("Remove thread")], ["none", t("No cosmetic thread")]], f.threadMode ?? "")
             + (f.size ? sel("tclass", t("Thread class"), threadClasses(f.size).map(c => [c, c] as [string, string]), f.tclass ?? threadClasses(f.size)[0]) : "") : "")
@@ -6836,6 +6884,8 @@ export class ModelController {
           // A typed size makes the hole custom (SolidWorks' "Show custom sizing").
           if (f.type === "hole" && key !== "depth" && key !== "threadDepth" && key !== "headClear" && key !== "drillAngle" && key !== "upToOffset" && !/^(near|under|far)Cs\./.test(key) && f.size) { delete f.size; delete f.fit; }
           if (f.type === "thread" && key === "diameter") { delete f.size; delete f.pitch; }
+          // Advanced Hole: a typed diameter or angle makes that element custom; the main hole's Ø is the feature's.
+          if (f.type === "hole" && f.kind === "adv") { const e = /^(near|far)\.(\d+)\.(dia|angle)$/.exec(key); if (e) delete f[e[1] as "near" | "far"]?.[+e[2]]?.size; advSync(f); }
         }, f.type === "hole" || f.type === "thread");
       };
       inp.addEventListener("change", apply);
@@ -6955,6 +7005,12 @@ export class ModelController {
               if (f.kind === "ptap") f.size ??= "1/4-18 NPT";
               else { delete f.taperDia; if (f.standard === "bspt") delete f.standard; }
               if (f.kind !== "tapped" && f.kind !== "ptap") delete f.threadMode;
+              // Advanced Hole: starts as the size's counterbore over its clearance hole; its elements carry the sizes.
+              if (f.kind === "adv") {
+                f.near ??= advDefault(f.size && holeSize(f.size) ? f.size : "M6");
+                for (const x of ["size", "fit", "standard", "cbDia", "cbDepth", "csDia", "csAngle", "cdDia", "cdDepth", "cdAngle", "threadDepth", "threadEnd", "major", "pitch", "screw", "tclass", "nearCs", "underCs", "farCs", "headClear", "slotHead"] as const) delete f[x];
+                advSync(f);
+              } else { delete f.near; delete f.far; }
             }
             if (k === "size") { if (val) f.size = String(val); else delete f.size; }
             if (k === "fit") f.fit = val as HoleFeature["fit"];
@@ -7324,6 +7380,40 @@ export class ModelController {
         saveFavs(loadFavs().filter((_x, k) => String(k) !== i));
         this.renderPanel();
       });
+      // Advanced Hole elements: type and size selects, move, remove, add (one undo step each through the draft).
+      const elemAt = (key: string) => { const [side, i] = key.split(":"); const list = side === "far" ? (f.far ??= []) : (f.near ??= []); return { side, i: +i, list }; };
+      const advDone = () => { if (f.far && !f.far.length) delete f.far; advSync(f); this.draftChanged(); };
+      pm.querySelectorAll<HTMLSelectElement>("select[data-ae]").forEach(el => el.addEventListener("change", () => {
+        const { i, list } = elemAt(el.dataset.ae!), what = el.dataset.ae!.split(":")[2], e = list[i];
+        if (!e) return;
+        const keep = e.t !== "csink" && e.depth ? e.depth.v : undefined;
+        const main = list === f.near && i === list.length - 1;
+        if (what === "t") list[i] = elemFor(el.value as HoleElem["t"], e.size, el.value === "tapped" ? undefined : keep);
+        else list[i] = elemFor(e.t, el.value || undefined, e.t === "tapped" ? undefined : keep);
+        if (!el.value && what === "size") { list[i] = { ...e }; delete list[i].size; }
+        // The main hole of a hole that is not blind runs to the end condition: no depth of its own unless tapped.
+        if (main && list[i].t === "straight") delete list[i].depth;
+        advDone();
+      }));
+      pm.querySelectorAll<HTMLButtonElement>("[data-aemv]").forEach(b => b.addEventListener("click", () => {
+        const [side, i, d] = b.dataset.aemv!.split(":"), { list } = elemAt(`${side}:${i}`), j = +i + +d;
+        if (j < 0 || j >= list.length) return;
+        [list[+i], list[j]] = [list[j], list[+i]];
+        advDone();
+      }));
+      pm.querySelectorAll<HTMLButtonElement>("[data-aerm]").forEach(b => b.addEventListener("click", () => {
+        const { i, list } = elemAt(b.dataset.aerm!);
+        if (list === f.near && i === list.length - 1) return;
+        list.splice(i, 1);
+        advDone();
+      }));
+      pm.querySelectorAll<HTMLButtonElement>("[data-aeadd]").forEach(b => b.addEventListener("click", () => {
+        const main = f.near?.[f.near.length - 1];
+        // Near side: a counterbore above the stack (a countersink when there already is one); far side: a countersink.
+        if (b.dataset.aeadd === "far") (f.far ??= []).push(elemFor("csink", main?.size));
+        else { f.near ??= advDefault(); f.near.splice(f.near.length - 1, 0, elemFor(f.near.some(e => e.t === "cbore") ? "csink" : "cbore", main?.size)); }
+        advDone();
+      }));
     }
     if (f.type === "curve") this.bindCurvePanel(pm, f, unit, upd);
     if (f.type === "helix") {

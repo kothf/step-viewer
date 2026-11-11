@@ -1453,6 +1453,11 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .pm-hkind { display: flex; align-items: center; justify-content: center; min-height: 34px; padding: 3px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); cursor: pointer; }
 .pm-hkind:hover { border-color: var(--accent); }
 .pm-hkind.on { border-color: var(--accent); background: var(--accent-soft); }
+.pm-aelem { border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px 2px; margin: 0 0 6px; }
+.pm-aehead { display: flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; margin-bottom: 2px; }
+.pm-aehead > span:nth-child(2) { flex: 1; min-width: 0; }
+.pm-aen { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; border-radius: 9px; background: var(--accent-soft); color: var(--accent-text); font-size: 11px; }
+.pm-help.pm-warn { color: var(--danger); }
 .pm-favs > summary { font-size: 12px; font-weight: 600; cursor: pointer; padding: 4px 0; }
 
 /* Toolbox design library (FR-ASM-028) */

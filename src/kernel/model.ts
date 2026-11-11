@@ -15,6 +15,7 @@ import type { HealFeature, RecognizedHole, RecognizedBlends, SketchPatternFeatur
 import { dir2Apart, dir2Feature, threadThrough, holeExits, headKind } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { recognizedHoleFeatures, TAPER } from "../model/holes";
+import { advProfile } from "../model/advHole";
 import { ctxFrame } from "../model/context";
 import { loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 import { splineBezierN } from "../sketch/spline";
@@ -2416,13 +2417,32 @@ export class Modeller {
       return hi;
     };
     const len: number[] = [];
+    // Advanced Hole: the element stack's section (z down from the face) turned into the kernel's (r, z up) profile,
+    // starting above the face and running past the far face so both are cut cleanly.
+    const advK = (o: V3): [number, number][] => {
+      const exits = holeExits(f), D = exits && f.far?.length && through ? reachAt(o) : depthAt(o);
+      if (exits && f.far?.length) len.push(D);
+      const main = f.near?.[f.near.length - 1], da = f.drillAngle?.v ?? (118 * Math.PI) / 180;
+      const tip = f.end === "blind" && !f.flat && main ? main.dia.v / 2 / Math.tan(da / 2) : 0;
+      let a;
+      try { a = advProfile(f.near ?? [], f.far, D, exits, tip); } catch (e) { throw new FeatureError("E-HOLE-ADV", (e as Error).message); }
+      const p = a.prof.map(([rr, z]) => [rr, -z] as [number, number]);
+      const first = f.near![0], t0 = first.t === "csink" ? Math.tan((first.angle?.v ?? Math.PI / 2) / 2) : 0;
+      const out: [number, number][] = [[0, lift], [p[0][0] + lift * t0, lift], ...p.slice(first.t === "csink" ? 1 : 0)];
+      if (exits) {
+        const [rl, zl] = out[out.length - 1], last = f.far?.[0], tl = last?.t === "csink" ? Math.tan((last.angle?.v ?? Math.PI / 2) / 2) : 0;
+        if (f.far?.length && last?.t === "csink") out[out.length - 1] = [rl + lift * tl, zl - lift]; else out.push([rl, zl - lift]);
+        out.push([0, zl - lift]);
+      }
+      return out;
+    };
     const tools: Named[] = [];
     f.pts.forEach((p, i) => {
       const o = add(add(fr.o, mul(fr.x, p[0])), mul(fr.y, p[1]));
       if (threadThrough(f)) len.push(reach(o));
       const exit = f.farCs && holeExits(f) ? (f.end === "through" ? reachAt(o) : depthAt(o)) : undefined;
       const td = f.kind === "ptap" ? f.threadDepth?.v ?? 0 : !M ? 0 : threadThrough(f) ? len[len.length - 1] : f.threadDepth?.v ?? (f.end === "blind" ? f.depth.v : 2 * f.diameter.v);
-      let shape = revolve(o, profile(depthAt(o), exit, td));
+      let shape = revolve(o, f.kind === "adv" ? advK(o) : profile(depthAt(o), exit, td));
       if (f.kind === "slot") {
         // Slot: the hole at both ends of the centre line, joined by the profile swept along it.
         const L = f.slotLen?.v ?? 0;
