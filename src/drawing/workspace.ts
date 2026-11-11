@@ -602,7 +602,7 @@ export class DrawingWorkspace {
     else if (m.kind === "projected") s = m.parent ? t("Move the cursor around the view and click to place a projected view. Esc or ✓ ends.") : t("Click the view to project from.");
     else if (m.kind === "section" && !m.line && m.how === "aligned") s = t(!m.pts?.length ? "Click the end of the first leg on a view." : m.pts.length === 1 ? "Click the centre: the second leg turns about it into the first leg's plane." : "Click the end of the second leg.");
     else if (m.kind === "section" && !m.line && (m.how === "off" || m.how === "half")) s = !m.pts?.length ? t("Click the first point of the cutting line on a view.") : m.how === "half" ? (m.pts.length === 1 ? t("Click the centre: the cut stops there.") : t("Click where the step ends, square to the cut.")) : m.pts.length === 1 ? t("Click the end of the first cut.") : t("Click the next corner: legs run along or square to the first. Enter or a second click on the last point finishes.");
-    else if (m.kind === "section") s = m.line ? t("Move the cursor to the side the section looks from and click to place it. Esc cancels.") : m.how === "2p" ? (m.p1 ? t("Click the second point of the cutting line.") : t("Click the first point of the cutting line on a view.")) : t("Click on a view to place the cutting line. It snaps to circle centres, line ends and midpoints.");
+    else if (m.kind === "section") s = m.line ? t(this.sheet.projection === "first" ? "Move the cursor to the side the section looks towards and click to place it. Esc cancels." : "Move the cursor to the side the section looks from and click to place it. Esc cancels.") : m.how === "2p" ? (m.p1 ? t("Click the second point of the cutting line.") : t("Click the first point of the cutting line on a view.")) : t("Click on a view to place the cutting line. It snaps to circle centres, line ends and midpoints.");
     else if (m.kind === "detail" && m.prof && !m.r) s = (m.pts?.length ?? 0) < 3 ? t("Click the corners of the detail profile on a view.") : t("Click more corners; click the first corner or press Enter to close the profile.");
     else if (m.kind === "detail") s = m.r ? t("Click on the sheet to place the detail view. Esc cancels.") : m.c ? t("Move the cursor to size the circle and click.") : t("Click the centre of the detail circle on a view.");
     else if (m.kind === "crop") s = m.p1 ? t("Click the opposite corner of the crop rectangle.") : t("Click the first corner of the crop rectangle on the view.");
@@ -2369,12 +2369,15 @@ export class DrawingWorkspace {
     return best;
   }
 
-  /** A section or auxiliary view of `parent` from `line`, on the cursor's side and lined up square to the line. */
+  /** A section or auxiliary view of `parent` from `line`, on the cursor's side (looking the way the sheet's projection places it) and lined up square to the line. */
   private sideViewAt(kind: "section" | "aux", parent: string, line: Line4, at: Pt, path?: number[], aligned?: boolean): DrawingView {
     const pp = this.placements.get(parent)!, par = findView(this.sheet, parent);
     const [a, b] = [toSheet(pp, line[0], line[1]), toSheet(pp, line[2], line[3])];
     const n: Pt = [-(b[1] - a[1]), b[0] - a[0]];
-    const look: 1 | -1 = (at[0] - a[0]) * n[0] + (at[1] - a[1]) * n[1] >= 0 ? 1 : -1;
+    // Third angle (ANSI, SolidWorks): the view sits on the side it looks from, the arrows pointing away from it.
+    // First angle (ISO E, ESKD): a view in projection position sees the far side, so it sits where the arrows point.
+    const side: 1 | -1 = (at[0] - a[0]) * n[0] + (at[1] - a[1]) * n[1] >= 0 ? 1 : -1;
+    const look: 1 | -1 = this.sheet.projection === "first" ? (side === 1 ? -1 : 1) : side;
     const v: DrawingView = { id: "_pv", name: "", kind, parent, line, look, x: at[0], y: at[1], letter: nextLetter(this.doc.sheets), style: kind === "section" ? "hlr" : par?.style, tangent: par?.tangent };
     if (path) v.path = path;
     if (aligned) v.aligned = true;

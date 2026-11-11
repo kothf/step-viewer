@@ -626,6 +626,16 @@ test("offset and half sections: the staircase cutter, hatched faces on every cut
   };
   assert.deepEqual(marks([-60, 10, 0, 10, 0, 0, 60, 0]), { arrows: 2, thick: 6, letters: 2 });
   assert.deepEqual(marks([-60, 0, 10, 0, 10, -40]), { arrows: 1, thick: 4, letters: 1 });
+  // The thick ends lie wholly outside the view, not over its outline (ISO 128-44): plain line and offset path.
+  const { viewRect } = await import("../../src/drawing/compose");
+  for (const path of [[-60, 0, 60, 0], [-60, 10, 0, 10, 0, 0, 60, 0]]) {
+    const v = { id: "s", name: "A", kind: "section", parent: "t", line: path.slice(0, 4), path: path.length > 4 ? path : undefined, look: 1, letter: "A", x: 100, y: 80 };
+    const sheet = { id: "sh", name: "S", size: "A3", scale: [1, 1], projection: "third", views: [parent, v], annots: [] } as never;
+    const pl = placement(sheet, parent as never, undefined, [[-50, -30, 0], [50, 30, 20]]), r = viewRect(pl);
+    const ends = childMarks(sheet, parent as never, pl).filter(p => p.t === "l" && p.pen === "frame" && Math.abs(p.p[1] - p.p[3]) < 1e-9 && Math.abs(p.p[0] - p.p[2]) > 5);
+    assert.equal(ends.length, 2);
+    for (const e of ends) if (e.t === "l") assert.ok(Math.min(e.p[0], e.p[2]) > r[2] + 1 || Math.max(e.p[0], e.p[2]) < r[0] - 1, `thick end ${e.p} outside ${r}`);
+  }
 });
 
 test("shaded views: triangles facing the viewer, back to front, drawn under the visible edges (FR-DRW-010)", async () => {

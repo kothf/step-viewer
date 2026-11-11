@@ -5196,7 +5196,7 @@ try {
     const cutArea = (secProj?.cut ?? []).reduce((t, l) => t + Math.abs(area(l)), 0);
     let prims = await dp.evaluate(() => window.__sv.drw.prims().map(p => ({ t: p.t, layer: p.layer, s: p.s, r: p.r, pen: p.pen })));
     const hatchN = prims.filter(p => p.layer === "HATCH").length, texts = prims.filter(p => p.t === "t").map(p => p.s);
-    check(cutPreview > 0 && sec && sec.letter === "A" && sec.look === -1 && Math.abs(sec.line[0] - 10) < 0.05 && sec.line[0] === sec.line[2] && Math.abs(sec.y - front.y) < 0.02 && sec.x < front.x,
+    check(cutPreview > 0 && sec && sec.letter === "A" && sec.look === 1 && Math.abs(sec.line[0] - 10) < 0.05 && sec.line[0] === sec.line[2] && Math.abs(sec.y - front.y) < 0.02 && sec.x < front.x,
       `drawing: section view from a vertical cutting line through the hole, placed on the left and lined up with the front view (${JSON.stringify(sec && { line: sec.line, look: sec.look, x: sec.x, y: sec.y })}, front ${front.x},${front.y})`);
     check(Math.abs(cutArea - (60 * 20 - 16 * 20)) < 0.5 && hatchN > 20 && texts.includes("SECTION A-A") && prims.filter(p => p.t === "t" && p.layer === "ANNOT" && p.s === "A").length === 2 && prims.some(p => p.layer === "ANNOT" && p.pen === "center"),
       `drawing: section A-A is hatched over the cut faces (area ${cutArea.toFixed(2)} mm² = 60×20 − 16×20), with its label and a lettered cutting line on the front view (${hatchN} hatch lines)`);
@@ -5210,7 +5210,7 @@ try {
     await ready();
     vs = await views();
     const flipped = vs.find(v => v.id === sec.id);
-    check(Math.round(dragged.x - sec.x) === -10 && Math.abs(dragged.y - sec.y) < 1e-9 && flipped.look === 1 && flipped.x > front.x && Math.abs(flipped.y - sec.y) < 1e-9,
+    check(Math.round(dragged.x - sec.x) === -10 && Math.abs(dragged.y - sec.y) < 1e-9 && flipped.look === -1 && flipped.x > front.x && Math.abs(flipped.y - sec.y) < 1e-9,
       `drawing: a section view slides only along its direction; Flip direction puts it on the other side (${dragged.x - sec.x},${dragged.y - sec.y}; flipped x ${flipped.x}, look ${flipped.look})`);
     await dp.keyboard.press("Control+z");
     await ready();
@@ -5256,7 +5256,7 @@ try {
     vs = await views();
     const aux = vs.find(v => v.kind === "aux");
     const auxBox = aux && await dp.evaluate(i => window.__sv.drw.placement(i).box.map(v => Math.round(v * 1000) / 1000), aux.id);
-    check(edgeHi === 1 && aux && aux.letter === "C" && aux.look === 1 && Math.abs(aux.x - front.x) < 0.02 && aux.y > front.y && auxBox && Math.round(auxBox[2] - auxBox[0]) === 100 && Math.round(auxBox[3] - auxBox[1]) === 60,
+    check(edgeHi === 1 && aux && aux.letter === "C" && aux.look === -1 && Math.abs(aux.x - front.x) < 0.02 && aux.y > front.y && auxBox && Math.round(auxBox[2] - auxBox[0]) === 100 && Math.round(auxBox[3] - auxBox[1]) === 60,
       `drawing: auxiliary view C square to a picked edge, lined up with its parent (${JSON.stringify(aux && { x: aux.x, y: aux.y, look: aux.look })}, box ${auxBox})`);
     // 1.114.0 offset section (FR-DRW-012): a path on the top view at y = 10 left of x = 0, a step down to y = 0, then through the hole.
     await dp.click('#drw [data-a="section"]'); await dp.click('#drw [data-cut="off"]');
@@ -6550,7 +6550,7 @@ try {
     await mp.click("#mc-ok");
     await settle();
     check(on === true && mb.merge === false && mb.bodies === 2, `model 1.57: Extrude with Merge result off makes a new body (FR-FT-006) (${on}, ${JSON.stringify(mb)})`);
-    // 1.504 (FR-FT-007): Feature scope: a Through all - both cut on the boss's axis takes both bodies; with only
+    // 1.505 (FR-FT-007): Feature scope: a Through all - both cut on the boss's axis takes both bodies; with only
     // the first body picked, the boss keeps its material.
     {
       await mp.evaluate(() => window.__sv.model.store.change("Circle", d => { d.features.push({ id: "ks", type: "sketch", name: "SketchScope", plane: { face: { name: "x:end" } }, rels: [], dims: [], ents: [{ id: "o", t: "point", x: 0, y: 0 }, { id: "c", t: "circle", c: "o", r: 2 }] }); }));
@@ -6573,7 +6573,7 @@ try {
       await settle();
       const kept = await mp.evaluate(() => ({ scope: window.__sv.model.store.doc.features.at(-1).scope?.length, bodies: window.__sv.model.last().props.bodies }));
       check(allOn === true && focusScope && sc.box === "1 body" && sc.v - vAll > 1 && v0 - sc.v > 1 && kept.scope === 1 && kept.bodies === 2,
-        `model 1.504: Feature scope cuts only the picked body (FR-FT-007) (${allOn}, ${focusScope}, ${JSON.stringify(sc)}, ${(v0 - vAll).toFixed(2)}, ${JSON.stringify(kept)})`);
+        `model 1.505: Feature scope cuts only the picked body (FR-FT-007) (${allOn}, ${focusScope}, ${JSON.stringify(sc)}, ${(v0 - vAll).toFixed(2)}, ${JSON.stringify(kept)})`);
       await mp.evaluate(() => window.__sv.model.store.undo());
       await settle();
       await mp.evaluate(() => window.__sv.model.store.undo());
