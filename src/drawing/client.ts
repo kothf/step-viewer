@@ -139,6 +139,8 @@ export class DrawingKernel {
   private snap: ModelSnap | null = null;
   private wantRecycle = false;
   private recycling: Promise<void> | null = null;
+  /** Loads that read the open assembly's own build (`load`'s `pre`) instead of building the parts (for tests). */
+  preLoads = 0;
   /** Times the main worker was started over (for tests). */
   recycles = 0;
   /** Told when a restart (`recycle`) starts and ends, so the status line can say so. */
@@ -226,8 +228,11 @@ export class DrawingKernel {
     this.cfgLoading.clear();
   }
 
-  /** Loads the model; the projection cache starts over. */
-  load(src: { part?: PartDoc; asm?: AsmDoc; file?: { name: string; bytes: Uint8Array } }): Promise<ModelFacts> {
+  /**
+   * Loads the model; the projection cache starts over. `pre`: the assembly's shape already built by the open
+   * assembly's kernel (`ModelKernel.drawingSnap`), read instead of building every part again.
+   */
+  load(src: { part?: PartDoc; asm?: AsmDoc; file?: { name: string; bytes: Uint8Array } }, pre?: ModelSnap | null): Promise<ModelFacts> {
     this.gen++;
     this.cache.clear();
     this.inflight.clear();
@@ -242,8 +247,9 @@ export class DrawingKernel {
     // The helper only for models under FAST_EDGES: a second copy of a big assembly can run the tab out of memory
     // (drawings exam: an engine tab crashed after Standard 3 views); big ones take the fast path anyway.
     const gen = this.gen;
-    this.loaded = this.start().then(() => this.call<ModelFacts & { snap?: ModelSnap }>({ type: "load", ...src })).then(r => {
+    this.loaded = this.start().then(() => this.call<ModelFacts & { snap?: ModelSnap; pre?: boolean }>({ type: "load", ...src, snap: src.asm && pre ? pre : undefined })).then(r => {
       if (gen === this.gen) this.snap = r.snap ?? null;
+      if (r.pre) this.preLoads++;
       return facts(r);
     }).then(f => {
       if (gen === this.gen) { if (f.topo.edges.length < FAST_EDGES) this.loadHelper(src); else this.stopHelper(); }
@@ -281,7 +287,7 @@ export class DrawingKernel {
   }
 
   /** For tests: whether the helper worker is up and has the model, and how many projections it made. */
-  helperState() { return { on: !!this.helper, loaded: !!this.helper?.loaded, helped: this.helped, recycles: this.recycles, snap: this.snap?.bin.length ?? 0, snapMesh: !!this.snap?.mesh }; }
+  helperState() { return { on: !!this.helper, loaded: !!this.helper?.loaded, helped: this.helped, recycles: this.recycles, preLoads: this.preLoads, snap: this.snap?.bin.length ?? 0, snapMesh: !!this.snap?.mesh }; }
 
   /** An exact projection or section, run by whichever worker is free first. */
   private exact<T>(msg: Record<string, unknown>, key?: string): Promise<T> {

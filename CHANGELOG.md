@@ -5,13 +5,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.501.0] - 2026-11-11
+## [1.502.0] - 2026-11-11
 
 ### Added
 
 - Linear and Circular pattern (FR-FT-070/071): Instances to skip are picked in the view, as in SolidWorks. Click the Instances to skip box and a dot appears at every instance; a click on a filled dot skips that instance (the preview drops it and the dot turns hollow), a click on a hollow one brings it back. The dot sits on the material the instance changes, so a through-all hole's dot is half way down the plate, not out in space along the cut. Typing instance numbers still works.
 - Linear pattern (FR-FT-070): each direction can be set by Up to distance (the distance from the seed to the last instance, shared out equally) instead of the spacing, and Direction 2 has Pattern seed only (it copies the seed alone, not the instances of direction 1).
 - Circular pattern (FR-FT-071): Direction 2 turns copies the other way about the same axis, Symmetric (direction 1's count and angle) or with its own count, angle and equal spacing. Its instances are -1, -2… in Instances to skip, and copies that land on direction 1's are left out.
+
+## [1.501.0] - 2026-11-11
+
+### Changed
+
+- A drawing of the assembly open in 3D takes its shape from the parts the assembly has built already instead of building every part again: on the steam engine that step takes about 1.5 s instead of 12 s.
+
+### Fixed
+
+- The Custom… scale box stays the same box while the drawing panel redraws, so typing into it is no longer cut off when a view arrives.
 
 ## [1.500.0] - 2026-11-11
 
@@ -3094,7 +3104,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.501.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.502.0...HEAD
+[1.502.0]: https://github.com/kothf/step-viewer/compare/v1.501.0...v1.502.0
 [1.501.0]: https://github.com/kothf/step-viewer/compare/v1.500.0...v1.501.0
 [1.500.0]: https://github.com/kothf/step-viewer/compare/v1.499.0...v1.500.0
 [1.499.0]: https://github.com/kothf/step-viewer/compare/v1.498.0...v1.499.0

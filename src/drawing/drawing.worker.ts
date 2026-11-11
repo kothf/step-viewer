@@ -38,7 +38,7 @@ export type DrawingRequest =
  * (an engine assembly: ~12 s). After the first fast view a big model's snapshot is sent again with its mesh
  * (`mesh`), so a restart need not mesh it again either (~6 s).
  */
-export interface ModelSnap { bin: Uint8Array; mesh?: boolean; names?: string[]; mat: string | null; mats: (string | null)[] | null; placed?: { id: string; mat: string | null; mats?: (string | null)[] | null }[] }
+export interface ModelSnap { bin: Uint8Array; mesh?: boolean; names?: string[]; mat: string | null; mats: (string | null)[] | null; placed?: { id: string; part?: string; name?: string; mat: string | null; mats?: (string | null)[] | null }[] }
 
 /** Snapshots past this many bytes are not made (they would cost more memory than the time saved). */
 const SNAP_MAX = 128 * 1048576;
@@ -62,6 +62,14 @@ function readSnap(snap: ModelSnap) {
   }
   shape = s; shapeNames = snap.names; modelMat = snap.mat; modelMats = snap.mats;
   snapMeshed = !!snap.mesh;
+}
+
+/** Reads an assembly snapshot made by the kernel worker; false (nothing kept) when it does not fit the assembly. */
+function fromAsm(snap: ModelSnap, asm: AsmDoc): boolean {
+  const ok = !!snap.placed?.length && snap.placed.every(p => p.part && p.name !== undefined && asm.components.some(c => c.id === p.id && !c.hidden && c.part === p.part));
+  if (!ok) return false;
+  try { readSnap(snap); return true; }
+  catch { shape = null; placedShapes = []; shapeNames = undefined; modelMat = null; modelMats = null; snapMeshed = false; return false; }
 }
 
 export type DiffSrc = { part?: PartDoc; asm?: AsmDoc };
@@ -259,6 +267,11 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
         const b = buildPart(r.part, r.lite);
         shape = b.shape; modelMat = b.mat; modelMats = b.mats; extra = b.extra; shapeNames = b.names;
         partDoc = r.part;
+      } else if (r.asm && r.snap && fromAsm(r.snap, r.asm)) {
+        // The open assembly's own build (kernel worker `asmSnap`): the same compound without building the parts again.
+        const comps = r.snap.placed!.map((p, i) => ({ id: p.id, part: p.part!, name: p.name!, mats: usedMats(placedShapes[i].mats) }));
+        post({ id: r.id, ok: true, ...shapeInfo(oc, shape), topo: topology(oc, shape, shapeNames), items: [], holes: [], comps, snap: r.snap, pre: true });
+        return;
       } else if (r.asm) {
         // An assembly (FR-DRW-030): the shown components placed into one compound; face names get
         // the component id in front (`<comp>@<face>`) so an edge says which component it is on.

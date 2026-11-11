@@ -10,6 +10,7 @@ import { solidworksToStep } from "./solidworks";
 import { ParasolidReader } from "../sw/parasolid";
 import { Modeller, type ModelMesh, type Named } from "./model";
 import { Assembler } from "./assembly";
+import { shapeBin } from "./drawing";
 import type { AsmDoc } from "../asm/types";
 import { analyzeMesh } from "../topology";
 import { applyPatch, probe } from "./patch";
@@ -46,6 +47,8 @@ export type KernelRequest =
   | { id: number; type: "asmInterfere"; doc: AsmDoc; touch?: boolean }
   | { id: number; type: "asmClearance"; doc: AsmDoc; min: number }
   | { id: number; type: "asmStep"; doc: AsmDoc }
+  /** The shown components placed into one compound as binary BREP, for a drawing of the open assembly (`ModelSnap`). */
+  | { id: number; type: "asmSnap"; doc: AsmDoc }
   | { id: number; type: "model"; doc: PartDoc; color: [number, number, number]; quality: number; previewAt?: number; verify?: boolean }
   /** Modelling: STEP of the last evaluated body. */
   | { id: number; type: "modelStep"; name: string; color: [number, number, number] }
@@ -272,6 +275,23 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
       const parts = keys.map(k => ({ key: k, shape: assembler!.sourceBody(k, r.doc)!.shape, name: r.doc.parts[k].name, color: (r.doc.parts[k].doc.color ?? [0.72, 0.74, 0.78]) as [number, number, number] }));
       const bytes = kernel.writeAssemblyStep(r.doc.name, parts, shown.map(p => ({ part: p.part, name: p.name, tf: p.tf }))).slice();
       post({ id: r.id, ok: true, bytes }, [bytes.buffer]);
+    } else if (r.type === "asmSnap") {
+      // A drawing of the open assembly reads this (~0.1 s on the engine) instead of building every part again (~11 s):
+      // the parts are already built here. Same compound, order and names as the drawing worker's own load.
+      assembler ??= new Assembler(kernel.module);
+      const oc = kernel.module, { placed } = assembler.evaluate(r.doc, 1);
+      const shown = placed.filter(p => !r.doc.components.find(c => c.id === p.id)?.hidden);
+      if (!shown.length) throw new Error("The assembly has no components to draw.");
+      const b = new oc.BRep_Builder(), comp = new oc.TopoDS_Compound();
+      b.MakeCompound(comp);
+      const names: string[] = [];
+      for (const p of shown) { b.Add(comp, p.body.shape); names.push(...p.body.names.map(n => `${p.id}@${n}`)); }
+      const bin = shapeBin(oc, comp, false);
+      const snap = {
+        bin, names, mat: null, mats: null,
+        placed: shown.map(p => ({ id: p.id, part: p.part, name: p.name, mat: r.doc.parts[p.part]?.doc?.material?.name ?? null, mats: assembler!.bodyMats(p.part, r.doc, p.src) })),
+      };
+      post({ id: r.id, ok: true, snap }, [bin.buffer]);
     } else if (r.type === "partBody") {
       // Insert part (FR-BODY-005): the other part is evaluated on its own, so this part's feature cache stays.
       const other = new Modeller(kernel.module).evaluate(r.doc);

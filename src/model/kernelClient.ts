@@ -11,6 +11,7 @@ import type { OwnBody } from "../tools/inertia";
 import type { AsmDoc, AsmComponentStatus } from "../asm/types";
 import type { SheetState } from "../sheetmetal/sheet";
 import type { CutItem } from "../weldments/types";
+import type { ModelSnap } from "../drawing/drawing.worker";
 import type { FaceRef, RecognizedHole, Feature, BodyProps, FeatureStatus, Frame, IntersectRegion, PatternSpot, PartDoc, SketchFeature, V3 } from "./types";
 
 export interface Rebuild {
@@ -269,6 +270,15 @@ export class ModelKernel {
   async assemblyStep(doc: AsmDoc): Promise<Uint8Array> {
     await this.start();
     return (await this.call<{ bytes: Uint8Array }>({ type: "asmStep", doc })).bytes;
+  }
+
+  /**
+   * The shown components as a drawing snapshot (`ModelSnap`), from the parts this worker has built already;
+   * `doc` must be what the last `assembly` built, or the worker would rebuild (and lose its cache for the 3D view).
+   */
+  async drawingSnap(doc: AsmDoc): Promise<ModelSnap> {
+    await this.start();
+    return (await this.call<{ snap: ModelSnap }>({ type: "asmSnap", doc })).snap;
   }
 
   async step(name: string, color: V3): Promise<Uint8Array> {

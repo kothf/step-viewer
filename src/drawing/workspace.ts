@@ -13,6 +13,7 @@ import { BALLOON_R, BOM_COLS, BOM_MAT_COL, autoBalloons, bomMats, compOfKey, she
 import { t, onLangChange, lang } from "../i18n";
 import { toast, confirmModal } from "../ui";
 import { DROPPED, OUT_OF_MEMORY, DrawingKernel, type ModelFacts } from "./client";
+import type { ModelSnap } from "./drawing.worker";
 import { BREAK_GAP, composeSheet, fromSheet, HATCH_PATTERNS, hatchOf, inPoly, nextLetter, polyBox, placement, toSheet, viewBody, viewPrims, viewRect, type Placement } from "./compose";
 import { DrawingStore, newSheet, uid } from "./doc";
 import { DRAWING_EXT, packDrawing, unpackDrawing } from "./file";
@@ -60,6 +61,8 @@ export interface DrawingHost {
   livePart(id: string): PartDoc | null;
   /** The assembly with this id open now, if any (with patterns and sub-assemblies expanded). */
   liveAsm?(id: string): { doc: AsmDoc; flat: AsmDoc } | null;
+  /** The shape of this flattened assembly from the open assembly's kernel, when it is the one built there; else null. */
+  asmSnap?(flat: AsmDoc): Promise<ModelSnap | null>;
   /** Runs after every change of the part open in the modeller. */
   onPartChange(fn: () => void): void;
   /** Direction of the 3D camera (for "Current 3D view"). */
@@ -307,7 +310,9 @@ export class DrawingWorkspace {
     this.loading++;
     this.renderStatus();
     try {
-      this.facts = await this.kernel.load(src.kind === "part" ? { part: src.doc } : src.kind === "asm" ? { asm: src.flat } : { file: { name: src.name, bytes: this.model! } });
+      // A drawing of the assembly open in 3D: its kernel has built the parts already (engine: 11 s → 0.1 s).
+      const pre = src.kind === "asm" ? await this.host.asmSnap?.(src.flat).catch(() => null) : null;
+      this.facts = await this.kernel.load(src.kind === "part" ? { part: src.doc } : src.kind === "asm" ? { asm: src.flat } : { file: { name: src.name, bytes: this.model! } }, pre);
       this.boms = src.kind === "asm" ? new Map() : null;
       this.stale = false;
       this.renderAll();
@@ -2850,10 +2855,16 @@ export class DrawingWorkspace {
     if (keep && box0) { keep.val = box0.value; keep.focus = document.activeElement === box0; }
     this.renderPropsOnly();
     const sel = keep && this.el.querySelector<HTMLSelectElement>(`.drw-props select[data-${keep.k}="scale"]`);
-    if (keep && sel) { sel.value = "custom"; this.addScaleBox(sel, keep); } else this.cscale = null;
+    if (keep && sel) { sel.value = "custom"; this.addScaleBox(sel, keep, box0?.dataset[keep.k] === "scale" ? box0 : null); } else this.cscale = null;
   }
 
-  private addScaleBox(sel: HTMLSelectElement, c: { k: "v" | "s"; val: string; focus: boolean }) {
+  /** Puts the Custom… box under the scale list; `reuse` = the box already there, moved over so the element typed into stays the same. */
+  private addScaleBox(sel: HTMLSelectElement, c: { k: "v" | "s"; val: string; focus: boolean }, reuse: HTMLInputElement | null = null) {
+    if (reuse) {
+      sel.closest("label")?.after(reuse);
+      if (c.focus && document.activeElement !== reuse) reuse.focus();
+      return;
+    }
     const box = document.createElement("input");
     box.dataset[c.k] = "scale";
     box.className = "drw-cscale";

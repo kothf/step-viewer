@@ -447,6 +447,7 @@ const drawing = new DrawingWorkspace({
   },
   livePart: id => (modeller.store?.doc.id === id ? modeller.store.doc : null),
   liveAsm: id => (asm.active && asm.doc?.id === id ? { doc: asm.doc, flat: asm.expanded?.doc ?? flattenSubs(asm.doc) } : null),
+  asmSnap: flat => (asm.active ? asm.drawingSnap(flat) : Promise.resolve(null)),
   onPartChange: fn => { partListeners.push(fn); },
   currentView() {
     if (!viewer.parts.length && !modeller.active) return null;
