@@ -85,8 +85,20 @@ circle.drw-edge { fill: none; }
 .drw-ptabs button.on { color: var(--text); border-bottom-color: var(--accent); }
 .drw-pal { border-bottom: 1px solid var(--line); padding: 8px 10px; }
 .drw-pal[hidden] { display: none; }
-.drw-at-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
-.drw-at { justify-content: flex-start; text-align: left; }
+/* Annotation tab: icon tiles in groups, like the 3D command bar's buttons (.mc-b). */
+#drw-pane-annot { flex: none; max-height: 50vh; overflow-y: auto; }
+.drw-atg + .drw-atg { margin-top: 8px; }
+.drw-atg-h { font-size: 11px; font-weight: 600; color: var(--muted); margin: 0 2px 3px; }
+.drw-at-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(60px, 1fr)); gap: 2px; }
+.drw-at { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 3px; min-height: 48px; padding: 4px 2px 3px; border: 1px solid transparent; border-radius: 7px; background: none; color: var(--text); font: inherit; cursor: pointer; }
+.drw-at svg { width: 20px; height: 20px; flex: none; }
+.drw-at .mc-l { white-space: normal; text-align: center; line-height: 1.15; font-size: 11px; }
+.drw-at:hover { background: var(--panel-2); border-color: var(--line); }
+.drw-at:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+.drw-at.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text); }
+.drw-menu button:has(> svg) { display: flex; align-items: center; gap: 8px; padding: 5px 10px; }
+.drw-menu button > svg { flex: none; }
+.drw-menu-sep { height: 1px; margin: 3px 6px; background: var(--line); flex: none; }
 .drw-pal-note { margin: 0 0 6px; font-size: 11px; color: var(--muted); }
 .drw-pal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 6px; }
 .drw-pt { display: grid; justify-items: center; gap: 2px; padding: 4px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 11px; cursor: grab; }
