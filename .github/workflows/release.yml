@@ -174,17 +174,20 @@ jobs:
           V="${TAG#v}"
           SHA=$(cut -d' ' -f1 "dist/step-viewer-$V.tar.gz.sha256")
           pin() {
-            meta=$(gh api "repos/$SITE_REPO/contents/vendor.json?ref=main") || return 1
-            echo "$meta" | jq -r .content | base64 -d > vendor.json
-            cur=$(jq -r '.packages[] | select(.name == "step-viewer") | .version' vendor.json)
+            # gh's own --jq and node, so the runner needs no jq
+            gh api "repos/$SITE_REPO/contents/vendor.json?ref=main" --jq .content | base64 -d > vendor.json || return 1
+            blob=$(gh api "repos/$SITE_REPO/contents/vendor.json?ref=main" --jq .sha) || return 1
+            cur=$(node -p 'JSON.parse(require("fs").readFileSync("vendor.json")).packages.find(p => p.name === "step-viewer").version')
             if [ "$(printf '%s\n%s\n' "$cur" "$V" | sort -V | tail -1)" = "$cur" ]; then
               echo "aerocat.tech already pins $cur"; return 0
             fi
-            jq --indent 2 --arg v "$V" --arg s "$SHA" \
-              '(.packages[] | select(.name == "step-viewer")) |= (.version = $v | .sha256 = $s)' vendor.json > vendor.new
+            V="$V" SHA="$SHA" node -e '
+              const fs = require("fs"), j = JSON.parse(fs.readFileSync("vendor.json"));
+              Object.assign(j.packages.find(p => p.name === "step-viewer"), { version: process.env.V, sha256: process.env.SHA });
+              fs.writeFileSync("vendor.new", JSON.stringify(j, null, 2) + "\n");'
             gh api -X PUT "repos/$SITE_REPO/contents/vendor.json" \
               -f message="chore(vendor): update step-viewer $V" -f branch=main \
-              -f sha="$(echo "$meta" | jq -r .sha)" -f content="$(base64 -w0 vendor.new)" --jq .commit.sha >/dev/null || return 1
+              -f sha="$blob" -f content="$(base64 -w0 vendor.new)" --jq .commit.sha >/dev/null || return 1
             echo "aerocat.tech now pins step-viewer $V ($cur before)"
           }
           # a second try covers a concurrent commit on the site's main (stale blob sha)
