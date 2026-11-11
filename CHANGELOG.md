@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.501.0] - 2026-11-11
+
+### Added
+
+- Linear and Circular pattern (FR-FT-070/071): Instances to skip are picked in the view, as in SolidWorks. Click the Instances to skip box and a dot appears at every instance; a click on a filled dot skips that instance (the preview drops it and the dot turns hollow), a click on a hollow one brings it back. The dot sits on the material the instance changes, so a through-all hole's dot is half way down the plate, not out in space along the cut. Typing instance numbers still works.
+
 ## [1.500.0] - 2026-11-11
 
 ### Added
@@ -3086,7 +3092,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.500.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.501.0...HEAD
+[1.501.0]: https://github.com/kothf/step-viewer/compare/v1.500.0...v1.501.0
 [1.500.0]: https://github.com/kothf/step-viewer/compare/v1.499.0...v1.500.0
 [1.499.0]: https://github.com/kothf/step-viewer/compare/v1.498.0...v1.499.0
 [1.498.0]: https://github.com/kothf/step-viewer/compare/v1.497.0...v1.498.0

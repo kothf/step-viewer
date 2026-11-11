@@ -935,6 +935,8 @@ export interface IntersectFeature {
 }
 
 /** A region an intersect found: a point inside it, its volume and whether it is left out. */
+/** Where each instance of a linear or circular pattern lands (the seed's centre moved), `key` as in `skip`. */
+export interface PatternSpot { key: string; p: V3 }
 export interface IntersectRegion { c: V3; v: number; out: boolean; /** Indexes of the `exclude` points inside it. */ ex?: number[] }
 
 export type Feature = SheetFeature | SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature | CsysFeature

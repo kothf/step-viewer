@@ -4594,4 +4594,11 @@ export const RU: Record<string, string> = {
   "uses v{n}": "использует v{n}",
   "At angle about an edge or axis": "Под углом вокруг ребра или оси",
   "Pick an axis to turn the plane about.": "Выберите ось, вокруг которой поворачивается плоскость.",
+  "{n} skipped": "пропущено: {n}",
+  "Click this box, then the dots in the view: a filled dot is an instance, a hollow one is skipped.": "Щёлкните это поле, затем точки на модели: закрашенная точка — экземпляр, пустая — пропущенный.",
+  "Instance {n}": "Экземпляр {n}",
+  "skipped, click to bring it back": "пропущен, щёлкните, чтобы вернуть",
+  "click to skip it": "щёлкните, чтобы пропустить",
+  "Skip {instance}": "Пропустить: {instance}",
+  "Click the dots to skip instances, or another box to pick again.": "Щёлкайте точки, чтобы пропускать экземпляры, или другое поле, чтобы снова выбирать.",
 };
