@@ -29,7 +29,7 @@ import { quadCorners, perimeterCircle, type PerimItem } from "./shapes";
 import { conicBezier, conicShoulder, entBezier, eqBezier, hasControl, parabolaFrom, rhoAt, styleBezier, type CurveEq } from "./conic";
 import { DEFAULT_SNAPS, SNAP_KINDS, arcCurve, intersections, perpendicularFoot, quadrants, tangentPoints, type SnapCurve, type SnapKind } from "./snaps";
 import { gridLines, gridStep, snapToGrid } from "./grid";
-import { explodeInsert, insertBlock, insertEnts, insertOf, makeBlock, moveInsert, removeInserts, renameBlock } from "./blocks";
+import { beginEditBlock, explodeInsert, finishEditBlock, insertBlock, insertEnts, insertOf, makeBlock, moveInsert, removeInserts, renameBlock } from "./blocks";
 import type { BlockInsert, SketchBlock } from "../model/types";
 import { stepFor } from "../prefs";
 import { arcSlotCorners, arcSlotEnts, arcSlotHalfWidth, arcSlotOutline, centreArcAxis, threePointArcAxis, type ArcSlotAxis } from "./slots";
@@ -408,7 +408,7 @@ export class SketchEditor {
       // Ctrl+drag copies (FR-SK-044): a Ctrl+click on a selected item still deselects it, on release without a move.
       const ctrl = e.ctrlKey || e.metaKey;
       // A block instance is picked whole and dragged by its insertion point (FRS 2.2 blocks).
-      const blk = insertOf(this.sk, h.id);
+      const blk = this.lockedInsert(h.id);
       if (blk) {
         const ids = insertEnts(this.sk, blk.id), was = ids.every(x => this.selection.has(x));
         if (ctrl || e.shiftKey) { for (const x of ids) if (was) this.selection.delete(x); else this.selection.add(x); }
@@ -441,7 +441,7 @@ export class SketchEditor {
     if (this.tool === "hord" || this.tool === "vord") { this.ordClick(p); return true; }
     if (["trim", "fillet", "chamfer", "extend", "split", "segment", "jog", "offset"].includes(this.tool)) {
       const h = this.hits(p)[0];
-      if (h && insertOf(this.sk, h.id)) { this.host.toast(t("Explode the block to change its entities."), "warn"); return true; }
+      if (h && this.lockedInsert(h.id)) { this.host.toast(t("Explode the block to change its entities."), "warn"); return true; }
     }
     if (this.tool === "trim") { this.trimAt(p); return true; }
     if (this.tool === "fillet") { this.filletAt(p); return true; }
@@ -2185,11 +2185,17 @@ export class SketchEditor {
   /** Ctrl+A: every sketch curve and point (the origin is not an entity). */
   // ---------- blocks (FRS 2.2) ----------
 
+  /** The block instance an id belongs to, unless that instance is being edited (Edit Block). */
+  private lockedInsert(id: string): BlockInsert | null {
+    const ins = insertOf(this.sk, id);
+    return ins && ins.id !== this.sk.editBlock?.insert ? ins : null;
+  }
+
   /** The one block instance the selection is, when it is exactly one instance's entities. */
   selectedInsert(): BlockInsert | null {
     const sel = [...this.selection];
     if (!sel.length) return null;
-    const ins = insertOf(this.sk, sel[0]);
+    const ins = this.lockedInsert(sel[0]);
     if (!ins || !sel.every(id => insertOf(this.sk, id)?.id === ins.id)) return null;
     return ins;
   }
@@ -2227,6 +2233,29 @@ export class SketchEditor {
     this.render();
   }
 
+  /** Edit Block: the instance's entities come free with the block's relations and dimensions on them. */
+  editBlock(id: string) {
+    if (this.sk.editBlock) return;
+    this.sk = beginEditBlock(this.sk, id);
+    this.selection.clear();
+    this.info = solve(this.sk);
+    this.commit("Edit block");
+    this.render();
+    this.emitSel();
+  }
+
+  /** Ends Edit Block: the definition takes the edited entities and every instance follows. */
+  finishEditBlock() {
+    const id = this.sk.editBlock?.insert;
+    if (!id) return;
+    this.sk = finishEditBlock(this.sk);
+    this.selection = new Set(insertEnts(this.sk, id));
+    this.info = solve(this.sk);
+    this.commit("Finish editing block");
+    this.render();
+    this.emitSel();
+  }
+
   explodeBlock(id: string) {
     this.sk = explodeInsert(this.sk, id, k => uid(k));
     this.selection.clear();
@@ -2249,7 +2278,7 @@ export class SketchEditor {
   deleteSelection() {
     if (!this.selection.size) return false;
     // Block instances go whole (their entities are the definition's).
-    const ins = new Set([...this.selection].map(id => insertOf(this.sk, id)?.id).filter((x): x is string => !!x));
+    const ins = new Set([...this.selection].map(id => this.lockedInsert(id)?.id).filter((x): x is string => !!x));
     if (ins.size) {
       this.sk = removeInserts(this.sk, ins);
       for (const id of [...this.selection]) if (!this.sk.ents.some(e => e.id === id) && !this.sk.rels.some(r => r.id === id) && !this.sk.dims.some(d => d.id === id)) this.selection.delete(id);
@@ -4297,7 +4326,7 @@ export class SketchEditor {
     // Relation glyphs next to the first entity of each relation (points: beside the point).
     const per = new Map<string, number>();
     for (const r of this.sk.rels) {
-      if (r.t === "coincident" || r.t === "onCurve" || insertOf(this.sk, r.id)) continue;
+      if (r.t === "coincident" || r.t === "onCurve" || this.lockedInsert(r.id)) continue;
       // Hidden glyphs (FR-SK-053) still show while selected, so a relation picked in the list can be seen.
       if (!this.showRels && !this.selection.has(r.id)) continue;
       const el = mk(r.id, "sk-rel");

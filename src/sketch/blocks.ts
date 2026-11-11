@@ -4,7 +4,7 @@
  * as ordinary entities `<insert>~<entity>` held by one fix relation `<insert>~fix`, so the solver, the
  * profiles and the kernel see plain fixed geometry. Moving, turning or scaling an instance places it again.
  */
-import type { BlockInsert, SketchBlock, SketchFeature, SkEnt, SkRel, V2 } from "../model/types";
+import type { BlockInsert, SketchBlock, SketchFeature, SkDim, SkEnt, SkRel, V2 } from "../model/types";
 import { refPts } from "./define";
 
 export const BLOCK_SEP = "~";
@@ -58,10 +58,12 @@ function placed(def: SketchBlock, ins: BlockInsert): SkEnt[] {
 export function placeInserts(sk: SketchFeature): SketchFeature {
   const defs = new Map((sk.blocks ?? []).map(b => [b.id, b] as const));
   const inserts = (sk.inserts ?? []).filter(i => defs.has(i.block));
-  const ours = (id: string) => { const k = id.indexOf(BLOCK_SEP); return k > 0 && (sk.inserts ?? []).some(i => i.id === id.slice(0, k)); };
+  const editing = sk.editBlock?.insert;
+  const ours = (id: string) => { const k = id.indexOf(BLOCK_SEP); return k > 0 && id.slice(0, k) !== editing && (sk.inserts ?? []).some(i => i.id === id.slice(0, k)); };
   const ents = sk.ents.filter(e => !ours(e.id));
   const rels = sk.rels.filter(r => !ours(r.id));
   for (const ins of inserts) {
+    if (ins.id === editing) continue;
     const def = defs.get(ins.block)!;
     const made = placed(def, ins);
     ents.push(...made);
@@ -227,4 +229,92 @@ export function readBlockFile(text: string): SketchBlock {
     if (e.t === "point" ? !(isFinite(e.x) && isFinite(e.y)) : !refPts(e).every(p => ids.has(p))) throw new Error("NOT_BLOCK");
   }
   return { id: typeof b.id === "string" ? b.id : "blk1", name: b.name, ents: b.ents, rels: b.rels.filter(r => r && r.e?.every(x => ids.has(x))) };
+}
+
+const isLen = (d: SkDim) => d.t !== "angle";
+
+/**
+ * Edit Block (SolidWorks' Edit Block): the instance's entities come free, with the definition's relations and
+ * dimensions on them, so they can be dragged, dimensioned and added to. Other instances follow at the end.
+ */
+export function beginEditBlock(sk: SketchFeature, id: string): SketchFeature {
+  const ins = sk.inserts?.find(i => i.id === id);
+  const def = ins && sk.blocks?.find(b => b.id === ins.block);
+  if (!ins || !def || sk.editBlock) return sk;
+  const pre = id + BLOCK_SEP, s = ins.scale ?? 1;
+  const rels = sk.rels.filter(r => r.id !== `${pre}fix`);
+  for (const r of def.rels) rels.push({ ...structuredClone(r), id: pre + r.id, e: r.e.map(x => pre + x) });
+  const dims = [...sk.dims];
+  const names = new Set(dims.map(d => d.name));
+  for (const d of def.dims ?? []) {
+    let name = d.name, k = 1;
+    while (names.has(name)) name = `D${k++}`;
+    names.add(name);
+    const c: SkDim = { ...structuredClone(d), id: pre + d.id, name, e: d.e.map(x => pre + x) };
+    if (isLen(d) && !d.val.expr) c.val = { v: d.val.v * s };
+    if (d.pos) c.pos = placePoint(ins, d.pos);
+    dims.push(c);
+  }
+  const known = sk.ents.filter(e => !e.id.startsWith(pre)).map(e => e.id);
+  return { ...sk, rels, dims, editBlock: { insert: id, known } };
+}
+
+/**
+ * Ends Edit Block: the instance's entities (and ones drawn during the edit) are taken back into its own
+ * coordinates as the new definition, relations and dimensions among them go with it, and every instance of
+ * the block is placed again.
+ */
+export function finishEditBlock(sk: SketchFeature): SketchFeature {
+  const ed = sk.editBlock;
+  const ins = ed && sk.inserts?.find(i => i.id === ed.insert);
+  const def = ins && sk.blocks?.find(b => b.id === ins.block);
+  if (!ed || !ins || !def) { const o = { ...sk }; delete o.editBlock; return o; }
+  const pre = ins.id + BLOCK_SEP, s = ins.scale ?? 1, a = ins.ang ?? 0, ca = Math.cos(a), sa = Math.sin(a);
+  const back = (p: V2): V2 => { const x = (p[0] - ins.x) / s, y = (p[1] - ins.y) / s; return [ca * x + sa * y, -sa * x + ca * y]; };
+  const known = new Set(ed.known);
+  const ent = new Map(sk.ents.map(e => [e.id, e] as const));
+  // Drawn during the edit: new curves (with their points) that are not text.
+  const take = new Set(sk.ents.filter(e => e.id.startsWith(pre)).map(e => e.id));
+  for (const e of sk.ents) if (!known.has(e.id) && !e.id.startsWith(pre) && e.t !== "point" && e.t !== "text") { take.add(e.id); for (const p of refPts(e)) take.add(p); }
+  for (const e of sk.ents) if (!known.has(e.id) && !e.id.startsWith(pre) && e.t === "point") take.add(e.id);
+  const local = (x: string) => (x.startsWith(pre) ? x.slice(pre.length) : x);
+  const ids = new Set<string>();
+  const ents: SkEnt[] = [];
+  for (const id of take) {
+    const e = ent.get(id);
+    if (!e) continue;
+    const c = renameEnt(e, local);
+    if (c.t === "point") { const q = back([c.x, c.y]); c.x = q[0]; c.y = q[1]; }
+    else if (c.t === "circle") c.r /= s;
+    ents.push(c);
+    ids.add(id);
+  }
+  // Points of known (outside) entities the new curves share stay outside: the block gets its own copy.
+  const shared = new Set([...ids].filter(id => sk.ents.some(o => !ids.has(o.id) && refPts(o).includes(id))));
+  const within = (xs: string[]) => xs.length > 0 && xs.every(x => ids.has(x));
+  const rels = sk.rels.filter(r => LOCAL(r) && within(r.e)).map(r => ({ ...structuredClone(r), id: local(r.id), e: r.e.map(local) }));
+  const dims = sk.dims.filter(d => within(d.e)).map(d => {
+    const c: SkDim = { ...structuredClone(d), id: local(d.id), e: d.e.map(local) };
+    if (isLen(d) && !d.val.expr) c.val = { v: d.val.v / s };
+    if (d.pos) c.pos = back(d.pos);
+    return c;
+  });
+  const nd: SketchBlock = { ...def, ents, rels };
+  if (dims.length) nd.dims = dims; else delete nd.dims;
+  const gone = new Set([...ids].filter(id => !shared.has(id) && !known.has(id)));
+  const inDef = new Set([...sk.rels.filter(r => LOCAL(r) && within(r.e)).map(r => r.id), ...sk.dims.filter(d => within(d.e)).map(d => d.id)]);
+  // Old instance entities keep their ids (re-placed); new ones are renamed into the instance.
+  const mine = (x: string) => x.startsWith(pre);
+  const ren = (x: string) => (gone.has(x) && !mine(x) ? pre + x : x);
+  const out: SketchFeature = {
+    ...sk,
+    ents: sk.ents.filter(e => !gone.has(e.id) || mine(e.id)),
+    rels: sk.rels.filter(r => !inDef.has(r.id)).map(r => ({ ...r, e: r.e.map(ren) })),
+    dims: sk.dims.filter(d => !inDef.has(d.id)).map(d => ({ ...d, e: d.e.map(ren) })),
+    blocks: (sk.blocks ?? []).map(b => (b.id === def.id ? nd : b)),
+  };
+  delete out.editBlock;
+  // The edited instance's own entities go too, so placeInserts makes them all again from the new definition.
+  out.ents = out.ents.filter(e => !mine(e.id));
+  return placeInserts(out);
 }

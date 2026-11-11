@@ -2614,6 +2614,15 @@ try {
       await mp.click('#mc-menu button[data-k="0"]');
       await mp.waitForTimeout(150);
       const b2 = await mp.evaluate(() => { const sk = window.__sv.model.editor().sk; return { ins: sk.inserts?.length, blocks: sk.blocks?.length }; });
+      // Edit Block on the copy: widen it by 5; the first instance follows when the edit ends.
+      await mp.click('#mc-pm [data-blk="edit"]'); await mp.waitForSelector("#mc-pm .pm-blkedit");
+      const be = await mp.evaluate(() => {
+        const ed = window.__sv.model.editor(), sk = ed.sk, id = sk.editBlock?.insert;
+        for (const e of sk.ents) if (e.t === "point" && (e.id === `${id}~bkB` || e.id === `${id}~bkC`)) e.x += 5;
+        return { id, free: !sk.rels.some(r => r.id === `${id}~fix`) };
+      });
+      await mp.click('#mc-pm [data-blk="finish"]'); await mp.waitForTimeout(150);
+      const b2e = await mp.evaluate(() => { const sk = window.__sv.model.editor().sk, b = sk.ents.find(e => e.id === "bi1~bkB"); return { b: b && [b.x, b.y], editing: !!sk.editBlock, box: !!document.querySelector("#mc-pm [data-blk=explode]") }; });
       await mp.click('#mc-pm [data-blk="explode"]'); await mp.waitForTimeout(150);
       const b3 = await mp.evaluate(keep => {
         const ed = window.__sv.model.editor(), sk = ed.sk;
@@ -2623,8 +2632,9 @@ try {
         return { ...r, left: ed.sk.ents.filter(e => !keep.includes(e.id)).length, blocks: ed.sk.blocks?.length ?? 0 };
       }, before);
       check(b0.ins?.join() === "205,205" && b0.name === "Block1" && b0.n === 8 && b1.a?.join() === "295,200" && b1.status === "ok" && rows[0] === "Block1" && b2.ins === 2 && b2.blocks === 1
+        && be.id === "bi2" && be.free && b2e.b?.join() === "310,200" && !b2e.editing && b2e.box
         && b3.ins === 1 && b3.plain === 8 && b3.left === 0 && b3.blocks === 0,
-        `model 1.554: Make Block, move it in the panel, Insert Block a copy, Explode one (FRS 2.2 blocks) (${JSON.stringify({ b0, b1, rows, b2, b3 })})`);
+        `model 1.554: Make Block, move it in the panel, Insert Block a copy, Edit Block, Explode one (FRS 2.2 blocks) (${JSON.stringify({ b0, b1, rows, b2, be, b2e, b3 })})`);
     }
     // 1.266.0 (FR-SK-043/044/047): dragging the last line's start onto the free end of the Ctrl line merges them
     // (coincident relation); Ctrl+drag of that line copies it; the status bar shows the cursor position.

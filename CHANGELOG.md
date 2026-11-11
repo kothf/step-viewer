@@ -9,7 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- Sketch blocks (FRS 2.2): **Make Block** on the Sketch tab turns the selected entities into one block instance, placed at the middle of their box; the relations among them go into the block definition and the instance moves as one fixed piece (it adds no degrees of freedom). Drag an instance or set its X, Y, angle and scale in the sketch panel; relations and dimensions to its points stay. **Insert Block** places another instance of any block in the part, or one from a `.mcadblk` file (**Save block** writes it). **Explode block** gives plain entities back with the block's relations. Trim, fillet, offset and the other editing tools ask to explode a block first, as in SolidWorks.
+- Sketch blocks (FRS 2.2): **Make Block** on the Sketch tab turns the selected entities into one block instance, placed at the middle of their box; the relations among them go into the block definition and the instance moves as one fixed piece (it adds no degrees of freedom). Drag an instance or set its X, Y, angle and scale in the sketch panel; relations and dimensions to its points stay. **Insert Block** places another instance of any block in the part, or one from a `.mcadblk` file (**Save block** writes it). **Edit block** frees one instance in place with the block's relations and dimensions on it; drag, dimension or draw more, and **Finish editing block** (or Exit sketch) updates every copy. **Explode block** gives plain entities back with the block's relations. Trim, fillet, offset and the other editing tools ask to explode a block first, as in SolidWorks.
 
 ## [1.553.0] - 2026-11-11
 

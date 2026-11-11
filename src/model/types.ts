@@ -154,10 +154,16 @@ export interface SketchFeature {
    * `<insert id>~fix` (`src/sketch/blocks.ts` `placeInserts`), so profiles and the kernel need nothing new.
    */
   inserts?: BlockInsert[];
+  /**
+   * Edit Block: the insert being edited in place. Its entities are free (no fix), its definition's relations
+   * and dimensions are on them (ids `<insert>~<id>`); `known` = the other entity ids when the edit began, so
+   * entities drawn meanwhile join the block when it finishes (`src/sketch/blocks.ts` `finishEditBlock`).
+   */
+  editBlock?: { insert: string; known: string[] };
 }
 
 /** A sketch block definition (SolidWorks' Make Block): entities and the relations among them, the insertion point at 0, 0. */
-export interface SketchBlock { id: string; name: string; ents: SkEnt[]; rels: SkRel[] }
+export interface SketchBlock { id: string; name: string; ents: SkEnt[]; rels: SkRel[]; dims?: SkDim[] }
 /** A placed block: its insertion point, angle (rad) and scale. */
 export interface BlockInsert { id: string; block: string; x: number; y: number; ang?: number; scale?: number }
 

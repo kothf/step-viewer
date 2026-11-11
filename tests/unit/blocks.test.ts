@@ -73,3 +73,31 @@ test("blocks: Explode gives plain entities with the block's relations back; file
   assert.throws(() => readBlockFile("{}"), /NOT_BLOCK/);
   assert.equal(makeBlock(rectSketch(), ["a"]), "NOTHING");
 });
+
+test("blocks: Edit Block changes the definition, every instance follows, drawn entities join", async () => {
+  const { beginEditBlock, finishEditBlock } = await import("../../src/sketch/blocks");
+  const r = makeBlock(rectSketch(), ["l1", "l2", "l3", "l4"]);
+  assert.ok(typeof r !== "string");
+  let sk = insertBlock(r.sk, r.block, [100, 0], Math.PI / 2, 2).sk;
+  sk = beginEditBlock(sk, "bi1");
+  assert.ok(!sk.rels.some(x => x.id === "bi1~fix"), "the edited instance is free");
+  assert.ok(sk.rels.some(x => x.id === "bi1~r1" && x.e[0] === "bi1~l1"), "the block's relations come back on it");
+  assert.equal(solve(sk).status, "ok");
+  // Make the rectangle 30 wide: move b and c right by 10, and draw a diagonal.
+  for (const e of sk.ents) if (e.t === "point" && (e.id === "bi1~b" || e.id === "bi1~c")) e.x += 10;
+  sk.ents.push({ id: "n1", t: "line", a: "bi1~a", b: "bi1~c" });
+  sk.dims.push({ id: "dn", name: "D9", t: "distance", e: ["bi1~a", "bi1~b"], val: { v: 30 } });
+  sk = finishEditBlock(sk);
+  assert.equal(sk.editBlock, undefined);
+  const def = sk.blocks![0];
+  assert.equal(def.ents.length, 9, "the diagonal joined the block");
+  assert.equal(def.dims?.length, 1);
+  assert.ok(Math.abs(def.dims![0].val.v - 30) < 1e-9);
+  assert.ok(sk.rels.some(x => x.id === "bi1~fix") && sk.rels.some(x => x.id === "bi2~fix"));
+  assert.ok(!sk.ents.some(e => e.id === "n1"), "the drawn line is now the instance's");
+  assert.ok(sk.ents.some(e => e.id === "bi2~n1"), "and the other instance has it too");
+  // The other instance (turned 90°, scaled 2) has b at (100, 0) + 2·rot90(20, −5).
+  const c = pt(sk, "bi2~b");
+  assert.ok(Math.abs(c[0] - 110) < 1e-9 && Math.abs(c[1] - 40) < 1e-9, String(c));
+  assert.equal(solve(sk).dof, 0);
+});

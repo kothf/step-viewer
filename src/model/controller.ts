@@ -1322,6 +1322,7 @@ export class ModelController {
   ok(repeat = false) {
     const m = this.mode;
     if (m.kind === "sketch") {
+      if (m.editor.sk.editBlock) m.editor.finishEditBlock();
       const sk = this.store!.feature(m.id);
       this.exitMode(true);
       if (sk) this.store!.collapse(this.sketchMark, m.isNew ? `Add ${sk.name}` : `Edit ${sk.name}`);
@@ -1882,6 +1883,13 @@ export class ModelController {
 
   /** The selected block instance: definition name, place, angle, scale, Explode, Save to a file. */
   private blockBox(ed: SketchEditor): string {
+    const eb = ed.sk.editBlock;
+    if (eb) {
+      const ins = ed.sk.inserts?.find(i => i.id === eb.insert), def = ins && ed.sk.blocks?.find(b => b.id === ins.block);
+      return `<div class="pm-sec pm-block pm-blkedit" role="status"><h4>${esc(t("Editing block"))} <span translate="no">${esc(def?.name ?? "")}</span></h4>`
+        + `<p class="pm-help muted">${esc(t("Drag, dimension and relate the block's entities, or draw new ones; they join the block. Every copy follows when you finish."))}</p>`
+        + `<div class="pm-rels"><button class="btn small primary" data-blk="finish">${esc(t("Finish editing block"))}</button></div></div>`;
+    }
     const ins = ed.selectedInsert();
     const def = ins && ed.sk.blocks?.find(b => b.id === ins.block);
     if (!ins || !def) return "";
@@ -1893,7 +1901,7 @@ export class ModelController {
       + num("x", "X", ins.x * f, u) + num("y", "Y", ins.y * f, u)
       + num("ang", t("Angle"), ((ins.ang ?? 0) * 180) / Math.PI, "°") + num("scale", t("Scale"), ins.scale ?? 1, "×")
       + `<p class="pm-help muted">${esc(t("{n} copies of this block in the sketch. Drag the block to move it; relations and dimensions can tie it to other geometry.", { n: count }))}</p>`
-      + `<div class="pm-rels"><button class="btn small" data-blk="explode" title="${esc(t("Turn this copy back into ordinary sketch entities"))}">${esc(t("Explode block"))}</button><button class="btn small" data-blk="save">${esc(t("Save block…"))}</button></div></div>`;
+      + `<div class="pm-rels"><button class="btn small" data-blk="edit" title="${esc(t("Change the block's entities in place; every copy follows"))}">${esc(t("Edit block"))}</button><button class="btn small" data-blk="explode" title="${esc(t("Turn this copy back into ordinary sketch entities"))}">${esc(t("Explode block"))}</button><button class="btn small" data-blk="save">${esc(t("Save block…"))}</button></div></div>`;
   }
 
   private bindBlockBox(pm: HTMLElement, ed: SketchEditor) {
@@ -1903,8 +1911,10 @@ export class ModelController {
       const ins = () => ed.selectedInsert();
       if (el instanceof HTMLButtonElement) {
         el.addEventListener("click", () => {
+          if (k === "finish") { ed.finishEditBlock(); this.renderPanel(); return; }
           const i = ins();
           if (!i) return;
+          if (k === "edit") { ed.editBlock(i.id); this.renderPanel(); return; }
           if (k === "explode") { ed.explodeBlock(i.id); this.renderPanel(); return; }
           const def = ed.sk.blocks?.find(b => b.id === i.block);
           if (def) downloadBlob(new Blob([blockFile(def)], { type: "application/json" }), `${def.name.replace(/[\\/:*?"<>|]+/g, "_") || "block"}.mcadblk`);
