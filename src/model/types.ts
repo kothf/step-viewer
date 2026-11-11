@@ -696,6 +696,8 @@ export interface LoftFeature {
   /** Tangent length (1 = default) for the start / end constraint. */
   startLen?: number;
   endLen?: number;
+  /** Merge result off: the lofted body is added as a new body (boss only). */
+  merge?: boolean;
 }
 
 /**

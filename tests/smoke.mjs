@@ -9819,6 +9819,26 @@ try {
     const db1 = await state();
     check(!db0.bad && db0.v > 3000 && Math.abs(db1.v - db0.v) < db0.v * 1e-5 && !db1.bad && db1.types === "import,sketch,sketch,sweep,delbody",
       `model 1.496.0: Recognize Features makes a bent bar of a line/arc profile again as a Sweep (FR-FT-102) (${JSON.stringify({ db0, db1 })})`);
+    // 1.498.0: a lofted body (rectangle up to a circle) comes back as two profile sketches on its ends and a Loft.
+    await mp.evaluate(() => window.__sv.model.store.change("Loft", d => {
+      d.features = [{ id: "pl", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 30 } },
+        { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [
+          { id: "r0", t: "point", x: -10, y: -6 }, { id: "r1", t: "point", x: 10, y: -6 }, { id: "r2", t: "point", x: 10, y: 6 }, { id: "r3", t: "point", x: -10, y: 6 },
+          { id: "l0", t: "line", a: "r0", b: "r1" }, { id: "l1", t: "line", a: "r1", b: "r2" }, { id: "l2", t: "line", a: "r2", b: "r3" }, { id: "l3", t: "line", a: "r3", b: "r0" }] },
+        { id: "s2", type: "sketch", name: "Sketch2", plane: { plane: "pl" }, rels: [], dims: [], ents: [{ id: "cc", t: "point", x: 2, y: 1 }, { id: "ci", t: "circle", c: "cc", r: 6 }] },
+        { id: "lf", type: "loft", name: "Loft1", op: "boss", profiles: ["s1", "s2"] }];
+    }));
+    await settle();
+    const lb0 = await state();
+    const brepLb = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "loft.brep", brep }]; }), brepLb);
+    await settle();
+    await runCmd(mp, "Recognize Features");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.length > 1, null, { timeout: 120000 });
+    await settle();
+    const lb1 = await state();
+    check(!lb0.bad && lb0.v > 3000 && Math.abs(lb1.v - lb0.v) < lb0.v * 1e-5 && !lb1.bad && lb1.types === "import,sketch,sketch,loft,delbody",
+      `model 1.498.0: Recognize Features makes a lofted body again as two profile sketches and a Loft (FR-FT-102) (${JSON.stringify({ lb0, lb1 })})`);
     // 1.492.0 (FR-UI-100): a middle click on a straight edge turns the view about the edge's line; empty space clears it and puts Z up again.
     await mp.evaluate(() => window.__sv.model.store.change("Block", d => {
       const xy = [[-30, -20], [30, -20], [30, 20], [-30, 20]];

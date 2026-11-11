@@ -3666,7 +3666,7 @@ export class Modeller {
     if (base) {
       try { const b = this.baseExtrude(upto, at, dels, rounds, K.feats); if (b) return b; } catch { /* without the base */ }
       try { const b = this.baseRevolve(upto, at, dels, rounds, K.feats); if (b) return b; } catch { /* without the base */ }
-      try { const b = rounds.length || K.feats.length ? null : this.baseSweep(upto, at) ?? this.baseSweepAny(upto, at); if (b) return b; } catch { /* without the base */ }
+      try { const b = rounds.length || K.feats.length ? null : this.baseSweep(upto, at) ?? this.baseSweepAny(upto, at) ?? this.baseLoft(upto, at); if (b) return b; } catch { /* without the base */ }
     }
     if (rounds.length < 2) return [...kDel, ...first, ...K.feats];
     try {
@@ -4290,6 +4290,90 @@ export class Modeller {
       if (!done || chain.every(g => "line" in g)) continue;
       const out = this.sweepOut(body, chain, c0, cap, prof, at, tol, size);
       if (out) return out;
+    }
+    return null;
+  }
+
+  /**
+   * The base of a lofted body (FR-FT-102): two flat end faces of one outline each (lines, arcs, circles) with every
+   * other face reaching from one end's plane to the other's. The ends become profile sketches on those faces and a
+   * new-body Loft joins them, first as OCCT lines them up, else starting both at the ends of a straight side edge;
+   * the imported body is deleted. Kept at the same volume.
+   */
+  private baseLoft(upto: Feature[], at: (fs: Feature[]) => PartDoc): Feature[] | null {
+    const oc = this.oc;
+    const imports = upto.filter(f => f.type === "import" && !f.suppressed).map(f => `${f.id}:`);
+    if (!imports.length) return null;
+    const start = this.evaluate(at([]));
+    const body = start.body;
+    if (!body || this.solids(body.shape) !== 1 || body.names.some(n => !imports.some(p => n.startsWith(p)))) return null;
+    const size = this.size(body.shape), tol = Math.max(1e-4, size * 1e-6) * 10;
+    const S = oc.GeomAbs_SurfaceType, C = oc.GeomAbs_CurveType;
+    type Prof = ExtrudeFind["segs"];
+    const samples = body.faces.map(face => this.sub(face, "EDGE").map(e => {
+      const ca = new oc.BRepAdaptor_Curve_2(e), t0 = ca.FirstParameter(), t1 = ca.LastParameter();
+      return { line: ca.GetType() === C.GeomAbs_Line, pts: [0, 0.25, 0.5, 0.75, 1].map(u => this.xyz(ca.Value(t0 + (t1 - t0) * u))) };
+    }));
+    const planes = body.faces.map(face => {
+      const ad = new oc.BRepAdaptor_Surface_2(face, true);
+      return ad.GetType() === S.GeomAbs_Plane ? { n: this.faceNormalAt(face), o: this.xyz(ad.Plane().Location()) } : null;
+    });
+    const profile = (i: number): Prof | null => {
+      if (this.sub(oc.BRepTools.OuterWire(body.faces[i]), "EDGE").length !== this.sub(body.faces[i], "EDGE").length) return null;
+      const segs: Prof = [];
+      for (const e of this.sub(body.faces[i], "EDGE")) {
+        const ca = new oc.BRepAdaptor_Curve_2(e), t0 = ca.FirstParameter(), t1 = ca.LastParameter(), ct = ca.GetType();
+        const a = this.xyz(ca.Value(t0)), b = this.xyz(ca.Value(t1)), m = this.xyz(ca.Value((t0 + t1) / 2));
+        if (ct === C.GeomAbs_Line) segs.push({ line: [a, b] });
+        else if (ct === C.GeomAbs_Circle) {
+          const c = this.xyz(ca.Circle().Location()), r = ca.Circle().Radius();
+          segs.push(Math.abs(Math.abs(t1 - t0) - 2 * Math.PI) < 1e-9 ? { circle: { c, r } } : { arc: { c, a, b, m } });
+        } else return null;
+      }
+      return segs;
+    };
+    const onPlane = (p: V3, q: { n: V3; o: V3 }) => Math.abs(dot(sub3(p, q.o), q.n)) <= tol;
+    const flats = planes.map((q, i) => q ? i : -1).filter(i => i >= 0);
+    const area = (i: number): number => { const g = new oc.GProp_GProps_1(); oc.BRepGProp.SurfaceProperties_1(body.faces[i], g, false, false); return g.Mass(); };
+    const areas = new Map(flats.map(i => [i, area(i)]));
+    flats.sort((a, b) => areas.get(b)! - areas.get(a)!);
+    const id = () => `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
+    for (let x = 0; x < flats.length; x++) for (let y = x + 1; y < flats.length; y++) {
+      const A = flats[x], B = flats[y], pa = planes[A]!, pb = planes[B]!;
+      // The ends face away from each other, and every other face runs from one to the other.
+      if (dot(pa.n, pb.n) > -1e-6) continue;
+      const others = body.faces.map((_, k) => k).filter(k => k !== A && k !== B);
+      if (!others.length || others.some(k => {
+        const all = samples[k].flatMap(es => es.pts);
+        return !all.some(p => onPlane(p, pa)) || !all.some(p => onPlane(p, pb)) || (planes[k] && (Math.abs(Math.abs(dot(planes[k]!.n, pa.n)) - 1) < 1e-9 || Math.abs(Math.abs(dot(planes[k]!.n, pb.n)) - 1) < 1e-9));
+      })) continue;
+      const profA = profile(A), profB = profile(B);
+      if (!profA || !profB) continue;
+      const refA: PlaneRef = { face: { name: body.names[A], hint: this.centroid(body.faces[A]) } }, refB: PlaneRef = { face: { name: body.names[B], hint: this.centroid(body.faces[B]) } };
+      const fa = this.planeFrame(refA, body, {}), fb = this.planeFrame(refB, body, {});
+      const sa = id(), sb = id(), la = this.loopEnts(sa, fa, profA), lb = this.loopEnts(sb, fb, profB);
+      // Connector pairs: the ends of straight side edges that join a corner of each end.
+      const corners = (prof: Prof) => prof.flatMap(g => "line" in g ? g.line : "arc" in g ? [g.arc.a, g.arc.b] : []);
+      const ca = corners(profA), cb = corners(profB), near = (p: V3, ps: V3[]) => ps.find(q => Math.hypot(...sub3(p, q)) <= tol);
+      const joins: [string, string][] = [];
+      for (const k of others) for (const es of samples[k]) {
+        if (!es.line) continue;
+        const p = es.pts[0], q = es.pts[4];
+        const [u, v] = onPlane(p, pa) ? [p, q] : [q, p];
+        const cu = near(u, ca), cv = near(v, cb);
+        if (cu && cv && !joins.some(j => j[0] === la.pt(cu))) joins.push([la.pt(cu), lb.pt(cv)]);
+      }
+      for (const join of [null, ...joins.slice(0, 2)]) {
+        const out: Feature[] = [
+          { id: sa, type: "sketch", name: "", plane: refA, ents: la.ents, rels: [], dims: [] } as Feature,
+          { id: sb, type: "sketch", name: "", plane: refB, ents: lb.ents, rels: [], dims: [] } as Feature,
+          { id: id(), type: "loft", name: "", op: "boss", merge: false, profiles: [sa, sb], ...(join ? { connectors: join } : {}) } as Feature,
+          { id: id(), type: "delbody", name: "", bodies: [{ name: body.names[0], hint: this.centroid(body.faces[0]) }] } as Feature];
+        let fin: ReturnType<Modeller["evaluate"]>;
+        try { fin = this.evaluate(at(out)); } catch { continue; }
+        if (!fin.body || this.solids(fin.body.shape) !== 1 || fin.statuses.slice(-out.length).some(st => st.ok === false)) continue;
+        if (this.sameVolume(fin.body.shape, body.shape)) return out;
+      }
     }
     return null;
   }
