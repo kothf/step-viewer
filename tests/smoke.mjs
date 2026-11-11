@@ -2643,6 +2643,19 @@ try {
     check(tFree === "hdistance" && tLocked.t === "hdistance" && tLocked.lock && tLocked.cls && placed?.t === "hdistance" && near(placed.v, 30, 0.01) && gripPos && near(gripPos[0], 50, 0.01)
       && near(dragged?.v, 40, 1e-6) && near(undoneDim?.v, placed?.v, 1e-9),
       `model 1.282: right-click locks a dimension while placing, and dragging its handle changes the value with one undo step (${tFree}, ${JSON.stringify(tLocked)}, ${JSON.stringify(placed)}, ${JSON.stringify(gripPos)}, ${JSON.stringify(dragged)}, ${JSON.stringify(undoneDim)})`);
+    // 1.540: sketch dimensions draw arrowheads; the selected one shows a dot at its first end that flips them
+    // inside/outside as one undo step (FR-SK-068).
+    await mp.evaluate(id => window.__sv.model.editor().select([id]), placed.id);
+    await mp.waitForTimeout(80);
+    const flip0 = await mp.evaluate(id => { const ed = window.__sv.model.editor(); return { auto: ed.arrowsOf(ed.sk.dims.find(x => x.id === id)), dot: !!document.querySelector(".sk-adot"), mesh: ed.group.children.some(c => c.userData.skArrows) }; }, placed.id);
+    await mp.evaluate(() => document.querySelector(".sk-adot")?.click());
+    await mp.waitForTimeout(150);
+    const flip1 = await mp.evaluate(id => window.__sv.model.editor().sk.dims.find(x => x.id === id)?.arrows ?? null, placed.id);
+    await mp.keyboard.press("Control+z");
+    await mp.waitForTimeout(150);
+    const flip2 = await mp.evaluate(id => window.__sv.model.editor().sk.dims.find(x => x.id === id)?.arrows ?? null, placed.id);
+    check(flip0.auto === "in" && flip0.dot && flip0.mesh && flip1 === "out" && flip2 === null,
+      `model 1.540: sketch dimension arrowheads flip inside/outside from the dot on the selected dimension, one undo step (FR-SK-068) (${JSON.stringify({ flip0, flip1, flip2 })})`);
     // Quick snaps (FR-SK-046): Tangent from the quick access bar ends the next line on the circle, tangent to it;
     // Intersection from the right-click menu puts a point where a line crosses the circle, with an intersection relation.
     await tool("circle");
