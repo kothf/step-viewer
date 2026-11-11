@@ -5,11 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.499.0] - 2026-11-11
+## [1.500.0] - 2026-11-11
 
 ### Changed
 
 - A drawing of the assembly open in 3D takes its shape from the parts the assembly has built already instead of building every part again: on the steam engine that step takes about 1.5 s instead of 12 s.
+
+## [1.499.0] - 2026-11-11
+
+### Added
+
+- Recognize Features (FR-FT-102): a coil spring (a round wire swept along a helix, so its path does not lie in one plane) comes back as a circle sketch on a standard plane (or a plane offset from one) through the start of the coil, a Helix with its pitch, revolutions, start angle and hand, and a Sweep with a circular profile, which replaces the imported body. The helix is fitted to the middle of the wire, so measured values come back as typed (pitch 5, 3.5 revolutions). The coil's axis must run along X, Y or Z.
 
 ## [1.498.0] - 2026-11-11
 
@@ -3080,7 +3086,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.499.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.500.0...HEAD
+[1.500.0]: https://github.com/kothf/step-viewer/compare/v1.499.0...v1.500.0
 [1.499.0]: https://github.com/kothf/step-viewer/compare/v1.498.0...v1.499.0
 [1.498.0]: https://github.com/kothf/step-viewer/compare/v1.497.0...v1.498.0
 [1.497.0]: https://github.com/kothf/step-viewer/compare/v1.496.0...v1.497.0

@@ -376,3 +376,25 @@ test("recognize features: a lofted body comes back as a Loft between its end fac
     close(vol(m, { ...imp, features: [...imp.features, ...fs] }), v0, 1e-5);
   }
 });
+
+test("recognize features: a coil spring comes back as a circle sketch, a Helix and a circular Sweep (FR-FT-102)", async () => {
+  const m = new Modeller(await occ());
+  const lift = { id: "pl", type: "plane", name: "P", base: { std: "XY" }, mode: "offset", offset: { v: 8 } } as Feature;
+  const cases: [string, Feature[], Record<string, unknown>, string][] = [
+    ["right-handed, from a plane 8 mm up", [lift], { plane: "pl" }, "plane,sketch,helix,sweep,delbody"],
+    ["left-handed about X, reversed, starting at 1 rad", [], { std: "YZ" }, "sketch,helix,sweep,delbody"]];
+  for (const [name, lead, plane, want] of cases) {
+    const left = "std" in plane;
+    const s1: SketchFeature = { id: "s1", type: "sketch", name: "s1", plane: plane as SketchFeature["plane"], rels: [], dims: [], ents: [{ id: "c", t: "point", x: 3, y: 2 }, { id: "k", t: "circle", c: "c", r: 10 } as SkEnt] };
+    const hx = { id: "h1", type: "helix", name: "H", sketch: "s1", mode: "pitchRev", pitch: { v: 5 }, revs: { v: 3.5 }, height: { v: 15 }, ...(left ? { cw: true, reverse: true, start: { v: 1 } } : {}) } as Feature;
+    const imp = imported(m, [...lead, s1, hx, { id: "w1", type: "sweep", name: "S", op: "boss", circular: { v: 2 }, path: { helix: "h1" } } as Feature]);
+    const v0 = vol(m, imp);
+    const fs = m.recognizeFeatures(imp);
+    assert.equal(types(fs), want, name);
+    const h = fs.find(f => f.type === "helix") as Feature & { pitch: { v: number }; revs: { v: number }; cw?: boolean };
+    assert.equal(h.pitch.v, 5, name);
+    assert.equal(h.revs.v, 3.5, name);
+    assert.equal(!!h.cw, left, name);
+    close(vol(m, { ...imp, features: [...imp.features, ...fs] }), v0, 1e-6);
+  }
+});

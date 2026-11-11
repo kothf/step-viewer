@@ -9842,6 +9842,24 @@ try {
     const lb1 = await state();
     check(!lb0.bad && lb0.v > 3000 && Math.abs(lb1.v - lb0.v) < lb0.v * 1e-5 && !lb1.bad && lb1.types === "import,sketch,sketch,loft,delbody",
       `model 1.498.0: Recognize Features makes a lofted body again as two profile sketches and a Loft (FR-FT-102) (${JSON.stringify({ lb0, lb1 })})`);
+    // 1.499.0: a coil spring (a sweep path out of one plane) comes back as a circle sketch, a Helix and a circular Sweep.
+    await mp.evaluate(() => window.__sv.model.store.change("Spring", d => {
+      d.features = [{ id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "c", t: "point", x: 0, y: 0 }, { id: "k", t: "circle", c: "c", r: 10 }] },
+        { id: "h1", type: "helix", name: "Helix1", sketch: "s1", mode: "pitchRev", pitch: { v: 6 }, revs: { v: 4 }, height: { v: 24 } },
+        { id: "w1", type: "sweep", name: "Sweep1", op: "boss", circular: { v: 3 }, path: { helix: "h1" } }];
+    }));
+    await settle();
+    const sp0 = await state();
+    const brepSp = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "spring.brep", brep }]; }), brepSp);
+    await settle();
+    await runCmd(mp, "Recognize Features");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.length > 1, null, { timeout: 120000 });
+    await settle();
+    const sp1 = await state();
+    const spH = await mp.evaluate(() => { const h = window.__sv.model.store.doc.features.find(f => f.type === "helix"); return h && { p: h.pitch.v, n: h.revs.v }; });
+    check(!sp0.bad && sp0.v > 1000 && Math.abs(sp1.v - sp0.v) < sp0.v * 1e-5 && !sp1.bad && sp1.types === "import,sketch,helix,sweep,delbody" && spH?.p === 6 && spH?.n === 4,
+      `model 1.499.0: Recognize Features makes a coil spring again as a circle sketch, a Helix and a circular Sweep (FR-FT-102) (${JSON.stringify({ sp0, sp1, spH })})`);
     // 1.492.0 (FR-UI-100): a middle click on a straight edge turns the view about the edge's line; empty space clears it and puts Z up again.
     await mp.evaluate(() => window.__sv.model.store.change("Block", d => {
       const xy = [[-30, -20], [30, -20], [30, 20], [-30, 20]];

@@ -3666,7 +3666,7 @@ export class Modeller {
     if (base) {
       try { const b = this.baseExtrude(upto, at, dels, rounds, K.feats); if (b) return b; } catch { /* without the base */ }
       try { const b = this.baseRevolve(upto, at, dels, rounds, K.feats); if (b) return b; } catch { /* without the base */ }
-      try { const b = rounds.length || K.feats.length ? null : this.baseSweep(upto, at) ?? this.baseSweepAny(upto, at) ?? this.baseLoft(upto, at); if (b) return b; } catch { /* without the base */ }
+      try { const b = rounds.length || K.feats.length ? null : this.baseSweep(upto, at) ?? this.baseSweepAny(upto, at) ?? this.baseLoft(upto, at) ?? this.baseHelix(upto, at); if (b) return b; } catch { /* without the base */ }
     }
     if (rounds.length < 2) return [...kDel, ...first, ...K.feats];
     try {
@@ -4374,6 +4374,152 @@ export class Modeller {
         if (!fin.body || this.solids(fin.body.shape) !== 1 || fin.statuses.slice(-out.length).some(st => st.ok === false)) continue;
         if (this.sameVolume(fin.body.shape, body.shape)) return out;
       }
+    }
+    return null;
+  }
+
+  /**
+   * The base of a coil spring (FR-FT-102, a sweep path out of one plane): two flat ends bounded by one circle
+   * each of one radius and one swept side face around which the tube runs. The tube's centreline (the middle of
+   * the side face's sections) must be a helix of constant radius and pitch about an axis along a standard axis:
+   * its unit tangents keep one angle to the axis, its points one distance from it, and its height grows evenly
+   * with the turn. Comes back as a circle sketch on the standard plane (or an offset plane) through the start,
+   * a Helix, a circular-profile Sweep with Merge result off and Delete Body of the import; kept when its helix runs
+   * through the centreline turning the same way and the volume matches.
+   */
+  private baseHelix(upto: Feature[], at: (fs: Feature[]) => PartDoc): Feature[] | null {
+    const oc = this.oc;
+    const imports = upto.filter(f => f.type === "import" && !f.suppressed).map(f => `${f.id}:`);
+    if (!imports.length) return null;
+    const start = this.evaluate(at([]));
+    const body = start.body;
+    if (!body || this.solids(body.shape) !== 1 || body.names.some(n => !imports.some(p => n.startsWith(p)))) return null;
+    const size = this.size(body.shape), tol = Math.max(1e-4, size * 1e-6) * 10;
+    const S = oc.GeomAbs_SurfaceType;
+    const caps: { c: V3; r: number }[] = [];
+    const sides: any[] = [];
+    for (const face of body.faces) {
+      const ad = new oc.BRepAdaptor_Surface_2(face, true);
+      if (ad.GetType() === S.GeomAbs_Plane) {
+        const es = this.sub(face, "EDGE");
+        if (es.length !== 1) return null;
+        // A circle, or a spline lying on one (a pipe's end): around the face's centroid.
+        const ca = new oc.BRepAdaptor_Curve_2(es[0]), t0 = ca.FirstParameter(), t1 = ca.LastParameter();
+        const c = this.centroid(face), ds = Array.from({ length: 16 }, (_, k) => Math.hypot(...sub3(this.xyz(ca.Value(t0 + ((t1 - t0) * k) / 16)), c)));
+        const rr = ds.reduce((x, y) => x + y, 0) / ds.length;
+        if (ds.some(x => Math.abs(x - rr) > Math.max(tol, rr * 1e-4))) return null;
+        caps.push({ c, r: rr });
+      } else sides.push(ad);
+    }
+    if (caps.length !== 2 || sides.length !== 1 || Math.abs(caps[0].r - caps[1].r) > tol) return null;
+    const r = caps[0].r, ad = sides[0];
+    // The tube's sections: the parameter that runs round the profile closes on itself.
+    const u0 = ad.FirstUParameter(), u1 = ad.LastUParameter(), v0 = ad.FirstVParameter(), v1 = ad.LastVParameter();
+    const P = (u: number, v: number) => this.xyz(ad.Value(u, v));
+    const uRound = Math.hypot(...sub3(P(u0, (v0 + v1) / 2), P(u1, (v0 + v1) / 2))) <= tol;
+    const vRound = Math.hypot(...sub3(P((u0 + u1) / 2, v0), P((u0 + u1) / 2, v1))) <= tol;
+    if (uRound === vRound) return null;
+    const K = 240, M = 12;
+    const cen: V3[] = [];
+    for (let k = 0; k <= K; k++) {
+      const pts: V3[] = [];
+      for (let j = 0; j < M; j++) {
+        const a = j / M;
+        pts.push(uRound ? P(u0 + (u1 - u0) * a, v0 + (v1 - v0) * k / K) : P(u0 + (u1 - u0) * k / K, v0 + (v1 - v0) * a));
+      }
+      // The section circle's centre: circumcentres of evenly spread triples (the samples need not be even in angle).
+      const cc = (a: V3, b: V3, e: V3): V3 => {
+        const u = sub3(b, a), w = sub3(e, a), n = cross(u, w), nn = dot(n, n);
+        return add(a, mul(add(mul(cross(n, u), dot(w, w)), mul(cross(w, n), dot(u, u))), 1 / (2 * nn)));
+      };
+      const c = mul([0, 1, 2, 3].map(j => cc(pts[j], pts[j + 4], pts[j + 8])).reduce((s, p) => add(s, p), [0, 0, 0] as V3), 1 / 4);
+      if (pts.some(p => Math.abs(Math.hypot(...sub3(p, c)) - r) > Math.max(tol, r * 1e-3))) return null;
+      cen.push(c);
+    }
+    // Run from the cap the first section sits on.
+    const near = (p: V3) => caps.findIndex(q => Math.hypot(...sub3(p, q.c)) <= Math.max(tol, r * 1e-3));
+    if (near(cen[0]) < 0 || near(cen[K]) < 0 || near(cen[0]) === near(cen[K])) return null;
+    cen[0] = caps[near(cen[0])].c; cen[K] = caps[near(cen[K])].c;
+    // The axis: square to every difference of unit tangents (they all keep one angle to it).
+    const T = cen.slice(0, K).map((c, k) => unit(sub3(cen[k + 1], c)));
+    let ax: V3 | null = null, best = 0;
+    for (const [i, j] of [[K / 4, K / 2], [K / 3, (2 * K) / 3], [K / 6, K / 3], [K / 2, (3 * K) / 4], [K / 12, K / 6]]) {
+      const c = cross(sub3(T[i], T[0]), sub3(T[j], T[0])), l = Math.hypot(...c);
+      if (l > best) { best = l; ax = mul(c, 1 / l); }
+    }
+    if (!ax || best < 1e-3) return null;
+    if (dot(ax, sub3(cen[K], cen[0])) < 0) ax = mul(ax, -1);
+    const std = (["XY", "XZ", "YZ"] as const).find(k => Math.abs(Math.abs(dot(STD_FRAMES[k].n, ax!)) - 1) < 1e-6);
+    if (!std) return null;
+    const F = STD_FRAMES[std], d = mul(F.n, Math.sign(dot(F.n, ax)));
+    // The circle the centreline lies on, seen along the axis (least squares).
+    const xy = cen.map(c => [dot(c, F.x), dot(c, F.y)] as [number, number]);
+    const A = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], b = [0, 0, 0];
+    for (const [x, y] of xy) {
+      const row = [x, y, 1], z = -(x * x + y * y);
+      for (let i = 0; i < 3; i++) { b[i] += row[i] * z; for (let j = 0; j < 3; j++) A[i][j] += row[i] * row[j]; }
+    }
+    const det = (m: number[][]) => m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+    const D0 = det(A);
+    if (Math.abs(D0) < 1e-12) return null;
+    const sol = [0, 1, 2].map(i => det(A.map((row, k) => row.map((v, j) => j === i ? b[k] : v))) / D0);
+    const ox = -sol[0] / 2, oy = -sol[1] / 2, R = Math.sqrt(ox * ox + oy * oy - sol[2]);
+    if (!(R > r) || xy.some(([x, y]) => Math.abs(Math.hypot(x - ox, y - oy) - R) > Math.max(tol, R * 1e-3))) return null;
+    // Turn and height: height even in the turn.
+    const th: number[] = [];
+    for (const [x, y] of xy) {
+      let a = Math.atan2(y - oy, x - ox);
+      if (th.length) { const pr = th[th.length - 1]; while (a - pr > Math.PI) a -= 2 * Math.PI; while (a - pr < -Math.PI) a += 2 * Math.PI; }
+      th.push(a);
+    }
+    const hs = cen.map(c => dot(c, d)), turn = th[K] - th[0], H = hs[K] - hs[0];
+    if (Math.abs(turn) < Math.PI || !(H > tol)) return null;
+    if (th.some((a, k) => Math.abs(hs[k] - hs[0] - (H * (a - th[0])) / turn) > Math.max(tol, H * 2e-3))) return null;
+    // Measured values carry the spline fit's noise: whole ten-thousandths are taken as meant.
+    const snap = (x: number) => { const k = Math.round(x * 1e4) / 1e4; return Math.abs(x - k) <= 1e-5 * Math.max(1, Math.abs(x)) ? k : x; };
+    const id = () => `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
+    const h0 = dot(cen[0], F.n);
+    const lead: Feature[] = [];
+    let plane: PlaneRef = { std };
+    if (Math.abs(h0) > tol) {
+      const ref = { id: id(), type: "plane", name: "", base: { std }, mode: "offset", offset: { v: snap(Math.abs(h0)) }, ...(h0 < 0 ? { flip: true } : {}) } as PlaneFeature;
+      lead.push(ref);
+      plane = { plane: ref.id };
+    }
+    const fr = lead.length ? this.refPlane(lead[0] as PlaneFeature, body, {}) : F;
+    // The sketch circle in the plane's own frame (an offset plane may turn it).
+    const o3 = add(add(mul(F.x, ox), mul(F.y, oy)), mul(F.n, h0)), q = sub3(o3, fr.o);
+    const sid = id(), hid = id();
+    const sk = { id: sid, type: "sketch", name: "", plane, rels: [], dims: [], ents: [
+      { id: `${sid}c`, t: "point", x: snap(dot(q, fr.x)), y: snap(dot(q, fr.y)) }, { id: `${sid}k`, t: "circle", c: `${sid}c`, r: snap(R) }] } as unknown as Feature;
+    const v0p = this.volume(body.shape);
+    const goal = sub3(cen[0], o3), aim = Math.atan2(dot(goal, fr.y), dot(goal, fr.x));
+    const reverse = dot(fr.n, d) < 0;
+    // Which way it turns about the way it runs.
+    const cw = (turn > 0) !== (dot(F.n, d) > 0);
+    for (const st of [aim, -aim, Math.PI - aim, aim + Math.PI]) {
+      const hx = { id: hid, type: "helix", name: "", sketch: sid, mode: "heightRev", pitch: { v: snap((2 * Math.PI * H) / Math.abs(turn)) }, revs: { v: snap(Math.abs(turn) / (2 * Math.PI)) },
+        height: { v: snap(H) }, ...(snap(st) ? { start: { v: snap(st) } } : {}), ...(cw ? { cw: true } : {}), ...(reverse ? { reverse: true } : {}) } as unknown as Feature;
+      const probe = this.evaluate(at([...lead, sk, hx]));
+      const pts = probe.curves[hid];
+      if (!pts?.length || Math.hypot(...sub3(pts[0], cen[0])) > Math.max(tol, R * 1e-3) || Math.hypot(...sub3(pts[pts.length - 1], cen[K])) > Math.max(tol, R * 1e-3)) continue;
+      // It turns the same way as it climbs (a mirror image ends in the same place only after whole half turns).
+      let pa = th[0], bad = false;
+      for (const p of pts) {
+        let a = Math.atan2(dot(p, F.y) - oy, dot(p, F.x) - ox);
+        while (a - pa > Math.PI) a -= 2 * Math.PI;
+        while (a - pa < -Math.PI) a += 2 * Math.PI;
+        pa = a;
+        if (Math.abs(dot(p, d) - hs[0] - (H * (a - th[0])) / turn) > Math.max(tol, H * 2e-3)) { bad = true; break; }
+      }
+      if (bad) continue;
+      const out: Feature[] = [...lead, sk, hx,
+        { id: id(), type: "sweep", name: "", op: "boss", merge: false, circular: { v: snap(2 * r) }, path: { helix: hid } } as Feature,
+        { id: id(), type: "delbody", name: "", bodies: [{ name: body.names[0], hint: this.centroid(body.faces[0]) }] } as Feature];
+      const fin = this.evaluate(at(out));
+      if (!fin.body || this.solids(fin.body.shape) !== 1 || fin.statuses.slice(-out.length).some(x => x.ok === false)) return null;
+      if (Math.abs(this.volume(fin.body.shape) - v0p) > 1e-4 * v0p) return null;
+      return out;
     }
     return null;
   }
