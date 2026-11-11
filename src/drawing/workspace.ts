@@ -235,7 +235,7 @@ const ANNOT_GROUPS: { name: string; tools: [string, string, string][] }[] = [
 const BAR_TOOLS = ["items", "note", "balloon", "hole", "surf", "gtol", "datum", "cline", "cmark"];
 /** A command bar button: icon over its label, like the 3D command bar's `.mc-b`; `title` feeds the rich tooltip. */
 const cmdButton = (attrs: string, icon: string, label: string, tip: string, menu = false) =>
-  `<button class="drw-cb" ${attrs}${menu ? ' aria-haspopup="menu" aria-expanded="false"' : ""} title="${esc(t(tip))}">${icon}<span class="mc-l">${esc(t(label))}${menu ? " ▾" : ""}</span></button>`;
+  `<button class="drw-cb" ${attrs}${menu ? ' aria-haspopup="menu" aria-expanded="false"' : ""} title="${esc(t(tip))}">${icon}<span class="mc-l">${menu ? `<span>${esc(t(label))}</span> ▾` : esc(t(label))}</span></button>`;
 /** An annotation tool button: an icon tile in the Annotation tab, an icon menu row in Annotate ▾. */
 const annotButton = ([k, label, tip]: [string, string, string], menu: boolean) => {
   const act = k === "dim" ? 'data-a="dim"' : `data-an="${k}"`;
