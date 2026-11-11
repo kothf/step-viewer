@@ -9798,7 +9798,7 @@ try {
     const tb1 = await state();
     check(!tb0.bad && tb0.v > 3000 && Math.abs(tb1.v - tb0.v) < tb0.v * 1e-5 && !tb1.bad && tb1.types === "import,sketch,sketch,sweep,delbody",
       `model 1.493.0: Recognize Features makes a bent tube again as path and profile sketches and a Sweep (FR-FT-102) (${JSON.stringify({ tb0, tb1 })})`);
-    // 1.495.0: a bent bar of any line/arc profile (a square on its corner: the bends are cones) comes back as a Sweep too.
+    // 1.496.0: a bent bar of any line/arc profile (a square on its corner: the bends are cones) comes back as a Sweep too.
     await mp.evaluate(() => window.__sv.model.store.change("Bar", d => {
       d.features = [{ id: "pt", type: "sketch", name: "Sketch1", plane: { std: "XZ" }, rels: [], dims: [], ents: [
         { id: "q1", t: "point", x: 0, y: 0 }, { id: "q2", t: "point", x: 0, y: 40 }, { id: "q3", t: "point", x: 20, y: 60 }, { id: "q4", t: "point", x: 60, y: 60 }, { id: "qc", t: "point", x: 20, y: 40 },
@@ -9818,7 +9818,7 @@ try {
     await settle();
     const db1 = await state();
     check(!db0.bad && db0.v > 3000 && Math.abs(db1.v - db0.v) < db0.v * 1e-5 && !db1.bad && db1.types === "import,sketch,sketch,sweep,delbody",
-      `model 1.495.0: Recognize Features makes a bent bar of a line/arc profile again as a Sweep (FR-FT-102) (${JSON.stringify({ db0, db1 })})`);
+      `model 1.496.0: Recognize Features makes a bent bar of a line/arc profile again as a Sweep (FR-FT-102) (${JSON.stringify({ db0, db1 })})`);
     // 1.492.0 (FR-UI-100): a middle click on a straight edge turns the view about the edge's line; empty space clears it and puts Z up again.
     await mp.evaluate(() => window.__sv.model.store.change("Block", d => {
       const xy = [[-30, -20], [30, -20], [30, 20], [-30, 20]];
