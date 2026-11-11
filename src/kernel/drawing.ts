@@ -253,6 +253,10 @@ export function viewCurves(oc: any, shape: any, view: ViewDir): { circles: Circl
  */
 export const FAST_ANGLE = 0.3;
 
+/** The angle the fast views use: `FAST_ANGLE`, or `?drwangle=<rad>` sent by the client (to compare meshes on one build). */
+let fastAngle = FAST_ANGLE;
+export function setFastAngle(a: number): void { if (a > 0 && a < 1.6) fastAngle = a; }
+
 /**
  * Fast hidden-line removal for big models (drawings exam: a 57-part assembly never finished the exact HLR):
  * OCCT's polygonal HLR on a fine mesh, then each polyline is rebuilt from what it really is. Mesh nodes on an
@@ -271,7 +275,8 @@ export function projectFast(oc: any, shape: any, view: ViewDir, lin: number, edg
   const poly = (l: number, a: number): Projection => {
     try { return projectPoly(oc, shape, view, l, a); } catch (e) { return { vis: [], hid: [], box: [0, 0, 0, 0], ms: 0, fail: e instanceof Error ? e.message : String(e) }; }
   };
-  let p = poly(lin, FAST_ANGLE);
+  let p = poly(lin, fastAngle);
+  const t1 = Date.now();
   // The polygonal HLR can come back empty (drawings exam round three: an engine assembly got views with no
   // lines at all). Try again on a fresh mesh at the old finer angle, then on a coarser one (what the previews use).
   const retries: [number, number][] = [[lin, 0.1], [lin * 10 / 3, 0.5]];
@@ -291,7 +296,9 @@ export function projectFast(oc: any, shape: any, view: ViewDir, lin: number, edg
   }
   const { circles, lines } = viewCurves(oc, shape, view);
   const vis = exactify(p.vis, circles, lin, lines), hid = underLines(exactify(p.hid, circles, lin, lines), vis, Math.max(1e-4, lin * 1.5));
-  return { vis, hid: unhide(hid, vis), box: bounds(vis.length ? vis : hid), ms: Date.now() - t0, fast: true };
+  const out = unhide(hid, vis), t2 = Date.now();
+  console.info(`Fast view [${view.dir.map(v => +v.toFixed(3))}]: mesh + polygonal HLR ${t1 - t0} ms (${fastAngle} rad, ${p.vis.length} + ${p.hid.length} segments), exact curves ${t2 - t1} ms.`);
+  return { vis, hid: out, box: bounds(vis.length ? vis : hid), ms: t2 - t0, fast: true };
 }
 
 /** Polylines (and chords) of a polygonal HLR turned into lines, exact arcs of `circles` and leftover polylines (see `projectFast`). */

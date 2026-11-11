@@ -5,7 +5,7 @@
 import { FLAT_CONFIG, type Align, type Stair } from "./views";
 import { flatBends, flatPatternDoc, flatToXY } from "../sheetmetal/sheet";
 import type { Projection, SectionCut } from "../kernel/drawing";
-import { geometryDiff, projectAuto, FAST_EDGES, projectPoly, readShape, shapeBin, readBin, childShapes, alignedShape, sectionCut, sectionFinish, sectionPreview, freeSection, shapeBox, shadeTris, shapeInfo, topology, type V3, type ViewDir } from "../kernel/drawing";
+import { geometryDiff, projectAuto, FAST_EDGES, setFastAngle, projectPoly, readShape, shapeBin, readBin, childShapes, alignedShape, sectionCut, sectionFinish, sectionPreview, freeSection, shapeBox, shadeTris, shapeInfo, topology, type V3, type ViewDir } from "../kernel/drawing";
 import { Assembler } from "../kernel/assembly";
 import { Modeller } from "../kernel/model";
 import type { AsmDoc } from "../asm/types";
@@ -17,7 +17,7 @@ import { bodiesDensity, findMaterial } from "../tools/materials";
 import { activate } from "../model/configs";
 
 export type DrawingRequest =
-  | { id: number; type: "init"; base: string; module: WebAssembly.Module; fast?: number }
+  | { id: number; type: "init"; base: string; module: WebAssembly.Module; fast?: number; angle?: number }
   /** `lite`: a helper worker that only projects; no topology, model items or tables. */
   | { id: number; type: "load"; part?: PartDoc; asm?: AsmDoc; file?: { name: string; bytes: Uint8Array }; lite?: boolean; snap?: ModelSnap }
   | { id: number; type: "project"; view: ViewDir; shade?: boolean; cfg?: string; only?: string[] }
@@ -243,6 +243,7 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
         instantiateWasm: (imports: WebAssembly.Imports, done: (inst: WebAssembly.Instance) => void) => { WebAssembly.instantiate(r.module, imports).then(done); return {}; },
       });
       if (r.fast !== undefined) fastEdges = r.fast;
+      if (r.angle !== undefined) setFastAngle(r.angle);
       post({ id: r.id, ok: true });
     } else if (r.type === "load") {
       for (const sc of stash.values()) freeSection(sc);
