@@ -7243,7 +7243,7 @@ try {
     const rib = await mp.evaluate(() => ({ v: window.__sv.model.last().props.volume, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length, names: window.__sv.model.store.doc.features.map(f => f.name).join(",") }));
     check(r0.type === "rib" && r0.sketch === "rs" && r0.title === "Rib" && Math.abs(r0.live - v0 - 8000) < 1e-3 && Math.abs(live4 - v0 - 6400) < 1e-3 && Math.abs(rib.v - v0 - 6400) < 1e-3 && !rib.bad && /Rib1/.test(rib.names),
       `model 1.56: Rib from an open line fills the bracket's corner, previewed live (FR-FT-062) (${JSON.stringify(r0)}, ${v0}, ${live4}, ${JSON.stringify(rib)})`);
-    // Split line (FR-FT-084): a circle on Top, clear of the rib, splits the base's top and bottom faces; the volume stays.
+    // Split line (FRS 2.3): a circle on Top, clear of the rib, splits the base's top and bottom faces; the volume stays.
     await mp.evaluate(() => window.__sv.model.store.change("Circle", d => { d.features.push({ id: "cs", type: "sketch", name: "Sketch4", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "o", t: "point", x: 20, y: 15 }, { id: "k", t: "circle", c: "o", r: 6 }] }); }));
     await settle();
     const nf0 = await mp.evaluate(() => window.__sv.model.last().faceNames.length);
@@ -7254,7 +7254,7 @@ try {
     await settle();
     const sp = await mp.evaluate(() => ({ v: window.__sv.model.last().props.volume, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length, faces: window.__sv.model.last().faceNames.length }));
     check(sp0.sketch === "cs" && sp0.count === "All faces it crosses" && sp0.faces === nf0 + 2 && sp.faces === nf0 + 2 && !sp.bad && Math.abs(sp.v - rib.v) < 1e-6,
-      `model 1.56: Split Line splits the faces a projected circle crosses, previewed live (FR-FT-084) (${nf0}, ${JSON.stringify(sp0)}, ${JSON.stringify(sp)})`);
+      `model 1.56: Split Line splits the faces a projected circle crosses, previewed live (FRS 2.3) (${nf0}, ${JSON.stringify(sp0)}, ${JSON.stringify(sp)})`);
     await mp.click("#lang-btn");
     await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "rib").id));
     await settle();
@@ -9867,6 +9867,25 @@ try {
     check(wpm.title === "Wrap" && wpm.sketch === "s2" && wpm.focus === "faces" && Math.abs(wv.v - (shaft + 100.8)) < 0.5 && !wv.bad && Math.abs(wd.v - (shaft - 91.2)) < 0.5 && !wd.bad
       && wfin.type === "wrap" && wfin.kind === "deboss" && wfin.name === "Wrap1",
       `model 1.548: Wrap embosses and debosses a sketch on a shaft (FR-FT-104) (${JSON.stringify({ wpm, wv, wd, wfin })})`);
+    // Boundary Boss (Sweep ▾, FRS 2.3): two 20 mm squares 40 apart and four corner curves bowing out half way; the draft takes them all.
+    await mp.evaluate(() => window.__sv.model.store.change("Boundary", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), L = (id, a, b) => ({ id, t: "line", a, b });
+      const sq = (id, plane) => ({ id, type: "sketch", name: id, plane, rels: [], dims: [], ents: [P(id + "1", -10, -10), P(id + "2", 10, -10), P(id + "3", 10, 10), P(id + "4", -10, 10), L(id + "a", id + "1", id + "2"), L(id + "b", id + "2", id + "3"), L(id + "c", id + "3", id + "4"), L(id + "d", id + "4", id + "1")] });
+      d.features = [sq("SketchA", { std: "XY" }), { id: "p1", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 40 } }, sq("SketchB", { plane: "p1" }),
+        ...[[-10, -10], [10, -10], [10, 10], [-10, 10]].map(([x, y], i) => ({ id: `c${i}`, type: "curve", name: `Curve${i + 1}`, kind: "xyz", pts: [[x, y, 0], [x * 1.5, y * 1.5, 20], [x, y, 40]] }))];
+    }));
+    // No body yet, so wait for the rebuild alone.
+    await mp.waitForTimeout(150);
+    await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.statuses.length === 7, null, { timeout: 120000 });
+    await runCmd(mp, "Boundary Boss/Base");
+    await settle();
+    const bpm = await mp.evaluate(() => { const f = window.__sv.model.mode().draft; return { title: document.querySelector("#mc-pm h3")?.textContent, profiles: f.profiles.join(), guides: (f.guides ?? []).length, rows: document.querySelectorAll('#mc-pm select[data-k^="lg"]').length, v: Math.round(window.__sv.model.last().props?.volume ?? 0), bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    await mp.click("#mc-ok");
+    await settle();
+    const bfin = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.at(-1); return { type: f.type, boundary: f.boundary, name: f.name, v: Math.round(window.__sv.model.last().props.volume) }; });
+    check(bpm.title === "Boundary Boss/Base" && bpm.profiles === "SketchA,SketchB" && bpm.guides === 4 && bpm.rows === 5 && bpm.v > 16000 * 1.3 && !bpm.bad
+      && bfin.type === "loft" && bfin.boundary === true && bfin.name === "Boundary-Boss1" && bfin.v === bpm.v,
+      `model 1.557: Boundary Boss fills between profiles and Direction 2 curves (FRS 2.3) (${JSON.stringify({ bpm, bfin })})`);
     // Flex (Bodies ▾, FR-FT-105): a 100 × 20 × 10 bar along X bent 90° (volume kept), trim planes drawn, then twisted; the panel shows the bend radius.
     await mp.evaluate(() => window.__sv.model.store.change("Bar", d => {
       const P = (k, x, y) => ({ id: `b${k}`, t: "point", x, y });

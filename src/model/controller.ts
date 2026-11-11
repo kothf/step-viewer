@@ -1045,7 +1045,7 @@ export class ModelController {
   }
 
   /** Extrude / Cut / Revolve / Fillet / Chamfer: opens the property panel with a draft. */
-  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "spattern" | "tpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "rib" | "split" | "combine" | "indent" | "intersect" | "bsplit" | "delbody" | "movebody" | "scale" | "flex" | "delface" | "moveface" | "dome" | "wrap" | "heal" | "smbase" | "smloft" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smrelief" | "smgusset" | "smcross" | "smvent" | "smcut" | "smconvert" | "sminsert" | "smform" | "smunfold" | "smfold" | "smmiter" | "smswept" | "smtabslot" | "smrip" | CurveTool | SurfTool | WeldTool) {
+  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "spattern" | "tpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "boundary" | "boundarycut" | "rib" | "split" | "combine" | "indent" | "intersect" | "bsplit" | "delbody" | "movebody" | "scale" | "flex" | "delface" | "moveface" | "dome" | "wrap" | "heal" | "smbase" | "smloft" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smrelief" | "smgusset" | "smcross" | "smvent" | "smcut" | "smconvert" | "sminsert" | "smform" | "smunfold" | "smfold" | "smmiter" | "smswept" | "smtabslot" | "smrip" | CurveTool | SurfTool | WeldTool) {
     if (!this.store) return;
     // Starting a feature from inside a sketch exits the sketch and uses it (FR-SK-004).
     const fromSketch = this.mode.kind === "sketch" ? this.mode.id : null;
@@ -1184,7 +1184,7 @@ export class ModelController {
         cf.sketch = sk?.id ?? ""; cf.faces = [];
       }
       draft = cf;
-    } else if (type === "helix" || type === "sweep" || type === "sweepcut" || type === "loft" || type === "loftcut") {
+    } else if (type === "helix" || type === "sweep" || type === "sweepcut" || type === "loft" || type === "loftcut" || type === "boundary" || type === "boundarycut") {
       const p3 = this.p3Draft(type, id, sketches, used);
       if (!p3) return;
       draft = p3;
@@ -1274,7 +1274,7 @@ export class ModelController {
    * circle; a sweep along the last helix or a path sketch, with the last unused closed sketch as its
    * profile (else a circular profile); a loft through the last two unused sketches.
    */
-  private p3Draft(type: "helix" | "sweep" | "sweepcut" | "loft" | "loftcut", id: string, sketches: SketchFeature[], used: Set<string>): Feature | null {
+  private p3Draft(type: "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "boundary" | "boundarycut", id: string, sketches: SketchFeature[], used: Set<string>): Feature | null {
     const d = this.doc;
     const end = d.rollback ?? d.features.length;
     const sel = this.selected ? sketches.find(s => s.id === this.selected) : undefined;
@@ -1285,12 +1285,20 @@ export class ModelController {
       if (!sk) { toast(t("Draw a sketch with a circle first: the helix starts on it."), true); return null; }
       return { id, type: "helix", name: nextName(d, "helix"), sketch: sk.id, mode: "pitchRev", pitch: { v: 5 }, revs: { v: 4 }, height: { v: 20 } } satisfies HelixFeature;
     }
-    const cut = type === "sweepcut" || type === "loftcut";
+    const cut = type === "sweepcut" || type === "loftcut" || type === "boundarycut";
     if (cut && !this.last?.data) { toast(t("There is no body yet."), true); return null; }
     const free = sketches.filter(s => !used.has(s.id) && !d.features.some(g => (g.type === "sweep" && (g.profile === s.id || (g.path && "sketch" in g.path && g.path.sketch === s.id))) || (g.type === "loft" && g.profiles.includes(s.id)) || (g.type === "helix" && g.sketch === s.id)));
     if (type === "loft" || type === "loftcut") {
       const profs = free.filter(closed).slice(-2);
       return { id, type: "loft", name: nextName(d, "loft", cut), op: cut ? "cut" : "boss", profiles: profs.map(s => s.id) } satisfies LoftFeature;
+    }
+    if (type === "boundary" || type === "boundarycut") {
+      // Boundary Boss/Cut (FRS 2.3): the last two closed sketches across, the curves made since them along.
+      const profs = free.filter(closed).slice(-2);
+      const at = profs.length ? Math.max(...profs.map(s => d.features.indexOf(s))) : -1;
+      const along = d.features.slice(0, end).filter((g, i) => (g.type === "curve" || g.type === "sketch3d" || (g.type === "sketch" && !closed(g) && !used.has(g.id))) && !g.suppressed && (i > at || profs.length < 2));
+      const guides = along.map(g => g.type === "sketch" ? { sketch: g.id } : { curve: g.id });
+      return { id, type: "loft", name: nextName(d, "loft", cut, cut ? "Cut-Boundary" : "Boundary-Boss"), op: cut ? "cut" : "boss", boundary: true, profiles: profs.map(s => s.id), ...(guides.length ? { guides } : {}) } satisfies LoftFeature;
     }
     // The last helix or 3D curve is the likely path (FR-FT-083/085).
     const helix = d.features.slice(0, end).filter(f => (f.type === "helix" || f.type === "curve" || f.type === "sketch3d") && !f.suppressed).at(-1);
@@ -5757,6 +5765,7 @@ export class ModelController {
 
   /** The command a running feature belongs to, to mark its button. */
   private openCmd(d: Feature): string {
+    if (d.type === "loft" && d.boundary) return d.op === "cut" ? "boundarycut" : "boundary";
     if ((d.type === "sweep" || d.type === "loft") && d.op === "cut") return `${d.type}cut`;
     if (d.type === "extrude" && d.op === "cut") return "cut";
     if (d.type === "spattern" && d.src === "table") return "tpattern";
@@ -6466,7 +6475,7 @@ export class ModelController {
         break;
       case "exit": this.ok(); break;
       case "sketch": this.noteRecent(c); this.startSketch(); break;
-      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "spattern": case "tpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "indent": case "intersect": case "bsplit": case "delbody": case "movebody": case "scale": case "flex": case "delface": case "moveface": case "dome": case "wrap": case "heal": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": case "revsurf": case "loftsurf": case "trimsurf": case "fillsurf": case "extendsurf": case "untrimsurf": case "sweepsurf": case "xyzcurve": case "compcurve": case "projcurve": case "sketch3d": case "member": case "trimext": case "endcap": case "gusset": case "weldbead": this.lastCmd = this.activeCmd = c; this.noteRecent(c); this.startFeature(c); break;
+      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "spattern": case "tpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "boundary": case "boundarycut": case "rib": case "split": case "combine": case "indent": case "intersect": case "bsplit": case "delbody": case "movebody": case "scale": case "flex": case "delface": case "moveface": case "dome": case "wrap": case "heal": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": case "revsurf": case "loftsurf": case "trimsurf": case "fillsurf": case "extendsurf": case "untrimsurf": case "sweepsurf": case "xyzcurve": case "compcurve": case "projcurve": case "sketch3d": case "member": case "trimext": case "endcap": case "gusset": case "weldbead": this.lastCmd = this.activeCmd = c; this.noteRecent(c); this.startFeature(c); break;
       case "cutlist": if (m.kind === "sketch") this.ok(); this.cutList(); break;
       case "import": if (m.kind === "sketch") this.ok(); this.importBodyFile(); break;
       case "smbase": case "smloft": case "smflange": case "smhem": case "smbend": case "smjog": case "smcorner": case "smclosed": case "smrelief": case "smgusset": case "smcross": case "smvent": case "smcut": case "smconvert": case "sminsert": case "smform": case "smunfold": case "smfold": case "smmiter": case "smswept": case "smtabslot": case "smrip": this.startFeature(c); break;
@@ -8806,6 +8815,22 @@ export class ModelController {
         + `<p class="pm-help muted">${esc(t("The profile moves along the path. A circular profile needs no sketch: it is centred on the start of the path, square to it."))}</p>` };
     }
     const closed = sketches.filter(sketchProfileOk);
+    if (f.boundary) {
+      // Boundary Boss/Cut (FRS 2.3): Direction 1 = profiles, Direction 2 = curves crossing every one of them.
+      const at = this.mode.kind === "feature" ? this.mode.index : this.doc.features.length;
+      const curves = this.doc.features.slice(0, at).filter(g => g.type === "curve" || g.type === "sketch3d");
+      const gs = f.guides ?? [];
+      const opts = (cur: string, none: string) => opt("", none, cur) + curves.map(h => opt(`c:${h.id}`, featureLabel(h.name), cur)).join("")
+        + sketches.filter(s => !f.profiles.includes(s.id) && !sketchProfileOk(s)).map(s => opt(`s:${s.id}`, featureLabel(s.name), cur)).join("");
+      return { title: f.op === "cut" ? t("Boundary Cut") : t("Boundary Boss/Base"),
+        body: group(t("Direction 1"), f.profiles.map((id, i) => sel(`lp${i}`, `${t("Profile")} ${i + 1}`, skOpts(closed, id, t("Remove")))).join("")
+          + sel(`lp${f.profiles.length}`, t("Add profile"), skOpts(closed.filter(s => !f.profiles.includes(s.id)), "", "—"))
+          + `<p class="pm-help muted">${esc(t("Closed profiles, joined in this order."))}</p>`)
+        + group(t("Direction 2"), gs.map((g, i) => sel(`lg${i}`, `${t("Direction 2 curve")} ${i + 1}`, opts(pathKey(g), t("Remove")))).join("")
+          + sel(`lg${gs.length}`, t("Add curve"), opts("", "—"))
+          + `<p class="pm-help muted">${esc(t("Each curve runs from the first profile to the last through a point of every one. Between two curves the surface follows both directions; with fewer than two it lofts."))}</p>`)
+        + (f.op === "boss" && this.last?.data ? group(t("Options"), chk("merge", f.merge !== false, t("Merge result"))) : "") };
+    }
     const rows = f.profiles.map((id, i) => sel(`lp${i}`, `${t("Profile")} ${i + 1}`, skOpts(closed, id, t("Remove")))).join("")
       + sel(`lp${f.profiles.length}`, t("Add profile"), skOpts(closed.filter(s => !f.profiles.includes(s.id)), "", "—"));
     return { title: f.op === "cut" ? t("Cut-Loft") : t("Loft"), body: group(t("Profiles"), rows + `<p class="pm-help muted">${esc(t("Profiles are joined in this order. Each is one closed region, usually on parallel planes."))}</p>`)
@@ -9381,8 +9406,8 @@ const sketchOpenOk = (s: SketchFeature) => { const p = sketchPath(s); return !p.
 const FROM_SKETCH_SKIP = new Set(["sketch", "import", "save", "step", "filter", "undo", "redo", "smflat", "smdxf", "smprops"]);
 
 const CM_FLY: Record<string, string[]> = {
-  sweep: ["sweep", "loft"],
-  sweepcut: ["sweepcut", "loftcut"],
+  sweep: ["sweep", "loft", "boundary"],
+  sweepcut: ["sweepcut", "loftcut", "boundarycut"],
   pattern: ["lpattern", "cpattern", "mirror", "spattern", "tpattern"],
   plane: ["plane", "axis", "point", "csys", "extrefs"],
   curves: ["helix", "sketch3d", "xyzcurve", "compcurve", "projcurve", "split"],
@@ -9395,6 +9420,8 @@ const P3_TOOLS = (): [string, string, string][] => [
   ["sweepcut", t("Cut-Sweep"), t("Swept cut: removes a profile moved along a path")],
   ["loft", t("Loft"), t("Lofted boss: through two or more profiles")],
   ["loftcut", t("Cut-Loft"), t("Lofted cut: removes material through two or more profiles")],
+  ["boundary", t("Boundary Boss/Base"), t("Boundary boss: profiles one way, curves the other, the surface follows both")],
+  ["boundarycut", t("Boundary Cut"), t("Boundary cut: removes material bounded by profiles and curves")],
   ["helix", t("Helix/Spiral"), t("Helix: a curve round a sketch circle, for springs and threads")],
   ["sketch3d", t("3D Sketch"), t("3D sketch: lines and splines in space, for sweep paths")],
   ["xyzcurve", t("Curve Through XYZ Points"), t("3D curve through points typed in or read from a CSV file")],
@@ -9465,6 +9492,8 @@ const ICON_SVG: Record<string, string> = {
   sweepcut: S('<path d="M2 6h12v8H2z"/><path d="M4 12c2-4 5-5 8-5" stroke-dasharray="2 1.5"/>'),
   loft: S('<path d="M3 13h6v-2H3zM9 4h4v3H9z"/><path d="M3 11l6-7M9 11l4-4"/>'),
   loftcut: S('<path d="M2 6h12v8H2z"/><path d="M5 12h3l3-4H9z" fill="currentColor" fill-opacity=".3"/>'),
+  boundary: S('<path d="M3 13h7M6 4h7"/><path d="M3 13c0-4 1-7 3-9M10 13c1-3 2-6 3-9" stroke-dasharray="2 1.5"/>'),
+  boundarycut: S('<path d="M2 6h12v8H2z"/><path d="M4 12h5l2-4H7z" fill="currentColor" fill-opacity=".3" stroke-dasharray="2 1.5"/>'),
   import: S('<path d="M8 2v8M5 7l3 3 3-3"/><path d="M3 11v3h10v-3"/>'),
   combine: S('<circle cx="6" cy="8" r="4"/><circle cx="10" cy="8" r="4"/>'),
   indent: S('<path d="M2 7h4v3h4V7h4v4H2z"/><path d="M6 2h4v8H6z" stroke-dasharray="2 1.5"/>'),

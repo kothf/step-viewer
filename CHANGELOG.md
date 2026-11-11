@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.557.0] - 2026-11-11
+
+### Added
+
+- **Boundary Boss/Base** and **Boundary Cut** (Sweep ▾): closed profiles in Direction 1 and curves in Direction 2 (3D curves, 3D sketches or open sketches) running from the first profile to the last. Between each pair of neighbouring curves the surface is filled from all four sides (a Coons patch), so the body follows the curves along their whole length, not only where they meet the profiles. The command picks the last two unused closed sketches and the curves made after them; with fewer than two curves it builds a loft.
+
 ## [1.554.0] - 2026-11-11
 
 ### Added
@@ -3454,7 +3460,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.554.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.557.0...HEAD
+[1.557.0]: https://github.com/kothf/step-viewer/compare/v1.556.0...v1.557.0
 [1.554.0]: https://github.com/kothf/step-viewer/compare/v1.553.0...v1.554.0
 [1.553.0]: https://github.com/kothf/step-viewer/compare/v1.552.0...v1.553.0
 [1.552.0]: https://github.com/kothf/step-viewer/compare/v1.551.0...v1.552.0

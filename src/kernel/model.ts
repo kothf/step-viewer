@@ -3340,6 +3340,7 @@ export class Modeller {
   private loft(f: LoftFeature, doc: PartDoc, prev: Named | null, frames: Record<string, Frame>): Named {
     const oc = this.oc;
     if (f.profiles.length < 2) throw new FeatureError("E-LOFT-PROFILES", "Pick two or more profile sketches.");
+    if (f.boundary) return this.boundary(f, doc, prev, frames);
     if (f.centerline) return this.loftAlong(f, doc, prev, frames);
     const mk = new oc.BRepOffsetAPI_ThruSections(true, !!f.ruled, 1e-6);
     let firstEdges: [any, string][] = [];
@@ -3411,6 +3412,136 @@ export class Modeller {
     let k = 0;
     const tool: Named = { shape, faces, names: names.map(n => n ?? `${f.id}:new:${k++}`) };
     return this.applyTool(f, [tool], prev);
+  }
+
+  /**
+   * Boundary Boss/Cut (FRS P5): closed profiles in Direction 1 and two or more curves in Direction 2 that
+   * cross every profile make a net; each cell of it (between two neighbouring profiles and two neighbouring
+   * curves) is filled by one Coons patch (`GeomFill_BSplineCurves`) whose edges are those four pieces, so the
+   * body passes exactly through every curve of both directions (a guided loft only meets its guides at
+   * the sections). With fewer than two curves it is a loft (with the one curve as a guide).
+   */
+  private boundary(f: LoftFeature, doc: PartDoc, prev: Named | null, frames: Record<string, Frame>): Named {
+    const oc = this.oc;
+    const A = oc.TopAbs_ShapeEnum;
+    if (f.profiles.length < 2) throw new FeatureError("E-LOFT-PROFILES", "Pick two or more profile sketches.");
+    const dir2 = f.guides ?? [];
+    if (dir2.length < 2) return this.loft({ ...f, boundary: undefined, ruled: undefined, close: undefined, centerline: undefined }, doc, prev, frames);
+    const caps: any[] = [];
+    const profWires = f.profiles.map(id => {
+      const { sk, frame } = this.sketchOf(id, doc, prev, frames, "the profile sketches");
+      const { faces } = this.profileFaces(sk, frame);
+      if (faces.length !== 1) throw new FeatureError("E-LOFT-PROFILE", "Each loft profile must be one closed region.");
+      caps.push(faces[0]);
+      return oc.BRepTools.OuterWire(faces[0]);
+    });
+    const curveWires = dir2.map(g => this.pathWire(g, doc, prev, frames));
+    // Dense samples of each wire: points, the adaptor parameter and the length along it.
+    type Poly = { ad: any; u: number[]; s: number[]; p: V3[]; len: number; closed: boolean };
+    const polyOf = (w: any, closed: boolean): Poly => {
+      const ad = new oc.BRepAdaptor_CompCurve_2(w, false);
+      const u0 = ad.FirstParameter(), u1 = ad.LastParameter(), n = 600;
+      const u: number[] = [], p: V3[] = [], s: number[] = [];
+      for (let k = 0; k <= n; k++) { const t = u0 + ((u1 - u0) * k) / n; u.push(t); p.push(this.xyz(ad.Value(t))); s.push(k ? s[k - 1] + d3(p[k], p[k - 1]) : 0); }
+      return { ad, u, s, p, len: s[n], closed };
+    };
+    const reversed = (q: Poly): Poly => ({ ...q, u: [...q.u].reverse(), p: [...q.p].reverse(), s: q.s.map(x => q.len - x).reverse() });
+    const at = (q: Poly, s: number): V3 => {
+      // The exact curve point at length s (parameter interpolated between the samples).
+      if (q.closed) s = ((s % q.len) + q.len) % q.len;
+      s = Math.max(0, Math.min(q.len, s));
+      let k = 1;
+      while (k < q.s.length - 1 && q.s[k] < s) k++;
+      const a = q.s[k - 1], b = q.s[k], w = b > a ? (s - a) / (b - a) : 0;
+      return this.xyz(q.ad.Value(q.u[k - 1] + (q.u[k] - q.u[k - 1]) * w));
+    };
+    const near = (q: Poly, x: V3): { s: number; d: number } => {
+      let best = { s: 0, d: Infinity };
+      for (let k = 1; k < q.p.length; k++) {
+        const a = q.p[k - 1], e = sub3(q.p[k], a), l2 = dot(e, e) || 1e-30, t = Math.max(0, Math.min(1, dot(sub3(x, a), e) / l2));
+        const d = d3(add(a, mul(e, t)), x);
+        if (d < best.d) best = { s: q.s[k - 1] + (q.s[k] - q.s[k - 1]) * t, d };
+      }
+      return best;
+    };
+    let profs = profWires.map(w => polyOf(w, true));
+    let curves = curveWires.map(w => polyOf(w, false));
+    // Every profile wound the same way about the boundary's run (first profile to last).
+    const cen = (q: Poly): V3 => mul(q.p.reduce((a, b) => add(a, b), [0, 0, 0] as V3), 1 / q.p.length);
+    const run = sub3(cen(profs[profs.length - 1]), cen(profs[0]));
+    const span = Math.max(1, Math.hypot(...run), ...profs.map(q => q.len / Math.PI));
+    const tol = Math.max(1e-3, span * 1e-3);
+    profs = profs.map(q => { let a: V3 = [0, 0, 0]; for (let k = 1; k < q.p.length; k++) a = add(a, cross(q.p[k - 1], q.p[k])); return dot(a, run) < 0 ? reversed(q) : q; });
+    // Where each curve crosses each profile: one corner per pair, on the profile.
+    const C: V3[][] = profs.map(() => []), S: number[][] = profs.map(() => []), T: number[][] = profs.map(() => []);
+    profs.forEach((q, i) => curveWires.forEach((cw, j) => {
+      const ext = new oc.BRepExtrema_DistShapeShape_2(profWires[i], cw, oc.Extrema_ExtFlag.Extrema_ExtFlag_MIN, oc.Extrema_ExtAlgo.Extrema_ExtAlgo_Grad, new oc.Message_ProgressRange_1());
+      if (!ext.IsDone() || ext.Value() > tol) throw new FeatureError("E-BND-CROSS", "Each Direction 2 curve must touch every profile.");
+      const x = this.xyz(ext.PointOnShape1(1));
+      C[i][j] = x; S[i][j] = near(q, x).s; T[i][j] = near(curves[j], x).s;
+    }));
+    // Curves run from the first profile to the last.
+    curves = curves.map((q, j) => { if (T[0][j] > T[profs.length - 1][j]) { profs.forEach((_, i) => { T[i][j] = q.len - T[i][j]; }); return reversed(q); } return q; });
+    for (let j = 0; j < curves.length; j++) for (let i = 1; i < profs.length; i++) if (!(T[i][j] > T[i - 1][j] + 1e-9)) throw new FeatureError("E-BND-ORDER", "The Direction 2 curves must cross the profiles in the profiles' order.");
+    // The curves in the order they go round the first profile; every profile must meet them in the same turn.
+    const order = curves.map((_, j) => j).sort((a, b) => S[0][a] - S[0][b]);
+    const M = order.length;
+    profs.forEach((_, i) => {
+      const o = curves.map((__, j) => j).sort((a, b) => S[i][a] - S[i][b]);
+      const r = o.indexOf(order[0]);
+      if (order.some((j, k) => o[(r + k) % M] !== j)) throw new FeatureError("E-BND-ORDER", "The Direction 2 curves must go round every profile in the same order.");
+    });
+    // A piece of a curve as one B-spline (points on the exact curve, the corners snapped), as a Geom handle.
+    const piece = (q: Poly, s0: number, s1: number, a: V3, b: V3): any => {
+      let ds = s1 - s0;
+      if (q.closed && ds <= 0) ds += q.len;
+      const n = 24, pts: V3[] = [];
+      for (let k = 0; k <= n; k++) pts.push(k === 0 ? a : k === n ? b : at(q, s0 + (ds * k) / n));
+      const e = this.bezierEdge(splineBezierN(pts));
+      const c = new oc.BRepAdaptor_Curve_2(e);
+      return c.BSpline();
+    };
+    const style = oc.GeomFill_FillingStyle.GeomFill_CoonsStyle;
+    const faces: { face: any; name: string }[] = [];
+    for (let i = 0; i + 1 < profs.length; i++) {
+      for (let k = 0; k < M; k++) {
+        const j = order[k], j2 = order[(k + 1) % M];
+        const c1 = piece(profs[i], S[i][j], S[i][j2], C[i][j], C[i][j2]);
+        const c2 = piece(curves[j2], T[i][j2], T[i + 1][j2], C[i][j2], C[i + 1][j2]);
+        const c3 = piece(profs[i + 1], S[i + 1][j], S[i + 1][j2], C[i + 1][j], C[i + 1][j2]);
+        const c4 = piece(curves[j], T[i][j], T[i + 1][j], C[i][j], C[i + 1][j]);
+        let srf: any;
+        try { srf = new oc.GeomFill_BSplineCurves_2(c1, c2, c3, c4, style).Surface(); } catch { throw new FeatureError("E-BND-FAIL", "The boundary could not be filled between these curves."); }
+        const face = new oc.BRepBuilderAPI_MakeFace_8(new oc.Handle_Geom_Surface_2(srf.get()), 1e-6).Face();
+        faces.push({ face, name: `${f.id}:side:${i}:${k}` });
+      }
+    }
+    faces.push({ face: caps[0], name: `${f.id}:start` }, { face: caps[caps.length - 1], name: `${f.id}:end` });
+    const sew = new oc.BRepBuilderAPI_Sewing(Math.max(1e-4, span * 1e-6), true, true, true, false);
+    for (const x of faces) sew.Add(x.face);
+    sew.Perform(new oc.Message_ProgressRange_1());
+    const sewn = sew.SewedShape();
+    const ms = new oc.BRepBuilderAPI_MakeSolid_1();
+    let shells = 0;
+    for (const ex = new oc.TopExp_Explorer_2(sewn, A.TopAbs_SHELL, A.TopAbs_SHAPE); ex.More(); ex.Next()) { ms.Add(oc.TopoDS.Shell_1(ex.Current())); shells++; }
+    if (shells !== 1) throw new FeatureError("E-BND-FAIL", "The boundary could not be filled between these curves.");
+    const fx = new oc.ShapeFix_Solid_1();
+    fx.Init(ms.Solid());
+    fx.Perform(new oc.Message_ProgressRange_1());
+    let shape = fx.Solid();
+    if (this.volume(shape) < 0) shape = shape.Reversed();
+    if (!(Math.abs(this.volume(shape)) > 1e-9)) throw new FeatureError("E-BND-FAIL", "The boundary could not be filled between these curves.");
+    const cs = faces.map(x => this.centroid(x.face));
+    const out = this.sub(shape, "FACE");
+    const names = out.map(x => {
+      const j = faces.findIndex(y => y.face.IsSame(x));
+      if (j >= 0) return faces[j].name;
+      const c = this.centroid(x);
+      let best = 0, bd = Infinity;
+      cs.forEach((q, k) => { const d = d3(q, c); if (d < bd) { bd = d; best = k; } });
+      return faces[best].name;
+    });
+    return this.applyTool(f, [{ shape, faces: out, names }], prev);
   }
 
   /**
