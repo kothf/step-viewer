@@ -5868,6 +5868,25 @@ try {
     an = await annots();
     check(tx.includes("Ø16 THRU") && tx.includes("BREAK SHARP EDGES") && an.some(a => a.t === "hole") && an.some(a => a.t === "note" && !a.view),
       `drawing: hole callout from the model (Ø16 THRU) and a note on the sheet (${tx.filter(s => /THRU|BREAK/.test(s)).join(" / ")})`);
+    // Drawing tree (1.522.0): annotations are listed under their view and under Sheet annotations; the new note's group
+    // opened for it; another group opens on a click; a row selects its annotation; hovering a row outlines it on the sheet.
+    {
+      const ho = await dp.evaluate(() => window.__sv.drw.doc().sheets[0].annots.find(a => a.t === "hole"));
+      const tr0 = await dp.evaluate(v => ({ sheetGrp: document.querySelector('.drw-tree [data-tw=""]')?.getAttribute("aria-expanded"), on: document.querySelector(".drw-tree .drw-ti.ann.on small")?.textContent,
+        viewGrp: document.querySelector(`.drw-tree [data-tw="${v}"]`)?.getAttribute("aria-expanded") }), ho.view);
+      await dp.click(`.drw-tree [data-tw="${ho.view}"]`);
+      await dp.click(`.drw-tree [data-sela="${ho.id}"]`);
+      const tr1 = await dp.evaluate(() => ({ head: document.querySelector(".drw-pm-head b")?.textContent, on: document.querySelector(".drw-tree .drw-ti.ann.on")?.textContent }));
+      await dp.hover('.drw-tree [data-tw=""] + [role=group] [data-sela]');
+      const hov = await dp.evaluate(() => document.querySelectorAll(".drw-ovl .drw-hov").length);
+      await dp.focus('.drw-tree .drw-ti.ann.on');
+      await dp.keyboard.press("ArrowUp");
+      const up = await dp.evaluate(() => document.activeElement?.getAttribute("data-tw") != null);
+      await dp.click('.drw-tree [data-tw=""] + [role=group] [data-sela]');
+      const tr2 = await dp.evaluate(() => document.querySelector(".drw-pm-head b")?.textContent);
+      check(tr0.sheetGrp === "true" && tr0.on === "BREAK SHARP EDGES" && tr0.viewGrp === "false" && tr1.head === "Hole callout" && /Hole callout/.test(tr1.on ?? "") && hov >= 1 && up && tr2 === "Note",
+        `drawing tree lists annotations by view, selects them and outlines the hovered one (${JSON.stringify([tr0, tr1, hov, up, tr2])})`);
+    }
     // Note border (FR-DRW-023): the placed note is selected; a circle frames it, None takes it away.
     const arcsOf = async () => (await prims()).filter(p => p.t === "a" && p.layer === "ANNOT").length;
     const arcs0 = await arcsOf();

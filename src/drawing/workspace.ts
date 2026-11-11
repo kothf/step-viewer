@@ -633,6 +633,9 @@ export class DrawingWorkspace {
       document.addEventListener("pointerdown", e => { if (!(e.target as HTMLElement).closest?.(".drw-dd")) this.closeMenus(); });
       // Annotation tiles get the command bar's tooltips: name, shortcut and what to click.
       bindCommandTips(this.el, ".drw-at, .drw-cb");
+      this.el.addEventListener("keydown", e => this.treeKey(e));
+      this.el.addEventListener("pointerover", e => this.treeHover(e, false));
+      this.el.addEventListener("pointerout", e => { const to = e.relatedTarget as Element | null; if ((e.target as Element).closest?.(".drw-tree") && !to?.closest?.(".drw-tree")) this.treeHover(e, true); });
     }
     this.svg.addEventListener("pointerdown", e => this.onDown(e));
     this.svg.addEventListener("pointermove", e => this.onMove(e));
@@ -888,6 +891,7 @@ export class DrawingWorkspace {
     if (this.sel) frame(this.sel, "drw-sel");
     // Annotations whose edge is gone (FR-DRW-026), in the warning colour; on screen only.
     for (const h of this.annotHits) if (this.dangling.has(h.id)) s += `<rect class="drw-dangle" x="${h.box[0] - 0.6}" y="${H - h.box[3] - 0.6}" width="${h.box[2] - h.box[0] + 1.2}" height="${h.box[3] - h.box[1] + 1.2}"><title>${esc(t("Its model edge is gone: pick it again or delete it."))}</title></rect>`;
+    if (this.hoverA && this.hoverA !== this.selA) for (const h of this.annotHits) if (h.id === this.hoverA) s += `<rect class="drw-hov" x="${h.box[0] - 1}" y="${H - h.box[3] - 1}" width="${h.box[2] - h.box[0] + 2}" height="${h.box[3] - h.box[1] + 2}"/>`;
     if (this.selA) for (const h of this.annotHits) if (h.id === this.selA) s += `<rect class="drw-sel" x="${h.box[0] - 1}" y="${H - h.box[3] - 1}" width="${h.box[2] - h.box[0] + 2}" height="${h.box[3] - h.box[1] + 2}"/>`;
     const pv = this.previewView();
     if (pv) {
@@ -3014,23 +3018,96 @@ export class DrawingWorkspace {
 
   // ---------- tree, properties, tabs ----------
 
+  /** Annotation groups opened in the tree ("<view id>", "" = the sheet's own); view-only. */
+  private treeOpen = new Set<string>();
+  /** The annotation whose group the tree last opened for it, so the user can fold it again. */
+  private treeShown: string | null = null;
+  /** The annotation under the pointer in the tree, outlined on the sheet. */
+  private hoverA: string | null = null;
+
   private renderTree() {
     const host = this.el.querySelector<HTMLElement>(".drw-tree")!;
-    const sh = this.sheet;
+    const sh = this.sheet, groups = new Map<string, Annot[]>();
+    for (const a of sh.annots ?? []) { const k = a.view ?? ""; if (!groups.has(k)) groups.set(k, []); groups.get(k)!.push(a); }
+    const sa = this.selA ? this.annot(this.selA) : undefined;
+    // A pick on the sheet opens the annotation's group once, so the selected row shows.
+    if (sa && this.selA !== this.treeShown) { this.treeOpen.add(sa.view ?? ""); this.treeShown = this.selA; }
+    if (!sa) this.treeShown = null;
+    const pad = (depth: number) => `style="padding-left:${12 + depth * 14}px"`;
+    const annRows = (key: string, depth: number): string => {
+      const list = groups.get(key);
+      if (!list?.length) return "";
+      const open = this.treeOpen.has(key);
+      let s = `<div role="treeitem" tabindex="-1" aria-expanded="${open}" class="drw-ti grp" data-tw="${esc(key)}" ${pad(depth)}><span class="drw-tw">${CHEVRON}</span><span>${esc(t(key ? "Annotations" : "Sheet annotations"))}</span><small>${list.length}</small></div>`;
+      if (!open) return s;
+      s += `<div role="group">`;
+      for (const a of list) {
+        const on = a.id === this.selA, gone = this.dangling.has(a.id), tool = annotTool(a);
+        s += `<div role="treeitem" tabindex="${on ? 0 : -1}" aria-selected="${on}" class="drw-ti ann${on ? " on" : ""}${gone ? " dangle" : ""}" data-sela="${a.id}" ${pad(depth + 1)}>${AICON[tool] ?? AICON.note}<span>${esc(t(ANNOT_GROUPS.flatMap(g => g.tools).find(x => x[0] === tool)?.[1] ?? "Annotation"))}</span>`
+          + (gone ? `<small title="${esc(t("Its model edge is gone: pick it again or delete it."))}">${esc(t("Dangling"))}</small>` : annotHint(a) ? `<small translate="no">${esc(annotHint(a))}</small>` : "") + `</div>`;
+      }
+      return s + `</div>`;
+    };
     const item = (v: DrawingView, depth: number): string => {
       const kind = v.kind ? t(KIND_NAMES[v.kind]) : v.parent ? t("Projected") : t(ORIENT_NAMES[v.orient ?? "front"]);
       const icon = v.kind ? ICON[v.kind === "section" ? "section" : v.kind === "detail" ? "detail" : "aux"] : v.parent ? ICON.proj : ICON.model;
-      let s = `<div role="treeitem" tabindex="${v.id === this.sel ? 0 : -1}" aria-selected="${v.id === this.sel}" class="drw-ti${v.id === this.sel ? " on" : ""}" data-sel="${v.id}" style="padding-left:${12 + depth * 14}px">${icon}<span translate="no">${esc(v.name)}</span><small>${esc(kind)}</small></div>`;
+      let s = `<div role="treeitem" tabindex="${v.id === this.sel ? 0 : -1}" aria-selected="${v.id === this.sel}" class="drw-ti${v.id === this.sel ? " on" : ""}" data-sel="${v.id}" ${pad(depth)}>${icon}<span translate="no">${esc(v.name)}</span><small>${esc(kind)}</small></div>`;
+      s += annRows(v.id, depth + 1);
       for (const c of sh.views) if (c.parent === v.id) s += item(c, depth + 1);
       return s;
     };
     // Rebuilding the rows drops the focus a row click gave the tree; keep it there, on the selected row, so Delete
     // (and the arrow keys) still reach the tree, as after a click in SolidWorks' FeatureManager.
     const hadFocus = host.contains(document.activeElement);
-    host.innerHTML = `<div role="treeitem" tabindex="${this.sel ? -1 : 0}" aria-selected="${!this.sel}" class="drw-ti sheet${this.sel ? "" : " on"}" data-sel="">${ICON.hlr}<span>${esc(sheetName(sh))}</span><small>${esc(sh.size === "custom" ? t("Custom") : sh.size)} · ${scaleText(sh.scale)}</small></div>`
-      + sh.views.filter(v => !v.parent || !findView(sh, v.parent)).map(v => item(v, 1)).join("");
-    if (hadFocus) host.querySelector<HTMLElement>(".drw-ti.on")?.focus({ preventScroll: true });
+    const top = !this.sel && !this.selA;
+    host.innerHTML = `<div role="treeitem" tabindex="${top ? 0 : -1}" aria-selected="${top}" class="drw-ti sheet${top ? " on" : ""}" data-sel="">${ICON.hlr}<span>${esc(sheetName(sh))}</span><small>${esc(sh.size === "custom" ? t("Custom") : sh.size)} · ${scaleText(sh.scale)}</small></div>`
+      + sh.views.filter(v => !v.parent || !findView(sh, v.parent)).map(v => item(v, 1)).join("")
+      // Annotations of views that are gone stay listed with the sheet's own, so they can still be picked and deleted.
+      + annRows("", 1) + [...groups.keys()].filter(k => k && !findView(sh, k)).map(k => annRows(k, 1)).join("");
+    const on = host.querySelector<HTMLElement>(".drw-ti.on");
+    if (hadFocus) on?.focus({ preventScroll: true });
+    on?.scrollIntoView?.({ block: "nearest" });
   }
+
+  /** Opens or folds an annotation group of the tree. */
+  private toggleTreeGroup(key: string, open = !this.treeOpen.has(key)) {
+    if (open) this.treeOpen.add(key); else this.treeOpen.delete(key);
+    const host = this.el.querySelector<HTMLElement>(".drw-tree")!, had = host.contains(document.activeElement);
+    this.renderTree();
+    if (had) host.querySelector<HTMLElement>(`[data-tw="${CSS.escape(key)}"]`)?.focus({ preventScroll: true });
+  }
+
+  /** Arrow keys in the drawing tree: up/down select the next row, right/left open and fold groups (WAI-ARIA tree). */
+  private treeKey(e: KeyboardEvent) {
+    const host = this.el.querySelector<HTMLElement>(".drw-tree");
+    const row = (e.target as HTMLElement).closest?.<HTMLElement>(".drw-ti");
+    if (!host || !row || !host.contains(row) || e.ctrlKey || e.metaKey || e.altKey) return;
+    const rows = [...host.querySelectorAll<HTMLElement>(".drw-ti")], i = rows.indexOf(row);
+    const go = (r: HTMLElement | undefined) => { if (!r) return; if (r.dataset.tw !== undefined) r.focus(); else r.click(); };
+    const tw = row.dataset.tw;
+    if (e.key === "ArrowDown") go(rows[i + 1]);
+    else if (e.key === "ArrowUp") go(rows[i - 1]);
+    else if (e.key === "Home") go(rows[0]);
+    else if (e.key === "End") go(rows[rows.length - 1]);
+    else if (e.key === "ArrowRight" && tw !== undefined) { if (this.treeOpen.has(tw)) go(rows[i + 1]); else this.toggleTreeGroup(tw, true); }
+    else if (e.key === "ArrowLeft" && tw !== undefined) this.toggleTreeGroup(tw, false);
+    else if (e.key === "ArrowLeft" && row.dataset.sela) { const a = this.annot(row.dataset.sela); host.querySelector<HTMLElement>(`[data-tw="${CSS.escape(a?.view ?? "")}"]`)?.focus(); }
+    else if ((e.key === "Enter" || e.key === " ") && tw !== undefined) this.toggleTreeGroup(tw);
+    else return;
+    e.preventDefault(); e.stopPropagation();
+  }
+
+  /** The pointer over a tree row outlines that view or annotation on the sheet. */
+  private treeHover(e: PointerEvent, leave: boolean) {
+    const r = leave ? null : (e.target as HTMLElement).closest?.<HTMLElement>(".drw-tree [data-sel], .drw-tree [data-sela]");
+    const v = r?.dataset.sel || null, a = r?.dataset.sela || null;
+    if (leave && !this.hoverA && !this.treeHov) return;
+    this.treeHov = !!r;
+    if (v === this.hover && a === this.hoverA) return;
+    this.hover = v; this.hoverA = a;
+    this.renderOverlay();
+  }
+  private treeHov = false;
 
   /** The Custom… scale box being typed into ("v" view, "s" sheet): kept across re-renders of the panel. */
   private cscale: { k: "v" | "s"; val: string; focus: boolean } | null = null;
@@ -3209,9 +3286,11 @@ export class DrawingWorkspace {
   }
 
   private onClick(e: MouseEvent) {
-    const b = (e.target as HTMLElement).closest<HTMLElement>("button, [data-sel]");
+    const b = (e.target as HTMLElement).closest<HTMLElement>("button, [data-sel], [data-sela], [data-tw]");
     if (!b || !this.store) return;
     const a = b.dataset.a;
+    if (b.dataset.tw !== undefined) { this.toggleTreeGroup(b.dataset.tw); return; }
+    if (b.dataset.sela) { this.cancelMode(); this.sel = null; this.selA = b.dataset.sela; this.renderTree(); this.renderProps(); this.renderOverlay(); return; }
     if (b.dataset.sel !== undefined) { this.cancelMode(); this.selA = null; this.sel = b.dataset.sel || null; this.renderTree(); this.renderProps(); this.renderOverlay(); return; }
     if (b.dataset.ptab) {
       for (const x of this.el.querySelectorAll<HTMLElement>("[data-ptab]")) {
@@ -3576,7 +3655,7 @@ export class DrawingWorkspace {
     else if (k === "enter" && this.mode.kind === "detail" && this.mode.prof && !this.mode.r && (this.mode.pts?.length ?? 0) >= 3 && (tgt as Element) === this.svg) this.finishProfile(this.mode);
     else if (k === "enter" && this.mode.kind === "section" && !this.mode.line && (this.mode.pts?.length ?? 0) >= 2 && (tgt as Element) === this.svg) this.finishPath(this.mode);
     else if (k === "enter" && this.mode.kind !== "none" && (tgt as Element) === this.svg) this.cancelMode();
-    else if ((k === "delete" || k === "backspace") && this.selA && (tgt as Element) === this.svg) this.deleteAnnot();
+    else if ((k === "delete" || k === "backspace") && this.selA && ((tgt as Element) === this.svg || tgt.closest(".drw-tree"))) this.deleteAnnot();
     else if ((k === "delete" || k === "backspace") && this.sel && ((tgt as Element) === this.svg || tgt.closest(".drw-tree"))) void this.deleteSel();
     else if (k === "d" && tgt.closest(".drw")) this.startAnnot("dim");
     else if (k === "f" && tgt.closest(".drw")) this.fit();
@@ -3726,6 +3805,15 @@ function annotTool(a: Annot): string {
     case "table": return a.kind === "bom" ? "bom" : a.kind === "rev" ? "rev" : "table";
     default: return a.t;
   }
+}
+/** A short text beside an annotation's name in the tree: a note's first line, a datum letter, a balloon's own text. */
+function annotHint(a: Annot): string {
+  const cut = (x: string) => (x.length > 18 ? `${x.slice(0, 17)}…` : x);
+  if (a.t === "note") return cut(a.text.split("\n")[0]);
+  if (a.t === "datum") return a.letter;
+  if (a.t === "balloon" && a.txt) return cut(a.txt);
+  if (a.t === "hole" && a.txt) return cut(a.txt.split("\n")[0]);
+  return "";
 }
 /** Groups of the properties folded by the user, "<kind>:<index>". */
 function readFolds(): Set<string> {

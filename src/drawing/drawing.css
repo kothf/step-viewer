@@ -34,6 +34,14 @@
 .drw-ti.on { background: var(--accent-soft); color: var(--accent-text); }
 .drw-ti.on small { color: var(--accent-text); }
 .drw-ti svg { flex: none; }
+.drw-ti.grp { color: var(--muted); font-size: 12px; padding-top: 3px; padding-bottom: 3px; }
+.drw-ti.grp:hover { color: var(--text); }
+.drw-tw { display: inline-flex; flex: none; width: 14px; }
+.drw-tw svg { transition: transform .12s; transform: rotate(180deg); }
+.drw-ti.grp[aria-expanded="false"] .drw-tw svg { transform: rotate(90deg); }
+.drw-ti.ann svg { width: 16px; height: 16px; }
+.drw-ti.dangle small { color: var(--warn-text); }
+.drw-ti:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .drw-props { padding: 8px 10px 16px; }
 .drw-props .pm-group { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px 10px; margin: 0 0 10px; }
 .drw-props legend { font-weight: 600; padding: 0 4px; }
