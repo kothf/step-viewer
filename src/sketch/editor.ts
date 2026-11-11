@@ -29,6 +29,8 @@ import { quadCorners, perimeterCircle, type PerimItem } from "./shapes";
 import { conicBezier, conicShoulder, entBezier, eqBezier, hasControl, parabolaFrom, rhoAt, styleBezier, type CurveEq } from "./conic";
 import { DEFAULT_SNAPS, SNAP_KINDS, arcCurve, intersections, perpendicularFoot, quadrants, tangentPoints, type SnapCurve, type SnapKind } from "./snaps";
 import { gridLines, gridStep, snapToGrid } from "./grid";
+import { explodeInsert, insertBlock, insertEnts, insertOf, makeBlock, moveInsert, removeInserts, renameBlock } from "./blocks";
+import type { BlockInsert, SketchBlock } from "../model/types";
 import { stepFor } from "../prefs";
 import { arcSlotCorners, arcSlotEnts, arcSlotHalfWidth, arcSlotOutline, centreArcAxis, threePointArcAxis, type ArcSlotAxis } from "./slots";
 
@@ -184,7 +186,7 @@ export class SketchEditor {
    * join on release); `copy` = Ctrl+drag copies the selection (FR-SK-044), `untoggle` = a Ctrl+click without a move
    * deselects it.
    */
-  private drag: { ids: string[]; start: V2; orig: Map<string, V2>; circle?: string; moved: boolean; base: SketchFeature; point?: string; target?: { t: "coincident" | "onCurve"; id: string } | null; copy?: boolean; untoggle?: string | null; made?: string[] } | null = null;
+  private drag: { ids: string[]; start: V2; orig: Map<string, V2>; circle?: string; moved: boolean; base: SketchFeature; point?: string; target?: { t: "coincident" | "onCurve"; id: string } | null; copy?: boolean; untoggle?: string | null; made?: string[]; ins?: { id: string; x: number; y: number } } | null = null;
   /** The cursor in sketch coordinates, shown in the status bar (FR-SK-047). */
   private cursorUV: V2 | null = null;
   private labels = new Map<string, HTMLElement>();
@@ -405,6 +407,17 @@ export class SketchEditor {
       }
       // Ctrl+drag copies (FR-SK-044): a Ctrl+click on a selected item still deselects it, on release without a move.
       const ctrl = e.ctrlKey || e.metaKey;
+      // A block instance is picked whole and dragged by its insertion point (FRS 2.2 blocks).
+      const blk = insertOf(this.sk, h.id);
+      if (blk) {
+        const ids = insertEnts(this.sk, blk.id), was = ids.every(x => this.selection.has(x));
+        if (ctrl || e.shiftKey) { for (const x of ids) if (was) this.selection.delete(x); else this.selection.add(x); }
+        else if (!was) this.selection = new Set(ids);
+        this.emitSel();
+        if (!ctrl && !e.shiftKey) this.drag = { ids: [], start: p, orig: new Map(), moved: false, base: structuredClone(this.sk), ins: { id: blk.id, x: blk.x, y: blk.y } };
+        this.render();
+        return true;
+      }
       const was = this.selection.has(h.id);
       if (ctrl) { if (!was) this.selection.add(h.id); }
       else if (e.shiftKey) { if (was) this.selection.delete(h.id); else this.selection.add(h.id); }
@@ -426,6 +439,10 @@ export class SketchEditor {
     }
     if (this.tool === "dim") { this.dimClick(p, e); return true; }
     if (this.tool === "hord" || this.tool === "vord") { this.ordClick(p); return true; }
+    if (["trim", "fillet", "chamfer", "extend", "split", "segment", "jog", "offset"].includes(this.tool)) {
+      const h = this.hits(p)[0];
+      if (h && insertOf(this.sk, h.id)) { this.host.toast(t("Explode the block to change its entities."), "warn"); return true; }
+    }
     if (this.tool === "trim") { this.trimAt(p); return true; }
     if (this.tool === "fillet") { this.filletAt(p); return true; }
     if (this.tool === "chamfer") { this.chamferAt(p); return true; }
@@ -459,6 +476,12 @@ export class SketchEditor {
       d.moved = true;
       const dx = p[0] - d.start[0], dy = p[1] - d.start[1];
       this.sk = structuredClone(d.base);
+      if (d.ins) {
+        this.sk = moveInsert(this.sk, d.ins.id, { x: d.ins.x + dx, y: d.ins.y + dy });
+        this.info = solve(this.sk);
+        this.render();
+        return true;
+      }
       if (d.copy) {
         d.made = this.copyItems([dx, dy]);
         this.info = solve(this.sk);
@@ -537,7 +560,7 @@ export class SketchEditor {
         const r = tryAdd(this.sk, { rel });
         if (r.ok) { this.sk = r.sketch; this.info = r.result; this.commit(d.target.t === "coincident" ? "Merge points" : "Add relation"); this.render(); return true; }
       }
-      if (d.moved) this.commit("Drag sketch geometry");
+      if (d.moved) this.commit(d.ins ? "Move block" : "Drag sketch geometry");
       return true;
     }
     return true;
@@ -2160,6 +2183,63 @@ export class SketchEditor {
   }
 
   /** Ctrl+A: every sketch curve and point (the origin is not an entity). */
+  // ---------- blocks (FRS 2.2) ----------
+
+  /** The one block instance the selection is, when it is exactly one instance's entities. */
+  selectedInsert(): BlockInsert | null {
+    const sel = [...this.selection];
+    if (!sel.length) return null;
+    const ins = insertOf(this.sk, sel[0]);
+    if (!ins || !sel.every(id => insertOf(this.sk, id)?.id === ins.id)) return null;
+    return ins;
+  }
+
+  /** Make Block from the selection; returns an English message key when it cannot. */
+  makeBlock(): string | null {
+    const r = makeBlock(this.sk, this.selection);
+    if (r === "NOTHING") return "Select the sketch entities for the block first.";
+    if (r === "TEXT") return "Text cannot go into a block.";
+    if (r === "INSERT") return "A block cannot hold another block; explode it first.";
+    this.sk = r.sk;
+    this.selection = new Set(insertEnts(this.sk, r.insert.id));
+    this.commit("Make block");
+    this.render();
+    this.emitSel();
+    return null;
+  }
+
+  /** Insert Block: another instance at `at` (sketch coordinates), selected. */
+  insertBlock(def: SketchBlock, at: V2 = [0, 0]) {
+    const r = insertBlock(this.sk, def, at);
+    this.sk = r.sk;
+    this.selection = new Set(insertEnts(this.sk, r.insert.id));
+    this.commit("Insert block");
+    this.render();
+    this.emitSel();
+  }
+
+  /** Places an instance again: position (mm), angle (rad), scale. */
+  setInsert(id: string, patch: Partial<Pick<BlockInsert, "x" | "y" | "ang" | "scale">>) {
+    if (patch.scale !== undefined && !(patch.scale > 0)) return;
+    this.sk = moveInsert(this.sk, id, patch);
+    this.selection = new Set(insertEnts(this.sk, id));
+    this.commit("Move block");
+    this.render();
+  }
+
+  explodeBlock(id: string) {
+    this.sk = explodeInsert(this.sk, id, k => uid(k));
+    this.selection.clear();
+    this.commit("Explode block");
+    this.render();
+    this.emitSel();
+  }
+
+  renameBlock(id: string, name: string) {
+    this.sk = renameBlock(this.sk, id, name);
+    this.commit("Rename block");
+  }
+
   selectAll() {
     this.selection = new Set(this.sk.ents.map(e => e.id));
     this.render();
@@ -2168,6 +2248,13 @@ export class SketchEditor {
 
   deleteSelection() {
     if (!this.selection.size) return false;
+    // Block instances go whole (their entities are the definition's).
+    const ins = new Set([...this.selection].map(id => insertOf(this.sk, id)?.id).filter((x): x is string => !!x));
+    if (ins.size) {
+      this.sk = removeInserts(this.sk, ins);
+      for (const id of [...this.selection]) if (!this.sk.ents.some(e => e.id === id) && !this.sk.rels.some(r => r.id === id) && !this.sk.dims.some(d => d.id === id)) this.selection.delete(id);
+      if (!this.selection.size) { this.info = solve(this.sk); this.commit("Delete block"); this.render(); this.emitSel(); return true; }
+    }
     const del = new Set(this.selection);
     // Curves take their unshared points with them.
     for (const id of [...del]) {
@@ -4210,7 +4297,7 @@ export class SketchEditor {
     // Relation glyphs next to the first entity of each relation (points: beside the point).
     const per = new Map<string, number>();
     for (const r of this.sk.rels) {
-      if (r.t === "coincident" || r.t === "onCurve") continue;
+      if (r.t === "coincident" || r.t === "onCurve" || insertOf(this.sk, r.id)) continue;
       // Hidden glyphs (FR-SK-053) still show while selected, so a relation picked in the list can be seen.
       if (!this.showRels && !this.selection.has(r.id)) continue;
       const el = mk(r.id, "sk-rel");

@@ -147,7 +147,19 @@ export interface SketchFeature {
   dims: SkDim[];
   /** Sketch pictures (FRS 2.2): images to trace over, drawn under the curves while the sketch is edited. */
   pictures?: SketchPicture[];
+  /** Block definitions (FRS 2.2 blocks): entities in their own coordinates, the insertion point at 0, 0. */
+  blocks?: SketchBlock[];
+  /**
+   * Block instances: each is placed as fixed entities `<insert id>~<entity id>` held by one fix relation
+   * `<insert id>~fix` (`src/sketch/blocks.ts` `placeInserts`), so profiles and the kernel need nothing new.
+   */
+  inserts?: BlockInsert[];
 }
+
+/** A sketch block definition (SolidWorks' Make Block): entities and the relations among them, the insertion point at 0, 0. */
+export interface SketchBlock { id: string; name: string; ents: SkEnt[]; rels: SkRel[] }
+/** A placed block: its insertion point, angle (rad) and scale. */
+export interface BlockInsert { id: string; block: string; x: number; y: number; ang?: number; scale?: number }
 
 /** An image on the sketch plane: `src` a data URL, centre `c`, size `w` × `h` (mm), `ang` (rad), `alpha` transparency 0..1, `flip` mirrored left-right, `free` = width and height change apart. */
 export interface SketchPicture { id: string; name?: string; src: string; c: V2; w: number; h: number; ang?: number; alpha?: number; flip?: boolean; free?: boolean }

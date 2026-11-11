@@ -2591,6 +2591,41 @@ try {
       check(p0.w === 25.4 && p0.h === 12.7 && p0.c.join() === "12.7,6.35" && p0.mesh && p1.w === 50 && p1.h === 25 && p1.alpha === 0.4 && p1.opacity === 0.6 && p2.gone && !p2.mesh,
         `model 1.549: Sketch Picture adds an image, resizes it with the aspect locked, fades and deletes it (FRS 2.2) (${JSON.stringify({ p0, p1, p2 })})`);
     }
+    // 1.554.0 (FRS 2.2 blocks): Make Block turns a selected square into a fixed instance; the panel moves it,
+    // Insert Block adds a copy from the part's blocks, Explode gives plain entities back.
+    {
+      const before = await mp.evaluate(() => {
+        const ed = window.__sv.model.editor(), sk = ed.sk;
+        const keep = sk.ents.map(e => e.id);
+        const P = (id, x, y) => ({ id, t: "point", x, y });
+        sk.ents.push(P("bkA", 200, 200), P("bkB", 210, 200), P("bkC", 210, 210), P("bkD", 200, 210),
+          { id: "bkL1", t: "line", a: "bkA", b: "bkB" }, { id: "bkL2", t: "line", a: "bkB", b: "bkC" }, { id: "bkL3", t: "line", a: "bkC", b: "bkD" }, { id: "bkL4", t: "line", a: "bkD", b: "bkA" });
+        ed.select(["bkL1", "bkL2", "bkL3", "bkL4"]);
+        return keep;
+      });
+      await mp.click('#mc-tools [data-c="skblock"]');
+      await mp.waitForSelector("#mc-pm .pm-block");
+      const b0 = await mp.evaluate(() => { const sk = window.__sv.model.editor().sk; return { ins: sk.inserts?.map(i => [i.x, i.y]), name: document.querySelector('#mc-pm [data-blk="name"]')?.value, n: sk.ents.filter(e => e.id.startsWith("bi1~")).length }; });
+      await mp.fill('#mc-pm [data-blk="x"]', "300"); await mp.press('#mc-pm [data-blk="x"]', "Tab"); await mp.waitForTimeout(150);
+      const b1 = await mp.evaluate(() => { const sk = window.__sv.model.editor().sk, a = sk.ents.find(e => e.id === "bi1~bkA"); return { a: a && [a.x, a.y], status: window.__sv.model.editor().info.status }; });
+      await mp.click('#mc-tools [data-c="skinsblk"]');
+      await mp.waitForSelector("#mc-menu:not([hidden]) button");
+      const rows = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent.trim()));
+      await mp.click('#mc-menu button[data-k="0"]');
+      await mp.waitForTimeout(150);
+      const b2 = await mp.evaluate(() => { const sk = window.__sv.model.editor().sk; return { ins: sk.inserts?.length, blocks: sk.blocks?.length }; });
+      await mp.click('#mc-pm [data-blk="explode"]'); await mp.waitForTimeout(150);
+      const b3 = await mp.evaluate(keep => {
+        const ed = window.__sv.model.editor(), sk = ed.sk;
+        const r = { ins: sk.inserts?.length ?? 0, plain: sk.ents.filter(e => !keep.includes(e.id) && !e.id.includes("~")).length };
+        ed.select(["bi1~bkL1"]); ed.deleteSelection();
+        ed.deleteItems(sk.ents.filter(e => !keep.includes(e.id)).map(e => e.id));
+        return { ...r, left: ed.sk.ents.filter(e => !keep.includes(e.id)).length, blocks: ed.sk.blocks?.length ?? 0 };
+      }, before);
+      check(b0.ins?.join() === "205,205" && b0.name === "Block1" && b0.n === 8 && b1.a?.join() === "295,200" && b1.status === "ok" && rows[0] === "Block1" && b2.ins === 2 && b2.blocks === 1
+        && b3.ins === 1 && b3.plain === 8 && b3.left === 0 && b3.blocks === 0,
+        `model 1.554: Make Block, move it in the panel, Insert Block a copy, Explode one (FRS 2.2 blocks) (${JSON.stringify({ b0, b1, rows, b2, b3 })})`);
+    }
     // 1.266.0 (FR-SK-043/044/047): dragging the last line's start onto the free end of the Ctrl line merges them
     // (coincident relation); Ctrl+drag of that line copies it; the status bar shows the cursor position.
     await tool("select");
