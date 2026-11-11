@@ -3266,6 +3266,34 @@ try {
     await idle();
     const vLp = await vol(), stLp = await lastSt();
     check(patMenu === "Linear pattern|Circular pattern|Mirror|Sketch driven pattern|Table driven pattern" && Math.abs(vLp - (120000 - 4 * hole)) < 1 && stLp === "lpattern:ok", `model 1.23: linear pattern of a hole along a picked edge, 4 × 20 mm (${patMenu}, ${Math.round(vLp)}, ${stLp})`);
+    // 1.502: Instances to skip picked in the view: a dot per instance; a click skips it, another brings it back.
+    {
+      const pid = await mp.evaluate(() => window.__sv.model.store.doc.features.at(-1).id);
+      await mp.evaluate(id => window.__sv.modeller.editFeature(id), pid);
+      await idle();
+      await mp.click('#mc-pm [data-focus="skip"]');
+      await mp.waitForFunction(() => document.querySelectorAll("#mc-layer .pat-spot").length === 3, null, { timeout: 15000 }).catch(() => {});
+      const dots = await mp.evaluate(() => [...document.querySelectorAll("#mc-layer .pat-spot")].map(d => d.dataset.spot).join());
+      await mp.click('#mc-layer .pat-spot[data-spot="2"]');
+      await idle();
+      const vSkip = await vol();
+      const off = await mp.evaluate(() => [document.querySelector('#mc-layer .pat-spot[data-spot="2"]')?.classList.contains("off"), document.querySelector('#mc-pm input[data-k="skip"]')?.value]);
+      await mp.click('#mc-layer .pat-spot[data-spot="2"]');
+      await idle();
+      const vBack = await vol();
+      // Up to distance: the 20 typed becomes the reach of the last instance (3 gaps of 6.67 mm), then back.
+      await mp.selectOption('#mc-pm select[data-k="total"]', "1");
+      await idle();
+      const upTo = await mp.evaluate(() => [document.querySelector('#mc-pm input[data-num="spacing"]')?.closest("label")?.querySelector("span")?.textContent]);
+      const vUp = await vol();
+      await mp.selectOption('#mc-pm select[data-k="total"]', "");
+      await idle();
+      const vBack2 = await vol();
+      check(upTo[0] === "Distance" && Math.abs(vUp - vLp) > 1 && Math.abs(vBack2 - vLp) < 1, `model 1.502: linear pattern Up to distance (${upTo}, ${Math.round(vUp)}, ${Math.round(vBack2)})`);
+      await mp.click("#mc-ok");
+      await idle();
+      check(dots === "1,2,3" && Math.abs(vSkip - (120000 - 3 * hole)) < 1 && off[0] === true && off[1] === "2" && Math.abs(vBack - vLp) < 1, `model 1.502: Instances to skip clicked in the view (${dots}, ${Math.round(vSkip)}, ${off}, ${Math.round(vBack)})`);
+    }
     // Mirror the pattern about Right (YZ): three mirrored holes land on existing ones and are skipped with a warning.
     await mp.click('#mc-tools [data-fly="pattern"]');
     await mp.click("#mc-menu button:nth-child(3)");

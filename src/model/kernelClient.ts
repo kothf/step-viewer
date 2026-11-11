@@ -12,7 +12,7 @@ import type { AsmDoc, AsmComponentStatus } from "../asm/types";
 import type { SheetState } from "../sheetmetal/sheet";
 import type { CutItem } from "../weldments/types";
 import type { ModelSnap } from "../drawing/drawing.worker";
-import type { FaceRef, RecognizedHole, Feature, BodyProps, FeatureStatus, Frame, IntersectRegion, PartDoc, SketchFeature, V3 } from "./types";
+import type { FaceRef, RecognizedHole, Feature, BodyProps, FeatureStatus, Frame, IntersectRegion, PatternSpot, PartDoc, SketchFeature, V3 } from "./types";
 
 export interface Rebuild {
   statuses: FeatureStatus[];
@@ -25,6 +25,8 @@ export interface Rebuild {
   sheet?: SheetState | null;
   /** Regions each intersect feature found (FR-BODY-007). */
   regions?: Record<string, IntersectRegion[]>;
+  /** Where each linear/circular pattern's instances land (Instances to skip). */
+  spots?: Record<string, PatternSpot[]>;
   data: PartData | null;
   faceNames: string[];
   /** How many of the last `faceNames` belong to surface bodies (FRS 9.11); they come after the solids. */
