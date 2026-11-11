@@ -83,6 +83,16 @@ test("hole options: near/far side and under head countersinks, head clearance cu
   near(run({ kind: "slot", slotLen: { v: 20 }, slotHead: "cbore", cbDia: { v: 18 }, cbDepth: { v: 6 } }), ob(9) * 6 + ob(5) * 14, "counterbored slot");
   near(run({ kind: "slot", slotLen: { v: 20 }, slotHead: "csink", csDia: { v: 20 }, csAngle: { v: PI / 2 } }), cone(10, 5, 5) + 2 * 20 * 37.5 + ob(5) * 15, "countersunk slot");
   near(run({ end: "vertex", upToVertex: { edge: { faces: ["f1:side:s1l1", "f1:side:s1l2"] }, at: [50, -30, 0] } }), PI * 25 * 20, "up to vertex");
+  // Advanced Hole: near side counterbore + countersink over the main hole, far side counterbore + countersink inwards.
+  const el = (t: string, d: number, x?: number) => ({ t, dia: { v: d }, ...(t === "csink" ? { angle: { v: PI / 2 } } : x != null ? { depth: { v: x } } : {}) });
+  near(run({ kind: "adv", near: [el("cbore", 18, 6), el("csink", 14), el("straight", 10)], far: [el("cbore", 16, 3), el("csink", 12)] } as Partial<HoleFeature>),
+    PI * 81 * 6 + cone(7, 5, 2) + PI * 25 * 8 + cone(6, 5, 1) + PI * 64 * 3, "advanced hole through");
+  near(run({ kind: "adv", end: "blind", depth: { v: 12 }, drillAngle: { v: PI / 2 }, near: [el("straight", 14, 4), { ...el("tapped", 10, 8), major: 12 }], far: [el("csink", 14)] } as Partial<HoleFeature>),
+    PI * 49 * 4 + PI * 25 * 8 + cone(5, 0, 5), "advanced hole blind (far side left out)");
+  near(run({ kind: "adv", near: [el("csink", 20), el("straight", 10)], far: [el("csink", 14)] } as Partial<HoleFeature>), cone(10, 5, 5) + PI * 25 * 13 + cone(7, 5, 2), "advanced hole countersunk both sides");
+  const badAdv = m.evaluate(doc([rect("s1", 100, 60), { id: "f1", type: "extrude", name: "E", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
+    { id: "h", type: "hole", name: "Hole1", plane: { face: { name: "f1:end" } }, pts: [[0, 0]], kind: "adv", diameter: { v: 10 }, end: "through", depth: { v: 10 }, near: [el("csink", 8), el("straight", 10)] } as unknown as Feature]));
+  assert.equal(badAdv.statuses.at(-1)?.code, "E-HOLE-ADV");
   // An option countersink narrower than what it opens is refused.
   const bad = m.evaluate(doc([rect("s1", 100, 60), { id: "f1", type: "extrude", name: "E", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
     { id: "h", type: "hole", name: "Hole1", plane: { face: { name: "f1:end" } }, pts: [[0, 0]], kind: "simple", diameter: { v: 10 }, end: "through", depth: { v: 10 }, nearCs: sink(8) } as Feature]));

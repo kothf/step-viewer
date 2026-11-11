@@ -79,3 +79,25 @@ test("counterbored and countersunk slots get the head pocket in the callout and 
   // A straight slot keeps the plain profile even with stale pocket values.
   assert.deepEqual(holeCallout(hole({ kind: "slot", cbDia: { v: 11 }, cbDepth: { v: 6 } }), f, fa, label), ["Ø6 ↧10"]);
 });
+
+test("Advanced Hole: callout lists the main hole then each element, the section stacks them, the icon draws (FR-FT-051)", async () => {
+  const { advProfile, advDefault, elemFor, advProblem } = await import("../../src/model/advHole");
+  const H = hole({ kind: "adv", end: "through", diameter: { v: 6.6 }, near: advDefault("M6"), far: [elemFor("csink", "M6")] });
+  assert.deepEqual(holeCallout(H, f, fa, label, 2), ["2× Ø6.6 THRU", "⌴Ø11 ↧6.4", "⌵Ø13.44 × 90° FAR SIDE"]);
+  const T = hole({ kind: "adv", near: [elemFor("csink", "M8"), elemFor("tapped", "M6")], depth: { v: 20 } });
+  assert.deepEqual(holeCallout(T, f, fa, label), ["Ø5 ↧20", "M6-6H ↧12", `⌵Ø${f(elemFor("csink", "M8").dia.v)} × 90°`]);
+  const s = holeSection(H)!;
+  assert.equal(s.open, true);
+  assert.deepEqual(s.prof[0], [5.5, 0]);
+  assert.deepEqual(s.prof[s.prof.length - 1], [6.72, s.plate]);
+  const ts = holeSection(T)!;
+  assert.equal(ts.threads?.length, 1);
+  assert.equal(ts.threads![0].r, 3);
+  // Profile: the far countersink cone starts on the main hole and opens onto the far face.
+  const a = advProfile(H.near!, H.far, 20, true);
+  const [p1, p2] = a.prof.slice(-2);
+  assert.ok(p1[0] === 3.3 && Math.abs(p1[1] - (20 - 3.42)) < 1e-9 && p2[0] === 6.72 && p2[1] === 20, JSON.stringify(a.prof));
+  assert.throws(() => advProfile(H.near!, H.far, 8, true), /deeper than the hole/);
+  assert.equal(advProblem([elemFor("cbore", "M6")], []), "The last near side element is the main hole: make it straight or tapped.");
+  assert.ok(HOLE_KINDS.includes("adv") && holeIcon("adv").includes("<svg"));
+});
