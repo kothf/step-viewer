@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.544.0] - 2026-11-11
+
+### Added
+
+- Converted edges from other components (FR-ASM-030): while editing a part in the context of an assembly, the other components' edges are drawn with their see-through faces, and Convert entities (or a click with Select while sketching, or a snap while drawing) takes their straight edges, circles and arcs into the sketch. Each copy keeps an external reference to that edge: back in the assembly it follows the edge when the component moves or its part changes, unless locked. External References lists them beside the sketch planes (Type: Sketch plane / Converted edge) with the same lock and Lock all; the tree marks the sketch with -> as for planes.
+
 ## [1.543.0] - 2026-11-11
 
 ### Added
@@ -3381,7 +3387,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.543.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.544.0...HEAD
+[1.544.0]: https://github.com/kothf/step-viewer/compare/v1.543.0...v1.544.0
 [1.543.0]: https://github.com/kothf/step-viewer/compare/v1.542.0...v1.543.0
 [1.542.0]: https://github.com/kothf/step-viewer/compare/v1.541.0...v1.542.0
 [1.541.0]: https://github.com/kothf/step-viewer/compare/v1.540.0...v1.541.0

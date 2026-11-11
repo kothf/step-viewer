@@ -27,10 +27,11 @@ import { ModelKernel, type Rebuild } from "./kernelClient";
 import { pathId, hasDir2, dir2Apart, dir2Blind, clearDir2, threadThrough, holeExits, headKind, holeCount, DIR2_ENDS, type Dir2End } from "./types";
 import { parseXyz } from "./curves";
 import { textPolys, TEXT_FONTS } from "../sketch/text";
-import { ctxRefs, type PartContext } from "./context";
+import { allCtxRefs, ctxMark, moveEdgeGeo, type AnyCtxRef, type PartContext } from "./context";
+import type { ModelEdge } from "../sketch/external";
 import { applyDir as tfDir, applyPoint as tfPoint, invert as tfInvert } from "../asm/math";
 import { segPoints, solve3d } from "../sketch/sketch3d";
-import type { CtxRef, SkEnt, SketchPatternFeature, FeatureFolder, ThreadFeature, Sketch3dFeature, Sk3Rel, CurveFeature, SweepSurfFeature, SweepPath,
+import type { SkEnt, SketchPatternFeature, FeatureFolder, ThreadFeature, Sketch3dFeature, Sk3Rel, CurveFeature, SweepSurfFeature, SweepPath,
   AxisFeature, ChamferFeature, CsysFeature, CircularPatternFeature, EdgeRef, ExtrudeFeature, Feature, FeatureStatus, FilletFeature, ScaleFeature, Frame, LinearPatternFeature, LineRef,
   GlobalVar, HelixFeature, LoftFeature, RibFeature, SplitFeature, FaceRef, RecognizedHole, ImportFeature, HealFeature, HoleSink, HoleElem, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, UntrimSurfFeature, IntersectFeature, SweepFeature, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3, VertexRef,
 } from "./types";
@@ -388,7 +389,7 @@ export class ModelController {
 
   private setContext(ctx: PartContext | null) {
     this.context = ctx;
-    for (const o of this.ctxView.children) { const m = o as THREE.Mesh; m.geometry.dispose(); (m.material as THREE.Material).dispose(); }
+    this.ctxView.traverse(o => { const m = o as THREE.Mesh; if (m.geometry) { m.geometry.dispose(); (m.material as THREE.Material).dispose(); } });
     this.ctxView.clear();
     if (!ctx) { this.host.viewer.invalidate(); return; }
     if (!this.ctxView.parent) this.host.viewer.scene.add(this.ctxView);
@@ -406,6 +407,22 @@ export class ModelController {
       m.renderOrder = 2;
       this.ctxView.add(m);
     }
+    // Their edges, so they can be seen and converted into sketches (in a group: `ctxAt` raycasts the meshes only).
+    const lines = new THREE.Group();
+    lines.matrixAutoUpdate = false;
+    lines.matrix.copy(mat);
+    for (const c of ctx.comps) {
+      const seg: number[] = [];
+      for (const ed of c.edges ?? []) for (let k = 3; k < ed.pts.length; k += 3) seg.push(ed.pts[k - 3], ed.pts[k - 2], ed.pts[k - 1], ed.pts[k], ed.pts[k + 1], ed.pts[k + 2]);
+      if (!seg.length) continue;
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.Float32BufferAttribute(seg, 3));
+      const l = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0x5b6670, transparent: true, opacity: 0.7, depthWrite: false }));
+      l.userData.ctxEdges = c.comp;
+      l.renderOrder = 2;
+      lines.add(l);
+    }
+    if (lines.children.length) this.ctxView.add(lines);
     this.ctxView.updateMatrixWorld(true);
     this.host.viewer.invalidate();
   }
@@ -424,6 +441,54 @@ export class ModelController {
     const inv = tfInvert(this.context.tf);
     const ref = { ctx: { comp: c.comp, face: face.name, host: this.context.host, label: c.label, p: tfPoint(inv, face.plane.p), n: tfDir(inv, face.plane.n) } };
     return { ref, dist: hit.distance };
+  }
+
+  /** References of the context edges handed to the sketcher (FR-ASM-030), by the edge objects it gets. */
+  private ctxEdgeRefs = new WeakMap<object, EdgeRef>();
+
+  /**
+   * Edges of context components near the pointer (within `px` screen pixels), nearest first, in this part's
+   * coordinates; each carries its external reference for the sketcher (`edgeRef`). With `face`, every edge of
+   * the context face under the pointer when none is near.
+   */
+  private ctxEdgesAt(x: number, y: number, px = 8, face = false): ModelEdge[] {
+    const ctx = this.context;
+    if (!ctx || !ctx.comps.some(c => c.edges?.length)) return [];
+    const v = this.host.viewer, r = v.renderer.domElement.getBoundingClientRect();
+    const inv = tfInvert(ctx.tf), q = new THREE.Vector3();
+    const scr = (a: number, b: number, c: number): [number, number] => { q.set(...tfPoint(inv, [a, b, c])).project(v.camera); return [r.left + (q.x + 1) / 2 * r.width, r.top + (1 - q.y) / 2 * r.height]; };
+    const segDist = (a: [number, number], b: [number, number]) => {
+      const dx = b[0] - a[0], dy = b[1] - a[1], l2 = dx * dx + dy * dy;
+      const t = l2 ? Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / l2)) : 0;
+      return Math.hypot(a[0] + dx * t - x, a[1] + dy * t - y);
+    };
+    const near: { c: PartContext["comps"][number]; ed: NonNullable<PartContext["comps"][number]["edges"]>[number]; d: number }[] = [];
+    for (const c of ctx.comps) for (const ed of c.edges ?? []) {
+      let best = Infinity, prev: [number, number] | null = null;
+      for (let k = 0; k < ed.pts.length; k += 3) {
+        const s2 = scr(ed.pts[k], ed.pts[k + 1], ed.pts[k + 2]);
+        if (prev) best = Math.min(best, segDist(prev, s2));
+        prev = s2;
+      }
+      if (best <= px) near.push({ c, ed, d: best });
+    }
+    near.sort((a, b) => a.d - b.d);
+    let list = near.map(n => ({ c: n.c, ed: n.ed }));
+    if (!list.length && face) {
+      // Every edge of the context face under the pointer.
+      const rc = new THREE.Raycaster();
+      rc.setFromCamera(new THREE.Vector2(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1), v.camera);
+      const hit = rc.intersectObjects(this.ctxView.children.filter(o => (o as THREE.Mesh).isMesh), false)[0];
+      const c = hit?.object.userData.ctx as PartContext["comps"][number] | undefined;
+      const f = c && c.faces.find(g => hit!.faceIndex! >= g.triStart && hit!.faceIndex! < g.triStart + g.triCount);
+      if (c && f?.name) list = (c.edges ?? []).filter(ed => ed.faces.includes(f.name)).map(ed => ({ c, ed }));
+    }
+    return list.map(({ c, ed }) => {
+      const geo = moveEdgeGeo(ed, p => tfPoint(inv, p), d => tfDir(inv, d));
+      const me: ModelEdge = { ...geo };
+      this.ctxEdgeRefs.set(me, { faces: [ed.faces[0], ed.faces[1]], hint: ed.hint.slice() as V3, ctx: { comp: c.comp, host: ctx.host, label: c.label, geo } });
+      return me;
+    });
   }
 
   /** Back to the assembly with the part as it is now. */
@@ -922,8 +987,13 @@ export class ModelController {
       modelEdges: e => {
         const hit = this.host.edgeAt(e.clientX, e.clientY);
         const data = this.host.viewer.parts[0]?.data;
-        if (!hit || !data) return null;
-        return hit.edge ? [hit.edge] : hit.faceId != null ? data.edges.filter(x => x.faces.includes(hit.faceId!)) : null;
+        // Edges of other components while editing in context (FR-ASM-030) come after this part's own edge.
+        if (hit?.edge) return [hit.edge];
+        const cx = this.ctxEdgesAt(e.clientX, e.clientY);
+        if (cx.length) return cx.slice(0, 1);
+        if (hit && data && hit.faceId != null) return data.edges.filter(x => x.faces.includes(hit.faceId!));
+        const cf = this.ctxEdgesAt(e.clientX, e.clientY, 8, true);
+        return cf.length ? cf : null;
       },
       modelFace: e => {
         const hit = this.host.faceAt(e.clientX, e.clientY);
@@ -937,7 +1007,7 @@ export class ModelController {
         }
         return { tri, type: face.type, axis: face.axis, center: face.center, radius: face.radius };
       },
-      edgeRef: ed => this.refOfEdge(ed as EdgeInfo),
+      edgeRef: ed => this.ctxEdgeRefs.get(ed) ?? this.refOfEdge(ed as EdgeInfo),
       modelEdge: e => {
         // The edge under the pointer, then every edge that ends or is centred at the snapped point (a vertex
         // snap may name an edge square to the sketch, which projects to nothing).
@@ -949,7 +1019,7 @@ export class ModelController {
           const near = (q?: V3) => !!q && Math.hypot(q[0] - sp.point[0], q[1] - sp.point[1], q[2] - sp.point[2]) < 1e-4 * (1 + Math.hypot(...sp.point));
           for (const x of data.edges) if (!out.includes(x) && (near(x.start) || near(x.end) || near(x.center) || near(x.mid))) out.push(x);
         }
-        return out;
+        return [...out, ...this.ctxEdgesAt(e.clientX, e.clientY)];
       },
       renamedDim: (from, to) => this.store!.change("Rename dimension", d => renameEverywhere(d, from, to)),
     }, sk, this.frameOf(sk));
@@ -2105,12 +2175,12 @@ export class ModelController {
     }
     const dlg = d;
     const draw = () => {
-      const refs = ctxRefs(this.doc), all = !!this.doc.ctxLocked;
-      const found = (r: CtxRef) => !!this.context?.comps.some(c => c.comp === r.comp && c.faces.some(f => f.name === r.face));
-      const state = (r: CtxRef) => (all || r.locked ? t("Locked") : !this.context ? t("Out of context") : found(r) ? t("In context") : t("Missing"));
+      const refs = allCtxRefs(this.doc), all = !!this.doc.ctxLocked;
+      const found = (r: AnyCtxRef) => !!this.context?.comps.some(c => c.comp === r.comp && (r.kind === "plane" ? c.faces.some(f => f.name === r.key) : !!c.edges?.some(e => [...e.faces].sort().join("|") === r.key)));
+      const state = (r: AnyCtxRef) => (all || r.locked ? t("Locked") : !this.context ? t("Out of context") : found(r) ? t("In context") : t("Missing"));
       dlg.innerHTML = `<h3 id="mc-xref-title">${esc(t("External References"))}</h3>`
-        + `<p class="muted">${esc(t("Planes this part takes from faces of other components, made while editing it in the context of an assembly. Unlocked ones follow the faces when the assembly changes."))}</p>`
-        + (refs.length ? `<div class="v-scroll"><table class="v-table"><thead><tr><th>${esc(t("Feature"))}</th><th>${esc(t("Referenced face"))}</th><th>${esc(t("State"))}</th><th>${esc(t("Lock"))}</th></tr></thead><tbody>${refs.map(({ f, ref }, i) => `<tr><td translate="no">${esc(featureLabel(f.name))}</td><td translate="no">${esc(ref.label ?? ref.comp)}</td><td>${esc(state(ref))}</td><td><input type="checkbox" data-xlock="${i}"${ref.locked || all ? " checked" : ""}${all ? " disabled" : ""} aria-label="${esc(t("Lock"))} ${esc(featureLabel(f.name))}" /></td></tr>`).join("")}</tbody></table></div>`
+        + `<p class="muted">${esc(t("Planes and converted edges this part takes from other components, made while editing it in the context of an assembly. Unlocked ones follow the components when the assembly changes."))}</p>`
+        + (refs.length ? `<div class="v-scroll"><table class="v-table"><thead><tr><th>${esc(t("Feature"))}</th><th>${esc(t("Component"))}</th><th>${esc(t("Type"))}</th><th>${esc(t("State"))}</th><th>${esc(t("Lock"))}</th></tr></thead><tbody>${refs.map((ref, i) => { const f = ref.f; return  `<tr><td translate="no">${esc(featureLabel(f.name))}</td><td translate="no">${esc(ref.label ?? ref.comp)}</td><td>${esc(ref.kind === "plane" ? t("Sketch plane") : t("Converted edge"))}</td><td>${esc(state(ref))}</td><td><input type="checkbox" data-xlock="${i}"${ref.locked || all ? " checked" : ""}${all ? " disabled" : ""} aria-label="${esc(t("Lock"))} ${esc(featureLabel(f.name))}" /></td></tr>`; }).join("")}</tbody></table></div>`
           : `<p>${esc(t("This part has no external references. Edit it in context from an assembly (right-click a component) and sketch on another component's face to make one."))}</p>`)
         + `<div class="row end">${refs.length ? `<button class="btn" data-a="lockall">${esc(all ? t("Unlock all") : t("Lock all"))}</button>` : ""}<button class="btn" data-a="close">${esc(t("Close"))}</button></div>`;
       dlg.querySelector("[data-a=close]")!.addEventListener("click", () => dlg.close());
@@ -2120,7 +2190,7 @@ export class ModelController {
       });
       dlg.querySelectorAll<HTMLInputElement>("[data-xlock]").forEach(b => b.addEventListener("change", () => {
         const i = +b.dataset.xlock!, on = b.checked;
-        this.store!.change(on ? "Lock external reference" : "Unlock external reference", doc => { const r = ctxRefs(doc)[i]?.ref; if (r) { if (on) r.locked = true; else delete r.locked; } });
+        this.store!.change(on ? "Lock external reference" : "Unlock external reference", doc => { allCtxRefs(doc)[i]?.set(on); });
         draw();
       }));
     };
@@ -6284,8 +6354,8 @@ export class ModelController {
       const relMark = rel ? `<span class="ft-rel" title="${esc(relTip)}" role="img" aria-label="${esc(relTip)}">${par.has(f.id) ? "↑" : "↓"}</span>` : "";
       const ice = i < frozen ? `<span class="ft-ice" title="${esc(t("Frozen"))}" role="img" aria-label="${esc(t("Frozen"))}">❄</span>` : "";
       // External reference (FR-ASM-030): -> in context, ->* locked, ->? out of context (SolidWorks marks).
-      const pl = (f as { plane?: PlaneRef }).plane, cr = pl && "ctx" in pl ? pl.ctx : null;
-      const xm = cr ? (d.ctxLocked || cr.locked ? ["->*", t("External reference (locked)")] : this.context ? ["->", t("External reference")] : ["->?", t("External reference (out of context)")]) : null;
+      const xk = ctxMark(d, f);
+      const xm = xk === "none" ? null : xk === "locked" ? ["->*", t("External reference (locked)")] : this.context ? ["->", t("External reference")] : ["->?", t("External reference (out of context)")];
       const ext = xm ? `<span class="ft-ext" title="${esc(xm[1])}" role="img" aria-label="${esc(xm[1])}" translate="no">${xm[0]}</span>` : "";
       // A feature with an absorbed sketch folds it away (FR-HIS-013).
       const kidsOf = [...absorbed.values()].includes(i), open = !this.closedFeats.has(f.id);
