@@ -7621,6 +7621,45 @@ try {
     const crumbGone = await mp.evaluate(() => !document.getElementById("asm-crumbs"));
     check(!!crumbs && crumbs.n >= 3 && crumbs.ids[0] === "" && crumbs.ids.at(-1) === "asm" && crumbs.sel === crumbs.cid && crumbs.row && crumbAt?.c && crumbGone,
       `asm 1.371: selection breadcrumbs from a click on a component, a crumb selects its tree row, Shift+D, Esc (${JSON.stringify({ crumbs, crumbAt, crumbGone })})`);
+    // 1.541 (FR-SEL-007/008): Ctrl+click rows picks several components; their menu hides them all as one step;
+    // a window box over the whole view takes every component, a crossing box the ones it touches; the view stays put.
+    await mp.click("#asm-tree .ft-comp >> nth=0");
+    await mp.click("#asm-tree .ft-comp >> nth=2", { modifiers: ["ControlOrMeta"] });
+    const pk = await mp.evaluate(() => ({ sel: window.__sv.asm.selection(), rows: document.querySelectorAll("#asm-tree .ft-comp.sel").length, status: document.querySelector("#asm-status")?.textContent ?? "", tint: window.__sv.viewer.scene.children.some(o => o.children?.some(m => m.userData?.picked)) }));
+    await mp.click("#asm-tree .ft-comp >> nth=2", { button: "right" });
+    const hideItem = mp.locator("#asm-menu button", { hasText: "Hide components (2)" });
+    const multiMenu = await hideItem.count();
+    if (multiMenu) await hideItem.click();
+    await shown(1);
+    const nHid = await mp.evaluate(() => window.__sv.asm.doc.components.filter(c => c.hidden).length);
+    await mp.keyboard.press("ControlOrMeta+z");
+    await shown(3);
+    await mp.evaluate(() => document.activeElement?.blur());
+    await mp.keyboard.press("Escape");
+    const esc = await mp.evaluate(() => window.__sv.asm.selection().length);
+    await mp.evaluate(() => window.__sv.viewer.fit(false));
+    await mp.waitForTimeout(100);
+    const vr = await mp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom }; });
+    const c2 = await mp.evaluate(() => {
+      const a = window.__sv.asm, v = window.__sv.viewer, id = a.doc.components[2].id, i = a.shownIds.findIndex(s => s === id);
+      const m = v.parts[i].mesh; m.geometry.computeBoundingBox();
+      const c = m.geometry.boundingBox.getCenter(new (v.camera.position.constructor)()).applyMatrix4(m.matrixWorld).project(v.camera);
+      const r = v.renderer.domElement.getBoundingClientRect();
+      return { id, x: r.left + ((c.x + 1) / 2) * r.width, y: r.top + ((1 - c.y) / 2) * r.height };
+    });
+    const cam0 = await mp.evaluate(() => window.__sv.viewer.camera.position.toArray().map(x => x.toFixed(3)).join());
+    const drag = async (x0, y0, x1, y1) => { await mp.mouse.move(x0, y0); await mp.mouse.down(); await mp.mouse.move((x0 + x1) / 2, (y0 + y1) / 2, { steps: 4 }); await mp.mouse.move(x1, y1, { steps: 4 }); await mp.mouse.up(); await mp.waitForTimeout(100); };
+    // Corners of the view not under the heads-up bar, the view cube or another overlay.
+    const free = await mp.evaluate(([x0, y0, dx, dy]) => { const cv = window.__sv.viewer.renderer.domElement; for (let k = 0; k < 40; k++) { const x = x0 + dx * k * 4, y = y0 + dy * k * 4; if (document.elementFromPoint(x, y) === cv) return { x, y }; } return { x: x0, y: y0 }; }, [vr.l + 6, vr.t + 6, 0, 1]);
+    const free2 = await mp.evaluate(([x0, y0, dx, dy]) => { const cv = window.__sv.viewer.renderer.domElement; for (let k = 0; k < 40; k++) { const x = x0 + dx * k * 4, y = y0 + dy * k * 4; if (document.elementFromPoint(x, y) === cv) return { x, y }; } return { x: x0, y: y0 }; }, [vr.r - 6, vr.b - 6, 0, -1]);
+    await drag(free.x, free.y, vr.r - 6, vr.b - 6);
+    const win = await mp.evaluate(() => window.__sv.asm.selection().length);
+    await drag(free2.x, free2.y, c2.x, c2.y);
+    const crossIds = await mp.evaluate(() => window.__sv.asm.selection()), cross = crossIds.length;
+    const cam1 = await mp.evaluate(() => window.__sv.viewer.camera.position.toArray().map(x => x.toFixed(3)).join());
+    await mp.keyboard.press("Escape");
+    check(pk.sel.length === 2 && pk.rows === 2 && /Selected: 2/.test(pk.status) && pk.tint && multiMenu === 1 && nHid === 2 && esc <= 1 && win === 3 && crossIds.includes(c2.id) && cam0 === cam1,
+      `asm 1.541: Ctrl+click and box selection of components, menu on all of them (${JSON.stringify({ pk, multiMenu, nHid, esc, win, cross, free, free2, vr, same: cam0 === cam1 })})`);
     // Save to bytes and reopen: the same components and poses.
     const re = await mp.evaluate(async () => {
       const sig = () => JSON.stringify(window.__sv.asm.doc.components.map(c => [c.id, c.name, c.part, c.tf, !!c.fixed, !!c.hidden]));

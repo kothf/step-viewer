@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.541.0] - 2026-11-11
+
+### Added
+
+- Several components at once in assemblies (FR-SEL-007/008): Ctrl+click components in the tree or the view to add or remove them; a left drag from empty space in the view draws a box (left to right: components wholly inside, right to left: those it touches; Ctrl adds). The selected components are tinted blue and the status bar counts them. A right-click on one of them (tree or view) hides, shows, fixes, floats, suppresses or deletes them all as one undo step; Delete deletes them; Esc or a click on empty space clears the selection. A right-click on a component in the view now opens its menu.
+
 ## [1.540.0] - 2026-11-11
 
 ### Added
@@ -3359,7 +3365,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.540.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.541.0...HEAD
+[1.541.0]: https://github.com/kothf/step-viewer/compare/v1.540.0...v1.541.0
 [1.540.0]: https://github.com/kothf/step-viewer/compare/v1.539.0...v1.540.0
 [1.539.0]: https://github.com/kothf/step-viewer/compare/v1.538.0...v1.539.0
 [1.538.0]: https://github.com/kothf/step-viewer/compare/v1.537.0...v1.538.0

@@ -26,6 +26,8 @@ import { mateDefaults, mateTypes, placeGeo, solve, type Geo, type SolveResult } 
 import { folderPath, hashBytes, planLinks, type LinkFile } from "./links";
 import { MCMASTER, mcmasterPart, tagVendor, vendorOf } from "./vendor";
 import { pickMaterial } from "../materialPicker";
+import { isLongPress } from "../longPress";
+import { inRect, isCrossing, mergeSel, probeGrid, rectOf, type Rect } from "../boxSelect";
 import { toRef } from "../tools/materials";
 import { FASTENERS, TOOLBOX_GROUPS, defaultLength, fastenerInfo, fastenerLengths, fastenerName, fastenerPart, fastenerSizes, lengthFor, lengthLabel, searchFasteners, sizeForHole, type FastenerKind, type ToolboxGroup } from "./fasteners";
 import { fastenerShape, shapeSvg, shapeVolume, type ToolShape } from "./toolboxShape";
@@ -60,6 +62,8 @@ export interface AsmHost {
   editPart?(doc: PartDoc, fileName: string, label: string, back: (doc: PartDoc) => void, ctx?: PartContext): void;
   /** The part open in the modeller, if any (Make assembly from part). */
   openPart?(): { doc: PartDoc; fileName: string } | null;
+  /** The Smart measure tool in use ("select" = the default); box selection only runs with it. */
+  measureTool?(): string;
   appVersion: string;
 }
 
@@ -170,6 +174,10 @@ export class AsmController {
     host.viewer.scene.add(this.overlay);
     host.viewer.scene.add(this.toolGhost);
     this.bindTabHide();
+    // Box selection of components (FR-SEL-008).
+    window.addEventListener("pointerdown", e => this.boxDown(e), true);
+    window.addEventListener("pointermove", e => this.boxMove(e), true);
+    window.addEventListener("pointerup", e => this.boxUp(e), true);
     this.bindToolbox();
     onLangChange(() => { delete $("#asm-pm").dataset.id; if (this.doc) this.renderAll(); });
   }
@@ -276,6 +284,9 @@ export class AsmController {
     this.handle = handle;
     this.vault = null;
     this.selected = null;
+    this.picked = [];
+    this.boxed = false;
+    this.selGroup.clear();
     this.moving = null;
     this.mating = null;
     this.interfere = null;
@@ -304,6 +315,9 @@ export class AsmController {
     this.hideCrumbs();
     for (const o of [...this.ghostGroup.children]) this.dropGhost(o.userData.ghost);
     this.ghostGroup.visible = false;
+    this.picked = [];
+    this.boxed = false;
+    this.selGroup.clear();
     this.motion?.close();
     this.doc = null;
     this.vault = null;
@@ -416,6 +430,7 @@ export class AsmController {
           this.host.show(r.parts.map(p => p.data), tree, this.first && r.parts.length > 0);
           if (r.parts.length) this.first = false;
           this.applyOpacity();
+          this.drawPicked();
         } catch (err) {
           if (gen !== this.gen || (err as Error).message === STOPPED) return;
           toast(t("The assembly could not be rebuilt: {err}", { err: (err as Error).message }), true);
@@ -2016,6 +2031,7 @@ export class AsmController {
   private deleteSelected() {
     const id = this.selected, d = this.doc;
     if (!id || !d) return;
+    if (this.picked.length > 1) { void this.deleteComponents(this.selection()); return; }
     if (d.mates?.some(x => x.id === id)) void this.deleteMate(id);
     else if (d.components.some(x => x.id === id)) void this.deleteComponent(id);
     else if (d.patterns?.some(x => x.id === id)) this.deletePattern(id);
@@ -2529,6 +2545,187 @@ export class AsmController {
     }, true);
   }
 
+  /**
+   * Several components at once (FR-SEL-007/008): Ctrl+click in the tree or the view adds or removes one, and a left
+   * drag from empty space in the view draws a box (left to right: components wholly inside; right to left: those
+   * it touches; Ctrl adds). Empty = the one `selected` component, as before. Picked components are tinted blue.
+   */
+  private picked: string[] = [];
+  private selGroup = new THREE.Group();
+  private selMat = new THREE.MeshBasicMaterial({ color: 0x1c7ed6, transparent: true, opacity: 0.35, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+  private boxDrag: { x: number; y: number; add: boolean; el: HTMLDivElement | null } | null = null;
+
+  /** The components a command acts on: the picked ones, else the selected one. */
+  selection(): string[] {
+    const ok = this.picked.filter(id => this.comp(id));
+    if (ok.length) return ok;
+    return this.selected && this.comp(this.selected) ? [this.selected] : [];
+  }
+
+  /** Makes `ids` the picked components (the last one is also the selected one) and redraws the tint and the tree. */
+  setPicked(ids: string[]) {
+    const order = new Map((this.doc?.components ?? []).map((c, i) => [c.id, i]));
+    this.picked = [...new Set(ids)].filter(id => order.has(id));
+    if (this.picked.length) this.selected = this.picked[this.picked.length - 1];
+    else if (this.selected && this.comp(this.selected) && ids.length === 0) this.selected = null;
+    this.drawPicked();
+    this.renderTree();
+    this.renderBar();
+  }
+
+  /** Ctrl+click: adds the component to the selection, or takes it out. */
+  private togglePick(id: string) {
+    this.boxed = false;
+    const cur = this.selection();
+    this.setPicked(cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id]);
+  }
+
+  private clearPicked() {
+    if (!this.picked.length) return;
+    this.picked = [];
+    this.drawPicked();
+  }
+
+  /** Tints the shown meshes of the picked components (they share the meshes' geometry, so nothing is copied). */
+  private drawPicked() {
+    const v = this.host.viewer, g = this.selGroup;
+    if (!g.parent) v.scene.add(g);
+    g.clear();
+    const on = new Set(this.picked.length > 1 || this.boxed ? this.picked : []);
+    if (on.size) this.shownIds.forEach((sid, i) => {
+      const p = v.parts[i];
+      if (!p || !on.has(topOf(sid)) || !p.group.visible) return;
+      p.mesh.updateMatrixWorld(true);
+      const m = new THREE.Mesh(p.mesh.geometry, this.selMat);
+      m.matrixAutoUpdate = false;
+      m.matrix.copy(p.mesh.matrixWorld);
+      m.renderOrder = 2200;
+      m.userData.picked = topOf(sid);
+      g.add(m);
+    });
+    v.invalidate();
+  }
+  /** The last selection came from a box: one boxed component is tinted too. */
+  private boxed = false;
+
+  /** Left press on empty space with Smart measure and no tool open: the orbit controls sit this drag out. */
+  private boxDown(e: PointerEvent) {
+    const v = this.host.viewer, canvas = v.renderer.domElement;
+    if (e.button !== 0 || e.pointerType !== "mouse" || e.target !== canvas || e.altKey || e.shiftKey) return;
+    if (!this.doc || !document.getElementById("app")?.classList.contains("asm") || this.picking || this.moving || this.ghostGroup.visible) return;
+    if ((this.host.measureTool?.() ?? "select") !== "select" || !v.controls.enabled || !v.controls.enableRotate || !v.parts.length) return;
+    if (this.host.partAt(e.clientX, e.clientY)) return;
+    v.controls.enabled = false;
+    this.boxDrag = { x: e.clientX, y: e.clientY, add: e.ctrlKey || e.metaKey, el: null };
+  }
+
+  private boxMove(e: PointerEvent) {
+    const b = this.boxDrag;
+    if (!b) return;
+    if (!b.el && Math.hypot(e.clientX - b.x, e.clientY - b.y) <= 4) return;
+    if (!b.el) { b.el = document.createElement("div"); b.el.className = "mc-selbox"; document.body.appendChild(b.el); }
+    const r = rectOf(b.x, b.y, e.clientX, e.clientY);
+    Object.assign(b.el.style, { left: `${r.x0}px`, top: `${r.y0}px`, width: `${r.x1 - r.x0}px`, height: `${r.y1 - r.y0}px` });
+    b.el.classList.toggle("cross", isCrossing(b.x, e.clientX));
+  }
+
+  private boxUp(e: PointerEvent) {
+    const b = this.boxDrag;
+    if (!b || e.button !== 0) return;
+    this.boxDrag = null;
+    this.host.viewer.controls.enabled = true;
+    // A click on empty space ends a selection of several components.
+    if (!b.el) { if (!b.add && this.picked.length) { this.boxed = false; this.setPicked([]); } return; }
+    b.el.remove();
+    e.stopPropagation();
+    this.boxSelect(rectOf(b.x, b.y, e.clientX, e.clientY), isCrossing(b.x, e.clientX), b.add);
+  }
+
+  /** The top-level components a screen box takes: wholly inside (window) or touched (crossing). Hidden ones are left out. */
+  boxComponents(r: Rect, crossing: boolean): string[] {
+    const v = this.host.viewer, cr = v.renderer.domElement.getBoundingClientRect(), cam = v.camera, q = new THREE.Vector3();
+    const all = new Map<string, boolean>(), touch = new Set<string>();
+    this.shownIds.forEach((sid, i) => {
+      const id = topOf(sid), p = v.parts[i];
+      if (!p || !this.comp(id) || !p.group.visible) return;
+      p.mesh.updateMatrixWorld(true);
+      const pos = p.mesh.geometry.getAttribute("position"), m = p.mesh.matrixWorld;
+      let whole = true, any = false;
+      for (let k = 0; k < pos.count; k++) {
+        q.set(pos.getX(k), pos.getY(k), pos.getZ(k)).applyMatrix4(m).project(cam);
+        const ok = q.z >= -1 && q.z <= 1 && inRect(r, cr.left + ((q.x + 1) / 2) * cr.width, cr.top + ((1 - q.y) / 2) * cr.height);
+        if (ok) any = true; else whole = false;
+        if (crossing ? any : !whole) break;
+      }
+      if (!pos.count) whole = false;
+      all.set(id, (all.get(id) ?? true) && whole);
+      if (any) touch.add(id);
+    });
+    // A face larger than the box has no corner in it: probe what is seen inside.
+    if (crossing) for (const [x, y] of probeGrid(r, 400, 6)) {
+      const hit = this.host.partAt(x, y), id = hit ? topOf(this.shownIds[hit.idx] ?? "") : "";
+      if (id && this.comp(id)) touch.add(id);
+    }
+    const take = (id: string) => crossing ? touch.has(id) || all.get(id) === true : all.get(id) === true;
+    return (this.doc?.components ?? []).map(c => c.id).filter(take);
+  }
+
+  boxSelect(r: Rect, crossing: boolean, add: boolean) {
+    const ids = this.boxComponents(r, crossing);
+    this.boxed = true;
+    this.setPicked(mergeSel(add ? this.selection() : [], ids, add));
+    if (!ids.length && !add) toast(t("Nothing in the box"));
+  }
+
+  /** The menu for several picked components: each command acts on all of them, as one undo step. */
+  private multiMenu(ids: string[], x: number, y: number) {
+    const each = (f: (c: Component) => void) => this.change(d => { for (const c of d.components) if (ids.includes(c.id)) f(c); });
+    const cs = ids.map(id => this.comp(id)!).filter(Boolean);
+    const n = cs.length;
+    this.popup([
+      ...(cs.some(c => !c.hidden) ? [[t("Hide components ({n})", { n }), () => { for (const c of cs) if (!c.hidden) this.keepGhost(c.id); each(c => { c.hidden = true; }); }] as [string, () => void]] : []),
+      ...(cs.some(c => c.hidden) ? [[t("Show components ({n})", { n }), () => each(c => { delete c.hidden; })] as [string, () => void]] : []),
+      ...(cs.some(c => !c.fixed) ? [[t("Fix"), () => each(c => { c.fixed = true; })] as [string, () => void]] : []),
+      ...(cs.some(c => c.fixed) ? [[t("Float"), () => each(c => { delete c.fixed; })] as [string, () => void]] : []),
+      ...(cs.some(c => !c.suppressed) ? [[t("Suppress"), () => each(c => { c.suppressed = true; })] as [string, () => void]] : []),
+      ...(cs.some(c => c.suppressed) ? [[t("Unsuppress"), () => each(c => { delete c.suppressed; })] as [string, () => void]] : []),
+      [t("Delete components ({n})", { n }), () => void this.deleteComponents(ids)],
+    ], x, y);
+  }
+
+  /** The right-click menu in the view: the picked components' when one of them is under the pointer, else that component's. */
+  private viewMenu(x: number, y: number) {
+    const hit = this.host.partAt(x, y), id = hit ? topOf(this.shownIds[hit.idx] ?? "") : "", c = this.comp(id);
+    if (!c) return;
+    if (this.picked.length > 1 && this.picked.includes(id)) { this.multiMenu(this.selection(), x, y); return; }
+    this.boxed = false;
+    this.clearPicked();
+    this.selected = id;
+    this.renderTree();
+    this.renderBar();
+    this.menu(c, x, y);
+  }
+
+  /** Deletes several components with their mates as one undo step. */
+  async deleteComponents(ids: string[]) {
+    const cs = ids.filter(id => this.comp(id));
+    if (cs.length === 1) { await this.deleteComponent(cs[0]); return; }
+    if (!cs.length || !(await confirmModal(t("Delete the selected components ({n}) from the assembly?", { n: cs.length })))) return;
+    const gone = new Set(cs);
+    this.change(d => {
+      d.components = d.components.filter(x => !gone.has(x.id));
+      if (d.mates) { d.mates = d.mates.filter(m => !gone.has(m.a.comp) && !gone.has(m.b.comp)); if (!d.mates.length) delete d.mates; }
+      if (d.patterns) { for (const p of d.patterns) { p.seeds = p.seeds.filter(x => !gone.has(x)); if (p.dir && gone.has(p.dir.comp)) p.dir = null; } d.patterns = d.patterns.filter(p => p.seeds.length); if (!d.patterns.length) delete d.patterns; }
+      if (d.explodes) for (const v of d.explodes) { for (const st of v.steps) st.comps = st.comps.filter(x => !gone.has(x) && ![...gone].some(g => x.includes(`~${g}~`))); v.steps = v.steps.filter(st => st.comps.length); }
+      for (const k of Object.keys(d.parts)) if (!partUsed(d, k)) delete d.parts[k];
+    });
+    if (this.moving && gone.has(this.moving)) this.moving = null;
+    if (this.selected && gone.has(this.selected)) this.selected = null;
+    this.picked = [];
+    this.drawPicked();
+    this.renderAll();
+  }
+
   /** Keeps see-through copies of the shown meshes of top-level component `id`. */
   private keepGhost(id: string) {
     this.dropGhost(id);
@@ -2585,6 +2782,8 @@ export class AsmController {
     if (!this.comp(id)) return;
     this.moving = id;
     this.selected = id;
+    this.picked = [];
+    this.drawPicked();
     this.renderAll();
   }
 
@@ -2679,6 +2878,7 @@ export class AsmController {
       if (this.doc && !this.picking && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.target instanceof Element && e.target.closest("input, textarea, select, dialog[open]"))) {
         // Breadcrumbs (FR-SEL-009): Esc hides them, Shift+D brings them to the cursor.
         if (e.key === "Escape" && document.getElementById("asm-crumbs") && !document.querySelector(".mag-lens")) this.hideCrumbs();
+        if (e.key === "Escape" && this.picked.length && !document.querySelector(".mag-lens, #asm-menu")) { this.boxed = false; this.setPicked([]); }
         if (e.key.toLowerCase() === "d" && e.shiftKey && this.pointer && document.getElementById("asm-crumbs")) { e.preventDefault(); e.stopImmediatePropagation(); this.crumbAt = { ...this.pointer }; this.placeCrumbs(); return; }
       }
       if (!this.doc || !(e.ctrlKey || e.metaKey) || e.altKey) return;
@@ -2707,6 +2907,10 @@ export class AsmController {
       // A sub-assembly moves as one (FR-ASM-006): its children drag their top component.
       const id = topOf(this.shownIds[hit.idx]), c = this.comp(id);
       if (!c) return;
+      // Ctrl+click adds the component to the selection, or takes it out (FR-SEL-007); it never drags.
+      if ((e.ctrlKey || e.metaKey) && !e.altKey) { e.stopPropagation(); e.preventDefault(); this.togglePick(id); return; }
+      this.boxed = false;
+      this.clearPicked();
       this.selected = id;
       this.showCrumbs(hit);
       this.renderStatus();
@@ -2722,6 +2926,16 @@ export class AsmController {
       const face = this.faceNames[hit.idx]?.[hit.face], own = this.shownIds[hit.idx];
       if (e.altKey && face && own === id && this.geo.get(c.part)?.get(face)) this.drag.grab = { comp: id, face };
       canvas().setPointerCapture?.(e.pointerId);
+    }, true);
+    // Right-click on a component without a drag (FR-UI-025): its menu, or the menu of every picked component.
+    let rdown: { x: number; y: number } | null = null;
+    vp.addEventListener("pointerdown", e => { rdown = e.button === 2 && e.target === canvas() ? { x: e.clientX, y: e.clientY } : null; }, true);
+    canvas().addEventListener("contextmenu", e => { if (isLongPress(e) && this.doc && !this.picking && !this.moving) this.viewMenu(e.clientX, e.clientY); });
+    vp.addEventListener("pointerup", e => {
+      const d0 = rdown;
+      rdown = null;
+      if (e.button !== 2 || !d0 || !this.doc || this.picking || this.moving || Math.hypot(e.clientX - d0.x, e.clientY - d0.y) > 4) return;
+      this.viewMenu(e.clientX, e.clientY);
     }, true);
     vp.addEventListener("pointermove", e => { this.pointer = e.target === canvas() ? { x: e.clientX, y: e.clientY } : null; });
     vp.addEventListener("pointerleave", () => { this.pointer = null; });
@@ -2861,7 +3075,8 @@ export class AsmController {
   private renderStatus() {
     if (!this.doc) return;
     const n = this.doc.components.length;
-    $("#asm-status").textContent = n ? `${t("{n} component|{n} components", { n })} · ${this.defText()}` : t("Insert a part or a STEP model to start.");
+    const k = this.picked.filter(id => this.comp(id)).length;
+    $("#asm-status").textContent = n ? `${t("{n} component|{n} components", { n })} · ${this.defText()}${k > 1 ? ` · ${t("Selected: {n}", { n: k })}` : ""}` : t("Insert a part or a STEP model to start.");
   }
 
   /** The status text: the state with the assembly's free degrees of freedom, and the selected component's. */
@@ -2908,8 +3123,9 @@ export class AsmController {
     if (!this.doc) { box.innerHTML = ""; return; }
     const st = new Map(this.statuses.map(s => [s.id, s]));
     const doc = this.doc;
+    const isSel = (id: string) => this.selected === id || this.picked.includes(id);
     const row = (id: string, icon: string, label: string, cls = "", extra = "") =>
-      `<div class="ft-row${cls}${this.selected === id ? " sel" : ""}" role="treeitem" aria-selected="${this.selected === id}" tabindex="${this.selected === id ? 0 : -1}" data-id="${esc(id)}"><span class="ft-ico" aria-hidden="true">${icon}</span><span class="ft-name" translate="no">${esc(label)}</span>${extra}</div>`;
+      `<div class="ft-row${cls}${isSel(id) ? " sel" : ""}" role="treeitem" aria-selected="${isSel(id)}" tabindex="${this.selected === id ? 0 : -1}" data-id="${esc(id)}"><span class="ft-ico" aria-hidden="true">${icon}</span><span class="ft-name" translate="no">${esc(label)}</span>${extra}</div>`;
     let html = row("asm", "◆", this.doc.name, " ft-root");
     html += `<div class="ft-group" role="group">${row("origin", "⊹", t("Origin"), " ft-plane")}</div>`;
     for (const c of this.doc.components) {
@@ -2985,6 +3201,9 @@ export class AsmController {
       r.addEventListener("click", e => {
         const a = (e.target as HTMLElement).closest<HTMLElement>("[data-a]")?.dataset.a;
         const c = this.comp(id), mt = this.doc?.mates?.find(x => x.id === id), pt = this.doc?.patterns?.find(x => x.id === id), xv = this.doc?.explodes?.find(x => x.id === id);
+        // Ctrl+click adds a component to the selection, or takes it out (FR-SEL-007).
+        if (c && !a && (e.ctrlKey || e.metaKey)) { this.togglePick(id); return; }
+        if (!a || !c) { this.boxed = false; this.clearPicked(); }
         const ds = this.doc?.states?.find(x => x.id === id);
         if (ds) { if (a === "del") this.deleteDisplayState(id); else this.activateDisplayState(id); return; }
         const cf = this.doc?.configs?.find(x => x.id === id);
@@ -3012,6 +3231,7 @@ export class AsmController {
       r.addEventListener("contextmenu", e => {
         e.preventDefault();
         const c = this.comp(id), mt = this.doc?.mates?.find(x => x.id === id);
+        if (c && this.picked.length > 1 && this.picked.includes(id)) { this.multiMenu(this.selection(), e.clientX, e.clientY); return; }
         if (c) this.menu(c, e.clientX, e.clientY);
         const ds = this.doc?.states?.find(x => x.id === id);
         if (ds) { this.popup([[t("Activate"), () => this.activateDisplayState(id)], [t("Rename"), () => this.renameState(id)], [t("Add display state"), () => this.addDisplayState()], [t("Delete"), () => this.deleteDisplayState(id)]], e.clientX, e.clientY); return; }
