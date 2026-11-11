@@ -11016,6 +11016,18 @@ try {
     const unpressed = await ap.evaluate(() => document.querySelectorAll("#drw-pane-annot .drw-at.on").length);
     check(tab.views && !tab.annot && tab.n === 28 && tab.icons === 28 && tab.groups === 6 && tab.menuIcons === 27 && mode.m === "note" && mode.on === "note" && mode.pressed === "true" && unpressed === 0 && /Hole callout/.test(tip) && /round edge/.test(tip),
       `drawing: annotation tab shows the 28 annotation tools as icon tiles in 6 groups (Annotate ▾ rows have icons too); Note starts the note command and shows pressed; tooltips (${JSON.stringify([tab, mode, unpressed, tip])})`);
+    // Command bar: icon-over-label buttons in a Views and an Annotation group, one row at 1440 px; the running tool is
+    // pressed there too; under 1280 px only the icons show. Undo, Save and Export sit on the file row above.
+    await ap.click('.drw-cmds [data-an="balloon"]');
+    const bar = await ap.evaluate(() => { const bs = [...document.querySelectorAll(".drw-cmds .drw-cb")], tops = new Set(bs.map(b => Math.round(b.getBoundingClientRect().top)));
+      return { n: bs.length, groups: document.querySelectorAll(".drw-cmds .drw-cg").length, rows: tops.size, on: [...document.querySelectorAll(".drw-cmds .drw-cb.on")].map(b => b.dataset.tool).join(), labels: bs.every(b => b.querySelector(".mc-l").offsetWidth > 0),
+        file: ["undo", "save", "export"].every(a => document.querySelector(`.drw-top [data-a="${a}"]`)), mode: window.__sv.drw.mode() }; });
+    await ap.keyboard.press("Escape");
+    await ap.setViewportSize({ width: 1100, height: 900 });
+    const narrow = await ap.evaluate(() => { const bs = [...document.querySelectorAll(".drw-cmds .drw-cb")]; return { labels: bs.filter(b => b.querySelector(".mc-l").offsetWidth > 0).length, rows: new Set(bs.map(b => Math.round(b.getBoundingClientRect().top))).size }; });
+    await ap.setViewportSize({ width: 1440, height: 900 });
+    check(bar.n === 17 && bar.groups === 2 && bar.rows === 1 && bar.on === "balloon" && bar.mode === "balloon" && bar.labels && bar.file && narrow.labels === 0 && narrow.rows === 1,
+      `drawing: command bar shows 17 icon commands in two groups in one row, the running tool pressed; icons only under 1280 px (${JSON.stringify([bar, narrow])})`);
     // 1.82.0 break view (FR-DRW-015): select the first front view, leave out u = −25…15 mm; it closes up to a 6 mm gap.
     const fv = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views[0]; const pl = window.__sv.drw.placement(v.id); return { id: v.id, x: v.x, y: v.y, s: pl.s, w: pl.box[2] - pl.box[0], uc: pl.uc }; });
     const clickAt = async (x, y) => { const q = await ap.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await ap.mouse.click(q[0], q[1]); };

@@ -5,12 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.517.0] - 2026-11-11
+
+### Changed
+
+- Drawings: the commands above the sheet are a command bar like the 3D one and SolidWorks' CommandManager: icon-over-label buttons in a Views group (Standard 3 views, Model view, Projected, Section, Detail, Auxiliary) and an Annotation group (Smart dimension, Model items, Note, Balloon, Hole callout, Surface finish, Geometric tolerance, Datum, Centerline, Center mark, and Annotate ▾ for the rest), all in one row; the running tool shows pressed, and each button has the rich tooltip. Undo, Redo, Fit, Save and Export moved up to the file name's row. Under 1280 px only the icons show.
+
 ## [1.516.0] - 2026-11-11
 
 ### Added
 - Hole: a tapped hole that is not blind (Through all, Up to next, Up to face or plane) has a Thread end choice, Blind or Through all, as in SolidWorks' Hole Wizard. Through all runs the cosmetic thread the whole length of the drill in the 3D view and in drawings, and the drawing callout reads "M6-6H THRU" (or no depth for an up-to hole) instead of a thread depth. The Thread rows now sit under End condition.
-
-
 
 ## [1.515.0] - 2026-11-11
 
@@ -3206,7 +3210,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.516.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.517.0...HEAD
+[1.517.0]: https://github.com/kothf/step-viewer/compare/v1.516.0...v1.517.0
 [1.516.0]: https://github.com/kothf/step-viewer/compare/v1.515.0...v1.516.0
 [1.515.0]: https://github.com/kothf/step-viewer/compare/v1.514.0...v1.515.0
 [1.514.0]: https://github.com/kothf/step-viewer/compare/v1.513.0...v1.514.0

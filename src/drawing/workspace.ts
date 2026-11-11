@@ -236,6 +236,11 @@ const ANNOT_GROUPS: { name: string; tools: [string, string, string][] }[] = [
     ["skpoly", "Polyline", "Click each corner; Enter ends it"],
   ] },
 ];
+/** The annotation tools that also sit on the command bar (the rest are under Annotate ▾), as in SolidWorks' Annotation tab. */
+const BAR_TOOLS = ["items", "note", "balloon", "hole", "surf", "gtol", "datum", "cline", "cmark"];
+/** A command bar button: icon over its label, like the 3D command bar's `.mc-b`; `title` feeds the rich tooltip. */
+const cmdButton = (attrs: string, icon: string, label: string, tip: string, menu = false) =>
+  `<button class="drw-cb" ${attrs}${menu ? ' aria-haspopup="menu" aria-expanded="false"' : ""} title="${esc(t(tip))}">${icon}<span class="mc-l">${menu ? `<span>${esc(t(label))}</span> ▾` : esc(t(label))}</span></button>`;
 /** An annotation tool button: an icon tile in the Annotation tab, an icon menu row in Annotate ▾. */
 const annotButton = ([k, label, tip]: [string, string, string], menu: boolean) => {
   const act = k === "dim" ? 'data-a="dim"' : `data-an="${k}"`;
@@ -535,33 +540,7 @@ export class DrawingWorkspace {
         <button class="btn small" data-a="back" title="${esc(t("Back to the 3D model"))}">${ICON.back}<span>${esc(t("Model"))}</span></button>
         ${this.host.fileMenu ? `<button class="btn small drw-file" data-a="file" aria-haspopup="menu" aria-expanded="false" aria-controls="file-menu" title="${esc(t("File: new, open, save, Pack and Go, export, print, recent documents"))}"><span>${esc(t("File"))}</span> ▾</button>` : ""}
         <span class="drw-name" translate="no"></span>
-        <div class="drw-cmds" role="toolbar" aria-label="${esc(t("Drawing commands"))}">
-          <button class="btn small" data-a="std3" title="${esc(t("Standard 3 views: front, top and side, lined up"))}">${ICON.std3}<span>${esc(t("Standard 3 views"))}</span></button>
-          <div class="drw-dd"><button class="btn small" data-a="model" aria-haspopup="menu" aria-expanded="false" title="${esc(t("Model view: pick an orientation, then place it on the sheet"))}">${ICON.model}<span>${esc(t("Model view"))}</span> ▾</button>
-            <div class="drw-menu" role="menu" hidden>${(Object.keys(ORIENT_NAMES) as Orient[]).map(o => `<button role="menuitem" data-orient="${o}">${esc(t(ORIENT_NAMES[o]))}</button>`).join("")}</div></div>
-          <button class="btn small" data-a="proj" title="${esc(t("Projected view: move the cursor around a view and click"))}">${ICON.proj}<span>${esc(t("Projected view"))}</span></button>
-          <div class="drw-dd"><button class="btn small" data-a="section" aria-haspopup="menu" aria-expanded="false" title="${esc(t("Section view: draw the cutting line on a view, then place the section"))}">${ICON.section}<span>${esc(t("Section"))}</span> ▾</button>
-            <div class="drw-menu" role="menu" hidden>
-              <button role="menuitem" data-cut="h">${esc(t("Horizontal cutting line"))}</button>
-              <button role="menuitem" data-cut="v">${esc(t("Vertical cutting line"))}</button>
-              <button role="menuitem" data-cut="2p">${esc(t("Cutting line through two points"))}</button>
-              <button role="menuitem" data-cut="off">${esc(t("Offset section"))}</button>
-              <button role="menuitem" data-cut="half">${esc(t("Half section"))}</button>
-              <button role="menuitem" data-cut="aligned">${esc(t("Aligned section"))}</button>
-            </div></div>
-          <div class="drw-dd"><button class="btn small" data-a="detail" aria-haspopup="menu" aria-expanded="false" title="${esc(t("Detail view: click the centre of the circle on a view, then its radius, then place the view"))}">${ICON.detail}<span>${esc(t("Detail"))}</span> ▾</button>
-            <div class="drw-menu" role="menu" hidden>
-              <button role="menuitem" data-det="circle">${esc(t("Circle"))}</button>
-              <button role="menuitem" data-det="profile">${esc(t("Profile"))}</button>
-            </div></div>
-          <button class="btn small" data-a="aux" title="${esc(t("Auxiliary view: click a straight edge or a drawn line, then place the view square to it"))}">${ICON.aux}<span>${esc(t("Auxiliary"))}</span></button>
-          <span class="drw-sep"></span>
-          <button class="btn small" data-a="dim" title="${esc(t("Smart dimension (D): click an edge, a circle or two points, then place the dimension"))}">${AICON.dim}<span>${esc(t("Dimension"))}</span></button>
-          <div class="drw-dd"><button class="btn small" data-a="annot" aria-haspopup="menu" aria-expanded="false" title="${esc(t("Model items, hole callouts, notes, geometric tolerances, datums, surface finish, tables, balloons and the bill of materials"))}">${ICON.annot}<span>${esc(t("Annotate"))}</span> ▾</button>
-            <div class="drw-menu" role="menu" hidden>
-              ${ANNOT_GROUPS.map((g, i) => `${i ? '<div class="drw-menu-sep" role="separator"></div>' : ""}${g.tools.filter(x => x[0] !== "dim").map(x => annotButton(x, true)).join("")}`).join("")}
-            </div></div>
-          <span class="drw-sep"></span>
+        <div class="drw-right" role="toolbar" aria-label="${esc(t("Edit and file"))}">
           <button class="icon" data-a="undo" aria-label="${esc(t("Undo (Ctrl+Z)"))}" title="${esc(t("Undo (Ctrl+Z)"))}">${ICON.undo}</button>
           <button class="icon" data-a="redo" aria-label="${esc(t("Redo (Ctrl+Y)"))}" title="${esc(t("Redo (Ctrl+Y)"))}">${ICON.redo}</button>
           <button class="icon" data-a="fit" aria-label="${esc(t("Fit the sheet (F)"))}" title="${esc(t("Fit the sheet (F)"))}">${ICON.fit}</button>
@@ -576,6 +555,38 @@ export class DrawingWorkspace {
               <button role="menuitem" data-x="dxf2000">${esc(t("DXF 2000 (this sheet)"))}</button>
               <button role="menuitem" data-x="png">${esc(t("PNG 300 dpi (this sheet)"))}</button>
               <button role="menuitem" data-x="print">${esc(t("Print… (Ctrl+P)"))}</button>
+            </div></div>
+        </div>
+      </div>
+      <div class="drw-cmds" role="toolbar" aria-label="${esc(t("Drawing commands"))}">
+        <div class="drw-cg" role="group" aria-label="${esc(t("Views"))}">
+          ${cmdButton('data-a="std3"', ICON.std3, "Standard 3 views", "Standard 3 views: front, top and side, lined up")}
+          <div class="drw-dd">${cmdButton('data-a="model"', ICON.model, "Model view", "Model view: pick an orientation, then place it on the sheet", true)}
+            <div class="drw-menu" role="menu" hidden>${(Object.keys(ORIENT_NAMES) as Orient[]).map(o => `<button role="menuitem" data-orient="${o}">${esc(t(ORIENT_NAMES[o]))}</button>`).join("")}</div></div>
+          ${cmdButton('data-a="proj"', ICON.proj, "Projected view", "Projected view: move the cursor around a view and click")}
+          <div class="drw-dd">${cmdButton('data-a="section"', ICON.section, "Section", "Section view: draw the cutting line on a view, then place the section", true)}
+            <div class="drw-menu" role="menu" hidden>
+              <button role="menuitem" data-cut="h">${esc(t("Horizontal cutting line"))}</button>
+              <button role="menuitem" data-cut="v">${esc(t("Vertical cutting line"))}</button>
+              <button role="menuitem" data-cut="2p">${esc(t("Cutting line through two points"))}</button>
+              <button role="menuitem" data-cut="off">${esc(t("Offset section"))}</button>
+              <button role="menuitem" data-cut="half">${esc(t("Half section"))}</button>
+              <button role="menuitem" data-cut="aligned">${esc(t("Aligned section"))}</button>
+            </div></div>
+          <div class="drw-dd">${cmdButton('data-a="detail"', ICON.detail, "Detail", "Detail view: click the centre of the circle on a view, then its radius, then place the view", true)}
+            <div class="drw-menu" role="menu" hidden>
+              <button role="menuitem" data-det="circle">${esc(t("Circle"))}</button>
+              <button role="menuitem" data-det="profile">${esc(t("Profile"))}</button>
+            </div></div>
+          ${cmdButton('data-a="aux"', ICON.aux, "Auxiliary", "Auxiliary view: click a straight edge or a drawn line, then place the view square to it")}
+        </div>
+        <span class="drw-sep"></span>
+        <div class="drw-cg" role="group" aria-label="${esc(t("Annotation"))}">
+          ${cmdButton('data-a="dim" data-tool="dim"', AICON.dim, "Dimension", "Smart dimension: click an edge, a circle or two points, then place the dimension (D)")}
+          ${BAR_TOOLS.map(k => { const x = ANNOT_GROUPS.flatMap(g => g.tools).find(y => y[0] === k)!; return cmdButton(`data-an="${k}" data-tool="${k}"`, AICON[k], x[1], x[2]); }).join("")}
+          <div class="drw-dd">${cmdButton('data-a="annot"', ICON.annot, "Annotate", "Every annotation: dimensions, notes, symbols, tolerances, centre lines, tables and sheet sketch", true)}
+            <div class="drw-menu right" role="menu" hidden>
+              ${ANNOT_GROUPS.map((g, i) => `${i ? '<div class="drw-menu-sep" role="separator"></div>' : ""}${g.tools.filter(x => x[0] !== "dim").map(x => annotButton(x, true)).join("")}`).join("")}
             </div></div>
         </div>
       </div>
@@ -613,7 +624,7 @@ export class DrawingWorkspace {
       this.el.addEventListener("input", e => this.onInput(e as Event, false));
       document.addEventListener("pointerdown", e => { if (!(e.target as HTMLElement).closest?.(".drw-dd")) this.closeMenus(); });
       // Annotation tiles get the command bar's tooltips: name, shortcut and what to click.
-      bindCommandTips(this.el, ".drw-at");
+      bindCommandTips(this.el, ".drw-at, .drw-cb");
     }
     this.svg.addEventListener("pointerdown", e => this.onDown(e));
     this.svg.addEventListener("pointermove", e => this.onMove(e));
@@ -662,7 +673,7 @@ export class DrawingWorkspace {
 
   private renderStatus() {
     const tool = this.activeTool();
-    for (const b of this.el.querySelectorAll<HTMLElement>(".drw-at")) { const on = b.dataset.tool === tool; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); }
+    for (const b of this.el.querySelectorAll<HTMLElement>(".drw-at, .drw-cb[data-tool]")) { const on = b.dataset.tool === tool; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); }
     const st = this.el.querySelector<HTMLElement>(".drw-status");
     if (!st || !this.store) return;
     const m = this.mode;
