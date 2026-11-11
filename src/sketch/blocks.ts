@@ -1,5 +1,5 @@
 /**
- * Sketch blocks (FRS 2.2, SolidWorks' Make Block / Insert Block / Explode Block). A definition keeps its
+ * Sketch blocks (FRS 2.2, a CAD app's Make Block / Insert Block / Explode Block). A definition keeps its
  * entities in its own coordinates with the insertion point at 0, 0; each instance is placed in the sketch
  * as ordinary entities `<insert>~<entity>` held by one fix relation `<insert>~fix`, so the solver, the
  * profiles and the kernel see plain fixed geometry. Moving, turning or scaling an instance places it again.
@@ -234,7 +234,7 @@ export function readBlockFile(text: string): SketchBlock {
 const isLen = (d: SkDim) => d.t !== "angle";
 
 /**
- * Edit Block (SolidWorks' Edit Block): the instance's entities come free, with the definition's relations and
+ * Edit Block (a CAD app's Edit Block): the instance's entities come free, with the definition's relations and
  * dimensions on them, so they can be dragged, dimensioned and added to. Other instances follow at the end.
  */
 export function beginEditBlock(sk: SketchFeature, id: string): SketchFeature {

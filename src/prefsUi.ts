@@ -65,7 +65,7 @@ export function openPrefs(host: PrefsHost, page: "modelling" | "sketch" | "mouse
     + `</section>`;
   const mouse = `<section class="prefs-page" role="tabpanel" id="pp-mouse" aria-labelledby="pt-mouse" tabindex="0" hidden>`
     + `<ul class="prefs-mouse"><li>${esc(t("Left drag: rotate the view (in a sketch: draw or select)."))}</li><li>${esc(t("Right drag: pan, or a mouse gesture when gestures are on."))}</li><li>${esc(t("Wheel: zoom about the pointer."))}</li></ul>`
-    + `<label class="row">${esc(t("Middle drag"))} <select data-p="middle">${opt("pan", "Pan", p.middle)}${opt("rotate", "Rotate (SolidWorks)", p.middle)}</select></label>`
+    + `<label class="row">${esc(t("Middle drag"))} <select data-p="middle">${opt("pan", "Pan", p.middle)}${opt("rotate", "Rotate (CAD app style)", p.middle)}</select></label>`
     + `<p class="muted">${esc(t("In a sketch the middle button always rotates, since the left one draws."))}</p>`
     + `<label class="row">${esc(t("Wheel zoom"))} <select data-p="wheel">${opt("normal", "Wheel away zooms in", p.wheel)}${opt("reverse", "Wheel away zooms out", p.wheel)}</select></label>`
     + `<button type="button" class="btn" data-a="gestures">${esc(t("Mouse gestures…"))}</button>`

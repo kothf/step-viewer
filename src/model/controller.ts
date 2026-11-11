@@ -891,7 +891,7 @@ export class ModelController {
 
   // ---------- commands ----------
 
-  /** The features Ctrl+C took (FR-HIS-014); kept for this window only, like SolidWorks' clipboard. */
+  /** The features Ctrl+C took (FR-HIS-014); kept for this window only, like a CAD app's clipboard. */
   private clip: Clip | null = null;
 
   /** Ctrl+C on the selected tree row: a sketch, an extrude or revolve (with its sketch) or a hole. */
@@ -1142,7 +1142,7 @@ export class ModelController {
         : { id, type, name: nm, bodies: [], dx: { v: 0 }, dy: { v: 0 }, dz: { v: 0 } } satisfies MoveBodyFeature;
     } else if (type === "wrap") {
       if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
-      // The selected closed sketch, else the last unused one; the picked round face (SolidWorks: sketch, then Wrap).
+      // The selected closed sketch, else the last unused one; the picked round face (a CAD app: sketch, then Wrap).
       const sel = this.selected ? sketches.find(s => s.id === this.selected && sketchProfileOk(s)) : undefined;
       const sk = sel ?? sketches.filter(s => !used.has(s.id) && sketchProfileOk(s)).at(-1);
       const fr = shellFace != null && this.host.viewer.parts[0]?.data.faces[shellFace]?.type === "cylinder" ? this.faceRef(shellFace) : null;
@@ -1155,7 +1155,7 @@ export class ModelController {
       draft = { id, type: "split", name: nextName(d, "split"), sketch: sk?.id ?? "", faces: [] } satisfies SplitFeature;
     } else if (type === "rib") {
       if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
-      // The selected open sketch, else the last unused one (SolidWorks: sketch the rib line, then Rib).
+      // The selected open sketch, else the last unused one (a CAD app: sketch the rib line, then Rib).
       const sel = this.selected ? sketches.find(s => s.id === this.selected && sketchOpenOk(s)) : undefined;
       const sk = sel ?? sketches.filter(s => !used.has(s.id) && sketchOpenOk(s)).at(-1);
       draft = { id, type: "rib", name: nextName(d, "rib"), sketch: sk?.id ?? "", thickness: { v: 5 }, side: "mid", dir: "parallel" } satisfies RibFeature;
@@ -1199,7 +1199,7 @@ export class ModelController {
       draft = sf;
     } else if (type === "draft") {
       if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
-      // SolidWorks order: the neutral plane first (a picked flat face), then the faces to draft.
+      // CAD app order: the neutral plane first (a picked flat face), then the faces to draft.
       const dr: DraftFeature = { id, type: "draft", name: nextName(d, "draft"), faces: [], angle: { v: Math.PI / 180 } };
       const face = shellFace != null ? this.host.viewer.parts[0]?.data.faces[shellFace] : undefined;
       if (shellFace != null && face?.type === "plane") { const pr = this.planeOfFace(shellFace); if (pr) dr.plane = pr; }
@@ -1234,7 +1234,7 @@ export class ModelController {
       else if (pre) (draft as FilletFeature).edges = [pre];
     }
     this.recallOptions(type, draft);
-    // The flat pattern stays last (SolidWorks): new features go in before it.
+    // The flat pattern stays last (a CAD app): new features go in before it.
     const index = d.features[end - 1]?.type === "smflat" ? end - 1 : end;
     const focus: Focus | undefined = type === "plane" ? "base" : type === "shell" || type === "delface" || type === "moveface" || type === "dome" || type === "offsurf" || (type === "wrap" && !(draft as WrapFeature).face) ? "faces" : type === "trimsurf" ? ((draft as TrimSurfFeature).surface ? "ttool" : "tsurf") : type === "draft" ? ((draft as DraftFeature).plane ? "faces" : "nplane") : type === "hole" ? ((draft as HoleFeature).plane ? "pts" : "hplane")
       : type === "mirror" ? ((draft as MirrorFeature).features.length ? "mplane" : "seeds")
@@ -1249,7 +1249,7 @@ export class ModelController {
     this.host.clearPick();
     this.renderAll();
     if (draft.type === "extrude" || draft.type === "revolve") {
-      // The cursor starts in Depth (or Angle), so a typed size goes there (SolidWorks; exam #7).
+      // The cursor starts in Depth (or Angle), so a typed size goes there (a CAD app; exam #7).
       const inp = $("#mc-pm").querySelector<HTMLInputElement>("input[data-num=depth], input[data-num=angle]");
       if (inp) { inp.focus(); inp.select(); }
       // Seen straight on, an extrude shows no depth: turn to the three-quarter view on the sketch's side (exam #8).
@@ -1435,7 +1435,7 @@ export class ModelController {
       if (m.isNew) d.features.splice(m.index, 0, f); else d.features[m.index] = f;
       if (m.isNew && d.rollback != null) d.rollback++;
     });
-    // After OK nothing stays selected (FR-SEL-012), as in SolidWorks: the new feature's faces are not lit.
+    // After OK nothing stays selected (FR-SEL-012), as in other CAD apps: the new feature's faces are not lit.
     this.selected = null;
     this.clearDecor();
     this.renderAll();
@@ -1583,7 +1583,7 @@ export class ModelController {
     return [];
   }
   /**
-   * Moves bodies into a sub-weldment (SolidWorks' Create Sub-weldment): `sub` null makes a new one, "" takes them out of
+   * Moves bodies into a sub-weldment (a CAD app's Create Sub-weldment): `sub` null makes a new one, "" takes them out of
    * every one. One undo step; sub-weldments left empty by a move stay until dissolved.
    */
   moveToSub(bodies: string[], sub: string | null) {
@@ -1775,7 +1775,7 @@ export class ModelController {
     });
   }
 
-  /** Whether a sketch shows in the view: by its own choice, else until a feature uses it (SolidWorks absorbs it). */
+  /** Whether a sketch shows in the view: by its own choice, else until a feature uses it (a CAD app absorbs it). */
   private sketchShown(f: SketchFeature) {
     return !(f.hidden ?? this.doc.features.some(g => absorbs(g, f.id)));
   }
@@ -2255,7 +2255,7 @@ export class ModelController {
     if (as && this.vault) this.setVault(null);
     let blob = new Blob([bytes], { type: "application/zip" });
     const suggested = this.fileName || `${this.doc.name}${PART_EXT}`;
-    // The part takes the name of the file it is saved as, as in SolidWorks (exam #69): its tab, its title and
+    // The part takes the name of the file it is saved as, as in other CAD apps (exam #69): its tab, its title and
     // Insert component's list of open documents then show that name, not "Part1".
     const named = async (file: string) => {
       const base = file.replace(/\.[^.]+$/, "");
@@ -2428,7 +2428,7 @@ export class ModelController {
     const vp = this.host.vp;
     const canvas = this.host.viewer.renderer.domElement;
     const onCanvas = (e: Event) => e.target === canvas;
-    // In a sketch the left button draws, so the middle button orbits (as in SolidWorks) and the right one pans.
+    // In a sketch the left button draws, so the middle button orbits (as in other CAD apps) and the right one pans.
     // Ctrl+drag of a tree row onto a flat face or a plane pastes a copy there (FR-HIS-014), before the file drop.
     const featDrag = (e: DragEvent) => !!e.dataTransfer?.types.includes(FEATURE_DRAG) && this.mode.kind === "none";
     vp.addEventListener("dragover", e => {
@@ -2621,7 +2621,7 @@ export class ModelController {
     if (mod && !e.shiftKey && !e.altKey && k === "v" && this.mode.kind === "none" && this.clip) { stop(); this.pasteFeature(); return; }
     // Ctrl+Enter: OK and the same command again in a feature; leaves a sketch (FR-UI-044, FR-UI-106).
     if (mod && k === "enter" && !e.altKey && (this.mode.kind === "feature" || this.mode.kind === "sketch")) { stop(); this.ok(this.mode.kind === "feature"); return; }
-    // Ctrl+A in a sketch selects every sketch entity, as in SolidWorks, not the page's text (exam #91).
+    // Ctrl+A in a sketch selects every sketch entity, as in other CAD apps, not the page's text (exam #91).
     if (mod && k === "a" && !e.shiftKey && !e.altKey && this.mode.kind === "sketch") { stop(); this.mode.editor.selectAll(); this.renderPanel(); return; }
     if (mod || e.altKey) return;
     if (e.key === "F5") { stop(); this.toggleFilterBar(); return; }
@@ -2633,7 +2633,7 @@ export class ModelController {
     if (k === "escape" && document.querySelector("#mc-sbar, #mc-cbar")) { stop(); this.hideShortcutBar(); return; }
     if (k === "escape" && this.instant && this.mode.kind === "none" && !document.querySelector("#mc-menu:not([hidden])")) { stop(); this.hideInstant(); return; }
     const m = this.mode;
-    // S: the shortcut bar at the cursor (SolidWorks habit, FR-UI-023).
+    // S: the shortcut bar at the cursor (CAD app habit, FR-UI-023).
     if (k === "s" && !e.shiftKey && (m.kind === "sketch" || m.kind === "none")) { stop(); this.showShortcutBar(); return; }
     if (m.kind === "sketch") {
       if (k === "enter") { stop(); this.ok(); return; }
@@ -2818,7 +2818,7 @@ export class ModelController {
     this.draftChanged();
   }
 
-  /** Hovering while Selected Contours has focus (SolidWorks' region pre-highlight): the region under the pointer lights up blue. */
+  /** Hovering while Selected Contours has focus (a CAD app's region pre-highlight): the region under the pointer lights up blue. */
   private hoverContour(x: number | null, y = 0) {
     const m = this.mode;
     const f = m.kind === "feature" && m.focus === "contours" && hasContours(m.draft) ? m.draft : null;
@@ -3219,7 +3219,7 @@ export class ModelController {
     const data = this.host.viewer.parts[0]?.data;
     if (!hit || !data) return;
     let edges = hit.edge ? [hit.edge] : data.edges.filter(x => x.faces.includes(hit.faceId!));
-    // Tangent propagation (FR-SEL-005, on by default as in SolidWorks): an edge brings its smooth chain.
+    // Tangent propagation (FR-SEL-005, on by default as in other CAD apps): an edge brings its smooth chain.
     if (hit.edge && this.tangentProp) edges = tangentChain(data.edges, hit.edge);
     this.toggleEdges(edges);
   }
@@ -4228,7 +4228,7 @@ export class ModelController {
   }
 
   /**
-   * Where a hole click snaps (SolidWorks-style): the origin (projected onto the hole's face), or a
+   * Where a hole click snaps (CAD-app-style): the origin (projected onto the hole's face), or a
    * vertex, arc centre or midpoint of the model lying in that face, when within a few pixels.
    */
   private holeSnap(e: { clientX: number; clientY: number }, fr: Frame): V3 | null {
@@ -4473,7 +4473,7 @@ export class ModelController {
     if (!this.store) return;
     const dark = document.documentElement.dataset.theme === "dark";
     const m = this.mode;
-    // Sketches no feature uses yet are shown (SolidWorks shows unabsorbed sketches).
+    // Sketches no feature uses yet are shown (a CAD app shows unabsorbed sketches).
     const used = new Set(this.doc.features.flatMap(f => this.doc.features.filter(g => g.type === "sketch" && absorbs(f, g.id)).map(g => g.id)));
     if (m.kind === "feature" && (m.draft.type === "extrude" || m.draft.type === "revolve")) used.add(m.draft.sketch);
     const end = this.doc.rollback ?? this.doc.features.length;
@@ -4559,7 +4559,7 @@ export class ModelController {
 
   /**
    * Value callouts (FR-UI-110): the main values of the open feature (thickness, angle, distance, spacing, count…)
-   * in small labels on the model by its result, as in SolidWorks. A click opens the Modify box; the value goes
+   * in small labels on the model by its result, as in other CAD apps. A click opens the Modify box; the value goes
    * through the panel's own field, so both stay in step. A ⇄ beside the first one reverses the direction.
    * Features with drag handles or their own callouts (extrude, revolve, fillet, chamfer, end cap, gusset, flange) keep those.
    */
@@ -4809,7 +4809,7 @@ export class ModelController {
   }
 
   /**
-   * Corner callouts of an open structural member (FR-FT-121, SolidWorks' corner spheres): the treatment at
+   * Corner callouts of an open structural member (FR-FT-121, a CAD app's corner spheres): the treatment at
    * each corner where its segments meet; a click offers the treatments for that corner alone.
    */
   /** The Locate profile focus the view was last zoomed for (zoom once per start). */
@@ -4870,7 +4870,7 @@ export class ModelController {
   }
 
   /**
-   * Instances to skip (FR-FT-070/071, SolidWorks' pink dots): while the box has focus, a dot at each instance of
+   * Instances to skip (FR-FT-070/071, a CAD app's pink dots): while the box has focus, a dot at each instance of
    * the linear or circular pattern being edited; a click skips the instance or brings it back.
    */
   private drawPatternSpots() {
@@ -4931,7 +4931,7 @@ export class ModelController {
   private static threadTex: THREE.CanvasTexture | null = null;
 
   /**
-   * Shaded cosmetic thread (FR-FT-054, SolidWorks' thread texture): a helically striped sleeve just off the
+   * Shaded cosmetic thread (FR-FT-054, a CAD app's thread texture): a helically striped sleeve just off the
    * cylinder (inside it for a hole), from c along dir for length L.
    */
   private threadShade(c: V3, dir: V3, r: number, L: number, pitch: number, internal: boolean) {
@@ -5149,7 +5149,7 @@ export class ModelController {
       this.placeArrow(base.clone(), dir.clone(), f.depth.v, mid, "depth");
       this.handleLabel(f.id, "depth", t("Drag the arrow to change the depth; click to type it"));
     }
-    // Direction 2 (FR-FT-011): its own arrow the other way, as SolidWorks shows one per direction.
+    // Direction 2 (FR-FT-011): its own arrow the other way, as a CAD app shows one per direction.
     if (dir2Blind(f)) {
       this.placeArrow(base.clone(), dir.clone().negate(), f.depth2!.v, false, "depth2");
       this.handleLabel(f.id, "depth2", t("Drag the arrow to change the depth in direction 2; click to type it"));
@@ -5227,7 +5227,7 @@ export class ModelController {
     this.handleLabel(f.id, "trim1", t("Drag the arrow to move trim plane 1; click to type it"));
     this.placeArrow(o.clone().addScaledVector(n, fr.len[5]), n.clone().negate(), f.trim2?.v ?? 0, false, "trim2");
     this.handleLabel(f.id, "trim2", t("Drag the arrow to move trim plane 2; click to type it"));
-    // Triad handles (SolidWorks drags the triad): one short arrow per world axis from the triad's point.
+    // Triad handles (a CAD app drags the triad): one short arrow per world axis from the triad's point.
     if (this.mode.kind !== "feature") return;
     const at = f.origin ?? fr.o;
     (["x", "y", "z"] as const).forEach((c, i) => {
@@ -5483,7 +5483,7 @@ export class ModelController {
   /** The faces made by the feature selected in the tree (FR-HIS-003). */
   private drawFeatureFaces() {
     const m = this.mode;
-    // While an extrude or revolve is open, its faces are tinted yellow like a SolidWorks preview.
+    // While an extrude or revolve is open, its faces are tinted yellow like a CAD app preview.
     const draft = m.kind === "feature" && (m.draft.type === "extrude" || m.draft.type === "revolve" || isSheet(m.draft)) ? m.draft.id : null;
     const id = draft ?? (m.kind === "none" ? this.selected : null);
     if (!id) return;
@@ -5581,7 +5581,7 @@ export class ModelController {
   }
 
   /**
-   * Live preview of a fillet or chamfer (SolidWorks style): its new faces in see-through yellow over the
+   * Live preview of a fillet or chamfer (CAD app style): its new faces in see-through yellow over the
    * body the edges are picked on, and a callout with the size at the first edge (FR-FT-031).
    */
   /** Flex (FR-FT-105): the two trim planes (see-through orange) and the triad, from the frame the rebuild returned. */
@@ -5610,7 +5610,7 @@ export class ModelController {
     });
   }
 
-  /** The material an open cut removes, as a see-through yellow body (SolidWorks' cut preview). */
+  /** The material an open cut removes, as a see-through yellow body (a CAD app's cut preview). */
   private drawCutPreview() {
     const pv = this.last?.preview;
     if (!pv?.position.length) return;
@@ -5764,7 +5764,7 @@ export class ModelController {
     return d.type;
   }
 
-  /** Quick commands at the right of the tab strip (SolidWorks keeps them in the menu bar): filter, undo, save. */
+  /** Quick commands at the right of the tab strip (a CAD app keeps them in the menu bar): filter, undo, save. */
   private renderQuick() {
     const q = $("#mc-quick");
     if (!this.store) { q.hidden = true; q.innerHTML = ""; return; }
@@ -5838,11 +5838,11 @@ export class ModelController {
   private wasSketch = false;
   private inBar = false;
   private wasCmd = false;
-  /** The fly-out tree is folded to its title row, as SolidWorks shows it, until opened (kept per browser). */
+  /** The fly-out tree is folded to its title row, as a CAD app shows it, until opened (kept per browser). */
   private flyClosed = (() => { try { return localStorage.getItem("mc:flyTree") !== "1"; } catch { return true; } })();
 
   /**
-   * Fly-out tree (FR-UI-003, SolidWorks' fly-out FeatureManager): while a panel is open it fills the Features tab,
+   * Fly-out tree (FR-UI-003, a CAD app's fly-out FeatureManager): while a panel is open it fills the Features tab,
    * and the tree itself moves to the top left of the view, so planes and features can still be picked from it.
    * The same `#mc-tree` element moves, so its rows, listeners and selectors stay as they are. Phones keep it in the panel.
    */
@@ -5929,7 +5929,7 @@ export class ModelController {
         ["dim", t("Dimension"), t("Smart dimension (D)")],
         ["hord", t("Horizontal ordinate"), t("Horizontal ordinate dimensions: X distances from one base")], ["vord", t("Vertical ordinate"), t("Vertical ordinate dimensions: Y distances from one base")],
       ];
-      // Related tools share one button with a flyout (SolidWorks-style): the button shows the last one used.
+      // Related tools share one button with a flyout (CAD-app-style): the button shows the last one used.
       const groups: SkTool[][] = [["select"], ["dim", "hord", "vord"], ["line", "cline", "mline", "spline", "sspline", "eqn"], ["rect", "crect", "rect3", "crect3", "pgram", "polygon"], ["circle", "circle3", "pcircle", "ellipse", "earc", "parabola", "conic"], ["arc", "arc3", "tarc"], ["slot", "cslot", "aslot", "aslot3"], ["point", "text"], ["trim", "extend", "split", "jog", "segment"], ["fillet", "chamfer"], ["offset", "convert", "intersect"]];
       const info = new Map(tools.map(x => [x[0], x]));
       html = `<div class="mc-g" role="group" aria-label="${esc(t("Sketch"))}">${groups.map(g => {
@@ -6025,7 +6025,7 @@ export class ModelController {
 
   private hasInstant(f: Feature) { return this.instantItems(f).length > 0 || this.featureValues(f).length > 0; }
 
-  /** Double-click on the model: the dimensions of the feature that made the face or edge show on it, as in SolidWorks. */
+  /** Double-click on the model: the dimensions of the feature that made the face or edge show on it, as in other CAD apps. */
   showInstant(x: number, y: number) {
     if (!this.store || !this.last || this.mode.kind !== "none") return;
     const hit = this.host.edgeAt(x, y);
@@ -6286,7 +6286,7 @@ export class ModelController {
 
   /**
    * The context toolbar (FR-UI-026): after a click picks a face or an edge, the commands for it in a small
-   * bar by the cursor, as in SolidWorks. It fades as the pointer moves away and goes at 160 px.
+   * bar by the cursor, as in other CAD apps. It fades as the pointer moves away and goes at 160 px.
    */
   showContextBar(at: { x: number; y: number }, other = false) {
     this.hideShortcutBar();
@@ -6578,7 +6578,7 @@ export class ModelController {
       const tools = `<span class="ft-tools">${hid == null ? "" : eyeButton(hid, featureLabel(f.name))}<button class="icon" tabindex="-1" data-a="sup" title="${esc(f.suppressed ? t("Unsuppress") : t("Suppress"))}" aria-label="${esc(f.suppressed ? t("Unsuppress") : t("Suppress"))}">${f.suppressed ? "◌" : "●"}</button><button class="icon" tabindex="-1" data-a="del" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">✕</button></span>`;
       const relMark = rel ? `<span class="ft-rel" title="${esc(relTip)}" role="img" aria-label="${esc(relTip)}">${par.has(f.id) ? "↑" : "↓"}</span>` : "";
       const ice = i < frozen ? `<span class="ft-ice" title="${esc(t("Frozen"))}" role="img" aria-label="${esc(t("Frozen"))}">❄</span>` : "";
-      // External reference (FR-ASM-030): -> in context, ->* locked, ->? out of context (SolidWorks marks).
+      // External reference (FR-ASM-030): -> in context, ->* locked, ->? out of context (a CAD app marks).
       const xk = ctxMark(d, f);
       const xm = xk === "none" ? null : xk === "locked" ? ["->*", t("External reference (locked)")] : this.context ? ["->", t("External reference")] : ["->?", t("External reference (out of context)")];
       const ext = xm ? `<span class="ft-ext" title="${esc(xm[1])}" role="img" aria-label="${esc(xm[1])}" translate="no">${xm[0]}</span>` : "";
@@ -6738,7 +6738,7 @@ export class ModelController {
         // Equations is not geometry to select: a click opens it.
         if (id === "equations") { this.editEquations(); return; }
         if (id === "configs") { this.editConfigs(); return; }
-        // A feature picked in the tree shows its dimensions and values on the model, as in SolidWorks (FR-UI-115).
+        // A feature picked in the tree shows its dimensions and values on the model, as in other CAD apps (FR-UI-115).
         if (mm.kind === "none") { const f = this.store!.feature(id); this.instant = f && !f.suppressed && this.hasInstant(f) ? id : null; }
         this.selected = id;
         this.renderTree();
@@ -6841,7 +6841,7 @@ export class ModelController {
       items.push([t("Delete body"), () => this.deleteBody(key)]);
     }
     if (id === "folder:cutlist" || id.startsWith("cut:") || id.startsWith("wsub:")) items.push([t("Cut List…"), () => this.cutList()]);
-    // Sub-weldments (SolidWorks): a cut list item or a weldment body goes into a new or an existing one.
+    // Sub-weldments (a CAD app): a cut list item or a weldment body goes into a new or an existing one.
     const wb = this.cutBodies(id);
     if (wb.length && !id.startsWith("wsub:")) {
       const subs = this.doc.subWelds ?? [];
@@ -7116,7 +7116,7 @@ export class ModelController {
       const endSel = `<label class="pm-field"><span>${esc(t("End condition"))}</span><select data-k="end">${ends.map(([v, l]) => `<option value="${v}"${f.end === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;
       const upto = f.end === "upto" || f.end === "offset";
       const thinSel = f.thin ? `<label class="pm-field"><span>${esc(t("Type"))}</span><select data-k="thinMode">${([["inside", t("Inside the profile")], ["outside", t("Outside the profile")], ["mid", t("Mid-plane")]] as const).map(([v, l]) => `<option value="${v}"${f.thin!.mode === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>` + numField("thin.t", t("Thickness"), f.thin.t, "length") : "";
-      // Direction 2 (FR-FT-011): its own end condition, as SolidWorks offers (no mid plane or through all - both).
+      // Direction 2 (FR-FT-011): its own end condition, as a CAD app offers (no mid plane or through all - both).
       const e2 = f.end2 ?? "blind";
       const bodyName = (r: FaceRef | undefined) => r ? t("Body of {name}", { name: featureLabel(this.store?.feature(r.name.split(":")[0])?.name ?? "?") }) : t("None");
       const draft2On = !!f.draft2 && Math.abs(f.draft2.angle.v) > 1e-9;
@@ -7126,9 +7126,9 @@ export class ModelController {
         + (e2 === "body" ? `<div class="pm-field"><span>${esc(t("Body"))}</span><button class="pm-box${tg === "body2" ? " focus" : ""}" data-focus="upbody2" translate="no">${esc(bodyName(f.upToBody2))}</button></div>` : "")
         + (e2 === "offset" ? numField("upToOffset2", t("Offset distance"), f.upToOffset2 ?? { v: 5 }, "length") + chk("reverseOffset2", f.reverseOffset2, t("Reverse offset")) : "")
         + (e2 === "blind" ? numField("depth2", t("Depth 2"), f.depth2 ?? f.depth, "length")
-          // Direction 2's own draft (FR-FT-014), as SolidWorks: off at 0°.
+          // Direction 2's own draft (FR-FT-014), as a CAD app: off at 0°.
           + chk("draft2On", draft2On, t("Draft on/off")) + (draft2On ? numField("draft2.angle", t("Draft angle"), f.draft2!.angle, "angle") + chk("draft2Out", f.draft2!.outward, t("Draft outward")) : "") : "");
-      // Selected Contours comes first when the sketch needs it, as SolidWorks opens that box.
+      // Selected Contours comes first when the sketch needs it, as a CAD app opens that box.
       const needCt = this.needsContours(f);
       body = (needCt ? this.contoursGroup(f, m.focus) : "") + group(t("From"), sketchSel(f.sketch) + opSel(f.op) + (f.op === "boss" && this.last?.data ? chk("merge", f.merge !== false, t("Merge result")) : "") + startSel)
         + group(t("Direction 1"), endSel
@@ -7241,7 +7241,7 @@ export class ModelController {
       const sel = (k: string, label: string, opts: [string, string][], cur: string) => `<label class="pm-field"><span>${esc(label)}</span><select data-k="${k}">${opts.map(([v, l]) => `<option value="${v}"${v === cur ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;
       const hbox = (focus: Focus, label: string, value: string) => `<div class="pm-field"><span>${esc(label)}</span><button class="pm-box${m.focus === focus ? " focus" : ""}" data-focus="${focus}" translate="no">${esc(value)}</button></div>`;
       const favs = loadFavs();
-      // FR-FT-051 UX: Type and Positions tabs as in SolidWorks; view picks work on either tab.
+      // FR-FT-051 UX: Type and Positions tabs as in other CAD apps; view picks work on either tab.
       if (this.holeTabOf !== f) { this.holeTabOf = f; this.holeTab = "type"; }
       const tab = this.holeTab;
       const kindNames: Record<HoleFeature["kind"], string> = { simple: t("Simple hole"), clear: t("Clearance hole"), cbore: t("Counterbore"), cdrill: t("Counterdrill"), csink: t("Countersink"), tapped: t("Tapped hole"), ptap: t("Tapered tap"), slot: t("Slot"), insert: t("Heat-set insert"), adv: t("Advanced hole"), captive: t("Captive screw") };
@@ -7271,7 +7271,7 @@ export class ModelController {
           + (f.end === "vertex" ? hbox("hupto", t("Up to"), this.vertexLabel(f.upToVertex)) + `<p class="pm-help muted">${esc(t("Click near the end of an edge, or a reference point in the tree."))}</p>` : "")
           + (f.end === "next" ? `<p class="pm-help muted">${esc(t("Each hole stops where it leaves the material."))}</p>` : "")
           + (f.end === "blind" ? numField("depth", t("Depth"), f.depth, "length") + chk("flat", f.flat, t("Flat bottom (no drill point)")) + (f.flat ? "" : numField("drillAngle", t("Drill angle"), f.drillAngle ?? { v: (118 * Math.PI) / 180 }, "angle")) : "")
-          // The thread's own end condition sits under the hole's, as in SolidWorks' End Condition box.
+          // The thread's own end condition sits under the hole's, as in a CAD app's End Condition box.
           + (f.kind === "tapped" && holeExits(f) ? sel("threadEnd", t("Thread"), [["blind", t("Blind")], ["through", t("Through all")]], f.threadEnd ?? "blind") : "")
           + (f.kind === "tapped" && !threadThrough(f) ? numField("threadDepth", t("Thread depth"), f.threadDepth ?? { v: f.diameter.v * 2 }, "length") : "")
           + (f.kind === "ptap" ? numField("threadDepth", t("Thread length"), f.threadDepth ?? { v: f.diameter.v }, "length") : "")
@@ -7460,7 +7460,7 @@ export class ModelController {
           + chk("flip", f.flip, t("Flip")))
         + `<p class="pm-help muted">${esc(m.focus === "axis" ? t("Click a straight edge of the model.") : t("Click a plane or a flat face in the view or the tree."))}</p>`;
     }
-    // SolidWorks habit: ✓ and ✕ at the top of the panel, then the message box, then the groups.
+    // CAD app habit: ✓ and ✕ at the top of the panel, then the message box, then the groups.
     // A rebuild re-renders the panel; keep what is being typed (and the caret) instead of the stored value.
     const typing = new Map<string, { value: string; focus: boolean; a: number | null; b: number | null }>();
     pm.querySelectorAll<HTMLInputElement>("input[data-num], input[type=text][data-k], input[data-hp]").forEach(inp => {
@@ -7514,7 +7514,7 @@ export class ModelController {
           }
           (host as Record<string, Num>)[last] = n;
           if (f.type === "hole" && (key === "threadDepth" || key === "diameter")) keepTapDepth(f, tapLinked);
-          // A typed size makes the hole custom (SolidWorks' "Show custom sizing").
+          // A typed size makes the hole custom (a CAD app's "Show custom sizing").
           if (f.type === "hole" && key !== "depth" && key !== "threadDepth" && key !== "headClear" && key !== "drillAngle" && key !== "upToOffset" && !/^(near|under|far)Cs\./.test(key) && !(f.kind === "captive" && /^(capHold|capThread|ringDia|ringT|cbDia|cbDepth|diameter)$/.test(key)) && f.size) { delete f.size; delete f.fit; }
           if (f.type === "thread" && key === "diameter") { delete f.size; delete f.pitch; }
           // Advanced Hole: a typed diameter or angle makes that element custom; the main hole's Ø is the feature's.
@@ -7627,7 +7627,7 @@ export class ModelController {
         if (f.type === "hole" && k === "standard") {
           upd(() => {
             if (val === "iso") delete f.standard; else f.standard = val as Exclude<HoleStandard, "iso">;
-            // The size nearest the old one by diameter, as SolidWorks keeps a size when the standard changes.
+            // The size nearest the old one by diameter, as a CAD app keeps a size when the standard changes.
             const list = HOLE_STANDARDS[val as HoleStandard] ?? HOLE_STANDARDS.iso, old = holeSize(f.size), d = old ? majorOf(old) : 6;
             f.size = list.reduce((b, h) => (Math.abs(majorOf(h) - d) < Math.abs(majorOf(b) - d) ? h : b)).size;
             applyHoleSize(f);
@@ -9340,7 +9340,7 @@ function sketchSegments(sk: SketchFeature, f: Frame): number[] {
 }
 
 const S = (d: string) => `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
-/** Whether a feature uses a sketch up (SolidWorks hides it once used). */
+/** Whether a feature uses a sketch up (a CAD app hides it once used). */
 /** Whether view face i belongs to one of the bodies `keys` (the worker lists shown faces body by body). */
 function bodyFaces(bodies: { key: string; faces?: number }[], keys: string[]): (i: number) => boolean {
   const ranges: [number, number][] = [];

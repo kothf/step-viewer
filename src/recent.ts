@@ -1,6 +1,6 @@
 // Recent documents for File ▸ recent list (FR-UI-010): the files themselves are kept in IndexedDB, so a
 // recent entry opens again without a file picker (a browser page cannot reopen a path on disk). A group of
-// files opened together (a SolidWorks assembly with its parts, a set of PCB layers) is one entry.
+// files opened together (an SLDASM assembly with its parts, a set of PCB layers) is one entry.
 
 export interface RecentEntry {
   /** The name shown: the main file's name. */

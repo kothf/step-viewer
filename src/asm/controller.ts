@@ -221,7 +221,7 @@ export class AsmController {
     toast(t("New assembly: insert a part or a STEP model as the first component; it is fixed at the origin."));
   }
 
-  /** Make assembly from part (SolidWorks File → Make Assembly from Part): a new assembly with the open part fixed at the origin. */
+  /** Make assembly from part (CAD app File → Make Assembly from Part): a new assembly with the open part fixed at the origin. */
   fromPart() {
     const open = this.host.openPart?.();
     if (!open) return;
@@ -1570,7 +1570,7 @@ export class AsmController {
   /**
    * Mates keep their faces through a part edit (exam #84): a face whose name went away but whose surface is
    * still there under another, new name (adding a concentric circle renamed an old part's outer face) is
-   * followed to that name, as SolidWorks keeps a mate on the same face after a sketch edit.
+   * followed to that name, as a CAD app keeps a mate on the same face after a sketch edit.
    */
   private keepMateFaces(doc: AsmDoc, part: string, prev: Map<string, Geo> | undefined, now: Map<string, Geo>) {
     if (!prev?.size) return;
@@ -1841,7 +1841,7 @@ export class AsmController {
     if (!mate) { this.previewTfs(this.shownTf); this.renderPanel(); return; }
     let r = this.solveMate(this.withoutEdited(), mate);
     // Face-to-face is only a first guess: when it can't be solved and the other alignment can (the part can't turn
-    // over, e.g. a pin on an axis), take that one, as SolidWorks does (exam #74). A choice made in the panel stays.
+    // over, e.g. a pin on an axis), take that one, as a CAD app does (exam #74). A choice made in the panel stays.
     if (!r.ok && mate.type === "coincident" && mate.align && !m.alignSet && !m.edit) {
       const other = { ...mate, align: mate.align === "anti" ? "aligned" as const : "anti" as const };
       const r2 = this.solveMate(this.withoutEdited(), other);
@@ -2030,7 +2030,7 @@ export class AsmController {
       inp.addEventListener("change", () => { const f = inp.files?.[0]; if (f) void run(f); });
       inp.click();
     };
-    // Parts open in other tabs come first, as SolidWorks lists open documents (FR-DOC-003).
+    // Parts open in other tabs come first, as a CAD app lists open documents (FR-DOC-003).
     const open = this.host.openParts?.() ?? [];
     const btn = document.querySelector<HTMLElement>('#asm-tools [data-ac="insert"]');
     if (!open.length || !btn) { browse(); return; }
@@ -2070,7 +2070,7 @@ export class AsmController {
     if (!this.doc) return;
     {
       const f = { name: fileName };
-      // Components are named after their file, as in SolidWorks.
+      // Components are named after their file, as in other CAD apps.
       const base = f.name.replace(/\.[^.]+$/, "") || pd.name;
       // The same document again shares its source (FR-ASM-005).
       const key = this.sourceKey(pd, asm, f.name);
@@ -2141,7 +2141,7 @@ export class AsmController {
 
   /**
    * The key of an embedded source with this content, or a new one (FR-ASM-005). With `file`, only a source read from a file
-   * of that name is shared: another file is another part even when its content is the same, as in SolidWorks (exam #87).
+   * of that name is shared: another file is another part even when its content is the same, as in other CAD apps (exam #87).
    */
   private sourceKey(pd: PartDoc, asm?: AsmDoc, file?: string) {
     const json = JSON.stringify(asm ?? pd);
@@ -2984,7 +2984,7 @@ export class AsmController {
         // A mated component moves only where its mates let it (FR-MATE-001): solved from the dragged position.
         if (!d.mated) return tfs;
         const r = this.solveDoc(doc, [], tfs, false);
-        // On an axis (concentric, hinge, screw) it may turn instead, as a wheel does in SolidWorks: the grabbed
+        // On an axis (concentric, hinge, screw) it may turn instead, as a wheel does in CAD apps: the grabbed
         // point turned towards the pointer about that axis, solved too; the one that follows the pointer better wins.
         const ax = d.axis;
         if (!ax) return r.ok ? r.tfs : null;
@@ -3100,7 +3100,7 @@ export class AsmController {
     this.renderStatus();
   }
 
-  /** SolidWorks' status: fully defined, under defined or over defined. */
+  /** A CAD app's status: fully defined, under defined or over defined. */
   private renderStatus() {
     if (!this.doc) return;
     const n = this.doc.components.length;
@@ -3159,7 +3159,7 @@ export class AsmController {
     html += `<div class="ft-group" role="group">${row("origin", "⊹", t("Origin"), " ft-plane")}</div>`;
     for (const c of this.doc.components) {
       const s = st.get(c.id);
-      // SolidWorks marks: (f) fixed, (-) under defined, (+) over defined, none when fully defined.
+      // A CAD app marks: (f) fixed, (-) under defined, (+) over defined, none when fully defined.
       const sv = this.solved, over = !!sv && (doc.mates ?? []).some(m => (sv.bad.includes(m.id) || sv.missing.includes(m.id)) && (m.a.comp === c.id || m.b.comp === c.id));
       const mark = c.fixed ? "(f) " : over ? "(+) " : sv && sv.dof[c.id] === 0 ? "" : "(-) ";
       const err = s && !s.ok ? `<span class="ft-err" title="${esc(s.message ?? "")}" role="img" aria-label="${esc(t("Error"))}: ${esc(s.message ?? "")}">⚠</span>` : "";
@@ -3285,7 +3285,7 @@ export class AsmController {
     });
   }
 
-  /** Sets (or clears) the material of a component's part from the assembly, as SolidWorks' Edit Material does:
+  /** Sets (or clears) the material of a component's part from the assembly, as a CAD app's Edit Material does:
    *  every instance of that part follows, and the BOM and mass properties with it. One undo step. */
   setPartMaterial(id: string, m: ReturnType<typeof toRef> | null) {
     this.change(d => {

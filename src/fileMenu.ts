@@ -1,4 +1,4 @@
-// File menu (FR-UI-010, SolidWorks' File menu): New, Open, Close, Save / Save as / Save all, Pack and Go,
+// File menu (FR-UI-010, a CAD app's File menu): New, Open, Close, Save / Save as / Save all, Pack and Go,
 // Export, Print, Properties, the recent documents and Exit, with their shortcuts. The header's File button
 // and the drawing workspace's File button open the same menu; main.ts supplies the actions (`FileHost`).
 import { t } from "./i18n";
@@ -219,7 +219,7 @@ export class FileMenu {
     }
   }
 
-  /** Pack and Go (SolidWorks): the open documents, and an assembly's parts as separate files, in one .zip. */
+  /** Pack and Go (a CAD app): the open documents, and an assembly's parts as separate files, in one .zip. */
   packAndGo() {
     const docs = this.host.packDocs();
     if (!docs.length) { toast(t("Open a document first.")); return; }

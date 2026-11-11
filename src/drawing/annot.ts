@@ -27,7 +27,7 @@ export type Label = (s: string, p?: Record<string, string>) => string;
 /** What annotations need from the model and the UI. */
 export interface AnnotCtx {
   topo: Topo | null; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; bends?: FlatBend[]; welds?: WeldInfo[]; cuts?: CutInfo[]; cutFaces?: Record<string, number>; weldFaces?: Record<string, number>; items: ModelItem[]; box: [V3, V3] | null; dec: string; label: Label; bom?: Bom | null;
-  /** A part drawing with neither a BOM nor a cut list: every balloon is item 1, as in SolidWorks. */
+  /** A part drawing with neither a BOM nor a cut list: every balloon is item 1, as in other CAD apps. */
   single?: boolean;
   /** A view that shows another part configuration (FR-DRW-010) gets that configuration's topology and model items. */
   forView?: (v: DrawingView) => Partial<AnnotCtx> | null;
@@ -424,7 +424,7 @@ export function stackAt(c: V3, ax: V3, r: number, topo: Topo | null): MHole | nu
 }
 
 /**
- * Callout of a hole made of cylinders and cones (ISO style, as SolidWorks writes it): the drill Ø with its depth from
+ * Callout of a hole made of cylinders and cones (ISO style, as a CAD app writes it): the drill Ø with its depth from
  * the entry face or THRU, then ⌴ counterbore Ø and depth or ⌵ countersink Ø × angle. The entry is the open end (for a
  * through hole, the wider one). Null when the hole has no cylinder to call the drill or no open end.
  */
@@ -762,7 +762,7 @@ export function notePrims(a: NoteAnnot, at: P2, leaderTo: P2 | null): { prims: P
 
 /** The drawing's properties that notes link to with $PRP:"name" (set from the title block fields before composing). */
 let NOTE_PROPS: Record<string, string> = {};
-/** SolidWorks property names that mean one of our fields. */
+/** CAD app property names that mean one of our fields. */
 const PROP_ALIAS: Record<string, string> = { description: "title", partno: "number", partnumber: "number", weight: "mass", drawnby: "author", swsheetscale: "scale", sheetscale: "scale", sheetformatsize: "size", swsheetformatsize: "size" };
 
 export function useProps(fields: Record<string, string | undefined>) {
@@ -1521,7 +1521,7 @@ export function sketchPrims(v: DrawingView, pl: Placement, sketches: SketchInfo[
   return decorPrims(v, pl, segs, "thin", "SKETCH");
 }
 
-/** Flat pattern bend lines (FR-FT-120): centre lines with a note along each, "UP 90° R2" (SolidWorks' bend notes). */
+/** Flat pattern bend lines (FR-FT-120): centre lines with a note along each, "UP 90° R2" (a CAD app's bend notes). */
 export function bendPrims(v: DrawingView, pl: Placement, bends: FlatBend[], P: (p: V3) => P2, ctx: AnnotCtx, tagged = false): Prim[] {
   const segs: Seg2[] = bends.map(b => ({ k: "p", c: 0, p: [...P(b.a), ...P(b.b)] }));
   const out = decorPrims(v, pl, segs, "center", "CENTER");
@@ -1608,7 +1608,7 @@ export function stackItem(s: string, ctx: Pick<AnnotCtx, "bom" | "cuts" | "welds
   return ctx.bom?.itemOf(s) ?? null;
 }
 
-/** The cut list table's columns (SolidWorks' Weldment Cut List: ITEM NO., QTY., DESCRIPTION, LENGTH, ANGLE1, ANGLE2), with Mass (kg) when asked. */
+/** The cut list table's columns (a CAD app's Weldment Cut List: ITEM NO., QTY., DESCRIPTION, LENGTH, ANGLE1, ANGLE2), with Mass (kg) when asked. */
 export function cutCols(a: CutTableAnnot): string[] {
   return ["Item", "Qty", "Description", "Length", "Angle 1", "Angle 2", ...(a.mass ? ["Mass (kg)"] : [])];
 }

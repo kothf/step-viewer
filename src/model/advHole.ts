@@ -1,4 +1,4 @@
-// Advanced Hole (FR-FT-051, SolidWorks' Advanced Hole): a hole built from elements stacked from the face down
+// Advanced Hole (FR-FT-051, a CAD app's Advanced Hole): a hole built from elements stacked from the face down
 // (near side) and from the far face in (far side). Pure: the kernel, the panel picture and the callout share it.
 
 import type { HoleElem, HoleFeature } from "./types";

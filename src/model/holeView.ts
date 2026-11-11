@@ -8,7 +8,7 @@ import { advCallout, advProfile, advStack, captiveStack } from "./advHole";
 const DRILL = (118 * Math.PI) / 180;
 
 /**
- * Callout lines of a hole feature, ISO style as SolidWorks writes them: drill Ø with its depth (or THRU), the thread
+ * Callout lines of a hole feature, ISO style as a CAD app writes them: drill Ø with its depth (or THRU), the thread
  * for a tapped hole, then ⌴ counterbore / ⌵ countersink lines and the options. `f` formats lengths, `fa` angles and
  * `label` translates THRU, UNDER HEAD and FAR SIDE; `drillThru` says a through drill is no longer than the thread
  * (the drawing knows it from the geometry).

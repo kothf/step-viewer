@@ -1,5 +1,5 @@
 // Mass properties maths (FR-MAT-002): second moments of tessellated solids, combining
-// bodies, principal axes and the moments SolidWorks reports. Pure, so unit-tested.
+// bodies, principal axes and the moments a CAD app reports. Pure, so unit-tested.
 //
 // A body's inertia is kept as its covariance about its own centre of mass,
 // C = ∫ (p − c)(p − c)ᵀ dV for unit density, stored as the six numbers
@@ -130,7 +130,7 @@ export function combine(bodies: MassBody[]): Combined {
   return { volume, area, mass, com: c, cov, partial };
 }
 
-/** Moments and products of inertia (SolidWorks' positive notation: Lxy = ∫xy dm) from a mass covariance. */
+/** Moments and products of inertia (a CAD app's positive notation: Lxy = ∫xy dm) from a mass covariance. */
 export function inertiaOf(cov: Sym): { xx: number; yy: number; zz: number; xy: number; yz: number; zx: number } {
   return { xx: cov[1] + cov[2], yy: cov[0] + cov[2], zz: cov[0] + cov[1], xy: cov[3], yz: cov[4], zx: cov[5] };
 }
@@ -160,7 +160,7 @@ const cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[
 /** An output coordinate system: origin and orthonormal axes in world coordinates. */
 export interface Frame { origin: V3; x: V3; y: V3; z: V3 }
 
-/** What SolidWorks' Mass Properties lists, in an output frame (identity = world). */
+/** What a CAD app's Mass Properties lists, in an output frame (identity = world). */
 export interface MassReport extends Combined {
   /** Centre of mass in the frame. */
   local: V3;

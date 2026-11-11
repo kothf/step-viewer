@@ -1,5 +1,5 @@
 // Drawing workspace (FRS section 11): a full-window sheet editor over the 3D view.
-// Views are placed like in SolidWorks: a model view follows the cursor with its
+// Views are placed like in CAD apps: a model view follows the cursor with its
 // lines as a live preview, then projected views come off it as the cursor moves
 // around (Esc or ✓ ends); views drag on the sheet and projected ones stay lined up
 // with their parent. Lines come from the drawing worker (exact HLR).
@@ -192,7 +192,7 @@ const AICON: Record<string, string> = {
   skcircle: I('<circle cx="8" cy="8" r="6"/><path d="M8 8h.01" stroke-width="2"/>'),
   skpoly: I('<path d="M2 13 5 5l4.5 5.5L14 3"/>'),
 };
-/** The annotation tools (FR-UI-072, the same commands as Dimension and Annotate ▾), grouped as in SolidWorks'
+/** The annotation tools (FR-UI-072, the same commands as Dimension and Annotate ▾), grouped as in a CAD app's
  *  Annotation tab: [key, label, tooltip]. Key "dim" is the Smart dimension button (`data-a="dim"`), the rest `data-an`. */
 const ANNOT_GROUPS: { name: string; tools: [string, string, string][] }[] = [
   { name: "Dimensions", tools: [
@@ -237,7 +237,7 @@ const ANNOT_GROUPS: { name: string; tools: [string, string, string][] }[] = [
   ] },
 ];
 /**
- * The command bar's tabs, as in SolidWorks: views on View Layout, every annotation tool on Annotation (the less used
+ * The command bar's tabs, as in other CAD apps: views on View Layout, every annotation tool on Annotation (the less used
  * dimension kinds and the tables under a ▾ each), the sheet's own lines on Sketch. Each tool has one place; the side
  * panel keeps the view palette, the tree and the properties.
  */
@@ -343,7 +343,7 @@ export class DrawingWorkspace {
   // ---------- opening ----------
 
   /**
-   * A new drawing of the model open now: an empty sheet beside the view palette, as in SolidWorks; views are
+   * A new drawing of the model open now: an empty sheet beside the view palette, as in other CAD apps; views are
    * dragged from the palette, or placed with Standard 3 views.
    */
   async newFromModel() {
@@ -383,7 +383,7 @@ export class DrawingWorkspace {
   private get bom(): Bom | null { return this.bomFor(this.sheet); }
   /** A weldment part's cut list, which balloons number when the drawing has no BOM. */
   private get cuts() { return this.bom ? null : this.facts?.cuts?.length ? this.facts.cuts : null; }
-  /** A part drawing with no cut list: balloons are item 1 (SolidWorks numbers a part drawing's balloon 1). */
+  /** A part drawing with no cut list: balloons are item 1 (a CAD app numbers a part drawing's balloon 1). */
   private get single() { return this.doc.source.kind !== "asm" && !this.facts?.cuts?.length; }
   /** What balloons number on this sheet: BOM items (assembly) or cut list items (weldment part). */
   private balloonItems(): BalloonItems { const c = this.ctx(); return { edge: k => edgeItem(k, c), stack: x => stackItem(x, c), mine: a => !a.weld }; }
@@ -1323,7 +1323,7 @@ export class DrawingWorkspace {
       d.sheets[this.sheetIdx].views.push({ id, name: `${t("Drawing View")}${n}`, orient: m.orient, dir: m.orient === "current" ? m.dir : undefined, x: round(p[0]), y: round(p[1]), style: m.orient === "iso" || m.orient === "current" || m.cfg === FLAT_CONFIG ? "hlr" : "hlv", ...(m.cfg ? { config: m.cfg } : {}) });
     });
     this.sel = id;
-    // As in SolidWorks, projected views come off the new view until Esc.
+    // As in CAD apps, projected views come off the new view until Esc.
     this.mode = { kind: "projected", parent: id, at: p };
     this.renderAll();
   }
@@ -1476,7 +1476,7 @@ export class DrawingWorkspace {
         // A straight edge wins a tie with an edge-on circle lying on it (a hole's rim on a plate's face line).
         if ((d < bd || (best?.seg && d < bd + 1e-6)) && inDetail(fromSheet(pl, q[0], q[1]))) { bd = d; best = { kind: "line", ref: edgeRef(e, "e"), e }; }
       } else if (edgeOn && !only && e.t === "c" && e.c && e.r && e.ax && Math.abs(e.ax[0] * n[0] + e.ax[1] * n[1] + e.ax[2] * n[2]) < 1e-6) {
-        // A circle seen edge-on is a line across its axis: SolidWorks picks it as one (a boss top, a shaft's end).
+        // A circle seen edge-on is a line across its axis: a CAD app picks it as one (a boss top, a shaft's end).
         const seg = edgeOnSeg(e, P);
         if (!seg) continue;
         const a = toSheet(pl, ...seg[0]), b = toSheet(pl, ...seg[1]), dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy;
@@ -1540,7 +1540,7 @@ export class DrawingWorkspace {
     return best;
   }
 
-  /** The dimension the picks and the cursor make (FR-DRW-021), SolidWorks style: the cursor's side picks horizontal, vertical or aligned. */
+  /** The dimension the picks and the cursor make (FR-DRW-021), CAD app style: the cursor's side picks horizontal, vertical or aligned. */
   private buildDim(viewId: string, picks: Pick[], at: Pt): DimAnnot | null {
     const pl = this.placements.get(viewId), v = findView(this.sheet, viewId);
     if (!pl || !v || !picks.length) return null;
@@ -1552,7 +1552,7 @@ export class DrawingWorkspace {
       if (p0.kind === "circle") return { ...base, k: wholeCircle(p0.e, this.factsOf(viewId)?.topo ?? null) ? "dia" : "rad", refs: [p0.ref] };
       if (p0.kind === "pt") return null;
     }
-    // With another pick a cylinder's outline is the line it is (SolidWorks: the distance between two outlines, exam #14).
+    // With another pick a cylinder's outline is the line it is (a CAD app: the distance between two outlines, exam #14).
     const lineRef = (pk: Pick): GeoRef | null => pk.kind === "line" ? pk.ref : pk.side ? { ...edgeRef(pk.e, "e"), s: pk.side } : null;
     const l0 = lineRef(p0), l1 = p1 ? lineRef(p1) : null;
     if (l0 && l1) {
@@ -1608,7 +1608,7 @@ export class DrawingWorkspace {
     const offY = !!w && (w[1] > by1 || w[1] < by0), offX = !!w && (w[0] > bx1 || w[0] < bx0);
     const axis = m.axis ?? (offY && !offX ? "h" : offX && !offY ? "v" : Math.abs(q[0] - q0[0]) >= Math.abs(q[1] - q0[1]) ? "h" : "v");
     const n = m.picks.length - 1, gap = 8 / pl.s, j = axis === "h" ? 1 : 0;
-    // The row is where the placement click put it (SolidWorks: the set goes where you click); before that it follows the pointer,
+    // The row is where the placement click put it (a CAD app: the set goes where you click); before that it follows the pointer,
     // or sits clear of the view's dimensions above it / to its right. Baseline dimensions stack 7 mm further out, away from the view.
     const ks = axis === "h" ? ["h", "oh"] : ["v", "ov"], edge = axis === "h" ? by1 : bx1;
     const row = m.row ?? (w ? round(w[j]) : (this.sheet.annots ?? []).reduce((r, a) => a.t === "dim" && a.view === vid && ks.includes(a.k) && a.pos[j] > edge ? Math.max(r, round(a.pos[j] + 7 / pl.s)) : r, round(edge + gap)));
@@ -1786,7 +1786,7 @@ export class DrawingWorkspace {
         const pick = this.annotPick(vid, p);
         if (pick) { m.view = vid; m.leader = pick.kind === "circle" && !pick.side ? edgeRef(pick.e, "c") : pick.kind === "pt" ? pick.ref : { ...this.pickRef(pick), p: "e" }; this.renderStatus(); this.renderOverlay(); return; }
       }
-      // The note goes down at once and its text box takes the typing (several lines), like SolidWorks; a browser
+      // The note goes down at once and its text box takes the typing (several lines), like a CAD app; a browser
       // prompt took one line and covered the sheet (drawings exam #9).
       const view = m.view ?? vid ?? undefined, pl = view ? this.placements.get(view) : undefined;
       const pos: Pt = pl ? fromSheet(pl, p[0], p[1]) : p;
@@ -1860,7 +1860,7 @@ export class DrawingWorkspace {
     if (last && Math.hypot(last[0] - p[0], last[1] - p[1]) < 1e-6) return;
     m.pts.push(p);
     if (m.k !== "poly" && m.pts.length === 2) {
-      // As in SolidWorks the tool stays on: a line chains on from its end, a rectangle or circle starts afresh. Esc (or a double-click) ends.
+      // As in CAD apps the tool stays on: a line chains on from its end, a rectangle or circle starts afresh. Esc (or a double-click) ends.
       const names = { line: "Line", rect: "Rectangle", circle: "Circle" } as const;
       this.addAnnot(this.skOf(m, m.pts), names[m.k]);
       this.mode = { ...m, pts: m.k === "line" ? [p] : [] };
@@ -2488,7 +2488,7 @@ export class DrawingWorkspace {
   private startKind(kind: "section" | "detail" | "aux", how: "h" | "v" | "2p" | "off" | "half" | "aligned" = "h", prof = false) {
     if (!this.facts) { toast(t("The drawing's model is still loading.")); return; }
     if (!this.sheet.views.length) { toast(t("Place a model view first."), true); return; }
-    // The first click picks the view (as in SolidWorks), unless there is only one.
+    // The first click picks the view (as in other CAD apps), unless there is only one.
     const parent = this.sheet.views.length === 1 ? this.sheet.views[0].id : null;
     if (kind === "section") this.mode = { kind, how, parent, p1: null, line: null, at: null, pts: [] };
     else if (kind === "detail") this.mode = { kind, parent, c: null, r: null, at: null, ...(prof ? { prof: true, pts: [] } : {}) };
@@ -2575,7 +2575,7 @@ export class DrawingWorkspace {
   }
 
   /**
-   * What an auxiliary view folds about at a sheet point (FR-DRW-014): a line drawn on the sheet, as SolidWorks takes a
+   * What an auxiliary view folds about at a sheet point (FR-DRW-014): a line drawn on the sheet, as a CAD app takes a
    * sketched line, else a straight model edge. A drawn line belongs to the view under the click, else to the nearest
    * view. Returns the parent view and the line in its model axes.
    */
@@ -2605,7 +2605,7 @@ export class DrawingWorkspace {
     const pp = this.placements.get(parent)!, par = findView(this.sheet, parent);
     const [a, b] = [toSheet(pp, line[0], line[1]), toSheet(pp, line[2], line[3])];
     const n: Pt = [-(b[1] - a[1]), b[0] - a[0]];
-    // Third angle (ANSI, SolidWorks): the view sits on the side it looks from, the arrows pointing away from it.
+    // Third angle (ANSI, a CAD app): the view sits on the side it looks from, the arrows pointing away from it.
     // First angle (ISO E, ESKD): a view in projection position sees the far side, so it sits where the arrows point.
     const side: 1 | -1 = (at[0] - a[0]) * n[0] + (at[1] - a[1]) * n[1] >= 0 ? 1 : -1;
     const look: 1 | -1 = this.sheet.projection === "first" ? (side === 1 ? -1 : 1) : side;
@@ -3107,7 +3107,7 @@ export class DrawingWorkspace {
       return s;
     };
     // Rebuilding the rows drops the focus a row click gave the tree; keep it there, on the selected row, so Delete
-    // (and the arrow keys) still reach the tree, as after a click in SolidWorks' FeatureManager.
+    // (and the arrow keys) still reach the tree, as after a click in a CAD app's FeatureManager.
     const hadFocus = host.contains(document.activeElement);
     const top = !this.sel && !this.selA;
     host.innerHTML = `<div role="treeitem" tabindex="${top ? 0 : -1}" aria-selected="${top}" class="drw-ti sheet${top ? " on" : ""}" data-sel="">${ICON.hlr}<span>${esc(sheetName(sh))}</span><small>${esc(sh.size === "custom" ? t("Custom") : sh.size)} · ${scaleText(sh.scale)}</small></div>`
@@ -3260,7 +3260,7 @@ export class DrawingWorkspace {
       lg.innerHTML = `<button type="button" class="drw-fold" data-fold="${key}" aria-expanded="${!fold}">${lg.innerHTML}</button>`;
       lg.parentElement!.classList.toggle("folded", fold);
     });
-    // A new selection brings its properties into sight, as SolidWorks swaps in the PropertyManager.
+    // A new selection brings its properties into sight, as a CAD app swaps in the PropertyManager.
     const at = `${h.key}|${this.selA ?? this.sel ?? ""}`;
     if (at !== this.pmAt) {
       this.pmAt = at;

@@ -835,7 +835,7 @@ test("DXF 2000 of a big sheet: no call stack overflow (File ▸ Export on the Le
   assert.equal(d.split("\nLINE\n").length - 1, 60000);
 });
 
-test("note property links: $PRP:\"name\" takes the title block field, SolidWorks names too (FR-DRW-023)", async () => {
+test("note property links: $PRP:\"name\" takes the title block field, CAD app names too (FR-DRW-023)", async () => {
   const { expandProps, useProps, notePrims } = await import("../../src/drawing/annot");
   const props = { material: "Steel", mass: "1.25 kg", number: "MC-001", scale: "2:1", title: "Plate" };
   assert.equal(expandProps('MATERIAL: $PRP:"Material"', props), "MATERIAL: Steel");

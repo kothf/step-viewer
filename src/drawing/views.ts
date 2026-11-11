@@ -39,7 +39,7 @@ export function projectedDir(parent: ViewDir, side: [number, number], proj: Proj
 /**
  * Changes a sheet between first and third angle (FR-DRW-011) keeping every projected view the same view:
  * its side flips and it moves across its parent (a Top view goes from under the front view to above it),
- * as SolidWorks does. Views placed off a view that moved follow it. `ext` gives a view's extent about its centre
+ * as a CAD app does. Views placed off a view that moved follow it. `ext` gives a view's extent about its centre
  * (sheet mm: left, bottom, right, top) and `frame` the drawing frame, to keep the layout on the sheet.
  */
 export function switchProjection(sheet: Sheet, proj: Projection, ext?: (v: DrawingView) => [number, number, number, number] | null, frame?: [number, number, number, number]) {

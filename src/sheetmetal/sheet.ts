@@ -401,7 +401,7 @@ export function edgeFlange(prev: SheetState, f: SmFlangeFeature): { state: Sheet
   const d = pos === "inside" ? outerSetback(st.T, angle, r) : pos === "outside" ? innerSetback(angle, r) : 0;
   const ops: SheetOp[] = [];
   const off0 = f.off0?.v ?? 0, off1 = f.off1?.v ?? 0;
-  // Picked edges meeting at a corner of the same face: their flanges run on past it and are mitred (SolidWorks).
+  // Picked edges meeting at a corner of the same face: their flanges run on past it and are mitred (a CAD app).
   const corners = off0 > 1e-9 || off1 > 1e-9 ? [] : flangeCorners(st, f.edges.map(x => x.faces));
   const E = 2 * (s + d + bendAllowance(st, angle, r) + 2 * st.T);
   const mids = f.edges.map(x => edgeMid(st, x.faces));
@@ -605,7 +605,7 @@ export function sweptProfile(sk: SketchFeature, frame: Frame): { pts: V3[]; radi
 }
 
 /**
- * Miter flange (SolidWorks): the profile, drawn on a plane square to one of the picked edges and starting at it,
+ * Miter flange (a CAD app): the profile, drawn on a plane square to one of the picked edges and starting at it,
  * becomes a chain of bends and flat flanges on every picked edge. Each line of the profile is one level of flanges;
  * the lengths run to the virtual sharps on the profile's side, which is the outside of the first bend.
  * Flanges of edges meeting at a corner of the face run on and are mitred, level by level.
@@ -825,7 +825,7 @@ export function breakCorner(prev: SheetState, f: SmCornerFeature): { state: Shee
   return { state: st, ops };
 }
 
-/** Closed corner (SolidWorks): each picked flange end face moves along its flange to the neighbouring flange,
+/** Closed corner (a CAD app): each picked flange end face moves along its flange to the neighbouring flange,
  * over that flange's end (overlap) or up to its inside face less the gap (underlap), and the neighbour's end
  * facing it moves the other way to close the corner. The flat outlines move with them. */
 export function closedCorner(prev: SheetState, f: SmClosedFeature): { state: SheetState; ops: SheetOp[] } {

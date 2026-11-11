@@ -1,4 +1,4 @@
-// Motion manager (FR-FT-122): SolidWorks' motion study pane under the view. A timeline with key tracks on
+// Motion manager (FR-FT-122): a CAD app's motion study pane under the view. A timeline with key tracks on
 // distance/angle mates, motors on mates, exploded view and camera keys; play, loop, back and forth; record
 // a WebM video or an animated GIF of the view. Frames are solved in order with the assembly's mate solver
 // (each from the one before, so linkages do not flip) and cached until the study or the assembly changes.
@@ -37,7 +37,7 @@ type AnyKey = Key | CamKey | PoseKey;
 type KeyRef = { track: string; t: number };
 const same = (a: number, b: number) => Math.abs(a - b) < 1e-9;
 
-/** Key interpolations, as SolidWorks' key point menu lists them. */
+/** Key interpolations, as a CAD app's key point menu lists them. */
 const FITS: [PointsFit, string][] = [["linear", "Linear"], ["cubic", "Cubic spline"], ["akima", "Akima"]];
 const MOTOR_PLOTS: [MotorPlot, string][] = [["disp", "Displacement"], ["vel", "Velocity"], ["acc", "Acceleration"]];
 const PROFILES: [MotorTrack["profile"], string][] = [["constant", "Constant speed"], ["distance", "Distance"], ["oscillate", "Oscillating"], ["points", "Data points"], ["segments", "Motion segments"], ["expr", "Expression"]];
@@ -80,7 +80,7 @@ export class MotionManager {
   clash: { study: string; key: string; items: ClashItem[]; ignored: number } | null = null;
   /** The interference results are what the panel under the timeline shows (until a key, motor or trace is selected). */
   private clashOpen = false;
-  /** Count pairs that already touch at the start (SolidWorks: treat coincidence as interference). */
+  /** Count pairs that already touch at the start (a CAD app: treat coincidence as interference). */
   clashAll = false;
   /** Pause playback where an interference from the last check starts (view-only, like the check itself). */
   clashStop = false;
@@ -89,7 +89,7 @@ export class MotionManager {
   set sel(v: Sel) { this._sel = v; this.more = []; if (v) { this.selTrace = null; this.clashOpen = false; } }
   /** The copied keys (Ctrl+C or the key menu): each with its track, the unit of that track and its time after the first. */
   private clip: { items: { track: string; unit: string; dt: number; key: AnyKey }[] } | null = null;
-  /** Timeline zoom (view only): 1 shows the whole study, 2 half of it, … (SolidWorks' Zoom In / Zoom Out / Zoom to Fit). */
+  /** Timeline zoom (view only): 1 shows the whole study, 2 half of it, … (a CAD app's Zoom In / Zoom Out / Zoom to Fit). */
   zoom = 1;
   /** Solved component transforms per frame, from frame 0 up. */
   private frames: Record<string, Tf>[] = [];
@@ -175,7 +175,7 @@ export class MotionManager {
     this.showAt(0);
   }
 
-  /** A copy of the shown study with all its tracks, keys and results, shown next (SolidWorks: Duplicate on the study tab). */
+  /** A copy of the shown study with all its tracks, keys and results, shown next (a CAD app: Duplicate on the study tab). */
   duplicateStudy() {
     const src = this.study, names = new Set(this.studies.map(x => x.name));
     let k = 2, name = `${src.name} (${k})`;
@@ -264,7 +264,7 @@ export class MotionManager {
   }
 
   /**
-   * Adds a key at `at` to every key track that is on, each with the value it has there now (SolidWorks: Place
+   * Adds a key at `at` to every key track that is on, each with the value it has there now (a CAD app: Place
    * key on the whole assembly), as one undo step, and selects them together.
    */
   keyAll(at = this.time) {
@@ -313,7 +313,7 @@ export class MotionManager {
     return { t: tq, pos: c.position.toArray() as V3, target: g.toArray() as V3, up: c.up.toArray() as V3, ...("isOrthographicCamera" in c && c.isOrthographicCamera ? { zoom: c.zoom } : {}) };
   }
 
-  /** Animation wizard (SolidWorks): explode or collapse an exploded view, or rotate the model, over the study. */
+  /** Animation wizard (a CAD app): explode or collapse an exploded view, or rotate the model, over the study. */
   wizard(what: "explode" | "collapse" | "orbit") {
     const s = this.study;
     if (what === "orbit") {
@@ -323,7 +323,7 @@ export class MotionManager {
     }
     const view = this.asm.exploded ?? this.asm.doc?.explodes?.[0]?.id;
     if (!view) { toast(t("Make an exploded view first (Explode)."), "warn"); return; }
-    // Like SolidWorks' animation wizard, several steps run one after another (collapsing goes back in reverse).
+    // Like a CAD app's animation wizard, several steps run one after another (collapsing goes back in reverse).
     const steps = this.asm.doc?.explodes?.find(v => v.id === view)?.steps.length ?? 0;
     this.edit(st => { st.tracks = st.tracks.filter(x => !(x.kind === "explode" && x.view === view)); st.tracks.push({ id: uid("mt_"), kind: "explode", view, keys: explodeKeys(s.duration, what === "collapse"), ...(steps > 1 ? { seq: true as const } : {}) }); });
   }
@@ -1350,7 +1350,7 @@ export class MotionManager {
     on("input[data-mo=duration]", "change", (_e, el) => {
       const v = num((el as HTMLInputElement).value);
       if (!Number.isFinite(v) || v <= 0 || v > 600) { el.setAttribute("aria-invalid", "true"); return; }
-      // Keys and motors scale with the study, as SolidWorks stretches the key points.
+      // Keys and motors scale with the study, as a CAD app stretches the key points.
       this.edit(st => {
         const k = v / st.duration;
         for (const tr of st.tracks) { if (tr.kind === "motor") { tr.start *= k; tr.end *= k; } else for (const key of tr.keys) key.t *= k; }
@@ -1454,7 +1454,7 @@ export class MotionManager {
       const key = tr && tr.kind !== "motor" ? sortKeys(tr.keys as AnyKey[])[Number(i)] : undefined;
       return key ? { track: id, t: key.t } : null;
     };
-    // Alt+drag stretches the timing (SolidWorks): several selected keys about the one at the other end, one key every key of the study about 0.
+    // Alt+drag stretches the timing (a CAD app): several selected keys about the one at the other end, one key every key of the study about 0.
     const stretch = (el: HTMLElement) => {
       const me = refOf(el);
       if (!me) return null;

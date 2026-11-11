@@ -202,7 +202,7 @@ export interface SmVentFeature {
 }
 
 /**
- * Convert to Sheet Metal (SolidWorks' Convert to Sheet Metal from a solid): the fixed face of a solid becomes a flat
+ * Convert to Sheet Metal (a CAD app's Convert to Sheet Metal from a solid): the fixed face of a solid becomes a flat
  * panel and the flat faces across the picked bend edges flanges, each as long and at the angle the solid has, with the
  * thickness inside the solid (its outer faces stay); other edges between converted faces are rips, mitred `gap` apart.
  * The solid is replaced by the sheet, trimmed to the solid's faces. It starts a sheet metal part, like a base flange.
@@ -226,7 +226,7 @@ export interface SmConvertFeature {
 }
 
 /**
- * Insert Bends (SolidWorks' Insert Bends): a thin-walled solid of flat walls (a shelled box, a bent profile) becomes sheet
+ * Insert Bends (a CAD app's Insert Bends): a thin-walled solid of flat walls (a shelled box, a bent profile) becomes sheet
  * metal. The picked outside face stays fixed; every sharp outside edge of it to another flat wall becomes a bend of the
  * given radius; the thickness is the wall's own. Corners between walls are ripped and mitred `gap` apart.
  */
@@ -243,7 +243,7 @@ export interface SmInsertFeature {
 }
 
 /**
- * Normal cut (SolidWorks' Extruded Cut with Normal cut): a closed sketch is projected along its normal onto the
+ * Normal cut (a CAD app's Extruded Cut with Normal cut): a closed sketch is projected along its normal onto the
  * sheet's mid-surface, and each piece it lands on is cut square to the sheet there, panels and bends alike, so the
  * flat pattern gets clean openings. End: link to thickness (default: as deep as the sheet), blind or through all.
  */
@@ -264,7 +264,7 @@ export type FormTool = "dimple" | "rib" | "louver" | "xhole";
 /**
  * Forming tool: a library shape pressed into a flat face of the sheet at one or more points. The material is formed
  * out of the picked face (the other way when flipped) and keeps the sheet's thickness. The flat pattern leaves the
- * form out (as SolidWorks does), keeps its footprint as a mark and cuts an extruded hole's pre-pierce hole.
+ * form out (as a CAD app does), keeps its footprint as a mark and cuts an extruded hole's pre-pierce hole.
  */
 export interface SmFormFeature {
   id: string; type: "smform"; name: string; suppressed?: boolean;
@@ -288,7 +288,7 @@ export interface SmFormFeature {
 }
 
 /** Lofted bend: two open profiles of lines and arcs, each on its own sketch, joined by a ruled sheet. It is made of
- * flat facets folded along straight lines (SolidWorks' "bent" method), so its flat pattern is exact. A base feature. */
+ * flat facets folded along straight lines (a CAD app's "bent" method), so its flat pattern is exact. A base feature. */
 export interface SmLoftFeature {
   id: string; type: "smloft"; name: string; suppressed?: boolean;
   sketch1: string;
@@ -309,7 +309,7 @@ export interface SmLoftFeature {
 export type ReliefKind = "rect" | "obround" | "circle" | "tear";
 
 /**
- * Corner relief: cuts a relief where two bends meet at a corner of one face (SolidWorks' Corner Relief, two-bend
+ * Corner relief: cuts a relief where two bends meet at a corner of one face (a CAD app's Corner Relief, two-bend
  * corners). It is cut from the panels and bends in the flat pattern, so the bends lose their corner material and the
  * flat pattern shows the relief.
  */
@@ -327,7 +327,7 @@ export interface SmReliefFeature {
 }
 
 /**
- * Sheet metal gusset: a stiffening rib pressed across a bend (SolidWorks' Sheet Metal Gusset, flat type). The rib
+ * Sheet metal gusset: a stiffening rib pressed across a bend (a CAD app's Sheet Metal Gusset, flat type). The rib
  * stands inside the bend, a triangle `depth` along each face from their virtual sharp, `width` wide; the outside gets
  * the matching groove, so the walls keep the sheet's thickness. The flat pattern leaves it out.
  */
@@ -353,7 +353,7 @@ export interface SmGussetFeature {
 }
 
 /**
- * Rip (SolidWorks' Rip): a thin gap cut along corner edges of a thin-walled solid (a shelled box) so its walls part
+ * Rip (a CAD app's Rip): a thin gap cut along corner edges of a thin-walled solid (a shelled box) so its walls part
  * there before Insert Bends or Convert. Both directions = a slot `gap` wide on the bisector of the two faces; one
  * direction (inside edges only) = the cut lies along the chosen face, so that wall runs on past the other.
  */
@@ -367,7 +367,7 @@ export interface SmRipFeature {
 }
 
 /**
- * Tab and slot (SolidWorks' Tab and Slot): tabs grow out of a straight edge of a flat face, in its plane, and pass
+ * Tab and slot (a CAD app's Tab and Slot): tabs grow out of a straight edge of a flat face, in its plane, and pass
  * through the face they meet (any body, the sheet too), which gets slots `clearance` bigger all round. Tabs are panels,
  * so the flat pattern has them; slots in the sheet reach it like any cut.
  */

@@ -160,7 +160,7 @@ export function tablePrims(a: TableAnnot, label: (s: string, p?: Record<string, 
   const widths = head.map((c, i) => Math.max(12, tw(c, h) + 3, ...a.rows.map(r => tw(r[i] ?? "", h) + 3)));
   const W = widths.reduce((s, w) => s + w, 0);
   // A parts list taller than the room above it is split into blocks side by side, each with its header, continuing to the
-  // left (SolidWorks' split table): drawings exam round 2, a 43-row BOM ran off the sheet.
+  // left (a CAD app's split table): drawings exam round 2, a 43-row BOM ran off the sheet.
   const per = a.anchor === "br" && Number.isFinite(maxH) ? Math.max(1, Math.floor(maxH / rh) - 1 - (a.title ? 1 : 0)) : Infinity;
   const blocks: string[][][] = [];
   for (let i = 0; i < Math.max(1, a.rows.length); i += per === Infinity ? Math.max(1, a.rows.length) : per) blocks.push(a.rows.slice(i, per === Infinity ? undefined : i + per));

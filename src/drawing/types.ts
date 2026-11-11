@@ -77,7 +77,7 @@ export interface DrawingView {
   /** Flat pattern views: bend lines and their notes (false hides them). */
   bendLines?: boolean;
   bendNotes?: boolean;
-  /** Show the model's centre of mass point (SolidWorks' Center of Mass model item); dimensions can measure from it. */
+  /** Show the model's centre of mass point (a CAD app's Center of Mass model item); dimensions can measure from it. */
   com?: boolean;
   /** Show the sketches that are shown in the model, as thin lines (FR-DRW-017). */
   sketches?: boolean;
@@ -197,23 +197,23 @@ export interface BalloonAnnot { id: string; t: "balloon"; view: string; ref: Geo
  * with their X/Y from `origin` along the view's axes and their size. `pos` (the table's top-left corner) is in the view's
  * model axes like other view annotations; `holes` are circle edges, so the table follows the model.
  */
-/** A bend table (SolidWorks' Bend Table, FR-FT-120) on a flat pattern view: the bend lines get tags A, B, … (top to bottom,
+/** A bend table (a CAD app's Bend Table, FR-FT-120) on a flat pattern view: the bend lines get tags A, B, … (top to bottom,
  *  then left to right on the view) in place of their notes, and the table lists each one's direction, angle and inner radius.
  *  `pos` (the table's top-left corner) is in the view's model axes. */
 /** Weld table (FR-FT-121): a weldment part's fillet beads from its cut list, placed beside the view whose model they come from. */
 export interface WeldTableAnnot { id: string; t: "wtable"; view: string; pos: [number, number]; prec?: number }
-/** Weldment cut list table (SolidWorks' Weldment Cut List table, FR-FT-121): the part's cut list items beside a view of it;
+/** Weldment cut list table (a CAD app's Weldment Cut List table, FR-FT-121): the part's cut list items beside a view of it;
  *  `beads` false leaves weld beads out, `mass` adds a mass column. */
 export interface CutTableAnnot { id: string; t: "ctable"; view: string; pos: [number, number]; prec?: number; beads?: boolean; mass?: boolean }
 export interface BendTableAnnot { id: string; t: "btable"; view: string; pos: [number, number]; prec?: number }
 
 export interface HoleTableAnnot { id: string; t: "htable"; view: string; origin: GeoRef; holes: GeoRef[]; pos: [number, number]; prec?: number }
 
-/** A revision cloud (SolidWorks' Revision Cloud): scallops around a polygon on the sheet. `pts` are x, y pairs relative to `pos`
+/** A revision cloud (a CAD app's Revision Cloud): scallops around a polygon on the sheet. `pts` are x, y pairs relative to `pos`
  *  (sheet mm); `arc` is the largest scallop chord (mm, default 6); `rev` an optional revision letter in a triangle at the first corner. */
 export interface CloudAnnot { id: string; t: "cloud"; view?: undefined; pos: [number, number]; pts: number[]; arc?: number; rev?: string }
 
-/** A centreline or centre mark put in by hand (SolidWorks' Centerline / Center Mark, FR-DRW-023). `k` "line": between two
+/** A centreline or centre mark put in by hand (a CAD app's Centerline / Center Mark, FR-DRW-023). `k` "line": between two
  *  parallel straight edges (the middle line over both) or through two points; "mark": a cross on a round edge seen end-on
  *  (also arcs, which get no automatic mark). `ext` is how far it runs past the geometry, in sheet mm (default 2). */
 export interface CLineAnnot { id: string; t: "cline"; view: string; k: "line" | "mark"; refs: GeoRef[]; ext?: number; pos?: undefined }

@@ -1,4 +1,4 @@
-// Sheet metal cut-list properties (FR-FT-120): what SolidWorks lists for a sheet metal cut-list item,
+// Sheet metal cut-list properties (FR-FT-120): what a CAD app lists for a sheet metal cut-list item,
 // worked out from the flat pattern. Pure: no DOM, no OCCT.
 import type { V2 } from "../model/types";
 import { tableValue } from "./bendTable";

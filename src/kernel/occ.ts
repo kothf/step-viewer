@@ -503,7 +503,7 @@ export class Kernel {
     return this.stepOfDoc(doc);
   }
 
-  /** STEP of an XCAF document built elsewhere (a converted SolidWorks model). */
+  /** STEP of an XCAF document built elsewhere (a converted SLDPRT/SLDASM model). */
   stepOfDoc(doc: any): Uint8Array {
     const oc = this.oc;
     const path = `/out${++this.seq}.stp`;

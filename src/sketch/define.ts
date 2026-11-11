@@ -1,5 +1,5 @@
 /**
- * Fully define sketch (FR-SK-045, SolidWorks' Fully Define Sketch) as a pure function, shared by the sketch editor
+ * Fully define sketch (FR-SK-045, a CAD app's Fully Define Sketch) as a pure function, shared by the sketch editor
  * and by feature recognition (FR-FT-102), which gives the sketches it makes dimensions the way FeatureWorks does.
  */
 import type { SkDim, SkEnt, SketchFeature, SkRel, V2 } from "../model/types";
@@ -64,7 +64,7 @@ export function fullyDefineSketch(sk0: SketchFeature, opts: { sizes?: boolean } 
     d.val.v = measureDim(sk, d);
     if (!isFinite(d.val.v)) return;
     // A point level with (or plumb over) the origin to round-off gets a horizontal (vertical) relation, not a
-    // 0.0000004 mm dimension that shows as 0 and cannot be typed to 0 (exam #86), as SolidWorks does.
+    // 0.0000004 mm dimension that shows as 0 and cannot be typed to 0 (exam #86), as a CAD app does.
     if (d.val.v < 1e-5 * size) {
       if (t === "hdistance" || t === "vdistance") take({ rel: { id: uid("r"), t: t === "hdistance" ? "vertical" : "horizontal", e: [e[0], e[1]] } });
       return;
@@ -94,7 +94,7 @@ export function fullyDefineSketch(sk0: SketchFeature, opts: { sizes?: boolean } 
       dim("distance", [e.id], [m[0] + n[0] * gap, m[1] + n[1] * gap]);
     }
   }
-  // Defining points first, as SolidWorks does: arc and circle centres and the ends of construction lines
+  // Defining points first, as a CAD app does: arc and circle centres and the ends of construction lines
   // (a slot's centreline), then other curve points, then free points; nearest the origin first in each.
   const centres = new Set(sk.ents.flatMap(x => (x.t === "circle" || x.t === "arc") ? [x.c] : x.t === "line" && x.cons ? [x.a, x.b] : []));
   const onCurve = new Set(sk.ents.filter(x => x.t !== "point" && !x.cons).flatMap(x => refPts(x)));
