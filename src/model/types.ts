@@ -145,7 +145,12 @@ export interface SketchFeature {
   ents: SkEnt[];
   rels: SkRel[];
   dims: SkDim[];
+  /** Sketch pictures (FRS 2.2): images to trace over, drawn under the curves while the sketch is edited. */
+  pictures?: SketchPicture[];
 }
+
+/** An image on the sketch plane: `src` a data URL, centre `c`, size `w` × `h` (mm), `ang` (rad), `alpha` transparency 0..1, `flip` mirrored left-right, `free` = width and height change apart. */
+export interface SketchPicture { id: string; name?: string; src: string; c: V2; w: number; h: number; ang?: number; alpha?: number; flip?: boolean; free?: boolean }
 
 // ---------- persistent references (FRS 9.14) ----------
 

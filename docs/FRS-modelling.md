@@ -144,7 +144,7 @@ MöbiusCAD keeps the same workflow model (history-based parts, mated assemblies,
 | Display/Delete Relations, SketchXpert (conflict resolution) | | P1 (list/delete), P2 (assistant) |
 | Shaded sketch contours, contour selection, regions | Pick regions for extrude | P1 |
 | 3D sketch | Lines/splines in space | P5 |
-| Blocks (sketch blocks), sketch picture, DXF/DWG import into sketch | | P2 (DXF import), P5 (blocks, picture) |
+| Blocks (sketch blocks), sketch picture, DXF/DWG import into sketch | | P2 (DXF import), P5 (blocks; picture done 1.549.0) |
 | Layout sketch driving several features | Shared sketches | P1 (sketch reuse) |
 
 ### 2.3 Part features
