@@ -24,7 +24,7 @@ import { evaluate, ExprError, isPlain } from "./expr";
 import { journalDrop, journalList, journalSave, packPart, unpackPart, PART_EXT, type JournalEntry } from "./file";
 import { snapshotList, snapshotRead, snapshotSave, SNAPSHOT_KEEP } from "./snapshots";
 import { ModelKernel, type Rebuild } from "./kernelClient";
-import { pathId, hasDir2, dir2Apart, dir2Blind, clearDir2, DIR2_ENDS, type Dir2End } from "./types";
+import { pathId, hasDir2, dir2Apart, dir2Blind, clearDir2, threadThrough, DIR2_ENDS, type Dir2End } from "./types";
 import { parseXyz } from "./curves";
 import { textPolys, TEXT_FONTS } from "../sketch/text";
 import { ctxRefs, type PartContext } from "./context";
@@ -41,7 +41,7 @@ import { ISO_METRIC, HEAT_INSERTS, holeSize, insertSize, recognizedHoleFeatures,
 /** What a hole favourite keeps: the definition, not the placement. */
 /** Drag data of a Features tree row (FR-HIS-014: Ctrl+drag onto a face or plane pastes a copy). */
 const FEATURE_DRAG = "application/x-mcad-feature";
-const HOLE_DEF_KEYS = ["kind", "size", "fit", "diameter", "end", "depth", "flat", "cbDia", "cbDepth", "csDia", "csAngle", "threadDepth", "major", "pitch", "cdDia", "cdDepth", "cdAngle", "slotLen", "slotAngle"] as const;
+const HOLE_DEF_KEYS = ["kind", "size", "fit", "diameter", "end", "depth", "flat", "cbDia", "cbDepth", "csDia", "csAngle", "threadDepth", "threadEnd", "major", "pitch", "cdDia", "cdDepth", "cdAngle", "slotLen", "slotAngle"] as const;
 interface HoleFav { name: string; def: Partial<HoleFeature> }
 function loadFavs(): HoleFav[] { try { const v = JSON.parse(localStorage.getItem("mc:holeFavs") ?? "[]"); return Array.isArray(v) ? v : []; } catch { return []; } }
 function saveFavs(list: HoleFav[]) { try { localStorage.setItem("mc:holeFavs", JSON.stringify(list)); } catch { /* storage blocked: kept for this page only */ } }
@@ -4358,9 +4358,9 @@ export class ModelController {
       const fr = this.last?.frames[h.id];
       if (!fr) continue;
       const at = (p: [number, number], dx: number, dy: number) => [0, 1, 2].map(i => fr.o[i] + fr.x[i] * (p[0] + dx) + fr.y[i] * (p[1] + dy));
-      for (const p of h.pts) {
+      h.pts.forEach((p, i) => {
         if (h.kind === "tapped" && h.major) {
-          const td = h.threadDepth?.v ?? (h.end === "through" ? 0 : h.depth.v);
+          const td = threadThrough(h) ? fr.len?.[i] ?? 0 : h.threadDepth?.v ?? (h.end === "through" ? 0 : h.depth.v);
           const o = at(p, 0, 0) as V3;
           if (td > 0) this.threadShade(o, (h.flip ? fr.n : [-fr.n[0], -fr.n[1], -fr.n[2]]) as V3, h.diameter.v / 2, td, h.pitch ?? Math.max(0.25, h.major * 0.15), true);
           const r = h.major / 2, n = 48;
@@ -4373,7 +4373,7 @@ export class ModelController {
           const c = Math.max(h.diameter.v * 0.8, 1.5);
           marks.push(...at(p, -c, 0), ...at(p, c, 0), ...at(p, 0, -c), ...at(p, 0, c));
         }
-      }
+      });
     }
     if (thread.length) this.lines(thread, 0x2b8a3e, 1.6, true);
     if (marks.length) this.lines(marks, 0xf08c00, 2);
@@ -6530,12 +6530,14 @@ export class ModelController {
           + (f.kind === "cbore" ? numField("cbDia", t("Counterbore diameter"), f.cbDia ?? { v: f.diameter.v * 1.7 }, "length") + numField("cbDepth", t("Counterbore depth"), f.cbDepth ?? { v: f.diameter.v }, "length") : "")
           + (f.kind === "csink" ? numField("csDia", t("Countersink diameter"), f.csDia ?? { v: f.diameter.v * 2 }, "length") + numField("csAngle", t("Countersink angle"), f.csAngle ?? { v: Math.PI / 2 }, "angle") : "")
           + (f.kind === "cdrill" ? numField("cdDia", t("Counterdrill diameter"), f.cdDia ?? { v: f.diameter.v * 1.7 }, "length") + numField("cdDepth", t("Counterdrill depth"), f.cdDepth ?? { v: f.diameter.v }, "length") + numField("cdAngle", t("Counterdrill angle"), f.cdAngle ?? { v: (118 * Math.PI) / 180 }, "angle") : "")
-          + (f.kind === "slot" ? numField("slotLen", t("Slot length"), f.slotLen ?? { v: f.diameter.v * 2 }, "length") + numField("slotAngle", t("Slot angle"), f.slotAngle ?? { v: 0 }, "angle") : "")
-          + (f.kind === "tapped" ? numField("threadDepth", t("Thread depth"), f.threadDepth ?? { v: f.diameter.v * 2 }, "length") : ""))
+          + (f.kind === "slot" ? numField("slotLen", t("Slot length"), f.slotLen ?? { v: f.diameter.v * 2 }, "length") + numField("slotAngle", t("Slot angle"), f.slotAngle ?? { v: 0 }, "angle") : ""))
         + group(t("End condition"), sel("end", t("End condition"), [["blind", t("Blind")], ["through", t("Through all")], ["next", t("Up to next")], ["upto", t("Up to face or plane")]], f.end)
           + (f.end === "upto" ? hbox("hupto", t("Up to"), this.refLabel(f.upTo)) + `<p class="pm-help muted">${esc(t("Click a flat face or a plane in the view or the tree."))}</p>` : "")
           + (f.end === "next" ? `<p class="pm-help muted">${esc(t("Each hole stops where it leaves the material."))}</p>` : "")
           + (f.end === "blind" ? numField("depth", t("Depth"), f.depth, "length") + chk("flat", f.flat, t("Flat bottom (no drill point)")) : "")
+          // The thread's own end condition sits under the hole's, as in SolidWorks' End Condition box.
+          + (f.kind === "tapped" && f.end !== "blind" ? sel("threadEnd", t("Thread"), [["blind", t("Blind")], ["through", t("Through all")]], f.threadEnd ?? "blind") : "")
+          + (f.kind === "tapped" && !threadThrough(f) ? numField("threadDepth", t("Thread depth"), f.threadDepth ?? { v: f.diameter.v * 2 }, "length") : "")
           + chk("flip", f.flip, t("Reverse direction")))
         + group(t("Positions"), hbox("hplane", t("Face"), this.refLabel(f.plane)) + hbox("pts", t("Hole positions"), t("{n} hole|{n} holes", { n: f.pts.length }))
           + (f.pts.length ? `<ul class="pm-items pm-hpts" aria-label="${esc(t("Hole positions"))}">${f.pts.map((p, i) => `<li><span>${i + 1}</span>${holeAxes(this.last?.frames[f.id]).names.map((ax, j) => `<span class="pm-in"><span class="muted">${ax}</span><input type="text" inputmode="decimal" data-hp="${i}:${j}" value="${esc(trimNum(holeAxes(this.last?.frames[f.id]).show(p)[j] * UNITS[unit].f, 6))}" aria-label="${esc(t("Hole {n}", { n: i + 1 }))} ${ax}" spellcheck="false" /></span>`).join("")}<button class="icon" data-rmh="${i}" title="${esc(t("Remove"))}" aria-label="${esc(t("Remove"))} ${esc(t("Hole {n}", { n: i + 1 }))}">✕</button></li>`).join("")}</ul>` : "")
@@ -6801,6 +6803,7 @@ export class ModelController {
         }
         if (f.type === "fillet" && k === "multi") { upd(() => { if (val) { f.multi = true; delete f.variable; f.edges.forEach(e => { delete e.r2; delete e.at; }); } else { delete f.multi; f.edges.forEach(e => delete e.r); } }, true); return; }
         if (f.type === "fillet" && k === "variable") { upd(() => { if (val) { f.variable = true; delete f.multi; } else { delete f.variable; f.edges.forEach(e => { delete e.r; delete e.r2; delete e.at; }); } }, true); return; }
+        if (f.type === "hole" && k === "threadEnd") { upd(() => { if (val === "through") f.threadEnd = "through"; else { delete f.threadEnd; f.threadDepth ??= { v: Math.round((f.major ?? f.diameter.v) * 20) / 10 }; } }, true); return; }
         if (f.type === "thread" && k === "size") { upd(() => this.applyThreadSize(f, String(val) || undefined), true); return; }
         if (f.type === "hole" && (k === "kind" || k === "size" || k === "fit")) {
           upd(() => {
