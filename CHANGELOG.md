@@ -5,6 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.524.0] - 2026-11-11
+
+### Added
+- Hole Wizard panel: a picture of the hole cut in a plate (half section with the counterbore, countersinks, drill point and thread drawn to scale) and the callout it will get on a drawing, both updating as you change the values; the hole types are picture buttons; the panel has Type and Positions tabs as in SolidWorks (clicks in the view place holes from either tab), and Favourites fold away.
+
+
+
+
 ## [1.523.0] - 2026-11-11
 
 ### Added
@@ -3256,7 +3264,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.523.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.524.0...HEAD
+[1.524.0]: https://github.com/kothf/step-viewer/compare/v1.523.0...v1.524.0
 [1.523.0]: https://github.com/kothf/step-viewer/compare/v1.522.0...v1.523.0
 [1.522.0]: https://github.com/kothf/step-viewer/compare/v1.521.0...v1.522.0
 [1.521.0]: https://github.com/kothf/step-viewer/compare/v1.520.0...v1.521.0
