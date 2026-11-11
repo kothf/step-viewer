@@ -246,12 +246,12 @@ export function viewCurves(oc: any, shape: any, view: ViewDir): { circles: Circl
 }
 
 /**
- * Angular deflection of the fast views' mesh (rad). The chord error (1/1000 of the model) already bounds every
- * chord's sag; the angle only refines small round features below it (sag r·a²/8). 0.1 made them ~10 times finer than
- * needed: on the engine assembly 0.3 meshes in 1.8 s instead of 5.9 s and each polygonal HLR takes 1.0 s instead of
- * 2.2 s, and the Front view's visible lines agree within 0.6 mm (1.2 chord errors) for all but 0.1 % of their length.
+ * Angular deflection of the fast views' mesh (rad). 1.497.0 tried 0.3 (the chord error of 1/1000 of the model already
+ * bounds the sag, and the engine's Front view meshed 3 times faster), but OCCT's polygonal HLR then never returned on
+ * the engine's Top and Left views (drawings exam round five: Standard 3 views stuck at "2 to go"), so it is 0.1 again.
+ * `?drwangle=<rad>` still tries others.
  */
-export const FAST_ANGLE = 0.3;
+export const FAST_ANGLE = 0.1;
 
 /** The angle the fast views use: `FAST_ANGLE`, or `?drwangle=<rad>` sent by the client (to compare meshes on one build). */
 let fastAngle = FAST_ANGLE;
@@ -278,8 +278,8 @@ export function projectFast(oc: any, shape: any, view: ViewDir, lin: number, edg
   let p = poly(lin, fastAngle);
   const t1 = Date.now();
   // The polygonal HLR can come back empty (drawings exam round three: an engine assembly got views with no
-  // lines at all). Try again on a fresh mesh at the old finer angle, then on a coarser one (what the previews use).
-  const retries: [number, number][] = [[lin, 0.1], [lin * 10 / 3, 0.5]];
+  // lines at all). Try again on a fresh mesh at a finer angle, then on a coarser one (what the previews use).
+  const retries: [number, number][] = [[lin, fastAngle === 0.1 ? 0.05 : 0.1], [lin * 10 / 3, 0.5]];
   for (const [l, a] of retries) {
     if (p.vis.length) break;
     console.warn(`Fast view: the polygonal HLR gave ${p.hid.length} hidden and no visible lines${p.fail ? ` (${p.fail})` : ""}; trying a fresh mesh (${a} rad).`);

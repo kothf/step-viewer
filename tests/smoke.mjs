@@ -5281,7 +5281,7 @@ try {
     const auxBox = aux && await dp.evaluate(i => window.__sv.drw.placement(i).box.map(v => Math.round(v * 1000) / 1000), aux.id);
     check(edgeHi === 1 && aux && aux.letter === "C" && aux.look === -1 && Math.abs(aux.x - front.x) < 0.02 && aux.y > front.y && auxBox && Math.round(auxBox[2] - auxBox[0]) === 100 && Math.round(auxBox[3] - auxBox[1]) === 60,
       `drawing: auxiliary view C square to a picked edge, lined up with its parent (${JSON.stringify(aux && { x: aux.x, y: aux.y, look: aux.look })}, box ${auxBox})`);
-    // 1.510.0: an auxiliary view from a line drawn with Annotate ▸ Line over the top view (SolidWorks' sketched line), then undone.
+    // 1.511.0: an auxiliary view from a line drawn with Annotate ▸ Line over the top view (SolidWorks' sketched line), then undone.
     {
       const viewsBefore = vs.length;
       await dp.keyboard.press("Escape");
