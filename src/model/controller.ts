@@ -33,7 +33,7 @@ import { applyDir as tfDir, applyPoint as tfPoint, invert as tfInvert } from "..
 import { segPoints, solve3d } from "../sketch/sketch3d";
 import type { SkEnt, SketchPatternFeature, FeatureFolder, ThreadFeature, Sketch3dFeature, Sk3Rel, CurveFeature, SweepSurfFeature, SweepPath,
   AxisFeature, ChamferFeature, CsysFeature, CircularPatternFeature, EdgeRef, ExtrudeFeature, Feature, FeatureStatus, FilletFeature, ScaleFeature, Frame, LinearPatternFeature, LineRef,
-  GlobalVar, HelixFeature, LoftFeature, RibFeature, SplitFeature, FaceRef, RecognizedHole, ImportFeature, HealFeature, DomeFeature, HoleSink, HoleElem, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, UntrimSurfFeature, IntersectFeature, SweepFeature, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3, VertexRef,
+  GlobalVar, HelixFeature, LoftFeature, RibFeature, SplitFeature, FaceRef, RecognizedHole, ImportFeature, HealFeature, DomeFeature, WrapFeature, HoleSink, HoleElem, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, UntrimSurfFeature, IntersectFeature, SweepFeature, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3, VertexRef,
 } from "./types";
 import { hexRgb, toRef, type MatRef } from "../tools/materials";
 import { pickMaterial } from "../materialPicker";
@@ -237,7 +237,7 @@ function applyHoleSize(f: HoleFeature) {
 
 const DEFAULT_COLOR: V3 = [0.72, 0.75, 0.8];
 const STD_NAMES: Record<"XY" | "XZ" | "YZ", string> = { XY: "Top (XY)", XZ: "Front (XZ)", YZ: "Right (YZ)" };
-const ICONS: Record<string, string> = { sketch3d: "⟁", curve: "〰", sweepsurf: "⤼", helix: "∿", sweep: "⤳", loft: "⏢", rib: "⊿", split: "⊘", import: "⇩", combine: "⊕", indent: "⊔", intersect: "⧇", untrimsurf: "⬚", bsplit: "◨", delbody: "⊖", movebody: "⇲", moveface: "⇧", dome: "◓", delface: "⌫", planesurf: "▢", extsurf: "⊓", offsurf: "⫽", knit: "⧉", thicken: "▤", replaceface: "⇄", revsurf: "◠", loftsurf: "⏥", trimsurf: "✂", fillsurf: "◈", extendsurf: "⇱", scale: "⤢", thread: "≋", hole: "◎", sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", axis: "⟋", point: "✳", csys: "⊹", shell: "◫", draft: "◿", mirror: "⧎", lpattern: "⋯", cpattern: "✲", spattern: "⁘", part: "◆", material: "▦", ...SM_TREE_ICONS };
+const ICONS: Record<string, string> = { sketch3d: "⟁", curve: "〰", sweepsurf: "⤼", helix: "∿", sweep: "⤳", loft: "⏢", rib: "⊿", split: "⊘", import: "⇩", combine: "⊕", indent: "⊔", intersect: "⧇", untrimsurf: "⬚", bsplit: "◨", delbody: "⊖", movebody: "⇲", moveface: "⇧", dome: "◓", wrap: "◍", delface: "⌫", planesurf: "▢", extsurf: "⊓", offsurf: "⫽", knit: "⧉", thicken: "▤", replaceface: "⇄", revsurf: "◠", loftsurf: "⏥", trimsurf: "✂", fillsurf: "◈", extendsurf: "⇱", scale: "⤢", thread: "≋", hole: "◎", sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", axis: "⟋", point: "✳", csys: "⊹", shell: "◫", draft: "◿", mirror: "⧎", lpattern: "⋯", cpattern: "✲", spattern: "⁘", part: "◆", material: "▦", ...SM_TREE_ICONS };
 const BASES = [...SM_BASES, "Revolve cut", "Sketch", "Extrude", "Cut", "Revolve", "Fillet", "Chamfer", "Plane", "Axis", "Point", "Coordinate system", "Shell", "Draft", "Mirror", "LPattern", "CirPattern", "Hole", "Thread", "Cut-Sweep", "Cut-Loft", "Helix", "Sweep", "Loft", "Rib", "Split Line", "Combine", "Split", "Body-Delete/Keep", "Body-Move/Copy", "Imported", "Scale", "DeleteFace", "MoveFace", "Surface-Plane", "Surface-Extrude", "Surface-Offset", "Surface-Knit", "Thicken", "ReplaceFace", "Surface-Revolve", "Surface-Loft", "Surface-Trim", "Structural Member", "Trim/Extend", "End cap", "Gusset", "Fillet Bead", "SketchPattern", "TablePattern"];
 
 const d3v = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
@@ -1041,7 +1041,7 @@ export class ModelController {
   }
 
   /** Extrude / Cut / Revolve / Fillet / Chamfer: opens the property panel with a draft. */
-  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "spattern" | "tpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "rib" | "split" | "combine" | "indent" | "intersect" | "bsplit" | "delbody" | "movebody" | "scale" | "delface" | "moveface" | "dome" | "heal" | "smbase" | "smloft" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smrelief" | "smgusset" | "smcross" | "smvent" | "smcut" | "smconvert" | "sminsert" | "smform" | "smunfold" | "smfold" | "smmiter" | "smswept" | "smtabslot" | "smrip" | CurveTool | SurfTool | WeldTool) {
+  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "spattern" | "tpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "rib" | "split" | "combine" | "indent" | "intersect" | "bsplit" | "delbody" | "movebody" | "scale" | "delface" | "moveface" | "dome" | "wrap" | "heal" | "smbase" | "smloft" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smrelief" | "smgusset" | "smcross" | "smvent" | "smcut" | "smconvert" | "sminsert" | "smform" | "smunfold" | "smfold" | "smmiter" | "smswept" | "smtabslot" | "smrip" | CurveTool | SurfTool | WeldTool) {
     if (!this.store) return;
     // Starting a feature from inside a sketch exits the sketch and uses it (FR-SK-004).
     const fromSketch = this.mode.kind === "sketch" ? this.mode.id : null;
@@ -1061,7 +1061,7 @@ export class ModelController {
     const refEdge = type === "axis" || type === "point" ? this.pickedEdge() : null;
     const refFace = type === "axis" || type === "point" ? this.pickedFace() : null;
     const csysEdge = type === "csys" ? this.pickedEdge() : null;
-    const shellFace = type === "shell" || type === "hole" || type === "draft" || type === "delface" || type === "moveface" || type === "dome" || type === "offsurf" || type === "knit" || type === "thicken" || type === "replaceface" || type === "trimsurf" || type === "fillsurf" || type === "extendsurf" || type === "untrimsurf" ? this.pickedFace() : null;
+    const shellFace = type === "shell" || type === "hole" || type === "draft" || type === "delface" || type === "moveface" || type === "dome" || type === "wrap" || type === "offsurf" || type === "knit" || type === "thicken" || type === "replaceface" || type === "trimsurf" || type === "fillsurf" || type === "extendsurf" || type === "untrimsurf" ? this.pickedFace() : null;
     const weldFace = WELD_TOOL_SET.has(type) ? this.pickedFace() : null;
     const seedSel = this.selected && SEED_TYPES.has(this.store.feature(this.selected)?.type ?? "") ? this.selected : null;
     this.exitMode(false);
@@ -1135,6 +1135,13 @@ export class ModelController {
         : type === "delbody" ? { id, type, name: nm, bodies: [] } satisfies DeleteBodyFeature
         : type === "scale" ? { id, type, name: nm, bodies: [], about: "centroid", factor: { v: 1 } } satisfies ScaleFeature
         : { id, type, name: nm, bodies: [], dx: { v: 0 }, dy: { v: 0 }, dz: { v: 0 } } satisfies MoveBodyFeature;
+    } else if (type === "wrap") {
+      if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
+      // The selected closed sketch, else the last unused one; the picked round face (SolidWorks: sketch, then Wrap).
+      const sel = this.selected ? sketches.find(s => s.id === this.selected && sketchProfileOk(s)) : undefined;
+      const sk = sel ?? sketches.filter(s => !used.has(s.id) && sketchProfileOk(s)).at(-1);
+      const fr = shellFace != null && this.host.viewer.parts[0]?.data.faces[shellFace]?.type === "cylinder" ? this.faceRef(shellFace) : null;
+      draft = { id, type: "wrap", name: nextName(d, "wrap"), sketch: sk?.id ?? "", kind: "emboss", depth: { v: 1 }, ...(fr ? { face: fr } : {}) } satisfies WrapFeature;
     } else if (type === "split") {
       if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
       const hasCurves = (s: SketchFeature) => s.ents.some(e => !e.cons && e.t !== "point");
@@ -1224,7 +1231,7 @@ export class ModelController {
     this.recallOptions(type, draft);
     // The flat pattern stays last (SolidWorks): new features go in before it.
     const index = d.features[end - 1]?.type === "smflat" ? end - 1 : end;
-    const focus: Focus | undefined = type === "plane" ? "base" : type === "shell" || type === "delface" || type === "moveface" || type === "dome" || type === "offsurf" ? "faces" : type === "trimsurf" ? ((draft as TrimSurfFeature).surface ? "ttool" : "tsurf") : type === "draft" ? ((draft as DraftFeature).plane ? "faces" : "nplane") : type === "hole" ? ((draft as HoleFeature).plane ? "pts" : "hplane")
+    const focus: Focus | undefined = type === "plane" ? "base" : type === "shell" || type === "delface" || type === "moveface" || type === "dome" || type === "offsurf" || (type === "wrap" && !(draft as WrapFeature).face) ? "faces" : type === "trimsurf" ? ((draft as TrimSurfFeature).surface ? "ttool" : "tsurf") : type === "draft" ? ((draft as DraftFeature).plane ? "faces" : "nplane") : type === "hole" ? ((draft as HoleFeature).plane ? "pts" : "hplane")
       : type === "mirror" ? ((draft as MirrorFeature).features.length ? "mplane" : "seeds")
       : type === "lpattern" || type === "cpattern" ? ((draft as CopyFeature).features.length ? "dir" : "seeds")
       : type === "spattern" ? ((draft as SketchPatternFeature).sketch || (draft as CopyFeature).features.length ? "seeds" : "psketch")
@@ -1399,6 +1406,8 @@ export class ModelController {
     if ((f.type === "delbody" || f.type === "movebody") && !f.bodies.length) { toast(t("Pick the bodies."), true); return; }
     if ((f.type === "delface" || f.type === "moveface" || f.type === "dome") && !f.faces.length) { toast(t("Pick the faces."), true); return; }
     if (f.type === "split" && !f.sketch) { toast(t("Pick the sketch to project."), true); return; }
+    if (f.type === "wrap" && !f.sketch) { toast(t("Pick a sketch."), true); return; }
+    if (f.type === "wrap" && !f.face) { toast(t("Pick the round face to wrap onto."), true); return; }
     if ((f.type === "planesurf" || f.type === "extsurf") && !f.sketch) { toast(t("Pick a sketch."), true); return; }
     if (f.type === "offsurf" && !f.faces.length) { toast(t("Pick the faces."), true); return; }
     if (f.type === "knit" && f.surfaces.length < (f.solid ? 1 : 2)) { toast(t("Pick two or more surface bodies."), true); return; }
@@ -2418,7 +2427,7 @@ export class ModelController {
       } else if (m.kind === "feature" && (m.draft.type === "axis" || m.draft.type === "point")) this.pickRefGeometry(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "csys") this.pickCsys(e, m.draft);
       else if (m.kind === "feature" && isBodyOp(m.draft)) this.pickBody(e);
-      else if (m.kind === "feature" && (m.draft.type === "shell" || m.draft.type === "draft" || m.draft.type === "split" || m.draft.type === "delface" || m.draft.type === "moveface" || m.draft.type === "dome" || m.draft.type === "offsurf" || isCopy(m.draft))) this.pickCopy(e);
+      else if (m.kind === "feature" && (m.draft.type === "shell" || m.draft.type === "draft" || m.draft.type === "split" || m.draft.type === "delface" || m.draft.type === "moveface" || m.draft.type === "dome" || m.draft.type === "wrap" || m.draft.type === "offsurf" || isCopy(m.draft))) this.pickCopy(e);
       else if (m.kind === "feature" && (m.draft.type === "knit" || m.draft.type === "thicken" || m.draft.type === "replaceface" || m.draft.type === "trimsurf" || m.draft.type === "fillsurf" || m.draft.type === "extendsurf" || m.draft.type === "untrimsurf")) this.pickSurface(e);
       else if (m.kind === "feature" && isWeldFeature(m.draft)) { m.focus = weldPick(this.weldCtx(m.index), e, m.draft, m.focus) as Focus | undefined; this.draftChanged(); }
       else if (m.kind === "feature" && m.draft.type === "hole") this.pickHole(e, m.draft);
@@ -3662,10 +3671,17 @@ export class ModelController {
       this.draftChanged();
       return;
     }
-    if (f.type === "shell" || f.type === "draft" || f.type === "split" || f.type === "delface" || f.type === "moveface" || f.type === "dome" || f.type === "offsurf") {
+    if (f.type === "shell" || f.type === "draft" || f.type === "split" || f.type === "delface" || f.type === "moveface" || f.type === "dome" || f.type === "wrap" || f.type === "offsurf") {
       const hit = this.host.faceAt(e.clientX, e.clientY);
       const fr = hit ? this.faceRef(hit.faceId) : null;
       if (!fr || own(fr.name)) { toast(t("Pick a face.")); return; }
+      if (f.type === "wrap") {
+        if (this.host.viewer.parts[0]?.data.faces[hit!.faceId]?.type !== "cylinder") { toast(t("Pick a cylindrical face.")); return; }
+        f.face = fr;
+        m.focus = undefined;
+        this.draftChanged();
+        return;
+      }
       if (f.type === "shell" && m.focus === "mthick") {
         // Multi-thickness (FR-FT-060): a click toggles a face with its own wall thickness.
         const list = (f.multi ??= []);
@@ -4507,6 +4523,7 @@ export class ModelController {
       case "shell": return [{ focus: "faces", label: t("Faces to remove"), faces: d.faces }, ...(d.multi?.length ? [{ focus: "mthick", label: t("Multi-thickness settings"), faces: d.multi.map(x => ({ name: x.name, ...(x.hint ? { hint: x.hint } : {}) })) }] : [])];
       case "delface": case "moveface": case "dome": case "offsurf": case "replaceface": case "split":
         return [{ focus: "faces", label: t("Faces"), faces: d.faces }];
+      case "wrap": return [{ focus: "faces", label: t("Face"), faces: d.face ? [d.face] : [] }];
       // End and start references (AT-UX-6): the target face in the Up to box's colour, named by its tag.
       case "extrude": return [
         ...(d.start === "surface" ? [{ focus: "start", label: t("Start at"), faces: pf(d.startRef) }] : []),
@@ -6245,7 +6262,7 @@ export class ModelController {
         break;
       case "exit": this.ok(); break;
       case "sketch": this.noteRecent(c); this.startSketch(); break;
-      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "spattern": case "tpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "indent": case "intersect": case "bsplit": case "delbody": case "movebody": case "scale": case "delface": case "moveface": case "dome": case "heal": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": case "revsurf": case "loftsurf": case "trimsurf": case "fillsurf": case "extendsurf": case "untrimsurf": case "sweepsurf": case "xyzcurve": case "compcurve": case "projcurve": case "sketch3d": case "member": case "trimext": case "endcap": case "gusset": case "weldbead": this.lastCmd = this.activeCmd = c; this.noteRecent(c); this.startFeature(c); break;
+      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "spattern": case "tpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "indent": case "intersect": case "bsplit": case "delbody": case "movebody": case "scale": case "delface": case "moveface": case "dome": case "wrap": case "heal": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": case "revsurf": case "loftsurf": case "trimsurf": case "fillsurf": case "extendsurf": case "untrimsurf": case "sweepsurf": case "xyzcurve": case "compcurve": case "projcurve": case "sketch3d": case "member": case "trimext": case "endcap": case "gusset": case "weldbead": this.lastCmd = this.activeCmd = c; this.noteRecent(c); this.startFeature(c); break;
       case "cutlist": if (m.kind === "sketch") this.ok(); this.cutList(); break;
       case "import": if (m.kind === "sketch") this.ok(); this.importBodyFile(); break;
       case "smbase": case "smloft": case "smflange": case "smhem": case "smbend": case "smjog": case "smcorner": case "smclosed": case "smrelief": case "smgusset": case "smcross": case "smvent": case "smcut": case "smconvert": case "sminsert": case "smform": case "smunfold": case "smfold": case "smmiter": case "smswept": case "smtabslot": case "smrip": this.startFeature(c); break;
@@ -7099,6 +7116,16 @@ export class ModelController {
         + group(t("Faces to dome"), `<p class="pm-count">${esc(t("{n} face|{n} faces", { n: f.faces.length }))}</p>`
           + (f.faces.length ? `<button class="btn small" data-k="clearFaces">${esc(t("Clear faces"))}</button>` : "")
           + `<p class="pm-help muted">${esc(t("Click flat faces to dome; click a face again to remove it. A round face gets a spherical cap, or an elliptical one."))}</p>`);
+    }
+    if (f.type === "wrap") {
+      title = t("Wrap");
+      const sel = (k: string, label: string, opts: [string, string][], cur: string) => `<label class="pm-field"><span>${esc(label)}</span><select data-k="${k}">${opts.map(([v, l]) => `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;
+      const closed = sketches.filter(s => sketchProfileOk(s) || s.id === f.sketch);
+      body = group(t("Wrap type"), sel("kind", t("Type"), [["emboss", t("Emboss")], ["deboss", t("Deboss")]], f.kind))
+        + group(t("Wrap parameters"), `<div class="pm-field"><span>${esc(t("Face"))}</span><button class="pm-box${m.focus === "faces" ? " focus" : ""}" data-focus="faces" translate="no">${esc(f.face ? this.refLabel({ face: f.face }) : t("None"))}</button></div>`
+          + sel("sketch", t("Source sketch"), [...(f.sketch ? [] : [["", t("None")] as [string, string]]), ...closed.map(s => [s.id, featureLabel(s.name)] as [string, string])], f.sketch)
+          + numField("depth", t("Depth"), f.depth, "length"))
+        + `<p class="pm-help muted">${esc(t("Sketch closed shapes on a plane parallel to the cylinder's axis, then pick the round face: the shapes wrap around it without stretching and stand out of it (emboss) or sink into it (deboss)."))}</p>`;
     }
     if (f.type === "delface" || f.type === "moveface") {
       title = f.type === "delface" ? t("Delete Face") : t("Move Face");
@@ -9014,7 +9041,7 @@ function absorbs(g: Feature, sketch: string): boolean {
   if (g.type === "sweepsurf") return g.profile === sketch || onPath(g.path);
   if (g.type === "curve") return g.sketch === sketch;
   if (g.type === "loft") return g.profiles.includes(sketch) || onPath(g.centerline) || (g.guides ?? []).some(onPath);
-  if (g.type === "rib" || g.type === "split" || g.type === "planesurf" || g.type === "extsurf" || g.type === "spattern") return g.sketch === sketch;
+  if (g.type === "rib" || g.type === "split" || g.type === "wrap" || g.type === "planesurf" || g.type === "extsurf" || g.type === "spattern") return g.sketch === sketch;
   if (g.type === "member") return g.profile === "sketch" && g.psketch === sketch;
   return false;
 }
@@ -9043,7 +9070,7 @@ const CM_FLY: Record<string, string[]> = {
   pattern: ["lpattern", "cpattern", "mirror", "spattern", "tpattern"],
   plane: ["plane", "axis", "point", "csys", "extrefs"],
   curves: ["helix", "sketch3d", "xyzcurve", "compcurve", "projcurve", "split"],
-  bodies: ["import", "heal", "combine", "indent", "dome", "intersect", "bsplit", "movebody", "delbody", "scale"],
+  bodies: ["import", "heal", "combine", "indent", "dome", "wrap", "intersect", "bsplit", "movebody", "delbody", "scale"],
   direct: ["moveface", "delface", "recall", "recognize", "recblend", "recext"],
 };
 
@@ -9064,6 +9091,7 @@ const P3_TOOLS = (): [string, string, string][] => [
   ["combine", t("Combine"), t("Combine bodies: add, subtract or keep the common part")],
   ["indent", t("Indent"), t("Indent: a body takes the shape of tool bodies pressed into it, with a wall or as a cut")],
   ["dome", t("Dome"), t("Dome: a flat face bulges out (or in) by a distance, round faces as a spherical or elliptical cap")],
+  ["wrap", t("Wrap"), t("Wrap: a closed sketch wrapped round a cylindrical face, raised (emboss) or sunk (deboss)")],
   ["intersect", t("Intersect"), t("Intersect: solids and surfaces cut each other into regions; keep the ones you want")],
   ["bsplit", t("Split"), t("Split bodies with a plane into separate bodies")],
   ["movebody", t("Body-Move/Copy"), t("Move or copy bodies: translate and rotate")],
@@ -9128,6 +9156,7 @@ const ICON_SVG: Record<string, string> = {
   scale: S('<path d="M2 14V8h6v6z"/><path d="M8 8l6-6M10 2h4v4"/>'),
   delbody: S('<path d="M3 5h10v9H3z"/><path d="M5 7l6 6M11 7l-6 6"/>'),
   dome: S('<path d="M2 13h12v-3H2z"/><path d="M3 10a5 4 0 0 1 10 0"/>'),
+  wrap: S('<ellipse cx="8" cy="3.5" rx="5" ry="1.5"/><path d="M3 3.5v9c0 .8 2.2 1.5 5 1.5s5-.7 5-1.5v-9"/><path d="M6 7h4v4H6z"/>'),
   moveface: S('<path d="M2 8h9v6H2z"/><path d="M6 8V3M4 5l2-2 2 2"/><path d="M2 8l3-3h9l-3 3M14 5v6l-3 3"/>'),
   heal: S('<path d="M3 13l7-7 3 3-7 7H3z"/><path d="M9 3l4 4M12 2l2 2"/>'),
   recognize: S('<path d="M2 5h12v8H2z"/><circle cx="8" cy="9" r="2.2"/><path d="M5 2l-2 2M11 2l2 2"/>'),

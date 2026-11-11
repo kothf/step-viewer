@@ -9632,6 +9632,31 @@ try {
     await mp.click("#mc-ok");
     await settle();
     check(rp.title === "Replace Face" && Math.abs(rp.v - 100 * 60 * 25) < 1 && !rp.bad, `model: Replace Face grows the body to a surface (FR-FT-101) (${JSON.stringify(rp)})`);
+    // Wrap (Bodies ▾, FR-FT-104): a 12 × 8 rectangle on the front plane wrapped onto a Ø20 shaft, 1 mm proud, then sunk.
+    await mp.evaluate(() => window.__sv.model.store.change("Shaft", d => {
+      const P = (k, x, y) => ({ id: `w${k}`, t: "point", x, y });
+      d.features = [
+        { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "c0", t: "point", x: 0, y: 0 }, { id: "c1", t: "circle", c: "c0", r: 10 }] },
+        { id: "f1", type: "extrude", name: "Boss-Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 30 } },
+        { id: "s2", type: "sketch", name: "Sketch2", plane: { std: "XZ" }, rels: [], dims: [], ents: [P(1, -6, 11), P(2, 6, 11), P(3, 6, 19), P(4, -6, 19), { id: "wl1", t: "line", a: "w1", b: "w2" }, { id: "wl2", t: "line", a: "w2", b: "w3" }, { id: "wl3", t: "line", a: "w3", b: "w4" }, { id: "wl4", t: "line", a: "w4", b: "w1" }] }];
+    }));
+    await settle();
+    await runCmd(mp, "Wrap");
+    await settle();
+    const wpm = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, sketch: window.__sv.model.mode().draft.sketch, focus: document.querySelector("#mc-pm .pm-box.focus")?.dataset.focus ?? null }));
+    await mp.evaluate(() => { const m = window.__sv.model, f = m.mode().draft; f.face = { name: "f1:side:c1" }; m.panel(); void m.rebuild(); });
+    await settle();
+    const wv = await mp.evaluate(() => ({ v: window.__sv.model.last().props.volume, bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";") }));
+    await mp.selectOption('#mc-pm select[data-k="kind"]', "deboss");
+    await settle();
+    const wd = await mp.evaluate(() => ({ v: window.__sv.model.last().props.volume, bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";") }));
+    await mp.click("#mc-ok");
+    await settle();
+    const wfin = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.at(-1); return { type: f.type, kind: f.kind, name: f.name }; });
+    const shaft = Math.PI * 100 * 30;
+    check(wpm.title === "Wrap" && wpm.sketch === "s2" && wpm.focus === "faces" && Math.abs(wv.v - (shaft + 100.8)) < 0.5 && !wv.bad && Math.abs(wd.v - (shaft - 91.2)) < 0.5 && !wd.bad
+      && wfin.type === "wrap" && wfin.kind === "deboss" && wfin.name === "Wrap1",
+      `model 1.548: Wrap embosses and debosses a sketch on a shaft (FR-FT-104) (${JSON.stringify({ wpm, wv, wd, wfin })})`);
     await ctx.close();
   }
 

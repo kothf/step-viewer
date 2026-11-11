@@ -11,7 +11,7 @@
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { V2, SkEnt } from "../model/types";
-import type { DomeFeature, HealFeature, RecognizedHole, RecognizedBlends, SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, PatternSpot, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, ChamferFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, HoleSink, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
+import type { WrapFeature, DomeFeature, HealFeature, RecognizedHole, RecognizedBlends, SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, PatternSpot, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, ChamferFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, HoleSink, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
 import { dir2Apart, dir2Feature, threadThrough, holeExits, headKind } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { recognizedHoleFeatures, TAPER } from "../model/holes";
@@ -19,6 +19,7 @@ import { advProfile, captiveStack } from "../model/advHole";
 import { ctxFrame } from "../model/context";
 import { loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 import { splineBezierN } from "../sketch/spline";
+import { segSpline } from "../sketch/wrap";
 import { chain3d } from "../sketch/sketch3d";
 import { applyExt, piercePoint, projectEdge, uvOf, type ModelEdge } from "../sketch/external";
 import { solve } from "../sketch/solver";
@@ -1631,6 +1632,108 @@ export class Modeller {
       // The patch's edges are the face's own, so the tool shares the face exactly: GlueShift handles that.
       body = this.bool(f.flip ? "cut" : "fuse", rest, named, f.id, !circ);
     });
+    return body;
+  }
+
+  /**
+   * Wrap (FR-FT-104): the sketch's regions mapped onto the cylinder without stretching (across the axis,
+   * the sketch distance becomes arc length; along it, distance stays), as faces on the cylinder made from
+   * exact 2D B-splines in its (angle, height) parameters (`segSpline`: the map is affine, so the poles move
+   * exactly), thickened square to the surface and fused (emboss) or cut (deboss).
+   */
+  private wrap(f: WrapFeature, doc: PartDoc, prev: Named | null, frames: Record<string, Frame>): Named {
+    const oc = this.oc;
+    if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
+    if (!f.face) throw new FeatureError("E-WRAP-FACE", "Pick the round face to wrap onto.");
+    const { sk, frame } = this.sketchOf(f.sketch, doc, prev, frames, "a sketch to wrap");
+    const face = this.resolveFace(prev, f.face);
+    const ad = new oc.BRepAdaptor_Surface_2(face, true);
+    if (ad.GetType() !== oc.GeomAbs_SurfaceType.GeomAbs_Cylinder) throw new FeatureError("E-WRAP-CYL", "Wrap works on cylindrical faces.");
+    const cy = ad.Cylinder(), r = cy.Radius();
+    const o = this.xyz(cy.Location());
+    let d = unit(this.xyz(cy.Axis().Direction()));
+    if (Math.abs(dot(frame.n, d)) > 1e-6) throw new FeatureError("E-WRAP-PLANE", "The sketch plane must be parallel to the cylinder's axis.");
+    const h = f.depth.v;
+    if (!(h > 1e-6)) throw new FeatureError("E-FT-ZERO", "The depth must be more than 0.");
+    // Material lies inside a shaft's face, outside a hole's.
+    const mid = (() => {
+      const u = (ad.FirstUParameter() + ad.LastUParameter()) / 2, v = (ad.FirstVParameter() + ad.LastVParameter()) / 2;
+      const p = new oc.gp_Pnt_1(), du = new oc.gp_Vec_1(), dv = new oc.gp_Vec_1();
+      ad.D1(u, v, p, du, dv);
+      return { p: this.xyz(p), n: cross(this.xyz(du), this.xyz(dv)) };
+    })();
+    const rel0 = add(mid.p, mul(o, -1));
+    const shaft = (dot(mid.n, add(rel0, mul(d, -dot(rel0, d)))) > 0) !== (face.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED);
+    if (f.kind === "deboss" && shaft && h >= r) throw new FeatureError("E-WRAP-DEEP", "The depth must be less than the radius.");
+    // u0 points from the axis towards the sketch plane; angles grow towards e = d × u0.
+    const nPerp = unit(add(frame.n, mul(d, -dot(frame.n, d))));
+    const u0 = dot(add(frame.o, mul(o, -1)), nPerp) < 0 ? mul(nPerp, -1) : nPerp;
+    let e = cross(d, u0);
+    // Keep the sketch's handedness in (angle, height), so outer loops stay counter-clockwise: the face's axis may point either way.
+    if (dot(frame.x, e) * dot(frame.y, d) - dot(frame.y, e) * dot(frame.x, d) < 0) { d = mul(d, -1); e = cross(d, u0); }
+    // The surface's angle 0 faces away from the sketch, so the wrapped shapes sit round angle π, clear of the seam.
+    const S = new oc.Handle_Geom_Surface_2(new oc.Geom_CylindricalSurface_1(new oc.gp_Ax3_3(this.P(o), this.D(d), this.D(mul(u0, -1))), r));
+    const uv = (q: V2): V2 => { const P = add(this.w(frame, q), mul(o, -1)); return [Math.PI + dot(P, e) / r, dot(P, d)]; };
+    const edgeOf = (sg: Seg) => {
+      const sp = segSpline(sg), n = sp.poles.length;
+      const poles = new oc.TColgp_Array1OfPnt2d_2(1, n), wts = new oc.TColStd_Array1OfReal_2(1, n);
+      sp.poles.forEach((q, i) => { const m = uv(q); poles.SetValue(i + 1, new oc.gp_Pnt2d_3(m[0], m[1])); wts.SetValue(i + 1, sp.w[i]); });
+      const knots = new oc.TColStd_Array1OfReal_2(1, sp.knots.length), mults = new oc.TColStd_Array1OfInteger_2(1, sp.knots.length);
+      sp.knots.forEach((k, i) => { knots.SetValue(i + 1, k); mults.SetValue(i + 1, sp.mults[i]); });
+      const c2 = new oc.Geom2d_BSplineCurve_2(poles, wts, knots, mults, sp.deg, false);
+      const ed = new oc.BRepBuilderAPI_MakeEdge_30(new oc.Handle_Geom2d_Curve_2(c2), S).Edge();
+      oc.BRepLib.BuildCurves3d_2(ed);
+      return ed;
+    };
+    const wireOf = (loop: Seg[]) => {
+      const mk = new oc.BRepBuilderAPI_MakeWire_1();
+      for (const sg of loop) mk.Add_1(edgeOf(sg));
+      if (!mk.IsDone()) throw new FeatureError("E-WRAP-FAIL", "The sketch could not be wrapped.");
+      return mk.Wire();
+    };
+    const prof = sketchProfile(sk);
+    if (prof.error || !prof.faces.length) throw new FeatureError("E-WRAP-PROFILE", "The sketch must have closed regions to wrap.");
+    const out = shaft === (f.kind === "emboss") ? 1 : -1;
+    const tools: Named[] = [];
+    prof.faces.forEach((pf, k) => {
+      const mk = new oc.BRepBuilderAPI_MakeFace_21(S, wireOf(pf.outer), true);
+      for (const hl of pf.holes) mk.Add(wireOf(hl));
+      if (!mk.IsDone()) throw new FeatureError("E-WRAP-FAIL", "The sketch could not be wrapped.");
+      const fix = new oc.ShapeFix_Face_2(mk.Face());
+      fix.Perform();
+      const wf = oc.TopoDS.Face_1(fix.Face());
+      // Thicken square to the cylinder; the sign that moves the solid the right way (out or in): its centroid lies
+      // further from the axis than the wrapped face's own (which is inside the radius when the face goes round).
+      const fp = new oc.GProp_GProps_1();
+      oc.BRepGProp.SurfaceProperties_1(wf, fp, false, false);
+      const radOf = (c: V3) => { const rel = add(c, mul(o, -1)); return Math.hypot(...add(rel, mul(d, -dot(rel, d)))); };
+      const rf = radOf(this.xyz(fp.CentreOfMass()));
+      let solid: any = null;
+      for (const sgn of [1, -1]) {
+        const th = new oc.BRepOffsetAPI_MakeThickSolid();
+        try { th.MakeThickSolidBySimple(wf, sgn * h); } catch { continue; }
+        if (!th.IsDone()) continue;
+        const sh = th.Shape();
+        const props = new oc.GProp_GProps_1();
+        oc.BRepGProp.VolumeProperties_1(sh, props, false, false, false);
+        if ((radOf(this.xyz(props.CentreOfMass())) - rf) * out > 0) { solid = sh; break; }
+      }
+      if (!solid) throw new FeatureError("E-WRAP-FAIL", "The sketch could not be wrapped.");
+      if (this.volume(solid) < 0) solid = solid.Reversed();
+      const faces = this.sub(solid, "FACE");
+      let q = 0;
+      tools.push({ shape: solid, faces, names: faces.map(x => {
+        const a = new oc.BRepAdaptor_Surface_2(x, true);
+        if (a.GetType() === oc.GeomAbs_SurfaceType.GeomAbs_Cylinder) {
+          const rr = a.Cylinder().Radius();
+          if (Math.abs(rr - r) < 1e-6 * (1 + r)) return `${f.id}:base:${k}`;
+          if (Math.abs(rr - (r + out * h)) < 1e-6 * (1 + r)) return `${f.id}:top:${k}`;
+        }
+        return `${f.id}:side:${k}:${q++}`;
+      }) });
+    });
+    let body = prev;
+    for (const t of tools) body = this.bool(f.kind === "emboss" ? "fuse" : "cut", body, t, f.id, true);
     return body;
   }
 
@@ -6009,6 +6112,7 @@ export class Modeller {
           else if (f.type === "intersect") ({ body, sheets } = this.intersect(f, body, sheets));
           else if (f.type === "moveface") body = this.moveFaces(f, body, frames);
           else if (f.type === "dome") body = this.dome(f, body);
+          else if (f.type === "wrap") body = this.wrap(f, doc, body, frames);
           else if (f.type === "planesurf") sheets = this.planeSurf(f, doc, body, sheets, frames);
           else if (f.type === "extsurf") sheets = this.extSurf(f, doc, body, sheets, frames);
           else if (f.type === "offsurf") sheets = this.offSurf(f, body, sheets);
