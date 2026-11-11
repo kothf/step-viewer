@@ -1001,7 +1001,7 @@ try {
     check(col.cls && col.w > w0 + 200 && col.exp === "false" && kept && back && dur > 0 && dur < 200, `ui: Ctrl+[ / hamburger collapse the layer panel (${dur} ms), state kept after reload`);
 
     // Header: active file name and a status badge with a text alternative.
-    const hdr = await pg.evaluate(() => ({ name: document.querySelector("#doc-name").textContent, st: document.querySelector("#doc-status").dataset.state, label: document.querySelector("#doc-status").getAttribute("aria-label") }));
+    const hdr = await pg.evaluate(() => ({ name: document.querySelector("#doc").textContent, st: document.querySelector("#doc-status").dataset.state, label: document.querySelector("#doc-status").getAttribute("aria-label") }));
     check(/board/.test(hdr.name) && hdr.st === "ready" && /Status/.test(hdr.label), `ui: header shows the open file and its status (${JSON.stringify(hdr)})`);
 
     // Pin a measurement so the list, the readout card and all controls are on screen for the audits.
@@ -1665,7 +1665,7 @@ try {
     await mp.waitForSelector("#name-dlg[open]");
     const [dlPart] = await Promise.all([mp.waitForEvent("download"), mp.keyboard.press("Enter")]);
     const partBytes = await readFile(await dlPart.path());
-    const saved = await mp.evaluate(() => ({ dirty: window.__sv.model.store.dirty, doc: document.querySelector("#doc-name").textContent }));
+    const saved = await mp.evaluate(() => ({ dirty: window.__sv.model.store.dirty, doc: document.querySelector("#doc").textContent }));
     check(/Part1\.mcadprt$/.test(dlPart.suggestedFilename()) && partBytes.readUInt32LE(0) === 0x04034b50 && !saved.dirty && !/•/.test(saved.doc), `model: Save writes ${dlPart.suggestedFilename()} (${partBytes.length} bytes, a zip) and clears the unsaved mark`);
     const [dlStep] = await Promise.all([mp.waitForEvent("download"), mp.click('[data-c="step"]')]);
     const stepBack = readStep(await readFile(await dlStep.path()));
@@ -1675,7 +1675,7 @@ try {
       const prev = window.showSaveFilePicker;
       window.showSaveFilePicker = async () => ({ name: "bracket.mcadprt", createWritable: async () => ({ write: async () => {}, close: async () => {} }) });
       try { await window.__sv.modeller.save(true); } finally { window.showSaveFilePicker = prev; }
-      return { name: window.__sv.model.store.doc.name, dirty: window.__sv.model.store.dirty, title: document.querySelector("#doc-name").textContent };
+      return { name: window.__sv.model.store.doc.name, dirty: window.__sv.model.store.dirty, title: document.querySelector("#doc").textContent };
     });
     check(saveAs.name === "bracket" && !saveAs.dirty && /bracket\.mcadprt$/.test(saveAs.title), `model: Save as names the part after its file (${JSON.stringify(saveAs)})`);
     await mp.goto(`${origin}/index.html?debug`);
@@ -1706,7 +1706,7 @@ try {
     await mp.click('#mc-snaps [data-snap-copy="0"]');
     await mp.waitForFunction(id => window.__sv.model.store.doc.id !== id, idBefore);
     await idle();
-    const copy = await mp.evaluate(() => ({ name: document.querySelector("#doc-name").textContent, n: window.__sv.model.store.doc.features.length }));
+    const copy = await mp.evaluate(() => ({ name: document.querySelector("#doc").textContent, n: window.__sv.model.store.doc.features.length }));
     check(snapRows >= 1 && near(restored.v, v30, 1e-3) && restored.n === 5 && /\(copy\)/.test(copy.name) && copy.n === 5, `model 1.44: save snapshots, Restore and Open as copy (${snapRows} rows, ${restored.v}, ${JSON.stringify(copy)})`);
     // Autosave journal: an unsaved change is offered after a reload.
     await mp.evaluate(() => { const ex = window.__sv.model.store.doc.features.find(f => f.type === "extrude"); window.__sv.model.store.change("Rename", d => { d.features.find(f => f.id === ex.id).name = "Base"; }); });
@@ -2365,6 +2365,64 @@ try {
       }, arcsBefore);
       check(arcMode === true && back === false && ta.arc && Math.abs(ta.r - 3) < 0.05 && Math.abs(ta.r2 - 3) < 0.05 && Math.abs(ta.c[0] - 101) < 0.05 && Math.abs(ta.c[1] - 41) < 0.05 && ta.tan >= 1 && ta.status === "ok",
         `model 1.507: A in the line tool draws a tangent arc, then lines go on tangent to it (FR-SK-011) (${arcMode}, ${back}, ${JSON.stringify(ta)})`);
+      await tool("select");
+    }
+    // 1.513.0 (FR-SK-015): the Tangent Arc tool starts on the end of that last line and chains tangent arcs.
+    {
+      await tool("tarc");
+      const arcsBefore = await mp.evaluate(() => window.__sv.model.editor().sk.ents.filter(e => e.t === "arc").map(e => e.id));
+      await click([104, 45]);
+      const on = await mp.evaluate(() => window.__sv.model.editor().arcMode);
+      await click([108, 45]); await click([112, 45]);
+      await mp.keyboard.press("Escape");
+      const tr = await mp.evaluate(old => {
+        const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id);
+        const arcs = sk.ents.filter(e => e.t === "arc" && !old.includes(e.id));
+        return { n: arcs.length, rs: arcs.map(a => { const c = P(a.c), q = P(a.a); return Math.hypot(q.x - c.x, q.y - c.y); }), cs: arcs.map(a => [P(a.c).x, P(a.c).y]),
+          tan: arcs.map(a => sk.rels.filter(r => r.t === "tangent" && r.e.includes(a.id)).length), status: ed.info.status };
+      }, arcsBefore);
+      check(on === true && tr.n === 2 && tr.rs.every(r => Math.abs(r - 2) < 0.05) && Math.abs(tr.cs[0][0] - 106) < 0.05 && Math.abs(tr.cs[1][0] - 110) < 0.05 && tr.tan.every(k => k >= 1) && tr.status === "ok",
+        `model 1.513: Tangent Arc tool chains arcs tangent to the line it starts on (FR-SK-015) (${on}, ${JSON.stringify(tr)})`);
+      await tool("select");
+    }
+    // 1.513.0 (FR-SK-037): dynamic mirror about a line mirrors each new line at once, and the mirrored chain stays joined.
+    {
+      await tool("line");
+      await click([120, 30]); await click([120, 50]); await mp.keyboard.press("Escape");
+      const axis = await mp.evaluate(() => { const ed = window.__sv.model.editor(); const l = ed.sk.ents.filter(e => e.t === "line").at(-1); ed.selection = new Set([l.id]); return { id: l.id, on: ed.toggleDynMirror(), dm: ed.dynMirror }; });
+      const linesBefore = await mp.evaluate(() => window.__sv.model.editor().sk.ents.filter(e => e.t === "line").map(e => e.id));
+      await click([123, 32]); await click([126, 36]); await click([126, 41]); await mp.keyboard.press("Escape");
+      const dm = await mp.evaluate(old => {
+        const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id);
+        const fresh = sk.ents.filter(e => e.t === "line" && !old.includes(e.id));
+        const xs = fresh.flatMap(l => [P(l.a).x, P(l.b).x]).map(x => Math.round(x * 100) / 100).sort((a, b) => a - b);
+        const left = fresh.filter(l => P(l.a).x < 120);
+        const joined = left.length === 2 && [left[0].a, left[0].b].some(q => q === left[1].a || q === left[1].b);
+        const sym = sk.rels.filter(r => r.t === "symmetric").length;
+        ed.toggleDynMirror();
+        return { n: fresh.length, xs, joined, sym, off: ed.dynMirror === null, status: ed.info.status };
+      }, linesBefore);
+      check(axis.on && axis.dm === axis.id && dm.n === 4 && Math.abs(dm.xs[0] - 114) < 0.05 && Math.abs(dm.xs.at(-1) - 126) < 0.05 && dm.joined && dm.sym >= 3 && dm.off && dm.status === "ok",
+        `model 1.513: dynamic mirror copies each new line about the picked line, joined (FR-SK-037) (${JSON.stringify(axis)}, ${JSON.stringify(dm)})`);
+      await tool("select");
+    }
+    // 1.513.0 (FR-SK-012): Centerline draws construction lines; Midpoint line puts its middle on the first click.
+    {
+      const before = await mp.evaluate(() => window.__sv.model.editor().sk.ents.filter(e => e.t === "line").map(e => e.id));
+      await tool("cline");
+      await click([130, 44]); await click([136, 44]); await mp.keyboard.press("Escape");
+      await tool("mline");
+      await click([132, 58]); await click([136, 58]);
+      const ml = await mp.evaluate(old => {
+        const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id);
+        const fresh = sk.ents.filter(e => e.t === "line" && !old.includes(e.id));
+        const c = fresh.find(l => l.cons), m = fresh.find(l => !l.cons);
+        const mid = m && sk.rels.find(r => r.t === "midpoint" && r.e[1] === m.id);
+        return { n: fresh.length, cons: !!c, ends: m ? [P(m.a).x, P(m.a).y, P(m.b).x, P(m.b).y].map(v => Math.round(v * 100) / 100) : null,
+          mid: mid ? [P(mid.e[0]).x, P(mid.e[0]).y].map(v => Math.round(v * 100) / 100) : null, status: ed.info.status };
+      }, before);
+      check(ml.n === 2 && ml.cons && ml.ends && Math.abs(ml.ends[0] - 128) < 0.05 && Math.abs(ml.ends[2] - 136) < 0.05 && Math.abs(ml.ends[1] - 58) < 0.05 && ml.mid && Math.abs(ml.mid[0] - 132) < 0.05 && ml.status === "ok",
+        `model 1.513: Centerline makes a construction line, Midpoint line spans both ways from its middle (FR-SK-012) (${JSON.stringify(ml)})`);
       await tool("select");
     }
     // 1.266.0 (FR-SK-043/044/047): dragging the last line's start onto the free end of the Ctrl line merges them
@@ -3364,12 +3422,12 @@ try {
     await mp.selectOption('#mc-pm select[data-k="kind"]', "tapped");
     await idle();
     const holePanel = await mp.evaluate(() => ({ n: document.querySelector('#mc-pm [data-focus="pts"]')?.textContent, d: document.querySelector('#mc-pm input[data-num="diameter"]')?.value, td: document.querySelector('#mc-pm input[data-num="threadDepth"]')?.value }));
-    // 1.513: a through tapped hole's thread can run through all too: the depth box goes, the 3D thread is the plate's 20 mm.
+    // 1.515: a through tapped hole's thread can run through all too: the depth box goes, the 3D thread is the plate's 20 mm.
     const thrSel = await mp.evaluate(() => document.querySelector('#mc-pm select[data-k="threadEnd"]')?.value ?? null);
     await mp.selectOption('#mc-pm select[data-k="threadEnd"]', "through").catch(() => {});
     await idle();
     const thrAll = await mp.evaluate(() => ({ box: !!document.querySelector('#mc-pm input[data-num="threadDepth"]'), len: Object.values(window.__sv.model.last()?.frames ?? {}).find(f => f.len)?.len ?? null }));
-    check(thrSel === "blind" && !thrAll.box && Array.isArray(thrAll.len) && thrAll.len.length === 2 && thrAll.len.every(x => Math.abs(x - 20) < 0.01), `model 1.513: tapped hole thread end Through all (${thrSel}, ${JSON.stringify(thrAll)})`);
+    check(thrSel === "blind" && !thrAll.box && Array.isArray(thrAll.len) && thrAll.len.length === 2 && thrAll.len.every(x => Math.abs(x - 20) < 0.01), `model 1.515: tapped hole thread end Through all (${thrSel}, ${JSON.stringify(thrAll)})`);
     await mp.click("#mc-ok");
     await idle();
     const vHole = await vol(), stHole = await lastSt();
@@ -3714,7 +3772,7 @@ try {
     await mp.waitForTimeout(1200);
     await mp.click('#mc-tools [data-fly="line"]');
     const lnFly = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
-    await mp.click("#mc-menu button:nth-child(2)");
+    await mp.click("#mc-menu button:nth-child(4)");
     await click([-22, 0]); await click([-15, -3]); await click([-8, 0]); await click([-15, 3]); await click([-22, 0]);
     const spl = await mp.evaluate(() => { const ed = window.__sv.model.editor(), e = ed.sk.ents.find(x => x.t === "spline"); return e ? { n: e.pts.length, closed: !!e.closed, dof: ed.info.dof } : null; });
     await mp.evaluate(() => window.__sv.modeller.ok());
@@ -3723,7 +3781,7 @@ try {
     await idle();
     const cut3 = await mp.evaluate(() => { const r = window.__sv.model.last(); return { v: r.props?.volume ?? 0, ok: r.statuses.every(s => s.ok), faces: window.__sv.viewer.parts[0]?.data.faces.length }; });
     const dSpl = cut.v - cut3.v;
-    check(lnFly === "Line|Spline|Style spline|Equation driven curve" && spl?.n === 4 && spl.closed && spl.dof === 8 && cut3.ok && dSpl > 42 * 5 && dSpl < 42 * 5 * 1.7, `model 1.35: a closed spline through four clicks, cut through the part (${lnFly}, ${JSON.stringify(spl)}, ${cut3.ok}, ${dSpl.toFixed(1)})`);
+    check(lnFly === "Line|Centerline|Midpoint line|Spline|Style spline|Equation driven curve" && spl?.n === 4 && spl.closed && spl.dof === 8 && cut3.ok && dSpl > 42 * 5 && dSpl < 42 * 5 * 1.7, `model 1.35: a closed spline through four clicks, cut through the part (${lnFly}, ${JSON.stringify(spl)}, ${cut3.ok}, ${dSpl.toFixed(1)})`);
     await ctx.close();
   }
 
@@ -4255,7 +4313,7 @@ try {
     check(parGot.length === 6 && parGot.every((v, i) => Math.abs(v - parWant[i]) < 0.002), `model 1.157: parabola from focus, vertex and two ends (${par})`);
     await mp.click('#mc-tools [data-fly="line"]');
     const lfly = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
-    await mp.click("#mc-menu button:nth-child(4)");
+    await mp.click("#mc-menu button:nth-child(6)");
     await mp.waitForSelector("#mc-pm [data-cq=add]");
     await mp.selectOption("#mc-pm [data-cq=mode]", "param");
     await mp.waitForSelector("#mc-pm [data-cq=x]");
@@ -4271,13 +4329,13 @@ try {
     })();
     await mp.click("#mc-pm [data-cq=add]");
     const eq = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id), c = sk.ents.find(e => e.kind === "eqn"); return c ? { ends: c.pts.map(id => [P(id).x, P(id).y].map(v => Math.round(v * 1000) / 1000).join(",")).join(" "), fixes: sk.rels.filter(r => r.t === "fix").length, sel: [...ed.selection][0] === c.id, ok: ed.info.status, panel: !!document.querySelector("#mc-pm [data-cq=y]") } : null; });
-    check(lfly === "Line|Spline|Style spline|Equation driven curve" && eq && eq.ends === "-20,0 -40,0" && eq.fixes === 2 && eq.sel && eq.ok === "ok" && eq.panel,
+    check(lfly === "Line|Centerline|Midpoint line|Spline|Style spline|Equation driven curve" && eq && eq.ends === "-20,0 -40,0" && eq.fixes === 2 && eq.sel && eq.ok === "ok" && eq.panel,
       `model 1.157: equation driven curve x(t), y(t) added from the panel with fixed ends (${lfly}, ${JSON.stringify(eq)})`);
     check(ruAdd === "Добавить кривую", `model 1.157: Add curve in Russian (${ruAdd})`);
     // 1.164: a style spline (FR-SK-019 P5) from the Line flyout: four control points, the last clicked again ends it.
     await mp.keyboard.press("Escape");
     await mp.click('#mc-tools [data-fly="line"]');
-    await mp.click("#mc-menu button:nth-child(3)");
+    await mp.click("#mc-menu button:nth-child(5)");
     const sTool = await mp.evaluate(() => window.__sv.model.editor().tool);
     for (const q of [[12, -15], [17, -9], [24, -15], [30, -9], [30, -9]]) await click(q);
     const sty = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id), c = sk.ents.find(e => e.kind === "style"); return c ? { n: c.pts.length, closed: !!c.closed, ends: [c.pts[0], c.pts.at(-1)].map(id => [P(id).x, P(id).y].map(v => Math.round(v)).join(",")).join(" "), ok: ed.info.status } : null; });
@@ -4571,7 +4629,7 @@ try {
     await mp.click('#vault-panel [data-a="savepart"]');
     await mp.waitForSelector("#vault-panel .v-row");
     const row1 = await mp.evaluate(() => document.querySelector("#vault-panel .v-row").textContent.replace(/\s+/g, " ").trim());
-    const title1 = await mp.evaluate(() => document.querySelector("#doc-name").textContent);
+    const title1 = await mp.evaluate(() => document.querySelector("#doc").textContent);
     // Edit, save (into the working copy), check in with a comment: version 2.
     await mp.evaluate(() => window.__sv.model.store.change("Depth", d => { d.features[1].depth = { v: 20 }; }));
     await idle();
@@ -4602,6 +4660,64 @@ try {
     const chk = await mp.evaluate(async () => { const r = await window.__sv.vault.vault.verify(); return `${r.files}/${r.objects}/${r.missing.length + r.corrupt.length}`; });
     check(/Part1\.mcadprt/.test(row1) && /v1/.test(row1) && /Andrey/.test(row1) && /v1 · .*checked out/.test(title1) && dirty === true && hist === "v2:Twice as deep|v1:Added" && Math.abs(vBack - 4000) < 1e-3, `vault 1.39: save to vault, check in, read-only, history and roll back (${row1}, ${title1}, ${dirty}, ${hist}, ${vBack})`);
     check(audit === "create vault,add,check out,check in,roll back" && chk === "1/2/0", `vault 1.39: audit trail and integrity check (${audit}, ${chk})`);
+    await ctx.close();
+  }
+
+  // --- 1.514.0: vault status chip in the header with a tooltip; a drawing of a vault part goes into the vault ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    mp.on("dialog", d => d.accept());
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => { localStorage.setItem("sv:tips", "off"); localStorage.setItem("mc:vaultUser", "Andrey"); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 60000 });
+    const block = () => mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("Block", d => { d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -10, -10), P("b", 10, -10), P("c", 10, 10), P("d", -10, 10), L("l1", "a", "b"), L("l2", "b", "c"), L("l3", "c", "d"), L("l4", "d", "a")] }, { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } }); }); });
+    const rows = () => mp.evaluate(() => [...document.querySelectorAll("#vault-panel .v-row")].map(r => r.textContent.replace(/\s+/g, " ").trim()).join(" | "));
+    const newDrawing = async () => {
+      await mp.evaluate(() => document.querySelector("#new-drawing").click());
+      await mp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length > 0, null, { timeout: 90000 });
+    };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await block();
+    await idle();
+    await mp.click("#t-vault");
+    await mp.fill("#v-name", "Chip vault");
+    await mp.click('#vault-panel [data-a="new-ws"]');
+    await mp.waitForSelector('#vault-panel [data-a="savepart"]:not([disabled])');
+    await mp.click('#vault-panel [data-a="savepart"]');
+    await mp.waitForSelector("#vault-panel .v-row");
+    await mp.waitForFunction(() => !document.querySelector("#doc-vault").hidden);
+    const head = await mp.evaluate(() => ({ name: document.querySelector("#doc-name").textContent, chip: document.querySelector("#doc-vault").textContent, tip: document.querySelector("#doc").title }));
+    // A new drawing of the vault part: Save puts it in the vault beside the part, checked out, no download.
+    await newDrawing();
+    let downloads = 0;
+    mp.on("download", () => downloads++);
+    await mp.evaluate(() => window.__sv.drawing.save());
+    await mp.waitForFunction(() => /\.mcaddrw/.test(document.querySelector("#vault-panel")?.textContent ?? ""), null, { timeout: 15000 }).catch(() => {});
+    const r1 = await rows();
+    const tied = await mp.evaluate(() => !!window.__sv.drawing.vault && !window.__sv.drawing.dirty);
+    // A second part with an open drawing: Save to vault takes the drawing along.
+    await mp.evaluate(() => window.__sv.drawing.hide());
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.some(f => f.id === "x"));
+    await block();
+    await idle();
+    await newDrawing();
+    await mp.evaluate(() => window.__sv.drawing.hide());
+    await mp.waitForFunction(() => window.__sv.modeller.active);
+    await mp.evaluate(() => window.__sv.vault.saveOpenDoc());
+    await mp.waitForFunction(() => document.querySelectorAll("#vault-panel .v-row").length >= 4, null, { timeout: 15000 }).catch(() => {});
+    const r2 = await rows();
+    const n2 = await mp.evaluate(() => document.querySelectorAll("#vault-panel .v-row").length);
+    check(/^Part1\.mcadprt$/.test(head.name.trim()) && /^v1 · Draft · checked out to you$/.test(head.chip) && /version 1/.test(head.tip) && /Lifecycle state: Draft/.test(head.tip) && /Checked out to you/.test(head.tip),
+      `vault 1.514: the header shows the vault status in its own chip with a tooltip that explains it (${JSON.stringify(head)})`);
+    check(/Part1\.mcaddrw/.test(r1) && tied && downloads === 0 && n2 === 4 && /Part2\.mcadprt/.test(r2) && /Part2\.mcaddrw/.test(r2),
+      `vault 1.514: a drawing of a vault part saves into the vault, and Save to vault takes the part's open drawing along (${r1}; ${tied}, ${downloads}; ${n2}: ${r2})`);
     await ctx.close();
   }
 
@@ -4637,8 +4753,8 @@ try {
     await mp.waitForFunction(() => window.__sv.asm.doc);
     await menu("save");
     await mp.waitForSelector("#vault-panel .v-row", { state: "attached" });
-    await mp.waitForFunction(() => /v1/.test(document.querySelector("#doc-name").textContent));
-    const title1 = await mp.evaluate(() => document.querySelector("#doc-name").textContent);
+    await mp.waitForFunction(() => /v1/.test(document.querySelector("#doc").textContent));
+    const title1 = await mp.evaluate(() => document.querySelector("#doc").textContent);
     await mp.evaluate(() => window.__sv.asm.change(d => { d.name = "Frame"; }));
     await mp.evaluate(() => window.__sv.asm.save());
     const saved = await mp.evaluate(async () => { const v = window.__sv.vault.vault, f = (await v.files())[0]; return `${window.__sv.asm.dirty}/${(await v.status(f)).modified}`; });
@@ -4653,7 +4769,7 @@ try {
     await mp.evaluate(() => window.__sv.asm.save());
     const refused = await mp.evaluate(() => window.__sv.asm.dirty);
     await menu("co");
-    await mp.waitForFunction(() => /checked out/.test(document.querySelector("#doc-name").textContent));
+    await mp.waitForFunction(() => /checked out/.test(document.querySelector("#doc").textContent));
     await mp.evaluate(() => window.__sv.asm.save());
     const savedAgain = await mp.evaluate(() => window.__sv.asm.dirty);
     await menu("hist");
@@ -4752,14 +4868,14 @@ try {
     await mp.click("#empty-asm");
     await mp.waitForFunction(() => window.__sv.asm.doc);
     await menu("save");
-    await mp.waitForFunction(() => /v1/.test(document.querySelector("#doc-name").textContent));
+    await mp.waitForFunction(() => /v1/.test(document.querySelector("#doc").textContent));
     await mp.evaluate(async () => { const p = window.__sv.vault, v = p.vault, f = p.files.find(x => x.kind === "assembly"); await v.undoCheckOut(f.id); await v.rollBack(f.id, 1); await p.refresh(); });
-    await mp.waitForFunction(() => /newer v2/.test(document.querySelector("#doc-name").textContent));
-    const stale = await mp.evaluate(() => document.querySelector("#doc-name").textContent);
+    await mp.waitForFunction(() => /newer v2/.test(document.querySelector("#doc").textContent));
+    const stale = await mp.evaluate(() => document.querySelector("#doc").textContent);
     // Opening it again from the list reloads it in its own tab instead of a second one.
     await menu("panel");
     await mp.evaluate(() => [...document.querySelectorAll("#vault-panel .v-row")].find(r => /\.mcadasm/.test(r.textContent)).dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
-    await mp.waitForFunction(() => /v2/.test(document.querySelector("#doc-name").textContent) && !/newer/.test(document.querySelector("#doc-name").textContent));
+    await mp.waitForFunction(() => /v2/.test(document.querySelector("#doc").textContent) && !/newer/.test(document.querySelector("#doc").textContent));
     await mp.evaluate(() => [...document.querySelectorAll("#vault-panel .v-row")].find(r => /\.mcadasm/.test(r.textContent)).dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
     await mp.waitForTimeout(500);
     const tabs = await mp.evaluate(() => document.querySelectorAll("#doc-tabs [data-dt]").length);
@@ -6302,7 +6418,7 @@ try {
     await mp.waitForFunction(f => /Выпущен/.test(eval(f)()), bracketRow.toString(), { timeout: 5000 }).catch(() => {});
     const ruRow = await mp.evaluate(f => eval(f)(), bracketRow.toString());
     await mp.click("#lang-btn");
-    check(/Work in progress/.test(row0) && checks && /Approve/.test(dlgTitle) && /Released/.test(row1) && /Rev A/.test(row1) && /BR-001/.test(row1) && !canCheckOut, `vault P4: data card, Submit for review and Approve give revision A (${row0} → ${row1}; ${dlgTitle})`);
+    check(/Draft/.test(row0) && checks && /Approve/.test(dlgTitle) && /Released/.test(row1) && /Rev A/.test(row1) && /BR-001/.test(row1) && !canCheckOut, `vault P4: data card, Submit for review and Approve give revision A (${row0} → ${row1}; ${dlgTitle})`);
     check(found === "bracket.txt" && audit === "data card,transition,transition,move,delete,restore", `vault P4: search, move, recycle bin and audit (${found}; ${audit})`);
     check(/Выпущен/.test(ruRow) && /Ред\. A/.test(ruRow), `vault P4: lifecycle in Russian (${ruRow})`);
     await ctx.close();
