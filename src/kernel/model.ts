@@ -5504,10 +5504,14 @@ export class Modeller {
     const skip = new Set(f.skip ?? []);
     const xfs: { trsf: any; tag: (k: number) => string; label: string }[] = [];
     const c = this.spotCentre(set, prev), spots: PatternSpot[] = [];
+    // Up to distance: the typed distance reaches the last instance.
+    const s1 = f.total ? f.spacing.v / Math.max(1, n1 - 1) : f.spacing.v;
+    const s2 = f.total2 ? (f.spacing2?.v ?? 0) / Math.max(1, n2 - 1) : (f.spacing2?.v ?? 0);
     for (let j = 0; j < n2; j++) for (let i = 0; i < n1; i++) {
       if (i === 0 && j === 0) continue;
+      if (f.seedOnly && i > 0 && j > 0) continue;
       const key = f.dir2 ? `${i},${j}` : `${i}`;
-      const v = add(mul(d1, i * f.spacing.v), mul(d2, j * (f.spacing2?.v ?? 0)));
+      const v = add(mul(d1, i * s1), mul(d2, j * s2));
       if (c) spots.push({ key, p: add(c, v) });
       if (skip.has(key)) continue;
       const trsf = new oc.gp_Trsf_1();
@@ -5528,18 +5532,26 @@ export class Modeller {
     if (n < 2) throw new FeatureError("E-PAT-COUNT", "The pattern needs at least 2 instances.");
     const total = f.angle.v;
     if (!(total > 1e-9)) throw new FeatureError("E-FT-ZERO", "The angle must be more than 0.");
-    const full = Math.abs(total - 2 * Math.PI) < 1e-9;
-    const step = f.equal ? total / (full ? n : n - 1) : total;
+    const stepOf = (tot: number, cnt: number, eq: boolean) => eq ? tot / (Math.abs(tot - 2 * Math.PI) < 1e-9 ? cnt : cnt - 1) : tot;
+    const step = stepOf(total, n, f.equal);
+    // Direction 2 turns the other way: its own count and angle, or direction 1's when symmetric.
+    const n2 = f.dir2 ? Math.max(1, Math.round(f.sym ? n : f.count2 ?? n)) : 1;
+    const step2 = f.sym ? step : stepOf(f.angle2?.v ?? total, n2, f.equal2 ?? f.equal);
+    if (f.dir2 && n2 > 1 && !(step2 > 1e-9)) throw new FeatureError("E-FT-ZERO", "The angle must be more than 0.");
     const skip = new Set(f.skip ?? []);
     const xfs: { trsf: any; tag: (k: number) => string; label: string }[] = [];
     const c = this.spotCentre(set, prev), spots: PatternSpot[] = [];
-    for (let i = 1; i < n; i++) {
-      const q = (f.flip ? -1 : 1) * step * i;
-      if (c) spots.push({ key: String(i), p: turnAbout(c, ax.o, ax.d, q) });
-      if (skip.has(String(i))) continue;
+    const turns: { key: string; q: number; tk: string }[] = [];
+    for (let i = 1; i < n; i++) turns.push({ key: String(i), q: (f.flip ? -1 : 1) * step * i, tk: String(i) });
+    for (let i = 1; i < n2; i++) turns.push({ key: `-${i}`, q: (f.flip ? 1 : -1) * step2 * i, tk: `m${i}` });
+    for (const { key, q, tk } of turns) {
+      // A second-direction copy landing on a first-direction one (a full turn) is left out.
+      if (key.startsWith("-") && turns.some(o => !o.key.startsWith("-") && Math.abs(Math.cos(o.q - q) - 1) < 1e-12)) continue;
+      if (c) spots.push({ key, p: turnAbout(c, ax.o, ax.d, q) });
+      if (skip.has(key)) continue;
       const trsf = new oc.gp_Trsf_1();
       trsf.SetRotation_1(new oc.gp_Ax1_2(this.P(ax.o), this.D(ax.d)), q);
-      xfs.push({ trsf, tag: k => f.copy === "bodies" ? `i${i}b${k}` : `i${i}s${k}`, label: String(i) });
+      xfs.push({ trsf, tag: k => f.copy === "bodies" ? `i${tk}b${k}` : `i${tk}s${k}`, label: key });
     }
     this.spots.set(f.id, spots);
     return this.copyBy(f, prev!, set, xfs, { doc, frames });

@@ -10,6 +10,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Added
 
 - Linear and Circular pattern (FR-FT-070/071): Instances to skip are picked in the view, as in SolidWorks. Click the Instances to skip box and a dot appears at every instance; a click on a filled dot skips that instance (the preview drops it and the dot turns hollow), a click on a hollow one brings it back. The dot sits on the material the instance changes, so a through-all hole's dot is half way down the plate, not out in space along the cut. Typing instance numbers still works.
+- Linear pattern (FR-FT-070): each direction can be set by Up to distance (the distance from the seed to the last instance, shared out equally) instead of the spacing, and Direction 2 has Pattern seed only (it copies the seed alone, not the instances of direction 1).
+- Circular pattern (FR-FT-071): Direction 2 turns copies the other way about the same axis, Symmetric (direction 1's count and angle) or with its own count, angle and equal spacing. Its instances are -1, -2… in Instances to skip, and copies that land on direction 1's are left out.
 
 ## [1.500.0] - 2026-11-11
 

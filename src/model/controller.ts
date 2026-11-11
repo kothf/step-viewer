@@ -6533,7 +6533,7 @@ export class ModelController {
       const skipN = (f.type === "lpattern" || f.type === "cpattern") ? (f.skip ?? []).length : 0;
       const skip = (f.type === "lpattern" || f.type === "cpattern") ? group(t("Instances to skip"), box("skip", t("Instances"), skipN ? t("{n} skipped", { n: skipN }) : t("None"))
         + `<p class="pm-help muted">${esc(t("Click this box, then the dots in the view: a filled dot is an instance, a hollow one is skipped."))}</p>`
-        + `<label class="pm-field"><span>${esc(t("Skip"))}</span><input type="text" data-k="skip" value="${esc((f.skip ?? []).join("; "))}" spellcheck="false" placeholder="${f.type === "lpattern" && f.dir2 ? "1,1; 2,0" : "2; 3"}" /></label><p class="pm-help muted">${esc(f.type === "lpattern" && f.dir2 ? t("Instance numbers as column,row from 0 (the seed is 0,0), separated by semicolons.") : t("Instance numbers from 0 (the seed is 0), separated by semicolons."))}</p>`) : "";
+        + `<label class="pm-field"><span>${esc(t("Skip"))}</span><input type="text" data-k="skip" value="${esc((f.skip ?? []).join("; "))}" spellcheck="false" placeholder="${f.type === "lpattern" && f.dir2 ? "1,1; 2,0" : "2; 3"}" /></label><p class="pm-help muted">${esc(f.type === "lpattern" && f.dir2 ? t("Instance numbers as column,row from 0 (the seed is 0,0), separated by semicolons.") : f.type === "cpattern" && f.dir2 ? t("Instance numbers from 0 (the seed is 0), direction 2 as -1, -2…, separated by semicolons.") : t("Instance numbers from 0 (the seed is 0), separated by semicolons."))}</p>`) : "";
       if (f.type === "shell") {
         title = t("Shell");
         body = group(t("Parameters"), numField("thickness", t("Thickness"), f.thickness, "length") + chk("outward", f.outward, t("Shell outward")))
@@ -6548,9 +6548,12 @@ export class ModelController {
         body = group(t("Mirror face/plane"), box("mplane", t("Plane"), this.refLabel(f.plane)) + `<p class="pm-help muted">${esc(t("Click a plane or a flat face in the view or the tree."))}</p>`) + seedGroup;
       } else if (f.type === "lpattern") {
         title = t("Linear pattern");
-        body = group(t("Direction 1"), box("dir", t("Direction"), this.lineLabel(f.dir)) + numField("spacing", t("Spacing"), f.spacing, "length") + intField("count", t("Instances"), f.count) + chk("flip", f.flip, t("Reverse direction")))
+        // Spacing and instances, or Up to distance (the distance from the seed to the last instance), per direction.
+        const how = (k: "total" | "total2", on: boolean | undefined) => `<label class="pm-field"><span>${esc(t("Spacing"))}</span><select data-k="${k}">${([["", t("Spacing and instances")], ["1", t("Up to distance")]] as const).map(([v, l]) => `<option value="${v}"${(on ? "1" : "") === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;
+        body = group(t("Direction 1"), box("dir", t("Direction"), this.lineLabel(f.dir)) + how("total", f.total) + numField("spacing", f.total ? t("Distance") : t("Spacing"), f.spacing, "length") + intField("count", t("Instances"), f.count) + chk("flip", f.flip, t("Reverse direction")))
           + group(t("Direction 2"), chk("useDir2", !!f.dir2 || m.focus === "dir2", t("Direction 2"))
-            + (f.dir2 || m.focus === "dir2" ? box("dir2", t("Direction"), this.lineLabel(f.dir2)) + numField("spacing2", t("Spacing"), f.spacing2 ?? { v: f.spacing.v }, "length") + intField("count2", t("Instances"), f.count2 ?? 2) + chk("flip2", f.flip2, t("Reverse direction")) : ""))
+            + (f.dir2 || m.focus === "dir2" ? box("dir2", t("Direction"), this.lineLabel(f.dir2)) + how("total2", f.total2) + numField("spacing2", f.total2 ? t("Distance") : t("Spacing"), f.spacing2 ?? { v: f.spacing.v }, "length") + intField("count2", t("Instances"), f.count2 ?? 2) + chk("flip2", f.flip2, t("Reverse direction"))
+              + chk("seedOnly", f.seedOnly, t("Pattern seed only")) : ""))
           + seedGroup + skip
           + `<p class="pm-help muted">${esc(t("For a direction, click a straight edge, a flat face (its normal) or a reference axis in the tree."))}</p>`;
       } else if (f.type === "spattern") {
@@ -6577,6 +6580,10 @@ export class ModelController {
         title = t("Circular pattern");
         body = group(t("Parameters"), box("dir", t("Axis"), this.lineLabel(f.axis)) + numField("angle", t("Angle"), f.angle, "angle") + intField("count", t("Instances"), f.count)
           + chk("equal", f.equal, t("Equal spacing")) + chk("flip", f.flip, t("Reverse direction")))
+          + group(t("Direction 2"), chk("cdir2", f.dir2, t("Direction 2"))
+            + (f.dir2 ? chk("sym", f.sym, t("Symmetric"))
+              + (f.sym ? "" : numField("angle2", t("Angle"), f.angle2 ?? f.angle, "angle") + intField("count2", t("Instances"), f.count2 ?? f.count) + chk("equal2", f.equal2 ?? f.equal, t("Equal spacing")))
+              + `<p class="pm-help muted">${esc(t("Copies turned the other way about the same axis."))}</p>` : ""))
           + seedGroup + skip
           + `<p class="pm-help muted">${esc(t("For the axis, click a round edge or face, a straight edge, or a reference axis in the tree."))}</p>`;
       }
@@ -6762,12 +6769,19 @@ export class ModelController {
         }
         if (k === "skip" && (f.type === "lpattern" || f.type === "cpattern")) {
           const list = String(val).split(/[;\s]+/).map(x => x.trim()).filter(Boolean);
-          const ok = list.every(x => (f.type === "lpattern" && f.dir2 ? /^\d+,\d+$/ : /^\d+$/).test(x));
+          const ok = list.every(x => (f.type === "lpattern" && f.dir2 ? /^\d+,\d+$/ : f.type === "cpattern" && f.dir2 ? /^-?\d+$/ : /^\d+$/).test(x));
           if (!ok) { el.setAttribute("aria-invalid", "true"); toast(t("Write instance numbers like 2; 3 (or 1,1; 2,0 with two directions)."), true); return; }
           el.removeAttribute("aria-invalid");
           upd(() => { if (list.length) f.skip = list; else delete f.skip; });
           return;
         }
+        if ((k === "total" || k === "total2") && f.type === "lpattern") { upd(() => { if (val) f[k] = true; else delete f[k]; }, true); return; }
+        if (k === "cdir2" && f.type === "cpattern") {
+          upd(() => { if (val) { f.dir2 = true; f.sym = true; } else { delete f.dir2; delete f.sym; delete f.count2; delete f.angle2; delete f.equal2; if (f.skip) { f.skip = f.skip.filter(x => !x.startsWith("-")); if (!f.skip.length) delete f.skip; } } }, true);
+          return;
+        }
+        if (k === "sym" && f.type === "cpattern") { upd(() => { if (val) { f.sym = true; delete f.count2; delete f.angle2; delete f.equal2; } else { delete f.sym; f.count2 = f.count; f.angle2 = { ...f.angle }; f.equal2 = f.equal; } }, true); return; }
+        if (k === "equal2" && f.type === "cpattern") { upd(() => { f.equal2 = !!val; }, true); return; }
         if (k === "useDir2" && f.type === "lpattern") {
           upd(() => { if (val) { m.focus = "dir2"; f.spacing2 ??= { v: f.spacing.v }; f.count2 ??= 2; } else { delete f.dir2; delete f.spacing2; delete f.count2; delete f.flip2; if (m.focus === "dir2") m.focus = "dir"; } }, true);
           return;

@@ -3281,6 +3281,15 @@ try {
       await mp.click('#mc-layer .pat-spot[data-spot="2"]');
       await idle();
       const vBack = await vol();
+      // Up to distance: the 20 typed becomes the reach of the last instance (3 gaps of 6.67 mm), then back.
+      await mp.selectOption('#mc-pm select[data-k="total"]', "1");
+      await idle();
+      const upTo = await mp.evaluate(() => [document.querySelector('#mc-pm input[data-num="spacing"]')?.closest("label")?.querySelector("span")?.textContent]);
+      const vUp = await vol();
+      await mp.selectOption('#mc-pm select[data-k="total"]', "");
+      await idle();
+      const vBack2 = await vol();
+      check(upTo[0] === "Distance" && Math.abs(vUp - vLp) > 1 && Math.abs(vBack2 - vLp) < 1, `model 1.501: linear pattern Up to distance (${upTo}, ${Math.round(vUp)}, ${Math.round(vBack2)})`);
       await mp.click("#mc-ok");
       await idle();
       check(dots === "1,2,3" && Math.abs(vSkip - (120000 - 3 * hole)) < 1 && off[0] === true && off[1] === "2" && Math.abs(vBack - vLp) < 1, `model 1.501: Instances to skip clicked in the view (${dots}, ${Math.round(vSkip)}, ${off}, ${Math.round(vBack)})`);

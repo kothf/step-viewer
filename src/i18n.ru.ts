@@ -4601,4 +4601,9 @@ export const RU: Record<string, string> = {
   "click to skip it": "щёлкните, чтобы пропустить",
   "Skip {instance}": "Пропустить: {instance}",
   "Click the dots to skip instances, or another box to pick again.": "Щёлкайте точки, чтобы пропускать экземпляры, или другое поле, чтобы снова выбирать.",
+  "Spacing and instances": "Шаг и число экземпляров",
+  "Up to distance": "До расстояния",
+  "Pattern seed only": "Только исходный элемент",
+  "Copies turned the other way about the same axis.": "Копии, повёрнутые в другую сторону вокруг той же оси.",
+  "Instance numbers from 0 (the seed is 0), direction 2 as -1, -2…, separated by semicolons.": "Номера экземпляров с 0 (исходный — 0), направление 2 — -1, -2…, через точку с запятой.",
 };

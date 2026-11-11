@@ -470,6 +470,11 @@ export interface LinearPatternFeature extends CopySource {
   flip2?: boolean;
   /** Instances left out, as "i" or "i,j" (0-based; the seed is 0 / 0,0). */
   skip?: string[];
+  /** Up to distance (FR-FT-070): `spacing` is the distance from the seed to the last instance, shared out equally. */
+  total?: boolean;
+  total2?: boolean;
+  /** Pattern seed only: direction 2 copies the seed alone, not the instances of direction 1. */
+  seedOnly?: boolean;
 }
 
 /** Circular pattern (FR-FT-071): copies of features about an axis. */
@@ -482,6 +487,12 @@ export interface CircularPatternFeature extends CopySource {
   angle: Num;
   equal: boolean;
   flip?: boolean;
+  /** Direction 2 (FR-FT-071): copies turned the other way; `sym` = the same count and angle as direction 1. Its instances are "-i" in `skip`. */
+  dir2?: boolean;
+  sym?: boolean;
+  count2?: number;
+  angle2?: Num;
+  equal2?: boolean;
   skip?: string[];
 }
 
