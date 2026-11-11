@@ -17,14 +17,50 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Jobs run on self-hosted runners on Andrey's desktop (label "desktop"): the account's free GitHub-hosted
-# minutes ran out in November 2026 (the private site repo used them). PRs from forks never reach the
-# desktop; they get GitHub's runner.
+# The account's free GitHub-hosted minutes ran out in November 2026 (the private site repo used them), so
+# CI runs on the self-hosted runners on Andrey's desktop (label "desktop", 4 runners on a 4-core/8-thread
+# i7 with 15 GB): one job installs and packages once, then runs the unit tests and 4 smoke shards as
+# parallel processes. PRs from forks never reach the desktop: they keep the GitHub-hosted jobs below.
 jobs:
+  desktop:
+    name: desktop (unit + smoke)
+    if: ${{ !github.event.pull_request.head.repo.fork }}
+    runs-on: [self-hosted, desktop]
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - run: npm ci --prefer-offline --no-audit --no-fund
+
+      # ~/.cache/ms-playwright stays on the desktop between runs; the runner's .env sets
+      # PLAYWRIGHT_HOST_PLATFORM_OVERRIDE, since Playwright does not know its Debian release
+      - name: Browser for the tests
+        run: npx playwright install --only-shell chromium
+
+      - name: Package
+        run: npm run package
+
+      - name: Unit tests and smoke test in 4 shards, in parallel
+        run: |
+          mkdir -p ci-logs
+          npm run test:unit > ci-logs/unit.log 2>&1 & pids="$!"
+          for i in 1 2 3 4; do SMOKE_SHARD=$i/4 npm test > ci-logs/smoke-$i.log 2>&1 & pids="$pids $!"; done
+          fail=0; for p in $pids; do wait $p || fail=1; done
+          for f in ci-logs/unit.log ci-logs/smoke-*.log; do
+            echo "::group::$f"; cat "$f"; echo "::endgroup::"
+          done
+          grep -h "^shard " ci-logs/smoke-*.log || true
+          exit $fail
+
   unit:
     name: unit tests
-    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-24.04' || fromJSON('["self-hosted","desktop"]') }}
-    timeout-minutes: 15
+    if: ${{ github.event.pull_request.head.repo.fork }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
@@ -43,8 +79,9 @@ jobs:
   # passing it between jobs as an artifact would.
   smoke:
     name: smoke ${{ matrix.shard }}/6
-    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-24.04' || fromJSON('["self-hosted","desktop"]') }}
-    timeout-minutes: 25
+    if: ${{ github.event.pull_request.head.repo.fork }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
     strategy:
       fail-fast: false
       matrix:
@@ -76,13 +113,17 @@ jobs:
           SMOKE_SHARD: ${{ matrix.shard }}/6
         run: npm test
 
-  # One check that is green only when every job above is (the Release workflow reads the whole run's result).
+  # One check that is green only when the jobs above are (the Release workflow reads the whole run's result).
   test:
-    needs: [unit, smoke]
+    needs: [desktop, unit, smoke]
     if: always()
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-24.04' || fromJSON('["self-hosted","desktop"]') }}
     timeout-minutes: 2
     steps:
       - name: All tests passed
         run: |
-          [ "${{ needs.unit.result }}" = success ] && [ "${{ needs.smoke.result }}" = success ] || { echo "::error::unit: ${{ needs.unit.result }}, smoke: ${{ needs.smoke.result }}"; exit 1; }
+          if [ "${{ github.event.pull_request.head.repo.fork }}" = true ]; then
+            [ "${{ needs.unit.result }}" = success ] && [ "${{ needs.smoke.result }}" = success ]
+          else
+            [ "${{ needs.desktop.result }}" = success ]
+          fi || { echo "::error::desktop: ${{ needs.desktop.result }}, unit: ${{ needs.unit.result }}, smoke: ${{ needs.smoke.result }}"; exit 1; }
