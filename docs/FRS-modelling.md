@@ -1581,7 +1581,7 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | Space orientation picker, named views | FR-UI-031, FR-UI-104 | 1.107.0: Space picker at the cursor (six views, Isometric, Normal to, zooms); 1.371.0: named views saved with the part/assembly | Done |
 | Animated view changes | FR-UI-103 | 1.107.0: 300 ms moves, instant with reduced motion | Done |
 | Normal to, twice flips | FR-UI-030 | Done (N and Ctrl+8) | Done |
-| Click empty space clears; Ctrl+click toggles | FR-SEL-002, FR-SEL-007 | 1.536.0: Ctrl+click adds/removes faces and edges in parts; a plain click or Esc clears; Fillet/Chamfer take every selected edge, Shell/Delete Face/Move Face every selected face | Done |
+| Click empty space clears; Ctrl+click toggles | FR-SEL-002, FR-SEL-007 | 1.537.0: Ctrl+click adds/removes faces and edges in parts; a plain click or Esc clears; Fillet/Chamfer take every selected edge, Shell/Delete Face/Move Face every selected face | Done |
 | Box selection in the part | FR-SEL-002, FR-SEL-008 | Sketch only | Weaker |
 | Select other | FR-SEL-004 | Alt+click cycles faces behind | Done |
 | Selection filter F5 | FR-SEL-003 | Done (faces, edges, vertices) | Done |

@@ -37,7 +37,7 @@ import type { CtxRef, SkEnt, SketchPatternFeature, FeatureFolder, ThreadFeature,
 import { hexRgb, toRef, type MatRef } from "../tools/materials";
 import { pickMaterial } from "../materialPicker";
 import { holeCallout, holeDiagram, holeIcon, holeSection, HOLE_KINDS } from "./holeView";
-import { advDefault, advProfile, advSync, elemFor, ELEM_KINDS } from "./advHole";
+import { advDefault, advProfile, advSync, captiveSize, captiveStack, elemFor, ELEM_KINDS } from "./advHole";
 import { ISO_METRIC, HEAT_INSERTS, HOLE_STANDARDS, SCREW_TYPES, defaultScrew, headPocket, screwTypes, threadClasses, holeSize, insertSize, majorOf, recognizedHoleFeatures, standardOf, taperSize, taperStandardOf, TAPER_STANDARDS, type HoleStandard } from "./holes";
 
 /** What a hole favourite keeps: the definition, not the placement. */
@@ -202,6 +202,7 @@ function applyHoleSize(f: HoleFeature) {
     if (f.end === "blind" && f.depth.v < ts.len + ts.pitch * 2) f.depth = { v: Math.round((ts.len + ts.tap * 0.5) * 10) / 10 };
     return;
   }
+  if (f.kind === "captive") { captiveSize(f); return; }
   delete f.taperDia;
   if (f.standard === "bspt") delete f.standard;
   const h = holeSize(f.size);
@@ -265,6 +266,8 @@ function statusText(s: FeatureStatus) {
     if (m) return t("{n} of {m} edges could not be rounded and were skipped.", { n: m[1], m: m[2] });
     const h = s.warning.match(/^Check and heal: (\d+) free edges before, (\d+) after; (valid|not valid) before, (valid|not valid) after; (\d+) solid bodies\.$/);
     if (h) return t("Check and heal: {a} free edges before, {b} after; {v0} before, {v1} after; {n} solid bodies.", { a: h[1], b: h[2], v0: t(h[3]), v1: t(h[4]), n: h[5] });
+    const cv = s.warning.match(/^The cover is ([\d.]+) mm too thin to hide the retracted screw's thread/);
+    if (cv) return t("The cover is {d} mm too thin to hide the retracted screw's thread: add a boss under the hole or use a shorter screw.", { d: cv[1] });
     const c = s.warning.match(/^(\d+) of (\d+) copies fall outside the body and were skipped: (.*)\.$/);
     return c ? t("{n} of {m} copies fall outside the body and were skipped (instances {list}).", { n: c[1], m: c[2], list: c[3] }) : t(s.warning);
   }
@@ -3825,6 +3828,22 @@ export class ModelController {
       + (bad ? `<p class="pm-help pm-warn" role="alert">${esc(t(bad))}</p>` : "");
   }
 
+  /** Captive screw hole: retaining style, its lengths, Retracted screw and the head counterbore. */
+  private captiveGroup(f: HoleFeature, numField: (key: string, label: string, n: Num, q: "length" | "angle") => string, group: (title: string, body: string) => string, chk: (k: string, on: boolean | undefined, label: string) => string): string {
+    const opt = (v: string, l: string) => `<option value="${v}"${(f.capStyle ?? "") === v ? " selected" : ""}>${esc(l)}</option>`;
+    const M = f.major ?? f.diameter.v;
+    const c = captiveStack(f);
+    return group(t("Hole specification"), `<label class="pm-field"><span>${esc(t("Held by"))}</span><select data-k="capStyle">${opt("", t("Thread in the cover"))}${opt("ring", t("Retaining ring under the cover"))}</select></label>`
+        + numField("diameter", t("Clearance diameter"), f.diameter, "length")
+        + (f.capStyle === "ring" ? numField("ringDia", t("Retaining ring diameter"), f.ringDia ?? { v: 2 * M }, "length") + numField("ringT", t("Retaining ring thickness"), f.ringT ?? { v: 1 }, "length")
+          : f.retract ? numField("capHold", t("Retaining thread length"), f.capHold ?? { v: M }, "length") : "")
+        + chk("retract", f.retract, t("Retracted screw: room for its thread inside the cover"))
+        + (f.retract ? numField("capThread", t("Screw thread length"), f.capThread ?? { v: 2 * M }, "length")
+          + `<p class="pm-help muted">${esc(t("With the screw pulled up its thread stays inside the cover, so the cover sits flat on the box. Cover thickness needed: {d} mm.", { d: trimNum(c.need, 2) }))}</p>` : "")
+        + chk("capHead", !!f.cbDia, t("Head counterbore"))
+        + (f.cbDia ? numField("cbDia", t("Counterbore diameter"), f.cbDia, "length") + numField("cbDepth", t("Counterbore depth"), f.cbDepth ?? { v: M }, "length") : ""));
+  }
+
   private holePreview(f: HoleFeature): string {
     const fu = UNITS[units.current].f, dec = units.decimals ?? this.doc.units.decimals;
     const len = (v: number) => trimNum(v * fu, Math.max(dec, 2)), ang = (v: number) => trimNum(v, 2);
@@ -4568,10 +4587,11 @@ export class ModelController {
       const at = (p: [number, number], dx: number, dy: number) => [0, 1, 2].map(i => fr.o[i] + fr.x[i] * (p[0] + dx) + fr.y[i] * (p[1] + dy));
       h.pts.forEach((p, i) => {
         // Advanced Hole: each tapped element's thread from its own depth down.
-        if (h.kind === "adv" && h.near?.length) {
+        const stack = h.kind === "captive" ? captiveStack(h) : h.kind === "adv" && h.near?.length ? { near: h.near, far: h.far } : null;
+        if (stack) {
           const exits = holeExits(h), D = exits ? fr.len?.[i] ?? 1e5 : h.depth.v;
           let threads: ReturnType<typeof advProfile>["threads"] = [];
-          try { threads = advProfile(h.near, h.far, D, exits).threads; } catch { /* the panel says what is wrong */ }
+          try { threads = advProfile(stack.near, stack.far, D, exits).threads; } catch { /* the panel says what is wrong */ }
           const dir = (h.flip ? fr.n : [-fr.n[0], -fr.n[1], -fr.n[2]]) as V3;
           for (const th of threads) {
             const o = at(p, 0, 0).map((x, k) => x + dir[k] * th.z0) as V3;
@@ -6750,13 +6770,13 @@ export class ModelController {
       // FR-FT-051 UX: Type and Positions tabs as in SolidWorks; view picks work on either tab.
       if (this.holeTabOf !== f) { this.holeTabOf = f; this.holeTab = "type"; }
       const tab = this.holeTab;
-      const kindNames: Record<HoleFeature["kind"], string> = { simple: t("Simple hole"), clear: t("Clearance hole"), cbore: t("Counterbore"), cdrill: t("Counterdrill"), csink: t("Countersink"), tapped: t("Tapped hole"), ptap: t("Tapered tap"), slot: t("Slot"), insert: t("Heat-set insert"), adv: t("Advanced hole") };
+      const kindNames: Record<HoleFeature["kind"], string> = { simple: t("Simple hole"), clear: t("Clearance hole"), cbore: t("Counterbore"), cdrill: t("Counterdrill"), csink: t("Countersink"), tapped: t("Tapped hole"), ptap: t("Tapered tap"), slot: t("Slot"), insert: t("Heat-set insert"), adv: t("Advanced hole"), captive: t("Captive screw") };
       const favOpen = (() => { try { return localStorage.getItem("mc:holeFavOpen") === "1"; } catch { return false; } })();
       const typeTab = this.holePreview(f)
         + `<details class="pm-group pm-favs" data-ui="favs"${favOpen ? " open" : ""}><summary>${esc(t("Favourites"))}${favs.length ? ` <span class="muted">(${favs.length})</span>` : ""}</summary><label class="pm-field"><span>${esc(t("Favourite"))}</span><select data-ui="fav"><option value="">${esc(t("None"))}</option>${favs.map((x, i) => `<option value="${i}" translate="no">${esc(x.name)}</option>`).join("")}</select></label>`
           + `<label class="pm-field"><span>${esc(t("Name"))}</span><input type="text" data-ui="favName" value="${esc(holeTitle(f))}" spellcheck="false" translate="no" /></label>`
           + `<div class="pm-rels"><button class="btn small" data-ui="favSave">${esc(t("Save as favourite"))}</button>${favs.length ? `<button class="btn small" data-ui="favDel">${esc(t("Delete favourite"))}</button>` : ""}</div></details>`
-        + group(t("Hole type"), `<div class="pm-hkinds" role="group" aria-label="${esc(t("Hole type"))}">${HOLE_KINDS.map(k => `<button type="button" class="pm-hkind${f.kind === k ? " on" : ""}" data-hkind="${k}" aria-pressed="${f.kind === k}" title="${esc(kindNames[k])}" aria-label="${esc(kindNames[k])}">${holeIcon(k)}</button>`).join("")}</div>` + sel("kind", t("Type"), [["simple", t("Simple hole")], ["clear", t("Clearance hole")], ["cbore", t("Counterbore")], ["cdrill", t("Counterdrill")], ["csink", t("Countersink")], ["tapped", t("Tapped hole")], ["ptap", t("Tapered tap")], ["slot", t("Slot")], ["insert", t("Heat-set insert")], ["adv", t("Advanced hole")]], f.kind)
+        + group(t("Hole type"), `<div class="pm-hkinds" role="group" aria-label="${esc(t("Hole type"))}">${HOLE_KINDS.map(k => `<button type="button" class="pm-hkind${f.kind === k ? " on" : ""}" data-hkind="${k}" aria-pressed="${f.kind === k}" title="${esc(kindNames[k])}" aria-label="${esc(kindNames[k])}">${holeIcon(k)}</button>`).join("")}</div>` + sel("kind", t("Type"), [["simple", t("Simple hole")], ["clear", t("Clearance hole")], ["cbore", t("Counterbore")], ["cdrill", t("Counterdrill")], ["csink", t("Countersink")], ["tapped", t("Tapped hole")], ["ptap", t("Tapered tap")], ["slot", t("Slot")], ["insert", t("Heat-set insert")], ["adv", t("Advanced hole")], ["captive", t("Captive screw")]], f.kind)
           + (f.kind === "adv" ? "" : f.kind === "ptap" ? sel("standard", t("Standard"), [["npt", t("ANSI NPT (pipe taper)")], ["bspt", t("ISO 7 Rc (BSPT)")]], f.standard === "bspt" ? "bspt" : "npt")
             : f.kind !== "insert" ? sel("standard", t("Standard"), [["iso", t("ISO metric")], ["isofine", t("ISO metric fine")], ["unc", t("ANSI inch UNC")], ["unf", t("ANSI inch UNF")]], holeStd(f)) : "")
           + (f.kind === "adv" ? "" : sel("size", t("Size"), [["", t("Custom")], ...(f.kind === "insert" ? HEAT_INSERTS : f.kind === "ptap" ? TAPER_STANDARDS[f.standard === "bspt" ? "bspt" : "npt"] : HOLE_STANDARDS[holeStd(f)]).map(h => [h.size, h.size] as [string, string])], f.size ?? ""))
@@ -6764,7 +6784,7 @@ export class ModelController {
           + ((headKind(f) === "cbore" || headKind(f) === "csink" || f.kind === "cdrill") && f.size && screwTypes(f.size, headKind(f) === "csink" ? "csink" : "cbore").length > 1
             ? sel("screw", t("Screw type"), screwTypes(f.size, headKind(f) === "csink" ? "csink" : "cbore").map(k => [k, t(SCREW_TYPES.find(x => x.key === k)!.label)] as [string, string]), f.screw ?? defaultScrew(headKind(f) === "csink" ? "csink" : "cbore")) : "")
           + (f.kind !== "tapped" && f.kind !== "ptap" && f.kind !== "insert" && f.size ? sel("fit", t("Clearance fit"), [["close", t("Close fit")], ["normal", t("Normal fit")], ["loose", t("Loose fit")]], f.fit ?? "normal") : ""))
-        + (f.kind === "adv" ? this.advGroups(f, numField, group) : group(t("Hole specification"), numField("diameter", f.kind === "tapped" || f.kind === "ptap" ? t("Tap drill diameter") : t("Diameter"), f.diameter, "length")
+        + (f.kind === "adv" ? this.advGroups(f, numField, group) : f.kind === "captive" ? this.captiveGroup(f, numField, group, chk) : group(t("Hole specification"), numField("diameter", f.kind === "tapped" || f.kind === "ptap" ? t("Tap drill diameter") : t("Diameter"), f.diameter, "length")
           + (f.kind === "ptap" ? numField("taperDia", t("Tapered diameter at the face"), f.taperDia ?? { v: f.diameter.v * 1.1 }, "length") : "")
           + (headKind(f) === "cbore" ? numField("cbDia", t("Counterbore diameter"), f.cbDia ?? { v: f.diameter.v * 1.7 }, "length") + numField("cbDepth", t("Counterbore depth"), f.cbDepth ?? { v: f.diameter.v }, "length") : "")
           + (headKind(f) === "csink" ? numField("csDia", t("Countersink diameter"), f.csDia ?? { v: f.diameter.v * 2 }, "length") + numField("csAngle", t("Countersink angle"), f.csAngle ?? { v: Math.PI / 2 }, "angle") : "")
@@ -6782,7 +6802,7 @@ export class ModelController {
           + (f.kind === "tapped" && !threadThrough(f) ? numField("threadDepth", t("Thread depth"), f.threadDepth ?? { v: f.diameter.v * 2 }, "length") : "")
           + (f.kind === "ptap" ? numField("threadDepth", t("Thread length"), f.threadDepth ?? { v: f.diameter.v }, "length") : "")
           + chk("flip", f.flip, t("Reverse direction")))
-        + (f.kind === "insert" || f.kind === "adv" ? "" : group(t("Options"),
+        + (f.kind === "insert" || f.kind === "adv" || f.kind === "captive" ? "" : group(t("Options"),
           (f.kind === "ptap" ? sel("threadMode", t("Thread display"), [["", t("Cosmetic thread")], ["remove", t("Remove thread")]], f.threadMode ?? "") : "")
           + (f.kind === "tapped" ? sel("threadMode", t("Thread display"), [["", t("Cosmetic thread")], ["remove", t("Remove thread")], ["none", t("No cosmetic thread")]], f.threadMode ?? "")
             + (f.size ? sel("tclass", t("Thread class"), threadClasses(f.size).map(c => [c, c] as [string, string]), f.tclass ?? threadClasses(f.size)[0]) : "") : "")
@@ -6997,7 +7017,7 @@ export class ModelController {
           }
           (host as Record<string, Num>)[last] = n;
           // A typed size makes the hole custom (SolidWorks' "Show custom sizing").
-          if (f.type === "hole" && key !== "depth" && key !== "threadDepth" && key !== "headClear" && key !== "drillAngle" && key !== "upToOffset" && !/^(near|under|far)Cs\./.test(key) && f.size) { delete f.size; delete f.fit; }
+          if (f.type === "hole" && key !== "depth" && key !== "threadDepth" && key !== "headClear" && key !== "drillAngle" && key !== "upToOffset" && !/^(near|under|far)Cs\./.test(key) && !(f.kind === "captive" && /^(capHold|capThread|ringDia|ringT|cbDia|cbDepth|diameter)$/.test(key)) && f.size) { delete f.size; delete f.fit; }
           if (f.type === "thread" && key === "diameter") { delete f.size; delete f.pitch; }
           // Advanced Hole: a typed diameter or angle makes that element custom; the main hole's Ø is the feature's.
           if (f.type === "hole" && f.kind === "adv") { const e = /^(near|far)\.(\d+)\.(dia|angle)$/.exec(key); if (e) delete f[e[1] as "near" | "far"]?.[+e[2]]?.size; advSync(f); }
@@ -7092,6 +7112,20 @@ export class ModelController {
           }, true);
           return;
         }
+        if (f.type === "hole" && f.kind === "captive" && (k === "capStyle" || k === "retract" || k === "capHead")) {
+          upd(() => {
+            const M = f.major ?? f.diameter.v;
+            if (k === "capStyle") { if (val) f.capStyle = "ring"; else delete f.capStyle; }
+            if (k === "retract") { if (val) f.retract = true; else delete f.retract; }
+            if (k === "capHead") {
+              if (!val) { delete f.cbDia; delete f.cbDepth; }
+              else { const p = headPocket(f.size, undefined, "cbore"); f.cbDia = { v: p?.[0] ?? Math.round(M * 18) / 10 }; f.cbDepth = { v: p?.[1] ?? M }; }
+            }
+            f.capHold ??= { v: M }; f.capThread ??= { v: 2 * M };
+            if (f.capStyle === "ring") { f.ringDia ??= { v: Math.round(M * 22) / 10 }; f.ringT ??= { v: 1 }; }
+          }, true);
+          return;
+        }
         if (f.type === "hole" && k === "slotHead") {
           upd(() => {
             if (val) f.slotHead = val as HoleFeature["slotHead"]; else { delete f.slotHead; delete f.screw; delete f.headClear; delete f.underCs; }
@@ -7126,6 +7160,12 @@ export class ModelController {
                 for (const x of ["size", "fit", "standard", "cbDia", "cbDepth", "csDia", "csAngle", "cdDia", "cdDepth", "cdAngle", "threadDepth", "threadEnd", "major", "pitch", "screw", "tclass", "nearCs", "underCs", "farCs", "headClear", "slotHead"] as const) delete f[x];
                 advSync(f);
               } else { delete f.near; delete f.far; }
+              // Captive screw: through the cover, M4 unless a size is kept; leaving it drops its own values.
+              if (f.kind === "captive") {
+                if (!f.size || !holeSize(f.size)) f.size = "M4";
+                for (const x of ["cbDia", "cbDepth", "csDia", "csAngle", "cdDia", "cdDepth", "cdAngle", "threadDepth", "threadEnd", "screw", "tclass", "nearCs", "underCs", "farCs", "headClear", "slotHead"] as const) delete f[x];
+                if (f.end === "blind" || f.end === "vertex" || f.end === "offset") f.end = "through";
+              } else for (const x of ["capStyle", "retract", "capHold", "capThread", "ringDia", "ringT"] as const) delete f[x];
             }
             if (k === "size") { if (val) f.size = String(val); else delete f.size; }
             if (k === "fit") f.fit = val as HoleFeature["fit"];
