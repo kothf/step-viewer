@@ -2367,6 +2367,64 @@ try {
         `model 1.507: A in the line tool draws a tangent arc, then lines go on tangent to it (FR-SK-011) (${arcMode}, ${back}, ${JSON.stringify(ta)})`);
       await tool("select");
     }
+    // 1.513.0 (FR-SK-015): the Tangent Arc tool starts on the end of that last line and chains tangent arcs.
+    {
+      await tool("tarc");
+      const arcsBefore = await mp.evaluate(() => window.__sv.model.editor().sk.ents.filter(e => e.t === "arc").map(e => e.id));
+      await click([104, 45]);
+      const on = await mp.evaluate(() => window.__sv.model.editor().arcMode);
+      await click([108, 45]); await click([112, 45]);
+      await mp.keyboard.press("Escape");
+      const tr = await mp.evaluate(old => {
+        const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id);
+        const arcs = sk.ents.filter(e => e.t === "arc" && !old.includes(e.id));
+        return { n: arcs.length, rs: arcs.map(a => { const c = P(a.c), q = P(a.a); return Math.hypot(q.x - c.x, q.y - c.y); }), cs: arcs.map(a => [P(a.c).x, P(a.c).y]),
+          tan: arcs.map(a => sk.rels.filter(r => r.t === "tangent" && r.e.includes(a.id)).length), status: ed.info.status };
+      }, arcsBefore);
+      check(on === true && tr.n === 2 && tr.rs.every(r => Math.abs(r - 2) < 0.05) && Math.abs(tr.cs[0][0] - 106) < 0.05 && Math.abs(tr.cs[1][0] - 110) < 0.05 && tr.tan.every(k => k >= 1) && tr.status === "ok",
+        `model 1.513: Tangent Arc tool chains arcs tangent to the line it starts on (FR-SK-015) (${on}, ${JSON.stringify(tr)})`);
+      await tool("select");
+    }
+    // 1.513.0 (FR-SK-037): dynamic mirror about a line mirrors each new line at once, and the mirrored chain stays joined.
+    {
+      await tool("line");
+      await click([120, 30]); await click([120, 50]); await mp.keyboard.press("Escape");
+      const axis = await mp.evaluate(() => { const ed = window.__sv.model.editor(); const l = ed.sk.ents.filter(e => e.t === "line").at(-1); ed.selection = new Set([l.id]); return { id: l.id, on: ed.toggleDynMirror(), dm: ed.dynMirror }; });
+      const linesBefore = await mp.evaluate(() => window.__sv.model.editor().sk.ents.filter(e => e.t === "line").map(e => e.id));
+      await click([123, 32]); await click([126, 36]); await click([126, 41]); await mp.keyboard.press("Escape");
+      const dm = await mp.evaluate(old => {
+        const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id);
+        const fresh = sk.ents.filter(e => e.t === "line" && !old.includes(e.id));
+        const xs = fresh.flatMap(l => [P(l.a).x, P(l.b).x]).map(x => Math.round(x * 100) / 100).sort((a, b) => a - b);
+        const left = fresh.filter(l => P(l.a).x < 120);
+        const joined = left.length === 2 && [left[0].a, left[0].b].some(q => q === left[1].a || q === left[1].b);
+        const sym = sk.rels.filter(r => r.t === "symmetric").length;
+        ed.toggleDynMirror();
+        return { n: fresh.length, xs, joined, sym, off: ed.dynMirror === null, status: ed.info.status };
+      }, linesBefore);
+      check(axis.on && axis.dm === axis.id && dm.n === 4 && Math.abs(dm.xs[0] - 114) < 0.05 && Math.abs(dm.xs.at(-1) - 126) < 0.05 && dm.joined && dm.sym >= 3 && dm.off && dm.status === "ok",
+        `model 1.513: dynamic mirror copies each new line about the picked line, joined (FR-SK-037) (${JSON.stringify(axis)}, ${JSON.stringify(dm)})`);
+      await tool("select");
+    }
+    // 1.513.0 (FR-SK-012): Centerline draws construction lines; Midpoint line puts its middle on the first click.
+    {
+      const before = await mp.evaluate(() => window.__sv.model.editor().sk.ents.filter(e => e.t === "line").map(e => e.id));
+      await tool("cline");
+      await click([130, 44]); await click([136, 44]); await mp.keyboard.press("Escape");
+      await tool("mline");
+      await click([132, 58]); await click([136, 58]);
+      const ml = await mp.evaluate(old => {
+        const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id);
+        const fresh = sk.ents.filter(e => e.t === "line" && !old.includes(e.id));
+        const c = fresh.find(l => l.cons), m = fresh.find(l => !l.cons);
+        const mid = m && sk.rels.find(r => r.t === "midpoint" && r.e[1] === m.id);
+        return { n: fresh.length, cons: !!c, ends: m ? [P(m.a).x, P(m.a).y, P(m.b).x, P(m.b).y].map(v => Math.round(v * 100) / 100) : null,
+          mid: mid ? [P(mid.e[0]).x, P(mid.e[0]).y].map(v => Math.round(v * 100) / 100) : null, status: ed.info.status };
+      }, before);
+      check(ml.n === 2 && ml.cons && ml.ends && Math.abs(ml.ends[0] - 128) < 0.05 && Math.abs(ml.ends[2] - 136) < 0.05 && Math.abs(ml.ends[1] - 58) < 0.05 && ml.mid && Math.abs(ml.mid[0] - 132) < 0.05 && ml.status === "ok",
+        `model 1.513: Centerline makes a construction line, Midpoint line spans both ways from its middle (FR-SK-012) (${JSON.stringify(ml)})`);
+      await tool("select");
+    }
     // 1.266.0 (FR-SK-043/044/047): dragging the last line's start onto the free end of the Ctrl line merges them
     // (coincident relation); Ctrl+drag of that line copies it; the status bar shows the cursor position.
     await tool("select");
@@ -3708,7 +3766,7 @@ try {
     await mp.waitForTimeout(1200);
     await mp.click('#mc-tools [data-fly="line"]');
     const lnFly = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
-    await mp.click("#mc-menu button:nth-child(2)");
+    await mp.click("#mc-menu button:nth-child(4)");
     await click([-22, 0]); await click([-15, -3]); await click([-8, 0]); await click([-15, 3]); await click([-22, 0]);
     const spl = await mp.evaluate(() => { const ed = window.__sv.model.editor(), e = ed.sk.ents.find(x => x.t === "spline"); return e ? { n: e.pts.length, closed: !!e.closed, dof: ed.info.dof } : null; });
     await mp.evaluate(() => window.__sv.modeller.ok());
@@ -3717,7 +3775,7 @@ try {
     await idle();
     const cut3 = await mp.evaluate(() => { const r = window.__sv.model.last(); return { v: r.props?.volume ?? 0, ok: r.statuses.every(s => s.ok), faces: window.__sv.viewer.parts[0]?.data.faces.length }; });
     const dSpl = cut.v - cut3.v;
-    check(lnFly === "Line|Spline|Style spline|Equation driven curve" && spl?.n === 4 && spl.closed && spl.dof === 8 && cut3.ok && dSpl > 42 * 5 && dSpl < 42 * 5 * 1.7, `model 1.35: a closed spline through four clicks, cut through the part (${lnFly}, ${JSON.stringify(spl)}, ${cut3.ok}, ${dSpl.toFixed(1)})`);
+    check(lnFly === "Line|Centerline|Midpoint line|Spline|Style spline|Equation driven curve" && spl?.n === 4 && spl.closed && spl.dof === 8 && cut3.ok && dSpl > 42 * 5 && dSpl < 42 * 5 * 1.7, `model 1.35: a closed spline through four clicks, cut through the part (${lnFly}, ${JSON.stringify(spl)}, ${cut3.ok}, ${dSpl.toFixed(1)})`);
     await ctx.close();
   }
 
@@ -4249,7 +4307,7 @@ try {
     check(parGot.length === 6 && parGot.every((v, i) => Math.abs(v - parWant[i]) < 0.002), `model 1.157: parabola from focus, vertex and two ends (${par})`);
     await mp.click('#mc-tools [data-fly="line"]');
     const lfly = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
-    await mp.click("#mc-menu button:nth-child(4)");
+    await mp.click("#mc-menu button:nth-child(6)");
     await mp.waitForSelector("#mc-pm [data-cq=add]");
     await mp.selectOption("#mc-pm [data-cq=mode]", "param");
     await mp.waitForSelector("#mc-pm [data-cq=x]");
@@ -4265,13 +4323,13 @@ try {
     })();
     await mp.click("#mc-pm [data-cq=add]");
     const eq = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id), c = sk.ents.find(e => e.kind === "eqn"); return c ? { ends: c.pts.map(id => [P(id).x, P(id).y].map(v => Math.round(v * 1000) / 1000).join(",")).join(" "), fixes: sk.rels.filter(r => r.t === "fix").length, sel: [...ed.selection][0] === c.id, ok: ed.info.status, panel: !!document.querySelector("#mc-pm [data-cq=y]") } : null; });
-    check(lfly === "Line|Spline|Style spline|Equation driven curve" && eq && eq.ends === "-20,0 -40,0" && eq.fixes === 2 && eq.sel && eq.ok === "ok" && eq.panel,
+    check(lfly === "Line|Centerline|Midpoint line|Spline|Style spline|Equation driven curve" && eq && eq.ends === "-20,0 -40,0" && eq.fixes === 2 && eq.sel && eq.ok === "ok" && eq.panel,
       `model 1.157: equation driven curve x(t), y(t) added from the panel with fixed ends (${lfly}, ${JSON.stringify(eq)})`);
     check(ruAdd === "Добавить кривую", `model 1.157: Add curve in Russian (${ruAdd})`);
     // 1.164: a style spline (FR-SK-019 P5) from the Line flyout: four control points, the last clicked again ends it.
     await mp.keyboard.press("Escape");
     await mp.click('#mc-tools [data-fly="line"]');
-    await mp.click("#mc-menu button:nth-child(3)");
+    await mp.click("#mc-menu button:nth-child(5)");
     const sTool = await mp.evaluate(() => window.__sv.model.editor().tool);
     for (const q of [[12, -15], [17, -9], [24, -15], [30, -9], [30, -9]]) await click(q);
     const sty = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id), c = sk.ents.find(e => e.kind === "style"); return c ? { n: c.pts.length, closed: !!c.closed, ends: [c.pts[0], c.pts.at(-1)].map(id => [P(id).x, P(id).y].map(v => Math.round(v)).join(",")).join(" "), ok: ed.info.status } : null; });
@@ -4599,7 +4657,7 @@ try {
     await ctx.close();
   }
 
-  // --- 1.513.0: vault status chip in the header with a tooltip; a drawing of a vault part goes into the vault ---
+  // --- 1.514.0: vault status chip in the header with a tooltip; a drawing of a vault part goes into the vault ---
   if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
@@ -4651,9 +4709,9 @@ try {
     const r2 = await rows();
     const n2 = await mp.evaluate(() => document.querySelectorAll("#vault-panel .v-row").length);
     check(/^Part1\.mcadprt$/.test(head.name.trim()) && /^v1 · Draft · checked out to you$/.test(head.chip) && /version 1/.test(head.tip) && /Lifecycle state: Draft/.test(head.tip) && /Checked out to you/.test(head.tip),
-      `vault 1.513: the header shows the vault status in its own chip with a tooltip that explains it (${JSON.stringify(head)})`);
+      `vault 1.514: the header shows the vault status in its own chip with a tooltip that explains it (${JSON.stringify(head)})`);
     check(/Part1\.mcaddrw/.test(r1) && tied && downloads === 0 && n2 === 4 && /Part2\.mcadprt/.test(r2) && /Part2\.mcaddrw/.test(r2),
-      `vault 1.513: a drawing of a vault part saves into the vault, and Save to vault takes the part's open drawing along (${r1}; ${tied}, ${downloads}; ${n2}: ${r2})`);
+      `vault 1.514: a drawing of a vault part saves into the vault, and Save to vault takes the part's open drawing along (${r1}; ${tied}, ${downloads}; ${n2}: ${r2})`);
     await ctx.close();
   }
 
