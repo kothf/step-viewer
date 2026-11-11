@@ -2248,7 +2248,7 @@ try {
     const fly = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent));
     await mp.click("#mc-menu button:nth-child(2)");
     const flyTool = await mp.evaluate(() => ({ tool: window.__sv.model.editor().tool, shown: document.querySelector('#mc-tools [data-c^="sk:"][data-c="sk:extend"]')?.textContent?.trim() }));
-    check(fly.join("|") === "Trim|Extend|Split|Jog line" && flyTool.tool === "extend" && flyTool.shown === "Extend", `model 1.20: the sketch bar groups Trim, Extend and Split in a flyout (${fly.join("|")}, ${JSON.stringify(flyTool)})`);
+    check(fly.join("|") === "Trim|Extend|Split|Jog line|Segment" && flyTool.tool === "extend" && flyTool.shown === "Extend", `model 1.20: the sketch bar groups Trim, Extend and Split in a flyout (${fly.join("|")}, ${JSON.stringify(flyTool)})`);
     // A tool picked on the sketch bar shows its fields in the panel at once (exam #89: Fillet came without its radius).
     await mp.click('#mc-tools [data-c="sk:fillet"]');
     const frBox = await mp.evaluate(() => ({ tool: window.__sv.model.editor().tool, box: !!document.querySelector('#mc-pm input[data-a="fr"]') }));
@@ -2484,6 +2484,56 @@ try {
       }, jl);
       check(jg.chain.join("|") === "90 56 95 56|95 56 95 53|95 53 103 53|103 53 103 56|103 56 110 56" && /collinear/.test(jg.rels) && /parallel/.test(jg.rels) && (jg.rels.match(/perpendicular/g) ?? []).length === 2 && jg.status === "ok",
         `model 1.523: Jog line steps a line out with parallel and square sides (FR-SK-030) (${JSON.stringify(jg)})`);
+      await tool("select");
+    }
+    // 1.527.0 (FR-SK-032): Segment divides a line into equal collinear lines, and a circle by points on it.
+    {
+      await tool("segment");
+      const sg = await mp.evaluate(() => {
+        const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id);
+        sk.ents.push({ id: "sg1", t: "point", x: 300, y: 300 }, { id: "sg2", t: "point", x: 330, y: 300 }, { id: "sgl", t: "line", a: "sg1", b: "sg2" });
+        sk.ents.push({ id: "sgc", t: "point", x: 300, y: 400 }, { id: "sgo", t: "circle", c: "sgc", r: 10 });
+        ed.render();
+        ed.segCount = 3; ed.segMode = "segments";
+        ed.segmentAt([311, 300]);
+        const r = v => Math.round(v * 100) / 100;
+        const chain = [];
+        let l = P("sgl");
+        while (l && chain.length < 5) { chain.push([P(l.a).x, P(l.b).x].map(r).join("-")); const b = l.b; l = sk.ents.find(e => e.t === "line" && e.a === b); }
+        const lineRels = sk.rels.filter(x => x.e[0] === "sgl").map(x => x.t).sort().join(",");
+        ed.segCount = 4; ed.segMode = "points";
+        ed.segmentAt([310, 400]);
+        const on = sk.rels.filter(x => x.t === "onCurve" && x.e[1] === "sgo").map(x => [P(x.e[0]).x, P(x.e[0]).y].map(r).join(" "));
+        return { chain, lineRels, on, status: ed.info.status };
+      });
+      check(sg.chain.join("|") === "300-310|310-320|320-330" && sg.lineRels === "collinear,collinear,equal,equal" && sg.on.join("|") === "310 400|300 410|290 400|300 390" && sg.status === "ok",
+        `model 1.527: Segment divides a line into equal lines and a circle by points (FR-SK-032) (${JSON.stringify(sg)})`);
+      await tool("select");
+    }
+    // 1.527.0 (FR-UI-052): Add dimensions on creation: a new circle gets its diameter and the Modify box at once,
+    // a new line its length; a typed value drives it, and a click elsewhere keeps the drawn size.
+    {
+      const known = await mp.evaluate(() => { const ed = window.__sv.model.editor(); ed.addDims = true; return ed.sk.ents.map(e => e.id); });
+      await tool("circle");
+      await click([120, 20]); await click([124, 20]);
+      await mp.waitForSelector(".mod-box .mod-in", { timeout: 10000 });
+      await mp.fill(".mod-box .mod-in", "10"); await mp.keyboard.press("Enter"); await mp.waitForTimeout(200);
+      await tool("line");
+      await click([112, 40]); await click([128, 40]);
+      const lineBox = await mp.waitForSelector(".mod-box .mod-in", { timeout: 10000 }).then(() => true, () => false);
+      await mp.keyboard.press("Escape"); await mp.waitForTimeout(100);
+      await mp.keyboard.press("Escape"); await mp.waitForTimeout(100);
+      const ad = await mp.evaluate(old => {
+        const ed = window.__sv.model.editor(), sk = ed.sk;
+        const made = sk.ents.filter(e => !old.includes(e.id));
+        const circ = made.find(e => e.t === "circle"), line = made.find(e => e.t === "line");
+        const dimOf = id => sk.dims.find(d => d.e.length === 1 && d.e[0] === id);
+        const r = v => Math.round(v * 1000) / 1000;
+        ed.addDims = false;
+        return { r: circ && r(circ.r), cd: circ && dimOf(circ.id)?.t, cv: circ && r(dimOf(circ.id)?.val.v ?? 0), ld: line && dimOf(line.id)?.t, status: ed.info.status };
+      }, known);
+      check(ad.r === 5 && ad.cd === "diameter" && ad.cv === 10 && lineBox && ad.ld === "distance" && ad.status === "ok",
+        `model 1.527: Add dimensions gives a new circle its diameter and a new line its length, with the Modify box (FR-UI-052) (${JSON.stringify({ ...ad, lineBox })})`);
       await tool("select");
     }
     // 1.266.0 (FR-SK-043/044/047): dragging the last line's start onto the free end of the Ctrl line merges them
