@@ -57,7 +57,7 @@ import { openPrefs } from "./prefsUi";
 import { getPref, onPrefs } from "./prefs";
 import { DrawingWorkspace } from "./drawing/workspace";
 import { isDrawingName } from "./drawing/file";
-import { AsmController } from "./asm/controller";
+import { AsmController, TOOLBOX_MIME } from "./asm/controller";
 import { MotionManager } from "./motion/manager";
 import { flattenSubs } from "./asm/patterns";
 import { makeGrip, rememberDialogSizes } from "./resize";
@@ -1142,16 +1142,22 @@ $<HTMLInputElement>("#file-input").addEventListener("change", e => {
   if (fs?.length) openFiles([...fs]);
   (e.target as HTMLInputElement).value = "";
 });
-vpEl.addEventListener("dragover", e => { e.preventDefault(); vpEl.classList.add("drag"); });
+vpEl.addEventListener("dragover", e => {
+  e.preventDefault();
+  // A Toolbox library card: preview the part on the hole under the pointer.
+  if (e.dataTransfer?.types.includes(TOOLBOX_MIME)) { e.dataTransfer.dropEffect = "copy"; asm.toolboxDragOver(e.clientX, e.clientY); return; }
+  vpEl.classList.add("drag");
+});
 // The user is about to open a file: start the exact-geometry kernel now (it takes seconds to set up).
 $("#file-input").addEventListener("click", () => warmKernel());
 window.addEventListener("dragenter", e => { if (e.dataTransfer?.types.includes("Files")) warmKernel(); });
-vpEl.addEventListener("dragleave", () => vpEl.classList.remove("drag"));
+vpEl.addEventListener("dragleave", () => { vpEl.classList.remove("drag"); asm.toolboxDragLeave(); });
 vpEl.addEventListener("drop", e => {
   e.preventDefault();
   vpEl.classList.remove("drag");
   const dt = e.dataTransfer;
   if (!dt) return;
+  if (dt.types.includes(TOOLBOX_MIME)) { asm.toolboxDrop(e.clientX, e.clientY); return; }
   // A dropped folder (an assembly with its parts) is read through its entries.
   const entries = [...dt.items].map(i => i.webkitGetAsEntry?.()).filter((x): x is FileSystemEntry => !!x);
   if (entries.some(x => x.isDirectory)) { filesOf(entries).then(fs => { if (fs.length) openFiles(fs); }); return; }
