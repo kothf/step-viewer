@@ -66,6 +66,11 @@ test("hole options: near/far side and under head countersinks, head clearance cu
   near(run({ kind: "csink", csDia: { v: 20 }, csAngle: { v: PI / 2 }, headClear: { v: 2 } }), PI * 100 * 2 + cone(10, 5, 5) + PI * 25 * 13, "countersink head clearance");
   // A far side countersink on an Up to next hole opens where the hole stops.
   near(run({ end: "next", farCs: sink(12) }), PI * 25 * 19 + cone(6, 5, 1), "up to next far side");
+  // Drill point angle and the extra end conditions.
+  near(run({ end: "blind", depth: { v: 10 }, drillAngle: { v: PI / 2 } }), PI * 25 * 10 + cone(5, 0, 5), "drill angle 90°");
+  near(run({ end: "offset", upTo: { std: "XY" }, upToOffset: { v: 5 } }), PI * 25 * 15, "offset from surface");
+  near(run({ end: "offset", upTo: { std: "XY" }, upToOffset: { v: 5 }, reverseOffset: true }), PI * 25 * 20, "offset reversed (past the bottom)");
+  near(run({ end: "vertex", upToVertex: { edge: { faces: ["f1:side:s1l1", "f1:side:s1l2"] }, at: [50, -30, 0] } }), PI * 25 * 20, "up to vertex");
   // An option countersink narrower than what it opens is refused.
   const bad = m.evaluate(doc([rect("s1", 100, 60), { id: "f1", type: "extrude", name: "E", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
     { id: "h", type: "hole", name: "Hole1", plane: { face: { name: "f1:end" } }, pts: [[0, 0]], kind: "simple", diameter: { v: 10 }, end: "through", depth: { v: 10 }, nearCs: sink(8) } as Feature]));

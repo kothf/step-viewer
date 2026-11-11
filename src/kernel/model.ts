@@ -12,7 +12,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { V2, SkEnt } from "../model/types";
 import type { HealFeature, RecognizedHole, RecognizedBlends, SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, PatternSpot, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, ChamferFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, HoleSink, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
-import { dir2Apart, dir2Feature, threadThrough } from "../model/types";
+import { dir2Apart, dir2Feature, threadThrough, holeExits } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { recognizedHoleFeatures } from "../model/holes";
 import { ctxFrame } from "../model/context";
@@ -2281,13 +2281,21 @@ export class Modeller {
     // The depth at a hole centre: as set, through, to a plane (along the axis) or until the material ends.
     const depthAt = (o: V3): number => {
       if (through) return big;
-      if (f.end === "upto") {
+      if (f.end === "upto" || f.end === "offset") {
         if (!f.upTo) throw new FeatureError("E-HOLE-UPTO", "Pick the face or plane the hole goes up to.");
         const tp = this.planeFrame(f.upTo, prev, frames);
         const den = dot(tp.n, down);
         if (Math.abs(den) < 1e-9) throw new FeatureError("E-HOLE-UPTO", "The face or plane must not be parallel to the hole.");
-        const s = dot(sub3(tp.o, o), tp.n) / den;
+        let s = dot(sub3(tp.o, o), tp.n) / den;
+        // Offset from surface: measured along the hole, short of the face (past it when reversed).
+        if (f.end === "offset") s += (f.reverseOffset ? 1 : -1) * (f.upToOffset?.v ?? 0);
         if (!(s > 1e-6)) throw new FeatureError("E-HOLE-UPTO", "The face or plane is behind the hole's face.");
+        return s;
+      }
+      if (f.end === "vertex") {
+        if (!f.upToVertex) throw new FeatureError("E-HOLE-VERTEX", "Pick the vertex the hole goes up to.");
+        const s = dot(sub3(this.vertexPos(f.upToVertex, prev, frames), o), down);
+        if (!(s > 1e-6)) throw new FeatureError("E-HOLE-VERTEX", "The vertex is behind the hole's face.");
         return s;
       }
       if (f.end === "next") {
@@ -2304,7 +2312,6 @@ export class Modeller {
       return f.depth.v;
     };
     const lift = Math.max(0.01, r * 0.05);
-    const tan59 = Math.tan((118 * Math.PI) / 360);
     // Options: countersinks as (radius, height of the cone) from a diameter and included angle, wider than `inner`.
     const sinkOf = (s: HoleSink | undefined, inner: number): { R: number; h: number; t: number } | null => {
       if (!s) return null;
@@ -2352,7 +2359,7 @@ export class Modeller {
         else prof.push([R + lift * Math.tan(a / 2), lift], [r, -h]);
       } else top(prof, r);
       // Far side countersink: a cone opening onto the face where the hole leaves the material.
-      const fs = f.end === "blind" ? null : sinkOf(f.farCs, r);
+      const fs = holeExits(f) ? sinkOf(f.farCs, r) : null;
       if (fs && exit != null) {
         if (!(exit - fs.h > (-prof[prof.length - 1][1]) + 1e-6)) throw new FeatureError("E-HOLE-OPTCS", "An option countersink must be wider than the hole under it, at an angle between 6° and 174°.");
         prof.push([r, -(exit - fs.h)], [fs.R + lift * fs.t, -(exit + lift)]);
@@ -2360,7 +2367,9 @@ export class Modeller {
         else prof.push([0, -(exit + lift)]);
         return prof;
       }
-      const tipH = f.flat || f.end !== "blind" ? 0 : r / tan59;
+      const da = f.drillAngle?.v ?? (118 * Math.PI) / 180;
+      if (f.end === "blind" && !f.flat && !(da > 0.1 && da < Math.PI - 0.1)) throw new FeatureError("E-HOLE-DRILL", "The drill point angle must be between 6° and 174°.");
+      const tipH = f.flat || f.end !== "blind" ? 0 : r / Math.tan(da / 2);
       prof.push([r, -depth], [0, -depth - tipH]);
       return prof;
     };
@@ -2393,7 +2402,7 @@ export class Modeller {
     f.pts.forEach((p, i) => {
       const o = add(add(fr.o, mul(fr.x, p[0])), mul(fr.y, p[1]));
       if (threadThrough(f)) len.push(reach(o));
-      const exit = f.farCs && f.end !== "blind" ? (f.end === "through" ? reachAt(o) : depthAt(o)) : undefined;
+      const exit = f.farCs && holeExits(f) ? (f.end === "through" ? reachAt(o) : depthAt(o)) : undefined;
       let shape = revolve(o, profile(depthAt(o), exit));
       if (f.kind === "slot") {
         // Slot: the hole at both ends of the centre line, joined by the profile swept along it.

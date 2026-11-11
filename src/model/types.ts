@@ -568,10 +568,16 @@ export interface HoleFeature {
   standard?: "isofine" | "unc" | "unf";
   fit?: "close" | "normal" | "loose";
   diameter: Num;
-  /** upto: to a face or plane (`upTo`); next: until the hole leaves the material. */
-  end: "blind" | "through" | "upto" | "next";
+  /** upto: to a face or plane (`upTo`); next: until the hole leaves the material; vertex: to the plane through
+   *  `upToVertex` square to the hole; offset: `upToOffset` short of the face or plane `upTo` (past it with `reverseOffset`). */
+  end: "blind" | "through" | "upto" | "next" | "vertex" | "offset";
   depth: Num;
   upTo?: PlaneRef;
+  upToVertex?: VertexRef;
+  upToOffset?: Num;
+  reverseOffset?: boolean;
+  /** Drill point angle of a blind hole (absent = 118°). */
+  drillAngle?: Num;
   /** Counterdrill: diameter, depth and the angle of its conical bottom. */
   cdDia?: Num;
   cdDepth?: Num;
@@ -606,7 +612,9 @@ export interface HoleFeature {
 export interface HoleSink { dia: Num; angle: Num }
 
 /** The tapped hole's thread runs the whole drill (thread end Through all; only for holes that are not blind). */
-export function threadThrough(f: HoleFeature): boolean { return f.kind === "tapped" && f.threadEnd === "through" && f.end !== "blind"; }
+export function threadThrough(f: HoleFeature): boolean { return f.kind === "tapped" && f.threadEnd === "through" && holeExits(f); }
+/** The hole's end is where it leaves the material or meets a face (through, up to next, up to face): far side options apply. */
+export function holeExits(f: HoleFeature): boolean { return f.end === "through" || f.end === "next" || f.end === "upto"; }
 
 /**
  * Helix / spiral curve (FR-FT-083): round the circle of a sketch, starting on it at the start angle and

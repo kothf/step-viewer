@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Added
 - Hole Wizard sizes and standards: a Standard box (ISO metric, ISO metric fine, ANSI inch UNC, ANSI inch UNF) above Size. ISO metric now runs from M1.6 to M64 (clearance holes to ISO 273, counterbores for ISO 4762 cap screws, countersinks for ISO 10642 / DIN 7991), ISO fine has 20 common fine pitches (M8x1 to M64x4), and the inch tables have #2 to 1" with 75 % tap drills, close/free/loose clearance, socket head counterbores and 82° flat-head countersinks. Switching the standard keeps the nearest size. Drawing callouts give inch threads the class 2B ("1/4-20 UNC-2B").
 - Hole Wizard Options box, as in SolidWorks: Head clearance (deepens a counterbore, or puts a cylinder of the countersink's width above the cone), Near side countersink (at the top of the hole or its counterbore), Under head countersink (from the counterbore's floor into the hole) and Far side countersink (where a hole that is not blind leaves the material). Each countersink has its own diameter and angle; drawing callouts list them ("⌵Ø9 × 90° FAR SIDE").
+- Hole end conditions Up to vertex (pick a model corner or a sketch point; the hole stops at its depth) and Offset from surface (a face or plane plus a distance, with Reverse offset), and a Drill angle for blind holes with a drill point (118° by default, any angle up to 180°).
 
 ## [1.516.0] - 2026-11-11
 

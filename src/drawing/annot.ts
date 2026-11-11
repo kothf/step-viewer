@@ -18,7 +18,7 @@ import { frameOf } from "./sheet";
 import { dtargetPrims } from "./dtarget";
 import { skPrims } from "./sheetSketch";
 import { textWidth } from "./textWidth";
-import { threadThrough, type HoleSink } from "../model/types";
+import { threadThrough, holeExits, type HoleSink } from "../model/types";
 import { threadClass } from "../model/holes";
 
 type P2 = [number, number];
@@ -371,7 +371,7 @@ export function holeText(e: MEdge, ctx: AnnotCtx, count = true): string[] {
       if (H.nearCs && H.kind !== "csink" && H.kind !== "insert") lines.push(sink(H.nearCs, ""));
       if (H.kind === "cdrill" && H.cdDia) lines.push(`⌴Ø${f(H.cdDia.v)}${H.cdDepth ? ` ↧${f(H.cdDepth.v)}` : ""} × ${fa((H.cdAngle?.v ?? (118 * Math.PI) / 180) * 180 / Math.PI)}°`);
       if (H.kind === "csink" && H.csDia) lines.push(`⌵Ø${f(H.csDia.v)} × ${fa((H.csAngle?.v ?? Math.PI / 2) * 180 / Math.PI)}°`);
-      if (H.farCs && H.end !== "blind" && H.kind !== "slot" && H.kind !== "insert") lines.push(sink(H.farCs, "FAR SIDE"));
+      if (H.farCs && holeExits(H) && H.kind !== "slot" && H.kind !== "insert") lines.push(sink(H.farCs, "FAR SIDE"));
       return lines;
     }
   }
