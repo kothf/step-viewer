@@ -5,13 +5,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.519.0] - 2026-11-11
+## [1.520.0] - 2026-11-11
 
 ### Added
 - Hole Wizard sizes and standards: a Standard box (ISO metric, ISO metric fine, ANSI inch UNC, ANSI inch UNF) above Size. ISO metric now runs from M1.6 to M64 (clearance holes to ISO 273, counterbores for ISO 4762 cap screws, countersinks for ISO 10642 / DIN 7991), ISO fine has 20 common fine pitches (M8x1 to M64x4), and the inch tables have #2 to 1" with 75 % tap drills, close/free/loose clearance, socket head counterbores and 82° flat-head countersinks. Switching the standard keeps the nearest size. Drawing callouts give inch threads the class 2B ("1/4-20 UNC-2B").
 - Hole Wizard Options box, as in SolidWorks: Head clearance (deepens a counterbore, or puts a cylinder of the countersink's width above the cone), Near side countersink (at the top of the hole or its counterbore), Under head countersink (from the counterbore's floor into the hole) and Far side countersink (where a hole that is not blind leaves the material). Each countersink has its own diameter and angle; drawing callouts list them ("⌵Ø9 × 90° FAR SIDE").
 - Hole end conditions Up to vertex (pick a model corner or a sketch point; the hole stops at its depth) and Offset from surface (a face or plane plus a distance, with Reverse offset), and a Drill angle for blind holes with a drill point (118° by default, any angle up to 180°).
 
+
+
+## [1.519.0] - 2026-11-11
+
+### Added
+
+- Sketch: Stretch entities (FR-SK-039), as in SolidWorks. Pick the points at one end of a shape (a box over that end, or points and curves), click Stretch and give Delta X/Y. The picked points move, and the lines and arcs ending on them stretch. A curve picked without any of its points moves whole. Driving dimensions that span moved and fixed points take their new sizes; dimensions typed as an expression keep their expression. Relations stay.
 
 ## [1.518.0] - 2026-11-11
 
@@ -3229,7 +3236,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.519.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.520.0...HEAD
+[1.520.0]: https://github.com/kothf/step-viewer/compare/v1.519.0...v1.520.0
 [1.519.0]: https://github.com/kothf/step-viewer/compare/v1.518.0...v1.519.0
 [1.518.0]: https://github.com/kothf/step-viewer/compare/v1.517.0...v1.518.0
 [1.517.0]: https://github.com/kothf/step-viewer/compare/v1.516.0...v1.517.0

@@ -2432,6 +2432,36 @@ try {
         `model 1.513: Centerline makes a construction line, Midpoint line spans both ways from its middle (FR-SK-012) (${JSON.stringify(ml)})`);
       await tool("select");
     }
+    // 1.519.0 (FR-SK-039): Stretch entities moves only the picked end of a rectangle (a crossing pick of its right
+    // side: the two right corners plus the lines crossing the box); the width dimension takes the new size.
+    {
+      await tool("select");
+      await mp.evaluate(() => {
+        const ed = window.__sv.model.editor(), sk = ed.sk;
+        const P = (id, x, y) => ({ id, t: "point", x, y });
+        sk.ents.push(P("st1", 200, 100), P("st2", 220, 100), P("st3", 220, 110), P("st4", 200, 110),
+          { id: "stl1", t: "line", a: "st1", b: "st2" }, { id: "stl2", t: "line", a: "st2", b: "st3" }, { id: "stl3", t: "line", a: "st3", b: "st4" }, { id: "stl4", t: "line", a: "st4", b: "st1" });
+        sk.rels.push({ id: "str1", t: "horizontal", e: ["stl1"] }, { id: "str2", t: "horizontal", e: ["stl3"] }, { id: "str3", t: "vertical", e: ["stl2"] }, { id: "str4", t: "vertical", e: ["stl4"] });
+        sk.dims.push({ id: "std1", name: "STW", t: "hdistance", e: ["st1", "st2"], val: { v: 20 } }, { id: "std2", name: "STH", t: "vdistance", e: ["st2", "st3"], val: { v: 10 } });
+        ed.selection = new Set(["st2", "st3", "stl1", "stl2", "stl3"]);
+      });
+      await mp.click('#mc-tools [data-c="skstretch"]');
+      const stTitle = await mp.evaluate(() => document.querySelector("#mc-pm h3")?.textContent);
+      await mp.fill('#mc-pm input[data-p="dx"]', "5");
+      await mp.press('#mc-pm input[data-p="dx"]', "Tab");
+      await mp.click('#mc-pm [data-a="pok"]');
+      const st = await mp.evaluate(() => {
+        const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id);
+        const out = { pts: ["st1", "st2", "st3", "st4"].map(id => [P(id).x, P(id).y].map(v => Math.round(v * 100) / 100).join(",")).join(" "),
+          w: sk.dims.find(d => d.id === "std1")?.val.v, h: sk.dims.find(d => d.id === "std2")?.val.v, status: ed.info.status };
+        const mine = new Set(["st1", "st2", "st3", "st4", "stl1", "stl2", "stl3", "stl4", "str1", "str2", "str3", "str4", "std1", "std2"]);
+        sk.ents = sk.ents.filter(e => !mine.has(e.id)); sk.rels = sk.rels.filter(r => !mine.has(r.id)); sk.dims = sk.dims.filter(d => !mine.has(d.id));
+        ed.selection = new Set(); ed.render();
+        return out;
+      });
+      check(/Stretch/.test(stTitle ?? "") && st.pts === "200,100 225,100 225,110 200,110" && Math.abs(st.w - 25) < 1e-6 && st.h === 10 && st.status === "ok",
+        `model 1.519: Stretch entities moves the picked end of a rectangle and its width dimension follows (FR-SK-039) (${stTitle}, ${JSON.stringify(st)})`);
+    }
     // 1.266.0 (FR-SK-043/044/047): dragging the last line's start onto the free end of the Ctrl line merges them
     // (coincident relation); Ctrl+drag of that line copies it; the status bar shows the cursor position.
     await tool("select");
@@ -3442,7 +3472,7 @@ try {
     await mp.selectOption('#mc-pm select[data-k="standard"]', "iso").catch(() => {});
     await idle();
     const iso = await mp.evaluate(() => ({ s: document.querySelector('#mc-pm select[data-k="size"]')?.value, d: parseFloat(document.querySelector('#mc-pm input[data-num="diameter"]')?.value), n: document.querySelectorAll('#mc-pm select[data-k="size"] option').length }));
-    check(unc.s === "1/4-20 UNC" && Math.abs(unc.d - 5.105) < 1e-3 && unc.n === 14 && iso.s === "M6" && iso.d === 5 && iso.n === 25, `model 1.519: hole Standard ANSI inch UNC and back to ISO metric (${JSON.stringify(unc)}, ${JSON.stringify(iso)})`);
+    check(unc.s === "1/4-20 UNC" && Math.abs(unc.d - 5.105) < 1e-3 && unc.n === 14 && iso.s === "M6" && iso.d === 5 && iso.n === 25, `model 1.520: hole Standard ANSI inch UNC and back to ISO metric (${JSON.stringify(unc)}, ${JSON.stringify(iso)})`);
     // Options: Near side countersink defaults to the hole + 1 mm at 90°; unticking takes it away.
     await mp.check('#mc-pm input[data-k="optNear"]').catch(() => {});
     await idle();
@@ -3450,7 +3480,7 @@ try {
     await mp.uncheck('#mc-pm input[data-k="optNear"]').catch(() => {});
     await idle();
     const ncsOff = await mp.evaluate(() => !document.querySelector('#mc-pm input[data-num="nearCs.dia"]'));
-    check(ncs.d === "6" && ncs.a === "90" && ncs.far && !ncs.head && ncsOff, `model 1.519: hole Options near side countersink on and off (${JSON.stringify(ncs)}, ${ncsOff})`);
+    check(ncs.d === "6" && ncs.a === "90" && ncs.far && !ncs.head && ncsOff, `model 1.520: hole Options near side countersink on and off (${JSON.stringify(ncs)}, ${ncsOff})`);
     // End conditions Up to vertex / Offset from surface are offered; a blind drilled hole shows its Drill angle (118°).
     const ends = await mp.evaluate(() => [...document.querySelectorAll('#mc-pm select[data-k="end"] option')].map(o => o.value));
     await mp.selectOption('#mc-pm select[data-k="end"]', "blind");
@@ -3458,7 +3488,7 @@ try {
     const drill = await mp.evaluate(() => document.querySelector('#mc-pm input[data-num="drillAngle"]')?.value ?? null);
     await mp.selectOption('#mc-pm select[data-k="end"]', "through");
     await idle();
-    check(ends.includes("vertex") && ends.includes("offset") && drill === "118", `model 1.519: hole end Up to vertex / Offset from surface and Drill angle (${JSON.stringify(ends)}, ${drill})`);
+    check(ends.includes("vertex") && ends.includes("offset") && drill === "118", `model 1.520: hole end Up to vertex / Offset from surface and Drill angle (${JSON.stringify(ends)}, ${drill})`);
     await mp.click("#mc-ok");
     await idle();
     const vHole = await vol(), stHole = await lastSt();
