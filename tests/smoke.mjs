@@ -2970,7 +2970,7 @@ try {
       `model 1.351: Draft's selection boxes have their own colours and the picked face is drawn in the faces box's colour with a "Faces to draft" tag (${JSON.stringify(bx)})`);
     // 1.387 (FR-SEL-011, AT-UX-6): the other panels' boxes: the Hole Wizard's face is drawn in the Face box's colour with its tag, and an extrude's Start at / Up to faces get one box each.
     await mp.evaluate(() => window.__sv.modeller.command("hole"));
-    await mp.waitForSelector('#mc-pm .pm-box[data-focus="hplane"]');
+    await mp.waitForSelector('#mc-pm .pm-box[data-focus="hplane"]', { state: "attached" });
     await mp.evaluate(() => {
       const m = window.__sv.modeller, d = m.mode.draft, names = window.__sv.model.last().faceNames;
       d.plane = { face: { name: names.find(n => n.startsWith("cpe:")) } }; m.draftChanged();
@@ -3781,6 +3781,22 @@ try {
     await idle();
     await mp.selectOption('#mc-pm select[data-k="size"]', "M8");
     await idle();
+    // 1.524 (FR-FT-051 UX): the panel shows the hole's half section and its drawing callout, types as pictograms, Type/Positions tabs; favourites fold.
+    const hux = await mp.evaluate(() => ({ svg: !!document.querySelector('#mc-pm [data-hpreview] svg.hole-diagram path.hd-edge'), callout: document.querySelector('#mc-pm .pm-hcallout')?.textContent ?? "", icons: document.querySelectorAll('#mc-pm [data-hkind] svg').length, on: document.querySelector('#mc-pm [data-hkind].on')?.dataset.hkind, tabs: [...document.querySelectorAll('#mc-pm .pm-htabs [role=tab]')].map(b => b.dataset.htab + ":" + b.getAttribute("aria-selected")).join(), favOpen: document.querySelector('#mc-pm [data-ui=favs]')?.open }));
+    await mp.click('#mc-pm [data-hkind="csink"]');
+    await idle();
+    const huxK = await mp.evaluate(() => ({ kind: window.__sv.model.mode().draft.kind, callout: document.querySelector('#mc-pm .pm-hcallout')?.textContent ?? "" }));
+    await mp.click('#mc-pm [data-htab="pos"]');
+    const huxP = await mp.evaluate(() => ({ pos: !document.querySelector('#mc-pm [data-hpane="pos"]').hidden, type: !document.querySelector('#mc-pm [data-hpane="type"]').hidden, face: !!document.querySelector('#mc-pm [data-hpane="pos"] .pm-box[data-focus="hplane"]') }));
+    await mp.click('#mc-pm [data-htab="type"]');
+    await mp.click('#mc-pm [data-hkind="cbore"]');
+    await idle();
+    await mp.selectOption('#mc-pm select[data-k="size"]', "M8");
+    await idle();
+    check(hux.svg && hux.callout.includes("⌴Ø15") && hux.icons === 8 && hux.on === "cbore" && hux.tabs === "type:true,pos:false" && hux.favOpen === false
+      && huxK.kind === "csink" && huxK.callout.includes("⌵Ø") && huxP.pos && !huxP.type && huxP.face,
+      `model 1.524: Hole Wizard panel preview, type pictograms and Type/Positions tabs (${JSON.stringify({ hux, huxK, huxP })})`);
+    await mp.click('#mc-pm [data-ui="favs"] > summary');
     await mp.fill('#mc-pm input[data-ui="favName"]', "M8 cbore");
     await mp.click('#mc-pm [data-ui="favSave"]');
     await mp.selectOption('#mc-pm select[data-k="kind"]', "simple");
