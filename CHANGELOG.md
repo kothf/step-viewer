@@ -5,6 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.510.0] - 2026-11-11
+
+### Changed
+
+- Vault: the header shows a vault file's status (version, lifecycle state such as Work in progress, checked out to you) in its own chip beside the file name, so it is no longer cut off, and its tooltip explains each part.
+- Vault: Save on a drawing whose part or assembly is in the open vault puts the drawing in the vault beside it, checked out to you, instead of downloading it; Save to vault on a part or assembly takes its open drawings along.
+
+### Fixed
+
+- Vault: a browser vault asks the browser to keep the site's storage (persistent storage), since Firefox and Safari may otherwise clear it when space runs short; when the browser refuses, a new vault says how to keep a backup (Export ZIP).
+
 ## [1.509.0] - 2026-11-11
 
 ### Fixed
@@ -3153,7 +3164,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.509.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.510.0...HEAD
+[1.510.0]: https://github.com/kothf/step-viewer/compare/v1.509.0...v1.510.0
 [1.509.0]: https://github.com/kothf/step-viewer/compare/v1.508.0...v1.509.0
 [1.508.0]: https://github.com/kothf/step-viewer/compare/v1.507.0...v1.508.0
 [1.507.0]: https://github.com/kothf/step-viewer/compare/v1.506.0...v1.507.0

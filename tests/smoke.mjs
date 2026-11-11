@@ -4599,7 +4599,7 @@ try {
     await ctx.close();
   }
 
-  // --- 1.509.0: vault status chip in the header with a tooltip; a drawing of a vault part goes into the vault ---
+  // --- 1.510.0: vault status chip in the header with a tooltip; a drawing of a vault part goes into the vault ---
   if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
@@ -4651,9 +4651,9 @@ try {
     const r2 = await rows();
     const n2 = await mp.evaluate(() => document.querySelectorAll("#vault-panel .v-row").length);
     check(/^Part1\.mcadprt$/.test(head.name.trim()) && /^v1 · Work in progress · checked out to you$/.test(head.chip) && /version 1/.test(head.tip) && /Lifecycle state: Work in progress/.test(head.tip) && /Checked out to you/.test(head.tip),
-      `vault 1.509: the header shows the vault status in its own chip with a tooltip that explains it (${JSON.stringify(head)})`);
+      `vault 1.510: the header shows the vault status in its own chip with a tooltip that explains it (${JSON.stringify(head)})`);
     check(/Part1\.mcaddrw/.test(r1) && tied && downloads === 0 && n2 === 4 && /Part2\.mcadprt/.test(r2) && /Part2\.mcaddrw/.test(r2),
-      `vault 1.509: a drawing of a vault part saves into the vault, and Save to vault takes the part's open drawing along (${r1}; ${tied}, ${downloads}; ${n2}: ${r2})`);
+      `vault 1.510: a drawing of a vault part saves into the vault, and Save to vault takes the part's open drawing along (${r1}; ${tied}, ${downloads}; ${n2}: ${r2})`);
     await ctx.close();
   }
 
