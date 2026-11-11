@@ -3629,6 +3629,27 @@ try {
     check(adv.near === "cbore:M6:11,straight:M6:6.6" && adv.far === "csink:13.44" && adv.d === 6.6 && adv.rows === 3 && adv.callout.includes("⌴Ø11") && adv.callout.includes("FAR SIDE") && adv.ok && !adv.warn
       && adv2.near === "csink:13.44,straight:6.6" && adv2.callout.includes("⌵Ø13.44 × 90°") && adv2.ok && aback.k === "tapped" && aback.near === null && aback.s === "M6",
       `model 1.534: Hole Wizard advanced hole (${JSON.stringify({ adv, adv2, aback })})`);
+    // 1.536 (FR-FT-051): Captive screw: the M6 kept, its thread through the cover, then Retracted screw (short retaining thread over
+    // the clearance bore, cover thickness shown) and a head counterbore; back to tapped M6.
+    await mp.selectOption('#mc-pm select[data-k="kind"]', "captive");
+    await idle();
+    const cap1 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft, l = window.__sv.model.last(); return { k: d.kind, s: d.size, d: d.diameter.v, end: d.end, callout: document.querySelector('#mc-pm .pm-hcallout')?.textContent ?? "", ok: l.statuses.every(s => s.ok) }; });
+    await mp.check('#mc-pm input[data-k="retract"]');
+    await idle();
+    await mp.check('#mc-pm input[data-k="capHead"]');
+    await idle();
+    const cap2 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft, l = window.__sv.model.last(); return { r: d.retract, hold: d.capHold?.v, lt: d.capThread?.v, cb: d.cbDia?.v, need: [...document.querySelectorAll("#mc-pm .pm-help")].some(p => /thickness needed/i.test(p.textContent ?? "")), callout: document.querySelector('#mc-pm .pm-hcallout')?.textContent ?? "", ok: l.statuses.every(s => s.ok), box: !!document.querySelector('#mc-pm input[data-num="capThread"]') }; });
+    await mp.selectOption('#mc-pm select[data-k="kind"]', "tapped");
+    await idle();
+    await mp.selectOption('#mc-pm select[data-k="size"]', "M6");
+    await idle();
+    await mp.selectOption('#mc-pm select[data-k="threadEnd"]', "through").catch(() => {});
+    await idle();
+    const cback2 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { k: d.kind, r: d.retract ?? null, s: d.size }; });
+    check(cap1.k === "captive" && cap1.s === "M6" && cap1.d === 6.6 && cap1.end === "through" && cap1.callout.includes("M6-6H") && cap1.ok
+      && cap2.r === true && cap2.hold === 4.8 && cap2.lt === 12 && cap2.cb === 11 && cap2.need && cap2.box && cap2.callout.includes("⌴Ø11") && cap2.callout.includes("M6-6H ↧4.8") && cap2.ok
+      && cback2.k === "tapped" && cback2.r === null && cback2.s === "M6",
+      `model 1.536: Hole Wizard captive screw (${JSON.stringify({ cap1, cap2, cback2 })})`);
     // Options: Near side countersink defaults to the hole + 1 mm at 90°; unticking takes it away.
     await mp.check('#mc-pm input[data-k="optNear"]').catch(() => {});
     await idle();
@@ -3925,7 +3946,7 @@ try {
     await idle();
     await mp.selectOption('#mc-pm select[data-k="size"]', "M8");
     await idle();
-    check(hux.svg && hux.callout.includes("⌴Ø15") && hux.icons === 10 && hux.on === "cbore" && hux.tabs === "type:true,pos:false" && hux.favOpen === false
+    check(hux.svg && hux.callout.includes("⌴Ø15") && hux.icons === 11 && hux.on === "cbore" && hux.tabs === "type:true,pos:false" && hux.favOpen === false
       && huxK.kind === "csink" && huxK.callout.includes("⌵Ø") && huxP.pos && !huxP.type && huxP.face,
       `model 1.524: Hole Wizard panel preview, type pictograms and Type/Positions tabs (${JSON.stringify({ hux, huxK, huxP })})`);
     // 1.528 (FR-FT-051): the counterbore follows the screw type: DIN 7984 low head M8 = Ø15 × 5.6 (ISO 4762's Ø15 × 8.6 with a 3 mm lower head).

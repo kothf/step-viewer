@@ -564,7 +564,18 @@ export interface HoleFeature {
   /** clear = ISO 273 clearance hole for the size and fit; cdrill = counterdrilled; slot = an obround of `slotLen`;
    *  ptap = tapered tap (pipe thread, NPT or Rc): a 1:16 cone from `taperDia` at the face over the thread depth,
    *  never narrower than the tap drill `diameter`. */
-  kind: "simple" | "cbore" | "csink" | "tapped" | "insert" | "clear" | "cdrill" | "slot" | "ptap" | "adv";
+  kind: "simple" | "cbore" | "csink" | "tapped" | "insert" | "clear" | "cdrill" | "slot" | "ptap" | "adv" | "captive";
+  /** Captive screw hole (in a cover): `capStyle` absent = a tapped retaining section the screw is turned through
+   *  (`capHold` long, then a clearance bore; without `retract` the thread runs through the cover), "ring" = a
+   *  clearance hole with a recess under the cover for the retaining ring (`ringDia` × `ringT`). `retract` =
+   *  Retracted screw: room below the retaining section for the screw's thread (`capThread`) so the cover sits flat
+   *  with the screw pulled up; a cover too thin for it gets a warning. */
+  capStyle?: "ring";
+  retract?: boolean;
+  capHold?: Num;
+  capThread?: Num;
+  ringDia?: Num;
+  ringT?: Num;
   /** Advanced Hole (SolidWorks' Advanced Hole): elements stacked from the face down (`near`, the last one is the
    *  main hole and runs to the end condition, `diameter` mirrors it) and from the far face in (`far`, holes that
    *  leave the material only). */

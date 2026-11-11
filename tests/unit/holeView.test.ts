@@ -101,3 +101,15 @@ test("Advanced Hole: callout lists the main hole then each element, the section 
   assert.equal(advProblem([elemFor("cbore", "M6")], []), "The last near side element is the main hole: make it straight or tapped.");
   assert.ok(HOLE_KINDS.includes("adv") && holeIcon("adv").includes("<svg"));
 });
+
+test("captive screw: callout and section follow its options (FR-FT-051)", () => {
+  const C = hole({ kind: "captive", end: "through", size: "M6", diameter: { v: 6.6 }, major: 6, pitch: 1 });
+  assert.deepEqual(holeCallout(C, f, fa, label), ["Ø5 THRU", "M6-6H"]);
+  const R = hole({ ...C, retract: true, capHold: { v: 5 }, capThread: { v: 12 } });
+  assert.deepEqual(holeCallout(R, f, fa, label), ["Ø6.6 THRU", "Ø5 ↧5", "M6-6H ↧5"]);
+  const s = holeSection(R)!;
+  assert.ok(s.plate >= 17.5 && s.threads?.length === 1 && s.open, JSON.stringify(s));
+  const ring = hole({ ...C, capStyle: "ring", ringDia: { v: 13 }, ringT: { v: 1 } });
+  assert.deepEqual(holeCallout(ring, f, fa, label), ["Ø6.6 THRU", "⌴Ø14 ↧1.2 FAR SIDE"]);
+  assert.ok(HOLE_KINDS.includes("captive") && holeIcon("captive").includes("<svg"));
+});
