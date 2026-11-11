@@ -9691,6 +9691,28 @@ try {
     check(wpm.title === "Wrap" && wpm.sketch === "s2" && wpm.focus === "faces" && Math.abs(wv.v - (shaft + 100.8)) < 0.5 && !wv.bad && Math.abs(wd.v - (shaft - 91.2)) < 0.5 && !wd.bad
       && wfin.type === "wrap" && wfin.kind === "deboss" && wfin.name === "Wrap1",
       `model 1.548: Wrap embosses and debosses a sketch on a shaft (FR-FT-104) (${JSON.stringify({ wpm, wv, wd, wfin })})`);
+    // Flex (Bodies ▾, FR-FT-105): a 100 × 20 × 10 bar along X bent 90° (volume kept), trim planes drawn, then twisted; the panel shows the bend radius.
+    await mp.evaluate(() => window.__sv.model.store.change("Bar", d => {
+      const P = (k, x, y) => ({ id: `b${k}`, t: "point", x, y });
+      d.features = [
+        { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "YZ" }, rels: [], dims: [], ents: [P(1, -10, -5), P(2, 10, -5), P(3, 10, 5), P(4, -10, 5), { id: "bl1", t: "line", a: "b1", b: "b2" }, { id: "bl2", t: "line", a: "b2", b: "b3" }, { id: "bl3", t: "line", a: "b3", b: "b4" }, { id: "bl4", t: "line", a: "b4", b: "b1" }] },
+        { id: "f1", type: "extrude", name: "Boss-Extrude1", sketch: "s1", op: "boss", end: "mid", depth: { v: 100 } }];
+    }));
+    await settle();
+    await runCmd(mp, "Flex");
+    await settle();
+    const flexState = () => mp.evaluate(() => { const l = window.__sv.model.last(); let planes = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData.flexPlane) planes++; }); return { v: l.props.volume, hz: l.props.box[1][2], bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), planes }; });
+    const fpm = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, axis: window.__sv.model.mode().draft.axis, radius: [...document.querySelectorAll("#mc-pm .pm-help")].some(p => /Bend radius: 63\.66/.test(p.textContent)) }));
+    const fb = await flexState();
+    await mp.selectOption('#mc-pm select[data-k="kind"]', "twist");
+    await settle();
+    const ft = await flexState();
+    await mp.click("#mc-ok");
+    await settle();
+    const ffin = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.at(-1); return { type: f.type, kind: f.kind, name: f.name }; });
+    check(fpm.title === "Flex" && fpm.axis === "x" && fpm.radius && Math.abs(fb.v - 20000) < 20 && fb.hz > 15 && !fb.bad && fb.planes === 2
+      && Math.abs(ft.v - 20000) < 20 && !ft.bad && ffin.type === "flex" && ffin.kind === "twist" && ffin.name === "Flex1",
+      `model 1.551: Flex bends and twists a bar between trim planes (FR-FT-105) (${JSON.stringify({ fpm, fb, ft, ffin })})`);
     await ctx.close();
   }
 

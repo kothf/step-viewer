@@ -11,7 +11,7 @@
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { V2, SkEnt } from "../model/types";
-import type { WrapFeature, DomeFeature, HealFeature, RecognizedHole, RecognizedBlends, SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, PatternSpot, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, ChamferFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, HoleSink, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
+import type { FlexFeature, WrapFeature, DomeFeature, HealFeature, RecognizedHole, RecognizedBlends, SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, PatternSpot, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, ChamferFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, HoleSink, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
 import { dir2Apart, dir2Feature, threadThrough, holeExits, headKind } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { recognizedHoleFeatures, TAPER } from "../model/holes";
@@ -20,6 +20,7 @@ import { ctxFrame } from "../model/context";
 import { loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 import { splineBezierN } from "../sketch/spline";
 import { segSpline } from "../sketch/wrap";
+import { FlexError, flexAffine, flexIdle, flexLinear, flexMap, flexPoint, type FlexMap } from "../model/flex";
 import { chain3d } from "../sketch/sketch3d";
 import { applyExt, piercePoint, projectEdge, uvOf, type ModelEdge } from "../sketch/external";
 import { solve } from "../sketch/solver";
@@ -1735,6 +1736,199 @@ export class Modeller {
     let body = prev;
     for (const t of tools) body = this.bool(f.kind === "emboss" ? "fuse" : "cut", body, t, f.id, true);
     return body;
+  }
+
+  /**
+   * Flex (FR-FT-105): each picked body is split at the trim planes (`hard`, the default); pieces outside
+   * them (and a stretched middle) move by the exact affine map of `flexAffine`, the middle's faces are
+   * converted to B-splines, refined, and their poles moved so the surface interpolates the map at the
+   * Greville points; edges are rebuilt from their pcurves, all faces sewn back into a solid. Faces keep
+   * their names (split pieces share one); the cut faces between pieces are dropped.
+   */
+  private flex(f: FlexFeature, prev: Named | null, frames: Record<string, Frame>): Named {
+    const oc = this.oc;
+    if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
+    const list = this.bodyList(prev);
+    const picked = f.bodies.length ? this.pickedBodies(list, prev, f.bodies) : list.map((_b, i) => i);
+    const bb = new oc.Bnd_Box_1();
+    for (const i of picked) oc.BRepBndLib.AddOptimal(list[i].shape, bb, false, false);
+    let m: FlexMap;
+    try { m = flexMap(f, [this.xyz(bb.CornerMin()), this.xyz(bb.CornerMax())]); }
+    catch (e) { if (e instanceof FlexError) throw new FeatureError(e.code, e.message); throw e; }
+    // The triad and trim planes for the view: n = flex axis, x = bend direction; len = s1, s2 and the box's half sizes across.
+    const lo = this.xyz(bb.CornerMin()), hi = this.xyz(bb.CornerMax());
+    const half = (d: V3) => Math.abs(dot(add(hi, mul(lo, -1)), d)) / 2 + 1e-3 * (1 + this.size(prev.shape));
+    frames[f.id] = { o: m.o, x: m.b, y: m.c, n: m.a, len: [m.s1, m.s2, half(m.b), half(m.c)] };
+    if (flexIdle(m)) return prev;
+    const out = list.map((b, i) => (picked.includes(i) ? this.flexBody(f, m, b) : b));
+    return this.compoundOf(out);
+  }
+
+  private flexBody(f: FlexFeature, m: FlexMap, body: Named): Named {
+    const oc = this.oc, A = oc.TopAbs_ShapeEnum;
+    const sOf = (p: V3) => dot(add(p, mul(m.o, -1)), m.a);
+    const range = (shape: any) => {
+      const b = new oc.Bnd_Box_1(); oc.BRepBndLib.Add(shape, b, false);
+      const lo = this.xyz(b.CornerMin()), hi = this.xyz(b.CornerMax());
+      let a = Infinity, z = -Infinity;
+      for (let k = 0; k < 8; k++) { const s = sOf([k & 1 ? hi[0] : lo[0], k & 2 ? hi[1] : lo[1], k & 4 ? hi[2] : lo[2]]); a = Math.min(a, s); z = Math.max(z, s); }
+      return [a, z];
+    };
+    const [smin, smax] = range(body.shape);
+    const L = m.s2 - m.s1, tol = 1e-6 * (1 + L);
+    // Pieces: below, inside and above the region.
+    let pieces: Named[] = [body];
+    const planes: number[] = [];
+    if (f.hard !== false) for (const s of [m.s1, m.s2]) if (s > smin + tol && s < smax - tol) planes.push(s);
+    if (planes.length) {
+      const big = 4 * (this.size(body.shape) + 1);
+      const sp = new oc.BRepAlgoAPI_Splitter_1();
+      const args = new oc.TopTools_ListOfShape_1(), tools = new oc.TopTools_ListOfShape_1();
+      args.Append_1(body.shape);
+      for (const s of planes) {
+        const pl = new oc.gp_Pln_3(this.P(add(m.o, mul(m.a, s))), this.D(m.a));
+        tools.Append_1(new oc.BRepBuilderAPI_MakeFace_9(pl, -big, big, -big, big).Face());
+      }
+      sp.SetArguments(args);
+      sp.SetTools(tools);
+      sp.Build(new oc.Message_ProgressRange_1());
+      if (!sp.IsDone() || sp.HasErrors()) throw new FeatureError("E-FLEX-FAIL", "The body could not be flexed.");
+      pieces = this.bodyList(this.carry(sp, [body], sp.Shape(), f.id));
+    }
+    // A face two pieces share is a cut between them: dropped.
+    const shared = (x: any, k: number) => pieces.some((p, j) => j !== k && p.faces.some(y => y.IsSame(x)));
+    const faces: { face: any; name: string }[] = [];
+    pieces.forEach((pc, k) => {
+      const [a, z] = range(pc.shape), mid = (a + z) / 2;
+      const zone = mid < m.s1 - tol && z < m.s1 + tol ? "low" : mid > m.s2 + tol && a > m.s2 - tol ? "high" : "mid";
+      const keep = pc.faces.map((x, i) => ({ x, i })).filter(({ x }) => !shared(x, k));
+      if (zone !== "mid" || (flexLinear(m) && a > m.s1 - tol && z < m.s2 + tol)) {
+        const { M, t } = flexAffine(m, zone === "low" ? m.s1 - 2 : zone === "high" ? m.s2 + 1 : m.s1);
+        const moved = this.affineMove(pc.shape, M, t);
+        const mk = moved.mk;
+        for (const { x, i } of keep) {
+          const g = this.list(mk.Modified(x))[0] ?? x;
+          faces.push({ face: g, name: pc.names[i] });
+        }
+        return;
+      }
+      for (const { x, i } of keep) faces.push({ face: this.flexFace(m, oc.TopoDS.Face_1(x)), name: pc.names[i] });
+    });
+    const sew = new oc.BRepBuilderAPI_Sewing(Math.max(1e-4, 1e-5 * L), true, true, true, false);
+    for (const x of faces) sew.Add(x.face);
+    sew.Perform(new oc.Message_ProgressRange_1());
+    const sewn = sew.SewedShape();
+    const ms = new oc.BRepBuilderAPI_MakeSolid_1();
+    let shells = 0;
+    for (const ex = new oc.TopExp_Explorer_2(sewn, A.TopAbs_SHELL, A.TopAbs_SHAPE); ex.More(); ex.Next()) { ms.Add(oc.TopoDS.Shell_1(ex.Current())); shells++; }
+    if (shells !== 1) throw new FeatureError("E-FLEX-FAIL", "The body could not be flexed.");
+    const fx = new oc.ShapeFix_Solid_1();
+    fx.Init(ms.Solid());
+    fx.Perform(new oc.Message_ProgressRange_1());
+    let shape = fx.Solid();
+    if (!new oc.BRepCheck_Analyzer(shape, true, false).IsValid_2()) {
+      const fix = new oc.ShapeFix_Shape_2(shape);
+      fix.Perform(new oc.Message_ProgressRange_1());
+      shape = fix.Shape();
+    }
+    if (this.volume(shape) < 0) shape = shape.Reversed();
+    // Names by the nearest of the moved faces (sewing may rebuild a face).
+    const cs = faces.map(x => this.centroid(x.face));
+    const out = this.sub(shape, "FACE");
+    const names = out.map(x => {
+      const j = faces.findIndex(y => y.face.IsSame(x));
+      if (j >= 0) return faces[j].name;
+      const c = this.centroid(x);
+      let best = 0, bd = Infinity;
+      cs.forEach((q, k) => { const d = d3(q, c); if (d < bd) { bd = d; best = k; } });
+      return faces[best]?.name ?? `${f.id}:new`;
+    });
+    return this.unifyAlike({ shape, faces: out, names });
+  }
+
+  /** A shape moved by an affine map (rigid maps keep exact surfaces). */
+  private affineMove(shape: any, M: number[], t: V3): { mk: any } {
+    const oc = this.oc;
+    const col = (j: number): V3 => [M[j], M[3 + j], M[6 + j]];
+    const rigid = [0, 1, 2].every(i => [0, 1, 2].every(j => Math.abs(dot(col(i), col(j)) - (i === j ? 1 : 0)) < 1e-9)) && dot(cross(col(0), col(1)), col(2)) > 0;
+    if (rigid) {
+      const tr = new oc.gp_Trsf_1();
+      tr.SetValues(M[0], M[1], M[2], t[0], M[3], M[4], M[5], t[1], M[6], M[7], M[8], t[2]);
+      return { mk: new oc.BRepBuilderAPI_Transform_2(shape, tr, true) };
+    }
+    const g = new oc.gp_GTrsf_1();
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) g.SetValue(i + 1, j + 1, M[3 * i + j]);
+    g.SetTranslationPart(new oc.gp_XYZ_2(t[0], t[1], t[2]));
+    return { mk: new oc.BRepBuilderAPI_GTransform_2(shape, g, true) };
+  }
+
+  /** One face through the flex map: B-spline surface refined, poles fitted to the map at the Greville points, edges from the pcurves. */
+  private flexFace(m: FlexMap, face0: any): any {
+    const oc = this.oc, A = oc.TopAbs_ShapeEnum, REV = oc.TopAbs_Orientation.TopAbs_REVERSED;
+    const conv = new oc.BRepBuilderAPI_NurbsConvert_2(face0, true).Shape();
+    let face: any = null;
+    for (const ex = new oc.TopExp_Explorer_2(conv, A.TopAbs_FACE, A.TopAbs_SHAPE); ex.More() && !face; ex.Next()) face = oc.TopoDS.Face_1(ex.Current());
+    if (!face) throw new FeatureError("E-FLEX-FAIL", "The body could not be flexed.");
+    const bs = new oc.Handle_Geom_BSplineSurface_2(oc.BRep_Tool.Surface_2(face).get()).get();
+    if (!bs) throw new FeatureError("E-FLEX-FAIL", "The body could not be flexed.");
+    const rat = bs.IsURational() || bs.IsVRational();
+    let W: any = null;
+    if (rat) { W = new oc.TColStd_Array2OfReal_2(1, bs.NbUPoles(), 1, bs.NbVPoles()); for (let i = 1; i <= bs.NbUPoles(); i++) for (let j = 1; j <= bs.NbVPoles(); j++) W.SetValue(i, j, bs.Weight(i, j)); }
+    const S = rat
+      ? new oc.Geom_BSplineSurface_2(bs.Poles_2(), W, bs.UKnots_2(), bs.VKnots_2(), bs.UMultiplicities_2(), bs.VMultiplicities_2(), bs.UDegree(), bs.VDegree(), bs.IsUPeriodic(), bs.IsVPeriodic())
+      : new oc.Geom_BSplineSurface_1(bs.Poles_2(), bs.UKnots_2(), bs.VKnots_2(), bs.UMultiplicities_2(), bs.VMultiplicities_2(), bs.UDegree(), bs.VDegree(), bs.IsUPeriodic(), bs.IsVPeriodic());
+    if (S.IsUPeriodic() || S.IsVPeriodic()) {
+      const ad = new oc.BRepAdaptor_Surface_2(face, true);
+      S.Segment(ad.FirstUParameter(), ad.LastUParameter(), ad.FirstVParameter(), ad.LastVParameter(), 1e-9, 1e-9);
+    }
+    S.IncreaseDegree(Math.max(3, S.UDegree()), Math.max(3, S.VDegree()));
+    // Spans: by how much of the region the face spans along the axis and how hard the map turns.
+    const L = m.s2 - m.s1;
+    let a = Infinity, z = -Infinity;
+    for (let i = 1; i <= S.NbUPoles(); i++) for (let j = 1; j <= S.NbVPoles(); j++) {
+      const s = dot(add(this.xyz(S.Pole(i, j)), mul(m.o, -1)), m.a);
+      a = Math.min(a, s); z = Math.max(z, s);
+    }
+    // The spans run over the whole face at the region's density (a face may reach past the trim planes when not split).
+    const along = Math.min(z, m.s2) > Math.max(a, m.s1) ? (z - a) / L : 0;
+    const per = m.kind === "taper" ? 6 : 12 * Math.max(1, Math.abs(m.angle) / (Math.PI / 2));
+    const n = Math.min(96, Math.ceil(along * per));
+    const knots = (lo: number, hi: number, ins: (x: number) => void) => { for (let k = 1; k < n; k++) ins(lo + ((hi - lo) * k) / n); };
+    if (n > 1) {
+      knots(S.UKnot(S.FirstUKnotIndex()), S.UKnot(S.LastUKnotIndex()), x => S.InsertUKnot(x, 1, 1e-9, true));
+      knots(S.VKnot(S.FirstVKnotIndex()), S.VKnot(S.LastVKnotIndex()), x => S.InsertVKnot(x, 1, 1e-9, true));
+    }
+    const nu = S.NbUPoles(), nv = S.NbVPoles(), ud = S.UDegree(), vd = S.VDegree();
+    const uk = S.UKnotSequence_2(), vk = S.VKnotSequence_2();
+    const gre = (k: any, d: number, i: number) => { let x = 0; for (let q = 1; q <= d; q++) x += k.Value(i + q); return x / d; };
+    const gu = Array.from({ length: nu }, (_x, i) => gre(uk, ud, i + 1)), gv = Array.from({ length: nv }, (_x, j) => gre(vk, vd, j + 1));
+    const tgt = gu.map(u => gv.map(v => flexPoint(m, this.xyz(S.Value(u, v)))));
+    for (let i = 1; i <= nu; i++) for (let j = 1; j <= nv; j++) S.SetPole_2(i, j, this.P(flexPoint(m, this.xyz(S.Pole(i, j)))), S.Weight(i, j));
+    // Interpolate at the Greville points (a few Jacobi steps: the collocation matrix is close to I).
+    for (let it = 0; it < 4; it++) {
+      const d = gu.map((u, i) => gv.map((v, j) => add(tgt[i][j], mul(this.xyz(S.Value(u, v)), -1))));
+      for (let i = 1; i <= nu; i++) for (let j = 1; j <= nv; j++) S.SetPole_2(i, j, this.P(add(this.xyz(S.Pole(i, j)), d[i - 1][j - 1])), S.Weight(i, j));
+    }
+    const HS = new oc.Handle_Geom_Surface_2(S);
+    let mk: any = null;
+    for (const ex = new oc.TopExp_Explorer_2(face, A.TopAbs_WIRE, A.TopAbs_SHAPE); ex.More(); ex.Next()) {
+      const mw = new oc.BRepBuilderAPI_MakeWire_1();
+      for (const we = new oc.BRepTools_WireExplorer_3(oc.TopoDS.Wire_1(ex.Current()), face); we.More(); we.Next()) {
+        const e = we.Current();
+        const c2 = new oc.BRepAdaptor_Curve2d_2(e, face);
+        let ne = new oc.BRepBuilderAPI_MakeEdge_31(c2.Curve(), HS, c2.FirstParameter(), c2.LastParameter()).Edge();
+        oc.BRepLib.BuildCurves3d_2(ne);
+        if (e.Orientation_1() === REV) ne = oc.TopoDS.Edge_1(ne.Reversed());
+        mw.Add_1(ne);
+      }
+      if (!mw.IsDone()) throw new FeatureError("E-FLEX-FAIL", "The body could not be flexed.");
+      if (!mk) mk = new oc.BRepBuilderAPI_MakeFace_21(HS, mw.Wire(), true); else mk.Add(mw.Wire());
+    }
+    if (!mk?.IsDone()) throw new FeatureError("E-FLEX-FAIL", "The body could not be flexed.");
+    const fix = new oc.ShapeFix_Face_2(mk.Face());
+    fix.Perform();
+    const out = fix.Face();
+    return face0.Orientation_1() === REV ? out.Reversed() : out;
   }
 
   // ---------- surfaces (FRS 9.11, FR-FT-100) ----------
@@ -6113,6 +6307,7 @@ export class Modeller {
           else if (f.type === "moveface") body = this.moveFaces(f, body, frames);
           else if (f.type === "dome") body = this.dome(f, body);
           else if (f.type === "wrap") body = this.wrap(f, doc, body, frames);
+          else if (f.type === "flex") body = this.flex(f, body, frames);
           else if (f.type === "planesurf") sheets = this.planeSurf(f, doc, body, sheets, frames);
           else if (f.type === "extsurf") sheets = this.extSurf(f, doc, body, sheets, frames);
           else if (f.type === "offsurf") sheets = this.offSurf(f, body, sheets);
