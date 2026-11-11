@@ -19,7 +19,15 @@ export type FastenerKind = "iso4762" | "iso4017" | "iso4014" | "iso7380" | "iso1
  * across flats), t socket depth, m nut height, d1/d2/h washer (d1 also a spring pin's bore), dc/c collar or
  * flange Ø and height, b/hk key width and height, D/B bearing outside Ø and width, lmin/lmax length range.
  */
-interface Row { d: number; dk?: number; k?: number; s?: number; t?: number; m?: number; d1?: number; d2?: number; h?: number; dc?: number; c?: number; hk?: number; b?: number; D?: number; B?: number; lmin?: number; lmax?: number }
+interface Row {
+  d: number; dk?: number; k?: number; s?: number; t?: number; m?: number; d1?: number; d2?: number; h?: number; dc?: number; c?: number; hk?: number; b?: number; D?: number; B?: number; lmin?: number; lmax?: number;
+  /** Detail values `detailRow` works out per size and length: tip/edge chamfer, head chamfer, thread length and Ø, bearing shield radii and depth. */
+  ch?: number; hc?: number; tl?: number; td?: number; si?: number; so?: number; sd?: number;
+}
+
+/** ISO 261 coarse pitches by nominal Ø (the thread drawn on screws and nuts). */
+export const COARSE_PITCH: Record<number, number> = { 1.6: 0.35, 2: 0.4, 2.5: 0.45, 3: 0.5, 4: 0.7, 5: 0.8, 6: 1, 8: 1.25, 10: 1.5, 12: 1.75, 14: 2, 16: 2, 20: 2.5, 24: 3, 30: 3.5, 36: 4 };
+const r2 = (v: number) => Math.round(v * 100) / 100;
 
 const T4762: Record<string, Row> = {
   M2: { d: 2, dk: 3.8, k: 2, s: 1.5, t: 1 }, "M2.5": { d: 2.5, dk: 4.5, k: 2.5, s: 2, t: 1.1 }, M3: { d: 3, dk: 5.5, k: 3, s: 2.5, t: 1.3 },
@@ -160,6 +168,26 @@ export function defaultLength(kind: FastenerKind, size: string): number {
   return ls.reduce((b, l) => (Math.abs(l - 3 * d) < Math.abs(b - 3 * d) ? l : b), ls[0] ?? 3 * d);
 }
 
+/** The preferred length of `kind` in `size` nearest `want` (none for parts without a length). */
+export function lengthFor(kind: FastenerKind, size: string, want: number): number {
+  const ls = fastenerLengths(kind, size);
+  return ls.length ? ls.reduce((b, l) => (Math.abs(l - want) < Math.abs(b - want) ? l : b), ls[0]) : defaultLength(kind, size);
+}
+
+/**
+ * Library search (FR-ASM-028): every word must be found in the standard's name or label (English or
+ * shown), its group, or be one of its sizes ("m6 nut", "4762", "6201", "washer").
+ */
+export function searchFasteners(q: string, shown: (label: string) => string = x => x): FastenerInfo[] {
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return FASTENERS;
+  return FASTENERS.filter(f => {
+    const text = `${f.name} ${f.label} ${shown(f.label)} ${f.group} ${shown(f.group)} ${f.kind}`.toLowerCase();
+    const sizes = Object.keys(f.table).map(x => x.toLowerCase());
+    return words.every(w => text.includes(w) || sizes.includes(w) || (w.length > 3 && text.includes(w.replace(/s$/, ""))));
+  });
+}
+
 /** The part name, as in SolidWorks Toolbox: "ISO 4762 M6 x 20", "ISO 4032 M6", "Ball bearing 6201". */
 export function fastenerName(kind: FastenerKind, size: string, length?: number) {
   const f = fastenerInfo(kind);
@@ -197,7 +225,46 @@ export function sizeForHole(kind: FastenerKind, dia: number, current?: string): 
 
 // ---------- geometry ----------
 
+/** Thread length b of partly threaded screws (ISO 4762 / ISO 4014, L ≤ 125 mm; longer ones a little more); absent = threaded to the head. */
+function threadRun(kind: FastenerKind, d: number, L: number): number | undefined {
+  if (kind === "iso4762") return 2 * d + 12;
+  if (kind === "iso4014") return L <= 125 ? 2 * d + 6 : 2 * d + 12;
+  return undefined;
+}
+
+/**
+ * A size's row with the detail values for length `L`: screws get a tip chamfer about the thread depth and a
+ * cosmetic thread (minor Ø, run b or up to the head); socket head cap screws a head chamfer; nuts a 90°
+ * countersink each side and a thread between them; pins chamfered ends; bearings chamfered rings and a
+ * shield recess each side.
+ */
+export function detailRow(kind: FastenerKind, row: Row, L: number): Row {
+  const r: Row = { ...row }, info = fastenerInfo(kind), P = COARSE_PITCH[row.d] ?? 0.15 * row.d;
+  if (info.group === "Screws") {
+    const shank = kind === "iso10642" ? L - row.k! : L;
+    r.ch = r2(Math.max(0.2, 0.7 * P));
+    r.tl = r2(Math.min(threadRun(kind, row.d, L) ?? shank, shank) - r.ch);
+    r.td = r2(row.d - 1.2269 * P);
+    if (kind === "iso4762") r.hc = r2(0.06 * row.dk!);
+  } else if (info.group === "Nuts") {
+    const h = kind === "iso7040" ? row.m! + row.c! : row.m!;
+    r.ch = r2(0.1 * row.d);
+    r.tl = r2(h - 2 * r.ch);
+    r.td = row.d;
+  } else if (info.group === "Pins") {
+    r.ch = r2(Math.min(0.1 * row.d, row.d1 ? 0.4 * (row.d - row.d1) / 2 : Infinity));
+  } else if (kind === "bearing") {
+    const w = (row.D! - row.d) / 2;
+    r.ch = r2(Math.min(row.D! < 30 ? 0.3 : row.D! < 55 ? 0.6 : 1, 0.15 * w));
+    r.si = r2(row.d + 0.7 * w);
+    r.so = r2(row.D! - 0.5 * w);
+    r.sd = r2(Math.max(0.2, 0.03 * row.B!));
+  }
+  return r;
+}
+
 const VAR_NAMES: Record<keyof Row | "L", string> = {
+  ch: "Chamfer", hc: "HeadChamfer", tl: "ThreadL", td: "ThreadDia", si: "ShieldIn", so: "ShieldOut", sd: "ShieldDepth",
   d: "Dia", dk: "HeadDia", k: "HeadH", s: "Key", t: "KeyDepth", m: "NutH", d1: "HoleDia", d2: "OuterDia", h: "WasherH", L: "Length",
   dc: "CollarDia", c: "CollarH", b: "KeyW", hk: "KeyH", D: "OutsideDia", B: "Width", lmin: "MinLength", lmax: "MaxLength",
 };
@@ -243,15 +310,46 @@ function rectangle(sk: SketchFeature, vx: string, x: number, vy: string, y: numb
 }
 const num = (v: number, expr: string) => ({ v, expr });
 
+type Key = keyof Row | "L";
+/**
+ * Chamfers and cosmetic threads (see `detailRow`) added after the body features; returns the variables they use.
+ * Face names are the extrudes' (`<id>:side:c`, `<id>:start|end`); a one-edge chamfer's face is `<id>:chamfer:0`.
+ */
+function detailFeatures(kind: FastenerKind, row: Row, feats: Feature[], v: (k: Key) => string, val: (k: Key) => number): Key[] {
+  const info = fastenerInfo(kind), P = COARSE_PITCH[row.d] ?? 0.15 * row.d;
+  const chamfer = (id: string, name: string, edges: [string, string][], k: Key): Feature =>
+    ({ id, type: "chamfer", name, distance: num(val(k), v(k)), edges: edges.map(faces => ({ faces })) });
+  const thread = (faces: [string, string], internal: boolean): Feature =>
+    ({ id: "t1", type: "thread", name: "Cosmetic Thread1", edge: { faces }, size: `M${row.d}`, diameter: num(val("td"), v("td")), length: num(val("tl"), v("tl")), pitch: P, ...(internal ? { internal: true } : {}) });
+  if (info.group === "Screws") {
+    const sh = kind === "iso10642" ? "e2" : "e1";
+    feats.push(chamfer("c1", "Chamfer1", [[`${sh}:side:c`, `${sh}:end`]], "ch"));
+    if (kind === "iso4762") feats.push(chamfer("c2", "Chamfer2", [["e2:side:c", "e2:end"]], "hc"));
+    feats.push(thread([`${sh}:side:c`, "c1:chamfer:0"], false));
+    return kind === "iso4762" ? ["ch", "hc", "tl", "td"] : ["ch", "tl", "td"];
+  }
+  if (info.group === "Nuts") {
+    const bore = kind === "iso7040" || kind === "iso4161" ? "e3" : "e2", top = kind === "iso7040" || kind === "iso4161" ? "e2:end" : "e1:end";
+    feats.push(chamfer("c1", "Chamfer1", [[`${bore}:side:c`, "e1:start"], [`${bore}:side:c`, top]], "ch"), thread([`${bore}:side:c`, "c1:chamfer:0"], true));
+    return ["ch", "tl", "td"];
+  }
+  if (info.group === "Pins") { feats.push(chamfer("c1", "Chamfer1", [["e1:side:c", "e1:start"], ["e1:side:c", "e1:end"]], "ch")); return ["ch"]; }
+  if (kind === "bearing") {
+    feats.push(chamfer("c1", "Chamfer1", [["e1:side:c", "e1:start"], ["e1:side:c", "e1:end"], ["e2:side:c", "e1:start"], ["e2:side:c", "e1:end"]], "ch"));
+    return ["ch"];
+  }
+  return [];
+}
+
 /**
  * A fastener part of one standard with every size as a configuration; `size` is active, screws get
  * `length` (default: the preferred length nearest 3 d) in each configuration.
  */
-export function fastenerPart(kind: FastenerKind, size: string, length?: number): PartDoc {
-  const info = fastenerInfo(kind);
-  const row = info.table[size];
-  if (!row) throw new Error(`No ${info.name} size ${size}`);
+export function fastenerPart(kind: FastenerKind, size: string, length?: number, opts: { detail?: boolean } = {}): PartDoc {
+  const info = fastenerInfo(kind), detail = opts.detail !== false;
+  if (!info.table[size]) throw new Error(`No ${info.name} size ${size}`);
   const L = length ?? defaultLength(kind, size);
+  const row = detail ? detailRow(kind, info.table[size], L) : info.table[size];
   const pd = newPart(fastenerName(kind, size, L));
   const feats: Feature[] = [];
   const v = (k: keyof Row | "L") => VAR_NAMES[k];
@@ -327,15 +425,28 @@ export function fastenerPart(kind: FastenerKind, size: string, length?: number):
     const s2 = sketch("s2", "Sketch2"); circle(s2, v("d"), row.d);
     feats.push(s1, ext("e1", "Ring", "s1", "B", { flip: true }), s2, cut("e2", "Bore", "s2", num(row.B!, v("B"))));
     used.push("D", "B", "d");
+    if (detail) {
+      // Shields: a shallow ring recess on both faces between the inner and the outer ring.
+      const s3 = sketch("s3", "Sketch3");
+      s3.ents.push({ id: "c", t: "circle", c: "o", r: row.so! / 2 }, { id: "ci", t: "circle", c: "o", r: row.si! / 2 });
+      s3.dims.push({ id: "dc", name: "D1@Sketch3", t: "diameter", e: ["c"], val: num(row.so!, v("so")) }, { id: "di", name: "D2@Sketch3", t: "diameter", e: ["ci"], val: num(row.si!, v("si")) });
+      feats.push(s3, cut("e3", "Shield", "s3", num(row.sd!, v("sd"))),
+        { ...cut("e4", "Shield", "s3", num(row.sd!, v("sd")), num(-row.B!, `-${v("B")}`)), flip: true });
+      used.push("so", "si", "sd");
+    }
   } else {
     const s1 = sketch("s1", "Sketch1"); circle(s1, v("d2"), row.d2!);
     const s2 = sketch("s2", "Sketch2"); circle(s2, v("d1"), row.d1!);
     feats.push(s1, ext("e1", "Washer", "s1", "h"), s2, cut("e2", "Bore", "s2", num(row.h!, v("h")), num(row.h!, v("h"))));
     used.push("d2", "h", "d1");
   }
+  if (detail) used.push(...detailFeatures(kind, row, feats, v, val));
   pd.features = feats;
   pd.material = { name: "Steel", density: 7.85 };
-  const vars = (r: Row, len: number): GlobalVar[] => used.map(k => ({ name: VAR_NAMES[k], expr: `${+(k === "L" ? len : r[k] ?? 0).toFixed(4)}`, kind: "length" }));
+  const vars = (r0: Row, len: number): GlobalVar[] => {
+    const r = detail ? detailRow(kind, r0, len) : r0;
+    return used.map(k => ({ name: VAR_NAMES[k], expr: `${+(k === "L" ? len : r[k] ?? 0).toFixed(4)}`, kind: "length" }));
+  };
   // Every size as a configuration (its variables), then the asked one made active.
   pd.configs = [];
   for (const [name, r] of Object.entries(info.table)) {

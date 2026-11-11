@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.522.0] - 2026-11-11
+
+### Added
+- Toolbox (assemblies) is now a design library: a search box ("M6 nut", "4762", "6201"), category tiles for screws, nuts, washers, pins, keys and bearings, and a card with a picture for each standard. The picked standard shows a side view with its main dimensions for the chosen size, size buttons, the length, its designation (ISO 4762 M6 x 20) and its mass.
+- Toolbox: moving the pointer over a hole shows the part see-through where it would go, already sized to the hole, and the status line names it ("ISO 4762 M6 x 16 on a Ø6.6 hole"). A click places it, as before.
+- Toolbox: a card can be dragged from the panel onto a hole in the view. The part is sized to the hole and mated there. Dropped anywhere else, it is inserted where it was dropped.
+
+### Changed
+- Toolbox parts look like the real thing: screws have a chamfered tip and a cosmetic thread (thread length b of ISO 4762 / ISO 4014, else up to the head), socket head cap screws a chamfered head, nuts a countersink on both sides and an internal cosmetic thread, pins chamfered ends, and ball bearings chamfered rings and shields. Threads show in the part and in drawings like any cosmetic thread.
+
 ## [1.521.0] - 2026-11-11
 
 ### Changed
@@ -3240,7 +3250,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.521.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.522.0...HEAD
+[1.522.0]: https://github.com/kothf/step-viewer/compare/v1.521.0...v1.522.0
 [1.521.0]: https://github.com/kothf/step-viewer/compare/v1.520.0...v1.521.0
 [1.520.0]: https://github.com/kothf/step-viewer/compare/v1.519.0...v1.520.0
 [1.519.0]: https://github.com/kothf/step-viewer/compare/v1.518.0...v1.519.0
