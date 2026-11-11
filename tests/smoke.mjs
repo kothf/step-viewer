@@ -2553,6 +2553,28 @@ try {
         `model 1.533: K opens Add relation with the relations valid for the selection (FR-UI-054) (${JSON.stringify({ ...km, ...kr })})`);
       await mp.evaluate(() => { const ed = window.__sv.model.editor(); ed.selection = new Set(); ed.render(); });
     }
+    // 1.549.0 (FRS 2.2): Sketch Picture puts an image on the sketch plane at 96 dpi; the panel resizes it with the
+    // aspect ratio locked, makes it see-through, and deletes it.
+    {
+      const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAGAAAAAwCAYAAADuFn/PAAAAW0lEQVR42u3RIQEAAAjAsPcvDRGQmIkX+Joa/ZUJAAAIAAABACAAAAQAgAAAEAAAAgBAAAAIAAABACAAAAQAgAAAEAAAAgBAAAAIAAABACAAAAQAgAAAEAAAulvDGN4OKAZ0ugAAAABJRU5ErkJggg==", "base64");
+      const [picChooser] = await Promise.all([mp.waitForEvent("filechooser"), mp.click('#mc-tools [data-c="skpic"]')]);
+      await picChooser.setFiles({ name: "logo.png", mimeType: "image/png", buffer: png });
+      await mp.waitForFunction(() => window.__sv.model.editor().sk.pictures?.length === 1, null, { timeout: 10000 });
+      await mp.waitForSelector("#mc-pm .pm-pics");
+      const pic = () => mp.evaluate(() => {
+        const p = window.__sv.model.editor().sk.pictures?.[0], r = v => Math.round(v * 100) / 100;
+        const mesh = window.__sv.viewer.scene.children.find(o => o.userData.skPicture);
+        return p ? { w: r(p.w), h: r(p.h), c: p.c.map(r), alpha: p.alpha ?? 0, mesh: !!mesh, opacity: mesh ? r(mesh.material.opacity) : null } : { gone: true, mesh: !!mesh };
+      });
+      const p0 = await pic();
+      await mp.fill('#mc-pm [data-pic="pic1:w"]', "50"); await mp.press('#mc-pm [data-pic="pic1:w"]', "Tab"); await mp.waitForTimeout(150);
+      await mp.fill('#mc-pm [data-pic="pic1:alpha"]', "40"); await mp.press('#mc-pm [data-pic="pic1:alpha"]', "Tab"); await mp.waitForTimeout(150);
+      const p1 = await pic();
+      await mp.click('#mc-pm [data-pic="pic1:del"]'); await mp.waitForTimeout(150);
+      const p2 = await pic();
+      check(p0.w === 25.4 && p0.h === 12.7 && p0.c.join() === "12.7,6.35" && p0.mesh && p1.w === 50 && p1.h === 25 && p1.alpha === 0.4 && p1.opacity === 0.6 && p2.gone && !p2.mesh,
+        `model 1.549: Sketch Picture adds an image, resizes it with the aspect locked, fades and deletes it (FRS 2.2) (${JSON.stringify({ p0, p1, p2 })})`);
+    }
     // 1.266.0 (FR-SK-043/044/047): dragging the last line's start onto the free end of the Ctrl line merges them
     // (coincident relation); Ctrl+drag of that line copies it; the status bar shows the cursor position.
     await tool("select");
@@ -3572,7 +3594,7 @@ try {
     await idle();
     const thrAll = await mp.evaluate(() => ({ box: !!document.querySelector('#mc-pm input[data-num="threadDepth"]'), len: Object.values(window.__sv.model.last()?.frames ?? {}).find(f => f.len)?.len ?? null }));
     check(thrSel === "blind" && !thrAll.box && Array.isArray(thrAll.len) && thrAll.len.length === 2 && thrAll.len.every(x => Math.abs(x - 20) < 0.01), `model 1.516: tapped hole thread end Through all (${thrSel}, ${JSON.stringify(thrAll)})`);
-    // 1.549: a tapped hole turned blind drills past its 12 mm thread (M6: 15 mm, not the through hole's 10);
+    // 1.550: a tapped hole turned blind drills past its 12 mm thread (M6: 15 mm, not the through hole's 10);
     // a typed drill depth short of the thread plus the tap's lead is flagged.
     await mp.selectOption('#mc-pm select[data-k="end"]', "blind");
     await idle();
@@ -3583,7 +3605,7 @@ try {
     const tapW = await mp.evaluate(() => ({ d: window.__sv.model.mode().draft.depth.v, warn: !!document.querySelector('#mc-pm [data-warn="tapdepth"]') }));
     await mp.selectOption('#mc-pm select[data-k="end"]', "through");
     await idle();
-    check(tapD.d === 15 && tapD.td === 12 && !tapD.warn && tapW.d === 12 && tapW.warn, `model 1.549: blind tapped hole drills past its thread (${JSON.stringify({ tapD, tapW })})`);
+    check(tapD.d === 15 && tapD.td === 12 && !tapD.warn && tapW.d === 12 && tapW.warn, `model 1.550: blind tapped hole drills past its thread (${JSON.stringify({ tapD, tapW })})`);
     // Hole standards: ANSI inch UNC takes the size nearest M6 (1/4-20, tap drill #7 = 5.105 mm), ISO metric brings M6 back.
     await mp.selectOption('#mc-pm select[data-k="standard"]', "unc").catch(() => {});
     await idle();

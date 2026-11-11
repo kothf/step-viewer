@@ -9,7 +9,7 @@ import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import type { Viewer } from "../viewer/Viewer";
-import type { EdgeRef, Frame, RelKind, SkDim, SkEnt, SketchFeature, SkRel, TextFont, TextOutline, V2 } from "../model/types";
+import type { EdgeRef, Frame, RelKind, SkDim, SkEnt, SketchFeature, SketchPicture, SkRel, TextFont, TextOutline, V2 } from "../model/types";
 import { applyExt, piercePoint, projectEdge, uvOf, type ExtGeo, type ModelEdge } from "./external";
 import { renameIn } from "../model/params";
 export { refPts } from "./define";
@@ -250,6 +250,7 @@ export class SketchEditor {
     this.closeInput(false);
     this.host.viewer.scene.remove(this.group, this.marker);
     this.dropGrid();
+    for (const id of [...this.picObjs.keys()]) this.dropPicture(id);
     this.showAlign([]);
     this.clearGroup();
     for (const l of this.labels.values()) l.remove();
@@ -738,6 +739,83 @@ export class SketchEditor {
     this.gridObj.renderOrder = 2990;
     this.gridObj.userData.skGrid = true;
     this.host.viewer.scene.add(this.gridObj);
+  }
+
+  // ---------- sketch pictures (FRS 2.2) ----------
+
+  private picObjs = new Map<string, { src: string; mesh: THREE.Mesh; tex: THREE.Texture }>();
+
+  private dropPicture(id: string) {
+    const o = this.picObjs.get(id);
+    if (!o) return;
+    this.host.viewer.scene.remove(o.mesh);
+    o.mesh.geometry.dispose();
+    (o.mesh.material as THREE.Material).dispose();
+    o.tex.dispose();
+    this.picObjs.delete(id);
+  }
+
+  /** Puts each picture on the sketch plane under the curves; a texture is made once per image. */
+  private syncPictures() {
+    const pics = this.sk.pictures ?? [];
+    for (const id of [...this.picObjs.keys()]) if (!pics.some(p => p.id === id && p.src === this.picObjs.get(id)!.src)) this.dropPicture(id);
+    const f = this.frame;
+    for (const p of pics) {
+      let o = this.picObjs.get(p.id);
+      if (!o) {
+        const tex = new THREE.TextureLoader().load(p.src, () => this.host.viewer.invalidate());
+        tex.colorSpace = THREE.SRGBColorSpace;
+        const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide }));
+        mesh.renderOrder = 2980;
+        mesh.matrixAutoUpdate = false;
+        mesh.userData.skPicture = p.id;
+        this.host.viewer.scene.add(mesh);
+        o = { src: p.src, mesh, tex };
+        this.picObjs.set(p.id, o);
+      }
+      const ca = Math.cos(p.ang ?? 0), sa = Math.sin(p.ang ?? 0);
+      const X = new THREE.Vector3(...f.x).multiplyScalar(ca).addScaledVector(new THREE.Vector3(...f.y), sa).multiplyScalar(p.w * (p.flip ? -1 : 1));
+      const Y = new THREE.Vector3(...f.y).multiplyScalar(ca).addScaledVector(new THREE.Vector3(...f.x), -sa).multiplyScalar(p.h);
+      o.mesh.matrix.makeBasis(X, Y, new THREE.Vector3(...f.n)).setPosition(this.w(p.c));
+      o.mesh.matrixWorldNeedsUpdate = true;
+      (o.mesh.material as THREE.MeshBasicMaterial).opacity = 1 - Math.min(1, Math.max(0, p.alpha ?? 0));
+    }
+  }
+
+  /** Adds a picture (a data URL of `wpx` × `hpx` pixels) at 96 dpi, its lower left corner on the origin (SolidWorks). */
+  addPicture(src: string, wpx: number, hpx: number, name?: string): string {
+    const pics = (this.sk.pictures ??= []);
+    let k = pics.length + 1;
+    while (pics.some(p => p.id === `pic${k}`)) k++;
+    const w = (wpx * 25.4) / 96, h = (hpx * 25.4) / 96;
+    pics.push({ id: `pic${k}`, ...(name ? { name } : {}), src, c: [w / 2, h / 2], w, h });
+    this.commit("Sketch picture");
+    this.render();
+    return `pic${k}`;
+  }
+
+  /** Changes a picture; with the size locked, a new width or height scales the other one too. */
+  setPicture(id: string, patch: Partial<Omit<SketchPicture, "id" | "src">>) {
+    const p = this.sk.pictures?.find(x => x.id === id);
+    if (!p) return;
+    if (!p.free && !patch.free) {
+      if (patch.w !== undefined && patch.h === undefined && p.w > 0) patch.h = (p.h * patch.w) / p.w;
+      else if (patch.h !== undefined && patch.w === undefined && p.h > 0) patch.w = (p.w * patch.h) / p.h;
+    }
+    if ((patch.w !== undefined && !(patch.w > 0)) || (patch.h !== undefined && !(patch.h > 0))) return;
+    Object.assign(p, patch);
+    for (const k of Object.keys(patch) as (keyof typeof patch)[]) if (patch[k] === undefined || patch[k] === false || (k === "alpha" && !patch.alpha) || (k === "ang" && !patch.ang)) delete p[k];
+    this.commit("Sketch picture");
+    this.render();
+  }
+
+  removePicture(id: string) {
+    const pics = this.sk.pictures;
+    if (!pics?.some(p => p.id === id)) return;
+    this.sk.pictures = pics.filter(p => p.id !== id);
+    if (!this.sk.pictures.length) delete this.sk.pictures;
+    this.commit("Delete sketch picture");
+    this.render();
   }
 
   /** Shows or hides the grid, sets Snap to grid and the spacing (mm, 0 = automatic). */
@@ -3683,6 +3761,7 @@ export class SketchEditor {
 
   render() {
     if (this.disposed) return;
+    this.syncPictures();
     this.dark = document.documentElement.dataset.theme === "dark";
     const C = this.dark ? COLORS.dark : COLORS.light;
     this.clearGroup();

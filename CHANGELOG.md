@@ -5,11 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.549.0] - 2026-11-11
+## [1.550.0] - 2026-11-11
 
 ### Fixed
 
 - Hole Wizard, tapped and tapered tap holes: the blind drill now always goes deeper than the thread, as SolidWorks' automatically calculated depth does. A tapped hole made through and then set to Blind kept the through hole's 10 mm depth, equal to the M5 thread depth, which cannot be made (the tap needs room for its lead). The drill depth is now the thread depth plus half the thread diameter (M5: thread 10, drill 12.5; M6: 12 and 15), it follows the thread depth and size while it is at that value, and a typed drill depth shorter than the thread plus two pitches shows a warning under the thread depth. Saved parts keep their values.
+
+## [1.549.0] - 2026-11-11
+
+### Added
+
+- Sketch Picture (FRS 2.2, on the Sketch tab beside DXF): an image (PNG, JPEG, GIF, BMP, WebP, SVG) on the sketch plane under the curves, to trace over. It comes in at 96 dpi with its lower left corner on the origin; the sketch panel sets its X, Y, width and height (aspect ratio locked unless unticked), angle, transparency and flip, or deletes it. Images over 2048 px are scaled down; the picture is saved in the part file and shows while the sketch is edited.
 
 ## [1.548.0] - 2026-11-11
 
@@ -3417,7 +3423,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.549.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.550.0...HEAD
+[1.550.0]: https://github.com/kothf/step-viewer/compare/v1.549.0...v1.550.0
 [1.549.0]: https://github.com/kothf/step-viewer/compare/v1.548.0...v1.549.0
 [1.548.0]: https://github.com/kothf/step-viewer/compare/v1.547.0...v1.548.0
 [1.547.0]: https://github.com/kothf/step-viewer/compare/v1.546.0...v1.547.0
