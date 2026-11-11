@@ -3757,7 +3757,7 @@ try {
     await idle();
     await mp.selectOption('#mc-pm select[data-k="size"]', "M8");
     await idle();
-    // 1.522 (FR-FT-051 UX): the panel shows the hole's half section and its drawing callout, types as pictograms, Type/Positions tabs; favourites fold.
+    // 1.523 (FR-FT-051 UX): the panel shows the hole's half section and its drawing callout, types as pictograms, Type/Positions tabs; favourites fold.
     const hux = await mp.evaluate(() => ({ svg: !!document.querySelector('#mc-pm [data-hpreview] svg.hole-diagram path.hd-edge'), callout: document.querySelector('#mc-pm .pm-hcallout')?.textContent ?? "", icons: document.querySelectorAll('#mc-pm [data-hkind] svg').length, on: document.querySelector('#mc-pm [data-hkind].on')?.dataset.hkind, tabs: [...document.querySelectorAll('#mc-pm .pm-htabs [role=tab]')].map(b => b.dataset.htab + ":" + b.getAttribute("aria-selected")).join(), favOpen: document.querySelector('#mc-pm [data-ui=favs]')?.open }));
     await mp.click('#mc-pm [data-hkind="csink"]');
     await idle();
