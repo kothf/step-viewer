@@ -5,6 +5,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Changed
+
+- Drawings: the Annotation tab beside the sheet shows its 28 tools as icon buttons in groups (Dimensions, Notes and symbols, Geometric tolerancing, Centerlines, Tables, Sheet sketch), like SolidWorks' Annotation tab. Hovering a button shows its name, its shortcut and what to click; the running tool stays highlighted. The Annotate ▾ menu has the same icons, grouped with separators.
+
 ## [1.507.0] - 2026-11-11
 
 ### Added
