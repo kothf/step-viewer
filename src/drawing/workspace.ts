@@ -6,7 +6,7 @@
 import type { VaultTie } from "../pdm/panel";
 import fontUrl from "dejavu-fonts-ttf/ttf/DejaVuSans.ttf?url";
 import type { MEdge, Projection, ViewDir } from "../kernel/drawing";
-import { AUTO_LAYERS, arrowOutside, withCut, coneMid, coneOutline, wholeCircle, edgeOnSeg, outlineSeg, clineSegs, cloudPrims, dimGeo, factsCtx, holeEdges, ringDist, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, stackItem, edgeItem, weldItem, cutDesc, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
+import { AUTO_LAYERS, arrowOutside, withCut, ringTopo, coneMid, coneOutline, wholeCircle, edgeOnSeg, outlineSeg, clineSegs, cloudPrims, dimGeo, factsCtx, holeEdges, ringDist, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, stackItem, edgeItem, weldItem, cutDesc, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
 import type { PartDoc } from "../model/types";
 import type { AsmDoc } from "../asm/types";
 import { BALLOON_R, BOM_COLS, BOM_MAT_COL, autoBalloons, bomMats, compOfKey, sheetBom, subsOf, type BalloonItems, type Bom } from "./bom";
@@ -236,18 +236,28 @@ const ANNOT_GROUPS: { name: string; tools: [string, string, string][] }[] = [
     ["skpoly", "Polyline", "Click each corner; Enter ends it"],
   ] },
 ];
-/** The annotation tools that also sit on the command bar (the rest are under Annotate ▾), as in SolidWorks' Annotation tab. */
-const BAR_TOOLS = ["items", "note", "balloon", "hole", "surf", "gtol", "datum", "cline", "cmark"];
+/**
+ * The command bar's tabs, as in SolidWorks: views on View Layout, every annotation tool on Annotation (the less used
+ * dimension kinds and the tables under a ▾ each), the sheet's own lines on Sketch. Each tool has one place; the side
+ * panel keeps the view palette, the tree and the properties.
+ */
+const CMD_TABS: [string, string][] = [["layout", "View Layout"], ["annot", "Annotation"], ["sketch", "Sketch"]];
+type BarMenu = { menu: string; icon: string; label: string; tip: string; tools: string[] };
+const SKETCH_TOOLS = ["skline", "skrect", "skcircle", "skpoly"];
+const toolDef = (k: string) => ANNOT_GROUPS.flatMap(g => g.tools).find(y => y[0] === k)!;
+const BAR_LAYOUT: (string | BarMenu)[] = [
+  "dim", { menu: "dims", icon: AICON.chain, label: "Dimensions", tip: "More dimensions: chain, baseline and ordinate", tools: ["chain", "base", "ord"] }, "items", "|",
+  "note", "hole", "balloon", "auto", "surf", "weld", "cloud", "|",
+  "gtol", "datum", "dtarget", "|",
+  "cline", "cmark", "|",
+  { menu: "tables", icon: AICON.table, label: "Tables", tip: "Tables: bill of materials, hole, revision, general, bend, weld and cut list tables", tools: ["bom", "htable", "rev", "table", "btable", "wtable", "ctable"] },
+];
 /** A command bar button: icon over its label, like the 3D command bar's `.mc-b`; `title` feeds the rich tooltip. */
 const cmdButton = (attrs: string, icon: string, label: string, tip: string, menu = false) =>
   `<button class="drw-cb" ${attrs}${menu ? ' aria-haspopup="menu" aria-expanded="false"' : ""} title="${esc(t(tip))}">${icon}<span class="mc-l">${menu ? `<span>${esc(t(label))}</span> ▾` : esc(t(label))}</span></button>`;
-/** An annotation tool button: an icon tile in the Annotation tab, an icon menu row in Annotate ▾. */
-const annotButton = ([k, label, tip]: [string, string, string], menu: boolean) => {
-  const act = k === "dim" ? 'data-a="dim"' : `data-an="${k}"`;
-  return menu
-    ? `<button role="menuitem" ${act}>${AICON[k]}<span>${esc(t(label))}</span></button>`
-    : `<button class="drw-at" ${act} data-tool="${k}" aria-pressed="false" title="${esc(t(tip))}">${AICON[k]}<span class="mc-l">${esc(t(label))}</span></button>`;
-};
+/** An annotation tool as an icon menu row under a ▾ of the Annotation tab. */
+const annotButton = ([k, label]: [string, string, string]) =>
+  `<button role="menuitem" ${k === "dim" ? 'data-a="dim"' : `data-an="${k}"`}>${AICON[k]}<span>${esc(t(label))}</span></button>`;
 
 const ICON = {
   std3: I('<rect x="1.5" y="1.5" width="6" height="5"/><rect x="1.5" y="9.5" width="6" height="5"/><rect x="9.5" y="1.5" width="5" height="5"/>'),
@@ -564,7 +574,7 @@ export class DrawingWorkspace {
         </div>
       </div>
       <div class="drw-cmds" role="toolbar" aria-label="${esc(t("Drawing commands"))}">
-        <div class="drw-cg" role="group" aria-label="${esc(t("Views"))}">
+        <div class="drw-cg" role="group" data-cpane="layout" aria-label="${esc(t("View Layout"))}">
           ${cmdButton('data-a="std3"', ICON.std3, "Standard 3 views", "Standard 3 views: front, top and side, lined up")}
           <div class="drw-dd">${cmdButton('data-a="model"', ICON.model, "Model view", "Model view: pick an orientation, then place it on the sheet", true)}
             <div class="drw-menu" role="menu" hidden>${(Object.keys(ORIENT_NAMES) as Orient[]).map(o => `<button role="menuitem" data-orient="${o}">${esc(t(ORIENT_NAMES[o]))}</button>`).join("")}</div></div>
@@ -585,31 +595,31 @@ export class DrawingWorkspace {
             </div></div>
           ${cmdButton('data-a="aux"', ICON.aux, "Auxiliary", "Auxiliary view: click a straight edge or a drawn line, then place the view square to it")}
         </div>
-        <span class="drw-sep"></span>
-        <div class="drw-cg" role="group" aria-label="${esc(t("Annotation"))}">
-          ${cmdButton('data-a="dim" data-tool="dim"', AICON.dim, "Dimension", "Smart dimension: click an edge, a circle or two points, then place the dimension (D)")}
-          ${BAR_TOOLS.map(k => { const x = ANNOT_GROUPS.flatMap(g => g.tools).find(y => y[0] === k)!; return cmdButton(`data-an="${k}" data-tool="${k}"`, AICON[k], x[1], x[2]); }).join("")}
-          <div class="drw-dd">${cmdButton('data-a="annot"', ICON.annot, "Annotate", "Every annotation: dimensions, notes, symbols, tolerances, centre lines, tables and sheet sketch", true)}
-            <div class="drw-menu right" role="menu" hidden>
-              ${ANNOT_GROUPS.map((g, i) => `${i ? '<div class="drw-menu-sep" role="separator"></div>' : ""}${g.tools.filter(x => x[0] !== "dim").map(x => annotButton(x, true)).join("")}`).join("")}
-            </div></div>
+        <div class="drw-cg" role="group" data-cpane="annot" aria-label="${esc(t("Annotation"))}" hidden>
+          ${BAR_LAYOUT.map(it => {
+            if (it === "|") return '<span class="drw-sep"></span>';
+            if (typeof it !== "string") return `<div class="drw-dd">${cmdButton(`data-a="${it.menu}"`, it.icon, it.label, it.tip, true)}
+            <div class="drw-menu" role="menu" hidden>${it.tools.map(k => annotButton(toolDef(k))).join("")}</div></div>`;
+            const x = toolDef(it);
+            return cmdButton(`${it === "dim" ? 'data-a="dim"' : `data-an="${it}"`} data-tool="${it}"`, AICON[it], x[1], x[2]);
+          }).join("")}
+        </div>
+        <div class="drw-cg" role="group" data-cpane="sketch" aria-label="${esc(t("Sheet sketch"))}" hidden>
+          ${SKETCH_TOOLS.map(k => { const x = toolDef(k); return cmdButton(`data-an="${k}" data-tool="${k}"`, AICON[k], x[1], x[2]); }).join("")}
         </div>
       </div>
+      <div class="drw-cfoot"><div class="cm-tabs drw-ctabs" role="tablist" aria-label="${esc(t("Command tabs"))}">
+        ${CMD_TABS.map(([k, label], i) => `<button role="tab" data-ctab="${k}" aria-selected="${i ? "false" : "true"}"${i ? ' tabindex="-1"' : ' class="on"'}>${esc(t(label))}</button>`).join("")}
+      </div></div>
       <div class="drw-body">
         <aside class="drw-side" aria-label="${esc(t("Sheets and views"))}">
           <div class="drw-ptabs-row">
-            <div class="drw-ptabs" role="tablist" aria-label="${esc(t("Palettes"))}">
-              <button role="tab" id="drw-pt-views" aria-selected="true" aria-controls="drw-pane-views" data-ptab="views" class="on">${esc(t("View palette"))}</button>
-              <button role="tab" id="drw-pt-annot" aria-selected="false" aria-controls="drw-pane-annot" tabindex="-1" data-ptab="annot">${esc(t("Annotation"))}</button>
-            </div>
+            <h2 class="drw-pal-h" id="drw-pt-views">${esc(t("View palette"))}</h2>
             <button class="drw-palfold" data-a="palfold" aria-expanded="true" aria-label="${esc(t("Fold the palette"))}" title="${esc(t("Fold the palette"))}">${CHEVRON}</button>
           </div>
-          <div class="drw-pal" id="drw-pane-views" role="tabpanel" aria-labelledby="drw-pt-views">
+          <div class="drw-pal" id="drw-pane-views" role="group" aria-labelledby="drw-pt-views">
             <p class="drw-pal-note">${esc(t("Drag a view onto the sheet, or click it and then click the sheet."))}</p>
             <div class="drw-pal-grid">${PALETTE.map(o => `<button class="drw-pt" draggable="true" data-orient="${o}" data-pal="${o}" title="${esc(t("Drag this view onto the sheet"))}"><svg viewBox="0 0 64 64" aria-hidden="true"><path d=""/></svg><span>${esc(t(ORIENT_NAMES[o]))}</span></button>`).join("")}</div>
-          </div>
-          <div class="drw-pal" id="drw-pane-annot" role="tabpanel" aria-labelledby="drw-pt-annot" hidden>
-            ${ANNOT_GROUPS.map(g => `<div class="drw-atg" role="group" aria-label="${esc(t(g.name))}"><div class="drw-atg-h">${esc(t(g.name))}</div><div class="drw-at-grid">${g.tools.map(x => annotButton(x, false)).join("")}</div></div>`).join("")}
           </div>
           <div class="drw-tree" role="tree" aria-label="${esc(t("Drawing tree"))}"></div>
           <div class="drw-props"></div>
@@ -631,8 +641,11 @@ export class DrawingWorkspace {
       this.el.addEventListener("change", e => this.onInput(e as Event, true));
       this.el.addEventListener("input", e => this.onInput(e as Event, false));
       document.addEventListener("pointerdown", e => { if (!(e.target as HTMLElement).closest?.(".drw-dd")) this.closeMenus(); });
+      // Menus are fixed to the window (placeMenu), so they close when their button moves away under them.
+      window.addEventListener("resize", () => this.closeMenus());
+      this.el.addEventListener("scroll", e => { if ((e.target as HTMLElement).classList?.contains("drw-cmds")) this.closeMenus(); }, true);
       // Annotation tiles get the command bar's tooltips: name, shortcut and what to click.
-      bindCommandTips(this.el, ".drw-at, .drw-cb");
+      bindCommandTips(this.el, ".drw-cb");
       this.el.addEventListener("keydown", e => this.treeKey(e));
       this.el.addEventListener("pointerover", e => this.treeHover(e, false));
       this.el.addEventListener("pointerout", e => { const to = e.relatedTarget as Element | null; if ((e.target as Element).closest?.(".drw-tree") && !to?.closest?.(".drw-tree")) this.treeHover(e, true); });
@@ -652,12 +665,25 @@ export class DrawingWorkspace {
     const side = this.el.querySelector<HTMLElement>(".drw-side")!;
     side.after(makeGrip({ key: "drw-side", axis: "x", sign: 1, def: 280, min: 200, max: () => Math.min(640, window.innerWidth * 0.45), apply: px => { side.style.width = px == null ? "" : `${px}px`; }, label: "Resize the side panel" }));
     try { if (localStorage.getItem("mc:drwPalFold") === "1") this.foldPalette(true); } catch { /* storage off */ }
+    try { this.showCmdTab(localStorage.getItem("mc:drwTab") ?? "layout"); } catch { this.showCmdTab("layout"); }
     new ResizeObserver(() => this.applyViewBox()).observe(this.svg);
     this.renderAll();
   }
 
   private closeMenus() {
-    this.el.querySelectorAll<HTMLElement>(".drw-menu").forEach(m => { m.hidden = true; m.previousElementSibling?.setAttribute("aria-expanded", "false"); });
+    this.el.querySelectorAll<HTMLElement>(".drw-menu").forEach(m => { m.hidden = true; m.style.cssText = ""; m.previousElementSibling?.setAttribute("aria-expanded", "false"); });
+  }
+
+  /** Command bar menus are fixed to the window: the bar scrolls sideways (overflow-x), which would clip them at its bottom edge. */
+  private placeMenu(b: HTMLElement, menu: HTMLElement) {
+    const r = b.getBoundingClientRect(), gap = 4, room = innerHeight - r.bottom - gap - 8;
+    menu.style.position = "fixed";
+    menu.style.top = `${r.bottom + gap}px`;
+    menu.style.maxHeight = `${Math.max(120, room)}px`;
+    const w = menu.offsetWidth;
+    const left = menu.classList.contains("right") ? r.right - w : r.left;
+    menu.style.left = `${Math.max(8, Math.min(left, innerWidth - w - 8))}px`;
+    menu.style.right = "auto";
   }
 
   private renderAll() {
@@ -689,7 +715,11 @@ export class DrawingWorkspace {
 
   private renderStatus() {
     const tool = this.activeTool();
-    for (const b of this.el.querySelectorAll<HTMLElement>(".drw-at, .drw-cb[data-tool]")) { const on = b.dataset.tool === tool; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); }
+    for (const b of this.el.querySelectorAll<HTMLElement>(".drw-cb[data-tool]")) { const on = b.dataset.tool === tool; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); }
+    // A tool started from the keyboard (D) or a menu shows on its own tab, and a ▾ holding it lights up.
+    for (const d of this.el.querySelectorAll<HTMLElement>(".drw-cmds [data-cpane] .drw-dd > .drw-cb")) d.classList.toggle("on", !!tool && !!d.nextElementSibling?.querySelector(`[data-an="${tool}"]`));
+    if (tool && tool !== this.tabTool) { const pane = this.el.querySelector<HTMLElement>(`.drw-cmds [data-an="${tool}"], .drw-cmds [data-tool="${tool}"]`)?.closest<HTMLElement>("[data-cpane]"); if (pane?.hidden) this.showCmdTab(pane.dataset.cpane!); }
+    this.tabTool = tool;
     const st = this.el.querySelector<HTMLElement>(".drw-status");
     if (!st || !this.store) return;
     const m = this.mode;
@@ -1337,7 +1367,10 @@ export class DrawingWorkspace {
   private factsOf(view: string, sh = this.sheet): ModelFacts | null {
     const v = findView(sh, view), c = v && viewConfig(sh, v), only = v && viewOnly(sh, v);
     // A section view also measures its cut faces' edges (FR-DRW-021).
-    const f = withCut((c && this.kernel.configs.get(c)) || this.facts, v ? this.kernel.cache.get(viewReq(sh, v).key) : null);
+    let base = (c && this.kernel.configs.get(c)) || this.facts;
+    // Curves on a cylinder (a cross hole's rim on a shaft) stand in as that cylinder's circle in this view.
+    if (base && v) { const tp = ringTopo(base.topo, projector(viewDir(sh, v)).n); if (tp !== base.topo) base = { ...base, topo: tp }; }
+    const f = withCut(base, v ? this.kernel.cache.get(viewReq(sh, v).key) : null);
     return f && only ? { ...f, topo: topoOnly(f.topo, only) } : f;
   }
 
@@ -3164,6 +3197,18 @@ export class DrawingWorkspace {
     if (c.focus) box.focus();
   }
 
+  /** Shows one command bar tab's buttons (View Layout, Annotation, Sketch); the choice is remembered. */
+  private tabTool: string | null = null;
+  private showCmdTab(tab: string, keep = false) {
+    if (!CMD_TABS.some(x => x[0] === tab)) tab = "layout";
+    for (const x of this.el.querySelectorAll<HTMLElement>("[data-ctab]")) {
+      const on = x.dataset.ctab === tab;
+      x.classList.toggle("on", on); x.setAttribute("aria-selected", String(on)); x.tabIndex = on ? 0 : -1;
+    }
+    for (const g of this.el.querySelectorAll<HTMLElement>("[data-cpane]")) g.hidden = g.dataset.cpane !== tab;
+    if (keep) try { localStorage.setItem("mc:drwTab", tab); } catch { /* storage off */ }
+  }
+
   /** Folds the palette panes away (or back), so the tree and the properties get the room; remembered. */
   private foldPalette(fold: boolean) {
     const side = this.el.querySelector<HTMLElement>(".drw-side")!, b = this.el.querySelector<HTMLElement>(".drw-palfold")!;
@@ -3317,15 +3362,7 @@ export class DrawingWorkspace {
     if (b.dataset.tw !== undefined) { this.toggleTreeGroup(b.dataset.tw); return; }
     if (b.dataset.sela) { this.cancelMode(); this.sel = null; this.selA = b.dataset.sela; this.renderTree(); this.renderProps(); this.renderOverlay(); return; }
     if (b.dataset.sel !== undefined) { this.cancelMode(); this.selA = null; this.sel = b.dataset.sel || null; this.renderTree(); this.renderProps(); this.renderOverlay(); return; }
-    if (b.dataset.ptab) {
-      for (const x of this.el.querySelectorAll<HTMLElement>("[data-ptab]")) {
-        const on = x === b;
-        x.classList.toggle("on", on); x.setAttribute("aria-selected", String(on)); x.tabIndex = on ? 0 : -1;
-        this.el.querySelector<HTMLElement>(`#drw-pane-${x.dataset.ptab}`)!.hidden = !on;
-      }
-      this.foldPalette(false);
-      return;
-    }
+    if (b.dataset.ctab) { this.closeMenus(); this.showCmdTab(b.dataset.ctab, true); return; }
     if (a === "palfold") { this.foldPalette(!this.el.querySelector(".drw-side")!.classList.contains("palfold")); return; }
     if (a === "pmclose") { this.cancelMode(); this.selA = null; this.sel = null; this.renderTree(); this.renderProps(); this.renderOverlay(); return; }
     if (b.dataset.fold) { this.foldGroup(b); return; }
@@ -3371,12 +3408,12 @@ export class DrawingWorkspace {
       case "back": void this.backToModel(); break;
       case "file": this.cancelMode(); this.closeMenus(); this.host.fileMenu?.(b); break;
       case "std3": this.cancelMode(); this.standard3(); break;
-      case "model": case "export": case "section": case "annot": case "detail": {
+      case "model": case "export": case "section": case "dims": case "tables": case "detail": {
         const menu = b.nextElementSibling as HTMLElement, open = menu.hidden;
         this.closeMenus();
         menu.hidden = !open;
         b.setAttribute("aria-expanded", String(open));
-        if (open) menu.querySelector<HTMLElement>("button")?.focus();
+        if (open) { this.placeMenu(b, menu); menu.querySelector<HTMLElement>("button")?.focus(); }
         break;
       }
       case "proj": this.startProjected(); break;
