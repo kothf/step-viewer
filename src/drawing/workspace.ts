@@ -620,7 +620,7 @@ export class DrawingWorkspace {
           <div class="drw-tabs"></div>
         </div>
       </div>
-      <div class="drw-status" role="status"></div>`;
+      <div class="drw-status"><span class="drw-st-msg" role="status"></span><span class="drw-xy" translate="no" aria-hidden="true"></span></div>`;
     this.svg = this.el.querySelector(".drw-svg")!;
     // `build` runs again for every drawing opened or brought back from its tab, but `el` stays: its listeners go on once,
     // else each click ran twice after a trip to the model and back, and the menus opened and closed at once (drawings exam #29).
@@ -639,6 +639,10 @@ export class DrawingWorkspace {
     }
     this.svg.addEventListener("pointerdown", e => this.onDown(e));
     this.svg.addEventListener("pointermove", e => this.onMove(e));
+    this.svg.addEventListener("pointerleave", () => {
+      this.showXY(null);
+      if ((this.hover || this.hoverA) && !this.drag && !this.adrag && !this.treeHov) { this.hover = null; this.hoverA = null; this.renderOverlay(); }
+    });
     this.svg.addEventListener("pointerup", e => this.onUp(e));
     this.svg.addEventListener("dblclick", e => this.onDbl(e));
     this.svg.addEventListener("wheel", e => this.onWheel(e), { passive: false });
@@ -728,8 +732,10 @@ export class DrawingWorkspace {
     else if (this.projecting.size && this.kernel.restarting) s = t("Freeing the drawing kernel's memory, then projecting… {n} to go", { n: this.projecting.size });
     else if (this.projecting.size) s = t("Projecting the views… {n} to go", { n: this.projecting.size });
     else if (!this.sheet.views.length) s = t("Drag a view from the View palette onto the sheet, or use Standard 3 views.");
+    else if (this.selA) s = t("Drag the annotation to move it. Delete removes it, Esc deselects it.");
+    else if (this.sel) s = t("Drag the view to move it; views lined up with it follow. Delete removes it, Esc deselects it.");
     else s = t("Drag a view to move it. Double-click the title block to fill it in.");
-    st.textContent = s;
+    st.querySelector(".drw-st-msg")!.textContent = s;
     st.classList.toggle("warn", this.stale && !this.loading);
     this.el.querySelector<HTMLElement>(".drw-confirm")!.hidden = m.kind === "none";
     this.el.classList.toggle("stale", this.stale || this.loading > 0);
@@ -1053,6 +1059,7 @@ export class DrawingWorkspace {
       const d = this.adrag;
       if (!d.moved && Math.hypot(p[0] - d.start[0], p[1] - d.start[1]) < 0.5) return;
       d.moved = true;
+      this.showXY(p);
       this.renderAnnotDrag(p);
       return;
     }
@@ -1067,15 +1074,25 @@ export class DrawingWorkspace {
         const pl = this.placements.get(id);
         if (pl) { pl.x = x; pl.y = y; }
       }
+      const c = moves.get(d.id);
+      if (c) this.showXY(c, findView(this.sheet, d.id)?.name ?? "");
       this.renderOverlay();
       return;
     }
     const m = this.mode;
     if (m.kind === "model") { const s = this.infer(p, new Set()); m.at = s.p; this.guides = s.guides; this.renderOverlay(); return; }
     if (m.kind !== "none") { m.at = p; this.renderOverlay(); return; }
-    const h = this.viewAt(p);
-    if (h !== this.hover) { this.hover = h; this.renderOverlay(); }
-    this.svg.style.cursor = h ? "move" : "";
+    this.showXY(p);
+    // An annotation under the pointer is outlined like a view, so it is clear what a press would pick and drag.
+    const ha = this.annotAt(p), h = ha ? null : this.viewAt(p);
+    if (h !== this.hover || ha !== this.hoverA) { this.hover = h; this.hoverA = ha; this.renderOverlay(); }
+    this.svg.style.cursor = h || (ha && this.annot(ha)?.pos) ? "move" : "";
+  }
+
+  /** The pointer's place on the sheet (mm from the lower left corner) at the right of the status bar, or a label. */
+  private showXY(p: Pt | null, label = "") {
+    const el = this.el.querySelector<HTMLElement>(".drw-xy");
+    if (el) el.textContent = p ? `${label}${label ? " " : ""}X ${p[0].toFixed(1)}  Y ${p[1].toFixed(1)} mm` : "";
   }
 
   /** New centres of a dragged view and the views that follow it (FR-DRW-011). */
@@ -3072,6 +3089,8 @@ export class DrawingWorkspace {
       const r = on.getBoundingClientRect(), b = pane.getBoundingClientRect();
       if (r.top < b.top) pane.scrollTop -= b.top - r.top; else if (r.bottom > b.bottom) pane.scrollTop += r.bottom - b.bottom;
     }
+    // The status bar says what the selection takes (drag, Delete, Esc).
+    this.renderStatus();
   }
 
   /** Opens or folds an annotation group of the tree. */

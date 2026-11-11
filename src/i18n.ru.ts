@@ -2738,6 +2738,8 @@ export const RU: Record<string, string> = {
   "Annotation": "Обозначения",
   "Annotations": "Обозначения",
   "Sheet annotations": "Обозначения листа",
+  "Drag the annotation to move it. Delete removes it, Esc deselects it.": "Перетащите обозначение, чтобы сдвинуть его. Delete удаляет его, Esc снимает выбор.",
+  "Drag the view to move it; views lined up with it follow. Delete removes it, Esc deselects it.": "Перетащите вид, чтобы сдвинуть его; выровненные с ним виды следуют за ним. Delete удаляет его, Esc снимает выбор.",
   // Drawing Annotation tab: groups and tool tooltips
   "Fold the palette": "Свернуть палитру",
   "Show the palette": "Показать палитру",

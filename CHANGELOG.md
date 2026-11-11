@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.527.0] - 2026-11-11
+
+### Changed
+
+- Drawings: the status bar says what the selection takes (drag a view or annotation to move it, Delete removes it, Esc deselects it), and its right end shows the pointer's place on the sheet in mm from the lower left corner, or the dragged view's centre. An annotation under the pointer is outlined before you press, like a view, and the pointer becomes a move cursor over it.
+
 ## [1.526.0] - 2026-11-11
 
 ### Changed
@@ -3274,7 +3280,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.526.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.527.0...HEAD
+[1.527.0]: https://github.com/kothf/step-viewer/compare/v1.526.0...v1.527.0
 [1.526.0]: https://github.com/kothf/step-viewer/compare/v1.525.0...v1.526.0
 [1.525.0]: https://github.com/kothf/step-viewer/compare/v1.524.0...v1.525.0
 [1.524.0]: https://github.com/kothf/step-viewer/compare/v1.523.0...v1.524.0
