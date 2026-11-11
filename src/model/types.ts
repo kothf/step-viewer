@@ -116,7 +116,8 @@ export type PlaneRef =
 export interface CtxRef { comp: string; face: string; host: string; label?: string; p: V3; n: V3; locked?: boolean }
 
 /** World frame of a sketch plane: origin, x and y directions, normal. */
-export interface Frame { o: V3; x: V3; y: V3; n: V3 }
+/** `len` (Hole only): each hole's thread length when the thread runs through all (`HoleFeature.threadEnd`). */
+export interface Frame { o: V3; x: V3; y: V3; n: V3; len?: number[] }
 
 export interface SketchFeature {
   id: string; type: "sketch"; name: string; suppressed?: boolean;
@@ -586,9 +587,14 @@ export interface HoleFeature {
   csAngle?: Num;
   /** Tapped: thread depth (cosmetic thread) and nominal diameter. */
   threadDepth?: Num;
+  /** Tapped, hole end not blind: "through" = the thread runs the whole drill (SolidWorks' thread Through All); absent = `threadDepth`. */
+  threadEnd?: "through";
   major?: number;
   pitch?: number;
 }
+
+/** The tapped hole's thread runs the whole drill (thread end Through all; only for holes that are not blind). */
+export function threadThrough(f: HoleFeature): boolean { return f.kind === "tapped" && f.threadEnd === "through" && f.end !== "blind"; }
 
 /**
  * Helix / spiral curve (FR-FT-083): round the circle of a sketch, starting on it at the start angle and
