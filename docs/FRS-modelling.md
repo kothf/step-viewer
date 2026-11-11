@@ -486,7 +486,7 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 
 - **FR-SK-030** (P1, M) Trim: smart trim by clicking a segment (removes it up to the nearest intersections), and drag-through trim over several segments. Jog line (1.523.0): a line stepped out between two clicks, sides square to it.
 - **FR-SK-031** (P1, M) Extend to the nearest intersection.
-- **FR-SK-032** (P1, M) Split entity at a point.
+- **FR-SK-032** (P1, M) Split entity at a point. Segment (1.527.0): a line, arc or circle divided into equal pieces, by points on it or as that many curves.
 - **FR-SK-033** (P1, M) Sketch fillet (radius) and sketch chamfer (distance, distance-angle) at a corner, keeping relations and adding a radius/distance dimension.
 - **FR-SK-034** (P1, M) Offset entities: selected chain or loop, distance, side, both sides, cap ends (arc/line); keeps an offset relation so the result follows the source (P2) or is static (P1). *Done: static copy (1.20.0); both sides, arc/line caps and linked offsets (offset relations + one dimension) in 1.240.0.*
 - **FR-SK-035** (P1, M) Convert entities (project model edges, loops of a face, or other sketches' entities into this sketch) with an "on edge" relation that follows the model.
@@ -1000,7 +1000,7 @@ The modelling UI combines SolidWorks' interaction model with MöbiusCAD's existi
 
 - **FR-UI-050** (P1, M) Sketch status in the status bar and a badge in the graphics area: "Under defined (3 DOF) / Fully defined / Over defined"; colours per FR-SLV-002 with a legend in Help.
 - **FR-UI-051** (P1, M) Cursor feedback: the tool icon next to the cursor, inference glyphs (coincident, horizontal, tangent ...), the live length/angle/radius beside the cursor, dotted inference lines.
-- **FR-UI-052** (P1, M) Typing a number while drawing an entity opens the value box for its next size (length, then angle), so lines can be drawn fully by keyboard.
+- **FR-UI-052** (P1, M) Typing a number while drawing an entity opens the value box for its next size (length, then angle), so lines can be drawn fully by keyboard. Add dimensions on creation (1.527.0): new lines, rectangles, parallelograms, polygons, circles and arcs get their sizes as dimensions and the Modify box opens on each, as SolidWorks with Add dimensions on (quick bar, sketch panel and Preferences switch).
 - **FR-UI-053** (P1, M) Dimension value boxes appear at the dimension (SW habit: Modify box) with ✓, ✕, rebuild and spin; Esc keeps the previous value.
 - **FR-UI-054** (P1, M) Sketch keyboard: L line, R rectangle, C circle, A arc (tangent arc while drawing), P point, G polygon, T trim, E extend, F sketch fillet, O offset, W slot, D dimension, K add relation, Q construction toggle (letters as built in 1.85.0, plus K), Esc ends the current tool then exits selection, Ctrl+Enter exits the sketch; letters are rebindable (P2) and do not collide with viewer letters while the sketch is active (viewer measure letters move under the Evaluate tab in modelling).
 - **FR-UI-055** (P1, S) Grid and inference toggles in the heads-up bar while sketching. *Done in 1.310.0 (quick access bar: Grid, Snap to grid, Inferences).*
