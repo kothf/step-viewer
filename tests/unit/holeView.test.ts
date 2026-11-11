@@ -52,3 +52,20 @@ test("diagram and icons are SVG for every kind", () => {
   assert.match(svg, /hd-break/);
   for (const k of HOLE_KINDS) assert.match(holeIcon(k), /^<svg class="hole-icon"/, k);
 });
+
+test("tapered tap: callout without a class, 1:16 cone in the section, tapered cosmetic thread", () => {
+  const H = hole({ kind: "ptap", size: "1/4-18 NPT", diameter: { v: 11.11 }, taperDia: { v: 11.63 }, major: 13.89, threadDepth: { v: 10.2 }, depth: { v: 16 } });
+  assert.deepEqual(holeCallout(H, f, fa, label), ["Ø11.11 ↧16", "1/4-18 NPT ↧10.2"]);
+  const s = holeSection(H)!;
+  assert.deepEqual(s.prof[0], [11.63 / 2, 0]);
+  // The cone narrows 1:32 on the radius until it meets the drill.
+  const zc = (11.63 / 2 - 11.11 / 2) * 32;
+  assert.ok(s.prof.some(([r, z]) => Math.abs(r - 11.11 / 2) < 1e-9 && Math.abs(z - zc) < 1e-9), JSON.stringify(s.prof));
+  assert.ok(s.thread && s.thread.r1! < s.thread.r && Math.abs(s.thread.z1 - 10.2) < 1e-9);
+  assert.ok(holeIcon("ptap").includes("hd-thread"));
+  assert.ok(HOLE_KINDS.includes("ptap"));
+  // Remove thread: the cone starts at the major diameter, and no cosmetic thread is drawn.
+  const rm = holeSection({ ...H, threadMode: "remove" })!;
+  assert.deepEqual(rm.prof[0], [13.89 / 2, 0]);
+  assert.equal(rm.thread, undefined);
+});

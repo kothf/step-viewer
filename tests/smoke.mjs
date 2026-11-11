@@ -3557,6 +3557,24 @@ try {
     await mp.selectOption('#mc-pm select[data-k="tclass"]', "6H");
     await idle();
     check(tcl.tc === "6G" && tcl.tm === "remove" && tcl.callout.includes("M6-6G") && tcl.ok && !tcl.shade, `model 1.528: Hole Wizard thread class and Remove thread (${JSON.stringify(tcl)})`);
+    // 1.531 (FR-FT-051): Tapered tap: 1/4-18 NPT from the table (tap drill 7/16", cone Ø at the face, thread length L2),
+    // callout without a class; Rc (BSPT) takes the nearest size; back to a tapped M6 with its thread through all.
+    await mp.selectOption('#mc-pm select[data-k="kind"]', "ptap");
+    await idle();
+    const npt = await mp.evaluate(() => { const d = window.__sv.model.mode().draft, l = window.__sv.model.last(); return { k: d.kind, s: d.size, d: d.diameter.v, td: d.taperDia?.v, len: d.threadDepth?.v, box: !!document.querySelector('#mc-pm input[data-num="taperDia"]'), callout: document.querySelector('#mc-pm .pm-hcallout')?.textContent ?? "", ok: l.statuses.every(s => s.ok), cls: !!document.querySelector('#mc-pm select[data-k="tclass"]') }; });
+    await mp.selectOption('#mc-pm select[data-k="standard"]', "bspt");
+    await idle();
+    const rc = await mp.evaluate(() => { const d = window.__sv.model.mode().draft, l = window.__sv.model.last(); return { s: d.size, d: d.diameter.v, ok: l.statuses.every(s => s.ok) }; });
+    await mp.selectOption('#mc-pm select[data-k="kind"]', "tapped");
+    await idle();
+    await mp.selectOption('#mc-pm select[data-k="size"]', "M6");
+    await idle();
+    await mp.selectOption('#mc-pm select[data-k="threadEnd"]', "through").catch(() => {});
+    await idle();
+    const back = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { k: d.kind, s: d.size, d: d.diameter.v, std: d.standard ?? null, td: d.taperDia ?? null }; });
+    check(npt.k === "ptap" && npt.s === "1/4-18 NPT" && Math.abs(npt.d - 11.1125) < 2e-3 && Math.abs(npt.td - 11.635) < 0.01 && Math.abs(npt.len - 10.206) < 0.01 && npt.box && !npt.cls && npt.callout.includes("1/4-18 NPT") && npt.ok
+      && rc.s === "Rc 1/4" && rc.d === 11.2 && rc.ok && back.k === "tapped" && back.s === "M6" && back.d === 5 && back.std === null && back.td === null,
+      `model 1.531: Hole Wizard tapered tap NPT and Rc (${JSON.stringify({ npt, rc, back })})`);
     // Options: Near side countersink defaults to the hole + 1 mm at 90°; unticking takes it away.
     await mp.check('#mc-pm input[data-k="optNear"]').catch(() => {});
     await idle();
@@ -3853,7 +3871,7 @@ try {
     await idle();
     await mp.selectOption('#mc-pm select[data-k="size"]', "M8");
     await idle();
-    check(hux.svg && hux.callout.includes("⌴Ø15") && hux.icons === 8 && hux.on === "cbore" && hux.tabs === "type:true,pos:false" && hux.favOpen === false
+    check(hux.svg && hux.callout.includes("⌴Ø15") && hux.icons === 9 && hux.on === "cbore" && hux.tabs === "type:true,pos:false" && hux.favOpen === false
       && huxK.kind === "csink" && huxK.callout.includes("⌵Ø") && huxP.pos && !huxP.type && huxP.face,
       `model 1.524: Hole Wizard panel preview, type pictograms and Type/Positions tabs (${JSON.stringify({ hux, huxK, huxP })})`);
     // 1.528 (FR-FT-051): the counterbore follows the screw type: DIN 7984 low head M8 = Ø15 × 5.6 (ISO 4762's Ø15 × 8.6 with a 3 mm lower head).

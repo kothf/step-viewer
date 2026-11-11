@@ -560,12 +560,14 @@ export interface HoleFeature {
   plane?: PlaneRef;
   /** Hole centres in the plane's frame (x, y). */
   pts: [number, number][];
-  /** clear = ISO 273 clearance hole for the size and fit; cdrill = counterdrilled; slot = an obround of `slotLen`. */
-  kind: "simple" | "cbore" | "csink" | "tapped" | "insert" | "clear" | "cdrill" | "slot";
+  /** clear = ISO 273 clearance hole for the size and fit; cdrill = counterdrilled; slot = an obround of `slotLen`;
+   *  ptap = tapered tap (pipe thread, NPT or Rc): a 1:16 cone from `taperDia` at the face over the thread depth,
+   *  never narrower than the tap drill `diameter`. */
+  kind: "simple" | "cbore" | "csink" | "tapped" | "insert" | "clear" | "cdrill" | "slot" | "ptap";
   /** Size ("M6", "M8x1", "1/4-20 UNC") the values were taken from; absent for a custom hole. */
   size?: string;
   /** Size table (FR-FT-051): absent = ISO metric coarse. */
-  standard?: "isofine" | "unc" | "unf";
+  standard?: "isofine" | "unc" | "unf" | "bspt";
   fit?: "close" | "normal" | "loose";
   diameter: Num;
   /** upto: to a face or plane (`upTo`); next: until the hole leaves the material; vertex: to the plane through
@@ -600,6 +602,8 @@ export interface HoleFeature {
   underCs?: HoleSink;
   farCs?: HoleSink;
   headClear?: Num;
+  /** Tapered tap: the cone's diameter at the face (the thread's minor diameter there). */
+  taperDia?: Num;
   /** Tapped: thread depth (cosmetic thread) and nominal diameter. */
   threadDepth?: Num;
   /** Tapped, hole end not blind: "through" = the thread runs the whole drill (SolidWorks' thread Through All); absent = `threadDepth`. */
@@ -610,7 +614,7 @@ export interface HoleFeature {
   screw?: "iso4762" | "din7984" | "iso7380" | "iso1207" | "iso10642" | "iso2009";
   /** Tapped: thread tolerance class in the callout (absent = 6H, or 2B for inch). */
   tclass?: string;
-  /** Tapped: "remove" cuts the threaded length to the major diameter (SolidWorks' Remove thread), "none" drops the
+  /** Tapped (and tapered tap: "remove" only): "remove" cuts the threaded length to the major diameter (SolidWorks' Remove thread), "none" drops the
    *  cosmetic thread; absent = cosmetic thread on the tap drill. */
   threadMode?: "remove" | "none";
 }
