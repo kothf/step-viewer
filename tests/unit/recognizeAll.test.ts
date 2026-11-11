@@ -354,3 +354,25 @@ test("recognize features: a bent bar of any line/arc profile comes back as a Swe
     close(vol(m, { ...imp, features: [...imp.features, ...fs] }), v0, 1e-5);
   }
 });
+
+test("recognize features: a lofted body comes back as a Loft between its end faces (FR-FT-102)", async () => {
+  const m = new Modeller(await occ());
+  const top = { id: "pl", type: "plane", name: "P", base: { std: "XY" }, mode: "offset", offset: { v: 30 } } as Feature;
+  const poly = (pre: string, pts: [number, number][]): SkEnt[] => [
+    ...pts.map(([x, y], k) => ({ id: `${pre}p${k}`, t: "point", x, y }) as SkEnt),
+    ...pts.map((_, k) => ({ id: `${pre}l${k}`, t: "line", a: `${pre}p${k}`, b: `${pre}p${(k + 1) % pts.length}` }) as SkEnt)];
+  const circle: SkEnt[] = [{ id: "cc", t: "point", x: 2, y: 1 }, { id: "ci", t: "circle", c: "cc", r: 6 } as SkEnt];
+  const rect = poly("a", [[-10, -6], [10, -6], [10, 6], [-10, 6]]);
+  const cases: [string, SkEnt[], SkEnt[], string[]][] = [
+    ["rectangle to circle", rect, circle, []],
+    ["square to a turned smaller square", poly("a", [[-8, -8], [8, -8], [8, 8], [-8, 8]]), poly("b", [[0, -5], [5, 0], [0, 5], [-5, 0]]), ["ap0", "bp0"]]];
+  for (const [name, a, b, con] of cases) {
+    const s1: SketchFeature = { id: "s1", type: "sketch", name: "s1", plane: { std: "XY" }, rels: [], dims: [], ents: a };
+    const s2: SketchFeature = { id: "s2", type: "sketch", name: "s2", plane: { plane: "pl" }, rels: [], dims: [], ents: b };
+    const imp = imported(m, [top, s1, s2, { id: "lf", type: "loft", name: "L", op: "boss", profiles: ["s1", "s2"], ...(con.length ? { connectors: con } : {}) } as Feature]);
+    const v0 = vol(m, imp);
+    const fs = m.recognizeFeatures(imp);
+    assert.equal(types(fs), "sketch,sketch,loft,delbody", name);
+    close(vol(m, { ...imp, features: [...imp.features, ...fs] }), v0, 1e-5);
+  }
+});

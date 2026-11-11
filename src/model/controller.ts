@@ -7710,7 +7710,8 @@ export class ModelController {
         return sel(`${w}C`, w === "start" ? t("Start constraint") : t("End constraint"), `<option value="none"${on ? "" : " selected"}>${esc(t("None"))}</option><option value="normal"${on ? " selected" : ""}>${esc(t("Normal to profile"))}</option>`)
           + (on ? `<label class="pm-field"><span>${esc(t("Tangent length"))}</span><input type="text" inputmode="decimal" data-k="${w}Len" value="${esc(trimNum(len, 3))}" spellcheck="false" /></label>` : "");
       }).join("")))
-      + (f.centerline || f.guides?.length ? "" : group(t("Options"), chk("ruled", f.ruled, t("Straight sections (ruled)")) + (f.profiles.length >= 3 ? chk("close", f.close, t("Close loft")) : ""))) };
+      + (f.centerline || f.guides?.length ? "" : group(t("Options"), chk("ruled", f.ruled, t("Straight sections (ruled)")) + (f.profiles.length >= 3 ? chk("close", f.close, t("Close loft")) : "")
+        + (f.op === "boss" && this.last?.data ? chk("merge", f.merge !== false, t("Merge result")) : ""))) };
   }
 
   /** 3D sketch editing state (view-only): tool, sketch plane, the chain's last point, the spline being drawn, selection. */
