@@ -195,7 +195,7 @@ export function edgeCount(oc: any, shape: any): number {
 /** The exact HLR, or `projectFast` (chord 1/1000 of the model's size) for models of `FAST_EDGES` edges or more. */
 export function projectAuto(oc: any, shape: any, view: ViewDir, tol = 0.02, fast = FAST_EDGES): Projection {
   if (edgeCount(oc, shape) < fast) return project(oc, shape, view, tol);
-  const [lo, hi] = shapeInfo(oc, shape).box;
+  const [lo, hi] = shapeBox(oc, shape);
   return projectFast(oc, shape, view, Math.max(0.01, Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 1000));
 }
 
@@ -621,12 +621,11 @@ export function bounds(segs: Seg2[]): [number, number, number, number] {
 
 /** Tight bounds and volume of a shape (model mm). */
 export function shapeInfo(oc: any, shape: any): { box: [V3, V3]; volume: number } {
-  const b = new oc.Bnd_Box_1();
-  oc.BRepBndLib.AddOptimal(shape, b, false, false);
-  const lo = b.CornerMin(), hi = b.CornerMax();
   const p = new oc.GProp_GProps_1();
   oc.BRepGProp.VolumeProperties_1(shape, p, true, false, false);
-  return { box: [[lo.X(), lo.Y(), lo.Z()], [hi.X(), hi.Y(), hi.Z()]], volume: Math.abs(p.Mass()) };
+  const volume = Math.abs(p.Mass());
+  p.delete();
+  return { box: shapeBox(oc, shape), volume };
 }
 
 /**
@@ -635,8 +634,7 @@ export function shapeInfo(oc: any, shape: any): { box: [V3, V3]; volume: number 
  * stays. Both go into one compound, which is then cut like a straight section.
  */
 export function alignedShape(oc: any, shape: any, al: { c: V3; s: V3; axis: V3; ang: number }): any {
-  const info = shapeInfo(oc, shape);
-  const [lo, hi] = info.box;
+  const [lo, hi] = shapeBox(oc, shape);
   const L = 2 * Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) + 10
     + 2 * Math.hypot(al.c[0] - (lo[0] + hi[0]) / 2, al.c[1] - (lo[1] + hi[1]) / 2, al.c[2] - (lo[2] + hi[2]) / 2);
   const half = (n: V3) => {
@@ -675,13 +673,20 @@ function shapeList(oc: any, l: any): any[] {
 /** How far (mm) a section's cutting plane is moved off the picked place (see `section`). */
 export const SECTION_NUDGE = 1e-3;
 
-/** The shape's bounding box (no mass properties). */
+/** Boxes already found, by shape wrapper: a tight box of an engine assembly takes ~1 s, and every view wanted it. */
+const boxes = new WeakMap<object, [V3, V3]>();
+
+/** The shape's tight bounding box (no mass properties), kept per shape object. */
 export function shapeBox(oc: any, shape: any): [V3, V3] {
+  const have = boxes.get(shape);
+  if (have) return [[...have[0]], [...have[1]]];
   const b = new oc.Bnd_Box_1();
   oc.BRepBndLib.AddOptimal(shape, b, false, false);
   const lo = b.CornerMin(), hi = b.CornerMax();
+  const box: [V3, V3] = [[lo.X(), lo.Y(), lo.Z()], [hi.X(), hi.Y(), hi.Z()]];
   b.delete();
-  return [[lo.X(), lo.Y(), lo.Z()], [hi.X(), hi.Y(), hi.Z()]];
+  boxes.set(shape, box);
+  return [[...box[0]], [...box[1]]];
 }
 
 /** One input solid of a section: the pieces left of it (itself when the cutter cannot reach it) and its own Boolean. */
