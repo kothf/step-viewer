@@ -3650,6 +3650,20 @@ try {
       && cap2.r === true && cap2.hold === 4.8 && cap2.lt === 12 && cap2.cb === 11 && cap2.need && cap2.box && cap2.callout.includes("⌴Ø11") && cap2.callout.includes("M6-6H ↧4.8") && cap2.ok
       && cback2.k === "tapped" && cback2.r === null && cback2.s === "M6",
       `model 1.536: Hole Wizard captive screw (${JSON.stringify({ cap1, cap2, cback2 })})`);
+    // 1.537 (FR-FT-052): a click on another face of the plate (a side face we can see) adds a hole square to it there.
+    {
+      let side = null;
+      for (const w of [[0, -30, 10], [50, 0, 10], [0, 30, 10], [-50, 0, 10]]) {
+        const at = await world(w);
+        const name = await mp.evaluate(([x, y]) => { const c = window.__sv.model, h = c.host.faceAt(x, y); return h ? c.faceRef(h.faceId)?.name ?? null : null; }, at);
+        if (name && /:side:/.test(name)) { side = { at, name }; break; }
+      }
+      if (side) { await mp.mouse.click(side.at[0], side.at[1]); await idle(); }
+      const sp = await mp.evaluate(() => { const d = window.__sv.model.mode().draft, l = window.__sv.model.last(), fr = l.frames[d.id]; return { n: d.spots?.length ?? 0, face: d.spots?.[0]?.face.name ?? null, sp: fr?.sp?.length ?? 0, box: document.querySelector('#mc-pm [data-focus="pts"]')?.textContent ?? "", ok: l.statuses.every(s => s.ok) }; });
+      if (side) { await mp.evaluate(() => document.querySelector('#mc-pm [data-rms="0"]')?.click()); await idle(); }
+      const sp2 = await mp.evaluate(() => window.__sv.model.mode().draft.spots?.length ?? 0);
+      check(side && sp.n === 1 && sp.face === side.name && sp.sp === 1 && sp.box === "3 holes" && sp.ok && sp2 === 0, `model 1.537: Hole Wizard hole on another face (${JSON.stringify({ side, sp, sp2 })})`);
+    }
     // Options: Near side countersink defaults to the hole + 1 mm at 90°; unticking takes it away.
     await mp.check('#mc-pm input[data-k="optNear"]').catch(() => {});
     await idle();

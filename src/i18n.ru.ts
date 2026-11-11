@@ -971,6 +971,8 @@ export const RU: Record<string, string> = {
   "Thread length": "Длина резьбы",
   "The tapered diameter must be wider than the tap drill, with a thread length more than 0.": "Диаметр конуса должен быть больше диаметра сверла под резьбу, а длина резьбы больше 0.",
   "Advanced hole": "Расширенное отверстие",
+  "Holes on other faces": "Отверстия на других гранях",
+  "Click another face, flat or curved, for a hole square to it there.": "Щёлкните другую грань, плоскую или кривую, чтобы сделать там отверстие по нормали к ней.",
   "Captive screw": "Невыпадающий винт",
   "Held by": "Удерживается",
   "Thread in the cover": "Резьбой в крышке",

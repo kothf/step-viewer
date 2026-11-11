@@ -112,6 +112,27 @@ test("hole options: near/far side and under head countersinks, head clearance cu
   assert.equal(bad.statuses.at(-1)?.code, "E-HOLE-OPTCS");
 });
 
+test("holes on other faces: a flat side face and a curved face, each drilled square to its face (FR-FT-052)", async () => {
+  const m = new Modeller(await occ());
+  const PI = Math.PI;
+  const near = (a: number, b: number, msg: string) => assert.ok(Math.abs(a - b) < 2e-3 * b, `${msg}: ${a} vs ${b}`);
+  const plate = m.evaluate(doc([rect("s1", 100, 60), { id: "f1", type: "extrude", name: "E", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
+    { id: "h", type: "hole", name: "Hole1", plane: { face: { name: "f1:end" } }, pts: [[0, 0]], spots: [{ face: { name: "f1:side:s1l1" }, p: [20, -30.4, 10] }], kind: "simple", diameter: { v: 10 }, end: "blind", depth: { v: 10 }, flat: true } as Feature]));
+  assert.ok(plate.statuses.every(s => s.ok), JSON.stringify(plate.statuses));
+  near(100 * 60 * 20 - m.props(plate.body!).volume, 2 * PI * 25 * 10, "top + side face");
+  const fr = plate.frames.h;
+  assert.ok(fr.sp?.length === 1 && Math.abs(fr.sp[0][0][1] + 30) < 1e-6 && Math.abs(fr.sp[0][1][1] + 1) < 1e-9, JSON.stringify(fr.sp));
+  // A Ø6 hole 10 deep into a Ø40 cylinder's side at x = 20: removed = ∫∫ over the disc (√(400 − y²) − 10).
+  const circle: SketchFeature = { id: "s1", type: "sketch", name: "s1", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "c0", t: "point", x: 0, y: 0 }, { id: "k", t: "circle", c: "c0", r: 20 } as SkEnt] };
+  const cyl = m.evaluate(doc([circle, { id: "f1", type: "extrude", name: "E", sketch: "s1", op: "boss", end: "blind", depth: { v: 40 } },
+    { id: "h", type: "hole", name: "Hole1", plane: { face: { name: "f1:end" } }, pts: [], spots: [{ face: { name: "f1:side:k" }, p: [20, 0, 20] }], kind: "simple", diameter: { v: 6 }, end: "blind", depth: { v: 10 }, flat: true } as Feature]));
+  assert.ok(cyl.statuses.every(s => s.ok), JSON.stringify(cyl.statuses));
+  let want = 0;
+  const N = 400;
+  for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) { const y = -3 + (6 * (i + 0.5)) / N, z = -3 + (6 * (j + 0.5)) / N; if (y * y + z * z < 9) want += (Math.sqrt(400 - y * y) - 10) * (6 / N) ** 2; }
+  near(PI * 400 * 40 - m.props(cyl.body!).volume, want, "curved face");
+});
+
 test("screw types size the head pocket; thread classes (FR-FT-051)", () => {
   assert.deepEqual(headPocket("M6", undefined, "cbore"), [11, 6.4]);
   assert.deepEqual(headPocket("M6", "din7984", "cbore"), [11, 4.4]);

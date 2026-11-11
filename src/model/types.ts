@@ -118,7 +118,7 @@ export interface CtxRef { comp: string; face: string; host: string; label?: stri
 /** World frame of a sketch plane: origin, x and y directions, normal. */
 /** `len` (Hole only): each hole's thread length when the thread runs through all (`HoleFeature.threadEnd`);
  *  for an Advanced Hole that leaves the material, each hole's depth to the far face. */
-export interface Frame { o: V3; x: V3; y: V3; n: V3; len?: number[] }
+export interface Frame { o: V3; x: V3; y: V3; n: V3; len?: number[]; /** Hole: each spot's point on its face and outward normal. */ sp?: [V3, V3][] }
 
 export interface SketchFeature {
   id: string; type: "sketch"; name: string; suppressed?: boolean;
@@ -561,6 +561,8 @@ export interface HoleFeature {
   plane?: PlaneRef;
   /** Hole centres in the plane's frame (x, y). */
   pts: [number, number][];
+  /** Holes on other faces, flat or curved (FR-FT-052): a point on the face (world mm), drilled square to the face there. */
+  spots?: { face: FaceRef; p: V3 }[];
   /** clear = ISO 273 clearance hole for the size and fit; cdrill = counterdrilled; slot = an obround of `slotLen`;
    *  ptap = tapered tap (pipe thread, NPT or Rc): a 1:16 cone from `taperDia` at the face over the thread depth,
    *  never narrower than the tap drill `diameter`. */
@@ -647,6 +649,9 @@ export interface HoleSink { dia: Num; angle: Num }
  *  the tap drill, `major`/`pitch` the thread; on the main hole `depth` is the thread depth), countersink = a cone
  *  from `dia` at its top down to the next element at `angle`. `size` = the table size the values came from. */
 export interface HoleElem { t: "cbore" | "csink" | "straight" | "tapped"; size?: string; dia: Num; depth?: Num; angle?: Num; major?: number; pitch?: number }
+
+/** How many holes the feature makes: its positions on the plane plus those on other faces. */
+export function holeCount(f: HoleFeature): number { return f.pts.length + (f.spots?.length ?? 0); }
 
 export function headKind(f: HoleFeature): HoleFeature["kind"] { return f.kind === "slot" && f.slotHead ? f.slotHead : f.kind; }
 export function threadThrough(f: HoleFeature): boolean { return f.kind === "tapped" && f.threadEnd === "through" && holeExits(f); }
