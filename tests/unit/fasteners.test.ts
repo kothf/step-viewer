@@ -16,7 +16,7 @@ test("FR-ASM-028: sizes, lengths and names", () => {
   assert.ok(fastenerLengths("iso4762", "M6").includes(20) && !fastenerLengths("iso4762", "M6").includes(100));
   assert.equal(fastenerName("iso4762", "M6", 20), "ISO 4762 M6 x 20");
   assert.equal(fastenerName("iso4032", "M8"), "ISO 4032 M8");
-  assert.equal(FASTENERS.length, 23);
+  assert.equal(FASTENERS.length, 27);
   assert.equal(fastenerName("din6885", "8x7", 32), "DIN 6885 B 8x7 x 32");
   assert.equal(fastenerName("bearing", "6201"), "Ball bearing 6201");
   assert.deepEqual(fastenerLengths("din6885", "6x6"), [14, 16, 18, 20, 22, 25, 28, 32, 36, 40, 45, 50, 56, 63, 70]);
@@ -169,4 +169,35 @@ test("FR-ASM-028: spacers, standoffs, spring washers and retaining rings", async
   const mf = fastenerPart("standoffm", "M4", 15);
   assert.deepEqual(mf.features.filter(f => f.type === "thread").map(f => [(f as any).internal ?? false, (f as any).length.v]), [[true, 7.6], [false, 7.51]]);
   close(shapeVolume(fastenerShape("standoff", "M3", 10)), (hex(5.5) - Math.PI * 2.25) * 10);
+});
+
+test("FR-ASM-028: bearing series: flanged, needle, linear and thrust", async () => {
+  const m = new Modeller(await occ());
+  const vol = (pd: ReturnType<typeof fastenerPart>) => {
+    const r = m.evaluate(pd);
+    assert.ok(r.statuses.every(s => s.ok && !s.code), `${pd.name}: ${JSON.stringify(r.statuses)}`);
+    return m.props(r.body!).volume;
+  };
+  const cyl = (d: number, h: number) => (Math.PI * d * d / 4) * h;
+  assert.equal(fastenerName("bearingf", "F608"), "Flanged ball bearing F608");
+  assert.equal(fastenerName("linear", "LM8UU"), "Linear bearing LM8UU");
+  // F608: ring Ø22 × 5.5 below the seat, flange Ø25 × 1.5 above it, bore Ø8 through both.
+  close(vol(fastenerPart("bearingf", "F608", undefined, { detail: false })), cyl(22, 5.5) + cyl(25, 1.5) - cyl(8, 7));
+  close(vol(fastenerPart("needle", "HK1010", undefined, { detail: false })), cyl(14, 10) - cyl(10, 10));
+  close(vol(fastenerPart("linear", "LM8UU", undefined, { detail: false })), cyl(15, 24) - cyl(8, 24));
+  // 51104: the gap between the washers leaves a cage ring 0.3 w wide over 0.3 H.
+  const H = 10, mid = (20 + 35) / 2, w = 7.5, gap = (cyl(35, 0.3 * H) - cyl(20, 0.3 * H)) - (cyl(mid + 0.3 * w, 0.3 * H) - cyl(mid - 0.3 * w, 0.3 * H));
+  const th = fastenerPart("thrust", "51104");
+  assert.ok(th.features.some(f => f.id === "e3"));
+  close(vol(fastenerPart("thrust", "51104", undefined, { detail: false })) - gap, cyl(35, H) - cyl(20, H) - gap);
+  assert.ok(vol(th) < cyl(35, H) - cyl(20, H) - gap * 0.98);
+  // A hole picks the bearing by its outside Ø; the 608 is the 22 mm one picked first.
+  assert.equal(sizeForHole("bearing", 22), "608");
+  assert.equal(sizeForHole("needle", 14), "HK1010");
+  assert.equal(sizeForHole("linear", 15), "LM8UU");
+  assert.equal(sizeForHole("bearingf", 22), "F608");
+  assert.deepEqual(searchFasteners("lm8").map(f => f.kind), ["linear"]);
+  assert.deepEqual(searchFasteners("51104").map(f => f.kind), ["thrust"]);
+  assert.equal(fastenerSizes("bearing").length, 56);
+  close(shapeVolume(fastenerShape("bearingf", "F608")), cyl(22, 5.5) + cyl(25, 1.5) - cyl(8, 7));
 });

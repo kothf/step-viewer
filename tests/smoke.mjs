@@ -8096,10 +8096,20 @@ try {
       q.dispatchEvent(new Event("input"));
       const found = [...document.querySelectorAll("#asm-pm [data-kind]")].map(b => b.dataset.kind);
       window.__sv.asm.setFastener({ kind: "din471", size: "20" });
-      return { found, cat: document.querySelector("#asm-pm .tb-cat.on")?.dataset.cat ?? null, desig: document.querySelector("#asm-pm .tb-desig b")?.textContent, dims: [...document.querySelectorAll("#asm-pm .tb-view .tb-dt")].map(x => x.textContent) };
+      const out = { found, cat: document.querySelector("#asm-pm .tb-cat.on")?.dataset.cat ?? null, desig: document.querySelector("#asm-pm .tb-desig b")?.textContent, dims: [...document.querySelectorAll("#asm-pm .tb-view .tb-dt")].map(x => x.textContent) };
+      // Bearing series: "lm8" finds the linear bearing by its size; a flanged bearing shows its flange.
+      q.value = "lm8";
+      q.dispatchEvent(new Event("input"));
+      out.lm = [...document.querySelectorAll("#asm-pm [data-kind]")].map(b => b.dataset.kind);
+      q.value = "";
+      q.dispatchEvent(new Event("input"));
+      window.__sv.asm.setFastener({ kind: "bearingf", size: "F608" });
+      out.brg = [document.querySelectorAll('#asm-pm [data-kind]').length, document.querySelector("#asm-pm .tb-desig b")?.textContent, [...document.querySelectorAll("#asm-pm .tb-view .tb-dt")].map(x => x.textContent).join(",")];
+      return out;
     });
-    check(JSON.stringify(sp.found) === '["standoff","standoffm"]' && sp.desig === "DIN 471 20" && JSON.stringify(sp.dims) === '["d3 18.5","d1 20"]',
-      `asm toolbox 2: Toolbox standoffs, spacers and retaining rings (FR-ASM-028) (${JSON.stringify(sp)})`);
+    check(JSON.stringify(sp.found) === '["standoff","standoffm"]' && sp.desig === "DIN 471 20" && JSON.stringify(sp.dims) === '["d3 18.5","d1 20"]'
+      && JSON.stringify(sp.lm) === '["linear"]' && JSON.stringify(sp.brg) === '[5,"Flanged ball bearing F608","D1 25,d 8,B 7"]',
+      `asm toolbox 2: Toolbox standoffs, spacers, retaining rings and bearing series (FR-ASM-028) (${JSON.stringify(sp)})`);
     await tp.evaluate(() => window.__sv.asm.closeTools());
     // McMaster-Carr: a downloaded STEP named "<part number>_<description>.STEP" keeps its part number and a buy link.
     const cube = [...await readFile(join(fixtures, "cube-10x10mm/Cube 10x10.stp"))];

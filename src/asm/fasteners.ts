@@ -12,7 +12,7 @@ import type { ExtrudeFeature, Feature, GlobalVar, Num, PartDoc, SketchFeature, S
 
 export type FastenerKind = "iso4762" | "iso4017" | "iso4014" | "iso7380" | "iso10642" | "iso4026"
   | "iso4032" | "iso4035" | "iso7040" | "iso4161" | "iso7089" | "iso7092" | "iso7093"
-  | "iso2338" | "iso8752" | "din6885" | "bearing" | "standoff" | "standoffm" | "spacer" | "din127" | "din471" | "din472";
+  | "iso2338" | "iso8752" | "din6885" | "bearing" | "bearingf" | "thrust" | "linear" | "needle" | "standoff" | "standoffm" | "spacer" | "din127" | "din471" | "din472";
 
 /**
  * Per size: d nominal (pin Ø, key width, bearing bore), dk head Ø, k head height, s key (hex socket or
@@ -108,10 +108,34 @@ const T6885: Record<string, Row> = Object.fromEntries(([[2, 2, 6, 20], [3, 3, 6,
   .map(([b, h, lmin, lmax]) => [`${b}x${h}`, { d: b, b, hk: h, lmin, lmax }]));
 // Deep groove ball bearings (ISO 15), shown as one ring: bore d, outside D, width B.
 const TBRG: Record<string, Row> = Object.fromEntries(([
-  ["625", 5, 16, 5], ["626", 6, 19, 6], ["608", 8, 22, 7],
+  ["623", 3, 10, 4], ["624", 4, 13, 5], ["625", 5, 16, 5], ["626", 6, 19, 6], ["608", 8, 22, 7], ["627", 7, 22, 7], ["628", 8, 24, 8], ["609", 9, 24, 7], ["629", 9, 26, 8],
   ["6000", 10, 26, 8], ["6001", 12, 28, 8], ["6002", 15, 32, 9], ["6003", 17, 35, 10], ["6004", 20, 42, 12], ["6005", 25, 47, 12], ["6006", 30, 55, 13],
+  ["6007", 35, 62, 14], ["6008", 40, 68, 15], ["6009", 45, 75, 16], ["6010", 50, 80, 16],
   ["6200", 10, 30, 9], ["6201", 12, 32, 10], ["6202", 15, 35, 11], ["6203", 17, 40, 12], ["6204", 20, 47, 14], ["6205", 25, 52, 15], ["6206", 30, 62, 16],
+  ["6207", 35, 72, 17], ["6208", 40, 80, 18], ["6209", 45, 85, 19], ["6210", 50, 90, 20],
   ["6300", 10, 35, 11], ["6301", 12, 37, 12], ["6302", 15, 42, 13], ["6303", 17, 47, 14], ["6304", 20, 52, 15], ["6305", 25, 62, 17], ["6306", 30, 72, 19],
+  ["6307", 35, 80, 21], ["6308", 40, 90, 23], ["6309", 45, 100, 25], ["6310", 50, 110, 27],
+  ["6800", 10, 19, 5], ["6801", 12, 21, 5], ["6802", 15, 24, 5], ["6803", 17, 26, 5], ["6804", 20, 32, 7], ["6805", 25, 37, 7], ["6806", 30, 42, 7],
+  ["6900", 10, 22, 6], ["6901", 12, 24, 6], ["6902", 15, 28, 7], ["6903", 17, 30, 7], ["6904", 20, 37, 9], ["6905", 25, 42, 9], ["6906", 30, 47, 9],
+] as const).map(([n, d, D, B]) => [n, { d, D, B }]));
+// Flanged miniature ball bearings: d, D, B and the flange Ø dc × width c (NSK / Koyo catalogue values).
+const TBRGF: Record<string, Row> = Object.fromEntries(([
+  ["F623", 3, 10, 4, 11.5, 1], ["F624", 4, 13, 5, 15, 1], ["F625", 5, 16, 5, 18, 1], ["F626", 6, 19, 6, 22, 1.5], ["F608", 8, 22, 7, 25, 1.5],
+] as const).map(([n, d, D, B, dc, c]) => [n, { d, D, B, dc, c }]));
+// Single direction thrust ball bearings (ISO 104, 511 series): bore d, outside D, height B.
+const TTHRUST: Record<string, Row> = Object.fromEntries(([
+  ["51100", 10, 24, 9], ["51101", 12, 26, 9], ["51102", 15, 28, 9], ["51103", 17, 30, 9], ["51104", 20, 35, 10], ["51105", 25, 42, 11],
+  ["51106", 30, 47, 11], ["51107", 35, 52, 12], ["51108", 40, 60, 13], ["51110", 50, 70, 14],
+] as const).map(([n, d, D, B]) => [n, { d, D, B }]));
+// Linear ball bearings LM..UU (both ends sealed): shaft d, outside D, length B.
+const TLINEAR: Record<string, Row> = Object.fromEntries(([
+  ["LM6UU", 6, 12, 19], ["LM8UU", 8, 15, 24], ["LM10UU", 10, 19, 29], ["LM12UU", 12, 21, 30], ["LM13UU", 13, 23, 32], ["LM16UU", 16, 28, 37],
+  ["LM20UU", 20, 32, 42], ["LM25UU", 25, 40, 59], ["LM30UU", 30, 45, 64],
+] as const).map(([n, d, D, B]) => [n, { d, D, B }]));
+// Drawn cup needle roller bearings HK (ISO 3245): roller set bore d (Fw), outside D, width B (C).
+const TNEEDLE: Record<string, Row> = Object.fromEntries(([
+  ["HK0408", 4, 8, 8], ["HK0509", 5, 9, 9], ["HK0609", 6, 10, 9], ["HK0808", 8, 12, 8], ["HK1010", 10, 14, 10], ["HK1210", 12, 16, 10],
+  ["HK1512", 15, 21, 12], ["HK2010", 20, 26, 10], ["HK2512", 25, 32, 12],
 ] as const).map(([n, d, D, B]) => [n, { d, D, B }]));
 
 // Hex standoffs (common catalogue sizes): across flats s, male stud length ls, internal thread depth bd of the male-female one.
@@ -183,6 +207,10 @@ export const FASTENERS: FastenerInfo[] = [
   { kind: "din471", label: "Retaining ring for shafts (DIN 471)", name: "DIN 471", group: "Retaining rings", seat: "flush", screw: false, table: T471, fit: "d" },
   { kind: "din472", label: "Retaining ring for bores (DIN 472)", name: "DIN 472", group: "Retaining rings", seat: "flush", screw: false, table: T472, fit: "d" },
   { kind: "bearing", label: "Deep groove ball bearing (ISO 15)", name: "Ball bearing", group: "Bearings", seat: "flush", screw: false, table: TBRG, fit: "D" },
+  { kind: "bearingf", label: "Flanged ball bearing", name: "Flanged ball bearing", group: "Bearings", seat: "under", screw: false, table: TBRGF, fit: "D" },
+  { kind: "needle", label: "Drawn cup needle roller bearing (HK)", name: "Needle roller bearing", group: "Bearings", seat: "flush", screw: false, table: TNEEDLE, fit: "D" },
+  { kind: "linear", label: "Linear ball bearing (LM..UU)", name: "Linear bearing", group: "Bearings", seat: "flush", screw: false, table: TLINEAR, fit: "D" },
+  { kind: "thrust", label: "Thrust ball bearing (ISO 104)", name: "Thrust ball bearing", group: "Bearings", seat: "flush", screw: false, table: TTHRUST, fit: "D" },
 ];
 export const TOOLBOX_GROUPS: ToolboxGroup[] = ["Screws", "Nuts", "Washers", "Spacers", "Pins", "Keys", "Retaining rings", "Bearings"];
 
@@ -223,7 +251,9 @@ export function searchFasteners(q: string, shown: (label: string) => string = x 
   return FASTENERS.filter(f => {
     const text = `${f.name} ${f.label} ${shown(f.label)} ${f.group} ${shown(f.group)} ${f.kind}`.toLowerCase();
     const sizes = Object.keys(f.table).map(x => x.toLowerCase());
-    return words.every(w => text.includes(w) || sizes.includes(w) || (w.length > 3 && text.includes(w.replace(/s$/, ""))));
+    // A size matches whole, or by its start from three characters with a digit ("lm8" → LM8UU, "hk10" → HK1010).
+    const sizeHit = (w: string) => sizes.includes(w) || (w.length >= 3 && /\d/.test(w) && sizes.some(x => x.startsWith(w)));
+    return words.every(w => text.includes(w) || sizeHit(w) || (w.length > 3 && text.includes(w.replace(/s$/, ""))));
   });
 }
 
@@ -299,12 +329,20 @@ export function detailRow(kind: FastenerKind, row: Row, L: number): Row {
     if (kind === "standoffm") { r.hc = r2(Math.max(0.2, 0.7 * P0)); r.si = r2(row.ls! - r.hc); r.so = r2(row.d - 1.2269 * P0); }
   } else if (info.group === "Pins") {
     r.ch = r2(Math.min(0.1 * row.d, row.d1 ? 0.4 * (row.d - row.d1) / 2 : Infinity));
-  } else if (kind === "bearing") {
+  } else if (info.group === "Bearings") {
     const w = (row.D! - row.d) / 2;
-    r.ch = r2(Math.min(row.D! < 30 ? 0.3 : row.D! < 55 ? 0.6 : 1, 0.15 * w));
-    r.si = r2(row.d + 0.7 * w);
-    r.so = r2(row.D! - 0.5 * w);
-    r.sd = r2(Math.max(0.2, 0.03 * row.B!));
+    r.ch = r2(Math.min(row.D! < 30 ? 0.3 : row.D! < 55 ? 0.6 : 1, 0.15 * w, kind === "bearingf" ? 0.4 * row.c! : Infinity));
+    if (kind === "bearing") {
+      r.si = r2(row.d + 0.7 * w);
+      r.so = r2(row.D! - 0.5 * w);
+      r.sd = r2(Math.max(0.2, 0.03 * row.B!));
+    } else if (kind === "thrust") {
+      // The gap between the shaft and housing washers, cut in from the bore and from the outside, leaving the cage.
+      const m = (row.d + row.D!) / 2;
+      r.si = r2(m - 0.3 * w);
+      r.so = r2(m + 0.3 * w);
+      r.sd = r2(0.3 * row.B!);
+    }
   }
   return r;
 }
@@ -411,7 +449,11 @@ function detailFeatures(kind: FastenerKind, row: Row, feats: Feature[], v: (k: K
     return ["ch", "tl", "td", "hc", "si", "so"];
   }
   if (info.group === "Pins") { feats.push(chamfer("c1", "Chamfer1", [["e1:side:c", "e1:start"], ["e1:side:c", "e1:end"]], "ch")); return ["ch"]; }
-  if (kind === "bearing") {
+  if (kind === "bearingf") {
+    feats.push(chamfer("c1", "Chamfer1", [["e1:side:c", "e1:end"], ["e2:side:c", "e2:end"], ["e3:side:c", "e2:end"], ["e3:side:c", "e1:end"]], "ch"));
+    return ["ch"];
+  }
+  if (info.group === "Bearings") {
     feats.push(chamfer("c1", "Chamfer1", [["e1:side:c", "e1:start"], ["e1:side:c", "e1:end"], ["e2:side:c", "e1:start"], ["e2:side:c", "e1:end"]], "ch"));
     return ["ch"];
   }
@@ -497,6 +539,31 @@ export function fastenerPart(kind: FastenerKind, size: string, length?: number, 
     const s1 = sketch("s1", "Sketch1"); rectangle(s1, v("L"), L, v("b"), row.b!);
     feats.push(s1, ext("e1", "Key", "s1", "hk"));
     used.push("L", "b", "hk");
+  } else if (kind === "bearingf") {
+    // Flange on top of z = 0 (its underside is the seat), the ring below it, the bore through both.
+    const s1 = sketch("s1", "Sketch1"); circle(s1, v("D"), row.D!);
+    const s2 = sketch("s2", "Sketch2"); circle(s2, v("dc"), row.dc!);
+    const s3 = sketch("s3", "Sketch3"); circle(s3, v("d"), row.d);
+    feats.push(s1, ext("e1", "Ring", "s1", "B", { flip: true, depth: num(row.B! - row.c!, `${v("B")} - ${v("c")}`) }), s2, ext("e2", "Flange", "s2", "c"),
+      s3, cut("e3", "Bore", "s3", num(row.B!, v("B")), num(row.c!, v("c"))));
+    used.push("D", "dc", "c", "B", "d");
+  } else if (kind === "needle" || kind === "linear" || kind === "thrust") {
+    const s1 = sketch("s1", "Sketch1"); circle(s1, v("D"), row.D!);
+    const s2 = sketch("s2", "Sketch2"); circle(s2, v("d"), row.d);
+    feats.push(s1, ext("e1", "Ring", "s1", "B", { flip: true }), s2, cut("e2", "Bore", "s2", num(row.B!, v("B"))));
+    used.push("D", "B", "d");
+    if (detail && kind === "thrust") {
+      // Two ring grooves halfway down, one in from the bore and one in from the outside: the gap between the washers.
+      const s3 = sketch("s3", "Sketch3");
+      s3.ents.push({ id: "c1", t: "circle", c: "o", r: row.d / 2 - 1 }, { id: "c2", t: "circle", c: "o", r: row.si! / 2 },
+        { id: "c3", t: "circle", c: "o", r: row.so! / 2 }, { id: "c4", t: "circle", c: "o", r: row.D! / 2 + 1 });
+      s3.dims.push({ id: "d1", name: "D1@Sketch3", t: "diameter", e: ["c1"], val: num(row.d - 2, `${v("d")} - 2`) },
+        { id: "d2", name: "D2@Sketch3", t: "diameter", e: ["c2"], val: num(row.si!, v("si")) },
+        { id: "d3", name: "D3@Sketch3", t: "diameter", e: ["c3"], val: num(row.so!, v("so")) },
+        { id: "d4", name: "D4@Sketch3", t: "diameter", e: ["c4"], val: num(row.D! + 2, `${v("D")} + 2`) });
+      feats.push(s3, cut("e3", "Gap", "s3", num(row.sd!, v("sd")), num(-(row.B! - row.sd!) / 2, `-(${v("B")} - ${v("sd")}) / 2`)));
+      used.push("si", "so", "sd");
+    }
   } else if (kind === "bearing") {
     const s1 = sketch("s1", "Sketch1"); circle(s1, v("D"), row.D!);
     const s2 = sketch("s2", "Sketch2"); circle(s2, v("d"), row.d);
