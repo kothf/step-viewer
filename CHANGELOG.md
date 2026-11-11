@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.546.0] - 2026-11-11
+
+### Added
+
+- Recognize Features (FR-FT-102): a round rod, wire or tube bent along any 3D curve (an imported cable or pipe run) comes back as a 3D sketch spline through its centreline, a Sweep with a circular profile and Merge result off, and Delete Body of the import. The spline runs through every eighth of 240 centreline samples, so the volume is kept to 0.1 % rather than exactly; straight rods stay extrudes, planar bends and coil springs keep their exact forms.
+
 ## [1.545.0] - 2026-11-11
 
 ### Changed
@@ -3393,7 +3399,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.545.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.546.0...HEAD
+[1.546.0]: https://github.com/kothf/step-viewer/compare/v1.545.0...v1.546.0
 [1.545.0]: https://github.com/kothf/step-viewer/compare/v1.544.0...v1.545.0
 [1.544.0]: https://github.com/kothf/step-viewer/compare/v1.543.0...v1.544.0
 [1.543.0]: https://github.com/kothf/step-viewer/compare/v1.542.0...v1.543.0
