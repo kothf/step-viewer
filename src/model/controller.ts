@@ -2404,6 +2404,8 @@ export class ModelController {
     if (k === "s" && !e.shiftKey && (m.kind === "sketch" || m.kind === "none")) { stop(); this.showShortcutBar(); return; }
     if (m.kind === "sketch") {
       if (k === "enter") { stop(); this.ok(); return; }
+      // K: Add relation (FR-UI-054): the relations valid for the selection in a menu at the cursor.
+      if (k === "k" && !e.shiftKey) { stop(); this.relationMenu(); return; }
       // A tool key also refreshes the panel: the fillet radius, chamfer and offset distances show there.
       if (m.editor.key(e)) { stop(); this.renderBar(); this.renderPanel(); return; }
       // Esc with nothing left to clear leaves an unchanged sketch; a changed one stays open (✕ discards), so a stray Esc
@@ -3165,6 +3167,20 @@ export class ModelController {
     rows.push(null);
     rows.push([t("Exit sketch"), () => this.ok(), "✓"], [t("Discard"), () => void this.cancel(), "✕"]);
     this.showMenu(rows, e.clientX, e.clientY, () => this.host.viewer.renderer.domElement.focus());
+  }
+
+  /** Add relation on K (FR-UI-054, FR-SK-054): a menu of the relations valid for the selection, at the pointer. */
+  private relationMenu() {
+    const m = this.mode;
+    if (m.kind !== "sketch" || m.editor.pattern) return;
+    const ed = m.editor;
+    if (!ed.selection.size) { toast(t("Select sketch items first, then press K to add a relation.")); return; }
+    const rows = ed.relationRows();
+    if (!rows.length) { toast(t("No relation fits the selection.")); return; }
+    const r = this.host.viewer.renderer.domElement.getBoundingClientRect();
+    const at = this.pointerIn && this.pointer ? this.pointer : { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    this.showMenu(rows, at.x, at.y, () => this.host.viewer.renderer.domElement.focus());
+    document.getElementById("mc-menu")?.insertAdjacentHTML("afterbegin", `<div class="mc-menu-h" role="presentation">${esc(t("Add relation"))}</div>`);
   }
 
   /** The quick snap menu (FR-SK-046): one snap type for the next point; the active one first offers Clear. */

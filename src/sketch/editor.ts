@@ -570,12 +570,18 @@ export class SketchEditor {
     if (one && (one.t === "line" || one.t === "arc") && !one.cons) rows.push([t("Select chain"), () => this.select(this.chainOf(one.id).segs.map(s => s.id))]);
     const curves = ids.map(id => this.ent(id)).filter(x => x && x.t !== "point");
     if (curves.length) rows.push([curves.every(x => x!.cons) ? t("Normal geometry") : t("Construction geometry"), () => this.toggleConstruction()]);
-    const rels = this.validRelations();
-    if (rels.length) { sep(); for (const k of rels) rows.push([t(REL_NAME[k]), () => this.addRelation(k), REL_GLYPH[k]]); }
-    if (this.canMerge()) rows.push([t("Merge points"), () => this.mergePoints()]);
+    const rels = this.relationRows();
+    if (rels.length) { sep(); rows.push(...rels); }
     sep();
     rows.push([t("Delete"), () => this.deleteSelection(), "🗑"]);
     rows.push([t("Zoom to selection"), () => { const b = this.selectionBox(); if (b) this.host.viewer.fit(true, b); }]);
+    return rows;
+  }
+
+  /** Add relation rows for the selection (FR-SK-054): the relations valid for it, then Merge points when it can. */
+  relationRows(): [string, () => void, string?][] {
+    const rows: [string, () => void, string?][] = this.validRelations().map(k => [t(REL_NAME[k]), () => this.addRelation(k), REL_GLYPH[k]]);
+    if (this.canMerge()) rows.push([t("Merge points"), () => this.mergePoints()]);
     return rows;
   }
 
