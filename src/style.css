@@ -915,6 +915,9 @@ input.drop-val { outline: 2px solid var(--accent) !important; background: var(--
 .mc-handle.wld-pierce { transform: translate(-50%, -50%); width: 14px; height: 14px; padding: 0; border-radius: 50%; border: 2px solid #c2255c; background: #fff; }
 .mc-handle.wld-pierce:hover, .mc-handle.wld-pierce:focus-visible { background: #f06595; }
 .mc-handle.wld-pierce.cur { background: #c2255c; }
+.mc-handle.pat-spot { transform: translate(-50%, -50%); width: 14px; height: 14px; padding: 0; border-radius: 50%; border: 2px solid #c2255c; background: #c2255c; }
+.mc-handle.pat-spot.off { background: #fff; }
+.mc-handle.pat-spot:hover, .mc-handle.pat-spot:focus-visible { background: #f06595; }
 :root[data-theme="dark"] .mc-callout.wld-corner { background: #3b1027; color: #faa2c1; border-color: #f06595; }
 .sk-cursor { position: absolute; pointer-events: none; transform: translate(14px, 10px); background: var(--panel); border: 1px solid var(--line); border-radius: 4px; font: 600 11px var(--mono); padding: 0 4px; color: var(--text); white-space: nowrap; }
 /* Equations panel (FR-PAR-001/005) */

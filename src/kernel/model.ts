@@ -11,7 +11,7 @@
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { V2, SkEnt } from "../model/types";
-import type { HealFeature, RecognizedHole, RecognizedBlends, SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, ChamferFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
+import type { HealFeature, RecognizedHole, RecognizedBlends, SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, PatternSpot, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, ChamferFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
 import { dir2Apart, dir2Feature } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { recognizedHoleFeatures } from "../model/holes";
@@ -38,7 +38,7 @@ export interface Named { shape: any; faces: any[]; names: string[] }
 type Tool = { shape: Named; op: "fuse" | "cut" };
 /** A curve feature's result (helix): the OCCT wire and points along it for the view. */
 interface Curve { wire: any; pts: V3[] }
-interface CacheEntry { key: string; body: Named | null; sheets: Named | null; status: FeatureStatus; frame?: Frame; tools?: Tool[]; sketch?: SketchFeature; curve?: Curve; regions?: IntersectRegion[]; sm?: SheetState | null }
+interface CacheEntry { key: string; body: Named | null; sheets: Named | null; status: FeatureStatus; frame?: Frame; tools?: Tool[]; sketch?: SketchFeature; curve?: Curve; regions?: IntersectRegion[]; spots?: PatternSpot[]; sm?: SheetState | null }
 
 export interface ModelMesh {
   name: string;
@@ -75,6 +75,11 @@ const FUSE_FUZZ = 1e-5;
 const d3 = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 const dot = (a: V3, b: V3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const sub3 = (a: V3, b: V3): V3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+/** `p` turned by `q` about the line through `o` along `d` (Rodrigues). */
+const turnAbout = (p: V3, o: V3, d: V3, q: number): V3 => {
+  const l = Math.hypot(...d), k = mul(d, 1 / l), v = sub3(p, o), c = Math.cos(q), s = Math.sin(q);
+  return add(o, add(add(mul(v, c), mul(cross(k, v), s)), mul(k, dot(k, v) * (1 - c))));
+};
 const cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const unit = (a: V3): V3 => { const l = Math.hypot(...a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
 /** Rodrigues rotation of v about the unit axis u by angle a. */
@@ -97,6 +102,8 @@ export class Modeller {
   private curves = new Map<string, Curve>();
   /** Regions each intersect feature found (for its panel). */
   private regions = new Map<string, IntersectRegion[]>();
+  /** Instance places of each linear/circular pattern (Instances to skip in the view). */
+  private spots = new Map<string, PatternSpot[]>();
   /** A warning set while evaluating the current feature. */
   private warning = "";
 
@@ -5373,6 +5380,29 @@ export class Modeller {
     return vr < vb ? { shape: this.bool("cut", prev, rest, fid), op: "fuse" } : { shape: this.bool("cut", rest, prev, fid), op: "cut" };
   }
 
+  /** The seed's centre for the instance dots, or null when it cannot be measured (an empty seed set). */
+  private spotCentre(set: { tools: Tool[]; list: Named[]; idx: number[] }, prev: Named | null): V3 | null {
+    try {
+      // A cut's tool runs past the body (through all, up to next): its part inside the body's box is where the instance shows.
+      if (!set.idx.length && prev && set.tools.some(t => t.op === "cut")) {
+        const oc = this.oc, p = new oc.GProp_GProps_1();
+        // The body already has the seed's cut, so the tool is clipped by the body's box instead.
+        const bb = new oc.Bnd_Box_1(); oc.BRepBndLib.Add(prev.shape, bb, false);
+        const bx = new oc.BRepPrimAPI_MakeBox_4(this.P(this.xyz(bb.CornerMin())), this.P(this.xyz(bb.CornerMax()))).Shape(), bf = this.sub(bx, "FACE");
+        const boxN: Named = { shape: bx, faces: bf, names: bf.map((_, j) => `spot:${j}`) };
+        for (const t of set.tools) {
+          let sh = t.shape.shape;
+          if (t.op === "cut") { try { const c = this.bool("common", boxN, t.shape, "spot").shape; if (Math.abs(this.volume(c)) > 1e-9) sh = c; } catch { /* keep the tool */ } }
+          const q = new oc.GProp_GProps_1(); oc.BRepGProp.VolumeProperties_1(sh, q, true, false, false); p.Add(q, 1);
+        }
+        const c = this.xyz(p.CentreOfMass());
+        if (c.every(Number.isFinite)) return c;
+      }
+      const c = this.seedCentre(set);
+      return c.every(Number.isFinite) ? c : null;
+    } catch { return null; }
+  }
+
   /** The centre of what a pattern copies (the reference point of a sketch-driven pattern). */
   private seedCentre(set: { tools: Tool[]; list: Named[]; idx: number[] }): V3 {
     const oc = this.oc, p = new oc.GProp_GProps_1();
@@ -5473,16 +5503,23 @@ export class Modeller {
     if (!(f.spacing.v > 1e-6) || (f.dir2 && n2 > 1 && !((f.spacing2?.v ?? 0) > 1e-6))) throw new FeatureError("E-FT-ZERO", "The spacing must be more than 0.");
     const skip = new Set(f.skip ?? []);
     const xfs: { trsf: any; tag: (k: number) => string; label: string }[] = [];
+    const c = this.spotCentre(set, prev), spots: PatternSpot[] = [];
+    // Up to distance: the typed distance reaches the last instance.
+    const s1 = f.total ? f.spacing.v / Math.max(1, n1 - 1) : f.spacing.v;
+    const s2 = f.total2 ? (f.spacing2?.v ?? 0) / Math.max(1, n2 - 1) : (f.spacing2?.v ?? 0);
     for (let j = 0; j < n2; j++) for (let i = 0; i < n1; i++) {
       if (i === 0 && j === 0) continue;
+      if (f.seedOnly && i > 0 && j > 0) continue;
       const key = f.dir2 ? `${i},${j}` : `${i}`;
+      const v = add(mul(d1, i * s1), mul(d2, j * s2));
+      if (c) spots.push({ key, p: add(c, v) });
       if (skip.has(key)) continue;
-      const v = add(mul(d1, i * f.spacing.v), mul(d2, j * (f.spacing2?.v ?? 0)));
       const trsf = new oc.gp_Trsf_1();
       trsf.SetTranslation_1(this.V(v));
       const tk = key.replace(",", "_");
       xfs.push({ trsf, tag: k => f.copy === "bodies" ? `i${tk}b${k}` : `i${tk}s${k}`, label: key });
     }
+    this.spots.set(f.id, spots);
     return this.copyBy(f, prev!, set, xfs, { doc, frames });
   }
 
@@ -5495,16 +5532,28 @@ export class Modeller {
     if (n < 2) throw new FeatureError("E-PAT-COUNT", "The pattern needs at least 2 instances.");
     const total = f.angle.v;
     if (!(total > 1e-9)) throw new FeatureError("E-FT-ZERO", "The angle must be more than 0.");
-    const full = Math.abs(total - 2 * Math.PI) < 1e-9;
-    const step = f.equal ? total / (full ? n : n - 1) : total;
+    const stepOf = (tot: number, cnt: number, eq: boolean) => eq ? tot / (Math.abs(tot - 2 * Math.PI) < 1e-9 ? cnt : cnt - 1) : tot;
+    const step = stepOf(total, n, f.equal);
+    // Direction 2 turns the other way: its own count and angle, or direction 1's when symmetric.
+    const n2 = f.dir2 ? Math.max(1, Math.round(f.sym ? n : f.count2 ?? n)) : 1;
+    const step2 = f.sym ? step : stepOf(f.angle2?.v ?? total, n2, f.equal2 ?? f.equal);
+    if (f.dir2 && n2 > 1 && !(step2 > 1e-9)) throw new FeatureError("E-FT-ZERO", "The angle must be more than 0.");
     const skip = new Set(f.skip ?? []);
     const xfs: { trsf: any; tag: (k: number) => string; label: string }[] = [];
-    for (let i = 1; i < n; i++) {
-      if (skip.has(String(i))) continue;
+    const c = this.spotCentre(set, prev), spots: PatternSpot[] = [];
+    const turns: { key: string; q: number; tk: string }[] = [];
+    for (let i = 1; i < n; i++) turns.push({ key: String(i), q: (f.flip ? -1 : 1) * step * i, tk: String(i) });
+    for (let i = 1; i < n2; i++) turns.push({ key: `-${i}`, q: (f.flip ? 1 : -1) * step2 * i, tk: `m${i}` });
+    for (const { key, q, tk } of turns) {
+      // A second-direction copy landing on a first-direction one (a full turn) is left out.
+      if (key.startsWith("-") && turns.some(o => !o.key.startsWith("-") && Math.abs(Math.cos(o.q - q) - 1) < 1e-12)) continue;
+      if (c) spots.push({ key, p: turnAbout(c, ax.o, ax.d, q) });
+      if (skip.has(key)) continue;
       const trsf = new oc.gp_Trsf_1();
-      trsf.SetRotation_1(new oc.gp_Ax1_2(this.P(ax.o), this.D(ax.d)), (f.flip ? -1 : 1) * step * i);
-      xfs.push({ trsf, tag: k => f.copy === "bodies" ? `i${i}b${k}` : `i${i}s${k}`, label: String(i) });
+      trsf.SetRotation_1(new oc.gp_Ax1_2(this.P(ax.o), this.D(ax.d)), q);
+      xfs.push({ trsf, tag: k => f.copy === "bodies" ? `i${tk}b${k}` : `i${tk}s${k}`, label: key });
     }
+    this.spots.set(f.id, spots);
     return this.copyBy(f, prev!, set, xfs, { doc, frames });
   }
 
@@ -5590,7 +5639,7 @@ export class Modeller {
   /** Turns verification on or off; the cached results were made the other way, so they are dropped. */
   setVerify(on: boolean) { if (on !== this.verify) { this.verify = on; this.cache = []; } }
 
-  evaluate(doc: PartDoc): { body: Named | null; sheets: Named | null; statuses: FeatureStatus[]; frames: Record<string, Frame>; sketches: Record<string, SketchFeature>; curves: Record<string, V3[]>; regions: Record<string, IntersectRegion[]>; sheet: SheetState | null } {
+  evaluate(doc: PartDoc): { body: Named | null; sheets: Named | null; statuses: FeatureStatus[]; frames: Record<string, Frame>; sketches: Record<string, SketchFeature>; curves: Record<string, V3[]>; regions: Record<string, IntersectRegion[]>; spots: Record<string, PatternSpot[]>; sheet: SheetState | null } {
     const end = doc.rollback ?? doc.features.length;
     // Sketches whose On edge curves moved with the model (FR-SK-064): later features use the moved copy.
     doc = { ...doc, features: [...doc.features] };
@@ -5610,6 +5659,7 @@ export class Modeller {
     this.tools = new Map();
     this.curves = new Map();
     this.regions = new Map();
+    this.spots = new Map();
     // Freeze bar (FR-HIS-024): features up to it keep their cached result even when they changed.
     const frozen = doc.freezeAfter ? doc.features.findIndex(f => f.id === doc.freezeAfter) + 1 : 0;
     doc.features.forEach((f, i) => {
@@ -5625,6 +5675,7 @@ export class Modeller {
         if (hit.sketch) { doc.features[i] = hit.sketch; sketches[f.id] = hit.sketch; }
         if (hit.curve) this.curves.set(f.id, hit.curve);
         if (hit.regions) this.regions.set(f.id, hit.regions);
+        if (hit.spots) this.spots.set(f.id, hit.spots);
         if (!hit.status.ok) failed.add(f.id);
         body = hit.body;
         sheets = hit.sheets;
@@ -5710,12 +5761,12 @@ export class Modeller {
         }
       }
       statuses.push(status);
-      next.push({ key: chain, body, sheets, status, frame: frame ?? frames[f.id], tools: this.tools.get(f.id), sketch: moved, curve: this.curves.get(f.id), regions: this.regions.get(f.id), sm });
+      next.push({ key: chain, body, sheets, status, frame: frame ?? frames[f.id], tools: this.tools.get(f.id), sketch: moved, curve: this.curves.get(f.id), regions: this.regions.get(f.id), spots: this.spots.get(f.id), sm });
     });
     this.cache = next;
     const curves: Record<string, V3[]> = {};
     for (const [id, c] of this.curves) curves[id] = c.pts;
-    return { body, sheets, statuses, frames, sketches, curves, regions: Object.fromEntries(this.regions), sheet: sm };
+    return { body, sheets, statuses, frames, sketches, curves, regions: Object.fromEntries(this.regions), spots: Object.fromEntries(this.spots), sheet: sm };
   }
 
   /** The helpers sheet metal (src/sheetmetal) builds its solids with. */

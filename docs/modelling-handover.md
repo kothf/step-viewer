@@ -1,12 +1,17 @@
-# Part modelling: handover (2026-11-10)
+# Part modelling: handover (2026-11-11)
 
-State of the part modelling work. Current thread: "Recognize angled cross holes" (from 21:11Z, branch `claude/project-thread-ofe7e0`); before it "Continue modelling SolidWorks-fidelity pass", "Polish cut-extrude contour preview", "Add draft per extrude direction", "Polish modelling to match SolidWorks" and "Continue part modelling from FRS". The requirements are in `docs/FRS-modelling.md`; the code map is in `CLAUDE.md`.
+State of the part modelling work. Current thread: "Match SolidWorks in everyday part workflows" (from 2026-11-11 05:12Z, branch `claude/project-thread-bzboib`); before it "Recognize angled cross holes", "Continue modelling SolidWorks-fidelity pass", "Polish cut-extrude contour preview", "Add draft per extrude direction", "Polish modelling to match SolidWorks" and "Continue part modelling from FRS". The requirements are in `docs/FRS-modelling.md`; the code map is in `CLAUDE.md`.
 
 ## Where things stand
 
-- `main` has 1.499.0; swept-base recognition is 1.493.0 (round) and 1.496.0 (any line/arc profile, `baseSweepAny`), lofted bases 1.498.0 (`baseLoft`), coil springs 1.499.0 (`baseHelix`), on any axis 1.500.0 (`squarePlane`). Every row of the FRS gap table (section 13.13 and the feature tables) is Done except one that is partial on purpose:
+- `main` has 1.501.0 (1.502.0 adds Instances to skip picked in the view); swept-base recognition is 1.493.0 (round) and 1.496.0 (any line/arc profile, `baseSweepAny`), lofted bases 1.498.0 (`baseLoft`), coil springs 1.499.0 (`baseHelix`), on any axis 1.500.0 (`squarePlane`). Every row of the FRS gap table (section 13.13 and the feature tables) is Done except one that is partial on purpose:
   - **FR-FT-102** feature recognition on imported bodies. Done: Recognize Holes (1.116.0), Recognize Fillets with chamfers on round edges and two-distance chamfers (1.390.0, 1.398.0), Recognize Extrudes with nested rounds, cuts open to the side, through notches at the outline (1.402.0 to 1.411.0), the base of a prism as sketch + Extrude (1.414.0) and the base of a body of revolution as sketch + Revolve (1.415.0). Bent rods and tubes as path + profile sketches and a Sweep (1.493.0, `baseSweep`), bent bars of any line/arc profile (1.496.0, `baseSweepAny`). Left: swept bases with other non-planar paths and other non-planar sweep paths (lofted bases done in 1.498.0, coil springs 1.499.0, on skew axes 1.500.0) (skew-axis revolves done in 1.488.0, variable fillets in 1.489.0). All are rare in real imports.
 - Last slices: PR #336 (1.421.0 Selected Contours, FR-FT-010), #344 (1.428.0 contour hover, Planar Surface contours), #354 (1.451.0 Extrude/Cut/Revolve from the sketch being edited, FR-SK-004), #371 (1.456.0 extrude Direction 2 with any end condition, FR-FT-011), #377 (1.460.0 draft angle for each extrude direction, FR-FT-014).
+
+## SolidWorks-fidelity pass on everyday workflows (from 1.502.0)
+
+- **1.502.0: Instances to skip in the view** (FR-FT-070/071 "click to skip"): see the CLAUDE.md line. Unit test `tests/unit/patternSpots.test.ts`, smoke "model 1.501".
+- Also 1.502.0: linear Up to distance and Pattern seed only, circular Direction 2. Next ideas: SolidWorks' Up to reference (spacing from a picked face/vertex), fillet/shell/sketch fidelity checks, FRS 13.13 rows.
 
 ## Extrude Direction 2 (1.456.0)
 
