@@ -2536,6 +2536,23 @@ try {
         `model 1.527: Add dimensions gives a new circle its diameter and a new line its length, with the Modify box (FR-UI-052) (${JSON.stringify({ ...ad, lineBox })})`);
       await tool("select");
     }
+    // 1.533.0 (FR-UI-054): K opens Add relation at the cursor: the relations valid for the selection.
+    {
+      await mp.evaluate(() => { const ed = window.__sv.model.editor(); ed.selection = new Set(["sgo", "sgl"]); ed.render(); });
+      await mp.evaluate(() => window.__sv.viewer.renderer.domElement.focus());
+      await mp.keyboard.press("k"); await mp.waitForTimeout(150);
+      const km = await mp.evaluate(() => {
+        const m = document.getElementById("mc-menu");
+        return { shown: !!m && !m.hidden, head: m?.querySelector(".mc-menu-h")?.textContent, rows: [...(m?.querySelectorAll("button") ?? [])].map(b => b.textContent.trim()) };
+      });
+      const tan = km.rows.findIndex(r => /Tangent/.test(r));
+      if (tan >= 0) await mp.click(`#mc-menu button[data-k="${tan}"]`);
+      await mp.waitForTimeout(150);
+      const kr = await mp.evaluate(() => { const ed = window.__sv.model.editor(); return { tangent: ed.sk.rels.some(r => r.t === "tangent" && r.e.includes("sgo") && r.e.includes("sgl")), status: ed.info.status }; });
+      check(km.shown && km.head === "Add relation" && tan >= 0 && kr.tangent,
+        `model 1.533: K opens Add relation with the relations valid for the selection (FR-UI-054) (${JSON.stringify({ ...km, ...kr })})`);
+      await mp.evaluate(() => { const ed = window.__sv.model.editor(); ed.selection = new Set(); ed.render(); });
+    }
     // 1.266.0 (FR-SK-043/044/047): dragging the last line's start onto the free end of the Ctrl line merges them
     // (coincident relation); Ctrl+drag of that line copies it; the status bar shows the cursor position.
     await tool("select");
