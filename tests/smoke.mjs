@@ -3458,7 +3458,7 @@ try {
     const drill = await mp.evaluate(() => document.querySelector('#mc-pm input[data-num="drillAngle"]')?.value ?? null);
     await mp.selectOption('#mc-pm select[data-k="end"]', "through");
     await idle();
-    check(ends.includes("vertex") && ends.includes("offset") && drill === "118", `model 1.517: hole end Up to vertex / Offset from surface and Drill angle (${JSON.stringify(ends)}, ${drill})`);
+    check(ends.includes("vertex") && ends.includes("offset") && drill === "118", `model 1.519: hole end Up to vertex / Offset from surface and Drill angle (${JSON.stringify(ends)}, ${drill})`);
     await mp.click("#mc-ok");
     await idle();
     const vHole = await vol(), stHole = await lastSt();
