@@ -997,7 +997,14 @@ function sectionEdges(oc: any, parts: CutPart[], capEdges: any, namer: (face: an
  * face indices for files), so a dimension finds it again after the part changes; `m` is its middle.
  * Circles carry centre, axis, radius and the angle they sweep.
  */
-export interface MEdge { k: string; t: "l" | "c" | "o"; a: V3; b: V3; m: V3; c?: V3; ax?: V3; r?: number; sp?: number }
+/** `rg`: see `Ring`. `rim`: a view's stand-in circle for such a curve seen from the side (`annot.ts` `ringTopo`): it names its cylinder, but is no flat circle. */
+export interface MEdge { k: string; t: "l" | "c" | "o"; a: V3; b: V3; m: V3; c?: V3; ax?: V3; r?: number; sp?: number; rg?: Ring[]; rim?: boolean }
+/**
+ * A curve lying on a cylinder (`t: "o"` only, e.g. a cross hole's rim on a shaft): seen along the cylinder's axis it is
+ * that cylinder's circle, or the arc `sp` of it the curve covers. `c` = the axis point halfway along the curve's reach.
+ * Drawings treat such an edge as an end-on circle in a view looking along `ax` (`annot.ts` `ringsEndOn`).
+ */
+export interface Ring { c: V3; ax: V3; r: number; sp: number }
 /** A cylindrical face: axis point and direction, radius, extent along the axis from `o`, angle swept. */
 /** `in`: material lies outside the cylinder (a hole, a slot end), not inside (a shaft). */
 export interface MCyl { o: V3; ax: V3; r: number; v0: number; v1: number; sp: number; f?: string; in?: boolean }
@@ -1015,6 +1022,35 @@ export interface MHoleSeg { k: "cyl" | "cone"; v0: number; v1: number; r0: numbe
  * just past the first and the last piece (both = a through hole).
  */
 export interface MHole { o: V3; ax: V3; segs: MHoleSeg[]; open: [boolean, boolean]; f?: string }
+
+/** The circle a curve on a cylinder shows seen along its axis: null when the samples are not all on it. */
+export function ringOn(q: V3[], cy: { o: V3; ax: V3; r: number }): Ring | null {
+  const { o, ax, r } = cy, tol = 1e-4 * Math.max(1, r);
+  let v0 = Infinity, v1 = -Infinity;
+  let ux: V3 | null = null, uy: V3 | null = null;
+  const angs: number[] = [];
+  for (const p of q) {
+    const w: V3 = [p[0] - o[0], p[1] - o[1], p[2] - o[2]], v = dot(w, ax);
+    const rad: V3 = [w[0] - ax[0] * v, w[1] - ax[1] * v, w[2] - ax[2] * v], d = Math.hypot(...rad);
+    if (Math.abs(d - r) > tol) return null;
+    v0 = Math.min(v0, v); v1 = Math.max(v1, v);
+    if (!ux) { ux = [rad[0] / d, rad[1] / d, rad[2] / d]; uy = [ax[1] * ux[2] - ax[2] * ux[1], ax[2] * ux[0] - ax[0] * ux[2], ax[0] * ux[1] - ax[1] * ux[0]]; }
+    angs.push(Math.atan2(dot(rad, uy!), dot(rad, ux)));
+  }
+  if (!ux || angs.length < 3) return null;
+  const a = q[0], b = q[q.length - 1];
+  let sp: number;
+  if (Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) < tol) sp = 2 * Math.PI;
+  else {
+    const s = [...angs].sort((x, y) => x - y);
+    let gap = s[0] + 2 * Math.PI - s[s.length - 1];
+    for (let j = 1; j < s.length; j++) gap = Math.max(gap, s[j] - s[j - 1]);
+    sp = 2 * Math.PI - gap;
+  }
+  if (sp < 1e-3) return null;
+  const vm = (v0 + v1) / 2;
+  return { c: [o[0] + ax[0] * vm, o[1] + ax[1] * vm, o[2] + ax[2] * vm], ax, r, sp };
+}
 
 /** Edges and cylinders of a shape. `names` are the faces' persistent names in TopExp order (else f<i>). */
 export function topology(oc: any, shape: any, names?: string[]): Topo {
@@ -1046,6 +1082,7 @@ export function topology(oc: any, shape: any, names?: string[]): Topo {
   const xyz = (p: any): V3 => [p.X(), p.Y(), p.Z()];
   const edges: MEdge[] = [];
   const byIndex: (MEdge | null)[] = [null];
+  const samples: V3[][] = [];
   for (let i = 1; i <= emap.Extent(); i++) {
     const e = oc.TopoDS.Edge_1(emap.FindKey(i));
     let ad: any;
@@ -1060,10 +1097,18 @@ export function topology(oc: any, shape: any, names?: string[]): Topo {
     else if (ty === T.GeomAbs_Circle) {
       const ci = ad.Circle();
       me = { k, t: "c", a, b, m, c: xyz(ci.Location()), ax: xyz(ci.Axis().Direction()), r: ci.Radius(), sp: Math.min(2 * Math.PI, u1 - u0) };
-    } else me = { k, t: "o", a, b, m };
+    } else {
+      me = { k, t: "o", a, b, m };
+      const q: V3[] = [];
+      for (let j = 0; j <= 24; j++) q.push(xyz(ad.Value(u0 + (u1 - u0) * j / 24)));
+      samples[i] = q;
+    }
     edges.push(me);
     byIndex.push(me);
   }
+  // The points that say how far a face reaches along its axis: a curved edge's samples, not only its ends and middle
+  // (a cross hole's saddle rim is highest between them).
+  const reach = (k: number, me: MEdge): V3[] => samples[k] ?? [me.a, me.b, me.m];
   const cyls: MCyl[] = [], revs: MRev[] = [], bores: Bore[] = [];
   // Material outside a cylinder or cone: its face normal points at the axis (a direct frame's natural normal points away).
   const inward = (f: any, ax3: any) => (f.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED) === ax3.Direct();
@@ -1083,7 +1128,7 @@ export function topology(oc: any, shape: any, names?: string[]): Topo {
       for (const k of faceEdges[i - 1]) {
         const me = byIndex[k];
         if (!me) continue;
-        for (const p of [me.a, me.b, me.m]) { const v = dot([p[0] - o[0], p[1] - o[1], p[2] - o[2]], ax); v0 = Math.min(v0, v); v1 = Math.max(v1, v); }
+        for (const p of reach(k, me)) { const v = dot([p[0] - o[0], p[1] - o[1], p[2] - o[2]], ax); v0 = Math.min(v0, v); v1 = Math.max(v1, v); }
       }
       const sp = Math.min(2 * Math.PI, sa.LastUParameter() - sa.FirstUParameter());
       let rr: { r0: number; r1: number } | null = null;
@@ -1110,13 +1155,28 @@ export function topology(oc: any, shape: any, names?: string[]): Topo {
     for (const k of faceEdges[i - 1]) {
       const me = byIndex[k];
       if (!me) continue;
-      for (const p of [me.a, me.b, me.m]) { const v = dot([p[0] - o[0], p[1] - o[1], p[2] - o[2]], ax); v0 = Math.min(v0, v); v1 = Math.max(v1, v); }
+      for (const p of reach(k, me)) { const v = dot([p[0] - o[0], p[1] - o[1], p[2] - o[2]], ax); v0 = Math.min(v0, v); v1 = Math.max(v1, v); }
     }
     const sp = Math.min(2 * Math.PI, sa.LastUParameter() - sa.FirstUParameter());
     if (v1 > v0) cyls.push({ o, ax, r, v0, v1, sp, f: names?.[i - 1] ?? `f${i - 1}`, ...(inward(f, ax3) ? { in: true } : {}) });
     if (v1 > v0 && inward(f, ax3)) bores.push({ o, ax, k: "cyl", v0, v1, r0: r, r1: r, sp, f: names?.[i - 1] ?? `f${i - 1}`, s: faceSolid[i] });
   }
   emap.delete(); fmap.delete();
+  // Other curves on a cylinder face show as its circle when seen along its axis (a cross hole's rim on a shaft).
+  for (let i = 1; i < byIndex.length; i++) {
+    const me = byIndex[i], q = samples[i];
+    if (!me || me.t !== "o" || !q) continue;
+    const found: Ring[] = [];
+    for (const cy of cyls) {
+      if (!cy.f || !faceOf[i].includes(cy.f)) continue;
+      const ring = ringOn(q, cy);
+      if (ring) found.push(ring);
+    }
+    // Of two crossing cylinders the curve is the smaller one's rim (the hole's, not the shaft's).
+    const least = Math.min(...found.map(g => g.r));
+    const keep = found.filter(g => g.r <= least * (1 + 1e-6));
+    if (keep.length) me.rg = keep;
+  }
   // A point is in the air when it is outside the hole's own solid (all solids when unknown). One classifier per solid,
   // made once and tried only where the solid's box holds the point: a fresh classifier of the whole compound per point
   // took 45 s on an engine assembly, and it took a pin in a hole for air or not depending on the faces' parity.
