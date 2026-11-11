@@ -969,6 +969,7 @@ export const RU: Record<string, string> = {
   "ISO 7 Rc (BSPT)": "ISO 7 Rc (BSPT, трубная коническая)",
   "Tapered diameter at the face": "Диаметр конуса у грани",
   "Thread length": "Длина резьбы",
+  "The drill must go deeper than the thread: at least {n} for the tap's lead.": "Отверстие под резьбу должно быть глубже резьбы: не меньше {n} на заборную часть метчика.",
   "The tapered diameter must be wider than the tap drill, with a thread length more than 0.": "Диаметр конуса должен быть больше диаметра сверла под резьбу, а длина резьбы больше 0.",
   "Advanced hole": "Расширенное отверстие",
   "Holes on other faces": "Отверстия на других гранях",

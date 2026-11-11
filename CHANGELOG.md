@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.550.0] - 2026-11-11
+## [1.551.0] - 2026-11-11
 
 ### Changed
 
@@ -15,6 +15,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - Drawings: the Section ▾ menu (and Model view ▾, Detail ▾) showed only its first row, the rest was cut off by the command bar. The menus now open over the sheet in full, stay inside the window and scroll when the window is too low.
 - Drawings: a hole drilled across a round part (a cross hole in a shaft, also off the axis or blind) could not be dimensioned or annotated where it shows as a circle, because its rim on the cylinder is a saddle curve. Seen along the hole it is now a circle for everything: diameter and location dimensions, hole callout (Ø8 THRU), datum, geometric tolerance, note, hole table and its automatic centre mark; seen from the side, its two lines give the diameter.
+
+## [1.550.0] - 2026-11-11
+
+### Fixed
+
+- Hole Wizard, tapped and tapered tap holes: the blind drill now always goes deeper than the thread, as SolidWorks' automatically calculated depth does. A tapped hole made through and then set to Blind kept the through hole's 10 mm depth, equal to the M5 thread depth, which cannot be made (the tap needs room for its lead). The drill depth is now the thread depth plus half the thread diameter (M5: thread 10, drill 12.5; M6: 12 and 15), it follows the thread depth and size while it is at that value, and a typed drill depth shorter than the thread plus two pitches shows a warning under the thread depth. Saved parts keep their values.
 
 ## [1.549.0] - 2026-11-11
 
@@ -3428,7 +3434,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.550.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.551.0...HEAD
+[1.551.0]: https://github.com/kothf/step-viewer/compare/v1.550.0...v1.551.0
 [1.550.0]: https://github.com/kothf/step-viewer/compare/v1.549.0...v1.550.0
 [1.549.0]: https://github.com/kothf/step-viewer/compare/v1.548.0...v1.549.0
 [1.548.0]: https://github.com/kothf/step-viewer/compare/v1.547.0...v1.548.0

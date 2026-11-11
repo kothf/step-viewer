@@ -39,6 +39,7 @@ import { hexRgb, toRef, type MatRef } from "../tools/materials";
 import { pickMaterial } from "../materialPicker";
 import { holeCallout, holeDiagram, holeIcon, holeSection, HOLE_KINDS } from "./holeView";
 import { advDefault, advProfile, advSync, captiveSize, captiveStack, elemFor, ELEM_KINDS } from "./advHole";
+import { keepTapDepth, tapDepthLinked, tapTooShallow } from "./tapDepth";
 import { ISO_METRIC, HEAT_INSERTS, HOLE_STANDARDS, SCREW_TYPES, defaultScrew, headPocket, screwTypes, threadClasses, holeSize, insertSize, majorOf, recognizedHoleFeatures, standardOf, taperSize, taperStandardOf, TAPER_STANDARDS, type HoleStandard } from "./holes";
 
 /** What a hole favourite keeps: the definition, not the placement. */
@@ -7102,6 +7103,7 @@ export class ModelController {
           + (f.kind === "tapped" && holeExits(f) ? sel("threadEnd", t("Thread"), [["blind", t("Blind")], ["through", t("Through all")]], f.threadEnd ?? "blind") : "")
           + (f.kind === "tapped" && !threadThrough(f) ? numField("threadDepth", t("Thread depth"), f.threadDepth ?? { v: f.diameter.v * 2 }, "length") : "")
           + (f.kind === "ptap" ? numField("threadDepth", t("Thread length"), f.threadDepth ?? { v: f.diameter.v }, "length") : "")
+          + (tapTooShallow(f) !== null ? `<p class="pm-help pm-warn" role="alert" data-warn="tapdepth">${esc(t("The drill must go deeper than the thread: at least {n} for the tap's lead.", { n: `${trimNum(Math.ceil(tapTooShallow(f)! * 10) / 10 * UNITS[units.current].f, Math.max(units.decimals ?? this.doc.units.decimals, 2))} ${units.current}` }))}</p>` : "")
           + chk("flip", f.flip, t("Reverse direction")))
         + (f.kind === "insert" || f.kind === "adv" || f.kind === "captive" ? "" : group(t("Options"),
           (f.kind === "ptap" ? sel("threadMode", t("Thread display"), [["", t("Cosmetic thread")], ["remove", t("Remove thread")]], f.threadMode ?? "") : "")
@@ -7319,6 +7321,8 @@ export class ModelController {
         const host = path.reduce<Record<string, unknown> | undefined>((o, p) => o?.[p] as Record<string, unknown> | undefined, f as unknown as Record<string, unknown>) as Record<string, Num | undefined> | undefined;
         const cur = host?.[last];
         if (cur && cur.v === n.v && cur.expr === n.expr) return;
+        // A drill depth still at its automatic value follows the thread depth (and a typed diameter's thread).
+        const tapLinked = f.type === "hole" && (key === "threadDepth" || key === "diameter") && tapDepthLinked(f);
         upd(() => {
           // Head sizes still at their automatic values (the size's ISO table, or the custom defaults) follow
           // a typed diameter: a Ø3.2 countersink kept the M6 head (Ø13.44) before.
@@ -7337,6 +7341,7 @@ export class ModelController {
             }
           }
           (host as Record<string, Num>)[last] = n;
+          if (f.type === "hole" && (key === "threadDepth" || key === "diameter")) keepTapDepth(f, tapLinked);
           // A typed size makes the hole custom (SolidWorks' "Show custom sizing").
           if (f.type === "hole" && key !== "depth" && key !== "threadDepth" && key !== "headClear" && key !== "drillAngle" && key !== "upToOffset" && !/^(near|under|far)Cs\./.test(key) && !(f.kind === "captive" && /^(capHold|capThread|ringDia|ringT|cbDia|cbDepth|diameter)$/.test(key)) && f.size) { delete f.size; delete f.fit; }
           if (f.type === "thread" && key === "diameter") { delete f.size; delete f.pitch; }
@@ -7467,6 +7472,7 @@ export class ModelController {
           return;
         }
         if (f.type === "hole" && (k === "kind" || k === "size" || k === "fit")) {
+          const tapLinked = tapDepthLinked(f);
           upd(() => {
             if (k === "kind") {
               f.kind = val as HoleFeature["kind"];
@@ -7500,6 +7506,7 @@ export class ModelController {
             }
             if (f.kind === "slot") { f.slotLen ??= { v: Math.round(f.diameter.v * 20) / 10 }; f.slotAngle ??= { v: 0 }; } else { delete f.slotLen; delete f.slotAngle; delete f.slotHead; }
             if (f.kind === "clear" && !f.size) { f.size = "M6"; applyHoleSize(f); }
+            keepTapDepth(f, tapLinked);
           }, true);
           return;
         }
@@ -7720,6 +7727,8 @@ export class ModelController {
           if (k === "end" && f.type === "extrude" && f.depth2 && f.depth2.v > 0 && val !== "blind") f.end2 ??= "blind";
           if (k === "end" && f.type === "extrude" && (val === "mid" || val === "through2")) { delete f.depth2; clearDir2(f); }
           if (k === "op" && val !== "cut" && g.end === "through2") g.end = "through";
+          // A tapped hole turned blind drills past its thread (it kept the through hole's depth before).
+          if (f.type === "hole" && (k === "end" || k === "threadEnd")) keepTapDepth(f, false);
         }, k === "end" || k === "op" || k === "sketch" || k === "modelled" || k === "axes" || (k === "cut" && f.type === "indent"));
       });
     });

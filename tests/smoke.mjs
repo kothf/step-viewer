@@ -3610,6 +3610,18 @@ try {
     await idle();
     const thrAll = await mp.evaluate(() => ({ box: !!document.querySelector('#mc-pm input[data-num="threadDepth"]'), len: Object.values(window.__sv.model.last()?.frames ?? {}).find(f => f.len)?.len ?? null }));
     check(thrSel === "blind" && !thrAll.box && Array.isArray(thrAll.len) && thrAll.len.length === 2 && thrAll.len.every(x => Math.abs(x - 20) < 0.01), `model 1.516: tapped hole thread end Through all (${thrSel}, ${JSON.stringify(thrAll)})`);
+    // 1.550: a tapped hole turned blind drills past its 12 mm thread (M6: 15 mm, not the through hole's 10);
+    // a typed drill depth short of the thread plus the tap's lead is flagged.
+    await mp.selectOption('#mc-pm select[data-k="end"]', "blind");
+    await idle();
+    const tapD = await mp.evaluate(() => ({ d: window.__sv.model.mode().draft.depth.v, td: window.__sv.model.mode().draft.threadDepth?.v, warn: !!document.querySelector('#mc-pm [data-warn="tapdepth"]') }));
+    await mp.fill('#mc-pm input[data-num="depth"]', "12");
+    await mp.press('#mc-pm input[data-num="depth"]', "Tab");
+    await idle();
+    const tapW = await mp.evaluate(() => ({ d: window.__sv.model.mode().draft.depth.v, warn: !!document.querySelector('#mc-pm [data-warn="tapdepth"]') }));
+    await mp.selectOption('#mc-pm select[data-k="end"]', "through");
+    await idle();
+    check(tapD.d === 15 && tapD.td === 12 && !tapD.warn && tapW.d === 12 && tapW.warn, `model 1.550: blind tapped hole drills past its thread (${JSON.stringify({ tapD, tapW })})`);
     // Hole standards: ANSI inch UNC takes the size nearest M6 (1/4-20, tap drill #7 = 5.105 mm), ISO metric brings M6 back.
     await mp.selectOption('#mc-pm select[data-k="standard"]', "unc").catch(() => {});
     await idle();
@@ -11844,7 +11856,7 @@ try {
     await ap.keyboard.press("Escape");
     const placed = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views.at(-1); return [v.orient, v.x, v.y]; });
     check(guide >= 1 && placed[0] === "front" && placed[1] === front[0], `drawing: inference line lines a new view up with another view's centre (${guide} guide, ${JSON.stringify([placed, front])})`);
-    // One place for the tools (1.550.0): the command bar has View Layout / Annotation / Sketch tabs; the side panel keeps
+    // One place for the tools (1.551.0): the command bar has View Layout / Annotation / Sketch tabs; the side panel keeps
     // the view palette, the tree and the properties, with no tool buttons of its own.
     const once = await ap.evaluate(() => { const ks = [...document.querySelectorAll("#drw [data-an]")].map(b => b.dataset.an);
       return { n: ks.length, uniq: new Set(ks).size, dim: document.querySelectorAll('#drw [data-a="dim"]').length, side: document.querySelectorAll(".drw-side [data-an], .drw-side [data-a=dim], .drw-side [role=tab]").length,
