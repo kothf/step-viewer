@@ -2367,7 +2367,7 @@ try {
         `model 1.507: A in the line tool draws a tangent arc, then lines go on tangent to it (FR-SK-011) (${arcMode}, ${back}, ${JSON.stringify(ta)})`);
       await tool("select");
     }
-    // 1.510.0 (FR-SK-015): the Tangent Arc tool starts on the end of that last line and chains tangent arcs.
+    // 1.512.0 (FR-SK-015): the Tangent Arc tool starts on the end of that last line and chains tangent arcs.
     {
       await tool("tarc");
       const arcsBefore = await mp.evaluate(() => window.__sv.model.editor().sk.ents.filter(e => e.t === "arc").map(e => e.id));
@@ -2382,10 +2382,10 @@ try {
           tan: arcs.map(a => sk.rels.filter(r => r.t === "tangent" && r.e.includes(a.id)).length), status: ed.info.status };
       }, arcsBefore);
       check(on === true && tr.n === 2 && tr.rs.every(r => Math.abs(r - 2) < 0.05) && Math.abs(tr.cs[0][0] - 106) < 0.05 && Math.abs(tr.cs[1][0] - 110) < 0.05 && tr.tan.every(k => k >= 1) && tr.status === "ok",
-        `model 1.510: Tangent Arc tool chains arcs tangent to the line it starts on (FR-SK-015) (${on}, ${JSON.stringify(tr)})`);
+        `model 1.512: Tangent Arc tool chains arcs tangent to the line it starts on (FR-SK-015) (${on}, ${JSON.stringify(tr)})`);
       await tool("select");
     }
-    // 1.510.0 (FR-SK-037): dynamic mirror about a line mirrors each new line at once, and the mirrored chain stays joined.
+    // 1.512.0 (FR-SK-037): dynamic mirror about a line mirrors each new line at once, and the mirrored chain stays joined.
     {
       await tool("line");
       await click([120, 30]); await click([120, 50]); await mp.keyboard.press("Escape");
@@ -2403,10 +2403,10 @@ try {
         return { n: fresh.length, xs, joined, sym, off: ed.dynMirror === null, status: ed.info.status };
       }, linesBefore);
       check(axis.on && axis.dm === axis.id && dm.n === 4 && Math.abs(dm.xs[0] - 114) < 0.05 && Math.abs(dm.xs.at(-1) - 126) < 0.05 && dm.joined && dm.sym >= 3 && dm.off && dm.status === "ok",
-        `model 1.510: dynamic mirror copies each new line about the picked line, joined (FR-SK-037) (${JSON.stringify(axis)}, ${JSON.stringify(dm)})`);
+        `model 1.512: dynamic mirror copies each new line about the picked line, joined (FR-SK-037) (${JSON.stringify(axis)}, ${JSON.stringify(dm)})`);
       await tool("select");
     }
-    // 1.510.0 (FR-SK-012): Centerline draws construction lines; Midpoint line puts its middle on the first click.
+    // 1.512.0 (FR-SK-012): Centerline draws construction lines; Midpoint line puts its middle on the first click.
     {
       const before = await mp.evaluate(() => window.__sv.model.editor().sk.ents.filter(e => e.t === "line").map(e => e.id));
       await tool("cline");
@@ -2422,7 +2422,7 @@ try {
           mid: mid ? [P(mid.e[0]).x, P(mid.e[0]).y].map(v => Math.round(v * 100) / 100) : null, status: ed.info.status };
       }, before);
       check(ml.n === 2 && ml.cons && ml.ends && Math.abs(ml.ends[0] - 128) < 0.05 && Math.abs(ml.ends[2] - 136) < 0.05 && Math.abs(ml.ends[1] - 58) < 0.05 && ml.mid && Math.abs(ml.mid[0] - 132) < 0.05 && ml.status === "ok",
-        `model 1.510: Centerline makes a construction line, Midpoint line spans both ways from its middle (FR-SK-012) (${JSON.stringify(ml)})`);
+        `model 1.512: Centerline makes a construction line, Midpoint line spans both ways from its middle (FR-SK-012) (${JSON.stringify(ml)})`);
       await tool("select");
     }
     // 1.266.0 (FR-SK-043/044/047): dragging the last line's start onto the free end of the Ctrl line merges them
@@ -10855,11 +10855,17 @@ try {
     check(guide >= 1 && placed[0] === "front" && placed[1] === front[0], `drawing: inference line lines a new view up with another view's centre (${guide} guide, ${JSON.stringify([placed, front])})`);
     // Annotation tab: the tools beside the sheet start the same commands.
     await ap.click('[data-ptab="annot"]');
-    const tab = await ap.evaluate(() => ({ views: document.querySelector("#drw-pane-views").hidden, annot: document.querySelector("#drw-pane-annot").hidden, n: document.querySelectorAll("#drw-pane-annot button").length }));
+    const tab = await ap.evaluate(() => ({ views: document.querySelector("#drw-pane-views").hidden, annot: document.querySelector("#drw-pane-annot").hidden, n: document.querySelectorAll("#drw-pane-annot button").length,
+      icons: document.querySelectorAll("#drw-pane-annot .drw-at > svg").length, groups: document.querySelectorAll("#drw-pane-annot .drw-atg").length, menuIcons: document.querySelectorAll('#drw [data-a="annot"] + .drw-menu [data-an] > svg').length }));
     await ap.click('#drw-pane-annot [data-an="note"]');
-    const mode = await ap.evaluate(() => window.__sv.drw.mode());
+    const mode = await ap.evaluate(() => ({ m: window.__sv.drw.mode(), on: [...document.querySelectorAll("#drw-pane-annot .drw-at.on")].map(b => b.dataset.tool).join(), pressed: document.querySelector('#drw-pane-annot [data-an="note"]').getAttribute("aria-pressed") }));
+    // 1.508.0: hovering a tile shows the command bar's tooltip with what to click.
+    await ap.hover('#drw-pane-annot [data-an="hole"]');
+    const tip = await ap.waitForSelector("#cm-tip", { timeout: 3000 }).then(e => e.textContent()).catch(() => "");
     await ap.keyboard.press("Escape");
-    check(tab.views && !tab.annot && tab.n === 28 && mode === "note", `drawing: annotation tab shows the 28 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
+    const unpressed = await ap.evaluate(() => document.querySelectorAll("#drw-pane-annot .drw-at.on").length);
+    check(tab.views && !tab.annot && tab.n === 28 && tab.icons === 28 && tab.groups === 6 && tab.menuIcons === 27 && mode.m === "note" && mode.on === "note" && mode.pressed === "true" && unpressed === 0 && /Hole callout/.test(tip) && /round edge/.test(tip),
+      `drawing: annotation tab shows the 28 annotation tools as icon tiles in 6 groups (Annotate ▾ rows have icons too); Note starts the note command and shows pressed; tooltips (${JSON.stringify([tab, mode, unpressed, tip])})`);
     // 1.82.0 break view (FR-DRW-015): select the first front view, leave out u = −25…15 mm; it closes up to a 6 mm gap.
     const fv = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views[0]; const pl = window.__sv.drw.placement(v.id); return { id: v.id, x: v.x, y: v.y, s: pl.s, w: pl.box[2] - pl.box[0], uc: pl.uc }; });
     const clickAt = async (x, y) => { const q = await ap.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await ap.mouse.click(q[0], q[1]); };
