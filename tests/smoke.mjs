@@ -9798,6 +9798,27 @@ try {
     const tb1 = await state();
     check(!tb0.bad && tb0.v > 3000 && Math.abs(tb1.v - tb0.v) < tb0.v * 1e-5 && !tb1.bad && tb1.types === "import,sketch,sketch,sweep,delbody",
       `model 1.493.0: Recognize Features makes a bent tube again as path and profile sketches and a Sweep (FR-FT-102) (${JSON.stringify({ tb0, tb1 })})`);
+    // 1.495.0: a bent bar of any line/arc profile (a square on its corner: the bends are cones) comes back as a Sweep too.
+    await mp.evaluate(() => window.__sv.model.store.change("Bar", d => {
+      d.features = [{ id: "pt", type: "sketch", name: "Sketch1", plane: { std: "XZ" }, rels: [], dims: [], ents: [
+        { id: "q1", t: "point", x: 0, y: 0 }, { id: "q2", t: "point", x: 0, y: 40 }, { id: "q3", t: "point", x: 20, y: 60 }, { id: "q4", t: "point", x: 60, y: 60 }, { id: "qc", t: "point", x: 20, y: 40 },
+        { id: "w1", t: "line", a: "q1", b: "q2" }, { id: "w2", t: "arc", c: "qc", a: "q3", b: "q2" }, { id: "w3", t: "line", a: "q3", b: "q4" }] },
+        { id: "pr", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [
+          { id: "r0", t: "point", x: 0, y: -5 }, { id: "r1", t: "point", x: 5, y: 0 }, { id: "r2", t: "point", x: 0, y: 5 }, { id: "r3", t: "point", x: -5, y: 0 },
+          { id: "l0", t: "line", a: "r0", b: "r1" }, { id: "l1", t: "line", a: "r1", b: "r2" }, { id: "l2", t: "line", a: "r2", b: "r3" }, { id: "l3", t: "line", a: "r3", b: "r0" }] },
+        { id: "sw", type: "sweep", name: "Sweep1", op: "boss", profile: "pr", path: { sketch: "pt" } }];
+    }));
+    await settle();
+    const db0 = await state();
+    const brepDb = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "bar.brep", brep }]; }), brepDb);
+    await settle();
+    await runCmd(mp, "Recognize Features");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.length > 1, null, { timeout: 120000 });
+    await settle();
+    const db1 = await state();
+    check(!db0.bad && db0.v > 3000 && Math.abs(db1.v - db0.v) < db0.v * 1e-5 && !db1.bad && db1.types === "import,sketch,sketch,sweep,delbody",
+      `model 1.495.0: Recognize Features makes a bent bar of a line/arc profile again as a Sweep (FR-FT-102) (${JSON.stringify({ db0, db1 })})`);
     // 1.492.0 (FR-UI-100): a middle click on a straight edge turns the view about the edge's line; empty space clears it and puts Z up again.
     await mp.evaluate(() => window.__sv.model.store.change("Block", d => {
       const xy = [[-30, -20], [30, -20], [30, 20], [-30, 20]];
