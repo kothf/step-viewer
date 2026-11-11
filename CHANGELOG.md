@@ -11,6 +11,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - Big assembly drawings get their first view about 4 seconds sooner and every later view about a second sooner: the mesh that the fast views of big models are drawn from is no longer refined on small round features far below its own accuracy (the engine assembly: mesh 5.9 s → 1.8 s, each view's hidden-line pass 2.2 s → 1.0 s, with the same lines to within the mesh accuracy).
 
+### Fixed
+
+- A drawing view's quick preview no longer goes missing when the drawing kernel starts over while it is asked for (for example when a section is placed while the exact lines of the other side are being made): it is asked again from the restarted kernel.
+
 ## [1.496.0] - 2026-11-11
 
 ### Added
