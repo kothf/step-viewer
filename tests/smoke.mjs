@@ -3557,7 +3557,7 @@ try {
     await mp.selectOption('#mc-pm select[data-k="tclass"]', "6H");
     await idle();
     check(tcl.tc === "6G" && tcl.tm === "remove" && tcl.callout.includes("M6-6G") && tcl.ok && !tcl.shade, `model 1.528: Hole Wizard thread class and Remove thread (${JSON.stringify(tcl)})`);
-    // 1.529 (FR-FT-051): Tapered tap: 1/4-18 NPT from the table (tap drill 7/16", cone Ø at the face, thread length L2),
+    // 1.530 (FR-FT-051): Tapered tap: 1/4-18 NPT from the table (tap drill 7/16", cone Ø at the face, thread length L2),
     // callout without a class; Rc (BSPT) takes the nearest size; back to a tapped M6 with its thread through all.
     await mp.selectOption('#mc-pm select[data-k="kind"]', "ptap");
     await idle();
