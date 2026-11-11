@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.531.0] - 2026-11-11
+
+### Added
+
+- Sketch **K** key (FR-UI-054, FR-SK-054): with sketch items selected, K opens **Add relation** at the cursor, listing only the relations valid for the selection (and Merge points when it fits).
+
 ## [1.530.0] - 2026-11-11
 
 ### Added
@@ -3300,7 +3306,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.530.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.531.0...HEAD
+[1.531.0]: https://github.com/kothf/step-viewer/compare/v1.530.0...v1.531.0
 [1.530.0]: https://github.com/kothf/step-viewer/compare/v1.529.0...v1.530.0
 [1.529.0]: https://github.com/kothf/step-viewer/compare/v1.528.0...v1.529.0
 [1.528.0]: https://github.com/kothf/step-viewer/compare/v1.527.0...v1.528.0

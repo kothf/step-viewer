@@ -1608,7 +1608,7 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | Feature dimensions on the model, double-click to edit | FR-HIS-010, FR-UI-028, FR-UI-115 | 1.140.0: double-click a face shows its feature's sketch dimensions and extrude depth on the model; a click opens the Modify box, one undo step; 1.371.0: also from a single click on the tree row, with the feature's own values (angles, radii, distances, thicknesses, spacing, instance counts) beside its faces; a double click on a row still opens Edit feature | Done |
 | Instant2D dimension drag; placement lock on right-click | FR-SK-067, FR-SK-068 | Yes (1.282.0) | Done (no arrow flip yet) |
 | Typing a number while drawing | FR-UI-052 | 1.121.0: typed sizes while drawing | Done |
-| Sketch keys (L R C A P T O D K Q) | FR-UI-054 | L R C A D T O Q, plus G polygon, F fillet, E extend, W slot; no K | Weaker (keys differ) |
+| Sketch keys (L R C A P T O D K Q) | FR-UI-054 | L R C A D T O Q, plus G polygon, F fillet, E extend, W slot; K = Add relation menu at the cursor (1.531.0) | Done |
 | Drag an end point onto another to merge | FR-SK-043 | 1.266.0: dropping a point on a point, the origin or a curve adds coincident / on curve | Done |
 | Ctrl+drag copies sketch entities | FR-SK-044 | 1.266.0: copies with the relations and dimensions among them | Done |
 | Sketch right-click menu (End chain, Select chain…) | FR-SK-045 | 1.275.0: right-click menu; a line-tool right-click ends the chain; 1.298.0: Fully define sketch | Done |
