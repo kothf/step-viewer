@@ -3896,6 +3896,8 @@ export class ModelController {
     if (m.kind !== "feature" || !layer || !pm || !this.last) return;
     const f = m.draft;
     if (VALUE_CALLOUT_SKIP.has(f.type)) return;
+    // Picking instances to skip: the instance dots stand where the callouts would, so the callouts step aside.
+    if (m.focus === "skip") return;
     const fields = VALUE_KEYS.map(k => pm.querySelector<HTMLInputElement>(`input[data-num="${k}"], input[data-int="${k}"]`)).filter((x): x is HTMLInputElement => !!x && !x.closest("[hidden]"));
     if (!fields.length) return;
     const at = this.calloutPoint(f);
