@@ -3574,7 +3574,7 @@ try {
     const back = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { k: d.kind, s: d.size, d: d.diameter.v, std: d.standard ?? null, td: d.taperDia ?? null }; });
     check(npt.k === "ptap" && npt.s === "1/4-18 NPT" && Math.abs(npt.d - 11.1125) < 2e-3 && Math.abs(npt.td - 11.635) < 0.01 && Math.abs(npt.len - 10.206) < 0.01 && npt.box && !npt.cls && npt.callout.includes("1/4-18 NPT") && npt.ok
       && rc.s === "Rc 1/4" && rc.d === 11.2 && rc.ok && back.k === "tapped" && back.s === "M6" && back.d === 5 && back.std === null && back.td === null,
-      `model 1.529: Hole Wizard tapered tap NPT and Rc (${JSON.stringify({ npt, rc, back })})`);
+      `model 1.530: Hole Wizard tapered tap NPT and Rc (${JSON.stringify({ npt, rc, back })})`);
     // Options: Near side countersink defaults to the hole + 1 mm at 90°; unticking takes it away.
     await mp.check('#mc-pm input[data-k="optNear"]').catch(() => {});
     await idle();
@@ -6019,6 +6019,14 @@ try {
       const tr2 = await dp.evaluate(() => document.querySelector(".drw-pm-head b")?.textContent);
       check(tr0.sheetGrp === "true" && tr0.on === "BREAK SHARP EDGES" && tr0.viewGrp === "true" && folded === "false" && tr1.head === "Hole callout" && /Hole callout/.test(tr1.on ?? "") && hov >= 1 && up && tr2 === "Note",
         `drawing tree lists annotations by view, selects them and outlines the hovered one (${JSON.stringify([tr0, folded, tr1, hov, up, tr2])})`);
+      // 1.527: the status bar says what the selection takes and shows the pointer's sheet position; an annotation
+      // under the pointer on the sheet is outlined before it is pressed.
+      const nt = await dp.evaluate(() => { const q = window.__sv.drw.prims().find(p => p.t === "t" && p.s === "BREAK SHARP EDGES"); return q ? window.__sv.drw.sheetPt(q.x + 2, q.y + 1) : null; });
+      await dp.mouse.move(10, 10);
+      await dp.mouse.move(nt[0], nt[1]);
+      const sb = await dp.evaluate(() => ({ msg: document.querySelector(".drw-st-msg")?.textContent, xy: document.querySelector(".drw-xy")?.textContent, hov: document.querySelectorAll(".drw-ovl .drw-hov").length, cur: document.querySelector(".drw-svg").style.cursor }));
+      check(/Drag the annotation/.test(sb.msg ?? "") && /^X \d+\.\d  Y \d+\.\d mm$/.test(sb.xy ?? "") && sb.cur === "move",
+        `drawing status bar: selection hint and pointer position on the sheet; the annotation under the pointer is pickable (${JSON.stringify(sb)})`);
     }
     // Note border (FR-DRW-023): the placed note is selected; a circle frames it, None takes it away.
     const arcsOf = async () => (await prims()).filter(p => p.t === "a" && p.layer === "ANNOT").length;
