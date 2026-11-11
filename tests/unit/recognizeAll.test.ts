@@ -404,3 +404,16 @@ test("recognize features: a coil spring comes back as a circle sketch, a Helix a
     close(vol(m, { ...imp, features: [...imp.features, ...fs] }), v0, 1e-6);
   }
 });
+
+test("recognize features: a tube along a free 3D curve comes back as a 3D sketch spline and a circular Sweep (FR-FT-102)", async () => {
+  const m = new Modeller(await occ());
+  const pts = [[0, 0, 0], [30, 10, 5], [60, -5, 25], [80, 20, 40], [100, 30, 35]].map((p, i) => ({ id: `p${i}`, p: p as [number, number, number] }));
+  const k3 = { id: "k3", type: "sketch3d", name: "K", pts, segs: [{ id: "sp", t: "spline", pts: pts.map(p => p.id) }], rels: [], dims: [] } as Feature;
+  const imp = imported(m, [k3, { id: "w1", type: "sweep", name: "S", op: "boss", circular: { v: 6 }, path: { curve: "k3" } } as Feature]);
+  const v0 = vol(m, imp);
+  const fs = m.recognizeFeatures(imp);
+  assert.equal(types(fs), "sketch3d,sweep,delbody");
+  const sw = fs.find(f => f.type === "sweep") as Feature & { circular: { v: number } };
+  assert.equal(sw.circular.v, 6);
+  close(vol(m, { ...imp, features: [...imp.features, ...fs] }), v0, 1e-3);
+});

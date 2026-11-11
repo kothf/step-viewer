@@ -3777,7 +3777,7 @@ export class Modeller {
     if (base) {
       try { const b = this.baseExtrude(upto, at, dels, rounds, K.feats); if (b) return b; } catch { /* without the base */ }
       try { const b = this.baseRevolve(upto, at, dels, rounds, K.feats); if (b) return b; } catch { /* without the base */ }
-      try { const b = rounds.length || K.feats.length ? null : this.baseSweep(upto, at) ?? this.baseSweepAny(upto, at) ?? this.baseLoft(upto, at) ?? this.baseHelix(upto, at); if (b) return b; } catch { /* without the base */ }
+      try { const b = rounds.length || K.feats.length ? null : this.baseSweep(upto, at) ?? this.baseSweepAny(upto, at) ?? this.baseLoft(upto, at) ?? this.baseHelix(upto, at) ?? this.baseCurve(upto, at); if (b) return b; } catch { /* without the base */ }
     }
     if (rounds.length < 2) return [...kDel, ...first, ...K.feats];
     try {
@@ -3975,6 +3975,8 @@ export class Modeller {
       return out;
     };
     if (!B.length && !holes.length && !cuts.length && !E.length) return [];
+    // A base alone was checked by its own finder (a free-curve sweep only to 1e-3 of the volume, which `good` would refuse).
+    if (!B.length && !holes.length && !cuts.length && E.some(f => f.type === "delbody")) return E;
     try {
       if (E.some(f => f.type === "delbody")) {
         // The base replaces the imported body: the Delete Faces before it are not needed.
@@ -4489,15 +4491,6 @@ export class Modeller {
     return null;
   }
 
-  /**
-   * The base of a coil spring (FR-FT-102, a sweep path out of one plane): two flat ends bounded by one circle
-   * each of one radius and one swept side face around which the tube runs. The tube's centreline (the middle of
-   * the side face's sections) must be a helix of constant radius and pitch about an axis along a standard axis:
-   * its unit tangents keep one angle to the axis, its points one distance from it, and its height grows evenly
-   * with the turn. Comes back as a circle sketch on the standard plane (or an offset plane) through the start,
-   * a Helix, a circular-profile Sweep with Merge result off and Delete Body of the import; kept when its helix runs
-   * through the centreline turning the same way and the volume matches.
-   */
   /** Features for a plane square to `d`: a standard plane; else a plane at an angle to one about the standard axis square
    * to `d`; else (a compound angle) a plane about Z, the axis where it meets XY and a plane about that axis. Frames of the
    * new features go into `frames`. `snapAng` rounds a measured angle; with `angTol` (radians) `d` is a measured direction. */
@@ -4539,14 +4532,13 @@ export class Modeller {
     return along(out.fr.n, d) ? out : null;
   }
 
-  private baseHelix(upto: Feature[], at: (fs: Feature[]) => PartDoc): Feature[] | null {
+  /**
+   * A round tube or rod (FR-FT-102): two flat ends bounded by one circle each (or a spline on one) of one radius,
+   * one side face closed in one parameter. Returns the radius and the section centres along the other parameter
+   * (K + 1 of them, from one end's centre to the other's), or null.
+   */
+  private tubeCentres(body: Named, tol: number): { r: number; cen: V3[]; K: number } | null {
     const oc = this.oc;
-    const imports = upto.filter(f => f.type === "import" && !f.suppressed).map(f => `${f.id}:`);
-    if (!imports.length) return null;
-    const start = this.evaluate(at([]));
-    const body = start.body;
-    if (!body || this.solids(body.shape) !== 1 || body.names.some(n => !imports.some(p => n.startsWith(p)))) return null;
-    const size = this.size(body.shape), tol = Math.max(1e-4, size * 1e-6) * 10;
     const S = oc.GeomAbs_SurfaceType;
     const caps: { c: V3; r: number }[] = [];
     const sides: any[] = [];
@@ -4592,6 +4584,28 @@ export class Modeller {
     const near = (p: V3) => caps.findIndex(q => Math.hypot(...sub3(p, q.c)) <= Math.max(tol, r * 1e-3));
     if (near(cen[0]) < 0 || near(cen[K]) < 0 || near(cen[0]) === near(cen[K])) return null;
     cen[0] = caps[near(cen[0])].c; cen[K] = caps[near(cen[K])].c;
+    return { r, cen, K };
+  }
+
+  /**
+   * The base of a coil spring (FR-FT-102, a sweep path out of one plane): two flat ends bounded by one circle
+   * each of one radius and one swept side face around which the tube runs. The tube's centreline (the middle of
+   * the side face's sections) must be a helix of constant radius and pitch about an axis along a standard axis:
+   * its unit tangents keep one angle to the axis, its points one distance from it, and its height grows evenly
+   * with the turn. Comes back as a circle sketch on the standard plane (or an offset plane) through the start,
+   * a Helix, a circular-profile Sweep with Merge result off and Delete Body of the import; kept when its helix runs
+   * through the centreline turning the same way and the volume matches.
+   */
+  private baseHelix(upto: Feature[], at: (fs: Feature[]) => PartDoc): Feature[] | null {
+    const imports = upto.filter(f => f.type === "import" && !f.suppressed).map(f => `${f.id}:`);
+    if (!imports.length) return null;
+    const start = this.evaluate(at([]));
+    const body = start.body;
+    if (!body || this.solids(body.shape) !== 1 || body.names.some(n => !imports.some(p => n.startsWith(p)))) return null;
+    const size = this.size(body.shape), tol = Math.max(1e-4, size * 1e-6) * 10;
+    const tube = this.tubeCentres(body, tol);
+    if (!tube) return null;
+    const { r, cen, K } = tube;
     // The axis: square to every difference of unit tangents (they all keep one angle to it).
     const T = cen.slice(0, K).map((c, k) => unit(sub3(cen[k + 1], c)));
     let ax: V3 | null = null, best = 0;
@@ -4678,6 +4692,41 @@ export class Modeller {
       return out;
     }
     return null;
+  }
+
+  /**
+   * The base of a round tube or rod swept along a free 3D curve (FR-FT-102), tried after `baseHelix`: the section
+   * centres become a 3D sketch spline through every 8th of them (fixed points), a circular new-body Sweep follows it
+   * and the import is deleted. The spline only runs through samples of the centreline, so the volume is kept within
+   * 1e-3 rather than exactly. A straight rod is left to the extrude.
+   */
+  private baseCurve(upto: Feature[], at: (fs: Feature[]) => PartDoc): Feature[] | null {
+    const imports = upto.filter(f => f.type === "import" && !f.suppressed).map(f => `${f.id}:`);
+    if (!imports.length) return null;
+    const start = this.evaluate(at([]));
+    const body = start.body;
+    if (!body || this.solids(body.shape) !== 1 || body.names.some(n => !imports.some(p => n.startsWith(p)))) return null;
+    const size = this.size(body.shape), tol = Math.max(1e-4, size * 1e-6) * 10;
+    const tube = this.tubeCentres(body, tol);
+    if (!tube) return null;
+    const { r, cen, K } = tube;
+    const chord = sub3(cen[K], cen[0]), L = Math.hypot(...chord);
+    if (L > tol && cen.every(c => Math.hypot(...cross(sub3(c, cen[0]), mul(chord, 1 / L))) <= tol)) return null;
+    const snap = (x: number) => { const k = Math.round(x * 1e4) / 1e4; return Math.abs(x - k) <= 1e-5 * Math.max(1, Math.abs(x)) ? k : x; };
+    const id = () => `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
+    const sid = id(), step = 8;
+    const idx: number[] = [];
+    for (let k = 0; k < K; k += step) idx.push(k);
+    idx.push(K);
+    const pts = idx.map((k, i) => ({ id: `${sid}p${i}`, p: cen[k].map(snap) as V3, fixed: true }));
+    const sk: Sketch3dFeature = { id: sid, type: "sketch3d", name: "", pts, segs: [{ id: `${sid}s`, t: "spline", pts: pts.map(q => q.id) }], rels: [], dims: [] };
+    const out: Feature[] = [sk,
+      { id: id(), type: "sweep", name: "", op: "boss", merge: false, circular: { v: snap(2 * r) }, path: { curve: sid } } as Feature,
+      { id: id(), type: "delbody", name: "", bodies: [{ name: body.names[0], hint: this.centroid(body.faces[0]) }] } as Feature];
+    const v0 = this.volume(body.shape), fin = this.evaluate(at(out));
+    if (!fin.body || this.solids(fin.body.shape) !== 1 || fin.statuses.slice(-out.length).some(x => x.ok === false)) return null;
+    if (Math.abs(this.volume(fin.body.shape) - v0) > 1e-3 * v0) return null;
+    return out;
   }
 
   /** Path sketch (with its plane) + profile sketch on end face `capI` + a new-body Sweep + Delete Body of the import, kept at the same volume. */
