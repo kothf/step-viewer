@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.556.0] - 2026-11-11
+
+### Changed
+
+- Help (English and Russian) brought up to date: a new Sheet Metal entry (every tool on the Sheet Metal tab, the flat pattern and its drawing view), the Hole Wizard as it is now (standards and sizes, screw types, options, thread class and display, tapered tap, slot types, captive screw, advanced hole, holes on other faces), the Toolbox design library (search, categories, hover preview, drag onto a hole, the new sizes, bearings, spacers and retaining rings) and Recent commands. Fixed stale text: files open from the File menu, new drawings start with an empty sheet and the View palette (Standard 3 views on the View Layout tab), section views follow the sheet's projection angle, and the sheet sketch tools are on the drawing's Sketch tab.
+
 ## [1.555.0] - 2026-11-11
 
 ### Changed
@@ -3460,7 +3466,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.555.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.556.0...HEAD
+[1.556.0]: https://github.com/kothf/step-viewer/compare/v1.555.0...v1.556.0
 [1.555.0]: https://github.com/kothf/step-viewer/compare/v1.554.0...v1.555.0
 [1.554.0]: https://github.com/kothf/step-viewer/compare/v1.553.0...v1.554.0
 [1.553.0]: https://github.com/kothf/step-viewer/compare/v1.552.0...v1.553.0
