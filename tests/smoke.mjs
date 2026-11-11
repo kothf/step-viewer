@@ -9858,6 +9858,25 @@ try {
     const spH = await mp.evaluate(() => { const h = window.__sv.model.store.doc.features.find(f => f.type === "helix"); return h && { p: h.pitch.v, n: h.revs.v }; });
     check(!sp0.bad && sp0.v > 1000 && Math.abs(sp1.v - sp0.v) < sp0.v * 1e-5 && !sp1.bad && sp1.types === "import,sketch,helix,sweep,delbody" && spH?.p === 6 && spH?.n === 4,
       `model 1.499.0: Recognize Features makes a coil spring again as a circle sketch, a Helix and a circular Sweep (FR-FT-102) (${JSON.stringify({ sp0, sp1, spH })})`);
+    // 1.500.0: a spring whose axis is tilted 30° about X comes back on a reference plane at that angle.
+    await mp.evaluate(() => window.__sv.model.store.change("Tilted spring", d => {
+      d.features = [{ id: "t1", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "angle", offset: { v: 0 }, angle: { v: Math.PI / 6 }, about: { std: "X" } },
+        { id: "s1", type: "sketch", name: "Sketch1", plane: { plane: "t1" }, rels: [], dims: [], ents: [{ id: "c", t: "point", x: 0, y: 0 }, { id: "k", t: "circle", c: "c", r: 10 }] },
+        { id: "h1", type: "helix", name: "Helix1", sketch: "s1", mode: "pitchRev", pitch: { v: 6 }, revs: { v: 3 }, height: { v: 18 } },
+        { id: "w1", type: "sweep", name: "Sweep1", op: "boss", circular: { v: 3 }, path: { helix: "h1" } }];
+    }));
+    await settle();
+    const st0 = await state();
+    const brepSt = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "tilted.brep", brep }]; }), brepSt);
+    await settle();
+    await runCmd(mp, "Recognize Features");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.length > 1, null, { timeout: 120000 });
+    await settle();
+    const st1 = await state();
+    const stP = await mp.evaluate(() => { const p = window.__sv.model.store.doc.features.find(f => f.type === "plane"); return p && { deg: +((p.angle?.v ?? 0) * 180 / Math.PI).toFixed(4), about: p.about?.std }; });
+    check(!st0.bad && st0.v > 1000 && Math.abs(st1.v - st0.v) < st0.v * 1e-5 && !st1.bad && st1.types === "import,plane,sketch,helix,sweep,delbody" && stP?.deg === 30 && stP?.about === "X",
+      `model 1.500.0: Recognize Features makes a spring on a tilted axis again on a reference plane at 30° about X (FR-FT-102) (${JSON.stringify({ st0, st1, stP })})`);
     // 1.492.0 (FR-UI-100): a middle click on a straight edge turns the view about the edge's line; empty space clears it and puts Z up again.
     await mp.evaluate(() => window.__sv.model.store.change("Block", d => {
       const xy = [[-30, -20], [30, -20], [30, 20], [-30, 20]];
