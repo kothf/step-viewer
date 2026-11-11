@@ -1586,6 +1586,7 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | Several components selected in an assembly | FR-SEL-007, FR-SEL-008 | 1.541.0: Ctrl+click in the tree or the view, box from empty space (window / crossing, Ctrl adds), blue tint, one menu (hide, show, fix, float, suppress, delete) for all of them as one undo step, Delete key | Done |
 | Lasso selection | FR-SEL-008 (P2) | 1.542.0: heads-up bar toggle; a left drag from empty space draws a lasso in parts and assemblies, clockwise = wholly inside, anticlockwise = touching, filter and Ctrl as for the box | Done |
 | Cursor glyph for the entity under the pointer | FR-SEL-012 | 1.543.0: face, edge, vertex, snap point, plane and sketch curve/point icons beside the arrow in parts, assemblies and sketches | Done |
+| Empty selection after OK or Cancel | FR-SEL-012 | 1.545.0: a feature's OK or Cancel leaves nothing selected (no lit faces, no highlighted tree row) | Done |
 | Select other | FR-SEL-004 | Alt+click cycles faces behind | Done |
 | Selection filter F5 | FR-SEL-003 | Done (faces, edges, vertices) | Done |
 | Breadcrumbs, D to the cursor | FR-SEL-009 | 1.354.0: part breadcrumbs (face/edge → feature → sketch → body → part) with hover, select and menu; Shift+D; 1.371.0: assemblies (face → part feature → component → sub-assemblies → assembly) | Done |

@@ -1419,7 +1419,8 @@ export class ModelController {
       if (m.isNew) d.features.splice(m.index, 0, f); else d.features[m.index] = f;
       if (m.isNew && d.rollback != null) d.rollback++;
     });
-    this.selected = f.id;
+    // After OK nothing stays selected (FR-SEL-012), as in SolidWorks: the new feature's faces are not lit.
+    this.selected = null;
     this.clearDecor();
     this.renderAll();
     // Pushpin or Ctrl+Enter: the same command again once the part has rebuilt (FR-UI-106).
@@ -1505,6 +1506,8 @@ export class ModelController {
       return;
     }
     if (m.kind === "none") return;
+    // Cancel leaves no selection either (FR-SEL-012).
+    if (m.kind === "feature") this.selected = null;
     this.exitMode(false);
     void this.rebuild();
   }

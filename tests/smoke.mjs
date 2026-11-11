@@ -3528,6 +3528,9 @@ try {
       check(dots === "1,2,3" && Math.abs(vSkip - (120000 - 3 * hole)) < 1 && off[0] === true && off[1] === "2" && Math.abs(vBack - vLp) < 1, `model 1.502: Instances to skip clicked in the view (${dots}, ${Math.round(vSkip)}, ${off}, ${Math.round(vBack)})`);
     }
     // Mirror the pattern about Right (YZ): three mirrored holes land on existing ones and are skipped with a warning.
+    // Nothing stays selected after OK (FR-SEL-012), so the pattern is picked in the tree first, as in SolidWorks.
+    const lpId = await mp.evaluate(() => window.__sv.model.store.doc.features.filter(f => f.type === "lpattern").at(-1)?.id);
+    await treeClick(mp, `#mc-tree .ft-row[data-id="${lpId}"]`);
     await mp.click('#mc-tools [data-fly="pattern"]');
     await mp.click("#mc-menu button:nth-child(3)");
     await treeClick(mp, '#mc-tree .ft-row[data-id="std:YZ"]');
@@ -7279,6 +7282,19 @@ try {
         check(gPart.every(g => ["face", "edge", "vertex", "point"].includes(g.k) && /^url\("data:image\/svg/.test(g.cur)) && gPart.some(g => g.k === "face")
           && (gEmpty.k === null || gEmpty.k === "plane") && gLeft === null,
           `model 1.543: hover cursor glyph for the entity under the pointer (FR-SEL-012) (${JSON.stringify({ gPart, gEmpty, gLeft })})`);
+        // 1.545 (FR-SEL-012): after OK or Cancel of a feature nothing stays selected (no lit faces, no tree row).
+        const selAfter = async how => {
+          const fid = await mp.evaluate(() => window.__sv.model.store.doc.features.find(f => f.type === "extrude")?.id);
+          await mp.evaluate(id => { window.__sv.modeller.selected = id; window.__sv.modeller.editFeature(id); }, fid);
+          await mp.waitForTimeout(300);
+          await mp.evaluate(h => (h === "ok" ? window.__sv.modeller.ok() : window.__sv.modeller.cancel()), how);
+          await mp.waitForTimeout(300);
+          await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden, null, { timeout: 60000 });
+          return mp.evaluate(() => ({ sel: window.__sv.modeller.selected, row: !!document.querySelector("#mc-tree .ft-row.sel"), mode: window.__sv.model.mode().kind }));
+        };
+        const sOk = await selAfter("ok"), sCancel = await selAfter("cancel");
+        check(sOk.sel === null && !sOk.row && sOk.mode === "none" && sCancel.sel === null && !sCancel.row && sCancel.mode === "none",
+          `model 1.545: nothing stays selected after OK or Cancel of a feature (FR-SEL-012) (${JSON.stringify({ sOk, sCancel })})`);
       }
       await mp.evaluate(() => window.__sv.model.store.undo());
       await settle();
