@@ -68,3 +68,84 @@ export function mergeSel<T>(old: T[], boxed: T[], add: boolean): T[] {
   for (const b of boxed) if (!out.includes(b)) out.push(b);
   return out;
 }
+
+/**
+ * A selection area on the screen: a box, or a lasso (FR-SEL-008 P2) = a closed freehand polygon. `box` bounds it;
+ * `has` tells a point inside; `touches` a segment that meets it.
+ */
+export interface Region { box: Rect; has(x: number, y: number): boolean; touches(ax: number, ay: number, bx: number, by: number): boolean }
+
+export const rectRegion = (r: Rect): Region => ({ box: r, has: (x, y) => inRect(r, x, y), touches: (ax, ay, bx, by) => segTouches(r, ax, ay, bx, by) });
+
+/** Is the point inside the closed polygon `pts` (flat x, y pairs)? Even-odd rule. */
+export function pointInPoly(pts: ArrayLike<number>, x: number, y: number): boolean {
+  let on = false;
+  const n = pts.length / 2;
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const xi = pts[i * 2], yi = pts[i * 2 + 1], xj = pts[j * 2], yj = pts[j * 2 + 1];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) on = !on;
+  }
+  return on;
+}
+
+/** Do the segments a-b and c-d cross or touch? */
+export function segsCross(ax: number, ay: number, bx: number, by: number, cx: number, cy: number, dx: number, dy: number): boolean {
+  const o = (px: number, py: number, qx: number, qy: number, rx: number, ry: number) => Math.sign((qx - px) * (ry - py) - (qy - py) * (rx - px));
+  const d1 = o(cx, cy, dx, dy, ax, ay), d2 = o(cx, cy, dx, dy, bx, by), d3 = o(ax, ay, bx, by, cx, cy), d4 = o(ax, ay, bx, by, dx, dy);
+  if (d1 !== d2 && d3 !== d4) return true;
+  const on = (px: number, py: number, qx: number, qy: number, rx: number, ry: number) => Math.min(px, qx) <= rx && rx <= Math.max(px, qx) && Math.min(py, qy) <= ry && ry <= Math.max(py, qy);
+  return (d1 === 0 && on(cx, cy, dx, dy, ax, ay)) || (d2 === 0 && on(cx, cy, dx, dy, bx, by)) || (d3 === 0 && on(ax, ay, bx, by, cx, cy)) || (d4 === 0 && on(ax, ay, bx, by, dx, dy));
+}
+
+/** A lasso through screen points (closed back to the first). */
+export function lassoRegion(pts: ArrayLike<number>): Region {
+  const xs: number[] = [], ys: number[] = [];
+  for (let i = 0; i + 1 < pts.length; i += 2) { xs.push(pts[i]); ys.push(pts[i + 1]); }
+  const box: Rect = { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
+  const n = xs.length;
+  const has = (x: number, y: number) => inRect(box, x, y) && pointInPoly(pts, x, y);
+  return {
+    box, has,
+    touches: (ax, ay, bx, by) => {
+      if (has(ax, ay) || has(bx, by)) return true;
+      if (!segTouches(box, ax, ay, bx, by)) return false;
+      for (let i = 0, j = n - 1; i < n; j = i++) if (segsCross(ax, ay, bx, by, xs[j], ys[j], xs[i], ys[i])) return true;
+      return false;
+    },
+  };
+}
+
+/** A lasso drawn clockwise on the screen (y down) selects what lies wholly inside; anticlockwise, what it touches. */
+export function isClockwise(pts: ArrayLike<number>): boolean {
+  let a = 0;
+  const n = pts.length / 2;
+  for (let i = 0, j = n - 1; i < n; j = i++) a += pts[j * 2] * pts[i * 2 + 1] - pts[i * 2] * pts[j * 2 + 1];
+  return a >= 0;
+}
+
+/** Every point of a polyline inside the area. */
+export function regionInside(R: Region, pts: ArrayLike<number>): boolean {
+  if (pts.length < 2) return false;
+  for (let i = 0; i + 1 < pts.length; i += 2) if (!R.has(pts[i], pts[i + 1])) return false;
+  return true;
+}
+
+/** Any piece of a polyline touching the area. */
+export function regionTouches(R: Region, pts: ArrayLike<number>): boolean {
+  if (pts.length === 2) return R.has(pts[0], pts[1]);
+  for (let i = 0; i + 3 < pts.length; i += 2) if (R.touches(pts[i], pts[i + 1], pts[i + 2], pts[i + 3])) return true;
+  return false;
+}
+
+export const regionTaken = (R: Region, pts: ArrayLike<number>, crossing: boolean) => crossing ? regionTouches(R, pts) : regionInside(R, pts);
+
+/** The probe grid of the area's box, kept to the points inside it. */
+export const regionProbe = (R: Region, max = 3000, minStep = 4) => probeGrid(R.box, max, minStep).filter(([x, y]) => R.has(x, y));
+
+/** Lasso mode (FR-SEL-008 P2): a left drag from empty space draws a lasso instead of a box. Kept per browser. */
+export function lassoMode(): boolean {
+  try { return localStorage.getItem("mc:lasso") === "1"; } catch { return false; }
+}
+export function setLassoMode(on: boolean) {
+  try { if (on) localStorage.setItem("mc:lasso", "1"); else localStorage.removeItem("mc:lasso"); } catch { /* storage off */ }
+}

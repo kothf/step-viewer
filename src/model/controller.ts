@@ -62,7 +62,8 @@ import { ORIGIN, repairs, solve } from "../sketch/solver";
 import { sketchPath, sketchProfile, textPath } from "../sketch/profile";
 import { regionAt, regionPoint, sketchRegions, type Region } from "../sketch/regions";
 import { SEL_FILTER } from "../tools/Snapper";
-import { inRect, isCrossing, mergeSel, polyInside, polyTaken, probeGrid, rectOf, type Rect } from "../boxSelect";
+import { lassoMode, mergeSel, rectRegion, regionInside, regionProbe, regionTaken, type Rect, type Region as SelArea } from "../boxSelect";
+import { SelDrag } from "../selDrag";
 import { bodyMasses } from "../tools/inertia";
 import { units, UNITS } from "../tools/units";
 import { csys } from "../tools/csys";
@@ -3279,7 +3280,7 @@ export class ModelController {
   }
 
   /** A box being dragged for box selection (FR-SEL-008). */
-  private boxDrag: { x: number; y: number; add: boolean; el: HTMLDivElement | null; ctl: boolean } | null = null;
+  private boxDrag: SelDrag | null = null;
 
   /** Left press on empty space with Smart measure and no command: the orbit controls sit this drag out. */
   private boxDown(e: PointerEvent) {
@@ -3289,7 +3290,7 @@ export class ModelController {
     if ((this.host.measureTool?.() ?? "select") !== "select" || !v.controls.enabled || !v.controls.enableRotate || !v.parts[0]) return;
     if (this.emptyAt(e.clientX, e.clientY) === false) return;
     v.controls.enabled = false;
-    this.boxDrag = { x: e.clientX, y: e.clientY, add: e.ctrlKey || e.metaKey, el: null, ctl: true };
+    this.boxDrag = new SelDrag(e.clientX, e.clientY, e.ctrlKey || e.metaKey, lassoMode());
   }
 
   /** True when nothing of the part or a plane lies under a screen point. */
@@ -3305,13 +3306,7 @@ export class ModelController {
   }
 
   private boxMove(e: PointerEvent) {
-    const b = this.boxDrag;
-    if (!b) return;
-    if (!b.el && Math.hypot(e.clientX - b.x, e.clientY - b.y) <= 4) return;
-    if (!b.el) { b.el = document.createElement("div"); b.el.className = "mc-selbox"; document.body.appendChild(b.el); }
-    const r = rectOf(b.x, b.y, e.clientX, e.clientY);
-    Object.assign(b.el.style, { left: `${r.x0}px`, top: `${r.y0}px`, width: `${r.x1 - r.x0}px`, height: `${r.y1 - r.y0}px` });
-    b.el.classList.toggle("cross", isCrossing(b.x, e.clientX));
+    this.boxDrag?.move(e.clientX, e.clientY);
   }
 
   private boxUp(e: PointerEvent) {
@@ -3319,19 +3314,20 @@ export class ModelController {
     if (!b || e.button !== 0) return;
     this.boxDrag = null;
     this.host.viewer.controls.enabled = true;
-    if (!b.el) return; // a click: the usual empty-space click clears the selection
-    b.el.remove();
+    if (!b.drawn) return; // a click: the usual empty-space click clears the selection
+    const got = b.end(e.clientX, e.clientY);
     // The click handlers must not take the end of a drag.
     e.stopPropagation();
     this.down = null;
-    this.boxSelect(rectOf(b.x, b.y, e.clientX, e.clientY), isCrossing(b.x, e.clientX), b.add);
+    if (got) this.boxSelect(got.area, got.crossing, b.add);
   }
 
   /**
    * Selects the faces and edges a box holds (FR-SEL-008), as the Ctrl+click selection: left to right those wholly
    * inside, right to left those it touches; only what is seen (not behind other faces) and allowed by the filter.
    */
-  boxSelect(box: Rect, crossing: boolean, add: boolean) {
+  boxSelect(where: Rect | SelArea, crossing: boolean, add: boolean) {
+    const box: SelArea = "has" in where ? where : rectRegion(where);
     const v = this.host.viewer, part = v.parts[0];
     if (!part || this.mode.kind !== "none") return;
     const cr = v.renderer.domElement.getBoundingClientRect(), cam = v.camera, mw = part.mesh.matrixWorld;
@@ -3349,7 +3345,7 @@ export class ModelController {
     const faceOfHit = (h: THREE.Intersection | null) => (h && h.object === part.mesh && h.faceIndex != null ? triFace[h.faceIndex] ?? -1 : -1);
     // Faces seen through the box.
     const seen = new Set<number>();
-    for (const [x, y] of probeGrid(box)) { const f = faceOfHit(rayAt(x, y)); if (f >= 0) seen.add(f); }
+    for (const [x, y] of regionProbe(box)) { const f = faceOfHit(rayAt(x, y)); if (f >= 0) seen.add(f); }
     const tol = 1e-3 * v.modelSize;
     const faces: number[] = [], edges: EdgeInfo[] = [];
     if (SEL_FILTER.faces) {
@@ -3361,7 +3357,7 @@ export class ModelController {
           const [sx, sy] = toScreen(pos.getX(vi), pos.getY(vi), pos.getZ(vi));
           pts.push(sx, sy);
         }
-        if (!polyInside(box, pts)) continue;
+        if (!regionInside(box, pts)) continue;
         let vis = seen.has(f.id);
         // A small face the probe grid missed: look at a few triangle middles.
         for (let k = 0; !vis && k < Math.min(6, f.triCount); k++) {
@@ -3376,14 +3372,14 @@ export class ModelController {
       for (const ed of data.edges) {
         const sp: number[] = [], dist: number[] = [];
         for (let i = 0; i + 2 < ed.pts.length; i += 3) { const [x, y, d] = toScreen(ed.pts[i], ed.pts[i + 1], ed.pts[i + 2]); sp.push(x, y); dist.push(d); }
-        if (!polyTaken(box, sp, crossing)) continue;
+        if (!regionTaken(box, sp, crossing)) continue;
         // Seen: a sample inside the box is not behind another face.
         // Points along the edge (each piece cut in 8) that fall inside the box, at most about 24 of them.
         const n = dist.length, samples: [number, number, number][] = [];
         for (let i = 0; i < Math.max(1, n - 1); i++) for (let k = 0; k < (n > 1 ? 8 : 1); k++) {
           const j = Math.min(i + 1, n - 1), u = k / 8;
           const x = sp[i * 2] + (sp[j * 2] - sp[i * 2]) * u, y = sp[i * 2 + 1] + (sp[j * 2 + 1] - sp[i * 2 + 1]) * u;
-          if (inRect(box, x, y)) samples.push([x, y, dist[i] + (dist[j] - dist[i]) * u]);
+          if (box.has(x, y)) samples.push([x, y, dist[i] + (dist[j] - dist[i]) * u]);
         }
         const step = Math.max(1, Math.floor(samples.length / 24));
         let vis = false;

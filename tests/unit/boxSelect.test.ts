@@ -40,3 +40,33 @@ test("Ctrl adds to the selection without repeats; a plain box replaces it", () =
   assert.deepEqual(mergeSel([1, 2], [2, 3], true), [1, 2, 3]);
   assert.deepEqual(mergeSel([1, 2], [3], false), [3]);
 });
+
+// Lasso (FR-SEL-008 P2): a freehand polygon; clockwise = window, anticlockwise = crossing.
+import { isClockwise, lassoRegion, pointInPoly, rectRegion, regionInside, regionProbe, regionTaken, regionTouches, segsCross } from "../../src/boxSelect";
+
+const tri = [0, 0, 100, 0, 0, 100]; // top left, top right, bottom left
+test("points inside a lasso and its turning sense", () => {
+  assert.equal(pointInPoly(tri, 20, 20), true);
+  assert.equal(pointInPoly(tri, 80, 80), false);
+  assert.equal(isClockwise(tri), true);
+  assert.equal(isClockwise([0, 0, 0, 100, 100, 0]), false);
+  assert.equal(segsCross(0, 0, 10, 10, 0, 10, 10, 0), true);
+  assert.equal(segsCross(0, 0, 10, 0, 0, 5, 10, 5), false);
+});
+
+test("a lasso takes polylines inside it or crossing its outline", () => {
+  const L = lassoRegion(tri);
+  assert.deepEqual(L.box, { x0: 0, y0: 0, x1: 100, y1: 100 });
+  assert.equal(regionInside(L, [10, 10, 30, 30]), true);
+  // Inside the box but past the diagonal: not inside the lasso.
+  assert.equal(regionInside(L, [10, 10, 70, 70]), false);
+  assert.equal(regionTouches(L, [70, 70, 90, 90]), false);
+  // Crossing the diagonal with both ends outside the lasso.
+  assert.equal(regionTouches(L, [-10, 40, 90, 40]), true);
+  assert.equal(regionTaken(L, [-10, 40, 90, 40], false), false);
+  assert.equal(regionTaken(L, [-10, 40, 90, 40], true), true);
+  assert.ok(regionProbe(L).every(([x, y]) => x + y <= 100.0001));
+  assert.ok(regionProbe(L).length < probeGrid(L.box).length);
+  const R = rectRegion(rectOf(0, 0, 100, 100));
+  assert.equal(regionInside(R, [10, 10, 70, 70]), true);
+});

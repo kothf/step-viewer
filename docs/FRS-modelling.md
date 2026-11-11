@@ -1584,6 +1584,7 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | Click empty space clears; Ctrl+click toggles | FR-SEL-002, FR-SEL-007 | 1.537.0: Ctrl+click adds/removes faces and edges in parts; a plain click or Esc clears; Fillet/Chamfer take every selected edge, Shell/Delete Face/Move Face every selected face | Done |
 | Box selection in the part | FR-SEL-002, FR-SEL-008 | 1.539.0: left drag from empty space, window left to right / crossing right to left, seen faces and edges only, filter applies, Ctrl adds; a drag on the part still orbits (lasso not yet) | Done |
 | Several components selected in an assembly | FR-SEL-007, FR-SEL-008 | 1.541.0: Ctrl+click in the tree or the view, box from empty space (window / crossing, Ctrl adds), blue tint, one menu (hide, show, fix, float, suppress, delete) for all of them as one undo step, Delete key | Done |
+| Lasso selection | FR-SEL-008 (P2) | 1.542.0: heads-up bar toggle; a left drag from empty space draws a lasso in parts and assemblies, clockwise = wholly inside, anticlockwise = touching, filter and Ctrl as for the box | Done |
 | Select other | FR-SEL-004 | Alt+click cycles faces behind | Done |
 | Selection filter F5 | FR-SEL-003 | Done (faces, edges, vertices) | Done |
 | Breadcrumbs, D to the cursor | FR-SEL-009 | 1.354.0: part breadcrumbs (face/edge → feature → sketch → body → part) with hover, select and menu; Shift+D; 1.371.0: assemblies (face → part feature → component → sub-assemblies → assembly) | Done |

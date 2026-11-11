@@ -2181,6 +2181,8 @@ export const RU: Record<string, string> = {
   "Delete components ({n})": "Удалить компоненты ({n})",
   "Delete the selected components ({n}) from the assembly?": "Удалить выбранные компоненты ({n}) из сборки?",
   "Selected: {n}": "Выбрано: {n}",
+  "Lasso selection": "Выбор лассо",
+  "Lasso selection: drag clockwise for what is wholly inside, anticlockwise for what it touches": "Выбор лассо: обведите по часовой стрелке — выбрать целиком попавшее внутрь, против часовой — всё, чего касается",
   "Insert component": "Вставить компонент",
   "Insert component: a part, STEP, IGES or BREP model": "Вставить компонент: деталь, модель STEP, IGES или BREP",
   "Move component": "Переместить компонент",

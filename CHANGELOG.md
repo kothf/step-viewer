@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.542.0] - 2026-11-11
+
+### Added
+
+- Lasso selection in parts and assemblies (FR-SEL-008 P2): the lasso button in the heads-up bar makes a left drag from empty space draw a freehand lasso instead of a box. Drawn clockwise it selects the faces and edges (or components) wholly inside it; drawn anticlockwise (dashed green), also those it touches. The filter and Ctrl work as for the box. The setting is kept in the browser.
+
 ## [1.541.0] - 2026-11-11
 
 ### Added
@@ -3365,7 +3371,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.541.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.542.0...HEAD
+[1.542.0]: https://github.com/kothf/step-viewer/compare/v1.541.0...v1.542.0
 [1.541.0]: https://github.com/kothf/step-viewer/compare/v1.540.0...v1.541.0
 [1.540.0]: https://github.com/kothf/step-viewer/compare/v1.539.0...v1.540.0
 [1.539.0]: https://github.com/kothf/step-viewer/compare/v1.538.0...v1.539.0

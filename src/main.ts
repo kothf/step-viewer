@@ -1,4 +1,5 @@
 import "./style.css";
+import { lassoMode, setLassoMode } from "./boxSelect";
 import type { NamedView } from "./model/types";
 import { bindCommandTips } from "./tooltip";
 import * as THREE from "three";
@@ -2410,7 +2411,11 @@ const sessionViews = new Map<string, NamedView[]>();
   hud.hidden = true;
   hud.innerHTML = `<div class="seg" role="group"><button type="button" data-hud="area" title="${t("Zoom to area")}" aria-label="${t("Zoom to area")}">⬚</button>`
     + `<button type="button" data-hud="prev" title="${t("Previous view (Alt+Z)")}" aria-label="${t("Previous view (Alt+Z)")}">↶</button>`
-    + `<button type="button" data-hud="section" aria-pressed="false" title="${t("Section view")}" aria-label="${t("Section view")}">◫</button></div>`;
+    + `<button type="button" data-hud="section" aria-pressed="false" title="${t("Section view")}" aria-label="${t("Section view")}">◫</button>`
+    // Lasso selection (FR-SEL-008 P2): while on, a left drag from empty space draws a lasso instead of a box.
+    + `<button type="button" data-hud="lasso" aria-pressed="${lassoMode()}" title="${t("Lasso selection: drag clockwise for what is wholly inside, anticlockwise for what it touches")}" aria-label="${t("Lasso selection")}"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M8 2.5c3.6 0 6 1.7 6 3.8S11.6 10 8 10 2 8.4 2 6.3 4.4 2.5 8 2.5zM4.6 9.2c-.9 1.3-.6 2.9.9 3.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button></div>`;
+  hud.querySelector('[data-hud="lasso"]')!.addEventListener("click", e => { const b = e.currentTarget as HTMLElement, on = !lassoMode(); setLassoMode(on); b.setAttribute("aria-pressed", String(on)); b.classList.toggle("on", on); });
+  hud.querySelector('[data-hud="lasso"]')!.classList.toggle("on", lassoMode());
   hud.querySelector('[data-hud="section"]')!.addEventListener("click", () => toggleSectionView());
   hud.querySelector('[data-hud="area"]')!.addEventListener("click", () => nav.startZoomArea());
   hud.querySelector('[data-hud="prev"]')!.addEventListener("click", () => nav.previousView());
