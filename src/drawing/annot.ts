@@ -18,7 +18,7 @@ import { frameOf } from "./sheet";
 import { dtargetPrims } from "./dtarget";
 import { skPrims } from "./sheetSketch";
 import { textWidth } from "./textWidth";
-import { threadThrough, holeExits, type HoleSink } from "../model/types";
+import { holeCallout } from "../model/holeView";
 import { threadClass } from "../model/holes";
 
 type P2 = [number, number];
@@ -353,26 +353,11 @@ export function holeText(e: MEdge, ctx: AnnotCtx, count = true): string[] {
       if (Math.abs(Math.abs(dot3(h.n, ax)) - 1) > 1e-6) continue;
       const on = h.pts.some(p => { const w = sub3(c, p), along = dot3(w, h.n); return Math.hypot(w[0] - h.n[0] * along, w[1] - h.n[1] * along, w[2] - h.n[2] * along) < 1e-3; });
       if (!on) continue;
-      const H = h.f, n = count && h.pts.length > 1 ? `${h.pts.length}× ` : "";
-      const depth = H.end === "through" ? ` ${ctx.label("THRU")}` : H.end === "blind" ? ` ↧${f(H.depth.v)}` : "";
-      const lines: string[] = [];
-      if (H.kind === "tapped" && H.size) {
-        lines.push(`${n}Ø${f(H.diameter.v)}${depth}`);
-        // A thread at least as deep as a through drill is long runs through too.
-        const drill = H.end === "through" ? ctx.topo?.cyls.find(y => Math.abs(y.r - H.diameter.v / 2) < 1e-4 && Math.abs(Math.abs(dot3(y.ax, ax)) - 1) < 1e-6 && (() => { const w = sub3(c, y.o), al = dot3(w, y.ax); return Math.hypot(w[0] - y.ax[0] * al, w[1] - y.ax[1] * al, w[2] - y.ax[2] * al) < 1e-3; })()) : undefined;
-        const thru = H.end === "through" && (H.threadEnd === "through" || !H.threadDepth || (!!drill && H.threadDepth.v >= drill.v1 - drill.v0 - 1e-6));
-        // Thread end Through all on an Up to next / up to face hole: the thread runs the whole drill, no depth.
-        lines.push(`${H.size}-${threadClass(H.size)}${thru ? ` ${ctx.label("THRU")}` : H.threadDepth && !threadThrough(H) ? ` ↧${f(H.threadDepth.v)}` : ""}`);
-      } else lines.push(`${n}Ø${f(H.diameter.v)}${depth}`);
-      // Head clearance deepens the counterbore; the callout gives the depth as cut.
-      if (H.kind === "cbore" && H.cbDia) lines.push(`⌴Ø${f(H.cbDia.v)}${H.cbDepth ? ` ↧${f(H.cbDepth.v + (H.headClear?.v ?? 0))}` : ""}`);
-      const sink = (s: HoleSink, tail: string) => `⌵Ø${f(s.dia.v)} × ${fa(s.angle.v * 180 / Math.PI)}°${tail ? ` ${ctx.label(tail)}` : ""}`;
-      if (H.kind === "cbore" && H.underCs) lines.push(sink(H.underCs, "UNDER HEAD"));
-      if (H.nearCs && H.kind !== "csink" && H.kind !== "insert") lines.push(sink(H.nearCs, ""));
-      if (H.kind === "cdrill" && H.cdDia) lines.push(`⌴Ø${f(H.cdDia.v)}${H.cdDepth ? ` ↧${f(H.cdDepth.v)}` : ""} × ${fa((H.cdAngle?.v ?? (118 * Math.PI) / 180) * 180 / Math.PI)}°`);
-      if (H.kind === "csink" && H.csDia) lines.push(`⌵Ø${f(H.csDia.v)} × ${fa((H.csAngle?.v ?? Math.PI / 2) * 180 / Math.PI)}°`);
-      if (H.farCs && holeExits(H) && H.kind !== "slot" && H.kind !== "insert") lines.push(sink(H.farCs, "FAR SIDE"));
-      return lines;
+      const H = h.f;
+      // A thread at least as deep as a through drill is long runs through too.
+      const drill = H.kind === "tapped" && H.end === "through" ? ctx.topo?.cyls.find(y => Math.abs(y.r - H.diameter.v / 2) < 1e-4 && Math.abs(Math.abs(dot3(y.ax, ax)) - 1) < 1e-6 && (() => { const w = sub3(c, y.o), al = dot3(w, y.ax); return Math.hypot(w[0] - y.ax[0] * al, w[1] - y.ax[1] * al, w[2] - y.ax[2] * al) < 1e-3; })()) : undefined;
+      const drillThru = !!drill && !!H.threadDepth && H.threadDepth.v >= drill.v1 - drill.v0 - 1e-6;
+      return holeCallout(H, f, fa, ctx.label, count ? h.pts.length : 1, drillThru);
     }
   }
   // No hole feature: read the hole from the geometry (count, counterbore, countersink, depth or THRU).

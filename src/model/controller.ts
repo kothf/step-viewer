@@ -36,6 +36,7 @@ import type { CtxRef, SkEnt, SketchPatternFeature, FeatureFolder, ThreadFeature,
 } from "./types";
 import { hexRgb, toRef, type MatRef } from "../tools/materials";
 import { pickMaterial } from "../materialPicker";
+import { holeCallout, holeDiagram, holeIcon, holeSection, HOLE_KINDS } from "./holeView";
 import { ISO_METRIC, HEAT_INSERTS, HOLE_STANDARDS, holeSize, insertSize, majorOf, recognizedHoleFeatures, standardOf, type HoleStandard } from "./holes";
 
 /** What a hole favourite keeps: the definition, not the placement. */
@@ -63,7 +64,7 @@ import { SEL_FILTER } from "../tools/Snapper";
 import { bodyMasses } from "../tools/inertia";
 import { units, UNITS } from "../tools/units";
 import { csys } from "../tools/csys";
-import { askFileName, confirmModal, toast, trapFocus } from "../ui";
+import { askFileName, bindTabs, confirmModal, toast, trapFocus } from "../ui";
 import { cmTab, onCmTab, selectCmTab } from "../commandBar";
 import { rememberWeld } from "../weldments/defaults";
 import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, cornerSpots, cutListRows, locateSpots, isWeldFeature, showCutList, weldChange, weldSymbols, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
@@ -1479,6 +1480,9 @@ export class ModelController {
   }
   /** Fillet/chamfer picking adds the tangent chain of an edge (FR-SEL-005). */
   private tangentProp = true;
+  /** Hole panel tab (view-only) and the draft it belongs to: a new hole panel opens on Type. */
+  private holeTab: "type" | "pos" = "type";
+  private holeTabOf?: HoleFeature;
   /** Folders collapsed in the tree (view state, not saved). */
   private closedFolders = new Set<string>();
   /** Features whose absorbed sketch rows are folded away (view state, FR-HIS-013). */
@@ -3632,6 +3636,15 @@ export class ModelController {
     // Clicks made before the plane's frame arrives are placed once it does.
     if (!fr || this.pendingHole.length) { this.pendingHole.push({ p: hit.point, at: { clientX: e.clientX, clientY: e.clientY } }); return; }
     this.placeHole(f, this.holeSnap(e, fr) ?? hit.point, fr);
+  }
+
+  /** Hole panel preview (FR-FT-051 UX): the half section of the hole in a plate and the callout it gets on drawings. */
+  private holePreview(f: HoleFeature): string {
+    const fu = UNITS[units.current].f, dec = units.decimals ?? this.doc.units.decimals;
+    const len = (v: number) => trimNum(v * fu, Math.max(dec, 2)), ang = (v: number) => trimNum(v, 2);
+    const s = holeSection(f), lines = holeCallout(f, len, ang, x => t(x), f.pts.length);
+    return `<div class="pm-hpreview" data-hpreview>${s ? holeDiagram(s) : ""}<div class="pm-hcallout" translate="no" aria-label="${esc(t("Callout"))}">${lines.map(l => `<div>${esc(l)}</div>`).join("")}</div>`
+      + `<p class="pm-help muted">${esc(f.plane ? t("Click on the face to place holes; click a hole again to remove it.") : t("Click the flat face (or a plane) for the holes."))}</p></div>`;
   }
 
   /**
@@ -6531,10 +6544,16 @@ export class ModelController {
       const sel = (k: string, label: string, opts: [string, string][], cur: string) => `<label class="pm-field"><span>${esc(label)}</span><select data-k="${k}">${opts.map(([v, l]) => `<option value="${v}"${v === cur ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;
       const hbox = (focus: Focus, label: string, value: string) => `<div class="pm-field"><span>${esc(label)}</span><button class="pm-box${m.focus === focus ? " focus" : ""}" data-focus="${focus}" translate="no">${esc(value)}</button></div>`;
       const favs = loadFavs();
-      body = group(t("Favourites"), `<label class="pm-field"><span>${esc(t("Favourite"))}</span><select data-ui="fav"><option value="">${esc(t("None"))}</option>${favs.map((x, i) => `<option value="${i}" translate="no">${esc(x.name)}</option>`).join("")}</select></label>`
+      // FR-FT-051 UX: Type and Positions tabs as in SolidWorks; view picks work on either tab.
+      if (this.holeTabOf !== f) { this.holeTabOf = f; this.holeTab = "type"; }
+      const tab = this.holeTab;
+      const kindNames: Record<HoleFeature["kind"], string> = { simple: t("Simple hole"), clear: t("Clearance hole"), cbore: t("Counterbore"), cdrill: t("Counterdrill"), csink: t("Countersink"), tapped: t("Tapped hole"), slot: t("Slot"), insert: t("Heat-set insert") };
+      const favOpen = (() => { try { return localStorage.getItem("mc:holeFavOpen") === "1"; } catch { return false; } })();
+      const typeTab = this.holePreview(f)
+        + `<details class="pm-group pm-favs" data-ui="favs"${favOpen ? " open" : ""}><summary>${esc(t("Favourites"))}${favs.length ? ` <span class="muted">(${favs.length})</span>` : ""}</summary><label class="pm-field"><span>${esc(t("Favourite"))}</span><select data-ui="fav"><option value="">${esc(t("None"))}</option>${favs.map((x, i) => `<option value="${i}" translate="no">${esc(x.name)}</option>`).join("")}</select></label>`
           + `<label class="pm-field"><span>${esc(t("Name"))}</span><input type="text" data-ui="favName" value="${esc(holeTitle(f))}" spellcheck="false" translate="no" /></label>`
-          + `<div class="pm-rels"><button class="btn small" data-ui="favSave">${esc(t("Save as favourite"))}</button>${favs.length ? `<button class="btn small" data-ui="favDel">${esc(t("Delete favourite"))}</button>` : ""}</div>`)
-        + group(t("Hole type"), sel("kind", t("Type"), [["simple", t("Simple hole")], ["clear", t("Clearance hole")], ["cbore", t("Counterbore")], ["cdrill", t("Counterdrill")], ["csink", t("Countersink")], ["tapped", t("Tapped hole")], ["slot", t("Slot")], ["insert", t("Heat-set insert")]], f.kind)
+          + `<div class="pm-rels"><button class="btn small" data-ui="favSave">${esc(t("Save as favourite"))}</button>${favs.length ? `<button class="btn small" data-ui="favDel">${esc(t("Delete favourite"))}</button>` : ""}</div></details>`
+        + group(t("Hole type"), `<div class="pm-hkinds" role="group" aria-label="${esc(t("Hole type"))}">${HOLE_KINDS.map(k => `<button type="button" class="pm-hkind${f.kind === k ? " on" : ""}" data-hkind="${k}" aria-pressed="${f.kind === k}" title="${esc(kindNames[k])}" aria-label="${esc(kindNames[k])}">${holeIcon(k)}</button>`).join("")}</div>` + sel("kind", t("Type"), [["simple", t("Simple hole")], ["clear", t("Clearance hole")], ["cbore", t("Counterbore")], ["cdrill", t("Counterdrill")], ["csink", t("Countersink")], ["tapped", t("Tapped hole")], ["slot", t("Slot")], ["insert", t("Heat-set insert")]], f.kind)
           + (f.kind !== "insert" ? sel("standard", t("Standard"), [["iso", t("ISO metric")], ["isofine", t("ISO metric fine")], ["unc", t("ANSI inch UNC")], ["unf", t("ANSI inch UNF")]], holeStd(f)) : "")
           + sel("size", t("Size"), [["", t("Custom")], ...(f.kind === "insert" ? HEAT_INSERTS : HOLE_STANDARDS[holeStd(f)]).map(h => [h.size, h.size] as [string, string])], f.size ?? "")
           + (f.kind === "insert" && insertSize(f.size) ? `<p class="pm-help muted" data-insert>${esc(t("Insert length {l} mm; keep at least {w} mm of wall around the hole (boss Ø {b} mm).", { l: trimNum(insertSize(f.size)!.length, 2), w: trimNum(insertSize(f.size)!.wall, 2), b: trimNum(insertSize(f.size)!.hole + 2 * insertSize(f.size)!.wall, 2) }))}</p>` : "")
@@ -6558,12 +6577,15 @@ export class ModelController {
           (f.kind === "cbore" || f.kind === "csink" ? chk("optHead", !!f.headClear, t("Head clearance")) + (f.headClear ? numField("headClear", t("Head clearance"), f.headClear, "length") : "") : "")
           + (f.kind !== "csink" ? chk("optNear", !!f.nearCs, t("Near side countersink")) + (f.nearCs ? numField("nearCs.dia", t("Diameter"), f.nearCs.dia, "length") + numField("nearCs.angle", t("Angle"), f.nearCs.angle, "angle") : "") : "")
           + (f.kind === "cbore" ? chk("optUnder", !!f.underCs, t("Under head countersink")) + (f.underCs ? numField("underCs.dia", t("Diameter"), f.underCs.dia, "length") + numField("underCs.angle", t("Angle"), f.underCs.angle, "angle") : "") : "")
-          + (holeExits(f) && f.kind !== "slot" ? chk("optFar", !!f.farCs, t("Far side countersink")) + (f.farCs ? numField("farCs.dia", t("Diameter"), f.farCs.dia, "length") + numField("farCs.angle", t("Angle"), f.farCs.angle, "angle") : "") : "")))
-        + group(t("Positions"), hbox("hplane", t("Face"), this.refLabel(f.plane)) + hbox("pts", t("Hole positions"), t("{n} hole|{n} holes", { n: f.pts.length }))
+          + (holeExits(f) && f.kind !== "slot" ? chk("optFar", !!f.farCs, t("Far side countersink")) + (f.farCs ? numField("farCs.dia", t("Diameter"), f.farCs.dia, "length") + numField("farCs.angle", t("Angle"), f.farCs.angle, "angle") : "") : "")));
+      const posTab = group(t("Positions"), hbox("hplane", t("Face"), this.refLabel(f.plane)) + hbox("pts", t("Hole positions"), t("{n} hole|{n} holes", { n: f.pts.length }))
           + (f.pts.length ? `<ul class="pm-items pm-hpts" aria-label="${esc(t("Hole positions"))}">${f.pts.map((p, i) => `<li><span>${i + 1}</span>${holeAxes(this.last?.frames[f.id]).names.map((ax, j) => `<span class="pm-in"><span class="muted">${ax}</span><input type="text" inputmode="decimal" data-hp="${i}:${j}" value="${esc(trimNum(holeAxes(this.last?.frames[f.id]).show(p)[j] * UNITS[unit].f, 6))}" aria-label="${esc(t("Hole {n}", { n: i + 1 }))} ${ax}" spellcheck="false" /></span>`).join("")}<button class="icon" data-rmh="${i}" title="${esc(t("Remove"))}" aria-label="${esc(t("Remove"))} ${esc(t("Hole {n}", { n: i + 1 }))}">✕</button></li>`).join("")}</ul>` : "")
           + (f.plane ? `<button class="btn small" data-k="addPt">${esc(t("Add hole"))}</button> ` : "")
           + (f.pts.length ? `<button class="btn small" data-k="clearPts">${esc(t("Clear holes"))}</button>` : "")
           + `<p class="pm-help muted">${esc(f.plane ? t("Click on the face to place holes; click a hole again to remove it.") : t("Click the flat face (or a plane) for the holes."))}</p>`);
+      const tabBtn = (k: "type" | "pos", label: string) => `<button type="button" role="tab" data-tab="${k}" data-htab="${k}" class="${tab === k ? "on" : ""}" aria-selected="${tab === k}" tabindex="${tab === k ? 0 : -1}">${esc(label)}</button>`;
+      body = `<div class="tabs pm-htabs" role="tablist" aria-label="${esc(t("Hole"))}">${tabBtn("type", t("Type"))}${tabBtn("pos", f.pts.length ? `${t("Positions")} (${f.pts.length})` : t("Positions"))}</div>`
+        + `<div class="pm-htab" data-hpane="type"${tab === "type" ? "" : " hidden"}>${typeTab}</div><div class="pm-htab" data-hpane="pos"${tab === "pos" ? "" : " hidden"}>${posTab}</div>`;
     }
     if (f.type === "draft") {
       title = t("Draft");
@@ -7186,6 +7208,18 @@ export class ModelController {
     pm.querySelectorAll<HTMLElement>("[data-focus]").forEach(b => b.addEventListener("click", () => { if (m.kind === "feature") { m.focus = b.dataset.focus as Focus; this.renderPanel(); this.drawDecor(); } }));
     // Hole favourites (FR-FT-056): a saved definition (type, size, diameters, end) applied in one go; kept in this browser.
     if (f.type === "hole") {
+      const tabs = pm.querySelector<HTMLElement>(".pm-htabs");
+      if (tabs) bindTabs(tabs, k => {
+        this.holeTab = k === "pos" ? "pos" : "type";
+        pm.querySelectorAll<HTMLElement>("[data-hpane]").forEach(p => { p.hidden = p.dataset.hpane !== this.holeTab; });
+      });
+      pm.querySelectorAll<HTMLButtonElement>("[data-hkind]").forEach(b => b.addEventListener("click", () => {
+        const s = pm.querySelector<HTMLSelectElement>("select[data-k=kind]");
+        if (!s || s.value === b.dataset.hkind) return;
+        s.value = b.dataset.hkind!;
+        s.dispatchEvent(new Event("change", { bubbles: true }));
+      }));
+      pm.querySelector<HTMLDetailsElement>("[data-ui=favs]")?.addEventListener("toggle", e => { try { localStorage.setItem("mc:holeFavOpen", (e.target as HTMLDetailsElement).open ? "1" : "0"); } catch { /* private window */ } });
       const favSel = pm.querySelector<HTMLSelectElement>("[data-ui=fav]");
       favSel?.addEventListener("change", () => {
         const fav = loadFavs()[+favSel.value];
