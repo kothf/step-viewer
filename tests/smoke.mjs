@@ -7239,6 +7239,30 @@ try {
         check(win.faces >= 3 && win.edges >= 6 && /selected/.test(win.hint) && !win.box && moved < 1e-6 && !/cross/.test(winCls) && /cross/.test(crCls)
           && cleared.faces + cleared.edges === 0 && cross.faces >= 1 && cross.edges >= 1 && half.faces + half.edges < cross.faces + cross.edges,
           `model 1.539: box selection in the part, window and crossing, the view stays put, an empty click clears (FR-SEL-008) (${JSON.stringify({ geom: [geom.x0, geom.x1, geom.y0, geom.y1], winCls, win, moved, cleared, crCls, cross, half })})`);
+        // 1.542 (FR-SEL-008 P2): with Lasso selection on in the heads-up bar, the drag draws a lasso: clockwise round
+        // the part takes what lies inside, anticlockwise over its middle what the lasso touches.
+        await mp.click('#hud [data-hud="lasso"]');
+        const lassoOn = await mp.evaluate(() => document.querySelector('#hud [data-hud="lasso"]').getAttribute("aria-pressed"));
+        const lasso = async pts => {
+          await mp.mouse.move(...pts[0]);
+          await mp.mouse.down();
+          for (let k = 1; k < pts.length; k++) for (let i = 1; i <= 5; i++) await mp.mouse.move(pts[k - 1][0] + (pts[k][0] - pts[k - 1][0]) * i / 5, pts[k - 1][1] + (pts[k][1] - pts[k - 1][1]) * i / 5);
+          const cls = await mp.evaluate(() => document.querySelector(".mc-lasso")?.getAttribute("class") ?? "");
+          await mp.mouse.up();
+          await mp.waitForTimeout(200);
+          return cls;
+        };
+        const lwCls = await lasso([px(m0, n0), px(m1, n0), px(m1, n1), px(m0, n1), px(m0, n0 + 0.01)]);
+        const lw = await mp.evaluate(() => ({ ...window.__sv.modeller.multiCount, gone: !document.querySelector(".mc-lasso") }));
+        await mp.keyboard.press("Escape");
+        const ym = (geom.y0 + geom.y1) / 2, xm = (geom.x0 + geom.x1) / 2;
+        const lcCls = await lasso([px(m1, ym), px(xm, ym - 0.03), px(xm, ym + 0.03), px(m1, ym + 0.005)]);
+        const lc = await mp.evaluate(() => window.__sv.modeller.multiCount);
+        await mp.keyboard.press("Escape");
+        await mp.click('#hud [data-hud="lasso"]');
+        const lassoOff = await mp.evaluate(() => [document.querySelector('#hud [data-hud="lasso"]').getAttribute("aria-pressed"), localStorage.getItem("mc:lasso")]);
+        check(lassoOn === "true" && /mc-lasso/.test(lwCls) && !/cross/.test(lwCls) && lw.faces >= 3 && lw.edges >= 6 && lw.gone && /cross/.test(lcCls) && lc.faces + lc.edges >= 1 && lassoOff[0] === "false" && lassoOff[1] === null,
+          `model 1.542: lasso selection in the part, clockwise inside, anticlockwise touching (FR-SEL-008) (${JSON.stringify({ lassoOn, lwCls, lw, lcCls, lc, lassoOff })})`);
       }
       await mp.evaluate(() => window.__sv.model.store.undo());
       await settle();
@@ -7660,6 +7684,16 @@ try {
     await mp.keyboard.press("Escape");
     check(pk.sel.length === 2 && pk.rows === 2 && /Selected: 2/.test(pk.status) && pk.tint && multiMenu === 1 && nHid === 2 && esc <= 1 && win === 3 && crossIds.includes(c2.id) && cam0 === cam1,
       `asm 1.541: Ctrl+click and box selection of components, menu on all of them (${JSON.stringify({ pk, multiMenu, nHid, esc, win, cross, free, free2, vr, same: cam0 === cam1 })})`);
+    // 1.542: the same with Lasso selection on: a clockwise lasso round the view takes every component.
+    await mp.click('#hud [data-hud="lasso"]');
+    await mp.mouse.move(free.x, free.y); await mp.mouse.down();
+    for (const [x, y] of [[vr.r - 6, free.y], [vr.r - 6, vr.b - 6], [free.x, vr.b - 6], [free.x, free.y + 4]]) await mp.mouse.move(x, y, { steps: 6 });
+    await mp.mouse.up();
+    await mp.waitForTimeout(100);
+    const lassoN = await mp.evaluate(() => window.__sv.asm.selection().length);
+    await mp.keyboard.press("Escape");
+    await mp.click('#hud [data-hud="lasso"]');
+    check(lassoN === 3, `asm 1.542: a clockwise lasso takes every component inside it (${lassoN})`);
     // Save to bytes and reopen: the same components and poses.
     const re = await mp.evaluate(async () => {
       const sig = () => JSON.stringify(window.__sv.asm.doc.components.map(c => [c.id, c.name, c.part, c.tf, !!c.fixed, !!c.hidden]));

@@ -27,7 +27,8 @@ import { folderPath, hashBytes, planLinks, type LinkFile } from "./links";
 import { MCMASTER, mcmasterPart, tagVendor, vendorOf } from "./vendor";
 import { pickMaterial } from "../materialPicker";
 import { isLongPress } from "../longPress";
-import { inRect, isCrossing, mergeSel, probeGrid, rectOf, type Rect } from "../boxSelect";
+import { lassoMode, mergeSel, rectRegion, regionProbe, type Rect, type Region as SelArea } from "../boxSelect";
+import { SelDrag } from "../selDrag";
 import { toRef } from "../tools/materials";
 import { FASTENERS, TOOLBOX_GROUPS, defaultLength, fastenerInfo, fastenerLengths, fastenerName, fastenerPart, fastenerSizes, lengthFor, lengthLabel, searchFasteners, sizeForHole, type FastenerKind, type ToolboxGroup } from "./fasteners";
 import { fastenerShape, shapeSvg, shapeVolume, type ToolShape } from "./toolboxShape";
@@ -2553,7 +2554,7 @@ export class AsmController {
   private picked: string[] = [];
   private selGroup = new THREE.Group();
   private selMat = new THREE.MeshBasicMaterial({ color: 0x1c7ed6, transparent: true, opacity: 0.35, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
-  private boxDrag: { x: number; y: number; add: boolean; el: HTMLDivElement | null } | null = null;
+  private boxDrag: SelDrag | null = null;
 
   /** The components a command acts on: the picked ones, else the selected one. */
   selection(): string[] {
@@ -2616,17 +2617,11 @@ export class AsmController {
     if ((this.host.measureTool?.() ?? "select") !== "select" || !v.controls.enabled || !v.controls.enableRotate || !v.parts.length) return;
     if (this.host.partAt(e.clientX, e.clientY)) return;
     v.controls.enabled = false;
-    this.boxDrag = { x: e.clientX, y: e.clientY, add: e.ctrlKey || e.metaKey, el: null };
+    this.boxDrag = new SelDrag(e.clientX, e.clientY, e.ctrlKey || e.metaKey, lassoMode());
   }
 
   private boxMove(e: PointerEvent) {
-    const b = this.boxDrag;
-    if (!b) return;
-    if (!b.el && Math.hypot(e.clientX - b.x, e.clientY - b.y) <= 4) return;
-    if (!b.el) { b.el = document.createElement("div"); b.el.className = "mc-selbox"; document.body.appendChild(b.el); }
-    const r = rectOf(b.x, b.y, e.clientX, e.clientY);
-    Object.assign(b.el.style, { left: `${r.x0}px`, top: `${r.y0}px`, width: `${r.x1 - r.x0}px`, height: `${r.y1 - r.y0}px` });
-    b.el.classList.toggle("cross", isCrossing(b.x, e.clientX));
+    this.boxDrag?.move(e.clientX, e.clientY);
   }
 
   private boxUp(e: PointerEvent) {
@@ -2635,14 +2630,15 @@ export class AsmController {
     this.boxDrag = null;
     this.host.viewer.controls.enabled = true;
     // A click on empty space ends a selection of several components.
-    if (!b.el) { if (!b.add && this.picked.length) { this.boxed = false; this.setPicked([]); } return; }
-    b.el.remove();
+    if (!b.drawn) { if (!b.add && this.picked.length) { this.boxed = false; this.setPicked([]); } return; }
+    const got = b.end(e.clientX, e.clientY);
     e.stopPropagation();
-    this.boxSelect(rectOf(b.x, b.y, e.clientX, e.clientY), isCrossing(b.x, e.clientX), b.add);
+    if (got) this.boxSelect(got.area, got.crossing, b.add);
   }
 
   /** The top-level components a screen box takes: wholly inside (window) or touched (crossing). Hidden ones are left out. */
-  boxComponents(r: Rect, crossing: boolean): string[] {
+  boxComponents(where: Rect | SelArea, crossing: boolean): string[] {
+    const r: SelArea = "has" in where ? where : rectRegion(where);
     const v = this.host.viewer, cr = v.renderer.domElement.getBoundingClientRect(), cam = v.camera, q = new THREE.Vector3();
     const all = new Map<string, boolean>(), touch = new Set<string>();
     this.shownIds.forEach((sid, i) => {
@@ -2653,7 +2649,7 @@ export class AsmController {
       let whole = true, any = false;
       for (let k = 0; k < pos.count; k++) {
         q.set(pos.getX(k), pos.getY(k), pos.getZ(k)).applyMatrix4(m).project(cam);
-        const ok = q.z >= -1 && q.z <= 1 && inRect(r, cr.left + ((q.x + 1) / 2) * cr.width, cr.top + ((1 - q.y) / 2) * cr.height);
+        const ok = q.z >= -1 && q.z <= 1 && r.has(cr.left + ((q.x + 1) / 2) * cr.width, cr.top + ((1 - q.y) / 2) * cr.height);
         if (ok) any = true; else whole = false;
         if (crossing ? any : !whole) break;
       }
@@ -2662,7 +2658,7 @@ export class AsmController {
       if (any) touch.add(id);
     });
     // A face larger than the box has no corner in it: probe what is seen inside.
-    if (crossing) for (const [x, y] of probeGrid(r, 400, 6)) {
+    if (crossing) for (const [x, y] of regionProbe(r, 400, 6)) {
       const hit = this.host.partAt(x, y), id = hit ? topOf(this.shownIds[hit.idx] ?? "") : "";
       if (id && this.comp(id)) touch.add(id);
     }
@@ -2670,7 +2666,7 @@ export class AsmController {
     return (this.doc?.components ?? []).map(c => c.id).filter(take);
   }
 
-  boxSelect(r: Rect, crossing: boolean, add: boolean) {
+  boxSelect(r: Rect | SelArea, crossing: boolean, add: boolean) {
     const ids = this.boxComponents(r, crossing);
     this.boxed = true;
     this.setPicked(mergeSel(add ? this.selection() : [], ids, add));
