@@ -123,6 +123,10 @@ dialog.sized { max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); mi
 .doc { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 0 1 auto; max-width: 300px; font-size: 12px; color: var(--muted); }
 .doc-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .doc[data-state="ready"] .doc-name { color: var(--text); font-weight: 600; }
+.doc:has(.doc-vault:not([hidden])) { max-width: 560px; }
+.doc-vault { flex: 0 1 auto; min-width: 0; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 1px 7px; border: 1px solid var(--line); border-radius: 9px; color: var(--text); background: var(--panel); }
+.doc-vault[hidden] { display: none; }
+.doc-name { flex: 0 1 auto; }
 .doc-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--muted); }
 .doc-dot[data-state="loading"] { background: var(--accent); animation: pulse 1s ease-in-out infinite; }
 .doc-dot[data-state="ready"] { background: #2f9e44; }
