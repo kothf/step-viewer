@@ -490,6 +490,14 @@ export class SketchEditor {
     return true;
   }
 
+  /** What lies under the cursor for the hover glyph (FR-SEL-012): a hit kind, or "point"/"curve" from the drawing snap. */
+  hoverHitKind(): string | null {
+    if (this.hover) return this.hover.kind;
+    if (this.draft.snap) return "point";
+    if (this.draft.hoverCurve) return "curve";
+    return null;
+  }
+
   pointerUp(e: PointerEvent): boolean {
     if (e.button !== 0) return false;
     if (this.box) {
