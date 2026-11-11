@@ -4680,6 +4680,9 @@ try {
     const rows = () => mp.evaluate(() => [...document.querySelectorAll("#vault-panel .v-row")].map(r => r.textContent.replace(/\s+/g, " ").trim()).join(" | "));
     const newDrawing = async () => {
       await mp.evaluate(() => document.querySelector("#new-drawing").click());
+      // Since 1.515.0 a new drawing starts empty: add Standard 3 views once the model is in.
+      await mp.waitForFunction(() => window.__sv.drw.loaded(), null, { timeout: 90000 });
+      await mp.evaluate(() => document.querySelector('#drw [data-a="std3"]').click());
       await mp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length > 0, null, { timeout: 90000 });
     };
     await mp.click("#new-part");
