@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.504.0] - 2026-11-11
+
+### Changed
+
+- Section and auxiliary views on a first-angle sheet (ISO, GOST) follow first-angle placement: the view goes on the side the arrows point to, as in ESKD and ISO first angle. Third-angle sheets keep the SolidWorks/ANSI rule (the view on the side it looks from). Views already on a sheet keep their direction.
+
+### Fixed
+
+- The thick ends of a cutting line now lie wholly outside the view, 2 mm clear of the outline (ISO 128-44), instead of running over the part's edge.
+
 ## [1.503.0] - 2026-11-11
 
 ### Added
@@ -3110,7 +3120,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.503.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.504.0...HEAD
+[1.504.0]: https://github.com/kothf/step-viewer/compare/v1.503.0...v1.504.0
 [1.503.0]: https://github.com/kothf/step-viewer/compare/v1.502.0...v1.503.0
 [1.502.0]: https://github.com/kothf/step-viewer/compare/v1.501.0...v1.502.0
 [1.501.0]: https://github.com/kothf/step-viewer/compare/v1.500.0...v1.501.0

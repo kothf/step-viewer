@@ -518,6 +518,9 @@ export function arrowHead(x: number, y: number, dx: number, dy: number, len = 3.
 }
 
 /** Marks on a parent view for the views made from it: cutting lines, detail circles, view arrows. */
+/** How far a cutting line runs out past the view: its 6 mm thick end lies wholly outside the outline, 2 mm clear (ISO 128-44). */
+const CUT_RUN = 8;
+
 export function childMarks(sheet: Sheet, parent: DrawingView, pl: Placement): Prim[] {
   const out: Prim[] = [];
   const r = viewRect(pl);
@@ -558,7 +561,7 @@ export function childMarks(sheet: Sheet, parent: DrawingView, pl: Placement): Pr
         lo = Math.max(lo, Math.min(k0, k1)); hi = Math.min(hi, Math.max(k0, k1));
       }
       if (lo < hi) { t0 = Math.min(t0, lo); t1 = Math.max(t1, hi); }
-      t0 -= 4; t1 += 4;
+      t0 -= CUT_RUN; t1 += CUT_RUN;
       const P = (t: number): [number, number] => [a[0] + ux * t, a[1] + uy * t];
       const [s0, s1] = [P(t0), P(t1)];
       out.push({ t: "l", p: [...P(t0 + 6), ...P(t1 - 6)] as [number, number, number, number], pen: "center", layer: "ANNOT" });
@@ -604,7 +607,7 @@ function pathMarks(legs: CutLeg[], q: [number, number], letter: string, pl: Plac
   const d0 = dir(pts[1], pts[0]), last = legs[legs.length - 1].cut, n = pts.length;
   const d1 = dir(pts[n - 2], pts[n - 1]);
   const run = (p: [number, number], d: [number, number], k: number): [number, number] => [p[0] + d[0] * k, p[1] + d[1] * k];
-  const s0 = run(pts[0], d0, exitAt(pts[0], d0, r) + 4), s1 = run(pts[n - 1], d1, last ? exitAt(pts[n - 1], d1, r) + 4 : 0);
+  const s0 = run(pts[0], d0, exitAt(pts[0], d0, r) + CUT_RUN), s1 = run(pts[n - 1], d1, last ? exitAt(pts[n - 1], d1, r) + CUT_RUN : 0);
   const line = [s0, ...pts.slice(1, -1), s1];
   for (let i = 0; i + 1 < line.length; i++) out.push({ t: "l", p: [...line[i], ...line[i + 1]] as [number, number, number, number], pen: "center", layer: "ANNOT" });
   out.push({ t: "l", p: [...s0, ...run(s0, d0, -6)] as [number, number, number, number], pen: "frame", layer: "ANNOT" });
@@ -634,7 +637,7 @@ function alignedMarks(path: number[], ang: number, q: [number, number], letter: 
   const dir = (a: [number, number], b: [number, number]): [number, number] => { const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1; return [(b[0] - a[0]) / L, (b[1] - a[1]) / L]; };
   const run = (p: [number, number], d: [number, number], k: number): [number, number] => [p[0] + d[0] * k, p[1] + d[1] * k];
   const d1 = dir(c, e1), d2 = dir(c, e2);
-  const s1 = run(e1, d1, exitAt(e1, d1, r) + 4), s2 = run(e2, d2, exitAt(e2, d2, r) + 4);
+  const s1 = run(e1, d1, exitAt(e1, d1, r) + CUT_RUN), s2 = run(e2, d2, exitAt(e2, d2, r) + CUT_RUN);
   out.push({ t: "l", p: [...s1, ...c] as [number, number, number, number], pen: "center", layer: "ANNOT" });
   out.push({ t: "l", p: [...c, ...s2] as [number, number, number, number], pen: "center", layer: "ANNOT" });
   for (const [s, d] of [[s1, d1], [s2, d2]] as [[number, number], [number, number]][]) out.push({ t: "l", p: [...s, ...run(s, d, -6)] as [number, number, number, number], pen: "frame", layer: "ANNOT" });
