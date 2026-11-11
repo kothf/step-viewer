@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ANSI_UNC, ANSI_UNF, HOLE_STANDARDS, ISO_FINE, ISO_METRIC, holeSize, majorOf, standardOf, threadClass } from "../../src/model/holes";
+import { ANSI_UNC, ANSI_UNF, HOLE_STANDARDS, ISO_FINE, ISO_METRIC, headPocket, holeSize, majorOf, screwTypes, standardOf, threadClass, threadClasses } from "../../src/model/holes";
 
 test("hole sizes: ISO M1.6 to M64 coarse, fine pitches, ANSI inch UNC/UNF, each row consistent (FR-FT-051)", () => {
   assert.equal(ISO_METRIC[0].size, "M1.6");
@@ -70,9 +70,30 @@ test("hole options: near/far side and under head countersinks, head clearance cu
   near(run({ end: "blind", depth: { v: 10 }, drillAngle: { v: PI / 2 } }), PI * 25 * 10 + cone(5, 0, 5), "drill angle 90°");
   near(run({ end: "offset", upTo: { std: "XY" }, upToOffset: { v: 5 } }), PI * 25 * 15, "offset from surface");
   near(run({ end: "offset", upTo: { std: "XY" }, upToOffset: { v: 5 }, reverseOffset: true }), PI * 25 * 20, "offset reversed (past the bottom)");
+  // Remove thread: M12 (major 12) cut 8 deep over a Ø10 drill; through thread = the whole plate at the major Ø.
+  near(run({ kind: "tapped", size: "M12", major: 12, threadDepth: { v: 8 }, threadMode: "remove" }), PI * 36 * 8 + PI * 25 * 12, "remove thread");
+  near(run({ kind: "tapped", size: "M12", major: 12, threadEnd: "through", threadMode: "remove" }), PI * 36 * 20, "remove thread through");
+  near(run({ kind: "tapped", size: "M12", major: 12, threadDepth: { v: 8 }, threadMode: "none" }), PI * 25 * 20, "no cosmetic thread");
   near(run({ end: "vertex", upToVertex: { edge: { faces: ["f1:side:s1l1", "f1:side:s1l2"] }, at: [50, -30, 0] } }), PI * 25 * 20, "up to vertex");
   // An option countersink narrower than what it opens is refused.
   const bad = m.evaluate(doc([rect("s1", 100, 60), { id: "f1", type: "extrude", name: "E", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
     { id: "h", type: "hole", name: "Hole1", plane: { face: { name: "f1:end" } }, pts: [[0, 0]], kind: "simple", diameter: { v: 10 }, end: "through", depth: { v: 10 }, nearCs: sink(8) } as Feature]));
   assert.equal(bad.statuses.at(-1)?.code, "E-HOLE-OPTCS");
+});
+
+test("screw types size the head pocket; thread classes (FR-FT-051)", () => {
+  assert.deepEqual(headPocket("M6", undefined, "cbore"), [11, 6.4]);
+  assert.deepEqual(headPocket("M6", "din7984", "cbore"), [11, 4.4]);
+  assert.deepEqual(headPocket("M6", "iso7380", "cbore"), [11.5, 3.7]);
+  assert.deepEqual(headPocket("M6", "iso1207", "cbore"), [11, 4.3]);
+  assert.deepEqual(headPocket("M6", "iso2009", "csink"), [12.6, 90]);
+  assert.deepEqual(headPocket("M6", undefined, "csink"), [13.44, 90]);
+  assert.deepEqual(headPocket("M10x1.25", "din7984", "cbore"), [18, 6.6]);
+  assert.equal(headPocket("M20", "iso1207", "cbore"), null);
+  assert.deepEqual(screwTypes("M2", "cbore"), ["iso4762", "iso1207"]);
+  assert.deepEqual(screwTypes("M6", "csink"), ["iso10642", "iso2009"]);
+  assert.deepEqual(screwTypes("1/4-20 UNC", "cbore"), ["iso4762"]);
+  assert.deepEqual(headPocket("1/4-20 UNC", "din7984", "cbore"), headPocket("1/4-20 UNC", undefined, "cbore"));
+  assert.equal(threadClasses("M6")[0], "6H");
+  assert.equal(threadClasses("1/4-20 UNC")[0], "2B");
 });

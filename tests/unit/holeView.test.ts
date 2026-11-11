@@ -39,6 +39,10 @@ test("section: counterbore, countersink, thread", () => {
   const th = holeSection(hole({ kind: "tapped", size: "M6", major: 6, diameter: { v: 5 }, threadDepth: { v: 8 }, depth: { v: 12 } }))!;
   assert.deepEqual(th.thread, { r: 3, z0: 0, z1: 8 });
   assert.equal(holeSection(hole({ kind: "cbore" })), null);
+  const rm = holeSection(hole({ kind: "tapped", size: "M6", major: 6, diameter: { v: 5 }, threadDepth: { v: 8 }, depth: { v: 12 }, threadMode: "remove" }))!;
+  assert.deepEqual(rm.prof.slice(0, 3), [[3, 0], [3, 8], [2.5, 8]]);
+  assert.equal(rm.thread, undefined);
+  assert.deepEqual(holeCallout(hole({ kind: "tapped", size: "M6", diameter: { v: 5 }, threadDepth: { v: 8 }, depth: { v: 12 }, tclass: "6G" }), f, fa, label), ["Ø5 ↧12", "M6-6G ↧8"]);
   assert.equal(holeSection(hole({ diameter: { v: 0 } })), null);
 });
 
