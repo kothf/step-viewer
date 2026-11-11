@@ -32,3 +32,42 @@ test("hole sizes: ISO M1.6 to M64 coarse, fine pitches, ANSI inch UNC/UNF, each 
   assert.equal(threadClass("#10-32 UNF"), "2B");
   assert.equal(standardOf(undefined), "iso");
 });
+
+import { Modeller } from "../../src/kernel/model";
+import type { Feature, HoleFeature, PartDoc, SketchFeature, SkEnt } from "../../src/model/types";
+import { occ } from "./occ";
+
+const rect = (id: string, w: number, h: number): SketchFeature => {
+  const P = (k: string, x: number, y: number): SkEnt => ({ id: `${id}p${k}`, t: "point", x, y });
+  return { id, type: "sketch", name: id, plane: { std: "XY" }, rels: [], dims: [], ents: [
+    P("1", -w / 2, -h / 2), P("2", w / 2, -h / 2), P("3", w / 2, h / 2), P("4", -w / 2, h / 2),
+    { id: `${id}l1`, t: "line", a: `${id}p1`, b: `${id}p2` }, { id: `${id}l2`, t: "line", a: `${id}p2`, b: `${id}p3` },
+    { id: `${id}l3`, t: "line", a: `${id}p3`, b: `${id}p4` }, { id: `${id}l4`, t: "line", a: `${id}p4`, b: `${id}p1` }] };
+};
+const doc = (features: Feature[]): PartDoc => ({ schema: 1, kind: "part", id: "d", name: "t", units: { length: "mm", decimals: 2 }, props: {}, features, rollback: null });
+
+test("hole options: near/far side and under head countersinks, head clearance cut the expected volume (FR-FT-051)", async () => {
+  const m = new Modeller(await occ());
+  const plate = 100 * 60 * 20, PI = Math.PI;
+  const cone = (R: number, r: number, h: number) => (PI * h / 3) * (R * R + R * r + r * r);
+  const sink = (d: number) => ({ dia: { v: d }, angle: { v: PI / 2 } });
+  const run = (h: Partial<HoleFeature>) => {
+    const f = { id: "h", type: "hole", name: "Hole1", plane: { face: { name: "f1:end" } }, pts: [[0, 0]], kind: "simple", diameter: { v: 10 }, end: "through", depth: { v: 10 }, ...h } as Feature;
+    const r = m.evaluate(doc([rect("s1", 100, 60), { id: "f1", type: "extrude", name: "E", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } }, f]));
+    assert.ok(r.statuses.every(s => s.ok), JSON.stringify(r.statuses));
+    return plate - m.props(r.body!).volume;
+  };
+  const near = (a: number, b: number, msg: string) => assert.ok(Math.abs(a - b) < 1e-3 * b, `${msg}: ${a} vs ${b}`);
+  near(run({ nearCs: sink(14) }), PI * 25 * 18 + cone(7, 5, 2), "near side");
+  near(run({ farCs: sink(14) }), PI * 25 * 18 + cone(7, 5, 2), "far side");
+  near(run({ nearCs: sink(14), farCs: sink(12) }), PI * 25 * 17 + cone(7, 5, 2) + cone(6, 5, 1), "both sides");
+  near(run({ kind: "cbore", cbDia: { v: 18 }, cbDepth: { v: 6 }, headClear: { v: 1 }, underCs: sink(12) }), PI * 81 * 7 + cone(6, 5, 1) + PI * 25 * 12, "counterbore, head clearance, under head");
+  near(run({ kind: "cbore", cbDia: { v: 18 }, cbDepth: { v: 6 }, nearCs: sink(20) }), cone(10, 9, 1) + PI * 81 * 5 + PI * 25 * 14, "counterbore with near side");
+  near(run({ kind: "csink", csDia: { v: 20 }, csAngle: { v: PI / 2 }, headClear: { v: 2 } }), PI * 100 * 2 + cone(10, 5, 5) + PI * 25 * 13, "countersink head clearance");
+  // A far side countersink on an Up to next hole opens where the hole stops.
+  near(run({ end: "next", farCs: sink(12) }), PI * 25 * 19 + cone(6, 5, 1), "up to next far side");
+  // An option countersink narrower than what it opens is refused.
+  const bad = m.evaluate(doc([rect("s1", 100, 60), { id: "f1", type: "extrude", name: "E", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
+    { id: "h", type: "hole", name: "Hole1", plane: { face: { name: "f1:end" } }, pts: [[0, 0]], kind: "simple", diameter: { v: 10 }, end: "through", depth: { v: 10 }, nearCs: sink(8) } as Feature]));
+  assert.equal(bad.statuses.at(-1)?.code, "E-HOLE-OPTCS");
+});

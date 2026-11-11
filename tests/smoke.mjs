@@ -3436,6 +3436,14 @@ try {
     await idle();
     const iso = await mp.evaluate(() => ({ s: document.querySelector('#mc-pm select[data-k="size"]')?.value, d: parseFloat(document.querySelector('#mc-pm input[data-num="diameter"]')?.value), n: document.querySelectorAll('#mc-pm select[data-k="size"] option').length }));
     check(unc.s === "1/4-20 UNC" && Math.abs(unc.d - 5.105) < 1e-3 && unc.n === 14 && iso.s === "M6" && iso.d === 5 && iso.n === 25, `model 1.517: hole Standard ANSI inch UNC and back to ISO metric (${JSON.stringify(unc)}, ${JSON.stringify(iso)})`);
+    // Options: Near side countersink defaults to the hole + 1 mm at 90°; unticking takes it away.
+    await mp.check('#mc-pm input[data-k="optNear"]').catch(() => {});
+    await idle();
+    const ncs = await mp.evaluate(() => ({ d: document.querySelector('#mc-pm input[data-num="nearCs.dia"]')?.value ?? null, a: document.querySelector('#mc-pm input[data-num="nearCs.angle"]')?.value ?? null, far: !!document.querySelector('#mc-pm input[data-k="optFar"]'), head: !!document.querySelector('#mc-pm input[data-k="optHead"]') }));
+    await mp.uncheck('#mc-pm input[data-k="optNear"]').catch(() => {});
+    await idle();
+    const ncsOff = await mp.evaluate(() => !document.querySelector('#mc-pm input[data-num="nearCs.dia"]'));
+    check(ncs.d === "6" && ncs.a === "90" && ncs.far && !ncs.head && ncsOff, `model 1.517: hole Options near side countersink on and off (${JSON.stringify(ncs)}, ${ncsOff})`);
     await mp.click("#mc-ok");
     await idle();
     const vHole = await vol(), stHole = await lastSt();

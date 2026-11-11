@@ -18,7 +18,7 @@ import { frameOf } from "./sheet";
 import { dtargetPrims } from "./dtarget";
 import { skPrims } from "./sheetSketch";
 import { textWidth } from "./textWidth";
-import { threadThrough } from "../model/types";
+import { threadThrough, type HoleSink } from "../model/types";
 import { threadClass } from "../model/holes";
 
 type P2 = [number, number];
@@ -364,9 +364,14 @@ export function holeText(e: MEdge, ctx: AnnotCtx, count = true): string[] {
         // Thread end Through all on an Up to next / up to face hole: the thread runs the whole drill, no depth.
         lines.push(`${H.size}-${threadClass(H.size)}${thru ? ` ${ctx.label("THRU")}` : H.threadDepth && !threadThrough(H) ? ` ↧${f(H.threadDepth.v)}` : ""}`);
       } else lines.push(`${n}Ø${f(H.diameter.v)}${depth}`);
-      if (H.kind === "cbore" && H.cbDia) lines.push(`⌴Ø${f(H.cbDia.v)}${H.cbDepth ? ` ↧${f(H.cbDepth.v)}` : ""}`);
+      // Head clearance deepens the counterbore; the callout gives the depth as cut.
+      if (H.kind === "cbore" && H.cbDia) lines.push(`⌴Ø${f(H.cbDia.v)}${H.cbDepth ? ` ↧${f(H.cbDepth.v + (H.headClear?.v ?? 0))}` : ""}`);
+      const sink = (s: HoleSink, tail: string) => `⌵Ø${f(s.dia.v)} × ${fa(s.angle.v * 180 / Math.PI)}°${tail ? ` ${ctx.label(tail)}` : ""}`;
+      if (H.kind === "cbore" && H.underCs) lines.push(sink(H.underCs, "UNDER HEAD"));
+      if (H.nearCs && H.kind !== "csink" && H.kind !== "insert") lines.push(sink(H.nearCs, ""));
       if (H.kind === "cdrill" && H.cdDia) lines.push(`⌴Ø${f(H.cdDia.v)}${H.cdDepth ? ` ↧${f(H.cdDepth.v)}` : ""} × ${fa((H.cdAngle?.v ?? (118 * Math.PI) / 180) * 180 / Math.PI)}°`);
       if (H.kind === "csink" && H.csDia) lines.push(`⌵Ø${f(H.csDia.v)} × ${fa((H.csAngle?.v ?? Math.PI / 2) * 180 / Math.PI)}°`);
+      if (H.farCs && H.end !== "blind" && H.kind !== "slot" && H.kind !== "insert") lines.push(sink(H.farCs, "FAR SIDE"));
       return lines;
     }
   }

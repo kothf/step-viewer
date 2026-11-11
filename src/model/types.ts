@@ -587,6 +587,13 @@ export interface HoleFeature {
   cbDepth?: Num;
   csDia?: Num;
   csAngle?: Num;
+  /** Options (FR-FT-051, as in SolidWorks' Hole Wizard): a countersink on the near side (at the top of the hole or
+   *  its counterbore), under the counterbore's head, and on the far side where a hole that is not blind leaves the
+   *  material; head clearance deepens a counterbore or puts a cylinder of the countersink's width above the cone. */
+  nearCs?: HoleSink;
+  underCs?: HoleSink;
+  farCs?: HoleSink;
+  headClear?: Num;
   /** Tapped: thread depth (cosmetic thread) and nominal diameter. */
   threadDepth?: Num;
   /** Tapped, hole end not blind: "through" = the thread runs the whole drill (SolidWorks' thread Through All); absent = `threadDepth`. */
@@ -594,6 +601,9 @@ export interface HoleFeature {
   major?: number;
   pitch?: number;
 }
+
+/** A countersink option of a hole: its diameter and included angle. */
+export interface HoleSink { dia: Num; angle: Num }
 
 /** The tapped hole's thread runs the whole drill (thread end Through all; only for holes that are not blind). */
 export function threadThrough(f: HoleFeature): boolean { return f.kind === "tapped" && f.threadEnd === "through" && f.end !== "blind"; }
