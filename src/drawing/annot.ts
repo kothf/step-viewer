@@ -19,6 +19,7 @@ import { dtargetPrims } from "./dtarget";
 import { skPrims } from "./sheetSketch";
 import { textWidth } from "./textWidth";
 import { threadThrough } from "../model/types";
+import { threadClass } from "../model/holes";
 
 type P2 = [number, number];
 export type Label = (s: string, p?: Record<string, string>) => string;
@@ -361,7 +362,7 @@ export function holeText(e: MEdge, ctx: AnnotCtx, count = true): string[] {
         const drill = H.end === "through" ? ctx.topo?.cyls.find(y => Math.abs(y.r - H.diameter.v / 2) < 1e-4 && Math.abs(Math.abs(dot3(y.ax, ax)) - 1) < 1e-6 && (() => { const w = sub3(c, y.o), al = dot3(w, y.ax); return Math.hypot(w[0] - y.ax[0] * al, w[1] - y.ax[1] * al, w[2] - y.ax[2] * al) < 1e-3; })()) : undefined;
         const thru = H.end === "through" && (H.threadEnd === "through" || !H.threadDepth || (!!drill && H.threadDepth.v >= drill.v1 - drill.v0 - 1e-6));
         // Thread end Through all on an Up to next / up to face hole: the thread runs the whole drill, no depth.
-        lines.push(`${H.size}-6H${thru ? ` ${ctx.label("THRU")}` : H.threadDepth && !threadThrough(H) ? ` ↧${f(H.threadDepth.v)}` : ""}`);
+        lines.push(`${H.size}-${threadClass(H.size)}${thru ? ` ${ctx.label("THRU")}` : H.threadDepth && !threadThrough(H) ? ` ↧${f(H.threadDepth.v)}` : ""}`);
       } else lines.push(`${n}Ø${f(H.diameter.v)}${depth}`);
       if (H.kind === "cbore" && H.cbDia) lines.push(`⌴Ø${f(H.cbDia.v)}${H.cbDepth ? ` ↧${f(H.cbDepth.v)}` : ""}`);
       if (H.kind === "cdrill" && H.cdDia) lines.push(`⌴Ø${f(H.cdDia.v)}${H.cdDepth ? ` ↧${f(H.cdDepth.v)}` : ""} × ${fa((H.cdAngle?.v ?? (118 * Math.PI) / 180) * 180 / Math.PI)}°`);
@@ -434,7 +435,7 @@ export function geoHole(h: MHole, f: (v: number) => string = v => fmtNum(v, unde
     const w = sub3(t.c, h.o), v = dot3(w, h.ax);
     return Math.hypot(w[0] - h.ax[0] * v, w[1] - h.ax[1] * v, w[2] - h.ax[2] * v) < 1e-3;
   });
-  if (th) lines.push(`${th.size ?? `M${fa(th.d)}`}-6H ${th.L == null ? (thru ? "THRU" : `↧${f(d.b)}`) : `↧${f(th.L)}`}`);
+  if (th) lines.push(`${th.size ?? `M${fa(th.d)}`}-${threadClass(th.size)} ${th.L == null ? (thru ? "THRU" : `↧${f(d.b)}`) : `↧${f(th.L)}`}`);
   if (extra) lines.push(extra);
   // The rest past the drill (a drill point) is part of the key, so a flat-bottomed hole is not counted with a pointed one.
   const rest = W.slice(i + 1).map(g => `${g.k}:${f(g.b - g.a)}:${f(g.ra)}:${f(g.rb)}`).join(",");

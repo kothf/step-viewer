@@ -562,8 +562,10 @@ export interface HoleFeature {
   pts: [number, number][];
   /** clear = ISO 273 clearance hole for the size and fit; cdrill = counterdrilled; slot = an obround of `slotLen`. */
   kind: "simple" | "cbore" | "csink" | "tapped" | "insert" | "clear" | "cdrill" | "slot";
-  /** ISO size ("M6") the values were taken from; absent for a custom hole. */
+  /** Size ("M6", "M8x1", "1/4-20 UNC") the values were taken from; absent for a custom hole. */
   size?: string;
+  /** Size table (FR-FT-051): absent = ISO metric coarse. */
+  standard?: "isofine" | "unc" | "unf";
   fit?: "close" | "normal" | "loose";
   diameter: Num;
   /** upto: to a face or plane (`upTo`); next: until the hole leaves the material. */

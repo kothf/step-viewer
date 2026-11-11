@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.517.0] - 2026-11-11
+
+### Added
+- Hole Wizard sizes and standards: a Standard box (ISO metric, ISO metric fine, ANSI inch UNC, ANSI inch UNF) above Size. ISO metric now runs from M1.6 to M64 (clearance holes to ISO 273, counterbores for ISO 4762 cap screws, countersinks for ISO 10642 / DIN 7991), ISO fine has 20 common fine pitches (M8x1 to M64x4), and the inch tables have #2 to 1" with 75 % tap drills, close/free/loose clearance, socket head counterbores and 82° flat-head countersinks. Switching the standard keeps the nearest size. Drawing callouts give inch threads the class 2B ("1/4-20 UNC-2B").
+
 ## [1.516.0] - 2026-11-11
 
 ### Added
@@ -3206,7 +3211,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.516.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.517.0...HEAD
+[1.517.0]: https://github.com/kothf/step-viewer/compare/v1.516.0...v1.517.0
 [1.516.0]: https://github.com/kothf/step-viewer/compare/v1.515.0...v1.516.0
 [1.515.0]: https://github.com/kothf/step-viewer/compare/v1.514.0...v1.515.0
 [1.514.0]: https://github.com/kothf/step-viewer/compare/v1.513.0...v1.514.0

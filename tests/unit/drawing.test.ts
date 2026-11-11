@@ -1842,6 +1842,11 @@ test("thread end Through all: the thread runs the whole drill in the model, the 
   assert.deepEqual(lims, [0], "every thread stops at the bottom face");
   const ctx = { topo, holes: mi.holes, threads: mi.threads, items: [], box: null, dec: ".", label: (s: string) => s } as never;
   assert.deepEqual(holeText({ t: "c", c: [20, 0, 20], ax: [0, 0, 1], r: 3.4 } as never, ctx), ["2× Ø6.8 THRU", "M8-6H THRU"]);
+  // An inch size gets the unified class 2B.
+  const hf = (mi.holes as { f: { size?: string } }[]).find(h => h.f.size === "M8")!.f;
+  hf.size = "5/16-18 UNC";
+  assert.deepEqual(holeText({ t: "c", c: [20, 0, 20], ax: [0, 0, 1], r: 3.4 } as never, ctx), ["2× Ø6.8 THRU", "5/16-18 UNC-2B THRU"]);
+  hf.size = "M8";
   assert.deepEqual(holeText({ t: "c", c: [-20, 0, 20], ax: [0, 0, 1], r: 2.5 } as never, ctx), ["Ø5", "M6-6H"], "up to next: the thread is as deep as the drill");
   // Blind again: the typed depth is back.
   const d2 = structuredClone(d);
