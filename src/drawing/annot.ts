@@ -324,7 +324,10 @@ export function holeText(e: MEdge, ctx: AnnotCtx, count = true): string[] {
       const lines: string[] = [];
       if (H.kind === "tapped" && H.size) {
         lines.push(`${n}Ø${f(H.diameter.v)}${depth}`);
-        lines.push(`${H.size}-6H${H.threadDepth ? ` ↧${f(H.threadDepth.v)}` : H.end === "through" ? ` ${ctx.label("THRU")}` : ""}`);
+        // A thread at least as deep as a through drill is long runs through too.
+        const drill = H.end === "through" ? ctx.topo?.cyls.find(y => Math.abs(y.r - H.diameter.v / 2) < 1e-4 && Math.abs(Math.abs(dot3(y.ax, ax)) - 1) < 1e-6 && (() => { const w = sub3(c, y.o), al = dot3(w, y.ax); return Math.hypot(w[0] - y.ax[0] * al, w[1] - y.ax[1] * al, w[2] - y.ax[2] * al) < 1e-3; })()) : undefined;
+        const thru = H.end === "through" && (!H.threadDepth || (!!drill && H.threadDepth.v >= drill.v1 - drill.v0 - 1e-6));
+        lines.push(`${H.size}-6H${thru ? ` ${ctx.label("THRU")}` : H.threadDepth ? ` ↧${f(H.threadDepth.v)}` : ""}`);
       } else lines.push(`${n}Ø${f(H.diameter.v)}${depth}`);
       if (H.kind === "cbore" && H.cbDia) lines.push(`⌴Ø${f(H.cbDia.v)}${H.cbDepth ? ` ↧${f(H.cbDepth.v)}` : ""}`);
       if (H.kind === "cdrill" && H.cdDia) lines.push(`⌴Ø${f(H.cdDia.v)}${H.cdDepth ? ` ↧${f(H.cdDepth.v)}` : ""} × ${fa((H.cdAngle?.v ?? (118 * Math.PI) / 180) * 180 / Math.PI)}°`);
@@ -833,8 +836,10 @@ export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: Ann
   if (only && ctx.topo) ctx = { ...ctx, topo: topoOnly(ctx.topo, only) };
   const out: AnnotOut = { prims: [], hits: [], dangling: [] };
   const vd = viewDir(sheet, v), { P, n } = projector(vd);
-  if (v.marks !== false && ctx.topo) out.prims.push(...centreMarks(v, pl, v.kind === "section" ? cutAway(sheet, v, ctx.topo) : ctx.topo, P, n));
-  if (v.threads !== false && ctx.threads?.length) out.prims.push(...threadPrims(v, pl, ctx.threads, ctx.topo, P, n));
+  // A plain section leaves out the centre marks and cosmetic threads of what its cut took away.
+  const kept = v.kind === "section" && ctx.topo ? cutAway(sheet, v, ctx.topo) : ctx.topo;
+  if (v.marks !== false && kept) out.prims.push(...centreMarks(v, pl, kept, P, n));
+  if (v.threads !== false && ctx.threads?.length) out.prims.push(...threadPrims(v, pl, ctx.threads, kept, P, n));
   if (v.sketches && ctx.sketches?.length) out.prims.push(...sketchPrims(v, pl, ctx.sketches, P));
   const btable = (sheet.annots ?? []).some(a => a.t === "btable" && a.view === v.id);
   if (v.bendLines !== false && ctx.bends?.length) out.prims.push(...bendPrims(v, pl, ctx.bends, P, ctx, btable));
@@ -1392,12 +1397,14 @@ export const AUTO_LAYERS = new Set<string>(["CENTER", "THREAD", "SKETCH"]);
 export function threadRun(t: ThreadInfo, topo: Topo | null): { c: V3; dir: V3; L: number; R: number } | null {
   const cyl = topo?.cyls.find(y => Math.abs(y.r - t.r) < 1e-4 && Math.abs(Math.abs(dot3(y.ax, t.ax)) - 1) < 1e-6 && (() => { const w = sub3(t.c, y.o), al = dot3(w, y.ax); return Math.hypot(w[0] - y.ax[0] * al, w[1] - y.ax[1] * al, w[2] - y.ax[2] * al) < 1e-3; })());
   if (!cyl) return null;
-  const tc = dot3(sub3(t.c, cyl.o), cyl.ax);
+  // A start off the cylinder (a hole placed from a plane in the air) moves along the axis to its nearer end.
+  const al = dot3(sub3(t.c, cyl.o), cyl.ax), tc = Math.min(Math.max(al, cyl.v0), cyl.v1);
+  const c0: V3 = [t.c[0] + cyl.ax[0] * (tc - al), t.c[1] + cyl.ax[1] * (tc - al), t.c[2] + cyl.ax[2] * (tc - al)];
   const toEnd = Math.abs(tc - cyl.v0) <= Math.abs(tc - cyl.v1);
   const dir: V3 = toEnd ? cyl.ax : [-cyl.ax[0], -cyl.ax[1], -cyl.ax[2]];
   const full = toEnd ? cyl.v1 - tc : tc - cyl.v0;
   const L = t.L == null ? full : Math.min(t.L, full);
-  return L > 1e-6 ? { c: t.c, dir, L, R: t.r } : null;
+  return L > 1e-6 ? { c: c0, dir, L, R: t.r } : null;
 }
 
 /**
