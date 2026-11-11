@@ -1,4 +1,4 @@
-// The Modify box (FR-UI-114): the small window SolidWorks opens next to a dimension when it is placed or
+// The Modify box (FR-UI-114): the small window a CAD app opens next to a dimension when it is placed or
 // double-clicked. A value field (expressions allowed) with spin arrows, ✓ to accept, ✕ to cancel and ⟲ to
 // rebuild with the value typed so far. Enter accepts, Esc cancels, ↑/↓ and the wheel step the value by the
 // increment in its own field (remembered per kind of value), and a click outside keeps the value as typed. A
@@ -131,7 +131,7 @@ export class ModifyBox {
     this.el.style.top = `${y}px`;
   }
 
-  /** Steps a plain number by the increment: ×10 with Shift, ×0.1 with Alt, as in SolidWorks. */
+  /** Steps a plain number by the increment: ×10 with Shift, ×0.1 with Alt, as in other CAD apps. */
   private spin(dir: 1 | -1, e?: { shiftKey: boolean; altKey: boolean }) {
     const v = Number(this.input.value.trim().replace(",", "."));
     if (!Number.isFinite(v)) return;

@@ -137,7 +137,7 @@ function finish(mode: BomMode, rows: BomRow[], keyOf: (comp: string) => string |
 /** The BOM as table cells, in the order of `BOM_COLS`. */
 export const bomCells = (b: Bom): string[][] => b.rows.map(r => [String(r.item), r.part, r.description, String(r.qty), r.material]);
 
-/** Balloon outlines (SolidWorks' balloon styles): the plain circle, a circle split for the quantity, or a polygon; "none" = the number alone, underlined. */
+/** Balloon outlines (a CAD app's balloon styles): the plain circle, a circle split for the quantity, or a polygon; "none" = the number alone, underlined. */
 export type BalloonShape = "split" | "tri" | "hex" | "box" | "none";
 export const BALLOON_R = 5;
 

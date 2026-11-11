@@ -910,7 +910,7 @@ export function freeSection(sc: SectionCut) {
 
 /**
  * An offset or half section's steps (the cutter's walls square to the cut planes, at a constant t inside the model) are
- * no edges of the part: ISO 128-44 and SolidWorks leave them out of the section, so the hatching on both sides meets on
+ * no edges of the part: ISO 128-44 and CAD apps leave them out of the section, so the hatching on both sides meets on
  * no line. Their edges lie on one line each in the view; where cut faces lie on both sides of it the line is dropped
  * (drawings exam #12). Where the step meets material that is not cut, it stays: there it is the cut face's outline.
  */

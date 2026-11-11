@@ -1,6 +1,6 @@
 /**
  * Hover cursor glyphs (FR-SEL-012): the pointer over the graphics area shows a small icon for the kind of
- * entity under it (face, edge, vertex, other snap point, plane, sketch entity), as SolidWorks does beside
+ * entity under it (face, edge, vertex, other snap point, plane, sketch entity), as a CAD app does beside
  * its arrow. The canvas carries `data-hover`; CSS rules (installed once) map it to an SVG cursor. A cursor
  * set inline (grab, pointer, crosshair…) still wins, so drag handles and tools keep theirs.
  */

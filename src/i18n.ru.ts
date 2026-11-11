@@ -600,7 +600,7 @@ export const RU: Record<string, string> = {
 
   // ---------- 1.13: exact geometry, STEP / DXF export, notes, mesh files ----------
   "Open STEP / IGES / BREP, STL / OBJ / 3MF, or Gerber / Excellon layers and .zip sets (Ctrl+O)": "Открыть STEP / IGES / BREP, STL / OBJ / 3MF или слои Gerber / Excellon и наборы .zip (Ctrl+O)",
-  "AP203 · AP214 · AP242, plus IGES, BREP and SolidWorks parts and assemblies, parsed by OpenCASCADE, and STL, OBJ and 3MF meshes. PCB layers: Gerber RS-274X / X2, Excellon drill and .zip sets. Everything runs in your browser: files never leave your computer.": "AP203 · AP214 · AP242, а также IGES, BREP и детали и сборки SolidWorks, разбор с помощью OpenCASCADE, и сетки STL, OBJ и 3MF. Слои плат: Gerber RS-274X / X2, сверловка Excellon и наборы .zip. Всё работает в браузере: файлы не покидают ваш компьютер.",
+  "AP203 · AP214 · AP242, plus IGES, BREP and SLDPRT parts and assemblies, parsed by OpenCASCADE, and STL, OBJ and 3MF meshes. PCB layers: Gerber RS-274X / X2, Excellon drill and .zip sets. Everything runs in your browser: files never leave your computer.": "AP203 · AP214 · AP242, а также IGES, BREP и детали SLDPRT и сборки SLDASM, разбор с помощью OpenCASCADE, и сетки STL, OBJ и 3MF. Слои плат: Gerber RS-274X / X2, сверловка Excellon и наборы .zip. Всё работает в браузере: файлы не покидают ваш компьютер.",
   "Exact geometry: loading…": "Точная геометрия: загрузка…",
   "Exact geometry": "Точная геометрия",
   "Exact geometry: {n} of {m} parts": "Точная геометрия: {n} из {m} деталей",
@@ -665,16 +665,16 @@ export const RU: Record<string, string> = {
   "Origin axes": "Оси начала координат",
   "Ambient occlusion": "Затенение (ambient occlusion)",
   "Soft contact shadows in corners and gaps. Looks nicer, costs some speed on large models; off while sectioning.": "Мягкие тени в углах и зазорах. Красивее, но на больших моделях немного медленнее; при сечении выключено.",
-  // ---------- SolidWorks ----------
-  "SolidWorks files need the geometry kernel, which is turned off (?nokernel).": "Для файлов SolidWorks нужно геометрическое ядро, а оно отключено (?nokernel).",
-  "Reading the SolidWorks model in {name}…": "Чтение модели SolidWorks из {name}…",
+  // ---------- SLDPRT / SLDASM ----------
+  "SLDPRT/SLDASM files need the geometry kernel, which is turned off (?nokernel).": "Для файлов SLDPRT/SLDASM нужно геометрическое ядро, а оно отключено (?nokernel).",
+  "Reading the SLDPRT/SLDASM model in {name}…": "Чтение модели SLDPRT/SLDASM из {name}…",
   "Opening {name}. Open one part at a time, or drop the assembly with its parts.": "Открывается {name}. Открывайте детали по одной или перетащите сборку вместе с её деталями.",
   "{name} needs its part files: drop the assembly together with its parts, or the whole folder.": "Для {name} нужны файлы деталей: перетащите сборку вместе с деталями или всю папку.",
   "No geometry could be read from {name}.": "Не удалось прочитать геометрию из {name}.",
   "{n} part file is missing and left out: {list}. Drop the assembly together with its parts, or the whole folder.|{n} part files are missing and left out: {list}. Drop the assembly together with its parts, or the whole folder.|{n} part files are missing and left out: {list}. Drop the assembly together with its parts, or the whole folder.": "Нет {n} файла детали, она пропущена: {list}. Перетащите сборку вместе с деталями или всю папку.|Нет {n} файлов деталей, они пропущены: {list}. Перетащите сборку вместе с деталями или всю папку.|Нет {n} файлов деталей, они пропущены: {list}. Перетащите сборку вместе с деталями или всю папку.",
   "{n} face could not be rebuilt and is left out.|{n} faces could not be rebuilt and are left out.|{n} faces could not be rebuilt and are left out.": "{n} грань не удалось восстановить, она пропущена.|{n} грани не удалось восстановить, они пропущены.|{n} граней не удалось восстановить, они пропущены.",
   "Preview of {name}": "Эскиз {name}",
-  "This is the picture SolidWorks saved in the file. Its geometry could not be read, so nothing can be measured.": "Это картинка, которую SolidWorks сохранил в файле. Геометрию прочитать не удалось, поэтому измерять нечего.",
+  "This is the picture the CAD app saved in the file. Its geometry could not be read, so nothing can be measured.": "Это картинка, которую CAD-программа сохранила в файле. Геометрию прочитать не удалось, поэтому измерять нечего.",
 
   // ---------- part modelling: command bar, feature tree, property panel, sketcher ----------
   "New part": "Новая деталь",
@@ -4567,7 +4567,7 @@ export const RU: Record<string, string> = {
   "Wheel: zoom about the pointer.": "Колесо: масштаб относительно указателя.",
   "Middle drag": "Перетаскивание средней кнопкой",
   "Pan": "Сдвиг",
-  "Rotate (SolidWorks)": "Поворот (как в SolidWorks)",
+  "Rotate (CAD app style)": "Поворот (как в CAD-программах)",
   "In a sketch the middle button always rotates, since the left one draws.": "В эскизе средняя кнопка всегда поворачивает вид, так как левая рисует.",
   "Wheel zoom": "Масштаб колесом",
   "Wheel away zooms in": "Колесо от себя приближает",

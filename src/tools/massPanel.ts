@@ -1,4 +1,4 @@
-// Mass Properties panel (FR-MAT-002, Evaluate ▸ Mass properties): what SolidWorks lists in its
+// Mass Properties panel (FR-MAT-002, Evaluate ▸ Mass properties): what a CAD app lists in its
 // Mass Properties dialog, shown in a panel over the view, plus a plain-text copy.
 import { t } from "../i18n";
 import { UNITS, fmtArea, fmtMass, fmtNum, fmtVol, units } from "./units";

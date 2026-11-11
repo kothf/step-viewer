@@ -720,7 +720,7 @@ export function tryAdd(sk: SketchFeature, item: { rel?: SkRel; dim?: SkDim }): {
 }
 
 /**
- * A new relation between points and curves moves the points, as in SolidWorks: a free point given a
+ * A new relation between points and curves moves the points, as in other CAD apps: a free point given a
  * Midpoint on a line goes to the middle instead of the line (and what hangs on it) shifting towards it.
  * Solves once with every other point held; when that works, those positions are the start of the real
  * solve, which then has nothing left to move. Otherwise the usual least-movement solve decides.

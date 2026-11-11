@@ -158,16 +158,41 @@ jobs:
             --notes-file release-notes.md \
             --verify-tag
 
-      # Starts the site's vendor update as soon as the release exists (it opens the
-      # PR that pins this version). Needs a SITE_DISPATCH_TOKEN secret: a token
-      # allowed to run workflows in kothf/astro_source-new_theme. Without it the
-      # step is skipped and the site's scheduled vendor update picks it up.
-      - name: Ask aerocat.tech to pick up this release
+      # Pins this release on aerocat.tech (kothf/astro_source-new_theme). The site repo is private,
+      # so its own Actions cost minutes and stop when its billing fails (2026-11-11): the vendor.json
+      # pin is committed from here instead, through the API with the SITE_DISPATCH_TOKEN secret
+      # (needs Contents read/write on that repo). The NUC deploys the site's main by itself, without
+      # Actions. When the commit is refused, the site's vendor-update workflow is dispatched as before.
+      - name: Pin this release on aerocat.tech
         env:
           SITE_TOKEN: ${{ secrets.SITE_DISPATCH_TOKEN }}
+          SITE_REPO: kothf/astro_source-new_theme
         run: |
-          if [ -z "$SITE_TOKEN" ]; then echo "::notice::No SITE_DISPATCH_TOKEN secret: the vendor update was not dispatched"; exit 0; fi
-          GH_TOKEN="$SITE_TOKEN" gh workflow run vendor-update.yml --repo kothf/astro_source-new_theme --ref main
+          if [ -z "$SITE_TOKEN" ]; then echo "::notice::No SITE_DISPATCH_TOKEN secret: aerocat.tech was not told"; exit 0; fi
+          export GH_TOKEN="$SITE_TOKEN"
+          V="${TAG#v}"
+          SHA=$(cut -d' ' -f1 "dist/step-viewer-$V.tar.gz.sha256")
+          pin() {
+            # gh's own --jq and node, so the runner needs no jq
+            gh api "repos/$SITE_REPO/contents/vendor.json?ref=main" --jq .content | base64 -d > vendor.json || return 1
+            blob=$(gh api "repos/$SITE_REPO/contents/vendor.json?ref=main" --jq .sha) || return 1
+            cur=$(node -p 'JSON.parse(require("fs").readFileSync("vendor.json")).packages.find(p => p.name === "step-viewer").version')
+            if [ "$(printf '%s\n%s\n' "$cur" "$V" | sort -V | tail -1)" = "$cur" ]; then
+              echo "aerocat.tech already pins $cur"; return 0
+            fi
+            V="$V" SHA="$SHA" node -e '
+              const fs = require("fs"), j = JSON.parse(fs.readFileSync("vendor.json"));
+              Object.assign(j.packages.find(p => p.name === "step-viewer"), { version: process.env.V, sha256: process.env.SHA });
+              fs.writeFileSync("vendor.new", JSON.stringify(j, null, 2) + "\n");'
+            gh api -X PUT "repos/$SITE_REPO/contents/vendor.json" \
+              -f message="chore(vendor): update step-viewer $V" -f branch=main \
+              -f sha="$blob" -f content="$(base64 -w0 vendor.new)" --jq .commit.sha >/dev/null || return 1
+            echo "aerocat.tech now pins step-viewer $V ($cur before)"
+          }
+          # a second try covers a concurrent commit on the site's main (stale blob sha)
+          pin || { sleep 5; pin; } && exit 0
+          echo "::warning::Could not commit the pin (does SITE_DISPATCH_TOKEN have Contents write on $SITE_REPO?); dispatching its vendor update instead"
+          gh workflow run vendor-update.yml --repo "$SITE_REPO" --ref main
 
       - uses: actions/configure-pages@v6
 

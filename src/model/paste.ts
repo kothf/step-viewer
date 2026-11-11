@@ -1,5 +1,5 @@
 // Copy and paste features (FR-HIS-014): Ctrl+C on a sketch, an extrude, a revolve or a hole in the tree, then Ctrl+V
-// with a plane or a flat face selected puts a copy on it (as SolidWorks does). Pure: the controller supplies the
+// with a plane or a flat face selected puts a copy on it (as a CAD app does). Pure: the controller supplies the
 // target plane and stores the result as one undo step.
 import { nextName, uid } from "./doc";
 import type { Feature, PartDoc, PlaneRef, SketchFeature } from "./types";

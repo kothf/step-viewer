@@ -11,7 +11,7 @@ export interface Prefs {
   rotateToSketch: boolean;
   /** Tessellation of the part on screen: coarse is faster, fine is smoother. */
   quality: "coarse" | "normal" | "fine";
-  /** Check the body after each feature (BRepCheck), as SolidWorks' verification on rebuild. */
+  /** Check the body after each feature (BRepCheck), as a CAD app's verification on rebuild. */
   verify: boolean;
   /** Seconds after the last change before the recovery journal is written; 0 = off. */
   autosave: number;

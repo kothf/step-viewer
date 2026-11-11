@@ -325,7 +325,7 @@ export function searchFasteners(q: string, shown: (label: string) => string = x 
   });
 }
 
-/** The part name, as in SolidWorks Toolbox: "ISO 4762 M6 x 20", "ISO 4032 M6", "Ball bearing 6201". */
+/** The part name, as in other CAD apps Toolbox: "ISO 4762 M6 x 20", "ISO 4032 M6", "Ball bearing 6201". */
 export function fastenerName(kind: FastenerKind, size: string, length?: number) {
   const f = fastenerInfo(kind);
   return f.screw ? `${f.name} ${size} x ${lengthText(kind, length ?? defaultLength(kind, size))}` : `${f.name} ${size}`;

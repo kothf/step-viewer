@@ -55,7 +55,7 @@ export type KernelRequest =
   | { id: number; type: "importBody"; buffer: ArrayBuffer; name: string };
 
 let parasolid: Promise<ParasolidReader> | null = null;
-/** The Parasolid reader (600 kB of WASM), loaded at the first SolidWorks file. */
+/** The Parasolid reader (600 kB of WASM), loaded at the first SLDPRT/SLDASM file. */
 function parasolidReader() {
   parasolid ??= fetch(parasolidWasm).then(r => r.arrayBuffer()).then(b => ParasolidReader.create(b));
   parasolid.catch(() => { parasolid = null; });
