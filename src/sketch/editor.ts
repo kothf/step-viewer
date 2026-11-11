@@ -56,7 +56,7 @@ export type SketchPattern =
   /** Stretch entities (FR-SK-039): the selected points (and the points of selected curves) move, curves ending on them stretch. */
   | { kind: "stretch"; dx: number; dy: number };
 
-export type SkTool = "select" | "line" | "cline" | "mline" | "rect" | "crect" | "rect3" | "crect3" | "pgram" | "circle" | "circle3" | "pcircle" | "arc" | "arc3" | "tarc" | "polygon" | "slot" | "cslot" | "aslot" | "aslot3" | "ellipse" | "earc" | "spline" | "sspline" | "conic" | "parabola" | "eqn" | "point" | "text" | "trim" | "extend" | "split" | "jog" | "fillet" | "chamfer" | "offset" | "convert" | "intersect" | "dim" | "hord" | "vord";
+export type SkTool = "select" | "line" | "cline" | "mline" | "rect" | "crect" | "rect3" | "crect3" | "pgram" | "circle" | "circle3" | "pcircle" | "arc" | "arc3" | "tarc" | "polygon" | "slot" | "cslot" | "aslot" | "aslot3" | "ellipse" | "earc" | "spline" | "sspline" | "conic" | "parabola" | "eqn" | "point" | "text" | "trim" | "extend" | "split" | "jog" | "segment" | "fillet" | "chamfer" | "offset" | "convert" | "intersect" | "dim" | "hord" | "vord";
 
 export interface SketchHost {
   viewer: Viewer;
@@ -128,6 +128,9 @@ export class SketchEditor {
   filletRadius = 2;
   /** Sketch chamfer distance and offset distance (mm), set in the panel. */
   chamferDist = 2;
+  /** Segment tool (FR-SK-032): how many equal pieces, and whether they become points on the curve or separate curves. */
+  segCount = 4;
+  segMode: "points" | "segments" = "points";
   offsetDist = 5;
   /** Offset options (FR-SK-034): both sides, end caps for an open chain offset both ways, and linked (offset relations + one dimension). */
   offsetBoth = false;
@@ -420,6 +423,7 @@ export class SketchEditor {
     if (this.tool === "chamfer") { this.chamferAt(p); return true; }
     if (this.tool === "extend") { this.extendAt(p); return true; }
     if (this.tool === "split") { this.splitAt(p); return true; }
+    if (this.tool === "segment") { this.segmentAt(p); return true; }
     if (this.tool === "jog") { this.jogClick(p); return true; }
     if (this.tool === "offset") { this.offsetAt(p, true); return true; }
     if (this.tool === "convert") { this.convertAt(e); return true; }
@@ -464,7 +468,7 @@ export class SketchEditor {
       return true;
     }
     if (this.tool === "dim" && this.dimDraft.dim) { this.placeDimDraft(p); this.render(); return true; }
-    const pick = ["trim", "extend", "split", "offset"].includes(this.tool) || (this.tool === "jog" && !this.draft.pts.length);
+    const pick = ["trim", "extend", "split", "segment", "offset"].includes(this.tool) || (this.tool === "jog" && !this.draft.pts.length);
     const snap = this.snapPoint(p, !pick && !["select", "fillet", "chamfer", "convert", "intersect", "jog"].includes(this.tool));
     this.hover = this.tool === "select" || this.tool === "dim" || pick ? this.hits(p, { points: !pick })[0] ?? null
       : this.tool === "fillet" || this.tool === "chamfer" ? this.hits(p, { curves: false }).find(h => h.kind === "point") ?? null : null;
@@ -837,7 +841,7 @@ export class SketchEditor {
 
   /** Is a tool that places points running (quick snaps apply)? */
   get drawing(): boolean {
-    return !["select", "fillet", "chamfer", "convert", "intersect", "trim", "extend", "split", "jog", "offset", "dim", "hord", "vord", "eqn"].includes(this.tool);
+    return !["select", "fillet", "chamfer", "convert", "intersect", "trim", "extend", "split", "jog", "segment", "offset", "dim", "hord", "vord", "eqn"].includes(this.tool);
   }
 
   /** Sets (or with null cancels) the quick snap for the next point (FR-SK-046). */
@@ -2470,6 +2474,66 @@ export class SketchEditor {
     this.emitSel();
   }
 
+  // ---------- segment (SolidWorks Segment) ----------
+
+  /** Segment: divides the clicked line, arc or circle into `segCount` equal pieces, marked by points on it or cut into that many curves. */
+  segmentAt(p: V2) {
+    const h = this.hits(p, { points: false })[0];
+    const e = h && this.ent(h.id);
+    if (!e || (e.t !== "line" && e.t !== "arc" && e.t !== "circle")) { this.host.toast(t("Click a line, an arc or a circle to divide.")); return; }
+    const n = Math.max(2, Math.min(100, Math.round(this.segCount)));
+    if (e.t === "circle" && this.segMode === "segments") { this.host.toast(t("A circle is divided by points: pick Sketch points."), "warn"); return; }
+    let at: (k: number) => V2;
+    if (e.t === "line") {
+      const a = this.pt(e.a), b = this.pt(e.b);
+      at = k => [a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n];
+    } else {
+      const c = this.pt(e.c);
+      let r: number, a0: number, sw: number;
+      if (e.t === "circle") { r = e.r; a0 = 0; sw = 2 * Math.PI; }
+      else {
+        const a = this.pt(e.a), b = this.pt(e.b);
+        r = Math.hypot(a[0] - c[0], a[1] - c[1]);
+        a0 = Math.atan2(a[1] - c[1], a[0] - c[0]);
+        sw = Math.atan2(b[1] - c[1], b[0] - c[0]) - a0;
+        while (sw <= 1e-12) sw += 2 * Math.PI;
+      }
+      at = k => [c[0] + r * Math.cos(a0 + sw * k / n), c[1] + r * Math.sin(a0 + sw * k / n)];
+    }
+    const first = e.t === "circle" ? 0 : 1;
+    const ids: string[] = [];
+    for (let k = first; k < n; k++) { const q = at(k), id = uid("p"); this.sk.ents.push({ id, t: "point", x: q[0], y: q[1] }); ids.push(id); }
+    const rel = (t: RelKind, ...x: string[]) => this.sk.rels.push({ id: uid("r"), t, e: x });
+    if (this.segMode === "points" || e.t === "circle") {
+      for (const id of ids) rel("onCurve", id, e.id);
+      this.selection = new Set(ids);
+      this.commit("Segment");
+    } else {
+      const cons = e.cons ? { cons: true } : {};
+      const oldEnd = e.b, made: string[] = [];
+      e.b = ids[0];
+      const ends = [...ids, oldEnd];
+      for (let k = 0; k < ends.length - 1; k++) {
+        const id = uid(e.t === "line" ? "l" : "a");
+        this.sk.ents.push(e.t === "line" ? { id, t: "line", a: ends[k], b: ends[k + 1], ...cons } : { id, t: "arc", c: e.c, a: ends[k], b: ends[k + 1], ...cons });
+        made.push(id);
+      }
+      if (e.t === "line") {
+        const hv = this.sk.rels.filter(r => r.e.length === 1 && r.e[0] === e.id && (r.t === "horizontal" || r.t === "vertical" || r.t === "fix"));
+        for (const id of made) {
+          rel("collinear", e.id, id);
+          rel("equal", e.id, id);
+          for (const r of hv) rel(r.t, id);
+        }
+        this.sk.dims = this.sk.dims.filter(d => !(d.e.length === 1 && d.e[0] === e.id));
+      }
+      this.selection = new Set([e.id, ...made]);
+      this.commit("Segment");
+    }
+    this.render();
+    this.emitSel();
+  }
+
   // ---------- jog line (SolidWorks Jog Line) ----------
 
   /** The jog that the second click at `p` would make on the line picked first: two cuts along it and a step of `h` square to it. */
@@ -3474,6 +3538,7 @@ export class SketchEditor {
       chamfer: "Click a corner where two lines meet; set the distance in the panel",
       extend: "Click a line or arc near the end to extend it to the next curve",
       split: "Click a line or arc where it should be split in two",
+      segment: "Click a line, an arc or a circle to divide it into equal pieces",
       jog: "Click a line where the jog starts, then where it ends and how far it steps out",
       offset: "Move to the side to offset to, then click the curve or chain; set the distance in the panel",
       convert: "Click model edges (or a face for all its edges) to copy them into the sketch",
@@ -3761,7 +3826,7 @@ export class SketchEditor {
     const addPt = (p: V2, c: number) => { const w = this.w(p); pp.push(w.x, w.y, w.z); const k = new THREE.Color(c); pc.push(k.r, k.g, k.b); };
     addPt([0, 0], this.selection.has(ORIGIN) ? color(ORIGIN) : 0xd9480f);
     for (const e of this.sk.ents) if (e.t === "point") addPt([e.x, e.y], color(e.id));
-    if (d.cursor && !["select", "dim", "hord", "vord", "trim", "fillet", "chamfer", "extend", "split", "jog", "offset", "convert", "intersect", "eqn"].includes(this.tool)) addPt(d.cursor, C.pre);
+    if (d.cursor && !["select", "dim", "hord", "vord", "trim", "fillet", "chamfer", "extend", "split", "jog", "segment", "offset", "convert", "intersect", "eqn"].includes(this.tool)) addPt(d.cursor, C.pre);
     const pg = new THREE.BufferGeometry();
     pg.setAttribute("position", new THREE.Float32BufferAttribute(pp, 3));
     pg.setAttribute("color", new THREE.Float32BufferAttribute(pc, 3));

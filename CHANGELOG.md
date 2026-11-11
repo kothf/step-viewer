@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.524.0] - 2026-11-11
+
+### Added
+
+- Sketch **Segment** (Trim ▾ menu, FR-SK-032): divides a line, arc or circle into equal pieces, marked by sketch points on it or cut into that many lines or arcs; the number of pieces and the mode are set in the panel.
+
 ## [1.523.0] - 2026-11-11
 
 ### Added
@@ -3256,7 +3262,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.523.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.524.0...HEAD
+[1.524.0]: https://github.com/kothf/step-viewer/compare/v1.523.0...v1.524.0
 [1.523.0]: https://github.com/kothf/step-viewer/compare/v1.522.0...v1.523.0
 [1.522.0]: https://github.com/kothf/step-viewer/compare/v1.521.0...v1.522.0
 [1.521.0]: https://github.com/kothf/step-viewer/compare/v1.520.0...v1.521.0

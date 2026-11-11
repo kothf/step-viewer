@@ -486,7 +486,7 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 
 - **FR-SK-030** (P1, M) Trim: smart trim by clicking a segment (removes it up to the nearest intersections), and drag-through trim over several segments. Jog line (1.523.0): a line stepped out between two clicks, sides square to it.
 - **FR-SK-031** (P1, M) Extend to the nearest intersection.
-- **FR-SK-032** (P1, M) Split entity at a point.
+- **FR-SK-032** (P1, M) Split entity at a point. Segment (1.524.0): a line, arc or circle divided into equal pieces, by points on it or as that many curves.
 - **FR-SK-033** (P1, M) Sketch fillet (radius) and sketch chamfer (distance, distance-angle) at a corner, keeping relations and adding a radius/distance dimension.
 - **FR-SK-034** (P1, M) Offset entities: selected chain or loop, distance, side, both sides, cap ends (arc/line); keeps an offset relation so the result follows the source (P2) or is static (P1). *Done: static copy (1.20.0); both sides, arc/line caps and linked offsets (offset relations + one dimension) in 1.240.0.*
 - **FR-SK-035** (P1, M) Convert entities (project model edges, loops of a face, or other sketches' entities into this sketch) with an "on edge" relation that follows the model.
