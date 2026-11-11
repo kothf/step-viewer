@@ -2192,6 +2192,7 @@ export const RU: Record<string, string> = {
   "Look at the other side of the line": "Смотреть с другой стороны линии",
   "Move the cursor to size the circle and click.": "Ведите курсор, задавая размер окружности, и щёлкните.",
   "Move the cursor to the side of the edge and click to place the auxiliary view. Esc cancels.": "Отведите курсор в сторону от ребра и щёлкните, чтобы разместить дополнительный вид. Esc — отмена.",
+  "Move the cursor to the side the section looks towards and click to place it. Esc cancels.": "Отведите курсор в сторону, куда смотрит разрез, и щёлкните, чтобы разместить его. Esc — отмена.",
   "Move the cursor to the side the section looks from and click to place it. Esc cancels.": "Отведите курсор в сторону, с которой смотрит разрез, и щёлкните, чтобы разместить его. Esc — отмена.",
   "Radius (mm)": "Радиус (мм)",
   "Section View": "Разрез",

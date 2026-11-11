@@ -79,6 +79,8 @@ Written for whoever continues drawing work (FRS section 11, `FR-DRW-…`). The C
 
 - Box cache (1.495.0), node on the engine: `AddOptimal` box 0.9 s, `shapeInfo` 1.2 s, called by every `projectAuto` and preview; now once per shape. Left on a sheet: the first fast view's diag/1000 mesh (5.3 s, BRepMesh, single-threaded wasm), and previews after that mesh are slower (0.7 s → 1.9 s: the poly HLR works on the finer mesh, which BRepMesh keeps).
 
+- Section check (1.503.0, Andrey asked if sections are made the right way): direction, no mirroring, alignment, hatching only on cut faces and preview = exact were all right on a test part. Fixed: cutting-line thick ends ran 2 mm into the outline (`CUT_RUN` 8). Andrey chose first-angle placement: on a first-angle sheet `sideViewAt` gives the view on the cursor's side look = −side (arrows point at the view); third angle unchanged; stored `look` never changes. Not done (offered): ribs/shafts cut lengthwise left unhatched (fasteners already via `exclude`), GOST label "A–A" above the view instead of "SECTION A-A" below.
+
 ## Ideas for next slices (none started)
 
 - **Centre marks on views at an angle**: end-on tests use `|ax·n| ≈ 1` (1e-6). Isometric views get no marks at all, which matches SolidWorks, so leave them unless asked.
