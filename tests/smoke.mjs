@@ -4952,6 +4952,7 @@ try {
     // Custom sheet scale (drawings exam #17): a box under the list takes it, no browser prompt.
     {
       await dp.keyboard.press("Escape");
+      await ready();
       await dp.selectOption('#drw .drw-props [data-s="scale"]', "custom");
       const box = dp.locator("#drw .drw-props input.drw-cscale");
       const focused = await dp.evaluate(() => document.activeElement?.classList.contains("drw-cscale"));
@@ -5854,6 +5855,8 @@ try {
     const annots = () => dp.evaluate(() => (window.__sv.drw.doc().sheets[0].annots ?? []).map(a => JSON.parse(JSON.stringify(a))));
     const tool = async an => { await dp.click('#drw [data-a="annot"]'); await dp.click(`#drw [data-an="${an}"]`); };
     const src = await dp.evaluate(() => window.__sv.drw.doc().source.kind);
+    // The drawing read the open assembly's own build instead of building the parts again (engine: 11 s → 0.1 s).
+    const preLoads = await dp.evaluate(() => window.__sv.drw.helper().preLoads);
     // BOM on the title block: Plate ×1, PN-7 (the pin's part number) ×2.
     await tool("bom");
     await dp.waitForTimeout(150);
@@ -5868,7 +5871,7 @@ try {
     let an = await annots();
     const auto = an.filter(a => a.t === "balloon");
     const autoNums = (await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "ANNOT" && p.h === 5).map(p => p.s))).sort().join();
-    check(src === "asm" && bomOk && auto.length === 2 && auto.every(a => a.view === front) && autoNums === "1,2", `drawing: assembly drawing with a BOM (Plate ×1, PN-7 ×2) and auto balloons 1 and 2 (${src}; ${auto.length} balloons ${autoNums}; ${tx.join(" ")})`);
+    check(src === "asm" && preLoads === 1 && bomOk && auto.length === 2 && auto.every(a => a.view === front) && autoNums === "1,2", `drawing: assembly drawing from the open assembly's build (${preLoads} such loads), with a BOM (Plate ×1, PN-7 ×2) and auto balloons 1 and 2 (${src}; ${auto.length} balloons ${autoNums}; ${tx.join(" ")})`);
     // Auto balloons keep clear of each other and of every view and annotation on the sheet (drawings exam round 2).
     const clearOk = await dp.evaluate(ids => {
       const d = window.__sv.drw, sh = d.doc().sheets[0], bs = (sh.annots ?? []).filter(a => ids.includes(a.id));
