@@ -116,6 +116,10 @@ export class DrawingKernel {
   slowest = 0;
   /** Previews made so far (for the smoke test). */
   previewsMade = 0;
+  /** Of those, section previews (with their cut loops). */
+  sectionPreviewsMade = 0;
+  /** Previews that failed (for the smoke test). */
+  readonly previewErrors: string[] = [];
   /**
    * Exact projections run on the drawing's worker and, with enough threads, on a helper worker
    * holding the same model, one at a time each, so a sheet's views are projected two at a time.
@@ -409,10 +413,10 @@ export class DrawingKernel {
   }
 
   /**
-   * A quick polygonal preview of a plain view (not a section), cached by the same key. Ask for it before
-   * the exact projection: the worker answers in order.
+   * A quick polygonal preview of a view, cached by the same key. Ask for it before the exact projection: the
+   * worker answers in order, and a section's exact request reuses the cut its preview made.
    */
-  preview(req: { view: ViewDir; cfg?: string; only?: string[]; key: string }): Promise<Projection> {
+  preview(req: { view: ViewDir; p?: V3; poly?: number[]; stair?: Stair; align?: Align; exclude?: string[]; cfg?: string; only?: string[]; key: string }): Promise<Projection> {
     const { key } = req;
     const have = this.previews.get(key);
     if (have) return Promise.resolve(have);
@@ -420,12 +424,15 @@ export class DrawingKernel {
     if (!p) {
       if (!this.loaded) return Promise.reject(new Error("No model loaded"));
       const gen = this.gen, cfg = req.cfg;
-      p = (cfg ? this.config(cfg) : this.loaded).then(() => this.call<{ proj: Projection }>({ type: "preview", view: req.view, cfg, only: req.only })).then(r => {
+      p = (cfg ? this.config(cfg) : this.loaded).then(() => this.call<{ proj: Projection }>(req.p
+        ? { type: "secpreview", view: req.view, p: req.p, poly: req.poly, stair: req.stair, align: req.align, exclude: req.exclude, cfg, only: req.only }
+        : { type: "preview", view: req.view, cfg, only: req.only })).then(r => {
         this.previewsMade++;
+        if (r.proj.cut) this.sectionPreviewsMade++;
         if (gen === this.gen && !this.cache.has(key)) this.previews.set(key, r.proj);
         this.previewing.delete(key);
         return r.proj;
-      }, err => { this.previewing.delete(key); throw err; });
+      }, err => { this.previewing.delete(key); this.previewErrors.push(String(err?.message ?? err)); throw err; });
       this.previewing.set(key, p);
     }
     return p;

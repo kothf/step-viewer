@@ -128,6 +128,25 @@ test("section through the hole: the cut faces are the block's middle slice minus
   assert.equal(s.hid.length, 0);
 });
 
+test("section preview: the cut shared with the exact lines, same cut loops, outline within the mesh error (FR-DRW-016)", async () => {
+  const { section, sectionCut, sectionPreview, sectionFinish } = await import("../../src/kernel/drawing");
+  const { oc, shape } = await block();
+  const view = { dir: [0, -1, 0] as V3, up: [0, 0, 1] as V3 };
+  const exact = section(oc, shape, view, [0, 0, 0]);
+  const sc = sectionCut(oc, shape, view, [0, 0, 0]);
+  const pre = sectionPreview(oc, sc, view, 0.5);
+  assert.deepEqual(pre.cut, exact.cut);
+  assert.deepEqual(pre.cutOf, exact.cutOf);
+  assert.ok(pre.vis.length > 0);
+  const [a, b] = [bounds(pre.vis), bounds(exact.vis)];
+  for (let i = 0; i < 4; i++) assert.ok(Math.abs(a[i] - b[i]) < 0.6, `box ${a} vs ${b}`);
+  // The exact request after the preview reuses its cut and gives the plain section's lines.
+  const fin = sectionFinish(oc, sc, view);
+  assert.deepEqual(fin.cut, exact.cut);
+  assert.equal(fin.vis.length, exact.vis.length);
+  assert.equal(fin.hid.length, exact.hid.length);
+});
+
 test("broken-out section: only the outline is cut away, down to the plane, and its floor is hatched (FR-DRW-015)", async () => {
   const { section, viewAxes } = await import("../../src/kernel/drawing");
   const { viewReq } = await import("../../src/drawing/views");

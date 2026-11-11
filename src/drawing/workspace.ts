@@ -700,10 +700,10 @@ export class DrawingWorkspace {
     return !!this.facts && (this.facts.topo.edges.length >= PREVIEW_EDGES || this.kernel.slowest > PREVIEW_MS);
   }
 
-  /** A view's quick polygonal preview while its exact lines are on the way; none for sections. */
+  /** A view's quick polygonal preview while its exact lines are on the way (a section's with its cut and hatching). */
   private previewFor(sheet: Sheet, v: DrawingView): Projection | undefined {
     const req = viewReq(sheet, v);
-    if (req.p || !this.previewsOn() || this.kernel.cache.has(req.key)) return undefined;
+    if (!this.previewsOn() || this.kernel.cache.has(req.key)) return undefined;
     const have = this.kernel.previews.get(req.key);
     if (!have && !this.previewAsked.has(req.key)) {
       this.previewAsked.add(req.key);
@@ -793,7 +793,8 @@ export class DrawingWorkspace {
     if (this.selA) for (const h of this.annotHits) if (h.id === this.selA) s += `<rect class="drw-sel" x="${h.box[0] - 1}" y="${H - h.box[3] - 1}" width="${h.box[2] - h.box[0] + 2}" height="${h.box[3] - h.box[1] + 2}"/>`;
     const pv = this.previewView();
     if (pv) {
-      const proj = this.projFor(this.sheet, pv.view);
+      // A slow model's quick preview stands in until the exact lines come (a section being placed, FR-DRW-016).
+      const proj = this.projFor(this.sheet, pv.view) ?? this.previewFor(this.sheet, pv.view);
       const pl = placement(this.sheetWith(pv.view), pv.view, proj, this.facts?.box ?? null);
       const r = viewRect(pl);
       s += `<g class="drw-preview">${proj ? svgBody(viewPrims(pv.view, proj, pl), H, "currentColor") : ""}<rect class="drw-pv-frame" x="${r[0] - 3}" y="${H - r[3] - 3}" width="${r[2] - r[0] + 6}" height="${r[3] - r[1] + 6}"/></g>`;
@@ -2394,13 +2395,15 @@ export class DrawingWorkspace {
 
   /** Projects both sides of a section/aux line ahead, so the preview has its lines when the cursor gets there. */
   private warmSides(kind: "section" | "aux", parent: string, line: Line4, path?: number[], aligned?: boolean) {
-    for (const look of [1, -1] as const) {
+    const reqs = ([1, -1] as const).map(look => {
       const v: DrawingView = { id: "_pv", name: "", kind, parent, line, look, x: 0, y: 0 };
       if (path) v.path = path;
       if (aligned) v.aligned = true;
-      const sh = this.sheetWith(v);
-      void this.kernel.request(viewReq(sh, v)).then(() => this.renderOverlay(), () => {});
-    }
+      return viewReq(this.sheetWith(v), v);
+    });
+    // Both sides' quick previews first (the worker answers in order), so either side shows at once.
+    if (this.previewsOn()) for (const req of reqs) if (!this.kernel.cache.has(req.key)) void this.kernel.preview(req).then(() => this.renderOverlay(), () => {});
+    for (const req of reqs) void this.kernel.request(req).then(() => this.renderOverlay(), () => {});
   }
 
   private kindClick(m: Extract<Mode, { kind: "section" | "detail" | "aux" }>, p: Pt) {
@@ -3408,7 +3411,7 @@ export class DrawingWorkspace {
       mode: () => this.mode.kind,
       fields: () => (this.store ? this.fields() : null),
       helper: () => this.kernel.helperState(),
-      previews: () => ({ shown: this.previewsShown, made: this.kernel.previewsMade, left: this.svg.querySelectorAll(".drw-preview").length }),
+      previews: () => ({ shown: this.previewsShown, made: this.kernel.previewsMade, sections: this.kernel.sectionPreviewsMade, errs: this.kernel.previewErrors.slice(0, 3), on: this.previewsOn(), asked: this.previewAsked.size, left: this.svg.querySelectorAll(".drw-preview").length }),
       renders: () => this.sheetRenders,
       drop: () => this.dropGone(true),
       holes: () => (this.facts?.topo?.holes ?? []).map(h => ({ segs: h.segs.length, open: h.open })),

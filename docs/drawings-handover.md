@@ -74,6 +74,8 @@ Written for whoever continues drawing work (FRS section 11, `FR-DRW-…`). The C
 - Cancelling (1.491.0): `DrawingKernel.drop(keep)` (wanted keys from the workspace's `dropGone` on every store change) rejects queued jobs with `DROPPED`, stops a helper running a dropped job and recycles the main worker when its running job is dropped. `lastShown` keeps each view's last exact projection while one with a new style/config is coming (drawn as a preview, same direction only).
 - Standard 3 views: `std3Layout(dx, dy, dz, area, tb, third)` in `views.ts` tries scales from the largest, placing the L-shaped group centred, at the frame edges, left of or above the title block; null falls back to the old `fitScale`.
 
+- Section previews (1.494.0): the old blank frame while a section's exact lines ran is gone. Measured in node on the project-files engine (centre, Front and Right sections): cut 2.0 / 2.8 s, preview (poly HLR of the cut) 0.4 / 0.5 s, exact finish 5.8 / 2.9 s. The preview's cut is stashed in the worker and reused by the exact request, so only the preview's ~0.4 s is added. When the exact job goes to the helper lane (small models), the helper cuts again.
+
 ## Ideas for next slices (none started)
 
 - **Centre marks on views at an angle**: end-on tests use `|ax·n| ≈ 1` (1e-6). Isometric views get no marks at all, which matches SolidWorks, so leave them unless asked.
