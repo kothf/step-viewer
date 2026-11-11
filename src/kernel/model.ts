@@ -15,7 +15,7 @@ import type { HealFeature, RecognizedHole, RecognizedBlends, SketchPatternFeatur
 import { dir2Apart, dir2Feature, threadThrough, holeExits, headKind } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { recognizedHoleFeatures, TAPER } from "../model/holes";
-import { advProfile } from "../model/advHole";
+import { advProfile, captiveStack } from "../model/advHole";
 import { ctxFrame } from "../model/context";
 import { loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 import { splineBezierN } from "../sketch/spline";
@@ -2419,19 +2419,24 @@ export class Modeller {
     const len: number[] = [];
     // Advanced Hole: the element stack's section (z down from the face) turned into the kernel's (r, z up) profile,
     // starting above the face and running past the far face so both are cut cleanly.
+    // Captive screw hole: the same as an Advanced Hole with the stack its options make.
+    const cap = f.kind === "captive" ? captiveStack(f) : null;
+    const nearL = cap?.near ?? f.near ?? [], farL = cap ? cap.far : f.far;
+    let short = 0;
     const advK = (o: V3): [number, number][] => {
-      const exits = holeExits(f), D = exits && f.far?.length && through ? reachAt(o) : depthAt(o);
-      if (exits && f.far?.length) len.push(D);
-      const main = f.near?.[f.near.length - 1], da = f.drillAngle?.v ?? (118 * Math.PI) / 180;
+      const exits = holeExits(f), D = exits && (farL?.length || cap) && through ? reachAt(o) : depthAt(o);
+      if (exits && (farL?.length || cap)) len.push(D);
+      if (cap?.need && D < cap.need - 1e-6) short = Math.max(short, cap.need - D);
+      const main = nearL[nearL.length - 1], da = f.drillAngle?.v ?? (118 * Math.PI) / 180;
       const tip = f.end === "blind" && !f.flat && main ? main.dia.v / 2 / Math.tan(da / 2) : 0;
       let a;
-      try { a = advProfile(f.near ?? [], f.far, D, exits, tip); } catch (e) { throw new FeatureError("E-HOLE-ADV", (e as Error).message); }
+      try { a = advProfile(nearL, farL, D, exits, tip); } catch (e) { throw new FeatureError(cap ? "E-HOLE-CAPTIVE" : "E-HOLE-ADV", cap && /deeper/.test((e as Error).message) ? "The cover is too thin for this captive screw hole: use a shorter screw or a thicker cover." : (e as Error).message); }
       const p = a.prof.map(([rr, z]) => [rr, -z] as [number, number]);
-      const first = f.near![0], t0 = first.t === "csink" ? Math.tan((first.angle?.v ?? Math.PI / 2) / 2) : 0;
+      const first = nearL[0], t0 = first.t === "csink" ? Math.tan((first.angle?.v ?? Math.PI / 2) / 2) : 0;
       const out: [number, number][] = [[0, lift], [p[0][0] + lift * t0, lift], ...p.slice(first.t === "csink" ? 1 : 0)];
       if (exits) {
-        const [rl, zl] = out[out.length - 1], last = f.far?.[0], tl = last?.t === "csink" ? Math.tan((last.angle?.v ?? Math.PI / 2) / 2) : 0;
-        if (f.far?.length && last?.t === "csink") out[out.length - 1] = [rl + lift * tl, zl - lift]; else out.push([rl, zl - lift]);
+        const [rl, zl] = out[out.length - 1], last = farL?.[0], tl = last?.t === "csink" ? Math.tan((last.angle?.v ?? Math.PI / 2) / 2) : 0;
+        if (farL?.length && last?.t === "csink") out[out.length - 1] = [rl + lift * tl, zl - lift]; else out.push([rl, zl - lift]);
         out.push([0, zl - lift]);
       }
       return out;
@@ -2442,7 +2447,7 @@ export class Modeller {
       if (threadThrough(f)) len.push(reach(o));
       const exit = f.farCs && holeExits(f) ? (f.end === "through" ? reachAt(o) : depthAt(o)) : undefined;
       const td = f.kind === "ptap" ? f.threadDepth?.v ?? 0 : !M ? 0 : threadThrough(f) ? len[len.length - 1] : f.threadDepth?.v ?? (f.end === "blind" ? f.depth.v : 2 * f.diameter.v);
-      let shape = revolve(o, f.kind === "adv" ? advK(o) : profile(depthAt(o), exit, td));
+      let shape = revolve(o, f.kind === "adv" || f.kind === "captive" ? advK(o) : profile(depthAt(o), exit, td));
       if (f.kind === "slot") {
         // Slot: the hole at both ends of the centre line, joined by the profile swept along it.
         const L = f.slotLen?.v ?? 0;
@@ -2474,6 +2479,8 @@ export class Modeller {
     let out = this.bool("cut", sc.target!, tool, f.id);
     if (sc.keep.length) out = this.compoundOf([...sc.keep, ...this.bodyList(out)]);
     if (Math.abs(this.volume(out.shape) - this.volume(prev.shape)) < 1e-9) throw new FeatureError("E-FT-NOCHANGE", "The holes do not touch the body.");
+    // Retracted screw: the thread hangs below the retaining section and must stay inside the cover.
+    if (short > 0) this.warning = `The cover is ${Math.round(short * 100) / 100} mm too thin to hide the retracted screw's thread: add a boss under the hole or use a shorter screw.`;
     if (!len.length) return { body: out, frame: fr0 };
     const frame = { ...fr0, len };
     frames[f.id] = frame;

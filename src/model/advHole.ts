@@ -142,3 +142,44 @@ export function advCallout(H: HoleFeature, f: (v: number) => string, fa: (v: num
   for (const e of far) lines.push(...line(e, "FAR SIDE"));
   return lines;
 }
+
+/**
+ * Captive screw hole as an element stack: optional head counterbore, then the retaining section (a short thread
+ * with Retracted screw, else the thread through the cover; ring style: a clearance hole with a recess for the
+ * retaining ring on the far side, deep enough for the screw's thread too with Retracted screw). `need` = the cover
+ * thickness the retracted screw needs to sit inside it (0 without Retracted screw).
+ */
+export function captiveStack(f: HoleFeature): { near: HoleElem[]; far: HoleElem[]; need: number } {
+  const near: HoleElem[] = [], far: HoleElem[] = [];
+  const head = f.cbDia && f.cbDepth ? f.cbDepth.v : 0;
+  if (f.cbDia && f.cbDepth) near.push({ t: "cbore", dia: f.cbDia, depth: f.cbDepth });
+  const h = holeSize(f.size), M = f.major ?? (h ? majorOf(h) : f.diameter.v), P = f.pitch ?? h?.pitch;
+  const tap = h?.tap ?? M * 0.85, Lt = f.capThread?.v ?? 2 * M;
+  const sz = f.size ? { size: f.size } : {};
+  if (f.capStyle === "ring") {
+    const t = (f.ringT?.v ?? 1) + 0.2;
+    near.push({ t: "straight", ...sz, dia: f.diameter });
+    far.push({ t: "cbore", dia: { v: (f.ringDia?.v ?? 2 * M) + 1 }, depth: { v: t + (f.retract ? Lt : 0) } });
+    return { near, far, need: f.retract ? head + t + Lt + 1 : 0 };
+  }
+  const hold = f.capHold?.v ?? M;
+  if (!f.retract) { near.push({ t: "tapped", ...sz, dia: { v: tap }, major: M, ...(P ? { pitch: P } : {}) }); return { near, far, need: 0 }; }
+  near.push({ t: "tapped", ...sz, dia: { v: tap }, depth: { v: hold }, major: M, ...(P ? { pitch: P } : {}) });
+  near.push({ t: "straight", ...sz, dia: f.diameter });
+  return { near, far, need: head + hold + Lt + 0.5 };
+}
+
+/** A captive screw hole's values for its size: clearance Ø, thread, retaining length, screw thread length, ring, head pocket. */
+export function captiveSize(f: HoleFeature) {
+  const h = holeSize(f.size);
+  if (!h) return;
+  const M = majorOf(h);
+  f.diameter = { v: h.clear[f.fit ?? "normal"] };
+  f.major = M;
+  f.pitch = h.pitch;
+  f.capHold = { v: Math.max(Math.round(M * 8) / 10, Math.round(h.pitch * 30) / 10) };
+  f.capThread = { v: Math.round(M * 20) / 10 };
+  f.ringDia = { v: Math.round(M * 22) / 10 };
+  f.ringT = { v: M <= 4 ? 0.6 : M <= 8 ? 1 : 1.5 };
+  if (f.cbDia) { const p = headPocket(h.size, undefined, "cbore")!; f.cbDia = { v: p[0] }; f.cbDepth = { v: p[1] }; }
+}

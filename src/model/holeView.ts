@@ -3,7 +3,7 @@
 
 import { headKind, holeExits, threadThrough, type HoleFeature, type HoleSink } from "./types";
 import { TAPER, threadClass } from "./holes";
-import { advCallout, advProfile, advStack } from "./advHole";
+import { advCallout, advProfile, advStack, captiveStack } from "./advHole";
 
 const DRILL = (118 * Math.PI) / 180;
 
@@ -17,6 +17,7 @@ export function holeCallout(H: HoleFeature, f: (v: number) => string, fa: (v: nu
   const n = count > 1 ? `${count}× ` : "";
   const depth = H.end === "through" ? ` ${label("THRU")}` : H.end === "blind" ? ` ↧${f(H.depth.v)}` : "";
   if (H.kind === "adv") return advCallout(H, f, fa, label, n, depth);
+  if (H.kind === "captive") { const c = captiveStack(H); return advCallout({ ...H, near: c.near, far: c.far }, f, fa, label, n, depth); }
   const lines: string[] = [];
   lines.push(`${n}Ø${f(H.diameter.v)}${depth}`);
   if (H.kind === "tapped" && H.size) {
@@ -59,6 +60,7 @@ export interface HoleSection {
 /** The hole's half section as the kernel cuts it (no lift above the face), null when the values do not make a hole. */
 export function holeSection(H: HoleFeature): HoleSection | null {
   if (H.kind === "adv") return advSection(H);
+  if (H.kind === "captive") { const c = captiveStack(H); return advSection({ ...H, near: c.near, far: c.far }, c.need); }
   const r = H.diameter.v / 2;
   if (!(r > 1e-6)) return null;
   const ok = (x: number | undefined) => x != null && isFinite(x);
@@ -149,7 +151,7 @@ export function holeSection(H: HoleFeature): HoleSection | null {
 }
 
 /** Advanced Hole: its element stack in a plate (blind: the hole's own depth; else deep enough to show both stacks). */
-function advSection(H: HoleFeature): HoleSection | null {
+function advSection(H: HoleFeature, need = 0): HoleSection | null {
   const near = H.near ?? [], main = near[near.length - 1];
   if (!main || !(main.dia.v > 1e-6)) return null;
   const r = main.dia.v / 2, blind = H.end === "blind", open = holeExits(H), rough = !blind && H.end !== "through";
@@ -157,7 +159,7 @@ function advSection(H: HoleFeature): HoleSection | null {
   const tip = blind && !H.flat && tipA > 0.1 && tipA < Math.PI - 0.1 ? r / Math.tan(tipA / 2) : 0;
   try {
     const st = advStack(near, open ? H.far ?? [] : []);
-    const depth = blind ? H.depth.v : st.top + st.bottom + Math.max(4 * r, 2 * r + 0.5 * (st.top + st.bottom));
+    const depth = blind ? H.depth.v : Math.max(need, st.top + st.bottom + Math.max(4 * r, 2 * r + 0.5 * (st.top + st.bottom)));
     const a = advProfile(near, H.far, depth, open, tip);
     const plate = open ? depth : depth + tip + Math.max(1.5 * r, 0.25 * depth);
     const threads = a.threads.map(t => ({ r: t.R, z0: t.z0, z1: t.z1 }));
@@ -193,7 +195,7 @@ export function holeDiagram(s: HoleSection, w = 220, h = 120, icon = false): str
 }
 
 /** Kinds in the order the panel shows them. */
-export const HOLE_KINDS: HoleFeature["kind"][] = ["simple", "clear", "cbore", "csink", "cdrill", "tapped", "ptap", "slot", "insert", "adv"];
+export const HOLE_KINDS: HoleFeature["kind"][] = ["simple", "clear", "cbore", "csink", "cdrill", "tapped", "ptap", "slot", "insert", "adv", "captive"];
 
 /** A small pictogram of a hole kind: a typical one of that kind (through or blind), drawn like the section. */
 export function holeIcon(kind: HoleFeature["kind"], w = 34, h = 26): string {
@@ -219,6 +221,8 @@ export function holeIcon(kind: HoleFeature["kind"], w = 34, h = 26): string {
     H.near = [{ t: "cbore", dia: { v: 5.6 }, depth: { v: 1.4 } }, { t: "straight", dia: { v: 3 } }];
     H.far = [{ t: "csink", dia: { v: 5.4 }, angle: { v: Math.PI / 2 } }];
   }
+  // Captive screw: a short retaining thread at the top, the clearance bore under it (Retracted screw).
+  if (kind === "captive") { H.end = "through"; H.size = "M3"; H.diameter = { v: 3.4 }; H.major = 3; H.retract = true; H.capHold = { v: 1.4 }; H.capThread = { v: 2 }; }
   // A slot reads best from above: an obround in a plate.
   if (kind === "slot") return `<svg class="hole-icon" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" aria-hidden="true"><path class="hd-mat" fill-rule="evenodd" d="M2 2H${w - 2}V${h - 2}H2ZM${w / 2 - 7} ${h / 2 - 4}H${w / 2 + 7}A4 4 0 0 1 ${w / 2 + 7} ${h / 2 + 4}H${w / 2 - 7}A4 4 0 0 1 ${w / 2 - 7} ${h / 2 - 4}Z"/>`
     + `<path class="hd-edge" d="M${w / 2 - 7} ${h / 2 - 4}H${w / 2 + 7}A4 4 0 0 1 ${w / 2 + 7} ${h / 2 + 4}H${w / 2 - 7}A4 4 0 0 1 ${w / 2 - 7} ${h / 2 - 4}Z"/></svg>`;
