@@ -8089,6 +8089,17 @@ try {
     check(JSON.stringify(lib.found) === '["iso4032","iso4035","iso7040","iso4161"]' && lib.view && /^ISO 2338 6 x \d+$/.test(lib.desig ?? "") && hover.ghost && hover.comps === 3
       && /^ISO 4032 M6<1>$/.test(dropped.name) && JSON.stringify(dropped.at) === "[48,7,10,1]" && dropped.kind === "iso4032" && dropped.thread,
       `asm 1.517: design library search, hover preview on a hole, card dropped on the hole is sized and mated (FR-ASM-028) (${JSON.stringify({ lib, hover, dropped })})`);
+    // Spacers and retaining rings: search finds the standoffs; a DIN 471 ring is drawn from above with its opening.
+    const sp = await tp.evaluate(() => {
+      const q = document.querySelector('#asm-pm [data-f="q"]');
+      q.value = "standoff";
+      q.dispatchEvent(new Event("input"));
+      const found = [...document.querySelectorAll("#asm-pm [data-kind]")].map(b => b.dataset.kind);
+      window.__sv.asm.setFastener({ kind: "din471", size: "20" });
+      return { found, cat: document.querySelector("#asm-pm .tb-cat.on")?.dataset.cat ?? null, desig: document.querySelector("#asm-pm .tb-desig b")?.textContent, dims: [...document.querySelectorAll("#asm-pm .tb-view .tb-dt")].map(x => x.textContent) };
+    });
+    check(JSON.stringify(sp.found) === '["standoff","standoffm"]' && sp.desig === "DIN 471 20" && JSON.stringify(sp.dims) === '["d3 18.5","d1 20"]',
+      `asm toolbox 2: Toolbox standoffs, spacers and retaining rings (FR-ASM-028) (${JSON.stringify(sp)})`);
     await tp.evaluate(() => window.__sv.asm.closeTools());
     // McMaster-Carr: a downloaded STEP named "<part number>_<description>.STEP" keeps its part number and a buy link.
     const cube = [...await readFile(join(fixtures, "cube-10x10mm/Cube 10x10.stp"))];
@@ -8102,7 +8113,7 @@ try {
       document.querySelector("#asm-bom [data-a=close]").click();
       return { pn: pd.props?.partNumber, desc: pd.props?.description, vendor: pd.props?.custom?.Vendor, href: link?.getAttribute("href"), target: link?.getAttribute("target"), row, csv: a.bomCsvText().split("\r\n").slice(0, 1)[0], csvRow: a.bomCsvText().split("\r\n").find(l => l.includes("91290A115")) };
     });
-    check(panel.title === "Toolbox" && panel.groups === 6 && panel.auto
+    check(panel.title === "Toolbox" && panel.groups === 8 && panel.auto
       && /^Ball bearing 6201<1>$/.test(tb.names[1]) && /^ISO 2338 6 x \d+<1>$/.test(tb.names[2])
       && JSON.stringify(tb.mates) === '[["concentric",""],["coincident","aligned"],["concentric",""],["coincident","aligned"]]'
       && JSON.stringify(tb.brg) === "[20,20,10,1]" && JSON.stringify(tb.pin) === "[48,20,10,1]" && JSON.stringify(tb.dof) === "[1,1]"

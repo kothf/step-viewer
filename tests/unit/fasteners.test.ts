@@ -16,7 +16,7 @@ test("FR-ASM-028: sizes, lengths and names", () => {
   assert.ok(fastenerLengths("iso4762", "M6").includes(20) && !fastenerLengths("iso4762", "M6").includes(100));
   assert.equal(fastenerName("iso4762", "M6", 20), "ISO 4762 M6 x 20");
   assert.equal(fastenerName("iso4032", "M8"), "ISO 4032 M8");
-  assert.equal(FASTENERS.length, 17);
+  assert.equal(FASTENERS.length, 23);
   assert.equal(fastenerName("din6885", "8x7", 32), "DIN 6885 B 8x7 x 32");
   assert.equal(fastenerName("bearing", "6201"), "Ball bearing 6201");
   assert.deepEqual(fastenerLengths("din6885", "6x6"), [14, 16, 18, 20, 22, 25, 28, 32, 36, 40, 45, 50, 56, 63, 70]);
@@ -136,7 +136,37 @@ test("FR-ASM-028: library pictures, mass estimate, search and lengths", () => {
   assert.deepEqual(searchFasteners("m6 nut").map(f => f.kind), ["iso4032", "iso4035", "iso7040", "iso4161"]);
   assert.deepEqual(searchFasteners("4762").map(f => f.kind), ["iso4762"]);
   assert.deepEqual(searchFasteners("6201").map(f => f.kind), ["bearing"]);
-  assert.deepEqual(searchFasteners("washers").map(f => f.group), ["Washers", "Washers", "Washers"]);
+  assert.deepEqual(searchFasteners("washers").map(f => f.kind), ["iso7089", "iso7092", "iso7093", "din127"]);
   assert.equal(searchFasteners("").length, FASTENERS.length);
   assert.equal(lengthFor("iso4762", "M3", 33), 30);
+});
+
+test("FR-ASM-028: spacers, standoffs, spring washers and retaining rings", async () => {
+  const m = new Modeller(await occ());
+  const vol = (pd: ReturnType<typeof fastenerPart>) => {
+    const r = m.evaluate(pd);
+    assert.ok(r.statuses.every(s => s.ok && !s.code), `${pd.name}: ${JSON.stringify(r.statuses)}`);
+    return m.props(r.body!).volume;
+  };
+  const hex = (s: number) => (Math.sqrt(3) / 2) * s * s, cyl = (d: number, h: number) => (Math.PI * d * d / 4) * h;
+  assert.equal(fastenerName("standoff", "M3", 10), "Standoff F-F M3 x 10");
+  assert.equal(fastenerName("din471", "20"), "DIN 471 20");
+  assert.deepEqual(fastenerLengths("spacer", "M4").slice(0, 3), [2, 3, 4]);
+  close(vol(fastenerPart("standoff", "M3", 10, PLAIN)), (hex(5.5) - Math.PI * 2.25) * 10);
+  // M-F M4 x 15: hex 7 × 15 less a Ø4 × 8 bore, plus a Ø4 × 8 stud.
+  close(vol(fastenerPart("standoffm", "M4", 15, PLAIN)), hex(7) * 15 - cyl(4, 8) + cyl(4, 8));
+  close(vol(fastenerPart("spacer", "M4", 10, PLAIN)), cyl(8, 10) - cyl(4.5, 10));
+  // Split rings: the ring less an opening about g × ring width × s (2 % for the curved edges).
+  const ring = (d1: number, d2: number, h: number, g: number) => cyl(d2, h) - cyl(d1, h) - g * (d2 - d1) / 2 * h;
+  close(vol(fastenerPart("din471", "20", undefined, PLAIN)), ring(18.5, 23.7, 1.2, 2.4), 0.02);
+  close(vol(fastenerPart("din472", "32", undefined, PLAIN)), ring(28, 34.4, 1.2, 3.24), 0.02);
+  close(vol(fastenerPart("din127", "M8", undefined, PLAIN)), ring(8.2, 14.8, 2, 1.2), 0.02);
+  // Retaining rings follow the shaft or the bore; standoffs and spacers the screw.
+  assert.equal(sizeForHole("din471", 20), "20");
+  assert.equal(sizeForHole("din472", 32), "32");
+  assert.equal(sizeForHole("standoff", 3.4), "M3");
+  assert.equal(sizeForHole("spacer", 4.5), "M4");
+  const mf = fastenerPart("standoffm", "M4", 15);
+  assert.deepEqual(mf.features.filter(f => f.type === "thread").map(f => [(f as any).internal ?? false, (f as any).length.v]), [[true, 7.6], [false, 7.51]]);
+  close(shapeVolume(fastenerShape("standoff", "M3", 10)), (hex(5.5) - Math.PI * 2.25) * 10);
 });

@@ -944,7 +944,7 @@ export class AsmController {
     const cats = TOOLBOX_GROUPS.map(gr => {
       const ks = FASTENERS.filter(x => x.group === gr), k0 = ks[0], sz = fastenerSizes(k0.kind), mid = sz[Math.floor(sz.length / 2)];
       const on = !f.q && f.cat === gr;
-      return `<button class="tb-cat${on ? " on" : ""}" data-cat="${gr}" role="tab" aria-selected="${on}">${shapeSvg(fastenerShape(k0.kind, mid, defaultLength(k0.kind, mid)), { w: 30, h: 24, cls: "tb-ico" })}<span>${esc(t(gr))}</span><span class="tb-n">${ks.length}</span></button>`;
+      return `<button class="tb-cat${on ? " on" : ""}" data-cat="${gr}" title="${esc(t(gr))}" role="tab" aria-selected="${on}">${shapeSvg(fastenerShape(k0.kind, mid, defaultLength(k0.kind, mid)), { w: 30, h: 24, cls: "tb-ico" })}<span>${esc(t(gr))}</span><span class="tb-n">${ks.length}</span></button>`;
     }).join("");
     const L = info.screw ? f.length : 0, shape = fastenerShape(f.kind, f.size, L);
     const grams = shapeVolume(shape) * 7.85e-3;
