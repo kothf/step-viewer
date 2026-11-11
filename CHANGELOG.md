@@ -5,17 +5,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.512.0] - 2026-11-11
+## [1.513.0] - 2026-11-11
 
 ### Changed
 
-- Vault: the header shows a vault file's status (version, lifecycle state such as Work in progress, checked out to you) in its own chip beside the file name, so it is no longer cut off, and its tooltip explains each part.
+- Vault: the header shows a vault file's status (version, lifecycle state, checked out to you) in its own chip beside the file name, so it is no longer cut off, and its tooltip explains each part.
 - Vault: a file's first lifecycle state is shown as Draft (Черновик) instead of Work in progress, which read as if something was still running; stored vaults keep their state names.
 - Vault: Save on a drawing whose part or assembly is in the open vault puts the drawing in the vault beside it, checked out to you, instead of downloading it; Save to vault on a part or assembly takes its open drawings along.
 
 ### Fixed
 
 - Vault: a browser vault asks the browser to keep the site's storage (persistent storage), since Firefox and Safari may otherwise clear it when space runs short; when the browser refuses, a new vault says how to keep a backup (Export ZIP).
+
+## [1.512.0] - 2026-11-11
+
+### Added
+
+- Auxiliary view from a drawn line (FR-DRW-014), as in SolidWorks from a sketched line: with Auxiliary, click a line drawn with Annotate ▸ Line (or a side of a drawn rectangle or polyline) over a view, and the view folds about it, square to that line.
 
 ## [1.511.0] - 2026-11-11
 
@@ -3177,7 +3183,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.512.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.513.0...HEAD
+[1.513.0]: https://github.com/kothf/step-viewer/compare/v1.512.0...v1.513.0
 [1.512.0]: https://github.com/kothf/step-viewer/compare/v1.511.0...v1.512.0
 [1.511.0]: https://github.com/kothf/step-viewer/compare/v1.510.0...v1.511.0
 [1.510.0]: https://github.com/kothf/step-viewer/compare/v1.509.0...v1.510.0
