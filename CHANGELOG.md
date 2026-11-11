@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.508.0] - 2026-11-11
+
+### Added
+
+- Auxiliary view from a drawn line (FR-DRW-014), as in SolidWorks from a sketched line: with Auxiliary, click a line drawn with Annotate ▸ Line (or a side of a drawn rectangle or polyline) over a view, and the view folds about it, square to that line.
+
 ## [1.507.0] - 2026-11-11
 
 ### Added
@@ -3139,7 +3145,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.507.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.508.0...HEAD
+[1.508.0]: https://github.com/kothf/step-viewer/compare/v1.507.0...v1.508.0
 [1.507.0]: https://github.com/kothf/step-viewer/compare/v1.506.0...v1.507.0
 [1.506.0]: https://github.com/kothf/step-viewer/compare/v1.505.0...v1.506.0
 [1.505.0]: https://github.com/kothf/step-viewer/compare/v1.504.0...v1.505.0

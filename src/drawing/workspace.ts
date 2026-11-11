@@ -470,7 +470,7 @@ export class DrawingWorkspace {
               <button role="menuitem" data-det="circle">${esc(t("Circle"))}</button>
               <button role="menuitem" data-det="profile">${esc(t("Profile"))}</button>
             </div></div>
-          <button class="btn small" data-a="aux" title="${esc(t("Auxiliary view: click a straight edge, then place the view square to it"))}">${ICON.aux}<span>${esc(t("Auxiliary"))}</span></button>
+          <button class="btn small" data-a="aux" title="${esc(t("Auxiliary view: click a straight edge or a drawn line, then place the view square to it"))}">${ICON.aux}<span>${esc(t("Auxiliary"))}</span></button>
           <span class="drw-sep"></span>
           <button class="btn small" data-a="dim" title="${esc(t("Smart dimension (D): click an edge, a circle or two points, then place the dimension"))}">${ICON.dim}<span>${esc(t("Dimension"))}</span></button>
           <div class="drw-dd"><button class="btn small" data-a="annot" aria-haspopup="menu" aria-expanded="false" title="${esc(t("Model items, hole callouts, notes, geometric tolerances, datums, surface finish, tables, balloons and the bill of materials"))}">${ICON.annot}<span>${esc(t("Annotate"))}</span> ▾</button>
@@ -629,7 +629,7 @@ export class DrawingWorkspace {
     else if (m.kind === "datum") s = m.ref ? t("Click where the datum letter goes.") : t("Click the edge of the datum feature.");
     else if (m.kind === "balloon") s = m.ref ? t("Click where the balloon goes.") : t("Click an edge of a component.");
     else if (m.kind === "surf") s = m.ref ? t("Click on the edge to put the symbol there, or away from it for a leader.") : t("Click the edge of the surface, or an empty place on the sheet.");
-    else if (m.kind === "aux") s = m.line ? t("Move the cursor to the side of the edge and click to place the auxiliary view. Esc cancels.") : t("Click a straight edge of a view.");
+    else if (m.kind === "aux") s = m.line ? t("Move the cursor to the side of the edge and click to place the auxiliary view. Esc cancels.") : t("Click a straight edge of a view or a line drawn on it.");
     else if (this.stale) s = t("The model changed: the views are out of date. Updating…");
     else if (this.projecting.size && this.kernel.restarting) s = t("Freeing the drawing kernel's memory, then projecting… {n} to go", { n: this.projecting.size });
     else if (this.projecting.size) s = t("Projecting the views… {n} to go", { n: this.projecting.size });
@@ -2369,6 +2369,53 @@ export class DrawingWorkspace {
     return best;
   }
 
+  /**
+   * The segment of a line drawn on the sheet (Annotate ▸ Line, a rectangle side or a polyline leg) nearest to a
+   * sheet point, within the snap distance: sheet coordinates.
+   */
+  private drawnLineAt(p: Pt): Line4 | null {
+    let best: Line4 | null = null, bd = this.snapTol();
+    for (const a of this.sheet.annots ?? []) {
+      if (a.t !== "sk" || a.k === "circle") continue;
+      const P = skPoints(a), closed = a.k === "rect" || (a.k === "poly" && !!a.closed && P.length >= 3);
+      for (let i = 0; i + 1 < P.length + (closed ? 1 : 0); i++) {
+        const [ax, ay] = P[i], [bx, by] = P[(i + 1) % P.length];
+        const dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy;
+        if (L2 < 1e-6) continue;
+        const k = Math.max(0, Math.min(1, ((p[0] - ax) * dx + (p[1] - ay) * dy) / L2));
+        const d = Math.hypot(ax + dx * k - p[0], ay + dy * k - p[1]);
+        if (d < bd) { bd = d; best = [ax, ay, bx, by]; }
+      }
+    }
+    return best;
+  }
+
+  /**
+   * What an auxiliary view folds about at a sheet point (FR-DRW-014): a line drawn on the sheet, as SolidWorks takes a
+   * sketched line, else a straight model edge. A drawn line belongs to the view under the click, else to the nearest
+   * view. Returns the parent view and the line in its model axes.
+   */
+  private auxPick(m: { parent: string | null }, p: Pt): { id: string; line: Line4 } | null {
+    const drawn = this.drawnLineAt(p);
+    let id = this.kindParent(m, p);
+    if (drawn) {
+      if (!id) {
+        const mid: Pt = [(drawn[0] + drawn[2]) / 2, (drawn[1] + drawn[3]) / 2];
+        let bd = Infinity;
+        for (const v of this.sheet.views) {
+          const pl = this.placements.get(v.id);
+          if (!pl) continue;
+          const r = viewRect(pl), d = Math.hypot(Math.max(r[0] - mid[0], 0, mid[0] - r[2]), Math.max(r[1] - mid[1], 0, mid[1] - r[3]));
+          if (d < bd) { bd = d; id = v.id; }
+        }
+      }
+      const pl = id ? this.placements.get(id) : undefined;
+      if (id && pl) return { id, line: [...fromSheet(pl, drawn[0], drawn[1]), ...fromSheet(pl, drawn[2], drawn[3])] as Line4 };
+    }
+    const e = id ? this.edgeAt(id, p) : null;
+    return id && e ? { id, line: e } : null;
+  }
+
   /** A section or auxiliary view of `parent` from `line`, on the cursor's side (looking the way the sheet's projection places it) and lined up square to the line. */
   private sideViewAt(kind: "section" | "aux", parent: string, line: Line4, at: Pt, path?: number[], aligned?: boolean): DrawingView {
     const pp = this.placements.get(parent)!, par = findView(this.sheet, parent);
@@ -2443,11 +2490,10 @@ export class DrawingWorkspace {
       }
     } else {
       if (m.line && m.parent) { this.placeKind(this.sideViewAt("aux", m.parent, m.line, p)); return; }
-      if (!id) return;
-      const e = this.edgeAt(id, p);
-      if (!e) { toast(t("Click a straight edge of the view.")); return; }
-      m.parent = id; m.line = e; this.sel = id;
-      this.warmSides("aux", id, e);
+      const pick = this.auxPick(m, p);
+      if (!pick) { if (id) toast(t("Click a straight edge of the view or a line drawn on it.")); return; }
+      m.parent = pick.id; m.line = pick.line; this.sel = pick.id;
+      this.warmSides("aux", pick.id, pick.line);
     }
     this.renderStatus();
     this.renderOverlay();
@@ -2728,6 +2774,12 @@ export class DrawingWorkspace {
     if (m.kind === "altpos") return this.altMarks(H);
     if (m.kind !== "section" && m.kind !== "detail" && m.kind !== "aux") return "";
     const at = m.at;
+    if (m.kind === "aux" && !m.line) {
+      const pick = at ? this.auxPick(m, at) : null, pl = pick && this.placements.get(pick.id);
+      if (!pick || !pl) return "";
+      const [a, b] = [toSheet(pl, pick.line[0], pick.line[1]), toSheet(pl, pick.line[2], pick.line[3])];
+      return `<line class="drw-edge" x1="${a[0]}" y1="${H - a[1]}" x2="${b[0]}" y2="${H - b[1]}"/>`;
+    }
     const id = at ? this.kindParent(m, at) : m.parent;
     const pl = id ? this.placements.get(id) : undefined;
     if (!pl || !id) return "";
