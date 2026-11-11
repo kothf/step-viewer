@@ -1581,7 +1581,7 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | Space orientation picker, named views | FR-UI-031, FR-UI-104 | 1.107.0: Space picker at the cursor (six views, Isometric, Normal to, zooms); 1.371.0: named views saved with the part/assembly | Done |
 | Animated view changes | FR-UI-103 | 1.107.0: 300 ms moves, instant with reduced motion | Done |
 | Normal to, twice flips | FR-UI-030 | Done (N and Ctrl+8) | Done |
-| Click empty space clears; Ctrl+click toggles | FR-SEL-002, FR-SEL-007 | Esc clears; sketch box select only | Weaker |
+| Click empty space clears; Ctrl+click toggles | FR-SEL-002, FR-SEL-007 | 1.536.0: Ctrl+click adds/removes faces and edges in parts; a plain click or Esc clears; Fillet/Chamfer take every selected edge, Shell/Delete Face/Move Face every selected face | Done |
 | Box selection in the part | FR-SEL-002, FR-SEL-008 | Sketch only | Weaker |
 | Select other | FR-SEL-004 | Alt+click cycles faces behind | Done |
 | Selection filter F5 | FR-SEL-003 | Done (faces, edges, vertices) | Done |
@@ -1595,7 +1595,7 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | Right-click menu on geometry | FR-UI-025 | 1.535.0: right-click on a face or edge shows the context toolbar above and a menu (Edit feature, Edit sketch, Suppress, Hide body, Normal to, Zoom to fit, Delete) for the feature that made it | Done |
 | Right-click during a command: OK / Cancel / Clear selections | FR-UI-107 | 1.107.0: right-click without drag offers OK and Cancel | Done |
 | Mouse gestures | FR-UI-024 (P2, S) | 1.316.0: right-drag radial guide in parts and sketches, 4 or 8 configurable directions, opt-in | Done |
-| Heads-up view bar | FR-UI-022 | View buttons sit in the header | Weaker |
+| Heads-up view bar | FR-UI-022 | 1.371.0: heads-up view bar (see Appendix G) | Done |
 | Fly-out mini tree while a panel is open | FR-UI-003 | 1.335.0: the panel fills the Features tab, the tree flies out at the top left of the view, folded until opened | Done |
 | Pushpin / OK and repeat | FR-UI-044, FR-UI-106 | 1.107.0: 📌 Keep visible and Ctrl+Enter | Done |
 | Undo inside an open panel | FR-UI-108 | 1.351.0: Ctrl+Z / Ctrl+Y step the panel's draft; the document stack waits for OK | Done |
@@ -1621,7 +1621,7 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | Copy and paste features | FR-HIS-014 | 1.342.0: Ctrl+C/Ctrl+V and Ctrl+drag for sketches, extrudes, revolves and holes; lost references listed | Done |
 | Tree reorder by drag, Alt+↑/↓ | FR-HIS-006 | Done | Done |
 | Rename F2, Del deletes | FR-UI-060 | Done | Done |
-| Undo/redo with names and a ▾ list | FR-UND-001, FR-UND-005 | Generic "Undo (Ctrl+Z)" tooltip, no list | Weaker / New |
+| Undo/redo with names and a ▾ list | FR-UND-001, FR-UND-005 | 1.107.0: named undo steps, Undo ▾ list | Done |
 | Rebuild Ctrl+B, force Ctrl+Q | FR-HIS-020 | Done | Done |
 | Command search Ctrl+K | FR-UI-014 (S) | Done (1.121.0) | Done |
 | Units in the status bar | FR-UI-116 | 1.351.0: unit and decimals button in the status bar; the part's unit is a document change (undoable); mass stays g/kg | Done |

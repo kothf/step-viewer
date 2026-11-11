@@ -2029,6 +2029,8 @@ canvas.addEventListener("pointerup", e => {
   const r = canvas.getBoundingClientRect();
   if (state.tool === "sectionFace") { sectionOnFace(faceUnder(e.clientX - r.left, e.clientY - r.top)); return; }
   if (e.altKey && state.tool === "select") { selectOther(e.clientX - r.left, e.clientY - r.top); return; }
+  // Ctrl+click in a part (FR-SEL-007): adds or removes a face or edge of the selection that commands take.
+  if ((e.ctrlKey || e.metaKey) && state.tool === "select" && modeller.ctrlPick(e)) return;
   handlePick(snapper.pick(e.clientX - r.left, e.clientY - r.top));
 });
 /** Select other (FR-SEL-004): Alt+click picks the next face behind, cycling at the same spot. */
