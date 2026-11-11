@@ -8077,9 +8077,9 @@ try {
     await fp.waitForFunction(() => window.__sv.asm.doc.mates?.length === 6 && !window.__sv.asm.building, null, { timeout: 120000 });
     await shown(5);
     const auto = await fp.evaluate(() => { const a = window.__sv.asm, c = a.doc.components, t = c[4].tf, r = v => Math.round(v * 1e3) / 1e3; return { mates: a.doc.mates.slice(4).map(m => [m.type, m.a.comp === c[0].id, m.b.comp === c[4].id]), at: [t[3], t[7], t[11]].map(r) }; });
-    check(panel.kinds === 6 && panel.sizes === 11 && panel.len === "12"
+    check(panel.kinds === 8 && panel.sizes === 20 && panel.len === "12"
       && /^ISO 4762 M6 x 12<1>$/.test(fast.names[1]) && /^ISO 4032 M6<1>$/.test(fast.names[2]) && JSON.stringify(fast.mates) === '["concentric","coincident","concentric","coincident"]'
-      && JSON.stringify(fast.screw) === "[10,10,5,1]" && JSON.stringify(fast.nut) === "[10,10,0,-1]" && JSON.stringify(fast.dof) === "[1,1]" && /2 parts placed/.test(fast.status ?? "") && fast.configs === 11
+      && JSON.stringify(fast.screw) === "[10,10,5,1]" && JSON.stringify(fast.nut) === "[10,10,0,-1]" && JSON.stringify(fast.dof) === "[1,1]" && /2 parts placed/.test(fast.status ?? "") && fast.configs === 20
       && refs.title === "Mate reference" && refs.plate === 2 && refs.pin === 2
       && JSON.stringify(auto.mates) === '[["concentric",true,true],["coincident",true,true]]' && JSON.stringify(auto.at) === "[30,10,5]",
       `asm 1.79: ISO fasteners placed on a hole with concentric + coincident mates; mate references mate a part on insert (FR-ASM-028, FR-MATE-011) (${JSON.stringify({ panel, fast, refs, auto })})`);
