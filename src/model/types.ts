@@ -606,6 +606,13 @@ export interface HoleFeature {
   threadEnd?: "through";
   major?: number;
   pitch?: number;
+  /** Counterbore / countersink / counterdrill: the screw type its head pocket is sized for (holes.ts `ScrewType`); absent = ISO 4762 or ISO 10642. */
+  screw?: "iso4762" | "din7984" | "iso7380" | "iso1207" | "iso10642" | "iso2009";
+  /** Tapped: thread tolerance class in the callout (absent = 6H, or 2B for inch). */
+  tclass?: string;
+  /** Tapped: "remove" cuts the threaded length to the major diameter (SolidWorks' Remove thread), "none" drops the
+   *  cosmetic thread; absent = cosmetic thread on the tap drill. */
+  threadMode?: "remove" | "none";
 }
 
 /** A countersink option of a hole: its diameter and included angle. */

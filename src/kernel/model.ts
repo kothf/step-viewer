@@ -2328,7 +2328,9 @@ export class Modeller {
       if (s) prof.push([s.R + lift * s.t, lift], [rTop, -s.h]); else prof.push([rTop, lift]);
       return s?.h ?? 0;
     };
-    const profile = (depth: number, exit?: number): [number, number][] => {
+    // Remove thread (FR-FT-051): the threaded length is cut to the major diameter.
+    const M = f.kind === "tapped" && f.threadMode === "remove" && f.major && f.major / 2 > r + 1e-9 ? f.major / 2 : 0;
+    const profile = (depth: number, exit?: number, td = 0): [number, number][] => {
       if (!(depth > 1e-6)) throw new FeatureError("E-FT-ZERO", "The depth must be more than 0.");
       // Profile from the axis outward, starting above the face so the top is cut cleanly.
       const prof: [number, number][] = [[0, lift]];
@@ -2357,6 +2359,10 @@ export class Modeller {
         // Head clearance: a cylinder of the countersink's width above the cone.
         if (clear > 0) prof.push([R, lift], [R, -clear], [r, -clear - h]);
         else prof.push([R + lift * Math.tan(a / 2), lift], [r, -h]);
+      } else if (M && td > 1e-6) {
+        top(prof, M);
+        if (td >= depth - 1e-6) { prof.push([M, -depth], [0, -depth]); return prof; }
+        prof.push([M, -td], [r, -td]);
       } else top(prof, r);
       // Far side countersink: a cone opening onto the face where the hole leaves the material.
       const fs = holeExits(f) ? sinkOf(f.farCs, r) : null;
@@ -2403,7 +2409,8 @@ export class Modeller {
       const o = add(add(fr.o, mul(fr.x, p[0])), mul(fr.y, p[1]));
       if (threadThrough(f)) len.push(reach(o));
       const exit = f.farCs && holeExits(f) ? (f.end === "through" ? reachAt(o) : depthAt(o)) : undefined;
-      let shape = revolve(o, profile(depthAt(o), exit));
+      const td = !M ? 0 : threadThrough(f) ? len[len.length - 1] : f.threadDepth?.v ?? (f.end === "blind" ? f.depth.v : 2 * f.diameter.v);
+      let shape = revolve(o, profile(depthAt(o), exit, td));
       if (f.kind === "slot") {
         // Slot: the hole at both ends of the centre line, joined by the profile swept along it.
         const L = f.slotLen?.v ?? 0;
