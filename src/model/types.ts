@@ -562,14 +562,22 @@ export interface HoleFeature {
   pts: [number, number][];
   /** clear = ISO 273 clearance hole for the size and fit; cdrill = counterdrilled; slot = an obround of `slotLen`. */
   kind: "simple" | "cbore" | "csink" | "tapped" | "insert" | "clear" | "cdrill" | "slot";
-  /** ISO size ("M6") the values were taken from; absent for a custom hole. */
+  /** Size ("M6", "M8x1", "1/4-20 UNC") the values were taken from; absent for a custom hole. */
   size?: string;
+  /** Size table (FR-FT-051): absent = ISO metric coarse. */
+  standard?: "isofine" | "unc" | "unf";
   fit?: "close" | "normal" | "loose";
   diameter: Num;
-  /** upto: to a face or plane (`upTo`); next: until the hole leaves the material. */
-  end: "blind" | "through" | "upto" | "next";
+  /** upto: to a face or plane (`upTo`); next: until the hole leaves the material; vertex: to the plane through
+   *  `upToVertex` square to the hole; offset: `upToOffset` short of the face or plane `upTo` (past it with `reverseOffset`). */
+  end: "blind" | "through" | "upto" | "next" | "vertex" | "offset";
   depth: Num;
   upTo?: PlaneRef;
+  upToVertex?: VertexRef;
+  upToOffset?: Num;
+  reverseOffset?: boolean;
+  /** Drill point angle of a blind hole (absent = 118°). */
+  drillAngle?: Num;
   /** Counterdrill: diameter, depth and the angle of its conical bottom. */
   cdDia?: Num;
   cdDepth?: Num;
@@ -585,6 +593,13 @@ export interface HoleFeature {
   cbDepth?: Num;
   csDia?: Num;
   csAngle?: Num;
+  /** Options (FR-FT-051, as in SolidWorks' Hole Wizard): a countersink on the near side (at the top of the hole or
+   *  its counterbore), under the counterbore's head, and on the far side where a hole that is not blind leaves the
+   *  material; head clearance deepens a counterbore or puts a cylinder of the countersink's width above the cone. */
+  nearCs?: HoleSink;
+  underCs?: HoleSink;
+  farCs?: HoleSink;
+  headClear?: Num;
   /** Tapped: thread depth (cosmetic thread) and nominal diameter. */
   threadDepth?: Num;
   /** Tapped, hole end not blind: "through" = the thread runs the whole drill (SolidWorks' thread Through All); absent = `threadDepth`. */
@@ -593,8 +608,13 @@ export interface HoleFeature {
   pitch?: number;
 }
 
+/** A countersink option of a hole: its diameter and included angle. */
+export interface HoleSink { dia: Num; angle: Num }
+
 /** The tapped hole's thread runs the whole drill (thread end Through all; only for holes that are not blind). */
-export function threadThrough(f: HoleFeature): boolean { return f.kind === "tapped" && f.threadEnd === "through" && f.end !== "blind"; }
+export function threadThrough(f: HoleFeature): boolean { return f.kind === "tapped" && f.threadEnd === "through" && holeExits(f); }
+/** The hole's end is where it leaves the material or meets a face (through, up to next, up to face): far side options apply. */
+export function holeExits(f: HoleFeature): boolean { return f.end === "through" || f.end === "next" || f.end === "upto"; }
 
 /**
  * Helix / spiral curve (FR-FT-083): round the circle of a sketch, starting on it at the start angle and

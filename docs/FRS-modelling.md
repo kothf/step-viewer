@@ -484,7 +484,7 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 
 ### 8.3 Sketch tools
 
-- **FR-SK-030** (P1, M) Trim: smart trim by clicking a segment (removes it up to the nearest intersections), and drag-through trim over several segments. Jog line (1.520.0): a line stepped out between two clicks, sides square to it.
+- **FR-SK-030** (P1, M) Trim: smart trim by clicking a segment (removes it up to the nearest intersections), and drag-through trim over several segments. Jog line (1.521.0): a line stepped out between two clicks, sides square to it.
 - **FR-SK-031** (P1, M) Extend to the nearest intersection.
 - **FR-SK-032** (P1, M) Split entity at a point.
 - **FR-SK-033** (P1, M) Sketch fillet (radius) and sketch chamfer (distance, distance-angle) at a corner, keeping relations and adding a radius/distance dimension.

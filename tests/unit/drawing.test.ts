@@ -1842,6 +1842,16 @@ test("thread end Through all: the thread runs the whole drill in the model, the 
   assert.deepEqual(lims, [0], "every thread stops at the bottom face");
   const ctx = { topo, holes: mi.holes, threads: mi.threads, items: [], box: null, dec: ".", label: (s: string) => s } as never;
   assert.deepEqual(holeText({ t: "c", c: [20, 0, 20], ax: [0, 0, 1], r: 3.4 } as never, ctx), ["2× Ø6.8 THRU", "M8-6H THRU"]);
+  // An inch size gets the unified class 2B.
+  const hf = (mi.holes as { f: { size?: string } }[]).find(h => h.f.size === "M8")!.f;
+  hf.size = "5/16-18 UNC";
+  assert.deepEqual(holeText({ t: "c", c: [20, 0, 20], ax: [0, 0, 1], r: 3.4 } as never, ctx), ["2× Ø6.8 THRU", "5/16-18 UNC-2B THRU"]);
+  hf.size = "M8";
+  // Option countersinks go under the thread line; the far side one says so.
+  const ho = hf as { nearCs?: unknown; farCs?: unknown };
+  ho.nearCs = { dia: { v: 9 }, angle: { v: Math.PI / 2 } }; ho.farCs = { dia: { v: 8 }, angle: { v: Math.PI / 2 } };
+  assert.deepEqual(holeText({ t: "c", c: [20, 0, 20], ax: [0, 0, 1], r: 3.4 } as never, ctx), ["2× Ø6.8 THRU", "M8-6H THRU", "⌵Ø9 × 90°", "⌵Ø8 × 90° FAR SIDE"]);
+  delete ho.nearCs; delete ho.farCs;
   assert.deepEqual(holeText({ t: "c", c: [-20, 0, 20], ax: [0, 0, 1], r: 2.5 } as never, ctx), ["Ø5", "M6-6H"], "up to next: the thread is as deep as the drill");
   // Blind again: the typed depth is back.
   const d2 = structuredClone(d);

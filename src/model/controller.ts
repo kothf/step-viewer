@@ -24,7 +24,7 @@ import { evaluate, ExprError, isPlain } from "./expr";
 import { journalDrop, journalList, journalSave, packPart, unpackPart, PART_EXT, type JournalEntry } from "./file";
 import { snapshotList, snapshotRead, snapshotSave, SNAPSHOT_KEEP } from "./snapshots";
 import { ModelKernel, type Rebuild } from "./kernelClient";
-import { pathId, hasDir2, dir2Apart, dir2Blind, clearDir2, threadThrough, DIR2_ENDS, type Dir2End } from "./types";
+import { pathId, hasDir2, dir2Apart, dir2Blind, clearDir2, threadThrough, holeExits, DIR2_ENDS, type Dir2End } from "./types";
 import { parseXyz } from "./curves";
 import { textPolys, TEXT_FONTS } from "../sketch/text";
 import { ctxRefs, type PartContext } from "./context";
@@ -32,23 +32,23 @@ import { applyDir as tfDir, applyPoint as tfPoint, invert as tfInvert } from "..
 import { segPoints, solve3d } from "../sketch/sketch3d";
 import type { CtxRef, SkEnt, SketchPatternFeature, FeatureFolder, ThreadFeature, Sketch3dFeature, Sk3Rel, CurveFeature, SweepSurfFeature, SweepPath,
   AxisFeature, ChamferFeature, CsysFeature, CircularPatternFeature, EdgeRef, ExtrudeFeature, Feature, FeatureStatus, FilletFeature, ScaleFeature, Frame, LinearPatternFeature, LineRef,
-  GlobalVar, HelixFeature, LoftFeature, RibFeature, SplitFeature, FaceRef, RecognizedHole, ImportFeature, HealFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, UntrimSurfFeature, IntersectFeature, SweepFeature, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3, VertexRef,
+  GlobalVar, HelixFeature, LoftFeature, RibFeature, SplitFeature, FaceRef, RecognizedHole, ImportFeature, HealFeature, HoleSink, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, UntrimSurfFeature, IntersectFeature, SweepFeature, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3, VertexRef,
 } from "./types";
 import { hexRgb, toRef, type MatRef } from "../tools/materials";
 import { pickMaterial } from "../materialPicker";
-import { ISO_METRIC, HEAT_INSERTS, holeSize, insertSize, recognizedHoleFeatures, type HoleSize } from "./holes";
+import { ISO_METRIC, HEAT_INSERTS, HOLE_STANDARDS, holeSize, insertSize, majorOf, recognizedHoleFeatures, standardOf, type HoleStandard } from "./holes";
 
 /** What a hole favourite keeps: the definition, not the placement. */
 /** Drag data of a Features tree row (FR-HIS-014: Ctrl+drag onto a face or plane pastes a copy). */
 const FEATURE_DRAG = "application/x-mcad-feature";
-const HOLE_DEF_KEYS = ["kind", "size", "fit", "diameter", "end", "depth", "flat", "cbDia", "cbDepth", "csDia", "csAngle", "threadDepth", "threadEnd", "major", "pitch", "cdDia", "cdDepth", "cdAngle", "slotLen", "slotAngle"] as const;
+const HOLE_DEF_KEYS = ["kind", "standard", "size", "fit", "diameter", "end", "depth", "flat", "cbDia", "cbDepth", "csDia", "csAngle", "threadDepth", "threadEnd", "nearCs", "underCs", "farCs", "headClear", "drillAngle", "major", "pitch", "cdDia", "cdDepth", "cdAngle", "slotLen", "slotAngle"] as const;
 interface HoleFav { name: string; def: Partial<HoleFeature> }
 function loadFavs(): HoleFav[] { try { const v = JSON.parse(localStorage.getItem("mc:holeFavs") ?? "[]"); return Array.isArray(v) ? v : []; } catch { return []; } }
 function saveFavs(list: HoleFav[]) { try { localStorage.setItem("mc:holeFavs", JSON.stringify(list)); } catch { /* storage blocked: kept for this page only */ } }
+/** A hole's thread/screw standard: the stored one, else the one its size belongs to. */
+function holeStd(f: HoleFeature): HoleStandard { return f.standard ?? (f.size ? standardOf(f.size) : "iso"); }
 function holeTitle(f: HoleFeature) { return `${f.size ?? `Ø${trimNum(f.diameter.v, 2)}`} ${f.kind}`; }
 
-/** Nominal (major) diameter of an ISO metric size: "M6" → 6. */
-const majorOf = (h: HoleSize) => parseFloat(h.size.slice(1));
 import { evalVars, exprTargets, refreshExprs, renameEverywhere, validVarName } from "./params";
 import { STD_FRAMES } from "../kernel/model";
 import { ellOf, ellParam, ellPts, ellSweep } from "../sketch/ellipse";
@@ -191,13 +191,13 @@ function applyHoleSize(f: HoleFeature) {
   delete f.cbDia; delete f.cbDepth; delete f.csDia; delete f.csAngle; delete f.threadDepth; delete f.major; delete f.pitch; delete f.cdDia; delete f.cdDepth; delete f.cdAngle;
   if (f.kind === "tapped") {
     f.diameter = { v: h.tap };
-    f.major = parseFloat(h.size.slice(1));
+    f.major = majorOf(h);
     f.pitch = h.pitch;
     f.threadDepth = { v: Math.round(f.major * 2 * 10) / 10 };
     if (f.end === "blind" && f.depth.v < f.threadDepth.v + h.pitch * 2) f.depth = { v: Math.round((f.threadDepth.v + f.major * 0.5) * 10) / 10 };
   } else f.diameter = { v: h.clear[fit] };
   if (f.kind === "cbore") { f.cbDia = { v: h.cbore[0] }; f.cbDepth = { v: h.cbore[1] }; }
-  if (f.kind === "csink") { f.csDia = { v: h.csink }; f.csAngle = { v: Math.PI / 2 }; }
+  if (f.kind === "csink") { f.csDia = { v: h.csink }; f.csAngle = { v: ((h.csAng ?? 90) * Math.PI) / 180 }; }
   // Counterdrill: as wide as the screw head's counterbore, to the same depth, with a 118° bottom.
   if (f.kind === "cdrill") { f.cdDia = { v: h.cbore[0] }; f.cdDepth = { v: h.cbore[1] }; f.cdAngle = { v: (118 * Math.PI) / 180 }; }
 }
@@ -2657,7 +2657,7 @@ export class ModelController {
     switch (d.type) {
       case "plane": return [{ focus: "base", filled: !!d.base, one: true }, ...(d.mode === "angle" ? [{ focus: "axis" as Focus, filled: !!(d.axis || d.about), one: true }] : [])];
       case "draft": return [{ focus: "nplane", filled: !!d.plane, one: true }, { focus: "faces", filled: d.kind === "parting" ? !!d.parting?.length : d.faces.length > 0, one: false }];
-      case "hole": return [{ focus: "hplane", filled: !!d.plane, one: true }, ...(d.end === "upto" ? [{ focus: "hupto" as Focus, filled: !!d.upTo, one: true }] : []), { focus: "pts", filled: d.pts.length > 0, one: false }];
+      case "hole": return [{ focus: "hplane", filled: !!d.plane, one: true }, ...(d.end === "upto" || d.end === "offset" ? [{ focus: "hupto" as Focus, filled: !!d.upTo, one: true }] : d.end === "vertex" ? [{ focus: "hupto" as Focus, filled: !!d.upToVertex, one: true }] : []), { focus: "pts", filled: d.pts.length > 0, one: false }];
       case "mirror": return [{ focus: "mplane", filled: !!d.plane, one: true }, { focus: "seeds", filled: seeds(d), one: false }];
       case "lpattern": return [{ focus: "seeds", filled: seeds(d), one: false }, { focus: "dir", filled: !!d.dir, one: true }];
       case "cpattern": return [{ focus: "seeds", filled: seeds(d), one: false }, { focus: "dir", filled: !!d.axis, one: true }];
@@ -3598,7 +3598,15 @@ export class ModelController {
     const m = this.mode;
     if (m.kind !== "feature") return;
     const own = (n: string) => n.startsWith(`${f.id}:`);
-    if (m.focus === "hupto" && f.end === "upto") {
+    if (m.focus === "hupto" && f.end === "vertex") {
+      const v = this.pickVertex(e);
+      if (!v) return;
+      f.upToVertex = v;
+      m.focus = "pts";
+      this.draftChanged();
+      return;
+    }
+    if (m.focus === "hupto" && (f.end === "upto" || f.end === "offset")) {
       const r = this.pickRef(e);
       if (!r || ("face" in r && own(r.face.name))) return;
       f.upTo = r;
@@ -4049,7 +4057,7 @@ export class ModelController {
         ...(dir2Apart(d) && d.end2 === "body" ? [{ focus: "upbody2", label: t("Body (direction 2)"), faces: d.upToBody2 ? [d.upToBody2] : [] }] : [])];
       case "revolve": return d.end === "upto" ? [{ focus: "upto", label: t("Up to"), faces: pf(d.upTo), sel: '.pm-box[data-k="focus-upto"]' }] : [];
       case "hole": return [{ focus: "hplane", label: t("Face"), faces: pf(d.plane) },
-        ...(d.end === "upto" ? [{ focus: "hupto", label: t("Up to"), faces: pf(d.upTo) }] : [])];
+        ...(d.end === "upto" || d.end === "offset" ? [{ focus: "hupto", label: t("Up to"), faces: pf(d.upTo) }] : [])];
       case "mirror": return [{ focus: "mplane", label: t("Plane"), faces: pf(d.plane) },
         ...(d.copy === "faces" ? [{ focus: "faces", label: t("Faces"), faces: d.faces ?? [] }] : [])];
       case "lpattern": case "cpattern": case "spattern":
@@ -5989,7 +5997,8 @@ export class ModelController {
         }
         if (mm.kind === "feature" && asRef && mm.draft.type === "revolve" && mm.draft.end === "upto") { mm.draft.upTo = asRef; this.draftChanged(); return; }
         if (mm.kind === "feature" && asRef && mm.draft.type === "axis" && mm.draft.mode === "planes") { mm.draft.planes = [...(mm.draft.planes ?? []), asRef].slice(-2); this.draftChanged(); return; }
-        if (mm.kind === "feature" && mm.draft.type === "hole" && asRef && mm.focus === "hupto" && mm.draft.end === "upto") { mm.draft.upTo = asRef; mm.focus = "pts"; this.draftChanged(); return; }
+        if (mm.kind === "feature" && mm.draft.type === "hole" && asRef && mm.focus === "hupto" && (mm.draft.end === "upto" || mm.draft.end === "offset")) { mm.draft.upTo = asRef; mm.focus = "pts"; this.draftChanged(); return; }
+        if (mm.kind === "feature" && mm.draft.type === "hole" && mm.focus === "hupto" && mm.draft.end === "vertex" && this.store!.feature(id)?.type === "point") { mm.draft.upToVertex = { point: id }; mm.focus = "pts"; this.draftChanged(); return; }
         if (mm.kind === "feature" && mm.draft.type === "hole" && asRef && (mm.focus === "hplane" || !mm.draft.plane)) { mm.draft.plane = asRef; mm.draft.pts = []; mm.focus = "pts"; this.draftChanged(); return; }
         if (mm.kind === "feature" && mm.draft.type === "draft" && asRef && (mm.focus === "nplane" || !mm.draft.plane)) { mm.draft.plane = asRef; mm.focus = "faces"; this.draftChanged(); return; }
         if (mm.kind === "feature" && mm.draft.type === "lpattern" && asRef && (mm.focus === "pref" || mm.focus === "pref2")) { if (mm.focus === "pref2") mm.draft.upTo2 = asRef; else mm.draft.upTo = asRef; this.draftChanged(); return; }
@@ -6523,7 +6532,8 @@ export class ModelController {
           + `<label class="pm-field"><span>${esc(t("Name"))}</span><input type="text" data-ui="favName" value="${esc(holeTitle(f))}" spellcheck="false" translate="no" /></label>`
           + `<div class="pm-rels"><button class="btn small" data-ui="favSave">${esc(t("Save as favourite"))}</button>${favs.length ? `<button class="btn small" data-ui="favDel">${esc(t("Delete favourite"))}</button>` : ""}</div>`)
         + group(t("Hole type"), sel("kind", t("Type"), [["simple", t("Simple hole")], ["clear", t("Clearance hole")], ["cbore", t("Counterbore")], ["cdrill", t("Counterdrill")], ["csink", t("Countersink")], ["tapped", t("Tapped hole")], ["slot", t("Slot")], ["insert", t("Heat-set insert")]], f.kind)
-          + sel("size", t("Size"), [["", t("Custom")], ...(f.kind === "insert" ? HEAT_INSERTS : ISO_METRIC).map(h => [h.size, h.size] as [string, string])], f.size ?? "")
+          + (f.kind !== "insert" ? sel("standard", t("Standard"), [["iso", t("ISO metric")], ["isofine", t("ISO metric fine")], ["unc", t("ANSI inch UNC")], ["unf", t("ANSI inch UNF")]], holeStd(f)) : "")
+          + sel("size", t("Size"), [["", t("Custom")], ...(f.kind === "insert" ? HEAT_INSERTS : HOLE_STANDARDS[holeStd(f)]).map(h => [h.size, h.size] as [string, string])], f.size ?? "")
           + (f.kind === "insert" && insertSize(f.size) ? `<p class="pm-help muted" data-insert>${esc(t("Insert length {l} mm; keep at least {w} mm of wall around the hole (boss Ø {b} mm).", { l: trimNum(insertSize(f.size)!.length, 2), w: trimNum(insertSize(f.size)!.wall, 2), b: trimNum(insertSize(f.size)!.hole + 2 * insertSize(f.size)!.wall, 2) }))}</p>` : "")
           + (f.kind !== "tapped" && f.kind !== "insert" && f.size ? sel("fit", t("Clearance fit"), [["close", t("Close fit")], ["normal", t("Normal fit")], ["loose", t("Loose fit")]], f.fit ?? "normal") : ""))
         + group(t("Hole specification"), numField("diameter", f.kind === "tapped" ? t("Tap drill diameter") : t("Diameter"), f.diameter, "length")
@@ -6531,14 +6541,21 @@ export class ModelController {
           + (f.kind === "csink" ? numField("csDia", t("Countersink diameter"), f.csDia ?? { v: f.diameter.v * 2 }, "length") + numField("csAngle", t("Countersink angle"), f.csAngle ?? { v: Math.PI / 2 }, "angle") : "")
           + (f.kind === "cdrill" ? numField("cdDia", t("Counterdrill diameter"), f.cdDia ?? { v: f.diameter.v * 1.7 }, "length") + numField("cdDepth", t("Counterdrill depth"), f.cdDepth ?? { v: f.diameter.v }, "length") + numField("cdAngle", t("Counterdrill angle"), f.cdAngle ?? { v: (118 * Math.PI) / 180 }, "angle") : "")
           + (f.kind === "slot" ? numField("slotLen", t("Slot length"), f.slotLen ?? { v: f.diameter.v * 2 }, "length") + numField("slotAngle", t("Slot angle"), f.slotAngle ?? { v: 0 }, "angle") : ""))
-        + group(t("End condition"), sel("end", t("End condition"), [["blind", t("Blind")], ["through", t("Through all")], ["next", t("Up to next")], ["upto", t("Up to face or plane")]], f.end)
-          + (f.end === "upto" ? hbox("hupto", t("Up to"), this.refLabel(f.upTo)) + `<p class="pm-help muted">${esc(t("Click a flat face or a plane in the view or the tree."))}</p>` : "")
+        + group(t("End condition"), sel("end", t("End condition"), [["blind", t("Blind")], ["through", t("Through all")], ["next", t("Up to next")], ["vertex", t("Up to vertex")], ["upto", t("Up to face or plane")], ["offset", t("Offset from surface")]], f.end)
+          + (f.end === "upto" || f.end === "offset" ? hbox("hupto", t("Up to"), this.refLabel(f.upTo)) + `<p class="pm-help muted">${esc(t("Click a flat face or a plane in the view or the tree."))}</p>` : "")
+          + (f.end === "offset" ? numField("upToOffset", t("Offset distance"), f.upToOffset ?? { v: 5 }, "length") + chk("reverseOffset", f.reverseOffset, t("Reverse offset")) : "")
+          + (f.end === "vertex" ? hbox("hupto", t("Up to"), this.vertexLabel(f.upToVertex)) + `<p class="pm-help muted">${esc(t("Click near the end of an edge, or a reference point in the tree."))}</p>` : "")
           + (f.end === "next" ? `<p class="pm-help muted">${esc(t("Each hole stops where it leaves the material."))}</p>` : "")
-          + (f.end === "blind" ? numField("depth", t("Depth"), f.depth, "length") + chk("flat", f.flat, t("Flat bottom (no drill point)")) : "")
+          + (f.end === "blind" ? numField("depth", t("Depth"), f.depth, "length") + chk("flat", f.flat, t("Flat bottom (no drill point)")) + (f.flat ? "" : numField("drillAngle", t("Drill angle"), f.drillAngle ?? { v: (118 * Math.PI) / 180 }, "angle")) : "")
           // The thread's own end condition sits under the hole's, as in SolidWorks' End Condition box.
-          + (f.kind === "tapped" && f.end !== "blind" ? sel("threadEnd", t("Thread"), [["blind", t("Blind")], ["through", t("Through all")]], f.threadEnd ?? "blind") : "")
+          + (f.kind === "tapped" && holeExits(f) ? sel("threadEnd", t("Thread"), [["blind", t("Blind")], ["through", t("Through all")]], f.threadEnd ?? "blind") : "")
           + (f.kind === "tapped" && !threadThrough(f) ? numField("threadDepth", t("Thread depth"), f.threadDepth ?? { v: f.diameter.v * 2 }, "length") : "")
           + chk("flip", f.flip, t("Reverse direction")))
+        + (f.kind === "insert" ? "" : group(t("Options"),
+          (f.kind === "cbore" || f.kind === "csink" ? chk("optHead", !!f.headClear, t("Head clearance")) + (f.headClear ? numField("headClear", t("Head clearance"), f.headClear, "length") : "") : "")
+          + (f.kind !== "csink" ? chk("optNear", !!f.nearCs, t("Near side countersink")) + (f.nearCs ? numField("nearCs.dia", t("Diameter"), f.nearCs.dia, "length") + numField("nearCs.angle", t("Angle"), f.nearCs.angle, "angle") : "") : "")
+          + (f.kind === "cbore" ? chk("optUnder", !!f.underCs, t("Under head countersink")) + (f.underCs ? numField("underCs.dia", t("Diameter"), f.underCs.dia, "length") + numField("underCs.angle", t("Angle"), f.underCs.angle, "angle") : "") : "")
+          + (holeExits(f) && f.kind !== "slot" ? chk("optFar", !!f.farCs, t("Far side countersink")) + (f.farCs ? numField("farCs.dia", t("Diameter"), f.farCs.dia, "length") + numField("farCs.angle", t("Angle"), f.farCs.angle, "angle") : "") : "")))
         + group(t("Positions"), hbox("hplane", t("Face"), this.refLabel(f.plane)) + hbox("pts", t("Hole positions"), t("{n} hole|{n} holes", { n: f.pts.length }))
           + (f.pts.length ? `<ul class="pm-items pm-hpts" aria-label="${esc(t("Hole positions"))}">${f.pts.map((p, i) => `<li><span>${i + 1}</span>${holeAxes(this.last?.frames[f.id]).names.map((ax, j) => `<span class="pm-in"><span class="muted">${ax}</span><input type="text" inputmode="decimal" data-hp="${i}:${j}" value="${esc(trimNum(holeAxes(this.last?.frames[f.id]).show(p)[j] * UNITS[unit].f, 6))}" aria-label="${esc(t("Hole {n}", { n: i + 1 }))} ${ax}" spellcheck="false" /></span>`).join("")}<button class="icon" data-rmh="${i}" title="${esc(t("Remove"))}" aria-label="${esc(t("Remove"))} ${esc(t("Hole {n}", { n: i + 1 }))}">✕</button></li>`).join("")}</ul>` : "")
           + (f.plane ? `<button class="btn small" data-k="addPt">${esc(t("Add hole"))}</button> ` : "")
@@ -6743,7 +6760,7 @@ export class ModelController {
           }
           (host as Record<string, Num>)[last] = n;
           // A typed size makes the hole custom (SolidWorks' "Show custom sizing").
-          if (f.type === "hole" && key !== "depth" && key !== "threadDepth" && f.size) { delete f.size; delete f.fit; }
+          if (f.type === "hole" && key !== "depth" && key !== "threadDepth" && key !== "headClear" && key !== "drillAngle" && key !== "upToOffset" && !/^(near|under|far)Cs\./.test(key) && f.size) { delete f.size; delete f.fit; }
           if (f.type === "thread" && key === "diameter") { delete f.size; delete f.pitch; }
         }, f.type === "hole" || f.type === "thread");
       };
@@ -6805,6 +6822,28 @@ export class ModelController {
         if (f.type === "fillet" && k === "variable") { upd(() => { if (val) { f.variable = true; delete f.multi; } else { delete f.variable; f.edges.forEach(e => { delete e.r; delete e.r2; delete e.at; }); } }, true); return; }
         if (f.type === "hole" && k === "threadEnd") { upd(() => { if (val === "through") f.threadEnd = "through"; else { delete f.threadEnd; f.threadDepth ??= { v: Math.round((f.major ?? f.diameter.v) * 20) / 10 }; } }, true); return; }
         if (f.type === "thread" && k === "size") { upd(() => this.applyThreadSize(f, String(val) || undefined), true); return; }
+        if (f.type === "hole" && (k === "optHead" || k === "optNear" || k === "optUnder" || k === "optFar")) {
+          upd(() => {
+            // Defaults: 1 mm of head clearance; countersinks 1 mm wider than what they open, at 90°.
+            const sink = (d: number): HoleSink => ({ dia: { v: Math.round((d + 1) * 100) / 100 }, angle: { v: Math.PI / 2 } });
+            const topDia = f.kind === "cbore" ? f.cbDia?.v ?? f.diameter.v : f.kind === "cdrill" ? f.cdDia?.v ?? f.diameter.v : f.diameter.v;
+            if (k === "optHead") { if (val) f.headClear = { v: 1 }; else delete f.headClear; }
+            if (k === "optNear") { if (val) f.nearCs = sink(topDia); else delete f.nearCs; }
+            if (k === "optUnder") { if (val) f.underCs = sink(f.diameter.v); else delete f.underCs; }
+            if (k === "optFar") { if (val) f.farCs = sink(f.diameter.v); else delete f.farCs; }
+          }, true);
+          return;
+        }
+        if (f.type === "hole" && k === "standard") {
+          upd(() => {
+            if (val === "iso") delete f.standard; else f.standard = val as Exclude<HoleStandard, "iso">;
+            // The size nearest the old one by diameter, as SolidWorks keeps a size when the standard changes.
+            const list = HOLE_STANDARDS[val as HoleStandard] ?? HOLE_STANDARDS.iso, old = holeSize(f.size), d = old ? majorOf(old) : 6;
+            f.size = list.reduce((b, h) => (Math.abs(majorOf(h) - d) < Math.abs(majorOf(b) - d) ? h : b)).size;
+            applyHoleSize(f);
+          }, true);
+          return;
+        }
         if (f.type === "hole" && (k === "kind" || k === "size" || k === "fit")) {
           upd(() => {
             if (k === "kind") {
