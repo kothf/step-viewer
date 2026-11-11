@@ -5004,12 +5004,13 @@ export class ModelController {
   // ---------- extrude depth arrow (FR-FT-017, FR-UI-027) ----------
 
   /** The extrude or revolve being edited, or the one selected in the tree (dragging it edits it at once). */
-  private arrowFeature(): ExtrudeFeature | RevolveFeature | EndCapFeature | GussetFeature | SmFlangeFeature | null {
+  private arrowFeature(): ExtrudeFeature | RevolveFeature | EndCapFeature | GussetFeature | SmFlangeFeature | FlexFeature | null {
     const m = this.mode;
     // Sheet metal flanges show their arrow while folded only (the flat pattern hides where the flange stands).
     const folded = () => !this.doc.features.some(x => x.type === "smflat" && !x.suppressed);
-    const ok = (f: Feature | undefined): f is ExtrudeFeature | RevolveFeature | EndCapFeature | GussetFeature | SmFlangeFeature => f?.type === "revolve" || (f?.type === "extrude" && (f.end === "blind" || f.end === "mid" || dir2Blind(f)))
-      || (f?.type === "endcap" && f.faces.length > 0) || (f?.type === "gusset" && !!f.face1 && !!f.face2) || (f?.type === "smflange" && f.edges.length > 0 && folded());
+    const ok = (f: Feature | undefined): f is ExtrudeFeature | RevolveFeature | EndCapFeature | GussetFeature | SmFlangeFeature | FlexFeature => f?.type === "revolve" || (f?.type === "extrude" && (f.end === "blind" || f.end === "mid" || dir2Blind(f)))
+      || (f?.type === "endcap" && f.faces.length > 0) || (f?.type === "gusset" && !!f.face1 && !!f.face2) || (f?.type === "smflange" && f.edges.length > 0 && folded())
+      || (f?.type === "flex" && (this.last?.frames[f.id]?.len?.length ?? 0) >= 6);
     if (m.kind === "feature") return ok(m.draft) ? m.draft : null;
     // A part that was closed or handed back to its assembly has no store; its last selection must not draw (exam bug 40).
     if (m.kind !== "none" || !this.selected || !this.store) return null;
@@ -5035,6 +5036,7 @@ export class ModelController {
     if (f.type === "endcap") { this.drawCapArrow(f); return; }
     if (f.type === "gusset") { this.drawGussetArrows(f); return; }
     if (f.type === "smflange") { this.drawFlangeArrow(f); return; }
+    if (f.type === "flex") { this.drawFlexArrows(f); return; }
     const sk = this.store!.feature(f.sketch);
     if (sk?.type !== "sketch") return;
     const fr = this.frameOf(sk);
@@ -5118,6 +5120,17 @@ export class ModelController {
     this.handleLabel(f.id, "d1", t("Drag the arrow to change the length along face 1; click to type it"));
     this.placeArrow(P.clone(), u2, f.d2.v, false, "d2");
     this.handleLabel(f.id, "d2", t("Drag the arrow to change the length along face 2; click to type it"));
+  }
+
+  /** Flex (FR-FT-105): an arrow on each trim plane, from the bodies' end inwards, dragging its offset. */
+  private drawFlexArrows(f: FlexFeature) {
+    const fr = this.last?.frames[f.id];
+    if (!fr?.len || fr.len.length < 6) return;
+    const o = new THREE.Vector3(...fr.o), n = new THREE.Vector3(...fr.n);
+    this.placeArrow(o.clone().addScaledVector(n, fr.len[4]), n.clone(), f.trim1?.v ?? 0, false, "trim1");
+    this.handleLabel(f.id, "trim1", t("Drag the arrow to move trim plane 1; click to type it"));
+    this.placeArrow(o.clone().addScaledVector(n, fr.len[5]), n.clone().negate(), f.trim2?.v ?? 0, false, "trim2");
+    this.handleLabel(f.id, "trim2", t("Drag the arrow to move trim plane 2; click to type it"));
   }
 
   /** A straight drag arrow from `base` along `dir`, its tip at `value` (Mid plane: half of it), dragging the number `key`. */
@@ -5276,7 +5289,7 @@ export class ModelController {
     }
     this.arrowDrag = f.type === "revolve"
       ? { start: 0, depth: f.angle.v, moved: false, raw: this.pointerAngle(e), key }
-      : { start: this.axisParam(e), depth: (f as unknown as Record<string, Num>)[key].v, moved: false, key };
+      : { start: this.axisParam(e), depth: (f as unknown as Record<string, Num | undefined>)[key]?.v ?? 0, moved: false, key };
     const canvas = this.host.viewer.renderer.domElement;
     canvas.style.cursor = "grabbing";
     // Keep getting the moves and the release when the pointer leaves the view.
@@ -5286,7 +5299,7 @@ export class ModelController {
   private moveArrow(e: PointerEvent) {
     const m = this.mode, d = this.arrowDrag, a = this.arrow;
     if (m.kind === "feature" && m.draft.type === "revolve" && d && a?.ang) { this.moveAngle(e, m.draft, d); return; }
-    if (m.kind !== "feature" || (m.draft.type !== "extrude" && m.draft.type !== "endcap" && m.draft.type !== "gusset" && m.draft.type !== "smflange") || !d || !a) return;
+    if (m.kind !== "feature" || (m.draft.type !== "extrude" && m.draft.type !== "endcap" && m.draft.type !== "gusset" && m.draft.type !== "smflange" && m.draft.type !== "flex") || !d || !a) return;
     const key = a.key;
     const k = a.mid ? 2 : 1;
     let v = d.depth + (this.axisParam(e) - d.start) * k;
@@ -5295,9 +5308,15 @@ export class ModelController {
     const step = 10 ** Math.floor(Math.log10(Math.max(px, 1e-6)));
     const fu = UNITS[units.current].f;
     v = (Math.round((v * fu) / step) * step) / fu;
-    if (!(v > 1e-6)) v = step / fu;
-    const draft = m.draft as unknown as Record<string, Num>;
-    if (Math.abs(v - draft[key]!.v) < 1e-12) return;
+    if (m.draft.type === "flex") {
+      // Trim offsets run from 0 (the bodies' end) up to leaving a step between the planes.
+      const len = this.last?.frames[m.draft.id]?.len;
+      const other = (key === "trim1" ? m.draft.trim2 : m.draft.trim1)?.v ?? 0;
+      const room = len && len.length >= 6 ? len[5] - len[4] - other - step / fu : Infinity;
+      v = Math.max(0, Math.min(v, room));
+    } else if (!(v > 1e-6)) v = step / fu;
+    const draft = m.draft as unknown as Record<string, Num | undefined>;
+    if (Math.abs(v - (draft[key]?.v ?? 0)) < 1e-12) return;
     d.moved = true;
     draft[key] = { v };
     const inp = $("#mc-pm").querySelector<HTMLInputElement>(`input[data-num=${key}]`);
@@ -7400,8 +7419,18 @@ export class ModelController {
         const g = f as unknown as Record<string, unknown>;
         if (k === "name") { const s = String(val).trim(); if (s) f.name = s === featureLabel(f.name) ? f.name : s; this.renderPanel(); return; }
         if (k === "mode" && (f.type === "axis" || f.type === "point")) { upd(() => { (f as { mode: string }).mode = String(val); delete f.edge; delete f.face; if (f.type === "axis") delete f.planes; if (f.type === "point") delete f.at; }, true); return; }
-        if (f.type === "flex" && (k === "hard" || k === "kind" || k === "axis")) {
+        if (f.type === "flex" && /^o[xyz]$/.test(k)) {
+          let v: number;
+          try { v = evaluate(String(val), "length", unit, evalVars(this.doc, unit).values); }
+          catch (err) { el.setAttribute("aria-invalid", "true"); toast(t((err as ExprError).key ?? String(err), (err as ExprError).params), true); return; }
+          el.removeAttribute("aria-invalid");
+          upd(() => { const o: V3 = [...(f.origin ?? [0, 0, 0])]; o["xyz".indexOf(k[1])] = v; f.origin = o; });
+          return;
+        }
+        if (f.type === "flex" && (k === "hard" || k === "kind" || k === "axis" || k === "tcentre")) {
           upd(() => {
+            // Unticked, the triad starts where it is (the bodies' centre), so nothing jumps.
+            if (k === "tcentre") { if (val) delete f.origin; else f.origin = [...(this.last?.frames[f.id]?.o ?? [0, 0, 0])].map(c => Math.round(c * 1e6) / 1e6) as V3; return; }
             if (k === "hard") { if (val) delete f.hard; else f.hard = false; return; }
             if (k === "kind") {
               f.kind = String(val) as FlexFeature["kind"];
@@ -9053,8 +9082,10 @@ export class ModelController {
         + params + chk("hard", f.hard !== false, t("Hard edges")))
       + group(t("Trim planes"), numField("trim1", t("Trim plane 1 offset"), f.trim1 ?? { v: 0 }, "length") + numField("trim2", t("Trim plane 2 offset"), f.trim2 ?? { v: 0 }, "length"))
       + group(t("Triad"), sel("axis", t("Flex axis"), axes, f.axis)
-        + (f.kind === "bend" ? sel("toward", t("Bend towards"), axes.filter(([v]) => v !== f.axis), toward) : ""))
-      + `<p class="pm-help muted">${esc(t("The bodies change between the trim planes (orange); past them they move along as solid pieces. The triad sits in the middle of the bodies and stays put."))}</p>` + help + status };
+        + (f.kind === "bend" ? sel("toward", t("Bend towards"), axes.filter(([v]) => v !== f.axis), toward) : "")
+        + chk("tcentre", !f.origin, t("Triad at the centre of the bodies"))
+        + (f.origin ? f.origin.map((c, i) => `<label class="pm-field"><span>${esc(t("Triad {a}", { a: "XYZ"[i] }))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-k="o${"xyz"[i]}" value="${esc(trimNum(c * UNITS[units.current].f, 6))}" spellcheck="false" /><span class="muted">${esc(units.current)}</span></span></label>`).join("") : ""))
+      + `<p class="pm-help muted">${esc(t("The bodies change between the trim planes (orange); past them they move along as solid pieces. Drag the arrows to move the trim planes. The triad stays put."))}</p>` + help + status };
   }
 
   /** A positive number field that takes fractions (revolutions). */
