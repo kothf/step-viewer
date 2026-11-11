@@ -1,7 +1,7 @@
 // The Vault tab (FR-PDM-002, 080): create or open a vault, list its files with their state, version and lock,
 // and the commands Check out, Check in, Undo check-out, Get latest, History (open a version, roll back),
 // Add files, Save the open part to the vault, the audit trail and the integrity check.
-import { onLangChange, t } from "../i18n";
+import { onLangChange, t, tAs } from "../i18n";
 import { confirmModal, storage, toast } from "../ui";
 import { unzipLimited, zip } from "../model/zip";
 import { packPart } from "../model/file";
@@ -10,7 +10,7 @@ import { embeddedParts, resolveRel } from "./codec";
 import { geomComparable, geometryCompare, geomRows, mountDiffView } from "./geomCompare";
 import { folderHandle, forgetFolder, rememberFolder, vaultFolders } from "./folders";
 import { fsaDir, MOVED_ON, Vault, VaultError, type FileRec, type Msg, type RefRec, type Resolve, type SearchQuery, type TreeNode, type VDir, STORE } from "./vault";
-import { defaultWorkflow, PART_NUMBER, ROLES, type CardField, type Role, type Workflow } from "./workflow";
+import { defaultWorkflow, PART_NUMBER, ROLES, WIP, type CardField, type Role, type Workflow } from "./workflow";
 
 /**
  * What ties an open document to its vault file: Save writes the working copy through it, only while the file
@@ -20,6 +20,8 @@ export interface VaultTie {
   /** The vault file's id. */
   id: string;
   readonly label: string;
+  /** What the label means, one line per part (the header's tooltip). */
+  readonly hint?: string;
   readonly readOnly: boolean;
   save(bytes: Uint8Array): Promise<void>;
   checkOut(): Promise<void>;
@@ -42,6 +44,8 @@ export interface VaultHost {
   show?(id: string): Promise<boolean>;
   /** The live part, assembly or drawing, if any. */
   doc(): VaultDoc | null;
+  /** A part or assembly was just saved to the vault: its open drawings go in beside it. */
+  added?(id: string): Promise<void>;
 }
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -49,7 +53,7 @@ const fmtDate = (iso: string) => new Date(iso).toLocaleString(undefined, { dateS
 /** A vault message in the interface language. */
 const tm = (m: Msg) => t(m.key, m.p);
 /** State, transition and role names: the default workflow's are translated, a user's own are shown as typed (FR-PDM-083). */
-const tn = (s: string) => t(s);
+const tn = (s: string) => (s === WIP ? tAs("Draft", "Draft (lifecycle state)") : t(s));
 const errText = (e: unknown) => (e instanceof VaultError ? t(e.key, e.params) : t("Vault error: {err}", { err: (e as Error).message }));
 const download = (name: string, data: BlobPart, type: string) => {
   const a = document.createElement("a");
@@ -264,6 +268,7 @@ export class VaultPanel {
     const safe = name.trim().replace(/[\\/:*?"<>|]/g, "_") || "Vault";
     const dir = await ws.dir(safe, true);
     await this.use(await Vault.create(dir!, safe, this.user, this.computer));
+    await this.keepStorage(true);
   }
 
   async openInBrowser(name: string) {
@@ -336,6 +341,23 @@ export class VaultPanel {
     storage.set("mc:lastVaultWhere", where);
     await this.refresh();
     toast(t("Vault {name} open", { name: v.info.name }), "success");
+    if (where === "browser") void this.keepStorage(false);
+  }
+
+  /**
+   * A browser vault lives in the site's storage, which browsers may clear when space runs short (Firefox and Safari
+   * readily, unless the site's storage is persistent). Asks for persistent storage once per page; `warn` (a new
+   * vault) says how to keep a backup when the browser refuses.
+   */
+  private storageAsked = false;
+  private async keepStorage(warn: boolean) {
+    const sm = navigator.storage;
+    if (!sm?.persist || !sm.persisted || (this.storageAsked && !warn)) return;
+    this.storageAsked = true;
+    try {
+      if (await sm.persisted() || await sm.persist()) return;
+      if (warn) toast(t("This browser may clear its vaults when it runs short of space. Export ZIP in the vault's ⋯ menu keeps a backup."));
+    } catch { /* not allowed here: nothing to do */ }
   }
 
   close() {
@@ -465,6 +487,29 @@ export class VaultPanel {
       this.sel = f.id;
       toast(t("{name} is in the vault, checked out to you", { name: p.name }), "success");
     });
+    if (p.kind !== "drawing" && this.openId) await this.app.added?.(this.openId);
+  }
+
+  /**
+   * A drawing of the vault file `modelId` goes into the vault beside it (same folder), checked out to the user;
+   * returns its tie, or null when that file is not in the open vault. A name taken by another file gets " (2)"….
+   */
+  /** The open vault holds this file (not in the recycle bin). */
+  has(id: string) { return this.files.some(x => x.id === id && !x.deleted); }
+
+  async addBeside(modelId: string, name: string, bytes: Uint8Array): Promise<VaultTie | null> {
+    const v = this.vault, m = this.files.find(x => x.id === modelId && !x.deleted);
+    if (!v || !m) return null;
+    const dir = m.path.includes("/") ? m.path.slice(0, m.path.lastIndexOf("/") + 1) : "";
+    const base = name.split("/").pop()!, dot = base.lastIndexOf("."), stem = dot > 0 ? base.slice(0, dot) : base, ext = dot > 0 ? base.slice(dot) : "";
+    let path = `${dir}${base}`;
+    for (let k = 2; await v.byPath(path); k++) path = `${dir}${stem} (${k})${ext}`;
+    const f = await v.add(path, bytes, "Added");
+    await v.checkOut(f.id);
+    this.shown.set(f.id, 1);
+    await this.refresh();
+    toast(t("{name} is in the vault beside {model}, checked out to you", { name: path, model: m.path }), "success");
+    return this.tie(f.id);
   }
 
   /** The drawing's latest version as a PDF; one that is not released says so across every sheet (FR-PDM-036). */
@@ -541,7 +586,20 @@ export class VaultPanel {
         const mine = !!st?.mine, n = v.latest(f).n, on = panel.shown.get(id) ?? n;
         // A tab left open while the vault moved on (check-in elsewhere, roll back, release) says so.
         if (on < n) return `v${on} · ${t("newer v{n} in the vault", { n })}`;
-        return `v${n}${f.revision ? ` · ${t("Rev {rev}", { rev: f.revision })}` : ""} · ${tn(f.state)}${f.checkout ? ` · ${mine ? t("checked out") : t("locked by {user}", { user: f.checkout.user })}` : ""}${st?.modified ? ` · ${mine ? t("modified") : t("local copy outdated")}` : ""}`;
+        return `v${n}${f.revision ? ` · ${t("Rev {rev}", { rev: f.revision })}` : ""} · ${tn(f.state)}${f.checkout ? ` · ${mine ? t("checked out to you") : t("locked by {user}", { user: f.checkout.user })}` : ""}${st?.modified ? ` · ${mine ? t("modified") : t("local copy outdated")}` : ""}`;
+      },
+      get hint() {
+        const f = cur(), st = panel.state.get(id);
+        if (!f) return t("The vault this file came from is closed.");
+        const mine = !!st?.mine, n = v.latest(f).n, on = panel.shown.get(id) ?? n;
+        const lines = [t("In the vault {vault}: version {n}", { vault: v.info.name, n: on })];
+        if (on < n) lines.push(t("The vault has a newer version {n}: Get latest opens it.", { n }));
+        if (f.revision) lines.push(t("Revision {rev}", { rev: f.revision }));
+        lines.push(t("Lifecycle state: {state}. Change state moves the file on (review, release).", { state: tn(f.state) }));
+        if (f.checkout) lines.push(mine ? t("Checked out to you: Save writes the vault's working copy, Check in… makes the next version.") : t("Locked: {user} has it checked out, so it opens read-only.", { user: f.checkout.user }));
+        else lines.push(t("Checked in: read-only until you check it out."));
+        if (st?.modified) lines.push(mine ? t("Modified: saved changes not checked in yet.") : t("Your local copy is older than the vault's latest version."));
+        return lines.join("\n");
       },
       get readOnly() { return !cur() || !panel.state.get(id)?.mine; },
       save: async bytes => { await v.saveWorking(id, bytes); await this.refresh(); },

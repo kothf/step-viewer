@@ -54,7 +54,7 @@ export type SketchPattern =
   | { kind: "rotate"; c: V2; centre: string | null; angle: number; copy: boolean; keep: boolean }
   | { kind: "scale"; c: V2; centre: string | null; k: number; copy: boolean; keep: boolean };
 
-export type SkTool = "select" | "line" | "rect" | "crect" | "rect3" | "crect3" | "pgram" | "circle" | "circle3" | "pcircle" | "arc" | "arc3" | "polygon" | "slot" | "cslot" | "aslot" | "aslot3" | "ellipse" | "earc" | "spline" | "sspline" | "conic" | "parabola" | "eqn" | "point" | "text" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "intersect" | "dim" | "hord" | "vord";
+export type SkTool = "select" | "line" | "cline" | "mline" | "rect" | "crect" | "rect3" | "crect3" | "pgram" | "circle" | "circle3" | "pcircle" | "arc" | "arc3" | "tarc" | "polygon" | "slot" | "cslot" | "aslot" | "aslot3" | "ellipse" | "earc" | "spline" | "sspline" | "conic" | "parabola" | "eqn" | "point" | "text" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "intersect" | "dim" | "hord" | "vord";
 
 export interface SketchHost {
   viewer: Viewer;
@@ -468,7 +468,7 @@ export class SketchEditor {
     this.offsetPreview = this.tool === "offset" ? this.offsetAt(p, false) : [];
     this.draft.cursor = snap.p;
     if (this.tool === "arc" && this.draft.pts.length === 2) this.trackArc(snap.p);
-    if (this.tool === "line") this.trackBack(snap.p);
+    if (this.lineTool) this.trackBack(snap.p);
     this.draft.snap = snap.id;
     this.draft.hoverCurve = snap.id ? null : snap.curve;
     this.showInfer(pick || ["select", "fillet", "chamfer", "convert", "intersect", "dim", "hord", "vord"].includes(this.tool) ? null : snap);
@@ -521,7 +521,7 @@ export class SketchEditor {
   }
 
   doubleClick(): boolean {
-    if (this.tool === "line" && this.draft.pts.length) { this.draft = { pts: [], ids: [], cursor: null, snap: null }; this.render(); return true; }
+    if (this.lineTool && this.draft.pts.length) { this.draft = { pts: [], ids: [], cursor: null, snap: null }; this.render(); return true; }
     if (this.tool === "select") {
       // Double-click a dimension label edits it; on geometry: nothing yet.
       return false;
@@ -536,7 +536,7 @@ export class SketchEditor {
    */
   contextMenu(e: { clientX: number; clientY: number }): ([string, () => void, string?] | null)[] | null {
     const d = this.draft;
-    if (this.tool === "line" && d.pts.length) { this.doubleClick(); this.statusHint(); return null; }
+    if (this.lineTool && d.pts.length) { this.doubleClick(); this.statusHint(); return null; }
     // Placing a dimension: a right-click locks (or frees) its orientation, so the text can go anywhere (FR-SK-068).
     if (this.tool === "dim" && this.dimDraft.dim) { this.dimDraft.lock = !this.dimDraft.lock; this.render(); this.statusHint(); return null; }
     const rows: ([string, () => void, string?] | null)[] = [];
@@ -812,7 +812,7 @@ export class SketchEditor {
     let q = p;
     let hv: "horizontal" | "vertical" | null = null;
     const last = this.draft.pts.at(-1);
-    if (last && this.tool === "line" && !this.draft.arc) {
+    if (last && (this.lineTool || this.tool === "mline") && !this.draft.arc) {
       const a = Math.atan2(p[1] - last[1], p[0] - last[0]);
       if (!on.has("hv")) { /* off in the preferences */ }
       else if (Math.abs(Math.sin(a)) < Math.sin(HV_TOL)) { q = [p[0], last[1]]; hv = "horizontal"; }
@@ -825,7 +825,7 @@ export class SketchEditor {
     const c = this.hits(q, { points: false })[0];
     if (c && !hv) {
       // A line hovered while drawing a line becomes the parallel/perpendicular reference (SolidWorks inference).
-      if (this.tool === "line" && this.sk.ents.find(x => x.id === c.id)?.t === "line") this.inferLine = c.id;
+      if (this.lineTool && this.sk.ents.find(x => x.id === c.id)?.t === "line") this.inferLine = c.id;
       if (!on.has("nearest")) return { p: q, id: null, curve: null, hv };
       const proj = this.project(q, c.id); this.showMarker(proj); return { p: proj, id: null, curve: c.id, hv: null };
     }
@@ -1285,7 +1285,10 @@ export class SketchEditor {
   }
 
   /** Whether the line tool is drawing a tangent arc now. */
-  get arcMode() { return this.tool === "line" && !!this.draft.arc; }
+  /** Line or Centerline (FR-SK-012): both chain, take typed sizes and switch to tangent arcs. */
+  private get lineTool() { return this.tool === "line" || this.tool === "cline"; }
+
+  get arcMode() { return (this.lineTool || this.tool === "tarc") && !!this.draft.arc; }
 
   private tangentArcClick(p: V2, s: Snap, rels: SkRel[], finish: (label: string) => void, e: { detail: number }) {
     const d = this.draft;
@@ -1301,8 +1304,9 @@ export class SketchEditor {
     finish("Add tangent arc");
     // Back to lines, chaining on from the arc's end (SolidWorks), unless the loop closed.
     const closed = !!s.id && (s.id !== ORIGIN || d.chainStart === ORIGIN);
+    // The Tangent Arc tool chains arcs; the line tool goes back to lines.
     if (closed || e.detail >= 2) this.draft = { pts: [], ids: [], cursor: null, snap: null };
-    else { d.pts.push(p); d.ids.push(bId); d.snapCurve = null; d.snapOrigin = false; d.prev = id; d.arc = false; d.back = 0; }
+    else { d.pts.push(p); d.ids.push(bId); d.snapCurve = null; d.snapOrigin = false; d.prev = id; d.arc = this.tool === "tarc"; d.back = 0; }
     this.render();
   }
 
@@ -1326,16 +1330,48 @@ export class SketchEditor {
     const p = s.p;
     const d = this.draft;
     const rels: SkRel[] = [];
-    const before = exact ? new Set(this.sk.ents.map(x => x.id)) : null;
+    const before = exact || this.dynMirror ? new Set(this.sk.ents.map(x => x.id)) : null;
     const finish = (label: string) => {
       this.sk.rels.push(...rels);
       if (exact && before) { const made = this.sk.ents.filter(x => !before.has(x.id)); this.addTypedDims(exact.dims(made), made); }
+      if (this.dynMirror && before) this.mirrorNew(before);
       this.commit(label);
     };
     if (this.tool === "eqn") return;
     if (this.tool === "point") { this.usePoint(p, s.id, s.curve, rels); finish("Add point"); return; }
     if (this.tool === "text") { void this.placeText(p, s.id, s.curve, rels); return; }
-    if (this.tool === "line") {
+    if (this.tool === "tarc") {
+      // Tangent Arc tool (FR-SK-015): starts at the end of a line or arc, tangent to it.
+      if (!d.pts.length) {
+        const ends = s.id && s.id !== ORIGIN ? this.sk.ents.filter(x => !x.cons && (x.t === "line" || x.t === "arc") && (x.a === s.id || x.b === s.id)) : [];
+        if (ends.length !== 1) { this.host.toast(t("Click the end of a line or arc to start the tangent arc.")); return; }
+        d.pts = [p]; d.ids = [s.id]; d.chainStart = s.id!; d.prev = ends[0].id; d.arc = true; d.back = 0;
+        this.statusHint(); this.render(); return;
+      }
+      const a0 = d.pts.at(-1)!;
+      if (!exact && Math.hypot(p[0] - a0[0], p[1] - a0[1]) < this.px(p) * 2) return;
+      this.tangentArcClick(p, s, rels, finish, e);
+      this.statusHint();
+      return;
+    }
+    if (this.tool === "mline") {
+      // Midpoint line (SolidWorks): the first click is the middle, the second one end; the other end mirrors it.
+      if (!d.pts.length) { d.pts = [p]; d.ids = [s.id]; d.snapCurve = s.curve; this.render(); return; }
+      const m = d.pts[0];
+      if (!exact && Math.hypot(p[0] - m[0], p[1] - m[1]) < this.px(p) * 2) return;
+      const mId = this.usePoint(m, d.ids[0], d.snapCurve ?? null, rels);
+      const aId = this.usePoint([2 * m[0] - p[0], 2 * m[1] - p[1]], null, null, rels);
+      const bId = this.usePoint(p, s.id, s.curve, rels);
+      const lid = uid("l");
+      this.sk.ents.push({ id: lid, t: "line", a: aId, b: bId });
+      rels.push({ id: uid("r"), t: "midpoint", e: [mId, lid] });
+      if (s.hv) rels.push({ id: uid("r"), t: s.hv, e: [lid] });
+      finish("Add midpoint line");
+      this.draft = { pts: [], ids: [], cursor: null, snap: null };
+      this.render();
+      return;
+    }
+    if (this.lineTool) {
       if (!d.pts.length) { this.inferLine = null; d.pts = [p]; d.ids = [s.id && s.id !== ORIGIN ? s.id : null]; d.chainStart = s.id ?? undefined; d.snapCurve = s.curve; d.snapOrigin = s.id === ORIGIN; d.back = 0; this.render(); return; }
       const a0 = d.pts.at(-1)!;
       if (!exact && Math.hypot(p[0] - a0[0], p[1] - a0[1]) < this.px(p) * 2) return;
@@ -1343,7 +1379,7 @@ export class SketchEditor {
       const aId = d.ids.at(-1) ?? this.usePoint(a0, d.snapOrigin ? ORIGIN : null, d.snapCurve ?? null, rels);
       const bId = this.usePoint(p, s.id, s.curve, rels);
       const lid = uid("l");
-      this.sk.ents.push({ id: lid, t: "line", a: aId, b: bId });
+      this.sk.ents.push({ id: lid, t: "line", a: aId, b: bId, ...(this.tool === "cline" ? { cons: true } : {}) });
       if (s.hv) rels.push({ id: uid("r"), t: s.hv, e: [lid] });
       else if (s.rel) rels.push({ id: uid("r"), t: s.rel.t, e: [s.rel.ref, lid] });
       finish("Add line");
@@ -2664,21 +2700,59 @@ export class SketchEditor {
     const axis = lines.find(l => l.cons) ?? lines.at(-1);
     const items = sel.filter(x => x !== axis);
     if (!axis || !items.length) { this.host.toast(t("Select the entities to mirror and the line to mirror about (Ctrl+click), then click Mirror.")); return false; }
+    const made = this.mirrorItems(axis, items, new Map());
+    if (!made) return false;
+    this.selection = new Set(made);
+    this.commit("Mirror entities");
+    this.render();
+    this.emitSel();
+    return true;
+  }
+
+  /** Dynamic mirror (FR-SK-037): the line new entities are mirrored about while drawing, and the points mirrored so far. */
+  dynMirror: string | null = null;
+  private dynMap = new Map<string, string>();
+
+  /** Turns dynamic mirror on about the selected line, or off. */
+  toggleDynMirror(): boolean {
+    if (this.dynMirror) { this.dynMirror = null; this.dynMap.clear(); this.statusHint(); this.render(); return true; }
+    const lines = [...this.selection].map(id => this.ent(id)).filter((x): x is Extract<SkEnt, { t: "line" }> => x?.t === "line");
+    const axis = lines.find(l => l.cons) ?? lines[0];
+    if (!axis || lines.length !== 1) { this.host.toast(t("Select one line to mirror about, then click Dynamic mirror.")); return false; }
+    this.dynMirror = axis.id; this.dynMap.clear();
+    this.selection.clear(); this.emitSel();
+    if (this.tool === "select") this.setTool("line");
+    this.statusHint(); this.render();
+    return true;
+  }
+
+  /** Mirrors the entities a drawing click just made (not in `before`) about the dynamic mirror line. */
+  private mirrorNew(before: Set<string>) {
+    const axis = this.dynMirror ? this.ent(this.dynMirror) : undefined;
+    if (!axis || axis.t !== "line") { this.dynMirror = null; this.dynMap.clear(); return; }
+    const fresh = this.sk.ents.filter(x => !before.has(x.id) && x.id !== axis.id);
+    const used = new Set<string>();
+    for (const e of fresh) if (e.t !== "point") for (const q of refPts(e)) used.add(q);
+    const items = fresh.filter(e => e.t !== "point" || !used.has(e.id));
+    if (items.length) this.mirrorItems(axis, items, this.dynMap);
+  }
+
+  /** Adds the mirror images of `items` about `axis` with symmetric relations; `map` = points already mirrored. */
+  private mirrorItems(axis: Extract<SkEnt, { t: "line" }>, items: SkEnt[], map: Map<string, string>): string[] | null {
     const A = this.pt(axis.a), B = this.pt(axis.b);
     const d: V2 = [B[0] - A[0], B[1] - A[1]];
     const L = Math.hypot(d[0], d[1]);
-    if (!(L > 1e-9)) return false;
+    if (!(L > 1e-9)) return null;
     const u: V2 = [d[0] / L, d[1] / L];
     const reflect = (q: V2): V2 => {
       const w: V2 = [q[0] - A[0], q[1] - A[1]];
       const k = w[0] * u[0] + w[1] * u[1];
       return [2 * (A[0] + u[0] * k) - q[0], 2 * (A[1] + u[1] * k) - q[1]];
     };
-    const map = new Map<string, string>();
     const point = (id: string) => {
       if (id === axis.a || id === axis.b) return id;
       const got = map.get(id);
-      if (got) return got;
+      if (got && this.ent(got)) return got;
       const q = this.pt(id), r = reflect(q);
       if (Math.hypot(r[0] - q[0], r[1] - q[1]) < 1e-9) { map.set(id, id); return id; }
       const nid = uid("p");
@@ -2698,11 +2772,7 @@ export class SketchEditor {
       else if (e.t === "text") { const id = uid("t"); this.sk.ents.push({ ...structuredClone(e), id, p: point(e.p) }); made.push(id); }
       else { const id = uid("a"); this.sk.ents.push({ id, t: "arc", c: point(e.c), a: point(e.b), b: point(e.a), ...(e.cons ? { cons: true } : {}) }); made.push(id); }
     }
-    this.selection = new Set(made);
-    this.commit("Mirror entities");
-    this.render();
-    this.emitSel();
-    return true;
+    return made;
   }
 
   // ---------- linear and circular sketch patterns (FR-SK-038) ----------
@@ -3121,8 +3191,8 @@ export class SketchEditor {
     const a = d.pts.at(-1);
     if (!a || !c) return null;
     const dx = c[0] - a[0], dy = c[1] - a[1];
-    if (this.tool === "line" && d.arc) return null;
-    if (this.tool === "line") return [{ name: "Length", q: "length", now: Math.hypot(dx, dy) }, { name: "Angle", q: "angle", now: (Math.atan2(dy, dx) + 2 * Math.PI) % (2 * Math.PI) }];
+    if ((this.lineTool || this.tool === "tarc") && d.arc) return null;
+    if (this.lineTool) return [{ name: "Length", q: "length", now: Math.hypot(dx, dy) }, { name: "Angle", q: "angle", now: (Math.atan2(dy, dx) + 2 * Math.PI) % (2 * Math.PI) }];
     if ((this.tool === "rect" || this.tool === "crect") && d.pts.length === 1) {
       const k = this.tool === "crect" ? 2 : 1;
       return [{ name: "Width", q: "length", now: Math.abs(dx) * k }, { name: "Height", q: "length", now: Math.abs(dy) * k }];
@@ -3185,9 +3255,9 @@ export class SketchEditor {
     const d = this.draft, a = d.pts.at(-1), c = d.cursor;
     if (!a || !c) return;
     const sx = c[0] < a[0] ? -1 : 1, sy = c[1] < a[1] ? -1 : 1;
-    const lineOf = (made: SkEnt[]) => made.filter((x): x is SkEnt & { t: "line" } => x.t === "line" && !x.cons);
+    const lineOf = (made: SkEnt[]) => made.filter((x): x is SkEnt & { t: "line" } => x.t === "line" && (!x.cons || this.tool === "cline"));
     const dim = (t: SkDim["t"], e: string[], val: number): SkDim => ({ id: uid("d"), name: "", t, e, val: { v: val } });
-    if (this.tool === "line") {
+    if (this.lineTool) {
       const [len, ang] = v;
       const deg = ((((ang * 180) / Math.PI) % 360) + 360) % 360;
       const hv = Math.abs(deg % 180) < 1e-9 || Math.abs((deg % 180) - 180) < 1e-9 ? "horizontal" : Math.abs(deg - 90) < 1e-9 || Math.abs(deg - 270) < 1e-9 ? "vertical" : null;
@@ -3245,7 +3315,7 @@ export class SketchEditor {
     }
     if (k === "delete" || k === "backspace") return this.deleteSelection();
     if (/^[0-9.]$/.test(e.key) && this.typedFields()) { this.openTyped(e.key); return true; }
-    if (k === "a" && this.tool === "line" && this.draft.pts.length) return this.toggleTangentArc();
+    if (k === "a" && this.lineTool && this.draft.pts.length) return this.toggleTangentArc();
     const tools: Record<string, SkTool> = { l: "line", r: "rect", c: "circle", a: "arc", d: "dim", p: "point", t: "trim", g: "polygon", f: "fillet", e: "extend", o: "offset", w: "slot" };
     if (tools[k]) { this.setTool(tools[k]); return true; }
     if (k === "q") { this.toggleConstruction(); return true; }
@@ -3258,6 +3328,8 @@ export class SketchEditor {
     const hints: Record<SkTool, string> = {
       select: "Click to select, drag to move; Delete removes",
       line: "Click points; double-click or Esc ends the chain",
+      cline: "Click points; double-click or Esc ends the chain of construction lines",
+      mline: "Click the middle of the line, then one end",
       rect: "Click two opposite corners",
       crect: "Click the centre, then a corner",
       circle: "Click the centre, then a point on the circle",
@@ -3267,6 +3339,7 @@ export class SketchEditor {
       circle3: "Click three points on the circle",
       pcircle: "Click three points or curves; the circle passes through the points and touches the lines, circles and arcs",
       arc3: "Click the start, the end, then a point on the arc",
+      tarc: "Click the end of a line or arc, then the arc's end",
       polygon: "Click the centre, then a corner; set the sides in the panel",
       trim: "Click the piece of a curve to remove, up to where it crosses others",
       fillet: "Click a corner where two curves meet; set the radius in the panel",
@@ -3298,8 +3371,9 @@ export class SketchEditor {
     const u = this.host.unit(), c = this.cursorUV;
     const at = c ? ` · x ${trimNum(c[0] / u.mm, u.decimals)}, y ${trimNum(c[1] / u.mm, u.decimals)} ${u.name}` : "";
     const qs = this.quickSnap ? ` · ${t("Quick snap")}: ${t(SNAP_KINDS.find(k => k[0] === this.quickSnap)![1])}` : "";
-    const hint = this.arcMode ? "Tangent arc: click its end; A goes back to lines" : this.tool === "line" && this.draft.pts.length ? "Click points; double-click or Esc ends the chain; A or moving back to the end point draws a tangent arc" : hints[this.tool];
-    this.host.status(`${def} · ${t(hint)}${qs}${at}`);
+    const hint = this.tool === "tarc" && this.draft.pts.length ? "Tangent arc: click its end; the next arc goes on from it; Esc ends" : this.arcMode ? "Tangent arc: click its end; A goes back to lines" : this.lineTool && this.draft.pts.length ? "Click points; double-click or Esc ends the chain; A or moving back to the end point draws a tangent arc" : hints[this.tool];
+    const dm = this.dynMirror ? ` · ${t("Dynamic mirror on")}` : "";
+    this.host.status(`${def} · ${t(hint)}${dm}${qs}${at}`);
   }
 
   // ---------- drawing the sketch ----------
@@ -3424,8 +3498,9 @@ export class SketchEditor {
     const d = this.draft;
     if (d.pts.length && d.cursor) {
       const p = d.cursor, a = d.pts[0];
-      if (this.tool === "line" && d.arc) { const g = this.tangentArc(p); if (g) poly(arcPts(g.c, g.r, g.a0, g.a0 + g.sweep, 48), C.pre); else push(d.pts.at(-1)!, p, C.pre); }
-      else if (this.tool === "line") push(d.pts.at(-1)!, p, C.pre);
+      if ((this.lineTool || this.tool === "tarc") && d.arc) { const g = this.tangentArc(p); if (g) poly(arcPts(g.c, g.r, g.a0, g.a0 + g.sweep, 48), C.pre); else push(d.pts.at(-1)!, p, C.pre); }
+      else if (this.lineTool) push(d.pts.at(-1)!, p, C.pre);
+      else if (this.tool === "mline") push([2 * a[0] - p[0], 2 * a[1] - p[1]], p, C.pre);
       else if (this.tool === "circle") poly(arcPts(a, Math.hypot(p[0] - a[0], p[1] - a[1]), 0, Math.PI * 2, 72), C.pre);
       else if (this.tool === "rect" || this.tool === "crect") {
         const [x0, y0] = this.tool === "rect" ? a : [2 * a[0] - p[0], 2 * a[1] - p[1]];
@@ -3579,8 +3654,9 @@ export class SketchEditor {
     let text = "";
     if (p && a) {
       const last = d.pts.at(-1)!;
-      if (this.tool === "line" && d.arc) { const g = this.tangentArc(p); text = g ? `R ${L(g.r)} · ${trimNum((Math.abs(g.sweep) * 180) / Math.PI, 1)}°` : ""; }
-      else if (this.tool === "line") { const dx = p[0] - last[0], dy = p[1] - last[1]; text = `L ${L(Math.hypot(dx, dy))} · ${trimNum((((Math.atan2(dy, dx) * 180) / Math.PI) + 360) % 360, 1)}°`; }
+      if ((this.lineTool || this.tool === "tarc") && d.arc) { const g = this.tangentArc(p); text = g ? `R ${L(g.r)} · ${trimNum((Math.abs(g.sweep) * 180) / Math.PI, 1)}°` : ""; }
+      else if (this.tool === "mline") text = `L ${L(2 * Math.hypot(p[0] - a[0], p[1] - a[1]))}`;
+      else if (this.lineTool) { const dx = p[0] - last[0], dy = p[1] - last[1]; text = `L ${L(Math.hypot(dx, dy))} · ${trimNum((((Math.atan2(dy, dx) * 180) / Math.PI) + 360) % 360, 1)}°`; }
       else if (this.tool === "circle" || this.tool === "polygon") text = `R ${L(Math.hypot(p[0] - a[0], p[1] - a[1]))}`;
       else if ((this.tool === "ellipse" || this.tool === "earc") && d.pts.length < 3) {
         const E = d.pts.length === 2 ? this.draftEll(a, d.pts[1], p) : null;
