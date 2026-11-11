@@ -47,6 +47,11 @@ export interface DrawingHost {
   appVersion: string;
   /** A drawing was saved (File ▸ recent documents). */
   saved?(name: string, bytes: Uint8Array): void;
+  /**
+   * A drawing not in a vault yet whose part or assembly is a file of the open vault goes in beside it on Save
+   * (checked out); returns the tie, or null when the model is not in a vault.
+   */
+  intoVault?(name: string, bytes: Uint8Array, source: DrawingDoc["source"]): Promise<VaultTie | null>;
   /** The File menu under the drawing's File button. */
   fileMenu?(btn: HTMLElement): void;
   occtBase: string;
@@ -3379,6 +3384,17 @@ export class DrawingWorkspace {
       return;
     }
     if (as && this.vault) this.setVault(null);
+    if (!as && this.host.intoVault) {
+      let tie: VaultTie | null = null;
+      try { tie = await this.host.intoVault(name, bytes, this.doc.source); }
+      catch (err) { toast(t("Could not save: {err}", { err: t((err as Error).message) }), true); return; }
+      if (tie) {
+        this.vault = tie;
+        this.store.markSaved();
+        this.renderAll();
+        return;
+      }
+    }
     this.host.download(new Blob([bytes], { type: "application/zip" }), name);
     this.fileName = name;
     this.store.markSaved();

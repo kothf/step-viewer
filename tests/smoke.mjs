@@ -1001,7 +1001,7 @@ try {
     check(col.cls && col.w > w0 + 200 && col.exp === "false" && kept && back && dur > 0 && dur < 200, `ui: Ctrl+[ / hamburger collapse the layer panel (${dur} ms), state kept after reload`);
 
     // Header: active file name and a status badge with a text alternative.
-    const hdr = await pg.evaluate(() => ({ name: document.querySelector("#doc-name").textContent, st: document.querySelector("#doc-status").dataset.state, label: document.querySelector("#doc-status").getAttribute("aria-label") }));
+    const hdr = await pg.evaluate(() => ({ name: document.querySelector("#doc").textContent, st: document.querySelector("#doc-status").dataset.state, label: document.querySelector("#doc-status").getAttribute("aria-label") }));
     check(/board/.test(hdr.name) && hdr.st === "ready" && /Status/.test(hdr.label), `ui: header shows the open file and its status (${JSON.stringify(hdr)})`);
 
     // Pin a measurement so the list, the readout card and all controls are on screen for the audits.
@@ -1665,7 +1665,7 @@ try {
     await mp.waitForSelector("#name-dlg[open]");
     const [dlPart] = await Promise.all([mp.waitForEvent("download"), mp.keyboard.press("Enter")]);
     const partBytes = await readFile(await dlPart.path());
-    const saved = await mp.evaluate(() => ({ dirty: window.__sv.model.store.dirty, doc: document.querySelector("#doc-name").textContent }));
+    const saved = await mp.evaluate(() => ({ dirty: window.__sv.model.store.dirty, doc: document.querySelector("#doc").textContent }));
     check(/Part1\.mcadprt$/.test(dlPart.suggestedFilename()) && partBytes.readUInt32LE(0) === 0x04034b50 && !saved.dirty && !/•/.test(saved.doc), `model: Save writes ${dlPart.suggestedFilename()} (${partBytes.length} bytes, a zip) and clears the unsaved mark`);
     const [dlStep] = await Promise.all([mp.waitForEvent("download"), mp.click('[data-c="step"]')]);
     const stepBack = readStep(await readFile(await dlStep.path()));
@@ -1675,7 +1675,7 @@ try {
       const prev = window.showSaveFilePicker;
       window.showSaveFilePicker = async () => ({ name: "bracket.mcadprt", createWritable: async () => ({ write: async () => {}, close: async () => {} }) });
       try { await window.__sv.modeller.save(true); } finally { window.showSaveFilePicker = prev; }
-      return { name: window.__sv.model.store.doc.name, dirty: window.__sv.model.store.dirty, title: document.querySelector("#doc-name").textContent };
+      return { name: window.__sv.model.store.doc.name, dirty: window.__sv.model.store.dirty, title: document.querySelector("#doc").textContent };
     });
     check(saveAs.name === "bracket" && !saveAs.dirty && /bracket\.mcadprt$/.test(saveAs.title), `model: Save as names the part after its file (${JSON.stringify(saveAs)})`);
     await mp.goto(`${origin}/index.html?debug`);
@@ -1706,7 +1706,7 @@ try {
     await mp.click('#mc-snaps [data-snap-copy="0"]');
     await mp.waitForFunction(id => window.__sv.model.store.doc.id !== id, idBefore);
     await idle();
-    const copy = await mp.evaluate(() => ({ name: document.querySelector("#doc-name").textContent, n: window.__sv.model.store.doc.features.length }));
+    const copy = await mp.evaluate(() => ({ name: document.querySelector("#doc").textContent, n: window.__sv.model.store.doc.features.length }));
     check(snapRows >= 1 && near(restored.v, v30, 1e-3) && restored.n === 5 && /\(copy\)/.test(copy.name) && copy.n === 5, `model 1.44: save snapshots, Restore and Open as copy (${snapRows} rows, ${restored.v}, ${JSON.stringify(copy)})`);
     // Autosave journal: an unsaved change is offered after a reload.
     await mp.evaluate(() => { const ex = window.__sv.model.store.doc.features.find(f => f.type === "extrude"); window.__sv.model.store.change("Rename", d => { d.features.find(f => f.id === ex.id).name = "Base"; }); });
@@ -4565,7 +4565,7 @@ try {
     await mp.click('#vault-panel [data-a="savepart"]');
     await mp.waitForSelector("#vault-panel .v-row");
     const row1 = await mp.evaluate(() => document.querySelector("#vault-panel .v-row").textContent.replace(/\s+/g, " ").trim());
-    const title1 = await mp.evaluate(() => document.querySelector("#doc-name").textContent);
+    const title1 = await mp.evaluate(() => document.querySelector("#doc").textContent);
     // Edit, save (into the working copy), check in with a comment: version 2.
     await mp.evaluate(() => window.__sv.model.store.change("Depth", d => { d.features[1].depth = { v: 20 }; }));
     await idle();
@@ -4596,6 +4596,64 @@ try {
     const chk = await mp.evaluate(async () => { const r = await window.__sv.vault.vault.verify(); return `${r.files}/${r.objects}/${r.missing.length + r.corrupt.length}`; });
     check(/Part1\.mcadprt/.test(row1) && /v1/.test(row1) && /Andrey/.test(row1) && /v1 · .*checked out/.test(title1) && dirty === true && hist === "v2:Twice as deep|v1:Added" && Math.abs(vBack - 4000) < 1e-3, `vault 1.39: save to vault, check in, read-only, history and roll back (${row1}, ${title1}, ${dirty}, ${hist}, ${vBack})`);
     check(audit === "create vault,add,check out,check in,roll back" && chk === "1/2/0", `vault 1.39: audit trail and integrity check (${audit}, ${chk})`);
+    await ctx.close();
+  }
+
+  // --- 1.509.0: vault status chip in the header with a tooltip; a drawing of a vault part goes into the vault ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    mp.on("dialog", d => d.accept());
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => { localStorage.setItem("sv:tips", "off"); localStorage.setItem("mc:vaultUser", "Andrey"); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 60000 });
+    const block = () => mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("Block", d => { d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -10, -10), P("b", 10, -10), P("c", 10, 10), P("d", -10, 10), L("l1", "a", "b"), L("l2", "b", "c"), L("l3", "c", "d"), L("l4", "d", "a")] }, { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } }); }); });
+    const rows = () => mp.evaluate(() => [...document.querySelectorAll("#vault-panel .v-row")].map(r => r.textContent.replace(/\s+/g, " ").trim()).join(" | "));
+    const newDrawing = async () => {
+      await mp.evaluate(() => document.querySelector("#new-drawing").click());
+      await mp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length > 0, null, { timeout: 90000 });
+    };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await block();
+    await idle();
+    await mp.click("#t-vault");
+    await mp.fill("#v-name", "Chip vault");
+    await mp.click('#vault-panel [data-a="new-ws"]');
+    await mp.waitForSelector('#vault-panel [data-a="savepart"]:not([disabled])');
+    await mp.click('#vault-panel [data-a="savepart"]');
+    await mp.waitForSelector("#vault-panel .v-row");
+    await mp.waitForFunction(() => !document.querySelector("#doc-vault").hidden);
+    const head = await mp.evaluate(() => ({ name: document.querySelector("#doc-name").textContent, chip: document.querySelector("#doc-vault").textContent, tip: document.querySelector("#doc").title }));
+    // A new drawing of the vault part: Save puts it in the vault beside the part, checked out, no download.
+    await newDrawing();
+    let downloads = 0;
+    mp.on("download", () => downloads++);
+    await mp.evaluate(() => window.__sv.drawing.save());
+    await mp.waitForFunction(() => /\.mcaddrw/.test(document.querySelector("#vault-panel")?.textContent ?? ""), null, { timeout: 15000 }).catch(() => {});
+    const r1 = await rows();
+    const tied = await mp.evaluate(() => !!window.__sv.drawing.vault && !window.__sv.drawing.dirty);
+    // A second part with an open drawing: Save to vault takes the drawing along.
+    await mp.evaluate(() => window.__sv.drawing.hide());
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.some(f => f.id === "x"));
+    await block();
+    await idle();
+    await newDrawing();
+    await mp.evaluate(() => window.__sv.drawing.hide());
+    await mp.waitForFunction(() => window.__sv.modeller.active);
+    await mp.evaluate(() => window.__sv.vault.saveOpenDoc());
+    await mp.waitForFunction(() => document.querySelectorAll("#vault-panel .v-row").length >= 4, null, { timeout: 15000 }).catch(() => {});
+    const r2 = await rows();
+    const n2 = await mp.evaluate(() => document.querySelectorAll("#vault-panel .v-row").length);
+    check(/^Part1\.mcadprt$/.test(head.name.trim()) && /^v1 · Work in progress · checked out to you$/.test(head.chip) && /version 1/.test(head.tip) && /Lifecycle state: Work in progress/.test(head.tip) && /Checked out to you/.test(head.tip),
+      `vault 1.509: the header shows the vault status in its own chip with a tooltip that explains it (${JSON.stringify(head)})`);
+    check(/Part1\.mcaddrw/.test(r1) && tied && downloads === 0 && n2 === 4 && /Part2\.mcadprt/.test(r2) && /Part2\.mcaddrw/.test(r2),
+      `vault 1.509: a drawing of a vault part saves into the vault, and Save to vault takes the part's open drawing along (${r1}; ${tied}, ${downloads}; ${n2}: ${r2})`);
     await ctx.close();
   }
 
@@ -4631,8 +4689,8 @@ try {
     await mp.waitForFunction(() => window.__sv.asm.doc);
     await menu("save");
     await mp.waitForSelector("#vault-panel .v-row", { state: "attached" });
-    await mp.waitForFunction(() => /v1/.test(document.querySelector("#doc-name").textContent));
-    const title1 = await mp.evaluate(() => document.querySelector("#doc-name").textContent);
+    await mp.waitForFunction(() => /v1/.test(document.querySelector("#doc").textContent));
+    const title1 = await mp.evaluate(() => document.querySelector("#doc").textContent);
     await mp.evaluate(() => window.__sv.asm.change(d => { d.name = "Frame"; }));
     await mp.evaluate(() => window.__sv.asm.save());
     const saved = await mp.evaluate(async () => { const v = window.__sv.vault.vault, f = (await v.files())[0]; return `${window.__sv.asm.dirty}/${(await v.status(f)).modified}`; });
@@ -4647,7 +4705,7 @@ try {
     await mp.evaluate(() => window.__sv.asm.save());
     const refused = await mp.evaluate(() => window.__sv.asm.dirty);
     await menu("co");
-    await mp.waitForFunction(() => /checked out/.test(document.querySelector("#doc-name").textContent));
+    await mp.waitForFunction(() => /checked out/.test(document.querySelector("#doc").textContent));
     await mp.evaluate(() => window.__sv.asm.save());
     const savedAgain = await mp.evaluate(() => window.__sv.asm.dirty);
     await menu("hist");
@@ -4746,14 +4804,14 @@ try {
     await mp.click("#empty-asm");
     await mp.waitForFunction(() => window.__sv.asm.doc);
     await menu("save");
-    await mp.waitForFunction(() => /v1/.test(document.querySelector("#doc-name").textContent));
+    await mp.waitForFunction(() => /v1/.test(document.querySelector("#doc").textContent));
     await mp.evaluate(async () => { const p = window.__sv.vault, v = p.vault, f = p.files.find(x => x.kind === "assembly"); await v.undoCheckOut(f.id); await v.rollBack(f.id, 1); await p.refresh(); });
-    await mp.waitForFunction(() => /newer v2/.test(document.querySelector("#doc-name").textContent));
-    const stale = await mp.evaluate(() => document.querySelector("#doc-name").textContent);
+    await mp.waitForFunction(() => /newer v2/.test(document.querySelector("#doc").textContent));
+    const stale = await mp.evaluate(() => document.querySelector("#doc").textContent);
     // Opening it again from the list reloads it in its own tab instead of a second one.
     await menu("panel");
     await mp.evaluate(() => [...document.querySelectorAll("#vault-panel .v-row")].find(r => /\.mcadasm/.test(r.textContent)).dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
-    await mp.waitForFunction(() => /v2/.test(document.querySelector("#doc-name").textContent) && !/newer/.test(document.querySelector("#doc-name").textContent));
+    await mp.waitForFunction(() => /v2/.test(document.querySelector("#doc").textContent) && !/newer/.test(document.querySelector("#doc").textContent));
     await mp.evaluate(() => [...document.querySelectorAll("#vault-panel .v-row")].find(r => /\.mcadasm/.test(r.textContent)).dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
     await mp.waitForTimeout(500);
     const tabs = await mp.evaluate(() => document.querySelectorAll("#doc-tabs [data-dt]").length);
