@@ -52,7 +52,9 @@ export type SketchPattern =
   /** Move / copy, rotate and scale entities (FR-SK-039): one transform, applied to the selection or to copies. */
   | { kind: "move"; dx: number; dy: number; copy: boolean; keep: boolean }
   | { kind: "rotate"; c: V2; centre: string | null; angle: number; copy: boolean; keep: boolean }
-  | { kind: "scale"; c: V2; centre: string | null; k: number; copy: boolean; keep: boolean };
+  | { kind: "scale"; c: V2; centre: string | null; k: number; copy: boolean; keep: boolean }
+  /** Stretch entities (FR-SK-039): the selected points (and the points of selected curves) move, curves ending on them stretch. */
+  | { kind: "stretch"; dx: number; dy: number };
 
 export type SkTool = "select" | "line" | "cline" | "mline" | "rect" | "crect" | "rect3" | "crect3" | "pgram" | "circle" | "circle3" | "pcircle" | "arc" | "arc3" | "tarc" | "polygon" | "slot" | "cslot" | "aslot" | "aslot3" | "ellipse" | "earc" | "spline" | "sspline" | "conic" | "parabola" | "eqn" | "point" | "text" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "intersect" | "dim" | "hord" | "vord";
 
@@ -2793,6 +2795,13 @@ export class SketchEditor {
   /** Starts a pattern of the selection (Linear or Circular), with the panel's defaults. */
   startPattern(kind: SketchPattern["kind"]): boolean {
     const { items, centre } = this.patternSeed();
+    if (kind === "stretch") {
+      if (!this.stretchPoints().size) { this.host.toast(t("Select the points or entities to stretch first (a box over one end of the shape), then click Stretch.")); return false; }
+      if (this.tool !== "select") this.setTool("select");
+      this.pattern = { kind, dx: 10, dy: 0 };
+      this.render();
+      return true;
+    }
     if (!items.length) { this.host.toast(t("Select the entities to pattern first, then click the pattern tool.")); return false; }
     if (this.tool !== "select") this.setTool("select");
     const c: V2 = centre ? this.pt(centre) : [0, 0];
@@ -2800,7 +2809,7 @@ export class SketchEditor {
       : kind === "circular" ? { kind, n: 6, total: Math.PI * 2, c, centre, equal: true }
       : kind === "move" ? { kind, dx: 10, dy: 0, copy: false, keep: true }
       : kind === "rotate" ? { kind, c, centre, angle: Math.PI / 2, copy: false, keep: true }
-      : { kind, c, centre, k: 2, copy: false, keep: true };
+      : { kind: "scale", c, centre, k: 2, copy: false, keep: true };
     this.render();
     return true;
   }
@@ -2826,15 +2835,53 @@ export class SketchEditor {
       for (let i = 1; i < p.n; i++) out.push({ f: rot(p.c, step * i), k: 1 });
     } else if (p.kind === "move") out.push({ f: q => [q[0] + p.dx, q[1] + p.dy], k: 1 });
     else if (p.kind === "rotate") out.push({ f: rot(p.c, p.angle), k: 1 });
+    else if (p.kind === "stretch") out.push({ f: q => [q[0] + p.dx, q[1] + p.dy], k: 1 });
     else { const c = p.c, k = p.k; out.push({ f: q => [c[0] + (q[0] - c[0]) * k, c[1] + (q[1] - c[1]) * k], k: Math.abs(k) }); }
     return out;
   }
 
+  /**
+   * Points a stretch moves: the selected points, and all points of a selected curve none of whose points are
+   * selected. So a crossing box over one end moves the end points inside it and stretches the curves crossing
+   * the box, while a curve picked on its own moves whole. The origin stays.
+   */
+  private stretchPoints(): Set<string> {
+    const pts = new Set<string>();
+    const sel = [...this.selection].map(id => this.ent(id)).filter((x): x is SkEnt => !!x);
+    for (const e of sel) if (e.t === "point") pts.add(e.id);
+    const picked = new Set(pts);
+    for (const e of sel) if (e.t !== "point" && !refPts(e).some(q => picked.has(q))) for (const q of refPts(e)) pts.add(q);
+    pts.delete(ORIGIN);
+    return pts;
+  }
+
+  /** Entities a stretch changes: every entity using a moved point, and the moved points themselves. */
+  private stretchItems(pts: Set<string>): SkEnt[] {
+    return this.sk.ents.filter(e => e.t === "point" ? pts.has(e.id) : refPts(e).some(q => pts.has(q)));
+  }
+
+  /** Stretch preview: the entities drawn with the moved points displaced (the sketch is put back at once). */
+  private stretchPreview(mv: (q: V2) => V2): V2[][] {
+    const pts = this.stretchPoints();
+    const keep = new Map<string, V2>();
+    for (const id of pts) { const e = this.ent(id) as SkEnt & { t: "point" }; keep.set(id, [e.x, e.y]); const q = mv([e.x, e.y]); e.x = q[0]; e.y = q[1]; }
+    try { return this.entPolys(this.stretchItems(pts), q => q, 1); }
+    finally { for (const [id, q] of keep) { const e = this.ent(id) as SkEnt & { t: "point" }; e.x = q[0]; e.y = q[1]; } }
+  }
+
   /** Preview polylines of the instances. */
   private patternPreview(): V2[][] {
-    const { items } = this.patternSeed();
     const out: V2[][] = [];
-    for (const { f: mv, k } of this.patternMoves()) {
+    if (this.pattern?.kind === "stretch") return this.stretchPreview(this.patternMoves()[0].f);
+    const { items } = this.patternSeed();
+    for (const { f: mv, k } of this.patternMoves()) out.push(...this.entPolys(items, mv, k));
+    return out;
+  }
+
+  /** Polylines of entities moved by mv (k scales radii). */
+  private entPolys(items: SkEnt[], mv: (q: V2) => V2, k: number): V2[][] {
+    const out: V2[][] = [];
+    {
       for (const e of items) {
         if (e.t === "point") { const q = mv(this.pt(e.id)), r = this.px(q) * 3; out.push(arcPts(q, r, 0, Math.PI * 2, 12)); }
         else if (e.t === "line") out.push([mv(this.pt(e.a)), mv(this.pt(e.b))]);
@@ -2862,6 +2909,7 @@ export class SketchEditor {
     const p = this.pattern;
     const { items } = this.patternSeed();
     const moves = this.patternMoves();
+    if (p?.kind === "stretch") return this.applyStretch(moves[0].f);
     if (!p || !items.length || !moves.length) { this.cancelPattern(); return 0; }
     if (p.kind === "move" || p.kind === "rotate" || p.kind === "scale") return this.applyTransform(p, items, moves[0]);
     const made: string[] = [];
@@ -2960,6 +3008,29 @@ export class SketchEditor {
     this.pattern = null;
     this.selection = new Set(made);
     this.commit(label);
+    this.render();
+    this.emitSel();
+    return 1;
+  }
+
+  /**
+   * Stretch entities (SolidWorks Stretch Entities): the selected points move by the delta, so curves ending on
+   * them stretch. Driving dimensions spanning moved and unmoved points take their new values (ones typed as an
+   * expression keep it, and the solver pulls against them); relations stay.
+   */
+  private applyStretch(mv: (q: V2) => V2): number {
+    const pts = this.stretchPoints();
+    this.pattern = null;
+    if (!pts.size) { this.render(); return 0; }
+    const ptsOf = (id: string): string[] => { const e = this.ent(id); return !e ? [] : e.t === "point" ? [e.id] : refPts(e); };
+    const touched = this.sk.dims.filter(d => {
+      if (d.driven || d.val.expr) return false;
+      const ps = d.e.flatMap(ptsOf);
+      return ps.some(q => pts.has(q)) && ps.some(q => !pts.has(q));
+    });
+    for (const id of pts) { const e = this.ent(id) as SkEnt & { t: "point" }; const q = mv([e.x, e.y]); e.x = q[0]; e.y = q[1]; }
+    for (const d of touched) { const v = measureDim(this.sk, d); if (Number.isFinite(v)) d.val = { v }; }
+    this.commit("Stretch entities");
     this.render();
     this.emitSel();
     return 1;

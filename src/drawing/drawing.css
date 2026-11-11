@@ -4,7 +4,19 @@
 .drw-top .btn svg, .drw-top .icon svg { vertical-align: -3px; }
 .drw-top .btn span { margin-left: 4px; }
 .drw-name { font-weight: 600; max-width: 28ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.drw-cmds { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-wrap: wrap; }
+.drw-right { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+/* Command bar: icon-over-label buttons in groups, like the 3D command bar (.mc-b). */
+.drw-cmds { display: flex; align-items: stretch; gap: 4px; padding: 3px 8px; background: var(--panel); border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: thin; }
+.drw-cg { display: flex; align-items: stretch; gap: 2px; }
+.drw-cg > .drw-dd { display: flex; }
+.drw-cb { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 2px; min-width: 50px; max-width: 92px; padding: 4px 5px 3px; border: 1px solid transparent; border-radius: 7px; background: none; color: var(--text); font: inherit; cursor: pointer; }
+.drw-cb svg { width: 20px; height: 20px; flex: none; }
+.drw-cb .mc-l { font-size: 11px; line-height: 1.15; text-align: center; white-space: normal; }
+.drw-cb:hover:not(:disabled), .drw-cb[aria-expanded="true"] { background: var(--panel-2); border-color: var(--line); }
+.drw-cb:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+.drw-cb.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text); }
+/* Under 1280 px the labels go (the tooltip still names each command), as on the 3D command bar. */
+@media (max-width: 1279px) { .drw-cb { min-width: 38px; } .drw-cb .mc-l { display: none; } }
 .drw-sep { width: 1px; align-self: stretch; background: var(--line); margin: 0 2px; }
 .drw-dd { position: relative; }
 .drw-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 5; min-width: 190px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); padding: 4px; display: flex; flex-direction: column; max-height: calc(100vh - 110px); overflow-y: auto; }

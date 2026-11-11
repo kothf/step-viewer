@@ -1224,6 +1224,11 @@ export const RU: Record<string, string> = {
   "Rotate entities about a point": "Повернуть объекты вокруг точки",
   "Scale entities about a point": "Масштабировать объекты относительно точки",
   "The green preview shows where the entities go.": "Зелёный предпросмотр показывает новое положение объектов.",
+  "Stretch": "Растянуть",
+  "Stretch entities": "Растянуть объекты",
+  "Stretch entities: select points or one end of a shape, then move them; lines ending there stretch": "Растянуть объекты: выберите точки или один край контура и сдвиньте их; линии, оканчивающиеся на них, растягиваются",
+  "Select the points or entities to stretch first (a box over one end of the shape), then click Stretch.": "Сначала выберите точки или объекты для растяжения (рамкой по одному краю контура), затем нажмите «Растянуть».",
+  "The selected points move; lines and arcs ending on them stretch. Dimensions across the stretch take the new sizes.": "Выбранные точки сдвигаются; линии и дуги, оканчивающиеся на них, растягиваются. Размеры поперёк растяжения принимают новые значения.",
   "Revolve type": "Тип поворота",
   "Angle 2": "Угол 2",
   "Click a flat face or a plane through the axis, in the view or the tree.": "Щёлкните плоскую грань или плоскость, проходящую через ось, в окне или в дереве.",
@@ -2685,6 +2690,7 @@ export const RU: Record<string, string> = {
   // 1.78.0: drawing view palette (FR-UI-072).
   "View palette": "Палитра видов",
   "Drag a view onto the sheet, or click it and then click the sheet.": "Перетащите вид на лист или щёлкните его, а затем лист.",
+  "Drag a view from the View palette onto the sheet, or use Standard 3 views.": "Перетащите вид из палитры видов на лист или нажмите «Три стандартных вида».",
   "Drag this view onto the sheet": "Перетащите этот вид на лист",
   // 1.80.0: vault geometry compare, check-in with referenced files, status in the title.
   "local copy outdated": "локальная копия устарела",
@@ -2708,6 +2714,9 @@ export const RU: Record<string, string> = {
   "Palettes": "Палитры",
   "Annotation": "Обозначения",
   // Drawing Annotation tab: groups and tool tooltips
+  "Edit and file": "Правка и файл",
+  "Every annotation: dimensions, notes, symbols, tolerances, centre lines, tables and sheet sketch": "Все обозначения: размеры, примечания, знаки, допуски, осевые линии, таблицы и эскиз на листе",
+  "Views": "Виды",
   "Notes and symbols": "Примечания и обозначения",
   "Geometric tolerancing": "Допуски формы и расположения",
   "Centerlines": "Осевые линии",
