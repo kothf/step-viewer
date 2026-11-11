@@ -5,9 +5,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.519.0] - 2026-11-11
+
 ### Changed
 
 - Drawings: the side panel reads like SolidWorks' PropertyManager. A title row with the item's icon, name and kind (Model view, Section view, Note…) stays at the top while the panel scrolls, with ✕ (Esc) to go back to the sheet. Every group (Scale, Display style, Text…) folds by its heading, and the panel remembers which ones you folded for each kind of item. The view palette folds away with the arrow beside its tabs, and its tiles are smaller, so a view's properties start higher.
+
+## [1.518.0] - 2026-11-11
+
+### Changed
+
+- Drawings: a new drawing opens with an empty sheet and the View palette, as in SolidWorks: drag the views you want onto the sheet, or use Standard 3 views for front, top and side lined up.
+
+### Fixed
+
+- Drawings: placing a view from the View palette while its pictures were still being drawn restarted the drawing kernel, so the view took seconds to appear (and a palette picture stayed blank). The pictures now wait behind the views and are never thrown away, so a palette view shows at once.
+- Drawings: the drawing kernel starts a few seconds after a model opens, so a new drawing's palette and first view no longer wait about 3 s (longer on slower computers) for OpenCASCADE to set itself up.
 
 ## [1.517.0] - 2026-11-11
 
@@ -3214,7 +3227,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.517.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.519.0...HEAD
+[1.519.0]: https://github.com/kothf/step-viewer/compare/v1.518.0...v1.519.0
+[1.518.0]: https://github.com/kothf/step-viewer/compare/v1.517.0...v1.518.0
 [1.517.0]: https://github.com/kothf/step-viewer/compare/v1.516.0...v1.517.0
 [1.516.0]: https://github.com/kothf/step-viewer/compare/v1.515.0...v1.516.0
 [1.515.0]: https://github.com/kothf/step-viewer/compare/v1.514.0...v1.515.0

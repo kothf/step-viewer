@@ -2685,6 +2685,7 @@ export const RU: Record<string, string> = {
   // 1.78.0: drawing view palette (FR-UI-072).
   "View palette": "Палитра видов",
   "Drag a view onto the sheet, or click it and then click the sheet.": "Перетащите вид на лист или щёлкните его, а затем лист.",
+  "Drag a view from the View palette onto the sheet, or use Standard 3 views.": "Перетащите вид из палитры видов на лист или нажмите «Три стандартных вида».",
   "Drag this view onto the sheet": "Перетащите этот вид на лист",
   // 1.80.0: vault geometry compare, check-in with referenced files, status in the title.
   "local copy outdated": "локальная копия устарела",

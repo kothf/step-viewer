@@ -28,7 +28,7 @@ import { GSYMS, GSYM_NAMES, SURF_LAYS, cellLabel } from "./gdt";
 import { WELD_SYMS, WELD_SYM_NAMES } from "./weld";
 import { SK_PENS, SK_PEN_NAMES, orthoSnap, skPoints, skPrims } from "./sheetSketch";
 import { fitLimits, splitFit } from "./iso286";
-import { FLAT_CONFIG, ORIENTS, ORIENT_NAMES, SCALES, viewConfig, viewOnly, topoOnly, altReq, alignAxis, alignedLegs, cutLegs, findView, fitScale, std3Layout, lookDir, parseScale, projectedDir, scaleText, sideOf, switchProjection, viewDir, viewReq, viewScale } from "./views";
+import { FLAT_CONFIG, ORIENTS, ORIENT_NAMES, SCALES, viewConfig, viewOnly, topoOnly, altReq, alignAxis, alignedLegs, cutLegs, dirKey, findView, fitScale, std3Layout, lookDir, parseScale, projectedDir, scaleText, sideOf, switchProjection, viewDir, viewReq, viewScale } from "./views";
 import { PALETTE, PALETTE_MIME, thumbPath } from "./palette";
 import "./drawing.css";
 import { makeGrip } from "../resize";
@@ -332,7 +332,10 @@ export class DrawingWorkspace {
 
   // ---------- opening ----------
 
-  /** A new drawing of the model open now, with the standard 3 views. */
+  /**
+   * A new drawing of the model open now: an empty sheet beside the view palette, as in SolidWorks; views are
+   * dragged from the palette, or placed with Standard 3 views.
+   */
   async newFromModel() {
     const m = await this.host.currentModel();
     if (!m) { toast(t("Open a part, an assembly or a STEP, IGES or BREP model first."), true); return; }
@@ -344,9 +347,11 @@ export class DrawingWorkspace {
     };
     this.info = m.info;
     this.load(doc, m.file?.bytes, "");
-    const facts = await this.loadModel();
-    if (facts) this.standard3(true);
+    await this.loadModel();
   }
+
+  /** Sets the drawing kernel up ahead of the first drawing (main.ts calls it once a model is shown). */
+  warm() { this.kernel.warm(); }
 
   async openFile(file: File | { name: string; data: ArrayBuffer }) {
     const buf = file instanceof File ? await file.arrayBuffer() : file.data;
@@ -719,6 +724,7 @@ export class DrawingWorkspace {
     else if (this.stale) s = t("The model changed: the views are out of date. Updating…");
     else if (this.projecting.size && this.kernel.restarting) s = t("Freeing the drawing kernel's memory, then projecting… {n} to go", { n: this.projecting.size });
     else if (this.projecting.size) s = t("Projecting the views… {n} to go", { n: this.projecting.size });
+    else if (!this.sheet.views.length) s = t("Drag a view from the View palette onto the sheet, or use Standard 3 views.");
     else s = t("Drag a view to move it. Double-click the title block to fill it in.");
     st.textContent = s;
     st.classList.toggle("warn", this.stale && !this.loading);
@@ -762,7 +768,8 @@ export class DrawingWorkspace {
    */
   private dropGone(always = false) {
     if (!this.store || (!this.projecting.size && !always)) return;
-    const want = new Set<string>();
+    // The view palette's pictures are wanted too (they run behind the views).
+    const want = new Set<string>([...PALETTE.map(o => dirKey(ORIENTS[o])), "palette:flat"]);
     for (const sh of this.store.doc.sheets) for (const v of sh.views) {
       want.add(viewReq(sh, v).key);
       const a = altReq(sh, v);
@@ -1196,12 +1203,13 @@ export class DrawingWorkspace {
   /** Draws the palette's pictures from the model's projections (the kernel keeps them for the views). */
   private async renderPalette() {
     const run = ++this.palRun;
-    for (const o of PALETTE) {
+    // In the background: a view placed meanwhile has its projection made first (and shares these when the same).
+    await Promise.all(PALETTE.map(async o => {
       let d = "";
-      try { d = thumbPath(await this.kernel.project(ORIENTS[o])); } catch { /* left blank */ }
-      if (run !== this.palRun) return;
-      this.el.querySelector(`[data-pal="${o}"] path`)?.setAttribute("d", d);
-    }
+      try { d = thumbPath(await this.kernel.project(ORIENTS[o], true)); } catch { /* left blank */ }
+      if (run === this.palRun) this.el.querySelector(`[data-pal="${o}"] path`)?.setAttribute("d", d);
+    }));
+    if (run !== this.palRun) return;
     // A sheet metal part also offers its flat pattern (FR-FT-120).
     // The drawing may have closed while the thumbnails were drawn.
     if (run !== this.palRun || !this.store) return;
@@ -1213,7 +1221,7 @@ export class DrawingWorkspace {
       tile = this.el.querySelector<HTMLElement>('[data-pal="flat"]')!;
     }
     let d = "";
-    try { d = thumbPath(await this.kernel.request({ view: ORIENTS.top, cfg: FLAT_CONFIG, key: "palette:flat" })); } catch { /* left blank */ }
+    try { d = thumbPath(await this.kernel.request({ view: ORIENTS.top, cfg: FLAT_CONFIG, key: "palette:flat" }, true)); } catch { /* left blank */ }
     if (run === this.palRun) tile.querySelector("path")?.setAttribute("d", d);
   }
 
@@ -3670,6 +3678,7 @@ export class DrawingWorkspace {
     return {
       doc: () => this.store?.doc ?? null,
       prims: () => (this.store ? this.composed(this.sheet).prims : []),
+      loaded: () => !!this.store && !this.loading && !!this.facts,
       ready: () => !!this.store && !this.loading && this.sheet.views.every(v => this.kernel.cache.has(viewReq(this.sheet, v).key) && (!altReq(this.sheet, v) || this.kernel.cache.has(altReq(this.sheet, v)!.key))),
       svg: () => (this.store ? (() => { const sh = this.sheet, [W, H] = sheetSize(sh); return sheetSvg(this.composed(sh).prims, W, H); })() : ""),
       dxf: () => (this.store ? (() => { const sh = this.sheet, [W, H] = sheetSize(sh); return sheetDxf(this.composed(sh).prims, W, H); })() : ""),
@@ -3679,6 +3688,8 @@ export class DrawingWorkspace {
       mode: () => this.mode.kind,
       fields: () => (this.store ? this.fields() : null),
       helper: () => this.kernel.helperState(),
+      /** Exact projections made so far: key and worker ms (tests and timing). */
+      projMs: () => [...this.kernel.cache].map(([k, p]) => [k, Math.round(p.ms)] as [string, number]),
       previews: () => ({ shown: this.previewsShown, made: this.kernel.previewsMade, sections: this.kernel.sectionPreviewsMade, errs: this.kernel.previewErrors.slice(0, 3), on: this.previewsOn(), asked: this.previewAsked.size, left: this.svg.querySelectorAll(".drw-preview").length }),
       renders: () => this.sheetRenders,
       drop: () => this.dropGone(true),
