@@ -6587,9 +6587,11 @@ try {
     const ssel = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-d="st2"]'));
     if (ssel) {
       await dp.fill('#drw [data-d="st2"]', "Rz 6.3"); await dp.dispatchEvent('#drw [data-d="st2"]', "change");
-      await dp.selectOption('#drw [data-d="slay"]', "⊥");
+      await dp.check('#drw [data-d="slay"][value="⊥"]', { force: true });
+      await dp.check('#drw [data-d="sp"][value="none"]', { force: true }); await dp.check('#drw [data-d="sp"][value="removal"]', { force: true });
       await dp.fill('#drw [data-d="sallow"]', "0.5"); await dp.dispatchEvent('#drw [data-d="sallow"]', "change");
       await dp.check('#drw [data-d="saround"]');
+      if (process.env.SMOKE_SHOTS) await dp.locator("#drw .drw-props").screenshot({ path: `${process.env.SMOKE_SHOTS}/drawing-surf-panel.png` });
     }
     an = await annots(); tx = await texts();
     const sf2 = an.find(a => a.t === "surf");
@@ -14677,21 +14679,26 @@ try {
     const ex = fr[0] + (fr[2] - fr[0]) * 0.3;
     await clickSheet(ex, fr[3]);
     await clickSheet(ex + 15, fr[3] + 15);
-    await dp.waitForTimeout(150);
+    // The weld dialog opens on the placed symbol: icons for each side's weld; OK adds it.
+    await dp.waitForSelector("#drw-weld-dlg[open]");
+    const wicons = await dp.evaluate(() => document.querySelectorAll('#drw-weld-dlg [data-side="arrow"] [data-w] svg').length);
+    await dp.click("#drw-weld-dlg button[value=ok]"); await annotDlgGone(dp);
     const prims = () => dp.evaluate(() => window.__sv.drw.prims().filter(p => p.layer === "ANNOT"));
     const w1 = await dp.evaluate(() => { const a = (window.__sv.drw.doc().sheets[0].annots ?? []).find(x => x.t === "weld"); return a && JSON.parse(JSON.stringify(a)); });
     const p1 = await prims();
     const tri = p1.filter(p => p.t === "p" && p.closed && !p.fill).length, a4 = p1.some(p => p.t === "t" && p.s === "a4");
-    const panel = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-d="wosym"]'));
+    const panel = wicons === 7 && await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-a="aedit"]'));
     check(w1 && w1.leader && w1.arrow?.sym === "fillet" && tri >= 1 && a4 && panel, `drawing: weld symbol with an arrow to the clicked joint, fillet a4 on the arrow side (${JSON.stringify({ w1, tri, a4, panel })})`);
-    await dp.selectOption('#drw .drw-props [data-d="wosym"]', "v");
-    await dp.waitForTimeout(150);
-    await dp.check('#drw .drw-props [data-d="waround"]');
-    await dp.waitForTimeout(150);
+    await dp.click('#drw .drw-props [data-a="aedit"]'); await dp.waitForSelector("#drw-weld-dlg[open]");
+    await dp.click('#drw-weld-dlg [data-w="other:v"]');
+    await dp.check('#drw-weld-dlg [data-wo="around"]');
+    const wpv = await dp.evaluate(() => document.querySelectorAll("#drw-weld-dlg .ad-pv *").length);
+    if (process.env.SMOKE_SHOTS) await dp.screenshot({ path: `${process.env.SMOKE_SHOTS}/drawing-weld-dialog.png` });
+    await dp.click("#drw-weld-dlg button[value=ok]"); await annotDlgGone(dp);
     const p2 = await prims(), w2 = await dp.evaluate(() => { const a = (window.__sv.drw.doc().sheets[0].annots ?? []).find(x => x.t === "weld"); return a && JSON.parse(JSON.stringify(a)); });
     const dash = p2.filter(p => p.t === "l" && p.pen === "hidden").length, ring = p2.some(p => p.t === "a" && Math.abs(p.r - 1.5) < 1e-9);
-    const ru = await dp.evaluate(() => document.querySelector('#drw .drw-props [data-d="wosym"]')?.closest("fieldset")?.querySelector("legend")?.textContent);
-    check(w2.other?.sym === "v" && w2.around === true && dash === 1 && ring, `drawing: other-side V adds the dashed identification line; all around draws the circle (${JSON.stringify({ other: w2.other, dash, ring, ru })})`);
+    const ru = wpv;
+    check(w2.other?.sym === "v" && w2.around === true && dash === 1 && ring && wpv > 6, `drawing: other-side V adds the dashed identification line; all around draws the circle (${JSON.stringify({ other: w2.other, dash, ring, ru })})`);
     // Datum target (ISO 5459): click a point on the bottom edge, place the frame below; then make it a hatched area.
     await dp.keyboard.press("Escape");
     await drwTool(dp, "dtarget");

@@ -191,3 +191,16 @@ dialog .gt-rows td, dialog .gt-rows td:first-child { padding: 3px 6px 3px 0; ver
 .ad-pv { display: block; max-width: 100%; height: auto; color: #000; font-family: 'DejaVu Sans', Arial, Helvetica, sans-serif; }
 .drw-props .ad-pvbox { margin-top: 4px; }
 .drw-callout { margin: 4px 0 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); font: inherit; white-space: pre-wrap; }
+.wd-ico line { stroke-width: 0.3; }
+.wd-dlg .wd-vals { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+.wd-dlg .wd-vals input, .wd-line input:not([type=checkbox]) { width: 100%; min-width: 0; box-sizing: border-box; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 7px; font-size: var(--fs-body); }
+.wd-line { display: flex; flex-wrap: wrap; align-items: end; gap: 4px 16px; margin: 8px 0; padding: 6px 0; border-top: 2px solid var(--text); }
+.wd-line .drw-f { flex: 1 1 180px; margin-top: 0; }
+.drw-weldrow { display: flex; align-items: center; gap: 8px; }
+.sf-ico { width: 32px; height: 22px; }
+.sf-ico line, .sf-ico circle, .sf-ico path { stroke-width: 0.6; }
+.drw-icoset { display: flex; flex-wrap: wrap; gap: 4px; }
+.drw-icoopt { position: relative; display: inline-grid; place-items: center; min-width: 32px; height: 32px; padding: 0 4px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); cursor: pointer; font-size: 14px; }
+.drw-icoopt input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.drw-icoopt:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, var(--panel)); }
+.drw-icoopt:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }

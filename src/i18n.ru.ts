@@ -4970,4 +4970,10 @@ export const RU: Record<string, string> = {
   "The text follows the hole. Untick the box, or press a symbol, to write your own.": "Текст следует за отверстием. Снимите флажок или нажмите символ, чтобы написать свой.",
   "The text follows the hole.": "Текст следует за отверстием.",
   "Double-click the frame on the sheet to edit it too.": "Двойной щелчок по рамке на листе тоже открывает правку.",
+  "Parallel to the view plane": "Параллельно плоскости вида",
+  "Perpendicular to the view plane": "Перпендикулярно плоскости вида",
+  "Crossed": "Перекрещивающееся",
+  "Multi-directional": "Произвольное",
+  "Radial": "Радиальное",
+  "Particulate, no direction": "Точечное, без направления",
 };

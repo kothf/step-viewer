@@ -3,11 +3,12 @@
 // on a double-click of an existing one, with the symbols as buttons and a live preview.
 import { t } from "../i18n";
 import { trapFocus } from "../ui";
-import { GMODS, GSYMS, GSYM_NAMES, gtolPrims, rowText, symbolPrims } from "./gdt";
+import { GMODS, GSYMS, GSYM_NAMES, gtolPrims, rowText, surfPrims, symbolPrims } from "./gdt";
 import { drawnSymbols, svgBody } from "./output";
 import type { Prim } from "./prims";
 import { textWidth } from "./textWidth";
-import type { GRow, GSym, GtolAnnot, HoleAnnot } from "./types";
+import type { GRow, GSym, GtolAnnot, HoleAnnot, SurfAnnot, WeldAnnot, WeldSide, WeldSym } from "./types";
+import { WELD_SYMS, WELD_SYM_NAMES, weldPrims, weldSymPrims } from "./weld";
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
@@ -234,5 +235,64 @@ export function editHole(start: HoleAnnot, auto: (count: boolean) => string[], t
   render();
   const p = run(dlg, [["input", onInput], ["focusin", onFocus], ["click", onClick]], (): HoleEdit => ({ ...(a.txt != null && a.txt.trim() ? { txt: a.txt } : {}), ...(a.count === false ? { count: false } : {}), ...(a.below ? { below: a.below } : {}) }));
   dlg.querySelector<HTMLElement>("[data-h=auto]")?.focus();
+  return p;
+}
+
+/** A weld symbol as an icon, standing on its reference line. */
+export const weldIcon = (y: WeldSym | "") => `<svg class="gt-ico wd-ico" viewBox="-3 -4.2 6 6" aria-hidden="true"><line x1="-2.8" y1="0" x2="2.8" y2="0" stroke="currentColor"/>${y ? svgBody(weldSymPrims(y, 0, 0, 1), 0, "currentColor") : ""}</svg>`;
+/** A surface finish symbol (any process, material removed, none removed) as an icon. */
+export function surfIcon(proc: SurfAnnot["proc"]): string {
+  const g = surfPrims({ id: "", t: "surf", pos: [0, 0], proc, text: "" }, [0, 0], ".");
+  return `<svg class="gt-ico sf-ico" viewBox="-3.5 -9.6 15 10.4" aria-hidden="true">${svgBody(g.prims, 0, "currentColor")}</svg>`;
+}
+
+/**
+ * The weld symbol dialog: the other side above the reference line and the arrow side below it, as on the
+ * symbol itself, each with its weld picked from icons, its size and length; all around, field weld, the tail note.
+ */
+export function editWeld(start: WeldAnnot, isNew: boolean): Promise<WeldAnnot | null> {
+  const a: WeldAnnot = structuredClone(start);
+  const dlg = dialog("drw-weld-dlg", "ad-dlg wd-dlg", "drw-weld-title");
+  const preview = () => { const g = weldPrims({ ...a, leader: undefined }, [0, 0], [-8, -8]); return previewSvg(g.prims, [Math.min(g.box[0], -9), Math.min(g.box[1], -9), g.box[2], g.box[3]], t("Preview")); };
+  const side = (k: "arrow" | "other", label: string) => {
+    const w = a[k];
+    return `<fieldset class="pm-group wd-side" data-side="${k}"><legend>${esc(t(label))}</legend>
+      <div class="ad-syms" role="radiogroup" aria-label="${esc(t(label))}: ${esc(t("Symbol"))}">${(["", ...WELD_SYMS] as const).map(y => `<button type="button" role="radio" aria-checked="${(w?.sym ?? "") === y}" class="ad-symb${(w?.sym ?? "") === y ? " on" : ""}" data-w="${k}:${y}" title="${esc(t(y ? WELD_SYM_NAMES[y] : "None"))}" aria-label="${esc(t(y ? WELD_SYM_NAMES[y] : "None"))}">${weldIcon(y)}</button>`).join("")}</div>
+      <div class="wd-vals"><label class="drw-f">${esc(t("Size"))}<input data-wv="${k}:size" value="${esc(w?.size ?? "")}" translate="no" placeholder="a4"${w ? "" : " disabled"}></label>
+      <label class="drw-f">${esc(t("Length"))}<input data-wv="${k}:len" value="${esc(w?.len ?? "")}" translate="no" placeholder="100"${w ? "" : " disabled"}></label></div>
+    </fieldset>`;
+  };
+  const render = () => {
+    dlg.innerHTML = `<form method="dialog">
+      <div class="modal-head"><h3 id="drw-weld-title">${esc(t("Weld symbol"))}</h3></div>
+      ${side("other", "Other side")}
+      <div class="wd-line"><label class="drw-chk"><input type="checkbox" data-wo="around"${a.around ? " checked" : ""}> ${esc(t("All around"))}</label>
+        <label class="drw-chk"><input type="checkbox" data-wo="field"${a.field ? " checked" : ""}> ${esc(t("Field weld"))}</label>
+        <label class="drw-f">${esc(t("Tail note"))}<input data-wo="tail" value="${esc(a.tail ?? "")}" placeholder="111 ISO 5817-B"></label></div>
+      ${side("arrow", "Arrow side")}
+      <div class="ad-pvbox">${preview()}</div>
+      <div class="row end"><button type="button" class="btn" data-cancel>${esc(t("Cancel"))}</button><button class="btn primary" value="ok">${esc(t("OK"))}</button></div>
+    </form>`;
+  };
+  const refresh = () => { const b = dlg.querySelector(".ad-pvbox"); if (b) b.innerHTML = preview(); };
+  const onInput = (e: Event) => {
+    const el = e.target as HTMLInputElement, v = el.dataset.wv, o = el.dataset.wo;
+    if (v) { const [k, f] = v.split(":") as ["arrow" | "other", "size" | "len"], w = a[k]; if (!w) return; if (el.value.trim()) w[f] = el.value.trim(); else delete w[f]; }
+    else if (o === "around" || o === "field") { if (el.checked) a[o] = true; else delete a[o]; }
+    else if (o === "tail") { if (el.value.trim()) a.tail = el.value.trim(); else delete a.tail; }
+    else return;
+    refresh();
+  };
+  const onClick = (e: Event) => {
+    const b = (e.target as HTMLElement).closest<HTMLElement>("[data-w]");
+    if (!b) return;
+    const [k, y] = b.dataset.w!.split(":") as ["arrow" | "other", WeldSym | ""];
+    if (y) a[k] = { ...(a[k] ?? {}), sym: y } as WeldSide; else delete a[k];
+    render();
+    dlg.querySelector<HTMLElement>(`[data-w="${k}:${y}"]`)?.focus();
+  };
+  render();
+  const p = run(dlg, [["input", onInput], ["click", onClick]], () => a);
+  (isNew ? dlg.querySelector<HTMLElement>('[data-side="arrow"] .ad-symb.on') : dlg.querySelector<HTMLInputElement>('[data-wv="arrow:size"]:not([disabled])') ?? dlg.querySelector<HTMLElement>(".ad-symb.on"))?.focus();
   return p;
 }
