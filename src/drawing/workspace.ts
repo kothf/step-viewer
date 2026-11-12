@@ -21,11 +21,12 @@ import { DRAWING_EXT, packDrawing, unpackDrawing } from "./file";
 import { printHtml, sheetDxf, sheetDxf2000, sheetPng, sheetSvg, sheetsPdf, svgBody, FONT } from "./output";
 import type { Prim } from "./prims";
 import { editTitleBlock } from "./tbEditor";
+import { editGtol, editHole, editWeld, gtolPicture, surfIcon, weldIcon } from "./annotDlg";
 import { loadFormats } from "./formats";
 import { FIELD_LABEL, isoFormat, editableOf, SIZES, fieldAt, formatPrims, frameOf, sheetSize, tbSize, titleBlockAt, type Fields } from "./sheet";
-import type { Annot, BalloonAnnot, CLineAnnot, DatumTargetAnnot, DimAnnot, SketchAnnot, SkPen, WeldSide, WeldSym, DisplayStyle, DraftStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, GRow, GSym, HatchPattern, Orient, Sheet, SheetSize, SurfLay, TableAnnot, TangentEdges, Tol } from "./types";
-import { GSYMS, GSYM_NAMES, SURF_LAYS, cellLabel } from "./gdt";
-import { WELD_SYMS, WELD_SYM_NAMES } from "./weld";
+import type { Annot, BalloonAnnot, CLineAnnot, GtolAnnot, HoleAnnot, DatumTargetAnnot, DimAnnot, SketchAnnot, SkPen, WeldSide, WeldAnnot, DisplayStyle, DraftStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, GRow, HatchPattern, Orient, Sheet, SheetSize, SurfLay, TableAnnot, TangentEdges, Tol } from "./types";
+import { SURF_LAYS, cellLabel } from "./gdt";
+import { WELD_SYM_NAMES } from "./weld";
 import { SK_PENS, SK_PEN_NAMES, orthoSnap, skPoints, skPrims } from "./sheetSketch";
 import { fitLimits, splitFit } from "./iso286";
 import { FLAT_CONFIG, ORIENTS, ORIENT_NAMES, SCALES, viewConfig, viewOnly, topoOnly, altReq, alignAxis, alignedLegs, cutLegs, dirKey, findView, fitScale, std3Layout, lookDir, parseScale, projectedDir, scaleText, sideOf, switchProjection, viewDir, viewReq, viewScale } from "./views";
@@ -150,6 +151,8 @@ type AnnotMode =
   | { kind: "surf"; view: string | null; ref: GeoRef | null; at: Pt | null }
   /** Balloon (FR-DRW-030): click an edge of a component, then place the balloon. */
   | { kind: "balloon"; view: string | null; ref: GeoRef | null; at: Pt | null };
+/** What each lay symbol of ISO 1302 says about the direction of the surface pattern. */
+const LAY_NAMES: Record<string, string> = { "": "None", "=": "Parallel to the view plane", "⊥": "Perpendicular to the view plane", X: "Crossed", M: "Multi-directional", C: "Circular", R: "Radial", P: "Particulate, no direction" };
 const ANNOT_KINDS = new Set(["dim", "dimset", "htable", "btable", "wtable", "ctable", "hole", "note", "gtol", "datum", "surf", "balloon", "cloud", "cline", "weld", "dtarget", "sk"]);
 const isAnnotMode = (m: Mode): m is AnnotMode => ANNOT_KINDS.has(m.kind);
 type Line4 = [number, number, number, number];
@@ -1213,6 +1216,12 @@ export class DrawingWorkspace {
     // A double-click ends a chain of lines (its second click added nothing: same point).
     if (this.mode.kind === "sk" && this.mode.k === "line") { this.mode = { kind: "none" }; this.renderStatus(); this.renderOverlay(); return; }
     const p = this.sheetPt(e);
+    if (this.mode.kind === "none") {
+      const aid = this.annotAt(p);
+      if (this.editAnnotDlg(aid)) return;
+      // Other annotations are edited in the panel: go to its first field.
+      if (aid) { const f = this.el.querySelector<HTMLElement>(".drw-props textarea, .drw-props input:not([type=checkbox]):not([type=radio]), .drw-props select"); f?.focus(); (f as HTMLInputElement | null)?.select?.(); return; }
+    }
     const f = fieldAt(this.sheet, p[0], p[1]);
     if (f) {
       this.sel = null;
@@ -1736,7 +1745,9 @@ export class DrawingWorkspace {
         m.view = vid; m.e = pick.e; m.s = pick.side;
       } else {
         const pl = this.placements.get(m.view!)!, pos = fromSheet(pl, p[0], p[1]);
-        this.addAnnot({ id: uid("a_"), t: "hole", view: m.view!, ref: { ...edgeRef(m.e, "e"), ...(m.s ? { s: m.s } : {}) }, pos: [round(pos[0]), round(pos[1])] }, "Hole callout");
+        const h: HoleAnnot = { id: uid("a_"), t: "hole", view: m.view!, ref: { ...edgeRef(m.e, "e"), ...(m.s ? { s: m.s } : {}) }, pos: [round(pos[0]), round(pos[1])] };
+        // The callout is read from the hole, so it is placed at once; its dialog opens on a double-click or Edit….
+        this.addAnnot(h, "Hole callout");
         this.mode = { kind: "none" };
       }
     } else if (m.kind === "dtarget") {
@@ -1755,8 +1766,9 @@ export class DrawingWorkspace {
       }
       const view = m.view ?? vid ?? undefined, pl = view ? this.placements.get(view) : undefined;
       const pos: Pt = pl ? fromSheet(pl, p[0], p[1]) : p;
-      this.addAnnot({ id: uid("a_"), t: "weld", ...(view ? { view } : {}), pos: [round(pos[0]), round(pos[1])], ...(m.leader ? { leader: m.leader } : {}), arrow: { sym: "fillet", size: "a4" } }, "Weld symbol");
+      const w: WeldAnnot = { id: uid("a_"), t: "weld", ...(view ? { view } : {}), pos: [round(pos[0]), round(pos[1])], ...(m.leader ? { leader: m.leader } : {}), arrow: { sym: "fillet", size: "a4" } };
       this.mode = { kind: "none" };
+      setTimeout(() => void this.editWeldAnnot(w, true));
     } else if (m.kind === "gtol") {
       if (!m.leader && vid && this.facts) {
         const pick = this.annotPick(vid, p);
@@ -1766,8 +1778,9 @@ export class DrawingWorkspace {
       const pos: Pt = pl ? fromSheet(pl, p[0], p[1]) : p;
       const row: GRow = m.circle ? { sym: "pos", tol: "0.1", dia: true, datums: ["A", "B"] } : { sym: m.leader ? "perp" : "flat", tol: "0.05", datums: m.leader ? ["A"] : [] };
       if (!m.leader) row.sym = "flat";
-      this.addAnnot({ id: uid("a_"), t: "gtol", ...(view ? { view } : {}), pos: [round(pos[0]), round(pos[1])], rows: [row], ...(m.leader ? { leader: m.leader } : {}) }, "Geometric tolerance");
+      const g: GtolAnnot = { id: uid("a_"), t: "gtol", ...(view ? { view } : {}), pos: [round(pos[0]), round(pos[1])], rows: [row], ...(m.leader ? { leader: m.leader } : {}) };
       this.mode = { kind: "none" };
+      setTimeout(() => void this.editGtolAnnot(g, true));
     } else if (m.kind === "balloon") {
       if (!m.ref) {
         const pick = vid ? this.annotPick(vid, p) : null;
@@ -1909,6 +1922,48 @@ export class DrawingWorkspace {
     this.addAnnot({ id: uid("a_"), t: "cloud", pos: [x0, y0], pts: m.pts.flatMap(([x, y]) => [round(x - x0), round(y - y0)]), ...(last ? { rev: last } : {}) }, "Revision cloud");
     this.mode = { kind: "none" };
     this.renderStatus(); this.renderOverlay();
+  }
+
+  /** The geometric tolerance dialog (FR-DRW-023): on a frame just placed (added on OK) or an existing one. */
+  private async editGtolAnnot(a: GtolAnnot, isNew = false) {
+    const r = await editGtol(a, this.ctx().dec, isNew);
+    this.renderStatus(); this.renderOverlay();
+    if (!r || !this.store) return;
+    if (isNew) { this.addAnnot(r, "Geometric tolerance"); return; }
+    this.selA = a.id;
+    this.setAnnot("Geometric tolerance", x => { if (x.t !== "gtol") return; x.rows = r.rows; for (const k of ["above", "below", "between", "around"] as const) { if (r[k] === undefined) delete x[k]; else (x as unknown as Record<string, unknown>)[k] = r[k]; } });
+  }
+
+  /** The hole callout dialog (FR-DRW-022). */
+  private async editHoleAnnot(a: HoleAnnot, isNew = false) {
+    const e = refEdge(a.ref, this.factsOf(a.view)?.topo ?? null), ctx = this.ctx();
+    const r = await editHole(a, count => e ? holeText(e, ctx, count) : [], t("THRU"));
+    this.renderStatus(); this.renderOverlay();
+    if (!r || !this.store) return;
+    const put = (x: HoleAnnot) => { for (const k of ["txt", "count", "below"] as const) { if (r[k] === undefined) delete x[k]; else (x as unknown as Record<string, unknown>)[k] = r[k]; } };
+    if (isNew) { put(a); this.addAnnot(a, "Hole callout"); return; }
+    this.selA = a.id;
+    this.setAnnot("Hole callout", x => { if (x.t === "hole") put(x); });
+  }
+
+  /** The weld symbol dialog (ISO 2553). */
+  private async editWeldAnnot(a: WeldAnnot, isNew = false) {
+    const r = await editWeld(a, isNew);
+    this.renderStatus(); this.renderOverlay();
+    if (!r || !this.store) return;
+    if (isNew) { this.addAnnot(r, "Weld symbol"); return; }
+    this.selA = a.id;
+    this.setAnnot("Weld symbol", x => { if (x.t !== "weld") return; for (const k of ["arrow", "other", "around", "field", "tail"] as const) { if (r[k] === undefined) delete x[k]; else (x as unknown as Record<string, unknown>)[k] = r[k]; } });
+  }
+
+  /** Opens the dialog of an annotation that has one. */
+  private editAnnotDlg(id: string | null): boolean {
+    const a = id ? this.annot(id) : null;
+    if (a?.t === "gtol") void this.editGtolAnnot(a);
+    else if (a?.t === "hole") void this.editHoleAnnot(a);
+    else if (a?.t === "weld") void this.editWeldAnnot(a);
+    else return false;
+    return true;
   }
 
   private addAnnot(a: Annot, label: string) {
@@ -2266,16 +2321,12 @@ export class DrawingWorkspace {
       </fieldset><div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
     }
     if (a.t === "weld") {
-      const side = (k: "a" | "o", w: WeldSide | undefined, label: string) => `<fieldset class="pm-group"><legend>${esc(t(label))}</legend>
-        <label class="drw-f">${esc(t("Symbol"))}<select data-d="w${k}sym"><option value="">${esc(t("None"))}</option>${WELD_SYMS.map(y => `<option value="${y}" ${w?.sym === y ? "selected" : ""}>${esc(t(WELD_SYM_NAMES[y]))}</option>`).join("")}</select></label>
-        ${w ? `<label class="drw-f">${esc(t("Size"))}<input data-d="w${k}size" value="${esc(w.size ?? "")}" translate="no" placeholder="a4"></label>
-        <label class="drw-f">${esc(t("Length"))}<input data-d="w${k}len" value="${esc(w.len ?? "")}" translate="no" placeholder="100"></label>` : ""}
+      const side = (w: WeldSide | undefined, label: string) => w ? `<p class="drw-note drw-weldrow">${weldIcon(w.sym)}<span>${esc(t(label))}: ${esc(t(WELD_SYM_NAMES[w.sym]))}${w.size || w.len ? ` <b translate="no">${esc([w.size, w.len].filter(Boolean).join(" × "))}</b>` : ""}</span></p>` : "";
+      const more = [a.around ? t("All around") : "", a.field ? t("Field weld") : "", a.tail ?? ""].filter(Boolean).join(" · ");
+      return `<fieldset class="pm-group"><legend>${esc(t("Weld symbol"))}</legend>
+        ${side(a.other, "Other side")}${side(a.arrow, "Arrow side")}${more ? `<p class="drw-note">${esc(more)}</p>` : ""}
+        <div class="row"><button class="btn small primary" data-a="aedit">${esc(t("Edit…"))}</button><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>
       </fieldset>`;
-      return side("a", a.arrow, "Arrow side") + side("o", a.other, "Other side") + `<fieldset class="pm-group"><legend>${esc(t("Weld symbol"))}</legend>
-        <label class="drw-chk"><input type="checkbox" data-d="waround" ${a.around ? "checked" : ""}> ${esc(t("All around"))}</label>
-        <label class="drw-chk"><input type="checkbox" data-d="wfield" ${a.field ? "checked" : ""}> ${esc(t("Field weld"))}</label>
-        <label class="drw-f">${esc(t("Tail note"))}<input data-d="wtail" value="${esc(a.tail ?? "")}" placeholder="111 ISO 5817-B"></label>
-      </fieldset><div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
     }
     if (a.t === "cline") {
       return `<fieldset class="pm-group"><legend>${esc(t(a.k === "mark" ? "Center mark" : "Centerline"))}</legend>
@@ -2290,28 +2341,21 @@ export class DrawingWorkspace {
     }
     if (a.t === "hole") {
       const e = refEdge(a.ref, this.factsOf(a.view)?.topo ?? null), auto = e ? holeText(e, this.ctx(), a.count !== false).join("\n") : "";
+      const lines = [...(a.txt ? a.txt.split("\n") : auto ? auto.split("\n") : []), ...(a.below ? a.below.split("\n") : [])];
       return `<fieldset class="pm-group"><legend>${esc(t("Hole callout"))}</legend>
-        <label class="drw-f">${esc(t("Text"))}<textarea data-d="htxt" rows="3" translate="no" placeholder="${esc(auto)}">${esc(a.txt ?? "")}</textarea></label>
-        <p class="drw-note">${esc(t("Empty: the text comes from the hole."))}</p>
-        <label class="drw-chk"><input type="checkbox" data-d="hcount"${a.count !== false ? " checked" : ""}> ${esc(t("Show the number of holes"))}</label>
-        <label class="drw-f">${esc(t("Text below"))}<input data-d="hbelow" value="${esc(a.below ?? "")}" translate="no"></label>
-      </fieldset><div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
+        <pre class="drw-callout" translate="no">${esc(lines.join("\n"))}</pre>
+        <p class="drw-note">${esc(t(a.txt ? "Your own text: it no longer follows the hole." : "The text follows the hole."))}</p>
+        <div class="row"><button class="btn small primary" data-a="aedit">${esc(t("Edit…"))}</button><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>
+      </fieldset>`;
     }
     const del = `<div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
     if (a.t === "gtol") {
-      const rows = a.rows.map((r, i) => `<fieldset class="pm-group drw-grow"><legend>${esc(t("Row {n}", { n: i + 1 }))}</legend>
-        ${i > 0 && r.composite ? "" : `<label class="drw-f">${esc(t("Characteristic"))}<select data-d="g:${i}:sym">${GSYMS.map(g => `<option value="${g}"${r.sym === g ? " selected" : ""}>${esc(t(GSYM_NAMES[g]))}</option>`).join("")}</select></label>`}
-        <label class="drw-f">${esc(t("Tolerance"))}<input data-d="g:${i}:tol" inputmode="decimal" value="${esc(r.tol)}" translate="no"></label>
-        <label class="drw-chk"><input type="checkbox" data-d="g:${i}:dia"${r.dia ? " checked" : ""}> ${esc(t("Diameter zone (Ø)"))}</label>
-        <label class="drw-f">${esc(t("Material condition"))}<select data-d="g:${i}:mod"><option value="">${esc(t("None"))}</option><option value="M"${r.mod === "M" ? " selected" : ""}>${esc(t("Maximum (M)"))}</option><option value="L"${r.mod === "L" ? " selected" : ""}>${esc(t("Least (L)"))}</option></select></label>
-        ${i > 0 ? `<label class="drw-chk"><input type="checkbox" data-d="g:${i}:comp"${r.composite ? " checked" : ""}> ${esc(t("Composite with the row above"))}</label>` : ""}
-        <div class="drw-datums">${[0, 1, 2].map(k => `<label class="drw-f">${esc(t(["Primary datum", "Secondary datum", "Tertiary datum"][k]))}<input data-d="g:${i}:d${k}" value="${esc(r.datums[k] ?? "")}" maxlength="6" translate="no"></label>`).join("")}</div>
-        ${a.rows.length > 1 ? `<div class="row"><button class="btn small" data-grow="-${i}">${esc(t("Remove row"))}</button></div>` : ""}
-      </fieldset>`).join("");
-      return `<fieldset class="pm-group"><legend>${esc(t("Geometric tolerance"))}</legend>${a.leader ? `<p class="drw-note">${esc(t("With a leader to the model."))}</p><label class="drw-chk"><input type="checkbox" data-d="gall"${a.around ? " checked" : ""}> ${esc(t("All around"))}</label>` : ""}
-        <label class="drw-f">${esc(t("Text above the frame"))}<input data-d="gabove" value="${esc(a.above ?? "")}" translate="no" placeholder="2×"></label>
-        <label class="drw-f">${esc(t("Text below the frame"))}<input data-d="gbelow" value="${esc(a.below ?? "")}" translate="no"></label></fieldset>${rows}
-        <div class="row"><button class="btn small" data-grow="+">${esc(t("Add row"))}</button></div>${del}`;
+      return `<fieldset class="pm-group"><legend>${esc(t("Geometric tolerance"))}</legend>
+        <div class="ad-pvbox">${gtolPicture(a, this.ctx().dec)}</div>
+        ${a.leader ? `<p class="drw-note">${esc(t("With a leader to the model."))}</p>` : ""}
+        <p class="drw-note">${esc(t("Double-click the frame on the sheet to edit it too."))}</p>
+        <div class="row"><button class="btn small primary" data-a="aedit">${esc(t("Edit…"))}</button><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>
+      </fieldset>`;
     }
     if (a.t === "datum") {
       return `<fieldset class="pm-group"><legend>${esc(t("Datum feature"))}</legend>
@@ -2322,11 +2366,11 @@ export class DrawingWorkspace {
     }
     if (a.t === "surf") {
       return `<fieldset class="pm-group"><legend>${esc(t("Surface finish"))}</legend>
-        <label class="drw-f">${esc(t("Process"))}<select data-d="sp">${([["any", "Any process"], ["removal", "Material removed"], ["none", "No material removed"]] as const).map(([k, l]) => `<option value="${k}"${a.proc === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>
+        <div class="drw-f"><span id="drw-sp-l">${esc(t("Symbol"))}</span><div class="drw-icoset" role="radiogroup" aria-labelledby="drw-sp-l">${([["any", "Any process"], ["removal", "Material removed"], ["none", "No material removed"]] as const).map(([k, l]) => `<label class="drw-icoopt" title="${esc(t(l))}"><input type="radio" name="drw-sp" data-d="sp" value="${k}"${a.proc === k ? " checked" : ""} aria-label="${esc(t(l))}">${surfIcon(k)}</label>`).join("")}</div></div>
         <label class="drw-f">${esc(t("Roughness"))}<input data-d="st" value="${esc(a.text)}" translate="no" placeholder="Ra 3.2"></label>
         <label class="drw-f">${esc(t("Production method"))}<input data-d="sm" value="${esc(a.method ?? "")}" translate="no"></label>
         <label class="drw-f">${esc(t("Second requirement"))}<input data-d="st2" value="${esc(a.text2 ?? "")}" translate="no" placeholder="Rz 6.3"></label>
-        <label class="drw-f">${esc(t("Lay"))}<select data-d="slay"><option value="">${esc(t("None"))}</option>${SURF_LAYS.map(k => `<option value="${k}"${a.lay === k ? " selected" : ""} translate="no">${k}</option>`).join("")}</select></label>
+        <div class="drw-f"><span id="drw-lay-l">${esc(t("Lay"))}</span><div class="drw-icoset" role="radiogroup" aria-labelledby="drw-lay-l">${(["", ...SURF_LAYS] as const).map(k => `<label class="drw-icoopt" title="${esc(t(LAY_NAMES[k]))}"><input type="radio" name="drw-lay" data-d="slay" value="${k}"${(a.lay ?? "") === k ? " checked" : ""} aria-label="${esc(t(LAY_NAMES[k]))}"><span translate="no">${k || "–"}</span></label>`).join("")}</div></div>
         <label class="drw-f">${esc(t("Machining allowance"))}<input data-d="sallow" value="${esc(a.allow ?? "")}" translate="no"></label>
         <label class="drw-chk"><input type="checkbox" data-d="saround"${a.around ? " checked" : ""}> ${esc(t("All around"))}</label>
       </fieldset>${del}`;
@@ -2428,9 +2472,7 @@ export class DrawingWorkspace {
         else if (a.tol && (k === "up" || k === "lo")) a.tol[k] = num(val);
         else if (a.tol && k === "fit") a.tol.fit = val.trim();
         else if (a.tol && k === "fshow") { if (val === "code") delete a.tol.show; else a.tol.show = val as Tol["show"]; }
-      } else if (a.t === "hole" && k === "htxt") { if (val.trim()) a.txt = val; else delete a.txt; }
-      else if (a.t === "hole" && k === "hcount") { if ((el as HTMLInputElement).checked) delete a.count; else a.count = false; }
-      else if (a.t === "hole" && k === "hbelow") { if (val.trim()) a.below = val; else delete a.below; }
+      }
       else if (a.t === "note" && k === "nprop") { if (val) a.text += `$PRP:"${val}"`; }
       else if (a.t === "sk") {
         const v = num(val);
@@ -2446,15 +2488,6 @@ export class DrawingWorkspace {
         else if (k === "dtd") { const v = num(val); if (v != null && v > 0 && v <= 10000) { if (a.size === `Ø${a.d ?? 8}`) a.size = `Ø${v}`; a.d = v; } }
         else if (k === "dtsize") { if (val.trim()) a.size = val.trim(); else delete a.size; }
       }
-      else if (a.t === "weld") {
-        const m = /^w([ao])(sym|size|len)$/.exec(k);
-        if (m) {
-          const key = m[1] === "a" ? "arrow" : "other", cur = a[key];
-          if (m[2] === "sym") { if (val) a[key] = { ...(cur ?? {}), sym: val as WeldSym }; else delete a[key]; }
-          else if (cur) { const f = m[2] as "size" | "len"; if (val.trim()) cur[f] = val.trim(); else delete cur[f]; }
-        } else if (k === "waround" || k === "wfield") { const f = k === "waround" ? "around" : "field"; if ((el as HTMLInputElement).checked) a[f] = true; else delete a[f]; }
-        else if (k === "wtail") { if (val.trim()) a.tail = val.trim(); else delete a.tail; }
-      }
       else if (a.t === "cline" && k === "cext") { const v = num(val); if (v != null && v >= 0 && v <= 50) a.ext = v; }
       else if (a.t === "cloud") { if (k === "carc") { const v = num(val); if (v && v >= 1) a.arc = v; } else if (k === "crev") { if (val.trim()) a.rev = val.trim(); else delete a.rev; } }
       else if (a.t === "note") { if (k === "ntxt" && val.trim()) a.text = val; else if (k === "nh") a.h = +val; else if (k === "nal") { if (val === "c" || val === "r") a.al = val; else delete a.al; } else if (k === "nend") { if (val === "dot" || val === "none") a.end = val; else delete a.end; } else if (k === "nbent") { if ((el as HTMLInputElement).checked) a.bent = true; else delete a.bent; } else if (k === "nborder") { if (val === "box" || val === "round" || val === "circle") a.border = val; else delete a.border; } }
@@ -2466,17 +2499,6 @@ export class DrawingWorkspace {
         else if (k === "cbeads") { if ((el as HTMLInputElement).checked) delete a.beads; else a.beads = false; }
         else if (k === "cmass") { if ((el as HTMLInputElement).checked) a.mass = true; else delete a.mass; }
       }
-      else if (a.t === "gtol" && k.startsWith("g:")) {
-        const [, si, f] = k.split(":"), r = a.rows[+si];
-        if (!r) return;
-        if (f === "sym") r.sym = val as GSym;
-        else if (f === "tol") r.tol = val.trim().replace(",", ".") || "0";
-        else if (f === "dia") { if ((el as HTMLInputElement).checked) r.dia = true; else delete r.dia; }
-        else if (f === "comp") { if ((el as HTMLInputElement).checked) { r.composite = true; r.sym = a.rows[+si - 1]?.sym ?? r.sym; } else delete r.composite; }
-        else if (f === "mod") { if (val === "M" || val === "L") r.mod = val; else delete r.mod; }
-        else if (f[0] === "d") { const d = [0, 1, 2].map(j => r.datums[j] ?? ""); d[+f[1]] = val.trim().toUpperCase(); while (d.length && !d[d.length - 1]) d.pop(); r.datums = d; }
-      } else if (a.t === "gtol" && (k === "gabove" || k === "gbelow")) { const key = k === "gabove" ? "above" : "below"; if (val.trim()) a[key] = val.trim(); else delete a[key]; }
-      else if (a.t === "gtol" && k === "gall") { if ((el as HTMLInputElement).checked) a.around = true; else delete a.around; }
       else if (a.t === "datum" && k === "dl" && val.trim()) a.letter = val.trim().toUpperCase();
       else if (a.t === "datum" && (k === "dopen" || k === "dbent")) { const key = k === "dopen" ? "open" : "bent"; if ((el as HTMLInputElement).checked) a[key] = true; else delete a[key]; }
       else if (a.t === "balloon" && k === "bshape") { if (val === "split" || val === "tri" || val === "hex" || val === "box" || val === "none") a.shape = val; else delete a.shape; }
@@ -3392,11 +3414,6 @@ export class DrawingWorkspace {
       if (an === "items") this.insertItems(); else if (an === "rev") this.insertTable("rev"); else if (an === "table") this.insertTable("general"); else if (an === "bom") this.insertBom(); else if (an === "auto") void this.autoBalloon(); else if (an === "chain" || an === "base" || an === "ord") this.startAnnot("dimset", an); else this.startAnnot(an as AnnotMode["kind"]);
       return;
     }
-    if (b.dataset.grow) {
-      const g = b.dataset.grow;
-      this.setAnnot(g === "+" ? "Add row" : "Remove row", a => { if (a.t !== "gtol") return; if (g === "+") a.rows.push({ sym: "flat", tol: "0.05", datums: [] }); else a.rows.splice(-+g, 1); });
-      return;
-    }
     if (b.dataset.unstack !== undefined) {
       const i = +b.dataset.unstack;
       this.setAnnot("Stacked balloon", a => { if (a.t !== "balloon" || !a.stack) return; a.stack.splice(i, 1); if (!a.stack.length) delete a.stack; });
@@ -3446,6 +3463,7 @@ export class DrawingWorkspace {
       case "unbroken": this.setView("Remove broken-out section", v => { delete v.broken; }); break;
       case "unalign": this.setView("Break alignment", v => { v.free = true; }); break;
       case "tbedit": void this.editFormat(); break;
+      case "aedit": this.editAnnotDlg(this.selA); break;
       case "align": this.realign(); break;
       case "dim": this.startAnnot("dim"); break;
       case "adel": this.deleteAnnot(); break;

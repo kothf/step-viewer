@@ -3,7 +3,7 @@
 // so they come out the same in SVG, PDF and DXF whatever font the viewer has.
 import { arrowHead } from "./compose";
 import type { Prim } from "./prims";
-import type { DatumAnnot, GSym, GtolAnnot, SurfAnnot, TableAnnot } from "./types";
+import type { DatumAnnot, GRow, GSym, GtolAnnot, SurfAnnot, TableAnnot } from "./types";
 
 type P2 = [number, number];
 type Box = [number, number, number, number];
@@ -19,6 +19,53 @@ export const GSYM_NAMES: Record<GSym, string> = {
   straight: "Straightness", flat: "Flatness", circ: "Circularity", cyl: "Cylindricity", pline: "Profile of a line", psurf: "Profile of a surface",
   par: "Parallelism", perp: "Perpendicularity", ang: "Angularity", pos: "Position tolerance", conc: "Concentricity", sym: "Symmetry", runout: "Circular run-out", trunout: "Total run-out",
 };
+
+/** Modifying symbols of a tolerance frame: the character kept in the text, what the button shows, its name. */
+export const GMODS: [string, string, string][] = [
+  ["Ø", "Ø", "Diameter"], ["SØ", "SØ", "Spherical diameter"],
+  ["Ⓜ", "M", "Maximum material condition"], ["Ⓛ", "L", "Least material condition"], ["Ⓢ", "S", "Regardless of feature size"],
+  ["Ⓕ", "F", "Free state"], ["Ⓟ", "P", "Projected tolerance zone"], ["Ⓣ", "T", "Tangent plane"], ["Ⓤ", "U", "Unequally disposed profile"],
+  ["Ⓘ", "I", "Independency"], ["Ⓔ", "E", "Envelope requirement"], ["⬡", "ST", "Statistical tolerance"], ["CF", "CF", "Continuous feature"], ["▷", "▷", "Translation"],
+];
+/** The circled letter for a modifier ("M" → "Ⓜ"). */
+export const circled = (l: string) => String.fromCodePoint(0x24b6 + l.toUpperCase().charCodeAt(0) - 65);
+type Run = { k: "t"; s: string } | { k: "c"; l: string } | { k: "st" };
+/** Frame text split into plain runs, circled letters and the statistical hexagon. */
+export function richRuns(s: string): Run[] {
+  const out: Run[] = [];
+  for (const part of s.split(/([\u24b6-\u24cf\u24d0-\u24e9⬡])/)) {
+    if (!part) continue;
+    const c = part.codePointAt(0)!;
+    if (part === "⬡") out.push({ k: "st" });
+    else if (c >= 0x24b6 && c <= 0x24cf) out.push({ k: "c", l: String.fromCharCode(65 + c - 0x24b6) });
+    else if (c >= 0x24d0 && c <= 0x24e9) out.push({ k: "c", l: String.fromCharCode(65 + c - 0x24d0) });
+    else out.push({ k: "t", s: part });
+  }
+  return out;
+}
+export const richW = (s: string, h = H) => richRuns(s).reduce((w, r) => w + (r.k === "t" ? tw(r.s, h) : r.k === "c" ? 1.25 * h : 2.3 * h), 0);
+/** Frame text on the baseline `base`: plain text as text, modifiers drawn (a circle with its letter, a hexagon with ST), so no font needs them. */
+export function richPrims(x: number, base: number, s: string, h = H, al: "l" | "c" = "l"): Prim[] {
+  const runs = richRuns(s);
+  if (runs.every(r => r.k === "t")) return s ? [T(x, base, s, h, al)] : [];
+  const out: Prim[] = [], cy = base + h / 2 - 0.2 * h / H;
+  let u = al === "c" ? x - richW(s, h) / 2 : x;
+  for (const r of runs) {
+    if (r.k === "t") { out.push(T(u, base, r.s, h, "l")); u += tw(r.s, h); }
+    else if (r.k === "c") { const m = u + 0.625 * h; out.push(C([m, cy], 0.49 * h), T(m, cy - 0.285 * h, r.l, 0.57 * h, "c")); u += 1.25 * h; }
+    else {
+      const m = u + 1.15 * h, a = 1.05 * h, b = 0.52 * h, k = 0.45 * h;
+      out.push({ t: "p", p: [m - a, cy, m - a + k, cy + b, m + a - k, cy + b, m + a, cy, m + a - k, cy - b, m - a + k, cy - b], pen: "thin", layer: "ANNOT", closed: true }, T(m, cy - 0.27 * h, "ST", 0.54 * h, "c"));
+      u += 2.3 * h;
+    }
+  }
+  return out;
+}
+/** A row as the dialog edits it: the older Ø flag and modifier written into the tolerance text. */
+export function rowText(r: GRow): GRow {
+  const { dia, mod, ...rest } = r;
+  return { ...rest, tol: (dia && !r.tol.startsWith("Ø") ? "Ø" : "") + r.tol + (mod ? circled(mod) : ""), datums: [...r.datums] };
+}
 
 /** A characteristic symbol centred at (x, y), about `k` mm tall. */
 export function symbolPrims(sym: GSym, x: number, y: number, k = H): Prim[] {
@@ -66,12 +113,10 @@ export function gtolPrims(a: GtolAnnot, at: P2, to: P2 | null, dec: string): { p
       out.push(L([x, yb], [x + 8, yb]), L([x + 8, yb], [x + 8, y0 + ROW]), L([x + 8, y0 + ROW], [x, y0 + ROW]), L([x, y0 + ROW], [x, yb]));
       x += 8;
     }
-    const tol = (r.dia ? "Ø" : "") + (dec === "." ? r.tol : r.tol.replace(".", dec));
-    const modW = r.mod ? 4.2 : 0, w = Math.max(8, tw(tol) + 3 + modW);
-    out.push(T(x + 1.5, base, tol, H, "l"));
-    if (r.mod) { const mx = x + w - 2.6; out.push(C([mx, cy], 1.7), T(mx, cy - 1, r.mod, 2, "c")); }
-    cell(w);
-    for (const d of r.datums.filter(Boolean)) { const dw = Math.max(7, tw(d) + 3); out.push(T(x + dw / 2, base, d)); cell(dw); }
+    const dp = (v: string) => dec === "." ? v : v.replace(".", dec);
+    const e = rowText(r);
+    for (const v of [dp(e.tol), ...(e.tol2 ? [dp(e.tol2)] : [])]) { const w = Math.max(8, richW(v) + 3); out.push(...richPrims(x + 1.5, base, v)); cell(w); }
+    for (const d of r.datums.filter(Boolean)) { const dw = Math.max(7, richW(d) + 3); out.push(...richPrims(x + dw / 2, base, d, H, "c")); cell(dw); }
     wMax = Math.max(wMax, x - at[0]);
   });
   if (to) {
@@ -83,10 +128,17 @@ export function gtolPrims(a: GtolAnnot, at: P2, to: P2 | null, dec: string): { p
     if (a.around) out.push(C(knee, 1.5));
   }
   // Text above the frame ("2×", "4× Ø6 H7") and below it ("SEP REQT"), left-aligned with it.
-  const hb = 2.5, yb = at[1] - a.rows.length * ROW;
+  const hb = 2.5;
+  let yb = at[1] - a.rows.length * ROW, wText = a.above ? tw(a.above, hb) : 0;
   if (a.above) out.push(T(at[0], at[1] + 1, a.above, hb, "l"));
-  if (a.below) out.push(T(at[0], yb - hb - 1, a.below, hb, "l"));
-  const wText = Math.max(a.above ? tw(a.above, hb) : 0, a.below ? tw(a.below, hb) : 0);
+  // Between: "A ↔ B" under the frame, the arrow drawn.
+  if (a.between && (a.between[0] || a.between[1])) {
+    const [p, q] = a.between, y = yb - H - 1.2, x0 = at[0] + tw(p) + 1, x1 = x0 + 7;
+    out.push(T(at[0], y, p, H, "l"), L([x0, y + H / 2], [x1, y + H / 2]), arrowHead(x0, y + H / 2, -1, 0, 2, 1), arrowHead(x1, y + H / 2, 1, 0, 2, 1), T(x1 + 1, y, q, H, "l"));
+    wText = Math.max(wText, x1 + 1 + tw(q) - at[0]);
+    yb = y - 0.6;
+  }
+  if (a.below) { out.push(T(at[0], yb - hb - 1, a.below, hb, "l")); wText = Math.max(wText, tw(a.below, hb)); }
   return { prims: out, box: [at[0], yb - (a.below ? hb + 1.5 : 0), at[0] + Math.max(wMax, wText), at[1] + (a.above ? hb + 1.5 : 0)] };
 }
 

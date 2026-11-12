@@ -172,10 +172,11 @@ export interface HoleAnnot { id: string; t: "hole"; view: string; ref: GeoRef; p
 export type GSym = "straight" | "flat" | "circ" | "cyl" | "pline" | "psurf" | "par" | "perp" | "ang" | "pos" | "conc" | "sym" | "runout" | "trunout";
 /** One row of a feature control frame: symbol, tolerance (Ø for a cylindrical zone, M/L material condition), datums. */
 /** `composite`: shares the characteristic of the row above (a composite frame, ISO 5458 / ASME Y14.5). */
-export interface GRow { sym: GSym; tol: string; dia?: boolean; mod?: "M" | "L"; datums: string[]; composite?: boolean }
+/** `tol`, `tol2` and the datums may hold circled modifier letters (Ⓜ Ⓛ Ⓢ Ⓟ Ⓕ Ⓣ Ⓤ …) and ⬡ (statistical), drawn as symbols; `dia`/`mod` are the older form of a leading Ø and a trailing modifier. */
+export interface GRow { sym: GSym; tol: string; /** A second tolerance cell. */ tol2?: string; dia?: boolean; mod?: "M" | "L"; datums: string[]; composite?: boolean }
 /** Geometric tolerance (FR-DRW-023): a feature control frame with a leader to the model (or free). */
 /** `around`: the all-around circle at the leader's bend (the tolerance applies all around the profile). */
-export interface GtolAnnot { id: string; t: "gtol"; view?: string; pos: [number, number]; rows: GRow[]; leader?: GeoRef; around?: boolean; /** Text above the frame (e.g. "2×") and below it. */ above?: string; below?: string }
+export interface GtolAnnot { id: string; t: "gtol"; view?: string; pos: [number, number]; rows: GRow[]; leader?: GeoRef; around?: boolean; /** Text above the frame (e.g. "2×") and below it. */ above?: string; below?: string; /** "A ↔ B" under the frame: the tolerance applies between these two points. */ between?: [string, string] }
 /** Datum feature symbol: a filled triangle on an edge and a framed letter. */
 export interface DatumAnnot { id: string; t: "datum"; view: string; ref: GeoRef; pos: [number, number]; letter: string; /** Outline triangle instead of the filled one (ISO 1101 allows both). */ open?: boolean; /** The leader leaves the triangle square to the edge, then runs level along the edge to the frame. */ bent?: boolean }
 /** Surface finish (ISO 1302 / 21920): the tick on an edge, any process, material removed or not removed, with the roughness above. */
