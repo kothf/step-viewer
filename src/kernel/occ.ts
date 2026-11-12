@@ -346,14 +346,25 @@ export class Kernel {
       const sas = new oc.ShapeAnalysis_Surface(surf);
       const ad = new oc.BRepAdaptor_Surface_2(face, true);
       let kMin = Infinity, kMax = 0;
+      // The samples are neighbouring mesh nodes: each projection starts from the last one's (NextValueOfUV), which
+      // falls back to the full search when that does not converge.
+      let prev: any = null;
       for (let k = 0; k + 2 < pts.length; k += 3) {
-        const uv = sas.ValueOfUV(new oc.gp_Pnt_3(pts[k], pts[k + 1], pts[k + 2]), 1e-6);
+        const p = new oc.gp_Pnt_3(pts[k], pts[k + 1], pts[k + 2]);
+        const uv = prev ? sas.NextValueOfUV(prev, p, 1e-6, -1) : sas.ValueOfUV(p, 1e-6);
+        p.delete();
+        prev?.delete();
+        prev = uv;
         const pr = new oc.BRepLProp_SLProps_1(ad, uv.X(), uv.Y(), 2, 1e-9);
-        if (!pr.IsCurvatureDefined()) continue;
-        const a = Math.abs(pr.MinCurvature()), b = Math.abs(pr.MaxCurvature());
+        const ok = pr.IsCurvatureDefined();
+        const a = ok ? Math.abs(pr.MinCurvature()) : 0, b = ok ? Math.abs(pr.MaxCurvature()) : 0;
+        pr.delete();
+        if (!ok) continue;
         kMin = Math.min(kMin, a, b);
         kMax = Math.max(kMax, a, b);
       }
+      prev?.delete();
+      sas.delete(); ad.delete();
       return kMin === Infinity ? {} : { kMin, kMax };
     } catch { return {}; }
   }
