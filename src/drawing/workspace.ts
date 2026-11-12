@@ -832,10 +832,20 @@ export class DrawingWorkspace {
     return p;
   }
 
-  /** Slow models (many edges, or an exact view that took long) get quick previews first (FR-DRW-016). */
+  /**
+   * Slow models get quick previews first (FR-DRW-016): many edges, an exact view that took long, or a free-form
+   * edge (a cross hole's rim on a shaft, a fillet run-out, text): the exact hidden-line removal can take seconds
+   * on a view that looks along such a curve, even on a part of a dozen faces.
+   */
   private previewsOn(): boolean {
-    return !!this.facts && (this.facts.topo.edges.length >= PREVIEW_EDGES || this.kernel.slowest > PREVIEW_MS);
+    const f = this.facts;
+    if (!f) return false;
+    if (f.topo.edges.length >= PREVIEW_EDGES || this.kernel.slowest > PREVIEW_MS) return true;
+    if (this.freeFor !== f) { this.freeFor = f; this.freeForm = f.topo.edges.some(e => e.t === "o"); }
+    return this.freeForm;
   }
+  private freeFor: unknown = null;
+  private freeForm = false;
 
   /** A view's quick polygonal preview while its exact lines are on the way (a section's with its cut and hatching). */
   private previewFor(sheet: Sheet, v: DrawingView): Projection | undefined {
@@ -1251,15 +1261,21 @@ export class DrawingWorkspace {
 
   private palRun = 0;
 
-  /** Draws the palette's pictures from the model's projections (the kernel keeps them for the views). */
+  /**
+   * Draws the palette's pictures: a view's exact lines when the drawing already has them, else its quick preview.
+   * Seven exact projections per model kept the worker busy for as long as the views themselves take (20 s for a
+   * disc with cross holes, minutes for an assembly) just for 64 px pictures; a placed view asks for its own lines.
+   */
   private async renderPalette() {
     const run = ++this.palRun;
-    // In the background: a view placed meanwhile has its projection made first (and shares these when the same).
-    await Promise.all(PALETTE.map(async o => {
+    // One at a time: a view placed meanwhile waits behind one picture at most.
+    for (const o of PALETTE) {
+      if (run !== this.palRun || !this.store) return;
+      const view = ORIENTS[o], key = dirKey(view);
       let d = "";
-      try { d = thumbPath(await this.kernel.project(ORIENTS[o], true)); } catch { /* left blank */ }
+      try { d = thumbPath(this.kernel.cache.get(key) ?? await this.kernel.preview({ view, key })); } catch { /* left blank */ }
       if (run === this.palRun) this.el.querySelector(`[data-pal="${o}"] path`)?.setAttribute("d", d);
-    }));
+    }
     if (run !== this.palRun) return;
     // A sheet metal part also offers its flat pattern (FR-FT-120).
     // The drawing may have closed while the thumbnails were drawn.

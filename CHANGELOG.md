@@ -5,6 +5,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.558.0] - 2026-11-12
+
+### Changed
+
+- **Rebuilding a part is faster after every change.** After each rebuild the kernel measured every face, the bounding box and the mass of the whole body again, even when the change touched two faces or none; on a part with many faces that took longer than the feature itself. Each value is now kept with the face or body it was measured on, so only what the change really made is measured. On the test set (the 37 parts of a model steam engine): a flywheel's rebuild after changing its last feature 1.95 s → 0.97 s, the same part shown again unchanged (hide a body, switch a display option) 0.67 s → 0.1 s, a nameplate with embossed text 2.1 s → 0.5 s.
+- **A pattern of cuts is one Boolean** instead of one per copy (a flywheel's six spokes: 1.0 s → 0.75 s); the result, its face names and the warning about copies that miss the body are the same. A Hole feature joins its holes' tools in one step too.
+- **Holes up to the next face and threads through all** find their depth 3 to 4 times faster (a steam chest with such holes: 1.56 s → 0.47 s for the whole part): the solid is prepared for inside/outside tests once, not for every probed point.
+- **Section views of parts are about ten times faster on round parts**, and their outlines are whole lines and arcs again. Since 1.491.0 every section was cut 1 µm off the picked plane, which assemblies need; on a part, though, a cut 1 µm beside the axis of a shaft, pulley or flywheel turns every cone and fillet outline into a free-form curve, which the exact hidden-line removal handles very slowly and draws in pieces. A part is now cut exactly on the plane (assemblies and aligned sections keep the 1 µm). A pulley's section through its axis: 13.4 s → 0.6 s, a flywheel's 8.3 s → 0.35 s, all 37 parts together 34 s → 11 s.
+- **The view palette no longer holds the drawing's kernel up.** Its seven pictures were made as seven exact projections; on a part with cross holes (where one exact view can take seconds) that kept the worker busy for 20 s after a drawing opened, and far longer on an assembly. The pictures now come from quick previews (or from a view's exact lines when the drawing has them already), one at a time, so a view placed meanwhile waits behind one picture at most.
+- **Views of parts with free-form edges show at once.** A cross hole's rim on a shaft, text or a fillet run-out makes the exact hidden-line removal take 2 to 7 s for a view even on a part of a dozen faces. Such parts now get the quick preview first (before, only models with 80 edges or more did), and the exact lines replace it when they are ready.
+- **A drawing follows its part faster**: the drawing's kernel keeps the part between updates, so after a change of the part only the changed features are built again, not the whole part.
+
 ## [1.557.0] - 2026-11-11
 
 ### Added
@@ -3472,7 +3484,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.557.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.558.0...HEAD
+[1.558.0]: https://github.com/kothf/step-viewer/compare/v1.557.0...v1.558.0
 [1.557.0]: https://github.com/kothf/step-viewer/compare/v1.556.0...v1.557.0
 [1.556.0]: https://github.com/kothf/step-viewer/compare/v1.555.0...v1.556.0
 [1.555.0]: https://github.com/kothf/step-viewer/compare/v1.554.0...v1.555.0

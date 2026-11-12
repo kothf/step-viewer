@@ -10,6 +10,7 @@
 //
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { areaOf, massOf, optimalBox, stateAt } from "./memo";
 import type { V2, SkEnt } from "../model/types";
 import type { FlexFeature, WrapFeature, DomeFeature, HealFeature, RecognizedHole, RecognizedBlends, SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, PatternSpot, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, ChamferFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, HoleSink, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
 import { dir2Apart, dir2Feature, threadThrough, holeExits, headKind } from "../model/types";
@@ -1012,6 +1013,29 @@ export class Modeller {
    * All the tools fused in one operation (the first as the argument, the rest as tools): one pass
    * instead of one per tool, each on a growing result (a 25-letter text: 8 s → 0.3 s).
    */
+  /**
+   * Cuts every tool from `body` in one Boolean. `touched[i]`: tool i left a face (or a piece of one) in the result.
+   * Null when the Boolean fails, so the caller can cut them one by one.
+   */
+  private cutAll(body: Named, tools: Named[], fid: string): { body: Named; touched: boolean[] } | null {
+    const oc = this.oc;
+    try {
+      const mk = new oc.BRepAlgoAPI_Cut_1();
+      const A = new oc.TopTools_ListOfShape_1(), B = new oc.TopTools_ListOfShape_1();
+      A.Append_1(body.shape);
+      for (const t of tools) B.Append_1(t.shape);
+      mk.SetArguments(A); mk.SetTools(B);
+      mk.Build(new oc.Message_ProgressRange_1());
+      if (!mk.IsDone() || mk.HasErrors()) return null;
+      // A copy counts when it leaves a face of its own in the result: one lying wholly outside the body
+      // loses every face, and one lying in a hole that is already there shares its faces with the body's.
+      const images = (f: any): any[] => { if (mk.IsDeleted(f)) return []; const m = this.list(mk.Modified(f)); return m.length ? m : [f]; };
+      const mine = body.faces.flatMap(images);
+      const made = this.sub(mk.Shape(), "FACE");
+      const touched = tools.map(t => t.faces.some(f => images(f).some(g => made.some(x => x.IsSame(g)) && !mine.some(x => x.IsSame(g)))));
+      return { body: this.carry(mk, [body, ...tools], mk.Shape(), fid), touched };
+    } catch { return null; }
+  }
   private fuseAll(tools: Named[], fid: string): Named {
     if (tools.length < 2) return tools[0];
     const oc = this.oc;
@@ -1303,7 +1327,7 @@ export class Modeller {
       let tool = mk.Shape();
       if (this.volume(tool) < 0) tool = tool.Reversed();
       const c = mul(add(add(pts[0], pts[1]), add(pts[2], o)), 0.25);
-      if (new oc.BRepClass3d_SolidClassifier_3(body.shape, this.P(c), 1e-7).State() !== oc.TopAbs_State.TopAbs_IN)
+      if (stateAt(oc, body.shape, c, 1e-7) !== "in")
         throw new FeatureError("E-FT-VCONCAVE", "A vertex chamfer works on outside corners.");
       const tri = mk.FirstShape();
       const faces = this.sub(tool, "FACE");
@@ -2392,7 +2416,7 @@ export class Modeller {
     const regions = this.bodyList(res).filter(r => Math.abs(this.volume(r.shape)) > 1e-9);
     if (!regions.length) throw new FeatureError("E-INT-NONE", "The bodies and surfaces enclose no region.");
     const info: IntersectRegion[] = regions.map(r => ({ c: this.insidePoint(r.shape), v: Math.abs(this.volume(r.shape)), out: false }));
-    const contains = (r: Named, p: V3) => new oc.BRepClass3d_SolidClassifier_3(r.shape, this.P(p), 1e-7).State() === oc.TopAbs_State.TopAbs_IN;
+    const contains = (r: Named, p: V3) => stateAt(oc, r.shape, p, 1e-7) === "in";
     regions.forEach((r, k) => { const ex = f.exclude.map((p, i) => contains(r, p) ? i : -1).filter(i => i >= 0); info[k].out = ex.length > 0; if (ex.length) info[k].ex = ex; });
     this.regions.set(f.id, info);
     const kept = regions.filter((_, k) => !info[k].out);
@@ -2694,7 +2718,7 @@ export class Modeller {
       }
       if (f.end === "next") {
         // March down the axis, just inside the hole's wall, until it leaves the material; then bisect.
-        const inside = (s: number) => new oc.BRepClass3d_SolidClassifier_3(prev.shape, this.P(add(o, mul(down, s))), 1e-7).State() === oc.TopAbs_State.TopAbs_IN;
+        const inside = (s: number) => stateAt(oc, prev.shape, add(o, mul(down, s)), 1e-7) === "in";
         const step = Math.max(big / 400, 0.05);
         let s = step / 4;
         if (!inside(s)) throw new FeatureError("E-HOLE-NEXT", "There is no material under the hole's face.");
@@ -2800,7 +2824,7 @@ export class Modeller {
     // drilling (through: to where the material last ends, so a cross gap does not stop it).
     const reach = (o: V3): number => f.end !== "through" ? depthAt(o) : reachAt(o);
     const reachAt = (o: V3): number => {
-      const inside = (s: number) => new oc.BRepClass3d_SolidClassifier_3(prev.shape, this.P(add(o, mul(down, s))), 1e-7).State() === oc.TopAbs_State.TopAbs_IN;
+      const inside = (s: number) => stateAt(oc, prev.shape, add(o, mul(down, s)), 1e-7) === "in";
       const step = Math.max(big / 800, 0.05);
       let last = -1;
       for (let s = step / 4; s < big; s += step) if (inside(s)) last = s;
@@ -2874,8 +2898,9 @@ export class Modeller {
       const faces = this.sub(shape, "FACE");
       tools.push({ shape, faces, names: faces.map((_x, k) => `${f.id}:h${i}:${k}`) });
     });
-    let tool = tools[0];
-    for (const t of tools.slice(1)) tool = this.bool("fuse", tool, t, f.id);
+    // One Boolean joins all the holes' tools (they were fused one after another).
+    let tool: Named;
+    try { tool = this.fuseAll(tools, f.id); } catch { tool = tools[0]; for (const t of tools.slice(1)) tool = this.bool("fuse", tool, t, f.id); }
     this.tools.set(f.id, [{ shape: tool, op: "cut" }]);
     // Feature scope (FR-FT-007): only the picked bodies are drilled.
     const sc = this.scoped(f, prev);
@@ -2905,7 +2930,7 @@ export class Modeller {
     if (!(P > 1e-6)) throw new FeatureError("E-THR-PITCH", "A modelled thread needs a pitch: pick a standard size.");
     // Which way the cylinder runs from the edge, and whether it is a hole: probe just inside the material.
     const xd = unit(cross(a, Math.abs(a[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0]));
-    const inside = (q: V3) => new oc.BRepClass3d_SolidClassifier_3(prev.shape, this.P(q), 1e-7).State() === oc.TopAbs_State.TopAbs_IN;
+    const inside = (q: V3) => stateAt(oc, prev.shape, q, 1e-7) === "in";
     const probe = (d: V3, rr: number, s: number) => inside(add(add(c, mul(d, s)), mul(xd, rr)));
     const eps = Math.min(P * 0.25, r * 0.05);
     let dir: V3 | null = null, internal = false;
@@ -3827,7 +3852,7 @@ export class Modeller {
           const pl = this.facePlane(x);
           if (pl && Math.abs(dot(pl.n, along!)) > 1e-6) return false;
           const c = this.centroid(x);
-          return new oc.BRepClass3d_SolidClassifier_3(prev.shape, this.P(c), 1e-6).State() !== oc.TopAbs_State.TopAbs_ON;
+          return stateAt(oc, prev.shape, c, 1e-6) !== "on";
         });
         rib = this.applyDraft(rib, walls, along!, f.draftOut ? -da : da, frame.o, f.id);
       }
@@ -4116,7 +4141,7 @@ export class Modeller {
         // A hole right through that comes out on a curved face (a cross hole in a shaft): a full round
         // whose ends are both outside the body, each either curved or plainly open on a flat face.
         const plainOr = (e: typeof e0) => !e || (e.kind === "open" && !e.cs);
-        const out = (s: number) => new oc.BRepClass3d_SolidClassifier_3(body.shape, this.P(at(s)), 1e-7).State() === oc.TopAbs_State.TopAbs_OUT;
+        const out = (s: number) => stateAt(oc, body.shape, at(s), 1e-7) === "out";
         const eps = Math.max(tol * 100, g.r * 1e-3);
         if (plainOr(e0) && plainOr(e1) && Math.abs(g.du - 2 * Math.PI) < 1e-6 && out(g.lo - eps) && out(g.hi + eps))
           crossH.push({ faces: g.faces, o: g.o, d: g.d, r: g.r });
@@ -4398,7 +4423,7 @@ export class Modeller {
       const far = [...new Set(walls.flatMap(j => edges[j].map(x => across(j, x.k))))].filter(j => j >= 0 && j !== i && !walls.includes(j) && !open.includes(j));
       if (!far.length || far.some(j => kinds[j].pln)) return;
       const c = this.centroid(face);
-      if (new oc.BRepClass3d_SolidClassifier_3(body.shape, this.P(add(c, mul(n, tol * 10))), 1e-7).State() !== oc.TopAbs_State.TopAbs_OUT) return;
+      if (stateAt(oc, body.shape, add(c, mul(n, tol * 10)), 1e-7) !== "out") return;
       const h = Math.max(...walls.map(j => this.reachAlong(body.faces[j], P!, n)));
       if (!(h > tol)) return;
       const F = STD_FRAMES[std], top = add(P, mul(n, h)), hs = dot(sub3(top, F.o), F.n);
@@ -6038,7 +6063,15 @@ export class Modeller {
     if (!body) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
     const skipped: string[] = [];
     const used: Tool[] = [];
-    for (const c of copies) {
+    // Copies that all cut go into one Boolean: one cut per copy made a pattern of n holes cost n whole-body cuts
+    // (a flywheel's six spokes took 0.85 s). A copy none of whose faces is left in the result did not touch the body.
+    const batch = copies.length > 1 && copies.every(c => c.tool.op === "cut") ? this.cutAll(body, copies.map(c => c.tool.shape), fid) : null;
+    if (batch) {
+      copies.forEach((c, i) => { if (batch.touched[i]) used.push(c.tool); else skipped.push(c.label); });
+      if (used.length && Math.abs(this.volume(batch.body.shape) - this.volume(body.shape)) >= 1e-9) body = batch.body;
+      else { used.length = 0; skipped.length = 0; }
+    }
+    if (!used.length) for (const c of copies) {
       try {
         const before = this.volume(body.shape), solids = this.solids(body.shape);
         const out = this.bool(c.tool.op, body, c.tool.shape, fid);
@@ -6339,9 +6372,7 @@ export class Modeller {
   }
 
   private volume(shape: any) {
-    const p = new this.oc.GProp_GProps_1();
-    this.oc.BRepGProp.VolumeProperties_1(shape, p, true, false, false);
-    return p.Mass();
+    return massOf(this.oc, shape).volume;
   }
 
   /**
@@ -6547,32 +6578,20 @@ export class Modeller {
   /** Volume, area, centre of mass and principal moments of inertia (density 1) of the body. */
   props(body: Named): BodyProps {
     const oc = this.oc;
-    const vp = new oc.GProp_GProps_1();
-    oc.BRepGProp.VolumeProperties_1(body.shape, vp, true, false, false);
-    const sp = new oc.GProp_GProps_1();
-    oc.BRepGProp.SurfaceProperties_1(body.shape, sp, false, false);
-    const m = vp.MatrixOfInertia();
-    const I = [0, 1, 2].map(r => [0, 1, 2].map(c => m.Value(r + 1, c + 1)));
-    const { values, vectors } = eigenSym3(I);
+    // Mass, area and box are kept per shape (memo.ts): a rebuild that changed nothing, or a few faces, pays little.
+    const mass = massOf(oc, body.shape);
+    const { values, vectors } = eigenSym3(mass.inertia.map(r => [...r]));
     // The exact box: the mesh's own is a little small on round faces (a Ø15 cylinder read 14.995; exam #12).
     let box: [V3, V3] | undefined;
-    try {
-      const b = new oc.Bnd_Box_1();
-      oc.BRepBndLib.AddOptimal(body.shape, b, false, false);
-      if (!b.IsVoid()) box = [this.xyz(b.CornerMin()), this.xyz(b.CornerMax())];
-    } catch { /* no box: the view's is used */ }
-    return { volume: vp.Mass(), area: sp.Mass(), com: this.xyz(vp.CentreOfMass()), moments: values as V3, axes: vectors as [V3, V3, V3], bodies: this.solids(body.shape), ...(box ? { box } : {}) };
+    try { box = optimalBox(oc, body.shape, body.faces) ?? undefined; } catch { /* no box: the view's is used */ }
+    return { volume: mass.volume, area: areaOf(oc, body.shape), com: [...mass.com], moments: values as V3, axes: vectors as [V3, V3, V3], bodies: this.solids(body.shape), ...(box ? { box } : {}) };
   }
 
   /** One body's area, centre of mass and covariance about it for unit density (src/tools/inertia.ts), for per-body materials. */
   bodyMass(body: Named): { area: number; com: V3; cov: Sym } {
     const oc = this.oc;
-    const vp = new oc.GProp_GProps_1();
-    oc.BRepGProp.VolumeProperties_1(body.shape, vp, true, false, false);
-    const sp = new oc.GProp_GProps_1();
-    oc.BRepGProp.SurfaceProperties_1(body.shape, sp, false, false);
-    const m = vp.MatrixOfInertia(), s = Math.sign(vp.Mass()) || 1;
-    return { area: sp.Mass(), com: this.xyz(vp.CentreOfMass()), cov: covOfTensor([0, 1, 2].map(r => [0, 1, 2].map(c => m.Value(r + 1, c + 1) * s))) };
+    const mass = massOf(oc, body.shape), s = Math.sign(mass.volume) || 1;
+    return { area: areaOf(oc, body.shape), com: [...mass.com], cov: covOfTensor(mass.inertia.map(r => r.map(v => v * s))) };
   }
 
   /** Drops cached shapes (a new document). */

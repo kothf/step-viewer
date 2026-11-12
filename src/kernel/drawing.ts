@@ -698,7 +698,14 @@ function shapeList(oc: any, l: any): any[] {
   return out;
 }
 
-/** How far (mm) a section's cutting plane is moved off the picked place (see `section`). */
+/**
+ * How far (mm) a section's cutting plane is moved off the picked place (see `section`), unless `nudge` says
+ * otherwise. Only models whose solids are placed by computed transforms need it (assemblies, aligned sections): there
+ * a plane meant to hold a round part's axis misses it by a rounding error, the case OCCT's Boolean is slow in. A part
+ * in its own coordinates is cut exactly on the plane (`nudge: 0`): 1 µm off the axis the cut of every cone, torus and
+ * fillet is a free-form curve instead of a line or an arc, and the exact hidden-line removal took 5 to 30 times longer
+ * on them (a pulley's section 15 s instead of 1.5 s) and drew the outline in pieces.
+ */
 export const SECTION_NUDGE = 1e-3;
 
 /** Boxes already found, by shape wrapper: a tight box of an engine assembly takes ~1 s, and every view wanted it. */
@@ -767,7 +774,7 @@ export function cutSolids(oc: any, shape: any, solids: any[], box: any, half: { 
  * spanned by `e` and `m`, run through the model square to that plane; values of 1e8 or more stand for "beyond the
  * model". Cut faces lying on any of `planes` (n · p) are hatched. `keep` is drawn whole (components left uncut).
  */
-export function section(oc: any, shape: any, view: ViewDir, p0: V3, tol = 0.02, poly?: number[], opts: { stair?: SectionStair; keep?: any; namer?: (face: any) => string | null; fast?: number } = {}): Projection {
+export function section(oc: any, shape: any, view: ViewDir, p0: V3, tol = 0.02, poly?: number[], opts: { stair?: SectionStair; keep?: any; namer?: (face: any) => string | null; fast?: number; nudge?: number } = {}): Projection {
   return sectionFinish(oc, sectionCut(oc, shape, view, p0, poly, opts), view, tol, opts);
 }
 
@@ -780,18 +787,21 @@ export interface SectionStair { o: V3; e: V3; m: V3; pts: number[]; planes: numb
 export interface SectionCut {
   drawn: any; rest: any; parts: CutPart[]; cut: number[][]; cutOf: number[]; capEdges: any;
   st?: SectionStair; n: V3; x: V3; y: V3;
+  /** How far the plane was moved towards the viewer for the cut (mm). */
+  nudge: number;
 }
 
-/** The cut of a section (see `section`), with the plane SECTION_NUDGE towards the viewer. Free it with `freeSection`. */
-export function sectionCut(oc: any, shape: any, view: ViewDir, p0: V3, poly?: number[], opts: { stair?: SectionStair; keep?: any } = {}): SectionCut {
+/** The cut of a section (see `section`), with the plane `nudge` (SECTION_NUDGE unless given) towards the viewer. Free it with `freeSection`. */
+export function sectionCut(oc: any, shape: any, view: ViewDir, p0: V3, poly?: number[], opts: { stair?: SectionStair; keep?: any; nudge?: number } = {}): SectionCut {
+  const NUDGE = opts.nudge ?? SECTION_NUDGE;
   const { x, y, n } = viewAxes(view);
   const [lo, hi] = shapeBox(oc, shape);
   const L = 2 * Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) + 10;
   let box: any;
   // The cutting plane goes SECTION_NUDGE towards the viewer from the picked place: a plane exactly through a
   // revolved face's axis (a piston cut along its centre line) took OCCT's Boolean minutes; 1 µm off it takes 0.1 s.
-  const p: V3 = [p0[0] + n[0] * SECTION_NUDGE, p0[1] + n[1] * SECTION_NUDGE, p0[2] + n[2] * SECTION_NUDGE];
-  const st = opts.stair && { ...opts.stair, o: opts.stair.o.map((v, j) => v + opts.stair!.m[j] * SECTION_NUDGE) as V3, planes: opts.stair.planes.map(d => d + SECTION_NUDGE) };
+  const p: V3 = [p0[0] + n[0] * NUDGE, p0[1] + n[1] * NUDGE, p0[2] + n[2] * NUDGE];
+  const st = opts.stair && { ...opts.stair, o: opts.stair.o.map((v, j) => v + opts.stair!.m[j] * NUDGE) as V3, planes: opts.stair.planes.map(d => d + NUDGE) };
   if (st) {
     const { o, e, m } = st;
     const w: V3 = [e[1] * m[2] - e[2] * m[1], e[2] * m[0] - e[0] * m[2], e[0] * m[1] - e[1] * m[0]];
@@ -877,7 +887,7 @@ export function sectionCut(oc: any, shape: any, view: ViewDir, p0: V3, poly?: nu
       if (loop.length >= 6) { cut.push(loop); cutOf.push(owner); }
     }
   }
-  return { drawn, rest, parts: cuts.parts, cut, cutOf, capEdges, st, n, x, y };
+  return { drawn, rest, parts: cuts.parts, cut, cutOf, capEdges, st, n, x, y, nudge: NUDGE };
 }
 
 /** The exact lines of a cut section (projected like any view), its cut edges named by `namer`; frees the cut. */
@@ -885,7 +895,7 @@ export function sectionFinish(oc: any, sc: SectionCut, view: ViewDir, tol = 0.02
   const { st, n, x, y, cut, cutOf } = sc;
   const proj = projectAuto(oc, sc.drawn, view, tol, opts.fast);
   if (st) dropSteps(proj, st, x, y, cut);
-  const cutEdges = opts.namer ? sectionEdges(oc, sc.parts, sc.capEdges, opts.namer, st ? st.m.map(v => v * SECTION_NUDGE) as V3 : [n[0] * SECTION_NUDGE, n[1] * SECTION_NUDGE, n[2] * SECTION_NUDGE]) : undefined;
+  const cutEdges = opts.namer ? sectionEdges(oc, sc.parts, sc.capEdges, opts.namer, st ? st.m.map(v => v * sc.nudge) as V3 : [n[0] * sc.nudge, n[1] * sc.nudge, n[2] * sc.nudge]) : undefined;
   freeSection(sc);
   return cutEdges ? { ...proj, cut, cutOf, cutEdges } : { ...proj, cut, cutOf };
 }

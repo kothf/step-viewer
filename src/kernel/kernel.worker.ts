@@ -6,6 +6,7 @@
 // to the worker; the worker is kept for the next file while it is idle.
 import { cutList, isWeld, type WeldHost } from "../weldments/kernel";
 import { Kernel, type PartProbe } from "./occ";
+import { memoOf } from "./memo";
 import { solidworksToStep } from "./solidworks";
 import { ParasolidReader } from "../sw/parasolid";
 import { Modeller, type ModelMesh, type Named } from "./model";
@@ -107,6 +108,7 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
     if (r.type === "ping") { post({ id: r.id, ok: true }); return; }
     if (r.type === "reset") {
       modeller = null; assembler = null; shared = null; lastBody = null;
+      if (occ) memoOf(occ as object).clear();
       kernel = new Kernel(occ as ConstructorParameters<typeof Kernel>[0]);
       post({ id: r.id, ok: true, heap: heap() });
       return;
