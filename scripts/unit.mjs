@@ -21,7 +21,7 @@ await build({
   format: "esm",
   outExtension: { ".js": ".mjs" },
   external: ["opencascade.js"],
-  define: { __APP_VERSION__: '"test"' },
+  define: { __APP_VERSION__: '"test"', __BUILD_ID__: '"test"' },
   logLevel: "warning",
   // Vite's `?url` imports become the file's absolute path, so modules that fetch assets still bundle.
   plugins: [{

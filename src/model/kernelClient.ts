@@ -6,6 +6,7 @@
 import { giveBack, takeWorker } from "../kernel/spare";
 import type { Prebuilt } from "../kernel/kernel.worker";
 import { kernelPool, type KernelPool } from "../kernel/pool";
+import { cacheDelete, cacheGet, cacheKey, cacheOn, cachePut } from "../buildCache";
 import type { PartData } from "../topology";
 import type { OwnBody } from "../tools/inertia";
 import type { AsmDoc, AsmComponentStatus } from "../asm/types";
@@ -43,6 +44,11 @@ export interface Rebuild {
 }
 
 const RECYCLE_HEAP = 1.5 * 1024 ** 3;
+/** A rebuild result is written to the disk cache once no newer one came for this long (one write per pause in editing). */
+const STORE_AFTER_MS = 1500;
+
+/** What a fresh build must give again for a cached result to stand: face names, statuses, bodies. */
+const signature = (r: Rebuild) => JSON.stringify([r.faceNames, r.statuses.map(s => [s.id, s.ok, s.code ?? ""]), r.bodies?.map(b => [b.key, Math.round(b.volume * 1e3)]), r.data?.faces.length ?? 0, r.data ? Math.round(r.data.volume * 1e3) : 0]);
 
 /** An assembly feature's result: the components it cut, or why it cut none (FR-ASM-027). */
 export interface AsmFeatureStatus { id: string; ok: boolean; cut: string[]; message?: string }
@@ -61,6 +67,18 @@ export class ModelKernel {
   private queued: { doc: PartDoc; color: V3; quality: number; previewAt?: number; verify?: boolean; resolve: (r: Rebuild | null) => void } | null = null;
   heap = 0;
   onCrash: ((msg: string) => void) | null = null;
+  /**
+   * Told when a result shown from the disk cache turned out to differ from the worker's own build of the same
+   * document (it never should): the entry is gone, and the caller rebuilds.
+   */
+  onStale: (() => void) | null = null;
+  /** Whether this worker has built the part since it started: the disk cache is read only for the first build. */
+  private built = false;
+  /** The next build skips the disk cache (Ctrl+Q: rebuild every feature). */
+  private bypass = false;
+  private storeTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Rebuilds and assembly parts answered from the disk cache (for `?debug` and the smoke test). */
+  cacheHits = 0;
 
   constructor(private base: string) {}
 
@@ -104,8 +122,12 @@ export class ModelKernel {
     this.worker = null;
     this.ready = null;
     this.heap = 0;
+    this.built = false;
     this.known.clear();
   }
+
+  /** The next rebuild runs every feature in the kernel instead of reading the disk cache. */
+  bypassCache() { this.bypass = true; }
 
   private call<T>(msg: Record<string, unknown>): Promise<T> {
     const id = ++this.seq;
@@ -134,10 +156,23 @@ export class ModelKernel {
       this.queued = null;
       try {
         if (this.heap > RECYCLE_HEAP) this.stop(false);
+        const plain = job.previewAt == null && cacheOn();
+        const key = plain ? await cacheKey("part", job.doc, job.color, job.quality, !!job.verify) : null;
+        // The first build of a document: the disk cache answers at once, and the worker still builds it behind,
+        // so the edits, picks and exports that follow find it ready (they queue behind it, as before).
+        const hit = key && !this.built && !this.bypass ? await cacheGet<Rebuild>(key) : undefined;
+        this.bypass = false;
+        if (hit) { this.cacheHits++; job.resolve(hit); }
         await this.start();
         const r = await this.call<Rebuild & { heap: number }>({ type: "model", doc: job.doc, color: job.color, quality: job.quality, previewAt: job.previewAt, verify: job.verify });
         this.heap = r.heap;
-        job.resolve(r);
+        this.built = true;
+        if (hit) {
+          if (signature(hit) !== signature(r)) { void cacheDelete(key); this.storeLater(key, r); this.onStale?.(); }
+        } else {
+          job.resolve(r);
+          if (key) this.storeLater(key, r);
+        }
       } catch (err) {
         // Stopped on purpose (the document was closed or parked): nobody waits for this result.
         if ((err as Error).message === STOPPED) { job.resolve(null); continue; }
@@ -154,6 +189,13 @@ export class ModelKernel {
       }
     }
     this.running = false;
+  }
+
+  /** Writes the newest rebuild result to the disk cache once editing pauses. */
+  private storeLater(key: string | null, r: Rebuild & { heap?: number }) {
+    if (this.storeTimer) clearTimeout(this.storeTimer);
+    const { heap: _h, ...keep } = r;
+    this.storeTimer = setTimeout(() => { this.storeTimer = null; void cachePut(key, keep); }, STORE_AFTER_MS);
   }
 
   /** Reads a STEP/IGES/BREP file into BREP text for an imported body (FR-FT-130). */
@@ -195,14 +237,34 @@ export class ModelKernel {
   /** Evaluates an assembly: one mesh per shown component, placed (FRS 10). */
   async assembly(doc: AsmDoc): Promise<{ parts: { id: string; data: PartData; faces: string[]; bodies?: OwnBody[] }[]; statuses: AsmComponentStatus[]; features?: AsmFeatureStatus[]; props: BodyProps | null }> {
     let t = performance.now();
-    const todo = this.unbuilt(doc);
+    const all = this.unbuilt(doc);
+    // Parts built before (this session or an earlier one) come from the disk cache as BREP + analysed mesh.
+    const keys = new Map<string, string | null>();
+    const cached: Record<string, Prebuilt> = {};
+    if (cacheOn()) {
+      await Promise.all(all.map(async k => {
+        const key = await cacheKey("asmpart", doc.parts[k].doc, 1);
+        keys.set(k, key);
+        const hit = await cacheGet<Prebuilt>(key);
+        if (hit?.brep) cached[k] = hit;
+      }));
+    }
+    const todo = all.filter(k => !cached[k]);
+    this.cacheHits += all.length - todo.length;
     const pool = todo.length > 1 ? kernelPool(this.base) : null;
     pool?.warm(todo.length - 1);
     await this.start();
     const worker = this.worker;
     const lap = () => { const n = performance.now(), d = n - t; t = n; return Math.round(d); };
     const start = lap();
-    const pre = pool ? await this.prebuild(doc, todo, pool) : undefined;
+    const store = keys.size ? (k: string, p: Prebuilt) => { if (p.brep && p.data) void cachePut(keys.get(k) ?? null, p); } : null;
+    let pre: Record<string, Prebuilt> | undefined = pool ? await this.prebuild(doc, todo, pool, store) : undefined;
+    // One part to build: the assembly worker builds it, and sends it back for the disk cache.
+    if (!pool && store && todo.length === 1) {
+      const r = await this.call<{ pre?: Prebuilt }>({ type: "asmPrime", doc, key: todo[0], quality: 1, out: true });
+      if (r.pre) store(todo[0], r.pre);
+    }
+    if (Object.keys(cached).length) pre = { ...pre, ...cached };
     const pb = lap();
     const r = await this.call<{ parts: { id: string; data: PartData; faces: string[]; bodies?: OwnBody[] }[]; statuses: AsmComponentStatus[]; features?: AsmFeatureStatus[]; props: BodyProps | null }>({ type: "asm", doc, quality: 1, pre });
     // The worker now holds these part sources; a new worker (after a crash) knows none.
@@ -232,11 +294,17 @@ export class ModelKernel {
    * back as BREP bodies with their analysed meshes for the "asm" call; a part a helper could not
    * build is left to the assembly worker.
    */
-  private async prebuild(doc: AsmDoc, todo: string[], pool: KernelPool): Promise<Record<string, Prebuilt>> {
+  private async prebuild(doc: AsmDoc, todo: string[], pool: KernelPool, store: ((k: string, p: Prebuilt) => void) | null): Promise<Record<string, Prebuilt>> {
     const t0 = performance.now();
     const pre: Record<string, Prebuilt> = {};
     let next = 0;
-    const own = async () => { while (next < todo.length) await this.call({ type: "asmPrime", doc, key: todo[next++], quality: 1 }); };
+    const own = async () => {
+      while (next < todo.length) {
+        const k = todo[next++];
+        const r = await this.call<{ pre?: Prebuilt }>({ type: "asmPrime", doc, key: k, quality: 1, out: !!store });
+        if (r.pre) store?.(k, r.pre);
+      }
+    };
     const helper = async () => {
       // Take parts only once a helper has started, so the assembly worker is not left waiting on one that is still loading.
       try { await pool.run({ type: "ping" }); } catch { return; }
@@ -245,6 +313,7 @@ export class ModelKernel {
         try {
           const r = await pool.run<{ pre: Prebuilt }>({ type: "prebuild", doc: doc.parts[k].doc, quality: 1 });
           pre[k] = r.pre;
+          store?.(k, r.pre);
         } catch { /* the assembly worker builds it in the "asm" call */ }
       }
     };

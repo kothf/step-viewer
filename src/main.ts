@@ -1,4 +1,5 @@
 import "./style.css";
+import { cacheClear, cacheSize, cacheStats } from "./buildCache";
 import { lassoMode, setLassoMode } from "./boxSelect";
 import { installHoverCursors, setHoverKind, hoverKindOfSnap } from "./hoverCursor";
 import type { NamedView } from "./model/types";
@@ -3372,4 +3373,4 @@ refreshMeasurements();
 // Orthographic by default (true dimensions on screen); the last choice is remembered.
 setProjection(storage.get("sv:proj") === "perspective" ? "perspective" : "orthographic");
 
-if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { tutorial, surfAna, modeller, asm, motion, drawing, drw: drawing.debug(), vault: vaultPanel, vaultFolders: { useMemory: useMemoryFolders }, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, csys, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, timings: () => Object.assign(timings, kernel.timing) } });
+if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { tutorial, surfAna, modeller, asm, motion, drawing, drw: drawing.debug(), vault: vaultPanel, vaultFolders: { useMemory: useMemoryFolders }, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, csys, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, buildCache: { stats: cacheStats, size: cacheSize, clear: cacheClear }, timings: () => Object.assign(timings, kernel.timing) } });

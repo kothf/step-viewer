@@ -33,10 +33,21 @@ Timings in node are close to Chrome's (same V8, same WASM). Runs differ by 10 to
 - The fast path (`projectFast`: polygonal HLR + exact lines and arcs) is not a drop-in for small parts: hidden
   lines come out in many short pieces and the first view pays for a fine mesh (1.7 s on the cylinder part).
 
+## Disk cache (1.559.0), timed in headless Chrome on the cloud container
+
+Opened in a new page of the same browser profile; "cold" = first time (built and stored), "warm" = read back.
+
+| Document | no cache | warm |
+| --- | --- | --- |
+| flywheel part | 2.1 s | 0.26 s |
+| nameplate part | 4.2 s | 0.27 s |
+| engine assembly (37 parts) | 11.2 s | 3.1 s |
+| its new drawing, Standard 3 views | 29.7 s | 6.4 s |
+
+Storing costs nothing visible (the writes come after the result is shown).
+
 ## Not done, in order of expected gain
 
-- A persistent cache of built parts (BREP + names + analysed mesh by a hash of the part document and the
-  worker's code) would make re-opening assemblies and drawings skip the rebuild altogether.
 - The OpenCASCADE build uses JavaScript exception handling (678 `invoke_*` trampolines); a rebuild with WASM
   exceptions and `-O3` should speed every kernel call up by a fifth or more and shrink the 50 MB file, at the
   price of maintaining our own build of opencascade.js.

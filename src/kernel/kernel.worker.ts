@@ -40,7 +40,8 @@ export type KernelRequest =
   | { id: number; type: "recognizeFeatures"; doc: PartDoc }
   /** Assemblies (FRS 10): place the components and return one mesh per shown component. */
   | { id: number; type: "asm"; doc: AsmDoc; quality: number; pre?: Record<string, Prebuilt> }
-  | { id: number; type: "asmPrime"; doc: AsmDoc; key: string; quality: number }
+  /** `out`: also send the part back as a `Prebuilt` (for the disk cache). */
+  | { id: number; type: "asmPrime"; doc: AsmDoc; key: string; quality: number; out?: boolean }
   | { id: number; type: "prebuild"; doc: PartDoc; quality: number }
   | { id: number; type: "ping" }
   /** Drops the document state so the worker can serve another document as the page's spare. */
@@ -215,7 +216,13 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
       const p = assembler.prime(r.key, r.doc, r.quality);
       const base = shared.get(p.src);
       if (p.body && !(base && base.quality === r.quality)) shared.set(p.src, { quality: r.quality, data: analysePart(p.body, p.mesh(), r.doc.parts[r.key].name) });
-      post({ id: r.id, ok: true });
+      let pre: Prebuilt | undefined;
+      if (r.out && p.body) {
+        const t = assembler.transport(r.key);
+        const data = shared.get(p.src)?.data;
+        if (t && data) pre = { ...t, names: p.body.names, data };
+      }
+      post({ id: r.id, ok: true, pre });
     } else if (r.type === "asm") {
       assembler ??= new Assembler(kernel.module);
       shared ??= new WeakMap();
