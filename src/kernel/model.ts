@@ -1027,7 +1027,12 @@ export class Modeller {
       mk.SetArguments(A); mk.SetTools(B);
       mk.Build(new oc.Message_ProgressRange_1());
       if (!mk.IsDone() || mk.HasErrors()) return null;
-      const touched = tools.map(t => t.faces.some(f => !mk.IsDeleted(f)));
+      // A copy counts when it leaves a face of its own in the result: one lying wholly outside the body
+      // loses every face, and one lying in a hole that is already there shares its faces with the body's.
+      const images = (f: any): any[] => { if (mk.IsDeleted(f)) return []; const m = this.list(mk.Modified(f)); return m.length ? m : [f]; };
+      const mine = body.faces.flatMap(images);
+      const made = this.sub(mk.Shape(), "FACE");
+      const touched = tools.map(t => t.faces.some(f => images(f).some(g => made.some(x => x.IsSame(g)) && !mine.some(x => x.IsSame(g)))));
       return { body: this.carry(mk, [body, ...tools], mk.Shape(), fid), touched };
     } catch { return null; }
   }

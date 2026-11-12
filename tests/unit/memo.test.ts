@@ -119,6 +119,13 @@ test("a pattern of cuts is one Boolean: same body as before, a copy off the body
   assert.ok(holes >= 2, r.body!.names.join());
   near(m.props(r.body!).volume, 100 * 100 * 20 - holes * Math.PI * 16 * 20, 1e-6);
   if (holes < 5) assert.match(st.warning ?? "", /copies fall outside the body/);
+  // Copies that land on holes already there change nothing and are skipped too.
+  const c3: Feature = { ...cp, id: "q3", name: "CPattern2", count: 3 } as Feature;
+  r = m.evaluate(doc([...plate, ...holeCut, c3, { ...cp, id: "q6", name: "CPattern3" } as Feature]));
+  const s6 = r.statuses.find(s => s.id === "q6")!;
+  assert.ok(s6.ok, JSON.stringify(s6));
+  assert.match(s6.warning ?? "", /^2 of 5 copies/);
+  near(m.props(r.body!).volume, 100 * 100 * 20 - 6 * Math.PI * 16 * 20, 1e-9);
 });
 
 test("a part's section is cut exactly on the plane: a shaft's fillets stay arcs and lines", async () => {
