@@ -7713,7 +7713,8 @@ try {
     mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
     await mp.goto(`${origin}/index.html?debug`);
     await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
-    await mp.goto(`${origin}/index.html?debug&drwhelper=1&drwheap=1`);
+    // `nocache`: the checks below are about the drawing workers, so repeated sections must not come from the disk cache.
+    await mp.goto(`${origin}/index.html?debug&drwhelper=1&drwheap=1&nocache`);
     await mp.waitForFunction(() => window.__sv);
     const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
     await mp.click("#new-part");

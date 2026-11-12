@@ -306,6 +306,9 @@ export class DrawingKernel {
     void this.modelKey.then(k => { if (k && this.loadFacts === f) void cachePut(`${k}|load`, { facts: f, snap }); });
   }
 
+  /** Exact requests whose disk cache lookup is under way (`drop` marks the ones no view wants). */
+  private looking = new Set<{ key: string; dropped: boolean }>();
+
   /** The disk cache key of one exact request on the loaded model. */
   private async viewKey(msg: Record<string, unknown>): Promise<string | null> {
     const mk = await this.modelKey;
@@ -315,7 +318,15 @@ export class DrawingKernel {
   /** An exact request: from the disk cache when this model's view was made before, else run and stored. */
   private exactCached(msg: Record<string, unknown>, key: string, low: boolean): Promise<{ proj: Projection }> {
     const gen = this.gen, dk = this.viewKey(msg);
-    return dk.then(k => (k ? cacheGet<Projection>(k) : undefined)).then(hit => {
+    // While the disk is read, `drop` may already say no view wants it: then it is not run.
+    const look = { key, dropped: false };
+    this.looking.add(look);
+    const lookup = dk.then(k => (k ? cacheGet<Projection>(k) : undefined));
+    lookup.catch(() => this.looking.delete(look));
+    return lookup.then(hit => {
+      // Still marked until the job is queued (where `drop` finds it), in this same callback.
+      this.looking.delete(look);
+      if (look.dropped) throw new Error(DROPPED);
       if (hit) { if (gen === this.gen) this.cacheHits++; return { proj: hit }; }
       return this.exact<{ proj: Projection }>(msg, key, low).then(r => {
         if (gen === this.gen) void dk.then(k => cachePut(k, r.proj));
@@ -373,6 +384,7 @@ export class DrawingKernel {
    */
   drop(keep: (key: string) => boolean) {
     const gone = (j: Job | null) => !!j && !!j.key && !j.dropped && !keep(j.key);
+    for (const l of this.looking) if (!keep(l.key)) l.dropped = true;
     for (const j of this.jobs.filter(gone)) { j.dropped = true; this.jobs.splice(this.jobs.indexOf(j), 1); j.reject(new Error(DROPPED)); }
     if (gone(this.helperJob)) { this.helperJob!.dropped = true; this.stopHelper(); }
     if (gone(this.mainJob)) { this.mainJob!.dropped = true; void this.recycle(); }
