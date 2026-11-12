@@ -105,14 +105,55 @@ export function optimalBox(oc: any, shape: any, faces?: any[]): [V3, V3] | null 
     } finally { b.delete(); }
   });
   if (!faces?.length) return boxOf(shape);
+  // A face whose quick box (triangulation or curve bounds, enlarged by deflection and tolerance, so never smaller
+  // than the face) lies inside the exact box of the faces done so far cannot widen it: its exact box is skipped.
+  // The outermost faces go first, so most inner ones are skipped (flywheel: 26 → 6 optimal boxes).
+  const quick = faces.map(f => looseBox(oc, f));
+  let all: [V3, V3] | null = null;
+  for (const q of quick) if (q) all = all ? union(all, q) : [[...q[0]], [...q[1]]];
+  const reach = (q: [V3, V3] | null) => {
+    if (!q || !all) return Infinity;
+    let r = 0;
+    for (let k = 0; k < 3; k++) {
+      const c = (all[0][k] + all[1][k]) / 2, h = (all[1][k] - all[0][k]) / 2 || 1;
+      r = Math.max(r, (q[1][k] - c) / h, (c - q[0][k]) / h);
+    }
+    return r;
+  };
+  const order = faces.map((_, i) => i).sort((a, b) => reach(quick[b]) - reach(quick[a]));
   let out: [V3, V3] | null = null;
-  for (const f of faces) {
-    const b = boxOf(f);
+  for (const i of order) {
+    const q = quick[i];
+    if (out && q && inside(q, out)) continue;
+    const b = boxOf(faces[i]);
     if (!b) continue;
-    if (!out) out = [[...b[0]], [...b[1]]];
-    else for (let k = 0; k < 3; k++) { out[0][k] = Math.min(out[0][k], b[0][k]); out[1][k] = Math.max(out[1][k], b[1][k]); }
+    out = out ? union(out, b) : [[...b[0]], [...b[1]]];
   }
   return out;
+}
+
+function union(a: [V3, V3], b: [V3, V3]): [V3, V3] {
+  return [[0, 1, 2].map(k => Math.min(a[0][k], b[0][k])) as V3, [0, 1, 2].map(k => Math.max(a[1][k], b[1][k])) as V3];
+}
+
+function inside(q: [V3, V3], b: [V3, V3]): boolean {
+  for (let k = 0; k < 3; k++) if (q[0][k] < b[0][k] || q[1][k] > b[1][k]) return false;
+  return true;
+}
+
+/** A box sure to hold the face: `BRepBndLib::Add` (its triangulation, else its curves' bounds), enlarged by OCCT. */
+function looseBox(oc: any, face: any): [V3, V3] | null {
+  return memoOf(oc).get("lbox", face, () => {
+    const b = new oc.Bnd_Box_1();
+    try {
+      oc.BRepBndLib.Add(face, b, true);
+      if (b.IsVoid()) return null;
+      const lo = b.CornerMin(), hi = b.CornerMax();
+      const out: [V3, V3] = [[lo.X(), lo.Y(), lo.Z()], [hi.X(), hi.Y(), hi.Z()]];
+      lo.delete(); hi.delete();
+      return out;
+    } catch { return null; } finally { b.delete(); }
+  });
 }
 
 /** Whether `p` is inside, on or outside a solid: one classifier per shape, kept for the next point. */

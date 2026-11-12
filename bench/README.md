@@ -9,6 +9,7 @@ node bench/run.mjs bench/drawing.bench.ts <folder> [filter]                     
 node bench/run.mjs bench/prof.bench.ts    <file.mcadprt> [rows]                  # time per Modeller method / OCCT call: open, edit, no change
 node bench/run.mjs bench/hlr.bench.ts     <file.mcadprt> front|top|right|iso|section
 node bench/run.mjs bench/names.bench.ts   <folder> out.json                      # face names, volume, area, box: diff two builds
+node bench/run.mjs bench/curv.bench.ts    <folder> out.json                      # free-form faces' curvature range: diff two builds
 PROF=1 node bench/run.mjs ...                                                    # also writes a V8 CPU profile under node_modules/.cache/bench/prof
 ```
 
@@ -45,6 +46,16 @@ Opened in a new page of the same browser profile; "cold" = first time (built and
 | its new drawing, Standard 3 views | 29.7 s | 6.4 s |
 
 Storing costs nothing visible (the writes come after the result is shown).
+
+## First build (1.560.0)
+
+- `optimalBox` skips a face whose quick box (`BRepBndLib::Add`: triangulation or curve bounds, enlarged by
+  OCCT) lies inside the exact box of the faces done so far, outermost faces first: props over the 37 parts
+  1.45 s → 0.7 s (flywheel 0.47 s → 0.01 s), boxes identical (`names` diff).
+- `Kernel.curvature` projects each sample from the previous one's UV (`NextValueOfUV`): exact over the 37 parts
+  1.18 s → 0.70 s (nameplate curvature 0.43 s → 0.09 s), values identical to six digits (`curv` diff).
+- Tried without gain: `SetUseOBB(true)` on Booleans (within noise), turning a full revolve's seam away from the
+  body's (pulley groove cut still 0.9 s).
 
 ## Not done, in order of expected gain
 

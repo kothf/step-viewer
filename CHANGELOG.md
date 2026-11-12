@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.560.0] - 2026-11-12
+
+### Changed
+
+- **A part opens faster the first time.** Two steps after every first build took longer than they needed. The exact bounding box was measured face by face, and the curved faces (tori, spheres) are slow to box exactly; faces that lie inside the box of the faces already measured cannot change it, so they are no longer measured (a flywheel: 0.47 s → 0.01 s, the same box to the last digit on all 37 parts of the model steam engine). The curvature of free-form faces (text, fillet run-outs) projected each sample point onto the surface from scratch; each now starts from the point before it (a nameplate with embossed text: 0.43 s → 0.09 s, the same values). Over the 37 parts the first build is about 1.2 s shorter in total.
+
 ## [1.559.0] - 2026-11-12
 
 ### Changed
@@ -3491,7 +3497,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.559.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.560.0...HEAD
+[1.560.0]: https://github.com/kothf/step-viewer/compare/v1.559.0...v1.560.0
 [1.559.0]: https://github.com/kothf/step-viewer/compare/v1.558.0...v1.559.0
 [1.558.0]: https://github.com/kothf/step-viewer/compare/v1.557.0...v1.558.0
 [1.557.0]: https://github.com/kothf/step-viewer/compare/v1.556.0...v1.557.0
