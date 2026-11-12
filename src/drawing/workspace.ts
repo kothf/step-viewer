@@ -21,10 +21,11 @@ import { DRAWING_EXT, packDrawing, unpackDrawing } from "./file";
 import { printHtml, sheetDxf, sheetDxf2000, sheetPng, sheetSvg, sheetsPdf, svgBody, FONT } from "./output";
 import type { Prim } from "./prims";
 import { editTitleBlock } from "./tbEditor";
+import { editGtol, editHole, gtolPicture } from "./annotDlg";
 import { loadFormats } from "./formats";
 import { FIELD_LABEL, isoFormat, editableOf, SIZES, fieldAt, formatPrims, frameOf, sheetSize, tbSize, titleBlockAt, type Fields } from "./sheet";
-import type { Annot, BalloonAnnot, CLineAnnot, DatumTargetAnnot, DimAnnot, SketchAnnot, SkPen, WeldSide, WeldSym, DisplayStyle, DraftStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, GRow, GSym, HatchPattern, Orient, Sheet, SheetSize, SurfLay, TableAnnot, TangentEdges, Tol } from "./types";
-import { GSYMS, GSYM_NAMES, SURF_LAYS, cellLabel } from "./gdt";
+import type { Annot, BalloonAnnot, CLineAnnot, GtolAnnot, HoleAnnot, DatumTargetAnnot, DimAnnot, SketchAnnot, SkPen, WeldSide, WeldSym, DisplayStyle, DraftStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, GRow, HatchPattern, Orient, Sheet, SheetSize, SurfLay, TableAnnot, TangentEdges, Tol } from "./types";
+import { SURF_LAYS, cellLabel } from "./gdt";
 import { WELD_SYMS, WELD_SYM_NAMES } from "./weld";
 import { SK_PENS, SK_PEN_NAMES, orthoSnap, skPoints, skPrims } from "./sheetSketch";
 import { fitLimits, splitFit } from "./iso286";
@@ -1213,6 +1214,7 @@ export class DrawingWorkspace {
     // A double-click ends a chain of lines (its second click added nothing: same point).
     if (this.mode.kind === "sk" && this.mode.k === "line") { this.mode = { kind: "none" }; this.renderStatus(); this.renderOverlay(); return; }
     const p = this.sheetPt(e);
+    if (this.mode.kind === "none" && this.editAnnotDlg(this.annotAt(p))) return;
     const f = fieldAt(this.sheet, p[0], p[1]);
     if (f) {
       this.sel = null;
@@ -1736,8 +1738,9 @@ export class DrawingWorkspace {
         m.view = vid; m.e = pick.e; m.s = pick.side;
       } else {
         const pl = this.placements.get(m.view!)!, pos = fromSheet(pl, p[0], p[1]);
-        this.addAnnot({ id: uid("a_"), t: "hole", view: m.view!, ref: { ...edgeRef(m.e, "e"), ...(m.s ? { s: m.s } : {}) }, pos: [round(pos[0]), round(pos[1])] }, "Hole callout");
+        const h: HoleAnnot = { id: uid("a_"), t: "hole", view: m.view!, ref: { ...edgeRef(m.e, "e"), ...(m.s ? { s: m.s } : {}) }, pos: [round(pos[0]), round(pos[1])] };
         this.mode = { kind: "none" };
+        setTimeout(() => void this.editHoleAnnot(h, true));
       }
     } else if (m.kind === "dtarget") {
       if (!m.leader && vid && this.facts) {
@@ -1766,8 +1769,9 @@ export class DrawingWorkspace {
       const pos: Pt = pl ? fromSheet(pl, p[0], p[1]) : p;
       const row: GRow = m.circle ? { sym: "pos", tol: "0.1", dia: true, datums: ["A", "B"] } : { sym: m.leader ? "perp" : "flat", tol: "0.05", datums: m.leader ? ["A"] : [] };
       if (!m.leader) row.sym = "flat";
-      this.addAnnot({ id: uid("a_"), t: "gtol", ...(view ? { view } : {}), pos: [round(pos[0]), round(pos[1])], rows: [row], ...(m.leader ? { leader: m.leader } : {}) }, "Geometric tolerance");
+      const g: GtolAnnot = { id: uid("a_"), t: "gtol", ...(view ? { view } : {}), pos: [round(pos[0]), round(pos[1])], rows: [row], ...(m.leader ? { leader: m.leader } : {}) };
       this.mode = { kind: "none" };
+      setTimeout(() => void this.editGtolAnnot(g, true));
     } else if (m.kind === "balloon") {
       if (!m.ref) {
         const pick = vid ? this.annotPick(vid, p) : null;
@@ -1909,6 +1913,37 @@ export class DrawingWorkspace {
     this.addAnnot({ id: uid("a_"), t: "cloud", pos: [x0, y0], pts: m.pts.flatMap(([x, y]) => [round(x - x0), round(y - y0)]), ...(last ? { rev: last } : {}) }, "Revision cloud");
     this.mode = { kind: "none" };
     this.renderStatus(); this.renderOverlay();
+  }
+
+  /** The geometric tolerance dialog (FR-DRW-023): on a frame just placed (added on OK) or an existing one. */
+  private async editGtolAnnot(a: GtolAnnot, isNew = false) {
+    const r = await editGtol(a, this.ctx().dec, isNew);
+    this.renderStatus(); this.renderOverlay();
+    if (!r || !this.store) return;
+    if (isNew) { this.addAnnot(r, "Geometric tolerance"); return; }
+    this.selA = a.id;
+    this.setAnnot("Geometric tolerance", x => { if (x.t !== "gtol") return; x.rows = r.rows; for (const k of ["above", "below", "between", "around"] as const) { if (r[k] === undefined) delete x[k]; else (x as unknown as Record<string, unknown>)[k] = r[k]; } });
+  }
+
+  /** The hole callout dialog (FR-DRW-022). */
+  private async editHoleAnnot(a: HoleAnnot, isNew = false) {
+    const e = refEdge(a.ref, this.factsOf(a.view)?.topo ?? null), ctx = this.ctx();
+    const r = await editHole(a, count => e ? holeText(e, ctx, count) : [], t("THRU"));
+    this.renderStatus(); this.renderOverlay();
+    if (!r || !this.store) return;
+    const put = (x: HoleAnnot) => { for (const k of ["txt", "count", "below"] as const) { if (r[k] === undefined) delete x[k]; else (x as unknown as Record<string, unknown>)[k] = r[k]; } };
+    if (isNew) { put(a); this.addAnnot(a, "Hole callout"); return; }
+    this.selA = a.id;
+    this.setAnnot("Hole callout", x => { if (x.t === "hole") put(x); });
+  }
+
+  /** Opens the dialog of an annotation that has one. */
+  private editAnnotDlg(id: string | null): boolean {
+    const a = id ? this.annot(id) : null;
+    if (a?.t === "gtol") void this.editGtolAnnot(a);
+    else if (a?.t === "hole") void this.editHoleAnnot(a);
+    else return false;
+    return true;
   }
 
   private addAnnot(a: Annot, label: string) {
@@ -2290,28 +2325,21 @@ export class DrawingWorkspace {
     }
     if (a.t === "hole") {
       const e = refEdge(a.ref, this.factsOf(a.view)?.topo ?? null), auto = e ? holeText(e, this.ctx(), a.count !== false).join("\n") : "";
+      const lines = [...(a.txt ? a.txt.split("\n") : auto ? auto.split("\n") : []), ...(a.below ? a.below.split("\n") : [])];
       return `<fieldset class="pm-group"><legend>${esc(t("Hole callout"))}</legend>
-        <label class="drw-f">${esc(t("Text"))}<textarea data-d="htxt" rows="3" translate="no" placeholder="${esc(auto)}">${esc(a.txt ?? "")}</textarea></label>
-        <p class="drw-note">${esc(t("Empty: the text comes from the hole."))}</p>
-        <label class="drw-chk"><input type="checkbox" data-d="hcount"${a.count !== false ? " checked" : ""}> ${esc(t("Show the number of holes"))}</label>
-        <label class="drw-f">${esc(t("Text below"))}<input data-d="hbelow" value="${esc(a.below ?? "")}" translate="no"></label>
-      </fieldset><div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
+        <pre class="drw-callout" translate="no">${esc(lines.join("\n"))}</pre>
+        <p class="drw-note">${esc(t(a.txt ? "Your own text: it no longer follows the hole." : "The text follows the hole."))}</p>
+        <div class="row"><button class="btn small primary" data-a="aedit">${esc(t("Edit…"))}</button><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>
+      </fieldset>`;
     }
     const del = `<div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
     if (a.t === "gtol") {
-      const rows = a.rows.map((r, i) => `<fieldset class="pm-group drw-grow"><legend>${esc(t("Row {n}", { n: i + 1 }))}</legend>
-        ${i > 0 && r.composite ? "" : `<label class="drw-f">${esc(t("Characteristic"))}<select data-d="g:${i}:sym">${GSYMS.map(g => `<option value="${g}"${r.sym === g ? " selected" : ""}>${esc(t(GSYM_NAMES[g]))}</option>`).join("")}</select></label>`}
-        <label class="drw-f">${esc(t("Tolerance"))}<input data-d="g:${i}:tol" inputmode="decimal" value="${esc(r.tol)}" translate="no"></label>
-        <label class="drw-chk"><input type="checkbox" data-d="g:${i}:dia"${r.dia ? " checked" : ""}> ${esc(t("Diameter zone (Ø)"))}</label>
-        <label class="drw-f">${esc(t("Material condition"))}<select data-d="g:${i}:mod"><option value="">${esc(t("None"))}</option><option value="M"${r.mod === "M" ? " selected" : ""}>${esc(t("Maximum (M)"))}</option><option value="L"${r.mod === "L" ? " selected" : ""}>${esc(t("Least (L)"))}</option></select></label>
-        ${i > 0 ? `<label class="drw-chk"><input type="checkbox" data-d="g:${i}:comp"${r.composite ? " checked" : ""}> ${esc(t("Composite with the row above"))}</label>` : ""}
-        <div class="drw-datums">${[0, 1, 2].map(k => `<label class="drw-f">${esc(t(["Primary datum", "Secondary datum", "Tertiary datum"][k]))}<input data-d="g:${i}:d${k}" value="${esc(r.datums[k] ?? "")}" maxlength="6" translate="no"></label>`).join("")}</div>
-        ${a.rows.length > 1 ? `<div class="row"><button class="btn small" data-grow="-${i}">${esc(t("Remove row"))}</button></div>` : ""}
-      </fieldset>`).join("");
-      return `<fieldset class="pm-group"><legend>${esc(t("Geometric tolerance"))}</legend>${a.leader ? `<p class="drw-note">${esc(t("With a leader to the model."))}</p><label class="drw-chk"><input type="checkbox" data-d="gall"${a.around ? " checked" : ""}> ${esc(t("All around"))}</label>` : ""}
-        <label class="drw-f">${esc(t("Text above the frame"))}<input data-d="gabove" value="${esc(a.above ?? "")}" translate="no" placeholder="2×"></label>
-        <label class="drw-f">${esc(t("Text below the frame"))}<input data-d="gbelow" value="${esc(a.below ?? "")}" translate="no"></label></fieldset>${rows}
-        <div class="row"><button class="btn small" data-grow="+">${esc(t("Add row"))}</button></div>${del}`;
+      return `<fieldset class="pm-group"><legend>${esc(t("Geometric tolerance"))}</legend>
+        <div class="ad-pvbox">${gtolPicture(a, this.ctx().dec)}</div>
+        ${a.leader ? `<p class="drw-note">${esc(t("With a leader to the model."))}</p>` : ""}
+        <p class="drw-note">${esc(t("Double-click the frame on the sheet to edit it too."))}</p>
+        <div class="row"><button class="btn small primary" data-a="aedit">${esc(t("Edit…"))}</button><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>
+      </fieldset>`;
     }
     if (a.t === "datum") {
       return `<fieldset class="pm-group"><legend>${esc(t("Datum feature"))}</legend>
@@ -2428,9 +2456,7 @@ export class DrawingWorkspace {
         else if (a.tol && (k === "up" || k === "lo")) a.tol[k] = num(val);
         else if (a.tol && k === "fit") a.tol.fit = val.trim();
         else if (a.tol && k === "fshow") { if (val === "code") delete a.tol.show; else a.tol.show = val as Tol["show"]; }
-      } else if (a.t === "hole" && k === "htxt") { if (val.trim()) a.txt = val; else delete a.txt; }
-      else if (a.t === "hole" && k === "hcount") { if ((el as HTMLInputElement).checked) delete a.count; else a.count = false; }
-      else if (a.t === "hole" && k === "hbelow") { if (val.trim()) a.below = val; else delete a.below; }
+      }
       else if (a.t === "note" && k === "nprop") { if (val) a.text += `$PRP:"${val}"`; }
       else if (a.t === "sk") {
         const v = num(val);
@@ -2466,17 +2492,6 @@ export class DrawingWorkspace {
         else if (k === "cbeads") { if ((el as HTMLInputElement).checked) delete a.beads; else a.beads = false; }
         else if (k === "cmass") { if ((el as HTMLInputElement).checked) a.mass = true; else delete a.mass; }
       }
-      else if (a.t === "gtol" && k.startsWith("g:")) {
-        const [, si, f] = k.split(":"), r = a.rows[+si];
-        if (!r) return;
-        if (f === "sym") r.sym = val as GSym;
-        else if (f === "tol") r.tol = val.trim().replace(",", ".") || "0";
-        else if (f === "dia") { if ((el as HTMLInputElement).checked) r.dia = true; else delete r.dia; }
-        else if (f === "comp") { if ((el as HTMLInputElement).checked) { r.composite = true; r.sym = a.rows[+si - 1]?.sym ?? r.sym; } else delete r.composite; }
-        else if (f === "mod") { if (val === "M" || val === "L") r.mod = val; else delete r.mod; }
-        else if (f[0] === "d") { const d = [0, 1, 2].map(j => r.datums[j] ?? ""); d[+f[1]] = val.trim().toUpperCase(); while (d.length && !d[d.length - 1]) d.pop(); r.datums = d; }
-      } else if (a.t === "gtol" && (k === "gabove" || k === "gbelow")) { const key = k === "gabove" ? "above" : "below"; if (val.trim()) a[key] = val.trim(); else delete a[key]; }
-      else if (a.t === "gtol" && k === "gall") { if ((el as HTMLInputElement).checked) a.around = true; else delete a.around; }
       else if (a.t === "datum" && k === "dl" && val.trim()) a.letter = val.trim().toUpperCase();
       else if (a.t === "datum" && (k === "dopen" || k === "dbent")) { const key = k === "dopen" ? "open" : "bent"; if ((el as HTMLInputElement).checked) a[key] = true; else delete a[key]; }
       else if (a.t === "balloon" && k === "bshape") { if (val === "split" || val === "tri" || val === "hex" || val === "box" || val === "none") a.shape = val; else delete a.shape; }
@@ -3392,11 +3407,6 @@ export class DrawingWorkspace {
       if (an === "items") this.insertItems(); else if (an === "rev") this.insertTable("rev"); else if (an === "table") this.insertTable("general"); else if (an === "bom") this.insertBom(); else if (an === "auto") void this.autoBalloon(); else if (an === "chain" || an === "base" || an === "ord") this.startAnnot("dimset", an); else this.startAnnot(an as AnnotMode["kind"]);
       return;
     }
-    if (b.dataset.grow) {
-      const g = b.dataset.grow;
-      this.setAnnot(g === "+" ? "Add row" : "Remove row", a => { if (a.t !== "gtol") return; if (g === "+") a.rows.push({ sym: "flat", tol: "0.05", datums: [] }); else a.rows.splice(-+g, 1); });
-      return;
-    }
     if (b.dataset.unstack !== undefined) {
       const i = +b.dataset.unstack;
       this.setAnnot("Stacked balloon", a => { if (a.t !== "balloon" || !a.stack) return; a.stack.splice(i, 1); if (!a.stack.length) delete a.stack; });
@@ -3446,6 +3456,7 @@ export class DrawingWorkspace {
       case "unbroken": this.setView("Remove broken-out section", v => { delete v.broken; }); break;
       case "unalign": this.setView("Break alignment", v => { v.free = true; }); break;
       case "tbedit": void this.editFormat(); break;
+      case "aedit": this.editAnnotDlg(this.selA); break;
       case "align": this.realign(); break;
       case "dim": this.startAnnot("dim"); break;
       case "adel": this.deleteAnnot(); break;

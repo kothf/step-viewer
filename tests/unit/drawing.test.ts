@@ -363,6 +363,27 @@ test("GD&T, datums, surface finish, tables, GOST title block, dangling annotatio
     assert.equal(st.prims.filter(p => p.t === "l").length, 1);
   }
   {
+    // Modifying symbols in the frame's text (1.561.0): circled letters are drawn (a circle and the letter), the older Ø flag
+    // and modifier read the same as the text form, a second tolerance adds a cell, "between" goes under the frame.
+    const { richRuns, rowText, circled } = await import("../../src/drawing/gdt");
+    assert.deepEqual(richRuns("Ø0.1Ⓜ"), [{ k: "t", s: "Ø0.1" }, { k: "c", l: "M" }]);
+    assert.equal(circled("L"), "Ⓛ");
+    assert.deepEqual(rowText({ sym: "pos", tol: "0.1", dia: true, mod: "M", datums: ["A"] }), { sym: "pos", tol: "Ø0.1Ⓜ", datums: ["A"] });
+    const G = (rows: Parameters<typeof gtolPrims>[0]["rows"], more = {}) => gtolPrims({ id: "g", t: "gtol", pos: [0, 0], rows, ...more }, [0, 0], null, ".");
+    const oldF = G([{ sym: "pos", tol: "0.1", dia: true, mod: "M", datums: ["A"] }]), newF = G([{ sym: "pos", tol: "Ø0.1Ⓜ", datums: ["A"] }]);
+    assert.deepEqual(oldF, newF);
+    const txt = (g: ReturnType<typeof G>) => (g.prims.filter(p => p.t === "t") as { s: string }[]).map(p => p.s);
+    assert.deepEqual(txt(newF), ["Ø0.1", "M", "A"]);
+    assert.equal(newF.prims.filter(p => p.t === "a").length, 2);
+    const two = G([{ sym: "pos", tol: "0.1", tol2: "0.2Ⓟ", datums: ["AⓁ", "⬡"] }]);
+    assert.ok(two.box[2] > G([{ sym: "pos", tol: "0.1", datums: ["A"] }]).box[2]);
+    assert.deepEqual(txt(two), ["0.1", "0.2", "P", "A", "L", "ST"]);
+    const btw = G([{ sym: "psurf", tol: "0.1", datums: [] }], { between: ["C", "D"], below: "X" });
+    const bt = btw.prims.filter(p => p.t === "t") as { s: string; y: number }[];
+    assert.ok(bt.find(p => p.s === "C")!.y < -7 && bt.find(p => p.s === "X")!.y < bt.find(p => p.s === "C")!.y && btw.box[1] < bt.find(p => p.s === "X")!.y);
+    assert.equal(btw.prims.filter(p => p.t === "p" && (p as { fill?: boolean }).fill).length, 2);
+  }
+  {
     // Text above and below a tolerance frame: left-aligned with it, and inside the hit box.
     const row = { sym: "pos" as const, tol: "0.1", datums: ["A"] };
     const g0 = gtolPrims({ id: "g", t: "gtol", pos: [0, 0], rows: [row] }, [10, 20], null, ".");

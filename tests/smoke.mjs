@@ -142,6 +142,18 @@ async function drwTool(pg, k) {
   await pg.click(`#drw .drw-cmds [data-an="${k}"]`);
 }
 
+/** Presses OK in the dialog a just placed geometric tolerance or hole callout opens. */
+async function annotDlgOk(pg) {
+  await pg.waitForSelector("#drw-gtol-dlg[open], #drw-hole-dlg[open]", { timeout: 10000 });
+  await pg.click("dialog.ad-dlg[open] button[value=ok]");
+  await annotDlgGone(pg);
+}
+/** Waits until an annotation dialog has closed and its result is in the drawing (the close event comes a task later). */
+async function annotDlgGone(pg) {
+  await pg.waitForFunction(() => !document.querySelector("dialog.ad-dlg[open]"));
+  await pg.waitForTimeout(120);
+}
+
 /** A command of the vault panel's ⋯ menu (FR-PDM-080). */
 async function vaultMore(pg, key) {
   await pg.click('#vault-panel [data-a="more"]');
@@ -6208,23 +6220,36 @@ try {
     await dp.mouse.move(x, y); await dp.mouse.click(x, y);
     [x, y] = await at(top.id, 40, -45);
     await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    await annotDlgOk(dp);
     // Hole callout options (FR-DRW-022): a line under the automatic text, and the number of holes left out.
     {
       await dp.waitForTimeout(150);
       let r = null;
-      if (await dp.$('#drw .drw-props [data-d="hbelow"]')) {
-        await dp.fill('#drw .drw-props [data-d="hbelow"]', "EQ SP");
-        await dp.dispatchEvent('#drw .drw-props [data-d="hbelow"]', "change");
-        const t1 = await texts();
-        await dp.uncheck('#drw .drw-props [data-d="hcount"]');
-        const h1 = (await annots()).find(a => a.t === "hole");
-        await dp.check('#drw .drw-props [data-d="hcount"]');
-        await dp.fill('#drw .drw-props [data-d="hbelow"]', "");
-        await dp.dispatchEvent('#drw .drw-props [data-d="hbelow"]', "change");
+      // The dialog (also on a double-click of the callout): a line below, the count off, a symbol button into your own text.
+      if (await dp.$('#drw .drw-props [data-a="aedit"]')) {
+        const dlg = "#drw-hole-dlg[open]";
+        await dp.click('#drw .drw-props [data-a="aedit"]'); await dp.waitForSelector(dlg);
+        const syms = await dp.evaluate(() => [...document.querySelectorAll("#drw-hole-dlg .ad-syms [data-ins]")].map(b => b.dataset.ins.trim()).join(""));
+        await dp.fill(`${dlg} [data-h="below"]`, "EQ SP");
+        await dp.uncheck(`${dlg} [data-h="count"]`);
+        const pv = await dp.evaluate(() => [...document.querySelectorAll("#drw-hole-dlg .ad-pv text")].map(e => e.textContent).join("|"));
+        await dp.click(`${dlg} button[value=ok]`); await annotDlgGone(dp);
+        const t1 = await texts(), h1 = (await annots()).find(a => a.t === "hole");
+        // A symbol pressed on the hole's own text makes it yours; Cancel leaves the callout alone.
+        await dp.click('#drw .drw-props [data-a="aedit"]'); await dp.waitForSelector(dlg);
+        await dp.click(`${dlg} [data-h="txt"]`); await dp.click(`${dlg} .ad-syms [data-ins="⌴"]`);
+        if (process.env.SMOKE_SHOTS) await dp.screenshot({ path: `${process.env.SMOKE_SHOTS}/drawing-hole-dialog.png` });
+        const own = await dp.evaluate(() => { const d = document.querySelector("#drw-hole-dlg"); return { auto: d.querySelector("[data-h=auto]").checked, txt: d.querySelector("[data-h=txt]").value, ro: d.querySelector("[data-h=txt]").readOnly }; });
+        await dp.click(`${dlg} [data-cancel]`); await annotDlgGone(dp);
+        const hc = (await annots()).find(a => a.t === "hole");
+        await dp.click('#drw .drw-props [data-a="aedit"]'); await dp.waitForSelector(dlg);
+        await dp.check(`${dlg} [data-h="count"]`); await dp.fill(`${dlg} [data-h="below"]`, "");
+        await dp.click(`${dlg} button[value=ok]`); await annotDlgGone(dp);
         const t2 = await texts(), h2 = (await annots()).find(a => a.t === "hole");
-        r = { below: t1.includes("EQ SP") && t1.includes("Ø16 THRU"), stored: h1?.below === "EQ SP" && h1?.count === false, back: !t2.includes("EQ SP") && h2 && h2.below == null && h2.count == null };
+        r = { below: t1.includes("EQ SP") && t1.includes("Ø16 THRU") && pv.includes("EQ SP"), stored: h1?.below === "EQ SP" && h1?.count === false, back: !t2.includes("EQ SP") && h2 && h2.below == null && h2.count == null,
+          syms: syms.startsWith("Ø⌴⌵↧"), own: !own.auto && !own.ro && own.txt.includes("⌴") && own.txt.includes("Ø16"), cancel: hc?.txt == null && hc?.below === "EQ SP" };
       }
-      check(r && r.below && r.stored && r.back, `drawing: a hole callout takes a line below and leaves the number of holes out (${JSON.stringify(r)})`);
+      check(r && r.below && r.stored && r.back && r.syms && r.own && r.cancel, `drawing: the hole callout dialog takes a line below, leaves the number of holes out, has symbol buttons and cancels (${JSON.stringify(r)})`);
     }
     await drwTool(dp, "note");
     [x, y] = await dp.evaluate(() => window.__sv.drw.sheetPt(40, 60));
@@ -6406,8 +6431,8 @@ try {
     // on the hole's hidden line, surface finish on the top face, a note to the right outline.
     await tool("datum"); await click(u0, vm); await click(u0 - 20, vm);
     await tool("datum"); await click((u0 + u1) / 2 - 20, v1); await click((u0 + u1) / 2 - 20, v1 + 15);
-    if (hu != null) { await tool("hole"); await click(hu, vm); await click(hu + 30, v1 + 25); }
-    if (hu != null) { await tool("gtol"); await click(hu, vm); await click(hu + 20, v0 - 20); }
+    if (hu != null) { await tool("hole"); await click(hu, vm); await click(hu + 30, v1 + 25); await annotDlgOk(dp); }
+    if (hu != null) { await tool("gtol"); await click(hu, vm); await click(hu + 20, v0 - 20); await annotDlgOk(dp); }
     await tool("surf"); await click((u0 + u1) / 2 + 20, v1); await click((u0 + u1) / 2 + 20, v1 + 10);
     await tool("note"); await click(u1, vm); await click(u1 + 25, vm + 15);
     await dp.keyboard.press("Escape");
@@ -6482,7 +6507,7 @@ try {
       // The hole has its centre mark already, before any annotation.
       got.mark = await dp.evaluate(([cx, cy]) => window.__sv.drw.prims().some(q => q.t === "l" && q.layer === "CENTER" && Math.abs((q.p[0] + q.p[2]) / 2 - cx) < 0.01 && Math.abs((q.p[1] + q.p[3]) / 2 - cy) < 0.01 && Math.hypot(q.p[2] - q.p[0], q.p[3] - q.p[1]) < 30), c);
       await drwCmd(dp, "dim"); await clickS(c[0] + r * k, c[1] + r * k); await clickS(c[0] + 25, c[1] + 25); await dp.keyboard.press("Escape");
-      await drwTool(dp, "hole"); await clickS(c[0] - r * k, c[1] + r * k); await clickS(c[0] - 30, c[1] + 30); await dp.keyboard.press("Escape");
+      await drwTool(dp, "hole"); await clickS(c[0] - r * k, c[1] + r * k); await clickS(c[0] - 30, c[1] + 30); await annotDlgOk(dp);
       await drwTool(dp, "datum"); await clickS(c[0] + r * k, c[1] - r * k); await clickS(c[0] + 20, c[1] - 20); await dp.keyboard.press("Escape");
       // A distance from the hole's centre to the shaft's end: the centre is a point to pick.
       const l = found.side.l, mx = (l[0] + l[2]) / 2, my = (l[1] + l[3]) / 2, horiz = Math.abs(l[3] - l[1]) < 1e-6;
@@ -6535,6 +6560,14 @@ try {
     await click(front.id, -30, 20);
     const [gx, gy] = await at(front.id, -40, 45);
     await dp.mouse.move(gx, gy); await dp.mouse.click(gx, gy);
+    // The dialog opens on its symbol palette: Cancel adds nothing, OK adds the frame.
+    await dp.waitForSelector("#drw-gtol-dlg[open] .gt-pal");
+    const gnew = await dp.evaluate(() => ({ pal: document.querySelectorAll("#drw-gtol-dlg .gt-pal [data-pick] svg").length, mods: document.querySelectorAll("#drw-gtol-dlg .ad-syms [data-ins]").length, pv: !!document.querySelector("#drw-gtol-dlg .ad-pv") }));
+    await dp.click("#drw-gtol-dlg [data-cancel]"); await annotDlgGone(dp);
+    const gnone = (await annots()).filter(a => a.t === "gtol").length;
+    await tool("gtol"); await click(front.id, -30, 20); await dp.mouse.move(gx, gy); await dp.mouse.click(gx, gy);
+    await annotDlgOk(dp);
+    check(gnew.pal === 14 && gnew.mods >= 12 && gnew.pv && gnone === 0 && (await annots()).filter(a => a.t === "gtol").length === 1, `drawing: a placed tolerance opens its dialog with symbol icons; Cancel adds nothing (${JSON.stringify(gnew)}, ${gnone})`);
     // Datum A on the bottom edge, the letter below; a datum on the hole's circle in the top view.
     await tool("datum");
     await click(front.id, -20, 0);
@@ -6564,19 +6597,29 @@ try {
       `drawing: surface finish with a second requirement, lay, allowance and all around (${JSON.stringify(sf2)}; ${tx.join(" ")})`);
     // The frame's properties: a Ø zone, (M) and a second row.
     await dp.mouse.move(gx + 8, gy + 4); await dp.mouse.click(gx + 8, gy + 4);
-    const gsel = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-grow="+"]'));
+    // A double-click opens the dialog: symbol from the palette, Ø and (M) as buttons at the cursor, a second frame, a second tolerance, between.
+    await dp.mouse.dblclick(gx + 8, gy + 4);
+    const gsel = !!(await dp.waitForSelector("#drw-gtol-dlg[open]", { timeout: 5000 }).catch(() => null));
     if (gsel) {
-      await dp.selectOption('#drw [data-d="g:0:sym"]', "pos");
-      await dp.check('#drw [data-d="g:0:dia"]');
-      await dp.selectOption('#drw [data-d="g:0:mod"]', "M");
-      await dp.click('#drw [data-grow="+"]');
-      await dp.fill('#drw [data-d="gabove"]', "2×"); await dp.dispatchEvent('#drw [data-d="gabove"]', "change");
-      await dp.fill('#drw [data-d="gbelow"]', "SEP REQT"); await dp.dispatchEvent('#drw [data-d="gbelow"]', "change");
+      const G = "#drw-gtol-dlg";
+      await dp.click(`${G} [data-sym="0"]`); await dp.click(`${G} .gt-pal [data-pick="pos"]`);
+      await dp.focus(`${G} [data-g="0:tol"]`); await dp.keyboard.press("Home"); await dp.click(`${G} [data-ins="Ø"]`);
+      await dp.keyboard.press("End"); await dp.click(`${G} [data-ins="Ⓜ"]`);
+      await dp.fill(`${G} [data-g="0:tol2"]`, "0.2"); await dp.fill(`${G} [data-g="0:d0"]`, "a"); await dp.click(`${G} [data-ins="Ⓛ"]`);
+      await dp.click(`${G} [data-add]`); await dp.keyboard.type("0.01");
+      await dp.fill(`${G} [data-o="above"]`, "2×"); await dp.fill(`${G} [data-o="below"]`, "SEP REQT");
+      await dp.fill(`${G} [data-o="b0"]`, "c"); await dp.fill(`${G} [data-o="b1"]`, "d");
+      await dp.click(`${G} [data-sym="1"]`);
+      if (process.env.SMOKE_SHOTS) await dp.screenshot({ path: `${process.env.SMOKE_SHOTS}/drawing-gtol-dialog.png` });
+      await dp.keyboard.press("Escape"); await dp.focus(`${G} [data-g="1:tol"]`);
+      await dp.keyboard.press("Enter");
+      await annotDlgGone(dp);
     }
     an = await annots(); tx = await texts();
     const g2 = an.find(a => a.t === "gtol");
     check(gsel && g2.above === "2×" && g2.below === "SEP REQT" && tx.includes("2×") && tx.includes("SEP REQT"), `drawing: text above and below the tolerance frame (${g2?.above} / ${g2?.below}; ${tx.join(" ")})`);
-    check(gsel && g2.rows.length === 2 && g2.rows[0].sym === "pos" && g2.rows[0].dia && tx.includes("Ø0.05") && tx.includes("M"), `drawing: tolerance frame edited: position, Ø, (M), second row (${JSON.stringify(g2?.rows)})`);
+    check(gsel && g2.rows.length === 2 && g2.rows[0].sym === "pos" && g2.rows[0].tol === "Ø0.05Ⓜ" && g2.rows[0].tol2 === "0.2" && g2.rows[0].datums[0] === "AⓁ" && g2.rows[1].sym === "pos" && g2.rows[1].tol === "0.01" && g2.between?.join("") === "CD"
+      && tx.includes("Ø0.05") && tx.includes("M") && tx.includes("L") && tx.includes("0.2") && tx.includes("C") && tx.includes("D") && !!(await dp.$("#drw .drw-props .ad-pv")), `drawing: tolerance frame edited in its dialog: position, Ø, (M), second tolerance, datum (L), second frame, between, Enter = OK (${JSON.stringify(g2)})`);
     // Datum feature options: open triangle and bent leader (datum B in the top view).
     {
       const [bx, by] = await at(top.id, 35, 20);
