@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.562.0] - 2026-11-12
+
+### Added
+
+- **A geometric tolerance can be attached to a dimension.** With the Geometric tolerance tool, click a dimension's text: the frame is placed centred under the text (and under any earlier frame on that dimension) with no leader, and from then on it moves with the dimension, whether you drag the dimension or the frame. An existing free frame attaches when you drag it onto a dimension's text. Its panel says it is attached and has **Detach from the dimension**, which leaves the frame where it is as a free one. Deleting the dimension deletes its frames. Attached frames are drawn the same in PDF, PNG, DXF and SVG.
+
 ## [1.561.0] - 2026-11-12
 
 ### Changed
@@ -3508,7 +3514,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.561.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.562.0...HEAD
+[1.562.0]: https://github.com/kothf/step-viewer/compare/v1.561.0...v1.562.0
 [1.561.0]: https://github.com/kothf/step-viewer/compare/v1.560.0...v1.561.0
 [1.560.0]: https://github.com/kothf/step-viewer/compare/v1.559.0...v1.560.0
 [1.559.0]: https://github.com/kothf/step-viewer/compare/v1.558.0...v1.559.0

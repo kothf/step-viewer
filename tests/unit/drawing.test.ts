@@ -281,6 +281,22 @@ test("annotations: topology names, centre marks, dimensions, hole callout, model
   assert.equal(dimGeo(dim, front.P, topo2)!.value, 120);
   const ctx = { topo, holes: [], items: [], box: [[-50, -30, 0], [50, 30, 20]] as [V3, V3], dec: ".", label: (s: string) => s };
   assert.deepEqual(holeText(circles[0], ctx), ["Ø10 THRU"]);
+  {
+    // A tolerance frame attached to a dimension (1.562.0) sits centred under its text and moves with it; without the dimension it is a free frame at `pos`.
+    const { viewAnnots } = await import("../../src/drawing/annot");
+    const gt = { id: "g", t: "gtol" as const, view: "front", pos: [0, 0] as [number, number], dim: "x", rows: [{ sym: "par" as const, tol: "0.05", datums: ["A"] }] };
+    const run = (annots: unknown[]) => viewAnnots({ id: "s", name: "S", size: "A3", scale: [1, 1], projection: "first", format: "iso", views: [view("front")], annots } as never, view("front") as never, pl, ctx as never).hits;
+    const box = (h: ReturnType<typeof run>, id: string) => h.find(x => x.id === id)!.box;
+    const h0 = run([gt, dim]), d0 = box(h0, "x"), g0 = box(h0, "g");
+    assert.ok(Math.abs((d0[0] + d0[2]) / 2 - (g0[0] + g0[2]) / 2) < 1e-6 && d0[1] - g0[3] > 0.5 && d0[1] - g0[3] < 3, `under the text: ${d0} ${g0}`);
+    const h1 = run([{ ...dim, pos: [12, -25] }, gt]), d1 = box(h1, "x"), g1 = box(h1, "g");
+    assert.ok(Math.abs((g1[0] - g0[0]) - (d1[0] - d0[0])) < 1e-6 && Math.abs((g1[1] - g0[1]) - (d1[1] - d0[1])) < 1e-6 && Math.abs(d1[1] - d0[1] + 15) < 1e-6);
+    // A second frame on the same dimension stacks under the first.
+    const g2 = box(run([dim, gt, { ...gt, id: "g2" }]), "g2");
+    assert.ok(g2[3] < g0[1] && g0[1] - g2[3] < 3);
+    const free = box(run([gt]), "g");
+    assert.ok(Math.abs(free[0]) < 1e-6 && Math.abs(free[3]) < 1e-6, `free at pos: ${free}`);
+  }
   // Model items: the sketch's 100 and 60 go to the top view, the depth 20 to the front view, the Ø10 to the top view; no duplicates the second time.
   const { items } = modelItems(d, r.frames, r.sketches);
   assert.deepEqual(items.map(i => `${i.src}=${i.value}`).sort(), ["f1:depth=20", "s1:d1=100", "s1:d2=60", "s2:d3=10"]);
