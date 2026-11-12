@@ -6657,6 +6657,49 @@ try {
     const fmt = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "FORMAT").map(p => p.s));
     check(hasFmt && fmt.includes("Developed") && fmt.includes("N. control") && fmt.includes("Lit."), `drawing: GOST 2.104 title block (${fmt.slice(0, 8).join(" | ")})`);
     // PNG at 300 dpi: A3 is 4961 × 3508 px with a pHYs chunk of 11811 px/m.
+    // A tolerance frame attached to a dimension: placed by a click on the dimension's text, it sits centred under it,
+    // follows a drag of the dimension (or of itself), detaches from its panel, re-attaches when dropped on the text,
+    // and goes with the dimension when that is deleted.
+    {
+      const hit = id => dp.evaluate(i => window.__sv.drw.hit(i), id);
+      const mid = async id => { const b = await hit(id); return dp.evaluate(([x, y]) => window.__sv.drw.sheetPt(x, y), [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2]); };
+      const dragBy = async (id, dx, dy) => { const [x, y] = await mid(id); await dp.mouse.move(x, y); await dp.mouse.down(); await dp.mouse.move(x + dx / 2, y + dy / 2); await dp.mouse.move(x + dx, y + dy); await dp.mouse.up(); await dp.waitForTimeout(150); };
+      await drwCmd(dp, "dim"); await click(front.id, 30, 20); await click(front.id, 30, 36); await dp.keyboard.press("Escape");
+      const dm = (await annots()).filter(a => a.t === "dim").at(-1);
+      await tool("gtol");
+      { const [x, y] = await mid(dm.id); await dp.mouse.move(x + 1, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); }
+      await annotDlgOk(dp);
+      const ga = (await annots()).find(a => a.t === "gtol" && a.dim === dm.id);
+      const under = async () => { const d = await hit(dm.id), g = await hit(ga.id); return d && g ? { dx: +((d[0] + d[2]) / 2 - (g[0] + g[2]) / 2).toFixed(2), gap: +(d[1] - g[3]).toFixed(2), y: +d[1].toFixed(1) } : null; };
+      const u0 = ga && await under();
+      await dragBy(dm.id, 30, -25);
+      const u1 = ga && await under();
+      if (ga) await dragBy(ga.id, -20, -10);
+      const u2 = ga && await under(), pos2 = (await annots()).find(a => a.id === dm.id).pos;
+      const okU = u => u && Math.abs(u.dx) < 0.6 && u.gap > 0.5 && u.gap < 3;
+      check(!!ga && ga.view === front.id && !ga.leader && okU(u0) && okU(u1) && okU(u2) && u1.y > u0.y + 2 && u2.y > u1.y + 1 && pos2[0] !== dm.pos[0],
+        `drawing: a tolerance frame attached to a dimension sits under its text and moves with it (${JSON.stringify({ ga: !!ga, u0, u1, u2 })})`);
+      if (ga) {
+        // (A pause, so the click is not the second half of a double-click after the drag.)
+        await dp.waitForTimeout(600);
+        { const [x, y] = await mid(ga.id); await dp.mouse.click(x, y); }
+        await dp.click('#drw .drw-props [data-a="gdetach"]');
+        const free = (await annots()).find(a => a.id === ga.id), u3 = await under();
+        await dragBy(ga.id, 60, -40);
+        const far = await under();
+        // Dropped back on the dimension's text it attaches again.
+        const [gx2, gy2] = await mid(ga.id), [dx2, dy2] = await mid(dm.id);
+        await dp.mouse.move(gx2, gy2); await dp.mouse.down(); await dp.mouse.move((gx2 + dx2) / 2, (gy2 + dy2) / 2); await dp.mouse.move(dx2, dy2); await dp.mouse.up(); await dp.waitForTimeout(150);
+        const again = (await annots()).find(a => a.id === ga.id), u4 = await under();
+        // Deleting the dimension takes the frame along.
+        await dp.waitForTimeout(600);
+        { const [x, y] = await mid(dm.id); await dp.mouse.click(x, y); }
+        await dp.click('#drw .drw-props [data-a="adel"]');
+        const left = (await annots()).filter(a => a.id === dm.id || a.id === ga.id).length;
+        check(!free.dim && okU(u3) && !okU(far) && again.dim === dm.id && okU(u4) && left === 0,
+          `drawing: the frame detaches where it is, attaches again when dropped on the dimension, and is deleted with it (${JSON.stringify({ free: free.dim, u3, far, again: again.dim, u4, left })})`);
+      }
+    }
     const [png] = await Promise.all([dp.waitForEvent("download", { timeout: 60000 }), (async () => { await dp.click('#drw [data-a="export"]'); await dp.click('#drw [data-x="png"]'); })()]);
     const pb = await readFile(await png.path());
     const pw = pb.readUInt32BE(16), ph = pb.readUInt32BE(20), phys = pb.indexOf("pHYs"), ppm = phys > 0 ? pb.readUInt32BE(phys + 4) : 0;
