@@ -1,14 +1,35 @@
-import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { defineConfig } from "vite";
 import credits from "./scripts/credits-plugin.mjs";
 import sw from "./scripts/sw-plugin.mjs";
 
 const { version } = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
 
+/**
+ * A hash of everything that can change what the kernels build: the sources and the locked package versions
+ * (OpenCASCADE among them). The disk cache of built parts and views (src/buildCache.ts) is keyed by it, so a
+ * new build never shows geometry an older one made, even without a version bump.
+ */
+function buildId(): string {
+  const h = createHash("sha256");
+  const walk = (dir: string) => {
+    for (const n of readdirSync(dir).sort()) {
+      const p = join(dir, n);
+      if (statSync(p).isDirectory()) walk(p);
+      else { h.update(p); h.update(readFileSync(p)); }
+    }
+  };
+  walk("src");
+  h.update(readFileSync("package-lock.json"));
+  return h.digest("hex").slice(0, 16);
+}
+
 // Relative base so the build works from any sub-path (e.g. aerocat.tech/tools/step-viewer/).
 export default defineConfig({
   base: "./",
-  define: { __APP_VERSION__: JSON.stringify(version) },
+  define: { __APP_VERSION__: JSON.stringify(version), __BUILD_ID__: JSON.stringify(buildId()) },
   worker: { format: "es" },
   // credits.json + THIRD-PARTY-LICENSES.txt for the About page; occt-import-js is loaded from occt/ at runtime
   plugins: [sw({ version }), credits({

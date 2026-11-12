@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.559.0] - 2026-11-12
+
+### Changed
+
+- **Documents opened again open much faster: built parts and drawing views are kept on disk.** A part's model, each part of an assembly and a drawing's model and exact views are stored in the browser (IndexedDB, at most about 400 MB; the least recently used go first) the first time they are built, and read back the next time the same document is opened, in this page or after a restart of the browser, instead of being built again. Timed in Chrome on the 37-part model steam engine: the flywheel part 2.1 s → 0.26 s, the nameplate 4.2 s → 0.27 s, the whole assembly 11.2 s → 3.1 s, and its new drawing with Standard 3 views 29.7 s → 6.4 s.
+- A stored result is used only for exactly the same document (every feature and value), the same file bytes and the same build of the app, so a changed part, a new release or a new geometry kernel never shows an old shape. The kernel still builds the part in the background, so edits, picks and exports right after opening work as before, and if its own build ever differed from the stored one, the stored one is dropped and the part is shown again from the kernel. Rebuild all (Ctrl+Q) always builds every feature. `?nocache` in the address turns the disk cache off.
+
 ## [1.558.0] - 2026-11-12
 
 ### Changed
@@ -3484,7 +3491,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.558.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.559.0...HEAD
+[1.559.0]: https://github.com/kothf/step-viewer/compare/v1.558.0...v1.559.0
 [1.558.0]: https://github.com/kothf/step-viewer/compare/v1.557.0...v1.558.0
 [1.557.0]: https://github.com/kothf/step-viewer/compare/v1.556.0...v1.557.0
 [1.556.0]: https://github.com/kothf/step-viewer/compare/v1.555.0...v1.556.0

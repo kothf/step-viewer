@@ -14991,6 +14991,96 @@ try {
     check(!early && bar > 0, `touch 1.394: a finger held on a face shows the context toolbar (${JSON.stringify({ early, bar })})`);
     await ctx.close();
   }
+
+  // --- Disk cache of built geometry (1.559.0): a part and its drawing opened again in a new page come from IndexedDB, no rebuild ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    const part = { schema: 1, kind: "part", id: "d_cacheblock", name: "Cached", units: { length: "mm", decimals: 2 }, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", -40, -25), P("p2", 40, -25), P("p3", 40, 25), P("p4", -40, 25),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 15 } },
+      { id: "s2", type: "sketch", name: "Sketch2", plane: { face: { name: "f1:end" } }, rels: [], dims: [], ents: [P("c0", 12, 0), { id: "c1", t: "circle", c: "c0", r: 6 }] },
+      { id: "f2", type: "extrude", name: "Cut1", sketch: "s2", op: "cut", end: "through", depth: { v: 0 } },
+    ] };
+    const file = { name: "Cached.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify({ format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-12T00:00:00Z", units: "mm" }), "document.json": JSON.stringify(part) })) };
+    const openPage = async (q = "") => {
+      const pg = await ctx.newPage();
+      pg.on("pageerror", e => errors.push(e.message));
+      pg.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+      await pg.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+      await pg.goto(`${origin}/index.html?debug${q}`);
+      await pg.waitForFunction(() => window.__sv);
+      await pg.setInputFiles("#file-input", file);
+      await pg.waitForFunction(() => window.__sv.viewer.parts.length > 0 && window.__sv.model.last()?.data, null, { timeout: 60000 });
+      return pg;
+    };
+    const shape = pg => pg.evaluate(() => { const r = window.__sv.model.last(); return `${r.faceNames.length} faces ${r.data.volume.toFixed(3)} mm3 ${r.faceNames.join(",")}`; });
+    const p1 = await openPage();
+    const first = await shape(p1);
+    // The result is written once editing pauses (1.5 s).
+    await p1.waitForFunction(() => window.__sv.buildCache.stats.puts >= 1, null, { timeout: 20000 });
+    await newDrawing3(p1);
+    const ready = pg => pg.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
+    await p1.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
+    await ready(p1);
+    // The load and the three views are stored (the load first).
+    await p1.waitForFunction(() => window.__sv.buildCache.stats.puts >= 5, null, { timeout: 20000 });
+    const lines1 = await p1.evaluate(() => window.__sv.drw.prims().filter(x => x.layer === "VISIBLE" || x.layer === "HIDDEN").length);
+    const hits1 = await p1.evaluate(() => ({ part: window.__sv.model.kernel.cacheHits, drw: window.__sv.drw.helper().diskHits }));
+    await p1.close();
+    const p2 = await openPage();
+    const again = await shape(p2);
+    const hit = await p2.evaluate(() => window.__sv.model.kernel.cacheHits);
+    // The kernel still builds the part behind the cached result, so an edit right after works as before.
+    await p2.evaluate(() => window.__sv.modeller.store.change("Deeper", d => { d.features[1].depth = { v: 25 }; }));
+    await p2.waitForFunction(() => window.__sv.model.last()?.data && Math.abs(window.__sv.model.last().data.bboxMax[2] - window.__sv.model.last().data.bboxMin[2] - 25) < 1e-6, null, { timeout: 60000 });
+    const edited = await p2.evaluate(() => ({ hits: window.__sv.model.kernel.cacheHits, h: +(window.__sv.model.last().data.bboxMax[2] - window.__sv.model.last().data.bboxMin[2]).toFixed(3) }));
+    await p2.evaluate(() => window.__sv.modeller.undo());
+    await p2.waitForFunction(() => window.__sv.model.last()?.data && Math.abs(window.__sv.model.last().data.bboxMax[2] - window.__sv.model.last().data.bboxMin[2] - 15) < 1e-6, null, { timeout: 60000 });
+    check(hits1.part === 0 && hit === 1 && again === first && edited.hits === 1 && edited.h === 25,
+      `cache 1.559: a part opened again in a new page is shown from the disk cache, identical, and edits still rebuild (${JSON.stringify({ hits1, hit, same: again === first, edited })})`);
+    await newDrawing3(p2);
+    await p2.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
+    await ready(p2);
+    const st2 = await p2.evaluate(() => ({ ...window.__sv.drw.helper(), lines: window.__sv.drw.prims().filter(x => x.layer === "VISIBLE" || x.layer === "HIDDEN").length }));
+    check(st2.diskHits >= 4 && st2.lines === lines1, `cache 1.559: its drawing loads the model and the three exact views from the disk cache (${JSON.stringify({ hits: st2.diskHits, lines: [lines1, st2.lines] })})`);
+    await p2.close();
+    // ?nocache: nothing read.
+    const p3 = await openPage("&nocache");
+    const off = await p3.evaluate(() => ({ hits: window.__sv.model.kernel.cacheHits, stats: window.__sv.buildCache.stats }));
+    check(off.hits === 0 && off.stats.hits === 0 && off.stats.misses === 0 && await shape(p3) === first, `cache 1.559: ?nocache builds the part in the kernel (${JSON.stringify(off)})`);
+    await p3.close();
+    // An assembly: its parts' bodies and analysed meshes come from the disk cache the second time, the same.
+    const T = (x, y, z) => [1, 0, 0, x, 0, 1, 0, y, 0, 0, 1, z];
+    const plate = (id, w, d, hole) => ({ ...structuredClone(part), id, name: id, features: [
+      { ...structuredClone(part.features[0]), ents: [P("p1", -w / 2, -15), P("p2", w / 2, -15), P("p3", w / 2, 15), P("p4", -w / 2, 15), ...part.features[0].ents.slice(4)] },
+      { ...part.features[1], depth: { v: d } }, ...(hole ? [{ ...structuredClone(part.features[2]), ents: [P("c0", 0, 0), { id: "c1", t: "circle", c: "c0", r: hole }] }, part.features[3]] : [])] });
+    const parts = {}, components = [];
+    for (let k = 0; k < 3; k++) {
+      parts[`p${k}`] = { name: `Part${k}`, file: `Part${k}.mcadprt`, doc: plate(`cpart${k}`, 40 + 10 * k, 5 + k, k % 2 ? 4 : 0) };
+      components.push({ id: `c${k}`, name: `Part${k}<1>`, part: `p${k}`, tf: T(0, 0, 20 * k), fixed: k === 0 });
+    }
+    components.push({ id: "c9", name: "Part1<2>", part: "p1", tf: [0, -1, 0, 100, 1, 0, 0, 0, 0, 0, 1, 0] });
+    const ab = [...zip(Object.entries({ "manifest.json": JSON.stringify({ format: "mobiuscad", schema: 1, kind: "assembly", app: "smoke", modified: "2026-11-12T00:00:00Z", units: "mm" }), "document.json": JSON.stringify({ schema: 1, kind: "assembly", id: "a_cache", name: "Cached asm", units: { length: "mm", decimals: 2 }, parts, components }) }))];
+    const asm = async () => {
+      const pg = await ctx.newPage();
+      pg.on("pageerror", e => errors.push(e.message));
+      await pg.goto(`${origin}/index.html?debug`);
+      await pg.waitForFunction(() => window.__sv);
+      await pg.evaluate(b => window.__sv.asm.openFile({ name: "Cached.mcadasm", data: new Uint8Array(b).buffer }), ab);
+      await pg.waitForFunction(() => window.__sv.viewer.parts.length === 4 && !window.__sv.asm.building, null, { timeout: 120000 });
+      // Written as each part is built; wait for the writes before the next page reads them.
+      await pg.waitForFunction(() => window.__sv.buildCache.stats.puts >= 3 || window.__sv.asm.kernel.cacheHits >= 3, null, { timeout: 20000 }).catch(() => {});
+      const r = await pg.evaluate(() => ({ hits: window.__sv.asm.kernel.cacheHits, parts: window.__sv.viewer.parts.map(p => [p.data.name, p.data.faces.length, Math.round(p.data.volume * 1000), p.data.faces.map(f => Math.round(f.area * 100)).join(",")]), volume: window.__sv.asm.props?.volume }));
+      await pg.close();
+      return r;
+    };
+    const a1 = await asm(), a2 = await asm();
+    check(a1.hits === 0 && a2.hits === 3 && JSON.stringify(a1.parts) === JSON.stringify(a2.parts) && Math.abs(a1.volume - a2.volume) < 1e-6 * a1.volume,
+      `cache 1.559: an assembly opened again takes its 3 parts from the disk cache, every component the same (${JSON.stringify({ hits: [a1.hits, a2.hits], v: [a1.volume, a2.volume] })})`);
+    await ctx.close();
+  }
 } catch (err) {
   console.error(err);
   failures++;

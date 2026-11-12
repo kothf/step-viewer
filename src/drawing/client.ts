@@ -11,6 +11,7 @@ import type { AsmDoc } from "../asm/types";
 import DrawingWorker from "./drawing.worker?worker";
 import { dirKey, type Align, type Stair } from "./views";
 import { FAST_EDGES } from "../kernel/drawing";
+import { cacheGet, cacheKey, cacheOn, cachePut } from "../buildCache";
 
 /** An assembly's placed component (FR-DRW-030): its edges' face names start with `<id>@`. */
 export interface CompInfo { id: string; part: string; name: string; /** Its part's body materials, when its bodies have their own (FR-MAT-001). */ mats?: string[] }
@@ -98,6 +99,12 @@ interface Job { msg: Record<string, unknown>; resolve: (v: any) => void; reject:
 /** The message a projection fails with when its view went away before it was made (see `DrawingKernel.drop`). */
 export const DROPPED = "The view is gone";
 
+/** The worker message of an exact projection or section (also what keys it in the disk cache). */
+function exactMsg(req: { view: ViewDir; p?: V3; poly?: number[]; stair?: Stair; align?: Align; exclude?: string[]; shade?: boolean; cfg?: string; only?: string[] }): Record<string, unknown> {
+  const { view, cfg, only } = req;
+  return req.p ? { type: "section", view, p: req.p, poly: req.poly, stair: req.stair, align: req.align, exclude: req.exclude, cfg, only } : { type: "project", view, shade: req.shade, cfg, only };
+}
+
 export class DrawingKernel {
   private worker: Worker | null = null;
   private ready: Promise<void> | null = null;
@@ -150,6 +157,15 @@ export class DrawingKernel {
   /** Told when a restart (`recycle`) starts and ends, so the status line can say so. */
   onRestart: (() => void) | null = null;
   get restarting() { return !!this.recycling; }
+  /**
+   * The disk cache key of the loaded model (src/buildCache.ts): the document or the file's bytes, with the flags that
+   * change projections. Its load facts and snapshot, and every exact view, are stored under keys made from it.
+   */
+  private modelKey: Promise<string | null> = Promise.resolve(null);
+  /** The loaded model's facts, stored with its snapshot. */
+  private loadFacts: ModelFacts | null = null;
+  /** Loads and exact views read from the disk cache (for `?debug` and the smoke test). */
+  cacheHits = 0;
 
   constructor(private base: string) {}
 
@@ -162,7 +178,7 @@ export class DrawingKernel {
       this.pending.delete(d.id);
       if (typeof d.heap === "number" && d.heap > HEAP_RECYCLE) this.wantRecycle = true;
       // A meshed snapshot after the first fast view (worker `ModelSnap`); replies come in order, so it is this model's.
-      if (d.ok && d.snap && d.proj && this.src) this.snap = d.snap;
+      if (d.ok && d.snap && d.proj && this.src) { this.snap = d.snap; this.storeLoad(); }
       if (d.ok) p.resolve(d); else p.reject(new Error(d.error));
       if (this.wantRecycle && !this.pending.size) void this.recycle();
     };
@@ -259,15 +275,53 @@ export class DrawingKernel {
     // The helper only for models under FAST_EDGES: a second copy of a big assembly can run the tab out of memory
     // (drawings exam: an engine tab crashed after Standard 3 views); big ones take the fast path anyway.
     const gen = this.gen;
-    this.loaded = this.start().then(() => this.call<ModelFacts & { snap?: ModelSnap; pre?: boolean }>({ type: "load", ...src, snap: src.asm && pre ? pre : undefined })).then(r => {
+    this.loadFacts = null;
+    const mk = this.modelKey = cacheOn() ? cacheKey("drawing", { part: src.part ?? null, asm: src.asm ?? null, file: src.file?.name ?? null }, src.file?.bytes ?? null, [fastFlag() ?? null, angleFlag() ?? null]) : Promise.resolve(null);
+    this.loaded = this.start().then(async () => {
+      // Drawn before: the model's facts and its shape snapshot come from the disk cache, so nothing is built.
+      const key = await mk;
+      const hit = key ? await cacheGet<{ facts: ModelFacts; snap: ModelSnap }>(`${key}|load`) : undefined;
+      if (hit?.snap && hit.facts) {
+        await this.call<void>({ type: "load", ...src, lite: true, snap: hit.snap });
+        if (gen === this.gen) { this.snap = hit.snap; this.loadFacts = hit.facts; this.cacheHits++; }
+        return hit.facts;
+      }
+      const r = await this.call<ModelFacts & { snap?: ModelSnap; pre?: boolean }>({ type: "load", ...src, snap: src.asm && pre ? pre : undefined });
       if (gen === this.gen) this.snap = r.snap ?? null;
       if (r.pre) this.preLoads++;
-      return facts(r);
+      const f = facts(r);
+      if (gen === this.gen) { this.loadFacts = f; this.storeLoad(); }
+      return f;
     }).then(f => {
       if (gen === this.gen) { if (f.topo.edges.length < FAST_EDGES) this.loadHelper(src); else this.stopHelper(); }
       return f;
     });
     return this.loaded;
+  }
+
+  /** Stores the loaded model's facts and snapshot (again when the snapshot gains its mesh). */
+  private storeLoad() {
+    const f = this.loadFacts, snap = this.snap;
+    if (!f || !snap) return;
+    void this.modelKey.then(k => { if (k && this.loadFacts === f) void cachePut(`${k}|load`, { facts: f, snap }); });
+  }
+
+  /** The disk cache key of one exact request on the loaded model. */
+  private async viewKey(msg: Record<string, unknown>): Promise<string | null> {
+    const mk = await this.modelKey;
+    return mk ? cacheKey("view", mk, msg) : null;
+  }
+
+  /** An exact request: from the disk cache when this model's view was made before, else run and stored. */
+  private exactCached(msg: Record<string, unknown>, key: string, low: boolean): Promise<{ proj: Projection }> {
+    const gen = this.gen, dk = this.viewKey(msg);
+    return dk.then(k => (k ? cacheGet<Projection>(k) : undefined)).then(hit => {
+      if (hit) { if (gen === this.gen) this.cacheHits++; return { proj: hit }; }
+      return this.exact<{ proj: Projection }>(msg, key, low).then(r => {
+        if (gen === this.gen) void dk.then(k => cachePut(k, r.proj));
+        return r;
+      });
+    });
   }
 
   /** Starts (or reuses) the helper worker and loads the same model into it, without its facts. */
@@ -299,7 +353,7 @@ export class DrawingKernel {
   }
 
   /** For tests: whether the helper worker is up and has the model, and how many projections it made. */
-  helperState() { return { on: !!this.helper, loaded: !!this.helper?.loaded, helped: this.helped, recycles: this.recycles, preLoads: this.preLoads, snap: this.snap?.bin.length ?? 0, snapMesh: !!this.snap?.mesh }; }
+  helperState() { return { diskHits: this.cacheHits, on: !!this.helper, loaded: !!this.helper?.loaded, helped: this.helped, recycles: this.recycles, preLoads: this.preLoads, snap: this.snap?.bin.length ?? 0, snapMesh: !!this.snap?.mesh }; }
 
   /** An exact projection or section, run by whichever worker is free first. */
   private exact<T>(msg: Record<string, unknown>, key?: string, low = false): Promise<T> {
@@ -403,7 +457,7 @@ export class DrawingKernel {
     if (!p) {
       if (!this.loaded) return Promise.reject(new Error("No model loaded"));
       const gen = this.gen;
-      p = this.loaded.then(() => this.exact<{ proj: Projection }>({ type: "alt", view: req.view, moves: req.moves }, req.key)).then(r => {
+      p = this.loaded.then(() => this.exactCached({ type: "alt", view: req.view, moves: req.moves }, req.key, false)).then(r => {
         if (gen === this.gen) this.cache.set(req.key, r.proj);
         this.inflight.delete(req.key);
         return r.proj;
@@ -418,7 +472,7 @@ export class DrawingKernel {
 
   /** A projection, or a section when `p` is set (cached by `key`). */
   request(req: { view: ViewDir; p?: V3; poly?: number[]; stair?: Stair; align?: Align; exclude?: string[]; shade?: boolean; cfg?: string; only?: string[]; key: string }, low = false): Promise<Projection> {
-    const { view, key } = req;
+    const { key } = req;
     const have = this.cache.get(key);
     if (have) return Promise.resolve(have);
     let p = this.inflight.get(key);
@@ -428,7 +482,7 @@ export class DrawingKernel {
       if (!this.loaded) return Promise.reject(new Error("No model loaded"));
       const gen = this.gen;
       const cfg = req.cfg;
-      p = (cfg ? this.config(cfg) : this.loaded).then(() => this.exact<{ proj: Projection }>(req.p ? { type: "section", view, p: req.p, poly: req.poly, stair: req.stair, align: req.align, exclude: req.exclude, cfg, only: req.only } : { type: "project", view, shade: req.shade, cfg, only: req.only }, key, low)).then(r => {
+      p = (cfg ? this.config(cfg) : this.loaded).then(() => this.exactCached(exactMsg(req), key, low)).then(r => {
         if (gen === this.gen) { this.cache.set(key, r.proj); this.previews.delete(key); this.slowest = Math.max(this.slowest, r.proj.ms); }
         this.inflight.delete(key);
         return r.proj;
@@ -459,9 +513,13 @@ export class DrawingKernel {
         if (gen !== this.gen || this.cache.has(key)) throw err;
         return (cfg ? this.config(cfg) : Promise.resolve()).then(ask);
       }) : Promise.reject(err);
-      p = (cfg ? this.config(cfg) : this.loaded).then(ask).catch(again).then(r => {
-        this.previewsMade++;
-        if (r.proj.cut) this.sectionPreviewsMade++;
+      // The exact view on disk already: no preview is needed.
+      const disk = (cfg ? this.config(cfg) : this.loaded).then(() => this.viewKey(exactMsg(req))).then(k => (k ? cacheGet<Projection>(k) : undefined)).catch(() => undefined);
+      p = disk.then(hit => {
+        if (!hit) return (cfg ? this.config(cfg) : this.loaded!).then(ask).catch(again).then(r => { this.previewsMade++; if (r.proj.cut) this.sectionPreviewsMade++; return r; });
+        if (gen === this.gen) { this.cacheHits++; this.cache.set(key, hit); this.slowest = Math.max(this.slowest, hit.ms); }
+        return { proj: hit };
+      }).then(r => {
         if (gen === this.gen && !this.cache.has(key)) this.previews.set(key, r.proj);
         this.previewing.delete(key);
         return r.proj;

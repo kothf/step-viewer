@@ -556,6 +556,8 @@ export class ModelController {
     this.kernel = new ModelKernel(occtBase);
     document.getElementById("ft-search")?.addEventListener("input", () => this.renderTree());
     this.kernel.onCrash = () => toast(t("The geometry kernel stopped; it was restarted."), "warn");
+    // A result shown from the disk cache that the kernel's own build did not match (it never should): build again.
+    this.kernel.onStale = () => void this.rebuild();
     host.viewer.scene.add(this.decor);
     host.viewer.scene.add(this.hoverGroup, this.ctHoverGroup);
     this.ghostGroup.visible = false;
@@ -873,7 +875,7 @@ export class ModelController {
   /** Rebuild (Ctrl+B), or force a rebuild of every feature with a fresh kernel (Ctrl+Q). */
   forceRebuild(all: boolean) {
     if (!this.store) return;
-    if (all) this.kernel.stop();
+    if (all) { this.kernel.stop(); this.kernel.bypassCache(); }
     void this.rebuild();
     toast(all ? t("Rebuilt all features") : t("Rebuilt"));
   }

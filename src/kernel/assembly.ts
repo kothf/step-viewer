@@ -83,6 +83,12 @@ export class Assembler {
     catch { return null; }
   }
 
+  /** A built part's body as BREP text with its face order (`Modeller.toTransport`), for the disk cache; null when it has none. */
+  transport(key: string): { brep: string; order: number[] } | null {
+    const s = this.sources.get(key);
+    try { return s?.body ? s.modeller.toTransport(s.body) : null; } catch { return null; }
+  }
+
   /** A part's evaluated body in its own coordinates (null when it has none). */
   sourceBody(key: string, doc: AsmDoc): Named | null { return this.source(key, doc).body; }
 
