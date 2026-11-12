@@ -10,6 +10,7 @@
 // 9 MB and would slow every type check down.
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { massOf, memoOf } from "./memo";
 import { covOfTensor, type Sym } from "../tools/inertia";
 
 export type V3 = [number, number, number];
@@ -250,9 +251,12 @@ export class Kernel {
     if (m.faces.length !== probe.faces) return { ok: false, reason: `face count ${m.faces.length} ≠ ${probe.faces}` };
 
     const faces: (FacePatch | null)[] = [];
+    const memo = memoOf(oc);
     let bad = 0, checked = 0;
     for (let f = 0; f < m.faces.length; f++) {
-      const fp = this.face(m.faces[f]);
+      // Kept per face (memo.ts): an edit re-measures only the faces it made. A copy, since curvature is added below.
+      const kept = memo.get("face", m.faces[f], () => this.face(m.faces[f]));
+      const fp = kept && { ...kept };
       faces.push(fp);
       const ma = probe.faceArea[f];
       if (!fp || !(ma > 0)) continue;
@@ -264,7 +268,7 @@ export class Kernel {
 
     for (const [f, pts] of probe.samples) {
       const fp = faces[f];
-      if (fp && fp.type === "freeform") Object.assign(fp, this.curvature(m.faces[f], pts));
+      if (fp && fp.type === "freeform") Object.assign(fp, this.curvatureOf(m.faces[f], pts));
     }
 
     const out: PartPatch = { ok: true, faces, edges: this.edges(m, probe) };
@@ -276,13 +280,10 @@ export class Kernel {
       out.area = props.Mass();
     }
     if (m.solid && this.allSolid(m.shape)) {
-      const vp = new oc.GProp_GProps_1();
-      oc.BRepGProp.VolumeProperties_1(m.shape, vp, true, false, false);
-      const vol = vp.Mass();
+      const mass = massOf(oc, m.shape), vol = mass.volume;
       if (vol !== 0) {
-        out.volume = Math.abs(vol); out.com = P(vp.CentreOfMass());
-        const mi = vp.MatrixOfInertia();
-        out.inertia = covOfTensor([0, 1, 2].map(r => [0, 1, 2].map(c => mi.Value(r + 1, c + 1) * Math.sign(vol))));
+        out.volume = Math.abs(vol); out.com = [...mass.com];
+        out.inertia = covOfTensor(mass.inertia.map(r => r.map(v => v * Math.sign(vol))));
       }
     }
     return out;
@@ -329,6 +330,14 @@ export class Kernel {
     } catch { return null; }
   }
 
+  /** `curvature`, kept per face for the same sample points (a face a rebuild left alone keeps its triangles). */
+  private curvatureOf(face: any, pts: number[]): Pick<FacePatch, "kMin" | "kMax"> {
+    const key = pts.join();
+    const kept = memoOf(this.oc).get("curvature", face, () => ({ key: "", value: {} as Pick<FacePatch, "kMin" | "kMax"> }));
+    if (kept.key !== key) { kept.value = this.curvature(face, pts); kept.key = key; }
+    return kept.value;
+  }
+
   /** Principal curvatures at the sample points (projected onto the surface). */
   private curvature(face: any, pts: number[]): Pick<FacePatch, "kMin" | "kMax"> {
     const oc = this.oc;
@@ -366,9 +375,10 @@ export class Kernel {
       }
       return ids;
     });
+    const memo = memoOf(oc);
     const info = new Map<number, ReturnType<Kernel["edgeInfo"]>>();
     const get = (id: number) => {
-      if (!info.has(id)) info.set(id, this.edgeInfo(oc.TopoDS.Edge_1(map.FindKey(id))));
+      if (!info.has(id)) { const e = oc.TopoDS.Edge_1(map.FindKey(id)); info.set(id, memo.get("edge", e, () => this.edgeInfo(e))); }
       return info.get(id)!;
     };
 

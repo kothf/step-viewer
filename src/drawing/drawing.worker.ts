@@ -140,9 +140,14 @@ const variants = new Map<string, { shape: any; mat: string | null; mats?: (strin
 /** The loaded part's solid materials (see `bodyMats`). */
 let modelMats: (string | null)[] | null = null;
 
+/** The loaded part's modeller, with its per-feature cache (see `buildPart`). */
+let partModeller: Modeller | null = null;
+
 /** A part's solid with its topology and model items (dimensions, holes, threads, sketches). */
-function buildPart(doc: PartDoc, lite = false): { shape: any; mat: string | null; mats: (string | null)[] | null; names: string[]; extra: Record<string, unknown> } {
-  const md = new Modeller(oc), res = md.evaluate(doc);
+function buildPart(doc: PartDoc, lite = false, variant = false): { shape: any; mat: string | null; mats: (string | null)[] | null; names: string[]; extra: Record<string, unknown> } {
+  // The part's own modeller is kept between loads: after an edit of the part only the changed features are built
+  // again (a fresh one rebuilt every feature each time the drawing followed its part). Configurations get their own.
+  const md = variant ? new Modeller(oc) : (partModeller ??= new Modeller(oc)), res = md.evaluate(doc);
   if (!res.body) throw new Error("The part has no body yet.");
   const body = res.body, shape = body.shape;
   if (lite) return { shape, mat: doc.material?.name ?? null, mats: bodyMats(md, body, doc), names: body.names, extra: {} };
@@ -305,7 +310,7 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
       if (!partDoc.configs?.some(c => c.name === r.name)) throw new Error(`The part has no configuration "${r.name}"`);
       const d: PartDoc = structuredClone(partDoc);
       activate(d, r.name);
-      const b = buildPart(d);
+      const b = buildPart(d, false, true);
       variants.set(r.name, { shape: b.shape, mat: b.mat, mats: b.mats, names: b.names });
       post({ id: r.id, ok: true, ...shapeInfo(oc, b.shape), ...b.extra });
     } else if (r.type === "project") {
@@ -369,7 +374,9 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
         cutShape = c;
         if (keep) keep = alignedShape(oc, keep, r.align);
       }
-      const sc = stashed ?? sectionCut(oc, cutShape, r.view, r.p, r.poly, { stair: r.stair, keep });
+      // A part is cut exactly on the plane; placed or turned solids 1 µm off it (see SECTION_NUDGE).
+      const nudge = partDoc && !placedShapes.length && !r.align ? 0 : undefined;
+      const sc = stashed ?? sectionCut(oc, cutShape, r.view, r.p, r.poly, { stair: r.stair, keep, nudge });
       let proj: Projection;
       if (r.type === "secpreview") {
         stash.set(skey, sc);
