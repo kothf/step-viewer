@@ -6220,7 +6220,6 @@ try {
     await dp.mouse.move(x, y); await dp.mouse.click(x, y);
     [x, y] = await at(top.id, 40, -45);
     await dp.mouse.move(x, y); await dp.mouse.click(x, y);
-    await annotDlgOk(dp);
     // Hole callout options (FR-DRW-022): a line under the automatic text, and the number of holes left out.
     {
       await dp.waitForTimeout(150);
@@ -6431,7 +6430,7 @@ try {
     // on the hole's hidden line, surface finish on the top face, a note to the right outline.
     await tool("datum"); await click(u0, vm); await click(u0 - 20, vm);
     await tool("datum"); await click((u0 + u1) / 2 - 20, v1); await click((u0 + u1) / 2 - 20, v1 + 15);
-    if (hu != null) { await tool("hole"); await click(hu, vm); await click(hu + 30, v1 + 25); await annotDlgOk(dp); }
+    if (hu != null) { await tool("hole"); await click(hu, vm); await click(hu + 30, v1 + 25); }
     if (hu != null) { await tool("gtol"); await click(hu, vm); await click(hu + 20, v0 - 20); await annotDlgOk(dp); }
     await tool("surf"); await click((u0 + u1) / 2 + 20, v1); await click((u0 + u1) / 2 + 20, v1 + 10);
     await tool("note"); await click(u1, vm); await click(u1 + 25, vm + 15);
@@ -6507,7 +6506,7 @@ try {
       // The hole has its centre mark already, before any annotation.
       got.mark = await dp.evaluate(([cx, cy]) => window.__sv.drw.prims().some(q => q.t === "l" && q.layer === "CENTER" && Math.abs((q.p[0] + q.p[2]) / 2 - cx) < 0.01 && Math.abs((q.p[1] + q.p[3]) / 2 - cy) < 0.01 && Math.hypot(q.p[2] - q.p[0], q.p[3] - q.p[1]) < 30), c);
       await drwCmd(dp, "dim"); await clickS(c[0] + r * k, c[1] + r * k); await clickS(c[0] + 25, c[1] + 25); await dp.keyboard.press("Escape");
-      await drwTool(dp, "hole"); await clickS(c[0] - r * k, c[1] + r * k); await clickS(c[0] - 30, c[1] + 30); await annotDlgOk(dp);
+      await drwTool(dp, "hole"); await clickS(c[0] - r * k, c[1] + r * k); await clickS(c[0] - 30, c[1] + 30); await dp.keyboard.press("Escape");
       await drwTool(dp, "datum"); await clickS(c[0] + r * k, c[1] - r * k); await clickS(c[0] + 20, c[1] - 20); await dp.keyboard.press("Escape");
       // A distance from the hole's centre to the shaft's end: the centre is a point to pick.
       const l = found.side.l, mx = (l[0] + l[2]) / 2, my = (l[1] + l[3]) / 2, horiz = Math.abs(l[3] - l[1]) < 1e-6;

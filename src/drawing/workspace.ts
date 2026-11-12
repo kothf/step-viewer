@@ -1746,8 +1746,9 @@ export class DrawingWorkspace {
       } else {
         const pl = this.placements.get(m.view!)!, pos = fromSheet(pl, p[0], p[1]);
         const h: HoleAnnot = { id: uid("a_"), t: "hole", view: m.view!, ref: { ...edgeRef(m.e, "e"), ...(m.s ? { s: m.s } : {}) }, pos: [round(pos[0]), round(pos[1])] };
+        // The callout is read from the hole, so it is placed at once; its dialog opens on a double-click or Edit….
+        this.addAnnot(h, "Hole callout");
         this.mode = { kind: "none" };
-        setTimeout(() => void this.editHoleAnnot(h, true));
       }
     } else if (m.kind === "dtarget") {
       if (!m.leader && vid && this.facts) {
