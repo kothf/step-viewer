@@ -5543,6 +5543,12 @@ try {
       `drawing: new drawing of a part gets the standard 3 views, lined up in first angle, at 1:1 on A3 (${sheet}, ${JSON.stringify(v3)}, front ${fb})`);
     check(prims.hidden === 4 && prims.circles === 1 && prims.text.includes("BLK-001") && prims.text.includes("Steel") && prims.text.includes("0.910 kg") && prims.text.includes("1:1"),
       `drawing: exact HLR lines (hidden hole edges dashed, the hole a true circle) and title block from the part (number, material, mass) (${prims.hidden} hidden, ${prims.circles} circle, ${prims.text.filter(s => /BLK|Steel|kg/.test(s)).join(" / ")})`);
+    // The part behind the drawing has an undo step of its own; Ctrl+Z on the drawing must leave it alone (drawings exam #1).
+    // The drawing takes that change as its own "Update from model" step once the part is rebuilt, so it is made
+    // before the moves: the two Ctrl+Z below then undo exactly the moves.
+    await dp.evaluate(() => window.__sv.modeller.store.change("Revision", d => { d.props.revision = "B"; }));
+    await dp.waitForFunction(() => window.__sv.drw.doc().source.doc?.props?.revision === "B", null, { timeout: 90000 });
+    await ready();
     // Drag the front view: its projected views follow; a projected view only slides along its alignment.
     const pt = (x, y) => dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]);
     let [sx, sy] = await pt(v3[0].x, v3[0].y + 9);
@@ -5557,9 +5563,6 @@ try {
     const flat = (a, b) => Math.abs(b.y - a.y) < 1e-9;
     check(d(v3[0], moved[0]) === "-20,15" && d(v3[1], moved[1]) === "-20,15" && d(v3[2], moved[2]) === "-20,15" && d(moved[2], slid[2]) === "10,0" && flat(moved[2], slid[2]),
       `drawing: dragging the parent moves its projected views; a side view only slides sideways (${d(v3[0], moved[0])} ${d(v3[1], moved[1])} ${d(v3[2], moved[2])}, side ${d(moved[2], slid[2])})`);
-    // The part behind the drawing has an undo step of its own; Ctrl+Z on the drawing must leave it alone (drawings exam #1).
-    await dp.evaluate(() => window.__sv.modeller.store.change("Revision", d => { d.props.revision = "B"; }));
-    await ready();
     await dp.keyboard.press("Control+z"); await dp.keyboard.press("Control+z");
     const undone = await views(), rev = await dp.evaluate(() => window.__sv.modeller.store.doc.props.revision);
     check(undone.length === 3 && d(v3[0], undone[0]) === "0,0" && d(v3[2], undone[2]) === "0,0" && rev === "B", `drawing: Ctrl+Z undoes the moves and not the part's last step (revision ${rev})`);
