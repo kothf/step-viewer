@@ -31,14 +31,21 @@ export function cacheOn(): boolean {
   return on;
 }
 
+/** Turns the cache on in a worker the page handed a key to (a worker's own URL has no `?nocache` to read). */
+export function cacheEnable() { on = typeof indexedDB !== "undefined"; }
+
 let db: Promise<IDBDatabase | null> | null = null;
+/** The database once open: `cachePut` then takes its copy of the value before it returns. */
+let opened: IDBDatabase | null = null;
+/** Opens the database ahead of a `cachePut` whose value is about to be transferred or changed. */
+export function cacheOpen(): Promise<unknown> { return open(); }
 function open(): Promise<IDBDatabase | null> {
   if (!cacheOn()) return Promise.resolve(null);
   db ??= new Promise<IDBDatabase | null>(resolve => {
     try {
       const r = indexedDB.open(DB, 1);
       r.onupgradeneeded = () => { r.result.createObjectStore(DATA); r.result.createObjectStore(META); };
-      r.onsuccess = () => resolve(r.result);
+      r.onsuccess = () => { opened = r.result; resolve(r.result); };
       r.onerror = () => resolve(null);
       r.onblocked = () => resolve(null);
     } catch { resolve(null); }
@@ -89,12 +96,15 @@ export async function cacheGet<T>(key: string | null): Promise<T | undefined> {
   } catch { cacheStats.errors++; return undefined; }
 }
 
-/** Stores `value` (cloned by IndexedDB) and drops the oldest entries past `CACHE_LIMIT`. */
+/**
+ * Stores `value` (cloned by IndexedDB) and drops the oldest entries past `CACHE_LIMIT`. When the database is
+ * already open (`cacheOpen`), the copy is taken before this returns, so the caller may then transfer or change it.
+ */
 export async function cachePut(key: string | null, value: unknown): Promise<void> {
   if (!key) return;
   const size = sizeOf(value);
   if (size > ENTRY_MAX) return;
-  const d = await open();
+  const d = opened ?? await open();
   if (!d) return;
   try {
     const tx = d.transaction([DATA, META], "readwrite");

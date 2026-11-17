@@ -1367,7 +1367,8 @@ try {
 
   // --- opening speed: the import engine warms up while idle, and the kernel worker is kept for the next file ---
   {
-    await page.goto(`${origin}/index.html?debug`);
+    // ?nocache: files opened earlier on this page would come from the disk cache (block "import cache 1.563").
+    await page.goto(`${origin}/index.html?debug&nocache`);
     await page.waitForFunction(() => window.__sv);
     await page.waitForTimeout(9000); // idle: OpenCASCADE loads and reads its warm-up block; the spare full kernel sets itself up
     await page.setInputFiles("#file-input", join(fixtures, "cax-if/as1_pe_203.stp"));
@@ -15175,6 +15176,34 @@ try {
     const a1 = await asm(), a2 = await asm();
     check(a1.hits === 0 && a2.hits === 3 && JSON.stringify(a1.parts) === JSON.stringify(a2.parts) && Math.abs(a1.volume - a2.volume) < 1e-6 * a1.volume,
       `cache 1.559: an assembly opened again takes its 3 parts from the disk cache, every component the same (${JSON.stringify({ hits: [a1.hits, a2.hits], v: [a1.volume, a2.volume] })})`);
+    await ctx.close();
+  }
+
+  // --- Disk cache of opened files (1.563.0): a STEP file opened again shows its mesh and exact values from IndexedDB; export still reads the B-rep ---
+  if (inShard(5)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const openStep = async () => {
+      const pg = await ctx.newPage();
+      pg.on("pageerror", e => errors.push(e.message));
+      await pg.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+      await pg.goto(`${origin}/index.html?debug`);
+      await pg.waitForFunction(() => window.__sv);
+      await pg.setInputFiles("#file-input", join(fixtures, "cax-if/as1-oc-214.stp"));
+      await pg.waitForFunction(() => document.querySelector("#st-kernel").dataset.state === "ready" && window.__sv.timings().exact, null, { timeout: 120000 });
+      // The entries are written after the result is shown.
+      await pg.waitForFunction(() => window.__sv.buildCache.stats.puts >= 2 || window.__sv.buildCache.stats.hits >= 2, null, { timeout: 20000 }).catch(() => {});
+      const r = await pg.evaluate(() => ({ t: window.__sv.timings(), parts: window.__sv.viewer.parts.map(p => [p.data.name, p.data.faces.length, p.data.index.length, Math.round(p.data.volume * 1000), !!p.data.exact, p.data.edges.filter(e => e.exact).length]) }));
+      return { pg, ...r };
+    };
+    const a = await openStep();
+    await a.pg.close();
+    const b = await openStep();
+    const [dl] = await Promise.all([b.pg.waitForEvent("download", { timeout: 60000 }), b.pg.evaluate(() => window.__sv.exportStep())]);
+    const step = await readFile(await dl.path(), "utf8");
+    await b.pg.close();
+    check(!a.t.cached && b.t.cached && b.t.load === undefined && JSON.stringify(a.parts) === JSON.stringify(b.parts) && b.parts.every(p => p[4]),
+      `import cache 1.563: a STEP file opened again comes from the disk cache with the same mesh and exact values, the kernel not read (${JSON.stringify({ shown: [Math.round(a.t.shown), Math.round(b.t.shown)], exact: [Math.round(a.t.exact), Math.round(b.t.exact)], parts: b.parts.length })})`);
+    check(/^ISO-10303-21;/.test(step) && (step.match(/MANIFOLD_SOLID_BREP/g) || []).length >= 1, `import cache 1.563: STEP export after a cached open reads the file into the kernel then (${step.length} bytes)`);
     await ctx.close();
   }
 } catch (err) {
