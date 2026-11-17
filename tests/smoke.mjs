@@ -15200,10 +15200,12 @@ try {
     const b = await openStep();
     const [dl] = await Promise.all([b.pg.waitForEvent("download", { timeout: 60000 }), b.pg.evaluate(() => window.__sv.exportStep())]);
     const step = await readFile(await dl.path(), "utf8");
+    const glue = await b.pg.evaluate(async () => (await (await fetch("occt/opencascade.full.js")).text()).includes("craftInvokerFunctionNow"));
     await b.pg.close();
     check(!a.t.cached && b.t.cached && b.t.load === undefined && JSON.stringify(a.parts) === JSON.stringify(b.parts) && b.parts.every(p => p[4]),
       `import cache 1.563: a STEP file opened again comes from the disk cache with the same mesh and exact values, the kernel not read (${JSON.stringify({ shown: [Math.round(a.t.shown), Math.round(b.t.shown)], exact: [Math.round(a.t.exact), Math.round(b.t.exact)], parts: b.parts.length })})`);
     check(/^ISO-10303-21;/.test(step) && (step.match(/MANIFOLD_SOLID_BREP/g) || []).length >= 1, `import cache 1.563: STEP export after a cached open reads the file into the kernel then (${step.length} bytes)`);
+    check(glue, "kernel start-up 1.564: the served opencascade.full.js makes embind invokers on first use (and the kernel above still exported STEP)");
     await ctx.close();
   }
 } catch (err) {
