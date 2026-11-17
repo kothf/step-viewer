@@ -1,5 +1,5 @@
 import "./style.css";
-import { cacheClear, cacheSize, cacheStats } from "./buildCache";
+import { cacheClear, cacheGet, cacheKey, cacheSize, cacheStats } from "./buildCache";
 import { lassoMode, setLassoMode } from "./boxSelect";
 import { installHoverCursors, setHoverKind, hoverKindOfSnap } from "./hoverCursor";
 import type { NamedView } from "./model/types";
@@ -35,7 +35,7 @@ import { massProperties, type MassResult } from "./tools/analysis";
 import { pickMaterial } from "./materialPicker";
 import { combine, massReport, principal, type Combined, type Frame } from "./tools/inertia";
 import { inertiaUnit, massPanelHtml, massText, type MassView } from "./tools/massPanel";
-import { exportMesh, inspectionReport, measurementsCsv, measurementsJson, snapshot, download } from "./tools/exporters";
+import { exportMesh, inspectionReport, pdfWriter, measurementsCsv, measurementsJson, snapshot, download } from "./tools/exporters";
 import { csys, makeCsys, type Csys } from "./tools/csys";
 import { fmtArea, fmtLen, fmtMass, fmtNum, fmtVec, fmtVol, unitMm, units, type Unit } from "./tools/units";
 import { readStepMeta, type StepMeta } from "./stepMeta";
@@ -885,10 +885,16 @@ async function openMesh(buffer: ArrayBuffer, name: string) {
   setLoading(true, t("Reading {name}…", { name }), 2);
   state.meta = null;
   const t0 = performance.now();
-  let meshes;
-  try { meshes = await parseMesh(buffer, name); }
-  catch (err) { setLoading(false); setDoc(name, "error"); toast(t("Could not open {name}: {err}", { name, err: t((err as Error).message) }), true); return; }
-  const result = await runImport(name, { kind: "mesh", name, meshes }, meshes.flatMap(m => (m.idx ? [m.pos.buffer, m.idx.buffer] : [m.pos.buffer])));
+  // Opened before: the faces found then come from the disk cache.
+  const key = await cacheKey("import", pendingSrc.data, "mesh");
+  let result: Awaited<ReturnType<typeof runImport>> | undefined = await cacheGet(key);
+  if (token !== loadToken) return;
+  if (!result) {
+    let meshes;
+    try { meshes = await parseMesh(buffer, name); }
+    catch (err) { setLoading(false); setDoc(name, "error"); toast(t("Could not open {name}: {err}", { name, err: t((err as Error).message) }), true); return; }
+    result = await runImport(name, { kind: "mesh", name, meshes, cacheKey: key }, meshes.flatMap(m => (m.idx ? [m.pos.buffer, m.idx.buffer] : [m.pos.buffer])));
+  }
   if (!result || token !== loadToken) return;
   setLoading(true, t("Building scene…"), 97);
   await new Promise(r => setTimeout(r, 0));
@@ -911,8 +917,14 @@ async function openBuffer(buffer: ArrayBuffer, name: string) {
   timings = {};
   // The kernel worker reads the file again, with its B-rep, alongside the import.
   const size = buffer.byteLength;
-  const parts = startKernel(buffer.slice(0), name, token, t0);
-  const result = await runImport(name, { buffer, name, occtBase, quality }, [buffer]);
+  const src = pendingSrc.data;
+  // A file opened before (or a tab switched back to): its mesh and faces come from the disk cache.
+  const key = await cacheKey("import", src, quality);
+  const cached = await cacheGet<{ parts: PartData[]; tree: TreeNode; timing?: Record<string, number> }>(key);
+  if (cached) timings.cached = 1;
+  // Its exact values are most likely on disk too: no need to let the first frames draw before reading them.
+  const parts = startKernel(src.slice(0), name, token, t0, quality, !!cached);
+  const result = cached ?? (token === loadToken ? await runImport(name, { buffer, name, occtBase, quality, cacheKey: key }, [buffer]) : null);
   parts(result?.parts ?? null);
   if (!result || token !== loadToken) return;
   Object.assign(timings, result.timing, { worker: performance.now() - t0 });
@@ -938,15 +950,15 @@ function warmKernel() { if (!kernelOff && kernelAlongside) kernel.warm(); }
 /** With fewer cores the kernel waits for the model to be on screen instead of reading alongside the import. */
 const kernelAlongside = (navigator.hardwareConcurrency || 2) >= 6;
 /** Starts the exact-geometry read of a file; call the result with the imported parts (null: the import failed). */
-function startKernel(bytes: ArrayBuffer, name: string, token: number, t0: number): (parts: PartData[] | null) => void {
+function startKernel(bytes: ArrayBuffer, name: string, token: number, t0: number, quality: string, cached = false): (parts: PartData[] | null) => void {
   if (kernelOff) return () => {};
   let give!: (parts: PartData[] | null) => void;
   const parts = new Promise<PartData[] | null>(r => (give = r));
   const current = () => token === loadToken;
-  const start = kernelAlongside ? Promise.resolve()
+  const start = kernelAlongside || cached ? Promise.resolve()
     // Let the first frames draw before the kernel starts.
     : parts.then(() => new Promise<void>(r => setTimeout(r, 300)));
-  kernelJob = start.then(() => (current() ? kernel.open(bytes, name, parts, current) : 0));
+  kernelJob = start.then(() => (current() ? kernel.open(bytes, name, parts, current, quality) : 0));
   kernelJob.then(n => {
     if (!n || !current()) return;
     timings.exact = performance.now() - t0;
@@ -3166,7 +3178,7 @@ $$("[data-export]").forEach(b => b.addEventListener("click", async () => {
   try { await exportMesh(viewer, b.dataset.export as "stl", baseName()); }
   catch (err) { toast(t("Export failed: {err}", { err: (err as Error).message }), true); }
 }));
-function report() {
+async function report() {
   if (!viewer.parts.length) { nothingToExport(); return; }
   if (!lastMass.length) runMass();
   const s = overallSize();
@@ -3181,8 +3193,9 @@ function report() {
     if (m.timestamp) meta.push(["Timestamp", m.timestamp]);
     if (m.materials.length) meta.push(["Materials", m.materials.join(", ")]);
   }
+  const pdf = await pdfWriter();
   const image = snapshot(viewer, annotations, { scale: 2, transparent: false, background: "#ffffff" });
-  withLang("en", () => inspectionReport({ fileName: state.fileName, meta, mass: lastMass, measurements: state.measurements, image }));
+  withLang("en", () => inspectionReport(pdf, { fileName: state.fileName, meta, mass: lastMass, measurements: state.measurements, image }));
 }
 $("#report").addEventListener("click", e => busy(e.currentTarget as HTMLElement, report));
 $("#step-export").addEventListener("click", e => busy(e.currentTarget as HTMLElement, exportStep));

@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.563.0] - 2026-11-17
+
+### Changed
+
+- **STEP, IGES, BREP and mesh files opened again open almost at once.** The mesh and faces read from a file, and the exact values the geometry kernel measures on it, are now kept in the browser's disk cache (the same one parts and drawings use since 1.559.0) the first time the file is opened, and read back the next time the same file is opened, in this page, after a restart, or when you switch back to its document tab (which opens the file again). The geometry kernel then reads the file only when something needs its B-rep, such as STEP export or a drawing. Timed in Chrome on a 41-part amplifier (0.6 MB STEP): shown 1.8 s → 0.16 s, exact values 7.1 s → 1.6 s. A stored result is used only for the same file bytes, the same mesh quality and the same build of the app; `?nocache` turns it off.
+- The PDF writer is loaded only when an inspection report or a drawing PDF is made, so the app's start-up script is about 360 kB smaller.
+
 ## [1.562.0] - 2026-11-12
 
 ### Added
@@ -3514,7 +3521,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.562.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.563.0...HEAD
+[1.563.0]: https://github.com/kothf/step-viewer/compare/v1.562.0...v1.563.0
 [1.562.0]: https://github.com/kothf/step-viewer/compare/v1.561.0...v1.562.0
 [1.561.0]: https://github.com/kothf/step-viewer/compare/v1.560.0...v1.561.0
 [1.560.0]: https://github.com/kothf/step-viewer/compare/v1.559.0...v1.560.0

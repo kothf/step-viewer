@@ -9,6 +9,8 @@ node bench/run.mjs bench/drawing.bench.ts <folder> [filter]                     
 node bench/run.mjs bench/prof.bench.ts    <file.mcadprt> [rows]                  # time per Modeller method / OCCT call: open, edit, no change
 node bench/run.mjs bench/hlr.bench.ts     <file.mcadprt> front|top|right|iso|section
 node bench/run.mjs bench/names.bench.ts   <folder> out.json                      # face names, volume, area, box: diff two builds
+node bench/run.mjs bench/step.bench.ts    <file.step> …                                  # open a STEP file: occt-import-js read, topology, kernel read, exact values
+node bench/run.mjs bench/pcb.bench.ts     <folder of Gerber/Excellon files>              # PCB worker: parse and build the layers
 node bench/run.mjs bench/curv.bench.ts    <folder> out.json                      # free-form faces' curvature range: diff two builds
 PROF=1 node bench/run.mjs ...                                                    # also writes a V8 CPU profile under node_modules/.cache/bench/prof
 ```
@@ -64,3 +66,11 @@ Storing costs nothing visible (the writes come after the result is shown).
   price of maintaining our own build of opencascade.js.
 - Hole cuts: each hole's cylinder is intersected with every body face whose box it overlaps (a big round body's
   faces overlap everything).
+
+## Opening STEP files (1.563.0)
+
+`step.bench.ts` on a 41-part amplifier (0.6 MB, 597 faces, 108k triangles): occt-import-js read 1.4 to 1.9 s, mesh
+topology 0.2 to 0.3 s, the full kernel's read (XCAF transfer) 1.6 to 2.1 s, exact values 1.5 to 1.7 s (volume
+properties of the solids about half, face areas a third, curvature the rest). All of it is OCCT's own work, so a file
+opened again is read from the disk cache instead (mesh + faces, and the exact patches; the kernel reads the B-rep
+only for an export): shown 1.8 s → 0.16 s, exact 7.1 s → 1.6 s in headless Chrome.

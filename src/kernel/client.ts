@@ -7,6 +7,7 @@ import type { PartPatch } from "./occ";
 import { applyPatch, probe } from "./patch";
 import type { SwReport } from "./solidworks";
 import { takeWorker } from "./spare";
+import { cacheGet, cacheKey, cachePut } from "../buildCache";
 
 export type KernelStatus = "off" | "loading" | "ready" | "partial" | "error";
 
@@ -37,6 +38,11 @@ export class KernelClient {
   private heap = 0;
   /** The file in the worker now (null: none, or a model that has no B-rep, such as a mesh). */
   file: string | null = null;
+  /**
+   * A file whose exact values came from the disk cache: the worker reads it only when something needs its B-rep
+   * (STEP export, a drawing), so reopening it costs no kernel time. `loading` is that read once started.
+   */
+  private lazy: { bytes: ArrayBuffer; name: string; loading?: Promise<void> } | null = null;
   status: KernelStatus = "off";
   /** Where the last open spent its time (ms), for `?debug` profiling. */
   timing: Record<string, number> = {};
@@ -103,6 +109,7 @@ export class KernelClient {
   clear() {
     if (this.pending.size) this.stop();
     this.file = null;
+    this.lazy = null;
     this.set("off");
   }
 
@@ -111,7 +118,7 @@ export class KernelClient {
    * alongside the import; `parts` resolves once the import is done (null: it failed).
    * Resolves with how many parts matched.
    */
-  async open(bytes: ArrayBuffer, name: string, parts: Promise<PartData[] | null>, stillCurrent: () => boolean) {
+  async open(bytes: ArrayBuffer, name: string, parts: Promise<PartData[] | null>, stillCurrent: () => boolean, quality = "") {
     this.set("loading");
     let t = performance.now();
     this.timing = {};
@@ -120,6 +127,24 @@ export class KernelClient {
       // A file still loading in the worker can't be interrupted: start a new worker.
       if (this.pending.size) this.stop();
       this.file = null;
+      this.lazy = null;
+      // Opened before: the exact values are on disk, and the worker reads the file only when it is needed.
+      const key = await cacheKey("exact", bytes, quality);
+      const kept = await cacheGet<(PartPatch | null)[]>(key);
+      if (kept) {
+        const ps = await parts;
+        if (!stillCurrent()) return 0;
+        if (!ps) { this.set("off"); return 0; }
+        if (kept.length === ps.length) {
+          let n = 0;
+          kept.forEach((p, i) => { if (p?.ok && applyPatch(ps[i], p)) n++; });
+          this.file = name;
+          this.lazy = { bytes, name };
+          lap("cached");
+          this.set(n === ps.length ? "ready" : n ? "partial" : "error");
+          return n;
+        }
+      }
       await this.take();
       lap("init");
       const { counts, heap } = await this.call<{ counts: number[]; heap: number }>({ type: "load", buffer: bytes, name }, [bytes]);
@@ -134,6 +159,7 @@ export class KernelClient {
       const { patches } = await this.call<{ patches: (PartPatch | null)[] }>({ type: "exact", probes: ps.map(probe) });
       if (!stillCurrent()) return 0;
       lap("match");
+      if (patches.some(p => p?.ok)) void cachePut(key, patches);
       let n = 0;
       patches.forEach((p, i) => { if (p?.ok && applyPatch(ps[i], p)) n++; });
       this.set(n === ps.length ? "ready" : n ? "partial" : "error");
@@ -147,8 +173,26 @@ export class KernelClient {
     }
   }
 
+  /** Reads a file whose exact values came from the disk cache into the worker (once), for its B-rep. */
+  private loaded(): Promise<void> {
+    const l = this.lazy;
+    if (!l) return Promise.resolve();
+    l.loading ??= (async () => {
+      if (this.pending.size) this.stop();
+      await this.take();
+      if (this.lazy !== l) throw new Error("cancelled");
+      this.file = l.name;
+      // The bytes stay ours until the read is done, so a failed read can be tried again.
+      await this.call({ type: "load", buffer: l.bytes.slice(0), name: l.name });
+      if (this.lazy === l) this.lazy = null;
+    })();
+    l.loading.catch(() => { if (this.lazy === l) l.loading = undefined; });
+    return l.loading;
+  }
+
   /** STEP of the open file: all of it (null) or the listed parts, with their names and colours. */
   async step(which: number[] | null, names: string[] = [], colors: (V3 | null)[] = []) {
+    await this.loaded();
     if (!this.worker || !this.file) throw new Error("The model is not loaded in the kernel");
     await this.ready;
     const r = await this.call<{ bytes: Uint8Array }>({ type: "step", which, names, colors });
@@ -163,6 +207,7 @@ export class KernelClient {
   async solidworks(files: { name: string; buffer: ArrayBuffer }[], main: string) {
     if (this.pending.size) this.stop();
     this.file = null;
+    this.lazy = null;
     await this.take();
     return this.call<{ bytes: Uint8Array | null; report: SwReport }>({ type: "solidworks", files, main }, files.map(f => f.buffer));
   }
