@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.564.0] - 2026-11-17
+
+### Changed
+
+- **The geometry kernel starts in about half the time.** Every background worker that runs the full OpenCASCADE kernel (the one for parts, the helpers that build an assembly's parts side by side, the drawing workers, the one that reads a STEP file exactly) used to spend 3 to 5 seconds setting itself up, most of it preparing a call wrapper for each of the kernel's tens of thousands of functions, nearly all of which are never used. The wrappers are now made the first time a function is called. Timed in Chrome: a new kernel worker is ready in 1.9 s instead of 3.4 s, and the model steam engine assembly (42 components) opened right after the app starts shows in 11.3 s instead of 12.7 s. Calculations are the same and run at the same speed.
+
 ## [1.563.0] - 2026-11-17
 
 ### Changed
@@ -3521,7 +3527,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.563.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.564.0...HEAD
+[1.564.0]: https://github.com/kothf/step-viewer/compare/v1.563.0...v1.564.0
 [1.563.0]: https://github.com/kothf/step-viewer/compare/v1.562.0...v1.563.0
 [1.562.0]: https://github.com/kothf/step-viewer/compare/v1.561.0...v1.562.0
 [1.561.0]: https://github.com/kothf/step-viewer/compare/v1.560.0...v1.561.0

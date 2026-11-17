@@ -74,3 +74,11 @@ topology 0.2 to 0.3 s, the full kernel's read (XCAF transfer) 1.6 to 2.1 s, exac
 properties of the solids about half, face areas a third, curvature the rest). All of it is OCCT's own work, so a file
 opened again is read from the disk cache instead (mesh + faces, and the exact patches; the kernel reads the B-rep
 only for an export): shown 1.8 s → 0.16 s, exact 7.1 s → 1.6 s in headless Chrome.
+
+## Kernel worker set-up (1.564.0)
+
+A profile of `init()` shows 4.3 of its 4.6 s in embind's class registration, half of that in `craftInvokerFunction`
+(a `new Function` per bound method and constructor). `scripts/occt-patch.mjs` makes those on first call: node 4.6 to
+5.2 s → 2.3 to 2.4 s, Chrome 3.4 s → 1.9 s (`?nospare&nocache`, kernel `init` timing). Over the 37 parts (`parts`
+bench, three runs each) the build time was within noise (9.0 to 9.5 s both ways). The node benches load the unpatched
+glue from node_modules.
