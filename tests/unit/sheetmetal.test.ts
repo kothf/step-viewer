@@ -939,8 +939,11 @@ test("sheet metal: insert bends into a thin-walled U profile (FR-FT-120)", async
   const big = run(doc([u, ex, ins({ radius: { v: 10 } })]));
   const flatB = 60 - 2 * (10 + T) + 2 * (40 - (10 + T) + (Math.PI / 2) * (10 + T / 2));
   close(big.props.volume, 100 * flatB * T, 1e-5);
-  // An inside face has no face behind it at the wall's thickness... it finds the outside one, but no sharp outside edges.
-  assert.equal(m.evaluate(doc([u, ex, ins({ face: { name: "e:side:ul4" } })])).statuses.find(x => x.id === "i")!.ok, false);  // A hat section: walls down from the top, brims turning outwards at their feet. The brims don't touch the fixed face;
+  // The inside face of the web (exam #18): its edges to the walls are concave, so the outside face T behind it stays fixed.
+  const inner = run(doc([u, ex, ins({ face: { name: "e:side:ul4" } })]));
+  assert.equal(inner.sheet!.bends.length, 2);
+  close(inner.props.volume, 100 * flatW * T, 1e-5);
+  // A hat section: walls down from the top, brims turning outwards at their feet. The brims don't touch the fixed face;
   // they are found across the walls' far edges and bent the other way. Mid-line 37 + 2 × 37 + 2 × 21.5, each 90° bend
   // takes 2(r + T/2) off it and adds a quarter circle of r + T/2.
   const hp: [number, number][] = [[0, 0], [23, 0], [23, 37], [57, 37], [57, 0], [80, 0], [80, 3], [60, 3], [60, 40], [20, 40], [20, 3], [0, 3]];
@@ -1012,6 +1015,10 @@ test("sheet metal: rip the corners of a shelled box (FR-FT-120)", async () => {
   close(v0 - run(doc([...box, all])).props.volume, 4 * Math.SQRT2 * T * g * (H - T), 1e-6);
   const ins: SmInsertFeature = { id: "i", type: "sminsert", name: "Insert-Bends1", face: { name: "e:start" }, radius: { v: 2 }, k: 0.5 };
   assert.equal(run(doc([...box, all, ins])).sheet!.bends.length, 4);
+  // Exam #18: the floor picked from inside the open box keeps all four walls too.
+  const fromIn = run(doc([...box, all, { ...ins, face: { name: "sh:off:e:start" } }]));
+  assert.equal(fromIn.sheet!.bends.length, 4);
+  assert.equal(fromIn.sheet!.panels.length, 5);
   // Errors: one-way rip on an outside edge, a zero gap.
   const bad = (f: SmRipFeature) => m.evaluate(doc([...box, f])).statuses.find(x => x.id === "r")!;
   assert.equal(bad(rip({ edges: [{ faces: ["e:side:sl1", "e:side:sl2"] }], side: "a" })).code, "E-SM-RIPSIDE");
