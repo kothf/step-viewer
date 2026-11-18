@@ -1666,8 +1666,12 @@ export class AsmController {
     return true;
   }
 
-  /** Pairs of shown parts ("i:j", i < j) whose meshes intersect where they are shown now; only pairs with a part in `only` when given. */
-  private clashes(only?: Set<number>): Set<string> {
+  /**
+   * Pairs of shown parts ("i:j", i < j) whose meshes intersect where they are shown now; only pairs with a part in `only`
+   * when given. `deep`: only parts that enter one another (motion interference), not ones that touch; a collision drag
+   * stops at the first touch.
+   */
+  private clashes(only?: Set<number>, deep = false): Set<string> {
     const parts = this.host.viewer.parts, out = new Set<string>();
     const boxes = parts.map(p => { p.mesh.updateWorldMatrix(true, false); p.mesh.geometry.boundingBox ?? p.mesh.geometry.computeBoundingBox(); return p.mesh.visible ? p.mesh.geometry.boundingBox!.clone().applyMatrix4(p.mesh.matrixWorld) : null; });
     const m = new THREE.Matrix4();
@@ -1684,7 +1688,7 @@ export class AsmController {
       if (!bvh || !other) continue;
       m.copy(parts[i].mesh.matrixWorld).invert().multiply(parts[j].mesh.matrixWorld);
       // Parts that only touch (a face mated onto a face) are not a clash: their triangles meet without entering.
-      if (penetrates(bvh, other, m, Math.max(0.005, 1e-3 * (size[i] + size[j])))) out.add(`${i}:${j}`);
+      if (deep ? penetrates(bvh, other, m, Math.max(0.005, 1e-3 * (size[i] + size[j]))) : bvh.intersectsGeometry(parts[j].mesh.geometry, m)) out.add(`${i}:${j}`);
     }
     return out;
   }
@@ -3637,7 +3641,7 @@ export class AsmController {
   /** Top-level components whose shown meshes enter one another where they are shown now (motion interference check). */
   motionClashes(): [string, string][] {
     const out = new Map<string, [string, string]>();
-    for (const k of this.clashes()) {
+    for (const k of this.clashes(undefined, true)) {
       const [i, j] = k.split(":").map(Number), a = topOf(this.shownIds[i]), b = topOf(this.shownIds[j]);
       if (a && b && a !== b) out.set(a < b ? `${a}|${b}` : `${b}|${a}`, a < b ? [a, b] : [b, a]);
     }
