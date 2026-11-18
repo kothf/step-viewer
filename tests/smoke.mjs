@@ -1204,7 +1204,7 @@ try {
     check(leftPcb.length === 0, `i18n: no English left in the PCB view${leftPcb.length ? ": " + leftPcb.slice(0, 6).join(" | ") : ""}`);
     // Help: tabs in Russian, with the shortcuts table.
     await pg.click("#help-btn");
-    const help = await pg.evaluate(() => ({ title: document.querySelector("#help-title").textContent, tabs: [...document.querySelectorAll("#help .help-tabs [role=tab]")].map(b => b.textContent), kbd: document.querySelectorAll("#help kbd").length, tips: document.querySelector("#tips-on").checked }));
+    const help = await pg.evaluate(() => ({ title: document.querySelector("#help-title").textContent, tabs: [...document.querySelectorAll("#help .help-tabs [role=tab]")].map(b => b.textContent), kbd: document.querySelectorAll("#help kbd").length }));
     await pg.click("#help [data-tab=keys]");
     const keysShown = await pg.evaluate(() => !document.querySelector("#hp-keys").hidden && document.querySelector("#hp-keys").textContent.includes("Ctrl+["));
     const leftHelp = await untranslated();
@@ -1228,7 +1228,7 @@ try {
       `about: credits list from the build (${about.n} packages, ${about.rows} rows), main libraries, licence texts, logo and version (${JSON.stringify({ main: about.main, version: about.version })})`);
     check(leftAbout.length === 0, `i18n: no English left in About${leftAbout.length ? ": " + leftAbout.slice(0, 6).join(" | ") : ""}`);
     await pg.keyboard.press("Escape");
-    check(help.title === "Справка" && help.tabs.length === 7 && help.tabs.includes("Моделирование") && help.tabs.includes("Клавиши") && help.kbd > 10 && keysShown && help.tips, `i18n: Help in Russian with sections and shortcuts (${JSON.stringify(help)})`);
+    check(help.title === "Справка" && help.tabs.length === 7 && help.tabs.includes("Моделирование") && help.tabs.includes("Клавиши") && help.kbd > 10 && keysShown, `i18n: Help in Russian with sections and shortcuts (${JSON.stringify(help)})`);
     check(leftHelp.length === 0, `i18n: no English left in Help${leftHelp.length ? ": " + leftHelp.slice(0, 6).join(" | ") : ""}`);
     // axe in Russian too.
     await pg.addScriptTag({ content: await readFile(createRequire(import.meta.url).resolve("axe-core/axe.min.js"), "utf8") });
@@ -2892,20 +2892,27 @@ try {
     await idle();
     await mp.evaluate(() => window.__sv.modeller.editSketch("gr"));
     await mp.waitForTimeout(800);
-    const setGridUi = (a, v) => mp.evaluate(([a, v]) => { const i = document.querySelector(`#mc-pm [data-a=${a}]`); if (!i) return; if (i.type === "checkbox") i.checked = v; else i.value = v; i.dispatchEvent(new Event("change", { bubbles: true })); }, [a, v]);
-    await setGridUi("grid", true);
+    // Grid settings live in Settings ▸ Sketch (1.593.0), opened from the sketch quick bar.
+    const setGridUi = async o => {
+      await mp.click("#mc-quick [data-qset]");
+      await mp.waitForSelector("#prefs-dlg[open]");
+      if ("grid" in o) await mp.setChecked('#prefs-dlg [data-p="grid"]', o.grid);
+      if ("snap" in o) await mp.setChecked('#prefs-dlg [data-p="gridSnap"]', o.snap);
+      if ("step" in o) await mp.fill('#prefs-dlg [data-p="gridStep"]', o.step);
+      await mp.click('#prefs-dlg [data-a="ok"]');
+      await mp.waitForSelector("#prefs-dlg", { state: "detached" });
+    };
+    await setGridUi({ grid: true });
     await mp.waitForTimeout(200);
     const grid0 = await mp.evaluate(() => { let n = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData?.skGrid) n += o.geometry.attributes.position.count / 2; }); return n; });
-    await setGridUi("gridsnap", true);
-    await setGridUi("gridstep", "10");
+    await setGridUi({ snap: true, step: "10" });
     await tool("line");
     await click([21.5, 8.7]);
     await click([48.6, 31.2]);
     await mp.keyboard.press("Escape");
     await mp.waitForTimeout(150);
     const grid1 = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sk = ed.sk, ln = sk.ents.find(e => e.t === "line"), P = id => sk.ents.find(e => e.id === id); return { ui: { show: ed.grid, snap: ed.gridSnap, step: ed.gridSpacing }, a: ln && [P(ln.a).x, P(ln.a).y], b: ln && [P(ln.b).x, P(ln.b).y], ls: localStorage.getItem("mc:skGridStep") }; });
-    await setGridUi("gridsnap", false);
-    await setGridUi("grid", false);
+    await setGridUi({ grid: false, snap: false, step: "" });
     await mp.waitForTimeout(200);
     const grid2 = await mp.evaluate(() => { let n = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData?.skGrid) n++; }); return n; });
     // Alignment inference (FR-SK-042): a point 3 px off the line end's y lines up with it, with a dotted line and no relation.
@@ -2927,7 +2934,7 @@ try {
       `model 1.303: sketch grid is drawn, and Snap to grid at 10 mm puts line ends on grid nodes (${grid0}, ${JSON.stringify(grid1)}, ${grid2})`);
     // 1.310: quick bar toggles while sketching (FR-UI-055): Grid, Snap to grid and Inferences flip the editor and the panel boxes.
     const qt = () => mp.evaluate(() => { const ed = window.__sv.model.editor(), q = k => document.querySelector(`#mc-quick [data-qt="${k}"]`), c = a => document.querySelector(`#mc-pm [data-a=${a}]`)?.checked;
-      return { has: ["grid", "gridsnap", "autorels"].every(k => !!q(k)), grid: ed.grid, snap: ed.gridSnap, auto: ed.autoRels, pressed: q("grid")?.getAttribute("aria-pressed"), box: c("grid"), sbox: c("gridsnap"), abox: c("autorels") }; });
+      return { has: ["grid", "gridsnap", "autorels"].every(k => !!q(k)), grid: ed.grid, snap: ed.gridSnap, auto: ed.autoRels, pressed: q("grid")?.getAttribute("aria-pressed"), stored: localStorage.getItem("mc:skGridSnap") }; });
     const qt0 = await qt();
     await mp.click('#mc-quick [data-qt="gridsnap"]');
     const qt1 = await qt();
@@ -2937,8 +2944,8 @@ try {
     const qt2 = await qt();
     await mp.click('#mc-quick [data-qt="autorels"]');
     const qt3 = await qt();
-    check(qt0.has && !qt0.grid && !qt0.snap && qt0.auto && qt1.grid && qt1.snap && qt1.pressed === "true" && qt1.box && qt1.sbox && !qt2.grid && !qt2.snap && !qt2.auto && qt2.pressed === "false" && !qt2.box && !qt2.abox && qt3.auto && qt3.abox,
-      `model 1.310: quick bar Grid / Snap to grid / Inferences toggles follow the editor and the sketch panel (${JSON.stringify([qt0, qt1, qt2, qt3])})`);
+    check(qt0.has && !qt0.grid && !qt0.snap && qt0.auto && qt1.grid && qt1.snap && qt1.pressed === "true" && qt1.stored === "1" && !qt2.grid && !qt2.snap && !qt2.auto && qt2.pressed === "false" && qt2.stored === "0" && qt3.auto,
+      `model 1.310: quick bar Grid / Snap to grid / Inferences toggles follow the editor and are stored (${JSON.stringify([qt0, qt1, qt2, qt3])})`);
     // 1.585: construction geometry. Construction with nothing selected turns For construction on (bar button pressed,
     // panel box ticked), so the next line is construction, drawn dashed; Q on a selected curve turns it back. The jog's
     // second click next to a line's middle lands on the line, not on its H glyph. The status bar names the sketch state.
@@ -3029,10 +3036,10 @@ try {
     await mp.keyboard.press("Escape");
     await mp.waitForTimeout(150);
     const shaded = await mp.evaluate(() => { let regions = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData?.skRegions) regions += o.userData.skRegions; }); return regions; });
-    await mp.click("#mc-pm [data-a=shade]");
+    await mp.click("#mc-quick [data-qt=shade]");
     await mp.waitForTimeout(100);
     const unshaded = await mp.evaluate(() => { let regions = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData?.skRegions) regions += o.userData.skRegions; }); return regions; });
-    await mp.click("#mc-pm [data-a=shade]");
+    await mp.click("#mc-quick [data-qt=shade]");
     await mp.keyboard.press("Control+z");
     await mp.waitForTimeout(100);
     await tool("select");
@@ -3124,10 +3131,11 @@ try {
     // 1.329: Preferences (FR-UI-080): coarse image quality and verification rebuild the part, the sketch and mouse pages store their keys.
     const pfTris = () => mp.evaluate(() => window.__sv.viewer.parts.reduce((n, p) => n + (p.mesh.geometry.attributes.position.count), 0));
     const pfBefore = await pfTris();
-    await mp.click("#display-btn");
-    await mp.click("#prefs-btn");
+    await mp.click("#settings-btn");
     await mp.waitForSelector("#prefs-dlg[open]");
+    await mp.click("#pt-view");
     await mp.selectOption('#prefs-dlg [data-p="quality"]', "coarse");
+    await mp.click("#pt-modelling");
     await mp.check('#prefs-dlg [data-p="verify"]');
     await mp.click("#pt-sketch");
     await mp.uncheck('#prefs-dlg [data-p="autoRels"]');
@@ -3138,16 +3146,18 @@ try {
     await idle();
     const pfSet = await mp.evaluate(() => ({ q: localStorage.getItem("mc:quality"), v: localStorage.getItem("mc:verify"), ar: localStorage.getItem("mc:autoRels"), zoom: window.__sv.viewer.controls.zoomSpeed, warn: window.__sv.model.last()?.statuses.filter(s => s.code === "warning" || !s.ok).length, open: !!document.querySelector("#prefs-dlg") }));
     const pfCoarse = await pfTris();
-    // Back to the defaults, page by page.
-    await mp.click("#display-btn");
-    await mp.click("#prefs-btn");
+    // Settings search shows matching rows from every page with a count per category; then back to the defaults, page by page.
+    await mp.keyboard.press("Control+,");
     await mp.waitForSelector("#prefs-dlg[open]");
-    for (const pg of ["modelling", "sketch", "mouse"]) { await mp.click(`#pt-${pg}`); await mp.click('#prefs-dlg [data-a="reset"]'); }
+    await mp.fill("#set-q", "grid");
+    const pfFind = await mp.evaluate(() => ({ shown: [...document.querySelectorAll("#prefs-dlg .set-page [data-find]")].filter(e => e.offsetParent).length, pages: [...document.querySelectorAll("#prefs-dlg .set-page")].filter(e => !e.hidden).map(e => e.id).join(), n: document.querySelector("#pt-sketch .set-n").textContent }));
+    await mp.fill("#set-q", "");
+    for (const pg of ["view", "modelling", "sketch", "mouse"]) { await mp.click(`#pt-${pg}`); await mp.click('#prefs-dlg [data-a="reset"]'); }
     await mp.click('#prefs-dlg [data-a="ok"]');
     await idle();
     const pfBack = await mp.evaluate(() => ({ q: localStorage.getItem("mc:quality"), v: localStorage.getItem("mc:verify"), ar: localStorage.getItem("mc:autoRels"), zoom: window.__sv.viewer.controls.zoomSpeed }));
-    check(pfSet.q === "coarse" && pfSet.v === "1" && pfSet.ar === "0" && pfSet.zoom === -1 && pfSet.warn === 0 && !pfSet.open && pfCoarse <= pfBefore && pfBack.q === "normal" && pfBack.v === "0" && pfBack.ar === "1" && pfBack.zoom === 1,
-      `model 1.329: Preferences set coarse quality (${pfBefore} → ${pfCoarse} indices), verification, no automatic relations and reversed wheel zoom, and Defaults restore them (${JSON.stringify([pfSet, pfBack])})`);
+    check(pfFind.pages === "pp-sketch" && pfFind.shown >= 3 && pfFind.n === String(pfFind.shown) && pfSet.q === "coarse" && pfSet.v === "1" && pfSet.ar === "0" && pfSet.zoom === -1 && pfSet.warn === 0 && !pfSet.open && pfCoarse <= pfBefore && pfBack.q === "normal" && pfBack.v === "0" && pfBack.ar === "1" && pfBack.zoom === 1,
+      `model 1.329/1.592: Settings search for "grid" ${JSON.stringify(pfFind)}; set coarse quality (${pfBefore} → ${pfCoarse} indices), verification, no automatic relations and reversed wheel zoom, and Defaults restore them (${JSON.stringify([pfSet, pfBack])})`);
     // 1.335: fly-out tree (FR-UI-003): a command panel fills the Features tab, the tree flies out over the view and still picks planes.
     await mp.click("#t-measures");
     await mp.evaluate(() => window.__sv.modeller.command("plane"));
@@ -3274,12 +3284,12 @@ try {
     const unMenu = await mp.evaluate(() => [...document.querySelectorAll("#st-units-menu [data-u]")].map(b => b.dataset.u).join());
     await mp.click('#st-units-menu [data-u="in"]');
     await idle();
-    const unIn = await mp.evaluate(() => ({ doc: window.__sv.model.store.doc.units.length, btn: document.querySelector("#st-units").textContent, sel: document.querySelector("#units").value, undo: window.__sv.model.store.undoLabel, menu: !!document.querySelector("#st-units-menu") }));
+    const unIn = await mp.evaluate(() => ({ doc: window.__sv.model.store.doc.units.length, btn: document.querySelector("#st-units").textContent, undo: window.__sv.model.store.undoLabel, menu: !!document.querySelector("#st-units-menu") }));
     await mp.evaluate(() => document.activeElement?.blur());
     await mp.keyboard.press("Control+z");
     await idle();
     const unBack = await mp.evaluate(() => ({ doc: window.__sv.model.store.doc.units.length, btn: document.querySelector("#st-units").textContent }));
-    check(unMenu === "mm,cm,m,in,ft" && unIn.doc === "in" && /^in /.test(unIn.btn) && unIn.sel === "in" && unIn.undo === "Units: in" && !unIn.menu && unBack.doc === "mm" && /^mm /.test(unBack.btn),
+    check(unMenu === "mm,cm,m,in,ft" && unIn.doc === "in" && /^in /.test(unIn.btn) && unIn.undo === "Units: in" && !unIn.menu && unBack.doc === "mm" && /^mm /.test(unBack.btn),
       `model 1.351: the status bar unit button sets the part's units to inches as one undo step; Ctrl+Z goes back to mm (${JSON.stringify([unMenu, unIn, unBack])})`);
     // FR-UI-105: Tab hides the body under the cursor, Shift+Tab shows it again, Ctrl+Shift+Tab held + click shows it too.
     await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });

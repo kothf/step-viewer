@@ -60,7 +60,7 @@ import { isMeshName, parseMesh } from "./meshLoad";
 import { isSolidWorksName } from "./sw/container";
 import { ModelController } from "./model/controller";
 import { gestureDialog } from "./gestureUi";
-import { openPrefs } from "./prefsUi";
+import { openPrefs, type SettingsPage } from "./prefsUi";
 import { getPref, onPrefs } from "./prefs";
 import { DrawingWorkspace } from "./drawing/workspace";
 import { isDrawingName } from "./drawing/file";
@@ -106,6 +106,7 @@ applyThemeToViewer();
 /** Document tabs at the bottom (FR-DOC-003); set up once the controllers exist. */
 let docs: DocTabs | undefined;
 const modeller = new ModelController({
+  openSettings: page => openSettings(page),
   viewer,
   saved: (name, bytes) => void recentAdd([{ name, data: bytes }]),
   vp: vpEl,
@@ -944,7 +945,7 @@ async function openBuffer(buffer: ArrayBuffer, name: string) {
   setDoc(name, "loading");
   setLoading(true, t("Reading {name}…", { name }), 2);
   state.meta = readStepMeta(new Uint8Array(buffer));
-  const quality = $<HTMLSelectElement>("#quality").value as "draft" | "normal" | "fine";
+  const quality = getPref("importQuality");
   const occtBase = new URL("occt/", document.baseURI).href;
   const t0 = performance.now();
   timings = {};
@@ -2603,8 +2604,6 @@ function normalTo(given?: [number, number, number]) {
   menu.addEventListener("keydown", e => { if (e.key === "Escape") { e.stopPropagation(); set(false); btn.focus(); } });
   window.addEventListener("resize", () => set(false));
 }
-// Mouse gestures (FR-UI-024): the settings dialog; the part controller reads the stored settings on each right press.
-$("#gestures-btn").addEventListener("click", () => { $("#display-menu").hidden = true; $("#display-btn").setAttribute("aria-expanded", "false"); gestureDialog(c => toast(t(c.on ? "Mouse gestures on: right-drag in a part or a sketch." : "Mouse gestures off."))); });
 // Preferences (FR-UI-080). The mouse page acts on the view controls here; the part controller reads the rest.
 const applyMousePrefs = () => {
   viewer.controls.mouseButtons.MIDDLE = getPref("middle") === "rotate" ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
@@ -2612,13 +2611,21 @@ const applyMousePrefs = () => {
 };
 applyMousePrefs();
 onPrefs(applyMousePrefs);
-$("#prefs-btn").addEventListener("click", () => {
+/** Settings (FR-UI-080): every lasting choice in one dialog; `page` opens that category. */
+function openSettings(page?: SettingsPage) {
   $("#display-menu").hidden = true; $("#display-btn").setAttribute("aria-expanded", "false");
   openPrefs({
     units: () => units.current, decimals: () => (units.decimals === null ? "" : String(units.decimals)),
     setUnits: u => setUnits(u as Unit), setDecimals: d => setDecimals(d),
+    lang: () => lang(), setLang: l => setLang(l as Parameters<typeof setLang>[0]),
+    theme: () => document.documentElement.dataset.theme === "dark" ? "dark" : "light", setTheme: th => setTheme(th === "dark" ? "dark" : "light"),
+    tips: () => tipsOn(), setTips: on => setTips(on),
     gestures: () => gestureDialog(c => toast(t(c.on ? "Mouse gestures on: right-drag in a part or a sketch." : "Mouse gestures off."))),
-  });
+  }, page);
+}
+$("#settings-btn").addEventListener("click", () => openSettings());
+window.addEventListener("keydown", e => {
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key === ",") { e.preventDefault(); if (!document.getElementById("prefs-dlg")) openSettings(); }
 });
 $<HTMLInputElement>("#ao").addEventListener("change", e => { viewer.aoEnabled = (e.target as HTMLInputElement).checked; viewer.invalidate(); });
 // Surface analyses (FR-MEA-005): picked in the Display menu, set up and explained in a panel in the view.
@@ -2631,20 +2638,15 @@ function applyThemeToViewer() {
   const dark = document.documentElement.dataset.theme === "dark";
   viewer.setEdgeColor(dark ? 0x0b0d12 : 0x14181f);
 }
-$("#theme").addEventListener("click", () => {
-  const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+function setTheme(next: "light" | "dark") {
   document.documentElement.dataset.theme = next;
   storage.set("sv:theme", next);
   applyThemeToViewer();
-});
+}
+$("#theme").addEventListener("click", () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
 const help = bindModal($<HTMLDialogElement>("#help"));
 $("#help-btn").addEventListener("click", () => help.open());
 renderHelp($("#help-body"));
-const tipsBox = $<HTMLInputElement>("#tips-on");
-tipsBox.checked = tipsOn();
-tipsBox.addEventListener("change", () => setTips(tipsBox.checked));
-$("#help").addEventListener("close", () => { tipsBox.checked = tipsOn(); });
-$("#help-btn").addEventListener("click", () => { tipsBox.checked = tipsOn(); });
 
 // ---------- interface language ----------
 function showLang() {
@@ -2686,7 +2688,6 @@ function setUnits(u: Unit) {
 }
 function applyUnits(u: Unit) {
   units.current = u;
-  $<HTMLSelectElement>("#units").value = u;
   syncUnitsButton();
   storage.set("sv:units", u);
   refreshMeasurements();
@@ -2696,7 +2697,6 @@ function applyUnits(u: Unit) {
 }
 function setDecimals(d: string) {
   units.decimals = d === "" ? null : Number(d);
-  $<HTMLSelectElement>("#decimals").value = d;
   syncUnitsButton();
   storage.set("sv:decimals", d);
   refreshMeasurements();
@@ -2738,13 +2738,11 @@ $("#st-units").addEventListener("click", openUnitsMenu);
 bindCommandTips($("#cm"));
 syncUnitsButton();
 $("#csys-reset").addEventListener("click", () => setCsys(null));
-$<HTMLSelectElement>("#units").addEventListener("change", e => setUnits((e.target as HTMLSelectElement).value as Unit));
-$<HTMLSelectElement>("#decimals").addEventListener("change", e => setDecimals((e.target as HTMLSelectElement).value));
 {
   const u = storage.get("sv:units") as Unit | null;
-  if (u && UNIT_LIST.includes(u)) { units.current = u; $<HTMLSelectElement>("#units").value = u; }
+  if (u && UNIT_LIST.includes(u)) { units.current = u; }
   const d = storage.get("sv:decimals");
-  if (d && /^[0-6]$/.test(d)) { units.decimals = Number(d); $<HTMLSelectElement>("#decimals").value = d; }
+  if (d && /^[0-6]$/.test(d)) { units.decimals = Number(d); }
   syncUnitsButton();
 }
 $$<HTMLInputElement>("[data-snap]").forEach(c => c.addEventListener("change", () => {
@@ -3447,6 +3445,7 @@ const fileMenu = new FileMenu({
     else print3d();
   },
   vault: btn => vaultMenu.toggle(btn),
+  settings: () => openSettings(),
   properties() {
     if (drawing.open) drawing.sheetProperties();
     else if (fileMenuLive() === "part") modeller.editProps();
