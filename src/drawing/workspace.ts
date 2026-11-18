@@ -3938,6 +3938,13 @@ export class DrawingWorkspace {
       previews: () => ({ shown: this.previewsShown, made: this.kernel.previewsMade, sections: this.kernel.sectionPreviewsMade, errs: this.kernel.previewErrors.slice(0, 3), on: this.previewsOn(), asked: this.previewAsked.size, left: this.svg.querySelectorAll(".drw-preview").length }),
       renders: () => this.sheetRenders,
       drop: () => this.dropGone(true),
+      /** Starts the main drawing worker over (as past HEAP_RECYCLE), then projects `cfg` from above on it (tests). */
+      recycle: async (cfg?: string) => {
+        await (this.kernel as unknown as { recycle(): Promise<void> }).recycle();
+        const configs = [...this.kernel.configs.keys()];
+        const pr = cfg ? await this.kernel.request({ view: ORIENTS.top, cfg, key: `debug|recycle|${Date.now()}` }).then(r => r.vis.length, e => String((e as Error).message ?? e)) : null;
+        return { configs, pr };
+      },
       holes: () => (this.facts?.topo?.holes ?? []).map(h => ({ segs: h.segs.length, open: h.open })),
       proj: (id: string) => { const sh = this.sheet, v = findView(sh, id); return v ? this.kernel.cache.get(viewReq(sh, v).key) ?? null : null; },
       /** A section of the loaded model through `p` looking along `dir` (tests: who and what each cut loop is). */

@@ -18,7 +18,7 @@ export const TOAST_MS = 4000;
 /** Warnings stay longer than information, but fade too (weldments exam #9: a warning sat over the view for two hours). */
 export const WARN_MS = 10000;
 /** Errors fade last (sheet metal exam #2: errors piled up until closed one by one). */
-export const ERROR_MS = 20000;
+export const ERROR_MS = 12000;
 const MAX_TOASTS = 4;
 
 /** Shows a non-blocking notification in the bottom-right stack. */

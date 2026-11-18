@@ -10,6 +10,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Fixed
 
 - **A sheet metal Tab drawn a hair off the face's edge joins the part.** Corners within a tenth of the thickness of the face's outline are put on it, so the tab fuses into one body (it used to become a separate body, and a Jog on it then lost the base plate). A tab whose edge runs a little past the face's corner, as at a mitred flange, is no longer refused for not touching the edge.
+- **A Miter Flange profile drawn on the face the first bend turns towards keeps that face on the sketch.** Starting the profile at a wall's outer top edge and drawing it outwards made the lip one sheet thickness short; now the sheet lies on one side of the sketched line all the way along.
+- **Miter Flanges on the top edges of walls round a box's corner are mitred there.** Lips on edges of different flange walls that meet at a corner used to stop short and leave the corner open; they now run on to the corner and meet on the bisecting plane, bends included.
+- **The flat pattern view of a drawing survives a restart of the drawing kernel.** After the kernel started over to free memory, the view failed with "Configuration "@flat" is not loaded" and lost its bend lines and notes.
+- **Error messages fade after 12 s** (they stayed 20 s).
 - **Louvers placed end to end keep the part.** Forming tools whose shapes touch each other are joined to the sheet together; before, a louver formed out of a flange's outer face could replace the whole part with the louvers alone, or quietly leave one out.
 
 ## [1.579.0] - 2026-11-18

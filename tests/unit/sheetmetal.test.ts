@@ -381,12 +381,35 @@ test("sheet metal: miter flange runs a sketched profile along edges (FR-FT-120)"
   assert.equal(flatLoops(r.sheet!).outer.length, 1);
   run(doc([s, base(), pr, mf, flat]));
 
+  // Drawn on the face the first bend turns towards (exam #1): from the top edge up 30, then 20 out. The profile
+  // is the inside of bend 1 (setback r) and the outside of bend 2 (r + T); the lip still ends at -20.
+  const inP = { ...chain("mp", [[0, 2], [0, 32], [-20, 32]]), plane: { std: "YZ" as const } };
+  const ri = run(doc([s, base(), inP, mf]));
+  close(ri.props.volume, 100 * ((50 - 2) + ba + (30 - 2 - 4) + ba + (20 - 4)) * 2, 1e-5);
+  close(ri.min[1], -20, 1e-5); close(ri.size[1], 70, 1e-5); close(ri.size[2], 32, 1e-5);
+
   // Front and right edges meet at a corner: every level is mitred there.
   const two: SmMiterFeature = { ...mf, edges: [{ faces: ["b:p0:top", "b:p0:sl1"] }, { faces: ["b:p0:top", "b:p0:sl2"] }] };
   r = run(doc([s, base(), pr, two]));
   close(r.size[0], 120, 1e-5); close(r.size[1], 70, 1e-5); close(r.size[2], 32, 1e-5);
   for (const id of ["mf:p0", "mf:p1", "mf:p2", "mf:p3"]) assert.equal(r.sheet!.panels.find(x => x.id === id)!.outer.filter(x => x.ent === "miter").length, 1, `${id} is mitred`);
   run(doc([s, base(), pr, two, flat]));
+
+  // On the top edges of two edge-flange walls round a corner (exam #5): the lips run on and are mitred there,
+  // without overlapping (the folded volume is the flat one).
+  const walls: SmFlangeFeature = { id: "f", type: "smflange", name: "Edge-Flange1", edges: [{ faces: ["b:p0:top", "b:p0:sl1"] }, { faces: ["b:p0:top", "b:p0:sl2"] }], length: { v: 30 }, angle: { v: Math.PI / 2 } };
+  const wr = run(doc([s, base(), walls]));
+  const lip = { ...chain("mp", [[0, 30], [-12, 30], [-12, 22]]), plane: { std: "YZ" as const } };
+  // Each wall's outer face: the one further out along the wall's outward direction (front -Y, right +X).
+  const outer = (id: string, k: 0 | 1, sgn: number) => {
+    const P = wr.sheet!.panels.find(x => x.id === id)!;
+    return sgn * P.M.z[k] > 0 ? "top" : "bot";
+  };
+  const lips: SmMiterFeature = { ...mf, edges: [{ faces: [`f:p0:${outer("f:p0", 1, -1)}`, "f:p0:tip"] }, { faces: [`f:p1:${outer("f:p1", 0, 1)}`, "f:p1:tip"] }] };
+  const lr = run(doc([s, base(), walls, lip, lips]));
+  assert.equal(lr.props.bodies, 1);
+  for (const id of ["mf:p0", "mf:p1", "mf:p2", "mf:p3"]) assert.equal(lr.sheet!.panels.find(x => x.id === id)!.outer.filter(x => x.ent === "miter").length, 1, `${id} is mitred`);
+  close(lr.props.volume, run(doc([s, base(), walls, lip, lips, flat])).props.volume, 1e-4);
 
   // A profile away from the edges, or not square to it, is refused.
   const off = { ...chain("mp", [[0, 0], [30, 10]]), plane: { std: "XZ" as const } };

@@ -686,7 +686,7 @@ export function miterFlange(prev: SheetState, f: SmMiterFeature, prof: V3[], arc
   if (!(r >= 0)) throw new SheetError("E-SM-R", "The bend radius can't be negative.");
   // The edge the profile starts at: the picked edge nearest either end of the chain.
   const size = Math.max(1, ...prof.flatMap(p => p.map(Math.abs)));
-  type Start = { j: number; pts: V3[]; radii: (number | null)[]; dist: number; o: V3; z: V3; e: V3 };
+  type Start = { j: number; pts: V3[]; radii: (number | null)[]; dist: number; o: V3; z: V3; e: V3; A: V3 };
   const radii = arcs ?? prof.slice(1).map(() => null);
   let best = null as Start | null;
   f.edges.forEach((ref, j) => {
@@ -701,7 +701,7 @@ export function miterFlange(prev: SheetState, f: SmMiterFeature, prof: V3[], arc
     for (const [pts, rr] of [[prof, radii], [[...prof].reverse(), [null, ...[...radii].reverse().slice(0, -1)]]] as [V3[], (number | null)[]][]) {
       const v = sub3(pts[0], A), t = Math.min(Math.max(dot(v, e), 0), l);
       const dist = Math.hypot(...sub3(v, mul(e, t)));
-      if (!best || dist < best.dist) best = { j, pts, radii: rr, dist, o: applyDir(M, [e2[1], -e2[0], 0]), z: M.z, e };
+      if (!best || dist < best.dist) best = { j, pts, radii: rr, dist, o: applyDir(M, [e2[1], -e2[0], 0]), z: M.z, e, A };
     }
   });
   const b = best as Start | null;
@@ -725,24 +725,56 @@ export function miterFlange(prev: SheetState, f: SmMiterFeature, prof: V3[], arc
     if (!(angle < Math.PI - 1e-3)) throw new SheetError("E-SM-ANGLE", "The flange angle must be between 0° and 180°.");
     return { angle, up: p[0] * x.d[1] - p[1] * x.d[0] > 0, L: x.L, arc: x.arc };
   });
-  // A sketched arc is the profile side of its bend: the outside when it turns like the first bend, else the inside.
+  // Which face of the sheet the profile is drawn on: the one the first bend turns towards (its inside), or the
+  // other (its outside). A profile from the edge's middle counts as outside.
+  const side = dot(sub3(P0, b.A), b.z);
+  const profIn = Math.abs(side) > T / 4 && (side > 0) === levels[0].up;
+  const outside = (x: { up: boolean }) => (x.up === levels[0].up) !== profIn;
+  // A sketched arc is the profile side of its bend: the outside when the profile is outside that bend, else the inside.
   const rs = levels.map(x => {
     if (x.arc == null) return r;
-    const ri = x.up === levels[0].up ? x.arc - T : x.arc;
+    const ri = outside(x) ? x.arc - T : x.arc;
     if (!(ri >= -1e-9)) throw new SheetError("E-SM-SWEPTR", "An arc of the swept flange profile is smaller than the sheet thickness on the outside of its bend.");
     return Math.max(ri, 0);
   });
-  // The profile lies on the outside of the first bend: later bends the same way have it outside too, the others inside.
-  const back = levels.map((x, k) => x.up === levels[0].up ? outerSetback(T, x.angle, rs[k]) : innerSetback(x.angle, rs[k]));
+  // Setbacks run from the virtual sharp on the profile's side: outside the bends it is outside of, inside the others.
+  const back = levels.map((x, k) => outside(x) ? outerSetback(T, x.angle, rs[k]) : innerSetback(x.angle, rs[k]));
   const flat = levels.map((x, k) => x.L - back[k]);
   levels.forEach((x, k) => {
     if (!(flat[k] - (back[k + 1] ?? 0) > 1e-6)) throw new SheetError("E-SM-MITERLEN", "A line of the miter flange profile is too short for its bends.");
   });
   const nE = f.edges.length;
   const corners = flangeCorners(st, f.edges.map(x => x.faces));
+  // Edges of different faces whose ends meet (the walls of edge flanges round a box's corner), with their lines
+  // crossing there: their flanges meet on the plane bisecting the two edges through that crossing (exam #5).
+  const ends = f.edges.map(ref => {
+    try {
+      const { panel, index } = findEdge(st, ref.faces);
+      const sg = panel.outer[index];
+      if (sg.kind !== "line") return null;
+      const a = apply(panel.M, [sg.a[0], sg.a[1], T / 2]), z = apply(panel.M, [sg.b[0], sg.b[1], T / 2]), u = sub3(z, a);
+      return { panel: panel.id, a, b: z, u: mul(u, 1 / Math.hypot(...u)) };
+    } catch { return null; }
+  });
+  const meet: { V: V3; n: V3 }[] = [];
+  ends.forEach((A, i) => ends.forEach((C, j) => {
+    if (i === j || !A || !C || A.panel === C.panel || Math.hypot(...sub3(A.b, C.a)) > 3 * T + 2 * (f.gap?.v ?? 0.1)) return;
+    const w = dot(A.u, C.u);
+    if (Math.abs(w) > 1 - 1e-6) return;
+    // Closest points of the two lines.
+    const d = sub3(A.b, C.a), p = dot(A.u, d), q = dot(C.u, d), den = 1 - w * w;
+    const s0 = (w * q - p) / den, t0 = (q - w * p) / den;
+    const PA = add(A.b, mul(A.u, s0)), PC = add(C.a, mul(C.u, t0));
+    if (Math.hypot(...sub3(PA, PC)) > T + 1e-6) return;
+    const n = add(A.u, C.u), nl = Math.hypot(...n);
+    corners.push([i, j]);
+    meet.push({ V: mul(add(PA, PC), 0.5), n: mul(n, 1 / nl) });
+  }));
+  const nSame = corners.length - meet.length;
   // Each corner's mitre plane: through the face's corner, square to the face, bisecting the two edges. The same
   // profile on both edges meets itself there at every level (coplanar flanges too, which mid-planes can't place).
-  const planes = corners.map(([i, j]) => {
+  const planes = corners.map(([i, j], ci) => {
+    if (ci >= nSame) return meet[ci - nSame];
     const a = findEdge(st, f.edges[i].faces), c = findEdge(st, f.edges[j].faces);
     const sa = a.panel.outer[a.index], sc = c.panel.outer[c.index];
     if (sa.kind !== "line" || sc.kind !== "line") return null;
@@ -764,7 +796,17 @@ export function miterFlange(prev: SheetState, f: SmMiterFeature, prof: V3[], arc
         ext0: corners.some(c => c[1] === j) ? E : 0, ext1: corners.some(c => c[0] === j) ? E : 0,
       }, pid(k, j), `${f.id}:b${k * nE + j}`));
     });
-    corners.forEach(([i, j], c) => { const pl = planes[c]; if (pl) { planeCut(st, pid(k, i), pl.V, pl.n, -1, gap); planeCut(st, pid(k, j), pl.V, pl.n, 1, gap); } });
+    corners.forEach(([i, j], c) => {
+      const pl = planes[c];
+      if (!pl) return;
+      planeCut(st, pid(k, i), pl.V, pl.n, -1, gap); planeCut(st, pid(k, j), pl.V, pl.n, 1, gap);
+      // The bends onto these flanges run on too: cut on the same plane, or they overlap in the corner.
+      const bi = st.bends.find(b => b.id === `${f.id}:b${k * nE + i}`), bj = st.bends.find(b => b.id === `${f.id}:b${k * nE + j}`);
+      if (bi && bj) {
+        (bi.cuts ??= []).push({ p: add(pl.V, mul(pl.n, -gap / 2)), m: pl.n });
+        (bj.cuts ??= []).push({ p: add(pl.V, mul(pl.n, gap / 2)), m: mul(pl.n, -1) });
+      }
+    });
   });
   return { state: st, ops };
 }

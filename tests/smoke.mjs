@@ -1101,7 +1101,7 @@ try {
     const busySeen = await pg.evaluate(() => { document.querySelector("#g-png").click(); return document.querySelector("#g-png").classList.contains("busy"); });
     check(st.dur >= 150 && st.dur <= 250 && /ease-in-out/.test(st.ease) && busySeen, `ui states: ${st.dur} ms ${st.ease} transitions, spinner on export`);
 
-    // Toasts: bottom-right, info dismisses after 4 s, errors stay 20 s or until dismissed.
+    // Toasts: bottom-right, info dismisses after 4 s, errors stay 12 s or until dismissed.
     await pg.evaluate(() => { window.__sv.toast("Info toast"); window.__sv.toast("Error toast", true); });
     const tpos = await pg.evaluate(() => { const r = document.querySelector("#toasts").getBoundingClientRect(); return { right: innerWidth - r.right, bottom: innerHeight - r.bottom }; });
     await pg.waitForTimeout(4300);
@@ -14653,6 +14653,10 @@ try {
     const bt = await dp.evaluate(() => ({ n: window.__sv.drw.doc().sheets[0].annots.filter(a => a.t === "btable").length, tx: [...document.querySelectorAll(".drw-svg text")].map(t => t.textContent) }));
     check(bt.n === 1 && ["Tag", "Direction", "Angle", "Inner radius", "90°", "2"].every(s => bt.tx.includes(s)) && bt.tx.filter(s => s === "A").length === aBefore + 2 && !bt.tx.some(s => /^(UP|DOWN) /.test(s)) && bt.tx.some(s => s === "UP" || s === "DOWN"),
       `drawing: bend table lists the flat pattern's bend and tags it on the view (${bt.tx.filter(s => /^(Tag|A|UP|DOWN|90|2|Inner)/.test(s)).join(" ")})`);
+    // The drawing worker started over (as when its memory grows past the limit): the flat view keeps its bend
+    // facts, and a new projection of it builds the flat pattern again instead of failing (sheet metal exam #19).
+    const rc = await dp.evaluate(() => window.__sv.drw.recycle("@flat"));
+    check(rc.configs.includes("@flat") && typeof rc.pr === "number" && rc.pr > 0, `drawing: the flat pattern view survives a drawing worker restart (${JSON.stringify(rc)})`);
     await ctx.close();
   }
 

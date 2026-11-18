@@ -216,9 +216,32 @@ function onlyOf(ids: string[]): { shape: any; list: typeof placedShapes } {
 
 function shapeOf(cfg?: string): { shape: any; mat: string | null; mats?: (string | null)[] | null; names?: string[] } {
   if (!cfg || !partDoc || cfg === partDoc.config) return { shape, mat: modelMat, mats: modelMats, names: shapeNames };
-  const v = variants.get(cfg);
-  if (!v) throw new Error(`Configuration "${cfg}" is not loaded`);
-  return v;
+  // Built on demand when a request comes first: a worker started over (memory recycle, a retry) has none.
+  if (!variants.has(cfg)) buildConfig(cfg);
+  return variants.get(cfg)!;
+}
+
+/** Builds a configuration of the loaded part (or its flat pattern, FLAT_CONFIG) into `variants`; returns its facts. */
+function buildConfig(name: string): Record<string, unknown> {
+  if (name === FLAT_CONFIG) {
+    // Flat pattern (FR-FT-120): the part with its flat pattern shown, laid on XY with the top face up.
+    const d = partDoc && flatPatternDoc(partDoc);
+    if (!d) throw new Error("Only a sheet metal part has a flat pattern");
+    const md = new Modeller(oc), res = md.evaluate(d);
+    if (!res.body || !res.sheet) throw new Error("The flat pattern could not be made.");
+    const t = flatToXY(res.sheet), trsf = new oc.gp_Trsf_1();
+    trsf.SetValues(t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7], t[8], t[9], t[10], t[11]);
+    const flat = res.body.shape.Moved(new oc.TopLoc_Location_2(trsf), false);
+    variants.set(name, { shape: flat, mat: d.material?.name ?? null, names: res.body.names });
+    return { ...shapeInfo(oc, flat), topo: topology(oc, flat, res.body.names), items: [], holes: [], threads: [], sketches: [], bends: flatBends(res.sheet) };
+  }
+  if (!partDoc) throw new Error("Only a part has configurations");
+  if (!partDoc.configs?.some(c => c.name === name)) throw new Error(`The part has no configuration "${name}"`);
+  const d: PartDoc = structuredClone(partDoc);
+  activate(d, name);
+  const b = buildPart(d, false, true);
+  variants.set(name, { shape: b.shape, mat: b.mat, mats: b.mats, names: b.names });
+  return { ...shapeInfo(oc, b.shape), ...b.extra };
 }
 
 /** Names a face of `full` (or of a compound of its pieces, which share its faces) by the model's face names; null for faces it lacks. */
@@ -303,25 +326,8 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
       else throw new Error("Nothing to load");
       if (r.lite) { post({ id: r.id, ok: true }); return; }
       post({ id: r.id, ok: true, ...shapeInfo(oc, shape), ...extra, snap: writeSnap() });
-    } else if (r.type === "config" && r.name === FLAT_CONFIG) {
-      // Flat pattern (FR-FT-120): the part with its flat pattern shown, laid on XY with the top face up.
-      const d = partDoc && flatPatternDoc(partDoc);
-      if (!d) throw new Error("Only a sheet metal part has a flat pattern");
-      const md = new Modeller(oc), res = md.evaluate(d);
-      if (!res.body || !res.sheet) throw new Error("The flat pattern could not be made.");
-      const t = flatToXY(res.sheet), trsf = new oc.gp_Trsf_1();
-      trsf.SetValues(t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7], t[8], t[9], t[10], t[11]);
-      const flat = res.body.shape.Moved(new oc.TopLoc_Location_2(trsf), false);
-      variants.set(r.name, { shape: flat, mat: d.material?.name ?? null, names: res.body.names });
-      post({ id: r.id, ok: true, ...shapeInfo(oc, flat), topo: topology(oc, flat, res.body.names), items: [], holes: [], threads: [], sketches: [], bends: flatBends(res.sheet) });
     } else if (r.type === "config") {
-      if (!partDoc) throw new Error("Only a part has configurations");
-      if (!partDoc.configs?.some(c => c.name === r.name)) throw new Error(`The part has no configuration "${r.name}"`);
-      const d: PartDoc = structuredClone(partDoc);
-      activate(d, r.name);
-      const b = buildPart(d, false, true);
-      variants.set(r.name, { shape: b.shape, mat: b.mat, mats: b.mats, names: b.names });
-      post({ id: r.id, ok: true, ...shapeInfo(oc, b.shape), ...b.extra });
+      post({ id: r.id, ok: true, ...buildConfig(r.name) });
     } else if (r.type === "project") {
       if (!shape) throw new Error("No model loaded");
       const sh = r.only?.length && placedShapes.length ? onlyOf(r.only).shape : shapeOf(r.cfg).shape;
