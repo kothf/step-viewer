@@ -6486,7 +6486,7 @@ export class Modeller {
           else if (f.type === "sweep") body = this.sweepAlong(f, doc, body, frames);
           else if (f.type === "loft") body = this.loft(f, doc, body, frames);
           else if (f.type === "rib") body = this.rib(f, doc, body, frames);
-          else if (isSheet(f)) ({ body, sm } = evalSheet(this.sheetApi(), f, doc, body, sm, sk => this.frameOf(sk, body, frames)));
+          else if (isSheet(f)) ({ body, sm } = evalSheet(this.sheetApi(frames), f, doc, body, sm, sk => this.frameOf(sk, body, frames)));
           else if (isWeld(f)) body = evalWeld(this as unknown as WeldHost, f, doc, body, frames);
           else if (f.type === "split") body = this.splitLine(f, doc, body, frames);
           else if (f.type === "import") body = this.importBody(f, body);
@@ -6527,8 +6527,8 @@ export class Modeller {
   }
 
   /** The helpers sheet metal (src/sheetmetal) builds its solids with. */
-  private sheetApi() {
-    return { oc: this.oc, bool: this.bool.bind(this), segEdge: (s: Seg, fr: Frame) => this.segEdge(s, fr), sub: this.sub.bind(this), centroid: this.centroid.bind(this), face: (b: Named | null, r: FaceRef) => this.resolveFace(b, r), edge: (b: Named | null, r: EdgeRef) => this.resolveEdge(b, r) };
+  private sheetApi(frames: Record<string, Frame> = {}) {
+    return { vertex: (b: Named | null, r: VertexRef) => this.vertexPos(r, b, frames), oc: this.oc, bool: this.bool.bind(this), segEdge: (s: Seg, fr: Frame) => this.segEdge(s, fr), sub: this.sub.bind(this), centroid: this.centroid.bind(this), face: (b: Named | null, r: FaceRef) => this.resolveFace(b, r), edge: (b: Named | null, r: EdgeRef) => this.resolveEdge(b, r) };
   }
 
   /** Triangles of the body in occt-import-js's layout (one range per B-rep face, in face order). */

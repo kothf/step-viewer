@@ -190,6 +190,7 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
   if (f.type === "smloft") features.push(f.sketch1, f.sketch2);
   if (f.type === "smbase" || f.type === "smbend" || f.type === "smjog" || f.type === "smtab" || f.type === "smmiter" || f.type === "smswept" || f.type === "smvent" || f.type === "smcut") features.push(f.sketch);
   if (f.type === "smflange" || f.type === "smhem" || f.type === "smcorner" || f.type === "smmiter" || f.type === "smswept") for (const e of f.edges) faces.push(...e.faces);
+  if (f.type === "smflange" && f.end === "vertex" && f.vertex) { if ("point" in f.vertex) features.push(f.vertex.point); else faces.push(...f.vertex.edge.faces); }
   if (f.type === "smclosed" || f.type === "smcross") faces.push(...f.faces.map(x => x.name));
   if (f.type === "smform" && f.face) faces.push(f.face.name);
   if (f.type === "smconvert") { if (f.face.name) faces.push(f.face.name); for (const e of f.edges) faces.push(...e.faces); }

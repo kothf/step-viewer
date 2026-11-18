@@ -249,6 +249,7 @@ export function smCheck(f: Feature): string | null {
   if (f.type === "smtab" && !f.sketch) return t("Pick a closed sketch for the tab.");
   if ((f.type === "smbend" || f.type === "smjog") && !f.sketch) return t("Pick a sketch with the bend line.");
   if ((f.type === "smflange" || f.type === "smhem") && !f.edges.length) return t("Pick the edges for the flange.");
+  if (f.type === "smflange" && f.end === "vertex" && !f.vertex) return t("Pick the vertex the flange goes up to.");
   if (f.type === "smmiter" && !f.sketch) return t("Pick a sketch with the miter flange profile.");
   if (f.type === "smswept" && !f.sketch) return t("Pick a sketch with the swept flange profile.");
   if ((f.type === "smmiter" || f.type === "smswept") && !f.edges.length) return t("Pick the edges for the flange.");
@@ -279,6 +280,8 @@ export interface PanelKit {
   unit: string;
   /** mm → the shown unit. */
   f: number;
+  /** Which pick box has focus. */
+  focus?: string;
 }
 
 const opt = (esc: PanelKit["esc"], v: string, cur: string | undefined, label: string) => `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(label)}</option>`;
@@ -348,8 +351,13 @@ export function smPanel(f: SheetFeature, k: PanelKit): { title: string; body: st
       title: t("Edge Flange"),
       body: group(t("Flange parameters"), edgeList(f.edges) + chk("flip", f.flip, t("Reverse direction")))
         + group(t("Angle"), numField("angle", t("Flange angle"), f.angle, "angle"))
-        + group(t("Flange length"), sel("lengthRef", t("Measured to"), [["outer", t("Outer virtual sharp")], ["inner", t("Inner virtual sharp")]], f.lengthRef ?? "outer") + numField("length", t("Length"), f.length, "length"))
-        + group(t("Flange position"), sel("position", t("Position"), [["inside", t("Material inside")], ["outside", t("Material outside")], ["bendout", t("Bend outside")]], f.position ?? "inside"))
+        + group(t("Flange length"), sel("end", t("End condition"), [["blind", t("Blind")], ["vertex", t("Up to vertex")]], f.end ?? "blind")
+          + (f.end === "vertex"
+            ? `<div class="pm-field"><span>${esc(t("Vertex"))}</span><button class="pm-box${k.focus === "smvertex" ? " focus" : ""}" data-focus="smvertex">${esc(f.vertex ? t("Vertex picked") : t("None"))}</button></div>`
+              + help(t("The flange's tip passes through the vertex: click near the end of an edge."))
+            : sel("lengthRef", t("Measured to"), [["outer", t("Outer virtual sharp")], ["inner", t("Inner virtual sharp")]], f.lengthRef ?? "outer") + numField("length", t("Length"), f.length, "length")))
+        + group(t("Flange position"), sel("position", t("Position"), [["inside", t("Material inside")], ["outside", t("Material outside")], ["bendout", t("Bend outside")], ["offset", t("Offset")]], f.position ?? "inside")
+          + (f.position === "offset" ? numField("offset", t("Offset distance"), f.offset ?? { v: 5 }, "length") + help(t("The face runs on past the edge by this distance and the flange bends there.")) : ""))
         + group(t("Custom bend radius"), `<label class="chk pm-chk"><input type="checkbox" data-sm="customR"${custom ? " checked" : ""} />${esc(t("Use custom bend radius"))}</label>` + (f.radius ? numField("radius", t("Bend radius"), f.radius, "length") : ""))
         + group(t("Custom width"), `<label class="chk pm-chk"><input type="checkbox" data-sm="offs"${offs ? " checked" : ""} />${esc(t("Offset from the edge ends"))}</label>`
           + (f.off0 ? numField("off0", t("Start offset"), f.off0, "length") : "") + (f.off1 ? numField("off1", t("End offset"), f.off1, "length") : "")
@@ -661,7 +669,8 @@ export function bindSmPanel(pm: HTMLElement, f: SheetFeature, upd: (fn: () => vo
       }
       if (f.type === "smflange") {
         if (key === "lengthRef") upd(() => { if (val === "inner") f.lengthRef = "inner"; else delete f.lengthRef; });
-        if (key === "position") upd(() => { if (val === "inside") delete f.position; else f.position = val as SmFlangeFeature["position"]; });
+        if (key === "position") upd(() => { if (val === "inside") delete f.position; else f.position = val as SmFlangeFeature["position"]; if (val === "offset") f.offset ??= { v: 5 }; else delete f.offset; }, true);
+        if (key === "end") upd(() => { if (val === "vertex") f.end = "vertex"; else { delete f.end; delete f.vertex; } }, true);
         if (key === "customR") upd(() => { if (val) f.radius = { v: 2 }; else delete f.radius; }, true);
         if (key === "offs") upd(() => { if (val) { f.off0 = { v: 5 }; f.off1 = { v: 5 }; } else { delete f.off0; delete f.off1; } }, true);
         return;
