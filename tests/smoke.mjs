@@ -10481,6 +10481,48 @@ try {
     await ctx.close();
   }
 
+  // --- 1.573: 3D sketch points clicked on a 2D sketch's points stay on them when that sketch changes (weldments exam #6) ---
+  if (inShard(5)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // A 100 × 60 frame sketch on XY, shown (no feature uses it).
+    await mp.evaluate(() => window.__sv.model.store.change("Setup", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "fr", type: "sketch", name: "Frame", plane: { std: "XY" }, rels: [], dims: [],
+        ents: [P("c1", -50, -30), P("c2", 50, -30), P("c3", 50, 30), P("c4", -50, 30), Ln("a", "c1", "c2"), Ln("b", "c2", "c3"), Ln("c", "c3", "c4"), Ln("e", "c4", "c1")] });
+    }));
+    await settle();
+    await mp.evaluate(() => { const v = window.__sv.viewer; v.fit(false); });
+    await runCmd(mp, "3D Sketch");
+    await settle();
+    const scr = p => mp.evaluate(p => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(); const V = v.camera.position.constructor; const q = new V(...p).project(v.camera); return [((q.x + 1) / 2) * r.width + r.left, ((1 - q.y) / 2) * r.height + r.top]; }, p);
+    const clickAt = async (p, dx = 0) => { const [x, y] = await scr(p); await mp.mouse.click(x + dx, y + dx); await settle(); };
+    // The first click lands 3 px off the frame's corner and takes the corner; Tab, then a point straight above it.
+    await clickAt([-50, -30, 0], 3);
+    await mp.keyboard.press("Tab");
+    await clickAt([-50, -30, 40]);
+    await mp.keyboard.press("Escape");
+    const drawn = await mp.evaluate(() => window.__sv.model.mode().draft.pts.map(q => ({ p: q.p, at: q.at, fixed: q.fixed })));
+    await mp.click("#mc-ok");
+    await settle();
+    // The frame grows 30 to the left: the 3D sketch's first point goes with the corner.
+    await mp.evaluate(() => window.__sv.model.store.change("Wider", d => { const c1 = d.features.find(f => f.id === "fr").ents.find(e => e.id === "c1"); c1.x = -80; }));
+    await settle();
+    const after = await mp.evaluate(() => ({ pts: window.__sv.model.store.doc.features.find(f => f.type === "sketch3d").pts.map(q => q.p.map(c => Math.round(c * 1000) / 1000)), bad: window.__sv.model.last().statuses.filter(s => !s.ok || s.warning).length }));
+    check(drawn[0]?.at?.sketch === "fr" && drawn[0]?.at?.pt === "c1" && drawn[0]?.fixed && !drawn[1]?.at && JSON.stringify(after.pts[0]) === "[-80,-30,0]" && after.bad === 0,
+      `model 1.573: a 3D sketch point clicked on a sketch point follows it (weldments exam #6) (${JSON.stringify({ drawn, after })})`);
+    await ctx.close();
+  }
+
   // --- 1.85: sweep twist and guide curve, loft centreline, variable pitch helix (FR-FT-080, FR-FT-082, FR-FT-083) ---
   if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

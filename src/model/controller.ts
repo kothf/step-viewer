@@ -843,6 +843,17 @@ export class ModelController {
     const upd = r.sketches ?? {};
     for (const [id, sk] of Object.entries(upd)) {
       const cur = this.store!.feature(id);
+      if (sk.type === "sketch3d") {
+        // A 3D sketch moved onto the sketch points it is on: take over its point positions (no undo step), also in an open panel.
+        if (cur?.type !== "sketch3d") continue;
+        const pos = new Map(sk.pts.map(q => [q.id, q.p]));
+        const m = this.mode, open = m.kind === "feature" && m.draft.id === id && m.draft.type === "sketch3d" ? m.draft : null;
+        const move = (g: Sketch3dFeature) => { let ch = false; for (const q of g.pts) { const p = pos.get(q.id); if (p && p.some((c, k) => Math.abs(c - q.p[k]) > 1e-9)) { q.p = [...p] as V3; ch = true; } } return ch; };
+        const next = structuredClone(cur);
+        if (move(next)) this.store!.amend(d => { const i = d.features.findIndex(f => f.id === id); if (i >= 0) d.features[i] = next; });
+        if (open && move(open)) this.drawDecor();
+        continue;
+      }
       if (!cur || cur.type !== "sketch") continue;
       const m = this.mode;
       const editing = m.kind === "sketch" && m.id === id;
@@ -8925,11 +8936,14 @@ export class ModelController {
   }
 
   /** Where a click in the view puts a 3D sketch point: an existing point, a snap point, a face, else the sketch plane through the last point. */
-  private click3d(e: PointerEvent, f: Sketch3dFeature): { id?: string; p?: V3 } | null {
+  private click3d(e: PointerEvent, f: Sketch3dFeature): { id?: string; p?: V3; at?: { sketch: string; pt: string } } | null {
     const v = this.host.viewer, r = v.renderer.domElement.getBoundingClientRect();
     const scr = (p: V3) => { const q = new THREE.Vector3(...p).project(v.camera); return [((q.x + 1) / 2) * r.width + r.left, ((1 - q.y) / 2) * r.height + r.top]; };
     const near = f.pts.find(p => { const [x, y] = scr(p.p); return Math.hypot(x - e.clientX, y - e.clientY) < 8; });
     if (near) return { id: near.id };
+    // A point of a shown 2D sketch before the 3D sketch: the new point stays on it when that sketch changes (exam #6).
+    const on = this.sketchPointAt(e.clientX, e.clientY, f.id, scr);
+    if (on) return on;
     const snap = this.host.snapAt?.(e.clientX, e.clientY);
     if (snap) return { p: snap.point };
     const face = this.host.faceAt(e.clientX, e.clientY);
@@ -8944,6 +8958,24 @@ export class ModelController {
     const q: V3 = [hit.x, hit.y, hit.z];
     // The point stays on the plane: round the in-plane coordinates to 0.01 mm.
     return { p: q.map((c, i) => n[i] ? o[i] : Math.round(c * 100) / 100) as V3 };
+  }
+
+  /** The nearest point (within 8 px) of a shown, unsuppressed 2D sketch earlier in the tree than the feature `before`, as a world point and its reference. */
+  private sketchPointAt(x: number, y: number, before: string, scr: (p: V3) => number[]): { p: V3; at: { sketch: string; pt: string } } | null {
+    const fs = this.doc.features, end = fs.findIndex(g => g.id === before);
+    let best: { p: V3; at: { sketch: string; pt: string } } | null = null, bd = 8;
+    for (const g of end >= 0 ? fs.slice(0, end) : fs) {
+      if (g.type !== "sketch" || g.suppressed || !this.sketchShown(g)) continue;
+      const fr = this.last?.frames[g.id];
+      if (!fr) continue;
+      for (const e of g.ents) {
+        if (e.t !== "point" || e.id.includes("~")) continue;
+        const w = [0, 1, 2].map(k => fr.o[k] + fr.x[k] * e.x + fr.y[k] * e.y) as V3;
+        const [sx, sy] = scr(w), d = Math.hypot(sx - x, sy - y);
+        if (d < bd) { bd = d; best = { p: w, at: { sketch: g.id, pt: e.id } }; }
+      }
+    }
+    return best;
   }
 
   private pick3d(e: PointerEvent, f: Sketch3dFeature) {
@@ -8973,7 +9005,7 @@ export class ModelController {
     if (!at) return;
     this.change3d(f, () => {
       let pid = at.id;
-      if (!pid) { pid = uid("p"); f.pts.push({ id: pid, p: at.p! }); }
+      if (!pid) { pid = uid("p"); f.pts.push({ id: pid, p: at.p!, ...(at.at ? { fixed: true, at: at.at } : {}) }); }
       const a = s3.anchor;
       if (a && a !== pid) {
         if (s3.tool === "line") f.segs.push({ id: uid("l"), t: "line", pts: [a, pid] });
@@ -9088,16 +9120,16 @@ export class ModelController {
     pm.querySelector<HTMLSelectElement>("[data-s3p]")?.addEventListener("change", ev => { s3.plane = (ev.target as HTMLSelectElement).value as "XY" | "YZ" | "ZX"; this.drawDecor(); });
     pm.querySelectorAll<HTMLButtonElement>("[data-s3sel]").forEach(b => b.addEventListener("click", () => { const id = b.dataset.s3sel!; s3.sel = s3.sel.includes(id) ? s3.sel.filter(x => x !== id) : [...s3.sel, id]; this.renderPanel(); this.drawDecor(); }));
     pm.querySelectorAll<HTMLInputElement>("input[data-s3x]").forEach(inp => {
-      const apply = () => { const [i, j] = inp.dataset.s3x!.split(":").map(Number); const v = num(inp); const p = f.pts[i]; if (v == null || !p || p.p[j] === v) return; this.change3d(f, () => { p.p = p.p.map((c, k) => k === j ? v : c) as V3; }); };
+      const apply = () => { const [i, j] = inp.dataset.s3x!.split(":").map(Number); const v = num(inp); const p = f.pts[i]; if (v == null || !p || p.p[j] === v) return; this.change3d(f, () => { p.p = p.p.map((c, k) => k === j ? v : c) as V3; delete p.at; }); };
       inp.addEventListener("change", apply);
       inp.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); apply(); } });
     });
-    pm.querySelectorAll<HTMLInputElement>("input[data-s3f]").forEach(inp => inp.addEventListener("change", () => { const p = f.pts[+inp.dataset.s3f!]; if (p) this.change3d(f, () => { if (inp.checked) p.fixed = true; else delete p.fixed; }); }));
+    pm.querySelectorAll<HTMLInputElement>("input[data-s3f]").forEach(inp => inp.addEventListener("change", () => { const p = f.pts[+inp.dataset.s3f!]; if (p) this.change3d(f, () => { if (inp.checked) p.fixed = true; else { delete p.fixed; delete p.at; } }); }));
     pm.querySelectorAll<HTMLButtonElement>("[data-s3r]").forEach(b => b.addEventListener("click", () => {
       const k = b.dataset.s3r!;
       const lines = s3.sel.filter(id => f.segs.some(g => g.id === id)), points = s3.sel.filter(id => f.pts.some(p => p.id === id));
       this.change3d(f, () => {
-        if (k === "fix") { const all = points.every(id => f.pts.find(p => p.id === id)?.fixed); for (const id of points) { const p = f.pts.find(q => q.id === id)!; if (all) delete p.fixed; else p.fixed = true; } return; }
+        if (k === "fix") { const all = points.every(id => f.pts.find(p => p.id === id)?.fixed); for (const id of points) { const p = f.pts.find(q => q.id === id)!; if (all) { delete p.fixed; delete p.at; } else p.fixed = true; } return; }
         if (k.startsWith("dim:")) {
           const P = (id: string) => f.pts.find(p => p.id === id)!.p;
           const sg = f.segs.find(g => g.id === lines[0]);

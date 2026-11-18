@@ -3054,6 +3054,8 @@ export const RU: Record<string, string> = {
   "Select a line, two lines or two points (in the view or above) to add relations and dimensions.": "Выберите отрезок, два отрезка или две точки (в окне или выше), чтобы добавить взаимосвязи и размеры.",
   "Spline {n}": "Сплайн {n}",
   "The 3D sketch has no lines or splines.": "В 3D-эскизе нет отрезков и сплайнов.",
+  "Some 3D sketch points lost the sketch points they were on; they stay where they were.": "Некоторые точки 3D-эскиза потеряли точки эскиза, на которых лежали; они остаются на месте.",
+  "The 3D sketch cannot follow the sketch points it is on: its relations or dimensions conflict.": "3D-эскиз не может следовать за точками эскиза, на которых лежит: его взаимосвязи или размеры противоречат друг другу.",
   "The relations and dimensions conflict.": "Взаимосвязи и размеры противоречат друг другу.",
   "The relations and dimensions conflict; the change was undone.": "Взаимосвязи и размеры противоречат друг другу; изменение отменено.",
   "Unfix": "Освободить",

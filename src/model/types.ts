@@ -755,7 +755,7 @@ export interface CurveFeature {
 }
 
 /** A 3D sketch point (FR-SK-080), part coordinates in mm. */
-export interface Sk3Point { id: string; p: V3; fixed?: boolean }
+export interface Sk3Point { id: string; p: V3; fixed?: boolean; /** Held on a 2D sketch's point (a CAD app's coincident to a sketch point): kept fixed and moved there on every rebuild. */ at?: { sketch: string; pt: string } }
 /** A 3D sketch line (two points) or spline (two or more points, the C2 interpolant). */
 export interface Sk3Seg { id: string; t: "line" | "spline"; pts: string[] }
 /** 3D sketch relations: a line along an axis or parallel to a standard plane, two lines parallel/perpendicular/equal, two points coincident. */

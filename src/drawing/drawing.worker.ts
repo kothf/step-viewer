@@ -9,7 +9,7 @@ import { geometryDiff, projectAuto, FAST_EDGES, setFastAngle, projectPoly, readS
 import { Assembler } from "../kernel/assembly";
 import { Modeller } from "../kernel/model";
 import type { AsmDoc } from "../asm/types";
-import type { EdgeRef, PartDoc } from "../model/types";
+import type { EdgeRef, PartDoc, SketchFeature } from "../model/types";
 import { modelItems, type CutInfo, type WeldInfo } from "./items";
 import { cutList, type WeldHost } from "../weldments/kernel";
 import { beadSym, cutPropsOf, itemDensity, itemMatText, splitSubs, type CutItem, type WeldBeadFeature } from "../weldments/types";
@@ -163,7 +163,7 @@ function buildPart(doc: PartDoc, lite = false, variant = false): { shape: any; m
     } catch { return null; }
   };
   let mi: ReturnType<typeof modelItems> = { items: [], holes: [], threads: [], sketches: [] };
-  try { mi = modelItems(doc, res.frames, res.sketches, edgeCircle); } catch { /* no model items */ }
+  try { mi = modelItems(doc, res.frames, Object.fromEntries(Object.entries(res.sketches).filter((e): e is [string, SketchFeature] => e[1].type === "sketch")), edgeCircle); } catch { /* no model items */ }
   // Weld table (FR-FT-121): the cut list's beads, less the items marked Exclude from cut list.
   // Cut list table: every item in the dialog's order (sub-weldments after the loose items), numbered the same way.
   // Cut list balloons: every face of an item's bodies names its item number.
