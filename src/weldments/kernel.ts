@@ -34,6 +34,38 @@ const len = (a: V3) => Math.hypot(a[0], a[1], a[2]);
 const unit = (a: V3): V3 => { const l = len(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
 const d3 = (a: V3, b: V3) => len(sub(a, b));
 
+// ---------- reuse of unchanged weldment steps ----------
+// A change to an early feature rebuilds every later one, and Booleans between rounded tubes cost 1 to 2 s each (the
+// corner cylinders of both meet). Members, Trim/Extend results and fillet beads are kept here by what they are made
+// from: the feature, its path geometry and the exact geometry of the input bodies (`bodySig`). A shelf trimmed to legs
+// that did not change is then taken as it was. Entries are dropped least recently used, and with the modeller's cache.
+
+const MEMO_MAX = 160;
+const memos = new WeakMap<object, Map<string, unknown>>();
+
+/** The value made from `key`, kept from an earlier rebuild when it was made already. */
+function memoized<T>(h: WeldHost, key: string, make: () => T): T {
+  let m = memos.get(h.oc);
+  if (!m) memos.set(h.oc, (m = new Map()));
+  if (m.has(key)) { const v = m.get(key) as T; m.delete(key); m.set(key, v); return v; }
+  const v = make();
+  m.set(key, v);
+  if (m.size > MEMO_MAX) m.delete(m.keys().next().value as string);
+  return v;
+}
+
+/** Forgets the kept weldment steps (a new document, or the modeller's cache dropped). */
+export function weldMemoClear(oc: object) { memos.delete(oc); }
+
+/** A body's exact geometry and face names in one string: two bodies with the same signature are the same body. */
+function bodySig(h: WeldHost, b: Named): string {
+  const box = new h.oc.Bnd_Box_1();
+  h.oc.BRepBndLib.Add(b.shape, box, false);
+  const lo = box.CornerMin(), hi = box.CornerMax();
+  const r = (x: number) => x.toFixed(6);
+  return [b.faces.length, h.sub(b.shape, "EDGE").length, h.volume(b.shape).toPrecision(12), r(lo.X()), r(lo.Y()), r(lo.Z()), r(hi.X()), r(hi.Y()), r(hi.Z()), b.names.join(",")].join("|");
+}
+
 export const isWeld = (f: Feature): f is WeldFeature => f.type === "member" || f.type === "trimext" || f.type === "endcap" || f.type === "gusset" || f.type === "weldbead";
 
 /**
@@ -350,77 +382,80 @@ export function member(h: WeldHost, f: MemberFeature, doc: PartDoc, prev: Named 
   const outAt = (i: number, e: 0 | 1) => (e ? segs[i].wb : mul(segs[i].wa, -1));
   /** The profile's placement at an end (an arc's turns along it). */
   const plAt = (i: number, e: 0 | 1) => (e && segs[i].arc ? placement(f, { ...segs[i], wa: segs[i].wb }, f.segs[i], doc, frames, shape) : pls[i]);
-  const ends: [End, End][] = segs.map((_s, i) => ([0, 1] as const).map(e => {
-    const P = endPt(i, e);
-    const others: [number, 0 | 1][] = [];
-    segs.forEach((_t, j) => { if (j !== i) for (const k of [0, 1] as const) if (d3(endPt(j, k), P) < tol) others.push([j, k]); });
-    const corner = f.corners?.[cornerKey([segs[i].ent, ...others.map(([j]) => segs[j].ent)])] ?? f.corner;
-    if (!others.length || corner === "none") return { kind: "free" } as End;
-    const din = outAt(i, e);
-    /** Run past the corner until the other members' outlines are covered. */
-    const cover = (js: [number, 0 | 1][]) => Math.max(0, ...js.flatMap(([j, k]) => { const p = plAt(j, k); return outline(p.shape.outer, 8).map(q => dot(sub(at3(p, P, q), P), din)); }));
-    if (others.length > 1) {
-      // Three or more meet: the first straight one (butt2: the last) runs through, the others stop at its face.
-      const all = [i, ...others.map(([j]) => j)].filter(x => !segs[x].arc);
-      if (!all.length) return { kind: "free" } as End;
-      const through = corner === "butt2" ? Math.max(...all) : Math.min(...all);
-      if (through !== i) return Math.abs(dot(din, segs[through].w)) > 1 - 1e-9 ? { kind: "free" } as End : { kind: "trimmed", other: through } as End;
-      return { kind: "through", ext: cover(others) } as End;
-    }
-    const [j, k] = others[0];
-    const dout = mul(outAt(j, k), -1);
-    if (Math.abs(dot(din, dout)) > 1 - 1e-9) return { kind: "free" } as End;
-    // An arc can't run through a corner: a butt with an arc makes the straight member run through, two arcs are mitred.
-    const arcs = (segs[i].arc ? 1 : 0) + (segs[j].arc ? 1 : 0);
-    if (corner === "miter" || arcs === 2) return { kind: "miter", n: unit(add(din, dout)) } as End;
-    const through = arcs ? (segs[i].arc ? j : i) : corner === "butt1" ? Math.min(i, j) : Math.max(i, j);
-    if (through !== i) return { kind: "trimmed", other: j } as End;
-    return { kind: "through", ext: cover([[j, k]]) } as End;
-  }) as [End, End]);
-  const items: Named[] = segs.map((s, i) => {
-    const pl = pls[i], base = `${f.id}:${s.ent}`;
-    const extOf = (e: End, k: 0 | 1) => e.kind === "through" ? e.ext : e.kind === "miter" ? pl.R / Math.max(Math.abs(dot(e.n, outAt(i, k))), 0.05) + pl.R : e.kind === "trimmed" ? pls[e.other].R + pl.R * 2 : 0;
-    const [e0, e1] = ends[i];
-    let body: Named;
-    if (s.arc) {
-      // Revolved about the arc's axis; ends that need more material get a straight run along the tangent.
-      body = revolveArc(h, pl, s, base);
-      ([0, 1] as const).forEach(k => {
-        const x = extOf(ends[i][k], k);
-        if (x <= 1e-9) return;
-        const P = endPt(i, k), out = outAt(i, k);
-        const tail = prism(h, plAt(i, k), sub(P, mul(out, 1e-3)), add(P, mul(out, x)), base);
-        body = bool(h, "fuse", body, tail, f.id);
-      });
-    } else body = prism(h, pl, sub(s.a, mul(s.w, extOf(e0, 0))), add(s.b, mul(s.w, extOf(e1, 1))), base);
-    const big = 4 * (s.L + pl.R * 40);
-    ([e0, e1] as End[]).forEach((e, k) => {
-      const P = k ? s.b : s.a;
-      const nm = `${base}:${k ? "end" : "start"}`;
-      // A mitre gap is split between the two ends, measured square to the mitre plane.
-      if (e.kind === "miter") body = bool(h, "cut", body, halfBox(h, sub(P, mul(e.n, gap / 2)), e.n, big, nm), f.id);
-      if (e.kind === "trimmed" && f.coped) {
-        // Coped cut: the end follows the other member's outer shape (a round tube's saddle), cut by its filled
-        // profile run well past both its ends; a weld gap moves the cut back along this member.
-        const o = segs[e.other], op = pls[e.other], run = 4 * (op.R + pl.R);
-        const back = mul(outAt(i, k as 0 | 1), -gap);
-        const t = prism(h, op, add(sub(o.a, mul(o.w, run)), back), add(add(o.b, mul(o.w, run)), back), nm, true);
-        body = bool(h, "cut", body, { ...t, names: t.faces.map(() => nm) }, f.id);
-      } else if (e.kind === "trimmed") {
-        // Cut square to the other member's face that looks at this one (the plane holds its axis).
-        const o = segs[e.other], op = pls[e.other];
-        const din = outAt(i, k as 0 | 1);
-        const m = unit(sub(mul(din, -1), mul(o.w, dot(mul(din, -1), o.w))));
-        const ext = Math.max(0, ...outline(op.shape.outer, 8).map(q => dot(sub(at3(op, P, q), P), m)));
-        body = bool(h, "cut", body, halfBox(h, add(P, mul(m, ext + gap)), mul(m, -1), big, nm), f.id);
+  // The bodies come from the feature and its path alone (placements hold the sketch frames and alignment).
+  const merged = memoized(h, "member " + JSON.stringify([f, segs, pls, shape]), (): Named[] => {
+    const ends: [End, End][] = segs.map((_s, i) => ([0, 1] as const).map(e => {
+      const P = endPt(i, e);
+      const others: [number, 0 | 1][] = [];
+      segs.forEach((_t, j) => { if (j !== i) for (const k of [0, 1] as const) if (d3(endPt(j, k), P) < tol) others.push([j, k]); });
+      const corner = f.corners?.[cornerKey([segs[i].ent, ...others.map(([j]) => segs[j].ent)])] ?? f.corner;
+      if (!others.length || corner === "none") return { kind: "free" } as End;
+      const din = outAt(i, e);
+      /** Run past the corner until the other members' outlines are covered. */
+      const cover = (js: [number, 0 | 1][]) => Math.max(0, ...js.flatMap(([j, k]) => { const p = plAt(j, k); return outline(p.shape.outer, 8).map(q => dot(sub(at3(p, P, q), P), din)); }));
+      if (others.length > 1) {
+        // Three or more meet: the first straight one (butt2: the last) runs through, the others stop at its face.
+        const all = [i, ...others.map(([j]) => j)].filter(x => !segs[x].arc);
+        if (!all.length) return { kind: "free" } as End;
+        const through = corner === "butt2" ? Math.max(...all) : Math.min(...all);
+        if (through !== i) return Math.abs(dot(din, segs[through].w)) > 1 - 1e-9 ? { kind: "free" } as End : { kind: "trimmed", other: through } as End;
+        return { kind: "through", ext: cover(others) } as End;
       }
+      const [j, k] = others[0];
+      const dout = mul(outAt(j, k), -1);
+      if (Math.abs(dot(din, dout)) > 1 - 1e-9) return { kind: "free" } as End;
+      // An arc can't run through a corner: a butt with an arc makes the straight member run through, two arcs are mitred.
+      const arcs = (segs[i].arc ? 1 : 0) + (segs[j].arc ? 1 : 0);
+      if (corner === "miter" || arcs === 2) return { kind: "miter", n: unit(add(din, dout)) } as End;
+      const through = arcs ? (segs[i].arc ? j : i) : corner === "butt1" ? Math.min(i, j) : Math.max(i, j);
+      if (through !== i) return { kind: "trimmed", other: j } as End;
+      return { kind: "through", ext: cover([[j, k]]) } as End;
+    }) as [End, End]);
+    const items: Named[] = segs.map((s, i) => {
+      const pl = pls[i], base = `${f.id}:${s.ent}`;
+      const extOf = (e: End, k: 0 | 1) => e.kind === "through" ? e.ext : e.kind === "miter" ? pl.R / Math.max(Math.abs(dot(e.n, outAt(i, k))), 0.05) + pl.R : e.kind === "trimmed" ? pls[e.other].R + pl.R * 2 : 0;
+      const [e0, e1] = ends[i];
+      let body: Named;
+      if (s.arc) {
+        // Revolved about the arc's axis; ends that need more material get a straight run along the tangent.
+        body = revolveArc(h, pl, s, base);
+        ([0, 1] as const).forEach(k => {
+          const x = extOf(ends[i][k], k);
+          if (x <= 1e-9) return;
+          const P = endPt(i, k), out = outAt(i, k);
+          const tail = prism(h, plAt(i, k), sub(P, mul(out, 1e-3)), add(P, mul(out, x)), base);
+          body = bool(h, "fuse", body, tail, f.id);
+        });
+      } else body = prism(h, pl, sub(s.a, mul(s.w, extOf(e0, 0))), add(s.b, mul(s.w, extOf(e1, 1))), base);
+      const big = 4 * (s.L + pl.R * 40);
+      ([e0, e1] as End[]).forEach((e, k) => {
+        const P = k ? s.b : s.a;
+        const nm = `${base}:${k ? "end" : "start"}`;
+        // A mitre gap is split between the two ends, measured square to the mitre plane.
+        if (e.kind === "miter") body = bool(h, "cut", body, halfBox(h, sub(P, mul(e.n, gap / 2)), e.n, big, nm), f.id);
+        if (e.kind === "trimmed" && f.coped) {
+          // Coped cut: the end follows the other member's outer shape (a round tube's saddle), cut by its filled
+          // profile run well past both its ends; a weld gap moves the cut back along this member.
+          const o = segs[e.other], op = pls[e.other], run = 4 * (op.R + pl.R);
+          const back = mul(outAt(i, k as 0 | 1), -gap);
+          const t = prism(h, op, add(sub(o.a, mul(o.w, run)), back), add(add(o.b, mul(o.w, run)), back), nm, true);
+          body = bool(h, "cut", body, { ...t, names: t.faces.map(() => nm) }, f.id);
+        } else if (e.kind === "trimmed") {
+          // Cut square to the other member's face that looks at this one (the plane holds its axis).
+          const o = segs[e.other], op = pls[e.other];
+          const din = outAt(i, k as 0 | 1);
+          const m = unit(sub(mul(din, -1), mul(o.w, dot(mul(din, -1), o.w))));
+          const ext = Math.max(0, ...outline(op.shape.outer, 8).map(q => dot(sub(at3(op, P, q), P), m)));
+          body = bool(h, "cut", body, halfBox(h, add(P, mul(m, ext + gap)), mul(m, -1), big, nm), f.id);
+        }
+      });
+      const piece = pieceNear(h, body, segMid(s));
+      return s.arc ? unify(h, piece) : piece;
     });
-    const piece = pieceNear(h, body, segMid(s));
-    return s.arc ? unify(h, piece) : piece;
+    // Merge miter trimmed bodies: the two ends of a mitred corner touch only without a weld gap.
+    const mitred = f.mergeMiter && gap <= 1e-9 ? ends.map(es => es.map(e => e.kind === "miter")) : null;
+    return f.mergeArcs || mitred ? mergeBodies(h, f, segs, items, tol, !!f.mergeArcs, mitred) : items;
   });
-  // Merge miter trimmed bodies: the two ends of a mitred corner touch only without a weld gap.
-  const mitred = f.mergeMiter && gap <= 1e-9 ? ends.map(es => es.map(e => e.kind === "miter")) : null;
-  const merged = f.mergeArcs || mitred ? mergeBodies(h, f, segs, items, tol, !!f.mergeArcs, mitred) : items;
   return h.compoundOf([...(prev ? h.bodyList(prev) : []), ...merged]);
 }
 
@@ -549,70 +584,75 @@ export function trimExtend(h: WeldHost, f: TrimExtendFeature, doc: PartDoc, prev
     const s = segOf(sref, doc, frames);
     if (s.arc) throw new FeatureError("E-WLD-TRIM", "Curved members can't be trimmed or extended.");
     const pl = placement(mo.f, s, sref, doc, frames);
-    const base = `${mo.f.id}:${mo.ent}`;
-    const mid = add(s.a, mul(s.w, s.L / 2));
-    let body = list[i];
-    // Which end meets the boundary, and how far it has to go: one end for a plane or one body; with several boundary
-    // bodies each end goes to the body nearest to it, both ends when those differ.
-    const jobs: { end: 0 | 1; reach: number; bound: Named | null }[] = [];
-    if (plane) {
-      const sa = dot(sub(s.a, plane.p), plane.n), sb = dot(sub(s.b, plane.p), plane.n);
-      const along = Math.abs(dot(s.w, plane.n));
-      if (along < 1e-6) throw new FeatureError("E-WLD-TRIM", "The member runs parallel to the boundary plane.");
-      const end = sa * sb < 0 ? (Math.abs(sa) < Math.abs(sb) ? 0 : 1) : Math.abs(sa) < Math.abs(sb) ? 0 : 1;
-      jobs.push({ end, reach: (sa * sb < 0 ? 0 : Math.abs(end ? sb : sa) / along) + pl.R / along + pl.R, bound: null });
-    } else {
-      const ends = ([0, 1] as const).map(e => {
-        let best = { d: Infinity, k: bis[0] };
-        for (const k of bis) { const d = distTo(h, list[k].shape, e ? s.b : s.a); if (d < best.d) best = { d, k }; }
-        return { end: e, d: best.d, k: best.k };
-      });
-      const use = bis.length > 1 && ends[0].k !== ends[1].k ? ends : [ends[0].d <= ends[1].d ? ends[0] : ends[1]];
-      for (const e of use) jobs.push({ end: e.end, reach: e.d + boxSize(h, list[e.k].shape) + pl.R, bound: list[e.k] });
-    }
-    for (const { end, reach, bound } of jobs) {
-      const P = end ? s.b : s.a, out = end ? s.w : mul(s.w, -1);
-      const nm = `${base}:${end ? "end" : "start"}`;
-      const big = 4 * (s.L + reach + pl.R * 10);
-      const extend = (b: Named) => f.noExtend ? b : bool(h, "fuse", b, prism(h, pl, sub(P, mul(out, 1e-3)), add(P, mul(out, reach)), base), f.id);
-      if (plane) {
-        const away = dot(out, plane.n) > 0 ? plane.n : mul(plane.n, -1);
-        const at = sub(plane.p, mul(away, gap));
-        // The extension lies wholly on the side the cut takes away when the member's whole outline at its end
-        // is already past the plane (0.1 mm spare for the sampled arcs): it would only be added to be cut off
-        // again (speed: one Boolean less).
-        const gone = Math.min(...outline(pl.shape.outer, 32).map(q => dot(sub(at3(pl, P, q), at), away))) - 1e-3 * dot(out, away) > 0.1;
-        body = bool(h, "cut", gone ? body : extend(body), halfBox(h, at, away, big, nm), f.id);
-      } else if (f.planar) {
-        // Planar trim: a flat end square to the member where it first meets the body. When the member already
-        // meets it before its end (t below the extension's start), the extension changes neither t nor the
-        // result, since the cut takes it all away, so it is left out (speed).
-        let t = f.noExtend ? Infinity : contactAlong(h, body, bound!, P, out);
-        if (!(t < -1e-3)) { body = extend(body); t = contactAlong(h, body, bound!, P, out); }
-        if (!Number.isFinite(t)) throw new FeatureError("E-WLD-TRIM", "The member doesn't reach the boundary body.");
-        body = bool(h, "cut", body, halfBox(h, add(P, mul(out, t - gap)), out, big, nm), f.id);
-      } else {
-        // A weld gap against a body: the boundary moved back along the member by the gap.
-        const tool = gap > 0 ? shifted(h, bound!, mul(out, -gap)) : bound!;
-        const tmp = `${nm}~`, own = `${base}:side:`, other = `${base}:${end ? "start" : "end"}`;
-        const cutBy = (b: Named) => bool(h, "cut", b, { ...tool, names: bound!.names.map(() => tmp) }, f.id);
-        const named = (b: Named): Named => ({ ...b, names: b.names.map(n => n === tmp ? nm : n) });
-        // Speed: cut the member as it is first. When the piece kept has nothing left of this end but its side
-        // walls and the boundary's faces (its other end may stay), the extension, which only grows the member
-        // past that end, could not have joined it, so the result is the same without it; otherwise extend and
-        // cut as before.
-        let done: Named | null = null;
-        if (!f.noExtend && body.names.includes(nm) && boxesMeet(h, body.shape, tool.shape)) {
-          const k = pieceNear(h, cutBy(body), mid);
-          if (k.names.includes(tmp) && k.names.every(n => n === tmp || n === other || n.startsWith(own))) done = named(k);
-        }
-        body = done ?? named(cutBy(extend(body)));
-      }
-      if (jobs.length > 1) body = pieceNear(h, body, mid);
-    }
-    list[i] = unify(h, pieceNear(h, body, mid));
+    const key = "trim " + JSON.stringify([f.id, f.kind, !!f.planar, !!f.noExtend, gap, plane, mo.f, sref, s, pl]) + "#" + bodySig(h, list[i]) + "#" + (plane ? "" : bis.map(k => bodySig(h, list[k])).join("#"));
+    list[i] = memoized(h, key, () => trimOne(h, f, list, i, bis, plane, gap, s, pl, `${mo.f.id}:${mo.ent}`));
   }
   return h.compoundOf(list);
+}
+
+/** One member of a Trim/Extend cut back to, or lengthened up to, the boundary plane or bodies. */
+function trimOne(h: WeldHost, f: TrimExtendFeature, list: Named[], i: number, bis: number[], plane: { p: V3; n: V3 } | null, gap: number, s: PathSeg, pl: Placement, base: string): Named {
+  const mid = add(s.a, mul(s.w, s.L / 2));
+  let body = list[i];
+  // Which end meets the boundary, and how far it has to go: one end for a plane or one body; with several boundary
+  // bodies each end goes to the body nearest to it, both ends when those differ.
+  const jobs: { end: 0 | 1; reach: number; bound: Named | null }[] = [];
+  if (plane) {
+    const sa = dot(sub(s.a, plane.p), plane.n), sb = dot(sub(s.b, plane.p), plane.n);
+    const along = Math.abs(dot(s.w, plane.n));
+    if (along < 1e-6) throw new FeatureError("E-WLD-TRIM", "The member runs parallel to the boundary plane.");
+    const end = sa * sb < 0 ? (Math.abs(sa) < Math.abs(sb) ? 0 : 1) : Math.abs(sa) < Math.abs(sb) ? 0 : 1;
+    jobs.push({ end, reach: (sa * sb < 0 ? 0 : Math.abs(end ? sb : sa) / along) + pl.R / along + pl.R, bound: null });
+  } else {
+    const ends = ([0, 1] as const).map(e => {
+      let best = { d: Infinity, k: bis[0] };
+      for (const k of bis) { const d = distTo(h, list[k].shape, e ? s.b : s.a); if (d < best.d) best = { d, k }; }
+      return { end: e, d: best.d, k: best.k };
+    });
+    const use = bis.length > 1 && ends[0].k !== ends[1].k ? ends : [ends[0].d <= ends[1].d ? ends[0] : ends[1]];
+    for (const e of use) jobs.push({ end: e.end, reach: e.d + boxSize(h, list[e.k].shape) + pl.R, bound: list[e.k] });
+  }
+  for (const { end, reach, bound } of jobs) {
+    const P = end ? s.b : s.a, out = end ? s.w : mul(s.w, -1);
+    const nm = `${base}:${end ? "end" : "start"}`;
+    const big = 4 * (s.L + reach + pl.R * 10);
+    const extend = (b: Named) => f.noExtend ? b : bool(h, "fuse", b, prism(h, pl, sub(P, mul(out, 1e-3)), add(P, mul(out, reach)), base), f.id);
+    if (plane) {
+      const away = dot(out, plane.n) > 0 ? plane.n : mul(plane.n, -1);
+      const at = sub(plane.p, mul(away, gap));
+      // The extension lies wholly on the side the cut takes away when the member's whole outline at its end
+      // is already past the plane (0.1 mm spare for the sampled arcs): it would only be added to be cut off
+      // again (speed: one Boolean less).
+      const gone = Math.min(...outline(pl.shape.outer, 32).map(q => dot(sub(at3(pl, P, q), at), away))) - 1e-3 * dot(out, away) > 0.1;
+      body = bool(h, "cut", gone ? body : extend(body), halfBox(h, at, away, big, nm), f.id);
+    } else if (f.planar) {
+      // Planar trim: a flat end square to the member where it first meets the body. When the member already
+      // meets it before its end (t below the extension's start), the extension changes neither t nor the
+      // result, since the cut takes it all away, so it is left out (speed).
+      let t = f.noExtend ? Infinity : contactAlong(h, body, bound!, P, out);
+      if (!(t < -1e-3)) { body = extend(body); t = contactAlong(h, body, bound!, P, out); }
+      if (!Number.isFinite(t)) throw new FeatureError("E-WLD-TRIM", "The member doesn't reach the boundary body.");
+      body = bool(h, "cut", body, halfBox(h, add(P, mul(out, t - gap)), out, big, nm), f.id);
+    } else {
+      // A weld gap against a body: the boundary moved back along the member by the gap.
+      const tool = gap > 0 ? shifted(h, bound!, mul(out, -gap)) : bound!;
+      const tmp = `${nm}~`, own = `${base}:side:`, other = `${base}:${end ? "start" : "end"}`;
+      const cutBy = (b: Named) => bool(h, "cut", b, { ...tool, names: bound!.names.map(() => tmp) }, f.id);
+      const named = (b: Named): Named => ({ ...b, names: b.names.map(n => n === tmp ? nm : n) });
+      // Speed: cut the member as it is first. When the piece kept has nothing left of this end but its side
+      // walls and the boundary's faces (its other end may stay), the extension, which only grows the member
+      // past that end, could not have joined it, so the result is the same without it; otherwise extend and
+      // cut as before.
+      let done: Named | null = null;
+      if (!f.noExtend && body.names.includes(nm) && boxesMeet(h, body.shape, tool.shape)) {
+        const k = pieceNear(h, cutBy(body), mid);
+        if (k.names.includes(tmp) && k.names.every(n => n === tmp || n === other || n.startsWith(own))) done = named(k);
+      }
+      body = done ?? named(cutBy(extend(body)));
+    }
+    if (jobs.length > 1) body = pieceNear(h, body, mid);
+  }
+  return unify(h, pieceNear(h, body, mid));
 }
 
 /** A body moved by `d` (Moved keeps its faces in order, so the names still line up). */
@@ -901,6 +941,19 @@ export function beadLegs(f: WeldBeadFeature): string {
 
 /** Fillet weld beads: a triangular bead of leg `size` along every line where a face of set 1 meets a face of set 2. */
 export function weldBead(h: WeldHost, f: WeldBeadFeature, prev: Named | null, _frames: Record<string, Frame>): Named {
+  if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
+  // A bead is made from its picked faces and the solids that hold them (tangent faces and a plate's other side are
+  // found on the same solid), so it is kept by those solids' geometry.
+  const solids = h.bodyList(prev);
+  const own = [...new Set([...f.faces1, ...f.faces2].map(r => { const x = h.resolveFace(prev, r); return solids.findIndex(b => b.faces.some(y => y.IsSame(x))); }))].sort((a, b) => a - b);
+  const make = () => beadsOf(h, f, prev);
+  const r = own.includes(-1) ? make() : memoized(h, "bead " + JSON.stringify(f) + "#" + own.map(i => bodySig(h, solids[i])).join("#"), make);
+  if (r.warning) h.warning = r.warning;
+  return h.compoundOf([...solids, ...r.beads]);
+}
+
+/** The bead solids of a Fillet Bead, and the warning it gives. */
+function beadsOf(h: WeldHost, f: WeldBeadFeature, prev: Named): { beads: Named[]; warning: string | null } {
   const oc = h.oc;
   if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
   if (!f.faces1.length || !f.faces2.length) throw new FeatureError("E-WLD-BEAD", "Pick the faces of set 1 and set 2: the bead runs where they meet.");
@@ -1178,9 +1231,7 @@ export function weldBead(h: WeldHost, f: WeldBeadFeature, prev: Named | null, _f
       } catch { /* the next way, else kept as separate pieces */ }
     }
   }
-  if (skipped) h.warning = "Some edges were skipped: the faces are tangent somewhere along them, so a bead has no room there.";
-  if (!beads.length) throw new FeatureError("E-WLD-BEAD", "The faces of the two sets do not meet along an edge a bead can follow.");
-  return h.compoundOf([...h.bodyList(prev), ...beads]);
+  return { beads, warning: skipped ? "Some edges were skipped: the faces are tangent somewhere along them, so a bead has no room there." : null };
 }
 
 /** Evaluates a weldment feature (called from `Modeller.evaluate`). */
