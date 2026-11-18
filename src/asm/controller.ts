@@ -1870,6 +1870,14 @@ export class AsmController {
     if (!r.ok) { m.problem = t(MATE_FAILS); this.renderPanel(); toast(m.problem, true); return; }
     untoast([t(MATE_FAILS), t("This mate cannot be solved with the others: the assembly would be over-defined.")]);
     const edit = m.edit;
+    // Autokey (FR-FT-122): only the value of a distance or angle mate changed while a motion study is open and
+    // keying: the mate keeps its value and the new one becomes a key at the playhead.
+    const old = edit ? this.doc.mates?.find(x => x.id === edit) : undefined;
+    if (old && edit && (old.type === "distance" || old.type === "angle") && onlyValue(old, mate) && this.motion?.canKeyMate?.(edit)) {
+      this.cancelMate();
+      this.motion.mateKey?.(edit, mate.value ?? 0);
+      return;
+    }
     this.mating = edit ? {} : { added: mate.name };
     this.mateOther = null;
     this.clearPicks();
@@ -3527,6 +3535,10 @@ export class AsmController {
     dragFrom?(id: string): Record<string, Tf> | null;
     /** Autokey: takes the dragged component's new transform as a placement key; true when it did. */
     dragged?(id: string, tf: Tf): boolean;
+    /** Autokey: true when a new value typed for distance or angle mate `id` should become a key at the playhead. */
+    canKeyMate?(id: string): boolean;
+    /** Autokey: puts `v` (mm or radians) as a key on mate `id`'s track at the playhead. */
+    mateKey?(id: string, v: number): void;
   } | null = null;
 
   /** The shown component under a screen point (client coordinates), its top-level component and the world point hit (motion trace paths). */
@@ -3712,3 +3724,10 @@ const ASM_ICONS: Record<string, string> = {
   save: AI('<path d="M2.5 2.5h9l2 2v9h-11z"/><path d="M5 2.5v3.5h5V2.5M5 13.5v-4h6v4"/>'),
   step: AI('<path d="M8 10V2.5M5 5.5l3-3 3 3"/><path d="M2.5 9.5v4h11v-4"/>'),
 };
+
+/** True when two mates differ only in `value` (and it did change). */
+function onlyValue(a: Mate, b: Mate) {
+  if ((a.value ?? 0) === (b.value ?? 0)) return false;
+  const norm = (m: Mate) => { const o: Record<string, unknown> = { ...m }; delete o.value; for (const k of Object.keys(o)) if (o[k] === undefined || o[k] === false) delete o[k]; return JSON.stringify(Object.keys(o).sort().map(k => [k, o[k]])); };
+  return norm(a) === norm(b);
+}

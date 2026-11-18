@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.572.0] - 2026-11-18
+
+### Added
+
+- Autokey in motion studies now also keys mate values: with Autokey on, typing a new value for a distance or angle mate (and changing nothing else) puts that value as a key on the mate's track at the playhead instead of changing the mate, as Autokey does in other CAD apps. A mate driven by a motor is edited as before.
+
 ## [1.571.0] - 2026-11-18
 
 ### Fixed
@@ -3579,7 +3585,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.571.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.572.0...HEAD
+[1.572.0]: https://github.com/kothf/step-viewer/compare/v1.571.0...v1.572.0
 [1.571.0]: https://github.com/kothf/step-viewer/compare/v1.570.0...v1.571.0
 [1.570.0]: https://github.com/kothf/step-viewer/compare/v1.569.0...v1.570.0
 [1.569.0]: https://github.com/kothf/step-viewer/compare/v1.568.0...v1.569.0

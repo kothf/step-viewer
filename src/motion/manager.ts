@@ -20,7 +20,7 @@ import { frameName, frameTimes } from "./frames";
 import { zip } from "../model/zip";
 import { clashCsv, clashItems, pairKey, type ClashItem } from "./interfere";
 import { GAP_PLOTS, gapCsv, plotFile, MATE_PLOTS, TRACE_COLORS, TRACE_PLOTS, accels, alertSpans, outOfRange, tripFrame, mateCsv, mateMeasures, pathLength, plotSvg, plotUnit, rates, relativeFrames, speeds, traceAngles, traceCsv, tracePoints, traceSeries, type TracePlot } from "./trace";
-import type { CamKey, Interp, Key, MotionStudy, MotorTrack, PoseKey, PoseTrack, TracePath, Track } from "./types";
+import type { CamKey, Interp, Key, MateTrack, MotionStudy, MotorTrack, PoseKey, PoseTrack, TracePath, Track } from "./types";
 
 const $ = <T extends HTMLElement = HTMLElement>(s: string, r: ParentNode = document) => r.querySelector(s) as T;
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -120,7 +120,7 @@ export class MotionManager {
     // The timeline pane resizes from its top edge and keeps its height (FR-UI-002).
     this.grip = makeGrip({ key: "motion", axis: "y", sign: -1, def: 240, min: 120, measure: () => this.pane.offsetHeight, max: () => Math.max(160, this.viewer.size.y - 60), apply: px => { this.pane.style.height = px == null ? "" : `${px}px`; this.pane.style.maxHeight = px == null ? "" : "none"; }, label: "Resize the motion study" });
     this.grip.classList.add("mo-grip");
-    asm.motion = { open: () => this.show(), rebuilt: () => this.rebuilt(), close: () => this.hide(), dragFrom: id => this.dragFrom(id), dragged: (id, tf) => this.keyPose(id, tf) };
+    asm.motion = { open: () => this.show(), rebuilt: () => this.rebuilt(), close: () => this.hide(), dragFrom: id => this.dragFrom(id), dragged: (id, tf) => this.keyPose(id, tf), canKeyMate: id => this.canKeyMate(id), mateKey: (id, v) => this.keyMate(id, v) };
     // Picking a trace point: the click on the view goes to the study, not to the assembly's tools or the orbit controls.
     window.addEventListener("pointerdown", e => {
       if (!this.tracing || e.button !== 0 || e.target !== viewer.renderer.domElement) return;
@@ -353,6 +353,38 @@ export class MotionManager {
     this.showAt(this.time);
     this.setStatus(t("Placement key at {t} s", { t: fmt(tq) }));
     return true;
+  }
+
+  /** Autokey: a typed distance or angle mate value becomes a key, unless a motor drives that mate. */
+  private canKeyMate(id: string) {
+    const mate = (this.asm.doc?.mates ?? []).find(m => m.id === id);
+    return this.open && this.autoKey && !this.playing && !this.recording && !!mate && (mate.type === "distance" || mate.type === "angle")
+      && !this.study.tracks.some(k => k.kind === "motor" && k.mate === id && !k.off);
+  }
+
+  /**
+   * Puts `v` (mm or radians) as a key on mate `id`'s track at the playhead (one undo step). With no track for the
+   * mate yet, one is made that holds the mate's own value from 0.
+   */
+  keyMate(id: string, v: number) {
+    const mate = (this.asm.doc?.mates ?? []).find(m => m.id === id);
+    if (!mate) return;
+    const tq = this.snap(this.time);
+    let tid = "";
+    this.edit(s => {
+      let k = s.tracks.find((x): x is MateTrack => x.kind === "mate" && x.mate === id && !x.off);
+      if (!k) {
+        k = { id: uid("mt_"), kind: "mate", mate: id, keys: tq > 0 ? [{ t: 0, v: mate.value ?? 0 }] : [] };
+        s.tracks.push(k);
+      }
+      k.keys = sortKeys([...k.keys.filter(x => Math.abs(x.t - tq) > 1e-9), { t: tq, v }]);
+      tid = k.id;
+    });
+    const tr = this.study.tracks.find(x => x.id === tid);
+    if (tr && tr.kind === "mate") this.sel = { track: tid, key: sortKeys(tr.keys).findIndex(x => Math.abs(x.t - tq) < 1e-9) };
+    this.render();
+    this.showAt(this.time);
+    this.setStatus(t("Mate key at {t} s", { t: fmt(tq) }));
   }
 
   /**
