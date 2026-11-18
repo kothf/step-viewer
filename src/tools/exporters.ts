@@ -1,3 +1,4 @@
+import type { ExportMesh } from "../kernel/occ";
 import * as THREE from "three";
 import { STLExporter } from "three/addons/exporters/STLExporter.js";
 import { OBJExporter } from "three/addons/exporters/OBJExporter.js";
@@ -20,7 +21,7 @@ export function download(blob: Blob, name: string) {
 }
 
 /** Plain meshes (no edge lines) with exploded offsets baked in, grouped like the assembly tree. */
-function exportScene(v: Viewer) {
+function exportScene(v: Viewer, fine?: Map<number, ExportMesh> | null) {
   const root = new THREE.Group();
   root.name = v.tree?.name ?? "model";
   const build = (n: TreeNode, parent: THREE.Object3D) => {
@@ -30,10 +31,17 @@ function exportScene(v: Viewer) {
     for (const i of n.parts) {
       const p = v.parts[i];
       if (!p.visible) continue;
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute("position", p.mesh.geometry.getAttribute("position"));
-      geo.setAttribute("normal", p.mesh.geometry.getAttribute("normal"));
-      geo.setIndex(p.mesh.geometry.getIndex());
+      const geo = new THREE.BufferGeometry(), own = fine?.get(i);
+      if (own) {
+        // Tessellated again from the exact B-rep at the export quality, in the same coordinates as the view's mesh.
+        geo.setAttribute("position", new THREE.BufferAttribute(own.pos, 3));
+        geo.setIndex(new THREE.BufferAttribute(own.idx, 1));
+        geo.computeVertexNormals();
+      } else {
+        geo.setAttribute("position", p.mesh.geometry.getAttribute("position"));
+        geo.setAttribute("normal", p.mesh.geometry.getAttribute("normal"));
+        geo.setIndex(p.mesh.geometry.getIndex());
+      }
       const mat = new THREE.MeshStandardMaterial({ color: p.material.color.clone(), metalness: 0.15, roughness: 0.55, name: p.data.name });
       if (p.data.colors) mat.color.copy(p.baseColor);
       const m = new THREE.Mesh(geo, mat);
@@ -95,8 +103,11 @@ export async function to3mf(scene: THREE.Object3D): Promise<Uint8Array> {
   ]);
 }
 
-export async function exportMesh(v: Viewer, format: "stl" | "obj" | "glb" | "3mf", baseName: string) {
-  const scene = exportScene(v);
+/** Writes the visible parts as STL/OBJ/glTF/3MF; `fine` = export meshes by view part index (else the view's own). Returns the triangle count. */
+export async function exportMesh(v: Viewer, format: "stl" | "obj" | "glb" | "3mf", baseName: string, fine?: Map<number, ExportMesh> | null) {
+  const scene = exportScene(v, fine);
+  let tris = 0;
+  scene.traverse(o => { const g = (o as THREE.Mesh).isMesh ? (o as THREE.Mesh).geometry : null; if (g) tris += (g.getIndex()?.count ?? g.getAttribute("position").count) / 3; });
   // Mesh exports are written in the active coordinate system (FR-REF-005).
   const c = csys.active;
   if (c) {
@@ -116,6 +127,7 @@ export async function exportMesh(v: Viewer, format: "stl" | "obj" | "glb" | "3mf
     const glb = (await new GLTFExporter().parseAsync(scene, { binary: true })) as ArrayBuffer;
     download(new Blob([glb], { type: "model/gltf-binary" }), `${baseName}.glb`);
   }
+  return tris;
 }
 
 /** Renders the view at `scale`× and composites the measurement labels. */

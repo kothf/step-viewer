@@ -5,6 +5,7 @@
 // The document (DocStore) is the source of truth; every rebuild sends it to the
 // kernel worker and shows the returned body with the viewer's own pipeline, so
 // the measuring tools work on modelled parts unchanged.
+import type { ExportMesh } from "../kernel/occ";
 import { fixRefsIn } from "./refFix";
 import { fullyDefineSketch } from "../sketch/define";
 import type { VaultTie } from "../pdm/panel";
@@ -2487,6 +2488,13 @@ export class ModelController {
     }));
     dlg.showModal();
     dlg.querySelector<HTMLElement>("button")?.focus();
+  }
+
+  /** Export triangles of the shown bodies at a chord deviation `lin` mm and angle `ang` rad (view part 0), or null. */
+  async exportMeshes(lin: number, ang: number): Promise<Map<number, ExportMesh> | null> {
+    if (!this.store || !this.last?.data) return null;
+    const r = await this.kernel.exportMesh("part", lin, ang);
+    return new Map(r.map(m => [0, m.mesh]));
   }
 
   async exportStep() {

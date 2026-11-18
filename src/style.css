@@ -1524,3 +1524,18 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .choose-dlg { max-width: 420px; }
 .choose-opts { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
 .choose-opts .btn { justify-content: flex-start; text-align: left; }
+
+/* File ▸ Export… dialog and File ▸ Properties window. */
+#export-dlg { width: min(460px, calc(100vw - 32px)); }
+#export-dlg fieldset { border: 1px solid var(--line); border-radius: 8px; margin: 0 0 12px; padding: 6px 10px 8px; }
+#export-dlg legend { padding: 0 4px; color: var(--muted); font-size: 12px; }
+.xd-f { display: grid; grid-template-columns: auto 8.5em 1fr; align-items: baseline; gap: 6px; padding: 4px 2px; border-radius: 6px; cursor: pointer; }
+.xd-f:hover { background: var(--hover, rgba(127,127,127,.08)); }
+.xd-f.off { opacity: .55; cursor: not-allowed; }
+.xd-f .muted { font-size: 12px; }
+.xd-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 4px 0; }
+.xd-row input[type=number] { width: 7em; }
+.xd-hint { font-size: 12px; margin: 6px 0 0; }
+.props-win { width: min(460px, calc(100vw - 16px)); max-height: calc(100vh - 32px); padding: 0; }
+.props-win[open] { display: flex; flex-direction: column; }
+.props-win-b { overflow-y: auto; min-height: 0; padding: 8px 12px 12px; }

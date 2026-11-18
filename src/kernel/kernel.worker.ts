@@ -5,7 +5,7 @@
 // saved as STEP. The main thread compiles the WASM once and hands the module
 // to the worker; the worker is kept for the next file while it is idle.
 import { cutList, isWeld, type WeldHost } from "../weldments/kernel";
-import { Kernel, type PartProbe } from "./occ";
+import { Kernel, exportTriangles, type ExportMesh, type PartProbe } from "./occ";
 import { memoOf } from "./memo";
 import { solidworksToStep } from "./solidworks";
 import { ParasolidReader } from "../sw/parasolid";
@@ -56,7 +56,12 @@ export type KernelRequest =
   | { id: number; type: "model"; doc: PartDoc; color: [number, number, number]; quality: number; previewAt?: number; verify?: boolean }
   /** Modelling: STEP of the last evaluated body. */
   | { id: number; type: "modelStep"; name: string; color: [number, number, number] }
-  | { id: number; type: "importBody"; buffer: ArrayBuffer; name: string };
+  | { id: number; type: "importBody"; buffer: ArrayBuffer; name: string }
+  /**
+   * Mesh export (STL, 3MF, OBJ, glTF) at a chord deviation `lin` mm and angle `ang` rad: `part` = the last shown part
+   * body, `file` = the loaded file's meshes `which`, `asm` = each shown component of `doc` (by id, world coordinates).
+   */
+  | { id: number; type: "exportMesh"; of: "part" | "file" | "asm"; lin: number; ang: number; which?: number[]; doc?: AsmDoc };
 
 let parasolid: Promise<ParasolidReader> | null = null;
 /** The Parasolid reader (600 kB of WASM), loaded at the first SLDPRT/SLDASM file. */
@@ -73,6 +78,8 @@ let assembler: Assembler | null = null;
 let shared: WeakMap<object, { quality: number; data: PartData }> | null = null;
 /** The last evaluated body, for STEP export. */
 let lastBody: { shape: unknown; faces: unknown[] } | null = null;
+/** What the view last showed of the part (shown solids and surface bodies), for mesh export. */
+let lastShown: { shape: unknown } | null = null;
 let heap: () => number = () => 0;
 let occ: unknown = null;
 const post = (msg: unknown, transfer: Transferable[] = []) => (self as DedicatedWorkerGlobalScope).postMessage(msg, transfer);
@@ -110,7 +117,7 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
     if (!kernel) throw new Error("Kernel not started");
     if (r.type === "ping") { post({ id: r.id, ok: true }); return; }
     if (r.type === "reset") {
-      modeller = null; assembler = null; shared = null; lastBody = null;
+      modeller = null; assembler = null; shared = null; lastBody = null; lastShown = null;
       if (occ) memoOf(occ as object).clear();
       kernel = new Kernel(occ as ConstructorParameters<typeof Kernel>[0]);
       post({ id: r.id, ok: true, heap: heap() });
@@ -151,6 +158,7 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
       const solidShown = !res.body ? null : !split || !info.length ? res.body : vis.length ? modeller.shownBodies(vis.map(b => b.part)) : null;
       // Surface bodies (FRS 9.11) come after the solids in the view, so solid face indices stay put.
       const shown = res.sheets ? (solidShown ? modeller.shownBodies([solidShown, res.sheets]) : res.sheets) : solidShown;
+      if (r.previewAt == null) lastShown = shown;
       if (shown) {
         const mesh = modeller.mesh(shown, r.doc.name, r.color, r.quality);
         if (split) {
@@ -334,6 +342,20 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
       kernel.meshes = [{ shape: lastBody.shape, faces: lastBody.faces, name: r.name, color: r.color, solid: true }];
       const bytes = kernel.writeStep([0], [r.name], [r.color]).slice();
       post({ id: r.id, ok: true, bytes }, [bytes.buffer]);
+    } else if (r.type === "exportMesh") {
+      const oc = kernel.module;
+      let out: { id: string | number; mesh: ExportMesh }[];
+      if (r.of === "part") {
+        if (!lastShown) throw new Error("There is no body to export yet.");
+        out = [{ id: 0, mesh: exportTriangles(oc, lastShown.shape, r.lin, r.ang) }];
+      } else if (r.of === "file") {
+        out = (r.which ?? kernel.meshes.map((_, i) => i)).filter(i => kernel!.meshes[i]).map(i => ({ id: i, mesh: exportTriangles(oc, kernel!.meshes[i].shape, r.lin, r.ang) }));
+      } else {
+        assembler ??= new Assembler(kernel.module);
+        const doc = r.doc!, { placed } = assembler.evaluate(doc, 1);
+        out = placed.filter(p => p.body && !doc.components.find(c => c.id === p.id)?.hidden).map(p => ({ id: p.id, mesh: exportTriangles(oc, p.body.shape, r.lin, r.ang) }));
+      }
+      post({ id: r.id, ok: true, meshes: out }, out.flatMap(m => [m.mesh.pos.buffer, m.mesh.idx.buffer]));
     } else if (r.type === "board") {
       const bytes = kernel.boardStep(r.loops, r.holes, r.z0, r.thickness, r.name).slice();
       post({ id: r.id, ok: true, bytes }, [bytes.buffer]);

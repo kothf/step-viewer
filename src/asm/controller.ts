@@ -2,6 +2,7 @@
 // view or type the pose), fixed/floating, hide, delete, save and open .mcadasm. The kernel places the
 // components (src/kernel/assembly.ts) and the viewer shows one part per component, so the measuring
 // tools work across components as for an imported assembly.
+import type { ExportMesh } from "../kernel/occ";
 import type { VaultTie } from "../pdm/panel";
 import type { NamedViews } from "../viewer/navigation";
 import { MATE_LABEL, mateName } from "./mateName";
@@ -727,6 +728,15 @@ export class AsmController {
       toast(t("Saved as STEP"), "success");
     } catch (err) { toast(t("Export failed: {err}", { err: (err as Error).message }), true); }
     finally { $("#asm-busy").hidden = true; }
+  }
+
+  /** Export triangles per shown component at a chord deviation `lin` mm and angle `ang` rad, by view part index. */
+  async exportMeshes(lin: number, ang: number): Promise<Map<number, ExportMesh> | null> {
+    if (!this.doc) return null;
+    const r = await this.kernel.exportMesh("asm", lin, ang, this.expand(this.doc).doc);
+    const out = new Map<number, ExportMesh>();
+    for (const m of r) { const i = this.shownIds.indexOf(String(m.id)); if (i >= 0) out.set(i, m.mesh); }
+    return out;
   }
 
   /** The STEP bytes, for tests. */

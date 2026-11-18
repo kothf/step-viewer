@@ -36,6 +36,9 @@ import { pickMaterial } from "./materialPicker";
 import { combine, massReport, principal, type Combined, type Frame } from "./tools/inertia";
 import { inertiaUnit, massPanelHtml, massText, type MassView } from "./tools/massPanel";
 import { exportMesh, inspectionReport, pdfWriter, measurementsCsv, measurementsJson, snapshot, download } from "./tools/exporters";
+import { openExportDialog } from "./exportDlg";
+import { meshQuality, parseMeshQuality, setMeshQuality, type MeshQuality } from "./tools/meshQuality";
+import type { ExportMesh } from "./kernel/occ";
 import { csys, makeCsys, type Csys } from "./tools/csys";
 import { fmtArea, fmtLen, fmtMass, fmtNum, fmtVec, fmtVol, unitMm, units, type Unit } from "./tools/units";
 import { readStepMeta, type StepMeta } from "./stepMeta";
@@ -2303,6 +2306,27 @@ function showVault() {
   void vaultPanel.render();
   d.showModal();
 }
+/** File > Properties of a model file or an assembly: the Properties page's content in a window, put back on close. */
+function showPropsWindow() {
+  const props = $("#props"), home = $("#rp-props");
+  let d = document.getElementById("props-win") as HTMLDialogElement | null;
+  if (d?.open) return;
+  if (!d) {
+    d = document.createElement("dialog");
+    d.id = "props-win";
+    d.className = "modal props-win";
+    d.setAttribute("aria-labelledby", "props-win-title");
+    d.innerHTML = `<div class="vault-win-h"><h3 id="props-win-title"></h3><button class="btn small" data-a="close"></button></div><div class="props-win-b"></div>`;
+    document.body.appendChild(d);
+    trapFocus(d, () => d!.open);
+    d.querySelector("[data-a=close]")!.addEventListener("click", () => d!.close());
+    d.addEventListener("close", () => home.appendChild(props));
+  }
+  d.querySelector("#props-win-title")!.textContent = t("Properties");
+  d.querySelector("[data-a=close]")!.textContent = t("Close");
+  d.querySelector(".props-win-b")!.appendChild(props);
+  d.showModal();
+}
 const vaultMenu = new VaultMenu({ panel: vaultPanel, showPanel: showVault });
 /** The Vault button says which vault is open. */
 function syncVaultButton() {
@@ -3152,7 +3176,7 @@ mpPanel.addEventListener("click", e => {
     if (v) navigator.clipboard?.writeText(massText(v)).then(() => toast(t("Mass properties copied")), () => toast(t("Could not copy to the clipboard"), true));
   } else if (a === "material") {
     if (modeller.active) modeller.editProps();
-    else { panels.show("right"); showPage("mass"); $("#material").focus(); }
+    else matBtn.click();
   }
 });
 mpPanel.addEventListener("change", e => {
@@ -3171,19 +3195,55 @@ $<HTMLInputElement>("#com-show").addEventListener("change", showMassMarks);
 const nothingToExport = () => toast(t("There is no body to export yet."), true);
 const baseName = () => state.fileName.replace(/\.[^.]+$/, "") || "model";
 function bgColor() { return getComputedStyle(document.documentElement).getPropertyValue("--vp-top").trim() || "#ffffff"; }
-for (const [id, transparent] of [["#png", false], ["#png-t", true]] as const) {
-  $(id).addEventListener("click", () => {
-    if (!viewer.parts.length) { nothingToExport(); return; }
-    const scale = parseInt($<HTMLSelectElement>("#png-scale").value);
-    const c = snapshot(viewer, annotations, { scale, transparent, background: bgColor() });
-    c.toBlob(b => b && download(b, `${baseName()}${transparent ? "-transparent" : ""}.png`), "image/png");
-  });
+/** The view as a PNG at `scale`x the screen. */
+function exportPng(transparent: boolean, scale: number) {
+  if (!viewer.parts.length) { nothingToExport(); return Promise.resolve(); }
+  const c = snapshot(viewer, annotations, { scale, transparent, background: bgColor() });
+  const name = `${baseName()}${transparent ? "-transparent" : ""}.png`;
+  return new Promise<void>(res => c.toBlob(b => { if (b) { download(b, name); toast(t("Saved {name}", { name }), "success"); } res(); }, "image/png"));
 }
-$$("[data-export]").forEach(b => b.addEventListener("click", async () => {
+for (const [id, transparent] of [["#png", false], ["#png-t", true]] as const) {
+  $(id).addEventListener("click", () => void exportPng(transparent, parseInt($<HTMLSelectElement>("#png-scale").value)));
+}
+/**
+ * Export meshes made again from the exact B-rep at the chosen quality (a modelled part, an assembly, a STEP/IGES/
+ * BREP file), by view part index; null when there is no B-rep (mesh files, PCBs) or the quality is "as shown".
+ */
+async function exportMeshes(q: MeshQuality): Promise<Map<number, ExportMesh> | null> {
+  if (q.kind === "view") return null;
+  const lin = q.dev, ang = (q.ang * Math.PI) / 180;
+  if (modeller.active) return modeller.exportMeshes(lin, ang);
+  if (asm.active) return asm.exportMeshes(lin, ang);
+  if (state.fileKey.startsWith("sv:pcb:")) return null;
+  if (kernelJob && kernel.status === "loading") await kernelJob;
+  if (!kernel.file) return null;
+  const vis = viewer.parts.filter(p => p.visible);
+  const r = await kernel.exportMesh(vis.map(p => p.idx), lin, ang);
+  const out = new Map<number, ExportMesh>();
+  for (const m of r) { const i = viewer.parts.findIndex(p => p.idx === m.id); if (i >= 0) out.set(i, m.mesh); }
+  return out;
+}
+/** STL, OBJ, glTF or 3MF of the visible parts at the remembered mesh quality (FR-STO-021). */
+async function exportMeshFile(format: "stl" | "obj" | "glb" | "3mf", q = meshQuality()) {
   if (!viewer.parts.length) { nothingToExport(); return; }
-  try { await exportMesh(viewer, b.dataset.export as "stl", baseName()); }
-  catch (err) { toast(t("Export failed: {err}", { err: (err as Error).message }), true); }
-}));
+  let fine: Map<number, ExportMesh> | null = null;
+  try { fine = await exportMeshes(q); }
+  catch (err) { toast(t("Could not mesh at the chosen quality ({err}), so the view's triangles were used.", { err: t((err as Error).message) }), "warn"); }
+  try {
+    const n = await exportMesh(viewer, format, baseName(), fine);
+    const name = `${baseName()}.${format}`;
+    toast(t("Saved {name}: {n} triangles", { name, n: n.toLocaleString() }), "success");
+  } catch (err) { toast(t("Export failed: {err}", { err: (err as Error).message }), true); }
+}
+const meshQSel = $<HTMLSelectElement>("#mesh-q");
+const syncMeshQ = () => { const q = meshQuality(); meshQSel.value = q.kind; meshQSel.querySelector<HTMLOptionElement>("[value=custom]")!.hidden = q.kind !== "custom"; };
+syncMeshQ();
+meshQSel.addEventListener("focus", syncMeshQ);
+meshQSel.addEventListener("change", () => {
+  const k = meshQSel.value as MeshQuality["kind"];
+  if (k !== "custom") setMeshQuality(parseMeshQuality(JSON.stringify({ kind: k })));
+});
+$$<HTMLButtonElement>("[data-export]").forEach(b => b.addEventListener("click", () => busy(b, () => exportMeshFile(b.dataset.export as "stl"))));
 async function report() {
   if (!viewer.parts.length) { nothingToExport(); return; }
   if (!lastMass.length) runMass();
@@ -3308,7 +3368,19 @@ const fileMenu = new FileMenu({
   download: (b, n) => download(b, n),
   exportDoc() {
     if (drawing.open) { drawing.openExportMenu(); return; }
-    $("#rt-export").click();
+    if (isPcbMode()) { panels.show("right"); $("#rt-export").click(); return; }
+    // A dialog, not the side panel's Export page: switching a page looked like nothing happened.
+    openExportDialog({
+      why: f => (f === "step" && !modeller.active && !asm.active && !kernel.file && !state.fileKey.startsWith("sv:pcb:") && viewer.parts.length
+        ? t("STEP export needs a STEP, IGES or BREP model; mesh files have no B-rep.") : null),
+      async run(f, o) {
+        if (!viewer.parts.length && f !== "step") { nothingToExport(); return; }
+        if (f === "step") await exportStep();
+        else if (f === "png" || f === "pngt") await exportPng(f === "pngt", o.scale);
+        else if (f === "pdf") await report();
+        else await exportMeshFile(f, o.quality);
+      },
+    });
   },
   print() {
     if (drawing.open) void drawing.exportAs("print");
@@ -3318,7 +3390,7 @@ const fileMenu = new FileMenu({
   properties() {
     if (drawing.open) drawing.sheetProperties();
     else if (fileMenuLive() === "part") modeller.editProps();
-    else $("#rt-props").click();
+    else showPropsWindow();
   },
 });
 $("#file-btn").addEventListener("click", e => fileMenu.toggle(e.currentTarget as HTMLElement));

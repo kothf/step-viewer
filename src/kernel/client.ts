@@ -3,7 +3,7 @@
 // exact values it returns back into the parts (volume, areas, lengths, radii,
 // curvature). Measurements read those fields, so they become exact without a switch.
 import type { PartData, V3 } from "../topology";
-import type { PartPatch } from "./occ";
+import type { ExportMesh, PartPatch } from "./occ";
 import { applyPatch, probe } from "./patch";
 import type { SwReport } from "./solidworks";
 import { takeWorker } from "./spare";
@@ -188,6 +188,14 @@ export class KernelClient {
     })();
     l.loading.catch(() => { if (this.lazy === l) l.loading = undefined; });
     return l.loading;
+  }
+
+  /** Mesh export triangles of the listed parts at a chord deviation `lin` mm and angle `ang` rad, from the exact B-rep. */
+  async exportMesh(which: number[], lin: number, ang: number) {
+    await this.loaded();
+    if (!this.worker || !this.file) throw new Error("The model is not loaded in the kernel");
+    await this.ready;
+    return (await this.call<{ meshes: { id: number; mesh: ExportMesh }[] }>({ type: "exportMesh", of: "file", which, lin, ang })).meshes;
   }
 
   /** STEP of the open file: all of it (null) or the listed parts, with their names and colours. */
