@@ -14417,6 +14417,11 @@ try {
     await ready();
     const ct2 = await dp.evaluate(() => [...document.querySelectorAll(".drw-svg text")].map(t => t.textContent));
     check(!ct2.includes("Fillet weld, leg 4") && ct2.includes("SHS 40x40x3"), `drawing: unticking Weld beads leaves the bead out of the cut list table`);
+    // Material column: the item's material (own, else its bodies', else the part's).
+    await dp.click('#drw .drw-props [data-d="cmat"]');
+    await ready();
+    const ct3 = await dp.evaluate(() => ({ mat: window.__sv.drw.doc().sheets[0].annots.find(a => a.t === "ctable")?.mat, tx: [...document.querySelectorAll(".drw-svg text")].map(t => t.textContent) }));
+    check(ct3.mat === true && ct3.tx.includes("Material"), `drawing: cut list table Material column (${JSON.stringify({ mat: ct3.mat })})`);
     // Auto balloon on a weldment part: one balloon per cut list item seen in the view, numbered as in the cut list.
     await drwTool(dp, "auto");
     await dp.waitForFunction(() => window.__sv.drw.doc().sheets[0].annots.some(a => a.t === "balloon"), null, { timeout: 30000 }).catch(() => {});

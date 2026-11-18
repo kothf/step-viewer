@@ -7,7 +7,7 @@ import { cutList, gussetEnds, pierceSpots, type WeldHost } from "../../src/weldm
 import { PROFILE_TYPES, profileArea, profileShape, profileSizes } from "../../src/weldments/profiles";
 import type { Feature, PartDoc, SketchFeature, SkEnt, V2, V3, Sketch3dFeature } from "../../src/model/types";
 import type { GussetFeature, MemberFeature } from "../../src/weldments/types";
-import { barPlan, barsNeeded, bodyMatName, cutKey, itemDensity, planGroups, splitSubs, stockTotals } from "../../src/weldments/types";
+import { barPlan, barsNeeded, bodyMatName, cutKey, itemDensity, itemMatText, planGroups, splitSubs, stockTotals } from "../../src/weldments/types";
 import { occ } from "./occ";
 import { applyWeldMemory, weldMemory } from "../../src/weldments/defaults";
 
@@ -692,4 +692,9 @@ test("cut list items weigh with their bodies' own materials", () => {
   assert.equal(bodyMatName(c, mixed), null);
   // The item's own cut list material wins.
   assert.equal(itemDensity(c, { mat: "Copper" }, both, 7.85), 8.96);
+  // Table text: own, else the bodies' distinct materials (the part's for a body with none).
+  assert.equal(itemMatText(c, { mat: "Copper" }, both, "S235"), "Copper");
+  assert.equal(itemMatText(c, undefined, mixed, "S235"), "Aluminium 6061-T6, Stainless steel 304");
+  assert.equal(itemMatText(c, undefined, { m1: { material: al } } as PartDoc["bodies"], "S235"), "Aluminium 6061-T6, S235");
+  assert.equal(itemMatText(c, undefined, undefined, ""), "");
 });

@@ -1628,9 +1628,9 @@ export function stackItem(s: string, ctx: Pick<AnnotCtx, "bom" | "cuts" | "welds
   return ctx.bom?.itemOf(s) ?? null;
 }
 
-/** The cut list table's columns (a CAD app's Weldment Cut List: ITEM NO., QTY., DESCRIPTION, LENGTH, ANGLE1, ANGLE2), with Mass (kg) when asked. */
+/** The cut list table's columns (a CAD app's Weldment Cut List: ITEM NO., QTY., DESCRIPTION, LENGTH, ANGLE1, ANGLE2), with Material and Mass (kg) when asked. */
 export function cutCols(a: CutTableAnnot): string[] {
-  return ["Item", "Qty", "Description", "Length", "Angle 1", "Angle 2", ...(a.mass ? ["Mass (kg)"] : [])];
+  return ["Item", "Qty", "Description", "Length", "Angle 1", "Angle 2", ...(a.mat ? ["Material"] : []), ...(a.mass ? ["Mass (kg)"] : [])];
 }
 
 /**
@@ -1651,7 +1651,7 @@ export function cutDesc(c: CutInfo, ctx: Pick<AnnotCtx, "dec" | "label">, prec?:
 export function cutRows(a: CutTableAnnot, cuts: CutInfo[], ctx: AnnotCtx): string[][] {
   const f = (v: number) => fmtNum(v, a.prec, ctx.dec), desc = (c: CutInfo) => cutDesc(c, ctx, a.prec);
   return cuts.filter(c => a.beads !== false || c.kind !== "bead").map(c => [String(c.item), String(c.qty), desc(c), c.length != null ? f(c.length) : "",
-    c.a1 != null ? `${f(c.a1)}°` : "", c.a2 != null ? `${f(c.a2)}°` : "", ...(a.mass ? [fmtNum(c.kg, a.prec ?? 2, ctx.dec)] : [])]);
+    c.a1 != null ? `${f(c.a1)}°` : "", c.a2 != null ? `${f(c.a2)}°` : "", ...(a.mat ? [c.mat ?? ""] : []), ...(a.mass ? [fmtNum(c.kg, a.prec ?? 2, ctx.dec)] : [])]);
 }
 
 // ---------- model items ----------

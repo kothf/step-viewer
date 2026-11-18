@@ -5,12 +5,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.566.0] - 2026-11-18
+## [1.567.0] - 2026-11-18
 
 ### Added
 
 - **Autokey in motion studies.** The new Autokey button in the motion study bar records as you go, as in other CAD apps: turning, panning or zooming the view puts a camera key at the playhead (a new camera track starts with the old view at 0 s, and a view that did not move adds nothing), and dragging a component that no mate holds puts a placement key there, keeping the component's turn at that moment.
 - **Camera key properties.** A selected camera key shows its position, target, distance and (in orthographic views) zoom; type a value to change it. Changing the distance moves the camera along its line of sight.
+
+## [1.566.0] - 2026-11-18
+
+### Added
+
+- **Material column in the drawing's cut list table.** Select a weldment's cut list table on a drawing and tick **Material column**: each item shows its material (the one picked for it in the Cut List dialog, else its bodies' own materials, else the part's), before the mass column when both are on.
 
 ## [1.565.0] - 2026-11-18
 
@@ -3540,7 +3546,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.566.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.567.0...HEAD
+[1.567.0]: https://github.com/kothf/step-viewer/compare/v1.566.0...v1.567.0
 [1.566.0]: https://github.com/kothf/step-viewer/compare/v1.565.0...v1.566.0
 [1.565.0]: https://github.com/kothf/step-viewer/compare/v1.564.0...v1.565.0
 [1.564.0]: https://github.com/kothf/step-viewer/compare/v1.563.0...v1.564.0
