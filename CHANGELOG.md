@@ -5,6 +5,32 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.575.0] - 2026-11-18
+
+### Fixed
+
+- Parts turned by a motion study or a mate preview are highlighted, snapped to and measured where they are shown. Smart measure, Properties, section profiles and new coordinate systems used to take only the part's position, so a turned part's face lit up and measured somewhere else.
+- Interference in motion studies and collision detection while dragging no longer report parts that only touch, such as a face mated onto a face, or a pin turning in a bore of its own size. A clash now needs an edge of one part to pass through a face of the other, deeper than the meshes' own error.
+- A Concentric mate's value result plots its angle by default, not a distance that stays at 0.
+- Turning a spin box in the motion study (wheel or arrows) makes one undo step, not one per click.
+- Recordings and exports from a motion study are named after the assembly file, not after its internal name.
+- A GIF of a study that ends where it starts (a motor turning whole turns) no longer shows that pose twice each time it loops.
+
+## [1.574.0] - 2026-11-18
+
+### Added
+
+- **Trim/Extend against several bodies.** With Trim to Body, more boundary bodies can be picked; each member end stops at the boundary nearest to it, so a rail between two legs is trimmed at both ends in one feature. Clicking a picked body again takes it out.
+- **Pick several bodies or cut list items in the tree.** Ctrl+click adds rows of the Bodies and Cut list folders to the selection; the right-click menu then hides or shows, sets the material of, or puts into a sub-weldment every body picked.
+
+### Fixed
+
+- **Zoom to fit sees sketches.** Zoom to fit, the standard views and Normal to take the shown sketches and curves in, so a large frame sketch with no body yet fits the view, and it no longer vanishes while panning.
+- **3D sketch points stay on sketch points.** A 3D sketch point clicked on a point of a shown 2D sketch (such as a weldment's frame sketch) is held on it: when that sketch changes, the 3D sketch follows and solves again, so legs and braces drawn from the frame's corners move with it. Unfixing the point or typing its coordinates lets it go.
+- **Cut list properties survive a model change.** A description, part number, note, material or Exclude typed for a weldment cut list item stays with that item when its length or end angles change, instead of being lost.
+- **Weld table keeps excluded beads.** A fillet bead excluded from the cut list is still listed in the drawing's weld table and still gets its weld symbol from Model items.
+- **Title block material for mixed weldments.** When only some bodies have their own material and the part has none, the drawing no longer gives one body's material as the whole part's; the Material field stays empty, as Mass does, until the part's material is set.
+
 ## [1.573.0] - 2026-11-18
 
 ### Fixed
@@ -3598,7 +3624,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.573.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.575.0...HEAD
+[1.575.0]: https://github.com/kothf/step-viewer/compare/v1.574.0...v1.575.0
+[1.574.0]: https://github.com/kothf/step-viewer/compare/v1.573.0...v1.574.0
 [1.573.0]: https://github.com/kothf/step-viewer/compare/v1.572.0...v1.573.0
 [1.572.0]: https://github.com/kothf/step-viewer/compare/v1.571.0...v1.572.0
 [1.571.0]: https://github.com/kothf/step-viewer/compare/v1.570.0...v1.571.0

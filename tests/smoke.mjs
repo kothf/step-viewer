@@ -3221,7 +3221,13 @@ try {
     // 1.354 (FR-SEL-010): G opens the magnifying glass at the cursor; the wheel inside changes its factor, pointer events inside
     // reach the view at the magnified point, G or Esc closes it.
     {
-      const vb = await mp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+      // The lens goes over the body's middle (shown sketches count in the framing, so it need not be the view's centre).
+      const vb = await mp.evaluate(() => {
+        const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect();
+        const c = new (v.camera.position.constructor)(); new (window.__sv.viewer.bounds.constructor)().setFromObject(v.parts[0].mesh).getCenter(c);
+        const q = c.project(v.camera);
+        return { x: r.left + ((q.x + 1) / 2) * r.width, y: r.top + ((1 - q.y) / 2) * r.height };
+      });
       await mp.mouse.move(vb.x, vb.y);
       await mp.evaluate(() => window.__sv.viewer.renderer.domElement.focus());
       await mp.keyboard.press("g");
@@ -10533,6 +10539,61 @@ try {
     await ctx.close();
   }
 
+  // --- 1.574: 3D sketch points clicked on a 2D sketch's points stay on them when that sketch changes (weldments exam #6) ---
+  if (inShard(5)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // A 100 × 60 frame sketch on XY, shown (no feature uses it).
+    await mp.evaluate(() => window.__sv.model.store.change("Setup", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "fr", type: "sketch", name: "Frame", plane: { std: "XY" }, rels: [], dims: [],
+        ents: [P("c1", -50, -30), P("c2", 50, -30), P("c3", 50, 30), P("c4", -50, 30), Ln("a", "c1", "c2"), Ln("b", "c2", "c3"), Ln("c", "c3", "c4"), Ln("e", "c4", "c1")] });
+    }));
+    await settle();
+    // Zoom to fit takes the shown sketch in, with no body yet (weldments exam #1).
+    // A far 600 mm line on its own sketch widens the box; the small frame alone keeps the empty part's ±50 framing.
+    const box = () => mp.evaluate(() => { const b = window.__sv.viewer.computeBounds(); return [b.min.x, b.min.y, b.max.x, b.max.y].map(Math.round); });
+    const small = await box();
+    await mp.evaluate(() => window.__sv.model.store.change("Far", d => {
+      d.features.push({ id: "far", type: "sketch", name: "Far", plane: { std: "XY" }, rels: [], dims: [],
+        ents: [{ id: "f1", t: "point", x: 0, y: 0 }, { id: "f2", t: "point", x: 600, y: 0 }, { id: "fl", t: "line", a: "f1", b: "f2" }] });
+    }));
+    await settle();
+    const fitBox = await box();
+    await mp.evaluate(() => window.__sv.model.store.change("No far", d => { d.features = d.features.filter(f => f.id !== "far"); }));
+    await settle();
+    check(JSON.stringify(small) === "[-50,-50,50,50]" && fitBox[0] === -50 && fitBox[2] >= 600, `model 1.574: Zoom to fit takes shown sketches in (${JSON.stringify({ small, fitBox })})`);
+    await mp.evaluate(() => { const v = window.__sv.viewer; v.fit(false); });
+    await runCmd(mp, "3D Sketch");
+    await settle();
+    const scr = p => mp.evaluate(p => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(); const V = v.camera.position.constructor; const q = new V(...p).project(v.camera); return [((q.x + 1) / 2) * r.width + r.left, ((1 - q.y) / 2) * r.height + r.top]; }, p);
+    const clickAt = async (p, dx = 0) => { const [x, y] = await scr(p); await mp.mouse.click(x + dx, y + dx); await settle(); };
+    // The first click lands 3 px off the frame's corner and takes the corner; Tab, then a point straight above it.
+    await clickAt([-50, -30, 0], 3);
+    await mp.keyboard.press("Tab");
+    await clickAt([-50, -30, 40]);
+    await mp.keyboard.press("Escape");
+    const drawn = await mp.evaluate(() => window.__sv.model.mode().draft.pts.map(q => ({ p: q.p, at: q.at, fixed: q.fixed })));
+    await mp.click("#mc-ok");
+    await settle();
+    // The frame grows 30 to the left: the 3D sketch's first point goes with the corner.
+    await mp.evaluate(() => window.__sv.model.store.change("Wider", d => { const c1 = d.features.find(f => f.id === "fr").ents.find(e => e.id === "c1"); c1.x = -80; }));
+    await settle();
+    const after = await mp.evaluate(() => ({ pts: window.__sv.model.store.doc.features.find(f => f.type === "sketch3d").pts.map(q => q.p.map(c => Math.round(c * 1000) / 1000)), bad: window.__sv.model.last().statuses.filter(s => !s.ok || s.warning).length }));
+    check(drawn[0]?.at?.sketch === "fr" && drawn[0]?.at?.pt === "c1" && drawn[0]?.fixed && !drawn[1]?.at && JSON.stringify(after.pts[0]) === "[-80,-30,0]" && after.bad === 0,
+      `model 1.574: a 3D sketch point clicked on a sketch point follows it (weldments exam #6) (${JSON.stringify({ drawn, after })})`);
+    await ctx.close();
+  }
+
   // --- 1.85: sweep twist and guide curve, loft centreline, variable pitch helix (FR-FT-080, FR-FT-082, FR-FT-083) ---
   if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -12810,7 +12871,16 @@ try {
     check(cl.rows === 2 && /Total mass [\d.,]+ kg/.test(cl.total ?? ""), `weldments: cut list dialog (${JSON.stringify(cl)})`);
     await settle();
     const cp = await mp.evaluate(() => ({ props: Object.values(window.__sv.model.store.doc.cutProps ?? {}), row: document.querySelector('#mc-tree .ft-row[data-id="cut:0"]')?.textContent ?? "" }));
-    check(JSON.stringify(cp.props) === '[{"desc":"Top rail","part":"FR-001","mat":"Aluminium 6061"}]' && cp.row.includes("Top rail"), `weldments: cut list item properties (${JSON.stringify(cp)})`);
+    check(JSON.stringify(cp.props.map(({ bodies, ...p }) => p)) === '[{"desc":"Top rail","part":"FR-001","mat":"Aluminium 6061"}]' && cp.props[0]?.bodies?.length === 2 && cp.row.includes("Top rail"), `weldments: cut list item properties (${JSON.stringify(cp)})`);
+    // The properties follow the item when its length changes (its key changes): stored under the old length's key with its bodies, they still name it (exam #17).
+    const followed = await mp.evaluate(() => {
+      const m = window.__sv.model;
+      m.store.change("Cut list properties", d => { const [[k, p]] = Object.entries(d.cutProps); d.cutProps = { [k.replace("|650|", "|600|")]: p }; });
+      return new Promise(r => setTimeout(() => r({ keys: Object.keys(m.store.doc.cutProps), row: document.querySelector('#mc-tree .ft-row[data-id="cut:0"]')?.textContent ?? "" }), 300));
+    });
+    await mp.evaluate(() => window.__sv.modeller.undo());
+    await settle();
+    check(followed.keys[0]?.includes("|600|") && followed.row.includes("Top rail"), `weldments: cut list properties follow an item whose length changed (${JSON.stringify(followed)})`);
     // Body materials (Bodies folder → Material…) weigh an item with no material of its own, and its Material list says so.
     await mp.evaluate(() => { const ks = window.__sv.model.last().cutList[1].bodies; window.__sv.model.store.change("Body material", d => { d.bodies ??= {}; for (const k of ks) d.bodies[k] = { ...(d.bodies[k] ?? {}), material: { name: "Aluminium 6061", density: 2.7 } }; }); });
     await settle();
@@ -12855,6 +12925,21 @@ try {
       && JSON.stringify(sw1.rows) === '["cut:SHS 50x50x4 × 450 mm (1)","wsub:Sub-weldment1 (2)","cut>:Top rail × 650 mm (2)","cut>:SHS 50x50x4 × 450 mm (1)"]'
       && JSON.stringify(sw2.heads) === '["Frame"]' && sw2.rows === 3 && sw3.subs === undefined && sw3.rows === 2,
       `weldments: sub-weldments in the cut list (${JSON.stringify({ sw0, sw1, sw2, sw3 })})`);
+    // Exam #12: Ctrl+click picks both cut list items; the menu's sub-weldment and Hide bodies act on every body picked.
+    await treeClick(mp, '#mc-tree .ft-row[data-id="cut:0"]');
+    await mp.click('#mc-tree .ft-row[data-id="cut:1"]', { modifiers: ["Control"] });
+    const ms0 = await mp.evaluate(() => document.querySelectorAll('#mc-tree .ft-row.sel[data-id^="cut:"]').length);
+    await menuPick('#mc-tree .ft-row[data-id="cut:1"]', "Create sub-weldment");
+    const ms1 = await mp.evaluate(() => window.__sv.model.store.doc.subWelds?.map(x => x.bodies.length));
+    await mp.evaluate(() => window.__sv.model.store.undo());
+    await settle();
+    await treeClick(mp, '#mc-tree .ft-row[data-id="cut:0"]');
+    await mp.click('#mc-tree .ft-row[data-id="cut:1"]', { modifiers: ["Control"] });
+    await menuPick('#mc-tree .ft-row[data-id="cut:0"]', "Hide bodies");
+    const ms2 = await mp.evaluate(() => Object.values(window.__sv.model.store.doc.bodies ?? {}).filter(b => b.hidden).length);
+    await mp.evaluate(() => window.__sv.model.store.undo());
+    await settle();
+    check(ms0 === 2 && JSON.stringify(ms1) === "[4]" && ms2 === 4, `weldments: Ctrl+click picks several cut list items for the menu (${JSON.stringify({ ms0, ms1, ms2 })})`);
     // Merge miter trimmed bodies: the four mitred tubes of the frame become one body, one cut list item 2 × 650 + 2 × 450 long.
     const frameId = await mp.evaluate(() => window.__sv.model.store.doc.features.find(x => x.type === "member").id);
     await mp.evaluate(id => window.__sv.modeller.editFeature(id), frameId);
@@ -13310,6 +13395,29 @@ try {
     const pt = await mp.evaluate(() => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.at(-1); return { planar: f.planar, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), }; });
     pt.added = (await mp.evaluate(`[${qtyAt}][0](380)`)) - before;
     check(pt.planar === true && !pt.bad && pt.added === 1, `weldments: Trim/Extend planar trim against a body (${JSON.stringify(pt)})`);
+    // Two boundary bodies (weldments exam #4): Beam E (4100..4400) between posts at x = 4000 and 4500 is trimmed at both ends,
+    // each to the post nearer to it, round corners included: 500 − 40 + 2 × 6 = 472.
+    await mp.evaluate(() => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b });
+      window.__sv.model.store.change("Beams", d => {
+        d.features.push({ id: "xse", type: "sketch", name: "SketchE", plane: { std: "XY" }, rels: [], dims: [], ents: [P("e1", 4100, 4000), P("e2", 4400, 4000), L("we", "e1", "e2"), P("g1", 4000, 3900), P("g2", 4000, 4100), L("wg", "g1", "g2"), P("h1", 4500, 3900), P("h2", 4500, 4100), L("wh", "h1", "h2")] },
+          { id: "xme", type: "member", name: "Beam E", profile: "shs", size: "40x40x3", segs: [{ sketch: "xse", ent: "we" }], corner: "none" },
+          { id: "xmg", type: "member", name: "Post G", profile: "shs", size: "40x40x3", segs: [{ sketch: "xse", ent: "wg" }, { sketch: "xse", ent: "wh" }], corner: "none" });
+        d.rollback = null;
+      });
+    });
+    await settle();
+    await runCmd(mp, "Trim/Extend");
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wkind"]', "body");
+    await settle();
+    await mp.evaluate(() => { const m = window.__sv.model.mode(); m.draft.bodies = [{ name: "xme:we:start" }]; m.draft.boundary = { name: "xmg:wg:start" }; m.draft.more = [{ name: "xmg:wh:start" }]; window.__sv.modeller.draftChanged(); });
+    await settle();
+    const boxText = await mp.evaluate(() => document.querySelector('#mc-pm [data-focus="wbound"]')?.textContent ?? document.querySelector('#mc-pm [data-k="wbound"]')?.textContent ?? "");
+    await mp.click("#mc-ok");
+    await settle();
+    const two = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), rows: (l.cutList ?? []).filter(c => c.desc === "SHS 40x40x3" && Math.abs(c.length - 472) < 0.01).map(c => c.qty) }; });
+    check(!two.bad && JSON.stringify(two.rows) === "[1]" && /2/.test(boxText), `weldments: Trim/Extend against two boundary bodies trims both ends (${JSON.stringify({ two, boxText })})`);
     // In Russian: the Structural Member panel.
     await mp.click("#lang-btn");
     await mp.evaluate(() => window.__sv.modeller.editFeature("m2"));

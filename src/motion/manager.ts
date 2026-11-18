@@ -2187,9 +2187,12 @@ export class MotionManager {
   }
 }
 
+<<<<<<< HEAD
 /** Two captured frames with the same pixels. */
 function sameFrame(a: Uint8ClampedArray, b: Uint8ClampedArray) {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
   return true;
 }
+=======
+>>>>>>> origin/main

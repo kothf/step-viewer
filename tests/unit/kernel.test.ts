@@ -1164,6 +1164,26 @@ test("3D sketch as a sweep path (FR-SK-080)", async () => {
   assert.equal(br.statuses.find(s => s.id === "w")?.code, "E-SWP-PATH");
 });
 
+test("3D sketch points on 2D sketch points follow the sketch (weldments exam #6)", async () => {
+  const m = new Modeller(await occ());
+  // A leg from the frame sketch's corner straight up: A on the corner point, B fixed 50 above it by relations.
+  const frame = rect("f", 0, 0, 100, 60);
+  const k: Feature = { id: "k", type: "sketch3d", name: "3DSketch1", pts: [{ id: "A", p: [-50, -30, 0], fixed: true, at: { sketch: "f", pt: "fp1" } }, { id: "B", p: [-50, -30, 50] }],
+    segs: [{ id: "l", t: "line", pts: ["A", "B"] }], rels: [{ id: "r", t: "alongZ", e: ["l"] }], dims: [{ id: "d", t: "length", e: ["l"], val: { v: 50 } }] } as Feature;
+  const sw: Feature = { id: "w", type: "sweep", name: "Sweep1", op: "boss", circular: { v: 4 }, path: { curve: "k" } };
+  let r = run(m, doc([frame, k, sw]));
+  assert.equal(r.sketches.k, undefined);
+  // The frame grows to 160 wide: the corner moves 30 in -X, and the leg goes with it, still 50 long and upright.
+  r = run(m, doc([rect("f", 0, 0, 160, 60), k, sw]));
+  const moved = r.sketches.k as import("../../src/model/types").Sketch3dFeature;
+  assert.deepEqual(moved.pts.map(q => q.p.map(c => Math.round(c * 1e6) / 1e6)), [[-80, -30, 0], [-80, -30, 50]]);
+  close(r.props!.volume, Math.PI * 4 * 50, 1e-3);
+  // The sketch point gone: the point stays where it was, with a warning.
+  const lost = m.evaluate(doc([{ ...frame, ents: frame.ents.filter(e => e.id !== "fp1" && !(e.t === "line" && (e.a === "fp1" || e.b === "fp1"))) }, k, sw]));
+  assert.equal(lost.statuses.find(s => s.id === "k")?.ok, true);
+  assert.match(lost.statuses.find(s => s.id === "k")?.warning ?? "", /lost the sketch points/);
+});
+
 test("Sweep twist and guide curve, loft centreline, variable pitch helix (FR-FT-080, FR-FT-082, FR-FT-083)", async () => {
   const oc = await occ();
   const m = new Modeller(oc);

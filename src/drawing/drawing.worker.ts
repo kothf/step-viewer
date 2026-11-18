@@ -9,10 +9,10 @@ import { geometryDiff, projectAuto, FAST_EDGES, setFastAngle, projectPoly, readS
 import { Assembler } from "../kernel/assembly";
 import { Modeller } from "../kernel/model";
 import type { AsmDoc } from "../asm/types";
-import type { EdgeRef, PartDoc } from "../model/types";
+import type { EdgeRef, PartDoc, SketchFeature } from "../model/types";
 import { modelItems, type CutInfo, type WeldInfo } from "./items";
 import { cutList, type WeldHost } from "../weldments/kernel";
-import { beadSym, cutKey, itemDensity, itemMatText, splitSubs, type CutItem, type WeldBeadFeature } from "../weldments/types";
+import { beadSym, cutPropsOf, itemDensity, itemMatText, splitSubs, type CutItem, type WeldBeadFeature } from "../weldments/types";
 import { activate } from "../model/configs";
 
 export type DrawingRequest =
@@ -129,9 +129,12 @@ function bodiesKg(md: Modeller, body: any, doc: PartDoc): number | undefined {
     return kg;
   } catch { return undefined; }
 }
-/** The distinct materials of a part whose bodies have their own, in body order (title block, BOM), else undefined. */
+/**
+ * The distinct materials of a part whose bodies have their own, in body order (title block, BOM), else undefined; also undefined
+ * when a body has none and the part has none either, so the title block does not give the foot plates' steel as the whole part's (exam #13).
+ */
 function usedMats(mats: (string | null)[] | null | undefined): string[] | undefined {
-  return mats ? [...new Set(mats.filter((m): m is string => !!m))] : undefined;
+  return mats && !mats.includes(null) ? [...new Set(mats as string[])] : undefined;
 }
 /** The loaded part's document, for its other configurations, and those built so far by name. */
 let partDoc: PartDoc | null = null;
@@ -160,7 +163,7 @@ function buildPart(doc: PartDoc, lite = false, variant = false): { shape: any; m
     } catch { return null; }
   };
   let mi: ReturnType<typeof modelItems> = { items: [], holes: [], threads: [], sketches: [] };
-  try { mi = modelItems(doc, res.frames, res.sketches, edgeCircle); } catch { /* no model items */ }
+  try { mi = modelItems(doc, res.frames, Object.fromEntries(Object.entries(res.sketches).filter((e): e is [string, SketchFeature] => e[1].type === "sketch")), edgeCircle); } catch { /* no model items */ }
   // Weld table (FR-FT-121): the cut list's beads, less the items marked Exclude from cut list.
   // Cut list table: every item in the dialog's order (sub-weldments after the loose items), numbered the same way.
   // Cut list balloons: every face of an item's bodies names its item number.
@@ -173,8 +176,9 @@ function buildPart(doc: PartDoc, lite = false, variant = false): { shape: any; m
       const namesOf = new Map(info.map(b => [b.key, b.part.names]));
       const density = doc.material?.density ?? 7.85;
       let n = 0;
+      const propOf = cutPropsOf(items, doc.cutProps);
       for (const c of items) {
-        const p = doc.cutProps?.[cutKey(c)];
+        const p = propOf(c).p;
         if (p?.excl) continue;
         const kg = c.volume * itemDensity(c, p, doc.bodies, density) / 1e6;
         ++n;
@@ -184,7 +188,8 @@ function buildPart(doc: PartDoc, lite = false, variant = false): { shape: any; m
           ...(c.length != null ? { length: c.length } : {}), ...(c.kind === "member" ? { a1: c.angle1 ?? 0, a2: c.angle2 ?? 0 } : {}),
           ...(c.plate ? { plate: c.plate } : {}), ...(c.box ? { box: c.box } : {}), ...(c.inter ? { inter: c.inter } : {}) });
       }
-      const beads = raw.filter(c => c.kind === "bead" && !doc.cutProps?.[cutKey(c)]?.excl);
+      // Exclude from cut list leaves the weld table alone: a bead is still welded (exam #14).
+      const beads = raw.filter(c => c.kind === "bead");
       // Weld tags: every face of a bead's bodies names its weld table row.
       beads.forEach((c, i) => { for (const k of c.bodies) for (const nm of namesOf.get(k) ?? []) weldFaces[nm] ??= i + 1; });
       // A bead body's key is the id of the Fillet Bead that made it (`bodyInfo`: earliest feature naming a face).

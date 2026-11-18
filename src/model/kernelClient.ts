@@ -13,13 +13,14 @@ import type { AsmDoc, AsmComponentStatus } from "../asm/types";
 import type { SheetState } from "../sheetmetal/sheet";
 import type { CutItem } from "../weldments/types";
 import type { ModelSnap } from "../drawing/drawing.worker";
-import type { FaceRef, RecognizedHole, Feature, BodyProps, FeatureStatus, Frame, IntersectRegion, PatternSpot, PartDoc, SketchFeature, V3 } from "./types";
+import type { FaceRef, RecognizedHole, Feature, BodyProps, FeatureStatus, Frame, IntersectRegion, PatternSpot, PartDoc, SketchFeature, Sketch3dFeature, V3 } from "./types";
 
 export interface Rebuild {
   statuses: FeatureStatus[];
   frames: Record<string, Frame>;
   /** Sketches whose On edge curves the rebuild moved or marked dangling (FR-SK-064). */
-  sketches?: Record<string, SketchFeature>;
+  /** Sketches the rebuild moved: 2D ones onto their model edges, 3D ones onto the sketch points they are on. */
+  sketches?: Record<string, SketchFeature | Sketch3dFeature>;
   /** Points along curve features (helix), for the view. */
   curves?: Record<string, V3[]>;
   /** Sheet metal panels and bends (FR-FT-120), for the flat pattern and its DXF. */
