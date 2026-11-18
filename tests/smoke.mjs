@@ -7315,7 +7315,7 @@ try {
     const a2 = await s3x();
     check(a1.xs.every(x => Math.abs(x - 50) < 1e-6) && !a1.dangling && a2.xs.every(x => Math.abs(x - 70) < 1e-6) && !a2.dangling && a2.ok, `model 1.53: a converted edge follows the model when it changes (FR-SK-064) (${JSON.stringify(a1)} → ${JSON.stringify(a2)})`);
     // The edge goes: the relation dangles, the line stays, the sketch warns.
-    await mp.evaluate(() => window.__sv.model.store.change("Lose edge", d => { d.features.find(f => f.id === "s3").rels[0].ext.faces = ["f1:end", "f9:side:zz"]; }));
+    await mp.evaluate(() => window.__sv.model.store.change("Lose edge", d => { const x = d.features.find(f => f.id === "s3").rels[0].ext; x.faces = ["f9:end", "f9:side:zz"]; delete x.hint; delete x.g; }));
     await settle();
     const a3 = await s3x();
     check(a3.dangling === 1 && a3.code === "warning" && a3.xs.every(x => Math.abs(x - 70) < 1e-6), `model 1.53: a lost edge leaves a dangling relation and a warning (${JSON.stringify(a3)})`);
