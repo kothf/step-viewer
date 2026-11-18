@@ -734,3 +734,34 @@ test("cut list properties follow an item whose length changed (exam #17)", () =>
   const plate = { kind: "plate", desc: "", plate: [120, 120, 10], qty: 1, volume: 1, bodies: ["m1"] } as unknown as import("../../src/weldments/types").CutItem;
   assert.deepEqual(cutPropsOf([plate], props)(plate).p, {});
 });
+
+test("an early edit takes unchanged members and trims as they were, identical to a fresh build", async () => {
+  const oc = await occ();
+  const { weldMemoClear } = await import("../../src/weldments/kernel");
+  // An unrelated member first, then a rail body-trimmed to a post standing across it.
+  const c = poly("c", [[0, 1000], [300, 1000]], false);
+  const r = poly("r", [[0, 0], [500, 0]], false);
+  const p = poly("p", [[400, -200], [400, 200]], false, { std: "XZ" });
+  const feats = (cx: number): Feature[] => [
+    { ...c, ents: c.ents.map(e => (e.id === "cp1" ? { ...e, x: cx } : e)) } as SketchFeature,
+    { id: "mc", type: "member", name: "Structural Member1", profile: "shs", size: "40x40x3", segs: lines(c), corner: "miter" } as MemberFeature,
+    r, { id: "mr", type: "member", name: "Structural Member2", profile: "shs", size: "50x50x4", segs: lines(r), corner: "miter" } as MemberFeature,
+    p, { id: "mp", type: "member", name: "Structural Member3", profile: "shs", size: "50x50x4", segs: lines(p), corner: "miter" } as MemberFeature,
+    { id: "t", type: "trimext", name: "Trim/Extend1", bodies: [{ name: "mr:rl0:side:0" }], boundary: { name: "mp:pl0:side:0" }, kind: "body" } as Feature,
+  ];
+  const rail = (m: Modeller, res: ReturnType<typeof run>) => (m as any).bodyList(res.body).find((b: any) => b.names.includes("mr:rl0:side:0"));
+  weldMemoClear(oc);
+  const m = new Modeller(oc);
+  const a = run(m, doc(feats(300)));
+  const b = run(m, doc(feats(350)));
+  // The rail and the post did not change: the trimmed rail is the same shape, not cut again.
+  assert.ok(rail(m, a).shape.IsSame(rail(m, b).shape));
+  assert.ok(a.volume < b.volume);
+  // And it is what a build from nothing gives.
+  weldMemoClear(oc);
+  const m2 = new Modeller(oc);
+  const fresh = run(m2, doc(feats(350)));
+  near(fresh.volume, b.volume, 1e-9);
+  assert.deepEqual([...fresh.body!.names].sort(), [...b.body!.names].sort());
+  near(m2.volume(rail(m2, fresh).shape), m.volume(rail(m, b).shape), 1e-9);
+});
