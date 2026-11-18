@@ -11,7 +11,7 @@ import { CATEGORIES, allMaterials, findMaterial } from "../tools/materials";
 import { ANCHORS, PROFILE_TYPES, profileSizes, type Anchor, type ProfileType } from "./profiles";
 import { sketchProfile } from "../sketch/profile";
 import type { CutItem, Pierce, SubWeld, EndCapFeature, GussetFeature, MemberFeature, MemberGroup, TrimExtendFeature, WeldBeadFeature, WeldFeature, WeldSegRef } from "./types";
-import { capDir, cornerKey, cutKey, planGroups, stockTotals } from "./types";
+import { bodyMatName, capDir, cornerKey, cutKey, itemDensity, planGroups, stockTotals, type BodyMats } from "./types";
 import { pierceSpots, segOf } from "./kernel";
 
 export type WeldTool = "member" | "trimext" | "endcap" | "gusset" | "weldbead";
@@ -614,16 +614,16 @@ function matOptions(cur: string) {
   }).join("");
 }
 
-function rowsOf(items: CutItem[], density: number, props?: CutProps) {
+function rowsOf(items: CutItem[], density: number, props?: CutProps, bodies?: BodyMats) {
   const L = (mm: number | undefined) => mm == null ? "" : (mm * UNITS[units.current].f).toLocaleString(undefined, { maximumFractionDigits: 1 });
   let n = 0;
   return items.map(c => {
     const auto = c.kind === "member" ? c.desc : c.kind === "plate" ? t("Plate {t} × {w} × {l}", { t: c.plate![2], w: c.plate![0], l: c.plate![1] }) : beadText(c, t);
     const key = cutKey(c), p = props?.[key] ?? {};
     const desc = p.desc || auto;
-    const kg = (c.volume * (itemMat(p)?.density ?? density)) / 1e6;
+    const kg = (c.volume * itemDensity(c, p, bodies, density)) / 1e6;
     const excl = !!p.excl;
-    return { key, auto, excl, part: p.part ?? "", note: p.note ?? "", mat: itemMat(p)?.name ?? "", item: excl ? 0 : ++n, qty: c.kind === "bead" ? 1 : c.qty, desc, length: L(c.length), a1: c.kind === "member" ? String(c.angle1 ?? 0) : "", a2: c.kind === "member" ? String(c.angle2 ?? 0) : "", kg, total: excl ? 0 : c.kind === "bead" ? kg : kg * c.qty };
+    return { key, auto, excl, part: p.part ?? "", note: p.note ?? "", mat: itemMat(p)?.name ?? "", bodyMat: bodyMatName(c, bodies), item: excl ? 0 : ++n, qty: c.kind === "bead" ? 1 : c.qty, desc, length: L(c.length), a1: c.kind === "member" ? String(c.angle1 ?? 0) : "", a2: c.kind === "member" ? String(c.angle2 ?? 0) : "", kg, total: excl ? 0 : c.kind === "bead" ? kg : kg * c.qty };
   });
 }
 
@@ -652,7 +652,7 @@ export function cutListRows(items: CutItem[] | undefined, open: boolean, row: (i
 }
 
 /** The weldment cut list as CSV (English, like the other exports; lengths in mm). */
-export function cutListCsv(items: CutItem[], density: number, props?: CutProps, partMat = "Steel (assumed)", subs?: SubWeld[], bar?: StockBar): string {
+export function cutListCsv(items: CutItem[], density: number, props?: CutProps, partMat = "Steel (assumed)", subs?: SubWeld[], bar?: StockBar, bodies?: BodyMats): string {
   const q = (v: string | number) => { const s = String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
   const subName = (id?: string) => subs?.find(x => x.id === id)?.name ?? "";
   const lines = [["Item", "Qty", "Description", "Length (mm)", "Angle 1 (deg)", "Angle 2 (deg)", "Material", "Mass each (kg)", "Mass (kg)", "Part number", "Notes", ...(subs?.length ? ["Sub-weldment"] : [])].join(",")];
@@ -661,8 +661,9 @@ export function cutListCsv(items: CutItem[], density: number, props?: CutProps, 
     const p = props?.[cutKey(c)] ?? {};
     if (p.excl) return;
     const desc = p.desc || (c.kind === "member" ? c.desc : c.kind === "plate" ? `Plate ${c.plate![2]} x ${c.plate![0]} x ${c.plate![1]}` : beadText(c, (k, p) => k.replace(/\{(\w+)\}/g, (_m, n) => String(p?.[n] ?? ""))));
-    const m = itemMat(p), kg = (c.volume * (m?.density ?? density)) / 1e6, qty = c.kind === "bead" ? 1 : c.qty;
-    lines.push([++n, qty, desc, c.length ?? "", c.kind === "member" ? c.angle1 ?? 0 : "", c.kind === "member" ? c.angle2 ?? 0 : "", m?.name ?? partMat, kg.toFixed(4), (kg * (c.kind === "bead" ? 1 : c.qty)).toFixed(4), p.part ?? "", p.note ?? "", ...(subs?.length ? [subName(c.sub)] : [])].map(q).join(","));
+    const m = itemMat(p), kg = (c.volume * itemDensity(c, p, bodies, density)) / 1e6, qty = c.kind === "bead" ? 1 : c.qty;
+    const bm = bodyMatName(c, bodies);
+    lines.push([++n, qty, desc, c.length ?? "", c.kind === "member" ? c.angle1 ?? 0 : "", c.kind === "member" ? c.angle2 ?? 0 : "", m?.name ?? (bm === null ? "Mixed" : bm || partMat), kg.toFixed(4), (kg * (c.kind === "bead" ? 1 : c.qty)).toFixed(4), p.part ?? "", p.note ?? "", ...(subs?.length ? [subName(c.sub)] : [])].map(q).join(","));
   });
   const stock = stockTotals(items, c => !!props?.[cutKey(c)]?.excl, bar);
   if (stock.length) {
@@ -707,7 +708,7 @@ export function showCutList(items: CutItem[] | undefined, doc: PartDoc, onProps?
   const density = doc.material?.density ?? STEEL;
   const props: CutProps = { ...(doc.cutProps ?? {}) };
   const bar: StockBar = { ...(doc.stock ?? {}) };
-  const rows = rowsOf(items, density, props);
+  const rows = rowsOf(items, density, props, doc.bodies);
   const kg = (m: number) => m.toLocaleString(undefined, { maximumFractionDigits: 3 });
   const total = rows.reduce((s, r) => s + r.total, 0);
   const subs = doc.subWelds ?? [];
@@ -724,9 +725,11 @@ export function showCutList(items: CutItem[] | undefined, doc: PartDoc, onProps?
         ? `<input type="text" class="wld-cp" data-cp="${f}" data-ci="${i}" value="${esc(v)}" placeholder="${esc(ph)}" aria-label="${esc(label)} ${r.item}" translate="no" />`
         : esc(v || ph);
       const partName = doc.material ? t(doc.material.name) : t("Steel (assumed)");
+      // No material of its own: the item's bodies' material (Bodies folder), else the part's.
+      const inherit = r.bodyMat === null ? t("Body materials (mixed)") : r.bodyMat ? t("Body material ({m})", { m: t(r.bodyMat) }) : t("Part material ({m})", { m: partName });
       const mat = onProps
-        ? `<select class="wld-cp" data-cp="mat" data-ci="${i}" aria-label="${esc(t("Material"))} ${r.item}"><option value="">${esc(t("Part material ({m})", { m: partName }))}</option>${matOptions(r.mat)}</select>`
-        : esc(r.mat ? t(r.mat) : partName);
+        ? `<select class="wld-cp" data-cp="mat" data-ci="${i}" aria-label="${esc(t("Material"))} ${r.item}"><option value="">${esc(inherit)}</option>${matOptions(r.mat)}</select>`
+        : esc(r.mat ? t(r.mat) : r.bodyMat === null ? t("Mixed") : r.bodyMat ? t(r.bodyMat) : partName);
       const ex = onProps
         ? `<input type="checkbox" class="wld-cx" data-cp="excl" data-ci="${i}"${r.excl ? " checked" : ""} aria-label="${esc(t("Exclude from cut list"))} ${i + 1}" />`
         : r.excl ? "✓" : "";
@@ -743,7 +746,7 @@ export function showCutList(items: CutItem[] | undefined, doc: PartDoc, onProps?
     if (f === "mat" || f === "excl") refreshMass();
   }));
   const refreshMass = () => {
-    const now = rowsOf(items, density, props);
+    const now = rowsOf(items, density, props, doc.bodies);
     dlg.querySelectorAll<HTMLElement>("#wld-cut-body tbody tr[data-ri]").forEach((tr, i) => {
       const c = tr.querySelector<HTMLElement>("[data-wkg]"); if (c) c.textContent = kg(now[i].total);
       const n = tr.querySelector<HTMLElement>("[data-witem]"); if (n) n.textContent = now[i].item ? String(now[i].item) : "—";
@@ -769,7 +772,7 @@ export function showCutList(items: CutItem[] | undefined, doc: PartDoc, onProps?
   dlg.querySelector<HTMLButtonElement>("[data-a=close]")!.onclick = () => dlg.close();
   dlg.querySelector<HTMLButtonElement>("[data-a=csv]")!.onclick = () => {
     const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([cutListCsv(items, density, props, doc.material?.name, subs, bar)], { type: "text/csv" }));
+    a.href = URL.createObjectURL(new Blob([cutListCsv(items, density, props, doc.material?.name, subs, bar, doc.bodies)], { type: "text/csv" }));
     a.download = `${doc.name}-cut-list.csv`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);

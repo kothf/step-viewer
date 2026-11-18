@@ -2465,6 +2465,7 @@ export class DrawingWorkspace {
       return `<fieldset class="pm-group"><legend>${esc(t("Cut list table"))}</legend>
         <p class="drw-note">${esc(t("Cut list items: {n}, from the part's cut list.", { n }))}</p>
         <label class="drw-chk"><input type="checkbox" data-d="cbeads"${a.beads !== false ? " checked" : ""}> ${esc(t("Weld beads"))}</label>
+        <label class="drw-chk"><input type="checkbox" data-d="cmat"${a.mat ? " checked" : ""}> ${esc(t("Material column"))}</label>
         <label class="drw-chk"><input type="checkbox" data-d="cmass"${a.mass ? " checked" : ""}> ${esc(t("Mass column"))}</label>
         <label class="drw-f">${esc(t("Decimals"))}<select data-d="cprec"><option value="">${esc(t("Auto"))}</option>${[0, 1, 2, 3].map(k => `<option value="${k}"${a.prec === k ? " selected" : ""}>${k}</option>`).join("")}</select></label>
       </fieldset>${del}`;
@@ -2536,6 +2537,7 @@ export class DrawingWorkspace {
       else if (a.t === "ctable") {
         if (k === "cprec") { if (val === "") delete a.prec; else a.prec = +val; }
         else if (k === "cbeads") { if ((el as HTMLInputElement).checked) delete a.beads; else a.beads = false; }
+        else if (k === "cmat") { if ((el as HTMLInputElement).checked) a.mat = true; else delete a.mat; }
         else if (k === "cmass") { if ((el as HTMLInputElement).checked) a.mass = true; else delete a.mass; }
       }
       else if (a.t === "datum" && k === "dl" && val.trim()) a.letter = val.trim().toUpperCase();

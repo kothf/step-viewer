@@ -12714,6 +12714,16 @@ try {
     await settle();
     const cp = await mp.evaluate(() => ({ props: Object.values(window.__sv.model.store.doc.cutProps ?? {}), row: document.querySelector('#mc-tree .ft-row[data-id="cut:0"]')?.textContent ?? "" }));
     check(JSON.stringify(cp.props) === '[{"desc":"Top rail","part":"FR-001","mat":"Aluminium 6061"}]' && cp.row.includes("Top rail"), `weldments: cut list item properties (${JSON.stringify(cp)})`);
+    // Body materials (Bodies folder → Material…) weigh an item with no material of its own, and its Material list says so.
+    await mp.evaluate(() => { const ks = window.__sv.model.last().cutList[1].bodies; window.__sv.model.store.change("Body material", d => { d.bodies ??= {}; for (const k of ks) d.bodies[k] = { ...(d.bodies[k] ?? {}), material: { name: "Aluminium 6061", density: 2.7 } }; }); });
+    await settle();
+    await runCmd(mp, "Cut List");
+    await mp.waitForSelector("#wld-cut[open]");
+    const bm = await mp.evaluate(() => ({ kg: [...document.querySelectorAll("#wld-cut [data-wkg]")].map(e => e.textContent), opt: document.querySelector('#wld-cut select[data-cp="mat"][data-ci="1"] option')?.textContent ?? "" }));
+    await mp.click('#wld-cut [data-a="close"]');
+    await mp.evaluate(() => window.__sv.modeller.undo());
+    await settle();
+    check(Math.abs(num(bm.kg[1]) / num(kg1[1]) - 2.7 / 7.85) < 0.01 && /Body material/.test(bm.opt), `weldments: cut list items weigh with their bodies' materials (${JSON.stringify({ bm, kg1 })})`);
     // The Cut list folder in the tree: one row per item; clicking one lights up its two bodies.
     await treeClick(mp, '#mc-tree .ft-row[data-id="cut:0"]');
     await mp.waitForTimeout(100);
@@ -14423,6 +14433,11 @@ try {
     await ready();
     const ct2 = await dp.evaluate(() => [...document.querySelectorAll(".drw-svg text")].map(t => t.textContent));
     check(!ct2.includes("Fillet weld, leg 4") && ct2.includes("SHS 40x40x3"), `drawing: unticking Weld beads leaves the bead out of the cut list table`);
+    // Material column: the item's material (own, else its bodies', else the part's).
+    await dp.click('#drw .drw-props [data-d="cmat"]');
+    await ready();
+    const ct3 = await dp.evaluate(() => ({ mat: window.__sv.drw.doc().sheets[0].annots.find(a => a.t === "ctable")?.mat, tx: [...document.querySelectorAll(".drw-svg text")].map(t => t.textContent) }));
+    check(ct3.mat === true && ct3.tx.includes("Material"), `drawing: cut list table Material column (${JSON.stringify({ mat: ct3.mat })})`);
     // Auto balloon on a weldment part: one balloon per cut list item seen in the view, numbered as in the cut list.
     await drwTool(dp, "auto");
     await dp.waitForFunction(() => window.__sv.drw.doc().sheets[0].annots.some(a => a.t === "balloon"), null, { timeout: 30000 }).catch(() => {});

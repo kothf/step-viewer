@@ -1,6 +1,7 @@
 // Weldment features (FR-FT-121). Each member, end cap, gusset and weld bead is its own solid body
 // in the part's body compound, so the Bodies folder, mass properties and the cut list see them.
-import type { FaceRef, Num, PlaneRef } from "../model/types";
+import type { FaceRef, Num, PartDoc, PlaneRef } from "../model/types";
+import { bodiesDensity, findMaterial } from "../tools/materials";
 import type { Anchor, ProfileType } from "./profiles";
 
 /**
@@ -290,4 +291,27 @@ export function stockTotals(items: CutItem[], skip?: (c: CutItem) => boolean, st
     }
     return row;
   });
+}
+
+export type BodyMats = PartDoc["bodies"];
+
+/**
+ * The density an item weighs with: its own cut list material, else the average of its bodies' own materials
+ * (Bodies folder → Material…, the part's for bodies with none), as the drawing's cut list table does.
+ */
+export function itemDensity(c: CutItem, p: { mat?: string } | undefined, bodies: BodyMats, density: number): number {
+  return findMaterial(p?.mat)?.density ?? bodiesDensity(c.bodies, bodies, density);
+}
+
+/** The material text of an item for tables: its own material, else its bodies' distinct materials (the part's for bodies with none), joined ", ". */
+export function itemMatText(c: CutItem, p: { mat?: string } | undefined, bodies: BodyMats, partName: string): string {
+  const own = findMaterial(p?.mat)?.name;
+  if (own) return own;
+  return [...new Set(c.bodies.map(k => bodies?.[k]?.material?.name || partName))].filter(Boolean).join(", ");
+}
+
+/** The material name an item shows when it has none of its own: its bodies' one material, "" = the part's, null = several. */
+export function bodyMatName(c: CutItem, bodies: BodyMats): string | null {
+  const names = new Set(c.bodies.map(k => bodies?.[k]?.material?.name ?? ""));
+  return names.size > 1 ? null : names.size ? [...names][0] : "";
 }

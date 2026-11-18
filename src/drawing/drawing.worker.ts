@@ -12,8 +12,7 @@ import type { AsmDoc } from "../asm/types";
 import type { EdgeRef, PartDoc } from "../model/types";
 import { modelItems, type CutInfo, type WeldInfo } from "./items";
 import { cutList, type WeldHost } from "../weldments/kernel";
-import { cutKey, splitSubs } from "../weldments/types";
-import { bodiesDensity, findMaterial } from "../tools/materials";
+import { cutKey, itemDensity, itemMatText, splitSubs } from "../weldments/types";
 import { activate } from "../model/configs";
 
 export type DrawingRequest =
@@ -177,10 +176,11 @@ function buildPart(doc: PartDoc, lite = false, variant = false): { shape: any; m
       for (const c of items) {
         const p = doc.cutProps?.[cutKey(c)];
         if (p?.excl) continue;
-        const kg = c.volume * (findMaterial(p?.mat)?.density ?? bodiesDensity(c.bodies, doc.bodies, density)) / 1e6;
+        const kg = c.volume * itemDensity(c, p, doc.bodies, density) / 1e6;
         ++n;
         for (const k of c.bodies) for (const nm of namesOf.get(k) ?? []) cutFaces[nm] ??= n;
-        cuts.push({ item: n, kind: c.kind, desc: p?.desc || c.desc, ...(p?.desc ? { own: true } : {}), qty: c.kind === "bead" ? 1 : c.qty, kg,
+        const mat = itemMatText(c, p, doc.bodies, doc.material?.name ?? "");
+        cuts.push({ item: n, kind: c.kind, desc: p?.desc || c.desc, ...(p?.desc ? { own: true } : {}), qty: c.kind === "bead" ? 1 : c.qty, kg, ...(mat ? { mat } : {}),
           ...(c.length != null ? { length: c.length } : {}), ...(c.kind === "member" ? { a1: c.angle1 ?? 0, a2: c.angle2 ?? 0 } : {}),
           ...(c.plate ? { plate: c.plate } : {}), ...(c.inter ? { inter: c.inter } : {}) });
       }
