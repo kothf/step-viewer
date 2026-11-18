@@ -582,6 +582,8 @@ test("stock lengths of a cut list (FR-FT-121)", () => {
     { desc: "SHS 40x40x3", pieces: 4, length: 1410.3, bars: 2, left: 589.8, over: 0, plan: [{ pieces: [420, 420, 150.25], left: 9.8 }, { pieces: [420], left: 580 }] },
     { desc: "CHS 33.7x2.6", pieces: 2, length: 200, bars: 1, left: 800, over: 0, plan: [{ pieces: [100, 100], left: 800 }] },
   ]);
+  // What is left takes the kerf off every cut, as the cutting plan does (weldments exam #11): 1.8 + 580.
+  assert.equal(stockTotals(items, undefined, { len: 1000, kerf: 4 })[0].left, 581.8);
   // The cutting plan: the kerf between cuts comes off what is left, and equal bars are put together.
   assert.deepEqual(barPlan([420, 420, 150.25, 420], 1000, 4), { bars: [{ pieces: [420, 420, 150.25], left: 1.8 }, { pieces: [420], left: 580 }], over: [] });
   assert.deepEqual(barPlan([300, 700, 300, 700, 1200], 1000), { bars: [{ pieces: [700, 300], left: 0 }, { pieces: [700, 300], left: 0 }], over: [1200] });

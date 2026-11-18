@@ -624,11 +624,15 @@ test("sheet metal: unfold, cut across the bend, fold back (FR-FT-120)", async ()
   const dim: SmFormFeature = { id: "fm", type: "smform", name: "Form-Tool1", face: { name: "b:p0:top" }, tool: "dimple", pts: [[50, 30]], size: { v: 10 }, width: { v: 4 }, height: { v: 3 } };
   const pre = [s, base(), fl, k2, cut("c2", "k2"), dim];
   const fv = run(doc(pre)).props.volume;
+  const fn = run(doc(pre)).body!.faces.length;
   r = run(doc([...pre, unf]));
   close(r.props.volume, fv, 1e-4);
   close(r.size[2], 2 + 3, 1e-6);
+  // The slot's outline is unrolled into lines and arcs, not one face per sample (exam #10).
+  assert.ok(r.body!.faces.length <= fn + 8, `unfolded faces ${r.body!.faces.length} vs ${fn}`);
   r = run(doc([...pre, unf, fold]));
   close(r.props.volume, fv, 1e-4);
+  assert.ok(r.body!.faces.length <= fn + 8, `folded back faces ${r.body!.faces.length} vs ${fn}`);
   // (The box of the wrapped faces' B-spline edges is a little loose.)
   close(r.size[2], 30, 1e-3);
 });
@@ -735,6 +739,12 @@ test("sheet metal: gusset across a bend, left out of the flat pattern (FR-FT-120
   assert.equal(code(gus({ at: { v: 99 } })), "E-SM-GUSSETPOS");
   const unf: SmUnfoldFeature = { id: "u", type: "smunfold", name: "Unfold1", bends: [] };
   assert.equal(m.evaluate(doc([...pre, gus(), unf])).statuses.find(x => x.id === "u")?.code, "E-SM-UNFOLDGUSSET");
+  // Another bend unfolds: only bends with gussets are refused (exam #9).
+  const fl2: SmFlangeFeature = { id: "h", type: "smflange", name: "Edge-Flange2", edges: [{ faces: ["b:p0:top", "b:p0:sl2"] }], length: { v: 20 }, angle: { v: Math.PI / 2 } };
+  const other = m.evaluate(doc([...pre, fl2, gus(), { ...unf, face: { name: "b:p0:top" }, bends: ["h:b0"] }]));
+  assert.equal(other.statuses.find(x => x.id === "u")?.code, undefined);
+  assert.equal(other.sheet!.gussets?.length, 1);
+  assert.equal(m.evaluate(doc([...pre, fl2, gus(), { ...unf, face: { name: "b:p0:top" }, bends: ["f:b0"] }])).statuses.find(x => x.id === "u")?.code, "E-SM-UNFOLDGUSSET");
   // Three ribs 20 apart about the middle (x 30, 50, 70); the volume grows three times as much as for one.
   const one = r.props.volume - r0.props.volume;
   const r3 = run(doc([...pre, gus({ count: 3, spacing: { v: 20 } })]));

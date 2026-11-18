@@ -309,8 +309,8 @@ export function stockTotals(items: CutItem[], skip?: (c: CutItem) => boolean, st
     const row: StockRow = { ...r, length: r1(r.length) };
     if (stock?.len && stock.len > 0) {
       const b = barPlan(all, stock.len, Math.max(0, stock.kerf ?? 0));
-      const fit = all.filter(l => l <= stock.len! + 1e-6).reduce((s, l) => s + l, 0);
-      row.bars = b.bars.length; row.left = r1(b.bars.length * stock.len - fit); row.over = b.over.length; row.plan = b.bars;
+      // What is left = the cutting plan's offcuts, so the saw kerf is taken off every cut (weldments exam #11).
+      row.bars = b.bars.length; row.left = r1(b.bars.reduce((s, x) => s + x.left, 0)); row.over = b.over.length; row.plan = b.bars;
     }
     return row;
   });

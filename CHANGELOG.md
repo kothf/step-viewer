@@ -5,6 +5,36 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.579.0] - 2026-11-18
+
+### Fixed
+
+- **Unfold and Fold are quick again on sheet metal with cuts across bends.** Cuts unrolled from a bend or wrapped back onto one keep their outline as lines, arcs and smooth curves instead of hundreds of tiny flat faces. On a test chassis an Unfold went from 50 s to 13 s and a Fold from over four minutes to 14 s, the part kept about 220 faces instead of 1,400, and the Gussets and Corner Reliefs after them build again instead of stopping the geometry kernel.
+- **Round corner reliefs have smooth walls** where they cross a bend, not dozens of facets.
+- **Unfold only refuses bends that carry a gusset.** Any other bend of a part with gussets unfolds.
+- **The geometry kernel recovers after it runs out of memory.** It is restarted and the part rebuilt; when it runs out again, the message says it was memory and suggests undoing the last change. Before, every feature showed an error until the page was reloaded.
+- **Error messages fade after 20 s** (warnings after 10 s), and stay while the pointer is on them.
+
+## [1.578.0] - 2026-11-18
+
+### Changed
+
+- **Slow rebuilds keep the model on screen.** After editing a sketch of a big part (a weldment of 30+ features), the model as it was stays in the view, greyed, until the new one is built, instead of an empty view; the Rebuilding… pill names the feature being built ("Trim/Extend2 (5 of 33)") with a progress bar under it.
+
+## [1.577.0] - 2026-11-18
+
+### Added
+
+- **Cut list table on drawings: Part number column and sub-weldments.** The table's properties gain a Part number column (the numbers typed in the Cut List dialog), each sub-weldment heads its own items with a "Sub-weldment: name" row, and long material names wrap onto a second line instead of widening the table past the sheet.
+
+### Fixed
+
+- **Midpoints snap while drawing.** The Midpoint snap is on by default, so a line drawn from one edge's middle to another's gets two Midpoint relations; a line held horizontal or vertical that ends on an edge now also gets On curve there.
+- **3D sketch panel:** clicking a point or line in the lists selects just it (Ctrl+click adds), and the panel shows what is selected, so a second click no longer deselects the line you meant to dimension.
+- **Warnings fade.** A yellow warning such as "The sketch already had that relation" goes after 10 seconds instead of staying over the view; errors still stay until closed.
+- **A sketch on a reference plane names the plane** in its panel ("Plane: Plane2", not "Plane: Face").
+- **Weldment cut list:** "Left over" in Stock lengths takes the saw kerf off every cut, as the cutting plan below it does, so both give one figure.
+
 ## [1.576.0] - 2026-11-18
 
 ### Fixed
@@ -3632,7 +3662,10 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.576.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.579.0...HEAD
+[1.579.0]: https://github.com/kothf/step-viewer/compare/v1.578.0...v1.579.0
+[1.578.0]: https://github.com/kothf/step-viewer/compare/v1.577.0...v1.578.0
+[1.577.0]: https://github.com/kothf/step-viewer/compare/v1.576.0...v1.577.0
 [1.576.0]: https://github.com/kothf/step-viewer/compare/v1.575.0...v1.576.0
 [1.575.0]: https://github.com/kothf/step-viewer/compare/v1.574.0...v1.575.0
 [1.574.0]: https://github.com/kothf/step-viewer/compare/v1.573.0...v1.574.0

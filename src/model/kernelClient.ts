@@ -54,6 +54,9 @@ const signature = (r: Rebuild) => JSON.stringify([r.faceNames, r.statuses.map(s 
 /** An assembly feature's result: the components it cut, or why it cut none (FR-ASM-027). */
 export interface AsmFeatureStatus { id: string; ok: boolean; cut: string[]; message?: string }
 
+/** What a kernel that ran out of memory says (emscripten aborts, allocation failures). */
+export const KERNEL_MEMORY = /malloc failed|bad_alloc|out of memory|Cannot enlarge memory|Array buffer allocation failed|Aborted\(OOM\)|OOM/i;
+
 /** The message of calls cut short by `stop()`. */
 export const STOPPED = "The geometry kernel was stopped.";
 
@@ -80,6 +83,8 @@ export class ModelKernel {
   private storeTimer: ReturnType<typeof setTimeout> | null = null;
   /** Rebuilds and assembly parts answered from the disk cache (for `?debug` and the smoke test). */
   cacheHits = 0;
+  /** Rebuild progress from the worker: feature i of `of` (0-based) is being built (exam #16). */
+  onProgress?: (p: { i: number; of: number; name: string }) => void;
 
   constructor(private base: string) {}
 
@@ -89,7 +94,9 @@ export class ModelKernel {
     const { w, ready, abort } = takeWorker(this.base);
     this.abortReady = abort;
     w.onmessage = (e: MessageEvent) => {
-      const d = e.data, p = this.pending.get(d.id);
+      const d = e.data;
+      if (d.id === -2 && d.progress) { this.onProgress?.(d.progress); return; }
+      const p = this.pending.get(d.id);
       if (!p) return;
       this.pending.delete(d.id);
       if (d.ok) p.resolve(d); else p.reject(new Error(d.error));
@@ -177,16 +184,23 @@ export class ModelKernel {
       } catch (err) {
         // Stopped on purpose (the document was closed or parked): nobody waits for this result.
         if ((err as Error).message === STOPPED) { job.resolve(null); continue; }
-        // A crashed worker: start again from the document once.
-        if (!this.worker) {
-          try {
-            await this.start();
-            const r = await this.call<Rebuild & { heap: number }>({ type: "model", doc: job.doc, color: job.color, quality: job.quality, previewAt: job.previewAt, verify: job.verify });
-            job.resolve(r);
-            continue;
-          } catch { /* give up below */ }
+        // A model request never fails on its own (feature errors come back as statuses): the worker crashed or its
+        // OpenCASCADE aborted (out of memory), and an aborted one stays broken, so it is replaced too (exam #12).
+        let msg = (err as Error).message ?? "";
+        if (this.worker) this.stop(false);
+        try {
+          await this.start();
+          const r = await this.call<Rebuild & { heap: number }>({ type: "model", doc: job.doc, color: job.color, quality: job.quality, previewAt: job.previewAt, verify: job.verify });
+          job.resolve(r);
+          continue;
+        } catch (again) {
+          // Failed again: the next edit gets a fresh worker as well.
+          msg = (again as Error).message || msg;
+          if ((again as Error).message === STOPPED) { job.resolve(null); continue; }
+          if (this.worker) this.stop(false);
         }
-        job.resolve({ statuses: job.doc.features.map(f => ({ id: f.id, ok: false, code: "E-KRN-CRASH", message: (err as Error).message })), frames: {}, data: null, faceNames: [], props: null, ms: { eval: 0, mesh: 0 } });
+        const code = KERNEL_MEMORY.test(msg) ? "E-KRN-MEMORY" : "E-KRN-CRASH";
+        job.resolve({ statuses: job.doc.features.map(f => ({ id: f.id, ok: false, code, message: msg })), frames: {}, data: null, faceNames: [], props: null, ms: { eval: 0, mesh: 0 } });
       }
     }
     this.running = false;

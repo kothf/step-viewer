@@ -23,7 +23,7 @@ import { download } from "../tools/exporters";
 import { evaluate, ExprError, isPlain } from "./expr";
 import { journalDrop, journalList, journalSave, packPart, unpackPart, PART_EXT, type JournalEntry } from "./file";
 import { snapshotList, snapshotRead, snapshotSave, SNAPSHOT_KEEP } from "./snapshots";
-import { ModelKernel, type Rebuild } from "./kernelClient";
+import { KERNEL_MEMORY, ModelKernel, type Rebuild } from "./kernelClient";
 import { pathId, hasDir2, dir2Apart, dir2Blind, clearDir2, threadThrough, holeExits, headKind, holeCount, DIR2_ENDS, type Dir2End } from "./types";
 import { defaultToward } from "./flex";
 import { parseXyz } from "./curves";
@@ -283,6 +283,7 @@ function statusText(s: FeatureStatus) {
   }
   if (s.code === "E-TN-LOST") return t("A face or edge this feature used is gone (reference lost).");
   if (s.code === "E-KRN-CRASH") return t("The geometry kernel stopped; it was restarted.");
+  if (s.code === "E-KRN-MEMORY") return t("The geometry kernel ran out of memory and was restarted. Undo the last change or suppress the features after it.");
   return t(s.message ?? "Error");
 }
 
@@ -545,6 +546,12 @@ export class ModelController {
   private lineMats: LineMaterial[] = [];
   private down: { x: number; y: number } | null = null;
   private busyCount = 0;
+  /** The last whole model shown, and whether the view now shows a rolled-back one (a sketch being edited): while the
+   *  rebuild after it runs, the old model stays on screen greyed (exam #16). */
+  private fullData: PartData | null = null;
+  private shownRolled = false;
+  private rebuildGen = 0;
+  private staleTimer = 0;
   private rebuildMs = 0;
   /** Undo mark taken when a sketch was opened: leaving it merges its steps (FR-UND-003). */
   private sketchMark = 0;
@@ -558,7 +565,8 @@ export class ModelController {
   constructor(private host: ModelHost, occtBase: string) {
     this.kernel = new ModelKernel(occtBase);
     document.getElementById("ft-search")?.addEventListener("input", () => this.renderTree());
-    this.kernel.onCrash = () => toast(t("The geometry kernel stopped; it was restarted."), "warn");
+    this.kernel.onProgress = p => this.showProgress(p.i, p.of, p.name);
+    this.kernel.onCrash = msg => toast(KERNEL_MEMORY.test(msg) ? t("The geometry kernel ran out of memory and was restarted. Undo the last change or suppress the features after it.") : t("The geometry kernel stopped; it was restarted."), "warn");
     // A result shown from the disk cache that the kernel's own build did not match (it never should): build again.
     this.kernel.onStale = () => void this.rebuild();
     host.viewer.scene.add(this.decor);
@@ -830,10 +838,23 @@ export class ModelController {
     const m = this.mode;
     const d = m.kind === "feature" ? m.draft : null;
     const previewAt = m.kind === "feature" && d && (((d.type === "fillet" || d.type === "chamfer") && roundReady(d)) || ((d.type === "smconvert" || d.type === "sminsert") && !!d.face.name) || ((d.type === "extrude" || d.type === "revolve" || d.type === "sweep" || d.type === "loft") && d.op === "cut")) ? m.index : undefined;
+    const gen = ++this.rebuildGen;
+    const rolled = m.kind === "sketch" || m.kind === "plane";
+    clearTimeout(this.staleTimer);
+    if (m.kind === "none" && this.shownRolled && this.fullData && !quiet) {
+      // Leaving a sketch of a slow part: show the model as it was, greyed, until the new one comes (exam #16).
+      const old = this.fullData;
+      this.staleTimer = window.setTimeout(() => { if (gen === this.rebuildGen && this.store) { this.host.show(old, this.doc.name, false); this.setStale(true); } }, 250);
+    }
     const r = await this.kernel.rebuild(doc, doc.color ?? DEFAULT_COLOR, qualityFactor(getPref("quality")), previewAt, getPref("verify"));
     if (!quiet) this.setBusy(-1);
+    if (gen === this.rebuildGen) { clearTimeout(this.staleTimer); if (r) this.setStale(false); }
     if (!r || !this.store) return;
     this.last = r;
+    if (gen === this.rebuildGen) {
+      this.shownRolled = rolled;
+      if (m.kind === "none" && !this.instantDoc) this.fullData = r.data;
+    }
     this.multi = null;
     this.followEdges(r);
     this.rebuildMs = r.ms.eval + r.ms.mesh;
@@ -911,7 +932,22 @@ export class ModelController {
 
   private setBusy(d: number) {
     this.busyCount += d;
-    $("#mc-busy").hidden = this.busyCount <= 0;
+    const el = $("#mc-busy");
+    el.hidden = this.busyCount <= 0;
+    if (el.hidden) { el.textContent = t("Rebuilding…"); el.style.removeProperty("--p"); }
+  }
+
+  /** "Rebuilding… Trim/Extend3 (12 of 33)" with a bar under it, while a long rebuild runs (exam #16). */
+  private showProgress(i: number, of: number, name: string) {
+    const el = $("#mc-busy");
+    if (el.hidden) return;
+    el.textContent = t("Rebuilding… {name} ({n} of {m})", { name: featureLabel(name), n: i + 1, m: of });
+    el.style.setProperty("--p", `${Math.round((i / Math.max(1, of)) * 100)}%`);
+  }
+
+  /** The view shows the model from before the change while it rebuilds. */
+  private setStale(on: boolean) {
+    this.host.viewer.renderer.domElement.classList.toggle("mc-stale", on);
   }
 
   /** World frame of a sketch: standard planes are fixed, face sketches come from the last rebuild. */
@@ -8512,9 +8548,9 @@ export class ModelController {
     const def = info.status !== "ok" ? t("Over defined") : info.dof === 0 ? t("Fully defined") : t("Under defined, {n} DOF", { n: info.dof });
     const rels = ed.validRelations();
     const nSel = ed.selection.size;
-    const plane = "std" in sk.plane ? t(STD_NAMES[sk.plane.std]) : t("Face");
+    const plane = this.refLabel(sk.plane);
     pm.innerHTML = okHead(featureLabel(sk.name), { ok: t("Exit sketch (Enter)"), noTranslate: true })
-      + `<p class="pm-help muted">${esc(t("Plane"))}: ${esc(plane)} · <b class="pm-def" data-state="${info.status !== "ok" ? "over" : info.dof === 0 ? "full" : "under"}">${esc(def)}</b>${info.status === "ok" && info.dof > 0 ? ` <button class="btn small" data-a="fulldef" title="${esc(t("Add horizontal/vertical relations and dimensions from the origin until nothing is free"))}">${esc(t("Fully define sketch"))}</button>` : ""}</p>`
+      + `<p class="pm-help muted">${esc(t("Plane"))}: <span class="pm-skplane" translate="no">${esc(plane)}</span> · <b class="pm-def" data-state="${info.status !== "ok" ? "over" : info.dof === 0 ? "full" : "under"}">${esc(def)}</b>${info.status === "ok" && info.dof > 0 ? ` <button class="btn small" data-a="fulldef" title="${esc(t("Add horizontal/vertical relations and dimensions from the origin until nothing is free"))}">${esc(t("Fully define sketch"))}</button>` : ""}</p>`
       + `<p class="pm-help muted">${esc(t("Draw with the tools above. Blue is free to move, black is fixed by dimensions and relations. Double-click a dimension to change it."))}</p>`
       + `<label class="chk pm-chk" title="${esc(t("Points snap to model vertices, edge midpoints and circle centres, and stay attached to them; Smart Dimension takes model edges."))}"><input type="checkbox" data-a="modelsnap"${ed.modelSnap ? " checked" : ""} />${esc(t("Snap to model geometry"))}</label>`
       + `<label class="chk pm-chk" title="${esc(t("Lines snap horizontal, vertical, perpendicular, parallel or tangent and keep that relation; hold Ctrl to draw without them."))}"><input type="checkbox" data-a="autorels"${ed.autoRels ? " checked" : ""} />${esc(t("Automatic relations"))}</label>`
@@ -9166,7 +9202,7 @@ export class ModelController {
     return { title: t("3D Sketch"), body: group(t("Tools"), tools)
       + group(t("Points"), pts)
       + group(t("Lines and splines"), segs || `<p class="pm-help muted">${esc(t("None yet."))}</p>`)
-      + group(t("Relations"), (add ? `<div class="pm-rels">${add}</div>` : `<p class="pm-help muted">${esc(t("Select a line, two lines or two points (in the view or above) to add relations and dimensions."))}</p>`) + (rels ? `<ul class="pm-dims">${rels}</ul>` : ""))
+      + group(t("Relations"), (s3.sel.length ? `<p class="pm-help" data-s3picked>${esc(t("Selected"))}: <span translate="no">${esc(s3.sel.map(entName).join(", "))}</span></p>` : "") + (add ? `<div class="pm-rels">${add}</div>` : `<p class="pm-help muted">${esc(t("Select a line, two lines or two points (in the view or above; Ctrl+click adds) to add relations and dimensions."))}</p>`) + (rels ? `<ul class="pm-dims">${rels}</ul>` : ""))
       + group(t("Dimensions"), dims ? `<ul class="pm-dims">${dims}</ul>` : `<p class="pm-help muted">${esc(t("None yet."))}</p>`)
       + `<p class="pm-help" role="status" data-s3status>${esc(status)}</p>` };
   }
@@ -9179,7 +9215,8 @@ export class ModelController {
     };
     pm.querySelectorAll<HTMLButtonElement>("[data-s3t]").forEach(b => b.addEventListener("click", () => { const k = b.dataset.s3t; s3.tool = k === "line" || k === "spline" ? k : null; s3.spline = null; if (!s3.tool) s3.anchor = null; this.renderPanel(); this.drawDecor(); }));
     pm.querySelector<HTMLSelectElement>("[data-s3p]")?.addEventListener("change", ev => { s3.plane = (ev.target as HTMLSelectElement).value as "XY" | "YZ" | "ZX"; this.drawDecor(); });
-    pm.querySelectorAll<HTMLButtonElement>("[data-s3sel]").forEach(b => b.addEventListener("click", () => { const id = b.dataset.s3sel!; s3.sel = s3.sel.includes(id) ? s3.sel.filter(x => x !== id) : [...s3.sel, id]; this.renderPanel(); this.drawDecor(); }));
+    // A click selects just that item; Ctrl/Shift+click adds or removes it (weldments exam #7: plain clicks toggled a hidden multi-selection).
+    pm.querySelectorAll<HTMLButtonElement>("[data-s3sel]").forEach(b => b.addEventListener("click", ev => { const id = b.dataset.s3sel!; s3.sel = ev.ctrlKey || ev.metaKey || ev.shiftKey ? (s3.sel.includes(id) ? s3.sel.filter(x => x !== id) : [...s3.sel, id]) : [id]; this.renderPanel(); this.drawDecor(); }));
     pm.querySelectorAll<HTMLInputElement>("input[data-s3x]").forEach(inp => {
       const apply = () => { const [i, j] = inp.dataset.s3x!.split(":").map(Number); const v = num(inp); const p = f.pts[i]; if (v == null || !p || p.p[j] === v) return; this.change3d(f, () => { p.p = p.p.map((c, k) => k === j ? v : c) as V3; delete p.at; }); };
       inp.addEventListener("change", apply);

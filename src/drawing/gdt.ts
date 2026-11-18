@@ -204,13 +204,20 @@ export function cellLabel(c: string, label: (s: string, p?: Record<string, strin
   return m ? label("Column {n}", { n: m[1] }) : label(c);
 }
 
-/** A table: optional title row, a header row and the rows, column widths from their contents. */
+/** A table cell's lines: a cell may hold "\n" (wrapped text, weldments exam #15); each line is LINE_H below the last. */
+const cellLines = (c: string) => c.split("\n");
+const LINE_H = 3.6;
+
+/** A table: optional title row, a header row and the rows, column widths from their contents (the widest line of a cell). */
 export function tablePrims(a: TableAnnot, label: (s: string, p?: Record<string, string>) => string, maxH = Infinity): { prims: Prim[]; box: Box; boxes: Box[] } {
   const out: Prim[] = [];
   const h = 2.5, rh = 6;
   const head = a.cols.map(c => cellLabel(c, label));
-  const widths = head.map((c, i) => Math.max(12, tw(c, h) + 3, ...a.rows.map(r => tw(r[i] ?? "", h) + 3)));
+  const cw = (c: string) => Math.max(0, ...cellLines(c).map(l => tw(l, h)));
+  const widths = head.map((c, i) => Math.max(12, cw(c) + 3, ...a.rows.map(r => cw(r[i] ?? "") + 3)));
   const W = widths.reduce((s, w) => s + w, 0);
+  /** A row's height: one line = rh, each more line LINE_H more. */
+  const rowH = (cells: string[]) => rh + (Math.max(1, ...cells.map(c => cellLines(c).length)) - 1) * LINE_H;
   // A parts list taller than the room above it is split into blocks side by side, each with its header, continuing to the
   // left (a CAD app's split table): drawings exam round 2, a 43-row BOM ran off the sheet.
   const per = a.anchor === "br" && Number.isFinite(maxH) ? Math.max(1, Math.floor(maxH / rh) - 1 - (a.title ? 1 : 0)) : Infinity;
@@ -221,25 +228,25 @@ export function tablePrims(a: TableAnnot, label: (s: string, p?: Record<string, 
   const boxes: Box[] = [];
   blocks.forEach((block, bi) => {
     const title = bi === 0 && a.title;
-    const nRows = (title ? 1 : 0) + 1 + block.length;
-    // Anchored at the bottom (a parts list on the title block): the header is at the bottom and items count upwards.
-    let y = a.anchor === "br" ? a.pos[1] + nRows * rh : a.pos[1];
-    top = Math.max(top, y);
-    const x0 = xr - bi * W;
     const rows: { cells: string[]; bold?: boolean; span?: boolean }[] = [];
     if (title) rows.push({ cells: [cellLabel(title, label)], bold: true, span: true });
     const body = block.map(r => ({ cells: a.cols.map((_c, i) => r[i] ?? "") }));
     if (a.anchor === "br") rows.push(...body.reverse(), { cells: head, bold: true });
     else rows.push({ cells: head, bold: true }, ...body);
+    const total = rows.reduce((s, r) => s + (r.span ? rh : rowH(r.cells)), 0);
+    // Anchored at the bottom (a parts list on the title block): the header is at the bottom and items count upwards.
+    let y = a.anchor === "br" ? a.pos[1] + total : a.pos[1];
+    top = Math.max(top, y);
+    const x0 = xr - bi * W;
     for (const r of rows) {
-      const y0 = y - rh;
+      const y0 = y - (r.span ? rh : rowH(r.cells));
       out.push(L([x0, y0], [x0 + W, y0]), L([x0, y], [x0 + W, y]));
       if (r.span) { out.push({ ...T(x0 + W / 2, y0 + 1.8, r.cells[0], h, "c"), bold: true }); }
       else {
         let x = x0;
         r.cells.forEach((c, i) => {
           out.push(L([x, y0], [x, y]));
-          if (c) out.push({ ...T(x + 1.5, y0 + 1.8, c, h, "l"), bold: r.bold });
+          cellLines(c).forEach((ln, k) => { if (ln) out.push({ ...T(x + 1.5, y - rh + 1.8 - k * LINE_H, ln, h, "l"), bold: r.bold }); });
           x += widths[i];
         });
       }
@@ -247,7 +254,7 @@ export function tablePrims(a: TableAnnot, label: (s: string, p?: Record<string, 
       y = y0;
     }
     bottom = Math.min(bottom, y);
-    boxes.push(a.anchor === "br" ? [x0, y, x0 + W, a.pos[1] + nRows * rh] : [x0, y, x0 + W, a.pos[1]]);
+    boxes.push(a.anchor === "br" ? [x0, y, x0 + W, a.pos[1] + total] : [x0, y, x0 + W, a.pos[1]]);
   });
   return { prims: out, box: [xr - (blocks.length - 1) * W, bottom, xr + W, top], boxes };
 }

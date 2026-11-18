@@ -1101,14 +1101,14 @@ try {
     const busySeen = await pg.evaluate(() => { document.querySelector("#g-png").click(); return document.querySelector("#g-png").classList.contains("busy"); });
     check(st.dur >= 150 && st.dur <= 250 && /ease-in-out/.test(st.ease) && busySeen, `ui states: ${st.dur} ms ${st.ease} transitions, spinner on export`);
 
-    // Toasts: bottom-right, info dismisses after 4 s, errors stay until dismissed.
+    // Toasts: bottom-right, info dismisses after 4 s, errors stay 20 s or until dismissed.
     await pg.evaluate(() => { window.__sv.toast("Info toast"); window.__sv.toast("Error toast", true); });
     const tpos = await pg.evaluate(() => { const r = document.querySelector("#toasts").getBoundingClientRect(); return { right: innerWidth - r.right, bottom: innerHeight - r.bottom }; });
     await pg.waitForTimeout(4300);
     const tAfter = await pg.evaluate(() => [...document.querySelectorAll("#toasts .toast")].map(t => [t.dataset.kind, t.getAttribute("role")]));
     await pg.click("#toasts .toast.error .x");
     const tGone = await pg.evaluate(() => !document.querySelector("#toasts .toast.error"));
-    check(tpos.right <= 24 && tpos.bottom <= 60 && tAfter.length === 1 && tAfter[0][0] === "error" && tAfter[0][1] === "alert" && tGone, `ui toasts: bottom-right, info auto-dismissed at 4 s, error sticky until closed (${JSON.stringify(tAfter)})`);
+    check(tpos.right <= 24 && tpos.bottom <= 60 && tAfter.length === 1 && tAfter[0][0] === "error" && tAfter[0][1] === "alert" && tGone, `ui toasts: bottom-right, info auto-dismissed at 4 s, error kept past it until closed (${JSON.stringify(tAfter)})`);
 
     // Modal: blurred backdrop, focus trapped, Esc and backdrop click close; destructive confirm ignores the backdrop.
     await pg.click("#help-btn");
@@ -2250,6 +2250,47 @@ try {
   }
 
   // --- Part modelling 1.20.0: slot, extend, split, sketch chamfer, offset and convert entities, sketch-bar flyouts ---
+  // Weldments exam #2: a line from one edge's midpoint to another's gets two Midpoint relations (Mid snaps by default),
+  // and a vertical line held onto an edge gets On curve there too.
+  if (inShard(5)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 60000 });
+    const toPage = q => mp.evaluate(q => { const v = window.__sv.viewer, f = window.__sv.model.editor().frame; const w = [0, 1, 2].map(i => f.o[i] + f.x[i] * q[0] + f.y[i] * q[1]); const s = new (v.camera.position.constructor)(...w).project(v.camera); const r = v.renderer.domElement.getBoundingClientRect(); return [r.left + (s.x + 1) / 2 * r.width, r.top + (1 - s.y) / 2 * r.height]; }, q);
+    const click = async q => { const [x, y] = await toPage(q); await mp.mouse.move(x - 3, y - 3); await mp.waitForTimeout(40); await mp.mouse.move(x, y); await mp.waitForTimeout(40); await mp.mouse.down(); await mp.mouse.up(); await mp.waitForTimeout(80); };
+    const tool = t => mp.evaluate(t => window.__sv.model.editor().setTool(t), t);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Sketch", d => { d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, ents: [], rels: [], dims: [] }); }));
+    await idle();
+    await mp.evaluate(() => window.__sv.modeller.editSketch("s"));
+    await mp.waitForTimeout(1200);
+    await tool("crect");
+    await click([0, 0]); await click([75, 35]);
+    await mp.keyboard.press("Escape");
+    await mp.evaluate(() => window.__sv.viewer.fit(false));
+    await mp.waitForTimeout(300);
+    const rb = await mp.evaluate(() => window.__sv.model.editor().sk.rels.map(r => r.id));
+    await tool("line");
+    await click([0, 35]); await click([0, -35]); await mp.keyboard.press("Escape");
+    await tool("line");
+    await click([20, 35]); await click([20.6, -35.3]); await mp.keyboard.press("Escape");
+    const mid2 = await mp.evaluate(old => { const ed = window.__sv.model.editor(); return { rels: ed.sk.rels.filter(r => !old.includes(r.id)).map(r => r.t).sort(), snaps: [...ed.snaps] }; }, rb);
+    check(mid2.rels.filter(x => x === "midpoint").length === 2 && mid2.rels.filter(x => x === "onCurve").length === 2 && mid2.rels.includes("vertical") && mid2.snaps.includes("mid"),
+      `sketch: midpoints and an H/V end on an edge get their relations while drawing (weldments exam #2) (${JSON.stringify(mid2)})`);
+    // Exam #16: leaving the sketch never leaves the view greyed or the busy pill showing a feature's progress.
+    await mp.click("#mc-confirm .pm-ok, .pm-top .pm-ok");
+    await idle();
+    await mp.waitForTimeout(400);
+    const after = await mp.evaluate(() => ({ stale: !!document.querySelector("canvas.mc-stale"), busy: document.querySelector("#mc-busy").textContent, mode: window.__sv.model.editor() ? "sketch" : "none" }));
+    check(!after.stale && after.busy === "Rebuilding…" && after.mode === "none", `part: the view is not left greyed after a sketch edit (weldments exam #16) (${JSON.stringify(after)})`);
+    await ctx.close();
+  }
   if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
@@ -10507,6 +10548,13 @@ try {
     await pmClick(`[data-s3sel="${ptIds[0]}"]`); await pmClick('[data-s3r="fix"]'); await pmClick(`[data-s3sel="${ptIds[0]}"]`);
     await pmClick(`[data-s3sel="${segIds[0]}"]`); await pmClick('[data-s3r="alongX"]'); await pmClick('[data-s3r="dim:length"]'); await pmClick(`[data-s3sel="${segIds[0]}"]`);
     await pmClick(`[data-s3sel="${segIds[1]}"]`); await pmClick('[data-s3r="alongZ"]'); await pmClick(`[data-s3sel="${segIds[1]}"]`);
+    // Weldments exam #7: a second plain click keeps the line selected (Length still offered), Ctrl+click adds, and the panel says what is picked.
+    const keep7 = await mp.evaluate(() => window.__sv.model.mode().draft && document.querySelector('#mc-pm [data-s3r="dim:length"]') != null);
+    await mp.click(`#mc-pm [data-s3sel="${segIds[0]}"]`, { modifiers: ["Control"] });
+    const both7 = await mp.evaluate(() => ({ par: document.querySelector('#mc-pm [data-s3r="parallel"]') != null, picked: document.querySelector("#mc-pm [data-s3picked]")?.textContent ?? "" }));
+    await pmClick(`[data-s3sel="${segIds[0]}"]`);
+    const one7 = await mp.evaluate(() => document.querySelector('#mc-pm [data-s3r="dim:length"]') != null && document.querySelector('#mc-pm [data-s3r="parallel"]') == null);
+    check(keep7 && both7.par && /Line 1/.test(both7.picked) && /Line 2/.test(both7.picked) && one7, `3D sketch list: a plain click selects one item, Ctrl+click adds (exam #7) ${JSON.stringify({ keep7, both7, one7 })}`);
     const dimIn = mp.locator("#mc-pm input[data-s3dim]").first();
     await dimIn.fill("50"); await dimIn.press("Enter");
     await settle();
@@ -13695,7 +13743,7 @@ try {
     const ufBox = () => mp.evaluate(() => {
       const l = window.__sv.model.last(), P = l.data.positions, lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
       for (let i = 0; i < P.length; i++) { lo[i % 3] = Math.min(lo[i % 3], P[i]); hi[i % 3] = Math.max(hi[i % 3], P[i]); }
-      return { v: l.props?.volume ?? 0, y: Math.round((hi[1] - lo[1]) * 1000) / 1000, z: Math.round((hi[2] - lo[2]) * 1000) / 1000, unfold: l.sheet?.unfold?.bends.length ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") };
+      return { v: l.props?.volume ?? 0, y: Math.round((hi[1] - lo[1]) * 1000) / 1000, z: Math.round((hi[2] - lo[2]) * 1000) / 1000, unfold: l.sheet?.unfold?.bends.length ?? 0, f: l.faceNames?.length ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") };
     });
     const uf0 = await ufBox();
     await smMenu("Unfold");
@@ -13711,7 +13759,7 @@ try {
     await settle();
     const uf3 = await ufBox();
     check(uf1.title === "Unfold" && /:p0:top$/.test(uf1.face ?? "") && uf1.bends === 0 && uf1.all === "All bends" && !uf2.bad && uf2.z === T && uf2.unfold === 1 && uf2.y > 50 + 15 && Math.abs(uf2.v - uf0.v) < uf0.v * 0.01
-      && !uf3.bad && uf3.unfold === 0 && Math.abs(uf3.z - uf0.z) < 1e-3 && Math.abs(uf3.v - uf0.v) < 1e-3,
+      && !uf3.bad && uf3.unfold === 0 && Math.abs(uf3.z - uf0.z) < 1e-3 && Math.abs(uf3.v - uf0.v) < 1e-3 && uf2.f <= uf0.f + 8 && uf3.f <= uf0.f + 8,
       `sheet metal: Unfold lays the flange flat about the clicked face and Fold bends it back (${JSON.stringify({ uf0, uf1, uf2, uf3 })})`);
     // Corner Relief: one flange feature on the front and right edges (one mitred corner); the panel lists it, a click on the
     // plate near that corner picks it, Circular, ✓: material comes off at the corner.
@@ -14667,6 +14715,11 @@ try {
     await ready();
     const ct3 = await dp.evaluate(() => ({ mat: window.__sv.drw.doc().sheets[0].annots.find(a => a.t === "ctable")?.mat, tx: [...document.querySelectorAll(".drw-svg text")].map(t => t.textContent) }));
     check(ct3.mat === true && ct3.tx.includes("Material"), `drawing: cut list table Material column (${JSON.stringify({ mat: ct3.mat })})`);
+    // Part number column (weldments exam #15).
+    await dp.click('#drw .drw-props [data-d="cpart"]');
+    await ready();
+    const ct4 = await dp.evaluate(() => ({ part: window.__sv.drw.doc().sheets[0].annots.find(a => a.t === "ctable")?.part, tx: [...document.querySelectorAll(".drw-svg text")].map(t => t.textContent) }));
+    check(ct4.part === true && ct4.tx.includes("Part number"), `drawing: cut list table Part number column (weldments exam #15) (${JSON.stringify({ part: ct4.part })})`);
     // Auto balloon on a weldment part: one balloon per cut list item seen in the view, numbered as in the cut list.
     await drwTool(dp, "auto");
     await dp.waitForFunction(() => window.__sv.drw.doc().sheets[0].annots.some(a => a.t === "balloon"), null, { timeout: 30000 }).catch(() => {});
