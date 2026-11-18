@@ -51,6 +51,8 @@ export interface Bend {
   r: number;
   /** The transform of the panel the bend starts from. */
   M: Mat;
+  /** Mitred at corners: the half-spaces m·(x − p) > 0 are cut off the folded bend (and unrolled off its flat strip). */
+  cuts?: { p: V3; m: V3 }[];
 }
 
 export interface SheetState {
@@ -535,7 +537,15 @@ export function convertFlanges(prev: SheetState, items: { faces: [string, string
       const parallel = !A || !B || Math.hypot(A.M.z[1] * B.M.z[2] - A.M.z[2] * B.M.z[1], A.M.z[2] * B.M.z[0] - A.M.z[0] * B.M.z[2], A.M.z[0] * B.M.z[1] - A.M.z[1] * B.M.z[0]) < 1e-6;
       const pl = planes[q];
       if (k === 0 || (!sameUpTo(i, j, k) && !parallel) || !pl) mitre(st, pid(i, k), pid(j, k), gap, [mids[i], mids[j]]);
-      else { planeCut(st, pid(i, k), pl.V, pl.n, -1, gap); planeCut(st, pid(j, k), pl.V, pl.n, 1, gap); }
+      else {
+        planeCut(st, pid(i, k), pl.V, pl.n, -1, gap); planeCut(st, pid(j, k), pl.V, pl.n, 1, gap);
+        // The bends onto these walls meet in the same plane (they would overlap in the corner).
+        const bi = st.bends.find(b => b.id === bid(i, k)), bj = st.bends.find(b => b.id === bid(j, k));
+        if (k > 0 && bi && bj) {
+          (bi.cuts ??= []).push({ p: add(pl.V, mul(pl.n, -gap / 2)), m: pl.n });
+          (bj.cuts ??= []).push({ p: add(pl.V, mul(pl.n, gap / 2)), m: mul(pl.n, -1) });
+        }
+      }
     });
   }
   return { state: st, ops };
