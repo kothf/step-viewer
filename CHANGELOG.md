@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.583.0] - 2026-11-18
+
+### Changed
+
+- **Weldments rebuild in seconds after an early edit.** Members, Trim/Extend cuts and fillet beads whose bodies did not change are taken from the last rebuild instead of being made again, and a hole or cut on a part of several bodies only works on the bodies it reaches (each with the tools near it). On the exam workbench (33 features, 39 bodies), lengthening the top frame in its sketch rebuilt in 20 s and now in 7 s; changing it back takes about 1.5 s. The result is the same as a build from nothing, face for face.
+
 ## [1.582.0] - 2026-11-18
 
 ### Fixed
@@ -3695,7 +3701,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.582.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.583.0...HEAD
+[1.583.0]: https://github.com/kothf/step-viewer/compare/v1.582.0...v1.583.0
 [1.582.0]: https://github.com/kothf/step-viewer/compare/v1.581.0...v1.582.0
 [1.581.0]: https://github.com/kothf/step-viewer/compare/v1.580.0...v1.581.0
 [1.580.0]: https://github.com/kothf/step-viewer/compare/v1.579.0...v1.580.0

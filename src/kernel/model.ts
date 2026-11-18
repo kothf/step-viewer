@@ -28,7 +28,7 @@ import { solve } from "../sketch/solver";
 import { evalSheet } from "../sheetmetal/kernel";
 import { SheetError, type SheetState } from "../sheetmetal/sheet";
 import { isSheet } from "../sheetmetal/types";
-import { evalWeld, isWeld, type WeldHost } from "../weldments/kernel";
+import { evalWeld, isWeld, weldMemoClear, type WeldHost } from "../weldments/kernel";
 import { covOfTensor, eigenSym3, type Sym } from "../tools/inertia";
 
 export class FeatureError extends Error {
@@ -978,6 +978,7 @@ export class Modeller {
    */
   private bool(kind: "fuse" | "cut" | "common", a: Named, b: Named, fid: string, glue = false): Named {
     const oc = this.oc;
+    if (kind === "cut" && !glue) { const near = this.cutNear(a, b, fid); if (near) return near; }
     const pr = new oc.Message_ProgressRange_1();
     let mk: any;
     if (glue && kind !== "common") {
@@ -1007,6 +1008,46 @@ export class Modeller {
       }
     }
     return this.carry(mk, [a, b], mk.Shape(), fid);
+  }
+
+  /**
+   * A cut from a body of several solids, made only on the solids the tool's box meets; the others are kept as they
+   * are, in their places. A Boolean on the whole compound intersects every solid with every tool: 16 holes drilled
+   * in 4 foot plates of a 24-solid weldment took 2.7 s. Null when there is nothing to skip.
+   */
+  private cutNear(a: Named, b: Named, fid: string): Named | null {
+    const oc = this.oc;
+    const list = this.bodyList(a);
+    if (list.length < 2) return null;
+    const boxOf = (shape: any) => { const bx = new oc.Bnd_Box_1(); oc.BRepBndLib.Add(shape, bx, false); bx.Enlarge(1e-4); return bx; };
+    // Each tool solid's own box: the union of 16 long through-hole cylinders spans every plate. Each solid is cut by
+    // the tools whose boxes meet its own.
+    const tools = this.bodyList(b), tbs = tools.map(t => boxOf(t.shape));
+    const near = list.map(x => { const bx = boxOf(x.shape); return tools.filter((_t, k) => !tbs[k].IsOut_4(bx)); });
+    if (near.every(n => n.length === tools.length) || !near.some(n => n.length)) return null;
+    // A solid cut by the same tools as in the last rebuild is taken from then (an early edit rebuilds every hole).
+    const cutOne = (x: Named, ts: Named[]): Named => {
+      const key = [fid, this.shapeSig(x), ...ts.map(t => this.shapeSig(t))].join("#");
+      const hit = this.cutMemo.get(key);
+      if (hit) { this.cutMemo.delete(key); this.cutMemo.set(key, hit); return hit; }
+      const out = this.bool("cut", x, ts.length === 1 ? ts[0] : this.compoundOf(ts), fid);
+      this.cutMemo.set(key, out);
+      if (this.cutMemo.size > 400) this.cutMemo.delete(this.cutMemo.keys().next().value as string);
+      return out;
+    };
+    return this.compoundOf(list.flatMap((x, i) => (near[i].length ? this.bodyList(cutOne(x, near[i])) : [x])));
+  }
+
+  /** Solid cuts kept by what they were made from (`cutNear`). */
+  private cutMemo = new Map<string, Named>();
+
+  /** A body's exact geometry and face names in one string: two bodies with the same one are the same body. */
+  private shapeSig(b: Named): string {
+    const oc = this.oc;
+    const box = new oc.Bnd_Box_1();
+    oc.BRepBndLib.Add(b.shape, box, false);
+    const lo = box.CornerMin(), hi = box.CornerMax(), r = (x: number) => x.toFixed(6);
+    return [b.faces.length, this.sub(b.shape, "EDGE").length, this.volume(b.shape).toPrecision(12), r(lo.X()), r(lo.Y()), r(lo.Z()), r(hi.X()), r(hi.Y()), r(hi.Z()), b.names.join(",")].join("|");
   }
 
   /**
@@ -6428,7 +6469,7 @@ export class Modeller {
   /** Verification on rebuild (FR-UI-080): check the body after every feature that changes it. */
   private verify = false;
   /** Turns verification on or off; the cached results were made the other way, so they are dropped. */
-  setVerify(on: boolean) { if (on !== this.verify) { this.verify = on; this.cache = []; } }
+  setVerify(on: boolean) { if (on !== this.verify) { this.verify = on; this.cache = []; this.cutMemo.clear(); weldMemoClear(this.oc); } }
 
   /** Called before each feature that is built again (not from the cache): the worker reports rebuild progress (exam #16). */
   onFeature?: (i: number, of: number, name: string) => void;
@@ -6640,7 +6681,7 @@ export class Modeller {
   }
 
   /** Drops cached shapes (a new document). */
-  reset() { this.cache = []; }
+  reset() { this.cache = []; this.cutMemo.clear(); weldMemoClear(this.oc); }
 }
 
 /** The sketch a feature is built from, if any. */
