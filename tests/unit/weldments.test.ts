@@ -7,7 +7,7 @@ import { cutList, gussetEnds, pierceSpots, type WeldHost } from "../../src/weldm
 import { PROFILE_TYPES, profileArea, profileShape, profileSizes } from "../../src/weldments/profiles";
 import type { Feature, PartDoc, SketchFeature, SkEnt, V2, V3, Sketch3dFeature } from "../../src/model/types";
 import type { GussetFeature, MemberFeature } from "../../src/weldments/types";
-import { barPlan, barsNeeded, cutKey, planGroups, splitSubs, stockTotals } from "../../src/weldments/types";
+import { barPlan, barsNeeded, bodyMatName, cutKey, itemDensity, planGroups, splitSubs, stockTotals } from "../../src/weldments/types";
 import { occ } from "./occ";
 import { applyWeldMemory, weldMemory } from "../../src/weldments/defaults";
 
@@ -675,3 +675,21 @@ test("fillet beads along curved roots: a tilted tube on a plate (ellipse), a tub
 });
 
 function unit3(v: V3): V3 { const l = Math.hypot(...v); return [v[0] / l, v[1] / l, v[2] / l]; }
+
+test("cut list items weigh with their bodies' own materials", () => {
+  const c = { kind: "member", desc: "SHS 40 × 40 × 3", qty: 2, volume: 1e5, length: 500, bodies: ["m1", "m2"] } as unknown as import("../../src/weldments/types").CutItem;
+  const al = { name: "Aluminium 6061-T6", density: 2.7 }, ss = { name: "Stainless steel 304", density: 8.0 };
+  // No body materials: the part's density, the part's name.
+  assert.equal(itemDensity(c, undefined, undefined, 7.85), 7.85);
+  assert.equal(bodyMatName(c, undefined), "");
+  // Both bodies aluminium: its density and name.
+  const both = { m1: { material: al }, m2: { material: al } } as PartDoc["bodies"];
+  assert.equal(itemDensity(c, undefined, both, 7.85), 2.7);
+  assert.equal(bodyMatName(c, both), "Aluminium 6061-T6");
+  // Mixed: the average density, no single name.
+  const mixed = { m1: { material: al }, m2: { material: ss } } as PartDoc["bodies"];
+  assert.ok(Math.abs(itemDensity(c, undefined, mixed, 7.85) - 5.35) < 1e-9);
+  assert.equal(bodyMatName(c, mixed), null);
+  // The item's own cut list material wins.
+  assert.equal(itemDensity(c, { mat: "Copper" }, both, 7.85), 8.96);
+});
