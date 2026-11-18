@@ -590,7 +590,10 @@ export class SketchEditor {
   doubleClick(): boolean {
     if (this.lineTool && this.draft.pts.length) { this.draft = { pts: [], ids: [], cursor: null, snap: null }; this.render(); return true; }
     if (this.tool === "select") {
-      // Double-click a dimension label edits it; on geometry: nothing yet.
+      // Double-click a dimension label edits it (its own listener); on a line or arc it picks the whole joined chain
+      // (gap list S7, as in other CAD apps).
+      const h = this.hover, e = h && this.sk.ents.find(x => x.id === h.id);
+      if (e && (e.t === "line" || e.t === "arc") && !e.cons && !e.id.includes("~")) { this.select(this.chainOf(e.id).segs.map(sg => sg.id)); return true; }
       return false;
     }
     return false;
@@ -4053,6 +4056,8 @@ export class SketchEditor {
   // ---------- drawing the sketch ----------
 
   /** Shade closed regions while sketching (gap list S5); off via localStorage `mc:skShade`. */
+  /** Dimensions shown (gap list S8): off hides every dimension but the selected ones and the one being placed. */
+  showDims = (() => { try { return localStorage.getItem("mc:skDims") !== "0"; } catch { return true; } })();
   shadeRegions = (() => { try { return localStorage.getItem("mc:skShade") !== "0"; } catch { return true; } })();
   private fillCache: { key: string; tris: number[]; n: number } | null = null;
 
@@ -4374,7 +4379,7 @@ export class SketchEditor {
       }
     }
     // Dimension lines.
-    const dims = [...this.sk.dims, ...(this.dimDraft.dim ? [this.dimDraft.dim] : [])];
+    const dims = [...this.sk.dims.filter(dm => this.showDims || this.selection.has(dm.id)), ...(this.dimDraft.dim ? [this.dimDraft.dim] : [])];
     const triPos: number[] = [], triCol: number[] = [];
     for (const dm of dims) {
       const c = this.selection.has(dm.id) ? C.sel : C.dim;

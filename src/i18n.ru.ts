@@ -5095,4 +5095,7 @@ export const RU: Record<string, string> = {
   "Others transparent": "Остальные прозрачные",
   "Exit Isolate": "Выйти из изоляции",
   "Make others transparent": "Сделать остальные прозрачными",
+  "Show dimensions": "Показать размеры",
+  "Dimensions on the sketch; off hides them (a selected one still shows) to see the shape.": "Размеры на эскизе; если выключено, они скрыты (выбранный всё равно виден), чтобы видеть форму.",
+  "Edges where faces meet smoothly (fillets, seams); off draws only the sharp ones": "Рёбра, где грани сопрягаются гладко (скругления, швы); если выключено, видны только острые",
 };

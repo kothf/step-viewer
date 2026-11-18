@@ -3039,6 +3039,25 @@ try {
     check(shaded >= 1 && unshaded === 0, `model 1.590: a closed circle is shaded while sketching, and Shade closed regions turns it off (${JSON.stringify([deco.regions, shaded, unshaded])})`);
     check(ep0.keys.join() === "x1,y1,x2,y2,len,ang" && Math.abs(ep1.x1 - 100) < 1e-6 && Math.abs(ep1.len - ep0.len) < 1e-6 && Math.abs(ep1.ang) < 1e-9 && lenOk === false && angOk === false && Math.abs(ep2.ang) < 1e-9 && Math.abs(ep2.x1 - 100) < 1e-6 && deco.open >= 1 && deco.open === deco.ends && deco.legend,
       `model 1.590: selected line shows start/end/length/angle, a typed start X moves it (the length dimension keeps its length), a length or angle its dimension or relation holds is refused, open ends are marked (${JSON.stringify([ep0, ep1, lenOk, angOk, deco])})`);
+    // 1.592 (gap list S7, S8): a double-click on a line picks its whole chain; Show dimensions off hides the labels.
+    {
+      const [qx, qy] = await toPage([122, 60]);
+      await mp.mouse.move(qx, qy); await mp.waitForTimeout(60);
+      await mp.mouse.dblclick(qx, qy);
+      await mp.waitForTimeout(120);
+      const chain = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sel = [...ed.selection]; const one = sel[0]; return { sel: sel.length, want: one ? ed.chainOf(one).segs.length : -1, kinds: sel.map(id => ed.sk.ents.find(e => e.id === id)?.t) }; });
+      await mp.keyboard.press("Escape");
+      const nd = () => mp.evaluate(() => document.querySelectorAll(".sk-dim:not(.ord0)").length);
+      const d0 = await nd();
+      await mp.click("#mc-pm [data-a=showdims]");
+      await mp.waitForTimeout(100);
+      const d1 = await nd();
+      await mp.click("#mc-pm [data-a=showdims]");
+      await mp.waitForTimeout(100);
+      const d2 = await nd();
+      check(chain.sel >= 2 && chain.sel === chain.want && chain.kinds.every(k => k === "line" || k === "arc") && d0 >= 1 && d1 === 0 && d2 === d0,
+        `model 1.592: double-click selects the joined chain, Show dimensions hides and shows the sketch's dimensions (gap list S7, S8) (${JSON.stringify({ chain, d0, d1, d2 })})`);
+    }
     // 1.316: mouse gestures (FR-UI-024): with the preference on, a right-drag shows the guide and runs the slot's command;
     // a right-click without a drag still opens the sketch menu.
     await mp.evaluate(() => localStorage.setItem("mc:gestures", JSON.stringify({ on: true, n: 4 })));
@@ -10285,6 +10304,19 @@ try {
     }
     check(!!arrow && pushed?.type === "moveface" && pushed.d > 1 && !pushed.flip && pushed.faces?.[0] === "f1:end" && Math.abs(pushed.v - 6000 * (20 + pushed.d)) < 1 && pushed.mode === "none" && pushed.mid.kind === "feature",
       `model 1.591: dragging the arrow on a picked flat face pulls it out as a Move Face (gap list M1) (${JSON.stringify({ arrow, pushed })})`);
+    // 1.592 (gap list M7): a fillet's edges are tangent; Display ▸ Tangent edges off draws only the sharp ones.
+    await mp.evaluate(() => window.__sv.model.store.change("Fillet", d => { d.features.push({ id: "f7", type: "fillet", name: "Fillet1", radius: { v: 3 }, edges: [{ faces: ["f1:side:s1l1", "f1:side:s1l2"] }] }); }));
+    await settle();
+    const segs = () => mp.evaluate(() => { const p = window.__sv.viewer.parts[0]; return { n: p.edges.geometry.instanceCount, all: p.data.edgeSegs.length / 6, sharp: (p.data.sharpSegs ?? -6) / 6, tan: p.data.edges.filter(e => e.tangent).length }; });
+    const t0 = await segs();
+    await mp.click("#display-btn");
+    await mp.uncheck("#tangent-edges");
+    const t1 = await segs();
+    await mp.check("#tangent-edges");
+    await mp.keyboard.press("Escape");
+    const t2 = await segs();
+    check(t0.tan >= 2 && t0.sharp > 0 && t0.sharp < t0.all && t0.n === t0.all && t1.n === t0.sharp && t2.n === t0.all,
+      `model 1.592: fillet edges are tangent, Tangent edges off hides them (gap list M7) (${JSON.stringify({ t0, t1, t2 })})`);
     await ctx.close();
   }
 

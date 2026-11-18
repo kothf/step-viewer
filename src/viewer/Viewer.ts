@@ -53,6 +53,8 @@ export class Viewer {
   clipPlanes: THREE.Plane[] = [];
   bounds = new THREE.Box3();
   aoEnabled = false;
+  /** Tangent edges drawn (gap list M7); off leaves out edges where faces meet smoothly, and seams. */
+  tangentEdges = (() => { try { return localStorage.getItem("mc:tangentEdges") !== "0"; } catch { return true; } })();
   edgeColor = new THREE.Color(0x111418);
 
   private dirty = true;
@@ -285,12 +287,12 @@ export class Viewer {
       mesh.userData.partIdx = idx;
 
       const eg = new LineSegmentsGeometry();
-      eg.setPositions(data.edgeSegs.length ? data.edgeSegs : new Float32Array(6));
+      eg.setPositions(this.edgeSegsOf(data));
       const edgeMaterial = new LineMaterial({ color: this.edgeColor.getHex(), linewidth: 1.3, worldUnits: false });
       edgeMaterial.resolution.set(this.size.x, this.size.y);
       const edges = new LineSegments2(eg, edgeMaterial);
       edges.renderOrder = 1001;
-      edges.visible = data.edgeSegs.length > 0;
+      edges.visible = (this.tangentEdges ? data.edgeSegs.length : data.sharpSegs ?? data.edgeSegs.length) > 0;
       edges.raycast = () => {};
 
       const group = new THREE.Group();
@@ -350,7 +352,7 @@ export class Viewer {
     m.colorWrite = this.mode !== "hlr";
     m.clippingPlanes = this.clipPlanes;
     p.mesh.visible = p.visible && this.mode !== "wireframe";
-    p.edges.visible = p.visible && this.mode !== "shaded" && p.data.edgeSegs.length > 0;
+    p.edges.visible = p.visible && this.mode !== "shaded" && (this.tangentEdges ? p.data.edgeSegs.length : p.data.sharpSegs ?? p.data.edgeSegs.length) > 0;
     p.edgeMaterial.clippingPlanes = this.clipPlanes;
     p.edgeMaterial.color.copy(xray ? new THREE.Color(0x5a6b85) : this.edgeColor);
     p.edgeMaterial.opacity = xray ? 0.6 : 1;
@@ -360,6 +362,22 @@ export class Viewer {
     // A surface analysis wears its own material: keep it clipped like the part's.
     const am = p.mesh.material;
     if (am !== m) { am.clippingPlanes = this.clipPlanes; am.needsUpdate = true; }
+  }
+
+  /** The edge segments drawn for a part: all, or the sharp ones only while tangent edges are off. */
+  private edgeSegsOf(d: PartData): Float32Array {
+    const all = d.edgeSegs, n = this.tangentEdges || d.sharpSegs == null ? all.length : d.sharpSegs;
+    return n ? all.subarray(0, n) : new Float32Array(6);
+  }
+
+  setTangentEdges(on: boolean) {
+    this.tangentEdges = on;
+    try { localStorage.setItem("mc:tangentEdges", on ? "1" : "0"); } catch { /* view only */ }
+    for (const p of this.parts) {
+      (p.edges.geometry as LineSegmentsGeometry).setPositions(this.edgeSegsOf(p.data));
+      this.applyPartAppearance(p);
+    }
+    this.invalidate();
   }
 
   setEdgeColor(c: THREE.ColorRepresentation) {

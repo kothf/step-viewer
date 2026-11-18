@@ -2597,6 +2597,8 @@ $("#prefs-btn").addEventListener("click", () => {
     gestures: () => gestureDialog(c => toast(t(c.on ? "Mouse gestures on: right-drag in a part or a sketch." : "Mouse gestures off."))),
   });
 });
+$<HTMLInputElement>("#tangent-edges").checked = viewer.tangentEdges;
+$<HTMLInputElement>("#tangent-edges").addEventListener("change", e => viewer.setTangentEdges((e.target as HTMLInputElement).checked));
 $<HTMLInputElement>("#ao").addEventListener("change", e => { viewer.aoEnabled = (e.target as HTMLInputElement).checked; viewer.invalidate(); });
 // Surface analyses (FR-MEA-005): picked in the Display menu, set up and explained in a panel in the view.
 const surfAna = new SurfaceAnalysis(viewer, {

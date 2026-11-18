@@ -53,6 +53,8 @@ export interface EdgeInfo {
   exact?: boolean;
   /** The B-rep curve is an ellipse. */
   ellipse?: boolean;
+  /** The faces meet smoothly across it (or it is a seam): drawn or not by the view's Tangent edges switch. */
+  tangent?: boolean;
 }
 
 export interface PartData {
@@ -65,6 +67,11 @@ export interface PartData {
   faces: FaceInfo[];
   edges: EdgeInfo[];
   edgeSegs: Float32Array;
+  /**
+   * Tangent edges (gap list M7): `edgeSegs` holds the sharp edges' segments first and the tangent ones (faces meeting
+   * smoothly, under 4° apart, and seams) after; this many numbers are sharp. Absent: all of them.
+   */
+  sharpSegs?: number;
   closed: boolean;
   volume: number;
   area: number;
@@ -367,6 +374,8 @@ export function analyzeMesh(m: OcctMesh): PartData {
   const seen = new Uint32Array(nv);
   const count = new Map<number, number>();
 
+  // The face each vertex was first seen in (OCCT meshes keep a face's vertices to itself), for edge tangency.
+  const vFace = new Int32Array(nv).fill(-1);
   brepFaces.forEach((bf, fid) => {
     const triStart = bf.first, triCount = bf.last - bf.first + 1;
     count.clear();
@@ -375,6 +384,9 @@ export function analyzeMesh(m: OcctMesh): PartData {
     for (let t = triStart; t < triStart + triCount; t++) {
       triFace[t] = fid;
       const ia = I[3 * t], ib = I[3 * t + 1], ic = I[3 * t + 2];
+      if (vFace[ia] < 0) vFace[ia] = fid;
+      if (vFace[ib] < 0) vFace[ib] = fid;
+      if (vFace[ic] < 0) vFace[ic] = fid;
       if (seen[ia] !== fid + 1) { seen[ia] = fid + 1; verts.push(ia); }
       if (seen[ib] !== fid + 1) { seen[ib] = fid + 1; verts.push(ib); }
       if (seen[ic] !== fid + 1) { seen[ic] = fid + 1; verts.push(ic); }
@@ -427,7 +439,24 @@ export function analyzeMesh(m: OcctMesh): PartData {
   }
 
   const edges: EdgeInfo[] = [];
-  const segOut: number[] = [];
+  const segOut: number[] = [], tanOut: number[] = [];
+  // Normal of each face at the welded vertices edges pass through (first original vertex of that face there).
+  const wNorm = new Map<number, Map<number, V3>>();
+  for (let i = 0; i < nv; i++) {
+    const f = vFace[i];
+    if (f < 0) continue;
+    const w = weld[i];
+    let m = wNorm.get(w);
+    if (!m) { m = new Map(); wNorm.set(w, m); }
+    if (!m.has(f)) m.set(f, [normals[3 * i], normals[3 * i + 1], normals[3 * i + 2]]);
+  }
+  const TAN_COS = Math.cos((4 * Math.PI) / 180);
+  const smoothAt = (w: number, fa: number, fb: number) => {
+    const m = wNorm.get(w), na = m?.get(fa), nb = m?.get(fb);
+    if (!na || !nb) return false;
+    const la = Math.hypot(...na), lb = Math.hypot(...nb);
+    return la > 0 && lb > 0 && (na[0] * nb[0] + na[1] * nb[1] + na[2] * nb[2]) / (la * lb) > TAN_COS;
+  };
   for (const [gk, segs] of groups) {
     const [fa, fb] = gk.split("|").map(Number) as [number, number];
     for (const chain of chainSegments(segs, weldPos)) {
@@ -439,7 +468,11 @@ export function analyzeMesh(m: OcctMesh): PartData {
       edges.push(edge);
       faces[fa]?.edges.push(id);
       if (fb >= 0) faces[fb]?.edges.push(id);
-      for (let i = 1; i < pts.length; i++) segOut.push(...pts[i - 1], ...pts[i]);
+      // Tangent: a seam (one face on both sides) or faces whose normals agree at the chain's middle.
+      const tangent = fb >= 0 && (fa === fb || smoothAt(chain[chain.length >> 1], fa, fb));
+      if (tangent) edge.tangent = true;
+      const out = tangent ? tanOut : segOut;
+      for (let i = 1; i < pts.length; i++) out.push(...pts[i - 1], ...pts[i]);
     }
   }
 
@@ -459,7 +492,8 @@ export function analyzeMesh(m: OcctMesh): PartData {
     name: m.name || "Part",
     color: base,
     positions, normals, colors, index, faces, edges,
-    edgeSegs: Float32Array.from(segOut),
+    edgeSegs: Float32Array.from(tanOut.length ? segOut.concat(tanOut) : segOut),
+    ...(tanOut.length ? { sharpSegs: segOut.length } : {}),
     closed,
     volume: absV,
     area,
