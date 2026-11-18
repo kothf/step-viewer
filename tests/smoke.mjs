@@ -12863,7 +12863,7 @@ try {
     });
     check(/Cut list \(2\)/.test(ct.folder ?? "") && JSON.stringify(ct.rows) === '["Top rail × 650 mm (2)","SHS 50x50x4 × 450 mm (2)"]' && ct.tris > 0 && ct.faces.every(n => n > 0), `weldments: Cut list folder in the tree highlights an item's bodies (${JSON.stringify(ct)})`);
     const icons = await mp.evaluate(() => [...document.querySelectorAll("#mc-tree .ft-row[data-i] .ft-ico")].map(e => e.textContent));
-    check(icons.length > 2 && icons.every(x => x && x !== "undefined"), `weldments: every feature row has an icon (${JSON.stringify(icons)})`);
+    check(icons.includes("⌗") && icons.every(x => x && x !== "undefined"), `weldments: every feature row has an icon (${JSON.stringify(icons)})`);
     // Sub-weldments: Create sub-weldment on a cut list item puts it in a folder of its own; one body of the other item added
     // to it splits that item (1 + 1); the dialog heads the sub-weldment's rows; Dissolve puts everything back.
     const menuPick = async (sel, label) => {
