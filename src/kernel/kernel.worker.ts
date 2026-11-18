@@ -34,6 +34,8 @@ export type KernelRequest =
   | { id: number; type: "solidworks"; files: { name: string; buffer: ArrayBuffer }[]; main: string }
   /** Modelling: evaluate a part document and return its body (FRS 6.3). */
   | { id: number; type: "partBody"; doc: PartDoc }
+  /** Sheet metal (FR-FT-120): the part's flat pattern state with the outline of every cut (`flatEdges`). */
+  | { id: number; type: "flatState"; doc: PartDoc }
   | { id: number; type: "recognize"; doc: PartDoc }
   | { id: number; type: "recognizeBlends"; doc: PartDoc }
   | { id: number; type: "recognizeExtrudes"; doc: PartDoc }
@@ -310,6 +312,11 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
       const other = new Modeller(kernel.module).evaluate(r.doc);
       if (!other.body) throw new Error("The part has no body.");
       post({ id: r.id, ok: true, ...(modeller ??= new Modeller(kernel.module)).brepText(other.body) });
+    } else if (r.type === "flatState") {
+      // The part's own modeller: its cached features up to the flat pattern are reused.
+      const md = (modeller ??= new Modeller(kernel.module)), told = md.onFeature;
+      md.onFeature = undefined;
+      try { post({ id: r.id, ok: true, sheet: md.evaluate(r.doc).sheet ?? null }); } finally { md.onFeature = told; }
     } else if (r.type === "recognize") {
       // Feature recognition (FR-FT-102) in its own modeller, so the part's feature cache stays as it is.
       post({ id: r.id, ok: true, ...new Modeller(kernel.module).recognizeHoles(r.doc) });

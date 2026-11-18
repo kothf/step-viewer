@@ -1101,7 +1101,7 @@ try {
     const busySeen = await pg.evaluate(() => { document.querySelector("#g-png").click(); return document.querySelector("#g-png").classList.contains("busy"); });
     check(st.dur >= 150 && st.dur <= 250 && /ease-in-out/.test(st.ease) && busySeen, `ui states: ${st.dur} ms ${st.ease} transitions, spinner on export`);
 
-    // Toasts: bottom-right, info dismisses after 4 s, errors stay 20 s or until dismissed.
+    // Toasts: bottom-right, info dismisses after 4 s, errors stay 12 s or until dismissed.
     await pg.evaluate(() => { window.__sv.toast("Info toast"); window.__sv.toast("Error toast", true); });
     const tpos = await pg.evaluate(() => { const r = document.querySelector("#toasts").getBoundingClientRect(); return { right: innerWidth - r.right, bottom: innerHeight - r.bottom }; });
     await pg.waitForTimeout(4300);
@@ -13733,6 +13733,16 @@ try {
     check(ft0.title === "Forming Tool" && /:p0:top$/.test(ft0.face ?? "") && ft0.pts?.length === 1 && Math.hypot(ft0.pts[0][0] - 10, ft0.pts[0][1] - 25) < 1 && ft0.tool === "xhole" && ft0.rows === 1
       && !ft1.bad && ft1.forms === 1 && Math.abs(ft1.v - vt1.v - ftDv) < 1e-3,
       `sheet metal: Forming Tool places an extruded hole where the face is clicked (${JSON.stringify({ ft0, ft1, ftDv, v0: vt1.v })})`);
+    // Editing it, a click on the face adds a second position (exam #7); ✕ leaves the part as it was.
+    await mp.evaluate(() => { window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "smform").id); });
+    await settle();
+    const [fex, fey] = await scr([10, 42, T]);
+    await mp.mouse.click(fex, fey);
+    await settle();
+    const fe0 = await mp.evaluate(() => { const m = window.__sv.model, d = m.mode().draft; return { pts: d?.pts?.length, forms: m.last().sheet?.forms?.length, rows: document.querySelectorAll("#mc-pm [data-sm-pt]").length, toast: [...document.querySelectorAll(".toast")].map(x => x.textContent).join("|") }; });
+    await mp.click("#mc-cancel");
+    await settle();
+    check(fe0.pts === 2 && fe0.forms === 2 && fe0.rows === 2, `sheet metal: editing a Forming Tool, a click on the face adds a position (${JSON.stringify(fe0)})`);
     // Normal Cut: a Ø8 circle sketched on the bottom face (XY); Reverse direction sends it into the sheet, linked to thickness.
     await mp.evaluate(() => window.__sv.model.store.change("Cut sketch", d => {
       d.features.push({ id: "nsk", type: "sketch", name: "Sketch10", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "nc0", t: "point", x: 90, y: 10 }, { id: "nc", t: "circle", c: "nc0", r: 4 }] });
@@ -14178,6 +14188,20 @@ try {
     await mp.click("#sm-props [data-a=close]");
     await mp.evaluate(() => window.__sv.model.store.change("Body material", d => { delete d.bodies; }));
     await settle();
+    // A window cut by an ordinary extrude while folded counts as a cut out too (sheet metal exam #14).
+    await mp.evaluate(() => window.__sv.model.store.change("Window", d => {
+      const q = [[20, 15], [40, 15], [40, 35], [20, 35]];
+      d.features.push({ id: "ws", type: "sketch", name: "SketchW", plane: { std: "XY" }, rels: [], dims: [], ents: [...q.map((p, i) => ({ id: `wq${i}`, t: "point", x: p[0], y: p[1] })), ...q.map((_p, i) => ({ id: `wl${i + 1}`, t: "line", a: `wq${i}`, b: `wq${(i + 1) % 4}` }))] },
+        { id: "wc", type: "extrude", name: "Cut-Extrude1", sketch: "ws", op: "cut", end: "through2", depth: { v: 0 } });
+    }));
+    await settle();
+    await smMenu("Sheet Metal Properties");
+    await mp.waitForSelector("#sm-props[open]");
+    await mp.waitForFunction(() => document.querySelector('#sm-props tr[data-prop="Cut outs"] td')?.textContent === "2", null, { timeout: 30000 }).catch(() => {});
+    const spW = await mp.evaluate(() => Object.fromEntries([...document.querySelectorAll("#sm-props tr[data-prop]")].map(r => [r.dataset.prop, r.querySelector("td").textContent])));
+    check(spW["Cut outs"] === "2" && Math.abs(num(spW["Cutting length - inner"]) - (10 * Math.PI + 80)) < 0.01,
+      `sheet metal: Sheet Metal Properties count a window cut by a later feature (${JSON.stringify(spW)})`);
+    await mp.click("#sm-props [data-a=close]");
     // A base flange from an open L: its depth arrow (as an extrude's) sits on the sketch and dragging it deepens the walls live.
     const keepFs = await mp.evaluate(() => JSON.stringify(window.__sv.model.store.doc.features));
     await mp.evaluate(() => window.__sv.model.store.change("Open base", d => {
@@ -14658,6 +14682,10 @@ try {
     const bt = await dp.evaluate(() => ({ n: window.__sv.drw.doc().sheets[0].annots.filter(a => a.t === "btable").length, tx: [...document.querySelectorAll(".drw-svg text")].map(t => t.textContent) }));
     check(bt.n === 1 && ["Tag", "Direction", "Angle", "Inner radius", "90°", "2"].every(s => bt.tx.includes(s)) && bt.tx.filter(s => s === "A").length === aBefore + 2 && !bt.tx.some(s => /^(UP|DOWN) /.test(s)) && bt.tx.some(s => s === "UP" || s === "DOWN"),
       `drawing: bend table lists the flat pattern's bend and tags it on the view (${bt.tx.filter(s => /^(Tag|A|UP|DOWN|90|2|Inner)/.test(s)).join(" ")})`);
+    // The drawing worker started over (as when its memory grows past the limit): the flat view keeps its bend
+    // facts, and a new projection of it builds the flat pattern again instead of failing (sheet metal exam #19).
+    const rc = await dp.evaluate(() => window.__sv.drw.recycle("@flat"));
+    check(rc.configs.includes("@flat") && typeof rc.pr === "number" && rc.pr > 0, `drawing: the flat pattern view survives a drawing worker restart (${JSON.stringify(rc)})`);
     await ctx.close();
   }
 

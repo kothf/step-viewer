@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { Modeller } from "../../src/kernel/model";
 import type { Feature, PartDoc, SketchFeature, SkEnt } from "../../src/model/types";
 import type { SmRipFeature, SmTabSlotFeature, SmInsertFeature, SmConvertFeature, SmCutFeature, SmGussetFeature, SmReliefFeature, SmUnfoldFeature, SmFormFeature, SmVentFeature, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
-import { apply, edgeFlange, flatLoops, flatSize, bendAllowance, reliefCorners, filletLoop } from "../../src/sheetmetal/sheet";
+import { apply, edgeFlange, flatLoops, flatSize, bendAllowance, reliefCorners, filletLoop, flatPatternDoc } from "../../src/sheetmetal/sheet";
 import { flatDrawing } from "../../src/sheetmetal/flat";
 import { cutPropRows, cutPropsCsv, sheetCutProps } from "../../src/sheetmetal/cutprops";
 import { bendTableText, defaultTable, dinTable, parseBendTable, tableValue } from "../../src/sheetmetal/bendTable";
@@ -207,6 +207,13 @@ test("sheet metal: tab beside a face joins the flat pattern (FR-FT-120)", async 
   const fl: SmFlangeFeature = { id: "f", type: "smflange", name: "Edge-Flange1", edges: [{ faces: ["tb:p0:top", "tb:p0:tl2"] }], length: { v: 15 }, angle: { v: Math.PI / 2 } };
   const r2 = run(doc([s, base(), tb, tf, fl]));
   close(r2.props.volume, (100 * 50 + 20 * 30 - 4 * 30 + ((Math.PI / 2) * 3 + 11) * 30) * 2, 1e-5);
+  // Drawn a hair off the edge (exam #3/#17) or a little past the plate's corner (exam #4): snapped on, one body.
+  const off = run(doc([s, base(), rect("t2", 100.0001, 10, 120, 40), { ...tf, sketch: "t2" }]));
+  assert.equal(off.props.bodies, 1);
+  close(off.props.volume, (100 * 50 + 20 * 30) * 2, 1e-6);
+  const past = run(doc([s, base(), rect("t3", 100, -0.05, 120, 40), { ...tf, sketch: "t3" }]));
+  assert.equal(past.props.bodies, 1);
+  close(past.props.volume, (100 * 50 + 20 * 40 + 20 * 0.05 / 2) * 2, 1e-6);  // the near corner moves onto the plate's, the far one stays
   // Over the face: refused.
   const over = m.evaluate(doc([s, base(), rect("o", 90, 10, 120, 40), { ...tf, sketch: "o" }])).statuses.find(x => x.id === "tb");
   assert.equal(over?.ok, false);
@@ -374,12 +381,35 @@ test("sheet metal: miter flange runs a sketched profile along edges (FR-FT-120)"
   assert.equal(flatLoops(r.sheet!).outer.length, 1);
   run(doc([s, base(), pr, mf, flat]));
 
+  // Drawn on the face the first bend turns towards (exam #1): from the top edge up 30, then 20 out. The profile
+  // is the inside of bend 1 (setback r) and the outside of bend 2 (r + T); the lip still ends at -20.
+  const inP = { ...chain("mp", [[0, 2], [0, 32], [-20, 32]]), plane: { std: "YZ" as const } };
+  const ri = run(doc([s, base(), inP, mf]));
+  close(ri.props.volume, 100 * ((50 - 2) + ba + (30 - 2 - 4) + ba + (20 - 4)) * 2, 1e-5);
+  close(ri.min[1], -20, 1e-5); close(ri.size[1], 70, 1e-5); close(ri.size[2], 32, 1e-5);
+
   // Front and right edges meet at a corner: every level is mitred there.
   const two: SmMiterFeature = { ...mf, edges: [{ faces: ["b:p0:top", "b:p0:sl1"] }, { faces: ["b:p0:top", "b:p0:sl2"] }] };
   r = run(doc([s, base(), pr, two]));
   close(r.size[0], 120, 1e-5); close(r.size[1], 70, 1e-5); close(r.size[2], 32, 1e-5);
   for (const id of ["mf:p0", "mf:p1", "mf:p2", "mf:p3"]) assert.equal(r.sheet!.panels.find(x => x.id === id)!.outer.filter(x => x.ent === "miter").length, 1, `${id} is mitred`);
   run(doc([s, base(), pr, two, flat]));
+
+  // On the top edges of two edge-flange walls round a corner (exam #5): the lips run on and are mitred there,
+  // without overlapping (the folded volume is the flat one).
+  const walls: SmFlangeFeature = { id: "f", type: "smflange", name: "Edge-Flange1", edges: [{ faces: ["b:p0:top", "b:p0:sl1"] }, { faces: ["b:p0:top", "b:p0:sl2"] }], length: { v: 30 }, angle: { v: Math.PI / 2 } };
+  const wr = run(doc([s, base(), walls]));
+  const lip = { ...chain("mp", [[0, 30], [-12, 30], [-12, 22]]), plane: { std: "YZ" as const } };
+  // Each wall's outer face: the one further out along the wall's outward direction (front -Y, right +X).
+  const outer = (id: string, k: 0 | 1, sgn: number) => {
+    const P = wr.sheet!.panels.find(x => x.id === id)!;
+    return sgn * P.M.z[k] > 0 ? "top" : "bot";
+  };
+  const lips: SmMiterFeature = { ...mf, edges: [{ faces: [`f:p0:${outer("f:p0", 1, -1)}`, "f:p0:tip"] }, { faces: [`f:p1:${outer("f:p1", 0, 1)}`, "f:p1:tip"] }] };
+  const lr = run(doc([s, base(), walls, lip, lips]));
+  assert.equal(lr.props.bodies, 1);
+  for (const id of ["mf:p0", "mf:p1", "mf:p2", "mf:p3"]) assert.equal(lr.sheet!.panels.find(x => x.id === id)!.outer.filter(x => x.ent === "miter").length, 1, `${id} is mitred`);
+  close(lr.props.volume, run(doc([s, base(), walls, lip, lips, flat])).props.volume, 1e-4);
 
   // A profile away from the edges, or not square to it, is refused.
   const off = { ...chain("mp", [[0, 0], [30, 10]]), plane: { std: "XZ" as const } };
@@ -569,6 +599,13 @@ test("sheet metal: forming tools keep the thickness and stay out of the flat pat
   const lv = form({ tool: "louver", pts: [[50, 25]], size: { v: 30 }, width: { v: 12 }, height: { v: 5 } });
   assert.ok(run(doc([s, base(), lv])).props.volume > plate);
   close(run(doc([s, base(), lv, flat])).props.volume, plate, 1e-6);
+  // Louvers end to end touch on a face: each one still adds its own (exam #8), out of either face.
+  const lv1 = run(doc([s, base(), lv])).props.volume - plate;
+  for (const face of ["b:p0:top", "b:p0:bot"]) for (const flip of [false, true]) {
+    const two = run(doc([s, base(), form({ ...lv, face: { name: face }, flip, pts: [[35, 25], [65, 25]] })]));
+    assert.equal(two.props.bodies, 1);
+    close(two.props.volume, plate + 2 * lv1, 1e-5);
+  }
   const dd = form({ draft: { v: Math.PI / 12 }, pts: [[25, 25], [75, 25]] });
   assert.ok(run(doc([s, base(), dd])).props.volume > plate);
   close(run(doc([s, base(), dd, flat])).props.volume, plate, 1e-6);
@@ -1062,4 +1099,20 @@ test("sheet metal: bend tables (FR-FT-120)", async () => {
   // A broken table is a feature error.
   const bad = m.evaluate(doc([s, base({ calc: "table", table: { kind: "k", radii: [], angles: [], v: [] } })]));
   assert.ok(bad.statuses.some(x => !x.ok && /bend table/i.test(x.message)), JSON.stringify(bad.statuses));
+});
+
+test("sheet metal: cut-list properties count cuts made by later features (exam #14)", async () => {
+  oc ??= await occ();
+  m ??= new Modeller(oc);
+  const s = rect("s", 0, 0, 100, 50);
+  s.ents.push({ id: "sc0", t: "point", x: 70, y: 30 }, { id: "sc", t: "circle", c: "sc0", r: 5 });
+  const fl: SmFlangeFeature = { id: "f", type: "smflange", name: "Edge-Flange1", edges: [{ faces: ["b:p0:top", "b:p0:sl1"] }], length: { v: 30 }, angle: { v: Math.PI / 2 } };
+  const win: Feature = { id: "wc", type: "extrude", name: "Cut", sketch: "w", op: "cut", end: "through2", depth: { v: 0 } } as Feature;
+  // The controller asks for the flattened copy (flatPatternDoc) when cuts follow the sheet features.
+  const r = m.evaluate(flatPatternDoc(doc([s, base(), fl, rect("w", 20, 15, 40, 35), win]))!);
+  const p = sheetCutProps(r.sheet!);
+  assert.equal(p.cutouts, 2);
+  close(p.inner, 10 * Math.PI + 80, 1e-9);
+  // The flat DXF of it: the hole once, as a circle.
+  assert.equal(flatDrawing(r.sheet!).entities.filter(e => e.kind === "circle" && e.layer === "OUTLINE").length, 1);
 });

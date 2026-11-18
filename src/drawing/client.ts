@@ -222,8 +222,8 @@ export class DrawingKernel {
     this.ready = null;
     for (const p of this.pending.values()) p.reject(new Error("The drawing kernel stopped"));
     this.pending.clear();
-    // Configurations are built inside the worker: build them again when asked.
-    this.configs.clear();
+    // Configurations live inside the worker: the new one builds each again when a request names it, so their
+    // facts stay (cleared, a flat pattern view lost its bend lines and notes after a restart).
     this.cfgLoading.clear();
     // Loaded lite: the facts (topology, items, tables) are known already, and skipping them saves a good part
     // of the restart on a big assembly.

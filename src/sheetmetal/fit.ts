@@ -3,6 +3,7 @@
 // sample (exam bug #10: an Unfold went from 242 to 1,381 faces and a Fold took four minutes).
 import type { V2 } from "../model/types";
 import type { Seg } from "../sketch/profile";
+import type { FlatEdge } from "./sheet";
 
 /** Circle through three points, null when they are (nearly) in a line. */
 function circle3(a: V2, b: V2, c: V2): { c: V2; r: number } | null {
@@ -133,5 +134,56 @@ export function arcRationals(s: Seg): { poles: V2[]; w: number[] }[] {
     const p0 = i === 0 && s.kind === "arc" ? s.a : P(a), p2 = i === k - 1 && s.kind === "arc" ? s.b : P(a + 2 * h);
     out.push({ poles: [p0, [s.c[0] + rr * Math.cos(m), s.c[1] + rr * Math.sin(m)], p2], w: [1, Math.cos(h), 1] });
   }
+  return out;
+}
+
+/**
+ * Runs of short straight edges (a cut-out whose curve reached the flat pattern as facets) put back as one line, arc
+ * or smooth curve each, so a DXF has an arc where the part has one (sheet metal exam #16: 6,912 lines under 0.5 mm).
+ * Only chains through points where exactly two edges meet are joined.
+ */
+export function joinShort(edges: FlatEdge[], short = 0.5, tol = 2e-3): FlatEdge[] {
+  const key = (p: V2) => `${Math.round(p[0] * 1e5)},${Math.round(p[1] * 1e5)}`;
+  const isShort = (e: FlatEdge) => e.kind === "line" && Math.hypot(e.b[0] - e.a[0], e.b[1] - e.a[1]) < short;
+  const at = new Map<string, number[]>();
+  edges.forEach((e, i) => { if (e.kind !== "line") return; for (const p of [e.a, e.b]) { const k = key(p); const l = at.get(k); if (l) l.push(i); else at.set(k, [i]); } });
+  const used = new Set<number>(), out: FlatEdge[] = [];
+  const other = (i: number, k: string) => { const l = at.get(k)!; return l.length === 2 ? l[0] === i ? l[1] : l[0] : -1; };
+  edges.forEach((e, i) => {
+    if (used.has(i)) return;
+    if (!isShort(e) || e.kind !== "line") { out.push(e); return; }
+    used.add(i);
+    // Walk both ways from this edge over short lines.
+    const pts: V2[] = [e.a, e.b];
+    for (const dir of [1, -1] as const) {
+      let cur = i, end = dir > 0 ? e.b : e.a;
+      for (;;) {
+        const j = other(cur, key(end));
+        if (j < 0 || used.has(j) || !isShort(edges[j])) break;
+        const n = edges[j] as Extract<FlatEdge, { kind: "line" }>;
+        const next = key(n.a) === key(end) ? n.b : n.a;
+        used.add(j);
+        if (dir > 0) pts.push(next); else pts.unshift(next);
+        cur = j; end = next;
+      }
+    }
+    if (pts.length < 4) { for (let k = 1; k < pts.length; k++) out.push({ kind: "line", a: pts[k - 1], b: pts[k] }); return; }
+    const closed = key(pts[0]) === key(pts[pts.length - 1]);
+    // A closed run is split in two, so each half has distinct ends.
+    const runs = closed ? [pts.slice(0, Math.ceil(pts.length / 2)), pts.slice(Math.ceil(pts.length / 2) - 1)] : [pts];
+    const fitted = runs.map(r => fitSeg(r, tol));
+    if (closed && fitted.every(f => f.kind === "arc") && fitted.every(f => f.kind === "arc" && Math.hypot(f.c[0] - (fitted[0] as typeof f).c[0], f.c[1] - (fitted[0] as typeof f).c[1]) < tol && Math.abs(f.r - (fitted[0] as typeof f).r) < tol)) {
+      const f0 = fitted[0] as Extract<Seg, { kind: "arc" }>;
+      out.push({ kind: "circle", c: f0.c, r: f0.r });
+      return;
+    }
+    fitted.forEach((f, k) => {
+      if (f.kind === "line") out.push({ kind: "line", a: f.a, b: f.b });
+      else if (f.kind === "arc") {
+        const [p, q] = f.ccw ? [f.a, f.b] : [f.b, f.a];
+        out.push({ kind: "arc", c: f.c, r: f.r, a0: Math.atan2(p[1] - f.c[1], p[0] - f.c[0]), a1: Math.atan2(q[1] - f.c[1], q[0] - f.c[0]) });
+      } else out.push({ kind: "poly", pts: runs[k] });
+    });
+  });
   return out;
 }

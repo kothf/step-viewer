@@ -116,10 +116,10 @@ const n = (x: number) => (Math.abs(x) < 5e-10 ? "0" : x.toFixed(6).replace(/\.?0
 const deg = (a: number) => n((((a * 180) / Math.PI) % 360 + 360) % 360);
 
 /** AutoCAD R12 ASCII DXF, millimetres. */
-export function toDxf(d: Drawing2, title: string): string {
+export function toDxf(d: Drawing2, title: string, what = "section profile"): string {
   const out: string[] = [];
   const g = (code: number, value: string | number) => out.push(String(code), typeof value === "number" ? n(value) : value);
-  g(999, `MöbiusCAD section profile: ${title}`.replace(/[\r\n]+/g, " "));
+  g(999, `MöbiusCAD ${what}: ${title}`.replace(/[\r\n]+/g, " "));
   g(0, "SECTION"); g(2, "HEADER");
   g(9, "$ACADVER"); g(1, "AC1009");
   g(9, "$INSUNITS"); g(70, "4");

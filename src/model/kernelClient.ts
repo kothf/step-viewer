@@ -225,6 +225,12 @@ export class ModelKernel {
     return this.call<{ brep: string; solids: number; faces: number }>({ type: "partBody", doc });
   }
 
+  /** Sheet metal (FR-FT-120): the state of `doc` (a part with its flat pattern on), cut outlines included. */
+  async flatState(doc: PartDoc): Promise<SheetState | null> {
+    await this.start();
+    return (await this.call<{ sheet: SheetState | null }>({ type: "flatState", doc })).sheet;
+  }
+
   /** Feature recognition (FR-FT-102): the round holes of the part's body, as hole features would make them. */
   async recognizeHoles(doc: PartDoc): Promise<{ faces: FaceRef[]; holes: RecognizedHole[]; cuts?: Feature[] }> {
     await this.start();
