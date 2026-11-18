@@ -80,6 +80,8 @@ export class ModelKernel {
   private storeTimer: ReturnType<typeof setTimeout> | null = null;
   /** Rebuilds and assembly parts answered from the disk cache (for `?debug` and the smoke test). */
   cacheHits = 0;
+  /** Rebuild progress from the worker: feature i of `of` (0-based) is being built (exam #16). */
+  onProgress?: (p: { i: number; of: number; name: string }) => void;
 
   constructor(private base: string) {}
 
@@ -89,7 +91,9 @@ export class ModelKernel {
     const { w, ready, abort } = takeWorker(this.base);
     this.abortReady = abort;
     w.onmessage = (e: MessageEvent) => {
-      const d = e.data, p = this.pending.get(d.id);
+      const d = e.data;
+      if (d.id === -2 && d.progress) { this.onProgress?.(d.progress); return; }
+      const p = this.pending.get(d.id);
       if (!p) return;
       this.pending.delete(d.id);
       if (d.ok) p.resolve(d); else p.reject(new Error(d.error));

@@ -133,7 +133,11 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
       modeller ??= new Modeller(kernel.module);
       modeller.setVerify(!!r.verify);
       const t0 = performance.now();
+      // Progress for long rebuilds (exam #16): which feature is being built, at most every 150 ms.
+      let told = t0;
+      modeller.onFeature = (i, of, name) => { const now = performance.now(); if (now - told < 150) return; told = now; post({ id: -2, progress: { i, of, name } }); };
       const res = modeller.evaluate(r.doc);
+      modeller.onFeature = undefined;
       const t1 = performance.now();
       let data = null, props = null;
       lastBody = res.body;
