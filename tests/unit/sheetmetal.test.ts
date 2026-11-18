@@ -834,7 +834,7 @@ test("sheet metal: convert a solid box to sheet metal (FR-FT-120)", async () => 
   close(run(doc([s, box, cl, flat])).props.volume, c2.props.volume, 1e-5);
   // A tray with lips: the top is a 10 mm rim round a 20 mm deep pocket. All four bottom edges and the walls' far edges
   // picked: each wall gets a lip turned inwards, and the lips meet mitred at the corners like the walls, so the flat
-  // pattern keeps the folded volume (but for the overlapping bends) and no lip runs on past its corner.
+  // pattern keeps the folded volume (the lip bends are mitred too) and no lip runs on past its corner.
   const pk: Feature[] = [
     { id: "pl", type: "plane", name: "pl", base: { std: "XY" }, mode: "offset", offset: { v: 40 } } as Feature,
     { ...rect("pk", 10, 10, 90, 50), plane: { plane: "pl" } },
@@ -848,7 +848,7 @@ test("sheet metal: convert a solid box to sheet metal (FR-FT-120)", async () => 
   const inL = (p: [number, number, number]) => new oc.BRepClass3d_SolidClassifier_3(lt.body!.shape, new oc.gp_Pnt_3(...p), 1e-6).State() === oc.TopAbs_State.TopAbs_IN;
   assert.ok(inL([8, 5, 39]) && inL([5, 8, 39]) && inL([95, 52, 39]) && !inL([50, 30, 39]) && !inL([12, 12, 39]), "lips meet at the corners round an open middle");
   const lf = run(doc([s, box, ...pk, lips, flat]));
-  close(lf.props.volume, lt.props.volume, 6e-3);
+  close(lf.props.volume, lt.props.volume, 3e-4);
   // One lip only: its ends stop at the inner faces of the walls beside it (they used to run into their inner half,
   // material the flat pattern then had twice), so the flat pattern keeps the folded volume.
   const one = conv({ edges: [...["l1", "l2", "l3", "l4"].map(edge), { faces: ["e:end", "e:side:sl1"] as [string, string] }] });

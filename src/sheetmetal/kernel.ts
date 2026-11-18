@@ -345,7 +345,13 @@ function bendSolid(api: SheetApi, b: Bend, T: number): Named {
   const face = new oc.BRepBuilderAPI_MakeFace_15(mk.Wire(), true).Face();
   const c = w(b.a0, b.up ? T + b.r : -b.r);
   const u = applyDir(b.M, b.up ? [-e[0], -e[1], 0] : [e[0], e[1], 0]);
-  const shape = new oc.BRepPrimAPI_MakeRevol_1(face, new oc.gp_Ax1_2(P(c), new oc.gp_Dir_4(u[0], u[1], u[2])), b.angle, false).Shape();
+  let shape = new oc.BRepPrimAPI_MakeRevol_1(face, new oc.gp_Ax1_2(P(c), new oc.gp_Dir_4(u[0], u[1], u[2])), b.angle, false).Shape();
+  // Mitred at a corner: the half-spaces past the seam planes are cut off.
+  const size = 4 * (l + b.r + 2 * T);
+  for (const h of b.cuts ?? []) {
+    const cu = new oc.BRepAlgoAPI_Cut_3(shape, halfSpace(api, h.p, h.m, size, c), new oc.Message_ProgressRange_1());
+    if (cu.IsDone()) shape = cu.Shape();
+  }
   const faces = api.sub(shape, "FACE");
   const ew = applyDir(b.M, [e[0], e[1], 0]);
   const start = w([(b.a0[0] + b.a1[0]) / 2, (b.a0[1] + b.a1[1]) / 2], T / 2);
@@ -354,12 +360,28 @@ function bendSolid(api: SheetApi, b: Bend, T: number): Named {
     const ty = ad.GetType();
     if (ty === oc.GeomAbs_SurfaceType.GeomAbs_Cylinder) return `${b.id}:${Math.abs(ad.Cylinder().Radius() - b.r) < Math.abs(ad.Cylinder().Radius() - b.r - T) ? "in" : "out"}`;
     const cen = api.centroid(fc);
+    if (b.cuts?.some(h => Math.abs(dot(sub3(cen, h.p), h.m)) < T * 1e-3)) return `${b.id}:miter`;
     const along = dot(sub3(cen, corners[0]), ew);
     if (along < l * 1e-3) return `${b.id}:s0`;
     if (along > l * (1 - 1e-3)) return `${b.id}:s1`;
     return `${b.id}:${Math.hypot(...sub3(cen, start)) < T * 1e-2 ? "start" : "end"}`;
   });
   return { shape, faces, names };
+}
+
+/** A box standing on the plane through p square to m, on m's side: `size` across (centred on `near` seen along m)
+ * and deep. */
+function halfSpace(api: SheetApi, p: V3, m: V3, size: number, near: V3): any {
+  const oc = api.oc;
+  const n = unit3(m);
+  const a = unit3(Math.abs(n[0]) < 0.9 ? cross3(n, [1, 0, 0]) : cross3(n, [0, 1, 0])), b = cross3(n, a);
+  const o = sub3(near, [n[0] * dot(sub3(near, p), n), n[1] * dot(sub3(near, p), n), n[2] * dot(sub3(near, p), n)]);
+  const at = (u: number, v: number): V3 => [o[0] + a[0] * u + b[0] * v, o[1] + a[1] * u + b[1] * v, o[2] + a[2] * u + b[2] * v];
+  const mk = new oc.BRepBuilderAPI_MakePolygon_1();
+  for (const [u, v] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) { const q = at(u * size, v * size); mk.Add_1(new oc.gp_Pnt_3(q[0], q[1], q[2])); }
+  mk.Close();
+  const face = new oc.BRepBuilderAPI_MakeFace_15(mk.Wire(), true).Face();
+  return prism(api, face, [n[0] * size, n[1] * size, n[2] * size]);
 }
 
 /**
@@ -476,9 +498,15 @@ function removedPieces(api: SheetApi, st: SheetState, folded: Named, fid: string
   const panels = st.panels.map(p => ({ p, solid: panelSolid(api, p, st.T) }));
   const sheet = panels.reduce((a, x) => a + volumeOf(api, x.solid.shape), 0) + st.bends.reduce((a, b) => a + volumeOf(api, bendSolid(api, b, st.T).shape), 0);
   const body = volumeOf(api, folded.shape);
-  // Nothing taken out: the folded body is exactly the panels and bends.
-  if (Math.abs(body - sheet) <= sheet * 1e-7) return [];
   const out: Named[] = [];
+  // Mitred bends: what the seam planes cut off, unrolled off the full strip.
+  for (const b of st.bends) {
+    if (!b.cuts?.length) continue;
+    const gone = api.bool("cut", bendSolid(api, { ...b, cuts: undefined }, st.T), bendSolid(api, b, st.T), `${fid}:cut`);
+    if (volumeOf(api, gone.shape) > 1e-9) out.push(...unrolled(api, st, b, gone, fid));
+  }
+  // Nothing else taken out: the folded body is exactly the panels and bends.
+  if (Math.abs(body - sheet) <= sheet * 1e-7) return out;
   // Gussets are pressed, not cut: their grooves stay out of the flat pattern.
   const grooves = (st.gussets ?? []).map(g => grooveOf(api, g, fid));
   for (const { p, solid } of panels) {

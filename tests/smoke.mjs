@@ -13777,7 +13777,7 @@ try {
     await mp.evaluate(lipDoc, true);
     await settle();
     const lpf = await mp.evaluate(() => window.__sv.model.last().props?.volume ?? 0);
-    check(!lp.bad && lp.bends === 8 && !lp.out.length && Math.abs(lpf / lp.v - 1) < 6e-3,
+    check(!lp.bad && lp.bends === 8 && !lp.out.length && Math.abs(lpf / lp.v - 1) < 1e-3,
       `sheet metal: Convert gives each wall its own lip off a shared rim, mitred at the corners (${JSON.stringify({ lp, lpf })})`);
     // A tray (all four walls of the 100 × 60 × 40 box) with Auto relief: the walls meet on the corners' bisector planes
     // and each corner gets a rectangular relief, so the flat pattern has the part's volume; without relief, more.

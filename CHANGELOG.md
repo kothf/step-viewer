@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.569.0] - 2026-11-18
+
+### Fixed
+
+- **Convert to Sheet Metal: lip bends are mitred at the corners.** Where two lips meet at a corner, their bends now meet on the same seam plane as the lips instead of overlapping inside the corner, and the flat pattern leaves out what the seam cuts off, so its volume matches the folded part.
+
 ## [1.568.0] - 2026-11-18
 
 ### Added
@@ -3560,7 +3566,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.568.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.569.0...HEAD
+[1.569.0]: https://github.com/kothf/step-viewer/compare/v1.568.0...v1.569.0
 [1.568.0]: https://github.com/kothf/step-viewer/compare/v1.567.0...v1.568.0
 [1.567.0]: https://github.com/kothf/step-viewer/compare/v1.566.0...v1.567.0
 [1.566.0]: https://github.com/kothf/step-viewer/compare/v1.565.0...v1.566.0
