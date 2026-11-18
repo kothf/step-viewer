@@ -5088,4 +5088,11 @@ export const RU: Record<string, string> = {
   "Remove appearance": "Убрать внешний вид",
   "Face colour": "Цвет грани",
   "Feature colour": "Цвет элемента",
+  "Isolate": "Изолировать",
+  "Isolated: {n}": "Изолировано: {n}",
+  "The others": "Остальные",
+  "Others hidden": "Остальные скрыты",
+  "Others transparent": "Остальные прозрачные",
+  "Exit Isolate": "Выйти из изоляции",
+  "Make others transparent": "Сделать остальные прозрачными",
 };

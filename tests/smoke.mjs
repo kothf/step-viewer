@@ -8253,6 +8253,21 @@ try {
     await mp.keyboard.press("Escape");
     check(pk.sel.length === 2 && pk.rows === 2 && /Selected: 2/.test(pk.status) && pk.tint && multiMenu === 1 && nHid === 2 && esc <= 1 && win === 3 && crossIds.includes(c2.id) && cam0 === cam1,
       `asm 1.541: Ctrl+click and box selection of components, menu on all of them (${JSON.stringify({ pk, multiMenu, nHid, esc, win, cross, free, free2, vr, same: cam0 === cam1 })})`);
+    // 1.592 (gap list A1/A2): Isolate on a component's menu hides the others (view only), the bar switches them to
+    // see-through, Exit Isolate (or Esc) brings everything back; nothing goes into the document.
+    const isoView = () => mp.evaluate(() => { const a = window.__sv.asm, v = window.__sv.viewer, id = a.doc.components[0].id; return { vis: v.parts.filter(p => p.visible).length, mine: a.shownIds.filter(s => s === id || s.startsWith(id + "/")).length, faded: v.parts.filter(p => p.opacity < 0.2).length, n: v.parts.length, bar: !!document.getElementById("asm-iso"), hidden: a.doc.components.filter(c => c.hidden).length }; });
+    await mp.click("#asm-tree .ft-comp >> nth=0", { button: "right" });
+    await mp.locator("#asm-menu button", { hasText: /^Isolate$/ }).click();
+    await mp.waitForTimeout(100);
+    const iso1 = await isoView();
+    await mp.selectOption('#asm-iso select[data-iso="mode"]', "trans");
+    await mp.waitForTimeout(100);
+    const iso2 = await isoView();
+    await mp.click('#asm-iso [data-iso="exit"]');
+    await mp.waitForTimeout(100);
+    const iso3 = await isoView();
+    check(iso1.bar && iso1.vis === iso1.mine && iso1.vis < iso1.n && iso1.hidden === 0 && iso2.vis === iso2.n && iso2.faded === iso2.n - iso2.mine && !iso3.bar && iso3.vis === iso3.n && iso3.faded === 0,
+      `asm 1.592: Isolate hides the other components, Others transparent fades them, Exit Isolate restores the view (gap list A1/A2) (${JSON.stringify({ iso1, iso2, iso3 })})`);
     // 1.542: the same with Lasso selection on: a clockwise lasso round the view takes every component.
     await mp.click('#hud [data-hud="lasso"]');
     await mp.mouse.move(free.x, free.y); await mp.mouse.down();
