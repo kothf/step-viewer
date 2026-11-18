@@ -694,7 +694,7 @@ function ventCut(api: SheetApi, body: Named, f: SmVentFeature, st: SheetState, s
  * plane with the thickness inside the solid; each bend edge gets a flange as long and as steep as the face across it;
  * then the sheet is trimmed to the solid, so openings and slanted ends of those faces carry over.
  */
-function convertSolid(api: SheetApi, body: Named, f: SmConvertFeature | SmInsertFeature): { body: Named; sm: SheetState } {
+function convertSolid(api: SheetApi, body: Named, f: SmConvertFeature | SmInsertFeature, fixed?: any): { body: Named; sm: SheetState } {
   const oc = api.oc;
   const plane = (fc: any): { o: V3; n: V3; x: V3 } | null => {
     const ad = new oc.BRepAdaptor_Surface_2(fc, true);
@@ -703,7 +703,7 @@ function convertSolid(api: SheetApi, body: Named, f: SmConvertFeature | SmInsert
     const s = fc.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED ? -1 : 1;
     return { o: [l.X(), l.Y(), l.Z()], n: [a.X() * s, a.Y() * s, a.Z() * s], x: [xd.X(), xd.Y(), xd.Z()] };
   };
-  const face = f.face.name ? api.face(body, f.face) : null;
+  const face = fixed ?? (f.face.name ? api.face(body, f.face) : null);
   const pl = face ? plane(face) : null;
   if (!face || !pl) throw new SheetError("E-SM-CONVFACE", "Pick a flat face of the solid to stay fixed.");
   // The plate's frame: z into the solid, so the thickness lies inside it.
@@ -782,6 +782,18 @@ function convertSolid(api: SheetApi, body: Named, f: SmConvertFeature | SmInsert
     // A wall, not an end face across the thickness: it has its own inside face T behind it.
     return planes.some(q => dot(q.n, op.n) < -1 + 1e-6 && Math.abs(dot(sub3(op.o, q.o), op.n) - T) < 1e-4 * (1 + T));
   });
+  if (f.type === "sminsert" && !picked.length && !fixed) {
+    // The inside face of the wall (the floor seen inside an open box): its edges to the walls are concave, so the
+    // fixed face is the outside one T behind it, as the CAD app takes either side.
+    const back = body.faces.filter(fc => {
+      const q = fc.IsSame(face) ? null : plane(fc);
+      return !!q && dot(q.n, pl.n) < -1 + 1e-6 && Math.abs(dot(sub3(pl.o, q.o), pl.n) - T) < 1e-6 * (1 + T);
+    });
+    const c = api.centroid(face);
+    const near = (fc: any) => { const d = sub3(api.centroid(fc), c); const t = dot(d, pl.n); return Math.hypot(d[0] - t * pl.n[0], d[1] - t * pl.n[1], d[2] - t * pl.n[2]); };
+    back.sort((a, b) => near(a) - near(b));
+    if (back.length) return convertSolid(api, body, f, back[0]);
+  }
   if (f.type === "sminsert" && !picked.length) throw new SheetError("E-SM-INSERTNONE", "The face has no sharp edges to other flat walls to bend.");
   // Walls further on (FR-FT-120): the face across a wall's far straight edge (parallel to the bend edge) is the next
   // wall on the same side of the sheet when it is one (Insert Bends: it has its own face T behind it; Convert: that
@@ -1272,7 +1284,13 @@ function wrapped(api: SheetApi, T: number, b: Bend, gone: Named, Mf: Mat, fid: s
     const sew = new oc.BRepBuilderAPI_Sewing(T * 1e-5, true, true, true, false);
     sew.Add(new oc.BRepBuilderAPI_MakeFace_21(S1, wire(e1), true).Face());
     sew.Add(new oc.BRepBuilderAPI_MakeFace_21(S2, wire(e2), true).Face());
-    e1.forEach((x, i) => sew.Add(oc.BRepFill.Face(x, e2[i])));
+    // A side between two lines across the bend or two arcs round it lies in a plane: made as a plane, it keeps the
+    // Boolean with the bend's cylinders quick (a ruled B-spline side took 1 to 2 s per cut).
+    e1.forEach((x, i) => {
+      const ruled = oc.BRepFill.Face(x, e2[i]);
+      const flat = new oc.BRepBuilderAPI_MakeFace_15(oc.BRepTools.OuterWire(ruled), true);
+      sew.Add(flat.IsDone() ? flat.Face() : ruled);
+    });
     sew.Perform(new oc.Message_ProgressRange_1());
     const shells: any[] = [];
     for (const ex = new oc.TopExp_Explorer_2(sew.SewedShape(), oc.TopAbs_ShapeEnum.TopAbs_SHELL, oc.TopAbs_ShapeEnum.TopAbs_SHAPE); ex.More(); ex.Next()) shells.push(oc.TopoDS.Shell_1(ex.Current()));
