@@ -82,7 +82,7 @@ import { capDir, splitSubs } from "../weldments/types";
 import { showSheetProps } from "../sheetmetal/propsUi";
 import { bindSmPanel, smCheck, smDraft, smPanel, SM_BASES, SM_ICONS, SM_TOOLS, SM_TREE_ICONS } from "../sheetmetal/ui";
 import { isSheet, isSheetBase, type SmBaseFeature, type SmHemFeature, type SmFlangeFeature, type SmFormFeature, type SmUnfoldFeature, type SmReliefFeature, type SmGussetFeature, type SmConvertFeature, type SmInsertFeature, type SmTabSlotFeature } from "../sheetmetal/types";
-import { apply as smApply, applyDir as smApplyDir, bendOfFace, flatPatternDoc, type SheetState, reliefCorners, crossBreakLines, flatBendLines, flatPointOn, panelOfFace, placedState, unfoldBendLines } from "../sheetmetal/sheet";
+import { apply as smApply, applyDir as smApplyDir, bendOfFace, flatPatternDoc, type SheetState, reliefCorners, crossBreakLines, flatBendLines, flatFormLines, flatPointOn, panelOfFace, placedState, unfoldBendLines } from "../sheetmetal/sheet";
 import { flatDxf } from "../sheetmetal/flat";
 import { modelItems, type ModelItem } from "../drawing/items";
 import { ModifyBox } from "../modifyBox";
@@ -4617,6 +4617,9 @@ export class ModelController {
         for (const b of flatBendLines(this.last.sheet)) if (b.up === up) pos.push(...b.a, ...b.b);
         if (pos.length) this.lines(pos, up ? 0x2f9e44 : 0xc2255c, 1.6);
       }
+      // Forming tools are left out of the flat pattern: their footprints are drawn on it, as in the DXF.
+      const forms = flatFormLines(this.last.sheet);
+      if (forms.length) this.lines(forms.flat(), 0xe8590c, 1.4);
     }
     // Cross breaks: crossed lines on the faces (or the flat pattern), dashed look by a lighter colour.
     if (this.last?.sheet?.crosses?.length) {

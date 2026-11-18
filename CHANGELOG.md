@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.583.0] - 2026-11-18
+
+### Fixed
+
+- **Louvers placed end to end stay part of the sheet when it is unfolded.** On the exam chassis one of three touching louvers on a flange came out as a body of its own in the unfolded part; pieces that land a few hundred-thousandths of a millimetre apart are now joined.
+- **The flattened part shows its forming tools' footprints,** as the flat pattern DXF does, in orange beside the bend lines.
+
 ## [1.582.0] - 2026-11-18
 
 ### Fixed
@@ -3696,6 +3703,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.582.0...HEAD
+[1.583.0]: https://github.com/kothf/step-viewer/compare/v1.582.0...v1.583.0
 [1.582.0]: https://github.com/kothf/step-viewer/compare/v1.581.0...v1.582.0
 [1.581.0]: https://github.com/kothf/step-viewer/compare/v1.580.0...v1.581.0
 [1.580.0]: https://github.com/kothf/step-viewer/compare/v1.579.0...v1.580.0

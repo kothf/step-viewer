@@ -1037,10 +1037,10 @@ export class Modeller {
     } catch { return null; }
   }
   /** `a` fused with / less every tool in one Boolean; one at a time when that fails. */
-  private boolAll(kind: "fuse" | "cut", a: Named, tools: Named[], fid: string): Named {
+  private boolAll(kind: "fuse" | "cut", a: Named, tools: Named[], fid: string, fuzzy = 0): Named {
     if (!tools.length) return a;
     try {
-      if (kind === "fuse") return this.fuseAll([a, ...tools], fid);
+      if (kind === "fuse") return this.fuseAll([a, ...tools], fid, fuzzy);
       const r = this.cutAll(a, tools, fid);
       if (r) return r.body;
     } catch { /* below */ }
@@ -1048,7 +1048,7 @@ export class Modeller {
     for (const t of tools) out = this.bool(kind, out, t, fid);
     return out;
   }
-  private fuseAll(tools: Named[], fid: string): Named {
+  private fuseAll(tools: Named[], fid: string, fuzzy = 0): Named {
     if (tools.length < 2) return tools[0];
     const oc = this.oc;
     const mk = new oc.BRepAlgoAPI_Fuse_1();
@@ -1056,6 +1056,7 @@ export class Modeller {
     A.Append_1(tools[0].shape);
     for (const t of tools.slice(1)) B.Append_1(t.shape);
     mk.SetArguments(A); mk.SetTools(B);
+    if (fuzzy > 0) mk.SetFuzzyValue(fuzzy);
     mk.Build(new oc.Message_ProgressRange_1());
     if (!mk.IsDone() || mk.HasErrors()) throw new FeatureError("E-FT-BOOL", "The new material could not be joined to the body.");
     return this.carry(mk, tools, mk.Shape(), fid);
@@ -6573,7 +6574,7 @@ export class Modeller {
 
   /** The helpers sheet metal (src/sheetmetal) builds its solids with. */
   private sheetApi(frames: Record<string, Frame> = {}) {
-    return { vertex: (b: Named | null, r: VertexRef) => this.vertexPos(r, b, frames), oc: this.oc, bool: this.bool.bind(this), boolAll: (kind: "fuse" | "cut", a: Named, tools: Named[], fid: string) => this.boolAll(kind, a, tools, fid), segEdge: (s: Seg, fr: Frame) => this.segEdge(s, fr), sub: this.sub.bind(this), centroid: this.centroid.bind(this), face: (b: Named | null, r: FaceRef) => this.resolveFace(b, r), edge: (b: Named | null, r: EdgeRef) => this.resolveEdge(b, r) };
+    return { vertex: (b: Named | null, r: VertexRef) => this.vertexPos(r, b, frames), oc: this.oc, bool: this.bool.bind(this), boolAll: (kind: "fuse" | "cut", a: Named, tools: Named[], fid: string, fuzzy?: number) => this.boolAll(kind, a, tools, fid, fuzzy), segEdge: (s: Seg, fr: Frame) => this.segEdge(s, fr), sub: this.sub.bind(this), centroid: this.centroid.bind(this), face: (b: Named | null, r: FaceRef) => this.resolveFace(b, r), edge: (b: Named | null, r: EdgeRef) => this.resolveEdge(b, r) };
   }
 
   /** Triangles of the body in occt-import-js's layout (one range per B-rep face, in face order). */

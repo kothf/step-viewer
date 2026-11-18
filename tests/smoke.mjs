@@ -13743,6 +13743,13 @@ try {
     await mp.click("#mc-cancel");
     await settle();
     check(fe0.pts === 2 && fe0.forms === 2 && fe0.rows === 2, `sheet metal: editing a Forming Tool, a click on the face adds a position (${JSON.stringify(fe0)})`);
+    // Flattened, the flat pattern draws the form's footprint in orange (exam #15), then fold back.
+    await smMenu("Flatten");
+    await settle();
+    const ffl = await mp.evaluate(() => { let n = 0; window.__sv.viewer.scene.traverse(o => { if (o.isLineSegments2 && o.material?.color?.getHex() === 0xe8590c) n += o.geometry.attributes.instanceStart.count; }); return { n, flat: window.__sv.model.store.doc.features.some(f => f.type === "smflat" && !f.suppressed) }; });
+    await smMenu("Flatten");
+    await settle();
+    check(ffl.flat && ffl.n >= 16, `sheet metal: the flat pattern view draws forming tool footprints (${JSON.stringify(ffl)})`);
     // Normal Cut: a Ø8 circle sketched on the bottom face (XY); Reverse direction sends it into the sheet, linked to thickness.
     await mp.evaluate(() => window.__sv.model.store.change("Cut sketch", d => {
       d.features.push({ id: "nsk", type: "sketch", name: "Sketch10", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "nc0", t: "point", x: 90, y: 10 }, { id: "nc", t: "circle", c: "nc0", r: 4 }] });
