@@ -62,7 +62,7 @@ import { ellOf, ellParam, ellPts, ellSweep } from "../sketch/ellipse";
 import { entBezier } from "../sketch/conic";
 import { bezPts } from "../sketch/spline";
 import { hoverKindOfSketch, type HoverKind } from "../hoverCursor";
-import { SketchEditor, REL_NAME, relName, trimNum, type SkTool } from "../sketch/editor";
+import { SketchEditor, REL_NAME, relName, trimNum, type EntityProps, type SkTool } from "../sketch/editor";
 import { SNAP_KINDS, parseSnaps, type SnapKind } from "../sketch/snaps";
 import { ORIGIN, isOver, repairs, solve } from "../sketch/solver";
 import { sketchPath, sketchProfile, textPath } from "../sketch/profile";
@@ -8626,10 +8626,11 @@ export class ModelController {
     pm.innerHTML = okHead(featureLabel(sk.name), { ok: t("Exit sketch (Enter)"), noTranslate: true })
       + `<p class="pm-help muted">${esc(t("Plane"))}: <span class="pm-skplane" translate="no">${esc(plane)}</span> · <b class="pm-def" data-state="${isOver(info) ? "over" : info.dof === 0 ? "full" : "under"}">${esc(def)}</b>${!isOver(info) && info.dof > 0 ? ` <button class="btn small" data-a="fulldef" title="${esc(t("Add horizontal/vertical relations and dimensions from the origin until nothing is free"))}">${esc(t("Fully define sketch"))}</button>` : ""}</p>`
       + `<p class="pm-help muted">${esc(t("Draw with the tools above. Double-click a dimension to change it."))}</p>`
-      + `<ul class="pm-legend" aria-label="${esc(t("Sketch colours"))}"><li><i class="sw under"></i>${esc(t("Blue: under defined, can still move"))}</li><li><i class="sw full"></i>${esc(t("Black: fully defined by dimensions and relations"))}</li><li><i class="sw over"></i>${esc(t("Red: over defined, relations or dimensions conflict"))}</li><li><i class="sw cons"></i>${esc(t("Dashed: construction geometry, not in profiles"))}</li><li><i class="sw hot"></i>${esc(t("Thick turquoise: under the cursor, what a click takes"))}</li><li><i class="sw sel"></i>${esc(t("Orange: selected"))}</li></ul>`
+      + `<ul class="pm-legend" aria-label="${esc(t("Sketch colours"))}"><li><i class="sw under"></i>${esc(t("Blue: under defined, can still move"))}</li><li><i class="sw full"></i>${esc(t("Black: fully defined by dimensions and relations"))}</li><li><i class="sw over"></i>${esc(t("Red: over defined, relations or dimensions conflict"))}</li><li><i class="sw cons"></i>${esc(t("Dashed: construction geometry, not in profiles"))}</li><li><i class="sw hot"></i>${esc(t("Thick turquoise: under the cursor, what a click takes"))}</li><li><i class="sw sel"></i>${esc(t("Orange: selected"))}</li><li><i class="sw fill"></i>${esc(t("Light blue fill: a closed region a feature can use"))}</li><li><i class="sw open"></i>${esc(t("Orange dot: an open end, joined to nothing"))}</li></ul>`
       + `<label class="chk pm-chk" title="${esc(t("Points snap to model vertices, edge midpoints and circle centres, and stay attached to them; Smart Dimension takes model edges."))}"><input type="checkbox" data-a="modelsnap"${ed.modelSnap ? " checked" : ""} />${esc(t("Snap to model geometry"))}</label>`
       + `<label class="chk pm-chk" title="${esc(t("Lines snap horizontal, vertical, perpendicular, parallel or tangent and keep that relation; hold Ctrl to draw without them."))}"><input type="checkbox" data-a="autorels"${ed.autoRels ? " checked" : ""} />${esc(t("Automatic relations"))}</label>`
       + `<label class="chk pm-chk" title="${esc(t("Relation glyphs next to the entities; hover one to see what it ties, click to select it."))}"><input type="checkbox" data-a="showrels"${ed.showRels ? " checked" : ""} />${esc(t("Show relations"))}</label>`
+      + `<label class="chk pm-chk" title="${esc(t("Fill closed regions while sketching, so an outline that does not close shows at once."))}"><input type="checkbox" data-a="shade"${ed.shadeRegions ? " checked" : ""} />${esc(t("Shade closed regions"))}</label>`
       + `<details class="pm-snaps"><summary>${esc(t("Snaps"))}</summary><div class="pm-snapgrid">${SNAP_KINDS.map(([k, label]) => `<label class="chk pm-chk"><input type="checkbox" data-snap="${k}"${ed.snaps.has(k) ? " checked" : ""} />${esc(t(label))}</label>`).join("")}</div></details>`
       + `<details class="pm-snaps pm-grid"${ed.grid || ed.gridSnap ? " open" : ""}><summary>${esc(t("Grid"))}</summary><div class="pm-snapgrid">`
         + `<label class="chk pm-chk"><input type="checkbox" data-a="grid"${ed.grid ? " checked" : ""} />${esc(t("Show grid"))}</label>`
@@ -8642,6 +8643,7 @@ export class ModelController {
         : `<p class="muted">${esc(t("Select sketch items or model edges to add relations (Ctrl+click for more)."))}</p>`)
       + (ed.piercing ? `<p class="muted pm-pierce" role="status">${esc(t("Click a model edge that crosses the sketch plane: the point moves to where it pierces the plane."))}</p>` : "")
       + `</div>`
+      + this.entityBox(ed)
       + this.textBox(ed)
       + this.curveBox(ed)
       + this.pictureBox(ed)
@@ -8679,12 +8681,14 @@ export class ModelController {
     pm.querySelector<HTMLInputElement>("[data-a=slotdims]")?.addEventListener("change", e => { ed.slotDims = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:slotDims", ed.slotDims ? "1" : "0"); } catch { /* private mode */ } });
     pm.querySelector<HTMLInputElement>("[data-a=adddims]")?.addEventListener("change", e => { ed.addDims = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:skAutoDims", ed.addDims ? "1" : "0"); } catch { /* private mode */ } this.renderQuick(); });
     pm.querySelector<HTMLInputElement>("[data-a=autorels]")?.addEventListener("change", e => { ed.autoRels = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:autoRels", ed.autoRels ? "1" : "0"); } catch { /* private mode */ } this.renderQuick(); });
+    pm.querySelector<HTMLInputElement>("[data-a=shade]")?.addEventListener("change", e => { ed.shadeRegions = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:skShade", ed.shadeRegions ? "1" : "0"); } catch { /* private mode */ } ed.render(); });
     pm.querySelector<HTMLInputElement>("[data-a=showrels]")?.addEventListener("change", e => { ed.showRels = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:skRels", ed.showRels ? "1" : "0"); } catch { /* private mode */ } ed.render(); });
     const saveGrid = () => { try { localStorage.setItem("mc:skGrid", ed.grid ? "1" : "0"); localStorage.setItem("mc:skGridSnap", ed.gridSnap ? "1" : "0"); localStorage.setItem("mc:skGridStep", String(ed.gridSpacing || "")); } catch { /* private mode */ } };
     pm.querySelector<HTMLInputElement>("[data-a=grid]")?.addEventListener("change", e => { ed.setGrid({ show: (e.target as HTMLInputElement).checked }); saveGrid(); this.renderQuick(); });
     pm.querySelector<HTMLInputElement>("[data-a=gridsnap]")?.addEventListener("change", e => { ed.setGrid({ snap: (e.target as HTMLInputElement).checked }); saveGrid(); this.renderQuick(); });
     this.bindPictureBox(pm, ed);
     this.bindBlockBox(pm, ed);
+    this.bindEntityBox(pm, ed);
     pm.querySelector<HTMLInputElement>("[data-a=gridstep]")?.addEventListener("change", e => { const v = Number((e.target as HTMLInputElement).value); ed.setGrid({ spacing: isFinite(v) && v > 0 ? v : 0 }); saveGrid(); });
     pm.querySelectorAll<HTMLInputElement>("[data-snap]").forEach(i => i.addEventListener("change", () => {
       const k = i.dataset.snap as SnapKind;
@@ -8803,6 +8807,36 @@ export class ModelController {
    * Conics and equation curves (FR-SK-021): with the Equation curve tool, the equation to add; with one
    * conic or equation curve selected, its rho or its equation.
    */
+  /** Gap list S4: the selected point, line, circle or arc's positions and sizes, typed to move it. */
+  private entityBox(ed: SketchEditor): string {
+    const pr = ed.entityProps();
+    if (!pr) return "";
+    const f = UNITS[units.current].f;
+    const LABEL: Record<string, string> = { x: "X", y: "Y", x1: "Start X", y1: "Start Y", x2: "End X", y2: "End Y", len: "Length", ang: "Angle", cx: "Centre X", cy: "Centre Y", r: "Radius", sweep: "Arc angle" };
+    const TITLE: Record<EntityProps["kind"], string> = { point: "Point", line: "Line", circle: "Circle", arc: "Arc" };
+    const field = (k: string) => {
+      const angle = k === "ang" || k === "sweep";
+      const val = angle ? trimNum((pr.v[k] * 180) / Math.PI, 4) : trimNum(pr.v[k] * f, 4);
+      const ro = k === "sweep";
+      return `<label class="pm-field"><span>${esc(t(LABEL[k]))}</span><span class="pm-in"><input type="text" inputmode="decimal" class="pm-n" data-ep="${k}" value="${val}"${ro ? " readonly" : ""} /><span class="muted">${angle ? "°" : units.current}</span></span></label>`;
+    };
+    return `<div class="pm-sec pm-entprops"><h4>${esc(t(TITLE[pr.kind]))}</h4>${Object.keys(pr.v).map(field).join("")}`
+      + `<p class="muted pm-help">${esc(t("Type a value to move it; relations and dimensions still hold."))}</p></div>`;
+  }
+
+  private bindEntityBox(pm: HTMLElement, ed: SketchEditor) {
+    pm.querySelectorAll<HTMLInputElement>("[data-ep]").forEach(inp => inp.addEventListener("change", () => {
+      const k = inp.dataset.ep!;
+      const angle = k === "ang";
+      let v: number;
+      try { v = evaluate(inp.value, angle ? "angle" : "length", angle ? "deg" : units.current); }
+      catch (err) { toast(t((err as Error).message), true); this.renderPanel(); return; }
+      if (!ed.setEntityProp(k, v)) toast(t("It cannot go there: relations or dimensions hold it."), true);
+      this.renderPanel();
+      pm.querySelector<HTMLInputElement>(`[data-ep="${k}"]`)?.focus();
+    }));
+  }
+
   private curveBox(ed: SketchEditor): string {
     const one = ed.selection.size === 1 ? ed.sk.ents.find(e => e.id === [...ed.selection][0]) : undefined;
     const sel = one && one.t === "spline" && one.kind ? one : undefined;

@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.590.0] - 2026-11-18
+
+### Added
+- Sketch: select one point, line, circle or arc and the sketch panel shows its coordinates and sizes (start and end X/Y, length and angle; centre and radius). Type a value to move it; relations and dimensions still hold, and a value they forbid is refused with a message.
+- Sketch: closed regions are shaded light blue while sketching, so an outline that does not close shows at once (Shade closed regions in the sketch panel turns it off).
+- Sketch: curve ends joined to nothing else are marked with a bigger orange dot.
+
 ## [1.589.0] - 2026-11-18
 
 ### Fixed
@@ -3756,7 +3763,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.589.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.590.0...HEAD
+[1.590.0]: https://github.com/kothf/step-viewer/compare/v1.589.0...v1.590.0
 [1.589.0]: https://github.com/kothf/step-viewer/compare/v1.588.0...v1.589.0
 [1.588.0]: https://github.com/kothf/step-viewer/compare/v1.587.0...v1.588.0
 [1.587.0]: https://github.com/kothf/step-viewer/compare/v1.586.0...v1.587.0

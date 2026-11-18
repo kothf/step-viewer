@@ -860,6 +860,9 @@ canvas.mc-stale { filter: grayscale(0.85) opacity(0.6); transition: filter .2s; 
 .pm-legend .sw.hot { border-top: 5px solid #0bb5c9; }
 :root[data-theme="dark"] .pm-legend .sw.hot { border-color: #3bf0e4; }
 .pm-legend .sw.sel { border-color: #f08c00; }
+.pm-legend .sw.fill { height: 10px; border: none; background: rgba(143, 179, 255, 0.45); }
+.pm-legend .sw.open { width: 10px; height: 10px; border: none; border-radius: 50%; background: #e8590c; margin: 0 4px; }
+:root[data-theme="dark"] .pm-legend .sw.open { background: #ff922b; }
 .st-skdef { font-weight: 600; white-space: nowrap; }
 .st-skdef[data-state=full] { color: var(--text); }
 .link { background: none; border: 0; padding: 0; color: var(--accent-text); cursor: pointer; text-decoration: underline; font: inherit; }
