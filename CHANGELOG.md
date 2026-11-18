@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.578.0] - 2026-11-18
+
+### Fixed
+
+- **Unfold and Fold are quick again on sheet metal with cuts across bends.** Cuts unrolled from a bend or wrapped back onto one keep their outline as lines, arcs and smooth curves instead of hundreds of tiny flat faces. On a test chassis an Unfold went from 50 s to 13 s and a Fold from over four minutes to 14 s, the part kept about 220 faces instead of 1,400, and the Gussets and Corner Reliefs after them build again instead of stopping the geometry kernel.
+- **Round corner reliefs have smooth walls** where they cross a bend, not dozens of facets.
+- **Unfold only refuses bends that carry a gusset.** Any other bend of a part with gussets unfolds.
+- **The geometry kernel recovers after it runs out of memory.** It is restarted and the part rebuilt; when it runs out again, the message says it was memory and suggests undoing the last change. Before, every feature showed an error until the page was reloaded.
+- **Error messages fade after 20 s** (warnings after 10 s), and stay while the pointer is on them.
+
 ## [1.577.0] - 2026-11-18
 
 ### Added
@@ -3646,7 +3656,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.577.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.578.0...HEAD
+[1.578.0]: https://github.com/kothf/step-viewer/compare/v1.577.0...v1.578.0
 [1.577.0]: https://github.com/kothf/step-viewer/compare/v1.576.0...v1.577.0
 [1.576.0]: https://github.com/kothf/step-viewer/compare/v1.575.0...v1.576.0
 [1.575.0]: https://github.com/kothf/step-viewer/compare/v1.574.0...v1.575.0

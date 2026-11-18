@@ -23,7 +23,7 @@ import { download } from "../tools/exporters";
 import { evaluate, ExprError, isPlain } from "./expr";
 import { journalDrop, journalList, journalSave, packPart, unpackPart, PART_EXT, type JournalEntry } from "./file";
 import { snapshotList, snapshotRead, snapshotSave, SNAPSHOT_KEEP } from "./snapshots";
-import { ModelKernel, type Rebuild } from "./kernelClient";
+import { KERNEL_MEMORY, ModelKernel, type Rebuild } from "./kernelClient";
 import { pathId, hasDir2, dir2Apart, dir2Blind, clearDir2, threadThrough, holeExits, headKind, holeCount, DIR2_ENDS, type Dir2End } from "./types";
 import { defaultToward } from "./flex";
 import { parseXyz } from "./curves";
@@ -283,6 +283,7 @@ function statusText(s: FeatureStatus) {
   }
   if (s.code === "E-TN-LOST") return t("A face or edge this feature used is gone (reference lost).");
   if (s.code === "E-KRN-CRASH") return t("The geometry kernel stopped; it was restarted.");
+  if (s.code === "E-KRN-MEMORY") return t("The geometry kernel ran out of memory and was restarted. Undo the last change or suppress the features after it.");
   return t(s.message ?? "Error");
 }
 
@@ -558,7 +559,7 @@ export class ModelController {
   constructor(private host: ModelHost, occtBase: string) {
     this.kernel = new ModelKernel(occtBase);
     document.getElementById("ft-search")?.addEventListener("input", () => this.renderTree());
-    this.kernel.onCrash = () => toast(t("The geometry kernel stopped; it was restarted."), "warn");
+    this.kernel.onCrash = msg => toast(KERNEL_MEMORY.test(msg) ? t("The geometry kernel ran out of memory and was restarted. Undo the last change or suppress the features after it.") : t("The geometry kernel stopped; it was restarted."), "warn");
     // A result shown from the disk cache that the kernel's own build did not match (it never should): build again.
     this.kernel.onStale = () => void this.rebuild();
     host.viewer.scene.add(this.decor);

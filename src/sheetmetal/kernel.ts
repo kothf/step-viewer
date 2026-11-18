@@ -5,12 +5,15 @@ import type { EdgeRef, FaceRef, Frame, PartDoc, SketchFeature, SkEnt, V2, V3, Ve
 import type { Named } from "../kernel/model";
 import { inPolygon, loopPolygon, polyArea, sketchProfile, type Seg } from "../sketch/profile";
 import { tabSlot, type SlotCut, convertFlanges, type ConvertLevel, gussetSheet, type GussetMark, cornerRelief, reliefCorners, reliefLoop, apply, applyDir, bendStrip, sheetPlace, unfoldSheet, type SheetPlace, baseFlange, crossBreak, formTools, obroundLoop, type FormItem, ventLayout, ventPanel, loftedBend, type SheetMesh, breakCorner, closedCorner, miterFlange, miterProfile, sweptProfile, type FlatEdge, bendSketchLine, edgeFlange, flatLoops, hem, jog, sketchedBend, tab, SheetError, type Bend, type Mat, type Panel, type SheetOp, type SheetState } from "./sheet";
+import { arcRationals, fitSeg, loopArea, reverseLoop, segEnd, segPoints, startAt } from "./fit";
 import type { SmRipFeature, SheetFeature, SmBaseFeature, SmConvertFeature, SmInsertFeature, SmCutFeature, SmFormFeature, SmVentFeature } from "./types";
 
 /** The few Modeller helpers the sheet metal code needs. */
 export interface SheetApi {
   oc: any;
   bool(kind: "fuse" | "cut" | "common", a: Named, b: Named, fid: string): Named;
+  /** `a` fused with / less every tool in one Boolean. */
+  boolAll?(kind: "fuse" | "cut", a: Named, tools: Named[], fid: string): Named;
   segEdge(s: Seg, frame: Frame): any;
   sub(shape: any, kind: "FACE" | "EDGE"): any[];
   centroid(face: any): V3;
@@ -100,7 +103,9 @@ export function evalSheet(api: SheetApi, f: SheetFeature, doc: PartDoc, body: Na
   }
   if (f.type === "smrelief") {
     if (!body) throw new SheetError("E-SM-NOBASE", "Make a base flange first.");
-    return { body: reliefCut(api, body, sm, cornerRelief(sm, f).loops, f.id), sm };
+    const cr = cornerRelief(sm, f);
+    const out = reliefCut(api, body, sm, cr.loops, f.id);
+    return { body: out, sm };
   }
   if (f.type === "smform") {
     if (!body) throw new SheetError("E-SM-NOBASE", "Make a base flange first.");
@@ -483,7 +488,7 @@ export function flatBody(api: SheetApi, st: SheetState, fid: string, folded: Nam
   // An extruded hole's pre-pierce hole.
   for (const m of st.forms ?? []) if (m.pierce) removed.push(footprint(api, st.root, [{ ent: "f", kind: "circle", c: m.c, r: m.pierce }], st.T, `${fid}:pp`));
   if (!removed.length) return { body: out };
-  for (const r of removed) out = api.bool("cut", out, r, fid);
+  out = boolAll(api, "cut", out, removed, fid);
   return { body: out, edges: topEdges(api, out, st.root, st.T) };
 }
 
@@ -576,22 +581,9 @@ function neutralLoops(api: SheetApi, st: SheetState, b: Bend, solid: any): Seg[]
     return [b.a0[0] + t * e[0] + phi * rho * o[0], b.a0[1] + t * e[1] + phi * rho * o[1]];
   };
   const loopOf = (wire: any): Seg[] => {
-    const pts: V2[] = [];
-    const ex = new oc.BRepTools_WireExplorer_2(wire);
-    for (; ex.More(); ex.Next()) {
-      const ed = ex.Current();
-      const cu = new oc.BRepAdaptor_Curve_2(ed);
-      const u0 = cu.FirstParameter(), u1 = cu.LastParameter();
-      const n = cu.GetType() === oc.GeomAbs_CurveType.GeomAbs_Line ? 1 : 24;
-      const seq: V2[] = [];
-      for (let i = 0; i <= n; i++) { const q = cu.Value(u0 + (u1 - u0) * i / n); seq.push(flat([q.X(), q.Y(), q.Z()])); }
-      if (ed.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED) seq.reverse();
-      for (const q of seq) if (!pts.length || Math.hypot(q[0] - pts.at(-1)![0], q[1] - pts.at(-1)![1]) > 1e-7) pts.push(q);
-    }
-    if (pts.length > 1 && Math.hypot(pts[0][0] - pts.at(-1)![0], pts[0][1] - pts.at(-1)![1]) < 1e-7) pts.pop();
-    if (pts.length < 3 || Math.abs(polyArea(pts)) < 1e-9) return [];
-    const ccw = polyArea(pts) >= 0 ? pts : [...pts].reverse();
-    return ccw.map((a, i) => ({ ent: `u${i}`, kind: "line", a, b: ccw[(i + 1) % ccw.length] }) as Seg);
+    const loop = wireSegs(api, wire, q => flat([q.X(), q.Y(), q.Z()]), T * 1e-5);
+    if (!loop.length || Math.abs(loopArea(loop)) < 1e-9) return [];
+    return loopArea(loop) >= 0 ? loop : reverseLoop(loop);
   };
   const out: Seg[][] = [];
   for (const fc of api.sub(common.Shape(), "FACE")) {
@@ -983,23 +975,33 @@ const grooveOf = (api: SheetApi, g: GussetMark, fid: string) => prism3(api, g.gr
  */
 function reliefCut(api: SheetApi, body: Named, st: SheetState, loops: Seg[][], fid: string): Named {
   const T = st.T, tiny = T * T * T * 1e-6;
-  let out = body;
+  // Flat boxes first: a loop only meets the panels and bend strips its box reaches.
+  const box = (loop: Seg[]): [number, number, number, number] => {
+    const pts = loop.flatMap(sg => segPoints(sg, 16));
+    return [Math.min(...pts.map(q => q[0])), Math.min(...pts.map(q => q[1])), Math.max(...pts.map(q => q[0])), Math.max(...pts.map(q => q[1]))];
+  };
+  const meet = (a: number[], b: number[]) => a[0] <= b[2] + T && b[0] <= a[2] + T && a[1] <= b[3] + T && b[1] <= a[3] + T;
+  const panelBoxes = st.panels.map(p => box(p.outer)), bendBoxes = st.bends.map(b => box(bendStrip(b)));
+  const tools: Named[] = [];
   loops.forEach((loop, i) => {
-    for (const p of st.panels) {
+    const lb = box(loop);
+    st.panels.forEach((p, k) => {
+      if (!meet(lb, panelBoxes[k])) return;
       const tool = footprint(api, p.M, loop, T, `${fid}:r${i}:`);
       // The panel's prism a little thicker, so the piece reaches past its faces.
       const slab = prism(api, faceOf(api, p.outer, p.holes, frameOf(p.M, -T * 0.01)), applyDir(p.M, [0, 0, T * 1.02]));
       const piece = api.bool("common", tool, { shape: slab, faces: api.sub(slab, "FACE"), names: api.sub(slab, "FACE").map(() => `${fid}:s`) }, fid);
-      if (volumeOf(api, piece.shape) > tiny) out = api.bool("cut", out, piece, fid);
-    }
-    for (const b of st.bends) {
+      if (volumeOf(api, piece.shape) > tiny) tools.push(piece);
+    });
+    st.bends.forEach((b, k) => {
+      if (!meet(lb, bendBoxes[k])) return;
       const strip = stripSolid(api, b, b.M, T);
       const piece = api.bool("common", strip, footprint(api, b.M, loop, T, `${fid}:r${i}:`), fid);
-      if (volumeOf(api, piece.shape) <= tiny) continue;
-      for (const w of wrapped(api, T, b, piece, b.M, `${fid}:w${i}`)) out = api.bool("cut", out, w, fid);
-    }
+      if (volumeOf(api, piece.shape) <= tiny) return;
+      tools.push(...wrapped(api, T, b, piece, b.M, `${fid}:w${i}`));
+    });
   });
-  return out;
+  return boolAll(api, "cut", body, tools, fid);
 }
 
 /** A ruled solid through the same loop at two heights, drawn by `at(z)` (the loop at height z) in a frame. */
@@ -1076,8 +1078,22 @@ function stripSolid(api: SheetApi, b: Bend, M: Mat, T: number): Named {
 }
 
 function fuseAll(api: SheetApi, parts: Named[], fid: string): Named {
-  let out = parts[0];
-  for (const p of parts.slice(1)) out = api.bool("fuse", out, p, fid);
+  return boolAll(api, "fuse", parts[0], parts.slice(1), fid);
+}
+
+type Box = [V3, V3];
+function boxOf(api: SheetApi, shape: any, pad: number): Box {
+  const bb = new api.oc.Bnd_Box_1();
+  api.oc.BRepBndLib.Add(shape, bb, false);
+  const a = bb.CornerMin(), b = bb.CornerMax();
+  return [[a.X() - pad, a.Y() - pad, a.Z() - pad], [b.X() + pad, b.Y() + pad, b.Z() + pad]];
+}
+const boxesMeet = (p: Box, q: Box) => [0, 1, 2].every(k => p[0][k] <= q[1][k] && q[0][k] <= p[1][k]);
+
+function boolAll(api: SheetApi, kind: "fuse" | "cut", a: Named, tools: Named[], fid: string): Named {
+  if (api.boolAll) return api.boolAll(kind, a, tools, fid);
+  let out = a;
+  for (const t of tools) out = api.bool(kind, out, t, fid);
   return out;
 }
 
@@ -1104,8 +1120,15 @@ function reposition(api: SheetApi, T: number, st: SheetState, body: Named, from:
   if (Math.abs(vb - sheet) <= sheet * 1e-7) return target;
   const flatFrom = new Set(from.flat), flatTo = new Set(to.flat);
   const removed: Named[] = [];
+  // What features took out and added, each in one Boolean against the sheet as it was; the parts that a removed
+  // piece's box reaches then take their share of it.
+  const sheetWas = fuseAll(api, was.map(x => x.solid), fid);
+  const taken = api.bool("cut", sheetWas, body, `${fid}:cut`);
+  const takenBoxes = solidsOf(api, taken).filter(x => volumeOf(api, x.shape) > sheet * 1e-12).map(x => boxOf(api, x.shape, T * 1e-3));
   was.forEach((x, i) => {
-    const gone = api.bool("cut", x.solid, body, `${fid}:cut`);
+    const bx = boxOf(api, x.solid.shape, T * 1e-3);
+    if (!takenBoxes.some(q => boxesMeet(q, bx))) return;
+    const gone = api.bool("common", x.solid, taken, `${fid}:cut`);
     if (volumeOf(api, gone.shape) <= vols[i] * 1e-6) return;
     if (x.kind === "panel") { removed.push(moved(api, gone, flatTrsf(api, from.mats[x.id], to.mats[x.id]))); return; }
     const b = st.bends.find(q => q.id === x.id)!, a = from.a[b.id];
@@ -1115,11 +1138,10 @@ function reposition(api: SheetApi, T: number, st: SheetState, body: Named, from:
     else removed.push(...wrapped(api, T, { ...b, M: to.mats[a] }, gone, from.mats[a], fid));
   });
   let out = target;
-  for (const r of removed) out = api.bool("cut", out, r, fid);
+  out = boolAll(api, "cut", out, removed, fid);
   // Added material: the body less the sheet, each solid moved with the panel nearest to it.
-  let extra: Named = body;
-  for (const x of was) extra = api.bool("cut", extra, x.solid, `${fid}:add`);
-  const panels = was.filter(x => x.kind === "panel");
+  const extra = api.bool("cut", body, sheetWas, `${fid}:add`);
+  const panels = was.filter(x => x.kind === "panel"), adds: Named[] = [];
   for (const piece of solidsOf(api, extra)) {
     if (volumeOf(api, piece.shape) <= sheet * 1e-9) continue;
     let best = panels[0], bd = Infinity;
@@ -1128,27 +1150,40 @@ function reposition(api: SheetApi, T: number, st: SheetState, body: Named, from:
       const v = d.IsDone() ? d.Value() : Infinity;
       if (v < bd) { bd = v; best = p; }
     }
-    out = api.bool("fuse", out, moved(api, piece, flatTrsf(api, from.mats[best.id], to.mats[best.id])), fid);
+    adds.push(moved(api, piece, flatTrsf(api, from.mats[best.id], to.mats[best.id])));
   }
+  out = boolAll(api, "fuse", out, adds, fid);
   return out;
 }
 
-/** Points of a wire, sampled (lines exact), in the plane of M, wound as the wire runs. */
-function wirePoints(api: SheetApi, wire: any, M: Mat): V2[] {
-  const oc = api.oc, pts: V2[] = [];
-  const to2 = (q: any): V2 => { const d = sub3([q.X(), q.Y(), q.Z()], M.o); return [dot(d, M.x), dot(d, M.y)]; };
+/**
+ * A wire as fitted outline pieces (lines, arcs, splines; see fit.ts) through `map` (a 3D point to 2D), in the order
+ * and direction the wire runs, each piece starting where the one before ends.
+ */
+function wireSegs(api: SheetApi, wire: any, map: (q: any) => V2, tol: number): Seg[] {
+  const oc = api.oc, out: Seg[] = [];
   for (const ex = new oc.BRepTools_WireExplorer_2(wire); ex.More(); ex.Next()) {
     const ed = ex.Current();
     const cu = new oc.BRepAdaptor_Curve_2(ed);
     const u0 = cu.FirstParameter(), u1 = cu.LastParameter();
     const n = cu.GetType() === oc.GeomAbs_CurveType.GeomAbs_Line ? 1 : 24;
     const seq: V2[] = [];
-    for (let i = 0; i <= n; i++) seq.push(to2(cu.Value(u0 + (u1 - u0) * i / n)));
+    for (let i = 0; i <= n; i++) seq.push(map(cu.Value(u0 + (u1 - u0) * i / n)));
     if (ed.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED) seq.reverse();
-    for (const q of seq) if (!pts.length || Math.hypot(q[0] - pts.at(-1)![0], q[1] - pts.at(-1)![1]) > 1e-7) pts.push(q);
+    const len = seq.slice(1).reduce((a, q, i) => a + Math.hypot(q[0] - seq[i][0], q[1] - seq[i][1]), 0);
+    if (len <= tol) continue;
+    out.push(fitSeg(seq, tol, `w${out.length}`));
   }
-  if (pts.length > 1 && Math.hypot(pts[0][0] - pts.at(-1)![0], pts[0][1] - pts.at(-1)![1]) < 1e-7) pts.pop();
-  return pts;
+  // Pieces meet end to end, and the last one closes on the first.
+  for (let i = 1; i < out.length; i++) { const e = segEnd(out[i - 1]); if (e) out[i] = startAt(out[i], e); }
+  if (out.length > 1) { const e = segEnd(out[out.length - 1]), f = out[0]; const st = f.kind === "spline" ? f.bz[0] : f.kind === "circle" || f.kind === "ellipse" ? null : f.a; if (e && st) out[out.length - 1] = endAt(out[out.length - 1], st); }
+  return out;
+}
+
+function endAt(s: Seg, p: V2): Seg {
+  if (s.kind === "line" || s.kind === "arc" || s.kind === "earc") return { ...s, b: p };
+  if (s.kind === "spline") return { ent: s.ent, kind: "spline", bz: [...s.bz.slice(0, -1), p] };
+  return s;
 }
 
 /**
@@ -1170,12 +1205,31 @@ function wrapped(api: SheetApi, T: number, b: Bend, gone: Named, Mf: Mat, fid: s
   const R1 = Math.max(b.r - T * 0.01, T * 1e-3), R2 = b.r + T * 1.01;
   const S1 = new oc.Handle_Geom_Surface_2(new oc.Geom_CylindricalSurface_1(ax3, R1)), S2 = new oc.Handle_Geom_Surface_2(new oc.Geom_CylindricalSurface_1(ax3, R2));
   const uv = (p: V2): V2 => { const d: V2 = [p[0] - b.a0[0], p[1] - b.a0[1]]; return [(d[0] * o[0] + d[1] * o[1]) / rho, sg * (d[0] * e[0] + d[1] * e[1])]; };
-  const tool = (poly: V2[], tag: string): Named => {
-    const q = poly.map(uv);
-    const edgesOn = (S: any) => q.map((p, i) => {
-      const r = q[(i + 1) % q.length], du = r[0] - p[0], dv = r[1] - p[1];
-      const line = new oc.Handle_Geom2d_Curve_2(new oc.Geom2d_Line_3(new oc.gp_Pnt2d_3(p[0], p[1]), new oc.gp_Dir2d_4(du, dv)));
-      const ed = new oc.BRepBuilderAPI_MakeEdge_31(line, S, 0, Math.hypot(du, dv)).Edge();
+  const tool = (loop: Seg[], tag: string): Named => {
+    // The map flat → (angle, height) on the cylinders is affine, so lines stay lines and the poles of arcs
+    // (rational quadratics) and splines (cubic Béziers) map exactly.
+    const P2 = (p: V2) => { const q = uv(p); return new oc.gp_Pnt2d_3(q[0], q[1]); };
+    const curves: any[] = [];
+    for (const sg of loop) {
+      if (sg.kind === "line") {
+        const p = uv(sg.a), r = uv(sg.b), du = r[0] - p[0], dv = r[1] - p[1];
+        curves.push({ line: new oc.Handle_Geom2d_Curve_2(new oc.Geom2d_Line_3(new oc.gp_Pnt2d_3(p[0], p[1]), new oc.gp_Dir2d_4(du, dv))), len: Math.hypot(du, dv) });
+      } else if (sg.kind === "arc" || sg.kind === "circle") {
+        for (const q of arcRationals(sg)) {
+          const poles = new oc.TColgp_Array1OfPnt2d_2(1, 3), w = new oc.TColStd_Array1OfReal_2(1, 3);
+          q.poles.forEach((p, i) => { poles.SetValue(i + 1, P2(p)); w.SetValue(i + 1, q.w[i]); });
+          curves.push({ c: new oc.Handle_Geom2d_Curve_2(new oc.Geom2d_BezierCurve_2(poles, w)) });
+        }
+      } else if (sg.kind === "spline") {
+        for (let k = 0; k + 3 < sg.bz.length; k += 3) {
+          const poles = new oc.TColgp_Array1OfPnt2d_2(1, 4);
+          sg.bz.slice(k, k + 4).forEach((p, i) => poles.SetValue(i + 1, P2(p)));
+          curves.push({ c: new oc.Handle_Geom2d_Curve_2(new oc.Geom2d_BezierCurve_1(poles)) });
+        }
+      }
+    }
+    const edgesOn = (S: any) => curves.map(x => {
+      const ed = x.line ? new oc.BRepBuilderAPI_MakeEdge_31(x.line, S, 0, x.len).Edge() : new oc.BRepBuilderAPI_MakeEdge_30(x.c, S).Edge();
       oc.BRepLib.BuildCurves3d_2(ed);
       return ed;
     });
@@ -1199,14 +1253,15 @@ function wrapped(api: SheetApi, T: number, b: Bend, gone: Named, Mf: Mat, fid: s
   for (const fc of api.sub(gone.shape, "FACE")) {
     if (Math.abs(dot(sub3(api.centroid(fc), Mf.o), Mf.z) - T) > T * 1e-3) continue;
     const outerW = oc.BRepTools.OuterWire(fc);
-    const outer = wirePoints(api, outerW, Mf);
-    if (outer.length < 3 || Math.abs(polyArea(outer)) < 1e-9) continue;
+    const to2 = (q: any): V2 => { const d = sub3([q.X(), q.Y(), q.Z()], Mf.o); return [dot(d, Mf.x), dot(d, Mf.y)]; };
+    const outer = wireSegs(api, outerW, to2, T * 1e-5);
+    if (!outer.length || Math.abs(loopArea(outer)) < 1e-9) continue;
     let t = tool(outer, `w${k++}:`);
     for (const ex = new oc.TopExp_Explorer_2(fc, oc.TopAbs_ShapeEnum.TopAbs_WIRE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE); ex.More(); ex.Next()) {
       const w = oc.TopoDS.Wire_1(ex.Current());
       if (w.IsSame(outerW)) continue;
-      const h = wirePoints(api, w, Mf);
-      if (h.length >= 3 && Math.abs(polyArea(h)) > 1e-9) t = api.bool("cut", t, tool(h, `w${k++}:`), fid);
+      const h = wireSegs(api, w, to2, T * 1e-5);
+      if (h.length && Math.abs(loopArea(h)) > 1e-9) t = api.bool("cut", t, tool(h, `w${k++}:`), fid);
     }
     out.push(t);
   }

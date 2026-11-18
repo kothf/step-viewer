@@ -13,10 +13,12 @@ export const storage = {
 // ---------- toasts ----------
 
 export type ToastKind = "info" | "success" | "warn" | "error";
-/** Info and success toasts dismiss themselves after this many ms; warnings and errors stay until closed. */
+/** Info and success toasts dismiss themselves after this many ms. */
 export const TOAST_MS = 4000;
-/** Warnings stay longer than information, but fade too (weldments exam #9: a warning sat over the view for two hours); errors stay until dismissed. */
+/** Warnings stay longer than information, but fade too (weldments exam #9: a warning sat over the view for two hours). */
 export const WARN_MS = 10000;
+/** Errors fade last (sheet metal exam #2: errors piled up until closed one by one). */
+export const ERROR_MS = 20000;
 const MAX_TOASTS = 4;
 
 /** Shows a non-blocking notification in the bottom-right stack. */
@@ -34,8 +36,11 @@ export function toast(msg: string, kind: ToastKind | boolean = "info") {
   el.innerHTML = `<span class="msg">${esc(msg)}</span><button class="x" aria-label="Dismiss notification" title="Dismiss">✕</button>`;
   el.querySelector(".x")!.addEventListener("click", () => el.remove());
   host.appendChild(el);
-  if (k === "info" || k === "success") window.setTimeout(() => el.remove(), TOAST_MS);
-  else if (k === "warn") window.setTimeout(() => el.remove(), WARN_MS);
+  // Each toast goes by itself, but not while the pointer is on it.
+  let hover = false, due = false;
+  el.addEventListener("pointerenter", () => { hover = true; });
+  el.addEventListener("pointerleave", () => { hover = false; if (due) el.remove(); });
+  window.setTimeout(() => { due = true; if (!hover) el.remove(); }, k === "info" || k === "success" ? TOAST_MS : k === "warn" ? WARN_MS : ERROR_MS);
   const all = host.querySelectorAll(".toast");
   for (let i = 0; i < all.length - MAX_TOASTS; i++) all[i].remove();
 }

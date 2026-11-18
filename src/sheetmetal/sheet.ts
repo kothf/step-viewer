@@ -1895,7 +1895,6 @@ export function bendOfFace(st: SheetState, name: string): Bend | undefined {
 export function unfoldSheet(st: SheetState, f: SmUnfoldFeature): { state: SheetState; from: SheetPlace; to: SheetPlace } {
   if (st.faceted) throw new SheetError("E-SM-UNFOLDLOFT", "A lofted bend can't be unfolded; use the Flat-Pattern.");
   if (!st.bends.length) throw new SheetError("E-SM-NOBENDS", "The sheet has no bends to unfold.");
-  if (st.gussets?.length) throw new SheetError("E-SM-UNFOLDGUSSET", "Bends with gussets can't be unfolded; use the Flat-Pattern.");
   const from = sheetPlace(st);
   const ids = new Set(st.bends.map(b => b.id));
   for (const b of f.bends) if (!ids.has(b)) throw new SheetError("E-SM-UNFOLDBEND", "A picked bend no longer exists.");
@@ -1916,6 +1915,7 @@ export function unfoldSheet(st: SheetState, f: SmUnfoldFeature): { state: SheetS
     const back = new Set(f.bends.length ? f.bends : [...now]);
     flat = [...now].filter(b => !back.has(b));
   }
+  if (st.gussets?.some(g => flat.includes(g.bend))) throw new SheetError("E-SM-UNFOLDGUSSET", "Bends with gussets can't be unfolded; use the Flat-Pattern.");
   const anchor = from.mats[fixed] ?? st.panels[0].M;
   const to = placeSheet(st, fixed, anchor, flat);
   const home = st.panels.find(p => p.id === fixed)!;
