@@ -186,11 +186,11 @@ export class Snapper {
       if (SNAP_FILTERS.edge) {
         // Closest point of each visible stretch of the edge to the cursor ray: a part-hidden
         // edge (a circle half behind its cylinder) snaps on the half that shows.
-        const off = part.group.position;
+        const M = v.placing(part);
         const segs: { d: number; p: THREE.Vector3 }[] = [];
         for (let i = 3; i < e.pts.length; i += 3) {
-          this.tmpA.set(e.pts[i - 3], e.pts[i - 2], e.pts[i - 1]).add(off);
-          this.tmpB.set(e.pts[i], e.pts[i + 1], e.pts[i + 2]).add(off);
+          this.tmpA.set(e.pts[i - 3], e.pts[i - 2], e.pts[i - 1]).applyMatrix4(M);
+          this.tmpB.set(e.pts[i], e.pts[i + 1], e.pts[i + 2]).applyMatrix4(M);
           const seg = new THREE.Vector3();
           const d = ray.distanceSqToSegment(this.tmpA, this.tmpB, undefined, seg);
           segs.push({ d, p: seg });
@@ -327,11 +327,12 @@ export class Snapper {
     return best;
   }
 
+  /** The face's normal where it is shown (the hit's normal is in the part's own coordinates, like the face's). */
   private faceNormal(part: Part, face: FaceInfo, hit: THREE.Intersection) {
-    if (face.type === "plane" && face.normal) return new THREE.Vector3(...face.normal);
+    if (face.type === "plane" && face.normal) return this.viewer.dirToWorld(part, face.normal);
     const n = (hit as any).normal as THREE.Vector3 | undefined;
-    if (n) return n.clone().normalize();
-    return hit.face ? hit.face.normal.clone() : new THREE.Vector3(0, 0, 1);
+    if (n) return this.viewer.dirToWorld(part, n);
+    return hit.face ? this.viewer.dirToWorld(part, hit.face.normal) : new THREE.Vector3(0, 0, 1);
   }
 
   /** Keeps the current snap unless the new one is clearly closer, so markers do not flicker. */

@@ -39,6 +39,8 @@ function exportScene(v: Viewer) {
       const m = new THREE.Mesh(geo, mat);
       m.name = p.data.name;
       m.position.copy(p.group.position);
+      m.quaternion.copy(p.group.quaternion);
+      m.scale.copy(p.group.scale);
       g.add(m);
     }
     n.children.forEach(c => build(c, g));

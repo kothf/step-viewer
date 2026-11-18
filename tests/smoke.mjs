@@ -9018,9 +9018,46 @@ try {
       return out;
     });
     check(!oneClick.panel && oneClick.key && oneClick.value === 10 && oneClick.holds === true, `motion 1.573: ✓ works on the first click after typing; the study holds drags of mated parts (${JSON.stringify(oneClick)})`);
+    // 1.575: a Concentric mate's value result plots its angle; quick changes of one property make one undo step; downloads
+    // are named after the assembly file.
+    const small = await mp.evaluate(() => {
+      const m = window.__sv.motion, a = window.__sv.asm;
+      m.addMatePlot("mc");
+      const tr = m.study.traces.find(x => x.mate === "mc"), plot = tr.plot;
+      m.deleteTrace(tr.id);
+      const n0 = a.undoStack.length, d0 = a.doc.motions[0].duration;
+      a.changeMotions(d => { d.motions[0].duration = d0 + 1; }, "x:duration");
+      a.changeMotions(d => { d.motions[0].duration = d0 + 2; }, "x:duration");
+      const merged = a.undoStack.length - n0;
+      a.changeMotions(d => { d.motions[0].fps = d.motions[0].fps + 1; }, "x:fps");
+      const apart = a.undoStack.length - n0;
+      a.undo(); a.undo();
+      return { plot, merged, apart, back: a.doc.motions[0].duration === d0, stem: a.fileStem() };
+    });
+    check(small.plot === "angle" && small.merged === 1 && small.apart === 2 && small.back && !/\.mcadasm$/.test(small.stem), `motion 1.575: Concentric value plots the angle; one property changed twice in a row is one undo step (${JSON.stringify(small)})`);
     // A 60 rpm rotary motor on Concentric1: half a turn at 0.5 s.
     await mp.evaluate(() => { const m = window.__sv.motion; m.addTrack("motor:mc"); m.edit(s => { const k = s.tracks.find(x => x.kind === "motor"); k.speed = 60; }); m.seek(0.5); });
     const turn = await pos();
+    // 1.575 (engine motion test): a part the study turns is measured and highlighted where it is shown (overlays and
+    // Smart measure used to take only the part's position, so a turned part's face showed and measured elsewhere).
+    const turned = await mp.evaluate(() => {
+      const { viewer: v, setTool, handlePick, hl, state } = window.__sv;
+      const p = v.parts.find(q => q.group.visible && Math.abs(q.group.quaternion.w) < 0.99);
+      if (!p) return { none: true };
+      const f = p.data.faces.find(x => x.type === "plane" && Math.abs(x.normal[0]) + Math.abs(x.normal[2]) > 0.5) ?? p.data.faces.find(x => x.type === "plane");
+      p.mesh.updateWorldMatrix(true, false);
+      const want = new p.mesh.position.constructor(...f.centroid).applyMatrix4(p.mesh.matrixWorld);
+      const n = new p.mesh.position.constructor(...f.normal).transformDirection(p.mesh.matrixWorld);
+      setTool("select");
+      handlePick({ kind: "onFace", point: want.clone(), part: p, face: f, normal: n, px: 0 });
+      hl.selFace.updateWorldMatrix(true, false);
+      const shown = new p.mesh.position.constructor(...f.centroid).applyMatrix4(hl.selFace.matrixWorld);
+      const rows = [...document.querySelectorAll("#readout tr, #readout .row")].map(r => r.textContent).join(" | ");
+      const out = { overlay: shown.distanceTo(want), toWorld: v.toWorld(p, f.centroid).distanceTo(want), dir: v.dirToWorld(p, f.normal).distanceTo(n), live: !!state.live, rows: rows.slice(0, 200) };
+      handlePick(null);
+      return out;
+    });
+    check(!turned.none && turned.overlay < 1e-6 && turned.toWorld < 1e-6 && turned.dir < 1e-9 && turned.live, `motion 1.575: a part turned by the study is highlighted and measured where it is shown (${JSON.stringify(turned)})`);
     // 1.330 (exam #60): Play with frames still to solve calculates them first (yielding, progress in the bar), then plays.
     const calc = await mp.evaluate(async () => {
       const m = window.__sv.motion;

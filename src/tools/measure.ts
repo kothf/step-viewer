@@ -162,9 +162,8 @@ function closestPointEntity(v: Viewer, p: THREE.Vector3, e: Entity): Closest {
     }
     return best;
   }
-  const off = e.part.group.position;
-  const hit = faceBvh(e.part, e.face!).closestPointToPoint(p.clone().sub(off));
-  return { d: hit!.distance, a: p.clone(), b: hit!.point.clone().add(off) };
+  const hit = faceBvh(e.part, e.face!).closestPointToPoint(v.toPart(e.part, p));
+  return { d: hit!.distance, a: p.clone(), b: v.toWorld(e.part, hit!.point) };
 }
 
 function boxGap(a: THREE.Box3, b: THREE.Box3) {
@@ -182,20 +181,20 @@ export function shortestDistance(v: Viewer, A: Entity, B: Entity): Closest {
 
   if (A.kind === "face" && B.kind === "face") {
     const fa = A.face!, fb = B.face!;
-    const offA = A.part.group.position, offB = B.part.group.position;
+    const MA = v.placing(A.part).clone();
     const bvhA = faceBvh(A.part, fa), bvhB = faceBvh(B.part, fb);
-    const m = new THREE.Matrix4().makeTranslation(offB.x - offA.x, offB.y - offA.y, offB.z - offA.z);
+    const m = MA.clone().invert().multiply(v.placing(B.part));
     const t1 = { point: new THREE.Vector3(), distance: 0, faceIndex: 0 } as HitPointInfo;
     const t2 = { point: new THREE.Vector3(), distance: 0, faceIndex: 0 } as HitPointInfo;
     // Parallel planes: the plane gap is exact, but it is the distance between the
     // faces only where they overlap seen along the normal; otherwise the faces are further apart.
-    const na = fa.type === "plane" && fb.type === "plane" ? V(fa.normal!) : null;
-    const parallel = !!na && Math.abs(na.dot(V(fb.normal!))) > 1 - 1e-9;
+    const na = fa.type === "plane" && fb.type === "plane" ? v.dirToWorld(A.part, fa.normal!) : null;
+    const parallel = !!na && Math.abs(na.dot(v.dirToWorld(B.part, fb.normal!))) > 1 - 1e-9;
     const gap = parallel ? Math.abs(v.toWorld(B.part, fb.centroid).sub(v.toWorld(A.part, fa.centroid)).dot(na!)) : 0;
     const gapTol = 1e-6 * (1 + gap);
     // Stop at the first triangle pair at the plane gap: nothing can be closer.
     bvhA.closestPointToGeometry(bvhB.geometry, m, t1, t2, parallel ? gap + gapTol : 0);
-    const mesh: Closest = { d: t1.distance, a: t1.point.clone().add(offA), b: t2.point.clone().applyMatrix4(m).add(offA) };
+    const mesh: Closest = { d: t1.distance, a: t1.point.clone().applyMatrix4(MA), b: t2.point.clone().applyMatrix4(m).applyMatrix4(MA) };
     if (na && parallel) {
       if (mesh.d <= gap + gapTol) {
         const d = mesh.b.clone().sub(mesh.a).dot(na);
@@ -220,11 +219,11 @@ export function shortestDistance(v: Viewer, A: Entity, B: Entity): Closest {
   // edge - face
   const [E, F, flip] = A.kind === "edge" ? [A, B, false] : [B, A, true];
   // Walk the face's BVH per edge segment, nearest boxes first, so big faces stay fast.
-  const off = F.part.group.position, bvh = faceBvh(F.part, F.face!);
+  const bvh = faceBvh(F.part, F.face!);
   let best: Closest = { d: Infinity, a: new THREE.Vector3(), b: new THREE.Vector3() };
   const t1 = new THREE.Vector3(), t2 = new THREE.Vector3(), seg = new THREE.Line3(), segBox = new THREE.Box3();
   for (const [p, q] of edgeSegments(v, E)) {
-    seg.set(p.clone().sub(off), q.clone().sub(off));
+    seg.set(v.toPart(F.part, p), v.toPart(F.part, q));
     segBox.makeEmpty().expandByPoint(seg.start).expandByPoint(seg.end);
     bvh.shapecast({
       // Box-to-box distance never exceeds box-to-segment distance, so it is a safe lower bound.
@@ -232,7 +231,7 @@ export function shortestDistance(v: Viewer, A: Entity, B: Entity): Closest {
       intersectsBounds: (_box, _leaf, score) => score! < best.d,
       intersectsTriangle: (tri: ExtendedTriangle) => {
         const d = tri.closestPointToSegment(seg, t1, t2);
-        if (d < best.d) best = { d, a: t2.clone().add(off), b: t1.clone().add(off) };
+        if (d < best.d) best = { d, a: v.toWorld(F.part, t2), b: v.toWorld(F.part, t1) };
         return false;
       },
     });
@@ -245,9 +244,9 @@ export function shortestDistance(v: Viewer, A: Entity, B: Entity): Closest {
 interface Circleish { center: THREE.Vector3; axis?: THREE.Vector3; radius?: number }
 
 function circleOf(v: Viewer, e: Entity): Circleish | null {
-  if (e.kind === "edge" && e.edge!.center) return { center: v.toWorld(e.part, e.edge!.center), axis: V(e.edge!.axis!), radius: e.edge!.radius };
+  if (e.kind === "edge" && e.edge!.center) return { center: v.toWorld(e.part, e.edge!.center), axis: v.dirToWorld(e.part, e.edge!.axis!), radius: e.edge!.radius };
   if (e.kind === "face" && e.face!.type === "cylinder") {
-    const f = e.face!, axis = V(f.axis!), c = v.toWorld(e.part, f.center);
+    const f = e.face!, axis = v.dirToWorld(e.part, f.axis!), c = v.toWorld(e.part, f.center);
     // Centre on the axis level with the pick, so pitch lines sit at the hole.
     return { center: c.clone().addScaledVector(axis, e.point.clone().sub(c).dot(axis)), axis, radius: f.radius };
   }
@@ -255,7 +254,7 @@ function circleOf(v: Viewer, e: Entity): Circleish | null {
   if (e.kind === "face" && e.face!.type === "plane") {
     // A disc, boss top or hole rim: a planar face bounded by a circle acts as that circle.
     const best = faceCircle(e.part, e.face!);
-    if (best) return { center: v.toWorld(e.part, best.center!), axis: V(e.face!.normal!), radius: best.radius };
+    if (best) return { center: v.toWorld(e.part, best.center!), axis: v.dirToWorld(e.part, e.face!.normal!), radius: best.radius };
   }
   return null;
 }
@@ -293,17 +292,17 @@ function closesCircle(part: Part, ed: EdgeInfo) {
     Math.abs(c.radius! - ed.radius!) < 0.02 * Math.max(1, ed.radius!) && V(c.center!).distanceTo(V(ed.center!)) < 0.02 * Math.max(1, ed.radius!)));
 }
 
-function directionOf(e: Entity): { v: THREE.Vector3; kind: "line" | "plane" } | null {
+function directionOf(v: Viewer, e: Entity): { v: THREE.Vector3; kind: "line" | "plane" } | null {
   if (e.kind === "edge") {
     const ed = e.edge!;
-    if (ed.type === "line") return { v: V(ed.dir!), kind: "line" };
-    if (ed.axis) return { v: V(ed.axis), kind: "line" };
+    if (ed.type === "line") return { v: v.dirToWorld(e.part, ed.dir!), kind: "line" };
+    if (ed.axis) return { v: v.dirToWorld(e.part, ed.axis), kind: "line" };
     return null;
   }
   if (e.kind === "face") {
     const f = e.face!;
-    if (f.type === "plane") return { v: V(f.normal!), kind: "plane" };
-    if (f.type === "cylinder") return { v: V(f.axis!), kind: "line" };
+    if (f.type === "plane") return { v: v.dirToWorld(e.part, f.normal!), kind: "plane" };
+    if (f.type === "cylinder") return { v: v.dirToWorld(e.part, f.axis!), kind: "line" };
     if (e.normal) return { v: e.normal.clone(), kind: "plane" };
   }
   return null;
@@ -339,7 +338,7 @@ export function measure(v: Viewer, type: MeasureType, picks: Entity[], color: st
       return base(type, ang, color, [a, o, b], [[0, 1], [1, 2]], at, { supplement: Math.PI - ang });
     }
     case "angle": {
-      const da = directionOf(picks[0]), db = directionOf(picks[1]);
+      const da = directionOf(v, picks[0]), db = directionOf(v, picks[1]);
       if (!da || !db) throw new MeasureError("Pick straight edges, planar faces or cylinders (axis).");
       let ang = da.v.angleTo(db.v), label = "between normals";
       if (da.kind === "line" && db.kind === "line") { ang = Math.min(ang, Math.PI - ang); label = "between lines"; }
@@ -588,7 +587,7 @@ function smartSingle(v: Viewer, e: Entity, color: string): Measurement {
     const geo = measure(v, "arcLength", [e], color);
     const a = v.toWorld(e.part, ed.start), b = v.toWorld(e.part, ed.end);
     const rows: Row[] = ed.type === "line"
-      ? [...deltas(a, b), ["Direction", "dir", ed.dir!], ["Midpoint", "pos", v3(v.toWorld(e.part, ed.mid))]]
+      ? [...deltas(a, b), ["Direction", "dir", v3(v.dirToWorld(e.part, ed.dir!))], ["Midpoint", "pos", v3(v.toWorld(e.part, ed.mid))]]
       : [["Chord", "len", a.distanceTo(b)]];
     return smart(geo, ed.type === "line" ? "Edge length" : ed.ellipse ? "Ellipse length" : "Curve length", ed.length, "len", rows);
   }
@@ -600,13 +599,13 @@ function smartSingle(v: Viewer, e: Entity, color: string): Measurement {
       const [lo, hi] = axialExtent(e.part, f, f.center, f.axis!);
       rows.push(["Length", "len", hi - lo], ["Axis", "dir", v3(c.axis!)], ["Axis point", "pos", v3(v.toWorld(e.part, f.center))]);
     } else rows.push(["Centre", "pos", v3(c.center)]);
-    if (f.type === "plane") rows.push(["Perimeter", "len", facePerimeter(e.part, f)], ["Normal", "dir", f.normal!]);
+    if (f.type === "plane") rows.push(["Perimeter", "len", facePerimeter(e.part, f)], ["Normal", "dir", v3(v.dirToWorld(e.part, f.normal!))]);
     const title = f.type === "cylinder" ? "Cylinder" : f.type === "sphere" ? "Sphere" : "Circular face";
     return smart(measure(v, "diameter", [e], color), title, c.radius! * 2, "len", rows, f.type === "sphere" ? "SØ " : "Ø ");
   }
   const geo = measure(v, "point", [e], color);
   if (f.type === "plane") {
-    const rows: Row[] = [["Perimeter", "len", facePerimeter(e.part, f)], ["Normal", "dir", f.normal!], ["Centroid", "pos", v3(v.toWorld(e.part, f.centroid))], ["Point", "pos", v3(e.point)]];
+    const rows: Row[] = [["Perimeter", "len", facePerimeter(e.part, f)], ["Normal", "dir", v3(v.dirToWorld(e.part, f.normal!))], ["Centroid", "pos", v3(v.toWorld(e.part, f.centroid))], ["Point", "pos", v3(e.point)]];
     return smart(geo, "Planar face", f.area, "area", rows);
   }
   const rows: Row[] = [];
@@ -685,7 +684,7 @@ function smartPair(v: Viewer, A: Entity, B: Entity, color: string, opts: SmartOp
   const other = pt === A ? B : A;
   if (pt && other.kind === "edge" && other.edge!.type === "line") {
     const ed = other.edge!;
-    const p0 = v.toWorld(other.part, ed.start), p1 = v.toWorld(other.part, ed.end), dir = V(ed.dir!);
+    const p0 = v.toWorld(other.part, ed.start), p1 = v.toWorld(other.part, ed.end), dir = v.dirToWorld(other.part, ed.dir!);
     const t = pt.point.clone().sub(p0).dot(dir), edgeLen = p0.distanceTo(p1);
     const foot = p0.clone().addScaledVector(dir, t);
     const onEdge = t >= -tol && t <= edgeLen + tol;
@@ -698,7 +697,7 @@ function smartPair(v: Viewer, A: Entity, B: Entity, color: string, opts: SmartOp
     return smart(geo, "Point to line", d, "len", rows, "", legs(pt.point, foot));
   }
   if (pt && other.kind === "face" && other.face!.type === "plane") {
-    const n = V(other.face!.normal!);
+    const n = v.dirToWorld(other.part, other.face!.normal!);
     const d = pt.point.clone().sub(other.point).dot(n);
     const foot = pt.point.clone().addScaledVector(n, -d);
     const rows: Row[] = [["Foot on plane", "pos", v3(foot)]];
@@ -713,7 +712,7 @@ function smartPair(v: Viewer, A: Entity, B: Entity, color: string, opts: SmartOp
     const { c, e, o } = circ;
     const isCylinder = e.kind === "face" && e.face!.type === "cylinder";
     if (o.kind === "face" && o.face!.type === "plane") {
-      const n = V(o.face!.normal!);
+      const n = v.dirToWorld(o.part, o.face!.normal!);
       const cos = c.axis ? Math.abs(c.axis.dot(n)) : 0;
       // Axis along the face: centre to face. Axis square to it: the circle's depth (a cylinder has no single centre there).
       if (cos < 1e-6 || (cos > 1 - 1e-6 && !isCylinder)) {
@@ -723,7 +722,7 @@ function smartPair(v: Viewer, A: Entity, B: Entity, color: string, opts: SmartOp
         return smart(line(c.center, foot), cos < 1e-6 ? "Centre to face" : "Circle to face", Math.abs(d), "len", rows, "", legs(c.center, foot));
       }
     } else if (o.kind === "edge" && o.edge!.type === "line") {
-      const p0 = v.toWorld(o.part, o.edge!.start), dir = V(o.edge!.dir!);
+      const p0 = v.toWorld(o.part, o.edge!.start), dir = v.dirToWorld(o.part, o.edge!.dir!);
       const w = c.center.clone().sub(p0);
       const foot = p0.clone().addScaledVector(dir, w.dot(dir));
       const rows: Row[] = [["Ø", "len", (c.radius ?? 0) * 2], gapRow, names];
@@ -731,7 +730,7 @@ function smartPair(v: Viewer, A: Entity, B: Entity, color: string, opts: SmartOp
     }
   }
 
-  const da = directionOf(A), db = directionOf(B);
+  const da = directionOf(v, A), db = directionOf(v, B);
   const lineEdge = (e: Entity) => e.kind === "edge" && e.edge!.type === "line";
   if (da && db) {
     const raw = da.v.angleTo(db.v), acute = Math.min(raw, Math.PI - raw);
