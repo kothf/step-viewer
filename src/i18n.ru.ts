@@ -693,6 +693,7 @@ export const RU: Record<string, string> = {
   "Feature tree": "Дерево элементов",
   "Modelling commands": "Команды моделирования",
   "Rebuilding…": "Перестроение…",
+  "Rebuilding… {name} ({n} of {m})": "Перестроение… {name} ({n} из {m})",
   "Cancel (Esc)": "Отмена (Esc)",
   "OK (Enter)": "ОК (Enter)",
   "OK": "ОК",

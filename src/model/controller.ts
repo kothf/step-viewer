@@ -545,6 +545,12 @@ export class ModelController {
   private lineMats: LineMaterial[] = [];
   private down: { x: number; y: number } | null = null;
   private busyCount = 0;
+  /** The last whole model shown, and whether the view now shows a rolled-back one (a sketch being edited): while the
+   *  rebuild after it runs, the old model stays on screen greyed (exam #16). */
+  private fullData: PartData | null = null;
+  private shownRolled = false;
+  private rebuildGen = 0;
+  private staleTimer = 0;
   private rebuildMs = 0;
   /** Undo mark taken when a sketch was opened: leaving it merges its steps (FR-UND-003). */
   private sketchMark = 0;
@@ -558,6 +564,7 @@ export class ModelController {
   constructor(private host: ModelHost, occtBase: string) {
     this.kernel = new ModelKernel(occtBase);
     document.getElementById("ft-search")?.addEventListener("input", () => this.renderTree());
+    this.kernel.onProgress = p => this.showProgress(p.i, p.of, p.name);
     this.kernel.onCrash = () => toast(t("The geometry kernel stopped; it was restarted."), "warn");
     // A result shown from the disk cache that the kernel's own build did not match (it never should): build again.
     this.kernel.onStale = () => void this.rebuild();
@@ -830,10 +837,23 @@ export class ModelController {
     const m = this.mode;
     const d = m.kind === "feature" ? m.draft : null;
     const previewAt = m.kind === "feature" && d && (((d.type === "fillet" || d.type === "chamfer") && roundReady(d)) || ((d.type === "smconvert" || d.type === "sminsert") && !!d.face.name) || ((d.type === "extrude" || d.type === "revolve" || d.type === "sweep" || d.type === "loft") && d.op === "cut")) ? m.index : undefined;
+    const gen = ++this.rebuildGen;
+    const rolled = m.kind === "sketch" || m.kind === "plane";
+    clearTimeout(this.staleTimer);
+    if (m.kind === "none" && this.shownRolled && this.fullData && !quiet) {
+      // Leaving a sketch of a slow part: show the model as it was, greyed, until the new one comes (exam #16).
+      const old = this.fullData;
+      this.staleTimer = window.setTimeout(() => { if (gen === this.rebuildGen && this.store) { this.host.show(old, this.doc.name, false); this.setStale(true); } }, 250);
+    }
     const r = await this.kernel.rebuild(doc, doc.color ?? DEFAULT_COLOR, qualityFactor(getPref("quality")), previewAt, getPref("verify"));
     if (!quiet) this.setBusy(-1);
+    if (gen === this.rebuildGen) { clearTimeout(this.staleTimer); if (r) this.setStale(false); }
     if (!r || !this.store) return;
     this.last = r;
+    if (gen === this.rebuildGen) {
+      this.shownRolled = rolled;
+      if (m.kind === "none" && !this.instantDoc) this.fullData = r.data;
+    }
     this.multi = null;
     this.followEdges(r);
     this.rebuildMs = r.ms.eval + r.ms.mesh;
@@ -911,7 +931,22 @@ export class ModelController {
 
   private setBusy(d: number) {
     this.busyCount += d;
-    $("#mc-busy").hidden = this.busyCount <= 0;
+    const el = $("#mc-busy");
+    el.hidden = this.busyCount <= 0;
+    if (el.hidden) { el.textContent = t("Rebuilding…"); el.style.removeProperty("--p"); }
+  }
+
+  /** "Rebuilding… Trim/Extend3 (12 of 33)" with a bar under it, while a long rebuild runs (exam #16). */
+  private showProgress(i: number, of: number, name: string) {
+    const el = $("#mc-busy");
+    if (el.hidden) return;
+    el.textContent = t("Rebuilding… {name} ({n} of {m})", { name: featureLabel(name), n: i + 1, m: of });
+    el.style.setProperty("--p", `${Math.round((i / Math.max(1, of)) * 100)}%`);
+  }
+
+  /** The view shows the model from before the change while it rebuilds. */
+  private setStale(on: boolean) {
+    this.host.viewer.renderer.domElement.classList.toggle("mc-stale", on);
   }
 
   /** World frame of a sketch: standard planes are fixed, face sketches come from the last rebuild. */
