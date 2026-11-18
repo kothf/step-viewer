@@ -12272,9 +12272,10 @@ try {
     await mp.mouse.move(ex2, ey2); await mp.mouse.click(ex2, ey2);
     const [px, py] = await scr([0, -20, 20]);
     await mp.mouse.move(px, py); await mp.mouse.click(px, py);
-    await mp.waitForTimeout(200);
-    // The edge's copy is fixed, so the dimension would over define the sketch: since 1.586 that asks first.
+    // The edge's copy is fixed, so the dimension would over define the sketch: since 1.587 that asks first.
+    await mp.waitForFunction(() => document.querySelector("dialog.choose-dlg[open]") || window.__sv.model.editor().sk.dims.length > 0, null, { timeout: 5000 }).catch(() => {});
     if (await mp.$("dialog.choose-dlg[open]")) await mp.click('dialog.choose-dlg [data-choose="driven"]');
+    await mp.waitForTimeout(200);
     await mp.evaluate(() => window.__sv.model.editor().closeInput(false));
     const dm = await mp.evaluate(() => { const s = window.__sv.model.editor().sk; return { dims: s.dims.length, ext: s.rels.filter(r => r.ext).length, cons: s.ents.filter(e => e.cons).length }; });
     await mp.evaluate(() => window.__sv.modeller.ok());
