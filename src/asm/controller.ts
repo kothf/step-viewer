@@ -111,7 +111,7 @@ export class AsmController {
   private again = false;
   private gen = 0;
   private first = true;
-  private drag: { id: string; idx: number; plane: THREE.Plane; start: THREE.Vector3; delta: THREE.Vector3; moved: boolean; mated: boolean; result?: Record<string, Tf>; touching?: Set<string>; stopped?: boolean; grab?: MateRef; axis?: { o: V3; u: V3 } | null } | null = null;
+  private drag: { id: string; idx: number; plane: THREE.Plane; start: THREE.Vector3; delta: THREE.Vector3; moved: boolean; mated: boolean; result?: Record<string, Tf>; frame?: Record<string, Tf> | null; touching?: Set<string>; stopped?: boolean; grab?: MateRef; axis?: { o: V3; u: V3 } | null } | null = null;
   /** Collision detection while dragging (FR-MATE-002): the drag stops where a component would enter another. */
   collide = (() => { try { return localStorage.getItem("mc:asmCollide") === "1"; } catch { return false; } })();
   /** Mate geometry of each part's faces, in part coordinates, learnt from the shown meshes (by part key, face name). */
@@ -2950,7 +2950,9 @@ export class AsmController {
       const n = this.host.viewer.camera.getWorldDirection(new THREE.Vector3());
       const p = new THREE.Vector3(...hit.point);
       const mated = this.mateLive(id);
-      this.drag = { id, idx: hit.idx, plane: new THREE.Plane().setFromNormalAndCoplanarPoint(n, p), start: p, delta: new THREE.Vector3(), moved: false, mated, axis: mated ? this.dragAxis(id) : null, ...(this.collide ? { touching: this.clashes() } : {}) };
+      // Motion study with Autokey: the drag starts where the study shows the component and ends as a placement key.
+      const frame = mated ? null : this.motion?.dragFrom?.(id) ?? null;
+      this.drag = { id, idx: hit.idx, frame, plane: new THREE.Plane().setFromNormalAndCoplanarPoint(n, p), start: p, delta: new THREE.Vector3(), moved: false, mated, axis: mated ? this.dragAxis(id) : null, ...(this.collide ? { touching: this.clashes() } : {}) };
       // Alt-drag (FR-MATE-007): the grabbed face is mated to the face it is dropped on.
       const face = this.faceNames[hit.idx]?.[hit.face], own = this.shownIds[hit.idx];
       if (e.altKey && face && own === id && this.geo.get(c.part)?.get(face)) this.drag.grab = { comp: id, face };
@@ -2979,8 +2981,8 @@ export class AsmController {
       const doc = this.doc;
       const at = (delta: THREE.Vector3): Record<string, Tf> | null => {
         const tfs: Record<string, Tf> = {};
-        for (const x of doc.components) tfs[x.id] = x.tf;
-        tfs[d.id] = compose(translation([delta.x, delta.y, delta.z]), c.tf);
+        for (const x of doc.components) tfs[x.id] = d.frame?.[x.id] ?? x.tf;
+        tfs[d.id] = compose(translation([delta.x, delta.y, delta.z]), d.frame?.[d.id] ?? c.tf);
         // A mated component moves only where its mates let it (FR-MATE-001): solved from the dragged position.
         if (!d.mated) return tfs;
         const r = this.solveDoc(doc, [], tfs, false);
@@ -3049,6 +3051,10 @@ export class AsmController {
       e.stopPropagation();
       this.drag = null;
       // A fully constrained component snaps back where it was: no undo step, nothing modified.
+      if (d.frame) {
+        if (d.moved && d.result?.[d.id] && !this.motion?.dragged?.(d.id, d.result[d.id])) this.motion?.rebuilt();
+        return;
+      }
       const res0 = d.result, still = !!res0 && (this.doc?.components ?? []).every(c => !res0[c.id] || res0[c.id].every((v, i) => Math.abs(v - c.tf[i]) < 1e-9 * (i % 4 === 3 ? 1 + this.size() : 1)));
       if (!d.moved || !d.result || (still && !d.grab)) { if (still) this.previewTfs(this.shownTf); this.renderTree(); this.renderBar(); return; }
       if (d.grab && this.inferMate(d.grab, ray(e), d.result)) return;
@@ -3515,7 +3521,13 @@ export class AsmController {
   // ---------- motion studies (FR-FT-122): the API src/motion uses ----------
 
   /** The motion manager: opened from the bar, told when the document is rebuilt, replaced or closed. */
-  motion: { open(): void; rebuilt(): void; close(): void } | null = null;
+  motion: {
+    open(): void; rebuilt(): void; close(): void;
+    /** Autokey: the component transforms shown now when a drag of `id` should become a placement key, else null. */
+    dragFrom?(id: string): Record<string, Tf> | null;
+    /** Autokey: takes the dragged component's new transform as a placement key; true when it did. */
+    dragged?(id: string, tf: Tf): boolean;
+  } | null = null;
 
   /** The shown component under a screen point (client coordinates), its top-level component and the world point hit (motion trace paths). */
   shownAt(x: number, y: number): { id: string; top: string; point: V3 } | null {

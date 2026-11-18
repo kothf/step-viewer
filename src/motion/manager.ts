@@ -20,7 +20,7 @@ import { frameName, frameTimes } from "./frames";
 import { zip } from "../model/zip";
 import { clashCsv, clashItems, pairKey, type ClashItem } from "./interfere";
 import { GAP_PLOTS, gapCsv, plotFile, MATE_PLOTS, TRACE_COLORS, TRACE_PLOTS, accels, alertSpans, outOfRange, tripFrame, mateCsv, mateMeasures, pathLength, plotSvg, plotUnit, rates, relativeFrames, speeds, traceAngles, traceCsv, tracePoints, traceSeries, type TracePlot } from "./trace";
-import type { CamKey, Interp, Key, MotionStudy, MotorTrack, PoseKey, TracePath, Track } from "./types";
+import type { CamKey, Interp, Key, MotionStudy, MotorTrack, PoseKey, PoseTrack, TracePath, Track } from "./types";
 
 const $ = <T extends HTMLElement = HTMLElement>(s: string, r: ParentNode = document) => r.querySelector(s) as T;
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -120,7 +120,7 @@ export class MotionManager {
     // The timeline pane resizes from its top edge and keeps its height (FR-UI-002).
     this.grip = makeGrip({ key: "motion", axis: "y", sign: -1, def: 240, min: 120, measure: () => this.pane.offsetHeight, max: () => Math.max(160, this.viewer.size.y - 60), apply: px => { this.pane.style.height = px == null ? "" : `${px}px`; this.pane.style.maxHeight = px == null ? "" : "none"; }, label: "Resize the motion study" });
     this.grip.classList.add("mo-grip");
-    asm.motion = { open: () => this.show(), rebuilt: () => this.rebuilt(), close: () => this.hide() };
+    asm.motion = { open: () => this.show(), rebuilt: () => this.rebuilt(), close: () => this.hide(), dragFrom: id => this.dragFrom(id), dragged: (id, tf) => this.keyPose(id, tf) };
     // Picking a trace point: the click on the view goes to the study, not to the assembly's tools or the orbit controls.
     window.addEventListener("pointerdown", e => {
       if (!this.tracing || e.button !== 0 || e.target !== viewer.renderer.domElement) return;
@@ -135,6 +135,9 @@ export class MotionManager {
     });
     this.pane.addEventListener("keydown", e => this.key(e));
     onLangChange(() => { if (this.open) this.render(); });
+    // Autokey (as in CAD apps): a view change made with the mouse while it is on puts a camera key at the playhead.
+    viewer.controls.addEventListener("start", () => { this.camBefore = this.camKey(0); });
+    viewer.controls.addEventListener("end", () => { if (this.autoKey && this.open && !this.playing && !this.recording) this.keyCamera(this.camBefore); });
   }
 
   // ---------- study ----------
@@ -305,6 +308,77 @@ export class MotionManager {
       return;
     }
     this.edit(s => { const k = s.tracks.find(x => x.id === sel.track); if (k && k.kind !== "motor") { const keys = sortKeys(k.keys as Key[]); keys.splice(sel.key!, 1); (k as { keys: unknown[] }).keys = keys; } });
+  }
+
+  /** Autokey: view changes become camera keys at the playhead (view-only, remembered per browser). */
+  autoKey = (() => { try { return localStorage.getItem("mc:moAutokey") === "1"; } catch { return false; } })();
+  private camBefore: CamKey | null = null;
+
+  setAutoKey(on: boolean) {
+    this.autoKey = on;
+    try { localStorage.setItem("mc:moAutokey", on ? "1" : "0"); } catch { /* storage off */ }
+    this.render();
+  }
+
+  /** Autokey: the transforms shown at the playhead when dragging `id` should make a placement key (a component no mate holds). */
+  private dragFrom(id: string): Record<string, Tf> | null {
+    if (!this.open || !this.autoKey || this.playing || this.recording || !this.movable().some(c => c.id === id)) return null;
+    const s = this.study, i = Math.min(frameCount(s) - 1, Math.max(0, Math.round(this.time * s.fps)));
+    this.ensure(i);
+    return this.tfsAt(i, this.time);
+  }
+
+  /**
+   * Autokey for a dragged component: its new place as a placement key at the playhead (one undo step). With no
+   * placement track for it yet, one is made that holds it at rest from 0. The turn the track has there is kept.
+   */
+  keyPose(id: string, tf: Tf) {
+    const rest = this.asm.restTfs()[id];
+    if (!rest) return false;
+    const tq = this.snap(this.time), d: V3 = [tf[3] - rest[3], tf[7] - rest[7], tf[11] - rest[11]];
+    let tid = "";
+    this.edit(s => {
+      let k = s.tracks.find((x): x is PoseTrack => x.kind === "pose" && x.comp === id && !x.off);
+      if (!k) {
+        k = { id: uid("mt_"), kind: "pose", comp: id, keys: tq > 0 ? [{ t: 0, d: [0, 0, 0], r: [0, 0, 0] }] : [] };
+        s.tracks.push(k);
+      }
+      const r = poseAt(k.keys, tq)?.r ?? [0, 0, 0];
+      k.keys = sortKeys([...k.keys.filter(x => Math.abs(x.t - tq) > 1e-9), { t: tq, d, r: [...r] as V3 }]);
+      tid = k.id;
+    });
+    const tr = this.study.tracks.find(x => x.id === tid);
+    if (tr && tr.kind === "pose") this.sel = { track: tid, key: sortKeys(tr.keys).findIndex(x => Math.abs(x.t - tq) < 1e-9) };
+    this.render();
+    this.showAt(this.time);
+    this.setStatus(t("Placement key at {t} s", { t: fmt(tq) }));
+    return true;
+  }
+
+  /**
+   * Puts the current view as a camera key at the playhead (one undo step). With no camera track yet, one is made,
+   * starting from `before` (the view when the change began) at 0 so the study still opens on it. A click that
+   * did not move the view adds nothing.
+   */
+  keyCamera(before: CamKey | null = null) {
+    const tq = this.snap(this.time), now = this.camKey(tq);
+    const near = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) <= 1e-6 * Math.max(1, Math.hypot(...a));
+    if (before && near(before.pos, now.pos) && near(before.target, now.target) && (before.zoom ?? 1) === (now.zoom ?? 1)) return false;
+    let id = "";
+    this.edit(s => {
+      let k = s.tracks.find(x => x.kind === "camera" && !x.off);
+      if (!k) {
+        k = { id: uid("mt_"), kind: "camera", keys: tq > 0 && before ? [{ ...before, t: 0 }] : [] };
+        s.tracks.push(k);
+      }
+      this.keyInto(k, tq);
+      id = k.id;
+    });
+    const tr = this.study.tracks.find(x => x.id === id);
+    if (tr && tr.kind === "camera") this.sel = { track: id, key: sortKeys(tr.keys).findIndex(x => x.t === tq) };
+    this.render();
+    this.setStatus(t("Camera key at {t} s", { t: fmt(tq) }));
+    return true;
   }
 
   /** The camera now, as a key at `t`. */
@@ -1151,6 +1225,7 @@ export class MotionManager {
       + ib("zin", "⊕", t("Zoom in on the timeline"), this.zoom >= MAX_ZOOM ? " disabled" : "") + ib("zout", "⊖", t("Zoom out on the timeline"), this.zoom <= 1 ? " disabled" : "") + ib("zfit", "⤢", t("Fit the whole study"), this.zoom <= 1 ? " disabled" : "")
       + `<select data-mo="add" aria-label="${esc(t("Add track…"))}">${addOpts}</select>`
       + `<button class="btn small" data-mo="addkey"${this.sel && this.study.tracks.find(k => k.id === this.sel!.track)?.kind !== "motor" ? "" : " disabled"} title="${esc(t("Add a key at the playhead to the selected track"))}">${esc(t("Add key"))}</button>`
+      + `<button class="btn small mo-autokey" data-mo="autokey" aria-pressed="${this.autoKey}" title="${esc(t("Autokey: turning, panning or zooming the view puts a camera key at the playhead, and dragging a component no mate holds puts a placement key there"))}">${esc(t("Autokey"))}</button>`
       + `<button class="btn small" data-mo="keyall"${this.study.tracks.some(k => k.kind !== "motor" && !k.off) ? "" : " disabled"} title="${esc(t("Add a key at the playhead to every track, holding what each shows there"))}">${esc(t("Key all"))}</button>`
       + `<button class="btn small" data-mo="wexplode"${doc.explodes?.length ? "" : " disabled"} title="${esc(t("Animate the exploded view over the study"))}">${esc(t("Explode"))}</button>`
       + `<button class="btn small" data-mo="wcollapse"${doc.explodes?.length ? "" : " disabled"} title="${esc(t("Animate collapsing the exploded view over the study"))}">${esc(t("Collapse"))}</button>`
@@ -1237,7 +1312,15 @@ export class MotionManager {
         + field(t("Time scale"), "scale", "100", "%")
         + `<span class="muted">${esc(t("Drag one of them or press Alt+←/→ to move them together. Alt+drag stretches their timing, Ctrl+drag copies them."))}</span>`;
     }
-    if (tr.kind === "camera") return field(t("Time"), "t", fmt(key.t), t("s")) + interpSel(key.interp) + `<button class="btn small" data-p="setcam">${esc(t("Set to current view"))}</button>`;
+    if (tr.kind === "camera") {
+      const ck = key as unknown as CamKey, d = Math.hypot(ck.pos[0] - ck.target[0], ck.pos[1] - ck.target[1], ck.pos[2] - ck.target[2]);
+      return field(t("Time"), "t", fmt(key.t), t("s")) + interpSel(key.interp)
+        + (["x", "y", "z"] as const).map((a, j) => field(t("Position {axis}", { axis: a.toUpperCase() }), `cp${a}`, fmt(ck.pos[j]), "mm")).join("")
+        + (["x", "y", "z"] as const).map((a, j) => field(t("Target {axis}", { axis: a.toUpperCase() }), `ct${a}`, fmt(ck.target[j]), "mm")).join("")
+        + field(t("Distance"), "cdist", fmt(d), "mm")
+        + (ck.zoom !== undefined ? field(t("Zoom"), "czoom", fmt(ck.zoom * 100, 1), "%") : "")
+        + `<button class="btn small" data-p="setcam">${esc(t("Set to current view"))}</button>`;
+    }
     if (tr.kind === "pose") {
       const pk = key as unknown as PoseKey;
       return field(t("Time"), "t", fmt(pk.t), t("s"))
@@ -1294,6 +1377,7 @@ export class MotionManager {
       else if (a === "end") this.seek(this.study.duration);
       else if (a === "addkey" && this.sel) this.addKey(this.sel.track);
       else if (a === "keyall") this.keyAll();
+      else if (a === "autokey") this.setAutoKey(!this.autoKey);
       else if (a === "zin") this.setZoom(this.zoom * 2);
       else if (a === "zout") this.setZoom(this.zoom / 2);
       else if (a === "zfit") { this.scrollX = 0; this.setZoom(1); }
@@ -1599,6 +1683,13 @@ export class MotionManager {
       if (p === "t") k.t = this.snap(v);
       else if (p === "interp") { const i = interpOf(raw); if (i) k.interp = i; else delete k.interp; }
       else if (p === "setcam" && tr.kind === "camera") Object.assign(k, this.camKey(k.t));
+      else if (/^c[pt][xyz]$/.test(p) && tr.kind === "camera") { const ck = k as CamKey; (p[1] === "p" ? ck.pos : ck.target)["xyz".indexOf(p[2])] = v; }
+      else if (p === "cdist" && tr.kind === "camera") {
+        // Dolly along the line of sight: the target stays, the position moves to the typed distance.
+        const ck = k as CamKey, dv = ck.pos.map((x, j) => x - ck.target[j]), L = Math.hypot(...dv);
+        if (v > 0 && L > 1e-9) ck.pos = ck.target.map((x, j) => x + (dv[j] * v) / L) as V3;
+      }
+      else if (p === "czoom" && tr.kind === "camera" && v > 0) (k as CamKey).zoom = v / 100;
       else if (p === "v" && (tr.kind === "explode" || tr.kind === "look")) (k as Key).v = Math.max(0, Math.min(1, v / 100));
       else if (/^[dr][xyz]$/.test(p) && tr.kind === "pose") { const pk = k as unknown as PoseKey; (p[0] === "d" ? pk.d : pk.r)["xyz".indexOf(p[1])] = v; }
       else if (p === "c" && tr.kind === "look" && /^#[0-9a-f]{6}$/i.test(raw)) (k as Key).c = raw.toLowerCase();
@@ -1611,6 +1702,7 @@ export class MotionManager {
     });
     if (newIdx != null) this.sel = { track: sel.track, key: newIdx };
     this.render();
+    if (tr0.kind === "camera" && /^c(p[xyz]|t[xyz]|dist|zoom)$/.test(p)) this.showAt(this.time);
   }
 
   /** Moves the selected key by `dt` seconds (Alt+←/→, Shift for ten frames), keeping it inside the study and off its neighbours. */
