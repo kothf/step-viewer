@@ -241,7 +241,7 @@ function applyHoleSize(f: HoleFeature) {
 
 const DEFAULT_COLOR: V3 = [0.72, 0.75, 0.8];
 const STD_NAMES: Record<"XY" | "XZ" | "YZ", string> = { XY: "Top (XY)", XZ: "Front (XZ)", YZ: "Right (YZ)" };
-const ICONS: Record<string, string> = { sketch3d: "⟁", curve: "〰", sweepsurf: "⤼", helix: "∿", sweep: "⤳", loft: "⏢", rib: "⊿", split: "⊘", import: "⇩", combine: "⊕", indent: "⊔", intersect: "⧇", untrimsurf: "⬚", bsplit: "◨", delbody: "⊖", movebody: "⇲", moveface: "⇧", dome: "◓", wrap: "◍", delface: "⌫", planesurf: "▢", extsurf: "⊓", offsurf: "⫽", knit: "⧉", thicken: "▤", replaceface: "⇄", revsurf: "◠", loftsurf: "⏥", trimsurf: "✂", fillsurf: "◈", extendsurf: "⇱", scale: "⤢", flex: "⌒", thread: "≋", hole: "◎", sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", axis: "⟋", point: "✳", csys: "⊹", shell: "◫", draft: "◿", mirror: "⧎", lpattern: "⋯", cpattern: "✲", spattern: "⁘", part: "◆", material: "▦", ...SM_TREE_ICONS };
+const ICONS: Record<string, string> = { sketch3d: "⟁", curve: "〰", sweepsurf: "⤼", helix: "∿", sweep: "⤳", loft: "⏢", rib: "⊿", split: "⊘", import: "⇩", combine: "⊕", indent: "⊔", intersect: "⧇", untrimsurf: "⬚", bsplit: "◨", delbody: "⊖", movebody: "⇲", moveface: "⇧", dome: "◓", wrap: "◍", delface: "⌫", planesurf: "▢", extsurf: "⊓", offsurf: "⫽", knit: "⧉", thicken: "▤", replaceface: "⇄", revsurf: "◠", loftsurf: "⏥", trimsurf: "✂", fillsurf: "◈", extendsurf: "⇱", scale: "⤢", flex: "⌒", thread: "≋", hole: "◎", sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", axis: "⟋", point: "✳", csys: "⊹", shell: "◫", draft: "◿", mirror: "⧎", lpattern: "⋯", cpattern: "✲", spattern: "⁘", part: "◆", material: "▦", heal: "✚", member: "⌗", trimext: "⇥", endcap: "▮", gusset: "◣", weldbead: "◢", ...SM_TREE_ICONS };
 const BASES = [...SM_BASES, "Revolve cut", "Sketch", "Extrude", "Cut", "Revolve", "Fillet", "Chamfer", "Plane", "Axis", "Point", "Coordinate system", "Shell", "Draft", "Mirror", "LPattern", "CirPattern", "Hole", "Thread", "Cut-Sweep", "Cut-Loft", "Helix", "Sweep", "Loft", "Rib", "Split Line", "Combine", "Split", "Body-Delete/Keep", "Body-Move/Copy", "Imported", "Scale", "DeleteFace", "MoveFace", "Surface-Plane", "Surface-Extrude", "Surface-Offset", "Surface-Knit", "Thicken", "ReplaceFace", "Surface-Revolve", "Surface-Loft", "Surface-Trim", "Structural Member", "Trim/Extend", "End cap", "Gusset", "Fillet Bead", "SketchPattern", "TablePattern"];
 
 const d3v = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
@@ -571,6 +571,12 @@ export class ModelController {
       if (sk && !sk.isEmpty()) box.union(sk);
       return box.isEmpty() ? null : box;
     };
+    // The wheel over a handle or callout (they sit over the canvas) still zooms the view (weldments exam #8).
+    document.getElementById("mc-layer")?.addEventListener("wheel", e => {
+      if (!(e.target as HTMLElement).closest?.(".mc-handle")) return;
+      e.preventDefault();
+      host.viewer.renderer.domElement.dispatchEvent(new WheelEvent("wheel", e));
+    }, { passive: false });
     host.viewer.scene.add(this.hoverGroup, this.ctHoverGroup);
     this.ghostGroup.visible = false;
     host.viewer.scene.add(this.ghostGroup);
@@ -4879,13 +4885,16 @@ export class ModelController {
     if (fo?.startsWith("wlocate")) {
       const gi = fo === "wlocate" ? 0 : +fo.slice(8);
       const spots = locateSpots(ctx, f, gi);
-      // Zoom to the profile once when locating starts, so its points are far enough apart to click.
+      // Zoom to the profile once when locating starts, looking at it face on (seen from the side its points would
+      // fall on one another), so its points are far enough apart to click (weldments exam #8).
       if (this.locateFit !== fo && spots.length) {
         this.locateFit = fo;
         const b = new THREE.Box3();
         for (const p of spots) b.expandByPoint(new THREE.Vector3(...p.at));
         b.expandByScalar(Math.max(1, b.getSize(new THREE.Vector3()).length() / 2));
-        this.host.viewer.fit(true, b);
+        const v = this.host.viewer, n = new THREE.Vector3(...spots[0].n);
+        if (n.dot(v.camera.position.clone().sub(v.controls.target)) < 0) n.negate();
+        v.fit(true, b, n.lengthSq() > 1e-12 ? n : undefined);
       }
       for (const p of spots) {
         const dot = document.createElement("button");
@@ -6651,7 +6660,7 @@ export class ModelController {
       const rel = par.has(f.id) ? " ft-parent" : kids.has(f.id) ? " ft-child" : "";
       const relTip = par.has(f.id) ? t("Used by the selected feature") : kids.has(f.id) ? t("Uses the selected feature") : "";
       const editing = (m.kind === "sketch" && m.id === f.id) || (m.kind === "feature" && !m.isNew && m.index === i);
-      const icon = f.type === "extrude" && f.op === "cut" ? ICONS.cut : ICONS[f.type];
+      const icon = f.type === "extrude" && f.op === "cut" ? ICONS.cut : ICONS[f.type] ?? "•";
       const badge = s && !s.ok ? `<span class="ft-err" title="${esc(statusText(s))}" role="img" aria-label="${esc(t("Error"))}: ${esc(statusText(s))}">⚠</span>`
         : s?.code === "warning" ? `<span class="ft-warn" title="${esc(statusText(s))}" role="img" aria-label="${esc(t("Warning"))}: ${esc(statusText(s))}">⚠</span>` : "";
       const hid = this.isHidden(f);

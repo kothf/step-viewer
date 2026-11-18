@@ -173,7 +173,7 @@ function placement(f: MemberFeature, seg: PathSeg, ref: { sketch: string; ent: s
  * points), where they are now at the start of segment `ent`, world mm. Points that coincide are listed once (a
  * sketch point before an anchor), the others in `also`. Empty when the member can't be placed.
  */
-export function pierceSpots(f: MemberFeature, ent: string, doc: PartDoc, frames: Record<string, Frame>): { key: Pierce; at: V3; also: Pierce[] }[] {
+export function pierceSpots(f: MemberFeature, ent: string, doc: PartDoc, frames: Record<string, Frame>): { key: Pierce; at: V3; also: Pierce[]; n: V3 }[] {
   const ref = f.segs.find(s => s.ent === ent);
   if (!ref) return [];
   try {
@@ -186,7 +186,9 @@ export function pierceSpots(f: MemberFeature, ent: string, doc: PartDoc, frames:
       const same = out.find(o => Math.hypot(o.q[0] - q[0], o.q[1] - q[1]) < 1e-6);
       if (same) same.also.push(key); else out.push({ key, q, at: at3(pl, seg.a, q), also: [] });
     }
-    return out.map(({ key, at, also }) => ({ key, at, also }));
+    // n = the profile plane's normal, so the view can look at the profile face on.
+    const n = cross(pl.u, pl.v);
+    return out.map(({ key, at, also }) => ({ key, at, also, n }));
   } catch { return []; }
 }
 

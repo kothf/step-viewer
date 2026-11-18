@@ -12862,6 +12862,8 @@ try {
       return { folder: document.querySelector('#mc-tree .ft-row[data-id="folder:cutlist"]')?.textContent, rows: [...document.querySelectorAll('#mc-tree .ft-row[data-id^="cut:"] .ft-name')].map(e => e.textContent), tris: hl.reduce((n, o) => n + o.geometry.getAttribute("position").count / 3, 0), faces: window.__sv.model.last().bodies.map(b => b.faces) };
     });
     check(/Cut list \(2\)/.test(ct.folder ?? "") && JSON.stringify(ct.rows) === '["Top rail × 650 mm (2)","SHS 50x50x4 × 450 mm (2)"]' && ct.tris > 0 && ct.faces.every(n => n > 0), `weldments: Cut list folder in the tree highlights an item's bodies (${JSON.stringify(ct)})`);
+    const icons = await mp.evaluate(() => [...document.querySelectorAll("#mc-tree .ft-row[data-i] .ft-ico")].map(e => e.textContent));
+    check(icons.includes("⌗") && icons.every(x => x && x !== "undefined"), `weldments: every feature row has an icon (${JSON.stringify(icons)})`);
     // Sub-weldments: Create sub-weldment on a cut list item puts it in a folder of its own; one body of the other item added
     // to it splits that item (1 + 1); the dialog heads the sub-weldment's rows; Dissolve puts everything back.
     const menuPick = async (sel, label) => {
@@ -13048,6 +13050,20 @@ try {
     await settle();
     await mp.waitForTimeout(800); // the view zooms to the profile
     const lpDots = await mp.evaluate(() => [...document.querySelectorAll("#mc-layer .wld-pierce")].map(e => e.dataset.pierce + (e.classList.contains("cur") ? "*" : "")));
+    // Exam #8: the profile is seen face on, its points apart; the wheel over a point zooms the view.
+    const lpView = await mp.evaluate(() => {
+      const r = [...document.querySelectorAll("#mc-layer .wld-pierce")].map(e => e.getBoundingClientRect()).map(b => [b.left + b.width / 2, b.top + b.height / 2]);
+      let gap = Infinity; for (let i = 0; i < r.length; i++) for (let j = i + 1; j < r.length; j++) gap = Math.min(gap, Math.hypot(r[i][0] - r[j][0], r[i][1] - r[j][1]));
+      const v = window.__sv.viewer; return { gap: Math.round(gap), d: v.camera.position.distanceTo(v.controls.target) / v.camera.zoom };
+    });
+    const dotAt = await mp.evaluate(() => { const b = document.querySelector('#mc-layer .wld-pierce[data-pierce="c"]').getBoundingClientRect(); return [b.left + b.width / 2, b.top + b.height / 2]; });
+    await mp.mouse.move(dotAt[0], dotAt[1]);
+    await mp.mouse.wheel(0, 300);
+    await mp.waitForTimeout(400);
+    const lpD2 = await mp.evaluate(() => { const v = window.__sv.viewer; return v.camera.position.distanceTo(v.controls.target) / v.camera.zoom; });
+    await mp.mouse.wheel(0, -300);
+    await mp.waitForTimeout(400);
+    check(lpView.gap >= 14 && Math.abs(lpD2 - lpView.d) > 1e-3 * lpView.d, `weldments: Locate profile looks at the profile face on and the wheel zooms over its points (${JSON.stringify({ lpView, lpD2 })})`);
     await mp.click('#mc-layer .wld-pierce[data-pierce="p:q3"]');
     await settle();
     const lpAfter = await mp.evaluate(() => ({ anchor: window.__sv.model.mode().draft.anchor, dots: document.querySelectorAll("#mc-layer .wld-pierce").length, sel: document.querySelector('#mc-pm select[data-k="anchor"]').value }));
@@ -13218,6 +13234,13 @@ try {
     // The new member starts with the size the first one was given (weldment defaults: the settings used last).
     check(bl.size === "50x50x4", `weldments: a new member starts with the profile used last (${bl.size})`);
     check(JSON.stringify(bl.segs) === '["j1","j2","j3"]' && JSON.stringify(bl.labels) === '["Line 1","Arc 2","Line 3"]' && bend.faces > 0 && !bend.bad && bend.arc, `weldments: a member along a line, an arc and a line (${JSON.stringify({ bl, bend })})`);
+    // Exam: a second member on the same sketch starts with no segment ticked (the first one runs along them all).
+    await runCmd(mp, "Structural Member");
+    await settle();
+    const again = await mp.evaluate(() => window.__sv.model.mode().draft?.segs?.length);
+    await mp.evaluate(() => window.__sv.modeller.exitMode(false));
+    await settle();
+    check(again === 0, `weldments: a new member leaves segments other members use unticked (${again})`);
     // Merge arc segment bodies: the line, arc and line become one body, one cut list item of the whole bent length (300 + 157.1 + 300).
     const bendId = await mp.evaluate(() => window.__sv.model.store.doc.features.at(-1).id);
     await mp.evaluate(id => window.__sv.modeller.editFeature(id), bendId);
