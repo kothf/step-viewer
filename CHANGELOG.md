@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.581.0] - 2026-11-18
+## [1.582.0] - 2026-11-18
 
 ### Fixed
 
@@ -15,6 +15,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - **The flat pattern view of a drawing survives a restart of the drawing kernel.** After the kernel started over to free memory, the view failed with "Configuration "@flat" is not loaded" and lost its bend lines and notes.
 - **Error messages fade after 12 s** (they stayed 20 s).
 - **Louvers placed end to end keep the part.** Forming tools whose shapes touch each other are joined to the sheet together; before, a louver formed out of a flange's outer face could replace the whole part with the louvers alone, or quietly leave one out.
+- **Sheet Metal Properties and the flat pattern DXF include cuts made by other features while the part is folded.** A window cut by an extrude or a vent used to be left out (cut outs counted 1) until the part was flattened; now a flattened copy is built for them.
+- **Flat pattern DXF files have arcs where the part has them,** not thousands of tiny lines, and say "flat pattern" in their header. A hole is no longer counted twice in Sheet Metal Properties.
+
+## [1.581.0] - 2026-11-18
+
+### Changed
+
+- **Weldments rebuild almost twice as fast.** Trim/Extend no longer lengthens a member that already reaches the boundary only to cut the extra off again, finds where a member first meets a body for a planar trim without a full Boolean, and merged tangent segments (a bent tube) are joined in one step. The exam workbench (33 features, 9 Trim/Extends) rebuilds in about 18 s instead of 33 s after a sketch change; the result, face names and volumes are the same as before.
 
 ## [1.580.0] - 2026-11-18
 
@@ -3687,7 +3695,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.581.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.582.0...HEAD
+[1.582.0]: https://github.com/kothf/step-viewer/compare/v1.581.0...v1.582.0
 [1.581.0]: https://github.com/kothf/step-viewer/compare/v1.580.0...v1.581.0
 [1.580.0]: https://github.com/kothf/step-viewer/compare/v1.579.0...v1.580.0
 [1.579.0]: https://github.com/kothf/step-viewer/compare/v1.578.0...v1.579.0
