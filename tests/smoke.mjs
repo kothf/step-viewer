@@ -7272,7 +7272,7 @@ try {
     const lab = await mp.evaluate(() => { const el = [...document.querySelectorAll("#sk-layer .sk-dim")].find(e => e.dataset.id === "dd"); const b = el.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2, title: el.title }; });
     await mp.mouse.move(lab.x, lab.y); await mp.mouse.down(); await mp.mouse.move(lab.x + 30, lab.y + 30, { steps: 4 }); await mp.mouse.move(lab.x + 60, lab.y + 60, { steps: 4 }); await mp.mouse.up();
     await mp.waitForTimeout(100);
-    const followed = await mp.evaluate(() => { const ed = window.__sv.model.editor(); const d = ed.sk.dims.find(x => x.id === "dd"); const st = window.__sv.model.store.doc.features.find(f => f.id === "s3").dims.find(x => x.id === "dd"); return { pos: d.pos, stored: st.pos, input: !!document.querySelector(".sk-input"), v: d.val.v }; });
+    const moved = await mp.evaluate(() => { const ed = window.__sv.model.editor(); const d = ed.sk.dims.find(x => x.id === "dd"); const st = window.__sv.model.store.doc.features.find(f => f.id === "s3").dims.find(x => x.id === "dd"); return { pos: d.pos, stored: st.pos, input: !!document.querySelector(".sk-input"), v: d.val.v }; });
     check(lab.title === "D1@Sketch3" && Math.hypot(moved.pos[0] + 15, moved.pos[1] - 6) > 3 && JSON.stringify(moved.pos) === JSON.stringify(moved.stored) && !moved.input && moved.v === 30, `model 1.53: dimension text drags and stays where it is put; hover shows D1@Sketch3 (FR-SK-065/066) (${lab.title}, ${JSON.stringify(moved)})`);
     await mp.evaluate(() => { window.__sv.model.editor().select(["dd"]); window.__sv.model.panel(); });
     await mp.fill('#mc-pm input[data-a="dimname"]', "Width");
@@ -12035,7 +12035,7 @@ try {
     // The block grows to 60 wide: the line's start follows the corner.
     await mp.evaluate(() => window.__sv.model.store.change("Wider", d => { const s = d.features.find(f => f.id === "b"); s.ents.find(e => e.id === "b2").x = 30; s.ents.find(e => e.id === "b3").x = 30; }));
     await settle();
-    const followed = await mp.evaluate(() => { const s = window.__sv.model.store.doc.features.find(f => f.id === "k"); const line = s.ents.find(e => e.t === "line" && !e.cons); const a = s.ents.find(e => e.id === line.a); return { a: [a.x, a.y], bad: window.__sv.model.last().statuses.filter(x => !x.ok).length }; });
+    const moved = await mp.evaluate(() => { const s = window.__sv.model.store.doc.features.find(f => f.id === "k"); const line = s.ents.find(e => e.t === "line" && !e.cons); const a = s.ents.find(e => e.id === line.a); return { a: [a.x, a.y], bad: window.__sv.model.last().statuses.filter(x => !x.ok).length }; });
     check(sk.cons === 1 && sk.ext === 1 && sk.a && Math.hypot(sk.a[0] - 20, sk.a[1] - 10) < 1e-6 && Math.hypot(moved.a[0] - 30, moved.a[1] - 10) < 1e-6 && !moved.bad,
       `model 1.89: a sketch point snapped to a model vertex follows it when the model changes (${JSON.stringify({ sk, moved })})`);
     // Smart Dimension from the line to a model edge (the top's front edge, at its midpoint): a new reference and a dimension.
@@ -12857,6 +12857,21 @@ try {
       && JSON.stringify(sw1.rows) === '["cut:SHS 50x50x4 × 450 mm (1)","wsub:Sub-weldment1 (2)","cut>:Top rail × 650 mm (2)","cut>:SHS 50x50x4 × 450 mm (1)"]'
       && JSON.stringify(sw2.heads) === '["Frame"]' && sw2.rows === 3 && sw3.subs === undefined && sw3.rows === 2,
       `weldments: sub-weldments in the cut list (${JSON.stringify({ sw0, sw1, sw2, sw3 })})`);
+    // Exam #12: Ctrl+click picks both cut list items; the menu's sub-weldment and Hide bodies act on every body picked.
+    await treeClick(mp, '#mc-tree .ft-row[data-id="cut:0"]');
+    await mp.click('#mc-tree .ft-row[data-id="cut:1"]', { modifiers: ["Control"] });
+    const ms0 = await mp.evaluate(() => document.querySelectorAll('#mc-tree .ft-row.sel[data-id^="cut:"]').length);
+    await menuPick('#mc-tree .ft-row[data-id="cut:1"]', "Create sub-weldment");
+    const ms1 = await mp.evaluate(() => window.__sv.model.store.doc.subWelds?.map(x => x.bodies.length));
+    await mp.evaluate(() => window.__sv.model.store.undo());
+    await settle();
+    await treeClick(mp, '#mc-tree .ft-row[data-id="cut:0"]');
+    await mp.click('#mc-tree .ft-row[data-id="cut:1"]', { modifiers: ["Control"] });
+    await menuPick('#mc-tree .ft-row[data-id="cut:0"]', "Hide bodies");
+    const ms2 = await mp.evaluate(() => Object.values(window.__sv.model.store.doc.bodies ?? {}).filter(b => b.hidden).length);
+    await mp.evaluate(() => window.__sv.model.store.undo());
+    await settle();
+    check(ms0 === 2 && JSON.stringify(ms1) === "[4]" && ms2 === 4, `weldments: Ctrl+click picks several cut list items for the menu (${JSON.stringify({ ms0, ms1, ms2 })})`);
     // Merge miter trimmed bodies: the four mitred tubes of the frame become one body, one cut list item 2 × 650 + 2 × 450 long.
     const frameId = await mp.evaluate(() => window.__sv.model.store.doc.features.find(x => x.type === "member").id);
     await mp.evaluate(id => window.__sv.modeller.editFeature(id), frameId);

@@ -2214,6 +2214,8 @@ export const RU: Record<string, string> = {
   "Solid Bodies ({n})": "Твёрдые тела ({n})",
   "Show body": "Показать тело",
   "Hide body": "Скрыть тело",
+  "Show bodies": "Показать тела",
+  "Hide bodies": "Скрыть тела",
   "Body colour": "Цвет тела",
   "Delete body": "Удалить тело",
   "Reset colour": "Сбросить цвет",

@@ -330,6 +330,9 @@ function defineRecognised(feats: Feature[]) {
   });
 }
 
+/** Tree rows that Ctrl+click picks together: bodies and cut list items. */
+const multiRow = (id: string | null) => !!id && (id.startsWith("body:") || id.startsWith("cut:"));
+
 export class ModelController {
   store: DocStore | null = null;
   private kernel: ModelKernel;
@@ -1604,6 +1607,8 @@ export class ModelController {
   deleteFolder(fid: string) { this.store?.change("Delete folder", d => { d.folders = (d.folders ?? []).filter(g => g.id !== fid); }); }
   /** The cut list as shown: the last rebuild's items split by sub-weldment (`splitSubs`); tree rows `cut:<i>` index it. */
   cutItems() { return splitSubs(this.last?.cutList ?? [], this.doc.subWelds); }
+  /** Body and cut list rows picked with Ctrl+click beside `selected` (exam #12). */
+  private treePicks = new Set<string>();
   /** The bodies a cut list row, body row or sub-weldment row stands for (only bodies the cut list knows). */
   private cutBodies(id: string): string[] {
     const known = new Set((this.last?.cutList ?? []).flatMap(c => c.bodies));
@@ -5561,6 +5566,7 @@ export class ModelController {
     if (!id) return;
     const mesh = this.featureFaceMesh(id, draft ? 0xffd43b : 0x4dabf7, draft ? 0.5 : 0.45);
     if (mesh) this.decor.add(mesh);
+    if (!draft) for (const p of this.treePicks) { const x = this.featureFaceMesh(p, 0x4dabf7, 0.45); if (x) this.decor.add(x); }
   }
 
   /** A see-through overlay of the faces a feature made (or a body / cut list item's faces), in world space; null when it has none. */
@@ -6608,11 +6614,12 @@ export class ModelController {
     const box = $("#mc-tree");
     this.renderRollNotice();
     if (!this.store) { box.innerHTML = ""; return; }
+    if (!multiRow(this.selected)) this.treePicks.clear();
     const d = this.doc;
     const st = new Map((this.last?.statuses ?? []).map(s => [s.id, s]));
     const m = this.mode;
     const row = (id: string, icon: string, label: string, extra = "", cls = "", aria = "") =>
-      `<div class="ft-row${cls}${this.selected === id ? " sel" : ""}" role="treeitem" aria-selected="${this.selected === id}"${aria} tabindex="${this.selected === id ? 0 : -1}" data-id="${esc(id)}"><span class="ft-ico" aria-hidden="true">${icon}</span><span class="ft-name" translate="no">${esc(label)}</span>${extra}</div>`;
+      `<div class="ft-row${cls}${this.selected === id || this.treePicks.has(id) ? " sel" : ""}" role="treeitem" aria-selected="${this.selected === id || this.treePicks.has(id)}"${aria} tabindex="${this.selected === id ? 0 : -1}" data-id="${esc(id)}"><span class="ft-ico" aria-hidden="true">${icon}</span><span class="ft-name" translate="no">${esc(label)}</span>${extra}</div>`;
     let html = row("part", ICONS.part, d.name, "", " ft-root");
     html += `<div class="ft-group" role="group">`;
     html += row("material", ICONS.material, d.material ? t(d.material.name) : t("Material <not specified>"), "", " ft-plane");
@@ -6745,6 +6752,15 @@ export class ModelController {
       const id = r.dataset.id!;
       r.addEventListener("click", e => {
         const a = (e.target as HTMLElement).closest<HTMLElement>("[data-a]")?.dataset.a;
+        // Ctrl+click picks several bodies or cut list items, so the menu's Hide, Material… and sub-weldment act on all (exam #12).
+        if (!a && multiRow(id) && this.mode.kind === "none") {
+          if ((e.ctrlKey || e.metaKey) && multiRow(this.selected)) {
+            if (id === this.selected) { const nx = [...this.treePicks][0]; if (nx) { this.treePicks.delete(nx); this.selected = nx; } }
+            else if (this.treePicks.has(id)) this.treePicks.delete(id); else this.treePicks.add(id);
+            this.renderTree(); this.drawDecor(); return;
+          }
+          this.treePicks.clear();
+        }
         if (a === "sup") { this.toggleSuppress(id); return; }
         if (a === "eye") { this.toggleHidden(id); return; }
         if (a === "twist") { this.toggleFeat(id); return; }
@@ -6905,7 +6921,16 @@ export class ModelController {
     const end = this.doc.rollback ?? this.doc.features.length;
     const items: ([string, () => void] | null)[] = [];
     if (id === "part" || id === "material") items.push([t("Properties…"), () => this.editProps()]);
-    if (id.startsWith("body:")) {
+    // Rows picked together (Ctrl+click): the menu acts on all of them.
+    const rows = this.treePicks.size && (id === this.selected || this.treePicks.has(id)) ? [this.selected!, ...this.treePicks] : [id];
+    if (rows.length > 1) {
+      const keys = [...new Set(rows.flatMap(r => r.startsWith("body:") ? [r.slice(5)] : this.cutBodies(r)))];
+      if (keys.length) {
+        const hide = keys.some(k => !this.doc.bodies?.[k]?.hidden);
+        items.push([hide ? t("Hide bodies") : t("Show bodies"), () => this.setBody(keys, { hidden: hide })]);
+        items.push([t("Material…"), () => void this.pickBodyMaterial(keys)]);
+      }
+    } else if (id.startsWith("body:")) {
       const key = id.slice(5);
       items.push([this.doc.bodies?.[key]?.hidden ? t("Show body") : t("Hide body"), () => this.setBody(key, { hidden: !this.doc.bodies?.[key]?.hidden })]);
       items.push([t("Rename"), () => this.startRename(id)]);
@@ -6915,7 +6940,7 @@ export class ModelController {
     }
     if (id === "folder:cutlist" || id.startsWith("cut:") || id.startsWith("wsub:")) items.push([t("Cut List…"), () => this.cutList()]);
     // Sub-weldments (a CAD app): a cut list item or a weldment body goes into a new or an existing one.
-    const wb = this.cutBodies(id);
+    const wb = [...new Set(rows.flatMap(r => this.cutBodies(r)))];
     if (wb.length && !id.startsWith("wsub:")) {
       const subs = this.doc.subWelds ?? [];
       const inSub = subs.filter(x => wb.some(b => x.bodies.includes(b)));
@@ -7031,12 +7056,15 @@ export class ModelController {
   }
 
   /** Bodies folder actions: show/hide and colour are display state (one undo step each), delete adds a Body-Delete feature. */
-  setBody(key: string, ch: { name?: string; hidden?: boolean; color?: V3; material?: MatRef }) {
+  /** Changes one body, or several as one undo step (bodies picked together in the tree). */
+  setBody(keys: string | string[], ch: { name?: string; hidden?: boolean; color?: V3; material?: MatRef }) {
     if (!this.store) return;
+    const all = typeof keys === "string" ? [keys] : keys;
     // A body being hidden leaves a see-through copy, so Shift+Tab / Ctrl+Shift+Tab can find it again (FR-UI-105).
     // (A shown body keeps its ghost: undo may hide it again; only still-hidden bodies are picked.)
-    if (ch.hidden === true) this.keepGhost(key);
+    if (ch.hidden === true) for (const key of all) this.keepGhost(key);
     this.store.change(ch.hidden != null ? (ch.hidden ? "Hide body" : "Show body") : "color" in ch ? "Body colour" : "material" in ch ? "Body material" : "Rename body", d => {
+      for (const key of all) {
       const cur = { ...(d.bodies?.[key] ?? {}), ...ch };
       if (!cur.hidden) delete cur.hidden;
       if (!cur.name) delete cur.name;
@@ -7045,15 +7073,17 @@ export class ModelController {
       d.bodies = { ...(d.bodies ?? {}), [key]: cur };
       if (!Object.keys(cur).length) delete d.bodies[key];
       if (!Object.keys(d.bodies).length) delete d.bodies;
+      }
     });
     this.renderTree();
     void this.rebuild();
   }
 
   /** A body's own material from the library (FR-MAT-001); None gives it the part's again. */
-  async pickBodyMaterial(key: string) {
+  async pickBodyMaterial(keys: string | string[]) {
+    const key = typeof keys === "string" ? keys : keys[0];
     const r = await pickMaterial({ current: this.doc.bodies?.[key]?.material ?? this.doc.material ?? null, allowNone: true });
-    if (r) this.setBody(key, { material: r.material ? toRef(r.material) : undefined });
+    if (r) this.setBody(keys, { material: r.material ? toRef(r.material) : undefined });
   }
 
   /**

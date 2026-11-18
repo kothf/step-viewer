@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Added
 
 - **Trim/Extend against several bodies.** With Trim to Body, more boundary bodies can be picked; each member end stops at the boundary nearest to it, so a rail between two legs is trimmed at both ends in one feature. Clicking a picked body again takes it out.
+- **Pick several bodies or cut list items in the tree.** Ctrl+click adds rows of the Bodies and Cut list folders to the selection; the right-click menu then hides or shows, sets the material of, or puts into a sub-weldment every body picked.
 
 ### Fixed
 
