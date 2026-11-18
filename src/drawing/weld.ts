@@ -4,7 +4,8 @@
 // and field flag at the knee, and an optional tail with its note.
 import { arrowHead } from "./compose";
 import type { Prim } from "./prims";
-import type { WeldAnnot, WeldSide, WeldSym } from "./types";
+import type { BalloonAnnot, WeldAnnot, WeldSide, WeldSym } from "./types";
+import type { WeldInfo } from "./items";
 
 type P2 = [number, number];
 type Box = [number, number, number, number];
@@ -79,4 +80,17 @@ export function weldPrims(a: WeldAnnot, knee: P2, to: P2 | null): { prims: Prim[
   }
   const yTop = y + (a.field ? 5 : 0) + (a.other ? K + 1.6 : 1.5), yBot = y - (a.arrow ? K + 0.6 : 1.5);
   return { prims: out, box: [bx0, Math.min(yBot, y - 2), bx1, yTop] };
+}
+
+/**
+ * Model items for a weldment (a CAD app's weld symbols from the model): the weld symbol of a bead's weld table row, placed where
+ * Auto balloon would put its tag (`b`: leader on the bead's longest visible edge, knee outside the view). Without the bead
+ * feature's own symbol the row's leg sizes are used.
+ */
+export function beadWeld(b: BalloonAnnot, row: number, w: WeldInfo): WeldAnnot {
+  const s = w.sym;
+  const len = s ? s.len : w.inter ? `${w.inter[0]}${w.inter[2] ? " Z" : ""} (${w.inter[1]})` : undefined;
+  const side: WeldSide = { sym: "fillet", size: s?.size ?? `z${w.legs}`, ...(len ? { len } : {}) };
+  return { id: b.id, t: "weld", view: b.view, pos: b.pos, leader: b.ref, arrow: side, ...(s?.both ? { other: { ...side } } : {}),
+    ...(s?.around ? { around: true } : {}), ...(s?.field ? { field: true } : {}), row };
 }

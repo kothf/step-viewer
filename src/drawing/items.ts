@@ -35,7 +35,7 @@ export interface ThreadInfo { id: string; c: V3; ax: V3; r: number; d: number; L
 
 /** A sketch shown in the model, as 3D polylines for views that show sketches (FR-DRW-017). */
 /** A weldment part's fillet beads alike (FR-FT-121): leg size(s) ("5" or "5×8"), intermittent length/pitch(/1 = staggered), summed root length and how many beads. */
-export interface WeldInfo { legs: string; inter?: [number, number] | [number, number, 1]; length: number; qty: number }
+export interface WeldInfo { legs: string; inter?: [number, number] | [number, number, 1]; length: number; qty: number; /** The weld symbol of the bead feature that made it (Model items). */ sym?: import("../weldments/types").BeadSym }
 /**
  * A weldment cut list item for the cut list table (FR-FT-121): `item` = its number in the cut list dialog (excluded
  * items left out), `desc` the description typed for it, else the kernel's (profile, plate thickness, bead leg);

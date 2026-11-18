@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.567.0] - 2026-11-18
+
+### Added
+
+- **Weld symbols from the model on weldment drawings.** Model items (Annotation tab) on a drawing of a weldment part now also brings each fillet bead's weld symbol: once per sheet, on the first view that shows the bead, with its leader on the bead. The symbol carries what the Fillet Bead sets: the fillet symbol, leg size z (z5×6 for unequal legs), the weld length and pitch of an intermittent weld (Z when staggered) or a from/to length, both sides, all around and field weld. Running Model items again adds none twice.
+
 ## [1.566.0] - 2026-11-18
 
 ### Added
@@ -3539,7 +3545,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.566.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.567.0...HEAD
+[1.567.0]: https://github.com/kothf/step-viewer/compare/v1.566.0...v1.567.0
 [1.566.0]: https://github.com/kothf/step-viewer/compare/v1.565.0...v1.566.0
 [1.565.0]: https://github.com/kothf/step-viewer/compare/v1.564.0...v1.565.0
 [1.564.0]: https://github.com/kothf/step-viewer/compare/v1.563.0...v1.564.0
