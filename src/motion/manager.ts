@@ -20,7 +20,7 @@ import { frameName, frameTimes } from "./frames";
 import { zip } from "../model/zip";
 import { clashCsv, clashItems, pairKey, type ClashItem } from "./interfere";
 import { GAP_PLOTS, gapCsv, plotFile, MATE_PLOTS, TRACE_COLORS, TRACE_PLOTS, accels, alertSpans, outOfRange, tripFrame, mateCsv, mateMeasures, pathLength, plotSvg, plotUnit, rates, relativeFrames, speeds, traceAngles, traceCsv, tracePoints, traceSeries, type TracePlot } from "./trace";
-import type { CamKey, Interp, Key, MotionStudy, MotorTrack, PoseKey, TracePath, Track } from "./types";
+import type { CamKey, Interp, Key, MotionStudy, MotorTrack, PoseKey, PoseTrack, TracePath, Track } from "./types";
 
 const $ = <T extends HTMLElement = HTMLElement>(s: string, r: ParentNode = document) => r.querySelector(s) as T;
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -120,7 +120,7 @@ export class MotionManager {
     // The timeline pane resizes from its top edge and keeps its height (FR-UI-002).
     this.grip = makeGrip({ key: "motion", axis: "y", sign: -1, def: 240, min: 120, measure: () => this.pane.offsetHeight, max: () => Math.max(160, this.viewer.size.y - 60), apply: px => { this.pane.style.height = px == null ? "" : `${px}px`; this.pane.style.maxHeight = px == null ? "" : "none"; }, label: "Resize the motion study" });
     this.grip.classList.add("mo-grip");
-    asm.motion = { open: () => this.show(), rebuilt: () => this.rebuilt(), close: () => this.hide() };
+    asm.motion = { open: () => this.show(), rebuilt: () => this.rebuilt(), close: () => this.hide(), dragFrom: id => this.dragFrom(id), dragged: (id, tf) => this.keyPose(id, tf) };
     // Picking a trace point: the click on the view goes to the study, not to the assembly's tools or the orbit controls.
     window.addEventListener("pointerdown", e => {
       if (!this.tracing || e.button !== 0 || e.target !== viewer.renderer.domElement) return;
@@ -318,6 +318,41 @@ export class MotionManager {
     this.autoKey = on;
     try { localStorage.setItem("mc:moAutokey", on ? "1" : "0"); } catch { /* storage off */ }
     this.render();
+  }
+
+  /** Autokey: the transforms shown at the playhead when dragging `id` should make a placement key (a component no mate holds). */
+  private dragFrom(id: string): Record<string, Tf> | null {
+    if (!this.open || !this.autoKey || this.playing || this.recording || !this.movable().some(c => c.id === id)) return null;
+    const s = this.study, i = Math.min(frameCount(s) - 1, Math.max(0, Math.round(this.time * s.fps)));
+    this.ensure(i);
+    return this.tfsAt(i, this.time);
+  }
+
+  /**
+   * Autokey for a dragged component: its new place as a placement key at the playhead (one undo step). With no
+   * placement track for it yet, one is made that holds it at rest from 0. The turn the track has there is kept.
+   */
+  keyPose(id: string, tf: Tf) {
+    const rest = this.asm.restTfs()[id];
+    if (!rest) return false;
+    const tq = this.snap(this.time), d: V3 = [tf[3] - rest[3], tf[7] - rest[7], tf[11] - rest[11]];
+    let tid = "";
+    this.edit(s => {
+      let k = s.tracks.find((x): x is PoseTrack => x.kind === "pose" && x.comp === id && !x.off);
+      if (!k) {
+        k = { id: uid("mt_"), kind: "pose", comp: id, keys: tq > 0 ? [{ t: 0, d: [0, 0, 0], r: [0, 0, 0] }] : [] };
+        s.tracks.push(k);
+      }
+      const r = poseAt(k.keys, tq)?.r ?? [0, 0, 0];
+      k.keys = sortKeys([...k.keys.filter(x => Math.abs(x.t - tq) > 1e-9), { t: tq, d, r: [...r] as V3 }]);
+      tid = k.id;
+    });
+    const tr = this.study.tracks.find(x => x.id === tid);
+    if (tr && tr.kind === "pose") this.sel = { track: tid, key: sortKeys(tr.keys).findIndex(x => Math.abs(x.t - tq) < 1e-9) };
+    this.render();
+    this.showAt(this.time);
+    this.setStatus(t("Placement key at {t} s", { t: fmt(tq) }));
+    return true;
   }
 
   /**
@@ -1190,7 +1225,7 @@ export class MotionManager {
       + ib("zin", "⊕", t("Zoom in on the timeline"), this.zoom >= MAX_ZOOM ? " disabled" : "") + ib("zout", "⊖", t("Zoom out on the timeline"), this.zoom <= 1 ? " disabled" : "") + ib("zfit", "⤢", t("Fit the whole study"), this.zoom <= 1 ? " disabled" : "")
       + `<select data-mo="add" aria-label="${esc(t("Add track…"))}">${addOpts}</select>`
       + `<button class="btn small" data-mo="addkey"${this.sel && this.study.tracks.find(k => k.id === this.sel!.track)?.kind !== "motor" ? "" : " disabled"} title="${esc(t("Add a key at the playhead to the selected track"))}">${esc(t("Add key"))}</button>`
-      + `<button class="btn small mo-autokey" data-mo="autokey" aria-pressed="${this.autoKey}" title="${esc(t("Autokey: turning, panning or zooming the view puts a camera key at the playhead"))}">${esc(t("Autokey"))}</button>`
+      + `<button class="btn small mo-autokey" data-mo="autokey" aria-pressed="${this.autoKey}" title="${esc(t("Autokey: turning, panning or zooming the view puts a camera key at the playhead, and dragging a component no mate holds puts a placement key there"))}">${esc(t("Autokey"))}</button>`
       + `<button class="btn small" data-mo="keyall"${this.study.tracks.some(k => k.kind !== "motor" && !k.off) ? "" : " disabled"} title="${esc(t("Add a key at the playhead to every track, holding what each shows there"))}">${esc(t("Key all"))}</button>`
       + `<button class="btn small" data-mo="wexplode"${doc.explodes?.length ? "" : " disabled"} title="${esc(t("Animate the exploded view over the study"))}">${esc(t("Explode"))}</button>`
       + `<button class="btn small" data-mo="wcollapse"${doc.explodes?.length ? "" : " disabled"} title="${esc(t("Animate collapsing the exploded view over the study"))}">${esc(t("Collapse"))}</button>`

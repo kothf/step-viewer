@@ -9169,6 +9169,14 @@ try {
       m.seek(1);
       const mid = { z: g().position.z, dx: g().position.x - (x0 - (q * x0 - q * y0)), dy: g().position.y - (y0 - (q * x0 + q * y0)), rz: 2 * Math.atan2(g().quaternion.z, g().quaternion.w) };
       m.seek(2);
+      // Autokey on a drag: an unmated component dragged at 1 s gets a placement key there (the asm drag hooks), 10 mm along X from where it was shown.
+      const keys0 = JSON.parse(JSON.stringify(m.study.tracks.find(k => k.kind === "pose").keys)), ak0 = m.autoKey;
+      m.setAutoKey(false); const offFrame = a.motion.dragFrom(id);
+      m.setAutoKey(true); m.seek(1);
+      const fr = a.motion.dragFrom(id), dragTf = fr[id].slice(), gx0 = g().position.x; dragTf[3] += 10;
+      const took = a.motion.dragged(id, dragTf), pk = m.study.tracks.find(k => k.kind === "pose").keys.find(k => Math.abs(k.t - 1) < 1e-9);
+      const dragKey = { offFrame, took, d: pk?.d, r: pk?.r, x: g().position.x - gx0, mated: a.motion.dragFrom(c[1].id) };
+      m.edit(s => { s.tracks.find(k => k.kind === "pose").keys = keys0; }); m.setAutoKey(ak0); m.seek(2);
       const end = { z: g().position.z };
       // Trace path: Add track… → Trace path… then a click on the pin picks a point on it; the pin's own origin traced
       // through the study rises 20 mm in a straight line (the turn is about it), one point per frame, plotted and saved as CSV.
@@ -9347,7 +9355,7 @@ try {
       m.deleteStudy();
       m.studyId = prevStudy; m.render(); m.seek(prevTime);
       trace.interfere = interfere;
-      return { opts: [opts.includes(`pose:${id}`), opts.includes(`pose:${c[1].id}`)], fields, mid, end, menu, zoomed, multi, trace };
+      return { opts: [opts.includes(`pose:${id}`), opts.includes(`pose:${c[1].id}`)], fields, mid, end, menu, zoomed, multi, trace, dragKey };
     }).catch(e => ({ err: String(e) }));
     // A box dragged over the empty top of the placement track selects its three keys; Delete removes them all.
     let boxed = { err: "no track" }, stretched = { err: "no track" };
@@ -9428,7 +9436,7 @@ try {
       && st.copied?.length === 4 && st.copied[0] === 1 && Math.abs(st.copied[1] - 30) <= 1 && st.nSel === 1 && st.ghosts === 0,
       `motion study: a time scale and Alt+drag stretch selected keys, Ctrl+drag copies a key (FR-FT-122) (${JSON.stringify(st)})`);
     check(pose.opts?.[0] === true && pose.opts[1] === false && pose.fields >= 6 && Math.abs(pose.mid.z - 10) < 0.01 && Math.abs(pose.mid.dx) < 0.01 && Math.abs(pose.mid.dy) < 0.01
-      && Math.abs(Math.abs(pose.mid.rz) - Math.PI / 4) < 0.01 && Math.abs(pose.end.z - 20) < 0.01, `motion study: placement keys move and turn an unmated component (FR-FT-122) (${JSON.stringify(pose)})`);
+      && Math.abs(Math.abs(pose.mid.rz) - Math.PI / 4) < 0.01 && Math.abs(pose.end.z - 20) < 0.01 && pose.dragKey.offFrame === null && pose.dragKey.mated === null && pose.dragKey.took === true && Math.abs(pose.dragKey.d[0] - 10) < 0.01 && Math.abs(pose.dragKey.d[2] - 10) < 0.01 && Math.abs(pose.dragKey.r[2] - 45) < 0.01 && Math.abs(pose.dragKey.x - 10) < 0.01, `motion study: placement keys move and turn an unmated component, Autokey on a drag (FR-FT-122) (${JSON.stringify(pose)})`);
     check(pose.menu?.items.length === 5 && pose.menu.items[1] === "Snap (jump)" && pose.menu.menuGone && Math.abs(pose.menu.snapMid) < 0.01
       && JSON.stringify(pose.menu.pasted) === '[[0,0,""],[1.5,20,"snap"],[2,20,"snap"]]' && Math.abs(pose.menu.z15 - 20) < 0.01 && pose.menu.snapKey === 2,
       `motion study: key point menu sets Snap interpolation; Ctrl+C / Ctrl+V copy a key to the playhead (FR-FT-122) (${JSON.stringify(pose.menu)})`);
