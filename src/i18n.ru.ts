@@ -4667,6 +4667,8 @@ export const RU: Record<string, string> = {
   "Save all": "Сохранить все",
   "Saves the chosen documents into one .zip, with everything they need to open elsewhere.": "Сохраняет выбранные документы в один .zip со всем, что нужно, чтобы открыть их в другом месте.",
   "That document is no longer in the recent list.": "Этого документа больше нет в списке последних.",
+  "in vault {name}": "в хранилище {name}",
+  "Could not open it from the vault {vault}: opened the copy kept with the recent documents.": "Не удалось открыть его из хранилища {vault}: открыта копия из списка последних документов.",
   "Title, part number, material and other properties of the document": "Название, обозначение, материал и другие свойства документа",
   "Zip file name": "Имя файла .zip",
   "Show the feature tree": "Показать дерево конструирования",

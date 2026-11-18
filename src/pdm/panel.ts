@@ -9,6 +9,7 @@ import type { PartDoc } from "../model/types";
 import { embeddedParts, resolveRel } from "./codec";
 import { geomComparable, geometryCompare, geomRows, mountDiffView } from "./geomCompare";
 import { folderHandle, forgetFolder, rememberFolder, vaultFolders } from "./folders";
+import type { RecentVault } from "../recent";
 import { fsaDir, MOVED_ON, Vault, VaultError, type FileRec, type Msg, type RefRec, type Resolve, type SearchQuery, type TreeNode, type VDir, STORE } from "./vault";
 import { defaultWorkflow, PART_NUMBER, ROLES, WIP, type CardField, type Role, type Workflow } from "./workflow";
 
@@ -48,6 +49,8 @@ export interface VaultHost {
   added?(id: string): Promise<void>;
   /** A small PNG of the live document's view (the explorer's preview), or null when nothing is shown. */
   thumb?(): Promise<Uint8Array | null>;
+  /** A vault file was just opened: File ▸ recent documents remembers it with its vault. */
+  recent?(name: string, data: Uint8Array, ref: RecentVault): void;
 }
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -588,7 +591,34 @@ export class VaultPanel {
       // A part, assembly or drawing opened from the vault saves back into it (an old version is a loose copy).
       const d = this.app.doc();
       if (!version && d && d.kind === f.kind) { this.shown.set(id, v.latest(f).n); d.setVault(this.tie(id)); setTimeout(() => void this.keepThumb(id), 4000); }
+      if (!version) { const ref = this.recentRef(id); if (ref) this.app.recent?.(name, data, ref); }
     } catch (e) { toast(errText(e), true); }
+  }
+
+  /** What File ▸ recent documents keeps for a file of the open vault, so it opens through the vault again. */
+  recentRef(id: string): RecentVault | null {
+    return this.vault && this.files.some(f => f.id === id) ? { vault: this.vault.root.name, where: this.where, id } : null;
+  }
+
+  /**
+   * A recent document that came from a vault: opens that vault (unless it is the open one) and the file in it,
+   * tied to the vault like any file opened from the Vault tab. False when the vault or the file is not there.
+   */
+  async openRecent(r: RecentVault): Promise<boolean> {
+    if (!this.vault || this.vault.root.name !== r.vault || this.where !== r.where) {
+      if (r.where === "folder") {
+        if (!this.foldersOk) return false;
+        const f = (await vaultFolders()).find(x => x.name === r.vault);
+        if (!f) return false;
+        await this.openFolder(f.key);
+      } else {
+        if (!(await this.browserVaults()).includes(r.vault)) return false;
+        try { await this.openInBrowser(r.vault); } catch { return false; }
+      }
+    }
+    if (!this.vault || this.vault.root.name !== r.vault || !this.files.some(f => f.id === r.id && !f.deleted)) return false;
+    await this.openFile(r.id);
+    return true;
   }
 
   /** The tie between an open document and its vault file (FR-PDM-010/081). */
