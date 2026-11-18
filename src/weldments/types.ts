@@ -315,3 +315,13 @@ export function bodyMatName(c: CutItem, bodies: BodyMats): string | null {
   const names = new Set(c.bodies.map(k => bodies?.[k]?.material?.name ?? ""));
   return names.size > 1 ? null : names.size ? [...names][0] : "";
 }
+
+/** A fillet bead's ISO 2553 weld symbol as drawing text: leg size `z5` (`z5×6` unequal), weld length with ` Z` when staggered and the pitch in brackets, both sides, all around, field weld. */
+export interface BeadSym { size: string; len?: string; both?: true; around?: true; field?: true }
+export function beadSym(f: WeldBeadFeature): BeadSym {
+  const n = (v: number) => String(Math.round(v * 100) / 100);
+  const it = f.inter;
+  const len = it ? `${n(it.len.v)}${it.stagger ? " Z" : ""} (${n(Math.max(it.pitch.v, it.len.v))})` : f.span ? n(f.span.len.v) : undefined;
+  return { size: `z${n(f.size.v)}${f.size2 && Math.abs(f.size2.v - f.size.v) > 1e-9 ? `×${n(f.size2.v)}` : ""}`, ...(len ? { len } : {}),
+    ...(f.both ? { both: true as const } : {}), ...(f.around ? { around: true as const } : {}), ...(f.field ? { field: true as const } : {}) };
+}

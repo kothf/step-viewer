@@ -225,7 +225,7 @@ export type WeldSym = "fillet" | "square" | "v" | "bevel" | "plug" | "spot";
 export interface WeldSide { sym: WeldSym; size?: string; len?: string }
 /** A weld symbol (ISO 2553 system A, FR-DRW-023): `pos` is the knee (view axes, or sheet mm without a view); `leader` the joint the
  *  arrow points at; `arrow`/`other` the arrow-side and other-side welds; `around` = all round, `field` = site weld, `tail` a note. */
-export interface WeldAnnot { id: string; t: "weld"; view?: string; pos: [number, number]; leader?: GeoRef; arrow?: WeldSide; other?: WeldSide; around?: boolean; field?: boolean; tail?: string }
+export interface WeldAnnot { id: string; t: "weld"; view?: string; pos: [number, number]; leader?: GeoRef; arrow?: WeldSide; other?: WeldSide; around?: boolean; field?: boolean; tail?: string; /** Inserted by Model items from a weldment bead: its weld table row (one symbol per row per sheet). */ row?: number }
 
 /** A datum target (ISO 5459, FR-DRW-023): `pos` is the frame circle's centre (view axes, or sheet mm without a view); `leader` the
  *  target on the model; `label` e.g. "A1" (lower half), `size` e.g. "Ø8" (upper half, area targets); `kind` the target marker;

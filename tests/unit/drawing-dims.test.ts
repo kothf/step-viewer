@@ -239,3 +239,11 @@ test("section centrelines: cylinders the cut took away get none (drawings exam #
   const a = kept(1), b = kept(-1);
   assert.deepEqual([a, b].sort(), ["boss,bore", "far hole"].sort(), `${a} | ${b}: one side keeps only the hole beyond y = 20, the other only the boss and bore`);
 });
+
+test("Model items bring a weldment bead's weld symbol (FR-FT-121)", async () => {
+  const { beadWeld } = await import("../../src/drawing/weld");
+  const b = { id: "a1", t: "balloon" as const, view: "v", ref: { e: "w:b0:leg1|m", h: [0, 0, 0] as [number, number, number], p: "e" as const }, pos: [10, 20] as [number, number] };
+  const w = beadWeld(b, 2, { legs: "4", length: 100, qty: 1, sym: { size: "z4", len: "40 (80)", both: true, field: true } });
+  assert.deepEqual(w, { id: "a1", t: "weld", view: "v", pos: [10, 20], leader: b.ref, arrow: { sym: "fillet", size: "z4", len: "40 (80)" }, other: { sym: "fillet", size: "z4", len: "40 (80)" }, field: true, row: 2 });
+  assert.deepEqual(beadWeld(b, 1, { legs: "3", length: 60, qty: 1, inter: [20, 50, 1] }).arrow, { sym: "fillet", size: "z3", len: "20 Z (50)" });
+});

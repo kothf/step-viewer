@@ -7,7 +7,7 @@ import { cutList, gussetEnds, pierceSpots, type WeldHost } from "../../src/weldm
 import { PROFILE_TYPES, profileArea, profileShape, profileSizes } from "../../src/weldments/profiles";
 import type { Feature, PartDoc, SketchFeature, SkEnt, V2, V3, Sketch3dFeature } from "../../src/model/types";
 import type { GussetFeature, MemberFeature } from "../../src/weldments/types";
-import { barPlan, barsNeeded, bodyMatName, cutKey, itemDensity, itemMatText, planGroups, splitSubs, stockTotals } from "../../src/weldments/types";
+import { barPlan, barsNeeded, beadSym, bodyMatName, cutKey, itemDensity, itemMatText, planGroups, splitSubs, stockTotals } from "../../src/weldments/types";
 import { occ } from "./occ";
 import { applyWeldMemory, weldMemory } from "../../src/weldments/defaults";
 
@@ -697,4 +697,11 @@ test("cut list items weigh with their bodies' own materials", () => {
   assert.equal(itemMatText(c, undefined, mixed, "S235"), "Aluminium 6061-T6, Stainless steel 304");
   assert.equal(itemMatText(c, undefined, { m1: { material: al } } as PartDoc["bodies"], "S235"), "Aluminium 6061-T6, S235");
   assert.equal(itemMatText(c, undefined, undefined, ""), "");
+});
+
+test("a fillet bead's weld symbol text for drawings", () => {
+  const N = (v: number) => ({ v });
+  const f = { id: "w", type: "weldbead", name: "", set1: [], set2: [], size: N(5), size2: N(6), inter: { len: N(50), pitch: N(100), stagger: true }, both: true, around: true } as unknown as import("../../src/weldments/types").WeldBeadFeature;
+  assert.deepEqual(beadSym(f), { size: "z5×6", len: "50 Z (100)", both: true, around: true });
+  assert.deepEqual(beadSym({ ...f, size2: undefined, inter: undefined, both: undefined, around: undefined, field: true, span: { start: N(0), len: N(80) } }), { size: "z5", len: "80", field: true });
 });

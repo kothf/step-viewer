@@ -14446,6 +14446,15 @@ try {
       return { n: bs.length, tx: [...document.querySelectorAll(".drw-svg text")].map(t => t.textContent), dangle: document.querySelectorAll("#drw .drw-dangle").length }; });
     check(bl.n >= 2 && bl.tx.includes("1") && bl.tx.includes("2") && !bl.tx.includes("?") && bl.dangle === 0,
       `drawing: auto balloon numbers a weldment part's bodies by their cut list items (${JSON.stringify({ n: bl.n, dangle: bl.dangle, nums: bl.tx.filter(s => /^\d$|^\?$/.test(s)) })})`);
+    // Model items on a weldment drawing bring the bead's weld symbol once (a second run adds none).
+    await drwTool(dp, "items");
+    await dp.waitForFunction(() => window.__sv.drw.doc().sheets[0].annots.some(a => a.t === "weld" && a.row), null, { timeout: 30000 }).catch(() => {});
+    await drwTool(dp, "items");
+    await dp.waitForTimeout(1500);
+    await ready();
+    const ws = await dp.evaluate(() => ({ w: window.__sv.drw.doc().sheets[0].annots.filter(a => a.t === "weld" && a.row).map(a => ({ row: a.row, arrow: a.arrow, leader: !!a.leader })), dangle: document.querySelectorAll("#drw .drw-dangle").length }));
+    check(ws.w.length === 1 && ws.w[0].row === 1 && ws.w[0].arrow?.sym === "fillet" && ws.w[0].arrow?.size === "z4" && ws.w[0].leader && ws.dangle === 0,
+      `drawing: model items bring a weldment bead's weld symbol once (${JSON.stringify(ws)})`);
     await ctx.close();
   }
 
