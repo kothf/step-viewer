@@ -174,6 +174,9 @@ test("cut list table: the cut list's items with their numbers, typed description
   const m = { ...a, beads: false, mass: true };
   assert.deepEqual(cutCols(m).at(-1), "Mass (kg)");
   assert.deepEqual(cutRows(m, cuts, ctx).map(r => [r[0], r[6]]), [["1", "1,05"], ["2", "2,36"], ["3", "1,75"]], "beads left out, numbers kept, mass each");
+  const mm = { ...m, mat: true }, withMat = cuts.map((c, i) => i === 0 ? { ...c, mat: "Aluminium 6061" } : c);
+  assert.deepEqual(cutCols(mm).slice(6), ["Material", "Mass (kg)"]);
+  assert.deepEqual(cutRows(mm, withMat, ctx).map(r => [r[6], r[7]]), [["Aluminium 6061", "1,05"], ["", "2,36"], ["", "1,75"]], "material column before the mass");
   const sh = { ...sheet, views: [view], annots: [a] } as unknown as Sheet;
   const out = viewAnnots(sh, view, pl, ctx), tx = out.prims.filter(p => p.t === "t").map(p => (p as { s: string }).s);
   assert.ok(["Item", "Qty", "Description", "Angle 1", "SHS 40x40x3", "Plate 10 × 200 × 150"].every(s => tx.includes(s)), tx.join(" "));
