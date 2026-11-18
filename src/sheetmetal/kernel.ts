@@ -1,7 +1,7 @@
 // Sheet metal on OpenCASCADE (FR-FT-120): turns the panels and bends of sheet.ts into solids and
 // joins them to the body. Runs in the kernel worker, called from Modeller.evaluate.
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import type { EdgeRef, FaceRef, Frame, PartDoc, SketchFeature, SkEnt, V2, V3 } from "../model/types";
+import type { EdgeRef, FaceRef, Frame, PartDoc, SketchFeature, SkEnt, V2, V3, VertexRef } from "../model/types";
 import type { Named } from "../kernel/model";
 import { inPolygon, loopPolygon, polyArea, sketchProfile, type Seg } from "../sketch/profile";
 import { tabSlot, type SlotCut, convertFlanges, type ConvertLevel, gussetSheet, type GussetMark, cornerRelief, reliefCorners, reliefLoop, apply, applyDir, bendStrip, sheetPlace, unfoldSheet, type SheetPlace, baseFlange, crossBreak, formTools, obroundLoop, type FormItem, ventLayout, ventPanel, loftedBend, type SheetMesh, breakCorner, closedCorner, miterFlange, miterProfile, sweptProfile, type FlatEdge, bendSketchLine, edgeFlange, flatLoops, hem, jog, sketchedBend, tab, SheetError, type Bend, type Mat, type Panel, type SheetOp, type SheetState } from "./sheet";
@@ -17,6 +17,8 @@ export interface SheetApi {
   /** A face / edge of the body by its reference (null when it is gone). */
   face(body: Named | null, ref: FaceRef): any;
   edge(body: Named | null, ref: EdgeRef): any;
+  /** A vertex's place (world mm). */
+  vertex?(body: Named | null, ref: VertexRef): V3;
 }
 
 const sub3 = (a: V3, b: V3): V3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -133,7 +135,7 @@ export function evalSheet(api: SheetApi, f: SheetFeature, doc: PartDoc, body: Na
   } else if (f.type === "smcross") {
     const { state } = crossBreak(sm, f);
     return { body, sm: state };
-  } else res = f.type === "smflange" ? edgeFlange(sm, f) : f.type === "smcorner" ? breakCorner(sm, f) : f.type === "smclosed" ? closedCorner(sm, f) : f.type === "smhem" ? hem(sm, f) : (() => { throw new SheetError("E-SM-TYPE", "Unknown sheet metal feature."); })();
+  } else res = f.type === "smflange" ? edgeFlange(sm, f, f.end === "vertex" && f.vertex && api.vertex ? api.vertex(body, f.vertex) : undefined) : f.type === "smcorner" ? breakCorner(sm, f) : f.type === "smclosed" ? closedCorner(sm, f) : f.type === "smhem" ? hem(sm, f) : (() => { throw new SheetError("E-SM-TYPE", "Unknown sheet metal feature."); })();
   const { state, ops } = res;
   if (!body) throw new SheetError("E-SM-NOBASE", "Make a base flange first.");
   return { body: applyOps(api, body, ops, state.T, f.id), sm: state };

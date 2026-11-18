@@ -26,7 +26,7 @@ import { loadFormats } from "./formats";
 import { FIELD_LABEL, isoFormat, editableOf, SIZES, fieldAt, formatPrims, frameOf, sheetSize, tbSize, titleBlockAt, type Fields } from "./sheet";
 import type { Annot, BalloonAnnot, CLineAnnot, GtolAnnot, HoleAnnot, DatumTargetAnnot, DimAnnot, SketchAnnot, SkPen, WeldSide, WeldAnnot, DisplayStyle, DraftStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, GRow, HatchPattern, Orient, Sheet, SheetSize, SurfLay, TableAnnot, TangentEdges, Tol } from "./types";
 import { SURF_LAYS, cellLabel } from "./gdt";
-import { WELD_SYM_NAMES } from "./weld";
+import { WELD_SYM_NAMES, beadWeld } from "./weld";
 import { SK_PENS, SK_PEN_NAMES, orthoSnap, skPoints, skPrims } from "./sheetSketch";
 import { fitLimits, splitFit } from "./iso286";
 import { FLAT_CONFIG, ORIENTS, ORIENT_NAMES, SCALES, viewConfig, viewOnly, topoOnly, altReq, alignAxis, alignedLegs, cutLegs, dirKey, findView, fitScale, std3Layout, lookDir, parseScale, projectedDir, scaleText, sideOf, switchProjection, viewDir, viewReq, viewScale } from "./views";
@@ -2211,13 +2211,33 @@ export class DrawingWorkspace {
   }
 
   /** Model items (FR-DRW-020): the part's driving dimensions, each once, in the view where it reads best. */
-  private insertItems() {
+  private async insertItems() {
     if (!this.facts) { toast(t("The drawing's model is still loading.")); return; }
-    if (!this.facts.items.length) { toast(t("The model has no dimensions to import: model items come from a part's sketches and extrudes."), true); return; }
-    const add = placeItems(this.sheet, this.facts.items, v => this.placements.get(v.id)?.box ?? null, () => uid("a_"), v => viewScale(this.sheet, v));
+    const welds = this.facts.welds ?? [];
+    if (!this.facts.items.length && !welds.length) { toast(t("The model has no dimensions to import: model items come from a part's sketches and extrudes."), true); return; }
+    const add: Annot[] = placeItems(this.sheet, this.facts.items, v => this.placements.get(v.id)?.box ?? null, () => uid("a_"), v => viewScale(this.sheet, v));
+    const dims = add.length;
+    // Weldment: each weld table row's weld symbol once per sheet, in the first view that shows the bead.
+    if (welds.length) {
+      const sheet = this.sheet, facts = this.facts, c = this.ctx();
+      const have = new Set((sheet.annots ?? []).flatMap(a => a.t === "weld" && a.row ? [a.row] : []));
+      for (const v of sheet.views) {
+        if (have.size >= welds.length) break;
+        const proj = await this.kernel.request(viewReq(sheet, v)).catch(() => null);
+        if (!proj || this.facts !== facts || this.sheet !== sheet) return;
+        const items: BalloonItems = { edge: k => { const r = weldItem(k, c); return r && !have.has(r) ? r : null; }, stack: () => null, mine: () => false };
+        for (const b of autoBalloons(sheet, v, facts.topo, projector(viewDir(sheet, v)).P, proj, viewScale(sheet, v), items, () => uid("a_"))) {
+          const row = "e" in b.ref ? weldItem(b.ref.e, c) : null;
+          if (!row || have.has(row)) continue;
+          have.add(row);
+          add.push(beadWeld(b, row, welds[row - 1]));
+        }
+      }
+    }
     if (!add.length) { toast(t("Every model item is on the sheet already, or no view shows it square on.")); return; }
     this.store!.change("Model items", d => { const S = d.sheets[this.sheetIdx]; (S.annots ??= []).push(...add); });
-    toast(t("{n} model dimension inserted|{n} model dimensions inserted", { n: add.length }), "success");
+    const syms = add.length - dims;
+    toast(syms ? t("{d} model dimensions and {w} weld symbols inserted", { d: dims, w: syms }) : t("{n} model dimension inserted|{n} model dimensions inserted", { n: dims }), "success");
   }
 
   private deleteAnnot() {
@@ -3452,7 +3472,7 @@ export class DrawingWorkspace {
     if (b.dataset.an) {
       this.closeMenus();
       const an = b.dataset.an;
-      if (an === "items") this.insertItems(); else if (an === "rev") this.insertTable("rev"); else if (an === "table") this.insertTable("general"); else if (an === "bom") this.insertBom(); else if (an === "auto") void this.autoBalloon(); else if (an === "chain" || an === "base" || an === "ord") this.startAnnot("dimset", an); else this.startAnnot(an as AnnotMode["kind"]);
+      if (an === "items") void this.insertItems(); else if (an === "rev") this.insertTable("rev"); else if (an === "table") this.insertTable("general"); else if (an === "bom") this.insertBom(); else if (an === "auto") void this.autoBalloon(); else if (an === "chain" || an === "base" || an === "ord") this.startAnnot("dimset", an); else this.startAnnot(an as AnnotMode["kind"]);
       return;
     }
     if (b.dataset.unstack !== undefined) {
