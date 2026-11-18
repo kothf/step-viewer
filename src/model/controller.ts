@@ -5,6 +5,7 @@
 // The document (DocStore) is the source of truth; every rebuild sends it to the
 // kernel worker and shows the returned body with the viewer's own pipeline, so
 // the measuring tools work on modelled parts unchanged.
+import { fixRefsIn } from "./refFix";
 import { fullyDefineSketch } from "../sketch/define";
 import type { VaultTie } from "../pdm/panel";
 import type { NamedView, V2 } from "./types";
@@ -857,6 +858,7 @@ export class ModelController {
     }
     this.multi = null;
     this.followEdges(r);
+    this.takeRefs(r);
     this.rebuildMs = r.ms.eval + r.ms.mesh;
     this.syncCsys();
     const first = !this.shownOnce;
@@ -875,6 +877,24 @@ export class ModelController {
       const fr = r.frames[hm.draft.id];
       if (fr) { const ws = this.pendingHole; this.pendingHole = []; for (const w of ws) this.placeHole(hm.draft, this.holeSnap(w.at, fr) ?? w.p, fr); }
     } else this.pendingHole = [];
+  }
+
+  /**
+   * Takes over the references the rebuild resolved under other names or at another place (no undo step):
+   * a face or edge whose names an earlier edit changed is stored as found, so the feature keeps it.
+   */
+  private takeRefs(r: Rebuild) {
+    const found: string[] = [];
+    for (const [id, fixes] of Object.entries(r.refs ?? {})) {
+      const cur = this.store!.feature(id);
+      let n = 0;
+      if (cur) this.store!.amendQuiet(() => { n = fixRefsIn(cur, fixes); });
+      const m = this.mode;
+      if (m.kind === "feature" && m.draft.id === id) fixRefsIn(m.draft, fixes);
+      if (m.kind === "sketch" && m.id === id) fixRefsIn(m.editor.sk, fixes);
+      if (cur && n && fixes.some(x => x.found)) found.push(featureLabel(cur.name));
+    }
+    if (found.length) toast(t("References found again after the change: {names}.", { names: [...new Set(found)].join(", ") }));
   }
 
   /** Takes over the sketches the rebuild moved onto their model edges or marked dangling (FR-SK-064). */
@@ -4512,15 +4532,27 @@ export class ModelController {
 
   /** What an entityRef points at after a rebuild, if it still exists. */
   resolveRef(r: { edge?: EdgeRef; face?: { name: string; hint: V3 } }): { edge?: EdgeInfo; faceId?: number } | null {
-    if (r.edge) { const ed = this.edgeOf(r.edge); return ed ? { edge: ed } : null; }
     const data = this.host.viewer.parts[0]?.data, names = this.last?.faceNames;
+    // Names gone (an earlier feature was edited): the same thing at the same place, when there is exactly one.
+    const tol = data ? Math.max(1e-3, 1e-3 * Math.hypot(data.bboxMax[0] - data.bboxMin[0], data.bboxMax[1] - data.bboxMin[1], data.bboxMax[2] - data.bboxMin[2])) : 0;
+    const far = (a: V3 | number[], b: V3 | number[]) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+    if (r.edge) {
+      const ed = this.edgeOf(r.edge);
+      if (ed || !data || !r.edge.hint) return ed ? { edge: ed } : null;
+      const near = data.edges.filter(x => far(x.mid, r.edge!.hint!) <= tol);
+      return near.length === 1 ? { edge: near[0] } : null;
+    }
     if (!r.face || !data || !names) return null;
     let best = -1, bd = Infinity;
     names.forEach((n, i) => {
       if (n !== r.face!.name || !data.faces[i]) return;
-      const c = data.faces[i].center, h = r.face!.hint, d = Math.hypot(c[0] - h[0], c[1] - h[1], c[2] - h[2]);
+      const d = far(data.faces[i].center, r.face!.hint);
       if (d < bd) { bd = d; best = i; }
     });
+    if (best < 0) {
+      const near = data.faces.map((f, i) => (f && far(f.center, r.face!.hint) <= tol ? i : -1)).filter(i => i >= 0);
+      if (near.length === 1) best = near[0];
+    }
     return best >= 0 ? { faceId: best } : null;
   }
 

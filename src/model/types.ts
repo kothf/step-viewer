@@ -182,9 +182,15 @@ export interface SketchPicture { id: string; name?: string; src: string; c: V2; 
 // ---------- persistent references (FRS 9.14) ----------
 
 /** A face by name (feature id + role), with its centroid when picked to choose between several. */
-export interface FaceRef { name: string; hint?: V3 }
+/**
+ * What a referenced face or edge was when it last resolved, kept by the rebuild so it can be found again
+ * when its names change: face `["p", nx, ny, nz]` plane, `["c", r]` cylinder, `["s", r]` sphere, `["o"]` other;
+ * edge `["l", dx, dy, dz]` line, `["c", r]` circle, `["o"]` other.
+ */
+export type RefSig = (string | number)[];
+export interface FaceRef { name: string; hint?: V3; g?: RefSig }
 /** An edge between two named faces; the hint picks between several shared edges. */
-export interface EdgeRef { faces: [string, string]; hint?: V3; /** An edge of another component (edit in context, sketch On edge relations only). */ ctx?: CtxEdge }
+export interface EdgeRef { faces: [string, string]; hint?: V3; g?: RefSig; /** An edge of another component (edit in context, sketch On edge relations only). */ ctx?: CtxEdge }
 
 // ---------- features ----------
 
