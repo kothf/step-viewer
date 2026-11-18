@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.565.0] - 2026-11-18
+
+### Changed
+
+- **Weldment cut list masses follow body materials.** A cut list item with no material of its own now weighs with its bodies' own materials (Bodies folder → Material…), as the drawing's cut list table already did, and falls back to the part's material only for bodies with none. Its Material list says *Body material (…)* in that case, or *Body materials (mixed)* when the item's bodies differ (the mass then uses their average density); the CSV's Material column names the bodies' material, or *Mixed*.
+
 ## [1.564.0] - 2026-11-17
 
 ### Changed
@@ -3527,7 +3533,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.564.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.565.0...HEAD
+[1.565.0]: https://github.com/kothf/step-viewer/compare/v1.564.0...v1.565.0
 [1.564.0]: https://github.com/kothf/step-viewer/compare/v1.563.0...v1.564.0
 [1.563.0]: https://github.com/kothf/step-viewer/compare/v1.562.0...v1.563.0
 [1.562.0]: https://github.com/kothf/step-viewer/compare/v1.561.0...v1.562.0
