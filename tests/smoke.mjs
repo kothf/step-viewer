@@ -14380,8 +14380,9 @@ try {
     await ready();
     const ct = await dp.evaluate(() => ({ n: window.__sv.drw.doc().sheets[0].annots.filter(a => a.t === "ctable").length, tx: [...document.querySelectorAll(".drw-svg text")].map(t => t.textContent),
       beads: !!document.querySelector('#drw .drw-props [data-d="cbeads"]') }));
-    check(ct.n === 1 && ct.beads && ["Description", "Angle 1", "Angle 2", "SHS 40x40x3", "290", "0°", "Fillet weld, leg 4"].every(s => ct.tx.includes(s)),
-      `drawing: cut list table lists the tube with its length and end angles and the bead (${JSON.stringify({ n: ct.n, tx: ct.tx.filter(s => /^(Item|Qty|Desc|Angle|SHS|Fillet|29\d|0°)/.test(s)) })})`);
+    // The extruded base plate is listed too (a body made by an ordinary feature: a plate by its thickness and size).
+    check(ct.n === 1 && ct.beads && ["Description", "Angle 1", "Angle 2", "SHS 40x40x3", "290", "0°", "Fillet weld, leg 4", "Plate 10 × 200 × 200"].every(s => ct.tx.includes(s)),
+      `drawing: cut list table lists the tube with its length and end angles and the bead (${JSON.stringify({ n: ct.n, tx: ct.tx.filter(s => /^(Item|Qty|Desc|Angle|SHS|Fillet|Plate|29\d|0°)/.test(s)) })})`);
     await dp.click('#drw .drw-props [data-d="cbeads"]');
     await ready();
     const ct2 = await dp.evaluate(() => [...document.querySelectorAll(".drw-svg text")].map(t => t.textContent));

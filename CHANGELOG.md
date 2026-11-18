@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.568.0] - 2026-11-18
+
+### Changed
+
+- **Every body of a weldment is in its cut list.** Bodies made by ordinary features (an extruded base plate, an inserted or imported body) used to be left out of the cut list; now, as in other CAD apps, each one is listed. A flat slab (two parallel faces, the volume of the larger one times the distance between them) is a plate of its thickness, width and length and groups with end caps and gussets of the same size; any other body is listed as *Body L × W × H* by its overall size. They show in the Cut list folder, the Cut List dialog and CSV, and the drawing's cut list table and balloons.
+
 ## [1.567.0] - 2026-11-18
 
 ### Added
@@ -3545,7 +3551,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.567.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.568.0...HEAD
+[1.568.0]: https://github.com/kothf/step-viewer/compare/v1.567.0...v1.568.0
 [1.567.0]: https://github.com/kothf/step-viewer/compare/v1.566.0...v1.567.0
 [1.566.0]: https://github.com/kothf/step-viewer/compare/v1.565.0...v1.566.0
 [1.565.0]: https://github.com/kothf/step-viewer/compare/v1.564.0...v1.565.0

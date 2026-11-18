@@ -171,6 +171,7 @@ test("cut list table: the cut list's items with their numbers, typed description
     ["3", "2", "Leg", "500", "0°", "0°"], ["4", "1", "Fillet weld, leg 4,5", "149,7", "", ""],
     ["5", "1", "Staggered fillet weld, leg 3, 20 every 50", "60", "", ""],
   ]);
+  assert.equal(cutDesc({ item: 6, kind: "body", desc: "", box: [200, 200, 80.5], qty: 1, kg: 1 }, ctx), "Body 200 × 200 × 80,5");
   const m = { ...a, beads: false, mass: true };
   assert.deepEqual(cutCols(m).at(-1), "Mass (kg)");
   assert.deepEqual(cutRows(m, cuts, ctx).map(r => [r[0], r[6]]), [["1", "1,05"], ["2", "2,36"], ["3", "1,75"]], "beads left out, numbers kept, mass each");

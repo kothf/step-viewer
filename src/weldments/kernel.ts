@@ -1190,9 +1190,40 @@ export function cutList(h: WeldHost, parts: { key: string; part: Named; volume: 
     const d = ad.Plane().Axis().Direction();
     return [d.X(), d.Y(), d.Z()];
   };
+  const areaOf = (x: any) => { const p = new oc.GProp_GProps_1(); oc.BRepGProp.SurfaceProperties_1(x, p, false, false); return p.Mass(); };
+  /** The biggest flat face: a plate's top. */
+  const plateTop = (part: Named) => {
+    let best = -1, ba = 0;
+    part.faces.forEach((x, i) => { if (!planeN(x)) return; const a = areaOf(x); if (a > ba) { ba = a; best = i; } });
+    return best < 0 ? null : { face: part.faces[best], n: planeN(part.faces[best])!, area: ba };
+  };
+  /** A plate item: the top's extents in its own axes, longer first, and the thickness. */
+  const plate = (key: string, top: { face: any; n: V3 }, t: number, volume: number) => {
+    const ax = faceAxes(h, top.face, top.n), pts = edgePoints(h, top.face);
+    const ext = (d: V3) => { const ts = pts.map(p => dot(p, d)); return Math.max(...ts) - Math.min(...ts); };
+    const [w, l] = [r1(ext(ax.x)), r1(ext(ax.y))].sort((p, q) => q - p);
+    put(`p|${t}|${w}|${l}`, { kind: "plate", desc: `${t}`, plate: [w, l, t], volume }, key);
+  };
+  const other = (key: string, part: Named, volume: number) => {
+    const top = plateTop(part);
+    if (top) {
+      // A slab: a flat face parallel to the top behind it, and the volume of the top's area times that distance.
+      const p0 = edgePoints(h, top.face)[0];
+      for (const x of part.faces) {
+        const n = planeN(x);
+        if (!n || Math.abs(dot(n, top.n)) < 1 - 1e-6) continue;
+        const t = Math.abs(dot(sub(edgePoints(h, x)[0], p0), top.n));
+        if (t > 1e-6 && Math.abs(top.area * t - volume) < 0.02 * volume) { plate(key, top, r1(t), volume); return; }
+      }
+    }
+    const pts = edgePoints(h, part.shape), ext = (i: number) => Math.max(...pts.map(p => p[i])) - Math.min(...pts.map(p => p[i]));
+    const box = [ext(0), ext(1), ext(2)].map(r1).sort((p, q) => q - p) as [number, number, number];
+    put(`o|${box.join("|")}`, { kind: "body", desc: box.join(" × "), box, volume }, key);
+  };
   for (const { key, part, volume } of parts) {
     const owner = part.names.map(n => doc.features.find(x => x.id === n.split(":")[0])).find(x => x && (x.type === "member" || x.type === "endcap" || x.type === "gusset" || x.type === "weldbead"));
-    if (!owner) continue;
+    // Any other solid (an extruded base plate, an inserted body): a plate when it is one flat slab, else a body by its box, as a CAD app lists every body of a weldment.
+    if (!owner) { try { other(key, part, volume); } catch { /* left out */ } continue; }
     try {
       if (owner.type === "member") {
         // A merged body (Merge arc segment bodies) holds several segments: each one's faces give its part of the length.
@@ -1239,20 +1270,13 @@ export function cutList(h: WeldHost, parts: { key: string; part: Named; volume: 
         r.length = r1((r.length ?? 0) + length);
         r.volume += volume;
       } else {
-        const t = (owner as EndCapFeature | GussetFeature).thickness.v;
-        // The biggest flat face is the plate's top: its extents in its own axes.
-        let best = -1, ba = 0;
-        part.faces.forEach((x, i) => { if (!planeN(x)) return; const p = new oc.GProp_GProps_1(); oc.BRepGProp.SurfaceProperties_1(x, p, false, false); if (p.Mass() > ba) { ba = p.Mass(); best = i; } });
-        if (best < 0) continue;
-        const n = planeN(part.faces[best])!, ax = faceAxes(h, part.faces[best], n);
-        const pts = edgePoints(h, part.faces[best]);
-        const ext = (d: V3) => { const ts = pts.map(p => dot(p, d)); return Math.max(...ts) - Math.min(...ts); };
-        const [w, l] = [r1(ext(ax.x)), r1(ext(ax.y))].sort((p, q) => q - p);
-        put(`p|${t}|${w}|${l}`, { kind: "plate", desc: `${t}`, plate: [w, l, t], volume }, key);
+        const top = plateTop(part);
+        if (!top) continue;
+        plate(key, top, (owner as EndCapFeature | GussetFeature).thickness.v, volume);
       }
     } catch { /* a body whose path is gone is left out */ }
   }
-  // Members first, then plates, then beads; within a kind by description and length.
-  const order = { member: 0, plate: 1, bead: 2 };
+  // Members first, then plates, other bodies, then beads; within a kind by description and length.
+  const order = { member: 0, plate: 1, body: 2, bead: 3 };
   return [...rows.values()].sort((p, q) => order[p.kind] - order[q.kind] || p.desc.localeCompare(q.desc, "en", { numeric: true }) || (q.length ?? 0) - (p.length ?? 0));
 }
