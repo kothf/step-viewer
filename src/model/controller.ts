@@ -6842,7 +6842,12 @@ export class ModelController {
         if (id.startsWith("folder:") || id.startsWith("body:") || id.startsWith("wsub:")) { if (id.startsWith("folder:")) this.toggleFolder(id.slice(7)); this.startRename(id); return; }
         if (this.store!.feature(id)) this.editFeature(id);
       });
-      r.addEventListener("contextmenu", e => { e.preventDefault(); this.selected = id; this.renderTree(); this.drawDecor(); this.openMenu(id, e.clientX, e.clientY); });
+      r.addEventListener("contextmenu", e => {
+        e.preventDefault();
+        // A right-click on one of several picked rows keeps them all picked for the menu.
+        if (!this.treePicks.has(id)) { this.selected = id; this.renderTree(); this.drawDecor(); }
+        this.openMenu(id, e.clientX, e.clientY);
+      });
       r.addEventListener("keydown", e => {
         if ((e.target as HTMLElement).matches("input")) return;
         const rows = [...box.querySelectorAll<HTMLElement>(".ft-row")];

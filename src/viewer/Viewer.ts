@@ -309,7 +309,8 @@ export class Viewer {
     this.bounds.makeEmpty();
     for (const p of this.parts) if (p.visible) this.bounds.expandByObject(p.mesh);
     const x = this.extraBounds?.();
-    if (x && !x.isEmpty()) this.bounds.union(x);
+    // With no body shown the empty-part box stays the least the view fits, so a small sketch keeps the usual framing.
+    if (x && !x.isEmpty()) this.bounds.union(this.bounds.isEmpty() ? x.clone().union(new THREE.Box3(new THREE.Vector3(-1, -1, -1).multiplyScalar(this.emptySize), new THREE.Vector3(1, 1, 1).multiplyScalar(this.emptySize))) : x);
     if (this.bounds.isEmpty()) this.bounds.set(new THREE.Vector3(-1, -1, -1).multiplyScalar(this.emptySize), new THREE.Vector3(1, 1, 1).multiplyScalar(this.emptySize));
     return this.bounds;
   }
