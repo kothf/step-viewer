@@ -15627,6 +15627,14 @@ try {
     await fp.click("#file-menu [data-f='recent:0']");
     await fp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
     check(true, "File menu: a recent document opens again from the list");
+    // Start screen: the same recent documents, one click to open.
+    await fp.click("#file-btn");
+    await fp.click("#file-menu [data-f=close-all]");
+    await fp.waitForFunction(() => !window.__sv.viewer.parts.length && !document.querySelector("#empty").hidden && document.querySelector("#empty-recent [data-recent]"), null, { timeout: 30000 });
+    const startRec = await fp.$$eval("#empty-recent [data-recent]", bs => bs.map(b => b.textContent));
+    await fp.click("#empty-recent [data-recent='0']");
+    await fp.waitForFunction(() => window.__sv.viewer.parts.length > 0 && document.querySelector("#empty").hidden, null, { timeout: 60000 });
+    check(/rounded-cube\.step/.test(startRec[0] ?? ""), `start screen: lists the recent documents and opens one with a click (${JSON.stringify(startRec)})`);
     await ctx.close();
   }
   // 1.381 (FR-HLP-003): the tutorial from the start card makes a part and ticks its steps from the document.
