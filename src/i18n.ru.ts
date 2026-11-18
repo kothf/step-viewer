@@ -5017,6 +5017,7 @@ export const RU: Record<string, string> = {
   "Multi-directional": "Произвольное",
   "Radial": "Радиальное",
   "Particulate, no direction": "Точечное, без направления",
+  "References found again after the change: {names}.": "Ссылки найдены заново после изменения: {names}.",
   "Construction geometry: shown dashed, not used in profiles.": "Вспомогательная геометрия: показана штрихом, в профили не входит.",
   "Normal geometry again.": "Снова обычная геометрия.",
   "For construction on: new lines, arcs and circles are construction geometry. Press Q again to turn it off.": "Режим «Для построения» включён: новые линии, дуги и окружности будут вспомогательными. Нажмите Q ещё раз, чтобы выключить.",

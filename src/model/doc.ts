@@ -73,6 +73,13 @@ export class DocStore {
    */
   amend(fn: (d: PartDoc) => void) { fn(this.doc); }
 
+  /** Like `amend`, and a saved document stays saved: what changes is only what the next rebuild would derive again. */
+  amendQuiet(fn: (d: PartDoc) => void) {
+    const clean = !this.dirty;
+    fn(this.doc);
+    if (clean) this.savedAt = JSON.stringify(this.doc);
+  }
+
   /** Replaces the document without an undo step (opening a file). */
   reset(doc: PartDoc) {
     this.doc = doc;
