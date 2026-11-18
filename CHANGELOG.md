@@ -13,6 +13,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Fixed
 
+- **Zoom to fit sees sketches.** Zoom to fit, the standard views and Normal to take the shown sketches and curves in, so a large frame sketch with no body yet fits the view, and it no longer vanishes while panning.
 - **3D sketch points stay on sketch points.** A 3D sketch point clicked on a point of a shown 2D sketch (such as a weldment's frame sketch) is held on it: when that sketch changes, the 3D sketch follows and solves again, so legs and braces drawn from the frame's corners move with it. Unfixing the point or typing its coordinates lets it go.
 - **Cut list properties survive a model change.** A description, part number, note, material or Exclude typed for a weldment cut list item stays with that item when its length or end angles change, instead of being lost.
 - **Weld table keeps excluded beads.** A fillet bead excluded from the cut list is still listed in the drawing's weld table and still gets its weld symbol from Model items.

@@ -199,7 +199,8 @@ export class Viewer {
 
   /** Tight near/far from the model bounds keeps depth precision (and edge polygon offset) good. */
   private updateClipRange() {
-    const s = this.bounds.getBoundingSphere(new THREE.Sphere());
+    const x = this.extraBounds?.();
+    const s = (x && !x.isEmpty() ? this.bounds.clone().union(x) : this.bounds).getBoundingSphere(new THREE.Sphere());
     const d = this.camera.position.distanceTo(s.center);
     const r = Math.max(s.radius, 1e-3) * 4;
     this.persp.near = Math.max(d - r, r * 1e-4);
@@ -301,9 +302,14 @@ export class Viewer {
   /** Half size of the box the view fits when nothing is shown (a new part: 50 mm). */
   emptySize = 1;
 
+  /** More to fit and keep inside the clip range besides the parts (the part editor's shown sketches and curves). */
+  extraBounds: (() => THREE.Box3 | null) | null = null;
+
   computeBounds() {
     this.bounds.makeEmpty();
     for (const p of this.parts) if (p.visible) this.bounds.expandByObject(p.mesh);
+    const x = this.extraBounds?.();
+    if (x && !x.isEmpty()) this.bounds.union(x);
     if (this.bounds.isEmpty()) this.bounds.set(new THREE.Vector3(-1, -1, -1).multiplyScalar(this.emptySize), new THREE.Vector3(1, 1, 1).multiplyScalar(this.emptySize));
     return this.bounds;
   }

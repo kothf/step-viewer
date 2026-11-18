@@ -559,6 +559,15 @@ export class ModelController {
     // A result shown from the disk cache that the kernel's own build did not match (it never should): build again.
     this.kernel.onStale = () => void this.rebuild();
     host.viewer.scene.add(this.decor);
+    // Shown sketches and curves count in Zoom to fit and the view's clip range, so a big frame sketch
+    // with no body yet fits the view and does not vanish when panned (weldments exam #1).
+    host.viewer.extraBounds = () => {
+      if (!this.store) return null;
+      const m = this.mode, box = this.shownBox.clone();
+      const sk = m.kind === "sketch" ? m.editor.sketchBox() : null;
+      if (sk && !sk.isEmpty()) box.union(sk);
+      return box.isEmpty() ? null : box;
+    };
     host.viewer.scene.add(this.hoverGroup, this.ctHoverGroup);
     this.ghostGroup.visible = false;
     host.viewer.scene.add(this.ghostGroup);
@@ -4471,7 +4480,12 @@ export class ModelController {
 
   // ---------- 3D decorations: sketches, planes, picked edges ----------
 
+  /** The box of the sketches and curves `drawDecor` drew last (`boxing` while it draws them). */
+  private shownBox = new THREE.Box3();
+  private boxing = false;
+
   private clearDecor() {
+    this.shownBox.makeEmpty();
     for (const c of [...this.decor.children]) {
       const o = c as THREE.Mesh;
       o.geometry?.dispose();
@@ -4489,6 +4503,7 @@ export class ModelController {
 
   private lines(pos: number[], color: number, width: number, dashed = false, depthTest = false) {
     if (!pos.length) return;
+    if (this.boxing) for (let i = 0; i + 2 < pos.length; i += 3) this.shownBox.expandByPoint(new THREE.Vector3(pos[i], pos[i + 1], pos[i + 2]));
     const g = new LineSegmentsGeometry();
     g.setPositions(pos);
     const mat = new LineMaterial({ color, linewidth: width, worldUnits: false, depthTest, transparent: true, dashed, dashSize: 3, gapSize: 2 });
@@ -4510,6 +4525,7 @@ export class ModelController {
     const used = new Set(this.doc.features.flatMap(f => this.doc.features.filter(g => g.type === "sketch" && absorbs(f, g.id)).map(g => g.id)));
     if (m.kind === "feature" && (m.draft.type === "extrude" || m.draft.type === "revolve")) used.add(m.draft.sketch);
     const end = this.doc.rollback ?? this.doc.features.length;
+    this.boxing = true;
     this.doc.features.slice(0, end).forEach(f => {
       if (f.type !== "sketch" || f.suppressed || (m.kind === "sketch" && m.id === f.id)) return;
       // Edit sketch plane: the sketch shows on the plane picked so far, highlighted.
@@ -4531,6 +4547,7 @@ export class ModelController {
       this.lines(pos, editing ? 0xf08c00 : dark ? 0x8ab4ff : 0x1d4ed8, editing ? 2.2 : 1.4);
     }
     this.draw3dSketches();
+    this.boxing = false;
     // Flattened sheet metal (FR-FT-120): bend lines on the flat pattern, up bends one colour, down the other.
     const fp = this.doc.features.find(f => f.type === "smflat");
     const fpAt = fp ? this.doc.features.indexOf(fp) : -1;

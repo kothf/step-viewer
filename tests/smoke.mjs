@@ -10501,6 +10501,9 @@ try {
         ents: [P("c1", -50, -30), P("c2", 50, -30), P("c3", 50, 30), P("c4", -50, 30), Ln("a", "c1", "c2"), Ln("b", "c2", "c3"), Ln("c", "c3", "c4"), Ln("e", "c4", "c1")] });
     }));
     await settle();
+    // Zoom to fit takes the shown sketch in, with no body yet (weldments exam #1).
+    const fitBox = await mp.evaluate(() => { const b = window.__sv.viewer.computeBounds(); return [b.min.x, b.min.y, b.max.x, b.max.y].map(Math.round); });
+    check(JSON.stringify(fitBox) === "[-50,-30,50,30]", `model 1.573: Zoom to fit takes shown sketches in (${JSON.stringify(fitBox)})`);
     await mp.evaluate(() => { const v = window.__sv.viewer; v.fit(false); });
     await runCmd(mp, "3D Sketch");
     await settle();
@@ -13309,6 +13312,29 @@ try {
     const pt = await mp.evaluate(() => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.at(-1); return { planar: f.planar, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), }; });
     pt.added = (await mp.evaluate(`[${qtyAt}][0](380)`)) - before;
     check(pt.planar === true && !pt.bad && pt.added === 1, `weldments: Trim/Extend planar trim against a body (${JSON.stringify(pt)})`);
+    // Two boundary bodies (weldments exam #4): Beam E (4100..4400) between posts at x = 4000 and 4500 is trimmed at both ends,
+    // each to the post nearer to it, round corners included: 500 − 40 + 2 × 6 = 472.
+    await mp.evaluate(() => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b });
+      window.__sv.model.store.change("Beams", d => {
+        d.features.push({ id: "xse", type: "sketch", name: "SketchE", plane: { std: "XY" }, rels: [], dims: [], ents: [P("e1", 4100, 4000), P("e2", 4400, 4000), L("we", "e1", "e2"), P("g1", 4000, 3900), P("g2", 4000, 4100), L("wg", "g1", "g2"), P("h1", 4500, 3900), P("h2", 4500, 4100), L("wh", "h1", "h2")] },
+          { id: "xme", type: "member", name: "Beam E", profile: "shs", size: "40x40x3", segs: [{ sketch: "xse", ent: "we" }], corner: "none" },
+          { id: "xmg", type: "member", name: "Post G", profile: "shs", size: "40x40x3", segs: [{ sketch: "xse", ent: "wg" }, { sketch: "xse", ent: "wh" }], corner: "none" });
+        d.rollback = null;
+      });
+    });
+    await settle();
+    await runCmd(mp, "Trim/Extend");
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wkind"]', "body");
+    await settle();
+    await mp.evaluate(() => { const m = window.__sv.model.mode(); m.draft.bodies = [{ name: "xme:we:start" }]; m.draft.boundary = { name: "xmg:wg:start" }; m.draft.more = [{ name: "xmg:wh:start" }]; window.__sv.modeller.draftChanged(); });
+    await settle();
+    const boxText = await mp.evaluate(() => document.querySelector('#mc-pm [data-focus="wbound"]')?.textContent ?? document.querySelector('#mc-pm [data-k="wbound"]')?.textContent ?? "");
+    await mp.click("#mc-ok");
+    await settle();
+    const two = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), rows: (l.cutList ?? []).filter(c => c.desc === "SHS 40x40x3" && Math.abs(c.length - 472) < 0.01).map(c => c.qty) }; });
+    check(!two.bad && JSON.stringify(two.rows) === "[1]" && /2/.test(boxText), `weldments: Trim/Extend against two boundary bodies trims both ends (${JSON.stringify({ two, boxText })})`);
     // In Russian: the Structural Member panel.
     await mp.click("#lang-btn");
     await mp.evaluate(() => window.__sv.modeller.editFeature("m2"));
