@@ -205,7 +205,7 @@ export class VaultPanel {
    * (the browser may ask for access again) or the browser vault of that name.
    */
   async startCard() {
-    const card = document.querySelector<HTMLElement>("#empty .empty-tut")?.parentElement;
+    const card = document.getElementById("empty-more");
     if (!card) return;
     let row = card.querySelector<HTMLElement>(".empty-vault");
     const name = storage.get("mc:lastVault"), where = storage.get("mc:lastVaultWhere") || "browser";
@@ -217,7 +217,7 @@ export class VaultPanel {
       } else if (where === "browser" && (await this.browserVaults()).includes(name)) open = () => void this.openInBrowser(name).catch(e => toast(t((e as Error).message), true));
     }
     if (!open || this.vault || !name) { row?.remove(); return; }
-    if (!row) { row = document.createElement("div"); row.className = "row center empty-vault"; card.appendChild(row); }
+    if (!row) { row = document.createElement("div"); row.className = "row empty-vault"; card.appendChild(row); }
     row.innerHTML = `<button class="btn small" id="empty-vault" title="${esc(t("Open the vault you used last"))}">${esc(t("Reopen vault {name}", { name }))}</button>`;
     row.querySelector("button")!.addEventListener("click", () => { open!(); document.getElementById("t-vault")?.click(); });
   }

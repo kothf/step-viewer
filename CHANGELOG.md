@@ -5,13 +5,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.592.0] - 2026-11-18
+## [1.593.0] - 2026-11-18
 
 ### Added
 - Assemblies: **Isolate** and **Make others transparent** on a component's right-click menu (and for several picked components). A bar at the bottom of the view switches the others between hidden and see-through; **Exit Isolate** or Esc brings them back. Only the view changes.
 - Sketch: double-click a line or arc to select its whole joined chain.
 - Sketch: **Show dimensions** in the sketch panel hides every dimension (a selected one still shows) to see the shape.
 - Display ▸ **Tangent edges**: off draws only sharp edges, leaving out the edges where faces meet smoothly, such as along fillets.
+
+## [1.592.0] - 2026-11-18
+
+### Changed
+
+- **New start screen.** The card shown with nothing open now leads with what a CAD app starts with: **New part**, **New assembly**, **Open…** and the **Tutorial**, each with a one-line description, and lists your **recent documents** beside them (one click opens one again), with unsaved parts to recover and the last vault underneath. The long list of file formats moved behind a **Supported formats** link; files can still be dropped anywhere on the card. The navigation cube is hidden while the start screen shows.
 
 ## [1.591.0] - 2026-11-18
 
@@ -440,7 +446,6 @@ Fixes from a test of motion studies on a real 57-part steam engine assembly:
 ### Added
 - Hole Wizard: holes on other faces. With the hole open, a click on another face of the part, flat or curved, adds a hole square to that face at the click; the positions list shows them and a × removes one. Threads, callout counts and the Positions box include them.
 
-
 ## [1.537.0] - 2026-11-11
 
 ### Added
@@ -452,7 +457,6 @@ Fixes from a test of motion studies on a real 57-part steam engine assembly:
 ### Added
 - Hole Wizard **Captive screw**: a hole for a screw that stays in its cover. Held by a thread in the cover (the screw is turned through it) or by a retaining ring under the cover (a recess is cut for the ring). **Retracted screw** leaves room for the screw's thread inside the cover, so with the screw pulled up the cover sits flat on the box: a short retaining thread over a clearance bore, or a deeper ring recess; the panel shows the cover thickness this needs, and a cover that is too thin gets a warning saying by how much. Optional head counterbore; sizes from the ISO table.
 
-
 ## [1.535.0] - 2026-11-11
 
 ### Added
@@ -463,7 +467,6 @@ Fixes from a test of motion studies on a real 57-part steam engine assembly:
 
 ### Added
 - Hole Wizard **Advanced hole**: build a hole from elements stacked from the face down (counterbore, countersink, straight, tapped) and, for holes that come out of the part, from the far face in. Each element takes a size from the ISO table or custom values, can be moved up or down, removed or added; the last near side element is the main hole and runs to the end condition. The callout lists every element (far side ones marked FAR SIDE), the panel picture shows the whole stack, and tapped elements get cosmetic threads.
-
 
 ## [1.533.0] - 2026-11-11
 
@@ -480,7 +483,6 @@ Fixes from a test of motion studies on a real 57-part steam engine assembly:
 
 ### Added
 - Hole Wizard **Tapered tap**: pipe threads ANSI NPT (1/16 to 2) and ISO 7 Rc / BSPT (1/16 to 2). The hole is cut as a 1:16 cone from the thread's diameter at the face over the thread length, never narrower than the tap drill; Remove thread cuts the cone at the major diameter. The callout reads e.g. "1/4-18 NPT ↧10.21", and the panel picture shows the tapered thread.
-
 
 
 ## [1.530.0] - 2026-11-11
@@ -500,7 +502,6 @@ Fixes from a test of motion studies on a real 57-part steam engine assembly:
 ### Added
 - Hole Wizard screw types: counterbores and counterdrills can be sized for ISO 4762 socket head, DIN 7984 low head, ISO 7380 button head or ISO 1207 cheese head screws, and countersinks for ISO 10642 socket or ISO 2009 / 7046 slotted and cross countersunk screws (each metric size offers the types that have a head of that size).
 - Tapped holes: Thread class (6H, 4H, 5H, 7H, 6G; 2B, 1B, 3B for inch) goes into the callout, and Thread display can be Remove thread (the threaded length is cut to the major diameter) or no cosmetic thread.
-
 
 ## [1.527.0] - 2026-11-11
 
@@ -524,7 +525,6 @@ Fixes from a test of motion studies on a real 57-part steam engine assembly:
 
 ### Added
 - Hole Wizard panel: a picture of the hole cut in a plate (half section with the counterbore, countersinks, drill point and thread drawn to scale) and the callout it will get on a drawing, both updating as you change the values; the hole types are picture buttons; the panel has Type and Positions tabs as in other CAD apps (clicks in the view place holes from either tab), and Favourites fold away.
-
 
 
 
@@ -1146,7 +1146,6 @@ Fixes from a test of motion studies on a real 57-part steam engine assembly:
 ### Fixed
 
 - Mitred sheet metal corners (edge flanges, miter flanges, Convert to Sheet Metal) now meet on the corner's bisector plane, as in other CAD apps. Before, the two walls were cut square and overlapped in a thin strip along the inside of the seam, so the flat pattern had slightly more material than the part.
-
 
 ## [1.442.0] - 2026-11-10
 
@@ -3778,7 +3777,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.590.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.593.0...HEAD
+[1.593.0]: https://github.com/kothf/step-viewer/compare/v1.592.0...v1.593.0
 [1.592.0]: https://github.com/kothf/step-viewer/compare/v1.591.0...v1.592.0
 [1.591.0]: https://github.com/kothf/step-viewer/compare/v1.590.0...v1.591.0
 [1.590.0]: https://github.com/kothf/step-viewer/compare/v1.589.0...v1.590.0
