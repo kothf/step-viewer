@@ -21,7 +21,7 @@ export interface Rebuild {
   frames: Record<string, Frame>;
   /** Sketches the rebuild moved: 2D ones onto their model edges, 3D ones onto the sketch points they are on. */
   sketches?: Record<string, SketchFeature | Sketch3dFeature>;
-  /** References that resolved under other names or at another place than the document stores, per feature (1.585.0). */
+  /** References that resolved under other names or at another place than the document stores, per feature (1.586.0). */
   refs?: Record<string, RefFix[]>;
   /** Points along curve features (helix), for the view. */
   curves?: Record<string, V3[]>;

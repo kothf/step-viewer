@@ -2939,6 +2939,42 @@ try {
     const qt3 = await qt();
     check(qt0.has && !qt0.grid && !qt0.snap && qt0.auto && qt1.grid && qt1.snap && qt1.pressed === "true" && qt1.box && qt1.sbox && !qt2.grid && !qt2.snap && !qt2.auto && qt2.pressed === "false" && !qt2.box && !qt2.abox && qt3.auto && qt3.abox,
       `model 1.310: quick bar Grid / Snap to grid / Inferences toggles follow the editor and the sketch panel (${JSON.stringify([qt0, qt1, qt2, qt3])})`);
+    // 1.585: construction geometry. Construction with nothing selected turns For construction on (bar button pressed,
+    // panel box ticked), so the next line is construction, drawn dashed; Q on a selected curve turns it back. The jog's
+    // second click next to a line's middle lands on the line, not on its H glyph. The status bar names the sketch state.
+    await tool("select");
+    await mp.keyboard.press("Escape");
+    await mp.click('#mc-tools [data-c="cons"]');
+    await tool("line");
+    const cs0 = await mp.evaluate(() => (window.__sv.modeller.renderPanel(), { on: window.__sv.model.editor().forCons, pressed: document.querySelector('#mc-tools [data-c="cons"]')?.getAttribute("aria-pressed"), box: document.querySelector("#mc-pm [data-a=forcons]")?.checked }));
+    const nL = await mp.evaluate(() => window.__sv.model.editor().sk.ents.length);
+    await click([110, 60]);
+    await click([150, 60]);
+    await mp.keyboard.press("Escape");
+    await mp.keyboard.press("Escape");
+    await mp.waitForTimeout(150);
+    const cs1 = await mp.evaluate(n => { const ed = window.__sv.model.editor(), made = ed.sk.ents.slice(n).find(e => e.t === "line"); let dashed = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData?.skConstruction) dashed++; }); return { id: made?.id, cons: !!made?.cons, dashed, st: document.getElementById("st-skdef")?.textContent, hidden: document.getElementById("st-skdef")?.hidden }; }, nL);
+    await mp.click('#mc-tools [data-c="cons"]');
+    await tool("select");
+    await click([130, 60]);
+    await mp.keyboard.press("q");
+    await mp.waitForTimeout(100);
+    const cs2 = await mp.evaluate(id => { const ed = window.__sv.model.editor(); return { off: !ed.forCons, cons: !!ed.sk.ents.find(e => e.id === id)?.cons }; }, cs1.id);
+    await mp.keyboard.press("Escape");
+    await tool("jog");
+    await click([120, 60]);
+    await click([130, 64]);
+    const jogged = await mp.evaluate(() => window.__sv.model.editor().sk.ents.filter(e => e.t === "line").length);
+    await mp.keyboard.press("Control+z");
+    await mp.waitForTimeout(100);
+    const unjogged = await mp.evaluate(() => window.__sv.model.editor().sk.ents.filter(e => e.t === "line").length);
+    await tool("dim");
+    { const [hx, hy] = await toPage([140, 60]); await mp.mouse.move(hx, hy, { steps: 3 }); await mp.waitForTimeout(120); }
+    const dimHover = await mp.evaluate(() => { let thick = 0; window.__sv.viewer.scene.traverse(o => { if (o.material?.linewidth === 4) thick++; }); return { kind: window.__sv.model.editor().hover?.kind, thick }; });
+    await tool("select");
+    check(dimHover.kind === "line" && dimHover.thick >= 1, `model 1.585: Smart Dimension lights up the line under the cursor, drawn thicker (${JSON.stringify(dimHover)})`);
+    check(cs0.on && cs0.pressed === "true" && cs0.box === true && cs1.cons && cs1.dashed >= 1 && cs1.st === "Under Defined" && !cs1.hidden && cs2.off && !cs2.cons && jogged === unjogged + 4,
+      `model 1.585: Construction with nothing selected = For construction (dashed new line), Q turns a line back, jog clicks are not caught by relation glyphs, status bar shows Under Defined (${JSON.stringify([cs0, cs1, cs2, jogged, unjogged])})`);
     // 1.316: mouse gestures (FR-UI-024): with the preference on, a right-drag shows the guide and runs the slot's command;
     // a right-click without a drag still opens the sketch menu.
     await mp.evaluate(() => localStorage.setItem("mc:gestures", JSON.stringify({ on: true, n: 4 })));
@@ -3477,7 +3513,7 @@ try {
   }
 
   // --- Part modelling 1.21.0: reference axes and points, S shortcut bar, sketch box selection ---
-  // 1.585: references found again after an earlier feature changes (a fillet keeps its edge when sketch lines get new ids).
+  // 1.586: references found again after an earlier feature changes (a fillet keeps its edge when sketch lines get new ids).
   if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
@@ -3501,7 +3537,7 @@ try {
     await mp.waitForFunction(() => window.__sv.model.store.doc.features[2].edges[0].faces.includes("f1:side:l7"), null, { timeout: 5000 }).catch(() => {});
     const rf1 = await mp.evaluate(() => { const m = window.__sv.model; return { ok: m.last().statuses.every(s => s.ok), v: Math.round(m.last().props.volume), faces: [...m.store.doc.features[2].edges[0].faces].sort().join(), toast: [...document.querySelectorAll(".toast")].some(x => /found again/.test(x.textContent)) }; });
     check(rf0.ok && rf0.g?.[0] === "l" && rf1.ok && rf1.v === 143893 && rf1.faces === "f1:side:l7,f1:side:l8" && rf1.toast,
-      `model 1.585: a fillet finds its edge again after the sketch lines were drawn anew, and the document takes the new names (${JSON.stringify({ rf0, rf1 })})`);
+      `model 1.586: a fillet finds its edge again after the sketch lines were drawn anew, and the document takes the new names (${JSON.stringify({ rf0, rf1 })})`);
     await ctx.close();
   }
   if (inShard(2)) {
@@ -4620,7 +4656,7 @@ try {
     mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
     mp.on("dialog", d => d.accept());
     await mp.goto(`${origin}/index.html?debug`);
-    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.evaluate(() => { localStorage.setItem("sv:tips", "off"); localStorage.setItem("mc:slotDims", "1"); }); // slot dimensions are off by default since 1.585
     await mp.goto(`${origin}/index.html?debug`);
     await mp.waitForFunction(() => window.__sv);
     const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 60000 });

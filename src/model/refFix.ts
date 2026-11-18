@@ -1,4 +1,4 @@
-// Re-found references (1.585.0): the rebuild reports each face or edge reference that resolved under other
+// Re-found references (1.586.0): the rebuild reports each face or edge reference that resolved under other
 // names, at another place or as another shape than the document stores; the document takes them over, so
 // features keep their edges and faces after earlier features were edited.
 import type { EdgeRef, FaceRef } from "./types";

@@ -5,12 +5,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.585.0] - 2026-11-18
+## [1.586.0] - 2026-11-18
 
 ### Fixed
 
 - **Features keep rebuilding after you edit earlier ones.** A fillet, chamfer, shell, hole, sketch plane, pattern, draft or any other feature used to fail with "Reference lost" as soon as an earlier edit gave the faces it was made on new names (a sketch line drawn again, trimmed or split, for instance), even though the faces and edges themselves were still there. The rebuild now looks for such a face or edge again by where it was and what it was (a straight edge in the same direction, a round one of the same radius, a flat face with the same normal), and the part keeps the reference as found, so the next edits start from it. Every reference also follows its geometry when sizes change, so a later rename is still found. A face or edge that is really gone still gives the error, and nothing is guessed when two candidates are equally near.
 - **Measurements pinned to a part** follow the same way when a face or edge comes back under another name at the same place.
+
+## [1.585.0] - 2026-11-18
+
+### Changed
+
+- **Construction lines work the way other CAD apps do.** Construction geometry is drawn dashed in the sketch's definition colour, so a line turned into construction visibly changes. Construction (Q) with nothing selected turns on For construction: the lines, arcs and circles drawn next are construction geometry until it is pressed again; the button stays pressed and the drawing tools' panels have a For construction box. Centerline is still in the Line menu.
+- **Sketch colours are explained.** The sketch panel has a colour key (blue under defined, black fully defined, red over defined, dashed construction), and the status bar says Under Defined, Fully Defined or Over Defined in that colour while a sketch is open.
+- **New lines, rectangles, circles, arcs and slots are no longer dimensioned automatically.** They stay under defined until you dimension them; Add dimensions in the sketch panel, the quick bar or Preferences turns it back on.
+- **Smart Dimension lights up what it would take.** The line, arc, circle or point under the cursor is drawn thicker in the hover colour, before the first pick and before the second.
+
+### Fixed
+
+- **Jog line's second click and other clicks next to a line's middle did nothing,** because the relation glyph (H, V, …) there caught them. Glyphs and dimension texts now let drawing and editing tools' clicks through; Select still picks them.
+- **Deleting a line's end point said nothing.** It now explains that the point goes with its curve.
 
 ## [1.584.0] - 2026-11-18
 
@@ -3715,7 +3729,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.585.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.586.0...HEAD
+[1.586.0]: https://github.com/kothf/step-viewer/compare/v1.585.0...v1.586.0
 [1.585.0]: https://github.com/kothf/step-viewer/compare/v1.584.0...v1.585.0
 [1.584.0]: https://github.com/kothf/step-viewer/compare/v1.583.0...v1.584.0
 [1.583.0]: https://github.com/kothf/step-viewer/compare/v1.582.0...v1.583.0

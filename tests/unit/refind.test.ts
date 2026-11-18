@@ -1,4 +1,4 @@
-// References found again after earlier features change (1.585.0): a fillet, chamfer, sketch plane or any
+// References found again after earlier features change (1.586.0): a fillet, chamfer, sketch plane or any
 // other face/edge reference keeps its geometry when an upstream edit renames the faces it was stored by.
 import { test } from "node:test";
 import assert from "node:assert/strict";

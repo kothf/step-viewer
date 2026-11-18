@@ -209,7 +209,7 @@ export class Modeller {
   // ---------- references ----------
 
   /**
-   * Re-finding references (1.585.0). While `evaluate` runs a feature, a face or edge whose names are gone
+   * Re-finding references (1.586.0). While `evaluate` runs a feature, a face or edge whose names are gone
    * is looked for again by where it was (`hint`) and what it was (`g`), and every reference that resolved
    * with a new name, place or shape is noted in `fixes`, so the document can take the current one over.
    */
