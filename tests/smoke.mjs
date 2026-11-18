@@ -2892,20 +2892,27 @@ try {
     await idle();
     await mp.evaluate(() => window.__sv.modeller.editSketch("gr"));
     await mp.waitForTimeout(800);
-    const setGridUi = (a, v) => mp.evaluate(([a, v]) => { const i = document.querySelector(`#mc-pm [data-a=${a}]`); if (!i) return; if (i.type === "checkbox") i.checked = v; else i.value = v; i.dispatchEvent(new Event("change", { bubbles: true })); }, [a, v]);
-    await setGridUi("grid", true);
+    // Grid settings live in Settings ▸ Sketch (1.593.0), opened from the sketch quick bar.
+    const setGridUi = async o => {
+      await mp.click("#mc-quick [data-qset]");
+      await mp.waitForSelector("#prefs-dlg[open]");
+      if ("grid" in o) await mp.setChecked('#prefs-dlg [data-p="grid"]', o.grid);
+      if ("snap" in o) await mp.setChecked('#prefs-dlg [data-p="gridSnap"]', o.snap);
+      if ("step" in o) await mp.fill('#prefs-dlg [data-p="gridStep"]', o.step);
+      await mp.click('#prefs-dlg [data-a="ok"]');
+      await mp.waitForSelector("#prefs-dlg", { state: "detached" });
+    };
+    await setGridUi({ grid: true });
     await mp.waitForTimeout(200);
     const grid0 = await mp.evaluate(() => { let n = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData?.skGrid) n += o.geometry.attributes.position.count / 2; }); return n; });
-    await setGridUi("gridsnap", true);
-    await setGridUi("gridstep", "10");
+    await setGridUi({ snap: true, step: "10" });
     await tool("line");
     await click([21.5, 8.7]);
     await click([48.6, 31.2]);
     await mp.keyboard.press("Escape");
     await mp.waitForTimeout(150);
     const grid1 = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sk = ed.sk, ln = sk.ents.find(e => e.t === "line"), P = id => sk.ents.find(e => e.id === id); return { ui: { show: ed.grid, snap: ed.gridSnap, step: ed.gridSpacing }, a: ln && [P(ln.a).x, P(ln.a).y], b: ln && [P(ln.b).x, P(ln.b).y], ls: localStorage.getItem("mc:skGridStep") }; });
-    await setGridUi("gridsnap", false);
-    await setGridUi("grid", false);
+    await setGridUi({ grid: false, snap: false, step: "" });
     await mp.waitForTimeout(200);
     const grid2 = await mp.evaluate(() => { let n = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData?.skGrid) n++; }); return n; });
     // Alignment inference (FR-SK-042): a point 3 px off the line end's y lines up with it, with a dotted line and no relation.
@@ -2927,7 +2934,7 @@ try {
       `model 1.303: sketch grid is drawn, and Snap to grid at 10 mm puts line ends on grid nodes (${grid0}, ${JSON.stringify(grid1)}, ${grid2})`);
     // 1.310: quick bar toggles while sketching (FR-UI-055): Grid, Snap to grid and Inferences flip the editor and the panel boxes.
     const qt = () => mp.evaluate(() => { const ed = window.__sv.model.editor(), q = k => document.querySelector(`#mc-quick [data-qt="${k}"]`), c = a => document.querySelector(`#mc-pm [data-a=${a}]`)?.checked;
-      return { has: ["grid", "gridsnap", "autorels"].every(k => !!q(k)), grid: ed.grid, snap: ed.gridSnap, auto: ed.autoRels, pressed: q("grid")?.getAttribute("aria-pressed"), box: c("grid"), sbox: c("gridsnap"), abox: c("autorels") }; });
+      return { has: ["grid", "gridsnap", "autorels"].every(k => !!q(k)), grid: ed.grid, snap: ed.gridSnap, auto: ed.autoRels, pressed: q("grid")?.getAttribute("aria-pressed"), stored: localStorage.getItem("mc:skGridSnap") }; });
     const qt0 = await qt();
     await mp.click('#mc-quick [data-qt="gridsnap"]');
     const qt1 = await qt();
@@ -2937,8 +2944,8 @@ try {
     const qt2 = await qt();
     await mp.click('#mc-quick [data-qt="autorels"]');
     const qt3 = await qt();
-    check(qt0.has && !qt0.grid && !qt0.snap && qt0.auto && qt1.grid && qt1.snap && qt1.pressed === "true" && qt1.box && qt1.sbox && !qt2.grid && !qt2.snap && !qt2.auto && qt2.pressed === "false" && !qt2.box && !qt2.abox && qt3.auto && qt3.abox,
-      `model 1.310: quick bar Grid / Snap to grid / Inferences toggles follow the editor and the sketch panel (${JSON.stringify([qt0, qt1, qt2, qt3])})`);
+    check(qt0.has && !qt0.grid && !qt0.snap && qt0.auto && qt1.grid && qt1.snap && qt1.pressed === "true" && qt1.stored === "1" && !qt2.grid && !qt2.snap && !qt2.auto && qt2.pressed === "false" && qt2.stored === "0" && qt3.auto,
+      `model 1.310: quick bar Grid / Snap to grid / Inferences toggles follow the editor and are stored (${JSON.stringify([qt0, qt1, qt2, qt3])})`);
     // 1.585: construction geometry. Construction with nothing selected turns For construction on (bar button pressed,
     // panel box ticked), so the next line is construction, drawn dashed; Q on a selected curve turns it back. The jog's
     // second click next to a line's middle lands on the line, not on its H glyph. The status bar names the sketch state.

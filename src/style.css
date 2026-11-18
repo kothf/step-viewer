@@ -664,6 +664,7 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
   #app:not(.gerber) .sep { display: none; }
 }
 @media (max-width: 767px) { #app.gerber .lang-btn { min-width: 28px; padding: 0 3px; } }
+@media (max-width: 479px) { #theme { display: none; } } /* on phones the theme is in Settings ▸ General, where the ⚙ button leads */
 
 /* Markup notes: the user's text in a box joined to its point by a leader. */
 .m-label.m-note {
