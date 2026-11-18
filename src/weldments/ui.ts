@@ -179,7 +179,10 @@ export function weldDraft(ctx: WeldCtx, type: WeldTool, id: string, name: string
     // The selected sketch, else the last 3D sketch or sketch with lines (a CAD app: sketch the frame, then Structural Member).
     const sk = paths.find(s => s.id === ctx.selected) ?? paths.at(-1);
     if (!sk) { toast(t("Draw a sketch or a 3D sketch with lines first: the members run along them."), true); return null; }
-    return recallWeld({ id, type, name, profile: "shs", size: "40x40x3", segs: pathLines(sk).map(ent => ({ sketch: sk.id, ent })), corner: "miter" } satisfies MemberFeature);
+    // Segments another Structural Member already runs along start unticked (a CAD app: the next member takes the rest).
+    const used = new Set(ctx.before.flatMap(x => x.type === "member" && !x.suppressed ? x.segs.filter(g => g.sketch === sk.id).map(g => g.ent) : []));
+    const free = pathLines(sk).filter(ent => !used.has(ent));
+    return recallWeld({ id, type, name, profile: "shs", size: "40x40x3", segs: free.map(ent => ({ sketch: sk.id, ent })), corner: "miter" } satisfies MemberFeature);
   }
   if (!ctx.last?.data) { toast(t("There is no body yet."), true); return null; }
   if (type === "trimext") return { id, type, name, bodies: fr && memberFace(ctx, fr.name) ? [fr] : [], kind: "face" } satisfies TrimExtendFeature;

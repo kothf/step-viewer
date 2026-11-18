@@ -12862,6 +12862,8 @@ try {
       return { folder: document.querySelector('#mc-tree .ft-row[data-id="folder:cutlist"]')?.textContent, rows: [...document.querySelectorAll('#mc-tree .ft-row[data-id^="cut:"] .ft-name')].map(e => e.textContent), tris: hl.reduce((n, o) => n + o.geometry.getAttribute("position").count / 3, 0), faces: window.__sv.model.last().bodies.map(b => b.faces) };
     });
     check(/Cut list \(2\)/.test(ct.folder ?? "") && JSON.stringify(ct.rows) === '["Top rail × 650 mm (2)","SHS 50x50x4 × 450 mm (2)"]' && ct.tris > 0 && ct.faces.every(n => n > 0), `weldments: Cut list folder in the tree highlights an item's bodies (${JSON.stringify(ct)})`);
+    const icons = await mp.evaluate(() => [...document.querySelectorAll("#mc-tree .ft-row[data-i] .ft-ico")].map(e => e.textContent));
+    check(icons.length > 2 && icons.every(x => x && x !== "undefined"), `weldments: every feature row has an icon (${JSON.stringify(icons)})`);
     // Sub-weldments: Create sub-weldment on a cut list item puts it in a folder of its own; one body of the other item added
     // to it splits that item (1 + 1); the dialog heads the sub-weldment's rows; Dissolve puts everything back.
     const menuPick = async (sel, label) => {
@@ -13232,6 +13234,13 @@ try {
     // The new member starts with the size the first one was given (weldment defaults: the settings used last).
     check(bl.size === "50x50x4", `weldments: a new member starts with the profile used last (${bl.size})`);
     check(JSON.stringify(bl.segs) === '["j1","j2","j3"]' && JSON.stringify(bl.labels) === '["Line 1","Arc 2","Line 3"]' && bend.faces > 0 && !bend.bad && bend.arc, `weldments: a member along a line, an arc and a line (${JSON.stringify({ bl, bend })})`);
+    // Exam: a second member on the same sketch starts with no segment ticked (the first one runs along them all).
+    await runCmd(mp, "Structural Member");
+    await settle();
+    const again = await mp.evaluate(() => window.__sv.model.mode().draft?.segs?.length);
+    await mp.evaluate(() => window.__sv.modeller.exitMode(false));
+    await settle();
+    check(again === 0, `weldments: a new member leaves segments other members use unticked (${again})`);
     // Merge arc segment bodies: the line, arc and line become one body, one cut list item of the whole bent length (300 + 157.1 + 300).
     const bendId = await mp.evaluate(() => window.__sv.model.store.doc.features.at(-1).id);
     await mp.evaluate(id => window.__sv.modeller.editFeature(id), bendId);

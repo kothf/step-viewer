@@ -10,6 +10,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Fixed
 
 - **Locate profile is easy to click.** The view now turns to look at the profile face on while it zooms, so its points no longer fall on top of one another, and the mouse wheel zooms the view while the pointer is over a point or a callout.
+- **Weldment features have their icons in the tree.** Structural Member, Trim/Extend, End cap, Gusset, Fillet Bead and Check-Heal rows showed "undefined" in place of an icon.
+- **A new Structural Member leaves taken segments unticked.** Segments of the path sketch that another member already runs along start unticked, so a second member no longer doubles the first.
 
 ## [1.574.0] - 2026-11-18
 
