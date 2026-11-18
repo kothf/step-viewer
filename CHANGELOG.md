@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.586.0] - 2026-11-18
+
+### Changed
+
+- **Only the items in a conflict turn red.** When a sketch is over defined, the relations and dimensions that conflict, and the lines, arcs and points they hold, are drawn red; the rest keep their blue or black, so you can see where the problem is. Their dimension texts and relation glyphs are red too.
+- **A dimension that would over define the sketch asks Make Dimension Driven?** As in other CAD apps you choose: make it a driven (reference) dimension, or leave it driving. Before, it silently became a reference.
+- **A driving dimension that adds nothing makes the sketch Over Defined,** even when the values agree, as other CAD apps say. The sketch assistant lists such dimensions with Make driven and Delete.
+- **Every sketch tool lights up what a click would take.** Lines, arcs, circles and the rest highlight the point or curve they would snap to, Ordinate dimensions the item under the cursor, as Smart Dimension already did.
+- **One clear colour for the cursor.** The item under the cursor is thick turquoise, a selection orange; the colour key in the sketch panel lists both.
+
 ## [1.585.0] - 2026-11-18
 
 ### Changed
@@ -3722,7 +3732,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.585.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.586.0...HEAD
+[1.586.0]: https://github.com/kothf/step-viewer/compare/v1.585.0...v1.586.0
 [1.585.0]: https://github.com/kothf/step-viewer/compare/v1.584.0...v1.585.0
 [1.584.0]: https://github.com/kothf/step-viewer/compare/v1.583.0...v1.584.0
 [1.583.0]: https://github.com/kothf/step-viewer/compare/v1.582.0...v1.583.0

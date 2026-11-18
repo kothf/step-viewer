@@ -2975,6 +2975,35 @@ try {
     check(dimHover.kind === "line" && dimHover.thick >= 1, `model 1.585: Smart Dimension lights up the line under the cursor, drawn thicker (${JSON.stringify(dimHover)})`);
     check(cs0.on && cs0.pressed === "true" && cs0.box === true && cs1.cons && cs1.dashed >= 1 && cs1.st === "Under Defined" && !cs1.hidden && cs2.off && !cs2.cons && jogged === unjogged + 4,
       `model 1.585: Construction with nothing selected = For construction (dashed new line), Q turns a line back, jog clicks are not caught by relation glyphs, status bar shows Under Defined (${JSON.stringify([cs0, cs1, cs2, jogged, unjogged])})`);
+    // 1.586: a second length on the same line asks Make Dimension Driven?; left driving it makes the sketch Over Defined
+    // although it solves, only that dimension is red, and the assistant's Make driven ends it. The line tool lights up
+    // the end point it would snap to.
+    await tool("line");
+    { const [hx, hy] = await toPage([150, 60]); await mp.mouse.move(hx, hy, { steps: 3 }); await mp.waitForTimeout(120); }
+    const lineHover = await mp.evaluate(() => window.__sv.model.editor().hover?.kind);
+    await mp.keyboard.press("Escape");
+    await tool("dim");
+    await click([140, 60]);
+    await click([140, 52]);
+    await mp.waitForTimeout(150);
+    await mp.fill(".mod-in", "40");
+    await mp.keyboard.press("Enter");
+    await mp.waitForTimeout(150);
+    await click([118, 60]);
+    await click([118, 72]);
+    await mp.waitForSelector("dialog.choose-dlg[open]", { timeout: 5000 });
+    const askTxt = await mp.evaluate(() => document.querySelector("dialog.choose-dlg")?.innerText ?? "");
+    await mp.click('dialog.choose-dlg [data-choose="driving"]');
+    await mp.waitForTimeout(150);
+    await tool("select");
+    await mp.keyboard.press("Escape");
+    const ov0 = await mp.evaluate(() => (window.__sv.modeller.renderPanel(), { status: window.__sv.model.editor().info.status, over: window.__sv.model.editor().info.over.length, bad: document.querySelectorAll(".sk-dim.bad").length, st: document.getElementById("st-skdef")?.textContent, fix: !!document.querySelector("#mc-pm [data-mkdriven]") }));
+    await mp.click("#mc-pm [data-mkdriven]");
+    await mp.waitForTimeout(150);
+    const ov1 = await mp.evaluate(() => ({ over: window.__sv.model.editor().info.over.length, bad: document.querySelectorAll(".sk-dim.bad").length, st: document.getElementById("st-skdef")?.textContent, driven: window.__sv.model.editor().sk.dims.filter(d => d.driven).length }));
+    for (let k = 0; k < 3; k++) { await mp.keyboard.press("Control+z"); await mp.waitForTimeout(80); }
+    check(lineHover === "point" && /Make Dimension Driven\?/.test(askTxt) && ov0.status === "ok" && ov0.over === 1 && ov0.bad === 1 && ov0.st === "Over Defined" && ov0.fix && ov1.over === 0 && ov1.bad === 0 && ov1.st !== "Over Defined" && ov1.driven >= 1,
+      `model 1.586: line tool lights the end point, a redundant dimension asks Make Dimension Driven?, left driving it is Over Defined with only it red, Make driven ends it (${JSON.stringify([lineHover, askTxt.slice(0, 40), ov0, ov1])})`);
     // 1.316: mouse gestures (FR-UI-024): with the preference on, a right-drag shows the guide and runs the slot's command;
     // a right-click without a drag still opens the sketch menu.
     await mp.evaluate(() => localStorage.setItem("mc:gestures", JSON.stringify({ on: true, n: 4 })));

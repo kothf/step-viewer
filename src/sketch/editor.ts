@@ -13,7 +13,7 @@ import type { ArcCond, EdgeRef, Frame, RelKind, SkDim, SkEnt, SketchFeature, Ske
 import { applyExt, piercePoint, projectEdge, uvOf, type ExtGeo, type ModelEdge } from "./external";
 import { renameIn } from "../model/params";
 export { refPts } from "./define";
-import { ORIGIN, curveJoint, freeDirections, measureDim, solve, tryAdd, type SolveResult } from "./solver";
+import { ORIGIN, curveJoint, freeDirections, isOver, measureDim, solve, tryAdd, type SolveResult } from "./solver";
 import { uid } from "../model/doc";
 import { fullyDefineSketch, nextDimName, refPts } from "./define";
 import { cutTriangles, thin } from "./intersect";
@@ -21,6 +21,7 @@ import { evaluate, ExprError, isPlain, type VarValue } from "../model/expr";
 import type { DxfShape } from "./dxf";
 import { t } from "../i18n";
 import { ModifyBox } from "../modifyBox";
+import { chooseModal } from "../ui";
 import { bezPts, nearestOn, splineBezier } from "./spline";
 import { ellDist, earcDist, ellLocal, ellOf, ellParam, ellPt, ellPts, ellSweep, type Ell } from "./ellipse";
 import { textBox, textKey, textOutline, textPolys } from "./text";
@@ -101,8 +102,8 @@ type Snap = { p: V2; id: string | null; curve: string | null; hv: "horizontal" |
 /** Under-defined analysis arrows (FR-SLV-010). */
 const FREE_ARROW = 0xf08c00;
 const COLORS = {
-  light: { free: 0x1d4ed8, defined: 0x111827, cons: 0x7c8594, sel: 0xf08c00, hover: 0xf59f00, bad: 0xd32f2f, dim: 0x334155, pre: 0x2f9e44 },
-  dark: { free: 0x6ea8ff, defined: 0xe8ecf2, cons: 0x8a94a6, sel: 0xffa94d, hover: 0xffc078, bad: 0xff6b5e, dim: 0xcbd5e1, pre: 0x51cf66 },
+  light: { free: 0x1d4ed8, defined: 0x111827, cons: 0x7c8594, sel: 0xf08c00, hover: 0x0bb5c9, bad: 0xd32f2f, dim: 0x334155, pre: 0x2f9e44 },
+  dark: { free: 0x6ea8ff, defined: 0xe8ecf2, cons: 0x8a94a6, sel: 0xffa94d, hover: 0x3bf0e4, bad: 0xff6b5e, dim: 0xcbd5e1, pre: 0x51cf66 },
 };
 /** Curves whose model edge is gone (FR-SK-064): olive brown, as dangling items in CAD apps. */
 const DANGLING = { light: 0x8f6a00, dark: 0xd8b13a };
@@ -508,8 +509,9 @@ export class SketchEditor {
     }
     const pick = ["trim", "extend", "split", "segment", "offset"].includes(this.tool) || (this.tool === "jog" && !this.draft.pts.length);
     const snap = this.snapPoint(p, !pick && !["select", "fillet", "chamfer", "convert", "intersect", "jog"].includes(this.tool));
-    this.hover = this.tool === "select" || this.tool === "dim" || pick ? this.hits(p, { points: !pick })[0] ?? null
-      : this.tool === "fillet" || this.tool === "chamfer" ? this.hits(p, { curves: false }).find(h => h.kind === "point") ?? null : null;
+    this.hover = this.tool === "select" || this.tool === "dim" || this.tool === "hord" || this.tool === "vord" || pick ? this.hits(p, { points: !pick })[0] ?? null
+      : this.tool === "fillet" || this.tool === "chamfer" ? this.hits(p, { curves: false }).find(h => h.kind === "point") ?? null
+      : this.snapHover(snap);
     this.offsetPreview = this.tool === "offset" ? this.offsetAt(p, false) : this.tool === "jog" ? [this.jogShape(p)?.poly ?? []].filter(x => x.length) : [];
     this.draft.cursor = snap.p;
     if (this.tool === "arc" && this.draft.pts.length === 2) this.trackArc(snap.p);
@@ -519,6 +521,14 @@ export class SketchEditor {
     this.showInfer(pick || ["select", "fillet", "chamfer", "convert", "intersect", "dim", "hord", "vord", "jog"].includes(this.tool) ? null : snap);
     this.render();
     return true;
+  }
+
+  /** Drawing tools: the point or curve the snapped click will attach to lights up, like other CAD apps' inference highlight. */
+  private snapHover(snap: Snap): Hit | null {
+    if (snap.id === ORIGIN) return { id: ORIGIN, kind: "origin", d: 0 };
+    const e = this.ent(snap.id ?? snap.curve ?? "");
+    if (!e || e.t === "text") return null;
+    return { id: e.id, kind: e.t, d: 0 };
   }
 
   /** What lies under the cursor for the hover glyph (FR-SEL-012): a hit kind, or "point"/"curve" from the drawing snap. */
@@ -603,7 +613,7 @@ export class SketchEditor {
       if (h && h.kind !== "dim" && h.kind !== "rel" && !this.selection.has(h.id)) { this.selection = new Set([h.id]); this.render(); this.emitSel(); }
     }
     if (!this.selection.size) {
-      if (this.tool === "select" && this.info.status === "ok" && this.info.dof > 0) { sep(); rows.push([t("Fully define sketch"), () => this.fullyDefineUi()]); }
+      if (this.tool === "select" && !isOver(this.info) && this.info.dof > 0) { sep(); rows.push([t("Fully define sketch"), () => this.fullyDefineUi()]); }
       return rows;
     }
     sep();
@@ -2013,10 +2023,19 @@ export class SketchEditor {
     dim.val.v = measureDim(this.sk, dim);
     const r = tryAdd(this.sk, { dim });
     if (!r.ok || r.redundant) {
-      dim.driven = true;
-      this.sk.dims.push(dim);
-      this.commit("Add dimension");
-      this.host.toast(t("The sketch is already defined there: added as a reference dimension."), "info");
+      // Make Dimension Driven? (FR-SK-064): as in other CAD apps, ask instead of choosing silently.
+      void chooseModal(t("Make Dimension Driven?"), t("This dimension would over define the sketch."), [
+        { key: "driven", label: t("Make this dimension driven (a reference)") },
+        { key: "driving", label: t("Leave this dimension driving (the sketch is over defined)") },
+      ]).then(k => {
+        if (this.disposed) return;
+        dim.driven = k !== "driving";
+        this.sk.dims.push(dim);
+        if (!dim.driven) this.info = solve(this.sk);
+        this.commit(dim.driven ? "Add dimension" : "Add over-defining dimension");
+        this.render();
+        this.emitSel();
+      });
       return;
     }
     this.sk = r.sketch;
@@ -2413,6 +2432,17 @@ export class SketchEditor {
 
   /** Deletes the given items (relations, dimensions, entities) as one step. */
   deleteItems(ids: string[]) { this.selection = new Set(ids); this.deleteSelection(); }
+
+  /** Turns driving dimensions into driven (reference) ones: the way out of a redundant dimension. */
+  makeDriven(ids: string[]) {
+    const ds = this.sk.dims.filter(d => ids.includes(d.id) && !d.driven);
+    if (!ds.length) return;
+    for (const d of ds) d.driven = true;
+    this.info = solve(this.sk);
+    this.commit("Make dimension driven");
+    this.render();
+    this.emitSel();
+  }
 
   select(ids: string[]) { this.selection = new Set(ids); this.render(); this.emitSel(); }
 
@@ -3883,7 +3913,7 @@ export class SketchEditor {
 
   statusHint() {
     const st = this.info;
-    const def = st.status !== "ok" ? t("Over defined") : st.dof === 0 ? t("Fully defined") : t("Under defined, {n} DOF", { n: st.dof });
+    const def = isOver(st) ? t("Over defined") : st.dof === 0 ? t("Fully defined") : t("Under defined, {n} DOF", { n: st.dof });
     const hints: Record<SkTool, string> = {
       select: "Click to select, drag to move; Delete removes",
       line: "Click points; double-click or Esc ends the chain",
@@ -4012,11 +4042,21 @@ export class SketchEditor {
     const lost = new Set(this.sk.rels.filter(r => r.ext && r.dangling).map(r => r.e[0]));
     const hr = this.hoverRel ? this.sk.rels.find(r => r.id === this.hoverRel) : null;
     this.relHot = new Set(hr ? hr.e : []);
+    const badEnts = new Set<string>();
+    const over = isOver(this.info);
+    if (over) {
+      const bad = new Set([...this.info.conflicting, ...this.info.over]);
+      for (const x of [...this.sk.rels, ...this.sk.dims]) if (bad.has(x.id)) for (const id of x.e) badEnts.add(id);
+      // A curve all of whose points are held by conflicting items is part of the conflict too.
+      for (const e of this.sk.ents) if (e.t !== "point" && refPts(e).length && refPts(e).every(p => badEnts.has(p))) badEnts.add(e.id);
+    }
     const color = (id: string, cons?: boolean) => {
       if (this.selection.has(id)) return C.sel;
       if (this.hover?.id === id || this.relHot.has(id)) return C.hover;
       if (lost.has(id)) return this.dark ? DANGLING.dark : DANGLING.light;
-      if (this.info.status !== "ok" && this.info.conflicting.length) return C.bad;
+      // Over defined (FR-SK-064): only the items tied by the conflicting relations and dimensions turn red, as in
+      // other CAD apps; the rest keep their blue/black. With no culprit known, everything is red.
+      if (over && (!badEnts.size || badEnts.has(id))) return C.bad;
       // Construction geometry keeps the definition colours (blue free, black defined) and is drawn dashed.
       void cons;
       return this.info.defined.has(id) ? C.defined : C.free;
@@ -4473,6 +4513,7 @@ export class SketchEditor {
       el.title = `${d.name}@${this.sk.name}${d.val.expr ? ` = ${d.val.expr}` : ""}${d.driven ? ` · ${t("reference")}` : ""}`;
       if (this.showNames) { const n = document.createElement("span"); n.className = "sk-dname"; n.textContent = d.name; n.setAttribute("translate", "no"); el.prepend(n); }
       el.classList.toggle("sel", this.selection.has(d.id));
+      el.classList.toggle("bad", this.info.conflicting.includes(d.id) || this.info.over.includes(d.id));
       el.classList.toggle("driven", !!d.driven);
       el.classList.toggle("draft", d === this.dimDraft.dim);
       el.classList.toggle("locked", d === this.dimDraft.dim && !!this.dimDraft.lock);
@@ -4502,6 +4543,7 @@ export class SketchEditor {
       el.title = name;
       el.setAttribute("aria-label", name);
       el.classList.toggle("sel", this.selection.has(r.id));
+      el.classList.toggle("bad", this.info.conflicting.includes(r.id));
       el.classList.toggle("dangling", !!r.dangling);
       const anchor = r.e.find(x => x !== ORIGIN) ?? ORIGIN;
       const k = per.get(anchor) ?? 0;

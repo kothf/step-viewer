@@ -5033,4 +5033,13 @@ export const RU: Record<string, string> = {
   "Fully Defined": "Полностью определён",
   "Under Defined": "Недоопределён",
   "An end point of a line or arc goes with its curve: select the curve to delete it.": "Конечная точка линии или дуги удаляется вместе с кривой: выберите кривую, чтобы удалить её.",
+  "Make Dimension Driven?": "Сделать размер справочным?",
+  "This dimension would over define the sketch.": "Этот размер переопределит эскиз.",
+  "Make this dimension driven (a reference)": "Сделать размер справочным (не управляющим)",
+  "Leave this dimension driving (the sketch is over defined)": "Оставить размер управляющим (эскиз будет переопределён)",
+  "Thick turquoise: under the cursor, what a click takes": "Толстый бирюзовый: под курсором, это возьмёт щелчок",
+  "Orange: selected": "Оранжевый: выбрано",
+  "These dimensions add nothing the sketch does not already say. Make them driven (a reference) or delete them:": "Эти размеры не добавляют ничего нового к эскизу. Сделайте их справочными или удалите:",
+  "Make driven": "Сделать справочным",
+  "The sketch is no longer over defined.": "Эскиз больше не переопределён.",
 };

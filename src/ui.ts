@@ -125,6 +125,33 @@ export function confirmModal(text: string, ok = "Delete", title = "Are you sure?
 }
 
 /**
+ * A question with a few answers, each a button; the first is the default (Enter). Esc gives null.
+ * Used where a CAD app asks a short question in a dialog, such as a dimension that would over-define a sketch.
+ */
+export function chooseModal(title: string, text: string, options: { key: string; label: string }[]): Promise<string | null> {
+  const d = document.createElement("dialog");
+  d.className = "modal choose-dlg";
+  d.setAttribute("aria-labelledby", "choose-dlg-title");
+  const esc = (x: string) => x.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+  d.innerHTML = `<form method="dialog"><h3 id="choose-dlg-title">${esc(title)}</h3><p>${esc(text)}</p>`
+    + `<div class="choose-opts">${options.map((o, i) => `<button class="btn${i === 0 ? " primary" : ""}" value="${esc(o.key)}" data-choose="${esc(o.key)}">${esc(o.label)}</button>`).join("")}</div></form>`;
+  document.body.appendChild(d);
+  trapFocus(d, () => d.open);
+  const opener = document.activeElement as HTMLElement | null;
+  d.returnValue = "";
+  d.showModal();
+  d.querySelector<HTMLButtonElement>("button")?.focus();
+  return new Promise(resolve => {
+    d.addEventListener("close", () => {
+      const v = d.returnValue;
+      d.remove();
+      opener?.focus?.();
+      resolve(options.some(o => o.key === v) ? v : null);
+    }, { once: true });
+  });
+}
+
+/**
  * Asks for a file name before a document is downloaded (exam #9): browsers without the save dialog
  * would otherwise write "Part1.mcadprt" with no chance to name it, where a CAD app shows Save As on the
  * first save. Returns the name with `ext`, or null when cancelled.

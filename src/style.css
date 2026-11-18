@@ -822,6 +822,9 @@ canvas.mc-stale { filter: grayscale(0.85) opacity(0.6); transition: filter .2s; 
 .pm-legend .sw.full { border-color: var(--text); }
 .pm-legend .sw.over, .st-skdef[data-state=over] { border-color: var(--danger); color: var(--danger); }
 .pm-legend .sw.cons { border-top: 2px dashed var(--accent-text); }
+.pm-legend .sw.hot { border-top: 5px solid #0bb5c9; }
+:root[data-theme="dark"] .pm-legend .sw.hot { border-color: #3bf0e4; }
+.pm-legend .sw.sel { border-color: #f08c00; }
 .st-skdef { font-weight: 600; white-space: nowrap; }
 .st-skdef[data-state=full] { color: var(--text); }
 .link { background: none; border: 0; padding: 0; color: var(--accent-text); cursor: pointer; text-decoration: underline; font: inherit; }
@@ -1031,6 +1034,8 @@ canvas.mc-stale { filter: grayscale(0.85) opacity(0.6); transition: filter .2s; 
 .mc-ro { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; background: var(--accent-soft); border-bottom: 1px solid var(--line); font-size: var(--fs-caption); }
 /* Dangling On edge relations (FR-SK-064), dimension names (FR-SK-065), draggable dimension text (FR-SK-066). */
 .sk-pass .sk-rel, .sk-pass .sk-dim { pointer-events: none; }
+.sk-dim.bad, .sk-rel.bad { border-color: var(--danger); color: var(--danger); background: #fdecec; }
+:root[data-theme="dark"] .sk-dim.bad, :root[data-theme="dark"] .sk-rel.bad { background: #3a1616; }
 .sk-rel.dangling { background: #fff6d6; color: #6b4f00; border-color: #c9a227; cursor: grab; }
 :root[data-theme="dark"] .sk-rel.dangling { background: #3a3110; color: #f0d36b; border-color: #8f7a1f; }
 .sk-dim:not(.ord0):not(.draft) { cursor: move; }
@@ -1515,3 +1520,7 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .tb-desig { margin: 6px 0 2px; font-size: 12px; display: flex; gap: 6px; flex-wrap: wrap; align-items: baseline; }
 .tb-desig > span { color: var(--muted); }
 .tb-desig > b { font-family: var(--mono); }
+
+.choose-dlg { max-width: 420px; }
+.choose-opts { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+.choose-opts .btn { justify-content: flex-start; text-align: left; }

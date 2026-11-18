@@ -42,7 +42,15 @@ export interface SolveResult {
   residual: number;
   /** Relations/dimensions involved when the sketch is over-defined. */
   conflicting: string[];
+  /**
+   * Driving dimensions that solve but add nothing (their value already follows from the relations and the
+   * dimensions before them): the sketch is over defined, as other CAD apps say, though it still solves.
+   */
+  over: string[];
 }
+
+/** Over defined: a conflict, or a driving dimension that adds nothing. */
+export const isOver = (r: SolveResult) => r.status !== "ok" || r.over.length > 0;
 
 export type Drag = { point: string; to: V2 } | { circle: string; to: V2 } | { points: { id: string; to: V2 }[] };
 
@@ -548,6 +556,30 @@ function analyse(sys: System): { rank: number; pinned: boolean[] } {
   return { rank, pinned };
 }
 
+/**
+ * Driving dimensions whose Jacobian row lies in the span of the rows before it (relations come first, then
+ * dimensions in the order they were added), so the newest of a redundant set is the one named.
+ */
+function redundantDims(sys: System, dims: Set<string>): string[] {
+  if (!dims.size) return [];
+  const n = sys.x.length;
+  const { rows } = jacobian(sys, sys.x);
+  const basis: Float64Array[] = [];
+  const out: string[] = [];
+  rows.forEach((r, i) => {
+    const v = new Float64Array(n);
+    r.idx.forEach((k, a) => { v[k] += r.val[a]; });
+    const n0 = Math.hypot(...v);
+    if (n0 < 1e-12) return;
+    for (const b of basis) { let d = 0; for (let k = 0; k < n; k++) d += v[k] * b[k]; if (d) for (let k = 0; k < n; k++) v[k] -= d * b[k]; }
+    const n1 = Math.hypot(...v);
+    if (n1 < 1e-5 * n0) { if (dims.has(sys.owner[i]) && !out.includes(sys.owner[i])) out.push(sys.owner[i]); return; }
+    for (let k = 0; k < n; k++) v[k] /= n1;
+    basis.push(v);
+  });
+  return out;
+}
+
 /** Row-reduces the Jacobian: rank, pinned variables and a basis of the null space (the free motions). */
 function nullSpace(sys: System): { rank: number; pinned: boolean[]; basis: Float64Array[] } {
   const n = sys.x.length;
@@ -668,6 +700,7 @@ export function solve(sk: SketchFeature, drag?: Drag): SolveResult {
     for (const d of sk.dims) if (d.driven) { const v = measureDim(sk, d); if (Number.isFinite(v) && v !== d.val.v) d.val = { ...d.val, v }; }
   }
   const { rank, pinned } = analyse(sys);
+  const over = ok ? redundantDims(sys, new Set(sk.dims.filter(d => !d.driven).map(d => d.id))) : [];
   const defined = new Set<string>();
   for (const [id, vars] of sys.entVars) if (vars.every(v => pinned[v])) defined.add(id);
   return {
@@ -675,6 +708,7 @@ export function solve(sk: SketchFeature, drag?: Drag): SolveResult {
     dof: sys.x.length - rank,
     defined,
     residual: err,
+    over,
     conflicting: ok ? [] : [...new Set(sys.terms.map((t, i) => (Math.abs(t.f(sys.x)) > TOL * scale * 1e3 ? sys.owner[i] : "")).filter(Boolean))],
   };
 }

@@ -62,7 +62,7 @@ import { bezPts } from "../sketch/spline";
 import { hoverKindOfSketch, type HoverKind } from "../hoverCursor";
 import { SketchEditor, REL_NAME, relName, trimNum, type SkTool } from "../sketch/editor";
 import { SNAP_KINDS, parseSnaps, type SnapKind } from "../sketch/snaps";
-import { ORIGIN, repairs, solve } from "../sketch/solver";
+import { ORIGIN, isOver, repairs, solve } from "../sketch/solver";
 import { sketchPath, sketchProfile, textPath } from "../sketch/profile";
 import { blockFile, readBlockFile } from "../sketch/blocks";
 import type { SketchBlock } from "./types";
@@ -6029,7 +6029,7 @@ export class ModelController {
     const m = this.mode;
     if (m.kind !== "sketch" || m.editor.pattern) { el.hidden = true; return; }
     const info = m.editor.info;
-    const state = info.status !== "ok" ? "over" : info.dof === 0 ? "full" : "under";
+    const state = isOver(info) ? "over" : info.dof === 0 ? "full" : "under";
     el.hidden = false;
     el.dataset.state = state;
     el.textContent = state === "over" ? t("Over Defined") : state === "full" ? t("Fully Defined") : t("Under Defined");
@@ -8578,15 +8578,15 @@ export class ModelController {
     if (ed.pattern) { this.renderPatternPanel(pm, ed); return; }
     const sk = ed.sk;
     const info = ed.info;
-    const def = info.status !== "ok" ? t("Over defined") : info.dof === 0 ? t("Fully defined") : t("Under defined, {n} DOF", { n: info.dof });
+    const def = isOver(info) ? t("Over defined") : info.dof === 0 ? t("Fully defined") : t("Under defined, {n} DOF", { n: info.dof });
     const rels = ed.validRelations();
     const nSel = ed.selection.size;
     const plane = this.refLabel(sk.plane);
     this.syncSketchStatus();
     pm.innerHTML = okHead(featureLabel(sk.name), { ok: t("Exit sketch (Enter)"), noTranslate: true })
-      + `<p class="pm-help muted">${esc(t("Plane"))}: <span class="pm-skplane" translate="no">${esc(plane)}</span> · <b class="pm-def" data-state="${info.status !== "ok" ? "over" : info.dof === 0 ? "full" : "under"}">${esc(def)}</b>${info.status === "ok" && info.dof > 0 ? ` <button class="btn small" data-a="fulldef" title="${esc(t("Add horizontal/vertical relations and dimensions from the origin until nothing is free"))}">${esc(t("Fully define sketch"))}</button>` : ""}</p>`
+      + `<p class="pm-help muted">${esc(t("Plane"))}: <span class="pm-skplane" translate="no">${esc(plane)}</span> · <b class="pm-def" data-state="${isOver(info) ? "over" : info.dof === 0 ? "full" : "under"}">${esc(def)}</b>${!isOver(info) && info.dof > 0 ? ` <button class="btn small" data-a="fulldef" title="${esc(t("Add horizontal/vertical relations and dimensions from the origin until nothing is free"))}">${esc(t("Fully define sketch"))}</button>` : ""}</p>`
       + `<p class="pm-help muted">${esc(t("Draw with the tools above. Double-click a dimension to change it."))}</p>`
-      + `<ul class="pm-legend" aria-label="${esc(t("Sketch colours"))}"><li><i class="sw under"></i>${esc(t("Blue: under defined, can still move"))}</li><li><i class="sw full"></i>${esc(t("Black: fully defined by dimensions and relations"))}</li><li><i class="sw over"></i>${esc(t("Red: over defined, relations or dimensions conflict"))}</li><li><i class="sw cons"></i>${esc(t("Dashed: construction geometry, not in profiles"))}</li></ul>`
+      + `<ul class="pm-legend" aria-label="${esc(t("Sketch colours"))}"><li><i class="sw under"></i>${esc(t("Blue: under defined, can still move"))}</li><li><i class="sw full"></i>${esc(t("Black: fully defined by dimensions and relations"))}</li><li><i class="sw over"></i>${esc(t("Red: over defined, relations or dimensions conflict"))}</li><li><i class="sw cons"></i>${esc(t("Dashed: construction geometry, not in profiles"))}</li><li><i class="sw hot"></i>${esc(t("Thick turquoise: under the cursor, what a click takes"))}</li><li><i class="sw sel"></i>${esc(t("Orange: selected"))}</li></ul>`
       + `<label class="chk pm-chk" title="${esc(t("Points snap to model vertices, edge midpoints and circle centres, and stay attached to them; Smart Dimension takes model edges."))}"><input type="checkbox" data-a="modelsnap"${ed.modelSnap ? " checked" : ""} />${esc(t("Snap to model geometry"))}</label>`
       + `<label class="chk pm-chk" title="${esc(t("Lines snap horizontal, vertical, perpendicular, parallel or tangent and keep that relation; hold Ctrl to draw without them."))}"><input type="checkbox" data-a="autorels"${ed.autoRels ? " checked" : ""} />${esc(t("Automatic relations"))}</label>`
       + `<label class="chk pm-chk" title="${esc(t("Relation glyphs next to the entities; hover one to see what it ties, click to select it."))}"><input type="checkbox" data-a="showrels"${ed.showRels ? " checked" : ""} />${esc(t("Show relations"))}</label>`
@@ -8661,7 +8661,12 @@ export class ModelController {
     pm.querySelectorAll<HTMLElement>("[data-fixshow]").forEach(b => b.addEventListener("click", () => { ed.select(b.dataset.fixshow!.split(",")); this.renderPanel(); }));
     pm.querySelectorAll<HTMLElement>("[data-fixapply]").forEach(b => b.addEventListener("click", () => {
       ed.deleteItems(b.dataset.fixapply!.split(","));
-      if (ed.info.status === "ok") toast(t("The sketch solves again."), "success");
+      if (ed.info.status === "ok") toast(t(ed.info.over.length ? "The sketch solves again." : "The sketch is no longer over defined."), "success");
+      this.renderPanel();
+    }));
+    pm.querySelectorAll<HTMLElement>("[data-mkdriven]").forEach(b => b.addEventListener("click", () => {
+      ed.makeDriven(b.dataset.mkdriven!.split(","));
+      if (!isOver(ed.info)) toast(t("The sketch is no longer over defined."), "success");
       this.renderPanel();
     }));
     this.bindTextBox(pm, ed);
@@ -8913,8 +8918,14 @@ export class ModelController {
 
   /** Sketch assistant (FR-SLV-009): ways out of an over-defined sketch, each shown on the sketch first or applied at once. */
   private assistant(ed: SketchEditor) {
-    if (ed.info.status === "ok") return "";
     const sk = ed.sk;
+    if (ed.info.status === "ok") {
+      // Solves, but some driving dimensions add nothing: over defined all the same, as other CAD apps say.
+      if (!ed.info.over.length) return "";
+      return `<div class="pm-sec pm-assist"><h4>${esc(t("Sketch assistant"))}</h4><p class="muted">${esc(t("These dimensions add nothing the sketch does not already say. Make them driven (a reference) or delete them:"))}</p><ul class="pm-rel-list">`
+        + ed.info.over.map(id => `<li><span translate="no">${esc(sk.dims.find(d => d.id === id)?.name ?? id)}</span><span><button class="btn small" data-fixshow="${id}">${esc(t("Show"))}</button> <button class="btn small" data-mkdriven="${id}">${esc(t("Make driven"))}</button> <button class="btn small" data-fixapply="${id}">${esc(t("Delete"))}</button></span></li>`).join("")
+        + `</ul></div>`;
+    }
     const key = JSON.stringify([sk.ents, sk.rels, sk.dims]);
     if (this.assistMemo?.key !== key) this.assistMemo = { key, sets: repairs(sk) };
     const sets = this.assistMemo.sets;
