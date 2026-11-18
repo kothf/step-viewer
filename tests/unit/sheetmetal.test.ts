@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { Modeller } from "../../src/kernel/model";
 import type { Feature, PartDoc, SketchFeature, SkEnt } from "../../src/model/types";
 import type { SmRipFeature, SmTabSlotFeature, SmInsertFeature, SmConvertFeature, SmCutFeature, SmGussetFeature, SmReliefFeature, SmUnfoldFeature, SmFormFeature, SmVentFeature, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
-import { apply, flatLoops, flatSize, bendAllowance, reliefCorners, filletLoop } from "../../src/sheetmetal/sheet";
+import { apply, edgeFlange, flatLoops, flatSize, bendAllowance, reliefCorners, filletLoop } from "../../src/sheetmetal/sheet";
 import { flatDrawing } from "../../src/sheetmetal/flat";
 import { cutPropRows, cutPropsCsv, sheetCutProps } from "../../src/sheetmetal/cutprops";
 import { bendTableText, defaultTable, dinTable, parseBendTable, tableValue } from "../../src/sheetmetal/bendTable";
@@ -70,6 +70,19 @@ test("sheet metal: plate, edge flange, flat pattern (FR-FT-120)", async () => {
   assert.equal(loops.outer[0].length, 4, "the flat outline merges into one rectangle");
   const fs = flatSize(st);
   close(fs.w, 100); close(fs.h, flatLen);
+
+  // Offset position: the plate runs on 5 past the edge, then the flange bends (bend outside the extended face).
+  const offV = 100 * 50 * 2 + 100 * 5 * 2 + (Math.PI / 4) * (16 - 4) * 100 + 100 * 26 * 2;
+  const ro = run(doc([s, base(), { ...fl, position: "offset", offset: { v: 5 } }]));
+  close(ro.props.volume, offV, 1e-6);
+  close(ro.min[1], -5 - 4, 1e-5);
+  close(run(doc([s, base(), { ...fl, position: "offset", offset: { v: 5 } }, flat])).props.volume, offV, 1e-5);
+  // Up to vertex: the flange's tip passes through the point (here 22 above the bottom face: flat 18 after the bend).
+  const sv = edgeFlange(run(doc([s, base()])).sheet!, { ...fl, end: "vertex" }, [50, 3, 22]).state;
+  const vp = sv.panels.find(p => p.id === "f:p0")!, s0 = vp.outer.find(x => x.ent === "s0")!;
+  close(Math.hypot(s0.b[0] - s0.a[0], s0.b[1] - s0.a[1]), 18, 1e-9);
+  assert.throws(() => edgeFlange(run(doc([s, base()])).sheet!, { ...fl, end: "vertex" }, [50, 3, -5]), /beyond/);
+  assert.equal(m.evaluate(doc([s, base(), { ...fl, end: "vertex" }])).statuses.find(x => x.id === "f")!.ok, false, "no vertex picked");
 
   // Flatten: same volume, lies on the base plane.
   r = run(doc([s, base(), fl, flat]));

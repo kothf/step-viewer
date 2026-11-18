@@ -1,7 +1,7 @@
 // Sheet metal features (FRS 9.12, FR-FT-120). The first sheet metal feature of a part, the base
 // flange, holds the part's sheet metal parameters (thickness, default bend radius, bend allowance);
 // later sheet metal features use them unless they override the radius.
-import type { EdgeRef, FaceRef, Num } from "../model/types";
+import type { EdgeRef, FaceRef, Num, VertexRef } from "../model/types";
 
 /** How bend allowance is worked out: K-factor, a bend allowance or a bend deduction per bend, or a bend table. */
 export type BendCalc = "k" | "ba" | "bd" | "table";
@@ -59,8 +59,13 @@ export interface SmFlangeFeature {
   angle: Num;
   /** What the length is measured to: the outer (default) or inner virtual sharp. */
   lengthRef?: "outer" | "inner";
-  /** Where the flange sits against the edge: material inside (default), material outside, or bend outside. */
-  position?: "inside" | "outside" | "bendout";
+  /** Length end condition: blind (default, `length`) or up to a vertex (the flange's tip passes through it). */
+  end?: "vertex";
+  vertex?: VertexRef;
+  /** Where the flange sits against the edge: material inside (default), material outside, bend outside, or offset
+   * outwards by `offset` (the face is extended to the bend). */
+  position?: "inside" | "outside" | "bendout" | "offset";
+  offset?: Num;
   /** Bend the other way. */
   flip?: boolean;
   /** Custom inside bend radius (else the base flange's). */

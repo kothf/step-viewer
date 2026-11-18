@@ -154,7 +154,7 @@ type Mode =
 /** Features that take a Feature scope (FR-FT-007). */
 type ScopedFeature = ExtrudeFeature | RevolveFeature | SweepFeature | LoftFeature | HoleFeature;
 const isScoped = (f: Feature): f is ScopedFeature => f.type === "extrude" || f.type === "revolve" || f.type === "sweep" || f.type === "loft" || f.type === "hole";
-type Focus = "wbodies" | "wbound" | "wfaces" | "wf1" | "wf2" | "tsurf" | "ttool" | "keep" | "fs1" | "fs2" | "fc" | "main" | "bodies" | "base" | "axis" | "upto" | "start" | "origin" | "cx" | "cz" | "seeds" | "psketch" | "hupto" | "upbody" | "upto2" | "upbody2" | "mthick" | "dir" | "dir2" | "mplane" | "faces" | "hplane" | "pts" | "nplane" | "sbv" | "contours" | "skip" | "pref" | "pref2" | "scope";
+type Focus = "wbodies" | "wbound" | "wfaces" | "wf1" | "wf2" | "tsurf" | "ttool" | "keep" | "fs1" | "fs2" | "fc" | "main" | "bodies" | "base" | "axis" | "upto" | "start" | "origin" | "cx" | "cz" | "seeds" | "psketch" | "hupto" | "upbody" | "upto2" | "upbody2" | "mthick" | "dir" | "dir2" | "mplane" | "faces" | "hplane" | "pts" | "nplane" | "sbv" | "contours" | "skip" | "pref" | "pref2" | "scope" | "smvertex";
 type CopyFeature = MirrorFeature | LinearPatternFeature | CircularPatternFeature | SketchPatternFeature;
 type BodyFeature = IntersectFeature | CombineFeature | IndentFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ScaleFeature | FlexFeature;
 /** A fillet or chamfer has what it needs to preview: edges, or the face sets of a face fillet / full round. */
@@ -2523,7 +2523,10 @@ export class ModelController {
       else if (m.kind === "feature" && m.draft.type === "chamfer" && m.draft.mode === "vertex") this.pickChamferVertex(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "fillet" && m.focus === "sbv") this.pickSetback(e, m.draft);
       else if (m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer" || (m.draft.type === "curve" && m.draft.kind === "composite"))) this.pickEdge(e);
-      else if (m.kind === "feature" && (m.draft.type === "smflange" || m.draft.type === "smhem" || m.draft.type === "smcorner" || m.draft.type === "smrip" || m.draft.type === "smmiter" || m.draft.type === "smswept")) this.pickSmEdge(e, m.draft);
+      else if (m.kind === "feature" && m.draft.type === "smflange" && m.draft.end === "vertex" && (m.focus === "smvertex" || (!m.draft.vertex && m.draft.edges.length > 0))) {
+        const v = this.pickVertex(e);
+        if (v) { m.draft.vertex = v; m.focus = undefined; this.draftChanged(); }
+      } else if (m.kind === "feature" && (m.draft.type === "smflange" || m.draft.type === "smhem" || m.draft.type === "smcorner" || m.draft.type === "smrip" || m.draft.type === "smmiter" || m.draft.type === "smswept")) this.pickSmEdge(e, m.draft);
       else if (m.kind === "feature" && (m.draft.type === "smclosed" || m.draft.type === "smcross")) this.pickSmFace(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "smform") this.placeForm(e, m.draft);
       else if (m.kind === "feature" && (m.draft.type === "smunfold" || m.draft.type === "smfold")) this.pickUnfold(e, m.draft);
@@ -5124,7 +5127,7 @@ export class ModelController {
     // Sheet metal flanges show their arrow while folded only (the flat pattern hides where the flange stands).
     const folded = () => !this.doc.features.some(x => x.type === "smflat" && !x.suppressed);
     const ok = (f: Feature | undefined): f is ExtrudeFeature | RevolveFeature | EndCapFeature | GussetFeature | SmFlangeFeature | SmHemFeature | SmBaseFeature | FlexFeature => f?.type === "revolve" || (f?.type === "extrude" && (f.end === "blind" || f.end === "mid" || dir2Blind(f)))
-      || (f?.type === "endcap" && f.faces.length > 0) || (f?.type === "gusset" && !!f.face1 && !!f.face2) || ((f?.type === "smflange" || f?.type === "smhem") && f.edges.length > 0 && folded())
+      || (f?.type === "endcap" && f.faces.length > 0) || (f?.type === "gusset" && !!f.face1 && !!f.face2) || ((f?.type === "smflange" || f?.type === "smhem") && f.edges.length > 0 && folded() && !(f.type === "smflange" && f.end === "vertex"))
       || (f?.type === "smbase" && folded() && this.smOpenBase(f))
       || (f?.type === "flex" && (this.last?.frames[f.id]?.len?.length ?? 0) >= 6);
     if (m.kind === "feature") return ok(m.draft) ? m.draft : null;
@@ -7475,7 +7478,7 @@ export class ModelController {
     if (f.type === "helix" || f.type === "sweep" || f.type === "loft" || f.type === "rib" || f.type === "split" || f.type === "curve" || f.type === "sweepsurf") ({ title, body } = this.p3Panel(f, sketches, group, numField, chk));
     if (f.type === "sweep" || f.type === "loft" || f.type === "hole") body += this.scopeGroup(f, m.focus);
     if (isBodyOp(f)) ({ title, body } = this.bodyPanel(f, m.focus, group, numField, chk));
-    if (isSheet(f)) ({ title, body } = smPanel(f, { esc, group, numField, chk, sketches, label: featureLabel, sheet: this.last?.sheet, unit, f: UNITS[unit].f }));
+    if (isSheet(f)) ({ title, body } = smPanel(f, { esc, group, numField, chk, sketches, label: featureLabel, sheet: this.last?.sheet, unit, f: UNITS[unit].f, focus: m.kind === "feature" ? m.focus : undefined }));
     if (isWeldFeature(f)) ({ title, body } = weldPanel(f, this.weldCtx(m.index), m.focus, group, numField, chk));
     if (f.type === "planesurf" || f.type === "extsurf" || f.type === "offsurf" || f.type === "knit" || f.type === "thicken" || f.type === "replaceface" || f.type === "revsurf" || f.type === "loftsurf" || f.type === "trimsurf" || f.type === "fillsurf" || f.type === "extendsurf" || f.type === "untrimsurf") ({ title, body } = this.surfPanel(f, sketches, group, numField, chk));
     if (f.type === "import") {

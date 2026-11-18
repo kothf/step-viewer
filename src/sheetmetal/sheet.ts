@@ -352,6 +352,13 @@ function addFlange(st: SheetState, faces: [string, string], spec: FlangeSpec, pi
     if (t1 >= l - eps) panel.outer[(index + 1) % n] = { ...next, a: clean.at(-1)! } as Seg;
     panel.outer.splice(index, 1, ...newSegs);
   }
+  if (d < -eps) {
+    // Offset flange: the face runs on |d| past the edge (its own coplanar panel), the bend starts there.
+    const ext: Panel = { id: `${pid}x`, outer: strip(P(t0, 0), P(t1, 0), o, -d, ["s0", "tip", "s1", "att"]), holes: [], M: panel.M, n: 0 };
+    st.used.push(`${ext.id}:att`, `${ext.id}:tip`);
+    st.panels.push(ext);
+    ops.push({ kind: "panel", panel: ext });
+  }
   st.used.push(key);
   const A0 = P(t0, d), A1 = P(t1, d);
   const { bend, next } = makeBend(st, panel.M, A0, A1, up, spec.angle, spec.r, bid);
@@ -388,17 +395,38 @@ function cleanPath(pts: V2[]): V2[] {
 
 const clone = (st: SheetState): SheetState => structuredClone(st);
 
-/** Edge flange on each picked edge. */
-export function edgeFlange(prev: SheetState, f: SmFlangeFeature): { state: SheetState; ops: SheetOp[] } {
+/** Edge flange on each picked edge. `at` = the vertex an Up to vertex flange's tip passes through (world mm). */
+export function edgeFlange(prev: SheetState, f: SmFlangeFeature, at?: V3): { state: SheetState; ops: SheetOp[] } {
   if (!f.edges.length) throw new SheetError("E-SM-NOEDGE", "Pick the edges for the flange.");
-  const st = clone(prev);
   const angle = f.angle.v;
   if (!(angle > 1e-6 && angle < Math.PI - 1e-3)) throw new SheetError("E-SM-ANGLE", "The flange angle must be between 0° and 180°.");
+  const r = f.radius?.v ?? prev.R;
+  const s = f.length.v - (f.lengthRef === "inner" ? innerSetback(angle, r) : outerSetback(prev.T, angle, r));
+  if (f.end !== "vertex") return flangeWith(prev, f, s);
+  if (!at) throw new SheetError("E-SM-VERTEX", "Pick the vertex the flange goes up to.");
+  // A first build gives the flange's plane; its tip then moves to where the vertex lies along the flange.
+  const trial = flangeWith(prev, f, Math.max(s, 1));
+  const P = trial.state.panels.find(p => p.id === `${f.id}:p0`), att = P?.outer.find(x => x.ent === "att"), tip = P?.outer.find(x => x.ent === "tip");
+  if (!P || att?.kind !== "line" || tip?.kind !== "line") return trial;
+  const v: V3 = [at[0] - P.M.o[0], at[1] - P.M.o[1], at[2] - P.M.o[2]];
+  const q: V2 = [v[0] * P.M.x[0] + v[1] * P.M.x[1] + v[2] * P.M.x[2], v[0] * P.M.y[0] + v[1] * P.M.y[1] + v[2] * P.M.y[2]];
+  // Across the flange: from its attached edge towards the tip.
+  const e: V2 = [att.b[0] - att.a[0], att.b[1] - att.a[1]], el = Math.hypot(...e);
+  let n: V2 = [-e[1] / el, e[0] / el];
+  if ((tip.a[0] - att.a[0]) * n[0] + (tip.a[1] - att.a[1]) * n[1] < 0) n = [-n[0], -n[1]];
+  const sv = (q[0] - att.a[0]) * n[0] + (q[1] - att.a[1]) * n[1];
+  if (!(sv > 1e-6)) throw new SheetError("E-SM-VERTEX", "The vertex must lie beyond the flange's bend.");
+  return flangeWith(prev, f, sv);
+}
+
+function flangeWith(prev: SheetState, f: SmFlangeFeature, s: number): { state: SheetState; ops: SheetOp[] } {
+  const st = clone(prev);
+  const angle = f.angle.v;
   const r = f.radius?.v ?? st.R;
-  const L = f.length.v;
-  const s = L - (f.lengthRef === "inner" ? innerSetback(angle, r) : outerSetback(st.T, angle, r));
   const pos = f.position ?? "inside";
-  const d = pos === "inside" ? outerSetback(st.T, angle, r) : pos === "outside" ? innerSetback(angle, r) : 0;
+  const off = f.offset?.v ?? 0;
+  if (pos === "offset" && !(off > 1e-6)) throw new SheetError("E-SM-OFFSETPOS", "The flange offset must be more than 0.");
+  const d = pos === "inside" ? outerSetback(st.T, angle, r) : pos === "outside" ? innerSetback(angle, r) : pos === "offset" ? -off : 0;
   const ops: SheetOp[] = [];
   const off0 = f.off0?.v ?? 0, off1 = f.off1?.v ?? 0;
   // Picked edges meeting at a corner of the same face: their flanges run on past it and are mitred (a CAD app).

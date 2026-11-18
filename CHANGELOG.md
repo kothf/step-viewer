@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Changed
 
 - **Sheet Metal Properties list what the sheet is made of.** The dialog (and its CSV) now has Material and Density rows, and the mass follows the materials given to bodies: a body with its own material weighs by its density, the rest by the part's. A mass typed under Override mass properties in the part's properties is shown as is. Material names are shown as typed in both languages.
+- **Edge Flange: Up to vertex and Offset, as in other CAD apps.** Under Flange length, End condition **Up to vertex** makes the flange's tip pass through a vertex you click (near the end of an edge); the flange follows it when the model changes. Under Flange position, **Offset** runs the face on past the edge by the distance you type and bends the flange there; the flat pattern includes the extra strip.
 - **Drag arrows on more sheet metal features.** A Base Flange drawn from an open sketch shows a depth arrow on the sketch (both ways with Mid plane), and a Hem shows a length arrow at its tip, like the Edge Flange's: drag it to change the value with a live preview, or click its label to type it. Selecting the feature in the tree and dragging edits it at once.
 
 ### Fixed
