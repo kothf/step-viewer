@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { arcRationals, fitSeg, loopArea, reverseLoop, segEnd, segPoints, startAt } from "../../src/sheetmetal/fit";
+import { arcRationals, fitSeg, joinShort, loopArea, reverseLoop, segEnd, segPoints, startAt } from "../../src/sheetmetal/fit";
 import type { V2 } from "../../src/model/types";
 
 const close = (a: number, b: number, tol: number, msg = "") => assert.ok(Math.abs(a - b) <= tol, `${msg} ${a} vs ${b}`);
@@ -40,4 +40,27 @@ test("sheet metal fit: loops, areas and rational arcs", () => {
   const sp = segPoints(arc, 6);
   assert.equal(sp.length, 7);
   for (const p of sp) close(Math.hypot(...p), 1, 1e-12);
+});
+
+test("flat pattern: runs of short lines come back as circles and arcs (sheet metal exam #16)", () => {
+  type L = { kind: "line"; a: V2; b: V2 };
+  const ring = (c: V2, r: number, n: number, a0 = 0, sw = 2 * Math.PI): L[] => Array.from({ length: n }, (_, i) => {
+    const t0 = a0 + (sw * i) / n, t1 = a0 + (sw * (i + 1)) / n;
+    return { kind: "line", a: [c[0] + r * Math.cos(t0), c[1] + r * Math.sin(t0)], b: [c[0] + r * Math.cos(t1), c[1] + r * Math.sin(t1)] };
+  });
+  // A Ø4 hole as 64 facets: one circle.
+  const hole = joinShort(ring([10, 10], 2, 64));
+  assert.equal(hole.length, 1);
+  assert.equal(hole[0].kind, "circle");
+  // A slot: two long sides joined by half circles of 48 facets each: 2 lines + 2 arcs.
+  const slot = [
+    { kind: "line" as const, a: [0, 0] as V2, b: [20, 0] as V2 }, ...ring([20, 2], 2, 48, -Math.PI / 2, Math.PI),
+    { kind: "line" as const, a: [20, 4] as V2, b: [0, 4] as V2 }, ...ring([0, 2], 2, 48, Math.PI / 2, Math.PI),
+  ];
+  const js = joinShort(slot);
+  assert.deepEqual(js.map(e => e.kind).sort(), ["arc", "arc", "line", "line"]);
+  const arc = js.find(e => e.kind === "arc") as { c: V2; r: number };
+  assert.ok(Math.abs(arc.r - 2) < 1e-3);
+  // Long lines alone are left as they are.
+  assert.equal(joinShort([{ kind: "line", a: [0, 0], b: [5, 0] }, { kind: "line", a: [5, 0], b: [5, 5] }]).length, 2);
 });

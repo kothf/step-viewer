@@ -82,7 +82,7 @@ import { capDir, splitSubs } from "../weldments/types";
 import { showSheetProps } from "../sheetmetal/propsUi";
 import { bindSmPanel, smCheck, smDraft, smPanel, SM_BASES, SM_ICONS, SM_TOOLS, SM_TREE_ICONS } from "../sheetmetal/ui";
 import { isSheet, isSheetBase, type SmBaseFeature, type SmHemFeature, type SmFlangeFeature, type SmFormFeature, type SmUnfoldFeature, type SmReliefFeature, type SmGussetFeature, type SmConvertFeature, type SmInsertFeature, type SmTabSlotFeature } from "../sheetmetal/types";
-import { apply as smApply, applyDir as smApplyDir, bendOfFace, reliefCorners, crossBreakLines, flatBendLines, flatPointOn, panelOfFace, placedState, unfoldBendLines } from "../sheetmetal/sheet";
+import { apply as smApply, applyDir as smApplyDir, bendOfFace, flatPatternDoc, type SheetState, reliefCorners, crossBreakLines, flatBendLines, flatPointOn, panelOfFace, placedState, unfoldBendLines } from "../sheetmetal/sheet";
 import { flatDxf } from "../sheetmetal/flat";
 import { modelItems, type ModelItem } from "../drawing/items";
 import { ModifyBox } from "../modifyBox";
@@ -3267,7 +3267,23 @@ export class ModelController {
   }
 
   /** Sheet metal cut-list properties (FR-FT-120): bounding box, thickness, cutting lengths, bends, mass. */
-  private sheetProps() {
+  /**
+   * The sheet state with the flat pattern's real outline: folded, cuts by other features are known only once the
+   * part is flattened, so a flattened copy is built for them (sheet metal exam #14: cut outs counted 1).
+   */
+  private async flatSheet(): Promise<SheetState | undefined> {
+    const st = this.last?.sheet ?? undefined;
+    if (!st || st.flatEdges) return st;
+    const fs = this.doc.features, at = fs.findIndex(isSheetBase);
+    const cuts = fs.slice(at + 1).some(f => !f.suppressed && (f.type === "smvent" || f.type === "smcut" || f.type === "smrelief" || f.type === "smform" || (!isSheet(f) && f.type !== "sketch" && f.type !== "plane")));
+    const d = cuts ? flatPatternDoc(this.doc) : null;
+    if (!d) return st;
+    toast(t("Making the flat pattern…"));
+    try { return (await this.kernel.flatState(d)) ?? st; } catch { return st; }
+  }
+
+  private async sheetProps() {
+    const st = await this.flatSheet();
     const d = this.doc, vol = this.last?.props?.volume, rho = d.material?.density;
     // Bodies with their own material weigh by it; the rest by the part's. A typed mass override wins.
     const own = d.bodies && Object.values(d.bodies).some(b => b.material);
@@ -3278,18 +3294,15 @@ export class ModelController {
     const mass = d.massOverride?.mass != null ? d.massOverride.mass * 1000
       : own && mats.every(m => m) ? (() => { const bs = this.bodyMasses(rho ?? 0); return bs ? combine(bs).mass : undefined; })()
       : vol != null && rho != null ? vol * rho / 1000 : undefined;
-    showSheetProps(this.last?.sheet, d.name, mass, { name: names.length ? names.join(", ") : undefined, density: dens.length === 1 ? dens[0] : undefined });
+    showSheetProps(st, d.name, mass, { name: names.length ? names.join(", ") : undefined, density: dens.length === 1 ? dens[0] : undefined });
   }
 
   /** The flat pattern with its bend lines as DXF (R12, mm). */
-  private exportFlatDxf() {
-    const st = this.last?.sheet;
+  private async exportFlatDxf() {
+    const st = await this.flatSheet();
     if (!st) { toast(t("Make a base flange first."), true); return; }
     downloadBlob(new Blob([flatDxf(st, this.doc.name)], { type: "image/vnd.dxf" }), `${this.doc.name}-flat.dxf`);
-    // Cuts by later features reach the DXF through the flat pattern; folded, only the sheet outline is known.
-    const fs = this.doc.features, at = fs.findIndex(isSheetBase);
-    const cuts = !st.flatEdges && fs.slice(at + 1).some(f => !f.suppressed && !isSheet(f) && f.type !== "sketch" && f.type !== "plane");
-    toast(cuts ? t("Flat pattern saved as DXF. Flatten the part first to include its cuts.") : t("Flat pattern saved as DXF."));
+    toast(t("Flat pattern saved as DXF."));
   }
 
   /** The edge list a click toggles: fillet and chamfer edges, or a composite curve's (FR-FT-085). */
@@ -6595,8 +6608,8 @@ export class ModelController {
       case "import": if (m.kind === "sketch") this.ok(); this.importBodyFile(); break;
       case "smbase": case "smloft": case "smflange": case "smhem": case "smbend": case "smjog": case "smcorner": case "smclosed": case "smrelief": case "smgusset": case "smcross": case "smvent": case "smcut": case "smconvert": case "sminsert": case "smform": case "smunfold": case "smfold": case "smmiter": case "smswept": case "smtabslot": case "smrip": this.startFeature(c); break;
       case "smflat": if (m.kind === "sketch") this.ok(); this.toggleFlat(); break;
-      case "smdxf": if (m.kind === "sketch") this.ok(); this.exportFlatDxf(); break;
-      case "smprops": if (m.kind === "sketch") this.ok(); this.sheetProps(); break;
+      case "smdxf": if (m.kind === "sketch") this.ok(); void this.exportFlatDxf(); break;
+      case "smprops": if (m.kind === "sketch") this.ok(); void this.sheetProps(); break;
       case "recognize": if (m.kind === "sketch") this.ok(); void this.recognizeHoles(); break;
       case "recblend": if (m.kind === "sketch") this.ok(); void this.recognizeBlends(); break;
       case "recext": if (m.kind === "sketch") this.ok(); void this.recognizeExtrudes(); break;
@@ -8081,7 +8094,7 @@ export class ModelController {
         }, k === "end" || k === "op" || k === "sketch" || k === "modelled" || k === "axes" || (k === "cut" && f.type === "indent"));
       });
     });
-    if (isSheet(f)) bindSmPanel(pm, f, upd, () => this.exportFlatDxf(), msg => toast(msg, true), UNITS[units.current].f, this.last?.sheet?.T ?? 1);
+    if (isSheet(f)) bindSmPanel(pm, f, upd, () => void this.exportFlatDxf(), msg => toast(msg, true), UNITS[units.current].f, this.last?.sheet?.T ?? 1);
     pm.querySelectorAll<HTMLInputElement>("input[data-er2]").forEach(inp => {
       const apply = () => {
         if (f.type !== "fillet") return;

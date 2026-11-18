@@ -14188,6 +14188,20 @@ try {
     await mp.click("#sm-props [data-a=close]");
     await mp.evaluate(() => window.__sv.model.store.change("Body material", d => { delete d.bodies; }));
     await settle();
+    // A window cut by an ordinary extrude while folded counts as a cut out too (sheet metal exam #14).
+    await mp.evaluate(() => window.__sv.model.store.change("Window", d => {
+      const q = [[20, 15], [40, 15], [40, 35], [20, 35]];
+      d.features.push({ id: "ws", type: "sketch", name: "SketchW", plane: { std: "XY" }, rels: [], dims: [], ents: [...q.map((p, i) => ({ id: `wq${i}`, t: "point", x: p[0], y: p[1] })), ...q.map((_p, i) => ({ id: `wl${i + 1}`, t: "line", a: `wq${i}`, b: `wq${(i + 1) % 4}` }))] },
+        { id: "wc", type: "extrude", name: "Cut-Extrude1", sketch: "ws", op: "cut", end: "through2", depth: { v: 0 } });
+    }));
+    await settle();
+    await smMenu("Sheet Metal Properties");
+    await mp.waitForSelector("#sm-props[open]");
+    await mp.waitForFunction(() => document.querySelector('#sm-props tr[data-prop="Cut outs"] td')?.textContent === "2", null, { timeout: 30000 }).catch(() => {});
+    const spW = await mp.evaluate(() => Object.fromEntries([...document.querySelectorAll("#sm-props tr[data-prop]")].map(r => [r.dataset.prop, r.querySelector("td").textContent])));
+    check(spW["Cut outs"] === "2" && Math.abs(num(spW["Cutting length - inner"]) - (10 * Math.PI + 80)) < 0.01,
+      `sheet metal: Sheet Metal Properties count a window cut by a later feature (${JSON.stringify(spW)})`);
+    await mp.click("#sm-props [data-a=close]");
     // A base flange from an open L: its depth arrow (as an extrude's) sits on the sketch and dragging it deepens the walls live.
     const keepFs = await mp.evaluate(() => JSON.stringify(window.__sv.model.store.doc.features));
     await mp.evaluate(() => window.__sv.model.store.change("Open base", d => {

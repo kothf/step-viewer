@@ -48,5 +48,5 @@ export function flatDrawing(st: SheetState): Drawing2 {
   return { entities, u: new THREE.Vector3(1, 0, 0), v: new THREE.Vector3(0, 1, 0), min, max };
 }
 
-export const flatDxf = (st: SheetState, title: string) => toDxf(flatDrawing(st), title);
+export const flatDxf = (st: SheetState, title: string) => toDxf(flatDrawing(st), title, "flat pattern");
 export const flatSvg = (st: SheetState, title: string) => toSvg(flatDrawing(st), title);

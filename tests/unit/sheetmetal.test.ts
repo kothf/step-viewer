@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { Modeller } from "../../src/kernel/model";
 import type { Feature, PartDoc, SketchFeature, SkEnt } from "../../src/model/types";
 import type { SmRipFeature, SmTabSlotFeature, SmInsertFeature, SmConvertFeature, SmCutFeature, SmGussetFeature, SmReliefFeature, SmUnfoldFeature, SmFormFeature, SmVentFeature, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
-import { apply, edgeFlange, flatLoops, flatSize, bendAllowance, reliefCorners, filletLoop } from "../../src/sheetmetal/sheet";
+import { apply, edgeFlange, flatLoops, flatSize, bendAllowance, reliefCorners, filletLoop, flatPatternDoc } from "../../src/sheetmetal/sheet";
 import { flatDrawing } from "../../src/sheetmetal/flat";
 import { cutPropRows, cutPropsCsv, sheetCutProps } from "../../src/sheetmetal/cutprops";
 import { bendTableText, defaultTable, dinTable, parseBendTable, tableValue } from "../../src/sheetmetal/bendTable";
@@ -1099,4 +1099,20 @@ test("sheet metal: bend tables (FR-FT-120)", async () => {
   // A broken table is a feature error.
   const bad = m.evaluate(doc([s, base({ calc: "table", table: { kind: "k", radii: [], angles: [], v: [] } })]));
   assert.ok(bad.statuses.some(x => !x.ok && /bend table/i.test(x.message)), JSON.stringify(bad.statuses));
+});
+
+test("sheet metal: cut-list properties count cuts made by later features (exam #14)", async () => {
+  oc ??= await occ();
+  m ??= new Modeller(oc);
+  const s = rect("s", 0, 0, 100, 50);
+  s.ents.push({ id: "sc0", t: "point", x: 70, y: 30 }, { id: "sc", t: "circle", c: "sc0", r: 5 });
+  const fl: SmFlangeFeature = { id: "f", type: "smflange", name: "Edge-Flange1", edges: [{ faces: ["b:p0:top", "b:p0:sl1"] }], length: { v: 30 }, angle: { v: Math.PI / 2 } };
+  const win: Feature = { id: "wc", type: "extrude", name: "Cut", sketch: "w", op: "cut", end: "through2", depth: { v: 0 } } as Feature;
+  // The controller asks for the flattened copy (flatPatternDoc) when cuts follow the sheet features.
+  const r = m.evaluate(flatPatternDoc(doc([s, base(), fl, rect("w", 20, 15, 40, 35), win]))!);
+  const p = sheetCutProps(r.sheet!);
+  assert.equal(p.cutouts, 2);
+  close(p.inner, 10 * Math.PI + 80, 1e-9);
+  // The flat DXF of it: the hole once, as a circle.
+  assert.equal(flatDrawing(r.sheet!).entities.filter(e => e.kind === "circle" && e.layer === "OUTLINE").length, 1);
 });

@@ -5,7 +5,7 @@ import type { EdgeRef, FaceRef, Frame, PartDoc, SketchFeature, SkEnt, V2, V3, Ve
 import type { Named } from "../kernel/model";
 import { inPolygon, loopPolygon, polyArea, sketchProfile, type Seg } from "../sketch/profile";
 import { tabSlot, type SlotCut, convertFlanges, type ConvertLevel, gussetSheet, type GussetMark, cornerRelief, reliefCorners, reliefLoop, apply, applyDir, bendStrip, sheetPlace, unfoldSheet, type SheetPlace, baseFlange, crossBreak, formTools, obroundLoop, type FormItem, ventLayout, ventPanel, loftedBend, type SheetMesh, breakCorner, closedCorner, miterFlange, miterProfile, sweptProfile, type FlatEdge, bendSketchLine, edgeFlange, flatLoops, hem, jog, sketchedBend, tab, SheetError, type Bend, type Mat, type Panel, type SheetOp, type SheetState } from "./sheet";
-import { arcRationals, fitSeg, loopArea, reverseLoop, segEnd, segPoints, startAt } from "./fit";
+import { arcRationals, fitSeg, joinShort, loopArea, reverseLoop, segEnd, segPoints, startAt } from "./fit";
 import type { SmRipFeature, SheetFeature, SmBaseFeature, SmConvertFeature, SmInsertFeature, SmCutFeature, SmFormFeature, SmVentFeature } from "./types";
 
 /** The few Modeller helpers the sheet metal code needs. */
@@ -637,8 +637,19 @@ function topEdges(api: SheetApi, flat: Named, R: Mat, T: number): FlatEdge[] {
       }
     }
   }
-  return out;
+  // An edge met twice (a hole's circle seen from two faces) counts once.
+  const r = (x: number) => Math.round(x * 1e4);
+  const pk = (p: V2) => `${r(p[0])},${r(p[1])}`;
+  const seen = new Set<string>();
+  const once = out.filter(e => {
+    const k = e.kind === "line" ? ["l", ...[pk(e.a), pk(e.b)].sort()].join("|") : e.kind === "circle" ? `c|${pk(e.c)}|${r(e.r)}` : e.kind === "arc" ? `a|${pk(e.c)}|${r(e.r)}|${r(e.a0)}|${r(e.a1)}` : `p|${e.pts.map(pk).join(";")}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  return joinShort(once);
 }
+
 
 /**
  * Vent (FR-FT-120): the boundary's prism through the sheet, less a strip of rib width along each rib and a ring of
