@@ -8989,6 +8989,20 @@ try {
     const mid = await pos();
     await mp.evaluate(() => window.__sv.motion.seek(5));
     const end = await pos();
+    // Autokey on a mate edit: a new Distance1 value typed in its panel at 2.5 s becomes a key there; the mate keeps 10 mm.
+    const mateKey = await mp.evaluate(() => {
+      const m = window.__sv.motion, a = window.__sv.asm;
+      m.setAutoKey(true); m.seek(2.5);
+      a.startMate(a.doc.mates.find(x => x.id === "md"));
+      const vi = document.querySelector("#asm-pm [data-mv]"); vi.value = "25"; vi.dispatchEvent(new Event("change"));
+      a.okMate();
+      const tr = m.study.tracks.find(k => k.kind === "mate" && k.mate === "md");
+      const out = { value: a.doc.mates.find(x => x.id === "md").value, keys: tr.keys.map(k => [k.t, k.v]), panel: !!a.mating };
+      m.edit(st => { const k = st.tracks.find(x => x.id === tr.id); k.keys = k.keys.filter(x => Math.abs(x.t - 2.5) > 1e-9); });
+      m.setAutoKey(false);
+      return out;
+    });
+    check(mateKey.value === 10 && !mateKey.panel && mateKey.keys.some(([t, v]) => Math.abs(t - 2.5) < 1e-9 && v === 25) && mateKey.keys.length === 3, `motion 1.572: Autokey keys a typed mate value at the playhead and leaves the mate alone (FR-FT-122) (${JSON.stringify(mateKey)})`);
     // A 60 rpm rotary motor on Concentric1: half a turn at 0.5 s.
     await mp.evaluate(() => { const m = window.__sv.motion; m.addTrack("motor:mc"); m.edit(s => { const k = s.tracks.find(x => x.kind === "motor"); k.speed = 60; }); m.seek(0.5); });
     const turn = await pos();
