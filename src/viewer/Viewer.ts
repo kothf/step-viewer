@@ -695,9 +695,27 @@ export class Viewer {
 
   partOf(obj: THREE.Object3D) { return this.parts[obj.userData.partIdx as number]; }
 
+  /** A point in the part's own coordinates where the part is shown (its group may be moved and turned). */
   toWorld(p: Part, v: V3 | THREE.Vector3) {
     const w = Array.isArray(v) ? new THREE.Vector3(v[0], v[1], v[2]) : v.clone();
-    return w.add(p.group.position);
+    return w.applyMatrix4(this.placing(p));
+  }
+
+  /** A direction in the part's own coordinates as shown (turned with the part's group, unit length). */
+  dirToWorld(p: Part, v: V3 | THREE.Vector3) {
+    const w = Array.isArray(v) ? new THREE.Vector3(v[0], v[1], v[2]) : v.clone();
+    return w.transformDirection(this.placing(p));
+  }
+
+  /** A shown point back in the part's own coordinates. */
+  toPart(p: Part, v: THREE.Vector3) {
+    return v.clone().applyMatrix4(new THREE.Matrix4().copy(this.placing(p)).invert());
+  }
+
+  /** The part's placement: its group's position, rotation and scale. */
+  placing(p: Part) {
+    p.group.updateMatrix();
+    return p.group.matrix;
   }
 
   // ---------- explode ----------

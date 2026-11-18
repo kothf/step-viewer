@@ -25,7 +25,6 @@ export interface SectionResult {
  * which sums outer loops positively and holes negatively without needing loops.
  */
 export function computeSection(v: Viewer, plane: THREE.Plane, others: THREE.Plane[]): SectionResult {
-  const n = plane.normal;
   const out: SectionResult = { profiles: [], area: 0, segs: new Map() };
   const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
   const ab = new THREE.Vector3(), ac = new THREE.Vector3(), tn = new THREE.Vector3(), dir = new THREE.Vector3();
@@ -33,8 +32,9 @@ export function computeSection(v: Viewer, plane: THREE.Plane, others: THREE.Plan
 
   for (const part of v.parts) {
     if (!part.visible) continue;
-    const off = part.group.position;
-    const k = plane.constant + n.dot(off); // plane in part-local coordinates
+    // The planes in the part's own coordinates (its group may be moved and turned).
+    const M = v.placing(part), local = plane.clone().applyMatrix4(new THREE.Matrix4().copy(M).invert());
+    const n = local.normal, k = local.constant;
     const d = part.data;
     const lo = n.x * (n.x > 0 ? d.bboxMin[0] : d.bboxMax[0]) + n.y * (n.y > 0 ? d.bboxMin[1] : d.bboxMax[1]) + n.z * (n.z > 0 ? d.bboxMin[2] : d.bboxMax[2]) + k;
     const hi = n.x * (n.x > 0 ? d.bboxMax[0] : d.bboxMin[0]) + n.y * (n.y > 0 ? d.bboxMax[1] : d.bboxMin[1]) + n.z * (n.z > 0 ? d.bboxMax[2] : d.bboxMin[2]) + k;
@@ -55,7 +55,7 @@ export function computeSection(v: Viewer, plane: THREE.Plane, others: THREE.Plan
     const byFace = new Map<number, [number, number][]>();
     const draw: number[] = [];
     let area = 0;
-    const kept = (v3: THREE.Vector3) => others.every(o => o.distanceToPoint(w.copy(v3).add(off)) >= -1e-9);
+    const kept = (v3: THREE.Vector3) => others.every(o => o.distanceToPoint(w.copy(v3).applyMatrix4(M)) >= -1e-9);
 
     for (let t = 0, nt = I.length / 3; t < nt; t++) {
       a.fromArray(P, 3 * I[3 * t]); b.fromArray(P, 3 * I[3 * t + 1]); c.fromArray(P, 3 * I[3 * t + 2]);

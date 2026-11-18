@@ -159,7 +159,7 @@ export class MotionManager {
       let s = d.motions.find(x => x.id === id);
       if (!s) { s = { ...JSON.parse(JSON.stringify(cur)), id: id = uid("ms_") } as MotionStudy; d.motions.push(s); }
       fn(s);
-    });
+    }, this.merge ? `${id}:${this.merge}` : undefined);
     this.studyId = id;
     this.time = Math.min(this.time, this.study.duration);
     this.render();
@@ -597,7 +597,7 @@ export class MotionManager {
     const m = (this.asm.doc?.mates ?? []).find(k => k.id === mate);
     if (!m) return;
     const id = uid("tr_"), color = TRACE_COLORS[this.traces.length % TRACE_COLORS.length];
-    const angular = m.type === "angle" || m.type === "limitangle" || m.type === "gear" || m.type === "hinge";
+    const angular = m.type === "angle" || m.type === "limitangle" || m.type === "gear" || m.type === "hinge" || m.type === "concentric";
     this.edit(st => { (st.traces ??= []).push({ id, comp: "", mate, p: [0, 0, 0], color, plot: angular ? "angle" : "dist" }); });
     this.sel = null;
     this.selTrace = id;
@@ -1172,6 +1172,8 @@ export class MotionManager {
       }
     } finally { this.capture = null; }
     if (!this.recording) { this.renderTransport(); return null; }
+    // A study that ends where it starts (a motor turning whole turns) would show that pose twice as the GIF loops.
+    if (frames.length > 2 && sameFrame(frames[0], frames[frames.length - 1])) frames.pop();
     this.setStatus(t("Writing the GIF…"));
     await new Promise(r => setTimeout(r, 0));
     const bytes = encodeGif(frames, c.out.width, c.out.height, 100 / fps);
@@ -1214,7 +1216,7 @@ export class MotionManager {
     return blob;
   }
 
-  private fileBase() { return `${this.asm.doc?.name ?? "Assembly"}-${this.study.name}`.replace(/[\\/:*?"<>|]+/g, "_"); }
+  private fileBase() { return `${this.asm.fileStem()}-${this.study.name}`.replace(/[\\/:*?"<>|]+/g, "_"); }
 
   // ---------- pane ----------
 
@@ -1720,7 +1722,16 @@ export class MotionManager {
     on("button[data-p=show]", "click", () => this.setProp("show", null));
   }
 
+  /** Changes of one property of one track in a row (a spin box turned by the wheel or the arrows) make one undo step. */
   private setProp(p: string, el: HTMLInputElement | HTMLSelectElement | null) {
+    this.merge = this.sel ? `prop:${this.sel.track}:${p}` : null;
+    try { this.setProp0(p, el); } finally { this.merge = null; }
+  }
+
+  /** The undo merge key of the change being made (see `setProp`). */
+  private merge: string | null = null;
+
+  private setProp0(p: string, el: HTMLInputElement | HTMLSelectElement | null) {
     const sel = this.sel;
     if (!sel) return;
     const raw = el?.value ?? "", v = num(raw);
@@ -2176,3 +2187,9 @@ export class MotionManager {
   }
 }
 
+/** Two captured frames with the same pixels. */
+function sameFrame(a: Uint8ClampedArray, b: Uint8ClampedArray) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}

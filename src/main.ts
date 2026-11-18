@@ -341,6 +341,12 @@ function overlayEdge(color: number, width: number) {
   l.visible = false; l.renderOrder = 1011; l.raycast = () => {};
   return l;
 }
+/** Puts an overlay where the part is shown (a motion study or a mate preview turns parts as well as moving them). */
+function placeLike(o: THREE.Object3D, part: Part) {
+  o.position.copy(part.group.position);
+  o.quaternion.copy(part.group.quaternion);
+  o.scale.copy(part.group.scale);
+}
 function showFace(o: THREE.Mesh, part: Part | null, faceId?: number) {
   if (!part || faceId === undefined) { o.visible = false; return; }
   const f = part.data.faces[faceId];
@@ -349,7 +355,7 @@ function showFace(o: THREE.Mesh, part: Part | null, faceId?: number) {
   g.setIndex(part.mesh.geometry.getIndex());
   g.setDrawRange(f.triStart * 3, f.triCount * 3);
   o.geometry = g;
-  o.position.copy(part.group.position);
+  placeLike(o, part);
   (o.material as THREE.Material).clippingPlanes = viewer.clipPlanes;
   o.visible = true;
 }
@@ -359,7 +365,7 @@ function showEdge(o: LineSegments2, part: Part | null, edge?: EdgeInfo) {
   for (let i = 3; i < pts.length; i += 3) seg.push(pts[i - 3], pts[i - 2], pts[i - 1], pts[i], pts[i + 1], pts[i + 2]);
   o.geometry.dispose();
   o.geometry = new LineSegmentsGeometry().setPositions(seg);
-  o.position.copy(part.group.position);
+  placeLike(o, part);
   (o.material as LineMaterial).resolution.copy(viewer.size);
   edgeDepth(o);
   o.visible = true;
@@ -1391,8 +1397,8 @@ function renderProps() {
     if (e.kind === "face" && e.face) {
       const f = e.face;
       rows.push(["Surface", t(f.type)], ["Area", fmtArea(f.area)]);
-      if (f.normal) rows.push(["Normal", fmtVec(new THREE.Vector3(...f.normal), false)]);
-      if (f.axis) rows.push(["Axis", fmtVec(new THREE.Vector3(...f.axis), false)]);
+      if (f.normal) rows.push(["Normal", fmtVec(viewer.dirToWorld(p, f.normal), false)]);
+      if (f.axis) rows.push(["Axis", fmtVec(viewer.dirToWorld(p, f.axis), false)]);
       if (f.radius) rows.push(["Radius", fmtLen(f.radius)], ["Diameter", fmtLen(f.radius * 2)]);
       rows.push([f.type === "plane" || f.type === "other" ? "Centroid" : "Centre", fmtVec(viewer.toWorld(p, f.center))]);
       rows.push(["Boundary edges", String(f.edges.length)], ["Face #", String(f.id)]);
@@ -1401,7 +1407,7 @@ function renderProps() {
       rows.push(["Curve", t(ed.type)], ["Length", fmtLen(ed.length)]);
       if (ed.radius) rows.push(["Radius", fmtLen(ed.radius)], ["Diameter", fmtLen(ed.radius * 2)], ["Centre", fmtVec(viewer.toWorld(p, ed.center!))]);
       if (ed.sweep && ed.type === "arc") rows.push(["Sweep", `${((ed.sweep * 180) / Math.PI).toFixed(3)}°`]);
-      if (ed.dir) rows.push(["Direction", fmtVec(new THREE.Vector3(...ed.dir), false)]);
+      if (ed.dir) rows.push(["Direction", fmtVec(viewer.dirToWorld(p, ed.dir), false)]);
       rows.push(["Start", fmtVec(viewer.toWorld(p, ed.start))], ["End", fmtVec(viewer.toWorld(p, ed.end))]);
     }
     if (e.kind === "point") rows.push(["Point", fmtVec(e.point)]);
@@ -1910,24 +1916,24 @@ function csysFrom(e: Entity): Csys | null {
   if (e.kind === "edge") {
     const ed = e.edge!;
     if (ed.type === "line") {
-      const dir = new THREE.Vector3(...ed.dir!);
+      const dir = viewer.dirToWorld(e.part, ed.dir!);
       // Z: the normal of a planar face on the edge, else world Z, made square to the edge.
       const plane = ed.faces.map(i => e.part.data.faces[i]).find(f => f?.type === "plane" && f.normal);
-      let z = plane ? new THREE.Vector3(...plane.normal!) : new THREE.Vector3(0, 0, 1);
+      let z = plane ? viewer.dirToWorld(e.part, plane.normal!) : new THREE.Vector3(0, 0, 1);
       if (Math.abs(z.dot(dir)) > 0.999) z = new THREE.Vector3(0, Math.abs(dir.z) > 0.9 ? 1 : 0, Math.abs(dir.z) > 0.9 ? 0 : 1);
       z.addScaledVector(dir, -z.dot(dir));
-      return makeCsys("edge", t(viewer.toWorld(e.part, ed.start)), t(z), ed.dir!);
+      return makeCsys("edge", t(viewer.toWorld(e.part, ed.start)), t(z), t(dir));
     }
-    if (ed.center && ed.axis) return makeCsys("circle centre", t(viewer.toWorld(e.part, ed.center)), ed.axis);
+    if (ed.center && ed.axis) return makeCsys("circle centre", t(viewer.toWorld(e.part, ed.center)), t(viewer.dirToWorld(e.part, ed.axis)));
     return null;
   }
   const f = e.face!;
   if (f.type === "plane" && f.normal) {
     // X along the face's longest straight edge, if it has one.
     const lines = f.edges.map(i => e.part.data.edges[i]).filter(x => x?.type === "line").sort((a, b) => b.length - a.length);
-    return makeCsys("face", t(viewer.toWorld(e.part, f.centroid)), f.normal, lines[0]?.dir);
+    return makeCsys("face", t(viewer.toWorld(e.part, f.centroid)), t(viewer.dirToWorld(e.part, f.normal)), lines[0]?.dir && t(viewer.dirToWorld(e.part, lines[0].dir)));
   }
-  if (f.type === "cylinder" && f.axis) return makeCsys("cylinder axis", t(viewer.toWorld(e.part, f.center)), f.axis);
+  if (f.type === "cylinder" && f.axis) return makeCsys("cylinder axis", t(viewer.toWorld(e.part, f.center)), t(viewer.dirToWorld(e.part, f.axis)));
   return null;
 }
 
@@ -2488,7 +2494,7 @@ function normalTo(given?: [number, number, number]) {
   const sn = modeller.sketchNormal();
   if (given) n = new THREE.Vector3(...given);
   else if (sn) n = new THREE.Vector3(...sn);
-  else if (state.selection?.kind === "face" && state.selection.face?.normal && state.selection.face.type === "plane") n = new THREE.Vector3(...state.selection.face.normal);
+  else if (state.selection?.kind === "face" && state.selection.face?.normal && state.selection.face.type === "plane") n = viewer.dirToWorld(state.selection.part, state.selection.face.normal);
   else { const pn = modeller.selectedPlaneNormal(); if (pn) n = new THREE.Vector3(...pn); }
   if (!n) { toast(t("Select a flat face first (or open a sketch).")); return; }
   const cam = viewer.camera.position.clone().sub(viewer.controls.target).normalize();
@@ -2728,11 +2734,11 @@ function sectionOnFace(f: ReturnType<typeof faceUnder>) {
   const { part, face, point } = f;
   let sp: SectionPlane | null = null;
   if (face.type === "plane" && face.normal) {
-    const n = new THREE.Vector3(...face.normal);
+    const n = viewer.dirToWorld(part, face.normal);
     const p = viewer.toWorld(part, face.centroid);
     sp = section.add("Face", n, p.dot(n) - viewer.modelSize * 1e-4, point);
   } else if (face.type === "cylinder" && face.axis) {
-    const a = new THREE.Vector3(...face.axis).normalize();
+    const a = viewer.dirToWorld(part, face.axis);
     const n = viewer.camera.getWorldDirection(new THREE.Vector3()).negate();
     n.addScaledVector(a, -n.dot(a));
     if (n.lengthSq() < 1e-8) n.set(0, 0, 1).cross(a).lengthSq() > 1e-8 ? n.set(0, 0, 1).cross(a) : n.set(1, 0, 0).cross(a);
@@ -2750,7 +2756,7 @@ function sectionOnFace(f: ReturnType<typeof faceUnder>) {
 }
 function addSectionFromFace(e: Entity) {
   if (!section.canAdd) { toast(t("Up to 3 section planes"), true); return null; }
-  const n = new THREE.Vector3(...e.face!.normal!);
+  const n = viewer.dirToWorld(e.part, e.face!.normal!);
   const p = viewer.toWorld(e.part, e.face!.centroid);
   const sp = section.add("Face", n, p.dot(n) - viewer.modelSize * 1e-4);
   renderSections();
