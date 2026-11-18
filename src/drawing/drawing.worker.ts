@@ -12,7 +12,7 @@ import type { AsmDoc } from "../asm/types";
 import type { EdgeRef, PartDoc } from "../model/types";
 import { modelItems, type CutInfo, type WeldInfo } from "./items";
 import { cutList, type WeldHost } from "../weldments/kernel";
-import { cutKey, itemDensity, itemMatText, splitSubs } from "../weldments/types";
+import { beadSym, cutKey, itemDensity, itemMatText, splitSubs, type CutItem, type WeldBeadFeature } from "../weldments/types";
 import { activate } from "../model/configs";
 
 export type DrawingRequest =
@@ -187,7 +187,9 @@ function buildPart(doc: PartDoc, lite = false, variant = false): { shape: any; m
       const beads = raw.filter(c => c.kind === "bead" && !doc.cutProps?.[cutKey(c)]?.excl);
       // Weld tags: every face of a bead's bodies names its weld table row.
       beads.forEach((c, i) => { for (const k of c.bodies) for (const nm of namesOf.get(k) ?? []) weldFaces[nm] ??= i + 1; });
-      welds = beads.map(c => ({ legs: c.desc, length: c.length ?? 0, qty: c.qty, ...(c.inter ? { inter: c.inter } : {}) }));
+      // A bead body's key is the id of the Fillet Bead that made it (`bodyInfo`: earliest feature naming a face).
+      const beadOf = (c: CutItem) => c.bodies.map(k => doc.features.find(f => f.id === k.split("#")[0] && f.type === "weldbead") as WeldBeadFeature | undefined).find(Boolean);
+      welds = beads.map(c => { const f = beadOf(c); return { legs: c.desc, length: c.length ?? 0, qty: c.qty, ...(c.inter ? { inter: c.inter } : {}), ...(f ? { sym: beadSym(f) } : {}) }; });
     } catch { /* no weld or cut list table rows */ }
   }
   const mats = bodyMats(md, body, doc);

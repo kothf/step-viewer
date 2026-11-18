@@ -2449,6 +2449,7 @@ export const RU: Record<string, string> = {
   "The model has no dimensions to import: model items come from a part's sketches and extrudes.": "У модели нет размеров для вставки: размеры модели берутся из эскизов и вытягиваний детали.",
   "Value": "Значение",
   "model item": "размер модели",
+  "{d} model dimensions and {w} weld symbols inserted": "Вставлено размеров модели: {d}, обозначений сварных швов: {w}",
   "{n} model dimension inserted|{n} model dimensions inserted": "Вставлен {n} размер модели|Вставлено {n} размера модели|Вставлено {n} размеров модели",
   "Centre marks": "Центровые метки",
   "Dimension property": "Свойство размера",
