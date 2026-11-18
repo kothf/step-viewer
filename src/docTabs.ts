@@ -36,6 +36,21 @@ export interface DocsHost {
   beforeClose?(tab: DocTab, unsaved: boolean): Promise<boolean>;
 }
 
+/**
+ * A tab that is not a document (the Vault explorer): first in the row while `present`, shown over the live
+ * document while `on`. A document tab clicked (or a document opened) hides it again.
+ */
+export interface ExtraTab {
+  label(): string;
+  present(): boolean;
+  on(): boolean;
+  show(): void;
+  close(): void;
+  hide(): void;
+}
+
+const VAULT_ICON = '<path d="M2.5 3h11v10h-11z M8 6a2 2 0 1 0 0 4a2 2 0 1 0 0-4 M3.5 13v1 M12.5 13v1"/>';
+
 const ICON: Record<DocKind, string> = {
   part: '<path d="M8 2l5 3v6l-5 3-5-3V5z M8 8l5-3 M8 8v6 M8 8L3 5"/>',
   asm: '<path d="M2 5l4-2 4 2v4l-4 2-4-2z M10 7l4 2v4l-4 2-4-2v-2"/>',
@@ -56,30 +71,43 @@ export class DocTabs {
   /** Edit part in place: the part replaces the assembly in the same tab (and back). */
   private inPlace = false;
   private seq = 0;
+  /** The Vault explorer's tab. */
+  extra: ExtraTab | null = null;
 
   constructor(private host: DocsHost, private el: HTMLElement) {
     el.addEventListener("click", e => {
       const x = (e.target as HTMLElement).closest<HTMLElement>("[data-dtx]");
-      if (x) { e.stopPropagation(); void this.close(x.dataset.dtx!); return; }
+      if (x) {
+        e.stopPropagation();
+        if (x.dataset.dtx === "@extra") { this.extra?.close(); return; }
+        void this.close(x.dataset.dtx!);
+        return;
+      }
       const b = (e.target as HTMLElement).closest<HTMLElement>("[data-dt]");
-      if (b) void this.activate(b.dataset.dt!);
+      if (!b) return;
+      if (b.dataset.dt === "@extra") { this.extra?.show(); return; }
+      // A document tab: the explorer steps aside (also when that document is the live one already).
+      if (this.extra?.on()) this.extra.hide();
+      void this.activate(b.dataset.dt!);
     });
     el.addEventListener("auxclick", e => {
       // Middle click closes a tab, as in browsers.
       const b = (e.target as HTMLElement).closest<HTMLElement>("[data-dt]");
-      if (b && e.button === 1) { e.preventDefault(); void this.close(b.dataset.dt!); }
+      if (!b || e.button !== 1) return;
+      e.preventDefault();
+      if (b.dataset.dt === "@extra") this.extra?.close(); else void this.close(b.dataset.dt!);
     });
     el.addEventListener("keydown", e => {
       const b = (e.target as HTMLElement).closest<HTMLElement>("[data-dt]");
       if (!b) return;
-      const i = this.tabs.findIndex(x => x.id === b.dataset.dt);
-      if (e.key === "Delete") { e.preventDefault(); void this.close(b.dataset.dt!); return; }
+      if (e.key === "Delete") { e.preventDefault(); if (b.dataset.dt === "@extra") this.extra?.close(); else void this.close(b.dataset.dt!); return; }
       if (e.key !== "ArrowLeft" && e.key !== "ArrowRight" && e.key !== "Home" && e.key !== "End") return;
       e.preventDefault();
       e.stopPropagation();
-      const n = this.tabs.length;
+      const all = [...this.el.querySelectorAll<HTMLElement>("[data-dt]")];
+      const i = all.indexOf(b), n = all.length;
       const j = e.key === "Home" ? 0 : e.key === "End" ? n - 1 : (i + (e.key === "ArrowRight" ? 1 : -1) + n) % n;
-      this.el.querySelector<HTMLElement>(`[data-dt="${this.tabs[j].id}"]`)?.focus();
+      all[j]?.focus();
     });
   }
 
@@ -119,6 +147,7 @@ export class DocTabs {
 
   /** A document was opened or made. */
   opened(kind: DocKind, label: string) {
+    if (this.extra?.on()) this.extra.hide();
     if (this.busy) { this.render(); return; }
     if (this.inPlace && this.active) { this.active.kind = kind; this.active.label = label; this.render(); return; }
     const tab: DocTab = { id: `d${++this.seq}`, kind, label, state: null };
@@ -211,10 +240,18 @@ export class DocTabs {
       const l = tab ? this.host.label(k) : null;
       if (tab && l) tab.label = l;
     }
-    this.el.hidden = !this.tabs.length;
-    document.getElementById("app")?.classList.toggle("has-doc-tabs", !!this.tabs.length);
-    this.el.innerHTML = this.tabs.map(tab => {
-      const on = tab === this.active;
+    const ex = this.extra?.present() ? this.extra : null, exOn = !!ex?.on();
+    this.el.hidden = !this.tabs.length && !ex;
+    document.getElementById("app")?.classList.toggle("has-doc-tabs", !!this.tabs.length || !!ex);
+    const extra = ex ? (() => {
+      const name = ex.label();
+      return `<div class="dt dt-extra${exOn ? " on" : ""}"><button type="button" class="dt-b" data-dt="@extra"${exOn ? ' aria-current="page"' : ""} title="${esc(name)}">`
+        + `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round">${VAULT_ICON}</svg>`
+        + `<span class="dt-l">${esc(name)}</span></button>`
+        + `<button type="button" class="dt-x" data-dtx="@extra" aria-label="${esc(t("Close {name}", { name }))}" title="${esc(t("Close {name}", { name }))}">×</button></div>`;
+    })() : "";
+    this.el.innerHTML = extra + this.tabs.map(tab => {
+      const on = tab === this.active && !exOn;
       const name = tab.label.replace(/\s*•$/, "");
       const dirty = this.host.dirty(tab);
       return `<div class="dt${on ? " on" : ""}${tab === this.under ? " under" : ""}">`

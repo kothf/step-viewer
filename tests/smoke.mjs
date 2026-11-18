@@ -5484,9 +5484,9 @@ try {
     await mp.click('#vault-win [data-a="close"]');
     await mp.waitForFunction(() => document.querySelector("#vault-panel").parentElement.id === "tab-vault", null, { timeout: 5000 }).catch(() => {});
     const home = await mp.evaluate(() => document.querySelector("#vault-panel").parentElement.id);
-    check(btnShown && closed === "new-dir,open-dir,new-ws,import,panel" && lit === "Picked folder", `vault menu: Vault button and menu, new vault in a picked folder (${btnShown}, ${closed}, ${lit})`);
-    check(/v1 · .*checked out/.test(title1) && saved === "false/true" && opened === "save-,co-,ci,undo,latest,hist,add,addfolder,search,panel,settings,close" && refused === true && savedAgain === false && hist === "v2:Renamed|v1:Added", `vault menu: an assembly saved to the vault, saved into the working copy, checked in and out from the menu (${title1}, ${saved}, ${opened}, ${refused}, ${savedAgain}, ${hist})`);
-    check(again === "new-dir,open-dir,folder,new-ws,import,panel" && folderName === "Picked folder" && /\.mcadasm/.test(row) && /v2/.test(row) && home === "tab-vault", `vault menu: the vault folder is remembered and reopens; the file list opens in a window without the side panel (${again}, ${folderName}, ${row}, ${home})`);
+    check(btnShown && closed === "new-dir,open-dir,new-ws,import,panel,explorer" && lit === "Picked folder", `vault menu: Vault button and menu, new vault in a picked folder (${btnShown}, ${closed}, ${lit})`);
+    check(/v1 · .*checked out/.test(title1) && saved === "false/true" && opened === "save-,co-,ci,undo,latest,hist,add,addfolder,search,explorer,panel,settings,close" && refused === true && savedAgain === false && hist === "v2:Renamed|v1:Added", `vault menu: an assembly saved to the vault, saved into the working copy, checked in and out from the menu (${title1}, ${saved}, ${opened}, ${refused}, ${savedAgain}, ${hist})`);
+    check(again === "new-dir,open-dir,folder,new-ws,import,panel,explorer" && folderName === "Picked folder" && /\.mcadasm/.test(row) && /v2/.test(row) && home === "tab-vault", `vault menu: the vault folder is remembered and reopens; the file list opens in a window without the side panel (${again}, ${folderName}, ${row}, ${home})`);
     await ctx.close();
   }
 
@@ -5713,7 +5713,7 @@ try {
     check(/Changes not checked in .*docs\/specs\/e\.txt/.test(remind) && stillOpen, `vault UI: closing the vault with changes not checked in reminds first (${remind}, ${stillOpen})`);
     check(tree === "plate.mcaddrw,plate.mcadprt,[docs],[docs/specs],e.txt" && foldedList === "plate.mcaddrw,plate.mcadprt,[docs]" && chipsShown === "All|Parts 1|Drawings 1|Other files 1" && onlyDrw === "plate.mcaddrw",
       `vault UI: folders in the list fold, filter chips narrow it (${tree} | ${foldedList} | ${chipsShown} | ${onlyDrw})`);
-    check(top === "more,close,add,addfolder,savepart,search" && more === "behind,notes,changes,packages,audit,verify,storage,export,bin,settings,workflow,user" && back === "more:true",
+    check(top === "explorer,more,close,add,addfolder,savepart,search" && more === "behind,notes,changes,packages,audit,verify,storage,export,bin,settings,workflow,user" && back === "more:true",
       `vault UI: a slim panel top with the vault's commands in ⋯ (${top} | ${more} | ${back})`);
     check(ctrlSel === "a.txt,c.txt" && shiftSel === "c.txt,d.txt" && /^Check out\|Get latest\|Change state: Submit for review\|Request change…\|Delete$/.test(multiMenu)
       && versions === "a.txt:1:Added,b.txt:1:Added,c.txt:1:Added,d.txt:2:both" && /^Open\|Check out\|Get latest\|.*History\|Where used\|Data card\|Rename/.test(oneMenu) && oneSel === "a.txt" && allSel === "a.txt,b.txt,c.txt,d.txt",
@@ -5721,6 +5721,84 @@ try {
     check(nextRev === "becomes revision A|becomes revision A", `vault UI: the state change dialog names the revision each file will get (${nextRev})`);
     check(behindBtn === "1 behind" && /Drawings whose model changed/.test(behindDlg) && /plate\.mcaddrw/.test(behindDlg) && /plate\.mcadprt · v1 → v2/.test(behindDlg) && updated.n === 2 && /^Updated to the latest plate\.mcadprt$/.test(updated.comment) && !updated.lock && !updated.btn,
       `vault UI: What's behind lists a drawing whose model moved on, and Update checks in a version with the latest model (${behindBtn} | ${behindDlg} | ${JSON.stringify(updated)})`);
+    await ctx.close();
+  }
+
+  // --- 1.595.0: vault explorer, a full file manager in its own tab (FR-PDM-080) ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const xp = await ctx.newPage();
+    xp.on("pageerror", e => errors.push(e.message));
+    xp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await xp.goto(`${origin}/index.html?debug&nokernel`);
+    await xp.evaluate(() => { localStorage.setItem("sv:tips", "off"); localStorage.setItem("mc:vaultUser", "Andrey"); });
+    await xp.goto(`${origin}/index.html?debug&nokernel`);
+    await xp.waitForFunction(() => window.__sv);
+    await xp.evaluate(async () => {
+      window.__sv.vaultFolders.useMemory();
+      const p = window.__sv.vault;
+      await p.createInBrowser("Explorer");
+      const v = p.vault, enc = s => new TextEncoder().encode(s);
+      for (const n of ["a.txt", "b.txt", "c.txt", "parts/bracket.step", "parts/plate.step", "docs/spec.txt"]) await v.add(n, enc(n));
+      await p.refresh();
+    });
+    await xp.click("#vault-btn");
+    await xp.click('#vault-menu [data-v="explorer"]');
+    await xp.waitForSelector("#vault-ex .vx-row");
+    const names = () => xp.evaluate(() => [...document.querySelectorAll("#vault-ex .vx-row .vx-nm")].map(x => x.textContent).join(","));
+    const tab = await xp.evaluate(() => { const b = document.querySelector('#doc-tabs [data-dt="@extra"]'); return b ? `${b.textContent.trim()}:${b.getAttribute("aria-current") === "page"}` : "none"; });
+    const tree = await xp.evaluate(() => [...document.querySelectorAll("#vault-ex .vx-node")].map(n => n.dataset.dir).join(","));
+    const root = await names();
+    // Sort by name, the other way.
+    await xp.click('#vault-ex [data-sort="name"]');
+    const desc = await names();
+    // A folder from the tree.
+    await xp.click('#vault-ex .vx-node[data-dir="parts"] > .vx-nr');
+    await xp.waitForFunction(() => document.querySelectorAll("#vault-ex .vx-row").length === 2);
+    const inParts = await names();
+    await xp.click('#vault-ex .vx-node[data-dir=""] > .vx-nr');
+    await xp.waitForFunction(() => document.querySelectorAll("#vault-ex .vx-row").length === 5);
+    // Ctrl+click picks two files; the preview sums them up.
+    await xp.click('#vault-ex .vx-row:has-text("a.txt")');
+    await xp.click('#vault-ex .vx-row:has-text("c.txt")', { modifiers: ["Control"] });
+    const picked = await xp.evaluate(() => [...document.querySelectorAll("#vault-ex .vx-row.sel .vx-nm")].map(x => x.textContent).sort().join(","));
+    // Drag both onto the docs folder in the tree, then confirm.
+    await xp.dragAndDrop('#vault-ex .vx-row:has-text("a.txt")', '#vault-ex .vx-node[data-dir="docs"] > .vx-nr');
+    await xp.waitForFunction(() => document.querySelector("#confirm")?.open, null, { timeout: 5000 }).catch(() => {});
+    const askMove = await xp.evaluate(() => document.querySelector("#confirm")?.textContent.replace(/\s+/g, " ").trim() ?? "");
+    await xp.click("#confirm [data-a=ok]").catch(() => {});
+    await xp.waitForFunction(() => window.__sv.vault.fileList.filter(f => f.path.startsWith("docs/")).length === 3, null, { timeout: 5000 }).catch(() => {});
+    const moved = await xp.evaluate(() => window.__sv.vault.fileList.map(f => f.path).filter(p => p.startsWith("docs/")).sort().join(","));
+    // New folder, then search.
+    await xp.click('#vault-ex [data-x="newdir"]');
+    await xp.fill('#vault-dlg input[name="v"]', "drawings");
+    await xp.click('#vault-dlg button[value="ok"]');
+    await xp.waitForSelector('#vault-ex .vx-node[data-dir="drawings"]', { timeout: 3000 }).catch(() => {});
+    const newDir = await xp.evaluate(() => !!document.querySelector('#vault-ex .vx-node[data-dir="drawings"]'));
+    await xp.click('#vault-ex .vx-node[data-dir=""] > .vx-nr');
+    await xp.fill("#vault-ex .vx-q", "plate");
+    await xp.waitForFunction(() => document.querySelectorAll("#vault-ex .vx-row").length === 1, null, { timeout: 3000 }).catch(() => {});
+    const found = await names();
+    const folderCol = await xp.evaluate(() => !!document.querySelector("#vault-ex .vx-c-folder"));
+    // Right-click menu on the found file has Show in folder.
+    await xp.click('#vault-ex .vx-row:has-text("plate.step")', { button: "right" });
+    const menu = await xp.evaluate(() => [...document.querySelectorAll("#v-menu:not([hidden]) button")].map(b => b.textContent).join("|"));
+    await xp.keyboard.press("Escape");
+    // Detail tabs, then Where used for a file nothing uses.
+    const tabs = await xp.evaluate(() => [...document.querySelectorAll("#vault-ex [role=tab]")].map(b => b.textContent.trim()).join(","));
+    // Clicking the doc tab's × closes it.
+    await xp.click('#doc-tabs [data-dtx="@extra"]');
+    const closed = await xp.evaluate(() => `${document.querySelector("#vault-ex")?.hidden ?? true}:${!document.querySelector('#doc-tabs [data-dt="@extra"]')}`);
+    check(tab === "Vault Explorer:true" && /^,parts,docs|^,docs,parts/.test(tree) && tree.includes("@mine") && tree.includes("@bin"),
+      `vault explorer: opens from the Vault menu in its own tab with a folder tree (${tab} | ${tree})`);
+    check(root === "docs,parts,a.txt,b.txt,c.txt" && desc === "docs,parts,c.txt,b.txt,a.txt" && inParts === "plate.step,bracket.step",
+      `vault explorer: folders first, sorting by a column (kept per folder), a folder from the tree (${root} | ${desc} | ${inParts})`);
+    check(picked === "a.txt,c.txt" && /Move 2 files to docs/.test(askMove) && moved === "docs/a.txt,docs/c.txt,docs/spec.txt",
+      `vault explorer: Ctrl+click picks files and dragging them onto a folder moves them (${picked} | ${askMove} | ${moved})`);
+    check(newDir && found === "plate.step" && folderCol && /Show in folder/.test(menu) && /Check out/.test(menu),
+      `vault explorer: New folder, search across folders with a Folder column, row menu (${newDir} | ${found} | ${folderCol} | ${menu})`);
+    check(tabs === "Data card,Versions,Contains,Where used,Bill of materials" && closed === "true:true",
+      `vault explorer: detail tabs, and the tab's × closes it (${tabs} | ${closed})`);
     await ctx.close();
   }
 

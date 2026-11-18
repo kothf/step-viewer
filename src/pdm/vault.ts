@@ -324,6 +324,10 @@ export class Vault {
 
   latest(f: FileRec) { return f.versions[f.versions.length - 1]; }
 
+  /** A file's preview picture (PNG), kept beside the records; null when none was taken. */
+  async thumb(id: string): Promise<Uint8Array | null> { return (await this.sub("thumbs")).read(`${id}.png`); }
+  async setThumb(id: string, png: Uint8Array) { await (await this.sub("thumbs")).write(`${id}.png`, png); }
+
   /**
    * Files in the vault folder that are not vault files yet (FR-PDM-003), with their subfolders: a vault made in
    * a project folder takes the parts, assemblies and drawings already there in place. Hidden files and folders
