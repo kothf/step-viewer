@@ -5,6 +5,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.585.0] - 2026-11-18
+
+### Changed
+
+- **Construction lines work the way other CAD apps do.** Construction geometry is drawn dashed in the sketch's definition colour, so a line turned into construction visibly changes. Construction (Q) with nothing selected turns on For construction: the lines, arcs and circles drawn next are construction geometry until it is pressed again; the button stays pressed and the drawing tools' panels have a For construction box. Centerline is still in the Line menu.
+- **Sketch colours are explained.** The sketch panel has a colour key (blue under defined, black fully defined, red over defined, dashed construction), and the status bar says Under Defined, Fully Defined or Over Defined in that colour while a sketch is open.
+- **New lines, rectangles, circles, arcs and slots are no longer dimensioned automatically.** They stay under defined until you dimension them; Add dimensions in the sketch panel, the quick bar or Preferences turns it back on.
+- **Smart Dimension lights up what it would take.** The line, arc, circle or point under the cursor is drawn thicker in the hover colour, before the first pick and before the second.
+
+### Fixed
+
+- **Jog line's second click and other clicks next to a line's middle did nothing,** because the relation glyph (H, V, …) there caught them. Glyphs and dimension texts now let drawing and editing tools' clicks through; Select still picks them.
+- **Deleting a line's end point said nothing.** It now explains that the point goes with its curve.
+
 ## [1.584.0] - 2026-11-18
 
 ### Fixed
@@ -3708,7 +3722,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.584.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.585.0...HEAD
+[1.585.0]: https://github.com/kothf/step-viewer/compare/v1.584.0...v1.585.0
 [1.584.0]: https://github.com/kothf/step-viewer/compare/v1.583.0...v1.584.0
 [1.583.0]: https://github.com/kothf/step-viewer/compare/v1.582.0...v1.583.0
 [1.582.0]: https://github.com/kothf/step-viewer/compare/v1.581.0...v1.582.0

@@ -1097,6 +1097,7 @@ export class ModelController {
     sketchPrefs(editor, loadPrefs());
     try { editor.snaps = parseSnaps(localStorage.getItem("mc:skSnaps")); } catch { /* private mode */ }
     editor.onQuickSnap = () => this.renderQuick();
+    editor.onForCons = () => { this.renderBar(); this.renderPanel(); };
     this.mode = { kind: "sketch", id, editor, entry, isNew };
     document.getElementById("app")!.classList.add("sketching");
     this.renderAll();
@@ -5963,10 +5964,11 @@ export class ModelController {
     else if (k === "adddims") ed.addDims = !ed.addDims;
     else ed.autoRels = !ed.autoRels;
     try {
-      localStorage.setItem("mc:skAddDims", ed.addDims ? "1" : "0");
-      localStorage.setItem("mc:skGrid", ed.grid ? "1" : "0");
-      localStorage.setItem("mc:skGridSnap", ed.gridSnap ? "1" : "0");
-      localStorage.setItem("mc:autoRels", ed.autoRels ? "1" : "0");
+      // Only the toggle that changed is stored, so the others keep following their defaults.
+      if (k === "adddims") localStorage.setItem("mc:skAutoDims", ed.addDims ? "1" : "0");
+      else if (k === "grid") localStorage.setItem("mc:skGrid", ed.grid ? "1" : "0");
+      else if (k === "gridsnap") { localStorage.setItem("mc:skGridSnap", ed.gridSnap ? "1" : "0"); localStorage.setItem("mc:skGrid", ed.grid ? "1" : "0"); }
+      else localStorage.setItem("mc:autoRels", ed.autoRels ? "1" : "0");
     } catch { /* private mode */ }
     const pm = document.getElementById("mc-pm");
     const box = (a: string, v: boolean) => { const i = pm?.querySelector<HTMLInputElement>(`[data-a=${a}]`); if (i) i.checked = v; };
@@ -6020,7 +6022,22 @@ export class ModelController {
     tree.hidden = this.flyClosed;
   }
 
+  /** The sketch's state in the status bar: Under Defined (blue), Fully Defined (black) or Over Defined (red). */
+  private syncSketchStatus() {
+    const el = document.getElementById("st-skdef");
+    if (!el) return;
+    const m = this.mode;
+    if (m.kind !== "sketch" || m.editor.pattern) { el.hidden = true; return; }
+    const info = m.editor.info;
+    const state = info.status !== "ok" ? "over" : info.dof === 0 ? "full" : "under";
+    el.hidden = false;
+    el.dataset.state = state;
+    el.textContent = state === "over" ? t("Over Defined") : state === "full" ? t("Fully Defined") : t("Under Defined");
+    el.title = state === "under" ? t("Under defined, {n} DOF", { n: info.dof }) + " · " + t("Blue: under defined, can still move") : state === "full" ? t("Black: fully defined by dimensions and relations") : t("Red: over defined, relations or dimensions conflict");
+  }
+
   private renderBar() {
+    this.syncSketchStatus();
     const bar = $("#mc-bar");
     if (!this.store) { bar.hidden = true; $("#mc-confirm").hidden = true; this.renderQuick(); return; }
     bar.hidden = false;
@@ -6078,7 +6095,7 @@ export class ModelController {
         if (g.length === 1) return btn(`sk:${id}`, l, ti, tool === id);
         return `<span class="mc-fly">${btn(`sk:${id}`, l, ti, tool === id)}<button class="mc-caret" data-fly="${g[0]}" aria-haspopup="menu" title="${esc(t("More tools like this"))}" aria-label="${esc(t("More tools like this"))}: ${esc(l)}">▾</button></span>`;
       }).join("")}</div>`
-        + `<div class="mc-sep"></div><div class="mc-g">${btn("cons", t("Construction"), t("Construction geometry on/off for the selection (Q)"))}${btn("skmirror", t("Mirror"), t("Mirror entities: select them and a line to mirror about, then click"))}${btn("skdynmirror", t("Dynamic mirror"), t("Dynamic mirror: select a line, click, then draw; each new entity is mirrored about it"), !!m.editor.dynMirror)}${btn("skdxf", t("DXF"), t("Import a DXF drawing into the sketch"))}${btn("skpic", t("Sketch Picture"), t("Sketch picture: an image on the sketch plane to trace over"))}${btn("skblock", t("Make Block"), t("Make block: the selected entities become one block you can insert again, move, turn and scale"))}${btn("skinsblk", t("Insert Block"), t("Insert block: another copy of a block of this part, or one saved to a file"))}${btn("sksec", t("Section"), t("Section view at the sketch plane: hides the material in front of it"), this.skSection)}</div>`
+        + `<div class="mc-sep"></div><div class="mc-g">${btn("cons", t("Construction"), t("Construction geometry (Q): turns the selected curves into dashed construction lines or back; with nothing selected, the curves you draw next are construction lines"), m.editor.forCons)}${btn("skmirror", t("Mirror"), t("Mirror entities: select them and a line to mirror about, then click"))}${btn("skdynmirror", t("Dynamic mirror"), t("Dynamic mirror: select a line, click, then draw; each new entity is mirrored about it"), !!m.editor.dynMirror)}${btn("skdxf", t("DXF"), t("Import a DXF drawing into the sketch"))}${btn("skpic", t("Sketch Picture"), t("Sketch picture: an image on the sketch plane to trace over"))}${btn("skblock", t("Make Block"), t("Make block: the selected entities become one block you can insert again, move, turn and scale"))}${btn("skinsblk", t("Insert Block"), t("Insert block: another copy of a block of this part, or one saved to a file"))}${btn("sksec", t("Section"), t("Section view at the sketch plane: hides the material in front of it"), this.skSection)}</div>`
         + `<div class="mc-sep"></div><div class="mc-g">${btn("sklpat", t("Linear pattern"), t("Linear sketch pattern: select entities, then set count and spacing"))}${btn("skcpat", t("Circular pattern"), t("Circular sketch pattern: select entities (and a centre point), then set count and angle"))}${btn("skmove", t("Move"), t("Move or copy entities by a distance"))}${btn("skrot", t("Rotate"), t("Rotate entities about a point"))}${btn("skscale", t("Scale"), t("Scale entities about a point"))}${btn("skstretch", t("Stretch"), t("Stretch entities: select points or one end of a shape, then move them; lines ending there stretch"))}</div>`
         + `<div class="mc-sep"></div><div class="mc-g" role="group" aria-label="${esc(t("Features from this sketch"))}">${(["extrude", "cut", "revolve"] as const).map(id => { const [l, ti] = this.cmdInfo(id); return btn(id, l, ti); }).join("")}</div>`
         + `<div class="mc-sep"></div><div class="mc-g">${btn("exit", t("Exit sketch"), t("Exit sketch (Enter)"))}</div>`;
@@ -8565,9 +8582,11 @@ export class ModelController {
     const rels = ed.validRelations();
     const nSel = ed.selection.size;
     const plane = this.refLabel(sk.plane);
+    this.syncSketchStatus();
     pm.innerHTML = okHead(featureLabel(sk.name), { ok: t("Exit sketch (Enter)"), noTranslate: true })
       + `<p class="pm-help muted">${esc(t("Plane"))}: <span class="pm-skplane" translate="no">${esc(plane)}</span> · <b class="pm-def" data-state="${info.status !== "ok" ? "over" : info.dof === 0 ? "full" : "under"}">${esc(def)}</b>${info.status === "ok" && info.dof > 0 ? ` <button class="btn small" data-a="fulldef" title="${esc(t("Add horizontal/vertical relations and dimensions from the origin until nothing is free"))}">${esc(t("Fully define sketch"))}</button>` : ""}</p>`
-      + `<p class="pm-help muted">${esc(t("Draw with the tools above. Blue is free to move, black is fixed by dimensions and relations. Double-click a dimension to change it."))}</p>`
+      + `<p class="pm-help muted">${esc(t("Draw with the tools above. Double-click a dimension to change it."))}</p>`
+      + `<ul class="pm-legend" aria-label="${esc(t("Sketch colours"))}"><li><i class="sw under"></i>${esc(t("Blue: under defined, can still move"))}</li><li><i class="sw full"></i>${esc(t("Black: fully defined by dimensions and relations"))}</li><li><i class="sw over"></i>${esc(t("Red: over defined, relations or dimensions conflict"))}</li><li><i class="sw cons"></i>${esc(t("Dashed: construction geometry, not in profiles"))}</li></ul>`
       + `<label class="chk pm-chk" title="${esc(t("Points snap to model vertices, edge midpoints and circle centres, and stay attached to them; Smart Dimension takes model edges."))}"><input type="checkbox" data-a="modelsnap"${ed.modelSnap ? " checked" : ""} />${esc(t("Snap to model geometry"))}</label>`
       + `<label class="chk pm-chk" title="${esc(t("Lines snap horizontal, vertical, perpendicular, parallel or tangent and keep that relation; hold Ctrl to draw without them."))}"><input type="checkbox" data-a="autorels"${ed.autoRels ? " checked" : ""} />${esc(t("Automatic relations"))}</label>`
       + `<label class="chk pm-chk" title="${esc(t("Relation glyphs next to the entities; hover one to see what it ties, click to select it."))}"><input type="checkbox" data-a="showrels"${ed.showRels ? " checked" : ""} />${esc(t("Show relations"))}</label>`
@@ -8588,6 +8607,7 @@ export class ModelController {
       + this.pictureBox(ed)
       + this.blockBox(ed)
       + (["line", "cline", "mline", "tarc", "rect", "crect", "rect3", "crect3", "pgram", "circle", "circle3", "pcircle", "arc", "arc3", "polygon"].includes(ed.tool) ? `<label class="chk pm-chk" title="${esc(t("New lines, rectangles, circles and arcs get their sizes as dimensions and the Modify box opens on each."))}"><input type="checkbox" data-a="adddims"${ed.addDims ? " checked" : ""} />${esc(t("Add dimensions"))}</label>` : "")
+      + (ed.drawing || ["line", "cline", "mline", "tarc", "rect", "crect", "rect3", "crect3", "pgram", "circle", "circle3", "pcircle", "arc", "arc3", "polygon", "slot", "cslot", "aslot", "aslot3", "ellipse", "earc", "spline", "sspline", "conic", "parabola"].includes(ed.tool) ? `<label class="chk pm-chk" title="${esc(t("New curves are construction geometry: dashed, used for relations and dimensions but not in profiles (Q)."))}"><input type="checkbox" data-a="forcons"${ed.forCons ? " checked" : ""} />${esc(t("For construction"))}</label>` : "")
       + (["slot", "cslot", "aslot", "aslot3"].includes(ed.tool) ? `<label class="chk pm-chk" title="${esc(t("Slots get width and length (or radius) dimensions, and the Modify box opens on them."))}"><input type="checkbox" data-a="slotdims"${ed.slotDims ? " checked" : ""} />${esc(t("Add dimensions"))}</label>` : "")
       + (ed.tool === "polygon" ? `<label class="pm-field"><span>${esc(t("Sides"))}</span><input type="text" inputmode="numeric" class="pm-n" data-a="sides" value="${ed.polySides}" /></label>` : "")
       + (ed.tool === "fillet" ? `<label class="pm-field"><span>${esc(t("Radius"))}</span><span class="pm-in"><input type="text" inputmode="decimal" class="pm-n" data-a="fr" value="${trimNum(ed.filletRadius * UNITS[units.current].f, 4)}" /><span class="muted">${units.current}</span></span></label>` : "")
@@ -8606,6 +8626,7 @@ export class ModelController {
       + `<div class="pm-sec"><h4>${esc(t("Dimensions"))}</h4>${sk.dims.length ? `<label class="chk pm-chk"><input type="checkbox" data-a="shownames"${ed.showNames ? " checked" : ""} />${esc(t("Show dimension names"))}</label><ul class="pm-dims">${sk.dims.map(d => `<li><button class="link" data-dim="${d.id}" translate="no" title="${esc(`${d.name}@${sk.name}`)}">${esc(d.name)}</button> <span class="muted">${esc(d.val.expr ?? (d.t === "angle" ? `${trimNum((d.val.v * 180) / Math.PI, 3)}°` : `${trimNum(d.val.v * UNITS[units.current].f, 4)} ${units.current}`))}${d.driven ? ` (${esc(t("reference"))})` : ""}</span></li>`).join("")}</ul>` : `<p class="muted">${esc(t("None yet: use Dimension (D)."))}</p>`}</div>`;
     pm.querySelectorAll<HTMLElement>("[data-rel]").forEach(b => b.addEventListener("click", () => { ed.addRelation(b.dataset.rel as never); this.renderPanel(); }));
     pm.querySelector("[data-a=cons]")?.addEventListener("click", () => ed.toggleConstruction());
+    pm.querySelector<HTMLInputElement>("[data-a=forcons]")?.addEventListener("change", e => ed.setForCons((e.target as HTMLInputElement).checked));
     pm.querySelector("[data-a=merge]")?.addEventListener("click", () => { ed.mergePoints(); this.renderPanel(); });
     pm.querySelector("[data-a=fulldef]")?.addEventListener("click", () => { ed.fullyDefineUi(); this.renderPanel(); });
     pm.querySelector("[data-a=del]")?.addEventListener("click", () => { ed.deleteSelection(); this.renderPanel(); });
@@ -8616,7 +8637,7 @@ export class ModelController {
     pm.querySelector("[data-a=deldangling]")?.addEventListener("click", () => { ed.deleteItems(ed.danglingRels().map(r => r.id)); this.renderPanel(); });
     pm.querySelector<HTMLInputElement>("[data-a=shownames]")?.addEventListener("change", e => { ed.showNames = (e.target as HTMLInputElement).checked; ed.render(); });
     pm.querySelector<HTMLInputElement>("[data-a=slotdims]")?.addEventListener("change", e => { ed.slotDims = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:slotDims", ed.slotDims ? "1" : "0"); } catch { /* private mode */ } });
-    pm.querySelector<HTMLInputElement>("[data-a=adddims]")?.addEventListener("change", e => { ed.addDims = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:skAddDims", ed.addDims ? "1" : "0"); } catch { /* private mode */ } this.renderQuick(); });
+    pm.querySelector<HTMLInputElement>("[data-a=adddims]")?.addEventListener("change", e => { ed.addDims = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:skAutoDims", ed.addDims ? "1" : "0"); } catch { /* private mode */ } this.renderQuick(); });
     pm.querySelector<HTMLInputElement>("[data-a=autorels]")?.addEventListener("change", e => { ed.autoRels = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:autoRels", ed.autoRels ? "1" : "0"); } catch { /* private mode */ } this.renderQuick(); });
     pm.querySelector<HTMLInputElement>("[data-a=showrels]")?.addEventListener("change", e => { ed.showRels = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:skRels", ed.showRels ? "1" : "0"); } catch { /* private mode */ } ed.render(); });
     const saveGrid = () => { try { localStorage.setItem("mc:skGrid", ed.grid ? "1" : "0"); localStorage.setItem("mc:skGridSnap", ed.gridSnap ? "1" : "0"); localStorage.setItem("mc:skGridStep", String(ed.gridSpacing || "")); } catch { /* private mode */ } };
