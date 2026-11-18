@@ -9099,7 +9099,16 @@ try {
       ctl.dispatchEvent({ type: "start" }); ctl.dispatchEvent({ type: "end" });
       const still = cam().keys.length;
       document.querySelector('#motion [data-mo="autokey"]').click();
-      const auto = { pressed, made, keyed: camKeyed, still, off: m.autoKey === false };
+      // Camera key properties: the selected key's position, target and distance as numbers; Distance dollies along the line of sight.
+      document.querySelector(`#motion .mo-key[data-key="${cam().id}:1"]`).click();
+      const camIn = k => document.querySelector(`#motion [data-p="${k}"]`);
+      const hasProps = ["cpx", "cpy", "cpz", "ctx", "cty", "ctz", "cdist"].every(k => camIn(k));
+      camIn("ctz").value = "7"; camIn("ctz").dispatchEvent(new Event("change", { bubbles: true }));
+      const tz = cam().keys[1].target[2];
+      camIn("cdist").value = "300"; camIn("cdist").dispatchEvent(new Event("change", { bubbles: true }));
+      const k1 = cam().keys[1], dist = Math.hypot(k1.pos[0] - k1.target[0], k1.pos[1] - k1.target[1], k1.pos[2] - k1.target[2]);
+      const camProps = { hasProps, tz, dist, shown: Number(camIn("cdist").value) };
+      const auto = { pressed, made, keyed: camKeyed, still, off: m.autoKey === false, camProps };
       m.deleteTrack(tr.id);
       m.seek(5);
       const color = { c0, purple: cMid > 0.7 && cMid < 0.95, swatch, back: p().material.color.getHexString() === own, keyAll, auto };
@@ -9431,10 +9440,10 @@ try {
       && Math.abs(Math.abs(dist.rz) - Math.PI / 2) < 0.01 && Math.abs(Math.abs(ptsAt.rz) - Math.PI / 4) < 0.01 && ptsEnd === 1 && ptsBad === "true" && Math.abs(Math.abs(ptsCubic.rz) - 0.6875 * Math.PI / 2) < 0.01 && ptsFit === "cubic" && Math.abs(Math.abs(segAt.rz) - Math.PI / 8) < 0.01 && segRows === "harmonic,cycloid" && motorPlot === "°/s|true|true|vel" && Math.abs(Math.abs(exprAt.rz) - Math.PI / 2) < 0.01 && exprBad[0] === "true" && exprBad[1] === "180*t"
       && Math.abs(exploded.x - 50) < 0.01
       && look.listed && Math.abs(look.half.op - 0.5) < 0.02 && look.half.vis && look.half.mat && !look.end.vis && look.label === "Appearance"
-      && Math.abs(look.moved[1] - (5 - 1 / 30)) < 1e-6 && look.back.op === 1 && look.back.vis && look.color.c0 === "ff0000" && look.color.purple && look.color.swatch === 2 && look.color.back && look.color.keyAll.all && look.color.keyAll.sel && /^#[0-9a-f]{6}$/.test(look.color.keyAll.c) && look.color.auto.pressed === "true" && look.color.auto.made === "0,2" && look.color.auto.keyed && look.color.auto.still === 2 && look.color.auto.off && Math.abs(Math.hypot(cam1.p[0] - cam1.t[0], cam1.p[1] - cam1.t[1]) - Math.hypot(cam0[0] - cam1.t[0], cam0[1] - cam1.t[1])) < 1e-3 * Math.hypot(...cam0)
+      && Math.abs(look.moved[1] - (5 - 1 / 30)) < 1e-6 && look.back.op === 1 && look.back.vis && look.color.c0 === "ff0000" && look.color.purple && look.color.swatch === 2 && look.color.back && look.color.keyAll.all && look.color.keyAll.sel && /^#[0-9a-f]{6}$/.test(look.color.keyAll.c) && look.color.auto.pressed === "true" && look.color.auto.made === "0,2" && look.color.auto.keyed && look.color.auto.still === 2 && look.color.auto.off && look.color.auto.camProps.hasProps && look.color.auto.camProps.tz === 7 && Math.abs(look.color.auto.camProps.dist - 300) < 1e-6 && Math.abs(look.color.auto.camProps.shown - 300) < 0.01 && Math.abs(Math.hypot(cam1.p[0] - cam1.t[0], cam1.p[1] - cam1.t[1]) - Math.hypot(cam0[0] - cam1.t[0], cam0[1] - cam1.t[1])) < 1e-3 * Math.hypot(...cam0)
       && rec.gif === "GIF89a" && rec.gifSize > 1000 && rec.pngs.pk === "PK" && rec.pngs.n === rec.pngs.want && /_0001\.png$/.test(rec.pngs.name) && rec.webm === "1a45dfa3" && rec.webmSize > 1000 && undo === 5
       && !ru.bad.length && ru.title === "Исследование движения" && Math.abs(back.z) < 0.01 && Math.abs(back.x) < 0.01,
-      `motion study: mate keys, rotary motor (constant, distance, data points with cubic spline, motion segments, motor graph, expression), explode and orbit wizard, appearance keys with colours, Key all, Autokey, GIF and WebM, undo, duplicate study, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, motorProf, dup, exploded, cam1, look, rec, undo, ru, back })})`);
+      `motion study: mate keys, rotary motor (constant, distance, data points with cubic spline, motion segments, motor graph, expression), explode and orbit wizard, appearance keys with colours, Key all, Autokey, camera key properties, GIF and WebM, undo, duplicate study, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, motorProf, dup, exploded, cam1, look, rec, undo, ru, back })})`);
     await ctx.close();
   }
 
