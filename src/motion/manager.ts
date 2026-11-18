@@ -322,6 +322,9 @@ export class MotionManager {
     if (o.w && GIF_WIDTHS.includes(o.w)) this.gifOpts.w = o.w;
     if (o.fps && GIF_RATES.includes(o.fps)) this.gifOpts.fps = o.fps;
     try { localStorage.setItem("mc:moGif", JSON.stringify(this.gifOpts)); } catch { /* storage off */ }
+    const w = this.pane?.querySelector<HTMLSelectElement>("select[data-mo=gifw]"), f = this.pane?.querySelector<HTMLSelectElement>("select[data-mo=giffps]");
+    if (w) w.value = String(this.gifOpts.w);
+    if (f) f.value = String(this.gifOpts.fps);
   }
 
   autoKey = (() => { try { return localStorage.getItem("mc:moAutokey") === "1"; } catch { return false; } })();
@@ -530,11 +533,11 @@ export class MotionManager {
     if (!doc) return [];
     this.ensure(n - 1);
     const mates = new Map((doc.mates ?? []).map(m => [m.id, m]));
-    const per: [string, string][][] = [], tfs: Record<string, Tf>[] = [];
+    const per: [string, string][][] = [], tfs: Record<string, Tf>[] = [], memo = new Map<string, boolean>();
     for (let k = 0; k < n; k++) {
       tfs.push(this.tfsAt(k));
       this.asm.motionShow(tfs[k], frameAt(s, k / s.fps, mates).explode);
-      per.push(this.asm.motionClashes());
+      per.push(this.asm.motionClashes(memo));
     }
     if (!s.tracks.some(k => k.kind === "explode" && !k.off)) steadyClashes(per, tfs);
     // Pairs touching at the start (a pin in its hole, faces mated together) are left out unless asked for.
@@ -1149,7 +1152,7 @@ export class MotionManager {
     const done = new Promise<void>(res => { rec.onstop = () => res(); });
     this.recording = "webm";
     this.renderTransport();
-    this.viewer.bareKeep = new Set([this.traceGroup]);
+    this.viewer.bareKeep = new Set();
     this.capture = from => { c.draw(from); track.requestFrame?.(); };
     rec.start();
     const t0 = performance.now();
@@ -1182,7 +1185,7 @@ export class MotionManager {
     this.recording = "gif";
     this.renderTransport();
     const c = this.composer(maxW), frames: Uint8ClampedArray[] = [];
-    this.viewer.bareKeep = new Set([this.traceGroup]);
+    this.viewer.bareKeep = new Set();
     this.capture = from => { c.draw(from); frames.push(c.g.getImageData(0, 0, c.out.width, c.out.height).data); };
     try {
       for (let i = 0; i < n && this.recording; i++) {
@@ -1214,7 +1217,7 @@ export class MotionManager {
     this.recording = "png";
     this.renderTransport();
     const c = this.composer(maxW), shots: Promise<Blob | null>[] = [];
-    this.viewer.bareKeep = new Set([this.traceGroup]);
+    this.viewer.bareKeep = new Set();
     this.capture = from => { c.draw(from); shots.push(new Promise(res => c.out.toBlob(res, "image/png"))); };
     try {
       for (let i = 0; i < n && this.recording; i++) {

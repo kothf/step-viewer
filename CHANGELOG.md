@@ -14,7 +14,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Fixed
 
-- **Videos, GIFs and images of a motion study leave out hover and selection highlights, measurement marks, gizmos and the rotation centre.** Trace paths and section caps stay in.
+- **Videos, GIFs and images of a motion study leave out hover and selection highlights, measurement marks, gizmos, trace paths and the rotation centre.** Section caps stay in.
+- **Interference Detection over a motion study is quicker again.** Pairs whose meshes never meet are passed over at once, and a pair keeps its answer for every frame in which the two parts sit the same way to each other (parts turning together).
+- **A plain click on a part the motion study moves no longer shows the "drag a part no mate holds" hint;** it shows only when you actually drag.
 - **Result plots fit in the motion study pane on smaller screens** (1600×900): the properties area under the timeline scrolls instead of running off the bottom of the window.
 
 ## [1.579.0] - 2026-11-18

@@ -1671,7 +1671,7 @@ export class AsmController {
    * when given. `deep`: only parts that enter one another (motion interference), not ones that touch; a collision drag
    * stops at the first touch.
    */
-  private clashes(only?: Set<number>, deep = false): Set<string> {
+  private clashes(only?: Set<number>, deep = false, memo?: Map<string, boolean>): Set<string> {
     const parts = this.host.viewer.parts, out = new Set<string>();
     const boxes = parts.map(p => { p.mesh.updateWorldMatrix(true, false); p.mesh.geometry.boundingBox ?? p.mesh.geometry.computeBoundingBox(); return p.mesh.visible ? p.mesh.geometry.boundingBox!.clone().applyMatrix4(p.mesh.matrixWorld) : null; });
     const m = new THREE.Matrix4();
@@ -1688,7 +1688,16 @@ export class AsmController {
       if (!bvh || !other) continue;
       m.copy(parts[i].mesh.matrixWorld).invert().multiply(parts[j].mesh.matrixWorld);
       // Parts that only touch (a face mated onto a face) are not a clash: their triangles meet without entering.
-      if (deep ? penetrates(bvh, other, m, Math.max(0.005, 1e-3 * (size[i] + size[j]))) : bvh.intersectsGeometry(parts[j].mesh.geometry, m)) out.add(`${i}:${j}`);
+      if (!deep) { if (bvh.intersectsGeometry(parts[j].mesh.geometry, m)) out.add(`${i}:${j}`); continue; }
+      // Over a study a pair keeps one relative placement for many frames (parts turning together): one answer each.
+      const key = memo ? `${i}:${j}:${m.elements.map(v => Math.round(v * 1e5)).join(",")}` : "";
+      let hit = memo?.get(key);
+      if (hit === undefined) {
+        // Meshes whose triangles never meet cannot enter one another; that test stops at the first meeting pair.
+        hit = bvh.intersectsGeometry(parts[j].mesh.geometry, m) && penetrates(bvh, other, m, Math.max(0.005, 1e-3 * (size[i] + size[j])));
+        memo?.set(key, hit);
+      }
+      if (hit) out.add(`${i}:${j}`);
     }
     return out;
   }
@@ -2985,7 +2994,19 @@ export class AsmController {
       // assembly under the study, so the drag orbits the view instead.
       if (this.motion?.holdsDrag?.(id)) {
         this.renderTree();
-        if (!this.heldTold) { this.heldTold = true; toast(t("The motion study moves this part. Drag a part no mate holds, or close the study to move it.")); }
+        // Told once, and only when the pointer really drags (a plain click just selects).
+        if (!this.heldTold) {
+          const x0 = e.clientX, y0 = e.clientY;
+          const move = (m: PointerEvent) => {
+            if (Math.hypot(m.clientX - x0, m.clientY - y0) < 4 || this.heldTold) return;
+            this.heldTold = true;
+            toast(t("The motion study moves this part. Drag a part no mate holds, or close the study to move it."));
+            end();
+          };
+          const end = () => { window.removeEventListener("pointermove", move, true); window.removeEventListener("pointerup", end, true); };
+          window.addEventListener("pointermove", move, true);
+          window.addEventListener("pointerup", end, true);
+        }
         return;
       }
       // Left-drag on a floating component moves it in the view plane; the orbit controls never see it.
@@ -3639,9 +3660,9 @@ export class AsmController {
   }
 
   /** Top-level components whose shown meshes enter one another where they are shown now (motion interference check). */
-  motionClashes(): [string, string][] {
+  motionClashes(memo?: Map<string, boolean>): [string, string][] {
     const out = new Map<string, [string, string]>();
-    for (const k of this.clashes(undefined, true)) {
+    for (const k of this.clashes(undefined, true, memo)) {
       const [i, j] = k.split(":").map(Number), a = topOf(this.shownIds[i]), b = topOf(this.shownIds[j]);
       if (a && b && a !== b) out.set(a < b ? `${a}|${b}` : `${b}|${a}`, a < b ? [a, b] : [b, a]);
     }
