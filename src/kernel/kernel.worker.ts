@@ -154,6 +154,7 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
       const info = res.body ? modeller.bodyInfo(res.body, r.doc) : [];
       const state = r.doc.bodies ?? {};
       const vis = info.filter(b => !state[b.key]?.hidden);
+      const looks = !!(r.doc.faceColors && Object.keys(r.doc.faceColors).length) || !!(r.doc.featureColors && Object.keys(r.doc.featureColors).length);
       const split = info.length > 1 || vis.length < info.length || info.some(b => state[b.key]?.color);
       const solidShown = !res.body ? null : !split || !info.length ? res.body : vis.length ? modeller.shownBodies(vis.map(b => b.part)) : null;
       // Surface bodies (FRS 9.11) come after the solids in the view, so solid face indices stay put.
@@ -168,6 +169,14 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
             if (c) for (let i = at; i < at + b.part.faces.length; i++) if (mesh.brep_faces[i]) mesh.brep_faces[i].color = c;
             at += b.part.faces.length;
           }
+        }
+        // Face and feature appearances (gap list M2) over the body colours: a face's own, else the feature that made it.
+        if (looks) {
+          const fc = r.doc.faceColors ?? {}, gc = r.doc.featureColors ?? {};
+          shown.names.forEach((n: string, i: number) => {
+            const c = fc[n] ?? gc[n.split(":")[0]];
+            if (c && mesh.brep_faces[i]) mesh.brep_faces[i].color = c;
+          });
         }
         data = analyzeMesh(mesh);
         data.name = r.doc.name;

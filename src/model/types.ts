@@ -1220,6 +1220,12 @@ export interface PartDoc {
   stdHidden?: ("XY" | "XZ" | "YZ")[];
   /** Bodies folder (FR-BODY-001): per body key (see `Modeller.bodyInfo`), a name, hidden, colour, and its own material (FR-MAT-001; absent = the part's). */
   bodies?: Record<string, { name?: string; hidden?: boolean; color?: V3; material?: MatRef }>;
+  /**
+   * Appearances (gap list M2): a colour per face (by persistent face name) and per feature (every face it made),
+   * over the body's and the part's colour; face beats feature beats body. Entries for faces or features gone are ignored.
+   */
+  faceColors?: Record<string, V3>;
+  featureColors?: Record<string, V3>;
   /** Mate references (FR-MATE-011): named faces (persistent names; primary, secondary, tertiary) an assembly mates to a same-named reference on insert. */
   mateRefs?: { name: string; faces: string[] }[];
   /** Named views (FR-UI-104): saved cameras, view data kept out of the undo history. */

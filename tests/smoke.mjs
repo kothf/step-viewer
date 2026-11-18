@@ -10194,6 +10194,85 @@ try {
     await ctx.close();
   }
 
+  // --- 1.591: Hide/Show item types, face and feature colours, push/pull a face by dragging (gap list M4, M2, M1) ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    const settle = async () => { await mp.waitForTimeout(150); await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 }); };
+    await mp.evaluate(() => window.__sv.model.store.change("Part", d => {
+      const id = "s1", P = (k, x, y) => ({ id: `${id}p${k}`, t: "point", x, y });
+      d.features.push({ id, type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P(1, -50, -30), P(2, 50, -30), P(3, 50, 30), P(4, -50, 30), { id: "s1l1", t: "line", a: "s1p1", b: "s1p2" }, { id: "s1l2", t: "line", a: "s1p2", b: "s1p3" }, { id: "s1l3", t: "line", a: "s1p3", b: "s1p4" }, { id: "s1l4", t: "line", a: "s1p4", b: "s1p1" }] },
+        { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } });
+    }));
+    await settle();
+    await mp.evaluate(() => { window.__sv.viewer.setStandardView?.("iso"); });
+    await mp.waitForTimeout(600);
+    // M4: the heads-up eye menu turns all planes off and on again.
+    const planes = () => mp.evaluate(() => window.__sv.modeller.planeMeshes.length);
+    const p0 = await planes();
+    await mp.click('#hud [data-hud="items"]');
+    await mp.uncheck('.hud-items input[data-vi="planes"]');
+    const p1 = await planes();
+    const lit = await mp.evaluate(() => document.querySelector('#hud [data-hud="items"]').classList.contains("on"));
+    await mp.click('.hud-items [data-vi-all="1"]');
+    const p2 = await planes();
+    await mp.keyboard.press("Escape");
+    check(p0 === 3 && p1 === 0 && lit && p2 === 3, `model 1.591: Hide/Show items turns every plane off and back on (gap list M4) (${JSON.stringify({ p0, p1, lit, p2 })})`);
+    // M2: a feature colour on every face of Extrude1, then a face colour on the top beating it.
+    const colours = () => mp.evaluate(() => { const v = window.__sv.viewer, n = window.__sv.model.last().faceNames, fs = v.parts[0].data.faces; return { top: fs[n.indexOf("f1:end")]?.color, side: fs[n.findIndex(x => x.startsWith("f1:side"))]?.color }; });
+    await mp.evaluate(() => window.__sv.modeller.setAppearance("feature", "f1", [1, 0, 0]));
+    await settle();
+    const c1 = await colours();
+    await mp.evaluate(() => window.__sv.modeller.setAppearance("face", "f1:end", [0, 0, 1]));
+    await settle();
+    const c2 = await colours();
+    const top = await mp.evaluate(() => {
+      const v = window.__sv.viewer, part = v.parts[0], n = window.__sv.model.last().faceNames, f = part.data.faces[n.indexOf("f1:end")];
+      const s = v.toWorld(part, f.center).clone().project(v.camera), r = v.renderer.domElement.getBoundingClientRect();
+      return { x: r.left + ((s.x + 1) / 2) * r.width, y: r.top + ((1 - s.y) / 2) * r.height };
+    });
+    await mp.mouse.click(top.x, top.y, { button: "right" });
+    await mp.waitForTimeout(200);
+    const menu = await mp.evaluate(() => document.querySelector("#mc-menu")?.textContent ?? "");
+    await mp.keyboard.press("Escape");
+    await mp.mouse.click(5, 5);
+    const same = (a, b) => !!a && a.every((x, i) => Math.abs(x - b[i]) < 0.02);
+    check(same(c1.top, [1, 0, 0]) && same(c1.side, [1, 0, 0]) && same(c2.top, [0, 0, 1]) && same(c2.side, [1, 0, 0]) && /Face colour…/.test(menu) && /Feature colour…/.test(menu) && /Remove appearance/.test(menu),
+      `model 1.591: feature and face colours, face beating feature, in the right-click menu (gap list M2) (${JSON.stringify({ c1, c2, menu })})`);
+    // M1: a click on the top shows a drag arrow; dragging it up adds a Move Face of that distance.
+    await mp.mouse.click(top.x, top.y);
+    await mp.waitForTimeout(300);
+    const arrow = await mp.evaluate(() => {
+      const v = window.__sv.viewer, a = window.__sv.modeller.arrows.find(x => x.key === "push");
+      if (!a) return null;
+      const r = v.renderer.domElement.getBoundingClientRect();
+      const sc = p => { const s = p.clone().project(v.camera); return { x: r.left + ((s.x + 1) / 2) * r.width, y: r.top + ((1 - s.y) / 2) * r.height }; };
+      return { at: sc(a.base.clone().addScaledVector(a.dir, a.scale * 0.9)), up: sc(a.base.clone().addScaledVector(a.dir, a.scale * 0.9 + 15)) };
+    });
+    let pushed = null;
+    if (arrow) {
+      await mp.mouse.move(arrow.at.x, arrow.at.y);
+      await mp.mouse.down();
+      for (let k = 1; k <= 6; k++) { await mp.mouse.move(arrow.at.x + ((arrow.up.x - arrow.at.x) * k) / 6, arrow.at.y + ((arrow.up.y - arrow.at.y) * k) / 6); await mp.waitForTimeout(60); }
+      const mid = await mp.evaluate(() => { const m = window.__sv.model.mode(); return { kind: m.kind, type: m.draft?.type }; });
+      await mp.mouse.up();
+      await settle();
+      pushed = await mp.evaluate(() => { const m = window.__sv.model, f = m.store.doc.features.at(-1); return { type: f.type, d: f.distance?.v, flip: !!f.flip, faces: f.faces?.map(x => x.name), v: m.last().props.volume, mode: m.mode().kind }; });
+      pushed.mid = mid;
+    }
+    check(!!arrow && pushed?.type === "moveface" && pushed.d > 1 && !pushed.flip && pushed.faces?.[0] === "f1:end" && Math.abs(pushed.v - 6000 * (20 + pushed.d)) < 1 && pushed.mode === "none" && pushed.mid.kind === "feature",
+      `model 1.591: dragging the arrow on a picked flat face pulls it out as a Move Face (gap list M1) (${JSON.stringify({ arrow, pushed })})`);
+    await ctx.close();
+  }
+
   // --- Move Face translate and rotate (FR-FT-101) ---
   if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
