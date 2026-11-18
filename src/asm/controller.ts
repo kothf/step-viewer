@@ -183,6 +183,23 @@ export class AsmController {
     window.addEventListener("pointerup", e => this.boxUp(e), true);
     this.bindToolbox();
     onLangChange(() => { delete $("#asm-pm").dataset.id; if (this.doc) this.renderAll(); });
+    const apm = document.getElementById("asm-pm");
+    if (apm) this.bindPanelOk(apm);
+  }
+
+  /**
+   * ✓ / ✕ in the panel work on the first click after typing a value: pressing them keeps the focus in the field, so
+   * its change (which redraws the panel) does not replace the button under the pointer; ✓ then commits the typed value
+   * before its own handler runs (engine motion test, Edit mate needed two clicks).
+   */
+  private bindPanelOk(pm: HTMLElement) {
+    const btn = (e: Event) => (e.target as Element | null)?.closest?.(".pm-ok, .pm-cancel, [data-a=ok], [data-a=cancel]");
+    pm.addEventListener("pointerdown", e => { if (e.button === 0 && btn(e)) e.preventDefault(); }, true);
+    pm.addEventListener("click", e => {
+      const b = btn(e), f = document.activeElement;
+      if (!b || b.matches(".pm-cancel, [data-a=cancel]") || !(f instanceof HTMLInputElement) || !pm.contains(f)) return;
+      if (f.type !== "checkbox" && f.type !== "radio" && f.value !== f.defaultValue) f.dispatchEvent(new Event("change"));
+    }, true);
   }
 
   get active() { return !!this.doc; }
@@ -2952,6 +2969,13 @@ export class AsmController {
       this.showCrumbs(hit);
       this.renderStatus();
       if (c.fixed) { this.renderTree(); return; }
+      // An open motion study shows the mechanism where the mates put it: dragging a part the mates move would change the
+      // assembly under the study, so the drag orbits the view instead.
+      if (this.motion?.holdsDrag?.(id)) {
+        this.renderTree();
+        if (!this.heldTold) { this.heldTold = true; toast(t("The motion study moves this part. Drag a part no mate holds, or close the study to move it.")); }
+        return;
+      }
       // Left-drag on a floating component moves it in the view plane; the orbit controls never see it.
       e.stopPropagation();
       e.preventDefault();
@@ -3529,8 +3553,12 @@ export class AsmController {
   // ---------- motion studies (FR-FT-122): the API src/motion uses ----------
 
   /** The motion manager: opened from the bar, told when the document is rebuilt, replaced or closed. */
+  /** The motion study refused a drag once already (its toast is shown once per session). */
+  private heldTold = false;
   motion: {
     open(): void; rebuilt(): void; close(): void;
+    /** True while the study is open and its mates move `id`, so a view drag must not move it. */
+    holdsDrag?(id: string): boolean;
     /** Autokey: the component transforms shown now when a drag of `id` should become a placement key, else null. */
     dragFrom?(id: string): Record<string, Tf> | null;
     /** Autokey: takes the dragged component's new transform as a placement key; true when it did. */
@@ -3630,7 +3658,8 @@ export class AsmController {
       parts[j].mesh.updateWorldMatrix(true, false);
       m.copy(parts[i].mesh.matrixWorld).invert().multiply(parts[j].mesh.matrixWorld);
       // target1 comes back in part i's mesh coordinates, target2 in part j's.
-      const hit = bvh.closestPointToGeometry(parts[j].mesh.geometry, m, t1, t2, 0, best);
+      // Under 1e-4 mm counts as touching: the search stops there instead of combing a whole sliding contact.
+      const hit = bvh.closestPointToGeometry(parts[j].mesh.geometry, m, t1, t2, 1e-4, best);
       if (hit && hit.distance < best) {
         best = hit.distance;
         const p1 = t1.point.clone().applyMatrix4(parts[i].mesh.matrixWorld), p2 = t2.point.clone().applyMatrix4(parts[j].mesh.matrixWorld);

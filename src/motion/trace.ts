@@ -136,6 +136,9 @@ export function mateMeasures(frames: Record<string, Tf>[], a: string, b: string,
     } else { const pl = (A.k === "plane" ? A : B) as Geo & { k: "plane" }, ax = (A.k === "axis" ? A : B) as Geo & { k: "axis" }; d = vdot(pl.n, vsub(ax.p, pl.p)); }
     raw.push({ d, u, v });
   }
+  // Two axes that stay parallel (a concentric or hinge, often the motor's mate): the angle between them is always 0
+  // or 180°, so the angle plotted is how far b has turned about a's axis since the first frame (engine motion test).
+  if (ga.k === "axis" && gb.k === "axis" && raw.length && raw.every(r => vlen(vcross(r.u, r.v)) < 1e-6)) return { dist: raw.map(r => r.d), angle: turnAbout(frames, a, b, ga.d, gb.d) };
   let axis: V3 = [0, 0, 1], best = 1e-9;
   for (const r of raw) { const c = vcross(r.u, r.v), l = vlen(c); if (l > best) { best = l; axis = [c[0] / l, c[1] / l, c[2] / l]; } }
   const angle: number[] = [];
@@ -147,6 +150,29 @@ export function mateMeasures(frames: Record<string, Tf>[], a: string, b: string,
     last = x;
   }
   return { dist: raw.map(r => r.d), angle };
+}
+
+/** Unwrapped turn (degrees, 0 at the first frame) of component b about axis `da` of component a (directions in their own coordinates). */
+function turnAbout(frames: Record<string, Tf>[], a: string, b: string, da: V3, db: V3): number[] {
+  const rot = (t: Tf, v: V3): V3 => [t[0] * v[0] + t[1] * v[1] + t[2] * v[2], t[4] * v[0] + t[5] * v[1] + t[6] * v[2], t[8] * v[0] + t[9] * v[1] + t[10] * v[2]];
+  const back = (t: Tf, v: V3): V3 => [t[0] * v[0] + t[4] * v[1] + t[8] * v[2], t[1] * v[0] + t[5] * v[1] + t[9] * v[2], t[2] * v[0] + t[6] * v[1] + t[10] * v[2]];
+  const unit = (v: V3): V3 => { const l = vlen(v) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
+  const n = unit(da), m = unit(db);
+  // A direction square to b's axis, carried into a's coordinates each frame and measured about a's axis.
+  const w = unit(vcross(m, Math.abs(m[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0]));
+  const out: number[] = [];
+  let first: V3 | null = null, last = 0;
+  for (const f of frames) {
+    const ta = f[a], tb = f[b];
+    if (!ta || !tb) { out.push(last); continue; }
+    const q = back(ta, rot(tb, w)), p = unit(vsub(q, n.map(x => x * vdot(q, n)) as V3));
+    first ??= p;
+    let x = Math.atan2(vdot(vcross(first, p), n), vdot(first, p)) * 180 / Math.PI;
+    if (out.length) x += 360 * Math.round((last - x) / 360);
+    out.push(x);
+    last = x;
+  }
+  return out;
 }
 
 /** One row per frame of a mate value result: time, distance and angle (English headers, as every export). */

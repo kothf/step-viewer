@@ -269,6 +269,8 @@ export const RU: Record<string, string> = {
   "Camera key at {t} s": "Ключ камеры на {t} с",
   "Placement key at {t} s": "Ключ положения на {t} с",
   "Mate key at {t} s": "Ключ сопряжения на {t} с",
+  "The motion study moves this part. Drag a part no mate holds, or close the study to move it.": "Эту деталь двигает исследование движения. Перетащите деталь без сопряжений или закройте исследование, чтобы переместить её.",
+  "Measuring the gaps: frame {i} of {n}…": "Измерение зазоров: кадр {i} из {n}…",
   "Position {axis}": "Положение {axis}",
   "Target {axis}": "Цель {axis}",
   "Zoom": "Масштаб",
