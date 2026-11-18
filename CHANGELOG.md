@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.594.0] - 2026-11-18
+
+### Fixed
+- **Recent documents from a vault open in the vault again.** A part, assembly or drawing opened from a vault is listed in File ▸ recent documents and on the start screen as *in vault …*; opening it from there opens that vault (a folder vault or a browser vault) and the file in it, checked in or checked out as before, instead of a loose copy. When the vault or the file is no longer there, the copy kept with the recent list opens and a message says so.
+
 ## [1.593.0] - 2026-11-18
 
 ### Changed
@@ -3775,7 +3780,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.593.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.594.0...HEAD
+[1.594.0]: https://github.com/kothf/step-viewer/compare/v1.593.0...v1.594.0
 [1.593.0]: https://github.com/kothf/step-viewer/compare/v1.592.0...v1.593.0
 [1.592.0]: https://github.com/kothf/step-viewer/compare/v1.591.0...v1.592.0
 [1.591.0]: https://github.com/kothf/step-viewer/compare/v1.590.0...v1.591.0
