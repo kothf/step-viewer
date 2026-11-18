@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.575.0] - 2026-11-18
+
+### Fixed
+
+- **Locate profile is easy to click.** The view now turns to look at the profile face on while it zooms, so its points no longer fall on top of one another, and the mouse wheel zooms the view while the pointer is over a point or a callout.
+
 ## [1.574.0] - 2026-11-18
 
 ### Added
@@ -3613,7 +3619,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.574.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.575.0...HEAD
+[1.575.0]: https://github.com/kothf/step-viewer/compare/v1.574.0...v1.575.0
 [1.574.0]: https://github.com/kothf/step-viewer/compare/v1.573.0...v1.574.0
 [1.573.0]: https://github.com/kothf/step-viewer/compare/v1.572.0...v1.573.0
 [1.572.0]: https://github.com/kothf/step-viewer/compare/v1.571.0...v1.572.0

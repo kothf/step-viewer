@@ -380,10 +380,12 @@ export class Viewer {
 
   // ---------- camera ----------
 
-  fit(animate = true, box?: THREE.Box3) {
+  /** Fits the box (else everything); `along` = the view direction (target → camera) instead of the current one. */
+  fit(animate = true, box?: THREE.Box3, along?: THREE.Vector3) {
     const b = box && !box.isEmpty() ? box : this.computeBounds();
     const sphere = b.getBoundingSphere(new THREE.Sphere());
-    const dir = this.camera.position.clone().sub(this.controls.target);
+    const dir = along?.clone() ?? this.camera.position.clone().sub(this.controls.target);
+    if (along && Math.abs(along.clone().normalize().z) > 0.9999) dir.y -= 1e-4 * dir.length();
     if (dir.lengthSq() < 1e-12) dir.set(1, -1, 0.8);
     dir.normalize();
     this.upright();

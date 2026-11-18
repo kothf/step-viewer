@@ -13048,6 +13048,20 @@ try {
     await settle();
     await mp.waitForTimeout(800); // the view zooms to the profile
     const lpDots = await mp.evaluate(() => [...document.querySelectorAll("#mc-layer .wld-pierce")].map(e => e.dataset.pierce + (e.classList.contains("cur") ? "*" : "")));
+    // Exam #8: the profile is seen face on, its points apart; the wheel over a point zooms the view.
+    const lpView = await mp.evaluate(() => {
+      const r = [...document.querySelectorAll("#mc-layer .wld-pierce")].map(e => e.getBoundingClientRect()).map(b => [b.left + b.width / 2, b.top + b.height / 2]);
+      let gap = Infinity; for (let i = 0; i < r.length; i++) for (let j = i + 1; j < r.length; j++) gap = Math.min(gap, Math.hypot(r[i][0] - r[j][0], r[i][1] - r[j][1]));
+      const v = window.__sv.viewer; return { gap: Math.round(gap), d: v.camera.position.distanceTo(v.controls.target) / v.camera.zoom };
+    });
+    const dotAt = await mp.evaluate(() => { const b = document.querySelector('#mc-layer .wld-pierce[data-pierce="c"]').getBoundingClientRect(); return [b.left + b.width / 2, b.top + b.height / 2]; });
+    await mp.mouse.move(dotAt[0], dotAt[1]);
+    await mp.mouse.wheel(0, 300);
+    await mp.waitForTimeout(400);
+    const lpD2 = await mp.evaluate(() => { const v = window.__sv.viewer; return v.camera.position.distanceTo(v.controls.target) / v.camera.zoom; });
+    await mp.mouse.wheel(0, -300);
+    await mp.waitForTimeout(400);
+    check(lpView.gap >= 14 && Math.abs(lpD2 - lpView.d) > 1e-3 * lpView.d, `weldments: Locate profile looks at the profile face on and the wheel zooms over its points (${JSON.stringify({ lpView, lpD2 })})`);
     await mp.click('#mc-layer .wld-pierce[data-pierce="p:q3"]');
     await settle();
     const lpAfter = await mp.evaluate(() => ({ anchor: window.__sv.model.mode().draft.anchor, dots: document.querySelectorAll("#mc-layer .wld-pierce").length, sel: document.querySelector('#mc-pm select[data-k="anchor"]').value }));

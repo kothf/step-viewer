@@ -154,14 +154,14 @@ function profilePoints(ctx: WeldCtx, f: MemberFeature): [string, string][] {
 }
 
 /** Locate profile in the view: the profile points of a group's first segment (gi 0 = group 1), labelled, with the one in use. */
-export function locateSpots(ctx: WeldCtx, f: MemberFeature, gi: number): { key: Pierce; at: V3; label: string; cur: boolean }[] {
+export function locateSpots(ctx: WeldCtx, f: MemberFeature, gi: number): { key: Pierce; at: V3; label: string; cur: boolean; n: V3 }[] {
   const groups = f.groups ?? [];
   const ent = gi ? groups[gi - 1]?.ents[0] : f.segs.find(s => !groups.some(g => g.ents.includes(s.ent)))?.ent;
   if (!ent) return [];
   const pts = new Map(profilePoints(ctx, f));
   const cur = (gi ? groups[gi - 1].anchor : f.anchor) ?? (f.profile === "sketch" ? "o" : "c");
-  return pierceSpots(f, ent, ctx.doc, ctx.last?.frames ?? {}).map(({ key, at, also }) => ({
-    key, at, cur: key === cur || also.includes(cur),
+  return pierceSpots(f, ent, ctx.doc, ctx.last?.frames ?? {}).map(({ key, at, also, n }) => ({
+    key, at, n, cur: key === cur || also.includes(cur),
     label: key === "o" ? t("Sketch origin") : key.startsWith("p:") ? pts.get(key) ?? key : t(ANCHOR_LABEL[key as Anchor]),
   }));
 }

@@ -571,6 +571,12 @@ export class ModelController {
       if (sk && !sk.isEmpty()) box.union(sk);
       return box.isEmpty() ? null : box;
     };
+    // The wheel over a handle or callout (they sit over the canvas) still zooms the view (weldments exam #8).
+    document.getElementById("mc-layer")?.addEventListener("wheel", e => {
+      if (!(e.target as HTMLElement).closest?.(".mc-handle")) return;
+      e.preventDefault();
+      host.viewer.renderer.domElement.dispatchEvent(new WheelEvent("wheel", e));
+    }, { passive: false });
     host.viewer.scene.add(this.hoverGroup, this.ctHoverGroup);
     this.ghostGroup.visible = false;
     host.viewer.scene.add(this.ghostGroup);
@@ -4879,13 +4885,16 @@ export class ModelController {
     if (fo?.startsWith("wlocate")) {
       const gi = fo === "wlocate" ? 0 : +fo.slice(8);
       const spots = locateSpots(ctx, f, gi);
-      // Zoom to the profile once when locating starts, so its points are far enough apart to click.
+      // Zoom to the profile once when locating starts, looking at it face on (seen from the side its points would
+      // fall on one another), so its points are far enough apart to click (weldments exam #8).
       if (this.locateFit !== fo && spots.length) {
         this.locateFit = fo;
         const b = new THREE.Box3();
         for (const p of spots) b.expandByPoint(new THREE.Vector3(...p.at));
         b.expandByScalar(Math.max(1, b.getSize(new THREE.Vector3()).length() / 2));
-        this.host.viewer.fit(true, b);
+        const v = this.host.viewer, n = new THREE.Vector3(...spots[0].n);
+        if (n.dot(v.camera.position.clone().sub(v.controls.target)) < 0) n.negate();
+        v.fit(true, b, n.lengthSq() > 1e-12 ? n : undefined);
       }
       for (const p of spots) {
         const dot = document.createElement("button");
