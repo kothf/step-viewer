@@ -18,7 +18,7 @@ import { AXIS_MATES, VALUE_MATES, axisLock, cameraAt, colorAt, explodeKeys, fade
 import { encodeGif } from "./gif";
 import { frameName, frameTimes } from "./frames";
 import { zip } from "../model/zip";
-import { clashCsv, clashItems, pairKey, type ClashItem } from "./interfere";
+import { clashCsv, clashItems, pairKey, steadyClashes, type ClashItem } from "./interfere";
 import { GAP_PLOTS, gapCsv, plotFile, MATE_PLOTS, TRACE_COLORS, TRACE_PLOTS, accels, alertSpans, outOfRange, tripFrame, mateCsv, mateMeasures, pathLength, plotSvg, plotUnit, rates, relativeFrames, speeds, traceAngles, traceCsv, tracePoints, traceSeries, type TracePlot } from "./trace";
 import type { CamKey, Interp, Key, MateTrack, MotionStudy, MotorTrack, PoseKey, PoseTrack, TracePath, Track } from "./types";
 
@@ -120,7 +120,7 @@ export class MotionManager {
     // The timeline pane resizes from its top edge and keeps its height (FR-UI-002).
     this.grip = makeGrip({ key: "motion", axis: "y", sign: -1, def: 240, min: 120, measure: () => this.pane.offsetHeight, max: () => Math.max(160, this.viewer.size.y - 60), apply: px => { this.pane.style.height = px == null ? "" : `${px}px`; this.pane.style.maxHeight = px == null ? "" : "none"; }, label: "Resize the motion study" });
     this.grip.classList.add("mo-grip");
-    asm.motion = { open: () => this.show(), rebuilt: () => this.rebuilt(), close: () => this.hide(), dragFrom: id => this.dragFrom(id), dragged: (id, tf) => this.keyPose(id, tf), canKeyMate: id => this.canKeyMate(id), mateKey: (id, v) => this.keyMate(id, v) };
+    asm.motion = { open: () => this.show(), rebuilt: () => this.rebuilt(), close: () => this.hide(), dragFrom: id => this.dragFrom(id), holdsDrag: id => this.open && !this.movable().some(c => c.id === id), dragged: (id, tf) => this.keyPose(id, tf), canKeyMate: id => this.canKeyMate(id), mateKey: (id, v) => this.keyMate(id, v) };
     // Picking a trace point: the click on the view goes to the study, not to the assembly's tools or the orbit controls.
     window.addEventListener("pointerdown", e => {
       if (!this.tracing || e.button !== 0 || e.target !== viewer.renderer.domElement) return;
@@ -511,11 +511,13 @@ export class MotionManager {
     if (!doc) return [];
     this.ensure(n - 1);
     const mates = new Map((doc.mates ?? []).map(m => [m.id, m]));
-    const per: [string, string][][] = [];
+    const per: [string, string][][] = [], tfs: Record<string, Tf>[] = [];
     for (let k = 0; k < n; k++) {
-      this.asm.motionShow(this.tfsAt(k), frameAt(s, k / s.fps, mates).explode);
+      tfs.push(this.tfsAt(k));
+      this.asm.motionShow(tfs[k], frameAt(s, k / s.fps, mates).explode);
       per.push(this.asm.motionClashes());
     }
+    if (!s.tracks.some(k => k.kind === "explode" && !k.off)) steadyClashes(per, tfs);
     // Pairs touching at the start (a pin in its hole, faces mated together) are left out unless asked for.
     const ignore = this.clashAll ? new Set<string>() : new Set(per[0].map(([a, b]) => pairKey(a, b)));
     const items = clashItems(per, s.fps, ignore);
@@ -656,14 +658,24 @@ export class MotionManager {
       for (let k = 0; k < n; k++) all.push(this.tfsAt(k));
       const mates = new Map((this.asm.doc?.mates ?? []).map(m => [m.id, m]));
       // Proximity: pose every frame and measure the gap between the two components, then show frame i again.
-      const gaps = tr.filter(x => x.gap);
-      if (gaps.length) {
-        for (const x of gaps) this.gapVals.set(x.id, []);
-        for (let k = 0; k < n; k++) {
-          this.asm.motionShow(all[k], frameAt(s, k / s.fps, mates).explode);
-          for (const x of gaps) this.gapVals.get(x.id)!.push(this.asm.motionGap(x.gap![0], x.gap![1]));
-        }
-        this.asm.motionShow(this.tfsAt(i), frameAt(s, i / s.fps, mates).explode);
+      // Each pair is measured once per study state (kept in gapCache), so changing one pair leaves the others alone;
+      // the measuring runs in steps with a progress line (measureGaps) unless asked for at once (gapValues).
+      const gaps = tr.filter(x => x.gap), base = JSON.stringify([this.key0(), s.tracks.filter(k => k.kind === "pose" && !k.off)]);
+      const missing: TracePath[] = [];
+      for (const x of gaps) {
+        const v = this.gapCache.get(this.gapKey(base, x));
+        if (v) this.gapVals.set(x.id, v); else { this.gapVals.set(x.id, []); missing.push(x); }
+      }
+      if (missing.length) {
+        if (this.gapSync) {
+          const runs = missing.map(x => ({ x, rel: new Map<string, number>(), v: [] as number[] }));
+          for (let k = 0; k < n; k++) {
+            this.asm.motionShow(all[k], frameAt(s, k / s.fps, mates).explode);
+            for (const r of runs) r.v.push(this.gapAt(all[k], r.x.gap!, r.rel));
+          }
+          this.asm.motionShow(this.tfsAt(i), frameAt(s, i / s.fps, mates).explode);
+          for (const r of runs) { this.keepGap(this.gapKey(base, r.x), r.v); this.gapVals.set(r.x.id, r.v); }
+        } else void this.measureGaps(missing, all, base);
       }
       for (const x of tr) {
         if (x.gap) {
@@ -728,7 +740,7 @@ export class MotionManager {
         const gid = c.userData.gapLine as string | undefined, gx = gid ? tr.find(x => x.id === gid) : null;
         if (gx?.gap) {
           const r = this.asm.motionGapPts(gx.gap[0], gx.gap[1]), line = c as THREE.Line;
-          line.visible = !!r && r.d > 1e-6;
+          line.visible = !!r && r.d > 1e-3;
           if (r) {
             const a = line.geometry.getAttribute("position") as THREE.BufferAttribute;
             a.setXYZ(0, ...r.p[0]); a.setXYZ(1, ...r.p[1]); a.needsUpdate = true;
@@ -835,8 +847,78 @@ export class MotionManager {
 
   /** A proximity result's smallest distance (mm) per frame, every frame solved. */
   gapValues(id: string): number[] {
-    this.tracePath(id);
+    this.gapSync = true;
+    // Still being measured in steps: draw again, measuring at once.
+    if (!this.gapVals.get(id)?.length) this.traceKey = "";
+    try { this.tracePath(id); } finally { this.gapSync = false; }
     return this.gapVals.get(id) ?? [];
+  }
+
+  /** Proximity values already measured, by study state + pair (gapKey); the oldest go past 24. */
+  private gapCache = new Map<string, number[]>();
+  /** gapValues asks for the values at once, not in steps. */
+  private gapSync = false;
+  /** The proximity pairs being measured now (gapKey), so a redraw does not start them twice. */
+  private gapBusy = new Set<string>();
+
+  private gapKey(base: string, x: TracePath) { return JSON.stringify([base, x.gap, frameCount(this.study), this.study.fps]); }
+
+  private keepGap(key: string, v: number[]) {
+    this.gapCache.delete(key);
+    this.gapCache.set(key, v);
+    while (this.gapCache.size > 24) this.gapCache.delete(this.gapCache.keys().next().value!);
+  }
+
+  /**
+   * The gap of one pair at one frame (the components already shown there). A frame that puts the two in the same
+   * place relative to each other as an earlier one (parts at rest, a reciprocating return) takes its value.
+   */
+  private gapAt(tfs: Record<string, Tf>, pair: [string, string], seen: Map<string, number>): number {
+    const ta = tfs[pair[0]], tb = tfs[pair[1]];
+    // An explode moves components apart without changing their transforms here, so nothing is reused then.
+    const rel = ta && tb && !this.study.tracks.some(k => k.kind === "explode" && !k.off) ? compose(invert(ta), tb).map(v => Math.round(v * 1e6) / 1e6).join(",") : "";
+    const had = rel ? seen.get(rel) : undefined;
+    if (had !== undefined) return had;
+    const d = this.asm.motionGap(pair[0], pair[1]);
+    if (rel) seen.set(rel, d);
+    return d;
+  }
+
+  /**
+   * Measures proximity results frame by frame in short steps, putting the shown frame back between them so the
+   * page keeps drawing and the status line counts the frames (engine motion test: one pair froze the page 34 s).
+   */
+  private async measureGaps(xs: TracePath[], all: Record<string, Tf>[], base: string) {
+    const todo = xs.filter(x => !this.gapBusy.has(this.gapKey(base, x)));
+    if (!todo.length) return;
+    const keys = todo.map(x => this.gapKey(base, x));
+    keys.forEach(k => this.gapBusy.add(k));
+    const s = this.study, n = all.length, mates = new Map((this.asm.doc?.mates ?? []).map(m => [m.id, m]));
+    const runs = todo.map(x => ({ x, rel: new Map<string, number>(), v: [] as number[] }));
+    const back = () => { const i = Math.min(n - 1, Math.max(0, Math.round(this.time * s.fps))); this.asm.motionShow(this.tfsAt(i), frameAt(s, i / s.fps, mates).explode); };
+    try {
+      let t0 = performance.now();
+      for (let k = 0; k < n; k++) {
+        this.asm.motionShow(all[k], frameAt(s, k / s.fps, mates).explode);
+        for (const r of runs) r.v.push(this.gapAt(all[k], r.x.gap!, r.rel));
+        if (performance.now() - t0 > 60 && k < n - 1) {
+          back();
+          this.setStatus(t("Measuring the gaps: frame {i} of {n}…", { i: k + 1, n }));
+          await new Promise(r => setTimeout(r, 0));
+          // The study or the pairs changed meanwhile: a new measuring starts from the redraw.
+          if (!this.open || this.study !== s || JSON.stringify([this.key0(), s.tracks.filter(q => q.kind === "pose" && !q.off)]) !== base) { back(); return; }
+          t0 = performance.now();
+        }
+      }
+      back();
+      runs.forEach((r, j) => this.keepGap(keys[j], r.v));
+      this.setStatus("");
+      this.traceKey = "";
+      this.render();
+      this.showAt(this.time);
+    } finally {
+      keys.forEach(k => this.gapBusy.delete(k));
+    }
   }
 
   /** Adds a proximity result between two top-level components (the first two shown; the panel changes them). */
@@ -1719,7 +1801,11 @@ export class MotionManager {
       else if (p === "cdist" && tr.kind === "camera") {
         // Dolly along the line of sight: the target stays, the position moves to the typed distance.
         const ck = k as CamKey, dv = ck.pos.map((x, j) => x - ck.target[j]), L = Math.hypot(...dv);
-        if (v > 0 && L > 1e-9) ck.pos = ck.target.map((x, j) => x + (dv[j] * v) / L) as V3;
+        if (v > 0 && L > 1e-9) {
+          ck.pos = ck.target.map((x, j) => x + (dv[j] * v) / L) as V3;
+          // An orthographic view does not change with distance: the zoom follows, so the picture grows as a dolly would (engine motion test).
+          if (ck.zoom !== undefined) ck.zoom *= L / v;
+        }
       }
       else if (p === "czoom" && tr.kind === "camera" && v > 0) (k as CamKey).zoom = v / 100;
       else if (p === "v" && (tr.kind === "explode" || tr.kind === "look")) (k as Key).v = Math.max(0, Math.min(1, v / 100));
@@ -2089,3 +2175,4 @@ export class MotionManager {
     return { motors: s.tracks.filter((k): k is MotorTrack => k.kind === "motor").map(k => motorAmount(k, tq)), camera: cameraAt((s.tracks.find(k => k.kind === "camera") as { keys: CamKey[] } | undefined)?.keys ?? [], tq) };
   }
 }
+

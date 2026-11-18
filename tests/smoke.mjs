@@ -9003,6 +9003,21 @@ try {
       return out;
     });
     check(mateKey.value === 10 && !mateKey.panel && mateKey.keys.some(([t, v]) => Math.abs(t - 2.5) < 1e-9 && v === 25) && mateKey.keys.length === 3, `motion 1.572: Autokey keys a typed mate value at the playhead and leaves the mate alone (FR-FT-122) (${JSON.stringify(mateKey)})`);
+    // 1.573 (engine motion test): one real click on ✓ right after typing commits the value (the field's change used to
+    // redraw the panel under the pointer); an open study holds drags of the parts its mates move.
+    await mp.evaluate(() => { const m = window.__sv.motion, a = window.__sv.asm; m.setAutoKey(true); m.seek(2.5); a.startMate(a.doc.mates.find(x => x.id === "md")); });
+    await mp.click("#asm-pm [data-mv]", { clickCount: 3 });
+    await mp.keyboard.type("26");
+    await mp.click("#asm-pm .pm-top .pm-ok");
+    const oneClick = await mp.evaluate(() => {
+      const m = window.__sv.motion, a = window.__sv.asm, md = a.doc.mates.find(x => x.id === "md");
+      const tr = m.study.tracks.find(k => k.kind === "mate" && k.mate === "md");
+      const out = { panel: !!a.mating, key: tr.keys.some(k => Math.abs(k.t - 2.5) < 1e-9 && k.v === 26), value: md.value, holds: a.motion.holdsDrag(md.b.comp) };
+      m.edit(st => { const k = st.tracks.find(x => x.id === tr.id); k.keys = k.keys.filter(x => Math.abs(x.t - 2.5) > 1e-9); });
+      m.setAutoKey(false);
+      return out;
+    });
+    check(!oneClick.panel && oneClick.key && oneClick.value === 10 && oneClick.holds === true, `motion 1.573: ✓ works on the first click after typing; the study holds drags of mated parts (${JSON.stringify(oneClick)})`);
     // A 60 rpm rotary motor on Concentric1: half a turn at 0.5 s.
     await mp.evaluate(() => { const m = window.__sv.motion; m.addTrack("motor:mc"); m.edit(s => { const k = s.tracks.find(x => x.kind === "motor"); k.speed = 60; }); m.seek(0.5); });
     const turn = await pos();

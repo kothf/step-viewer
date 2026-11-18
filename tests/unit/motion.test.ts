@@ -312,6 +312,27 @@ test("motion interference over a study: per-frame pairs become spans per pair; p
   assert.deepEqual(clashItems([], 30), []);
 });
 
+test("mate value result of two parallel axes plots the turn about them (engine motion test, FR-FT-122)", () => {
+  const rz = (deg: number) => { const c = Math.cos(deg * Math.PI / 180), s = Math.sin(deg * Math.PI / 180); return [c, -s, 0, 0, s, c, 0, 0, 0, 0, 1, 0]; };
+  const I = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0];
+  const frames = [0, 120, 240, 360, 400].map(d => ({ g: I, w: rz(d) }));
+  const ax = { k: "axis" as const, p: [0, 0, 0] as [number, number, number], d: [0, 0, 1] as [number, number, number] };
+  const r = mateMeasures(frames, "g", "w", ax, { ...ax, d: [0, 0, -1] });
+  assert.deepEqual(r.angle.map(x => Math.round(x)), [0, 120, 240, 360, 400]);
+  assert.deepEqual(r.dist.map(x => Math.round(x * 1e9) / 1e9), [0, 0, 0, 0, 0]);
+});
+
+test("motion interference: a pair placed as in an earlier frame takes that frame's answer (engine motion test, FR-FT-122)", async () => {
+  const { steadyClashes } = await import("../../src/motion/interfere");
+  const I = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0];
+  const at = (x: number) => [1, 0, 0, x, 0, 1, 0, 0, 0, 0, 1, 0];
+  // Plate and bearing never move against each other: the flicker at frames 1 and 3 goes. The rod moves away and back.
+  const tfs = [0, 1, 2, 3, 0].map(x => ({ plate: I, brg: I, rod: at(x) }));
+  const per: [string, string][][] = [[["rod", "plate"]], [["brg", "plate"]], [], [["plate", "brg"]], []];
+  steadyClashes(per, tfs);
+  assert.deepEqual(per.map(f => f.map(p => p.join("|")).sort()), [["rod|plate"], [], [], [], ["rod|plate"]]);
+});
+
 test("explode steps one after another (animation wizard) or all at once (FR-FT-122)", async () => {
   const { explodeAt } = await import("../../src/asm/patterns");
   const v = { id: "x", name: "E", steps: [{ comps: ["a"], dir: [1, 0, 0] as [number, number, number], dist: 10 }, { comps: ["b", "a"], dir: [0, 0, 1] as [number, number, number], dist: 20 }] };

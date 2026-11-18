@@ -2,6 +2,9 @@
 // The manager poses every frame and asks the assembly which shown components enter one another; these pure
 // helpers turn the per-frame pairs into time spans per pair and a CSV.
 
+import { compose, invert } from "../asm/math";
+import type { Tf } from "../asm/types";
+
 /** One pair of components that interfere somewhere in the study. */
 export interface ClashItem {
   /** "a|b" with a < b. */
@@ -49,4 +52,29 @@ export function clashCsv(items: ClashItem[], name: (id: string) => string): stri
   const r4 = (v: number) => String(Math.round(v * 1e4) / 1e4);
   const rows = items.flatMap(it => it.spans.map(([a, b]) => [q(name(it.a)), q(name(it.b)), r4(a), r4(b)].join(",")));
   return ["component 1,component 2,from (s),to (s)", ...rows].join("\n") + "\n";
+}
+
+/**
+ * The mesh test on faces that only touch (a bearing seated on a plate) flickers from frame to frame. A pair placed
+ * relative to each other as in an earlier frame takes that frame's answer, so parts that never move against each
+ * other get one answer for the whole study (engine motion test). Changes `per` in place.
+ */
+export function steadyClashes(per: [string, string][][], tfs: Record<string, Tf>[]) {
+  const pairs = new Map<string, [string, string]>();
+  for (const f of per) for (const p of f) pairs.set(pairKey(p[0], p[1]), p);
+  const sets = per.map(f => new Set(f.map(p => pairKey(p[0], p[1]))));
+  for (const [key, [a, b]] of pairs) {
+    const first = new Map<string, boolean>();
+    for (let k = 0; k < per.length; k++) {
+      const ta = tfs[k]?.[a], tb = tfs[k]?.[b];
+      if (!ta || !tb) continue;
+      const rel = compose(invert(ta), tb).map(v => Math.round(v * 1e5) / 1e5).join(",");
+      const was = first.get(rel), now = sets[k].has(key);
+      if (was === undefined) { first.set(rel, now); continue; }
+      if (was !== now) {
+        if (was) per[k].push([a, b]); else per[k] = per[k].filter(p => pairKey(p[0], p[1]) !== key);
+        if (was) sets[k].add(key); else sets[k].delete(key);
+      }
+    }
+  }
 }
