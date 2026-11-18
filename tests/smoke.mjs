@@ -3046,11 +3046,14 @@ try {
       await click([95, 100]);
       await mp.keyboard.press("Escape");
       await tool("select");
-      const [qx, qy] = await toPage([82.5, 80]);
+      // Relation glyphs sit on the sides and would take the click: hidden for it.
+      await mp.evaluate(() => { const ed = window.__sv.model.editor(); ed.showRels = false; ed.render(); });
+      const [qx, qy] = await toPage([75, 80]);
       await mp.mouse.move(qx, qy); await mp.waitForTimeout(60);
       await mp.mouse.dblclick(qx, qy);
       await mp.waitForTimeout(120);
-      const chain = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sel = [...ed.selection]; const one = sel[0]; return { sel: sel.length, want: one ? ed.chainOf(one).segs.length : -1, kinds: sel.map(id => ed.sk.ents.find(e => e.id === id)?.t) }; });
+      const chain = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sel = [...ed.selection]; const one = sel.find(id => ed.sk.ents.find(e => e.id === id && (e.t === "line" || e.t === "arc"))); return { sel: sel.length, want: one ? ed.chainOf(one).segs.length : -1, kinds: sel.map(id => ed.sk.ents.find(e => e.id === id)?.t) }; });
+      await mp.evaluate(() => { const ed = window.__sv.model.editor(); ed.showRels = true; ed.render(); });
       await mp.keyboard.press("Escape");
       await mp.keyboard.press("Control+z");
       await mp.waitForTimeout(100);

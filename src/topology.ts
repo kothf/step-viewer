@@ -374,8 +374,16 @@ export function analyzeMesh(m: OcctMesh): PartData {
   const seen = new Uint32Array(nv);
   const count = new Map<number, number>();
 
-  // The face each vertex was first seen in (OCCT meshes keep a face's vertices to itself), for edge tangency.
-  const vFace = new Int32Array(nv).fill(-1);
+  // Per welded vertex and face: a vertex normal and the summed triangle normals there, for edge tangency.
+  const wNorm = new Map<number, Map<number, [V3, V3]>>();
+  const noteNorm = (i: number, fid: number, tx: number, ty: number, tz: number) => {
+    const w = weld[i];
+    let m = wNorm.get(w);
+    if (!m) { m = new Map(); wNorm.set(w, m); }
+    const e = m.get(fid);
+    if (e) { e[1][0] += tx; e[1][1] += ty; e[1][2] += tz; }
+    else m.set(fid, [[normals[3 * i], normals[3 * i + 1], normals[3 * i + 2]], [tx, ty, tz]]);
+  };
   brepFaces.forEach((bf, fid) => {
     const triStart = bf.first, triCount = bf.last - bf.first + 1;
     count.clear();
@@ -384,9 +392,6 @@ export function analyzeMesh(m: OcctMesh): PartData {
     for (let t = triStart; t < triStart + triCount; t++) {
       triFace[t] = fid;
       const ia = I[3 * t], ib = I[3 * t + 1], ic = I[3 * t + 2];
-      if (vFace[ia] < 0) vFace[ia] = fid;
-      if (vFace[ib] < 0) vFace[ib] = fid;
-      if (vFace[ic] < 0) vFace[ic] = fid;
       if (seen[ia] !== fid + 1) { seen[ia] = fid + 1; verts.push(ia); }
       if (seen[ib] !== fid + 1) { seen[ib] = fid + 1; verts.push(ib); }
       if (seen[ic] !== fid + 1) { seen[ic] = fid + 1; verts.push(ic); }
@@ -394,7 +399,9 @@ export function analyzeMesh(m: OcctMesh): PartData {
       const bx = P[3 * ib], by = P[3 * ib + 1], bz = P[3 * ib + 2];
       const qx = P[3 * ic], qy = P[3 * ic + 1], qz = P[3 * ic + 2];
       const ux = bx - ax, uy = by - ay, uz = bz - az, vx = qx - ax, vy = qy - ay, vz = qz - az;
-      const ta = Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx) / 2;
+      const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      const ta = Math.hypot(nx, ny, nz) / 2;
+      noteNorm(ia, fid, nx, ny, nz); noteNorm(ib, fid, nx, ny, nz); noteNorm(ic, fid, nx, ny, nz);
       const sx = ax + bx + qx, sy = ay + by + qy, sz = az + bz + qz;
       fArea += ta;
       fx += ta * sx / 3; fy += ta * sy / 3; fz += ta * sz / 3;
@@ -440,22 +447,30 @@ export function analyzeMesh(m: OcctMesh): PartData {
 
   const edges: EdgeInfo[] = [];
   const segOut: number[] = [], tanOut: number[] = [];
-  // Normal of each face at the welded vertices edges pass through (first original vertex of that face there).
-  const wNorm = new Map<number, Map<number, V3>>();
-  for (let i = 0; i < nv; i++) {
-    const f = vFace[i];
-    if (f < 0) continue;
-    const w = weld[i];
-    let m = wNorm.get(w);
-    if (!m) { m = new Map(); wNorm.set(w, m); }
-    if (!m.has(f)) m.set(f, [normals[3 * i], normals[3 * i + 1], normals[3 * i + 2]]);
-  }
-  const TAN_COS = Math.cos((4 * Math.PI) / 180);
+  const cosOf = (a: V3, b: V3) => {
+    const la = Math.hypot(...a), lb = Math.hypot(...b);
+    return la > 0 && lb > 0 ? (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) / (la * lb) : -1;
+  };
+  // Exact normal direction of a classified plane/cylinder/sphere at p (sign not known), else null.
+  const surfDir = (f: FaceInfo | undefined, p: V3): V3 | null => {
+    if (!f) return null;
+    if (f.type === "plane" && f.normal) return f.normal;
+    if (f.type === "sphere") return sub(p, f.center);
+    if (f.type === "cylinder" && f.axis) {
+      const d = sub(p, f.center), ax = norm(f.axis), t = d[0] * ax[0] + d[1] * ax[1] + d[2] * ax[2];
+      return [d[0] - t * ax[0], d[1] - t * ax[1], d[2] - t * ax[2]];
+    }
+    return null;
+  };
+  // Tangent: facet normals within 20° (they also fix the sign), and the exact normals of classified faces within 1°,
+  // else the mesh's vertex normals within 12° (they are averaged facets, a half step off on curved faces).
+  const FACET_COS = Math.cos((20 * Math.PI) / 180), EXACT_COS = Math.cos(Math.PI / 180), VERT_COS = Math.cos((12 * Math.PI) / 180);
   const smoothAt = (w: number, fa: number, fb: number) => {
-    const m = wNorm.get(w), na = m?.get(fa), nb = m?.get(fb);
-    if (!na || !nb) return false;
-    const la = Math.hypot(...na), lb = Math.hypot(...nb);
-    return la > 0 && lb > 0 && (na[0] * nb[0] + na[1] * nb[1] + na[2] * nb[2]) / (la * lb) > TAN_COS;
+    const m = wNorm.get(w), a = m?.get(fa), b = m?.get(fb);
+    if (!a || !b || cosOf(a[1], b[1]) <= FACET_COS) return false;
+    const p = weldPos[w], na = surfDir(faces[fa], p), nb = surfDir(faces[fb], p);
+    if (na && nb) return Math.abs(cosOf(na, nb)) > EXACT_COS;
+    return cosOf(a[0], b[0]) > VERT_COS;
   };
   for (const [gk, segs] of groups) {
     const [fa, fb] = gk.split("|").map(Number) as [number, number];
