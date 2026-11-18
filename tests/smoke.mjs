@@ -3221,7 +3221,13 @@ try {
     // 1.354 (FR-SEL-010): G opens the magnifying glass at the cursor; the wheel inside changes its factor, pointer events inside
     // reach the view at the magnified point, G or Esc closes it.
     {
-      const vb = await mp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+      // The lens goes over the body's middle (shown sketches count in the framing, so it need not be the view's centre).
+      const vb = await mp.evaluate(() => {
+        const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect();
+        const c = new (v.camera.position.constructor)(); new (window.__sv.viewer.bounds.constructor)().setFromObject(v.parts[0].mesh).getCenter(c);
+        const q = c.project(v.camera);
+        return { x: r.left + ((q.x + 1) / 2) * r.width, y: r.top + ((1 - q.y) / 2) * r.height };
+      });
       await mp.mouse.move(vb.x, vb.y);
       await mp.evaluate(() => window.__sv.viewer.renderer.domElement.focus());
       await mp.keyboard.press("g");
@@ -10502,8 +10508,18 @@ try {
     }));
     await settle();
     // Zoom to fit takes the shown sketch in, with no body yet (weldments exam #1).
-    const fitBox = await mp.evaluate(() => { const b = window.__sv.viewer.computeBounds(); return [b.min.x, b.min.y, b.max.x, b.max.y].map(Math.round); });
-    check(JSON.stringify(fitBox) === "[-50,-30,50,30]", `model 1.573: Zoom to fit takes shown sketches in (${JSON.stringify(fitBox)})`);
+    // A far 600 mm line on its own sketch widens the box; the small frame alone keeps the empty part's ±50 framing.
+    const box = () => mp.evaluate(() => { const b = window.__sv.viewer.computeBounds(); return [b.min.x, b.min.y, b.max.x, b.max.y].map(Math.round); });
+    const small = await box();
+    await mp.evaluate(() => window.__sv.model.store.change("Far", d => {
+      d.features.push({ id: "far", type: "sketch", name: "Far", plane: { std: "XY" }, rels: [], dims: [],
+        ents: [{ id: "f1", t: "point", x: 0, y: 0 }, { id: "f2", t: "point", x: 600, y: 0 }, { id: "fl", t: "line", a: "f1", b: "f2" }] });
+    }));
+    await settle();
+    const fitBox = await box();
+    await mp.evaluate(() => window.__sv.model.store.change("No far", d => { d.features = d.features.filter(f => f.id !== "far"); }));
+    await settle();
+    check(JSON.stringify(small) === "[-50,-50,50,50]" && fitBox[0] === -50 && fitBox[2] >= 600, `model 1.573: Zoom to fit takes shown sketches in (${JSON.stringify({ small, fitBox })})`);
     await mp.evaluate(() => { const v = window.__sv.viewer; v.fit(false); });
     await runCmd(mp, "3D Sketch");
     await settle();
