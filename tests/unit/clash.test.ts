@@ -15,7 +15,9 @@ const tri = (...p: number[]) => new THREE.Triangle(new THREE.Vector3(p[0], p[1],
 
 test("an edge through a face pierces it; one lying on it, ending on it or meeting its outline does not", () => {
   const floor = tri(-10, 0, -10, 10, 0, -10, 0, 0, 10);
-  assert.equal(pierces(floor, tri(-1, 0, 0, 1, 0, 0, 0, 0, 1), 0.005), false);
+  // Lying on it facing the other way: a face mated onto it. Facing the same way: the parts overlap.
+  assert.equal(pierces(floor, tri(1, 0, 0, -1, 0, 0, 0, 0, 1), 0.005), false);
+  assert.equal(pierces(floor, tri(-1, 0, 0, 1, 0, 0, 0, 0, 1), 0.005), true);
   assert.equal(pierces(floor, tri(-1, 0, 0, 1, 0, 0, 0, 5, 0), 0.005), false);
   assert.equal(pierces(floor, tri(-1, -0.3, 0, 1, -0.3, 0, 0, 5, 0), 0.005), true);
   assert.equal(pierces(floor, tri(-1, -0.003, 0, 1, -0.003, 0, 0, 5, 0), 0.005), false);
@@ -42,4 +44,10 @@ test("a pin turning in a bore of its size stays clear at the meshes' error; a th
   const bore = ring(10, 15, 10, 40), tol = Math.max(0.005, 1e-3 * (30 + 45));
   for (let k = 0; k < 8; k++) assert.equal(penetrates(bore, pin(10), new THREE.Matrix4().makeRotationY(k * 0.1), tol), false, `turn ${k}`);
   assert.equal(penetrates(bore, pin(10.5), new THREE.Matrix4(), tol), true);
+});
+
+test("a part placed on a copy of itself clashes; flush neighbours do not", () => {
+  const a = box(10, 10, 10);
+  assert.equal(penetrates(a, box(10, 10, 10), new THREE.Matrix4(), 0.005), true);
+  assert.equal(penetrates(a, box(10, 10, 10), at(10, 0, 0), 0.005), false);
 });
