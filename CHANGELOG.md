@@ -5,6 +5,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.577.0] - 2026-11-18
+
+### Added
+
+- **Cut list table on drawings: Part number column and sub-weldments.** The table's properties gain a Part number column (the numbers typed in the Cut List dialog), each sub-weldment heads its own items with a "Sub-weldment: name" row, and long material names wrap onto a second line instead of widening the table past the sheet.
+
+### Fixed
+
+- **Midpoints snap while drawing.** The Midpoint snap is on by default, so a line drawn from one edge's middle to another's gets two Midpoint relations; a line held horizontal or vertical that ends on an edge now also gets On curve there.
+- **3D sketch panel:** clicking a point or line in the lists selects just it (Ctrl+click adds), and the panel shows what is selected, so a second click no longer deselects the line you meant to dimension.
+- **Warnings fade.** A yellow warning such as "The sketch already had that relation" goes after 10 seconds instead of staying over the view; errors still stay until closed.
+- **A sketch on a reference plane names the plane** in its panel ("Plane: Plane2", not "Plane: Face").
+- **Weldment cut list:** "Left over" in Stock lengths takes the saw kerf off every cut, as the cutting plan below it does, so both give one figure.
+
 ## [1.576.0] - 2026-11-18
 
 ### Fixed
@@ -3632,7 +3646,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.576.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.577.0...HEAD
+[1.577.0]: https://github.com/kothf/step-viewer/compare/v1.576.0...v1.577.0
 [1.576.0]: https://github.com/kothf/step-viewer/compare/v1.575.0...v1.576.0
 [1.575.0]: https://github.com/kothf/step-viewer/compare/v1.574.0...v1.575.0
 [1.574.0]: https://github.com/kothf/step-viewer/compare/v1.573.0...v1.574.0
