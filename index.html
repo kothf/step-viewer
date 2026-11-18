@@ -180,12 +180,42 @@
     </div>
     <div id="empty" class="empty">
       <div class="empty-card">
-        <svg viewBox="0 0 32 32" width="56" height="56" aria-hidden="true"><path d="M16 3 28 10v12L16 29 4 22V10z" fill="none" stroke="var(--accent)" stroke-width="1.4"/><path d="M16 3v26M4 10l12 7 12-7" stroke="var(--accent)" stroke-width="1.2" fill="none"/></svg>
-        <h2>Drop a STEP file or Gerber set here</h2>
-        <p>AP203 · AP214 · AP242, plus IGES, BREP and SLDPRT parts and assemblies, parsed by OpenCASCADE, and STL, OBJ and 3MF meshes. PCB layers: Gerber RS-274X / X2, Excellon drill and .zip sets. Everything runs in your browser: files never leave your computer.</p>
-        <div class="row center"><button class="btn primary" data-open>Choose files…</button><button class="btn" id="empty-new">New part</button><button class="btn" id="empty-asm">New assembly</button></div>
-        <div class="row center empty-tut"><button class="btn small" id="empty-tut" title="A guided first part: the panel on the right ticks each step as you do it">Tutorial: bracket in 10 steps</button></div>
-        <div id="mc-recover" class="mc-recover" hidden></div>
+        <div class="empty-main">
+          <div class="empty-head">
+            <svg viewBox="0 0 32 32" width="40" height="40" aria-hidden="true"><path d="M16 3 28 10v12L16 29 4 22V10z" fill="none" stroke="var(--accent)" stroke-width="1.6"/><path d="M16 17v12M4 10l12 7 12-7" stroke="var(--accent)" stroke-width="1.4" fill="none"/></svg>
+            <div>
+              <h2>Welcome to MöbiusCAD</h2>
+              <p>Design parts, assemblies and drawings, or open a file to measure it.</p>
+            </div>
+          </div>
+          <div class="empty-cols">
+            <section class="empty-start" aria-labelledby="empty-start-h">
+              <h3 id="empty-start-h">Start</h3>
+              <button class="empty-act primary" id="empty-new"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5 20.5 7.3v9.4L12 21.5l-8.5-4.8V7.3z"/><path d="M12 12v9.5M3.5 7.3 12 12l8.5-4.7"/></svg><span><b>New part</b><small>Sketch and model a solid</small></span></button>
+              <button class="empty-act" id="empty-asm"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3.5 13 6.3v5.6L8 14.7 3 11.9V6.3z"/><path d="M16 9.3 21 12.1v5.6L16 20.5 11 17.7v-3.4"/><path d="M13 11.9 16 13.6l5-2.8"/></svg><span><b>New assembly</b><small>Put parts together with mates</small></span></button>
+              <button class="empty-act" data-open><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/></svg><span><b>Open…</b><small>Documents, CAD models, meshes, PCB layers</small></span></button>
+              <button class="empty-act" id="empty-tut" title="A guided first part: the panel on the right ticks each step as you do it"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 9 12 4.5 21.5 9 12 13.5z"/><path d="M6.5 11v4.5c1.5 1.7 3.5 2.5 5.5 2.5s4-.8 5.5-2.5V11M21.5 9v5"/></svg><span><b>Tutorial</b><small>A bracket in 10 steps</small></span></button>
+            </section>
+            <section class="empty-side" aria-labelledby="empty-recent-h">
+              <h3 id="empty-recent-h">Recent</h3>
+              <div id="empty-recent" class="empty-recent"></div>
+              <div id="mc-recover" class="mc-recover" hidden></div>
+              <div id="empty-more" class="empty-more"></div>
+            </section>
+          </div>
+          <div class="empty-foot">
+            <span>Drop files here to open them. They stay on your computer.</span>
+            <details class="empty-fmt"><summary>Supported formats</summary>
+              <dl>
+                <dt translate="no">MöbiusCAD</dt><dd translate="no">.mcadprt · .mcadasm · .mcaddrw</dd>
+                <dt>CAD models</dt><dd translate="no">STEP (AP203, AP214, AP242) · IGES · BREP · SLDPRT · SLDASM</dd>
+                <dt>Meshes</dt><dd translate="no">STL · OBJ · 3MF</dd>
+                <dt>PCB</dt><dd translate="no">Gerber RS-274X / X2 · Excellon · .zip</dd>
+              </dl>
+            </details>
+          </div>
+        </div>
+        <div class="empty-preview" hidden></div>
       </div>
     </div>
     <div id="loading" class="loading" hidden role="status" aria-live="polite"><div class="spinner" aria-hidden="true"></div><div id="loading-text">Loading…</div><div class="bar" aria-hidden="true"><i id="loading-bar"></i></div></div>

@@ -77,7 +77,7 @@ export const RU: Record<string, string> = {
   "PDF report": "PDF-отчёт",
   "Clear all": "Очистить всё",
   "No model loaded": "Модель не загружена",
-  "Open a STEP, IGES or BREP file to see its assembly tree.": "Откройте файл STEP, IGES или BREP, чтобы увидеть дерево сборки.",
+  "Open a file or start a new part to see its tree.": "Откройте файл или создайте новую деталь, чтобы увидеть дерево.",
   "Show/hide": "Показать / скрыть",
   "Show or hide {name}": "Показать или скрыть {name}",
   "No measurements yet": "Измерений пока нет",
@@ -121,8 +121,21 @@ export const RU: Record<string, string> = {
   "Delete all {n} measurements on this board?": "Удалить все измерения на этой плате ({n})?",
 
   // ---------- viewport ----------
-  "Drop a STEP file or Gerber set here": "Перетащите сюда файл STEP или набор Gerber",
   "Choose files…": "Выбрать файлы…",
+  // ---------- start screen ----------
+  "Welcome to MöbiusCAD": "Добро пожаловать в MöbiusCAD",
+  "Design parts, assemblies and drawings, or open a file to measure it.": "Проектируйте детали, сборки и чертежи или откройте файл, чтобы его измерить.",
+  "Sketch and model a solid": "Эскиз и твердотельная модель",
+  "Put parts together with mates": "Детали, связанные сопряжениями",
+  "Documents, CAD models, meshes, PCB layers": "Документы, CAD-модели, сетки, слои плат",
+  "A bracket in 10 steps": "Кронштейн за 10 шагов",
+  "Recent": "Недавние",
+  "No recent documents yet.": "Недавних документов пока нет.",
+  "Drop files here to open them. They stay on your computer.": "Перетащите сюда файлы, чтобы открыть их. Они остаются на вашем компьютере.",
+  "Supported formats": "Поддерживаемые форматы",
+  "CAD models": "CAD-модели",
+  "Meshes": "Сетки",
+  "PCB": "Печатные платы",
   "Loading…": "Загрузка…",
   "PCB view. Keys: Q smart, M point to point, C clearance, L polyline, A area, F fit, plus and minus zoom, B bottom view, 2 flat view, 3 3D board, Esc cancel": "Вид платы. Клавиши: Q умное измерение, M точка–точка, C зазор, L ломаная, A площадь, F вписать, плюс и минус масштаб, B вид снизу, 2 плоский вид, 3 3D-плата, Esc отмена",
   "Notifications": "Уведомления",
@@ -610,7 +623,6 @@ export const RU: Record<string, string> = {
 
   // ---------- 1.13: exact geometry, STEP / DXF export, notes, mesh files ----------
   "Open STEP / IGES / BREP, STL / OBJ / 3MF, or Gerber / Excellon layers and .zip sets (Ctrl+O)": "Открыть STEP / IGES / BREP, STL / OBJ / 3MF или слои Gerber / Excellon и наборы .zip (Ctrl+O)",
-  "AP203 · AP214 · AP242, plus IGES, BREP and SLDPRT parts and assemblies, parsed by OpenCASCADE, and STL, OBJ and 3MF meshes. PCB layers: Gerber RS-274X / X2, Excellon drill and .zip sets. Everything runs in your browser: files never leave your computer.": "AP203 · AP214 · AP242, а также IGES, BREP и детали SLDPRT и сборки SLDASM, разбор с помощью OpenCASCADE, и сетки STL, OBJ и 3MF. Слои плат: Gerber RS-274X / X2, сверловка Excellon и наборы .zip. Всё работает в браузере: файлы не покидают ваш компьютер.",
   "Exact geometry: loading…": "Точная геометрия: загрузка…",
   "Exact geometry": "Точная геометрия",
   "Exact geometry: {n} of {m} parts": "Точная геометрия: {n} из {m} деталей",

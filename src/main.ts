@@ -838,12 +838,10 @@ async function openSolidWorks(files: File[]) {
 const listNames = (a: string[]) => (a.length > 4 ? `${a.slice(0, 4).join(", ")} (+${a.length - 4})` : a.join(", "));
 
 /** The authoring CAD app's own thumbnail of a file whose geometry could not be read. */
-let emptyHtml = "";
 function showPreview(png: Uint8Array, name: string) {
-  const card = $("#empty .empty-card");
-  emptyHtml ||= card.innerHTML;
+  const box = $("#empty .empty-preview");
   const url = URL.createObjectURL(new Blob([png as BlobPart], { type: "image/png" }));
-  card.innerHTML = "";
+  box.innerHTML = "";
   const h = document.createElement("h2");
   h.textContent = t("Preview of {name}", { name });
   const img = document.createElement("img");
@@ -856,16 +854,41 @@ function showPreview(png: Uint8Array, name: string) {
   b.className = "btn primary";
   b.textContent = t("Choose files…");
   b.addEventListener("click", openPicker);
-  card.append(h, img, p, b);
+  box.append(h, img, p, b);
+  box.hidden = false;
+  $("#empty .empty-main").hidden = true;
   $("#empty").hidden = false;
 }
 function restoreEmpty() {
-  if (!emptyHtml) return;
-  const card = $("#empty .empty-card");
-  card.innerHTML = emptyHtml;
-  card.querySelector("[data-open]")?.addEventListener("click", openPicker);
-  emptyHtml = "";
+  const box = $("#empty .empty-preview");
+  if (box.hidden) return;
+  box.hidden = true;
+  box.innerHTML = "";
+  $("#empty .empty-main").hidden = false;
 }
+
+/** Start screen: the recent documents (File ▸ recent list), opened with one click. */
+const RECENT_SHOWN = 6;
+async function renderStartRecent() {
+  const box = document.getElementById("empty-recent");
+  if (!box) return;
+  const list = (await recentList()).slice(0, RECENT_SHOWN);
+  if (!list.length) { box.innerHTML = `<div class="empty-none">${esc(t("No recent documents yet."))}</div>`; return; }
+  const KIND: Record<string, string> = { mcadprt: "PRT", mcadasm: "ASM", mcaddrw: "DRW" };
+  const ext = (n: string) => { const e = (/\.([a-z0-9]+)$/i.exec(n)?.[1] ?? "").toLowerCase(); return KIND[e] ?? e.slice(0, 6).toUpperCase(); };
+  const when = (at: number) => {
+    const d = new Date(at), now = new Date();
+    return d.toDateString() === now.toDateString() ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : d.toLocaleDateString();
+  };
+  box.innerHTML = list.map((r, i) => `<button class="empty-rec" data-recent="${i}" title="${esc(`${r.name}${r.count > 1 ? ` (+${r.count - 1})` : ""} · ${new Date(r.at).toLocaleString()}`)}"><span class="ext" translate="no">${esc(ext(r.name))}</span><span class="nm" translate="no">${esc(r.name)}${r.count > 1 ? ` <span class="muted">+${r.count - 1}</span>` : ""}</span><span class="when">${esc(when(r.at))}</span></button>`).join("");
+  box.querySelectorAll<HTMLElement>("[data-recent]").forEach(b => b.addEventListener("click", async () => {
+    const fs = await recentFiles(+b.dataset.recent!);
+    if (fs) void openFiles(fs); else { toast(t("That document is no longer in the recent list."), true); void renderStartRecent(); }
+  }));
+}
+new MutationObserver(() => { if (!$("#empty").hidden) void renderStartRecent(); }).observe($("#empty"), { attributes: true, attributeFilter: ["hidden"] });
+onLangChange(() => void renderStartRecent());
+void renderStartRecent();
 
 async function openFile(file: File) {
   const buffer = await file.arrayBuffer();
@@ -1226,7 +1249,7 @@ function buildTree() {
   const host = $("#tree");
   host.innerHTML = "";
   nodeEls.clear();
-  if (!viewer.tree) { emptyState(host, { icon: "model", title: t("No model loaded"), text: t("Open a STEP, IGES or BREP file to see its assembly tree."), cta: t("Open file"), action: openPicker }); return; }
+  if (!viewer.tree) { emptyState(host, { icon: "model", title: t("No model loaded"), text: t("Open a file or start a new part to see its tree."), cta: t("Open file"), action: openPicker }); return; }
   const make = (n: TreeNode, depth: number): HTMLElement => {
     const el = document.createElement("div");
     el.className = "node";
