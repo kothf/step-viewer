@@ -542,6 +542,10 @@ test("fillet bead on both sides of a plate standing on another (FR-FT-121)", asy
   const s2 = poly("t", [[-5, -50], [5, -50], [5, 50], [-5, 50]], true);
   const stem: Feature = { id: "st", type: "extrude", name: "Extrude2", sketch: "t", op: "boss", end: "blind", depth: { v: 80 }, merge: false } as Feature;
   const r0 = run(m, doc([s1, base, s2, stem]));
+  // Bodies not made by weldment features are listed too: flat slabs as plates (thickness × width × length), the rest by their box.
+  assert.deepEqual(r0.cut.map(c => [c.kind, c.plate ?? c.box]), [["plate", [200, 200, 10]], ["plate", [100, 80, 10]]]);
+  const fused = run(m, doc([s1, base, s2, { ...stem, merge: true } as Feature]));
+  assert.deepEqual(fused.cut.map(c => [c.kind, c.box]), [["body", [200, 200, 80]]]);
   const side = r0.body!.names.map((n, i) => ({ n, c: centroid(m, r0.body!.faces[i]) })).find(x => x.n.startsWith("st:") && Math.abs(x.c[0] - 5) < 1e-6)!;
   const bead: Feature = { id: "w", type: "weldbead", name: "Fillet Bead1", faces1: [{ name: side.n, hint: side.c }], faces2: [{ name: "p:end" }], size: { v: 4 }, tangent: false };
   const one = run(m, doc([s1, base, s2, stem, bead]));

@@ -9086,9 +9086,32 @@ try {
       const keyed = m.study.tracks.filter(k => k.kind !== "motor" && !k.off);
       const keyAll = { all: keyed.length >= 3 && keyed.every(k => k.keys.some(x => Math.abs(x.t - 1) < 1e-9)), sel: document.querySelectorAll("#motion .mo-key.sel").length === keyed.length,
         c: m.study.tracks.find(k => k.kind === "look").keys.find(x => Math.abs(x.t - 1) < 1e-9)?.c ?? "" };
+      // Autokey: with no camera track, a view change at 2 s makes one (the old view at 0, the new one at 2 s); a click that does not move the view adds nothing.
+      m.edit(st => { st.tracks = st.tracks.filter(k => k.kind !== "camera"); });
+      m.seek(2); m.render();
+      document.querySelector('#motion [data-mo="autokey"]').click();
+      const pressed = document.querySelector('#motion [data-mo="autokey"]').getAttribute("aria-pressed");
+      const vw = window.__sv.viewer, ctl = vw.controls, p0 = vw.camera.position.toArray();
+      ctl.dispatchEvent({ type: "start" }); vw.camera.position.x += 25; vw.camera.updateMatrixWorld(); ctl.dispatchEvent({ type: "end" });
+      const cam = () => m.study.tracks.find(k => k.kind === "camera");
+      const made = cam() && cam().keys.map(k => k.t).join(",");
+      const camKeyed = cam() && Math.abs(cam().keys[1].pos[0] - (p0[0] + 25)) < 1e-6 && Math.abs(cam().keys[0].pos[0] - p0[0]) < 1e-6;
+      ctl.dispatchEvent({ type: "start" }); ctl.dispatchEvent({ type: "end" });
+      const still = cam().keys.length;
+      document.querySelector('#motion [data-mo="autokey"]').click();
+      // Camera key properties: the selected key's position, target and distance as numbers; Distance dollies along the line of sight.
+      document.querySelector(`#motion .mo-key[data-key="${cam().id}:1"]`).click();
+      const camIn = k => document.querySelector(`#motion [data-p="${k}"]`);
+      const hasProps = ["cpx", "cpy", "cpz", "ctx", "cty", "ctz", "cdist"].every(k => camIn(k));
+      camIn("ctz").value = "7"; camIn("ctz").dispatchEvent(new Event("change", { bubbles: true }));
+      const tz = cam().keys[1].target[2];
+      camIn("cdist").value = "300"; camIn("cdist").dispatchEvent(new Event("change", { bubbles: true }));
+      const k1 = cam().keys[1], dist = Math.hypot(k1.pos[0] - k1.target[0], k1.pos[1] - k1.target[1], k1.pos[2] - k1.target[2]);
+      const camProps = { hasProps, tz, dist, shown: Number(camIn("cdist").value) };
+      const auto = { pressed, made, keyed: camKeyed, still, off: m.autoKey === false, camProps };
       m.deleteTrack(tr.id);
       m.seek(5);
-      const color = { c0, purple: cMid > 0.7 && cMid < 0.95, swatch, back: p().material.color.getHexString() === own, keyAll };
+      const color = { c0, purple: cMid > 0.7 && cMid < 0.95, swatch, back: p().material.color.getHexString() === own, keyAll, auto };
       return { listed, half, end, moved, label, color, back: { op: p().opacity, vis: p().visible } };
     });
     // Recording: a GIF of a 1 s study and a WebM video.
@@ -9146,6 +9169,14 @@ try {
       m.seek(1);
       const mid = { z: g().position.z, dx: g().position.x - (x0 - (q * x0 - q * y0)), dy: g().position.y - (y0 - (q * x0 + q * y0)), rz: 2 * Math.atan2(g().quaternion.z, g().quaternion.w) };
       m.seek(2);
+      // Autokey on a drag: an unmated component dragged at 1 s gets a placement key there (the asm drag hooks), 10 mm along X from where it was shown.
+      const keys0 = JSON.parse(JSON.stringify(m.study.tracks.find(k => k.kind === "pose").keys)), ak0 = m.autoKey;
+      m.setAutoKey(false); const offFrame = a.motion.dragFrom(id);
+      m.setAutoKey(true); m.seek(1);
+      const fr = a.motion.dragFrom(id), dragTf = fr[id].slice(), gx0 = g().position.x; dragTf[3] += 10;
+      const took = a.motion.dragged(id, dragTf), pk = m.study.tracks.find(k => k.kind === "pose").keys.find(k => Math.abs(k.t - 1) < 1e-9);
+      const dragKey = { offFrame, took, d: pk?.d, r: pk?.r, x: g().position.x - gx0, mated: a.motion.dragFrom(c[1].id) };
+      m.edit(s => { s.tracks.find(k => k.kind === "pose").keys = keys0; }); m.setAutoKey(ak0); m.seek(2);
       const end = { z: g().position.z };
       // Trace path: Add track… → Trace path… then a click on the pin picks a point on it; the pin's own origin traced
       // through the study rises 20 mm in a straight line (the turn is about it), one point per frame, plotted and saved as CSV.
@@ -9324,7 +9355,7 @@ try {
       m.deleteStudy();
       m.studyId = prevStudy; m.render(); m.seek(prevTime);
       trace.interfere = interfere;
-      return { opts: [opts.includes(`pose:${id}`), opts.includes(`pose:${c[1].id}`)], fields, mid, end, menu, zoomed, multi, trace };
+      return { opts: [opts.includes(`pose:${id}`), opts.includes(`pose:${c[1].id}`)], fields, mid, end, menu, zoomed, multi, trace, dragKey };
     }).catch(e => ({ err: String(e) }));
     // A box dragged over the empty top of the placement track selects its three keys; Delete removes them all.
     let boxed = { err: "no track" }, stretched = { err: "no track" };
@@ -9405,7 +9436,7 @@ try {
       && st.copied?.length === 4 && st.copied[0] === 1 && Math.abs(st.copied[1] - 30) <= 1 && st.nSel === 1 && st.ghosts === 0,
       `motion study: a time scale and Alt+drag stretch selected keys, Ctrl+drag copies a key (FR-FT-122) (${JSON.stringify(st)})`);
     check(pose.opts?.[0] === true && pose.opts[1] === false && pose.fields >= 6 && Math.abs(pose.mid.z - 10) < 0.01 && Math.abs(pose.mid.dx) < 0.01 && Math.abs(pose.mid.dy) < 0.01
-      && Math.abs(Math.abs(pose.mid.rz) - Math.PI / 4) < 0.01 && Math.abs(pose.end.z - 20) < 0.01, `motion study: placement keys move and turn an unmated component (FR-FT-122) (${JSON.stringify(pose)})`);
+      && Math.abs(Math.abs(pose.mid.rz) - Math.PI / 4) < 0.01 && Math.abs(pose.end.z - 20) < 0.01 && pose.dragKey.offFrame === null && pose.dragKey.mated === null && pose.dragKey.took === true && Math.abs(pose.dragKey.d[0] - 10) < 0.01 && Math.abs(pose.dragKey.d[2] - 10) < 0.01 && Math.abs(pose.dragKey.r[2] - 45) < 0.01 && Math.abs(pose.dragKey.x - 10) < 0.01, `motion study: placement keys move and turn an unmated component, Autokey on a drag (FR-FT-122) (${JSON.stringify(pose)})`);
     check(pose.menu?.items.length === 5 && pose.menu.items[1] === "Snap (jump)" && pose.menu.menuGone && Math.abs(pose.menu.snapMid) < 0.01
       && JSON.stringify(pose.menu.pasted) === '[[0,0,""],[1.5,20,"snap"],[2,20,"snap"]]' && Math.abs(pose.menu.z15 - 20) < 0.01 && pose.menu.snapKey === 2,
       `motion study: key point menu sets Snap interpolation; Ctrl+C / Ctrl+V copy a key to the playhead (FR-FT-122) (${JSON.stringify(pose.menu)})`);
@@ -9417,10 +9448,10 @@ try {
       && Math.abs(Math.abs(dist.rz) - Math.PI / 2) < 0.01 && Math.abs(Math.abs(ptsAt.rz) - Math.PI / 4) < 0.01 && ptsEnd === 1 && ptsBad === "true" && Math.abs(Math.abs(ptsCubic.rz) - 0.6875 * Math.PI / 2) < 0.01 && ptsFit === "cubic" && Math.abs(Math.abs(segAt.rz) - Math.PI / 8) < 0.01 && segRows === "harmonic,cycloid" && motorPlot === "°/s|true|true|vel" && Math.abs(Math.abs(exprAt.rz) - Math.PI / 2) < 0.01 && exprBad[0] === "true" && exprBad[1] === "180*t"
       && Math.abs(exploded.x - 50) < 0.01
       && look.listed && Math.abs(look.half.op - 0.5) < 0.02 && look.half.vis && look.half.mat && !look.end.vis && look.label === "Appearance"
-      && Math.abs(look.moved[1] - (5 - 1 / 30)) < 1e-6 && look.back.op === 1 && look.back.vis && look.color.c0 === "ff0000" && look.color.purple && look.color.swatch === 2 && look.color.back && look.color.keyAll.all && look.color.keyAll.sel && /^#[0-9a-f]{6}$/.test(look.color.keyAll.c) && Math.abs(Math.hypot(cam1.p[0] - cam1.t[0], cam1.p[1] - cam1.t[1]) - Math.hypot(cam0[0] - cam1.t[0], cam0[1] - cam1.t[1])) < 1e-3 * Math.hypot(...cam0)
+      && Math.abs(look.moved[1] - (5 - 1 / 30)) < 1e-6 && look.back.op === 1 && look.back.vis && look.color.c0 === "ff0000" && look.color.purple && look.color.swatch === 2 && look.color.back && look.color.keyAll.all && look.color.keyAll.sel && /^#[0-9a-f]{6}$/.test(look.color.keyAll.c) && look.color.auto.pressed === "true" && look.color.auto.made === "0,2" && look.color.auto.keyed && look.color.auto.still === 2 && look.color.auto.off && look.color.auto.camProps.hasProps && look.color.auto.camProps.tz === 7 && Math.abs(look.color.auto.camProps.dist - 300) < 1e-6 && Math.abs(look.color.auto.camProps.shown - 300) < 0.01 && Math.abs(Math.hypot(cam1.p[0] - cam1.t[0], cam1.p[1] - cam1.t[1]) - Math.hypot(cam0[0] - cam1.t[0], cam0[1] - cam1.t[1])) < 1e-3 * Math.hypot(...cam0)
       && rec.gif === "GIF89a" && rec.gifSize > 1000 && rec.pngs.pk === "PK" && rec.pngs.n === rec.pngs.want && /_0001\.png$/.test(rec.pngs.name) && rec.webm === "1a45dfa3" && rec.webmSize > 1000 && undo === 5
       && !ru.bad.length && ru.title === "Исследование движения" && Math.abs(back.z) < 0.01 && Math.abs(back.x) < 0.01,
-      `motion study: mate keys, rotary motor (constant, distance, data points with cubic spline, motion segments, motor graph, expression), explode and orbit wizard, appearance keys with colours, Key all, GIF and WebM, undo, duplicate study, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, motorProf, dup, exploded, cam1, look, rec, undo, ru, back })})`);
+      `motion study: mate keys, rotary motor (constant, distance, data points with cubic spline, motion segments, motor graph, expression), explode and orbit wizard, appearance keys with colours, Key all, Autokey, camera key properties, GIF and WebM, undo, duplicate study, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, motorProf, dup, exploded, cam1, look, rec, undo, ru, back })})`);
     await ctx.close();
   }
 
@@ -14427,8 +14458,9 @@ try {
     await ready();
     const ct = await dp.evaluate(() => ({ n: window.__sv.drw.doc().sheets[0].annots.filter(a => a.t === "ctable").length, tx: [...document.querySelectorAll(".drw-svg text")].map(t => t.textContent),
       beads: !!document.querySelector('#drw .drw-props [data-d="cbeads"]') }));
-    check(ct.n === 1 && ct.beads && ["Description", "Angle 1", "Angle 2", "SHS 40x40x3", "290", "0°", "Fillet weld, leg 4"].every(s => ct.tx.includes(s)),
-      `drawing: cut list table lists the tube with its length and end angles and the bead (${JSON.stringify({ n: ct.n, tx: ct.tx.filter(s => /^(Item|Qty|Desc|Angle|SHS|Fillet|29\d|0°)/.test(s)) })})`);
+    // The extruded base plate is listed too (a body made by an ordinary feature: a plate by its thickness and size).
+    check(ct.n === 1 && ct.beads && ["Description", "Angle 1", "Angle 2", "SHS 40x40x3", "290", "0°", "Fillet weld, leg 4", "Plate 10 × 200 × 200"].every(s => ct.tx.includes(s)),
+      `drawing: cut list table lists the tube with its length and end angles and the bead (${JSON.stringify({ n: ct.n, tx: ct.tx.filter(s => /^(Item|Qty|Desc|Angle|SHS|Fillet|Plate|29\d|0°)/.test(s)) })})`);
     await dp.click('#drw .drw-props [data-d="cbeads"]');
     await ready();
     const ct2 = await dp.evaluate(() => [...document.querySelectorAll(".drw-svg text")].map(t => t.textContent));

@@ -174,7 +174,7 @@ export const WELD_TYPES: ReadonlySet<string> = new Set(["member", "trimext", "en
 
 /** One row of a weldment cut list (FR-FT-121): identical items grouped with a quantity. */
 export interface CutItem {
-  kind: "member" | "plate" | "bead";
+  kind: "member" | "plate" | "body" | "bead";
   /** "SHS 40x40x3", "PL 5", "Fillet weld a4". */
   desc: string;
   qty: number;
@@ -185,6 +185,8 @@ export interface CutItem {
   angle2?: number;
   /** Plate size (box in its plane) and thickness, mm. */
   plate?: [number, number, number];
+  /** Another body (not made by a weldment feature and not a flat slab): its box along the part's axes, longest first, mm. */
+  box?: [number, number, number];
   /** Intermittent bead: weld length, pitch, and 1 when staggered. */
   inter?: [number, number] | [number, number, 1];
   /** Volume of one item, mm³ (mass = volume × density). */
@@ -198,7 +200,7 @@ export interface CutItem {
 /** A cut list item's key in `PartDoc.cutProps`: what makes items alike (kind, description, length, end angles, plate size). */
 export function cutKey(c: CutItem): string {
   const r = (v: number | undefined) => v == null ? "" : String(Math.round(v * 10) / 10);
-  return [c.kind, c.desc, r(c.length), r(c.angle1), r(c.angle2), (c.plate ?? []).map(r).join("x")].join("|") + (c.inter ? `|${c.inter.join("/")}` : "");
+  return [c.kind, c.desc, r(c.length), r(c.angle1), r(c.angle2), (c.plate ?? []).map(r).join("x")].join("|") + (c.inter ? `|${c.inter.join("/")}` : "") + (c.box ? `|${c.box.map(r).join("x")}` : "");
 }
 
 export interface SubWeld { id: string; name: string; bodies: string[] }
