@@ -3,6 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { MEdge, Projection, Topo, V3 } from "../../src/kernel/drawing";
 import { bendRows, cutCols, cutDesc, cutRows, edgeItem, weldItem, stackItem, weldRows, dimGeo, dimPrims, dimText, holeEdges, holeRows, useStyle, viewAnnots, type AnnotCtx } from "../../src/drawing/annot";
+import { tablePrims } from "../../src/drawing/gdt";
 import { placement } from "../../src/drawing/compose";
 import type { DimAnnot, DrawingView, GeoRef, Sheet } from "../../src/drawing/types";
 
@@ -178,6 +179,14 @@ test("cut list table: the cut list's items with their numbers, typed description
   const mm = { ...m, mat: true }, withMat = cuts.map((c, i) => i === 0 ? { ...c, mat: "Aluminium 6061" } : c);
   assert.deepEqual(cutCols(mm).slice(6), ["Material", "Mass (kg)"]);
   assert.deepEqual(cutRows(mm, withMat, ctx).map(r => [r[6], r[7]]), [["Aluminium 6061", "1,05"], ["", "2,36"], ["", "1,75"]], "material column before the mass");
+  // Weldments exam #15: a part number column, sub-weldments heading their items, long material names wrapped.
+  const pn = { ...a, part: true, mat: true }, inSub = cuts.slice(0, 3).map((c, i) => ({ ...c, ...(i === 0 ? { part: "WB-001", mat: "Stainless steel 1.4301 (X5CrNi18-10)" } : {}), ...(i > 0 ? { sub: "Shelf" } : {}) }));
+  assert.deepEqual(cutCols(pn).slice(0, 4), ["Item", "Qty", "Part number", "Description"]);
+  const pr = cutRows(pn, inSub, ctx);
+  assert.deepEqual(pr.map(r => [r[0], r[2], r[3]]), [["1", "WB-001", "SHS 40x40x3"], ["", "", "Sub-weldment: Shelf"], ["2", "", "Plate 10 × 200 × 150"], ["3", "", "Leg"]]);
+  assert.equal(pr[0][7], "Stainless steel 1.4301\n(X5CrNi18-10)");
+  const tall = tablePrims({ id: "t", t: "table", kind: "general", pos: [0, 0], cols: ["A"], rows: [["x\ny"], ["z"]] }, s => s);
+  assert.ok(Math.abs(tall.box[1] - -(6 + 6 + 3.6 + 6)) < 1e-9, `a two-line row is taller (${tall.box})`);
   const sh = { ...sheet, views: [view], annots: [a] } as unknown as Sheet;
   const out = viewAnnots(sh, view, pl, ctx), tx = out.prims.filter(p => p.t === "t").map(p => (p as { s: string }).s);
   assert.ok(["Item", "Qty", "Description", "Angle 1", "SHS 40x40x3", "Plate 10 × 200 × 150"].every(s => tx.includes(s)), tx.join(" "));

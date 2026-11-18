@@ -14,7 +14,7 @@ export const SNAP_KINDS: [SnapKind, string][] = [
 ];
 
 /** Snaps on while drawing until the user turns one off; midpoints, quadrants and intersections are opt-in. */
-export const DEFAULT_SNAPS: SnapKind[] = ["end", "centre", "tangent", "perpendicular", "parallel", "nearest", "hv"];
+export const DEFAULT_SNAPS: SnapKind[] = ["end", "mid", "centre", "tangent", "perpendicular", "parallel", "nearest", "hv"];
 
 /** The snaps stored in localStorage `mc:skSnaps` (a JSON list), or the defaults. */
 export function parseSnaps(s: string | null): Set<SnapKind> {

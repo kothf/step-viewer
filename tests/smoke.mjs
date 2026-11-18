@@ -2250,6 +2250,41 @@ try {
   }
 
   // --- Part modelling 1.20.0: slot, extend, split, sketch chamfer, offset and convert entities, sketch-bar flyouts ---
+  // Weldments exam #2: a line from one edge's midpoint to another's gets two Midpoint relations (Mid snaps by default),
+  // and a vertical line held onto an edge gets On curve there too.
+  if (inShard(5)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 60000 });
+    const toPage = q => mp.evaluate(q => { const v = window.__sv.viewer, f = window.__sv.model.editor().frame; const w = [0, 1, 2].map(i => f.o[i] + f.x[i] * q[0] + f.y[i] * q[1]); const s = new (v.camera.position.constructor)(...w).project(v.camera); const r = v.renderer.domElement.getBoundingClientRect(); return [r.left + (s.x + 1) / 2 * r.width, r.top + (1 - s.y) / 2 * r.height]; }, q);
+    const click = async q => { const [x, y] = await toPage(q); await mp.mouse.move(x - 3, y - 3); await mp.waitForTimeout(40); await mp.mouse.move(x, y); await mp.waitForTimeout(40); await mp.mouse.down(); await mp.mouse.up(); await mp.waitForTimeout(80); };
+    const tool = t => mp.evaluate(t => window.__sv.model.editor().setTool(t), t);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Sketch", d => { d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, ents: [], rels: [], dims: [] }); }));
+    await idle();
+    await mp.evaluate(() => window.__sv.modeller.editSketch("s"));
+    await mp.waitForTimeout(1200);
+    await tool("crect");
+    await click([0, 0]); await click([75, 35]);
+    await mp.keyboard.press("Escape");
+    await mp.evaluate(() => window.__sv.viewer.fit(false));
+    await mp.waitForTimeout(300);
+    const rb = await mp.evaluate(() => window.__sv.model.editor().sk.rels.map(r => r.id));
+    await tool("line");
+    await click([0, 35]); await click([0, -35]); await mp.keyboard.press("Escape");
+    await tool("line");
+    await click([20, 35]); await click([20.6, -35.3]); await mp.keyboard.press("Escape");
+    const mid2 = await mp.evaluate(old => { const ed = window.__sv.model.editor(); return { rels: ed.sk.rels.filter(r => !old.includes(r.id)).map(r => r.t).sort(), snaps: [...ed.snaps] }; }, rb);
+    check(mid2.rels.filter(x => x === "midpoint").length === 2 && mid2.rels.filter(x => x === "onCurve").length === 2 && mid2.rels.includes("vertical") && mid2.snaps.includes("mid"),
+      `sketch: midpoints and an H/V end on an edge get their relations while drawing (weldments exam #2) (${JSON.stringify(mid2)})`);
+    await ctx.close();
+  }
   if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
@@ -10507,6 +10542,13 @@ try {
     await pmClick(`[data-s3sel="${ptIds[0]}"]`); await pmClick('[data-s3r="fix"]'); await pmClick(`[data-s3sel="${ptIds[0]}"]`);
     await pmClick(`[data-s3sel="${segIds[0]}"]`); await pmClick('[data-s3r="alongX"]'); await pmClick('[data-s3r="dim:length"]'); await pmClick(`[data-s3sel="${segIds[0]}"]`);
     await pmClick(`[data-s3sel="${segIds[1]}"]`); await pmClick('[data-s3r="alongZ"]'); await pmClick(`[data-s3sel="${segIds[1]}"]`);
+    // Weldments exam #7: a second plain click keeps the line selected (Length still offered), Ctrl+click adds, and the panel says what is picked.
+    const keep7 = await mp.evaluate(() => window.__sv.model.mode().draft && document.querySelector('#mc-pm [data-s3r="dim:length"]') != null);
+    await mp.click(`#mc-pm [data-s3sel="${segIds[0]}"]`, { modifiers: ["Control"] });
+    const both7 = await mp.evaluate(() => ({ par: document.querySelector('#mc-pm [data-s3r="parallel"]') != null, picked: document.querySelector("#mc-pm [data-s3picked]")?.textContent ?? "" }));
+    await pmClick(`[data-s3sel="${segIds[0]}"]`);
+    const one7 = await mp.evaluate(() => document.querySelector('#mc-pm [data-s3r="dim:length"]') != null && document.querySelector('#mc-pm [data-s3r="parallel"]') == null);
+    check(keep7 && both7.par && /Line 1/.test(both7.picked) && /Line 2/.test(both7.picked) && one7, `3D sketch list: a plain click selects one item, Ctrl+click adds (exam #7) ${JSON.stringify({ keep7, both7, one7 })}`);
     const dimIn = mp.locator("#mc-pm input[data-s3dim]").first();
     await dimIn.fill("50"); await dimIn.press("Enter");
     await settle();
@@ -14667,6 +14709,11 @@ try {
     await ready();
     const ct3 = await dp.evaluate(() => ({ mat: window.__sv.drw.doc().sheets[0].annots.find(a => a.t === "ctable")?.mat, tx: [...document.querySelectorAll(".drw-svg text")].map(t => t.textContent) }));
     check(ct3.mat === true && ct3.tx.includes("Material"), `drawing: cut list table Material column (${JSON.stringify({ mat: ct3.mat })})`);
+    // Part number column (weldments exam #15).
+    await dp.click('#drw .drw-props [data-d="cpart"]');
+    await ready();
+    const ct4 = await dp.evaluate(() => ({ part: window.__sv.drw.doc().sheets[0].annots.find(a => a.t === "ctable")?.part, tx: [...document.querySelectorAll(".drw-svg text")].map(t => t.textContent) }));
+    check(ct4.part === true && ct4.tx.includes("Part number"), `drawing: cut list table Part number column (weldments exam #15) (${JSON.stringify({ part: ct4.part })})`);
     // Auto balloon on a weldment part: one balloon per cut list item seen in the view, numbered as in the cut list.
     await drwTool(dp, "auto");
     await dp.waitForFunction(() => window.__sv.drw.doc().sheets[0].annots.some(a => a.t === "balloon"), null, { timeout: 30000 }).catch(() => {});

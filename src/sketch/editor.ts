@@ -942,7 +942,11 @@ export class SketchEditor {
     const extra = (["mid", "quadrant", "intersection"] as const).filter(k => on.has(k))
       .flatMap(k => this.snapCands(k)).map(c => ({ c, d: Math.hypot(c.p[0] - p[0], c.p[1] - p[1]) }))
       .filter(x => x.d < tol).sort((a, b) => a.d - b.d)[0];
-    if (extra) return this.useCand(extra.c, materialize);
+    if (extra) {
+      // A line's midpoint hovered with the line tool still makes that line the parallel/perpendicular reference.
+      if (this.lineTool && extra.c.mid && this.sk.ents.find(x => x.id === extra.c.mid)?.t === "line") this.inferLine = extra.c.mid;
+      return this.useCand(extra.c, materialize);
+    }
     let q = p;
     let hv: "horizontal" | "vertical" | null = null;
     const last = this.draft.pts.at(-1);
@@ -957,6 +961,14 @@ export class SketchEditor {
       }
     }
     const c = this.hits(q, { points: false })[0];
+    // Held horizontal/vertical onto a curve: the point lands where that line crosses the curve and keeps both
+    // relations (weldments exam #2: the line's far end on a rectangle edge got no relation).
+    if (c && hv && last && on.has("nearest")) {
+      const sc = this.snapCurves().find(x => x.id === c.id);
+      const far = this.px(p) * 1e5, guide: SnapCurve = hv === "horizontal" ? { id: "", k: "l", a: [last[0] - far, last[1]], b: [last[0] + far, last[1]] } : { id: "", k: "l", a: [last[0], last[1] - far], b: [last[0], last[1] + far] };
+      const x = sc && intersections(guide, sc).map(x => ({ x, d: Math.hypot(x[0] - q[0], x[1] - q[1]) })).sort((a, b) => a.d - b.d)[0];
+      if (x && x.d < this.px(p) * SNAP_PX) { this.showMarker(x.x); return { p: x.x, id: null, curve: c.id, hv }; }
+    }
     if (c && !hv) {
       // A line hovered while drawing a line becomes the parallel/perpendicular reference (CAD app inference).
       if (this.lineTool && this.sk.ents.find(x => x.id === c.id)?.t === "line") this.inferLine = c.id;
