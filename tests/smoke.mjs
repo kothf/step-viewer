@@ -3041,12 +3041,19 @@ try {
       `model 1.590: selected line shows start/end/length/angle, a typed start X moves it (the length dimension keeps its length), a length or angle its dimension or relation holds is refused, open ends are marked (${JSON.stringify([ep0, ep1, lenOk, angOk, deco])})`);
     // 1.592 (gap list S7, S8): a double-click on a line picks its whole chain; Show dimensions off hides the labels.
     {
-      const [qx, qy] = await toPage([122, 60]);
+      await tool("rect");
+      await click([70, 80]);
+      await click([95, 100]);
+      await mp.keyboard.press("Escape");
+      await tool("select");
+      const [qx, qy] = await toPage([82.5, 80]);
       await mp.mouse.move(qx, qy); await mp.waitForTimeout(60);
       await mp.mouse.dblclick(qx, qy);
       await mp.waitForTimeout(120);
       const chain = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sel = [...ed.selection]; const one = sel[0]; return { sel: sel.length, want: one ? ed.chainOf(one).segs.length : -1, kinds: sel.map(id => ed.sk.ents.find(e => e.id === id)?.t) }; });
       await mp.keyboard.press("Escape");
+      await mp.keyboard.press("Control+z");
+      await mp.waitForTimeout(100);
       const nd = () => mp.evaluate(() => document.querySelectorAll(".sk-dim:not(.ord0)").length);
       const d0 = await nd();
       await mp.click("#mc-pm [data-a=showdims]");
@@ -3055,7 +3062,7 @@ try {
       await mp.click("#mc-pm [data-a=showdims]");
       await mp.waitForTimeout(100);
       const d2 = await nd();
-      check(chain.sel >= 2 && chain.sel === chain.want && chain.kinds.every(k => k === "line" || k === "arc") && d0 >= 1 && d1 === 0 && d2 === d0,
+      check(chain.sel === 4 && chain.sel === chain.want && chain.kinds.every(k => k === "line" || k === "arc") && d0 >= 1 && d1 === 0 && d2 === d0,
         `model 1.592: double-click selects the joined chain, Show dimensions hides and shows the sketch's dimensions (gap list S7, S8) (${JSON.stringify({ chain, d0, d1, d2 })})`);
     }
     // 1.316: mouse gestures (FR-UI-024): with the preference on, a right-drag shows the guide and runs the slot's command;

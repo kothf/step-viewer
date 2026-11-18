@@ -5,6 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.592.0] - 2026-11-18
+
+### Added
+- Assemblies: **Isolate** and **Make others transparent** on a component's right-click menu (and for several picked components). A bar at the bottom of the view switches the others between hidden and see-through; **Exit Isolate** or Esc brings them back. Only the view changes.
+- Sketch: double-click a line or arc to select its whole joined chain.
+- Sketch: **Show dimensions** in the sketch panel hides every dimension (a selected one still shows) to see the shape.
+- Display ▸ **Tangent edges**: off draws only sharp edges, leaving out the edges where faces meet smoothly, such as along fillets.
+
 ## [1.591.0] - 2026-11-18
 
 ### Added
@@ -3771,6 +3779,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.590.0...HEAD
+[1.592.0]: https://github.com/kothf/step-viewer/compare/v1.591.0...v1.592.0
 [1.591.0]: https://github.com/kothf/step-viewer/compare/v1.590.0...v1.591.0
 [1.590.0]: https://github.com/kothf/step-viewer/compare/v1.589.0...v1.590.0
 [1.589.0]: https://github.com/kothf/step-viewer/compare/v1.588.0...v1.589.0
