@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.581.0] - 2026-11-18
+
+### Changed
+
+- **Weldments rebuild almost twice as fast.** Trim/Extend no longer lengthens a member that already reaches the boundary only to cut the extra off again, finds where a member first meets a body for a planar trim without a full Boolean, and merged tangent segments (a bent tube) are joined in one step. The exam workbench (33 features, 9 Trim/Extends) rebuilds in about 18 s instead of 33 s after a sketch change; the result, face names and volumes are the same as before.
+
 ## [1.580.0] - 2026-11-18
 
 ### Changed
@@ -3676,7 +3682,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.580.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.581.0...HEAD
+[1.581.0]: https://github.com/kothf/step-viewer/compare/v1.580.0...v1.581.0
 [1.580.0]: https://github.com/kothf/step-viewer/compare/v1.579.0...v1.580.0
 [1.579.0]: https://github.com/kothf/step-viewer/compare/v1.578.0...v1.579.0
 [1.578.0]: https://github.com/kothf/step-viewer/compare/v1.577.0...v1.578.0

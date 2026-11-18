@@ -4,6 +4,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { FaceRef, Feature, Frame, PartDoc, PlaneRef, V2, V3 } from "../model/types";
 import { FeatureError, type Named } from "../kernel/model";
+import { stateAt } from "../kernel/memo";
 import { ANCHORS, anchorPoint, loopSegs, outline, profileName, profileShape, type Anchor, type Loop, type LoopSeg, type ProfileShape } from "./profiles";
 import { sketchShape } from "./custom";
 import type { Pierce, CutItem, EndCapFeature, GussetFeature, MemberFeature, TrimExtendFeature, WeldBeadFeature, WeldSegRef, WeldFeature } from "./types";
@@ -447,8 +448,15 @@ function mergeBodies(h: WeldHost, f: MemberFeature, segs: PathSeg[], items: Name
   segs.forEach((_s, i) => { const r = find(i); groups.set(r, [...(groups.get(r) ?? []), i]); });
   return [...groups.values()].map(g => {
     if (g.length === 1) return items[g[0]];
-    let body = items[g[0]];
-    for (const k of g.slice(1)) body = bool(h, "fuse", body, items[k], f.id);
+    // Pieces that only touch end to end are glued in one Boolean (much faster on tangent tubes); the glue is
+    // kept only when it gives one solid of their summed volume, else they are fused one by one as before.
+    let body: Named | null = null;
+    try {
+      const parts = g.map(k => items[k]), want = parts.reduce((a, p) => a + Math.abs(h.volume(p.shape)), 0);
+      const glued = glueAll(h, parts, f.id);
+      if (h.bodyList(glued).length === 1 && Math.abs(Math.abs(h.volume(glued.shape)) - want) <= 1e-7 * want) body = glued;
+    } catch { body = null; }
+    if (!body) { body = items[g[0]]; for (const k of g.slice(1)) body = bool(h, "fuse", body, items[k], f.id); }
     const piece = pieceNear(h, body, segMid(segs[g[0]]));
     // Straight mitred pieces keep their faces (the mitre plane splits the sides); arcs are unified as before.
     return g.some(k => segs[k].arc) ? unify(h, piece) : piece;
@@ -483,6 +491,36 @@ function boxSize(h: WeldHost, shape: any) {
   oc.BRepBndLib.Add(shape, box, false);
   const a = box.CornerMin(), b = box.CornerMax();
   return Math.hypot(b.X() - a.X(), b.Y() - a.Y(), b.Z() - a.Z());
+}
+
+/** Whether the bounding boxes of two shapes overlap. */
+function boxesMeet(h: WeldHost, a: any, b: any) {
+  const oc = h.oc;
+  const ba = new oc.Bnd_Box_1(), bb = new oc.Bnd_Box_1();
+  oc.BRepBndLib.Add(a, ba, false); oc.BRepBndLib.Add(b, bb, false);
+  return !ba.IsOut_4(bb);
+}
+
+/**
+ * Where a member first meets a body along its outward direction `out`, measured from its end `P`
+ * (Infinity when they don't meet): the least t over the edges of member ∩ body, sampled. Those edges are
+ * the curves where their faces cross plus the parts of each one's edges inside the other, so they are
+ * found with a Section and a classifier instead of the Common itself (about three times faster).
+ */
+function contactAlong(h: WeldHost, body: Named, bound: Named, P: V3, out: V3): number {
+  const oc = h.oc;
+  const sec = new oc.BRepAlgoAPI_Section_3(body.shape, bound.shape, false);
+  sec.Build(new oc.Message_ProgressRange_1());
+  const pts = sec.IsDone() && !sec.HasErrors() ? edgePoints(h, sec.Shape()) : [];
+  for (const [a, b] of [[body, bound], [bound, body]]) {
+    const box = new oc.Bnd_Box_1();
+    oc.BRepBndLib.Add(b.shape, box, false);
+    for (const q of edgePoints(h, a.shape)) {
+      if (box.IsOut_1(new oc.gp_Pnt_3(q[0], q[1], q[2]))) continue;
+      if (stateAt(oc, b.shape, q, 1e-7) === "in") pts.push(q);
+    }
+  }
+  return pts.length ? Math.min(...pts.map(q => dot(sub(q, P), out))) : Infinity;
 }
 
 /** Trim/Extend: member ends cut back to, or lengthened up to, a plane or another body. */
@@ -535,25 +573,40 @@ export function trimExtend(h: WeldHost, f: TrimExtendFeature, doc: PartDoc, prev
     for (const { end, reach, bound } of jobs) {
       const P = end ? s.b : s.a, out = end ? s.w : mul(s.w, -1);
       const nm = `${base}:${end ? "end" : "start"}`;
-      if (!f.noExtend) {
-        const ext = prism(h, pl, sub(P, mul(out, 1e-3)), add(P, mul(out, reach)), base);
-        body = bool(h, "fuse", body, ext, f.id);
-      }
+      const big = 4 * (s.L + reach + pl.R * 10);
+      const extend = (b: Named) => f.noExtend ? b : bool(h, "fuse", b, prism(h, pl, sub(P, mul(out, 1e-3)), add(P, mul(out, reach)), base), f.id);
       if (plane) {
         const away = dot(out, plane.n) > 0 ? plane.n : mul(plane.n, -1);
-        body = bool(h, "cut", body, halfBox(h, sub(plane.p, mul(away, gap)), away, 4 * (s.L + reach + pl.R * 10), nm), f.id);
+        const at = sub(plane.p, mul(away, gap));
+        // The extension lies wholly on the side the cut takes away when the member's whole outline at its end
+        // is already past the plane (0.1 mm spare for the sampled arcs): it would only be added to be cut off
+        // again (speed: one Boolean less).
+        const gone = Math.min(...outline(pl.shape.outer, 32).map(q => dot(sub(at3(pl, P, q), at), away))) - 1e-3 * dot(out, away) > 0.1;
+        body = bool(h, "cut", gone ? body : extend(body), halfBox(h, at, away, big, nm), f.id);
       } else if (f.planar) {
-        // Planar trim: a flat end square to the member where it first meets the body.
-        const pr = new h.oc.Message_ProgressRange_1();
-        const mk = new h.oc.BRepAlgoAPI_Common_3(body.shape, bound!.shape, pr);
-        const pts = mk.IsDone() && !mk.HasErrors() ? edgePoints(h, mk.Shape()) : [];
-        if (!pts.length) throw new FeatureError("E-WLD-TRIM", "The member doesn't reach the boundary body.");
-        const t = Math.min(...pts.map(q => dot(sub(q, P), out)));
-        body = bool(h, "cut", body, halfBox(h, add(P, mul(out, t - gap)), out, 4 * (s.L + reach + pl.R * 10), nm), f.id);
+        // Planar trim: a flat end square to the member where it first meets the body. When the member already
+        // meets it before its end (t below the extension's start), the extension changes neither t nor the
+        // result, since the cut takes it all away, so it is left out (speed).
+        let t = f.noExtend ? Infinity : contactAlong(h, body, bound!, P, out);
+        if (!(t < -1e-3)) { body = extend(body); t = contactAlong(h, body, bound!, P, out); }
+        if (!Number.isFinite(t)) throw new FeatureError("E-WLD-TRIM", "The member doesn't reach the boundary body.");
+        body = bool(h, "cut", body, halfBox(h, add(P, mul(out, t - gap)), out, big, nm), f.id);
       } else {
         // A weld gap against a body: the boundary moved back along the member by the gap.
         const tool = gap > 0 ? shifted(h, bound!, mul(out, -gap)) : bound!;
-        body = bool(h, "cut", body, { ...tool, names: bound!.names.map(() => nm) }, f.id);
+        const tmp = `${nm}~`, own = `${base}:side:`, other = `${base}:${end ? "start" : "end"}`;
+        const cutBy = (b: Named) => bool(h, "cut", b, { ...tool, names: bound!.names.map(() => tmp) }, f.id);
+        const named = (b: Named): Named => ({ ...b, names: b.names.map(n => n === tmp ? nm : n) });
+        // Speed: cut the member as it is first. When the piece kept has nothing left of this end but its side
+        // walls and the boundary's faces (its other end may stay), the extension, which only grows the member
+        // past that end, could not have joined it, so the result is the same without it; otherwise extend and
+        // cut as before.
+        let done: Named | null = null;
+        if (!f.noExtend && body.names.includes(nm) && boxesMeet(h, body.shape, tool.shape)) {
+          const k = pieceNear(h, cutBy(body), mid);
+          if (k.names.includes(tmp) && k.names.every(n => n === tmp || n === other || n.startsWith(own))) done = named(k);
+        }
+        body = done ?? named(cutBy(extend(body)));
       }
       if (jobs.length > 1) body = pieceNear(h, body, mid);
     }

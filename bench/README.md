@@ -8,7 +8,8 @@ node bench/run.mjs bench/parts.bench.ts   <folder with .mcadprt> [name filter]  
 node bench/run.mjs bench/drawing.bench.ts <folder> [filter]                      # build, facts, four exact views, a preview, a section
 node bench/run.mjs bench/prof.bench.ts    <file.mcadprt> [rows]                  # time per Modeller method / OCCT call: open, edit, no change
 node bench/run.mjs bench/hlr.bench.ts     <file.mcadprt> front|top|right|iso|section
-node bench/run.mjs bench/names.bench.ts   <folder> out.json                      # face names, volume, area, box: diff two builds
+node bench/run.mjs bench/names.bench.ts   <folder> out.json                      # face names, volume, area, box, body keys: diff two builds
+node bench/run.mjs bench/feat.bench.ts    <file.mcadprt>                         # time per feature of a full build
 node bench/run.mjs bench/step.bench.ts    <file.step> …                                  # open a STEP file: occt-import-js read, topology, kernel read, exact values
 node bench/run.mjs bench/pcb.bench.ts     <folder of Gerber/Excellon files>              # PCB worker: parse and build the layers
 node bench/run.mjs bench/curv.bench.ts    <folder> out.json                      # free-form faces' curvature range: diff two builds
