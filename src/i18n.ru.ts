@@ -3939,6 +3939,7 @@ export const RU: Record<string, string> = {
   "Pick the member bodies to trim.": "Выберите тела элементов для обрезки.",
   "Pick the sketch lines the member runs along.": "Выберите отрезки эскиза, вдоль которых идёт элемент.",
   "Pick two flat faces that meet at a corner.": "Выберите две плоские грани, сходящиеся в углу.",
+  "Body {l} × {w} × {h}": "Тело {l} × {w} × {h}",
   "Plate {t} × {w} × {l}": "Пластина {t} × {w} × {l}",
   "Polygonal": "Многоугольная",
   "Profile position": "Положение профиля",
