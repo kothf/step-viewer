@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.580.0] - 2026-11-18
+
+### Fixed
+
+- **A sheet metal Tab drawn a hair off the face's edge joins the part.** Corners within a tenth of the thickness of the face's outline are put on it, so the tab fuses into one body (it used to become a separate body, and a Jog on it then lost the base plate). A tab whose edge runs a little past the face's corner, as at a mitred flange, is no longer refused for not touching the edge.
+- **Louvers placed end to end keep the part.** Forming tools whose shapes touch each other are joined to the sheet together; before, a louver formed out of a flange's outer face could replace the whole part with the louvers alone, or quietly leave one out.
+
 ## [1.579.0] - 2026-11-18
 
 ### Fixed
@@ -3662,7 +3669,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.579.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.580.0...HEAD
+[1.580.0]: https://github.com/kothf/step-viewer/compare/v1.579.0...v1.580.0
 [1.579.0]: https://github.com/kothf/step-viewer/compare/v1.578.0...v1.579.0
 [1.578.0]: https://github.com/kothf/step-viewer/compare/v1.577.0...v1.578.0
 [1.577.0]: https://github.com/kothf/step-viewer/compare/v1.576.0...v1.577.0

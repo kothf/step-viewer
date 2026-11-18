@@ -1275,21 +1275,39 @@ export function tab(prev: SheetState, f: SmTabFeature, sk: SketchFeature, frame:
   const to = (p: V2): V2 => { const l = local(host.M, w(p)); return [l[0], l[1]]; };
   // The sketch's normal along the panel's or against it (then arcs turn the other way).
   const same = dot(frame.n, host.M.z) > 0;
+  const hostPoly = loopPolygon(host.outer, 32);
+  const size = Math.max(1, ...hostPoly.flatMap(p => [Math.abs(p[0]), Math.abs(p[1])]));
+  // A corner drawn a hair off the face's outline (a snap that missed, a mitre gap) is put on it, so the tab
+  // shares the edge exactly and fuses into one body.
+  const snapTol = Math.min(0.5, 0.1 * st.T);
+  const snap = (q: V2): V2 => {
+    const corner = host.outer.flatMap(s => s.kind === "line" || s.kind === "arc" ? [s.a, s.b] : []).find(v => d2(v, q) < snapTol);
+    if (corner) return [corner[0], corner[1]];
+    let best: V2 | null = null, bd = snapTol;
+    for (const s of host.outer) {
+      if (s.kind !== "line") continue;
+      const ux = s.b[0] - s.a[0], uy = s.b[1] - s.a[1], l2 = ux * ux + uy * uy || 1;
+      const t = Math.max(0, Math.min(1, ((q[0] - s.a[0]) * ux + (q[1] - s.a[1]) * uy) / l2));
+      const f: V2 = [s.a[0] + t * ux, s.a[1] + t * uy], d = d2(f, q);
+      if (d < bd) { bd = d; best = f; }
+    }
+    return best ?? q;
+  };
+  const toS = (p: V2): V2 => snap(to(p));
   const map = (s: Seg): Seg => {
-    if (s.kind === "line") return { ...s, a: to(s.a), b: to(s.b) };
-    if (s.kind === "arc") return { ...s, c: to(s.c), a: to(s.a), b: to(s.b), ccw: same ? s.ccw : !s.ccw };
+    if (s.kind === "line") return { ...s, a: toS(s.a), b: toS(s.b) };
+    if (s.kind === "arc") return { ...s, c: to(s.c), a: toS(s.a), b: toS(s.b), ccw: same ? s.ccw : !s.ccw };
     if (s.kind === "circle") return { ...s, c: to(s.c) };
     throw new SheetError("E-SM-CURVE", "Sheet metal profiles use lines, arcs and circles.");
   };
-  const hostPoly = loopPolygon(host.outer, 32);
-  const size = Math.max(1, ...hostPoly.flatMap(p => [Math.abs(p[0]), Math.abs(p[1])]));
   const ops: SheetOp[] = [];
   prof.faces.forEach((pf, i) => {
     const outer = oriented(pf.outer.map(map), true);
     const poly = loopPolygon(outer, 32);
     // The tab sits beside the face: no corner inside it, and some edge shared with it.
     if (poly.some(p => inPolygon(p, hostPoly) && !onLoop(host.outer, p, size * 1e-6))) throw new SheetError("E-SM-TABOVER", "Draw the tab beside the face, touching its edge, not over it.");
-    if (!poly.some(p => onLoop(host.outer, p, size * 1e-6))) throw new SheetError("E-SM-TABTOUCH", "The tab must touch an edge of the face.");
+    const hostCorners = host.outer.flatMap(s => s.kind === "line" || s.kind === "arc" ? [s.a] : []);
+    if (!poly.some(p => onLoop(host.outer, p, size * 1e-6)) && !hostCorners.some(p => onLoop(outer, p, size * 1e-6))) throw new SheetError("E-SM-TABTOUCH", "The tab must touch an edge of the face.");
     const panel: Panel = { id: `${f.id}:p${i}`, outer, holes: pf.holes.map(h => oriented(h.map(map), false)), M: host.M, n: 0 };
     st.panels.push(panel);
     ops.push({ kind: "panel", panel });

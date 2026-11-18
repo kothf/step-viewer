@@ -1020,7 +1020,7 @@ function ruled(api: SheetApi, fr: Frame, z0: number, z1: number, at: (z: number)
  */
 function formBody(api: SheetApi, body: Named, f: SmFormFeature, T: number, items: FormItem[]): Named {
   const size = f.size.v, w = f.width.v, h = f.height.v, tn = Math.tan(f.draft?.v ?? 0), eps = T * 0.01;
-  let out = body;
+  const outers: Named[] = [], inners: Named[] = [];
   items.forEach((it, i) => {
     const sgn = it.up ? 1 : -1;
     const n = applyDir(it.M, [0, 0, sgn]);
@@ -1053,9 +1053,20 @@ function formBody(api: SheetApi, body: Named, f: SmFormFeature, T: number, items
       const lo = -T - eps, fr2: Frame = { ...fr, o: [fr.o[0] + n[0] * lo, fr.o[1] + n[1] * lo, fr.o[2] + n[2] * lo] }, L = h - lo + eps;
       inner = prism(api, faceOf(api, [{ ent: "f", kind: "circle", c: [0, 0], r: size / 2 }], [], fr2), [n[0] * L, n[1] * L, n[2] * L]);
     }
-    out = api.bool("fuse", out, named(outer, "o"), f.id);
-    out = api.bool("cut", out, named(inner, "i"), f.id);
+    outers.push(named(outer, "o"));
+    inners.push(named(inner, "i"));
   });
+  // All tools in one Boolean each: forms placed end to end touch on a face, and a fuse one at a time
+  // then lost the sheet (exam #8).
+  const vol = (x: any) => { const g = new api.oc.GProp_GProps_1(); api.oc.BRepGProp.VolumeProperties_1(x, g, false, false, false); const v = g.Mass(); g.delete(); return v; };
+  const v0 = vol(body.shape);
+  const vo = outers.reduce((a, o) => a + vol(o.shape), 0);
+  const fused = boolAll(api, "fuse", body, outers, f.id);
+  // Glued on a face, the fuse can drop a tool: then the tools are joined among themselves first.
+  const vf = vol(fused.shape);
+  const joined = Math.abs(vf - v0 - vo) <= 1e-4 * vo + 1e-6 ? fused : api.bool("fuse", body, fuseAll(api, outers, f.id), f.id);
+  const out = boolAll(api, "cut", joined, inners, f.id);
+  if (!(vol(out.shape) > v0 * 0.5)) throw new SheetError("E-SM-FORMFAIL", "The forming tools could not be joined to the sheet. Move them apart.");
   return out;
 }
 

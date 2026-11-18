@@ -207,6 +207,13 @@ test("sheet metal: tab beside a face joins the flat pattern (FR-FT-120)", async 
   const fl: SmFlangeFeature = { id: "f", type: "smflange", name: "Edge-Flange1", edges: [{ faces: ["tb:p0:top", "tb:p0:tl2"] }], length: { v: 15 }, angle: { v: Math.PI / 2 } };
   const r2 = run(doc([s, base(), tb, tf, fl]));
   close(r2.props.volume, (100 * 50 + 20 * 30 - 4 * 30 + ((Math.PI / 2) * 3 + 11) * 30) * 2, 1e-5);
+  // Drawn a hair off the edge (exam #3/#17) or a little past the plate's corner (exam #4): snapped on, one body.
+  const off = run(doc([s, base(), rect("t2", 100.0001, 10, 120, 40), { ...tf, sketch: "t2" }]));
+  assert.equal(off.props.bodies, 1);
+  close(off.props.volume, (100 * 50 + 20 * 30) * 2, 1e-6);
+  const past = run(doc([s, base(), rect("t3", 100, -0.05, 120, 40), { ...tf, sketch: "t3" }]));
+  assert.equal(past.props.bodies, 1);
+  close(past.props.volume, (100 * 50 + 20 * 40 + 20 * 0.05 / 2) * 2, 1e-6);  // the near corner moves onto the plate's, the far one stays
   // Over the face: refused.
   const over = m.evaluate(doc([s, base(), rect("o", 90, 10, 120, 40), { ...tf, sketch: "o" }])).statuses.find(x => x.id === "tb");
   assert.equal(over?.ok, false);
@@ -569,6 +576,13 @@ test("sheet metal: forming tools keep the thickness and stay out of the flat pat
   const lv = form({ tool: "louver", pts: [[50, 25]], size: { v: 30 }, width: { v: 12 }, height: { v: 5 } });
   assert.ok(run(doc([s, base(), lv])).props.volume > plate);
   close(run(doc([s, base(), lv, flat])).props.volume, plate, 1e-6);
+  // Louvers end to end touch on a face: each one still adds its own (exam #8), out of either face.
+  const lv1 = run(doc([s, base(), lv])).props.volume - plate;
+  for (const face of ["b:p0:top", "b:p0:bot"]) for (const flip of [false, true]) {
+    const two = run(doc([s, base(), form({ ...lv, face: { name: face }, flip, pts: [[35, 25], [65, 25]] })]));
+    assert.equal(two.props.bodies, 1);
+    close(two.props.volume, plate + 2 * lv1, 1e-5);
+  }
   const dd = form({ draft: { v: Math.PI / 12 }, pts: [[25, 25], [75, 25]] });
   assert.ok(run(doc([s, base(), dd])).props.volume > plate);
   close(run(doc([s, base(), dd, flat])).props.volume, plate, 1e-6);

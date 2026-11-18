@@ -3615,6 +3615,7 @@ export const RU: Record<string, string> = {
   "A louver must be longer than four thicknesses.": "Жалюзи должны быть длиннее четырёх толщин.",
   "The extruded hole is too tall for its diameter.": "Отбортовка слишком высокая для такого диаметра.",
   "A forming tool runs off its face.": "Инструмент формовки выходит за грань.",
+  "The forming tools could not be joined to the sheet. Move them apart.": "Инструменты формовки не удалось соединить с листом. Раздвиньте их.",
   "The forming tool could not be made.": "Не удалось построить инструмент формовки.",
   "Unfold": "Развернуть",
   "Fold": "Свернуть",

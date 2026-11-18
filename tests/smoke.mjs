@@ -13718,6 +13718,16 @@ try {
     check(ft0.title === "Forming Tool" && /:p0:top$/.test(ft0.face ?? "") && ft0.pts?.length === 1 && Math.hypot(ft0.pts[0][0] - 10, ft0.pts[0][1] - 25) < 1 && ft0.tool === "xhole" && ft0.rows === 1
       && !ft1.bad && ft1.forms === 1 && Math.abs(ft1.v - vt1.v - ftDv) < 1e-3,
       `sheet metal: Forming Tool places an extruded hole where the face is clicked (${JSON.stringify({ ft0, ft1, ftDv, v0: vt1.v })})`);
+    // Editing it, a click on the face adds a second position (exam #7); ✕ leaves the part as it was.
+    await mp.evaluate(() => { window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "smform").id); });
+    await settle();
+    const [fex, fey] = await scr([10, 42, T]);
+    await mp.mouse.click(fex, fey);
+    await settle();
+    const fe0 = await mp.evaluate(() => { const m = window.__sv.model, d = m.mode().draft; return { pts: d?.pts?.length, forms: m.last().sheet?.forms?.length, rows: document.querySelectorAll("#mc-pm [data-sm-pt]").length, toast: [...document.querySelectorAll(".toast")].map(x => x.textContent).join("|") }; });
+    await mp.click("#mc-cancel");
+    await settle();
+    check(fe0.pts === 2 && fe0.forms === 2 && fe0.rows === 2, `sheet metal: editing a Forming Tool, a click on the face adds a position (${JSON.stringify(fe0)})`);
     // Normal Cut: a Ø8 circle sketched on the bottom face (XY); Reverse direction sends it into the sheet, linked to thickness.
     await mp.evaluate(() => window.__sv.model.store.change("Cut sketch", d => {
       d.features.push({ id: "nsk", type: "sketch", name: "Sketch10", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "nc0", t: "point", x: 90, y: 10 }, { id: "nc", t: "circle", c: "nc0", r: 4 }] });
