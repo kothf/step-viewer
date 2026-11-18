@@ -36,9 +36,9 @@ export interface Prefs {
 
 export const DEFAULT_PREFS: Prefs = {
   rotateToSketch: true, quality: "normal", verify: false, autosave: 1, lenStep: 1, angStep: 5, middle: "pan", wheel: "normal",
-  autoRels: true, showRels: true, modelSnap: true, slotDims: true,
-  // Off under webdriver, so the smoke test's click-drawn sketches stay as drawn; its own check turns it on.
-  addDims: typeof navigator === "undefined" || !navigator.webdriver,
+  autoRels: true, showRels: true, modelSnap: true,
+  // Off: new curves stay under defined (blue) until the user dimensions them; Add dimensions turns it on.
+  slotDims: false, addDims: false,
   grid: false, gridSnap: false, gridStep: 0,
 };
 
@@ -46,7 +46,7 @@ export const DEFAULT_PREFS: Prefs = {
 export const PREF_STORE: Record<PrefKey, string> = {
   rotateToSketch: "mc:skRotate", quality: "mc:quality", verify: "mc:verify", autosave: "mc:autosave",
   lenStep: "mc:lenStep", angStep: "mc:angStep", middle: "mc:middle", wheel: "mc:wheel",
-  autoRels: "mc:autoRels", showRels: "mc:skRels", modelSnap: "mc:modelSnap", slotDims: "mc:slotDims", addDims: "mc:skAddDims",
+  autoRels: "mc:autoRels", showRels: "mc:skRels", modelSnap: "mc:modelSnap", slotDims: "mc:slotDims", addDims: "mc:skAutoDims",
   grid: "mc:skGrid", gridSnap: "mc:skGridSnap", gridStep: "mc:skGridStep",
 };
 

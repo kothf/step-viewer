@@ -499,7 +499,13 @@ export class SketchEditor {
       this.render();
       return true;
     }
-    if (this.tool === "dim" && this.dimDraft.dim) { this.placeDimDraft(p); this.render(); return true; }
+    if (this.tool === "dim" && this.dimDraft.dim) {
+      // The item a click would add as the second pick lights up too, not only before the first.
+      this.hover = this.hits(p)[0] ?? null;
+      this.placeDimDraft(p);
+      this.render();
+      return true;
+    }
     const pick = ["trim", "extend", "split", "segment", "offset"].includes(this.tool) || (this.tool === "jog" && !this.draft.pts.length);
     const snap = this.snapPoint(p, !pick && !["select", "fillet", "chamfer", "convert", "intersect", "jog"].includes(this.tool));
     this.hover = this.tool === "select" || this.tool === "dim" || pick ? this.hits(p, { points: !pick })[0] ?? null
@@ -1477,7 +1483,7 @@ export class SketchEditor {
     const d = this.draft;
     const rels: SkRel[] = [];
     const auto = !exact && this.addDims && AUTO_DIM_TOOLS.has(this.tool);
-    const before = exact || auto || this.dynMirror ? new Set(this.sk.ents.map(x => x.id)) : null;
+    const before = exact || auto || this.dynMirror || this.forCons ? new Set(this.sk.ents.map(x => x.id)) : null;
     const finish = (label: string) => {
       this.sk.rels.push(...rels);
       let sizes: string[] = [];
@@ -1485,6 +1491,7 @@ export class SketchEditor {
         const made = this.sk.ents.filter(x => !before.has(x.id));
         sizes = this.addTypedDims(exact ? exact.dims(made) : this.autoDims(made), made);
       }
+      if (this.forCons && before) for (const x of this.sk.ents) if (!before.has(x.id) && x.t !== "point" && x.t !== "text") x.cons = true;
       if (this.dynMirror && before) this.mirrorNew(before);
       this.commit(label);
       if (auto) this.openSizes(sizes);
@@ -2243,13 +2250,36 @@ export class SketchEditor {
     return true;
   }
 
+  /** New curves are drawn as construction geometry (For construction, FR-SK-005). */
+  forCons = false;
+  /** Called when `forCons` changes, so the command bar and panel follow. */
+  onForCons: (() => void) | null = null;
+
+  /**
+   * Construction (Q): with curves selected, turns them into construction geometry or back; with none, switches
+   * For construction on or off, so the curves drawn next are construction lines.
+   */
   toggleConstruction() {
     let n = 0;
     for (const id of this.selection) {
       const e = this.ent(id);
       if (e && e.t !== "point") { e.cons = !e.cons; n++; }
     }
-    if (n) { this.commit("Toggle construction"); this.render(); }
+    if (n) {
+      this.commit("Toggle construction");
+      this.render();
+      this.host.toast(t(this.sk.ents.some(e => this.selection.has(e.id) && e.cons) ? "Construction geometry: shown dashed, not used in profiles." : "Normal geometry again."));
+      return;
+    }
+    this.setForCons(!this.forCons);
+    this.host.toast(t(this.forCons ? "For construction on: new lines, arcs and circles are construction geometry. Press Q again to turn it off." : "For construction off."));
+  }
+
+  setForCons(on: boolean) {
+    if (this.forCons === on) return;
+    this.forCons = on;
+    this.render();
+    this.onForCons?.();
   }
 
   /** Ctrl+A: every sketch curve and point (the origin is not an entity). */
@@ -2369,6 +2399,7 @@ export class SketchEditor {
       const e = this.ent(id);
       if (e?.t === "point" && this.sk.ents.some(o => !del.has(o.id) && refPts(o).includes(id))) del.delete(id);
     }
+    if (!del.size) { this.host.toast(t("An end point of a line or arc goes with its curve: select the curve to delete it.")); return false; }
     this.sk.ents = this.sk.ents.filter(e => !del.has(e.id));
     this.sk.rels = this.sk.rels.filter(r => !del.has(r.id) && !r.e.some(x => del.has(x)));
     this.sk.dims = this.sk.dims.filter(d => !del.has(d.id) && !d.e.some(x => del.has(x)));
@@ -2680,9 +2711,9 @@ export class SketchEditor {
   }
 
   /** Slot tools add their sizes as dimensions (a CAD app's "Add dimensions"), unless turned off. */
-  slotDims = true;
+  slotDims = false;
   /** Lines, rectangles, circles, arcs and polygons add their sizes as dimensions and open the Modify box on each (FR-UI-052). */
-  addDims = true;
+  addDims = false;
 
   /** Adds the dimensions that tell something (a snapped end may already fix one); returns their ids. */
   private slotSizes(list: { t: SkDim["t"]; e: string[]; pos: V2 }[]): string[] {
@@ -3972,6 +4003,9 @@ export class SketchEditor {
     this.syncPictures();
     this.dark = document.documentElement.dataset.theme === "dark";
     const C = this.dark ? COLORS.dark : COLORS.light;
+    // Relation glyphs and dimension texts must not catch the clicks of drawing and editing tools (a jog or a line
+    // end next to a line's middle landed on its H glyph and did nothing).
+    this.host.layer.classList.toggle("sk-pass", this.tool !== "select" && this.tool !== "dim" && this.tool !== "hord" && this.tool !== "vord");
     this.clearGroup();
     const segs: number[] = [], cols: number[] = [];
     const dimSegs: number[] = [], dimCols: number[] = [];
@@ -3983,16 +4017,22 @@ export class SketchEditor {
       if (this.hover?.id === id || this.relHot.has(id)) return C.hover;
       if (lost.has(id)) return this.dark ? DANGLING.dark : DANGLING.light;
       if (this.info.status !== "ok" && this.info.conflicting.length) return C.bad;
-      if (cons) return C.cons;
+      // Construction geometry keeps the definition colours (blue free, black defined) and is drawn dashed.
+      void cons;
       return this.info.defined.has(id) ? C.defined : C.free;
     };
-    const push = (a: V2, b: V2, c: number, out = segs, oc = cols) => {
+    const consSegs: number[] = [], consCols: number[] = [];
+    // The curve under the cursor is drawn thicker as well as in the hover colour, so it is plain what a click takes.
+    const hotSegs: number[] = [], hotCols: number[] = [];
+    const hot = (id: string) => !this.selection.has(id) && (this.hover?.id === id || this.relHot.has(id));
+    let cur = { s: segs, c: cols };
+    const push = (a: V2, b: V2, c: number, out = cur.s, oc = cur.c) => {
       const A = this.w(a), B = this.w(b);
       out.push(A.x, A.y, A.z, B.x, B.y, B.z);
       const k = new THREE.Color(c);
       oc.push(k.r, k.g, k.b, k.r, k.g, k.b);
     };
-    const poly = (pts: V2[], c: number, out = segs, oc = cols) => { for (let i = 0; i + 1 < pts.length; i++) push(pts[i], pts[i + 1], c, out, oc); };
+    const poly = (pts: V2[], c: number, out = cur.s, oc = cur.c) => { for (let i = 0; i + 1 < pts.length; i++) push(pts[i], pts[i + 1], c, out, oc); };
 
     // Sketch axes through the origin, short.
     const ax = this.px([0, 0]) * 40;
@@ -4001,6 +4041,7 @@ export class SketchEditor {
 
     for (const e of this.sk.ents) {
       const c = color(e.id, e.cons);
+      cur = hot(e.id) ? { s: hotSegs, c: hotCols } : e.cons ? { s: consSegs, c: consCols } : { s: segs, c: cols };
       if (e.t === "line") push(this.pt(e.a), this.pt(e.b), c);
       else if (e.t === "circle") poly(arcPts(this.pt(e.c), e.r, 0, Math.PI * 2, 72), c);
       else if (e.t === "arc") {
@@ -4021,6 +4062,9 @@ export class SketchEditor {
         if (!ls.length) { const b = textBox(e, at, path); poly([...b, b[0]], C.cons); }
       }
     }
+    cur = { s: segs, c: cols };
+    // The line being drawn with For construction on is dashed too.
+    if (this.forCons && this.drawing) cur = { s: consSegs, c: consCols };
     // Under-defined analysis (FR-SLV-010): orange arrows show where the selected items can still move.
     if (this.tool === "select" && this.selection.size && this.info.status === "ok" && this.info.dof > 0) {
       const pts = new Set<string>();
@@ -4188,19 +4232,23 @@ export class SketchEditor {
     }
 
     const v = this.host.viewer;
-    const mkLines = (s: number[], c: number[], width: number) => {
+    const mkLines = (s: number[], c: number[], width: number, dashed = false) => {
       if (!s.length) return;
       const g = new LineSegmentsGeometry();
       g.setPositions(s);
       g.setColors(c);
-      const m = new LineMaterial({ vertexColors: true, linewidth: width, worldUnits: false, depthTest: false, transparent: true });
+      const px = this.px([0, 0]);
+      const m = new LineMaterial({ vertexColors: true, linewidth: width, worldUnits: false, depthTest: false, transparent: true, ...(dashed ? { dashed: true, dashSize: px * 9, gapSize: px * 5 } : {}) });
       m.resolution.set(v.size.x, v.size.y);
       const l = new LineSegments2(g, m);
+      if (dashed) { l.computeLineDistances(); l.userData.skConstruction = true; }
       l.renderOrder = 3000;
       l.raycast = () => {};
       this.group.add(l);
     };
     mkLines(segs, cols, 2.2);
+    mkLines(consSegs, consCols, 1.6, true);
+    mkLines(hotSegs, hotCols, 4);
     mkLines(dimSegs, dimCols, 1.1);
 
     // Points.
@@ -4215,6 +4263,16 @@ export class SketchEditor {
     const pts = new THREE.Points(pg, new THREE.PointsMaterial({ size: 7, sizeAttenuation: false, vertexColors: true, depthTest: false, transparent: true }));
     pts.renderOrder = 3001;
     this.group.add(pts);
+    // A hovered point grows, like a hovered curve thickens.
+    const hp = this.hover && (this.hover.kind === "point" || this.hover.kind === "origin") && !this.selection.has(this.hover.id) ? (this.hover.kind === "origin" ? [0, 0] as V2 : this.pt(this.hover.id)) : null;
+    if (hp) {
+      const w = this.w(hp), hg = new THREE.BufferGeometry();
+      hg.setAttribute("position", new THREE.Float32BufferAttribute([w.x, w.y, w.z], 3));
+      const hpt = new THREE.Points(hg, new THREE.PointsMaterial({ size: 12, sizeAttenuation: false, color: C.hover, depthTest: false, transparent: true }));
+      hpt.renderOrder = 3002;
+      hpt.userData.skHover = true;
+      this.group.add(hpt);
+    }
 
     this.syncLabels(dims);
     this.cursorLabel();
