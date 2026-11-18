@@ -5,11 +5,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.568.0] - 2026-11-18
+## [1.569.0] - 2026-11-18
 
 ### Changed
 
 - **Every body of a weldment is in its cut list.** Bodies made by ordinary features (an extruded base plate, an inserted or imported body) used to be left out of the cut list; now, as in other CAD apps, each one is listed. A flat slab (two parallel faces, the volume of the larger one times the distance between them) is a plate of its thickness, width and length and groups with end caps and gussets of the same size; any other body is listed as *Body L × W × H* by its overall size. They show in the Cut list folder, the Cut List dialog and CSV, and the drawing's cut list table and balloons.
+
+## [1.568.0] - 2026-11-18
+
+### Added
+
+- **Edge Flange: Up to vertex and Offset, as in other CAD apps.** Under Flange length, End condition **Up to vertex** makes the flange's tip pass through a vertex you click (near the end of an edge); the flange follows it when the model changes. Under Flange position, **Offset** runs the face on past the edge by the distance you type and bends the flange there; the flat pattern includes the extra strip.
+- **Drag arrows on more sheet metal features.** A Base Flange drawn from an open sketch shows a depth arrow on the sketch (both ways with Mid plane), and a Hem shows a length arrow at its tip, like the Edge Flange's: drag it to change the value with a live preview, or click its label to type it. Selecting the feature in the tree and dragging edits it at once.
+
+### Changed
+
+- **Sheet Metal Properties list what the sheet is made of.** The dialog (and its CSV) now has Material and Density rows, and the mass follows the materials given to bodies: a body with its own material weighs by its density, the rest by the part's. A mass typed under Override mass properties in the part's properties is shown as is. Material names are shown as typed in both languages.
+
+### Fixed
+
+- **Convert to Sheet Metal: a lip next to a wall without one stops at that wall.** A lip picked on one wall's far edge used to run on into the inner half of the wall beside it (when that wall had no lip of its own), so the flat pattern had that material twice. The lip and its bend now stop at the neighbouring wall's inner face (the corner gap short of it), and the flat pattern keeps the part's volume.
 
 ## [1.567.0] - 2026-11-18
 
@@ -3551,7 +3566,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.568.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.569.0...HEAD
+[1.569.0]: https://github.com/kothf/step-viewer/compare/v1.568.0...v1.569.0
 [1.568.0]: https://github.com/kothf/step-viewer/compare/v1.567.0...v1.568.0
 [1.567.0]: https://github.com/kothf/step-viewer/compare/v1.566.0...v1.567.0
 [1.566.0]: https://github.com/kothf/step-viewer/compare/v1.565.0...v1.566.0
