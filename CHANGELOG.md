@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.591.0] - 2026-11-18
+
+### Changed
+
+- **New start screen.** The card shown with nothing open now leads with what a CAD app starts with: **New part**, **New assembly**, **Open…** and the **Tutorial**, each with a one-line description, and lists your **recent documents** beside them (one click opens one again), with unsaved parts to recover and the last vault underneath. The long list of file formats moved behind a **Supported formats** link; files can still be dropped anywhere on the card. The navigation cube is hidden while the start screen shows.
+
 ## [1.590.0] - 2026-11-18
 
 ### Added
@@ -3763,7 +3769,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.590.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.591.0...HEAD
+[1.591.0]: https://github.com/kothf/step-viewer/compare/v1.590.0...v1.591.0
 [1.590.0]: https://github.com/kothf/step-viewer/compare/v1.589.0...v1.590.0
 [1.589.0]: https://github.com/kothf/step-viewer/compare/v1.588.0...v1.589.0
 [1.588.0]: https://github.com/kothf/step-viewer/compare/v1.587.0...v1.588.0
