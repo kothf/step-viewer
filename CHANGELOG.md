@@ -5,6 +5,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.580.0] - 2026-11-18
+
+### Changed
+
+- **Motion study playback is smooth at any frame rate.** Between two calculated frames each component now moves along its own path (a crank pin stays on its circle), so at 15 fps the crank no longer jumps 12° at a time while the camera moves smoothly. Seeking to a time between frames shows the pose there too.
+- **GIF options beside the GIF button:** width (320 to 1280 px) and frame rate (10 to 30 fps), remembered in this browser. The GIF and the video play at the chosen playback speed, and GIF frame times now add up to the study's real time (at 15 fps it played 5 % slow).
+
+### Fixed
+
+- **Videos, GIFs and images of a motion study leave out hover and selection highlights, measurement marks, gizmos, trace paths and the rotation centre.** Section caps stay in.
+- **Interference Detection over a motion study is quicker again.** Pairs whose meshes never meet are passed over at once, and a pair keeps its answer for every frame in which the two parts sit the same way to each other (parts turning together).
+- **A plain click on a part the motion study moves no longer shows the "drag a part no mate holds" hint;** it shows only when you actually drag.
+- **Result plots fit in the motion study pane on smaller screens** (1600×900): the properties area under the timeline scrolls instead of running off the bottom of the window.
+
 ## [1.579.0] - 2026-11-18
 
 ### Fixed
@@ -3662,7 +3676,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.579.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.580.0...HEAD
+[1.580.0]: https://github.com/kothf/step-viewer/compare/v1.579.0...v1.580.0
 [1.579.0]: https://github.com/kothf/step-viewer/compare/v1.578.0...v1.579.0
 [1.578.0]: https://github.com/kothf/step-viewer/compare/v1.577.0...v1.578.0
 [1.577.0]: https://github.com/kothf/step-viewer/compare/v1.576.0...v1.577.0

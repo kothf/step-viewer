@@ -210,7 +210,22 @@ export class Viewer {
     this.ortho.updateProjectionMatrix();
   }
 
+  /** While set (a motion recording), only the model, lights, section caps and these objects are drawn: hover and
+   *  selection highlights, measurement marks, gizmos and the rotation centre stay out of the video. */
+  bareKeep: Set<THREE.Object3D> | null = null;
+
   render() {
+    if (!this.bareKeep) { this.draw(); return; }
+    const hid: THREE.Object3D[] = [];
+    for (const o of this.scene.children) {
+      if (!o.visible || o === this.modelRoot || (o as THREE.Light).isLight || o.userData.sectionCap || this.bareKeep.has(o)) continue;
+      o.visible = false;
+      hid.push(o);
+    }
+    try { this.draw(); } finally { for (const o of hid) o.visible = true; }
+  }
+
+  private draw() {
     const useAO = this.aoEnabled && this.clipPlanes.length === 0 && this.mode !== "xray" && this.mode !== "wireframe";
     if (useAO) {
       this.renderPass.camera = this.camera;
