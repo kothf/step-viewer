@@ -118,19 +118,19 @@ await pg.keyboard.press("Escape");
 await tool("sk:select");
 const shownDims = () => pg.$$eval(".sk-dim", els => els.filter(e => e.offsetParent !== null).length);
 const n0 = await shownDims();
-await pg.getByLabel("Show dimensions").uncheck();
+await pg.click('#mc-quick [data-qt="showdims"]');
 await pg.waitForTimeout(200);
 const n1 = await shownDims();
 const img8 = await snap(pg, "dims-hidden");
-await pg.getByLabel("Show dimensions").check();
+await pg.click('#mc-quick [data-qt="showdims"]');
 await pg.waitForTimeout(200);
 const n2 = await shownDims();
-check("S8", n0 === 2 && n1 === 0 && n2 === 2, "Show dimensions hides and shows the dimension labels", { n0, n1, n2 }, img8);
+check("S8", n0 === 2 && n1 === 0 && n2 === 2, "the quick bar's Show dimensions hides and shows the dimension labels", { n0, n1, n2 }, img8);
 
 // Shade closed regions off.
-await pg.getByLabel("Shade closed regions").uncheck();
+await pg.click('#mc-quick [data-qt="shade"]');
 const r0 = (await deco()).regions;
-await pg.getByLabel("Shade closed regions").check();
+await pg.click('#mc-quick [data-qt="shade"]');
 const r1 = (await deco()).regions;
-check("S5-off", r0 === 0 && r1 === 1, "Shade closed regions turns the fill off and on", { r0, r1 });
+check("S5-off", r0 === 0 && r1 === 1, "the quick bar's Shade turns the fill off and on", { r0, r1 });
 await finish(browser, pg);

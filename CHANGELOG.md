@@ -5,18 +5,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.593.0] - 2026-11-18
+## [1.594.0] - 2026-11-18
 
 ### Added
 - Assemblies: **Isolate** and **Make others transparent** on a component's right-click menu (and for several picked components). A bar at the bottom of the view switches the others between hidden and see-through; **Exit Isolate** or Esc brings them back. Only the view changes.
 - Sketch: double-click a line or arc to select its whole joined chain.
-- Sketch: **Show dimensions** in the sketch panel hides every dimension (a selected one still shows) to see the shape.
+- Sketch: **Show dimensions** on the sketch quick bar hides every dimension (a selected one still shows) to see the shape.
 - Display ▸ **Tangent edges**: off draws only sharp edges, leaving out the edges where faces meet smoothly, such as along fillets.
 
 ### Fixed
 - Esc did not close the **Hide/Show items** menu after a switch in it had been clicked.
 - Push/pull: while the arrow was dragged, the face's distance did not show by the arrow and a stale "Distance: 0 mm" callout stayed on the face.
 - Isolate: after picking hidden/transparent in the bar, Esc did not exit Isolate.
+
+## [1.593.0] - 2026-11-18
+
+### Changed
+- **Settings** (⚙ in the header, File ▸ Settings… or Ctrl+,): one window for every lasting choice, with categories (General, Units, View and performance, Mouse, Modelling, Sketch), a search over all of them that counts the matches per category, Reset page and Reset all. Language, theme, tips, units and decimals, image and opened-file mesh quality, mouse buttons and gestures, verification, and the sketch options (relations, snaps, grid, shading, dimensions on new curves) are all there.
+- The sketch panel no longer lists snapping, relation, grid and shading options; they are in Settings ▸ Sketch, and the sketch quick bar keeps one-click Grid, Snap to grid, Inferences, Add dimensions and Shade toggles plus a ⚙ Settings button. The Display menu keeps view toggles only (origin axes, ambient occlusion, analysis, measurement colour); Show tips moved from Help to Settings ▸ General.
 
 ## [1.592.0] - 2026-11-18
 
@@ -3782,7 +3788,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.593.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.594.0...HEAD
+[1.594.0]: https://github.com/kothf/step-viewer/compare/v1.593.0...v1.594.0
 [1.593.0]: https://github.com/kothf/step-viewer/compare/v1.592.0...v1.593.0
 [1.592.0]: https://github.com/kothf/step-viewer/compare/v1.591.0...v1.592.0
 [1.591.0]: https://github.com/kothf/step-viewer/compare/v1.590.0...v1.591.0

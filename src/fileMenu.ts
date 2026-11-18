@@ -47,6 +47,8 @@ export interface FileHost {
   properties(): void;
   /** Opens the Vault menu from the button the File menu was opened with. */
   vault(opener: HTMLElement): void;
+  /** Opens Settings. */
+  settings?(): void;
 }
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -118,6 +120,7 @@ export class FileMenu {
       { id: "props", label: t("Properties…"), on: doc, title: t("Title, part number, material and other properties of the document") },
       "-",
       { id: "vault", label: t("Vault…"), on: true, title: t("Vault: keep every version of your files, in a folder or in the browser") },
+      { id: "settings", label: t("Settings…"), key: "Ctrl+,", on: true, hidden: !h.settings, title: t("Units, language, mouse, sketch and other settings") },
     ];
   }
 
@@ -208,6 +211,7 @@ export class FileMenu {
       case "print": h.print(); break;
       case "props": h.properties(); break;
       case "vault": if (this.opener) h.vault(this.opener); break;
+      case "settings": h.settings?.(); break;
       case "recent-clear": await recentClear(); toast(t("Recent documents cleared")); break;
       case "exit": {
         if (!(await h.closeAll())) return;
