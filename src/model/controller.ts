@@ -63,7 +63,7 @@ import { entBezier } from "../sketch/conic";
 import { bezPts } from "../sketch/spline";
 import { hoverKindOfSketch, type HoverKind } from "../hoverCursor";
 import { SketchEditor, REL_NAME, relName, trimNum, type EntityProps, type SkTool } from "../sketch/editor";
-import { SNAP_KINDS, parseSnaps, type SnapKind } from "../sketch/snaps";
+import { SNAP_KINDS, parseSnaps } from "../sketch/snaps";
 import { ORIGIN, isOver, repairs, solve } from "../sketch/solver";
 import { sketchPath, sketchProfile, textPath } from "../sketch/profile";
 import { blockFile, readBlockFile } from "../sketch/blocks";
@@ -100,6 +100,8 @@ import { autosaveDelay, getPref, loadPrefs, onPrefs, qualityFactor, stepFor, typ
 type DragArrow = { obj: THREE.Group; pick: THREE.Mesh; base: THREE.Vector3; dir: THREE.Vector3; scale: number; mid: boolean; key: string; label?: HTMLElement; ang?: { c: THREE.Vector3; u: THREE.Vector3; r: THREE.Vector3; arc: THREE.Line; head: THREE.Group } };
 
 export interface ModelHost {
+  /** Opens Settings at a page (FR-UI-080). */
+  openSettings?(page: "general" | "units" | "view" | "mouse" | "modelling" | "sketch"): void;
   viewer: Viewer;
   /** A part was saved to a file (File ▸ recent documents). */
   saved?(name: string, bytes: Uint8Array): void;
@@ -269,6 +271,7 @@ export function featureLabel(name: string) {
 /** The sketch editor settings from Preferences (FR-UI-080). */
 function sketchPrefs(ed: SketchEditor, p: Prefs) {
   ed.modelSnap = p.modelSnap; ed.autoRels = p.autoRels; ed.showRels = p.showRels; ed.slotDims = p.slotDims; ed.addDims = p.addDims;
+  ed.shadeRegions = p.shade; ed.snaps = parseSnaps(p.snaps);
   ed.setGrid({ show: p.grid, snap: p.gridSnap, spacing: p.gridStep });
 }
 
@@ -605,9 +608,7 @@ export class ModelController {
         sketchPrefs(ed, p);
         const pm = document.getElementById("mc-pm");
         const box = (a: string, v: boolean) => { const i = pm?.querySelector<HTMLInputElement>(`[data-a=${a}]`); if (i) i.checked = v; };
-        box("grid", ed.grid); box("gridsnap", ed.gridSnap); box("autorels", ed.autoRels); box("showrels", ed.showRels); box("slotdims", ed.slotDims); box("adddims", ed.addDims); box("modelsnap", ed.modelSnap);
-        const gs = pm?.querySelector<HTMLInputElement>("[data-a=gridstep]");
-        if (gs) gs.value = ed.gridSpacing ? String(ed.gridSpacing) : "";
+        box("slotdims", ed.slotDims); box("adddims", ed.addDims);
         ed.render();
         this.renderQuick();
       }
@@ -1124,7 +1125,6 @@ export class ModelController {
       renamedDim: (from, to) => this.store!.change("Rename dimension", d => renameEverywhere(d, from, to)),
     }, sk, this.frameOf(sk));
     sketchPrefs(editor, loadPrefs());
-    try { editor.snaps = parseSnaps(localStorage.getItem("mc:skSnaps")); } catch { /* private mode */ }
     editor.onQuickSnap = () => this.renderQuick();
     editor.onForCons = () => { this.renderBar(); this.renderPanel(); };
     this.mode = { kind: "sketch", id, editor, entry, isNew };
@@ -6084,7 +6084,8 @@ export class ModelController {
       + (sk ? "" : `<div class="mc-sep"></div><span class="mc-fly">${btn("save", t("Save"), t("Save the part as .mcadprt (Ctrl+S)"))}<button class="mc-caret" data-fly="save" aria-haspopup="menu" title="${esc(t("More save options"))}" aria-label="${esc(t("More save options"))}">▾</button></span>` + btn("step", t("STEP"), t("Export the body as STEP")));
     q.querySelectorAll<HTMLButtonElement>("[data-c]").forEach(b => b.addEventListener("click", () => this.command(b.dataset.c!)));
     q.querySelector<HTMLElement>('[data-fly="undo"]')?.addEventListener("click", e => this.historyMenu(e.currentTarget as HTMLElement));
-    q.querySelectorAll<HTMLButtonElement>("[data-qt]").forEach(b => b.addEventListener("click", () => this.sketchToggle(b.dataset.qt as "grid" | "gridsnap" | "autorels" | "adddims")));
+    q.querySelectorAll<HTMLButtonElement>("[data-qt]").forEach(b => b.addEventListener("click", () => this.sketchToggle(b.dataset.qt as "grid" | "gridsnap" | "autorels" | "adddims" | "shade")));
+    q.querySelector<HTMLElement>("[data-qset]")?.addEventListener("click", () => this.host.openSettings?.("sketch"));
     q.querySelector<HTMLElement>('[data-fly="qsnap"]')?.addEventListener("click", e => {
       const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
       this.quickSnapMenu(r.left, r.bottom + 4, () => $("#mc-quick").querySelector<HTMLElement>('[data-fly="qsnap"]')?.focus());
@@ -6110,28 +6111,32 @@ export class ModelController {
     return tg("grid", "#", t("Grid"), t("Show grid"), ed.grid)
       + tg("gridsnap", "⌗", t("Snap to grid"), t("Points that snap to nothing else go to the nearest grid point; hold Ctrl to place freely."), ed.gridSnap)
       + tg("autorels", "⊥", t("Inferences"), t("Lines snap horizontal, vertical, perpendicular, parallel or tangent and keep that relation; hold Ctrl to draw without them."), ed.autoRels)
-      + tg("adddims", "↔", t("Add dimensions"), t("New lines, rectangles, circles and arcs get their sizes as dimensions and the Modify box opens on each."), ed.addDims);
+      + tg("adddims", "↔", t("Add dimensions"), t("New lines, rectangles, circles and arcs get their sizes as dimensions and the Modify box opens on each."), ed.addDims)
+      + tg("shade", "▨", t("Shade"), t("Fill closed regions while sketching, so an outline that does not close shows at once."), ed.shadeRegions)
+      + (this.host.openSettings ? `<button class="mc-b mc-qset" data-qset="sketch" title="${esc(t("Sketch settings: relations, snaps, grid and display (Ctrl+,)"))}"><span class="mc-i" aria-hidden="true"><svg viewBox="3 3 18 18" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M17.25 10.74L19.14 11.04L19.14 12.96L17.25 13.26L16.60 14.82L17.72 16.37L16.37 17.72L14.82 16.60L13.26 17.25L12.96 19.14L11.04 19.14L10.74 17.25L9.18 16.60L7.63 17.72L6.28 16.37L7.40 14.82L6.75 13.26L4.86 12.96L4.86 11.04L6.75 10.74L7.40 9.18L6.28 7.63L7.63 6.28L9.18 7.40L10.74 6.75L11.04 4.86L12.96 4.86L13.26 6.75L14.82 7.40L16.37 6.28L17.72 7.63L16.60 9.18Z"/><circle cx="12" cy="12" r="2.6"/></svg></span><span class="mc-l">${esc(t("Settings"))}</span></button>` : "");
   }
 
   /** Flips one sketch toggle, remembers it, and keeps the quick bar and the sketch panel in step. */
-  private sketchToggle(k: "grid" | "gridsnap" | "autorels" | "adddims") {
+  private sketchToggle(k: "grid" | "gridsnap" | "autorels" | "adddims" | "shade") {
     const m = this.mode;
     if (m.kind !== "sketch") return;
     const ed = m.editor;
     if (k === "grid") ed.setGrid({ show: !ed.grid });
     else if (k === "gridsnap") ed.setGrid({ snap: !ed.gridSnap, show: ed.gridSnap ? undefined : true });
     else if (k === "adddims") ed.addDims = !ed.addDims;
+    else if (k === "shade") { ed.shadeRegions = !ed.shadeRegions; ed.render(); }
     else ed.autoRels = !ed.autoRels;
     try {
       // Only the toggle that changed is stored, so the others keep following their defaults.
       if (k === "adddims") localStorage.setItem("mc:skAutoDims", ed.addDims ? "1" : "0");
+      else if (k === "shade") localStorage.setItem("mc:skShade", ed.shadeRegions ? "1" : "0");
       else if (k === "grid") localStorage.setItem("mc:skGrid", ed.grid ? "1" : "0");
       else if (k === "gridsnap") { localStorage.setItem("mc:skGridSnap", ed.gridSnap ? "1" : "0"); localStorage.setItem("mc:skGrid", ed.grid ? "1" : "0"); }
       else localStorage.setItem("mc:autoRels", ed.autoRels ? "1" : "0");
     } catch { /* private mode */ }
     const pm = document.getElementById("mc-pm");
     const box = (a: string, v: boolean) => { const i = pm?.querySelector<HTMLInputElement>(`[data-a=${a}]`); if (i) i.checked = v; };
-    box("grid", ed.grid); box("gridsnap", ed.gridSnap); box("autorels", ed.autoRels); box("adddims", ed.addDims);
+    box("adddims", ed.addDims);
     this.renderQuick();
     $("#mc-quick").querySelector<HTMLElement>(`[data-qt="${k}"]`)?.focus();
   }
@@ -8754,16 +8759,6 @@ export class ModelController {
       + `<p class="pm-help muted">${esc(t("Plane"))}: <span class="pm-skplane" translate="no">${esc(plane)}</span> · <b class="pm-def" data-state="${isOver(info) ? "over" : info.dof === 0 ? "full" : "under"}">${esc(def)}</b>${!isOver(info) && info.dof > 0 ? ` <button class="btn small" data-a="fulldef" title="${esc(t("Add horizontal/vertical relations and dimensions from the origin until nothing is free"))}">${esc(t("Fully define sketch"))}</button>` : ""}</p>`
       + `<p class="pm-help muted">${esc(t("Draw with the tools above. Double-click a dimension to change it."))}</p>`
       + `<ul class="pm-legend" aria-label="${esc(t("Sketch colours"))}"><li><i class="sw under"></i>${esc(t("Blue: under defined, can still move"))}</li><li><i class="sw full"></i>${esc(t("Black: fully defined by dimensions and relations"))}</li><li><i class="sw over"></i>${esc(t("Red: over defined, relations or dimensions conflict"))}</li><li><i class="sw cons"></i>${esc(t("Dashed: construction geometry, not in profiles"))}</li><li><i class="sw hot"></i>${esc(t("Thick turquoise: under the cursor, what a click takes"))}</li><li><i class="sw sel"></i>${esc(t("Orange: selected"))}</li><li><i class="sw fill"></i>${esc(t("Light blue fill: a closed region a feature can use"))}</li><li><i class="sw open"></i>${esc(t("Orange dot: an open end, joined to nothing"))}</li></ul>`
-      + `<label class="chk pm-chk" title="${esc(t("Points snap to model vertices, edge midpoints and circle centres, and stay attached to them; Smart Dimension takes model edges."))}"><input type="checkbox" data-a="modelsnap"${ed.modelSnap ? " checked" : ""} />${esc(t("Snap to model geometry"))}</label>`
-      + `<label class="chk pm-chk" title="${esc(t("Lines snap horizontal, vertical, perpendicular, parallel or tangent and keep that relation; hold Ctrl to draw without them."))}"><input type="checkbox" data-a="autorels"${ed.autoRels ? " checked" : ""} />${esc(t("Automatic relations"))}</label>`
-      + `<label class="chk pm-chk" title="${esc(t("Relation glyphs next to the entities; hover one to see what it ties, click to select it."))}"><input type="checkbox" data-a="showrels"${ed.showRels ? " checked" : ""} />${esc(t("Show relations"))}</label>`
-      + `<label class="chk pm-chk" title="${esc(t("Fill closed regions while sketching, so an outline that does not close shows at once."))}"><input type="checkbox" data-a="shade"${ed.shadeRegions ? " checked" : ""} />${esc(t("Shade closed regions"))}</label>`
-      + `<details class="pm-snaps"><summary>${esc(t("Snaps"))}</summary><div class="pm-snapgrid">${SNAP_KINDS.map(([k, label]) => `<label class="chk pm-chk"><input type="checkbox" data-snap="${k}"${ed.snaps.has(k) ? " checked" : ""} />${esc(t(label))}</label>`).join("")}</div></details>`
-      + `<details class="pm-snaps pm-grid"${ed.grid || ed.gridSnap ? " open" : ""}><summary>${esc(t("Grid"))}</summary><div class="pm-snapgrid">`
-        + `<label class="chk pm-chk"><input type="checkbox" data-a="grid"${ed.grid ? " checked" : ""} />${esc(t("Show grid"))}</label>`
-        + `<label class="chk pm-chk" title="${esc(t("Points that snap to nothing else go to the nearest grid point; hold Ctrl to place freely."))}"><input type="checkbox" data-a="gridsnap"${ed.gridSnap ? " checked" : ""} />${esc(t("Snap to grid"))}</label>`
-        + `<label class="pm-field">${esc(t("Grid spacing"))} <input type="number" min="0" step="any" data-a="gridstep" value="${ed.gridSpacing || ""}" placeholder="${esc(t("Automatic"))}" title="${esc(t("Millimetres between grid lines; empty follows the zoom."))}" /></label>`
-        + `</div></details>`
       + `<div class="pm-sec"><h4>${esc(t("Selected"))}: ${nSel}</h4>`
       + (nSel ? `<div class="pm-rels">${rels.map(r => `<button class="btn small" data-rel="${r}">${esc(t(REL_NAME[r]))}</button>`).join("")}</div>`
         + `<div class="pm-rels"><button class="btn small" data-a="cons">${esc(t("Construction"))}</button>${ed.canMerge() ? `<button class="btn small" data-a="merge" title="${esc(t("Merge the two points into one"))}">${esc(t("Merge points"))}</button>` : ""}<button class="btn small danger" data-a="del">${esc(t("Delete"))}</button></div>`
@@ -8807,22 +8802,10 @@ export class ModelController {
     pm.querySelector<HTMLInputElement>("[data-a=shownames]")?.addEventListener("change", e => { ed.showNames = (e.target as HTMLInputElement).checked; ed.render(); });
     pm.querySelector<HTMLInputElement>("[data-a=slotdims]")?.addEventListener("change", e => { ed.slotDims = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:slotDims", ed.slotDims ? "1" : "0"); } catch { /* private mode */ } });
     pm.querySelector<HTMLInputElement>("[data-a=adddims]")?.addEventListener("change", e => { ed.addDims = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:skAutoDims", ed.addDims ? "1" : "0"); } catch { /* private mode */ } this.renderQuick(); });
-    pm.querySelector<HTMLInputElement>("[data-a=autorels]")?.addEventListener("change", e => { ed.autoRels = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:autoRels", ed.autoRels ? "1" : "0"); } catch { /* private mode */ } this.renderQuick(); });
-    pm.querySelector<HTMLInputElement>("[data-a=shade]")?.addEventListener("change", e => { ed.shadeRegions = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:skShade", ed.shadeRegions ? "1" : "0"); } catch { /* private mode */ } ed.render(); });
-    pm.querySelector<HTMLInputElement>("[data-a=showrels]")?.addEventListener("change", e => { ed.showRels = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:skRels", ed.showRels ? "1" : "0"); } catch { /* private mode */ } ed.render(); });
-    const saveGrid = () => { try { localStorage.setItem("mc:skGrid", ed.grid ? "1" : "0"); localStorage.setItem("mc:skGridSnap", ed.gridSnap ? "1" : "0"); localStorage.setItem("mc:skGridStep", String(ed.gridSpacing || "")); } catch { /* private mode */ } };
-    pm.querySelector<HTMLInputElement>("[data-a=grid]")?.addEventListener("change", e => { ed.setGrid({ show: (e.target as HTMLInputElement).checked }); saveGrid(); this.renderQuick(); });
-    pm.querySelector<HTMLInputElement>("[data-a=gridsnap]")?.addEventListener("change", e => { ed.setGrid({ snap: (e.target as HTMLInputElement).checked }); saveGrid(); this.renderQuick(); });
     this.bindPictureBox(pm, ed);
     this.bindBlockBox(pm, ed);
     this.bindEntityBox(pm, ed);
-    pm.querySelector<HTMLInputElement>("[data-a=gridstep]")?.addEventListener("change", e => { const v = Number((e.target as HTMLInputElement).value); ed.setGrid({ spacing: isFinite(v) && v > 0 ? v : 0 }); saveGrid(); });
-    pm.querySelectorAll<HTMLInputElement>("[data-snap]").forEach(i => i.addEventListener("change", () => {
-      const k = i.dataset.snap as SnapKind;
-      if (i.checked) ed.snaps.add(k); else ed.snaps.delete(k);
-      try { localStorage.setItem("mc:skSnaps", JSON.stringify([...ed.snaps])); } catch { /* private mode */ }
-    }));
-    pm.querySelector<HTMLInputElement>("[data-a=modelsnap]")?.addEventListener("change", e => { ed.modelSnap = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:modelSnap", ed.modelSnap ? "1" : "0"); } catch { /* private mode */ } });
+
     pm.querySelector<HTMLInputElement>("[data-a=dimname]")?.addEventListener("change", e => {
       const inp = e.target as HTMLInputElement;
       const err = ed.renameDim(inp.dataset.id!, inp.value);
