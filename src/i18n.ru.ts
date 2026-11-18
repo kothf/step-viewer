@@ -5017,4 +5017,5 @@ export const RU: Record<string, string> = {
   "Multi-directional": "Произвольное",
   "Radial": "Радиальное",
   "Particulate, no direction": "Точечное, без направления",
+  "References found again after the change: {names}.": "Ссылки найдены заново после изменения: {names}.",
 };

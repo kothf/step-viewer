@@ -12,9 +12,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { areaOf, massOf, optimalBox, stateAt } from "./memo";
 import type { V2, SkEnt } from "../model/types";
-import type { FlexFeature, WrapFeature, DomeFeature, HealFeature, RecognizedHole, RecognizedBlends, SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, PatternSpot, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, ChamferFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, HoleSink, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
+import type { FlexFeature, WrapFeature, DomeFeature, HealFeature, RecognizedHole, RecognizedBlends, SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, PatternSpot, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, ChamferFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, RefSig, HoleFeature, HoleSink, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
 import { dir2Apart, dir2Feature, threadThrough, holeExits, headKind } from "../model/types";
 import { featureRefs } from "../model/doc";
+import { applyRefFixes, type RefFix } from "../model/refFix";
 import { recognizedHoleFeatures, TAPER } from "../model/holes";
 import { advProfile, captiveStack } from "../model/advHole";
 import { ctxFrame } from "../model/context";
@@ -42,7 +43,7 @@ export interface Named { shape: any; faces: any[]; names: string[] }
 type Tool = { shape: Named; op: "fuse" | "cut" };
 /** A curve feature's result (helix): the OCCT wire and points along it for the view. */
 interface Curve { wire: any; pts: V3[] }
-interface CacheEntry { key: string; body: Named | null; sheets: Named | null; status: FeatureStatus; frame?: Frame; tools?: Tool[]; sketch?: SketchFeature; curve?: Curve; regions?: IntersectRegion[]; spots?: PatternSpot[]; sm?: SheetState | null }
+interface CacheEntry { key: string; alt?: string; fixed?: Feature; fixes?: RefFix[]; body: Named | null; sheets: Named | null; status: FeatureStatus; frame?: Frame; tools?: Tool[]; sketch?: SketchFeature; curve?: Curve; regions?: IntersectRegion[]; spots?: PatternSpot[]; sm?: SheetState | null }
 
 export interface ModelMesh {
   name: string;
@@ -207,14 +208,162 @@ export class Modeller {
 
   // ---------- references ----------
 
+  /**
+   * Re-finding references (1.585.0). While `evaluate` runs a feature, a face or edge whose names are gone
+   * is looked for again by where it was (`hint`) and what it was (`g`), and every reference that resolved
+   * with a new name, place or shape is noted in `fixes`, so the document can take the current one over.
+   */
+  private refind = false;
+  private fixes: RefFix[] = [];
+
+  private r6(v: number): number { const x = Math.round(v * 1e6) / 1e6; return x === 0 ? 0 : x; }
+
+  /** What a face is, for finding it again: plane + normal, cylinder / sphere + radius, or other. */
+  private faceSig(face: any): RefSig {
+    const oc = this.oc, T = oc.GeomAbs_SurfaceType;
+    const ad = new oc.BRepAdaptor_Surface_2(face, true);
+    try {
+      const ty = ad.GetType();
+      if (ty === T.GeomAbs_Plane) {
+        let n = this.xyz(ad.Plane().Axis().Direction());
+        if (!ad.Plane().Direct()) n = mul(n, -1);
+        if (face.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED) n = mul(n, -1);
+        return ["p", this.r6(n[0]), this.r6(n[1]), this.r6(n[2])];
+      }
+      if (ty === T.GeomAbs_Cylinder) return ["c", this.r6(ad.Cylinder().Radius())];
+      if (ty === T.GeomAbs_Sphere) return ["s", this.r6(ad.Sphere().Radius())];
+      return ["o"];
+    } finally { ad.delete(); }
+  }
+
+  /** What an edge is: line + direction (either way), circle + radius, or other. */
+  private edgeSig(edge: any): RefSig {
+    const oc = this.oc, T = oc.GeomAbs_CurveType;
+    const ad = new oc.BRepAdaptor_Curve_2(edge);
+    try {
+      const ty = ad.GetType();
+      if (ty === T.GeomAbs_Line) {
+        let d = this.xyz(ad.Line().Direction());
+        // One of the two ways along the line, always the same one.
+        const k = Math.abs(d[0]) > 1e-9 ? d[0] : Math.abs(d[1]) > 1e-9 ? d[1] : d[2];
+        if (k < 0) d = mul(d, -1);
+        return ["l", this.r6(d[0]), this.r6(d[1]), this.r6(d[2])];
+      }
+      if (ty === T.GeomAbs_Circle) return ["c", this.r6(ad.Circle().Radius())];
+      return ["o"];
+    } finally { ad.delete(); }
+  }
+
+  /** How well a found shape's signature fits the stored one: false = another kind of thing. */
+  private sigFits(want: RefSig | undefined, got: RefSig): boolean {
+    if (!want) return true;
+    if (want[0] !== got[0]) return false;
+    if (want[0] === "p" || want[0] === "l") {
+      const d = (want[1] as number) * (got[1] as number) + (want[2] as number) * (got[2] as number) + (want[3] as number) * (got[3] as number);
+      return (want[0] === "l" ? Math.abs(d) : d) > 0.9995;
+    }
+    if (want[0] === "c" || want[0] === "s") return Math.abs((want[1] as number) - (got[1] as number)) <= 0.02 * Math.abs(want[1] as number) + 1e-6;
+    return true;
+  }
+
+  private hintOf(p: V3): V3 { return [this.r6(p[0]), this.r6(p[1]), this.r6(p[2])]; }
+
+  /** Notes the reference as it resolved now, when its names, place or shape differ from the stored ones. */
+  private noteRef<T extends { hint?: V3; g?: RefSig }>(ref: T, to: T, found: boolean): void {
+    if (!this.refind) return;
+    const moved = !ref.hint || !to.hint || d3(ref.hint, to.hint) > 1e-3;
+    if (!found && !moved && JSON.stringify(ref.g) === JSON.stringify(to.g)) return;
+    const from = JSON.stringify(ref), next = JSON.stringify(to);
+    if (from === next || this.fixes.some(x => x.from === from)) return;
+    this.fixes.push({ from, to: JSON.parse(next), found });
+  }
+
+  /** The owner feature of a face name (`f3:side:e7` → `f3`). */
+  private ownerOf(name: string): string { const i = name.indexOf(":"); return i < 0 ? name : name.slice(0, i); }
+
+  /**
+   * The best of the candidates for a lost reference: nearest to the hint among those of the same kind.
+   * `near` = candidates that keep part of the name (looser limit). Null when nothing is near enough or
+   * two candidates are about as near (no guessing).
+   */
+  private nearest<C>(body: Named, cands: { c: C; d: number; near: boolean; fits: boolean }[], hasSig: boolean): C | null {
+    const L = this.size(body.shape);
+    const tight = Math.max(1e-4, 1e-3 * L);
+    const ok = cands.filter(x => x.fits).sort((a, b) => a.d - b.d);
+    if (!ok.length) return null;
+    const best = ok[0];
+    const limit = hasSig ? (best.near ? 0.25 : 0.1) * L : Math.max(0.05, (best.near ? 0.02 : 0.01) * L);
+    if (best.d > limit) return null;
+    if (best.d > tight && ok.length > 1 && ok[1].d < best.d * 1.5 + tight) return null;
+    return best.c;
+  }
+
+  /** A face whose name is gone, found again by its place and kind. */
+  private refindFace(body: Named, ref: FaceRef): number {
+    if (!this.refind || !ref.hint) return -1;
+    const owner = this.ownerOf(ref.name);
+    const cands = body.faces.map((f, i) => {
+      const fits = this.sigFits(ref.g, this.faceSig(f));
+      return { c: i, d: fits ? d3(this.centroid(f), ref.hint!) : Infinity, near: this.ownerOf(body.names[i]) === owner, fits };
+    });
+    return this.nearest(body, cands, !!ref.g) ?? -1;
+  }
+
   resolveFace(body: Named | null, ref: FaceRef): any {
     if (!body) throw new FeatureError("E-TN-LOST", `Reference lost: face ${ref.name}`);
     const idx = body.names.map((n, i) => (n === ref.name ? i : -1)).filter(i => i >= 0);
-    if (!idx.length) throw new FeatureError("E-TN-LOST", `Reference lost: face ${ref.name}`);
-    if (idx.length === 1 || !ref.hint) return body.faces[idx[0]];
-    let best = idx[0], bd = Infinity;
-    for (const i of idx) { const d = d3(this.centroid(body.faces[i]), ref.hint); if (d < bd) { bd = d; best = i; } }
-    return body.faces[best];
+    let best = idx[0] ?? -1, found = false;
+    if (!idx.length) { best = this.refindFace(body, ref); found = true; }
+    if (best < 0) throw new FeatureError("E-TN-LOST", `Reference lost: face ${ref.name}`);
+    if (idx.length > 1 && ref.hint) {
+      let bd = Infinity;
+      for (const i of idx) { const d = d3(this.centroid(body.faces[i]), ref.hint); if (d < bd) { bd = d; best = i; } }
+    }
+    const face = body.faces[best];
+    if (this.refind) this.noteRef(ref, { ...ref, name: body.names[best], hint: this.hintOf(this.centroid(face)), g: this.faceSig(face) }, found);
+    return face;
+  }
+
+  /** The faces of the body an edge lies on (their indices). */
+  private facesOfEdge(body: Named, e: any): number[] {
+    const out: number[] = [];
+    body.faces.forEach((x, i) => { if (this.sub(x, "EDGE").some(y => y.IsSame(e))) out.push(i); });
+    return out;
+  }
+
+  /** How far a point is from an edge: the nearest of its centre of mass and points along it. */
+  private edgeDist(e: any, p: V3): number {
+    let best = d3(this.edgeMid(e), p);
+    const ad = new this.oc.BRepAdaptor_Curve_2(e);
+    const a = ad.FirstParameter(), b = ad.LastParameter();
+    for (let i = 0; i <= 16; i++) best = Math.min(best, d3(this.xyz(ad.Value(a + ((b - a) * i) / 16)), p));
+    ad.delete();
+    return best;
+  }
+
+  /** An edge whose face names are gone (or no longer meet), found again by its place and kind. */
+  private refindEdge(body: Named, ref: EdgeRef, fa: any[], fb: any[]): any {
+    if (!this.refind || !ref.hint) return null;
+    const [na, nb] = ref.faces;
+    const owners = [this.ownerOf(na), this.ownerOf(nb)];
+    // With one name left, only that face's edges; with none (or both, apart), every edge of the body.
+    const one = fa.length && !fb.length ? fa : fb.length && !fa.length ? fb : null;
+    const seen: any[] = [];
+    for (const f of one ?? body.faces) for (const e of this.sub(f, "EDGE")) if (!seen.some(x => x.IsSame(e))) seen.push(e);
+    const cands = seen.map(e => {
+      const fits = this.sigFits(ref.g, this.edgeSig(e));
+      return { c: e, d: fits ? this.edgeDist(e, ref.hint!) : Infinity, near: false, fits };
+    });
+    // Only the few nearest need their faces looked up: an edge between faces of the same features is the likelier one.
+    cands.sort((x, y) => x.d - y.d);
+    for (const c of cands.slice(0, 6)) {
+      if (!c.fits) continue;
+      const ns = this.facesOfEdge(body, c.c).map(i => body.names[i]);
+      if (ns.length < 2) { c.fits = false; continue; }
+      const os = ns.map(n => this.ownerOf(n));
+      c.near = !!one || (os.includes(owners[0]) && os.includes(owners[1]));
+    }
+    return this.nearest(body, cands.slice(0, 6), !!ref.g);
   }
 
   resolveEdge(body: Named | null, ref: EdgeRef): any {
@@ -230,10 +379,22 @@ export class Modeller {
         for (const e of this.sub(b, "EDGE")) if (ea.some(x => x.IsSame(e)) && !cands.some(c => c.IsSame(e))) cands.push(e);
       }
     }
-    if (!cands.length) throw new FeatureError("E-TN-LOST", `Reference lost: edge between ${na} and ${nb}`);
-    if (cands.length === 1 || !ref.hint) return cands[0];
-    let best = cands[0], bd = Infinity;
-    for (const e of cands) { const d = d3(this.edgeMid(e), ref.hint); if (d < bd) { bd = d; best = e; } }
+    let best = cands[0], found = false;
+    if (!cands.length) { best = this.refindEdge(body, ref, fa, fb); found = true; }
+    if (!best) throw new FeatureError("E-TN-LOST", `Reference lost: edge between ${na} and ${nb}`);
+    if (cands.length > 1 && ref.hint) {
+      let bd = Infinity;
+      for (const e of cands) { const d = d3(this.edgeMid(e), ref.hint); if (d < bd) { bd = d; best = e; } }
+    }
+    if (this.refind) {
+      let faces = ref.faces;
+      if (found) {
+        const ns = this.facesOfEdge(body, best).map(i => body.names[i]);
+        // The old order where a name is kept, so "first face" meanings (two-distance chamfers) stay.
+        faces = ns[1] === na || ns[0] === nb ? [ns[1], ns[0]] : [ns[0], ns[1]];
+      }
+      this.noteRef(ref, { ...ref, faces, hint: this.hintOf(this.edgeMid(best)), g: this.edgeSig(best) }, found);
+    }
     return best;
   }
 
@@ -6475,11 +6636,13 @@ export class Modeller {
   /** Called before each feature that is built again (not from the cache): the worker reports rebuild progress (exam #16). */
   onFeature?: (i: number, of: number, name: string) => void;
 
-  evaluate(doc: PartDoc): { body: Named | null; sheets: Named | null; statuses: FeatureStatus[]; frames: Record<string, Frame>; sketches: Record<string, SketchFeature | Sketch3dFeature>; curves: Record<string, V3[]>; regions: Record<string, IntersectRegion[]>; spots: Record<string, PatternSpot[]>; sheet: SheetState | null } {
+  evaluate(doc: PartDoc): { body: Named | null; sheets: Named | null; statuses: FeatureStatus[]; frames: Record<string, Frame>; sketches: Record<string, SketchFeature | Sketch3dFeature>; refs: Record<string, RefFix[]>; curves: Record<string, V3[]>; regions: Record<string, IntersectRegion[]>; spots: Record<string, PatternSpot[]>; sheet: SheetState | null } {
     const end = doc.rollback ?? doc.features.length;
     // Sketches whose On edge curves moved with the model (FR-SK-064): later features use the moved copy.
     doc = { ...doc, features: [...doc.features] };
     const sketches: Record<string, SketchFeature | Sketch3dFeature> = {};
+    // References that resolved under other names or at another place than stored (per feature), for the document to take over.
+    const refs: Record<string, RefFix[]> = {};
     let body: Named | null = null;
     // Surface bodies (FRS 9.11): open sheets, kept apart from the solids.
     let sheets: Named | null = null;
@@ -6502,8 +6665,12 @@ export class Modeller {
       if (i >= end) { statuses.push({ id: f.id, ok: true, code: "rolled-back" }); return; }
       const hit = this.cache[i];
       const keep = i < frozen && hit && hit.status.id === f.id && next.length === i;
+      const prior = chain;
       chain = keep ? hit.key : `${chain}|${JSON.stringify(f)}`;
-      if (hit && hit.key === chain) {
+      if (hit && (hit.key === chain || (hit.alt !== undefined && hit.alt === chain))) {
+        // The document may already hold the references as they resolved (`alt`): the same result, the same chain on.
+        chain = hit.key;
+        if (hit.fixed) { doc.features[i] = hit.fixed; if (hit.fixes) refs[f.id] = hit.fixes; }
         next.push(hit);
         statuses.push(hit.status);
         if (hit.frame) frames[f.id] = hit.frame;
@@ -6527,6 +6694,8 @@ export class Modeller {
         try {
           if (featureRefs(f).features.some(p => failed.has(p))) throw new FeatureError("E-FT-PARENT", "A sketch or plane this feature uses has an error.");
           this.warning = "";
+          this.fixes = [];
+          this.refind = true;
           const before = body;
           if (f.type === "sketch") {
             frame = this.frameOf(f, body, frames);
@@ -6602,15 +6771,28 @@ export class Modeller {
           const coded = e instanceof FeatureError || e instanceof SheetError;
           status = { id: f.id, ok: false, code: coded ? (e as FeatureError).code : "E-KRN", message: coded ? e.message : `Kernel error: ${e.message ?? e}` };
           failed.add(f.id);
+          this.fixes = [];
         }
+        this.refind = false;
+      }
+      // References found again or moved: later features and the cache see the feature as it resolved.
+      let fixed: Feature | undefined, alt: string | undefined;
+      const fixes = this.fixes;
+      this.fixes = [];
+      if (fixes.length) {
+        fixed = applyRefFixes(doc.features[i], fixes);
+        alt = `${prior}|${JSON.stringify(applyRefFixes(f, fixes))}`;
+        doc.features[i] = fixed;
+        if (moved) { moved = fixed as SketchFeature; sketches[f.id] = moved; }
+        refs[f.id] = fixes;
       }
       statuses.push(status);
-      next.push({ key: chain, body, sheets, status, frame: frame ?? frames[f.id], tools: this.tools.get(f.id), sketch: moved, curve: this.curves.get(f.id), regions: this.regions.get(f.id), spots: this.spots.get(f.id), sm });
+      next.push({ key: chain, alt, fixed, fixes: fixes.length ? fixes : undefined, body, sheets, status, frame: frame ?? frames[f.id], tools: this.tools.get(f.id), sketch: moved, curve: this.curves.get(f.id), regions: this.regions.get(f.id), spots: this.spots.get(f.id), sm });
     });
     this.cache = next;
     const curves: Record<string, V3[]> = {};
     for (const [id, c] of this.curves) curves[id] = c.pts;
-    return { body, sheets, statuses, frames, sketches, curves, regions: Object.fromEntries(this.regions), spots: Object.fromEntries(this.spots), sheet: sm };
+    return { body, sheets, statuses, frames, sketches, refs, curves, regions: Object.fromEntries(this.regions), spots: Object.fromEntries(this.spots), sheet: sm };
   }
 
   /** The helpers sheet metal (src/sheetmetal) builds its solids with. */

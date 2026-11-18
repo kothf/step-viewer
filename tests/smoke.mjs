@@ -3477,6 +3477,33 @@ try {
   }
 
   // --- Part modelling 1.21.0: reference axes and points, S shortcut bar, sketch box selection ---
+  // 1.585: references found again after an earlier feature changes (a fillet keeps its edge when sketch lines get new ids).
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    mp.on("dialog", d => d.accept());
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    const volume = v => mp.waitForFunction(v => document.querySelector("#mc-busy").hidden && (Math.abs(window.__sv.model.last()?.props?.volume - v) < 1 || window.__sv.model.last()?.statuses.some(s => !s.ok)), v, { timeout: 60000 });
+    await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("Block", d => { d.features.push({ id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -50, -30), P("b", 50, -30), P("c", 50, 30), P("d", -50, 30), L("l1", "a", "b"), L("l2", "b", "c"), L("l3", "c", "d"), L("l4", "d", "a")] }, { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } }, { id: "fl", type: "fillet", name: "Fillet1", radius: { v: 5 }, edges: [{ faces: ["f1:side:l1", "f1:side:l2"], hint: [50, -30, 10] }] }); }); });
+    await volume(119892.7);
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features[2].edges[0].g);
+    const rf0 = await mp.evaluate(() => { const m = window.__sv.model; return { ok: m.last().statuses.every(s => s.ok), g: m.store.doc.features[2].edges[0].g }; });
+    // The two lines drawn again under new ids, and the block made longer, in one edit.
+    await mp.evaluate(() => window.__sv.model.store.change("Redraw", d => { const sk = d.features[0]; for (const e of sk.ents) { if (e.id === "l1") e.id = "l7"; if (e.id === "l2") e.id = "l8"; if (e.id === "b" || e.id === "c") e.x = 70; } }));
+    await volume(143892.7);
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features[2].edges[0].faces.includes("f1:side:l7"), null, { timeout: 5000 }).catch(() => {});
+    const rf1 = await mp.evaluate(() => { const m = window.__sv.model; return { ok: m.last().statuses.every(s => s.ok), v: Math.round(m.last().props.volume), faces: [...m.store.doc.features[2].edges[0].faces].sort().join(), toast: [...document.querySelectorAll(".toast")].some(x => /found again/.test(x.textContent)) }; });
+    check(rf0.ok && rf0.g?.[0] === "l" && rf1.ok && rf1.v === 143893 && rf1.faces === "f1:side:l7,f1:side:l8" && rf1.toast,
+      `model 1.585: a fillet finds its edge again after the sketch lines were drawn anew, and the document takes the new names (${JSON.stringify({ rf0, rf1 })})`);
+    await ctx.close();
+  }
   if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
