@@ -7,7 +7,7 @@ import { cutList, gussetEnds, pierceSpots, type WeldHost } from "../../src/weldm
 import { PROFILE_TYPES, profileArea, profileShape, profileSizes } from "../../src/weldments/profiles";
 import type { Feature, PartDoc, SketchFeature, SkEnt, V2, V3, Sketch3dFeature } from "../../src/model/types";
 import type { GussetFeature, MemberFeature } from "../../src/weldments/types";
-import { barPlan, barsNeeded, beadSym, bodyMatName, cutKey, itemDensity, itemMatText, planGroups, splitSubs, stockTotals } from "../../src/weldments/types";
+import { barPlan, barsNeeded, beadSym, bodyMatName, cutKey, cutPropsOf, itemDensity, itemMatText, planGroups, splitSubs, stockTotals } from "../../src/weldments/types";
 import { occ } from "./occ";
 import { applyWeldMemory, weldMemory } from "../../src/weldments/defaults";
 
@@ -180,6 +180,14 @@ test("trim/extend, end caps, gussets and weld beads (FR-FT-121)", async () => {
   assert.deepEqual(pt.cut.map(c => [c.length, c.angle1, c.angle2]), [[500, 0, 0], [380, 0, 0]]);
   near(pt.volume, rb.volume - 6 * pt.cut[1].volume / 380, 0.2 * pt.cut[1].volume / 380);
   assert.deepEqual(run(m, doc([k, mem, { ...tr, ...g3, kind: "body", planar: true } as Feature])).cut.map(c => c.length), [500, 377]);
+  // Two boundary bodies (exam #4): a second post at x = 500; the beam (100..400) runs to both, each end to its nearest post:
+  // 500 − 2·20 between the flat sides, plus the round corners' reach on both ends (386 above was one end: +6 each).
+  const k2: Sketch3dFeature = { ...k, pts: [...k.pts, { id: "E", p: [500, 0, 0] }, { id: "F", p: [500, 0, 500] }], segs: [...k.segs, { id: "post2", t: "line", pts: ["E", "F"] }] };
+  const mem2: MemberFeature = { ...mem, segs: [...mem.segs, { sketch: "k", ent: "post2" }] };
+  const two = run(m, doc([k2, mem2, { ...tr, kind: "body", more: [{ name: "m:post2:start" }] } as Feature]));
+  assert.deepEqual(two.cut.map(c => [c.length, c.qty]), [[500, 2], [472, 1]]);
+  // One boundary alone still trims only the end nearer to it.
+  assert.deepEqual(run(m, doc([k2, mem2, { ...tr, kind: "body" } as Feature])).cut.map(c => c.length), [500, 386]);
 
   // End cap on the beam's free end, 5 thick, 2 in from its outline.
   const cap: Feature = { id: "c", type: "endcap", name: "End cap1", faces: [{ name: "m:beam:end" }], thickness: { v: 5 }, inset: { v: 2 } };
@@ -708,4 +716,19 @@ test("a fillet bead's weld symbol text for drawings", () => {
   const f = { id: "w", type: "weldbead", name: "", set1: [], set2: [], size: N(5), size2: N(6), inter: { len: N(50), pitch: N(100), stagger: true }, both: true, around: true } as unknown as import("../../src/weldments/types").WeldBeadFeature;
   assert.deepEqual(beadSym(f), { size: "z5×6", len: "50 Z (100)", both: true, around: true });
   assert.deepEqual(beadSym({ ...f, size2: undefined, inter: undefined, both: undefined, around: undefined, field: true, span: { start: N(0), len: N(80) } }), { size: "z5", len: "80", field: true });
+});
+
+test("cut list properties follow an item whose length changed (exam #17)", () => {
+  const item = (length: number, bodies: string[]) => ({ kind: "member", desc: "SHS 50x50x4", length, angle1: 45, angle2: 45, qty: bodies.length, volume: 1, bodies } as import("../../src/weldments/types").CutItem);
+  const old = item(1500, ["m1", "m1#2"]), moved = item(1600, ["m1", "m1#2"]), other = item(700, ["m2"]);
+  const props: PartDoc["cutProps"] = { [cutKey(old)]: { desc: "Top rail", part: "P-1", bodies: ["m1", "m1#2"] } };
+  const of = cutPropsOf([moved, other], props);
+  assert.deepEqual(of(moved), { key: cutKey(old), p: props[cutKey(old)] });
+  assert.deepEqual(of(other), { key: cutKey(other), p: {} });
+  // An item's own key wins; properties without bodies (older files) only match their own key.
+  assert.deepEqual(cutPropsOf([old], props)(old).p.desc, "Top rail");
+  assert.deepEqual(cutPropsOf([moved], { [cutKey(old)]: { desc: "x" } })(moved).p, {});
+  // A plate never takes a member's properties.
+  const plate = { kind: "plate", desc: "", plate: [120, 120, 10], qty: 1, volume: 1, bodies: ["m1"] } as unknown as import("../../src/weldments/types").CutItem;
+  assert.deepEqual(cutPropsOf([plate], props)(plate).p, {});
 });

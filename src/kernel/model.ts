@@ -22,7 +22,7 @@ import { loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type Pr
 import { splineBezierN } from "../sketch/spline";
 import { segSpline } from "../sketch/wrap";
 import { FlexError, flexAffine, flexIdle, flexLinear, flexMap, flexPoint, type FlexMap } from "../model/flex";
-import { chain3d } from "../sketch/sketch3d";
+import { chain3d, solve3d } from "../sketch/sketch3d";
 import { applyExt, piercePoint, projectEdge, uvOf, type ModelEdge } from "../sketch/external";
 import { solve } from "../sketch/solver";
 import { evalSheet } from "../sheetmetal/kernel";
@@ -3184,6 +3184,31 @@ export class Modeller {
     for (const sg of p.segs) mk.Add_1(this.segEdge(sg, frame));
     if (!mk.IsDone()) throw new FeatureError("E-SWP-PATH", "The path's curves do not join end to end.");
     return mk.Wire();
+  }
+
+  /**
+   * A 3D sketch's points held on 2D sketch points (`Sk3Point.at`) moved to where those points are now, then the sketch solved
+   * again, so a 3D sketch drawn on a frame sketch follows it (weldments exam #6). Null when nothing moved.
+   */
+  follow3d(f: Sketch3dFeature, doc: PartDoc, frames: Record<string, Frame>): Sketch3dFeature | null {
+    if (!f.pts.some(q => q.at)) return null;
+    const next: Sketch3dFeature = structuredClone(f);
+    let lost = 0, changed = false;
+    for (const q of next.pts) {
+      if (!q.at) continue;
+      const sk = doc.features.find(g => g.id === q.at!.sketch), fr = frames[q.at.sketch];
+      const e = sk?.type === "sketch" && !sk.suppressed ? sk.ents.find(x => x.id === q.at!.pt) : undefined;
+      if (!fr || e?.t !== "point") { lost++; continue; }
+      const w: V3 = [0, 1, 2].map(k => fr.o[k] + fr.x[k] * e.x + fr.y[k] * e.y) as V3;
+      if (Math.hypot(w[0] - q.p[0], w[1] - q.p[1], w[2] - q.p[2]) > 1e-9) { q.p = w; changed = true; }
+      q.fixed = true;
+    }
+    if (lost) this.warning = "Some 3D sketch points lost the sketch points they were on; they stay where they were.";
+    if (!changed) return null;
+    const r = solve3d(next);
+    if (!r.ok) throw new FeatureError("E-3D-FOLLOW", "The 3D sketch cannot follow the sketch points it is on: its relations or dimensions conflict.");
+    for (const q of next.pts) if (r.pts[q.id]) q.p = r.pts[q.id];
+    return next;
   }
 
   /** 3D sketch (FR-SK-080): its lines and splines as one wire when they form a chain (a sweep path); drawn from the document. */
@@ -6393,11 +6418,11 @@ export class Modeller {
   /** Turns verification on or off; the cached results were made the other way, so they are dropped. */
   setVerify(on: boolean) { if (on !== this.verify) { this.verify = on; this.cache = []; } }
 
-  evaluate(doc: PartDoc): { body: Named | null; sheets: Named | null; statuses: FeatureStatus[]; frames: Record<string, Frame>; sketches: Record<string, SketchFeature>; curves: Record<string, V3[]>; regions: Record<string, IntersectRegion[]>; spots: Record<string, PatternSpot[]>; sheet: SheetState | null } {
+  evaluate(doc: PartDoc): { body: Named | null; sheets: Named | null; statuses: FeatureStatus[]; frames: Record<string, Frame>; sketches: Record<string, SketchFeature | Sketch3dFeature>; curves: Record<string, V3[]>; regions: Record<string, IntersectRegion[]>; spots: Record<string, PatternSpot[]>; sheet: SheetState | null } {
     const end = doc.rollback ?? doc.features.length;
     // Sketches whose On edge curves moved with the model (FR-SK-064): later features use the moved copy.
     doc = { ...doc, features: [...doc.features] };
-    const sketches: Record<string, SketchFeature> = {};
+    const sketches: Record<string, SketchFeature | Sketch3dFeature> = {};
     let body: Named | null = null;
     // Surface bodies (FRS 9.11): open sheets, kept apart from the solids.
     let sheets: Named | null = null;
@@ -6480,7 +6505,11 @@ export class Modeller {
           else if (f.type === "hole") { const h = this.hole(f, body, frames); body = h.body; frame = h.frame; frames[f.id] = frame; }
           else if (f.type === "mirror") body = this.mirror(f, doc, body, frames);
           else if (f.type === "helix") this.curves.set(f.id, this.helix(f, doc, body, frames));
-          else if (f.type === "sketch3d") this.curves.set(f.id, this.sketch3d(f));
+          else if (f.type === "sketch3d") {
+            const moved3 = this.follow3d(f, doc, frames);
+            if (moved3) { doc.features[i] = moved3; sketches[f.id] = moved3; }
+            this.curves.set(f.id, this.sketch3d(moved3 ?? f));
+          }
           else if (f.type === "curve") this.curves.set(f.id, this.curve(f, doc, body, sheets, frames));
           else if (f.type === "sweepsurf") sheets = this.sweepSurf(f, doc, body, sheets, frames);
           else if (f.type === "sweep") body = this.sweepAlong(f, doc, body, frames);

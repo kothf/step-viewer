@@ -330,6 +330,9 @@ function defineRecognised(feats: Feature[]) {
   });
 }
 
+/** Tree rows that Ctrl+click picks together: bodies and cut list items. */
+const multiRow = (id: string | null) => !!id && (id.startsWith("body:") || id.startsWith("cut:"));
+
 export class ModelController {
   store: DocStore | null = null;
   private kernel: ModelKernel;
@@ -559,6 +562,15 @@ export class ModelController {
     // A result shown from the disk cache that the kernel's own build did not match (it never should): build again.
     this.kernel.onStale = () => void this.rebuild();
     host.viewer.scene.add(this.decor);
+    // Shown sketches and curves count in Zoom to fit and the view's clip range, so a big frame sketch
+    // with no body yet fits the view and does not vanish when panned (weldments exam #1).
+    host.viewer.extraBounds = () => {
+      if (!this.store) return null;
+      const m = this.mode, box = this.shownBox.clone();
+      const sk = m.kind === "sketch" ? m.editor.sketchBox() : null;
+      if (sk && !sk.isEmpty()) box.union(sk);
+      return box.isEmpty() ? null : box;
+    };
     host.viewer.scene.add(this.hoverGroup, this.ctHoverGroup);
     this.ghostGroup.visible = false;
     host.viewer.scene.add(this.ghostGroup);
@@ -843,6 +855,17 @@ export class ModelController {
     const upd = r.sketches ?? {};
     for (const [id, sk] of Object.entries(upd)) {
       const cur = this.store!.feature(id);
+      if (sk.type === "sketch3d") {
+        // A 3D sketch moved onto the sketch points it is on: take over its point positions (no undo step), also in an open panel.
+        if (cur?.type !== "sketch3d") continue;
+        const pos = new Map(sk.pts.map(q => [q.id, q.p]));
+        const m = this.mode, open = m.kind === "feature" && m.draft.id === id && m.draft.type === "sketch3d" ? m.draft : null;
+        const move = (g: Sketch3dFeature) => { let ch = false; for (const q of g.pts) { const p = pos.get(q.id); if (p && p.some((c, k) => Math.abs(c - q.p[k]) > 1e-9)) { q.p = [...p] as V3; ch = true; } } return ch; };
+        const next = structuredClone(cur);
+        if (move(next)) this.store!.amend(d => { const i = d.features.findIndex(f => f.id === id); if (i >= 0) d.features[i] = next; });
+        if (open && move(open)) this.drawDecor();
+        continue;
+      }
       if (!cur || cur.type !== "sketch") continue;
       const m = this.mode;
       const editing = m.kind === "sketch" && m.id === id;
@@ -1584,6 +1607,8 @@ export class ModelController {
   deleteFolder(fid: string) { this.store?.change("Delete folder", d => { d.folders = (d.folders ?? []).filter(g => g.id !== fid); }); }
   /** The cut list as shown: the last rebuild's items split by sub-weldment (`splitSubs`); tree rows `cut:<i>` index it. */
   cutItems() { return splitSubs(this.last?.cutList ?? [], this.doc.subWelds); }
+  /** Body and cut list rows picked with Ctrl+click beside `selected` (exam #12). */
+  private treePicks = new Set<string>();
   /** The bodies a cut list row, body row or sub-weldment row stands for (only bodies the cut list knows). */
   private cutBodies(id: string): string[] {
     const known = new Set((this.last?.cutList ?? []).flatMap(c => c.bodies));
@@ -4460,7 +4485,12 @@ export class ModelController {
 
   // ---------- 3D decorations: sketches, planes, picked edges ----------
 
+  /** The box of the sketches and curves `drawDecor` drew last (`boxing` while it draws them). */
+  private shownBox = new THREE.Box3();
+  private boxing = false;
+
   private clearDecor() {
+    this.shownBox.makeEmpty();
     for (const c of [...this.decor.children]) {
       const o = c as THREE.Mesh;
       o.geometry?.dispose();
@@ -4478,6 +4508,7 @@ export class ModelController {
 
   private lines(pos: number[], color: number, width: number, dashed = false, depthTest = false) {
     if (!pos.length) return;
+    if (this.boxing) for (let i = 0; i + 2 < pos.length; i += 3) this.shownBox.expandByPoint(new THREE.Vector3(pos[i], pos[i + 1], pos[i + 2]));
     const g = new LineSegmentsGeometry();
     g.setPositions(pos);
     const mat = new LineMaterial({ color, linewidth: width, worldUnits: false, depthTest, transparent: true, dashed, dashSize: 3, gapSize: 2 });
@@ -4499,6 +4530,7 @@ export class ModelController {
     const used = new Set(this.doc.features.flatMap(f => this.doc.features.filter(g => g.type === "sketch" && absorbs(f, g.id)).map(g => g.id)));
     if (m.kind === "feature" && (m.draft.type === "extrude" || m.draft.type === "revolve")) used.add(m.draft.sketch);
     const end = this.doc.rollback ?? this.doc.features.length;
+    this.boxing = true;
     this.doc.features.slice(0, end).forEach(f => {
       if (f.type !== "sketch" || f.suppressed || (m.kind === "sketch" && m.id === f.id)) return;
       // Edit sketch plane: the sketch shows on the plane picked so far, highlighted.
@@ -4520,6 +4552,7 @@ export class ModelController {
       this.lines(pos, editing ? 0xf08c00 : dark ? 0x8ab4ff : 0x1d4ed8, editing ? 2.2 : 1.4);
     }
     this.draw3dSketches();
+    this.boxing = false;
     // Flattened sheet metal (FR-FT-120): bend lines on the flat pattern, up bends one colour, down the other.
     const fp = this.doc.features.find(f => f.type === "smflat");
     const fpAt = fp ? this.doc.features.indexOf(fp) : -1;
@@ -5533,6 +5566,7 @@ export class ModelController {
     if (!id) return;
     const mesh = this.featureFaceMesh(id, draft ? 0xffd43b : 0x4dabf7, draft ? 0.5 : 0.45);
     if (mesh) this.decor.add(mesh);
+    if (!draft) for (const p of this.treePicks) { const x = this.featureFaceMesh(p, 0x4dabf7, 0.45); if (x) this.decor.add(x); }
   }
 
   /** A see-through overlay of the faces a feature made (or a body / cut list item's faces), in world space; null when it has none. */
@@ -6580,11 +6614,12 @@ export class ModelController {
     const box = $("#mc-tree");
     this.renderRollNotice();
     if (!this.store) { box.innerHTML = ""; return; }
+    if (!multiRow(this.selected)) this.treePicks.clear();
     const d = this.doc;
     const st = new Map((this.last?.statuses ?? []).map(s => [s.id, s]));
     const m = this.mode;
     const row = (id: string, icon: string, label: string, extra = "", cls = "", aria = "") =>
-      `<div class="ft-row${cls}${this.selected === id ? " sel" : ""}" role="treeitem" aria-selected="${this.selected === id}"${aria} tabindex="${this.selected === id ? 0 : -1}" data-id="${esc(id)}"><span class="ft-ico" aria-hidden="true">${icon}</span><span class="ft-name" translate="no">${esc(label)}</span>${extra}</div>`;
+      `<div class="ft-row${cls}${this.selected === id || this.treePicks.has(id) ? " sel" : ""}" role="treeitem" aria-selected="${this.selected === id || this.treePicks.has(id)}"${aria} tabindex="${this.selected === id ? 0 : -1}" data-id="${esc(id)}"><span class="ft-ico" aria-hidden="true">${icon}</span><span class="ft-name" translate="no">${esc(label)}</span>${extra}</div>`;
     let html = row("part", ICONS.part, d.name, "", " ft-root");
     html += `<div class="ft-group" role="group">`;
     html += row("material", ICONS.material, d.material ? t(d.material.name) : t("Material <not specified>"), "", " ft-plane");
@@ -6717,6 +6752,15 @@ export class ModelController {
       const id = r.dataset.id!;
       r.addEventListener("click", e => {
         const a = (e.target as HTMLElement).closest<HTMLElement>("[data-a]")?.dataset.a;
+        // Ctrl+click picks several bodies or cut list items, so the menu's Hide, Material… and sub-weldment act on all (exam #12).
+        if (!a && multiRow(id) && this.mode.kind === "none") {
+          if ((e.ctrlKey || e.metaKey) && multiRow(this.selected)) {
+            if (id === this.selected) { const nx = [...this.treePicks][0]; if (nx) { this.treePicks.delete(nx); this.selected = nx; } }
+            else if (this.treePicks.has(id)) this.treePicks.delete(id); else this.treePicks.add(id);
+            this.renderTree(); this.drawDecor(); return;
+          }
+          this.treePicks.clear();
+        }
         if (a === "sup") { this.toggleSuppress(id); return; }
         if (a === "eye") { this.toggleHidden(id); return; }
         if (a === "twist") { this.toggleFeat(id); return; }
@@ -6798,7 +6842,12 @@ export class ModelController {
         if (id.startsWith("folder:") || id.startsWith("body:") || id.startsWith("wsub:")) { if (id.startsWith("folder:")) this.toggleFolder(id.slice(7)); this.startRename(id); return; }
         if (this.store!.feature(id)) this.editFeature(id);
       });
-      r.addEventListener("contextmenu", e => { e.preventDefault(); this.selected = id; this.renderTree(); this.drawDecor(); this.openMenu(id, e.clientX, e.clientY); });
+      r.addEventListener("contextmenu", e => {
+        e.preventDefault();
+        // A right-click on one of several picked rows keeps them all picked for the menu.
+        if (!this.treePicks.has(id)) { this.selected = id; this.renderTree(); this.drawDecor(); }
+        this.openMenu(id, e.clientX, e.clientY);
+      });
       r.addEventListener("keydown", e => {
         if ((e.target as HTMLElement).matches("input")) return;
         const rows = [...box.querySelectorAll<HTMLElement>(".ft-row")];
@@ -6877,7 +6926,16 @@ export class ModelController {
     const end = this.doc.rollback ?? this.doc.features.length;
     const items: ([string, () => void] | null)[] = [];
     if (id === "part" || id === "material") items.push([t("Properties…"), () => this.editProps()]);
-    if (id.startsWith("body:")) {
+    // Rows picked together (Ctrl+click): the menu acts on all of them.
+    const rows = this.treePicks.size && (id === this.selected || this.treePicks.has(id)) ? [this.selected!, ...this.treePicks] : [id];
+    if (rows.length > 1) {
+      const keys = [...new Set(rows.flatMap(r => r.startsWith("body:") ? [r.slice(5)] : this.cutBodies(r)))];
+      if (keys.length) {
+        const hide = keys.some(k => !this.doc.bodies?.[k]?.hidden);
+        items.push([hide ? t("Hide bodies") : t("Show bodies"), () => this.setBody(keys, { hidden: hide })]);
+        items.push([t("Material…"), () => void this.pickBodyMaterial(keys)]);
+      }
+    } else if (id.startsWith("body:")) {
       const key = id.slice(5);
       items.push([this.doc.bodies?.[key]?.hidden ? t("Show body") : t("Hide body"), () => this.setBody(key, { hidden: !this.doc.bodies?.[key]?.hidden })]);
       items.push([t("Rename"), () => this.startRename(id)]);
@@ -6887,7 +6945,7 @@ export class ModelController {
     }
     if (id === "folder:cutlist" || id.startsWith("cut:") || id.startsWith("wsub:")) items.push([t("Cut List…"), () => this.cutList()]);
     // Sub-weldments (a CAD app): a cut list item or a weldment body goes into a new or an existing one.
-    const wb = this.cutBodies(id);
+    const wb = [...new Set(rows.flatMap(r => this.cutBodies(r)))];
     if (wb.length && !id.startsWith("wsub:")) {
       const subs = this.doc.subWelds ?? [];
       const inSub = subs.filter(x => wb.some(b => x.bodies.includes(b)));
@@ -7003,12 +7061,15 @@ export class ModelController {
   }
 
   /** Bodies folder actions: show/hide and colour are display state (one undo step each), delete adds a Body-Delete feature. */
-  setBody(key: string, ch: { name?: string; hidden?: boolean; color?: V3; material?: MatRef }) {
+  /** Changes one body, or several as one undo step (bodies picked together in the tree). */
+  setBody(keys: string | string[], ch: { name?: string; hidden?: boolean; color?: V3; material?: MatRef }) {
     if (!this.store) return;
+    const all = typeof keys === "string" ? [keys] : keys;
     // A body being hidden leaves a see-through copy, so Shift+Tab / Ctrl+Shift+Tab can find it again (FR-UI-105).
     // (A shown body keeps its ghost: undo may hide it again; only still-hidden bodies are picked.)
-    if (ch.hidden === true) this.keepGhost(key);
+    if (ch.hidden === true) for (const key of all) this.keepGhost(key);
     this.store.change(ch.hidden != null ? (ch.hidden ? "Hide body" : "Show body") : "color" in ch ? "Body colour" : "material" in ch ? "Body material" : "Rename body", d => {
+      for (const key of all) {
       const cur = { ...(d.bodies?.[key] ?? {}), ...ch };
       if (!cur.hidden) delete cur.hidden;
       if (!cur.name) delete cur.name;
@@ -7017,15 +7078,17 @@ export class ModelController {
       d.bodies = { ...(d.bodies ?? {}), [key]: cur };
       if (!Object.keys(cur).length) delete d.bodies[key];
       if (!Object.keys(d.bodies).length) delete d.bodies;
+      }
     });
     this.renderTree();
     void this.rebuild();
   }
 
   /** A body's own material from the library (FR-MAT-001); None gives it the part's again. */
-  async pickBodyMaterial(key: string) {
+  async pickBodyMaterial(keys: string | string[]) {
+    const key = typeof keys === "string" ? keys : keys[0];
     const r = await pickMaterial({ current: this.doc.bodies?.[key]?.material ?? this.doc.material ?? null, allowNone: true });
-    if (r) this.setBody(key, { material: r.material ? toRef(r.material) : undefined });
+    if (r) this.setBody(keys, { material: r.material ? toRef(r.material) : undefined });
   }
 
   /**
@@ -8925,11 +8988,14 @@ export class ModelController {
   }
 
   /** Where a click in the view puts a 3D sketch point: an existing point, a snap point, a face, else the sketch plane through the last point. */
-  private click3d(e: PointerEvent, f: Sketch3dFeature): { id?: string; p?: V3 } | null {
+  private click3d(e: PointerEvent, f: Sketch3dFeature): { id?: string; p?: V3; at?: { sketch: string; pt: string } } | null {
     const v = this.host.viewer, r = v.renderer.domElement.getBoundingClientRect();
     const scr = (p: V3) => { const q = new THREE.Vector3(...p).project(v.camera); return [((q.x + 1) / 2) * r.width + r.left, ((1 - q.y) / 2) * r.height + r.top]; };
     const near = f.pts.find(p => { const [x, y] = scr(p.p); return Math.hypot(x - e.clientX, y - e.clientY) < 8; });
     if (near) return { id: near.id };
+    // A point of a shown 2D sketch before the 3D sketch: the new point stays on it when that sketch changes (exam #6).
+    const on = this.sketchPointAt(e.clientX, e.clientY, f.id, scr);
+    if (on) return on;
     const snap = this.host.snapAt?.(e.clientX, e.clientY);
     if (snap) return { p: snap.point };
     const face = this.host.faceAt(e.clientX, e.clientY);
@@ -8944,6 +9010,24 @@ export class ModelController {
     const q: V3 = [hit.x, hit.y, hit.z];
     // The point stays on the plane: round the in-plane coordinates to 0.01 mm.
     return { p: q.map((c, i) => n[i] ? o[i] : Math.round(c * 100) / 100) as V3 };
+  }
+
+  /** The nearest point (within 8 px) of a shown, unsuppressed 2D sketch earlier in the tree than the feature `before`, as a world point and its reference. */
+  private sketchPointAt(x: number, y: number, before: string, scr: (p: V3) => number[]): { p: V3; at: { sketch: string; pt: string } } | null {
+    const fs = this.doc.features, end = fs.findIndex(g => g.id === before);
+    let best: { p: V3; at: { sketch: string; pt: string } } | null = null, bd = 8;
+    for (const g of end >= 0 ? fs.slice(0, end) : fs) {
+      if (g.type !== "sketch" || g.suppressed || !this.sketchShown(g)) continue;
+      const fr = this.last?.frames[g.id];
+      if (!fr) continue;
+      for (const e of g.ents) {
+        if (e.t !== "point" || e.id.includes("~")) continue;
+        const w = [0, 1, 2].map(k => fr.o[k] + fr.x[k] * e.x + fr.y[k] * e.y) as V3;
+        const [sx, sy] = scr(w), d = Math.hypot(sx - x, sy - y);
+        if (d < bd) { bd = d; best = { p: w, at: { sketch: g.id, pt: e.id } }; }
+      }
+    }
+    return best;
   }
 
   private pick3d(e: PointerEvent, f: Sketch3dFeature) {
@@ -8973,7 +9057,7 @@ export class ModelController {
     if (!at) return;
     this.change3d(f, () => {
       let pid = at.id;
-      if (!pid) { pid = uid("p"); f.pts.push({ id: pid, p: at.p! }); }
+      if (!pid) { pid = uid("p"); f.pts.push({ id: pid, p: at.p!, ...(at.at ? { fixed: true, at: at.at } : {}) }); }
       const a = s3.anchor;
       if (a && a !== pid) {
         if (s3.tool === "line") f.segs.push({ id: uid("l"), t: "line", pts: [a, pid] });
@@ -9088,16 +9172,16 @@ export class ModelController {
     pm.querySelector<HTMLSelectElement>("[data-s3p]")?.addEventListener("change", ev => { s3.plane = (ev.target as HTMLSelectElement).value as "XY" | "YZ" | "ZX"; this.drawDecor(); });
     pm.querySelectorAll<HTMLButtonElement>("[data-s3sel]").forEach(b => b.addEventListener("click", () => { const id = b.dataset.s3sel!; s3.sel = s3.sel.includes(id) ? s3.sel.filter(x => x !== id) : [...s3.sel, id]; this.renderPanel(); this.drawDecor(); }));
     pm.querySelectorAll<HTMLInputElement>("input[data-s3x]").forEach(inp => {
-      const apply = () => { const [i, j] = inp.dataset.s3x!.split(":").map(Number); const v = num(inp); const p = f.pts[i]; if (v == null || !p || p.p[j] === v) return; this.change3d(f, () => { p.p = p.p.map((c, k) => k === j ? v : c) as V3; }); };
+      const apply = () => { const [i, j] = inp.dataset.s3x!.split(":").map(Number); const v = num(inp); const p = f.pts[i]; if (v == null || !p || p.p[j] === v) return; this.change3d(f, () => { p.p = p.p.map((c, k) => k === j ? v : c) as V3; delete p.at; }); };
       inp.addEventListener("change", apply);
       inp.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); apply(); } });
     });
-    pm.querySelectorAll<HTMLInputElement>("input[data-s3f]").forEach(inp => inp.addEventListener("change", () => { const p = f.pts[+inp.dataset.s3f!]; if (p) this.change3d(f, () => { if (inp.checked) p.fixed = true; else delete p.fixed; }); }));
+    pm.querySelectorAll<HTMLInputElement>("input[data-s3f]").forEach(inp => inp.addEventListener("change", () => { const p = f.pts[+inp.dataset.s3f!]; if (p) this.change3d(f, () => { if (inp.checked) p.fixed = true; else { delete p.fixed; delete p.at; } }); }));
     pm.querySelectorAll<HTMLButtonElement>("[data-s3r]").forEach(b => b.addEventListener("click", () => {
       const k = b.dataset.s3r!;
       const lines = s3.sel.filter(id => f.segs.some(g => g.id === id)), points = s3.sel.filter(id => f.pts.some(p => p.id === id));
       this.change3d(f, () => {
-        if (k === "fix") { const all = points.every(id => f.pts.find(p => p.id === id)?.fixed); for (const id of points) { const p = f.pts.find(q => q.id === id)!; if (all) delete p.fixed; else p.fixed = true; } return; }
+        if (k === "fix") { const all = points.every(id => f.pts.find(p => p.id === id)?.fixed); for (const id of points) { const p = f.pts.find(q => q.id === id)!; if (all) { delete p.fixed; delete p.at; } else p.fixed = true; } return; }
         if (k.startsWith("dim:")) {
           const P = (id: string) => f.pts.find(p => p.id === id)!.p;
           const sg = f.segs.find(g => g.id === lines[0]);

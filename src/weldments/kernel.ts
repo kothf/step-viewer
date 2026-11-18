@@ -497,13 +497,14 @@ export function trimExtend(h: WeldHost, f: TrimExtendFeature, doc: PartDoc, prev
     const fr = h.planeFrame(f.plane ?? { face: f.boundary! }, prev, frames);
     plane = { p: fr.o, n: fr.n };
   }
-  const bound = list[bi];
+  // Body trim with several boundaries: each member end stops at the nearest one.
+  const bis = f.kind === "body" ? [...new Set([bi, ...(f.more ?? []).map(r => bodyOf(h, list, prev, r))])] : [bi];
   const gap = Math.max(0, f.gap?.v ?? 0);
   for (const ref of f.bodies) {
     const mo = memberOfFace(ref.name, doc);
     if (!mo) throw new FeatureError("E-WLD-TRIM", "Only structural member bodies can be trimmed: pick a face of a member.");
     const i = bodyOf(h, list, prev, ref);
-    if (i === bi) throw new FeatureError("E-WLD-TRIM", "A member can't be trimmed by itself.");
+    if (bis.includes(i)) throw new FeatureError("E-WLD-TRIM", "A member can't be trimmed by itself.");
     const sref = mo.f.segs.find(s => s.ent === mo.ent)!;
     const s = segOf(sref, doc, frames);
     if (s.arc) throw new FeatureError("E-WLD-TRIM", "Curved members can't be trimmed or extended.");
@@ -511,40 +512,48 @@ export function trimExtend(h: WeldHost, f: TrimExtendFeature, doc: PartDoc, prev
     const base = `${mo.f.id}:${mo.ent}`;
     const mid = add(s.a, mul(s.w, s.L / 2));
     let body = list[i];
-    // Which end meets the boundary, and how far it has to go.
-    let end: 0 | 1, reach: number;
+    // Which end meets the boundary, and how far it has to go: one end for a plane or one body; with several boundary
+    // bodies each end goes to the body nearest to it, both ends when those differ.
+    const jobs: { end: 0 | 1; reach: number; bound: Named | null }[] = [];
     if (plane) {
       const sa = dot(sub(s.a, plane.p), plane.n), sb = dot(sub(s.b, plane.p), plane.n);
       const along = Math.abs(dot(s.w, plane.n));
       if (along < 1e-6) throw new FeatureError("E-WLD-TRIM", "The member runs parallel to the boundary plane.");
-      end = sa * sb < 0 ? (Math.abs(sa) < Math.abs(sb) ? 0 : 1) : Math.abs(sa) < Math.abs(sb) ? 0 : 1;
-      reach = (sa * sb < 0 ? 0 : Math.abs(end ? sb : sa) / along) + pl.R / along + pl.R;
+      const end = sa * sb < 0 ? (Math.abs(sa) < Math.abs(sb) ? 0 : 1) : Math.abs(sa) < Math.abs(sb) ? 0 : 1;
+      jobs.push({ end, reach: (sa * sb < 0 ? 0 : Math.abs(end ? sb : sa) / along) + pl.R / along + pl.R, bound: null });
     } else {
-      const da = distTo(h, bound.shape, s.a), db = distTo(h, bound.shape, s.b);
-      end = da <= db ? 0 : 1;
-      reach = Math.min(da, db) + boxSize(h, bound.shape) + pl.R;
+      const ends = ([0, 1] as const).map(e => {
+        let best = { d: Infinity, k: bis[0] };
+        for (const k of bis) { const d = distTo(h, list[k].shape, e ? s.b : s.a); if (d < best.d) best = { d, k }; }
+        return { end: e, d: best.d, k: best.k };
+      });
+      const use = bis.length > 1 && ends[0].k !== ends[1].k ? ends : [ends[0].d <= ends[1].d ? ends[0] : ends[1]];
+      for (const e of use) jobs.push({ end: e.end, reach: e.d + boxSize(h, list[e.k].shape) + pl.R, bound: list[e.k] });
     }
-    const P = end ? s.b : s.a, out = end ? s.w : mul(s.w, -1);
-    const nm = `${base}:${end ? "end" : "start"}`;
-    if (!f.noExtend) {
-      const ext = prism(h, pl, sub(P, mul(out, 1e-3)), add(P, mul(out, reach)), base);
-      body = bool(h, "fuse", body, ext, f.id);
-    }
-    if (plane) {
-      const away = dot(out, plane.n) > 0 ? plane.n : mul(plane.n, -1);
-      body = bool(h, "cut", body, halfBox(h, sub(plane.p, mul(away, gap)), away, 4 * (s.L + reach + pl.R * 10), nm), f.id);
-    } else if (f.planar) {
-      // Planar trim: a flat end square to the member where it first meets the body.
-      const pr = new h.oc.Message_ProgressRange_1();
-      const mk = new h.oc.BRepAlgoAPI_Common_3(body.shape, bound.shape, pr);
-      const pts = mk.IsDone() && !mk.HasErrors() ? edgePoints(h, mk.Shape()) : [];
-      if (!pts.length) throw new FeatureError("E-WLD-TRIM", "The member doesn't reach the boundary body.");
-      const t = Math.min(...pts.map(q => dot(sub(q, P), out)));
-      body = bool(h, "cut", body, halfBox(h, add(P, mul(out, t - gap)), out, 4 * (s.L + reach + pl.R * 10), nm), f.id);
-    } else {
-      // A weld gap against a body: the boundary moved back along the member by the gap.
-      const tool = gap > 0 ? shifted(h, bound, mul(out, -gap)) : bound;
-      body = bool(h, "cut", body, { ...tool, names: bound.names.map(() => nm) }, f.id);
+    for (const { end, reach, bound } of jobs) {
+      const P = end ? s.b : s.a, out = end ? s.w : mul(s.w, -1);
+      const nm = `${base}:${end ? "end" : "start"}`;
+      if (!f.noExtend) {
+        const ext = prism(h, pl, sub(P, mul(out, 1e-3)), add(P, mul(out, reach)), base);
+        body = bool(h, "fuse", body, ext, f.id);
+      }
+      if (plane) {
+        const away = dot(out, plane.n) > 0 ? plane.n : mul(plane.n, -1);
+        body = bool(h, "cut", body, halfBox(h, sub(plane.p, mul(away, gap)), away, 4 * (s.L + reach + pl.R * 10), nm), f.id);
+      } else if (f.planar) {
+        // Planar trim: a flat end square to the member where it first meets the body.
+        const pr = new h.oc.Message_ProgressRange_1();
+        const mk = new h.oc.BRepAlgoAPI_Common_3(body.shape, bound!.shape, pr);
+        const pts = mk.IsDone() && !mk.HasErrors() ? edgePoints(h, mk.Shape()) : [];
+        if (!pts.length) throw new FeatureError("E-WLD-TRIM", "The member doesn't reach the boundary body.");
+        const t = Math.min(...pts.map(q => dot(sub(q, P), out)));
+        body = bool(h, "cut", body, halfBox(h, add(P, mul(out, t - gap)), out, 4 * (s.L + reach + pl.R * 10), nm), f.id);
+      } else {
+        // A weld gap against a body: the boundary moved back along the member by the gap.
+        const tool = gap > 0 ? shifted(h, bound!, mul(out, -gap)) : bound!;
+        body = bool(h, "cut", body, { ...tool, names: bound!.names.map(() => nm) }, f.id);
+      }
+      if (jobs.length > 1) body = pieceNear(h, body, mid);
     }
     list[i] = unify(h, pieceNear(h, body, mid));
   }
