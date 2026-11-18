@@ -2105,6 +2105,7 @@ export const RU: Record<string, string> = {
   "Pick the bodies.": "Выберите тела.",
   "Click a face of a body.": "Щёлкните грань тела.",
   "{n} body|{n} bodies": "{n} тело|{n} тела|{n} тел",
+  "Click more bodies to trim against several: each member end stops at the nearest one. Click a picked body again to take it out.": "Щёлкните другие тела, чтобы обрезать по нескольким: каждый конец элемента останавливается у ближайшего. Повторный щелчок по выбранному телу убирает его.",
   "Clear bodies": "Очистить тела",
   "The part has {n} body|The part has {n} bodies": "В детали {n} тело|В детали {n} тела|В детали {n} тел",
   "Click any face of a body to pick it; click it again to drop it.": "Щёлкните любую грань тела, чтобы выбрать его; щёлкните ещё раз, чтобы убрать.",

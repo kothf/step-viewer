@@ -7,6 +7,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [1.573.0] - 2026-11-18
 
+### Added
+
+- **Trim/Extend against several bodies.** With Trim to Body, more boundary bodies can be picked; each member end stops at the boundary nearest to it, so a rail between two legs is trimmed at both ends in one feature. Clicking a picked body again takes it out.
+
 ### Fixed
 
 - **3D sketch points stay on sketch points.** A 3D sketch point clicked on a point of a shown 2D sketch (such as a weldment's frame sketch) is held on it: when that sketch changes, the 3D sketch follows and solves again, so legs and braces drawn from the frame's corners move with it. Unfixing the point or typing its coordinates lets it go.

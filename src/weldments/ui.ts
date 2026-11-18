@@ -295,7 +295,8 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
           + (f.bodies.length ? `<button class="btn small" data-k="wclear" data-wlist="bodies">${esc(t("Clear selections"))}</button>` : "")
           + help(t("Click faces of the members to trim or extend.")))
         + group(t("Trimming boundary"), (f.kind === "face" ? sel("wplane", t("Plane"), planeOpts(ctx), planeKey(f)) : "")
-          + (f.kind === "face" && f.plane ? "" : box("wbound", f.kind === "face" ? t("Face") : pair(f) ? t("Member") : t("Body"), f.boundary ? t("Picked") : t("None")))
+          + (f.kind === "face" && f.plane ? "" : box("wbound", f.kind === "face" ? t("Face") : pair(f) ? t("Member") : t("Bodies"), !f.boundary ? t("None") : f.kind === "body" ? t("{n} body|{n} bodies", { n: 1 + (f.more?.length ?? 0) }) : t("Picked")))
+          + (f.kind === "body" ? help(t("Click more bodies to trim against several: each member end stops at the nearest one. Click a picked body again to take it out.")) : "")
           + (f.kind === "body" ? sel("wplanar", t("Trim with"), [["", t("Body trim")], ["1", t("Planar trim")]], f.planar ? "1" : "") : "")
           + chk("allowExt", !f.noExtend, t("Allow extension"))
           + chk("wGap", (f.gap?.v ?? 0) > 0, t("Weld gap")) + ((f.gap?.v ?? 0) > 0 ? numField("gap", t("Gap"), f.gap!, "length") : "")
@@ -412,7 +413,7 @@ export function weldChange(f: WeldFeature, k: string, val: string | boolean, ctx
     if (k.startsWith("wgmirror:")) return () => { const g = f.groups?.[+k.slice(9)]; if (!g) return; if (val) g.mirror = true; else delete g.mirror; };
   }
   if (f.type === "trimext") {
-    if (k === "wkind") return () => { f.kind = val as TrimExtendFeature["kind"]; delete f.boundary; delete f.plane; if (pair(f)) f.bodies = f.bodies.slice(0, 1); };
+    if (k === "wkind") return () => { f.kind = val as TrimExtendFeature["kind"]; delete f.boundary; delete f.more; delete f.plane; if (pair(f)) f.bodies = f.bodies.slice(0, 1); };
     if (k === "wplane") return () => { const v = String(val); if (!val) delete f.plane; else { f.plane = v.startsWith("std:") ? { std: v.slice(4) as "XY" | "XZ" | "YZ" } : { plane: v.slice(6) }; delete f.boundary; } };
     if (k === "allowExt") return () => { if (val) delete f.noExtend; else f.noExtend = true; };
     if (k === "wplanar") return () => { if (val) f.planar = true; else delete f.planar; };
@@ -555,7 +556,14 @@ export function weldPick(ctx: WeldCtx, e: PointerEvent, f: WeldFeature, focus: s
       if (f.kind === "face" && !flat) { toast(t("Pick a flat face.")); return focus; }
       delete f.plane;
       if (pair(f) && !memberFace(ctx, fr.name)) { toast(t("Only structural member bodies can be trimmed: pick a face of a member.")); return focus; }
-      f.boundary = fr;
+      if (f.kind === "body" && f.boundary) {
+        // Several boundary bodies: a click on a picked body (any face of it) takes it out, else adds it.
+        const all = [f.boundary, ...(f.more ?? [])], mf = memberFace(ctx, fr.name);
+        const i = all.findIndex(x => { const o = mf && memberFace(ctx, x.name); return o ? o.id === mf!.id && o.ent === mf!.ent : x.name === fr.name; });
+        if (i >= 0) all.splice(i, 1); else all.push(fr);
+        if (all.length) f.boundary = all[0]; else delete f.boundary;
+        if (all.length > 1) f.more = all.slice(1); else delete f.more;
+      } else f.boundary = fr;
     }
   } else if (f.type === "endcap") {
     if (!flat) { toast(t("Pick a flat face.")); return focus; }

@@ -78,6 +78,8 @@ export interface TrimExtendFeature {
   /** Bodies to trim: any face of each member segment. */
   bodies: FaceRef[];
   boundary?: FaceRef;
+  /** kind body: more boundary bodies; each member end stops at the boundary nearest to it (a CAD app's several trimming boundaries). */
+  more?: FaceRef[];
   /** kind face: a reference or standard plane used instead of a picked face. */
   plane?: PlaneRef;
   /** face: cut at a flat face's plane; body: stop at another body; mitre: this member and the boundary member are both lengthened to where their axes meet and cut on the bisector plane (End miter); butt1/butt2: the same two members butted, the first (butt1) or the boundary member (butt2) stopping at the other's side, the other running on to its far side, cut square (End butt). */

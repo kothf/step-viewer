@@ -180,6 +180,14 @@ test("trim/extend, end caps, gussets and weld beads (FR-FT-121)", async () => {
   assert.deepEqual(pt.cut.map(c => [c.length, c.angle1, c.angle2]), [[500, 0, 0], [380, 0, 0]]);
   near(pt.volume, rb.volume - 6 * pt.cut[1].volume / 380, 0.2 * pt.cut[1].volume / 380);
   assert.deepEqual(run(m, doc([k, mem, { ...tr, ...g3, kind: "body", planar: true } as Feature])).cut.map(c => c.length), [500, 377]);
+  // Two boundary bodies (exam #4): a second post at x = 500; the beam (100..400) runs to both, each end to its nearest post:
+  // 500 − 2·20 between the flat sides, plus the round corners' reach on both ends (386 above was one end: +6 each).
+  const k2: Sketch3dFeature = { ...k, pts: [...k.pts, { id: "E", p: [500, 0, 0] }, { id: "F", p: [500, 0, 500] }], segs: [...k.segs, { id: "post2", t: "line", pts: ["E", "F"] }] };
+  const mem2: MemberFeature = { ...mem, segs: [...mem.segs, { sketch: "k", ent: "post2" }] };
+  const two = run(m, doc([k2, mem2, { ...tr, kind: "body", more: [{ name: "m:post2:start" }] } as Feature]));
+  assert.deepEqual(two.cut.map(c => [c.length, c.qty]), [[500, 2], [472, 1]]);
+  // One boundary alone still trims only the end nearer to it.
+  assert.deepEqual(run(m, doc([k2, mem2, { ...tr, kind: "body" } as Feature])).cut.map(c => c.length), [500, 386]);
 
   // End cap on the beam's free end, 5 thick, 2 in from its outline.
   const cap: Feature = { id: "c", type: "endcap", name: "End cap1", faces: [{ name: "m:beam:end" }], thickness: { v: 5 }, inset: { v: 2 } };
