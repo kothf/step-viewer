@@ -41,7 +41,7 @@ export interface WeldInfo { legs: string; inter?: [number, number] | [number, nu
  * items left out), `desc` the description typed for it, else the kernel's (profile, plate thickness, bead leg);
  * member length and end angles, plate size, intermittent bead length/pitch, quantity and mass of one in kg.
  */
-export interface CutInfo { item: number; kind: "member" | "plate" | "bead"; desc: string; own?: boolean; length?: number; a1?: number; a2?: number; plate?: [number, number, number]; inter?: [number, number] | [number, number, 1]; qty: number; kg: number }
+export interface CutInfo { item: number; kind: "member" | "plate" | "bead"; desc: string; own?: boolean; length?: number; a1?: number; a2?: number; plate?: [number, number, number]; inter?: [number, number] | [number, number, 1]; qty: number; kg: number; /** Its material: own, else its bodies', else the part's ("" when none is set). */ mat?: string }
 export interface SketchInfo { id: string; name: string; lines: V3[][] }
 
 /** The round edge a thread starts at, from the kernel. */

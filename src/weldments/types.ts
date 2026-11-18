@@ -303,6 +303,13 @@ export function itemDensity(c: CutItem, p: { mat?: string } | undefined, bodies:
   return findMaterial(p?.mat)?.density ?? bodiesDensity(c.bodies, bodies, density);
 }
 
+/** The material text of an item for tables: its own material, else its bodies' distinct materials (the part's for bodies with none), joined ", ". */
+export function itemMatText(c: CutItem, p: { mat?: string } | undefined, bodies: BodyMats, partName: string): string {
+  const own = findMaterial(p?.mat)?.name;
+  if (own) return own;
+  return [...new Set(c.bodies.map(k => bodies?.[k]?.material?.name || partName))].filter(Boolean).join(", ");
+}
+
 /** The material name an item shows when it has none of its own: its bodies' one material, "" = the part's, null = several. */
 export function bodyMatName(c: CutItem, bodies: BodyMats): string | null {
   const names = new Set(c.bodies.map(k => bodies?.[k]?.material?.name ?? ""));
