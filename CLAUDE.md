@@ -17,6 +17,8 @@ npm test           # headless-Chromium smoke test of the packaged build (run `np
 npm run test:unit  # node unit tests: modelling kernel, sketch solver, expressions, documents
 ```
 
+Human-style tests: `node tests/human/run.mjs [sketch|model|asm]` with `dist/step-viewer` served on :8123 (`HT_URL`): every action is a real click, drag or key on the packaged app (`window.__sv` only read), a screenshot per step and `report.md` in `HT_OUT` (default `/mnt/project-files/gap-tests`). Add a scenario there for every user-facing feature.
+
 The smoke test (`tests/smoke.mjs`) needs Playwright's Chromium (`npx playwright install chromium`). Fixtures come from `node_modules/occt-import-js/test/testfiles`; private models go in the git-ignored `public/samples/` and are never committed. Add a check to the smoke test for every measurement or geometry change.
 
 CI runs the smoke test as 6 parallel jobs (`SMOKE_SHARD=i/6 npm test` runs one; unset runs all). Put a new section in its own `if (inShard(k)) { … }` block that opens its own page or context, with k = the shard whose last CI run was shortest (each prints `shard i/6: … in N s`); unmarked code runs in every shard.

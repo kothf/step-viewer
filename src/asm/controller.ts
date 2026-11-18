@@ -2365,7 +2365,8 @@ export class AsmController {
     bar.innerHTML = `<span>${esc(t("Isolated: {n}", { n: iso.ids.size }))}</span>`
       + `<select data-iso="mode" aria-label="${esc(t("The others"))}"><option value="hide"${iso.mode === "hide" ? " selected" : ""}>${esc(t("Others hidden"))}</option><option value="trans"${iso.mode === "trans" ? " selected" : ""}>${esc(t("Others transparent"))}</option></select>`
       + `<button type="button" data-iso="exit">${esc(t("Exit Isolate"))}</button>`;
-    bar.querySelector("select")!.addEventListener("change", e => this.isolate([...iso.ids], (e.target as HTMLSelectElement).value as "hide" | "trans"));
+    // The focus leaves the select after a choice: Chrome keeps Esc for a focused select, and Esc must exit Isolate.
+    bar.querySelector("select")!.addEventListener("change", e => { const sel = e.target as HTMLSelectElement; this.isolate([...iso.ids], sel.value as "hide" | "trans"); sel.blur(); });
     bar.querySelector("button")!.addEventListener("click", () => this.isolate(null));
     document.getElementById("viewport")?.append(bar);
   }
@@ -3006,6 +3007,8 @@ export class AsmController {
           return;
         }
       }
+      // Esc on the Isolate bar's button exits Isolate too.
+      if (e.key === "Escape" && this.isolated && e.target instanceof Element && e.target.closest("#asm-iso")) { this.isolate(null); return; }
       if (this.doc && !this.picking && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.target instanceof Element && e.target.closest("input, textarea, select, dialog[open]"))) {
         // Breadcrumbs (FR-SEL-009): Esc hides them, Shift+D brings them to the cursor.
         if (e.key === "Escape" && document.getElementById("asm-crumbs") && !document.querySelector(".mag-lens")) this.hideCrumbs();

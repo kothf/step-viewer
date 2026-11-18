@@ -2511,12 +2511,16 @@ const sessionViews = new Map<string, NamedView[]>();
     menu.className = "hud-items"; menu.hidden = true; menu.setAttribute("role", "group");
     const draw = () => {
       const on = viewItems();
+      // Redrawn on every switch: keep the keyboard focus on the same control, so Esc and Tab still work.
+      const had = document.activeElement instanceof HTMLElement && menu.contains(document.activeElement) ? document.activeElement : null;
+      const focusSel = had ? (had.dataset.vi ? `[data-vi="${had.dataset.vi}"]` : had.dataset.viAll ? `[data-vi-all="${had.dataset.viAll}"]` : null) : null;
       menu.innerHTML = `<div class="hud-items-h">${t("Hide/Show items")}</div>`
         + VIEW_ITEMS.map(([k, label]) => `<label><input type="checkbox" data-vi="${k}"${on[k] ? " checked" : ""}> ${t(label)}</label>`).join("")
         + `<div class="hud-items-all"><button type="button" data-vi-all="1">${t("Show all")}</button><button type="button" data-vi-all="0">${t("Hide all")}</button></div>`;
       const any = VIEW_ITEMS.some(([k]) => !on[k]);
       btn.classList.toggle("on", any);
       btn.title = t(any ? "Hide/Show items (some hidden)" : "Hide/Show items"); btn.setAttribute("aria-label", t("Hide/Show items"));
+      if (focusSel) menu.querySelector<HTMLElement>(focusSel)?.focus();
     };
     draw();
     menu.addEventListener("change", e => { const i = e.target as HTMLInputElement; if (i.dataset.vi) setViewItem(i.dataset.vi as ViewItem, i.checked); });
@@ -2533,7 +2537,8 @@ const sessionViews = new Map<string, NamedView[]>();
     };
     btn.addEventListener("click", () => open(menu.hidden));
     document.addEventListener("pointerdown", e => { if (!menu.hidden && !menu.contains(e.target as Node) && !btn.contains(e.target as Node)) open(false); });
-    menu.addEventListener("keydown", e => { if (e.key === "Escape") { e.stopPropagation(); open(false); btn.focus(); } });
+    // Esc closes it wherever the focus is (a click in it may leave the focus on the page).
+    window.addEventListener("keydown", e => { if (e.key === "Escape" && !menu.hidden) { e.stopPropagation(); e.preventDefault(); open(false); btn.focus(); } }, true);
     $("#viewport").append(menu);
   }
   $("#viewport").append(hud);

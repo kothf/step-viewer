@@ -4766,6 +4766,8 @@ export class ModelController {
     if (m.kind !== "feature" || !layer || !pm || !this.last) return;
     const f = m.draft;
     if (VALUE_CALLOUT_SKIP.has(f.type)) return;
+    // A push/pull drag shows its own value by the arrow.
+    if (m.instant && this.pushAt) return;
     // Picking instances to skip: the instance dots stand where the callouts would, so the callouts step aside.
     if (m.focus === "skip") return;
     const fields = VALUE_KEYS.map(k => pm.querySelector<HTMLInputElement>(`input[data-num="${k}"], input[data-int="${k}"]`)).filter((x): x is HTMLInputElement => !!x && !x.closest("[hidden]"));
@@ -4883,7 +4885,8 @@ export class ModelController {
   private drawBoxPicks() {
     const m = this.mode;
     this.tintBoxes();
-    if (m.kind !== "feature") return;
+    // A push/pull drag: the arrow and the moving face say it all.
+    if (m.kind !== "feature" || (m.instant && this.pushAt)) return;
     const part = this.host.viewer.parts[0], names = this.last?.faceNames;
     const groups = this.boxPicks(m.draft);
     groups.forEach((g, k) => {
@@ -5606,6 +5609,7 @@ export class ModelController {
       const v = (m.draft.flip ? -1 : 1) * m.draft.distance.v;
       this.placeArrow(this.pushAt.base, this.pushAt.dir, v, false, "push");
       this.sizeArrow();
+      if (this.arrowDrag?.key === "push" && v) this.showPushValue(v);
       return;
     }
     if (m.kind !== "none" || this.pushFace == null || !this.last) return;
@@ -5653,12 +5657,23 @@ export class ModelController {
     if (v < 0) f.flip = true; else delete f.flip;
     a.obj.position.copy(a.base).addScaledVector(a.dir, v);
     this.sizeArrow();
+    this.showPushValue(v);
+    // The panel's Distance follows the drag.
+    const inp = document.querySelector<HTMLInputElement>('#mc-pm input[data-num="distance"]');
+    if (inp && document.activeElement !== inp) inp.value = trimNum(Math.abs(v) * UNITS[units.current].f, 6);
+    void this.rebuild();
+  }
+
+  /** The signed distance beside the push/pull arrow while it is dragged (drawn again after every rebuild clears the layer). */
+  private showPushValue(v: number) {
+    const a = this.arrow;
+    if (!a) return;
+    const fu = UNITS[units.current].f;
     const label = this.pushLabel();
     label.textContent = `${v < 0 ? "−" : ""}${trimNum(Math.abs(v) * fu, units.decimals ?? this.doc.units.decimals)} ${units.current}`;
     const s = a.obj.position.clone().addScaledVector(a.dir, a.scale * 1.5).project(this.host.viewer.camera);
     label.style.left = `${((s.x + 1) / 2) * this.host.viewer.size.x}px`;
     label.style.top = `${((1 - s.y) / 2) * this.host.viewer.size.y}px`;
-    void this.rebuild();
   }
 
   /** The distance label beside the push/pull arrow while it is dragged. */

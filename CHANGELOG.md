@@ -13,6 +13,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Sketch: **Show dimensions** in the sketch panel hides every dimension (a selected one still shows) to see the shape.
 - Display ▸ **Tangent edges**: off draws only sharp edges, leaving out the edges where faces meet smoothly, such as along fillets.
 
+### Fixed
+- Esc did not close the **Hide/Show items** menu after a switch in it had been clicked.
+- Push/pull: while the arrow was dragged, the face's distance did not show by the arrow and a stale "Distance: 0 mm" callout stayed on the face.
+- Isolate: after picking hidden/transparent in the bar, Esc did not exit Isolate.
+
 ## [1.592.0] - 2026-11-18
 
 ### Changed
