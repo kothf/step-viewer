@@ -487,6 +487,8 @@ export class SectionManager {
         mat.resolution.copy(v.size);
         const l = new LineSegments2(g, mat);
         l.position.copy(part.group.position);
+        l.quaternion.copy(part.group.quaternion);
+        l.scale.copy(part.group.scale);
         l.renderOrder = MODEL_ORDER + 2;
         l.raycast = () => {};
         this.profileRoot.add(l);

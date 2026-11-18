@@ -7,6 +7,7 @@ import type { NamedViews } from "../viewer/navigation";
 import { MATE_LABEL, mateName } from "./mateName";
 import type { NamedView } from "../model/types";
 import * as THREE from "three";
+import { penetrates } from "./clash";
 import { ModelKernel } from "../model/kernelClient";
 import type { ModelSnap } from "../drawing/drawing.worker";
 import { newPart, uid } from "../model/doc";
@@ -360,6 +361,9 @@ export class AsmController {
     $("#asm-quick").hidden = true;
     this.host.selectLeftTab("tree");
   }
+
+  /** The assembly's file name without its extension (its document name before the first save): downloads are named after it. */
+  fileStem() { return this.fileName ? this.fileName.replace(/\.[^.]+$/, "") : this.doc?.name || "Assembly"; }
 
   private label() { return `${this.fileName || `${this.doc!.name}${ASM_EXT}`}${this.vault ? ` · ${this.vault.label}` : ""}${this.dirty ? " •" : ""}`; }
 
@@ -1662,21 +1666,29 @@ export class AsmController {
     return true;
   }
 
-  /** Pairs of shown parts ("i:j", i < j) whose meshes intersect where they are shown now; only pairs with a part in `only` when given. */
-  private clashes(only?: Set<number>): Set<string> {
+  /**
+   * Pairs of shown parts ("i:j", i < j) whose meshes intersect where they are shown now; only pairs with a part in `only`
+   * when given. `deep`: only parts that enter one another (motion interference), not ones that touch; a collision drag
+   * stops at the first touch.
+   */
+  private clashes(only?: Set<number>, deep = false): Set<string> {
     const parts = this.host.viewer.parts, out = new Set<string>();
     const boxes = parts.map(p => { p.mesh.updateWorldMatrix(true, false); p.mesh.geometry.boundingBox ?? p.mesh.geometry.computeBoundingBox(); return p.mesh.visible ? p.mesh.geometry.boundingBox!.clone().applyMatrix4(p.mesh.matrixWorld) : null; });
     const m = new THREE.Matrix4();
+    // Each part's size: a clash must go deeper than the meshes' own error (a pin turning in a bore of its size crosses
+    // it by a chord's sag, up to about 1e-3 of the part's size at the import's quality).
+    const size = boxes.map(b => (b ? b.min.distanceTo(b.max) : 0));
     for (let i = 0; i < parts.length; i++) for (let j = i + 1; j < parts.length; j++) {
       if (only && !only.has(i) && !only.has(j)) continue;
       // Parts of one sub-assembly move together and never collide with each other.
       if (topOf(this.shownIds[i]) === topOf(this.shownIds[j])) continue;
       const a = boxes[i], b = boxes[j];
       if (!a || !b || !a.intersectsBox(b)) continue;
-      const bvh = parts[i].mesh.geometry.boundsTree;
-      if (!bvh) continue;
+      const bvh = parts[i].mesh.geometry.boundsTree, other = parts[j].mesh.geometry.boundsTree;
+      if (!bvh || !other) continue;
       m.copy(parts[i].mesh.matrixWorld).invert().multiply(parts[j].mesh.matrixWorld);
-      if (bvh.intersectsGeometry(parts[j].mesh.geometry, m)) out.add(`${i}:${j}`);
+      // Parts that only touch (a face mated onto a face) are not a clash: their triangles meet without entering.
+      if (deep ? penetrates(bvh, other, m, Math.max(0.005, 1e-3 * (size[i] + size[j]))) : bvh.intersectsGeometry(parts[j].mesh.geometry, m)) out.add(`${i}:${j}`);
     }
     return out;
   }
@@ -3629,7 +3641,7 @@ export class AsmController {
   /** Top-level components whose shown meshes enter one another where they are shown now (motion interference check). */
   motionClashes(): [string, string][] {
     const out = new Map<string, [string, string]>();
-    for (const k of this.clashes()) {
+    for (const k of this.clashes(undefined, true)) {
       const [i, j] = k.split(":").map(Number), a = topOf(this.shownIds[i]), b = topOf(this.shownIds[j]);
       if (a && b && a !== b) out.set(a < b ? `${a}|${b}` : `${b}|${a}`, a < b ? [a, b] : [b, a]);
     }
@@ -3710,14 +3722,23 @@ export class AsmController {
   }
 
   /** Changes the motion studies as one undo step, without placing the components again. */
-  changeMotions(fn: (d: AsmDoc) => void) {
+  /** The last motion change that later ones of the same property may join (see `changeMotions`). */
+  private motionMerge: { key: string; len: number; top: string; at: number } | null = null;
+
+  changeMotions(fn: (d: AsmDoc) => void, merge?: string) {
     if (!this.doc) return;
     const before = JSON.stringify(this.doc);
     const next = JSON.parse(before) as AsmDoc;
     fn(next);
     if (JSON.stringify(next) === before) return;
-    this.undoStack.push(before);
-    if (this.undoStack.length > 100) this.undoStack.shift();
+    // The same property changed again within a moment (a spin box turned by the wheel) stays in the step before it.
+    const now = performance.now(), m = this.motionMerge;
+    const same = !!merge && !!m && m.key === merge && m.len === this.undoStack.length && m.top === this.undoStack[this.undoStack.length - 1] && now - m.at < 1500 && !this.redoStack.length;
+    if (!same) {
+      this.undoStack.push(before);
+      if (this.undoStack.length > 100) this.undoStack.shift();
+    }
+    this.motionMerge = merge ? { key: merge, len: this.undoStack.length, top: this.undoStack[this.undoStack.length - 1], at: now } : null;
     this.redoStack = [];
     this.doc = next;
     this.host.setDoc(this.label());

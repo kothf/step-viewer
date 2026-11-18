@@ -5,6 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.576.0] - 2026-11-18
+
+### Fixed
+
+- Parts turned by a motion study or a mate preview are highlighted, snapped to and measured where they are shown. Smart measure, Properties, section profiles and new coordinate systems used to take only the part's position, so a turned part's face lit up and measured somewhere else.
+- Interference in motion studies no longer reports parts that only touch, such as a face mated onto a face, or a pin turning in a bore of its own size. A clash now needs an edge of one part to pass through a face of the other, deeper than the meshes' own error.
+- A Concentric mate's value result plots its angle by default, not a distance that stays at 0.
+- Turning a spin box in the motion study (wheel or arrows) makes one undo step, not one per click.
+- Recordings and exports from a motion study are named after the assembly file, not after its internal name.
+- A GIF of a study that ends where it starts (a motor turning whole turns) no longer shows that pose twice each time it loops.
+
 ## [1.575.0] - 2026-11-18
 
 ### Fixed
@@ -3621,7 +3632,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.575.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.576.0...HEAD
+[1.576.0]: https://github.com/kothf/step-viewer/compare/v1.575.0...v1.576.0
 [1.575.0]: https://github.com/kothf/step-viewer/compare/v1.574.0...v1.575.0
 [1.574.0]: https://github.com/kothf/step-viewer/compare/v1.573.0...v1.574.0
 [1.573.0]: https://github.com/kothf/step-viewer/compare/v1.572.0...v1.573.0
