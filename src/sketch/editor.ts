@@ -26,6 +26,7 @@ import { bezPts, nearestOn, splineBezier } from "./spline";
 import { ellDist, earcDist, ellLocal, ellOf, ellParam, ellPt, ellPts, ellSweep, type Ell } from "./ellipse";
 import { textBox, textKey, textOutline, textPolys } from "./text";
 import { inPolygon, textPath } from "./profile";
+import { sketchRegions } from "./regions";
 import { quadCorners, perimeterCircle, type PerimItem } from "./shapes";
 import { conicBezier, conicShoulder, entBezier, eqBezier, hasControl, parabolaFrom, rhoAt, styleBezier, type CurveEq } from "./conic";
 import { DEFAULT_SNAPS, SNAP_KINDS, arcCurve, intersections, perpendicularFoot, quadrants, tangentPoints, type SnapCurve, type SnapKind } from "./snaps";
@@ -49,6 +50,9 @@ function arcPts(c: V2, r: number, a0: number, a1: number, n = 48): V2[] {
 }
 
 /** Sketch pattern settings (FR-SK-038): spacing in mm, angles in radians. */
+/** The selected entity's editable sizes (gap list S4): mm, angles in radians. */
+export interface EntityProps { id: string; kind: "point" | "line" | "circle" | "arc"; v: Record<string, number> }
+
 export type SketchPattern =
   | { kind: "linear"; n: number; d: number; angle: number; n2: number; d2: number; angle2: number }
   | { kind: "circular"; n: number; total: number; c: V2; centre: string | null; equal: boolean }
@@ -2444,6 +2448,85 @@ export class SketchEditor {
     this.emitSel();
   }
 
+  // ---------- properties of the selected entity (gap list S4) ----------
+
+  /** The one selected point, line, circle or arc with its sizes (mm, angles in radians), else null. */
+  entityProps(): EntityProps | null {
+    if (this.selection.size !== 1) return null;
+    const e = this.ent([...this.selection][0]);
+    if (!e || e.id.includes("~")) return null;
+    const P = (id: string): V2 => { const q = this.ent(id) as SkEnt & { t: "point" }; return [q.x, q.y]; };
+    if (e.t === "point") { const [x, y] = P(e.id); return { id: e.id, kind: "point", v: { x, y } }; }
+    if (e.t === "line") {
+      const [x1, y1] = P(e.a), [x2, y2] = P(e.b);
+      return { id: e.id, kind: "line", v: { x1, y1, x2, y2, len: Math.hypot(x2 - x1, y2 - y1), ang: Math.atan2(y2 - y1, x2 - x1) } };
+    }
+    if (e.t === "circle") { const [cx, cy] = P(e.c); return { id: e.id, kind: "circle", v: { cx, cy, r: e.r } }; }
+    if (e.t === "arc") {
+      const [cx, cy] = P(e.c), a = P(e.a), b = P(e.b);
+      let sw = Math.atan2(b[1] - cy, b[0] - cx) - Math.atan2(a[1] - cy, a[0] - cx);
+      while (sw <= 0) sw += 2 * Math.PI;
+      return { id: e.id, kind: "arc", v: { cx, cy, r: Math.hypot(a[0] - cx, a[1] - cy), sweep: sw } };
+    }
+    return null;
+  }
+
+  /**
+   * Types one size of the selected entity: its points move there as far as the relations and dimensions let
+   * them (like a drag). Returns false and changes nothing when they hold it elsewhere.
+   */
+  setEntityProp(key: string, v: number): boolean {
+    const pr = this.entityProps();
+    if (!pr || !Number.isFinite(v)) return false;
+    const e = this.ent(pr.id)!;
+    const P = (id: string): V2 => { const q = this.ent(id) as SkEnt & { t: "point" }; return [q.x, q.y]; };
+    const to = new Map<string, V2>();
+    let radius: { circle: string; r: number } | null = null;
+    if (e.t === "point") { const [x, y] = P(e.id); to.set(e.id, key === "x" ? [v, y] : [x, v]); }
+    else if (e.t === "line") {
+      const a = P(e.a), b = P(e.b);
+      const { len, ang } = pr.v;
+      if (key === "x1" || key === "y1") to.set(e.a, key === "x1" ? [v, a[1]] : [a[0], v]);
+      else if (key === "x2" || key === "y2") to.set(e.b, key === "x2" ? [v, b[1]] : [b[0], v]);
+      else if (key === "len" || key === "ang") {
+        if (key === "len" && v <= 0) return false;
+        const L = key === "len" ? v : len, A = key === "ang" ? v : ang;
+        to.set(e.a, a);
+        to.set(e.b, [a[0] + L * Math.cos(A), a[1] + L * Math.sin(A)]);
+      } else return false;
+    } else if (e.t === "circle" || e.t === "arc") {
+      const c = P(e.c);
+      if (key === "cx" || key === "cy") {
+        const d: V2 = key === "cx" ? [v - c[0], 0] : [0, v - c[1]];
+        to.set(e.c, [c[0] + d[0], c[1] + d[1]]);
+        if (e.t === "arc") for (const q of [e.a, e.b]) { const p = P(q); to.set(q, [p[0] + d[0], p[1] + d[1]]); }
+      } else if (key === "r") {
+        if (v <= 0) return false;
+        if (e.t === "circle") radius = { circle: e.id, r: v };
+        else {
+          to.set(e.c, c);
+          for (const q of [e.a, e.b]) { const p = P(q), l = Math.hypot(p[0] - c[0], p[1] - c[1]) || 1; to.set(q, [c[0] + ((p[0] - c[0]) * v) / l, c[1] + ((p[1] - c[1]) * v) / l]); }
+        }
+      } else return false;
+    } else return false;
+    const sk = structuredClone(this.sk);
+    if (radius) {
+      const c = (sk.ents.find(q => q.id === (e as SkEnt & { t: "circle" }).c) as SkEnt & { t: "point" });
+      solve(sk, { circle: radius.circle, to: [c.x + radius.r, c.y] });
+    } else solve(sk, { points: [...to].map(([id, q]) => ({ id, to: q })) });
+    const tol = 1e-6 * Math.max(1, Math.abs(v));
+    const got = (id: string) => { const q = sk.ents.find(x => x.id === id) as SkEnt & { t: "point" }; return [q.x, q.y] as V2; };
+    const reached = radius
+      ? Math.abs((sk.ents.find(q => q.id === radius!.circle) as SkEnt & { t: "circle" }).r - radius.r) < tol
+      : [...to].every(([id, q]) => { const g = got(id); return Math.hypot(g[0] - q[0], g[1] - q[1]) < tol; });
+    if (!reached) return false;
+    this.sk = sk;
+    this.commit(e.t === "point" ? "Move point" : e.t === "line" ? "Edit line" : e.t === "circle" ? "Edit circle" : "Edit arc");
+    this.render();
+    this.emitSel();
+    return true;
+  }
+
   select(ids: string[]) { this.selection = new Set(ids); this.render(); this.emitSel(); }
 
   // ---------- trim (FR-SK-030) ----------
@@ -3969,6 +4052,63 @@ export class SketchEditor {
 
   // ---------- drawing the sketch ----------
 
+  /** Shade closed regions while sketching (gap list S5); off via localStorage `mc:skShade`. */
+  shadeRegions = (() => { try { return localStorage.getItem("mc:skShade") !== "0"; } catch { return true; } })();
+  private fillCache: { key: string; tris: number[]; n: number } | null = null;
+
+  /** The sketch's closed regions as one see-through mesh under the curves (null when there are none). */
+  private regionFill(color: number, opacity: number): THREE.Mesh | null {
+    if (this.sk.ents.length > 600) return null;
+    const key = JSON.stringify(this.sk.ents.map(e => e.t === "text" ? [e.id, e.cons, (e as { gl?: unknown }).gl ? 1 : 0, (e as { p: string }).p] : e));
+    if (this.fillCache?.key !== key) {
+      const tris: number[] = [];
+      let n = 0;
+      for (const rg of sketchRegions(this.sk)) {
+        const outer = rg.outer.map(p => new THREE.Vector2(p[0], p[1]));
+        const holes = rg.holes.map(h => h.map(p => new THREE.Vector2(p[0], p[1])));
+        const all = [...outer, ...holes.flat()];
+        for (const tr of THREE.ShapeUtils.triangulateShape(outer, holes)) for (const i of tr) tris.push(all[i].x, all[i].y);
+        n++;
+      }
+      this.fillCache = { key, tris, n };
+    }
+    const { tris, n } = this.fillCache;
+    if (!tris.length) return null;
+    const pos: number[] = [];
+    for (let i = 0; i < tris.length; i += 2) { const w = this.w([tris[i], tris[i + 1]]); pos.push(w.x, w.y, w.z); }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+    const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color, transparent: true, opacity, side: THREE.DoubleSide, depthTest: false, depthWrite: false }));
+    m.renderOrder = 2990;
+    m.raycast = () => {};
+    m.userData.skRegions = n;
+    return m;
+  }
+
+  /** End points of curves (not construction) that no other curve, coincident or on-curve relation joins. */
+  openEnds(): string[] {
+    const uses = new Map<string, number>();
+    const add = (id: string | undefined, k = 1) => { if (id) uses.set(id, (uses.get(id) ?? 0) + k); };
+    const ends: string[] = [];
+    for (const e of this.sk.ents) {
+      if (e.cons || e.id.includes("~")) continue;
+      let pair: (string | undefined)[] = [];
+      if (e.t === "line" || e.t === "arc") pair = [e.a, e.b];
+      else if (e.t === "ellipse" && e.p0 && e.p1) pair = [e.p0, e.p1];
+      else if (e.t === "spline" && !e.closed && e.pts.length >= 2) pair = [e.pts[0], e.pts[e.pts.length - 1]];
+      for (const id of pair) { add(id); if (id) ends.push(id); }
+    }
+    for (const r of this.sk.rels) {
+      if (r.t === "coincident" || r.t === "midpoint" || r.t === "intersection") for (const id of r.e) add(id, 2);
+      else if (r.t === "onCurve" && r.e[0]) add(r.e[0], 2);
+      else if (r.t === "pierce" && r.e[0]) add(r.e[0], 2);
+      else if (r.t === "fix" && r.ext && r.e[0]) add(r.e[0], 2);
+    }
+    // Points held by a model edge copy (snapped to model geometry) count as joined too.
+    for (const e of this.sk.ents) if (e.cons && (e.t === "line" || e.t === "arc")) { add(e.a, 2); add(e.b, 2); }
+    return [...new Set(ends)].filter(id => (uses.get(id) ?? 0) < 2 && id !== ORIGIN);
+  }
+
   private clearGroup() {
     for (const c of this.group.children) {
       const o = c as THREE.Mesh;
@@ -4271,6 +4411,9 @@ export class SketchEditor {
       }
     }
 
+    // Closed regions shaded (gap list S5), so an outline that does not close shows at once.
+    const fill = this.shadeRegions ? this.regionFill(this.dark ? 0x3b6fd8 : 0x8fb3ff, this.dark ? 0.16 : 0.22) : null;
+    if (fill) this.group.add(fill);
     const v = this.host.viewer;
     const mkLines = (s: number[], c: number[], width: number, dashed = false) => {
       if (!s.length) return;
@@ -4303,6 +4446,17 @@ export class SketchEditor {
     const pts = new THREE.Points(pg, new THREE.PointsMaterial({ size: 7, sizeAttenuation: false, vertexColors: true, depthTest: false, transparent: true }));
     pts.renderOrder = 3001;
     this.group.add(pts);
+    // Open ends (gap list S6): curve ends joined to nothing else get a bigger orange dot.
+    const ends = this.openEnds();
+    if (ends.length) {
+      const og = new THREE.BufferGeometry();
+      og.setAttribute("position", new THREE.Float32BufferAttribute(ends.flatMap(id => { const w = this.w(this.pt(id)); return [w.x, w.y, w.z]; }), 3));
+      const op = new THREE.Points(og, new THREE.PointsMaterial({ size: 11, sizeAttenuation: false, color: this.dark ? 0xff922b : 0xe8590c, depthTest: false, transparent: true }));
+      op.renderOrder = 3000.5;
+      op.userData.skOpenEnds = ends.length;
+      op.raycast = () => {};
+      this.group.add(op);
+    }
     // A hovered point grows, like a hovered curve thickens.
     const hp = this.hover && (this.hover.kind === "point" || this.hover.kind === "origin") && !this.selection.has(this.hover.id) ? (this.hover.kind === "origin" ? [0, 0] as V2 : this.pt(this.hover.id)) : null;
     if (hp) {

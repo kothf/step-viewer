@@ -3004,6 +3004,41 @@ try {
     for (let k = 0; k < 3; k++) { await mp.keyboard.press("Control+z"); await mp.waitForTimeout(80); }
     check(lineHover === "point" && /Make Dimension Driven\?/.test(askTxt) && ov0.status === "ok" && ov0.over === 1 && ov0.bad === 1 && ov0.st === "Over Defined" && ov0.fix && ov1.over === 0 && ov1.bad === 0 && ov1.st !== "Over Defined" && ov1.driven >= 1,
       `model 1.586: line tool lights the end point, a redundant dimension asks Make Dimension Driven?, left driving it is Over Defined with only it red, Make driven ends it (${JSON.stringify([lineHover, askTxt.slice(0, 40), ov0, ov1])})`);
+    // 1.590: the selected line's sizes in the panel (typing a length moves its end, an angle its horizontal
+    // relation forbids is refused and changes nothing), closed regions shaded and open ends marked.
+    await tool("select");
+    await mp.keyboard.press("Escape");
+    await click([122, 60]);
+    await mp.waitForTimeout(100);
+    const ep0 = await mp.evaluate(() => ({ keys: [...document.querySelectorAll("#mc-pm [data-ep]")].map(i => i.dataset.ep), len: window.__sv.model.editor().entityProps()?.v.len }));
+    await mp.fill('#mc-pm [data-ep="x1"]', "100");
+    await mp.press('#mc-pm [data-ep="x1"]', "Enter");
+    await mp.waitForTimeout(150);
+    const ep1 = await mp.evaluate(() => window.__sv.model.editor().entityProps()?.v);
+    // Its length dimension holds the length and its horizontal relation the angle: both are refused.
+    const lenOk = await mp.evaluate(() => window.__sv.model.editor().setEntityProp("len", 55));
+    const angOk = await mp.evaluate(() => window.__sv.model.editor().setEntityProp("ang", 0.5));
+    const ep2 = await mp.evaluate(() => window.__sv.model.editor().entityProps()?.v);
+    const deco = await mp.evaluate(() => { let regions = 0, open = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData?.skRegions) regions += o.userData.skRegions; if (o.userData?.skOpenEnds) open += o.userData.skOpenEnds; }); return { regions, open, ends: window.__sv.model.editor().openEnds().length, legend: !!document.querySelector("#mc-pm .pm-legend .sw.fill") }; });
+    await mp.keyboard.press("Control+z");
+    await mp.waitForTimeout(100);
+    await mp.keyboard.press("Escape");
+    await tool("circle");
+    await click([80, 95]);
+    await click([86, 95]);
+    await mp.keyboard.press("Escape");
+    await mp.waitForTimeout(150);
+    const shaded = await mp.evaluate(() => { let regions = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData?.skRegions) regions += o.userData.skRegions; }); return regions; });
+    await mp.click("#mc-pm [data-a=shade]");
+    await mp.waitForTimeout(100);
+    const unshaded = await mp.evaluate(() => { let regions = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData?.skRegions) regions += o.userData.skRegions; }); return regions; });
+    await mp.click("#mc-pm [data-a=shade]");
+    await mp.keyboard.press("Control+z");
+    await mp.waitForTimeout(100);
+    await tool("select");
+    check(shaded >= 1 && unshaded === 0, `model 1.590: a closed circle is shaded while sketching, and Shade closed regions turns it off (${JSON.stringify([deco.regions, shaded, unshaded])})`);
+    check(ep0.keys.join() === "x1,y1,x2,y2,len,ang" && Math.abs(ep1.x1 - 100) < 1e-6 && Math.abs(ep1.len - ep0.len) < 1e-6 && Math.abs(ep1.ang) < 1e-9 && lenOk === false && angOk === false && Math.abs(ep2.ang) < 1e-9 && Math.abs(ep2.x1 - 100) < 1e-6 && deco.open >= 1 && deco.open === deco.ends && deco.legend,
+      `model 1.590: selected line shows start/end/length/angle, a typed start X moves it (the length dimension keeps its length), a length or angle its dimension or relation holds is refused, open ends are marked (${JSON.stringify([ep0, ep1, lenOk, angOk, deco])})`);
     // 1.316: mouse gestures (FR-UI-024): with the preference on, a right-drag shows the guide and runs the slot's command;
     // a right-click without a drag still opens the sketch menu.
     await mp.evaluate(() => localStorage.setItem("mc:gestures", JSON.stringify({ on: true, n: 4 })));
