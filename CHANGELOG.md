@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.573.0] - 2026-11-18
+## [1.574.0] - 2026-11-18
 
 ### Added
 
@@ -19,6 +19,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - **Cut list properties survive a model change.** A description, part number, note, material or Exclude typed for a weldment cut list item stays with that item when its length or end angles change, instead of being lost.
 - **Weld table keeps excluded beads.** A fillet bead excluded from the cut list is still listed in the drawing's weld table and still gets its weld symbol from Model items.
 - **Title block material for mixed weldments.** When only some bodies have their own material and the part has none, the drawing no longer gives one body's material as the whole part's; the Material field stays empty, as Mass does, until the part's material is set.
+
+## [1.573.0] - 2026-11-18
+
+### Fixed
+
+Fixes from a test of motion studies on a real 57-part steam engine assembly:
+
+- **Dragging a part the study's mates move no longer changes the assembly.** While a motion study is open, such a drag turns the view instead, and a note says to drag a part no mate holds or to close the study. Before, the drag moved the whole mechanism in the assembly itself.
+- **✓ in an assembly panel works on the first click after typing a value.** The first click used to only commit the field and leave the panel open.
+- **Proximity results no longer freeze the page.** The gaps are measured a few frames at a time with a progress line, frames that place the two parts as an earlier frame did reuse its value, and changing one pair no longer measures the others again.
+- **Interference over a study no longer lists parts that only touch and never move against each other** (a bearing seated on a base plate). The mesh test on touching faces flickered from frame to frame; a pair placed as in an earlier frame now takes that frame's answer.
+- **The mate value result of a concentric mate** (often the motor's) plots how far the part has turned about the axis, instead of a constant −180°.
+- **Camera key Distance in an orthographic view** now changes the zoom as a dolly would; before, it changed nothing you could see.
 
 ## [1.572.0] - 2026-11-18
 
@@ -3600,7 +3613,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.573.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.574.0...HEAD
+[1.574.0]: https://github.com/kothf/step-viewer/compare/v1.573.0...v1.574.0
 [1.573.0]: https://github.com/kothf/step-viewer/compare/v1.572.0...v1.573.0
 [1.572.0]: https://github.com/kothf/step-viewer/compare/v1.571.0...v1.572.0
 [1.571.0]: https://github.com/kothf/step-viewer/compare/v1.570.0...v1.571.0

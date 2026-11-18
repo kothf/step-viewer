@@ -9009,6 +9009,21 @@ try {
       return out;
     });
     check(mateKey.value === 10 && !mateKey.panel && mateKey.keys.some(([t, v]) => Math.abs(t - 2.5) < 1e-9 && v === 25) && mateKey.keys.length === 3, `motion 1.572: Autokey keys a typed mate value at the playhead and leaves the mate alone (FR-FT-122) (${JSON.stringify(mateKey)})`);
+    // 1.573 (engine motion test): one real click on ✓ right after typing commits the value (the field's change used to
+    // redraw the panel under the pointer); an open study holds drags of the parts its mates move.
+    await mp.evaluate(() => { const m = window.__sv.motion, a = window.__sv.asm; m.setAutoKey(true); m.seek(2.5); a.startMate(a.doc.mates.find(x => x.id === "md")); });
+    await mp.click("#asm-pm [data-mv]", { clickCount: 3 });
+    await mp.keyboard.type("26");
+    await mp.click("#asm-pm .pm-top .pm-ok");
+    const oneClick = await mp.evaluate(() => {
+      const m = window.__sv.motion, a = window.__sv.asm, md = a.doc.mates.find(x => x.id === "md");
+      const tr = m.study.tracks.find(k => k.kind === "mate" && k.mate === "md");
+      const out = { panel: !!a.mating, key: tr.keys.some(k => Math.abs(k.t - 2.5) < 1e-9 && k.v === 26), value: md.value, holds: a.motion.holdsDrag(md.b.comp) };
+      m.edit(st => { const k = st.tracks.find(x => x.id === tr.id); k.keys = k.keys.filter(x => Math.abs(x.t - 2.5) > 1e-9); });
+      m.setAutoKey(false);
+      return out;
+    });
+    check(!oneClick.panel && oneClick.key && oneClick.value === 10 && oneClick.holds === true, `motion 1.573: ✓ works on the first click after typing; the study holds drags of mated parts (${JSON.stringify(oneClick)})`);
     // A 60 rpm rotary motor on Concentric1: half a turn at 0.5 s.
     await mp.evaluate(() => { const m = window.__sv.motion; m.addTrack("motor:mc"); m.edit(s => { const k = s.tracks.find(x => x.kind === "motor"); k.speed = 60; }); m.seek(0.5); });
     const turn = await pos();
@@ -10487,7 +10502,7 @@ try {
     await ctx.close();
   }
 
-  // --- 1.573: 3D sketch points clicked on a 2D sketch's points stay on them when that sketch changes (weldments exam #6) ---
+  // --- 1.574: 3D sketch points clicked on a 2D sketch's points stay on them when that sketch changes (weldments exam #6) ---
   if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
@@ -10519,7 +10534,7 @@ try {
     const fitBox = await box();
     await mp.evaluate(() => window.__sv.model.store.change("No far", d => { d.features = d.features.filter(f => f.id !== "far"); }));
     await settle();
-    check(JSON.stringify(small) === "[-50,-50,50,50]" && fitBox[0] === -50 && fitBox[2] >= 600, `model 1.573: Zoom to fit takes shown sketches in (${JSON.stringify({ small, fitBox })})`);
+    check(JSON.stringify(small) === "[-50,-50,50,50]" && fitBox[0] === -50 && fitBox[2] >= 600, `model 1.574: Zoom to fit takes shown sketches in (${JSON.stringify({ small, fitBox })})`);
     await mp.evaluate(() => { const v = window.__sv.viewer; v.fit(false); });
     await runCmd(mp, "3D Sketch");
     await settle();
@@ -10538,7 +10553,7 @@ try {
     await settle();
     const after = await mp.evaluate(() => ({ pts: window.__sv.model.store.doc.features.find(f => f.type === "sketch3d").pts.map(q => q.p.map(c => Math.round(c * 1000) / 1000)), bad: window.__sv.model.last().statuses.filter(s => !s.ok || s.warning).length }));
     check(drawn[0]?.at?.sketch === "fr" && drawn[0]?.at?.pt === "c1" && drawn[0]?.fixed && !drawn[1]?.at && JSON.stringify(after.pts[0]) === "[-80,-30,0]" && after.bad === 0,
-      `model 1.573: a 3D sketch point clicked on a sketch point follows it (weldments exam #6) (${JSON.stringify({ drawn, after })})`);
+      `model 1.574: a 3D sketch point clicked on a sketch point follows it (weldments exam #6) (${JSON.stringify({ drawn, after })})`);
     await ctx.close();
   }
 
