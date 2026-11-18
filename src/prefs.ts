@@ -1,10 +1,12 @@
 // Preferences (FR-UI-080): the Modelling and Sketch settings kept per browser in localStorage. Pure apart from
 // localStorage, so the controller, the sketch editor and the dialog (prefsUi.ts) read the same values.
-// The sketch keys predate the dialog (the sketch panel and the quick bar write them too) and keep their names.
+// The sketch keys predate the dialog (the sketch quick bar writes them too) and keep their names.
+import { DEFAULT_SNAPS, SNAP_KINDS, parseSnaps } from "./sketch/snaps";
 
 export type PrefKey =
   | "rotateToSketch" | "quality" | "verify" | "autosave" | "lenStep" | "angStep" | "middle" | "wheel"
-  | "autoRels" | "showRels" | "modelSnap" | "slotDims" | "addDims" | "grid" | "gridSnap" | "gridStep";
+  | "autoRels" | "showRels" | "modelSnap" | "slotDims" | "addDims" | "grid" | "gridSnap" | "gridStep"
+  | "shade" | "snaps" | "importQuality";
 
 export interface Prefs {
   /** Turn the view normal to the sketch plane when a sketch opens. */
@@ -32,6 +34,18 @@ export interface Prefs {
   gridSnap: boolean;
   /** Millimetres between grid lines; 0 follows the zoom. */
   gridStep: number;
+  /** Fill closed sketch regions while sketching. */
+  shade: boolean;
+  /** Sketch snaps that are on, as a JSON list of `SnapKind`s in menu order (`snapsText`). */
+  snaps: string;
+  /** Mesh of STEP/IGES/BREP files when they are opened (the exact geometry is unchanged). */
+  importQuality: "draft" | "normal" | "fine";
+}
+
+/** The canonical stored text of a set of snaps (menu order), so equal sets compare equal. */
+export function snapsText(on: Iterable<string>) {
+  const set = new Set(on);
+  return JSON.stringify(SNAP_KINDS.map(([k]) => k).filter(k => set.has(k)));
 }
 
 export const DEFAULT_PREFS: Prefs = {
@@ -40,6 +54,7 @@ export const DEFAULT_PREFS: Prefs = {
   // Off: new curves stay under defined (blue) until the user dimensions them; Add dimensions turns it on.
   slotDims: false, addDims: false,
   grid: false, gridSnap: false, gridStep: 0,
+  shade: true, snaps: snapsText(DEFAULT_SNAPS), importQuality: "normal",
 };
 
 /** localStorage key of each preference. Booleans that default to on are stored "0" when off, the others "1" when on. */
@@ -48,6 +63,7 @@ export const PREF_STORE: Record<PrefKey, string> = {
   lenStep: "mc:lenStep", angStep: "mc:angStep", middle: "mc:middle", wheel: "mc:wheel",
   autoRels: "mc:autoRels", showRels: "mc:skRels", modelSnap: "mc:modelSnap", slotDims: "mc:slotDims", addDims: "mc:skAutoDims",
   grid: "mc:skGrid", gridSnap: "mc:skGridSnap", gridStep: "mc:skGridStep",
+  shade: "mc:skShade", snaps: "mc:skSnaps", importQuality: "mc:importQuality",
 };
 
 /** Seconds offered for the recovery journal (0 = off). */
@@ -69,6 +85,8 @@ export function parsePref<K extends PrefKey>(k: K, raw: string | null): Prefs[K]
   }
   if (k === "quality") return (["coarse", "normal", "fine"].includes(raw) ? raw : def) as Prefs[K];
   if (k === "middle") return (raw === "rotate" || raw === "pan" ? raw : def) as Prefs[K];
+  if (k === "importQuality") return (["draft", "normal", "fine"].includes(raw) ? raw : def) as Prefs[K];
+  if (k === "snaps") return snapsText(parseSnaps(raw)) as Prefs[K];
   if (k === "wheel") return (raw === "reverse" || raw === "normal" ? raw : def) as Prefs[K];
   return def;
 }
@@ -122,4 +140,12 @@ export function stepFor(kind: "length" | "angle", unit = "mm") {
 export function autosaveDelay(): number | null {
   const s = getPref("autosave");
   return s <= 0 ? null : s === 1 ? 800 : s * 1000;
+}
+
+/** Whether a setting's texts (label, help, group, in any language shown) hold every word of the search. */
+export function settingMatches(query: string, texts: string[]) {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return true;
+  const hay = texts.join(" ").toLowerCase();
+  return words.every(w => hay.includes(w));
 }

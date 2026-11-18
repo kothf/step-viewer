@@ -5,6 +5,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Changed
+- **Settings** (⚙ in the header, File ▸ Settings… or Ctrl+,): one window for every lasting choice, with categories (General, Units, View and performance, Mouse, Modelling, Sketch), a search over all of them that counts the matches per category, Reset page and Reset all. Language, theme, tips, units and decimals, image and opened-file mesh quality, mouse buttons and gestures, verification, and the sketch options (relations, snaps, grid, shading, dimensions on new curves) are all there.
+- The sketch panel no longer lists snapping, relation, grid and shading options; they are in Settings ▸ Sketch, and the sketch quick bar keeps one-click Grid, Snap to grid, Inferences, Add dimensions and Shade toggles plus a ⚙ Settings button. The Display menu keeps view toggles only (origin axes, ambient occlusion, analysis, measurement colour); Show tips moved from Help to Settings ▸ General.
+
 ## [1.591.0] - 2026-11-18
 
 ### Added

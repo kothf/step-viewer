@@ -55,3 +55,24 @@ test("spin steps and the recovery journal delay", () => {
   setPrefs({ autosave: 0 });
   assert.equal(autosaveDelay(), null);
 });
+
+test("settings moved out of panels: shade, snaps and the opened-file mesh are preferences", async () => {
+  const { settingMatches, snapsText } = await import("../../src/prefs");
+  mem.clear();
+  assert.equal(getPref("shade"), true);
+  assert.equal(getPref("importQuality"), "normal");
+  assert.deepEqual(JSON.parse(getPref("snaps")), ["end", "mid", "centre", "tangent", "perpendicular", "parallel", "nearest", "hv"]);
+  // The sketch panel used to store the snaps as a JSON list in any order: read back in menu order.
+  mem.set("mc:skSnaps", JSON.stringify(["hv", "end", "bogus"]));
+  assert.equal(getPref("snaps"), snapsText(["end", "hv"]));
+  assert.equal(parsePref("importQuality", "ultra"), "normal");
+  const changed = setPrefs({ shade: false, importQuality: "fine", snaps: snapsText(["mid", "end"]) });
+  assert.deepEqual(changed.sort(), ["importQuality", "shade", "snaps"]);
+  assert.equal(mem.get("mc:skShade"), "0");
+  assert.equal(mem.get("mc:skSnaps"), '["end","mid"]');
+  assert.equal(mem.get("mc:importQuality"), "fine");
+  assert.ok(settingMatches("grid snap", ["Snap to grid Points that snap to nothing else"]));
+  assert.ok(settingMatches("  ", ["anything"]));
+  assert.ok(!settingMatches("wheel", ["Middle drag Pan"]));
+  assert.ok(settingMatches("СЕТК", ["Show grid Показать сетку"]));
+});

@@ -58,7 +58,8 @@
       <button data-gview="flip" title="View from the bottom, mirrored (B)" aria-pressed="false" aria-label="Bottom view"><span class="flip-long">Bottom view</span><span class="flip-short" aria-hidden="true">⇅</span></button>
     </div>
     <div class="spacer"></div>
-    <button class="btn small step-only" id="display-btn" aria-haspopup="true" aria-expanded="false" aria-controls="display-menu" title="Display: origin axes, ambient occlusion, mesh quality, units and decimals"><svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M2 4.5h12M2 11.5h12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="10" cy="4.5" r="1.8" fill="var(--panel)" stroke="currentColor" stroke-width="1.4"/><circle cx="6" cy="11.5" r="1.8" fill="var(--panel)" stroke="currentColor" stroke-width="1.4"/></svg><span class="disp-lbl">Display</span><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <button class="btn small step-only" id="display-btn" aria-haspopup="true" aria-expanded="false" aria-controls="display-menu" title="Display: origin axes, ambient occlusion, analysis and measurement colour"><svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M2 4.5h12M2 11.5h12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="10" cy="4.5" r="1.8" fill="var(--panel)" stroke="currentColor" stroke-width="1.4"/><circle cx="6" cy="11.5" r="1.8" fill="var(--panel)" stroke="currentColor" stroke-width="1.4"/></svg><span class="disp-lbl">Display</span><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <button class="icon" id="settings-btn" title="Settings (Ctrl+,)" aria-label="Settings (Ctrl+,)" aria-haspopup="dialog"><svg viewBox="3 3 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M17.25 10.74L19.14 11.04L19.14 12.96L17.25 13.26L16.60 14.82L17.72 16.37L16.37 17.72L14.82 16.60L13.26 17.25L12.96 19.14L11.04 19.14L10.74 17.25L9.18 16.60L7.63 17.72L6.28 16.37L7.40 14.82L6.75 13.26L4.86 12.96L4.86 11.04L6.75 10.74L7.40 9.18L6.28 7.63L7.63 6.28L9.18 7.40L10.74 6.75L11.04 4.86L12.96 4.86L13.26 6.75L14.82 7.40L16.37 6.28L17.72 7.63L16.60 9.18Z"/><circle cx="12" cy="12" r="2.6"/></svg></button>
     <button class="icon" id="theme" title="Toggle light/dark theme" aria-label="Toggle light/dark theme">◐</button>
     <button class="icon lang-btn" id="lang-btn" title="Interface language: English. Switch to Russian" aria-label="EN: Interface language: English. Switch to Russian">EN</button>
     <button class="icon" id="help-btn" title="Help: features, measuring and shortcuts (F1)" aria-label="Help: features, measuring and shortcuts (F1)" aria-haspopup="dialog">?</button>
@@ -323,14 +324,8 @@
   <label class="chk" title="X, Y, Z axes from the model origin (0, 0, 0)"><input type="checkbox" id="origin-axes" checked /> Origin axes</label>
   <label class="chk" title="Ambient occlusion (off while sectioning)"><input type="checkbox" id="ao" /> Ambient occlusion</label>
   <p class="menu-note">Soft contact shadows in corners and gaps. Looks nicer, costs some speed on large models; off while sectioning.</p>
-  <label class="menu-row">Mesh <select id="quality" title="Tessellation quality (applies on next open)"><option value="draft">Draft mesh</option><option value="normal" selected>Normal mesh</option><option value="fine">Fine mesh</option></select></label>
   <label class="menu-row" title="Colour the model by draft, curvature, wall thickness or undercut, or show zebra stripes">Analysis <select id="analysis"><option value="">None</option><option value="draft">Draft</option><option value="zebra">Zebra stripes</option><option value="curvature">Curvature</option><option value="thickness">Thickness</option><option value="undercut">Undercut</option></select></label>
-  <button type="button" class="btn" id="gestures-btn" title="Right-drag in a part or a sketch runs a command">Mouse gestures…</button>
-  <button type="button" class="btn" id="prefs-btn" title="Modelling, sketch and mouse settings">Preferences…</button>
-  <h4 class="menu-h">Measurements</h4>
-  <label class="menu-row" title="Units">Units <select id="units"><option>mm</option><option>cm</option><option>m</option><option>in</option><option>ft</option></select></label>
-  <label class="menu-row" title="Decimals">Decimals <select id="decimals"><option value="">Auto</option><option>0</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select></label>
-  <label class="menu-row" title="Colour of the next measurement">Colour <input type="color" id="m-color" value="#e8590c" /></label>
+  <label class="menu-row" title="Colour of the next measurement">Measurement colour <input type="color" id="m-color" value="#e8590c" /></label>
 </div>
 
 <div id="toasts" class="toasts" role="region" aria-label="Notifications"></div>
@@ -370,7 +365,7 @@
 <dialog id="help" class="modal help" aria-labelledby="help-title" data-backdrop-close>
   <div class="modal-head"><h3 id="help-title">Help</h3><button class="icon" data-close aria-label="Close" title="Close (Esc)">✕</button></div>
   <div id="help-body" data-no-i18n></div>
-  <div class="row end help-foot"><label class="chk" title="Short tips the first time you open a model or board, measure or add a section"><input type="checkbox" id="tips-on" checked /> Show tips</label><span class="spacer"></span><button class="btn" data-close>Close</button></div>
+  <div class="row end help-foot"><span class="spacer"></span><button class="btn" data-close>Close</button></div>
 </dialog>
 
 <script type="module" src="/src/main.ts"></script>
