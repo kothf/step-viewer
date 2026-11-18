@@ -2,9 +2,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { solve, type Geo } from "../../src/asm/solver";
-import { IDENTITY, applyDir, applyPoint, compose, invert, translation } from "../../src/asm/math";
+import { IDENTITY, applyDir, applyPoint, compose, invert, rotation, translation, tweenTf } from "../../src/asm/math";
 import { axisLock, cameraAt, colorAt, ease, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, exprValue, motorAmount, motorPlotUnit, motorSeries, orbitKeys, parsePoints, parseSegments, playTime, pointsAt, SEG_SHAPES, segmentsAt, segShape, valueAt } from "../../src/motion/evaluate";
-import { encodeGif, indexPixels, lzw, palette, unlzw } from "../../src/motion/gif";
+import { encodeGif, gifDelays, indexPixels, lzw, palette, unlzw } from "../../src/motion/gif";
 import { accels, alertSpans, gapCsv, plotFile, mateCsv, outOfRange, tripFrame, mateMeasures, pathLength, plotSvg, rates, relativeFrames, speeds, traceAngles, traceCsv, tracePoints, traceSeries } from "../../src/motion/trace";
 import type { AsmDoc, Mate } from "../../src/asm/types";
 import { frameName, frameTimes } from "../../src/motion/frames";
@@ -493,4 +493,40 @@ test("appearance colour keys blend between coloured keys", () => {
   const f = frameAt(s, 1, new Map());
   assert.equal(f.tint.c1, "#800080");
   assert.equal(f.look.c1, 0.5);
+});
+
+test("playback between solved frames follows the screw motion (1.580)", () => {
+  // A crank pin 40 mm from an axis through (10, 5, 0) along Z, frames 30° apart: halfway it is on the circle, not the chord.
+  const o: [number, number, number] = [10, 5, 0], k: [number, number, number] = [0, 0, 1];
+  const start = translation([3, -2, 7]);
+  const a = compose(rotation(o, k, 0.2), start), b = compose(rotation(o, k, 0.2 + Math.PI / 6), start), want = compose(rotation(o, k, 0.2 + Math.PI / 12), start);
+  const mid = tweenTf(a, b, 0.5);
+  for (let i = 0; i < 12; i++) close(mid[i], want[i], 1e-9);
+  const pin = applyPoint(mid, [40, 0, 0]), c = applyPoint(start, [40, 0, 0]);
+  close(Math.hypot(pin[0] - o[0], pin[1] - o[1]), Math.hypot(c[0] - o[0], c[1] - o[1]), 1e-9);
+  // A screw (turn plus slide along the axis), a half turn, and a pure slide.
+  const sa = IDENTITY, sb = compose(translation([0, 12, 0]), rotation([4, 0, 0], [0, 1, 0], 1.1));
+  const sq = tweenTf(sa, sb, 0.25), sw = compose(translation([0, 3, 0]), rotation([4, 0, 0], [0, 1, 0], 0.275));
+  for (let i = 0; i < 12; i++) close(sq[i], sw[i], 1e-9);
+  const half = tweenTf(IDENTITY, rotation([1, 2, 3], [1, 0, 0], Math.PI), 0.5), hw = rotation([1, 2, 3], [1, 0, 0], Math.PI / 2), hw2 = rotation([1, 2, 3], [1, 0, 0], -Math.PI / 2);
+  assert.ok([hw, hw2].some(w => w.every((v, i) => Math.abs(v - half[i]) < 1e-9)), JSON.stringify(half));
+  const slide = tweenTf(translation([1, 1, 1]), translation([3, 5, 9]), 0.25);
+  for (let i = 0; i < 12; i++) close(slide[i], translation([1.5, 2, 3])[i], 1e-12);
+  const q = tweenTf(sa, sb, 0.25), back = tweenTf(q, sb, 1);
+  for (let i = 0; i < 12; i++) close(back[i], sb[i], 1e-12);
+  // Four quarter steps land on the end pose.
+  let p = sa;
+  for (let s = 0; s < 4; s++) p = tweenTf(p, sb, 1 / (4 - s));
+  for (let i = 0; i < 12; i++) close(p[i], sb[i], 1e-9);
+});
+
+test("GIF frame delays add up to the true time (1.580)", () => {
+  const d = gifDelays(15, 15);
+  assert.equal(d.reduce((s, v) => s + v, 0), 100);
+  assert.ok(d.every(v => v === 6 || v === 7));
+  assert.equal(gifDelays(30, 30).reduce((s, v) => s + v, 0), 100);
+  assert.deepEqual(gifDelays(3, 10), [10, 10, 10]);
+  const gif = encodeGif([new Uint8Array(16), new Uint8Array(16)], 2, 2, [7, 6]);
+  const gce = [...gif.keys()].filter(i => gif[i] === 0x21 && gif[i + 1] === 0xf9).map(i => gif[i + 4]);
+  assert.deepEqual(gce, [7, 6]);
 });
