@@ -49,6 +49,12 @@ export function t(en: string, params?: Record<string, string | number>): string 
   return params ? s.replace(/\{(\w+)\}/g, (m, k: string) => (k in params ? String(params[k]) : m)) : s;
 }
 
+/**
+ * `en` shown in English, translated by the dictionary entry `key` (for an English word whose key is taken by
+ * another meaning, e.g. a vault "Draft" against the draft angle).
+ */
+export function tAs(en: string, key: string): string { return current === "ru" ? DICT.get(key) ?? en : en; }
+
 /** True when the dictionary has `en` (used by the tests to spot gaps). */
 export const hasKey = (en: string) => DICT.has(en);
 

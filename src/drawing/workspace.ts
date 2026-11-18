@@ -1,34 +1,39 @@
 // Drawing workspace (FRS section 11): a full-window sheet editor over the 3D view.
-// Views are placed like in SolidWorks: a model view follows the cursor with its
+// Views are placed like in CAD apps: a model view follows the cursor with its
 // lines as a live preview, then projected views come off it as the cursor moves
 // around (Esc or ✓ ends); views drag on the sheet and projected ones stay lined up
 // with their parent. Lines come from the drawing worker (exact HLR).
+import type { VaultTie } from "../pdm/panel";
 import fontUrl from "dejavu-fonts-ttf/ttf/DejaVuSans.ttf?url";
 import type { MEdge, Projection, ViewDir } from "../kernel/drawing";
-import { AUTO_LAYERS, withCut, clineSegs, cloudPrims, dimGeo, factsCtx, holeEdges, ringDist, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
+import { AUTO_LAYERS, arrowOutside, withCut, ringTopo, coneMid, coneOutline, wholeCircle, edgeOnSeg, outlineSeg, clineSegs, cloudPrims, dimGeo, factsCtx, holeEdges, ringDist, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, stackItem, edgeItem, weldItem, cutDesc, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
 import type { PartDoc } from "../model/types";
 import type { AsmDoc } from "../asm/types";
-import { BOM_COLS, autoBalloons, compOfKey, sheetBom, subsOf, type Bom } from "./bom";
+import { BALLOON_R, BOM_COLS, BOM_MAT_COL, autoBalloons, bomMats, compOfKey, sheetBom, subsOf, type BalloonItems, type Bom } from "./bom";
 import { t, onLangChange, lang } from "../i18n";
 import { toast, confirmModal } from "../ui";
-import { DrawingKernel, type ModelFacts } from "./client";
+import { DROPPED, OUT_OF_MEMORY, DrawingKernel, type ModelFacts } from "./client";
+import { NO_FAST_LINES } from "../kernel/drawing";
+import type { ModelSnap } from "./drawing.worker";
 import { BREAK_GAP, composeSheet, fromSheet, HATCH_PATTERNS, hatchOf, inPoly, nextLetter, polyBox, placement, toSheet, viewBody, viewPrims, viewRect, type Placement } from "./compose";
 import { DrawingStore, newSheet, uid } from "./doc";
 import { DRAWING_EXT, packDrawing, unpackDrawing } from "./file";
-import { sheetDxf, sheetDxf2000, sheetPng, sheetSvg, sheetsPdf, svgBody, FONT } from "./output";
+import { printHtml, sheetDxf, sheetDxf2000, sheetPng, sheetSvg, sheetsPdf, svgBody, FONT } from "./output";
 import type { Prim } from "./prims";
 import { editTitleBlock } from "./tbEditor";
+import { editGtol, editHole, editWeld, gtolPicture, surfIcon, weldIcon } from "./annotDlg";
 import { loadFormats } from "./formats";
 import { FIELD_LABEL, isoFormat, editableOf, SIZES, fieldAt, formatPrims, frameOf, sheetSize, tbSize, titleBlockAt, type Fields } from "./sheet";
-import type { Annot, BalloonAnnot, CLineAnnot, DatumTargetAnnot, DimAnnot, SketchAnnot, SkPen, WeldSide, WeldSym, DisplayStyle, DraftStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, GRow, GSym, HatchPattern, Orient, Sheet, SheetSize, TableAnnot, TangentEdges, Tol } from "./types";
-import { GSYMS, GSYM_NAMES, cellLabel } from "./gdt";
-import { WELD_SYMS, WELD_SYM_NAMES } from "./weld";
+import type { Annot, BalloonAnnot, CLineAnnot, GtolAnnot, HoleAnnot, DatumTargetAnnot, DimAnnot, SketchAnnot, SkPen, WeldSide, WeldAnnot, DisplayStyle, DraftStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, GRow, HatchPattern, Orient, Sheet, SheetSize, SurfLay, TableAnnot, TangentEdges, Tol } from "./types";
+import { SURF_LAYS, cellLabel } from "./gdt";
+import { WELD_SYM_NAMES } from "./weld";
 import { SK_PENS, SK_PEN_NAMES, orthoSnap, skPoints, skPrims } from "./sheetSketch";
 import { fitLimits, splitFit } from "./iso286";
-import { FLAT_CONFIG, ORIENTS, ORIENT_NAMES, SCALES, viewConfig, viewOnly, topoOnly, altReq, alignAxis, alignedLegs, cutLegs, findView, fitScale, lookDir, parseScale, projectedDir, scaleText, sideOf, switchProjection, viewDir, viewReq, viewScale } from "./views";
+import { FLAT_CONFIG, ORIENTS, ORIENT_NAMES, SCALES, viewConfig, viewOnly, topoOnly, altReq, alignAxis, alignedLegs, cutLegs, dirKey, findView, fitScale, std3Layout, lookDir, parseScale, projectedDir, scaleText, sideOf, switchProjection, viewDir, viewReq, viewScale } from "./views";
 import { PALETTE, PALETTE_MIME, thumbPath } from "./palette";
 import "./drawing.css";
 import { makeGrip } from "../resize";
+import { bindCommandTips } from "../tooltip";
 import { isSheetBase } from "../sheetmetal/types";
 
 export interface DrawingModel {
@@ -45,15 +50,27 @@ export interface DrawingHost {
   appVersion: string;
   /** A drawing was saved (File ▸ recent documents). */
   saved?(name: string, bytes: Uint8Array): void;
+  /**
+   * A drawing not in a vault yet whose part or assembly is a file of the open vault goes in beside it on Save
+   * (checked out); returns the tie, or null when the model is not in a vault.
+   */
+  intoVault?(name: string, bytes: Uint8Array, source: DrawingDoc["source"]): Promise<VaultTie | null>;
   /** The File menu under the drawing's File button. */
   fileMenu?(btn: HTMLElement): void;
   occtBase: string;
   /** The model open now (a part, or the STEP of the open file), or null. */
   currentModel(): Promise<DrawingModel | null>;
+  /**
+   * The Model button of a drawing whose model is not the 3D document shown under it: opens the drawing's own copy
+   * (a parked tab of that part or assembly, else a new tab) and answers true; false when the model is already there.
+   */
+  openModel?(m: { part?: PartDoc; asm?: AsmDoc; file?: { name: string; bytes: Uint8Array }; name: string }): Promise<boolean>;
   /** The part document with this id open in the modeller now, if any. */
   livePart(id: string): PartDoc | null;
   /** The assembly with this id open now, if any (with patterns and sub-assemblies expanded). */
   liveAsm?(id: string): { doc: AsmDoc; flat: AsmDoc } | null;
+  /** The shape of this flattened assembly from the open assembly's kernel, when it is the one built there; else null. */
+  asmSnap?(flat: AsmDoc): Promise<ModelSnap | null>;
   /** Runs after every change of the part open in the modeller. */
   onPartChange(fn: () => void): void;
   /** Direction of the 3D camera (for "Current 3D view"). */
@@ -92,18 +109,28 @@ type Mode =
   | AnnotMode;
 type Pt = [number, number];
 /** A pick for a dimension: a point (edge end or circle centre), a line or a circle, in a view. */
-interface Pick { kind: "pt" | "line" | "circle"; ref: GeoRef; e: MEdge }
+/** `seg`: the line a pick stands for in view axes, when it is not the edge's own (a circle seen edge-on, a cylinder's outline);
+ *  `side`: a cylinder outline pick (+1/−1, which of the two outline lines; `GeoRef.s`). */
+interface Pick { kind: "pt" | "line" | "circle"; ref: GeoRef; e: MEdge; seg?: [Pt, Pt]; side?: 1 | -1 }
 type AnnotMode =
   /** Smart dimension (FR-DRW-021): pick one or two entities, then place. */
   | { kind: "dim"; view: string | null; picks: Pick[]; at: Pt | null }
   /** Chain, baseline or ordinate dimensions (FR-DRW-021): the first point is the base, each further point adds dimensions at once. */
-  | { kind: "dimset"; how: "chain" | "base" | "ord"; view: string | null; picks: GeoRef[]; axis: "h" | "v" | null; at: Pt | null }
+  | { kind: "dimset"; how: "chain" | "base" | "ord"; view: string | null; picks: GeoRef[]; axis: "h" | "v" | null; at: Pt | null;
+      /** Where the set's first row runs (view model axes), fixed by the placement click after the second point. */
+      row?: number;
+      /** The second point while the set waits for its placement click. */
+      pend?: GeoRef | null }
   /** Hole table (FR-DRW-024): click the origin on a view (its end-on holes are taken), then place the table. */
   | { kind: "htable"; view: string | null; origin: GeoRef | null; holes: GeoRef[]; at: Pt | null }
   /** Bend table (FR-FT-120): click a flat pattern view, then place the table. */
   | { kind: "btable"; view: string | null; at: Pt | null }
+  /** Weld table (FR-FT-121): click a view of a weldment part with fillet beads, then place the table. */
+  | { kind: "wtable"; view: string | null; at: Pt | null }
+  /** Cut list table (FR-FT-121): click a view of a weldment part, then place the table. */
+  | { kind: "ctable"; view: string | null; at: Pt | null }
   /** Hole callout (FR-DRW-022): pick a round edge, then place. */
-  | { kind: "hole"; view: string | null; e: MEdge | null; at: Pt | null }
+  | { kind: "hole"; view: string | null; e: MEdge | null; at: Pt | null; s?: 1 | -1 }
   /** Note: click the place (first clicking an edge gives it a leader). */
   | { kind: "note"; view: string | null; leader: GeoRef | null; at: Pt | null }
   /** Centreline (two parallel edges or two points) or centre mark (a round edge), placed at the last click (FR-DRW-023). */
@@ -124,7 +151,9 @@ type AnnotMode =
   | { kind: "surf"; view: string | null; ref: GeoRef | null; at: Pt | null }
   /** Balloon (FR-DRW-030): click an edge of a component, then place the balloon. */
   | { kind: "balloon"; view: string | null; ref: GeoRef | null; at: Pt | null };
-const ANNOT_KINDS = new Set(["dim", "dimset", "htable", "btable", "hole", "note", "gtol", "datum", "surf", "balloon", "cloud", "cline", "weld", "dtarget", "sk"]);
+/** What each lay symbol of ISO 1302 says about the direction of the surface pattern. */
+const LAY_NAMES: Record<string, string> = { "": "None", "=": "Parallel to the view plane", "⊥": "Perpendicular to the view plane", X: "Crossed", M: "Multi-directional", C: "Circular", R: "Radial", P: "Particulate, no direction" };
+const ANNOT_KINDS = new Set(["dim", "dimset", "htable", "btable", "wtable", "ctable", "hole", "note", "gtol", "datum", "surf", "balloon", "cloud", "cline", "weld", "dtarget", "sk"]);
 const isAnnotMode = (m: Mode): m is AnnotMode => ANNOT_KINDS.has(m.kind);
 type Line4 = [number, number, number, number];
 
@@ -134,11 +163,104 @@ const SVGNS = "http://www.w3.org/2000/svg";
 const PREVIEW_EDGES = 80, PREVIEW_MS = 400;
 const SIZE_LIST = Object.keys(SIZES) as Exclude<SheetSize, "custom">[];
 const I = (d: string) => `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
-/** The annotation palette's tools (FR-UI-072), the same commands as Dimension and Annotate ▾. */
-const ANNOT_TOOLS: [string, string][] = [
-  ["dim", "Dimension"], ["chain", "Chain dimension"], ["base", "Baseline dimension"], ["ord", "Ordinate dimension"], ["items", "Model items"], ["hole", "Hole callout"], ["htable", "Hole table"], ["btable", "Bend table"], ["note", "Note"], ["gtol", "Geometric tolerance"], ["datum", "Datum feature"], ["dtarget", "Datum target"],
-  ["surf", "Surface finish"], ["cline", "Centerline"], ["cmark", "Center mark"], ["weld", "Weld symbol"], ["cloud", "Revision cloud"], ["skline", "Line"], ["skrect", "Rectangle"], ["skcircle", "Circle"], ["skpoly", "Polyline"], ["balloon", "Balloon"], ["auto", "Auto balloon"], ["bom", "Bill of materials"], ["rev", "Revision table"], ["table", "General table"],
+/** Annotation tool icons (16 × 16, stroke = currentColor), one per tool in `ANNOT_GROUPS`. */
+const TBL = '<rect x="1.5" y="2.5" width="13" height="11"/><path d="M1.5 5.8h13"/>';
+const AICON: Record<string, string> = {
+  dim: I('<path d="M2 4v8M14 4v8M2 8h12"/><path d="m4.5 6.5-2.5 1.5 2.5 1.5M11.5 6.5 14 8l-2.5 1.5"/>'),
+  chain: I('<path d="M1.5 4v8M8 4v8M14.5 4v8M1.5 8h13"/><path d="m3.5 7-2 1 2 1M6 7l2 1-2 1M10 7 8 8l2 1M12.5 7l2 1-2 1"/>'),
+  base: I('<path d="M2 2.5v11M8.5 7v6.5M14 2.5v11M2 10h6.5M2 5h12"/><path d="m4 9-2 1 2 1M6.5 9l2 1-2 1M12 4l2 1-2 1"/>'),
+  ord: I('<path d="M2 14.5h12.5M3 13V4M8 13V7M13 13V9.5"/><path d="M3 2.5v.01M8 5.5v.01M13 8v.01" stroke-width="2"/>'),
+  items: I('<path d="M2 6.5 5 4.5h7l-3 2zM2 6.5v7h7v-7M9 6.5l3-2v7l-3 2"/><path d="M14.5 2.5v4" stroke-dasharray="1.2 1"/>'),
+  hole: I('<circle cx="5" cy="10.5" r="3.5"/><path d="M7.6 8 11 4.5h3.5"/><path d="M3.8 11.8 6.2 9.2"/>'),
+  note: I('<path d="m2 13 3-8.5 3 8.5M3.1 10h3.8"/><path d="M10 5.5h4.5M10 8.5h4.5M10 11.5h3"/>'),
+  balloon: I('<circle cx="10" cy="6" r="4.5"/><path d="M6.8 9.2 2 14"/><path d="M9.2 4.6 10.2 3.8v4.4"/>'),
+  auto: I('<circle cx="5" cy="5" r="3"/><circle cx="11.5" cy="11" r="3"/><path d="M7 7.3 9.6 9.4"/><path d="M14 2v3M12.5 3.5h3"/>'),
+  surf: I('<path d="m1.5 8.5 3 5 5.5-11h4.5"/><path d="M1.5 8.5h5.5"/>'),
+  weld: I('<path d="M1.5 14 6 6.5h8.5"/><path d="M9 6.5v-3l3 3"/>'),
+  cloud: I('<path d="M4.2 12.5a2.2 2.2 0 0 1-1.6-3.6 2.2 2.2 0 0 1 2.2-3.4 2.4 2.4 0 0 1 4.2-1.3 2.2 2.2 0 0 1 3.6 1.6 2.2 2.2 0 0 1 .6 4.1 2.2 2.2 0 0 1-2.7 2.6 2.4 2.4 0 0 1-3.6.4 2.2 2.2 0 0 1-2.9-.4z"/>'),
+  gtol: I('<rect x="1.5" y="5" width="13" height="6"/><path d="M6 5v6M10.5 5v6"/><path d="m2.8 9.8 1.4-3.6M4.3 9.8l1.4-3.6" stroke-width="1"/>'),
+  datum: I('<rect x="4" y="1.5" width="8" height="6"/><path d="M8 7.5v3"/><path d="M5.5 14.5h5L8 10.5z" fill="currentColor"/>'),
+  dtarget: I('<circle cx="9.5" cy="6" r="4.5"/><path d="M5 6h9M6.3 9.2 2 14"/>'),
+  cline: I('<path d="M1.5 3.5h13M1.5 12.5h13"/><path d="M1 8h14" stroke-dasharray="4 1.4 1 1.4"/>'),
+  cmark: I('<circle cx="8" cy="8" r="4.5"/><path d="M8 1v4.5M8 10.5V15M1 8h4.5M10.5 8H15M7 8h2M8 7v2"/>'),
+  htable: I(`${TBL}<path d="M6 5.8v7.7"/><circle cx="10.3" cy="9.6" r="2"/>`),
+  btable: I(`${TBL}<path d="M6 5.8v7.7"/><path d="M8.5 12V10a2 2 0 0 1 2-2h2" stroke-dasharray="1.4 1"/>`),
+  wtable: I(`${TBL}<path d="M6 5.8v7.7"/><path d="M8.5 12h4.5L8.5 8z"/>`),
+  ctable: I(`${TBL}<path d="M6 5.8v7.7"/><path d="M8.5 8h4.5M8.5 12h4.5M10.8 8v4"/>`),
+  bom: I(`${TBL}<path d="M5 5.8v7.7M1.5 9.7h13"/><path d="M3.2 7v1.6M3.2 10.9v1.6"/>`),
+  rev: I(`${TBL}<path d="M1.5 9.7h13M6 5.8v7.7"/><path d="M2.4 8.6h2.7L3.75 6.6z"/>`),
+  table: I(`${TBL}<path d="M1.5 9.7h13M6 5.8v7.7M10.3 5.8v7.7"/>`),
+  skline: I('<path d="M3 13 13 3"/><circle cx="3" cy="13" r="1.2"/><circle cx="13" cy="3" r="1.2"/>'),
+  skrect: I('<rect x="2" y="3.5" width="12" height="9"/>'),
+  skcircle: I('<circle cx="8" cy="8" r="6"/><path d="M8 8h.01" stroke-width="2"/>'),
+  skpoly: I('<path d="M2 13 5 5l4.5 5.5L14 3"/>'),
+};
+/** The annotation tools (FR-UI-072, the same commands as Dimension and Annotate ▾), grouped as in a CAD app's
+ *  Annotation tab: [key, label, tooltip]. Key "dim" is the Smart dimension button (`data-a="dim"`), the rest `data-an`. */
+const ANNOT_GROUPS: { name: string; tools: [string, string, string][] }[] = [
+  { name: "Dimensions", tools: [
+    ["dim", "Dimension", "Smart dimension: click an edge, a circle or two points, then place the dimension (D)"],
+    ["chain", "Chain dimension", "Dimensions from point to point: click the base point, then each next point"],
+    ["base", "Baseline dimension", "Dimensions from one base point: click the base, then each point"],
+    ["ord", "Ordinate dimension", "Ordinate dimensions from a zero point: click the zero, then each point"],
+    ["items", "Model items", "Bring the model's sketch dimensions and depths onto the views"],
+  ] },
+  { name: "Notes and symbols", tools: [
+    ["note", "Note", "Text on the sheet; click an edge first to give it a leader"],
+    ["hole", "Hole callout", "Click a round edge of a hole, then place its size and depth"],
+    ["balloon", "Balloon", "Click a component's edge, then place its item number"],
+    ["auto", "Auto balloon", "Balloon every item of the selected view"],
+    ["surf", "Surface finish", "Click an edge, then place the surface texture symbol"],
+    ["weld", "Weld symbol", "Optionally click the joint's edge, then place the weld symbol"],
+    ["cloud", "Revision cloud", "Click the corners round a change; the first corner or Enter closes it"],
+  ] },
+  { name: "Geometric tolerancing", tools: [
+    ["gtol", "Geometric tolerance", "Feature control frame: optionally click an edge for the leader, then place it"],
+    ["datum", "Datum feature", "Click an edge, then place the datum letter"],
+    ["dtarget", "Datum target", "Optionally click the target on an edge, then place the frame circle"],
+  ] },
+  { name: "Centerlines", tools: [
+    ["cline", "Centerline", "Click two parallel edges or two points"],
+    ["cmark", "Center mark", "Click a round edge seen end-on"],
+  ] },
+  { name: "Tables", tools: [
+    ["bom", "Bill of materials", "Insert the assembly's bill of materials"],
+    ["htable", "Hole table", "Click the origin on a view, then place the table of its holes"],
+    ["rev", "Revision table", "Insert a revision table at the top right corner"],
+    ["table", "General table", "Insert a table you fill in"],
+    ["btable", "Bend table", "Click a flat pattern view, then place its bend table"],
+    ["wtable", "Weld table", "Click a view of a weldment, then place its weld table"],
+    ["ctable", "Cut list table", "Click a view of a weldment, then place its cut list"],
+  ] },
+  { name: "Sheet sketch", tools: [
+    ["skline", "Line", "Two clicks on the sheet"],
+    ["skrect", "Rectangle", "Two opposite corners"],
+    ["skcircle", "Circle", "The centre, then a point on the circle"],
+    ["skpoly", "Polyline", "Click each corner; Enter ends it"],
+  ] },
 ];
+/**
+ * The command bar's tabs, as in other CAD apps: views on View Layout, every annotation tool on Annotation (the less used
+ * dimension kinds and the tables under a ▾ each), the sheet's own lines on Sketch. Each tool has one place; the side
+ * panel keeps the view palette, the tree and the properties.
+ */
+const CMD_TABS: [string, string][] = [["layout", "View Layout"], ["annot", "Annotation"], ["sketch", "Sketch"]];
+type BarMenu = { menu: string; icon: string; label: string; tip: string; tools: string[] };
+const SKETCH_TOOLS = ["skline", "skrect", "skcircle", "skpoly"];
+const toolDef = (k: string) => ANNOT_GROUPS.flatMap(g => g.tools).find(y => y[0] === k)!;
+const BAR_LAYOUT: (string | BarMenu)[] = [
+  "dim", { menu: "dims", icon: AICON.chain, label: "Dimensions", tip: "More dimensions: chain, baseline and ordinate", tools: ["chain", "base", "ord"] }, "items", "|",
+  "note", "hole", "balloon", "auto", "surf", "weld", "cloud", "|",
+  "gtol", "datum", "dtarget", "|",
+  "cline", "cmark", "|",
+  { menu: "tables", icon: AICON.table, label: "Tables", tip: "Tables: bill of materials, hole, revision, general, bend, weld and cut list tables", tools: ["bom", "htable", "rev", "table", "btable", "wtable", "ctable"] },
+];
+/** A command bar button: icon over its label, like the 3D command bar's `.mc-b`; `title` feeds the rich tooltip. */
+const cmdButton = (attrs: string, icon: string, label: string, tip: string, menu = false) =>
+  `<button class="drw-cb" ${attrs}${menu ? ' aria-haspopup="menu" aria-expanded="false"' : ""} title="${esc(t(tip))}">${icon}<span class="mc-l">${menu ? `<span>${esc(t(label))}</span> ▾` : esc(t(label))}</span></button>`;
+/** An annotation tool as an icon menu row under a ▾ of the Annotation tab. */
+const annotButton = ([k, label]: [string, string, string]) =>
+  `<button role="menuitem" ${k === "dim" ? 'data-a="dim"' : `data-an="${k}"`}>${AICON[k]}<span>${esc(t(label))}</span></button>`;
 
 const ICON = {
   std3: I('<rect x="1.5" y="1.5" width="6" height="5"/><rect x="1.5" y="9.5" width="6" height="5"/><rect x="9.5" y="1.5" width="5" height="5"/>'),
@@ -158,13 +280,12 @@ const ICON = {
   ok: I('<path d="m3 8.5 3.2 3L13 4.5"/>'),
   section: I('<rect x="3" y="3.5" width="10" height="9"/><path d="M3 12.5l4-9M6.5 12.5l4-9M10 12.5l3-6.5" stroke-width="1"/><path d="M1 8h14" stroke-dasharray="3 1.2 1 1.2"/>'),
   detail: I('<circle cx="6.5" cy="6.5" r="4"/><path d="m9.5 9.5 4 4"/>'),
-  dim: I('<path d="M2 4v8M14 4v8M2 8h12"/><path d="m4.5 6.5-2.5 1.5 2.5 1.5M11.5 6.5 14 8l-2.5 1.5"/>'),
   annot: I('<path d="M2.5 3h11M2.5 6.5h11M2.5 10h7"/><path d="m11 13 2-2"/>'),
   aux: I('<path d="M2 12 9 3"/><path d="m7.5 9.5 4 3.2M11.5 12.7l-.4-2.6M11.5 12.7l-2.5.3"/>'),
 };
 
 /** A drawing kept in a document tab while another document is shown. */
-export interface DrawingTab { store: DrawingStore; model: Uint8Array | undefined; fileName: string; info: DrawingModel["info"]; modelKey: string; sheetIdx: number }
+export interface DrawingTab { store: DrawingStore; model: Uint8Array | undefined; fileName: string; info: DrawingModel["info"]; modelKey: string; sheetIdx: number; vault: VaultTie | null }
 
 export class DrawingWorkspace {
   readonly el: HTMLElement;
@@ -175,6 +296,10 @@ export class DrawingWorkspace {
   private model: Uint8Array | undefined;
   private fileName = "";
   private sheetIdx = 0;
+  /** The listeners on `el` itself are on (see `build`). */
+  private bound = false;
+  /** The palette view being dragged onto the sheet. */
+  private palDragged: Orient | null = null;
   private sel: string | null = null;
   private hover: string | null = null;
   private mode: Mode = { kind: "none" };
@@ -195,6 +320,7 @@ export class DrawingWorkspace {
 
   constructor(private host: DrawingHost) {
     this.kernel = new DrawingKernel(host.occtBase);
+    this.kernel.onRestart = () => this.renderStatus();
     this.el = document.createElement("div");
     this.el.id = "drw";
     this.el.className = "drw";
@@ -212,12 +338,17 @@ export class DrawingWorkspace {
 
   get open() { return !this.el.hidden; }
   get hasDrawing() { return !!this.store; }
+  /** The drawing's document id, name and model (File ▸ Open drawing), or null. */
+  get current(): { id: string; name: string; source: DrawingDoc["source"] } | null { return this.store ? { id: this.doc.id, name: this.title, source: this.doc.source } : null; }
   private get doc() { return this.store!.doc; }
   private get sheet() { return this.doc.sheets[Math.min(this.sheetIdx, this.doc.sheets.length - 1)]; }
 
   // ---------- opening ----------
 
-  /** A new drawing of the model open now, with the standard 3 views. */
+  /**
+   * A new drawing of the model open now: an empty sheet beside the view palette, as in other CAD apps; views are
+   * dragged from the palette, or placed with Standard 3 views.
+   */
   async newFromModel() {
     const m = await this.host.currentModel();
     if (!m) { toast(t("Open a part, an assembly or a STEP, IGES or BREP model first."), true); return; }
@@ -229,9 +360,11 @@ export class DrawingWorkspace {
     };
     this.info = m.info;
     this.load(doc, m.file?.bytes, "");
-    const facts = await this.loadModel();
-    if (facts) this.standard3(true);
+    await this.loadModel();
   }
+
+  /** Sets the drawing kernel up ahead of the first drawing (main.ts calls it once a model is shown). */
+  warm() { this.kernel.warm(); }
 
   async openFile(file: File | { name: string; data: ArrayBuffer }) {
     const buf = file instanceof File ? await file.arrayBuffer() : file.data;
@@ -249,15 +382,25 @@ export class DrawingWorkspace {
   /** The assembly's bill of materials (FR-DRW-030), for BOM tables and balloon numbers. */
   private boms: Map<string, Bom> | null = null;
   /** The BOM a sheet's balloons and parts list follow (its BOM table's mode). */
-  private bomFor(sh: Sheet): Bom | null { const src = this.doc.source; return this.boms && src.kind === "asm" ? sheetBom(sh, src.doc, src.flat, this.boms) : null; }
+  private bomFor(sh: Sheet): Bom | null { const src = this.doc.source; return this.boms && src.kind === "asm" ? sheetBom(sh, src.doc, src.flat, this.boms, bomMats(this.facts?.comps)) : null; }
   private get bom(): Bom | null { return this.bomFor(this.sheet); }
+  /** A weldment part's cut list, which balloons number when the drawing has no BOM. */
+  private get cuts() { return this.bom ? null : this.facts?.cuts?.length ? this.facts.cuts : null; }
+  /** A part drawing with no cut list: balloons are item 1 (a CAD app numbers a part drawing's balloon 1). */
+  private get single() { return this.doc.source.kind !== "asm" && !this.facts?.cuts?.length; }
+  /** What balloons number on this sheet: BOM items (assembly) or cut list items (weldment part). */
+  private balloonItems(): BalloonItems { const c = this.ctx(); return { edge: k => edgeItem(k, c), stack: x => stackItem(x, c), mine: a => !a.weld }; }
+  /** What weld tags number: the bead's row in the weld table. */
+  private weldItems(): BalloonItems { const c = this.ctx(); return { edge: k => weldItem(k, c), stack: x => stackItem(x, c), mine: a => !!a.weld }; }
 
   private load(doc: DrawingDoc, model: Uint8Array | undefined, fileName: string) {
     this.host.beforeOpen?.();
     this.store = new DrawingStore(doc);
-    this.store.onChange(() => this.renderAll());
+    this.store.onChange(() => { this.renderAll(); this.dropGone(); });
+    this.lastShown.clear();
     this.model = model;
     this.fileName = fileName;
+    this.vault = null;
     this.sheetIdx = 0;
     this.sel = null;
     this.mode = { kind: "none" };
@@ -274,11 +417,14 @@ export class DrawingWorkspace {
     this.loading++;
     this.renderStatus();
     try {
-      this.facts = await this.kernel.load(src.kind === "part" ? { part: src.doc } : src.kind === "asm" ? { asm: src.flat } : { file: { name: src.name, bytes: this.model! } });
+      // A drawing of the assembly open in 3D: its kernel has built the parts already (engine: 11 s → 0.1 s).
+      const pre = src.kind === "asm" ? await this.host.asmSnap?.(src.flat).catch(() => null) : null;
+      this.facts = await this.kernel.load(src.kind === "part" ? { part: src.doc } : src.kind === "asm" ? { asm: src.flat } : { file: { name: src.name, bytes: this.model! } }, pre);
       this.boms = src.kind === "asm" ? new Map() : null;
       this.stale = false;
       this.renderAll();
-      void this.renderPalette();
+      // The palette's thumbnails queue behind the sheet's previews and views, so the sheet shows first.
+      setTimeout(() => void this.renderPalette(), 0);
       return this.facts;
     } catch (err) {
       toast(t("The drawing's model could not be loaded: {err}", { err: t((err as Error).message) }), true);
@@ -290,7 +436,8 @@ export class DrawingWorkspace {
   park(): DrawingTab | null {
     if (!this.store) return null;
     this.cancelMode();
-    const tab: DrawingTab = { store: this.store, model: this.model, fileName: this.fileName, info: this.info, modelKey: this.modelKey, sheetIdx: this.sheetIdx };
+    const tab: DrawingTab = { store: this.store, model: this.model, fileName: this.fileName, info: this.info, modelKey: this.modelKey, sheetIdx: this.sheetIdx, vault: this.vault };
+    this.vault = null;
     this.hide();
     this.store = null;
     return tab;
@@ -303,6 +450,7 @@ export class DrawingWorkspace {
     this.fileName = tab.fileName;
     this.info = tab.info;
     this.modelKey = tab.modelKey;
+    this.vault = tab.vault;
     this.sheetIdx = tab.sheetIdx;
     this.sel = null;
     this.mode = { kind: "none" };
@@ -353,6 +501,18 @@ export class DrawingWorkspace {
     requestAnimationFrame(() => this.svg?.focus({ preventScroll: true }));
   }
 
+  /** Model: back to the 3D document under the drawing; a drawing opened by itself opens the model it carries. */
+  private async backToModel() {
+    const src = this.store ? this.doc.source : null;
+    if (src && this.host.openModel) {
+      this.cancelMode();
+      const m = src.kind === "part" ? { part: src.doc, name: src.name } : src.kind === "asm" ? { asm: src.doc, name: src.name } : this.model ? { file: { name: src.name, bytes: this.model }, name: src.name } : null;
+      // The model gets its own copy of the document: the drawing's stays as it is until the model changes.
+      if (m && await this.host.openModel("file" in m ? m : JSON.parse(JSON.stringify(m)))) return;
+    }
+    this.hide();
+  }
+
   hide() {
     this.cancelMode();
     this.el.hidden = true;
@@ -398,57 +558,7 @@ export class DrawingWorkspace {
         <button class="btn small" data-a="back" title="${esc(t("Back to the 3D model"))}">${ICON.back}<span>${esc(t("Model"))}</span></button>
         ${this.host.fileMenu ? `<button class="btn small drw-file" data-a="file" aria-haspopup="menu" aria-expanded="false" aria-controls="file-menu" title="${esc(t("File: new, open, save, Pack and Go, export, print, recent documents"))}"><span>${esc(t("File"))}</span> ▾</button>` : ""}
         <span class="drw-name" translate="no"></span>
-        <div class="drw-cmds" role="toolbar" aria-label="${esc(t("Drawing commands"))}">
-          <button class="btn small" data-a="std3" title="${esc(t("Standard 3 views: front, top and side, lined up"))}">${ICON.std3}<span>${esc(t("Standard 3 views"))}</span></button>
-          <div class="drw-dd"><button class="btn small" data-a="model" aria-haspopup="menu" aria-expanded="false" title="${esc(t("Model view: pick an orientation, then place it on the sheet"))}">${ICON.model}<span>${esc(t("Model view"))}</span> ▾</button>
-            <div class="drw-menu" role="menu" hidden>${(Object.keys(ORIENT_NAMES) as Orient[]).map(o => `<button role="menuitem" data-orient="${o}">${esc(t(ORIENT_NAMES[o]))}</button>`).join("")}</div></div>
-          <button class="btn small" data-a="proj" title="${esc(t("Projected view: move the cursor around a view and click"))}">${ICON.proj}<span>${esc(t("Projected view"))}</span></button>
-          <div class="drw-dd"><button class="btn small" data-a="section" aria-haspopup="menu" aria-expanded="false" title="${esc(t("Section view: draw the cutting line on a view, then place the section"))}">${ICON.section}<span>${esc(t("Section"))}</span> ▾</button>
-            <div class="drw-menu" role="menu" hidden>
-              <button role="menuitem" data-cut="h">${esc(t("Horizontal cutting line"))}</button>
-              <button role="menuitem" data-cut="v">${esc(t("Vertical cutting line"))}</button>
-              <button role="menuitem" data-cut="2p">${esc(t("Cutting line through two points"))}</button>
-              <button role="menuitem" data-cut="off">${esc(t("Offset section"))}</button>
-              <button role="menuitem" data-cut="half">${esc(t("Half section"))}</button>
-              <button role="menuitem" data-cut="aligned">${esc(t("Aligned section"))}</button>
-            </div></div>
-          <div class="drw-dd"><button class="btn small" data-a="detail" aria-haspopup="menu" aria-expanded="false" title="${esc(t("Detail view: click the centre of the circle on a view, then its radius, then place the view"))}">${ICON.detail}<span>${esc(t("Detail"))}</span> ▾</button>
-            <div class="drw-menu" role="menu" hidden>
-              <button role="menuitem" data-det="circle">${esc(t("Circle"))}</button>
-              <button role="menuitem" data-det="profile">${esc(t("Profile"))}</button>
-            </div></div>
-          <button class="btn small" data-a="aux" title="${esc(t("Auxiliary view: click a straight edge, then place the view square to it"))}">${ICON.aux}<span>${esc(t("Auxiliary"))}</span></button>
-          <span class="drw-sep"></span>
-          <button class="btn small" data-a="dim" title="${esc(t("Smart dimension (D): click an edge, a circle or two points, then place the dimension"))}">${ICON.dim}<span>${esc(t("Dimension"))}</span></button>
-          <div class="drw-dd"><button class="btn small" data-a="annot" aria-haspopup="menu" aria-expanded="false" title="${esc(t("Model items, hole callouts, notes, geometric tolerances, datums, surface finish, tables, balloons and the bill of materials"))}">${ICON.annot}<span>${esc(t("Annotate"))}</span> ▾</button>
-            <div class="drw-menu" role="menu" hidden>
-              <button role="menuitem" data-an="chain">${esc(t("Chain dimension"))}</button>
-              <button role="menuitem" data-an="base">${esc(t("Baseline dimension"))}</button>
-              <button role="menuitem" data-an="ord">${esc(t("Ordinate dimension"))}</button>
-              <button role="menuitem" data-an="items">${esc(t("Model items"))}</button>
-              <button role="menuitem" data-an="hole">${esc(t("Hole callout"))}</button>
-              <button role="menuitem" data-an="htable">${esc(t("Hole table"))}</button>
-              <button role="menuitem" data-an="btable">${esc(t("Bend table"))}</button>
-              <button role="menuitem" data-an="note">${esc(t("Note"))}</button>
-              <button role="menuitem" data-an="gtol">${esc(t("Geometric tolerance"))}</button>
-              <button role="menuitem" data-an="datum">${esc(t("Datum feature"))}</button>
-              <button role="menuitem" data-an="dtarget">${esc(t("Datum target"))}</button>
-              <button role="menuitem" data-an="surf">${esc(t("Surface finish"))}</button>
-              <button role="menuitem" data-an="cline">${esc(t("Centerline"))}</button>
-              <button role="menuitem" data-an="cmark">${esc(t("Center mark"))}</button>
-              <button role="menuitem" data-an="weld">${esc(t("Weld symbol"))}</button>
-              <button role="menuitem" data-an="cloud">${esc(t("Revision cloud"))}</button>
-              <button role="menuitem" data-an="skline">${esc(t("Line"))}</button>
-              <button role="menuitem" data-an="skrect">${esc(t("Rectangle"))}</button>
-              <button role="menuitem" data-an="skcircle">${esc(t("Circle"))}</button>
-              <button role="menuitem" data-an="skpoly">${esc(t("Polyline"))}</button>
-              <button role="menuitem" data-an="rev">${esc(t("Revision table"))}</button>
-              <button role="menuitem" data-an="table">${esc(t("General table"))}</button>
-              <button role="menuitem" data-an="balloon">${esc(t("Balloon"))}</button>
-              <button role="menuitem" data-an="auto">${esc(t("Auto balloon"))}</button>
-              <button role="menuitem" data-an="bom">${esc(t("Bill of materials"))}</button>
-            </div></div>
-          <span class="drw-sep"></span>
+        <div class="drw-right" role="toolbar" aria-label="${esc(t("Edit and file"))}">
           <button class="icon" data-a="undo" aria-label="${esc(t("Undo (Ctrl+Z)"))}" title="${esc(t("Undo (Ctrl+Z)"))}">${ICON.undo}</button>
           <button class="icon" data-a="redo" aria-label="${esc(t("Redo (Ctrl+Y)"))}" title="${esc(t("Redo (Ctrl+Y)"))}">${ICON.redo}</button>
           <button class="icon" data-a="fit" aria-label="${esc(t("Fit the sheet (F)"))}" title="${esc(t("Fit the sheet (F)"))}">${ICON.fit}</button>
@@ -466,18 +576,53 @@ export class DrawingWorkspace {
             </div></div>
         </div>
       </div>
+      <div class="drw-cmds" role="toolbar" aria-label="${esc(t("Drawing commands"))}">
+        <div class="drw-cg" role="group" data-cpane="layout" aria-label="${esc(t("View Layout"))}">
+          ${cmdButton('data-a="std3"', ICON.std3, "Standard 3 views", "Standard 3 views: front, top and side, lined up")}
+          <div class="drw-dd">${cmdButton('data-a="model"', ICON.model, "Model view", "Model view: pick an orientation, then place it on the sheet", true)}
+            <div class="drw-menu" role="menu" hidden>${(Object.keys(ORIENT_NAMES) as Orient[]).map(o => `<button role="menuitem" data-orient="${o}">${esc(t(ORIENT_NAMES[o]))}</button>`).join("")}</div></div>
+          ${cmdButton('data-a="proj"', ICON.proj, "Projected view", "Projected view: move the cursor around a view and click")}
+          <div class="drw-dd">${cmdButton('data-a="section"', ICON.section, "Section", "Section view: draw the cutting line on a view, then place the section", true)}
+            <div class="drw-menu" role="menu" hidden>
+              <button role="menuitem" data-cut="h">${esc(t("Horizontal cutting line"))}</button>
+              <button role="menuitem" data-cut="v">${esc(t("Vertical cutting line"))}</button>
+              <button role="menuitem" data-cut="2p">${esc(t("Cutting line through two points"))}</button>
+              <button role="menuitem" data-cut="off">${esc(t("Offset section"))}</button>
+              <button role="menuitem" data-cut="half">${esc(t("Half section"))}</button>
+              <button role="menuitem" data-cut="aligned">${esc(t("Aligned section"))}</button>
+            </div></div>
+          <div class="drw-dd">${cmdButton('data-a="detail"', ICON.detail, "Detail", "Detail view: click the centre of the circle on a view, then its radius, then place the view", true)}
+            <div class="drw-menu" role="menu" hidden>
+              <button role="menuitem" data-det="circle">${esc(t("Circle"))}</button>
+              <button role="menuitem" data-det="profile">${esc(t("Profile"))}</button>
+            </div></div>
+          ${cmdButton('data-a="aux"', ICON.aux, "Auxiliary", "Auxiliary view: click a straight edge or a drawn line, then place the view square to it")}
+        </div>
+        <div class="drw-cg" role="group" data-cpane="annot" aria-label="${esc(t("Annotation"))}" hidden>
+          ${BAR_LAYOUT.map(it => {
+            if (it === "|") return '<span class="drw-sep"></span>';
+            if (typeof it !== "string") return `<div class="drw-dd">${cmdButton(`data-a="${it.menu}"`, it.icon, it.label, it.tip, true)}
+            <div class="drw-menu" role="menu" hidden>${it.tools.map(k => annotButton(toolDef(k))).join("")}</div></div>`;
+            const x = toolDef(it);
+            return cmdButton(`${it === "dim" ? 'data-a="dim"' : `data-an="${it}"`} data-tool="${it}"`, AICON[it], x[1], x[2]);
+          }).join("")}
+        </div>
+        <div class="drw-cg" role="group" data-cpane="sketch" aria-label="${esc(t("Sheet sketch"))}" hidden>
+          ${SKETCH_TOOLS.map(k => { const x = toolDef(k); return cmdButton(`data-an="${k}" data-tool="${k}"`, AICON[k], x[1], x[2]); }).join("")}
+        </div>
+      </div>
+      <div class="drw-cfoot"><div class="cm-tabs drw-ctabs" role="tablist" aria-label="${esc(t("Command tabs"))}">
+        ${CMD_TABS.map(([k, label], i) => `<button role="tab" data-ctab="${k}" aria-selected="${i ? "false" : "true"}"${i ? ' tabindex="-1"' : ' class="on"'}>${esc(t(label))}</button>`).join("")}
+      </div></div>
       <div class="drw-body">
         <aside class="drw-side" aria-label="${esc(t("Sheets and views"))}">
-          <div class="drw-ptabs" role="tablist" aria-label="${esc(t("Palettes"))}">
-            <button role="tab" id="drw-pt-views" aria-selected="true" aria-controls="drw-pane-views" data-ptab="views" class="on">${esc(t("View palette"))}</button>
-            <button role="tab" id="drw-pt-annot" aria-selected="false" aria-controls="drw-pane-annot" tabindex="-1" data-ptab="annot">${esc(t("Annotation"))}</button>
+          <div class="drw-ptabs-row">
+            <h2 class="drw-pal-h" id="drw-pt-views">${esc(t("View palette"))}</h2>
+            <button class="drw-palfold" data-a="palfold" aria-expanded="true" aria-label="${esc(t("Fold the palette"))}" title="${esc(t("Fold the palette"))}">${CHEVRON}</button>
           </div>
-          <div class="drw-pal" id="drw-pane-views" role="tabpanel" aria-labelledby="drw-pt-views">
+          <div class="drw-pal" id="drw-pane-views" role="group" aria-labelledby="drw-pt-views">
             <p class="drw-pal-note">${esc(t("Drag a view onto the sheet, or click it and then click the sheet."))}</p>
             <div class="drw-pal-grid">${PALETTE.map(o => `<button class="drw-pt" draggable="true" data-orient="${o}" data-pal="${o}" title="${esc(t("Drag this view onto the sheet"))}"><svg viewBox="0 0 64 64" aria-hidden="true"><path d=""/></svg><span>${esc(t(ORIENT_NAMES[o]))}</span></button>`).join("")}</div>
-          </div>
-          <div class="drw-pal" id="drw-pane-annot" role="tabpanel" aria-labelledby="drw-pt-annot" hidden>
-            <div class="drw-at-grid">${ANNOT_TOOLS.map(([k, label]) => `<button class="btn small drw-at" ${k === "dim" ? 'data-a="dim"' : `data-an="${k}"`}>${esc(t(label))}</button>`).join("")}</div>
           </div>
           <div class="drw-tree" role="tree" aria-label="${esc(t("Drawing tree"))}"></div>
           <div class="drw-props"></div>
@@ -488,32 +633,66 @@ export class DrawingWorkspace {
           <div class="drw-tabs"></div>
         </div>
       </div>
-      <div class="drw-status" role="status"></div>`;
+      <div class="drw-status"><span class="drw-st-msg" role="status"></span><span class="drw-xy" translate="no" aria-hidden="true"></span></div>`;
     this.svg = this.el.querySelector(".drw-svg")!;
-    this.el.addEventListener("click", e => this.onClick(e));
-    this.el.addEventListener("change", e => this.onInput(e as Event, true));
-    this.el.addEventListener("input", e => this.onInput(e as Event, false));
+    // `build` runs again for every drawing opened or brought back from its tab, but `el` stays: its listeners go on once,
+    // else each click ran twice after a trip to the model and back, and the menus opened and closed at once (drawings exam #29).
+    const first = !this.bound;
+    this.bound = true;
+    if (first) {
+      this.el.addEventListener("click", e => this.onClick(e));
+      this.el.addEventListener("change", e => this.onInput(e as Event, true));
+      this.el.addEventListener("input", e => this.onInput(e as Event, false));
+      document.addEventListener("pointerdown", e => { if (!(e.target as HTMLElement).closest?.(".drw-dd")) this.closeMenus(); });
+      // Menus are fixed to the window (placeMenu), so they close when their button moves away under them.
+      window.addEventListener("resize", () => this.closeMenus());
+      this.el.addEventListener("scroll", e => { if ((e.target as HTMLElement).classList?.contains("drw-cmds")) this.closeMenus(); }, true);
+      // Annotation tiles get the command bar's tooltips: name, shortcut and what to click.
+      bindCommandTips(this.el, ".drw-cb");
+      this.el.addEventListener("keydown", e => this.treeKey(e));
+      this.el.addEventListener("pointerover", e => this.treeHover(e, false));
+      this.el.addEventListener("pointerout", e => { const to = e.relatedTarget as Element | null; if ((e.target as Element).closest?.(".drw-tree") && !to?.closest?.(".drw-tree")) this.treeHover(e, true); });
+    }
     this.svg.addEventListener("pointerdown", e => this.onDown(e));
     this.svg.addEventListener("pointermove", e => this.onMove(e));
+    this.svg.addEventListener("pointerleave", () => {
+      this.showXY(null);
+      if ((this.hover || this.hoverA) && !this.drag && !this.adrag && !this.treeHov) { this.hover = null; this.hoverA = null; this.renderOverlay(); }
+    });
     this.svg.addEventListener("pointerup", e => this.onUp(e));
     this.svg.addEventListener("dblclick", e => this.onDbl(e));
     this.svg.addEventListener("wheel", e => this.onWheel(e), { passive: false });
     this.svg.addEventListener("contextmenu", e => e.preventDefault());
-    this.bindPalette();
+    this.bindPalette(first);
     // The side panel resizes from its edge and keeps its width (FR-UI-002).
     const side = this.el.querySelector<HTMLElement>(".drw-side")!;
     side.after(makeGrip({ key: "drw-side", axis: "x", sign: 1, def: 280, min: 200, max: () => Math.min(640, window.innerWidth * 0.45), apply: px => { side.style.width = px == null ? "" : `${px}px`; }, label: "Resize the side panel" }));
-    document.addEventListener("pointerdown", e => { if (!(e.target as HTMLElement).closest?.(".drw-dd")) this.closeMenus(); });
+    try { if (localStorage.getItem("mc:drwPalFold") === "1") this.foldPalette(true); } catch { /* storage off */ }
+    try { this.showCmdTab(localStorage.getItem("mc:drwTab") ?? "layout"); } catch { this.showCmdTab("layout"); }
     new ResizeObserver(() => this.applyViewBox()).observe(this.svg);
     this.renderAll();
   }
 
   private closeMenus() {
-    this.el.querySelectorAll<HTMLElement>(".drw-menu").forEach(m => { m.hidden = true; m.previousElementSibling?.setAttribute("aria-expanded", "false"); });
+    this.el.querySelectorAll<HTMLElement>(".drw-menu").forEach(m => { m.hidden = true; m.style.cssText = ""; m.previousElementSibling?.setAttribute("aria-expanded", "false"); });
+  }
+
+  /** Command bar menus are fixed to the window: the bar scrolls sideways (overflow-x), which would clip them at its bottom edge. */
+  private placeMenu(b: HTMLElement, menu: HTMLElement) {
+    const r = b.getBoundingClientRect(), gap = 4, room = innerHeight - r.bottom - gap - 8;
+    menu.style.position = "fixed";
+    menu.style.top = `${r.bottom + gap}px`;
+    menu.style.maxHeight = `${Math.max(120, room)}px`;
+    const w = menu.offsetWidth;
+    const left = menu.classList.contains("right") ? r.right - w : r.left;
+    menu.style.left = `${Math.max(8, Math.min(left, innerWidth - w - 8))}px`;
+    menu.style.right = "auto";
   }
 
   private renderAll() {
     if (!this.store || !this.svg) return;
+    // Undo of Add sheet (or redo of Delete sheet) removes the open sheet: edits wrote to sheets[sheetIdx] = undefined (drawings exam #28).
+    if (this.sheetIdx >= this.doc.sheets.length) this.sheetIdx = this.doc.sheets.length - 1;
     if (this.sel && !findView(this.sheet, this.sel)) this.sel = null;
     this.renderSheet();
     this.renderTree();
@@ -521,14 +700,29 @@ export class DrawingWorkspace {
     this.renderTabs();
     this.renderStatus();
     const name = this.el.querySelector(".drw-name")!;
-    name.textContent = `${this.fileName || `${this.doc.name}${DRAWING_EXT}`}${this.store.dirty ? " •" : ""}`;
+    name.textContent = `${this.fileName || `${this.doc.name}${DRAWING_EXT}`}${this.vault ? ` · ${this.vault.label}` : ""}${this.store.dirty ? " •" : ""}`;
     const u = this.el.querySelector<HTMLButtonElement>('[data-a="undo"]')!, r = this.el.querySelector<HTMLButtonElement>('[data-a="redo"]')!;
     u.disabled = !this.store.undoLabel; r.disabled = !this.store.redoLabel;
     u.title = this.store.undoLabel ? t("Undo {what} (Ctrl+Z)", { what: t(this.store.undoLabel) }) : t("Undo (Ctrl+Z)");
     r.title = this.store.redoLabel ? t("Redo {what} (Ctrl+Y)", { what: t(this.store.redoLabel) }) : t("Redo (Ctrl+Y)");
   }
 
+  /** The annotation tool of the running command, for the tile shown pressed (same keys as `ANNOT_GROUPS`). */
+  private activeTool(): string | null {
+    const m = this.mode;
+    if (m.kind === "dimset") return m.how;
+    if (m.kind === "cline") return m.how === "mark" ? "cmark" : "cline";
+    if (m.kind === "sk") return `sk${m.k}`;
+    return isAnnotMode(m) ? m.kind : null;
+  }
+
   private renderStatus() {
+    const tool = this.activeTool();
+    for (const b of this.el.querySelectorAll<HTMLElement>(".drw-cb[data-tool]")) { const on = b.dataset.tool === tool; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); }
+    // A tool started from the keyboard (D) or a menu shows on its own tab, and a ▾ holding it lights up.
+    for (const d of this.el.querySelectorAll<HTMLElement>(".drw-cmds [data-cpane] .drw-dd > .drw-cb")) d.classList.toggle("on", !!tool && !!d.nextElementSibling?.querySelector(`[data-an="${tool}"]`));
+    if (tool && tool !== this.tabTool) { const pane = this.el.querySelector<HTMLElement>(`.drw-cmds [data-an="${tool}"], .drw-cmds [data-tool="${tool}"]`)?.closest<HTMLElement>("[data-cpane]"); if (pane?.hidden) this.showCmdTab(pane.dataset.cpane!); }
+    this.tabTool = tool;
     const st = this.el.querySelector<HTMLElement>(".drw-status");
     if (!st || !this.store) return;
     const m = this.mode;
@@ -539,7 +733,7 @@ export class DrawingWorkspace {
     else if (m.kind === "projected") s = m.parent ? t("Move the cursor around the view and click to place a projected view. Esc or ✓ ends.") : t("Click the view to project from.");
     else if (m.kind === "section" && !m.line && m.how === "aligned") s = t(!m.pts?.length ? "Click the end of the first leg on a view." : m.pts.length === 1 ? "Click the centre: the second leg turns about it into the first leg's plane." : "Click the end of the second leg.");
     else if (m.kind === "section" && !m.line && (m.how === "off" || m.how === "half")) s = !m.pts?.length ? t("Click the first point of the cutting line on a view.") : m.how === "half" ? (m.pts.length === 1 ? t("Click the centre: the cut stops there.") : t("Click where the step ends, square to the cut.")) : m.pts.length === 1 ? t("Click the end of the first cut.") : t("Click the next corner: legs run along or square to the first. Enter or a second click on the last point finishes.");
-    else if (m.kind === "section") s = m.line ? t("Move the cursor to the side the section looks from and click to place it. Esc cancels.") : m.how === "2p" ? (m.p1 ? t("Click the second point of the cutting line.") : t("Click the first point of the cutting line on a view.")) : t("Click on a view to place the cutting line. It snaps to circle centres, line ends and midpoints.");
+    else if (m.kind === "section") s = m.line ? t(this.sheet.projection === "first" ? "Move the cursor to the side the section looks towards and click to place it. Esc cancels." : "Move the cursor to the side the section looks from and click to place it. Esc cancels.") : m.how === "2p" ? (m.p1 ? t("Click the second point of the cutting line.") : t("Click the first point of the cutting line on a view.")) : t("Click on a view to place the cutting line. It snaps to circle centres, line ends and midpoints.");
     else if (m.kind === "detail" && m.prof && !m.r) s = (m.pts?.length ?? 0) < 3 ? t("Click the corners of the detail profile on a view.") : t("Click more corners; click the first corner or press Enter to close the profile.");
     else if (m.kind === "detail") s = m.r ? t("Click on the sheet to place the detail view. Esc cancels.") : m.c ? t("Move the cursor to size the circle and click.") : t("Click the centre of the detail circle on a view.");
     else if (m.kind === "crop") s = m.p1 ? t("Click the opposite corner of the crop rectangle.") : t("Click the first corner of the crop rectangle on the view.");
@@ -547,27 +741,34 @@ export class DrawingWorkspace {
     else if (m.kind === "brokenout") s = m.pts.length < 3 ? t("Click the corners of the area to cut away on the view.") : t("Click more corners; click the first corner or press Enter to cut.");
     else if (m.kind === "break") s = m.a != null ? t("Click where the break ends.") : t("Click where the break starts on the view.");
     else if (m.kind === "dim") s = !m.picks.length ? t("Click an edge, a circle or a point of a view. Esc ends.") : t("Click a second edge or point, or click where the dimension goes. Esc ends.");
-    else if (m.kind === "dimset") s = !m.picks.length ? t("Click the base point: a corner or a circle centre.") : t("Click the next point. Enter or Esc ends.");
+    else if (m.kind === "dimset") s = !m.picks.length ? t("Click the base point: a corner or a circle centre.") : m.pend ? t("Click where the dimensions go.") : t("Click the next point. Enter or Esc ends.");
     else if (m.kind === "htable") s = m.origin ? t("Click where the hole table goes.") : t("Click the origin of the hole table on a view: a corner or a circle centre.");
     else if (m.kind === "btable") s = m.view ? t("Click where the bend table goes.") : t("Click a flat pattern view.");
+    else if (m.kind === "wtable") s = m.view ? t("Click where the weld table goes.") : t("Click a view of the weldment.");
+    else if (m.kind === "ctable") s = m.view ? t("Click where the cut list table goes.") : t("Click a view of the weldment.");
     else if (m.kind === "hole") s = m.e ? t("Click where the callout goes.") : t("Click the edge of a hole.");
     else if (m.kind === "cline") s = m.how === "mark" ? t("Click a round edge seen end-on: a circle or an arc. Esc ends.") : !m.picks.length ? t("Click a straight edge or a point (a circle's centre) of a view. Esc ends.") : t("Click a parallel edge, or a second point. Esc ends.");
     else if (m.kind === "sk") s = m.k === "circle" ? t(m.pts.length ? "Click a point on the circle." : "Click the centre of the circle.")
       : m.k === "rect" ? t(m.pts.length ? "Click the opposite corner." : "Click the first corner of the rectangle.")
-      : m.k === "line" ? t(m.pts.length ? "Click the end of the line." : "Click the start of the line.")
+      : m.k === "line" ? t(m.pts.length ? "Click the end of the line; the next line starts there. Double-click or Esc ends." : "Click the start of the line.")
       : t(m.pts.length < 2 ? "Click the points of the polyline." : "Click more points; click the first point to close it, or press Enter to end it.");
     else if (m.kind === "cloud") s = m.pts.length < 3 ? t("Click the corners of the area to mark with a revision cloud.") : t("Click more corners; click the first corner or press Enter to close the cloud.");
     else if (m.kind === "note") s = m.leader ? t("Click where the note goes.") : t("Click where the note goes, or first click an edge for a leader.");
     else if (m.kind === "dtarget") s = m.leader ? t("Click where the datum target frame goes.") : t("Click the target on an edge, or where the datum target frame goes.");
     else if (m.kind === "weld") s = m.leader ? t("Click where the weld symbol goes.") : t("Click the edge of the joint for the arrow, or where the weld symbol goes.");
-    else if (m.kind === "gtol") s = m.leader ? t("Click where the tolerance frame goes.") : t("Click where the tolerance frame goes, or first click an edge for a leader.");
+    else if (m.kind === "gtol") s = m.leader ? t("Click where the tolerance frame goes.") : t("Click where the tolerance frame goes, a dimension to attach it under, or first an edge for a leader.");
     else if (m.kind === "datum") s = m.ref ? t("Click where the datum letter goes.") : t("Click the edge of the datum feature.");
     else if (m.kind === "balloon") s = m.ref ? t("Click where the balloon goes.") : t("Click an edge of a component.");
     else if (m.kind === "surf") s = m.ref ? t("Click on the edge to put the symbol there, or away from it for a leader.") : t("Click the edge of the surface, or an empty place on the sheet.");
-    else if (m.kind === "aux") s = m.line ? t("Move the cursor to the side of the edge and click to place the auxiliary view. Esc cancels.") : t("Click a straight edge of a view.");
+    else if (m.kind === "aux") s = m.line ? t("Move the cursor to the side of the edge and click to place the auxiliary view. Esc cancels.") : t("Click a straight edge of a view or a line drawn on it.");
     else if (this.stale) s = t("The model changed: the views are out of date. Updating…");
+    else if (this.projecting.size && this.kernel.restarting) s = t("Freeing the drawing kernel's memory, then projecting… {n} to go", { n: this.projecting.size });
+    else if (this.projecting.size) s = t("Projecting the views… {n} to go", { n: this.projecting.size });
+    else if (!this.sheet.views.length) s = t("Drag a view from the View palette onto the sheet, or use Standard 3 views.");
+    else if (this.selA) s = t("Drag the annotation to move it. Delete removes it, Esc deselects it.");
+    else if (this.sel) s = t("Drag the view to move it; views lined up with it follow. Delete removes it, Esc deselects it.");
     else s = t("Drag a view to move it. Double-click the title block to fill it in.");
-    st.textContent = s;
+    st.querySelector(".drw-st-msg")!.textContent = s;
     st.classList.toggle("warn", this.stale && !this.loading);
     this.el.querySelector<HTMLElement>(".drw-confirm")!.hidden = m.kind === "none";
     this.el.classList.toggle("stale", this.stale || this.loading > 0);
@@ -577,10 +778,10 @@ export class DrawingWorkspace {
 
   private fields(sheet: Sheet = this.sheet): Fields {
     const p = this.doc.props, i = this.info;
-    const massKg = this.facts && i.density ? this.facts.volume * i.density * 1e-6 : null;
+    const massKg = this.facts?.kg ?? (this.facts && i.density ? this.facts.volume * i.density * 1e-6 : null);
     return {
       title: p.title || i.title || this.doc.name, number: p.number || i.number || this.doc.name, revision: p.revision || i.revision || "",
-      material: p.material || i.material || "", mass: p.mass || (massKg != null ? `${massKg < 10 ? massKg.toFixed(3) : massKg.toFixed(2)} kg` : ""),
+      material: p.material || this.facts?.mats?.join(", ") || i.material || "", mass: p.mass || (massKg != null ? `${massKg < 10 ? massKg.toFixed(3) : massKg.toFixed(2)} kg` : ""),
       company: p.company || "", author: p.author || i.author || "", checked: p.checked || "", approved: p.approved || "", date: p.date || "",
       tcontrol: p.tcontrol || "", ncontrol: p.ncontrol || "", litera: p.litera || "",
       scale: scaleText(sheet.scale), sheet: `${this.doc.sheets.indexOf(sheet) + 1}/${this.doc.sheets.length}`,
@@ -592,27 +793,73 @@ export class DrawingWorkspace {
     const req = viewReq(sheet, v);
     const p = this.kernel.cache.get(req.key);
     if (!p && this.facts) {
-      const ask = () => this.kernel.request(req).then(() => this.renderSheet(), err => toast(t("A view could not be projected: {err}", { err: (err as Error).message }), true));
+      // Asked once: every render while it is on the way would otherwise add one more redraw when it lands.
+      const ask = () => {
+        if (this.projecting.has(req.key)) return;
+        void this.track(req.key, this.kernel.request(req)).then(() => this.renderSheetSoon(), err => viewFailed(err));
+      };
       // With previews on, the exact requests go after this render's previews (the worker answers in order).
       if (this.previewsOn()) void Promise.resolve().then(ask); else void ask();
     }
     return p;
   }
 
-  /** How many times a view was drawn from its quick preview (for the smoke test). */
-  private previewsShown = 0;
-
-  /** Slow models (many edges, or an exact view that took long) get quick previews first (FR-DRW-016). */
-  private previewsOn(): boolean {
-    return !!this.facts && (this.facts.topo.edges.length >= PREVIEW_EDGES || this.kernel.slowest > PREVIEW_MS);
+  /**
+   * Exact projections no view of this drawing wants any more (a view deleted, or restyled while its lines were
+   * on the way) are dropped, so later views do not wait behind them.
+   */
+  private dropGone(always = false) {
+    if (!this.store || (!this.projecting.size && !always)) return;
+    // The view palette's pictures are wanted too (they run behind the views).
+    const want = new Set<string>([...PALETTE.map(o => dirKey(ORIENTS[o])), "palette:flat"]);
+    for (const sh of this.store.doc.sheets) for (const v of sh.views) {
+      want.add(viewReq(sh, v).key);
+      const a = altReq(sh, v);
+      if (a) want.add(a.key);
+    }
+    this.kernel.drop(k => want.has(k));
   }
 
-  /** A view's quick polygonal preview while its exact lines are on the way; none for sections. */
+  /** How many times a view was drawn from its quick preview (for the smoke test). */
+  private previewsShown = 0;
+  /** Exact projections asked for and not back yet, by key: the status line says they are coming. */
+  private projecting = new Set<string>();
+
+  private track<T>(key: string, p: Promise<T>): Promise<T> {
+    if (!this.projecting.has(key)) {
+      this.projecting.add(key);
+      this.renderStatus();
+      const done = () => { if (this.projecting.delete(key)) this.renderStatus(); };
+      p.then(done, done);
+    }
+    return p;
+  }
+
+  /**
+   * Slow models get quick previews first (FR-DRW-016): many edges, an exact view that took long, or a free-form
+   * edge (a cross hole's rim on a shaft, a fillet run-out, text): the exact hidden-line removal can take seconds
+   * on a view that looks along such a curve, even on a part of a dozen faces.
+   */
+  private previewsOn(): boolean {
+    const f = this.facts;
+    if (!f) return false;
+    if (f.topo.edges.length >= PREVIEW_EDGES || this.kernel.slowest > PREVIEW_MS) return true;
+    if (this.freeFor !== f) { this.freeFor = f; this.freeForm = f.topo.edges.some(e => e.t === "o"); }
+    return this.freeForm;
+  }
+  private freeFor: unknown = null;
+  private freeForm = false;
+
+  /** A view's quick polygonal preview while its exact lines are on the way (a section's with its cut and hatching). */
   private previewFor(sheet: Sheet, v: DrawingView): Projection | undefined {
     const req = viewReq(sheet, v);
-    if (req.p || !this.previewsOn() || this.kernel.cache.has(req.key)) return undefined;
+    if (!this.previewsOn() || this.kernel.cache.has(req.key)) return undefined;
     const have = this.kernel.previews.get(req.key);
-    if (!have) void this.kernel.preview(req).then(() => { if (!this.kernel.cache.has(req.key)) this.renderSheet(); }, () => {});
+    if (!have && !this.previewAsked.has(req.key)) {
+      this.previewAsked.add(req.key);
+      const done = () => { this.previewAsked.delete(req.key); };
+      void this.kernel.preview(req).then(() => { done(); if (!this.kernel.cache.has(req.key)) this.renderSheetSoon(); }, done);
+    }
     return have;
   }
 
@@ -621,8 +868,26 @@ export class DrawingWorkspace {
     const req = altReq(sheet, v);
     if (!req) return undefined;
     const p = this.kernel.cache.get(req.key);
-    if (!p && this.facts) void this.kernel.alt(req).then(() => this.renderSheet(), err => toast(t("A view could not be projected: {err}", { err: (err as Error).message }), true));
+    if (!p && this.facts && !this.projecting.has(req.key)) void this.track(req.key, this.kernel.alt(req)).then(() => this.renderSheetSoon(), err => viewFailed(err));
     return p;
+  }
+
+  /** The lines each view was last drawn with (exact), and from which direction: shown while a restyle comes in. */
+  private lastShown = new Map<string, { dir: string; proj: Projection }>();
+  /** Previews asked for and not back yet (asked once, like `projecting`). */
+  private previewAsked = new Set<string>();
+  private sheetSoon = false;
+  /** Sheet redraws so far (big assembly sheets once redrew 66 times while three views came in). */
+  private sheetRenders = 0;
+
+  /**
+   * One redraw for everything that lands in the same moment: a big assembly sheet is megabytes of SVG,
+   * and a redraw per arriving view (plus one per render that asked) kept the page busy for half a minute.
+   */
+  private renderSheetSoon() {
+    if (this.sheetSoon) return;
+    this.sheetSoon = true;
+    queueMicrotask(() => { this.sheetSoon = false; if (this.store) this.renderSheet(); });
   }
 
   private renderSheet() {
@@ -632,7 +897,10 @@ export class DrawingWorkspace {
     this.dangling.clear();
     let html = `<rect class="drw-paper" x="0" y="0" width="${W}" height="${H}"/><g class="drw-fmt">${svgBody(formatPrims(sh, this.fields(), s => t(s)), H)}</g>`;
     for (const v of sh.views) {
-      const pre = this.previewFor(sh, v), proj = this.projFor(sh, v), shown = proj ?? pre;
+      // Until a restyled view's new lines land, its last ones stay up (drawn like a preview), not an empty box.
+      const proj = this.projFor(sh, v), dir = JSON.stringify(viewReq(sh, v).view), last = this.lastShown.get(v.id);
+      const pre = this.previewFor(sh, v) ?? (!proj && last?.dir === dir ? last.proj : undefined), shown = proj ?? pre;
+      if (proj) this.lastShown.set(v.id, { dir, proj });
       const pl = placement(sh, v, shown, this.facts?.box ?? null);
       this.placements.set(v.id, pl);
       const r = viewRect(pl);
@@ -653,6 +921,7 @@ export class DrawingWorkspace {
     this.svg.style.fontFamily = FONT;
     this.renderOverlay();
     this.applyViewBox();
+    this.sheetRenders++;
   }
 
   /** Selection and hover frames, and the live preview of a view being placed. */
@@ -671,10 +940,12 @@ export class DrawingWorkspace {
     if (this.sel) frame(this.sel, "drw-sel");
     // Annotations whose edge is gone (FR-DRW-026), in the warning colour; on screen only.
     for (const h of this.annotHits) if (this.dangling.has(h.id)) s += `<rect class="drw-dangle" x="${h.box[0] - 0.6}" y="${H - h.box[3] - 0.6}" width="${h.box[2] - h.box[0] + 1.2}" height="${h.box[3] - h.box[1] + 1.2}"><title>${esc(t("Its model edge is gone: pick it again or delete it."))}</title></rect>`;
+    if (this.hoverA && this.hoverA !== this.selA) for (const h of this.annotHits) if (h.id === this.hoverA) s += `<rect class="drw-hov" x="${h.box[0] - 1}" y="${H - h.box[3] - 1}" width="${h.box[2] - h.box[0] + 2}" height="${h.box[3] - h.box[1] + 2}"/>`;
     if (this.selA) for (const h of this.annotHits) if (h.id === this.selA) s += `<rect class="drw-sel" x="${h.box[0] - 1}" y="${H - h.box[3] - 1}" width="${h.box[2] - h.box[0] + 2}" height="${h.box[3] - h.box[1] + 2}"/>`;
     const pv = this.previewView();
     if (pv) {
-      const proj = this.projFor(this.sheet, pv.view);
+      // A slow model's quick preview stands in until the exact lines come (a section being placed, FR-DRW-016).
+      const proj = this.projFor(this.sheet, pv.view) ?? this.previewFor(this.sheet, pv.view);
       const pl = placement(this.sheetWith(pv.view), pv.view, proj, this.facts?.box ?? null);
       const r = viewRect(pl);
       s += `<g class="drw-preview">${proj ? svgBody(viewPrims(pv.view, proj, pl), H, "currentColor") : ""}<rect class="drw-pv-frame" x="${r[0] - 3}" y="${H - r[3] - 3}" width="${r[2] - r[0] + 6}" height="${r[3] - r[1] + 6}"/></g>`;
@@ -791,7 +1062,9 @@ export class DrawingWorkspace {
     if (aid) {
       const a = this.annot(aid)!, pl = a.view ? this.placements.get(a.view) : undefined;
       this.sel = null; this.selA = aid;
-      if (a.pos) this.adrag = { id: aid, start: p, orig: [...a.pos] as Pt, s: pl?.s ?? 1, moved: false };
+      // A frame attached to a dimension drags the dimension.
+      const lead = this.gtolDim(a) ?? a;
+      if (lead.pos) this.adrag = { id: lead.id, start: p, orig: [...lead.pos] as Pt, s: pl?.s ?? 1, moved: false };
       this.svg.setPointerCapture(e.pointerId);
       this.renderTree(); this.renderProps(); this.renderOverlay();
       return;
@@ -831,6 +1104,7 @@ export class DrawingWorkspace {
       const d = this.adrag;
       if (!d.moved && Math.hypot(p[0] - d.start[0], p[1] - d.start[1]) < 0.5) return;
       d.moved = true;
+      this.showXY(p);
       this.renderAnnotDrag(p);
       return;
     }
@@ -845,15 +1119,25 @@ export class DrawingWorkspace {
         const pl = this.placements.get(id);
         if (pl) { pl.x = x; pl.y = y; }
       }
+      const c = moves.get(d.id);
+      if (c) this.showXY(c, findView(this.sheet, d.id)?.name ?? "");
       this.renderOverlay();
       return;
     }
     const m = this.mode;
     if (m.kind === "model") { const s = this.infer(p, new Set()); m.at = s.p; this.guides = s.guides; this.renderOverlay(); return; }
     if (m.kind !== "none") { m.at = p; this.renderOverlay(); return; }
-    const h = this.viewAt(p);
-    if (h !== this.hover) { this.hover = h; this.renderOverlay(); }
-    this.svg.style.cursor = h ? "move" : "";
+    this.showXY(p);
+    // An annotation under the pointer is outlined like a view, so it is clear what a press would pick and drag.
+    const ha = this.annotAt(p), h = ha ? null : this.viewAt(p);
+    if (h !== this.hover || ha !== this.hoverA) { this.hover = h; this.hoverA = ha; this.renderOverlay(); }
+    this.svg.style.cursor = h || (ha && this.annot(ha)?.pos) ? "move" : "";
+  }
+
+  /** The pointer's place on the sheet (mm from the lower left corner) at the right of the status bar, or a label. */
+  private showXY(p: Pt | null, label = "") {
+    const el = this.el.querySelector<HTMLElement>(".drw-xy");
+    if (el) el.textContent = p ? `${label}${label ? " " : ""}X ${p[0].toFixed(1)}  Y ${p[1].toFixed(1)} mm` : "";
   }
 
   /** New centres of a dragged view and the views that follow it (FR-DRW-011). */
@@ -914,6 +1198,13 @@ export class DrawingWorkspace {
       try { this.svg.releasePointerCapture(e.pointerId); } catch { /* gone */ }
       if (!d.moved) return;
       const p = this.sheetPt(e), np: Pt = [round(d.orig[0] + (p[0] - d.start[0]) / d.s), round(d.orig[1] + (p[1] - d.start[1]) / d.s)];
+      // A free tolerance frame dropped on a dimension's text attaches to it.
+      const moved = this.annot(d.id), on = moved?.t === "gtol" && !moved.leader && !moved.dim ? this.dimAt(p, d.id) : null;
+      if (on) {
+        this.store!.change("Attach to dimension", doc => { const a = (doc.sheets[this.sheetIdx].annots ?? []).find(x => x.id === d.id); if (a?.t === "gtol") { a.dim = on.id; a.view = on.view; a.pos = [...on.pos] as Pt; } });
+        toast(t("Attached to the dimension: it moves with it."));
+        return;
+      }
       this.store!.change("Move annotation", doc => { const a = (doc.sheets[this.sheetIdx].annots ?? []).find(x => x.id === d.id); if (a) a.pos = np; });
       return;
     }
@@ -931,7 +1222,15 @@ export class DrawingWorkspace {
   }
 
   private onDbl(e: MouseEvent) {
+    // A double-click ends a chain of lines (its second click added nothing: same point).
+    if (this.mode.kind === "sk" && this.mode.k === "line") { this.mode = { kind: "none" }; this.renderStatus(); this.renderOverlay(); return; }
     const p = this.sheetPt(e);
+    if (this.mode.kind === "none") {
+      const aid = this.annotAt(p);
+      if (this.editAnnotDlg(aid)) return;
+      // Other annotations are edited in the panel: go to its first field.
+      if (aid) { const f = this.el.querySelector<HTMLElement>(".drw-props textarea, .drw-props input:not([type=checkbox]):not([type=radio]), .drw-props select"); f?.focus(); (f as HTMLInputElement | null)?.select?.(); return; }
+    }
     const f = fieldAt(this.sheet, p[0], p[1]);
     if (f) {
       this.sel = null;
@@ -980,15 +1279,22 @@ export class DrawingWorkspace {
 
   private palRun = 0;
 
-  /** Draws the palette's pictures from the model's projections (the kernel keeps them for the views). */
+  /**
+   * Draws the palette's pictures: a view's exact lines when the drawing already has them, else its quick preview.
+   * Seven exact projections per model kept the worker busy for as long as the views themselves take (20 s for a
+   * disc with cross holes, minutes for an assembly) just for 64 px pictures; a placed view asks for its own lines.
+   */
   private async renderPalette() {
     const run = ++this.palRun;
+    // One at a time: a view placed meanwhile waits behind one picture at most.
     for (const o of PALETTE) {
+      if (run !== this.palRun || !this.store) return;
+      const view = ORIENTS[o], key = dirKey(view);
       let d = "";
-      try { d = thumbPath(await this.kernel.project(ORIENTS[o])); } catch { /* left blank */ }
-      if (run !== this.palRun) return;
-      this.el.querySelector(`[data-pal="${o}"] path`)?.setAttribute("d", d);
+      try { d = thumbPath(this.kernel.cache.get(key) ?? await this.kernel.preview({ view, key })); } catch { /* left blank */ }
+      if (run === this.palRun) this.el.querySelector(`[data-pal="${o}"] path`)?.setAttribute("d", d);
     }
+    if (run !== this.palRun) return;
     // A sheet metal part also offers its flat pattern (FR-FT-120).
     // The drawing may have closed while the thumbnails were drawn.
     if (run !== this.palRun || !this.store) return;
@@ -1000,31 +1306,30 @@ export class DrawingWorkspace {
       tile = this.el.querySelector<HTMLElement>('[data-pal="flat"]')!;
     }
     let d = "";
-    try { d = thumbPath(await this.kernel.request({ view: ORIENTS.top, cfg: FLAT_CONFIG, key: "palette:flat" })); } catch { /* left blank */ }
+    try { d = thumbPath(await this.kernel.request({ view: ORIENTS.top, cfg: FLAT_CONFIG, key: "palette:flat" }, true)); } catch { /* left blank */ }
     if (run === this.palRun) tile.querySelector("path")?.setAttribute("d", d);
   }
 
   /** Dragging a palette view over the sheet previews it under the cursor; dropping places it. */
-  private bindPalette() {
-    let dragged: Orient | null = null;
+  private bindPalette(first: boolean) {
     this.el.querySelector(".drw-pal-grid")!.addEventListener("dragstart", e => {
       const b = (e.target as HTMLElement).closest<HTMLElement>("[data-pal]"), de = e as DragEvent;
       if (!b || !de.dataTransfer) return;
       if (!this.facts) { e.preventDefault(); toast(t("The drawing's model is still loading.")); return; }
       const flat = b.dataset.pal === "flat";
-      dragged = flat ? "top" : b.dataset.pal as Orient;
+      this.palDragged = flat ? "top" : b.dataset.pal as Orient;
       de.dataTransfer.setData(PALETTE_MIME, b.dataset.pal!);
       de.dataTransfer.effectAllowed = "copy";
       this.cancelMode();
-      this.mode = { kind: "model", orient: dragged, dir: ORIENTS[dragged as Exclude<Orient, "current">], at: null, cfg: flat ? FLAT_CONFIG : undefined };
+      this.mode = { kind: "model", orient: this.palDragged, dir: ORIENTS[this.palDragged as Exclude<Orient, "current">], at: null, cfg: flat ? FLAT_CONFIG : undefined };
       this.renderStatus();
     });
-    this.el.addEventListener("dragend", () => {
-      if (dragged && this.mode.kind === "model" && this.mode.orient === dragged) this.cancelMode();
-      dragged = null;
+    if (first) this.el.addEventListener("dragend", () => {
+      if (this.palDragged && this.mode.kind === "model" && this.mode.orient === this.palDragged) this.cancelMode();
+      this.palDragged = null;
     });
     this.svg.addEventListener("dragover", e => {
-      if (!dragged || this.mode.kind !== "model") return;
+      if (!this.palDragged || this.mode.kind !== "model") return;
       e.preventDefault();
       e.dataTransfer!.dropEffect = "copy";
       const s = this.infer(this.sheetPt(e), new Set());
@@ -1034,10 +1339,10 @@ export class DrawingWorkspace {
     });
     this.svg.addEventListener("dragleave", () => { if (this.mode.kind === "model") { this.mode.at = null; this.renderOverlay(); } });
     this.svg.addEventListener("drop", e => {
-      if (!dragged || this.mode.kind !== "model") return;
+      if (!this.palDragged || this.mode.kind !== "model") return;
       e.preventDefault();
       const m = this.mode;
-      dragged = null;
+      this.palDragged = null;
       this.placeModel(m, this.sheetPt(e));
       this.svg.focus({ preventScroll: true });
     });
@@ -1052,7 +1357,7 @@ export class DrawingWorkspace {
       d.sheets[this.sheetIdx].views.push({ id, name: `${t("Drawing View")}${n}`, orient: m.orient, dir: m.orient === "current" ? m.dir : undefined, x: round(p[0]), y: round(p[1]), style: m.orient === "iso" || m.orient === "current" || m.cfg === FLAT_CONFIG ? "hlr" : "hlv", ...(m.cfg ? { config: m.cfg } : {}) });
     });
     this.sel = id;
-    // As in SolidWorks, projected views come off the new view until Esc.
+    // As in CAD apps, projected views come off the new view until Esc.
     this.mode = { kind: "projected", parent: id, at: p };
     this.renderAll();
   }
@@ -1089,18 +1394,40 @@ export class DrawingWorkspace {
   private ctx(sh: Sheet = this.sheet): AnnotCtx {
     const f = this.facts;
     if (this.store) { useStyle(this.doc.style); useProps(this.fields(sh) as unknown as Record<string, string>); }
-    return { ...factsCtx(f), dec: lang() === "ru" ? "," : ".", label: (s, p) => t(s, p), bom: this.bomFor(sh), forView: v => { const c = viewConfig(sh, v), g = (c && this.kernel.configs.get(c)) || null, pr = this.kernel.cache.get(viewReq(sh, v).key); return pr?.cutEdges?.length ? factsCtx(withCut(g ?? f, pr)) : g ? factsCtx(g) : null; } };
+    return { ...factsCtx(f), dec: lang() === "ru" ? "," : ".", label: (s, p) => t(s, p), bom: this.bomFor(sh), single: this.single, forView: v => { const c = viewConfig(sh, v), g = (c && this.kernel.configs.get(c)) || null, pr = this.kernel.cache.get(viewReq(sh, v).key); return pr?.cutEdges?.length ? factsCtx(withCut(g ?? f, pr)) : g ? factsCtx(g) : null; } };
   }
 
   /** The model facts a view draws on: its part configuration's (FR-DRW-010) once built, else the loaded model's. */
   private factsOf(view: string, sh = this.sheet): ModelFacts | null {
     const v = findView(sh, view), c = v && viewConfig(sh, v), only = v && viewOnly(sh, v);
     // A section view also measures its cut faces' edges (FR-DRW-021).
-    const f = withCut((c && this.kernel.configs.get(c)) || this.facts, v ? this.kernel.cache.get(viewReq(sh, v).key) : null);
+    let base = (c && this.kernel.configs.get(c)) || this.facts;
+    // Curves on a cylinder (a cross hole's rim on a shaft) stand in as that cylinder's circle in this view.
+    if (base && v) { const tp = ringTopo(base.topo, projector(viewDir(sh, v)).n); if (tp !== base.topo) base = { ...base, topo: tp }; }
+    const f = withCut(base, v ? this.kernel.cache.get(viewReq(sh, v).key) : null);
     return f && only ? { ...f, topo: topoOnly(f.topo, only) } : f;
   }
 
   private annot(id: string): Annot | undefined { return (this.sheet.annots ?? []).find(a => a.id === id); }
+
+  /** The dimension whose text (or attached frame) is under a sheet point. */
+  private dimAt(p: Pt, skip?: string): DimAnnot | null {
+    const m = 0.8;
+    for (let i = this.annotHits.length - 1; i >= 0; i--) {
+      const h = this.annotHits[i];
+      if (h.ring || h.id === skip || p[0] < h.box[0] - m || p[0] > h.box[2] + m || p[1] < h.box[1] - m || p[1] > h.box[3] + m) continue;
+      const a = this.annot(h.id), d = a?.t === "gtol" && a.dim ? this.annot(a.dim) : a;
+      if (d?.t === "dim") return d;
+    }
+    return null;
+  }
+
+  /** The dimension a tolerance frame is attached to, when it is still there. */
+  private gtolDim(a: Annot | undefined): DimAnnot | null {
+    if (a?.t !== "gtol" || !a.dim) return null;
+    const d = this.annot(a.dim);
+    return d?.t === "dim" && d.view === a.view ? d : null;
+  }
 
   private annotAt(p: Pt): string | null {
     for (let i = this.annotHits.length - 1; i >= 0; i--) {
@@ -1118,21 +1445,23 @@ export class DrawingWorkspace {
     const moved = { ...a, pos: [d.orig[0] + (p[0] - d.start[0]) / d.s, d.orig[1] + (p[1] - d.start[1]) / d.s] as Pt } as Annot;
     const sh = { ...this.sheet, annots: (this.sheet.annots ?? []).map(x => (x.id === d.id ? moved : x)) };
     const H = sheetSize(sh)[1];
+    // Tolerance frames attached to a dragged dimension go along.
+    const along = (x: Annot) => x.id === d.id || (x.t === "gtol" && x.dim === d.id && moved.t === "dim");
     let prims: Prim[] = [];
-    if (moved.view) { const v = findView(sh, moved.view), pl = this.placements.get(moved.view); if (v && pl) prims = viewAnnots({ ...sh, annots: [moved] }, v, pl, { ...this.ctx(), topo: this.ctx().topo && { ...this.ctx().topo!, cyls: [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)); }
+    if (moved.view) { const v = findView(sh, moved.view), pl = this.placements.get(moved.view); if (v && pl) prims = viewAnnots({ ...sh, annots: sh.annots.filter(along) }, v, pl, { ...this.ctx(), topo: this.ctx().topo && { ...this.ctx().topo!, cyls: [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)); }
     else prims = sheetNotes({ ...sh, annots: [moved] }, (s, p) => t(s, p), this.ctx().dec, this.bom).prims;
     const host = moved.view ? this.svg.querySelector(`.drw-view[data-v="${moved.view}"] .drw-annots`) : this.svg.querySelector(".drw-notes");
     if (!host) return;
     // Draw everything but the dragged one from the stored sheet, then the dragged one where it is now.
     let rest: Prim[];
-    if (moved.view) { const v = findView(sh, moved.view)!, pl = this.placements.get(moved.view)!; rest = viewAnnots({ ...this.sheet, annots: (this.sheet.annots ?? []).filter(x => x.id !== d.id) }, v, pl, this.ctx()).prims; }
+    if (moved.view) { const v = findView(sh, moved.view)!, pl = this.placements.get(moved.view)!; rest = viewAnnots({ ...this.sheet, annots: (this.sheet.annots ?? []).filter(x => !along(x)) }, v, pl, this.ctx()).prims; }
     else rest = sheetNotes({ ...this.sheet, annots: (this.sheet.annots ?? []).filter(x => x.id !== d.id) }, (s, p) => t(s, p), this.ctx().dec, this.bom).prims;
     host.innerHTML = svgBody(rest, H) + `<g class="drw-adrag">${svgBody(prims, H)}</g>`;
   }
 
   private startAnnot(kind: AnnotMode["kind"] | "cmark" | "skline" | "skrect" | "skcircle" | "skpoly", how: "chain" | "base" | "ord" = "chain") {
     const free = kind === "note" || kind === "gtol" || kind === "surf" || kind === "cloud" || kind === "weld" || kind === "dtarget" || kind.startsWith("sk");
-    if (kind === "balloon" && !this.bom) { toast(t("Balloons and the bill of materials are for drawings of an assembly."), true); return; }
+    if (kind === "balloon" && this.facts && !this.bom && !this.cuts && !this.single) { toast(t("Balloons are for drawings of an assembly or of a weldment part."), true); return; }
     if (!free && !this.facts) { toast(t("The drawing's model is still loading.")); return; }
     if (!free && !this.sheet.views.length) { toast(t("Place a model view first."), true); return; }
     if (kind === "cloud") this.mode = { kind, view: null, pts: [], at: null };
@@ -1142,7 +1471,7 @@ export class DrawingWorkspace {
     else if (kind === "dimset") this.mode = { kind, how, view: null, picks: [], axis: null, at: null };
     else if (kind === "hole") this.mode = { kind, view: null, e: null, at: null };
     else if (kind === "htable") this.mode = { kind, view: null, origin: null, holes: [], at: null };
-    else if (kind === "btable") this.mode = { kind, view: null, at: null };
+    else if (kind === "btable" || kind === "wtable" || kind === "ctable") this.mode = { kind, view: null, at: null };
     else if (kind === "datum" || kind === "surf" || kind === "balloon") this.mode = { kind, view: null, ref: null, at: null };
     else if (kind === "dtarget") this.mode = { kind, view: null, leader: null, tp: null, at: null };
     else if (kind === "note" || kind === "gtol" || kind === "weld") this.mode = { kind, view: null, leader: null, at: null };
@@ -1150,8 +1479,15 @@ export class DrawingWorkspace {
     this.renderStatus(); this.renderProps(); this.renderOverlay();
   }
 
+  /** A leader or symbol pick (notes, datums, tolerances, surface, weld, datum target, balloon): like Smart dimension's, so on a
+   *  side view a round part's lines can be picked: a circle seen edge-on (a disc's face) and a cylinder's outline. */
+  private annotPick(viewId: string, p: Pt): Pick | null { return this.pickAt(viewId, p, undefined, false, true); }
+
+  /** The reference a pick stands for: a cylinder outline keeps its side (`s`), so leaders end on the line clicked. */
+  private pickRef(pk: Pick): GeoRef { return pk.side ? { ...edgeRef(pk.e, "e"), s: pk.side } : pk.ref; }
+
   /** The point, line or circle of a view's model under a sheet point (points first), within the snap distance. */
-  private pickAt(viewId: string, p: Pt, only?: "circle", first = false): Pick | null {
+  private pickAt(viewId: string, p: Pt, only?: "circle", first = false, edgeOn = false): Pick | null {
     const v = findView(this.sheet, viewId), pl = this.placements.get(viewId), topo = this.factsOf(viewId)?.topo;
     if (!v || !pl || !topo) return null;
     const { P, n } = projector(viewDir(this.sheet, v));
@@ -1159,8 +1495,13 @@ export class DrawingWorkspace {
     const S = (q: [number, number, number]) => toSheet(pl, ...P(q));
     const inDetail = (q: Pt) => v.kind !== "detail" || (v.outline && v.outline.length >= 6 ? inPoly(v.outline, q[0], q[1]) : !v.c || !v.r || Math.hypot(q[0] - v.c[0], q[1] - v.c[1]) <= v.r);
     const endOn = (e: MEdge) => e.t === "c" && !!e.ax && Math.abs(Math.abs(e.ax[0] * n[0] + e.ax[1] * n[1] + e.ax[2] * n[2]) - 1) < 1e-6;
+    // A straight edge on one round face alone is its seam: the view does not draw it, so it is no line or corner to pick
+    // (on a side view it ran across a disc's or a hole's side and took the click from the line under it).
+    const round = new Set([...topo.cyls.map(c => c.f), ...(topo.revs ?? []).map(q => q.f)].filter((f): f is string => !!f));
+    const seam = (e: MEdge) => e.t === "l" && round.has(e.k);
     let best: Pick | null = null, bd = tol;
     if (!only) for (const e of topo.edges) {
+      if (seam(e)) continue;
       // Ends of an edge seen end-on (a cylinder's seam) are not corners of the view.
       if (e.t !== "c") { const a = P(e.a), b = P(e.b); if (Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-6) continue; }
       const cands: [Pick["ref"], [number, number, number]][] = e.t === "c" ? (endOn(e) && e.c ? [[edgeRef(e, "c"), e.c]] : []) : [[edgeRef(e, "a"), e.a], [edgeRef(e, "b"), e.b]];
@@ -1182,16 +1523,69 @@ export class DrawingWorkspace {
     best = null; bd = tol;
     for (const e of topo.edges) {
       if (e.t === "l" && !only) {
+        if (seam(e)) continue;
         const a = S(e.a), b = S(e.b), dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy;
         if (L2 < 1e-6) continue;
         const k = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2));
         const q: Pt = [a[0] + dx * k, a[1] + dy * k], d = Math.hypot(q[0] - p[0], q[1] - p[1]);
-        if (d < bd && inDetail(fromSheet(pl, q[0], q[1]))) { bd = d; best = { kind: "line", ref: edgeRef(e, "e"), e }; }
+        // A straight edge wins a tie with an edge-on circle lying on it (a hole's rim on a plate's face line).
+        if ((d < bd || (best?.seg && d < bd + 1e-6)) && inDetail(fromSheet(pl, q[0], q[1]))) { bd = d; best = { kind: "line", ref: edgeRef(e, "e"), e }; }
+      } else if (edgeOn && !only && e.t === "c" && e.c && e.r && e.ax && Math.abs(e.ax[0] * n[0] + e.ax[1] * n[1] + e.ax[2] * n[2]) < 1e-6) {
+        // A circle seen edge-on is a line across its axis: a CAD app picks it as one (a boss top, a shaft's end).
+        const seg = edgeOnSeg(e, P);
+        if (!seg) continue;
+        const a = toSheet(pl, ...seg[0]), b = toSheet(pl, ...seg[1]), dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy;
+        if (L2 < 1e-6) continue;
+        const k = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2));
+        const q: Pt = [a[0] + dx * k, a[1] + dy * k], d = Math.hypot(q[0] - p[0], q[1] - p[1]);
+        if (d < bd - 1e-6 && inDetail(fromSheet(pl, q[0], q[1]))) { bd = d; best = { kind: "line", ref: edgeRef(e, "e"), e, seg }; }
       } else if (endOn(e) && e.c && e.r) {
         const c = S(e.c), R = e.r * pl.s, d = Math.abs(Math.hypot(p[0] - c[0], p[1] - c[1]) - R);
         // Arcs of one circle seen end-on lie on top of each other: on a tie the fuller one wins, so a whole circle gives a Ø (exam bug 36).
         const tie = best?.kind === "circle" && Math.abs(d - bd) < 1e-6 && (e.sp ?? 0) > (best.e.sp ?? 0) + 1e-6;
         if ((d < bd - 1e-6 || tie) && inDetail(fromSheet(pl, p[0], p[1]))) { bd = Math.min(bd, d); best = { kind: "circle", ref: edgeRef(e, "e"), e }; }
+      }
+    }
+    // A cylinder seen from the side: either of its outline lines stands for the whole circle at its end, so a click
+    // gives the diameter as a linear dimension (a hole's hidden lines, a shaft's or a disc's sides).
+    // A section's cut edge on top of such a line stays itself: two cut walls give a linear dimension.
+    for (const cy of topo.cyls) {
+      const ax = cy.ax, dn = ax[0] * n[0] + ax[1] * n[1] + ax[2] * n[2];
+      if (Math.abs(dn) > 1e-6 || cy.v1 - cy.v0 < 1e-9) continue;
+      const tolr = 1e-6 * Math.max(1, cy.r);
+      // The whole circle on this cylinder nearest the click along the axis.
+      let ce: MEdge | null = null, cd = Infinity;
+      const pm = fromSheet(pl, p[0], p[1]), o2 = P(cy.o), a2 = P(ax), a0 = P([0, 0, 0]), ad: Pt = [a2[0] - a0[0], a2[1] - a0[1]], along = (pm[0] - o2[0]) * ad[0] + (pm[1] - o2[1]) * ad[1];
+      for (const e of topo.edges) {
+        if (e.t !== "c" || !e.c || !e.r || !e.ax || Math.abs(e.r - cy.r) > tolr) continue;
+        if (Math.abs(Math.abs(e.ax[0] * ax[0] + e.ax[1] * ax[1] + e.ax[2] * ax[2]) - 1) > 1e-6) continue;
+        const dq = [e.c[0] - cy.o[0], e.c[1] - cy.o[1], e.c[2] - cy.o[2]], t = dq[0] * ax[0] + dq[1] * ax[1] + dq[2] * ax[2];
+        if (Math.hypot(dq[0] - ax[0] * t, dq[1] - ax[1] * t, dq[2] - ax[2] * t) > tolr || !wholeCircle(e, topo)) continue;
+        const dd = Math.abs(t - along);
+        if (dd < cd) { cd = dd; ce = e; }
+      }
+      if (!ce) continue;
+      for (const sgn of [1, -1] as const) {
+        const seg = outlineSeg(o2, ad, cy.r, cy.v0, cy.v1, sgn);
+        const a = toSheet(pl, ...seg[0]), b = toSheet(pl, ...seg[1]), dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy;
+        if (L2 < 1e-6) continue;
+        const k = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2));
+        const q: Pt = [a[0] + dx * k, a[1] + dy * k], d = Math.hypot(q[0] - p[0], q[1] - p[1]);
+        if (d < bd + (best?.kind === "line" && !best.e.k.endsWith("|§") && !best.seg ? 1e-6 : -1e-6) && inDetail(fromSheet(pl, q[0], q[1]))) { bd = d; best = { kind: "circle", ref: edgeRef(ce, "e"), e: ce, seg, side: sgn }; }
+      }
+    }
+    // A cone seen from the side (a chamfer or a taper on a turned part): its outline lines are lines of their own (exam #50).
+    for (const q of topo.revs ?? []) {
+      if (only || q.k !== "cone" || q.r0 == null || q.r1 == null || !q.f || Math.abs(q.ax[0] * n[0] + q.ax[1] * n[1] + q.ax[2] * n[2]) > 1e-6) continue;
+      const h = coneMid(q);
+      for (const sgn of [1, -1] as const) {
+        const seg = coneOutline(q.f, h, sgn, P, topo);
+        if (!seg) continue;
+        const a = toSheet(pl, ...seg[0]), b = toSheet(pl, ...seg[1]), dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy;
+        if (L2 < 1e-6) continue;
+        const k = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2));
+        const qq: Pt = [a[0] + dx * k, a[1] + dy * k], d = Math.hypot(qq[0] - p[0], qq[1] - p[1]);
+        if (d < bd - 1e-6 && inDetail(fromSheet(pl, qq[0], qq[1]))) { bd = d; best = { kind: "line", ref: { e: q.f, h, p: "e", s: sgn, rv: true }, e: { k: q.f, t: "l", a: h, b: h, m: h }, seg }; }
       }
     }
     // A first dimension pick on a circle takes the circle even when another edge ends on it there (a cross hole's
@@ -1201,7 +1595,7 @@ export class DrawingWorkspace {
     return best;
   }
 
-  /** The dimension the picks and the cursor make (FR-DRW-021), SolidWorks style: the cursor's side picks horizontal, vertical or aligned. */
+  /** The dimension the picks and the cursor make (FR-DRW-021), CAD app style: the cursor's side picks horizontal, vertical or aligned. */
   private buildDim(viewId: string, picks: Pick[], at: Pt): DimAnnot | null {
     const pl = this.placements.get(viewId), v = findView(this.sheet, viewId);
     if (!pl || !v || !picks.length) return null;
@@ -1210,16 +1604,22 @@ export class DrawingWorkspace {
     const base = { id: "_pd", t: "dim" as const, view: viewId, pos: [round(pos[0]), round(pos[1])] as Pt };
     const [p0, p1] = picks;
     if (picks.length === 1) {
-      if (p0.kind === "circle") return { ...base, k: (p0.e.sp ?? 0) >= 2 * Math.PI - 1e-3 ? "dia" : "rad", refs: [p0.ref] };
+      if (p0.kind === "circle") return { ...base, k: wholeCircle(p0.e, this.factsOf(viewId)?.topo ?? null) ? "dia" : "rad", refs: [p0.ref] };
       if (p0.kind === "pt") return null;
     }
-    if (p0.kind === "line" && p1?.kind === "line") {
-      const d = (e: MEdge) => { const a = P(e.a), b = P(e.b); const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1; return [(b[0] - a[0]) / L, (b[1] - a[1]) / L]; };
-      const u = d(p0.e), w = d(p1.e);
-      return { ...base, k: Math.abs(u[0] * w[1] - u[1] * w[0]) < 1e-6 ? "al" : "ang", refs: [p0.ref, p1.ref] };
+    // With another pick a cylinder's outline is the line it is (a CAD app: the distance between two outlines, exam #14).
+    const lineRef = (pk: Pick): GeoRef | null => pk.kind === "line" ? pk.ref : pk.side ? { ...edgeRef(pk.e, "e"), s: pk.side } : null;
+    const l0 = lineRef(p0), l1 = p1 ? lineRef(p1) : null;
+    if (l0 && l1) {
+      const d = (pk: Pick) => { const [a, b] = pk.seg ?? [P(pk.e.a), P(pk.e.b)]; const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1; return [(b[0] - a[0]) / L, (b[1] - a[1]) / L]; };
+      const u = d(p0), w = d(p1!);
+      const par = Math.abs(u[0] * w[1] - u[1] * w[0]) < 1e-6;
+      // Not parallel: the angle between them, also between outlines and circles seen edge-on (exam #50: a chamfer's cone
+      // outline and the end face give 45°, which the panel can show as 2 × 45°).
+      return { ...base, k: par ? "al" : "ang", refs: [l0, l1] };
     }
     const asPoint = (pk: Pick): GeoRef => (pk.kind === "circle" ? edgeRef(pk.e, "c") : pk.ref);
-    if (p1 && (p0.kind === "line" || p1.kind === "line")) return { ...base, k: "al", refs: [p0.kind === "line" ? p0.ref : asPoint(p0), p1.kind === "line" ? p1.ref : asPoint(p1)] };
+    if (p1 && (l0 || l1)) return { ...base, k: "al", refs: [l0 ?? asPoint(p0), l1 ?? asPoint(p1)] };
     const refs = picks.length === 1 ? [p0.ref] : [asPoint(p0), asPoint(p1)];
     const g = dimGeo({ ...base, k: "al", refs }, P, this.factsOf(viewId)?.topo ?? null);
     if (!g) return null;
@@ -1251,26 +1651,36 @@ export class DrawingWorkspace {
 
   /** The dimensions one more point adds to a chain, baseline or ordinate set (FR-DRW-021), placed clear of the view:
    *  horizontal ones above it, vertical ones to its right, baseline ones stacked 7 mm apart. The axis comes from the first step. */
-  private dimSetNext(m: Extract<AnnotMode, { kind: "dimset" }>, ref: GeoRef): { dims: DimAnnot[]; axis: "h" | "v" } | null {
+  private dimSetNext(m: Extract<AnnotMode, { kind: "dimset" }>, ref: GeoRef, at?: Pt): { dims: DimAnnot[]; axis: "h" | "v"; row: number } | null {
     const vid = m.view, v = vid ? findView(this.sheet, vid) : undefined, pl = vid ? this.placements.get(vid) : undefined, topo = (vid ? this.factsOf(vid) : this.facts)?.topo ?? null;
     if (!vid || !v || !pl || !m.picks.length) return null;
     const { P } = projector(viewDir(this.sheet, v));
     const pt = (r: GeoRef) => { const q = refPoint(r, topo); return q ? P(q) : null; };
     const q0 = pt(m.picks[0]), ql = pt(m.picks[m.picks.length - 1]), q = pt(ref);
     if (!q0 || !ql || !q || Math.hypot(q[0] - ql[0], q[1] - ql[1]) < 1e-6) return null;
-    const axis = m.axis ?? (Math.abs(q[0] - q0[0]) >= Math.abs(q[1] - q0[1]) ? "h" : "v");
-    const n = m.picks.length - 1, gap = 8 / pl.s, step = 7 / pl.s, [, , bx1, by1] = pl.box;
-    const pos = (a: [number, number], b: [number, number], k: number): Pt => axis === "h" ? [round((a[0] + b[0]) / 2), round(by1 + gap + k * step)] : [round(bx1 + gap + k * step), round((a[1] + b[1]) / 2)];
+    const [bx0, by0, bx1, by1] = pl.box, w: Pt | null = at ? fromSheet(pl, at[0], at[1]) : null;
+    // The placement side decides the direction, as for Smart dimension: above or below the view horizontal, beside it vertical.
+    const offY = !!w && (w[1] > by1 || w[1] < by0), offX = !!w && (w[0] > bx1 || w[0] < bx0);
+    const axis = m.axis ?? (offY && !offX ? "h" : offX && !offY ? "v" : Math.abs(q[0] - q0[0]) >= Math.abs(q[1] - q0[1]) ? "h" : "v");
+    const n = m.picks.length - 1, gap = 8 / pl.s, j = axis === "h" ? 1 : 0;
+    // The row is where the placement click put it (a CAD app: the set goes where you click); before that it follows the pointer,
+    // or sits clear of the view's dimensions above it / to its right. Baseline dimensions stack 7 mm further out, away from the view.
+    const ks = axis === "h" ? ["h", "oh"] : ["v", "ov"], edge = axis === "h" ? by1 : bx1;
+    const row = m.row ?? (w ? round(w[j]) : (this.sheet.annots ?? []).reduce((r, a) => a.t === "dim" && a.view === vid && ks.includes(a.k) && a.pos[j] > edge ? Math.max(r, round(a.pos[j] + 7 / pl.s)) : r, round(edge + gap)));
+    const step = (row >= (axis === "h" ? (by0 + by1) / 2 : (bx0 + bx1) / 2) ? 7 : -7) / pl.s;
+    const pos = (a: [number, number], b: [number, number], k: number): Pt => axis === "h" ? [round((a[0] + b[0]) / 2), round(row + k * step)] : [round(row + k * step), round((a[1] + b[1]) / 2)];
     const dim = (refs: GeoRef[], k: DimAnnot["k"], at: Pt): DimAnnot => ({ id: uid("a_"), t: "dim", view: vid, k, refs, pos: at });
     const dims: DimAnnot[] = [];
     if (m.how === "chain") dims.push(dim([m.picks[n], ref], axis, pos(ql, q, 0)));
     else if (m.how === "base") dims.push(dim([m.picks[0], ref], axis, pos(q0, q, n)));
     else {
-      const k = axis === "h" ? "oh" : "ov", at = (w: [number, number]): Pt => axis === "h" ? [round(w[0]), round(by1 + gap)] : [round(bx1 + gap), round(w[1])];
+      const k = axis === "h" ? "oh" : "ov", at = (w: [number, number]): Pt => axis === "h" ? [round(w[0]), row] : [row, round(w[1])];
       if (!n) dims.push(dim([m.picks[0], m.picks[0]], k, at(q0)));
-      dims.push(dim([m.picks[0], ref], k, at(q)));
+      // A point level with one already in the set would print its value again on top of it.
+      const same = m.picks.some(r => { const w = pt(r); return !!w && Math.abs(w[j ^ 1] - q[j ^ 1]) < 1e-6; });
+      if (!same) dims.push(dim([m.picks[0], ref], k, at(q)));
     }
-    return { dims, axis };
+    return { dims, axis, row };
   }
 
   private annotClick(m: AnnotMode, p: Pt) {
@@ -1280,10 +1690,10 @@ export class DrawingWorkspace {
     const vid = m.view ?? this.viewAt(p);
     if (m.kind === "dim") {
       if (!vid) return;
-      const pick = this.pickAt(vid, p, undefined, !m.picks.length);
-      const same = (a: Pick, b: Pick) => JSON.stringify(a.ref) === JSON.stringify(b.ref);
+      const pick = this.pickAt(vid, p, undefined, !m.picks.length, true);
+      const same = (a: Pick, b: Pick) => JSON.stringify(a.ref) === JSON.stringify(b.ref) && a.side === b.side;
       if (!m.picks.length) { if (!pick) return; m.view = vid; m.picks = [pick]; }
-      else if (pick && m.picks.length === 1 && !same(pick, m.picks[0]) && !(m.picks[0].kind === "circle" && pick.kind === "circle" && pick.e === m.picks[0].e)) m.picks.push(pick);
+      else if (pick && m.picks.length === 1 && !same(pick, m.picks[0]) && !(m.picks[0].kind === "circle" && pick.kind === "circle" && pick.e === m.picks[0].e && !(pick.side && m.picks[0].side))) m.picks.push(pick);
       else {
         const d = this.buildDim(m.view!, m.picks, p);
         if (!d) return;
@@ -1315,11 +1725,44 @@ export class DrawingWorkspace {
         this.addAnnot({ id: uid("a_"), t: "btable", view: m.view, pos: [round(pos[0]), round(pos[1])] }, "Bend table");
         this.mode = { kind: "none" };
       }
+    } else if (m.kind === "wtable") {
+      if (!m.view) {
+        if (!vid) return;
+        if (!this.factsOf(vid)?.welds?.length) { toast(t("This view's model has no fillet beads. Click a view of a weldment part."), true); return; }
+        m.view = vid;
+        this.renderStatus();
+      } else {
+        const pl = this.placements.get(m.view)!, pos = fromSheet(pl, p[0], p[1]);
+        this.addAnnot({ id: uid("a_"), t: "wtable", view: m.view, pos: [round(pos[0]), round(pos[1])] }, "Weld table");
+        void this.tagBeads(m.view, true);
+        this.mode = { kind: "none" };
+      }
+    } else if (m.kind === "ctable") {
+      if (!m.view) {
+        if (!vid) return;
+        if (!this.factsOf(vid)?.cuts?.length) { toast(t("This view's model has no cut list. Click a view of a weldment part."), true); return; }
+        m.view = vid;
+        this.renderStatus();
+      } else {
+        const pl = this.placements.get(m.view)!, pos = fromSheet(pl, p[0], p[1]);
+        this.addAnnot({ id: uid("a_"), t: "ctable", view: m.view, pos: [round(pos[0]), round(pos[1])] }, "Cut list table");
+        this.mode = { kind: "none" };
+      }
     } else if (m.kind === "dimset") {
+      if (m.pend) {
+        // The placement click: the set's row goes through it.
+        const next = this.dimSetNext(m, m.pend, p);
+        if (!next) return;
+        m.axis = next.axis; m.row = next.row; m.picks.push(m.pend); m.pend = null;
+        this.store!.change(m.how === "ord" ? "Ordinate dimension" : m.how === "base" ? "Baseline dimension" : "Chain dimension", d => { (d.sheets[this.sheetIdx].annots ??= []).push(...next.dims); });
+        this.renderStatus();
+        return;
+      }
       if (!vid) return;
-      const ref = this.pointAt(vid, p);
+      const ref = this.pointAt(m.view ?? vid, p);
       if (!ref) { toast(t("Click a point: a corner or a circle centre.")); return; }
       if (!m.picks.length) { m.view = vid; m.picks = [ref]; this.renderStatus(); return; }
+      if (m.row == null) { if (this.dimSetNext(m, ref)) { m.pend = ref; this.renderStatus(); } return; }
       const next = this.dimSetNext(m, ref);
       if (!next) return;
       m.axis = next.axis; m.picks.push(ref);
@@ -1329,16 +1772,18 @@ export class DrawingWorkspace {
         if (!vid) return;
         const pick = this.pickAt(vid, p, "circle");
         if (!pick) { toast(t("Click the edge of a hole.")); return; }
-        m.view = vid; m.e = pick.e;
+        m.view = vid; m.e = pick.e; m.s = pick.side;
       } else {
         const pl = this.placements.get(m.view!)!, pos = fromSheet(pl, p[0], p[1]);
-        this.addAnnot({ id: uid("a_"), t: "hole", view: m.view!, ref: edgeRef(m.e, "e"), pos: [round(pos[0]), round(pos[1])] }, "Hole callout");
+        const h: HoleAnnot = { id: uid("a_"), t: "hole", view: m.view!, ref: { ...edgeRef(m.e, "e"), ...(m.s ? { s: m.s } : {}) }, pos: [round(pos[0]), round(pos[1])] };
+        // The callout is read from the hole, so it is placed at once; its dialog opens on a double-click or Edit….
+        this.addAnnot(h, "Hole callout");
         this.mode = { kind: "none" };
       }
     } else if (m.kind === "dtarget") {
       if (!m.leader && vid && this.facts) {
-        const pick = this.pickAt(vid, p);
-        if (pick) { const pl = this.placements.get(vid)!; m.view = vid; m.leader = pick.kind === "pt" ? pick.ref : { ...pick.ref, p: "e" }; m.tp = fromSheet(pl, p[0], p[1]); this.renderStatus(); this.renderOverlay(); return; }
+        const pick = this.annotPick(vid, p);
+        if (pick) { const pl = this.placements.get(vid)!; m.view = vid; m.leader = pick.kind === "pt" ? pick.ref : { ...this.pickRef(pick), p: "e" }; m.tp = fromSheet(pl, p[0], p[1]); this.renderStatus(); this.renderOverlay(); return; }
       }
       const view = m.view ?? vid ?? undefined, pl = view ? this.placements.get(view) : undefined;
       const pos: Pt = pl ? fromSheet(pl, p[0], p[1]) : p;
@@ -1346,30 +1791,40 @@ export class DrawingWorkspace {
       this.mode = { kind: "none" };
     } else if (m.kind === "weld") {
       if (!m.leader && vid && this.facts) {
-        const pick = this.pickAt(vid, p);
-        if (pick) { m.view = vid; m.leader = pick.kind === "pt" ? pick.ref : { ...pick.ref, p: "e" }; this.renderStatus(); this.renderOverlay(); return; }
+        const pick = this.annotPick(vid, p);
+        if (pick) { m.view = vid; m.leader = pick.kind === "pt" ? pick.ref : { ...this.pickRef(pick), p: "e" }; this.renderStatus(); this.renderOverlay(); return; }
       }
       const view = m.view ?? vid ?? undefined, pl = view ? this.placements.get(view) : undefined;
       const pos: Pt = pl ? fromSheet(pl, p[0], p[1]) : p;
-      this.addAnnot({ id: uid("a_"), t: "weld", ...(view ? { view } : {}), pos: [round(pos[0]), round(pos[1])], ...(m.leader ? { leader: m.leader } : {}), arrow: { sym: "fillet", size: "a4" } }, "Weld symbol");
+      const w: WeldAnnot = { id: uid("a_"), t: "weld", ...(view ? { view } : {}), pos: [round(pos[0]), round(pos[1])], ...(m.leader ? { leader: m.leader } : {}), arrow: { sym: "fillet", size: "a4" } };
       this.mode = { kind: "none" };
+      setTimeout(() => void this.editWeldAnnot(w, true));
     } else if (m.kind === "gtol") {
+      // A click on a dimension attaches the frame under its text.
+      const on = m.leader ? null : this.dimAt(p);
+      if (on) {
+        const g: GtolAnnot = { id: uid("a_"), t: "gtol", view: on.view, pos: [...on.pos] as Pt, dim: on.id, rows: [on.k === "dia" || on.k === "rad" ? { sym: "pos", tol: "0.1", dia: true, datums: ["A", "B"] } : { sym: "par", tol: "0.05", datums: ["A"] }] };
+        this.mode = { kind: "none" };
+        setTimeout(() => void this.editGtolAnnot(g, true));
+        return;
+      }
       if (!m.leader && vid && this.facts) {
-        const pick = this.pickAt(vid, p);
-        if (pick) { m.view = vid; m.circle = pick.kind === "circle"; m.leader = pick.kind === "circle" ? { ...pick.ref, p: "e" } : pick.kind === "line" ? { ...pick.ref, p: "e" } : pick.ref; this.renderStatus(); this.renderOverlay(); return; }
+        const pick = this.annotPick(vid, p);
+        if (pick) { m.view = vid; m.circle = pick.kind === "circle"; m.leader = pick.kind === "pt" ? pick.ref : { ...this.pickRef(pick), p: "e" }; this.renderStatus(); this.renderOverlay(); return; }
       }
       const view = m.view ?? vid ?? undefined, pl = view ? this.placements.get(view) : undefined;
       const pos: Pt = pl ? fromSheet(pl, p[0], p[1]) : p;
       const row: GRow = m.circle ? { sym: "pos", tol: "0.1", dia: true, datums: ["A", "B"] } : { sym: m.leader ? "perp" : "flat", tol: "0.05", datums: m.leader ? ["A"] : [] };
       if (!m.leader) row.sym = "flat";
-      this.addAnnot({ id: uid("a_"), t: "gtol", ...(view ? { view } : {}), pos: [round(pos[0]), round(pos[1])], rows: [row], ...(m.leader ? { leader: m.leader } : {}) }, "Geometric tolerance");
+      const g: GtolAnnot = { id: uid("a_"), t: "gtol", ...(view ? { view } : {}), pos: [round(pos[0]), round(pos[1])], rows: [row], ...(m.leader ? { leader: m.leader } : {}) };
       this.mode = { kind: "none" };
+      setTimeout(() => void this.editGtolAnnot(g, true));
     } else if (m.kind === "balloon") {
       if (!m.ref) {
-        const pick = vid ? this.pickAt(vid, p) : null;
+        const pick = vid ? this.annotPick(vid, p) : null;
         const e = pick?.e;
-        if (!e || !compOfKey(e.k)) { toast(t("Click an edge of a component.")); return; }
-        m.view = vid; m.ref = edgeRef(e, "e");
+        if (!e || !edgeItem(e.k, this.ctx())) { toast(t(this.bom ? "Click an edge of a component." : "Click an edge of a cut list body.")); return; }
+        m.view = vid; m.ref = pick.kind === "pt" ? edgeRef(e, "e") : this.pickRef(pick);
         this.renderStatus(); this.renderOverlay(); return;
       }
       const pl = this.placements.get(m.view!)!, pos = fromSheet(pl, p[0], p[1]);
@@ -1377,8 +1832,8 @@ export class DrawingWorkspace {
       m.ref = null; m.view = null;
     } else if (m.kind === "datum" || m.kind === "surf") {
       if (!m.ref) {
-        const pick = vid && this.facts ? this.pickAt(vid, p) : null;
-        if (pick && pick.kind !== "pt") { m.view = vid; m.ref = pick.ref; this.renderStatus(); this.renderOverlay(); return; }
+        const pick = vid && this.facts ? this.annotPick(vid, p) : null;
+        if (pick && pick.kind !== "pt") { m.view = vid; m.ref = this.pickRef(pick); this.renderStatus(); this.renderOverlay(); return; }
         if (m.kind === "datum") { toast(t("Click an edge of a view.")); return; }
         // A surface symbol on its own: on the view under the cursor, or on the sheet.
         const pl = vid ? this.placements.get(vid) : undefined, pos: Pt = pl ? fromSheet(pl, p[0], p[1]) : p;
@@ -1395,15 +1850,17 @@ export class DrawingWorkspace {
       }
     } else {
       if (!m.leader && vid) {
-        const pick = this.pickAt(vid, p);
-        if (pick) { m.view = vid; m.leader = pick.kind === "circle" ? edgeRef(pick.e, "c") : pick.kind === "line" ? { ...pick.ref, p: "e" } : pick.ref; this.renderStatus(); this.renderOverlay(); return; }
+        const pick = this.annotPick(vid, p);
+        if (pick) { m.view = vid; m.leader = pick.kind === "circle" && !pick.side ? edgeRef(pick.e, "c") : pick.kind === "pt" ? pick.ref : { ...this.pickRef(pick), p: "e" }; this.renderStatus(); this.renderOverlay(); return; }
       }
-      const text = prompt(t("Note text"), "");
-      if (!text?.trim()) return;
+      // The note goes down at once and its text box takes the typing (several lines), like a CAD app; a browser
+      // prompt took one line and covered the sheet (drawings exam #9).
       const view = m.view ?? vid ?? undefined, pl = view ? this.placements.get(view) : undefined;
       const pos: Pt = pl ? fromSheet(pl, p[0], p[1]) : p;
-      this.addAnnot({ id: uid("a_"), t: "note", ...(view ? { view } : {}), pos: [round(pos[0]), round(pos[1])], text: text.trim(), ...(m.leader ? { leader: m.leader } : {}) }, "Note");
+      this.addAnnot({ id: uid("a_"), t: "note", ...(view ? { view } : {}), pos: [round(pos[0]), round(pos[1])], text: t("Note"), ...(m.leader ? { leader: m.leader } : {}) }, "Note");
       this.mode = { kind: "none" };
+      // After the pointer press has finished focusing the sheet.
+      setTimeout(() => { const box = this.el.querySelector<HTMLTextAreaElement>("textarea[data-d=ntxt]"); if (box) { box.focus(); box.select(); } }, 0);
     }
     this.renderStatus();
     this.renderOverlay();
@@ -1419,10 +1876,17 @@ export class DrawingWorkspace {
     return clineSegs(a, projector(viewDir(this.sheet, v)).P, this.factsOf(vid)?.topo ?? null, pl) ? a : null;
   }
 
+  /** A centreline pick: like Smart dimension's, so a cylinder's outline (a hole's hidden lines) and a circle seen edge-on are lines. */
+  private clinePick(vid: string, p: Pt, how: "line" | "mark"): Pick | null {
+    if (how === "mark") return this.pickAt(vid, p, "circle");
+    const pk = this.pickAt(vid, p, undefined, false, true);
+    return pk?.kind === "circle" && pk.side ? { ...pk, kind: "line", ref: { ...edgeRef(pk.e, "e"), s: pk.side } } : pk;
+  }
+
   private clineClick(m: Extract<AnnotMode, { kind: "cline" }>, p: Pt) {
     const vid = m.view ?? this.viewAt(p);
     if (!vid) return;
-    const pick = this.pickAt(vid, p, m.how === "mark" ? "circle" : undefined);
+    const pick = this.clinePick(vid, p, m.how);
     if (!pick) { toast(t(m.how === "mark" ? "Click a round edge seen end-on: a circle or an arc. Esc ends." : "Click a straight edge or a point (a circle's centre) of a view. Esc ends.")); return; }
     m.view = vid;
     if (m.how === "mark" || m.picks.length) {
@@ -1462,7 +1926,14 @@ export class DrawingWorkspace {
     const last = m.pts[m.pts.length - 1];
     if (last && Math.hypot(last[0] - p[0], last[1] - p[1]) < 1e-6) return;
     m.pts.push(p);
-    if (m.k !== "poly" && m.pts.length === 2) { this.finishSk(m); return; }
+    if (m.k !== "poly" && m.pts.length === 2) {
+      // As in CAD apps the tool stays on: a line chains on from its end, a rectangle or circle starts afresh. Esc (or a double-click) ends.
+      const names = { line: "Line", rect: "Rectangle", circle: "Circle" } as const;
+      this.addAnnot(this.skOf(m, m.pts), names[m.k]);
+      this.mode = { ...m, pts: m.k === "line" ? [p] : [] };
+      this.renderStatus(); this.renderOverlay();
+      return;
+    }
     this.renderStatus(); this.renderOverlay();
   }
 
@@ -1491,6 +1962,48 @@ export class DrawingWorkspace {
     this.renderStatus(); this.renderOverlay();
   }
 
+  /** The geometric tolerance dialog (FR-DRW-023): on a frame just placed (added on OK) or an existing one. */
+  private async editGtolAnnot(a: GtolAnnot, isNew = false) {
+    const r = await editGtol(a, this.ctx().dec, isNew);
+    this.renderStatus(); this.renderOverlay();
+    if (!r || !this.store) return;
+    if (isNew) { this.addAnnot(r, "Geometric tolerance"); return; }
+    this.selA = a.id;
+    this.setAnnot("Geometric tolerance", x => { if (x.t !== "gtol") return; x.rows = r.rows; for (const k of ["above", "below", "between", "around"] as const) { if (r[k] === undefined) delete x[k]; else (x as unknown as Record<string, unknown>)[k] = r[k]; } });
+  }
+
+  /** The hole callout dialog (FR-DRW-022). */
+  private async editHoleAnnot(a: HoleAnnot, isNew = false) {
+    const e = refEdge(a.ref, this.factsOf(a.view)?.topo ?? null), ctx = this.ctx();
+    const r = await editHole(a, count => e ? holeText(e, ctx, count) : [], t("THRU"));
+    this.renderStatus(); this.renderOverlay();
+    if (!r || !this.store) return;
+    const put = (x: HoleAnnot) => { for (const k of ["txt", "count", "below"] as const) { if (r[k] === undefined) delete x[k]; else (x as unknown as Record<string, unknown>)[k] = r[k]; } };
+    if (isNew) { put(a); this.addAnnot(a, "Hole callout"); return; }
+    this.selA = a.id;
+    this.setAnnot("Hole callout", x => { if (x.t === "hole") put(x); });
+  }
+
+  /** The weld symbol dialog (ISO 2553). */
+  private async editWeldAnnot(a: WeldAnnot, isNew = false) {
+    const r = await editWeld(a, isNew);
+    this.renderStatus(); this.renderOverlay();
+    if (!r || !this.store) return;
+    if (isNew) { this.addAnnot(r, "Weld symbol"); return; }
+    this.selA = a.id;
+    this.setAnnot("Weld symbol", x => { if (x.t !== "weld") return; for (const k of ["arrow", "other", "around", "field", "tail"] as const) { if (r[k] === undefined) delete x[k]; else (x as unknown as Record<string, unknown>)[k] = r[k]; } });
+  }
+
+  /** Opens the dialog of an annotation that has one. */
+  private editAnnotDlg(id: string | null): boolean {
+    const a = id ? this.annot(id) : null;
+    if (a?.t === "gtol") void this.editGtolAnnot(a);
+    else if (a?.t === "hole") void this.editHoleAnnot(a);
+    else if (a?.t === "weld") void this.editWeldAnnot(a);
+    else return false;
+    return true;
+  }
+
   private addAnnot(a: Annot, label: string) {
     this.store!.change(label, d => { const S = d.sheets[this.sheetIdx]; (S.annots ??= []).push(a); });
     if (a.t !== "dim") { this.selA = a.id; this.renderProps(); }
@@ -1509,7 +2022,8 @@ export class DrawingWorkspace {
   }
 
   private nextDatum(): string {
-    const used = new Set(this.doc.sheets.flatMap(s => (s.annots ?? []).map(a => (a.t === "datum" ? a.letter : ""))));
+    // Section, detail and auxiliary view letters are taken too (drawings exam #6).
+    const used = new Set(this.doc.sheets.flatMap(s => [...(s.annots ?? []).map(a => (a.t === "datum" ? a.letter : "")), ...s.views.map(v => v.letter ?? "")]));
     for (const c of "ABCDEFGHJKLMNPRSTUVWXYZ") if (!used.has(c)) return c;
     return "A";
   }
@@ -1533,6 +2047,7 @@ export class DrawingWorkspace {
 
   /** A BOM table (FR-DRW-030) on top of the title block, header at the bottom, items upwards; its rows follow the assembly. */
   private insertBom() {
+    if (!this.facts) { toast(t("The drawing's model is still loading.")); return; }
     if (!this.bom) { toast(t("Balloons and the bill of materials are for drawings of an assembly."), true); return; }
     if ((this.sheet.annots ?? []).some(a => a.t === "table" && a.kind === "bom")) { toast(t("The sheet has a bill of materials already.")); return; }
     const [bx, by] = titleBlockAt(this.sheet), [tw, th] = tbSize(this.sheet);
@@ -1541,15 +2056,40 @@ export class DrawingWorkspace {
 
   /** Auto balloon (FR-DRW-030): one balloon per BOM item in the selected view (or the first view), around it. */
   private async autoBalloon() {
-    if (!this.bom || !this.facts) { toast(t("Balloons and the bill of materials are for drawings of an assembly."), true); return; }
+    if (!this.facts) { toast(t("The drawing's model is still loading.")); return; }
+    if (!this.bom && !this.cuts && !this.single) { toast(t("Balloons are for drawings of an assembly or of a weldment part."), true); return; }
     const v = this.sheet.views.find(x => x.id === this.sel) ?? this.sheet.views.find(x => x.kind !== "detail");
     if (!v) { toast(t("Place a model view first."), true); return; }
-    const proj = await this.kernel.request(viewReq(this.sheet, v)).catch(() => null);
-    if (!proj || !this.facts) return;
-    const add = autoBalloons(this.sheet, v, this.facts.topo, projector(viewDir(this.sheet, v)).P, proj, viewScale(this.sheet, v), this.bom, () => uid("a_"));
+    // A view whose lines are still coming (or a big assembly's slow section ahead of it) is waited for, and says so.
+    const req = viewReq(this.sheet, v);
+    if (!this.kernel.cache.has(req.key)) toast(t("Waiting for the view's lines to be projected…"));
+    const proj = await this.kernel.request(req).catch((err: unknown) => { viewFailed(err); return null; });
+    if (!proj || !this.facts || !this.sheet.views.some(x => x.id === v.id)) return;
+    // Balloons keep clear of the annotations already on the sheet (dimension texts, notes, tables): drawings exam round 2.
+    const pl = this.placements.get(v.id), R = BALLOON_R + 1;
+    const boxes = [...this.annotHits.filter(h => !h.ring).map(h => h.box), ...this.sheet.views.flatMap(w => { const q = this.placements.get(w.id); return q ? [viewRect(q)] : []; })];
+    // Drawings exam #39: nor outside the drawing frame, nor on the title block.
+    const [fx0, fy0, fx1, fy1] = frameOf(this.sheet), [tbx, tby] = titleBlockAt(this.sheet), tbh = tbSize(this.sheet)[1];
+    const off = (x: number, y: number) => x < fx0 + R || x > fx1 - R || y < fy0 + R || y > fy1 - R || (x > tbx - R && y < tby + tbh + R);
+    const outside = (p: Pt) => { if (!pl) return false; const [x, y] = toSheet(pl, p[0], p[1]); return off(x, y); };
+    const taken = (p: Pt) => { if (!pl) return false; const [x, y] = toSheet(pl, p[0], p[1]); return off(x, y) || boxes.some(([x0, y0, x1, y1]) => x > x0 - R && x < x1 + R && y > y0 - R && y < y1 + R); };
+    const add = autoBalloons(this.sheet, v, this.facts.topo, projector(viewDir(this.sheet, v)).P, proj, viewScale(this.sheet, v), this.balloonItems(), () => uid("a_"), 12, taken, outside);
     if (!add.length) { toast(t("Every item already has a balloon in the view.")); return; }
     this.store!.change("Auto balloon", d => { const S = d.sheets[this.sheetIdx]; (S.annots ??= []).push(...add); });
     toast(t("{n} balloon added|{n} balloons added", { n: add.length }), "success");
+  }
+
+  /** Weld tags (FR-FT-121): a rectangle balloon on each bead seen in the view that has none, numbered like the weld table. */
+  private async tagBeads(vid: string, quiet = false) {
+    const v = this.sheet.views.find(x => x.id === vid);
+    if (!v || !this.facts?.welds?.length) return;
+    const proj = await this.kernel.request(viewReq(this.sheet, v)).catch(() => null);
+    if (!proj || !this.facts || !this.sheet.views.includes(v)) return;
+    const add = autoBalloons(this.sheet, v, this.facts.topo, projector(viewDir(this.sheet, v)).P, proj, viewScale(this.sheet, v), this.weldItems(), () => uid("a_"))
+      .map(a => ({ ...a, weld: true as const, shape: "box" as const }));
+    if (!add.length) { if (!quiet) toast(t("Every bead already has a tag in the view.")); return; }
+    this.store!.change("Tag the beads", d => { const S = d.sheets[this.sheetIdx]; (S.annots ??= []).push(...add); });
+    toast(t("{n} bead tagged|{n} beads tagged", { n: add.length }), "success");
   }
 
   /** What an annotation command shows before it is placed: the hovered entity, the picks and the preview. */
@@ -1580,13 +2120,13 @@ export class DrawingWorkspace {
     const S = (q: [number, number, number]) => toSheet(pl, ...P(q));
     const show = (pk: Pick, cls: string) => {
       if (pk.kind === "pt") { const q = S(pk.ref && "pt" in pk.ref ? pk.ref.pt : (pk.ref.p === "c" ? pk.e.c! : pk.ref.p === "a" ? pk.e.a : pk.e.b)); return `<circle class="drw-snap" cx="${q[0]}" cy="${H - q[1]}" r="${this.snapTol() / 2.5}"/>`; }
-      if (pk.kind === "line") { const a = S(pk.e.a), b = S(pk.e.b); return `<line class="${cls}" x1="${a[0]}" y1="${H - a[1]}" x2="${b[0]}" y2="${H - b[1]}"/>`; }
+      if (pk.seg || pk.kind === "line") { const [a, b] = pk.seg ? pk.seg.map(q => toSheet(pl, ...q)) : [S(pk.e.a), S(pk.e.b)]; return `<line class="${cls}" x1="${a[0]}" y1="${H - a[1]}" x2="${b[0]}" y2="${H - b[1]}"/>`; }
       const c = S(pk.e.c!); return `<circle class="${cls}" cx="${c[0]}" cy="${H - c[1]}" r="${pk.e.r! * pl.s}" fill="none"/>`;
     };
     let s = "";
     if (m.kind === "dim") {
       for (const pk of m.picks) s += show(pk, "drw-edge on");
-      const hov = this.pickAt(vid, at, undefined, !m.picks.length);
+      const hov = this.pickAt(vid, at, undefined, !m.picks.length, true);
       if (hov && !(m.picks.length >= 2)) s += show(hov, "drw-edge");
       if (m.picks.length) {
         const d = this.buildDim(vid, m.picks, at), g = d && dimGeo(d, P, this.factsOf(vid)?.topo ?? null);
@@ -1598,51 +2138,52 @@ export class DrawingWorkspace {
         const pa: Annot = { id: "_pt", t: "htable", view: vid, origin: m.origin, holes: m.holes, pos: fromSheet(pl, at[0], at[1]) };
         s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, this.ctx()).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
       }
-    } else if (m.kind === "btable") {
+    } else if (m.kind === "btable" || m.kind === "wtable" || m.kind === "ctable") {
       if (m.view) {
-        const pa: Annot = { id: "_pt", t: "btable", view: vid, pos: fromSheet(pl, at[0], at[1]) };
+        const pa: Annot = { id: "_pt", t: m.kind, view: vid, pos: fromSheet(pl, at[0], at[1]) };
         s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, this.ctx()).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
       }
     } else if (m.kind === "dimset") {
       const topo = this.factsOf(vid)?.topo ?? null;
       for (const r of m.picks) { const q = refPoint(r, topo); if (q) { const w = S(q); s += `<circle class="drw-snap" cx="${w[0]}" cy="${H - w[1]}" r="${this.snapTol() / 2.5}"/>`; } }
-      const ref = this.pointAt(vid, at), q = ref && refPoint(ref, topo);
+      if (m.pend) { const q = refPoint(m.pend, topo); if (q) { const w = S(q); s += `<circle class="drw-snap" cx="${w[0]}" cy="${H - w[1]}" r="${this.snapTol() / 2.5}"/>`; } }
+      const ref = m.pend ? null : this.pointAt(vid, at), q = ref && refPoint(ref, topo);
       if (q) { const w = S(q); s += `<circle class="drw-snap" cx="${w[0]}" cy="${H - w[1]}" r="${this.snapTol() / 2.5}"/>`; }
-      const next = ref && this.dimSetNext(m, ref);
+      const next = m.pend ? this.dimSetNext(m, m.pend, at) : ref && this.dimSetNext(m, ref);
       if (next) s += `<g class="drw-preview">${svgBody(next.dims.flatMap(d => { const g = dimGeo(d, P, topo); return g ? dimPrims(d, g, pl, this.ctx().dec).prims : []; }), H, "currentColor")}</g>`;
     } else if (m.kind === "hole") {
       if (!m.e) { const hov = this.pickAt(vid, at, "circle"); if (hov) s += show(hov, "drw-edge"); }
       else {
         const pos = fromSheet(pl, at[0], at[1]);
-        const sh = { ...this.sheet, annots: [{ id: "_ph", t: "hole" as const, view: vid, ref: edgeRef(m.e, "e"), pos }] };
+        const sh = { ...this.sheet, annots: [{ id: "_ph", t: "hole" as const, view: vid, ref: { ...edgeRef(m.e, "e"), ...(m.s ? { s: m.s } : {}) }, pos }] };
         s += `<g class="drw-preview">${svgBody(viewAnnots(sh, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: this.factsOf(vid)?.topo.cyls ?? [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
       }
     } else if (m.kind === "balloon") {
-      if (!m.ref) { const hov = this.pickAt(vid, at); if (hov && compOfKey(hov.e.k)) s += show(hov.kind === "pt" ? { ...hov, kind: hov.e.t === "c" && hov.e.c ? "circle" : "line" } : hov, "drw-edge"); }
+      if (!m.ref) { const hov = this.annotPick(vid, at); if (hov && edgeItem(hov.e.k, this.ctx())) s += show(hov.kind === "pt" ? { ...hov, kind: hov.e.t === "c" && hov.e.c ? "circle" : "line" } : hov, "drw-edge"); }
       else {
         const pa: Annot = { id: "_pb", t: "balloon", view: vid, ref: m.ref, pos: fromSheet(pl, at[0], at[1]) };
-        s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
+        s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: this.factsOf(vid)?.topo.cyls ?? [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
       }
     } else if (m.kind === "dtarget") {
-      if (!m.leader) { const hov = this.pickAt(vid, at); if (hov) s += show(hov, "drw-edge"); }
+      if (!m.leader) { const hov = this.annotPick(vid, at); if (hov) s += show(hov, "drw-edge"); }
       else {
         const pa: Annot = { ...this.dtargetOf(m, vid, fromSheet(pl, at[0], at[1])), id: "_pt" };
-        s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
+        s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: this.factsOf(vid)?.topo.cyls ?? [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
       }
     } else if (m.kind === "weld") {
-      if (!m.leader) { const hov = this.pickAt(vid, at); if (hov) s += show(hov, "drw-edge"); }
+      if (!m.leader) { const hov = this.annotPick(vid, at); if (hov) s += show(hov, "drw-edge"); }
       else {
         const pa: Annot = { id: "_pw", t: "weld", view: vid, pos: fromSheet(pl, at[0], at[1]), leader: m.leader, arrow: { sym: "fillet", size: "a4" } };
-        s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
+        s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: this.factsOf(vid)?.topo.cyls ?? [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
       }
     } else if (m.kind === "datum" || m.kind === "surf") {
-      if (!m.ref) { const hov = this.pickAt(vid, at); if (hov && hov.kind !== "pt") s += show(hov, "drw-edge"); }
+      if (!m.ref) { const hov = this.annotPick(vid, at); if (hov && hov.kind !== "pt") s += show(hov, "drw-edge"); }
       else {
         const pos = fromSheet(pl, at[0], at[1]);
         const pa: Annot = m.kind === "datum" ? { id: "_pa", t: "datum", view: vid, ref: m.ref, pos, letter: this.nextDatum() } : { id: "_pa", t: "surf", view: vid, ref: m.ref, pos: (() => { const f = this.footAt(vid, m.ref!, at); return f && Math.hypot(f.at[0] - at[0], f.at[1] - at[1]) < this.snapTol() * 1.5 ? fromSheet(pl, ...f.at) : pos; })(), proc: "removal", text: "Ra 3.2" };
-        s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
+        s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: this.factsOf(vid)?.topo.cyls ?? [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
       }
-    } else if (!m.leader) { const hov = this.pickAt(vid, at); if (hov) s += show(hov, "drw-edge"); }
+    } else if (!m.leader) { const hov = this.annotPick(vid, at); if (hov) s += show(hov, "drw-edge"); }
     return s;
   }
 
@@ -1655,11 +2196,11 @@ export class DrawingWorkspace {
     const S = (q: [number, number, number]) => toSheet(pl, ...P(q));
     const show = (pk: Pick, cls: string) => {
       if (pk.kind === "pt") { const q = S("pt" in pk.ref ? pk.ref.pt : (pk.ref.p === "c" ? pk.e.c! : pk.ref.p === "a" ? pk.e.a : pk.e.b)); return `<circle class="drw-snap" cx="${q[0]}" cy="${H - q[1]}" r="${this.snapTol() / 2.5}"/>`; }
-      if (pk.kind === "line") { const a = S(pk.e.a), b = S(pk.e.b); return `<line class="${cls}" x1="${a[0]}" y1="${H - a[1]}" x2="${b[0]}" y2="${H - b[1]}"/>`; }
+      if (pk.seg || pk.kind === "line") { const [a, b] = pk.seg ? pk.seg.map(q => toSheet(pl, ...q)) : [S(pk.e.a), S(pk.e.b)]; return `<line class="${cls}" x1="${a[0]}" y1="${H - a[1]}" x2="${b[0]}" y2="${H - b[1]}"/>`; }
       const c = S(pk.e.c!); return `<circle class="${cls}" cx="${c[0]}" cy="${H - c[1]}" r="${pk.e.r! * pl.s}" fill="none"/>`;
     };
     let s = m.picks.map(pk => show(pk, "drw-edge on")).join("");
-    const hov = at ? this.pickAt(vid, at, m.how === "mark" ? "circle" : undefined) : null;
+    const hov = at ? this.clinePick(vid, at, m.how) : null;
     if (hov) {
       s += show(hov, "drw-edge");
       const a = m.how === "mark" ? this.buildCline({ ...m, view: vid }, [hov]) : m.picks.length ? this.buildCline(m, [m.picks[0], hov]) : null;
@@ -1673,7 +2214,7 @@ export class DrawingWorkspace {
   private insertItems() {
     if (!this.facts) { toast(t("The drawing's model is still loading.")); return; }
     if (!this.facts.items.length) { toast(t("The model has no dimensions to import: model items come from a part's sketches and extrudes."), true); return; }
-    const add = placeItems(this.sheet, this.facts.items, v => this.placements.get(v.id)?.box ?? null, () => uid("a_"));
+    const add = placeItems(this.sheet, this.facts.items, v => this.placements.get(v.id)?.box ?? null, () => uid("a_"), v => viewScale(this.sheet, v));
     if (!add.length) { toast(t("Every model item is on the sheet already, or no view shows it square on.")); return; }
     this.store!.change("Model items", d => { const S = d.sheets[this.sheetIdx]; (S.annots ??= []).push(...add); });
     toast(t("{n} model dimension inserted|{n} model dimensions inserted", { n: add.length }), "success");
@@ -1683,7 +2224,7 @@ export class DrawingWorkspace {
     const id = this.selA;
     if (!id) return;
     this.selA = null;
-    this.store!.change("Delete annotation", d => { const S = d.sheets[this.sheetIdx]; S.annots = (S.annots ?? []).filter(a => a.id !== id); });
+    this.store!.change("Delete annotation", d => { const S = d.sheets[this.sheetIdx]; S.annots = (S.annots ?? []).filter(a => a.id !== id && !(a.t === "gtol" && a.dim === id)); });
   }
 
   /** The BOM's sub-assembly choice: the whole assembly or one top-level sub-assembly. */
@@ -1697,7 +2238,7 @@ export class DrawingWorkspace {
   /** A balloon's stacked items (FR-DRW-030): each with a remove button, and a list of the items not shown yet. */
   private stackRows(a: BalloonAnnot): string {
     const bom = this.bom;
-    if (!bom) return "";
+    if (!bom) return this.cutStackRows(a);
     const item = (c: string) => bom.itemOf(c);
     const own = "e" in a.ref ? compOfKey(a.ref.e) : null;
     const used = new Set([own, ...(a.stack ?? [])].map(c => (c ? item(c) : null)));
@@ -1705,6 +2246,23 @@ export class DrawingWorkspace {
     const free = bom.rows.filter(r => !used.has(r.item) && r.comp);
     const add = free.length ? `<label class="drw-f">${esc(t("Stack another item"))}<select data-d="bstack"><option value="">—</option>${free.map(r => `<option value="${esc(r.comp)}">${r.item} · ${esc(r.part)}</option>`).join("")}</select></label>` : "";
     return rows || add ? `<p class="drw-note">${esc(t("Stacked balloons"))}</p>${rows}${add}` : "";
+  }
+
+  /** The same on a weldment part drawing: stacked entries are `cut:<item>`. */
+  private cutStackRows(a: BalloonAnnot): string {
+    const cuts = this.cuts;
+    if (!cuts || a.weld) return "";
+    const it = this.balloonItems();
+    const used = new Set([..."e" in a.ref ? [it.edge(a.ref.e)] : [], ...(a.stack ?? []).map(x => it.stack(x))]);
+    const rows = (a.stack ?? []).map((c, i) => `<div class="row drw-stack"><span>${esc(t("item {n}", { n: it.stack(c) ?? "?" }))}</span><button class="btn small" data-unstack="${i}" aria-label="${esc(t("Remove from the stack"))}">✕</button></div>`).join("");
+    const free = cuts.filter(c => !used.has(c.item));
+    const add = free.length ? `<label class="drw-f">${esc(t("Stack another item"))}<select data-d="bstack"><option value="">—</option>${free.map(c => `<option value="cut:${c.item}">${c.item} · ${esc(this.cutLabel(c))}</option>`).join("")}</select></label>` : "";
+    return rows || add ? `<p class="drw-note">${esc(t("Stacked balloons"))}</p>${rows}${add}` : "";
+  }
+
+  /** A cut list item's name for pickers, as the cut list table writes it. */
+  private cutLabel(c: NonNullable<ModelFacts["cuts"]>[number]): string {
+    return cutDesc(c, this.ctx());
   }
 
   private setAnnot(label: string, fn: (a: Annot) => void) {
@@ -1732,6 +2290,7 @@ export class DrawingWorkspace {
     this.setAnnot("Tolerance", a => {
       if (a.t !== "dim") return;
       if (!tt) delete a.tol;
+      else if (tt === "none") a.tol = { t: "none" };
       else a.tol = { t: tt, up: a.tol?.up ?? (tt === "fit" ? undefined : 0.1), lo: a.tol?.lo ?? (tt === "sym" || tt === "fit" ? undefined : 0.1), fit: tt === "fit" ? a.tol?.fit ?? (a.k === "dia" ? "H7" : "h7") : undefined };
     });
   }
@@ -1741,27 +2300,40 @@ export class DrawingWorkspace {
     const sh = this.sheet;
     if (a.t === "dim") {
       const v = findView(sh, a.view), g = v ? dimGeo(a.src ? { ...a, refs: (() => { const it = this.factsOf(a.view)?.items.find(i => i.src === a.src); return it ? [{ pt: it.p[0] }, { pt: it.p[1] }] : a.refs; })() } : a, projector(viewDir(sh, v)).P, this.factsOf(a.view)?.topo ?? null) : null;
-      const val = g ? (g.k === "ang" ? null : dimText({ ...a, tol: undefined, txt: undefined }, g, this.ctx().dec).main) : "?";
+      const val = g ? (g.k === "ang" ? null : dimText({ ...a, tol: { t: "none" }, txt: undefined, dual: false, show: undefined }, g, this.ctx().dec).main) : "?";
+      // With a drawing default tolerance, no tolerance of its own reads "Document" and "None" turns the default off.
+      const dflt = a.k === "ang" ? this.doc.style?.atol : a.k === "chamfer" ? undefined : this.doc.style?.tol;
       const tol = a.tol?.t ?? "";
       const lin = a.k === "h" || a.k === "v" || a.k === "al";
       // A round edge can be dimensioned as radius, diameter or (an arc) its length; two lines as an angle or a chamfer.
       const e0 = a.refs[0] && !("pt" in a.refs[0]) ? refEdge(a.refs[0], this.factsOf(a.view)?.topo ?? null) : null;
-      const kinds: [DimAnnot["k"], string][] | null = (a.k === "rad" || a.k === "dia" || a.k === "arc") && e0?.t === "c"
+      const kinds: [DimAnnot["k"], string][] | null = (a.k === "rad" || a.k === "dia" || a.k === "arc") && e0?.t === "c" && !g?.dl
         ? [["rad", "Radius"], ["dia", "Diameter"], ...((e0.sp ?? 2 * Math.PI) < 2 * Math.PI - 1e-3 ? [["arc", "Arc length"] as [DimAnnot["k"], string]] : [])]
         : a.k === "ang" || a.k === "chamfer" ? [["ang", "Angle"], ["chamfer", "Chamfer"]] : null;
       return `<fieldset class="pm-group"><legend>${esc(t("Dimension"))}</legend>
         ${val != null ? `<p class="drw-note">${esc(t("Value"))}: <b translate="no">${esc(val)}</b>${a.src ? ` · ${esc(t("model item"))}` : ""}</p>` : ""}
         ${kinds ? `<label class="drw-f">${esc(t("Type"))}<select data-d="k">${kinds.map(([k, l]) => `<option value="${k}"${a.k === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : ""}
         ${lin ? `<label class="drw-f">${esc(t("Direction"))}<select data-d="k">${(["h", "v", "al"] as const).map(k => `<option value="${k}"${a.k === k ? " selected" : ""}>${esc(t(k === "h" ? "Horizontal" : k === "v" ? "Vertical" : "Aligned"))}</option>`).join("")}</select></label>` : ""}
+        ${lin || a.k === "ang" ? `<label class="drw-f">${esc(t("Arrows"))}<select data-d="arrows">${([["", "Auto"], ["in", "Inside"], ["out", "Outside"]] as const).map(([k, l]) => `<option value="${k}"${(a.arrows ?? "") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : ""}
+        ${lin || a.k === "arc" || a.k === "ang" ? `<label class="drw-f">${esc(t("Extension lines"))}<select data-d="noext">${([["", "Both shown"], ["a", "First hidden"], ["b", "Second hidden"], ["both", "Both hidden"]] as const).map(([k, l]) => `<option value="${k}"${(a.noExt ?? "") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : ""}
+        <label class="drw-f">${esc(t("Arrowheads"))}<select data-d="ends"><option value="">${esc(t("Document"))}</option>${(["filled", "open", "dot", "tick"] as const).map(k => `<option value="${k}"${a.ends === k ? " selected" : ""}>${esc(t(ARROW_NAMES[k]))}</option>`).join("")}</select></label>
+        ${a.k === "dia" && !g?.dl ? `<label class="drw-f">${esc(t("Display"))}<select data-d="dlin">${([["", "Diameter"], ["h", "Linear, horizontal"], ["v", "Linear, vertical"]] as const).map(([k, l]) => `<option value="${k}"${(a.lin ?? "") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : ""}
+        ${!g?.dl && ((a.k === "rad" && !a.fore) || (a.k === "dia" && !a.lin)) ? `<label class="drw-chk"><input type="checkbox" data-d="rout"${arrowOutside(a) ? " checked" : ""}> ${esc(t("Arrow outside the circle"))}</label>` : ""}
+        ${!g?.dl && (a.k === "rad" || (a.k === "dia" && !a.lin)) ? `<label class="drw-chk"><input type="checkbox" data-d="ralong"${a.along ? " checked" : ""}> ${esc(t("Text along the leader"))}</label>` : ""}
+        ${a.k === "rad" ? `<label class="drw-chk"><input type="checkbox" data-d="fore"${a.fore ? " checked" : ""}> ${esc(t("Foreshortened radius"))}</label>` : ""}
+        ${lin ? `<label class="drw-chk"><input type="checkbox" data-d="horiz"${a.horiz ? " checked" : ""}> ${esc(t("Horizontal text in the dimension line"))}</label>` : ""}
         <label class="drw-f">${esc(t("Decimals"))}<select data-d="prec"><option value="">${esc(t("Auto"))}</option>${[0, 1, 2, 3].map(n => `<option value="${n}"${a.prec === n ? " selected" : ""}>${n}</option>`).join("")}</select></label>
         <label class="drw-f">${esc(t("Prefix"))}<input data-d="pre" value="${esc(a.pre ?? "")}" translate="no"></label>
         <label class="drw-f">${esc(t("Suffix"))}<input data-d="suf" value="${esc(a.suf ?? "")}" translate="no"></label>
         <label class="drw-f">${esc(t("Text instead of the value"))}<input data-d="txt" value="${esc(a.txt ?? "")}" translate="no"></label>
+        <label class="drw-f">${esc(t("Text below"))}<input data-d="below" value="${esc(a.below ?? "")}" translate="no"></label>
+        <label class="drw-f">${esc(t("Display"))}<select data-d="show">${([["", "As measured"], ["ref", "Reference (in parentheses)"], ["basic", "Basic (boxed)"]] as const).map(([k, l]) => `<option value="${k}"${(a.show ?? "") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>
         <label class="drw-chk"><input type="checkbox" data-d="insp"${a.insp ? " checked" : ""}> ${esc(t("Inspection dimension"))}</label>
+        ${a.k !== "ang" ? `<label class="drw-chk"><input type="checkbox" data-d="dual"${a.dual ?? this.doc.style?.dual === "in" ? " checked" : ""}> ${esc(t("Dual dimension (inches in brackets)"))}</label>` : ""}
       </fieldset>
       <fieldset class="pm-group"><legend>${esc(t("Tolerance"))}</legend>
-        <div class="seg drw-seg drw-tolseg" role="radiogroup" aria-label="${esc(t("Tolerance"))}">${([["", "None"], ["sym", "±"], ["dev", "+/−"], ["limit", "Limits"], ["fit", "Fit"]] as const).map(([k, l]) => `<button role="radio" aria-checked="${tol === k}" class="${tol === k ? "on" : ""}" data-tolt="${k}">${esc(t(l))}</button>`).join("")}</div>
-        ${tol && tol !== "fit" ? `<label class="drw-f">${esc(t(tol === "sym" ? "Tolerance (±)" : "Upper"))}<input data-d="up" inputmode="decimal" value="${a.tol?.up ?? ""}"></label>` : ""}
+        <div class="seg drw-seg drw-tolseg" role="radiogroup" aria-label="${esc(t("Tolerance"))}">${([...(dflt ? [["", "Document"], ["none", "None"]] : [["", "None"]]), ["sym", "±"], ["dev", "+/−"], ["limit", "Limits"], ["fit", "Fit"]] as [string, string][]).map(([k, l]) => `<button role="radio" aria-checked="${tol === k}" class="${tol === k ? "on" : ""}" data-tolt="${k}">${esc(t(l))}</button>`).join("")}</div>
+        ${tol && tol !== "fit" && tol !== "none" ? `<label class="drw-f">${esc(t(tol === "sym" ? "Tolerance (±)" : "Upper"))}<input data-d="up" inputmode="decimal" value="${a.tol?.up ?? ""}"></label>` : ""}
         ${tol === "dev" || tol === "limit" ? `<label class="drw-f">${esc(t("Lower"))}<input data-d="lo" inputmode="decimal" value="${a.tol?.lo ?? ""}"></label>` : ""}
         ${tol === "fit" ? `<label class="drw-f">${esc(t("Fit (ISO 286)"))}<input data-d="fit" value="${esc(a.tol?.fit ?? "")}" translate="no" placeholder="H7"></label>${this.fitFields(a, g?.value)}` : ""}
       </fieldset>
@@ -1787,16 +2359,12 @@ export class DrawingWorkspace {
       </fieldset><div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
     }
     if (a.t === "weld") {
-      const side = (k: "a" | "o", w: WeldSide | undefined, label: string) => `<fieldset class="pm-group"><legend>${esc(t(label))}</legend>
-        <label class="drw-f">${esc(t("Symbol"))}<select data-d="w${k}sym"><option value="">${esc(t("None"))}</option>${WELD_SYMS.map(y => `<option value="${y}" ${w?.sym === y ? "selected" : ""}>${esc(t(WELD_SYM_NAMES[y]))}</option>`).join("")}</select></label>
-        ${w ? `<label class="drw-f">${esc(t("Size"))}<input data-d="w${k}size" value="${esc(w.size ?? "")}" translate="no" placeholder="a4"></label>
-        <label class="drw-f">${esc(t("Length"))}<input data-d="w${k}len" value="${esc(w.len ?? "")}" translate="no" placeholder="100"></label>` : ""}
+      const side = (w: WeldSide | undefined, label: string) => w ? `<p class="drw-note drw-weldrow">${weldIcon(w.sym)}<span>${esc(t(label))}: ${esc(t(WELD_SYM_NAMES[w.sym]))}${w.size || w.len ? ` <b translate="no">${esc([w.size, w.len].filter(Boolean).join(" × "))}</b>` : ""}</span></p>` : "";
+      const more = [a.around ? t("All around") : "", a.field ? t("Field weld") : "", a.tail ?? ""].filter(Boolean).join(" · ");
+      return `<fieldset class="pm-group"><legend>${esc(t("Weld symbol"))}</legend>
+        ${side(a.other, "Other side")}${side(a.arrow, "Arrow side")}${more ? `<p class="drw-note">${esc(more)}</p>` : ""}
+        <div class="row"><button class="btn small primary" data-a="aedit">${esc(t("Edit…"))}</button><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>
       </fieldset>`;
-      return side("a", a.arrow, "Arrow side") + side("o", a.other, "Other side") + `<fieldset class="pm-group"><legend>${esc(t("Weld symbol"))}</legend>
-        <label class="drw-chk"><input type="checkbox" data-d="waround" ${a.around ? "checked" : ""}> ${esc(t("All around"))}</label>
-        <label class="drw-chk"><input type="checkbox" data-d="wfield" ${a.field ? "checked" : ""}> ${esc(t("Field weld"))}</label>
-        <label class="drw-f">${esc(t("Tail note"))}<input data-d="wtail" value="${esc(a.tail ?? "")}" placeholder="111 ISO 5817-B"></label>
-      </fieldset><div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
     }
     if (a.t === "cline") {
       return `<fieldset class="pm-group"><legend>${esc(t(a.k === "mark" ? "Center mark" : "Centerline"))}</legend>
@@ -1810,44 +2378,53 @@ export class DrawingWorkspace {
       </fieldset><div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
     }
     if (a.t === "hole") {
-      const e = refEdge(a.ref, this.factsOf(a.view)?.topo ?? null), auto = e ? holeText(e, this.ctx()).join("\n") : "";
+      const e = refEdge(a.ref, this.factsOf(a.view)?.topo ?? null), auto = e ? holeText(e, this.ctx(), a.count !== false).join("\n") : "";
+      const lines = [...(a.txt ? a.txt.split("\n") : auto ? auto.split("\n") : []), ...(a.below ? a.below.split("\n") : [])];
       return `<fieldset class="pm-group"><legend>${esc(t("Hole callout"))}</legend>
-        <label class="drw-f">${esc(t("Text"))}<textarea data-d="htxt" rows="3" translate="no" placeholder="${esc(auto)}">${esc(a.txt ?? "")}</textarea></label>
-        <p class="drw-note">${esc(t("Empty: the text comes from the hole."))}</p>
-      </fieldset><div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
+        <pre class="drw-callout" translate="no">${esc(lines.join("\n"))}</pre>
+        <p class="drw-note">${esc(t(a.txt ? "Your own text: it no longer follows the hole." : "The text follows the hole."))}</p>
+        <div class="row"><button class="btn small primary" data-a="aedit">${esc(t("Edit…"))}</button><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>
+      </fieldset>`;
     }
     const del = `<div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
     if (a.t === "gtol") {
-      const rows = a.rows.map((r, i) => `<fieldset class="pm-group drw-grow"><legend>${esc(t("Row {n}", { n: i + 1 }))}</legend>
-        ${i > 0 && r.composite ? "" : `<label class="drw-f">${esc(t("Characteristic"))}<select data-d="g:${i}:sym">${GSYMS.map(g => `<option value="${g}"${r.sym === g ? " selected" : ""}>${esc(t(GSYM_NAMES[g]))}</option>`).join("")}</select></label>`}
-        <label class="drw-f">${esc(t("Tolerance"))}<input data-d="g:${i}:tol" inputmode="decimal" value="${esc(r.tol)}" translate="no"></label>
-        <label class="drw-chk"><input type="checkbox" data-d="g:${i}:dia"${r.dia ? " checked" : ""}> ${esc(t("Diameter zone (Ø)"))}</label>
-        <label class="drw-f">${esc(t("Material condition"))}<select data-d="g:${i}:mod"><option value="">${esc(t("None"))}</option><option value="M"${r.mod === "M" ? " selected" : ""}>${esc(t("Maximum (M)"))}</option><option value="L"${r.mod === "L" ? " selected" : ""}>${esc(t("Least (L)"))}</option></select></label>
-        ${i > 0 ? `<label class="drw-chk"><input type="checkbox" data-d="g:${i}:comp"${r.composite ? " checked" : ""}> ${esc(t("Composite with the row above"))}</label>` : ""}
-        <div class="drw-datums">${[0, 1, 2].map(k => `<label class="drw-f">${esc(t(["Primary datum", "Secondary datum", "Tertiary datum"][k]))}<input data-d="g:${i}:d${k}" value="${esc(r.datums[k] ?? "")}" maxlength="6" translate="no"></label>`).join("")}</div>
-        ${a.rows.length > 1 ? `<div class="row"><button class="btn small" data-grow="-${i}">${esc(t("Remove row"))}</button></div>` : ""}
-      </fieldset>`).join("");
-      return `<fieldset class="pm-group"><legend>${esc(t("Geometric tolerance"))}</legend>${a.leader ? `<p class="drw-note">${esc(t("With a leader to the model."))}</p><label class="drw-chk"><input type="checkbox" data-d="gall"${a.around ? " checked" : ""}> ${esc(t("All around"))}</label>` : ""}</fieldset>${rows}
-        <div class="row"><button class="btn small" data-grow="+">${esc(t("Add row"))}</button></div>${del}`;
+      return `<fieldset class="pm-group"><legend>${esc(t("Geometric tolerance"))}</legend>
+        <div class="ad-pvbox">${gtolPicture(a, this.ctx().dec)}</div>
+        ${a.leader ? `<p class="drw-note">${esc(t("With a leader to the model."))}</p>` : ""}
+        ${this.gtolDim(a) ? `<p class="drw-note">${esc(t("Attached under a dimension: it moves with it."))}</p><div class="row"><button class="btn small" data-a="gdetach">${esc(t("Detach from the dimension"))}</button></div>` : !a.leader ? `<p class="drw-note">${esc(t("Drag the frame onto a dimension's text to attach it under the dimension."))}</p>` : ""}
+        <p class="drw-note">${esc(t("Double-click the frame on the sheet to edit it too."))}</p>
+        <div class="row"><button class="btn small primary" data-a="aedit">${esc(t("Edit…"))}</button><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>
+      </fieldset>`;
     }
     if (a.t === "datum") {
       return `<fieldset class="pm-group"><legend>${esc(t("Datum feature"))}</legend>
         <label class="drw-f">${esc(t("Letter"))}<input data-d="dl" value="${esc(a.letter)}" maxlength="2" translate="no"></label>
+        <label class="drw-chk"><input type="checkbox" data-d="dopen"${a.open ? " checked" : ""}> ${esc(t("Open triangle"))}</label>
+        <label class="drw-chk"><input type="checkbox" data-d="dbent"${a.bent ? " checked" : ""}> ${esc(t("Bent leader"))}</label>
       </fieldset>${del}`;
     }
     if (a.t === "surf") {
       return `<fieldset class="pm-group"><legend>${esc(t("Surface finish"))}</legend>
-        <label class="drw-f">${esc(t("Process"))}<select data-d="sp">${([["any", "Any process"], ["removal", "Material removed"], ["none", "No material removed"]] as const).map(([k, l]) => `<option value="${k}"${a.proc === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>
+        <div class="drw-f"><span id="drw-sp-l">${esc(t("Symbol"))}</span><div class="drw-icoset" role="radiogroup" aria-labelledby="drw-sp-l">${([["any", "Any process"], ["removal", "Material removed"], ["none", "No material removed"]] as const).map(([k, l]) => `<label class="drw-icoopt" title="${esc(t(l))}"><input type="radio" name="drw-sp" data-d="sp" value="${k}"${a.proc === k ? " checked" : ""} aria-label="${esc(t(l))}">${surfIcon(k)}</label>`).join("")}</div></div>
         <label class="drw-f">${esc(t("Roughness"))}<input data-d="st" value="${esc(a.text)}" translate="no" placeholder="Ra 3.2"></label>
         <label class="drw-f">${esc(t("Production method"))}<input data-d="sm" value="${esc(a.method ?? "")}" translate="no"></label>
+        <label class="drw-f">${esc(t("Second requirement"))}<input data-d="st2" value="${esc(a.text2 ?? "")}" translate="no" placeholder="Rz 6.3"></label>
+        <div class="drw-f"><span id="drw-lay-l">${esc(t("Lay"))}</span><div class="drw-icoset" role="radiogroup" aria-labelledby="drw-lay-l">${(["", ...SURF_LAYS] as const).map(k => `<label class="drw-icoopt" title="${esc(t(LAY_NAMES[k]))}"><input type="radio" name="drw-lay" data-d="slay" value="${k}"${(a.lay ?? "") === k ? " checked" : ""} aria-label="${esc(t(LAY_NAMES[k]))}"><span translate="no">${k || "–"}</span></label>`).join("")}</div></div>
+        <label class="drw-f">${esc(t("Machining allowance"))}<input data-d="sallow" value="${esc(a.allow ?? "")}" translate="no"></label>
+        <label class="drw-chk"><input type="checkbox" data-d="saround"${a.around ? " checked" : ""}> ${esc(t("All around"))}</label>
       </fieldset>${del}`;
     }
     if (a.t === "balloon") {
-      const c = "e" in a.ref ? compOfKey(a.ref.e) : null, item = c && this.bom ? this.bom.itemOf(c) : null;
+      const c = "e" in a.ref ? compOfKey(a.ref.e) : null, item = "e" in a.ref ? (a.weld ? weldItem(a.ref.e, this.ctx()) : edgeItem(a.ref.e, this.ctx())) : null;
       const comp = c ? this.facts?.comps?.find(x => x.id === c)?.name ?? c : "";
-      return `<fieldset class="pm-group"><legend>${esc(t("Balloon"))}</legend>
+      const cut = !this.bom && item && !a.weld ? this.cuts?.find(x => x.item === item) : undefined;
+      const weld = a.weld && item ? this.facts?.welds?.[item - 1] : undefined;
+      return `<fieldset class="pm-group"><legend>${esc(t(a.weld ? "Weld tag" : "Balloon"))}</legend>
+        ${weld ? `<p class="drw-note">${esc(t("Weld table"))}: <b translate="no">z${esc(weld.legs)}</b> · ${esc(t("item {n}", { n: item! }))}</p>` : ""}
         ${comp ? `<p class="drw-note">${esc(t("Component"))}: <b translate="no">${esc(comp)}</b>${item ? ` · ${esc(t("item {n}", { n: item }))}` : ""}</p>` : ""}
+        ${cut ? `<p class="drw-note">${esc(t("Cut list"))}: <b translate="no">${esc(this.cutLabel(cut))}</b> · ${esc(t("item {n}", { n: item! }))}</p>` : ""}
         <label class="drw-f">${esc(t("Text instead of the item number"))}<input data-d="btxt" value="${esc(a.txt ?? "")}" translate="no"></label>
+        <label class="drw-f">${esc(t("Style"))}<select data-d="bshape">${([["", "Circle"], ["split", "Circular split line"], ["tri", "Triangle"], ["hex", "Hexagon"], ["box", "Rectangle"], ["none", "Underline"]] as const).map(([v, l]) => `<option value="${v}"${(a.shape ?? "") === v ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>
         ${this.stackRows(a)}
       </fieldset>${del}`;
     }
@@ -1855,7 +2432,8 @@ export class DrawingWorkspace {
       const head = a.cols.map((c, j) => `<label class="drw-f">${esc(t("Column {n}", { n: j + 1 }))}<input data-d="th:${j}" value="${esc(cellLabel(c, t))}" translate="no"></label>`).join("");
       return `<fieldset class="pm-group"><legend>${esc(t("Bill of materials"))}</legend>
         <p class="drw-note">${esc(t("The rows come from the assembly and follow it."))}</p>
-        <label class="drw-f">${esc(t("List"))}<select data-d="bmode"><option value="top"${a.mode !== "parts" ? " selected" : ""}>${esc(t("Top-level only"))}</option><option value="parts"${a.mode === "parts" ? " selected" : ""}>${esc(t("Parts only"))}</option></select></label>${this.subRow(a)}${head}
+        <label class="drw-f">${esc(t("List"))}<select data-d="bmode"><option value="top"${a.mode !== "parts" ? " selected" : ""}>${esc(t("Top-level only"))}</option><option value="parts"${a.mode === "parts" ? " selected" : ""}>${esc(t("Parts only"))}</option></select></label>${this.subRow(a)}
+        <label class="drw-chk"><input type="checkbox" data-d="bmat"${a.cols.length > BOM_MAT_COL ? " checked" : ""}> ${esc(t("Material column"))}</label>${head}
       </fieldset>${del}`;
     }
     if (a.t === "table") {
@@ -1874,6 +2452,23 @@ export class DrawingWorkspace {
         <label class="drw-f">${esc(t("Decimals"))}<select data-d="bprec"><option value="">${esc(t("Auto"))}</option>${[0, 1, 2, 3].map(k => `<option value="${k}"${a.prec === k ? " selected" : ""}>${k}</option>`).join("")}</select></label>
       </fieldset>${del}`;
     }
+    if (a.t === "wtable") {
+      const n = this.factsOf(a.view, sh)?.welds?.reduce((s, w) => s + w.qty, 0) ?? 0;
+      return `<fieldset class="pm-group"><legend>${esc(t("Weld table"))}</legend>
+        <p class="drw-note">${esc(t("Fillet beads: {n}, from the part's cut list.", { n }))}</p>
+        <button class="btn small" data-a="wtags">${esc(t("Tag the beads"))}</button>
+        <label class="drw-f">${esc(t("Decimals"))}<select data-d="wprec"><option value="">${esc(t("Auto"))}</option>${[0, 1, 2, 3].map(k => `<option value="${k}"${a.prec === k ? " selected" : ""}>${k}</option>`).join("")}</select></label>
+      </fieldset>${del}`;
+    }
+    if (a.t === "ctable") {
+      const n = this.factsOf(a.view, sh)?.cuts?.length ?? 0;
+      return `<fieldset class="pm-group"><legend>${esc(t("Cut list table"))}</legend>
+        <p class="drw-note">${esc(t("Cut list items: {n}, from the part's cut list.", { n }))}</p>
+        <label class="drw-chk"><input type="checkbox" data-d="cbeads"${a.beads !== false ? " checked" : ""}> ${esc(t("Weld beads"))}</label>
+        <label class="drw-chk"><input type="checkbox" data-d="cmass"${a.mass ? " checked" : ""}> ${esc(t("Mass column"))}</label>
+        <label class="drw-f">${esc(t("Decimals"))}<select data-d="cprec"><option value="">${esc(t("Auto"))}</option>${[0, 1, 2, 3].map(k => `<option value="${k}"${a.prec === k ? " selected" : ""}>${k}</option>`).join("")}</select></label>
+      </fieldset>${del}`;
+    }
     if (a.t === "htable") {
       const v = findView(sh, a.view), n = v ? holeRows(a, projector(viewDir(sh, v)).P, this.ctx()).rows.length : 0;
       return `<fieldset class="pm-group"><legend>${esc(t("Hole table"))}</legend>
@@ -1886,6 +2481,10 @@ export class DrawingWorkspace {
     return `<fieldset class="pm-group"><legend>${esc(t("Note"))}</legend>
       <label class="drw-f">${esc(t("Text"))}<textarea data-d="ntxt" rows="4" translate="no">${esc(a.text)}</textarea></label>
       <label class="drw-f">${esc(t("Link to property"))}<select data-d="nprop"><option value="">—</option>${NOTE_PROP_KEYS.map(([k, l]) => `<option value="${k}">${esc(t(l))}</option>`).join("")}</select></label>
+      <label class="drw-f">${esc(t("Border"))}<select data-d="nborder">${([["", "None"], ["box", "Rectangle"], ["round", "Rounded"], ["circle", "Circle"]] as const).map(([v, l]) => `<option value="${v}"${(a.border ?? "") === v ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>
+      <label class="drw-f">${esc(t("Justify"))}<select data-d="nal">${([["", "Left"], ["c", "Centre"], ["r", "Right"]] as const).map(([v, l]) => `<option value="${v}"${(a.al ?? "") === v ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>
+      ${a.leader ? `<label class="drw-f">${esc(t("Leader end"))}<select data-d="nend">${([["", "Arrow"], ["dot", "Dot"], ["none", "None"]] as const).map(([v, l]) => `<option value="${v}"${(a.end ?? "") === v ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>
+      <label class="drw-chk"><input type="checkbox" data-d="nbent"${a.bent ? " checked" : ""}> ${esc(t("Bent leader"))}</label>` : ""}
       <label class="drw-f">${esc(t("Text height (mm)"))}<select data-d="nh">${[2.5, 3.5, 5, 7].map(h => `<option value="${h}"${(a.h ?? 3.5) === h ? " selected" : ""}>${h}</option>`).join("")}</select></label>
     </fieldset><div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
   }
@@ -1895,14 +2494,24 @@ export class DrawingWorkspace {
     const num = (s: string) => { const v = parseFloat(s.replace(",", ".")); return isFinite(v) ? v : undefined; };
     this.setAnnot(k === "ntxt" || k === "htxt" ? "Text" : "Annotation property", a => {
       if (a.t === "dim") {
-        if (k === "k") a.k = val as DimAnnot["k"];
+        if (k === "k") { a.k = val as DimAnnot["k"]; if (a.k !== "dia") delete a.lin; if (a.k !== "rad") delete a.fore; if (a.k !== "rad" && a.k !== "dia") { delete a.outside; delete a.along; } }
+        else if (k === "rout") { const on = (el as HTMLInputElement).checked; if (a.k === "dia") { if (on) delete a.outside; else a.outside = false; } else if (on) a.outside = true; else delete a.outside; }
+        else if (k === "ralong") { if ((el as HTMLInputElement).checked) a.along = true; else delete a.along; }
+        else if (k === "dlin") { if (val === "h" || val === "v") a.lin = val; else delete a.lin; }
+        else if (k === "ends") { if (val === "filled" || val === "open" || val === "dot" || val === "tick") a.ends = val; else delete a.ends; }
+        else if (k === "arrows") { if (val === "in" || val === "out") a.arrows = val; else delete a.arrows; }
+        else if (k === "noext") { if (val === "a" || val === "b" || val === "both") a.noExt = val; else delete a.noExt; }
+        else if (k === "fore") { if ((el as HTMLInputElement).checked) a.fore = true; else delete a.fore; }
+        else if (k === "horiz") { if ((el as HTMLInputElement).checked) a.horiz = true; else delete a.horiz; }
+        else if (k === "show") { if (val === "ref" || val === "basic") a.show = val; else delete a.show; }
         else if (k === "insp") { if ((el as HTMLInputElement).checked) a.insp = true; else delete a.insp; }
+        else if (k === "dual") { const on = (el as HTMLInputElement).checked; if (on === (this.doc.style?.dual === "in")) delete a.dual; else a.dual = on; }
         else if (k === "prec") { if (val === "") delete a.prec; else a.prec = +val; }
-        else if (k === "pre" || k === "suf" || k === "txt") { if (val) a[k] = val; else delete a[k]; }
+        else if (k === "pre" || k === "suf" || k === "txt" || k === "below") { if (val) a[k] = val; else delete a[k]; }
         else if (a.tol && (k === "up" || k === "lo")) a.tol[k] = num(val);
         else if (a.tol && k === "fit") a.tol.fit = val.trim();
         else if (a.tol && k === "fshow") { if (val === "code") delete a.tol.show; else a.tol.show = val as Tol["show"]; }
-      } else if (a.t === "hole" && k === "htxt") { if (val.trim()) a.txt = val; else delete a.txt; }
+      }
       else if (a.t === "note" && k === "nprop") { if (val) a.text += `$PRP:"${val}"`; }
       else if (a.t === "sk") {
         const v = num(val);
@@ -1918,36 +2527,30 @@ export class DrawingWorkspace {
         else if (k === "dtd") { const v = num(val); if (v != null && v > 0 && v <= 10000) { if (a.size === `Ø${a.d ?? 8}`) a.size = `Ø${v}`; a.d = v; } }
         else if (k === "dtsize") { if (val.trim()) a.size = val.trim(); else delete a.size; }
       }
-      else if (a.t === "weld") {
-        const m = /^w([ao])(sym|size|len)$/.exec(k);
-        if (m) {
-          const key = m[1] === "a" ? "arrow" : "other", cur = a[key];
-          if (m[2] === "sym") { if (val) a[key] = { ...(cur ?? {}), sym: val as WeldSym }; else delete a[key]; }
-          else if (cur) { const f = m[2] as "size" | "len"; if (val.trim()) cur[f] = val.trim(); else delete cur[f]; }
-        } else if (k === "waround" || k === "wfield") { const f = k === "waround" ? "around" : "field"; if ((el as HTMLInputElement).checked) a[f] = true; else delete a[f]; }
-        else if (k === "wtail") { if (val.trim()) a.tail = val.trim(); else delete a.tail; }
-      }
       else if (a.t === "cline" && k === "cext") { const v = num(val); if (v != null && v >= 0 && v <= 50) a.ext = v; }
       else if (a.t === "cloud") { if (k === "carc") { const v = num(val); if (v && v >= 1) a.arc = v; } else if (k === "crev") { if (val.trim()) a.rev = val.trim(); else delete a.rev; } }
-      else if (a.t === "note") { if (k === "ntxt" && val.trim()) a.text = val; else if (k === "nh") a.h = +val; }
+      else if (a.t === "note") { if (k === "ntxt" && val.trim()) a.text = val; else if (k === "nh") a.h = +val; else if (k === "nal") { if (val === "c" || val === "r") a.al = val; else delete a.al; } else if (k === "nend") { if (val === "dot" || val === "none") a.end = val; else delete a.end; } else if (k === "nbent") { if ((el as HTMLInputElement).checked) a.bent = true; else delete a.bent; } else if (k === "nborder") { if (val === "box" || val === "round" || val === "circle") a.border = val; else delete a.border; } }
       else if (a.t === "htable" && k === "hprec") { if (val === "") delete a.prec; else a.prec = +val; }
       else if (a.t === "btable" && k === "bprec") { if (val === "") delete a.prec; else a.prec = +val; }
-      else if (a.t === "gtol" && k.startsWith("g:")) {
-        const [, si, f] = k.split(":"), r = a.rows[+si];
-        if (!r) return;
-        if (f === "sym") r.sym = val as GSym;
-        else if (f === "tol") r.tol = val.trim().replace(",", ".") || "0";
-        else if (f === "dia") { if ((el as HTMLInputElement).checked) r.dia = true; else delete r.dia; }
-        else if (f === "comp") { if ((el as HTMLInputElement).checked) { r.composite = true; r.sym = a.rows[+si - 1]?.sym ?? r.sym; } else delete r.composite; }
-        else if (f === "mod") { if (val === "M" || val === "L") r.mod = val; else delete r.mod; }
-        else if (f[0] === "d") { const d = [0, 1, 2].map(j => r.datums[j] ?? ""); d[+f[1]] = val.trim().toUpperCase(); while (d.length && !d[d.length - 1]) d.pop(); r.datums = d; }
-      } else if (a.t === "gtol" && k === "gall") { if ((el as HTMLInputElement).checked) a.around = true; else delete a.around; }
+      else if (a.t === "wtable" && k === "wprec") { if (val === "") delete a.prec; else a.prec = +val; }
+      else if (a.t === "ctable") {
+        if (k === "cprec") { if (val === "") delete a.prec; else a.prec = +val; }
+        else if (k === "cbeads") { if ((el as HTMLInputElement).checked) delete a.beads; else a.beads = false; }
+        else if (k === "cmass") { if ((el as HTMLInputElement).checked) a.mass = true; else delete a.mass; }
+      }
       else if (a.t === "datum" && k === "dl" && val.trim()) a.letter = val.trim().toUpperCase();
+      else if (a.t === "datum" && (k === "dopen" || k === "dbent")) { const key = k === "dopen" ? "open" : "bent"; if ((el as HTMLInputElement).checked) a[key] = true; else delete a[key]; }
+      else if (a.t === "balloon" && k === "bshape") { if (val === "split" || val === "tri" || val === "hex" || val === "box" || val === "none") a.shape = val; else delete a.shape; }
       else if (a.t === "balloon" && k === "btxt") { if (val.trim()) a.txt = val.trim(); else delete a.txt; }
       else if (a.t === "balloon" && k === "bstack") { if (val) a.stack = [...(a.stack ?? []), val]; }
       else if (a.t === "table" && a.kind === "bom" && k === "bsub") { if (val) a.sub = val; else delete a.sub; }
+      else if (a.t === "table" && a.kind === "bom" && k === "bmat") { a.cols = (el as HTMLInputElement).checked ? [...a.cols.slice(0, BOM_MAT_COL), ...BOM_COLS.slice(a.cols.length, BOM_MAT_COL + 1)] : a.cols.slice(0, BOM_MAT_COL); }
       else if (a.t === "table" && a.kind === "bom" && k === "bmode") { if (val === "parts") a.mode = "parts"; else delete a.mode; }
-      else if (a.t === "surf") { if (k === "sp") a.proc = val as typeof a.proc; else if (k === "st") a.text = val.trim(); else if (k === "sm") { if (val.trim()) a.method = val.trim(); else delete a.method; } }
+      else if (a.t === "surf") { if (k === "sp") a.proc = val as typeof a.proc; else if (k === "st") a.text = val.trim(); else if (k === "sm") { if (val.trim()) a.method = val.trim(); else delete a.method; }
+        else if (k === "st2") { if (val.trim()) a.text2 = val.trim(); else delete a.text2; }
+        else if (k === "slay") { if (val) a.lay = val as SurfLay; else delete a.lay; }
+        else if (k === "sallow") { if (val.trim()) a.allow = val.trim(); else delete a.allow; }
+        else if (k === "saround") { if ((el as HTMLInputElement).checked) a.around = true; else delete a.around; } }
       else if (a.t === "table") {
         // Headers and the title keep their English key while unchanged, so they follow the language.
         if (k === "tt") { if (!val.trim()) delete a.title; else if (!(a.title && cellLabel(a.title, t) === val)) a.title = val; }
@@ -1962,7 +2565,7 @@ export class DrawingWorkspace {
   private startKind(kind: "section" | "detail" | "aux", how: "h" | "v" | "2p" | "off" | "half" | "aligned" = "h", prof = false) {
     if (!this.facts) { toast(t("The drawing's model is still loading.")); return; }
     if (!this.sheet.views.length) { toast(t("Place a model view first."), true); return; }
-    // The first click picks the view (as in SolidWorks), unless there is only one.
+    // The first click picks the view (as in other CAD apps), unless there is only one.
     const parent = this.sheet.views.length === 1 ? this.sheet.views[0].id : null;
     if (kind === "section") this.mode = { kind, how, parent, p1: null, line: null, at: null, pts: [] };
     else if (kind === "detail") this.mode = { kind, parent, c: null, r: null, at: null, ...(prof ? { prof: true, pts: [] } : {}) };
@@ -2027,12 +2630,62 @@ export class DrawingWorkspace {
     return best;
   }
 
-  /** A section or auxiliary view of `parent` from `line`, on the cursor's side and lined up square to the line. */
+  /**
+   * The segment of a line drawn on the sheet (Annotate ▸ Line, a rectangle side or a polyline leg) nearest to a
+   * sheet point, within the snap distance: sheet coordinates.
+   */
+  private drawnLineAt(p: Pt): Line4 | null {
+    let best: Line4 | null = null, bd = this.snapTol();
+    for (const a of this.sheet.annots ?? []) {
+      if (a.t !== "sk" || a.k === "circle") continue;
+      const P = skPoints(a), closed = a.k === "rect" || (a.k === "poly" && !!a.closed && P.length >= 3);
+      for (let i = 0; i + 1 < P.length + (closed ? 1 : 0); i++) {
+        const [ax, ay] = P[i], [bx, by] = P[(i + 1) % P.length];
+        const dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy;
+        if (L2 < 1e-6) continue;
+        const k = Math.max(0, Math.min(1, ((p[0] - ax) * dx + (p[1] - ay) * dy) / L2));
+        const d = Math.hypot(ax + dx * k - p[0], ay + dy * k - p[1]);
+        if (d < bd) { bd = d; best = [ax, ay, bx, by]; }
+      }
+    }
+    return best;
+  }
+
+  /**
+   * What an auxiliary view folds about at a sheet point (FR-DRW-014): a line drawn on the sheet, as a CAD app takes a
+   * sketched line, else a straight model edge. A drawn line belongs to the view under the click, else to the nearest
+   * view. Returns the parent view and the line in its model axes.
+   */
+  private auxPick(m: { parent: string | null }, p: Pt): { id: string; line: Line4 } | null {
+    const drawn = this.drawnLineAt(p);
+    let id = this.kindParent(m, p);
+    if (drawn) {
+      if (!id) {
+        const mid: Pt = [(drawn[0] + drawn[2]) / 2, (drawn[1] + drawn[3]) / 2];
+        let bd = Infinity;
+        for (const v of this.sheet.views) {
+          const pl = this.placements.get(v.id);
+          if (!pl) continue;
+          const r = viewRect(pl), d = Math.hypot(Math.max(r[0] - mid[0], 0, mid[0] - r[2]), Math.max(r[1] - mid[1], 0, mid[1] - r[3]));
+          if (d < bd) { bd = d; id = v.id; }
+        }
+      }
+      const pl = id ? this.placements.get(id) : undefined;
+      if (id && pl) return { id, line: [...fromSheet(pl, drawn[0], drawn[1]), ...fromSheet(pl, drawn[2], drawn[3])] as Line4 };
+    }
+    const e = id ? this.edgeAt(id, p) : null;
+    return id && e ? { id, line: e } : null;
+  }
+
+  /** A section or auxiliary view of `parent` from `line`, on the cursor's side (looking the way the sheet's projection places it) and lined up square to the line. */
   private sideViewAt(kind: "section" | "aux", parent: string, line: Line4, at: Pt, path?: number[], aligned?: boolean): DrawingView {
     const pp = this.placements.get(parent)!, par = findView(this.sheet, parent);
     const [a, b] = [toSheet(pp, line[0], line[1]), toSheet(pp, line[2], line[3])];
     const n: Pt = [-(b[1] - a[1]), b[0] - a[0]];
-    const look: 1 | -1 = (at[0] - a[0]) * n[0] + (at[1] - a[1]) * n[1] >= 0 ? 1 : -1;
+    // Third angle (ANSI, a CAD app): the view sits on the side it looks from, the arrows pointing away from it.
+    // First angle (ISO E, ESKD): a view in projection position sees the far side, so it sits where the arrows point.
+    const side: 1 | -1 = (at[0] - a[0]) * n[0] + (at[1] - a[1]) * n[1] >= 0 ? 1 : -1;
+    const look: 1 | -1 = this.sheet.projection === "first" ? (side === 1 ? -1 : 1) : side;
     const v: DrawingView = { id: "_pv", name: "", kind, parent, line, look, x: at[0], y: at[1], letter: nextLetter(this.doc.sheets), style: kind === "section" ? "hlr" : par?.style, tangent: par?.tangent };
     if (path) v.path = path;
     if (aligned) v.aligned = true;
@@ -2058,13 +2711,15 @@ export class DrawingWorkspace {
 
   /** Projects both sides of a section/aux line ahead, so the preview has its lines when the cursor gets there. */
   private warmSides(kind: "section" | "aux", parent: string, line: Line4, path?: number[], aligned?: boolean) {
-    for (const look of [1, -1] as const) {
+    const reqs = ([1, -1] as const).map(look => {
       const v: DrawingView = { id: "_pv", name: "", kind, parent, line, look, x: 0, y: 0 };
       if (path) v.path = path;
       if (aligned) v.aligned = true;
-      const sh = this.sheetWith(v);
-      void this.kernel.request(viewReq(sh, v)).then(() => this.renderOverlay(), () => {});
-    }
+      return viewReq(this.sheetWith(v), v);
+    });
+    // Both sides' quick previews first (the worker answers in order), so either side shows at once.
+    if (this.previewsOn()) for (const req of reqs) if (!this.kernel.cache.has(req.key)) void this.kernel.preview(req).then(() => this.renderOverlay(), () => {});
+    for (const req of reqs) void this.kernel.request(req).then(() => this.renderOverlay(), () => {});
   }
 
   private kindClick(m: Extract<Mode, { kind: "section" | "detail" | "aux" }>, p: Pt) {
@@ -2096,11 +2751,10 @@ export class DrawingWorkspace {
       }
     } else {
       if (m.line && m.parent) { this.placeKind(this.sideViewAt("aux", m.parent, m.line, p)); return; }
-      if (!id) return;
-      const e = this.edgeAt(id, p);
-      if (!e) { toast(t("Click a straight edge of the view.")); return; }
-      m.parent = id; m.line = e; this.sel = id;
-      this.warmSides("aux", id, e);
+      const pick = this.auxPick(m, p);
+      if (!pick) { if (id) toast(t("Click a straight edge of the view or a line drawn on it.")); return; }
+      m.parent = pick.id; m.line = pick.line; this.sel = pick.id;
+      this.warmSides("aux", pick.id, pick.line);
     }
     this.renderStatus();
     this.renderOverlay();
@@ -2381,6 +3035,12 @@ export class DrawingWorkspace {
     if (m.kind === "altpos") return this.altMarks(H);
     if (m.kind !== "section" && m.kind !== "detail" && m.kind !== "aux") return "";
     const at = m.at;
+    if (m.kind === "aux" && !m.line) {
+      const pick = at ? this.auxPick(m, at) : null, pl = pick && this.placements.get(pick.id);
+      if (!pick || !pl) return "";
+      const [a, b] = [toSheet(pl, pick.line[0], pick.line[1]), toSheet(pl, pick.line[2], pick.line[3])];
+      return `<line class="drw-edge" x1="${a[0]}" y1="${H - a[1]}" x2="${b[0]}" y2="${H - b[1]}"/>`;
+    }
     const id = at ? this.kindParent(m, at) : m.parent;
     const pl = id ? this.placements.get(id) : undefined;
     if (!pl || !id) return "";
@@ -2425,18 +3085,32 @@ export class DrawingWorkspace {
     const dx = hi[0] - lo[0], dy = hi[1] - lo[1], dz = hi[2] - lo[2];
     const f = frameOf(sh), gap = 25;
     const ax0 = f[0] + 10, ax1 = f[2] - 10, ay0 = f[1] + tbSize(sh)[1] + 10, ay1 = f[3] - 10;
-    const s = fresh || !sh.views.length ? fitScale(dx + dy, dz + dy, (ax1 - ax0 - gap) * 0.85, (ay1 - ay0 - gap) * 0.85) : sh.scale;
+    const third = sh.projection === "third";
+    const [bx, by] = titleBlockAt(sh), [tw, th] = tbSize(sh);
+    const auto = fresh || !sh.views.length;
+    const area: [number, number, number, number] = [f[0] + 4, f[1] + 4, f[2] - 4, f[3] - 4], tbBox: [number, number, number, number] = [bx - 4, by, bx + tw, by + th + 4];
+    let lay = auto ? std3Layout(dx, dy, dz, area, tbBox, third, gap) : null, onNew = false;
+    if (!auto) {
+      // A second set goes beside what is on the sheet, at its scale (drawings exam #27: it was centred on top of the first),
+      // else on a new sheet of the same size.
+      const avoid = [...sh.views.flatMap(w => { const q = this.placements.get(w.id); return q ? [viewRect(q)] : []; }), ...this.annotHits.filter(h => !h.ring).map(h => h.box)];
+      // Clear of everything on the sheet taken as one box, so the two sets never interleave.
+      const all: [number, number, number, number] = avoid.reduce((b, r) => [Math.min(b[0], r[0]), Math.min(b[1], r[1]), Math.max(b[2], r[2]), Math.max(b[3], r[3])], [Infinity, Infinity, -Infinity, -Infinity]);
+      lay = std3Layout(dx, dy, dz, area, tbBox, third, gap, 8, avoid.length ? [all] : [], [sh.scale]);
+      if (!lay) { onNew = true; lay = std3Layout(dx, dy, dz, area, tbBox, third, gap); }
+    }
+    const s = lay ? lay.scale : auto || onNew ? fitScale(dx + dy, dz + dy, (ax1 - ax0 - gap) * 0.85, (ay1 - ay0 - gap) * 0.85) : sh.scale;
     const k = s[0] / s[1];
     const Wg = k * (dx + dy) + gap, Hg = k * (dz + dy) + gap;
-    const gx = (ax0 + ax1) / 2 - Wg / 2, gy = (ay0 + ay1) / 2 - Hg / 2;
-    const third = sh.projection === "third";
+    const gx = lay ? lay.gx : (ax0 + ax1) / 2 - Wg / 2, gy = lay ? lay.gy : (ay0 + ay1) / 2 - Hg / 2;
     const front: [number, number] = third ? [gx + k * dx / 2, gy + k * dz / 2] : [gx + k * dx / 2, gy + k * dy + gap + k * dz / 2];
     const top: [number, number] = third ? [front[0], gy + k * dz + gap + k * dy / 2] : [front[0], gy + k * dy / 2];
     const side: [number, number] = [gx + k * dx + gap + k * dy / 2, front[1]];
     const fid = uid("v_");
     const n = this.nextViewNumber();
     this.store!.change("Standard 3 views", d => {
-      const S = d.sheets[this.sheetIdx];
+      if (onNew) { d.sheets.push(newSheet(d.sheets.length + 1, this.sheet)); d.sheets[d.sheets.length - 1].views = []; }
+      const S = d.sheets[onNew ? d.sheets.length - 1 : this.sheetIdx];
       S.scale = s;
       S.views.push(
         { id: fid, name: `${t("Drawing View")}${n}`, orient: "front", x: round(front[0]), y: round(front[1]), style: "hlv" },
@@ -2445,6 +3119,11 @@ export class DrawingWorkspace {
       );
     });
     this.sel = fid;
+    if (onNew) {
+      this.sheetIdx = this.doc.sheets.length - 1;
+      toast(t("No room left on the sheet: the views went on {name}.", { name: sheetName(this.sheet) }));
+      this.fit();
+    }
     this.renderAll();
   }
 
@@ -2466,21 +3145,209 @@ export class DrawingWorkspace {
 
   // ---------- tree, properties, tabs ----------
 
+  /** Annotation groups opened in the tree ("<view id>", "" = the sheet's own); view-only. */
+  private treeOpen = new Set<string>();
+  /** The annotation whose group the tree last opened for it, so the user can fold it again. */
+  private treeShown: string | null = null;
+  /** The annotation under the pointer in the tree, outlined on the sheet. */
+  private hoverA: string | null = null;
+
   private renderTree() {
     const host = this.el.querySelector<HTMLElement>(".drw-tree")!;
-    const sh = this.sheet;
+    const sh = this.sheet, groups = new Map<string, Annot[]>();
+    for (const a of sh.annots ?? []) { const k = a.view ?? ""; if (!groups.has(k)) groups.set(k, []); groups.get(k)!.push(a); }
+    const sa = this.selA ? this.annot(this.selA) : undefined;
+    // A pick on the sheet opens the annotation's group once, so the selected row shows.
+    if (sa && this.selA !== this.treeShown) { this.treeOpen.add(sa.view ?? ""); this.treeShown = this.selA; }
+    if (!sa) this.treeShown = null;
+    const pad = (depth: number) => `style="padding-left:${12 + depth * 14}px"`;
+    const annRows = (key: string, depth: number): string => {
+      const list = groups.get(key);
+      if (!list?.length) return "";
+      const open = this.treeOpen.has(key);
+      let s = `<div role="treeitem" tabindex="-1" aria-expanded="${open}" class="drw-ti grp" data-tw="${esc(key)}" ${pad(depth)}><span class="drw-tw">${CHEVRON}</span><span>${esc(t(key ? "Annotations" : "Sheet annotations"))}</span><small>${list.length}</small></div>`;
+      if (!open) return s;
+      s += `<div role="group">`;
+      for (const a of list) {
+        const on = a.id === this.selA, gone = this.dangling.has(a.id), tool = annotTool(a);
+        s += `<div role="treeitem" tabindex="${on ? 0 : -1}" aria-selected="${on}" class="drw-ti ann${on ? " on" : ""}${gone ? " dangle" : ""}" data-sela="${a.id}" ${pad(depth + 1)}>${AICON[tool] ?? AICON.note}<span>${esc(t(ANNOT_GROUPS.flatMap(g => g.tools).find(x => x[0] === tool)?.[1] ?? "Annotation"))}</span>`
+          + (gone ? `<small title="${esc(t("Its model edge is gone: pick it again or delete it."))}">${esc(t("Dangling"))}</small>` : annotHint(a) ? `<small translate="no">${esc(annotHint(a))}</small>` : "") + `</div>`;
+      }
+      return s + `</div>`;
+    };
     const item = (v: DrawingView, depth: number): string => {
       const kind = v.kind ? t(KIND_NAMES[v.kind]) : v.parent ? t("Projected") : t(ORIENT_NAMES[v.orient ?? "front"]);
       const icon = v.kind ? ICON[v.kind === "section" ? "section" : v.kind === "detail" ? "detail" : "aux"] : v.parent ? ICON.proj : ICON.model;
-      let s = `<div role="treeitem" tabindex="${v.id === this.sel ? 0 : -1}" aria-selected="${v.id === this.sel}" class="drw-ti${v.id === this.sel ? " on" : ""}" data-sel="${v.id}" style="padding-left:${12 + depth * 14}px">${icon}<span translate="no">${esc(v.name)}</span><small>${esc(kind)}</small></div>`;
+      let s = `<div role="treeitem" tabindex="${v.id === this.sel ? 0 : -1}" aria-selected="${v.id === this.sel}" class="drw-ti${v.id === this.sel ? " on" : ""}" data-sel="${v.id}" ${pad(depth)}>${icon}<span translate="no">${esc(v.name)}</span><small>${esc(kind)}</small></div>`;
+      s += annRows(v.id, depth + 1);
       for (const c of sh.views) if (c.parent === v.id) s += item(c, depth + 1);
       return s;
     };
-    host.innerHTML = `<div role="treeitem" tabindex="${this.sel ? -1 : 0}" aria-selected="${!this.sel}" class="drw-ti sheet${this.sel ? "" : " on"}" data-sel="">${ICON.hlr}<span>${esc(sheetName(sh))}</span><small>${esc(sh.size === "custom" ? t("Custom") : sh.size)} · ${scaleText(sh.scale)}</small></div>`
-      + sh.views.filter(v => !v.parent || !findView(sh, v.parent)).map(v => item(v, 1)).join("");
+    // Rebuilding the rows drops the focus a row click gave the tree; keep it there, on the selected row, so Delete
+    // (and the arrow keys) still reach the tree, as after a click in a CAD app's FeatureManager.
+    const hadFocus = host.contains(document.activeElement);
+    const top = !this.sel && !this.selA;
+    host.innerHTML = `<div role="treeitem" tabindex="${top ? 0 : -1}" aria-selected="${top}" class="drw-ti sheet${top ? " on" : ""}" data-sel="">${ICON.hlr}<span>${esc(sheetName(sh))}</span><small>${esc(sh.size === "custom" ? t("Custom") : sh.size)} · ${scaleText(sh.scale)}</small></div>`
+      + sh.views.filter(v => !v.parent || !findView(sh, v.parent)).map(v => item(v, 1)).join("")
+      // Annotations of views that are gone stay listed with the sheet's own, so they can still be picked and deleted.
+      + annRows("", 1) + [...groups.keys()].filter(k => k && !findView(sh, k)).map(k => annRows(k, 1)).join("");
+    const on = host.querySelector<HTMLElement>(".drw-ti.on");
+    if (hadFocus) on?.focus({ preventScroll: true });
+    // Bring the selected row into the side panel's view; only the panel scrolls (scrollIntoView would move the page too).
+    const pane = host.closest<HTMLElement>("aside");
+    if (on && pane && pane.scrollHeight > pane.clientHeight) {
+      const r = on.getBoundingClientRect(), b = pane.getBoundingClientRect();
+      if (r.top < b.top) pane.scrollTop -= b.top - r.top; else if (r.bottom > b.bottom) pane.scrollTop += r.bottom - b.bottom;
+    }
+    // The status bar says what the selection takes (drag, Delete, Esc).
+    this.renderStatus();
   }
 
+  /** Opens or folds an annotation group of the tree. */
+  private toggleTreeGroup(key: string, open = !this.treeOpen.has(key)) {
+    if (open) this.treeOpen.add(key); else this.treeOpen.delete(key);
+    const host = this.el.querySelector<HTMLElement>(".drw-tree")!, had = host.contains(document.activeElement);
+    this.renderTree();
+    if (had) host.querySelector<HTMLElement>(`[data-tw="${CSS.escape(key)}"]`)?.focus({ preventScroll: true });
+  }
+
+  /** Arrow keys in the drawing tree: up/down select the next row, right/left open and fold groups (WAI-ARIA tree). */
+  private treeKey(e: KeyboardEvent) {
+    const host = this.el.querySelector<HTMLElement>(".drw-tree");
+    const row = (e.target as HTMLElement).closest?.<HTMLElement>(".drw-ti");
+    if (!host || !row || !host.contains(row) || e.ctrlKey || e.metaKey || e.altKey) return;
+    const rows = [...host.querySelectorAll<HTMLElement>(".drw-ti")], i = rows.indexOf(row);
+    const go = (r: HTMLElement | undefined) => { if (!r) return; if (r.dataset.tw !== undefined) r.focus(); else r.click(); };
+    const tw = row.dataset.tw;
+    if (e.key === "ArrowDown") go(rows[i + 1]);
+    else if (e.key === "ArrowUp") go(rows[i - 1]);
+    else if (e.key === "Home") go(rows[0]);
+    else if (e.key === "End") go(rows[rows.length - 1]);
+    else if (e.key === "ArrowRight" && tw !== undefined) { if (this.treeOpen.has(tw)) go(rows[i + 1]); else this.toggleTreeGroup(tw, true); }
+    else if (e.key === "ArrowLeft" && tw !== undefined) this.toggleTreeGroup(tw, false);
+    else if (e.key === "ArrowLeft" && row.dataset.sela) { const a = this.annot(row.dataset.sela); host.querySelector<HTMLElement>(`[data-tw="${CSS.escape(a?.view ?? "")}"]`)?.focus(); }
+    else if ((e.key === "Enter" || e.key === " ") && tw !== undefined) this.toggleTreeGroup(tw);
+    else return;
+    e.preventDefault(); e.stopPropagation();
+  }
+
+  /** The pointer over a tree row outlines that view or annotation on the sheet. */
+  private treeHover(e: PointerEvent, leave: boolean) {
+    const r = leave ? null : (e.target as HTMLElement).closest?.<HTMLElement>(".drw-tree [data-sel], .drw-tree [data-sela]");
+    // Only the tree's own rows: the sheet keeps its hover from the pointer (onMove).
+    if (!r && !this.treeHov) return;
+    const v = r?.dataset.sel || null, a = r?.dataset.sela || null;
+    this.treeHov = !!r;
+    if (v === this.hover && a === this.hoverA) return;
+    this.hover = v; this.hoverA = a;
+    this.renderOverlay();
+  }
+  private treeHov = false;
+
+  /** The Custom… scale box being typed into ("v" view, "s" sheet): kept across re-renders of the panel. */
+  private cscale: { k: "v" | "s"; val: string; focus: boolean } | null = null;
+
   private renderProps() {
+    const keep = this.cscale, box0 = this.el.querySelector<HTMLInputElement>(".drw-cscale");
+    if (keep && box0) { keep.val = box0.value; keep.focus = document.activeElement === box0; }
+    this.renderPropsOnly();
+    this.dressProps();
+    const sel = keep && this.el.querySelector<HTMLSelectElement>(`.drw-props select[data-${keep.k}="scale"]`);
+    if (keep && sel) { sel.value = "custom"; this.addScaleBox(sel, keep, box0?.dataset[keep.k] === "scale" ? box0 : null); } else this.cscale = null;
+  }
+
+  /** Puts the Custom… box under the scale list; `reuse` = the box already there, moved over so the element typed into stays the same. */
+  private addScaleBox(sel: HTMLSelectElement, c: { k: "v" | "s"; val: string; focus: boolean }, reuse: HTMLInputElement | null = null) {
+    if (reuse) {
+      sel.closest("label")?.after(reuse);
+      if (c.focus && document.activeElement !== reuse) reuse.focus();
+      return;
+    }
+    const box = document.createElement("input");
+    box.dataset[c.k] = "scale";
+    box.className = "drw-cscale";
+    box.value = c.val;
+    box.placeholder = "1:3";
+    box.setAttribute("aria-label", t("Scale, for example 1:3 or 3:2"));
+    box.title = t("Scale, for example 1:3 or 3:2");
+    sel.closest("label")?.after(box);
+    if (c.focus) box.focus();
+  }
+
+  /** Shows one command bar tab's buttons (View Layout, Annotation, Sketch); the choice is remembered. */
+  private tabTool: string | null = null;
+  private showCmdTab(tab: string, keep = false) {
+    if (!CMD_TABS.some(x => x[0] === tab)) tab = "layout";
+    for (const x of this.el.querySelectorAll<HTMLElement>("[data-ctab]")) {
+      const on = x.dataset.ctab === tab;
+      x.classList.toggle("on", on); x.setAttribute("aria-selected", String(on)); x.tabIndex = on ? 0 : -1;
+    }
+    for (const g of this.el.querySelectorAll<HTMLElement>("[data-cpane]")) g.hidden = g.dataset.cpane !== tab;
+    if (keep) try { localStorage.setItem("mc:drwTab", tab); } catch { /* storage off */ }
+  }
+
+  /** Folds the palette panes away (or back), so the tree and the properties get the room; remembered. */
+  private foldPalette(fold: boolean) {
+    const side = this.el.querySelector<HTMLElement>(".drw-side")!, b = this.el.querySelector<HTMLElement>(".drw-palfold")!;
+    if (side.classList.contains("palfold") === fold) return;
+    side.classList.toggle("palfold", fold);
+    b.setAttribute("aria-expanded", String(!fold));
+    const tip = t(fold ? "Show the palette" : "Fold the palette");
+    b.setAttribute("aria-label", tip); b.title = tip;
+    try { localStorage.setItem("mc:drwPalFold", fold ? "1" : "0"); } catch { /* storage off */ }
+  }
+
+  private foldGroup(b: HTMLElement) {
+    const fs = b.closest("fieldset")!, fold = !fs.classList.contains("folded");
+    fs.classList.toggle("folded", fold);
+    b.setAttribute("aria-expanded", String(!fold));
+    const folded = readFolds();
+    if (fold) folded.add(b.dataset.fold!); else folded.delete(b.dataset.fold!);
+    try { localStorage.setItem("mc:drwFolds", JSON.stringify([...folded])); } catch { /* storage off */ }
+  }
+
+  /** What the properties show, as a PropertyManager title: icon, name and kind, and the key its folds are kept under. */
+  private pmTitle(): { icon: string; name: string; kind: string; key: string; own: boolean } {
+    const sa = this.selA ? this.annot(this.selA) : undefined;
+    if (sa) {
+      const tool = annotTool(sa);
+      return { icon: AICON[tool] ?? AICON.note, name: t(ANNOT_GROUPS.flatMap(g => g.tools).find(x => x[0] === tool)?.[1] ?? "Annotation"), kind: t("Annotation"), key: `a:${sa.t}`, own: false };
+    }
+    const v = this.sel ? findView(this.sheet, this.sel) : null;
+    if (v) return {
+      icon: v.kind ? ICON[v.kind === "section" ? "section" : v.kind === "detail" ? "detail" : "aux"] : v.parent ? ICON.proj : ICON.model,
+      name: v.name, kind: v.kind ? t(KIND_VIEW[v.kind]) : v.parent ? t("Projected view") : t("Model view"), key: `v:${v.kind ?? "model"}`, own: true,
+    };
+    return { icon: ICON.hlr, name: sheetName(this.sheet), kind: t("Sheet"), key: "s", own: true };
+  }
+
+  /** PropertyManager look: a title row (✕ goes back to the sheet) and groups that fold on their title, remembered per kind. */
+  private dressProps() {
+    const host = this.el.querySelector<HTMLElement>(".drw-props")!;
+    const h = this.pmTitle(), selected = !!(this.selA || this.sel);
+    const head = document.createElement("div");
+    head.className = "drw-pm-head";
+    head.innerHTML = `<span class="drw-pm-ic">${h.icon}</span><span class="drw-pm-t"><b${h.own ? ' translate="no"' : ""}>${esc(h.name)}</b><small>${esc(h.kind)}</small></span>`
+      + (selected ? `<button class="icon drw-pm-x" data-a="pmclose" aria-label="${esc(t("Close (Esc)"))}" title="${esc(t("Close (Esc)"))}">✕</button>` : "");
+    host.prepend(head);
+    const folded = readFolds();
+    host.querySelectorAll<HTMLElement>(":scope > fieldset.pm-group > legend").forEach((lg, i) => {
+      if (lg.children.length) return;
+      const key = `${h.key}:${i}`, fold = folded.has(key);
+      lg.innerHTML = `<button type="button" class="drw-fold" data-fold="${key}" aria-expanded="${!fold}">${lg.innerHTML}</button>`;
+      lg.parentElement!.classList.toggle("folded", fold);
+    });
+    // A new selection brings its properties into sight, as a CAD app swaps in the PropertyManager.
+    const at = `${h.key}|${this.selA ?? this.sel ?? ""}`;
+    if (at !== this.pmAt) {
+      this.pmAt = at;
+      const side = this.el.querySelector<HTMLElement>(".drw-side")!;
+      if (selected && head.offsetTop > side.scrollTop + side.clientHeight - 120) side.scrollTop = head.offsetTop - 8;
+    }
+  }
+  private pmAt = "";
+
+  private renderPropsOnly() {
     const host = this.el.querySelector<HTMLElement>(".drw-props")!;
     const sh = this.sheet;
     const sa = this.selA ? this.annot(this.selA) : undefined;
@@ -2544,6 +3411,14 @@ export class DrawingWorkspace {
         <label class="drw-f">${esc(t("Text height"))}<select data-st="text">${[2.5, 3.5, 5].map(h => `<option value="${h}"${(this.doc.style?.text ?? 3.5) === h ? " selected" : ""}>${String(h).replace(".", lang() === "ru" ? "," : ".")} ${esc(t("mm"))}</option>`).join("")}</select></label>
         <label class="drw-f">${esc(t("Arrowheads"))}<select data-st="arrow">${(["filled", "open", "dot", "tick"] as const).map(k => `<option value="${k}"${(this.doc.style?.arrow ?? "filled") === k ? " selected" : ""}>${esc(t(ARROW_NAMES[k]))}</option>`).join("")}</select></label>
         <label class="drw-f">${esc(t("Line group"))}<select data-st="lines">${[0.25, 0.35, 0.5, 0.7].map(w => `<option value="${w}"${(this.doc.style?.lines ?? 0.35) === w ? " selected" : ""}>${String(w).replace(".", lang() === "ru" ? "," : ".")} ${esc(t("mm"))}</option>`).join("")}</select></label>
+        <label class="drw-f">${esc(t("Linear decimals"))}<select data-st="lin"><option value=""${this.doc.style?.lin == null ? " selected" : ""}>${esc(t("Auto"))}</option>${[0, 1, 2, 3, 4].map(n => `<option value="${n}"${this.doc.style?.lin === n ? " selected" : ""}>${n}</option>`).join("")}</select></label>
+        <label class="drw-f">${esc(t("Angle decimals"))}<select data-st="ang"><option value=""${this.doc.style?.ang == null ? " selected" : ""}>${esc(t("Auto"))}</option>${[0, 1, 2, 3, 4].map(n => `<option value="${n}"${this.doc.style?.ang === n ? " selected" : ""}>${n}</option>`).join("")}</select></label>
+        <label class="drw-f">${esc(t("Extension line gap"))}<select data-st="extGap">${[0, 0.5, 1, 1.5, 2].map(v => `<option value="${v === 1 ? "" : v}"${(this.doc.style?.extGap ?? 1) === v ? " selected" : ""}>${String(v).replace(".", lang() === "ru" ? "," : ".")} ${esc(t("mm"))}</option>`).join("")}</select></label>
+        <label class="drw-f">${esc(t("Extension past the dimension line"))}<select data-st="extOver">${[1, 1.5, 2, 3].map(v => `<option value="${v === 2 ? "" : v}"${(this.doc.style?.extOver ?? 2) === v ? " selected" : ""}>${String(v).replace(".", lang() === "ru" ? "," : ".")} ${esc(t("mm"))}</option>`).join("")}</select></label>
+        <label class="drw-f">${esc(t("Default tolerance (±)"))}<input data-st="tol" inputmode="decimal" value="${this.doc.style?.tol ?? ""}" placeholder="${esc(t("None"))}"></label>
+        <label class="drw-f">${esc(t("Default angle tolerance (±°)"))}<input data-st="atol" inputmode="decimal" value="${this.doc.style?.atol ?? ""}" placeholder="${esc(t("None"))}"></label>
+        <label class="drw-f">${esc(t("Dual dimensions"))}<select data-st="dual"><option value=""${this.doc.style?.dual ? "" : " selected"}>${esc(t("Off"))}</option><option value="in"${this.doc.style?.dual === "in" ? " selected" : ""}>${esc(t("Inches in brackets"))}</option></select></label>
+        ${this.doc.style?.dual ? `<label class="drw-f">${esc(t("Inch decimals"))}<select data-st="dualPrec">${[1, 2, 3, 4].map(n => `<option value="${n}"${(this.doc.style?.dualPrec ?? 3) === n ? " selected" : ""}>${n}</option>`).join("")}</select></label>` : ""}
       </fieldset>
       <fieldset class="pm-group"><legend>${esc(t("Title block"))}</legend>
         ${editableOf(sh).map(k => `<label class="drw-f">${esc(t(FIELD_LABEL[k]))}<input data-f="${k}" value="${esc(this.doc.props[k] ?? "")}" placeholder="${esc(String(f[k] ?? ""))}"${k === "litera" ? ' maxlength="3"' : ""} translate="no"></label>`).join("")}
@@ -2558,18 +3433,16 @@ export class DrawingWorkspace {
   }
 
   private onClick(e: MouseEvent) {
-    const b = (e.target as HTMLElement).closest<HTMLElement>("button, [data-sel]");
+    const b = (e.target as HTMLElement).closest<HTMLElement>("button, [data-sel], [data-sela], [data-tw]");
     if (!b || !this.store) return;
     const a = b.dataset.a;
+    if (b.dataset.tw !== undefined) { this.toggleTreeGroup(b.dataset.tw); return; }
+    if (b.dataset.sela) { this.cancelMode(); this.sel = null; this.selA = b.dataset.sela; this.renderTree(); this.renderProps(); this.renderOverlay(); return; }
     if (b.dataset.sel !== undefined) { this.cancelMode(); this.selA = null; this.sel = b.dataset.sel || null; this.renderTree(); this.renderProps(); this.renderOverlay(); return; }
-    if (b.dataset.ptab) {
-      for (const x of this.el.querySelectorAll<HTMLElement>("[data-ptab]")) {
-        const on = x === b;
-        x.classList.toggle("on", on); x.setAttribute("aria-selected", String(on)); x.tabIndex = on ? 0 : -1;
-        this.el.querySelector<HTMLElement>(`#drw-pane-${x.dataset.ptab}`)!.hidden = !on;
-      }
-      return;
-    }
+    if (b.dataset.ctab) { this.closeMenus(); this.showCmdTab(b.dataset.ctab, true); return; }
+    if (a === "palfold") { this.foldPalette(!this.el.querySelector(".drw-side")!.classList.contains("palfold")); return; }
+    if (a === "pmclose") { this.cancelMode(); this.selA = null; this.sel = null; this.renderTree(); this.renderProps(); this.renderOverlay(); return; }
+    if (b.dataset.fold) { this.foldGroup(b); return; }
     if (b.dataset.orient) { this.closeMenus(); this.startModel(b.dataset.orient as Orient); return; }
     if (b.dataset.flatview) { this.closeMenus(); this.startModel("top", FLAT_CONFIG); return; }
     if (b.dataset.cut) { this.closeMenus(); this.startKind("section", b.dataset.cut as "h"); return; }
@@ -2578,11 +3451,6 @@ export class DrawingWorkspace {
       this.closeMenus();
       const an = b.dataset.an;
       if (an === "items") this.insertItems(); else if (an === "rev") this.insertTable("rev"); else if (an === "table") this.insertTable("general"); else if (an === "bom") this.insertBom(); else if (an === "auto") void this.autoBalloon(); else if (an === "chain" || an === "base" || an === "ord") this.startAnnot("dimset", an); else this.startAnnot(an as AnnotMode["kind"]);
-      return;
-    }
-    if (b.dataset.grow) {
-      const g = b.dataset.grow;
-      this.setAnnot(g === "+" ? "Add row" : "Remove row", a => { if (a.t !== "gtol") return; if (g === "+") a.rows.push({ sym: "flat", tol: "0.05", datums: [] }); else a.rows.splice(-+g, 1); });
       return;
     }
     if (b.dataset.unstack !== undefined) {
@@ -2609,15 +3477,15 @@ export class DrawingWorkspace {
     if (b.dataset.style) { this.setView("Display style", v => { v.style = b.dataset.style as DisplayStyle; }); return; }
     if (b.dataset.orientation) { this.setSheet("Sheet orientation", s => { s.portrait = b.dataset.orientation === "port" || undefined; }); this.fit(); return; }
     switch (a) {
-      case "back": this.hide(); break;
+      case "back": void this.backToModel(); break;
       case "file": this.cancelMode(); this.closeMenus(); this.host.fileMenu?.(b); break;
       case "std3": this.cancelMode(); this.standard3(); break;
-      case "model": case "export": case "section": case "annot": case "detail": {
+      case "model": case "export": case "section": case "dims": case "tables": case "detail": {
         const menu = b.nextElementSibling as HTMLElement, open = menu.hidden;
         this.closeMenus();
         menu.hidden = !open;
         b.setAttribute("aria-expanded", String(open));
-        if (open) menu.querySelector<HTMLElement>("button")?.focus();
+        if (open) { this.placeMenu(b, menu); menu.querySelector<HTMLElement>("button")?.focus(); }
         break;
       }
       case "proj": this.startProjected(); break;
@@ -2634,9 +3502,17 @@ export class DrawingWorkspace {
       case "unbroken": this.setView("Remove broken-out section", v => { delete v.broken; }); break;
       case "unalign": this.setView("Break alignment", v => { v.free = true; }); break;
       case "tbedit": void this.editFormat(); break;
+      case "aedit": this.editAnnotDlg(this.selA); break;
+      case "gdetach": {
+        const h = this.annotHits.find(x => x.id === this.selA), a = this.selA ? this.annot(this.selA) : undefined, pl = a?.view ? this.placements.get(a.view) : undefined;
+        const at = h && pl ? fromSheet(pl, h.box[0], h.box[3]) : null;
+        this.setAnnot("Detach from the dimension", x => { if (x.t !== "gtol") return; delete x.dim; if (at) x.pos = [round(at[0]), round(at[1])]; });
+        break;
+      }
       case "align": this.realign(); break;
       case "dim": this.startAnnot("dim"); break;
       case "adel": this.deleteAnnot(); break;
+      case "wtags": { const a = this.selA ? this.annot(this.selA) : null; if (a?.t === "wtable") void this.tagBeads(a.view); break; }
       case "hupd": { const a = this.selA ? this.annot(this.selA) : null; if (a?.t === "htable") { const holes = this.viewHoleRefs(a.view); this.setAnnot("Update holes", x => { if (x.t === "htable") x.holes = holes; }); } break; }
       case "undo": this.store.undo(); break;
       case "redo": this.store.redo(); break;
@@ -2760,7 +3636,7 @@ export class DrawingWorkspace {
     const lib = loadFormats(), cur = sh.tb ? `user:${sh.tb.id}` : sh.format;
     const users = sh.tb && !lib.some(f => f.id === sh.tb!.id) ? [sh.tb, ...lib] : lib;
     const opt = (v: string, label: string, tr = false) => `<option value="${esc(v)}"${v === cur ? " selected" : ""}${tr ? ' translate="no"' : ""}>${esc(label)}</option>`;
-    return opt("iso", "ISO 7200") + opt("ansi", "ANSI Y14.1") + opt("gost", "GOST 2.104")
+    return opt("iso", "ISO 7200") + opt("ansi", "ANSI Y14.1") + opt("gost", t("GOST 2.104"))
       + (users.length ? `<optgroup label="${esc(t("My formats"))}">${users.map(f => opt(`user:${f.id}`, f.name, true)).join("")}</optgroup>` : "");
   }
 
@@ -2827,11 +3703,14 @@ export class DrawingWorkspace {
       this.setView("View orientation", v => { v.orient = o; v.dir = c ?? undefined; });
     } else if (vk === "scale" || sk === "scale") {
       let s: [number, number] | null | undefined = val === "" ? undefined : parseScale(val);
+      // Custom…: a box under the list takes the scale (a browser prompt covered the sheet, drawings exam #17).
       if (val === "custom") {
-        const txt = prompt(t("Scale, for example 1:3 or 3:2"), "1:3");
-        s = txt ? parseScale(txt) : null;
-        if (!s) { if (txt) toast(t("Type a scale like 1:3."), true); this.renderProps(); return; }
+        this.cscale = { k: vk ? "v" : "s", val: "", focus: true };
+        this.addScaleBox(el as HTMLSelectElement, this.cscale);
+        return;
       }
+      if (el instanceof HTMLInputElement && !s) { toast(t("Type a scale like 1:3."), true); el.focus(); return; }
+      this.cscale = null;
       if (vk) this.setView("View scale", v => { if (s) v.scale = s; else delete v.scale; });
       else if (s) this.setSheet("Sheet scale", sh => { sh.scale = s!; });
     } else if (vk === "tangent") this.setView("Tangent edges", v => { v.tangent = val as TangentEdges; });
@@ -2882,7 +3761,10 @@ export class DrawingWorkspace {
       });
     }
     else if (sk === "size") { this.setSheet("Sheet size", sh => { sh.size = val as SheetSize; }); this.fit(); }
-    else if (sk === "projection") this.setSheet("Projection type", sh => switchProjection(sh, val as Sheet["projection"]));
+    else if (sk === "projection") this.setSheet("Projection type", sh => switchProjection(sh, val as Sheet["projection"], v => {
+      const p = this.placements.get(v.id);
+      return p ? [(p.box[0] - p.uc) * p.s, (p.box[1] - p.vc) * p.s, (p.box[2] - p.uc) * p.s, (p.box[3] - p.vc) * p.s] : null;
+    }, (([a, b, c, d]) => [a + 5, b + 5, c - 5, d - 5] as [number, number, number, number])(frameOf(sh))));
     else if (sk === "format") {
       if (val.startsWith("user:")) {
         const id = val.slice(5), f = this.sheet.tb?.id === id ? this.sheet.tb : loadFormats().find(x => x.id === id);
@@ -2891,7 +3773,7 @@ export class DrawingWorkspace {
     }
     else if (el.dataset.st) {
       const k = el.dataset.st as keyof DraftStyle;
-      this.store.change("Drafting style", d => { const st: DraftStyle = { ...d.style }; if (k === "arrow") st.arrow = val as DraftStyle["arrow"]; else (st as Record<string, number>)[k] = +val; d.style = st; });
+      this.store.change("Drafting style", d => { const st: DraftStyle = { ...d.style }; if (k === "arrow") st.arrow = val as DraftStyle["arrow"]; else if (k === "dual") { if (val === "in") st.dual = "in"; else { delete st.dual; delete st.dualPrec; } } else if (k === "tol" || k === "atol") { const x = parseFloat(val.replace(",", ".")); if (x > 0) st[k] = x; else delete st[k]; } else if (val === "") delete st[k]; else (st as Record<string, number>)[k] = +val; d.style = st; });
     }
   }
 
@@ -2914,7 +3796,7 @@ export class DrawingWorkspace {
     else if (k === "enter" && this.mode.kind === "detail" && this.mode.prof && !this.mode.r && (this.mode.pts?.length ?? 0) >= 3 && (tgt as Element) === this.svg) this.finishProfile(this.mode);
     else if (k === "enter" && this.mode.kind === "section" && !this.mode.line && (this.mode.pts?.length ?? 0) >= 2 && (tgt as Element) === this.svg) this.finishPath(this.mode);
     else if (k === "enter" && this.mode.kind !== "none" && (tgt as Element) === this.svg) this.cancelMode();
-    else if ((k === "delete" || k === "backspace") && this.selA && (tgt as Element) === this.svg) this.deleteAnnot();
+    else if ((k === "delete" || k === "backspace") && this.selA && ((tgt as Element) === this.svg || tgt.closest(".drw-tree"))) this.deleteAnnot();
     else if ((k === "delete" || k === "backspace") && this.sel && ((tgt as Element) === this.svg || tgt.closest(".drw-tree"))) void this.deleteSel();
     else if (k === "d" && tgt.closest(".drw")) this.startAnnot("dim");
     else if (k === "f" && tgt.closest(".drw")) this.fit();
@@ -2925,10 +3807,48 @@ export class DrawingWorkspace {
 
   // ---------- saving and output ----------
 
-  async save() {
+  /**
+   * The open drawing came from a vault (FR-PDM-010/081): Save writes the working copy there, only while it is
+   * checked out here; the title shows the version and the lock.
+   */
+  vault: VaultTie | null = null;
+  setVault(v: VaultTie | null) {
+    this.vault = v;
+    if (this.store) this.renderAll();
+  }
+  /** Marks the open drawing saved (the vault wrote it). */
+  markSaved() {
+    if (!this.store) return;
+    this.store.markSaved();
+    this.renderAll();
+  }
+
+  /** Saves the drawing; `as` = a copy outside the vault. */
+  async save(as = false) {
     if (!this.store) return;
     const bytes = await packDrawing(this.doc, `MöbiusCAD ${this.host.appVersion}`, this.model);
     const name = this.fileName || `${this.doc.name}${DRAWING_EXT}`;
+    if (this.vault && !as) {
+      if (this.vault.readOnly) { toast(t("This file is read-only: check it out to save, or use Save as."), true); return; }
+      try { await this.vault.save(bytes); }
+      catch (err) { toast(t("Could not save: {err}", { err: t((err as Error).message) }), true); return; }
+      this.store.markSaved();
+      this.renderAll();
+      toast(t("Saved {name}", { name }), "success");
+      return;
+    }
+    if (as && this.vault) this.setVault(null);
+    if (!as && this.host.intoVault) {
+      let tie: VaultTie | null = null;
+      try { tie = await this.host.intoVault(name, bytes, this.doc.source); }
+      catch (err) { toast(t("Could not save: {err}", { err: t((err as Error).message) }), true); return; }
+      if (tie) {
+        this.vault = tie;
+        this.store.markSaved();
+        this.renderAll();
+        return;
+      }
+    }
     this.host.download(new Blob([bytes], { type: "application/zip" }), name);
     this.fileName = name;
     this.store.markSaved();
@@ -2978,21 +3898,71 @@ export class DrawingWorkspace {
     return {
       doc: () => this.store?.doc ?? null,
       prims: () => (this.store ? this.composed(this.sheet).prims : []),
+      loaded: () => !!this.store && !this.loading && !!this.facts,
       ready: () => !!this.store && !this.loading && this.sheet.views.every(v => this.kernel.cache.has(viewReq(this.sheet, v).key) && (!altReq(this.sheet, v) || this.kernel.cache.has(altReq(this.sheet, v)!.key))),
       svg: () => (this.store ? (() => { const sh = this.sheet, [W, H] = sheetSize(sh); return sheetSvg(this.composed(sh).prims, W, H); })() : ""),
       dxf: () => (this.store ? (() => { const sh = this.sheet, [W, H] = sheetSize(sh); return sheetDxf(this.composed(sh).prims, W, H); })() : ""),
       sheetPt: (x: number, y: number) => { const rc = this.svg.getBoundingClientRect(), H = sheetSize(this.sheet)[1]; return [rc.left + (x - this.vb.x) / this.vb.w * rc.width, rc.top + (H - y - this.vb.y) / this.vb.h * rc.height]; },
       placement: (id: string) => this.placements.get(id) ?? null,
+      hit: (id: string) => this.annotHits.find(h => h.id === id)?.box ?? null,
+      frame: () => ({ frame: frameOf(this.sheet), tb: [...titleBlockAt(this.sheet), ...tbSize(this.sheet)] }),
       mode: () => this.mode.kind,
-      previews: () => ({ shown: this.previewsShown, made: this.kernel.previewsMade, left: this.svg.querySelectorAll(".drw-preview").length }),
+      fields: () => (this.store ? this.fields() : null),
+      helper: () => this.kernel.helperState(),
+      /** Exact projections made so far: key and worker ms (tests and timing). */
+      projMs: () => [...this.kernel.cache].map(([k, p]) => [k, Math.round(p.ms)] as [string, number]),
+      previews: () => ({ shown: this.previewsShown, made: this.kernel.previewsMade, sections: this.kernel.sectionPreviewsMade, errs: this.kernel.previewErrors.slice(0, 3), on: this.previewsOn(), asked: this.previewAsked.size, left: this.svg.querySelectorAll(".drw-preview").length }),
+      renders: () => this.sheetRenders,
+      drop: () => this.dropGone(true),
+      holes: () => (this.facts?.topo?.holes ?? []).map(h => ({ segs: h.segs.length, open: h.open })),
       proj: (id: string) => { const sh = this.sheet, v = findView(sh, id); return v ? this.kernel.cache.get(viewReq(sh, v).key) ?? null : null; },
+      /** A section of the loaded model through `p` looking along `dir` (tests: who and what each cut loop is). */
+      section: (dir: [number, number, number], up: [number, number, number], p: [number, number, number], tag = "") => this.kernel.request({ view: { dir, up }, p, key: `debug|${tag}|${[dir, up, p].join("|")}` }).then(pr => ({ keys: pr.cutKey ?? [], mats: pr.cutMat ?? [] })),
     };
   }
 }
 
+/** A view's projection failed: say why, unless its view went away first (`DrawingKernel.drop`). */
+function viewFailed(err: unknown) {
+  if (err instanceof Error && err.message === DROPPED) return;
+  toast(t("A view could not be projected: {err}", { err: kernelError(err) }), true);
+}
+
+/** A drawing worker error for a toast: a bare OCCT exception number becomes a sentence. */
+function kernelError(err: unknown): string {
+  const m = err instanceof Error ? err.message : String(err), n = /^OpenCASCADE error (\d+)$/.exec(m);
+  if (m === NO_FAST_LINES) return t("the model is too big for an exact view and its quick projection came back empty. Try another view direction, or show fewer components in this view.");
+  if (OUT_OF_MEMORY.test(m)) return t("not enough memory for this view. Close other tabs, or draw the big assembly with fewer views per sheet.");
+  return n ? t("the geometry kernel failed (error {n}). The model may be too big for the browser's memory: close other tabs or draw fewer views.", { n: n[1] }) : m;
+}
+
 const STYLE_NAMES: Record<DisplayStyle, string> = { hlv: "Hidden lines visible", hlr: "Hidden lines removed", wire: "Wireframe", shaded: "Shaded", shadedEdges: "Shaded with edges" };
+const KIND_VIEW: Record<NonNullable<DrawingView["kind"]>, string> = { section: "Section view", detail: "Detail view", aux: "Auxiliary view" };
+const CHEVRON = '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10l4-4 4 4"/></svg>';
+/** The Annotation tool an annotation was made with, for its icon and name. */
+function annotTool(a: Annot): string {
+  switch (a.t) {
+    case "cline": return a.k === "mark" ? "cmark" : "cline";
+    case "sk": return `sk${a.k}`;
+    case "table": return a.kind === "bom" ? "bom" : a.kind === "rev" ? "rev" : "table";
+    default: return a.t;
+  }
+}
+/** A short text beside an annotation's name in the tree: a note's first line, a datum letter, a balloon's own text. */
+function annotHint(a: Annot): string {
+  const cut = (x: string) => (x.length > 18 ? `${x.slice(0, 17)}…` : x);
+  if (a.t === "note") return cut(a.text.split("\n")[0]);
+  if (a.t === "datum") return a.letter;
+  if (a.t === "balloon" && a.txt) return cut(a.txt);
+  if (a.t === "hole" && a.txt) return cut(a.txt.split("\n")[0]);
+  return "";
+}
+/** Groups of the properties folded by the user, "<kind>:<index>". */
+function readFolds(): Set<string> {
+  try { const v = JSON.parse(localStorage.getItem("mc:drwFolds") ?? "[]"); return new Set(Array.isArray(v) ? v.filter(x => typeof x === "string") : []); } catch { return new Set(); }
+}
 const KIND_NAMES: Record<NonNullable<DrawingView["kind"]>, string> = { section: "Section", detail: "Detail", aux: "Auxiliary" };
-const ARROW_NAMES: Record<NonNullable<DraftStyle["arrow"]>, string> = { filled: "Filled", open: "Open", dot: "Dot", tick: "Oblique stroke" };
+const ARROW_NAMES: Record<NonNullable<DraftStyle["arrow"]>, string> = { filled: "Filled", open: "Open arrow", dot: "Dot", tick: "Oblique stroke" };
 const TAN_NAMES: Record<TangentEdges, string> = { visible: "Visible", thin: "Thin", hidden: "Removed" };
 const round = (v: number) => Math.round(v * 100) / 100;
 function sheetName(s: Sheet) { const m = /^Sheet(\d+)$/.exec(s.name); return m ? t("Sheet {n}", { n: m[1] }) : s.name; }
@@ -3007,8 +3977,7 @@ function printSheets(sheets: { prims: Prim[]; W: number; H: number }[], title: s
   fr.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0";
   fr.setAttribute("aria-hidden", "true");
   document.body.appendChild(fr);
-  const first = sheets[0];
-  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>@page{size:${first.W}mm ${first.H}mm;margin:0}html,body{margin:0}svg{display:block;page-break-after:always;break-after:page}@font-face{font-family:"DejaVu Sans";src:url(${new URL(fontUrl, location.href).href})}</style></head><body>${sheets.map(s => sheetSvg(s.prims, s.W, s.H).replace(/^<\?xml[^>]*>\n/, "")).join("")}</body></html>`;
+  const html = printHtml(sheets, title, new URL(fontUrl, location.href).href);
   const d = fr.contentDocument!;
   d.open(); d.write(html); d.close();
   const go = () => { try { fr.contentWindow!.focus(); fr.contentWindow!.print(); } finally { setTimeout(() => fr.remove(), 60_000); } };

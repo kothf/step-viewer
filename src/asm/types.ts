@@ -1,3 +1,4 @@
+import type { NamedView } from "../model/types";
 // Assembly documents (FRS 10, P4): components that place parts by a rigid transform.
 // Every source is kept as a part document: a MöbiusCAD part as it is, a STEP/IGES/BREP
 // model as a part with one Imported feature, so the kernel evaluates them all the same way.
@@ -61,6 +62,8 @@ export interface AsmDoc {
     /** Linked (FR-ASM-003): the source file by path relative to the assembly's folder and the SHA-256 of
      * its bytes when last read; `doc`/`asm` are then the last loaded copy. Unset = embedded. */
     link?: { path: string; hash: string } }>;
+  /** Named views (FR-UI-104), kept out of the undo history. */
+  views?: NamedView[];
 }
 
 /** The kernel's answer for an assembly: one mesh per shown component, and mass properties of the solved assembly. */
@@ -102,8 +105,13 @@ export interface Mate {
   ratio?: number;
   /** Gear, screw and a concentric with `lockRot`: a's and b's transforms when the mate was made (their motion is measured from there). */
   t0?: [Tf, Tf];
-  /** Concentric: b may not turn about the shared axis relative to a (SolidWorks' Lock rotation). */
+  /** Concentric: b may not turn about the shared axis relative to a (a CAD app's Lock rotation). */
   lockRot?: boolean;
+  /**
+   * Angle: the direction (in a's part coordinates) the angle turns about, a × b when the mate was made. With it the
+   * angle is signed (−180..180°), so +θ and −θ are different positions; without it, 0..180° (exam #72).
+   */
+  about?: V3;
   /** Lock only: hold just the orientation ("rot") or just the travel along `along` (in a's coordinates, "slide"); motion study motors use these. */
   keep?: "rot" | "slide";
   along?: V3;

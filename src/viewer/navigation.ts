@@ -1,8 +1,10 @@
 // View navigation habits of mechanical CAD (FRS 13.13, FR-UI-101..104): arrow keys turn and pan the view,
 // Z / Shift+Z zoom, Alt+Z goes back to the previous view, a double middle click fits, Zoom to area draws a box,
 // Zoom to selection frames what is picked, and Space opens the orientation picker at the cursor.
+import { Magnifier } from "./Magnifier";
 import * as THREE from "three";
 import type { Viewer } from "./Viewer";
+import type { NamedView } from "../model/types";
 import { t } from "../i18n";
 import { toast } from "../ui";
 
@@ -15,6 +17,20 @@ export interface NavHost {
   normalTo(): void;
   /** World box of the current selection, or null when nothing is picked. */
   selectionBox(): THREE.Box3 | null;
+  /**
+   * The model point under the screen point (a vertex, an edge or a face), for the rotation centre (FR-UI-100);
+   * `axis` = the direction of a straight edge picked along its length, which the view then turns about.
+   */
+  pointAt?(x: number, y: number): { p: THREE.Vector3; axis?: THREE.Vector3 } | null;
+  /** Named views of the open document (FR-UI-104); absent = none can be stored. */
+  namedViews?(): NamedViews | null;
+}
+
+/** A document's named views: saved cameras, kept out of its undo history. */
+export interface NamedViews {
+  list(): NamedView[];
+  save(v: NamedView): void;
+  remove(name: string): void;
 }
 
 /** Degrees per arrow press, and the pan step as a fraction of the view height. */
@@ -26,12 +42,15 @@ export interface Navigation {
   previousView(): void;
   openPicker(at?: { x: number; y: number }): void;
   closePicker(): void;
+  /** The magnifying glass (FR-SEL-010). */
+  magnifier: Magnifier;
 }
 
 export function bindNavigation(host: NavHost): Navigation {
   const { viewer } = host;
   const canvas = viewer.renderer.domElement;
   const pointer = { x: -1, y: -1 };
+  const magnifier = new Magnifier(viewer);
   window.addEventListener("pointermove", e => { pointer.x = e.clientX; pointer.y = e.clientY; }, { passive: true });
 
   // The keys act when nothing that takes keys has focus: the page itself or the view.
@@ -119,6 +138,18 @@ export function bindNavigation(host: NavHost): Navigation {
     lastMiddle = { t: now, x: e.clientX, y: e.clientY };
   });
 
+  // ---------- rotation centre (FR-UI-100): a middle click without a drag ----------
+  let midDown: { x: number; y: number; t: number } | null = null;
+  canvas.addEventListener("pointerdown", e => { midDown = e.button === 1 && host.active() ? { x: e.clientX, y: e.clientY, t: performance.now() } : null; });
+  window.addEventListener("pointerup", e => {
+    const d = midDown;
+    midDown = null;
+    if (!d || e.button !== 1 || performance.now() - d.t > 500 || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
+    const hit = host.pointAt?.(e.clientX, e.clientY) ?? null;
+    if (!hit && !viewer.pivot) return;
+    viewer.setPivot(hit?.p ?? null, hit?.axis ?? null);
+  });
+
   // ---------- orientation picker (Space) ----------
   let picker: HTMLElement | null = null;
   let back: HTMLElement | null = null;
@@ -128,6 +159,37 @@ export function bindNavigation(host: NavHost): Navigation {
     back?.focus?.();
     back = null;
   };
+  // ---------- named views (FR-UI-104) ----------
+  let named: NamedViews | null = null;
+  const namedHtml = () => {
+    named = host.namedViews?.() ?? null;
+    if (!named) return "";
+    const esc = (x: string) => x.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+    const list = named.list();
+    return `<div class="nav-named"><div class="nav-pick-t">${t("Named views")}</div>`
+      + (list.length ? `<div class="nav-vlist">${list.map(x => `<span class="nav-vrow"><button type="button" data-nv="view:${esc(x.name)}" translate="no">${esc(x.name)}</button><button type="button" class="nav-vdel" data-nvdel="${esc(x.name)}" title="${esc(t("Delete view"))}" aria-label="${esc(t("Delete view"))}: ${esc(x.name)}">✕</button></span>`).join("")}</div>` : "")
+      + `<span class="nav-vsave"><input class="nav-vname" type="text" spellcheck="false" aria-label="${esc(t("View name"))}" placeholder="${esc(t("View {n}", { n: list.length + 1 }))}" /><button type="button" data-nv="save">${t("Save view")}</button></span></div>`;
+  };
+  const refreshNamed = (el: HTMLElement) => {
+    const old = el.querySelector(".nav-named");
+    if (!old) return;
+    const tmp = document.createElement("div");
+    tmp.innerHTML = namedHtml();
+    const had = old.contains(document.activeElement);
+    if (tmp.firstElementChild) old.replaceWith(tmp.firstElementChild);
+    el.querySelector<HTMLInputElement>(".nav-vname")?.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); saveNamed(el); } else if (e.key !== "Escape" && e.key !== "Tab") e.stopPropagation(); });
+    // The field the name was typed in was replaced: keep the keys in the picker (Esc still closes it).
+    if (had) el.querySelector<HTMLInputElement>(".nav-vname")?.focus();
+  };
+  const saveNamed = (el: HTMLElement) => {
+    if (!named) return;
+    const inp = el.querySelector<HTMLInputElement>(".nav-vname");
+    const name = (inp?.value.trim() || inp?.placeholder || t("View {n}", { n: named.list().length + 1 })).slice(0, 60);
+    named.save({ name, ...viewer.getView() });
+    toast(t("View \"{name}\" saved.", { name }));
+    refreshNamed(el);
+  };
+
   const openPicker = (at?: { x: number; y: number }) => {
     if (picker) { closePicker(); return; }
     if (!host.active()) return;
@@ -145,16 +207,21 @@ export function bindNavigation(host: NavHost): Navigation {
       + `${v("left", "Left")}${v("front", "Front", "main")}${v("right", "Right")}${v("back", "Back")}`
       + `<span></span>${v("bottom", "Bottom")}<span></span><span></span></div>`
       + `<div class="nav-more">${v("iso", "Isometric")}${v("normal", "Normal to")}${v("fit", "Zoom to fit")}`
-      + `${v("sel", "Zoom to selection")}${v("area", "Zoom to area")}${v("prev", "Previous view")}</div>`;
+      + `${v("sel", "Zoom to selection")}${v("area", "Zoom to area")}${v("prev", "Previous view")}</div>`
+      + namedHtml();
     document.body.appendChild(el);
     const w = el.offsetWidth, h = el.offsetHeight;
     el.style.left = `${Math.max(8, Math.min(window.innerWidth - w - 8, p.x - w / 2))}px`;
     el.style.top = `${Math.max(8, Math.min(window.innerHeight - h - 8, p.y - h / 2))}px`;
     el.querySelector<HTMLButtonElement>(".main")?.focus();
     el.addEventListener("click", e => {
+      const del = (e.target as HTMLElement).closest<HTMLElement>("[data-nvdel]");
+      if (del) { named?.remove(del.dataset.nvdel!); refreshNamed(el); return; }
       const b = (e.target as HTMLElement).closest<HTMLElement>("[data-nv]");
       if (!b) return;
       const id = b.dataset.nv!;
+      if (id === "save") { saveNamed(el); return; }
+      if (id.startsWith("view:")) { const nv = named?.list().find(x => x.name === id.slice(5)); closePicker(); if (nv) viewer.setView(nv); return; }
       closePicker();
       if (id === "normal") host.normalTo();
       else if (id === "fit") viewer.fit();
@@ -163,6 +230,7 @@ export function bindNavigation(host: NavHost): Navigation {
       else if (id === "prev") previousView();
       else viewer.viewFrom(host.views[id]);
     });
+    el.querySelector<HTMLInputElement>(".nav-vname")?.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); saveNamed(el); } else if (e.key !== "Escape" && e.key !== "Tab") e.stopPropagation(); });
     el.addEventListener("keydown", e => {
       const btns = [...el.querySelectorAll<HTMLButtonElement>("button")];
       const i = btns.indexOf(document.activeElement as HTMLButtonElement);
@@ -180,6 +248,7 @@ export function bindNavigation(host: NavHost): Navigation {
   window.addEventListener("keydown", e => {
     if (e.defaultPrevented) return;
     if (areaArmed && e.key === "Escape") { e.preventDefault(); e.stopPropagation(); endArea(); return; }
+    if (picker && e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closePicker(); return; }
     const k = e.key;
     const arrow = k === "ArrowLeft" || k === "ArrowRight" || k === "ArrowUp" || k === "ArrowDown";
     if (!(arrow ? arrowsFree(e) : free(e)) || !host.active() || e.metaKey) return;
@@ -195,8 +264,16 @@ export function bindNavigation(host: NavHost): Navigation {
     if (e.altKey && (k === "z" || k === "Z" || e.code === "KeyZ")) { stop(); previousView(); return; }
     if (e.altKey) return;
     if (e.code === "KeyZ") { stop(); viewer.zoomView(e.shiftKey ? ZOOM : 1 / ZOOM); return; }
+    if (e.code === "KeyG" && !e.shiftKey && !e.repeat) {
+      stop();
+      if (magnifier.open) { magnifier.close(); return; }
+      const r = canvas.getBoundingClientRect();
+      const on = pointer.x >= r.left && pointer.x <= r.right && pointer.y >= r.top && pointer.y <= r.bottom;
+      magnifier.show(on ? pointer.x : (r.left + r.right) / 2, on ? pointer.y : (r.top + r.bottom) / 2);
+      return;
+    }
     if (k === " " && !e.repeat) { stop(); openPicker(); }
   });
 
-  return { zoomToSelection, startZoomArea, previousView, openPicker, closePicker };
+  return { zoomToSelection, startZoomArea, previousView, openPicker, closePicker, magnifier };
 }

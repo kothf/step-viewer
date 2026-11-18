@@ -5,6 +5,10 @@
 // The document (DocStore) is the source of truth; every rebuild sends it to the
 // kernel worker and shows the returned body with the viewer's own pipeline, so
 // the measuring tools work on modelled parts unchanged.
+import { fullyDefineSketch } from "../sketch/define";
+import type { VaultTie } from "../pdm/panel";
+import type { NamedView, V2 } from "./types";
+import type { NamedViews } from "../viewer/navigation";
 import * as THREE from "three";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
@@ -13,53 +17,71 @@ import type { Viewer } from "../viewer/Viewer";
 import type { EdgeInfo, PartData } from "../topology";
 import { edgeLoop, sameEdges, tangentChain } from "./chain";
 import { DocStore, dependants, moved, newPart, nextName, orderProblem, parents, uid } from "./doc";
+import { canCopy, copyClip, pasteClip, type Clip } from "./paste";
 import { activate, addConfig, applyConfigTable, configTable, nextConfigName, removeConfig, renameConfig } from "./configs";
 import { download } from "../tools/exporters";
 import { evaluate, ExprError, isPlain } from "./expr";
 import { journalDrop, journalList, journalSave, packPart, unpackPart, PART_EXT, type JournalEntry } from "./file";
 import { snapshotList, snapshotRead, snapshotSave, SNAPSHOT_KEEP } from "./snapshots";
 import { ModelKernel, type Rebuild } from "./kernelClient";
-import { pathId } from "./types";
+import { pathId, hasDir2, dir2Apart, dir2Blind, clearDir2, threadThrough, holeExits, headKind, holeCount, DIR2_ENDS, type Dir2End } from "./types";
+import { defaultToward } from "./flex";
 import { parseXyz } from "./curves";
 import { textPolys, TEXT_FONTS } from "../sketch/text";
-import { ctxRefs, type PartContext } from "./context";
+import { allCtxRefs, ctxMark, moveEdgeGeo, type AnyCtxRef, type PartContext } from "./context";
+import type { ModelEdge } from "../sketch/external";
 import { applyDir as tfDir, applyPoint as tfPoint, invert as tfInvert } from "../asm/math";
 import { segPoints, solve3d } from "../sketch/sketch3d";
-import type { CtxRef, SkEnt, SketchPatternFeature, FeatureFolder, ThreadFeature, Sketch3dFeature, Sk3Rel, CurveFeature, SweepSurfFeature, SweepPath,
+import type { SkEnt, SketchPatternFeature, FeatureFolder, ThreadFeature, Sketch3dFeature, Sk3Rel, CurveFeature, SweepSurfFeature, SweepPath,
   AxisFeature, ChamferFeature, CsysFeature, CircularPatternFeature, EdgeRef, ExtrudeFeature, Feature, FeatureStatus, FilletFeature, ScaleFeature, Frame, LinearPatternFeature, LineRef,
-  GlobalVar, HelixFeature, LoftFeature, RibFeature, SplitFeature, FaceRef, RecognizedHole, ImportFeature, HealFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, UntrimSurfFeature, IntersectFeature, SweepFeature, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3, VertexRef,
+  GlobalVar, HelixFeature, LoftFeature, RibFeature, SplitFeature, FaceRef, RecognizedHole, ImportFeature, HealFeature, DomeFeature, WrapFeature, FlexFeature, HoleSink, HoleElem, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, UntrimSurfFeature, IntersectFeature, SweepFeature, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3, VertexRef,
 } from "./types";
-import { MATERIALS } from "../tools/analysis";
-import { ISO_METRIC, HEAT_INSERTS, holeSize, insertSize, type HoleSize } from "./holes";
+import { hexRgb, toRef, type MatRef } from "../tools/materials";
+import { pickMaterial } from "../materialPicker";
+import { holeCallout, holeDiagram, holeIcon, holeSection, HOLE_KINDS } from "./holeView";
+import { advDefault, advProfile, advSync, captiveSize, captiveStack, elemFor, ELEM_KINDS } from "./advHole";
+import { keepTapDepth, tapDepthLinked, tapTooShallow } from "./tapDepth";
+import { ISO_METRIC, HEAT_INSERTS, HOLE_STANDARDS, SCREW_TYPES, defaultScrew, headPocket, screwTypes, threadClasses, holeSize, insertSize, majorOf, recognizedHoleFeatures, standardOf, taperSize, taperStandardOf, TAPER_STANDARDS, type HoleStandard } from "./holes";
 
 /** What a hole favourite keeps: the definition, not the placement. */
-const HOLE_DEF_KEYS = ["kind", "size", "fit", "diameter", "end", "depth", "flat", "cbDia", "cbDepth", "csDia", "csAngle", "threadDepth", "major", "pitch", "cdDia", "cdDepth", "cdAngle", "slotLen", "slotAngle"] as const;
+/** Drag data of a Features tree row (FR-HIS-014: Ctrl+drag onto a face or plane pastes a copy). */
+const FEATURE_DRAG = "application/x-mcad-feature";
+const HOLE_DEF_KEYS = ["kind", "standard", "size", "fit", "diameter", "end", "depth", "flat", "cbDia", "cbDepth", "csDia", "csAngle", "threadDepth", "threadEnd", "nearCs", "underCs", "farCs", "headClear", "drillAngle", "major", "pitch", "cdDia", "cdDepth", "cdAngle", "slotLen", "slotAngle", "slotHead", "taperDia", "screw", "tclass", "threadMode", "near", "far"] as const;
 interface HoleFav { name: string; def: Partial<HoleFeature> }
 function loadFavs(): HoleFav[] { try { const v = JSON.parse(localStorage.getItem("mc:holeFavs") ?? "[]"); return Array.isArray(v) ? v : []; } catch { return []; } }
 function saveFavs(list: HoleFav[]) { try { localStorage.setItem("mc:holeFavs", JSON.stringify(list)); } catch { /* storage blocked: kept for this page only */ } }
+/** A hole's thread/screw standard: the stored one, else the one its size belongs to. */
+function holeStd(f: HoleFeature): HoleStandard { return f.standard && f.standard !== "bspt" ? f.standard : f.size ? standardOf(f.size) : "iso"; }
 function holeTitle(f: HoleFeature) { return `${f.size ?? `Ø${trimNum(f.diameter.v, 2)}`} ${f.kind}`; }
 
-/** Nominal (major) diameter of an ISO metric size: "M6" → 6. */
-const majorOf = (h: HoleSize) => parseFloat(h.size.slice(1));
 import { evalVars, exprTargets, refreshExprs, renameEverywhere, validVarName } from "./params";
 import { STD_FRAMES } from "../kernel/model";
 import { ellOf, ellParam, ellPts, ellSweep } from "../sketch/ellipse";
 import { entBezier } from "../sketch/conic";
 import { bezPts } from "../sketch/spline";
+import { hoverKindOfSketch, type HoverKind } from "../hoverCursor";
 import { SketchEditor, REL_NAME, relName, trimNum, type SkTool } from "../sketch/editor";
 import { SNAP_KINDS, parseSnaps, type SnapKind } from "../sketch/snaps";
 import { ORIGIN, repairs, solve } from "../sketch/solver";
 import { sketchPath, sketchProfile, textPath } from "../sketch/profile";
+import { blockFile, readBlockFile } from "../sketch/blocks";
+import type { SketchBlock } from "./types";
+import { regionAt, regionPoint, sketchRegions, type Region } from "../sketch/regions";
 import { SEL_FILTER } from "../tools/Snapper";
+import { lassoMode, mergeSel, rectRegion, regionInside, regionProbe, regionTaken, type Rect, type Region as SelArea } from "../boxSelect";
+import { SelDrag } from "../selDrag";
+import { bodyMasses } from "../tools/inertia";
 import { units, UNITS } from "../tools/units";
 import { csys } from "../tools/csys";
-import { confirmModal, toast, trapFocus } from "../ui";
+import { askFileName, bindTabs, confirmModal, toast, trapFocus } from "../ui";
 import { cmTab, onCmTab, selectCmTab } from "../commandBar";
-import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, cutListRows, isWeldFeature, showCutList, weldChange, weldSymbols, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
+import { rememberWeld } from "../weldments/defaults";
+import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, cornerSpots, cutListRows, locateSpots, isWeldFeature, showCutList, weldChange, weldSymbols, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
 import type { EndCapFeature, GussetFeature } from "../weldments/types";
-import { capDir } from "../weldments/types";
+import { capDir, splitSubs } from "../weldments/types";
+import { showSheetProps } from "../sheetmetal/propsUi";
 import { bindSmPanel, smCheck, smDraft, smPanel, SM_BASES, SM_ICONS, SM_TOOLS, SM_TREE_ICONS } from "../sheetmetal/ui";
-import { isSheet, isSheetBase, type SmFlangeFeature, type SmFormFeature, type SmUnfoldFeature, type SmReliefFeature } from "../sheetmetal/types";
+import { isSheet, isSheetBase, type SmFlangeFeature, type SmFormFeature, type SmUnfoldFeature, type SmReliefFeature, type SmGussetFeature, type SmConvertFeature, type SmInsertFeature, type SmTabSlotFeature } from "../sheetmetal/types";
 import { apply as smApply, applyDir as smApplyDir, bendOfFace, reliefCorners, crossBreakLines, flatBendLines, flatPointOn, panelOfFace, placedState, unfoldBendLines } from "../sheetmetal/sheet";
 import { flatDxf } from "../sheetmetal/flat";
 import { modelItems, type ModelItem } from "../drawing/items";
@@ -67,6 +89,7 @@ import { ModifyBox } from "../modifyBox";
 import { checkSketch, SKETCH_USES, type CheckResult, type SketchUse } from "../sketch/check";
 import { lang, onLangChange, t, withLang } from "../i18n";
 import { gestureSlot, loadGestures, GESTURE_SHOW, type GestureMode } from "../gestures";
+import { isLongPress } from "../longPress";
 import { gestureGuide } from "../gestureUi";
 import { autosaveDelay, getPref, loadPrefs, onPrefs, qualityFactor, stepFor, type Prefs } from "../prefs";
 
@@ -94,8 +117,12 @@ export interface ModelHost {
   selectLeftTab(tab: "features" | "tree"): void;
   /** The edge picked with Smart measure, if any (pre-selection for fillet and chamfer). */
   selectedEdge?(): EdgeInfo | null;
+  /** The measuring tool in use ("select" = Smart measure). */
+  measureTool?(): string;
   /** The part's material changed (or a part opened): preset the mass properties panel. */
-  setMaterial?(m: { name: string; density: number } | undefined): void;
+  setMaterial?(m: MatRef | undefined): void;
+  /** The open part's length unit became the display unit (FR-UI-116). */
+  setUnits?(u: PartDoc["units"]["length"]): void;
   /** Normal to the picked flat face (the view's "8"). */
   normalTo?(normal?: V3): void;
   /** A standard view by name (front, top, iso, ..., "normal", "fit"), for mouse gestures. */
@@ -124,14 +151,28 @@ type Mode =
   | { kind: "cfg" };
 
 /** Which selection box of the feature panel the next click in the view fills. */
-type Focus = "wbodies" | "wbound" | "wfaces" | "wf1" | "wf2" | "tsurf" | "ttool" | "keep" | "fs1" | "fs2" | "fc" | "main" | "bodies" | "base" | "axis" | "upto" | "start" | "origin" | "cx" | "cz" | "seeds" | "psketch" | "hupto" | "upbody" | "mthick" | "dir" | "dir2" | "mplane" | "faces" | "hplane" | "pts" | "nplane" | "sbv";
+/** Features that take a Feature scope (FR-FT-007). */
+type ScopedFeature = ExtrudeFeature | RevolveFeature | SweepFeature | LoftFeature | HoleFeature;
+const isScoped = (f: Feature): f is ScopedFeature => f.type === "extrude" || f.type === "revolve" || f.type === "sweep" || f.type === "loft" || f.type === "hole";
+type Focus = "wbodies" | "wbound" | "wfaces" | "wf1" | "wf2" | "tsurf" | "ttool" | "keep" | "fs1" | "fs2" | "fc" | "main" | "bodies" | "base" | "axis" | "upto" | "start" | "origin" | "cx" | "cz" | "seeds" | "psketch" | "hupto" | "upbody" | "upto2" | "upbody2" | "mthick" | "dir" | "dir2" | "mplane" | "faces" | "hplane" | "pts" | "nplane" | "sbv" | "contours" | "skip" | "pref" | "pref2" | "scope";
 type CopyFeature = MirrorFeature | LinearPatternFeature | CircularPatternFeature | SketchPatternFeature;
-type BodyFeature = IntersectFeature | CombineFeature | IndentFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ScaleFeature;
+type BodyFeature = IntersectFeature | CombineFeature | IndentFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ScaleFeature | FlexFeature;
 /** A fillet or chamfer has what it needs to preview: edges, or the face sets of a face fillet / full round. */
+/** FR-UI-110: the panel fields shown as value callouts on the model, in this order, and the features that have handles instead. */
+const VALUE_KEYS = ["thickness", "depth", "distance", "offset", "angle", "radius", "spacing", "count", "spacing2", "count2", "pitch", "height", "length", "factor"];
+/** Feature values shown with its dimensions on the model (FR-UI-115): key, quantity, English label. */
+const INSTANT_VALUES: [string, "length" | "angle" | "count", string][] = [
+  ["angle", "angle", "Angle"], ["angle2", "angle", "Angle"], ["radius", "length", "Radius"], ["diameter", "length", "Diameter"],
+  ["distance", "length", "Distance"], ["distance2", "length", "Distance"], ["thickness", "length", "Thickness"], ["depth", "length", "Depth"],
+  ["offset", "length", "Offset"], ["spacing", "length", "Spacing"], ["count", "count", "Instances"], ["spacing2", "length", "Spacing"],
+  ["count2", "count", "Instances"], ["pitch", "length", "Pitch"], ["height", "length", "Height"], ["length", "length", "Length"]];
+/** Features with a `flip` the Modify box can reverse. */
+const FLIP_TYPES = new Set(["extrude", "revolve", "plane", "moveface", "dome", "draft", "lpattern", "hole"]);
+const VALUE_CALLOUT_SKIP = new Set(["extrude", "revolve", "fillet", "chamfer", "endcap", "gusset", "smflange", "sketch", "sketch3d"]);
 const roundReady = (f: FilletFeature | ChamferFeature) => f.type === "fillet" && f.kind
   ? !!f.faces1?.length && !!f.faces2?.length && (f.kind !== "full" || !!f.center?.length)
   : f.type === "chamfer" && f.mode === "vertex" ? !!f.vertices?.length : f.edges.length > 0;
-const isBodyOp = (f: Feature): f is BodyFeature => f.type === "intersect" || f.type === "combine" || f.type === "indent" || f.type === "bsplit" || f.type === "delbody" || f.type === "movebody" || f.type === "scale";
+const isBodyOp = (f: Feature): f is BodyFeature => f.type === "intersect" || f.type === "combine" || f.type === "indent" || f.type === "bsplit" || f.type === "delbody" || f.type === "movebody" || f.type === "scale" || f.type === "flex";
 const isCopy = (f: Feature): f is CopyFeature => f.type === "mirror" || f.type === "lpattern" || f.type === "cpattern" || f.type === "spattern";
 /** A sketch's free points (not the ends or centres of its curves): where a sketch-driven pattern puts copies. */
 function freePoints(sk: Feature): { id: string; x: number; y: number }[] {
@@ -156,31 +197,65 @@ function applyHoleSize(f: HoleFeature) {
     f.flat = true;
     return;
   }
+  if (f.kind === "ptap") {
+    // Tapered tap (pipe thread): tap drill, the cone's diameter at the face and the thread length from the table.
+    const ts = taperSize(f.size);
+    if (!ts) return;
+    delete f.cbDia; delete f.cbDepth; delete f.csDia; delete f.csAngle; delete f.cdDia; delete f.cdDepth; delete f.cdAngle; delete f.fit; delete f.screw; delete f.tclass; delete f.threadEnd;
+    if (f.threadMode !== "remove") delete f.threadMode;
+    if (taperStandardOf(ts.size) === "bspt") f.standard = "bspt"; else delete f.standard;
+    f.diameter = { v: ts.tap };
+    f.taperDia = { v: ts.minor };
+    f.major = ts.major;
+    f.pitch = ts.pitch;
+    f.threadDepth = { v: ts.len };
+    if (f.end === "blind" && f.depth.v < ts.len + ts.pitch * 2) f.depth = { v: Math.round((ts.len + ts.tap * 0.5) * 10) / 10 };
+    return;
+  }
+  if (f.kind === "captive") { captiveSize(f); return; }
+  delete f.taperDia;
+  if (f.standard === "bspt") delete f.standard;
   const h = holeSize(f.size);
   if (!h) return;
   const fit = f.fit ?? "normal";
   delete f.cbDia; delete f.cbDepth; delete f.csDia; delete f.csAngle; delete f.threadDepth; delete f.major; delete f.pitch; delete f.cdDia; delete f.cdDepth; delete f.cdAngle;
   if (f.kind === "tapped") {
     f.diameter = { v: h.tap };
-    f.major = parseFloat(h.size.slice(1));
+    f.major = majorOf(h);
     f.pitch = h.pitch;
     f.threadDepth = { v: Math.round(f.major * 2 * 10) / 10 };
     if (f.end === "blind" && f.depth.v < f.threadDepth.v + h.pitch * 2) f.depth = { v: Math.round((f.threadDepth.v + f.major * 0.5) * 10) / 10 };
   } else f.diameter = { v: h.clear[fit] };
-  if (f.kind === "cbore") { f.cbDia = { v: h.cbore[0] }; f.cbDepth = { v: h.cbore[1] }; }
-  if (f.kind === "csink") { f.csDia = { v: h.csink }; f.csAngle = { v: Math.PI / 2 }; }
+  // The head pocket follows the screw type (FR-FT-051); a type without this size falls back to the default one.
+  const pocket = headKind(f) === "csink" ? "csink" : "cbore";
+  if (f.screw && !screwTypes(f.size, pocket).includes(f.screw)) delete f.screw;
+  if (f.screw === defaultScrew(pocket) || (headKind(f) !== "cbore" && headKind(f) !== "csink" && f.kind !== "cdrill")) delete f.screw;
+  const hp = headPocket(f.size, f.screw, pocket) ?? headPocket(f.size, undefined, pocket)!;
+  if (headKind(f) === "cbore") { f.cbDia = { v: hp[0] }; f.cbDepth = { v: hp[1] }; }
+  if (headKind(f) === "csink") { f.csDia = { v: hp[0] }; f.csAngle = { v: (hp[1] * Math.PI) / 180 }; }
   // Counterdrill: as wide as the screw head's counterbore, to the same depth, with a 118° bottom.
-  if (f.kind === "cdrill") { f.cdDia = { v: h.cbore[0] }; f.cdDepth = { v: h.cbore[1] }; f.cdAngle = { v: (118 * Math.PI) / 180 }; }
+  if (f.kind === "cdrill") { f.cdDia = { v: hp[0] }; f.cdDepth = { v: hp[1] }; f.cdAngle = { v: (118 * Math.PI) / 180 }; }
+  if (f.kind !== "tapped") { delete f.tclass; delete f.threadMode; }
+  else if (f.tclass && !threadClasses(f.size).includes(f.tclass)) delete f.tclass;
 }
 
 const DEFAULT_COLOR: V3 = [0.72, 0.75, 0.8];
 const STD_NAMES: Record<"XY" | "XZ" | "YZ", string> = { XY: "Top (XY)", XZ: "Front (XZ)", YZ: "Right (YZ)" };
-const ICONS: Record<string, string> = { sketch3d: "⟁", curve: "〰", sweepsurf: "⤼", helix: "∿", sweep: "⤳", loft: "⏢", rib: "⊿", split: "⊘", import: "⇩", combine: "⊕", indent: "⊔", intersect: "⧇", untrimsurf: "⬚", bsplit: "◨", delbody: "⊖", movebody: "⇲", moveface: "⇧", delface: "⌫", planesurf: "▢", extsurf: "⊓", offsurf: "⫽", knit: "⧉", thicken: "▤", replaceface: "⇄", revsurf: "◠", loftsurf: "⏥", trimsurf: "✂", fillsurf: "◈", extendsurf: "⇱", scale: "⤢", thread: "≋", hole: "◎", sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", axis: "⟋", point: "✳", csys: "⊹", shell: "◫", draft: "◿", mirror: "⧎", lpattern: "⋯", cpattern: "✲", spattern: "⁘", part: "◆", material: "▦", ...SM_TREE_ICONS };
+const ICONS: Record<string, string> = { sketch3d: "⟁", curve: "〰", sweepsurf: "⤼", helix: "∿", sweep: "⤳", loft: "⏢", rib: "⊿", split: "⊘", import: "⇩", combine: "⊕", indent: "⊔", intersect: "⧇", untrimsurf: "⬚", bsplit: "◨", delbody: "⊖", movebody: "⇲", moveface: "⇧", dome: "◓", wrap: "◍", delface: "⌫", planesurf: "▢", extsurf: "⊓", offsurf: "⫽", knit: "⧉", thicken: "▤", replaceface: "⇄", revsurf: "◠", loftsurf: "⏥", trimsurf: "✂", fillsurf: "◈", extendsurf: "⇱", scale: "⤢", flex: "⌒", thread: "≋", hole: "◎", sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", axis: "⟋", point: "✳", csys: "⊹", shell: "◫", draft: "◿", mirror: "⧎", lpattern: "⋯", cpattern: "✲", spattern: "⁘", part: "◆", material: "▦", ...SM_TREE_ICONS };
 const BASES = [...SM_BASES, "Revolve cut", "Sketch", "Extrude", "Cut", "Revolve", "Fillet", "Chamfer", "Plane", "Axis", "Point", "Coordinate system", "Shell", "Draft", "Mirror", "LPattern", "CirPattern", "Hole", "Thread", "Cut-Sweep", "Cut-Loft", "Helix", "Sweep", "Loft", "Rib", "Split Line", "Combine", "Split", "Body-Delete/Keep", "Body-Move/Copy", "Imported", "Scale", "DeleteFace", "MoveFace", "Surface-Plane", "Surface-Extrude", "Surface-Offset", "Surface-Knit", "Thicken", "ReplaceFace", "Surface-Revolve", "Surface-Loft", "Surface-Trim", "Structural Member", "Trim/Extend", "End cap", "Gusset", "Fillet Bead", "SketchPattern", "TablePattern"];
 
 const d3v = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
+/** Selection box colours (FR-SEL-011), in box order: orange, blue, green, purple (3:1 on the model grey and the background). */
+const BOX_COLORS = [0xe8590c, 0x1971c2, 0x2b8a3e, 0x9c36b5];
+/** Eye icons for the tree's show/hide buttons (FR-HIS-013). */
+const EYE = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M1 8s2.6-4.5 7-4.5S15 8 15 8s-2.6 4.5-7 4.5S1 8 1 8z" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="8" r="2.1" fill="currentColor"/></svg>`;
+const EYE_OFF = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M1 8s2.6-4.5 7-4.5S15 8 15 8s-2.6 4.5-7 4.5S1 8 1 8z" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 13.5l11-11" stroke="currentColor" stroke-width="1.3"/></svg>`;
+const eyeButton = (hidden: boolean, name: string) => {
+  const tip = hidden ? t("Show") : t("Hide");
+  return `<button class="icon ft-eye${hidden ? " off" : ""}" tabindex="-1" data-a="eye" title="${esc(tip)}" aria-label="${esc(tip)}: ${esc(name)}" aria-pressed="${!hidden}">${hidden ? EYE_OFF : EYE}</button>`;
+};
 
 /** A default feature name ("Extrude2") in the interface language; renamed features stay as typed. */
 export function featureLabel(name: string) {
@@ -190,7 +265,7 @@ export function featureLabel(name: string) {
 
 /** The sketch editor settings from Preferences (FR-UI-080). */
 function sketchPrefs(ed: SketchEditor, p: Prefs) {
-  ed.modelSnap = p.modelSnap; ed.autoRels = p.autoRels; ed.showRels = p.showRels; ed.slotDims = p.slotDims;
+  ed.modelSnap = p.modelSnap; ed.autoRels = p.autoRels; ed.showRels = p.showRels; ed.slotDims = p.slotDims; ed.addDims = p.addDims;
   ed.setGrid({ show: p.grid, snap: p.gridSnap, spacing: p.gridStep });
 }
 
@@ -201,6 +276,8 @@ function statusText(s: FeatureStatus) {
     if (m) return t("{n} of {m} edges could not be rounded and were skipped.", { n: m[1], m: m[2] });
     const h = s.warning.match(/^Check and heal: (\d+) free edges before, (\d+) after; (valid|not valid) before, (valid|not valid) after; (\d+) solid bodies\.$/);
     if (h) return t("Check and heal: {a} free edges before, {b} after; {v0} before, {v1} after; {n} solid bodies.", { a: h[1], b: h[2], v0: t(h[3]), v1: t(h[4]), n: h[5] });
+    const cv = s.warning.match(/^The cover is ([\d.]+) mm too thin to hide the retracted screw's thread/);
+    if (cv) return t("The cover is {d} mm too thin to hide the retracted screw's thread: add a boss under the hole or use a shorter screw.", { d: cv[1] });
     const c = s.warning.match(/^(\d+) of (\d+) copies fall outside the body and were skipped: (.*)\.$/);
     return c ? t("{n} of {m} copies fall outside the body and were skipped (instances {list}).", { n: c[1], m: c[2], list: c[3] }) : t(s.warning);
   }
@@ -210,7 +287,7 @@ function statusText(s: FeatureStatus) {
 }
 
 /** A part kept in a document tab while another document is shown. */
-export interface PartTab { store: DocStore; fileName: string; handle: FileSystemFileHandle | null; vault: ModelController["vault"]; returnTo: ModelController["returnTo"]; context: PartContext | null }
+export interface PartTab { store: DocStore; fileName: string; handle: FileSystemFileHandle | null; vault: ModelController["vault"]; returnTo: ModelController["returnTo"]; context: PartContext | null; sel: string | null }
 
 /**
  * Hole positions in the panel (FR-FT-052): on a face square to a world axis they show as the world coordinates
@@ -242,6 +319,17 @@ function okHead(title: string, o: { ok?: string; okKey?: string; cancelKey?: str
     + `<button class="pm-cancel" data-a="${o.cancelKey ?? "cancel"}" title="${esc(cancel)}" aria-label="${esc(cancel)}">✕</button></span></div>`;
 }
 
+/**
+ * Recognised sketches come back dimensioned, as FeatureWorks gives them (FR-FT-102): Fully define sketch
+ * (FR-SK-045) adds horizontal/vertical relations, diameters/radii and dimensions from the sketch origin.
+ */
+function defineRecognised(feats: Feature[]) {
+  feats.forEach((f, i) => {
+    if (f.type !== "sketch") return;
+    try { feats[i] = fullyDefineSketch(f, { sizes: true }).sketch; } catch { /* keep it as found */ }
+  });
+}
+
 export class ModelController {
   store: DocStore | null = null;
   private kernel: ModelKernel;
@@ -253,7 +341,7 @@ export class ModelController {
    * The open part came from a vault (FR-PDM-010/081): saving writes the working copy there, only while it is
    * checked out here; the title shows the version and a read-only bar offers Check out.
    */
-  vault: { label: string; readOnly: boolean; save(bytes: Uint8Array): Promise<void>; checkOut(): Promise<void> } | null = null;
+  vault: VaultTie | null = null;
 
   /** Ties (or unties) the open part to a vault file and refreshes the title and read-only bar. */
   setVault(v: ModelController["vault"]) {
@@ -305,7 +393,7 @@ export class ModelController {
 
   private setContext(ctx: PartContext | null) {
     this.context = ctx;
-    for (const o of this.ctxView.children) { const m = o as THREE.Mesh; m.geometry.dispose(); (m.material as THREE.Material).dispose(); }
+    this.ctxView.traverse(o => { const m = o as THREE.Mesh; if (m.geometry) { m.geometry.dispose(); (m.material as THREE.Material).dispose(); } });
     this.ctxView.clear();
     if (!ctx) { this.host.viewer.invalidate(); return; }
     if (!this.ctxView.parent) this.host.viewer.scene.add(this.ctxView);
@@ -323,6 +411,22 @@ export class ModelController {
       m.renderOrder = 2;
       this.ctxView.add(m);
     }
+    // Their edges, so they can be seen and converted into sketches (in a group: `ctxAt` raycasts the meshes only).
+    const lines = new THREE.Group();
+    lines.matrixAutoUpdate = false;
+    lines.matrix.copy(mat);
+    for (const c of ctx.comps) {
+      const seg: number[] = [];
+      for (const ed of c.edges ?? []) for (let k = 3; k < ed.pts.length; k += 3) seg.push(ed.pts[k - 3], ed.pts[k - 2], ed.pts[k - 1], ed.pts[k], ed.pts[k + 1], ed.pts[k + 2]);
+      if (!seg.length) continue;
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.Float32BufferAttribute(seg, 3));
+      const l = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0x5b6670, transparent: true, opacity: 0.7, depthWrite: false }));
+      l.userData.ctxEdges = c.comp;
+      l.renderOrder = 2;
+      lines.add(l);
+    }
+    if (lines.children.length) this.ctxView.add(lines);
     this.ctxView.updateMatrixWorld(true);
     this.host.viewer.invalidate();
   }
@@ -341,6 +445,54 @@ export class ModelController {
     const inv = tfInvert(this.context.tf);
     const ref = { ctx: { comp: c.comp, face: face.name, host: this.context.host, label: c.label, p: tfPoint(inv, face.plane.p), n: tfDir(inv, face.plane.n) } };
     return { ref, dist: hit.distance };
+  }
+
+  /** References of the context edges handed to the sketcher (FR-ASM-030), by the edge objects it gets. */
+  private ctxEdgeRefs = new WeakMap<object, EdgeRef>();
+
+  /**
+   * Edges of context components near the pointer (within `px` screen pixels), nearest first, in this part's
+   * coordinates; each carries its external reference for the sketcher (`edgeRef`). With `face`, every edge of
+   * the context face under the pointer when none is near.
+   */
+  private ctxEdgesAt(x: number, y: number, px = 8, face = false): ModelEdge[] {
+    const ctx = this.context;
+    if (!ctx || !ctx.comps.some(c => c.edges?.length)) return [];
+    const v = this.host.viewer, r = v.renderer.domElement.getBoundingClientRect();
+    const inv = tfInvert(ctx.tf), q = new THREE.Vector3();
+    const scr = (a: number, b: number, c: number): [number, number] => { q.set(...tfPoint(inv, [a, b, c])).project(v.camera); return [r.left + (q.x + 1) / 2 * r.width, r.top + (1 - q.y) / 2 * r.height]; };
+    const segDist = (a: [number, number], b: [number, number]) => {
+      const dx = b[0] - a[0], dy = b[1] - a[1], l2 = dx * dx + dy * dy;
+      const t = l2 ? Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / l2)) : 0;
+      return Math.hypot(a[0] + dx * t - x, a[1] + dy * t - y);
+    };
+    const near: { c: PartContext["comps"][number]; ed: NonNullable<PartContext["comps"][number]["edges"]>[number]; d: number }[] = [];
+    for (const c of ctx.comps) for (const ed of c.edges ?? []) {
+      let best = Infinity, prev: [number, number] | null = null;
+      for (let k = 0; k < ed.pts.length; k += 3) {
+        const s2 = scr(ed.pts[k], ed.pts[k + 1], ed.pts[k + 2]);
+        if (prev) best = Math.min(best, segDist(prev, s2));
+        prev = s2;
+      }
+      if (best <= px) near.push({ c, ed, d: best });
+    }
+    near.sort((a, b) => a.d - b.d);
+    let list = near.map(n => ({ c: n.c, ed: n.ed }));
+    if (!list.length && face) {
+      // Every edge of the context face under the pointer.
+      const rc = new THREE.Raycaster();
+      rc.setFromCamera(new THREE.Vector2(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1), v.camera);
+      const hit = rc.intersectObjects(this.ctxView.children.filter(o => (o as THREE.Mesh).isMesh), false)[0];
+      const c = hit?.object.userData.ctx as PartContext["comps"][number] | undefined;
+      const f = c && c.faces.find(g => hit!.faceIndex! >= g.triStart && hit!.faceIndex! < g.triStart + g.triCount);
+      if (c && f?.name) list = (c.edges ?? []).filter(ed => ed.faces.includes(f.name)).map(ed => ({ c, ed }));
+    }
+    return list.map(({ c, ed }) => {
+      const geo = moveEdgeGeo(ed, p => tfPoint(inv, p), d => tfDir(inv, d));
+      const me: ModelEdge = { ...geo };
+      this.ctxEdgeRefs.set(me, { faces: [ed.faces[0], ed.faces[1]], hint: ed.hint.slice() as V3, ctx: { comp: c.comp, host: ctx.host, label: c.label, geo } });
+      return me;
+    });
   }
 
   /** Back to the assembly with the part as it is now. */
@@ -380,6 +532,9 @@ export class ModelController {
   private decor = new THREE.Group();
   /** Hover link (FR-UI-061): the feature whose faces are lit because the pointer is on its tree row or on one of its faces. */
   private hoverGroup = new THREE.Group();
+  /** The sketch region under the pointer while Selected Contours has focus, and its index (-1 none, -2 = redraw). */
+  private ctHoverGroup = new THREE.Group();
+  private ctHover = -1;
   private hoverId: string | null = null;
   private hoverFrom: "tree" | "view" | null = null;
   private hoverRaf = 0;
@@ -401,8 +556,12 @@ export class ModelController {
     this.kernel = new ModelKernel(occtBase);
     document.getElementById("ft-search")?.addEventListener("input", () => this.renderTree());
     this.kernel.onCrash = () => toast(t("The geometry kernel stopped; it was restarted."), "warn");
+    // A result shown from the disk cache that the kernel's own build did not match (it never should): build again.
+    this.kernel.onStale = () => void this.rebuild();
     host.viewer.scene.add(this.decor);
-    host.viewer.scene.add(this.hoverGroup);
+    host.viewer.scene.add(this.hoverGroup, this.ctHoverGroup);
+    this.ghostGroup.visible = false;
+    host.viewer.scene.add(this.ghostGroup);
     this.bindHover();
     // Preferences (FR-UI-080): an open sketch takes the new sketch settings; quality and verification rebuild.
     onPrefs((p, changed) => {
@@ -412,7 +571,7 @@ export class ModelController {
         sketchPrefs(ed, p);
         const pm = document.getElementById("mc-pm");
         const box = (a: string, v: boolean) => { const i = pm?.querySelector<HTMLInputElement>(`[data-a=${a}]`); if (i) i.checked = v; };
-        box("grid", ed.grid); box("gridsnap", ed.gridSnap); box("autorels", ed.autoRels); box("showrels", ed.showRels); box("slotdims", ed.slotDims); box("modelsnap", ed.modelSnap);
+        box("grid", ed.grid); box("gridsnap", ed.gridSnap); box("autorels", ed.autoRels); box("showrels", ed.showRels); box("slotdims", ed.slotDims); box("adddims", ed.addDims); box("modelsnap", ed.modelSnap);
         const gs = pm?.querySelector<HTMLInputElement>("[data-a=gridstep]");
         if (gs) gs.value = ed.gridSpacing ? String(ed.gridSpacing) : "";
         ed.render();
@@ -447,13 +606,17 @@ export class ModelController {
   // ---------- opening and closing ----------
 
   /** Starts a new, empty part. */
-  newPart() {
+  newPart(base?: string) {
     let n = 1;
     const used = new Set([...journalList().map(j => j.doc.name), ...(this.host.openNames?.() ?? [])]);
-    while (used.has(`Part${n}`)) n++;
-    this.load(newPart(`Part${n}`), "", null);
+    const name = (k: number) => (base ? (k === 1 ? base : `${base} ${k}`) : `Part${k}`);
+    while (used.has(name(n))) n++;
+    const doc = newPart(name(n));
+    this.load(doc, "", null);
     this.warm();
-    toast(t("New part: click Sketch, pick a plane and draw a closed profile, then Extrude."));
+    // The tutorial (FR-HLP-003) names its part and gives the directions itself.
+    if (!base) toast(t("New part: click Sketch, pick a plane and draw a closed profile, then Extrude."));
+    return doc.id;
   }
 
   warm() { this.kernel.warm(); }
@@ -473,7 +636,7 @@ export class ModelController {
     if (!this.store) return null;
     if (this.mode.kind === "sketch") this.ok();
     else if (this.mode.kind !== "none") this.exitMode(false);
-    const tab: PartTab = { store: this.store, fileName: this.fileName, handle: this.handle, vault: this.vault, returnTo: this.returnTo, context: this.context };
+    const tab: PartTab = { store: this.store, fileName: this.fileName, handle: this.handle, vault: this.vault, returnTo: this.returnTo, context: this.context, sel: this.selected };
     this.close();
     return tab;
   }
@@ -487,6 +650,8 @@ export class ModelController {
     this.setContext(tab.context);
     this.renderReturnBar();
     this.host.setDoc(this.docLabel());
+    // The row that was selected when the tab was left (FR-DOC-003).
+    if (tab.sel && (tab.sel.includes(":") || this.store?.feature(tab.sel))) { this.selected = tab.sel; this.renderTree(); this.drawDecor(); }
   }
 
   /** Whether the part has unsaved changes. */
@@ -520,6 +685,9 @@ export class ModelController {
         if (d.freezeAfter && !have.has(d.freezeAfter)) delete d.freezeAfter;
       };
     }
+    // A part saved rolled back reopens rolled back, with a notice (FR-HIS-012); a parked tab keeps its own state.
+    if (!keep) { this.rollNotice = doc.rollback != null; this.rollPrev = undefined; this.closedFeats.clear(); }
+    this.clearGhosts();
     document.getElementById("app")!.classList.add("model");
     // The start card goes at once, not when the kernel's first rebuild comes back (that can take seconds).
     $("#empty").hidden = true;
@@ -527,6 +695,8 @@ export class ModelController {
     $("#t-features").hidden = false;
     this.host.selectLeftTab("features");
     this.host.setMaterial?.(doc.material);
+    // The part's units are the display units while it is open (FR-UI-116).
+    if (doc.units.length !== units.current) this.host.setUnits?.(doc.units.length);
     this.renderAll();
     this.host.opened?.(this.docLabel());
     if (!doc.features.length) {
@@ -552,6 +722,7 @@ export class ModelController {
     // Hide the part bar and the empty-part card, or they show through in the assembly after New assembly.
     $("#mc-bar").hidden = true;
     $("#mc-confirm").hidden = true;
+    document.getElementById("mc-crumbs")?.remove();
     this.syncFlyTree();
     this.renderEmpty();
     this.renderQuick();
@@ -595,6 +766,7 @@ export class ModelController {
     this.renderEmpty();
     this.host.setDoc(this.docLabel());
     if (why === "undo" || why === "redo" || why.startsWith("Properties")) this.host.setMaterial?.(this.doc.material);
+    if (this.doc.units.length !== units.current) this.host.setUnits?.(this.doc.units.length);
     if (why !== "saved" && why !== "open") {
       clearTimeout(this.journalTimer);
       const wait = autosaveDelay();
@@ -625,24 +797,26 @@ export class ModelController {
       const f = structuredClone(m.draft);
       if (m.isNew) d.features.splice(m.index, 0, f); else d.features[m.index] = f;
       // Fillet and chamfer pick edges on the body before them; extrude, revolve and planes preview live.
-      d.rollback = f.type === "fillet" || f.type === "chamfer" ? m.index : m.index + 1;
+      d.rollback = f.type === "fillet" || f.type === "chamfer" || f.type === "smconvert" || f.type === "sminsert" ? m.index : m.index + 1;
     } else if (m.kind === "props") d.color = m.draft.color;
     return d;
   }
 
   private async rebuild() {
     if (!this.store) return;
+    this.noteDraft();
     const doc = this.displayDoc();
     // An empty part has nothing to build: no busy sign while the kernel loads behind it.
     const quiet = !doc.features.length;
     if (!quiet) this.setBusy(1);
     const m = this.mode;
     const d = m.kind === "feature" ? m.draft : null;
-    const previewAt = m.kind === "feature" && d && (((d.type === "fillet" || d.type === "chamfer") && roundReady(d)) || ((d.type === "extrude" || d.type === "revolve" || d.type === "sweep" || d.type === "loft") && d.op === "cut")) ? m.index : undefined;
+    const previewAt = m.kind === "feature" && d && (((d.type === "fillet" || d.type === "chamfer") && roundReady(d)) || ((d.type === "smconvert" || d.type === "sminsert") && !!d.face.name) || ((d.type === "extrude" || d.type === "revolve" || d.type === "sweep" || d.type === "loft") && d.op === "cut")) ? m.index : undefined;
     const r = await this.kernel.rebuild(doc, doc.color ?? DEFAULT_COLOR, qualityFactor(getPref("quality")), previewAt, getPref("verify"));
     if (!quiet) this.setBusy(-1);
     if (!r || !this.store) return;
     this.last = r;
+    this.multi = null;
     this.followEdges(r);
     this.rebuildMs = r.ms.eval + r.ms.mesh;
     this.syncCsys();
@@ -701,7 +875,7 @@ export class ModelController {
   /** Rebuild (Ctrl+B), or force a rebuild of every feature with a fresh kernel (Ctrl+Q). */
   forceRebuild(all: boolean) {
     if (!this.store) return;
-    if (all) this.kernel.stop();
+    if (all) { this.kernel.stop(); this.kernel.bypassCache(); }
     void this.rebuild();
     toast(all ? t("Rebuilt all features") : t("Rebuilt"));
   }
@@ -718,6 +892,47 @@ export class ModelController {
   }
 
   // ---------- commands ----------
+
+  /** The features Ctrl+C took (FR-HIS-014); kept for this window only, like a CAD app's clipboard. */
+  private clip: Clip | null = null;
+
+  /** Ctrl+C on the selected tree row: a sketch, an extrude or revolve (with its sketch) or a hole. */
+  copyFeature(id = this.selected, quiet = false): boolean {
+    const f = id ? this.store?.feature(id) : undefined;
+    if (!this.store || !f || !canCopy(f)) return false;
+    this.clip = copyClip(this.doc, f.id);
+    if (this.clip && !quiet) toast(t("Copied {name}: select a plane or a flat face and press Ctrl+V.", { name: featureLabel(f.name) }));
+    return !!this.clip;
+  }
+
+  /** The plane a paste or a new sketch goes on: the picked flat face, else the selected plane in the tree. */
+  private targetPlane(): PlaneRef | null {
+    const cp = this.ctxPick?.plane;
+    if (cp) return cp;
+    const fid = this.pickedFace();
+    if (fid != null) return this.planeOfFace(fid);
+    if (this.selected?.startsWith("std:")) return { std: this.selected.slice(4) as "XY" };
+    const pl = this.selected ? this.store?.feature(this.selected) : undefined;
+    return pl?.type === "plane" && !pl.suppressed ? { plane: pl.id } : null;
+  }
+
+  /** Ctrl+V: the copied features on the selected plane or face, as one undo step (FR-HIS-014). */
+  pasteFeature(plane: PlaneRef | null = this.targetPlane()) {
+    if (!this.store || !this.clip) return;
+    if (this.isFrozen(this.doc.features[(this.doc.rollback ?? this.doc.features.length) - 1]?.id ?? "")) { this.frozenToast(); return; }
+    if (!plane) { toast(t("Select a plane or a flat face to paste on."), true); return; }
+    const { feats, lost } = pasteClip(this.doc, this.clip, plane);
+    this.store.change("Paste", d => {
+      const at = d.rollback ?? d.features.length;
+      d.features.splice(at, 0, ...feats);
+      if (d.rollback != null) d.rollback += feats.length;
+    });
+    this.selected = feats[feats.length - 1].id;
+    this.ctxPick = null;
+    this.host.clearPick();
+    this.renderTree();
+    toast(lost.length ? t("Pasted. References that could not follow: {list}", { list: lost.map(x => t(x)).join("; ") }) : t("Pasted {name}.", { name: featureLabel(feats[feats.length - 1].name) }), lost.length > 0);
+  }
 
   /** Sketch: on the picked flat face or the selected plane; otherwise asks for one. */
   startSketch() {
@@ -742,7 +957,7 @@ export class ModelController {
     const face = this.host.viewer.parts[0]?.data.faces[faceId];
     if (!name || !face) return null;
     if (face.type !== "plane") { toast(t("Pick a flat face or a plane: this one is curved."), true); return null; }
-    return { face: { name, hint: face.centroid } };
+    return { face: { name, hint: face.centroid }, ax: 1 };
   }
 
   private async createSketch(plane: PlaneRef) {
@@ -778,8 +993,13 @@ export class ModelController {
       modelEdges: e => {
         const hit = this.host.edgeAt(e.clientX, e.clientY);
         const data = this.host.viewer.parts[0]?.data;
-        if (!hit || !data) return null;
-        return hit.edge ? [hit.edge] : hit.faceId != null ? data.edges.filter(x => x.faces.includes(hit.faceId!)) : null;
+        // Edges of other components while editing in context (FR-ASM-030) come after this part's own edge.
+        if (hit?.edge) return [hit.edge];
+        const cx = this.ctxEdgesAt(e.clientX, e.clientY);
+        if (cx.length) return cx.slice(0, 1);
+        if (hit && data && hit.faceId != null) return data.edges.filter(x => x.faces.includes(hit.faceId!));
+        const cf = this.ctxEdgesAt(e.clientX, e.clientY, 8, true);
+        return cf.length ? cf : null;
       },
       modelFace: e => {
         const hit = this.host.faceAt(e.clientX, e.clientY);
@@ -793,7 +1013,7 @@ export class ModelController {
         }
         return { tri, type: face.type, axis: face.axis, center: face.center, radius: face.radius };
       },
-      edgeRef: ed => this.refOfEdge(ed as EdgeInfo),
+      edgeRef: ed => this.ctxEdgeRefs.get(ed) ?? this.refOfEdge(ed as EdgeInfo),
       modelEdge: e => {
         // The edge under the pointer, then every edge that ends or is centred at the snapped point (a vertex
         // snap may name an edge square to the sketch, which projects to nothing).
@@ -805,7 +1025,7 @@ export class ModelController {
           const near = (q?: V3) => !!q && Math.hypot(q[0] - sp.point[0], q[1] - sp.point[1], q[2] - sp.point[2]) < 1e-4 * (1 + Math.hypot(...sp.point));
           for (const x of data.edges) if (!out.includes(x) && (near(x.start) || near(x.end) || near(x.center) || near(x.mid))) out.push(x);
         }
-        return out;
+        return [...out, ...this.ctxEdgesAt(e.clientX, e.clientY)];
       },
       renamedDim: (from, to) => this.store!.change("Rename dimension", d => renameEverywhere(d, from, to)),
     }, sk, this.frameOf(sk));
@@ -821,12 +1041,13 @@ export class ModelController {
     if (m.kind === "sketch" && m.id === id) {
       const f = this.frameOf(sk);
       m.editor.setSketch(this.store!.feature(id) as SketchFeature, f);
-      if (getPref("rotateToSketch")) this.host.viewer.viewFrom(new THREE.Vector3(...f.n));
+      // Normal to the sketch, framing the model and the whole sketch, which may reach past the body (exam #96).
+      if (getPref("rotateToSketch")) this.host.viewer.viewFrom(new THREE.Vector3(...f.n), true, m.editor.sketchBox());
     }
   }
 
   /** Extrude / Cut / Revolve / Fillet / Chamfer: opens the property panel with a draft. */
-  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "spattern" | "tpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "rib" | "split" | "combine" | "indent" | "intersect" | "bsplit" | "delbody" | "movebody" | "scale" | "delface" | "moveface" | "heal" | "smbase" | "smloft" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smrelief" | "smcross" | "smvent" | "smform" | "smunfold" | "smfold" | "smmiter" | "smswept" | CurveTool | SurfTool | WeldTool) {
+  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "spattern" | "tpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "boundary" | "boundarycut" | "rib" | "split" | "combine" | "indent" | "intersect" | "bsplit" | "delbody" | "movebody" | "scale" | "flex" | "delface" | "moveface" | "dome" | "wrap" | "heal" | "smbase" | "smloft" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smrelief" | "smgusset" | "smcross" | "smvent" | "smcut" | "smconvert" | "sminsert" | "smform" | "smunfold" | "smfold" | "smmiter" | "smswept" | "smtabslot" | "smrip" | CurveTool | SurfTool | WeldTool) {
     if (!this.store) return;
     // Starting a feature from inside a sketch exits the sketch and uses it (FR-SK-004).
     const fromSketch = this.mode.kind === "sketch" ? this.mode.id : null;
@@ -834,14 +1055,19 @@ export class ModelController {
     // Pre-selected edges for fillet and chamfer (FR-SEL-006): the edge picked with Smart measure.
     const selEdge = (type === "fillet" || type === "chamfer") ? this.pickedEdge() : null;
     const threadEdge = type === "thread" ? this.pickedEdge() : null;
-    const smEdge = type === "smflange" || type === "smhem" || type === "smcorner" || type === "smmiter" || type === "smswept" ? this.pickedEdge() : null;
+    const smEdge = type === "smflange" || type === "smhem" || type === "smcorner" || type === "smmiter" || type === "smswept" || type === "smtabslot" || type === "smrip" ? this.pickedEdge() : null;
     const pre = selEdge ? this.refOfEdge(selEdge) : null;
+    // Ctrl+click selections (FR-SEL-007): every picked edge for fillet/chamfer, every picked face for face commands.
+    const multi = this.multi;
+    const multiEdges = (type === "fillet" || type === "chamfer") && multi?.edges.length ? multi.edges.map(ed => this.refOfEdge(ed)).filter((r): r is EdgeRef => !!r) : null;
+    const multiFaces = multi?.faces.length ? multi.faces.map(f => this.faceRef(f)).filter((r): r is FaceRef => !!r) : null;
+    this.multi = null;
     const preFace = type === "plane" ? this.pickedFace() : null;
     // Axis and point take a picked edge or face too.
     const refEdge = type === "axis" || type === "point" ? this.pickedEdge() : null;
     const refFace = type === "axis" || type === "point" ? this.pickedFace() : null;
     const csysEdge = type === "csys" ? this.pickedEdge() : null;
-    const shellFace = type === "shell" || type === "hole" || type === "draft" || type === "delface" || type === "moveface" || type === "offsurf" || type === "knit" || type === "thicken" || type === "replaceface" || type === "trimsurf" || type === "fillsurf" || type === "extendsurf" || type === "untrimsurf" ? this.pickedFace() : null;
+    const shellFace = type === "shell" || type === "hole" || type === "draft" || type === "delface" || type === "moveface" || type === "dome" || type === "wrap" || type === "offsurf" || type === "knit" || type === "thicken" || type === "replaceface" || type === "trimsurf" || type === "fillsurf" || type === "extendsurf" || type === "untrimsurf" ? this.pickedFace() : null;
     const weldFace = WELD_TOOL_SET.has(type) ? this.pickedFace() : null;
     const seedSel = this.selected && SEED_TYPES.has(this.store.feature(this.selected)?.type ?? "") ? this.selected : null;
     this.exitMode(false);
@@ -856,6 +1082,14 @@ export class ModelController {
       if (!pick) { toast(t("Draw a sketch first."), true); return; }
       const cut = type === "cut";
       draft = { id, type: "extrude", name: nextName(d, "extrude", cut), sketch: pick.id, op: cut ? "cut" : "boss", end: cut && this.last?.data ? "through" : "blind", depth: { v: 10 } } satisfies ExtrudeFeature;
+      // A cut goes against the sketch normal, which suits a sketch on a face. From a plane beside the part that may
+      // point away from it and cut nothing: when the whole body lies on the normal's side, start reversed (exam #24).
+      if (cut && this.last?.data && this.host.viewer.parts.length) {
+        const fr = this.frameOf(pick), b = this.host.viewer.computeBounds(), tol = 1e-6 * Math.max(1, b.getSize(new THREE.Vector3()).length());
+        let lo = Infinity;
+        for (let i = 0; i < 8; i++) lo = Math.min(lo, ((i & 1 ? b.max.x : b.min.x) - fr.o[0]) * fr.n[0] + ((i & 2 ? b.max.y : b.min.y) - fr.o[1]) * fr.n[1] + ((i & 4 ? b.max.z : b.min.z) - fr.o[2]) * fr.n[2]);
+        if (lo > -tol && !b.isEmpty()) (draft as ExtrudeFeature).flip = true;
+      }
     } else if (type === "revolve") {
       if (!pick) { toast(t("Draw a sketch first."), true); return; }
       const lines = pick.ents.filter(e => e.t === "line");
@@ -897,7 +1131,7 @@ export class ModelController {
     } else if (type === "heal") {
       if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
       draft = { id, type: "heal", name: nextName(d, "heal"), tol: { v: 0.01 } } satisfies HealFeature;
-    } else if (type === "combine" || type === "indent" || type === "intersect" || type === "bsplit" || type === "delbody" || type === "movebody" || type === "scale") {
+    } else if (type === "combine" || type === "indent" || type === "intersect" || type === "bsplit" || type === "delbody" || type === "movebody" || type === "scale" || type === "flex") {
       if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
       const nm = nextName(d, type);
       draft = type === "intersect" ? { id, type, name: nm, bodies: [], exclude: [] } satisfies IntersectFeature
@@ -906,7 +1140,15 @@ export class ModelController {
         : type === "bsplit" ? { id, type, name: nm, bodies: [] } satisfies SplitBodyFeature
         : type === "delbody" ? { id, type, name: nm, bodies: [] } satisfies DeleteBodyFeature
         : type === "scale" ? { id, type, name: nm, bodies: [], about: "centroid", factor: { v: 1 } } satisfies ScaleFeature
+        : type === "flex" ? { id, type, name: nm, bodies: [], kind: "bend", axis: this.longAxis(), angle: { v: Math.PI / 2 } } satisfies FlexFeature
         : { id, type, name: nm, bodies: [], dx: { v: 0 }, dy: { v: 0 }, dz: { v: 0 } } satisfies MoveBodyFeature;
+    } else if (type === "wrap") {
+      if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
+      // The selected closed sketch, else the last unused one; the picked round face (a CAD app: sketch, then Wrap).
+      const sel = this.selected ? sketches.find(s => s.id === this.selected && sketchProfileOk(s)) : undefined;
+      const sk = sel ?? sketches.filter(s => !used.has(s.id) && sketchProfileOk(s)).at(-1);
+      const fr = shellFace != null && this.host.viewer.parts[0]?.data.faces[shellFace]?.type === "cylinder" ? this.faceRef(shellFace) : null;
+      draft = { id, type: "wrap", name: nextName(d, "wrap"), sketch: sk?.id ?? "", kind: "emboss", depth: { v: 1 }, ...(fr ? { face: fr } : {}) } satisfies WrapFeature;
     } else if (type === "split") {
       if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
       const hasCurves = (s: SketchFeature) => s.ents.some(e => !e.cons && e.t !== "point");
@@ -915,13 +1157,13 @@ export class ModelController {
       draft = { id, type: "split", name: nextName(d, "split"), sketch: sk?.id ?? "", faces: [] } satisfies SplitFeature;
     } else if (type === "rib") {
       if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
-      // The selected open sketch, else the last unused one (SolidWorks: sketch the rib line, then Rib).
+      // The selected open sketch, else the last unused one (a CAD app: sketch the rib line, then Rib).
       const sel = this.selected ? sketches.find(s => s.id === this.selected && sketchOpenOk(s)) : undefined;
       const sk = sel ?? sketches.filter(s => !used.has(s.id) && sketchOpenOk(s)).at(-1);
       draft = { id, type: "rib", name: nextName(d, "rib"), sketch: sk?.id ?? "", thickness: { v: 5 }, side: "mid", dir: "parallel" } satisfies RibFeature;
-    } else if (type === "smbase" || type === "smloft" || type === "smflange" || type === "smhem" || type === "smbend" || type === "smjog" || type === "smcorner" || type === "smclosed" || type === "smrelief" || type === "smcross" || type === "smvent" || type === "smform" || type === "smunfold" || type === "smfold" || type === "smmiter" || type === "smswept") {
+    } else if (type === "smbase" || type === "smloft" || type === "smflange" || type === "smhem" || type === "smbend" || type === "smjog" || type === "smcorner" || type === "smclosed" || type === "smrelief" || type === "smgusset" || type === "smcross" || type === "smvent" || type === "smcut" || type === "smconvert" || type === "sminsert" || type === "smform" || type === "smunfold" || type === "smfold" || type === "smmiter" || type === "smswept" || type === "smtabslot" || type === "smrip") {
       // Sheet metal (FR-FT-120): src/sheetmetal/ui.ts makes the draft.
-      const smFace = type === "smclosed" || type === "smcross" || type === "smform" || type === "smunfold" || type === "smfold" ? this.pickedFace() : null;
+      const smFace = type === "smtabslot" || type === "smconvert" || type === "sminsert" || type === "smclosed" || type === "smgusset" || type === "smcross" || type === "smform" || type === "smunfold" || type === "smfold" ? this.pickedFace() : null;
       const sm = smDraft(type, { id, doc: d, sketches, used, selected: this.selected, name: ty => nextName(d, ty), edge: smEdge ? this.refOfEdge(smEdge) : null, face: smFace != null ? this.faceRef(smFace) : null, hasBody: !!this.last?.data, sheet: this.last?.sheet });
       if (typeof sm === "string") { toast(sm, true); return; }
       draft = sm;
@@ -944,7 +1186,7 @@ export class ModelController {
         cf.sketch = sk?.id ?? ""; cf.faces = [];
       }
       draft = cf;
-    } else if (type === "helix" || type === "sweep" || type === "sweepcut" || type === "loft" || type === "loftcut") {
+    } else if (type === "helix" || type === "sweep" || type === "sweepcut" || type === "loft" || type === "loftcut" || type === "boundary" || type === "boundarycut") {
       const p3 = this.p3Draft(type, id, sketches, used);
       if (!p3) return;
       draft = p3;
@@ -959,21 +1201,23 @@ export class ModelController {
       draft = sf;
     } else if (type === "draft") {
       if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
-      // SolidWorks order: the neutral plane first (a picked flat face), then the faces to draft.
+      // CAD app order: the neutral plane first (a picked flat face), then the faces to draft.
       const dr: DraftFeature = { id, type: "draft", name: nextName(d, "draft"), faces: [], angle: { v: Math.PI / 180 } };
       const face = shellFace != null ? this.host.viewer.parts[0]?.data.faces[shellFace] : undefined;
       if (shellFace != null && face?.type === "plane") { const pr = this.planeOfFace(shellFace); if (pr) dr.plane = pr; }
       draft = dr;
-    } else if (type === "shell" || type === "mirror" || type === "lpattern" || type === "cpattern" || type === "spattern" || type === "tpattern" || type === "delface" || type === "moveface") {
+    } else if (type === "shell" || type === "mirror" || type === "lpattern" || type === "cpattern" || type === "spattern" || type === "tpattern" || type === "delface" || type === "moveface" || type === "dome") {
       if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
       const seeds = seedSel ? [seedSel] : [];
-      if (type === "delface" || type === "moveface") {
+      if (type === "delface" || type === "moveface" || type === "dome") {
         const fr = shellFace != null ? this.faceRef(shellFace) : null;
-        draft = type === "delface" ? { id, type, name: nextName(d, type), faces: fr ? [fr] : [] } satisfies DeleteFaceFeature
-          : { id, type, name: nextName(d, type), faces: fr ? [fr] : [], distance: { v: 5 } } satisfies MoveFaceFeature;
+        const fs = multiFaces ?? (fr ? [fr] : []);
+        draft = type === "delface" ? { id, type, name: nextName(d, type), faces: fs } satisfies DeleteFaceFeature
+          : type === "dome" ? { id, type, name: nextName(d, type), faces: fs, distance: { v: 5 } } satisfies DomeFeature
+          : { id, type, name: nextName(d, type), faces: fs, distance: { v: 5 } } satisfies MoveFaceFeature;
       } else if (type === "shell") {
         const fr = shellFace != null ? this.faceRef(shellFace) : null;
-        draft = { id, type: "shell", name: nextName(d, "shell"), thickness: { v: 2 }, faces: fr ? [fr] : [] } satisfies ShellFeature;
+        draft = { id, type: "shell", name: nextName(d, "shell"), thickness: { v: 2 }, faces: multiFaces ?? (fr ? [fr] : []) } satisfies ShellFeature;
       } else if (type === "mirror") draft = { id, type: "mirror", name: nextName(d, "mirror"), features: seeds } satisfies MirrorFeature;
       else if (type === "lpattern") draft = { id, type: "lpattern", name: nextName(d, "lpattern"), features: seeds, spacing: { v: 10 }, count: 3 } satisfies LinearPatternFeature;
       else if (type === "spattern" || type === "tpattern") {
@@ -988,22 +1232,42 @@ export class ModelController {
       draft = type === "fillet"
         ? { id, type: "fillet", name: nextName(d, "fillet"), radius: { v: 2 }, edges: [] } satisfies FilletFeature
         : { id, type: "chamfer", name: nextName(d, "chamfer"), distance: { v: 1 }, edges: [] } satisfies ChamferFeature;
-      if (pre) (draft as FilletFeature).edges = [pre];
+      if (multiEdges?.length) (draft as FilletFeature).edges = multiEdges;
+      else if (pre) (draft as FilletFeature).edges = [pre];
     }
     this.recallOptions(type, draft);
-    // The flat pattern stays last (SolidWorks): new features go in before it.
+    // The flat pattern stays last (a CAD app): new features go in before it.
     const index = d.features[end - 1]?.type === "smflat" ? end - 1 : end;
-    const focus: Focus | undefined = type === "plane" ? "base" : type === "shell" || type === "delface" || type === "moveface" || type === "offsurf" ? "faces" : type === "trimsurf" ? ((draft as TrimSurfFeature).surface ? "ttool" : "tsurf") : type === "draft" ? ((draft as DraftFeature).plane ? "faces" : "nplane") : type === "hole" ? ((draft as HoleFeature).plane ? "pts" : "hplane")
+    const focus: Focus | undefined = type === "plane" ? "base" : type === "shell" || type === "delface" || type === "moveface" || type === "dome" || type === "offsurf" || (type === "wrap" && !(draft as WrapFeature).face) ? "faces" : type === "trimsurf" ? ((draft as TrimSurfFeature).surface ? "ttool" : "tsurf") : type === "draft" ? ((draft as DraftFeature).plane ? "faces" : "nplane") : type === "hole" ? ((draft as HoleFeature).plane ? "pts" : "hplane")
       : type === "mirror" ? ((draft as MirrorFeature).features.length ? "mplane" : "seeds")
       : type === "lpattern" || type === "cpattern" ? ((draft as CopyFeature).features.length ? "dir" : "seeds")
       : type === "spattern" ? ((draft as SketchPatternFeature).sketch || (draft as CopyFeature).features.length ? "seeds" : "psketch")
       : type === "tpattern" ? "seeds"
       : type === "csys" ? ((draft as CsysFeature).origin ? "cz" : "origin")
-      : type === "combine" || type === "indent" ? "main" : type === "bsplit" ? "mplane" : type === "delbody" || type === "movebody" || type === "scale" || type === "intersect" ? "bodies"
+      : type === "combine" || type === "indent" ? "main" : type === "bsplit" ? "mplane" : type === "delbody" || type === "movebody" || type === "scale" || type === "flex" || type === "intersect" ? "bodies"
       : WELD_TOOL_SET.has(type) ? weldFocus(draft) as Focus | undefined : undefined;
-    this.mode = { kind: "feature", draft, index, isNew: true, focus };
+    this.mode = { kind: "feature", draft, index, isNew: true, focus: this.openFocus(draft, focus) };
+    this.flowWas.set(this.mode, this.boxFlow(draft).filter(b => b.filled).map(b => b.focus).join(","));
     this.host.clearPick();
     this.renderAll();
+    if (draft.type === "extrude" || draft.type === "revolve") {
+      // The cursor starts in Depth (or Angle), so a typed size goes there (a CAD app; exam #7).
+      const inp = $("#mc-pm").querySelector<HTMLInputElement>("input[data-num=depth], input[data-num=angle]");
+      if (inp) { inp.focus(); inp.select(); }
+      // Seen straight on, an extrude shows no depth: turn to the three-quarter view on the sketch's side (exam #8).
+      const sk = draft.type === "extrude" ? this.store.feature(draft.sketch) : undefined;
+      if (sk?.type === "sketch" && getPref("rotateToSketch")) {
+        const n = new THREE.Vector3(...this.frameOf(sk).n), v = this.host.viewer, look = v.camera.position.clone().sub(v.controls.target).normalize();
+        if (Math.abs(look.dot(n)) > 0.985) {
+          let best = new THREE.Vector3(1, -1, 0.8), top = -Infinity;
+          for (const z of [0.8, -0.8]) for (const [x, y] of [[1, -1], [-1, -1], [1, 1], [-1, 1]]) {
+            const c = new THREE.Vector3(x, y, z), d = c.clone().normalize().dot(n) * Math.sign(look.dot(n) || 1);
+            if (d > top + 1e-9) { top = d; best = c; }
+          }
+          v.viewFrom(best);
+        }
+      }
+    }
     void this.rebuild();
   }
 
@@ -1012,7 +1276,7 @@ export class ModelController {
    * circle; a sweep along the last helix or a path sketch, with the last unused closed sketch as its
    * profile (else a circular profile); a loft through the last two unused sketches.
    */
-  private p3Draft(type: "helix" | "sweep" | "sweepcut" | "loft" | "loftcut", id: string, sketches: SketchFeature[], used: Set<string>): Feature | null {
+  private p3Draft(type: "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "boundary" | "boundarycut", id: string, sketches: SketchFeature[], used: Set<string>): Feature | null {
     const d = this.doc;
     const end = d.rollback ?? d.features.length;
     const sel = this.selected ? sketches.find(s => s.id === this.selected) : undefined;
@@ -1023,12 +1287,20 @@ export class ModelController {
       if (!sk) { toast(t("Draw a sketch with a circle first: the helix starts on it."), true); return null; }
       return { id, type: "helix", name: nextName(d, "helix"), sketch: sk.id, mode: "pitchRev", pitch: { v: 5 }, revs: { v: 4 }, height: { v: 20 } } satisfies HelixFeature;
     }
-    const cut = type === "sweepcut" || type === "loftcut";
+    const cut = type === "sweepcut" || type === "loftcut" || type === "boundarycut";
     if (cut && !this.last?.data) { toast(t("There is no body yet."), true); return null; }
     const free = sketches.filter(s => !used.has(s.id) && !d.features.some(g => (g.type === "sweep" && (g.profile === s.id || (g.path && "sketch" in g.path && g.path.sketch === s.id))) || (g.type === "loft" && g.profiles.includes(s.id)) || (g.type === "helix" && g.sketch === s.id)));
     if (type === "loft" || type === "loftcut") {
       const profs = free.filter(closed).slice(-2);
       return { id, type: "loft", name: nextName(d, "loft", cut), op: cut ? "cut" : "boss", profiles: profs.map(s => s.id) } satisfies LoftFeature;
+    }
+    if (type === "boundary" || type === "boundarycut") {
+      // Boundary Boss/Cut (FRS 2.3): the last two closed sketches across, the curves made since them along.
+      const profs = free.filter(closed).slice(-2);
+      const at = profs.length ? Math.max(...profs.map(s => d.features.indexOf(s))) : -1;
+      const along = d.features.slice(0, end).filter((g, i) => (g.type === "curve" || g.type === "sketch3d" || (g.type === "sketch" && !closed(g) && !used.has(g.id))) && !g.suppressed && (i > at || profs.length < 2));
+      const guides = along.map(g => g.type === "sketch" ? { sketch: g.id } : { curve: g.id });
+      return { id, type: "loft", name: nextName(d, "loft", cut, cut ? "Cut-Boundary" : "Boundary-Boss"), op: cut ? "cut" : "boss", boundary: true, profiles: profs.map(s => s.id), ...(guides.length ? { guides } : {}) } satisfies LoftFeature;
     }
     // The last helix or 3D curve is the likely path (FR-FT-083/085).
     const helix = d.features.slice(0, end).filter(f => (f.type === "helix" || f.type === "curve" || f.type === "sketch3d") && !f.suppressed).at(-1);
@@ -1047,7 +1319,10 @@ export class ModelController {
     if (this.isFrozen(id)) { this.frozenToast(); return; }
     if (f.type === "sketch") { void this.editSketch(id); return; }
     this.exitMode(false);
-    this.mode = { kind: "feature", draft: structuredClone(f), index: i, isNew: false };
+    const draft = structuredClone(f);
+    this.mode = { kind: "feature", draft, index: i, isNew: false, focus: this.openFocus(draft, undefined) };
+    if (!this.mode.focus) delete this.mode.focus;
+    this.flowWas.set(this.mode, this.boxFlow(draft).filter(b => b.filled).map(b => b.focus).join(","));
     this.host.clearPick();
     this.renderAll();
     void this.rebuild();
@@ -1057,6 +1332,7 @@ export class ModelController {
   ok(repeat = false) {
     const m = this.mode;
     if (m.kind === "sketch") {
+      if (m.editor.sk.editBlock) m.editor.finishEditBlock();
       const sk = this.store!.feature(m.id);
       this.exitMode(true);
       if (sk) this.store!.collapse(this.sketchMark, m.isNew ? `Add ${sk.name}` : `Edit ${sk.name}`);
@@ -1113,12 +1389,18 @@ export class ModelController {
     if (f.type === "extrude" && (f.end === "upto" || f.end === "offset") && !f.upTo) { toast(t("Pick the face or plane the extrusion goes up to."), true); return; }
     if (f.type === "extrude" && f.end === "vertex" && !f.upToVertex) { toast(t("Pick the vertex the extrusion goes up to."), true); return; }
     if (f.type === "extrude" && ((f.start === "surface" && !f.startRef) || (f.start === "vertex" && !f.startVertex))) { toast(t("Pick where the extrusion starts."), true); return; }
-    if (f.type === "plane" && f.mode === "angle" && !f.axis) { toast(t("Pick a straight edge to turn the plane about."), true); return; }
+    if (f.type === "plane" && f.mode === "angle" && !f.axis && !f.about) { toast(t("Pick a straight edge to turn the plane about."), true); return; }
     if (f.type === "axis" && !(f.mode === "edge" ? f.edge : f.mode === "cylinder" ? f.face : (f.planes?.length ?? 0) >= 2)) { toast(t(f.mode === "planes" ? "Pick two planes or flat faces." : f.mode === "edge" ? "Pick a straight edge." : "Pick a cylindrical or conical face."), true); return; }
     if (f.type === "thread" && !f.edge) { toast(t("Pick a round edge of a cylinder."), true); return; }
     if (f.type === "hole" && f.end === "upto" && !f.upTo) { toast(t("Pick the face or plane the hole goes up to."), true); return; }
     if (f.type === "extrude" && f.end === "body" && !f.upToBody) { toast(t("Pick the body the extrusion goes up to."), true); return; }
-    if (f.type === "hole" && (!f.plane || !f.pts.length)) { toast(t(f.plane ? "Click on the face to place the holes." : "Pick a flat face or a plane for the holes."), true); return; }
+    if (f.type === "extrude" && dir2Apart(f)) {
+      const e2 = f.end2;
+      if ((e2 === "upto" || e2 === "offset") && !f.upTo2) { toast(t("Pick the face or plane direction 2 goes up to."), true); return; }
+      if (e2 === "vertex" && !f.upToVertex2) { toast(t("Pick the vertex direction 2 goes up to."), true); return; }
+      if (e2 === "body" && !f.upToBody2) { toast(t("Pick the body direction 2 goes up to."), true); return; }
+    }
+    if (f.type === "hole" && (!f.plane || !holeCount(f))) { toast(t(f.plane ? "Click on the face to place the holes." : "Pick a flat face or a plane for the holes."), true); return; }
     if (f.type === "mirror" && !f.plane) { toast(t("Pick a plane or a flat face to mirror about."), true); return; }
     if ((f.type === "lpattern" || f.type === "cpattern" || f.type === "spattern") && (f.copy ?? "features") === "features" && !f.features.length) { toast(t("Pick the features to copy."), true); return; }
     if (isCopy(f) && f.copy === "faces" && !f.faces?.length) { toast(t("Pick the faces to copy."), true); return; }
@@ -1138,8 +1420,10 @@ export class ModelController {
     if (f.type === "indent" && (!f.main || !f.tools.length)) { toast(t("Pick the target body and at least one tool body."), true); return; }
     if (f.type === "bsplit" && !f.plane) { toast(t("Pick a plane or a flat face to split with."), true); return; }
     if ((f.type === "delbody" || f.type === "movebody") && !f.bodies.length) { toast(t("Pick the bodies."), true); return; }
-    if ((f.type === "delface" || f.type === "moveface") && !f.faces.length) { toast(t("Pick the faces."), true); return; }
+    if ((f.type === "delface" || f.type === "moveface" || f.type === "dome") && !f.faces.length) { toast(t("Pick the faces."), true); return; }
     if (f.type === "split" && !f.sketch) { toast(t("Pick the sketch to project."), true); return; }
+    if (f.type === "wrap" && !f.sketch) { toast(t("Pick a sketch."), true); return; }
+    if (f.type === "wrap" && !f.face) { toast(t("Pick the round face to wrap onto."), true); return; }
     if ((f.type === "planesurf" || f.type === "extsurf") && !f.sketch) { toast(t("Pick a sketch."), true); return; }
     if (f.type === "offsurf" && !f.faces.length) { toast(t("Pick the faces."), true); return; }
     if (f.type === "knit" && f.surfaces.length < (f.solid ? 1 : 2)) { toast(t("Pick two or more surface bodies."), true); return; }
@@ -1161,11 +1445,13 @@ export class ModelController {
       if (m.isNew) d.features.splice(m.index, 0, f); else d.features[m.index] = f;
       if (m.isNew && d.rollback != null) d.rollback++;
     });
-    this.selected = f.id;
+    // After OK nothing stays selected (FR-SEL-012), as in other CAD apps: the new feature's faces are not lit.
+    this.selected = null;
     this.clearDecor();
     this.renderAll();
     // Pushpin or Ctrl+Enter: the same command again once the part has rebuilt (FR-UI-106).
     if (m.isNew && this.activeCmd) this.rememberOptions(this.activeCmd, f);
+    if (m.isNew && isWeldFeature(f)) rememberWeld(f);
     const again = m.isNew && (repeat || this.pinned) ? this.activeCmd : null;
     void Promise.resolve(this.rebuild()).then(() => { if (again && this.mode.kind === "none") this.command(again); });
   }
@@ -1205,9 +1491,11 @@ export class ModelController {
 
   /** Undo/redo step names in the UI language; null when a name has no translation (FR-UND-005). */
   private stepName(label: string): string | null {
+    // A step with its own translation ("Delete sketch items") is used whole, not as Delete + a feature name.
+    const tr = t(label);
+    if (tr !== label) return tr;
     const m = /^(Add|Edit|Delete) (.+)$/.exec(label);
     if (m) return t(`${m[1]} {name}`, { name: featureLabel(m[2]) });
-    const tr = t(label);
     return tr === label && lang() !== "en" ? null : tr;
   }
   private undoTip(redo = false) {
@@ -1244,6 +1532,8 @@ export class ModelController {
       return;
     }
     if (m.kind === "none") return;
+    // Cancel leaves no selection either (FR-SEL-012).
+    if (m.kind === "feature") this.selected = null;
     this.exitMode(false);
     void this.rebuild();
   }
@@ -1292,10 +1582,55 @@ export class ModelController {
   }
   removeFromFolder(id: string) { this.store?.change("Remove from folder", d => { for (const g of d.folders ?? []) g.ids = g.ids.filter(x => x !== id); }); }
   deleteFolder(fid: string) { this.store?.change("Delete folder", d => { d.folders = (d.folders ?? []).filter(g => g.id !== fid); }); }
+  /** The cut list as shown: the last rebuild's items split by sub-weldment (`splitSubs`); tree rows `cut:<i>` index it. */
+  cutItems() { return splitSubs(this.last?.cutList ?? [], this.doc.subWelds); }
+  /** The bodies a cut list row, body row or sub-weldment row stands for (only bodies the cut list knows). */
+  private cutBodies(id: string): string[] {
+    const known = new Set((this.last?.cutList ?? []).flatMap(c => c.bodies));
+    if (id.startsWith("cut:")) return this.cutItems()[+id.slice(4)]?.bodies ?? [];
+    if (id.startsWith("body:")) return known.has(id.slice(5)) ? [id.slice(5)] : [];
+    if (id.startsWith("wsub:")) return this.doc.subWelds?.find(x => x.id === id.slice(5))?.bodies.filter(b => known.has(b)) ?? [];
+    return [];
+  }
+  /**
+   * Moves bodies into a sub-weldment (a CAD app's Create Sub-weldment): `sub` null makes a new one, "" takes them out of
+   * every one. One undo step; sub-weldments left empty by a move stay until dissolved.
+   */
+  moveToSub(bodies: string[], sub: string | null) {
+    if (!this.store || !bodies.length) return;
+    let made = "";
+    this.store.change(sub === null ? "Create sub-weldment" : sub ? "Add to sub-weldment" : "Remove from sub-weldment", d => {
+      const all = (d.subWelds ?? []).map(x => ({ ...x, bodies: x.bodies.filter(b => !bodies.includes(b)) }));
+      if (sub === null) {
+        let n = 1;
+        while (all.some(g => g.name === `Sub-weldment${n}`)) n++;
+        made = uid("sw");
+        all.push({ id: made, name: `Sub-weldment${n}`, bodies: [...bodies] });
+      } else if (sub) all.find(x => x.id === sub)?.bodies.push(...bodies);
+      if (all.length) d.subWelds = all; else delete d.subWelds;
+    });
+    if (made) { this.selected = `wsub:${made}`; this.closedFolders.delete("cutlist"); this.renderTree(); }
+  }
+  /** Dissolve sub-weldment: its items go back to the top of the cut list. */
+  dissolveSub(id: string) {
+    this.store?.change("Dissolve sub-weldment", d => {
+      const all = (d.subWelds ?? []).filter(x => x.id !== id);
+      if (all.length) d.subWelds = all; else delete d.subWelds;
+    });
+  }
   /** Fillet/chamfer picking adds the tangent chain of an edge (FR-SEL-005). */
   private tangentProp = true;
+  /** Hole panel tab (view-only) and the draft it belongs to: a new hole panel opens on Type. */
+  private holeTab: "type" | "pos" = "type";
+  private holeTabOf?: HoleFeature;
   /** Folders collapsed in the tree (view state, not saved). */
   private closedFolders = new Set<string>();
+  /** Features whose absorbed sketch rows are folded away (view state, FR-HIS-013). */
+  private closedFeats = new Set<string>();
+  /** Where the rollback bar was before it last moved (FR-HIS-012 Roll to previous); undefined: not moved yet. */
+  private rollPrev: number | null | undefined = undefined;
+  /** The part opened rolled back: the notice above the tree shows until it is rolled to the end (FR-HIS-012). */
+  private rollNotice = false;
 
   /** Moves the rollback bar: features from `index` on are not evaluated (null: none). */
   setRollback(index: number | null) {
@@ -1305,11 +1640,136 @@ export class ModelController {
     const n = this.doc.features.length;
     const rb = index == null || index >= n ? null : Math.max(0, index);
     if (rb === this.doc.rollback) return;
+    this.rollPrev = this.doc.rollback;
     this.store.change(rb == null ? "Roll to end" : "Roll back", d => { d.rollback = rb; });
+  }
+
+  /** Roll to previous (FR-HIS-012): back to where the bar was before its last move, else one feature up. */
+  rollToPrevious() {
+    if (!this.store) return;
+    const cur = this.doc.rollback ?? this.doc.features.length;
+    const to = this.rollPrev !== undefined && this.rollPrev !== this.doc.rollback ? this.rollPrev : Math.max(this.frozenCount(), cur - 1);
+    this.setRollback(to);
+  }
+
+  /** The notice of a part opened rolled back (AT-UX-14): how many features are not shown, and Roll to end. */
+  private renderRollNotice() {
+    let bar = document.getElementById("mc-rolled");
+    const n = this.store && this.doc.rollback != null ? this.doc.features.length - this.doc.rollback : 0;
+    if (!n) this.rollNotice = false;
+    if (!this.rollNotice) { bar?.remove(); return; }
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.id = "mc-rolled";
+      bar.className = "mc-ro";
+      bar.setAttribute("role", "status");
+      document.getElementById("tab-features")!.prepend(bar);
+    }
+    bar.innerHTML = `<span>${esc(t("The part is rolled back: {n} feature is not shown|The part is rolled back: {n} features are not shown", { n }))}</span><button class="btn small primary" data-a="rollend">${esc(t("Roll to end"))}</button>`;
+    bar.querySelector("button")!.addEventListener("click", () => this.setRollback(null));
+  }
+
+  /** Units from the status bar (FR-UI-116): the part's length unit, as one undo step; values stay in mm. */
+  setDocUnits(u: PartDoc["units"]["length"]) {
+    if (!this.store || this.doc.units.length === u) return;
+    this.store.change(`Units: ${u}`, d => { d.units = { ...d.units, length: u }; });
+  }
+
+  /**
+   * Hide/show under the cursor (FR-UI-105). Hidden bodies are not meshed, so each one keeps the triangles it had
+   * when it was hidden (world coordinates) as a see-through ghost: Shift+Tab shows the one under the cursor, and
+   * holding Ctrl+Shift+Tab draws them all so one can be clicked.
+   */
+  private ghostGroup = new THREE.Group();
+  private pointerIn = false;
+
+  private keepGhost(key: string) {
+    const m = this.featureFaceMesh(`body:${key}`, 0x8c99a6, 0.28);
+    if (!m) return;
+    this.dropGhost(key);
+    m.userData.ghost = key;
+    m.raycast = THREE.Mesh.prototype.raycast;
+    this.ghostGroup.add(m);
+  }
+
+  private dropGhost(key: string) {
+    for (const o of [...this.ghostGroup.children]) if (o.userData.ghost === key) { this.ghostGroup.remove(o); const m = o as THREE.Mesh; m.geometry.dispose(); (m.material as THREE.Material).dispose(); }
+  }
+
+  private clearGhosts() { for (const o of [...this.ghostGroup.children]) this.dropGhost(o.userData.ghost); this.showGhosts(false); }
+
+  private showGhosts(on: boolean) {
+    if (this.ghostGroup.visible === on) return;
+    this.ghostGroup.visible = on;
+    this.host.viewer.invalidate();
+  }
+
+  /** The hidden body whose ghost is under a screen point (only bodies that are still hidden). */
+  private ghostAt(x: number, y: number): string | null {
+    const v = this.host.viewer, r = v.renderer.domElement.getBoundingClientRect();
+    const rc = new THREE.Raycaster();
+    rc.setFromCamera(new THREE.Vector2(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1), v.camera);
+    const live = this.ghostGroup.children.filter(o => this.doc.bodies?.[o.userData.ghost]?.hidden);
+    return (rc.intersectObjects(live, false)[0]?.object.userData.ghost as string | undefined) ?? null;
+  }
+
+  /** The shown body under a screen point. */
+  /** The part's named views (FR-UI-104): stored in the document, out of the undo history. */
+  namedViews(): NamedViews | null {
+    const st = this.store;
+    if (!st) return null;
+    const set = (list: NamedView[]) => { st.amend(d => { if (list.length) d.views = list; else delete d.views; }); this.host.setDoc(this.docLabel()); };
+    return {
+      list: () => [...(st.doc.views ?? [])],
+      save: v => set([...(st.doc.views ?? []).filter(x => x.name !== v.name), v]),
+      remove: name => set((st.doc.views ?? []).filter(x => x.name !== name)),
+    };
+  }
+
+  bodyAt(x: number, y: number): string | null {
+    const hit = this.host.faceAt(x, y), bodies = this.last?.bodies ?? [];
+    if (!hit) return null;
+    let at = 0;
+    for (const b of bodies) { const n = b.faces ?? 0; if (hit.faceId >= at && hit.faceId < at + n) return b.key; at += n; }
+    return null;
+  }
+
+  /** Tab / Shift+Tab / Ctrl+Shift+Tab over the view; false when the keys are not for it. */
+  private tabKey(e: KeyboardEvent): boolean {
+    if (e.key !== "Tab" || e.altKey || this.mode.kind !== "none" || !this.pointerIn || !this.pointer) return false;
+    const tg = e.target as HTMLElement;
+    if (!(tg === document.body || tg === document.documentElement || tg === this.host.viewer.renderer.domElement || tg.id === "viewport")) return false;
+    const { x, y } = this.pointer;
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey) { this.showGhosts(true); return true; }
+    if (e.ctrlKey || e.metaKey) return false;
+    if (e.shiftKey) {
+      const key = this.ghostAt(x, y);
+      if (key) this.setBody(key, { hidden: false });
+      else toast(t("No hidden body under the cursor."));
+      return true;
+    }
+    const key = this.bodyAt(x, y);
+    if (key) this.setBody(key, { hidden: true });
+    return !!key;
+  }
+
+  /** Shift+C (FR-HIS-013): folds every folder and every feature's absorbed sketch. */
+  collapseAll() {
+    if (!this.store) return;
+    for (const g of this.doc.folders ?? []) this.closedFolders.add(g.id);
+    this.closedFolders.add("bodies");
+    this.closedFolders.add("cutlist");
+    for (const f of this.doc.features) if (f.type === "extrude" || f.type === "revolve") this.closedFeats.add(f.id);
+    this.renderTree();
   }
 
   rename(id: string, name: string) {
     if (id.startsWith("body:")) { const key = id.slice(5), v = name.trim(); if (v && v !== this.bodyName(key)) this.setBody(key, { name: v }); return; }
+    if (id.startsWith("wsub:")) {
+      const g = this.doc.subWelds?.find(x => `wsub:${x.id}` === id), v = name.trim();
+      if (g && v && v !== g.name) this.store!.change(`Rename ${g.name}`, d => { d.subWelds!.find(x => x.id === g.id)!.name = v; });
+      return;
+    }
     if (id.startsWith("folder:")) {
       const g = this.doc.folders?.find(x => `folder:${x.id}` === id), v = name.trim();
       if (g && v && v !== g.name) this.store!.change(`Rename ${g.name}`, d => { d.folders!.find(x => x.id === g.id)!.name = v; });
@@ -1325,7 +1785,7 @@ export class ModelController {
     });
   }
 
-  /** Whether a sketch shows in the view: by its own choice, else until a feature uses it (SolidWorks absorbs it). */
+  /** Whether a sketch shows in the view: by its own choice, else until a feature uses it (a CAD app absorbs it). */
   private sketchShown(f: SketchFeature) {
     return !(f.hidden ?? this.doc.features.some(g => absorbs(g, f.id)));
   }
@@ -1361,6 +1821,129 @@ export class ModelController {
     this.exitMode(false);
     this.mode = { kind: "eq", draft: structuredClone(this.doc.vars ?? []) };
     this.renderAll();
+  }
+
+  /** Sketch picture (FRS 2.2): an image into the open sketch, at most 2048 px on its longer side. */
+  insertPicture(file?: File) {
+    const m = this.mode;
+    if (m.kind !== "sketch") return;
+    const run = async (f: File) => {
+      if (f.size > 30 * 1024 * 1024) { toast(t("The image is too large (over 30 MB)."), true); return; }
+      const url = await new Promise<string>((ok, bad) => { const r = new FileReader(); r.onload = () => ok(String(r.result)); r.onerror = () => bad(r.error); r.readAsDataURL(f); });
+      const img = new Image();
+      try { img.src = url; await img.decode(); } catch { toast(t("The image could not be read."), true); return; }
+      let src = url, w = img.naturalWidth, h = img.naturalHeight;
+      const k = Math.min(1, 2048 / Math.max(w, h));
+      if (k < 1 || f.size > 2 * 1024 * 1024) {
+        const c = document.createElement("canvas");
+        c.width = Math.max(1, Math.round(w * k)); c.height = Math.max(1, Math.round(h * k));
+        c.getContext("2d")!.drawImage(img, 0, 0, c.width, c.height);
+        src = f.type === "image/png" || f.type === "image/gif" ? c.toDataURL("image/png") : c.toDataURL("image/jpeg", 0.9);
+      }
+      if (this.mode !== m) return;
+      m.editor.addPicture(src, w, h, f.name);
+      toast(t("Picture added; set its size and place in the panel."), "success");
+      this.renderPanel();
+    };
+    if (file) { void run(file); return; }
+    const inp = document.createElement("input");
+    inp.type = "file";
+    inp.accept = "image/png,image/jpeg,image/gif,image/bmp,image/webp,image/svg+xml";
+    inp.addEventListener("change", () => { const f = inp.files?.[0]; if (f) void run(f); });
+    inp.click();
+  }
+
+  /** Blocks of every sketch of the part, one per name and contents (the open sketch's own first). */
+  private partBlocks(ed: SketchEditor): SketchBlock[] {
+    const out: SketchBlock[] = [], seen = new Set<string>();
+    const sketches = [ed.sk, ...this.doc.features.filter((f): f is SketchFeature => f.type === "sketch" && f.id !== ed.sk.id)];
+    for (const sk of sketches) for (const b of sk.blocks ?? []) {
+      const key = `${b.name}|${JSON.stringify(b.ents)}`;
+      if (!seen.has(key)) { seen.add(key); out.push(b); }
+    }
+    return out;
+  }
+
+  /** Insert Block (FRS 2.2): a menu of the part's blocks and From file…; the copy lands on the sketch origin. */
+  insertBlockMenu(file?: File) {
+    const m = this.mode;
+    if (m.kind !== "sketch") return;
+    const ed = m.editor;
+    const fromFile = (f: File) => void f.text().then(txt => {
+      let def: SketchBlock;
+      try { def = readBlockFile(txt); } catch { toast(t("This is not a MöbiusCAD block file."), true); return; }
+      if (this.mode !== m) return;
+      ed.insertBlock(def);
+      toast(t("Block inserted at the sketch origin; drag it into place."), "success");
+      this.renderPanel();
+    });
+    if (file) { fromFile(file); return; }
+    const pick = () => {
+      const inp = document.createElement("input");
+      inp.type = "file";
+      inp.accept = ".mcadblk,application/json";
+      inp.addEventListener("change", () => { const f = inp.files?.[0]; if (f) fromFile(f); });
+      inp.click();
+    };
+    const defs = this.partBlocks(ed);
+    if (!defs.length) { pick(); return; }
+    const b = document.querySelector<HTMLElement>('#mc-tools [data-c="skinsblk"]')?.getBoundingClientRect();
+    this.showMenu([...defs.map(d => [d.name, () => { ed.insertBlock(d); toast(t("Block inserted at the sketch origin; drag it into place."), "success"); this.renderPanel(); }] as [string, () => void]), null, [t("From file…"), pick]], b ? b.left : innerWidth / 2, b ? b.bottom + 4 : innerHeight / 3, () => {});
+  }
+
+  /** The selected block instance: definition name, place, angle, scale, Explode, Save to a file. */
+  private blockBox(ed: SketchEditor): string {
+    const eb = ed.sk.editBlock;
+    if (eb) {
+      const ins = ed.sk.inserts?.find(i => i.id === eb.insert), def = ins && ed.sk.blocks?.find(b => b.id === ins.block);
+      return `<div class="pm-sec pm-block pm-blkedit" role="status"><h4>${esc(t("Editing block"))} <span translate="no">${esc(def?.name ?? "")}</span></h4>`
+        + `<p class="pm-help muted">${esc(t("Drag, dimension and relate the block's entities, or draw new ones; they join the block. Every copy follows when you finish."))}</p>`
+        + `<div class="pm-rels"><button class="btn small primary" data-blk="finish">${esc(t("Finish editing block"))}</button></div></div>`;
+    }
+    const ins = ed.selectedInsert();
+    const def = ins && ed.sk.blocks?.find(b => b.id === ins.block);
+    if (!ins || !def) return "";
+    const f = UNITS[units.current].f, u: string = units.current;
+    const num = (k: string, label: string, v: number, unit: string) => `<label class="pm-field"><span>${esc(label)}</span><span class="pm-in"><input type="text" inputmode="decimal" class="pm-n" data-blk="${k}" value="${trimNum(v, 4)}" /><span class="muted">${esc(unit)}</span></span></label>`;
+    const count = (ed.sk.inserts ?? []).filter(i => i.block === def.id).length;
+    return `<div class="pm-sec pm-block"><h4>${esc(t("Block"))}</h4>`
+      + `<label class="pm-field"><span>${esc(t("Name"))}</span><input type="text" data-blk="name" value="${esc(def.name)}" spellcheck="false" translate="no" /></label>`
+      + num("x", "X", ins.x * f, u) + num("y", "Y", ins.y * f, u)
+      + num("ang", t("Angle"), ((ins.ang ?? 0) * 180) / Math.PI, "°") + num("scale", t("Scale"), ins.scale ?? 1, "×")
+      + `<p class="pm-help muted">${esc(t("{n} copies of this block in the sketch. Drag the block to move it; relations and dimensions can tie it to other geometry.", { n: count }))}</p>`
+      + `<div class="pm-rels"><button class="btn small" data-blk="edit" title="${esc(t("Change the block's entities in place; every copy follows"))}">${esc(t("Edit block"))}</button><button class="btn small" data-blk="explode" title="${esc(t("Turn this copy back into ordinary sketch entities"))}">${esc(t("Explode block"))}</button><button class="btn small" data-blk="save">${esc(t("Save block…"))}</button></div></div>`;
+  }
+
+  private bindBlockBox(pm: HTMLElement, ed: SketchEditor) {
+    const f = UNITS[units.current].f;
+    pm.querySelectorAll<HTMLInputElement | HTMLButtonElement>("[data-blk]").forEach(el => {
+      const k = el.dataset.blk!;
+      const ins = () => ed.selectedInsert();
+      if (el instanceof HTMLButtonElement) {
+        el.addEventListener("click", () => {
+          if (k === "finish") { ed.finishEditBlock(); this.renderPanel(); return; }
+          const i = ins();
+          if (!i) return;
+          if (k === "edit") { ed.editBlock(i.id); this.renderPanel(); return; }
+          if (k === "explode") { ed.explodeBlock(i.id); this.renderPanel(); return; }
+          const def = ed.sk.blocks?.find(b => b.id === i.block);
+          if (def) downloadBlob(new Blob([blockFile(def)], { type: "application/json" }), `${def.name.replace(/[\\/:*?"<>|]+/g, "_") || "block"}.mcadblk`);
+        });
+        return;
+      }
+      el.addEventListener("change", () => {
+        const i = ins();
+        if (!i) return;
+        if (k === "name") { const v = el.value.trim(); if (v) ed.renameBlock(i.block, v); this.renderPanel(); return; }
+        const v = parseFloat(el.value.replace(",", "."));
+        if (!isFinite(v)) { this.renderPanel(); return; }
+        if (k === "x") ed.setInsert(i.id, { x: v / f });
+        else if (k === "y") ed.setInsert(i.id, { y: v / f });
+        else if (k === "ang") ed.setInsert(i.id, { ang: (v * Math.PI) / 180 });
+        else if (k === "scale") { if (v > 0) ed.setInsert(i.id, { scale: v }); else toast(t("The value must be more than 0."), true); }
+        this.renderPanel();
+      });
+    });
   }
 
   /** DXF into the open sketch (FR-SK-040, AT-P2-5): lines, circles, arcs and polylines, in the file's units. */
@@ -1427,27 +2010,104 @@ export class ModelController {
     if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
     if (this.mode.kind !== "none") this.exitMode(false);
     this.setBusy(1);
-    let rec: { faces: FaceRef[]; holes: RecognizedHole[] };
+    let rec: { faces: FaceRef[]; holes: RecognizedHole[]; cuts?: Feature[] };
     try { rec = await this.kernel.recognizeHoles(this.doc); }
     catch (err) { toast(t("Feature recognition failed: {msg}", { msg: (err as Error).message }), true); return; }
     finally { this.setBusy(-1); }
-    if (!rec.holes.length) { toast(t("No holes were found to recognise.")); return; }
-    // One Hole feature per opening face and size.
-    const groups = new Map<string, { h: RecognizedHole; pts: [number, number][] }>();
-    for (const h of rec.holes) {
-      const k = `${"face" in h.plane ? h.plane.face.name : ""}|${h.diameter.toFixed(6)}|${h.end}|${h.end === "blind" ? h.depth.toFixed(6) : ""}|${h.flat}`;
-      const g = groups.get(k);
-      if (g) g.pts.push(h.pt); else groups.set(k, { h, pts: [h.pt] });
-    }
+    const cuts = rec.cuts ?? [], n = rec.holes.length + cuts.filter(f => f.type === "hole" || f.type === "extrude").length;
+    if (!n) { toast(t("No holes were found to recognise.")); return; }
+    const holes = recognizedHoleFeatures(rec.holes, () => uid("f_"));
     this.store.change("Recognize holes", d => {
       let at = d.rollback ?? d.features.length;
       const add = (f: Feature) => { d.features.splice(at++, 0, f); if (d.rollback != null) d.rollback++; };
       add({ id: uid("f_"), type: "delface", name: nextName(d, "delface"), faces: rec.faces } satisfies DeleteFaceFeature);
-      for (const { h, pts } of groups.values()) {
-        add({ id: uid("f_"), type: "hole", name: nextName(d, "hole"), plane: h.plane, pts, kind: "simple", diameter: { v: h.diameter }, end: h.end, depth: { v: h.end === "blind" ? h.depth : 10 }, ...(h.flat && h.end === "blind" ? { flat: true } : {}) } satisfies HoleFeature);
+      for (const h of holes) add({ ...h, name: nextName(d, "hole") });
+      // Cross holes through a shaft come back as a sketch and a Through All cut.
+      for (const f of cuts) add({ ...f, name: nextName(d, f.type, f.type === "extrude") } as Feature);
+    });
+    toast(t("{n} hole recognised|{n} holes recognised", { n }));
+  }
+
+  /**
+   * Feature recognition (FR-FT-102): the body's fillets and chamfers are removed with Delete Face and
+   * made again as Fillet and Chamfer features, so their sizes can be edited or the features deleted.
+   */
+  async recognizeBlends() {
+    if (!this.store) return;
+    if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
+    if (this.mode.kind !== "none") this.exitMode(false);
+    this.setBusy(1);
+    let feats: Feature[];
+    try { feats = await this.kernel.recognizeBlends(this.doc); }
+    catch (err) { toast(t("Feature recognition failed: {msg}", { msg: (err as Error).message }), true); return; }
+    finally { this.setBusy(-1); }
+    const made = feats.filter(f => f.type === "fillet" || f.type === "chamfer");
+    if (!made.length) { toast(t("No fillets or chamfers were found to recognise.")); return; }
+    this.store.change("Recognize fillets", d => {
+      let at = d.rollback ?? d.features.length;
+      for (const f of feats) {
+        f.name = nextName(d, f.type);
+        d.features.splice(at++, 0, f);
+        if (d.rollback != null) d.rollback++;
       }
     });
-    toast(t("{n} hole recognised|{n} holes recognised", { n: rec.holes.length }));
+    const n = made.reduce((a, f) => a + (f as FilletFeature | ChamferFeature).edges.length, 0);
+    toast(t("Fillets and chamfers recognised: {n} edge|Fillets and chamfers recognised: {n} edges", { n }));
+  }
+
+  /**
+   * Feature recognition (FR-FT-102): prismatic pockets and bosses are removed with Delete Face and made
+   * again as sketches with Extruded Cut / Boss features, so their shape and depth can be edited.
+   */
+  async recognizeExtrudes() {
+    if (!this.store) return;
+    if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
+    if (this.mode.kind !== "none") this.exitMode(false);
+    this.setBusy(1);
+    let feats: Feature[];
+    try { feats = await this.kernel.recognizeExtrudes(this.doc); }
+    catch (err) { toast(t("Feature recognition failed: {msg}", { msg: (err as Error).message }), true); return; }
+    finally { this.setBusy(-1); }
+    const rev = feats.some(f => f.type === "revolve");
+    const n = feats.filter(f => f.type === "extrude" || f.type === "revolve").length;
+    if (!n) { toast(t("No pockets or bosses were found to recognise.")); return; }
+    defineRecognised(feats);
+    this.store.change("Recognize extrudes", d => {
+      let at = d.rollback ?? d.features.length;
+      for (const f of feats) {
+        f.name = nextName(d, f.type);
+        d.features.splice(at++, 0, f);
+        if (d.rollback != null) d.rollback++;
+      }
+    });
+    toast(rev ? t("{n} feature recognised|{n} features recognised", { n }) : t("{n} extrude recognised|{n} extrudes recognised", { n }));
+  }
+
+  /**
+   * Recognize Features (FR-FT-102), like FeatureWorks' automatic mode: the base, pockets and bosses, holes,
+   * fillets and chamfers all at once, added as one undo step in modelling order.
+   */
+  async recognizeFeatures() {
+    if (!this.store) return;
+    if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
+    if (this.mode.kind !== "none") this.exitMode(false);
+    this.setBusy(1);
+    let feats: Feature[];
+    try { feats = await this.kernel.recognizeFeatures(this.doc); }
+    catch (err) { toast(t("Feature recognition failed: {msg}", { msg: (err as Error).message }), true); return; }
+    finally { this.setBusy(-1); }
+    const n = feats.filter(f => f.type !== "sketch" && f.type !== "delface" && f.type !== "delbody" && f.type !== "plane" && f.type !== "axis").length;
+    if (!n) { toast(t("No features were found to recognise.")); return; }
+    defineRecognised(feats);
+    this.store.change("Recognize features", d => {
+      let at = d.rollback ?? d.features.length;
+      for (const f of feats) {
+        f.name = nextName(d, f.type, f.type === "extrude" && f.op === "cut");
+        d.features.splice(at++, 0, f);
+        if (d.rollback != null) d.rollback++;
+      }
+    });
+    toast(t("{n} feature recognised|{n} features recognised", { n }));
   }
 
   /** Configurations (FR-CFG-001/002): list, switch, add, rename, delete. */
@@ -1534,15 +2194,64 @@ export class ModelController {
     this.store!.change(`Delete ${f.name}`, d => { d.features = d.features.filter(x => !gone.has(x.id)); d.rollback = null; });
   }
 
-  undo() { if (this.mode.kind === "feature" || this.mode.kind === "plane") this.exitMode(false); this.store?.undo(); }
-  redo() { if (this.mode.kind === "feature" || this.mode.kind === "plane") this.exitMode(false); this.store?.redo(); }
+  undo() { if (this.mode.kind === "feature") { this.stepDraft(-1); return; } if (this.mode.kind === "plane") this.exitMode(false); this.store?.undo(); }
+  redo() { if (this.mode.kind === "feature") { this.stepDraft(1); return; } if (this.mode.kind === "plane") this.exitMode(false); this.store?.redo(); }
+
+  /**
+   * Undo inside a command (FR-UI-108): every state of the open feature's draft (picks, values, options, the box in
+   * focus) is kept per command; Ctrl+Z / Ctrl+Y step through them without leaving the panel, and the document's own
+   * undo stack is not touched until OK.
+   */
+  private drafts = new WeakMap<object, { snaps: string[]; at: number }>();
+
+  private draftSnap(m: Extract<Mode, { kind: "feature" }>) { return JSON.stringify({ d: m.draft, f: m.focus ?? null }); }
+
+  /** Records the draft's state when it differs from the last one kept. */
+  private noteDraft() {
+    const m = this.mode;
+    if (m.kind !== "feature") return;
+    const snap = this.draftSnap(m), h = this.drafts.get(m);
+    if (!h) { this.drafts.set(m, { snaps: [snap], at: 0 }); return; }
+    if (h.snaps[h.at] === snap) return;
+    h.snaps.length = h.at + 1;
+    h.snaps.push(snap);
+    if (h.snaps.length > 100) h.snaps.shift();
+    h.at = h.snaps.length - 1;
+    this.renderQuick();
+  }
+
+  /** Whether the open command has a step to undo (-1) or redo (+1). */
+  draftCan(dir: -1 | 1) {
+    const m = this.mode, h = m.kind === "feature" ? this.drafts.get(m) : undefined;
+    return !!h && (dir < 0 ? h.at > 0 : h.at < h.snaps.length - 1);
+  }
+
+  private stepDraft(dir: -1 | 1) {
+    const m = this.mode;
+    if (m.kind !== "feature") return;
+    this.noteDraft();
+    const h = this.drafts.get(m)!;
+    const to = h.at + dir;
+    if (to < 0 || to >= h.snaps.length) { toast(dir < 0 ? t("Nothing to undo in this command.") : t("Nothing to redo in this command.")); return; }
+    h.at = to;
+    const { d, f } = JSON.parse(h.snaps[to]) as { d: Feature; f: Focus | null };
+    // The draft object keeps its identity: view state keyed by it (3D sketch tools) stays.
+    const dr = m.draft as unknown as Record<string, unknown>;
+    for (const k of Object.keys(dr)) delete dr[k];
+    Object.assign(dr, d);
+    if (f) m.focus = f; else delete m.focus;
+    this.renderQuick();
+    this.renderPanel();
+    this.drawDecor();
+    void this.rebuild();
+  }
 
   // ---------- files ----------
 
   async save(as = false) {
     if (!this.store) return;
     if (this.mode.kind === "sketch") this.ok();
-    const bytes = await packPart(this.doc, `MöbiusCAD ${this.host.appVersion}`);
+    let bytes = await packPart(this.doc, `MöbiusCAD ${this.host.appVersion}`);
     if (this.vault && !as) {
       // A vaulted part saves into the vault's working copy, and only while checked out here (FR-PDM-081).
       if (this.vault.readOnly) { toast(t("This file is read-only: check it out to save, or use Save as."), true); return; }
@@ -1554,21 +2263,35 @@ export class ModelController {
       return;
     }
     if (as && this.vault) this.setVault(null);
-    const blob = new Blob([bytes], { type: "application/zip" });
+    let blob = new Blob([bytes], { type: "application/zip" });
     const suggested = this.fileName || `${this.doc.name}${PART_EXT}`;
+    // The part takes the name of the file it is saved as, as in other CAD apps (exam #69): its tab, its title and
+    // Insert component's list of open documents then show that name, not "Part1".
+    const named = async (file: string) => {
+      const base = file.replace(/\.[^.]+$/, "");
+      if (!base || base === this.doc.name) return;
+      this.store!.amend(d => { d.name = base; });
+      bytes = await packPart(this.doc, `MöbiusCAD ${this.host.appVersion}`);
+      blob = new Blob([bytes], { type: "application/zip" });
+    };
     const w = window as Window & { showSaveFilePicker?: (o: unknown) => Promise<FileSystemFileHandle> };
     try {
       if (w.showSaveFilePicker) {
         if (!this.handle || as) {
           this.handle = await w.showSaveFilePicker({ suggestedName: suggested, types: [{ description: "MöbiusCAD part", accept: { "application/zip": [PART_EXT] } }] });
         }
+        await named(this.handle.name);
         const out = await (this.handle as FileSystemFileHandle & { createWritable(): Promise<FileSystemWritableFileStream> }).createWritable();
         await out.write(blob);
         await out.close();
         this.fileName = this.handle.name;
       } else {
-        downloadBlob(blob, suggested);
-        this.fileName = suggested;
+        // No save dialog in this browser: ask for the name on the first save and on Save as (exam #9).
+        const file = this.fileName && !as ? this.fileName : await askFileName(suggested, PART_EXT);
+        if (!file) return;
+        await named(file);
+        downloadBlob(blob, file);
+        this.fileName = file;
       }
     } catch (err) {
       if ((err as Error).name === "AbortError") return;
@@ -1580,6 +2303,9 @@ export class ModelController {
     // Automatic snapshot of every save outside a vault (FR-STO-005).
     void snapshotSave(this.doc.id, bytes);
     this.host.saved?.(this.fileName, bytes);
+    // The title and the document tab drop the unsaved mark and show the file's name.
+    this.host.setDoc(this.docLabel());
+    this.renderTree?.();
     toast(t("Saved {name}", { name: this.fileName }), "success");
   }
 
@@ -1601,12 +2327,12 @@ export class ModelController {
     }
     const dlg = d;
     const draw = () => {
-      const refs = ctxRefs(this.doc), all = !!this.doc.ctxLocked;
-      const found = (r: CtxRef) => !!this.context?.comps.some(c => c.comp === r.comp && c.faces.some(f => f.name === r.face));
-      const state = (r: CtxRef) => (all || r.locked ? t("Locked") : !this.context ? t("Out of context") : found(r) ? t("In context") : t("Missing"));
+      const refs = allCtxRefs(this.doc), all = !!this.doc.ctxLocked;
+      const found = (r: AnyCtxRef) => !!this.context?.comps.some(c => c.comp === r.comp && (r.kind === "plane" ? c.faces.some(f => f.name === r.key) : !!c.edges?.some(e => [...e.faces].sort().join("|") === r.key)));
+      const state = (r: AnyCtxRef) => (all || r.locked ? t("Locked") : !this.context ? t("Out of context") : found(r) ? t("In context") : t("Missing"));
       dlg.innerHTML = `<h3 id="mc-xref-title">${esc(t("External References"))}</h3>`
-        + `<p class="muted">${esc(t("Planes this part takes from faces of other components, made while editing it in the context of an assembly. Unlocked ones follow the faces when the assembly changes."))}</p>`
-        + (refs.length ? `<div class="v-scroll"><table class="v-table"><thead><tr><th>${esc(t("Feature"))}</th><th>${esc(t("Referenced face"))}</th><th>${esc(t("State"))}</th><th>${esc(t("Lock"))}</th></tr></thead><tbody>${refs.map(({ f, ref }, i) => `<tr><td translate="no">${esc(featureLabel(f.name))}</td><td translate="no">${esc(ref.label ?? ref.comp)}</td><td>${esc(state(ref))}</td><td><input type="checkbox" data-xlock="${i}"${ref.locked || all ? " checked" : ""}${all ? " disabled" : ""} aria-label="${esc(t("Lock"))} ${esc(featureLabel(f.name))}" /></td></tr>`).join("")}</tbody></table></div>`
+        + `<p class="muted">${esc(t("Planes and converted edges this part takes from other components, made while editing it in the context of an assembly. Unlocked ones follow the components when the assembly changes."))}</p>`
+        + (refs.length ? `<div class="v-scroll"><table class="v-table"><thead><tr><th>${esc(t("Feature"))}</th><th>${esc(t("Component"))}</th><th>${esc(t("Type"))}</th><th>${esc(t("State"))}</th><th>${esc(t("Lock"))}</th></tr></thead><tbody>${refs.map((ref, i) => { const f = ref.f; return  `<tr><td translate="no">${esc(featureLabel(f.name))}</td><td translate="no">${esc(ref.label ?? ref.comp)}</td><td>${esc(ref.kind === "plane" ? t("Sketch plane") : t("Converted edge"))}</td><td>${esc(state(ref))}</td><td><input type="checkbox" data-xlock="${i}"${ref.locked || all ? " checked" : ""}${all ? " disabled" : ""} aria-label="${esc(t("Lock"))} ${esc(featureLabel(f.name))}" /></td></tr>`; }).join("")}</tbody></table></div>`
           : `<p>${esc(t("This part has no external references. Edit it in context from an assembly (right-click a component) and sketch on another component's face to make one."))}</p>`)
         + `<div class="row end">${refs.length ? `<button class="btn" data-a="lockall">${esc(all ? t("Unlock all") : t("Lock all"))}</button>` : ""}<button class="btn" data-a="close">${esc(t("Close"))}</button></div>`;
       dlg.querySelector("[data-a=close]")!.addEventListener("click", () => dlg.close());
@@ -1616,7 +2342,7 @@ export class ModelController {
       });
       dlg.querySelectorAll<HTMLInputElement>("[data-xlock]").forEach(b => b.addEventListener("change", () => {
         const i = +b.dataset.xlock!, on = b.checked;
-        this.store!.change(on ? "Lock external reference" : "Unlock external reference", doc => { const r = ctxRefs(doc)[i]?.ref; if (r) { if (on) r.locked = true; else delete r.locked; } });
+        this.store!.change(on ? "Lock external reference" : "Unlock external reference", doc => { allCtxRefs(doc)[i]?.set(on); });
         draw();
       }));
     };
@@ -1712,7 +2438,23 @@ export class ModelController {
     const vp = this.host.vp;
     const canvas = this.host.viewer.renderer.domElement;
     const onCanvas = (e: Event) => e.target === canvas;
-    // In a sketch the left button draws, so the middle button orbits (as in SolidWorks) and the right one pans.
+    // In a sketch the left button draws, so the middle button orbits (as in other CAD apps) and the right one pans.
+    // Ctrl+drag of a tree row onto a flat face or a plane pastes a copy there (FR-HIS-014), before the file drop.
+    const featDrag = (e: DragEvent) => !!e.dataTransfer?.types.includes(FEATURE_DRAG) && this.mode.kind === "none";
+    vp.addEventListener("dragover", e => {
+      if (!featDrag(e)) return;
+      e.preventDefault(); e.stopPropagation();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = e.ctrlKey ? "copy" : "none";
+    }, true);
+    vp.addEventListener("drop", e => {
+      if (!featDrag(e)) return;
+      e.preventDefault(); e.stopPropagation();
+      const id = e.dataTransfer!.getData(FEATURE_DRAG);
+      if (!e.ctrlKey || !id) return;
+      const plane = this.pickRef(e as unknown as PointerEvent);
+      if (!plane) { toast(t("Select a plane or a flat face to paste on."), true); return; }
+      if (this.copyFeature(id, true)) this.pasteFeature(plane);
+    }, true);
     vp.addEventListener("pointerdown", () => {
       const mb = this.host.viewer.controls.mouseButtons;
       mb.MIDDLE = this.mode.kind === "sketch" || getPref("middle") === "rotate" ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
@@ -1733,7 +2475,22 @@ export class ModelController {
         this.startArrowDrag(e);
       }
     }, true);
-    vp.addEventListener("pointermove", e => { this.pointer = { x: e.clientX, y: e.clientY }; }, true);
+    vp.addEventListener("pointermove", e => { this.pointer = { x: e.clientX, y: e.clientY }; this.pointerIn = e.target === this.host.viewer.renderer.domElement; }, true);
+    vp.addEventListener("pointerleave", () => { this.pointerIn = false; });
+    // Box selection (FR-SEL-008): a left drag from empty space draws a box instead of orbiting.
+    window.addEventListener("pointerdown", e => this.boxDown(e), true);
+    window.addEventListener("pointermove", e => this.boxMove(e), true);
+    window.addEventListener("pointerup", e => this.boxUp(e), true);
+    // Ctrl+Shift+Tab held (FR-UI-105): a click on a see-through hidden body shows it.
+    window.addEventListener("pointerdown", e => {
+      if (!this.ghostGroup.visible || e.button !== 0 || e.target !== this.host.viewer.renderer.domElement) return;
+      const key = this.ghostAt(e.clientX, e.clientY);
+      if (!key) return;
+      e.preventDefault(); e.stopPropagation();
+      this.setBody(key, { hidden: false });
+    }, true);
+    window.addEventListener("keyup", e => { if (this.ghostGroup.visible && (e.key === "Tab" || e.key === "Control" || e.key === "Shift" || e.key === "Meta")) this.showGhosts(false); });
+    window.addEventListener("blur", () => this.showGhosts(false));
     vp.addEventListener("pointermove", e => {
       if (this.arrowDrag) { e.stopPropagation(); this.moveArrow(e); return; }
       if (!onCanvas(e)) return;
@@ -1759,22 +2516,28 @@ export class ModelController {
       if (e.button === 2 && d && Math.hypot(e.clientX - d.x, e.clientY - d.y) <= 4) { if (!this.edgeMenu(e)) this.commandMenu(e); return; }
       if (e.button !== 0 || !d || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
       // Not stopped: the orbit controls must see the button go up. Smart measure skips these clicks (`picking`).
+      if (m.kind === "none" && this.multi && !e.ctrlKey && !e.metaKey) { this.multi = null; this.drawDecor(); }
       if (m.kind === "none") { if (e.detail < 2) this.hideInstant(); const at = { x: e.clientX, y: e.clientY }, alt = e.altKey; setTimeout(() => this.showContextBar(at, alt), 0); }
       else if (m.kind === "plane") this.pickPlane(e);
       else if (m.kind === "feature" && m.draft.type === "fillet" && m.draft.kind) this.pickFaceSet(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "chamfer" && m.draft.mode === "vertex") this.pickChamferVertex(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "fillet" && m.focus === "sbv") this.pickSetback(e, m.draft);
       else if (m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer" || (m.draft.type === "curve" && m.draft.kind === "composite"))) this.pickEdge(e);
-      else if (m.kind === "feature" && (m.draft.type === "smflange" || m.draft.type === "smhem" || m.draft.type === "smcorner" || m.draft.type === "smmiter" || m.draft.type === "smswept")) this.pickSmEdge(e, m.draft);
+      else if (m.kind === "feature" && (m.draft.type === "smflange" || m.draft.type === "smhem" || m.draft.type === "smcorner" || m.draft.type === "smrip" || m.draft.type === "smmiter" || m.draft.type === "smswept")) this.pickSmEdge(e, m.draft);
       else if (m.kind === "feature" && (m.draft.type === "smclosed" || m.draft.type === "smcross")) this.pickSmFace(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "smform") this.placeForm(e, m.draft);
       else if (m.kind === "feature" && (m.draft.type === "smunfold" || m.draft.type === "smfold")) this.pickUnfold(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "smrelief") this.pickRelief(e, m.draft);
+      else if (m.kind === "feature" && m.draft.type === "smgusset") this.pickGusset(e, m.draft);
+      else if (m.kind === "feature" && m.draft.type === "smtabslot") this.pickTabSlot(e, m.draft);
+      else if (m.kind === "feature" && (m.draft.type === "smconvert" || m.draft.type === "sminsert")) this.pickConvert(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "curve" && m.draft.kind === "projected") this.pickCopy(e);
       else if (m.kind === "feature" && m.draft.type === "sketch3d") this.pick3d(e, m.draft);
+      else if (m.kind === "feature" && isScoped(m.draft) && m.focus === "scope") this.pickScope(e, m.draft);
+      else if (m.kind === "feature" && hasContours(m.draft) && m.focus === "contours") this.pickContour(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "plane") {
         if (m.focus === "axis") this.pickAxis(e);
-        else { const r = this.pickRef(e); if (r) { m.draft.base = r; if (m.draft.mode === "angle" && !m.draft.axis) m.focus = "axis"; this.draftChanged(); } }
+        else { const r = this.pickRef(e); if (r) { m.draft.base = r; if (m.draft.mode === "angle" && !m.draft.axis && !m.draft.about) m.focus = "axis"; this.draftChanged(); } }
       } else if (m.kind === "feature" && m.draft.type === "extrude" && this.extrudeTarget(m.draft, m.focus)) {
         const f = m.draft, tg = this.extrudeTarget(f, m.focus)!;
         if (tg === "body") {
@@ -1782,14 +2545,19 @@ export class ModelController {
           const fr = h ? this.faceRef(h.faceId) : null;
           if (!fr || fr.name.startsWith(`${f.id}:`)) { toast(t("Click a face of a body.")); return; }
           f.upToBody = fr;
-        } else if (tg === "start-vertex" || tg === "vertex") {
+        } else if (tg === "body2") {
+          const h = this.host.faceAt(e.clientX, e.clientY);
+          const fr = h ? this.faceRef(h.faceId) : null;
+          if (!fr || fr.name.startsWith(`${f.id}:`)) { toast(t("Click a face of a body.")); return; }
+          f.upToBody2 = fr;
+        } else if (tg === "start-vertex" || tg === "vertex" || tg === "vertex2") {
           const v = this.pickVertex(e);
           if (!v) return;
-          if (tg === "vertex") f.upToVertex = v; else { f.startVertex = v; m.focus = "upto"; }
+          if (tg === "vertex") f.upToVertex = v; else if (tg === "vertex2") f.upToVertex2 = v; else { f.startVertex = v; m.focus = "upto"; }
         } else {
           const r = this.pickRef(e);
           if (!r) return;
-          if (tg === "upto") f.upTo = r; else { f.startRef = r; m.focus = "upto"; }
+          if (tg === "upto") f.upTo = r; else if (tg === "upto2") f.upTo2 = r; else { f.startRef = r; m.focus = "upto"; }
         }
         this.draftChanged();
       } else if (m.kind === "feature" && m.draft.type === "revolve" && m.draft.end === "upto") {
@@ -1798,7 +2566,7 @@ export class ModelController {
       } else if (m.kind === "feature" && (m.draft.type === "axis" || m.draft.type === "point")) this.pickRefGeometry(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "csys") this.pickCsys(e, m.draft);
       else if (m.kind === "feature" && isBodyOp(m.draft)) this.pickBody(e);
-      else if (m.kind === "feature" && (m.draft.type === "shell" || m.draft.type === "draft" || m.draft.type === "split" || m.draft.type === "delface" || m.draft.type === "moveface" || m.draft.type === "offsurf" || isCopy(m.draft))) this.pickCopy(e);
+      else if (m.kind === "feature" && (m.draft.type === "shell" || m.draft.type === "draft" || m.draft.type === "split" || m.draft.type === "delface" || m.draft.type === "moveface" || m.draft.type === "dome" || m.draft.type === "wrap" || m.draft.type === "offsurf" || isCopy(m.draft))) this.pickCopy(e);
       else if (m.kind === "feature" && (m.draft.type === "knit" || m.draft.type === "thicken" || m.draft.type === "replaceface" || m.draft.type === "trimsurf" || m.draft.type === "fillsurf" || m.draft.type === "extendsurf" || m.draft.type === "untrimsurf")) this.pickSurface(e);
       else if (m.kind === "feature" && isWeldFeature(m.draft)) { m.focus = weldPick(this.weldCtx(m.index), e, m.draft, m.focus) as Focus | undefined; this.draftChanged(); }
       else if (m.kind === "feature" && m.draft.type === "hole") this.pickHole(e, m.draft);
@@ -1811,6 +2579,15 @@ export class ModelController {
     vp.addEventListener("contextmenu", e => {
       // The edge helpers open on the button going up without a drag (a right-drag pans).
       const m = this.mode;
+      // A finger held still (FR-UI-091) opens what a right-click without a drag opens; lifting it then picks nothing.
+      if (isLongPress(e) && onCanvas(e) && this.active) {
+        e.preventDefault();
+        this.down = null;
+        if (m.kind === "sketch") this.sketchMenu(e);
+        else if (m.kind === "none") { if (!this.geometryMenu(e)) this.showContextBar({ x: e.clientX, y: e.clientY }, false); }
+        else { this.rightHit = m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer") ? this.host.edgeAt(e.clientX, e.clientY) : null; if (!this.edgeMenu(e)) this.commandMenu(e); }
+        return;
+      }
       if (onCanvas(e) && (m.kind === "sketch" || (m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer")))) e.preventDefault();
     }, true);
     vp.addEventListener("dblclick", e => {
@@ -1835,28 +2612,43 @@ export class ModelController {
 
   private key(e: KeyboardEvent) {
     if (!this.store) return;
+    // An open drawing owns the keyboard: Ctrl+Z there undid the part's last feature (drawings exam #1).
+    if (document.getElementById("app")?.classList.contains("drawing")) return;
     const tg = e.target as HTMLElement;
     if (tg.matches?.("input, select, textarea") || tg.closest?.("dialog")) return;
     const k = e.key.toLowerCase();
     const mod = e.ctrlKey || e.metaKey;
     const stop = () => { e.preventDefault(); e.stopPropagation(); };
+    if (this.tabKey(e)) { stop(); return; }
     if (mod && k === "s") { stop(); void this.save(e.shiftKey); return; }
     if (mod && !e.shiftKey && k === "z") { stop(); this.undo(); return; }
     if (mod && (k === "y" || (e.shiftKey && k === "z"))) { stop(); this.redo(); return; }
     if (mod && k === "b") { stop(); this.forceRebuild(false); return; }
     if (mod && k === "k" && !e.shiftKey && !e.altKey) { stop(); this.commandSearch(); return; }
     if (mod && k === "q") { stop(); this.forceRebuild(true); return; }
+    // Copy and paste features (FR-HIS-014): Ctrl+C on a tree row, Ctrl+V with a plane or flat face selected.
+    if (mod && !e.shiftKey && !e.altKey && k === "c" && this.mode.kind === "none" && !window.getSelection()?.toString()) { if (this.copyFeature()) stop(); return; }
+    if (mod && !e.shiftKey && !e.altKey && k === "v" && this.mode.kind === "none" && this.clip) { stop(); this.pasteFeature(); return; }
     // Ctrl+Enter: OK and the same command again in a feature; leaves a sketch (FR-UI-044, FR-UI-106).
     if (mod && k === "enter" && !e.altKey && (this.mode.kind === "feature" || this.mode.kind === "sketch")) { stop(); this.ok(this.mode.kind === "feature"); return; }
+    // Ctrl+A in a sketch selects every sketch entity, as in other CAD apps, not the page's text (exam #91).
+    if (mod && k === "a" && !e.shiftKey && !e.altKey && this.mode.kind === "sketch") { stop(); this.mode.editor.selectAll(); this.renderPanel(); return; }
     if (mod || e.altKey) return;
     if (e.key === "F5") { stop(); this.toggleFilterBar(); return; }
+    // Esc closes the magnifying glass first (FR-SEL-010; its own listener takes it).
+    if (k === "escape" && document.querySelector(".mag-lens")) return;
+    // Shift+D: breadcrumbs and the confirmation corner to the cursor (FR-SEL-009; D stays the distance tool).
+    if (k === "d" && e.shiftKey && this.pointerIn && (document.getElementById("mc-crumbs") || this.mode.kind !== "none")) { stop(); this.crumbsToCursor(); return; }
+    if (k === "escape" && this.mode.kind === "none") { this.hideCrumbs(); if (this.multi) { this.multi = null; this.drawDecor(); } }
     if (k === "escape" && document.querySelector("#mc-sbar, #mc-cbar")) { stop(); this.hideShortcutBar(); return; }
-    if (k === "escape" && this.instant && this.mode.kind === "none") { stop(); this.hideInstant(); return; }
+    if (k === "escape" && this.instant && this.mode.kind === "none" && !document.querySelector("#mc-menu:not([hidden])")) { stop(); this.hideInstant(); return; }
     const m = this.mode;
-    // S: the shortcut bar at the cursor (SolidWorks habit, FR-UI-023).
+    // S: the shortcut bar at the cursor (CAD app habit, FR-UI-023).
     if (k === "s" && !e.shiftKey && (m.kind === "sketch" || m.kind === "none")) { stop(); this.showShortcutBar(); return; }
     if (m.kind === "sketch") {
       if (k === "enter") { stop(); this.ok(); return; }
+      // K: Add relation (FR-UI-054): the relations valid for the selection in a menu at the cursor.
+      if (k === "k" && !e.shiftKey) { stop(); this.relationMenu(); return; }
       // A tool key also refreshes the panel: the fillet radius, chamfer and offset distances show there.
       if (m.editor.key(e)) { stop(); this.renderBar(); this.renderPanel(); return; }
       // Esc with nothing left to clear leaves an unchanged sketch; a changed one stays open (✕ discards), so a stray Esc
@@ -1879,6 +2671,8 @@ export class ModelController {
     const inTree = !!tg.closest?.("#tab-features");
     // Enter with no command running repeats the last feature command (FR-UI-111).
     if (k === "enter" && !inTree && !e.shiftKey && this.lastCmd && !tg.matches?.("button, a, summary, [role=treeitem], [role=tab], [role=menuitem]")) { stop(); toast(t("Repeat: {name}", { name: this.cmdLabel(this.lastCmd) })); this.command(this.lastCmd); return; }
+    // Shift+C folds the whole tree (FR-HIS-013).
+    if (k === "c" && e.shiftKey && m.kind === "none") { stop(); this.collapseAll(); return; }
     const feat = this.selected ? this.store.feature(this.selected) : undefined;
     if ((k === "delete" || k === "backspace") && feat && inTree) { stop(); void this.deleteFeature(feat.id); }
     else if (k === "f2" && feat) { stop(); this.startRename(feat.id); }
@@ -1948,6 +2742,16 @@ export class ModelController {
   }
 
   /** Angle plane: the straight edge it turns about. */
+  /** Plane at angle (FR-REF-002): turn about a picked edge, a standard axis or a reference axis before the plane. */
+  private aboutField(f: PlaneFeature, focus: boolean): string {
+    const at = this.doc.features.findIndex(x => x.id === f.id);
+    const axes = this.doc.features.slice(0, at < 0 ? this.doc.features.length : at).filter(x => x.type === "axis" && !x.suppressed);
+    const cur = f.about?.std ?? (f.about?.axis ? `axis:${f.about.axis}` : "edge");
+    const opt = (v: string, label: string, raw = false) => `<option value="${esc(v)}"${cur === v ? " selected" : ""}${raw ? ' translate="no"' : ""}>${esc(label)}</option>`;
+    return `<label class="pm-field"><span>${esc(t("Axis"))}</span><select data-k="about">${opt("edge", t("Straight edge"))}${opt("X", t("X axis"))}${opt("Y", t("Y axis"))}${opt("Z", t("Z axis"))}${axes.map(a => opt(`axis:${a.id}`, featureLabel(a.name), true)).join("")}</select></label>`
+      + (f.about ? "" : `<div class="pm-field"><span>${esc(t("Edge"))}</span><button class="pm-box${focus ? " focus" : ""}" data-k="focus-axis">${esc(f.axis ? t("Edge picked") : t("None"))}</button></div>`);
+  }
+
   private pickAxis(e: PointerEvent) {
     const m = this.mode;
     if (m.kind !== "feature" || m.draft.type !== "plane") return;
@@ -1957,6 +2761,7 @@ export class ModelController {
     const ref = this.refOfEdge(hit.edge);
     if (!ref) return;
     m.draft.axis = ref;
+    delete m.draft.about;
     m.focus = "base";
     this.draftChanged();
   }
@@ -1974,17 +2779,211 @@ export class ModelController {
       changed: () => this.draftChanged(),
     };
   }
-  private draftChanged() { this.renderPanel(); this.drawDecor(); void this.rebuild(); }
+  private draftChanged() { this.flowFocus(); this.renderPanel(); this.drawDecor(); void this.rebuild(); }
+
+  /**
+   * FR-UI-109: the required selection boxes of a panel in order. `one` = the box is done with one item (a plane, an
+   * edge, a body), so focus moves on by itself once it has it; boxes that take many items keep focus.
+   */
+  /** The sketch regions an extrude or revolve can pick from (FR-FT-010): the axis of a revolve left out when it is construction. */
+  private contourRegions(f: ContourFeature): { sk: SketchFeature; regions: Region[] } | null {
+    const sk = this.store?.feature(f.sketch);
+    if (sk?.type !== "sketch") return null;
+    const ax = f.type === "revolve" ? sk.ents.find(e => e.id === f.axis) : undefined;
+    return { sk, regions: sketchRegions(sk, new Set(ax?.cons ? [ax.id] : [])) };
+  }
+
+  /** The sketch does not make plain closed regions (crossing or branching curves), but its curves still bound some: the contours must be picked. */
+  private needsContours(f: ContourFeature): boolean {
+    const sk = this.store?.feature(f.sketch);
+    if (sk?.type !== "sketch" || !sketchProfile(sk).error) return false;
+    return !!this.contourRegions(f)?.regions.length;
+  }
+
+  /** The sketch region under a screen point (FR-FT-010), -1 when the pointer is outside every region. */
+  private contourAt(x: number, y: number, f: ContourFeature): { cr: { sk: SketchFeature; regions: Region[] }; i: number } | null {
+    const cr = this.contourRegions(f);
+    if (!cr) return null;
+    const fr = this.frameOf(cr.sk);
+    const v = this.host.viewer, r = v.renderer.domElement.getBoundingClientRect();
+    const rc = new THREE.Raycaster();
+    rc.setFromCamera(new THREE.Vector2(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1), v.camera);
+    const n = new THREE.Vector3(...fr.n), o = new THREE.Vector3(...fr.o);
+    const hit = rc.ray.intersectPlane(new THREE.Plane().setFromNormalAndCoplanarPoint(n, o), new THREE.Vector3());
+    const at: V2 | null = hit ? [hit.clone().sub(o).dot(new THREE.Vector3(...fr.x)), hit.clone().sub(o).dot(new THREE.Vector3(...fr.y))] : null;
+    return { cr, i: at ? regionAt(cr.regions, at) : -1 };
+  }
+
+  /** A click while Selected Contours has focus: the region under the pointer is added, or taken off when picked already. */
+  private pickContour(e: PointerEvent, f: ContourFeature) {
+    const hit = this.contourAt(e.clientX, e.clientY, f);
+    if (!hit) return;
+    const { cr, i } = hit;
+    if (i < 0) { toast(t("Click inside a closed region of the sketch.")); return; }
+    const list = (f.contours ?? []).filter(q => regionAt(cr.regions, q) >= 0);
+    const k = list.findIndex(q => regionAt(cr.regions, q) === i);
+    if (k >= 0) list.splice(k, 1); else list.push(regionPoint(cr.regions[i]));
+    if (list.length) f.contours = list; else delete f.contours;
+    this.ctHover = -2;
+    this.draftChanged();
+  }
+
+  /** Hovering while Selected Contours has focus (a CAD app's region pre-highlight): the region under the pointer lights up blue. */
+  private hoverContour(x: number | null, y = 0) {
+    const m = this.mode;
+    const f = m.kind === "feature" && m.focus === "contours" && hasContours(m.draft) ? m.draft : null;
+    const hit = f && x !== null ? this.contourAt(x, y, f) : null;
+    const i = hit?.i ?? -1;
+    if (i === this.ctHover) return;
+    this.ctHover = i;
+    for (const c of [...this.ctHoverGroup.children]) {
+      this.ctHoverGroup.remove(c);
+      (c as THREE.Mesh).geometry?.dispose();
+      ((c as THREE.Mesh).material as THREE.Material | undefined)?.dispose();
+    }
+    if (hit && i >= 0) {
+      const fr = this.frameOf(hit.cr.sk);
+      const mesh = this.regionMesh(hit.cr.regions[i], fr, 0x339af0, 0.3);
+      mesh.userData.contourHover = i;
+      this.ctHoverGroup.add(mesh);
+    }
+    this.host.viewer.renderer.domElement.style.cursor = f && i >= 0 ? "pointer" : "";
+    this.host.viewer.invalidate();
+  }
+
+  /** A sketch region as a flat see-through fill on its sketch plane, drawn over the model. */
+  private regionMesh(rg: Region, fr: Frame, color: number, opacity: number): THREE.Mesh {
+    const mtx = new THREE.Matrix4().makeBasis(new THREE.Vector3(...fr.x), new THREE.Vector3(...fr.y), new THREE.Vector3(...fr.n)).setPosition(...fr.o);
+    const shape = new THREE.Shape(rg.outer.map(p => new THREE.Vector2(p[0], p[1])));
+    shape.holes = rg.holes.map(h => new THREE.Path(h.map(p => new THREE.Vector2(p[0], p[1]))));
+    const mesh = new THREE.Mesh(new THREE.ShapeGeometry(shape), new THREE.MeshBasicMaterial({ color, transparent: true, opacity, side: THREE.DoubleSide, depthTest: false, depthWrite: false }));
+    mesh.applyMatrix4(mtx);
+    mesh.renderOrder = 2400;
+    return mesh;
+  }
+
+  /** Selected contours on the sketch plane: the sketch while they are picked, and the picked regions filled. */
+  private drawContours(f: ContourFeature, picking: boolean, dark: boolean) {
+    if (!picking && !f.contours?.length) return;
+    const cr = this.contourRegions(f);
+    if (!cr) return;
+    const fr = this.frameOf(cr.sk);
+    if (picking) this.lines(sketchSegments(cr.sk, fr), dark ? 0x8ab4ff : 0x1d4ed8, 1.4);
+    const picked = new Set((f.contours ?? []).map(q => regionAt(cr.regions, q)).filter(i => i >= 0));
+    // A cut's regions take the cut preview's yellow, so a picked region never reads as material being added.
+    const cut = f.type !== "planesurf" && f.op === "cut";
+    const [fill, edge] = cut ? CONTOUR_CUT : CONTOUR_BOSS;
+    const outline: number[] = [];
+    const at = (p: [number, number]) => [0, 1, 2].map(k => fr.o[k] + fr.x[k] * p[0] + fr.y[k] * p[1]);
+    for (const i of picked) {
+      const rg = cr.regions[i];
+      const mesh = this.regionMesh(rg, fr, fill, picking ? 0.35 : 0.18);
+      mesh.userData.contour = i;
+      mesh.userData.contourCut = cut;
+      this.decor.add(mesh);
+      // Its outline in a darker shade, so neighbouring picked regions stay apart.
+      for (const loop of [rg.outer, ...rg.holes]) loop.forEach((p, k) => outline.push(...at(p), ...at(loop[(k + 1) % loop.length])));
+    }
+    this.lines(outline, edge, picking ? 2 : 1.4);
+  }
+
+  /** The Selected Contours box (FR-FT-010): how many regions are picked, or that the whole sketch is used. */
+  /**
+   * Feature scope (FR-FT-007): for a cut, or a boss with Merge result, in a part with several bodies,
+   * All bodies or the bodies picked in the view.
+   */
+  private scopeGroup(f: ScopedFeature, focus: Focus | undefined): string {
+    const op = f.type === "hole" ? "cut" : f.op;
+    if (f.type !== "hole" && f.op === "boss" && f.merge === false) return "";
+    if ((this.last?.bodies?.length ?? 0) < 2 && f.scope === undefined) return "";
+    const all = f.scope === undefined, n = f.scope?.length ?? 0, on = focus === "scope";
+    const label = n ? t("{n} body|{n} bodies", { n }) : t("None");
+    return `<fieldset class="pm-group"><legend>${esc(t("Feature scope"))}</legend>`
+      + `<label class="chk pm-chk"><input type="checkbox" data-k="scopeAll"${all ? " checked" : ""} />${esc(t("All bodies"))}</label>`
+      + (all ? "" : `<div class="pm-field"><span>${esc(t("Bodies"))}</span><button class="pm-box${on ? " focus" : ""}" data-focus="scope" aria-label="${esc(t("Feature scope"))}: ${esc(label)}" translate="no">${esc(label)}</button></div>`
+        + `<p class="pm-help muted">${esc(op === "cut" ? t("Click a face of each body to cut; the other bodies are left as they are.") : t("Click a face of each body to merge with; the other bodies are left as they are."))}</p>`)
+      + `</fieldset>`;
+  }
+
+  /** Feature scope: a click on a body's face adds it, a click on a picked body takes it off. */
+  private pickScope(e: PointerEvent, f: ScopedFeature) {
+    const hit = this.host.faceAt(e.clientX, e.clientY);
+    const fr = hit ? this.faceRef(hit.faceId) : null;
+    if (!fr || fr.name.startsWith(`${f.id}:`)) { toast(t("Click a face of a body.")); return; }
+    const list = f.scope ?? (f.scope = []);
+    const j = list.findIndex(x => x.name === fr.name);
+    if (j >= 0) list.splice(j, 1); else list.push(fr);
+    this.draftChanged();
+  }
+
+  private contoursGroup(f: ContourFeature, focus: Focus | undefined): string {
+    const n = f.contours?.length ?? 0, need = this.needsContours(f), on = focus === "contours";
+    const label = n ? t("{n} region|{n} regions", { n }) : t("All regions");
+    return `<fieldset class="pm-group"><legend>${esc(t("Selected Contours"))}</legend>`
+      + `<div class="pm-field"><span>${esc(t("Contours"))}</span><button class="pm-box${on ? " focus" : ""}" data-focus="contours" data-k="focus-contours" aria-label="${esc(t("Selected Contours"))}: ${esc(label)}">${esc(label)}</button></div>`
+      + (on || need ? `<p class="pm-help muted">${esc(need && !n ? t("The sketch's curves cross or branch: click the regions to use in the view.") : t("Click regions of the sketch in the view; click a picked one again to take it off."))}</p>` : "")
+      + (n ? `<button class="btn small" data-k="clearContours">${esc(t("Use all regions"))}</button>` : "")
+      + `</fieldset>`;
+  }
+
+  private boxFlow(d: Feature): { focus: Focus; filled: boolean; one: boolean }[] {
+    const seeds = (f: CopyFeature) => f.copy === "faces" ? !!f.faces?.length : f.copy === "bodies" ? !!f.bodies?.length : f.features.length > 0;
+    switch (d.type) {
+      case "plane": return [{ focus: "base", filled: !!d.base, one: true }, ...(d.mode === "angle" ? [{ focus: "axis" as Focus, filled: !!(d.axis || d.about), one: true }] : [])];
+      case "draft": return [{ focus: "nplane", filled: !!d.plane, one: true }, { focus: "faces", filled: d.kind === "parting" ? !!d.parting?.length : d.faces.length > 0, one: false }];
+      case "hole": return [{ focus: "hplane", filled: !!d.plane, one: true }, ...(d.end === "upto" || d.end === "offset" ? [{ focus: "hupto" as Focus, filled: !!d.upTo, one: true }] : d.end === "vertex" ? [{ focus: "hupto" as Focus, filled: !!d.upToVertex, one: true }] : []), { focus: "pts", filled: holeCount(d) > 0, one: false }];
+      case "mirror": return [{ focus: "mplane", filled: !!d.plane, one: true }, { focus: "seeds", filled: seeds(d), one: false }];
+      case "lpattern": return [{ focus: "seeds", filled: seeds(d), one: false }, { focus: "dir", filled: !!d.dir, one: true }];
+      case "cpattern": return [{ focus: "seeds", filled: seeds(d), one: false }, { focus: "dir", filled: !!d.axis, one: true }];
+      case "csys": return [{ focus: "origin", filled: !!d.origin, one: true }, { focus: "cz", filled: !!d.z, one: true }, { focus: "cx", filled: !!d.x, one: true }];
+      case "combine": case "indent": return [{ focus: "main", filled: !!d.main, one: true }, { focus: "bodies", filled: d.tools.length > 0, one: false }];
+      case "trimsurf": return [{ focus: "tsurf", filled: !!d.surface, one: true }, { focus: "ttool", filled: !!d.tool, one: true }];
+      case "revolve": case "planesurf": return this.needsContours(d) ? [{ focus: "contours", filled: !!d.contours?.length, one: false }] : [];
+      case "extrude": return [
+        ...(this.needsContours(d) ? [{ focus: "contours" as Focus, filled: !!d.contours?.length, one: false }] : []),
+        ...(d.start === "surface" ? [{ focus: "start" as Focus, filled: !!d.startRef, one: true }] : d.start === "vertex" ? [{ focus: "start" as Focus, filled: !!d.startVertex, one: true }] : []),
+        ...(d.end === "upto" || d.end === "offset" ? [{ focus: "upto" as Focus, filled: !!d.upTo, one: true }] : d.end === "vertex" ? [{ focus: "upto" as Focus, filled: !!d.upToVertex, one: true }] : d.end === "body" ? [{ focus: "upbody" as Focus, filled: !!d.upToBody, one: true }] : []),
+        ...(!dir2Apart(d) ? [] : d.end2 === "upto" || d.end2 === "offset" ? [{ focus: "upto2" as Focus, filled: !!d.upTo2, one: true }] : d.end2 === "vertex" ? [{ focus: "upto2" as Focus, filled: !!d.upToVertex2, one: true }] : d.end2 === "body" ? [{ focus: "upbody2" as Focus, filled: !!d.upToBody2, one: true }] : [])];
+      default: return [];
+    }
+  }
+  private flowWas = new WeakMap<object, string>();
+  /** Moves focus to the next empty required box when the focused one-item box has just been filled (FR-UI-109). */
+  private flowFocus() {
+    const m = this.mode;
+    if (m.kind !== "feature") return;
+    const flow = this.boxFlow(m.draft);
+    const key = flow.filter(b => b.filled).map(b => b.focus).join(",");
+    const was = this.flowWas.get(m);
+    this.flowWas.set(m, key);
+    if (was == null) return;
+    const i = flow.findIndex(b => b.focus === m.focus);
+    if (i < 0 || !flow[i].one || !flow[i].filled || was.split(",").includes(flow[i].focus)) return;
+    const next = flow.slice(i + 1).find(b => !b.filled) ?? flow.slice(0, i).find(b => !b.filled);
+    if (next) m.focus = next.focus;
+  }
+  /** The box a panel opens on (FR-UI-109): the given one, unless it is a filled one-item box, then the first empty required box. */
+  private openFocus(d: Feature, focus: Focus | undefined): Focus | undefined {
+    const flow = this.boxFlow(d);
+    const cur = flow.find(b => b.focus === focus);
+    if (focus && (!cur || !cur.filled || !cur.one)) return focus;
+    return flow.find(b => !b.filled)?.focus ?? focus;
+  }
 
   /** A plane reference in words: "Top (XY)", "Plane1", "Face of Extrude1". */
   /** What a click in the view sets while an extrude is edited (FR-FT-012/013). */
-  private extrudeTarget(f: ExtrudeFeature, focus: Focus | undefined): "start-surface" | "start-vertex" | "upto" | "vertex" | "body" | null {
+  private extrudeTarget(f: ExtrudeFeature, focus: Focus | undefined): "start-surface" | "start-vertex" | "upto" | "vertex" | "body" | "upto2" | "vertex2" | "body2" | null {
+    const e2 = dir2Apart(f) ? f.end2 : undefined;
+    const t2 = e2 === "upto" || e2 === "offset" ? "upto2" : e2 === "vertex" ? "vertex2" : e2 === "body" ? "body2" : null;
+    const filled2 = t2 === "upto2" ? !!f.upTo2 : t2 === "vertex2" ? !!f.upToVertex2 : !!f.upToBody2;
+    if (t2 && (focus === "upto2" || focus === "upbody2")) return t2;
     if (f.start === "surface" && (focus === "start" || !f.startRef)) return "start-surface";
     if (f.start === "vertex" && (focus === "start" || !f.startVertex)) return "start-vertex";
-    if (f.end === "upto" || f.end === "offset") return "upto";
-    if (f.end === "vertex") return "vertex";
-    if (f.end === "body") return "body";
-    return null;
+    const t1 = f.end === "upto" || f.end === "offset" ? "upto" : f.end === "vertex" ? "vertex" : f.end === "body" ? "body" : null;
+    const filled1 = t1 === "upto" ? !!f.upTo : t1 === "vertex" ? !!f.upToVertex : !!f.upToBody;
+    // Direction 1's box unless it is filled and Direction 2 still waits for its reference.
+    if (t1 && !(t2 && filled1 && !filled2)) return t1;
+    return t2;
   }
 
   /** A vertex under the pointer: the end of the edge under it nearer the click on screen. */
@@ -2084,6 +3083,60 @@ export class ModelController {
     this.draftChanged();
   }
 
+  /** Sheet metal gusset: a click on a bend puts the rib there (centred when the panel says so). */
+  private pickGusset(e: PointerEvent, f: SmGussetFeature) {
+    const hit = this.host.faceAt(e.clientX, e.clientY);
+    const fr = hit ? this.faceRef(hit.faceId) : null;
+    const st = this.last?.sheet;
+    const b = fr && st ? bendOfFace(st, fr.name) : undefined;
+    if (!b || !hit) { toast(t("Pick a bend for the gusset.")); return; }
+    if (f.bend !== b.id) f.bend = b.id;
+    if (f.at) {
+      const l = Math.hypot(b.a1[0] - b.a0[0], b.a1[1] - b.a0[1]), e2 = [(b.a1[0] - b.a0[0]) / l, (b.a1[1] - b.a0[1]) / l];
+      const p0 = smApply(b.M, [b.a0[0], b.a0[1], 0]), d = smApplyDir(b.M, [e2[0], e2[1], 0]);
+      const at = (hit.point[0] - p0[0]) * d[0] + (hit.point[1] - p0[1]) * d[1] + (hit.point[2] - p0[2]) * d[2];
+      const w = f.width.v / 2;
+      f.at = { v: Math.round(Math.min(Math.max(at, w), l - w) * 100) / 100 };
+    }
+    this.draftChanged();
+  }
+
+  /** Tab and slot: a click on a straight outline edge of a flat sheet face sets the tab edge; a click on a face sets the slot face. */
+  private pickTabSlot(e: PointerEvent, f: SmTabSlotFeature) {
+    const ed = this.host.edgeAt(e.clientX, e.clientY)?.edge;
+    const ref = ed && ed.type === "line" ? this.edgeRefs([ed])[0] : undefined;
+    if (ref && !ref.faces.some(n => n.startsWith(`${f.id}:`)) && ref.faces.some(n => /:p\d+:(top|bot)$/.test(n)) && ref.faces.some(n => /:p\d+:(?!top$|bot$)[^:]+$/.test(n))) {
+      f.edge = ref;
+      this.draftChanged();
+      return;
+    }
+    const hit = this.host.faceAt(e.clientX, e.clientY);
+    const fr = hit ? this.faceRef(hit.faceId) : null;
+    if (!fr || fr.name.startsWith(`${f.id}:`)) { toast(f.edge ? t("Pick the face the tabs go through.") : t("Pick a straight edge of the sheet for the tabs.")); return; }
+    f.face = fr;
+    this.draftChanged();
+  }
+
+  /** Convert to Sheet Metal: the first click picks the fixed face; then clicks on its straight edges toggle bend edges
+   * (a click on another face makes that the fixed face). Picks are on the solid before the feature. */
+  private pickConvert(e: PointerEvent, f: SmConvertFeature | SmInsertFeature) {
+    const ed = f.type === "smconvert" && f.face.name ? this.host.edgeAt(e.clientX, e.clientY)?.edge : undefined;
+    const ref = ed && ed.type === "line" ? this.edgeRefs([ed])[0] : undefined;
+    // An edge of the fixed face, or a wall's far edge (it shares a face with a picked edge): a further wall.
+    if (f.type === "smconvert" && ref && (ref.faces.includes(f.face.name) || f.edges.some(x => x.faces.some(n => n !== f.face.name && ref.faces.includes(n))))) {
+      const key = (r: EdgeRef) => [...r.faces].sort().join("|");
+      const i = f.edges.findIndex(x => key(x) === key(ref));
+      if (i >= 0) f.edges.splice(i, 1); else f.edges.push(ref);
+      this.draftChanged();
+      return;
+    }
+    const hit = this.host.faceAt(e.clientX, e.clientY);
+    const fr = hit ? this.faceRef(hit.faceId) : null;
+    if (!fr || fr.name.startsWith(`${f.id}:`)) { toast(f.face.name && f.type === "smconvert" ? t("Pick a straight edge of the fixed face, or another flat face to stay fixed.") : t("Pick a flat face of the solid to stay fixed.")); return; }
+    if (fr.name !== f.face.name) { f.face = fr; if (f.type === "smconvert") f.edges = []; }
+    this.draftChanged();
+  }
+
   /** Corner relief: a click near a two-bend corner toggles it (none picked = every corner). */
   private pickRelief(e: PointerEvent, f: SmReliefFeature) {
     const hit = this.host.faceAt(e.clientX, e.clientY);
@@ -2120,7 +3173,7 @@ export class ModelController {
   private pickSmEdge(e: PointerEvent, f: { id: string; type: string; edges: EdgeRef[] }) {
     // Break corner takes the short edges across the thickness, between two side faces.
     const corner = f.type === "smcorner";
-    const msg = corner ? t("Pick an edge across the thickness at an outside corner.") : t("Pick a straight edge of the sheet.");
+    const msg = corner ? t("Pick an edge across the thickness at an outside corner.") : f.type === "smrip" ? t("Pick a straight edge where two flat walls meet.") : t("Pick a straight edge of the sheet.");
     const hit = this.host.edgeAt(e.clientX, e.clientY);
     if (!hit?.edge || hit.edge.type !== "line") { toast(msg); return; }
     const ref = this.edgeRefs([hit.edge])[0];
@@ -2141,6 +3194,12 @@ export class ModelController {
     const fp = d.features.find(f => f.type === "smflat");
     if (fp) this.store.change(fp.suppressed ? "Flatten" : "Fold", dd => { const x = dd.features.find(g => g.id === fp.id)!; if (x.suppressed) delete x.suppressed; else x.suppressed = true; });
     else this.store.change("Flatten", dd => { dd.features.push({ id: uid("f_"), type: "smflat", name: nextName(dd, "smflat") }); if (dd.rollback != null) dd.rollback = null; });
+  }
+
+  /** Sheet metal cut-list properties (FR-FT-120): bounding box, thickness, cutting lengths, bends, mass. */
+  private sheetProps() {
+    const vol = this.last?.props?.volume, rho = this.doc.material?.density;
+    showSheetProps(this.last?.sheet, this.doc.name, vol != null && rho != null ? vol * rho / 1000 : undefined);
   }
 
   /** The flat pattern with its bend lines as DXF (R12, mm). */
@@ -2170,7 +3229,7 @@ export class ModelController {
     const data = this.host.viewer.parts[0]?.data;
     if (!hit || !data) return;
     let edges = hit.edge ? [hit.edge] : data.edges.filter(x => x.faces.includes(hit.faceId!));
-    // Tangent propagation (FR-SEL-005, on by default as in SolidWorks): an edge brings its smooth chain.
+    // Tangent propagation (FR-SEL-005, on by default as in other CAD apps): an edge brings its smooth chain.
     if (hit.edge && this.tangentProp) edges = tangentChain(data.edges, hit.edge);
     this.toggleEdges(edges);
   }
@@ -2213,10 +3272,12 @@ export class ModelController {
   /** Commands Ctrl+K can run now: [id, label in the UI language, English label]. */
   private searchable(): [string, string, string][] {
     const m = this.mode;
-    if (m.kind === "sketch") return [["exit", t("Exit sketch"), "Exit sketch"]];
-    if (m.kind !== "none") return [];
-    const fixed: [string, string][] = [["sketch", "Sketch"], ["extrude", "Extrude"], ["cut", "Cut"], ["revolve", "Revolve"], ["fillet", "Fillet"], ["chamfer", "Chamfer"], ["hole", "Hole"], ["thread", "Thread"], ["shell", "Shell"], ["draft", "Draft"], ["mirror", "Mirror"], ["lpattern", "Linear pattern"], ["cpattern", "Circular pattern"], ["plane", "Plane"], ["axis", "Axis"], ["point", "Point"], ["csys", "Coordinate system"], ["import", "Insert body"], ["save", "Save"], ["step", "Export STEP"], ["filter", "Selection filter"], ["undo", "Undo"], ["redo", "Redo"]];
-    const en = withLang("en", () => [...P3_TOOLS(), ...SURF_TOOLS(), ...SM_TOOLS()].map(x => [x[0], x[1]] as [string, string]));
+    if (m.kind !== "none" && m.kind !== "sketch") return [];
+    let fixed: [string, string][] = [["sketch", "Sketch"], ["extrude", "Extrude"], ["cut", "Cut"], ["revolve", "Revolve"], ["fillet", "Fillet"], ["chamfer", "Chamfer"], ["hole", "Hole"], ["thread", "Thread"], ["shell", "Shell"], ["draft", "Draft"], ["mirror", "Mirror"], ["lpattern", "Linear pattern"], ["cpattern", "Circular pattern"], ["plane", "Plane"], ["axis", "Axis"], ["point", "Point"], ["csys", "Coordinate system"], ["import", "Insert body"], ["save", "Save"], ["step", "Export STEP"], ["filter", "Selection filter"], ["undo", "Undo"], ["redo", "Redo"]];
+    // In a sketch: Exit sketch, then the features, which exit the sketch and use it (FR-SK-004).
+    if (m.kind === "sketch") fixed = [["exit", "Exit sketch"], ...fixed.filter(([id]) => !FROM_SKETCH_SKIP.has(id))];
+    let en = withLang("en", () => [...P3_TOOLS(), ...SURF_TOOLS(), ...SM_TOOLS()].map(x => [x[0], x[1]] as [string, string]));
+    if (m.kind === "sketch") en = en.filter(([id]) => !FROM_SKETCH_SKIP.has(id));
     const loc = new Map([...P3_TOOLS(), ...SURF_TOOLS(), ...SM_TOOLS()].map(x => [x[0] as string, x[1]]));
     return [...fixed.map(([id, l]) => [id, t(l), l] as [string, string, string]), ...en.map(([id, l]) => [id, loc.get(id) ?? l, l] as [string, string, string])];
   }
@@ -2344,8 +3405,25 @@ export class ModelController {
       rows.push([t("Quick snaps") + " ▸", () => this.quickSnapMenu(e.clientX, e.clientY, () => this.host.viewer.renderer.domElement.focus())]);
     }
     if (rows.length && rows.at(-1) !== null) rows.push(null);
+    // Features straight from the open sketch (FR-SK-004): it is exited and used as the profile.
+    for (const id of ["extrude", "cut", "revolve"] as const) rows.push([this.cmdInfo(id)[0], () => this.command(id), ICON_SVG[id]]);
+    rows.push(null);
     rows.push([t("Exit sketch"), () => this.ok(), "✓"], [t("Discard"), () => void this.cancel(), "✕"]);
     this.showMenu(rows, e.clientX, e.clientY, () => this.host.viewer.renderer.domElement.focus());
+  }
+
+  /** Add relation on K (FR-UI-054, FR-SK-054): a menu of the relations valid for the selection, at the pointer. */
+  private relationMenu() {
+    const m = this.mode;
+    if (m.kind !== "sketch" || m.editor.pattern) return;
+    const ed = m.editor;
+    if (!ed.selection.size) { toast(t("Select sketch items first, then press K to add a relation.")); return; }
+    const rows = ed.relationRows();
+    if (!rows.length) { toast(t("No relation fits the selection.")); return; }
+    const r = this.host.viewer.renderer.domElement.getBoundingClientRect();
+    const at = this.pointerIn && this.pointer ? this.pointer : { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    this.showMenu(rows, at.x, at.y, () => this.host.viewer.renderer.domElement.focus());
+    document.getElementById("mc-menu")?.insertAdjacentHTML("afterbegin", `<div class="mc-menu-h" role="presentation">${esc(t("Add relation"))}</div>`);
   }
 
   /** The quick snap menu (FR-SK-046): one snap type for the next point; the active one first offers Clear. */
@@ -2364,11 +3442,282 @@ export class ModelController {
   /** Right-click without a drag while a feature or plane pick runs: OK and Cancel. */
   private commandMenu(e: MouseEvent) {
     const m = this.mode;
+    if (m.kind === "none") return this.emptyMenu(e) || this.geometryMenu(e);
     if (m.kind !== "feature" && m.kind !== "plane") return false;
     const items = this.okItems();
     items.pop();
     this.showMenu(items, e.clientX, e.clientY, () => this.host.viewer.renderer.domElement.focus());
     return true;
+  }
+
+  /**
+   * Right-click on empty space with no command running (FR-UI-113): the last 5 commands ("Recent commands"),
+   * newest first, above Zoom to fit and the standard views.
+   */
+  private emptyMenu(e: MouseEvent) {
+    if (!this.store || this.host.faceAt(e.clientX, e.clientY)) return false;
+    const items: ([string, () => void, string?] | null)[] = this.recent.map(c => [this.cmdLabel(c), () => this.command(c), ICON_SVG[c]] as [string, () => void, string?]);
+    if (items.length) items.push(null);
+    items.push([t("Zoom to fit"), () => this.host.view?.("fit")], [t("Isometric"), () => this.host.view?.("iso")], [t("Normal to"), () => this.host.view?.("normal")]);
+    this.showMenu(items, e.clientX, e.clientY, () => this.host.viewer.renderer.domElement.focus());
+    const menu = document.getElementById("mc-menu");
+    if (menu && this.recent.length) menu.insertAdjacentHTML("afterbegin", `<div class="mc-menu-h" role="presentation">${esc(t("Recent commands"))}</div>`);
+    return true;
+  }
+
+  /** Ctrl+click selection (FR-SEL-007): faces and edges picked one by one with no command running. */
+  private multi: { faces: number[]; edges: EdgeInfo[] } | null = null;
+  /** The Ctrl+click selection: how many faces and edges (tests). */
+  get multiCount() { return { faces: this.multi?.faces.length ?? 0, edges: this.multi?.edges.length ?? 0 }; }
+
+  /**
+   * Ctrl+click on the part with no command running (FR-SEL-007): adds the face or edge under the pointer to the
+   * selection, or takes it out again. The Smart measure pick made before is the first item. True when handled.
+   */
+  ctrlPick(e: MouseEvent): boolean {
+    if (!this.active || !this.store || !this.last || this.mode.kind !== "none") return false;
+    const hit = this.host.edgeAt(e.clientX, e.clientY);
+    if (!hit || (!hit.edge && hit.faceId == null)) return true;
+    if (!this.multi) {
+      const m = { faces: [] as number[], edges: [] as EdgeInfo[] };
+      const se = this.host.selectedEdge?.() ?? null, sf = se ? null : this.host.selectedFace();
+      if (se) m.edges.push(se);
+      else if (sf != null) m.faces.push(sf);
+      this.multi = m;
+    }
+    const m = this.multi;
+    if (hit.edge) {
+      const i = m.edges.indexOf(hit.edge);
+      if (i >= 0) m.edges.splice(i, 1); else m.edges.push(hit.edge);
+    } else {
+      const i = m.faces.indexOf(hit.faceId!);
+      if (i >= 0) m.faces.splice(i, 1); else m.faces.push(hit.faceId!);
+    }
+    this.host.clearPick();
+    if (!m.faces.length && !m.edges.length) this.multi = null;
+    this.drawDecor();
+    const n = m.faces.length + m.edges.length;
+    const st = document.getElementById("st-hint");
+    if (st && n) st.textContent = t("{n} selected: Ctrl+click adds or removes, Esc clears", { n });
+    return true;
+  }
+
+  /** A box being dragged for box selection (FR-SEL-008). */
+  private boxDrag: SelDrag | null = null;
+
+  /** Left press on empty space with Smart measure and no command: the orbit controls sit this drag out. */
+  private boxDown(e: PointerEvent) {
+    const v = this.host.viewer, canvas = v.renderer.domElement;
+    if (e.button !== 0 || e.pointerType !== "mouse" || e.target !== canvas || e.altKey || e.shiftKey) return;
+    if (!this.active || !this.store || !this.last || this.mode.kind !== "none" || this.ghostGroup.visible) return;
+    if ((this.host.measureTool?.() ?? "select") !== "select" || !v.controls.enabled || !v.controls.enableRotate || !v.parts[0]) return;
+    if (this.emptyAt(e.clientX, e.clientY) === false) return;
+    v.controls.enabled = false;
+    this.boxDrag = new SelDrag(e.clientX, e.clientY, e.ctrlKey || e.metaKey, lassoMode());
+  }
+
+  /**
+   * The hover glyph (FR-SEL-012) this controller decides: in a sketch the sketch entity under the cursor
+   * ("sketch"/"point", undefined when none, so model snaps still show), else "plane" over a shown plane
+   * with no part in front, else undefined.
+   */
+  hoverGlyph(x: number, y: number): HoverKind | undefined {
+    if (this.mode.kind === "sketch") return hoverKindOfSketch(this.mode.editor.hoverHitKind()) ?? undefined;
+    if (!this.store) return undefined;
+    const v = this.host.viewer, r = v.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1);
+    const planes = this.planeMeshes.filter(m => m.visible);
+    if (!planes.length || v.pickMeshes(ndc)) return undefined;
+    const rc = new THREE.Raycaster();
+    rc.setFromCamera(ndc, v.camera);
+    return rc.intersectObjects(planes, false).length ? "plane" : undefined;
+  }
+
+  /** True when nothing of the part or a plane lies under a screen point. */
+  private emptyAt(x: number, y: number): boolean {
+    const v = this.host.viewer, r = v.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1);
+    if (v.pickMeshes(ndc)) return false;
+    const rc = new THREE.Raycaster();
+    rc.setFromCamera(ndc, v.camera);
+    if (rc.intersectObjects(this.planeMeshes.filter(m => m.visible), false).length) return false;
+    const h = this.host.edgeAt(x, y);
+    return !h || (!h.edge && h.faceId == null);
+  }
+
+  private boxMove(e: PointerEvent) {
+    this.boxDrag?.move(e.clientX, e.clientY);
+  }
+
+  private boxUp(e: PointerEvent) {
+    const b = this.boxDrag;
+    if (!b || e.button !== 0) return;
+    this.boxDrag = null;
+    this.host.viewer.controls.enabled = true;
+    if (!b.drawn) return; // a click: the usual empty-space click clears the selection
+    const got = b.end(e.clientX, e.clientY);
+    // The click handlers must not take the end of a drag.
+    e.stopPropagation();
+    this.down = null;
+    if (got) this.boxSelect(got.area, got.crossing, b.add);
+  }
+
+  /**
+   * Selects the faces and edges a box holds (FR-SEL-008), as the Ctrl+click selection: left to right those wholly
+   * inside, right to left those it touches; only what is seen (not behind other faces) and allowed by the filter.
+   */
+  boxSelect(where: Rect | SelArea, crossing: boolean, add: boolean) {
+    const box: SelArea = "has" in where ? where : rectRegion(where);
+    const v = this.host.viewer, part = v.parts[0];
+    if (!part || this.mode.kind !== "none") return;
+    const cr = v.renderer.domElement.getBoundingClientRect(), cam = v.camera, mw = part.mesh.matrixWorld;
+    const data = part.data, geo = part.mesh.geometry as THREE.BufferGeometry, pos = geo.getAttribute("position"), idx = geo.getIndex();
+    const triFace = new Int32Array(idx ? idx.count / 3 : pos.count / 3).fill(-1);
+    for (const f of data.faces) triFace.fill(f.id, f.triStart, f.triStart + f.triCount);
+    const tmp = new THREE.Vector3();
+    const toScreen = (x: number, y: number, z: number): [number, number, number] => {
+      tmp.set(x, y, z).applyMatrix4(mw);
+      const d = tmp.distanceTo(cam.position);
+      tmp.project(cam);
+      return [cr.left + (tmp.x + 1) / 2 * cr.width, cr.top + (1 - tmp.y) / 2 * cr.height, d];
+    };
+    const rayAt = (x: number, y: number) => v.pickMeshes(new THREE.Vector2(((x - cr.left) / cr.width) * 2 - 1, -((y - cr.top) / cr.height) * 2 + 1));
+    const faceOfHit = (h: THREE.Intersection | null) => (h && h.object === part.mesh && h.faceIndex != null ? triFace[h.faceIndex] ?? -1 : -1);
+    // Faces seen through the box.
+    const seen = new Set<number>();
+    for (const [x, y] of regionProbe(box)) { const f = faceOfHit(rayAt(x, y)); if (f >= 0) seen.add(f); }
+    const tol = 1e-3 * v.modelSize;
+    const faces: number[] = [], edges: EdgeInfo[] = [];
+    if (SEL_FILTER.faces) {
+      for (const f of data.faces) {
+        if (crossing) { if (seen.has(f.id)) faces.push(f.id); continue; }
+        const pts: number[] = [];
+        for (let t = f.triStart; t < f.triStart + f.triCount; t++) for (let q = 0; q < 3; q++) {
+          const vi = idx ? idx.getX(t * 3 + q) : t * 3 + q;
+          const [sx, sy] = toScreen(pos.getX(vi), pos.getY(vi), pos.getZ(vi));
+          pts.push(sx, sy);
+        }
+        if (!regionInside(box, pts)) continue;
+        let vis = seen.has(f.id);
+        // A small face the probe grid missed: look at a few triangle middles.
+        for (let k = 0; !vis && k < Math.min(6, f.triCount); k++) {
+          const tt = f.triStart + Math.floor((k * f.triCount) / Math.min(6, f.triCount));
+          const o = (tt - f.triStart) * 6;
+          vis = faceOfHit(rayAt((pts[o] + pts[o + 2] + pts[o + 4]) / 3, (pts[o + 1] + pts[o + 3] + pts[o + 5]) / 3)) === f.id;
+        }
+        if (vis) faces.push(f.id);
+      }
+    }
+    if (SEL_FILTER.edges) {
+      for (const ed of data.edges) {
+        const sp: number[] = [], dist: number[] = [];
+        for (let i = 0; i + 2 < ed.pts.length; i += 3) { const [x, y, d] = toScreen(ed.pts[i], ed.pts[i + 1], ed.pts[i + 2]); sp.push(x, y); dist.push(d); }
+        if (!regionTaken(box, sp, crossing)) continue;
+        // Seen: a sample inside the box is not behind another face.
+        // Points along the edge (each piece cut in 8) that fall inside the box, at most about 24 of them.
+        const n = dist.length, samples: [number, number, number][] = [];
+        for (let i = 0; i < Math.max(1, n - 1); i++) for (let k = 0; k < (n > 1 ? 8 : 1); k++) {
+          const j = Math.min(i + 1, n - 1), u = k / 8;
+          const x = sp[i * 2] + (sp[j * 2] - sp[i * 2]) * u, y = sp[i * 2 + 1] + (sp[j * 2 + 1] - sp[i * 2 + 1]) * u;
+          if (box.has(x, y)) samples.push([x, y, dist[i] + (dist[j] - dist[i]) * u]);
+        }
+        const step = Math.max(1, Math.floor(samples.length / 24));
+        let vis = false;
+        for (let i = 0; !vis && i < samples.length; i += step) {
+          const [x, y, d] = samples[i];
+          const h = rayAt(x, y), f = faceOfHit(h);
+          vis = !h || f === ed.faces[0] || f === ed.faces[1] || h.distance >= d - tol;
+        }
+        if (vis) edges.push(ed);
+      }
+    }
+    const old = this.multi ?? { faces: [] as number[], edges: [] as EdgeInfo[] };
+    if (add && !this.multi) {
+      const se = this.host.selectedEdge?.() ?? null, sf = se ? null : this.host.selectedFace();
+      if (se) old.edges.push(se); else if (sf != null) old.faces.push(sf);
+    }
+    const m = { faces: mergeSel(old.faces, faces, add), edges: mergeSel(old.edges, edges, add) };
+    this.host.clearPick();
+    this.hideShortcutBar();
+    this.multi = m.faces.length || m.edges.length ? m : null;
+    this.drawDecor();
+    const total = m.faces.length + m.edges.length;
+    const st = document.getElementById("st-hint");
+    if (st) st.textContent = total ? t("{n} selected: Ctrl+click adds or removes, Esc clears", { n: total }) : t("Nothing in the box");
+  }
+
+  /** The Ctrl+click selection in the view: edges as thick lines, faces as a see-through overlay. */
+  private drawMulti() {
+    const m = this.multi;
+    if (!m || this.mode.kind !== "none") return;
+    const col = 0x1c7ed6;
+    if (m.edges.length) {
+      const pos: number[] = [];
+      for (const ed of m.edges) pushEdge(pos, ed);
+      this.lines(pos, col, 4);
+    }
+    const part = this.host.viewer.parts[0];
+    if (!m.faces.length || !part) return;
+    const geo = part.mesh.geometry as THREE.BufferGeometry, pos = geo.getAttribute("position"), idx = geo.getIndex();
+    const out: number[] = [];
+    for (const i of m.faces) {
+      const fc = part.data.faces[i];
+      if (!fc) continue;
+      for (let tri = fc.triStart; tri < fc.triStart + fc.triCount; tri++) for (let q = 0; q < 3; q++) {
+        const vi = idx ? idx.getX(tri * 3 + q) : tri * 3 + q;
+        out.push(pos.getX(vi), pos.getY(vi), pos.getZ(vi));
+      }
+    }
+    if (!out.length) return;
+    const gm = new THREE.BufferGeometry();
+    gm.setAttribute("position", new THREE.Float32BufferAttribute(out, 3));
+    const mesh = new THREE.Mesh(gm, new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.42, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3, side: THREE.DoubleSide }));
+    mesh.applyMatrix4(part.mesh.matrixWorld);
+    mesh.renderOrder = 2310;
+    mesh.raycast = () => {};
+    mesh.userData.multi = true;
+    this.decor.add(mesh);
+  }
+
+  /**
+   * Right-click on a face or an edge with no command running (FR-UI-025): the context toolbar's icons above the
+   * pointer and a text menu at it, headed by the feature that made the face: Edit feature, Edit sketch, Suppress,
+   * Hide body, Normal to (flat faces), Zoom to fit, Delete.
+   */
+  private geometryMenu(e: MouseEvent) {
+    if (!this.store || !this.last) return false;
+    const hit = this.host.edgeAt(e.clientX, e.clientY);
+    if (!hit || (hit.faceId == null && !hit.edge)) return false;
+    this.showContextBar({ x: e.clientX, y: e.clientY }, false);
+    const pick = this.ctxPick;
+    const names = this.last.faceNames;
+    const fid = hit.edge ? hit.edge.faces[0] : hit.faceId!;
+    const fRaw = names[fid]?.split(":")[0];
+    const f = fRaw ? this.store.feature(fRaw) : undefined;
+    const items: ([string, () => void, string?] | null)[] = [];
+    if (f) {
+      const sk = "sketch" in f && typeof f.sketch === "string" ? this.store.feature(f.sketch) : undefined;
+      items.push([t("Edit feature"), () => this.editFeature(f.id)]);
+      if (sk) items.push([t("Edit sketch"), () => this.editFeature(sk.id)]);
+      items.push([f.suppressed ? t("Unsuppress") : t("Suppress"), () => this.toggleSuppress(f.id)]);
+      items.push(null);
+    }
+    const body = this.bodyAt(e.clientX, e.clientY);
+    if (body) items.push([t("Hide body"), () => this.setBody(body, { hidden: true })]);
+    const face = !hit.edge && hit.faceId != null ? this.host.viewer.parts[0]?.data.faces[hit.faceId] : undefined;
+    if (face?.type === "plane") items.push([t("Normal to"), () => { this.ctxPick = pick; this.command("normal"); this.ctxPick = null; }]);
+    items.push([t("Zoom to fit"), () => this.host.view?.("fit")]);
+    if (f) items.push(null, [t("Delete"), () => void this.deleteFeature(f.id)]);
+    this.showMenu(items, e.clientX, e.clientY, () => this.host.viewer.renderer.domElement.focus());
+    const menu = document.getElementById("mc-menu");
+    if (menu && f) menu.insertAdjacentHTML("afterbegin", `<div class="mc-menu-h" role="presentation" translate="no">${esc(featureLabel(f.name))}</div>`);
+    return true;
+  }
+
+  /** The last feature commands, newest first (FR-UI-113). */
+  private recent: string[] = [];
+  private noteRecent(c: string) {
+    this.recent = [c, ...this.recent.filter(x => x !== c)].slice(0, 5);
   }
 
   /** Adds edges to the fillet/chamfer list (the helpers only add). */
@@ -2461,10 +3810,17 @@ export class ModelController {
       this.draftChanged();
       return;
     }
-    if (f.type === "shell" || f.type === "draft" || f.type === "split" || f.type === "delface" || f.type === "moveface" || f.type === "offsurf") {
+    if (f.type === "shell" || f.type === "draft" || f.type === "split" || f.type === "delface" || f.type === "moveface" || f.type === "dome" || f.type === "wrap" || f.type === "offsurf") {
       const hit = this.host.faceAt(e.clientX, e.clientY);
       const fr = hit ? this.faceRef(hit.faceId) : null;
       if (!fr || own(fr.name)) { toast(t("Pick a face.")); return; }
+      if (f.type === "wrap") {
+        if (this.host.viewer.parts[0]?.data.faces[hit!.faceId]?.type !== "cylinder") { toast(t("Pick a cylindrical face.")); return; }
+        f.face = fr;
+        m.focus = undefined;
+        this.draftChanged();
+        return;
+      }
       if (f.type === "shell" && m.focus === "mthick") {
         // Multi-thickness (FR-FT-060): a click toggles a face with its own wall thickness.
         const list = (f.multi ??= []);
@@ -2481,6 +3837,14 @@ export class ModelController {
       return;
     }
     if (!isCopy(f)) return;
+    if (m.focus === "skip") { toast(t("Click the dots to skip instances, or another box to pick again.")); return; }
+    if ((m.focus === "pref" || m.focus === "pref2") && f.type === "lpattern") {
+      const r = this.pickRef(e);
+      if (!r || ("face" in r && own(r.face.name))) return;
+      if (m.focus === "pref2") f.upTo2 = r; else f.upTo = r;
+      this.draftChanged();
+      return;
+    }
     if (m.focus === "mplane" && f.type === "mirror") {
       const r = this.pickRef(e);
       if (!r) return;
@@ -2600,7 +3964,7 @@ export class ModelController {
     const sel = this.selected ? sketches.find(s => s.id === this.selected) : undefined;
     const curves = (s: SketchFeature) => s.ents.some(e => !e.cons && e.t !== "point");
     if (type === "planesurf" || type === "extsurf") {
-      const ok = type === "planesurf" ? sketchProfileOk : curves;
+      const ok = type === "planesurf" ? sketchRegionsOk : curves;
       const sk = (sel && ok(sel) ? sel : undefined) ?? sketches.filter(s => !used.has(s.id) && !this.doc.features.some(g => absorbs(g, s.id)) && ok(s)).at(-1) ?? sketches.filter(ok).at(-1);
       if (!sk) { toast(t(type === "planesurf" ? "Draw a closed sketch first." : "Draw a sketch first."), true); return null; }
       return type === "planesurf" ? { id, type, name: nm, sketch: sk.id } satisfies PlaneSurfFeature
@@ -2654,8 +4018,9 @@ export class ModelController {
     const skOpts = (list: SketchFeature[], cur: string) => list.map(s => `<option value="${esc(s.id)}"${s.id === cur ? " selected" : ""} translate="no">${esc(featureLabel(s.name))}</option>`).join("");
     const help = (s: string) => `<p class="pm-help muted">${esc(s)}</p>`;
     if (f.type === "planesurf") {
-      const list = sketches.filter(s => sketchProfileOk(s) || s.id === f.sketch);
-      return { title: t("Planar Surface"), body: group(t("Bounding entities"), sel("sketch", t("Sketch"), skOpts(list, f.sketch))) + help(t("A closed sketch becomes a flat surface body: no volume, ready to knit or thicken.")) };
+      const list = sketches.filter(s => sketchRegionsOk(s) || s.id === f.sketch);
+      const ct = this.contoursGroup(f, this.mode.kind === "feature" ? this.mode.focus : undefined);
+      return { title: t("Planar Surface"), body: (this.needsContours(f) ? ct : "") + group(t("Bounding entities"), sel("sketch", t("Sketch"), skOpts(list, f.sketch))) + (this.needsContours(f) ? "" : ct) + help(t("A closed sketch becomes a flat surface body: no volume, ready to knit or thicken.")) };
     }
     if (f.type === "extsurf") {
       const list = sketches.filter(s => s.ents.some(e => !e.cons && e.t !== "point") || s.id === f.sketch);
@@ -2777,7 +4142,15 @@ export class ModelController {
     const m = this.mode;
     if (m.kind !== "feature") return;
     const own = (n: string) => n.startsWith(`${f.id}:`);
-    if (m.focus === "hupto" && f.end === "upto") {
+    if (m.focus === "hupto" && f.end === "vertex") {
+      const v = this.pickVertex(e);
+      if (!v) return;
+      f.upToVertex = v;
+      m.focus = "pts";
+      this.draftChanged();
+      return;
+    }
+    if (m.focus === "hupto" && (f.end === "upto" || f.end === "offset")) {
       const r = this.pickRef(e);
       if (!r || ("face" in r && own(r.face.name))) return;
       f.upTo = r;
@@ -2800,13 +4173,72 @@ export class ModelController {
     const hit = this.host.faceAt(e.clientX, e.clientY);
     const fr = this.last?.frames[f.id];
     if (!hit) return;
+    // A face other than the hole's face (FR-FT-052): a hole there, square to that face where it was clicked (curved faces too).
+    const other = f.plane && "face" in f.plane ? this.faceRef(hit.faceId) : null;
+    if (other && !other.name.startsWith(`${f.id}:`) && "face" in f.plane! && other.name !== f.plane.face.name) { this.toggleSpot(f, other, hit.point); return; }
     // Clicks made before the plane's frame arrives are placed once it does.
     if (!fr || this.pendingHole.length) { this.pendingHole.push({ p: hit.point, at: { clientX: e.clientX, clientY: e.clientY } }); return; }
     this.placeHole(f, this.holeSnap(e, fr) ?? hit.point, fr);
   }
 
+  /** Hole panel preview (FR-FT-051 UX): the half section of the hole in a plate and the callout it gets on drawings. */
+  /** Advanced Hole (FR-FT-051): the near side and far side element lists, each element with its type, size and values. */
+  private advGroups(f: HoleFeature, numField: (key: string, label: string, n: Num, q: "length" | "angle") => string, group: (title: string, body: string) => string): string {
+    const names: Record<HoleElem["t"], string> = { cbore: t("Counterbore"), csink: t("Countersink"), straight: t("Straight"), tapped: t("Straight tap") };
+    const rows = (side: "near" | "far", list: HoleElem[]) => list.map((e, i) => {
+      const main = side === "near" && i === list.length - 1;
+      const kinds = main ? (["straight", "tapped"] as const) : ELEM_KINDS;
+      const opt = (v: string, l: string, cur: string) => `<option value="${v}"${v === cur ? " selected" : ""}>${esc(l)}</option>`;
+      const label = `${side === "near" ? t("Near side") : t("Far side")} ${i + 1}`;
+      // The main hole stays last on the near side: it neither moves nor goes away.
+      const up = !main && i > 0, down = !main && (side === "far" ? i < list.length - 1 : i < list.length - 2);
+      const btn = (a: string, sym: string, tip: string, on: boolean) => `<button type="button" class="icon" ${a} title="${esc(tip)}" aria-label="${esc(tip)}: ${esc(label)}"${on ? "" : " disabled"}>${sym}</button>`;
+      const diaLabel = e.t === "cbore" ? t("Counterbore diameter") : e.t === "csink" ? t("Countersink diameter") : e.t === "tapped" ? t("Tap drill diameter") : t("Diameter");
+      return `<div class="pm-aelem" data-aelem="${side}:${i}"><div class="pm-aehead"><span class="pm-aen">${i + 1}</span><span>${esc(main ? t("Main hole") : names[e.t])}</span>`
+        + btn(`data-aemv="${side}:${i}:-1"`, "↑", t("Move up"), up) + btn(`data-aemv="${side}:${i}:1"`, "↓", t("Move down"), down) + btn(`data-aerm="${side}:${i}"`, "✕", t("Remove"), !main) + `</div>`
+        + `<label class="pm-field"><span>${esc(t("Element"))}</span><select data-ae="${side}:${i}:t" aria-label="${esc(label)}">${kinds.map(k => opt(k, names[k], e.t)).join("")}</select></label>`
+        + `<label class="pm-field"><span>${esc(t("Size"))}</span><select data-ae="${side}:${i}:size" aria-label="${esc(label)} ${esc(t("Size"))}">${opt("", t("Custom"), e.size ?? "")}${ISO_METRIC.map(h => opt(h.size, h.size, e.size ?? "")).join("")}</select></label>`
+        + numField(`${side}.${i}.dia`, diaLabel, e.dia, "length")
+        + (e.t === "csink" ? numField(`${side}.${i}.angle`, t("Countersink angle"), e.angle ?? { v: Math.PI / 2 }, "angle")
+          : main && e.t === "straight" ? "" : numField(`${side}.${i}.depth`, main ? t("Thread depth") : t("Depth"), e.depth ?? { v: e.dia.v }, "length"))
+        + `</div>`;
+    }).join("");
+    const near = f.near ?? [], far = f.far ?? [];
+    let bad = "";
+    try { if (near.length) advProfile(near, far, f.end === "blind" ? f.depth.v : 1e6, holeExits(f)); } catch (e) { bad = (e as Error).message; }
+    return group(t("Near side"), rows("near", near) + `<button class="btn small" data-aeadd="near">${esc(t("Add element"))}</button>`
+        + `<p class="pm-help muted">${esc(t("Elements from the face down; the last one is the main hole and runs to the end condition."))}</p>`)
+      + (holeExits(f) ? group(t("Far side"), rows("far", far) + `<button class="btn small" data-aeadd="far">${esc(t("Add element"))}</button>`
+        + `<p class="pm-help muted">${esc(t("Elements from the face where the hole comes out, inwards."))}</p>`) : "")
+      + (bad ? `<p class="pm-help pm-warn" role="alert">${esc(t(bad))}</p>` : "");
+  }
+
+  /** Captive screw hole: retaining style, its lengths, Retracted screw and the head counterbore. */
+  private captiveGroup(f: HoleFeature, numField: (key: string, label: string, n: Num, q: "length" | "angle") => string, group: (title: string, body: string) => string, chk: (k: string, on: boolean | undefined, label: string) => string): string {
+    const opt = (v: string, l: string) => `<option value="${v}"${(f.capStyle ?? "") === v ? " selected" : ""}>${esc(l)}</option>`;
+    const M = f.major ?? f.diameter.v;
+    const c = captiveStack(f);
+    return group(t("Hole specification"), `<label class="pm-field"><span>${esc(t("Held by"))}</span><select data-k="capStyle">${opt("", t("Thread in the cover"))}${opt("ring", t("Retaining ring under the cover"))}</select></label>`
+        + numField("diameter", t("Clearance diameter"), f.diameter, "length")
+        + (f.capStyle === "ring" ? numField("ringDia", t("Retaining ring diameter"), f.ringDia ?? { v: 2 * M }, "length") + numField("ringT", t("Retaining ring thickness"), f.ringT ?? { v: 1 }, "length")
+          : f.retract ? numField("capHold", t("Retaining thread length"), f.capHold ?? { v: M }, "length") : "")
+        + chk("retract", f.retract, t("Retracted screw: room for its thread inside the cover"))
+        + (f.retract ? numField("capThread", t("Screw thread length"), f.capThread ?? { v: 2 * M }, "length")
+          + `<p class="pm-help muted">${esc(t("With the screw pulled up its thread stays inside the cover, so the cover sits flat on the box. Cover thickness needed: {d} mm.", { d: trimNum(c.need, 2) }))}</p>` : "")
+        + chk("capHead", !!f.cbDia, t("Head counterbore"))
+        + (f.cbDia ? numField("cbDia", t("Counterbore diameter"), f.cbDia, "length") + numField("cbDepth", t("Counterbore depth"), f.cbDepth ?? { v: M }, "length") : ""));
+  }
+
+  private holePreview(f: HoleFeature): string {
+    const fu = UNITS[units.current].f, dec = units.decimals ?? this.doc.units.decimals;
+    const len = (v: number) => trimNum(v * fu, Math.max(dec, 2)), ang = (v: number) => trimNum(v, 2);
+    const s = holeSection(f), lines = holeCallout(f, len, ang, x => t(x), holeCount(f));
+    return `<div class="pm-hpreview" data-hpreview>${s ? holeDiagram(s) : ""}<div class="pm-hcallout" translate="no" aria-label="${esc(t("Callout"))}">${lines.map(l => `<div>${esc(l)}</div>`).join("")}</div>`
+      + `<p class="pm-help muted">${esc(f.plane ? t("Click on the face to place holes; click a hole again to remove it.") : t("Click the flat face (or a plane) for the holes."))}</p></div>`;
+  }
+
   /**
-   * Where a hole click snaps (SolidWorks-style): the origin (projected onto the hole's face), or a
+   * Where a hole click snaps (CAD-app-style): the origin (projected onto the hole's face), or a
    * vertex, arc centre or midpoint of the model lying in that face, when within a few pixels.
    */
   private holeSnap(e: { clientX: number; clientY: number }, fr: Frame): V3 | null {
@@ -2826,6 +4258,16 @@ export class ModelController {
 
   /** A first hole waiting for the hole's plane frame (it comes with the next rebuild). */
   private pendingHole: { p: V3; at: { clientX: number; clientY: number } }[] = [];
+
+  /** A hole on another face: added where clicked, or removed when the click is on one already there. */
+  private toggleSpot(f: HoleFeature, face: FaceRef, w: V3) {
+    const list = f.spots ?? [];
+    const q = (x: number) => Math.round(x * 1000) / 1000;
+    const i = list.findIndex(s => Math.hypot(s.p[0] - w[0], s.p[1] - w[1], s.p[2] - w[2]) < Math.max(f.diameter.v * 0.75, 1));
+    if (i >= 0) list.splice(i, 1); else list.push({ face: { name: face.name, ...(face.hint ? { hint: face.hint } : {}) }, p: [q(w[0]), q(w[1]), q(w[2])] });
+    if (list.length) f.spots = list; else delete f.spots;
+    this.draftChanged();
+  }
 
   private placeHole(f: HoleFeature, w: V3, fr: Frame) {
     const d: V3 = [w[0] - fr.o[0], w[1] - fr.o[1], w[2] - fr.o[2]];
@@ -2885,6 +4327,16 @@ export class ModelController {
     const end = this.doc.rollback ?? this.doc.features.length;
     if (f?.type !== "csys" || f.suppressed || !fr || this.doc.features.indexOf(f) >= end) { this.host.setCsys?.(null, true); return; }
     this.host.setCsys?.({ name: featureLabel(f.name), src, o: fr.o, x: fr.x, z: fr.n }, true);
+  }
+
+  /** The part's coordinate system features that are built (not suppressed or rolled back), with their frames. */
+  csysList(): { id: string; name: string; o: V3; x: V3; z: V3 }[] {
+    if (!this.store || !this.last) return [];
+    const end = this.doc.rollback ?? this.doc.features.length;
+    return this.doc.features.slice(0, end).flatMap(f => {
+      const fr = f.type === "csys" && !f.suppressed ? this.last!.frames[f.id] : undefined;
+      return fr ? [{ id: f.id, name: featureLabel(f.name), o: fr.o, x: fr.x, z: fr.n }] : [];
+    });
   }
 
   /** Makes a coordinate system feature the measurement and export frame, or goes back to the global one. */
@@ -3031,7 +4483,7 @@ export class ModelController {
     if (!this.store) return;
     const dark = document.documentElement.dataset.theme === "dark";
     const m = this.mode;
-    // Sketches no feature uses yet are shown (SolidWorks shows unabsorbed sketches).
+    // Sketches no feature uses yet are shown (a CAD app shows unabsorbed sketches).
     const used = new Set(this.doc.features.flatMap(f => this.doc.features.filter(g => g.type === "sketch" && absorbs(f, g.id)).map(g => g.id)));
     if (m.kind === "feature" && (m.draft.type === "extrude" || m.draft.type === "revolve")) used.add(m.draft.sketch);
     const end = this.doc.rollback ?? this.doc.features.length;
@@ -3043,6 +4495,9 @@ export class ModelController {
       const g = moving ? { ...f, plane: m.edit!.plane } : f;
       this.lines(sketchSegments(g, this.frameOf(g)), moving ? 0xf08c00 : dark ? 0x8ab4ff : 0x1d4ed8, moving ? 2.2 : 1.4);
     });
+    if (m.kind === "feature" && hasContours(m.draft)) this.drawContours(m.draft, m.focus === "contours", dark);
+    if (m.kind === "feature" && m.draft.type === "flex") this.drawFlexPlanes(m.draft.id);
+    if (!(m.kind === "feature" && m.focus === "contours") && this.ctHover !== -1) this.hoverContour(null);
     // Helix and 3D curves (FR-FT-083, FR-FT-085): drawn like sketch curves; the one being edited highlighted.
     for (const [id, pts] of Object.entries(this.last?.curves ?? {})) {
       const hf = this.doc.features.find(x => x.id === id);
@@ -3078,16 +4533,16 @@ export class ModelController {
         if (pos.length) this.lines(pos, up ? 0x2f9e44 : 0xc2255c, 1.6);
       }
     }
-    const picksPlanes = m.kind === "plane" || (m.kind === "feature" && ((m.draft.type === "plane" && m.focus !== "axis") || (m.draft.type === "extrude" && (this.extrudeTarget(m.draft, m.focus) === "upto" || this.extrudeTarget(m.draft, m.focus) === "start-surface")) || (m.draft.type === "revolve" && m.draft.end === "upto")));
+    const picksPlanes = m.kind === "plane" || (m.kind === "feature" && ((m.draft.type === "plane" && m.focus !== "axis") || (m.draft.type === "extrude" && ["upto", "upto2", "start-surface"].includes(this.extrudeTarget(m.draft, m.focus) ?? "")) || (m.draft.type === "revolve" && m.draft.end === "upto") || (m.draft.type === "lpattern" && (m.focus === "pref" || m.focus === "pref2"))));
     this.drawPlanes(picksPlanes);
     this.drawHoles();
     this.drawThreads();
     this.drawWeldSymbols();
+    this.drawCornerCallouts();
+    this.drawPatternSpots();
     this.drawInstant();
     if (m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer")) {
-      const pos: number[] = [];
-      for (const r of m.draft.edges) { const ed = this.edgeOf(r); if (ed) pushEdge(pos, ed); }
-      this.lines(pos, 0xf08c00, 4);
+      // The picked edges are drawn by drawBoxPicks in the Edges box's colour (FR-SEL-011).
       this.drawRoundPreview(m.draft);
     }
     if (m.kind === "feature" && m.draft.type === "curve" && m.draft.kind === "composite") {
@@ -3106,7 +4561,189 @@ export class ModelController {
     }
     this.drawArrow();
     this.drawFeatureFaces();
+    this.drawBoxPicks();
+    this.drawMulti();
+    this.drawValueCallouts();
     this.host.viewer.invalidate();
+  }
+
+  /**
+   * Value callouts (FR-UI-110): the main values of the open feature (thickness, angle, distance, spacing, count…)
+   * in small labels on the model by its result, as in other CAD apps. A click opens the Modify box; the value goes
+   * through the panel's own field, so both stay in step. A ⇄ beside the first one reverses the direction.
+   * Features with drag handles or their own callouts (extrude, revolve, fillet, chamfer, end cap, gusset, flange) keep those.
+   */
+  private drawValueCallouts() {
+    const layer = document.getElementById("mc-layer");
+    layer?.querySelectorAll(".mc-vcall").forEach(x => x.remove());
+    const m = this.mode, pm = document.getElementById("mc-pm");
+    if (m.kind !== "feature" || !layer || !pm || !this.last) return;
+    const f = m.draft;
+    if (VALUE_CALLOUT_SKIP.has(f.type)) return;
+    // Picking instances to skip: the instance dots stand where the callouts would, so the callouts step aside.
+    if (m.focus === "skip") return;
+    const fields = VALUE_KEYS.map(k => pm.querySelector<HTMLInputElement>(`input[data-num="${k}"], input[data-int="${k}"]`)).filter((x): x is HTMLInputElement => !!x && !x.closest("[hidden]"));
+    if (!fields.length) return;
+    const at = this.calloutPoint(f);
+    if (!at) return;
+    const flip = pm.querySelector<HTMLInputElement>('input[type=checkbox][data-k="flip"]');
+    fields.forEach((inp, row) => {
+      const lab = inp.closest(".pm-field")?.querySelector("span")?.textContent ?? "";
+      const unit = inp.parentElement?.querySelector(".muted")?.textContent ?? "";
+      const key = inp.dataset.num ?? inp.dataset.int!;
+      const el = document.createElement("span");
+      el.className = "mc-callout mc-vcall";
+      el.dataset.at = JSON.stringify(at);
+      el.dataset.row = String(row);
+      el.dataset.v = key;
+      const b = document.createElement("button");
+      b.className = "mc-handle";
+      b.title = t("Click to type the value");
+      b.textContent = `${lab}: ${inp.value}${unit === "°" ? "°" : unit ? ` ${unit}` : ""}`;
+      b.addEventListener("click", () => {
+        const r = b.getBoundingClientRect();
+        new ModifyBox({
+          at: { x: r.right, y: r.top + r.height / 2 }, title: lab, value: inp.value,
+          step: inp.dataset.int ? 1 : stepFor(inp.dataset.q === "angle" ? "angle" : "length", units.current),
+          accept: text => {
+            inp.value = text;
+            inp.dispatchEvent(new Event("change"));
+            return inp.getAttribute("aria-invalid") !== "true";
+          },
+          cancel: () => {},
+        });
+      });
+      el.append(b);
+      if (row === 0 && flip) {
+        const fb = document.createElement("button");
+        fb.className = "mc-handle mc-vflip";
+        fb.textContent = "⇄";
+        fb.title = t("Reverse direction");
+        fb.setAttribute("aria-label", t("Reverse direction"));
+        fb.addEventListener("click", () => { flip.click(); });
+        el.append(fb);
+      }
+      layer.append(el);
+    });
+    this.placeCallouts();
+  }
+
+  /** Where a feature's value callouts sit: the middle of its own faces in the last rebuild, else of the faces it picked. */
+  private calloutPoint(f: Feature): V3 | null {
+    const data = this.host.viewer.parts[0]?.data, names = this.last?.faceNames;
+    if (!data || !names) return null;
+    const pre = `${f.id}:`, own: number[] = [];
+    names.forEach((n, i) => { if (n?.startsWith(pre)) own.push(i); });
+    if (!own.length) {
+      const refs = ((f as { faces?: FaceRef[] }).faces ?? []);
+      for (const r of refs) { const i = names.indexOf(r.name); if (i >= 0) own.push(i); }
+    }
+    if (!own.length) return null;
+    const c = [0, 0, 0];
+    for (const i of own) { const fc = data.faces[i]; if (!fc) continue; c[0] += fc.center[0]; c[1] += fc.center[1]; c[2] += fc.center[2]; }
+    return [c[0] / own.length, c[1] / own.length, c[2] / own.length];
+  }
+
+  /**
+   * Colour-coded selection boxes (FR-SEL-011): each selection box of the open feature's panel has its own colour,
+   * its picks are drawn in that colour in the view, with a small tag naming the box at the first one.
+   */
+  private boxPicks(d: Feature): { focus: string; label: string; faces?: FaceRef[]; edges?: EdgeRef[]; sel?: string }[] {
+    const pf = (p?: PlaneRef) => (p && "face" in p ? [p.face] : []);
+    switch (d.type) {
+      case "fillet":
+        if (d.kind === "face" || d.kind === "full") return [
+          { focus: "fs1", label: d.kind === "full" ? t("Side face set 1") : t("Face set 1"), faces: d.faces1 ?? [] },
+          ...(d.kind === "full" ? [{ focus: "fc", label: t("Center face set"), faces: d.center ?? [] }] : []),
+          { focus: "fs2", label: d.kind === "full" ? t("Side face set 2") : t("Face set 2"), faces: d.faces2 ?? [] }];
+        return [{ focus: "edges", label: t("Edges"), edges: d.edges, sel: ".pm-count" }];
+      case "chamfer": return d.mode === "vertex" ? [] : [{ focus: "edges", label: t("Edges"), edges: d.edges, sel: ".pm-count" }];
+      case "draft": return [{ focus: "nplane", label: d.kind === "parting" ? t("Direction of pull") : t("Neutral plane"), faces: pf(d.plane) },
+        d.kind === "parting" ? { focus: "faces", label: t("Parting line"), edges: d.parting ?? [] } : { focus: "faces", label: t("Faces to draft"), faces: d.faces }];
+      case "shell": return [{ focus: "faces", label: t("Faces to remove"), faces: d.faces }, ...(d.multi?.length ? [{ focus: "mthick", label: t("Multi-thickness settings"), faces: d.multi.map(x => ({ name: x.name, ...(x.hint ? { hint: x.hint } : {}) })) }] : [])];
+      case "delface": case "moveface": case "dome": case "offsurf": case "replaceface": case "split":
+        return [{ focus: "faces", label: t("Faces"), faces: d.faces }];
+      case "wrap": return [{ focus: "faces", label: t("Face"), faces: d.face ? [d.face] : [] }];
+      // End and start references (AT-UX-6): the target face in the Up to box's colour, named by its tag.
+      case "extrude": return [
+        ...(d.start === "surface" ? [{ focus: "start", label: t("Start at"), faces: pf(d.startRef) }] : []),
+        ...(d.end === "upto" || d.end === "offset" ? [{ focus: "upto", label: t("Up to"), faces: pf(d.upTo) }] : []),
+        ...(d.end === "body" ? [{ focus: "upbody", label: t("Body"), faces: d.upToBody ? [d.upToBody] : [] }] : []),
+        ...(dir2Apart(d) && (d.end2 === "upto" || d.end2 === "offset") ? [{ focus: "upto2", label: t("Up to (direction 2)"), faces: pf(d.upTo2) }] : []),
+        ...(dir2Apart(d) && d.end2 === "body" ? [{ focus: "upbody2", label: t("Body (direction 2)"), faces: d.upToBody2 ? [d.upToBody2] : [] }] : [])];
+      case "revolve": return d.end === "upto" ? [{ focus: "upto", label: t("Up to"), faces: pf(d.upTo), sel: '.pm-box[data-k="focus-upto"]' }] : [];
+      case "hole": return [{ focus: "hplane", label: t("Face"), faces: pf(d.plane) },
+        ...(d.end === "upto" || d.end === "offset" ? [{ focus: "hupto", label: t("Up to"), faces: pf(d.upTo) }] : [])];
+      case "mirror": return [{ focus: "mplane", label: t("Plane"), faces: pf(d.plane) },
+        ...(d.copy === "faces" ? [{ focus: "faces", label: t("Faces"), faces: d.faces ?? [] }] : [])];
+      case "lpattern": case "cpattern": case "spattern":
+        return d.copy === "faces" ? [{ focus: "faces", label: t("Faces"), faces: d.faces ?? [] }] : [];
+      case "bsplit": return [{ focus: "mplane", label: t("Plane"), faces: pf(d.plane) }];
+      default: return [];
+    }
+  }
+
+  /** The panel's selection boxes take their colours (also after a panel re-render). */
+  private tintBoxes() {
+    const m = this.mode, pm = document.getElementById("mc-pm");
+    pm?.querySelectorAll<HTMLElement>("[data-boxc]").forEach(el => { el.style.removeProperty("--box-c"); delete el.dataset.boxc; });
+    if (m.kind !== "feature" || !pm) return;
+    this.boxPicks(m.draft).forEach((g, k) => {
+      const el = pm.querySelector<HTMLElement>(g.sel ?? `.pm-box[data-focus="${g.focus}"]`);
+      if (el) { el.style.setProperty("--box-c", `#${BOX_COLORS[k % BOX_COLORS.length].toString(16).padStart(6, "0")}`); el.dataset.boxc = String(k); }
+    });
+  }
+
+  private drawBoxPicks() {
+    const m = this.mode;
+    this.tintBoxes();
+    if (m.kind !== "feature") return;
+    const part = this.host.viewer.parts[0], names = this.last?.faceNames;
+    const groups = this.boxPicks(m.draft);
+    groups.forEach((g, k) => {
+      const col = BOX_COLORS[k % BOX_COLORS.length];
+      const css = `#${col.toString(16).padStart(6, "0")}`;
+      let at: V3 | null = null;
+      // Edges in the box's colour (the fillet/chamfer edges keep their usual width).
+      if (g.edges?.length) {
+        const pos: number[] = [];
+        for (const r of g.edges) { const ed = this.edgeOf(r); if (ed) { pushEdge(pos, ed); at ??= ed.mid; } }
+        if (pos.length) this.lines(pos, col, 4);
+      }
+      // Faces: a see-through overlay in the colour.
+      if (g.faces?.length && part && names) {
+        const want = new Set(g.faces.map(f => f.name));
+        const geo = part.mesh.geometry as THREE.BufferGeometry, pos = geo.getAttribute("position"), idx = geo.getIndex();
+        const out: number[] = [];
+        part.data.faces.forEach((fc, i) => {
+          if (!want.has(names[i] ?? "")) return;
+          for (let tri = fc.triStart; tri < fc.triStart + fc.triCount; tri++) for (let q = 0; q < 3; q++) {
+            const vi = idx ? idx.getX(tri * 3 + q) : tri * 3 + q;
+            out.push(pos.getX(vi), pos.getY(vi), pos.getZ(vi));
+          }
+          if (!at && fc.center) at = new THREE.Vector3(...fc.center).applyMatrix4(part.mesh.matrixWorld).toArray() as V3;
+        });
+        if (out.length) {
+          const gm = new THREE.BufferGeometry();
+          gm.setAttribute("position", new THREE.Float32BufferAttribute(out, 3));
+          const mesh = new THREE.Mesh(gm, new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.42, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3, side: THREE.DoubleSide }));
+          mesh.applyMatrix4(part.mesh.matrixWorld);
+          mesh.renderOrder = 2310;
+          mesh.raycast = () => {};
+          mesh.userData.boxPick = g.focus;
+          this.decor.add(mesh);
+        }
+      }
+      if (!at || groups.length < 2 && !g.faces?.length) return;
+      const tag = document.createElement("span");
+      tag.className = "mc-callout mc-boxtag";
+      tag.dataset.box = g.focus;
+      tag.style.setProperty("--box-c", css);
+      tag.textContent = g.label;
+      tag.dataset.at = JSON.stringify(at);
+      $("#mc-layer").appendChild(tag);
+    });
+    this.placeCallouts();
   }
 
   /** Standard planes (when picking one) and the reference planes, as see-through squares. */
@@ -3181,6 +4818,102 @@ export class ModelController {
     this.placeCallouts();
   }
 
+  /**
+   * Corner callouts of an open structural member (FR-FT-121, a CAD app's corner spheres): the treatment at
+   * each corner where its segments meet; a click offers the treatments for that corner alone.
+   */
+  /** The Locate profile focus the view was last zoomed for (zoom once per start). */
+  private locateFit: string | null = null;
+  private drawCornerCallouts() {
+    const m = this.mode;
+    if (m.kind !== "feature" || m.draft.type !== "member") { this.locateFit = null; return; }
+    const f = m.draft, ctx = this.weldCtx(m.index);
+    // Locate profile: the profile's points at the start of the group's first segment; a click puts that point on the path.
+    const fo = m.focus as string | undefined;
+    if (!fo?.startsWith("wlocate")) this.locateFit = null;
+    if (fo?.startsWith("wlocate")) {
+      const gi = fo === "wlocate" ? 0 : +fo.slice(8);
+      const spots = locateSpots(ctx, f, gi);
+      // Zoom to the profile once when locating starts, so its points are far enough apart to click.
+      if (this.locateFit !== fo && spots.length) {
+        this.locateFit = fo;
+        const b = new THREE.Box3();
+        for (const p of spots) b.expandByPoint(new THREE.Vector3(...p.at));
+        b.expandByScalar(Math.max(1, b.getSize(new THREE.Vector3()).length() / 2));
+        this.host.viewer.fit(true, b);
+      }
+      for (const p of spots) {
+        const dot = document.createElement("button");
+        dot.className = `mc-handle wld-pierce${p.cur ? " cur" : ""}`;
+        dot.dataset.pierce = p.key;
+        dot.dataset.at = JSON.stringify(p.at);
+        dot.title = p.label;
+        dot.setAttribute("aria-label", t("Locate profile: {point}", { point: p.label }));
+        dot.addEventListener("click", e => {
+          e.stopPropagation();
+          const fn = weldChange(f, gi ? `wganchor:${gi - 1}` : "anchor", p.key, ctx);
+          if (fn) { fn(); m.focus = undefined; this.renderPanel(); this.drawDecor(); this.renderBar(); void this.rebuild(); }
+        });
+        $("#mc-layer").appendChild(dot);
+      }
+    }
+    for (const c of cornerSpots(ctx, f)) {
+      const label = document.createElement("button");
+      label.className = `mc-handle mc-callout wld-corner${c.own ? " own" : ""}`;
+      label.dataset.corner = c.key;
+      label.dataset.at = JSON.stringify(c.at);
+      label.textContent = c.text;
+      label.title = t("Corner {corner}: click to change its treatment", { corner: c.label });
+      label.setAttribute("aria-haspopup", "menu");
+      label.addEventListener("pointerdown", e => e.stopPropagation());
+      label.addEventListener("click", e => {
+        e.stopPropagation();
+        const r = label.getBoundingClientRect();
+        this.showMenu(c.opts.map(([v, l]): [string, () => void] => [(v === c.cur ? "✓ " : "") + l, () => {
+          const fn = weldChange(f, `wcorner:${c.key}`, v, ctx);
+          if (fn) { fn(); this.renderPanel(); this.drawDecor(); this.renderBar(); void this.rebuild(); }
+        }]), r.left, r.bottom + 4, () => label.focus());
+      });
+      $("#mc-layer").appendChild(label);
+    }
+    this.placeCallouts();
+  }
+
+  /**
+   * Instances to skip (FR-FT-070/071, a CAD app's pink dots): while the box has focus, a dot at each instance of
+   * the linear or circular pattern being edited; a click skips the instance or brings it back.
+   */
+  private drawPatternSpots() {
+    const m = this.mode;
+    if (m.kind !== "feature" || m.focus !== "skip" || (m.draft.type !== "lpattern" && m.draft.type !== "cpattern")) return;
+    const f = m.draft;
+    const spots = this.last?.spots?.[f.id] ?? [];
+    const skip = new Set(f.skip ?? []);
+    for (const s of spots) {
+      const off = skip.has(s.key);
+      const dot = document.createElement("button");
+      dot.className = `mc-handle pat-spot${off ? " off" : ""}`;
+      dot.dataset.spot = s.key;
+      dot.dataset.at = JSON.stringify(s.p);
+      dot.setAttribute("aria-pressed", String(off));
+      const label = t("Instance {n}", { n: s.key });
+      dot.title = `${label}: ${off ? t("skipped, click to bring it back") : t("click to skip it")}`;
+      dot.setAttribute("aria-label", t("Skip {instance}", { instance: label }));
+      dot.addEventListener("pointerdown", e => e.stopPropagation());
+      dot.addEventListener("click", e => {
+        e.stopPropagation();
+        const list = (f.skip ?? []).filter(k => k !== s.key);
+        if (!off) list.push(s.key);
+        list.sort((a, b) => { const pa = a.split(",").map(Number), pb = b.split(",").map(Number); return (pa[1] ?? 0) - (pb[1] ?? 0) || pa[0] - pb[0]; });
+        if (list.length) f.skip = list; else delete f.skip;
+        this.draftChanged();
+        $("#mc-layer").querySelector<HTMLElement>(`.pat-spot[data-spot="${s.key}"]`)?.focus();
+      });
+      $("#mc-layer").appendChild(dot);
+    }
+    this.placeCallouts();
+  }
+
   private drawThreads() {
     const m = this.mode;
     const end = this.doc.rollback ?? this.doc.features.length;
@@ -3208,7 +4941,7 @@ export class ModelController {
   private static threadTex: THREE.CanvasTexture | null = null;
 
   /**
-   * Shaded cosmetic thread (FR-FT-054, SolidWorks' thread texture): a helically striped sleeve just off the
+   * Shaded cosmetic thread (FR-FT-054, a CAD app's thread texture): a helically striped sleeve just off the
    * cylinder (inside it for a hole), from c along dir for length L.
    */
   private threadShade(c: V3, dir: V3, r: number, L: number, pitch: number, internal: boolean) {
@@ -3249,11 +4982,28 @@ export class ModelController {
       const fr = this.last?.frames[h.id];
       if (!fr) continue;
       const at = (p: [number, number], dx: number, dy: number) => [0, 1, 2].map(i => fr.o[i] + fr.x[i] * (p[0] + dx) + fr.y[i] * (p[1] + dy));
-      for (const p of h.pts) {
-        if (h.kind === "tapped" && h.major) {
-          const td = h.threadDepth?.v ?? (h.end === "through" ? 0 : h.depth.v);
+      h.pts.forEach((p, i) => {
+        // Advanced Hole: each tapped element's thread from its own depth down.
+        const stack = h.kind === "captive" ? captiveStack(h) : h.kind === "adv" && h.near?.length ? { near: h.near, far: h.far } : null;
+        if (stack) {
+          const exits = holeExits(h), D = exits ? fr.len?.[i] ?? 1e5 : h.depth.v;
+          let threads: ReturnType<typeof advProfile>["threads"] = [];
+          try { threads = advProfile(stack.near, stack.far, D, exits).threads; } catch { /* the panel says what is wrong */ }
+          const dir = (h.flip ? fr.n : [-fr.n[0], -fr.n[1], -fr.n[2]]) as V3;
+          for (const th of threads) {
+            const o = at(p, 0, 0).map((x, k) => x + dir[k] * th.z0) as V3;
+            this.threadShade(o, dir, th.r, th.z1 - th.z0, th.pitch ?? Math.max(0.25, th.R * 0.3), true);
+            const n = 48;
+            for (let k = 0; k < n; k++) {
+              const a0 = (k / n) * Math.PI * 2, a1 = ((k + 1) / n) * Math.PI * 2;
+              thread.push(...at(p, th.R * Math.cos(a0), th.R * Math.sin(a0)).map((x, j) => x + dir[j] * th.z0), ...at(p, th.R * Math.cos(a1), th.R * Math.sin(a1)).map((x, j) => x + dir[j] * th.z0));
+            }
+          }
+        }
+        if (h.kind === "tapped" && h.major && !h.threadMode) {
+          const td = threadThrough(h) ? fr.len?.[i] ?? 0 : h.threadDepth?.v ?? (h.end === "through" ? 0 : h.depth.v);
           const o = at(p, 0, 0) as V3;
-          if (td > 0) this.threadShade(o, [-fr.n[0], -fr.n[1], -fr.n[2]], h.diameter.v / 2, td, h.pitch ?? Math.max(0.25, h.major * 0.15), true);
+          if (td > 0) this.threadShade(o, (h.flip ? fr.n : [-fr.n[0], -fr.n[1], -fr.n[2]]) as V3, h.diameter.v / 2, td, h.pitch ?? Math.max(0.25, h.major * 0.15), true);
           const r = h.major / 2, n = 48;
           for (let k = 0; k < n; k++) {
             const a0 = (k / n) * Math.PI * 2, a1 = ((k + 1) / n) * Math.PI * 2;
@@ -3264,7 +5014,20 @@ export class ModelController {
           const c = Math.max(h.diameter.v * 0.8, 1.5);
           marks.push(...at(p, -c, 0), ...at(p, c, 0), ...at(p, 0, -c), ...at(p, 0, c));
         }
-      }
+      });
+      // Holes on other faces: their own point and normal from the rebuild; a tapped one gets its thread ring and shading.
+      (fr.sp ?? []).forEach(([o, n]) => {
+        const a: V3 = Math.abs(n[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0];
+        const xr = new THREE.Vector3(...a).cross(new THREE.Vector3(...n)).normalize(), yr = new THREE.Vector3(...n).cross(xr);
+        const P = (dx: number, dy: number) => [0, 1, 2].map(k => o[k] + xr.getComponent(k) * dx + yr.getComponent(k) * dy);
+        if (h.kind === "tapped" && h.major && !h.threadMode) {
+          const td = h.threadDepth?.v ?? (h.end === "through" ? 0 : h.depth.v);
+          if (td > 0) this.threadShade(o, [-n[0], -n[1], -n[2]], h.diameter.v / 2, td, h.pitch ?? Math.max(0.25, h.major * 0.15), true);
+          const r = h.major / 2, k = 48;
+          for (let j = 0; j < k; j++) { const a0 = (j / k) * Math.PI * 2, a1 = ((j + 1) / k) * Math.PI * 2; thread.push(...P(r * Math.cos(a0), r * Math.sin(a0)), ...P(r * Math.cos(a1), r * Math.sin(a1))); }
+        }
+        if (m.kind === "feature" && m.draft === h) { const c = Math.max(h.diameter.v * 0.8, 1.5); marks.push(...P(-c, 0), ...P(c, 0), ...P(0, -c), ...P(0, c)); }
+      });
     }
     if (thread.length) this.lines(thread, 0x2b8a3e, 1.6, true);
     if (marks.length) this.lines(marks, 0xf08c00, 2);
@@ -3347,12 +5110,13 @@ export class ModelController {
   // ---------- extrude depth arrow (FR-FT-017, FR-UI-027) ----------
 
   /** The extrude or revolve being edited, or the one selected in the tree (dragging it edits it at once). */
-  private arrowFeature(): ExtrudeFeature | RevolveFeature | EndCapFeature | GussetFeature | SmFlangeFeature | null {
+  private arrowFeature(): ExtrudeFeature | RevolveFeature | EndCapFeature | GussetFeature | SmFlangeFeature | FlexFeature | null {
     const m = this.mode;
     // Sheet metal flanges show their arrow while folded only (the flat pattern hides where the flange stands).
     const folded = () => !this.doc.features.some(x => x.type === "smflat" && !x.suppressed);
-    const ok = (f: Feature | undefined): f is ExtrudeFeature | RevolveFeature | EndCapFeature | GussetFeature | SmFlangeFeature => f?.type === "revolve" || (f?.type === "extrude" && (f.end === "blind" || f.end === "mid"))
-      || (f?.type === "endcap" && f.faces.length > 0) || (f?.type === "gusset" && !!f.face1 && !!f.face2) || (f?.type === "smflange" && f.edges.length > 0 && folded());
+    const ok = (f: Feature | undefined): f is ExtrudeFeature | RevolveFeature | EndCapFeature | GussetFeature | SmFlangeFeature | FlexFeature => f?.type === "revolve" || (f?.type === "extrude" && (f.end === "blind" || f.end === "mid" || dir2Blind(f)))
+      || (f?.type === "endcap" && f.faces.length > 0) || (f?.type === "gusset" && !!f.face1 && !!f.face2) || (f?.type === "smflange" && f.edges.length > 0 && folded())
+      || (f?.type === "flex" && (this.last?.frames[f.id]?.len?.length ?? 0) >= 6);
     if (m.kind === "feature") return ok(m.draft) ? m.draft : null;
     // A part that was closed or handed back to its assembly has no store; its last selection must not draw (exam bug 40).
     if (m.kind !== "none" || !this.selected || !this.store) return null;
@@ -3378,6 +5142,7 @@ export class ModelController {
     if (f.type === "endcap") { this.drawCapArrow(f); return; }
     if (f.type === "gusset") { this.drawGussetArrows(f); return; }
     if (f.type === "smflange") { this.drawFlangeArrow(f); return; }
+    if (f.type === "flex") { this.drawFlexArrows(f); return; }
     const sk = this.store!.feature(f.sketch);
     if (sk?.type !== "sketch") return;
     const fr = this.frameOf(sk);
@@ -3390,8 +5155,15 @@ export class ModelController {
     if (f.start === "offset") base.addScaledVector(new THREE.Vector3(...fr.n), (f.startOffset?.v ?? 0) * (f.startReverse ? -1 : 1));
     const dir = new THREE.Vector3(...fr.n).multiplyScalar((f.op === "cut" ? -1 : 1) * (f.flip ? -1 : 1));
     const mid = f.end === "mid";
-    this.placeArrow(base, dir, f.depth.v, mid, "depth");
-    this.handleLabel(f.id, "depth", t("Drag the arrow to change the depth; click to type it"));
+    if (f.end === "blind" || mid) {
+      this.placeArrow(base.clone(), dir.clone(), f.depth.v, mid, "depth");
+      this.handleLabel(f.id, "depth", t("Drag the arrow to change the depth; click to type it"));
+    }
+    // Direction 2 (FR-FT-011): its own arrow the other way, as a CAD app shows one per direction.
+    if (dir2Blind(f)) {
+      this.placeArrow(base.clone(), dir.clone().negate(), f.depth2!.v, false, "depth2");
+      this.handleLabel(f.id, "depth2", t("Drag the arrow to change the depth in direction 2; click to type it"));
+    }
   }
 
   /** The thickness arrow of an end cap (FR-FT-121): from the first capped face, outwards (or into the member). */
@@ -3454,6 +5226,24 @@ export class ModelController {
     this.handleLabel(f.id, "d1", t("Drag the arrow to change the length along face 1; click to type it"));
     this.placeArrow(P.clone(), u2, f.d2.v, false, "d2");
     this.handleLabel(f.id, "d2", t("Drag the arrow to change the length along face 2; click to type it"));
+  }
+
+  /** Flex (FR-FT-105): an arrow on each trim plane, from the bodies' end inwards, dragging its offset. */
+  private drawFlexArrows(f: FlexFeature) {
+    const fr = this.last?.frames[f.id];
+    if (!fr?.len || fr.len.length < 6) return;
+    const o = new THREE.Vector3(...fr.o), n = new THREE.Vector3(...fr.n);
+    this.placeArrow(o.clone().addScaledVector(n, fr.len[4]), n.clone(), f.trim1?.v ?? 0, false, "trim1");
+    this.handleLabel(f.id, "trim1", t("Drag the arrow to move trim plane 1; click to type it"));
+    this.placeArrow(o.clone().addScaledVector(n, fr.len[5]), n.clone().negate(), f.trim2?.v ?? 0, false, "trim2");
+    this.handleLabel(f.id, "trim2", t("Drag the arrow to move trim plane 2; click to type it"));
+    // Triad handles (a CAD app drags the triad): one short arrow per world axis from the triad's point.
+    if (this.mode.kind !== "feature") return;
+    const at = f.origin ?? fr.o;
+    (["x", "y", "z"] as const).forEach((c, i) => {
+      const dir = new THREE.Vector3(i === 0 ? 1 : 0, i === 1 ? 1 : 0, i === 2 ? 1 : 0);
+      this.placeArrow(o.clone().addScaledVector(dir, -at[i]), dir, at[i], false, `o${c}`);
+    });
   }
 
   /** A straight drag arrow from `base` along `dir`, its tip at `value` (Mid plane: half of it), dragging the number `key`. */
@@ -3612,7 +5402,9 @@ export class ModelController {
     }
     this.arrowDrag = f.type === "revolve"
       ? { start: 0, depth: f.angle.v, moved: false, raw: this.pointerAngle(e), key }
-      : { start: this.axisParam(e), depth: (f as unknown as Record<string, Num>)[key].v, moved: false, key };
+      : f.type === "flex" && /^o[xyz]$/.test(key)
+        ? { start: this.axisParam(e), depth: (f.origin ?? this.last?.frames[f.id]?.o ?? [0, 0, 0])["xyz".indexOf(key[1])], moved: false, key }
+        : { start: this.axisParam(e), depth: (f as unknown as Record<string, Num | undefined>)[key]?.v ?? 0, moved: false, key };
     const canvas = this.host.viewer.renderer.domElement;
     canvas.style.cursor = "grabbing";
     // Keep getting the moves and the release when the pointer leaves the view.
@@ -3622,7 +5414,7 @@ export class ModelController {
   private moveArrow(e: PointerEvent) {
     const m = this.mode, d = this.arrowDrag, a = this.arrow;
     if (m.kind === "feature" && m.draft.type === "revolve" && d && a?.ang) { this.moveAngle(e, m.draft, d); return; }
-    if (m.kind !== "feature" || (m.draft.type !== "extrude" && m.draft.type !== "endcap" && m.draft.type !== "gusset" && m.draft.type !== "smflange") || !d || !a) return;
+    if (m.kind !== "feature" || (m.draft.type !== "extrude" && m.draft.type !== "endcap" && m.draft.type !== "gusset" && m.draft.type !== "smflange" && m.draft.type !== "flex") || !d || !a) return;
     const key = a.key;
     const k = a.mid ? 2 : 1;
     let v = d.depth + (this.axisParam(e) - d.start) * k;
@@ -3631,9 +5423,32 @@ export class ModelController {
     const step = 10 ** Math.floor(Math.log10(Math.max(px, 1e-6)));
     const fu = UNITS[units.current].f;
     v = (Math.round((v * fu) / step) * step) / fu;
-    if (!(v > 1e-6)) v = step / fu;
-    const draft = m.draft as unknown as Record<string, Num>;
-    if (Math.abs(v - draft[key]!.v) < 1e-12) return;
+    if (m.draft.type === "flex" && /^o[xyz]$/.test(key)) {
+      // The triad's point moves along a world axis; the box stops following the bodies' centre.
+      const f = m.draft, i = "xyz".indexOf(key[1]);
+      const o: V3 = [...(f.origin ?? this.last?.frames[f.id]?.o ?? [0, 0, 0])];
+      if (Math.abs(v - o[i]) < 1e-12) return;
+      d.moved = true;
+      o[i] = v;
+      f.origin = o;
+      const pm = $("#mc-pm");
+      const box = pm.querySelector<HTMLInputElement>("input[data-k=tcentre]");
+      if (box?.checked) { this.renderPanel(); }
+      else { const inp = pm.querySelector<HTMLInputElement>(`input[data-k=${key}]`); if (inp) inp.value = trimNum(v * fu, 6); }
+      a.obj.position.copy(a.base).addScaledVector(a.dir, v);
+      this.sizeArrow();
+      void this.rebuild();
+      return;
+    }
+    if (m.draft.type === "flex") {
+      // Trim offsets run from 0 (the bodies' end) up to leaving a step between the planes.
+      const len = this.last?.frames[m.draft.id]?.len;
+      const other = (key === "trim1" ? m.draft.trim2 : m.draft.trim1)?.v ?? 0;
+      const room = len && len.length >= 6 ? len[5] - len[4] - other - step / fu : Infinity;
+      v = Math.max(0, Math.min(v, room));
+    } else if (!(v > 1e-6)) v = step / fu;
+    const draft = m.draft as unknown as Record<string, Num | undefined>;
+    if (Math.abs(v - (draft[key]?.v ?? 0)) < 1e-12) return;
     d.moved = true;
     draft[key] = { v };
     const inp = $("#mc-pm").querySelector<HTMLInputElement>(`input[data-num=${key}]`);
@@ -3678,7 +5493,7 @@ export class ModelController {
   /** The faces made by the feature selected in the tree (FR-HIS-003). */
   private drawFeatureFaces() {
     const m = this.mode;
-    // While an extrude or revolve is open, its faces are tinted yellow like a SolidWorks preview.
+    // While an extrude or revolve is open, its faces are tinted yellow like a CAD app preview.
     const draft = m.kind === "feature" && (m.draft.type === "extrude" || m.draft.type === "revolve" || isSheet(m.draft)) ? m.draft.id : null;
     const id = draft ?? (m.kind === "none" ? this.selected : null);
     if (!id) return;
@@ -3693,7 +5508,7 @@ export class ModelController {
     if (!part || !names) return null;
     const pre = `${id}:`;
     // A body or a cut list item selected in the tree lights up its bodies' faces.
-    const keys = id.startsWith("body:") ? [id.slice(5)] : id.startsWith("cut:") ? this.last?.cutList?.[+id.slice(4)]?.bodies ?? [] : null;
+    const keys = id.startsWith("body:") ? [id.slice(5)] : id.startsWith("cut:") || id.startsWith("wsub:") ? this.cutBodies(id) : null;
     const inBody = keys ? bodyFaces(this.last?.bodies ?? [], keys) : null;
     const geo = part.mesh.geometry as THREE.BufferGeometry;
     const pos = geo.getAttribute("position"), idx = geo.getIndex();
@@ -3726,13 +5541,14 @@ export class ModelController {
     tree?.addEventListener("pointerleave", () => { if (this.hoverFrom === "tree") this.setHover(null, "tree"); });
     const canvas = this.host.viewer.renderer.domElement;
     canvas.addEventListener("pointermove", e => {
-      if (e.buttons || e.pointerType === "touch") { if (this.hoverFrom === "view") this.setHover(null, "view"); return; }
+      if (e.buttons || e.pointerType === "touch") { if (this.hoverFrom === "view") this.setHover(null, "view"); this.hoverContour(null); return; }
       const x = e.clientX, y = e.clientY;
       if (this.hoverRaf) cancelAnimationFrame(this.hoverRaf);
-      this.hoverRaf = requestAnimationFrame(() => { this.hoverRaf = 0; this.setHover(this.featureAt(x, y), "view"); });
+      this.hoverRaf = requestAnimationFrame(() => { this.hoverRaf = 0; this.setHover(this.featureAt(x, y), "view"); this.hoverContour(x, y); });
     });
     canvas.addEventListener("pointerleave", () => {
       if (this.hoverRaf) { cancelAnimationFrame(this.hoverRaf); this.hoverRaf = 0; }
+      this.hoverContour(null);
       if (this.hoverFrom === "view") this.setHover(null, "view");
     });
   }
@@ -3775,10 +5591,36 @@ export class ModelController {
   }
 
   /**
-   * Live preview of a fillet or chamfer (SolidWorks style): its new faces in see-through yellow over the
+   * Live preview of a fillet or chamfer (CAD app style): its new faces in see-through yellow over the
    * body the edges are picked on, and a callout with the size at the first edge (FR-FT-031).
    */
-  /** The material an open cut removes, as a see-through yellow body (SolidWorks' cut preview). */
+  /** Flex (FR-FT-105): the two trim planes (see-through orange) and the triad, from the frame the rebuild returned. */
+  private drawFlexPlanes(id: string) {
+    const fr = this.last?.frames[id];
+    if (!fr?.len || fr.len.length < 4) return;
+    const [s1, s2, hu, hw] = fr.len;
+    const P = (s: number, u: number, w: number) => new THREE.Vector3(...fr.o).addScaledVector(new THREE.Vector3(...fr.n), s).addScaledVector(new THREE.Vector3(...fr.x), u * hu * 1.15).addScaledVector(new THREE.Vector3(...fr.y), w * hw * 1.15);
+    for (const s of [s1, s2]) {
+      const c = [P(s, -1, -1), P(s, 1, -1), P(s, 1, 1), P(s, -1, 1)];
+      const g = new THREE.BufferGeometry().setFromPoints([c[0], c[1], c[2], c[0], c[2], c[3]]);
+      const mesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0xf08c00, transparent: true, opacity: 0.18, depthWrite: false, side: THREE.DoubleSide }));
+      mesh.renderOrder = 2340;
+      mesh.raycast = () => {};
+      mesh.userData.flexPlane = true;
+      this.decor.add(mesh);
+      this.lines([c[0], c[1], c[1], c[2], c[2], c[3], c[3], c[0]].flatMap(v => [v.x, v.y, v.z]), 0xf08c00, 1.6);
+    }
+    // Triad: flex axis (blue), bend direction (red), the third (green), each a fifth of the box across.
+    const k = Math.max(hu, hw) * 0.6, o = new THREE.Vector3(...fr.o);
+    ([[fr.n, 0x1c7ed6], [fr.x, 0xe03131], [fr.y, 0x2f9e44]] as [V3, number][]).forEach(([d, col]) => {
+      const e = o.clone().addScaledVector(new THREE.Vector3(...d), k);
+      this.lines([o.x, o.y, o.z, e.x, e.y, e.z], col, 2.4);
+      const last = this.decor.children.at(-1);
+      if (last) last.userData.flexTriad = true;
+    });
+  }
+
+  /** The material an open cut removes, as a see-through yellow body (a CAD app's cut preview). */
   private drawCutPreview() {
     const pv = this.last?.preview;
     if (!pv?.position.length) return;
@@ -3872,10 +5714,15 @@ export class ModelController {
       el.style.left = `${((s.x + 1) / 2) * v.size.x}px`;
       el.style.top = `${((1 - s.y) / 2) * v.size.y}px`;
     });
+    $("#mc-layer").querySelectorAll<HTMLElement>(".wld-pierce, .pat-spot").forEach(el => {
+      const s = new THREE.Vector3(...(JSON.parse(el.dataset.at!) as V3)).project(v.camera);
+      el.style.left = `${((s.x + 1) / 2) * v.size.x}px`;
+      el.style.top = `${((1 - s.y) / 2) * v.size.y}px`;
+    });
     $("#mc-layer").querySelectorAll<HTMLElement>(".mc-callout").forEach(el => {
       const s = new THREE.Vector3(...(JSON.parse(el.dataset.at!) as V3)).project(v.camera);
       el.style.left = `${((s.x + 1) / 2) * v.size.x}px`;
-      el.style.top = `${((1 - s.y) / 2) * v.size.y - 24}px`;
+      el.style.top = `${((1 - s.y) / 2) * v.size.y - 24 + 28 * Number(el.dataset.row ?? 0)}px`;
     });
   }
 
@@ -3920,6 +5767,7 @@ export class ModelController {
 
   /** The command a running feature belongs to, to mark its button. */
   private openCmd(d: Feature): string {
+    if (d.type === "loft" && d.boundary) return d.op === "cut" ? "boundarycut" : "boundary";
     if ((d.type === "sweep" || d.type === "loft") && d.op === "cut") return `${d.type}cut`;
     if (d.type === "extrude" && d.op === "cut") return "cut";
     if (d.type === "spattern" && d.src === "table") return "tpattern";
@@ -3927,23 +5775,27 @@ export class ModelController {
     return d.type;
   }
 
-  /** Quick commands at the right of the tab strip (SolidWorks keeps them in the menu bar): filter, undo, save. */
+  /** Quick commands at the right of the tab strip (a CAD app keeps them in the menu bar): filter, undo, save. */
   private renderQuick() {
     const q = $("#mc-quick");
     if (!this.store) { q.hidden = true; q.innerHTML = ""; return; }
     q.hidden = false;
     const m = this.mode, busy = m.kind !== "none" && m.kind !== "sketch", sk = m.kind === "sketch";
-    const btn = (id: string, label: string, title: string, on = false, dis = false) =>
-      `<button class="mc-b${on ? " on" : ""}" data-c="${id}" title="${esc(title)}"${on ? ' aria-pressed="true"' : ""}${dis ? " disabled" : ""}><span class="mc-i" aria-hidden="true">${ICON_SVG[id] ?? ""}</span><span class="mc-l">${esc(label)}</span></button>`;
-    const canUndo = sk ? this.store.canUndo : !busy && this.store.canUndo, canRedo = sk ? this.store.canRedo : !busy && this.store.canRedo;
+    // A disabled button says why (FR-UI-112): `data-why` shows in its tooltip.
+    const btn = (id: string, label: string, title: string, on = false, dis = false, why = "") =>
+      `<button class="mc-b${on ? " on" : ""}" data-c="${id}" title="${esc(title)}"${on ? ' aria-pressed="true"' : ""}${dis ? " disabled" : ""}${dis && why ? ` data-why="${esc(why)}"` : ""}><span class="mc-i" aria-hidden="true">${ICON_SVG[id] ?? ""}</span><span class="mc-l">${esc(label)}</span></button>`;
+    // Inside a feature command, Undo / Redo step the panel's own changes (FR-UI-108).
+    const inCmd = m.kind === "feature";
+    const canUndo = sk ? this.store.canUndo : inCmd ? this.draftCan(-1) : !busy && this.store.canUndo, canRedo = sk ? this.store.canRedo : inCmd ? this.draftCan(1) : !busy && this.store.canRedo;
+    const whyNot = (redo: boolean) => busy && !inCmd ? t("Finish or cancel the command first.") : inCmd ? t(redo ? "Nothing to redo in this command." : "Nothing to undo in this command.") : t(redo ? "Nothing to redo." : "Nothing to undo.");
     q.innerHTML = (sk ? "" : btn("filter", t("Filter"), t("Selection filter: faces, edges, vertices (F5)"), !!document.getElementById("mc-filter") || !(SEL_FILTER.faces && SEL_FILTER.edges && SEL_FILTER.vertices)) + `<div class="mc-sep"></div>`)
-      + `<span class="mc-fly">${btn("undo", t("Undo"), this.undoTip(), false, !canUndo)}${sk ? "" : `<button class="mc-caret" data-fly="undo" aria-haspopup="menu" title="${esc(t("Undo list"))}" aria-label="${esc(t("Undo list"))}"${busy || !(this.store.canUndo || this.store.canRedo) ? " disabled" : ""}>▾</button>`}</span>`
-      + btn("redo", t("Redo"), this.undoTip(true), false, !canRedo)
+      + `<span class="mc-fly">${btn("undo", t("Undo"), inCmd ? t("Undo in this command (Ctrl+Z)") : this.undoTip(), false, !canUndo, whyNot(false))}${sk ? "" : `<button class="mc-caret" data-fly="undo" aria-haspopup="menu" title="${esc(t("Undo list"))}" aria-label="${esc(t("Undo list"))}"${busy || !(this.store.canUndo || this.store.canRedo) ? " disabled" : ""}>▾</button>`}</span>`
+      + btn("redo", t("Redo"), inCmd ? t("Redo in this command (Ctrl+Y)") : this.undoTip(true), false, !canRedo, whyNot(true))
       + (sk && m.kind === "sketch" ? this.quickSnapButton(m.editor) + this.sketchToggles(m.editor) : "")
       + (sk ? "" : `<div class="mc-sep"></div><span class="mc-fly">${btn("save", t("Save"), t("Save the part as .mcadprt (Ctrl+S)"))}<button class="mc-caret" data-fly="save" aria-haspopup="menu" title="${esc(t("More save options"))}" aria-label="${esc(t("More save options"))}">▾</button></span>` + btn("step", t("STEP"), t("Export the body as STEP")));
     q.querySelectorAll<HTMLButtonElement>("[data-c]").forEach(b => b.addEventListener("click", () => this.command(b.dataset.c!)));
     q.querySelector<HTMLElement>('[data-fly="undo"]')?.addEventListener("click", e => this.historyMenu(e.currentTarget as HTMLElement));
-    q.querySelectorAll<HTMLButtonElement>("[data-qt]").forEach(b => b.addEventListener("click", () => this.sketchToggle(b.dataset.qt as "grid" | "gridsnap" | "autorels")));
+    q.querySelectorAll<HTMLButtonElement>("[data-qt]").forEach(b => b.addEventListener("click", () => this.sketchToggle(b.dataset.qt as "grid" | "gridsnap" | "autorels" | "adddims")));
     q.querySelector<HTMLElement>('[data-fly="qsnap"]')?.addEventListener("click", e => {
       const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
       this.quickSnapMenu(r.left, r.bottom + 4, () => $("#mc-quick").querySelector<HTMLElement>('[data-fly="qsnap"]')?.focus());
@@ -3968,25 +5820,28 @@ export class ModelController {
       `<button class="mc-b mc-qt${on ? " on" : ""}" data-qt="${k}" title="${esc(title)}" aria-pressed="${on}"><span class="mc-i" aria-hidden="true">${icon}</span><span class="mc-l">${esc(label)}</span></button>`;
     return tg("grid", "#", t("Grid"), t("Show grid"), ed.grid)
       + tg("gridsnap", "⌗", t("Snap to grid"), t("Points that snap to nothing else go to the nearest grid point; hold Ctrl to place freely."), ed.gridSnap)
-      + tg("autorels", "⊥", t("Inferences"), t("Lines snap horizontal, vertical, perpendicular, parallel or tangent and keep that relation; hold Ctrl to draw without them."), ed.autoRels);
+      + tg("autorels", "⊥", t("Inferences"), t("Lines snap horizontal, vertical, perpendicular, parallel or tangent and keep that relation; hold Ctrl to draw without them."), ed.autoRels)
+      + tg("adddims", "↔", t("Add dimensions"), t("New lines, rectangles, circles and arcs get their sizes as dimensions and the Modify box opens on each."), ed.addDims);
   }
 
   /** Flips one sketch toggle, remembers it, and keeps the quick bar and the sketch panel in step. */
-  private sketchToggle(k: "grid" | "gridsnap" | "autorels") {
+  private sketchToggle(k: "grid" | "gridsnap" | "autorels" | "adddims") {
     const m = this.mode;
     if (m.kind !== "sketch") return;
     const ed = m.editor;
     if (k === "grid") ed.setGrid({ show: !ed.grid });
     else if (k === "gridsnap") ed.setGrid({ snap: !ed.gridSnap, show: ed.gridSnap ? undefined : true });
+    else if (k === "adddims") ed.addDims = !ed.addDims;
     else ed.autoRels = !ed.autoRels;
     try {
+      localStorage.setItem("mc:skAddDims", ed.addDims ? "1" : "0");
       localStorage.setItem("mc:skGrid", ed.grid ? "1" : "0");
       localStorage.setItem("mc:skGridSnap", ed.gridSnap ? "1" : "0");
       localStorage.setItem("mc:autoRels", ed.autoRels ? "1" : "0");
     } catch { /* private mode */ }
     const pm = document.getElementById("mc-pm");
     const box = (a: string, v: boolean) => { const i = pm?.querySelector<HTMLInputElement>(`[data-a=${a}]`); if (i) i.checked = v; };
-    box("grid", ed.grid); box("gridsnap", ed.gridSnap); box("autorels", ed.autoRels);
+    box("grid", ed.grid); box("gridsnap", ed.gridSnap); box("autorels", ed.autoRels); box("adddims", ed.addDims);
     this.renderQuick();
     $("#mc-quick").querySelector<HTMLElement>(`[data-qt="${k}"]`)?.focus();
   }
@@ -3994,11 +5849,11 @@ export class ModelController {
   private wasSketch = false;
   private inBar = false;
   private wasCmd = false;
-  /** The fly-out tree is folded to its title row, as SolidWorks shows it, until opened (kept per browser). */
+  /** The fly-out tree is folded to its title row, as a CAD app shows it, until opened (kept per browser). */
   private flyClosed = (() => { try { return localStorage.getItem("mc:flyTree") !== "1"; } catch { return true; } })();
 
   /**
-   * Fly-out tree (FR-UI-003, SolidWorks' fly-out FeatureManager): while a panel is open it fills the Features tab,
+   * Fly-out tree (FR-UI-003, a CAD app's fly-out FeatureManager): while a panel is open it fills the Features tab,
    * and the tree itself moves to the top left of the view, so planes and features can still be picked from it.
    * The same `#mc-tree` element moves, so its rows, listeners and selectors stay as they are. Phones keep it in the panel.
    */
@@ -4059,30 +5914,34 @@ export class ModelController {
         : m.kind === "feature" ? t("Set the values in the panel; the view shows the result.") : "";
     }
     $("#mc-confirm").hidden = m.kind === "none";
+    if (m.kind !== "none") document.getElementById("mc-crumbs")?.remove();
+    if (m.kind !== this.crumbMode) { this.crumbMode = m.kind; this.crumbAt = null; this.placeCrumbs(); }
     $("#mc-ok").title = m.kind === "sketch" ? t("Exit sketch (Enter)") : t("OK (Enter)");
     $("#mc-ok").setAttribute("aria-label", $("#mc-ok").title);
     const btn = (id: string, label: string, title: string, on = false, dis = false) =>
       `<button class="mc-b${on ? " on" : ""}" data-c="${id}" title="${esc(title)}"${on ? ' aria-pressed="true"' : ""}${dis ? " disabled" : ""}><span class="mc-i" aria-hidden="true">${ICON_SVG[id] ?? ""}</span><span class="mc-l">${esc(label)}</span></button>`;
     let html: string;
-    if (m.kind === "sketch") {
+    // While a sketch is open the Sketch tab shows its tools; the other tabs keep their commands, and picking one
+    // exits the sketch and starts the feature on it (FR-SK-004).
+    if (m.kind === "sketch" && cmTab() === "sketch") {
       const tool = m.editor.tool;
       const tools: [SkTool, string, string][] = [
-        ["select", t("Select"), t("Select and drag (Esc)")], ["line", t("Line"), t("Line (L)")], ["rect", t("Rectangle"), t("Corner rectangle (R)")],
+        ["select", t("Select"), t("Select and drag (Esc)")], ["line", t("Line"), t("Line (L)")], ["cline", t("Centerline"), t("Centerline: construction lines for mirrors, revolve axes and symmetry")], ["mline", t("Midpoint line"), t("Midpoint line: the middle, then one end")], ["rect", t("Rectangle"), t("Corner rectangle (R)")],
         ["crect", t("Centre rect"), t("Centre rectangle")],
         ["rect3", t("3-pt rectangle"), t("3-point corner rectangle: two corners, then the width")], ["crect3", t("3-pt centre rect"), t("3-point centre rectangle: centre, middle of a side, then a corner")], ["pgram", t("Parallelogram"), t("Parallelogram: three corners")], ["circle", t("Circle"), t("Circle (C)")], ["circle3", t("3-pt circle"), t("Circle through three points")], ["pcircle", t("Perimeter circle"), t("Perimeter circle: click three points or curves; it touches the lines, circles and arcs")],
-        ["arc", t("Arc"), t("Centre-point arc (A)")], ["arc3", t("3-pt arc"), t("Arc through start, end and a point on it")],
+        ["arc", t("Arc"), t("Centre-point arc (A)")], ["arc3", t("3-pt arc"), t("Arc through start, end and a point on it")], ["tarc", t("Tangent arc"), t("Tangent arc: from the end of a line or arc, tangent to it")],
         ["polygon", t("Polygon"), t("Polygon: centre, then a corner")], ["slot", t("Slot"), t("Straight slot: two centres, then the width (W)")],
         ["cslot", t("Centre slot"), t("Centerpoint straight slot: the centre, one end, then the width")], ["aslot", t("Arc slot"), t("Centerpoint arc slot: the arc's centre, start, end, then the width")],
         ["aslot3", t("3-pt arc slot"), t("3-point arc slot: start, end, a point on the arc, then the width")],
         ["spline", t("Spline"), t("Spline: click points it passes through; double-click ends it")], ["sspline", t("Style spline"), t("Style spline: click its control points; double-click ends it")], ["ellipse", t("Ellipse"), t("Ellipse: centre, end of the major axis, then a point on it")], ["earc", t("Partial ellipse"), t("Partial ellipse: centre, major axis, start, then end")], ["parabola", t("Parabola"), t("Parabola: focus, vertex, then the start and the end")], ["conic", t("Conic"), t("Conic: start, end, the top vertex, then a point that sets rho")], ["eqn", t("Equation curve"), t("Equation driven curve: y = f(x), or x(t) and y(t)")], ["point", t("Point"), t("Point (P)")], ["text", t("Text"), t("Text: letters for embossing or engraving, from the bundled fonts")],
-        ["trim", t("Trim"), t("Trim: click the piece of a curve to remove (T)")], ["extend", t("Extend"), t("Extend a line or arc to the next curve (E)")], ["split", t("Split"), t("Split a line or arc where you click")],
+        ["trim", t("Trim"), t("Trim: click the piece of a curve to remove (T)")], ["extend", t("Extend"), t("Extend a line or arc to the next curve (E)")], ["split", t("Split"), t("Split a line or arc where you click")], ["jog", t("Jog line"), t("Jog line: click a line where the jog starts, then where it ends and how far it steps out")], ["segment", t("Segment"), t("Segment: divide a line, arc or circle into equal pieces")],
         ["fillet", t("Fillet"), t("Sketch fillet: click a corner where two lines meet")], ["chamfer", t("Chamfer"), t("Sketch chamfer: click a corner where two lines meet")],
         ["offset", t("Offset"), t("Offset entities: a curve or a chain, to the cursor's side (O)")], ["convert", t("Convert"), t("Convert entities: copy model edges into the sketch")], ["intersect", t("Intersection curve"), t("Intersection curve: where the sketch plane cuts model faces")],
         ["dim", t("Dimension"), t("Smart dimension (D)")],
         ["hord", t("Horizontal ordinate"), t("Horizontal ordinate dimensions: X distances from one base")], ["vord", t("Vertical ordinate"), t("Vertical ordinate dimensions: Y distances from one base")],
       ];
-      // Related tools share one button with a flyout (SolidWorks-style): the button shows the last one used.
-      const groups: SkTool[][] = [["select"], ["dim", "hord", "vord"], ["line", "spline", "sspline", "eqn"], ["rect", "crect", "rect3", "crect3", "pgram", "polygon"], ["circle", "circle3", "pcircle", "ellipse", "earc", "parabola", "conic"], ["arc", "arc3"], ["slot", "cslot", "aslot", "aslot3"], ["point", "text"], ["trim", "extend", "split"], ["fillet", "chamfer"], ["offset", "convert", "intersect"]];
+      // Related tools share one button with a flyout (CAD-app-style): the button shows the last one used.
+      const groups: SkTool[][] = [["select"], ["dim", "hord", "vord"], ["line", "cline", "mline", "spline", "sspline", "eqn"], ["rect", "crect", "rect3", "crect3", "pgram", "polygon"], ["circle", "circle3", "pcircle", "ellipse", "earc", "parabola", "conic"], ["arc", "arc3", "tarc"], ["slot", "cslot", "aslot", "aslot3"], ["point", "text"], ["trim", "extend", "split", "jog", "segment"], ["fillet", "chamfer"], ["offset", "convert", "intersect"]];
       const info = new Map(tools.map(x => [x[0], x]));
       html = `<div class="mc-g" role="group" aria-label="${esc(t("Sketch"))}">${groups.map(g => {
         const cur = g.includes(tool) ? tool : (this.flyLast.get(g[0]) as SkTool | undefined) ?? g[0];
@@ -4090,8 +5949,9 @@ export class ModelController {
         if (g.length === 1) return btn(`sk:${id}`, l, ti, tool === id);
         return `<span class="mc-fly">${btn(`sk:${id}`, l, ti, tool === id)}<button class="mc-caret" data-fly="${g[0]}" aria-haspopup="menu" title="${esc(t("More tools like this"))}" aria-label="${esc(t("More tools like this"))}: ${esc(l)}">▾</button></span>`;
       }).join("")}</div>`
-        + `<div class="mc-sep"></div><div class="mc-g">${btn("cons", t("Construction"), t("Construction geometry on/off for the selection (Q)"))}${btn("skmirror", t("Mirror"), t("Mirror entities: select them and a line to mirror about, then click"))}${btn("skdxf", t("DXF"), t("Import a DXF drawing into the sketch"))}${btn("sksec", t("Section"), t("Section view at the sketch plane: hides the material in front of it"), this.skSection)}</div>`
-        + `<div class="mc-sep"></div><div class="mc-g">${btn("sklpat", t("Linear pattern"), t("Linear sketch pattern: select entities, then set count and spacing"))}${btn("skcpat", t("Circular pattern"), t("Circular sketch pattern: select entities (and a centre point), then set count and angle"))}${btn("skmove", t("Move"), t("Move or copy entities by a distance"))}${btn("skrot", t("Rotate"), t("Rotate entities about a point"))}${btn("skscale", t("Scale"), t("Scale entities about a point"))}</div>`
+        + `<div class="mc-sep"></div><div class="mc-g">${btn("cons", t("Construction"), t("Construction geometry on/off for the selection (Q)"))}${btn("skmirror", t("Mirror"), t("Mirror entities: select them and a line to mirror about, then click"))}${btn("skdynmirror", t("Dynamic mirror"), t("Dynamic mirror: select a line, click, then draw; each new entity is mirrored about it"), !!m.editor.dynMirror)}${btn("skdxf", t("DXF"), t("Import a DXF drawing into the sketch"))}${btn("skpic", t("Sketch Picture"), t("Sketch picture: an image on the sketch plane to trace over"))}${btn("skblock", t("Make Block"), t("Make block: the selected entities become one block you can insert again, move, turn and scale"))}${btn("skinsblk", t("Insert Block"), t("Insert block: another copy of a block of this part, or one saved to a file"))}${btn("sksec", t("Section"), t("Section view at the sketch plane: hides the material in front of it"), this.skSection)}</div>`
+        + `<div class="mc-sep"></div><div class="mc-g">${btn("sklpat", t("Linear pattern"), t("Linear sketch pattern: select entities, then set count and spacing"))}${btn("skcpat", t("Circular pattern"), t("Circular sketch pattern: select entities (and a centre point), then set count and angle"))}${btn("skmove", t("Move"), t("Move or copy entities by a distance"))}${btn("skrot", t("Rotate"), t("Rotate entities about a point"))}${btn("skscale", t("Scale"), t("Scale entities about a point"))}${btn("skstretch", t("Stretch"), t("Stretch entities: select points or one end of a shape, then move them; lines ending there stretch"))}</div>`
+        + `<div class="mc-sep"></div><div class="mc-g" role="group" aria-label="${esc(t("Features from this sketch"))}">${(["extrude", "cut", "revolve"] as const).map(id => { const [l, ti] = this.cmdInfo(id); return btn(id, l, ti); }).join("")}</div>`
         + `<div class="mc-sep"></div><div class="mc-g">${btn("exit", t("Exit sketch"), t("Exit sketch (Enter)"))}</div>`;
     } else {
       // Command manager tabs (FR-UI-010): Features, Sketch, Surfaces, Weldments; Evaluate is main.ts's pane.
@@ -4128,15 +5988,15 @@ export class ModelController {
     $("#mc-tools").querySelectorAll<HTMLButtonElement>("[data-fly]").forEach(b => b.addEventListener("click", () => {
       const mm = this.mode;
       const key = b.dataset.fly!;
-      if (CM_FLY[key] && mm.kind !== "sketch") {
+      if (CM_FLY[key] && (mm.kind !== "sketch" || cmTab() !== "sketch")) {
         const r = b.getBoundingClientRect();
         this.showMenu(CM_FLY[key].map(id => [this.cmdInfo(id)[0], () => { if (id !== "cutlist") this.flyLast.set(key, id); this.command(id); }, ICON_SVG[id]] as [string, () => void, string]), r.left - 40, r.bottom + 4,
           () => $("#mc-tools").querySelector<HTMLElement>(`[data-fly="${key}"]`)?.focus());
         return;
       }
-      if (mm.kind !== "sketch") return;
-      const g = ({ line: ["line", "spline", "sspline", "eqn"], rect: ["rect", "crect", "rect3", "crect3", "pgram", "polygon"], circle: ["circle", "circle3", "pcircle", "ellipse", "earc", "parabola", "conic"], arc: ["arc", "arc3"], slot: ["slot", "cslot", "aslot", "aslot3"], trim: ["trim", "extend", "split"], fillet: ["fillet", "chamfer"], offset: ["offset", "convert", "intersect"], dim: ["dim", "hord", "vord"], point: ["point", "text"] } as Record<string, SkTool[]>)[key];
-      const label: Record<string, string> = { point: t("Point"), text: t("Text"), line: t("Line"), spline: t("Spline"), sspline: t("Style spline"), rect: t("Corner rectangle"), crect: t("Centre rectangle"), rect3: t("3-point corner rectangle"), crect3: t("3-point centre rectangle"), pgram: t("Parallelogram"), polygon: t("Polygon"), circle: t("Circle"), circle3: t("3-point circle"), pcircle: t("Perimeter circle"), arc: t("Centre-point arc"), arc3: t("3-point arc"), slot: t("Straight slot"), cslot: t("Centerpoint straight slot"), aslot: t("Centerpoint arc slot"), aslot3: t("3-point arc slot"), ellipse: t("Ellipse"), earc: t("Partial ellipse"), parabola: t("Parabola"), conic: t("Conic"), eqn: t("Equation driven curve"), trim: t("Trim"), extend: t("Extend"), split: t("Split"), fillet: t("Sketch fillet"), chamfer: t("Sketch chamfer"), offset: t("Offset entities"), convert: t("Convert entities"), intersect: t("Intersection curve"), dim: t("Smart dimension"), hord: t("Horizontal ordinate"), vord: t("Vertical ordinate") };
+      if (mm.kind !== "sketch" || cmTab() !== "sketch") return;
+      const g = ({ line: ["line", "cline", "mline", "spline", "sspline", "eqn"], rect: ["rect", "crect", "rect3", "crect3", "pgram", "polygon"], circle: ["circle", "circle3", "pcircle", "ellipse", "earc", "parabola", "conic"], arc: ["arc", "arc3", "tarc"], slot: ["slot", "cslot", "aslot", "aslot3"], trim: ["trim", "extend", "split", "jog", "segment"], fillet: ["fillet", "chamfer"], offset: ["offset", "convert", "intersect"], dim: ["dim", "hord", "vord"], point: ["point", "text"] } as Record<string, SkTool[]>)[key];
+      const label: Record<string, string> = { point: t("Point"), text: t("Text"), line: t("Line"), cline: t("Centerline"), mline: t("Midpoint line"), spline: t("Spline"), sspline: t("Style spline"), rect: t("Corner rectangle"), crect: t("Centre rectangle"), rect3: t("3-point corner rectangle"), crect3: t("3-point centre rectangle"), pgram: t("Parallelogram"), polygon: t("Polygon"), circle: t("Circle"), circle3: t("3-point circle"), pcircle: t("Perimeter circle"), arc: t("Centre-point arc"), arc3: t("3-point arc"), tarc: t("Tangent arc"), slot: t("Straight slot"), cslot: t("Centerpoint straight slot"), aslot: t("Centerpoint arc slot"), aslot3: t("3-point arc slot"), ellipse: t("Ellipse"), earc: t("Partial ellipse"), parabola: t("Parabola"), conic: t("Conic"), eqn: t("Equation driven curve"), trim: t("Trim"), extend: t("Extend"), split: t("Split"), jog: t("Jog line"), segment: t("Segment"), fillet: t("Sketch fillet"), chamfer: t("Sketch chamfer"), offset: t("Offset entities"), convert: t("Convert entities"), intersect: t("Intersection curve"), dim: t("Smart dimension"), hord: t("Horizontal ordinate"), vord: t("Vertical ordinate") };
       const r = b.getBoundingClientRect();
       this.showMenu(g.map(id => [label[id], () => { this.flyLast.set(g[0], id); mm.editor.setTool(id); this.renderBar(); this.renderPanel(); }, ICON_SVG[`sk:${id}`]] as [string, () => void, string]), r.left - 40, r.bottom + 4,
         () => $("#mc-tools").querySelector<HTMLElement>(`[data-fly="${b.dataset.fly}"]`)?.focus());
@@ -4159,7 +6019,24 @@ export class ModelController {
     return items.filter(it => (sk && it.src.startsWith(`${sk}:`)) || it.src === `${f.id}:depth`);
   }
 
-  /** Double-click on the model: the dimensions of the feature that made the face or edge show on it, as in SolidWorks. */
+  /** A feature's own values shown beside its dimensions (FR-UI-115): angles, radii, thicknesses, counts… */
+  private featureValues(f: Feature): { key: string; q: "length" | "angle" | "count"; label: string }[] {
+    if (f.type === "sketch" || f.type === "sketch3d" || f.suppressed) return [];
+    const g = f as unknown as Record<string, unknown>, out: { key: string; q: "length" | "angle" | "count"; label: string }[] = [];
+    for (const [key, q, label] of INSTANT_VALUES) {
+      if (f.type === "extrude" && key === "depth") continue;
+      // The revolve angle has its own drag handle with the value on it.
+      if (f.type === "revolve" && key === "angle") continue;
+      if (key === "depth" && typeof g.end === "string" && g.end !== "blind") continue;
+      const v = g[key];
+      if (q === "count" ? typeof v === "number" : !!v && typeof v === "object" && typeof (v as Num).v === "number") out.push({ key, q, label: t(label) });
+    }
+    return out;
+  }
+
+  private hasInstant(f: Feature) { return this.instantItems(f).length > 0 || this.featureValues(f).length > 0; }
+
+  /** Double-click on the model: the dimensions of the feature that made the face or edge show on it, as in other CAD apps. */
   showInstant(x: number, y: number) {
     if (!this.store || !this.last || this.mode.kind !== "none") return;
     const hit = this.host.edgeAt(x, y);
@@ -4168,7 +6045,7 @@ export class ModelController {
     const f = id ? this.store.feature(id) : undefined;
     if (!f || f.suppressed) { this.hideInstant(); return; }
     this.hideShortcutBar();
-    if (!this.instantItems(f).length) { this.hideInstant(); toast(t("{name} has no dimensions to show on the model.", { name: f.name })); return; }
+    if (!this.hasInstant(f)) { this.hideInstant(); toast(t("{name} has no dimensions to show on the model.", { name: f.name })); return; }
     this.instant = f.id;
     this.selected = f.id;
     this.renderTree();
@@ -4215,6 +6092,25 @@ export class ModelController {
       layer.appendChild(el);
     }
     this.lines(pos, dark ? 0x8ab4ff : 0x1d4ed8, 1.4);
+    // The feature's own values (angle, radius, thickness, count…) stacked by the middle of its faces.
+    const at = this.calloutPoint(f), g = f as unknown as Record<string, unknown>;
+    if (at) this.featureValues(f).forEach((fv, row) => {
+      const v = g[fv.key] as Num | number;
+      const el = document.createElement("span");
+      el.className = "mc-callout mc-ival";
+      el.dataset.at = JSON.stringify(at);
+      el.dataset.row = String(row);
+      el.dataset.v = fv.key;
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "mc-handle";
+      b.dataset.src = `${f.id}:${fv.key}`;
+      b.textContent = `${fv.label}: ${typeof v === "number" ? v : fv.q === "angle" ? `${trimNum(v.v * 180 / Math.PI, dec)}°` : trimNum(v.v * fu, dec)}`;
+      b.title = t("{name}: click to change", { name: fv.label });
+      b.addEventListener("click", ev => { ev.stopPropagation(); this.editInstant(`${f.id}:${fv.key}`, b); });
+      el.append(b);
+      layer.appendChild(el);
+    });
     this.placeCallouts();
   }
 
@@ -4225,26 +6121,42 @@ export class ModelController {
     const f = this.store.feature(fid);
     if (!f) return;
     const fu = UNITS[units.current].f;
-    let num: Num, title: string;
+    let num: Num, title: string, q: "length" | "angle" | "count" = "length";
+    const fv = f.type === "extrude" && key === "depth" ? undefined : this.featureValues(f).find(x => x.key === key);
     if (key === "depth" && f.type === "extrude") { num = f.depth; title = `${t("Depth")}@${f.name}`; }
-    else if (f.type === "sketch") {
+    else if (fv) {
+      const raw = (f as unknown as Record<string, unknown>)[key] as Num | number;
+      num = typeof raw === "number" ? { v: raw } : raw;
+      q = fv.q;
+      title = `${fv.label}@${f.name}`;
+    } else if (f.type === "sketch") {
       const d = f.dims.find(x => x.id === key);
       if (!d) return;
       num = d.val;
       title = `${d.name}@${f.name}`;
     } else return;
-    const value = num.expr ?? trimNum(num.v * fu, 6);
-    // The document with the typed value, or an error.
+    const value = num.expr ?? (q === "count" ? String(num.v) : trimNum(q === "angle" ? num.v * 180 / Math.PI : num.v * fu, 6));
+    const canFlip = FLIP_TYPES.has(f.type) && (key === "depth" || key === "distance" || key === "offset" || key === "angle" || key === "spacing");
+    let flipped = false;
+    // The document with the typed value (and the direction reversed, when asked), or an error.
     const docWith = (text: string): PartDoc | string | null => {
       let v: number;
-      try { v = evaluate(text, "length", units.current, evalVars(this.doc, units.current).values); }
-      catch (err) { return t((err as ExprError).key ?? String(err), (err as ExprError).params); }
-      if (!(v > 0)) return t("The value must be more than 0.");
-      const val: Num = isPlain(text) ? { v } : { v, expr: text.trim() };
-      if (Math.abs(v - num.v) < 1e-12 && (num.expr ?? "") === (val.expr ?? "")) return null;
+      if (q === "count") {
+        v = Number(text.trim());
+        if (!Number.isInteger(v) || v < 1) return t("Enter a whole number of 1 or more.");
+        if (v === num.v && !flipped) return null;
+      } else {
+        try { v = q === "angle" ? evaluate(text, "angle", "deg", evalVars(this.doc, units.current).values) : evaluate(text, "length", units.current, evalVars(this.doc, units.current).values); }
+        catch (err) { return t((err as ExprError).key ?? String(err), (err as ExprError).params); }
+        if (!(v > 0)) return t("The value must be more than 0.");
+      }
+      const val: Num = q === "count" || isPlain(text) ? { v } : { v, expr: text.trim() };
+      if (!flipped && q !== "count" && Math.abs(v - num.v) < 1e-12 && (num.expr ?? "") === (val.expr ?? "")) return null;
       const d = structuredClone(this.doc);
       const g = d.features.find(x => x.id === fid)!;
-      if (g.type === "extrude") g.depth = val;
+      if (flipped) { const gf = g as { flip?: boolean }; if (gf.flip) delete gf.flip; else gf.flip = true; }
+      if (fv) (g as unknown as Record<string, unknown>)[key] = q === "count" ? v : val;
+      else if (g.type === "extrude") g.depth = val;
       else if (g.type === "sketch") {
         g.dims.find(x => x.id === key)!.val = val;
         if (solve(g).status !== "ok") return t("That value cannot be reached with the other relations and dimensions.");
@@ -4258,7 +6170,10 @@ export class ModelController {
       at: { x: r.right, y: r.top + r.height / 2 },
       title,
       value,
-      step: stepFor("length", units.current),
+      step: q === "count" ? 1 : stepFor(q, units.current),
+      incKey: q,
+      // Reverse direction (FR-UI-114) for features that have one: previewed with the value, kept by ✓.
+      ...(canFlip ? { reverse: () => { flipped = !flipped; } } : {}),
       preview: text => {
         const d = docWith(text);
         if (typeof d === "string") { toast(d, "error"); return; }
@@ -4281,6 +6196,93 @@ export class ModelController {
     });
   }
 
+  /** Where Shift+D put the breadcrumbs and the confirmation corner (FR-SEL-009); null = their usual places. */
+  private crumbAt: { x: number; y: number } | null = null;
+  private crumbMode = "none";
+
+  /**
+   * Selection breadcrumbs (FR-SEL-009): after a pick, the chain from the picked face or edge up to the part (face →
+   * feature → sketch → body → part) at the top left of the view. Hovering a crumb lights it up, a click selects it as
+   * in the tree, a right-click opens its tree menu.
+   */
+  private showCrumbs(pick: { edge?: EdgeInfo; faceId?: number; plane?: PlaneRef } | null) {
+    const list: { id: string; icon: string; label: string }[] = [];
+    if (this.mode.kind === "none" && this.store && this.last && pick) {
+      const fid = pick.edge ? pick.edge.faces[0] : pick.faceId;
+      if (fid != null) {
+        list.push({ id: "", icon: pick.edge ? "╱" : "▱", label: pick.edge ? t("Edge") : t("Face") });
+        const f = this.store.feature(this.last.faceNames[fid]?.split(":")[0] ?? "");
+        if (f) {
+          list.push({ id: f.id, icon: f.type === "extrude" && f.op === "cut" ? ICONS.cut : ICONS[f.type] ?? "•", label: featureLabel(f.name) });
+          const sk = "sketch" in f && typeof f.sketch === "string" ? this.store.feature(f.sketch) : undefined;
+          if (sk) list.push({ id: sk.id, icon: ICONS.sketch, label: featureLabel(sk.name) });
+        }
+        let at = 0;
+        for (const b of this.last.bodies ?? []) {
+          const n = b.faces ?? 0;
+          if (fid >= at && fid < at + n) { list.push({ id: `body:${b.key}`, icon: "▣", label: this.bodyName(b.key) }); break; }
+          at += n;
+        }
+      } else if (pick.plane && ("std" in pick.plane || "plane" in pick.plane)) {
+        list.push({ id: "std" in pick.plane ? `std:${pick.plane.std}` : pick.plane.plane, icon: ICONS.plane, label: this.refLabel(pick.plane) });
+      }
+      if (list.length) list.push({ id: "part", icon: ICONS.part, label: this.displayName() });
+    }
+    let el = document.getElementById("mc-crumbs");
+    if (!list.length) { el?.remove(); if (this.mode.kind === "none") this.crumbAt = null; return; }
+    if (!el) {
+      el = document.createElement("nav");
+      el.id = "mc-crumbs";
+      el.className = "mc-crumbs";
+      el.setAttribute("aria-label", t("Selection breadcrumbs"));
+      $("#mc-bar").append(el);
+    }
+    el.innerHTML = list.map((c, i) => (i ? `<span class="mc-crumb-sep" aria-hidden="true">›</span>` : "")
+      + `<button class="mc-crumb${c.id ? "" : " here"}"${c.id ? ` data-id="${esc(c.id)}"` : ` aria-current="true"`} translate="no"><span aria-hidden="true">${esc(c.icon)}</span>${esc(c.label)}</button>`).join("");
+    this.placeCrumbs();
+    el.querySelectorAll<HTMLElement>(".mc-crumb[data-id]").forEach(b => {
+      const id = b.dataset.id!;
+      b.addEventListener("pointerenter", () => this.setHover(id, "tree"));
+      b.addEventListener("pointerleave", () => { if (this.hoverId === id) this.setHover(null, "tree"); });
+      b.addEventListener("click", () => this.selectRow(id));
+      b.addEventListener("contextmenu", e => { e.preventDefault(); this.selectRow(id); this.openMenu(id, e.clientX, e.clientY); });
+    });
+  }
+
+  private hideCrumbs() { this.showCrumbs(null); }
+
+  /** Selects a Features tree row as a click on it would (opening folded folders on the way). */
+  private selectRow(id: string) {
+    this.setHover(null, "tree");
+    this.selected = id;
+    if (id.startsWith("body:")) this.closedFolders.delete("bodies");
+    this.renderTree();
+    this.drawDecor();
+    document.querySelector(`#mc-tree .ft-row[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "nearest" });
+  }
+
+  /** Shift+D: the breadcrumbs and the confirmation corner come to the cursor (FR-SEL-009). */
+  private crumbsToCursor() {
+    if (!this.pointer) return;
+    this.crumbAt = { ...this.pointer };
+    this.placeCrumbs();
+  }
+
+  private placeCrumbs() {
+    const vr = this.host.vp.getBoundingClientRect(), at = this.crumbAt;
+    for (const el of [document.getElementById("mc-crumbs"), document.getElementById("mc-confirm")]) {
+      if (!el) continue;
+      el.classList.toggle("at-cursor", !!at);
+      if (!at) { el.style.left = el.style.top = ""; continue; }
+      const crumbs = el.id === "mc-crumbs", w = el.offsetWidth || 120, h = el.offsetHeight || 40;
+      // The crumbs sit just below-right of the cursor, the corner just above-right, both kept inside the view.
+      const x = Math.max(vr.left + 4, Math.min(at.x + 12, vr.right - w - 4));
+      const y = Math.max(vr.top + 4, Math.min(at.y + (crumbs ? 16 : -h - 12), vr.bottom - h - 4));
+      el.style.left = `${x}px`; el.style.top = `${y}px`;
+    }
+  }
+
+
   /** The S-key shortcut bar: the commands for the current mode in a small bar at the cursor. */
   showShortcutBar() {
     const m = this.mode;
@@ -4295,7 +6297,7 @@ export class ModelController {
 
   /**
    * The context toolbar (FR-UI-026): after a click picks a face or an edge, the commands for it in a small
-   * bar by the cursor, as in SolidWorks. It fades as the pointer moves away and goes at 160 px.
+   * bar by the cursor, as in other CAD apps. It fades as the pointer moves away and goes at 160 px.
    */
   showContextBar(at: { x: number; y: number }, other = false) {
     this.hideShortcutBar();
@@ -4350,6 +6352,7 @@ export class ModelController {
         items.push(["sketch", t("Sketch")], ["normal", t("Normal to")]);
       }
     }
+    this.showCrumbs(this.ctxPick);
     const seen = new Set<string>();
     const list = items.filter(([c]) => !seen.has(c) && !!seen.add(c));
     if (list.length) this.popBar("mc-cbar", t("Context toolbar"), list, at, true);
@@ -4459,25 +6462,33 @@ export class ModelController {
 
   private command(c: string) {
     const m = this.mode;
-    if (c.startsWith("sk:") && m.kind === "sketch") { m.editor.setTool(c.slice(3) as SkTool); this.renderBar(); return; }
+    if (c.startsWith("sk:") && m.kind === "sketch") { m.editor.setTool(c.slice(3) as SkTool); this.renderBar(); this.renderPanel(); return; } // the panel shows the tool's fields (fillet radius, exam #89)
     switch (c) {
       case "cons": if (m.kind === "sketch") m.editor.toggleConstruction(); break;
       case "skmirror": if (m.kind === "sketch") { m.editor.mirrorSelection(); this.renderPanel(); } break;
+      case "skdynmirror": if (m.kind === "sketch") { m.editor.toggleDynMirror(); this.renderBar(); this.renderPanel(); } break;
       case "skdxf": if (m.kind === "sketch") this.importDxf(); break;
+      case "skpic": if (m.kind === "sketch") this.insertPicture(); break;
+      case "skblock": if (m.kind === "sketch") { const err = m.editor.makeBlock(); if (err) toast(t(err), true); else toast(t("Block made; drag it to move it, or set its place in the panel."), "success"); this.renderPanel(); } break;
+      case "skinsblk": if (m.kind === "sketch") this.insertBlockMenu(); break;
       case "sksec": if (m.kind === "sketch") { this.skSection = !this.skSection; this.renderBar(); } break;
-      case "sklpat": case "skcpat": case "skmove": case "skrot": case "skscale":
-        if (m.kind === "sketch" && m.editor.startPattern(({ sklpat: "linear", skcpat: "circular", skmove: "move", skrot: "rotate", skscale: "scale" } as const)[c])) this.renderPanel();
+      case "sklpat": case "skcpat": case "skmove": case "skrot": case "skscale": case "skstretch":
+        if (m.kind === "sketch" && m.editor.startPattern(({ sklpat: "linear", skcpat: "circular", skmove: "move", skrot: "rotate", skscale: "scale", skstretch: "stretch" } as const)[c])) this.renderPanel();
         break;
       case "exit": this.ok(); break;
-      case "sketch": this.startSketch(); break;
-      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "spattern": case "tpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "indent": case "intersect": case "bsplit": case "delbody": case "movebody": case "scale": case "delface": case "moveface": case "heal": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": case "revsurf": case "loftsurf": case "trimsurf": case "fillsurf": case "extendsurf": case "untrimsurf": case "sweepsurf": case "xyzcurve": case "compcurve": case "projcurve": case "sketch3d": case "member": case "trimext": case "endcap": case "gusset": case "weldbead": this.lastCmd = this.activeCmd = c; this.startFeature(c); break;
-      case "cutlist": this.cutList(); break;
-      case "import": this.importBodyFile(); break;
-      case "smbase": case "smloft": case "smflange": case "smhem": case "smbend": case "smjog": case "smcorner": case "smclosed": case "smrelief": case "smcross": case "smvent": case "smform": case "smunfold": case "smfold": case "smmiter": case "smswept": this.startFeature(c); break;
-      case "smflat": this.toggleFlat(); break;
-      case "smdxf": this.exportFlatDxf(); break;
-      case "recognize": void this.recognizeHoles(); break;
-      case "extrefs": this.showExtRefs(); break;
+      case "sketch": this.noteRecent(c); this.startSketch(); break;
+      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "spattern": case "tpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "boundary": case "boundarycut": case "rib": case "split": case "combine": case "indent": case "intersect": case "bsplit": case "delbody": case "movebody": case "scale": case "flex": case "delface": case "moveface": case "dome": case "wrap": case "heal": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": case "revsurf": case "loftsurf": case "trimsurf": case "fillsurf": case "extendsurf": case "untrimsurf": case "sweepsurf": case "xyzcurve": case "compcurve": case "projcurve": case "sketch3d": case "member": case "trimext": case "endcap": case "gusset": case "weldbead": this.lastCmd = this.activeCmd = c; this.noteRecent(c); this.startFeature(c); break;
+      case "cutlist": if (m.kind === "sketch") this.ok(); this.cutList(); break;
+      case "import": if (m.kind === "sketch") this.ok(); this.importBodyFile(); break;
+      case "smbase": case "smloft": case "smflange": case "smhem": case "smbend": case "smjog": case "smcorner": case "smclosed": case "smrelief": case "smgusset": case "smcross": case "smvent": case "smcut": case "smconvert": case "sminsert": case "smform": case "smunfold": case "smfold": case "smmiter": case "smswept": case "smtabslot": case "smrip": this.startFeature(c); break;
+      case "smflat": if (m.kind === "sketch") this.ok(); this.toggleFlat(); break;
+      case "smdxf": if (m.kind === "sketch") this.ok(); this.exportFlatDxf(); break;
+      case "smprops": if (m.kind === "sketch") this.ok(); this.sheetProps(); break;
+      case "recognize": if (m.kind === "sketch") this.ok(); void this.recognizeHoles(); break;
+      case "recblend": if (m.kind === "sketch") this.ok(); void this.recognizeBlends(); break;
+      case "recext": if (m.kind === "sketch") this.ok(); void this.recognizeExtrudes(); break;
+      case "recall": if (m.kind === "sketch") this.ok(); void this.recognizeFeatures(); break;
+      case "extrefs": if (m.kind === "sketch") this.ok(); this.showExtRefs(); break;
       case "undo": this.undo(); break;
       case "redo": this.redo(); break;
       case "save": void this.save(); break;
@@ -4533,6 +6544,7 @@ export class ModelController {
 
   private renderTree() {
     const box = $("#mc-tree");
+    this.renderRollNotice();
     if (!this.store) { box.innerHTML = ""; return; }
     const d = this.doc;
     const st = new Map((this.last?.statuses ?? []).map(s => [s.id, s]));
@@ -4544,10 +6556,13 @@ export class ModelController {
     html += row("material", ICONS.material, d.material ? t(d.material.name) : t("Material <not specified>"), "", " ft-plane");
     html += row("configs", "◇", t("Configuration: {name}", { name: d.config ?? "Default" }), "", " ft-plane");
     html += row("equations", "Σ", d.vars?.length ? t("Equations ({n})", { n: d.vars.length }) : t("Equations"), "", " ft-plane");
-    for (const std of ["XY", "XZ", "YZ"] as const) html += row(`std:${std}`, ICONS.plane, t(STD_NAMES[std]), "", " ft-plane");
+    for (const std of ["XY", "XZ", "YZ"] as const) {
+      const hid = (d.stdHidden ?? []).includes(std);
+      html += row(`std:${std}`, ICONS.plane, t(STD_NAMES[std]), `<span class="ft-tools">${eyeButton(hid, t(STD_NAMES[std]))}</span>`, ` ft-plane${hid ? " hid" : ""}`);
+    }
     html += row("origin", "⊹", t("Origin"), "", " ft-plane");
     html += this.bodiesRows(row);
-    html += cutListRows(this.last?.cutList, !this.closedFolders.has("cutlist"), row, this.doc.cutProps);
+    html += cutListRows(this.cutItems(), !this.closedFolders.has("cutlist"), row, this.doc.cutProps, this.doc.subWelds);
     html += `</div>`;
     const end = d.rollback ?? d.features.length;
     // A sketch used by exactly one later feature is shown under it (absorbed, FR-HIS-008).
@@ -4570,14 +6585,18 @@ export class ModelController {
       const icon = f.type === "extrude" && f.op === "cut" ? ICONS.cut : ICONS[f.type];
       const badge = s && !s.ok ? `<span class="ft-err" title="${esc(statusText(s))}" role="img" aria-label="${esc(t("Error"))}: ${esc(statusText(s))}">⚠</span>`
         : s?.code === "warning" ? `<span class="ft-warn" title="${esc(statusText(s))}" role="img" aria-label="${esc(t("Warning"))}: ${esc(statusText(s))}">⚠</span>` : "";
-      const tools = `<span class="ft-tools"><button class="icon" tabindex="-1" data-a="sup" title="${esc(f.suppressed ? t("Unsuppress") : t("Suppress"))}" aria-label="${esc(f.suppressed ? t("Unsuppress") : t("Suppress"))}">${f.suppressed ? "◌" : "●"}</button><button class="icon" tabindex="-1" data-a="del" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">✕</button></span>`;
+      const hid = this.isHidden(f);
+      const tools = `<span class="ft-tools">${hid == null ? "" : eyeButton(hid, featureLabel(f.name))}<button class="icon" tabindex="-1" data-a="sup" title="${esc(f.suppressed ? t("Unsuppress") : t("Suppress"))}" aria-label="${esc(f.suppressed ? t("Unsuppress") : t("Suppress"))}">${f.suppressed ? "◌" : "●"}</button><button class="icon" tabindex="-1" data-a="del" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">✕</button></span>`;
       const relMark = rel ? `<span class="ft-rel" title="${esc(relTip)}" role="img" aria-label="${esc(relTip)}">${par.has(f.id) ? "↑" : "↓"}</span>` : "";
       const ice = i < frozen ? `<span class="ft-ice" title="${esc(t("Frozen"))}" role="img" aria-label="${esc(t("Frozen"))}">❄</span>` : "";
-      // External reference (FR-ASM-030): -> in context, ->* locked, ->? out of context (SolidWorks marks).
-      const pl = (f as { plane?: PlaneRef }).plane, cr = pl && "ctx" in pl ? pl.ctx : null;
-      const xm = cr ? (d.ctxLocked || cr.locked ? ["->*", t("External reference (locked)")] : this.context ? ["->", t("External reference")] : ["->?", t("External reference (out of context)")]) : null;
+      // External reference (FR-ASM-030): -> in context, ->* locked, ->? out of context (a CAD app marks).
+      const xk = ctxMark(d, f);
+      const xm = xk === "none" ? null : xk === "locked" ? ["->*", t("External reference (locked)")] : this.context ? ["->", t("External reference")] : ["->?", t("External reference (out of context)")];
       const ext = xm ? `<span class="ft-ext" title="${esc(xm[1])}" role="img" aria-label="${esc(xm[1])}" translate="no">${xm[0]}</span>` : "";
-      return row(f.id, icon, featureLabel(f.name), ext + relMark + ice + badge + tools, `${child ? " child" : ""}${inFolder ? " infolder" : ""}${f.suppressed ? " sup" : ""}${i >= end ? " rolled" : ""}${i < frozen ? " frozen" : ""}${editing ? " editing" : ""}${s && !s.ok ? " bad" : ""}${rel}`, ` data-i="${i}" draggable="${m.kind === "none" && i >= frozen}"`);
+      // A feature with an absorbed sketch folds it away (FR-HIS-013).
+      const kidsOf = [...absorbed.values()].includes(i), open = !this.closedFeats.has(f.id);
+      const twist = kidsOf ? `<button class="icon ft-twist" tabindex="-1" data-a="twist" aria-expanded="${open}" title="${esc(open ? t("Collapse") : t("Expand"))}" aria-label="${esc(open ? t("Collapse") : t("Expand"))}">${open ? "▾" : "▸"}</button>` : "";
+      return row(f.id, icon, featureLabel(f.name), ext + relMark + ice + badge + tools, `${hid ? " hid" : ""}${child ? " child" : ""}${inFolder ? " infolder" : ""}${f.suppressed ? " sup" : ""}${i >= end ? " rolled" : ""}${i < frozen ? " frozen" : ""}${editing ? " editing" : ""}${s && !s.ok ? " bad" : ""}${rel}${kidsOf ? " ft-parentrow" : ""}`, ` data-i="${i}" draggable="${m.kind === "none" && i >= frozen}"${kidsOf ? ` aria-expanded="${open}"` : ""}`).replace('<span class="ft-ico"', `${twist}<span class="ft-ico"`);
     };
     // Folders (FR-HIS-009): a folder row comes before its first member; closed folders hide their members.
     const frozen = this.frozenCount();
@@ -4600,7 +6619,7 @@ export class ModelController {
       }
       if (g && this.closedFolders.has(g.id)) return;
       html += featRow(f, i, false);
-      for (const [si, ui] of absorbed) if (ui === i) html += featRow(d.features[si], si, true);
+      if (!this.closedFeats.has(f.id)) for (const [si, ui] of absorbed) if (ui === i) html += featRow(d.features[si], si, true);
     });
     if (frozen >= d.features.length && frozen > 0) html += freezeBar;
     if (end >= d.features.length) html += bar;
@@ -4629,7 +6648,14 @@ export class ModelController {
     const clearDrop = () => box.querySelectorAll(".drop-before, .drop-after").forEach(x => x.classList.remove("drop-before", "drop-after"));
     box.querySelectorAll<HTMLElement>('.ft-row[draggable="true"]').forEach(r => {
       const id = r.dataset.id!;
-      r.addEventListener("dragstart", e => { dragId = id; e.dataTransfer?.setData("text/plain", id); if (e.dataTransfer) e.dataTransfer.effectAllowed = "move"; r.classList.add("dragging"); });
+      r.addEventListener("dragstart", e => {
+        dragId = id;
+        e.dataTransfer?.setData("text/plain", id);
+        // Ctrl+drag onto a flat face in the view pastes a copy there (FR-HIS-014).
+        if (canCopy(this.store?.feature(id))) e.dataTransfer?.setData(FEATURE_DRAG, id);
+        if (e.dataTransfer) e.dataTransfer.effectAllowed = "copyMove";
+        r.classList.add("dragging");
+      });
       r.addEventListener("dragend", () => { dragId = null; r.classList.remove("dragging"); clearDrop(); });
       r.addEventListener("dragover", e => {
         if (!dragId || dragId === id) return;
@@ -4658,6 +6684,8 @@ export class ModelController {
       r.addEventListener("click", e => {
         const a = (e.target as HTMLElement).closest<HTMLElement>("[data-a]")?.dataset.a;
         if (a === "sup") { this.toggleSuppress(id); return; }
+        if (a === "eye") { this.toggleHidden(id); return; }
+        if (a === "twist") { this.toggleFeat(id); return; }
         if (a === "del") { void this.deleteFeature(id); return; }
         if (id.startsWith("body:")) {
           const key = id.slice(5);
@@ -4680,6 +6708,8 @@ export class ModelController {
           const tg = this.extrudeTarget(mm.draft, mm.focus), pt = this.store!.feature(id)?.type === "point" ? { point: id } : null;
           if (asRef && tg === "start-surface") { mm.draft.startRef = asRef; mm.focus = "upto"; this.draftChanged(); return; }
           if (asRef && tg === "upto") { mm.draft.upTo = asRef; this.draftChanged(); return; }
+          if (asRef && tg === "upto2") { mm.draft.upTo2 = asRef; this.draftChanged(); return; }
+          if (pt && tg === "vertex2") { mm.draft.upToVertex2 = pt; this.draftChanged(); return; }
           if (pt && tg === "start-vertex") { mm.draft.startVertex = pt; mm.focus = "upto"; this.draftChanged(); return; }
           if (pt && tg === "vertex") { mm.draft.upToVertex = pt; this.draftChanged(); return; }
         }
@@ -4691,9 +6721,11 @@ export class ModelController {
         }
         if (mm.kind === "feature" && asRef && mm.draft.type === "revolve" && mm.draft.end === "upto") { mm.draft.upTo = asRef; this.draftChanged(); return; }
         if (mm.kind === "feature" && asRef && mm.draft.type === "axis" && mm.draft.mode === "planes") { mm.draft.planes = [...(mm.draft.planes ?? []), asRef].slice(-2); this.draftChanged(); return; }
-        if (mm.kind === "feature" && mm.draft.type === "hole" && asRef && mm.focus === "hupto" && mm.draft.end === "upto") { mm.draft.upTo = asRef; mm.focus = "pts"; this.draftChanged(); return; }
+        if (mm.kind === "feature" && mm.draft.type === "hole" && asRef && mm.focus === "hupto" && (mm.draft.end === "upto" || mm.draft.end === "offset")) { mm.draft.upTo = asRef; mm.focus = "pts"; this.draftChanged(); return; }
+        if (mm.kind === "feature" && mm.draft.type === "hole" && mm.focus === "hupto" && mm.draft.end === "vertex" && this.store!.feature(id)?.type === "point") { mm.draft.upToVertex = { point: id }; mm.focus = "pts"; this.draftChanged(); return; }
         if (mm.kind === "feature" && mm.draft.type === "hole" && asRef && (mm.focus === "hplane" || !mm.draft.plane)) { mm.draft.plane = asRef; mm.draft.pts = []; mm.focus = "pts"; this.draftChanged(); return; }
         if (mm.kind === "feature" && mm.draft.type === "draft" && asRef && (mm.focus === "nplane" || !mm.draft.plane)) { mm.draft.plane = asRef; mm.focus = "faces"; this.draftChanged(); return; }
+        if (mm.kind === "feature" && mm.draft.type === "lpattern" && asRef && (mm.focus === "pref" || mm.focus === "pref2")) { if (mm.focus === "pref2") mm.draft.upTo2 = asRef; else mm.draft.upTo = asRef; this.draftChanged(); return; }
         if (mm.kind === "feature" && mm.draft.type === "mirror" && asRef && (mm.focus === "mplane" || !mm.draft.plane)) { mm.draft.plane = asRef; if (!mm.draft.features.length) mm.focus = "seeds"; this.draftChanged(); return; }
         if (mm.kind === "feature" && (mm.draft.type === "lpattern" || mm.draft.type === "cpattern") && (mm.focus === "dir" || mm.focus === "dir2") && this.store!.feature(id)?.type === "axis") {
           const ref: LineRef = { axis: id };
@@ -4717,6 +6749,8 @@ export class ModelController {
         // Equations is not geometry to select: a click opens it.
         if (id === "equations") { this.editEquations(); return; }
         if (id === "configs") { this.editConfigs(); return; }
+        // A feature picked in the tree shows its dimensions and values on the model, as in other CAD apps (FR-UI-115).
+        if (mm.kind === "none") { const f = this.store!.feature(id); this.instant = f && !f.suppressed && this.hasInstant(f) ? id : null; }
         this.selected = id;
         this.renderTree();
         this.drawDecor();
@@ -4727,7 +6761,7 @@ export class ModelController {
         if (id === "equations") { this.editEquations(); return; }
         if (id === "folder:bodies" || id === "folder:cutlist") return;
         if (id.startsWith("cut:")) { this.cutList(); return; }
-        if (id.startsWith("folder:") || id.startsWith("body:")) { if (id.startsWith("folder:")) this.toggleFolder(id.slice(7)); this.startRename(id); return; }
+        if (id.startsWith("folder:") || id.startsWith("body:") || id.startsWith("wsub:")) { if (id.startsWith("folder:")) this.toggleFolder(id.slice(7)); this.startRename(id); return; }
         if (this.store!.feature(id)) this.editFeature(id);
       });
       r.addEventListener("contextmenu", e => { e.preventDefault(); this.selected = id; this.renderTree(); this.drawDecor(); this.openMenu(id, e.clientX, e.clientY); });
@@ -4742,7 +6776,8 @@ export class ModelController {
         else if (e.key === "Enter" && id === "equations") { e.preventDefault(); this.editEquations(); }
         else if (e.key === "Enter" && id === "configs") { e.preventDefault(); this.editConfigs(); }
         else if (id.startsWith("folder:") && (e.key === "Enter" || (e.key === "ArrowLeft") === !this.closedFolders.has(id.slice(7)) && (e.key === "ArrowLeft" || e.key === "ArrowRight"))) { e.preventDefault(); this.toggleFolder(id.slice(7)); $("#mc-tree").querySelector<HTMLElement>(`.ft-row[data-id="${CSS.escape(id)}"]`)?.focus(); }
-        else if (id.startsWith("folder:") && e.key === "F2") { e.preventDefault(); this.startRename(id); }
+        else if (r.classList.contains("ft-parentrow") && (e.key === "ArrowLeft") === !this.closedFeats.has(id) && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); this.toggleFeat(id); $("#mc-tree").querySelector<HTMLElement>(`.ft-row[data-id="${CSS.escape(id)}"]`)?.focus(); }
+        else if ((id.startsWith("folder:") || id.startsWith("wsub:")) && e.key === "F2") { e.preventDefault(); this.startRename(id); }
         else if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown") && this.store!.feature(id)) {
           // Alt+↑/↓ moves the feature past its neighbour (keyboard reorder).
           e.preventDefault();
@@ -4768,8 +6803,11 @@ export class ModelController {
         this.setRollback(Math.max(0, Math.min(n, cur + (e.key === "ArrowDown" ? 1 : -1))));
         setTimeout(() => $("#mc-tree").querySelector<HTMLElement>(".ft-rollback")?.focus(), 0);
       } else if (e.key === "End") { e.preventDefault(); this.setRollback(null); }
+      else if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) { e.preventDefault(); const b = bar.getBoundingClientRect(); this.barMenu(b.left + 30, b.bottom); }
     });
+    bar.addEventListener("contextmenu", e => { e.preventDefault(); this.barMenu(e.clientX, e.clientY); });
     bar.addEventListener("pointerdown", e => {
+      if (e.button !== 0) return;
       e.preventDefault();
       bar.setPointerCapture(e.pointerId);
       bar.classList.add("drag");
@@ -4809,14 +6847,29 @@ export class ModelController {
       const key = id.slice(5);
       items.push([this.doc.bodies?.[key]?.hidden ? t("Show body") : t("Hide body"), () => this.setBody(key, { hidden: !this.doc.bodies?.[key]?.hidden })]);
       items.push([t("Rename"), () => this.startRename(id)]);
+      items.push([t("Material…"), () => void this.pickBodyMaterial(key)]);
       if (this.doc.bodies?.[key]?.color) items.push([t("Reset colour"), () => this.setBody(key, { color: undefined })]);
       items.push([t("Delete body"), () => this.deleteBody(key)]);
     }
-    if (id === "folder:cutlist" || id.startsWith("cut:")) items.push([t("Cut List…"), () => this.cutList()]);
+    if (id === "folder:cutlist" || id.startsWith("cut:") || id.startsWith("wsub:")) items.push([t("Cut List…"), () => this.cutList()]);
+    // Sub-weldments (a CAD app): a cut list item or a weldment body goes into a new or an existing one.
+    const wb = this.cutBodies(id);
+    if (wb.length && !id.startsWith("wsub:")) {
+      const subs = this.doc.subWelds ?? [];
+      const inSub = subs.filter(x => wb.some(b => x.bodies.includes(b)));
+      items.push([t("Create sub-weldment"), () => this.moveToSub(wb, null)]);
+      for (const x of subs) if (!(inSub.length === 1 && inSub[0] === x)) items.push([t("Add to {name}", { name: x.name }), () => this.moveToSub(wb, x.id)]);
+      if (inSub.length) items.push([t("Remove from sub-weldment"), () => this.moveToSub(wb, "")]);
+    }
+    if (id.startsWith("wsub:")) {
+      items.push([t("Rename"), () => this.startRename(id)]);
+      items.push([t("Dissolve sub-weldment"), () => this.dissolveSub(id.slice(5))]);
+    }
     if (id.startsWith("folder:") && id !== "folder:bodies" && id !== "folder:cutlist") {
       items.push([t("Rename"), () => this.startRename(id)]);
       items.push([t("Delete folder (keep features)"), () => this.deleteFolder(id.slice(7))]);
     }
+    if (this.clip && (id.startsWith("std:") || (f?.type === "plane" && !f.suppressed))) items.push([t("Paste (Ctrl+V)"), () => this.pasteFeature(id.startsWith("std:") ? { std: id.slice(4) as "XY" } : { plane: id })]);
     if (id.startsWith("std:") || f?.type === "plane") items.push([t("Sketch on this plane"), () => void this.createSketch(id.startsWith("std:") ? { std: id.slice(4) as "XY" } : { plane: id })]);
     if (id.startsWith("std:")) items.push([(this.doc.stdHidden ?? []).includes(id.slice(4) as "XY") ? t("Show") : t("Hide"), () => this.toggleHidden(id)]);
     if (f?.type === "sketch") items.push([this.sketchShown(f) ? t("Hide") : t("Show"), () => this.toggleHidden(f.id)]);
@@ -4824,14 +6877,13 @@ export class ModelController {
       items.push([f.type === "sketch" ? t("Edit sketch") : t("Edit feature"), () => this.editFeature(f.id)]);
       if (f.type === "extrude" || f.type === "revolve") items.push([t("Edit sketch"), () => void this.editSketch(f.sketch)]);
       if (f.type === "sketch") items.push([t("Edit sketch plane"), () => this.editSketchPlane(f.id)]);
+      if (canCopy(f)) items.push([t("Copy (Ctrl+C)"), () => { this.copyFeature(f.id); }]);
       items.push([t("Rename"), () => this.startRename(f.id)]);
       items.push([f.suppressed ? t("Unsuppress") : t("Suppress"), () => this.toggleSuppress(f.id)]);
       if (f.type === "plane" || f.type === "axis" || f.type === "point" || f.type === "csys" || f.type === "helix" || f.type === "curve" || f.type === "sketch3d") items.push([f.hidden ? t("Show") : t("Hide"), () => this.toggleHidden(f.id)]);
       if (f.type === "csys") items.push(csys.active?.src === f.id ? [t("Back to the global coordinate system"), () => this.useCsys(null)] : [t("Use for measurements and export"), () => this.useCsys(f.id)]);
       items.push(null);
-      items.push([t("Roll back to here"), () => this.setRollback(i)]);
-      if (i < end - 1 || i >= end) items.push([t("Roll forward past this"), () => this.setRollback(i + 1)]);
-      if (this.doc.rollback != null) items.push([t("Roll to end"), () => this.setRollback(null)]);
+      items.push(...this.rollItems(i, end));
       items.push([t("Freeze up to here"), () => this.setFreeze(f.id)]);
       if (this.doc.freezeAfter) items.push([t("Unfreeze all"), () => this.setFreeze(null)]);
       items.push(null);
@@ -4849,6 +6901,22 @@ export class ModelController {
     }
     if (!items.length) return;
     this.showMenu(items, x, y, () => $("#mc-tree").querySelector<HTMLElement>(".ft-row.sel")?.focus());
+  }
+
+  /** The rollback bar's own menu: Roll to previous and Roll to end. */
+  private barMenu(x: number, y: number) {
+    const items = this.rollItems(null, this.doc.rollback ?? this.doc.features.length);
+    if (items.length) this.showMenu(items, x, y, () => $("#mc-tree").querySelector<HTMLElement>(".ft-rollback")?.focus());
+  }
+
+  /** Rollback commands of the tree menu (FR-HIS-012): Roll back to here, Roll to previous, Roll forward past this, Roll to end. */
+  private rollItems(i: number | null, end: number): [string, () => void][] {
+    const items: [string, () => void][] = [];
+    if (i != null && i !== end) items.push([t("Roll back to here"), () => this.setRollback(i)]);
+    if (this.doc.rollback != null || this.rollPrev !== undefined) items.push([t("Roll to previous"), () => this.rollToPrevious()]);
+    if (i != null && (i < end - 1 || i >= end)) items.push([t("Roll forward past this"), () => this.setRollback(i + 1)]);
+    if (this.doc.rollback != null) items.push([t("Roll to end"), () => this.setRollback(null)]);
+    return items;
   }
 
   /** A pop-up menu at x, y; Esc or Tab closes it and calls `back` (focus returns there). */
@@ -4892,28 +6960,48 @@ export class ModelController {
     const hex = (c?: V3) => "#" + (c ?? this.doc.color ?? DEFAULT_COLOR).map(x => Math.round(Math.max(0, Math.min(1, x)) * 255).toString(16).padStart(2, "0")).join("");
     for (const b of list) {
       const hidden = !!st[b.key]?.hidden, name = this.bodyName(b.key);
-      const tools = `<span class="ft-tools"><button class="icon" tabindex="-1" data-a="bhide" title="${esc(hidden ? t("Show body") : t("Hide body"))}" aria-label="${esc(hidden ? t("Show body") : t("Hide body"))}: ${esc(name)}">${hidden ? "◌" : "◉"}</button>`
+      const tools = `<span class="ft-tools"><button class="icon ft-eye${hidden ? " off" : ""}" tabindex="-1" data-a="bhide" title="${esc(hidden ? t("Show body") : t("Hide body"))}" aria-label="${esc(hidden ? t("Show body") : t("Hide body"))}: ${esc(name)}">${hidden ? EYE_OFF : EYE}</button>`
         + `<input type="color" class="ft-color" tabindex="-1" data-bcolor value="${hex(st[b.key]?.color)}" title="${esc(t("Body colour"))}" aria-label="${esc(t("Body colour"))}: ${esc(name)}" />`
         + `<button class="icon" tabindex="-1" data-a="bdel" title="${esc(t("Delete body"))}" aria-label="${esc(t("Delete body"))}: ${esc(name)}">✕</button></span>`;
-      html += row(`body:${b.key}`, "▣", name, tools, ` infolder ft-body${hidden ? " sup" : ""}`);
+      html += row(`body:${b.key}`, "▣", name, tools, ` infolder ft-body${hidden ? " sup hid" : ""}`);
     }
     return html;
   }
 
   /** Bodies folder actions: show/hide and colour are display state (one undo step each), delete adds a Body-Delete feature. */
-  setBody(key: string, ch: { name?: string; hidden?: boolean; color?: V3 }) {
+  setBody(key: string, ch: { name?: string; hidden?: boolean; color?: V3; material?: MatRef }) {
     if (!this.store) return;
-    this.store.change(ch.hidden != null ? (ch.hidden ? "Hide body" : "Show body") : "color" in ch ? "Body colour" : "Rename body", d => {
+    // A body being hidden leaves a see-through copy, so Shift+Tab / Ctrl+Shift+Tab can find it again (FR-UI-105).
+    // (A shown body keeps its ghost: undo may hide it again; only still-hidden bodies are picked.)
+    if (ch.hidden === true) this.keepGhost(key);
+    this.store.change(ch.hidden != null ? (ch.hidden ? "Hide body" : "Show body") : "color" in ch ? "Body colour" : "material" in ch ? "Body material" : "Rename body", d => {
       const cur = { ...(d.bodies?.[key] ?? {}), ...ch };
       if (!cur.hidden) delete cur.hidden;
       if (!cur.name) delete cur.name;
       if (!cur.color) delete cur.color;
+      if (!cur.material) delete cur.material;
       d.bodies = { ...(d.bodies ?? {}), [key]: cur };
       if (!Object.keys(cur).length) delete d.bodies[key];
       if (!Object.keys(d.bodies).length) delete d.bodies;
     });
     this.renderTree();
     void this.rebuild();
+  }
+
+  /** A body's own material from the library (FR-MAT-001); None gives it the part's again. */
+  async pickBodyMaterial(key: string) {
+    const r = await pickMaterial({ current: this.doc.bodies?.[key]?.material ?? this.doc.material ?? null, allowNone: true });
+    if (r) this.setBody(key, { material: r.material ? toRef(r.material) : undefined });
+  }
+
+  /**
+   * The bodies for mass properties when any has its own material: shown ones (all with `hidden`), each
+   * with its density, `fallback` for bodies without one. Null when no body has a material.
+   */
+  bodyMasses(fallback: number, hidden = false) {
+    const st = this.store?.doc.bodies;
+    if (!st || !Object.values(st).some(b => b.material)) return null;
+    return bodyMasses((this.last?.bodies ?? []).filter(b => hidden || b.faces), k => st[k]?.material?.density, fallback);
   }
 
   deleteBody(key: string) {
@@ -4926,6 +7014,20 @@ export class ModelController {
     void this.rebuild();
   }
 
+  /** Folds or unfolds a feature's absorbed sketch row (FR-HIS-013). */
+  private toggleFeat(id: string) {
+    if (this.closedFeats.has(id)) this.closedFeats.delete(id); else this.closedFeats.add(id);
+    this.selected = id;
+    this.renderTree();
+  }
+
+  /** Whether a feature is hidden in the view (eye button, FR-HIS-013); null: it can't be hidden. */
+  private isHidden(f: Feature): boolean | null {
+    if (f.type === "sketch") return !this.sketchShown(f);
+    if (f.type === "plane" || f.type === "axis" || f.type === "point" || f.type === "csys" || f.type === "helix" || f.type === "curve" || f.type === "sketch3d") return !!f.hidden;
+    return null;
+  }
+
   private toggleFolder(fid: string) {
     if (this.closedFolders.has(fid)) this.closedFolders.delete(fid); else this.closedFolders.add(fid);
     this.selected = `folder:${fid}`;
@@ -4935,13 +7037,14 @@ export class ModelController {
   startRename(id: string) {
     const folder = id.startsWith("folder:") ? this.doc.folders?.find(g => `folder:${g.id}` === id) : undefined;
     const body = id.startsWith("body:") ? id.slice(5) : null;
+    const sw = id.startsWith("wsub:") ? this.doc.subWelds?.find(x => `wsub:${x.id}` === id) : undefined;
     const f = this.store?.feature(id);
     const row = $("#mc-tree").querySelector<HTMLElement>(`.ft-row[data-id="${CSS.escape(id)}"]`);
     const name = row?.querySelector<HTMLElement>(".ft-name");
-    if ((!f && !folder && !body) || !row || !name) return;
+    if ((!f && !folder && !body && !sw) || !row || !name) return;
     const inp = document.createElement("input");
     inp.className = "ft-ren";
-    inp.value = folder ? folder.name : body ? this.bodyName(body) : featureLabel(f!.name);
+    inp.value = folder ? folder.name : sw ? sw.name : body ? this.bodyName(body) : featureLabel(f!.name);
     inp.setAttribute("aria-label", t("New name"));
     inp.setAttribute("translate", "no");
     name.replaceWith(inp);
@@ -4970,6 +7073,9 @@ export class ModelController {
     const m = this.mode;
     if (!this.store || m.kind === "none") { pm.hidden = true; pm.innerHTML = ""; return; }
     pm.hidden = false;
+    this.noteDraft();
+    // Selection box colours (FR-SEL-011) once the panel's markup is in.
+    queueMicrotask(() => { this.tintBoxes(); this.drawValueCallouts(); });
     const head = (title: string, help: string, ok = false) => (ok ? okHead(title) : `<div class="pm-head"><h3>${esc(title)}</h3></div>`) + `<p class="pm-help muted">${esc(help)}</p>`;
     if (m.kind === "plane") {
       const ed = m.edit, sk = ed ? this.store.feature(ed.id) : undefined;
@@ -5021,7 +7127,21 @@ export class ModelController {
       const endSel = `<label class="pm-field"><span>${esc(t("End condition"))}</span><select data-k="end">${ends.map(([v, l]) => `<option value="${v}"${f.end === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;
       const upto = f.end === "upto" || f.end === "offset";
       const thinSel = f.thin ? `<label class="pm-field"><span>${esc(t("Type"))}</span><select data-k="thinMode">${([["inside", t("Inside the profile")], ["outside", t("Outside the profile")], ["mid", t("Mid-plane")]] as const).map(([v, l]) => `<option value="${v}"${f.thin!.mode === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>` + numField("thin.t", t("Thickness"), f.thin.t, "length") : "";
-      body = group(t("From"), sketchSel(f.sketch) + opSel(f.op) + (f.op === "boss" && this.last?.data ? chk("merge", f.merge !== false, t("Merge result")) : "") + startSel)
+      // Direction 2 (FR-FT-011): its own end condition, as a CAD app offers (no mid plane or through all - both).
+      const e2 = f.end2 ?? "blind";
+      const bodyName = (r: FaceRef | undefined) => r ? t("Body of {name}", { name: featureLabel(this.store?.feature(r.name.split(":")[0])?.name ?? "?") }) : t("None");
+      const draft2On = !!f.draft2 && Math.abs(f.draft2.angle.v) > 1e-9;
+      const dir2Body = `<label class="pm-field"><span>${esc(t("End condition"))}</span><select data-k="end2">${DIR2_ENDS.map(v => `<option value="${v}"${e2 === v ? " selected" : ""}>${esc(ends.find(x => x[0] === v)![1])}</option>`).join("")}</select></label>`
+        + (e2 === "upto" || e2 === "offset" ? `<div class="pm-field"><span>${esc(t("Up to"))}</span><button class="pm-box${tg === "upto2" ? " focus" : ""}" data-focus="upto2" aria-label="${esc(t("Up to (direction 2)"))}: ${esc(this.refLabel(f.upTo2))}" translate="no">${esc(this.refLabel(f.upTo2))}</button></div>` : "")
+        + (e2 === "vertex" ? `<div class="pm-field"><span>${esc(t("Up to"))}</span><button class="pm-box${tg === "vertex2" ? " focus" : ""}" data-focus="upto2" translate="no">${esc(this.vertexLabel(f.upToVertex2))}</button></div>` : "")
+        + (e2 === "body" ? `<div class="pm-field"><span>${esc(t("Body"))}</span><button class="pm-box${tg === "body2" ? " focus" : ""}" data-focus="upbody2" translate="no">${esc(bodyName(f.upToBody2))}</button></div>` : "")
+        + (e2 === "offset" ? numField("upToOffset2", t("Offset distance"), f.upToOffset2 ?? { v: 5 }, "length") + chk("reverseOffset2", f.reverseOffset2, t("Reverse offset")) : "")
+        + (e2 === "blind" ? numField("depth2", t("Depth 2"), f.depth2 ?? f.depth, "length")
+          // Direction 2's own draft (FR-FT-014), as a CAD app: off at 0°.
+          + chk("draft2On", draft2On, t("Draft on/off")) + (draft2On ? numField("draft2.angle", t("Draft angle"), f.draft2!.angle, "angle") + chk("draft2Out", f.draft2!.outward, t("Draft outward")) : "") : "");
+      // Selected Contours comes first when the sketch needs it, as a CAD app opens that box.
+      const needCt = this.needsContours(f);
+      body = (needCt ? this.contoursGroup(f, m.focus) : "") + group(t("From"), sketchSel(f.sketch) + opSel(f.op) + (f.op === "boss" && this.last?.data ? chk("merge", f.merge !== false, t("Merge result")) : "") + startSel)
         + group(t("Direction 1"), endSel
           + (upto ? `<div class="pm-field"><span>${esc(t("Up to"))}</span><button class="pm-box${tg === "upto" ? " focus" : ""}" data-k="focus-upto" data-focus="upto" aria-label="${esc(t("Up to"))}: ${esc(this.refLabel(f.upTo))}" translate="no">${esc(this.refLabel(f.upTo))}</button></div><p class="pm-help muted">${esc(t("Click a flat face or a plane in the view or the tree."))}</p>` : "")
           + (f.end === "vertex" ? `<div class="pm-field"><span>${esc(t("Up to"))}</span><button class="pm-box${tg === "vertex" ? " focus" : ""}" data-focus="upto" translate="no">${esc(this.vertexLabel(f.upToVertex))}</button></div><p class="pm-help muted">${esc(t("Click near the end of an edge, or a reference point in the tree."))}</p>` : "")
@@ -5033,8 +7153,9 @@ export class ModelController {
           + (f.op === "cut" ? chk("outside", f.outside, t("Flip side to cut (keep inside the profile)")) : "")
           + (f.end === "blind" || f.end === "mid" ? chk("draftOn", !!f.draft, t("Draft on/off")) + (f.draft ? numField("draft.angle", t("Draft angle"), f.draft.angle, "angle") + chk("draftOut", f.draft.outward, t("Draft outward")) : "") : "")
           + (f.end === "blind" || f.end === "mid" ? `<p class="pm-help muted">${esc(t("Or drag the orange arrow in the view."))}</p>` : ""))
-        + (f.end === "blind" ? group(t("Direction 2"), chk("dir2", !!(f.depth2 && f.depth2.v > 0), t("Direction 2")) + (f.depth2 && f.depth2.v > 0 ? numField("depth2", t("Depth 2"), f.depth2, "length") : "")) : "")
-        + group(t("Thin feature"), chk("thinOn", !!f.thin, t("Thin feature")) + thinSel);
+        + (f.end !== "mid" && f.end !== "through2" ? group(t("Direction 2"), chk("dir2", hasDir2(f), t("Direction 2")) + (hasDir2(f) ? dir2Body : "")) : "")
+        + group(t("Thin feature"), chk("thinOn", !!f.thin, t("Thin feature")) + thinSel)
+        + (needCt ? "" : this.contoursGroup(f, m.focus)) + this.scopeGroup(f, m.focus);
     } else if (f.type === "revolve") {
       title = t("Revolve");
       const sk = this.store.feature(f.sketch) as SketchFeature | undefined;
@@ -5047,7 +7168,8 @@ export class ModelController {
           + chk("flip", f.flip, t("Reverse direction")) + (rvEnd === "upto" ? "" : `<p class="pm-help muted">${esc(t("Or drag the orange handle in the view."))}</p>`))
         + (rvEnd === "blind" ? group(t("Direction 2"), chk("dir2", !!(f.angle2 && f.angle2.v > 0), t("Direction 2")) + (f.angle2 && f.angle2.v > 0 ? numField("angle2", t("Angle 2"), f.angle2, "angle") : "")) : "")
         + group(t("Profile"), sketchSel(f.sketch) + opSel(f.op) + (f.op === "boss" && this.last?.data ? chk("merge", f.merge !== false, t("Merge result")) : ""))
-        + group(t("Thin feature"), chk("thinOn", !!f.thin, t("Thin feature")) + (f.thin ? `<label class="pm-field"><span>${esc(t("Type"))}</span><select data-k="thinMode">${([["inside", t("Inside the profile")], ["outside", t("Outside the profile")], ["mid", t("Mid-plane")]] as const).map(([v, l]) => `<option value="${v}"${f.thin!.mode === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>` + numField("thin.t", t("Thickness"), f.thin.t, "length") : ""));
+        + group(t("Thin feature"), chk("thinOn", !!f.thin, t("Thin feature")) + (f.thin ? `<label class="pm-field"><span>${esc(t("Type"))}</span><select data-k="thinMode">${([["inside", t("Inside the profile")], ["outside", t("Outside the profile")], ["mid", t("Mid-plane")]] as const).map(([v, l]) => `<option value="${v}"${f.thin!.mode === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>` + numField("thin.t", t("Thickness"), f.thin.t, "length") : ""))
+        + this.contoursGroup(f, m.focus) + this.scopeGroup(f, m.focus);
     } else if (f.type === "fillet" || f.type === "chamfer") {
       title = f.type === "fillet" ? t("Fillet") : t("Chamfer");
       const cm = f.type === "chamfer" ? f.mode ?? "equal" : "equal";
@@ -5130,28 +7252,60 @@ export class ModelController {
       const sel = (k: string, label: string, opts: [string, string][], cur: string) => `<label class="pm-field"><span>${esc(label)}</span><select data-k="${k}">${opts.map(([v, l]) => `<option value="${v}"${v === cur ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;
       const hbox = (focus: Focus, label: string, value: string) => `<div class="pm-field"><span>${esc(label)}</span><button class="pm-box${m.focus === focus ? " focus" : ""}" data-focus="${focus}" translate="no">${esc(value)}</button></div>`;
       const favs = loadFavs();
-      body = group(t("Favourites"), `<label class="pm-field"><span>${esc(t("Favourite"))}</span><select data-ui="fav"><option value="">${esc(t("None"))}</option>${favs.map((x, i) => `<option value="${i}" translate="no">${esc(x.name)}</option>`).join("")}</select></label>`
+      // FR-FT-051 UX: Type and Positions tabs as in other CAD apps; view picks work on either tab.
+      if (this.holeTabOf !== f) { this.holeTabOf = f; this.holeTab = "type"; }
+      const tab = this.holeTab;
+      const kindNames: Record<HoleFeature["kind"], string> = { simple: t("Simple hole"), clear: t("Clearance hole"), cbore: t("Counterbore"), cdrill: t("Counterdrill"), csink: t("Countersink"), tapped: t("Tapped hole"), ptap: t("Tapered tap"), slot: t("Slot"), insert: t("Heat-set insert"), adv: t("Advanced hole"), captive: t("Captive screw") };
+      const favOpen = (() => { try { return localStorage.getItem("mc:holeFavOpen") === "1"; } catch { return false; } })();
+      const typeTab = this.holePreview(f)
+        + `<details class="pm-group pm-favs" data-ui="favs"${favOpen ? " open" : ""}><summary>${esc(t("Favourites"))}${favs.length ? ` <span class="muted">(${favs.length})</span>` : ""}</summary><label class="pm-field"><span>${esc(t("Favourite"))}</span><select data-ui="fav"><option value="">${esc(t("None"))}</option>${favs.map((x, i) => `<option value="${i}" translate="no">${esc(x.name)}</option>`).join("")}</select></label>`
           + `<label class="pm-field"><span>${esc(t("Name"))}</span><input type="text" data-ui="favName" value="${esc(holeTitle(f))}" spellcheck="false" translate="no" /></label>`
-          + `<div class="pm-rels"><button class="btn small" data-ui="favSave">${esc(t("Save as favourite"))}</button>${favs.length ? `<button class="btn small" data-ui="favDel">${esc(t("Delete favourite"))}</button>` : ""}</div>`)
-        + group(t("Hole type"), sel("kind", t("Type"), [["simple", t("Simple hole")], ["clear", t("Clearance hole")], ["cbore", t("Counterbore")], ["cdrill", t("Counterdrill")], ["csink", t("Countersink")], ["tapped", t("Tapped hole")], ["slot", t("Slot")], ["insert", t("Heat-set insert")]], f.kind)
-          + sel("size", t("Size"), [["", t("Custom")], ...(f.kind === "insert" ? HEAT_INSERTS : ISO_METRIC).map(h => [h.size, h.size] as [string, string])], f.size ?? "")
+          + `<div class="pm-rels"><button class="btn small" data-ui="favSave">${esc(t("Save as favourite"))}</button>${favs.length ? `<button class="btn small" data-ui="favDel">${esc(t("Delete favourite"))}</button>` : ""}</div></details>`
+        + group(t("Hole type"), `<div class="pm-hkinds" role="group" aria-label="${esc(t("Hole type"))}">${HOLE_KINDS.map(k => `<button type="button" class="pm-hkind${f.kind === k ? " on" : ""}" data-hkind="${k}" aria-pressed="${f.kind === k}" title="${esc(kindNames[k])}" aria-label="${esc(kindNames[k])}">${holeIcon(k)}</button>`).join("")}</div>` + sel("kind", t("Type"), [["simple", t("Simple hole")], ["clear", t("Clearance hole")], ["cbore", t("Counterbore")], ["cdrill", t("Counterdrill")], ["csink", t("Countersink")], ["tapped", t("Tapped hole")], ["ptap", t("Tapered tap")], ["slot", t("Slot")], ["insert", t("Heat-set insert")], ["adv", t("Advanced hole")], ["captive", t("Captive screw")]], f.kind)
+          + (f.kind === "adv" ? "" : f.kind === "ptap" ? sel("standard", t("Standard"), [["npt", t("ANSI NPT (pipe taper)")], ["bspt", t("ISO 7 Rc (BSPT)")]], f.standard === "bspt" ? "bspt" : "npt")
+            : f.kind !== "insert" ? sel("standard", t("Standard"), [["iso", t("ISO metric")], ["isofine", t("ISO metric fine")], ["unc", t("ANSI inch UNC")], ["unf", t("ANSI inch UNF")]], holeStd(f)) : "")
+          + (f.kind === "adv" ? "" : sel("size", t("Size"), [["", t("Custom")], ...(f.kind === "insert" ? HEAT_INSERTS : f.kind === "ptap" ? TAPER_STANDARDS[f.standard === "bspt" ? "bspt" : "npt"] : HOLE_STANDARDS[holeStd(f)]).map(h => [h.size, h.size] as [string, string])], f.size ?? ""))
           + (f.kind === "insert" && insertSize(f.size) ? `<p class="pm-help muted" data-insert>${esc(t("Insert length {l} mm; keep at least {w} mm of wall around the hole (boss Ø {b} mm).", { l: trimNum(insertSize(f.size)!.length, 2), w: trimNum(insertSize(f.size)!.wall, 2), b: trimNum(insertSize(f.size)!.hole + 2 * insertSize(f.size)!.wall, 2) }))}</p>` : "")
-          + (f.kind !== "tapped" && f.kind !== "insert" && f.size ? sel("fit", t("Clearance fit"), [["close", t("Close fit")], ["normal", t("Normal fit")], ["loose", t("Loose fit")]], f.fit ?? "normal") : ""))
-        + group(t("Hole specification"), numField("diameter", f.kind === "tapped" ? t("Tap drill diameter") : t("Diameter"), f.diameter, "length")
-          + (f.kind === "cbore" ? numField("cbDia", t("Counterbore diameter"), f.cbDia ?? { v: f.diameter.v * 1.7 }, "length") + numField("cbDepth", t("Counterbore depth"), f.cbDepth ?? { v: f.diameter.v }, "length") : "")
-          + (f.kind === "csink" ? numField("csDia", t("Countersink diameter"), f.csDia ?? { v: f.diameter.v * 2 }, "length") + numField("csAngle", t("Countersink angle"), f.csAngle ?? { v: Math.PI / 2 }, "angle") : "")
+          + ((headKind(f) === "cbore" || headKind(f) === "csink" || f.kind === "cdrill") && f.size && screwTypes(f.size, headKind(f) === "csink" ? "csink" : "cbore").length > 1
+            ? sel("screw", t("Screw type"), screwTypes(f.size, headKind(f) === "csink" ? "csink" : "cbore").map(k => [k, t(SCREW_TYPES.find(x => x.key === k)!.label)] as [string, string]), f.screw ?? defaultScrew(headKind(f) === "csink" ? "csink" : "cbore")) : "")
+          + (f.kind !== "tapped" && f.kind !== "ptap" && f.kind !== "insert" && f.size ? sel("fit", t("Clearance fit"), [["close", t("Close fit")], ["normal", t("Normal fit")], ["loose", t("Loose fit")]], f.fit ?? "normal") : ""))
+        + (f.kind === "adv" ? this.advGroups(f, numField, group) : f.kind === "captive" ? this.captiveGroup(f, numField, group, chk) : group(t("Hole specification"), numField("diameter", f.kind === "tapped" || f.kind === "ptap" ? t("Tap drill diameter") : t("Diameter"), f.diameter, "length")
+          + (f.kind === "ptap" ? numField("taperDia", t("Tapered diameter at the face"), f.taperDia ?? { v: f.diameter.v * 1.1 }, "length") : "")
+          + (headKind(f) === "cbore" ? numField("cbDia", t("Counterbore diameter"), f.cbDia ?? { v: f.diameter.v * 1.7 }, "length") + numField("cbDepth", t("Counterbore depth"), f.cbDepth ?? { v: f.diameter.v }, "length") : "")
+          + (headKind(f) === "csink" ? numField("csDia", t("Countersink diameter"), f.csDia ?? { v: f.diameter.v * 2 }, "length") + numField("csAngle", t("Countersink angle"), f.csAngle ?? { v: Math.PI / 2 }, "angle") : "")
           + (f.kind === "cdrill" ? numField("cdDia", t("Counterdrill diameter"), f.cdDia ?? { v: f.diameter.v * 1.7 }, "length") + numField("cdDepth", t("Counterdrill depth"), f.cdDepth ?? { v: f.diameter.v }, "length") + numField("cdAngle", t("Counterdrill angle"), f.cdAngle ?? { v: (118 * Math.PI) / 180 }, "angle") : "")
-          + (f.kind === "slot" ? numField("slotLen", t("Slot length"), f.slotLen ?? { v: f.diameter.v * 2 }, "length") + numField("slotAngle", t("Slot angle"), f.slotAngle ?? { v: 0 }, "angle") : "")
-          + (f.kind === "tapped" ? numField("threadDepth", t("Thread depth"), f.threadDepth ?? { v: f.diameter.v * 2 }, "length") : ""))
-        + group(t("End condition"), sel("end", t("End condition"), [["blind", t("Blind")], ["through", t("Through all")], ["next", t("Up to next")], ["upto", t("Up to face or plane")]], f.end)
-          + (f.end === "upto" ? hbox("hupto", t("Up to"), this.refLabel(f.upTo)) + `<p class="pm-help muted">${esc(t("Click a flat face or a plane in the view or the tree."))}</p>` : "")
+          + (f.kind === "slot" ? sel("slotHead", t("Slot type"), [["", t("Straight slot")], ["cbore", t("Counterbored slot")], ["csink", t("Countersunk slot")]], f.slotHead ?? "") : "")
+          + (f.kind === "slot" ? numField("slotLen", t("Slot length"), f.slotLen ?? { v: f.diameter.v * 2 }, "length") + numField("slotAngle", t("Slot angle"), f.slotAngle ?? { v: 0 }, "angle") : "")))
+        + group(t("End condition"), sel("end", t("End condition"), [["blind", t("Blind")], ["through", t("Through all")], ["next", t("Up to next")], ["vertex", t("Up to vertex")], ["upto", t("Up to face or plane")], ["offset", t("Offset from surface")]], f.end)
+          + (f.end === "upto" || f.end === "offset" ? hbox("hupto", t("Up to"), this.refLabel(f.upTo)) + `<p class="pm-help muted">${esc(t("Click a flat face or a plane in the view or the tree."))}</p>` : "")
+          + (f.end === "offset" ? numField("upToOffset", t("Offset distance"), f.upToOffset ?? { v: 5 }, "length") + chk("reverseOffset", f.reverseOffset, t("Reverse offset")) : "")
+          + (f.end === "vertex" ? hbox("hupto", t("Up to"), this.vertexLabel(f.upToVertex)) + `<p class="pm-help muted">${esc(t("Click near the end of an edge, or a reference point in the tree."))}</p>` : "")
           + (f.end === "next" ? `<p class="pm-help muted">${esc(t("Each hole stops where it leaves the material."))}</p>` : "")
-          + (f.end === "blind" ? numField("depth", t("Depth"), f.depth, "length") + chk("flat", f.flat, t("Flat bottom (no drill point)")) : ""))
-        + group(t("Positions"), hbox("hplane", t("Face"), this.refLabel(f.plane)) + hbox("pts", t("Hole positions"), t("{n} hole|{n} holes", { n: f.pts.length }))
+          + (f.end === "blind" ? numField("depth", t("Depth"), f.depth, "length") + chk("flat", f.flat, t("Flat bottom (no drill point)")) + (f.flat ? "" : numField("drillAngle", t("Drill angle"), f.drillAngle ?? { v: (118 * Math.PI) / 180 }, "angle")) : "")
+          // The thread's own end condition sits under the hole's, as in a CAD app's End Condition box.
+          + (f.kind === "tapped" && holeExits(f) ? sel("threadEnd", t("Thread"), [["blind", t("Blind")], ["through", t("Through all")]], f.threadEnd ?? "blind") : "")
+          + (f.kind === "tapped" && !threadThrough(f) ? numField("threadDepth", t("Thread depth"), f.threadDepth ?? { v: f.diameter.v * 2 }, "length") : "")
+          + (f.kind === "ptap" ? numField("threadDepth", t("Thread length"), f.threadDepth ?? { v: f.diameter.v }, "length") : "")
+          + (tapTooShallow(f) !== null ? `<p class="pm-help pm-warn" role="alert" data-warn="tapdepth">${esc(t("The drill must go deeper than the thread: at least {n} for the tap's lead.", { n: `${trimNum(Math.ceil(tapTooShallow(f)! * 10) / 10 * UNITS[units.current].f, Math.max(units.decimals ?? this.doc.units.decimals, 2))} ${units.current}` }))}</p>` : "")
+          + chk("flip", f.flip, t("Reverse direction")))
+        + (f.kind === "insert" || f.kind === "adv" || f.kind === "captive" ? "" : group(t("Options"),
+          (f.kind === "ptap" ? sel("threadMode", t("Thread display"), [["", t("Cosmetic thread")], ["remove", t("Remove thread")]], f.threadMode ?? "") : "")
+          + (f.kind === "tapped" ? sel("threadMode", t("Thread display"), [["", t("Cosmetic thread")], ["remove", t("Remove thread")], ["none", t("No cosmetic thread")]], f.threadMode ?? "")
+            + (f.size ? sel("tclass", t("Thread class"), threadClasses(f.size).map(c => [c, c] as [string, string]), f.tclass ?? threadClasses(f.size)[0]) : "") : "")
+          + (headKind(f) === "cbore" || headKind(f) === "csink" ? chk("optHead", !!f.headClear, t("Head clearance")) + (f.headClear ? numField("headClear", t("Head clearance"), f.headClear, "length") : "") : "")
+          + (headKind(f) !== "csink" ? chk("optNear", !!f.nearCs, t("Near side countersink")) + (f.nearCs ? numField("nearCs.dia", t("Diameter"), f.nearCs.dia, "length") + numField("nearCs.angle", t("Angle"), f.nearCs.angle, "angle") : "") : "")
+          + (headKind(f) === "cbore" ? chk("optUnder", !!f.underCs, t("Under head countersink")) + (f.underCs ? numField("underCs.dia", t("Diameter"), f.underCs.dia, "length") + numField("underCs.angle", t("Angle"), f.underCs.angle, "angle") : "") : "")
+          + (holeExits(f) && f.kind !== "slot" ? chk("optFar", !!f.farCs, t("Far side countersink")) + (f.farCs ? numField("farCs.dia", t("Diameter"), f.farCs.dia, "length") + numField("farCs.angle", t("Angle"), f.farCs.angle, "angle") : "") : "")));
+      const posTab = group(t("Positions"), hbox("hplane", t("Face"), this.refLabel(f.plane)) + hbox("pts", t("Hole positions"), t("{n} hole|{n} holes", { n: holeCount(f) }))
           + (f.pts.length ? `<ul class="pm-items pm-hpts" aria-label="${esc(t("Hole positions"))}">${f.pts.map((p, i) => `<li><span>${i + 1}</span>${holeAxes(this.last?.frames[f.id]).names.map((ax, j) => `<span class="pm-in"><span class="muted">${ax}</span><input type="text" inputmode="decimal" data-hp="${i}:${j}" value="${esc(trimNum(holeAxes(this.last?.frames[f.id]).show(p)[j] * UNITS[unit].f, 6))}" aria-label="${esc(t("Hole {n}", { n: i + 1 }))} ${ax}" spellcheck="false" /></span>`).join("")}<button class="icon" data-rmh="${i}" title="${esc(t("Remove"))}" aria-label="${esc(t("Remove"))} ${esc(t("Hole {n}", { n: i + 1 }))}">✕</button></li>`).join("")}</ul>` : "")
           + (f.plane ? `<button class="btn small" data-k="addPt">${esc(t("Add hole"))}</button> ` : "")
-          + (f.pts.length ? `<button class="btn small" data-k="clearPts">${esc(t("Clear holes"))}</button>` : "")
-          + `<p class="pm-help muted">${esc(f.plane ? t("Click on the face to place holes; click a hole again to remove it.") : t("Click the flat face (or a plane) for the holes."))}</p>`);
+          + (f.spots?.length ? `<ul class="pm-items pm-hpts" aria-label="${esc(t("Holes on other faces"))}">${f.spots.map((sp, i) => `<li><span>${f.pts.length + i + 1}</span><span class="muted" translate="no">${esc(this.refLabel({ face: sp.face }))}</span><button class="icon" data-rms="${i}" title="${esc(t("Remove"))}" aria-label="${esc(t("Remove"))} ${esc(t("Hole {n}", { n: f.pts.length + i + 1 }))}">✕</button></li>`).join("")}</ul>` : "")
+          + (holeCount(f) ? `<button class="btn small" data-k="clearPts">${esc(t("Clear holes"))}</button>` : "")
+          + `<p class="pm-help muted">${esc(f.plane ? t("Click on the face to place holes; click a hole again to remove it.") : t("Click the flat face (or a plane) for the holes."))}</p>`
+          + (f.plane && "face" in f.plane ? `<p class="pm-help muted">${esc(t("Click another face, flat or curved, for a hole square to it there."))}</p>` : ""));
+      const tabBtn = (k: "type" | "pos", label: string) => `<button type="button" role="tab" data-tab="${k}" data-htab="${k}" class="${tab === k ? "on" : ""}" aria-selected="${tab === k}" tabindex="${tab === k ? 0 : -1}">${esc(label)}</button>`;
+      body = `<div class="tabs pm-htabs" role="tablist" aria-label="${esc(t("Hole"))}">${tabBtn("type", t("Type"))}${tabBtn("pos", holeCount(f) ? `${t("Positions")} (${holeCount(f)})` : t("Positions"))}</div>`
+        + `<div class="pm-htab" data-hpane="type"${tab === "type" ? "" : " hidden"}>${typeTab}</div><div class="pm-htab" data-hpane="pos"${tab === "pos" ? "" : " hidden"}>${posTab}</div>`;
     }
     if (f.type === "draft") {
       title = t("Draft");
@@ -5170,6 +7324,24 @@ export class ModelController {
         + group(t("Faces to draft"), dbox("faces", t("Faces"), t("{n} face|{n} faces", { n: f.faces.length }))
           + (f.faces.length ? `<button class="btn small" data-k="clearFaces">${esc(t("Clear faces"))}</button>` : "")
           + `<p class="pm-help muted">${esc(m.focus === "nplane" || !f.plane ? t("Click a plane or a flat face in the view or the tree.") : t("Click the faces to draft; click a face again to remove it."))}</p>`);
+    }
+    if (f.type === "dome") {
+      title = t("Dome");
+      body = group(t("Parameters"), numField("distance", t("Distance"), f.distance, "length") + chk("flip", f.flip, t("Reverse direction"))
+          + chk("elliptical", f.elliptical, t("Elliptical dome")))
+        + group(t("Faces to dome"), `<p class="pm-count">${esc(t("{n} face|{n} faces", { n: f.faces.length }))}</p>`
+          + (f.faces.length ? `<button class="btn small" data-k="clearFaces">${esc(t("Clear faces"))}</button>` : "")
+          + `<p class="pm-help muted">${esc(t("Click flat faces to dome; click a face again to remove it. A round face gets a spherical cap, or an elliptical one."))}</p>`);
+    }
+    if (f.type === "wrap") {
+      title = t("Wrap");
+      const sel = (k: string, label: string, opts: [string, string][], cur: string) => `<label class="pm-field"><span>${esc(label)}</span><select data-k="${k}">${opts.map(([v, l]) => `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;
+      const closed = sketches.filter(s => sketchProfileOk(s) || s.id === f.sketch);
+      body = group(t("Wrap type"), sel("kind", t("Type"), [["emboss", t("Emboss")], ["deboss", t("Deboss")]], f.kind))
+        + group(t("Wrap parameters"), `<div class="pm-field"><span>${esc(t("Face"))}</span><button class="pm-box${m.focus === "faces" ? " focus" : ""}" data-focus="faces" translate="no">${esc(f.face ? this.refLabel({ face: f.face }) : t("None"))}</button></div>`
+          + sel("sketch", t("Source sketch"), [...(f.sketch ? [] : [["", t("None")] as [string, string]]), ...closed.map(s => [s.id, featureLabel(s.name)] as [string, string])], f.sketch)
+          + numField("depth", t("Depth"), f.depth, "length"))
+        + `<p class="pm-help muted">${esc(t("Sketch closed shapes on a plane parallel to the cylinder's axis, then pick the round face: the shapes wrap around it without stretching and stand out of it (emboss) or sink into it (deboss)."))}</p>`;
     }
     if (f.type === "delface" || f.type === "moveface") {
       title = f.type === "delface" ? t("Delete Face") : t("Move Face");
@@ -5203,7 +7375,10 @@ export class ModelController {
           + (picked.length ? `<button class="btn small" data-k="clearCopy">${esc(what === "faces" ? t("Clear faces") : t("Clear bodies"))}</button>` : "")
           + (f.type === "mirror" && what === "bodies" ? chk("merge", f.merge, t("Merge solids")) : "")
           + `<p class="pm-help muted">${esc(what === "faces" ? t("Click all the faces of a boss or a cut: the copies add or remove the same shape.") : t("Click a face of each body to copy; the copies become new bodies."))}</p>`);
-      const skip = (f.type === "lpattern" || f.type === "cpattern") ? group(t("Instances to skip"), `<label class="pm-field"><span>${esc(t("Skip"))}</span><input type="text" data-k="skip" value="${esc((f.skip ?? []).join("; "))}" spellcheck="false" placeholder="${f.type === "lpattern" && f.dir2 ? "1,1; 2,0" : "2; 3"}" /></label><p class="pm-help muted">${esc(f.type === "lpattern" && f.dir2 ? t("Instance numbers as column,row from 0 (the seed is 0,0), separated by semicolons.") : t("Instance numbers from 0 (the seed is 0), separated by semicolons."))}</p>`) : "";
+      const skipN = (f.type === "lpattern" || f.type === "cpattern") ? (f.skip ?? []).length : 0;
+      const skip = (f.type === "lpattern" || f.type === "cpattern") ? group(t("Instances to skip"), box("skip", t("Instances"), skipN ? t("{n} skipped", { n: skipN }) : t("None"))
+        + `<p class="pm-help muted">${esc(t("Click this box, then the dots in the view: a filled dot is an instance, a hollow one is skipped."))}</p>`
+        + `<label class="pm-field"><span>${esc(t("Skip"))}</span><input type="text" data-k="skip" value="${esc((f.skip ?? []).join("; "))}" spellcheck="false" placeholder="${f.type === "lpattern" && f.dir2 ? "1,1; 2,0" : "2; 3"}" /></label><p class="pm-help muted">${esc(f.type === "lpattern" && f.dir2 ? t("Instance numbers as column,row from 0 (the seed is 0,0), separated by semicolons.") : f.type === "cpattern" && f.dir2 ? t("Instance numbers from 0 (the seed is 0), direction 2 as -1, -2…, separated by semicolons.") : t("Instance numbers from 0 (the seed is 0), separated by semicolons."))}</p>`) : "";
       if (f.type === "shell") {
         title = t("Shell");
         body = group(t("Parameters"), numField("thickness", t("Thickness"), f.thickness, "length") + chk("outward", f.outward, t("Shell outward")))
@@ -5218,9 +7393,19 @@ export class ModelController {
         body = group(t("Mirror face/plane"), box("mplane", t("Plane"), this.refLabel(f.plane)) + `<p class="pm-help muted">${esc(t("Click a plane or a flat face in the view or the tree."))}</p>`) + seedGroup;
       } else if (f.type === "lpattern") {
         title = t("Linear pattern");
-        body = group(t("Direction 1"), box("dir", t("Direction"), this.lineLabel(f.dir)) + numField("spacing", t("Spacing"), f.spacing, "length") + intField("count", t("Instances"), f.count) + chk("flip", f.flip, t("Reverse direction")))
+        // Spacing and instances, or Up to distance (the distance from the seed to the last instance), per direction.
+        const how = (k: "total" | "total2", cur: string) => `<label class="pm-field"><span>${esc(t("Spacing"))}</span><select data-k="${k}">${([["", t("Spacing and instances")], ["1", t("Up to distance")], ["ref", t("Up to reference")]] as const).map(([v, l]) => `<option value="${v}"${cur === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;
+        // Up to reference: a plane or flat face to stop at, an offset short of it, and the spacing that follows.
+        const refPart = (two: boolean) => {
+          const ref = two ? f.upTo2 : f.upTo, off = (two ? f.upToOffset2 : f.upToOffset) ?? { v: 0 };
+          return box(two ? "pref2" : "pref", t("Reference"), this.refLabel(ref)) + numField(two ? "upToOffset2" : "upToOffset", t("Offset distance"), off, "length")
+            + `<p class="pm-help muted">${esc(t("Click a plane or flat face across the direction: the last instance stops the offset short of it, measured from the seed's centre."))}</p>`;
+        };
+        const mode1 = f.upTo || m.focus === "pref" ? "ref" : f.total ? "1" : "", mode2 = f.upTo2 || m.focus === "pref2" ? "ref" : f.total2 ? "1" : "";
+        body = group(t("Direction 1"), box("dir", t("Direction"), this.lineLabel(f.dir)) + how("total", mode1) + (mode1 === "ref" ? refPart(false) : numField("spacing", f.total ? t("Distance") : t("Spacing"), f.spacing, "length")) + intField("count", t("Instances"), f.count) + chk("flip", f.flip, t("Reverse direction")))
           + group(t("Direction 2"), chk("useDir2", !!f.dir2 || m.focus === "dir2", t("Direction 2"))
-            + (f.dir2 || m.focus === "dir2" ? box("dir2", t("Direction"), this.lineLabel(f.dir2)) + numField("spacing2", t("Spacing"), f.spacing2 ?? { v: f.spacing.v }, "length") + intField("count2", t("Instances"), f.count2 ?? 2) + chk("flip2", f.flip2, t("Reverse direction")) : ""))
+            + (f.dir2 || m.focus === "dir2" ? box("dir2", t("Direction"), this.lineLabel(f.dir2)) + how("total2", mode2) + (mode2 === "ref" ? refPart(true) : numField("spacing2", f.total2 ? t("Distance") : t("Spacing"), f.spacing2 ?? { v: f.spacing.v }, "length")) + intField("count2", t("Instances"), f.count2 ?? 2) + chk("flip2", f.flip2, t("Reverse direction"))
+              + chk("seedOnly", f.seedOnly, t("Pattern seed only")) : ""))
           + seedGroup + skip
           + `<p class="pm-help muted">${esc(t("For a direction, click a straight edge, a flat face (its normal) or a reference axis in the tree."))}</p>`;
       } else if (f.type === "spattern") {
@@ -5247,12 +7432,17 @@ export class ModelController {
         title = t("Circular pattern");
         body = group(t("Parameters"), box("dir", t("Axis"), this.lineLabel(f.axis)) + numField("angle", t("Angle"), f.angle, "angle") + intField("count", t("Instances"), f.count)
           + chk("equal", f.equal, t("Equal spacing")) + chk("flip", f.flip, t("Reverse direction")))
+          + group(t("Direction 2"), chk("cdir2", f.dir2, t("Direction 2"))
+            + (f.dir2 ? chk("sym", f.sym, t("Symmetric"))
+              + (f.sym ? "" : numField("angle2", t("Angle"), f.angle2 ?? f.angle, "angle") + intField("count2", t("Instances"), f.count2 ?? f.count) + chk("equal2", f.equal2 ?? f.equal, t("Equal spacing")))
+              + `<p class="pm-help muted">${esc(t("Copies turned the other way about the same axis."))}</p>` : ""))
           + seedGroup + skip
           + `<p class="pm-help muted">${esc(t("For the axis, click a round edge or face, a straight edge, or a reference axis in the tree."))}</p>`;
       }
     }
     if (f.type === "sketch3d") ({ title, body } = this.sk3Panel(f, group));
     if (f.type === "helix" || f.type === "sweep" || f.type === "loft" || f.type === "rib" || f.type === "split" || f.type === "curve" || f.type === "sweepsurf") ({ title, body } = this.p3Panel(f, sketches, group, numField, chk));
+    if (f.type === "sweep" || f.type === "loft" || f.type === "hole") body += this.scopeGroup(f, m.focus);
     if (isBodyOp(f)) ({ title, body } = this.bodyPanel(f, m.focus, group, numField, chk));
     if (isSheet(f)) ({ title, body } = smPanel(f, { esc, group, numField, chk, sketches, label: featureLabel, sheet: this.last?.sheet, unit, f: UNITS[unit].f }));
     if (isWeldFeature(f)) ({ title, body } = weldPanel(f, this.weldCtx(m.index), m.focus, group, numField, chk));
@@ -5275,13 +7465,13 @@ export class ModelController {
     if (f.type === "plane") {
       title = t("Plane");
       body = group(t("First reference"), `<button class="pm-box${m.focus !== "axis" ? " focus" : ""}" data-k="focus-base" translate="no">${esc(this.refLabel(f.base))}</button>`)
-        + group(t("Placement"), `<label class="pm-field"><span>${esc(t("Type"))}</span><select data-k="mode"><option value="offset"${f.mode === "offset" ? " selected" : ""}>${esc(t("Offset distance"))}</option><option value="angle"${f.mode === "angle" ? " selected" : ""}>${esc(t("At angle about an edge"))}</option></select></label>`
+        + group(t("Placement"), `<label class="pm-field"><span>${esc(t("Type"))}</span><select data-k="mode"><option value="offset"${f.mode === "offset" ? " selected" : ""}>${esc(t("Offset distance"))}</option><option value="angle"${f.mode === "angle" ? " selected" : ""}>${esc(t("At angle about an edge or axis"))}</option></select></label>`
           + (f.mode === "offset" ? numField("offset", t("Distance"), f.offset, "length")
-            : `<div class="pm-field"><span>${esc(t("Edge"))}</span><button class="pm-box${m.focus === "axis" ? " focus" : ""}" data-k="focus-axis">${esc(f.axis ? t("Edge picked") : t("None"))}</button></div>` + numField("angle", t("Angle"), f.angle ?? { v: Math.PI / 4 }, "angle"))
+            : this.aboutField(f, m.focus === "axis") + numField("angle", t("Angle"), f.angle ?? { v: Math.PI / 4 }, "angle"))
           + chk("flip", f.flip, t("Flip")))
         + `<p class="pm-help muted">${esc(m.focus === "axis" ? t("Click a straight edge of the model.") : t("Click a plane or a flat face in the view or the tree."))}</p>`;
     }
-    // SolidWorks habit: ✓ and ✕ at the top of the panel, then the message box, then the groups.
+    // CAD app habit: ✓ and ✕ at the top of the panel, then the message box, then the groups.
     // A rebuild re-renders the panel; keep what is being typed (and the caret) instead of the stored value.
     const typing = new Map<string, { value: string; focus: boolean; a: number | null; b: number | null }>();
     pm.querySelectorAll<HTMLInputElement>("input[data-num], input[type=text][data-k], input[data-hp]").forEach(inp => {
@@ -5306,7 +7496,7 @@ export class ModelController {
         try { v = evaluate(inp.value, q, q === "angle" ? "deg" : unit, evalVars(this.doc, unit).values); }
         catch (err) { inp.setAttribute("aria-invalid", "true"); toast(t((err as ExprError).key ?? String(err), (err as ExprError).params), true); return; }
         // Helix start angle and taper may be 0 or negative.
-        if (!(v > 0) && !(key === "start" || key === "span.start" || key === "taper" || key === "twist" || ((key === "angle" || /^groups\.\d+\.angle$/.test(key)) && f.type === "member") || /^vpitch\.0\.h$/.test(key)) && !(key === "clearance" && f.type === "indent" && v === 0)) { inp.setAttribute("aria-invalid", "true"); toast(t("The value must be more than 0."), true); return; }
+        if (!(v > 0) && !(key === "start" || key === "span.start" || key === "taper" || key === "twist" || ((key === "angle" || /^groups\.\d+\.angle$/.test(key)) && f.type === "member") || /^vpitch\.0\.h$/.test(key)) && !(key === "clearance" && f.type === "indent" && v === 0) && !(f.type === "flex" && (key === "angle" || key === "distance" || ((key === "trim1" || key === "trim2") && v >= 0)))) { inp.setAttribute("aria-invalid", "true"); toast(t("The value must be more than 0."), true); return; }
         inp.removeAttribute("aria-invalid");
         const n: Num = isPlain(inp.value) ? { v } : { v, expr: inp.value.trim() };
         // "thin.t" and "draft.angle" live one level down, "vpitch.0.h" two.
@@ -5314,6 +7504,8 @@ export class ModelController {
         const host = path.reduce<Record<string, unknown> | undefined>((o, p) => o?.[p] as Record<string, unknown> | undefined, f as unknown as Record<string, unknown>) as Record<string, Num | undefined> | undefined;
         const cur = host?.[last];
         if (cur && cur.v === n.v && cur.expr === n.expr) return;
+        // A drill depth still at its automatic value follows the thread depth (and a typed diameter's thread).
+        const tapLinked = f.type === "hole" && (key === "threadDepth" || key === "diameter") && tapDepthLinked(f);
         upd(() => {
           // Head sizes still at their automatic values (the size's ISO table, or the custom defaults) follow
           // a typed diameter: a Ø3.2 countersink kept the M6 head (Ø13.44) before.
@@ -5332,9 +7524,12 @@ export class ModelController {
             }
           }
           (host as Record<string, Num>)[last] = n;
-          // A typed size makes the hole custom (SolidWorks' "Show custom sizing").
-          if (f.type === "hole" && key !== "depth" && key !== "threadDepth" && f.size) { delete f.size; delete f.fit; }
+          if (f.type === "hole" && (key === "threadDepth" || key === "diameter")) keepTapDepth(f, tapLinked);
+          // A typed size makes the hole custom (a CAD app's "Show custom sizing").
+          if (f.type === "hole" && key !== "depth" && key !== "threadDepth" && key !== "headClear" && key !== "drillAngle" && key !== "upToOffset" && !/^(near|under|far)Cs\./.test(key) && !(f.kind === "captive" && /^(capHold|capThread|ringDia|ringT|cbDia|cbDepth|diameter)$/.test(key)) && f.size) { delete f.size; delete f.fit; }
           if (f.type === "thread" && key === "diameter") { delete f.size; delete f.pitch; }
+          // Advanced Hole: a typed diameter or angle makes that element custom; the main hole's Ø is the feature's.
+          if (f.type === "hole" && f.kind === "adv") { const e = /^(near|far)\.(\d+)\.(dia|angle)$/.exec(key); if (e) delete f[e[1] as "near" | "far"]?.[+e[2]]?.size; advSync(f); }
         }, f.type === "hole" || f.type === "thread");
       };
       inp.addEventListener("change", apply);
@@ -5359,7 +7554,39 @@ export class ModelController {
         const g = f as unknown as Record<string, unknown>;
         if (k === "name") { const s = String(val).trim(); if (s) f.name = s === featureLabel(f.name) ? f.name : s; this.renderPanel(); return; }
         if (k === "mode" && (f.type === "axis" || f.type === "point")) { upd(() => { (f as { mode: string }).mode = String(val); delete f.edge; delete f.face; if (f.type === "axis") delete f.planes; if (f.type === "point") delete f.at; }, true); return; }
-        if (k === "mode" && f.type === "plane") { upd(() => { f.mode = val as "offset" | "angle"; if (f.mode === "angle") { f.angle ??= { v: Math.PI / 4 }; if (!f.axis) m.focus = "axis"; } else m.focus = "base"; }, true); return; }
+        if (f.type === "flex" && /^o[xyz]$/.test(k)) {
+          let v: number;
+          try { v = evaluate(String(val), "length", unit, evalVars(this.doc, unit).values); }
+          catch (err) { el.setAttribute("aria-invalid", "true"); toast(t((err as ExprError).key ?? String(err), (err as ExprError).params), true); return; }
+          el.removeAttribute("aria-invalid");
+          upd(() => { const o: V3 = [...(f.origin ?? [0, 0, 0])]; o["xyz".indexOf(k[1])] = v; f.origin = o; });
+          return;
+        }
+        if (f.type === "flex" && (k === "hard" || k === "kind" || k === "axis" || k === "tcentre")) {
+          upd(() => {
+            // Unticked, the triad starts where it is (the bodies' centre), so nothing jumps.
+            if (k === "tcentre") { if (val) delete f.origin; else f.origin = [...(this.last?.frames[f.id]?.o ?? [0, 0, 0])].map(c => Math.round(c * 1e6) / 1e6) as V3; return; }
+            if (k === "hard") { if (val) delete f.hard; else f.hard = false; return; }
+            if (k === "kind") {
+              f.kind = String(val) as FlexFeature["kind"];
+              if (f.kind === "taper") f.factor ??= { v: 0.5 };
+              if (f.kind === "stretch") f.distance ??= { v: 10 };
+              return;
+            }
+            f.axis = String(val) as FlexFeature["axis"];
+            if (f.toward === f.axis) delete f.toward;
+          }, true);
+          return;
+        }
+        if (k === "about" && f.type === "plane") {
+          upd(() => {
+            const v = String(val);
+            if (v === "edge") { delete f.about; if (!f.axis) m.focus = "axis"; }
+            else { f.about = v.startsWith("axis:") ? { axis: v.slice(5) } : { std: v as "X" | "Y" | "Z" }; delete f.axis; m.focus = "base"; }
+          }, true);
+          return;
+        }
+        if (k === "mode" && f.type === "plane") { upd(() => { f.mode = val as "offset" | "angle"; if (f.mode === "angle") { f.angle ??= { v: Math.PI / 4 }; if (!f.axis && !f.about) m.focus = "axis"; } else m.focus = "base"; }, true); return; }
         if (k === "dkind" && f.type === "draft") { upd(() => { if (val === "parting") { f.kind = "parting"; f.parting ??= []; f.faces = []; } else { delete f.kind; delete f.parting; delete f.other; } m.focus = f.plane ? "faces" : "nplane"; }, true); return; }
         if (k === "endTan" && f.type === "sweep") { upd(() => { if (val === "path") f.endTangent = true; else delete f.endTangent; }, true); return; }
         if (k === "startTan" && f.type === "sweep") { upd(() => { if (val === "path") f.startTangent = true; else delete f.startTangent; }, true); return; }
@@ -5385,25 +7612,108 @@ export class ModelController {
         }
         if (f.type === "fillet" && k === "multi") { upd(() => { if (val) { f.multi = true; delete f.variable; f.edges.forEach(e => { delete e.r2; delete e.at; }); } else { delete f.multi; f.edges.forEach(e => delete e.r); } }, true); return; }
         if (f.type === "fillet" && k === "variable") { upd(() => { if (val) { f.variable = true; delete f.multi; } else { delete f.variable; f.edges.forEach(e => { delete e.r; delete e.r2; delete e.at; }); } }, true); return; }
+        if (f.type === "hole" && k === "threadEnd") { upd(() => { if (val === "through") f.threadEnd = "through"; else { delete f.threadEnd; f.threadDepth ??= { v: Math.round((f.major ?? f.diameter.v) * 20) / 10 }; } }, true); return; }
         if (f.type === "thread" && k === "size") { upd(() => this.applyThreadSize(f, String(val) || undefined), true); return; }
+        if (f.type === "hole" && (k === "optHead" || k === "optNear" || k === "optUnder" || k === "optFar")) {
+          upd(() => {
+            // Defaults: 1 mm of head clearance; countersinks 1 mm wider than what they open, at 90°.
+            const sink = (d: number): HoleSink => ({ dia: { v: Math.round((d + 1) * 100) / 100 }, angle: { v: Math.PI / 2 } });
+            const topDia = headKind(f) === "cbore" ? f.cbDia?.v ?? f.diameter.v : f.kind === "cdrill" ? f.cdDia?.v ?? f.diameter.v : f.diameter.v;
+            if (k === "optHead") { if (val) f.headClear = { v: 1 }; else delete f.headClear; }
+            if (k === "optNear") { if (val) f.nearCs = sink(topDia); else delete f.nearCs; }
+            if (k === "optUnder") { if (val) f.underCs = sink(f.diameter.v); else delete f.underCs; }
+            if (k === "optFar") { if (val) f.farCs = sink(f.diameter.v); else delete f.farCs; }
+          }, true);
+          return;
+        }
+        if (f.type === "hole" && k === "standard" && f.kind === "ptap") {
+          upd(() => {
+            // The size nearest the old one by major diameter, as for the straight threads.
+            const list = TAPER_STANDARDS[val === "bspt" ? "bspt" : "npt"], d = taperSize(f.size)?.major ?? 13;
+            f.size = list.reduce((b, h) => (Math.abs(h.major - d) < Math.abs(b.major - d) ? h : b)).size;
+            applyHoleSize(f);
+          }, true);
+          return;
+        }
+        if (f.type === "hole" && k === "standard") {
+          upd(() => {
+            if (val === "iso") delete f.standard; else f.standard = val as Exclude<HoleStandard, "iso">;
+            // The size nearest the old one by diameter, as a CAD app keeps a size when the standard changes.
+            const list = HOLE_STANDARDS[val as HoleStandard] ?? HOLE_STANDARDS.iso, old = holeSize(f.size), d = old ? majorOf(old) : 6;
+            f.size = list.reduce((b, h) => (Math.abs(majorOf(h) - d) < Math.abs(majorOf(b) - d) ? h : b)).size;
+            applyHoleSize(f);
+          }, true);
+          return;
+        }
+        if (f.type === "hole" && f.kind === "captive" && (k === "capStyle" || k === "retract" || k === "capHead")) {
+          upd(() => {
+            const M = f.major ?? f.diameter.v;
+            if (k === "capStyle") { if (val) f.capStyle = "ring"; else delete f.capStyle; }
+            if (k === "retract") { if (val) f.retract = true; else delete f.retract; }
+            if (k === "capHead") {
+              if (!val) { delete f.cbDia; delete f.cbDepth; }
+              else { const p = headPocket(f.size, undefined, "cbore"); f.cbDia = { v: p?.[0] ?? Math.round(M * 18) / 10 }; f.cbDepth = { v: p?.[1] ?? M }; }
+            }
+            f.capHold ??= { v: M }; f.capThread ??= { v: 2 * M };
+            if (f.capStyle === "ring") { f.ringDia ??= { v: Math.round(M * 22) / 10 }; f.ringT ??= { v: 1 }; }
+          }, true);
+          return;
+        }
+        if (f.type === "hole" && k === "slotHead") {
+          upd(() => {
+            if (val) f.slotHead = val as HoleFeature["slotHead"]; else { delete f.slotHead; delete f.screw; delete f.headClear; delete f.underCs; }
+            delete f.cbDia; delete f.cbDepth; delete f.csDia; delete f.csAngle;
+            if (f.slotHead === "csink") { delete f.nearCs; delete f.underCs; }
+            if (f.size) applyHoleSize(f);
+            if (f.slotHead === "cbore") { f.cbDia ??= { v: Math.round(f.diameter.v * 17) / 10 }; f.cbDepth ??= { v: f.diameter.v }; }
+            if (f.slotHead === "csink") { f.csDia ??= { v: f.diameter.v * 2 }; f.csAngle ??= { v: Math.PI / 2 }; }
+          }, true);
+          return;
+        }
+        if (f.type === "hole" && (k === "screw" || k === "tclass" || k === "threadMode")) {
+          upd(() => {
+            if (k === "screw") { if (val) f.screw = val as HoleFeature["screw"]; else delete f.screw; if (f.size) applyHoleSize(f); }
+            if (k === "tclass") { if (val && val !== threadClasses(f.size)[0]) f.tclass = String(val); else delete f.tclass; }
+            if (k === "threadMode") { if (val) f.threadMode = val as HoleFeature["threadMode"]; else delete f.threadMode; }
+          }, true);
+          return;
+        }
         if (f.type === "hole" && (k === "kind" || k === "size" || k === "fit")) {
+          const tapLinked = tapDepthLinked(f);
           upd(() => {
             if (k === "kind") {
               f.kind = val as HoleFeature["kind"];
-              if (f.size && !(f.kind === "insert" ? insertSize(f.size) : holeSize(f.size))) delete f.size;
+              if (f.size && !(f.kind === "insert" ? insertSize(f.size) : f.kind === "ptap" ? taperSize(f.size) : holeSize(f.size))) delete f.size;
               if (f.kind === "insert") f.size ??= "M3";
+              if (f.kind === "ptap") f.size ??= "1/4-18 NPT";
+              else { delete f.taperDia; if (f.standard === "bspt") delete f.standard; }
+              if (f.kind !== "tapped" && f.kind !== "ptap") delete f.threadMode;
+              // Advanced Hole: starts as the size's counterbore over its clearance hole; its elements carry the sizes.
+              if (f.kind === "adv") {
+                f.near ??= advDefault(f.size && holeSize(f.size) ? f.size : "M6");
+                for (const x of ["size", "fit", "standard", "cbDia", "cbDepth", "csDia", "csAngle", "cdDia", "cdDepth", "cdAngle", "threadDepth", "threadEnd", "major", "pitch", "screw", "tclass", "nearCs", "underCs", "farCs", "headClear", "slotHead"] as const) delete f[x];
+                advSync(f);
+              } else { delete f.near; delete f.far; }
+              // Captive screw: through the cover, M4 unless a size is kept; leaving it drops its own values.
+              if (f.kind === "captive") {
+                if (!f.size || !holeSize(f.size)) f.size = "M4";
+                for (const x of ["cbDia", "cbDepth", "csDia", "csAngle", "cdDia", "cdDepth", "cdAngle", "threadDepth", "threadEnd", "screw", "tclass", "nearCs", "underCs", "farCs", "headClear", "slotHead"] as const) delete f[x];
+                if (f.end === "blind" || f.end === "vertex" || f.end === "offset") f.end = "through";
+              } else for (const x of ["capStyle", "retract", "capHold", "capThread", "ringDia", "ringT"] as const) delete f[x];
             }
             if (k === "size") { if (val) f.size = String(val); else delete f.size; }
             if (k === "fit") f.fit = val as HoleFeature["fit"];
             if (f.size) applyHoleSize(f);
             else {
-              if (f.kind === "cbore") { f.cbDia ??= { v: Math.round(f.diameter.v * 17) / 10 }; f.cbDepth ??= { v: f.diameter.v }; }
-              if (f.kind === "csink") { f.csDia ??= { v: f.diameter.v * 2 }; f.csAngle ??= { v: Math.PI / 2 }; }
+              if (headKind(f) === "cbore") { f.cbDia ??= { v: Math.round(f.diameter.v * 17) / 10 }; f.cbDepth ??= { v: f.diameter.v }; }
+              if (headKind(f) === "csink") { f.csDia ??= { v: f.diameter.v * 2 }; f.csAngle ??= { v: Math.PI / 2 }; }
               if (f.kind === "tapped") f.threadDepth ??= { v: f.diameter.v * 2 };
+              if (f.kind === "ptap") { f.taperDia ??= { v: Math.round(f.diameter.v * 11) / 10 }; f.threadDepth ??= { v: f.diameter.v }; }
               if (f.kind === "cdrill") { f.cdDia ??= { v: Math.round(f.diameter.v * 17) / 10 }; f.cdDepth ??= { v: f.diameter.v }; f.cdAngle ??= { v: (118 * Math.PI) / 180 }; }
             }
-            if (f.kind === "slot") { f.slotLen ??= { v: Math.round(f.diameter.v * 20) / 10 }; f.slotAngle ??= { v: 0 }; } else { delete f.slotLen; delete f.slotAngle; }
+            if (f.kind === "slot") { f.slotLen ??= { v: Math.round(f.diameter.v * 20) / 10 }; f.slotAngle ??= { v: 0 }; } else { delete f.slotLen; delete f.slotAngle; delete f.slotHead; }
             if (f.kind === "clear" && !f.size) { f.size = "M6"; applyHoleSize(f); }
+            keepTapDepth(f, tapLinked);
           }, true);
           return;
         }
@@ -5424,14 +7734,36 @@ export class ModelController {
         }
         if (k === "skip" && (f.type === "lpattern" || f.type === "cpattern")) {
           const list = String(val).split(/[;\s]+/).map(x => x.trim()).filter(Boolean);
-          const ok = list.every(x => (f.type === "lpattern" && f.dir2 ? /^\d+,\d+$/ : /^\d+$/).test(x));
+          const ok = list.every(x => (f.type === "lpattern" && f.dir2 ? /^\d+,\d+$/ : f.type === "cpattern" && f.dir2 ? /^-?\d+$/ : /^\d+$/).test(x));
           if (!ok) { el.setAttribute("aria-invalid", "true"); toast(t("Write instance numbers like 2; 3 (or 1,1; 2,0 with two directions)."), true); return; }
           el.removeAttribute("aria-invalid");
           upd(() => { if (list.length) f.skip = list; else delete f.skip; });
           return;
         }
+        if ((k === "total" || k === "total2") && f.type === "lpattern") {
+          const two = k === "total2";
+          upd(() => {
+            if (val === "1") f[k] = true; else delete f[k];
+            if (val !== "ref") { if (two) { delete f.upTo2; delete f.upToOffset2; } else { delete f.upTo; delete f.upToOffset; } if (m.focus === (two ? "pref2" : "pref")) m.focus = undefined; }
+            else m.focus = two ? "pref2" : "pref";
+          }, true);
+          return;
+        }
+        if (k === "cdir2" && f.type === "cpattern") {
+          upd(() => { if (val) { f.dir2 = true; f.sym = true; } else { delete f.dir2; delete f.sym; delete f.count2; delete f.angle2; delete f.equal2; if (f.skip) { f.skip = f.skip.filter(x => !x.startsWith("-")); if (!f.skip.length) delete f.skip; } } }, true);
+          return;
+        }
+        if (k === "sym" && f.type === "cpattern") { upd(() => { if (val) { f.sym = true; delete f.count2; delete f.angle2; delete f.equal2; } else { delete f.sym; f.count2 = f.count; f.angle2 = { ...f.angle }; f.equal2 = f.equal; } }, true); return; }
+        if (k === "equal2" && f.type === "cpattern") { upd(() => { f.equal2 = !!val; }, true); return; }
         if (k === "useDir2" && f.type === "lpattern") {
           upd(() => { if (val) { m.focus = "dir2"; f.spacing2 ??= { v: f.spacing.v }; f.count2 ??= 2; } else { delete f.dir2; delete f.spacing2; delete f.count2; delete f.flip2; if (m.focus === "dir2") m.focus = "dir"; } }, true);
+          return;
+        }
+        if (f.type === "extrude" && (k === "draft2On" || k === "draft2Out")) {
+          upd(() => {
+            if (k === "draft2On") { if (val) f.draft2 = { angle: { v: (5 * Math.PI) / 180 } }; else f.draft2 = { angle: { v: 0 } }; }
+            if (k === "draft2Out" && f.draft2) { if (val) f.draft2.outward = true; else delete f.draft2.outward; }
+          }, true);
           return;
         }
         if (f.type === "extrude" && (k === "thinOn" || k === "thinMode" || k === "draftOn" || k === "draftOut")) {
@@ -5439,6 +7771,8 @@ export class ModelController {
             if (k === "thinOn") { if (val) f.thin = { t: { v: 2 }, mode: "inside" }; else delete f.thin; }
             if (k === "thinMode" && f.thin) f.thin.mode = val as "inside" | "outside" | "mid";
             if (k === "draftOn") { if (val) f.draft = { angle: { v: (5 * Math.PI) / 180 } }; else delete f.draft; }
+            // Turning the draft on with Direction 2 on drafts each direction on its own (FR-FT-014).
+            if (k === "draftOn" && val && hasDir2(f)) f.draft2 ??= { angle: { v: 0 } };
             if (k === "draftOut" && f.draft) { if (val) f.draft.outward = true; else delete f.draft.outward; }
           }, true);
           return;
@@ -5553,7 +7887,32 @@ export class ModelController {
         }
         if (isWeldFeature(f)) { const fn = weldChange(f, k, val, this.weldCtx(m.index)); if (fn) { upd(fn, true); return; } }
         if (k === "merge") { upd(() => { if (val) delete (f as ExtrudeFeature).merge; else (f as ExtrudeFeature).merge = false; }); return; }
-        if (k === "dir2") { upd(() => { (f as ExtrudeFeature).depth2 = val ? { v: (f as ExtrudeFeature).depth.v } : undefined; if (!val) delete (f as ExtrudeFeature).depth2; }, true); return; }
+        if (k === "scopeAll" && isScoped(f)) {
+          upd(() => { if (val) { delete f.scope; if (m.focus === "scope") m.focus = undefined; } else { f.scope = []; m.focus = "scope"; } }, true);
+          return;
+        }
+        if (k === "dir2") {
+          upd(() => {
+            const x = f as ExtrudeFeature;
+            if (val) { x.depth2 = { v: x.depth.v }; if (x.end !== "blind") x.end2 = "blind"; x.draft2 = { angle: { v: 0 } }; }
+            else { delete x.depth2; clearDir2(x); }
+          }, true);
+          return;
+        }
+        if (k === "end2" && f.type === "extrude") {
+          upd(() => {
+            const e2 = String(val) as Dir2End;
+            if (e2 === "blind" && f.end === "blind") delete f.end2; else f.end2 = e2;
+            if (e2 !== "upto" && e2 !== "offset") delete f.upTo2;
+            if (e2 !== "vertex") delete f.upToVertex2;
+            if (e2 !== "body") delete f.upToBody2;
+            if (e2 === "offset") f.upToOffset2 ??= { v: 5 }; else { delete f.upToOffset2; delete f.reverseOffset2; }
+            if (e2 !== "blind") delete f.draft;
+            if (e2 === "upto" || e2 === "offset" || e2 === "vertex") m.focus = "upto2";
+            if (e2 === "body") m.focus = "upbody2";
+          }, true);
+          return;
+        }
         if (k === "sketch" && f.type === "revolve") {
           const sk = this.store!.feature(String(val)) as SketchFeature;
           const ls = sk.ents.filter(x => x.t === "line");
@@ -5571,7 +7930,12 @@ export class ModelController {
           if (k === "end" && val === "offset") g.upToOffset ??= { v: 5 };
           if (k === "end" && val !== "offset") { delete g.upToOffset; delete g.reverseOffset; }
           if (k === "end" && val !== "blind" && val !== "mid") delete g.draft;
+          // Direction 2 stays on when Direction 1 leaves blind: it keeps its own (blind) end condition.
+          if (k === "end" && f.type === "extrude" && f.depth2 && f.depth2.v > 0 && val !== "blind") f.end2 ??= "blind";
+          if (k === "end" && f.type === "extrude" && (val === "mid" || val === "through2")) { delete f.depth2; clearDir2(f); }
           if (k === "op" && val !== "cut" && g.end === "through2") g.end = "through";
+          // A tapped hole turned blind drills past its thread (it kept the through hole's depth before).
+          if (f.type === "hole" && (k === "end" || k === "threadEnd")) keepTapDepth(f, false);
         }, k === "end" || k === "op" || k === "sketch" || k === "modelled" || k === "axes" || (k === "cut" && f.type === "indent"));
       });
     });
@@ -5666,12 +8030,25 @@ export class ModelController {
     }));
     if (isWeldFeature(f)) bindWeldPanel(pm, f, this.weldCtx(m.index));
     pm.querySelector<HTMLInputElement>("[data-ui=tangent]")?.addEventListener("change", e => { this.tangentProp = (e.target as HTMLInputElement).checked; });
+    pm.querySelector("[data-k=clearContours]")?.addEventListener("click", () => { if (hasContours(f)) { delete f.contours; this.draftChanged(); } });
     pm.querySelector("[data-k=clear]")?.addEventListener("click", () => { if (f.type === "fillet" || f.type === "chamfer") { f.edges = []; this.drawDecor(); this.renderPanel(); void this.rebuild(); } });
     pm.querySelector("[data-k=focus-base]")?.addEventListener("click", () => { if (m.kind === "feature") { m.focus = "base"; this.renderPanel(); this.drawDecor(); } });
     pm.querySelector("[data-k=focus-axis]")?.addEventListener("click", () => { if (m.kind === "feature") { m.focus = "axis"; this.renderPanel(); this.drawDecor(); } });
     pm.querySelectorAll<HTMLElement>("[data-focus]").forEach(b => b.addEventListener("click", () => { if (m.kind === "feature") { m.focus = b.dataset.focus as Focus; this.renderPanel(); this.drawDecor(); } }));
     // Hole favourites (FR-FT-056): a saved definition (type, size, diameters, end) applied in one go; kept in this browser.
     if (f.type === "hole") {
+      const tabs = pm.querySelector<HTMLElement>(".pm-htabs");
+      if (tabs) bindTabs(tabs, k => {
+        this.holeTab = k === "pos" ? "pos" : "type";
+        pm.querySelectorAll<HTMLElement>("[data-hpane]").forEach(p => { p.hidden = p.dataset.hpane !== this.holeTab; });
+      });
+      pm.querySelectorAll<HTMLButtonElement>("[data-hkind]").forEach(b => b.addEventListener("click", () => {
+        const s = pm.querySelector<HTMLSelectElement>("select[data-k=kind]");
+        if (!s || s.value === b.dataset.hkind) return;
+        s.value = b.dataset.hkind!;
+        s.dispatchEvent(new Event("change", { bubbles: true }));
+      }));
+      pm.querySelector<HTMLDetailsElement>("[data-ui=favs]")?.addEventListener("toggle", e => { try { localStorage.setItem("mc:holeFavOpen", (e.target as HTMLDetailsElement).open ? "1" : "0"); } catch { /* private window */ } });
       const favSel = pm.querySelector<HTMLSelectElement>("[data-ui=fav]");
       favSel?.addEventListener("change", () => {
         const fav = loadFavs()[+favSel.value];
@@ -5695,6 +8072,40 @@ export class ModelController {
         saveFavs(loadFavs().filter((_x, k) => String(k) !== i));
         this.renderPanel();
       });
+      // Advanced Hole elements: type and size selects, move, remove, add (one undo step each through the draft).
+      const elemAt = (key: string) => { const [side, i] = key.split(":"); const list = side === "far" ? (f.far ??= []) : (f.near ??= []); return { side, i: +i, list }; };
+      const advDone = () => { if (f.far && !f.far.length) delete f.far; advSync(f); this.draftChanged(); };
+      pm.querySelectorAll<HTMLSelectElement>("select[data-ae]").forEach(el => el.addEventListener("change", () => {
+        const { i, list } = elemAt(el.dataset.ae!), what = el.dataset.ae!.split(":")[2], e = list[i];
+        if (!e) return;
+        const keep = e.t !== "csink" && e.depth ? e.depth.v : undefined;
+        const main = list === f.near && i === list.length - 1;
+        if (what === "t") list[i] = elemFor(el.value as HoleElem["t"], e.size, el.value === "tapped" ? undefined : keep);
+        else list[i] = elemFor(e.t, el.value || undefined, e.t === "tapped" ? undefined : keep);
+        if (!el.value && what === "size") { list[i] = { ...e }; delete list[i].size; }
+        // The main hole of a hole that is not blind runs to the end condition: no depth of its own unless tapped.
+        if (main && list[i].t === "straight") delete list[i].depth;
+        advDone();
+      }));
+      pm.querySelectorAll<HTMLButtonElement>("[data-aemv]").forEach(b => b.addEventListener("click", () => {
+        const [side, i, d] = b.dataset.aemv!.split(":"), { list } = elemAt(`${side}:${i}`), j = +i + +d;
+        if (j < 0 || j >= list.length) return;
+        [list[+i], list[j]] = [list[j], list[+i]];
+        advDone();
+      }));
+      pm.querySelectorAll<HTMLButtonElement>("[data-aerm]").forEach(b => b.addEventListener("click", () => {
+        const { i, list } = elemAt(b.dataset.aerm!);
+        if (list === f.near && i === list.length - 1) return;
+        list.splice(i, 1);
+        advDone();
+      }));
+      pm.querySelectorAll<HTMLButtonElement>("[data-aeadd]").forEach(b => b.addEventListener("click", () => {
+        const main = f.near?.[f.near.length - 1];
+        // Near side: a counterbore above the stack (a countersink when there already is one); far side: a countersink.
+        if (b.dataset.aeadd === "far") (f.far ??= []).push(elemFor("csink", main?.size));
+        else { f.near ??= advDefault(); f.near.splice(f.near.length - 1, 0, elemFor(f.near.some(e => e.t === "cbore") ? "csink" : "cbore", main?.size)); }
+        advDone();
+      }));
     }
     if (f.type === "curve") this.bindCurvePanel(pm, f, unit, upd);
     if (f.type === "helix") {
@@ -5709,7 +8120,8 @@ export class ModelController {
     }
     if (f.type === "sketch3d") this.bindSk3Panel(pm, f, unit);
     pm.querySelector("[data-k=clearSets]")?.addEventListener("click", () => { if (f.type === "fillet") { f.faces1 = []; f.faces2 = []; if (f.kind === "full") f.center = []; if (m.kind === "feature") m.focus = "fs1"; this.draftChanged(); } });
-    pm.querySelector("[data-k=clearPts]")?.addEventListener("click", () => { if (f.type === "hole") { f.pts = []; this.draftChanged(); } });
+    pm.querySelector("[data-k=clearPts]")?.addEventListener("click", () => { if (f.type === "hole") { f.pts = []; delete f.spots; this.draftChanged(); } });
+    pm.querySelectorAll<HTMLButtonElement>("[data-rms]").forEach(b => b.addEventListener("click", () => { if (f.type === "hole" && f.spots) { f.spots.splice(+b.dataset.rms!, 1); if (!f.spots.length) delete f.spots; this.draftChanged(); } }));
     // Hole positions typed as X/Y in the face's sketch axes (FR-FT-052): a clicked position can be made exact.
     pm.querySelector("[data-k=addPt]")?.addEventListener("click", () => {
       if (f.type !== "hole") return;
@@ -5752,7 +8164,7 @@ export class ModelController {
     });
     pm.querySelector("[data-k=clearSurfaces]")?.addEventListener("click", () => { if (f.type === "knit") { f.surfaces = []; this.draftChanged(); } });
     pm.querySelector("[data-k=clearCopy]")?.addEventListener("click", () => { if (isCopy(f)) { if (f.copy === "faces") f.faces = []; else f.bodies = []; this.draftChanged(); } });
-    pm.querySelector("[data-k=clearFaces]")?.addEventListener("click", () => { if (f.type === "shell" || f.type === "draft" || f.type === "split" || f.type === "delface" || f.type === "moveface" || f.type === "offsurf" || f.type === "replaceface") { f.faces = []; this.draftChanged(); }
+    pm.querySelector("[data-k=clearFaces]")?.addEventListener("click", () => { if (f.type === "shell" || f.type === "draft" || f.type === "split" || f.type === "delface" || f.type === "moveface" || f.type === "dome" || f.type === "offsurf" || f.type === "replaceface") { f.faces = []; this.draftChanged(); }
       if (isBodyOp(f)) { if (f.type === "combine" || f.type === "indent") f.tools = []; else f.bodies = []; if (f.type === "intersect") f.exclude = []; this.draftChanged(); } });
     if (f.type === "intersect") {
       pm.querySelector<HTMLButtonElement>('[data-k="keepAll"]')?.addEventListener("click", () => upd(() => { f.exclude = []; }, true));
@@ -5931,14 +8343,13 @@ export class ModelController {
   /** Part properties, material and colour (FR-DOC-007, FR-MAT-001/003). */
   private renderPropsPanel(pm: HTMLElement, d: PartDoc) {
     const text = (k: string, label: string, v: string | undefined) => `<label class="pm-field"><span>${esc(label)}</span><input type="text" data-p="${k}" value="${esc(v ?? "")}" spellcheck="false" translate="no" /></label>`;
-    const mi = d.material ? MATERIALS.findIndex(x => x.name === d.material!.name && x.density === d.material!.density) : -2;
     const col = d.color ?? DEFAULT_COLOR;
     const hex = `#${col.map(c => Math.round(c * 255).toString(16).padStart(2, "0")).join("")}`;
     pm.innerHTML = okHead(t("Part properties"))
       + text("name", t("Name"), d.name) + text("title", t("Title"), d.props.title) + text("partNumber", t("Part number"), d.props.partNumber)
       + text("description", t("Description"), d.props.description) + text("revision", t("Revision"), d.props.revision) + text("author", t("Author"), d.props.author)
-      + `<label class="pm-field"><span>${esc(t("Material"))}</span><select data-p="material"><option value="-2"${mi === -2 ? " selected" : ""}>${esc(t("Not specified"))}</option>${MATERIALS.map((x, i) => `<option value="${i}"${mi === i ? " selected" : ""}>${esc(t(x.name))} (${x.density})</option>`).join("")}<option value="-1"${mi === -1 ? " selected" : ""}>${esc(t("Custom…"))}</option></select></label>`
-      + (mi === -1 ? text("matName", t("Material name"), d.material?.name) + `<label class="pm-field"><span>${esc(t("Density"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-p="density" value="${d.material?.density ?? ""}" /><span class="muted">g/cm³</span></span></label>` : "")
+      + `<div class="pm-field"><span>${esc(t("Material"))}</span><button type="button" class="btn small pm-mat" data-a="matpick" title="${esc(t("Choose a material from the library"))}"><span translate="no">${esc(d.material ? t(d.material.name) : t("Not specified"))}</span> …</button></div>`
+      + (d.material ? `<label class="pm-field"><span>${esc(t("Density"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-p="density" value="${d.material.density}" /><span class="muted">g/cm³</span></span></label>` : "")
       + `<label class="pm-field"><span>${esc(t("Colour"))}</span><input type="color" data-p="color" value="${hex}" /></label>`
       + `<fieldset class="pm-group"><legend>${esc(t("Mass properties"))}</legend><label class="chk pm-chk"><input type="checkbox" data-p="ovr"${d.massOverride ? " checked" : ""} />${esc(t("Override mass properties"))}</label>`
       + (d.massOverride ? `<label class="pm-field"><span>${esc(t("Mass"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-p="ovrMass" value="${d.massOverride.mass ?? ""}" placeholder="${esc(t("calculated"))}" /><span class="muted">kg</span></span></label>`
@@ -5948,18 +8359,11 @@ export class ModelController {
     pm.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-p]").forEach(el => el.addEventListener("change", () => {
       const k = el.dataset.p!, v = el.value;
       if (k === "name") { if (v.trim()) d.name = v.trim(); }
-      else if (k === "material") {
-        const i = +v;
-        if (i >= 0) d.material = { ...MATERIALS[i] };
-        else if (i === -1) d.material = { name: d.material?.name ?? "Custom", density: d.material?.density ?? 1 };
-        else delete d.material;
-        this.renderPanel();
-      } else if (k === "matName") d.material = { name: v.trim() || "Custom", density: d.material?.density ?? 1 };
       else if (k === "density") {
         const x = parseFloat(v.replace(",", "."));
         if (!(x > 0)) { el.setAttribute("aria-invalid", "true"); toast(t("Density must be a number greater than 0 g/cm³."), true); return; }
         el.removeAttribute("aria-invalid");
-        d.material = { name: d.material?.name ?? "Custom", density: x };
+        d.material = { ...(d.material ?? { name: "Custom" }), density: x };
       } else if (k === "color") {
         d.color = [1, 3, 5].map(i => parseInt(v.slice(i, i + 2), 16) / 255) as V3;
         void this.rebuild();
@@ -5983,6 +8387,13 @@ export class ModelController {
         const p = d.props as Record<string, string | undefined>;
         if (v.trim()) p[k] = v.trim(); else delete p[k];
       }
+    }));
+    pm.querySelector("[data-a=matpick]")!.addEventListener("click", () => void pickMaterial({ current: d.material, allowNone: true, colour: true }).then(r => {
+      if (!r || this.mode.kind !== "props" || this.mode.draft !== d) return;
+      if (r.material) d.material = toRef(r.material); else delete d.material;
+      if (r.colour && r.material?.color) { d.color = hexRgb(r.material.color); void this.rebuild(); }
+      this.renderPanel();
+      pm.querySelector<HTMLElement>("[data-a=matpick]")?.focus();
     }));
     pm.querySelector("[data-a=ok]")!.addEventListener("click", () => this.ok());
     pm.querySelector("[data-a=cancel]")!.addEventListener("click", () => void this.cancel());
@@ -6016,9 +8427,14 @@ export class ModelController {
       + `</div>`
       + this.textBox(ed)
       + this.curveBox(ed)
+      + this.pictureBox(ed)
+      + this.blockBox(ed)
+      + (["line", "cline", "mline", "tarc", "rect", "crect", "rect3", "crect3", "pgram", "circle", "circle3", "pcircle", "arc", "arc3", "polygon"].includes(ed.tool) ? `<label class="chk pm-chk" title="${esc(t("New lines, rectangles, circles and arcs get their sizes as dimensions and the Modify box opens on each."))}"><input type="checkbox" data-a="adddims"${ed.addDims ? " checked" : ""} />${esc(t("Add dimensions"))}</label>` : "")
       + (["slot", "cslot", "aslot", "aslot3"].includes(ed.tool) ? `<label class="chk pm-chk" title="${esc(t("Slots get width and length (or radius) dimensions, and the Modify box opens on them."))}"><input type="checkbox" data-a="slotdims"${ed.slotDims ? " checked" : ""} />${esc(t("Add dimensions"))}</label>` : "")
       + (ed.tool === "polygon" ? `<label class="pm-field"><span>${esc(t("Sides"))}</span><input type="text" inputmode="numeric" class="pm-n" data-a="sides" value="${ed.polySides}" /></label>` : "")
       + (ed.tool === "fillet" ? `<label class="pm-field"><span>${esc(t("Radius"))}</span><span class="pm-in"><input type="text" inputmode="decimal" class="pm-n" data-a="fr" value="${trimNum(ed.filletRadius * UNITS[units.current].f, 4)}" /><span class="muted">${units.current}</span></span></label>` : "")
+      + (ed.tool === "segment" ? `<label class="pm-field"><span>${esc(t("Number of pieces"))}</span><input type="text" inputmode="numeric" class="pm-n" data-a="segn" value="${ed.segCount}" /></label>`
+        + `<label class="pm-field"><span>${esc(t("Mark with"))}</span><select data-a="segmode">${(["points", "segments"] as const).map(k => `<option value="${k}"${ed.segMode === k ? " selected" : ""}>${esc(t(k === "points" ? "Sketch points" : "Sketch segments"))}</option>`).join("")}</select></label>` : "")
       + (ed.tool === "chamfer" ? `<label class="pm-field"><span>${esc(t("Distance"))}</span><span class="pm-in"><input type="text" inputmode="decimal" class="pm-n" data-a="cd" value="${trimNum(ed.chamferDist * UNITS[units.current].f, 4)}" /><span class="muted">${units.current}</span></span></label>` : "")
       + (ed.tool === "offset" ? `<label class="pm-field"><span>${esc(t("Distance"))}</span><span class="pm-in"><input type="text" inputmode="decimal" class="pm-n" data-a="od" value="${trimNum(ed.offsetDist * UNITS[units.current].f, 4)}" /><span class="muted">${units.current}</span></span></label>`
         + `<label class="chk pm-chk"><input type="checkbox" data-a="oboth"${ed.offsetBoth ? " checked" : ""} />${esc(t("Both sides"))}</label>`
@@ -6042,11 +8458,14 @@ export class ModelController {
     pm.querySelector("[data-a=deldangling]")?.addEventListener("click", () => { ed.deleteItems(ed.danglingRels().map(r => r.id)); this.renderPanel(); });
     pm.querySelector<HTMLInputElement>("[data-a=shownames]")?.addEventListener("change", e => { ed.showNames = (e.target as HTMLInputElement).checked; ed.render(); });
     pm.querySelector<HTMLInputElement>("[data-a=slotdims]")?.addEventListener("change", e => { ed.slotDims = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:slotDims", ed.slotDims ? "1" : "0"); } catch { /* private mode */ } });
+    pm.querySelector<HTMLInputElement>("[data-a=adddims]")?.addEventListener("change", e => { ed.addDims = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:skAddDims", ed.addDims ? "1" : "0"); } catch { /* private mode */ } this.renderQuick(); });
     pm.querySelector<HTMLInputElement>("[data-a=autorels]")?.addEventListener("change", e => { ed.autoRels = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:autoRels", ed.autoRels ? "1" : "0"); } catch { /* private mode */ } this.renderQuick(); });
     pm.querySelector<HTMLInputElement>("[data-a=showrels]")?.addEventListener("change", e => { ed.showRels = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:skRels", ed.showRels ? "1" : "0"); } catch { /* private mode */ } ed.render(); });
     const saveGrid = () => { try { localStorage.setItem("mc:skGrid", ed.grid ? "1" : "0"); localStorage.setItem("mc:skGridSnap", ed.gridSnap ? "1" : "0"); localStorage.setItem("mc:skGridStep", String(ed.gridSpacing || "")); } catch { /* private mode */ } };
     pm.querySelector<HTMLInputElement>("[data-a=grid]")?.addEventListener("change", e => { ed.setGrid({ show: (e.target as HTMLInputElement).checked }); saveGrid(); this.renderQuick(); });
     pm.querySelector<HTMLInputElement>("[data-a=gridsnap]")?.addEventListener("change", e => { ed.setGrid({ snap: (e.target as HTMLInputElement).checked }); saveGrid(); this.renderQuick(); });
+    this.bindPictureBox(pm, ed);
+    this.bindBlockBox(pm, ed);
     pm.querySelector<HTMLInputElement>("[data-a=gridstep]")?.addEventListener("change", e => { const v = Number((e.target as HTMLInputElement).value); ed.setGrid({ spacing: isFinite(v) && v > 0 ? v : 0 }); saveGrid(); });
     pm.querySelectorAll<HTMLInputElement>("[data-snap]").forEach(i => i.addEventListener("change", () => {
       const k = i.dataset.snap as SnapKind;
@@ -6078,6 +8497,11 @@ export class ModelController {
         catch (err) { toast(t((err as Error).message), true); }
       });
     }
+    pm.querySelector<HTMLInputElement>("[data-a=segn]")?.addEventListener("change", e => {
+      const n = Math.round(+(e.target as HTMLInputElement).value);
+      if (n >= 2 && n <= 100) ed.segCount = n; else { toast(t("Divide into 2 to 100 pieces."), true); (e.target as HTMLInputElement).value = String(ed.segCount); }
+    });
+    pm.querySelector<HTMLSelectElement>("[data-a=segmode]")?.addEventListener("change", e => { ed.segMode = (e.target as HTMLSelectElement).value as typeof ed.segMode; });
     pm.querySelector<HTMLInputElement>("[data-a=oboth]")?.addEventListener("change", e => { ed.offsetBoth = (e.target as HTMLInputElement).checked; this.renderPanel(); });
     pm.querySelector<HTMLSelectElement>("[data-a=ocap]")?.addEventListener("change", e => { ed.offsetCap = (e.target as HTMLSelectElement).value as typeof ed.offsetCap; });
     pm.querySelector<HTMLInputElement>("[data-a=olink]")?.addEventListener("change", e => { ed.offsetLink = (e.target as HTMLInputElement).checked; });
@@ -6096,6 +8520,46 @@ export class ModelController {
    * Sketch text (FR-SK-020): with the Text tool, what the next click places; with one text selected, its
    * own text, font, height and angle (each change remakes the outline as one undo step).
    */
+  /** The sketch's pictures: place, size, angle, transparency, flip, delete (FRS 2.2). */
+  private pictureBox(ed: SketchEditor): string {
+    const pics = ed.sk.pictures ?? [];
+    if (!pics.length) return "";
+    const f = UNITS[units.current].f, u: string = units.current;
+    const num = (id: string, k: string, label: string, v: number, unit: string) => `<label class="pm-field"><span>${esc(label)}</span><span class="pm-in"><input type="text" inputmode="decimal" class="pm-n" data-pic="${esc(id)}:${k}" value="${trimNum(v, 4)}" /><span class="muted">${esc(unit)}</span></span></label>`;
+    return `<div class="pm-sec pm-pics"><h4>${esc(t("Sketch pictures"))}</h4>${pics.map((p, i) => `<details class="pm-pic"${i === pics.length - 1 ? " open" : ""}><summary translate="no">${esc(p.name ?? `${t("Picture")} ${i + 1}`)}</summary>`
+      + num(p.id, "x", "X", p.c[0] * f, u) + num(p.id, "y", "Y", p.c[1] * f, u)
+      + num(p.id, "w", t("Width"), p.w * f, u) + num(p.id, "h", t("Height"), p.h * f, u)
+      + `<label class="chk pm-chk"><input type="checkbox" data-pic="${esc(p.id)}:lock"${p.free ? "" : " checked"} />${esc(t("Lock aspect ratio"))}</label>`
+      + num(p.id, "ang", t("Angle"), ((p.ang ?? 0) * 180) / Math.PI, "°")
+      + num(p.id, "alpha", t("Transparency"), (p.alpha ?? 0) * 100, "%")
+      + `<label class="chk pm-chk"><input type="checkbox" data-pic="${esc(p.id)}:flip"${p.flip ? " checked" : ""} />${esc(t("Flip horizontal"))}</label>`
+      + `<button class="btn small" data-pic="${esc(p.id)}:del">${esc(t("Delete picture"))}</button></details>`).join("")}</div>`;
+  }
+
+  private bindPictureBox(pm: HTMLElement, ed: SketchEditor) {
+    const f = UNITS[units.current].f;
+    pm.querySelectorAll<HTMLInputElement | HTMLButtonElement>("[data-pic]").forEach(el => {
+      const [id, k] = el.dataset.pic!.split(":");
+      if (el instanceof HTMLButtonElement) { el.addEventListener("click", () => { ed.removePicture(id); this.renderPanel(); }); return; }
+      el.addEventListener("change", () => {
+        const p = ed.sk.pictures?.find(x => x.id === id);
+        if (!p) return;
+        if (k === "lock") ed.setPicture(id, { free: !el.checked });
+        else if (k === "flip") ed.setPicture(id, { flip: el.checked });
+        else {
+          const v = parseFloat(el.value.replace(",", "."));
+          if (!isFinite(v)) { this.renderPanel(); return; }
+          if (k === "x") ed.setPicture(id, { c: [v / f, p.c[1]] });
+          else if (k === "y") ed.setPicture(id, { c: [p.c[0], v / f] });
+          else if (k === "w" || k === "h") { if (v > 0) ed.setPicture(id, { [k]: v / f }); }
+          else if (k === "ang") ed.setPicture(id, { ang: (v * Math.PI) / 180 });
+          else if (k === "alpha") ed.setPicture(id, { alpha: Math.min(1, Math.max(0, v / 100)) });
+        }
+        this.renderPanel();
+      });
+    });
+  }
+
   private textBox(ed: SketchEditor): string {
     const sel = ed.selection.size === 1 ? ed.sk.ents.find(e => e.id === [...ed.selection][0] && e.t === "text") as Extract<SkEnt, { t: "text" }> | undefined : undefined;
     if (ed.tool !== "text" && !sel) return "";
@@ -6232,10 +8696,13 @@ export class ModelController {
         + group(t("Direction 2"), len("d2", t("Spacing"), p.d2) + cnt("n2", t("Instances"), p.n2) + ang("angle2", t("Angle"), p.angle2))
       : p.kind === "circular" ? group(t("Parameters"), centre(p.c) + cnt("n", t("Instances"), p.n) + ang("total", t("Total angle"), p.total) + chkP("equal", p.equal, t("Equal spacing")))
       : p.kind === "move" ? group(t("Parameters"), len("dx", t("Delta X"), p.dx) + len("dy", t("Delta Y"), p.dy)) + opts(p.copy, p.keep)
+      : p.kind === "stretch" ? group(t("Parameters"), len("dx", t("Delta X"), p.dx) + len("dy", t("Delta Y"), p.dy))
       : p.kind === "rotate" ? group(t("Parameters"), centre(p.c) + ang("angle", t("Angle"), p.angle)) + opts(p.copy, p.keep)
       : group(t("Parameters"), centre(p.c) + `<label class="pm-field"><span>${esc(t("Scale factor"))}</span><input type="text" inputmode="decimal" class="pm-n" data-p="k" data-q="factor" value="${trimNum(p.k, 6)}" /></label>`) + opts(p.copy, p.keep);
-    const titles = { linear: "Linear sketch pattern", circular: "Circular sketch pattern", move: "Move entities", rotate: "Rotate entities", scale: "Scale entities" } as const;
-    const help = p.kind === "linear" || p.kind === "circular" ? "The green preview shows the instances. Copies keep equal relations to the selected entities." : "The green preview shows where the entities go.";
+    const titles = { linear: "Linear sketch pattern", circular: "Circular sketch pattern", move: "Move entities", rotate: "Rotate entities", scale: "Scale entities", stretch: "Stretch entities" } as const;
+    const help = p.kind === "linear" || p.kind === "circular" ? "The green preview shows the instances. Copies keep equal relations to the selected entities."
+      : p.kind === "stretch" ? "The selected points move; lines and arcs ending on them stretch. Dimensions across the stretch take the new sizes."
+      : "The green preview shows where the entities go.";
     pm.innerHTML = okHead(t(titles[p.kind]), { okKey: "pok", cancelKey: "pcancel" })
       + `<p class="pm-help muted">${esc(t(help))}</p>`
       + body;
@@ -6345,10 +8812,27 @@ export class ModelController {
           + (f.startTangent ? `<p class="pm-help muted">${esc(t("The profile is turned square to the path where the path starts."))}</p>` : "")
           + `<label class="pm-field"><span>${esc(t("End tangency"))}</span><select data-k="endTan"><option value=""${f.endTangent ? "" : " selected"}>${esc(t("None"))}</option><option value="path"${f.endTangent ? " selected" : ""}>${esc(t("Path tangent"))}</option></select></label>`
           + (f.endTangent ? `<p class="pm-help muted">${esc(t("The sweep ends with the profile square to the path. Not with a guide curve or a closed path."))}</p>` : "")))
-        + group(t("Options"), (f.guide ? "" : orient(f.orient)) + (f.guide || f.orient === "normal" ? "" : chk("twistOn", !!f.twist, t("Twist along path")) + (f.twist ? numField("twist", t("Twist angle"), f.twist, "angle") : "")))
+        + group(t("Options"), (f.guide ? "" : orient(f.orient)) + (f.guide || f.orient === "normal" ? "" : chk("twistOn", !!f.twist, t("Twist along path")) + (f.twist ? numField("twist", t("Twist angle"), f.twist, "angle") : ""))
+          + (f.op === "boss" && this.last?.data ? chk("merge", f.merge !== false, t("Merge result")) : ""))
         + `<p class="pm-help muted">${esc(t("The profile moves along the path. A circular profile needs no sketch: it is centred on the start of the path, square to it."))}</p>` };
     }
     const closed = sketches.filter(sketchProfileOk);
+    if (f.boundary) {
+      // Boundary Boss/Cut (FRS 2.3): Direction 1 = profiles, Direction 2 = curves crossing every one of them.
+      const at = this.mode.kind === "feature" ? this.mode.index : this.doc.features.length;
+      const curves = this.doc.features.slice(0, at).filter(g => g.type === "curve" || g.type === "sketch3d");
+      const gs = f.guides ?? [];
+      const opts = (cur: string, none: string) => opt("", none, cur) + curves.map(h => opt(`c:${h.id}`, featureLabel(h.name), cur)).join("")
+        + sketches.filter(s => !f.profiles.includes(s.id) && !sketchProfileOk(s)).map(s => opt(`s:${s.id}`, featureLabel(s.name), cur)).join("");
+      return { title: f.op === "cut" ? t("Boundary Cut") : t("Boundary Boss/Base"),
+        body: group(t("Direction 1"), f.profiles.map((id, i) => sel(`lp${i}`, `${t("Profile")} ${i + 1}`, skOpts(closed, id, t("Remove")))).join("")
+          + sel(`lp${f.profiles.length}`, t("Add profile"), skOpts(closed.filter(s => !f.profiles.includes(s.id)), "", "—"))
+          + `<p class="pm-help muted">${esc(t("Closed profiles, joined in this order."))}</p>`)
+        + group(t("Direction 2"), gs.map((g, i) => sel(`lg${i}`, `${t("Direction 2 curve")} ${i + 1}`, opts(pathKey(g), t("Remove")))).join("")
+          + sel(`lg${gs.length}`, t("Add curve"), opts("", "—"))
+          + `<p class="pm-help muted">${esc(t("Each curve runs from the first profile to the last through a point of every one. Between two curves the surface follows both directions; with fewer than two it lofts."))}</p>`)
+        + (f.op === "boss" && this.last?.data ? group(t("Options"), chk("merge", f.merge !== false, t("Merge result"))) : "") };
+    }
     const rows = f.profiles.map((id, i) => sel(`lp${i}`, `${t("Profile")} ${i + 1}`, skOpts(closed, id, t("Remove")))).join("")
       + sel(`lp${f.profiles.length}`, t("Add profile"), skOpts(closed.filter(s => !f.profiles.includes(s.id)), "", "—"));
     return { title: f.op === "cut" ? t("Cut-Loft") : t("Loft"), body: group(t("Profiles"), rows + `<p class="pm-help muted">${esc(t("Profiles are joined in this order. Each is one closed region, usually on parallel planes."))}</p>`)
@@ -6380,7 +8864,8 @@ export class ModelController {
         return sel(`${w}C`, w === "start" ? t("Start constraint") : t("End constraint"), `<option value="none"${on ? "" : " selected"}>${esc(t("None"))}</option><option value="normal"${on ? " selected" : ""}>${esc(t("Normal to profile"))}</option>`)
           + (on ? `<label class="pm-field"><span>${esc(t("Tangent length"))}</span><input type="text" inputmode="decimal" data-k="${w}Len" value="${esc(trimNum(len, 3))}" spellcheck="false" /></label>` : "");
       }).join("")))
-      + (f.centerline || f.guides?.length ? "" : group(t("Options"), chk("ruled", f.ruled, t("Straight sections (ruled)")) + (f.profiles.length >= 3 ? chk("close", f.close, t("Close loft")) : ""))) };
+      + (f.centerline || f.guides?.length ? "" : group(t("Options"), chk("ruled", f.ruled, t("Straight sections (ruled)")) + (f.profiles.length >= 3 ? chk("close", f.close, t("Close loft")) : "")
+        + (f.op === "boss" && this.last?.data ? chk("merge", f.merge !== false, t("Merge result")) : ""))) };
   }
 
   /** 3D sketch editing state (view-only): tool, sketch plane, the chain's last point, the spline being drawn, selection. */
@@ -6715,10 +9200,45 @@ export class ModelController {
           + (f.axes ? this.countField("fx", "X", f.fx ?? { v: 1 }) + this.countField("fy", "Y", f.fy ?? { v: 1 }) + this.countField("fz", "Z", f.fz ?? { v: 1 }) : this.countField("factor", t("Scale factor"), f.factor)))
         + help + status };
     }
+    if (f.type === "flex") return this.flexPanel(f, box, clear, group, numField, chk, help, status);
     return { title: t("Body-Move/Copy"), body: group(t("Bodies to move/copy"), box("bodies", t("Bodies"), n(f.bodies.length)) + clear + chk("copy", f.copy, t("Copy")))
       + group(t("Translate"), numField("dx", "ΔX", f.dx, "length") + numField("dy", "ΔY", f.dy, "length") + numField("dz", "ΔZ", f.dz, "length"))
       + group(t("Rotate"), box("axis", t("Axis"), this.lineLabel(f.axis)) + (f.axis ? numField("angle", t("Angle"), f.angle ?? { v: Math.PI / 2 }, "angle") : ""))
       + help + status };
+  }
+
+  /** The axis the picked bodies are longest along (Flex starts with it as the flex axis). */
+  private longAxis(): FlexFeature["axis"] {
+    const b = this.last?.props?.box;
+    if (!b) return "x";
+    const d = [b[1][0] - b[0][0], b[1][1] - b[0][1], b[1][2] - b[0][2]];
+    return (["x", "y", "z"] as const)[d.indexOf(Math.max(...d))];
+  }
+
+  /** Flex (FR-FT-105) PropertyManager. */
+  private flexPanel(f: FlexFeature, box: (fc: Focus, label: string, value: string) => string, clear: string, group: (legend: string, inner: string) => string,
+    numField: (key: string, label: string, n: Num, q: "length" | "angle") => string, chk: (k: string, on: boolean | undefined, label: string) => string, help: string, status: string) {
+    const o = (v: string, l: string, cur: string) => `<option value="${v}"${cur === v ? " selected" : ""}>${esc(l)}</option>`;
+    const sel = (k: string, label: string, opts: [string, string][], cur: string) => `<label class="pm-field"><span>${esc(label)}</span><select data-k="${k}">${opts.map(([v, l]) => o(v, l, cur)).join("")}</select></label>`;
+    const axes: [string, string][] = [["x", t("X axis")], ["y", t("Y axis")], ["z", t("Z axis")]];
+    const toward = f.toward ?? defaultToward(f.axis);
+    // The region's length from the trim planes the rebuild placed (the body's own box is already flexed).
+    const len = this.last?.frames[f.id]?.len;
+    const L = len && len.length >= 2 ? len[1] - len[0] : 0;
+    const u = UNITS[this.doc.units.length];
+    const radius = f.kind === "bend" && L > 0 && Math.abs(f.angle.v) > 1e-9 ? `<p class="pm-help muted">${esc(t("Bend radius: {r}", { r: `${trimNum((L / Math.abs(f.angle.v)) * u.f, 3)} ${this.doc.units.length}` }))}</p>` : "";
+    const params = f.kind === "bend" || f.kind === "twist" ? numField("angle", t("Angle"), f.angle, "angle") + radius
+      : f.kind === "taper" ? this.countField("factor", t("Taper factor"), f.factor ?? { v: 0.5 })
+      : numField("distance", t("Distance"), f.distance ?? { v: 10 }, "length");
+    return { title: t("Flex"), body: group(t("Flex input"), box("bodies", t("Bodies for flex"), f.bodies.length ? t("{n} body|{n} bodies", { n: f.bodies.length }) : t("All bodies")) + clear
+        + sel("kind", t("Type"), [["bend", t("Bending")], ["twist", t("Twisting")], ["taper", t("Tapering")], ["stretch", t("Stretching")]], f.kind)
+        + params + chk("hard", f.hard !== false, t("Hard edges")))
+      + group(t("Trim planes"), numField("trim1", t("Trim plane 1 offset"), f.trim1 ?? { v: 0 }, "length") + numField("trim2", t("Trim plane 2 offset"), f.trim2 ?? { v: 0 }, "length"))
+      + group(t("Triad"), sel("axis", t("Flex axis"), axes, f.axis)
+        + (f.kind === "bend" ? sel("toward", t("Bend towards"), axes.filter(([v]) => v !== f.axis), toward) : "")
+        + chk("tcentre", !f.origin, t("Triad at the centre of the bodies"))
+        + (f.origin ? f.origin.map((c, i) => `<label class="pm-field"><span>${esc(t("Triad {a}", { a: "XYZ"[i] }))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-k="o${"xyz"[i]}" value="${esc(trimNum(c * UNITS[units.current].f, 6))}" spellcheck="false" /><span class="muted">${esc(units.current)}</span></span></label>`).join("") : ""))
+      + `<p class="pm-help muted">${esc(t("The bodies change between the trim planes (orange); past them they move along as solid pieces. Drag the arrows to move the trim planes. The triad stays put."))}</p>` + help + status };
   }
 
   /** A positive number field that takes fractions (revolutions). */
@@ -6748,7 +9268,8 @@ export class ModelController {
   private relationList(ed: SketchEditor) {
     const sk = ed.sk;
     const bad = new Set(ed.info.conflicting ?? []);
-    const rels = sk.rels;
+    // A block instance's holding fix is not the user's relation.
+    const rels = sk.rels.filter(r => !(r.t === "fix" && r.id.includes("~") && sk.inserts?.some(i => r.id === `${i.id}~fix`)));
     if (!rels.length) return `<p class="muted">${esc(t("None yet."))}</p>`;
     const sel = ed.selection;
     const shown = sel.size ? rels.filter(r => sel.has(r.id) || r.e.some(x => sel.has(x))) : rels;
@@ -6762,10 +9283,12 @@ export class ModelController {
   /** The part's mass property override (FR-MAT-004), if any. */
   /** The weldment Cut List dialog; typed item properties go into `PartDoc.cutProps` as one undo step each. */
   cutList() {
-    showCutList(this.last?.cutList, this.doc, (key, p) => this.store?.change("Cut list properties", d => {
+    showCutList(this.cutItems(), this.doc, (key, p) => this.store?.change("Cut list properties", d => {
       const all = { ...(d.cutProps ?? {}) };
       if (Object.keys(p).length) all[key] = p; else delete all[key];
       if (Object.keys(all).length) d.cutProps = all; else delete d.cutProps;
+    }), s => this.store?.change("Stock bar length", d => {
+      if (Object.keys(s).length) d.stock = s; else delete d.stock;
     }));
   }
 
@@ -6785,7 +9308,8 @@ export class ModelController {
   /** Test and debug handle. */
   debug() {
     const self = this;
-    return { get store() { return self.store; }, last: () => this.last, mode: () => this.mode, editor: () => (this.mode.kind === "sketch" ? this.mode.editor : null), rebuild: () => this.rebuild(), panel: () => this.renderPanel(), kernel: this.kernel };
+    return { get store() { return self.store; }, last: () => this.last, mode: () => this.mode, editor: () => (this.mode.kind === "sketch" ? this.mode.editor : null), rebuild: () => this.rebuild(), panel: () => this.renderPanel(), kernel: this.kernel,
+      faceName: (x: number, y: number) => { const h = this.host.faceAt(x, y); return h ? this.faceRef(h.faceId)?.name ?? null : null; } };
   }
 }
 
@@ -6843,7 +9367,7 @@ function sketchSegments(sk: SketchFeature, f: Frame): number[] {
 }
 
 const S = (d: string) => `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
-/** Whether a feature uses a sketch up (SolidWorks hides it once used). */
+/** Whether a feature uses a sketch up (a CAD app hides it once used). */
 /** Whether view face i belongs to one of the bodies `keys` (the worker lists shown faces body by body). */
 function bodyFaces(bodies: { key: string; faces?: number }[], keys: string[]): (i: number) => boolean {
   const ranges: [number, number][] = [];
@@ -6853,33 +9377,44 @@ function bodyFaces(bodies: { key: string; faces?: number }[], keys: string[]): (
 }
 
 function absorbs(g: Feature, sketch: string): boolean {
-  if (g.type === "extrude" || g.type === "revolve" || g.type === "helix" || g.type === "smbase" || g.type === "smbend" || g.type === "smjog" || g.type === "smtab" || g.type === "smmiter" || g.type === "smswept" || g.type === "smvent") return g.sketch === sketch;
+  if (g.type === "extrude" || g.type === "revolve" || g.type === "helix" || g.type === "smbase" || g.type === "smbend" || g.type === "smjog" || g.type === "smtab" || g.type === "smmiter" || g.type === "smswept" || g.type === "smvent" || g.type === "smcut") return g.sketch === sketch;
   if (g.type === "smloft") return g.sketch1 === sketch || g.sketch2 === sketch;
   const onPath = (p?: SweepPath) => !!p && "sketch" in p && p.sketch === sketch;
   if (g.type === "sweep") return g.profile === sketch || onPath(g.path) || onPath(g.guide);
   if (g.type === "sweepsurf") return g.profile === sketch || onPath(g.path);
   if (g.type === "curve") return g.sketch === sketch;
   if (g.type === "loft") return g.profiles.includes(sketch) || onPath(g.centerline) || (g.guides ?? []).some(onPath);
-  if (g.type === "rib" || g.type === "split" || g.type === "planesurf" || g.type === "extsurf" || g.type === "spattern") return g.sketch === sketch;
+  if (g.type === "rib" || g.type === "split" || g.type === "wrap" || g.type === "planesurf" || g.type === "extsurf" || g.type === "spattern") return g.sketch === sketch;
   if (g.type === "member") return g.profile === "sketch" && g.psketch === sketch;
   return false;
 }
 
 /** A sketch with closed regions (usable as a sweep or loft profile). */
 const sketchProfileOk = (s: SketchFeature) => !sketchProfile(s).error;
+/** A sketch a Planar Surface can use: closed profiles, or curves that cross or branch but still bound regions to pick (FR-FT-010). */
+const sketchRegionsOk = (s: SketchFeature) => sketchProfileOk(s) || sketchRegions(s).length > 0;
+/** Features with Selected Contours (FR-FT-010). */
+type ContourFeature = ExtrudeFeature | RevolveFeature | PlaneSurfFeature;
+/** Fill and outline of picked Selected Contours: orange for material added, the cut preview's yellow for a cut. */
+const CONTOUR_BOSS = [0xf08c00, 0xd9480f] as const;
+const CONTOUR_CUT = [0xffd43b, 0xe8a800] as const;
+const hasContours = (f: Feature): f is ContourFeature => f.type === "extrude" || f.type === "revolve" || f.type === "planesurf";
 /** A sketch that is one open chain of curves (a rib line). */
 const sketchOpenOk = (s: SketchFeature) => { const p = sketchPath(s); return !p.error && !p.closed; };
 
 /** The sweep flyout's commands (FRS 9.9). */
 /** Flyout buttons of the Features tab (FR-UI-011): related commands share one button that shows the last one used. */
+/** Commands Ctrl+K leaves out while a sketch is open (the rest exit the sketch and start on it). */
+const FROM_SKETCH_SKIP = new Set(["sketch", "import", "save", "step", "filter", "undo", "redo", "smflat", "smdxf", "smprops"]);
+
 const CM_FLY: Record<string, string[]> = {
-  sweep: ["sweep", "loft"],
-  sweepcut: ["sweepcut", "loftcut"],
+  sweep: ["sweep", "loft", "boundary"],
+  sweepcut: ["sweepcut", "loftcut", "boundarycut"],
   pattern: ["lpattern", "cpattern", "mirror", "spattern", "tpattern"],
   plane: ["plane", "axis", "point", "csys", "extrefs"],
   curves: ["helix", "sketch3d", "xyzcurve", "compcurve", "projcurve", "split"],
-  bodies: ["import", "heal", "combine", "indent", "intersect", "bsplit", "movebody", "delbody", "scale"],
-  direct: ["moveface", "delface", "recognize"],
+  bodies: ["import", "heal", "combine", "indent", "dome", "wrap", "intersect", "bsplit", "movebody", "delbody", "scale", "flex"],
+  direct: ["moveface", "delface", "recall", "recognize", "recblend", "recext"],
 };
 
 const P3_TOOLS = (): [string, string, string][] => [
@@ -6887,6 +9422,8 @@ const P3_TOOLS = (): [string, string, string][] => [
   ["sweepcut", t("Cut-Sweep"), t("Swept cut: removes a profile moved along a path")],
   ["loft", t("Loft"), t("Lofted boss: through two or more profiles")],
   ["loftcut", t("Cut-Loft"), t("Lofted cut: removes material through two or more profiles")],
+  ["boundary", t("Boundary Boss/Base"), t("Boundary boss: profiles one way, curves the other, the surface follows both")],
+  ["boundarycut", t("Boundary Cut"), t("Boundary cut: removes material bounded by profiles and curves")],
   ["helix", t("Helix/Spiral"), t("Helix: a curve round a sketch circle, for springs and threads")],
   ["sketch3d", t("3D Sketch"), t("3D sketch: lines and splines in space, for sweep paths")],
   ["xyzcurve", t("Curve Through XYZ Points"), t("3D curve through points typed in or read from a CSV file")],
@@ -6898,14 +9435,20 @@ const P3_TOOLS = (): [string, string, string][] => [
   ["heal", t("Check-Heal"), t("Check and heal: sew gaps, fix faces and close shells into solids, with a before and after report")],
   ["combine", t("Combine"), t("Combine bodies: add, subtract or keep the common part")],
   ["indent", t("Indent"), t("Indent: a body takes the shape of tool bodies pressed into it, with a wall or as a cut")],
+  ["dome", t("Dome"), t("Dome: a flat face bulges out (or in) by a distance, round faces as a spherical or elliptical cap")],
+  ["wrap", t("Wrap"), t("Wrap: a closed sketch wrapped round a cylindrical face, raised (emboss) or sunk (deboss)")],
   ["intersect", t("Intersect"), t("Intersect: solids and surfaces cut each other into regions; keep the ones you want")],
   ["bsplit", t("Split"), t("Split bodies with a plane into separate bodies")],
   ["movebody", t("Body-Move/Copy"), t("Move or copy bodies: translate and rotate")],
   ["delbody", t("Body-Delete/Keep"), t("Delete bodies, or keep only the picked ones")],
   ["scale", t("Scale"), t("Scale bodies: uniform or per axis, about the centroid or the origin")],
+  ["flex", t("Flex"), t("Flex: bend, twist, taper or stretch bodies between two trim planes")],
   ["moveface", t("Move Face"), t("Move face: push flat faces out or in along their normals, on any body")],
   ["delface", t("Delete Face"), t("Delete face: remove faces and heal the gap, on any body")],
+  ["recall", t("Recognize Features"), t("Recognize features: the body's base, pockets, bosses, holes, fillets and chamfers become features you can edit, in modelling order")],
   ["recognize", t("Recognize Holes"), t("Recognize holes: round holes in the body become Hole features you can edit")],
+  ["recblend", t("Recognize Fillets"), t("Recognize fillets and chamfers: the body's fillets and chamfers become Fillet and Chamfer features you can edit")],
+  ["recext", t("Recognize Extrudes"), t("Recognize extrudes: pockets and bosses of the body become sketches with Extrude features you can edit")],
 ];
 
 /** The surface flyout's commands (FRS 9.11). */
@@ -6951,16 +9494,24 @@ const ICON_SVG: Record<string, string> = {
   sweepcut: S('<path d="M2 6h12v8H2z"/><path d="M4 12c2-4 5-5 8-5" stroke-dasharray="2 1.5"/>'),
   loft: S('<path d="M3 13h6v-2H3zM9 4h4v3H9z"/><path d="M3 11l6-7M9 11l4-4"/>'),
   loftcut: S('<path d="M2 6h12v8H2z"/><path d="M5 12h3l3-4H9z" fill="currentColor" fill-opacity=".3"/>'),
+  boundary: S('<path d="M3 13h7M6 4h7"/><path d="M3 13c0-4 1-7 3-9M10 13c1-3 2-6 3-9" stroke-dasharray="2 1.5"/>'),
+  boundarycut: S('<path d="M2 6h12v8H2z"/><path d="M4 12h5l2-4H7z" fill="currentColor" fill-opacity=".3" stroke-dasharray="2 1.5"/>'),
   import: S('<path d="M8 2v8M5 7l3 3 3-3"/><path d="M3 11v3h10v-3"/>'),
   combine: S('<circle cx="6" cy="8" r="4"/><circle cx="10" cy="8" r="4"/>'),
   indent: S('<path d="M2 7h4v3h4V7h4v4H2z"/><path d="M6 2h4v8H6z" stroke-dasharray="2 1.5"/>'),
   bsplit: S('<path d="M2 4h12v9H2z"/><path d="M9 2l-2 13"/>'),
   movebody: S('<path d="M2 9h6v5H2z"/><path d="M8 9l3-3h3v5l-3 3M9 3h5v5"/>'),
   scale: S('<path d="M2 14V8h6v6z"/><path d="M8 8l6-6M10 2h4v4"/>'),
+  flex: S('<path d="M2 14h3a7 7 0 0 0 7-7V2"/><path d="M5 14v-3M12 7h-3" stroke-dasharray="1.5 1.5"/>'),
   delbody: S('<path d="M3 5h10v9H3z"/><path d="M5 7l6 6M11 7l-6 6"/>'),
+  dome: S('<path d="M2 13h12v-3H2z"/><path d="M3 10a5 4 0 0 1 10 0"/>'),
+  wrap: S('<ellipse cx="8" cy="3.5" rx="5" ry="1.5"/><path d="M3 3.5v9c0 .8 2.2 1.5 5 1.5s5-.7 5-1.5v-9"/><path d="M6 7h4v4H6z"/>'),
   moveface: S('<path d="M2 8h9v6H2z"/><path d="M6 8V3M4 5l2-2 2 2"/><path d="M2 8l3-3h9l-3 3M14 5v6l-3 3"/>'),
   heal: S('<path d="M3 13l7-7 3 3-7 7H3z"/><path d="M9 3l4 4M12 2l2 2"/>'),
   recognize: S('<path d="M2 5h12v8H2z"/><circle cx="8" cy="9" r="2.2"/><path d="M5 2l-2 2M11 2l2 2"/>'),
+  recblend: S('<path d="M2 13V7a5 5 0 0 1 5-5h7v11z"/><path d="M5 2l-2 2M11 2l2 2"/>'),
+  recall: S('<path d="M2 7h12v7H2z"/><path d="M6 7V4h4v3"/><circle cx="5" cy="10.5" r="1.3"/><path d="M8 1.5l1 1.6 1.8.3-1.3 1.3.3 1.8L8 5.6 6.2 6.5l.3-1.8-1.3-1.3 1.8-.3z"/>'),
+  recext: S('<path d="M2 6h12v7H2z"/><path d="M6 6V3h4v3"/><path d="M5 1l-2 2M11 1l2 2"/>'),
   delface: S('<path d="M2 6h9v8H2z"/><path d="M2 6l3-3h9l-3 3M14 3v8l-3 3"/><path d="M12 1l3 3M15 1l-3 3"/>'),
   split: S('<path d="M2 4h12v9H2z"/><path d="M8 1v14" stroke-dasharray="2 1.5"/>'),
   rib: S('<path d="M2 14h12M3 14V3"/><path d="M3 5l9 9" stroke-width="2.6"/>'),
@@ -6997,13 +9548,18 @@ const ICON_SVG: Record<string, string> = {
   "sel:faces": S('<path d="M2.5 5.5 8 2.5l5.5 3v6L8 14.5l-5.5-3z" fill="currentColor" fill-opacity=".35"/>'),
   "sel:edges": S('<path d="M2.5 5.5 8 2.5l5.5 3v6L8 14.5l-5.5-3z" opacity=".35"/><path d="M8 8.5v6" stroke-width="2.4"/>'),
   "sel:vertices": S('<path d="M2.5 5.5 8 2.5l5.5 3v6L8 14.5l-5.5-3z" opacity=".35"/><circle cx="8" cy="8.5" r="2" fill="currentColor"/>'),
+  skdynmirror: S('<path d="M8 1.5v13" stroke-dasharray="1.6 1.4"/><path d="M2.5 12 6 4"/><path d="M13.5 12 10 4" opacity=".55"/><circle cx="6" cy="4" r="1.1" fill="currentColor"/>'),
   skmirror: S('<path d="M8 1.5v13" stroke-dasharray="1.6 1.4"/><path d="M6 4 2.5 12H6z"/><path d="M10 4l3.5 8H10z" opacity=".55"/>'),
   sklpat: S('<rect x="1.5" y="6" width="3" height="4"/><rect x="6.5" y="6" width="3" height="4" opacity=".6"/><rect x="11.5" y="6" width="3" height="4" opacity=".35"/>'),
   skcpat: S('<circle cx="8" cy="8" r="1"/><circle cx="8" cy="2.8" r="1.6"/><circle cx="12.5" cy="10.6" r="1.6" opacity=".6"/><circle cx="3.5" cy="10.6" r="1.6" opacity=".35"/>'),
   skmove: S('<path d="M8 1.5v13M1.5 8h13"/><path d="M6 3.5 8 1.5l2 2M6 12.5l2 2 2-2M3.5 6 1.5 8l2 2M12.5 6l2 2-2 2"/>'),
   skrot: S('<path d="M13 8a5 5 0 1 1-1.5-3.5"/><path d="M12 1.8v2.9H9.1"/>'),
   skscale: S('<rect x="1.5" y="8.5" width="6" height="6"/><rect x="1.5" y="1.5" width="13" height="13" stroke-dasharray="1.6 1.4"/><path d="M8.5 7.5l4-4M9.5 3.5h3v3"/>'),
+  skstretch: S('<path d="M1.5 3.5h6l3 4.5-3 4.5h-6z" stroke-dasharray="1.6 1.4"/><path d="M1.5 3.5h9l3 4.5-3 4.5h-9z"/><path d="M9 8h5M12 6l2 2-2 2"/>'),
   sksec: S('<path d="M2 12 8 9l6 3-6 3z"/><path d="M8 1.5v7.5M3 6.5l5-2.5 5 2.5"/>'),
+  skblock: S('<path d="M2.5 2.5h11v11h-11z" stroke-dasharray="2 1.5"/><path d="M5 10l3-5 3 5z"/>'),
+  skinsblk: S('<path d="M5.5 5.5h8v8h-8z"/><path d="M8 11.5l1.5-3 1.5 3z"/><path d="M2.5 10.5v-8h8"/>'),
+  skpic: S('<path d="M1.5 2.5h13v11h-13z"/><path d="M1.5 11.5l4-4 3 3 2-2 4 4"/><circle cx="11" cy="5.5" r="1.2"/>'),
   skdxf: S('<path d="M3.5 1.5h6l3 3v10h-9z"/><path d="M9.5 1.5v3h3"/><path d="M5.5 9.5h5M5.5 12h5"/>'),
   cons: S('<path d="M2 14 14 2" stroke-dasharray="2.2 1.8"/>'),
   "sk:select": S('<path d="M3 2l9 5-4 1.2L6.5 13z"/>'),
@@ -7020,6 +9576,9 @@ const ICON_SVG: Record<string, string> = {
   plane: S('<path d="M1.5 11 5 4h9.5L11 11z"/><path d="M8 7.5v-6M6.5 3 8 1.5 9.5 3" />'),
   "sk:pcircle": S('<circle cx="8" cy="8" r="4.5"/><path d="M1.5 3.5h13M1.5 12.5h13M3.5 1.5v13"/>'),
   "sk:circle3": S('<circle cx="8" cy="8" r="5.5"/><circle cx="2.5" cy="8" r="1.1" fill="currentColor"/><circle cx="12" cy="4.3" r="1.1" fill="currentColor"/><circle cx="11" cy="12.6" r="1.1" fill="currentColor"/>'),
+  "sk:tarc": S('<path d="M1.5 12.5h6"/><path d="M7.5 12.5a5 5 0 0 0 5-5"/><circle cx="7.5" cy="12.5" r="1.1" fill="currentColor"/><circle cx="12.5" cy="7.5" r="1.1" fill="currentColor"/>'),
+  "sk:cline": S('<path d="M2 14 14 2" stroke-dasharray="3 1.5 1 1.5"/>'),
+  "sk:mline": S('<path d="M2 12 14 4"/><circle cx="8" cy="8" r="1.3" fill="currentColor"/>'),
   "sk:arc3": S('<path d="M2.5 11a5.5 5.5 0 0 1 11 0"/><circle cx="2.5" cy="11" r="1.1" fill="currentColor"/><circle cx="13.5" cy="11" r="1.1" fill="currentColor"/><circle cx="8" cy="5.5" r="1.1" fill="currentColor"/>'),
   "sk:polygon": S('<path d="M8 2 13.7 6.1 11.5 12.9h-7L2.3 6.1z"/>'),
   "sk:trim": S('<path d="M2 13 13 2" stroke-dasharray="2 2"/><path d="M2 8h12"/><circle cx="5" cy="11" r="1.6"/><circle cx="11" cy="11" r="1.6"/><path d="M6.2 9.9 9.8 6M9.8 9.9 6.2 6"/>'),
@@ -7039,6 +9598,8 @@ const ICON_SVG: Record<string, string> = {
   "sk:aslot3": S('<path d="M2.5 12.5a5.5 5.5 0 0 1 11 0M5.5 12.5a2.5 2.5 0 0 1 5 0M2.5 12.5a1.5 1.5 0 0 0 3 0M10.5 12.5a1.5 1.5 0 0 0 3 0"/><circle cx="4" cy="12.5" r="1" fill="currentColor"/><circle cx="12" cy="12.5" r="1" fill="currentColor"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/>'),
   "sk:extend": S('<path d="M2 12 9 5"/><path d="M9 5l3.5-3.5" stroke-dasharray="1.5 1.5"/><path d="M10 14 14 2"/>'),
   "sk:split": S('<path d="M2 12 7 7M9 5l5-5"/><circle cx="8" cy="6" r="1.4"/>'),
+  "sk:segment": S('<path d="M1.5 12.5l13-9"/><circle cx="5.8" cy="9.5" r="1.2" fill="currentColor"/><circle cx="10.2" cy="6.5" r="1.2" fill="currentColor"/><path d="M1.5 14.5v-2M14.5 5.5v-2"/>'),
+  "sk:jog": S('<path d="M1.5 11.5h4v-6h5v6h4"/><circle cx="5.5" cy="11.5" r="1" fill="currentColor"/><circle cx="10.5" cy="11.5" r="1" fill="currentColor"/>'),
   "sk:chamfer": S('<path d="M2.5 13.5V7l4.5-4.5h6.5"/>'),
   "sk:offset": S('<path d="M2.5 13.5V5.5a3 3 0 0 1 3-3h8"/><path d="M6 13.5V8a2 2 0 0 1 2-2h5.5" stroke-dasharray="1.5 1.5"/>'),
   "sk:intersect": S('<path d="M2 11.5 8 8.5l6 3" opacity=".5"/><path d="M2 6h12" /><path d="M4.5 3.5v5M11.5 3.5v5" opacity=".5"/><circle cx="4.5" cy="6" r="1.2" fill="currentColor"/><circle cx="11.5" cy="6" r="1.2" fill="currentColor"/>'),

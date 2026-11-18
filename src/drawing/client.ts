@@ -4,18 +4,106 @@
 import { compile } from "../kernel/client";
 import type { FlatBend } from "../sheetmetal/sheet";
 import type { GeomDiff, Projection, Topo, V3, ViewDir } from "../kernel/drawing";
-import type { DiffSrc } from "./drawing.worker";
-import type { HoleInfo, ModelItem, SketchInfo, ThreadInfo } from "./items";
+import type { DiffSrc, ModelSnap } from "./drawing.worker";
+import type { CutInfo, HoleInfo, ModelItem, SketchInfo, ThreadInfo, WeldInfo } from "./items";
 import type { PartDoc } from "../model/types";
 import type { AsmDoc } from "../asm/types";
 import DrawingWorker from "./drawing.worker?worker";
 import { dirKey, type Align, type Stair } from "./views";
+import { FAST_EDGES } from "../kernel/drawing";
+import { cacheGet, cacheKey, cacheOn, cachePut } from "../buildCache";
 
 /** An assembly's placed component (FR-DRW-030): its edges' face names start with `<id>@`. */
-export interface CompInfo { id: string; part: string; name: string }
-export interface ModelFacts { box: [V3, V3]; volume: number; topo: Topo; items: ModelItem[]; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; comps?: CompInfo[]; /** Flat pattern view: its bend lines. */ bends?: FlatBend[] }
+export interface CompInfo { id: string; part: string; name: string; /** Its part's body materials, when its bodies have their own (FR-MAT-001). */ mats?: string[] }
+export interface ModelFacts { box: [V3, V3]; volume: number; topo: Topo; items: ModelItem[]; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; comps?: CompInfo[]; /** Flat pattern view: its bend lines. */ bends?: FlatBend[]; /** Weldment part: its fillet beads (weld table). */ welds?: WeldInfo[]; /** Weldment part: its cut list (cut list table). */ cuts?: CutInfo[]; /** Weldment part: face name → cut list item number (balloons). */ cutFaces?: Record<string, number>; /** Weldment part: face name → weld table row (weld tags). */ weldFaces?: Record<string, number>; /** Part whose bodies have their own materials: the distinct ones in body order (title block). */ mats?: string[]; /** Such a part's mass in kg with each body's own density. */ kg?: number }
 
-const facts = (r: ModelFacts): ModelFacts => ({ box: r.box, volume: r.volume, topo: r.topo, items: r.items, holes: r.holes, threads: r.threads ?? [], sketches: r.sketches ?? [], comps: r.comps, bends: r.bends });
+/** `?fasthlr`: every exact view takes the fast path. */
+const angleFlag = () => { const v = typeof location !== "undefined" ? Number(new URLSearchParams(location.search).get("drwangle")) : NaN; return v > 0 ? v : undefined; };
+const fastFlag = () => (typeof location !== "undefined" && new URLSearchParams(location.search).has("fasthlr") ? 0 : undefined);
+
+const facts = (r: ModelFacts): ModelFacts => ({ box: r.box, volume: r.volume, topo: r.topo, items: r.items, holes: r.holes, threads: r.threads ?? [], sketches: r.sketches ?? [], comps: r.comps, bends: r.bends, welds: r.welds, cuts: r.cuts, cutFaces: r.cutFaces, weldFaces: r.weldFaces, mats: r.mats, kg: r.kg });
+
+/**
+ * Whether a drawing may use a second drawing worker for exact projections: four or more threads and
+ * a device that does not say it is short of memory. `?drwhelper=0|1` turns it off or on.
+ */
+function helperWanted(): boolean {
+  if (typeof location !== "undefined") {
+    const q = new URLSearchParams(location.search).get("drwhelper");
+    if (q === "0") return false;
+    if (q === "1") return true;
+  }
+  if (typeof navigator === "undefined") return false;
+  const nav = navigator as Navigator & { deviceMemory?: number; connection?: { saveData?: boolean } };
+  if ((nav.hardwareConcurrency ?? 2) < 4) return false;
+  if (nav.deviceMemory !== undefined && nav.deviceMemory <= 4) return false;
+  return !nav.connection?.saveData;
+}
+
+/** Heap size after which the main drawing worker is started over between calls (see `recycle`). */
+const HEAP_RECYCLE = (() => {
+  const q = typeof location !== "undefined" ? Number(new URLSearchParams(location.search).get("drwheap")) : 0;
+  return (q > 0 ? q : 1200) * 1048576;
+})();
+/** An error that means the worker's heap is full. */
+export const OUT_OF_MEMORY = /malloc failed|bad_alloc|out of memory|Cannot enlarge memory|Array buffer allocation failed/i;
+
+/** A helper drawing worker idle this long is stopped (its model is loaded again at the next load). */
+const HELPER_IDLE_MS = 60_000;
+
+/** One drawing worker and its calls in flight. */
+class Lane {
+  readonly worker: Worker;
+  readonly ready: Promise<void>;
+  private seq = 0;
+  private pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
+  /** The model is loaded (for the generation in `gen`). */
+  loaded = false;
+  gen = -1;
+  busy = false;
+  dead = false;
+  constructor(base: string, fast: number | undefined, onDead: (l: Lane) => void) {
+    const w = new DrawingWorker();
+    w.onmessage = (e: MessageEvent) => {
+      const d = e.data, p = this.pending.get(d.id);
+      if (!p) return;
+      this.pending.delete(d.id);
+      if (d.ok) p.resolve(d); else p.reject(new Error(d.error));
+    };
+    w.onerror = e => { this.stop(new Error(e.message || "The drawing kernel stopped")); onDead(this); };
+    this.worker = w;
+    this.ready = compile(base).then(module => this.call<void>({ type: "init", base, module, fast, angle: angleFlag() }));
+  }
+  call<T>(msg: Record<string, unknown>): Promise<T> {
+    if (this.dead) return Promise.reject(new Error("The drawing kernel stopped"));
+    const id = ++this.seq;
+    return new Promise<T>((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
+      this.worker.postMessage({ ...msg, id });
+    });
+  }
+  stop(err = new Error("The drawing kernel stopped")) {
+    if (this.dead) return;
+    this.dead = true;
+    this.worker.terminate();
+    for (const p of this.pending.values()) p.reject(err);
+    this.pending.clear();
+  }
+}
+
+/** An exact projection waiting for a worker. */
+/** `key`: the projection's cache key; `dropped`: its view is gone, so it is not run (again). */
+/** `low`: a background job (the view palette's pictures) that waits while a view's own projection is queued. */
+interface Job { msg: Record<string, unknown>; resolve: (v: any) => void; reject: (e: Error) => void; tries: number; key?: string; dropped?: boolean; low?: boolean }
+
+/** The message a projection fails with when its view went away before it was made (see `DrawingKernel.drop`). */
+export const DROPPED = "The view is gone";
+
+/** The worker message of an exact projection or section (also what keys it in the disk cache). */
+function exactMsg(req: { view: ViewDir; p?: V3; poly?: number[]; stair?: Stair; align?: Align; exclude?: string[]; shade?: boolean; cfg?: string; only?: string[] }): Record<string, unknown> {
+  const { view, cfg, only } = req;
+  return req.p ? { type: "section", view, p: req.p, poly: req.poly, stair: req.stair, align: req.align, exclude: req.exclude, cfg, only } : { type: "project", view, shade: req.shade, cfg, only };
+}
 
 export class DrawingKernel {
   private worker: Worker | null = null;
@@ -37,6 +125,47 @@ export class DrawingKernel {
   slowest = 0;
   /** Previews made so far (for the smoke test). */
   previewsMade = 0;
+  /** Of those, section previews (with their cut loops). */
+  sectionPreviewsMade = 0;
+  /** Previews that failed (for the smoke test). */
+  readonly previewErrors: string[] = [];
+  /**
+   * Exact projections run on the drawing's worker and, with enough threads, on a helper worker
+   * holding the same model, one at a time each, so a sheet's views are projected two at a time.
+   */
+  private jobs: Job[] = [];
+  /** Keys of background projections a view asked for while they were on the way (they run as a view's). */
+  private urgent = new Set<string>();
+  private mainBusy = false;
+  /** The exact job on the main worker, and on the helper. */
+  private mainJob: Job | null = null;
+  private helperJob: Job | null = null;
+  private helper: Lane | null = null;
+  private helperIdle: ReturnType<typeof setTimeout> | null = null;
+  /** Exact projections the helper worker made (for the smoke test). */
+  helped = 0;
+  /** The loaded model, for starting the worker over (`recycle`). */
+  private src: { part?: PartDoc; asm?: AsmDoc; file?: { name: string; bytes: Uint8Array } } | null = null;
+  /** The full load's shape as BREP (worker `ModelSnap`): a restart and the helper read it instead of building the model. */
+  private snap: ModelSnap | null = null;
+  private wantRecycle = false;
+  private recycling: Promise<void> | null = null;
+  /** Loads that read the open assembly's own build (`load`'s `pre`) instead of building the parts (for tests). */
+  preLoads = 0;
+  /** Times the main worker was started over (for tests). */
+  recycles = 0;
+  /** Told when a restart (`recycle`) starts and ends, so the status line can say so. */
+  onRestart: (() => void) | null = null;
+  get restarting() { return !!this.recycling; }
+  /**
+   * The disk cache key of the loaded model (src/buildCache.ts): the document or the file's bytes, with the flags that
+   * change projections. Its load facts and snapshot, and every exact view, are stored under keys made from it.
+   */
+  private modelKey: Promise<string | null> = Promise.resolve(null);
+  /** The loaded model's facts, stored with its snapshot. */
+  private loadFacts: ModelFacts | null = null;
+  /** Loads and exact views read from the disk cache (for `?debug` and the smoke test). */
+  cacheHits = 0;
 
   constructor(private base: string) {}
 
@@ -47,16 +176,29 @@ export class DrawingKernel {
       const d = e.data, p = this.pending.get(d.id);
       if (!p) return;
       this.pending.delete(d.id);
+      if (typeof d.heap === "number" && d.heap > HEAP_RECYCLE) this.wantRecycle = true;
+      // A meshed snapshot after the first fast view (worker `ModelSnap`); replies come in order, so it is this model's.
+      if (d.ok && d.snap && d.proj && this.src) { this.snap = d.snap; this.storeLoad(); }
       if (d.ok) p.resolve(d); else p.reject(new Error(d.error));
+      if (this.wantRecycle && !this.pending.size) void this.recycle();
     };
     w.onerror = e => { for (const p of this.pending.values()) p.reject(new Error(e.message || "The drawing kernel stopped")); this.pending.clear(); this.stop(); };
     this.worker = w;
-    this.ready = compile(this.base).then(module => this.call<void>({ type: "init", base: this.base, module }));
+    this.ready = compile(this.base).then(module => this.call<void>({ type: "init", base: this.base, module, fast: fastFlag(), angle: angleFlag() }));
     this.ready.catch(() => this.stop());
     return this.ready;
   }
 
+  /**
+   * Starts the worker and sets OpenCASCADE up in it ahead of the first drawing: that set-up takes ~3 s (more on
+   * a slow machine), and a new drawing waited for it before its palette or first view could show.
+   */
+  warm() { void this.start().catch(() => {}); }
+
   private call<T>(msg: Record<string, unknown>): Promise<T> {
+    // While the worker starts over, everything but its own set-up waits for the model to be back.
+    if (this.recycling && msg.type !== "init" && msg.type !== "load") return this.recycling.then(() => this.call<T>(msg));
+    if (!this.worker) return Promise.reject(new Error("The drawing kernel stopped"));
     const id = ++this.seq;
     return new Promise<T>((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
@@ -64,13 +206,48 @@ export class DrawingKernel {
     });
   }
 
+  /**
+   * Starts the main worker over with the same model (the projection cache stays): OCCT's polygonal HLR leaks
+   * ~100 MB per fast view of an engine assembly, and the heap ran out on an alternate position after
+   * Standard 3 views (drawings exam round three). Calls still waiting fail with "stopped".
+   */
+  private recycle(): Promise<void> {
+    if (this.recycling) return this.recycling;
+    const src = this.src;
+    if (!src || !this.worker) return Promise.resolve();
+    this.wantRecycle = false;
+    this.recycles++;
+    this.worker.terminate();
+    this.worker = null;
+    this.ready = null;
+    for (const p of this.pending.values()) p.reject(new Error("The drawing kernel stopped"));
+    this.pending.clear();
+    // Configurations are built inside the worker: build them again when asked.
+    this.configs.clear();
+    this.cfgLoading.clear();
+    // Loaded lite: the facts (topology, items, tables) are known already, and skipping them saves a good part
+    // of the restart on a big assembly.
+    const gen = this.gen;
+    const done = this.start().then(() => this.call<void>({ type: "load", ...src, lite: true, snap: this.snap ?? undefined }));
+    this.recycling = done.then(() => undefined, () => undefined).then(() => { this.recycling = null; this.onRestart?.(); if (gen === this.gen) this.pump(); });
+    this.onRestart?.();
+    return this.recycling;
+  }
+
   stop() {
+    this.src = null;
+    this.snap = null;
+    this.wantRecycle = false;
+    this.stopHelper();
+    for (const j of this.jobs.splice(0)) j.reject(new Error("The drawing kernel stopped"));
+    this.mainBusy = false;
     this.worker?.terminate();
     this.worker = null;
     this.ready = null;
     this.loaded = null;
     this.cache.clear();
     this.inflight.clear();
+    this.urgent.clear();
     this.previews.clear();
     this.previewing.clear();
     this.slowest = 0;
@@ -78,18 +255,183 @@ export class DrawingKernel {
     this.cfgLoading.clear();
   }
 
-  /** Loads the model; the projection cache starts over. */
-  load(src: { part?: PartDoc; asm?: AsmDoc; file?: { name: string; bytes: Uint8Array } }): Promise<ModelFacts> {
+  /**
+   * Loads the model; the projection cache starts over. `pre`: the assembly's shape already built by the open
+   * assembly's kernel (`ModelKernel.drawingSnap`), read instead of building every part again.
+   */
+  load(src: { part?: PartDoc; asm?: AsmDoc; file?: { name: string; bytes: Uint8Array } }, pre?: ModelSnap | null): Promise<ModelFacts> {
     this.gen++;
     this.cache.clear();
     this.inflight.clear();
+    this.urgent.clear();
     this.previews.clear();
     this.previewing.clear();
     this.slowest = 0;
     this.configs.clear();
     this.cfgLoading.clear();
-    this.loaded = this.start().then(() => this.call<ModelFacts>({ type: "load", ...src })).then(facts);
+    this.src = src;
+    this.snap = null;
+    this.wantRecycle = false;
+    // The helper only for models under FAST_EDGES: a second copy of a big assembly can run the tab out of memory
+    // (drawings exam: an engine tab crashed after Standard 3 views); big ones take the fast path anyway.
+    const gen = this.gen;
+    this.loadFacts = null;
+    const mk = this.modelKey = cacheOn() ? cacheKey("drawing", { part: src.part ?? null, asm: src.asm ?? null, file: src.file?.name ?? null }, src.file?.bytes ?? null, [fastFlag() ?? null, angleFlag() ?? null]) : Promise.resolve(null);
+    this.loaded = this.start().then(async () => {
+      // Drawn before: the model's facts and its shape snapshot come from the disk cache, so nothing is built.
+      const key = await mk;
+      const hit = key ? await cacheGet<{ facts: ModelFacts; snap: ModelSnap }>(`${key}|load`) : undefined;
+      if (hit?.snap && hit.facts) {
+        await this.call<void>({ type: "load", ...src, lite: true, snap: hit.snap });
+        if (gen === this.gen) { this.snap = hit.snap; this.loadFacts = hit.facts; this.cacheHits++; }
+        return hit.facts;
+      }
+      const r = await this.call<ModelFacts & { snap?: ModelSnap; pre?: boolean }>({ type: "load", ...src, snap: src.asm && pre ? pre : undefined });
+      if (gen === this.gen) this.snap = r.snap ?? null;
+      if (r.pre) this.preLoads++;
+      const f = facts(r);
+      if (gen === this.gen) { this.loadFacts = f; this.storeLoad(); }
+      return f;
+    }).then(f => {
+      if (gen === this.gen) { if (f.topo.edges.length < FAST_EDGES) this.loadHelper(src); else this.stopHelper(); }
+      return f;
+    });
     return this.loaded;
+  }
+
+  /** Stores the loaded model's facts and snapshot (again when the snapshot gains its mesh). */
+  private storeLoad() {
+    const f = this.loadFacts, snap = this.snap;
+    if (!f || !snap) return;
+    void this.modelKey.then(k => { if (k && this.loadFacts === f) void cachePut(`${k}|load`, { facts: f, snap }); });
+  }
+
+  /** Exact requests whose disk cache lookup is under way (`drop` marks the ones no view wants). */
+  private looking = new Set<{ key: string; dropped: boolean }>();
+
+  /** The disk cache key of one exact request on the loaded model. */
+  private async viewKey(msg: Record<string, unknown>): Promise<string | null> {
+    const mk = await this.modelKey;
+    return mk ? cacheKey("view", mk, msg) : null;
+  }
+
+  /** An exact request: from the disk cache when this model's view was made before, else run and stored. */
+  private exactCached(msg: Record<string, unknown>, key: string, low: boolean): Promise<{ proj: Projection }> {
+    const gen = this.gen, dk = this.viewKey(msg);
+    // While the disk is read, `drop` may already say no view wants it: then it is not run.
+    const look = { key, dropped: false };
+    this.looking.add(look);
+    const lookup = dk.then(k => (k ? cacheGet<Projection>(k) : undefined));
+    lookup.catch(() => this.looking.delete(look));
+    return lookup.then(hit => {
+      // Still marked until the job is queued (where `drop` finds it), in this same callback.
+      this.looking.delete(look);
+      if (look.dropped) throw new Error(DROPPED);
+      if (hit) { if (gen === this.gen) this.cacheHits++; return { proj: hit }; }
+      return this.exact<{ proj: Projection }>(msg, key, low).then(r => {
+        if (gen === this.gen) void dk.then(k => cachePut(k, r.proj));
+        return r;
+      });
+    });
+  }
+
+  /** Starts (or reuses) the helper worker and loads the same model into it, without its facts. */
+  private loadHelper(src: { part?: PartDoc; asm?: AsmDoc; file?: { name: string; bytes: Uint8Array } }) {
+    if (!helperWanted()) return;
+    const h = this.helper ?? (this.helper = new Lane(this.base, fastFlag(), l => { if (this.helper === l) this.helper = null; }));
+    const gen = this.gen;
+    h.loaded = false;
+    h.gen = gen;
+    h.ready.then(() => h.call({ type: "load", ...src, lite: true, snap: this.snap ?? undefined })).then(() => {
+      if (h.gen !== gen || h.dead) return;
+      h.loaded = true;
+      this.pump();
+      this.idleHelper();
+    }, () => { if (this.helper === h) this.stopHelper(); });
+  }
+
+  private stopHelper() {
+    if (this.helperIdle) clearTimeout(this.helperIdle);
+    this.helperIdle = null;
+    this.helper?.stop();
+    this.helper = null;
+  }
+
+  /** Stops the helper after a while without work. */
+  private idleHelper() {
+    if (this.helperIdle) clearTimeout(this.helperIdle);
+    this.helperIdle = setTimeout(() => { if (this.helper && !this.helper.busy) this.stopHelper(); }, HELPER_IDLE_MS);
+  }
+
+  /** For tests: whether the helper worker is up and has the model, and how many projections it made. */
+  helperState() { return { diskHits: this.cacheHits, on: !!this.helper, loaded: !!this.helper?.loaded, helped: this.helped, recycles: this.recycles, preLoads: this.preLoads, snap: this.snap?.bin.length ?? 0, snapMesh: !!this.snap?.mesh }; }
+
+  /** An exact projection or section, run by whichever worker is free first. */
+  private exact<T>(msg: Record<string, unknown>, key?: string, low = false): Promise<T> {
+    return new Promise<T>((resolve, reject) => { this.jobs.push({ msg, resolve, reject, tries: 0, key, low: low && !(key && this.urgent.has(key)) }); this.pump(); });
+  }
+
+  /** The next job to run: the first one a view waits for, else the first background one. */
+  private nextJob(ok: (j: Job) => boolean = () => true): number {
+    const i = this.jobs.findIndex(j => !j.low && ok(j));
+    return i >= 0 ? i : this.jobs.findIndex(ok);
+  }
+
+  /**
+   * Drops the exact projections no view wants any more (`keep(key)` false): waiting ones are taken off the queue,
+   * and a running one stops its worker, which starts over with the model (drawings exam round four: a deleted
+   * section through a big assembly kept the worker busy, and every later view waited behind it). They fail with `DROPPED`.
+   */
+  drop(keep: (key: string) => boolean) {
+    const gone = (j: Job | null) => !!j && !!j.key && !j.dropped && !keep(j.key);
+    for (const l of this.looking) if (!keep(l.key)) l.dropped = true;
+    for (const j of this.jobs.filter(gone)) { j.dropped = true; this.jobs.splice(this.jobs.indexOf(j), 1); j.reject(new Error(DROPPED)); }
+    if (gone(this.helperJob)) { this.helperJob!.dropped = true; this.stopHelper(); }
+    if (gone(this.mainJob)) { this.mainJob!.dropped = true; void this.recycle(); }
+  }
+
+  private pump() {
+    if (!this.worker) return;
+    while (this.jobs.length) {
+      if (!this.mainBusy && !this.recycling) {
+        const j = this.jobs.splice(this.nextJob(), 1)[0];
+        this.mainBusy = true;
+        this.mainJob = j;
+        const gen = this.gen;
+        this.call(j.msg).then(j.resolve, (err: Error) => {
+          if (j.dropped) { j.reject(new Error(DROPPED)); return; }
+          // Out of memory: start the worker over and try once more.
+          if (gen === this.gen && j.tries < 2 && OUT_OF_MEMORY.test(err.message) && this.src) {
+            j.tries = 2;
+            this.jobs.unshift(j);
+            this.wantRecycle = true;
+            return;
+          }
+          j.reject(err);
+        }).finally(() => {
+          this.mainBusy = false;
+          if (this.mainJob === j) this.mainJob = null;
+          if (this.wantRecycle && !this.pending.size) void this.recycle();
+          else this.pump();
+        });
+        continue;
+      }
+      if (this.recycling) break;
+      // The helper takes plain jobs of the loaded model (configurations are built on the main worker only).
+      const h = this.helper;
+      if (!h || !h.loaded || h.busy || h.gen !== this.gen) break;
+      const i = this.nextJob(j => !j.msg.cfg && j.tries === 0);
+      if (i < 0) break;
+      const j = this.jobs.splice(i, 1)[0];
+      h.busy = true;
+      this.helperJob = j;
+      h.call(j.msg).then(r => { this.helped++; j.resolve(r); }, () => {
+        if (j.dropped) { j.reject(new Error(DROPPED)); return; }
+        // The helper failed (out of memory, stopped): the main worker does it.
+        j.tries++;
+        this.jobs.unshift(j);
+      }).finally(() => { h.busy = false; if (this.helperJob === j) this.helperJob = null; this.idleHelper(); this.pump(); });
+    }
   }
 
   /** Builds another configuration of the loaded part (once) and gives its facts. */
@@ -127,7 +469,7 @@ export class DrawingKernel {
     if (!p) {
       if (!this.loaded) return Promise.reject(new Error("No model loaded"));
       const gen = this.gen;
-      p = this.loaded.then(() => this.call<{ proj: Projection }>({ type: "alt", view: req.view, moves: req.moves })).then(r => {
+      p = this.loaded.then(() => this.exactCached({ type: "alt", view: req.view, moves: req.moves }, req.key, false)).then(r => {
         if (gen === this.gen) this.cache.set(req.key, r.proj);
         this.inflight.delete(req.key);
         return r.proj;
@@ -138,19 +480,21 @@ export class DrawingKernel {
   }
 
   /** The view's lines (cached by direction). */
-  project(view: ViewDir): Promise<Projection> { return this.request({ view, key: dirKey(view) }); }
+  project(view: ViewDir, low = false): Promise<Projection> { return this.request({ view, key: dirKey(view) }, low); }
 
   /** A projection, or a section when `p` is set (cached by `key`). */
-  request(req: { view: ViewDir; p?: V3; poly?: number[]; stair?: Stair; align?: Align; exclude?: string[]; shade?: boolean; cfg?: string; only?: string[]; key: string }): Promise<Projection> {
-    const { view, key } = req;
+  request(req: { view: ViewDir; p?: V3; poly?: number[]; stair?: Stair; align?: Align; exclude?: string[]; shade?: boolean; cfg?: string; only?: string[]; key: string }, low = false): Promise<Projection> {
+    const { key } = req;
     const have = this.cache.get(key);
     if (have) return Promise.resolve(have);
     let p = this.inflight.get(key);
+    // A view now waits for a projection the palette asked for in the background: it goes first.
+    if (p && !low) { this.urgent.add(key); for (const j of this.jobs) if (j.key === key) j.low = false; }
     if (!p) {
       if (!this.loaded) return Promise.reject(new Error("No model loaded"));
       const gen = this.gen;
       const cfg = req.cfg;
-      p = (cfg ? this.config(cfg) : this.loaded).then(() => this.call<{ proj: Projection }>(req.p ? { type: "section", view, p: req.p, poly: req.poly, stair: req.stair, align: req.align, exclude: req.exclude, cfg, only: req.only } : { type: "project", view, shade: req.shade, cfg, only: req.only })).then(r => {
+      p = (cfg ? this.config(cfg) : this.loaded).then(() => this.exactCached(exactMsg(req), key, low)).then(r => {
         if (gen === this.gen) { this.cache.set(key, r.proj); this.previews.delete(key); this.slowest = Math.max(this.slowest, r.proj.ms); }
         this.inflight.delete(key);
         return r.proj;
@@ -161,10 +505,10 @@ export class DrawingKernel {
   }
 
   /**
-   * A quick polygonal preview of a plain view (not a section), cached by the same key. Ask for it before
-   * the exact projection: the worker answers in order.
+   * A quick polygonal preview of a view, cached by the same key. Ask for it before the exact projection: the
+   * worker answers in order, and a section's exact request reuses the cut its preview made.
    */
-  preview(req: { view: ViewDir; cfg?: string; only?: string[]; key: string }): Promise<Projection> {
+  preview(req: { view: ViewDir; p?: V3; poly?: number[]; stair?: Stair; align?: Align; exclude?: string[]; cfg?: string; only?: string[]; key: string }): Promise<Projection> {
     const { key } = req;
     const have = this.previews.get(key);
     if (have) return Promise.resolve(have);
@@ -172,12 +516,26 @@ export class DrawingKernel {
     if (!p) {
       if (!this.loaded) return Promise.reject(new Error("No model loaded"));
       const gen = this.gen, cfg = req.cfg;
-      p = (cfg ? this.config(cfg) : this.loaded).then(() => this.call<{ proj: Projection }>({ type: "preview", view: req.view, cfg, only: req.only })).then(r => {
-        this.previewsMade++;
+      const ask = () => this.call<{ proj: Projection }>(req.p
+        ? { type: "secpreview", view: req.view, p: req.p, poly: req.poly, stair: req.stair, align: req.align, exclude: req.exclude, cfg, only: req.only }
+        : { type: "preview", view: req.view, cfg, only: req.only });
+      // A worker started over (a dropped exact job, memory) fails the calls waiting on it: ask once more on the new
+      // one, unless the exact lines came first (CI: a section placed while the other side's exact cut ran got none).
+      const again = (err: Error) => gen === this.gen && this.recycling && !this.cache.has(key) ? this.recycling.then(() => {
+        if (gen !== this.gen || this.cache.has(key)) throw err;
+        return (cfg ? this.config(cfg) : Promise.resolve()).then(ask);
+      }) : Promise.reject(err);
+      // The exact view on disk already: no preview is needed.
+      const disk = (cfg ? this.config(cfg) : this.loaded).then(() => this.viewKey(exactMsg(req))).then(k => (k ? cacheGet<Projection>(k) : undefined)).catch(() => undefined);
+      p = disk.then(hit => {
+        if (!hit) return (cfg ? this.config(cfg) : this.loaded!).then(ask).catch(again).then(r => { this.previewsMade++; if (r.proj.cut) this.sectionPreviewsMade++; return r; });
+        if (gen === this.gen) { this.cacheHits++; this.cache.set(key, hit); this.slowest = Math.max(this.slowest, hit.ms); }
+        return { proj: hit };
+      }).then(r => {
         if (gen === this.gen && !this.cache.has(key)) this.previews.set(key, r.proj);
         this.previewing.delete(key);
         return r.proj;
-      }, err => { this.previewing.delete(key); throw err; });
+      }, err => { this.previewing.delete(key); this.previewErrors.push(String(err?.message ?? err)); throw err; });
       this.previewing.set(key, p);
     }
     return p;

@@ -1,4 +1,4 @@
-// Image sequence export of a motion study (SolidWorks Save Animation → series of images).
+// Image sequence export of a motion study (CAD app Save Animation → series of images).
 
 /** File name of frame i (0-based) of n: zero-padded to at least 4 digits so the names sort in order. */
 export function frameName(base: string, i: number, n: number) {

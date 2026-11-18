@@ -36,6 +36,15 @@ test("quick preview (polygonal HLR) matches the exact view's outline", async () 
   const t = projectPoly(oc, shape, { dir: [0, 0, 1], up: [0, 1, 0] }, 0.5);
   const xs = t.vis.flatMap(s => s.k === "l" ? [s.p[0], s.p[2]] : s.k === "p" ? s.p.filter((_v, i) => i % 2 === 0) : []);
   assert.ok(xs.some(x => Math.abs(x - 15) < 0.05) && xs.some(x => Math.abs(x - 5) < 0.05), "hole circle seen from the top");
+  // 1.480.0: the HLR reader is reused across calls; the same view again gives the same lines and the heap stays put.
+  const again = () => projectPoly(oc, shape, view, 0.5);
+  const first = again(), heap = oc.HEAP8.length;
+  for (let i = 0; i < 20; i++) again();
+  const last = again();
+  assert.equal(last.vis.length, first.vis.length);
+  assert.equal(last.hid.length, first.hid.length);
+  assert.deepEqual(last.box, first.box);
+  assert.equal(oc.HEAP8.length, heap, "no heap growth over repeated views");
 });
 
 test("top view: outline, hole circle, no hidden lines", async () => {
@@ -107,15 +116,45 @@ test("sheet output: SVG, DXF layers and linetypes, title block fields", async ()
   assert.match(svg, />BLK-1</);
 });
 
+test("shape boxes are found once per shape, and callers get their own copy", async () => {
+  const { shapeBox, shapeInfo } = await import("../../src/kernel/drawing");
+  const { oc, shape } = await block();
+  const a = shapeBox(oc, shape);
+  a[0][0] = 1e9;
+  const b = shapeBox(oc, shape), c = shapeInfo(oc, shape).box;
+  assert.ok(b[0][0] < 1e8);
+  assert.deepEqual(b, c);
+});
+
 test("section through the hole: the cut faces are the block's middle slice minus the hole", async () => {
   const { section } = await import("../../src/kernel/drawing");
   const { oc, shape } = await block();
   const s = section(oc, shape, { dir: [0, -1, 0], up: [0, 0, 1] }, [0, 0, 0]);
   const area = (l: number[]) => { let a = 0; for (let i = 0; i < l.length; i += 2) { const j = (i + 2) % l.length; a += l[i] * l[j + 1] - l[j] * l[i + 1]; } return a / 2; };
   const total = s.cut!.reduce((t, l) => t + Math.abs(area(l)), 0);
-  assert.ok(Math.abs(total - (100 * 20 - 10 * 20)) < 1e-6, `cut area ${total}`);
+  // The plane is cut SECTION_NUDGE (1 µm) off the picked place, so the hole's chord is a hair shorter.
+  assert.ok(Math.abs(total - (100 * 20 - 10 * 20)) < 1e-3, `cut area ${total}`);
   assert.equal(s.cut!.length, 2);
   assert.equal(s.hid.length, 0);
+});
+
+test("section preview: the cut shared with the exact lines, same cut loops, outline within the mesh error (FR-DRW-016)", async () => {
+  const { section, sectionCut, sectionPreview, sectionFinish } = await import("../../src/kernel/drawing");
+  const { oc, shape } = await block();
+  const view = { dir: [0, -1, 0] as V3, up: [0, 0, 1] as V3 };
+  const exact = section(oc, shape, view, [0, 0, 0]);
+  const sc = sectionCut(oc, shape, view, [0, 0, 0]);
+  const pre = sectionPreview(oc, sc, view, 0.5);
+  assert.deepEqual(pre.cut, exact.cut);
+  assert.deepEqual(pre.cutOf, exact.cutOf);
+  assert.ok(pre.vis.length > 0);
+  const [a, b] = [bounds(pre.vis), bounds(exact.vis)];
+  for (let i = 0; i < 4; i++) assert.ok(Math.abs(a[i] - b[i]) < 0.6, `box ${a} vs ${b}`);
+  // The exact request after the preview reuses its cut and gives the plain section's lines.
+  const fin = sectionFinish(oc, sc, view);
+  assert.deepEqual(fin.cut, exact.cut);
+  assert.equal(fin.vis.length, exact.vis.length);
+  assert.equal(fin.hid.length, exact.hid.length);
 });
 
 test("broken-out section: only the outline is cut away, down to the plane, and its floor is hatched (FR-DRW-015)", async () => {
@@ -188,6 +227,7 @@ test("detail clipping and section hatching", async () => {
   const sh = (letters: string[]) => [{ id: "s", name: "S", size: "A3" as const, scale: [1, 1] as [number, number], projection: "first" as const, format: "iso" as const, views: letters.map((l, i) => ({ id: `v${i}`, name: "", x: 0, y: 0, letter: l })) }];
   assert.equal(nextLetter(sh([])), "A");
   assert.equal(nextLetter(sh(["A", "B", "C", "D", "E", "F", "G", "H"])), "J");
+  assert.equal(nextLetter([{ ...sh(["A"])[0], annots: [{ id: "d", t: "datum", view: "v0", ref: { e: "x", h: [0, 0, 0], p: "e" }, pos: [0, 0], letter: "B" }] }] as never), "C", "a datum letter is taken (drawings exam #6)");
 });
 
 test("annotations: topology names, centre marks, dimensions, hole callout, model items", async () => {
@@ -241,6 +281,22 @@ test("annotations: topology names, centre marks, dimensions, hole callout, model
   assert.equal(dimGeo(dim, front.P, topo2)!.value, 120);
   const ctx = { topo, holes: [], items: [], box: [[-50, -30, 0], [50, 30, 20]] as [V3, V3], dec: ".", label: (s: string) => s };
   assert.deepEqual(holeText(circles[0], ctx), ["Ø10 THRU"]);
+  {
+    // A tolerance frame attached to a dimension (1.562.0) sits centred under its text and moves with it; without the dimension it is a free frame at `pos`.
+    const { viewAnnots } = await import("../../src/drawing/annot");
+    const gt = { id: "g", t: "gtol" as const, view: "front", pos: [0, 0] as [number, number], dim: "x", rows: [{ sym: "par" as const, tol: "0.05", datums: ["A"] }] };
+    const run = (annots: unknown[]) => viewAnnots({ id: "s", name: "S", size: "A3", scale: [1, 1], projection: "first", format: "iso", views: [view("front")], annots } as never, view("front") as never, pl, ctx as never).hits;
+    const box = (h: ReturnType<typeof run>, id: string) => h.find(x => x.id === id)!.box;
+    const h0 = run([gt, dim]), d0 = box(h0, "x"), g0 = box(h0, "g");
+    assert.ok(Math.abs((d0[0] + d0[2]) / 2 - (g0[0] + g0[2]) / 2) < 1e-6 && d0[1] - g0[3] > 0.5 && d0[1] - g0[3] < 3, `under the text: ${d0} ${g0}`);
+    const h1 = run([{ ...dim, pos: [12, -25] }, gt]), d1 = box(h1, "x"), g1 = box(h1, "g");
+    assert.ok(Math.abs((g1[0] - g0[0]) - (d1[0] - d0[0])) < 1e-6 && Math.abs((g1[1] - g0[1]) - (d1[1] - d0[1])) < 1e-6 && Math.abs(d1[1] - d0[1] + 15) < 1e-6);
+    // A second frame on the same dimension stacks under the first.
+    const g2 = box(run([dim, gt, { ...gt, id: "g2" }]), "g2");
+    assert.ok(g2[3] < g0[1] && g0[1] - g2[3] < 3);
+    const free = box(run([gt]), "g");
+    assert.ok(Math.abs(free[0]) < 1e-6 && Math.abs(free[3]) < 1e-6, `free at pos: ${free}`);
+  }
   // Model items: the sketch's 100 and 60 go to the top view, the depth 20 to the front view, the Ø10 to the top view; no duplicates the second time.
   const { items } = modelItems(d, r.frames, r.sketches);
   assert.deepEqual(items.map(i => `${i.src}=${i.value}`).sort(), ["f1:depth=20", "s1:d1=100", "s1:d2=60", "s2:d3=10"]);
@@ -310,15 +366,78 @@ test("GD&T, datums, surface finish, tables, GOST title block, dangling annotatio
   const tri = d.prims.find(p => p.t === "p" && p.fill) as { p: number[] };
   assert.equal(tri.p[5], 3);
   assert.deepEqual(d.box, [6.5, 11.5, 13.5, 18.5]);
+  {
+    // Open triangle: an outline, no fill. Bent leader: up from the apex square to the edge, then level to the frame.
+    const o = datumPrims({ id: "d", t: "datum", view: "v", ref: { pt: [0, 0, 0] }, pos: [0, 0], letter: "A", open: true, bent: true }, [10, 0], [1, 0], [30, 15]);
+    assert.ok(!o.prims.some(p => p.t === "p" && p.fill), "no filled triangle");
+    const ls = o.prims.filter(p => p.t === "l") as unknown as { p: number[] }[];
+    assert.equal(ls.length, 2);
+    assert.deepEqual(ls[0].p, [10, 3, 10, 15]);
+    assert.deepEqual(ls[1].p, [10, 15, 26.5, 15]);
+    // Straight above the edge point there is nothing to bend.
+    const st = datumPrims({ id: "d", t: "datum", view: "v", ref: { pt: [0, 0, 0] }, pos: [0, 0], letter: "A", bent: true }, [10, 0], [1, 0], [10, 15]);
+    assert.equal(st.prims.filter(p => p.t === "l").length, 1);
+  }
+  {
+    // Modifying symbols in the frame's text (1.561.0): circled letters are drawn (a circle and the letter), the older Ø flag
+    // and modifier read the same as the text form, a second tolerance adds a cell, "between" goes under the frame.
+    const { richRuns, rowText, circled } = await import("../../src/drawing/gdt");
+    assert.deepEqual(richRuns("Ø0.1Ⓜ"), [{ k: "t", s: "Ø0.1" }, { k: "c", l: "M" }]);
+    assert.equal(circled("L"), "Ⓛ");
+    assert.deepEqual(rowText({ sym: "pos", tol: "0.1", dia: true, mod: "M", datums: ["A"] }), { sym: "pos", tol: "Ø0.1Ⓜ", datums: ["A"] });
+    const G = (rows: Parameters<typeof gtolPrims>[0]["rows"], more = {}) => gtolPrims({ id: "g", t: "gtol", pos: [0, 0], rows, ...more }, [0, 0], null, ".");
+    const oldF = G([{ sym: "pos", tol: "0.1", dia: true, mod: "M", datums: ["A"] }]), newF = G([{ sym: "pos", tol: "Ø0.1Ⓜ", datums: ["A"] }]);
+    assert.deepEqual(oldF, newF);
+    const txt = (g: ReturnType<typeof G>) => (g.prims.filter(p => p.t === "t") as { s: string }[]).map(p => p.s);
+    assert.deepEqual(txt(newF), ["Ø0.1", "M", "A"]);
+    assert.equal(newF.prims.filter(p => p.t === "a").length, 2);
+    const two = G([{ sym: "pos", tol: "0.1", tol2: "0.2Ⓟ", datums: ["AⓁ", "⬡"] }]);
+    assert.ok(two.box[2] > G([{ sym: "pos", tol: "0.1", datums: ["A"] }]).box[2]);
+    assert.deepEqual(txt(two), ["0.1", "0.2", "P", "A", "L", "ST"]);
+    const btw = G([{ sym: "psurf", tol: "0.1", datums: [] }], { between: ["C", "D"], below: "X" });
+    const bt = btw.prims.filter(p => p.t === "t") as { s: string; y: number }[];
+    assert.ok(bt.find(p => p.s === "C")!.y < -7 && bt.find(p => p.s === "X")!.y < bt.find(p => p.s === "C")!.y && btw.box[1] < bt.find(p => p.s === "X")!.y);
+    assert.equal(btw.prims.filter(p => p.t === "p" && (p as { fill?: boolean }).fill).length, 2);
+  }
+  {
+    // Text above and below a tolerance frame: left-aligned with it, and inside the hit box.
+    const row = { sym: "pos" as const, tol: "0.1", datums: ["A"] };
+    const g0 = gtolPrims({ id: "g", t: "gtol", pos: [0, 0], rows: [row] }, [10, 20], null, ".");
+    const g1 = gtolPrims({ id: "g", t: "gtol", pos: [0, 0], rows: [row], above: "2×", below: "SEP REQT" }, [10, 20], null, ".");
+    const tt = g1.prims.filter(p => p.t === "t") as { s: string; x: number; y: number }[];
+    const up = tt.find(p => p.s === "2×")!, dn = tt.find(p => p.s === "SEP REQT")!;
+    assert.ok(up.x === 10 && up.y > 20 && dn.x === 10 && dn.y < 20 - 7 - 2.5 + 1e-9);
+    assert.ok(g1.box[3] > g0.box[3] && g1.box[1] < g0.box[1] && g1.box[0] === g0.box[0]);
+    assert.equal(g1.prims.length, g0.prims.length + 2);
+  }
   // Surface finish: the removal bar and the roughness under the long leg's line, decimal comma.
   const s = surfPrims({ id: "s", t: "surf", pos: [0, 0], proc: "removal", text: "Ra 3.2" }, [0, 0], ",");
   assert.equal(s.prims.filter(p => p.t === "l").length, 4);
   assert.ok(s.prims.some(p => p.t === "t" && p.s === "Ra 3,2"));
+  // Options: a second requirement lengthens the long leg, the lay symbol and the allowance sit by the legs, the circle = all around.
+  const s2 = surfPrims({ id: "s", t: "surf", pos: [0, 0], proc: "removal", text: "Ra 3.2", text2: "Rz 6.3", lay: "⊥", allow: "0.5", around: true }, [0, 0], ",");
+  const st = s2.prims.filter(p => p.t === "t") as { s: string; x: number; y: number; al?: string }[];
+  assert.deepEqual(st.map(p => p.s), ["Ra 3,2", "Rz 6,3", "⊥", "0,5"]);
+  const top = 14 * Math.sin(Math.PI / 3);
+  assert.ok(Math.abs(st[0].y - (top - 3.6)) < 1e-9 && Math.abs(st[1].y - (top - 7.2)) < 1e-9 && st[1].y > 3.1);
+  assert.ok(st[2].x > 0 && st[3].x < 0 && st[3].al === "r");
+  const ring = s2.prims.find(p => p.t === "a" && p.r === 1) as { o: number[] };
+  assert.ok(Math.abs(ring.o[0] - 7) < 1e-9 && Math.abs(ring.o[1] - top) < 1e-9);
+  assert.ok(s2.box[0] < s.box[0] && s2.box[3] > s.box[3]);
   // A revision table anchored at its top-right corner grows to the left; headers are translated.
   const tb = tablePrims({ id: "t", t: "table", kind: "rev", anchor: "tr", pos: [400, 287], title: "REVISIONS", cols: ["Rev.", "Column 2"], rows: [["A", "x"]] }, (k, p) => (k === "Column {n}" ? `C${p!.n}` : k.toLowerCase()));
   assert.equal(tb.box[2], 400);
   assert.equal(tb.box[1], 287 - 18);
   assert.ok(tb.prims.some(p => p.t === "t" && p.s === "C2") && tb.prims.some(p => p.t === "t" && p.s === "revisions" && p.bold));
+  // A 43-row parts list on the title block with 120 mm above it splits into side-by-side blocks (drawings exam round 2):
+  // 19 rows + header per block, three blocks continuing to the left, none past the room above.
+  const rows = Array.from({ length: 43 }, (_, i) => [String(i + 1), `part-${i + 1}`]);
+  const bt = tablePrims({ id: "b", t: "table", kind: "bom", anchor: "br", pos: [400, 50], cols: ["Item", "Part number"], rows }, k => k, 120);
+  const one = tablePrims({ id: "b", t: "table", kind: "bom", anchor: "br", pos: [400, 50], cols: ["Item", "Part number"], rows: rows.slice(0, 1) }, k => k, 120);
+  const W = one.box[2] - one.box[0];
+  assert.ok(bt.box[3] <= 170 + 1e-9 && bt.box[1] === 50 && Math.abs(bt.box[0] - (400 - 3 * W)) < 1e-6, JSON.stringify(bt.box));
+  assert.equal(bt.prims.filter(p => p.t === "t" && p.s === "Item").length, 3);
+  assert.ok(["1", "19", "20", "38", "39", "43"].every(n => bt.prims.some(p => p.t === "t" && p.s === n)));
   // GOST 2.104: frame 20/5/5/5, a 185 × 55 block in the bottom-right corner, sheet "2/3" split into its two cells.
   const g = newSheet(1); g.format = "gost";
   assert.deepEqual(frameOf(g), [20, 5, 415, 292]);
@@ -327,6 +446,15 @@ test("GD&T, datums, surface finish, tables, GOST title block, dangling annotatio
   const fp = formatPrims(g, fields, k => k);
   const texts = fp.filter(p => p.t === "t").map(p => (p as { s: string }).s);
   for (const k of ["Developed", "N. control", "Lit.", "No. of sheets", "АБВГ.123456.001", "Ivanov", "2", "3"]) assert.ok(texts.includes(k), k);
+  // GOST dates read DD.MM.YY and fit the 10 mm date cell (drawings exam round 2: 2026-11-10 ran over it).
+  const dated = formatPrims(g, { ...fields, date: "2026-11-10" }, k => k).filter(p => p.t === "t" && (p as { s: string }).s === "10.11.26");
+  assert.equal(dated.length, 1);
+  {
+    // …and stay inside it (round 3: at the 1.8 mm floor "10.11.26" was 11 mm wide in the 10 mm cell).
+    const { textWidth } = await import("../../src/drawing/textWidth");
+    const d = dated[0] as { x: number; h: number; s: string };
+    assert.ok(textWidth(d.s, d.h) <= 9.5, `${textWidth(d.s, d.h)} mm`);
+  }
   assert.ok(fp.every(p => p.t !== "t" || p.x >= 230), "no zone letters on a GOST frame");
   // A datum whose edge is gone is reported and drawn as its framed letter only; sheet-level tables are drawn.
   const sh = { ...newSheet(1), views: [{ id: "v", name: "v", orient: "front" as const, x: 0, y: 0 }], annots: [
@@ -349,14 +477,50 @@ test("assembly BOM: items in first-use order, pattern and sub-assembly instances
   // Flattened: a pattern instance of the pin and two parts of the sub-assembly.
   const flat = { ...top, components: [top.components[0], top.components[1], { id: "pt~c2~1", name: "pin<3>", part: "pin", tf: I }, { id: "c3/x", name: "x", part: "sub/x", tf: I }, { id: "c3/y", name: "y", part: "sub/y", tf: I }] };
   const b = bomOf(top, flat);
-  assert.deepEqual(bomCells(b), [["1", "plate", "", "1"], ["2", "PN-7", "", "2"], ["3", "sub", "", "1"]]);
+  assert.deepEqual(bomCells(b), [["1", "plate", "", "1", ""], ["2", "PN-7", "", "2", ""], ["3", "sub", "", "1", ""]]);
   assert.equal(b.itemOf("pt~c2~1"), 2);
+  // Material column (FR-MAT-001): the part's material, or its bodies' own ones as the drawing worker reports them; none for a sub-assembly.
+  const { bomMats } = await import("../../src/drawing/bom");
+  const steel = { name: "Steel S235", density: 7.85 };
+  const top2 = { ...top, parts: { ...top.parts, plate: { ...top.parts.plate, doc: { ...top.parts.plate.doc, material: steel } }, pin: { ...top.parts.pin, doc: { ...top.parts.pin.doc, material: steel } } } };
+  const mats = bomMats([{ part: "pin", mats: ["Steel S235", "Titanium Ti-6Al-4V"] }, { part: "plate" }]);
+  assert.deepEqual(bomOf(top2, { ...flat, parts: top2.parts }, "top", undefined, mats).rows.map(r => r.material), ["Steel S235", "Steel S235, Titanium Ti-6Al-4V", ""]);
+  assert.equal(bomMats([{ part: "plate" }]), undefined);
   assert.equal(b.itemOf("c3/y"), 3);
   assert.equal(compOfKey("c3/y@f1:end|c3/y@f1:side0"), "c3/y");
   const bp = balloonPrims([0, 20], [0, 0], "2");
   assert.ok(bp.prims.some(p => p.t === "l") && bp.prims.some(p => p.t === "p" && p.fill) && bp.prims.some(p => p.t === "t" && p.s === "2"));
   const proj = { vis: [{ k: "l" as const, c: "sharp" as never, p: [0, 0, 10, 0] as [number, number, number, number] }, { k: "a" as const, c: "sharp" as never, o: [20, 0] as [number, number], r: 5, a0: 0, a1: Math.PI }], hid: [], box: [0, -5, 25, 5] as [number, number, number, number], ms: 0 };
   assert.ok(onVisible(proj, [5, 0.001], 0.01) && onVisible(proj, [20, 5], 0.01) && !onVisible(proj, [20, -5], 0.01));
+});
+
+test("balloon styles: split circle with quantities, triangle, hexagon, box and underline (FR-DRW-023)", async () => {
+  const { balloonPrims, balloonOutline } = await import("../../src/drawing/bom");
+  type L = { t: "l"; p: number[] }; type T = { t: "t"; s: string; y: number };
+  const n = (r: { prims: { t: string }[] }, t: string) => r.prims.filter(q => q.t === t).length;
+  const plain = balloonPrims([0, 0], null, "7");
+  assert.deepEqual([n(plain, "a"), n(plain, "l")], [1, 0]);
+  // Split: the circle stays, a line across it, the item above and the quantity below.
+  const split = balloonPrims([0, 0], null, "7", ["8"], { shape: "split", lower: ["2", "12"] });
+  assert.deepEqual([n(split, "a"), n(split, "l")], [2, 2]);
+  const st = split.prims.filter(q => q.t === "t") as unknown as T[];
+  assert.deepEqual(st.map(q => q.s), ["7", "2", "8", "12"]);
+  assert.ok(st[0].y > 0 && st[1].y < 0 && st[2].y > -10 && st[3].y < -10, "item above the line, quantity below, per balloon");
+  // Polygons: sides instead of the circle, all 2R tall so a stack touches.
+  for (const [shape, sides] of [["tri", 3], ["hex", 6], ["box", 4]] as const) {
+    const r = balloonPrims([0, 0], null, "7", [], { shape });
+    assert.deepEqual([n(r, "a"), n(r, "l")], [0, sides], shape);
+    const ys = balloonOutline([0, 0], shape)!.map(q => q[1]);
+    assert.ok(Math.abs(Math.min(...ys) + 5) < 1e-9 && Math.abs(Math.max(...ys) - 5) < 1e-9, `${shape} is 10 mm tall`);
+  }
+  const none = balloonPrims([0, 0], null, "7", [], { shape: "none" });
+  assert.deepEqual([n(none, "a"), n(none, "l")], [0, 1], "underline only");
+  // The leader starts on the outline: on a box side to the right, on the hexagon's corner.
+  const lead = (shape: "box" | "hex" | "tri") => (balloonPrims([0, 0], [30, 0], "7", [], { shape }).prims.filter(q => q.t === "l") as unknown as L[]).find(q => q.p[2] === 30 && q.p[3] === 0)!;
+  assert.ok(Math.abs(lead("box").p[0] - 5) < 1e-9 && Math.abs(lead("hex").p[0] - 10 / Math.sqrt(3)) < 1e-9);
+  // Triangle: a level ray from the centre meets the sloping side half way up, at w/2.
+  assert.ok(Math.abs(lead("tri").p[0] - 5 / Math.sqrt(3)) < 1e-9, String(lead("tri").p[0]));
+  assert.ok(balloonPrims([0, 0], null, "7", [], { shape: "hex" }).box[2] > plain.box[2], "the hit box takes the wider outline in");
 });
 
 test("parts-only BOM, stacked balloons, surface symbol on a slanted edge, GOST signature cells", async () => {
@@ -373,7 +537,7 @@ test("parts-only BOM, stacked balloons, surface symbol on a slanted edge, GOST s
     components: [top.components[0], top.components[1], { id: "c3/p", name: "p", part: "sub/p", tf: I }, { id: "c3/w", name: "w", part: "sub/w", tf: I }] };
   const b = bomOf(top, flat, "parts");
   assert.equal(b.mode, "parts");
-  assert.deepEqual(bomCells(b), [["1", "plate", "", "1"], ["2", "PN-7", "", "2"], ["3", "W-3", "", "1"]]);
+  assert.deepEqual(bomCells(b), [["1", "plate", "", "1", ""], ["2", "PN-7", "", "2", ""], ["3", "W-3", "", "1", ""]]);
   assert.equal(b.itemOf("c3/p"), 2);
   assert.equal(b.itemOf("c3/w"), 3);
   assert.equal(b.rows[2].comp, "c3/w");
@@ -437,7 +601,7 @@ test("composite feature control frame, all around, and the BOM of one sub-assemb
   const flat = { ...top, parts: { plate: top.parts.plate, "sub/p": part("pin", "PN-7"), "sub/l": part("leaf", "LF-2") },
     components: [top.components[0], { id: "c3/a", name: "a", part: "sub/l", tf: I }, { id: "c3/b", name: "b", part: "sub/l", tf: I }, { id: "c3/p", name: "p", part: "sub/p", tf: I }] };
   assert.deepEqual(subsOf(top), [{ id: "c3", name: "Hinge<1>" }]);
-  assert.deepEqual(bomCells(bomOf(top, flat, "top", "c3")), [["1", "LF-2", "", "2"], ["2", "PN-7", "", "1"]]);
+  assert.deepEqual(bomCells(bomOf(top, flat, "top", "c3")), [["1", "LF-2", "", "2", ""], ["2", "PN-7", "", "1", ""]]);
   const sheet = { annots: [{ id: "t", t: "table", kind: "bom", pos: [0, 0], cols: [], rows: [], sub: "c3" }] };
   const b = sheetBom(sheet as never, top, flat);
   assert.equal(b.itemOf("c3/p"), 2);
@@ -499,6 +663,16 @@ test("offset and half sections: the staircase cutter, hatched faces on every cut
   };
   assert.deepEqual(marks([-60, 10, 0, 10, 0, 0, 60, 0]), { arrows: 2, thick: 6, letters: 2 });
   assert.deepEqual(marks([-60, 0, 10, 0, 10, -40]), { arrows: 1, thick: 4, letters: 1 });
+  // The thick ends lie wholly outside the view, not over its outline (ISO 128-44): plain line and offset path.
+  const { viewRect } = await import("../../src/drawing/compose");
+  for (const path of [[-60, 0, 60, 0], [-60, 10, 0, 10, 0, 0, 60, 0]]) {
+    const v = { id: "s", name: "A", kind: "section", parent: "t", line: path.slice(0, 4), path: path.length > 4 ? path : undefined, look: 1, letter: "A", x: 100, y: 80 };
+    const sheet = { id: "sh", name: "S", size: "A3", scale: [1, 1], projection: "third", views: [parent, v], annots: [] } as never;
+    const pl = placement(sheet, parent as never, undefined, [[-50, -30, 0], [50, 30, 20]]), r = viewRect(pl);
+    const ends = childMarks(sheet, parent as never, pl).filter(p => p.t === "l" && p.pen === "frame" && Math.abs(p.p[1] - p.p[3]) < 1e-9 && Math.abs(p.p[0] - p.p[2]) > 5);
+    assert.equal(ends.length, 2);
+    for (const e of ends) if (e.t === "l") assert.ok(Math.min(e.p[0], e.p[2]) > r[2] + 1 || Math.max(e.p[0], e.p[2]) < r[0] - 1, `thick end ${e.p} outside ${r}`);
+  }
 });
 
 test("shaded views: triangles facing the viewer, back to front, drawn under the visible edges (FR-DRW-010)", async () => {
@@ -600,7 +774,8 @@ test("aligned section: the second leg turns about the centre into the first leg'
   const cut = section(oc, turned, { dir: [0, -1, 0], up: [0, 0, 1] }, [0, 0, 0]);
   const area = (l: number[]) => { let a = 0; for (let i = 0; i < l.length; i += 2) { const j = (i + 2) % l.length; a += l[i] * l[j + 1] - l[j] * l[i + 1]; } return a / 2; };
   const total = cut.cut!.reduce((t, l) => t + Math.abs(area(l)), 0);
-  assert.ok(Math.abs(total - 100 * 10) < 1e-6, `cut area ${total}`);
+  // The plane is cut SECTION_NUDGE (1 µm) off the picked place: a 1 µm sliver where the two legs meet.
+  assert.ok(Math.abs(total - 100 * 10) < 0.05, `cut area ${total}`);
 });
 
 test("ISO 286 fit limits: H7, g6, js6, K7, N7, P7, s6 and the dimension text (FR-DRW-021)", async () => {
@@ -688,7 +863,16 @@ test("DXF 2000: handles, owners, model space records, LWPOLYLINE, Unicode text (
   assert.ok(d.includes("\\U+041C\\U+0430") && d.includes("\\U+00D8") && !/[^\x00-\x7f]/.test(d));
 });
 
-test("note property links: $PRP:\"name\" takes the title block field, SolidWorks names too (FR-DRW-023)", async () => {
+test("DXF 2000 of a big sheet: no call stack overflow (File ▸ Export on the Leuenberger engine drawing)", async () => {
+  const { sheetDxf2000 } = await import("../../src/drawing/output");
+  const prims: any[] = [];
+  for (let i = 0; i < 60000; i++) prims.push({ t: "l", p: [i % 400, 0, i % 400, 10], pen: "thin", layer: "VISIBLE" });
+  const d = sheetDxf2000(prims, 420, 297);
+  assert.ok(d.startsWith("0\nSECTION\n2\nHEADER") && d.trimEnd().endsWith("EOF"));
+  assert.equal(d.split("\nLINE\n").length - 1, 60000);
+});
+
+test("note property links: $PRP:\"name\" takes the title block field, CAD app names too (FR-DRW-023)", async () => {
   const { expandProps, useProps, notePrims } = await import("../../src/drawing/annot");
   const props = { material: "Steel", mass: "1.25 kg", number: "MC-001", scale: "2:1", title: "Plate" };
   assert.equal(expandProps('MATERIAL: $PRP:"Material"', props), "MATERIAL: Steel");
@@ -729,6 +913,13 @@ test("switching first/third angle keeps each projected view the same view and mo
   assert.deepEqual(sheet.views.map(v => [v.x, v.y]), [[100, 150], [100, 220], [0, 150], [-80, 150]]);
   assert.equal(sheet.projection, "third");
   void projectedDir;
+  // With extents and the A3 frame (20..410 × 10..287): the swapped layout (here 40 × 40 views) runs off the left,
+  // so it moves right as one, still lined up (drawings exam #48).
+  const s2 = structuredClone(sheet);
+  s2.projection = "first";
+  s2.views.forEach((v, i) => { v.x = [100, 100, 200, 280][i]; v.y = [150, 80, 150, 150][i]; if (v.side) v.side = [-v.side[0] || 0, -v.side[1] || 0] as [number, number]; });
+  switchProjection(s2 as any, "third", () => [-20, -20, 20, 20], [20, 10, 410, 287]);
+  assert.deepEqual(s2.views.map(v => [v.x, v.y]), [[220, 150], [220, 220], [120, 150], [40, 150]]);
 });
 
 
@@ -981,6 +1172,18 @@ test("slot centre marks: a centreline over a straight slot and a cross line at e
   assert.ok(along && Math.min(along[0], along[2]) === -27 && Math.max(along[0], along[2]) === 27, `centreline 2 mm past the ends: ${along}`);
   const ends = ls.filter(q => Math.abs(q[0] - q[2]) < 1e-6).map(q => [q[0], Math.min(q[1], q[3]), Math.max(q[1], q[3])]).sort((a, b) => a[0] - b[0]);
   assert.deepEqual(ends, [[-20, -7, 7], [20, -7, 7]]);
+  // From the side each slot end (half a cylinder with material outside) gets its axis, 2 mm past the faces; from the
+  // end the two axes fall on one line.
+  const front = projector(ORIENTS.front);
+  const side = centreMarks({ id: "f", name: "f", orient: "front", x: 0, y: 0 }, pl, topo, front.P, front.n)
+    .flatMap(p => p.t === "l" ? [p.p.map(x => Math.round(x * 1000) / 1000)] : []).sort((a, b) => a[0] - b[0]);
+  assert.equal(side.length, 2, `two end axes side-on: ${JSON.stringify(side)}`);
+  assert.ok(side.every(q => q[0] === q[2] && Math.abs(Math.abs(q[3] - q[1]) - 24) < 1e-6) && side[0][0] === -20 && side[1][0] === 20, JSON.stringify(side));
+  const right = projector(ORIENTS.right);
+  assert.equal(centreMarks({ id: "r", name: "r", orient: "right", x: 0, y: 0 }, pl, topo, right.P, right.n).length, 1, "one line looking along the slot");
+  // An outside half round (a rounded bar end) and a quarter (an inside fillet) get none.
+  const bar = { edges: [], cyls: [{ o: [0, 0, 0] as V3, ax: [0, 1, 0] as V3, r: 5, v0: 0, v1: 20, sp: Math.PI }, { o: [30, 0, 0] as V3, ax: [0, 1, 0] as V3, r: 5, v0: 0, v1: 20, sp: Math.PI / 2, in: true }] };
+  assert.equal(centreMarks({ id: "t", name: "t", orient: "top", x: 0, y: 0 }, pl, bar, top.P, top.n).length, 0);
   // Pure: half circles facing each other pair up; facing the same way or of another radius do not.
   assert.equal(straightSlots([{ c: [0, 0], r: 3, m: [-1, 0] }, { c: [10, 0], r: 3, m: [1, 0] }]).length, 1);
   assert.equal(straightSlots([{ c: [0, 0], r: 3, m: [1, 0] }, { c: [10, 0], r: 3, m: [-1, 0] }]).length, 0, "bulging towards each other");
@@ -1027,4 +1230,705 @@ test("arc slot centre marks: a centre-line arc through the end centres and a rad
   assert.ok(one && Math.abs(one.a0) < 1e-9 && Math.abs(one.a1 - Math.PI) < 1e-9 && Math.abs(one.R - 25) < 1e-9);
   assert.equal(arcSlots(halves, []).length, 0, "two loose notches");
   assert.equal(arcSlots([halves[0], { ...halves[1], m: [0, 1] }], [{ c: [0, 0], r: 29 }]).length, 0, "ends bulging the same way round");
+});
+
+test("cones and tori seen from the side get a centreline on their axis (FR-DRW-023)", async () => {
+  const { topology } = await import("../../src/kernel/drawing");
+  const { centreMarks, projector } = await import("../../src/drawing/annot");
+  const { ORIENTS } = await import("../../src/drawing/views");
+  const m = new Modeller(await occ());
+  // A frustum Ø20 → Ø10 over 20 mm, revolved about the sketch's y axis: one cone and two flat caps, no cylinder.
+  const P = (id: string, x: number, y: number): SkEnt => ({ id, t: "point", x, y });
+  const pts = [P("p0", 0, 0), P("p1", 10, 0), P("p2", 5, 20), P("p3", 0, 20)], ids = pts.map(p => p.id);
+  const s: SketchFeature = { id: "r", type: "sketch", name: "r", plane: { std: "XZ" }, rels: [], dims: [],
+    ents: [...pts, ...ids.map((a, i): SkEnt => ({ id: `l${i}`, t: "line", a, b: ids[(i + 1) % ids.length] }))] };
+  const r = m.evaluate(doc([s, { id: "f1", type: "revolve", name: "R", sketch: "r", op: "boss", axis: "l3", angle: { v: 2 * Math.PI } } as Feature]));
+  assert.ok(r.body, JSON.stringify(r.errors ?? r.warnings));
+  const topo = topology(await occ(), r.body!.shape, r.body!.names);
+  assert.equal(topo.cyls.length, 0);
+  assert.ok(topo.revs!.some(q => q.k === "cone"), `a cone: ${topo.revs!.map(q => q.k)}`);
+  const pl = { s: 1, uc: 0, vc: 0, x: 0, y: 0, box: [-50, -30, 50, 30] as [number, number, number, number], ready: true };
+  const front = projector(ORIENTS.front);
+  const cm = centreMarks({ id: "f", name: "f", orient: "front", x: 0, y: 0 }, pl, topo, front.P, front.n);
+  assert.equal(cm.length, 1, "one centreline on the cone's axis");
+  const [x0, y0, x1, y1] = cm[0].p as number[];
+  assert.ok(Math.abs(x0) < 1e-9 && Math.abs(x1) < 1e-9 && Math.abs(Math.abs(y1 - y0) - 24) < 1e-6, `along the axis, 2 mm past both ends: ${cm[0].p}`);
+  // A torus alone (an O-ring) gets one too; a cone that does not go all round does not.
+  const ring = { edges: [], cyls: [], revs: [{ k: "torus" as const, o: [0, 0, 0] as V3, ax: [0, 0, 1] as V3, v0: -2, v1: 2, sp: 2 * Math.PI }] };
+  assert.equal(centreMarks({ id: "f", name: "f", orient: "front", x: 0, y: 0 }, pl, ring, front.P, front.n).length, 1);
+  const part = { edges: [], cyls: [], revs: [{ k: "cone" as const, o: [0, 0, 0] as V3, ax: [0, 0, 1] as V3, v0: 0, v1: 5, sp: Math.PI / 2 }] };
+  assert.equal(centreMarks({ id: "f", name: "f", orient: "front", x: 0, y: 0 }, pl, part, front.P, front.n).length, 0);
+});
+
+test("spheres get a centre cross from any side; corner blends do not (FR-DRW-023)", async () => {
+  const { topology } = await import("../../src/kernel/drawing");
+  const { centreMarks, projector } = await import("../../src/drawing/annot");
+  const { ORIENTS } = await import("../../src/drawing/views");
+  const m = new Modeller(await occ());
+  // A half disc R10 revolved about its straight side: a ball.
+  const P = (id: string, x: number, y: number): SkEnt => ({ id, t: "point", x, y });
+  const s: SketchFeature = { id: "b", type: "sketch", name: "b", plane: { std: "XZ" }, rels: [], dims: [],
+    ents: [P("o", 0, 0), P("a", 0, -10), P("c", 0, 10), { id: "k", t: "arc", c: "o", a: "a", b: "c" }, { id: "l", t: "line", a: "c", b: "a" }] };
+  const r = m.evaluate(doc([s, { id: "f1", type: "revolve", name: "R", sketch: "b", op: "boss", axis: "l", angle: { v: 2 * Math.PI } } as Feature]));
+  assert.ok(r.body, JSON.stringify(r.errors ?? r.warnings));
+  const topo = topology(await occ(), r.body!.shape, r.body!.names);
+  const ball = topo.revs!.find(q => q.k === "sphere");
+  assert.ok(ball && Math.abs(ball.r! - 10) < 1e-6, `a sphere R10: ${JSON.stringify(topo.revs)}`);
+  const pl = { s: 1, uc: 0, vc: 0, x: 0, y: 0, box: [-50, -30, 50, 30] as [number, number, number, number], ready: true };
+  for (const o of ["front", "top", "iso"] as const) {
+    const pr = projector(ORIENTS[o]);
+    const cm = centreMarks({ id: "f", name: "f", orient: o, x: 0, y: 0 }, pl, { ...topo, cyls: [] }, pr.P, pr.n);
+    const c = pr.P(ball!.o), cross = cm.filter(g => { const p = g.p as number[]; return Math.abs((p[0] + p[2]) / 2 - c[0]) < 1e-6 && Math.abs((p[1] + p[3]) / 2 - c[1]) < 1e-6 && Math.abs(Math.hypot(p[2] - p[0], p[3] - p[1]) - 24) < 1e-6; });
+    assert.equal(cross.length, 2, `${o}: a 24 mm cross at the centre (${JSON.stringify(cm.map(g => g.p))})`);
+  }
+  const blend = { edges: [], cyls: [], revs: [{ k: "sphere" as const, o: [0, 0, 0] as V3, ax: [0, 0, 1] as V3, v0: -2, v1: 2, sp: Math.PI / 2, r: 2 }] };
+  const front = projector(ORIENTS.front);
+  assert.equal(centreMarks({ id: "f", name: "f", orient: "front", x: 0, y: 0 }, pl, blend, front.P, front.n).length, 0);
+});
+
+test("hole callouts read from the geometry: count, counterbore, countersink, blind with a point (FR-DRW-022)", async () => {
+  const { topology } = await import("../../src/kernel/drawing");
+  const { holeText, geoHole } = await import("../../src/drawing/annot");
+  const oc = await occ(), m = new Modeller(oc);
+  const s1 = rect("s1", 100, 60);
+  const ex: Feature = { id: "f1", type: "extrude", name: "E", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } };
+  const top = { face: { name: "f1:end" } };
+  const feats: Feature[] = [s1, ex,
+    { id: "h1", type: "hole", name: "H1", plane: top, pts: [[-30, 15], [-10, 15], [10, 15], [30, 15]], kind: "cbore", diameter: { v: 6.6 }, end: "through", depth: { v: 0 }, cbDia: { v: 11 }, cbDepth: { v: 6.4 } } as Feature,
+    { id: "h2", type: "hole", name: "H2", plane: top, pts: [[-30, -15], [0, -15]], kind: "csink", diameter: { v: 6.6 }, end: "through", depth: { v: 0 }, csDia: { v: 13.44 }, csAngle: { v: Math.PI / 2 } } as Feature,
+    { id: "h3", type: "hole", name: "H3", plane: top, pts: [[30, -15]], kind: "simple", diameter: { v: 5 }, end: "blind", depth: { v: 12 } } as Feature];
+  const r = m.evaluate(doc(feats));
+  const topo = topology(oc, r.body!.shape, r.body!.names);
+  assert.equal(topo.holes?.length, 7, JSON.stringify(topo.holes?.map(h => h.segs.length)));
+  // As if read from a STEP file: no hole features to go by.
+  const ctx = { topo, holes: [], items: [], box: [[-50, -30, 0], [50, 30, 20]] as [V3, V3], dec: ".", label: (s: string) => s };
+  const at = (x: number, y: number, r: number) => topo.edges.find(e => e.t === "c" && Math.abs(e.r! - r) < 1e-6 && Math.abs(e.c![0] - x) < 1e-6 && Math.abs(e.c![1] - y) < 1e-6)!;
+  assert.deepEqual(holeText(at(-30, 15, 3.3), ctx), ["4× Ø6.6 THRU", "⌴Ø11 ↧6.4"]);
+  assert.deepEqual(holeText(at(-30, 15, 3.3), ctx, false), ["Ø6.6 THRU", "⌴Ø11 ↧6.4"], "without the number of holes");
+  assert.deepEqual(holeText(at(10, 15, 5.5), ctx), ["4× Ø6.6 THRU", "⌴Ø11 ↧6.4"], "the counterbore's own circle gives the same callout");
+  assert.deepEqual(holeText(at(0, -15, 6.72), ctx), ["2× Ø6.6 THRU", "⌵Ø13.44 × 90°"]);
+  assert.deepEqual(holeText(at(30, -15, 2.5), ctx), ["Ø5 ↧12"]);
+  // Callouts follow the drawing's default decimals and dual dimensions; angles stay as they are.
+  const { useStyle: styleFor } = await import("../../src/drawing/annot");
+  try {
+    styleFor({ lin: 1, dual: "in", dualPrec: 2 });
+    assert.deepEqual(holeText(at(30, -15, 2.5), ctx), ["Ø5.0 [0.20] ↧12.0 [0.47]"]);
+    assert.deepEqual(holeText(at(0, -15, 6.72), ctx), ["2× Ø6.6 [0.26] THRU", "⌵Ø13.4 [0.53] × 90°"]);
+  } finally { styleFor(undefined); }
+  assert.deepEqual(holeText(at(30, -15, 2.5), ctx), ["Ø5 ↧12"]);
+  assert.deepEqual(holeText(at(-30, 15, 3.3), ctx, false), ["Ø6.6 THRU", "⌴Ø11 ↧6.4"], "no count in a hole table");
+  assert.deepEqual(holeText(at(-30, 15, 3.3), { ...ctx, dec: ",", label: (s: string) => (s === "THRU" ? "СКВОЗН." : s) }), ["4× Ø6,6 СКВОЗН.", "⌴Ø11 ↧6,4"]);
+  // Entered from the bottom, a counterbore is a different hole: holes count only with the same way in.
+  const flip = geoHole({ ...topo.holes!.find(h => h.segs.length === 2 && h.segs.some(s => Math.abs(s.r0 - 5.5) < 1e-6))!, ax: [0, 0, 1] });
+  assert.ok(flip && /⌴Ø11/.test(flip.lines[1]));
+});
+
+test("hole callout adds a cosmetic thread; drafting style sets default decimals (FR-DRW-022, FR-DRW-025)", async () => {
+  const { geoHole, dimText, useStyle } = await import("../../src/drawing/annot");
+  const hole = { o: [30, -15, 20] as V3, ax: [0, 0, -1] as V3, segs: [{ k: "cyl" as const, v0: 0, v1: 12, r0: 2.5, r1: 2.5 }, { k: "cone" as const, v0: 12, v1: 13.5, r0: 2.5, r1: 0 }], open: [true, false] as [boolean, boolean] };
+  const th = { id: "t", c: [30, -15, 20] as V3, ax: [0, 0, 1] as V3, r: 2.5, d: 6, L: 10, internal: true, size: "M6" };
+  assert.deepEqual(geoHole(hole, undefined, [th])!.lines, ["Ø5 ↧12", "M6-6H ↧10"]);
+  assert.deepEqual(geoHole(hole, undefined, [{ ...th, size: undefined, L: null }])!.lines, ["Ø5 ↧12", "M6-6H ↧12"], "full length: the drill depth");
+  assert.deepEqual(geoHole(hole, undefined, [{ ...th, c: [0, 0, 20] }])!.lines, ["Ø5 ↧12"], "a thread elsewhere is not this hole's");
+  const lin = { id: "a", t: "dim" as const, view: "v", k: "h" as const, refs: [], pos: [0, 0] as [number, number] };
+  const ang = { ...lin, k: "ang" as const };
+  try {
+    useStyle({ lin: 2, ang: 1 });
+    assert.equal(dimText(lin, { k: "h", pts: [], value: 100 }, ".").main, "100.00");
+    assert.equal(dimText(ang, { k: "ang", pts: [], value: 30 }, ",").main, "30,0°");
+    assert.equal(dimText({ ...lin, prec: 0 }, { k: "h", pts: [], value: 12.34 }, ".").main, "12", "a dimension's own precision wins");
+  } finally { useStyle(undefined); }
+  assert.equal(dimText(lin, { k: "h", pts: [], value: 100 }, ".").main, "100");
+});
+
+test("reference dimensions are in parentheses, basic ones boxed and never toleranced (FR-DRW-021)", async () => {
+  const { dimText, dimPrims, useStyle } = await import("../../src/drawing/annot");
+  const lin = { id: "a", t: "dim" as const, view: "v", k: "h" as const, refs: [], pos: [0, 0] as [number, number] };
+  const g = { k: "h" as const, pts: [], value: 40 };
+  assert.equal(dimText({ ...lin, show: "ref" }, g, ".").main, "(40)");
+  assert.equal(dimText({ ...lin, show: "ref", tol: { t: "sym", up: 0.1 } }, g, ".").main, "(40±0.1)");
+  assert.deepEqual(dimText({ ...lin, show: "ref", tol: { t: "limit", up: 1, lo: 1 } }, g, "."), { main: "", up: "(41)", lo: "(39)" });
+  assert.equal(dimText({ ...lin, show: "ref", txt: "REF" }, g, ".").main, "REF");
+  assert.equal(dimText({ ...lin, show: "basic", tol: { t: "sym", up: 0.1 } }, g, ".").main, "40", "a basic dimension has no tolerance of its own");
+  try {
+    useStyle({ tol: 0.2, dual: "in", dualPrec: 2 });
+    assert.equal(dimText({ ...lin, show: "basic" }, g, ".").main, "40 [1.57]", "nor the drawing's default");
+    assert.equal(dimText({ ...lin, show: "ref" }, g, ".").main, "(40±0.2 [1.57±0.01])");
+  } finally { useStyle(undefined); }
+  const pl = { s: 1, uc: 0, vc: 0, x: 0, y: 0 } as never;
+  const geo = { k: "h" as const, pts: [[0, 0], [40, 0]] as [number, number][], value: 40 };
+  const n = (a: object) => dimPrims({ ...lin, pos: [20, 15], ...a } as never, geo as never, pl, ".").prims.filter(q => q.t === "l").length;
+  assert.equal(n({ show: "basic" }) - n({}), 4, "four box sides");
+});
+
+test("a note can have a border; the leader starts on it (FR-DRW-023)", async () => {
+  const { notePrims } = await import("../../src/drawing/annot");
+  const note = { id: "n", t: "note" as const, pos: [0, 0] as [number, number], text: "A1" };
+  const plain = notePrims(note, [10, 10], [40, 10]);
+  const kinds = (b: "box" | "round" | "circle") => notePrims({ ...note, border: b }, [10, 10], [40, 10]);
+  const count = (r: { prims: { t: string }[] }, t: string) => r.prims.filter(q => q.t === t).length;
+  assert.equal(count(kinds("box"), "l") - count(plain, "l"), 4, "four sides");
+  assert.equal(count(kinds("round"), "a") - count(plain, "a"), 2, "two round ends");
+  assert.equal(count(kinds("circle"), "a") - count(plain, "a"), 1, "one circle");
+  for (const b of ["box", "round", "circle"] as const) {
+    const r = kinds(b);
+    assert.ok(r.box[0] < plain.box[0] && r.box[2] > plain.box[2], `${b}: the hit box takes the frame in`);
+    // The leader is the line ending at the arrow point; it starts on the frame's right side.
+    const lead = (r.prims.filter(q => q.t === "l") as { p: number[] }[]).find(q => Math.abs(q.p[2] - 40) < 1e-9 && Math.abs(q.p[3] - 10) < 1e-9)!;
+    assert.ok(Math.abs(lead.p[0] - r.box[2]) < 1e-6 || b === "circle", `${b}: leader from the frame edge`);
+    if (b === "circle") { const cx = (r.box[0] + r.box[2]) / 2, cy = (r.box[1] + r.box[3]) / 2; assert.ok(Math.abs(Math.hypot(lead.p[0] - cx, lead.p[1] - cy) - (r.box[2] - r.box[0]) / 2) < 1e-6, "leader from the circle"); }
+  }
+});
+
+test("a note's lines can be centred or set right, and its leader bent or ended in a dot (FR-DRW-023)", async () => {
+  const { notePrims, NOTE_SHOULDER, textW } = await import("../../src/drawing/annot");
+  const note = { id: "n", t: "note" as const, pos: [0, 0] as [number, number], text: "LONG LINE\nAB" };
+  type T = { t: "t"; x: number; al: string };
+  const texts = (r: { prims: { t: string }[] }) => r.prims.filter(q => q.t === "t") as unknown as T[];
+  const w = textW("LONG LINE", 3.5);
+  const left = notePrims(note, [10, 10], null), mid = notePrims({ ...note, al: "c" }, [10, 10], null), right = notePrims({ ...note, al: "r" }, [10, 10], null);
+  assert.deepEqual(texts(left).map(q => [q.x, q.al]), [[10, "l"], [10, "l"]]);
+  assert.ok(texts(mid).every(q => Math.abs(q.x - (10 + w / 2)) < 1e-9 && q.al === "c"), "centred on the block");
+  assert.ok(texts(right).every(q => Math.abs(q.x - (10 + w)) < 1e-9 && q.al === "r"), "set to the block's right side");
+  assert.deepEqual(mid.box, left.box, "the block stays where it was");
+  // Leader: straight with an arrow by default; bent adds a horizontal shoulder; a dot or nothing replaces the arrow.
+  const lines = (r: { prims: { t: string }[] }) => r.prims.filter(q => q.t === "l") as unknown as { p: number[] }[];
+  const fills = (r: { prims: { t: string }[] }) => (r.prims.filter(q => q.t === "p") as unknown as { fill?: boolean; p: number[] }[]).filter(q => q.fill);
+  const plain = notePrims(note, [10, 10], [60, 40]), bent = notePrims({ ...note, bent: true }, [10, 10], [60, 40]);
+  assert.equal(lines(bent).length, lines(plain).length + 1, "one more line: the shoulder");
+  const sh = lines(bent)[0], lead = lines(bent)[1];
+  assert.ok(Math.abs(sh.p[1] - sh.p[3]) < 1e-9 && Math.abs(sh.p[2] - sh.p[0] - NOTE_SHOULDER) < 1e-9, "shoulder runs level, towards the point");
+  assert.deepEqual([lead.p[0], lead.p[1], lead.p[2], lead.p[3]], [sh.p[2], sh.p[3], 60, 40], "the leader goes on from the shoulder to the point");
+  const toLeft = lines(notePrims({ ...note, bent: true }, [10, 10], [-30, 40]))[0];
+  assert.ok(Math.abs(toLeft.p[2] - toLeft.p[0] + NOTE_SHOULDER) < 1e-9, "a point on the left: the shoulder runs left");
+  const dot = notePrims({ ...note, end: "dot" }, [10, 10], [60, 40]), none = notePrims({ ...note, end: "none" }, [10, 10], [60, 40]);
+  assert.equal(fills(none).length, 0, "no arrow head");
+  assert.equal(fills(dot).length, 1);
+  const dp = fills(dot)[0].p; let cx = 0, cy = 0; for (let i = 0; i < dp.length; i += 2) { cx += dp[i]; cy += dp[i + 1]; }
+  assert.ok(Math.abs(cx / (dp.length / 2) - 60) < 1e-9 && Math.abs(cy / (dp.length / 2) - 40) < 1e-9 && dp.length === 24, "a dot centred on the point");
+  assert.equal(lines(dot).length, lines(plain).length, "the leader line stays");
+});
+
+test("a linear dimension's arrows can be put outside or inside by hand (FR-DRW-021)", async () => {
+  const { dimPrims } = await import("../../src/drawing/annot");
+  const lin = { id: "a", t: "dim" as const, view: "v", k: "h" as const, refs: [], pos: [20, 15] as [number, number] };
+  const pl = { s: 1, uc: 0, vc: 0, x: 0, y: 0 } as never;
+  const line = (value: number, a: object) => {
+    const geo = { k: "h" as const, pts: [[0, 0], [value, 0]] as [number, number][], value };
+    const ls = dimPrims({ ...lin, pos: [value / 2, 15], ...a } as never, geo as never, pl, ".").prims.filter(q => q.t === "l" && Math.abs((q as { p: number[] }).p[1] - 15) < 1e-9 && Math.abs((q as { p: number[] }).p[3] - 15) < 1e-9) as { p: number[] }[];
+    return Math.max(...ls.map(q => Math.abs(q.p[2] - q.p[0])));
+  };
+  assert.ok(Math.abs(line(40, {}) - 40) < 1e-9, "room enough: arrows inside, the line spans the extension lines");
+  assert.ok(Math.abs(line(40, { arrows: "out" }) - 50) < 1e-9, "outside: the line runs an arrow and 2 mm past each side");
+  assert.ok(line(3, {}) > 3 + 1e-9, "no room: arrows outside");
+  assert.ok(line(3, { arrows: "in" }) < line(3, {}) - 5, "inside by hand: no arrow tails");
+});
+
+test("a dimension can hide extension lines and keep its text horizontal in the line (FR-DRW-021)", async () => {
+  const { dimPrims } = await import("../../src/drawing/annot");
+  const pl = { s: 1, uc: 0, vc: 0, x: 0, y: 0 } as never;
+  const mk = (k: "h" | "v", a: object) => {
+    const pts = (k === "h" ? [[0, 0], [40, 0]] : [[0, 0], [0, 40]]) as [number, number][];
+    const r = dimPrims({ id: "a", t: "dim", view: "v", k, refs: [], pos: k === "h" ? [20, 15] : [15, 20], ...a } as never, { k, pts, value: 40 } as never, pl, ".");
+    return { ls: (r.prims.filter(q => q.t === "l") as { p: number[] }[]).map(q => q.p), tx: r.prims.filter(q => q.t === "t") as { x: number; y: number; rot?: number; s: string }[], box: r.box };
+  };
+  // Extension lines of a horizontal dimension are the vertical lines at x = 0 and x = 40.
+  const ext = (a: object) => mk("h", a).ls.filter(p => Math.abs(p[0] - p[2]) < 1e-9).map(p => p[0]).sort((x, y) => x - y);
+  assert.deepEqual(ext({}), [0, 40]);
+  assert.deepEqual(ext({ noExt: "a" }), [40]);
+  assert.deepEqual(ext({ noExt: "b" }), [0]);
+  assert.deepEqual(ext({ noExt: "both" }), []);
+  // A vertical dimension: the text is turned 90° beside the line; with `horiz` it is level and the line has a gap round it.
+  const v0 = mk("v", {}), v1 = mk("v", { horiz: true });
+  const dimLs = (r: typeof v0) => r.ls.filter(p => Math.abs(p[0] - 15) < 1e-9 && Math.abs(p[2] - 15) < 1e-9).map(p => [Math.min(p[1], p[3]), Math.max(p[1], p[3])]).sort((a, b) => a[0] - b[0]);
+  assert.equal(v0.tx[0].rot, 90);
+  assert.deepEqual(dimLs(v0), [[0, 40]]);
+  assert.equal(v1.tx[0].rot, undefined);
+  const g = dimLs(v1);
+  assert.equal(g.length, 2);
+  assert.ok(Math.abs(g[0][0]) < 1e-9 && Math.abs(g[1][1] - 40) < 1e-9 && g[0][1] < 20 && g[1][0] > 20 && Math.abs(g[0][1] + g[1][0] - 40) < 1e-9, "the gap is centred on the text");
+  assert.ok(v1.box[1] >= g[0][1] - 1e-9 && v1.box[3] <= g[1][0] + 1e-9 && v1.box[0] < 15 && v1.box[2] > 15, "the text box sits in the gap, across the line");
+  // A horizontal one too: the line stops either side of the text.
+  const h1 = mk("h", { horiz: true }).ls.filter(p => Math.abs(p[1] - 15) < 1e-9 && Math.abs(p[3] - 15) < 1e-9);
+  assert.equal(h1.length, 2);
+});
+
+test("a dimension can carry a second line of text under its line (FR-DRW-021)", async () => {
+  const { dimPrims, dimGeo, wholeCircle, edgeOnSeg, outlineSeg } = await import("../../src/drawing/annot");
+  const lin = { id: "a", t: "dim" as const, view: "v", k: "h" as const, refs: [], pos: [20, 15] as [number, number] };
+  const pl = { s: 1, uc: 0, vc: 0, x: 0, y: 0 } as never;
+  const geo = { k: "h" as const, pts: [[0, 0], [40, 0]] as [number, number][], value: 40 };
+  {
+    // Foreshortened radius: the line from the rim stops short of the centre with a jog; the arrow stays on the rim.
+    const rad = { id: "r", t: "dim", view: "v", k: "rad", refs: [], pos: [30, 40] } as never, rg = { k: "rad", pts: [], c: [0, 0], r: 100, value: 100 } as never;
+    const full = dimPrims(rad, rg, pl, "."), short = dimPrims({ ...(rad as object), fore: true } as never, rg, pl, ".");
+    assert.ok(full.prims.some(q => q.t === "l" && Math.hypot((q as { p: number[] }).p[0], (q as { p: number[] }).p[1]) < 1e-9), "the plain radius starts at the centre");
+    const zig = short.prims.find(q => q.t === "p" && (q as { p: number[] }).p.length === 8) as { p: number[] };
+    assert.ok(zig && Math.abs(Math.hypot(zig.p[6], zig.p[7]) - 100) < 1e-9, "the jogged line ends on the rim");
+    assert.ok(Math.hypot(zig.p[0], zig.p[1]) > 70 && Math.hypot(zig.p[0], zig.p[1]) < 80, "and starts about 24 mm inside it");
+    assert.ok(!short.prims.some(q => q.t === "l" && Math.hypot((q as { p: number[] }).p[0], (q as { p: number[] }).p[1]) < 1e-9));
+    assert.equal(short.prims.filter(q => q.t === "t").length, full.prims.filter(q => q.t === "t").length);
+  }
+  {
+    // Arrow outside: with the text outside the circle a diameter's leader stops at the rim (one arrow, nothing crosses the
+    // circle) unless `outside` is false (1.452.0: the default, so leaders no longer run over the part).
+    const dia = { id: "d", t: "dim", view: "v", k: "dia", refs: [], pos: [30, 0] } as never, dg = { k: "dia", pts: [], c: [0, 0], r: 10, value: 20 } as never;
+    const through = dimPrims({ ...(dia as object), outside: false } as never, dg, pl, "."), lead = dimPrims(dia, dg, pl, ".");
+    assert.deepEqual(dimPrims({ ...(dia as object), outside: true } as never, dg, pl, ".").prims, lead.prims, "true is the default");
+    // A radius keeps its line from the centre unless asked.
+    const rd = { ...(dia as object), k: "rad" } as never, rgo = { k: "rad", pts: [], c: [0, 0], r: 10, value: 10 } as never;
+    assert.ok(dimPrims(rd, rgo, pl, ".").prims.some(q => q.t === "l" && Math.hypot((q as { p: number[] }).p[0], (q as { p: number[] }).p[1]) < 1e-9), "radius from the centre");
+    const xs = (o: { prims: { t: string }[] }) => o.prims.filter(q => q.t === "l").flatMap(q => [(q as never as { p: number[] }).p[0], (q as never as { p: number[] }).p[2]]);
+    assert.ok(Math.min(...xs(through)) < -9.99, "the plain diameter crosses the circle");
+    assert.ok(Math.min(...xs(lead)) > 9.99, "the leader stays outside it");
+    assert.equal(lead.prims.length, through.prims.length - 1, "one arrow instead of two");
+    // Text inside the circle: nothing to lead from, so the option changes nothing.
+    const inn = { id: "d", t: "dim", view: "v", k: "dia", refs: [], pos: [3, 0] } as never;
+    assert.deepEqual(dimPrims({ ...(inn as object), outside: true } as never, dg, pl, ".").prims, dimPrims(inn, dg, pl, ".").prims);
+  }
+  {
+    // Extension lines leave a measured edge at its end nearest the dimension line, not at the point the distance was taken from.
+    const segs = [[[-50, -30], [-50, -10]], [[50, 10], [50, 30]]];
+    const dg = (s?: unknown) => ({ k: "al", pts: [[-50, -20], [50, -20]], value: 100, segs: s }) as never;
+    const dim = (pos: number[]) => ({ id: "d", t: "dim", view: "v", k: "al", refs: [], pos }) as never;
+    const vert = (o: { prims: { t: string }[] }) => o.prims.filter(q => q.t === "l").map(q => (q as never as { p: number[] }).p).filter(p => Math.abs(p[0] - p[2]) < 1e-9).map(p => [p[0], Math.min(p[1], p[3]), Math.max(p[1], p[3])]);
+    const plain = vert(dimPrims(dim([0, 40]), dg(), pl, ".")), slid = vert(dimPrims(dim([0, 40]), dg(segs), pl, "."));
+    assert.deepEqual(plain.map(v => v[1]), [-19, -19], "without the edges both start at the measured points");
+    assert.deepEqual(slid.map(v => [v[0], v[1]]), [[-50, -9], [50, 31]], "with them: 1 mm past each edge's upper end");
+    assert.ok(slid.every(v => Math.abs(v[2] - 42) < 1e-9), "and 2 mm past the dimension line");
+    // Below the part the lower ends are used; a dimension line crossing an edge needs no extension line there.
+    assert.deepEqual(vert(dimPrims(dim([0, -40]), dg(segs), pl, ".")).map(v => v[2]), [-31, 9]);
+    assert.equal(vert(dimPrims(dim([0, 20]), dg(segs), pl, ".")).length, 1);
+    assert.equal(dimPrims(dim([0, 40]), dg(segs), pl, ".").prims.length, dimPrims(dim([0, 40]), dg(), pl, ".").prims.length);
+    // dimGeo hands the edges over for two parallel lines.
+    const E = (k: string, a: number[], b: number[]) => ({ k, t: "l", a, b, m: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, 0] });
+    const topo = { edges: [E("a|b", [-50, -30, 0], [-50, -10, 0]), E("c|d", [50, 10, 0], [50, 30, 0])], cyls: [] } as never;
+    const g = dimGeo({ id: "d", t: "dim", view: "v", k: "al", refs: [{ e: "a|b", h: [-50, -20, 0], p: "e" }, { e: "c|d", h: [50, 20, 0], p: "e" }], pos: [0, 40] } as never, (p: number[]) => [p[0], p[1]], topo)!;
+    assert.equal(g.value, 100);
+    assert.equal(g.segs!.length, 2);
+    assert.deepEqual(g.segs![1], [[50, 10], [50, 30]]);
+  }
+  {
+    // A circle seen side-on (its axis in the view plane) is a line: its diameter is a linear dimension along that line, Ø kept.
+    const circ = { k: "s|t", t: "c", a: [10, 0, 0], b: [10, 0, 0], m: [-10, 0, 0], c: [0, 0, 5], ax: [0, 0, 1], r: 10, sp: 2 * Math.PI };
+    const topo = { edges: [circ], cyls: [] } as never, ref = { e: "s|t", h: [-10, 0, 0], p: "e" };
+    const front = (p: number[]) => [p[0], p[2]], top = (p: number[]) => [p[0], p[1]];
+    const side = dimGeo({ id: "d", t: "dim", view: "v", k: "dia", refs: [ref], pos: [0, 20] } as never, front, topo)!;
+    assert.ok(side.dl && Math.abs(Math.abs(side.dl[0]) - 1) < 1e-9 && Math.abs(side.dl[1]) < 1e-9, "the line runs along X");
+    assert.equal(dimGeo({ id: "d", t: "dim", view: "v", k: "dia", refs: [ref], pos: [0, 20] } as never, top, topo)!.dl, undefined, "end-on: an ordinary diameter");
+    const o = dimPrims({ id: "d", t: "dim", view: "v", k: "dia", refs: [ref], pos: [0, 20] } as never, side, pl, ".");
+    const ls = o.prims.filter(q => q.t === "l").map(q => (q as never as { p: number[] }).p);
+    assert.ok(ls.some(p => Math.abs(p[0] + 10) < 1e-9 && Math.abs(p[2] + 10) < 1e-9) && ls.some(p => Math.abs(p[0] - 10) < 1e-9 && Math.abs(p[2] - 10) < 1e-9), "extension lines at both ends of the line");
+    assert.ok(ls.some(p => Math.abs(p[1] - 20) < 1e-9 && Math.abs(p[3] - 20) < 1e-9 && Math.abs(Math.abs(p[2] - p[0]) - 20) < 1e-9), "a level dimension line 20 long");
+    assert.ok(o.prims.some(q => q.t === "t" && (q as never as { s: string }).s === "Ø20"));
+  }
+  {
+    // A stepped shaft seen from the front (axis along X): Ø20 from x = −80 to 0, Ø24 from 0 to 80, end circles at x = ±80.
+    // Two outline lines (`s`) give their distance (exam #14: 2, not the end circles' centres 160 apart); an end circle seen
+    // edge-on is a line across the axis (exam #3/#10: the overall length).
+    const C = (k: string, x: number, r: number) => ({ k, t: "c", a: [x, r, 0], b: [x, r, 0], m: [x, -r, 0], c: [x, 0, 0], ax: [1, 0, 0], r, sp: 2 * Math.PI });
+    const e1 = C("a|e1", -80, 10), e2 = C("b|e2", 80, 12);
+    const topo = { edges: [e1, e2], cyls: [{ o: [0, 0, 0], ax: [1, 0, 0], r: 10, v0: -80, v1: 0, sp: 2 * Math.PI }, { o: [0, 0, 0], ax: [1, 0, 0], r: 12, v0: 0, v1: 80, sp: 2 * Math.PI }] } as never;
+    const front = (p: number[]) => [p[0], p[1]];
+    const R = (e: { k: string; m: number[] }, s?: 1 | -1) => ({ e: e.k, h: e.m, p: "e", ...(s ? { s } : {}) });
+    const lower = dimGeo({ id: "d", t: "dim", view: "v", k: "al", refs: [R(e1, 1), R(e2, 1)], pos: [0, -30] } as never, front, topo)!;
+    assert.ok(Math.abs(lower.value - 2) < 1e-9, `outline to outline: ${lower.value}`);
+    assert.deepEqual(lower.segs![0], [[-80, 10], [0, 10]]);
+    const across = dimGeo({ id: "d", t: "dim", view: "v", k: "al", refs: [R(e1, 1), R(e1, -1)], pos: [-40, 0] } as never, front, topo)!;
+    assert.ok(Math.abs(across.value - 20) < 1e-9, "both outlines of one cylinder: its diameter");
+    const len = dimGeo({ id: "d", t: "dim", view: "v", k: "h", refs: [R(e1), R(e2)], pos: [0, 30] } as never, front, topo)!;
+    assert.equal(len.value, 160, "edge-on end circles: the overall length");
+    assert.deepEqual(edgeOnSeg(e2 as never, front, topo), [[80, -12], [80, 12]]);
+    assert.equal(edgeOnSeg(e2 as never, (p: number[]) => [p[1], p[2]], topo), null, "end-on: no line");
+    assert.deepEqual(outlineSeg([0, 0], [1, 0], 5, -1, 2, -1), [[-1, -5], [2, -5]]);
+  }
+  {
+    // A hole is dimensioned by its diameter: a whole circle, also when the file gives it as two half circles; other arcs by radius.
+    const C = (k: string, c: number[], r: number, sp: number) => ({ k, t: "c", a: [0, 0, 0], b: [0, 0, 0], m: [0, 0, 0], c, r, sp });
+    const whole = C("w", [0, 0, 0], 5, 2 * Math.PI), h1 = C("h1", [20, 0, 0], 3, Math.PI), h2 = C("h2", [20, 0, 0], 3, Math.PI), fil = C("f", [40, 0, 0], 3, Math.PI / 2), half = C("s", [60, 0, 0], 3, Math.PI);
+    const topo = { edges: [whole, h1, h2, fil, half, C("o", [60, 0, 0], 4, Math.PI)], cyls: [] } as never;
+    assert.equal(wholeCircle(whole as never, topo), true);
+    assert.equal(wholeCircle(h1 as never, topo), true, "two halves on one centre and radius");
+    assert.equal(wholeCircle(fil as never, topo), false, "a fillet arc");
+    assert.equal(wholeCircle(half as never, topo), false, "a lone half circle (the other arc there has another radius)");
+    assert.equal(wholeCircle(h1 as never, null), false);
+  }
+  {
+    // Text along the leader: turned to the leader's angle, no level shoulder; the leader runs on under the text.
+    const dia = { id: "d", t: "dim", view: "v", k: "dia", refs: [], pos: [20, 20] } as never, dg = { k: "dia", pts: [], c: [0, 0], r: 10, value: 20 } as never;
+    const flat = dimPrims(dia, dg, pl, "."), al = dimPrims({ ...(dia as object), along: true } as never, dg, pl, ".");
+    const tx = (o: { prims: { t: string }[] }) => o.prims.find(q => q.t === "t") as never as { rot?: number; x: number; y: number };
+    assert.ok(!tx(flat).rot && Math.abs(tx(al).rot! - 45) < 1e-9, "text at the leader's 45°");
+    const level = (o: { prims: { t: string }[] }) => o.prims.filter(q => q.t === "l").map(q => (q as never as { p: number[] }).p).filter(p => Math.abs(p[1] - p[3]) < 1e-9).length;
+    assert.equal(level(flat), 1, "the plain one has a level shoulder");
+    assert.equal(level(al), 0, "the aligned one has none");
+    assert.equal(al.prims.length, flat.prims.length);
+    // On the left the text still reads from the bottom (rot within -90..90).
+    const left = tx(dimPrims({ ...(dia as object), pos: [-20, 20], along: true } as never, dg, pl, "."));
+    assert.ok(Math.abs(left.rot! + 45) < 1e-9);
+  }
+  {
+    // Angle arrows: a wide sector keeps them inside; a narrow one gets them outside on tails of the arc; the choice can be forced.
+    const lines = [[[0, 0], [40, 0]], [[0, 0], [0, 40]]];
+    const ang = (pos: number[], more: object = {}) => dimPrims({ id: "d", t: "dim", view: "v", k: "ang", refs: [], pos, ...more } as never, { k: "ang", pts: [], lines, value: 0 } as never, pl, ".");
+    const arc = (o: { prims: { t: string }[] }) => o.prims.find(q => q.t === "a") as never as { a0: number; a1: number; r: number };
+    const wide = arc(ang([14, 14])), narrow = arc(ang([2.2, 2.2]));
+    assert.ok(Math.abs(wide.a1 - wide.a0 - Math.PI / 2) < 1e-9, "wide: the arc spans just the angle");
+    assert.ok(Math.abs(narrow.a1 - narrow.a0 - Math.PI / 2 - 2 * 5 / narrow.r) < 1e-9, "narrow: a tail of arrow + 2 at each end");
+    assert.ok(Math.abs(arc(ang([2.2, 2.2], { arrows: "in" })).a1 - arc(ang([2.2, 2.2], { arrows: "in" })).a0 - Math.PI / 2) < 1e-9, "forced inside");
+    assert.ok(arc(ang([14, 14], { arrows: "out" })).a1 - arc(ang([14, 14], { arrows: "out" })).a0 > Math.PI / 2 + 0.1, "forced outside");
+    assert.equal(ang([2.2, 2.2]).prims.length, ang([2.2, 2.2], { arrows: "in" }).prims.length, "same pieces either way");
+    // Extension lines appear when the arc is past the lines' ends, and can be hidden one by one.
+    const far = ang([50, 50]), nl = (o: { prims: { t: string }[] }) => o.prims.filter(q => q.t === "l").length;
+    assert.equal(nl(far) - nl(ang([50, 50], { noExt: "a" })), 1);
+    assert.equal(nl(far) - nl(ang([50, 50], { noExt: "both" })), 2);
+  }
+  {
+    // A diameter displayed as a linear dimension: extension lines from the rim's left and right ends, arrows on a level line, Ø kept.
+    const dia = { id: "d", t: "dim", view: "v", k: "dia", refs: [], pos: [3, 30], lin: "h" } as never, dg = { k: "dia", pts: [], c: [0, 0], r: 10, value: 20 } as never;
+    const o = dimPrims(dia, dg, pl, ".");
+    const ls = o.prims.filter(q => q.t === "l").map(q => (q as { p: number[] }).p);
+    assert.ok(ls.some(p => Math.abs(p[0] + 10) < 1e-9 && Math.abs(p[2] + 10) < 1e-9 && p[3] > 30), "extension line at x = -10");
+    assert.ok(ls.some(p => Math.abs(p[0] - 10) < 1e-9 && Math.abs(p[2] - 10) < 1e-9 && p[3] > 30), "extension line at x = 10");
+    assert.ok(ls.some(p => Math.abs(p[1] - 30) < 1e-9 && Math.abs(p[3] - 30) < 1e-9 && Math.abs(Math.abs(p[2] - p[0]) - 20) < 1e-9), "dimension line 20 long at y = 30");
+    assert.ok(o.prims.some(q => q.t === "t" && (q as { s: string }).s === "Ø20"));
+    const v = dimPrims({ ...(dia as object), lin: "v", pos: [30, 3] } as never, dg, pl, ".").prims.filter(q => q.t === "l").map(q => (q as { p: number[] }).p);
+    assert.ok(v.some(p => Math.abs(p[0] - 30) < 1e-9 && Math.abs(p[2] - 30) < 1e-9 && Math.abs(Math.abs(p[3] - p[1]) - 20) < 1e-9), "vertical dimension line at x = 30");
+  }
+  {
+    // The drawing's extension line gap and overshoot: with gap 0 and 3 past, the Ø20's lines start on the rim (y = 0) and end 3 above the dimension line.
+    const { useStyle } = await import("../../src/drawing/annot");
+    const dia = { id: "d", t: "dim", view: "v", k: "dia", refs: [], pos: [3, 30], lin: "h" } as never, dg = { k: "dia", pts: [], c: [0, 0], r: 10, value: 20 } as never;
+    const ext = () => dimPrims(dia, dg, pl, ".").prims.filter(q => q.t === "l").map(q => (q as { p: number[] }).p).filter(p => Math.abs(p[0] - p[2]) < 1e-9 && Math.abs(Math.abs(p[0]) - 10) < 1e-9);
+    const std = ext();
+    assert.ok(std.length === 2 && std.every(p => Math.abs(Math.min(p[1], p[3]) - 1) < 1e-9 && Math.abs(Math.max(p[1], p[3]) - 32) < 1e-9), JSON.stringify(std));
+    try {
+      useStyle({ extGap: 0, extOver: 3 });
+      const own = ext();
+      assert.ok(own.length === 2 && own.every(p => Math.abs(Math.min(p[1], p[3])) < 1e-9 && Math.abs(Math.max(p[1], p[3]) - 33) < 1e-9), JSON.stringify(own));
+    } finally { useStyle(undefined); }
+  }
+  {
+    // Arrowheads of its own: oblique strokes are two thick lines in place of the two filled heads, and the next dimension is back to the style's.
+    const base = dimPrims(lin as never, geo as never, pl, ".").prims, tick = dimPrims({ ...lin, ends: "tick" } as never, geo as never, pl, ".").prims;
+    const thick = (ps: typeof base) => ps.filter(q => q.t === "l" && (q as { pen?: string }).pen === "thick").length;
+    const filled = (ps: typeof base) => ps.filter(q => q.t === "p" && (q as { fill?: boolean }).fill).length;
+    assert.equal(thick(tick), thick(base) + 2);
+    assert.equal(filled(tick), filled(base) - 2);
+    assert.deepEqual(dimPrims(lin as never, geo as never, pl, ".").prims, base);
+  }
+  const plain = dimPrims(lin as never, geo as never, pl, ".");
+  const r = dimPrims({ ...lin, below: "2 PLACES" } as never, geo as never, pl, ".");
+  const ts = r.prims.filter(q => q.t === "t") as { s: string; x: number; y: number; h: number }[];
+  const main = ts.find(q => q.s === "40")!, low = ts.find(q => q.s === "2 PLACES")!;
+  assert.ok(main && low, "both lines are written");
+  assert.ok(main.y > 15 && low.y + low.h < 15, "the value above the dimension line, the second line under it");
+  assert.ok(r.box[1] < plain.box[1] - low.h * 0.9 && r.box[0] <= plain.box[0] && r.box[2] >= plain.box[2], "the hit box covers both lines");
+  assert.equal(plain.prims.filter(q => q.t === "t").length, 1);
+});
+
+test("dual dimensions add inches in brackets; a dimension can opt in or out (FR-DRW-021)", async () => {
+  const { dimText, useStyle } = await import("../../src/drawing/annot");
+  const lin = { id: "a", t: "dim" as const, view: "v", k: "h" as const, refs: [], pos: [0, 0] as [number, number] };
+  const g = { k: "h" as const, pts: [], value: 25.4 };
+  assert.equal(dimText({ ...lin, dual: true }, g, ".").main, "25.4 [1.000]", "one dimension, three decimals by default");
+  try {
+    useStyle({ dual: "in", dualPrec: 2 });
+    assert.equal(dimText(lin, g, ",").main, "25,4 [1,00]");
+    assert.equal(dimText({ ...lin, dual: false }, g, ".").main, "25.4", "turned off for one dimension");
+    assert.equal(dimText({ ...lin, k: "dia" as const, suf: " H7" }, { k: "dia", pts: [], value: 50.8 }, ".").main, "Ø50.8 H7 [2.00]");
+    assert.equal(dimText({ ...lin, tol: { t: "sym", up: 0.254 } }, g, ".").main, "25.4±0.25 [1.00±0.01]");
+    assert.deepEqual(dimText({ ...lin, tol: { t: "limit", up: 25.4, lo: 0 } }, g, "."), { main: "", up: "50.8 [2.00]", lo: "25.4 [1.00]" });
+    assert.deepEqual(dimText({ ...lin, tol: { t: "dev", up: 0.2, lo: 0 } }, g, "."), { main: "25.4 [1.00]", up: "+0.2", lo: "0" });
+    assert.equal(dimText({ ...lin, k: "ang" as const }, { k: "ang", pts: [], value: 30 }, ".").main, "30°", "angles have no inch value");
+    assert.equal(dimText({ ...lin, txt: "REF" }, g, ".").main, "REF", "typed text stays as typed");
+  } finally { useStyle(undefined); }
+  assert.equal(dimText(lin, g, ".").main, "25.4");
+});
+
+test("drafting style sets a default ± tolerance; a dimension's own tolerance or None wins (FR-DRW-025)", async () => {
+  const { dimText, useStyle } = await import("../../src/drawing/annot");
+  const lin = { id: "a", t: "dim" as const, view: "v", k: "h" as const, refs: [], pos: [0, 0] as [number, number] };
+  const ang = { ...lin, k: "ang" as const };
+  try {
+    useStyle({ tol: 0.1, atol: 0.5 });
+    assert.equal(dimText(lin, { k: "h", pts: [], value: 100 }, ".").main, "100±0.1");
+    assert.equal(dimText(ang, { k: "ang", pts: [], value: 30 }, ",").main, "30±0,5°");
+    assert.equal(dimText({ ...lin, tol: { t: "none" } }, { k: "h", pts: [], value: 100 }, ".").main, "100", "None turns the default off");
+    assert.deepEqual(dimText({ ...lin, tol: { t: "dev", up: 0.2, lo: 0 } }, { k: "h", pts: [], value: 100 }, "."), { main: "100", up: "+0.2", lo: "0" });
+    useStyle({ tol: 0.1 });
+    assert.equal(dimText(ang, { k: "ang", pts: [], value: 30 }, ".").main, "30°", "no angle default: angles stay plain");
+  } finally { useStyle(undefined); }
+  assert.equal(dimText(lin, { k: "h", pts: [], value: 100 }, ".").main, "100");
+});
+
+test("model items stack by size, clear of each other, in sheet millimetres (FR-DRW-020)", async () => {
+  const { placeItems } = await import("../../src/drawing/annot");
+  const lin = (src: string, len: number) => ({ src, name: src, k: "lin" as const, p: [[-len / 2, 30, 0], [len / 2, 30, 0]] as [V3, V3], dir: [1, 0, 0] as V3, n: [0, 0, 1] as V3, value: len });
+  const dia = (src: string) => ({ src, name: src, k: "dia" as const, p: [[0, 0, 0], [5, 0, 0]] as [V3, V3], n: [0, 0, 1] as V3, value: 10 });
+  const sheet = { id: "s", name: "S", size: "A3" as const, scale: [1, 1] as [number, number], projection: "first" as const, format: "iso" as const, views: [{ id: "top", name: "top", orient: "top", x: 0, y: 0 }] as never[], annots: [] as never[] };
+  const box = (): [number, number, number, number] => [-50, -30, 50, 30];
+  let n = 0;
+  const id = () => `a${n++}`;
+  const items = [lin("a:100", 100), lin("a:20", 20), lin("a:40", 40), dia("a:d1"), dia("a:d2")] as never[];
+  const off = (ds: { src?: string; pos: [number, number] }[], src: string) => Math.abs(ds.find(d => d.src === src)!.pos[1]) - 30;
+  const placed = placeItems(sheet, items, box, id);
+  assert.deepEqual(placed.filter(d => d.k === "h").map(d => Math.sign(d.pos[1])).filter((v, i, a) => a.indexOf(v) === i).length, 1, "all on one side");
+  assert.deepEqual(["a:20", "a:40", "a:100"].map(s => off(placed, s)), [10, 18, 26], "shorter dimensions nearer the view");
+  const [d1, d2] = placed.filter(d => d.k === "dia");
+  assert.ok(Math.hypot(d1.pos[0] - d2.pos[0], d1.pos[1] - d2.pos[1]) >= 7 - 1e-6, "two diameters on one centre do not share a place");
+  // At 1:2 the gaps are the same on the sheet, so twice as large in model millimetres.
+  const half = placeItems(sheet, items, box, id, () => 0.5);
+  assert.deepEqual(["a:20", "a:40", "a:100"].map(s => off(half, s)), [20, 36, 52]);
+  // A later import starts beyond the dimensions already on that side.
+  const more = placeItems({ ...sheet, annots: placed as never[] }, [...items, lin("a:10", 10)] as never[], box, id);
+  assert.equal(more.length, 1);
+  assert.equal(off(more, "a:10"), 34);
+});
+
+test("offset section: the cutter's steps are no lines in the view (drawings exam #12)", async () => {
+  const { dropSteps } = await import("../../src/kernel/drawing");
+  // Frame: e = +X, view x = +X, y = +Z; one step at t = 25 (x = 25 - 40 = -15), the outer walls at ±FAR stay.
+  const st = { o: [-40, -20, 0] as [number, number, number], e: [1, 0, 0] as [number, number, number], pts: [-1e9, 1e9, -1e9, 0, 25, 0, 25, 20, 1e9, 20, 1e9, 1e9] };
+  const l = (p: [number, number, number, number]) => ({ k: "l" as const, c: 0 as const, p });
+  const proj = { vis: [l([-15, 0, -15, 35]), l([-40, 0, 40, 0]), l([-20, 15, -20, 33]), l([-15, 15, -10, 15])], hid: [l([-15, 2, -15, 8])] };
+  // Cut faces: the plate cut on both sides of the step (z 0…15), and only right of it above (the boss beyond on the left).
+  const cut = [[-40, 0, -15, 0, -15, 15, -40, 15], [-15, 0, 40, 0, 40, 15, -10, 15, -10, 35, -15, 35]];
+  dropSteps(proj, st, [1, 0, 0], [0, 0, 1], cut);
+  const ps = proj.vis.map(g => (g as { p: number[] }).p.map(v => Math.round(v * 100) / 100));
+  assert.deepEqual(ps.slice(1), [[-40, 0, 40, 0], [-20, 15, -20, 33], [-15, 15, -10, 15]], "lines with only one end on the step stay");
+  assert.ok(ps[0][0] === -15 && ps[0][2] === -15 && Math.abs(ps[0][1] - 15) < 0.3 && ps[0][3] === 35, `the step stays only where it borders the uncut boss (${ps[0]})`);
+  assert.equal(proj.hid.length, 0, "between two cut faces it goes");
+});
+
+test("half section: hatched even when the stored line is a hair off the rounded path (drawings exam #13)", async () => {
+  const { section } = await import("../../src/kernel/drawing");
+  const { viewReq } = await import("../../src/drawing/views");
+  const { oc, shape } = await block();
+  const parent = { id: "t", name: "Top", orient: "top", x: 100, y: 200 };
+  for (const look of [1, -1]) {
+    // The first point snapped to the block's edge: the line keeps 1.6e-5 of drift, the path is rounded.
+    const v = { id: "s", name: "A", kind: "section", parent: "t", line: [20.0000162, -30.000004, 20, 0], path: [20, -30, 20, 0, 50, 0], look, x: 100, y: 80 };
+    const sheet = { id: "sh", name: "S", size: "A3", scale: [1, 1], projection: "first", views: [parent, v], annots: [] } as never;
+    const req = viewReq(sheet, v as never);
+    const s = section(oc, shape, req.view, req.p!, 0.02, undefined, { stair: req.stair });
+    assert.ok(s.cut!.length >= 1, `look ${look}: ${s.cut!.length} cut faces`);
+  }
+});
+
+test("Standard 3 views layout uses the corner beside the title block", async () => {
+  const { std3Layout } = await import("../../src/drawing/views");
+  // A3 ISO frame [20, 10, 410, 287], 180 × 40 title block at the bottom right; a 430 × 140 × 220 engine. The old fit (the strip
+  // above the title block, 85 %) gave 1:5.
+  const area: [number, number, number, number] = [24, 14, 406, 283], tb: [number, number, number, number] = [226, 10, 410, 54];
+  for (const third of [false, true]) {
+    const lay = std3Layout(430, 140, 220, area, tb, third)!;
+    assert.deepEqual(lay.scale, [1, 2], `third ${third}`);
+    // Every view, padded, stays inside and clear of the title block.
+    const k = 0.5, gap = 25, { gx, gy } = lay;
+    const fy = third ? gy : gy + k * 140 + gap, ty = third ? gy + k * 220 + gap : gy;
+    const rs = [[gx, fy, gx + k * 430, fy + k * 220], [gx, ty, gx + k * 430, ty + k * 140], [gx + k * 430 + gap, fy, gx + k * 570 + gap, fy + k * 220]];
+    for (const r of rs) {
+      assert.ok(r[0] >= area[0] && r[2] <= area[2] && r[1] >= area[1] && r[3] <= area[3]);
+      assert.ok(!(r[0] < tb[2] && tb[0] < r[2] && r[1] < tb[3] && tb[1] < r[3]));
+    }
+  }
+  const { fitScale } = await import("../../src/drawing/views");
+  assert.deepEqual(fitScale(570, 360, (370 - 20 - 25) * 0.85, (267 - 60 - 25) * 0.85), [1, 5]);
+  assert.equal(std3Layout(5000, 5000, 5000, area, tb, false)?.scale.join(":"), "1:50");
+  // The engine as the exam measured it (drawings exam round two, retest): 1:2 fits beside the title block.
+  assert.equal(std3Layout(430, 187, 184, area, tb, false)?.scale.join(":"), "1:2");
+  assert.equal(std3Layout(430, 187, 184, area, tb, true)?.scale.join(":"), "1:2");
+  // A small part is not blown up to fill the sheet.
+  assert.equal(std3Layout(100, 60, 20, area, tb, false)?.scale.join(":"), "1:1");
+  assert.equal(std3Layout(1e6, 1e6, 1e6, area, tb, false), null);
+});
+
+test("fast hidden-line views keep exact lines and end-on circles", async () => {
+  const { projectFast, projectAuto, edgeCount, FAST_EDGES } = await import("../../src/kernel/drawing");
+  const oc = await occ();
+  // A plate with a Ø20 through hole and a Ø16 boss on top.
+  const pr = new oc.Message_ProgressRange_1();
+  const plate = new oc.BRepPrimAPI_MakeBox_3(new oc.gp_Pnt_3(-50, -50, 0), 100, 100, 10).Shape();
+  const ax = (x: number, y: number, z: number) => new oc.gp_Ax2_3(new oc.gp_Pnt_3(x, y, z), new oc.gp_Dir_4(0, 0, 1));
+  const hole = new oc.BRepPrimAPI_MakeCylinder_3(ax(10, 5, -1), 10, 12).Shape();
+  const boss = new oc.BRepPrimAPI_MakeCylinder_3(ax(-25, -25, 10), 8, 15).Shape();
+  const shape = new oc.BRepAlgoAPI_Fuse_3(new oc.BRepAlgoAPI_Cut_3(plate, hole, pr).Shape(), boss, pr).Shape();
+  assert.ok(edgeCount(oc, shape) < FAST_EDGES);
+  const len = (p: any) => p.vis.reduce((t: number, s: any) => t + (s.k === "l" ? Math.hypot(s.p[2] - s.p[0], s.p[3] - s.p[1]) : s.k === "a" ? s.r * Math.abs(s.a1 - s.a0) : 0), 0);
+  for (const view of [{ dir: [0, 0, 1] as V3, up: [0, 1, 0] as V3 }, { dir: [0.5, -0.6, 0.62] as V3, up: [0, 0, 1] as V3 }]) {
+    const e = project(oc, shape, view), f = projectFast(oc, shape, view, 0.15);
+    assert.equal(projectAuto(oc, shape, view).fast, undefined, "a small model gets the exact HLR");
+    assert.ok(f.fast);
+    assert.ok(Math.abs(len(f) - len(e)) < 0.01 * len(e), `visible length ${len(f)} vs ${len(e)}`);
+    for (const a of e.vis.filter(s => s.k === "a") as any[]) {
+      const m = (f.vis as any[]).find(s => s.k === "a" && Math.hypot(s.o[0] - a.o[0], s.o[1] - a.o[1]) < 1e-6 && Math.abs(s.r - a.r) < 1e-9);
+      assert.ok(m, `end-on circle r ${a.r} at ${a.o} kept exact`);
+    }
+    for (const s of f.vis.filter(s => s.k === "l") as any[]) {
+      // Every line lies on an exact one.
+      const on = e.vis.some((x: any) => x.k === "l" && [0, 2].every(i => { const dx = x.p[2] - x.p[0], dy = x.p[3] - x.p[1], l = Math.hypot(dx, dy); return Math.abs((s.p[i] - x.p[0]) * dy - (s.p[i + 1] - x.p[1]) * dx) / l < 1e-6; }));
+      assert.ok(on, `line ${s.p} on an exact line`);
+    }
+  }
+});
+
+test("Standard 3 views again: placed clear of the views on the sheet at its scale, or nowhere (drawings exam #27)", async () => {
+  const { std3Layout } = await import("../../src/drawing/views");
+  const area: [number, number, number, number] = [24, 14, 406, 283], tb: [number, number, number, number] = [226, 10, 410, 54];
+  const hit = (a: number[], b: number[]) => a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];
+  // A small block (40 × 30 × 20) at 1:1, its first set top left.
+  const first: [number, number, number, number][] = [[40, 200, 80, 220], [40, 245, 80, 275], [105, 200, 135, 220]];
+  const lay = std3Layout(40, 30, 20, area, tb, false, 25, 8, first, [[1, 1]])!;
+  assert.deepEqual(lay.scale, [1, 1]);
+  const { gx, gy } = lay, fy = gy + 30 + 25;
+  for (const r of [[gx, fy, gx + 40, fy + 20], [gx, gy, gx + 40, gy + 30], [gx + 65, fy, gx + 95, fy + 20]])
+    for (const a of first) assert.ok(!hit(r, a), `${r} over ${a}`);
+  // The flange block at 2:1 filling the sheet: no room for a second set at 2:1.
+  assert.equal(std3Layout(80, 60, 35, area, tb, false, 25, 8, [[60, 60, 300, 270]], [[2, 1]]), null);
+});
+
+test("Add sheet keeps the sheet format: custom size and user title block (drawings exam #31)", async () => {
+  const { newSheet } = await import("../../src/drawing/doc");
+  const tb = { id: "f1", name: "Mine", w: 180, h: 40, cells: [{ x: 0, y: 0, w: 180, h: 40, label: "Firma" }] };
+  const a = { ...newSheet(1), size: "custom" as const, w: 500, h: 350, format: "ansi" as const, tb };
+  const b = newSheet(2, a);
+  assert.deepEqual([b.size, b.w, b.h, b.format, b.tb], ["custom", 500, 350, "ansi", tb]);
+  assert.notEqual(b.tb, a.tb, "a copy, so editing one sheet's block leaves the other");
+  assert.equal(newSheet(2, newSheet(1)).tb, undefined);
+});
+
+test("1.481: hole stacks per solid; a pin in a hole or a plate on top does not close it", async () => {
+  const { oc, shape } = await block();
+  const { topology } = await import("../../src/kernel/drawing");
+  const tr = new oc.gp_Trsf_1();
+  tr.SetTranslation_1(new oc.gp_Vec_4(0, 0, 20));
+  const top = shape.Moved(new oc.TopLoc_Location_2(tr), false);
+  const pin = new oc.BRepPrimAPI_MakeCylinder_3(new oc.gp_Ax2_3(new oc.gp_Pnt_3(10, 0, -5), new oc.gp_Dir_4(0, 0, 1)), 5, 50).Shape();
+  const b = new oc.BRep_Builder(), comp = new oc.TopoDS_Compound();
+  b.MakeCompound(comp);
+  for (const s of [shape, top, pin]) b.Add(comp, s);
+  const alone = topology(oc, shape).holes!;
+  assert.equal(alone.length, 1);
+  const holes = topology(oc, comp).holes!;
+  // One hole in each plate, each as long as the plate and open at both ends, as in the part's own drawing.
+  assert.equal(holes.length, 2);
+  for (const h of holes) {
+    assert.deepEqual(h.open, [true, true]);
+    assert.ok(Math.abs(h.segs.at(-1)!.v1 - h.segs[0].v0 - 20) < 1e-6);
+  }
+});
+
+test("1.483: a model snapshot (binary BREP) reads back with its components in order, the same views and, when asked, its mesh", async () => {
+  const { oc, shape, names } = await block();
+  const { shapeBin, readBin, childShapes, topology, projectPoly: poly } = await import("../../src/kernel/drawing");
+  const tr = new oc.gp_Trsf_1();
+  tr.SetTranslation_1(new oc.gp_Vec_4(0, 0, 20));
+  const top = shape.Moved(new oc.TopLoc_Location_2(tr), false);
+  const pin = new oc.BRepPrimAPI_MakeCylinder_3(new oc.gp_Ax2_3(new oc.gp_Pnt_3(10, 0, -5), new oc.gp_Dir_4(0, 0, 1)), 5, 50).Shape();
+  const b = new oc.BRep_Builder(), comp = new oc.TopoDS_Compound();
+  b.MakeCompound(comp);
+  for (const s of [pin, shape, top]) b.Add(comp, s);
+  const plain = shapeBin(oc, comp);
+  const back = readBin(oc, plain);
+  const kids = childShapes(oc, back);
+  assert.equal(kids.length, 3);
+  const vol = (s: any) => { const p = new oc.GProp_GProps_1(); oc.BRepGProp.VolumeProperties_1(s, p, false, false, false); return p.Mass(); };
+  const zc = (s: any) => { const p = new oc.GProp_GProps_1(); oc.BRepGProp.VolumeProperties_1(s, p, false, false, false); return p.CentreOfMass().Z(); };
+  assert.ok(Math.abs(vol(kids[0]) - Math.PI * 25 * 50) < 1e-6);
+  assert.ok(Math.abs(zc(kids[2]) - zc(kids[1]) - 20) < 1e-9);
+  const all = [...names.map(n => `a@${n}`), ...names.map(n => `b@${n}`)];
+  assert.equal(JSON.stringify(topology(oc, back, all)), JSON.stringify(topology(oc, comp, all)));
+  const view = { dir: [0, -1, 0] as V3, up: [0, 0, 1] as V3 };
+  assert.equal(JSON.stringify(project(oc, back, view).vis), JSON.stringify(project(oc, comp, view).vis));
+  // With the mesh: bigger, and the read shape has every face triangulated already.
+  const p0 = poly(oc, comp, view, 0.05, 0.1);
+  const meshed = shapeBin(oc, comp, true);
+  assert.ok(meshed.length > plain.length * 2, `${meshed.length} vs ${plain.length}`);
+  const m = readBin(oc, meshed);
+  let bare = 0;
+  for (const ex = new oc.TopExp_Explorer_2(m, oc.TopAbs_ShapeEnum.TopAbs_FACE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE); ex.More(); ex.Next())
+    if (oc.BRep_Tool.Triangulation(oc.TopoDS.Face_1(ex.Current()), new oc.TopLoc_Location_1(), 0).IsNull()) bare++;
+  assert.equal(bare, 0);
+  assert.equal(JSON.stringify(poly(oc, m, view, 0.05, 0.1).vis), JSON.stringify(p0.vis));
+});
+
+test("thread end Through all: the thread runs the whole drill in the model, the drawing and the callout", async () => {
+  const { topology } = await import("../../src/kernel/drawing");
+  const { modelItems } = await import("../../src/drawing/items");
+  const { threadPrims, projector, holeText } = await import("../../src/drawing/annot");
+  const { ORIENTS } = await import("../../src/drawing/views");
+  const oc = await occ(), m = new Modeller(oc);
+  const top = { face: { name: "f1:end" } };
+  // A 20 mm plate: M8 through all with its thread through all (the stale 10 mm depth is ignored), and an M6
+  // up to next with its thread through all.
+  const d = doc([rect("s1", 100, 60), { id: "f1", type: "extrude", name: "E", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
+    { id: "h1", type: "hole", name: "Hole1", plane: top, pts: [[20, 0], [30, 10]], kind: "tapped", size: "M8", diameter: { v: 6.8 }, end: "through", depth: { v: 0 }, threadDepth: { v: 10 }, threadEnd: "through", major: 8, pitch: 1.25 },
+    { id: "h2", type: "hole", name: "Hole2", plane: top, pts: [[-20, 0]], kind: "tapped", size: "M6", diameter: { v: 5 }, end: "next", depth: { v: 12 }, threadDepth: { v: 10 }, threadEnd: "through", major: 6, pitch: 1 }]);
+  const r = m.evaluate(d), body = r.body!;
+  assert.deepEqual(r.statuses.map(s => s.ok), [true, true, true, true]);
+  assert.deepEqual(r.frames.h1.len!.map(x => Math.round(x * 1000) / 1000), [20, 20], "the 3D thread is as long as the plate");
+  assert.deepEqual(r.frames.h2.len!.map(x => Math.round(x * 1000) / 1000), [20]);
+  const mi = modelItems(d, r.frames, r.sketches);
+  assert.deepEqual(mi.threads.map(t => t.L), [null, null, null], "drawing threads run the whole drill");
+  const topo = topology(oc, body.shape, body.names);
+  const pl = { s: 1, uc: 0, vc: 0, x: 0, y: 0, box: [-50, -30, 50, 30] as [number, number, number, number], ready: true };
+  const front = projector(ORIENTS.front);
+  const pf = threadPrims({ id: "front", name: "front", orient: "front", x: 0, y: 0 }, pl, mi.threads, topo, front.P, front.n);
+  const lims = [...new Set(pf.filter(p => p.t === "l" && Math.abs(p.p[1] - p.p[3]) < 1e-9).map(p => p.t === "l" ? Math.round(p.p[1] * 1000) / 1000 : NaN))].sort((a, b) => a - b);
+  assert.deepEqual(lims, [0], "every thread stops at the bottom face");
+  const ctx = { topo, holes: mi.holes, threads: mi.threads, items: [], box: null, dec: ".", label: (s: string) => s } as never;
+  assert.deepEqual(holeText({ t: "c", c: [20, 0, 20], ax: [0, 0, 1], r: 3.4 } as never, ctx), ["2× Ø6.8 THRU", "M8-6H THRU"]);
+  // An inch size gets the unified class 2B.
+  const hf = (mi.holes as { f: { size?: string } }[]).find(h => h.f.size === "M8")!.f;
+  hf.size = "5/16-18 UNC";
+  assert.deepEqual(holeText({ t: "c", c: [20, 0, 20], ax: [0, 0, 1], r: 3.4 } as never, ctx), ["2× Ø6.8 THRU", "5/16-18 UNC-2B THRU"]);
+  hf.size = "M8";
+  // Option countersinks go under the thread line; the far side one says so.
+  const ho = hf as { nearCs?: unknown; farCs?: unknown };
+  ho.nearCs = { dia: { v: 9 }, angle: { v: Math.PI / 2 } }; ho.farCs = { dia: { v: 8 }, angle: { v: Math.PI / 2 } };
+  assert.deepEqual(holeText({ t: "c", c: [20, 0, 20], ax: [0, 0, 1], r: 3.4 } as never, ctx), ["2× Ø6.8 THRU", "M8-6H THRU", "⌵Ø9 × 90°", "⌵Ø8 × 90° FAR SIDE"]);
+  delete ho.nearCs; delete ho.farCs;
+  assert.deepEqual(holeText({ t: "c", c: [-20, 0, 20], ax: [0, 0, 1], r: 2.5 } as never, ctx), ["Ø5", "M6-6H"], "up to next: the thread is as deep as the drill");
+  // Blind again: the typed depth is back.
+  const d2 = structuredClone(d);
+  delete (d2.features[2] as { threadEnd?: string }).threadEnd;
+  const r2 = m.evaluate(d2);
+  assert.equal(r2.frames.h1.len, undefined);
+  assert.deepEqual(modelItems(d2, r2.frames, r2.sketches).threads.map(t => t.L), [10, 10, null]);
+});
+
+test("a tapped Hole Wizard hole draws its cosmetic thread; a section leaves out threads its cut took away (drawings exam #44, #45)", async () => {
+  const { topology } = await import("../../src/kernel/drawing");
+  const { modelItems } = await import("../../src/drawing/items");
+  const { threadPrims, projector, holeText, viewAnnots } = await import("../../src/drawing/annot");
+  const { ORIENTS } = await import("../../src/drawing/views");
+  const oc = await occ(), m = new Modeller(oc);
+  const top = { face: { name: "f1:end" } };
+  // M8 through a 20 mm plate with a 25 mm thread (deeper than the plate), and a blind M6: drill 12, thread 10.
+  const d = doc([rect("s1", 100, 60), { id: "f1", type: "extrude", name: "E", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
+    { id: "h1", type: "hole", name: "Hole1", plane: top, pts: [[20, 0]], kind: "tapped", size: "M8", diameter: { v: 6.8 }, end: "through", depth: { v: 0 }, threadDepth: { v: 25 }, major: 8, pitch: 1.25 },
+    { id: "h2", type: "hole", name: "Hole2", plane: top, pts: [[-20, 0]], kind: "tapped", size: "M6", diameter: { v: 5 }, end: "blind", depth: { v: 12 }, threadDepth: { v: 10 }, major: 6, pitch: 1 }]);
+  const r = m.evaluate(d), body = r.body!;
+  const mi = modelItems(d, r.frames, r.sketches);
+  assert.deepEqual(mi.threads.map(t => [t.size, t.d, t.internal]), [["M8", 8, true], ["M6", 6, true]]);
+  const topo = topology(oc, body.shape, body.names);
+  const pl = { s: 1, uc: 0, vc: 0, x: 0, y: 0, box: [-50, -30, 50, 30] as [number, number, number, number], ready: true };
+  const front = projector(ORIENTS.front);
+  const pf = threadPrims({ id: "front", name: "front", orient: "front", x: 0, y: 0 }, pl, mi.threads, topo, front.P, front.n);
+  const lims = pf.filter(p => p.t === "l" && Math.abs(p.p[1] - p.p[3]) < 1e-9).map(p => p.t === "l" ? Math.round(p.p[1] * 1000) / 1000 : NaN).sort((a, b) => a - b);
+  assert.deepEqual(lims, [0, 10], "the M8 thread stops at the bottom face, the M6 one 10 deep");
+  assert.ok(pf.every(p => p.pen === "hidden"), "inside the part: dashed");
+  const ctx = { topo, holes: mi.holes, threads: mi.threads, items: [], box: null, dec: ".", label: (s: string) => s } as never;
+  assert.deepEqual(holeText({ t: "c", c: [20, 0, 20], ax: [0, 0, 1], r: 3.4 } as never, ctx), ["Ø6.8 THRU", "M8-6H THRU"], "a thread deeper than the plate runs through");
+  assert.deepEqual(holeText({ t: "c", c: [-20, 0, 20], ax: [0, 0, 1], r: 2.5 } as never, ctx), ["Ø5 ↧12", "M6-6H ↧10"]);
+  // Section on x = 0 from the top view: one side keeps only the M8 hole's thread, the other only the M6's.
+  const parent = { id: "t", name: "Top", orient: "top", x: 100, y: 200 };
+  const kept = (look: 1 | -1) => {
+    const v = { id: "s", name: "A", kind: "section", parent: "t", line: [0, -40, 0, 40], look, x: 250, y: 200, marks: false };
+    const sheet = { id: "sh", name: "S", size: "A3", scale: [1, 1], projection: "first", views: [parent, v], annots: [] } as never;
+    // The thread's lines along the axis lie at its major radius: 4 for the M8, 3 for the M6 (the view runs the axis across).
+    return [...new Set(viewAnnots(sheet, v as never, pl, ctx).prims.flatMap(p => p.layer === "THREAD" && p.t === "l" && Math.abs(p.p[1] - p.p[3]) < 1e-9 ? [Math.abs(Math.round(p.p[1]))] : []))].join(",");
+  };
+  assert.deepEqual([kept(1), kept(-1)].sort(), ["3", "4"], "each side keeps the thread of its own hole only");
 });

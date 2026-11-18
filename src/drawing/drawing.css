@@ -4,7 +4,24 @@
 .drw-top .btn svg, .drw-top .icon svg { vertical-align: -3px; }
 .drw-top .btn span { margin-left: 4px; }
 .drw-name { font-weight: 600; max-width: 28ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.drw-cmds { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-wrap: wrap; }
+.drw-right { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+/* Command bar: icon-over-label buttons in groups, like the 3D command bar (.mc-b). */
+.drw-cmds { display: flex; align-items: stretch; gap: 4px; padding: 3px 8px; background: var(--panel); border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: thin; }
+.drw-cg { display: flex; align-items: stretch; gap: 2px; }
+.drw-cg[hidden] { display: none; }
+.drw-cg > .drw-sep { align-self: center; height: 34px; margin: 0 4px; }
+.drw-cb.on[aria-haspopup] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text); }
+.drw-cfoot { display: flex; align-items: flex-end; padding: 0 8px; min-height: 26px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.drw-pal-h { flex: 1; margin: 0; padding: 8px 12px 6px; font-size: 12px; font-weight: 600; color: var(--text); }
+.drw-cg > .drw-dd { display: flex; }
+.drw-cb { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 2px; min-width: 50px; max-width: 92px; padding: 4px 5px 3px; border: 1px solid transparent; border-radius: 7px; background: none; color: var(--text); font: inherit; cursor: pointer; }
+.drw-cb svg { width: 20px; height: 20px; flex: none; }
+.drw-cb .mc-l { font-size: 11px; line-height: 1.15; text-align: center; white-space: normal; }
+.drw-cb:hover:not(:disabled), .drw-cb[aria-expanded="true"] { background: var(--panel-2); border-color: var(--line); }
+.drw-cb:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+.drw-cb.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text); }
+/* Under 1280 px the labels go (the tooltip still names each command), as on the 3D command bar. */
+@media (max-width: 1279px) { .drw-cb { min-width: 38px; } .drw-cb .mc-l { display: none; } }
 .drw-sep { width: 1px; align-self: stretch; background: var(--line); margin: 0 2px; }
 .drw-dd { position: relative; }
 .drw-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 5; min-width: 190px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); padding: 4px; display: flex; flex-direction: column; max-height: calc(100vh - 110px); overflow-y: auto; }
@@ -22,11 +39,19 @@
 .drw-ti.on { background: var(--accent-soft); color: var(--accent-text); }
 .drw-ti.on small { color: var(--accent-text); }
 .drw-ti svg { flex: none; }
+.drw-ti.grp { color: var(--muted); font-size: 12px; padding-top: 3px; padding-bottom: 3px; }
+.drw-ti.grp:hover { color: var(--text); }
+.drw-tw { display: inline-flex; flex: none; width: 14px; }
+.drw-tw svg { transition: transform .12s; transform: rotate(180deg); }
+.drw-ti.grp[aria-expanded="false"] .drw-tw svg { transform: rotate(90deg); }
+.drw-ti.ann svg { width: 16px; height: 16px; }
+.drw-ti.dangle small { color: var(--warn-text); }
+.drw-ti:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .drw-props { padding: 8px 10px 16px; }
 .drw-props .pm-group { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px 10px; margin: 0 0 10px; }
 .drw-props legend { font-weight: 600; padding: 0 4px; }
 .drw-f { display: flex; flex-direction: column; gap: 3px; margin-top: 7px; color: var(--muted); font-size: var(--fs-caption); }
-.drw-f input, .drw-f select { color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 7px; font-size: var(--fs-body); }
+.drw-f input, .drw-f select, .drw-cscale { color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 7px; font-size: var(--fs-body); }
 .drw-chk { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
 .drw-note { color: var(--muted); margin: 6px 0 0; }
 .drw-seg { margin-top: 7px; }
@@ -52,7 +77,9 @@
 .drw-tabs button { border: 0; background: transparent; padding: 0 14px; cursor: pointer; border-top: 2px solid transparent; white-space: nowrap; }
 .drw-tabs button.on { border-top-color: var(--accent); color: var(--accent-text); font-weight: 600; }
 .drw-tabs button:hover { background: var(--panel-2); }
-.drw-status { padding: 5px 12px; background: var(--panel); border-top: 1px solid var(--line); color: var(--muted); min-height: 28px; }
+.drw-status { display: flex; align-items: center; gap: 16px; padding: 5px 12px; background: var(--panel); border-top: 1px solid var(--line); color: var(--muted); min-height: 28px; }
+.drw-st-msg { flex: 1; min-width: 0; }
+.drw-xy { flex: none; font-variant-numeric: tabular-nums; white-space: pre; }
 .drw-status.warn { color: var(--warn-text); }
 @media (max-width: 767px) {
   .drw-body { flex-direction: column-reverse; }
@@ -80,13 +107,12 @@ circle.drw-edge { fill: none; }
 .drw-stack { align-items: center; justify-content: space-between; font-size: 12px; }
 
 /* View palette (FR-UI-072) */
-.drw-ptabs { display: flex; gap: 2px; padding: 6px 10px 0; border-bottom: 1px solid var(--line); }
-.drw-ptabs button { flex: 1; padding: 6px 4px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--muted); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
-.drw-ptabs button.on { color: var(--text); border-bottom-color: var(--accent); }
 .drw-pal { border-bottom: 1px solid var(--line); padding: 8px 10px; }
 .drw-pal[hidden] { display: none; }
-.drw-at-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
-.drw-at { justify-content: flex-start; text-align: left; }
+/* Annotation tab: icon tiles in groups, like the 3D command bar's buttons (.mc-b). */
+.drw-menu button:has(> svg) { display: flex; align-items: center; gap: 8px; padding: 5px 10px; }
+.drw-menu button > svg { flex: none; }
+.drw-menu-sep { height: 1px; margin: 3px 6px; background: var(--line); flex: none; }
 .drw-pal-note { margin: 0 0 6px; font-size: 11px; color: var(--muted); }
 .drw-pal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 6px; }
 .drw-pt { display: grid; justify-items: center; gap: 2px; padding: 4px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 11px; cursor: grab; }
@@ -106,3 +132,75 @@ circle.drw-edge { fill: none; }
 .drw-fs { border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px 6px; margin: 8px 0 0; }
 .drw-fs legend { font-size: 12px; padding: 0 4px; }
 .drw-exlist { max-height: 160px; overflow-y: auto; }
+/* Side panel (FeatureManager + PropertyManager): the palette folds away; the properties get a title row and fold by group. */
+.drw-ptabs-row { display: flex; align-items: flex-end; border-bottom: 1px solid var(--line); }
+.drw-palfold { flex: none; display: grid; place-items: center; width: 28px; height: 28px; margin: 0 6px 3px 0; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; }
+.drw-palfold:hover { background: var(--panel-2); color: var(--text); }
+.drw-palfold:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+.drw-palfold svg { transition: transform .15s; }
+.drw-side.palfold .drw-palfold svg { transform: rotate(180deg); }
+.drw-side.palfold .drw-pal { display: none; }
+.drw-pal-grid { grid-template-columns: repeat(auto-fill, minmax(56px, 1fr)); gap: 4px; }
+.drw-pt svg { width: 40px; height: 40px; }
+.drw-pm-head { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px; margin: -8px -10px 8px; padding: 8px 10px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.drw-pm-ic { display: grid; place-items: center; width: 28px; height: 28px; flex: none; border-radius: 7px; background: var(--accent-soft); color: var(--accent-text); }
+.drw-pm-ic svg { width: 18px; height: 18px; }
+.drw-pm-t { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.drw-pm-t b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drw-pm-t small { color: var(--muted); font-size: 11px; }
+.drw-pm-x { flex: none; }
+.drw-fold { display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; background: none; color: inherit; font: inherit; font-weight: 600; cursor: pointer; }
+.drw-fold::before { content: ""; width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid currentColor; transition: transform .15s; }
+.drw-fold[aria-expanded="false"]::before { transform: rotate(-90deg); }
+.drw-fold:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+.drw-props .pm-group.folded { padding-bottom: 0; border-bottom-color: transparent; border-left-color: transparent; border-right-color: transparent; border-radius: 0; }
+.drw-props .pm-group.folded > :not(legend) { display: none !important; }
+/* Annotation dialogs (geometric tolerance, hole callout): symbol buttons, the frame's rows, a preview. */
+dialog.ad-dlg { width: min(520px, calc(100vw - 32px)); }
+dialog.ad-dlg.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(100vw - 32px)); }
+.ad-syms { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 2px; }
+.ad-symb { display: inline-grid; place-items: center; min-width: 34px; height: 34px; padding: 0 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); cursor: pointer; font-size: 15px; line-height: 1; }
+.ad-symb:hover { border-color: var(--accent); }
+.ad-symb:focus-visible, .gt-sym:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ad-symb.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, var(--panel)); }
+.ad-symb.wide { font-size: 12px; }
+.gt-ico { width: 22px; height: 22px; display: block; overflow: visible; }
+.gt-ico line, .gt-ico path, .gt-ico circle { stroke-width: 0.32; stroke-linecap: round; }
+.gt-ico path[d^="M1 7"] { stroke-width: 1; }
+svg.gt-ico[viewBox="0 0 24 14"] { width: 30px; height: 18px; }
+.hc-ico { width: 20px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.gt-circ { display: inline-grid; place-items: center; width: 20px; height: 20px; border: 1.4px solid currentColor; border-radius: 50%; font-size: 12px; font-weight: 600; }
+.gt-plain { font-weight: 600; }
+.gt-scroll { overflow-x: auto; margin-top: 6px; }
+.gt-rows { border-collapse: collapse; width: 100%; }
+.gt-rows th { text-align: left; font-weight: 500; font-size: var(--fs-caption); color: var(--muted); padding: 2px 6px 4px 0; white-space: nowrap; }
+dialog .gt-rows td, dialog .gt-rows td:first-child { padding: 3px 6px 3px 0; vertical-align: middle; font-family: inherit; font-size: inherit; }
+.gt-rows input:not([type=checkbox]) { width: 100%; min-width: 84px; box-sizing: border-box; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 7px; font-size: var(--fs-body); }
+.gt-rows input.gt-datum { min-width: 56px; }
+.gt-sym { display: inline-flex; align-items: center; gap: 4px; height: 34px; padding: 0 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); cursor: pointer; }
+.gt-sym:disabled { opacity: 0.45; cursor: default; }
+.gt-rowend { white-space: nowrap; }
+.gt-rowend .drw-chk { display: inline-flex; margin: 0 6px 0 0; }
+.gt-pal { position: fixed; z-index: 5; box-shadow: var(--shadow); display: grid; grid-template-columns: repeat(7, 38px); gap: 4px; padding: 8px; margin: 4px 0; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); width: max-content; max-width: 100%; }
+.gt-opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 0 12px; align-items: end; }
+.gt-btw { display: flex; align-items: center; gap: 6px; }
+.gt-btw input { width: 56px; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 7px; font-size: var(--fs-body); }
+.ad-dlg textarea { color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 7px; font: inherit; font-size: var(--fs-body); resize: vertical; }
+.ad-dlg textarea[readonly] { background: var(--panel-2); color: var(--muted); }
+.ad-pvbox { border: 1px solid var(--line); border-radius: 6px; padding: 8px; margin: 10px 0 4px; background: #fff; overflow-x: auto; min-height: 44px; display: grid; place-items: center; }
+.ad-pv { display: block; max-width: 100%; height: auto; color: #000; font-family: 'DejaVu Sans', Arial, Helvetica, sans-serif; }
+.drw-props .ad-pvbox { margin-top: 4px; }
+.drw-callout { margin: 4px 0 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); font: inherit; white-space: pre-wrap; }
+.wd-ico line { stroke-width: 0.3; }
+.wd-dlg .wd-vals { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+.wd-dlg .wd-vals input, .wd-line input:not([type=checkbox]) { width: 100%; min-width: 0; box-sizing: border-box; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 7px; font-size: var(--fs-body); }
+.wd-line { display: flex; flex-wrap: wrap; align-items: end; gap: 4px 16px; margin: 8px 0; padding: 6px 0; border-top: 2px solid var(--text); }
+.wd-line .drw-f { flex: 1 1 180px; margin-top: 0; }
+.drw-weldrow { display: flex; align-items: center; gap: 8px; }
+.sf-ico { width: 32px; height: 22px; }
+.sf-ico line, .sf-ico circle, .sf-ico path { stroke-width: 0.6; }
+.drw-icoset { display: flex; flex-wrap: wrap; gap: 4px; }
+.drw-icoopt { position: relative; display: inline-grid; place-items: center; min-width: 32px; height: 32px; padding: 0 4px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); cursor: pointer; font-size: 14px; }
+.drw-icoopt input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.drw-icoopt:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, var(--panel)); }
+.drw-icoopt:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }

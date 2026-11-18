@@ -1,4 +1,4 @@
-// Trace paths (FR-FT-122): SolidWorks' motion study Results → Trace Path / Plot. A point picked on a component is
+// Trace paths (FR-FT-122): a CAD app's motion study Results → Trace Path / Plot. A point picked on a component is
 // followed through the solved frames; its path is drawn in the view and its position, distance from the start,
 // speed, acceleration and the component's angle and angular speed are plotted under the timeline and saved as CSV. Pure functions: the manager supplies the frames.
 import { applyPoint, compose, invert } from "../asm/math";
@@ -32,7 +32,7 @@ export function tracePoints(frames: Record<string, Tf>[], comp: string, p: V3): 
 }
 
 /**
- * The frames seen from component `rel` (SolidWorks' trace path "relative to" a component): every transform
+ * The frames seen from component `rel` (a CAD app's trace path "relative to" a component): every transform
  * re-expressed in `rel`'s own coordinates. A frame without `rel` keeps the last one it had (or stays in world).
  */
 export function relativeFrames(frames: Record<string, Tf>[], rel: string): Record<string, Tf>[] {

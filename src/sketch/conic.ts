@@ -74,7 +74,7 @@ export function parabolaFrom(f: V2, v: V2, p0: V2, p1: V2): [V2, V2, V2] | null 
   return [at(s0, (s0 * s0) / (4 * fl)), at((s0 + s1) / 2, (s0 * s1) / (4 * fl)), at(s1, (s1 * s1) / (4 * fl))];
 }
 
-/** Evaluates the equation's text with x (explicit) or t (parametric) set; angles in radians, as in SolidWorks. */
+/** Evaluates the equation's text with x (explicit) or t (parametric) set; angles in radians, as in other CAD apps. */
 function fn(src: string, name: string, vars: Record<string, number>): (x: number) => number {
   const extra = Object.fromEntries(Object.entries(vars).map(([k, v]) => [k, { v, unit: true }]));
   return (x: number) => evaluate(src, "number", "mm", { ...extra, [name]: { v: x, unit: true } });

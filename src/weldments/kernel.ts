@@ -4,9 +4,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { FaceRef, Feature, Frame, PartDoc, PlaneRef, V2, V3 } from "../model/types";
 import { FeatureError, type Named } from "../kernel/model";
-import { anchorPoint, loopSegs, outline, profileName, profileShape, type Loop, type LoopSeg, type ProfileShape } from "./profiles";
+import { ANCHORS, anchorPoint, loopSegs, outline, profileName, profileShape, type Anchor, type Loop, type LoopSeg, type ProfileShape } from "./profiles";
 import { sketchShape } from "./custom";
-import type { CutItem, EndCapFeature, GussetFeature, MemberFeature, TrimExtendFeature, WeldBeadFeature, WeldSegRef, WeldFeature } from "./types";
+import type { Pierce, CutItem, EndCapFeature, GussetFeature, MemberFeature, TrimExtendFeature, WeldBeadFeature, WeldSegRef, WeldFeature } from "./types";
 import { capDir, cornerKey } from "./types";
 
 /** The parts of `Modeller` the weldment features use (its private helpers, reached at run time). */
@@ -141,11 +141,22 @@ export function groupOf(f: MemberFeature, ent: string): Pick<MemberFeature, "anc
   return f.groups?.find(g => g.ents.includes(ent)) ?? f;
 }
 
+/** The profile point that goes on the path: an anchor, the sketch origin ("o", the default), or a profile sketch point (`p:<id>`). */
+export function pierceOf(shape: ProfileShape, a: Pierce | undefined): V2 {
+  if (!a || a === "o") return shape.origin ?? [0, 0];
+  if (a.startsWith("p:")) {
+    const p = shape.points?.[a.slice(2)];
+    if (!p) throw new FeatureError("E-WLD-PIERCE", "The profile point the member is located by is gone: pick another profile position.");
+    return p;
+  }
+  return anchorPoint(shape, a as Anchor);
+}
+
 function placement(f: MemberFeature, seg: PathSeg, ref: { sketch: string; ent: string }, doc: PartDoc, frames: Record<string, Frame>, shape = memberShape(f, doc)): Placement {
   const v = upOf(ref, seg, doc, frames, f.align);
   const u = cross(v, seg.wa);
   const g = groupOf(f, ref.ent);
-  const an = g.anchor ? anchorPoint(shape, g.anchor) : shape.origin ?? [0, 0];
+  const an = pierceOf(shape, g.anchor);
   const a = g.angle?.v ?? 0, c = Math.cos(a), s = Math.sin(a);
   const p2 = (q: V2): V2 => {
     let x = q[0] - an[0];
@@ -155,6 +166,28 @@ function placement(f: MemberFeature, seg: PathSeg, ref: { sketch: string; ent: s
   };
   const R = Math.max(...outline(shape.outer, 8).map(q => Math.hypot(...p2(q))));
   return { u, v, w: seg.wa, p2, R, shape };
+}
+
+/**
+ * Locate profile: the points a member's profile can sit on the path by (box anchors; a sketch profile's origin and
+ * points), where they are now at the start of segment `ent`, world mm. Points that coincide are listed once (a
+ * sketch point before an anchor), the others in `also`. Empty when the member can't be placed.
+ */
+export function pierceSpots(f: MemberFeature, ent: string, doc: PartDoc, frames: Record<string, Frame>): { key: Pierce; at: V3; also: Pierce[] }[] {
+  const ref = f.segs.find(s => s.ent === ent);
+  if (!ref) return [];
+  try {
+    const seg = segOf(ref, doc, frames), shape = memberShape(f, doc);
+    const pl = placement(f, seg, ref, doc, frames, shape);
+    const keys: Pierce[] = [...(f.profile === "sketch" ? [...Object.keys(shape.points ?? {}).map((id): Pierce => `p:${id}`), "o" as Pierce] : []), ...ANCHORS];
+    const out: { key: Pierce; at: V3; q: V2; also: Pierce[] }[] = [];
+    for (const key of keys) {
+      const q = pierceOf(shape, key);
+      const same = out.find(o => Math.hypot(o.q[0] - q[0], o.q[1] - q[1]) < 1e-6);
+      if (same) same.also.push(key); else out.push({ key, q, at: at3(pl, seg.a, q), also: [] });
+    }
+    return out.map(({ key, at, also }) => ({ key, at, also }));
+  } catch { return []; }
 }
 
 const at3 = (pl: Placement, o: V3, q: V2): V3 => add(add(o, mul(pl.u, pl.p2(q)[0])), mul(pl.v, pl.p2(q)[1]));
@@ -253,6 +286,20 @@ function bool(h: WeldHost, kind: "fuse" | "cut", a: Named, b: Named, fid: string
   return h.carry(mk, [a, b], mk.Shape(), fid);
 }
 
+/** All the pieces fused in one go with BOPAlgo_GlueShift: they only touch (beads end to end), never overlap. */
+function glueAll(h: WeldHost, parts: Named[], fid: string): Named {
+  const oc = h.oc;
+  const mk = new oc.BRepAlgoAPI_Fuse_1();
+  const A = new oc.TopTools_ListOfShape_1(), B = new oc.TopTools_ListOfShape_1();
+  A.Append_1(parts[0].shape);
+  for (const p of parts.slice(1)) B.Append_1(p.shape);
+  mk.SetArguments(A); mk.SetTools(B);
+  mk.SetGlue(oc.BOPAlgo_GlueEnum.BOPAlgo_GlueShift);
+  mk.Build(new oc.Message_ProgressRange_1());
+  if (!mk.IsDone() || mk.HasErrors()) throw new FeatureError("E-WLD-BOOL", "A weldment cut or join failed.");
+  return h.carry(mk, parts, mk.Shape(), fid);
+}
+
 /** The solid of a shape nearest a point (pieces a cut leaves on the far side are dropped). */
 function pieceNear(h: WeldHost, body: Named, p: V3): Named {
   const oc = h.oc;
@@ -349,7 +396,14 @@ export function member(h: WeldHost, f: MemberFeature, doc: PartDoc, prev: Named 
       const nm = `${base}:${k ? "end" : "start"}`;
       // A mitre gap is split between the two ends, measured square to the mitre plane.
       if (e.kind === "miter") body = bool(h, "cut", body, halfBox(h, sub(P, mul(e.n, gap / 2)), e.n, big, nm), f.id);
-      if (e.kind === "trimmed") {
+      if (e.kind === "trimmed" && f.coped) {
+        // Coped cut: the end follows the other member's outer shape (a round tube's saddle), cut by its filled
+        // profile run well past both its ends; a weld gap moves the cut back along this member.
+        const o = segs[e.other], op = pls[e.other], run = 4 * (op.R + pl.R);
+        const back = mul(outAt(i, k as 0 | 1), -gap);
+        const t = prism(h, op, add(sub(o.a, mul(o.w, run)), back), add(add(o.b, mul(o.w, run)), back), nm, true);
+        body = bool(h, "cut", body, { ...t, names: t.faces.map(() => nm) }, f.id);
+      } else if (e.kind === "trimmed") {
         // Cut square to the other member's face that looks at this one (the plane holds its axis).
         const o = segs[e.other], op = pls[e.other];
         const din = outAt(i, k as 0 | 1);
@@ -507,7 +561,7 @@ function shifted(h: WeldHost, b: Named, d: V3): Named {
 }
 
 /**
- * End miter (SolidWorks Trim/Extend corner type): the picked member and the boundary member are both
+ * End miter (CAD app Trim/Extend corner type): the picked member and the boundary member are both
  * lengthened to the point where their axes meet (the middle of the shortest join for skew axes) and cut
  * on the plane that halves the corner, so their end faces meet flush.
  */
@@ -746,13 +800,15 @@ export function gusset(h: WeldHost, f: GussetFeature, prev: Named | null, frames
   const leg = (n: V3, other: V3) => { let d = unit(cross(L, n)); if (dot(d, other) < 0) d = mul(d, -1); return d; };
   const u1 = leg(a.n, b.n), u2 = leg(b.n, a.n);
   const d1 = f.d1.v, d2 = f.d2.v, c = Math.min(f.chamfer?.v ?? 0, Math.min(d1, d2) * 0.9);
+  // An unequal chamfer: `chamfer` along face 1, `chamfer2` along face 2.
+  const c2 = c > 1e-9 && f.chamfer2 ? Math.min(f.chamfer2.v, d2 * 0.9) : c;
   const at = (x: number, y: number) => add(add(P, mul(u1, x)), mul(u2, y));
   const pts: V3[] = c > 1e-9 ? [at(c, 0)] : [at(0, 0)];
   if (f.shape === "poly" && f.d3 && f.d3.v > 1e-9) {
-    const d3v = Math.min(f.d3.v, Math.min(d1, d2) * 0.9);
-    pts.push(at(d1, 0), at(d1, d3v), at(d3v, d2), at(0, d2));
+    const { d3, d4 } = gussetEnds(f);
+    pts.push(at(d1, 0), at(d1, d3), at(d4, d2), at(0, d2));
   } else pts.push(at(d1, 0), at(0, d2));
-  if (c > 1e-9) pts.push(at(0, c));
+  if (c > 1e-9) pts.push(at(0, c2));
   const shifted = pts.map(p => sub(p, mul(L, th / 2)));
   const mk = new oc.BRepBuilderAPI_MakePolygon_1();
   for (const p of shifted) mk.Add_1(new oc.gp_Pnt_3(p[0], p[1], p[2]));
@@ -800,8 +856,42 @@ export function weldBead(h: WeldHost, f: WeldBeadFeature, prev: Named | null, _f
       n = unit(sub(q, mul(a, dot(q, a))));
       // The surface's own normal points away from the axis on a right-handed frame, towards it on a left-handed one.
       if (!ad.Cylinder().Position().Direct()) n = mul(n, -1);
-    } else return null;
+    } else {
+      // Any other surface (a cone, a torus, a spline face): the normal at the point's (u, v) on it.
+      try {
+        const uv = new oc.ShapeAnalysis_Surface(oc.BRep_Tool.Surface_2(face)).ValueOfUV(new oc.gp_Pnt_3(p[0], p[1], p[2]), 1e-6);
+        const pr = new oc.BRepLProp_SLProps_1(ad, uv.X(), uv.Y(), 1, 1e-9);
+        if (!pr.IsNormalDefined()) return null;
+        const d = pr.Normal();
+        n = [d.X(), d.Y(), d.Z()];
+      } catch { return null; }
+    }
     return face.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED ? mul(n, -1) : n;
+  };
+  /** Flat or cylindrical: a bead along a straight or round edge between two such faces keeps one cross-section. */
+  const simple = (face: any) => { const ty = new oc.BRepAdaptor_Surface_2(face, true).GetType(); return ty === S.GeomAbs_Plane || ty === S.GeomAbs_Cylinder; };
+  /** A bead whose cross-section changes along the root (a tube meeting a tube, a curved edge): a loft through sections, named by GeneratedFace. */
+  const pushLoft = (secs: { face: any; edges: [any, string][] }[]) => {
+    // The same first and last section (a closed chain): ThruSections closes the ring and makes no caps.
+    const mk = new oc.BRepOffsetAPI_ThruSections(true, false, 1e-6);
+    // The sections are made alike (root, leg 1, leg 2): OCCT's own matching turns them as the root goes round.
+    mk.CheckCompatibility(false);
+    for (const x of secs) mk.AddWire(oc.BRepTools.OuterWire(x.face));
+    mk.Build(new oc.Message_ProgressRange_1());
+    if (!mk.IsDone()) return false;
+    let shape = mk.Shape();
+    if (h.volume(shape) < 0) shape = shape.Reversed();
+    const faces = h.sub(shape, "FACE"), k = beads.length;
+    const names: (string | null)[] = faces.map(() => null);
+    for (const [e, role] of secs[0].edges) {
+      let g: any = null;
+      try { g = mk.GeneratedFace(e); } catch { g = null; }
+      const i = g && !g.IsNull() ? faces.findIndex(x => x.IsSame(g)) : -1;
+      if (i >= 0) names[i] = `${f.id}:b${k}:${role}`;
+    }
+    const caps = [...h.sub(mk.FirstShape(), "FACE"), ...h.sub(mk.LastShape(), "FACE")];
+    beads.push({ shape, faces, names: faces.map((x, i) => names[i] ?? (caps.some(c => c.IsSame(x)) ? `${f.id}:b${k}:cap` : `${f.id}:b${k}:side:${i}`)) });
+    return true;
   };
   /** The bead's cross-section at `p`, and its edges by role: the legs on face 1 and face 2, and the weld face. */
   const tri = (p: V3, ua: V3, ub: V3) => {
@@ -840,8 +930,33 @@ export function weldBead(h: WeldHost, f: WeldBeadFeature, prev: Named | null, _f
     return set;
   };
   const set1 = grow(f.faces1), set2 = grow(f.faces2);
+  if (f.both) {
+    // Both sides: the other side of each flat set 1 face's plate = the nearest flat face of its body behind it, facing the opposite way.
+    const flat = (x: any): { p: V3; n: V3 } | null => {
+      const ad = new oc.BRepAdaptor_Surface_2(x, true);
+      if (ad.GetType() !== S.GeomAbs_Plane) return null;
+      const l = ad.Plane().Location(), p: V3 = [l.X(), l.Y(), l.Z()];
+      return { p, n: normalAt(x, p)! };
+    };
+    const solids = h.bodyList(prev);
+    for (const fa of [...set1]) {
+      const a = flat(fa), body = a && solids.find(b => b.faces.some(x => x.IsSame(fa)));
+      if (!a || !body) continue;
+      let best: any[] = [], bd = Infinity;
+      for (const g of body.faces) {
+        const b = flat(g);
+        if (!b || dot(a.n, b.n) > -1 + 1e-6) continue;
+        const d = dot(sub(a.p, b.p), a.n);
+        if (d < 1e-6) continue;
+        if (d < bd - 1e-6) { best = [g]; bd = d; } else if (Math.abs(d - bd) <= 1e-6) best.push(g);
+      }
+      for (const g of best) if (!set1.some(x => x.IsSame(g)) && !set2.some(x => x.IsSame(g))) set1.push(g);
+    }
+  }
   /** One straight or round stretch of the root: its ends, length, and a builder for the bead from distance a to b along it. */
-  type Run = { p0: V3; p1: V3; len: number; make: (a: number, b: number) => void };
+  type Sec = { face: any; edges: [any, string][] };
+  /** `sec` (curved roots): the cross-section at a distance along the run, so a chain of such runs is lofted as one bead. */
+  type Run = { p0: V3; p1: V3; len: number; make: (a: number, b: number) => void; sec?: (d: number) => Sec | null };
   const runs: Run[] = [];
   for (const fa of set1) for (const fb of set2) {
     if (fa.IsSame(fb)) continue;
@@ -866,7 +981,8 @@ export function weldBead(h: WeldHost, f: WeldBeadFeature, prev: Named | null, _f
       };
       if (!section(t0)) { skipped++; continue; }
       const p0 = at(t0).p, p1 = at(t1).p;
-      if (ty === oc.GeomAbs_CurveType.GeomAbs_Line) {
+      const exact = simple(fa) && simple(fb);
+      if (ty === oc.GeomAbs_CurveType.GeomAbs_Line && exact) {
         const dv = sub(p1, p0), L = len(dv);
         if (L < 1e-6) continue;
         const w = mul(dv, 1 / L);
@@ -875,14 +991,30 @@ export function weldBead(h: WeldHost, f: WeldBeadFeature, prev: Named | null, _f
           const v = mul(w, b - a);
           push(new oc.BRepPrimAPI_MakePrism_1(face, new oc.gp_Vec_4(v[0], v[1], v[2]), false, true), edges);
         } });
-      } else if (ty === oc.GeomAbs_CurveType.GeomAbs_Circle) {
+      } else if (ty === oc.GeomAbs_CurveType.GeomAbs_Circle && exact) {
         // Round the circle's axis: a tube standing on a plate, or the round corners of a hollow section.
         const ax = ad.Circle().Axis(), r = ad.Circle().Radius();
         runs.push({ p0, p1, len: r * (t1 - t0), make: (a, b) => {
           const { face, edges } = section(t0 + a / r)!;
           push(new oc.BRepPrimAPI_MakeRevol_1(face, ax, (b - a) / r, true), edges);
         } });
-      } else skipped++;
+      } else {
+        // Any other root (an ellipse where a tube meets a plate at an angle, the saddle where two tubes meet, a curve
+        // between curved faces): sections every few millimetres, lofted, at most 64 per piece.
+        let L = 0;
+        try { L = oc.GCPnts_AbscissaPoint.Length_7(ad, t0, t1, 1e-7); } catch { L = 0; }
+        if (!(L > 1e-6)) { skipped++; continue; }
+        const param = (d: number) => new oc.GCPnts_AbscissaPoint_2(ad, d, t0).Parameter();
+        // The sections must exist along the whole edge (the faces are not tangent anywhere on it).
+        const probe = Array.from({ length: 9 }, (_x, i) => section(param((L * i) / 8)));
+        if (probe.some(x => !x)) { skipped++; continue; }
+        const sec = (d: number) => section(param(Math.min(L, Math.max(0, d))));
+        runs.push({ p0, p1, len: L, sec, make: (a, b) => {
+          const n = Math.min(64, Math.max(4, Math.ceil((b - a) / Math.max(1, Math.min(sz, sz2)))));
+          const secs = Array.from({ length: n + 1 }, (_x, i) => sec(a + ((b - a) * i) / n));
+          if (secs.some(x => !x) || !pushLoft(secs as Sec[])) skipped++;
+        } });
+      }
     }
   }
   // Runs chained end to end; each chain gets its welds as windows of distance along it: the whole chain, or the
@@ -927,6 +1059,31 @@ export function weldBead(h: WeldHost, f: WeldBeadFeature, prev: Named | null, _f
       const off = lo + (f.inter.stagger && chain % 2 ? e / 2 : 0);
       for (let w0 = off; w0 < hi; w0 += e) { const x = Math.max(w0, lo), y = Math.min(w0 + l, hi); if (y - x >= 0.05) wins.push([x, y]); }
     }
+    // A chain of curved runs only (the saddle round a tube on a tube): each window is lofted in one go, since OCCT
+    // can drop one of two lofted pieces that only touch when fusing them.
+    if (pieces.every(p => p.r.sec)) {
+      const closed = d3(pieces[0].rev ? pieces[0].r.p1 : pieces[0].r.p0, pieces.at(-1)!.rev ? pieces.at(-1)!.r.p0 : pieces.at(-1)!.r.p1) < tol;
+      const secAt = (x: number) => {
+        const p = pieces.find(q => x <= q.s + q.r.len + 1e-9) ?? pieces.at(-1)!;
+        const d = Math.min(p.r.len, Math.max(0, x - p.s));
+        return p.r.sec!(p.rev ? p.r.len - d : d);
+      };
+      for (const [x, y] of wins) {
+        const whole = closed && x <= 1e-9 && y >= L - 1e-9;
+        // Sections at every piece end inside the window (corners of the root) and every few millimetres between.
+        const ts = new Set<number>([x, y]);
+        for (const p of pieces) for (const q of [p.s, p.s + p.r.len]) if (q > x + 1e-6 && q < y - 1e-6) ts.add(q);
+        const n = Math.min(96, Math.max(4, Math.ceil((y - x) / Math.max(1, Math.min(sz, sz2)))));
+        for (let i = 1; i < n; i++) ts.add(x + ((y - x) * i) / n);
+        const at = [...ts].sort((a, b) => a - b).filter((v, i, a) => i === 0 || v - a[i - 1] > 1e-6 * (1 + L));
+        const secs = (whole ? at.slice(0, -1) : at).map(secAt);
+        if (secs.some(q => !q)) { skipped++; continue; }
+        if (whole) secs.push(secs[0]);
+        if (pushLoft(secs as Sec[])) made++; else skipped++;
+      }
+      chain++;
+      continue;
+    }
     for (const { r, rev: rv, s: s0 } of pieces) {
       for (const [x0, y0] of wins) {
         const x = Math.max(x0, s0), y = Math.min(y0, s0 + r.len);
@@ -941,15 +1098,24 @@ export function weldBead(h: WeldHost, f: WeldBeadFeature, prev: Named | null, _f
   if (runs.length && !made) throw new FeatureError("E-WLD-BEAD", "The weld starts past the end of the edges.");
   // Pieces that meet end to end become one bead (all round a tube, along a side and round its corners).
   if (beads.length > 1) {
-    try {
-      let all = beads[0];
-      for (const b of beads.slice(1)) all = bool(h, "fuse", all, b, f.id);
-      const joined = h.bodyList(unify(h, all));
-      if (joined.length && joined.length < beads.length) beads.splice(0, beads.length, ...joined);
-    } catch { /* kept as separate pieces */ }
+    // The join must keep every piece's volume: lofted pieces (curved roots) can come out of a plain fuse with one
+    // missing, so they are glued instead (they only touch end to end); failing that they stay separate pieces.
+    const total = beads.reduce((a, b) => a + Math.abs(h.volume(b.shape)), 0);
+    for (const glue of [false, true]) {
+      try {
+        let all: Named;
+        if (!glue) { all = beads[0]; for (const b of beads.slice(1)) all = bool(h, "fuse", all, b, f.id); }
+        else all = glueAll(h, beads, f.id);
+        const joined = h.bodyList(unify(h, all));
+        const v = joined.reduce((a, b) => a + Math.abs(h.volume(b.shape)), 0);
+        if (Math.abs(v - total) > 1e-4 * total) continue;
+        if (joined.length && joined.length < beads.length) beads.splice(0, beads.length, ...joined);
+        break;
+      } catch { /* the next way, else kept as separate pieces */ }
+    }
   }
-  if (skipped) h.warning = "Weld beads follow straight and round edges between flat and cylindrical faces; other edges were skipped.";
-  if (!beads.length) throw new FeatureError("E-WLD-BEAD", "The faces of the two sets do not meet along a straight or round edge.");
+  if (skipped) h.warning = "Some edges were skipped: the faces are tangent somewhere along them, so a bead has no room there.";
+  if (!beads.length) throw new FeatureError("E-WLD-BEAD", "The faces of the two sets do not meet along an edge a bead can follow.");
   return h.compoundOf([...h.bodyList(prev), ...beads]);
 }
 
@@ -991,6 +1157,23 @@ function arcLength(h: WeldHost, part: Named, s: PathSeg): number {
   };
   const ts = edgePoints(h, part.shape).map(along);
   return Math.max(...ts) - Math.min(...ts);
+}
+
+/**
+ * A polygonal gusset's end flats: `d3` up face 2's direction at the end of leg 1 and `d4` along face 1's direction at the
+ * end of leg 2. `d4` is the feature's own, or follows the profile angle (the sloping edge's angle from face 1), else = d3.
+ */
+export function gussetEnds(f: GussetFeature): { d3: number; d4: number } {
+  const d1 = f.d1.v, d2 = f.d2.v;
+  const own = f.d4 || f.polyAngle;
+  const d3 = Math.min(f.d3?.v ?? 0, (own ? d2 : Math.min(d1, d2)) * 0.9);
+  if (f.polyAngle) {
+    const a = f.polyAngle.v;
+    const d4 = a > 1e-6 && a < Math.PI - 1e-6 ? d1 - (d2 - d3) / Math.tan(a) : -1;
+    if (!(d4 > 1e-6) || d4 > d1 * 2) throw new FeatureError("E-WLD-GUSSETANG", "The profile angle doesn't fit this gusset: make it steeper, or the leg along face 1 longer.");
+    return { d3, d4 };
+  }
+  return { d3, d4: f.d4 ? Math.min(f.d4.v, d1 * 0.9) : d3 };
 }
 
 /** The weldment cut list (FR-FT-121): members by profile, length and end angles; plates by size; weld beads by size. */

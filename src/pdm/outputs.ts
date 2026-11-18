@@ -2,10 +2,9 @@
 // its STEP, named `<part number or name>_rev<revision>`; PDFs of versions that are not released carry a
 // "Not released" watermark. STEP files carry the revision and part number (FR-PDM-034).
 import fontUrl from "dejavu-fonts-ttf/ttf/DejaVuSans.ttf?url";
-import { t } from "../i18n";
 import { stampStepBytes } from "./stepStamp";
 import { PART_NUMBER } from "./workflow";
-import type { FileRec, Vault } from "./vault";
+import type { Vault } from "./vault";
 
 const occtBase = () => new URL("occt/", document.baseURI).href;
 const base = (path: string) => path.split("/").pop()!.replace(/\.[^.]+$/, "");
@@ -66,21 +65,11 @@ export async function releaseOutputs(v: Vault, ids: string[]): Promise<{ made: s
       const name = `${safe(number || base(f.path))}${f.revision ? `_rev${safe(f.revision)}` : ""}.${kind}`;
       const out = kind === "pdf" ? await drawingPdf(bytes, number || base(f.path)) : await documentStep(f.path, bytes, { revision: f.revision, number: number || undefined, description: f.card?.Description || undefined });
       const path = folderOf(f.path) + name;
-      await store(v, path, out, `Made on release of ${f.path}${f.revision ? ` (revision ${f.revision})` : ""}`);
+      await v.putOutput(path, out, f, `Made on release of ${f.path}${f.revision ? ` (revision ${f.revision})` : ""}`);
       made.push(path);
     } catch (e) {
       failed.push({ path: f.path, error: (e as Error).message });
     }
   }
   return { made, failed };
-}
-
-async function store(v: Vault, path: string, data: Uint8Array, comment: string): Promise<FileRec> {
-  const have = await v.byPath(path);
-  if (!have) return v.add(path, data, comment);
-  if (!v.stateOf(have.state).checkout) throw new Error(t("{path} is in a state that cannot be changed.", { path }));
-  await v.checkOut(have.id);
-  await v.saveWorking(have.id, data);
-  await v.checkIn(have.id, comment);
-  return have;
 }

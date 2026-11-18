@@ -4,6 +4,7 @@
 // so the points always follow the part.
 import type { V3 } from "../kernel/drawing";
 import type { EdgeRef, Frame, HoleFeature, PartDoc, SketchFeature, SkEnt } from "../model/types";
+import { threadThrough } from "../model/types";
 import { loopPolygon, sketchCurves, type Seg } from "../sketch/profile";
 
 /** A model dimension in 3D: linear between two points (along `dir`, or aligned), or radial on a circle. */
@@ -30,9 +31,17 @@ export interface HoleInfo { id: string; pts: V3[]; n: V3; f: HoleFeature }
  * A cosmetic thread (FR-DRW-017): the round edge it starts at (centre, axis, radius), the diameter of its
  * thin line (internal: major, external: minor) and its length (null: up to the end of the cylinder).
  */
-export interface ThreadInfo { id: string; c: V3; ax: V3; r: number; d: number; L: number | null; internal: boolean }
+export interface ThreadInfo { id: string; c: V3; ax: V3; r: number; d: number; L: number | null; internal: boolean; size?: string }
 
 /** A sketch shown in the model, as 3D polylines for views that show sketches (FR-DRW-017). */
+/** A weldment part's fillet beads alike (FR-FT-121): leg size(s) ("5" or "5×8"), intermittent length/pitch(/1 = staggered), summed root length and how many beads. */
+export interface WeldInfo { legs: string; inter?: [number, number] | [number, number, 1]; length: number; qty: number }
+/**
+ * A weldment cut list item for the cut list table (FR-FT-121): `item` = its number in the cut list dialog (excluded
+ * items left out), `desc` the description typed for it, else the kernel's (profile, plate thickness, bead leg);
+ * member length and end angles, plate size, intermittent bead length/pitch, quantity and mass of one in kg.
+ */
+export interface CutInfo { item: number; kind: "member" | "plate" | "bead"; desc: string; own?: boolean; length?: number; a1?: number; a2?: number; plate?: [number, number, number]; inter?: [number, number] | [number, number, 1]; qty: number; kg: number }
 export interface SketchInfo { id: string; name: string; lines: V3[][] }
 
 /** The round edge a thread starts at, from the kernel. */
@@ -81,7 +90,8 @@ export function modelItems(doc: PartDoc, frames: Record<string, Frame>, sketches
           items.push({ src: `${sk.id}:${d.id}`, name: d.name, k: d.t === "radius" ? "rad" : "dia", p: [at(fr, c[0], c[1]), at(fr, c[0] + r * Math.cos(ang), c[1] + r * Math.sin(ang))], n: fr.n, value: d.t === "radius" ? r : 2 * r });
           continue;
         }
-        if (d.t === "angle") continue;
+        // Angles, arc lengths and distances to the side of a circle (FR-SK-060) are not shown as model items.
+        if (d.t === "angle" || d.t === "arclen" || d.cond?.some(c => c === "min" || c === "max")) continue;
         let a: [number, number] | null = null, b: [number, number] | null = null;
         if (d.off) {
           // Offset of concentric curves: along a ray from the centre, rim to rim.
@@ -113,10 +123,15 @@ export function modelItems(doc: PartDoc, frames: Record<string, Frame>, sketches
       const a = at(sfr, p.x, p.y), depth = f0.depth.v;
       items.push({ src: `${f0.id}:depth`, name: `${f0.name} depth`, k: "lin", p: [a, add(a, sfr.n, s * depth)], dir: sfr.n, n: sfr.n, side: true, value: depth });
     } else if (f0.type === "hole" && fr) {
-      holes.push({ id: f0.id, pts: f0.pts.map(([x, y]) => at(fr, x, y)), n: fr.n, f: f0 });
+      const h: HoleInfo = { id: f0.id, pts: f0.pts.map(([x, y]) => at(fr, x, y)), n: f0.flip ? [-fr.n[0], -fr.n[1], -fr.n[2]] : fr.n, f: f0 };
+      holes.push(h);
+      // A tapped hole carries its cosmetic thread (as a CAD app's Hole Wizard does): the major diameter over the
+      // thread depth, or the whole drill when it has none.
+      const major = f0.kind === "tapped" && !f0.threadMode ? f0.major ?? (f0.size ? parseFloat(f0.size.replace(/^M/i, "")) : NaN) : NaN;
+      if (major > f0.diameter.v) h.pts.forEach((c, i) => threads.push({ id: `${f0.id}:${i}`, c, ax: h.n, r: f0.diameter.v / 2, d: major, L: f0.threadDepth && !threadThrough(f0) ? f0.threadDepth.v : null, internal: true, ...(f0.size ? { size: f0.size } : {}) }));
     } else if (f0.type === "thread" && !f0.modelled && f0.edge && edgeCircle) {
       const e = edgeCircle(f0.edge);
-      if (e) threads.push({ id: f0.id, ...e, d: f0.diameter.v, L: f0.upToEnd ? null : f0.length.v, internal: !!f0.internal });
+      if (e) threads.push({ id: f0.id, ...e, d: f0.diameter.v, L: f0.upToEnd ? null : f0.length.v, internal: !!f0.internal, ...(f0.size ? { size: f0.size } : {}) });
     }
   }
   return { items, holes, threads, sketches: shown };

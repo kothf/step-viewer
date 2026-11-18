@@ -4,6 +4,7 @@
 // lines clipped to a circle; parents carry the cutting lines, detail circles and
 // view arrows of the views made from them (FR-DRW-012/013/014).
 import type { Projection, Seg2, V3 } from "../kernel/drawing";
+import { findMaterial } from "../tools/materials";
 import type { Pen, Layer, Prim } from "./prims";
 import { formatPrims, type Fields } from "./sheet";
 import type { DrawingView, HatchPattern, Sheet } from "./types";
@@ -390,6 +391,13 @@ export const HATCH_PATTERNS: { id: HatchPattern; name: string }[] = [
 /** The ANSI pattern for a material name (ANSI Y14.2); anything unknown is general use (ANSI31). */
 export function materialPattern(mat: string | null | undefined): Exclude<HatchPattern, "material"> {
   const m = (mat ?? "").toLowerCase();
+  const cat = findMaterial(mat)?.cat;
+  if (cat === "steel" || cat === "stainless") return "ansi32";
+  if (cat === "castiron") return /steel/.test(m) ? "ansi32" : "ansi31";
+  if (cat === "copper") return "ansi33";
+  if (cat === "aluminium" || /^(die cast )?magnesium/.test(m)) return "ansi38";
+  if (cat === "plastic" || cat === "elastomer" || cat === "composite") return "ansi34";
+  if (cat === "metal" && /zinc|zamak|lead/.test(m)) return "ansi37";
   if (/steel/.test(m)) return "ansi32";
   if (/brass|bronze|copper/.test(m)) return "ansi33";
   if (/alumin|magnes/.test(m)) return "ansi38";
@@ -510,6 +518,9 @@ export function arrowHead(x: number, y: number, dx: number, dy: number, len = 3.
 }
 
 /** Marks on a parent view for the views made from it: cutting lines, detail circles, view arrows. */
+/** How far a cutting line runs out past the view: its 6 mm thick end lies wholly outside the outline, 2 mm clear (ISO 128-44). */
+const CUT_RUN = 8;
+
 export function childMarks(sheet: Sheet, parent: DrawingView, pl: Placement): Prim[] {
   const out: Prim[] = [];
   const r = viewRect(pl);
@@ -550,7 +561,7 @@ export function childMarks(sheet: Sheet, parent: DrawingView, pl: Placement): Pr
         lo = Math.max(lo, Math.min(k0, k1)); hi = Math.min(hi, Math.max(k0, k1));
       }
       if (lo < hi) { t0 = Math.min(t0, lo); t1 = Math.max(t1, hi); }
-      t0 -= 4; t1 += 4;
+      t0 -= CUT_RUN; t1 += CUT_RUN;
       const P = (t: number): [number, number] => [a[0] + ux * t, a[1] + uy * t];
       const [s0, s1] = [P(t0), P(t1)];
       out.push({ t: "l", p: [...P(t0 + 6), ...P(t1 - 6)] as [number, number, number, number], pen: "center", layer: "ANNOT" });
@@ -596,7 +607,7 @@ function pathMarks(legs: CutLeg[], q: [number, number], letter: string, pl: Plac
   const d0 = dir(pts[1], pts[0]), last = legs[legs.length - 1].cut, n = pts.length;
   const d1 = dir(pts[n - 2], pts[n - 1]);
   const run = (p: [number, number], d: [number, number], k: number): [number, number] => [p[0] + d[0] * k, p[1] + d[1] * k];
-  const s0 = run(pts[0], d0, exitAt(pts[0], d0, r) + 4), s1 = run(pts[n - 1], d1, last ? exitAt(pts[n - 1], d1, r) + 4 : 0);
+  const s0 = run(pts[0], d0, exitAt(pts[0], d0, r) + CUT_RUN), s1 = run(pts[n - 1], d1, last ? exitAt(pts[n - 1], d1, r) + CUT_RUN : 0);
   const line = [s0, ...pts.slice(1, -1), s1];
   for (let i = 0; i + 1 < line.length; i++) out.push({ t: "l", p: [...line[i], ...line[i + 1]] as [number, number, number, number], pen: "center", layer: "ANNOT" });
   out.push({ t: "l", p: [...s0, ...run(s0, d0, -6)] as [number, number, number, number], pen: "frame", layer: "ANNOT" });
@@ -626,7 +637,7 @@ function alignedMarks(path: number[], ang: number, q: [number, number], letter: 
   const dir = (a: [number, number], b: [number, number]): [number, number] => { const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1; return [(b[0] - a[0]) / L, (b[1] - a[1]) / L]; };
   const run = (p: [number, number], d: [number, number], k: number): [number, number] => [p[0] + d[0] * k, p[1] + d[1] * k];
   const d1 = dir(c, e1), d2 = dir(c, e2);
-  const s1 = run(e1, d1, exitAt(e1, d1, r) + 4), s2 = run(e2, d2, exitAt(e2, d2, r) + 4);
+  const s1 = run(e1, d1, exitAt(e1, d1, r) + CUT_RUN), s2 = run(e2, d2, exitAt(e2, d2, r) + CUT_RUN);
   out.push({ t: "l", p: [...s1, ...c] as [number, number, number, number], pen: "center", layer: "ANNOT" });
   out.push({ t: "l", p: [...c, ...s2] as [number, number, number, number], pen: "center", layer: "ANNOT" });
   for (const [s, d] of [[s1, d1], [s2, d2]] as [[number, number], [number, number]][]) out.push({ t: "l", p: [...s, ...run(s, d, -6)] as [number, number, number, number], pen: "frame", layer: "ANNOT" });
@@ -686,7 +697,8 @@ export function composeSheet(sheet: Sheet, fields: Fields, projections: Map<stri
 
 /** The next free letter for a section, detail or auxiliary view (I, O, Q are skipped, as ISO advises). */
 export function nextLetter(sheets: Sheet[]): string {
-  const used = new Set(sheets.flatMap(s => s.views.map(v => v.letter).filter(Boolean)));
+  // Datum letters count as used too: a section A-A beside datum A reads as the same thing (drawings exam #6).
+  const used = new Set(sheets.flatMap(s => [...s.views.map(v => v.letter), ...(s.annots ?? []).map(a => (a.t === "datum" ? a.letter : ""))].filter(Boolean)));
   const abc = "ABCDEFGHJKLMNPRSTUVWXYZ";
   for (let n = 0; ; n++) for (const ch of abc) { const l = n ? ch + n : ch; if (!used.has(l)) return l; }
 }

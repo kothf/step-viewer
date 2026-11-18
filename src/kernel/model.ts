@@ -10,12 +10,18 @@
 //
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import type { V2 } from "../model/types";
-import type { HealFeature, RecognizedHole, SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, ChamferFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
+import { areaOf, massOf, optimalBox, stateAt } from "./memo";
+import type { V2, SkEnt } from "../model/types";
+import type { FlexFeature, WrapFeature, DomeFeature, HealFeature, RecognizedHole, RecognizedBlends, SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, PatternSpot, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, ChamferFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, HoleSink, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
+import { dir2Apart, dir2Feature, threadThrough, holeExits, headKind } from "../model/types";
 import { featureRefs } from "../model/doc";
+import { recognizedHoleFeatures, TAPER } from "../model/holes";
+import { advProfile, captiveStack } from "../model/advHole";
 import { ctxFrame } from "../model/context";
 import { loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 import { splineBezierN } from "../sketch/spline";
+import { segSpline } from "../sketch/wrap";
+import { FlexError, flexAffine, flexIdle, flexLinear, flexMap, flexPoint, type FlexMap } from "../model/flex";
 import { chain3d } from "../sketch/sketch3d";
 import { applyExt, piercePoint, projectEdge, uvOf, type ModelEdge } from "../sketch/external";
 import { solve } from "../sketch/solver";
@@ -23,6 +29,7 @@ import { evalSheet } from "../sheetmetal/kernel";
 import { SheetError, type SheetState } from "../sheetmetal/sheet";
 import { isSheet } from "../sheetmetal/types";
 import { evalWeld, isWeld, type WeldHost } from "../weldments/kernel";
+import { covOfTensor, eigenSym3, type Sym } from "../tools/inertia";
 
 export class FeatureError extends Error {
   constructor(readonly code: string, message: string) { super(message); }
@@ -35,7 +42,7 @@ export interface Named { shape: any; faces: any[]; names: string[] }
 type Tool = { shape: Named; op: "fuse" | "cut" };
 /** A curve feature's result (helix): the OCCT wire and points along it for the view. */
 interface Curve { wire: any; pts: V3[] }
-interface CacheEntry { key: string; body: Named | null; sheets: Named | null; status: FeatureStatus; frame?: Frame; tools?: Tool[]; sketch?: SketchFeature; curve?: Curve; regions?: IntersectRegion[]; sm?: SheetState | null }
+interface CacheEntry { key: string; body: Named | null; sheets: Named | null; status: FeatureStatus; frame?: Frame; tools?: Tool[]; sketch?: SketchFeature; curve?: Curve; regions?: IntersectRegion[]; spots?: PatternSpot[]; sm?: SheetState | null }
 
 export interface ModelMesh {
   name: string;
@@ -56,6 +63,9 @@ export interface ModelResult {
   com: V3;
 }
 
+/** A pocket or boss found on a body: the loop (3D), the face point and normal it lies on, and how far it runs. */
+type ExtrudeFind = { p: V3; n: V3; op: "boss" | "cut"; end: "blind" | "through"; depth: number; segs: ({ line: [V3, V3] } | { circle: { c: V3; r: number } } | { arc: { c: V3; a: V3; b: V3; m: V3 } })[] };
+
 export const STD_FRAMES: Record<"XY" | "XZ" | "YZ", Frame> = {
   XY: { o: [0, 0, 0], x: [1, 0, 0], y: [0, 1, 0], n: [0, 0, 1] },
   XZ: { o: [0, 0, 0], x: [1, 0, 0], y: [0, 0, 1], n: [0, -1, 0] },
@@ -64,9 +74,16 @@ export const STD_FRAMES: Record<"XY" | "XZ" | "YZ", Frame> = {
 
 const add = (a: V3, b: V3): V3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 const mul = (a: V3, s: number): V3 => [a[0] * s, a[1] * s, a[2] * s];
+/** Gap within which touching material is joined when a plain fuse leaves it apart (mm). */
+const FUSE_FUZZ = 1e-5;
 const d3 = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 const dot = (a: V3, b: V3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const sub3 = (a: V3, b: V3): V3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+/** `p` turned by `q` about the line through `o` along `d` (Rodrigues). */
+const turnAbout = (p: V3, o: V3, d: V3, q: number): V3 => {
+  const l = Math.hypot(...d), k = mul(d, 1 / l), v = sub3(p, o), c = Math.cos(q), s = Math.sin(q);
+  return add(o, add(add(mul(v, c), mul(cross(k, v), s)), mul(k, dot(k, v) * (1 - c))));
+};
 const cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const unit = (a: V3): V3 => { const l = Math.hypot(...a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
 /** Rodrigues rotation of v about the unit axis u by angle a. */
@@ -89,6 +106,8 @@ export class Modeller {
   private curves = new Map<string, Curve>();
   /** Regions each intersect feature found (for its panel). */
   private regions = new Map<string, IntersectRegion[]>();
+  /** Instance places of each linear/circular pattern (Instances to skip in the view). */
+  private spots = new Map<string, PatternSpot[]>();
   /** A warning set while evaluating the current feature. */
   private warning = "";
 
@@ -135,10 +154,40 @@ export class Modeller {
     return this.xyz(props.CentreOfMass());
   }
 
+  /** How far a face's edges reach along a direction from `o`: the largest dot(p − o, d), each edge sampled then refined. */
+  private reachAlong(face: any, o: V3, d: V3): number {
+    const oc = this.oc;
+    let best = -Infinity;
+    for (const e of this.sub(face, "EDGE")) {
+      const ad = new oc.BRepAdaptor_Curve_2(e);
+      const a = ad.FirstParameter(), b = ad.LastParameter(), n = 48;
+      const f = (t: number) => dot(sub3(this.xyz(ad.Value(t)), o), d);
+      let k = 0, fk = -Infinity;
+      for (let i = 0; i <= n; i++) { const v = f(a + ((b - a) * i) / n); if (v > fk) { fk = v; k = i; } }
+      // Golden-section search between the best sample's neighbours.
+      let lo = a + ((b - a) * Math.max(0, k - 1)) / n, hi = a + ((b - a) * Math.min(n, k + 1)) / n;
+      for (let i = 0; i < 60; i++) {
+        const m1 = hi - (hi - lo) / 1.618033988749895, m2 = lo + (hi - lo) / 1.618033988749895;
+        if (f(m1) < f(m2)) lo = m1; else hi = m2;
+      }
+      best = Math.max(best, fk, f((lo + hi) / 2));
+    }
+    return best;
+  }
+
   private edgeMid(edge: any): V3 {
     const props = new this.oc.GProp_GProps_1();
     this.oc.BRepGProp.LinearProperties(edge, props, false, false);
     return this.xyz(props.CentreOfMass());
+  }
+
+  /** Face naming version 2 (PartDoc.naming): sweep sides matched to sketch curves by a point on the edge. */
+  private pointNaming = false;
+
+  /** A point on the edge at its middle parameter (an arc's centre of mass lies off it, inside the circle). */
+  private edgeOnPoint(edge: any): V3 {
+    const ad = new this.oc.BRepAdaptor_Curve_2(edge);
+    return this.xyz(ad.Value((ad.FirstParameter() + ad.LastParameter()) / 2));
   }
 
   /** Names of a body's faces after an operation, carried over from its inputs. */
@@ -217,7 +266,9 @@ export class Modeller {
       const ent = out.ents.find(e => e.id === r.e[0]);
       let ok = false;
       try {
-        if (r.t === "pierce") ok = !!body && ent?.t === "point" && this.pierce(body, r.ext, frame, ent);
+        // An edge of another component (edit in context, FR-ASM-030): its last seen place, kept by the assembly.
+        if (r.ext.ctx) { const g = ent && r.t !== "pierce" ? projectEdge(r.ext.ctx.geo, frame) : null; ok = !!g && applyExt(out, ent!, g); }
+        else if (r.t === "pierce") ok = !!body && ent?.t === "point" && this.pierce(body, r.ext, frame, ent);
         else {
           const g = body && ent ? projectEdge(this.modelEdge(this.resolveEdge(body, r.ext)), frame) : null;
           ok = !!g && applyExt(out, ent!, g);
@@ -303,7 +354,7 @@ export class Modeller {
     if (ad.GetType() !== oc.GeomAbs_SurfaceType.GeomAbs_Plane) throw new FeatureError("E-FT-NOTPLANAR", "A sketch needs a flat face or a plane.");
     const pos = ad.Plane().Position();
     let n = this.xyz(pos.Direction());
-    const x = this.xyz(pos.XDirection());
+    let x = this.xyz(pos.XDirection());
     // The face's own normal is du × dv of its surface; a plane made by revolving a straight edge (a revolve's
     // flat end or web face) is a surface of revolution whose du × dv can point against the plane's axis.
     {
@@ -314,6 +365,11 @@ export class Modeller {
     }
     const reversed = face.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED;
     if (reversed) { n = mul(n, -1); }
+    if (ref.ax === 1) {
+      // Stable in-plane X (exam #85): the part's X laid onto the face, or its Y on a face square to X.
+      const px: V3 = Math.abs(n[0]) > 0.99 ? [0, 1, 0] : [1, 0, 0];
+      x = add(px, mul(n, -dot(px, n)));
+    }
     let o: V3 = mul(n, dot(this.xyz(pos.Location()), n));
     if (ref.offset) o = add(o, mul(n, ref.offset));
     return frameFrom(o, x, n);
@@ -327,14 +383,18 @@ export class Modeller {
       const o = add(base.o, mul(base.n, sg * f.offset.v));
       return { o: mul(base.n, dot(o, base.n)), x: base.x, y: base.y, n: base.n };
     }
-    if (!f.axis) throw new FeatureError("E-REF-AXIS", "Pick a straight edge to turn the plane about.");
     const oc = this.oc;
-    const e = this.resolveEdge(body, f.axis);
-    const ad = new oc.BRepAdaptor_Curve_2(e);
-    if (ad.GetType() !== oc.GeomAbs_CurveType.GeomAbs_Line) throw new FeatureError("E-REF-AXIS", "The plane turns about a straight edge.");
-    const lin = ad.Line();
-    const p = this.xyz(lin.Location());
-    const u = this.xyz(lin.Direction());
+    let p: V3, u: V3;
+    if (f.about) ({ o: p, d: u } = this.lineOf(f.about, body, frames, "an axis to turn the plane about"));
+    else {
+      if (!f.axis) throw new FeatureError("E-REF-AXIS", "Pick a straight edge to turn the plane about.");
+      const ad = new oc.BRepAdaptor_Curve_2(this.resolveEdge(body, f.axis));
+      if (ad.GetType() !== oc.GeomAbs_CurveType.GeomAbs_Line) throw new FeatureError("E-REF-AXIS", "The plane turns about a straight edge.");
+      const lin = ad.Line();
+      p = this.xyz(lin.Location());
+      u = this.xyz(lin.Direction());
+    }
+    u = unit(u);
     const a = sg * (f.angle?.v ?? 0);
     const rot = (v: V3) => rotate(v, u, a);
     const n = rot(base.n);
@@ -412,7 +472,8 @@ export class Modeller {
   // ---------- profiles ----------
 
   /** OCCT faces of a sketch's regions, plus which sketch curve each edge came from. */
-  private profileFaces(sk: SketchFeature, frame: Frame, off: V3 = [0, 0, 0], skip?: Set<string>) {
+  private profileFaces(sk: SketchFeature, frame: Frame, off: V3 = [0, 0, 0], skip?: Set<string>, contours?: V2[]) {
+    if (contours?.length) return this.contourFaces(sk, frame, off, skip, contours);
     const oc = this.oc;
     const prof = sketchProfile(sk, skip);
     if (prof.error) throw new FeatureError(prof.error.code, prof.error.message);
@@ -436,10 +497,11 @@ export class Modeller {
       const fix = new oc.ShapeFix_Face_2(mk.Face());
       fix.Perform();
       const face = fix.Face();
-      // Wire building and healing copy edges: match the face's edges to the sketch curves by position.
+      // Wire building and healing copy edges: match the face's edges to the sketch curves by position
+      // (a point on the edge: an arc's centre of mass sits nearer a smaller concentric arc than its own middle).
       const segs = [pf.outer, ...pf.holes].flat();
       for (const e of this.sub(face, "EDGE")) {
-        const p = this.edgeMid(e);
+        const p = this.pointNaming ? this.edgeOnPoint(e) : this.edgeMid(e);
         let best = segs[0], bd = Infinity;
         for (const sg of segs) { const d = this.segDist(sg, frame, off, p); if (d < bd) { bd = d; best = sg; } }
         edgeEnt.push([e, best.ent]);
@@ -447,6 +509,78 @@ export class Modeller {
       return face;
     });
     return { faces, edgeEnt };
+  }
+
+  /** Ends and extremes of the outer loops of a sketch's regions (to find the profile's middle). */
+  private profilePts(sk: SketchFeature): V2[] {
+    const prof = sketchProfile(sk);
+    if (prof.error) throw new FeatureError(prof.error.code, prof.error.message);
+    return prof.faces.flatMap(pf => pf.outer.flatMap(sg => (sg.kind === "circle" ? [[sg.c[0] - sg.r, sg.c[1]], [sg.c[0] + sg.r, sg.c[1]]] : sg.kind === "ellipse" ? [sg.el.c] : sg.kind === "spline" ? [sg.bz[0], sg.bz[sg.bz.length - 1]] : [sg.a, sg.b]))) as V2[];
+  }
+
+  /**
+   * Selected contours (FR-FT-010): the sketch plane split by every curve of the sketch (crossing and
+   * branching curves allowed), keeping the pieces that hold the picked points. Pieces next to each other
+   * stay separate faces; the feature's fuse of their tools joins them.
+   */
+  private contourFaces(sk: SketchFeature, frame: Frame, off: V3, skip: Set<string> | undefined, contours: V2[]) {
+    const oc = this.oc;
+    const segs = sketchCurves(sk).filter(sg => !skip?.has(sg.ent));
+    if (!segs.length) throw new FeatureError("E-SK-EMPTY", "The sketch has no closed region.");
+    let span = 10;
+    for (const sg of segs) for (const q of loopPolygon([sg], 8)) span = Math.max(span, Math.abs(q[0]), Math.abs(q[1]));
+    for (const q of contours) span = Math.max(span, Math.abs(q[0]), Math.abs(q[1]));
+    span = span * 2 + 10;
+    const poly = new oc.BRepBuilderAPI_MakePolygon_1();
+    for (const [u, v] of [[-span, -span], [span, -span], [span, span], [-span, span]] as V2[]) poly.Add_1(this.P(this.w(frame, [u, v], off)));
+    poly.Close();
+    const plane = new oc.BRepBuilderAPI_MakeFace_15(poly.Wire(), true).Face();
+    const sp = new oc.BRepAlgoAPI_Splitter_1();
+    const args = new oc.TopTools_ListOfShape_1(), tools = new oc.TopTools_ListOfShape_1();
+    args.Append_1(plane);
+    for (const sg of segs) tools.Append_1(this.segEdge(sg, frame, off));
+    sp.SetArguments(args);
+    sp.SetTools(tools);
+    sp.SetFuzzyValue(1e-7 * span);
+    sp.Build(new oc.Message_ProgressRange_1());
+    if (!sp.IsDone() || sp.HasErrors()) throw new FeatureError("E-SK-CONTOUR", "The sketch's regions could not be found.");
+    const pieces = this.sub(sp.Shape(), "FACE").map((x: any) => oc.TopoDS.Face_1(x));
+    const inside = (face: any, q: V2) => {
+      const cl = new oc.BRepClass_FaceClassifier_4(face, this.P(this.w(frame, q, off)), 1e-7 * span, false, 0);
+      return cl.State() === oc.TopAbs_State.TopAbs_IN;
+    };
+    const corner: V2 = [span * 0.999, span * 0.999];
+    const picked: any[] = [];
+    for (const q of contours) {
+      const face = pieces.find(x => inside(x, q));
+      if (!face || inside(face, corner)) throw new FeatureError("E-SK-CONTOUR", "A selected contour is no longer a closed region: pick the contours again.");
+      if (!picked.some(x => x.IsSame(face))) picked.push(face);
+    }
+    // Each edge is a piece of one curve: the nearest curve to its middle, measured along the whole curve.
+    const lines = segs.map(sg => {
+      const q = loopPolygon([sg], 64);
+      if (sg.kind === "line" || sg.kind === "arc" || sg.kind === "earc") q.push(sg.b);
+      else if (sg.kind === "spline") q.push(sg.bz[sg.bz.length - 1]);
+      else q.push(q[0]);
+      return q;
+    });
+    const o = add(frame.o, off);
+    const edgeEnt: [any, string][] = [];
+    for (const face of picked) for (const e of this.sub(face, "EDGE")) {
+      const m3 = add(this.edgeMid(e), mul(o, -1));
+      const u = dot(m3, frame.x), v = dot(m3, frame.y);
+      let best = 0, bd = Infinity;
+      lines.forEach((q, k) => {
+        for (let i = 0; i + 1 < q.length; i++) {
+          const a = q[i], b = q[i + 1], vx = b[0] - a[0], vy = b[1] - a[1], L = vx * vx + vy * vy || 1;
+          const t = Math.max(0, Math.min(1, ((u - a[0]) * vx + (v - a[1]) * vy) / L));
+          const d = Math.hypot(u - a[0] - t * vx, v - a[1] - t * vy);
+          if (d < bd) { bd = d; best = k; }
+        }
+      });
+      edgeEnt.push([e, segs[best].ent]);
+    }
+    return { faces: picked, edgeEnt };
   }
 
   /** One B-spline edge through cubic Bézier poles (3n + 1): joined with triple knots at the chord lengths, then the interior knots dropped (the interpolant is C2). */
@@ -546,57 +680,18 @@ export class Modeller {
     let tools: Named[] = [];
     // Start from (FR-FT-013): the profile moves along the sketch normal before it is swept.
     const so = f.type === "extrude" ? mul(frame.n, this.startShift(f, frame, prev, frames)) : [0, 0, 0] as V3;
-    if (f.type === "extrude" && (f.end === "upto" || f.end === "offset")) {
-      tools = this.upTo(f, sk, frame, prev, frames, so);
-    } else if (f.type === "extrude") {
-      // A cut goes into the material (against the sketch normal); Reverse direction flips either.
-      let dir = (f.op === "cut" ? -1 : 1) * (f.flip ? -1 : 1);
-      let d1 = f.depth.v, d2 = f.depth2?.v ?? 0;
-      let target: Named | null = null;
-      if (f.end === "mid") { d2 = d1 / 2; d1 = d1 / 2; }
-      if (f.end === "vertex") {
-        // Up to vertex: as far as the vertex's level, toward it.
-        const s = dot(add(this.vertexPos(f.upToVertex, prev, frames), mul(add(frame.o, so), -1)), frame.n);
-        if (Math.abs(s) < 1e-7) throw new FeatureError("E-FT-ZERO", "The vertex is level with the start of the extrusion.");
-        dir = Math.sign(s); d1 = Math.abs(s); d2 = 0;
-      }
-      if (f.end === "next") {
-        if (!prev) throw new FeatureError("E-FT-NOBODY", "Up to next needs a body.");
-        d1 = this.reach(prev.shape, add(frame.o, so), mul(frame.n, dir)) + 1; d2 = 0;
-      }
-      if (f.end === "body") {
-        // Up to body: like up to next, against the picked solid only.
-        if (!prev) throw new FeatureError("E-FT-NOBODY", "Up to body needs a body.");
-        if (!f.upToBody) throw new FeatureError("E-FT-UPBODY", "Pick the body the extrusion goes up to.");
-        const list = this.bodyList(prev);
-        target = list[this.bodyIndex(list, prev, f.upToBody)];
-        d1 = this.reach(target.shape, add(frame.o, so), mul(frame.n, dir)) + 1; d2 = 0;
-      }
-      if (f.end === "through" || f.end === "through2") {
-        if (!prev) throw new FeatureError("E-FT-NOBODY", "Through all needs a body to cut.");
-        d1 = this.size(prev.shape) * 2 + 1;
-        // Through all both: as far again behind the sketch plane.
-        d2 = f.end === "through2" ? d1 : 0;
-      }
-      if (!(d1 + d2 > 1e-6)) throw new FeatureError("E-FT-ZERO", "The depth must be more than 0.");
-      const off = add(so, mul(frame.n, -d2 * dir));
-      const { faces, edgeEnt } = this.profileFaces(sk, frame, off);
-      for (const face0 of faces) {
-        const face = f.thin ? this.thinFace(face0, f.thin) : face0;
-        const mk = new oc.BRepPrimAPI_MakePrism_1(face, this.V(mul(frame.n, (d1 + d2) * dir)), false, true);
-        mk.Build(new oc.Message_ProgressRange_1());
-        if (!mk.IsDone()) throw new FeatureError("E-FT-FAIL", "The extrusion failed.");
-        let t = this.nameSweep(mk, f.id, edgeEnt, mk.Shape());
-        // Draft while extruding: the side faces taper about the sketch plane, away from it.
-        if (f.draft && Math.abs(f.draft.angle.v) > 1e-9) {
-          const a = f.draft.angle.v;
-          if (Math.abs(a) >= Math.PI / 2 - 1e-3) throw new FeatureError("E-DRAFT-ANGLE", "The draft angle must be between 0° and 90°.");
-          const sides = t.faces.filter((_x, i) => t.names[i].includes(":side:") || t.names[i].includes(":new:"));
-          t = this.applyDraft(t, sides, mul(frame.n, dir), f.draft.outward ? -a : a, add(this.w(frame, [0, 0]), off), f.id);
-        }
-        if (f.end === "next") t = this.upToNext(t, prev!, f, add(frame.o, so), mul(frame.n, dir), d1);
-        if (f.end === "body") t = this.upToNext(t, target!, f, add(frame.o, so), mul(frame.n, dir), d1);
-        tools.push(t);
+    if (f.type === "extrude") {
+      // Direction 2 with its own end condition (FR-FT-011): a second one-way extrusion the other way,
+      // its far cap named as the start cap of a two-way prism; blind both ways stays one prism.
+      const apart = dir2Apart(f);
+      tools = this.extrudeTools(apart ? { ...f, depth2: undefined } : f, sk, frame, prev, frames, so);
+      if (apart) {
+        const g = dir2Feature(f);
+        // With Direction 2's own draft (FR-FT-014) its side faces are not coplanar with Direction 1's: own names.
+        const side = `${f.id}:side:`, side2 = f.draft2 !== undefined;
+        const ren = (n: string) => n === `${f.id}:end` ? `${f.id}:start` : n === `${f.id}:start` ? `${f.id}:mid` : n.startsWith(`${f.id}:new:`) ? `${f.id}:new2:${n.slice(f.id.length + 5)}`
+          : side2 && n.startsWith(side) ? `${f.id}:side2:${n.slice(side.length)}` : n;
+        for (const t of this.extrudeTools(g, sk, frame, prev, frames, so)) tools.push({ ...t, names: t.names.map(ren) });
       }
     } else {
       const ax = sk.ents.find(e => e.id === f.axis);
@@ -614,11 +709,11 @@ export class Modeller {
       const back = upto ? 0 : f.mid ? angle / 2 : Math.max(0, Math.min(f.angle2?.v ?? 0, Math.PI * 2 - angle));
       if (!(angle > 1e-9)) throw new FeatureError("E-FT-ZERO", "The angle must be more than 0.");
       if (!f.mid) angle += back;
-      // A solid profile line may be the axis too (SolidWorks allows it): leave the axis out only when the
+      // A solid profile line may be the axis too (a CAD app allows it): leave the axis out only when the
       // profile closes without it, so a stand-alone line or centreline still works as before.
       const axSkip = new Set([ax.id]);
-      const skip = ax.cons || !sketchProfile(sk, axSkip).error ? axSkip : undefined;
-      const { faces, edgeEnt } = this.profileFaces(sk, frame, [0, 0, 0], skip);
+      const skip = ax.cons || (!f.contours?.length && !sketchProfile(sk, axSkip).error) ? axSkip : undefined;
+      const { faces, edgeEnt } = this.profileFaces(sk, frame, [0, 0, 0], skip, f.contours);
       for (let face0 of faces) {
         let face = f.thin ? this.thinFace(face0, f.thin) : face0;
         if (back > 1e-9 && angle < Math.PI * 2 - 1e-9) {
@@ -636,10 +731,29 @@ export class Modeller {
         tools.push(this.nameSweep(mk, f.id, edgeEnt, mk.Shape()));
       }
     }
-    // Several regions: fuse the tools first, in one operation.
-    const tool = this.fuseAll(tools, f.id);
+    // Several regions: fuse the tools first, in one operation. Picked contours next to each other leave
+    // their shared curve as split faces; those halves (same name) are joined again, as one profile would give.
+    let tool = this.fuseAll(tools, f.id);
+    if (tools.length > 1 && (f.contours?.length || (f.type === "extrude" && dir2Apart(f)))) tool = this.unifyAlike(tool);
     if (!(f.type === "extrude" && f.outside)) this.tools.set(f.id, [{ shape: tool, op: f.op === "boss" ? "fuse" : "cut" }]);
     if (f.op === "boss" && prev && f.merge === false) return this.compoundOf([...this.bodyList(prev), tool]);
+    // Feature scope (FR-FT-007): only the picked bodies are cut or merged with; the others stay as they are.
+    const sc = this.scoped(f, prev);
+    if (sc.keep.length) return this.compoundOf([...sc.keep, ...this.bodyList(this.applySwept(f, tool, sc.target, frame, so))]);
+    return this.applySwept(f, tool, prev, frame, so);
+  }
+
+  /** Feature scope: the picked bodies as one target, and the bodies left alone. */
+  private scoped(f: { scope?: FaceRef[] }, prev: Named | null): { target: Named | null; keep: Named[] } {
+    if (!prev || !f.scope?.length) return { target: prev, keep: [] };
+    const list = this.bodyList(prev);
+    if (list.length < 2) return { target: prev, keep: [] };
+    const idx = this.pickedBodies(list, prev, f.scope);
+    return { target: this.compoundOf(list.filter((_, i) => idx.includes(i))), keep: list.filter((_, i) => !idx.includes(i)) };
+  }
+
+  /** Joins an extrude or revolve tool to the body, or cuts it out. */
+  private applySwept(f: Feature & { type: "extrude" | "revolve" }, tool: Named, prev: Named | null, frame: Frame, so: V3): Named {
     if (f.op === "boss" && prev && f.type === "extrude") {
       // A boss standing on the body (embossed text, a pad on a face): when the body lies wholly behind
       // the plane the tool starts from, the two only touch, and gluing skips the slow intersection of
@@ -648,13 +762,70 @@ export class Modeller {
       const ahead = mul(frame.n, f.flip ? -1 : 1);
       const back = f.end === "mid" ? f.depth.v / 2 : f.end === "blind" ? f.depth2?.v ?? 0 : 0;
       const start = add(add(frame.o, so), mul(ahead, -back));
-      if (this.reach(prev.shape, start, ahead) < 1e-5 && this.reach(tool.shape, start, mul(ahead, -1)) < 1e-5) return this.bool("fuse", prev, tool, f.id, true);
+      if (!dir2Apart(f) && this.reach(prev.shape, start, ahead) < 1e-5 && this.reach(tool.shape, start, mul(ahead, -1)) < 1e-5) return this.bool("fuse", prev, tool, f.id, true);
     }
     if (f.op === "boss") return prev ? this.bool("fuse", prev, tool, f.id) : tool;
     if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body to cut yet.");
     const out = this.bool(f.type === "extrude" && f.outside ? "common" : "cut", prev, tool, f.id);
     if (Math.abs(this.volume(out.shape) - this.volume(prev.shape)) < 1e-9) throw new FeatureError("E-FT-NOCHANGE", "The cut does not touch the body.");
     return out;
+  }
+
+  /** The tool solids of a one- or two-way (blind) extrusion, one per profile region. */
+  private extrudeTools(f: ExtrudeFeature, sk: SketchFeature, frame: Frame, prev: Named | null, frames: Record<string, Frame>, so: V3): Named[] {
+    const oc = this.oc;
+    if (f.end === "upto" || f.end === "offset") return this.upTo(f, sk, frame, prev, frames, so);
+    const tools: Named[] = [];
+    // A cut goes into the material (against the sketch normal); Reverse direction flips either.
+    let dir = (f.op === "cut" ? -1 : 1) * (f.flip ? -1 : 1);
+    let d1 = f.depth.v, d2 = f.depth2?.v ?? 0;
+    let target: Named | null = null;
+    if (f.end === "mid") { d2 = d1 / 2; d1 = d1 / 2; }
+    if (f.end === "vertex") {
+      // Up to vertex: as far as the vertex's level, toward it.
+      const s = dot(add(this.vertexPos(f.upToVertex, prev, frames), mul(add(frame.o, so), -1)), frame.n);
+      if (Math.abs(s) < 1e-7) throw new FeatureError("E-FT-ZERO", "The vertex is level with the start of the extrusion.");
+      dir = Math.sign(s); d1 = Math.abs(s); d2 = 0;
+    }
+    if (f.end === "next") {
+      if (!prev) throw new FeatureError("E-FT-NOBODY", "Up to next needs a body.");
+      d1 = this.reach(prev.shape, add(frame.o, so), mul(frame.n, dir)) + 1; d2 = 0;
+    }
+    if (f.end === "body") {
+      // Up to body: like up to next, against the picked solid only.
+      if (!prev) throw new FeatureError("E-FT-NOBODY", "Up to body needs a body.");
+      if (!f.upToBody) throw new FeatureError("E-FT-UPBODY", "Pick the body the extrusion goes up to.");
+      const list = this.bodyList(prev);
+      target = list[this.bodyIndex(list, prev, f.upToBody)];
+      d1 = this.reach(target.shape, add(frame.o, so), mul(frame.n, dir)) + 1; d2 = 0;
+    }
+    if (f.end === "through" || f.end === "through2") {
+      if (!prev) throw new FeatureError("E-FT-NOBODY", "Through all needs a body to cut.");
+      d1 = this.size(prev.shape) * 2 + 1;
+      // Through all both: as far again behind the sketch plane.
+      d2 = f.end === "through2" ? d1 : 0;
+    }
+    if (!(d1 + d2 > 1e-6)) throw new FeatureError("E-FT-ZERO", "The depth must be more than 0.");
+    const off = add(so, mul(frame.n, -d2 * dir));
+    const { faces, edgeEnt } = this.profileFaces(sk, frame, off, undefined, f.contours);
+    for (const face0 of faces) {
+      const face = f.thin ? this.thinFace(face0, f.thin) : face0;
+      const mk = new oc.BRepPrimAPI_MakePrism_1(face, this.V(mul(frame.n, (d1 + d2) * dir)), false, true);
+      mk.Build(new oc.Message_ProgressRange_1());
+      if (!mk.IsDone()) throw new FeatureError("E-FT-FAIL", "The extrusion failed.");
+      let t = this.nameSweep(mk, f.id, edgeEnt, mk.Shape());
+      // Draft while extruding: the side faces taper about the sketch plane, away from it.
+      if (f.draft && Math.abs(f.draft.angle.v) > 1e-9) {
+        const a = f.draft.angle.v;
+        if (Math.abs(a) >= Math.PI / 2 - 1e-3) throw new FeatureError("E-DRAFT-ANGLE", "The draft angle must be between 0° and 90°.");
+        const sides = t.faces.filter((_x, i) => t.names[i].includes(":side:") || t.names[i].includes(":new:"));
+        t = this.applyDraft(t, sides, mul(frame.n, dir), f.draft.outward ? -a : a, add(this.w(frame, [0, 0]), off), f.id);
+      }
+      if (f.end === "next") t = this.upToNext(t, prev!, f, add(frame.o, so), mul(frame.n, dir), d1);
+      if (f.end === "body") t = this.upToNext(t, target!, f, add(frame.o, so), mul(frame.n, dir), d1);
+      tools.push(t);
+    }
+    return tools;
   }
 
   /**
@@ -671,10 +842,8 @@ export class Modeller {
       if (err instanceof FeatureError && err.code === "E-FT-NOTPLANAR") throw new FeatureError("E-FT-UPTO", "Up to face needs a flat face or a plane.");
       throw err;
     }
-    const prof = sketchProfile(sk);
-    if (prof.error) throw new FeatureError(prof.error.code, prof.error.message);
-    // Where the profile's middle meets the target along the sketch normal.
-    const pts = prof.faces.flatMap(pf => pf.outer.flatMap(sg => (sg.kind === "circle" ? [[sg.c[0] - sg.r, sg.c[1]], [sg.c[0] + sg.r, sg.c[1]]] : sg.kind === "ellipse" ? [sg.el.c] : sg.kind === "spline" ? [sg.bz[0], sg.bz[sg.bz.length - 1]] : [sg.a, sg.b]))) as [number, number][];
+    // Where the profile's middle (or the picked contours' middle) meets the target along the sketch normal.
+    const pts = f.contours?.length ? f.contours : this.profilePts(sk);
     const mid: [number, number] = [pts.reduce((a, p) => a + p[0], 0) / pts.length, pts.reduce((a, p) => a + p[1], 0) / pts.length];
     const c = add(this.w(frame, mid), so);
     const den = dot(frame.n, target.n);
@@ -691,7 +860,7 @@ export class Modeller {
     }
     const dir = Math.sign(s);
     const big = Math.abs(s) * 2 + (prev ? this.size(prev.shape) : 0) * 2 + 10;
-    const { faces, edgeEnt } = this.profileFaces(sk, frame, so);
+    const { faces, edgeEnt } = this.profileFaces(sk, frame, so, undefined, f.contours);
     const tools: Named[] = [];
     for (const face of faces) {
       const mk = new oc.BRepPrimAPI_MakePrism_1(face, this.V(mul(frame.n, big * dir)), false, true);
@@ -811,8 +980,8 @@ export class Modeller {
     const oc = this.oc;
     const pr = new oc.Message_ProgressRange_1();
     let mk: any;
-    if (glue && kind === "fuse") {
-      mk = new oc.BRepAlgoAPI_Fuse_1();
+    if (glue && kind !== "common") {
+      mk = kind === "fuse" ? new oc.BRepAlgoAPI_Fuse_1() : new oc.BRepAlgoAPI_Cut_1();
       const A = new oc.TopTools_ListOfShape_1(), B = new oc.TopTools_ListOfShape_1();
       A.Append_1(a.shape); B.Append_1(b.shape);
       mk.SetArguments(A); mk.SetTools(B);
@@ -822,6 +991,21 @@ export class Modeller {
       : kind === "cut" ? new oc.BRepAlgoAPI_Cut_3(a.shape, b.shape, pr)
       : new oc.BRepAlgoAPI_Common_3(a.shape, b.shape, pr);
     if (!mk.IsDone() || mk.HasErrors()) throw new FeatureError("E-FT-BOOL", kind === "fuse" ? "The new material could not be joined to the body." : "The cut failed.");
+    if (kind === "fuse" && !glue) {
+      // Material that only touches the body, with a gap of sketch round-off (a few 1e-6 mm, e.g. a boss
+      // drawn on a snapped edge), stayed a separate solid (Leuenberger exam #82). When the plain fuse
+      // joins nothing, fuse again with a fuzzy value of 1e-5 mm, about a CAD app's modelling tolerance.
+      const n = this.solids(mk.Shape());
+      if (n > 1 && n >= this.solids(a.shape) + this.solids(b.shape)) {
+        const fz = new oc.BRepAlgoAPI_Fuse_1();
+        const A = new oc.TopTools_ListOfShape_1(), B = new oc.TopTools_ListOfShape_1();
+        A.Append_1(a.shape); B.Append_1(b.shape);
+        fz.SetArguments(A); fz.SetTools(B);
+        fz.SetFuzzyValue(FUSE_FUZZ);
+        fz.Build(new oc.Message_ProgressRange_1());
+        if (fz.IsDone() && !fz.HasErrors() && this.solids(fz.Shape()) < n) return this.carry(fz, [a, b], fz.Shape(), fid);
+      }
+    }
     return this.carry(mk, [a, b], mk.Shape(), fid);
   }
 
@@ -829,6 +1013,29 @@ export class Modeller {
    * All the tools fused in one operation (the first as the argument, the rest as tools): one pass
    * instead of one per tool, each on a growing result (a 25-letter text: 8 s → 0.3 s).
    */
+  /**
+   * Cuts every tool from `body` in one Boolean. `touched[i]`: tool i left a face (or a piece of one) in the result.
+   * Null when the Boolean fails, so the caller can cut them one by one.
+   */
+  private cutAll(body: Named, tools: Named[], fid: string): { body: Named; touched: boolean[] } | null {
+    const oc = this.oc;
+    try {
+      const mk = new oc.BRepAlgoAPI_Cut_1();
+      const A = new oc.TopTools_ListOfShape_1(), B = new oc.TopTools_ListOfShape_1();
+      A.Append_1(body.shape);
+      for (const t of tools) B.Append_1(t.shape);
+      mk.SetArguments(A); mk.SetTools(B);
+      mk.Build(new oc.Message_ProgressRange_1());
+      if (!mk.IsDone() || mk.HasErrors()) return null;
+      // A copy counts when it leaves a face of its own in the result: one lying wholly outside the body
+      // loses every face, and one lying in a hole that is already there shares its faces with the body's.
+      const images = (f: any): any[] => { if (mk.IsDeleted(f)) return []; const m = this.list(mk.Modified(f)); return m.length ? m : [f]; };
+      const mine = body.faces.flatMap(images);
+      const made = this.sub(mk.Shape(), "FACE");
+      const touched = tools.map(t => t.faces.some(f => images(f).some(g => made.some(x => x.IsSame(g)) && !mine.some(x => x.IsSame(g)))));
+      return { body: this.carry(mk, [body, ...tools], mk.Shape(), fid), touched };
+    } catch { return null; }
+  }
   private fuseAll(tools: Named[], fid: string): Named {
     if (tools.length < 2) return tools[0];
     const oc = this.oc;
@@ -1120,7 +1327,7 @@ export class Modeller {
       let tool = mk.Shape();
       if (this.volume(tool) < 0) tool = tool.Reversed();
       const c = mul(add(add(pts[0], pts[1]), add(pts[2], o)), 0.25);
-      if (new oc.BRepClass3d_SolidClassifier_3(body.shape, this.P(c), 1e-7).State() !== oc.TopAbs_State.TopAbs_IN)
+      if (stateAt(oc, body.shape, c, 1e-7) !== "in")
         throw new FeatureError("E-FT-VCONCAVE", "A vertex chamfer works on outside corners.");
       const tri = mk.FirstShape();
       const faces = this.sub(tool, "FACE");
@@ -1360,6 +1567,394 @@ export class Modeller {
     return body;
   }
 
+  /**
+   * Dome (FR-FT-103): each flat face bulges out by the distance at its middle, or in with `flip`. A round
+   * face gets an exact spherical cap (or half an ellipsoid of revolution with `elliptical`) revolved about
+   * its axis; any other outline a patch (BRepOffsetAPI_MakeFilling) through its outer edges and the peak
+   * above its centroid, closed by the face into a solid. The tool is fused on (cut for a dent).
+   */
+  private dome(f: DomeFeature, prev: Named | null): Named {
+    const oc = this.oc;
+    if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
+    if (!f.faces.length) throw new FeatureError("E-FT-NOFACES", "Click the faces to dome.");
+    const h = f.distance.v;
+    if (!(h > 1e-6)) throw new FeatureError("E-FT-ZERO", "The distance must be more than 0.");
+    let body = prev;
+    f.faces.forEach((r, k) => {
+      const face = this.resolveFace(body, r), pl = this.facePlane(face);
+      if (!pl) throw new FeatureError("E-DOME-FLAT", "Dome works on flat faces.");
+      const dn = mul(pl.n, f.flip ? -1 : 1);
+      const outer = oc.BRepTools.OuterWire(face);
+      const edges = this.sub(outer, "EDGE");
+      // A round face: every outer edge on one circle.
+      let circ: { c: V3; a: number } | null = null;
+      for (const e of edges) {
+        const ca = new oc.BRepAdaptor_Curve_2(e);
+        if (ca.GetType() !== oc.GeomAbs_CurveType.GeomAbs_Circle) { circ = null; break; }
+        const ci = ca.Circle(), c = this.xyz(ci.Location()), a = ci.Radius();
+        if (circ && (d3(circ.c, c) > 1e-6 * (1 + a) || Math.abs(circ.a - a) > 1e-6 * (1 + a))) { circ = null; break; }
+        circ = { c, a };
+      }
+      if (f.elliptical && !circ) throw new FeatureError("E-DOME-ELLIPSE", "An elliptical dome needs a round face.");
+      let tool: any;
+      if (circ) {
+        const { c, a } = circ;
+        // The profile in the plane through the axis: rim P0, apex A, centre c; turned about the axis.
+        const ref = Math.abs(dn[0]) < 0.9 ? [1, 0, 0] as V3 : [0, 1, 0] as V3;
+        const u = unit(cross(cross(dn, ref), dn));
+        const P0 = add(c, mul(u, a)), A = add(c, mul(dn, h));
+        let arc: any;
+        if (f.elliptical) {
+          // gp_Elips wants the major radius on X; the arc runs counter-clockwise from angle 0 to π/2.
+          const major = a >= h;
+          const ax = major ? new oc.gp_Ax2_2(this.P(c), this.D(cross(u, dn)), this.D(u)) : new oc.gp_Ax2_2(this.P(c), this.D(cross(dn, u)), this.D(dn));
+          const el = new oc.gp_Elips_2(ax, Math.max(a, h), Math.min(a, h));
+          arc = major ? new oc.BRepBuilderAPI_MakeEdge_14(el, this.P(P0), this.P(A)).Edge() : new oc.BRepBuilderAPI_MakeEdge_14(el, this.P(A), this.P(P0)).Edge();
+        } else {
+          // Sphere through the rim and the apex: R = (a² + h²) / 2h, centre on the axis h − R above the face.
+          const R = (a * a + h * h) / (2 * h), O = add(c, mul(dn, h - R));
+          const ci = new oc.gp_Circ_2(new oc.gp_Ax2_2(this.P(O), this.D(cross(u, dn)), this.D(u)), R);
+          arc = new oc.BRepBuilderAPI_MakeEdge_10(ci, this.P(P0), this.P(A)).Edge();
+        }
+        const w = new oc.BRepBuilderAPI_MakeWire_1();
+        w.Add_1(arc);
+        w.Add_1(new oc.BRepBuilderAPI_MakeEdge_3(this.P(A), this.P(c)).Edge());
+        w.Add_1(new oc.BRepBuilderAPI_MakeEdge_3(this.P(c), this.P(P0)).Edge());
+        if (!w.IsDone()) throw new FeatureError("E-DOME-FAIL", "The dome could not be made.");
+        const prof = new oc.BRepBuilderAPI_MakeFace_15(w.Wire(), true).Face();
+        const mk = new oc.BRepPrimAPI_MakeRevol_1(prof, new oc.gp_Ax1_2(this.P(c), this.D(dn)), 2 * Math.PI, false);
+        mk.Build(new oc.Message_ProgressRange_1());
+        if (!mk.IsDone()) throw new FeatureError("E-DOME-FAIL", "The dome could not be made.");
+        tool = mk.Shape();
+      } else {
+        // Any outline: a smooth patch through the outer edges and the peak, closed by a copy of the face.
+        const mk = new oc.BRepOffsetAPI_MakeFilling(3, 15, 2, false, 1e-5, 1e-4, 1e-2, 0.1, 8, 9);
+        for (const e of edges) mk.Add_1(e, oc.GeomAbs_Shape.GeomAbs_C0, true);
+        mk.Add_4(this.P(add(this.centroid(face), mul(dn, h))));
+        try { mk.Build(new oc.Message_ProgressRange_1()); } catch { /* reported below */ }
+        if (!mk.IsDone()) throw new FeatureError("E-DOME-FAIL", "The dome could not be made.");
+        const base = new oc.BRepBuilderAPI_MakeFace_15(outer, true).Face();
+        const sew = new oc.BRepBuilderAPI_Sewing(1e-4, true, true, true, false);
+        sew.Add(base);
+        for (const x of this.sub(mk.Shape(), "FACE")) sew.Add(x);
+        sew.Perform(new oc.Message_ProgressRange_1());
+        const sewn = sew.SewedShape();
+        let shell: any = null;
+        for (const ex = new oc.TopExp_Explorer_2(sewn, oc.TopAbs_ShapeEnum.TopAbs_SHELL, oc.TopAbs_ShapeEnum.TopAbs_SHAPE); ex.More(); ex.Next()) shell = oc.TopoDS.Shell_1(ex.Current());
+        if (!shell) throw new FeatureError("E-DOME-FAIL", "The dome could not be made.");
+        tool = new oc.ShapeFix_Solid_1().SolidFromShell(shell);
+      }
+      if (this.volume(tool) < 0) tool = tool.Reversed();
+      const faces = this.sub(tool, "FACE");
+      const tol = 1e-5 * (1 + this.size(face));
+      let q = 0;
+      const named: Named = { shape: tool, faces, names: faces.map(x => {
+        const fp = this.facePlane(x);
+        const onBase = fp && Math.abs(dot(add(fp.p, mul(pl.p, -1)), pl.n)) < tol && Math.abs(Math.abs(dot(fp.n, pl.n)) - 1) < 1e-9;
+        return onBase ? `${f.id}:base:${k}` : `${f.id}:dome:${k}${q++ ? `:${q - 1}` : ""}`;
+      }) };
+      const rest: Named = { shape: body.shape, faces: body.faces, names: body.names.map((n, i) => (body.faces[i].IsSame(face) ? `${f.id}:old:${k}` : n)) };
+      // The patch's edges are the face's own, so the tool shares the face exactly: GlueShift handles that.
+      body = this.bool(f.flip ? "cut" : "fuse", rest, named, f.id, !circ);
+    });
+    return body;
+  }
+
+  /**
+   * Wrap (FR-FT-104): the sketch's regions mapped onto the cylinder without stretching (across the axis,
+   * the sketch distance becomes arc length; along it, distance stays), as faces on the cylinder made from
+   * exact 2D B-splines in its (angle, height) parameters (`segSpline`: the map is affine, so the poles move
+   * exactly), thickened square to the surface and fused (emboss) or cut (deboss).
+   */
+  private wrap(f: WrapFeature, doc: PartDoc, prev: Named | null, frames: Record<string, Frame>): Named {
+    const oc = this.oc;
+    if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
+    if (!f.face) throw new FeatureError("E-WRAP-FACE", "Pick the round face to wrap onto.");
+    const { sk, frame } = this.sketchOf(f.sketch, doc, prev, frames, "a sketch to wrap");
+    const face = this.resolveFace(prev, f.face);
+    const ad = new oc.BRepAdaptor_Surface_2(face, true);
+    if (ad.GetType() !== oc.GeomAbs_SurfaceType.GeomAbs_Cylinder) throw new FeatureError("E-WRAP-CYL", "Wrap works on cylindrical faces.");
+    const cy = ad.Cylinder(), r = cy.Radius();
+    const o = this.xyz(cy.Location());
+    let d = unit(this.xyz(cy.Axis().Direction()));
+    if (Math.abs(dot(frame.n, d)) > 1e-6) throw new FeatureError("E-WRAP-PLANE", "The sketch plane must be parallel to the cylinder's axis.");
+    const h = f.depth.v;
+    if (!(h > 1e-6)) throw new FeatureError("E-FT-ZERO", "The depth must be more than 0.");
+    // Material lies inside a shaft's face, outside a hole's.
+    const mid = (() => {
+      const u = (ad.FirstUParameter() + ad.LastUParameter()) / 2, v = (ad.FirstVParameter() + ad.LastVParameter()) / 2;
+      const p = new oc.gp_Pnt_1(), du = new oc.gp_Vec_1(), dv = new oc.gp_Vec_1();
+      ad.D1(u, v, p, du, dv);
+      return { p: this.xyz(p), n: cross(this.xyz(du), this.xyz(dv)) };
+    })();
+    const rel0 = add(mid.p, mul(o, -1));
+    const shaft = (dot(mid.n, add(rel0, mul(d, -dot(rel0, d)))) > 0) !== (face.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED);
+    if (f.kind === "deboss" && shaft && h >= r) throw new FeatureError("E-WRAP-DEEP", "The depth must be less than the radius.");
+    // u0 points from the axis towards the sketch plane; angles grow towards e = d × u0.
+    const nPerp = unit(add(frame.n, mul(d, -dot(frame.n, d))));
+    const u0 = dot(add(frame.o, mul(o, -1)), nPerp) < 0 ? mul(nPerp, -1) : nPerp;
+    let e = cross(d, u0);
+    // Keep the sketch's handedness in (angle, height), so outer loops stay counter-clockwise: the face's axis may point either way.
+    if (dot(frame.x, e) * dot(frame.y, d) - dot(frame.y, e) * dot(frame.x, d) < 0) { d = mul(d, -1); e = cross(d, u0); }
+    // The surface's angle 0 faces away from the sketch, so the wrapped shapes sit round angle π, clear of the seam.
+    const S = new oc.Handle_Geom_Surface_2(new oc.Geom_CylindricalSurface_1(new oc.gp_Ax3_3(this.P(o), this.D(d), this.D(mul(u0, -1))), r));
+    const uv = (q: V2): V2 => { const P = add(this.w(frame, q), mul(o, -1)); return [Math.PI + dot(P, e) / r, dot(P, d)]; };
+    const edgeOf = (sg: Seg) => {
+      const sp = segSpline(sg), n = sp.poles.length;
+      const poles = new oc.TColgp_Array1OfPnt2d_2(1, n), wts = new oc.TColStd_Array1OfReal_2(1, n);
+      sp.poles.forEach((q, i) => { const m = uv(q); poles.SetValue(i + 1, new oc.gp_Pnt2d_3(m[0], m[1])); wts.SetValue(i + 1, sp.w[i]); });
+      const knots = new oc.TColStd_Array1OfReal_2(1, sp.knots.length), mults = new oc.TColStd_Array1OfInteger_2(1, sp.knots.length);
+      sp.knots.forEach((k, i) => { knots.SetValue(i + 1, k); mults.SetValue(i + 1, sp.mults[i]); });
+      const c2 = new oc.Geom2d_BSplineCurve_2(poles, wts, knots, mults, sp.deg, false);
+      const ed = new oc.BRepBuilderAPI_MakeEdge_30(new oc.Handle_Geom2d_Curve_2(c2), S).Edge();
+      oc.BRepLib.BuildCurves3d_2(ed);
+      return ed;
+    };
+    const wireOf = (loop: Seg[]) => {
+      const mk = new oc.BRepBuilderAPI_MakeWire_1();
+      for (const sg of loop) mk.Add_1(edgeOf(sg));
+      if (!mk.IsDone()) throw new FeatureError("E-WRAP-FAIL", "The sketch could not be wrapped.");
+      return mk.Wire();
+    };
+    const prof = sketchProfile(sk);
+    if (prof.error || !prof.faces.length) throw new FeatureError("E-WRAP-PROFILE", "The sketch must have closed regions to wrap.");
+    const out = shaft === (f.kind === "emboss") ? 1 : -1;
+    const tools: Named[] = [];
+    prof.faces.forEach((pf, k) => {
+      const mk = new oc.BRepBuilderAPI_MakeFace_21(S, wireOf(pf.outer), true);
+      for (const hl of pf.holes) mk.Add(wireOf(hl));
+      if (!mk.IsDone()) throw new FeatureError("E-WRAP-FAIL", "The sketch could not be wrapped.");
+      const fix = new oc.ShapeFix_Face_2(mk.Face());
+      fix.Perform();
+      const wf = oc.TopoDS.Face_1(fix.Face());
+      // Thicken square to the cylinder; the sign that moves the solid the right way (out or in): its centroid lies
+      // further from the axis than the wrapped face's own (which is inside the radius when the face goes round).
+      const fp = new oc.GProp_GProps_1();
+      oc.BRepGProp.SurfaceProperties_1(wf, fp, false, false);
+      const radOf = (c: V3) => { const rel = add(c, mul(o, -1)); return Math.hypot(...add(rel, mul(d, -dot(rel, d)))); };
+      const rf = radOf(this.xyz(fp.CentreOfMass()));
+      let solid: any = null;
+      for (const sgn of [1, -1]) {
+        const th = new oc.BRepOffsetAPI_MakeThickSolid();
+        try { th.MakeThickSolidBySimple(wf, sgn * h); } catch { continue; }
+        if (!th.IsDone()) continue;
+        const sh = th.Shape();
+        const props = new oc.GProp_GProps_1();
+        oc.BRepGProp.VolumeProperties_1(sh, props, false, false, false);
+        if ((radOf(this.xyz(props.CentreOfMass())) - rf) * out > 0) { solid = sh; break; }
+      }
+      if (!solid) throw new FeatureError("E-WRAP-FAIL", "The sketch could not be wrapped.");
+      if (this.volume(solid) < 0) solid = solid.Reversed();
+      const faces = this.sub(solid, "FACE");
+      let q = 0;
+      tools.push({ shape: solid, faces, names: faces.map(x => {
+        const a = new oc.BRepAdaptor_Surface_2(x, true);
+        if (a.GetType() === oc.GeomAbs_SurfaceType.GeomAbs_Cylinder) {
+          const rr = a.Cylinder().Radius();
+          if (Math.abs(rr - r) < 1e-6 * (1 + r)) return `${f.id}:base:${k}`;
+          if (Math.abs(rr - (r + out * h)) < 1e-6 * (1 + r)) return `${f.id}:top:${k}`;
+        }
+        return `${f.id}:side:${k}:${q++}`;
+      }) });
+    });
+    let body = prev;
+    for (const t of tools) body = this.bool(f.kind === "emboss" ? "fuse" : "cut", body, t, f.id, true);
+    return body;
+  }
+
+  /**
+   * Flex (FR-FT-105): each picked body is split at the trim planes (`hard`, the default); pieces outside
+   * them (and a stretched middle) move by the exact affine map of `flexAffine`, the middle's faces are
+   * converted to B-splines, refined, and their poles moved so the surface interpolates the map at the
+   * Greville points; edges are rebuilt from their pcurves, all faces sewn back into a solid. Faces keep
+   * their names (split pieces share one); the cut faces between pieces are dropped.
+   */
+  private flex(f: FlexFeature, prev: Named | null, frames: Record<string, Frame>): Named {
+    const oc = this.oc;
+    if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
+    const list = this.bodyList(prev);
+    const picked = f.bodies.length ? this.pickedBodies(list, prev, f.bodies) : list.map((_b, i) => i);
+    const bb = new oc.Bnd_Box_1();
+    for (const i of picked) oc.BRepBndLib.AddOptimal(list[i].shape, bb, false, false);
+    let m: FlexMap;
+    try { m = flexMap(f, [this.xyz(bb.CornerMin()), this.xyz(bb.CornerMax())]); }
+    catch (e) { if (e instanceof FlexError) throw new FeatureError(e.code, e.message); throw e; }
+    // The triad and trim planes for the view: n = flex axis, x = bend direction; len = s1, s2, the box's half sizes across, and its ends lo, hi along n.
+    const lo = this.xyz(bb.CornerMin()), hi = this.xyz(bb.CornerMax());
+    const half = (d: V3) => Math.abs(dot(add(hi, mul(lo, -1)), d)) / 2 + 1e-3 * (1 + this.size(prev.shape));
+    frames[f.id] = { o: m.o, x: m.b, y: m.c, n: m.a, len: [m.s1, m.s2, half(m.b), half(m.c), m.s1 - (f.trim1?.v ?? 0), m.s2 + (f.trim2?.v ?? 0)] };
+    if (flexIdle(m)) return prev;
+    const out = list.map((b, i) => (picked.includes(i) ? this.flexBody(f, m, b) : b));
+    return this.compoundOf(out);
+  }
+
+  private flexBody(f: FlexFeature, m: FlexMap, body: Named): Named {
+    const oc = this.oc, A = oc.TopAbs_ShapeEnum;
+    const sOf = (p: V3) => dot(add(p, mul(m.o, -1)), m.a);
+    const range = (shape: any) => {
+      const b = new oc.Bnd_Box_1(); oc.BRepBndLib.Add(shape, b, false);
+      const lo = this.xyz(b.CornerMin()), hi = this.xyz(b.CornerMax());
+      let a = Infinity, z = -Infinity;
+      for (let k = 0; k < 8; k++) { const s = sOf([k & 1 ? hi[0] : lo[0], k & 2 ? hi[1] : lo[1], k & 4 ? hi[2] : lo[2]]); a = Math.min(a, s); z = Math.max(z, s); }
+      return [a, z];
+    };
+    const [smin, smax] = range(body.shape);
+    const L = m.s2 - m.s1, tol = 1e-6 * (1 + L);
+    // Pieces: below, inside and above the region.
+    let pieces: Named[] = [body];
+    const planes: number[] = [];
+    if (f.hard !== false) for (const s of [m.s1, m.s2]) if (s > smin + tol && s < smax - tol) planes.push(s);
+    if (planes.length) {
+      const big = 4 * (this.size(body.shape) + 1);
+      const sp = new oc.BRepAlgoAPI_Splitter_1();
+      const args = new oc.TopTools_ListOfShape_1(), tools = new oc.TopTools_ListOfShape_1();
+      args.Append_1(body.shape);
+      for (const s of planes) {
+        const pl = new oc.gp_Pln_3(this.P(add(m.o, mul(m.a, s))), this.D(m.a));
+        tools.Append_1(new oc.BRepBuilderAPI_MakeFace_9(pl, -big, big, -big, big).Face());
+      }
+      sp.SetArguments(args);
+      sp.SetTools(tools);
+      sp.Build(new oc.Message_ProgressRange_1());
+      if (!sp.IsDone() || sp.HasErrors()) throw new FeatureError("E-FLEX-FAIL", "The body could not be flexed.");
+      pieces = this.bodyList(this.carry(sp, [body], sp.Shape(), f.id));
+    }
+    // A face two pieces share is a cut between them: dropped.
+    const shared = (x: any, k: number) => pieces.some((p, j) => j !== k && p.faces.some(y => y.IsSame(x)));
+    const faces: { face: any; name: string }[] = [];
+    pieces.forEach((pc, k) => {
+      const [a, z] = range(pc.shape), mid = (a + z) / 2;
+      const zone = mid < m.s1 - tol && z < m.s1 + tol ? "low" : mid > m.s2 + tol && a > m.s2 - tol ? "high" : "mid";
+      const keep = pc.faces.map((x, i) => ({ x, i })).filter(({ x }) => !shared(x, k));
+      if (zone !== "mid" || (flexLinear(m) && a > m.s1 - tol && z < m.s2 + tol)) {
+        const { M, t } = flexAffine(m, zone === "low" ? m.s1 - 2 : zone === "high" ? m.s2 + 1 : m.s1);
+        const moved = this.affineMove(pc.shape, M, t);
+        const mk = moved.mk;
+        for (const { x, i } of keep) {
+          const g = this.list(mk.Modified(x))[0] ?? x;
+          faces.push({ face: g, name: pc.names[i] });
+        }
+        return;
+      }
+      for (const { x, i } of keep) faces.push({ face: this.flexFace(m, oc.TopoDS.Face_1(x)), name: pc.names[i] });
+    });
+    const sew = new oc.BRepBuilderAPI_Sewing(Math.max(1e-4, 1e-5 * L), true, true, true, false);
+    for (const x of faces) sew.Add(x.face);
+    sew.Perform(new oc.Message_ProgressRange_1());
+    const sewn = sew.SewedShape();
+    const ms = new oc.BRepBuilderAPI_MakeSolid_1();
+    let shells = 0;
+    for (const ex = new oc.TopExp_Explorer_2(sewn, A.TopAbs_SHELL, A.TopAbs_SHAPE); ex.More(); ex.Next()) { ms.Add(oc.TopoDS.Shell_1(ex.Current())); shells++; }
+    if (shells !== 1) throw new FeatureError("E-FLEX-FAIL", "The body could not be flexed.");
+    const fx = new oc.ShapeFix_Solid_1();
+    fx.Init(ms.Solid());
+    fx.Perform(new oc.Message_ProgressRange_1());
+    let shape = fx.Solid();
+    if (!new oc.BRepCheck_Analyzer(shape, true, false).IsValid_2()) {
+      const fix = new oc.ShapeFix_Shape_2(shape);
+      fix.Perform(new oc.Message_ProgressRange_1());
+      shape = fix.Shape();
+    }
+    if (this.volume(shape) < 0) shape = shape.Reversed();
+    // Names by the nearest of the moved faces (sewing may rebuild a face).
+    const cs = faces.map(x => this.centroid(x.face));
+    const out = this.sub(shape, "FACE");
+    const names = out.map(x => {
+      const j = faces.findIndex(y => y.face.IsSame(x));
+      if (j >= 0) return faces[j].name;
+      const c = this.centroid(x);
+      let best = 0, bd = Infinity;
+      cs.forEach((q, k) => { const d = d3(q, c); if (d < bd) { bd = d; best = k; } });
+      return faces[best]?.name ?? `${f.id}:new`;
+    });
+    return this.unifyAlike({ shape, faces: out, names });
+  }
+
+  /** A shape moved by an affine map (rigid maps keep exact surfaces). */
+  private affineMove(shape: any, M: number[], t: V3): { mk: any } {
+    const oc = this.oc;
+    const col = (j: number): V3 => [M[j], M[3 + j], M[6 + j]];
+    const rigid = [0, 1, 2].every(i => [0, 1, 2].every(j => Math.abs(dot(col(i), col(j)) - (i === j ? 1 : 0)) < 1e-9)) && dot(cross(col(0), col(1)), col(2)) > 0;
+    if (rigid) {
+      const tr = new oc.gp_Trsf_1();
+      tr.SetValues(M[0], M[1], M[2], t[0], M[3], M[4], M[5], t[1], M[6], M[7], M[8], t[2]);
+      return { mk: new oc.BRepBuilderAPI_Transform_2(shape, tr, true) };
+    }
+    const g = new oc.gp_GTrsf_1();
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) g.SetValue(i + 1, j + 1, M[3 * i + j]);
+    g.SetTranslationPart(new oc.gp_XYZ_2(t[0], t[1], t[2]));
+    return { mk: new oc.BRepBuilderAPI_GTransform_2(shape, g, true) };
+  }
+
+  /** One face through the flex map: B-spline surface refined, poles fitted to the map at the Greville points, edges from the pcurves. */
+  private flexFace(m: FlexMap, face0: any): any {
+    const oc = this.oc, A = oc.TopAbs_ShapeEnum, REV = oc.TopAbs_Orientation.TopAbs_REVERSED;
+    const conv = new oc.BRepBuilderAPI_NurbsConvert_2(face0, true).Shape();
+    let face: any = null;
+    for (const ex = new oc.TopExp_Explorer_2(conv, A.TopAbs_FACE, A.TopAbs_SHAPE); ex.More() && !face; ex.Next()) face = oc.TopoDS.Face_1(ex.Current());
+    if (!face) throw new FeatureError("E-FLEX-FAIL", "The body could not be flexed.");
+    const bs = new oc.Handle_Geom_BSplineSurface_2(oc.BRep_Tool.Surface_2(face).get()).get();
+    if (!bs) throw new FeatureError("E-FLEX-FAIL", "The body could not be flexed.");
+    const rat = bs.IsURational() || bs.IsVRational();
+    let W: any = null;
+    if (rat) { W = new oc.TColStd_Array2OfReal_2(1, bs.NbUPoles(), 1, bs.NbVPoles()); for (let i = 1; i <= bs.NbUPoles(); i++) for (let j = 1; j <= bs.NbVPoles(); j++) W.SetValue(i, j, bs.Weight(i, j)); }
+    const S = rat
+      ? new oc.Geom_BSplineSurface_2(bs.Poles_2(), W, bs.UKnots_2(), bs.VKnots_2(), bs.UMultiplicities_2(), bs.VMultiplicities_2(), bs.UDegree(), bs.VDegree(), bs.IsUPeriodic(), bs.IsVPeriodic())
+      : new oc.Geom_BSplineSurface_1(bs.Poles_2(), bs.UKnots_2(), bs.VKnots_2(), bs.UMultiplicities_2(), bs.VMultiplicities_2(), bs.UDegree(), bs.VDegree(), bs.IsUPeriodic(), bs.IsVPeriodic());
+    if (S.IsUPeriodic() || S.IsVPeriodic()) {
+      const ad = new oc.BRepAdaptor_Surface_2(face, true);
+      S.Segment(ad.FirstUParameter(), ad.LastUParameter(), ad.FirstVParameter(), ad.LastVParameter(), 1e-9, 1e-9);
+    }
+    S.IncreaseDegree(Math.max(3, S.UDegree()), Math.max(3, S.VDegree()));
+    // Spans: by how much of the region the face spans along the axis and how hard the map turns.
+    const L = m.s2 - m.s1;
+    let a = Infinity, z = -Infinity;
+    for (let i = 1; i <= S.NbUPoles(); i++) for (let j = 1; j <= S.NbVPoles(); j++) {
+      const s = dot(add(this.xyz(S.Pole(i, j)), mul(m.o, -1)), m.a);
+      a = Math.min(a, s); z = Math.max(z, s);
+    }
+    // The spans run over the whole face at the region's density (a face may reach past the trim planes when not split).
+    const along = Math.min(z, m.s2) > Math.max(a, m.s1) ? (z - a) / L : 0;
+    const per = m.kind === "taper" ? 6 : 12 * Math.max(1, Math.abs(m.angle) / (Math.PI / 2));
+    const n = Math.min(96, Math.ceil(along * per));
+    const knots = (lo: number, hi: number, ins: (x: number) => void) => { for (let k = 1; k < n; k++) ins(lo + ((hi - lo) * k) / n); };
+    if (n > 1) {
+      knots(S.UKnot(S.FirstUKnotIndex()), S.UKnot(S.LastUKnotIndex()), x => S.InsertUKnot(x, 1, 1e-9, true));
+      knots(S.VKnot(S.FirstVKnotIndex()), S.VKnot(S.LastVKnotIndex()), x => S.InsertVKnot(x, 1, 1e-9, true));
+    }
+    const nu = S.NbUPoles(), nv = S.NbVPoles(), ud = S.UDegree(), vd = S.VDegree();
+    const uk = S.UKnotSequence_2(), vk = S.VKnotSequence_2();
+    const gre = (k: any, d: number, i: number) => { let x = 0; for (let q = 1; q <= d; q++) x += k.Value(i + q); return x / d; };
+    const gu = Array.from({ length: nu }, (_x, i) => gre(uk, ud, i + 1)), gv = Array.from({ length: nv }, (_x, j) => gre(vk, vd, j + 1));
+    const tgt = gu.map(u => gv.map(v => flexPoint(m, this.xyz(S.Value(u, v)))));
+    for (let i = 1; i <= nu; i++) for (let j = 1; j <= nv; j++) S.SetPole_2(i, j, this.P(flexPoint(m, this.xyz(S.Pole(i, j)))), S.Weight(i, j));
+    // Interpolate at the Greville points (a few Jacobi steps: the collocation matrix is close to I).
+    for (let it = 0; it < 4; it++) {
+      const d = gu.map((u, i) => gv.map((v, j) => add(tgt[i][j], mul(this.xyz(S.Value(u, v)), -1))));
+      for (let i = 1; i <= nu; i++) for (let j = 1; j <= nv; j++) S.SetPole_2(i, j, this.P(add(this.xyz(S.Pole(i, j)), d[i - 1][j - 1])), S.Weight(i, j));
+    }
+    const HS = new oc.Handle_Geom_Surface_2(S);
+    let mk: any = null;
+    for (const ex = new oc.TopExp_Explorer_2(face, A.TopAbs_WIRE, A.TopAbs_SHAPE); ex.More(); ex.Next()) {
+      const mw = new oc.BRepBuilderAPI_MakeWire_1();
+      for (const we = new oc.BRepTools_WireExplorer_3(oc.TopoDS.Wire_1(ex.Current()), face); we.More(); we.Next()) {
+        const e = we.Current();
+        const c2 = new oc.BRepAdaptor_Curve2d_2(e, face);
+        let ne = new oc.BRepBuilderAPI_MakeEdge_31(c2.Curve(), HS, c2.FirstParameter(), c2.LastParameter()).Edge();
+        oc.BRepLib.BuildCurves3d_2(ne);
+        if (e.Orientation_1() === REV) ne = oc.TopoDS.Edge_1(ne.Reversed());
+        mw.Add_1(ne);
+      }
+      if (!mw.IsDone()) throw new FeatureError("E-FLEX-FAIL", "The body could not be flexed.");
+      if (!mk) mk = new oc.BRepBuilderAPI_MakeFace_21(HS, mw.Wire(), true); else mk.Add(mw.Wire());
+    }
+    if (!mk?.IsDone()) throw new FeatureError("E-FLEX-FAIL", "The body could not be flexed.");
+    const fix = new oc.ShapeFix_Face_2(mk.Face());
+    fix.Perform();
+    const out = fix.Face();
+    return face0.Orientation_1() === REV ? out.Reversed() : out;
+  }
+
   // ---------- surfaces (FRS 9.11, FR-FT-100) ----------
 
   /** The surface bodies: each child of the sheets compound, with its face names. */
@@ -1410,7 +2005,7 @@ export class Modeller {
   /** Planar surface: the sketch's closed regions become flat surface bodies. */
   private planeSurf(f: PlaneSurfFeature, doc: PartDoc, body: Named | null, sheets: Named | null, frames: Record<string, Frame>): Named | null {
     const { sk, frame } = this.sketchOf(f.sketch, doc, body, frames, "a sketch with a closed contour");
-    const { faces } = this.profileFaces(sk, frame);
+    const { faces } = this.profileFaces(sk, frame, [0, 0, 0], undefined, f.contours);
     if (!faces.length) throw new FeatureError("E-SRF-EMPTY", "The sketch has no closed contour.");
     return this.sheetsOf([...this.sheetList(sheets), ...faces.map((x, k) => ({ shape: x, faces: [x], names: [`${f.id}:face:${k}`] }))]);
   }
@@ -1821,7 +2416,7 @@ export class Modeller {
     const regions = this.bodyList(res).filter(r => Math.abs(this.volume(r.shape)) > 1e-9);
     if (!regions.length) throw new FeatureError("E-INT-NONE", "The bodies and surfaces enclose no region.");
     const info: IntersectRegion[] = regions.map(r => ({ c: this.insidePoint(r.shape), v: Math.abs(this.volume(r.shape)), out: false }));
-    const contains = (r: Named, p: V3) => new oc.BRepClass3d_SolidClassifier_3(r.shape, this.P(p), 1e-7).State() === oc.TopAbs_State.TopAbs_IN;
+    const contains = (r: Named, p: V3) => stateAt(oc, r.shape, p, 1e-7) === "in";
     regions.forEach((r, k) => { const ex = f.exclude.map((p, i) => contains(r, p) ? i : -1).filter(i => i >= 0); info[k].out = ex.length > 0; if (ex.length) info[k].ex = ex; });
     this.regions.set(f.id, info);
     const kept = regions.filter((_, k) => !info[k].out);
@@ -1909,6 +2504,29 @@ export class Modeller {
     const keep = pieces.filter(p => !p.names.includes(`${f.id}:cap`));
     if (keep.length === pieces.length || !keep.length) throw new FeatureError("E-RPF-MISS", "The surface must cross the faces' whole outline: make it bigger, or extend it.");
     return this.mergeSides(this.compoundOf(keep), f.id);
+  }
+
+  /** Joins neighbouring faces that carry the same name and lie on one surface (UnifySameDomain across those edges only). */
+  private unifyAlike(b: Named): Named {
+    const oc = this.oc;
+    const edges = b.faces.map(x => this.sub(x, "EDGE"));
+    const u = new oc.ShapeUpgrade_UnifySameDomain_2(b.shape, true, true, false);
+    let any = false;
+    for (const e of this.sub(b.shape, "EDGE")) {
+      const by = b.faces.map((_x, i) => i).filter(i => edges[i].some((x: any) => x.IsSame(e)));
+      if (by.length === 2 && b.names[by[0]] === b.names[by[1]]) any = true;
+      else u.KeepShape(e);
+    }
+    if (!any) return b;
+    try { u.Build(); } catch { return b; }
+    const shape = u.Shape(), h = u.History_1().get();
+    const faces = this.sub(shape, "FACE");
+    const names: string[] = faces.map(() => "");
+    b.faces.forEach((f, i) => {
+      const mods = this.list(h.Modified(f));
+      for (const m of mods.length ? mods : [f]) { const j = faces.findIndex(x => x.IsSame(m)); if (j >= 0 && !names[j]) names[j] = b.names[i]; }
+    });
+    return { shape, faces, names: names.map((n, i) => n || `${b.names[0]?.split(":")[0]}:new:${i}`) };
   }
 
   /**
@@ -2007,9 +2625,7 @@ export class Modeller {
     }
     const n = unit(target.n);
     if (Math.abs(dot(n, u)) > 1e-6 || Math.abs(dot(n, add(A, mul(target.o, -1)))) > 1e-4) throw new FeatureError("E-RV-UPTO", "Up to face for a revolve needs a flat face or plane through the axis.");
-    const prof = sketchProfile(sk);
-    if (prof.error) throw new FeatureError(prof.error.code, prof.error.message);
-    const pts = prof.faces.flatMap(pf => pf.outer.flatMap(sg => (sg.kind === "circle" ? [[sg.c[0] - sg.r, sg.c[1]], [sg.c[0] + sg.r, sg.c[1]]] : sg.kind === "ellipse" ? [sg.el.c] : sg.kind === "spline" ? [sg.bz[0], sg.bz[sg.bz.length - 1]] : [sg.a, sg.b]))) as [number, number][];
+    const pts = f.contours?.length ? f.contours : this.profilePts(sk);
     const c = this.w(frame, [pts.reduce((a, p) => a + p[0], 0) / pts.length, pts.reduce((a, p) => a + p[1], 0) / pts.length]);
     const w = add(c, mul(A, -1));
     const r0 = add(w, mul(u, -dot(w, u)));
@@ -2068,30 +2684,41 @@ export class Modeller {
     const oc = this.oc;
     if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
     if (!f.plane) throw new FeatureError("E-HOLE-FACE", "Pick a flat face or a plane for the holes.");
-    const fr = this.planeFrame(f.plane, prev, frames);
+    const fr0 = this.planeFrame(f.plane, prev, frames);
     // The panel places holes in this frame, so it is known even before the first hole.
-    frames[f.id] = fr;
-    if (!f.pts.length) throw new FeatureError("E-HOLE-PTS", "Click on the face to place the holes.");
+    frames[f.id] = fr0;
+    // Reverse direction: the holes go along the plane's normal instead of against it (x, y stay, so do the points).
+    const fr: Frame = f.flip ? { ...fr0, n: mul(fr0.n, -1) } : fr0;
+    if (!f.pts.length && !f.spots?.length) throw new FeatureError("E-HOLE-PTS", "Click on the face to place the holes.");
     const r = f.diameter.v / 2;
     if (!(r > 1e-6)) throw new FeatureError("E-FT-ZERO", "The diameter must be more than 0.");
     const through = f.end === "through";
     const big = this.size(prev.shape) * 2 + 1;
-    const down = mul(fr.n, -1);
+    // The hole being made: the plane's frame, or a spot's own frame on another (or curved) face.
+    let hf: Frame = fr, down = mul(fr.n, -1);
     // The depth at a hole centre: as set, through, to a plane (along the axis) or until the material ends.
     const depthAt = (o: V3): number => {
       if (through) return big;
-      if (f.end === "upto") {
+      if (f.end === "upto" || f.end === "offset") {
         if (!f.upTo) throw new FeatureError("E-HOLE-UPTO", "Pick the face or plane the hole goes up to.");
         const tp = this.planeFrame(f.upTo, prev, frames);
         const den = dot(tp.n, down);
         if (Math.abs(den) < 1e-9) throw new FeatureError("E-HOLE-UPTO", "The face or plane must not be parallel to the hole.");
-        const s = dot(sub3(tp.o, o), tp.n) / den;
+        let s = dot(sub3(tp.o, o), tp.n) / den;
+        // Offset from surface: measured along the hole, short of the face (past it when reversed).
+        if (f.end === "offset") s += (f.reverseOffset ? 1 : -1) * (f.upToOffset?.v ?? 0);
         if (!(s > 1e-6)) throw new FeatureError("E-HOLE-UPTO", "The face or plane is behind the hole's face.");
+        return s;
+      }
+      if (f.end === "vertex") {
+        if (!f.upToVertex) throw new FeatureError("E-HOLE-VERTEX", "Pick the vertex the hole goes up to.");
+        const s = dot(sub3(this.vertexPos(f.upToVertex, prev, frames), o), down);
+        if (!(s > 1e-6)) throw new FeatureError("E-HOLE-VERTEX", "The vertex is behind the hole's face.");
         return s;
       }
       if (f.end === "next") {
         // March down the axis, just inside the hole's wall, until it leaves the material; then bisect.
-        const inside = (s: number) => new oc.BRepClass3d_SolidClassifier_3(prev.shape, this.P(add(o, mul(down, s))), 1e-7).State() === oc.TopAbs_State.TopAbs_IN;
+        const inside = (s: number) => stateAt(oc, prev.shape, add(o, mul(down, s)), 1e-7) === "in";
         const step = Math.max(big / 400, 0.05);
         let s = step / 4;
         if (!inside(s)) throw new FeatureError("E-HOLE-NEXT", "There is no material under the hole's face.");
@@ -2103,48 +2730,152 @@ export class Modeller {
       return f.depth.v;
     };
     const lift = Math.max(0.01, r * 0.05);
-    const tan59 = Math.tan((118 * Math.PI) / 360);
-    const profile = (depth: number): [number, number][] => {
+    // Options: countersinks as (radius, height of the cone) from a diameter and included angle, wider than `inner`.
+    const sinkOf = (s: HoleSink | undefined, inner: number): { R: number; h: number; t: number } | null => {
+      if (!s) return null;
+      const R = s.dia.v / 2, a = s.angle.v;
+      if (!(R > inner + 1e-9) || !(a > 0.1 && a < Math.PI - 0.1)) throw new FeatureError("E-HOLE-OPTCS", "An option countersink must be wider than the hole under it, at an angle between 6° and 174°.");
+      const t = Math.tan(a / 2);
+      return { R, h: (R - inner) / t, t };
+    };
+    const clear = headKind(f) === "cbore" || headKind(f) === "csink" ? f.headClear?.v ?? 0 : 0;
+    if (f.headClear && !(clear >= 0)) throw new FeatureError("E-FT-ZERO", "The head clearance must not be negative.");
+    // The top of the hole (or its counterbore) gets the near side countersink: start at its rim above the face.
+    const top = (prof: [number, number][], rTop: number) => {
+      const s = headKind(f) === "csink" || f.kind === "insert" ? null : sinkOf(f.nearCs, rTop);
+      if (s) prof.push([s.R + lift * s.t, lift], [rTop, -s.h]); else prof.push([rTop, lift]);
+      return s?.h ?? 0;
+    };
+    // Remove thread (FR-FT-051): the threaded length is cut to the major diameter.
+    const M = f.kind === "tapped" && f.threadMode === "remove" && f.major && f.major / 2 > r + 1e-9 ? f.major / 2 : 0;
+    const profile = (depth: number, exit?: number, td = 0): [number, number][] => {
       if (!(depth > 1e-6)) throw new FeatureError("E-FT-ZERO", "The depth must be more than 0.");
       // Profile from the axis outward, starting above the face so the top is cut cleanly.
       const prof: [number, number][] = [[0, lift]];
-      if (f.kind === "cbore") {
-        const R = (f.cbDia?.v ?? 0) / 2, d = f.cbDepth?.v ?? 0;
+      if (headKind(f) === "cbore") {
+        const R = (f.cbDia?.v ?? 0) / 2, d = (f.cbDepth?.v ?? 0) + clear;
         if (!(R > r) || !(d > 0) || d >= depth) throw new FeatureError("E-HOLE-CBORE", "The counterbore must be wider than the hole and less deep.");
-        prof.push([R, lift], [R, -d], [r, -d]);
+        const hn = top(prof, R);
+        if (hn >= d) throw new FeatureError("E-HOLE-OPTCS", "An option countersink must be wider than the hole under it, at an angle between 6° and 174°.");
+        prof.push([R, -d]);
+        // Under head countersink: a cone from the counterbore's floor into the hole.
+        const u = sinkOf(f.underCs, r);
+        if (u && !(u.R < R)) throw new FeatureError("E-HOLE-OPTCS", "An option countersink must be wider than the hole under it, at an angle between 6° and 174°.");
+        if (u) prof.push([u.R, -d], [r, -d - u.h]); else prof.push([r, -d]);
       } else if (f.kind === "cdrill") {
         // Counterdrill: a wider drill with a conical bottom down to the hole.
         const R = (f.cdDia?.v ?? 0) / 2, d = f.cdDepth?.v ?? 0, a = f.cdAngle?.v ?? (118 * Math.PI) / 180;
         if (!(a > 0.1 && a < Math.PI - 0.1)) throw new FeatureError("E-HOLE-CDRILL", "The counterdrill must be wider than the hole and less deep, at an angle between 6° and 174°.");
         const h = (R - r) / Math.tan(a / 2);
         if (!(R > r) || !(d > 0) || d + h >= depth) throw new FeatureError("E-HOLE-CDRILL", "The counterdrill must be wider than the hole and less deep, at an angle between 6° and 174°.");
-        prof.push([R, lift], [R, -d], [r, -d - h]);
-      } else if (f.kind === "csink") {
+        top(prof, R);
+        prof.push([R, -d], [r, -d - h]);
+      } else if (headKind(f) === "csink") {
         const R = (f.csDia?.v ?? 0) / 2, a = f.csAngle?.v ?? Math.PI / 2;
         if (!(R > r) || !(a > 0.1 && a < Math.PI - 0.1)) throw new FeatureError("E-HOLE-CSINK", "The countersink must be wider than the hole, at an angle between 6° and 174°.");
         const h = (R - r) / Math.tan(a / 2);
-        prof.push([R + lift * Math.tan(a / 2), lift], [r, -h]);
-      } else prof.push([r, lift]);
-      const tipH = f.flat || f.end !== "blind" ? 0 : r / tan59;
+        // Head clearance: a cylinder of the countersink's width above the cone.
+        if (clear > 0) prof.push([R, lift], [R, -clear], [r, -clear - h]);
+        else prof.push([R + lift * Math.tan(a / 2), lift], [r, -h]);
+      } else if (f.kind === "ptap") {
+        // Tapered tap (pipe thread): a 1:16 cone from the face over the thread length, never narrower than the
+        // tap drill (the drill goes in first); Remove thread cuts the cone at the major diameter instead.
+        const Rt = (f.threadMode === "remove" && f.major ? f.major : f.taperDia?.v ?? 0) / 2, L = Math.min(td, depth);
+        if (!(Rt > r + 1e-9) || !(L > 1e-6)) throw new FeatureError("E-HOLE-TAPER", "The tapered diameter must be wider than the tap drill, with a thread length more than 0.");
+        top(prof, Rt);
+        // The cone is Rt at the face itself, not at the lift above it.
+        if (prof[prof.length - 1][1] > 0) prof.push([Rt, 0]);
+        const zc = Math.min(L, (Rt - r) / (TAPER / 2)), Re = Rt - zc * (TAPER / 2);
+        if (zc >= depth - 1e-6) { prof.push([Re, -depth], [0, -depth]); return prof; }
+        prof.push([Re, -zc]);
+        if (Re > r + 1e-9) prof.push([r, -zc]);
+      } else if (M && td > 1e-6) {
+        top(prof, M);
+        if (td >= depth - 1e-6) { prof.push([M, -depth], [0, -depth]); return prof; }
+        prof.push([M, -td], [r, -td]);
+      } else top(prof, r);
+      // Far side countersink: a cone opening onto the face where the hole leaves the material.
+      const fs = holeExits(f) ? sinkOf(f.farCs, r) : null;
+      if (fs && exit != null) {
+        if (!(exit - fs.h > (-prof[prof.length - 1][1]) + 1e-6)) throw new FeatureError("E-HOLE-OPTCS", "An option countersink must be wider than the hole under it, at an angle between 6° and 174°.");
+        prof.push([r, -(exit - fs.h)], [fs.R + lift * fs.t, -(exit + lift)]);
+        if (depth > exit + 2 * lift) prof.push([r, -(exit + lift)], [r, -depth], [0, -depth]);
+        else prof.push([0, -(exit + lift)]);
+        return prof;
+      }
+      const da = f.drillAngle?.v ?? (118 * Math.PI) / 180;
+      if (f.end === "blind" && !f.flat && !(da > 0.1 && da < Math.PI - 0.1)) throw new FeatureError("E-HOLE-DRILL", "The drill point angle must be between 6° and 174°.");
+      const tipH = f.flat || f.end !== "blind" ? 0 : r / Math.tan(da / 2);
       prof.push([r, -depth], [0, -depth - tipH]);
       return prof;
     };
     const revolve = (o: V3, prof: [number, number][]) => {
       // The profile lies in the plane through the axis and the frame's x: (r, z) → o + x·r + n·z.
       const poly = new oc.BRepBuilderAPI_MakePolygon_1();
-      for (const [rr, z] of prof) poly.Add_1(this.P(add(add(o, mul(fr.x, rr)), mul(fr.n, z))));
+      for (const [rr, z] of prof) poly.Add_1(this.P(add(add(o, mul(hf.x, rr)), mul(hf.n, z))));
       poly.Close();
       const face = new oc.BRepBuilderAPI_MakeFace_15(poly.Wire(), true).Face();
-      const mk = new oc.BRepPrimAPI_MakeRevol_1(face, new oc.gp_Ax1_2(this.P(o), this.D(fr.n)), 2 * Math.PI, false);
+      const mk = new oc.BRepPrimAPI_MakeRevol_1(face, new oc.gp_Ax1_2(this.P(o), this.D(hf.n)), 2 * Math.PI, false);
       mk.Build(new oc.Message_ProgressRange_1());
       if (!mk.IsDone()) throw new FeatureError("E-FT-FAIL", "The hole could not be made.");
       return mk.Shape();
     };
+    // Thread end Through all: the thread runs as far as the drill meets material, measured on the axis before
+    // drilling (through: to where the material last ends, so a cross gap does not stop it).
+    const reach = (o: V3): number => f.end !== "through" ? depthAt(o) : reachAt(o);
+    const reachAt = (o: V3): number => {
+      const inside = (s: number) => stateAt(oc, prev.shape, add(o, mul(down, s)), 1e-7) === "in";
+      const step = Math.max(big / 800, 0.05);
+      let last = -1;
+      for (let s = step / 4; s < big; s += step) if (inside(s)) last = s;
+      if (last < 0) return 0;
+      let lo = last, hi = last + step;
+      for (let k = 0; k < 30; k++) { const mid = (lo + hi) / 2; if (inside(mid)) lo = mid; else hi = mid; }
+      return hi;
+    };
+    const len: number[] = [];
+    // Advanced Hole: the element stack's section (z down from the face) turned into the kernel's (r, z up) profile,
+    // starting above the face and running past the far face so both are cut cleanly.
+    // Captive screw hole: the same as an Advanced Hole with the stack its options make.
+    const cap = f.kind === "captive" ? captiveStack(f) : null;
+    const nearL = cap?.near ?? f.near ?? [], farL = cap ? cap.far : f.far;
+    let short = 0;
+    const advK = (o: V3): [number, number][] => {
+      const exits = holeExits(f), D = exits && (farL?.length || cap) && through ? reachAt(o) : depthAt(o);
+      if (exits && (farL?.length || cap)) len.push(D);
+      if (cap?.need && D < cap.need - 1e-6) short = Math.max(short, cap.need - D);
+      const main = nearL[nearL.length - 1], da = f.drillAngle?.v ?? (118 * Math.PI) / 180;
+      const tip = f.end === "blind" && !f.flat && main ? main.dia.v / 2 / Math.tan(da / 2) : 0;
+      let a;
+      try { a = advProfile(nearL, farL, D, exits, tip); } catch (e) { throw new FeatureError(cap ? "E-HOLE-CAPTIVE" : "E-HOLE-ADV", cap && /deeper/.test((e as Error).message) ? "The cover is too thin for this captive screw hole: use a shorter screw or a thicker cover." : (e as Error).message); }
+      const p = a.prof.map(([rr, z]) => [rr, -z] as [number, number]);
+      const first = nearL[0], t0 = first.t === "csink" ? Math.tan((first.angle?.v ?? Math.PI / 2) / 2) : 0;
+      const out: [number, number][] = [[0, lift], [p[0][0] + lift * t0, lift], ...p.slice(first.t === "csink" ? 1 : 0)];
+      if (exits) {
+        const [rl, zl] = out[out.length - 1], last = farL?.[0], tl = last?.t === "csink" ? Math.tan((last.angle?.v ?? Math.PI / 2) / 2) : 0;
+        if (farL?.length && last?.t === "csink") out[out.length - 1] = [rl + lift * tl, zl - lift]; else out.push([rl, zl - lift]);
+        out.push([0, zl - lift]);
+      }
+      return out;
+    };
     const tools: Named[] = [];
-    f.pts.forEach((p, i) => {
-      const o = add(add(fr.o, mul(fr.x, p[0])), mul(fr.y, p[1]));
-      let shape = revolve(o, profile(depthAt(o)));
-      if (f.kind === "slot") {
+    // Holes on other faces (FR-FT-052): each spot is projected onto its face and drilled square to it there.
+    const spots = (f.spots ?? []).map(sp => {
+      const face = this.resolveFace(prev, sp.face);
+      const uv = new oc.ShapeAnalysis_Surface(oc.BRep_Tool.Surface_2(face)).ValueOfUV(this.P(sp.p), 1e-6);
+      const q = this.xyz(new oc.BRepAdaptor_Surface_2(face, true).Value(uv.X(), uv.Y()));
+      const n = this.normalNear(face, q);
+      const a: V3 = Math.abs(n[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0], x = unit(cross(a, n));
+      return { o: q, F: { o: q, x, y: cross(n, x), n } as Frame };
+    });
+    const holes = [...f.pts.map(p => ({ o: add(add(fr.o, mul(fr.x, p[0])), mul(fr.y, p[1])), F: fr })), ...spots];
+    holes.forEach(({ o, F }, i) => {
+      hf = F; down = mul(F.n, -1);
+      if (threadThrough(f)) len.push(reach(o));
+      const exit = f.farCs && holeExits(f) ? (f.end === "through" ? reachAt(o) : depthAt(o)) : undefined;
+      const td = f.kind === "ptap" ? f.threadDepth?.v ?? 0 : !M ? 0 : threadThrough(f) ? len[len.length - 1] : f.threadDepth?.v ?? (f.end === "blind" ? f.depth.v : 2 * f.diameter.v);
+      let shape = revolve(o, f.kind === "adv" || f.kind === "captive" ? advK(o) : profile(depthAt(o), exit, td));
+      if (f.kind === "slot" && F === fr) {
         // Slot: the hole at both ends of the centre line, joined by the profile swept along it.
         const L = f.slotLen?.v ?? 0;
         if (!(L > 1e-6)) throw new FeatureError("E-HOLE-SLOT", "The slot length must be more than 0.");
@@ -2167,12 +2898,21 @@ export class Modeller {
       const faces = this.sub(shape, "FACE");
       tools.push({ shape, faces, names: faces.map((_x, k) => `${f.id}:h${i}:${k}`) });
     });
-    let tool = tools[0];
-    for (const t of tools.slice(1)) tool = this.bool("fuse", tool, t, f.id);
+    // One Boolean joins all the holes' tools (they were fused one after another).
+    let tool: Named;
+    try { tool = this.fuseAll(tools, f.id); } catch { tool = tools[0]; for (const t of tools.slice(1)) tool = this.bool("fuse", tool, t, f.id); }
     this.tools.set(f.id, [{ shape: tool, op: "cut" }]);
-    const out = this.bool("cut", prev, tool, f.id);
+    // Feature scope (FR-FT-007): only the picked bodies are drilled.
+    const sc = this.scoped(f, prev);
+    let out = this.bool("cut", sc.target!, tool, f.id);
+    if (sc.keep.length) out = this.compoundOf([...sc.keep, ...this.bodyList(out)]);
     if (Math.abs(this.volume(out.shape) - this.volume(prev.shape)) < 1e-9) throw new FeatureError("E-FT-NOCHANGE", "The holes do not touch the body.");
-    return { body: out, frame: fr };
+    // Retracted screw: the thread hangs below the retaining section and must stay inside the cover.
+    if (short > 0) this.warning = `The cover is ${Math.round(short * 100) / 100} mm too thin to hide the retracted screw's thread: add a boss under the hole or use a shorter screw.`;
+    if (!len.length && !spots.length) return { body: out, frame: fr0 };
+    const frame: Frame = { ...fr0, ...(len.length ? { len } : {}), ...(spots.length ? { sp: spots.map(s => [s.F.o, s.F.n] as [V3, V3]) } : {}) };
+    frames[f.id] = frame;
+    return { body: out, frame };
   }
 
   /**
@@ -2190,7 +2930,7 @@ export class Modeller {
     if (!(P > 1e-6)) throw new FeatureError("E-THR-PITCH", "A modelled thread needs a pitch: pick a standard size.");
     // Which way the cylinder runs from the edge, and whether it is a hole: probe just inside the material.
     const xd = unit(cross(a, Math.abs(a[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0]));
-    const inside = (q: V3) => new oc.BRepClass3d_SolidClassifier_3(prev.shape, this.P(q), 1e-7).State() === oc.TopAbs_State.TopAbs_IN;
+    const inside = (q: V3) => stateAt(oc, prev.shape, q, 1e-7) === "in";
     const probe = (d: V3, rr: number, s: number) => inside(add(add(c, mul(d, s)), mul(xd, rr)));
     const eps = Math.min(P * 0.25, r * 0.05);
     let dir: V3 | null = null, internal = false;
@@ -2625,6 +3365,7 @@ export class Modeller {
   private loft(f: LoftFeature, doc: PartDoc, prev: Named | null, frames: Record<string, Frame>): Named {
     const oc = this.oc;
     if (f.profiles.length < 2) throw new FeatureError("E-LOFT-PROFILES", "Pick two or more profile sketches.");
+    if (f.boundary) return this.boundary(f, doc, prev, frames);
     if (f.centerline) return this.loftAlong(f, doc, prev, frames);
     const mk = new oc.BRepOffsetAPI_ThruSections(true, !!f.ruled, 1e-6);
     let firstEdges: [any, string][] = [];
@@ -2696,6 +3437,136 @@ export class Modeller {
     let k = 0;
     const tool: Named = { shape, faces, names: names.map(n => n ?? `${f.id}:new:${k++}`) };
     return this.applyTool(f, [tool], prev);
+  }
+
+  /**
+   * Boundary Boss/Cut (FRS P5): closed profiles in Direction 1 and two or more curves in Direction 2 that
+   * cross every profile make a net; each cell of it (between two neighbouring profiles and two neighbouring
+   * curves) is filled by one Coons patch (`GeomFill_BSplineCurves`) whose edges are those four pieces, so the
+   * body passes exactly through every curve of both directions (a guided loft only meets its guides at
+   * the sections). With fewer than two curves it is a loft (with the one curve as a guide).
+   */
+  private boundary(f: LoftFeature, doc: PartDoc, prev: Named | null, frames: Record<string, Frame>): Named {
+    const oc = this.oc;
+    const A = oc.TopAbs_ShapeEnum;
+    if (f.profiles.length < 2) throw new FeatureError("E-LOFT-PROFILES", "Pick two or more profile sketches.");
+    const dir2 = f.guides ?? [];
+    if (dir2.length < 2) return this.loft({ ...f, boundary: undefined, ruled: undefined, close: undefined, centerline: undefined }, doc, prev, frames);
+    const caps: any[] = [];
+    const profWires = f.profiles.map(id => {
+      const { sk, frame } = this.sketchOf(id, doc, prev, frames, "the profile sketches");
+      const { faces } = this.profileFaces(sk, frame);
+      if (faces.length !== 1) throw new FeatureError("E-LOFT-PROFILE", "Each loft profile must be one closed region.");
+      caps.push(faces[0]);
+      return oc.BRepTools.OuterWire(faces[0]);
+    });
+    const curveWires = dir2.map(g => this.pathWire(g, doc, prev, frames));
+    // Dense samples of each wire: points, the adaptor parameter and the length along it.
+    type Poly = { ad: any; u: number[]; s: number[]; p: V3[]; len: number; closed: boolean };
+    const polyOf = (w: any, closed: boolean): Poly => {
+      const ad = new oc.BRepAdaptor_CompCurve_2(w, false);
+      const u0 = ad.FirstParameter(), u1 = ad.LastParameter(), n = 600;
+      const u: number[] = [], p: V3[] = [], s: number[] = [];
+      for (let k = 0; k <= n; k++) { const t = u0 + ((u1 - u0) * k) / n; u.push(t); p.push(this.xyz(ad.Value(t))); s.push(k ? s[k - 1] + d3(p[k], p[k - 1]) : 0); }
+      return { ad, u, s, p, len: s[n], closed };
+    };
+    const reversed = (q: Poly): Poly => ({ ...q, u: [...q.u].reverse(), p: [...q.p].reverse(), s: q.s.map(x => q.len - x).reverse() });
+    const at = (q: Poly, s: number): V3 => {
+      // The exact curve point at length s (parameter interpolated between the samples).
+      if (q.closed) s = ((s % q.len) + q.len) % q.len;
+      s = Math.max(0, Math.min(q.len, s));
+      let k = 1;
+      while (k < q.s.length - 1 && q.s[k] < s) k++;
+      const a = q.s[k - 1], b = q.s[k], w = b > a ? (s - a) / (b - a) : 0;
+      return this.xyz(q.ad.Value(q.u[k - 1] + (q.u[k] - q.u[k - 1]) * w));
+    };
+    const near = (q: Poly, x: V3): { s: number; d: number } => {
+      let best = { s: 0, d: Infinity };
+      for (let k = 1; k < q.p.length; k++) {
+        const a = q.p[k - 1], e = sub3(q.p[k], a), l2 = dot(e, e) || 1e-30, t = Math.max(0, Math.min(1, dot(sub3(x, a), e) / l2));
+        const d = d3(add(a, mul(e, t)), x);
+        if (d < best.d) best = { s: q.s[k - 1] + (q.s[k] - q.s[k - 1]) * t, d };
+      }
+      return best;
+    };
+    let profs = profWires.map(w => polyOf(w, true));
+    let curves = curveWires.map(w => polyOf(w, false));
+    // Every profile wound the same way about the boundary's run (first profile to last).
+    const cen = (q: Poly): V3 => mul(q.p.reduce((a, b) => add(a, b), [0, 0, 0] as V3), 1 / q.p.length);
+    const run = sub3(cen(profs[profs.length - 1]), cen(profs[0]));
+    const span = Math.max(1, Math.hypot(...run), ...profs.map(q => q.len / Math.PI));
+    const tol = Math.max(1e-3, span * 1e-3);
+    profs = profs.map(q => { let a: V3 = [0, 0, 0]; for (let k = 1; k < q.p.length; k++) a = add(a, cross(q.p[k - 1], q.p[k])); return dot(a, run) < 0 ? reversed(q) : q; });
+    // Where each curve crosses each profile: one corner per pair, on the profile.
+    const C: V3[][] = profs.map(() => []), S: number[][] = profs.map(() => []), T: number[][] = profs.map(() => []);
+    profs.forEach((q, i) => curveWires.forEach((cw, j) => {
+      const ext = new oc.BRepExtrema_DistShapeShape_2(profWires[i], cw, oc.Extrema_ExtFlag.Extrema_ExtFlag_MIN, oc.Extrema_ExtAlgo.Extrema_ExtAlgo_Grad, new oc.Message_ProgressRange_1());
+      if (!ext.IsDone() || ext.Value() > tol) throw new FeatureError("E-BND-CROSS", "Each Direction 2 curve must touch every profile.");
+      const x = this.xyz(ext.PointOnShape1(1));
+      C[i][j] = x; S[i][j] = near(q, x).s; T[i][j] = near(curves[j], x).s;
+    }));
+    // Curves run from the first profile to the last.
+    curves = curves.map((q, j) => { if (T[0][j] > T[profs.length - 1][j]) { profs.forEach((_, i) => { T[i][j] = q.len - T[i][j]; }); return reversed(q); } return q; });
+    for (let j = 0; j < curves.length; j++) for (let i = 1; i < profs.length; i++) if (!(T[i][j] > T[i - 1][j] + 1e-9)) throw new FeatureError("E-BND-ORDER", "The Direction 2 curves must cross the profiles in the profiles' order.");
+    // The curves in the order they go round the first profile; every profile must meet them in the same turn.
+    const order = curves.map((_, j) => j).sort((a, b) => S[0][a] - S[0][b]);
+    const M = order.length;
+    profs.forEach((_, i) => {
+      const o = curves.map((__, j) => j).sort((a, b) => S[i][a] - S[i][b]);
+      const r = o.indexOf(order[0]);
+      if (order.some((j, k) => o[(r + k) % M] !== j)) throw new FeatureError("E-BND-ORDER", "The Direction 2 curves must go round every profile in the same order.");
+    });
+    // A piece of a curve as one B-spline (points on the exact curve, the corners snapped), as a Geom handle.
+    const piece = (q: Poly, s0: number, s1: number, a: V3, b: V3): any => {
+      let ds = s1 - s0;
+      if (q.closed && ds <= 0) ds += q.len;
+      const n = 24, pts: V3[] = [];
+      for (let k = 0; k <= n; k++) pts.push(k === 0 ? a : k === n ? b : at(q, s0 + (ds * k) / n));
+      const e = this.bezierEdge(splineBezierN(pts));
+      const c = new oc.BRepAdaptor_Curve_2(e);
+      return c.BSpline();
+    };
+    const style = oc.GeomFill_FillingStyle.GeomFill_CoonsStyle;
+    const faces: { face: any; name: string }[] = [];
+    for (let i = 0; i + 1 < profs.length; i++) {
+      for (let k = 0; k < M; k++) {
+        const j = order[k], j2 = order[(k + 1) % M];
+        const c1 = piece(profs[i], S[i][j], S[i][j2], C[i][j], C[i][j2]);
+        const c2 = piece(curves[j2], T[i][j2], T[i + 1][j2], C[i][j2], C[i + 1][j2]);
+        const c3 = piece(profs[i + 1], S[i + 1][j], S[i + 1][j2], C[i + 1][j], C[i + 1][j2]);
+        const c4 = piece(curves[j], T[i][j], T[i + 1][j], C[i][j], C[i + 1][j]);
+        let srf: any;
+        try { srf = new oc.GeomFill_BSplineCurves_2(c1, c2, c3, c4, style).Surface(); } catch { throw new FeatureError("E-BND-FAIL", "The boundary could not be filled between these curves."); }
+        const face = new oc.BRepBuilderAPI_MakeFace_8(new oc.Handle_Geom_Surface_2(srf.get()), 1e-6).Face();
+        faces.push({ face, name: `${f.id}:side:${i}:${k}` });
+      }
+    }
+    faces.push({ face: caps[0], name: `${f.id}:start` }, { face: caps[caps.length - 1], name: `${f.id}:end` });
+    const sew = new oc.BRepBuilderAPI_Sewing(Math.max(1e-4, span * 1e-6), true, true, true, false);
+    for (const x of faces) sew.Add(x.face);
+    sew.Perform(new oc.Message_ProgressRange_1());
+    const sewn = sew.SewedShape();
+    const ms = new oc.BRepBuilderAPI_MakeSolid_1();
+    let shells = 0;
+    for (const ex = new oc.TopExp_Explorer_2(sewn, A.TopAbs_SHELL, A.TopAbs_SHAPE); ex.More(); ex.Next()) { ms.Add(oc.TopoDS.Shell_1(ex.Current())); shells++; }
+    if (shells !== 1) throw new FeatureError("E-BND-FAIL", "The boundary could not be filled between these curves.");
+    const fx = new oc.ShapeFix_Solid_1();
+    fx.Init(ms.Solid());
+    fx.Perform(new oc.Message_ProgressRange_1());
+    let shape = fx.Solid();
+    if (this.volume(shape) < 0) shape = shape.Reversed();
+    if (!(Math.abs(this.volume(shape)) > 1e-9)) throw new FeatureError("E-BND-FAIL", "The boundary could not be filled between these curves.");
+    const cs = faces.map(x => this.centroid(x.face));
+    const out = this.sub(shape, "FACE");
+    const names = out.map(x => {
+      const j = faces.findIndex(y => y.face.IsSame(x));
+      if (j >= 0) return faces[j].name;
+      const c = this.centroid(x);
+      let best = 0, bd = Infinity;
+      cs.forEach((q, k) => { const d = d3(q, c); if (d < bd) { bd = d; best = k; } });
+      return faces[best].name;
+    });
+    return this.applyTool(f, [{ shape, faces: out, names }], prev);
   }
 
   /**
@@ -2981,7 +3852,7 @@ export class Modeller {
           const pl = this.facePlane(x);
           if (pl && Math.abs(dot(pl.n, along!)) > 1e-6) return false;
           const c = this.centroid(x);
-          return new oc.BRepClass3d_SolidClassifier_3(prev.shape, this.P(c), 1e-6).State() !== oc.TopAbs_State.TopAbs_ON;
+          return stateAt(oc, prev.shape, c, 1e-6) !== "on";
         });
         rib = this.applyDraft(rib, walls, along!, f.draftOut ? -da : da, frame.o, f.id);
       }
@@ -3171,83 +4042,1711 @@ export class Modeller {
    * (blind, with a flat or 118° drilled bottom) or both (through). The faces to fill come back with,
    * for each hole, its plane (the opening face, as it is after the fill) and centre in that frame.
    */
-  recognizeHoles(doc: PartDoc): { faces: FaceRef[]; holes: RecognizedHole[] } {
+  recognizeHoles(doc: PartDoc): { faces: FaceRef[]; holes: RecognizedHole[]; sinks?: string[]; cuts?: Feature[] } {
     const oc = this.oc;
     const r = this.evaluate(doc);
     const body = r.body;
     if (!body) return { faces: [], holes: [] };
     const tol = Math.max(1e-4, this.size(body.shape) * 1e-6);
-    type Cyl = { i: number; o: V3; d: V3; r: number; v0: number; v1: number };
+    type Cyl = { i: number; o: V3; d: V3; r: number; v0: number; v1: number; du: number };
     type Pln = { i: number; o: V3; n: V3 };
-    const cyls: Cyl[] = [], plns: Pln[] = [], cones: { i: number; o: V3; d: V3 }[] = [];
+    type Cone = { i: number; o: V3; d: V3; ends: V3[] };
+    const cyls: Cyl[] = [], plns: Pln[] = [], cones: Cone[] = [];
+    // Material outside a round face: its normal points at the axis.
+    const hollow = (ad: any, face: any, o: V3, d: V3): boolean => {
+      const u = (ad.FirstUParameter() + ad.LastUParameter()) / 2, v = (ad.FirstVParameter() + ad.LastVParameter()) / 2;
+      const pp = new oc.gp_Pnt_1(), du = new oc.gp_Vec_1(), dv = new oc.gp_Vec_1();
+      ad.D1(u, v, pp, du, dv);
+      let n = unit(cross(this.xyz(du), this.xyz(dv)));
+      if (face.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED) n = mul(n, -1);
+      const rel = sub3(this.xyz(pp), o), radial = sub3(rel, mul(d, dot(rel, d)));
+      return dot(n, radial) < 0;
+    };
     body.faces.forEach((face, i) => {
       const ad = new oc.BRepAdaptor_Surface_2(face, true);
       const ty = ad.GetType();
       if (ty === oc.GeomAbs_SurfaceType.GeomAbs_Cylinder) {
         const c = ad.Cylinder(), ax = c.Axis();
         const o = this.xyz(ax.Location()), d = unit(this.xyz(ax.Direction()));
-        // Normal and point at the same parameter (a full round's centroid lies on its axis).
-        const u = (ad.FirstUParameter() + ad.LastUParameter()) / 2, v = (ad.FirstVParameter() + ad.LastVParameter()) / 2;
-        const pp = new oc.gp_Pnt_1(), du = new oc.gp_Vec_1(), dv = new oc.gp_Vec_1();
-        ad.D1(u, v, pp, du, dv);
-        let n = unit(cross(this.xyz(du), this.xyz(dv)));
-        if (face.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED) n = mul(n, -1);
-        const rel = sub3(this.xyz(pp), o), radial = sub3(rel, mul(d, dot(rel, d)));
-        // Material outside: the face normal points at the axis.
-        if (dot(n, radial) >= 0) return;
+        if (!hollow(ad, face, o, d)) return;
         const vs = [ad.FirstVParameter(), ad.LastVParameter()];
-        cyls.push({ i, o, d, r: c.Radius(), v0: Math.min(...vs), v1: Math.max(...vs) });
+        cyls.push({ i, o, d, r: c.Radius(), v0: Math.min(...vs), v1: Math.max(...vs), du: Math.abs(ad.LastUParameter() - ad.FirstUParameter()) });
       } else if (ty === oc.GeomAbs_SurfaceType.GeomAbs_Plane) {
         plns.push({ i, o: this.xyz(ad.Plane().Location()), n: this.faceNormalAt(face) });
       } else if (ty === oc.GeomAbs_SurfaceType.GeomAbs_Cone) {
         const ax = ad.Cone().Axis();
-        cones.push({ i, o: this.xyz(ax.Location()), d: unit(this.xyz(ax.Direction())) });
+        const o = this.xyz(ax.Location()), d = unit(this.xyz(ax.Direction()));
+        if (!hollow(ad, face, o, d)) return;
+        const u = ad.FirstUParameter();
+        cones.push({ i, o, d, ends: [ad.FirstVParameter(), ad.LastVParameter()].map(v => this.xyz(ad.Value(u, v))) });
       }
     });
     const onAxis = (p: V3, o: V3, d: V3) => { const q = sub3(p, o); return Math.hypot(...sub3(q, mul(d, dot(q, d)))) < tol * 10; };
     // Group the cylinder faces of one hole (a full round is often two half faces).
-    const groups: { o: V3; d: V3; r: number; lo: number; hi: number; faces: number[] }[] = [];
+    const groups: { o: V3; d: V3; r: number; lo: number; hi: number; faces: number[]; du: number }[] = [];
     for (const c of cyls) {
       const g = groups.find(g => Math.abs(g.r - c.r) < tol * 10 && Math.abs(Math.abs(dot(g.d, c.d)) - 1) < 1e-6 && onAxis(c.o, g.o, g.d));
       const s = (v: number) => dot(sub3(add(c.o, mul(c.d, v)), g ? g.o : c.o), g ? g.d : c.d);
       const a = s(c.v0), b = s(c.v1);
-      if (g) { g.lo = Math.min(g.lo, a, b); g.hi = Math.max(g.hi, a, b); g.faces.push(c.i); }
-      else groups.push({ o: c.o, d: c.d, r: c.r, lo: Math.min(a, b), hi: Math.max(a, b), faces: [c.i] });
+      if (g) { g.lo = Math.min(g.lo, a, b); g.hi = Math.max(g.hi, a, b); g.faces.push(c.i); g.du += c.du; }
+      else groups.push({ o: c.o, d: c.d, r: c.r, lo: Math.min(a, b), hi: Math.max(a, b), faces: [c.i], du: c.du });
     }
-    const found: { faces: number[]; open: number; at: V3; end: "blind" | "through"; depth: number; flat: boolean; r: number }[] = [];
+    type Found = { faces: number[]; open: number; at: V3; end: "blind" | "through"; depth: number; flat: boolean; r: number;
+      d: V3; floor?: number; caps: number[]; cs?: { dia: number; angle: number; faces: number[] }; cb?: { dia: number; depth: number } };
+    const found: Found[] = [], crossH: { faces: number[]; o: V3; d: V3; r: number }[] = [];
+    const crossB: { faces: number[]; at: V3; d: V3; r: number; depth: number; flat: boolean }[] = [];
     for (const g of groups) {
-      const P0 = add(g.o, mul(g.d, g.lo)), P1 = add(g.o, mul(g.d, g.hi));
-      // A flat face square to the axis through an end, facing away from the hole: the hole opens there.
-      const cap = (P: V3, out: V3) => plns.find(p => Math.abs(dot(sub3(P, p.o), p.n)) < tol * 10 && dot(p.n, out) > 1 - 1e-6);
-      const floor = (P: V3, up: V3) => plns.find(p => Math.abs(dot(sub3(P, p.o), p.n)) < tol * 10 && dot(p.n, up) > 1 - 1e-6);
-      const open0 = cap(P0, mul(g.d, -1)), open1 = cap(P1, g.d);
-      const len = g.hi - g.lo;
-      if (open0 && open1) { found.push({ faces: g.faces, open: open0.i, at: P0, end: "through", depth: len, flat: true, r: g.r }); continue; }
-      const open = open0 ?? open1;
-      if (!open) continue;
-      const [at, bot, up] = open0 ? [P0, P1, mul(g.d, -1)] : [P1, P0, g.d];
-      const flatFace = floor(bot, up);
-      const cone = cones.find(c => Math.abs(Math.abs(dot(c.d, g.d)) - 1) < 1e-6 && onAxis(c.o, g.o, g.d));
-      if (flatFace) found.push({ faces: [...g.faces, flatFace.i], open: open.i, at, end: "blind", depth: len, flat: true, r: g.r });
-      else if (cone) found.push({ faces: [...g.faces, cone.i], open: open.i, at, end: "blind", depth: len, flat: false, r: g.r });
+      const at = (s: number): V3 => add(g.o, mul(g.d, s));
+      // A flat face square to the axis through a point, facing `out`; of coplanar ones (the floors of two
+      // counterbores side by side) the one that reaches the hole's rim there.
+      const side = unit(Math.abs(g.d[0]) < 0.9 ? cross(g.d, [1, 0, 0]) : cross(g.d, [0, 1, 0]));
+      const plane = (P: V3, out: V3, rim = g.r) => {
+        const ps = plns.filter(p => Math.abs(dot(sub3(P, p.o), p.n)) < tol * 10 && dot(p.n, out) > 1 - 1e-6);
+        if (ps.length < 2) return ps[0];
+        const v = new oc.BRepBuilderAPI_MakeVertex(this.P(add(P, mul(side, rim)))).Vertex();
+        const gap = (p: Pln) => {
+          const d = new oc.BRepExtrema_DistShapeShape_2(v, body.faces[p.i], oc.Extrema_ExtFlag.Extrema_ExtFlag_MIN, oc.Extrema_ExtAlgo.Extrema_ExtAlgo_Grad, new oc.Message_ProgressRange_1());
+          return d.IsDone() ? d.Value() : Infinity;
+        };
+        const best = ps.map(p => ({ p, d: gap(p) })).sort((a, b) => a.d - b.d)[0];
+        return best.d < tol * 10 ? best.p : undefined;
+      };
+      // The cone faces on this axis, each end as (position along the axis, radius).
+      const conesHere = cones.filter(c => Math.abs(Math.abs(dot(c.d, g.d)) - 1) < 1e-6 && onAxis(c.o, g.o, g.d)).map(c => ({
+        i: c.i, ends: c.ends.map(p => { const q = sub3(p, g.o), s = dot(q, g.d); return { s, r: Math.hypot(...sub3(q, mul(g.d, s))) }; }),
+      }));
+      // What closes the hole at one end (s, going out along sign): open on a face, a countersink up to a face, a flat floor or a drill point.
+      const endAt = (s: number, sign: number) => {
+        const out = mul(g.d, sign);
+        const cap = plane(at(s), out);
+        if (cap) return { kind: "open" as const, s, cap: cap.i, faces: [] as number[] };
+        for (const c of conesHere) {
+          const k = c.ends.findIndex(e => Math.abs(e.s - s) < tol * 10 && Math.abs(e.r - g.r) < tol * 10);
+          if (k < 0) continue;
+          const w = c.ends[1 - k], h = (w.s - s) * sign;
+          // A round cone often comes as two half faces: take every face of the same cone.
+          const near = (e: { s: number; r: number }, f: { s: number; r: number }) => Math.abs(e.s - f.s) < tol * 10 && Math.abs(e.r - f.r) < tol * 10;
+          const faces = conesHere.filter(x => x.ends.some(e => near(e, c.ends[k])) && x.ends.some(e => near(e, w))).map(x => x.i);
+          if (h > tol && w.r > g.r + tol) {
+            const top = plane(at(w.s), out, w.r);
+            if (top) return { kind: "open" as const, s: w.s, cap: top.i, faces, cs: { dia: 2 * w.r, angle: 2 * Math.atan2(w.r - g.r, h), faces } };
+          } else if (h > tol && w.r < tol * 10) return { kind: "drill" as const, s, faces };
+        }
+        const floor = plane(at(s), mul(out, -1));
+        if (floor) return { kind: "floor" as const, s, floor: floor.i, faces: [floor.i] };
+        return null;
+      };
+      const e0 = endAt(g.lo, -1), e1 = endAt(g.hi, 1);
+      if (!e0 || !e1) {
+        // A hole right through that comes out on a curved face (a cross hole in a shaft): a full round
+        // whose ends are both outside the body, each either curved or plainly open on a flat face.
+        const plainOr = (e: typeof e0) => !e || (e.kind === "open" && !e.cs);
+        const out = (s: number) => stateAt(oc, body.shape, at(s), 1e-7) === "out";
+        const eps = Math.max(tol * 100, g.r * 1e-3);
+        if (plainOr(e0) && plainOr(e1) && Math.abs(g.du - 2 * Math.PI) < 1e-6 && out(g.lo - eps) && out(g.hi + eps))
+          crossH.push({ faces: g.faces, o: g.o, d: g.d, r: g.r });
+        // A blind cross hole: it comes out on a curved face at one end and stops at a flat floor or a drill
+        // point at the other. It is drilled from the plane square to it through the farthest point of its rim
+        // (the plane tangent to a shaft), so a reference plane carries it.
+        const [shut, bare] = !e0 ? [e1, -1] : [e0, 1];
+        if ((!e0 !== !e1) && shut && (shut.kind === "floor" || shut.kind === "drill") && Math.abs(g.du - 2 * Math.PI) < 1e-6) {
+          // The face's parameter range is loose: measure the rim's farthest point from the edges.
+          const s = bare * Math.max(...g.faces.map(i => this.reachAlong(body.faces[i], g.o, mul(g.d, bare))));
+          if (out(s + bare * eps)) crossB.push({ faces: [...g.faces, ...shut.faces], at: at(s), d: mul(g.d, -bare), r: g.r, depth: Math.abs(shut.s - s), flat: shut.kind === "floor" });
+        }
+        continue;
+      }
+      if (e0.kind === "open" && e1.kind === "open") {
+        // Through: it opens on the countersunk end, else the lower one.
+        const [a, b] = e1.cs && !e0.cs ? [e1, e0] : [e0, e1];
+        found.push({ faces: [...g.faces, ...a.faces, ...b.faces], open: a.cap, at: at(a.s), end: "through", depth: Math.abs(b.s - a.s), flat: true, r: g.r,
+          d: g.d, caps: [a.cap, b.cap], ...(a.cs ? { cs: a.cs } : {}) });
+        continue;
+      }
+      const a = e0.kind === "open" ? e0 : e1.kind === "open" ? e1 : null, b = a === e0 ? e1 : e0;
+      if (!a || a.kind !== "open" || b.kind === "open") continue;
+      found.push({ faces: [...g.faces, ...a.faces, ...b.faces], open: a.cap, at: at(a.s), end: "blind", depth: Math.abs(b.s - a.s), flat: b.kind === "floor", r: g.r,
+        d: g.d, caps: [a.cap], ...(b.kind === "floor" ? { floor: b.floor } : {}), ...(a.cs ? { cs: a.cs } : {}) });
+    }
+    // Counterbores: a wider flat-bottomed hole whose floor is where a narrower one on its axis opens.
+    for (const A of [...found]) {
+      if (A.end !== "blind" || A.floor === undefined || A.cs || A.cb) continue;
+      const B = found.find(h => h !== A && !h.cs && !h.cb && h.r < A.r - tol && h.caps.includes(A.floor!) && Math.abs(Math.abs(dot(h.d, A.d)) - 1) < 1e-6 && onAxis(h.at, A.at, A.d));
+      if (!B) continue;
+      found.splice(found.indexOf(B), 1);
+      const far = B.end === "through" ? B.caps.find(c => c !== A.floor) : undefined;
+      found.splice(found.indexOf(A), 1, { ...A, faces: [...A.faces, ...B.faces], end: B.end, depth: A.depth + B.depth, flat: B.flat, r: B.r,
+        floor: B.floor, caps: far !== undefined ? [A.open, far] : [A.open], cb: { dia: 2 * A.r, depth: A.depth } });
     }
     // A face another hole fills cannot hold a hole.
     const filled = new Set(found.flatMap(h => h.faces));
     const keep = found.filter(h => !filled.has(h.open));
-    if (!keep.length) return { faces: [], holes: [] };
+    const upto = doc.features.slice(0, doc.rollback ?? doc.features.length);
     const ref = (i: number): FaceRef => ({ name: body.names[i], hint: this.centroid(body.faces[i]) });
-    const faces = keep.flatMap(h => h.faces.map(ref));
+    // Cross holes come back as a circle on the standard plane square to the hole, cut Through All both
+    // ways (FeatureWorks makes them cut-extrudes too); one is kept only when it gives the same volume.
+    const v0 = crossH.length || crossB.length ? this.volume(body.shape) : 0;
+    const cuts: Feature[] = [], crossFaces: FaceRef[] = [];
+    const tryPair = (pair: Feature[], fs: FaceRef[]) => {
+      try {
+        const r = this.evaluate({ ...doc, rollback: null, features: [...upto, { id: "__cross", type: "delface", name: "", faces: fs } as Feature, ...pair] });
+        if (!r.body || r.statuses.slice(-(pair.length + 1)).some(x => x.ok === false)) return;
+        const same = Math.abs(this.volume(r.body.shape) - v0) <= 1e-6 * Math.abs(v0) + 1e-9 || this.sameVolume(r.body.shape, body.shape);
+        if (!same) return;
+      } catch { return; }
+      cuts.push(...pair);
+      crossFaces.push(...fs);
+    };
+    const newId = () => `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
+    const frames: Record<string, Frame> = {};
+    const squareTo = (d: V3) => this.squarePlane(d, body, frames);
+    // Blind cross holes: a reference plane offset from the plane square to the hole, through the rim's
+    // farthest point, and a Hole Wizard hole on it (reversed when it runs along the plane's normal).
+    for (const c of crossB) {
+      const sq = squareTo(c.d);
+      if (!sq) continue;
+      const F = sq.fr, h = dot(sub3(c.at, F.o), F.n), pid = newId();
+      const q = sub3(c.at, F.o);
+      const pair: Feature[] = [...sq.feats,
+        { id: pid, type: "plane", name: "", base: sq.ref, mode: "offset", offset: { v: Math.abs(h) }, ...(h < 0 ? { flip: true } : {}) } as Feature,
+        { id: `${pid}h`, type: "hole", name: "", plane: { plane: pid }, pts: [[dot(q, F.x), dot(q, F.y)]], kind: "simple", diameter: { v: 2 * c.r }, end: "blind",
+          depth: { v: c.depth }, ...(c.flat ? { flat: true } : {}), ...(dot(c.d, F.n) > 0 ? { flip: true } : {}) } as Feature];
+      tryPair(pair, c.faces.map(ref));
+    }
+    for (const c of crossH) {
+      const sq = squareTo(c.d);
+      if (!sq) continue;
+      const F = sq.fr, q = sub3(c.o, F.o), sid = newId();
+      const pair: Feature[] = [...sq.feats,
+        { id: sid, type: "sketch", name: "", plane: sq.ref, rels: [], dims: [], ents: [{ id: `${sid}c`, t: "point", x: dot(q, F.x), y: dot(q, F.y) }, { id: `${sid}k`, t: "circle", c: `${sid}c`, r: c.r }] } as Feature,
+        { id: `${sid}x`, type: "extrude", name: "", sketch: sid, op: "cut", end: "through2", depth: { v: 10 } } as Feature];
+      tryPair(pair, c.faces.map(ref));
+    }
+    if (!keep.length) return cuts.length ? { faces: crossFaces, holes: [], cuts } : { faces: [], holes: [] };
+    const faces = [...keep.flatMap(h => h.faces.map(ref)), ...crossFaces];
     // The planes are measured after the fill, which is what the hole features will be built on.
     const del: Feature = { id: "__recog", type: "delface", name: "", faces };
-    const after = this.evaluate({ ...doc, rollback: null, features: [...doc.features.slice(0, doc.rollback ?? doc.features.length), del] });
+    const after = this.evaluate({ ...doc, rollback: null, features: [...upto, del] });
     if (after.statuses.at(-1)?.ok === false || !after.body) return { faces: [], holes: [] };
     const holes: RecognizedHole[] = keep.map(h => {
       const plane: PlaneRef = { face: { name: body.names[h.open], hint: h.at } };
       const fr = this.planeFrame(plane, after.body, after.frames);
       const q = sub3(h.at, fr.o);
-      return { plane, pt: [dot(q, fr.x), dot(q, fr.y)], diameter: 2 * h.r, end: h.end, depth: h.depth, flat: h.flat };
+      return { plane, pt: [dot(q, fr.x), dot(q, fr.y)], diameter: 2 * h.r, end: h.end, depth: h.depth, flat: h.flat, ...(h.cb ? { cb: h.cb } : {}), ...(h.cs ? { cs: { dia: h.cs.dia, angle: h.cs.angle } } : {}) };
     });
-    return { faces, holes };
+    // The countersink cones, so Recognize Features does not take them for chamfers first.
+    return { faces, holes, sinks: keep.flatMap(h => h.cs ? h.cs.faces.map(i => body.names[i]) : []), ...(cuts.length ? { cuts } : {}) };
+  }
+
+  /**
+   * Feature recognition (FR-FT-102): fillets and chamfers on the body at the end of the document. A
+   * fillet is a cylinder face (straight edge) or a torus face (round edge) tangent to its neighbour
+   * across each of its two long edges; a chamfer is a narrow flat face leaning the same way against
+   * the two faces along its long edges. Corner patches (spheres) between fillets go with them. A find
+   * counts only when deleting the faces and making the fillets and chamfers again gives the same solid.
+   * A blend that runs over another one (a fillet round a filleted corner) is found first; the one under
+   * it comes in the next round, on the body without the first. The features come back in the order
+   * to add them: the Delete Faces of each round, then the blends from the last round to the first.
+   */
+  recognizeBlends(doc: PartDoc, skip: string[] = []): Feature[] {
+    const rounds: RecognizedBlends[] = [];
+    const upto = doc.features.slice(0, doc.rollback ?? doc.features.length);
+    const id = () => `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
+    const at = (fs: Feature[]): PartDoc => ({ ...doc, rollback: null, features: [...upto, ...fs] });
+    const dels: Feature[] = [];
+    for (let k = 0; k < 8; k++) {
+      const r = this.blendRound(at(dels), skip);
+      if (!r.faces.length) break;
+      rounds.push(r);
+      dels.push({ id: id(), type: "delface", name: "", faces: r.faces } as Feature);
+    }
+    if (rounds.length < 2) return rounds.length ? [dels[0], ...this.blendFeatures(rounds[0], id)] : [];
+    // The blends go back on from the last round to the first. A blend of an earlier round may end on a
+    // face a later round deleted and made again under another name: its edges are found again by place.
+    const start = this.evaluate(at([])).body;
+    if (!start) return [];
+    const v0 = this.volume(start.shape), tol = Math.max(1e-4, this.size(start.shape) * 1e-6) * 100;
+    const out = [...dels];
+    for (let k = rounds.length - 1; k >= 0; k--) {
+      const body = this.evaluate(at(out)).body;
+      if (!body) return [];
+      const es = this.sub(body.shape, "EDGE").map(e => ({ e, m: this.edgeMid(e) }));
+      const again = (r: EdgeRef, first?: V3): EdgeRef | null => {
+        let best: typeof es[0] | null = null, bd = tol;
+        for (const x of es) { const d = d3(x.m, r.hint!); if (d < bd) { bd = d; best = x; } }
+        const names = best ? this.edgeKey(body, best.e).split("|") : [];
+        if (names.length !== 2) return null;
+        // A two-distance chamfer measures its first distance on the first face: keep that face first.
+        if (first) {
+          const lean = (n: string) => { const i = body.names.indexOf(n); return i < 0 ? -2 : dot(this.normalNear(body.faces[i], best!.m), first); };
+          if (lean(names[1]) > lean(names[0])) names.reverse();
+        }
+        return { faces: [names[0], names[1]], hint: best!.m };
+      };
+      const r = rounds[k];
+      const fix = <T extends { edges: EdgeRef[]; first?: V3[] }>(g: T): T => ({ ...g, edges: g.edges.map((e, n) => { const a = again(e, g.first?.[n]); return a && { ...e, ...a }; }).filter((x): x is EdgeRef => !!x) });
+      const fixed: RecognizedBlends = { faces: r.faces, fillets: r.fillets.map(fix), chamfers: r.chamfers.map(fix) };
+      if ([...fixed.fillets, ...fixed.chamfers].some((g, n) => g.edges.length !== [...r.fillets, ...r.chamfers][n].edges.length)) return [];
+      out.push(...this.blendFeatures(fixed, id));
+    }
+    const fin = this.evaluate(at(out));
+    if (!fin.body || fin.statuses.slice(-out.length).some(s => s.ok === false)) return [];
+    return Math.abs(this.volume(fin.body.shape) - v0) <= 1e-6 * Math.abs(v0) + 1e-9 ? out : [];
+  }
+
+  /**
+   * Feature recognition (FR-FT-102): prismatic pockets and bosses on the body at the end of the document.
+   * An inner loop of a flat face whose side faces all run square to it (flat faces and cylinders along the
+   * normal) is a cut when the sides go into the material, down to a flat floor (blind) or out through a
+   * face on the other side (through all), and a boss when they stand up to a flat top. The faces are
+   * removed with Delete Face and each loop comes back as a sketch on the face with an Extrude. Round
+   * pockets are left to Recognize Holes. A find counts only when the body comes back with the same volume.
+   */
+  recognizeExtrudes(doc: PartDoc, base = true): Feature[] {
+    const upto = doc.features.slice(0, doc.rollback ?? doc.features.length);
+    const at = (fs: Feature[]): PartDoc => ({ ...doc, rollback: null, features: [...upto, ...fs] });
+    // A pocket in the floor of another pocket (or in a boss) comes off first; the one around it is found in the
+    // next round, on the body without it. They go back on from the last round to the first.
+    // Keyways in a shaft have no flat face to sketch on: they come off first and go back last, on reference planes.
+    let K = { faces: [] as FaceRef[], feats: [] as Feature[] };
+    try { K = this.keyways(at([])); } catch { /* none */ }
+    const kDel: Feature[] = K.faces.length ? [{ id: `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`, type: "delface", name: "", faces: K.faces } as Feature] : [];
+    const rounds: ExtrudeFind[][] = [], dels: Feature[] = [...kDel];
+    let first: Feature[] = [];
+    for (let k = 0; k < 6; k++) {
+      const r = this.extrudeRound(at(dels));
+      if (!r) break;
+      rounds.push(r.finds);
+      dels.push(r.feats[0]);
+      if (!k) first = r.feats;
+    }
+    if (base) {
+      try { const b = this.baseExtrude(upto, at, dels, rounds, K.feats); if (b) return b; } catch { /* without the base */ }
+      try { const b = this.baseRevolve(upto, at, dels, rounds, K.feats); if (b) return b; } catch { /* without the base */ }
+      try { const b = rounds.length || K.feats.length ? null : this.baseSweep(upto, at) ?? this.baseSweepAny(upto, at) ?? this.baseLoft(upto, at) ?? this.baseHelix(upto, at) ?? this.baseCurve(upto, at); if (b) return b; } catch { /* without the base */ }
+    }
+    if (rounds.length < 2) return [...kDel, ...first, ...K.feats];
+    try {
+      const start = this.evaluate(at([])).body;
+      if (!start) return [];
+      const v0 = this.volume(start.shape);
+      const out = [...dels];
+      for (let k = rounds.length - 1; k >= 0; k--) {
+        const r = this.evaluate(at(out));
+        const fs = r.body ? this.extrudeFeatures(rounds[k], r.body, r.frames) : null;
+        if (!fs) return [...kDel, ...first, ...K.feats];
+        out.push(...fs);
+      }
+      out.push(...K.feats);
+      const fin = this.evaluate(at(out));
+      if (fin.body && !fin.statuses.slice(-out.length).some(s => s.ok === false) && Math.abs(this.volume(fin.body.shape) - v0) <= 1e-6 * Math.abs(v0) + 1e-9) return out;
+    } catch { /* the first round alone */ }
+    // The rounds do not go back together: the first one alone is still a good find.
+    return [...kDel, ...first, ...K.feats];
+  }
+
+  /**
+   * Keyways and other closed pockets in a curved face (FR-FT-102): a flat floor with one outline whose every
+   * edge is under a wall square to it (planes, cylinders along its normal) rising into curved faces only, so
+   * there is no flat face to sketch on. Like FeatureWorks it comes back as a reference plane square to the
+   * floor through the walls' farthest point (tangent to a shaft) with the floor's outline sketched on it and a
+   * blind cut down to the floor. The floor must face a standard axis. A keyway may run out through the shaft's
+   * end: outline lines on a flat face square to the floor that goes on below it and faces away from the floor
+   * are open sides, sketched where they are and left out of the Delete Face. Each find is kept only when
+   * Delete Face plus the cut gives the same volume.
+   */
+  private keyways(doc: PartDoc): { faces: FaceRef[]; feats: Feature[] } {
+    const oc = this.oc;
+    const none = { faces: [] as FaceRef[], feats: [] as Feature[] };
+    const body = this.evaluate(doc).body;
+    if (!body || this.solids(body.shape) < 1) return none;
+    const at = (fs: Feature[]): PartDoc => ({ ...doc, rollback: null, features: [...doc.features.slice(0, doc.rollback ?? doc.features.length), ...fs] });
+    const v0 = this.volume(body.shape);
+    const tol = Math.max(1e-4, this.size(body.shape) * 1e-6) * 10;
+    const S = oc.GeomAbs_SurfaceType, C = oc.GeomAbs_CurveType;
+    const emap = new oc.TopTools_IndexedMapOfShape_1();
+    oc.TopExp.MapShapes_1(body.shape, oc.TopAbs_ShapeEnum.TopAbs_EDGE, emap);
+    const users: number[][] = Array.from({ length: emap.Extent() + 1 }, () => []);
+    const edges = body.faces.map((f, i) => this.sub(f, "EDGE").map(e => { const k = emap.FindIndex(e); if (k > 0 && !users[k].includes(i)) users[k].push(i); return { e, k }; }));
+    const across = (i: number, k: number) => users[k]?.find(j => j !== i) ?? -1;
+    const kinds = body.faces.map(face => {
+      const ad = new oc.BRepAdaptor_Surface_2(face, true), ty = ad.GetType();
+      if (ty === S.GeomAbs_Plane) return { pln: this.faceNormalAt(face) };
+      if (ty === S.GeomAbs_Cylinder) return { cyl: unit(this.xyz(ad.Cylinder().Axis().Direction())) };
+      return {};
+    }) as { pln?: V3; cyl?: V3 }[];
+    const id = () => `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
+    const ref = (i: number): FaceRef => ({ name: body.names[i], hint: this.centroid(body.faces[i]) });
+    const out = { faces: [] as FaceRef[], feats: [] as Feature[] };
+    body.faces.forEach((face, i) => {
+      const n = kinds[i].pln;
+      if (!n) return;
+      const std = (["XY", "XZ", "YZ"] as const).find(k => Math.abs(Math.abs(dot(STD_FRAMES[k].n, n)) - 1) < 1e-9);
+      if (!std) return;
+      const wmap = new oc.TopTools_IndexedMapOfShape_1();
+      oc.TopExp.MapShapes_1(face, oc.TopAbs_ShapeEnum.TopAbs_WIRE, wmap);
+      if (wmap.Extent() !== 1) return;
+      const segs: ExtrudeFind["segs"] = [], walls: number[] = [], open: number[] = [];
+      let P: V3 | null = null;
+      const fc = this.centroid(face);
+      // A face that goes on below the floor: an open end (the shaft's end face) when it is flat, square to the floor and faces away from it.
+      const below = (j: number, Q: V3) => edges[j].some(({ e }) => {
+        const ca = new oc.BRepAdaptor_Curve_2(e);
+        return [ca.FirstParameter(), ca.LastParameter()].some(t => dot(sub3(this.xyz(ca.Value(t)), Q), n) < -tol);
+      });
+      for (const e of this.sub(wmap.FindKey(1), "EDGE")) {
+        const j = across(i, emap.FindIndex(e)), k = j >= 0 ? kinds[j] : {} as { pln?: V3; cyl?: V3 };
+        if (!(k.pln && Math.abs(dot(k.pln, n)) < 1e-6) && !(k.cyl && Math.abs(Math.abs(dot(k.cyl, n)) - 1) < 1e-6)) return;
+        const ca = new oc.BRepAdaptor_Curve_2(e), t0 = ca.FirstParameter(), t1 = ca.LastParameter(), ct = ca.GetType();
+        const a = this.xyz(ca.Value(t0)), b = this.xyz(ca.Value(t1)), m = this.xyz(ca.Value((t0 + t1) / 2));
+        P ??= a;
+        if (k.pln && below(j, a)) {
+          if (!(dot(k.pln, sub3(fc, m)) < -tol) || ct !== C.GeomAbs_Line) return;
+          segs.push({ line: [a, b] });
+          if (!open.includes(j)) open.push(j);
+          continue;
+        }
+        if (ct === C.GeomAbs_Line) segs.push({ line: [a, b] });
+        else if (ct === C.GeomAbs_Circle) {
+          const c = this.xyz(ca.Circle().Location());
+          if (Math.abs(Math.abs(t1 - t0) - 2 * Math.PI) < 1e-9) segs.push({ circle: { c, r: ca.Circle().Radius() } });
+          else segs.push({ arc: { c, a, b, m } });
+        } else return;
+        if (!walls.includes(j)) walls.push(j);
+      }
+      if (!P || !walls.length || walls.some(j => open.includes(j))) return;
+      // The walls rise from the floor into curved faces only (a flat top is an ordinary pocket), over air.
+      for (const j of walls) for (const { e } of edges[j]) {
+        const ca = new oc.BRepAdaptor_Curve_2(e);
+        for (const t of [ca.FirstParameter(), ca.LastParameter()]) if (dot(sub3(this.xyz(ca.Value(t)), P), n) < -tol) return;
+      }
+      const far = [...new Set(walls.flatMap(j => edges[j].map(x => across(j, x.k))))].filter(j => j >= 0 && j !== i && !walls.includes(j) && !open.includes(j));
+      if (!far.length || far.some(j => kinds[j].pln)) return;
+      const c = this.centroid(face);
+      if (stateAt(oc, body.shape, add(c, mul(n, tol * 10)), 1e-7) !== "out") return;
+      const h = Math.max(...walls.map(j => this.reachAlong(body.faces[j], P!, n)));
+      if (!(h > tol)) return;
+      const F = STD_FRAMES[std], top = add(P, mul(n, h)), hs = dot(sub3(top, F.o), F.n);
+      const fr: Frame = { o: mul(F.n, hs), x: F.x, y: F.y, n: F.n };
+      const up = (p: V3) => add(p, mul(n, h - dot(sub3(p, P!), n)));
+      const lifted = segs.map(sg => "line" in sg ? { line: [up(sg.line[0]), up(sg.line[1])] as [V3, V3] }
+        : "circle" in sg ? { circle: { c: up(sg.circle.c), r: sg.circle.r } } : { arc: { c: up(sg.arc.c), a: up(sg.arc.a), b: up(sg.arc.b), m: up(sg.arc.m) } });
+      const pid = id(), sid = id();
+      const feats: Feature[] = [
+        { id: pid, type: "plane", name: "", base: { std }, mode: "offset", offset: { v: Math.abs(hs) }, ...(hs < 0 ? { flip: true } : {}) } as Feature,
+        { id: sid, type: "sketch", name: "", plane: { plane: pid }, ents: this.loopEnts(sid, fr, lifted).ents, rels: [], dims: [] } as Feature,
+        { id: id(), type: "extrude", name: "", sketch: sid, op: "cut", end: "blind", depth: { v: h }, ...(dot(n, F.n) < 0 ? { flip: true } : {}) } as Feature];
+      const faces = [i, ...walls].map(ref);
+      try {
+        const r = this.evaluate(at([{ id: "__key", type: "delface", name: "", faces } as Feature, ...feats]));
+        if (!r.body || r.statuses.slice(-4).some(x => x.ok === false)) return;
+        if (Math.abs(this.volume(r.body.shape) - v0) > 1e-6 * Math.abs(v0) + 1e-9 && !this.sameVolume(r.body.shape, body.shape)) return;
+      } catch { return; }
+      out.faces.push(...faces);
+      out.feats.push(...feats);
+    });
+    return out;
+  }
+
+  /**
+   * Recognize Features (FR-FT-102), FeatureWorks' automatic mode in one go: fillets and chamfers, holes,
+   * then pockets, bosses and the base, each found on the body with the earlier finds taken off. The tree
+   * comes back in modelling order: the base and extrudes, then the holes, then the fillets and chamfers,
+   * their faces and edges found again by place on the body the extrudes make. When the base is found the
+   * Delete Faces of the fillets and holes are left out. Kept only when it rebuilds to the same volume;
+   * otherwise the finds are stacked one after another (blends, holes, extrudes), as the single commands do.
+   */
+  recognizeFeatures(doc: PartDoc): Feature[] {
+    const upto = doc.features.slice(0, doc.rollback ?? doc.features.length);
+    const at = (fs: Feature[]): PartDoc => ({ ...doc, rollback: null, features: [...upto, ...fs] });
+    const id = () => `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
+    const start = this.evaluate(at([])).body;
+    if (!start) return [];
+    const v0 = this.volume(start.shape), tol = Math.max(1e-4, this.size(start.shape) * 1e-6) * 100;
+    const B = this.recognizeBlends(at([]), this.recognizeHoles(at([])).sinks ?? []);
+    const bDel = B.filter(f => f.type === "delface"), blends = B.filter(f => f.type !== "delface");
+    const H = this.recognizeHoles(at(bDel));
+    const hDel: Feature[] = H.faces.length ? [{ id: id(), type: "delface", name: "", faces: H.faces } as Feature] : [];
+    // Cross holes (cut-extrudes on a standard plane) go back after the hole features.
+    const holes = recognizedHoleFeatures(H.holes, id), cuts = H.cuts ?? [];
+    const E = this.recognizeExtrudes(at([...bDel, ...hDel]));
+    const good = (fs: Feature[]): boolean => {
+      try {
+        const r = this.evaluate(at(fs));
+        return !!r.body && !r.statuses.slice(-fs.length).some(x => x.ok === false) && this.solids(r.body.shape) === this.solids(start.shape)
+          && (Math.abs(this.volume(r.body.shape) - v0) <= 1e-6 * Math.abs(v0) + 1e-9 || this.sameVolume(r.body.shape, start.shape));
+      } catch { return false; }
+    };
+    // Holes and blends go back on where they were, on the faces the body has by then.
+    const replace = (head: Feature[]): Feature[] | null => {
+      const out = [...head];
+      if (holes.length) {
+        const ref = this.evaluate(at([...bDel, ...hDel])).body, body = this.evaluate(at(out)).body;
+        if (!ref || !body) return null;
+        for (const h of holes) {
+          const fr = this.planeFrame(h.plane!, ref, {});
+          const pts3 = h.pts.map(([x, y]) => add(fr.o, add(mul(fr.x, x), mul(fr.y, y))));
+          const i = this.flatFaceAt(body, pts3[0], fr.n, tol);
+          if (i < 0) return null;
+          const plane: PlaneRef = { face: { name: body.names[i] } };
+          const nf = this.planeFrame(plane, body, {});
+          out.push({ ...h, plane, pts: pts3.map(p => { const q = sub3(p, nf.o); return [dot(q, nf.x), dot(q, nf.y)] as [number, number]; }) });
+        }
+      }
+      out.push(...cuts);
+      for (const g of blends) {
+        const f = g as FilletFeature | ChamferFeature;
+        // The body this blend was found on: a two-distance chamfer keeps its first face by its normal there.
+        const before = f.type === "chamfer" && f.mode === "two" ? this.evaluate(at(B.slice(0, B.indexOf(g)))).body : null;
+        const body = this.evaluate(at(out)).body;
+        if (!body) return null;
+        const es = this.sub(body.shape, "EDGE").map(e => ({ e, m: this.edgeMid(e) }));
+        const edges: EdgeRef[] = [];
+        for (const r of f.edges) {
+          if (!r.hint) return null;
+          let best: typeof es[0] | null = null, bd = tol;
+          for (const x of es) { const d = d3(x.m, r.hint); if (d < bd) { bd = d; best = x; } }
+          const names = best ? this.edgeKey(body, best.e).split("|") : [];
+          if (names.length !== 2) return null;
+          if (before) {
+            const k = before.names.indexOf(r.faces[0]);
+            const first = k >= 0 ? this.normalNear(before.faces[k], r.hint) : null;
+            const lean = (n: string) => { const i = body.names.indexOf(n); return i < 0 || !first ? -2 : dot(this.normalNear(body.faces[i], best!.m), first); };
+            if (first && lean(names[1]) > lean(names[0])) names.reverse();
+          }
+          edges.push({ ...r, faces: [names[0], names[1]], hint: best!.m });
+        }
+        out.push({ ...f, edges } as Feature);
+      }
+      return out;
+    };
+    if (!B.length && !holes.length && !cuts.length && !E.length) return [];
+    // A base alone was checked by its own finder (a free-curve sweep only to 1e-3 of the volume, which `good` would refuse).
+    if (!B.length && !holes.length && !cuts.length && E.some(f => f.type === "delbody")) return E;
+    try {
+      if (E.some(f => f.type === "delbody")) {
+        // The base replaces the imported body: the Delete Faces before it are not needed.
+        const lean = replace(E);
+        if (lean && good(lean)) return lean;
+      }
+      const full = replace([...bDel, ...hDel, ...E]);
+      if (full && good(full)) return full;
+    } catch { /* stacked below */ }
+    // Stacked: each command's finds on the body the earlier ones leave, as running them one by one does.
+    const out: Feature[] = [...B];
+    const H2 = this.recognizeHoles(at(out));
+    if (H2.faces.length) out.push({ id: id(), type: "delface", name: "", faces: H2.faces } as Feature, ...recognizedHoleFeatures(H2.holes, id), ...(H2.cuts ?? []));
+    out.push(...this.recognizeExtrudes(at(out)));
+    return out.length && good(out) ? out : [];
+  }
+
+  /**
+   * The base of an imported body (FR-FT-102): when the body without its pockets and bosses is one plain prism
+   * (two flat ends, every other face a flat wall square to them or a cylinder along their normal), it is made
+   * again as a sketch on one end with an Extrude that adds a new body, the imported body is deleted, and the
+   * finds go back on the new one. No Delete Face is needed then.
+   */
+  private baseExtrude(upto: Feature[], at: (fs: Feature[]) => PartDoc, dels: Feature[], rounds: ExtrudeFind[][], tail: Feature[] = []): Feature[] | null {
+    const oc = this.oc;
+    const imports = upto.filter(f => f.type === "import" && !f.suppressed).map(f => `${f.id}:`);
+    if (!imports.length) return null;
+    const start = this.evaluate(at([]));
+    const body = dels.length ? this.evaluate(at(dels)).body : start.body;
+    if (!start.body || !body || this.solids(start.body.shape) !== 1 || this.solids(body.shape) !== 1) return null;
+    if (body.names.some(n => !imports.some(p => n.startsWith(p)))) return null;
+    const v0 = this.volume(start.body.shape);
+    const tol = Math.max(1e-4, this.size(body.shape) * 1e-6) * 10;
+    const S = oc.GeomAbs_SurfaceType, C = oc.GeomAbs_CurveType;
+    const kinds = body.faces.map(face => {
+      const ad = new oc.BRepAdaptor_Surface_2(face, true), ty = ad.GetType();
+      if (ty === S.GeomAbs_Plane) return { pln: this.faceNormalAt(face) };
+      if (ty === S.GeomAbs_Cylinder) return { cyl: unit(this.xyz(ad.Cylinder().Axis().Direction())) };
+      return {} as { pln?: V3; cyl?: V3 };
+    }) as { pln?: V3; cyl?: V3 }[];
+    const area = (i: number): number => { const g = new oc.GProp_GProps_1(); oc.BRepGProp.SurfaceProperties_1(body.faces[i], g, false, false); return g.Mass(); };
+    let best = -1, far = -1, ba = 0;
+    kinds.forEach((k, i) => {
+      const n = k.pln;
+      if (!n) return;
+      let j = -1, ok = true;
+      kinds.forEach((q, x) => {
+        if (x === i || !ok) return;
+        if (q.pln && dot(q.pln, n) < -1 + 1e-6 && j < 0) j = x;
+        else if (!(q.pln && Math.abs(dot(q.pln, n)) < 1e-6) && !(q.cyl && Math.abs(Math.abs(dot(q.cyl, n)) - 1) < 1e-6)) ok = false;
+      });
+      if (!ok || j < 0) return;
+      const a = area(i);
+      if (a > ba * (1 + 1e-9)) { ba = a; best = i; far = j; }
+    });
+    if (best < 0) return null;
+    const n = kinds[best].pln!;
+    const depth = Math.abs(dot(sub3(this.centroid(body.faces[far]), this.centroid(body.faces[best])), n));
+    if (depth < tol) return null;
+    const segs: ExtrudeFind["segs"] = [], pts: V3[] = [];
+    for (const e of this.sub(body.faces[best], "EDGE")) {
+      const ca = new oc.BRepAdaptor_Curve_2(e), t0 = ca.FirstParameter(), t1 = ca.LastParameter(), ct = ca.GetType();
+      const a = this.xyz(ca.Value(t0)), b = this.xyz(ca.Value(t1)), m = this.xyz(ca.Value((t0 + t1) / 2));
+      pts.push(a, m);
+      if (ct === C.GeomAbs_Line) segs.push({ line: [a, b] });
+      else if (ct === C.GeomAbs_Circle) {
+        const c = this.xyz(ca.Circle().Location()), r = ca.Circle().Radius();
+        if (Math.abs(Math.abs(t1 - t0) - 2 * Math.PI) < 1e-9) segs.push({ circle: { c, r } });
+        else segs.push({ arc: { c, a, b, m } });
+      } else return null;
+    }
+    // The sketch goes on the imported body as it is: the end face is found there by place.
+    const p = pts.find(q => this.flatFaceAt(start.body!, q, n, tol) >= 0);
+    if (!p) return null;
+    const made = this.extrudeFeatures([{ p, n, op: "boss", end: "blind", depth, segs }], start.body, start.frames);
+    if (!made) return null;
+    const fi = this.flatFaceAt(start.body, p, n, tol);
+    const id = `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
+    const out: Feature[] = [made[0], { ...made[1], merge: false, flip: true } as Feature,
+      { id, type: "delbody", name: "", bodies: [{ name: start.body.names[fi], hint: this.centroid(start.body.faces[fi]) }] } as Feature];
+    for (let k = rounds.length - 1; k >= 0; k--) {
+      const r = this.evaluate(at(out));
+      const fs = r.body && !r.statuses.slice(-out.length).some(s => s.ok === false) ? this.extrudeFeatures(rounds[k], r.body, r.frames) : null;
+      if (!fs) return null;
+      out.push(...fs);
+    }
+    out.push(...tail);
+    const fin = this.evaluate(at(out));
+    if (!fin.body || this.solids(fin.body.shape) !== 1 || fin.statuses.slice(-out.length).some(s => s.ok === false)) return null;
+    // Keyways (tail) put back on curved faces need the adaptive volume (the quick one is a few 1e-6 off there).
+    return Math.abs(this.volume(fin.body.shape) - v0) <= 1e-6 * Math.abs(v0) + 1e-9 || (tail.length && this.sameVolume(fin.body.shape, start.body.shape)) ? out : null;
+  }
+
+  /** The flat face of a body that holds point `p` and faces along `n`. */
+  private flatFaceAt(body: Named, p: V3, n: V3, tol: number): number {
+    const oc = this.oc;
+    const v = new oc.BRepBuilderAPI_MakeVertex(this.P(p)).Vertex();
+    let best = -1, bd = tol;
+    body.faces.forEach((face, i) => {
+      const ad = new oc.BRepAdaptor_Surface_2(face, true);
+      if (ad.GetType() !== oc.GeomAbs_SurfaceType.GeomAbs_Plane) return;
+      if (dot(this.faceNormalAt(face), n) < 1 - 1e-6 || Math.abs(dot(sub3(p, this.xyz(ad.Plane().Location())), n)) > tol) return;
+      const d = new oc.BRepExtrema_DistShapeShape_2(v, face, oc.Extrema_ExtFlag.Extrema_ExtFlag_MIN, oc.Extrema_ExtAlgo.Extrema_ExtAlgo_Grad, new oc.Message_ProgressRange_1());
+      if (d.IsDone() && d.Value() < bd) { bd = d.Value(); best = i; }
+    });
+    return best;
+  }
+
+  /** Sketch entities in frame `fr` for curves given in 3D; `pt` adds (or finds) the point at a place. */
+  private loopEnts(sid: string, fr: Frame, segs: ExtrudeFind["segs"]): { ents: SkEnt[]; pt: (p: V3) => string } {
+    const ents: SkEnt[] = [], pts = new Map<string, string>();
+    const pt = (p: V3): string => {
+      const q = sub3(p, fr.o), x = dot(q, fr.x), y = dot(q, fr.y), k = `${x.toFixed(5)},${y.toFixed(5)}`;
+      let pid = pts.get(k);
+      if (!pid) { pid = `${sid}p${pts.size + 1}`; pts.set(k, pid); ents.push({ id: pid, t: "point", x, y }); }
+      return pid;
+    };
+    segs.forEach((sg, k) => {
+      const eid = `${sid}e${k + 1}`;
+      if ("line" in sg) ents.push({ id: eid, t: "line", a: pt(sg.line[0]), b: pt(sg.line[1]) });
+      else if ("circle" in sg) ents.push({ id: eid, t: "circle", c: pt(sg.circle.c), r: sg.circle.r });
+      else {
+        const { c: cc, a, b, m } = sg.arc;
+        const ccw = dot(cross(sub3(a, cc), sub3(m, cc)), fr.n) > 0;
+        ents.push({ id: eid, t: "arc", c: pt(cc), a: pt(ccw ? a : b), b: pt(ccw ? b : a) });
+      }
+    });
+    return { ents, pt };
+  }
+
+  /**
+   * The base of an imported body of revolution (FR-FT-102): when every face of the body without its pockets and
+   * bosses turns about one axis (flat faces square to it, cylinders, cones and tori on it, spheres centred on it)
+   * and the axis lies in a standard plane or parallel to one, the half section in that plane becomes a sketch
+   * with a centreline, a Revolve makes a new body from it and the imported body is deleted.
+   */
+  private baseRevolve(upto: Feature[], at: (fs: Feature[]) => PartDoc, dels: Feature[], rounds: ExtrudeFind[][], tail: Feature[] = []): Feature[] | null {
+    const oc = this.oc;
+    const imports = upto.filter(f => f.type === "import" && !f.suppressed).map(f => `${f.id}:`);
+    if (!imports.length) return null;
+    const start = this.evaluate(at([]));
+    const body = dels.length ? this.evaluate(at(dels)).body : start.body;
+    if (!start.body || !body || this.solids(start.body.shape) !== 1 || this.solids(body.shape) !== 1) return null;
+    if (body.names.some(n => !imports.some(p => n.startsWith(p)))) return null;
+    const v0 = this.volume(start.body.shape), size = this.size(body.shape);
+    const tol = Math.max(1e-4, size * 1e-6) * 10;
+    const S = oc.GeomAbs_SurfaceType, C = oc.GeomAbs_CurveType;
+    // What each face says about the axis: a direction (flat), a line (cylinder, cone, torus) or a point (sphere).
+    const says = body.faces.map(face => {
+      const ad = new oc.BRepAdaptor_Surface_2(face, true), ty = ad.GetType();
+      const ax = (a: any) => ({ p: this.xyz(a.Location()), d: unit(this.xyz(a.Direction())) });
+      if (ty === S.GeomAbs_Plane) return { n: this.faceNormalAt(face) };
+      if (ty === S.GeomAbs_Cylinder) return { ax: ax(ad.Cylinder().Axis()) };
+      if (ty === S.GeomAbs_Cone) return { ax: ax(ad.Cone().Axis()) };
+      if (ty === S.GeomAbs_Torus) return { ax: ax(ad.Torus().Axis()) };
+      if (ty === S.GeomAbs_Sphere) return { c: this.xyz(ad.Sphere().Location()) };
+      return null;
+    }) as ({ n?: V3; ax?: { p: V3; d: V3 }; c?: V3 } | null)[];
+    if (says.some(q => !q)) return null;
+    const lead = says.find(q => q!.ax)?.ax;
+    if (!lead) return null;
+    const A = lead.p, d = lead.d;
+    const off = (p: V3): number => { const q = sub3(p, A); return Math.hypot(...sub3(q, mul(d, dot(q, d)))); };
+    for (const q of says) {
+      if (q!.n && Math.abs(Math.abs(dot(q!.n, d)) - 1) > 1e-6) return null;
+      if (q!.ax && (Math.abs(Math.abs(dot(q!.ax.d, d)) - 1) > 1e-6 || off(q!.ax.p) > tol)) return null;
+      if (q!.c && off(q!.c) > tol) return null;
+    }
+    // The sketch plane: a standard plane that holds the axis, or one moved along its normal up to the axis.
+    const id = () => `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
+    let plane: PlaneRef | null = null, fr: Frame | null = null, ref: Feature | null = null;
+    for (const std of ["XY", "XZ", "YZ"] as const) {
+      const F = STD_FRAMES[std];
+      if (Math.abs(dot(d, F.n)) > 1e-9) continue;
+      const h = dot(A, F.n);
+      if (Math.abs(h) <= tol) { plane = { std }; fr = F; break; }
+      if (!ref) {
+        ref = { id: id(), type: "plane", name: "", base: { std }, mode: "offset", offset: { v: Math.abs(h) }, flip: h < 0 } as Feature;
+        plane = { plane: ref.id };
+        fr = { o: mul(F.n, h), x: F.x, y: F.y, n: F.n };
+      }
+    }
+    const lead2: Feature[] = [];
+    if (!plane || !fr) {
+      // A skew axis (FR-FT-102): a plane at an angle about Z that holds the axis's direction (its normal is the
+      // horizontal square to it), moved along its normal up to the axis when it misses it.
+      const Z: V3 = [0, 0, 1], hz = sub3(d, mul(Z, d[2]));
+      if (Math.hypot(...hz) < 1e-9) return null;
+      const m = unit(cross(Z, unit(hz)));
+      const base = Math.abs(m[0]) >= Math.abs(m[1]) ? "YZ" as const : "XZ" as const, n0 = STD_FRAMES[base].n;
+      const mm = dot(n0, m) < 0 ? mul(m, -1) : m, ang = Math.atan2(dot(mm, cross(Z, n0)), dot(mm, n0));
+      const p1 = { id: id(), type: "plane", name: "", base: { std: base }, mode: "angle", offset: { v: 0 }, angle: { v: Math.abs(ang) }, about: { std: "Z" }, ...(ang < 0 ? { flip: true } : {}) } as PlaneFeature;
+      const f1 = this.refPlane(p1, body, {});
+      if (Math.abs(dot(f1.n, d)) > 1e-9) return null;
+      lead2.push(p1);
+      const h = dot(sub3(A, f1.o), f1.n);
+      if (Math.abs(h) <= tol) { plane = { plane: p1.id }; fr = f1; }
+      else {
+        const p2 = { id: id(), type: "plane", name: "", base: { plane: p1.id }, mode: "offset", offset: { v: Math.abs(h) }, ...(h < 0 ? { flip: true } : {}) } as PlaneFeature;
+        fr = this.refPlane(p2, body, { [p1.id]: f1 });
+        lead2.push(p2);
+        plane = { plane: p2.id };
+      }
+    }
+    // Half of the section through the axis: the body cut by a big rectangle that starts on the axis.
+    const u = unit(cross(fr.n, d)), L = size * 4 + 1;
+    const corner = (a: number, b: number) => this.P(add(add(A, mul(d, a * L)), mul(u, b * L)));
+    const poly = new oc.BRepBuilderAPI_MakePolygon_1();
+    poly.Add_1(corner(-1, 0)); poly.Add_1(corner(1, 0)); poly.Add_1(corner(1, 1)); poly.Add_1(corner(-1, 1));
+    poly.Close();
+    const half = new oc.BRepBuilderAPI_MakeFace_15(poly.Wire(), true).Face();
+    const cut = new oc.BRepAlgoAPI_Common_3(half, body.shape, new oc.Message_ProgressRange_1());
+    if (!cut.IsDone() || cut.HasErrors()) return null;
+    const segs: ExtrudeFind["segs"] = [];
+    let lo = Infinity, hi = -Infinity;
+    for (const e of this.sub(cut.Shape(), "EDGE")) {
+      const ca = new oc.BRepAdaptor_Curve_2(e), t0 = ca.FirstParameter(), t1 = ca.LastParameter(), ct = ca.GetType();
+      const a = this.xyz(ca.Value(t0)), b = this.xyz(ca.Value(t1)), m = this.xyz(ca.Value((t0 + t1) / 2));
+      for (const p of [a, b, m]) { const t = dot(sub3(p, A), d); lo = Math.min(lo, t); hi = Math.max(hi, t); }
+      if (ct === C.GeomAbs_Line) segs.push({ line: [a, b] });
+      else if (ct === C.GeomAbs_Circle) {
+        const c = this.xyz(ca.Circle().Location()), r = ca.Circle().Radius();
+        if (Math.abs(Math.abs(t1 - t0) - 2 * Math.PI) < 1e-9) segs.push({ circle: { c, r } });
+        else segs.push({ arc: { c, a, b, m } });
+      } else return null;
+    }
+    if (!segs.length || !(hi - lo > tol)) return null;
+    const sid = id(), { ents, pt } = this.loopEnts(sid, fr, segs);
+    // The centreline runs a little past the profile, so it shares no point with it.
+    const pad = Math.max(1, (hi - lo) * 0.1), axis = `${sid}ax`;
+    ents.push({ id: axis, t: "line", a: pt(add(A, mul(d, lo - pad))), b: pt(add(A, mul(d, hi + pad))), cons: true });
+    const out: Feature[] = [...(lead2.length ? lead2 : ref ? [ref] : []),
+      { id: sid, type: "sketch", name: "", plane, ents, rels: [], dims: [] } as Feature,
+      { id: id(), type: "revolve", name: "", sketch: sid, op: "boss", merge: false, axis, angle: { v: Math.PI * 2 } } as Feature,
+      { id: id(), type: "delbody", name: "", bodies: [{ name: start.body.names[0], hint: this.centroid(start.body.faces[0]) }] } as Feature];
+    for (let k = rounds.length - 1; k >= 0; k--) {
+      const r = this.evaluate(at(out));
+      const fs = r.body && !r.statuses.slice(-out.length).some(s => s.ok === false) ? this.extrudeFeatures(rounds[k], r.body, r.frames) : null;
+      if (!fs) return null;
+      out.push(...fs);
+    }
+    out.push(...tail);
+    const fin = this.evaluate(at(out));
+    if (!fin.body || this.solids(fin.body.shape) !== 1 || fin.statuses.slice(-out.length).some(s => s.ok === false)) return null;
+    // Keyways (tail) put back on curved faces need the adaptive volume (the quick one is a few 1e-6 off there).
+    return Math.abs(this.volume(fin.body.shape) - v0) <= 1e-6 * Math.abs(v0) + 1e-9 || (tail.length && this.sameVolume(fin.body.shape, start.body.shape)) ? out : null;
+  }
+
+  /**
+   * The base of a bent tube or rod (FR-FT-102): two flat end faces bounded by circles (one, or two concentric for
+   * a tube) and between them only cylinders and tori of those radii, whose circle edges' centres chain from one
+   * end to the other along straight runs and bends, all in one plane. Like FeatureWorks it comes back as a
+   * path sketch (lines and arcs) on the standard plane holding it (or an offset plane), a profile sketch on the
+   * first end face, a Sweep making a new body and a Delete Body of the import. Kept only at the same volume.
+   */
+  private baseSweep(upto: Feature[], at: (fs: Feature[]) => PartDoc): Feature[] | null {
+    const oc = this.oc;
+    const imports = upto.filter(f => f.type === "import" && !f.suppressed).map(f => `${f.id}:`);
+    if (!imports.length) return null;
+    const start = this.evaluate(at([]));
+    const body = start.body;
+    if (!body || this.solids(body.shape) !== 1 || body.names.some(n => !imports.some(p => n.startsWith(p)))) return null;
+    const size = this.size(body.shape), tol = Math.max(1e-4, size * 1e-6) * 10;
+    const S = oc.GeomAbs_SurfaceType, C = oc.GeomAbs_CurveType;
+    const key = (p: V3) => p.map(x => Math.round(x / tol)).join(",");
+    /** Centres and radii of a face's circle edges. */
+    const circles = (face: any) => {
+      const out: { c: V3; r: number; n: V3 }[] = [];
+      for (const e of this.sub(face, "EDGE")) {
+        const ca = new oc.BRepAdaptor_Curve_2(e);
+        if (ca.GetType() !== C.GeomAbs_Circle) continue;
+        const ci = ca.Circle();
+        out.push({ c: this.xyz(ci.Location()), r: ci.Radius(), n: unit(this.xyz(ci.Axis().Direction())) });
+      }
+      return out;
+    };
+    const caps: { i: number; c: V3; n: V3; rs: number[] }[] = [];
+    type Seg = { line: [V3, V3] } | { arc: { c: V3; a: V3; b: V3; m: V3 } };
+    const segs = new Map<string, { a: V3; b: V3; seg: Seg; r: Set<number> }>();
+    for (let i = 0; i < body.faces.length; i++) {
+      const face = body.faces[i], ad = new oc.BRepAdaptor_Surface_2(face, true), ty = ad.GetType();
+      const cs = circles(face);
+      if (ty === S.GeomAbs_Plane) {
+        // An end face: only circle edges, all on one centre.
+        if (cs.length !== this.sub(face, "EDGE").length || !cs.length || cs.some(q => Math.hypot(...sub3(q.c, cs[0].c)) > tol)) return null;
+        caps.push({ i, c: cs[0].c, n: this.faceNormalAt(face), rs: [...new Set(cs.map(q => +q.r.toFixed(6)))] });
+        continue;
+      }
+      // The section circles (a torus' seam is a circle about its axis: left out by radius).
+      const minor = ty === S.GeomAbs_Cylinder ? ad.Cylinder().Radius() : ty === S.GeomAbs_Torus ? ad.Torus().MinorRadius() : NaN;
+      const cen: V3[] = [];
+      for (const q of cs) if (Math.abs(q.r - minor) <= tol && !cen.some(p => Math.hypot(...sub3(p, q.c)) <= tol)) cen.push(q.c);
+      if (cen.length !== 2) return null;
+      const [a, b] = cen, k = [key(a), key(b)].sort().join("|");
+      let r: number, seg: Seg;
+      if (ty === S.GeomAbs_Cylinder) {
+        const d = unit(this.xyz(ad.Cylinder().Axis().Direction())), ab = sub3(b, a);
+        if (Math.hypot(...cross(d, ab)) > tol) return null;
+        r = ad.Cylinder().Radius();
+        seg = { line: [a, b] };
+      } else if (ty === S.GeomAbs_Torus) {
+        const T = ad.Torus(), O = this.xyz(T.Location()), d = unit(this.xyz(T.Axis().Direction())), R = T.MajorRadius();
+        r = T.MinorRadius();
+        if (Math.abs(Math.hypot(...sub3(a, O)) - R) > tol || Math.abs(Math.hypot(...sub3(b, O)) - R) > tol || Math.abs(dot(sub3(a, O), d)) > tol) return null;
+        // The bend's middle: the face's middle major angle, put on the centre circle.
+        const sp = ad.Value((ad.FirstUParameter() + ad.LastUParameter()) / 2, (ad.FirstVParameter() + ad.LastVParameter()) / 2);
+        const q = sub3(this.xyz(sp), O), h = sub3(q, mul(d, dot(q, d)));
+        if (Math.hypot(...h) < tol) return null;
+        seg = { arc: { c: O, a, b, m: add(O, mul(unit(h), R)) } };
+      } else return null;
+      const got = segs.get(k);
+      if (got) got.r.add(+r.toFixed(6));
+      else segs.set(k, { a, b, seg, r: new Set([+r.toFixed(6)]) });
+    }
+    if (caps.length !== 2 || !segs.size || caps[0].rs.length > 2) return null;
+    if (caps[0].rs.join() !== caps[1].rs.join()) return null;
+    const radii = new Set(caps[0].rs);
+    for (const g of segs.values()) for (const r of g.r) if (![...radii].some(x => Math.abs(x - r) <= tol)) return null;
+    // Chain the runs from the first end's centre to the other's.
+    const chain: Seg[] = [], left = [...segs.values()];
+    let cur = caps[0].c;
+    while (left.length) {
+      const k = left.findIndex(g => Math.hypot(...sub3(g.a, cur)) <= tol || Math.hypot(...sub3(g.b, cur)) <= tol);
+      if (k < 0) return null;
+      const g = left.splice(k, 1)[0], next = Math.hypot(...sub3(g.a, cur)) <= tol ? g.b : g.a;
+      chain.push(g.seg);
+      cur = next;
+    }
+    if (Math.hypot(...sub3(cur, caps[1].c)) > tol || chain.every(g => "line" in g)) return null;
+    return this.sweepOut(body, chain, caps[0].c, caps[0].i, caps[0].rs.map(r => ({ circle: { c: caps[0].c, r } })), at, tol, size);
+  }
+
+  /**
+   * The base of a bar or tube of any line/arc profile bent along lines and arcs in one plane (FR-FT-102): from a
+   * flat end face whose outline matches another flat face's, the section marches along the body. A run whose
+   * faces at the section all hold its direction (planes along it, cylinders along it) is straight, as far as the
+   * nearest of those faces reaches; a run with a cylinder, cone or torus whose axis lies across the direction is
+   * a bend about that axis, as far round as the nearest face turns. Done when the section lands on another flat
+   * face facing along it. Comes back like `baseSweep` (path through the end face's centroid), kept at the same volume.
+   */
+  private baseSweepAny(upto: Feature[], at: (fs: Feature[]) => PartDoc): Feature[] | null {
+    const oc = this.oc;
+    const imports = upto.filter(f => f.type === "import" && !f.suppressed).map(f => `${f.id}:`);
+    if (!imports.length) return null;
+    const start = this.evaluate(at([]));
+    const body = start.body;
+    if (!body || this.solids(body.shape) !== 1 || body.names.some(n => !imports.some(p => n.startsWith(p)))) return null;
+    const size = this.size(body.shape), tol = Math.max(1e-4, size * 1e-6) * 10;
+    const S = oc.GeomAbs_SurfaceType, C = oc.GeomAbs_CurveType;
+    type Prof = ExtrudeFind["segs"];
+    /** Sample points of each edge of each face, per edge. */
+    const samples = body.faces.map(face => this.sub(face, "EDGE").map(e => {
+      const ca = new oc.BRepAdaptor_Curve_2(e), t0 = ca.FirstParameter(), t1 = ca.LastParameter();
+      return [0, 0.25, 0.5, 0.75, 1].map(u => this.xyz(ca.Value(t0 + (t1 - t0) * u)));
+    }));
+    const surf = body.faces.map(face => {
+      const ad = new oc.BRepAdaptor_Surface_2(face, true), ty = ad.GetType();
+      if (ty === S.GeomAbs_Plane) return { pln: this.faceNormalAt(face), o: this.xyz(ad.Plane().Location()) };
+      const ax = ty === S.GeomAbs_Cylinder ? ad.Cylinder().Axis() : ty === S.GeomAbs_Cone ? ad.Cone().Axis() : ty === S.GeomAbs_Torus ? ad.Torus().Axis() : null;
+      return ax ? { ax: { o: this.xyz(ax.Location()), d: unit(this.xyz(ax.Direction())) } } : {};
+    }) as { pln?: V3; o?: V3; ax?: { o: V3; d: V3 } }[];
+    const area = (i: number): number => { const g = new oc.GProp_GProps_1(); oc.BRepGProp.SurfaceProperties_1(body.faces[i], g, false, false); return g.Mass(); };
+    const profile = (i: number): Prof | null => {
+      const segs: Prof = [];
+      for (const e of this.sub(body.faces[i], "EDGE")) {
+        const ca = new oc.BRepAdaptor_Curve_2(e), t0 = ca.FirstParameter(), t1 = ca.LastParameter(), ct = ca.GetType();
+        const a = this.xyz(ca.Value(t0)), b = this.xyz(ca.Value(t1)), m = this.xyz(ca.Value((t0 + t1) / 2));
+        if (ct === C.GeomAbs_Line) segs.push({ line: [a, b] });
+        else if (ct === C.GeomAbs_Circle) {
+          const c = this.xyz(ca.Circle().Location()), r = ca.Circle().Radius();
+          segs.push(Math.abs(Math.abs(t1 - t0) - 2 * Math.PI) < 1e-9 ? { circle: { c, r } } : { arc: { c, a, b, m } });
+        } else return null;
+      }
+      return segs;
+    };
+    const turn = (v: V3, d: V3, th: number): V3 => add(add(mul(v, Math.cos(th)), mul(cross(d, v), Math.sin(th))), mul(d, dot(d, v) * (1 - Math.cos(th))));
+    const flats = surf.map((q, i) => q.pln ? i : -1).filter(i => i >= 0);
+    const areas = new Map(flats.map(i => [i, area(i)]));
+    const cands = flats.filter(i => flats.some(j => j !== i && samples[j].length === samples[i].length && Math.abs(areas.get(j)! - areas.get(i)!) <= 1e-6 * areas.get(i)!))
+      .sort((a, b) => areas.get(a)! - areas.get(b)!);
+    for (const cap of cands) {
+      const prof = profile(cap);
+      if (!prof) continue;
+      const c0 = this.centroid(body.faces[cap]);
+      const reach = Math.max(...samples[cap].flat().map(p => Math.hypot(...sub3(p, c0)))) * 1.01 + tol;
+      let c = c0, n = mul(surf[cap].pln!, -1), done = false;
+      const chain: ({ line: [V3, V3] } | { arc: { c: V3; a: V3; b: V3; m: V3 } })[] = [];
+      for (let step = 0; step < 40 && !done; step++) {
+        if (chain.length && flats.some(j => j !== cap && dot(surf[j].pln!, n) > 1 - 1e-6 && Math.abs(dot(sub3(c, surf[j].o!), n)) <= tol
+          && samples[j].flat().some(p => Math.hypot(...sub3(p, c)) <= reach))) { done = true; break; }
+        // The faces leaving the section: an edge lying on it near the centre, and points in front.
+        const on = (p: V3) => Math.abs(dot(sub3(p, c), n)) <= tol && Math.hypot(...sub3(p, c)) <= reach;
+        const touch = body.faces.map((_, i) => i).filter(i => i !== cap && samples[i].some(es => es.every(on)) && samples[i].some(es => es.some(p => dot(sub3(p, c), n) > tol)));
+        if (!touch.length || touch.some(i => !surf[i].pln && !surf[i].ax)) break;
+        const bend = touch.map(i => surf[i].ax).find(ax => ax && Math.abs(dot(ax.d, n)) < 1 - 1e-6);
+        if (!bend) {
+          if (touch.some(i => surf[i].pln ? Math.abs(dot(surf[i].pln!, n)) > 1e-6 : Math.abs(dot(surf[i].ax!.d, n)) < 1 - 1e-6)) break;
+          const L = Math.min(...touch.map(i => Math.max(...samples[i].flat().map(p => dot(sub3(p, c), n)))));
+          if (!(L > tol)) break;
+          const e = add(c, mul(n, L));
+          chain.push({ line: [c, e] });
+          c = e;
+          continue;
+        }
+        if (Math.abs(dot(bend.d, n)) > 1e-6) break;
+        const coaxial = (ax: { o: V3; d: V3 }) => Math.abs(Math.abs(dot(ax.d, bend.d)) - 1) <= 1e-6 && Math.hypot(...cross(sub3(ax.o, bend.o), bend.d)) <= tol;
+        if (touch.some(i => surf[i].pln ? Math.abs(Math.abs(dot(surf[i].pln!, bend.d)) - 1) > 1e-6 : !coaxial(surf[i].ax!))) break;
+        const q = sub3(c, bend.o), O = add(bend.o, mul(bend.d, dot(q, bend.d))), h = sub3(c, O);
+        if (Math.hypot(...h) <= tol) break;
+        const d = dot(cross(bend.d, h), n) < 0 ? mul(bend.d, -1) : bend.d;
+        const ang = (p: V3) => {
+          const w = sub3(p, O), hp = sub3(w, mul(d, dot(w, d)));
+          let a = Math.atan2(dot(cross(h, hp), d), dot(h, hp));
+          if (a < 0) a += 2 * Math.PI;
+          return a > 2 * Math.PI - 1e-7 ? 0 : a;
+        };
+        const phi = Math.min(...touch.map(i => Math.max(...samples[i].flat().map(ang))));
+        if (!(phi > 1e-6) || phi >= 2 * Math.PI - 1e-6) break;
+        const e = add(O, turn(h, d, phi));
+        chain.push({ arc: { c: O, a: c, b: e, m: add(O, turn(h, d, phi / 2)) } });
+        c = e;
+        n = unit(turn(n, d, phi));
+      }
+      if (!done || chain.every(g => "line" in g)) continue;
+      const out = this.sweepOut(body, chain, c0, cap, prof, at, tol, size);
+      if (out) return out;
+    }
+    return null;
+  }
+
+  /**
+   * The base of a lofted body (FR-FT-102): two flat end faces of one outline each (lines, arcs, circles) with every
+   * other face reaching from one end's plane to the other's. The ends become profile sketches on those faces and a
+   * new-body Loft joins them, first as OCCT lines them up, else starting both at the ends of a straight side edge;
+   * the imported body is deleted. Kept at the same volume.
+   */
+  private baseLoft(upto: Feature[], at: (fs: Feature[]) => PartDoc): Feature[] | null {
+    const oc = this.oc;
+    const imports = upto.filter(f => f.type === "import" && !f.suppressed).map(f => `${f.id}:`);
+    if (!imports.length) return null;
+    const start = this.evaluate(at([]));
+    const body = start.body;
+    if (!body || this.solids(body.shape) !== 1 || body.names.some(n => !imports.some(p => n.startsWith(p)))) return null;
+    const size = this.size(body.shape), tol = Math.max(1e-4, size * 1e-6) * 10;
+    const S = oc.GeomAbs_SurfaceType, C = oc.GeomAbs_CurveType;
+    type Prof = ExtrudeFind["segs"];
+    const samples = body.faces.map(face => this.sub(face, "EDGE").map(e => {
+      const ca = new oc.BRepAdaptor_Curve_2(e), t0 = ca.FirstParameter(), t1 = ca.LastParameter();
+      return { line: ca.GetType() === C.GeomAbs_Line, pts: [0, 0.25, 0.5, 0.75, 1].map(u => this.xyz(ca.Value(t0 + (t1 - t0) * u))) };
+    }));
+    const planes = body.faces.map(face => {
+      const ad = new oc.BRepAdaptor_Surface_2(face, true);
+      return ad.GetType() === S.GeomAbs_Plane ? { n: this.faceNormalAt(face), o: this.xyz(ad.Plane().Location()) } : null;
+    });
+    const profile = (i: number): Prof | null => {
+      if (this.sub(oc.BRepTools.OuterWire(body.faces[i]), "EDGE").length !== this.sub(body.faces[i], "EDGE").length) return null;
+      const segs: Prof = [];
+      for (const e of this.sub(body.faces[i], "EDGE")) {
+        const ca = new oc.BRepAdaptor_Curve_2(e), t0 = ca.FirstParameter(), t1 = ca.LastParameter(), ct = ca.GetType();
+        const a = this.xyz(ca.Value(t0)), b = this.xyz(ca.Value(t1)), m = this.xyz(ca.Value((t0 + t1) / 2));
+        if (ct === C.GeomAbs_Line) segs.push({ line: [a, b] });
+        else if (ct === C.GeomAbs_Circle) {
+          const c = this.xyz(ca.Circle().Location()), r = ca.Circle().Radius();
+          segs.push(Math.abs(Math.abs(t1 - t0) - 2 * Math.PI) < 1e-9 ? { circle: { c, r } } : { arc: { c, a, b, m } });
+        } else return null;
+      }
+      return segs;
+    };
+    const onPlane = (p: V3, q: { n: V3; o: V3 }) => Math.abs(dot(sub3(p, q.o), q.n)) <= tol;
+    const flats = planes.map((q, i) => q ? i : -1).filter(i => i >= 0);
+    const area = (i: number): number => { const g = new oc.GProp_GProps_1(); oc.BRepGProp.SurfaceProperties_1(body.faces[i], g, false, false); return g.Mass(); };
+    const areas = new Map(flats.map(i => [i, area(i)]));
+    flats.sort((a, b) => areas.get(b)! - areas.get(a)!);
+    const id = () => `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
+    for (let x = 0; x < flats.length; x++) for (let y = x + 1; y < flats.length; y++) {
+      const A = flats[x], B = flats[y], pa = planes[A]!, pb = planes[B]!;
+      // The ends face away from each other, and every other face runs from one to the other.
+      if (dot(pa.n, pb.n) > -1e-6) continue;
+      const others = body.faces.map((_, k) => k).filter(k => k !== A && k !== B);
+      if (!others.length || others.some(k => {
+        const all = samples[k].flatMap(es => es.pts);
+        return !all.some(p => onPlane(p, pa)) || !all.some(p => onPlane(p, pb)) || (planes[k] && (Math.abs(Math.abs(dot(planes[k]!.n, pa.n)) - 1) < 1e-9 || Math.abs(Math.abs(dot(planes[k]!.n, pb.n)) - 1) < 1e-9));
+      })) continue;
+      const profA = profile(A), profB = profile(B);
+      if (!profA || !profB) continue;
+      const refA: PlaneRef = { face: { name: body.names[A], hint: this.centroid(body.faces[A]) } }, refB: PlaneRef = { face: { name: body.names[B], hint: this.centroid(body.faces[B]) } };
+      const fa = this.planeFrame(refA, body, {}), fb = this.planeFrame(refB, body, {});
+      const sa = id(), sb = id(), la = this.loopEnts(sa, fa, profA), lb = this.loopEnts(sb, fb, profB);
+      // Connector pairs: the ends of straight side edges that join a corner of each end.
+      const corners = (prof: Prof) => prof.flatMap(g => "line" in g ? g.line : "arc" in g ? [g.arc.a, g.arc.b] : []);
+      const ca = corners(profA), cb = corners(profB), near = (p: V3, ps: V3[]) => ps.find(q => Math.hypot(...sub3(p, q)) <= tol);
+      const joins: [string, string][] = [];
+      for (const k of others) for (const es of samples[k]) {
+        if (!es.line) continue;
+        const p = es.pts[0], q = es.pts[4];
+        const [u, v] = onPlane(p, pa) ? [p, q] : [q, p];
+        const cu = near(u, ca), cv = near(v, cb);
+        if (cu && cv && !joins.some(j => j[0] === la.pt(cu))) joins.push([la.pt(cu), lb.pt(cv)]);
+      }
+      for (const join of [null, ...joins.slice(0, 2)]) {
+        const out: Feature[] = [
+          { id: sa, type: "sketch", name: "", plane: refA, ents: la.ents, rels: [], dims: [] } as Feature,
+          { id: sb, type: "sketch", name: "", plane: refB, ents: lb.ents, rels: [], dims: [] } as Feature,
+          { id: id(), type: "loft", name: "", op: "boss", merge: false, profiles: [sa, sb], ...(join ? { connectors: join } : {}) } as Feature,
+          { id: id(), type: "delbody", name: "", bodies: [{ name: body.names[0], hint: this.centroid(body.faces[0]) }] } as Feature];
+        let fin: ReturnType<Modeller["evaluate"]>;
+        try { fin = this.evaluate(at(out)); } catch { continue; }
+        if (!fin.body || this.solids(fin.body.shape) !== 1 || fin.statuses.slice(-out.length).some(st => st.ok === false)) continue;
+        if (this.sameVolume(fin.body.shape, body.shape)) return out;
+      }
+    }
+    return null;
+  }
+
+  /** Features for a plane square to `d`: a standard plane; else a plane at an angle to one about the standard axis square
+   * to `d`; else (a compound angle) a plane about Z, the axis where it meets XY and a plane about that axis. Frames of the
+   * new features go into `frames`. `snapAng` rounds a measured angle; with `angTol` (radians) `d` is a measured direction. */
+  private squarePlane(d: V3, body: Named | null, frames: Record<string, Frame>, snapAng: (a: number) => number = a => a, angTol?: number): { feats: Feature[]; ref: PlaneRef; fr: Frame } | null {
+    const newId = () => `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
+    const turned = (base: PlaneRef, n: V3, about: LineRef, u: V3, d: V3): { pf: PlaneFeature; fr: Frame } => {
+      const dd = dot(n, d) < 0 ? mul(d, -1) : d, a = Math.atan2(dot(dd, cross(u, n)), dot(dd, n));
+      const pf = { id: newId(), type: "plane", name: "", base, mode: "angle", offset: { v: 0 }, angle: { v: snapAng(Math.abs(a)) }, about, ...(a < 0 ? { flip: true } : {}) } as PlaneFeature;
+      return { pf, fr: this.refPlane(pf, body, frames) };
+    };
+    const along = (n: V3, v: V3) => angTol ? Math.hypot(...cross(n, v)) < angTol : Math.abs(Math.abs(dot(n, v)) - 1) < 1e-9;
+    const STD = ["XY", "XZ", "YZ"] as const;
+    const std = STD.find(k => along(STD_FRAMES[k].n, d));
+    if (std) return { feats: [], ref: { std }, fr: STD_FRAMES[std] };
+    const axes = [["X", [1, 0, 0]], ["Y", [0, 1, 0]], ["Z", [0, 0, 1]]] as [("X" | "Y" | "Z"), V3][];
+    const ax = axes.find(([, A]) => Math.abs(dot(A, d)) < (angTol ?? 1e-9));
+    let out: { feats: Feature[]; ref: PlaneRef; fr: Frame };
+    if (ax) {
+      // Of the two standard planes holding the axis, the one nearer square to the hole.
+      const base = STD.filter(k => Math.abs(dot(STD_FRAMES[k].n, ax[1])) < 1e-9)
+        .sort((a, b) => Math.abs(dot(STD_FRAMES[b].n, d)) - Math.abs(dot(STD_FRAMES[a].n, d)))[0];
+      const { pf, fr } = turned({ std: base }, STD_FRAMES[base].n, { std: ax[0] }, ax[1], d);
+      out = { feats: [pf], ref: { plane: pf.id }, fr };
+    } else {
+      const Z: V3 = [0, 0, 1], h = unit(sub3(d, mul(Z, d[2])));
+      // Plane 1 is square to the hole's direction seen from above (turned about Z from YZ or XZ); it meets XY
+      // along the horizontal line square to the hole, which plane 2 turns about until it is square to it.
+      const base = Math.abs(h[0]) >= Math.abs(h[1]) ? "YZ" as const : "XZ" as const;
+      const p1 = turned({ std: base }, STD_FRAMES[base].n, { std: "Z" }, Z, h);
+      frames[p1.pf.id] = p1.fr;
+      const aid = newId();
+      const axis = { id: aid, type: "axis", name: "", mode: "planes", planes: [{ std: "XY" }, { plane: p1.pf.id }] } as AxisFeature;
+      const af = this.refAxis(axis, body, frames);
+      frames[aid] = af;
+      const p2 = turned({ plane: p1.pf.id }, p1.fr.n, { axis: aid }, unit(af.n), d);
+      frames[p2.pf.id] = p2.fr;
+      out = { feats: [p1.pf, axis, p2.pf], ref: { plane: p2.pf.id }, fr: p2.fr };
+    }
+    return along(out.fr.n, d) ? out : null;
+  }
+
+  /**
+   * A round tube or rod (FR-FT-102): two flat ends bounded by one circle each (or a spline on one) of one radius,
+   * one side face closed in one parameter. Returns the radius and the section centres along the other parameter
+   * (K + 1 of them, from one end's centre to the other's), or null.
+   */
+  private tubeCentres(body: Named, tol: number): { r: number; cen: V3[]; K: number } | null {
+    const oc = this.oc;
+    const S = oc.GeomAbs_SurfaceType;
+    const caps: { c: V3; r: number }[] = [];
+    const sides: any[] = [];
+    for (const face of body.faces) {
+      const ad = new oc.BRepAdaptor_Surface_2(face, true);
+      if (ad.GetType() === S.GeomAbs_Plane) {
+        const es = this.sub(face, "EDGE");
+        if (es.length !== 1) return null;
+        // A circle, or a spline lying on one (a pipe's end): around the face's centroid.
+        const ca = new oc.BRepAdaptor_Curve_2(es[0]), t0 = ca.FirstParameter(), t1 = ca.LastParameter();
+        const c = this.centroid(face), ds = Array.from({ length: 16 }, (_, k) => Math.hypot(...sub3(this.xyz(ca.Value(t0 + ((t1 - t0) * k) / 16)), c)));
+        const rr = ds.reduce((x, y) => x + y, 0) / ds.length;
+        if (ds.some(x => Math.abs(x - rr) > Math.max(tol, rr * 1e-4))) return null;
+        caps.push({ c, r: rr });
+      } else sides.push(ad);
+    }
+    if (caps.length !== 2 || sides.length !== 1 || Math.abs(caps[0].r - caps[1].r) > tol) return null;
+    const r = caps[0].r, ad = sides[0];
+    // The tube's sections: the parameter that runs round the profile closes on itself.
+    const u0 = ad.FirstUParameter(), u1 = ad.LastUParameter(), v0 = ad.FirstVParameter(), v1 = ad.LastVParameter();
+    const P = (u: number, v: number) => this.xyz(ad.Value(u, v));
+    const uRound = Math.hypot(...sub3(P(u0, (v0 + v1) / 2), P(u1, (v0 + v1) / 2))) <= tol;
+    const vRound = Math.hypot(...sub3(P((u0 + u1) / 2, v0), P((u0 + u1) / 2, v1))) <= tol;
+    if (uRound === vRound) return null;
+    const K = 240, M = 12;
+    const cen: V3[] = [];
+    for (let k = 0; k <= K; k++) {
+      const pts: V3[] = [];
+      for (let j = 0; j < M; j++) {
+        const a = j / M;
+        pts.push(uRound ? P(u0 + (u1 - u0) * a, v0 + (v1 - v0) * k / K) : P(u0 + (u1 - u0) * k / K, v0 + (v1 - v0) * a));
+      }
+      // The section circle's centre: circumcentres of evenly spread triples (the samples need not be even in angle).
+      const cc = (a: V3, b: V3, e: V3): V3 => {
+        const u = sub3(b, a), w = sub3(e, a), n = cross(u, w), nn = dot(n, n);
+        return add(a, mul(add(mul(cross(n, u), dot(w, w)), mul(cross(w, n), dot(u, u))), 1 / (2 * nn)));
+      };
+      const c = mul([0, 1, 2, 3].map(j => cc(pts[j], pts[j + 4], pts[j + 8])).reduce((s, p) => add(s, p), [0, 0, 0] as V3), 1 / 4);
+      if (pts.some(p => Math.abs(Math.hypot(...sub3(p, c)) - r) > Math.max(tol, r * 1e-3))) return null;
+      cen.push(c);
+    }
+    // Run from the cap the first section sits on.
+    const near = (p: V3) => caps.findIndex(q => Math.hypot(...sub3(p, q.c)) <= Math.max(tol, r * 1e-3));
+    if (near(cen[0]) < 0 || near(cen[K]) < 0 || near(cen[0]) === near(cen[K])) return null;
+    cen[0] = caps[near(cen[0])].c; cen[K] = caps[near(cen[K])].c;
+    return { r, cen, K };
+  }
+
+  /**
+   * The base of a coil spring (FR-FT-102, a sweep path out of one plane): two flat ends bounded by one circle
+   * each of one radius and one swept side face around which the tube runs. The tube's centreline (the middle of
+   * the side face's sections) must be a helix of constant radius and pitch about an axis along a standard axis:
+   * its unit tangents keep one angle to the axis, its points one distance from it, and its height grows evenly
+   * with the turn. Comes back as a circle sketch on the standard plane (or an offset plane) through the start,
+   * a Helix, a circular-profile Sweep with Merge result off and Delete Body of the import; kept when its helix runs
+   * through the centreline turning the same way and the volume matches.
+   */
+  private baseHelix(upto: Feature[], at: (fs: Feature[]) => PartDoc): Feature[] | null {
+    const imports = upto.filter(f => f.type === "import" && !f.suppressed).map(f => `${f.id}:`);
+    if (!imports.length) return null;
+    const start = this.evaluate(at([]));
+    const body = start.body;
+    if (!body || this.solids(body.shape) !== 1 || body.names.some(n => !imports.some(p => n.startsWith(p)))) return null;
+    const size = this.size(body.shape), tol = Math.max(1e-4, size * 1e-6) * 10;
+    const tube = this.tubeCentres(body, tol);
+    if (!tube) return null;
+    const { r, cen, K } = tube;
+    // The axis: square to every difference of unit tangents (they all keep one angle to it).
+    const T = cen.slice(0, K).map((c, k) => unit(sub3(cen[k + 1], c)));
+    let ax: V3 | null = null, best = 0;
+    for (const [i, j] of [[K / 4, K / 2], [K / 3, (2 * K) / 3], [K / 6, K / 3], [K / 2, (3 * K) / 4], [K / 12, K / 6]]) {
+      const c = cross(sub3(T[i], T[0]), sub3(T[j], T[0])), l = Math.hypot(...c);
+      if (l > best) { best = l; ax = mul(c, 1 / l); }
+    }
+    if (!ax || best < 1e-3) return null;
+    if (dot(ax, sub3(cen[K], cen[0])) < 0) ax = mul(ax, -1);
+    // The plane square to the axis: a standard plane, else reference planes turned to it (angles to 0.01° taken as meant).
+    const frames: Record<string, Frame> = {};
+    const degSnap = (a: number) => { const g = (a * 180) / Math.PI, k = Math.round(g * 100) / 100; return Math.abs(g - k) <= 2e-3 ? (k * Math.PI) / 180 : a; };
+    const sq = this.squarePlane(ax, body, frames, degSnap, 1e-4);
+    if (!sq) return null;
+    const F = sq.fr, d = mul(F.n, Math.sign(dot(F.n, ax)));
+    if (sq.feats.length) frames[sq.feats[sq.feats.length - 1].id] ??= F;
+    // The circle the centreline lies on, seen along the axis (least squares).
+    const xy = cen.map(c => [dot(sub3(c, F.o), F.x), dot(sub3(c, F.o), F.y)] as [number, number]);
+    const A = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], b = [0, 0, 0];
+    for (const [x, y] of xy) {
+      const row = [x, y, 1], z = -(x * x + y * y);
+      for (let i = 0; i < 3; i++) { b[i] += row[i] * z; for (let j = 0; j < 3; j++) A[i][j] += row[i] * row[j]; }
+    }
+    const det = (m: number[][]) => m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+    const D0 = det(A);
+    if (Math.abs(D0) < 1e-12) return null;
+    const sol = [0, 1, 2].map(i => det(A.map((row, k) => row.map((v, j) => j === i ? b[k] : v))) / D0);
+    const ox = -sol[0] / 2, oy = -sol[1] / 2, R = Math.sqrt(ox * ox + oy * oy - sol[2]);
+    if (!(R > r) || xy.some(([x, y]) => Math.abs(Math.hypot(x - ox, y - oy) - R) > Math.max(tol, R * 1e-3))) return null;
+    // Turn and height: height even in the turn.
+    const th: number[] = [];
+    for (const [x, y] of xy) {
+      let a = Math.atan2(y - oy, x - ox);
+      if (th.length) { const pr = th[th.length - 1]; while (a - pr > Math.PI) a -= 2 * Math.PI; while (a - pr < -Math.PI) a += 2 * Math.PI; }
+      th.push(a);
+    }
+    const hs = cen.map(c => dot(c, d)), turn = th[K] - th[0], H = hs[K] - hs[0];
+    if (Math.abs(turn) < Math.PI || !(H > tol)) return null;
+    if (th.some((a, k) => Math.abs(hs[k] - hs[0] - (H * (a - th[0])) / turn) > Math.max(tol, H * 2e-3))) return null;
+    // Measured values carry the spline fit's noise: whole ten-thousandths are taken as meant.
+    const snap = (x: number) => { const k = Math.round(x * 1e4) / 1e4; return Math.abs(x - k) <= 1e-5 * Math.max(1, Math.abs(x)) ? k : x; };
+    const id = () => `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
+    const h0 = dot(sub3(cen[0], F.o), F.n);
+    const lead: Feature[] = [...sq.feats];
+    let plane: PlaneRef = sq.ref, fr = F;
+    if (Math.abs(h0) > tol) {
+      const ref = { id: id(), type: "plane", name: "", base: sq.ref, mode: "offset", offset: { v: snap(Math.abs(h0)) }, ...(h0 < 0 ? { flip: true } : {}) } as PlaneFeature;
+      lead.push(ref);
+      plane = { plane: ref.id };
+      fr = this.refPlane(ref, body, frames);
+    }
+    // The sketch circle in the plane's own frame (an offset plane may turn it).
+    const o3 = add(F.o, add(add(mul(F.x, ox), mul(F.y, oy)), mul(F.n, h0))), q = sub3(o3, fr.o);
+    const sid = id(), hid = id();
+    const sk = { id: sid, type: "sketch", name: "", plane, rels: [], dims: [], ents: [
+      { id: `${sid}c`, t: "point", x: snap(dot(q, fr.x)), y: snap(dot(q, fr.y)) }, { id: `${sid}k`, t: "circle", c: `${sid}c`, r: snap(R) }] } as unknown as Feature;
+    const v0p = this.volume(body.shape);
+    const goal = sub3(cen[0], o3), aim = Math.atan2(dot(goal, fr.y), dot(goal, fr.x));
+    const reverse = dot(fr.n, d) < 0;
+    // Which way it turns about the way it runs.
+    const cw = (turn > 0) !== (dot(F.n, d) > 0);
+    for (const st of [aim, -aim, Math.PI - aim, aim + Math.PI]) {
+      const hx = { id: hid, type: "helix", name: "", sketch: sid, mode: "heightRev", pitch: { v: snap((2 * Math.PI * H) / Math.abs(turn)) }, revs: { v: snap(Math.abs(turn) / (2 * Math.PI)) },
+        height: { v: snap(H) }, ...(snap(st) ? { start: { v: snap(st) } } : {}), ...(cw ? { cw: true } : {}), ...(reverse ? { reverse: true } : {}) } as unknown as Feature;
+      const probe = this.evaluate(at([...lead, sk, hx]));
+      const pts = probe.curves[hid];
+      if (!pts?.length || Math.hypot(...sub3(pts[0], cen[0])) > Math.max(tol, R * 1e-3) || Math.hypot(...sub3(pts[pts.length - 1], cen[K])) > Math.max(tol, R * 1e-3)) continue;
+      // It turns the same way as it climbs (a mirror image ends in the same place only after whole half turns).
+      let pa = th[0], bad = false;
+      for (const p of pts) {
+        let a = Math.atan2(dot(sub3(p, F.o), F.y) - oy, dot(sub3(p, F.o), F.x) - ox);
+        while (a - pa > Math.PI) a -= 2 * Math.PI;
+        while (a - pa < -Math.PI) a += 2 * Math.PI;
+        pa = a;
+        if (Math.abs(dot(p, d) - hs[0] - (H * (a - th[0])) / turn) > Math.max(tol, H * 2e-3)) { bad = true; break; }
+      }
+      if (bad) continue;
+      const out: Feature[] = [...lead, sk, hx,
+        { id: id(), type: "sweep", name: "", op: "boss", merge: false, circular: { v: snap(2 * r) }, path: { helix: hid } } as Feature,
+        { id: id(), type: "delbody", name: "", bodies: [{ name: body.names[0], hint: this.centroid(body.faces[0]) }] } as Feature];
+      const fin = this.evaluate(at(out));
+      if (!fin.body || this.solids(fin.body.shape) !== 1 || fin.statuses.slice(-out.length).some(x => x.ok === false)) return null;
+      if (Math.abs(this.volume(fin.body.shape) - v0p) > 1e-4 * v0p) return null;
+      return out;
+    }
+    return null;
+  }
+
+  /**
+   * The base of a round tube or rod swept along a free 3D curve (FR-FT-102), tried after `baseHelix`: the section
+   * centres become a 3D sketch spline through every 8th of them (fixed points), a circular new-body Sweep follows it
+   * and the import is deleted. The spline only runs through samples of the centreline, so the volume is kept within
+   * 1e-3 rather than exactly. A straight rod is left to the extrude.
+   */
+  private baseCurve(upto: Feature[], at: (fs: Feature[]) => PartDoc): Feature[] | null {
+    const imports = upto.filter(f => f.type === "import" && !f.suppressed).map(f => `${f.id}:`);
+    if (!imports.length) return null;
+    const start = this.evaluate(at([]));
+    const body = start.body;
+    if (!body || this.solids(body.shape) !== 1 || body.names.some(n => !imports.some(p => n.startsWith(p)))) return null;
+    const size = this.size(body.shape), tol = Math.max(1e-4, size * 1e-6) * 10;
+    const tube = this.tubeCentres(body, tol);
+    if (!tube) return null;
+    const { r, cen, K } = tube;
+    const chord = sub3(cen[K], cen[0]), L = Math.hypot(...chord);
+    if (L > tol && cen.every(c => Math.hypot(...cross(sub3(c, cen[0]), mul(chord, 1 / L))) <= tol)) return null;
+    const snap = (x: number) => { const k = Math.round(x * 1e4) / 1e4; return Math.abs(x - k) <= 1e-5 * Math.max(1, Math.abs(x)) ? k : x; };
+    const id = () => `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
+    const sid = id(), step = 8;
+    const idx: number[] = [];
+    for (let k = 0; k < K; k += step) idx.push(k);
+    idx.push(K);
+    const pts = idx.map((k, i) => ({ id: `${sid}p${i}`, p: cen[k].map(snap) as V3, fixed: true }));
+    const sk: Sketch3dFeature = { id: sid, type: "sketch3d", name: "", pts, segs: [{ id: `${sid}s`, t: "spline", pts: pts.map(q => q.id) }], rels: [], dims: [] };
+    const out: Feature[] = [sk,
+      { id: id(), type: "sweep", name: "", op: "boss", merge: false, circular: { v: snap(2 * r) }, path: { curve: sid } } as Feature,
+      { id: id(), type: "delbody", name: "", bodies: [{ name: body.names[0], hint: this.centroid(body.faces[0]) }] } as Feature];
+    const v0 = this.volume(body.shape), fin = this.evaluate(at(out));
+    if (!fin.body || this.solids(fin.body.shape) !== 1 || fin.statuses.slice(-out.length).some(x => x.ok === false)) return null;
+    if (Math.abs(this.volume(fin.body.shape) - v0) > 1e-3 * v0) return null;
+    return out;
+  }
+
+  /** Path sketch (with its plane) + profile sketch on end face `capI` + a new-body Sweep + Delete Body of the import, kept at the same volume. */
+  private sweepOut(body: Named, chain: ({ line: [V3, V3] } | { arc: { c: V3; a: V3; b: V3; m: V3 } })[], c0: V3, capI: number, prof: ExtrudeFind["segs"],
+    at: (fs: Feature[]) => PartDoc, tol: number, size: number): Feature[] | null {
+    // The path's plane: from the points and bend centres.
+    const P: V3[] = [c0];
+    for (const g of chain) if ("line" in g) P.push(g.line[1], g.line[0]); else P.push(g.arc.a, g.arc.b, g.arc.c, g.arc.m);
+    let n: V3 | null = null;
+    for (let i = 1; i < P.length && !n; i++) for (let j = i + 1; j < P.length && !n; j++) {
+      const c = cross(sub3(P[i], P[0]), sub3(P[j], P[0]));
+      if (Math.hypot(...c) > tol * size) n = unit(c);
+    }
+    if (!n || P.some(p => Math.abs(dot(sub3(p, P[0]), n!)) > tol)) return null;
+    const id = () => `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
+    let plane: PlaneRef | null = null, fr: Frame | null = null;
+    const lead: Feature[] = [];
+    for (const std of ["XY", "XZ", "YZ"] as const) {
+      const F = STD_FRAMES[std];
+      if (Math.abs(Math.abs(dot(n, F.n)) - 1) > 1e-9) continue;
+      const h = dot(P[0], F.n);
+      if (Math.abs(h) <= tol) { plane = { std }; fr = F; break; }
+      const ref = { id: id(), type: "plane", name: "", base: { std }, mode: "offset", offset: { v: Math.abs(h) }, ...(h < 0 ? { flip: true } : {}) } as PlaneFeature;
+      fr = this.refPlane(ref, body, {});
+      lead.push(ref);
+      plane = { plane: ref.id };
+      break;
+    }
+    if (!plane || !fr) return null;
+    const pathId = id(), { ents: pathEnts } = this.loopEnts(pathId, fr, chain);
+    const capPlane: PlaneRef = { face: { name: body.names[capI], hint: this.centroid(body.faces[capI]) } };
+    const cfr = this.planeFrame(capPlane, body, {});
+    const profId = id(), { ents: profEnts } = this.loopEnts(profId, cfr, prof);
+    const out: Feature[] = [...lead,
+      { id: pathId, type: "sketch", name: "", plane, ents: pathEnts, rels: [], dims: [] } as Feature,
+      { id: profId, type: "sketch", name: "", plane: capPlane, ents: profEnts, rels: [], dims: [] } as Feature,
+      { id: id(), type: "sweep", name: "", op: "boss", merge: false, profile: profId, path: { sketch: pathId } } as Feature,
+      { id: id(), type: "delbody", name: "", bodies: [{ name: body.names[0], hint: this.centroid(body.faces[0]) }] } as Feature];
+    const fin = this.evaluate(at(out));
+    if (!fin.body || this.solids(fin.body.shape) !== 1 || fin.statuses.slice(-out.length).some(st => st.ok === false)) return null;
+    return this.sameVolume(fin.body.shape, body.shape) ? out : null;
+  }
+
+  /** Sketch + extrude pairs for finds, each on the flat face of `body` its loop lies on. */
+  private extrudeFeatures(finds: ExtrudeFind[], body: Named, frames: Record<string, Frame>): Feature[] | null {
+    const id = () => `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`;
+    const tol = Math.max(1e-4, this.size(body.shape) * 1e-6) * 10;
+    const feats: Feature[] = [];
+    for (const c of finds) {
+      const fi = this.flatFaceAt(body, c.p, c.n, tol);
+      if (fi < 0) return null;
+      const plane: PlaneRef = { face: { name: body.names[fi], hint: this.centroid(body.faces[fi]) } };
+      const fr = this.planeFrame(plane, body, frames);
+      const sid = id(), { ents } = this.loopEnts(sid, fr, c.segs);
+      feats.push({ id: sid, type: "sketch", name: "", plane, ents, rels: [], dims: [] } as Feature,
+        { id: id(), type: "extrude", name: "", sketch: sid, op: c.op, end: c.end, depth: { v: c.depth } } as Feature);
+    }
+    return feats;
+  }
+
+  /** One round of Recognize Extrudes on the body at the end of `doc`: the Delete Face, then the sketch + extrude pairs, checked by volume. */
+  private extrudeRound(doc: PartDoc): { feats: Feature[]; finds: ExtrudeFind[] } | null {
+    const oc = this.oc;
+    const at = (fs: Feature[]): PartDoc => ({ ...doc, features: [...doc.features, ...fs] });
+    const body = this.evaluate(doc).body;
+    if (!body || this.solids(body.shape) < 1) return null;
+    const v0 = this.volume(body.shape);
+    const tol = Math.max(1e-4, this.size(body.shape) * 1e-6) * 10;
+    const S = oc.GeomAbs_SurfaceType, C = oc.GeomAbs_CurveType;
+    const emap = new oc.TopTools_IndexedMapOfShape_1();
+    oc.TopExp.MapShapes_1(body.shape, oc.TopAbs_ShapeEnum.TopAbs_EDGE, emap);
+    const users: number[][] = Array.from({ length: emap.Extent() + 1 }, () => []);
+    const edges = body.faces.map((f, i) => this.sub(f, "EDGE").map(e => { const k = emap.FindIndex(e); if (k > 0 && !users[k].includes(i)) users[k].push(i); return { e, k }; }));
+    const across = (i: number, k: number) => users[k]?.find(j => j !== i) ?? -1;
+    const neighbours = (i: number) => [...new Set(edges[i].map(x => across(i, x.k)).filter(j => j >= 0))];
+    type Kind = { pln?: V3; cyl?: { o: V3; d: V3; r: number } };
+    const kinds: Kind[] = body.faces.map(face => {
+      const ad = new oc.BRepAdaptor_Surface_2(face, true), ty = ad.GetType();
+      if (ty === S.GeomAbs_Plane) return { pln: this.faceNormalAt(face) };
+      if (ty === S.GeomAbs_Cylinder) { const ax = ad.Cylinder().Axis(); return { cyl: { o: this.xyz(ax.Location()), d: unit(this.xyz(ax.Direction())), r: ad.Cylinder().Radius() } }; }
+      return {};
+    });
+    const ends = (e: any): { a: V3; b: V3; m: V3; ca: any } => {
+      const ca = new oc.BRepAdaptor_Curve_2(e), t0 = ca.FirstParameter(), t1 = ca.LastParameter();
+      return { a: this.xyz(ca.Value(t0)), b: this.xyz(ca.Value(t1)), m: this.xyz(ca.Value((t0 + t1) / 2)), ca };
+    };
+    type Seg = ExtrudeFind["segs"][0];
+    type Cand = ExtrudeFind & { face: number; del: number[]; key: string; rank?: number };
+    const cands: Cand[] = [];
+    const areaOf = (i: number): number => { const g = new oc.GProp_GProps_1(); oc.BRepGProp.SurfaceProperties_1(body.faces[i], g, false, false); return g.Mass(); };
+    body.faces.forEach((face, i) => {
+      const n = kinds[i].pln;
+      if (!n) return;
+      const wmap = new oc.TopTools_IndexedMapOfShape_1();
+      oc.TopExp.MapShapes_1(face, oc.TopAbs_ShapeEnum.TopAbs_WIRE, wmap);
+      if (wmap.Extent() < 2) return;
+      const outer = oc.BRepTools.OuterWire(face);
+      for (let w = 1; w <= wmap.Extent(); w++) {
+        const wire = wmap.FindKey(w);
+        if (wire.IsSame(outer)) continue;
+        const segs: Seg[] = [], walls: number[] = [];
+        let ok = true, P: V3 | null = null;
+        for (const e of this.sub(wire, "EDGE")) {
+          const j = across(i, emap.FindIndex(e));
+          const k = j >= 0 ? kinds[j] : {};
+          if (!(k.pln && Math.abs(dot(k.pln, n)) < 1e-6) && !(k.cyl && Math.abs(Math.abs(dot(k.cyl.d, n)) - 1) < 1e-6)) { ok = false; break; }
+          const x = ends(e), ct = x.ca.GetType();
+          P ??= x.a;
+          if (ct === C.GeomAbs_Line) segs.push({ line: [x.a, x.b] });
+          else if (ct === C.GeomAbs_Circle) {
+            const c = this.xyz(x.ca.Circle().Location()), r = x.ca.Circle().Radius();
+            if (Math.abs(Math.abs(x.ca.LastParameter() - x.ca.FirstParameter()) - 2 * Math.PI) < 1e-9) segs.push({ circle: { c, r } });
+            else segs.push({ arc: { c, a: x.a, b: x.b, m: x.m } });
+          } else { ok = false; break; }
+          if (!walls.includes(j)) walls.push(j);
+        }
+        if (!ok || !P || !walls.length) continue;
+        // How far the side faces run from the face, and which way.
+        let lo = 0, hi = 0;
+        for (const j of walls) for (const { e } of edges[j]) { const x = ends(e); for (const p of [x.a, x.b, x.m]) { const h = dot(sub3(p, P), n); lo = Math.min(lo, h); hi = Math.max(hi, h); } }
+        if ((lo < -tol) === (hi > tol)) continue;
+        const up = hi > tol, depth = up ? hi : -lo;
+        const reach = (j: number) => { let m = 0; for (const { e } of edges[j]) { const x = ends(e); for (const p of [x.a, x.b]) m = Math.max(m, Math.abs(dot(sub3(p, P!), n))); } return m; };
+        if (walls.some(j => Math.abs(reach(j) - depth) > tol)) continue;
+        const far = [...new Set(walls.flatMap(neighbours))].filter(j => j !== i && !walls.includes(j));
+        if (!far.length) continue;
+        const enclosed = far.every(j => kinds[j].pln && dot(kinds[j].pln!, n) > 1 - 1e-6 && neighbours(j).every(q => walls.includes(q)));
+        let cand: Cand | null = null;
+        const key = [...walls].sort((a, b) => a - b).join(",");
+        if (enclosed) cand = { face: i, p: P, n, op: up ? "boss" : "cut", end: "blind", depth, del: [...walls, ...far], segs, key };
+        else if (!up && far.length === 1 && kinds[far[0]].pln && dot(kinds[far[0]].pln!, n) < -1 + 1e-6) cand = { face: i, p: P, n, op: "cut", end: "through", depth, del: walls, segs, key };
+        if (!cand) continue;
+        // A round pocket is a hole: Recognize Holes makes it a Hole feature.
+        const c0 = kinds[walls[0]].cyl;
+        if (cand.op === "cut" && c0 && walls.every(j => { const c = kinds[j].cyl; return !!c && Math.abs(c.r - c0.r) < tol && Math.hypot(...cross(sub3(c.o, c0.o), c0.d)) < tol; })) continue;
+        if (!cands.some(c => c.key === key)) cands.push(cand);
+      }
+    });
+    // Cuts open to the side (a step, a slot across a face, a notch at an edge): a flat floor with one outline,
+    // some of its edges under walls that stand square to it up to one flat top, the others on the outside of
+    // the body. The floor's outline, lifted to the top, is the sketch of a blind cut.
+    body.faces.forEach((face, i) => {
+      const n = kinds[i].pln;
+      if (!n) return;
+      const wmap = new oc.TopTools_IndexedMapOfShape_1();
+      oc.TopExp.MapShapes_1(face, oc.TopAbs_ShapeEnum.TopAbs_WIRE, wmap);
+      if (wmap.Extent() !== 1) return;
+      const raw: Seg[] = [], walls: number[] = [];
+      let P: V3 | null = null, open = 0, h = 0;
+      for (const e of this.sub(wmap.FindKey(1), "EDGE")) {
+        const j = across(i, emap.FindIndex(e));
+        if (j < 0) return;
+        const x = ends(e), ct = x.ca.GetType();
+        P ??= x.a;
+        if (ct === C.GeomAbs_Line) raw.push({ line: [x.a, x.b] });
+        else if (ct === C.GeomAbs_Circle) {
+          if (Math.abs(Math.abs(x.ca.LastParameter() - x.ca.FirstParameter()) - 2 * Math.PI) < 1e-9) return;
+          raw.push({ arc: { c: this.xyz(x.ca.Circle().Location()), a: x.a, b: x.b, m: x.m } });
+        } else return;
+        const k = kinds[j];
+        let lo = 0, hi = 0;
+        for (const { e: we } of edges[j]) { const y = ends(we); for (const p of [y.a, y.b, y.m]) { const d = dot(sub3(p, P), n); lo = Math.min(lo, d); hi = Math.max(hi, d); } }
+        const square = (k.pln && Math.abs(dot(k.pln, n)) < 1e-6) || (k.cyl && Math.abs(Math.abs(dot(k.cyl.d, n)) - 1) < 1e-6);
+        if (square && hi > tol && lo > -tol) {
+          if (h && Math.abs(hi - h) > tol) return;
+          h = hi;
+          if (!walls.includes(j)) walls.push(j);
+        } else if (lo < -tol) open++;
+        else return;
+      }
+      if (!P || !walls.length || !open || walls.includes(i)) return;
+      // Every wall ends under a flat top at that height.
+      const isTop = (j: number) => j !== i && !walls.includes(j) && !!kinds[j].pln && dot(kinds[j].pln!, n) > 1 - 1e-6
+        && Math.abs(dot(sub3(ends(edges[j][0].e).a, P!), n) - h) < tol;
+      const tops = [...new Set(walls.flatMap(neighbours))].filter(isTop);
+      if (!tops.length || walls.some(j => !neighbours(j).some(q => tops.includes(q)))) return;
+      const up = (p: V3): V3 => [p[0] + n[0] * h, p[1] + n[1] * h, p[2] + n[2] * h];
+      const segs: Seg[] = raw.map(sg => "line" in sg ? { line: [up(sg.line[0]), up(sg.line[1])] }
+        : "arc" in sg ? { arc: { c: up(sg.arc.c), a: up(sg.arc.a), b: up(sg.arc.b), m: up(sg.arc.m) } } : sg);
+      const key = [i, ...walls].sort((a, b) => a - b).join(",") + "|open";
+      const top = edges[tops[0]].map(x => across(tops[0], x.k)).some(j => walls.includes(j)) ? ends(edges[tops[0]].find(x => walls.includes(across(tops[0], x.k)))!.e).m : up(P);
+      cands.push({ face: tops[0], p: top, n, op: "cut", end: "blind", depth: h, del: [i, ...walls], segs, key, rank: tops.reduce((a, j) => a + areaOf(j), 0) });
+    });
+    // Notches cut right through at the outline of a flat face: a run of side walls joined by inside corners
+    // (or round inside walls), reaching the opposite face. The run, closed along the outline the neighbours
+    // would have without it, is the sketch of a through cut.
+    const near = (p: V3, q: V3) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) < tol;
+    body.faces.forEach((face, i) => {
+      const n = kinds[i].pln;
+      if (!n) return;
+      type OE = { j: number; a: V3; b: V3; m: V3; seg: Seg | null; line: boolean; wall: boolean; inCyl: boolean };
+      const raw: OE[] = [];
+      for (const e of this.sub(oc.BRepTools.OuterWire(face), "EDGE")) {
+        const j = across(i, emap.FindIndex(e));
+        if (j < 0) return;
+        const x = ends(e), ct = x.ca.GetType(), k = kinds[j];
+        let seg: Seg | null = null;
+        if (ct === C.GeomAbs_Line) seg = { line: [x.a, x.b] };
+        else if (ct === C.GeomAbs_Circle && Math.abs(Math.abs(x.ca.LastParameter() - x.ca.FirstParameter()) - 2 * Math.PI) > 1e-9) seg = { arc: { c: this.xyz(x.ca.Circle().Location()), a: x.a, b: x.b, m: x.m } };
+        const wall = !!seg && (!!(k.pln && Math.abs(dot(k.pln, n)) < 1e-6) || !!(k.cyl && Math.abs(Math.abs(dot(k.cyl.d, n)) - 1) < 1e-6));
+        // A round wall with the material outside it.
+        const inCyl = wall && !!k.cyl && dot(this.normalNear(body.faces[j], x.m), sub3(x.m, k.cyl.o)) - dot(this.normalNear(body.faces[j], x.m), k.cyl.d) * dot(sub3(x.m, k.cyl.o), k.cyl.d) < 0;
+        raw.push({ j, a: x.a, b: x.b, m: x.m, seg, line: ct === C.GeomAbs_Line, wall, inCyl });
+      }
+      if (raw.length < 4) return;
+      // In order round the outline, each edge running a → b.
+      const ord: OE[] = [raw[0]], left = raw.slice(1);
+      if (!left.some(e => near(e.a, raw[0].b) || near(e.b, raw[0].b))) ord[0] = { ...raw[0], a: raw[0].b, b: raw[0].a };
+      while (left.length) {
+        const last = ord[ord.length - 1];
+        const k = left.findIndex(e => near(e.a, last.b) || near(e.b, last.b));
+        if (k < 0) return;
+        const e = left.splice(k, 1)[0];
+        ord.push(near(e.a, last.b) ? e : { ...e, a: e.b, b: e.a });
+      }
+      const N = ord.length;
+      // The corner after edge k: inside (the walls close on each other), smooth onto a round inside wall, or outside.
+      const inside = ord.map((e, k) => {
+        const f = ord[(k + 1) % N];
+        if (!e.wall || !f.wall || e.j === f.j) return e.wall && f.wall && e.j === f.j && e.inCyl;
+        const d = dot(this.normalNear(body.faces[f.j], e.b), sub3(e.m, e.b));
+        if (d > tol * 1e-2 && d > 1e-6 * Math.hypot(...sub3(e.m, e.b))) return true;
+        return Math.abs(d) <= 1e-6 * Math.hypot(...sub3(e.m, e.b)) + tol * 1e-2 && (e.inCyl || f.inCyl);
+      });
+      if (inside.every(Boolean)) return;
+      const start = inside.findIndex((v, k) => !v && (inside[(k + 1) % N] || ord[(k + 1) % N].inCyl));
+      if (start < 0) return;
+      for (let s = 1; s <= N; s++) {
+        const k0 = (start + s) % N;
+        if (inside[(k0 - 1 + N) % N] || !(inside[k0] || ord[k0].inCyl)) continue;
+        let len = 1;
+        while (len < N && inside[(k0 + len - 1) % N]) len++;
+        const run = Array.from({ length: len }, (_, q) => ord[(k0 + q) % N]);
+        if (len >= N - 1 || run.some(e => !e.wall || !e.seg)) continue;
+        const walls = [...new Set(run.map(e => e.j))];
+        const P = run[0].a;
+        const reach = (j: number) => { let m = 0, up = 0; for (const { e } of edges[j]) { const x = ends(e); for (const p of [x.a, x.b]) { const h = dot(sub3(p, P), n); m = Math.max(m, -h); up = Math.max(up, h); } } return up > tol ? -1 : m; };
+        const depth = reach(walls[0]);
+        if (!(depth > tol) || walls.some(j => Math.abs(reach(j) - depth) > tol)) continue;
+        const far = [...new Set(walls.flatMap(neighbours))].filter(j => j !== i && !walls.includes(j));
+        const bottoms = far.filter(j => kinds[j].pln && dot(kinds[j].pln!, n) < -1 + 1e-6);
+        if (bottoms.length !== 1 || far.some(j => kinds[j].pln && dot(kinds[j].pln!, n) > 1 - 1e-6) || walls.some(j => !neighbours(j).includes(bottoms[0]))) continue;
+        // Closing the run: along the neighbours' lines to where they meet, else straight across.
+        const S = run[0].a, T = run[len - 1].b, prev = ord[(k0 - 1 + N) % N], next = ord[(k0 + len) % N];
+        const segs: Seg[] = run.map(e => e.seg!);
+        let X: V3 | null = null;
+        if (prev.line && next.line) {
+          const u = unit(sub3(prev.b, prev.a)), v = unit(sub3(next.b, next.a)), w = sub3(T, S), cuv = cross(u, v), den = dot(cuv, cuv);
+          if (den > 1e-12) { const t = dot(cross(w, v), cuv) / den; X = [S[0] + u[0] * t, S[1] + u[1] * t, S[2] + u[2] * t]; }
+        }
+        if (X && !near(X, S) && !near(X, T)) segs.push({ line: [T, X] }, { line: [X, S] });
+        else segs.push({ line: [T, S] });
+        const key = [...walls].sort((a, b) => a - b).join(",");
+        if (!cands.some(c => c.key === key)) cands.push({ face: i, p: run[0].m, n, op: "cut", end: "through", depth, del: walls, segs, key, rank: areaOf(i) });
+      }
+    });
+    // A face two finds would delete, or one a find stands on, goes to one of them only.
+    // A notch reads two ways (through from one face, blind and open from the next): the larger sketch face wins.
+    const order = [...cands.filter(c => c.rank === undefined), ...cands.filter(c => c.rank !== undefined).sort((a, b) => b.rank! - a.rank!)];
+    const picked: Cand[] = [];
+    for (const c of order) if (!picked.some(p => p.del.some(j => c.del.includes(j) || j === c.face) || c.del.includes(p.face))) picked.push(c);
+    if (!picked.length) return null;
+    const ref = (i: number): FaceRef => ({ name: body.names[i], hint: this.centroid(body.faces[i]) });
+    const attempt = (cs: Cand[]): Feature[] | null => {
+      try {
+        const del: Feature = { id: `f_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-3)}`, type: "delface", name: "", faces: cs.flatMap(c => c.del).map(ref) } as Feature;
+        const after = this.evaluate(at([del]));
+        if (after.statuses.at(-1)?.ok === false || !after.body) return null;
+        const made = this.extrudeFeatures(cs, after.body, after.frames);
+        if (!made) return null;
+        const feats = [del, ...made];
+        const fin = this.evaluate(at(feats));
+        if (!fin.body || fin.statuses.slice(-feats.length).some(s => s.ok === false)) return null;
+        return Math.abs(this.volume(fin.body.shape) - v0) <= 1e-6 * Math.abs(v0) + 1e-9 ? feats : null;
+      } catch { return null; }
+    };
+    const whole = attempt(picked);
+    if (whole) return { feats: whole, finds: picked };
+    if (picked.length === 1) return null;
+    // Not all of them: the ones that come back the same on their own are added one at a time.
+    let got: Cand[] = [], out: Feature[] | null = null;
+    for (const c of picked.slice(0, 40)) { const r = attempt([...got, c]); if (r) { got = [...got, c]; out = r; } }
+    return out ? { feats: out, finds: got } : null;
+  }
+
+  private blendFeatures(r: RecognizedBlends, id: () => string): Feature[] {
+    return [
+      ...r.chamfers.map(g => ({ id: id(), type: "chamfer", name: "", distance: { v: g.distance }, ...(g.distance2 ? { mode: "two", distance2: { v: g.distance2 } } : {}), edges: g.edges }) as Feature),
+      ...r.fillets.map(g => ({ id: id(), type: "fillet", name: "", radius: { v: g.radius }, ...(g.variable ? { variable: true } : {}), edges: g.edges }) as Feature)];
+  }
+
+  /**
+   * A variable radius fillet (FR-FT-032, FR-FT-102): a B-spline face with four edges, tangent to the faces
+   * across two of them and ending on the faces across the other two. Each end edge is a section of the
+   * blend: its ends touch the two tangent faces, whose normals there differ by the arc's angle φ, so the
+   * radius at that end is the chord over 2·sin(φ/2). Two equal ends make a plain fillet of that radius.
+   */
+  private variableBlend(body: Named, i: number, nbr: number[], tol: number): { i: number; kind: "fillet"; r: number; r2?: number; at?: V3; sides: [number, number]; mid: V3 } | null {
+    const face = body.faces[i], es = this.sub(face, "EDGE");
+    if (es.length !== 4 || nbr.some(j => j < 0)) return null;
+    const tang: number[] = [], ends: number[] = [];
+    es.forEach((e, n) => {
+      const m = this.edgeMid(e);
+      (dot(this.normalNear(face, m), this.normalNear(body.faces[nbr[n]], m)) > 1 - 1e-4 ? tang : ends).push(n);
+    });
+    if (tang.length !== 2 || ends.length !== 2 || nbr[tang[0]] === nbr[tang[1]]) return null;
+    const [A, B] = [nbr[tang[0]], nbr[tang[1]]];
+    const oc = this.oc, ends2 = (e: any): [V3, V3] => [this.xyz(oc.BRep_Tool.Pnt(oc.TopExp.FirstVertex(e, true))), this.xyz(oc.BRep_Tool.Pnt(oc.TopExp.LastVertex(e, true)))];
+    const onA = ends2(es[tang[0]]);
+    const radius = (n: number) => {
+      let [p, q] = ends2(es[n]);
+      // p is the end on the first tangent face (it is a vertex of the edge shared with it).
+      if (Math.min(...onA.map(v => d3(v, q))) < Math.min(...onA.map(v => d3(v, p)))) [p, q] = [q, p];
+      const c = Math.max(-1, Math.min(1, dot(this.normalNear(body.faces[A], p), this.normalNear(body.faces[B], q))));
+      const phi = Math.acos(c);
+      if (phi < 0.05 || phi > Math.PI - 0.05) return NaN;
+      return { r: d3(p, q) / (2 * Math.sin(phi / 2)), at: mul(add(p, q), 0.5) };
+    };
+    const e0 = radius(ends[0]), e1 = radius(ends[1]);
+    if (typeof e0 === "number" || typeof e1 === "number" || !(e0.r > tol) || !(e1.r > tol)) return null;
+    const mid = this.centroid(face);
+    if (Math.abs(e0.r - e1.r) <= 1e-4 * Math.max(e0.r, e1.r)) return { i, kind: "fillet", r: (e0.r + e1.r) / 2, sides: [A, B], mid };
+    return { i, kind: "fillet", r: e0.r, r2: e1.r, at: e0.at, sides: [A, B], mid };
+  }
+
+  /** `skip` = names of faces that are not blends (countersinks Recognize Features gives to the holes). */
+  private blendRound(doc: PartDoc, skip: string[] = []): RecognizedBlends {
+    const oc = this.oc;
+    const none: RecognizedBlends = { faces: [], fillets: [], chamfers: [] };
+    const body = this.evaluate(doc).body;
+    if (!body || this.solids(body.shape) < 1) return none;
+    const v0 = this.volume(body.shape);
+    const tol = Math.max(1e-4, this.size(body.shape) * 1e-6);
+    const emap = new oc.TopTools_IndexedMapOfShape_1();
+    oc.TopExp.MapShapes_1(body.shape, oc.TopAbs_ShapeEnum.TopAbs_EDGE, emap);
+    const users: number[][] = Array.from({ length: emap.Extent() + 1 }, () => []);
+    const edges = body.faces.map((f, i) => this.sub(f, "EDGE").map(e => { const k = emap.FindIndex(e); if (k > 0) users[k].push(i); return { e, k }; }));
+    const across = (i: number, k: number) => users[k]?.find(j => j !== i) ?? -1;
+    const area = (x: any) => { const g = new oc.GProp_GProps_1(); oc.BRepGProp.SurfaceProperties_1(x, g, false, false); return Math.abs(g.Mass()); };
+    type Cand = { i: number; kind: "fillet" | "chamfer"; r: number; r2?: number; first?: V3; at?: V3; sides: [number, number]; mid: V3 };
+    const cands: Cand[] = [], spheres: number[] = [];
+    const S = oc.GeomAbs_SurfaceType, C = oc.GeomAbs_CurveType;
+    body.faces.forEach((face, i) => {
+      const ad = new oc.BRepAdaptor_Surface_2(face, true);
+      const ty = ad.GetType();
+      if (ty === S.GeomAbs_Sphere) { spheres.push(i); return; }
+      const cyl = ty === S.GeomAbs_Cylinder, tor = ty === S.GeomAbs_Torus, pln = ty === S.GeomAbs_Plane, cone = ty === S.GeomAbs_Cone;
+      if (skip.includes(body.names[i])) return;
+      if (ty === S.GeomAbs_BSplineSurface) { const c = this.variableBlend(body, i, edges[i].map(x => across(i, x.k)), tol); if (c) cands.push(c); return; }
+      if (!cyl && !tor && !pln && !cone) return;
+      const axis = cyl ? unit(this.xyz(ad.Cylinder().Axis().Direction())) : tor ? unit(this.xyz(ad.Torus().Axis().Direction())) : cone ? unit(this.xyz(ad.Cone().Axis().Direction())) : null;
+      // The long edges: straight along the axis (cylinder), circles about the axis (torus), straight (flat).
+      const sides: { j: number; m: V3; d: V3; nj: V3; ni: V3; r?: number; z?: number }[] = [];
+      for (const { e, k } of edges[i]) {
+        const j = across(i, k);
+        if (j < 0) continue;
+        const ca = new oc.BRepAdaptor_Curve_2(e), ct = ca.GetType();
+        let d: V3, r: number | undefined, z: number | undefined;
+        if (tor || cone) {
+          if (ct !== C.GeomAbs_Circle) continue;
+          d = unit(this.xyz(ca.Circle().Axis().Direction()));
+          if (Math.abs(Math.abs(dot(d, axis!)) - 1) > 1e-6) continue;
+          r = ca.Circle().Radius();
+          z = dot(this.xyz(ca.Circle().Location()), axis!);
+        } else {
+          if (ct !== C.GeomAbs_Line) continue;
+          d = unit(this.xyz(ca.Line().Direction()));
+          if (cyl && Math.abs(Math.abs(dot(d, axis!)) - 1) > 1e-6) continue;
+        }
+        const m = this.xyz(ca.Value((ca.FirstParameter() + ca.LastParameter()) / 2));
+        sides.push({ j, m, d, nj: this.normalNear(body.faces[j], m), ni: this.normalNear(face, m), r, z });
+      }
+      if (cone) {
+        // A chamfer on a round edge: a cone leaning equally on the faces across its two circles (several arcs of one circle count once).
+        const rings: typeof sides = [];
+        for (const sd of sides) if (!rings.some(q => q.j === sd.j && Math.abs(q.r! - sd.r!) < tol && Math.abs(q.z! - sd.z!) < tol)) rings.push(sd);
+        if (rings.length !== 2 || rings[0].j === rings[1].j) return;
+        const [A, B] = rings, ca = dot(A.ni, A.nj), cb = dot(B.ni, B.nj);
+        if (Math.abs(ca - cb) > 1e-6 || ca < 0.05 || ca > 0.999) return;
+        const dist = Math.hypot(A.r! - B.r!, A.z! - B.z!) / (2 * ca);
+        if (!(dist > tol)) return;
+        cands.push({ i, kind: "chamfer", r: dist, sides: [A.j, B.j], mid: this.centroid(face) });
+        return;
+      }
+      if (!pln) {
+        const tang = sides.filter(s => dot(s.ni, s.nj) > 1 - 1e-5);
+        if (tang.length !== 2 || tang[0].j === tang[1].j) return;
+        const span = tor ? Math.abs(ad.LastVParameter() - ad.FirstVParameter()) : Math.abs(ad.LastUParameter() - ad.FirstUParameter());
+        if (span > Math.PI - 1e-3) return;
+        cands.push({ i, kind: "fillet", r: cyl ? ad.Cylinder().Radius() : ad.Torus().MinorRadius(), sides: [tang[0].j, tang[1].j], mid: this.centroid(face) });
+        return;
+      }
+      // A chamfer leans against both neighbours along parallel edges and is the smallest face of the three.
+      const pairs: [typeof sides[0], typeof sides[0]][] = [];
+      for (let a = 0; a < sides.length; a++) for (let b = a + 1; b < sides.length; b++) {
+        const A = sides[a], B = sides[b];
+        if (A.j === B.j || Math.abs(Math.abs(dot(A.d, B.d)) - 1) > 1e-6) continue;
+        const ca = dot(A.ni, A.nj), cb = dot(B.ni, B.nj);
+        if (ca < 0.05 || ca > 0.999 || cb < 0.05 || cb > 0.999) continue;
+        pairs.push([A, B]);
+      }
+      if (pairs.length !== 1) return;
+      const [A, B] = pairs[0];
+      const a0 = area(face);
+      if (a0 > 0.9 * Math.min(area(body.faces[A.j]), area(body.faces[B.j]))) return;
+      const q = sub3(B.m, A.m), w = Math.hypot(...sub3(q, mul(A.d, dot(q, A.d))));
+      // In the section square to the edge the chamfer, of width w, closes a triangle with the two faces: it turns
+      // by a from the first face and by b from the second, so the distances along them are w·sin b and w·sin a over sin(a + b).
+      const a = Math.acos(dot(A.ni, A.nj)), b = Math.acos(dot(B.ni, B.nj));
+      if (a + b > Math.PI - 0.05) return;
+      const d1 = w * Math.sin(b) / Math.sin(a + b), d2 = w * Math.sin(a) / Math.sin(a + b);
+      if (!(d1 > tol) || !(d2 > tol)) return;
+      if (Math.abs(d1 - d2) <= 1e-6 * Math.max(d1, d2)) cands.push({ i, kind: "chamfer", r: d1, sides: [A.j, B.j], mid: this.centroid(face) });
+      else cands.push({ i, kind: "chamfer", r: d1, r2: d2, first: A.nj, sides: [A.j, B.j], mid: this.centroid(face) });
+    });
+    // A blend another blend ends on waits for the next round.
+    const under = new Set(cands.flatMap(c => c.sides));
+    for (let k = cands.length - 1; k >= 0; k--) if (under.has(cands[k].i)) cands.splice(k, 1);
+    if (!cands.length) return none;
+    // Corner patches: spheres with fillets on every side.
+    const isFillet = new Set(cands.filter(c => c.kind === "fillet").map(c => c.i));
+    const corners = spheres.filter(i => { const ns = edges[i].map(x => across(i, x.k)).filter(j => j >= 0); return ns.length > 0 && ns.every(j => isFillet.has(j)); });
+    // Groups of blends that touch each other are tried together.
+    const all = [...cands.map(c => c.i), ...corners];
+    const parent = new Map(all.map(i => [i, i]));
+    const root = (i: number): number => { let p = parent.get(i)!; while (p !== parent.get(p)!) p = parent.get(p)!; parent.set(i, p); return p; };
+    for (const i of all) for (const { k } of edges[i]) { const j = across(i, k); if (j >= 0 && parent.has(j)) parent.set(root(i), root(j)); }
+    const upto = doc.features.slice(0, doc.rollback ?? doc.features.length);
+    const ref = (i: number): FaceRef => ({ name: body.names[i], hint: this.centroid(body.faces[i]) });
+    const attempt = (cs: Cand[], extra: number[]): RecognizedBlends | null => {
+      const faces = [...cs.map(c => c.i), ...extra].map(ref);
+      const del: Feature = { id: "__rb", type: "delface", name: "", faces };
+      try {
+        const after = this.evaluate({ ...doc, rollback: null, features: [...upto, del] });
+        if (after.statuses.at(-1)?.ok === false || !after.body) return null;
+        const fil = new Map<string, RecognizedBlends["fillets"][0]>(), ch = new Map<string, RecognizedBlends["chamfers"][0]>();
+        for (const c of cs) {
+          const pair: [string, string] = [body.names[c.sides[0]], body.names[c.sides[1]]];
+          const er: EdgeRef = { faces: pair, hint: this.edgeMid(this.resolveEdge(after.body, { faces: pair, hint: c.mid })) };
+          const key = c.r.toFixed(5) + (c.r2 ? `|${c.r2.toFixed(5)}` : "");
+          if (c.kind === "fillet" && c.r2) {
+            // Variable radius fillets go in one feature; each edge keeps its own end radii.
+            const g = fil.get("var");
+            const ev = { ...er, r: c.r, r2: c.r2, at: c.at! };
+            if (g) g.edges.push(ev); else fil.set("var", { radius: c.r, variable: true, edges: [ev] });
+          } else if (c.kind === "fillet") { const g = fil.get(key); if (g) g.edges.push(er); else fil.set(key, { radius: c.r, edges: [er] }); }
+          else {
+            let g = ch.get(key);
+            if (!g) ch.set(key, g = c.r2 ? { distance: c.r, distance2: c.r2, edges: [], first: [] } : { distance: c.r, edges: [] });
+            g.edges.push(er);
+            if (c.first) g.first!.push(c.first);
+          }
+        }
+        const out: RecognizedBlends = { faces, fillets: [...fil.values()], chamfers: [...ch.values()] };
+        const feats: Feature[] = [
+          ...out.chamfers.map((g, k) => ({ id: `__rc${k}`, type: "chamfer", name: "", distance: { v: g.distance }, ...(g.distance2 ? { mode: "two", distance2: { v: g.distance2 } } : {}), edges: g.edges }) as Feature),
+          ...out.fillets.map((g, k) => ({ id: `__rf${k}`, type: "fillet", name: "", radius: { v: g.radius }, ...(g.variable ? { variable: true } : {}), edges: g.edges }) as Feature)];
+        const fin = this.evaluate({ ...doc, rollback: null, features: [...upto, del, ...feats] });
+        if (!fin.body || fin.statuses.slice(-feats.length).some(s => s.ok === false)) return null;
+        return Math.abs(this.volume(fin.body.shape) - v0) <= 1e-6 * Math.abs(v0) + 1e-9 ? out : null;
+      } catch { return null; }
+    };
+    const whole = attempt(cands, corners);
+    if (whole) return whole;
+    // Not all of them: keep the groups that come back the same on their own, then try those together.
+    const groups = new Map<number, { cs: Cand[]; extra: number[] }>();
+    const groupOf = (i: number) => { const r = root(i); let g = groups.get(r); if (!g) groups.set(r, g = { cs: [], extra: [] }); return g; };
+    for (const c of cands) groupOf(c.i).cs.push(c);
+    for (const i of corners) groupOf(i).extra.push(i);
+    const good: { g: { cs: Cand[]; extra: number[] }; out: RecognizedBlends }[] = [];
+    for (const g of [...groups.values()].slice(0, 60)) { const out = g.cs.length ? attempt(g.cs, g.extra) : null; if (out) good.push({ g, out }); }
+    if (!good.length) return none;
+    if (good.length === 1) return good[0].out;
+    return attempt(good.flatMap(x => x.g.cs), good.flatMap(x => x.g.extra)) ?? good.sort((a, b) => b.out.faces.length - a.out.faces.length)[0].out;
   }
 
   brepText(body: Named): { brep: string; solids: number; faces: number } {
@@ -3474,9 +5973,13 @@ export class Modeller {
   }
 
   /** Boss or cut with a feature's tool solids; the tools are kept for mirror and patterns. */
-  private applyTool(f: { id: string; op: "boss" | "cut" }, tools: Named[], prev: Named | null): Named {
+  private applyTool(f: { id: string; op: "boss" | "cut"; merge?: boolean; scope?: FaceRef[] }, tools: Named[], prev: Named | null): Named {
     const tool = this.fuseAll(tools, f.id);
     this.tools.set(f.id, [{ shape: tool, op: f.op === "boss" ? "fuse" : "cut" }]);
+    // Merge result off (sweep, loft): the tool is a new body.
+    if (f.op === "boss" && prev && f.merge === false) return this.compoundOf([...this.bodyList(prev), tool]);
+    const sc = this.scoped(f, prev);
+    if (sc.keep.length) return this.compoundOf([...sc.keep, ...this.bodyList(this.applyTool({ ...f, scope: undefined }, [tool], sc.target))]);
     if (f.op === "boss") return prev ? this.bool("fuse", prev, tool, f.id) : tool;
     if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body to cut yet.");
     const out = this.bool("cut", prev, tool, f.id);
@@ -3488,6 +5991,7 @@ export class Modeller {
   private lineOf(ref: LineRef | undefined, body: Named | null, frames: Record<string, Frame>, what: string): { o: V3; d: V3 } {
     const oc = this.oc;
     if (!ref) throw new FeatureError("E-PAT-DIR", `Pick ${what}.`);
+    if (ref.std) return { o: [0, 0, 0], d: ref.std === "X" ? [1, 0, 0] : ref.std === "Y" ? [0, 1, 0] : [0, 0, 1] };
     if (ref.axis) {
       const fr = frames[ref.axis];
       if (!fr) throw new FeatureError("E-FT-PARENT", "The reference axis is missing or has an error.");
@@ -3559,7 +6063,15 @@ export class Modeller {
     if (!body) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
     const skipped: string[] = [];
     const used: Tool[] = [];
-    for (const c of copies) {
+    // Copies that all cut go into one Boolean: one cut per copy made a pattern of n holes cost n whole-body cuts
+    // (a flywheel's six spokes took 0.85 s). A copy none of whose faces is left in the result did not touch the body.
+    const batch = copies.length > 1 && copies.every(c => c.tool.op === "cut") ? this.cutAll(body, copies.map(c => c.tool.shape), fid) : null;
+    if (batch) {
+      copies.forEach((c, i) => { if (batch.touched[i]) used.push(c.tool); else skipped.push(c.label); });
+      if (used.length && Math.abs(this.volume(batch.body.shape) - this.volume(body.shape)) >= 1e-9) body = batch.body;
+      else { used.length = 0; skipped.length = 0; }
+    }
+    if (!used.length) for (const c of copies) {
       try {
         const before = this.volume(body.shape), solids = this.solids(body.shape);
         const out = this.bool(c.tool.op, body, c.tool.shape, fid);
@@ -3612,6 +6124,29 @@ export class Modeller {
     const vb = this.volume(prev.shape), vr = this.volume(shape);
     if (Math.abs(vb - vr) < 1e-9 * Math.max(1, vb)) throw bad();
     return vr < vb ? { shape: this.bool("cut", prev, rest, fid), op: "fuse" } : { shape: this.bool("cut", rest, prev, fid), op: "cut" };
+  }
+
+  /** The seed's centre for the instance dots, or null when it cannot be measured (an empty seed set). */
+  private spotCentre(set: { tools: Tool[]; list: Named[]; idx: number[] }, prev: Named | null): V3 | null {
+    try {
+      // A cut's tool runs past the body (through all, up to next): its part inside the body's box is where the instance shows.
+      if (!set.idx.length && prev && set.tools.some(t => t.op === "cut")) {
+        const oc = this.oc, p = new oc.GProp_GProps_1();
+        // The body already has the seed's cut, so the tool is clipped by the body's box instead.
+        const bb = new oc.Bnd_Box_1(); oc.BRepBndLib.Add(prev.shape, bb, false);
+        const bx = new oc.BRepPrimAPI_MakeBox_4(this.P(this.xyz(bb.CornerMin())), this.P(this.xyz(bb.CornerMax()))).Shape(), bf = this.sub(bx, "FACE");
+        const boxN: Named = { shape: bx, faces: bf, names: bf.map((_, j) => `spot:${j}`) };
+        for (const t of set.tools) {
+          let sh = t.shape.shape;
+          if (t.op === "cut") { try { const c = this.bool("common", boxN, t.shape, "spot").shape; if (Math.abs(this.volume(c)) > 1e-9) sh = c; } catch { /* keep the tool */ } }
+          const q = new oc.GProp_GProps_1(); oc.BRepGProp.VolumeProperties_1(sh, q, true, false, false); p.Add(q, 1);
+        }
+        const c = this.xyz(p.CentreOfMass());
+        if (c.every(Number.isFinite)) return c;
+      }
+      const c = this.seedCentre(set);
+      return c.every(Number.isFinite) ? c : null;
+    } catch { return null; }
   }
 
   /** The centre of what a pattern copies (the reference point of a sketch-driven pattern). */
@@ -3711,19 +6246,36 @@ export class Modeller {
     const n1 = Math.max(1, Math.round(f.count)), n2 = f.dir2 ? Math.max(1, Math.round(f.count2 ?? 1)) : 1;
     const d2 = f.dir2 ? mul(this.lineOf(f.dir2, prev, frames, "the second direction").d, f.flip2 ? -1 : 1) : [0, 0, 0] as V3;
     if (n1 * n2 < 2) throw new FeatureError("E-PAT-COUNT", "The pattern needs at least 2 instances.");
-    if (!(f.spacing.v > 1e-6) || (f.dir2 && n2 > 1 && !((f.spacing2?.v ?? 0) > 1e-6))) throw new FeatureError("E-FT-ZERO", "The spacing must be more than 0.");
+    if ((!f.upTo && !(f.spacing.v > 1e-6)) || (f.dir2 && n2 > 1 && !f.upTo2 && !((f.spacing2?.v ?? 0) > 1e-6))) throw new FeatureError("E-FT-ZERO", "The spacing must be more than 0.");
     const skip = new Set(f.skip ?? []);
     const xfs: { trsf: any; tag: (k: number) => string; label: string }[] = [];
+    const c = this.spotCentre(set, prev), spots: PatternSpot[] = [];
+    // Up to distance: the typed distance reaches the last instance.
+    // Up to reference: the reach from the seed's centre along the direction to the plane, less the offset.
+    const reach = (ref: PlaneRef, d: V3, off: number) => {
+      let pf: Frame;
+      try { pf = this.planeFrame(ref, prev, frames); } catch { throw new FeatureError("E-FT-PARENT", "A sketch or plane this feature uses has an error."); }
+      const den = dot(d, pf.n);
+      if (!c || Math.abs(den) < 1e-9) throw new FeatureError("E-PAT-REFPAR", "The reference must cross the pattern direction (not lie along it).");
+      const t = dot(sub3(pf.o, c), pf.n) / den - off;
+      if (!(t > 1e-6)) throw new FeatureError("E-PAT-REFBACK", "The reference lies behind the seed: reverse the direction.");
+      return t;
+    };
+    const s1 = f.upTo ? reach(f.upTo, d1, f.upToOffset?.v ?? 0) / Math.max(1, n1 - 1) : f.total ? f.spacing.v / Math.max(1, n1 - 1) : f.spacing.v;
+    const s2 = f.dir2 && f.upTo2 ? reach(f.upTo2, d2, f.upToOffset2?.v ?? 0) / Math.max(1, n2 - 1) : f.total2 ? (f.spacing2?.v ?? 0) / Math.max(1, n2 - 1) : (f.spacing2?.v ?? 0);
     for (let j = 0; j < n2; j++) for (let i = 0; i < n1; i++) {
       if (i === 0 && j === 0) continue;
+      if (f.seedOnly && i > 0 && j > 0) continue;
       const key = f.dir2 ? `${i},${j}` : `${i}`;
+      const v = add(mul(d1, i * s1), mul(d2, j * s2));
+      if (c) spots.push({ key, p: add(c, v) });
       if (skip.has(key)) continue;
-      const v = add(mul(d1, i * f.spacing.v), mul(d2, j * (f.spacing2?.v ?? 0)));
       const trsf = new oc.gp_Trsf_1();
       trsf.SetTranslation_1(this.V(v));
       const tk = key.replace(",", "_");
       xfs.push({ trsf, tag: k => f.copy === "bodies" ? `i${tk}b${k}` : `i${tk}s${k}`, label: key });
     }
+    this.spots.set(f.id, spots);
     return this.copyBy(f, prev!, set, xfs, { doc, frames });
   }
 
@@ -3736,16 +6288,28 @@ export class Modeller {
     if (n < 2) throw new FeatureError("E-PAT-COUNT", "The pattern needs at least 2 instances.");
     const total = f.angle.v;
     if (!(total > 1e-9)) throw new FeatureError("E-FT-ZERO", "The angle must be more than 0.");
-    const full = Math.abs(total - 2 * Math.PI) < 1e-9;
-    const step = f.equal ? total / (full ? n : n - 1) : total;
+    const stepOf = (tot: number, cnt: number, eq: boolean) => eq ? tot / (Math.abs(tot - 2 * Math.PI) < 1e-9 ? cnt : cnt - 1) : tot;
+    const step = stepOf(total, n, f.equal);
+    // Direction 2 turns the other way: its own count and angle, or direction 1's when symmetric.
+    const n2 = f.dir2 ? Math.max(1, Math.round(f.sym ? n : f.count2 ?? n)) : 1;
+    const step2 = f.sym ? step : stepOf(f.angle2?.v ?? total, n2, f.equal2 ?? f.equal);
+    if (f.dir2 && n2 > 1 && !(step2 > 1e-9)) throw new FeatureError("E-FT-ZERO", "The angle must be more than 0.");
     const skip = new Set(f.skip ?? []);
     const xfs: { trsf: any; tag: (k: number) => string; label: string }[] = [];
-    for (let i = 1; i < n; i++) {
-      if (skip.has(String(i))) continue;
+    const c = this.spotCentre(set, prev), spots: PatternSpot[] = [];
+    const turns: { key: string; q: number; tk: string }[] = [];
+    for (let i = 1; i < n; i++) turns.push({ key: String(i), q: (f.flip ? -1 : 1) * step * i, tk: String(i) });
+    for (let i = 1; i < n2; i++) turns.push({ key: `-${i}`, q: (f.flip ? 1 : -1) * step2 * i, tk: `m${i}` });
+    for (const { key, q, tk } of turns) {
+      // A second-direction copy landing on a first-direction one (a full turn) is left out.
+      if (key.startsWith("-") && turns.some(o => !o.key.startsWith("-") && Math.abs(Math.cos(o.q - q) - 1) < 1e-12)) continue;
+      if (c) spots.push({ key, p: turnAbout(c, ax.o, ax.d, q) });
+      if (skip.has(key)) continue;
       const trsf = new oc.gp_Trsf_1();
-      trsf.SetRotation_1(new oc.gp_Ax1_2(this.P(ax.o), this.D(ax.d)), (f.flip ? -1 : 1) * step * i);
-      xfs.push({ trsf, tag: k => f.copy === "bodies" ? `i${i}b${k}` : `i${i}s${k}`, label: String(i) });
+      trsf.SetRotation_1(new oc.gp_Ax1_2(this.P(ax.o), this.D(ax.d)), q);
+      xfs.push({ trsf, tag: k => f.copy === "bodies" ? `i${tk}b${k}` : `i${tk}s${k}`, label: key });
     }
+    this.spots.set(f.id, spots);
     return this.copyBy(f, prev!, set, xfs, { doc, frames });
   }
 
@@ -3808,9 +6372,17 @@ export class Modeller {
   }
 
   private volume(shape: any) {
-    const p = new this.oc.GProp_GProps_1();
-    this.oc.BRepGProp.VolumeProperties_1(shape, p, true, false, false);
-    return p.Mass();
+    return massOf(this.oc, shape).volume;
+  }
+
+  /**
+   * Same volume by OCCT's adaptive integration (to 1e-9): the quick `volume` can be ~4e-6 off on faces such
+   * as the saddle where a cross hole meets a shaft, so a recognition that the quick check refuses is weighed again.
+   */
+  private sameVolume(a: any, b: any): boolean {
+    const v = (x: any) => { const p = new this.oc.GProp_GProps_1(); this.oc.BRepGProp.VolumeProperties_2(x, p, 1e-9, false, false); return p.Mass(); };
+    const va = v(a), vb = v(b);
+    return Math.abs(va - vb) <= 1e-6 * Math.abs(vb) + 1e-9;
   }
 
   // ---------- evaluation ----------
@@ -3821,7 +6393,7 @@ export class Modeller {
   /** Turns verification on or off; the cached results were made the other way, so they are dropped. */
   setVerify(on: boolean) { if (on !== this.verify) { this.verify = on; this.cache = []; } }
 
-  evaluate(doc: PartDoc): { body: Named | null; sheets: Named | null; statuses: FeatureStatus[]; frames: Record<string, Frame>; sketches: Record<string, SketchFeature>; curves: Record<string, V3[]>; regions: Record<string, IntersectRegion[]>; sheet: SheetState | null } {
+  evaluate(doc: PartDoc): { body: Named | null; sheets: Named | null; statuses: FeatureStatus[]; frames: Record<string, Frame>; sketches: Record<string, SketchFeature>; curves: Record<string, V3[]>; regions: Record<string, IntersectRegion[]>; spots: Record<string, PatternSpot[]>; sheet: SheetState | null } {
     const end = doc.rollback ?? doc.features.length;
     // Sketches whose On edge curves moved with the model (FR-SK-064): later features use the moved copy.
     doc = { ...doc, features: [...doc.features] };
@@ -3831,7 +6403,9 @@ export class Modeller {
     let sheets: Named | null = null;
     // Sheet metal (FR-FT-120): the panels and bends made so far.
     let sm: SheetState | null = null;
-    let chain = "";
+    // Face naming version (exam #77): part of the cache key, since it changes the names a sweep gives.
+    this.pointNaming = doc.naming === 2;
+    let chain = this.pointNaming ? "n2" : "";
     const statuses: FeatureStatus[] = [];
     const frames: Record<string, Frame> = {};
     const failed = new Set<string>();
@@ -3839,6 +6413,7 @@ export class Modeller {
     this.tools = new Map();
     this.curves = new Map();
     this.regions = new Map();
+    this.spots = new Map();
     // Freeze bar (FR-HIS-024): features up to it keep their cached result even when they changed.
     const frozen = doc.freezeAfter ? doc.features.findIndex(f => f.id === doc.freezeAfter) + 1 : 0;
     doc.features.forEach((f, i) => {
@@ -3854,6 +6429,7 @@ export class Modeller {
         if (hit.sketch) { doc.features[i] = hit.sketch; sketches[f.id] = hit.sketch; }
         if (hit.curve) this.curves.set(f.id, hit.curve);
         if (hit.regions) this.regions.set(f.id, hit.regions);
+        if (hit.spots) this.spots.set(f.id, hit.spots);
         if (!hit.status.ok) failed.add(f.id);
         body = hit.body;
         sheets = hit.sheets;
@@ -3891,6 +6467,9 @@ export class Modeller {
           else if (f.type === "untrimsurf") sheets = this.untrimSurf(f, sheets);
           else if (f.type === "intersect") ({ body, sheets } = this.intersect(f, body, sheets));
           else if (f.type === "moveface") body = this.moveFaces(f, body, frames);
+          else if (f.type === "dome") body = this.dome(f, body);
+          else if (f.type === "wrap") body = this.wrap(f, doc, body, frames);
+          else if (f.type === "flex") body = this.flex(f, body, frames);
           else if (f.type === "planesurf") sheets = this.planeSurf(f, doc, body, sheets, frames);
           else if (f.type === "extsurf") sheets = this.extSurf(f, doc, body, sheets, frames);
           else if (f.type === "offsurf") sheets = this.offSurf(f, body, sheets);
@@ -3939,17 +6518,17 @@ export class Modeller {
         }
       }
       statuses.push(status);
-      next.push({ key: chain, body, sheets, status, frame: frame ?? frames[f.id], tools: this.tools.get(f.id), sketch: moved, curve: this.curves.get(f.id), regions: this.regions.get(f.id), sm });
+      next.push({ key: chain, body, sheets, status, frame: frame ?? frames[f.id], tools: this.tools.get(f.id), sketch: moved, curve: this.curves.get(f.id), regions: this.regions.get(f.id), spots: this.spots.get(f.id), sm });
     });
     this.cache = next;
     const curves: Record<string, V3[]> = {};
     for (const [id, c] of this.curves) curves[id] = c.pts;
-    return { body, sheets, statuses, frames, sketches, curves, regions: Object.fromEntries(this.regions), sheet: sm };
+    return { body, sheets, statuses, frames, sketches, curves, regions: Object.fromEntries(this.regions), spots: Object.fromEntries(this.spots), sheet: sm };
   }
 
   /** The helpers sheet metal (src/sheetmetal) builds its solids with. */
   private sheetApi() {
-    return { oc: this.oc, bool: this.bool.bind(this), segEdge: (s: Seg, fr: Frame) => this.segEdge(s, fr), sub: this.sub.bind(this), centroid: this.centroid.bind(this) };
+    return { oc: this.oc, bool: this.bool.bind(this), segEdge: (s: Seg, fr: Frame) => this.segEdge(s, fr), sub: this.sub.bind(this), centroid: this.centroid.bind(this), face: (b: Named | null, r: FaceRef) => this.resolveFace(b, r), edge: (b: Named | null, r: EdgeRef) => this.resolveEdge(b, r) };
   }
 
   /** Triangles of the body in occt-import-js's layout (one range per B-rep face, in face order). */
@@ -3999,14 +6578,20 @@ export class Modeller {
   /** Volume, area, centre of mass and principal moments of inertia (density 1) of the body. */
   props(body: Named): BodyProps {
     const oc = this.oc;
-    const vp = new oc.GProp_GProps_1();
-    oc.BRepGProp.VolumeProperties_1(body.shape, vp, true, false, false);
-    const sp = new oc.GProp_GProps_1();
-    oc.BRepGProp.SurfaceProperties_1(body.shape, sp, false, false);
-    const m = vp.MatrixOfInertia();
-    const I = [0, 1, 2].map(r => [0, 1, 2].map(c => m.Value(r + 1, c + 1)));
-    const { values, vectors } = eigenSym3(I);
-    return { volume: vp.Mass(), area: sp.Mass(), com: this.xyz(vp.CentreOfMass()), moments: values as V3, axes: vectors as [V3, V3, V3], bodies: this.solids(body.shape) };
+    // Mass, area and box are kept per shape (memo.ts): a rebuild that changed nothing, or a few faces, pays little.
+    const mass = massOf(oc, body.shape);
+    const { values, vectors } = eigenSym3(mass.inertia.map(r => [...r]));
+    // The exact box: the mesh's own is a little small on round faces (a Ø15 cylinder read 14.995; exam #12).
+    let box: [V3, V3] | undefined;
+    try { box = optimalBox(oc, body.shape, body.faces) ?? undefined; } catch { /* no box: the view's is used */ }
+    return { volume: mass.volume, area: areaOf(oc, body.shape), com: [...mass.com], moments: values as V3, axes: vectors as [V3, V3, V3], bodies: this.solids(body.shape), ...(box ? { box } : {}) };
+  }
+
+  /** One body's area, centre of mass and covariance about it for unit density (src/tools/inertia.ts), for per-body materials. */
+  bodyMass(body: Named): { area: number; com: V3; cov: Sym } {
+    const oc = this.oc;
+    const mass = massOf(oc, body.shape), s = Math.sign(mass.volume) || 1;
+    return { area: areaOf(oc, body.shape), com: [...mass.com], cov: covOfTensor(mass.inertia.map(r => r.map(v => v * s))) };
   }
 
   /** Drops cached shapes (a new document). */
@@ -4018,23 +6603,4 @@ export function parentOf(f: Feature): string | null {
   return f.type === "extrude" || f.type === "revolve" ? f.sketch : null;
 }
 
-/** Eigenvalues (ascending) and unit eigenvectors of a symmetric 3×3 matrix (Jacobi rotations). */
-export function eigenSym3(m: number[][]): { values: number[]; vectors: number[][] } {
-  const a = m.map(r => [...r]);
-  const v = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
-  for (let sweep = 0; sweep < 50; sweep++) {
-    const off = Math.abs(a[0][1]) + Math.abs(a[0][2]) + Math.abs(a[1][2]);
-    if (off < 1e-14 * (Math.abs(a[0][0]) + Math.abs(a[1][1]) + Math.abs(a[2][2]) + 1e-300)) break;
-    for (const [p, q] of [[0, 1], [0, 2], [1, 2]]) {
-      if (Math.abs(a[p][q]) < 1e-300) continue;
-      const th = (a[q][q] - a[p][p]) / (2 * a[p][q]);
-      const t = Math.sign(th || 1) / (Math.abs(th) + Math.sqrt(th * th + 1));
-      const c = 1 / Math.sqrt(t * t + 1), s = t * c;
-      for (let k = 0; k < 3; k++) { const x = a[k][p], y = a[k][q]; a[k][p] = c * x - s * y; a[k][q] = s * x + c * y; }
-      for (let k = 0; k < 3; k++) { const x = a[p][k], y = a[q][k]; a[p][k] = c * x - s * y; a[q][k] = s * x + c * y; }
-      for (let k = 0; k < 3; k++) { const x = v[k][p], y = v[k][q]; v[k][p] = c * x - s * y; v[k][q] = s * x + c * y; }
-    }
-  }
-  const order = [0, 1, 2].sort((i, j) => a[i][i] - a[j][j]);
-  return { values: order.map(i => a[i][i]), vectors: order.map(i => [v[0][i], v[1][i], v[2][i]]) };
-}
+export { eigenSym3 };

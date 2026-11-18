@@ -1,14 +1,35 @@
-import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { defineConfig } from "vite";
 import credits from "./scripts/credits-plugin.mjs";
 import sw from "./scripts/sw-plugin.mjs";
 
 const { version } = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
 
+/**
+ * A hash of everything that can change what the kernels build: the sources and the locked package versions
+ * (OpenCASCADE among them). The disk cache of built parts and views (src/buildCache.ts) is keyed by it, so a
+ * new build never shows geometry an older one made, even without a version bump.
+ */
+function buildId(): string {
+  const h = createHash("sha256");
+  const walk = (dir: string) => {
+    for (const n of readdirSync(dir).sort()) {
+      const p = join(dir, n);
+      if (statSync(p).isDirectory()) walk(p);
+      else { h.update(p); h.update(readFileSync(p)); }
+    }
+  };
+  walk("src");
+  h.update(readFileSync("package-lock.json"));
+  return h.digest("hex").slice(0, 16);
+}
+
 // Relative base so the build works from any sub-path (e.g. aerocat.tech/tools/step-viewer/).
 export default defineConfig({
   base: "./",
-  define: { __APP_VERSION__: JSON.stringify(version) },
+  define: { __APP_VERSION__: JSON.stringify(version), __BUILD_ID__: JSON.stringify(buildId()) },
   worker: { format: "es" },
   // credits.json + THIRD-PARTY-LICENSES.txt for the About page; occt-import-js is loaded from occt/ at runtime
   plugins: [sw({ version }), credits({
@@ -18,9 +39,9 @@ export default defineConfig({
       { entry: { name: "Open CASCADE Technology", version: "(in occt-import-js and opencascade.js)", license: "LGPL-2.1 with the OCCT exception", author: "Open Cascade SAS", url: "https://dev.opencascade.org" },
         files: ["node_modules/occt-import-js/dist/license.occt.txt"], note: "Compiled into occt-import-js.wasm; shipped unmodified in the occt/ folder." },
       { dir: "node_modules/opencascade.js", entry: { author: "Sebastian Alff" },
-        files: ["node_modules/opencascade.js/LICENSE"], note: "Full OpenCASCADE build for exact geometry and STEP export. Loaded in the background from the occt/ folder, unmodified." },
+        files: ["node_modules/opencascade.js/LICENSE"], note: "Full OpenCASCADE build for exact geometry and STEP export. Loaded in the background from the occt/ folder; the WASM is unmodified, its JavaScript glue makes embind's method invokers on first use (scripts/occt-patch.mjs)." },
       { entry: { name: "parasolid-kit (parasolid-core)", version: "0.3.15", license: "MIT AND Apache-2.0", author: "parasolid-kit contributors", url: "https://github.com/monozukuri-ai/parasolid-kit" },
-        files: ["native/parasolid-wasm/licenses/parasolid-kit-MIT.txt", "native/parasolid-wasm/licenses/parasolid-kit-Apache-2.0.txt"], note: "Parasolid reader for SolidWorks files: parasolid-core is copied into native/parasolid-core and compiled to WebAssembly (src/sw/parasolid.wasm) from native/parasolid-wasm." },
+        files: ["native/parasolid-wasm/licenses/parasolid-kit-MIT.txt", "native/parasolid-wasm/licenses/parasolid-kit-Apache-2.0.txt"], note: "Parasolid reader for SLDPRT/SLDASM files: parasolid-core is copied into native/parasolid-core and compiled to WebAssembly (src/sw/parasolid.wasm) from native/parasolid-wasm." },
     ],
     // package.json names one maintainer; the licence names the copyright holders
     overrides: { three: { author: "three.js authors" }, jspdf: { author: "James Hall, yWorks GmbH" }, "dejavu-fonts-ttf": { license: "Bitstream Vera Fonts License (DejaVu changes: public domain)", author: "Bitstream, DejaVu fonts team" } },

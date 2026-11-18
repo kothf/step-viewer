@@ -1,6 +1,7 @@
 // Mate solver (FR-MATE-003/008, AT-P4-1..3): pure geometry, no kernel.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { solve, mateTypes, mateDefaults, type Geo } from "../../src/asm/solver";
 import { IDENTITY, applyPoint, applyDir, translation, rotation, compose } from "../../src/asm/math";
 import type { AsmDoc, Mate } from "../../src/asm/types";
@@ -370,4 +371,101 @@ test("a 50-link hinge chain solves and counts its freedom in well under a second
     assert.ok(f.ok);
     assert.ok(full < 4000 && frame < 1500, `solve ${full.toFixed(0)} ms, frame ${frame.toFixed(0)} ms`);
   } finally { delete geos.link; }
+});
+
+test("an angle mate made with a turning direction is signed; a plane distance keeps its alignment (exam #64, #72)", () => {
+  // The pin on the hole, seated, turned about Z so its flat makes ±30° with the plate's side face.
+  const base = solve({ doc: doc([conc, coin]), geo, size: 100 });
+  const d = doc([conc, coin]);
+  d.components[1].tf = compose(rotation([20, 10, 0], [0, 0, 1], 0.1), base.tfs.q);
+  const ang = (v: number): Mate => ({ id: "m4", name: "Angle1", type: "angle", a: { comp: "p", face: "side" }, b: { comp: "q", face: "flat" }, value: (v * Math.PI) / 180, about: [0, 0, 1] });
+  for (const v of [30, -30]) {
+    const r = solve({ doc: { ...d, mates: [conc, coin, ang(v)] }, geo, size: 100 });
+    assert.ok(r.ok, `${v}: ${JSON.stringify(r.bad)}`);
+    const n = applyDir(r.tfs.q, [1, 0, 0]);
+    assert.ok(Math.abs(n[0] - Math.cos((v * Math.PI) / 180)) < 1e-5 && Math.abs(n[1] - Math.sin((v * Math.PI) / 180)) < 1e-5, `${v}: ${n}`);
+    assert.equal(r.dof.q, 0);
+  }
+  // Distance between the plate top (+Z) and the pin's under face: Aligned turns the pin over, Anti-aligned does not.
+  for (const align of ["aligned", "anti"] as const) {
+    const dist: Mate = { id: "m5", name: "Distance1", type: "distance", a: { comp: "p", face: "top" }, b: { comp: "q", face: "under" }, value: 4, align };
+    const r = solve({ doc: doc([conc, dist]), geo, size: 100 });
+    assert.ok(r.ok, align);
+    const nz = applyDir(r.tfs.q, [0, 0, -1])[2], z = applyPoint(r.tfs.q, [0, 0, 10])[2];
+    assert.ok(Math.abs(nz - (align === "aligned" ? 1 : -1)) < 1e-6 && Math.abs(z - 9) < 1e-5, `${align}: n ${nz}, z ${z}`);
+  }
+});
+
+test("a screw mate turns its shaft when the nut is moved by a distance (exam #75)", () => {
+  // A shaft that can only spin in the plate's hole, a nut on it that can only slide: pitch 0.5 mm per turn.
+  const all: Record<string, Record<string, Geo>> = { ...geos, nut: { bore: { k: "axis", p: [0, 0, 0], d: [0, 0, 1], r: 3 }, face: { k: "plane", p: [0, 0, 0], n: [0, 0, 1] }, flat: { k: "plane", p: [5, 0, 0], n: [1, 0, 0] } } };
+  const g = (part: string, face: string) => all[part]?.[face] ?? null;
+  const base = doc([conc, coin]);
+  const d: AsmDoc = {
+    ...base,
+    parts: { ...base.parts, nut: { name: "nut", file: "nut.mcadprt", doc: stub } },
+    components: [...base.components, { id: "n", name: "nut<1>", part: "nut", tf: translation([21, 9, 40]) }],
+    mates: [conc, coin,
+      { id: "m3", name: "Concentric2", type: "concentric", a: { comp: "q", face: "shank" }, b: { comp: "n", face: "bore" } },
+      { id: "m4", name: "Parallel1", type: "parallel", a: { comp: "p", face: "side" }, b: { comp: "n", face: "flat" } }],
+  };
+  const r0 = solve({ doc: d, geo: g, size: 500 });
+  assert.ok(r0.ok, JSON.stringify(r0.bad));
+  d.components[1].tf = r0.tfs.q;
+  d.components[2].tf = r0.tfs.n;
+  const z0 = applyPoint(r0.tfs.n, [0, 0, 0])[2] - 5, x0 = applyDir(r0.tfs.q, [1, 0, 0]);
+  const screw: Mate = { id: "m5", name: "Screw1", type: "screw", a: { comp: "q", face: "shank" }, b: { comp: "n", face: "bore" }, ratio: 0.5, t0: [r0.tfs.q, r0.tfs.n] };
+  for (const move of [0.03, 0.31, 3.1]) {
+    const dist: Mate = { id: "m6", name: "Distance1", type: "distance", a: { comp: "p", face: "top" }, b: { comp: "n", face: "face" }, value: Math.abs(z0 + move), flip: z0 + move < 0, align: "aligned" };
+    const r = solve({ doc: { ...d, mates: [...d.mates!, screw, dist] }, geo: g, size: 500 });
+    assert.ok(r.ok, `${move}: ${JSON.stringify(r.bad)}`);
+    assert.ok(Math.abs(applyPoint(r.tfs.n, [0, 0, 0])[2] - 5 - (z0 + move)) < 1e-4, `nut at ${applyPoint(r.tfs.n, [0, 0, 0])}`);
+    // The shaft stayed in its hole and turned move / pitch turns (either way round).
+    const at = applyPoint(r.tfs.q, [0, 0, 10]);
+    assert.ok(Math.abs(at[0] - 20) < 1e-4 && Math.abs(at[1] - 10) < 1e-4 && Math.abs(at[2] - 5) < 1e-4, String(at));
+    const x = applyDir(r.tfs.q, [1, 0, 0]), turned = Math.acos(Math.max(-1, Math.min(1, x[0] * x0[0] + x[1] * x0[1] + x[2] * x0[2])));
+    const want = Math.abs(((move / 0.5) * 2 * Math.PI + Math.PI) % (2 * Math.PI) - Math.PI);
+    assert.ok(Math.abs(turned - want) < 1e-3, `${move}: turned ${turned}, expected ${want}`);
+  }
+});
+
+test("a slot mate keeps the pin between the slot's rounded ends (exam #81)", () => {
+  // Slot 10 wide in y (faces y = 30 and 40) with end caps r 5 at x = 0 and x = 20, axes along z.
+  const g2: Record<string, Record<string, Geo>> = { ...geos, plate: { ...geos.plate,
+    slotA: { k: "plane", p: [10, 30, 0], n: [0, -1, 0] }, slotB: { k: "plane", p: [10, 40, 0], n: [0, 1, 0] },
+    cap0: { k: "axis", p: [0, 35, 3], d: [0, 0, 1], r: 5 }, cap1: { k: "axis", p: [20, 35, -2], d: [0, 0, -1], r: 5 } } };
+  const gg = (p: string, f: string) => g2[p]?.[f] ?? null;
+  const faces = (p: string) => Object.values(g2[p] ?? {});
+  const at = (x: number): AsmDoc => ({ ...doc([{ id: "sl", name: "Slot1", type: "slot", a: { comp: "p", face: "slotA" }, b: { comp: "q", face: "shank" }, c: { comp: "p", face: "slotB" } }]),
+    components: [{ id: "p", name: "plate<1>", part: "plate", tf: IDENTITY, fixed: true }, { id: "q", name: "pin<1>", part: "pin", tf: translation([x, 36, 0]) }] });
+  // Inside the slot the pin stays where it is along it.
+  const s1 = solve({ doc: at(12), geo: gg, faces, size: 100 });
+  assert.ok(s1.ok);
+  assert.ok(Math.abs(applyPoint(s1.tfs.q, [0, 0, 0])[0] - 12) < 1e-6 && Math.abs(applyPoint(s1.tfs.q, [0, 0, 0])[1] - 35) < 1e-6);
+  // Past an end it is brought back to that end (measured where the cap axes are, z = 3: the pin may lean along the slot); without the faces (older callers) it may stay out.
+  const s2 = solve({ doc: at(31), geo: gg, faces, size: 100 });
+  assert.ok(s2.ok && Math.abs(applyPoint(s2.tfs.q, [0, 0, 3])[0] - 20) < 1e-5, String(applyPoint(s2.tfs.q, [0, 0, 3])));
+  const s3 = solve({ doc: at(-7), geo: gg, faces, size: 100 });
+  assert.ok(s3.ok && Math.abs(applyPoint(s3.tfs.q, [0, 0, 3])[0]) < 1e-5);
+  assert.ok(Math.abs(applyPoint(solve({ doc: at(31), geo: gg, size: 100 }).tfs.q, [0, 0, 0])[0] - 31) < 1e-6);
+  // The ends take no freedom away, even with the pin at one.
+  const free = solve({ doc: at(20), geo: gg, faces, size: 100 }).dof.q, plain = solve({ doc: at(20), geo: gg, size: 100 }).dof.q;
+  assert.equal(free, plain);
+});
+
+test("a 57-part engine with repeated, slightly inexact mates still shows its one freedom (exam #94)", () => {
+  // The Leuenberger engine as saved from the app: 148 mates, many of them saying the same thing twice (a Lock beside
+  // Concentric + Coincident) with directions stored about 1e-5 off. Only the crank train may move.
+  const f = JSON.parse(readFileSync("tests/fixtures/engine-dof.json", "utf8")) as { size: number; centres: [string, [number, number, number]][]; geo: [string, [string, Geo][]][]; components: AsmDoc["components"]; mates: Mate[] };
+  const gm = new Map(f.geo.map(([p, fs]) => [p, new Map(fs)])), cm = new Map(f.centres);
+  const d: AsmDoc = { ...doc([]), components: f.components, mates: f.mates };
+  const r = solve({ doc: d, geo: (p, face) => gm.get(p)?.get(face) ?? null, faces: p => gm.get(p)?.values() ?? [], centre: p => cm.get(p) ?? [0, 0, 0], size: f.size });
+  assert.ok(r.ok);
+  assert.equal(r.free, 1);
+  const name = (n: string) => f.components.find(c => c.name.startsWith(n))!.id;
+  assert.equal(r.dof[name("2-01.1-flywheel")], 1);
+  assert.equal(r.dof[name("2-07.1-spool-valve")], 1);
+  assert.equal(r.dof[name("1-03.1-cylinder")], 0);
+  // The handwheel's screw (0.5 mm a turn) is a weak row, but a real one: the reverser stays put.
+  assert.equal(r.dof[name("2-05.4-handwheel")], 0);
 });

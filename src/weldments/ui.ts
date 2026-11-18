@@ -2,16 +2,17 @@
 // picking in the view, and the cut list dialog. The controller calls these through a small context.
 import type { FaceRef, Feature, Num, PartDoc, SketchFeature, Sketch3dFeature, V3 } from "../model/types";
 import type { Rebuild } from "../model/kernelClient";
+import { recallWeld } from "./defaults";
 import { t } from "../i18n";
 import { toast } from "../ui";
 import { featureLabel } from "../model/controller";
 import { units, UNITS } from "../tools/units";
-import { MATERIALS } from "../tools/analysis";
+import { CATEGORIES, allMaterials, findMaterial } from "../tools/materials";
 import { ANCHORS, PROFILE_TYPES, profileSizes, type Anchor, type ProfileType } from "./profiles";
 import { sketchProfile } from "../sketch/profile";
-import type { CutItem, EndCapFeature, GussetFeature, MemberFeature, MemberGroup, TrimExtendFeature, WeldBeadFeature, WeldFeature, WeldSegRef } from "./types";
-import { capDir, cornerKey, cutKey } from "./types";
-import { segOf } from "./kernel";
+import type { CutItem, Pierce, SubWeld, EndCapFeature, GussetFeature, MemberFeature, MemberGroup, TrimExtendFeature, WeldBeadFeature, WeldFeature, WeldSegRef } from "./types";
+import { capDir, cornerKey, cutKey, planGroups, stockTotals } from "./types";
+import { pierceSpots, segOf } from "./kernel";
 
 export type WeldTool = "member" | "trimext" | "endcap" | "gusset" | "weldbead";
 export const WELD_TOOL_SET: ReadonlySet<string> = new Set(["member", "trimext", "endcap", "gusset", "weldbead"]);
@@ -102,27 +103,90 @@ function memberCorners(sk: SketchFeature | Sketch3dFeature, ents: string[]): str
   return [...at.values()].filter(l => l.length > 1);
 }
 
+/** The treatments a corner of `n` segments can take (a mitre needs exactly two). */
+function cornerOpts(n: number): [string, string][] {
+  return [...(n === 2 ? [["miter", t("End miter")] as [string, string]] : []), ["butt1", t("End butt 1")], ["butt2", t("End butt 2")], ["none", t("None")]];
+}
+
+/** A corner of a structural member as the view shows it (a CAD app's corner callouts). */
+export interface CornerSpot {
+  key: string;
+  /** Where the segments meet, world mm. */
+  at: V3;
+  /** "Line 1 / Line 2". */
+  label: string;
+  /** The treatment used there, in words. */
+  text: string;
+  /** Its own treatment is set (not the member's). */
+  own: boolean;
+  /** Menu rows: value ("" = as the member) and label, the current one first ticked by the caller. */
+  opts: [string, string][];
+  cur: string;
+}
+
+/** The corners of an open structural member with their treatments, placed where the segments meet. */
+export function cornerSpots(ctx: WeldCtx, f: MemberFeature): CornerSpot[] {
+  const sk = pathSketches(ctx).find(s => s.id === f.segs[0]?.sketch);
+  if (!sk || f.segs.length < 2) return [];
+  const frames = ctx.last?.frames ?? {};
+  const out: CornerSpot[] = [];
+  for (const c of memberCorners(sk, f.segs.map(x => x.ent))) {
+    let at: V3 | null = null;
+    try {
+      const a = segOf({ sketch: sk.id, ent: c[0] }, ctx.doc, frames), b = segOf({ sketch: sk.id, ent: c[1] }, ctx.doc, frames);
+      const d = (p: V3) => Math.min(Math.hypot(p[0] - b.a[0], p[1] - b.a[1], p[2] - b.a[2]), Math.hypot(p[0] - b.b[0], p[1] - b.b[1], p[2] - b.b[2]));
+      at = d(a.a) <= d(a.b) ? a.a : a.b;
+    } catch { continue; }
+    const key = cornerKey(c), own = f.corners?.[key];
+    const opts = cornerOpts(c.length);
+    // Three or more segments can't be mitred: the kernel runs the first through, like End butt 1.
+    const used = own ?? (f.corner === "miter" && c.length > 2 ? "butt1" : f.corner);
+    out.push({ key, at, label: c.map(ent => segLabel(sk, ent)).join(" / "), text: opts.find(o => o[0] === used)?.[1] ?? used, own: !!own, opts: [["", t("As set for the member")], ...opts], cur: own ?? "" });
+  }
+  return out;
+}
+
+/** Where a sketch profile's points can sit on the path (Locate profile): "Sketch point n" for every point of the profile sketch. */
+function profilePoints(ctx: WeldCtx, f: MemberFeature): [string, string][] {
+  const sk = f.profile === "sketch" ? ctx.before.find(x => x.id === f.psketch) : undefined;
+  if (sk?.type !== "sketch") return [];
+  return sk.ents.filter(e => e.t === "point").map((e, i): [string, string] => [`p:${e.id}`, t("Sketch point {n}", { n: i + 1 })]);
+}
+
+/** Locate profile in the view: the profile points of a group's first segment (gi 0 = group 1), labelled, with the one in use. */
+export function locateSpots(ctx: WeldCtx, f: MemberFeature, gi: number): { key: Pierce; at: V3; label: string; cur: boolean }[] {
+  const groups = f.groups ?? [];
+  const ent = gi ? groups[gi - 1]?.ents[0] : f.segs.find(s => !groups.some(g => g.ents.includes(s.ent)))?.ent;
+  if (!ent) return [];
+  const pts = new Map(profilePoints(ctx, f));
+  const cur = (gi ? groups[gi - 1].anchor : f.anchor) ?? (f.profile === "sketch" ? "o" : "c");
+  return pierceSpots(f, ent, ctx.doc, ctx.last?.frames ?? {}).map(({ key, at, also }) => ({
+    key, at, cur: key === cur || also.includes(cur),
+    label: key === "o" ? t("Sketch origin") : key.startsWith("p:") ? pts.get(key) ?? key : t(ANCHOR_LABEL[key as Anchor]),
+  }));
+}
+
 /** 2D sketches with a closed region (custom member profiles), before the edited feature; not the path sketch. */
 function profileSketches(ctx: WeldCtx, path?: string): SketchFeature[] {
   return ctx.before.filter((x): x is SketchFeature => x.type === "sketch" && x.id !== path && !x.suppressed && sketchProfile(x).faces.length > 0);
 }
 
-/** A new weldment feature with sensible picks (FR-FT-121). */
+/** A new weldment feature with sensible picks and the settings used last for its type (FR-FT-121, `defaults.ts`). */
 export function weldDraft(ctx: WeldCtx, type: WeldTool, id: string, name: string, face: number | null): Feature | null {
   const fr = face != null ? ctx.faceRef(face) : null;
   if (type === "member") {
     const paths = pathSketches(ctx);
-    // The selected sketch, else the last 3D sketch or sketch with lines (SolidWorks: sketch the frame, then Structural Member).
+    // The selected sketch, else the last 3D sketch or sketch with lines (a CAD app: sketch the frame, then Structural Member).
     const sk = paths.find(s => s.id === ctx.selected) ?? paths.at(-1);
     if (!sk) { toast(t("Draw a sketch or a 3D sketch with lines first: the members run along them."), true); return null; }
-    return { id, type, name, profile: "shs", size: "40x40x3", segs: pathLines(sk).map(ent => ({ sketch: sk.id, ent })), corner: "miter" } satisfies MemberFeature;
+    return recallWeld({ id, type, name, profile: "shs", size: "40x40x3", segs: pathLines(sk).map(ent => ({ sketch: sk.id, ent })), corner: "miter" } satisfies MemberFeature);
   }
   if (!ctx.last?.data) { toast(t("There is no body yet."), true); return null; }
   if (type === "trimext") return { id, type, name, bodies: fr && memberFace(ctx, fr.name) ? [fr] : [], kind: "face" } satisfies TrimExtendFeature;
   const flat = fr && face != null && ctx.faceType(face) === "plane" ? fr : null;
-  if (type === "endcap") return { id, type, name, faces: flat ? [flat] : [], thickness: { v: 5 }, inset: { v: 0 } } satisfies EndCapFeature;
-  if (type === "gusset") return { id, type, name, face1: flat ?? undefined, d1: { v: 50 }, d2: { v: 50 }, thickness: { v: 5 }, shape: "tri", loc: "mid" } satisfies GussetFeature;
-  return { id, type, name, faces1: flat ? [flat] : [], faces2: [], size: { v: 4 } } satisfies WeldBeadFeature;
+  if (type === "endcap") return recallWeld({ id, type, name, faces: flat ? [flat] : [], thickness: { v: 5 }, inset: { v: 0 } } satisfies EndCapFeature);
+  if (type === "gusset") return recallWeld({ id, type, name, face1: flat ?? undefined, d1: { v: 50 }, d2: { v: 50 }, thickness: { v: 5 }, shape: "tri", loc: "mid" } satisfies GussetFeature);
+  return recallWeld({ id, type, name, faces1: flat ? [flat] : [], faces2: [], size: { v: 4 } } satisfies WeldBeadFeature);
 }
 
 /** Which box a new weldment feature's view clicks fill first. */
@@ -175,11 +239,17 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
     const gOf = (ent: string) => groups.findIndex(g => g.ents.includes(ent)) + 1;
     const gSel = (ent: string) => f.segs.length < 2 ? "" : `<select data-k="wgroup:${esc(ent)}" aria-label="${esc(t("Group of {seg}", { seg: segLabel(sk!, ent) }))}">${Array.from({ length: groups.length + 1 }, (_, i) => `<option value="${i}"${gOf(ent) === i ? " selected" : ""}>${esc(t("Group {n}", { n: i + 1 }))}</option>`).join("")}<option value="new">${esc(t("New group"))}</option></select>`;
     const segList = lines.map(ent => `<div class="wseg-row"><label class="chk pm-chk"><input type="checkbox" data-wseg="${esc(ent)}"${on.has(ent) ? " checked" : ""} />${esc(segLabel(sk!, ent))}</label>${on.has(ent) ? gSel(ent) : ""}</div>`).join("");
-    const anchorOpts: [string, string][] = [...(f.profile === "sketch" ? [["o", t("Sketch origin")] as [string, string]] : []), ...ANCHORS.map((a): [string, string] => [a, t(ANCHOR_LABEL[a])])];
+    const anchorOpts: [string, string][] = [...(f.profile === "sketch" ? [["o", t("Sketch origin")] as [string, string]] : []), ...ANCHORS.map((a): [string, string] => [a, t(ANCHOR_LABEL[a])]), ...profilePoints(ctx, f)];
     const defAnchor = f.profile === "sketch" ? "o" : "c";
+    // Locate profile: points of the profile drawn at the start of the group's first segment, a click puts one on the path.
+    const locate = (gi: number) => {
+      const fo = gi ? `wlocate:${gi}` : "wlocate";
+      return `<button class="btn small${focus === fo ? " focus" : ""}" data-focus="${focus === fo ? "" : fo}" aria-pressed="${focus === fo}">${esc(t("Locate profile"))}</button>`
+        + (focus === fo ? help(t("Click a point of the profile in the view: it moves onto the path.")) : "");
+    };
     const groupBoxes = groups.map((g, i) => group(t("Group {n}", { n: i + 2 }),
       `<p class="pm-count">${esc(g.ents.map(e => segLabel(sk!, e)).join(", "))}</p>`
-      + sel(`wganchor:${i}`, t("Profile position"), anchorOpts, g.anchor ?? defAnchor)
+      + sel(`wganchor:${i}`, t("Profile position"), anchorOpts, g.anchor ?? defAnchor) + locate(i + 1)
       + numField(`groups.${i}.angle`, t("Rotation angle"), g.angle ?? { v: 0 }, "angle")
       + chk(`wgmirror:${i}`, g.mirror, t("Mirror profile")))).join("");
     return {
@@ -187,18 +257,20 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
       body: group(t("Selections"), sel("wtype", t("Type"), [...PROFILE_TYPES.map(([v, l]): [string, string] => [v, t(l)]), ["sketch", t("Custom profile (sketch)")]], f.profile)
         + (f.profile === "sketch"
           ? sel("wpsketch", t("Profile sketch"), [["", t("None")], ...profileSketches(ctx, cur).map((s): [string, string] => [s.id, featureLabel(s.name)])], f.psketch ?? "")
-            + help(t("A closed sketch drawn at the origin: its largest region is the profile, the sketch origin sits on the path."))
+            + help(t("A closed sketch: its largest region is the profile. The sketch origin sits on the path, or any point of the sketch picked under Profile position."))
           : `<label class="pm-field"><span>${esc(t("Size"))}</span><select data-k="wsize" translate="no">${profileSizes(f.profile).map(s => `<option${s === f.size ? " selected" : ""}>${esc(s)}</option>`).join("")}</select></label>`))
         + group(t("Path segments"), sel("wsketch", t("Sketch"), paths.map(s => [s.id, featureLabel(s.name)]), cur)
           + `<p class="pm-count">${esc(t("{n} segment|{n} segments", { n: f.segs.length }))}</p>${segList}`
           + help(t("Each segment becomes its own body; where two segments meet end to end the corner is treated.")))
         + group(t("Settings"), sel("corner", t("Corner treatment"), [["miter", t("End miter")], ["butt1", t("End butt 1")], ["butt2", t("End butt 2")], ["none", t("None")]], f.corner)
+          + (f.segs.length > 1 ? sel("wcope", t("Butt end"), [["simple", t("Simple cut")], ["coped", t("Coped cut")]], f.coped ? "coped" : "simple")
+            + (f.coped ? help(t("A butted member's end follows the shape of the member it stops at, such as a saddle on a round tube.")) : "") : "")
           + chk("wGap", (f.gap?.v ?? 0) > 0, t("Weld gap")) + ((f.gap?.v ?? 0) > 0 ? numField("gap", t("Gap"), f.gap!, "length") : "")
           + (sk?.type === "sketch" && f.segs.some(r => sk.ents.find(e => e.id === r.ent)?.t === "arc") ? chk("wMergeArcs", !!f.mergeArcs, t("Merge arc segment bodies")) : "")
           + (f.segs.length > 1 && (f.corner === "miter" || Object.values(f.corners ?? {}).includes("miter")) ? chk("wMergeMiter", !!f.mergeMiter, t("Merge miter trimmed bodies"))
             + (f.mergeMiter && (f.gap?.v ?? 0) > 0 ? help(t("Mitred bodies with a weld gap don't touch, so they stay apart.")) : "") : "")
           + (groups.length ? `<p class="pm-count">${esc(t("Group {n}", { n: 1 }))}</p>` : "")
-          + sel("anchor", t("Profile position"), anchorOpts, f.anchor ?? defAnchor)
+          + sel("anchor", t("Profile position"), anchorOpts, f.anchor ?? defAnchor) + locate(0)
           + numField("angle", t("Rotation angle"), f.angle ?? { v: 0 }, "angle")
           + chk("mirror", f.mirror, t("Mirror profile"))
           + sel("walign", t("Alignment"), [["", t("None")], ...alignOpts(ctx)], f.align ? `${f.align.sketch}|${f.align.ent}` : "")
@@ -209,9 +281,9 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
         + (corners.length ? group(t("Corners"), corners.map(c => {
           const key = cornerKey(c);
           const label = c.map(ent => segLabel(sk!, ent)).join(" / ");
-          const opts: [string, string][] = [["", t("As set above")], ...(c.length === 2 ? [["miter", t("End miter")] as [string, string]] : []), ["butt1", t("End butt 1")], ["butt2", t("End butt 2")], ["none", t("None")]];
+          const opts: [string, string][] = [["", t("As set above")], ...cornerOpts(c.length)];
           return sel(`wcorner:${key}`, label, opts, f.corners?.[key] ?? "");
-        }).join("") + help(t("A corner set here keeps its own treatment when the one above changes."))) : "")
+        }).join("") + help(t("A corner set here keeps its own treatment when the one above changes. The callouts at the corners in the view set them too."))) : "")
         + group(t("Cut list"), `<label class="pm-field"><span>${esc(t("Description"))}</span><input type="text" data-k="wdesc" value="${esc(f.desc ?? "")}" placeholder="${esc(f.profile === "sketch" ? t("Profile sketch") : f.size)}" /></label>`),
     };
   }
@@ -256,9 +328,12 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
         + help(t("Click two flat faces that meet at a corner, such as a beam and a post.")))
         + group(t("Profile"), sel("wshape", t("Shape"), [["tri", t("Triangular")], ["poly", t("Polygonal")]], f.shape)
           + numField("d1", t("Length along face 1"), f.d1, "length") + numField("d2", t("Length along face 2"), f.d2, "length")
-          + (f.shape === "poly" ? numField("d3", t("End width"), f.d3 ?? { v: 10 }, "length") : "")
+          + (f.shape === "poly" ? numField("d3", t("End width"), f.d3 ?? { v: 10 }, "length")
+            + sel("wpolyEnd", t("Other end"), [["same", t("Same width")], ["d4", t("Its own width")], ["angle", t("By profile angle")]], f.polyAngle ? "angle" : f.d4 ? "d4" : "same")
+            + (f.polyAngle ? numField("polyAngle", t("Profile angle"), f.polyAngle, "angle") : f.d4 ? numField("d4", t("End width at face 2"), f.d4, "length") : "") : "")
           + numField("thickness", t("Thickness"), f.thickness, "length")
-          + chk("wChamfer", !!f.chamfer, t("Chamfer the inner corner")) + (f.chamfer ? numField("chamfer", t("Distance"), f.chamfer, "length") : ""))
+          + chk("wChamfer", !!f.chamfer, t("Chamfer the inner corner")) + (f.chamfer ? numField("chamfer", f.chamfer2 ? t("Distance along face 1") : t("Distance"), f.chamfer, "length")
+            + chk("wChamfer2", !!f.chamfer2, t("Different distance along face 2")) + (f.chamfer2 ? numField("chamfer2", t("Distance along face 2"), f.chamfer2, "length") : "") : ""))
         + group(t("Location"), sel("wloc", t("Location"), [["mid", t("Mid point")], ["start", t("Start")], ["end", t("End")]], f.loc)
           + (f.loc !== "mid" ? sel("wgside", t("Thickness"), [["in", t("Inner side")], ["both", t("Both sides")], ["out", t("Outer side")]], f.side ?? "in") : "")
           + chk("wgOffset", !!f.offset, t("Offset")) + (f.offset ? numField("offset", t("Offset"), f.offset, "length") : "")
@@ -269,6 +344,7 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
     title: t("Fillet Bead"),
     body: group(t("Settings"), (f.size2 ? numField("size", t("Leg on set 1"), f.size, "length") + numField("size2", t("Leg on set 2"), f.size2, "length") : numField("size", t("Bead size"), f.size, "length"))
         + chk("wEqual", !f.size2, t("Equal leg lengths")) + chk("wTangent", f.tangent !== false, t("Tangent propagation"))
+        + chk("wBoth", !!f.both, t("Weld both sides")) + (f.both ? help(t("Each flat face of set 1 also brings the face on the other side of its plate, so a plate standing on another is welded along both sides.")) : "")
         + chk("wSymbol", f.symbol !== false, t("Show weld symbol"))
         + (f.symbol !== false ? chk("wAround", !!f.around, t("Weld all around")) + chk("wField", !!f.field, t("Field weld")) : "")
         + sel("wLen", t("Bead length"), [["full", t("Full length")], ["span", t("From/to length")]], f.span ? "span" : "full")
@@ -299,12 +375,17 @@ export function weldChange(f: WeldFeature, k: string, val: string | boolean, ctx
         delete f.anchor;
         return;
       }
-      if (f.profile === "sketch") delete f.anchor;
+      if (f.profile === "sketch") { delete f.anchor; for (const g of f.groups ?? []) if (g.anchor === "o" || g.anchor?.startsWith("p:")) delete g.anchor; }
       f.profile = val as ProfileType;
       const sizes = profileSizes(f.profile);
       if (!sizes.includes(f.size)) f.size = sizes[Math.min(sizes.length - 1, Math.floor(sizes.length / 3))];
     };
-    if (k === "wpsketch") return () => { if (val) f.psketch = String(val); else delete f.psketch; };
+    if (k === "wpsketch") return () => {
+      if (val) f.psketch = String(val); else delete f.psketch;
+      // Points of the old profile sketch mean nothing on the new one.
+      if (f.anchor?.startsWith("p:")) delete f.anchor;
+      for (const g of f.groups ?? []) if (g.anchor?.startsWith("p:")) delete g.anchor;
+    };
     if (k === "wsize") return () => { f.size = String(val); };
     if (k === "wsketch") return () => { const sk = pathSketches(ctx).find(s => s.id === val); f.segs = sk ? pathLines(sk).map(ent => ({ sketch: sk.id, ent })) : []; delete f.groups; };
     if (k === "corner") return () => { f.corner = val as MemberFeature["corner"]; };
@@ -315,18 +396,19 @@ export function weldChange(f: WeldFeature, k: string, val: string | boolean, ctx
     };
     if (k === "wGap") return () => { if (val) f.gap = { v: 2 }; else delete f.gap; };
     if (k === "wMergeArcs") return () => { if (val) f.mergeArcs = true; else delete f.mergeArcs; };
+    if (k === "wcope") return () => { if (val === "coped") f.coped = true; else delete f.coped; };
     if (k === "walign") return () => { const [sketch, ent] = String(val).split("|"); if (val && sketch && ent) f.align = { sketch, ent, axis: f.align?.axis ?? "v" }; else delete f.align; };
     if (k === "walignAxis") return () => { if (f.align) f.align.axis = val === "h" ? "h" : "v"; };
     if (k === "wMergeMiter") return () => { if (val) f.mergeMiter = true; else delete f.mergeMiter; };
     if (k === "wdesc") return () => { const s = String(val).trim(); if (s) f.desc = s; else delete f.desc; };
-    if (k === "anchor") return () => { if (val === (f.profile === "sketch" ? "o" : "c")) delete f.anchor; else f.anchor = val as Anchor; };
+    if (k === "anchor") return () => { if (val === (f.profile === "sketch" ? "o" : "c")) delete f.anchor; else f.anchor = val as Pierce; };
     if (k.startsWith("wgroup:")) return () => {
       const ent = k.slice(7), gs = (f.groups ?? []).map(g => ({ ...g, ents: g.ents.filter(e => e !== ent) }));
       if (val === "new") gs.push({ ents: [ent], ...(f.anchor ? { anchor: f.anchor } : {}), ...(f.angle ? { angle: { ...f.angle } } : {}), ...(f.mirror ? { mirror: true } : {}) });
       else if (+val > 0) gs[+val - 1]?.ents.push(ent);
       setGroups(f, gs);
     };
-    if (k.startsWith("wganchor:")) return () => { const g = f.groups?.[+k.slice(9)]; if (!g) return; if (val === (f.profile === "sketch" ? "o" : "c")) delete g.anchor; else g.anchor = val as Anchor; };
+    if (k.startsWith("wganchor:")) return () => { const g = f.groups?.[+k.slice(9)]; if (!g) return; if (val === (f.profile === "sketch" ? "o" : "c")) delete g.anchor; else g.anchor = val as Pierce; };
     if (k.startsWith("wgmirror:")) return () => { const g = f.groups?.[+k.slice(9)]; if (!g) return; if (val) g.mirror = true; else delete g.mirror; };
   }
   if (f.type === "trimext") {
@@ -344,15 +426,24 @@ export function weldChange(f: WeldFeature, k: string, val: string | boolean, ctx
     if (k === "wCapCorner") return () => { if (val === "fillet") f.fillet = true; else delete f.fillet; };
   }
   if (f.type === "gusset") {
-    if (k === "wshape") return () => { f.shape = val as "tri" | "poly"; if (f.shape === "poly") f.d3 ??= { v: Math.round(Math.min(f.d1.v, f.d2.v) / 4) || 5 }; else delete f.d3; };
+    if (k === "wshape") return () => { f.shape = val as "tri" | "poly"; if (f.shape === "poly") f.d3 ??= { v: Math.round(Math.min(f.d1.v, f.d2.v) / 4) || 5 }; else { delete f.d3; delete f.d4; delete f.polyAngle; } };
+    if (k === "wpolyEnd") return () => {
+      delete f.d4; delete f.polyAngle;
+      const d3 = f.d3?.v ?? 10;
+      if (val === "d4") f.d4 = { v: d3 };
+      // Starts at the angle the symmetric profile has, so nothing jumps.
+      else if (val === "angle") f.polyAngle = { v: Math.atan2(Math.max(f.d2.v - d3, 1e-6), Math.max(f.d1.v - d3, 1e-6)) };
+    };
+    if (k === "wChamfer2") return () => { if (val) f.chamfer2 = { v: f.chamfer?.v ?? 5 }; else delete f.chamfer2; };
     if (k === "wloc") return () => { f.loc = val as GussetFeature["loc"]; if (f.loc === "mid") delete f.side; };
     if (k === "wgside") return () => { if (val === "in") delete f.side; else f.side = val as "both" | "out"; };
     if (k === "wgOffset") return () => { if (val) f.offset = { v: 10 }; else delete f.offset; };
-    if (k === "wChamfer") return () => { if (val) f.chamfer = { v: 5 }; else delete f.chamfer; };
+    if (k === "wChamfer") return () => { if (val) f.chamfer = { v: 5 }; else { delete f.chamfer; delete f.chamfer2; } };
   }
   if (f.type === "weldbead" && k === "wEqual") return () => { if (val) delete f.size2; else f.size2 = { v: f.size.v * 1.5 }; };
   if (f.type === "weldbead" && k === "wTangent") return () => { if (val) delete f.tangent; else f.tangent = false; };
   if (f.type === "weldbead" && k === "wSymbol") return () => { if (val) delete f.symbol; else f.symbol = false; };
+  if (f.type === "weldbead" && k === "wBoth") return () => { if (val) f.both = true; else delete f.both; };
   if (f.type === "weldbead" && k === "wAround") return () => { if (val) f.around = true; else delete f.around; };
   if (f.type === "weldbead" && k === "wField") return () => { if (val) f.field = true; else delete f.field; };
   if (f.type === "weldbead" && k === "wLen") return () => { if (val === "span") f.span ??= { start: { v: 0 }, len: { v: 50 } }; else delete f.span; };
@@ -417,7 +508,7 @@ export function segmentAt(ctx: WeldCtx, x: number, y: number, f: MemberFeature):
 }
 
 /**
- * A click while a structural member is open (SolidWorks-style): a path segment near the click, or a face
+ * A click while a structural member is open (CAD-app-style): a path segment near the click, or a face
  * of the member's own preview, is ticked or unticked. A segment of another sketch starts over with it.
  */
 function pickSegment(ctx: WeldCtx, e: PointerEvent, f: MemberFeature) {
@@ -439,7 +530,11 @@ function pickSegment(ctx: WeldCtx, e: PointerEvent, f: MemberFeature) {
 
 /** A click in the view while a weldment feature is open. Returns the new focus (or the old one). */
 export function weldPick(ctx: WeldCtx, e: PointerEvent, f: WeldFeature, focus: string | undefined): string | undefined {
-  if (f.type === "member") { pickSegment(ctx, e, f); return focus; }
+  if (f.type === "member") {
+    if (focus?.startsWith("wlocate")) { toast(t("Click a point of the profile in the view: it moves onto the path.")); return focus; }
+    pickSegment(ctx, e, f);
+    return focus;
+  }
   const hit = ctx.faceAt(e.clientX, e.clientY);
   const fr = hit ? ctx.faceRef(hit.faceId) : null;
   if (!hit || !fr || fr.name.startsWith(`${f.id}:`)) { toast(t("Pick a face.")); return focus; }
@@ -477,11 +572,11 @@ export function weldPick(ctx: WeldCtx, e: PointerEvent, f: WeldFeature, focus: s
 
 // ---------- weld symbols ----------
 
-/** A bead's weld symbol in ISO 2553 short form: ○ when welded all around, ⚑ for a field weld, fillet triangle, leg size z, and for intermittent welds the weld length, Z when staggered, and the pitch in brackets. */
+/** A bead's weld symbol in ISO 2553 short form: ○ when welded all around, ⚑ for a field weld, fillet triangle (two for a weld on both sides), leg size z, and for intermittent welds the weld length, Z when staggered, and the pitch in brackets. */
 export function weldSymbol(f: WeldBeadFeature): string {
   const n = (v: number) => String(Math.round(v * 100) / 100);
   const it = f.inter;
-  return (f.around ? "○ " : "") + (f.field ? "⚑ " : "") + `◺ z${n(f.size.v)}${f.size2 && Math.abs(f.size2.v - f.size.v) > 1e-9 ? `×${n(f.size2.v)}` : ""}` + (it ? ` ${n(it.len.v)}${it.stagger ? " Z" : ""} (${n(Math.max(it.pitch.v, it.len.v))})` : f.span ? ` ${n(f.span.len.v)}` : "");
+  return (f.around ? "○ " : "") + (f.field ? "⚑ " : "") + `${f.both ? "◺◹" : "◺"} z${n(f.size.v)}${f.size2 && Math.abs(f.size2.v - f.size.v) > 1e-9 ? `×${n(f.size2.v)}` : ""}` + (it ? ` ${n(it.len.v)}${it.stagger ? " Z" : ""} (${n(Math.max(it.pitch.v, it.len.v))})` : f.span ? ` ${n(f.span.len.v)}` : "");
 }
 
 /** The weld symbols to show: shown, built beads up to the rollback bar; the one being edited from its draft. */
@@ -505,9 +600,19 @@ function beadText(c: CutItem, tr: (k: string, p?: Record<string, string | number
 
 /** Display rows of a cut list: item number, quantity, description, length, angles, mass each. */
 type CutProps = NonNullable<PartDoc["cutProps"]>;
+type StockBar = NonNullable<PartDoc["stock"]>;
 
 /** An item's own material (cut list item property), if it names a known one. */
-function itemMat(p: { mat?: string } | undefined) { return p?.mat ? MATERIALS.find(m => m.name === p.mat) : undefined; }
+function itemMat(p: { mat?: string } | undefined) { return findMaterial(p?.mat); }
+
+/** The library as grouped options (one group per category), for the cut list item's Material list. */
+function matOptions(cur: string) {
+  const all = allMaterials();
+  return CATEGORIES.map(c => {
+    const ms = all.filter(m => m.cat === c.id);
+    return ms.length ? `<optgroup label="${esc(t(c.name))}">${ms.map(m => `<option value="${esc(m.name)}"${m.name === cur ? " selected" : ""}>${esc(t(m.name))}</option>`).join("")}</optgroup>` : "";
+  }).join("");
+}
 
 function rowsOf(items: CutItem[], density: number, props?: CutProps) {
   const L = (mm: number | undefined) => mm == null ? "" : (mm * UNITS[units.current].f).toLocaleString(undefined, { maximumFractionDigits: 1 });
@@ -523,50 +628,96 @@ function rowsOf(items: CutItem[], density: number, props?: CutProps) {
 }
 
 /**
- * The Cut list folder of the Features tree (SolidWorks' "Cut list"): one row per item with its quantity;
+ * The Cut list folder of the Features tree (a CAD app's "Cut list"): one row per item with its quantity;
  * a click selects `cut:<i>`, which lights up the item's bodies.
  */
-export function cutListRows(items: CutItem[] | undefined, open: boolean, row: (id: string, icon: string, label: string, extra?: string, cls?: string, aria?: string) => string, props?: CutProps): string {
+export function cutListRows(items: CutItem[] | undefined, open: boolean, row: (id: string, icon: string, label: string, extra?: string, cls?: string, aria?: string) => string, props?: CutProps, subs?: SubWeld[]): string {
   if (!items?.length) return "";
   let html = row("folder:cutlist", open ? "▾" : "▸", t("Cut list ({n})", { n: items.length }), "", " ft-bodies", ` aria-expanded="${open}"`);
   if (!open) return html;
-  rowsOf(items, STEEL, props).forEach((r, i) => {
+  const rows = rowsOf(items, STEEL, props);
+  const item = (i: number) => {
+    const r = rows[i], c = items[i];
     const len = r.length ? ` × ${r.length} ${units.current}` : "";
-    html += row(`cut:${i}`, items[i].kind === "member" ? "▭" : items[i].kind === "plate" ? "▱" : "◣", `${r.desc}${len} (${r.qty})${r.excl ? ` · ${t("excluded")}` : ""}`, "", ` infolder ft-body${r.excl ? " wld-excl" : ""}`);
-  });
+    return row(`cut:${i}`, c.kind === "member" ? "▭" : c.kind === "plate" ? "▱" : "◣", `${r.desc}${len} (${r.qty})${r.excl ? ` · ${t("excluded")}` : ""}`, "", ` infolder ft-body${c.sub ? " child" : ""}${r.excl ? " wld-excl" : ""}`);
+  };
+  items.forEach((c, i) => { if (!c.sub) html += item(i); });
+  // Sub-weldment folders (a CAD app): each with its items under it; one with no current items still shows, so it can be dissolved.
+  for (const sw of subs ?? []) {
+    const mine = items.map((c, i) => c.sub === sw.id ? i : -1).filter(i => i >= 0);
+    html += row(`wsub:${sw.id}`, "▣", t("{name} ({n})", { name: sw.name, n: mine.length }), "", " infolder ft-bodies wld-sub");
+    for (const i of mine) html += item(i);
+  }
   return html;
 }
 
 /** The weldment cut list as CSV (English, like the other exports; lengths in mm). */
-export function cutListCsv(items: CutItem[], density: number, props?: CutProps, partMat = "Steel (assumed)"): string {
+export function cutListCsv(items: CutItem[], density: number, props?: CutProps, partMat = "Steel (assumed)", subs?: SubWeld[], bar?: StockBar): string {
   const q = (v: string | number) => { const s = String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-  const lines = [["Item", "Qty", "Description", "Length (mm)", "Angle 1 (deg)", "Angle 2 (deg)", "Material", "Mass each (kg)", "Mass (kg)", "Part number", "Notes"].join(",")];
+  const subName = (id?: string) => subs?.find(x => x.id === id)?.name ?? "";
+  const lines = [["Item", "Qty", "Description", "Length (mm)", "Angle 1 (deg)", "Angle 2 (deg)", "Material", "Mass each (kg)", "Mass (kg)", "Part number", "Notes", ...(subs?.length ? ["Sub-weldment"] : [])].join(",")];
   let n = 0;
   items.forEach(c => {
     const p = props?.[cutKey(c)] ?? {};
     if (p.excl) return;
     const desc = p.desc || (c.kind === "member" ? c.desc : c.kind === "plate" ? `Plate ${c.plate![2]} x ${c.plate![0]} x ${c.plate![1]}` : beadText(c, (k, p) => k.replace(/\{(\w+)\}/g, (_m, n) => String(p?.[n] ?? ""))));
     const m = itemMat(p), kg = (c.volume * (m?.density ?? density)) / 1e6, qty = c.kind === "bead" ? 1 : c.qty;
-    lines.push([++n, qty, desc, c.length ?? "", c.kind === "member" ? c.angle1 ?? 0 : "", c.kind === "member" ? c.angle2 ?? 0 : "", m?.name ?? partMat, kg.toFixed(4), (kg * (c.kind === "bead" ? 1 : c.qty)).toFixed(4), p.part ?? "", p.note ?? ""].map(q).join(","));
+    lines.push([++n, qty, desc, c.length ?? "", c.kind === "member" ? c.angle1 ?? 0 : "", c.kind === "member" ? c.angle2 ?? 0 : "", m?.name ?? partMat, kg.toFixed(4), (kg * (c.kind === "bead" ? 1 : c.qty)).toFixed(4), p.part ?? "", p.note ?? "", ...(subs?.length ? [subName(c.sub)] : [])].map(q).join(","));
   });
+  const stock = stockTotals(items, c => !!props?.[cutKey(c)]?.excl, bar);
+  if (stock.length) {
+    const bars = stock.some(r => r.bars !== undefined);
+    lines.push("", "Stock lengths", `Profile,Pieces,Total length (mm)${bars ? ",Bar length (mm),Saw kerf (mm),Bars,Left over (mm),Too long" : ""}`,
+      ...stock.map(r => [q(r.desc), r.pieces, r.length, ...(bars ? [bar!.len!, bar!.kerf ?? 0, r.bars!, r.left!, r.over!] : [])].join(",")));
+    if (bars) lines.push("", "Cutting plan", "Profile,Bars,Pieces (mm),Left over (mm)",
+      ...stock.flatMap(r => planGroups(r.plan ?? []).map(g => [q(r.desc), g.n, q(g.pieces.join(" + ")), g.left].join(","))));
+  }
   return `${lines.join("\r\n")}\r\n`;
 }
 
 const STEEL = 7.85;
 
+/** Whether the cutting plan under the stock table is unfolded (view-only, kept while the dialog redraws). */
+let planOpen = false;
+
+/** Stock lengths under the cut list: per profile, the pieces and their summed length (excluded items left out); with a stock bar length also the bars to buy and what is left of them. */
+function stockHtml(items: CutItem[], props: CutProps, bar: StockBar, edit: boolean): string {
+  const rows = stockTotals(items, c => !!props[cutKey(c)]?.excl, bar);
+  if (!rows.length) return "";
+  const f = UNITS[units.current].f;
+  const L = (mm: number) => (mm * f).toLocaleString(undefined, { maximumFractionDigits: 1 });
+  const bars = rows.some(r => r.bars !== undefined);
+  const val = (mm?: number) => mm ? String(Math.round(mm * f * 1e4) / 1e4) : "";
+  const inp = (k: "len" | "kerf", label: string) => `<label>${esc(t(label))} (${esc(units.current)}) <input type="number" class="wld-bar" data-wbar="${k}" min="0" step="any" value="${val(bar[k])}"${edit ? "" : " disabled"} /></label>`;
+  return `<table class="v-table wld-stock"><caption>${esc(t("Stock lengths"))}</caption><thead><tr><th>${esc(t("Section"))}</th><th>${esc(t("Pieces"))}</th><th>${esc(t("Total length"))} (${esc(units.current)})</th>${bars ? `<th>${esc(t("Bars"))}</th><th>${esc(t("Left over"))} (${esc(units.current)})</th>` : ""}</tr></thead><tbody>`
+    + rows.map(r => `<tr data-stock><td translate="no">${esc(r.desc)}</td><td>${r.pieces}</td><td>${L(r.length)}</td>${bars ? `<td data-wbars>${r.bars}${r.over ? ` <span class="wld-over">${esc(t("+ {n} too long", { n: r.over }))}</span>` : ""}</td><td>${L(r.left!)}</td>` : ""}</tr>`).join("") + "</tbody></table>"
+    + `<p class="wld-barrow">${inp("len", "Stock bar length")} ${inp("kerf", "Saw kerf")}</p>`
+    + (bars ? `<details class="wld-plan"${planOpen ? " open" : ""}><summary>${esc(t("Cutting plan"))}</summary>${rows.map(r => `<p class="wld-plan-h" translate="no">${esc(r.desc)}</p><ol>`
+      + planGroups(r.plan ?? []).map(g => `<li data-wplan>${g.n > 1 ? `${g.n} × ` : ""}${g.pieces.map(L).join(" + ")} <span class="muted">${esc(t("left {l}", { l: L(g.left) }))}</span></li>`).join("") + "</ol>").join("")}</details>` : "");
+}
+
 /**
  * Opens the cut list dialog for the part's current cut list. Description, part number and notes of each item can be
- * typed (SolidWorks' cut list item properties); `onProps` stores them in `PartDoc.cutProps`.
+ * typed (a CAD app's cut list item properties); `onProps` stores them in `PartDoc.cutProps`.
  */
-export function showCutList(items: CutItem[] | undefined, doc: PartDoc, onProps?: (key: string, p: { desc?: string; part?: string; note?: string; mat?: string; excl?: boolean }) => void) {
+export function showCutList(items: CutItem[] | undefined, doc: PartDoc, onProps?: (key: string, p: { desc?: string; part?: string; note?: string; mat?: string; excl?: boolean }) => void, onStock?: (s: StockBar) => void) {
   const dlg = document.querySelector<HTMLDialogElement>("#wld-cut");
   if (!dlg) return;
   if (!items?.length) { toast(t("There are no weldment members yet: add a Structural Member first."), true); return; }
   const density = doc.material?.density ?? STEEL;
   const props: CutProps = { ...(doc.cutProps ?? {}) };
+  const bar: StockBar = { ...(doc.stock ?? {}) };
   const rows = rowsOf(items, density, props);
   const kg = (m: number) => m.toLocaleString(undefined, { maximumFractionDigits: 3 });
   const total = rows.reduce((s, r) => s + r.total, 0);
+  const subs = doc.subWelds ?? [];
+  // A sub-weldment's heading row comes before its first item (`splitSubs` keeps each one's items together).
+  const head = (i: number) => {
+    const sw = items[i].sub, prev = i ? items[i - 1].sub : undefined;
+    if (sw === prev || !subs.length) return "";
+    const s = subs.find(x => x.id === sw);
+    return `<tr class="wld-subrow"><th colspan="11" scope="rowgroup" translate="no">${esc(s?.name ?? "")}</th></tr>`;
+  };
   dlg.querySelector<HTMLElement>("#wld-cut-body")!.innerHTML = `<table class="v-table"><thead><tr><th>${esc(t("Item"))}</th><th>${esc(t("Qty"))}</th><th>${esc(t("Description"))}</th><th>${esc(t("Length"))} (${esc(units.current)})</th><th>${esc(t("Angle 1"))}</th><th>${esc(t("Angle 2"))}</th><th>${esc(t("Material"))}</th><th>${esc(t("Mass (kg)"))}</th><th>${esc(t("Part number"))}</th><th>${esc(t("Notes"))}</th><th>${esc(t("Exclude"))}</th></tr></thead><tbody>`
     + rows.map((r, i) => {
       const inp = (f: "desc" | "part" | "note", v: string, ph: string, label: string) => onProps
@@ -574,14 +725,14 @@ export function showCutList(items: CutItem[] | undefined, doc: PartDoc, onProps?
         : esc(v || ph);
       const partName = doc.material ? t(doc.material.name) : t("Steel (assumed)");
       const mat = onProps
-        ? `<select class="wld-cp" data-cp="mat" data-ci="${i}" aria-label="${esc(t("Material"))} ${r.item}"><option value="">${esc(t("Part material ({m})", { m: partName }))}</option>${MATERIALS.map(m => `<option value="${esc(m.name)}"${m.name === r.mat ? " selected" : ""}>${esc(t(m.name))}</option>`).join("")}</select>`
+        ? `<select class="wld-cp" data-cp="mat" data-ci="${i}" aria-label="${esc(t("Material"))} ${r.item}"><option value="">${esc(t("Part material ({m})", { m: partName }))}</option>${matOptions(r.mat)}</select>`
         : esc(r.mat ? t(r.mat) : partName);
       const ex = onProps
         ? `<input type="checkbox" class="wld-cx" data-cp="excl" data-ci="${i}"${r.excl ? " checked" : ""} aria-label="${esc(t("Exclude from cut list"))} ${i + 1}" />`
         : r.excl ? "✓" : "";
-      return `<tr${r.excl ? ` class="wld-excl"` : ""}><td data-witem>${r.item || "—"}</td><td>${r.qty}</td><td translate="no">${inp("desc", props[r.key]?.desc ?? "", r.auto, t("Description"))}</td><td>${r.length}</td><td>${r.a1}</td><td>${r.a2}</td><td>${mat}</td><td data-wkg>${kg(r.total)}</td><td>${inp("part", r.part, "", t("Part number"))}</td><td>${inp("note", r.note, "", t("Notes"))}</td><td>${ex}</td></tr>`;
+      return `${head(i)}<tr data-ri="${i}"${r.excl ? ` class="wld-excl"` : ""}><td data-witem>${r.item || "—"}</td><td>${r.qty}</td><td translate="no">${inp("desc", props[r.key]?.desc ?? "", r.auto, t("Description"))}</td><td>${r.length}</td><td>${r.a1}</td><td>${r.a2}</td><td>${mat}</td><td data-wkg>${kg(r.total)}</td><td>${inp("part", r.part, "", t("Part number"))}</td><td>${inp("note", r.note, "", t("Notes"))}</td><td>${ex}</td></tr>`;
     }).join("")
-    + `</tbody></table><p class="muted" data-wtotal><span data-wsum>${esc(t("Total mass {m} kg", { m: kg(total) }))}</span>${doc.material ? "" : ` · ${esc(t("Steel assumed (7.85 g/cm³): set the part's material in Properties."))}`}</p>`;
+    + `</tbody></table><p class="muted" data-wtotal><span data-wsum>${esc(t("Total mass {m} kg", { m: kg(total) }))}</span>${doc.material ? "" : ` · ${esc(t("Steel assumed (7.85 g/cm³): set the part's material in Properties."))}`}</p><div data-wstock>${stockHtml(items, props, bar, !!onStock)}</div>`;
   dlg.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-cp]").forEach(el => el.addEventListener("change", () => {
     const r = rows[Number(el.dataset.ci)], f = el.dataset.cp as "desc" | "part" | "note" | "mat" | "excl";
     const p = { ...(props[r.key] ?? {}) };
@@ -593,18 +744,32 @@ export function showCutList(items: CutItem[] | undefined, doc: PartDoc, onProps?
   }));
   const refreshMass = () => {
     const now = rowsOf(items, density, props);
-    dlg.querySelectorAll<HTMLElement>("#wld-cut-body tbody tr").forEach((tr, i) => {
+    dlg.querySelectorAll<HTMLElement>("#wld-cut-body tbody tr[data-ri]").forEach((tr, i) => {
       const c = tr.querySelector<HTMLElement>("[data-wkg]"); if (c) c.textContent = kg(now[i].total);
       const n = tr.querySelector<HTMLElement>("[data-witem]"); if (n) n.textContent = now[i].item ? String(now[i].item) : "—";
       tr.classList.toggle("wld-excl", now[i].excl);
     });
     const tot = dlg.querySelector<HTMLElement>("[data-wsum]");
     if (tot) tot.textContent = t("Total mass {m} kg", { m: kg(now.reduce((s, r) => s + r.total, 0)) });
+    const st = dlg.querySelector<HTMLElement>("[data-wstock]");
+    if (st) st.innerHTML = stockHtml(items, props, bar, !!onStock);
+  };
+  // The stock bar inputs are redrawn with the table, so one listener on the container serves them.
+  const stockBox = dlg.querySelector<HTMLElement>("[data-wstock]")!;
+  stockBox.addEventListener("toggle", ev => { if ((ev.target as HTMLElement).matches?.(".wld-plan")) planOpen = (ev.target as HTMLDetailsElement).open; }, true);
+  stockBox.onchange = ev => {
+    const el = ev.target as HTMLInputElement, k = el.dataset?.wbar as "len" | "kerf" | undefined;
+    if (!k) return;
+    const mm = Number(el.value) / UNITS[units.current].f;
+    if (el.value.trim() && Number.isFinite(mm) && mm > 0) bar[k] = Math.round(mm * 1e6) / 1e6; else delete bar[k];
+    onStock?.({ ...bar });
+    stockBox.innerHTML = stockHtml(items, props, bar, !!onStock);
+    stockBox.querySelector<HTMLInputElement>(`[data-wbar=${k}]`)?.focus();
   };
   dlg.querySelector<HTMLButtonElement>("[data-a=close]")!.onclick = () => dlg.close();
   dlg.querySelector<HTMLButtonElement>("[data-a=csv]")!.onclick = () => {
     const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([cutListCsv(items, density, props, doc.material?.name)], { type: "text/csv" }));
+    a.href = URL.createObjectURL(new Blob([cutListCsv(items, density, props, doc.material?.name, subs, bar)], { type: "text/csv" }));
     a.download = `${doc.name}-cut-list.csv`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);

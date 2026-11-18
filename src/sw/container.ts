@@ -1,14 +1,14 @@
-// SolidWorks part and assembly files (.sldprt, .sldasm): the container.
+// SLDPRT part and assembly files (.sldprt, .sldasm): the container.
 //
-// Since SolidWorks 2015 a file is a list of sections, each one a 6-byte
+// Since the 2015 format a file is a list of sections, each one a 6-byte
 // marker, a small header, its name (each byte's nibbles swapped) and raw
 // deflate data. Older files are OLE compound files with the same streams.
 // What we use from it:
 //   Contents/Config-<n>-Partition   the model as a Parasolid transmit file
 //                                   (zlib chunks, see parasolidStreams)
-//   PreviewPNG                      the thumbnail SolidWorks shows
+//   PreviewPNG                      the thumbnail a CAD app shows
 //   swXmlContents/COMPINSTANCETREE  an assembly's components and placements
-// Nothing here is documented by Dassault; the layout comes from the files.
+// Nothing here is documented by the vendor; the layout comes from the files.
 
 const MARKER = [0x14, 0x00, 0x06, 0x00, 0x08, 0x00];
 /** Header of each zlib chunk in a partition stream (the 16 bytes before its sizes). */
@@ -36,7 +36,7 @@ function find(b: Uint8Array, pat: number[], from: number) {
   return -1;
 }
 
-/** All named streams of a SolidWorks file, decompressed. */
+/** All named streams of an SLDPRT/SLDASM file, decompressed. */
 export async function readSections(bytes: Uint8Array): Promise<Sections> {
   if (u32(bytes, 0) === 0xe011cfd0 && u32(bytes, 4) === 0xe11ab1a1) return readCompoundFile(bytes);
   const out: Sections = new Map();
@@ -60,11 +60,11 @@ export async function readSections(bytes: Uint8Array): Promise<Sections> {
     }
     i = find(bytes, MARKER, next);
   }
-  if (!out.size) throw new Error("Not a SolidWorks file, or a version this viewer can't read");
+  if (!out.size) throw new Error("Not an SLDPRT/SLDASM file, or a version this viewer can't read");
   return out;
 }
 
-// ---------- OLE compound file (SolidWorks 2014 and older) ----------
+// ---------- OLE compound file (files from 2014 and older) ----------
 
 function readCompoundFile(b: Uint8Array): Sections {
   const shift = u16(b, 30), sec = 1 << shift, miniSec = 1 << u16(b, 32);
@@ -137,7 +137,7 @@ function readCompoundFile(b: Uint8Array): Sections {
     else if (e.type === 1) walk(e.child, path + "/", depth + 1);
   };
   if (root) walk(root.child, "", 0);
-  if (!out.size) throw new Error("Not a SolidWorks file, or a version this viewer can't read");
+  if (!out.size) throw new Error("Not an SLDPRT/SLDASM file, or a version this viewer can't read");
   return out;
 }
 
@@ -215,7 +215,7 @@ export async function readSolidWorks(bytes: Uint8Array, name: string): Promise<S
 // ---------- assemblies ----------
 
 export interface SwComponent {
-  /** Instance name as SolidWorks shows it, e.g. "wheel-1". */
+  /** Instance name as a CAD app shows it, e.g. "wheel-1". */
   name: string;
   /** File name of the referenced part or sub-assembly (without folders). */
   file: string;

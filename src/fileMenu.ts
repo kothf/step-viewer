@@ -1,4 +1,4 @@
-// File menu (FR-UI-010, SolidWorks' File menu): New, Open, Close, Save / Save as / Save all, Pack and Go,
+// File menu (FR-UI-010, a CAD app's File menu): New, Open, Close, Save / Save as / Save all, Pack and Go,
 // Export, Print, Properties, the recent documents and Exit, with their shortcuts. The header's File button
 // and the drawing workspace's File button open the same menu; main.ts supplies the actions (`FileHost`).
 import { t } from "./i18n";
@@ -31,6 +31,8 @@ export interface FileHost {
   newPart(): void;
   newAsm(): void;
   newDrawing(): void;
+  /** File ▸ Open drawing: the drawing of the open part, assembly or model; absent when none is open. */
+  openDrawing: (() => void) | null;
   /** Make assembly from part; absent when no part is open. */
   asmFromPart: (() => void) | null;
   close(): Promise<void>;
@@ -43,6 +45,8 @@ export interface FileHost {
   exportDoc(): void;
   print(): void;
   properties(): void;
+  /** Opens the Vault menu from the button the File menu was opened with. */
+  vault(opener: HTMLElement): void;
 }
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -99,6 +103,7 @@ export class FileMenu {
       { id: "asm-part", label: t("Make assembly from part"), on: true, hidden: !h.asmFromPart },
       "-",
       { id: "open", label: t("Open…"), key: "Ctrl+O", on: true },
+      { id: "open-drawing", label: t("Open drawing"), on: true, hidden: !h.openDrawing, title: t("The drawing of this part or assembly: open, in a tab, in the vault or in the recent documents") },
       { id: "close", label: t("Close"), key: "Ctrl+Alt+W", on: h.docCount() > 0 },
       { id: "close-all", label: t("Close all"), on: h.docCount() > 0 },
       "-",
@@ -111,6 +116,8 @@ export class FileMenu {
       { id: "print", label: t("Print…"), key: "Ctrl+P", on: doc },
       "-",
       { id: "props", label: t("Properties…"), on: doc, title: t("Title, part number, material and other properties of the document") },
+      "-",
+      { id: "vault", label: t("Vault…"), on: true, title: t("Vault: keep every version of your files, in a folder or in the browser") },
     ];
   }
 
@@ -190,6 +197,7 @@ export class FileMenu {
       case "new-drawing": h.newDrawing(); break;
       case "asm-part": h.asmFromPart?.(); break;
       case "open": h.open(); break;
+      case "open-drawing": h.openDrawing?.(); break;
       case "close": await h.close(); break;
       case "close-all": await h.closeAll(); break;
       case "save": await h.save(false); break;
@@ -199,6 +207,7 @@ export class FileMenu {
       case "export": h.exportDoc(); break;
       case "print": h.print(); break;
       case "props": h.properties(); break;
+      case "vault": if (this.opener) h.vault(this.opener); break;
       case "recent-clear": await recentClear(); toast(t("Recent documents cleared")); break;
       case "exit": {
         if (!(await h.closeAll())) return;
@@ -210,7 +219,7 @@ export class FileMenu {
     }
   }
 
-  /** Pack and Go (SolidWorks): the open documents, and an assembly's parts as separate files, in one .zip. */
+  /** Pack and Go (a CAD app): the open documents, and an assembly's parts as separate files, in one .zip. */
   packAndGo() {
     const docs = this.host.packDocs();
     if (!docs.length) { toast(t("Open a document first.")); return; }

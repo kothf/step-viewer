@@ -39,9 +39,10 @@ export function projectedDir(parent: ViewDir, side: [number, number], proj: Proj
 /**
  * Changes a sheet between first and third angle (FR-DRW-011) keeping every projected view the same view:
  * its side flips and it moves across its parent (a Top view goes from under the front view to above it),
- * as SolidWorks does. Views placed off a view that moved follow it.
+ * as a CAD app does. Views placed off a view that moved follow it. `ext` gives a view's extent about its centre
+ * (sheet mm: left, bottom, right, top) and `frame` the drawing frame, to keep the layout on the sheet.
  */
-export function switchProjection(sheet: Sheet, proj: Projection) {
+export function switchProjection(sheet: Sheet, proj: Projection, ext?: (v: DrawingView) => [number, number, number, number] | null, frame?: [number, number, number, number]) {
   if (sheet.projection === proj) return;
   sheet.projection = proj;
   const old = new Map(sheet.views.map(v => [v.id, [v.x, v.y] as [number, number]]));
@@ -59,6 +60,19 @@ export function switchProjection(sheet: Sheet, proj: Projection) {
     } else { v.x = par.x + (ox - px); v.y = par.y + (oy - py); }
   };
   for (const v of sheet.views) place(v);
+  // The swap mirrors views about their parents and can push them off the sheet (a top view under a front view
+  // high on the sheet goes above it): move the whole layout back inside the frame, keeping it lined up.
+  if (!ext || !frame) return;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const v of sheet.views) {
+    const e = ext(v);
+    if (!e) continue;
+    x0 = Math.min(x0, v.x + e[0]); y0 = Math.min(y0, v.y + e[1]); x1 = Math.max(x1, v.x + e[2]); y1 = Math.max(y1, v.y + e[3]);
+  }
+  if (!(x1 > x0)) return;
+  const shift = (a: number, b: number, f0: number, f1: number) => a < f0 ? f0 - a : b > f1 ? Math.max(f1 - b, f0 - a) : 0;
+  const dx = shift(x0, x1, frame[0], frame[2]), dy = shift(y0, y1, frame[1], frame[3]);
+  if (dx || dy) for (const v of sheet.views) { v.x += dx; v.y += dy; }
 }
 
 /**
@@ -229,10 +243,10 @@ export function viewConfig(sheet: Sheet, v: DrawingView, depth = 0): string | un
 
 /** The components an assembly view shows alone: its own list, else its parent's up to the model view; absent = all. */
 /** The topology a component-only view draws on: edges and cylinders of its components (face names `<comp>@<face>`). */
-export function topoOnly<T extends { edges: { k: string }[]; cyls: { f?: string }[] }>(topo: T, only?: string[]): T {
+export function topoOnly<T extends { edges: { k: string }[]; cyls: { f?: string }[]; revs?: { f?: string }[]; holes?: { f?: string }[] }>(topo: T, only?: string[]): T {
   if (!only?.length) return topo;
   const mine = (k?: string) => { const i = k ? k.indexOf("@") : -1, c = i > 0 ? k!.slice(0, i) : null; return !!c && only.some(x => c === x || c.startsWith(x + "/")); };
-  return { ...topo, edges: topo.edges.filter(e => mine(e.k)), cyls: topo.cyls.filter(c => mine(c.f)) };
+  return { ...topo, edges: topo.edges.filter(e => mine(e.k)), cyls: topo.cyls.filter(c => mine(c.f)), ...(topo.revs ? { revs: topo.revs.filter(c => mine(c.f)) } : {}), ...(topo.holes ? { holes: topo.holes.filter(c => mine(c.f)) } : {}) };
 }
 
 export function viewOnly(sheet: Sheet, v: DrawingView, depth = 0): string[] | undefined {
@@ -272,12 +286,16 @@ function rawReq(sheet: Sheet, v: DrawingView, depth = 0): ViewReq {
       const legs = v.path && !v.aligned ? cutLegs(v.path) : null;
       if (legs) {
         const n = viewAxes(view).n, mu = n[0] * x[0] + n[1] * x[1] + n[2] * x[2], mv = n[0] * y[0] + n[1] * y[1] + n[2] * y[2];
-        const ml = Math.hypot(mu, mv) || 1, m: [number, number] = [mu / ml, mv / ml];
+        // m: square to the path's first leg, on the viewer's side (n from the stored line may be a hair off the path).
+        const l0 = legs[0], lx = l0.b[0] - l0.a[0], ly = l0.b[1] - l0.a[1], ll = Math.hypot(lx, ly) || 1;
+        const sq: [number, number] = [-ly / ll, lx / ll], m: [number, number] = sq[0] * mu + sq[1] * mv >= 0 ? sq : [-sq[0], -sq[1]];
         const { pts, offs } = staircase(legs, m);
         const o = add(mul(x, legs[0].a[0]), y, legs[0].a[1]);
         const ev = [legs[0].b[0] - legs[0].a[0], legs[0].b[1] - legs[0].a[1]], el = Math.hypot(ev[0], ev[1]);
         const e = add(mul(x, ev[0] / el), y, ev[1] / el), m3 = add(mul(x, m[0]), y, m[1]);
-        const d0 = o[0] * n[0] + o[1] * n[1] + o[2] * n[2];
+        // Offsets along the cutter's own normal m3: the view's n comes from the stored line, which can be a hair off
+        // the rounded path, and then no cut face matched its plane (half section without hatching, drawings exam #13).
+        const d0 = o[0] * m3[0] + o[1] * m3[1] + o[2] * m3[2];
         const stair: Stair = { o, e, m: m3, pts, planes: offs.map(k => d0 + k) };
         return { view, p: o, stair, exclude, key: `${dirKey(view)}|st|${o.map(c => c.toFixed(6)).join(",")}|${pts.map(c => c.toFixed(5)).join(",")}${ex}` };
       }
@@ -335,6 +353,40 @@ export function parseScale(text: string): [number, number] | null {
   const a = +m[1], b = +m[2];
   return a > 0 && b > 0 ? [a, b] : null;
 }
+type Box = [number, number, number, number];
+/** Standard 3 views layout: the largest standard scale and the group's bottom-left corner at which front (dx × dz), top (dx × dy) and side (dy × dz)
+ *  fit inside `area` with `pad` round each view, clear of the title block `tb` (all sheet mm, y up). The group's empty corner may sit over the
+ *  title block, so a big model is not shrunk to the strip above it. Null when nothing fits. */
+export function std3Layout(dx: number, dy: number, dz: number, area: Box, tb: Box, third: boolean, gap = 25, pad = 8, avoid: Box[] = [], scales: [number, number][] = SCALES): { scale: [number, number]; gx: number; gy: number } | null {
+  const [x0, y0, x1, y1] = area;
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+  const hit = (a: Box, b: Box) => a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];
+  for (const s of scales) {
+    const k = s[0] / s[1];
+    const W = k * (dx + dy) + gap, H = k * (dz + dy) + gap;
+    // Enlarged views fill at most 85 % of the room left by the gaps and margins, as before (a small part stays at 1:1); reductions may fill it.
+    if (k > 1 && (k * (dx + dy) > (x1 - x0 - gap - 20) * 0.85 || k * (dz + dy) > (y1 - y0 - gap - 20) * 0.85)) continue;
+    const rects = (gx: number, gy: number): Box[] => {
+      const fy = third ? gy : gy + k * dy + gap, ty = third ? gy + k * dz + gap : gy;
+      return [[gx, fy, gx + k * dx, fy + k * dz], [gx, ty, gx + k * dx, ty + k * dy], [gx + k * dx + gap, fy, gx + k * dx + gap + k * dy, fy + k * dz]];
+    };
+    const xs = [cx - W / 2, x0 + pad, x1 - pad - W, tb[0] - pad - W], ys = [cy - H / 2, y1 - pad - H, y0 + pad, tb[3] + pad, (tb[3] + y1 - H) / 2];
+    // Views already on the sheet (drawings exam #27): the corners beside each of them are candidates too.
+    for (const a of avoid) { xs.push(a[2] + pad, a[0] - pad - W); ys.push(a[3] + pad, a[1] - pad - H); }
+    const cands: [number, number][] = [];
+    for (const gx of xs) for (const gy of ys) cands.push([gx, gy]);
+    cands.sort((a, b) => Math.hypot(a[0] + W / 2 - cx, a[1] + H / 2 - cy) - Math.hypot(b[0] + W / 2 - cx, b[1] + H / 2 - cy));
+    for (const [gx, gy] of cands) {
+      const ok = rects(gx, gy).every(r => {
+        const g: Box = [r[0] - pad, r[1] - pad, r[2] + pad, r[3] + pad];
+        return g[0] >= x0 - 1e-6 && g[1] >= y0 - 1e-6 && g[2] <= x1 + 1e-6 && g[3] <= y1 + 1e-6 && !hit(g, tb) && !avoid.some(a => hit(g, a));
+      });
+      if (ok) return { scale: s, gx, gy };
+    }
+  }
+  return null;
+}
+
 /** The largest standard scale at which a w × h (model mm) layout fits into W × H (sheet mm). */
 export function fitScale(w: number, h: number, W: number, H: number): [number, number] {
   for (const s of SCALES) if (w * s[0] / s[1] <= W && h * s[0] / s[1] <= H) return s;

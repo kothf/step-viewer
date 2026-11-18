@@ -3,8 +3,21 @@
 // later sheet metal features use them unless they override the radius.
 import type { EdgeRef, FaceRef, Num } from "../model/types";
 
-/** How bend allowance is worked out: K-factor, a bend allowance or a bend deduction per bend. */
-export type BendCalc = "k" | "ba" | "bd";
+/** How bend allowance is worked out: K-factor, a bend allowance or a bend deduction per bend, or a bend table. */
+export type BendCalc = "k" | "ba" | "bd" | "table";
+
+/**
+ * Bend table: K-factors, bend allowances or bend deductions (mm) by inside radius (rows, mm) and
+ * bend angle (columns, degrees), for the part's thickness. Values between the rows and columns are
+ * interpolated linearly; outside them the nearest row or column is used.
+ */
+export interface BendTable {
+  kind: "k" | "ba" | "bd";
+  radii: number[];
+  angles: number[];
+  /** v[i][j] = value at radii[i], angles[j]. */
+  v: number[][];
+}
 
 /** Base flange / tab: a closed sketch becomes a flat plate, an open sketch of lines a bent flange of `depth`. */
 export interface SmBaseFeature {
@@ -28,6 +41,8 @@ export interface SmBaseFeature {
   ba?: Num;
   /** Bend deduction per bend when calc is "bd". */
   bd?: Num;
+  /** Bend table when calc is "table". */
+  table?: BendTable;
   /** Gauge table row ("steel:16") the thickness, radius and K-factor came from. */
   gauge?: string;
   /** Bend relief where a bend stops short of the panel's edge: rectangular (default), obround or none. */
@@ -186,13 +201,70 @@ export interface SmVentFeature {
   spar: Num;
 }
 
+/**
+ * Convert to Sheet Metal (a CAD app's Convert to Sheet Metal from a solid): the fixed face of a solid becomes a flat
+ * panel and the flat faces across the picked bend edges flanges, each as long and at the angle the solid has, with the
+ * thickness inside the solid (its outer faces stay); other edges between converted faces are rips, mitred `gap` apart.
+ * The solid is replaced by the sheet, trimmed to the solid's faces. It starts a sheet metal part, like a base flange.
+ */
+export interface SmConvertFeature {
+  id: string; type: "smconvert"; name: string; suppressed?: boolean;
+  /** The flat face kept fixed. */
+  face: FaceRef;
+  /** Bend edges on the fixed face, each between it and another flat face. */
+  edges: EdgeRef[];
+  thickness: Num;
+  /** Default inside bend radius. */
+  radius: Num;
+  k?: number;
+  /** Rip gap at corners (default 0.1 mm). */
+  gap?: Num;
+  /** Auto relief at corners where two converted walls' bends meet (absent = none; new features: rect). */
+  relief?: ReliefKind;
+  /** Auto relief ratio × thickness (default 0.5). */
+  reliefRatio?: number;
+}
+
+/**
+ * Insert Bends (a CAD app's Insert Bends): a thin-walled solid of flat walls (a shelled box, a bent profile) becomes sheet
+ * metal. The picked outside face stays fixed; every sharp outside edge of it to another flat wall becomes a bend of the
+ * given radius; the thickness is the wall's own. Corners between walls are ripped and mitred `gap` apart.
+ */
+export interface SmInsertFeature {
+  id: string; type: "sminsert"; name: string; suppressed?: boolean;
+  face: FaceRef;
+  radius: Num;
+  k?: number;
+  gap?: Num;
+  /** Auto relief at corners where two converted walls' bends meet (absent = none; new features: rect). */
+  relief?: ReliefKind;
+  /** Auto relief ratio × thickness (default 0.5). */
+  reliefRatio?: number;
+}
+
+/**
+ * Normal cut (a CAD app's Extruded Cut with Normal cut): a closed sketch is projected along its normal onto the
+ * sheet's mid-surface, and each piece it lands on is cut square to the sheet there, panels and bends alike, so the
+ * flat pattern gets clean openings. End: link to thickness (default: as deep as the sheet), blind or through all.
+ */
+export interface SmCutFeature {
+  id: string; type: "smcut"; name: string; suppressed?: boolean;
+  sketch: string;
+  /** Absent = link to thickness. */
+  end?: "blind" | "through";
+  /** Blind depth from the sketch plane. */
+  depth?: Num;
+  /** Cut along the sketch normal (default: against it, into the material). */
+  flip?: boolean;
+}
+
 /** The forming tools of the library (FR-FT-120): a round dimple, an embossed rib, a louver and an extruded hole. */
 export type FormTool = "dimple" | "rib" | "louver" | "xhole";
 
 /**
  * Forming tool: a library shape pressed into a flat face of the sheet at one or more points. The material is formed
  * out of the picked face (the other way when flipped) and keeps the sheet's thickness. The flat pattern leaves the
- * form out (as SolidWorks does), keeps its footprint as a mark and cuts an extruded hole's pre-pierce hole.
+ * form out (as a CAD app does), keeps its footprint as a mark and cuts an extruded hole's pre-pierce hole.
  */
 export interface SmFormFeature {
   id: string; type: "smform"; name: string; suppressed?: boolean;
@@ -216,7 +288,7 @@ export interface SmFormFeature {
 }
 
 /** Lofted bend: two open profiles of lines and arcs, each on its own sketch, joined by a ruled sheet. It is made of
- * flat facets folded along straight lines (SolidWorks' "bent" method), so its flat pattern is exact. A base feature. */
+ * flat facets folded along straight lines (a CAD app's "bent" method), so its flat pattern is exact. A base feature. */
 export interface SmLoftFeature {
   id: string; type: "smloft"; name: string; suppressed?: boolean;
   sketch1: string;
@@ -234,10 +306,10 @@ export interface SmLoftFeature {
 
 /** Corner relief kinds: a rectangle over both bends' corner zone, a circle centred on the bend centre lines, or a small
  * round tear at the inside corner. */
-export type ReliefKind = "rect" | "circle" | "tear";
+export type ReliefKind = "rect" | "obround" | "circle" | "tear";
 
 /**
- * Corner relief: cuts a relief where two bends meet at a corner of one face (SolidWorks' Corner Relief, two-bend
+ * Corner relief: cuts a relief where two bends meet at a corner of one face (a CAD app's Corner Relief, two-bend
  * corners). It is cut from the panels and bends in the flat pattern, so the bends lose their corner material and the
  * flat pattern shows the relief.
  */
@@ -250,12 +322,80 @@ export interface SmReliefFeature {
   size?: Num;
   /** Relief ratio (default 0.5) used when `size` is absent. */
   ratio?: number;
+  /** Rectangular: corner fillet radius (absent = sharp corners). */
+  round?: Num;
 }
 
-export type SheetFeature = SmReliefFeature | SmUnfoldFeature | SmFormFeature | SmVentFeature | SmCrossFeature | SmLoftFeature | SmBaseFeature | SmFlangeFeature | SmHemFeature | SmSketchBendFeature | SmJogFeature | SmTabFeature | SmCornerFeature | SmClosedFeature | SmMiterFeature | SmFlatFeature;
-export const SHEET_TYPES: ReadonlySet<string> = new Set(["smloft", "smbase", "smflange", "smhem", "smbend", "smjog", "smtab", "smcross", "smvent", "smform", "smunfold", "smfold", "smrelief", "smcorner", "smclosed", "smmiter", "smswept", "smflat"]);
-/** The feature that starts a sheet metal part: a base flange or a lofted bend. */
-export const isSheetBase = (f: { type: string; suppressed?: boolean }) => (f.type === "smbase" || f.type === "smloft") && !f.suppressed;
+/**
+ * Sheet metal gusset: a stiffening rib pressed across a bend (a CAD app's Sheet Metal Gusset, flat type). The rib
+ * stands inside the bend, a triangle `depth` along each face from their virtual sharp, `width` wide; the outside gets
+ * the matching groove, so the walls keep the sheet's thickness. The flat pattern leaves it out.
+ */
+export interface SmGussetFeature {
+  id: string; type: "smgusset"; name: string; suppressed?: boolean;
+  /** The bend (`<feature>:b<n>`). */
+  bend: string;
+  /** Centre of the rib along the bend from its start end; absent = the middle. */
+  at?: Num;
+  /** Profile length along each face from the inside virtual sharp. */
+  depth: Num;
+  /** Rib width (outside). */
+  width: Num;
+  /** Profile length along the second face (absent = `depth` on both). */
+  depth2?: Num;
+  /** Several ribs (default 1), `spacing` apart centre to centre, centred on `at` (or the middle). */
+  count?: number;
+  spacing?: Num;
+  /** Rib profile across its width: flat (default) or rounded (a full half round). */
+  tip?: "flat" | "round";
+  /** Flat tip: radius of the rib's outside edges along the chord (absent = sharp). */
+  fillet?: Num;
+}
+
+/**
+ * Rip (a CAD app's Rip): a thin gap cut along corner edges of a thin-walled solid (a shelled box) so its walls part
+ * there before Insert Bends or Convert. Both directions = a slot `gap` wide on the bisector of the two faces; one
+ * direction (inside edges only) = the cut lies along the chosen face, so that wall runs on past the other.
+ */
+export interface SmRipFeature {
+  id: string; type: "smrip"; name: string; suppressed?: boolean;
+  edges: EdgeRef[];
+  /** Gap width (default 0.1 mm). */
+  gap: Num;
+  /** "a" / "b" = along the edge's first / second face (absent = both directions). */
+  side?: "a" | "b";
+}
+
+/**
+ * Tab and slot (a CAD app's Tab and Slot): tabs grow out of a straight edge of a flat face, in its plane, and pass
+ * through the face they meet (any body, the sheet too), which gets slots `clearance` bigger all round. Tabs are panels,
+ * so the flat pattern has them; slots in the sheet reach it like any cut.
+ */
+export interface SmTabSlotFeature {
+  id: string; type: "smtabslot"; name: string; suppressed?: boolean;
+  /** The tab edge: an outline edge of a panel (its top or bottom face and the side face). */
+  edge: EdgeRef | null;
+  /** The face the tabs go through, square to them and facing the edge. */
+  face: FaceRef | null;
+  /** Tab length along the edge. */
+  length: Num;
+  /** How far each tab stands past the slot face (default the thickness). */
+  height: Num;
+  count: number;
+  /** Distance from the edge's ends to the outer tabs (equal spacing between them). */
+  offset: Num;
+  /** Fixed centre-to-centre spacing instead, the group centred on the edge. */
+  spacing?: Num;
+  /** Gap left all round a tab in its slot. */
+  clearance: Num;
+  /** Slot corner radius (absent = sharp). */
+  round?: Num;
+}
+
+export type SheetFeature = SmRipFeature | SmTabSlotFeature | SmInsertFeature | SmConvertFeature | SmCutFeature | SmGussetFeature | SmReliefFeature | SmUnfoldFeature | SmFormFeature | SmVentFeature | SmCrossFeature | SmLoftFeature | SmBaseFeature | SmFlangeFeature | SmHemFeature | SmSketchBendFeature | SmJogFeature | SmTabFeature | SmCornerFeature | SmClosedFeature | SmMiterFeature | SmFlatFeature;
+export const SHEET_TYPES: ReadonlySet<string> = new Set(["smrip", "smtabslot", "smloft", "smbase", "smconvert", "sminsert", "smflange", "smhem", "smbend", "smjog", "smtab", "smcross", "smvent", "smcut", "smform", "smunfold", "smfold", "smrelief", "smgusset", "smcorner", "smclosed", "smmiter", "smswept", "smflat"]);
+/** The feature that starts a sheet metal part: a base flange, a lofted bend or a solid converted to sheet metal. */
+export const isSheetBase = (f: { type: string; suppressed?: boolean }) => (f.type === "smbase" || f.type === "smloft" || f.type === "smconvert" || f.type === "sminsert") && !f.suppressed;
 export const isSheet = (f: { type: string }): f is SheetFeature => SHEET_TYPES.has(f.type);
 
 /** Gauge tables: thickness, default inside radius and K-factor for common sheet gauges. */

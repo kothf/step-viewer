@@ -1,5 +1,5 @@
 // Document tabs (FRS 7, FR-DOC-003, FR-UI-120): every open part, assembly, drawing and model file gets a tab
-// at the bottom of the window, as in SolidWorks. Only one document is live at a time; the others are parked
+// at the bottom of the window, as in other CAD apps. Only one document is live at a time; the others are parked
 // with their undo history (`park`) and come back on a click (`resume`). A drawing is shown over the 3D view,
 // so while a drawing tab is active the 3D document under it stays live (`under`).
 import { t } from "./i18n";
@@ -13,11 +13,15 @@ export interface DocTab {
   label: string;
   /** What `park` returned while the tab is not shown; null while it is live. */
   state: unknown;
+  /** The camera of a parked 3D document (FR-DOC-003), put back when it is shown again. */
+  view?: unknown;
 }
 
 export interface DocsHost {
   /** Keeps the live document of this kind and closes it; null when there is nothing to keep. */
   park(kind: DocKind): unknown;
+  /** The 3D view's camera, kept with a parked 3D document. */
+  view?(): unknown;
   /** Shows a parked document again. */
   resume(tab: DocTab): Promise<void> | void;
   /** Closes the live document of this kind for good. */
@@ -28,6 +32,8 @@ export interface DocsHost {
   dirty(tab: DocTab): boolean;
   /** A tab closed without saving (drop its recovery copy). */
   forget?(tab: DocTab): void;
+  /** Asked before a tab closes (a vault check-in reminder); false keeps it open. */
+  beforeClose?(tab: DocTab, unsaved: boolean): Promise<boolean>;
 }
 
 const ICON: Record<DocKind, string> = {
@@ -89,6 +95,12 @@ export class DocTabs {
     try { fn(); } finally { this.inPlace = false; }
   }
 
+  /** Opens a document in place of the live one, in its tab (a vault file reloaded after the vault changed it). */
+  async replacing(fn: () => Promise<void>) {
+    this.inPlace = true;
+    try { await fn(); } finally { this.inPlace = false; }
+  }
+
   /** A 3D document (part, assembly or model) is about to open: the one shown now is parked in its tab. */
   before3d() {
     if (this.busy || this.inPlace) return;
@@ -100,7 +112,7 @@ export class DocTabs {
 
   /** A drawing is about to open: a drawing shown now is parked; a 3D document shown now stays live under it. */
   beforeDrawing() {
-    if (this.busy) return;
+    if (this.busy || (this.inPlace && this.active?.kind === "drawing")) return;
     if (this.active?.kind === "drawing") { this.parkTab(this.active); this.active = this.under; }
     if (this.active && this.active.kind !== "drawing") this.under = this.active;
   }
@@ -139,6 +151,7 @@ export class DocTabs {
 
   private parkTab(tab: DocTab) {
     this.parking = true;
+    if (tab.kind !== "drawing") tab.view = this.host.view?.();
     try { tab.state = this.host.park(tab.kind); } finally { this.parking = false; }
     if (tab.state == null) this.tabs = this.tabs.filter(x => x !== tab);
   }
@@ -172,7 +185,9 @@ export class DocTabs {
   async close(id: string) {
     const tab = this.tabs.find(x => x.id === id);
     if (!tab || this.busy) return;
-    if (this.host.dirty(tab) && !(await confirmModal(t("{name} has unsaved changes. Close it anyway?", { name: tab.label.replace(/\s*•$/, "") }), t("Close"), t("Close document")))) return;
+    const unsaved = this.host.dirty(tab);
+    if (unsaved && !(await confirmModal(t("{name} has unsaved changes. Close it anyway?", { name: tab.label.replace(/\s*•$/, "") }), t("Close"), t("Close document")))) return;
+    if (this.host.beforeClose && !(await this.host.beforeClose(tab, false))) return;
     const i = this.tabs.indexOf(tab);
     this.busy = true;
     try {

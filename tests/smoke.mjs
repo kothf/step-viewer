@@ -102,14 +102,64 @@ let failures = 0;
 const check = (cond, msg) => { console.log(`${cond ? "PASS" : "FAIL"} ${msg}`); if (!cond) failures++; };
 const near = (a, b, tol = 1e-3) => Math.abs(a - b) <= tol;
 // Shards: SMOKE_SHARD=i/n runs only the blocks marked inShard(k) with (k - 1) % n + 1 === i (CI runs
-// 1/4 … 4/4 as parallel jobs); unset, every block runs. A block must not rely on what another block
+// 1/6 … 6/6 as parallel jobs); unset, every block runs. A block must not rely on what another block
 // left behind (blocks 1 and 2 hold several sections that share `page`). A new section goes in its own
 // `if (inShard(k)) { … }` block, k = the shard with the shortest time (printed at the end of a run).
 const [shardI, shardN] = (process.env.SMOKE_SHARD || "1/1").split("/").map(Number);
 if (!(shardN >= 1 && shardI >= 1 && shardI <= shardN)) throw new Error(`SMOKE_SHARD must be i/n, got ${process.env.SMOKE_SHARD}`);
-const inShard = k => (k - 1) % shardN + 1 === shardI;
+// Each block that runs is timed (block n = the n-th inShard call in the file); the times are printed at the
+// end of a run, to keep the shards balanced.
+const blockTimes = [];
+let blockCount = 0;
+const inShard = k => {
+  blockCount++;
+  const on = (k - 1) % shardN + 1 === shardI;
+  if (on) blockTimes.push({ n: blockCount, k, at: Date.now() });
+  return on;
+};
 // A click on a Features tree row. While a command panel is open the tree is the folded fly-out over the view
 // (FR-UI-003): open it for the click and fold it again, so later clicks in the view are not covered.
+/** A new drawing of the open model with Standard 3 views (since 1.518.0 a new drawing starts with an empty sheet). */
+async function newDrawing3(pg) {
+  await pg.click("#new-more"); await pg.click("#new-drawing");
+  await pg.waitForFunction(() => window.__sv.drw.loaded(), null, { timeout: 120000 });
+  await drwCmd(pg, "std3");
+}
+
+/** Clicks a drawing command bar button by its `data-a` (std3, model, section, detail, aux, dim…), on whichever tab holds it. */
+async function drwCmd(pg, a) {
+  const tab = await pg.evaluate(a => document.querySelector(`#drw .drw-cmds [data-a="${a}"]`)?.closest("[data-cpane]")?.dataset.cpane ?? null, a);
+  if (tab) await pg.click(`#drw [data-ctab="${tab}"]`);
+  await pg.click(`#drw .drw-cmds [data-a="${a}"]`);
+}
+
+/** Starts a drawing annotation tool by its `data-an`: its tab first, then the ▾ it sits under, if any. */
+async function drwTool(pg, k) {
+  const at = await pg.evaluate(k => { const b = document.querySelector(`#drw .drw-cmds [data-an="${k}"]`); return b ? { tab: b.closest("[data-cpane]").dataset.cpane, menu: b.closest(".drw-menu") ? b.closest(".drw-dd").querySelector("button").dataset.a : null } : null; }, k);
+  if (!at) throw new Error(`no drawing tool ${k}`);
+  await pg.click(`#drw [data-ctab="${at.tab}"]`);
+  if (at.menu) await pg.click(`#drw .drw-cmds [data-a="${at.menu}"]`);
+  await pg.click(`#drw .drw-cmds [data-an="${k}"]`);
+}
+
+/** Presses OK in the dialog a just placed geometric tolerance or hole callout opens. */
+async function annotDlgOk(pg) {
+  await pg.waitForSelector("#drw-gtol-dlg[open], #drw-hole-dlg[open]", { timeout: 10000 });
+  await pg.click("dialog.ad-dlg[open] button[value=ok]");
+  await annotDlgGone(pg);
+}
+/** Waits until an annotation dialog has closed and its result is in the drawing (the close event comes a task later). */
+async function annotDlgGone(pg) {
+  await pg.waitForFunction(() => !document.querySelector("dialog.ad-dlg[open]"));
+  await pg.waitForTimeout(120);
+}
+
+/** A command of the vault panel's ⋯ menu (FR-PDM-080). */
+async function vaultMore(pg, key) {
+  await pg.click('#vault-panel [data-a="more"]');
+  await pg.click(`#v-menu [data-v="${key}"]`);
+}
+
 async function treeClick(pg, sel, opts) {
   const folded = await pg.evaluate(() => !!document.querySelector("#mc-treefly") && document.querySelector("#mc-tree").hidden);
   if (folded) await pg.click("#mc-treefly .mc-treefly-h");
@@ -127,7 +177,10 @@ async function runCmd(pg, label) {
       const texts = await pg.$$eval(sel, els => els.map(e => (e.querySelector(".mc-l") ?? e).textContent.trim()));
       return exact ? texts.indexOf(label) : texts.findIndex(x => x.startsWith(label));
     };
-    for (const tab of ["features", "surfaces", "sheetmetal", "weldments", "sketch"]) {
+    // In a sketch the Sketch tab's tools come first: the other tabs' commands would exit the sketch (FR-SK-004).
+    const sketching = await pg.evaluate(() => document.getElementById("app").classList.contains("sketching"));
+    const tabs = sketching ? ["sketch"] : ["features", "surfaces", "sheetmetal", "weldments", "sketch"];
+    for (const tab of tabs) {
       if (!(await pg.$(`#cm-t-${tab}`))) continue;
       await pg.click(`#cm-t-${tab}`);
       const i = await pick("#mc-tools [data-c]");
@@ -156,7 +209,7 @@ async function open(file, kernel = false) {
 }
 
 try {
-  if (inShard(1)) { // these sections share `page`: keep them together
+  if (inShard(5)) { // these sections share `page`: keep them together
   // --- a 10 mm cube: exact topology and every basic measurement ---
   await open("cube-10x10mm/Cube 10x10.stp");
   // --- branding: name, header logo, favicon and web manifest ---
@@ -186,13 +239,15 @@ try {
       return {
         n: tools.length, off: tools.filter(b => !inView(b)).map(b => b.dataset.tool), tab: document.querySelector("#cm-tabs [aria-selected=true]")?.dataset.cm,
         pages: pages.length, pagesOff: pages.filter(b => !inView(b)).map(b => b.dataset.tab),
+        // A page tab's name stays inside its own button (exam #10: the names ran into the next tab's icon).
+        lblOut: pages.filter(b => { const l = b.querySelector(".tb-lbl").getBoundingClientRect(), q = b.getBoundingClientRect(); return l.width > 2 && (l.right > q.right + 0.5 || l.left < q.left - 0.5); }).map(b => b.dataset.tab),
         named: [...tools, ...pages].every(b => b.textContent.trim().length > 1 && b.title),
         over: tb.scrollWidth - tb.clientWidth, page: document.documentElement.scrollWidth - innerWidth,
         h: Math.round(tb.getBoundingClientRect().height), cmH: Math.round(cm.getBoundingClientRect().height),
       };
     });
     check(r.n === 12 && r.pages === 5 && r.tab === "evaluate" && r.named && r.over <= 1 && r.page <= 0 && (w < 1024 || r.h <= 48) && r.cmH <= 80
-      && (w < 1024 || r.off.length === 0) && (w < 1280 || r.pagesOff.length === 0),
+      && (w < 1024 || r.off.length === 0) && (w < 1280 || r.pagesOff.length === 0) && r.lblOut.length === 0,
       `command bar ${w}px: Evaluate holds the 12 tools${w >= 1024 ? " on screen" : ""}, ${w >= 1280 ? "5 panel pages in view, " : ""}one-row header (${JSON.stringify(r)})`);
   }
   await page.setViewportSize({ width: 1400, height: 900 });
@@ -951,7 +1006,8 @@ try {
       }
       if (w === 375) {
         await pg.click("#g-bottomnav [data-sheet=layers]");
-        await pg.waitForTimeout(250);
+        // The sheet slides in (200 ms `sheet-in`): wait for it to finish, not a fixed time (main CI on 1.497.0 read it 12 px low).
+        await pg.waitForFunction(() => { const e = document.querySelector("#g-left"); return getComputedStyle(e).display !== "none" && e.getAnimations().every(a => a.playState === "finished"); }, null, { timeout: 3000 }).catch(() => {});
         const sh = await pg.evaluate(() => { const e = document.querySelector("#g-left"), b = e.getBoundingClientRect(); return { full: b.left <= 0 && b.width >= innerWidth - 1 && b.top <= 0, role: e.getAttribute("role"), modal: e.getAttribute("aria-modal"), focus: e.contains(document.activeElement) }; });
         await pg.keyboard.press("Escape");
         await pg.waitForTimeout(100);
@@ -980,7 +1036,7 @@ try {
     check(col.cls && col.w > w0 + 200 && col.exp === "false" && kept && back && dur > 0 && dur < 200, `ui: Ctrl+[ / hamburger collapse the layer panel (${dur} ms), state kept after reload`);
 
     // Header: active file name and a status badge with a text alternative.
-    const hdr = await pg.evaluate(() => ({ name: document.querySelector("#doc-name").textContent, st: document.querySelector("#doc-status").dataset.state, label: document.querySelector("#doc-status").getAttribute("aria-label") }));
+    const hdr = await pg.evaluate(() => ({ name: document.querySelector("#doc").textContent, st: document.querySelector("#doc-status").dataset.state, label: document.querySelector("#doc-status").getAttribute("aria-label") }));
     check(/board/.test(hdr.name) && hdr.st === "ready" && /Status/.test(hdr.label), `ui: header shows the open file and its status (${JSON.stringify(hdr)})`);
 
     // Pin a measurement so the list, the readout card and all controls are on screen for the audits.
@@ -1102,7 +1158,7 @@ try {
     const waitModel = () => pg.waitForFunction(() => window.__sv?.viewer.parts.length > 0 && document.querySelector("#loading").hidden, null, { timeout: 60000 });
     // Visible text and labels with English words left in Russian mode (file names, formats and units excepted).
     const untranslated = () => pg.evaluate(() => {
-      const OK = /^(MöbiusCAD|STEP|DXF|IGES|BREP|SolidWorks|Parasolid|sldprt|sldasm|Gerber|Excellon|PCB|PNG|SVG|CSV|JSON|PDF|STL|OBJ|MF|DXF|opencascade|glTF|GLB|HLR|AO|EN|RU|mm|cm|in|ft|mil|fps|PTH|NPTH|ANSI31|XY|YZ|XZ|Ctrl|Alt|Esc|Shift|Enter|Tab|Del|Backspace|macOS|OpenCASCADE|occt|import|js|WebAssembly|RS|X2|AP\d+|rep|B|size|vol|zip|F1|SMD|PMI|GD|T|ComponentPad|SMDPad|ViaPad|GND|ambient|occlusion|Delrin|ABS|PLA|PEEK|POM|PA6|Ti|Al|V|D\d+|J\d+)$/;
+      const OK = /^(MöbiusCAD|STEP|DXF|IGES|BREP|SLDPRT|SLDASM|CAD|Parasolid|sldprt|sldasm|Gerber|Excellon|PCB|PNG|SVG|CSV|JSON|PDF|STL|OBJ|MF|DXF|opencascade|glTF|GLB|HLR|AO|EN|RU|mm|cm|in|ft|mil|fps|PTH|NPTH|ANSI31|XY|YZ|XZ|Ctrl|Alt|Esc|Shift|Enter|Tab|Del|Backspace|macOS|OpenCASCADE|occt|import|js|WebAssembly|RS|X2|AP\d+|rep|B|size|vol|zip|F1|SMD|PMI|GD|T|ComponentPad|SMDPad|ViaPad|GND|ambient|occlusion|Delrin|ABS|PLA|PEEK|POM|PA6|Ti|Al|V|D\d+|J\d+)$/;
       const skip = e => !e || e.closest('[translate="no"], script, style, [hidden]') || getComputedStyle(e).display === "none";
       const bad = new Set();
       const test = (s, where) => { if (s.split(/[^A-Za-zö0-9]+/).map(w => w.replace(/^\d+/, "")).some(w => /[A-Za-z]{2,}/.test(w) && !OK.test(w))) bad.add(`${where}: ${s.trim().slice(0, 60)}`); };
@@ -1196,9 +1252,9 @@ try {
       document.querySelector("#display-menu").hidden = false;
     });
     await pg.waitForTimeout(200);
-    const model = await pg.evaluate(() => ({ lang: document.documentElement.lang, tree: document.querySelector("#t-tree").textContent, card: document.querySelector("#readout .ttl span")?.textContent, list: document.querySelector("#m-list .m-item .t")?.textContent, hint: document.querySelector("#tool-hint").textContent }));
+    const model = await pg.evaluate(() => ({ lang: document.documentElement.lang, tree: document.querySelector("#t-tree").textContent, card: document.querySelector("#readout .ttl span")?.textContent, list: document.querySelector("#m-list .m-item .t")?.textContent, hint: document.querySelector("#st-hint").textContent, banner: !document.querySelector("#tool-hint").hidden }));
     const leftModel = await untranslated();
-    check(model.lang === "ru" && model.tree === "Дерево модели" && !/[A-Za-z]{3}/.test(model.card ?? "x") && /\d\. [А-Яа-я]/.test(model.list ?? "") && /Умное измерение/.test(model.hint), `i18n: language kept after reload; model view, result card and list in Russian (${JSON.stringify(model)})`);
+    check(model.lang === "ru" && model.tree === "Дерево модели" && !/[A-Za-z]{3}/.test(model.card ?? "x") && /\d\. [А-Яа-я]/.test(model.list ?? "") && /Умное измерение/.test(model.hint) && !model.banner, `i18n: language kept after reload; model view, result card and list in Russian (${JSON.stringify(model)})`);
     check(leftModel.length === 0, `i18n: no English left in the model view${leftModel.length ? ": " + leftModel.slice(0, 6).join(" | ") : ""}`);
     for (const lang of ["ru", "en"]) {
       for (const w of [1024, 1280, 1440]) {
@@ -1227,7 +1283,7 @@ try {
   }
   }
 
-  if (inShard(2)) { // these sections share `page`: keep them together
+  if (inShard(3)) { // these sections share `page`: keep them together
   // --- exact geometry: the full kernel reads the file again; values switch to the B-rep ---
   {
     await open("rounded-cube/rounded-cube.step", true);
@@ -1278,7 +1334,7 @@ try {
     check(/-parts\.step$/.test(dl.suggestedFilename()) && back.ok && back.meshes === 3, `STEP export: only the 3 visible parts (${dl.suggestedFilename()}, ${back.meshes} read back)`);
   }
 
-  // --- SolidWorks: a generated block part (Parasolid X_T inside) and an assembly placing it twice ---
+  // --- a CAD app: a generated block part (Parasolid X_T inside) and an assembly placing it twice ---
   {
     const sw = resolve("tests/fixtures/sw");
     const swLoad = async (files, title) => {
@@ -1297,23 +1353,24 @@ try {
     await swLoad(["block.SLDPRT"], "block.SLDPRT");
     const part = await swState();
     check(part.n === 1 && near(part.vol[0], 24000, 1e-6) && part.planes[0] === 6 && part.closed && part.size.join() === "40,30,20",
-      `SolidWorks part: the block opens as one closed solid, 6 planes, 40 x 30 x 20 mm, V=${part.vol[0]} (${JSON.stringify(part)})`);
+      `SLDPRT part: the block opens as one closed solid, 6 planes, 40 x 30 x 20 mm, V=${part.vol[0]} (${JSON.stringify(part)})`);
     await swLoad(["pair.SLDASM", "block.SLDPRT"], "pair.SLDASM");
     const asm = await swState();
     check(asm.n === 2 && asm.vol.every(v => near(v, 24000, 1e-6)) && asm.size.join() === "100,40,20",
-      `SolidWorks assembly: two blocks, the second turned 90° and moved 100 mm, overall ${asm.size.join(" x ")} mm`);
-    check(asm.toasts.some(t => /^warn: .*lid\.SLDPRT/.test(t)), `SolidWorks assembly: the missing part is named (${asm.toasts})`);
+      `SLDASM assembly: two blocks, the second turned 90° and moved 100 mm, overall ${asm.size.join(" x ")} mm`);
+    check(asm.toasts.some(t => /^warn: .*lid\.SLDPRT/.test(t)), `SLDASM assembly: the missing part is named (${asm.toasts})`);
     await swLoad(["pair.SLDASM"]);
     await page.waitForSelector("#empty img.sw-preview", { timeout: 60000 });
     const alone = await page.evaluate(() => ({ toasts: [...document.querySelectorAll("#toasts .toast")].map(t => t.dataset.kind), img: document.querySelector("#empty img.sw-preview").naturalWidth }));
-    check(alone.toasts.includes("error") && alone.img === 1, `SolidWorks assembly without its parts: error toast and SolidWorks' own preview (${JSON.stringify(alone)})`);
+    check(alone.toasts.includes("error") && alone.img === 1, `SLDASM assembly without its parts: error toast and the file's own preview (${JSON.stringify(alone)})`);
   }
 
   // --- opening speed: the import engine warms up while idle, and the kernel worker is kept for the next file ---
   {
-    await page.goto(`${origin}/index.html?debug`);
+    // ?nocache: files opened earlier on this page would come from the disk cache (block "import cache 1.563").
+    await page.goto(`${origin}/index.html?debug&nocache`);
     await page.waitForFunction(() => window.__sv);
-    await page.waitForTimeout(4000); // idle: OpenCASCADE loads and reads its warm-up block
+    await page.waitForTimeout(9000); // idle: OpenCASCADE loads and reads its warm-up block; the spare full kernel sets itself up
     await page.setInputFiles("#file-input", join(fixtures, "cax-if/as1_pe_203.stp"));
     await page.waitForFunction(() => document.querySelector("#st-kernel").dataset.state === "ready" && window.__sv.timings().exact, null, { timeout: 120000 });
     const a = await page.evaluate(() => ({ ...window.__sv.timings() }));
@@ -1321,8 +1378,8 @@ try {
     await page.waitForFunction(() => document.title.startsWith("rounded-cube") && window.__sv.timings().exact, null, { timeout: 120000 });
     const b = await page.evaluate(() => ({ ...window.__sv.timings(), state: document.querySelector("#st-kernel").dataset.state, vol: window.__sv.viewer.parts[0].data.volume }));
     check(a.wasm < 50 && b.wasm < 50, `speed: OpenCASCADE was loaded before the first file (${a.wasm.toFixed(0)} ms, then ${b.wasm.toFixed(0)} ms to load it)`);
-    check(b.state === "ready" && near(b.vol, 946.3497, 1e-3) && b.init < 200 && b.init < a.init / 5,
-      `speed: the second file reuses the kernel worker (start-up ${a.init.toFixed(0)} ms, then ${b.init.toFixed(0)} ms) and still gets exact values (${b.vol.toFixed(4)} mm³)`);
+    check(b.state === "ready" && near(b.vol, 946.3497, 1e-3) && b.init < 200 && a.init < 1000,
+      `speed: the first file takes the spare kernel worker set up while idle and the second reuses it (start-up ${a.init.toFixed(0)} ms, then ${b.init.toFixed(0)} ms) and still gets exact values (${b.vol.toFixed(4)} mm³)`);
     console.log(`  timings (ms): first ${JSON.stringify(a, (k, v) => typeof v === "number" ? Math.round(v) : v)}, second ${JSON.stringify(b, (k, v) => typeof v === "number" ? Math.round(v) : v)}`);
   }
 
@@ -1459,7 +1516,7 @@ try {
   }
 
   // --- Part modelling (FRS P1): new part, sketch with dimensions, extrude, cut on a face, fillet, edit, undo, save/open, STEP, recovery, RU ---
-  if (inShard(4)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -1633,13 +1690,30 @@ try {
     check(near(hole, 10, 1e-6), `model: Smart measure data on the body: hole radius ${hole}`);
     // Save as .mcadprt (download fallback), STEP export, reopen.
     await mp.evaluate(() => { window.showSaveFilePicker = undefined; });
-    const [dlPart] = await Promise.all([mp.waitForEvent("download"), mp.click('[data-c="save"]')]);
+    // Without the save dialog the first save asks for the file name (exam #9); Cancel writes nothing.
+    await mp.click('[data-c="save"]');
+    await mp.waitForSelector("#name-dlg[open]");
+    const askName = await mp.evaluate(() => ({ v: document.querySelector("#name-dlg-in").value, ext: document.querySelector(".name-dlg-ext").textContent, focus: document.activeElement?.id }));
+    await mp.click("#name-dlg [data-a=cancel]");
+    const cancelled = await mp.evaluate(() => ({ open: document.querySelector("#name-dlg").open, dirty: window.__sv.model.store.dirty }));
+    check(askName.v === "Part1" && askName.ext === ".mcadprt" && askName.focus === "name-dlg-in" && !cancelled.open && cancelled.dirty, `model: first Save without a save dialog asks for the name, Cancel keeps it unsaved (${JSON.stringify({ askName, cancelled })})`);
+    await mp.click('[data-c="save"]');
+    await mp.waitForSelector("#name-dlg[open]");
+    const [dlPart] = await Promise.all([mp.waitForEvent("download"), mp.keyboard.press("Enter")]);
     const partBytes = await readFile(await dlPart.path());
-    const saved = await mp.evaluate(() => ({ dirty: window.__sv.model.store.dirty, doc: document.querySelector("#doc-name").textContent }));
+    const saved = await mp.evaluate(() => ({ dirty: window.__sv.model.store.dirty, doc: document.querySelector("#doc").textContent }));
     check(/Part1\.mcadprt$/.test(dlPart.suggestedFilename()) && partBytes.readUInt32LE(0) === 0x04034b50 && !saved.dirty && !/•/.test(saved.doc), `model: Save writes ${dlPart.suggestedFilename()} (${partBytes.length} bytes, a zip) and clears the unsaved mark`);
     const [dlStep] = await Promise.all([mp.waitForEvent("download"), mp.click('[data-c="step"]')]);
     const stepBack = readStep(await readFile(await dlStep.path()));
     check(stepBack.ok && stepBack.meshes === 1 && stepBack.faces === 11, `model: STEP export of the body reads back (${JSON.stringify(stepBack)})`);
+    // Save as takes the file's name for the part (exam #69): title and tab show it, with no unsaved mark.
+    const saveAs = await mp.evaluate(async () => {
+      const prev = window.showSaveFilePicker;
+      window.showSaveFilePicker = async () => ({ name: "bracket.mcadprt", createWritable: async () => ({ write: async () => {}, close: async () => {} }) });
+      try { await window.__sv.modeller.save(true); } finally { window.showSaveFilePicker = prev; }
+      return { name: window.__sv.model.store.doc.name, dirty: window.__sv.model.store.dirty, title: document.querySelector("#doc").textContent };
+    });
+    check(saveAs.name === "bracket" && !saveAs.dirty && /bracket\.mcadprt$/.test(saveAs.title), `model: Save as names the part after its file (${JSON.stringify(saveAs)})`);
     await mp.goto(`${origin}/index.html?debug`);
     await mp.waitForFunction(() => window.__sv);
     const recov0 = await mp.evaluate(() => document.querySelector("#mc-recover").hidden);
@@ -1668,7 +1742,7 @@ try {
     await mp.click('#mc-snaps [data-snap-copy="0"]');
     await mp.waitForFunction(id => window.__sv.model.store.doc.id !== id, idBefore);
     await idle();
-    const copy = await mp.evaluate(() => ({ name: document.querySelector("#doc-name").textContent, n: window.__sv.model.store.doc.features.length }));
+    const copy = await mp.evaluate(() => ({ name: document.querySelector("#doc").textContent, n: window.__sv.model.store.doc.features.length }));
     check(snapRows >= 1 && near(restored.v, v30, 1e-3) && restored.n === 5 && /\(copy\)/.test(copy.name) && copy.n === 5, `model 1.44: save snapshots, Restore and Open as copy (${snapRows} rows, ${restored.v}, ${JSON.stringify(copy)})`);
     // Autosave journal: an unsaved change is offered after a reload.
     await mp.evaluate(() => { const ex = window.__sv.model.store.doc.features.find(f => f.type === "extrude"); window.__sv.model.store.change("Rename", d => { d.features.find(f => f.id === ex.id).name = "Base"; }); });
@@ -1707,7 +1781,7 @@ try {
   }
 
   // --- Part modelling 1.19.0 (FRS P1 rest): empty-state planes, polygon, drag arrow, rollback bar, rename, menu, reference plane, up to face, trim, sketch fillet, views, properties ---
-  if (inShard(1)) {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -1927,6 +2001,25 @@ try {
     await click([5, 10]);
     const trimmed = await mp.evaluate(() => { const sk = window.__sv.model.editor().sk; const P = id => sk.ents.find(e => e.id === id); const h = sk.ents.filter(e => e.t === "line").find(l => Math.abs(P(l.a).y - P(l.b).y) < 1e-6); return h ? Math.max(P(h.a).x, P(h.b).x) : null; });
     check(trimmed !== null && near(trimmed, -10, 0.01), `model 1.19: Trim cuts the line back to the crossing (end at x = ${trimmed})`);
+    // Exam #76: a circle that lines only touch (ends held On curve, slipped a little along the tangent the way solved
+    // positions do) is cut at those ends, not deleted, and the kept arc ends on the lines' own end points.
+    const touch76 = await mp.evaluate(() => {
+      const ed = window.__sv.model.editor(), sk = ed.sk;
+      const P = (id, x, y) => sk.ents.push({ id, t: "point", x, y });
+      P("tc0", -25, -20); P("tl1a", -30, -19.9998); P("tl1b", -30, -12); P("tl2a", -20, -19.9998); P("tl2b", -20, -12);
+      sk.ents.push({ id: "tcirc", t: "circle", c: "tc0", r: 5 }, { id: "tl1", t: "line", a: "tl1a", b: "tl1b" }, { id: "tl2", t: "line", a: "tl2a", b: "tl2b" });
+      sk.rels.push({ id: "tr1", t: "onCurve", e: ["tl1a", "tcirc"] }, { id: "tr2", t: "onCurve", e: ["tl2a", "tcirc"] });
+      ed.render();
+      return true;
+    });
+    await mp.keyboard.press("t");
+    await click([-25, -25]);
+    const kept76 = await mp.evaluate(() => { const c = window.__sv.model.editor().sk.ents.find(e => e.id === "tcirc"); return c ? { t: c.t, ends: [c.a, c.b].sort().join(",") } : null; });
+    check(touch76 && kept76?.t === "arc" && kept76.ends === "tl1a,tl2a", `exam #76: Trim cuts a circle at the ends of lines touching it (${JSON.stringify(kept76)})`);
+    await mp.keyboard.press("Escape");
+    await mp.evaluate(() => { const ed = window.__sv.model.editor(), sk = ed.sk, mine = new Set(["tc0", "tl1a", "tl1b", "tl2a", "tl2b", "tcirc", "tl1", "tl2"]);
+      sk.ents = sk.ents.filter(e => !mine.has(e.id) && !(e.t === "point" && sk.rels.some(r => r.t === "onCurve" && r.e[0] === e.id && mine.has(r.e[1]))));
+      sk.rels = sk.rels.filter(r => !r.e.some(x => mine.has(x))); sk.dims = sk.dims.filter(d => !d.e.some(x => mine.has(x))); ed.render(); });
     // 3-point circle sits in the Circle flyout.
     await mp.click('#mc-tools [data-fly="circle"]');
     await mp.click("#mc-menu button:nth-child(2)");
@@ -1939,6 +2032,25 @@ try {
     await click([-15, -5]);
     const fl = await mp.evaluate(() => { const e = window.__sv.model.editor(); const sk = e.sk; return { arcs: sk.ents.filter(x => x.t === "arc").length, tan: sk.rels.filter(r => r.t === "tangent").length, dim: sk.dims.some(d => d.t === "radius" && Math.abs(d.val.v - 2) < 1e-9), ok: e.info.status }; });
     check(fl.arcs === 1 && fl.tan === 2 && fl.dim && fl.ok === "ok", `model 1.19: sketch fillet rounds the corner with a tangent R2 arc (${JSON.stringify(fl)})`);
+    // Exam #90-#93: a clockwise centre-point arc, a fillet where a line meets an arc, Ctrl+A, the rolled-back part's note.
+    {
+      const had = await mp.evaluate(() => window.__sv.model.editor().sk.ents.map(e => e.id));
+      const hover = async q => { const [x, y] = await toPage(q, true); await mp.mouse.move(x, y, { steps: 4 }); await mp.waitForTimeout(40); };
+      await mp.click('#mc-tools [data-c="sk:arc"]');
+      await click([10, -22]); await click([16, -22]); await hover([14, -26]); await hover([10, -28]); await hover([6, -26]); await click([4, -22]);
+      await mp.keyboard.press("Escape");
+      const cw = await mp.evaluate(had => { const sk = window.__sv.model.editor().sk, P = id => sk.ents.find(e => e.id === id); const a = sk.ents.find(e => e.t === "arc" && !had.includes(e.id)); return a && { a: [P(a.a).x, P(a.a).y], b: [P(a.b).x, P(a.b).y] }; }, had);
+      check(cw && near(cw.a[0], 4, 0.3) && near(cw.b[0], 16, 0.3), `exam #92: a centre-point arc drawn clockwise keeps the side the mouse went round (${JSON.stringify(cw)})`);
+      await mp.click('#mc-tools [data-c="sk:line"]'); await click([16, -22]); await click([24, -22]); await mp.keyboard.press("Escape"); await mp.keyboard.press("Escape");
+      await mp.click('#mc-tools [data-c="sk:fillet"]'); await click([16, -22]);
+      const la = await mp.evaluate(had => { const e = window.__sv.model.editor(), sk = e.sk; const mine = sk.ents.filter(x => !had.includes(x.id)); return { arcs: mine.filter(x => x.t === "arc").length, tan: sk.rels.filter(r => r.t === "tangent" && r.e.some(id => mine.some(m => m.id === id))).length, ok: e.info.status }; }, had);
+      check(la.arcs === 2 && la.tan === 2 && la.ok === "ok", `exam #90: sketch fillet rounds a corner where a line meets an arc (${JSON.stringify(la)})`);
+      await mp.keyboard.press("Escape"); await mp.keyboard.press("Escape");
+      await mp.keyboard.press("Control+a");
+      const all = await mp.evaluate(() => { const e = window.__sv.model.editor(); return { sel: e.selection.size, n: e.sk.ents.length, text: (window.getSelection()?.toString() ?? "").length }; });
+      check(all.sel === all.n && all.n > 0 && all.text === 0, `exam #91: Ctrl+A in a sketch selects every sketch entity, not the page text (${JSON.stringify(all)})`);
+      await mp.evaluate(had => { const ed = window.__sv.model.editor(); ed.selection.clear(); ed.deleteItems(ed.sk.ents.filter(e => !had.includes(e.id) && e.t !== "point").map(e => e.id)); }, had);
+    }
     // RU and accessibility with the sketch panel (relations list) open.
     await mp.addScriptTag({ content: await readFile(createRequire(import.meta.url).resolve("axe-core/axe.min.js"), "utf8") });
     const axe = () => mp.evaluate(async () => (await window.axe.run(document, { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] }, resultTypes: ["violations"] })).violations.map(v => `${v.id}: ${v.nodes.slice(0, 2).map(n => n.target.join(" ")).join(", ")}`));
@@ -1963,23 +2075,96 @@ try {
     await idle();
     // Part properties: material Aluminium; the mass panel shows principal moments.
     await mp.dblclick('#mc-tree .ft-row[data-id="part"]');
-    await mp.waitForSelector("#mc-pm select[data-p=material]");
-    await mp.selectOption("#mc-pm select[data-p=material]", { label: "Aluminium 6061 (2.7)" });
+    // 1.372.0 (FR-MAT-001): the material comes from the library dialog: categories, search by another standard's name, properties.
+    await mp.waitForSelector("#mc-pm [data-a=matpick]");
+    await mp.click("#mc-pm [data-a=matpick]");
+    await mp.waitForSelector("#mat-dlg[open]");
+    const matRows = () => mp.evaluate(() => [...document.querySelectorAll("#mat-dlg .mat-list li[data-i] b")].map(e => e.textContent));
+    const lib = { all: (await matRows()).length, cats: await mp.evaluate(() => document.querySelectorAll("#mat-dlg .mat-cat:not([disabled])").length) };
+    await mp.click('#mat-dlg .mat-cat[data-cat="titanium"]');
+    lib.ti = (await matRows()).length;
+    await mp.fill("#mat-q", "aisi 316l");
+    lib.found = await matRows();
+    lib.cat = await mp.evaluate(() => document.querySelector("#mat-dlg .mat-cat.on").dataset.cat);
+    lib.props = await mp.evaluate(() => [...document.querySelectorAll("#mat-dlg .mat-table tr")].map(r => r.textContent.replace(/\s+/g, " ")));
+    lib.src = await mp.evaluate(() => document.querySelector("#mat-dlg .mat-src").textContent);
+    const axMat = await axe();
+    await mp.fill("#mat-q", "д16т");
+    lib.gost = await matRows();
+    // 1.375.0: a material whose values were checked against a public page links to it.
+    await mp.fill("#mat-q", "S690QL");
+    const refLink = await mp.evaluate(() => { const l = document.querySelector("#mat-dlg .mat-src a"); return l && { href: l.href, text: l.textContent, rel: l.rel }; });
+    check(!!refLink && /^https:\/\/shop\.macsteel\.co\.za\//.test(refLink.href) && refLink.text === "shop.macsteel.co.za" && /noopener/.test(refLink.rel),
+      `model 1.375: a checked material shows the page its values were checked against (${JSON.stringify(refLink)})`);
+    // 1.382.0: a material without a checked reference says so.
+    const refNote = await mp.evaluate(() => !!document.querySelector("#mat-dlg .mat-unver"));
+    await mp.fill("#mat-q", "kevlar");
+    const unver = await mp.evaluate(() => ({ note: document.querySelector("#mat-dlg .mat-unver")?.textContent ?? "", link: !!document.querySelector("#mat-dlg .mat-src a") }));
+    check(!refNote && unver.note === "Not checked against a public reference yet." && !unver.link,
+      `model 1.382: a material with no checked reference is marked as not checked (${refNote}, ${JSON.stringify(unver)})`);
+    await mp.fill("#mat-q", "6061");
+    await mp.keyboard.press("ArrowDown");
+    await mp.keyboard.press("ArrowUp");
+    await mp.keyboard.press("Enter");
+    await mp.waitForSelector("#mat-dlg", { state: "detached" });
+    lib.btn = await mp.evaluate(() => ({ text: document.querySelector("#mc-pm [data-a=matpick]").textContent, dens: document.querySelector("#mc-pm [data-p=density]").value, col: document.querySelector("#mc-pm [data-p=color]").value, focus: document.activeElement?.dataset.a }));
+    check(lib.all >= 150 && lib.cats >= 15 && lib.ti === 5 && lib.found.length === 1 && /1\.4404/.test(lib.found[0]) && lib.cat === "all" && lib.props.some(r => /Density ?8 g\/cm³/.test(r)) && lib.props.some(r => /Yield strength ?220 MPa/.test(r)) && /EN 10088/.test(lib.src)
+      && lib.gost.length === 1 && /2024/.test(lib.gost[0]) && /Aluminium 6061/.test(lib.btn.text) && lib.btn.dens === "2.7" && lib.btn.col === "#c9ced6" && lib.btn.focus === "matpick",
+      `model 1.372: the material library lists 150+ materials by category, finds one by AISI or GOST name, shows its properties and source, Enter applies it with its colour (${JSON.stringify(lib)})`);
+    check(axMat.length === 0, `model 1.372: 0 WCAG 2.1 AA violations with the material library open${axMat.length ? ": " + axMat.join(" | ") : ""}`);
     await mp.fill("#mc-pm input[data-p=partNumber]", "HX-001");
     await mp.press("#mc-pm input[data-p=partNumber]", "Tab");
     const ax2 = await axe();
     await mp.click("#lang-btn");
     await mp.waitForTimeout(200);
     const ru2 = await ruScan();
+    // The library in Russian: a new material of my own, found by its name, then deleted.
+    await mp.click("#mc-pm [data-a=matpick]");
+    await mp.waitForSelector("#mat-dlg[open]");
+    const matRu = await mp.evaluate(() => {
+      const d = document.querySelector("#mat-dlg"), bad = [];
+      const w = document.createTreeWalker(d, NodeFilter.SHOW_TEXT);
+      for (let n = w.nextNode(); n; n = w.nextNode()) if (!n.parentElement.closest('[translate="no"]') && /[A-Za-z]{2,}/.test(n.data)) bad.push(n.data.trim().slice(0, 40));
+      for (const e of d.querySelectorAll("[title], [aria-label], [placeholder]")) for (const a of ["title", "aria-label", "placeholder"]) { const v = e.getAttribute(a); if (v && /[A-Za-z]{2,}/.test(v)) bad.push(v); }
+      return { bad, sel: d.querySelector(".mat-list li.on b")?.textContent, cat: d.querySelector('.mat-cat[data-cat="steel"]').textContent };
+    });
+    await mp.click("#mat-dlg [data-a=new]");
+    await mp.fill('#mat-dlg [data-f="name"]', "Сплав 7");
+    await mp.fill('#mat-dlg [data-f="density"]', "3,3");
+    await mp.fill('#mat-dlg [data-f="E"]', "55");
+    await mp.click("#mat-dlg [data-a=save]");
+    const own = await mp.evaluate(() => ({ cat: document.querySelector("#mat-dlg .mat-cat.on").dataset.cat, rows: [...document.querySelectorAll("#mat-dlg .mat-list li[data-i] b")].map(e => e.textContent), stored: JSON.parse(localStorage.getItem("mc:materials")) }));
+    // 1.471: My materials to a file and back (FR-MAT-001): the export holds the material; importing it plus one more adds that one and replaces the same name.
+    const [mdl] = await Promise.all([mp.waitForEvent("download"), mp.click("#mat-dlg [data-a=export]")]);
+    const exported = JSON.parse(await readFile(await mdl.path(), "utf8"));
+    const more = { ...exported, materials: [...exported.materials.map(m => ({ ...m, density: 3.4 })), { name: "Cork", density: 0.24 }] };
+    await mp.setInputFiles("#mat-dlg input[data-a=file]", { name: "mine.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(more)) });
+    await mp.waitForFunction(() => JSON.parse(localStorage.getItem("mc:materials")).length === 2);
+    const imp = await mp.evaluate(() => ({ stored: JSON.parse(localStorage.getItem("mc:materials")).map(m => `${m.name}=${m.density}`).join(), rows: [...document.querySelectorAll("#mat-dlg .mat-list li[data-i] b")].map(e => e.textContent).join() }));
+    check(mdl.suggestedFilename() === "my-materials.json" && exported.format === "mobiuscad-materials" && exported.materials[0]?.name === "Сплав 7" && exported.materials[0]?.E === 55 && imp.stored === "Сплав 7=3.4,Cork=0.24" && imp.rows === "Сплав 7,Cork",
+      `model 1.471: My materials export to a file and import back, replacing by name (${JSON.stringify({ name: mdl.suggestedFilename(), exported: exported.materials, imp })})`);
+    // The import selected Cork: delete it, then pick Сплав 7 again for the deletion below.
+    await mp.click("#mat-dlg [data-a=del]");
+    await mp.click("#confirm [data-a=ok]");
+    await mp.waitForFunction(() => !document.querySelector("#confirm").open && JSON.parse(localStorage.getItem("mc:materials")).length === 1);
+    await mp.click('#mat-dlg .mat-list li[data-i]:has-text("Сплав 7")');
+    await mp.click("#mat-dlg [data-a=del]");
+    await mp.click("#confirm [data-a=ok]");
+    await mp.waitForFunction(() => !document.querySelector("#confirm").open && JSON.parse(localStorage.getItem("mc:materials")).length === 0);
+    const ownGone = await mp.evaluate(() => JSON.parse(localStorage.getItem("mc:materials")).length);
+    await mp.keyboard.press("Escape");
+    await mp.waitForSelector("#mat-dlg", { state: "detached" });
+    check(matRu.bad.length === 0 && matRu.sel === "Алюминий 6061" && /^Стали/.test(matRu.cat) && own.cat === "custom" && own.rows.join() === "Сплав 7" && own.stored[0]?.density === 3.3 && own.stored[0]?.E === 55 && ownGone === 0,
+      `model 1.372: the material library in Russian, and a material of my own is saved in the browser and deleted again (${JSON.stringify({ matRu, own, ownGone })})`);
     await mp.click("#lang-btn");
     await mp.click("#mc-ok");
     await idle();
     const props = await mp.evaluate(() => ({ m: window.__sv.model.store.doc.material, pn: window.__sv.model.store.doc.props.partNumber, row: document.querySelector('#mc-tree .ft-row[data-id="material"] .ft-name').textContent, dens: document.querySelector("#density").value }));
-    check(props.m?.density === 2.7 && props.pn === "HX-001" && props.row === "Aluminium 6061" && props.dens === "2.7", `model 1.19: part properties set the material, part number and the mass panel's density (${JSON.stringify(props)})`);
+    check(props.m?.density === 2.7 && props.pn === "HX-001" && props.row === "Aluminium 6061" && props.dens === "2.7" && props.m?.sy === 276 && props.m?.E === 68.9, `model 1.19: part properties set the material, part number and the mass panel's density (${JSON.stringify(props)})`);
     await mp.evaluate(() => document.querySelector("#mass-run").click());
     await mp.waitForTimeout(300);
     const massTxt = await mp.evaluate(() => document.querySelector("#mass-out").textContent);
-    check(/Principal moments.*kg·mm²/.test(massTxt) && /Principal axes/.test(massTxt), `model 1.19: mass properties list the principal moments of the modelled part (${massTxt.match(/Principal moments[^A-Z]*/)?.[0]})`);
+    check(/Principal moments.*k?g·mm²/.test(massTxt) && /Principal axes/.test(massTxt), `model 1.19: mass properties list the principal moments of the modelled part (${massTxt.match(/Principal moments[^A-Z]*/)?.[0]})`);
     // 1.43: mass property override (FR-MAT-004): 1.25 kg and a centre of mass replace the calculated values.
     await mp.dblclick('#mc-tree .ft-row[data-id="part"]');
     await mp.waitForSelector("#mc-pm input[data-p=ovr]");
@@ -2065,7 +2250,7 @@ try {
   }
 
   // --- Part modelling 1.20.0: slot, extend, split, sketch chamfer, offset and convert entities, sketch-bar flyouts ---
-  if (inShard(4)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -2092,7 +2277,11 @@ try {
     const fly = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent));
     await mp.click("#mc-menu button:nth-child(2)");
     const flyTool = await mp.evaluate(() => ({ tool: window.__sv.model.editor().tool, shown: document.querySelector('#mc-tools [data-c^="sk:"][data-c="sk:extend"]')?.textContent?.trim() }));
-    check(fly.join("|") === "Trim|Extend|Split" && flyTool.tool === "extend" && flyTool.shown === "Extend", `model 1.20: the sketch bar groups Trim, Extend and Split in a flyout (${fly.join("|")}, ${JSON.stringify(flyTool)})`);
+    check(fly.join("|") === "Trim|Extend|Split|Jog line|Segment" && flyTool.tool === "extend" && flyTool.shown === "Extend", `model 1.20: the sketch bar groups Trim, Extend and Split in a flyout (${fly.join("|")}, ${JSON.stringify(flyTool)})`);
+    // A tool picked on the sketch bar shows its fields in the panel at once (exam #89: Fillet came without its radius).
+    await mp.click('#mc-tools [data-c="sk:fillet"]');
+    const frBox = await mp.evaluate(() => ({ tool: window.__sv.model.editor().tool, box: !!document.querySelector('#mc-pm input[data-a="fr"]') }));
+    check(frBox.tool === "fillet" && frBox.box, `exam #89: Fillet picked on the sketch bar shows its radius box in the panel (${JSON.stringify(frBox)})`);
     // Offset the rectangle 5 mm inwards: a closed chain of four parallel lines.
     await tool("offset");
     await mp.evaluate(() => { window.__sv.model.editor().offsetDist = 5; });
@@ -2191,6 +2380,275 @@ try {
     }, { id: inf.perpId, l1: inf.l1 });
     check(glyph === "perpendicular" && inf.n === 4 && inf.perp && inf.dot < 1e-6 && inf.ctrlFree && inf.par && inf.cross < 1e-6 && inf.status === "ok" && hot.lit && hot.cleared && hot.hidden,
       `model 1.251: automatic perpendicular/parallel relations while drawing, Ctrl suppresses them, relation glyphs light up their entities (${glyph}, ${JSON.stringify(inf)}, ${JSON.stringify(hot)})`);
+    // 1.507.0 (FR-SK-011): A while a line chain is open draws a tangent arc from its end; the chain then goes on as lines.
+    {
+      await tool("line");
+      const arcsBefore = await mp.evaluate(() => window.__sv.model.editor().sk.ents.filter(e => e.t === "arc").map(e => e.id));
+      await click([96, 38]); await click([101, 38]);
+      await mp.keyboard.press("a");
+      const arcMode = await mp.evaluate(() => window.__sv.model.editor().arcMode);
+      await click([104, 41]);
+      const back = await mp.evaluate(() => window.__sv.model.editor().arcMode);
+      await click([104, 45]);
+      await mp.keyboard.press("Escape");
+      const ta = await mp.evaluate(old => {
+        const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id);
+        const arc = sk.ents.find(e => e.t === "arc" && !old.includes(e.id));
+        if (!arc) return { arc: false };
+        const c = P(arc.c), a = P(arc.a), b = P(arc.b);
+        const tan = sk.rels.filter(r => r.t === "tangent" && r.e.includes(arc.id)).length;
+        return { arc: true, r: Math.hypot(a.x - c.x, a.y - c.y), r2: Math.hypot(b.x - c.x, b.y - c.y), c: [c.x, c.y], tan, tool: ed.tool, status: ed.info.status };
+      }, arcsBefore);
+      check(arcMode === true && back === false && ta.arc && Math.abs(ta.r - 3) < 0.05 && Math.abs(ta.r2 - 3) < 0.05 && Math.abs(ta.c[0] - 101) < 0.05 && Math.abs(ta.c[1] - 41) < 0.05 && ta.tan >= 1 && ta.status === "ok",
+        `model 1.507: A in the line tool draws a tangent arc, then lines go on tangent to it (FR-SK-011) (${arcMode}, ${back}, ${JSON.stringify(ta)})`);
+      await tool("select");
+    }
+    // 1.513.0 (FR-SK-015): the Tangent Arc tool starts on the end of that last line and chains tangent arcs.
+    {
+      await tool("tarc");
+      const arcsBefore = await mp.evaluate(() => window.__sv.model.editor().sk.ents.filter(e => e.t === "arc").map(e => e.id));
+      await click([104, 45]);
+      const on = await mp.evaluate(() => window.__sv.model.editor().arcMode);
+      await click([108, 45]); await click([112, 45]);
+      await mp.keyboard.press("Escape");
+      const tr = await mp.evaluate(old => {
+        const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id);
+        const arcs = sk.ents.filter(e => e.t === "arc" && !old.includes(e.id));
+        return { n: arcs.length, rs: arcs.map(a => { const c = P(a.c), q = P(a.a); return Math.hypot(q.x - c.x, q.y - c.y); }), cs: arcs.map(a => [P(a.c).x, P(a.c).y]),
+          tan: arcs.map(a => sk.rels.filter(r => r.t === "tangent" && r.e.includes(a.id)).length), status: ed.info.status };
+      }, arcsBefore);
+      check(on === true && tr.n === 2 && tr.rs.every(r => Math.abs(r - 2) < 0.05) && Math.abs(tr.cs[0][0] - 106) < 0.05 && Math.abs(tr.cs[1][0] - 110) < 0.05 && tr.tan.every(k => k >= 1) && tr.status === "ok",
+        `model 1.513: Tangent Arc tool chains arcs tangent to the line it starts on (FR-SK-015) (${on}, ${JSON.stringify(tr)})`);
+      await tool("select");
+    }
+    // 1.513.0 (FR-SK-037): dynamic mirror about a line mirrors each new line at once, and the mirrored chain stays joined.
+    {
+      await tool("line");
+      await click([120, 30]); await click([120, 50]); await mp.keyboard.press("Escape");
+      const axis = await mp.evaluate(() => { const ed = window.__sv.model.editor(); const l = ed.sk.ents.filter(e => e.t === "line").at(-1); ed.selection = new Set([l.id]); return { id: l.id, on: ed.toggleDynMirror(), dm: ed.dynMirror }; });
+      const linesBefore = await mp.evaluate(() => window.__sv.model.editor().sk.ents.filter(e => e.t === "line").map(e => e.id));
+      await click([123, 32]); await click([126, 36]); await click([126, 41]); await mp.keyboard.press("Escape");
+      const dm = await mp.evaluate(old => {
+        const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id);
+        const fresh = sk.ents.filter(e => e.t === "line" && !old.includes(e.id));
+        const xs = fresh.flatMap(l => [P(l.a).x, P(l.b).x]).map(x => Math.round(x * 100) / 100).sort((a, b) => a - b);
+        const left = fresh.filter(l => P(l.a).x < 120);
+        const joined = left.length === 2 && [left[0].a, left[0].b].some(q => q === left[1].a || q === left[1].b);
+        const sym = sk.rels.filter(r => r.t === "symmetric").length;
+        ed.toggleDynMirror();
+        return { n: fresh.length, xs, joined, sym, off: ed.dynMirror === null, status: ed.info.status };
+      }, linesBefore);
+      check(axis.on && axis.dm === axis.id && dm.n === 4 && Math.abs(dm.xs[0] - 114) < 0.05 && Math.abs(dm.xs.at(-1) - 126) < 0.05 && dm.joined && dm.sym >= 3 && dm.off && dm.status === "ok",
+        `model 1.513: dynamic mirror copies each new line about the picked line, joined (FR-SK-037) (${JSON.stringify(axis)}, ${JSON.stringify(dm)})`);
+      await tool("select");
+    }
+    // 1.513.0 (FR-SK-012): Centerline draws construction lines; Midpoint line puts its middle on the first click.
+    {
+      const before = await mp.evaluate(() => window.__sv.model.editor().sk.ents.filter(e => e.t === "line").map(e => e.id));
+      await tool("cline");
+      await click([130, 44]); await click([136, 44]); await mp.keyboard.press("Escape");
+      await tool("mline");
+      await click([132, 58]); await click([136, 58]);
+      const ml = await mp.evaluate(old => {
+        const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id);
+        const fresh = sk.ents.filter(e => e.t === "line" && !old.includes(e.id));
+        const c = fresh.find(l => l.cons), m = fresh.find(l => !l.cons);
+        const mid = m && sk.rels.find(r => r.t === "midpoint" && r.e[1] === m.id);
+        return { n: fresh.length, cons: !!c, ends: m ? [P(m.a).x, P(m.a).y, P(m.b).x, P(m.b).y].map(v => Math.round(v * 100) / 100) : null,
+          mid: mid ? [P(mid.e[0]).x, P(mid.e[0]).y].map(v => Math.round(v * 100) / 100) : null, status: ed.info.status };
+      }, before);
+      check(ml.n === 2 && ml.cons && ml.ends && Math.abs(ml.ends[0] - 128) < 0.05 && Math.abs(ml.ends[2] - 136) < 0.05 && Math.abs(ml.ends[1] - 58) < 0.05 && ml.mid && Math.abs(ml.mid[0] - 132) < 0.05 && ml.status === "ok",
+        `model 1.513: Centerline makes a construction line, Midpoint line spans both ways from its middle (FR-SK-012) (${JSON.stringify(ml)})`);
+      await tool("select");
+    }
+    // 1.519.0 (FR-SK-039): Stretch entities moves only the picked end of a rectangle (a crossing pick of its right
+    // side: the two right corners plus the lines crossing the box); the width dimension takes the new size.
+    {
+      await tool("select");
+      await mp.evaluate(() => {
+        const ed = window.__sv.model.editor(), sk = ed.sk;
+        const P = (id, x, y) => ({ id, t: "point", x, y });
+        sk.ents.push(P("st1", 200, 100), P("st2", 220, 100), P("st3", 220, 110), P("st4", 200, 110),
+          { id: "stl1", t: "line", a: "st1", b: "st2" }, { id: "stl2", t: "line", a: "st2", b: "st3" }, { id: "stl3", t: "line", a: "st3", b: "st4" }, { id: "stl4", t: "line", a: "st4", b: "st1" });
+        sk.rels.push({ id: "str1", t: "horizontal", e: ["stl1"] }, { id: "str2", t: "horizontal", e: ["stl3"] }, { id: "str3", t: "vertical", e: ["stl2"] }, { id: "str4", t: "vertical", e: ["stl4"] });
+        sk.dims.push({ id: "std1", name: "STW", t: "hdistance", e: ["st1", "st2"], val: { v: 20 } }, { id: "std2", name: "STH", t: "vdistance", e: ["st2", "st3"], val: { v: 10 } });
+        ed.selection = new Set(["st2", "st3", "stl1", "stl2", "stl3"]);
+      });
+      await mp.click('#mc-tools [data-c="skstretch"]');
+      const stTitle = await mp.evaluate(() => document.querySelector("#mc-pm h3")?.textContent);
+      await mp.fill('#mc-pm input[data-p="dx"]', "5");
+      await mp.press('#mc-pm input[data-p="dx"]', "Tab");
+      await mp.click('#mc-pm [data-a="pok"]');
+      const st = await mp.evaluate(() => {
+        const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id);
+        const out = { pts: ["st1", "st2", "st3", "st4"].map(id => [P(id).x, P(id).y].map(v => Math.round(v * 100) / 100).join(",")).join(" "),
+          w: sk.dims.find(d => d.id === "std1")?.val.v, h: sk.dims.find(d => d.id === "std2")?.val.v, status: ed.info.status };
+        const mine = new Set(["st1", "st2", "st3", "st4", "stl1", "stl2", "stl3", "stl4", "str1", "str2", "str3", "str4", "std1", "std2"]);
+        sk.ents = sk.ents.filter(e => !mine.has(e.id)); sk.rels = sk.rels.filter(r => !mine.has(r.id)); sk.dims = sk.dims.filter(d => !mine.has(d.id));
+        ed.selection = new Set(); ed.render();
+        return out;
+      });
+      check(/Stretch/.test(stTitle ?? "") && st.pts === "200,100 225,100 225,110 200,110" && Math.abs(st.w - 25) < 1e-6 && st.h === 10 && st.status === "ok",
+        `model 1.519: Stretch entities moves the picked end of a rectangle and its width dimension follows (FR-SK-039) (${stTitle}, ${JSON.stringify(st)})`);
+    }
+    // 1.523.0 (FR-SK-030): Jog line steps the middle of a line out: four new lines, parallel and square to it.
+    {
+      const jl = await mp.evaluate(() => {
+        const ed = window.__sv.model.editor();
+        ed.sk.ents.push({ id: "jg1", t: "point", x: 90, y: 56 }, { id: "jg2", t: "point", x: 110, y: 56 }, { id: "jgl", t: "line", a: "jg1", b: "jg2" });
+        ed.sk.rels.push({ id: "jgr", t: "horizontal", e: ["jgl"] });
+        ed.render();
+        return "jgl";
+      });
+      await tool("jog");
+      await click([95, 56]); await click([103, 53]);
+      const jg = await mp.evaluate(id => {
+        const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id);
+        const r = v => Math.round(v * 100) / 100;
+        const chain = [];
+        let l = sk.ents.find(e => e.id === id);
+        while (l && chain.length < 6) { chain.push([P(l.a).x, P(l.a).y, P(l.b).x, P(l.b).y].map(r).join(" ")); const b = l.b; l = sk.ents.find(e => e.t === "line" && e.a === b); }
+        const rels = sk.rels.filter(x => x.e.includes(id)).map(x => x.t).sort().join(",");
+        return { chain, rels, status: ed.info.status };
+      }, jl);
+      check(jg.chain.join("|") === "90 56 95 56|95 56 95 53|95 53 103 53|103 53 103 56|103 56 110 56" && /collinear/.test(jg.rels) && /parallel/.test(jg.rels) && (jg.rels.match(/perpendicular/g) ?? []).length === 2 && jg.status === "ok",
+        `model 1.523: Jog line steps a line out with parallel and square sides (FR-SK-030) (${JSON.stringify(jg)})`);
+      await tool("select");
+    }
+    // 1.527.0 (FR-SK-032): Segment divides a line into equal collinear lines, and a circle by points on it.
+    {
+      await tool("segment");
+      const sg = await mp.evaluate(() => {
+        const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id);
+        sk.ents.push({ id: "sg1", t: "point", x: 300, y: 300 }, { id: "sg2", t: "point", x: 330, y: 300 }, { id: "sgl", t: "line", a: "sg1", b: "sg2" });
+        sk.ents.push({ id: "sgc", t: "point", x: 300, y: 400 }, { id: "sgo", t: "circle", c: "sgc", r: 10 });
+        ed.render();
+        ed.segCount = 3; ed.segMode = "segments";
+        ed.segmentAt([311, 300]);
+        const r = v => Math.round(v * 100) / 100;
+        const chain = [];
+        let l = P("sgl");
+        while (l && chain.length < 5) { chain.push([P(l.a).x, P(l.b).x].map(r).join("-")); const b = l.b; l = sk.ents.find(e => e.t === "line" && e.a === b); }
+        const lineRels = sk.rels.filter(x => x.e[0] === "sgl").map(x => x.t).sort().join(",");
+        ed.segCount = 4; ed.segMode = "points";
+        ed.segmentAt([310, 400]);
+        const on = sk.rels.filter(x => x.t === "onCurve" && x.e[1] === "sgo").map(x => [P(x.e[0]).x, P(x.e[0]).y].map(r).join(" "));
+        return { chain, lineRels, on, status: ed.info.status };
+      });
+      check(sg.chain.join("|") === "300-310|310-320|320-330" && sg.lineRels === "collinear,collinear,equal,equal" && sg.on.join("|") === "310 400|300 410|290 400|300 390" && sg.status === "ok",
+        `model 1.527: Segment divides a line into equal lines and a circle by points (FR-SK-032) (${JSON.stringify(sg)})`);
+      await tool("select");
+    }
+    // 1.527.0 (FR-UI-052): Add dimensions on creation: a new circle gets its diameter and the Modify box at once,
+    // a new line its length; a typed value drives it, and a click elsewhere keeps the drawn size.
+    {
+      const known = await mp.evaluate(() => { const ed = window.__sv.model.editor(); ed.addDims = true; return ed.sk.ents.map(e => e.id); });
+      await tool("circle");
+      await click([120, 20]); await click([124, 20]);
+      await mp.waitForSelector(".mod-box .mod-in", { timeout: 10000 });
+      await mp.fill(".mod-box .mod-in", "10"); await mp.keyboard.press("Enter"); await mp.waitForTimeout(200);
+      await tool("line");
+      await click([112, 40]); await click([128, 40]);
+      const lineBox = await mp.waitForSelector(".mod-box .mod-in", { timeout: 10000 }).then(() => true, () => false);
+      await mp.keyboard.press("Escape"); await mp.waitForTimeout(100);
+      await mp.keyboard.press("Escape"); await mp.waitForTimeout(100);
+      const ad = await mp.evaluate(old => {
+        const ed = window.__sv.model.editor(), sk = ed.sk;
+        const made = sk.ents.filter(e => !old.includes(e.id));
+        const circ = made.find(e => e.t === "circle"), line = made.find(e => e.t === "line");
+        const dimOf = id => sk.dims.find(d => d.e.length === 1 && d.e[0] === id);
+        const r = v => Math.round(v * 1000) / 1000;
+        ed.addDims = false;
+        return { r: circ && r(circ.r), cd: circ && dimOf(circ.id)?.t, cv: circ && r(dimOf(circ.id)?.val.v ?? 0), ld: line && dimOf(line.id)?.t, status: ed.info.status };
+      }, known);
+      check(ad.r === 5 && ad.cd === "diameter" && ad.cv === 10 && lineBox && ad.ld === "distance" && ad.status === "ok",
+        `model 1.527: Add dimensions gives a new circle its diameter and a new line its length, with the Modify box (FR-UI-052) (${JSON.stringify({ ...ad, lineBox })})`);
+      await tool("select");
+    }
+    // 1.533.0 (FR-UI-054): K opens Add relation at the cursor: the relations valid for the selection.
+    {
+      await mp.evaluate(() => { const ed = window.__sv.model.editor(); ed.selection = new Set(["sgo", "sgl"]); ed.render(); });
+      await mp.evaluate(() => window.__sv.viewer.renderer.domElement.focus());
+      await mp.keyboard.press("k"); await mp.waitForTimeout(150);
+      const km = await mp.evaluate(() => {
+        const m = document.getElementById("mc-menu");
+        return { shown: !!m && !m.hidden, head: m?.querySelector(".mc-menu-h")?.textContent, rows: [...(m?.querySelectorAll("button") ?? [])].map(b => b.textContent.trim()) };
+      });
+      const tan = km.rows.findIndex(r => /Tangent/.test(r));
+      if (tan >= 0) await mp.click(`#mc-menu button[data-k="${tan}"]`);
+      await mp.waitForTimeout(150);
+      const kr = await mp.evaluate(() => { const ed = window.__sv.model.editor(); return { tangent: ed.sk.rels.some(r => r.t === "tangent" && r.e.includes("sgo") && r.e.includes("sgl")), status: ed.info.status }; });
+      check(km.shown && km.head === "Add relation" && tan >= 0 && kr.tangent,
+        `model 1.533: K opens Add relation with the relations valid for the selection (FR-UI-054) (${JSON.stringify({ ...km, ...kr })})`);
+      await mp.evaluate(() => { const ed = window.__sv.model.editor(); ed.selection = new Set(); ed.render(); });
+    }
+    // 1.549.0 (FRS 2.2): Sketch Picture puts an image on the sketch plane at 96 dpi; the panel resizes it with the
+    // aspect ratio locked, makes it see-through, and deletes it.
+    {
+      const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAGAAAAAwCAYAAADuFn/PAAAAW0lEQVR42u3RIQEAAAjAsPcvDRGQmIkX+Joa/ZUJAAAIAAABACAAAAQAgAAAEAAAAgBAAAAIAAABACAAAAQAgAAAEAAAAgBAAAAIAAABACAAAAQAgAAAEAAAulvDGN4OKAZ0ugAAAABJRU5ErkJggg==", "base64");
+      const [picChooser] = await Promise.all([mp.waitForEvent("filechooser"), mp.click('#mc-tools [data-c="skpic"]')]);
+      await picChooser.setFiles({ name: "logo.png", mimeType: "image/png", buffer: png });
+      await mp.waitForFunction(() => window.__sv.model.editor().sk.pictures?.length === 1, null, { timeout: 10000 });
+      await mp.waitForSelector("#mc-pm .pm-pics");
+      const pic = () => mp.evaluate(() => {
+        const p = window.__sv.model.editor().sk.pictures?.[0], r = v => Math.round(v * 100) / 100;
+        const mesh = window.__sv.viewer.scene.children.find(o => o.userData.skPicture);
+        return p ? { w: r(p.w), h: r(p.h), c: p.c.map(r), alpha: p.alpha ?? 0, mesh: !!mesh, opacity: mesh ? r(mesh.material.opacity) : null } : { gone: true, mesh: !!mesh };
+      });
+      const p0 = await pic();
+      await mp.fill('#mc-pm [data-pic="pic1:w"]', "50"); await mp.press('#mc-pm [data-pic="pic1:w"]', "Tab"); await mp.waitForTimeout(150);
+      await mp.fill('#mc-pm [data-pic="pic1:alpha"]', "40"); await mp.press('#mc-pm [data-pic="pic1:alpha"]', "Tab"); await mp.waitForTimeout(150);
+      const p1 = await pic();
+      await mp.click('#mc-pm [data-pic="pic1:del"]'); await mp.waitForTimeout(150);
+      const p2 = await pic();
+      check(p0.w === 25.4 && p0.h === 12.7 && p0.c.join() === "12.7,6.35" && p0.mesh && p1.w === 50 && p1.h === 25 && p1.alpha === 0.4 && p1.opacity === 0.6 && p2.gone && !p2.mesh,
+        `model 1.549: Sketch Picture adds an image, resizes it with the aspect locked, fades and deletes it (FRS 2.2) (${JSON.stringify({ p0, p1, p2 })})`);
+    }
+    // 1.554.0 (FRS 2.2 blocks): Make Block turns a selected square into a fixed instance; the panel moves it,
+    // Insert Block adds a copy from the part's blocks, Explode gives plain entities back.
+    {
+      const before = await mp.evaluate(() => {
+        const ed = window.__sv.model.editor(), sk = ed.sk;
+        const keep = sk.ents.map(e => e.id);
+        const P = (id, x, y) => ({ id, t: "point", x, y });
+        sk.ents.push(P("bkA", 200, 200), P("bkB", 210, 200), P("bkC", 210, 210), P("bkD", 200, 210),
+          { id: "bkL1", t: "line", a: "bkA", b: "bkB" }, { id: "bkL2", t: "line", a: "bkB", b: "bkC" }, { id: "bkL3", t: "line", a: "bkC", b: "bkD" }, { id: "bkL4", t: "line", a: "bkD", b: "bkA" });
+        ed.select(["bkL1", "bkL2", "bkL3", "bkL4"]);
+        return keep;
+      });
+      await mp.click('#mc-tools [data-c="skblock"]');
+      await mp.waitForSelector("#mc-pm .pm-block");
+      const b0 = await mp.evaluate(() => { const sk = window.__sv.model.editor().sk; return { ins: sk.inserts?.map(i => [i.x, i.y]), name: document.querySelector('#mc-pm [data-blk="name"]')?.value, n: sk.ents.filter(e => e.id.startsWith("bi1~")).length }; });
+      await mp.fill('#mc-pm [data-blk="x"]', "300"); await mp.press('#mc-pm [data-blk="x"]', "Tab"); await mp.waitForTimeout(150);
+      const b1 = await mp.evaluate(() => { const sk = window.__sv.model.editor().sk, a = sk.ents.find(e => e.id === "bi1~bkA"); return { a: a && [a.x, a.y], status: window.__sv.model.editor().info.status }; });
+      await mp.click('#mc-tools [data-c="skinsblk"]');
+      await mp.waitForSelector("#mc-menu:not([hidden]) button");
+      const rows = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent.trim()));
+      await mp.click('#mc-menu button[data-k="0"]');
+      await mp.waitForTimeout(150);
+      const b2 = await mp.evaluate(() => { const sk = window.__sv.model.editor().sk; return { ins: sk.inserts?.length, blocks: sk.blocks?.length }; });
+      // Edit Block on the copy: widen it by 5; the first instance follows when the edit ends.
+      await mp.click('#mc-pm [data-blk="edit"]'); await mp.waitForSelector("#mc-pm .pm-blkedit");
+      const be = await mp.evaluate(() => {
+        const ed = window.__sv.model.editor(), sk = ed.sk, id = sk.editBlock?.insert;
+        for (const e of sk.ents) if (e.t === "point" && (e.id === `${id}~bkB` || e.id === `${id}~bkC`)) e.x += 5;
+        return { id, free: !sk.rels.some(r => r.id === `${id}~fix`) };
+      });
+      await mp.click('#mc-pm [data-blk="finish"]'); await mp.waitForTimeout(150);
+      const b2e = await mp.evaluate(() => { const sk = window.__sv.model.editor().sk, b = sk.ents.find(e => e.id === "bi1~bkB"); return { b: b && [b.x, b.y], editing: !!sk.editBlock, box: !!document.querySelector("#mc-pm [data-blk=explode]") }; });
+      await mp.click('#mc-pm [data-blk="explode"]'); await mp.waitForTimeout(150);
+      const b3 = await mp.evaluate(keep => {
+        const ed = window.__sv.model.editor(), sk = ed.sk;
+        const r = { ins: sk.inserts?.length ?? 0, plain: sk.ents.filter(e => !keep.includes(e.id) && !e.id.includes("~")).length };
+        ed.select(["bi1~bkL1"]); ed.deleteSelection();
+        ed.deleteItems(sk.ents.filter(e => !keep.includes(e.id)).map(e => e.id));
+        return { ...r, left: ed.sk.ents.filter(e => !keep.includes(e.id)).length, blocks: ed.sk.blocks?.length ?? 0 };
+      }, before);
+      check(b0.ins?.join() === "205,205" && b0.name === "Block1" && b0.n === 8 && b1.a?.join() === "295,200" && b1.status === "ok" && rows[0] === "Block1" && b2.ins === 2 && b2.blocks === 1
+        && be.id === "bi2" && be.free && b2e.b?.join() === "310,200" && !b2e.editing && b2e.box
+        && b3.ins === 1 && b3.plain === 8 && b3.left === 0 && b3.blocks === 0,
+        `model 1.554: Make Block, move it in the panel, Insert Block a copy, Edit Block, Explode one (FRS 2.2 blocks) (${JSON.stringify({ b0, b1, rows, b2, be, b2e, b3 })})`);
+    }
     // 1.266.0 (FR-SK-043/044/047): dragging the last line's start onto the free end of the Ctrl line merges them
     // (coincident relation); Ctrl+drag of that line copies it; the status bar shows the cursor position.
     await tool("select");
@@ -2281,6 +2739,58 @@ try {
     check(tFree === "hdistance" && tLocked.t === "hdistance" && tLocked.lock && tLocked.cls && placed?.t === "hdistance" && near(placed.v, 30, 0.01) && gripPos && near(gripPos[0], 50, 0.01)
       && near(dragged?.v, 40, 1e-6) && near(undoneDim?.v, placed?.v, 1e-9),
       `model 1.282: right-click locks a dimension while placing, and dragging its handle changes the value with one undo step (${tFree}, ${JSON.stringify(tLocked)}, ${JSON.stringify(placed)}, ${JSON.stringify(gripPos)}, ${JSON.stringify(dragged)}, ${JSON.stringify(undoneDim)})`);
+    // 1.540: sketch dimensions draw arrowheads; the selected one shows a dot at its first end that flips them
+    // inside/outside as one undo step (FR-SK-068).
+    await mp.evaluate(id => window.__sv.model.editor().select([id]), placed.id);
+    await mp.waitForTimeout(80);
+    const flip0 = await mp.evaluate(id => { const ed = window.__sv.model.editor(); return { auto: ed.arrowsOf(ed.sk.dims.find(x => x.id === id)), dot: !!document.querySelector(".sk-adot"), mesh: ed.group.children.some(c => c.userData.skArrows) }; }, placed.id);
+    await mp.evaluate(() => document.querySelector(".sk-adot")?.click());
+    await mp.waitForTimeout(150);
+    const flip1 = await mp.evaluate(id => window.__sv.model.editor().sk.dims.find(x => x.id === id)?.arrows ?? null, placed.id);
+    await mp.keyboard.press("Control+z");
+    await mp.waitForTimeout(150);
+    const flip2 = await mp.evaluate(id => window.__sv.model.editor().sk.dims.find(x => x.id === id)?.arrows ?? null, placed.id);
+    check(flip0.auto === "in" && flip0.dot && flip0.mesh && flip1 === "out" && flip2 === null,
+      `model 1.540: sketch dimension arrowheads flip inside/outside from the dot on the selected dimension, one undo step (FR-SK-068) (${JSON.stringify({ flip0, flip1, flip2 })})`);
+    // 1.555: Shift+click a circle's near side and the other's far side for a min/max distance, switch one back to
+    // its centre from the right-click menu; an arc and both its ends give an arc length (FR-SK-060).
+    await tool("circle");
+    await click([-60, -70]); await click([-55, -70]);
+    await click([-30, -70]); await click([-27, -70]);
+    await tool("dim");
+    await mp.keyboard.down("Shift");
+    await click([-55, -70]); await click([-27, -70]);
+    await mp.keyboard.up("Shift");
+    await click([-42, -55]);
+    await mp.waitForTimeout(150);
+    await mp.keyboard.press("Escape");
+    await mp.waitForTimeout(100);
+    const condDim = () => mp.evaluate(() => { const d = window.__sv.model.editor().sk.dims.at(-1); return d && { id: d.id, t: d.t, cond: d.cond ?? null, v: d.val.v }; });
+    const cd0 = await condDim();
+    await tool("select");
+    await mp.evaluate(id => window.__sv.model.editor().select([id]), cd0?.id);
+    await mp.waitForTimeout(80);
+    // On empty space the right-click menu keeps the selected dimension.
+    await rclick([-90, -40]);
+    const condMenu = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent));
+    await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].find(b => b.textContent.includes("Second arc condition: Centre"))?.click());
+    await mp.waitForTimeout(150);
+    const cd1 = await condDim();
+    await mp.keyboard.press("Escape");
+    await tool("arc");
+    await click([-60, -100]); await click([-50, -100]); await click([-60, -90]);
+    await tool("dim");
+    await click([-60 + 7.0711, -100 + 7.0711]); await click([-50, -100]); await click([-60, -90]);
+    await click([-45, -85]);
+    await mp.waitForTimeout(150);
+    await mp.keyboard.press("Escape");
+    await mp.waitForTimeout(100);
+    const al = await condDim();
+    await tool("select");
+    check(cd0?.t === "distance" && JSON.stringify(cd0.cond) === '["min","max"]' && near(cd0.v, 28, 0.05)
+      && condMenu.some(m => m.includes("First arc condition")) && JSON.stringify(cd1?.cond) === '["min","c"]' && near(cd1?.v, 25, 0.05)
+      && al?.t === "arclen" && near(al.v, 5 * Math.PI, 0.05),
+      `model 1.555: Shift+click near/far side distances to circles, arc condition menu, arc length from an arc and both ends (FR-SK-060) (${JSON.stringify({ cd0, condMenu, cd1, al })})`);
     // Quick snaps (FR-SK-046): Tangent from the quick access bar ends the next line on the circle, tangent to it;
     // Intersection from the right-click menu puts a point where a line crosses the circle, with an intersection relation.
     await tool("circle");
@@ -2512,11 +3022,415 @@ try {
     const ftBack = await mp.evaluate(() => ({ fly: !!document.querySelector("#mc-treefly"), parent: document.querySelector("#mc-tree").parentElement.id, prev: document.querySelector("#mc-tree").previousElementSibling?.id, shown: !document.querySelector("#mc-tree").hidden, full: document.querySelector("#tab-features").classList.contains("pm-full") }));
     check(ftOpen.tab === "true" && ftOpen.full && ftOpen.inView && ftOpen.name && ftOpen.folded && ftBase?.std === "YZ" && ftFold.hidden && ftFold.exp === "false" && ftFold.ls === "0" && !ftBack.fly && ftBack.parent === "tab-features" && ftBack.prev === "ft-search" && ftBack.shown && !ftBack.full,
       `model 1.335: a command panel fills the Features tab, the tree flies out folded over the view, opens, picks a plane and folds again; Cancel puts it back (${JSON.stringify([ftOpen, ftBase, ftFold, ftBack])})`);
+    // 1.342: copy and paste features (FR-HIS-014): Ctrl+C on an extrude, Ctrl+V on the Right plane; Ctrl+drop of the row on a face.
+    await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("Block", d => { d.features.push({ id: "cps", type: "sketch", name: "CpSketch", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", 200, 200), P("b", 220, 200), P("c", 220, 220), P("d", 200, 220), L("l1", "a", "b"), L("l2", "b", "c"), L("l3", "c", "d"), L("l4", "d", "a")] }, { id: "cpe", type: "extrude", name: "CpExtrude", sketch: "cps", op: "boss", end: "blind", depth: { v: 10 } }); }); });
+    await idle();
+    const cpN = await mp.evaluate(() => ({ n: window.__sv.model.store.doc.features.length, vol: window.__sv.model.last().props.volume }));
+    await mp.click('#mc-tree .ft-row[data-id="cpe"]');
+    await mp.keyboard.press("Control+c");
+    await mp.click('#mc-tree .ft-row[data-id="std:YZ"]');
+    await mp.keyboard.press("Control+v");
+    await idle();
+    const cpV = await mp.evaluate(() => { const d = window.__sv.model.store.doc, f = d.features, ex = f.at(-1), sk = f.find(x => x.id === ex.sketch); return { n: f.length, ex: [ex.type, ex.name, ex.depth?.v], sk: [sk?.id !== "cps", sk?.plane?.std, f.indexOf(sk) === f.length - 2], vol: window.__sv.model.last().props.volume, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length, sel: window.__sv.modeller.selected === ex.id }; });
+    await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
+    const cpDrop = await mp.evaluate(() => {
+      const v = window.__sv.viewer, cv = v.renderer.domElement, r = cv.getBoundingClientRect(), s = new (v.camera.position.constructor)(210, 210, 10).project(v.camera);
+      const x = r.left + ((s.x + 1) / 2) * r.width, y = r.top + ((1 - s.y) / 2) * r.height, dt = new DataTransfer();
+      dt.setData("application/x-mcad-feature", "cps");
+      cv.dispatchEvent(new DragEvent("dragover", { dataTransfer: dt, ctrlKey: true, clientX: x, clientY: y, bubbles: true, cancelable: true }));
+      cv.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, ctrlKey: true, clientX: x, clientY: y, bubbles: true, cancelable: true }));
+      const f = window.__sv.model.store.doc.features.at(-1);
+      return { type: f.type, face: !!f.plane?.face };
+    });
+    await idle();
+    const cpUndo = await mp.evaluate(() => window.__sv.model.store.undoLabel);
+    check(cpV.n === cpN.n + 2 && /^extrude,Extrude\d+,10$/.test(cpV.ex.join()) && cpV.sk.join() === "true,YZ,true" && near(cpV.vol - cpN.vol, 4000, 1e-3) && !cpV.bad && cpV.sel && cpDrop.type === "sketch" && cpDrop.face && cpUndo === "Paste",
+      `model 1.342: Ctrl+C on an extrude and Ctrl+V on the Right plane paste it with a copy of its sketch (+4000 mm³); Ctrl+drop of a sketch row on a face pastes it there (${JSON.stringify([cpN, cpV, cpDrop, cpUndo])})`);
+    // 1.350: tree housekeeping (FR-HIS-013): the eye button hides the Top plane (outlined icon), Shift+C folds absorbed sketches, ▸ unfolds.
+    await mp.hover('#mc-tree .ft-row[data-id="std:XY"]');
+    await mp.click('#mc-tree .ft-row[data-id="std:XY"] [data-a="eye"]');
+    const hkEye = await mp.evaluate(() => ({ hidden: window.__sv.model.store.doc.stdHidden, hid: document.querySelector('#mc-tree .ft-row[data-id="std:XY"]').classList.contains("hid"), stroke: getComputedStyle(document.querySelector('#mc-tree .ft-row[data-id="std:XY"] .ft-ico')).webkitTextStrokeWidth, sketchEye: !!document.querySelector('#mc-tree .ft-row[data-id="cps"] [data-a="eye"]'), extrudeEye: !!document.querySelector('#mc-tree .ft-row[data-id="cpe"] [data-a="eye"]') }));
+    await mp.hover('#mc-tree .ft-row[data-id="std:XY"]');
+    await mp.click('#mc-tree .ft-row[data-id="std:XY"] [data-a="eye"]');
+    const hkShown = await mp.evaluate(() => window.__sv.model.store.doc.stdHidden ?? null);
+    await mp.click('#mc-tree .ft-row[data-id="cpe"]');
+    await mp.keyboard.press("Shift+C");
+    const hkFold = await mp.evaluate(() => ({ cps: !!document.querySelector('#mc-tree .ft-row[data-id="cps"]'), exp: document.querySelector('#mc-tree .ft-row[data-id="cpe"]')?.getAttribute("aria-expanded") }));
+    await mp.click('#mc-tree .ft-row[data-id="cpe"] [data-a="twist"]');
+    const hkOpen = await mp.evaluate(() => !!document.querySelector('#mc-tree .ft-row[data-id="cps"]'));
+    check(hkEye.hidden?.join() === "XY" && hkEye.hid && hkEye.stroke === "1px" && hkEye.sketchEye && !hkEye.extrudeEye && hkShown === null && !hkFold.cps && hkFold.exp === "false" && hkOpen,
+      `model 1.350: the eye button hides and shows the Top plane (outlined icon while hidden), Shift+C folds the extrude's sketch and ▸ unfolds it (${JSON.stringify([hkEye, hkShown, hkFold, hkOpen])})`);
+    // FR-HIS-012 / AT-UX-14: Roll back to here from the tree menu, reopen rolled back with the notice, Roll to end, Roll to previous.
+    const rbN = await mp.evaluate(() => window.__sv.model.store.doc.features.length);
+    const rbAt = await mp.evaluate(() => window.__sv.model.store.doc.features.at(-2).id);
+    await mp.click(`#mc-tree .ft-row[data-id="${rbAt}"]`, { button: "right" });
+    const rbMenu = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent));
+    await mp.click('#mc-menu button:text-is("Roll back to here")');
+    await idle();
+    const rbDoc = await mp.evaluate(() => JSON.parse(JSON.stringify(window.__sv.model.store.doc)));
+    await mp.evaluate(d => { const m = window.__sv.modeller; m.store.markSaved(); m.load(d, "rolled.mcadprt", null); }, rbDoc);
+    await idle();
+    const rbOpen = await mp.evaluate(() => ({ rb: window.__sv.model.store.doc.rollback, note: document.querySelector("#mc-rolled span")?.textContent, rolled: document.querySelectorAll("#mc-tree .ft-row.rolled").length }));
+    await mp.click("#mc-rolled button");
+    await idle();
+    const rbEnd = await mp.evaluate(() => ({ rb: window.__sv.model.store.doc.rollback, note: !!document.querySelector("#mc-rolled") }));
+    await mp.click("#mc-tree .ft-rollback", { button: "right" });
+    const rbBarMenu = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent));
+    await mp.click('#mc-menu button:text-is("Roll to previous")');
+    await idle();
+    const rbPrev = await mp.evaluate(() => window.__sv.model.store.doc.rollback);
+    await mp.evaluate(() => window.__sv.modeller.setRollback(null));
+    await idle();
+    check(rbMenu.includes("Roll back to here") && rbOpen.rb === rbN - 2 && rbOpen.note === "The part is rolled back: 2 features are not shown" && rbOpen.rolled >= 1 && rbEnd.rb === null && !rbEnd.note && rbBarMenu.join("|") === "Roll to previous" && rbPrev === rbN - 2,
+      `model 1.350: Roll back to here, reopened rolled back with the notice, Roll to end from it, then Roll to previous from the bar menu (${JSON.stringify([rbMenu, rbOpen, rbEnd, rbBarMenu, rbPrev])})`);
+    // 1.351: undo inside a command (FR-UI-108): Ctrl+Z / Ctrl+Y step the open extrude's depth back and forth; the document stack is untouched.
+    const ucLabel = await mp.evaluate(() => window.__sv.model.store.undoLabel);
+    await mp.evaluate(() => window.__sv.modeller.editFeature("cpe"));
+    await mp.waitForSelector('#mc-pm input[data-num="depth"]');
+    await idle();
+    await mp.fill('#mc-pm input[data-num="depth"]', "15");
+    await mp.$eval('#mc-pm input[data-num="depth"]', el => { el.dispatchEvent(new Event("change", { bubbles: true })); el.blur(); });
+    await idle();
+    const ucSet = await mp.evaluate(() => window.__sv.modeller.mode.draft?.depth?.v);
+    await mp.keyboard.press("Control+z");
+    await idle();
+    const ucUndo = await mp.evaluate(() => ({ kind: window.__sv.modeller.mode.kind, v: window.__sv.modeller.mode.draft?.depth?.v, box: document.querySelector('#mc-pm input[data-num="depth"]')?.value, label: window.__sv.model.store.undoLabel }));
+    await mp.keyboard.press("Control+y");
+    await idle();
+    const ucRedo = await mp.evaluate(() => window.__sv.modeller.mode.draft?.depth?.v);
+    await mp.keyboard.press("Control+z");
+    await idle();
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await idle();
+    const ucDoc = await mp.evaluate(() => window.__sv.model.store.doc.features.find(f => f.id === "cpe").depth.v);
+    check(ucSet === 15 && ucUndo.kind === "feature" && ucUndo.v === 10 && /^10/.test(ucUndo.box) && ucUndo.label === ucLabel && ucRedo === 15 && ucDoc === 10,
+      `model 1.351: Ctrl+Z in the open extrude puts the depth back to 10 without leaving it or touching the document's undo, Ctrl+Y brings 15 back (${JSON.stringify([ucLabel, ucSet, ucUndo, ucRedo, ucDoc])})`);
+    // FR-UI-112: command tooltips: label, shortcut key and description; a disabled button says why.
+    await mp.click("#cm-t-features");
+    await mp.hover('#mc-tools [data-c="fillet"]');
+    await mp.waitForSelector("#cm-tip", { timeout: 3000 }).catch(() => {});
+    const ttFillet = await mp.evaluate(() => ({ h: document.querySelector("#cm-tip .cm-tip-h")?.textContent, d: document.querySelector("#cm-tip .cm-tip-d")?.textContent, title: document.querySelector('#mc-tools [data-c="fillet"]').getAttribute("title") }));
+    await mp.mouse.move(5, 5);
+    await mp.hover('#mc-quick [data-c="filter"]');
+    await mp.waitForSelector("#cm-tip kbd", { timeout: 3000 }).catch(() => {});
+    const ttKey = await mp.evaluate(() => document.querySelector("#cm-tip kbd")?.textContent);
+    await mp.mouse.move(5, 5);
+    await mp.evaluate(() => window.__sv.modeller.editFeature("cpe"));
+    await mp.waitForSelector('#mc-pm input[data-num="depth"]');
+    await idle();
+    const udBox = await mp.evaluate(() => { const r = document.querySelector('#mc-quick [data-c="undo"]').getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; });
+    await mp.mouse.move(udBox[0], udBox[1]);
+    await mp.waitForSelector("#cm-tip .cm-tip-w", { timeout: 3000 }).catch(() => {});
+    const ttWhy = await mp.evaluate(() => ({ dis: document.querySelector('#mc-quick [data-c="undo"]').disabled, w: document.querySelector("#cm-tip .cm-tip-w")?.textContent }));
+    await mp.mouse.move(5, 5);
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await idle();
+    const ttGone = await mp.evaluate(() => ({ tip: !!document.querySelector("#cm-tip"), title: document.querySelector('#mc-tools [data-c="fillet"]')?.getAttribute("title") }));
+    check(ttFillet.h === "Fillet" && ttFillet.d === "Round edges" && ttFillet.title === null && ttKey === "F5" && ttWhy.dis && ttWhy.w === "Unavailable: Nothing to undo in this command." && !ttGone.tip && ttGone.title === "Round edges",
+      `model 1.351: command tooltips show the label, the description and the shortcut key, and a disabled Undo in a command says why (${JSON.stringify([ttFillet, ttKey, ttWhy, ttGone])})`);
+    // FR-UI-116: units in the status bar: inches for the part as one undo step, Ctrl+Z goes back to mm.
+    await mp.click("#st-units");
+    const unMenu = await mp.evaluate(() => [...document.querySelectorAll("#st-units-menu [data-u]")].map(b => b.dataset.u).join());
+    await mp.click('#st-units-menu [data-u="in"]');
+    await idle();
+    const unIn = await mp.evaluate(() => ({ doc: window.__sv.model.store.doc.units.length, btn: document.querySelector("#st-units").textContent, sel: document.querySelector("#units").value, undo: window.__sv.model.store.undoLabel, menu: !!document.querySelector("#st-units-menu") }));
+    await mp.evaluate(() => document.activeElement?.blur());
+    await mp.keyboard.press("Control+z");
+    await idle();
+    const unBack = await mp.evaluate(() => ({ doc: window.__sv.model.store.doc.units.length, btn: document.querySelector("#st-units").textContent }));
+    check(unMenu === "mm,cm,m,in,ft" && unIn.doc === "in" && /^in /.test(unIn.btn) && unIn.sel === "in" && unIn.undo === "Units: in" && !unIn.menu && unBack.doc === "mm" && /^mm /.test(unBack.btn),
+      `model 1.351: the status bar unit button sets the part's units to inches as one undo step; Ctrl+Z goes back to mm (${JSON.stringify([unMenu, unIn, unBack])})`);
+    // FR-UI-105: Tab hides the body under the cursor, Shift+Tab shows it again, Ctrl+Shift+Tab held + click shows it too.
+    await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
+    const thAt = await mp.evaluate(() => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(), s = new (v.camera.position.constructor)(210, 210, 10).project(v.camera); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; });
+    await mp.evaluate(() => document.activeElement?.blur());
+    await mp.mouse.move(thAt[0] + 1, thAt[1] + 1);
+    await mp.mouse.move(thAt[0], thAt[1]);
+    const thKey = await mp.evaluate(([x, y]) => window.__sv.modeller.bodyAt(x, y), thAt);
+    const thBodies = await mp.evaluate(() => window.__sv.model.last().bodies.length);
+    await mp.keyboard.press("Tab");
+    await idle();
+    const thHid = await mp.evaluate(k => ({ hidden: !!window.__sv.model.store.doc.bodies?.[k]?.hidden, undo: window.__sv.model.store.undoLabel, focus: document.activeElement === document.body }), thKey);
+    await mp.keyboard.press("Shift+Tab");
+    await idle();
+    const thShown = await mp.evaluate(k => !window.__sv.model.store.doc.bodies?.[k]?.hidden, thKey);
+    await mp.keyboard.press("Tab");
+    await idle();
+    await mp.keyboard.down("Control"); await mp.keyboard.down("Shift"); await mp.keyboard.down("Tab");
+    const thGhost = await mp.evaluate(() => window.__sv.modeller.ghostGroup.visible);
+    await mp.mouse.click(thAt[0], thAt[1]);
+    await mp.keyboard.up("Tab"); await mp.keyboard.up("Shift"); await mp.keyboard.up("Control");
+    await idle();
+    const thClick = await mp.evaluate(k => ({ shown: !window.__sv.model.store.doc.bodies?.[k]?.hidden, ghosts: window.__sv.modeller.ghostGroup.visible }), thKey);
+    check(thBodies >= 2 && thKey && thHid.hidden && thHid.undo === "Hide body" && thHid.focus && thShown && thGhost && thClick.shown && !thClick.ghosts,
+      `model 1.351: Tab hides the body under the cursor (one undo step), Shift+Tab shows it, holding Ctrl+Shift+Tab draws it see-through and a click shows it (${JSON.stringify([thBodies, thKey, thHid, thShown, thGhost, thClick])})`);
+    // 1.351 (FR-SEL-011): colour-coded selection boxes: Draft's neutral plane and faces boxes get their own colours, the picked faces are drawn in the faces box's colour with a tag naming it.
+    await mp.evaluate(() => window.__sv.modeller.command("draft"));
+    await mp.waitForSelector('#mc-pm .pm-box[data-focus="faces"]');
+    await mp.evaluate(() => {
+      const m = window.__sv.modeller, d = m.mode.draft, names = window.__sv.model.last().faceNames;
+      const side = names.find(n => n.startsWith("cpe:") && /side|:l\d|s\d/.test(n)) ?? names.find(n => n.startsWith("cpe:"));
+      d.plane = { std: "XY" }; d.faces = [{ name: side }]; m.focus = "faces"; m.draftChanged();
+    });
+    await idle();
+    await mp.waitForTimeout(100);
+    const bx = await mp.evaluate(() => {
+      const c = sel => getComputedStyle(document.querySelector(sel)).getPropertyValue("--box-c").trim();
+      const tag = document.querySelector('#mc-layer .mc-boxtag[data-box="faces"]');
+      return { plane: c('#mc-pm .pm-box[data-focus="nplane"]'), faces: c('#mc-pm .pm-box[data-focus="faces"]'), mesh: window.__sv.modeller.decor.children.some(o => o.userData.boxPick === "faces"), tag: tag?.textContent, tagC: tag && getComputedStyle(tag).getPropertyValue("--box-c").trim() };
+    });
+    await mp.evaluate(() => window.__sv.modeller.exitMode(false));
+    await idle();
+    check(bx.plane && bx.faces && bx.plane !== bx.faces && bx.mesh && bx.tag === "Faces to draft" && bx.tagC === bx.faces,
+      `model 1.351: Draft's selection boxes have their own colours and the picked face is drawn in the faces box's colour with a "Faces to draft" tag (${JSON.stringify(bx)})`);
+    // 1.387 (FR-SEL-011, AT-UX-6): the other panels' boxes: the Hole Wizard's face is drawn in the Face box's colour with its tag, and an extrude's Start at / Up to faces get one box each.
+    await mp.evaluate(() => window.__sv.modeller.command("hole"));
+    await mp.waitForSelector('#mc-pm .pm-box[data-focus="hplane"]', { state: "attached" });
+    await mp.evaluate(() => {
+      const m = window.__sv.modeller, d = m.mode.draft, names = window.__sv.model.last().faceNames;
+      d.plane = { face: { name: names.find(n => n.startsWith("cpe:")) } }; m.draftChanged();
+    });
+    await idle();
+    await mp.waitForTimeout(100);
+    const bx2 = await mp.evaluate(() => {
+      const m = window.__sv.modeller, names = window.__sv.model.last().faceNames;
+      const tag = document.querySelector('#mc-layer .mc-boxtag[data-box="hplane"]');
+      const ex = m.boxPicks({ type: "extrude", end: "upto", upTo: { face: { name: names[0] } }, start: "surface", startRef: { face: { name: names[1] } } });
+      return { c: getComputedStyle(document.querySelector('#mc-pm .pm-box[data-focus="hplane"]')).getPropertyValue("--box-c").trim(), mesh: m.decor.children.some(o => o.userData.boxPick === "hplane"), tag: tag?.textContent, tagC: tag && getComputedStyle(tag).getPropertyValue("--box-c").trim(), ex: ex.map(g => `${g.focus}:${g.label}:${g.faces.length}`).join() };
+    });
+    await mp.evaluate(() => window.__sv.modeller.exitMode(false));
+    await idle();
+    check(bx2.c && bx2.mesh && bx2.tag === "Face" && bx2.tagC === bx2.c && bx2.ex === "start:Start at:1,upto:Up to:1",
+      `model 1.387: the Hole Wizard's face is drawn in the Face box's colour with a "Face" tag, and an extrude's Start at and Up to faces have their own boxes (${JSON.stringify(bx2)})`);
+    // 1.354 (FR-UI-109): selection box flow: a one-item box that has just been filled hands focus to the next empty required box, also an earlier one; a panel opens on its first empty box.
+    await mp.evaluate(() => window.__sv.modeller.command("lpattern"));
+    await mp.waitForSelector('#mc-pm .pm-box[data-focus="dir"]');
+    const flow = await mp.evaluate(() => {
+      const m = window.__sv.modeller, d = m.mode.draft, open = m.mode.focus === (d.features.length ? "dir" : "seeds");
+      d.features = []; delete d.dir; m.mode.focus = "dir"; d.dir = { axis: "x" }; m.draftChanged();
+      const after = m.mode.focus;
+      const sel = document.querySelector('#mc-pm .pm-box.focus')?.dataset.focus;
+      const edit = m.openFocus({ type: "csys", id: "c", name: "c", origin: { point: "p" } }, undefined);
+      const keep = m.openFocus({ type: "draft", id: "d", name: "d", plane: { std: "XY" }, faces: [] }, "faces");
+      return { open, after, sel, edit, keep };
+    });
+    await mp.evaluate(() => window.__sv.modeller.exitMode(false));
+    await idle();
+    check(flow.open && flow.after === "seeds" && flow.sel === "seeds" && flow.edit === "cz" && flow.keep === "faces",
+      `model 1.354: selection boxes hand focus on by themselves (${JSON.stringify(flow)})`);
+    // 1.354 (FR-SEL-010): G opens the magnifying glass at the cursor; the wheel inside changes its factor, pointer events inside
+    // reach the view at the magnified point, G or Esc closes it.
+    {
+      const vb = await mp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+      await mp.mouse.move(vb.x, vb.y);
+      await mp.evaluate(() => window.__sv.viewer.renderer.domElement.focus());
+      await mp.keyboard.press("g");
+      await mp.waitForSelector(".mag-lens");
+      await mp.waitForTimeout(150);
+      const lens = await mp.evaluate(() => {
+        const c = document.querySelector(".mag-lens"), x = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+        let lit = 0; for (let i = 3; i < x.length; i += 4) if (x[i]) lit++;
+        return { lit, f: document.querySelector(".mag-ring").dataset.f };
+      });
+      await mp.mouse.wheel(0, -100);
+      await mp.waitForTimeout(50);
+      const f2 = await mp.evaluate(() => document.querySelector(".mag-ring").dataset.f);
+      const probe = mp.evaluate(() => new Promise(res => window.__sv.viewer.renderer.domElement.addEventListener("pointermove", e => res({ x: e.clientX, y: e.clientY }), { once: true })));
+      await mp.mouse.move(vb.x + 50, vb.y);
+      const moved = await probe;
+      await mp.keyboard.press("Escape");
+      const closed = await mp.evaluate(() => !document.querySelector(".mag-lens"));
+      const fac = Number(f2.slice(1));
+      check(lens.lit > 200 && lens.f === "×4" && fac === 5 && Math.abs(moved.x - (vb.x + 50 / fac)) < 1.5 && Math.abs(moved.y - vb.y) < 1.5 && closed,
+        `model 1.354: G opens the magnifying glass, the wheel changes its factor, a move inside reaches the view at the magnified point and Esc closes it (${JSON.stringify({ lens, f2, moved, vb, closed })})`);
+    }
+    // 1.354 (FR-SEL-009): a pick shows breadcrumbs (face → feature → sketch → body → part); hovering a crumb lights it up,
+    // a click selects its tree row, Shift+D brings the crumbs to the cursor, Esc hides them.
+    {
+      const vb = await mp.evaluate(() => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(), s = new (v.camera.position.constructor)(210, 210, 10).project(v.camera); return { x: r.left + ((s.x + 1) / 2) * r.width, y: r.top + ((1 - s.y) / 2) * r.height }; });
+      await mp.evaluate(() => { const m = window.__sv.modeller; m.selected = null; m.renderTree(); m.drawDecor(); });
+      await mp.mouse.click(vb.x, vb.y);
+      await mp.waitForSelector("#mc-crumbs", { timeout: 5000 }).catch(() => {});
+      const crumbs = await mp.evaluate(() => [...document.querySelectorAll("#mc-crumbs .mc-crumb")].map(b => b.dataset.id ?? "·" + b.textContent));
+      const feat = crumbs.find(c => c !== "part" && !c.startsWith("·") && !c.startsWith("body:"));
+      let hov = null, picked = null;
+      if (feat) {
+        await mp.hover(`#mc-crumbs .mc-crumb[data-id="${feat}"]`);
+        hov = await mp.evaluate(() => window.__sv.modeller.hoverGroup.children.length);
+        await mp.click(`#mc-crumbs .mc-crumb[data-id="${feat}"]`);
+        picked = await mp.evaluate(() => ({ sel: window.__sv.modeller.selected, row: document.querySelector("#mc-tree .ft-row.sel")?.dataset.id }));
+      }
+      await mp.mouse.move(vb.x - 40, vb.y + 30);
+      await mp.keyboard.press("Shift+D");
+      const near = await mp.evaluate(p => { const r = document.querySelector("#mc-crumbs")?.getBoundingClientRect(); return r && { at: document.querySelector("#mc-crumbs").classList.contains("at-cursor"), dx: Math.round(r.left - p.x), dy: Math.round(r.top - p.y), w: Math.round(r.width) }; }, { x: vb.x - 40, y: vb.y + 30 });
+      await mp.keyboard.press("Escape");
+      const gone = await mp.evaluate(() => !document.querySelector("#mc-crumbs"));
+      check(crumbs[0]?.startsWith("·") && feat && crumbs.some(c => c.startsWith("body:")) && crumbs.at(-1) === "part" && hov > 0 && picked?.sel === feat && picked.row === feat
+        && near?.at && near.dx <= 12 && near.dx + near.w >= 0 && near.dy >= 0 && near.dy < 40 && gone,
+        `model 1.354: picking a face shows breadcrumbs up to the part; a crumb lights up on hover and selects its row, Shift+D brings them to the cursor, Esc hides them (${JSON.stringify({ crumbs, hov, picked, near, gone })})`);
+    }
+    // 1.354 (FR-UI-110): value callouts: Shell's thickness shows on the model; a click opens the Modify box and the typed value goes to the panel and the feature.
+    {
+      await mp.evaluate(() => window.__sv.modeller.command("shell"));
+      await mp.waitForSelector('#mc-pm input[data-num="thickness"]');
+      await mp.evaluate(() => {
+        const m = window.__sv.modeller, d = m.mode.draft, names = window.__sv.model.last().faceNames;
+        d.faces = [{ name: names.find(n => n.startsWith("cpe:")) }]; m.draftChanged();
+      });
+      await idle();
+      await mp.waitForSelector('#mc-layer .mc-vcall[data-v="thickness"] .mc-handle', { timeout: 8000 }).catch(() => {});
+      const before = await mp.evaluate(() => document.querySelector('#mc-layer .mc-vcall[data-v="thickness"] .mc-handle')?.textContent ?? null);
+      if (before) {
+        await mp.click('#mc-layer .mc-vcall[data-v="thickness"] .mc-handle');
+        await mp.waitForSelector(".mod-box .mod-in");
+        await mp.fill(".mod-box .mod-in", "2.5");
+        await mp.keyboard.press("Enter");
+        await idle();
+      }
+      const after = await mp.evaluate(() => ({ v: window.__sv.modeller.mode.draft.thickness?.v, inp: document.querySelector('#mc-pm input[data-num="thickness"]')?.value, call: document.querySelector('#mc-layer .mc-vcall[data-v="thickness"] .mc-handle')?.textContent, box: !!document.querySelector(".mod-box") }));
+      await mp.evaluate(() => window.__sv.modeller.exitMode(false));
+      await idle();
+      check(before && after.v === 2.5 && after.inp === "2.5" && /2\.5/.test(after.call ?? "") && !after.box,
+        `model 1.354: Shell's thickness callout on the model opens the Modify box and the typed value reaches the panel and the feature (${JSON.stringify({ before, after })})`);
+    }
+    // 1.371 (FR-UI-022): heads-up view bar: with a part open the view groups sit in #hud at the top centre of the view; its Previous view button works.
+    {
+      const hud = await mp.evaluate(() => { const h = document.querySelector("#hud"), r = h?.getBoundingClientRect(), v = document.querySelector("#viewport").getBoundingClientRect(); return h && { shown: !h.hidden, views: !!h.querySelector("#views"), mode: !!h.querySelector("#display-mode"), proj: !!h.querySelector("#projection"), centred: Math.abs((r.left + r.right) / 2 - (v.left + v.right) / 2) < 4, inHeader: !!document.querySelector(".topbar #views") }; });
+      await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(0, 0, 1), false); v.viewFrom(new (v.camera.position.constructor)(1, 0, 0), false); });
+      await mp.click('#hud [data-hud="prev"]');
+      await mp.waitForTimeout(500);
+      const dir = await mp.evaluate(() => { const v = window.__sv.viewer, d = v.camera.position.clone().sub(v.controls.target).normalize(); return d.toArray().map(x => Math.round(x * 100) / 100); });
+      check(hud?.shown && hud.views && hud.mode && hud.proj && hud.centred && !hud.inHeader && dir[2] > 0.99,
+        `model 1.371: the heads-up view bar holds the view groups at the top centre of the view and Previous view goes back (${JSON.stringify({ hud, dir })})`);
+    }
+    // Exam #78: after a click on Front in the heads-up bar, ← turns the view (the bar was a toolbar, whose arrows did nothing).
+    {
+      // The button may be folded away at narrow widths: click it in the page and leave the focus on it, as a click does.
+      await mp.$eval('#hud [data-view="front"]', b => { b.focus(); b.click(); });
+      await mp.waitForTimeout(900);
+      const look = () => mp.evaluate(() => { const v = window.__sv.viewer; return v.camera.position.clone().sub(v.controls.target).normalize().toArray(); });
+      const d0 = await look();
+      await mp.keyboard.press("ArrowLeft");
+      await mp.waitForTimeout(900);
+      const d1 = await look();
+      const turn = Math.acos(Math.min(1, d0.reduce((s, x, i) => s + x * d1[i], 0))) * 180 / Math.PI;
+      const role = await mp.evaluate(() => document.querySelector("#hud").getAttribute("role"));
+      check(Math.abs(turn - 15) < 1 && role === "group", `exam #78: ← turns the view after a click on the heads-up Front button (${turn.toFixed(2)}°, role ${role})`);
+      await mp.evaluate(() => document.activeElement?.blur());
+    }
+    // 1.377 (FR-UI-022): Section view in the heads-up bar cuts the model, a second click turns the cut off (the plane stays), a third on again; the bar keeps clear of the ✓ ✕ corner.
+    {
+      const st = () => mp.evaluate(() => { const b = document.querySelector('#hud [data-hud="section"]'), ps = window.__sv.section.planes; return { n: ps.length, on: ps.filter(p => p.enabled).length, pressed: b.getAttribute("aria-pressed") }; });
+      await mp.click('#hud [data-hud="section"]');
+      const s1 = await st();
+      await mp.click('#hud [data-hud="section"]');
+      const s2 = await st();
+      await mp.click('#hud [data-hud="section"]');
+      const s3 = await st();
+      await mp.evaluate(() => document.querySelector("#sec-clear").click());
+      const s4 = await st();
+      // While a command is open the bar keeps clear of the ✓ ✕ corner.
+      await runCmd(mp, "Shell");
+      await mp.waitForSelector("#mc-confirm:not([hidden])");
+      const clear = await mp.evaluate(() => { const h = document.querySelector("#hud").getBoundingClientRect(), c = document.querySelector("#mc-confirm").getBoundingClientRect(); return { hud: Math.round(h.right), ok: Math.round(c.left), free: h.right <= c.left || h.bottom <= c.top }; });
+      await mp.click("#mc-cancel");
+      check(s1.n === 1 && s1.on === 1 && s1.pressed === "true" && s2.n === 1 && s2.on === 0 && s2.pressed === "false" && s3.on === 1 && s3.pressed === "true" && s4.n === 0 && s4.pressed === "false" && clear.free,
+        `model 1.377: Section view in the heads-up bar turns the cut on and off, and the bar keeps clear of the confirmation corner (${JSON.stringify({ s1, s2, s3, s4, clear })})`);
+    }
+    // 1.371 (FR-UI-104): named views: Space → Save view stores the camera in the part; the picker brings it back.
+    {
+      const vb = await mp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); document.activeElement?.blur(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+      await mp.mouse.move(vb.x, vb.y);
+      await mp.keyboard.press(" ");
+      await mp.waitForSelector(".nav-pick .nav-vname");
+      await mp.fill(".nav-pick .nav-vname", "Close up");
+      await mp.press(".nav-pick .nav-vname", "Enter");
+      const saved = await mp.evaluate(() => ({ views: window.__sv.model.store.doc.views, cam: window.__sv.viewer.camera.position.toArray(), dirty: window.__sv.model.store.dirty }));
+      await mp.keyboard.press("Escape");
+      const shut = await mp.evaluate(() => !document.querySelector(".nav-pick"));
+      await mp.evaluate(() => { document.activeElement?.blur(); const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(0, 0, 1), false); });
+      await mp.waitForTimeout(100);
+      await mp.keyboard.press(" ");
+      await mp.waitForSelector('.nav-pick [data-nv="view:Close up"]');
+      await mp.click('.nav-pick [data-nv="view:Close up"]');
+      await mp.waitForTimeout(600);
+      const back = await mp.evaluate(() => window.__sv.viewer.camera.position.toArray());
+      const d = Math.hypot(...back.map((x, i) => x - saved.cam[i]));
+      check(saved.views?.length === 1 && saved.views[0].name === "Close up" && saved.dirty && shut && d < 1e-3,
+        `model 1.371: Save view in the Space picker stores the camera in the part and picking the named view brings it back (${JSON.stringify({ n: saved.views?.length, d })})`);
+    }
+    // 1.371 (FR-UI-115): a feature picked in the tree shows its dimensions and its own values (angle, radius…) on the model;
+    // a value opens the Modify box and ✓ changes the feature as one undo step.
+    {
+      // A shell (thickness) to show: the part has only sketches and extrudes so far.
+      await mp.evaluate(() => window.__sv.modeller.command("shell"));
+      await mp.waitForSelector('#mc-pm input[data-num="thickness"]');
+      await mp.evaluate(() => {
+        const m = window.__sv.modeller, d = m.mode.draft, names = window.__sv.model.last().faceNames;
+        d.faces = [{ name: names.find(n => n.startsWith("cpe:")) }]; m.draftChanged();
+      });
+      await idle();
+      await mp.evaluate(() => window.__sv.modeller.ok());
+      await idle();
+      const pick = await mp.evaluate(() => {
+        const m = window.__sv.modeller, d = window.__sv.model.store.doc;
+        const f = d.features.find(x => m.featureValues(x).some(v => v.q !== "count") && m.calloutPoint(x));
+        const fv = f && m.featureValues(f).find(v => v.q !== "count");
+        return f ? { id: f.id, type: f.type, key: fv.key, q: fv.q, v: f[fv.key].v } : { types: d.features.map(x => x.type) };
+      });
+      let ival = null, after = null, undone = null;
+      if (pick.id) {
+        await treeClick(mp, `#mc-tree .ft-row[data-id="${pick.id}"]`);
+        await mp.waitForSelector(`#mc-layer .mc-ival[data-v="${pick.key}"] .mc-handle`, { timeout: 5000 }).catch(() => {});
+        ival = await mp.evaluate(k => document.querySelector(`#mc-layer .mc-ival[data-v="${k}"] .mc-handle`)?.textContent ?? null, pick.key);
+        if (ival) {
+          const nv = pick.q === "angle" ? "33" : String(Math.round(pick.v * 10) / 10 + 0.5);
+          await mp.click(`#mc-layer .mc-ival[data-v="${pick.key}"] .mc-handle`);
+          await mp.waitForSelector(".mod-box .mod-in");
+          await mp.fill(".mod-box .mod-in", nv);
+          await mp.keyboard.press("Enter");
+          await idle();
+          after = await mp.evaluate(p => ({ v: window.__sv.model.store.doc.features.find(x => x.id === p.id)[p.key].v, undo: window.__sv.model.store.undoLabel, box: !!document.querySelector(".mod-box") }), pick);
+          after.want = pick.q === "angle" ? 33 * Math.PI / 180 : Number(nv);
+          await mp.evaluate(() => window.__sv.modeller.undo());
+          await idle();
+          undone = await mp.evaluate(p => window.__sv.model.store.doc.features.find(x => x.id === p.id)[p.key].v, pick);
+        }
+      }
+      await mp.keyboard.press("Escape");
+      // Take the shell off again so the checks below see the part as before.
+      await mp.evaluate(() => { const st = window.__sv.model.store; if (st.doc.features.at(-1)?.type === "shell") window.__sv.modeller.undo(); });
+      await idle();
+      check(!!ival && after && Math.abs(after.v - after.want) < 1e-9 && !after.box && Math.abs(undone - pick.v) < 1e-9,
+        `model 1.371: a feature picked in the tree shows its values on the model; the Modify box changes it as one undo step (${JSON.stringify({ pick, ival, after, undone })})`);
+    }
+    // FR-UI-100: a middle click on the model sets the rotation centre; orbiting keeps that point still on screen; a middle click on empty space clears it.
+    await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
+    const pvAt = await mp.evaluate(() => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(), s = new (v.camera.position.constructor)(210, 210, 10).project(v.camera); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; });
+    await mp.mouse.click(pvAt[0], pvAt[1], { button: "middle" });
+    await mp.waitForTimeout(100);
+    const pvScreen = () => mp.evaluate(() => { const v = window.__sv.viewer; if (!v.pivot) return null; const r = v.renderer.domElement.getBoundingClientRect(), s = v.pivot.clone().project(v.camera); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; });
+    const pvSet = await mp.evaluate(() => { const v = window.__sv.viewer; return v.pivot && { p: v.pivot.toArray().map(x => Math.round(x)), mark: !!v.scene.children.find(o => o.userData.pivot), q: v.camera.quaternion.toArray() }; });
+    const pv0 = await pvScreen();
+    const cvBox = await mp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return [r.left + r.width * 0.3, r.top + r.height * 0.7]; });
+    await mp.mouse.move(cvBox[0], cvBox[1]);
+    await mp.mouse.down();
+    for (let k = 1; k <= 8; k++) await mp.mouse.move(cvBox[0] + k * 15, cvBox[1] - k * 6);
+    await mp.mouse.up();
+    await mp.waitForTimeout(800);
+    const pv1 = await pvScreen();
+    const pvTurned = await mp.evaluate(q => { const a = window.__sv.viewer.camera.quaternion.toArray(); return Math.abs(a.reduce((s, x, i) => s + x * q[i], 0)) < 0.9999; }, pvSet?.q ?? [0, 0, 0, 1]);
+    const cvCorner = await mp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return [r.right - 60, r.bottom - 60]; });
+    await mp.mouse.click(cvCorner[0], cvCorner[1], { button: "middle" });
+    await mp.waitForTimeout(100);
+    const pvGone = await mp.evaluate(() => ({ pivot: window.__sv.viewer.pivot, mark: !!window.__sv.viewer.scene.children.find(o => o.userData.pivot) }));
+    check(pvSet && Math.hypot(pvSet.p[0] - 210, pvSet.p[1] - 210) < 15 && pvSet.mark && pvTurned && pv0 && pv1 && Math.hypot(pv1[0] - pv0[0], pv1[1] - pv0[1]) < 1.5 && pvGone.pivot === null && !pvGone.mark,
+      `model 1.351: a middle click sets the rotation centre with a marker, orbiting turns about it (it stays put on screen), a middle click on empty space clears it (${JSON.stringify([pvSet, pv0, pv1, pvTurned, pvGone])})`);
     await ctx.close();
   }
 
   // --- Part modelling 1.21.0: reference axes and points, S shortcut bar, sketch box selection ---
-  if (inShard(3)) {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -2709,7 +3623,49 @@ try {
     await idle();
     const vLp = await vol(), stLp = await lastSt();
     check(patMenu === "Linear pattern|Circular pattern|Mirror|Sketch driven pattern|Table driven pattern" && Math.abs(vLp - (120000 - 4 * hole)) < 1 && stLp === "lpattern:ok", `model 1.23: linear pattern of a hole along a picked edge, 4 × 20 mm (${patMenu}, ${Math.round(vLp)}, ${stLp})`);
+    // 1.502: Instances to skip picked in the view: a dot per instance; a click skips it, another brings it back.
+    {
+      const pid = await mp.evaluate(() => window.__sv.model.store.doc.features.at(-1).id);
+      await mp.evaluate(id => window.__sv.modeller.editFeature(id), pid);
+      await idle();
+      await mp.click('#mc-pm [data-focus="skip"]');
+      await mp.waitForFunction(() => document.querySelectorAll("#mc-layer .pat-spot").length === 3, null, { timeout: 15000 }).catch(() => {});
+      const dots = await mp.evaluate(() => [...document.querySelectorAll("#mc-layer .pat-spot")].map(d => d.dataset.spot).join());
+      await mp.click('#mc-layer .pat-spot[data-spot="2"]');
+      await idle();
+      const vSkip = await vol();
+      const off = await mp.evaluate(() => [document.querySelector('#mc-layer .pat-spot[data-spot="2"]')?.classList.contains("off"), document.querySelector('#mc-pm input[data-k="skip"]')?.value]);
+      await mp.click('#mc-layer .pat-spot[data-spot="2"]');
+      await idle();
+      const vBack = await vol();
+      // Up to distance: the 20 typed becomes the reach of the last instance (3 gaps of 6.67 mm), then back.
+      await mp.selectOption('#mc-pm select[data-k="total"]', "1");
+      await idle();
+      const upTo = await mp.evaluate(() => [document.querySelector('#mc-pm input[data-num="spacing"]')?.closest("label")?.querySelector("span")?.textContent]);
+      const vUp = await vol();
+      await mp.selectOption('#mc-pm select[data-k="total"]', "");
+      await idle();
+      const vBack2 = await vol();
+      check(upTo[0] === "Distance" && Math.abs(vUp - vLp) > 1 && Math.abs(vBack2 - vLp) < 1, `model 1.502: linear pattern Up to distance (${upTo}, ${Math.round(vUp)}, ${Math.round(vBack2)})`);
+      // 1.503: Up to reference: Right (x = 0) picked in the tree; the last instance lands on it, then back to spacing.
+      await mp.selectOption('#mc-pm select[data-k="total"]', "ref");
+      await idle();
+      const refFocus = await mp.evaluate(() => !!document.querySelector('#mc-pm [data-focus="pref"]'));
+      await treeClick(mp, '#mc-tree .ft-row[data-id="std:YZ"]');
+      await idle();
+      const refX = await mp.evaluate(id => { const sp = window.__sv.model.last().spots?.[id] ?? []; return [document.querySelector('#mc-pm [data-focus="pref"]')?.textContent, Math.max(...sp.map(s => s.p[0]))]; }, pid);
+      await mp.selectOption('#mc-pm select[data-k="total"]', "");
+      await idle();
+      const vBack3 = await vol();
+      check(refFocus && /Right/.test(refX[0] ?? "") && Math.abs(refX[1]) < 1e-3 && Math.abs(vBack3 - vLp) < 1, `model 1.503: linear pattern Up to reference stops on Right (${refFocus}, ${refX}, ${Math.round(vBack3)})`);
+      await mp.click("#mc-ok");
+      await idle();
+      check(dots === "1,2,3" && Math.abs(vSkip - (120000 - 3 * hole)) < 1 && off[0] === true && off[1] === "2" && Math.abs(vBack - vLp) < 1, `model 1.502: Instances to skip clicked in the view (${dots}, ${Math.round(vSkip)}, ${off}, ${Math.round(vBack)})`);
+    }
     // Mirror the pattern about Right (YZ): three mirrored holes land on existing ones and are skipped with a warning.
+    // Nothing stays selected after OK (FR-SEL-012), so the pattern is picked in the tree first, as in other CAD apps.
+    const lpId = await mp.evaluate(() => window.__sv.model.store.doc.features.filter(f => f.type === "lpattern").at(-1)?.id);
+    await treeClick(mp, `#mc-tree .ft-row[data-id="${lpId}"]`);
     await mp.click('#mc-tools [data-fly="pattern"]');
     await mp.click("#mc-menu button:nth-child(3)");
     await treeClick(mp, '#mc-tree .ft-row[data-id="std:YZ"]');
@@ -2745,6 +3701,148 @@ try {
     await mp.selectOption('#mc-pm select[data-k="kind"]', "tapped");
     await idle();
     const holePanel = await mp.evaluate(() => ({ n: document.querySelector('#mc-pm [data-focus="pts"]')?.textContent, d: document.querySelector('#mc-pm input[data-num="diameter"]')?.value, td: document.querySelector('#mc-pm input[data-num="threadDepth"]')?.value }));
+    // 1.516: a through tapped hole's thread can run through all too: the depth box goes, the 3D thread is the plate's 20 mm.
+    const thrSel = await mp.evaluate(() => document.querySelector('#mc-pm select[data-k="threadEnd"]')?.value ?? null);
+    await mp.selectOption('#mc-pm select[data-k="threadEnd"]', "through").catch(() => {});
+    await idle();
+    const thrAll = await mp.evaluate(() => ({ box: !!document.querySelector('#mc-pm input[data-num="threadDepth"]'), len: Object.values(window.__sv.model.last()?.frames ?? {}).find(f => f.len)?.len ?? null }));
+    check(thrSel === "blind" && !thrAll.box && Array.isArray(thrAll.len) && thrAll.len.length === 2 && thrAll.len.every(x => Math.abs(x - 20) < 0.01), `model 1.516: tapped hole thread end Through all (${thrSel}, ${JSON.stringify(thrAll)})`);
+    // 1.550: a tapped hole turned blind drills past its 12 mm thread (M6: 15 mm, not the through hole's 10);
+    // a typed drill depth short of the thread plus the tap's lead is flagged.
+    await mp.selectOption('#mc-pm select[data-k="end"]', "blind");
+    await idle();
+    const tapD = await mp.evaluate(() => ({ d: window.__sv.model.mode().draft.depth.v, td: window.__sv.model.mode().draft.threadDepth?.v, warn: !!document.querySelector('#mc-pm [data-warn="tapdepth"]') }));
+    await mp.fill('#mc-pm input[data-num="depth"]', "12");
+    await mp.press('#mc-pm input[data-num="depth"]', "Tab");
+    await idle();
+    const tapW = await mp.evaluate(() => ({ d: window.__sv.model.mode().draft.depth.v, warn: !!document.querySelector('#mc-pm [data-warn="tapdepth"]') }));
+    await mp.selectOption('#mc-pm select[data-k="end"]', "through");
+    await idle();
+    check(tapD.d === 15 && tapD.td === 12 && !tapD.warn && tapW.d === 12 && tapW.warn, `model 1.550: blind tapped hole drills past its thread (${JSON.stringify({ tapD, tapW })})`);
+    // Hole standards: ANSI inch UNC takes the size nearest M6 (1/4-20, tap drill #7 = 5.105 mm), ISO metric brings M6 back.
+    await mp.selectOption('#mc-pm select[data-k="standard"]', "unc").catch(() => {});
+    await idle();
+    const unc = await mp.evaluate(() => ({ s: document.querySelector('#mc-pm select[data-k="size"]')?.value, d: parseFloat(document.querySelector('#mc-pm input[data-num="diameter"]')?.value), n: document.querySelectorAll('#mc-pm select[data-k="size"] option').length }));
+    await mp.selectOption('#mc-pm select[data-k="standard"]', "iso").catch(() => {});
+    await idle();
+    const iso = await mp.evaluate(() => ({ s: document.querySelector('#mc-pm select[data-k="size"]')?.value, d: parseFloat(document.querySelector('#mc-pm input[data-num="diameter"]')?.value), n: document.querySelectorAll('#mc-pm select[data-k="size"] option').length }));
+    check(unc.s === "1/4-20 UNC" && Math.abs(unc.d - 5.105) < 1e-3 && unc.n === 14 && iso.s === "M6" && iso.d === 5 && iso.n === 25, `model 1.520: hole Standard ANSI inch UNC and back to ISO metric (${JSON.stringify(unc)}, ${JSON.stringify(iso)})`);
+    // 1.528 (FR-FT-051): Thread class goes into the callout; Remove thread cuts the threaded length to the major diameter.
+    await mp.selectOption('#mc-pm select[data-k="tclass"]', "6G");
+    await idle();
+    await mp.selectOption('#mc-pm select[data-k="threadMode"]', "remove");
+    await idle();
+    const tcl = await mp.evaluate(() => { const d = window.__sv.model.mode().draft, l = window.__sv.model.last(); return { tc: d.tclass, tm: d.threadMode, callout: document.querySelector('#mc-pm .pm-hcallout')?.textContent ?? "", ok: l.statuses.every(s => s.ok), shade: window.__sv.modeller.decor.children.some(o => o.userData.threadShade) }; });
+    await mp.selectOption('#mc-pm select[data-k="threadMode"]', "");
+    await mp.selectOption('#mc-pm select[data-k="tclass"]', "6H");
+    await idle();
+    check(tcl.tc === "6G" && tcl.tm === "remove" && tcl.callout.includes("M6-6G") && tcl.ok && !tcl.shade, `model 1.528: Hole Wizard thread class and Remove thread (${JSON.stringify(tcl)})`);
+    // 1.531 (FR-FT-051): Tapered tap: 1/4-18 NPT from the table (tap drill 7/16", cone Ø at the face, thread length L2),
+    // callout without a class; Rc (BSPT) takes the nearest size; back to a tapped M6 with its thread through all.
+    await mp.selectOption('#mc-pm select[data-k="kind"]', "ptap");
+    await idle();
+    const npt = await mp.evaluate(() => { const d = window.__sv.model.mode().draft, l = window.__sv.model.last(); return { k: d.kind, s: d.size, d: d.diameter.v, td: d.taperDia?.v, len: d.threadDepth?.v, box: !!document.querySelector('#mc-pm input[data-num="taperDia"]'), callout: document.querySelector('#mc-pm .pm-hcallout')?.textContent ?? "", ok: l.statuses.every(s => s.ok), cls: !!document.querySelector('#mc-pm select[data-k="tclass"]') }; });
+    await mp.selectOption('#mc-pm select[data-k="standard"]', "bspt");
+    await idle();
+    const rc = await mp.evaluate(() => { const d = window.__sv.model.mode().draft, l = window.__sv.model.last(); return { s: d.size, d: d.diameter.v, ok: l.statuses.every(s => s.ok) }; });
+    await mp.selectOption('#mc-pm select[data-k="kind"]', "tapped");
+    await idle();
+    await mp.selectOption('#mc-pm select[data-k="size"]', "M6");
+    await idle();
+    await mp.selectOption('#mc-pm select[data-k="threadEnd"]', "through").catch(() => {});
+    await idle();
+    const back = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { k: d.kind, s: d.size, d: d.diameter.v, std: d.standard ?? null, td: d.taperDia ?? null }; });
+    check(npt.k === "ptap" && npt.s === "1/4-18 NPT" && Math.abs(npt.d - 11.1125) < 2e-3 && Math.abs(npt.td - 11.635) < 0.01 && Math.abs(npt.len - 10.206) < 0.01 && npt.box && !npt.cls && npt.callout.includes("1/4-18 NPT") && npt.ok
+      && rc.s === "Rc 1/4" && rc.d === 11.2 && rc.ok && back.k === "tapped" && back.s === "M6" && back.d === 5 && back.std === null && back.td === null,
+      `model 1.531: Hole Wizard tapered tap NPT and Rc (${JSON.stringify({ npt, rc, back })})`);
+    // 1.532 (FR-FT-051): Counterbored slot: the M6 socket head counterbore swept along the slot; back to tapped M6.
+    await mp.selectOption('#mc-pm select[data-k="kind"]', "slot");
+    await idle();
+    await mp.selectOption('#mc-pm select[data-k="slotHead"]', "cbore");
+    await idle();
+    const cslot = await mp.evaluate(() => { const d = window.__sv.model.mode().draft, l = window.__sv.model.last(); return { h: d.slotHead, cb: d.cbDia?.v, cd: d.cbDepth?.v, callout: document.querySelector('#mc-pm .pm-hcallout')?.textContent ?? "", ok: l.statuses.every(s => s.ok), box: !!document.querySelector('#mc-pm input[data-num="cbDia"]') }; });
+    await mp.selectOption('#mc-pm select[data-k="kind"]', "tapped");
+    await idle();
+    await mp.selectOption('#mc-pm select[data-k="size"]', "M6");
+    await idle();
+    await mp.selectOption('#mc-pm select[data-k="threadEnd"]', "through").catch(() => {});
+    await idle();
+    const cback = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { k: d.kind, h: d.slotHead ?? null, s: d.size }; });
+    check(cslot.h === "cbore" && cslot.cb === 11 && cslot.cd === 6.4 && cslot.box && cslot.callout.includes("⌴Ø11") && cslot.ok && cback.k === "tapped" && cback.h === null && cback.s === "M6",
+      `model 1.532: Hole Wizard counterbored slot (${JSON.stringify({ cslot, cback })})`);
+    // 1.534 (FR-FT-051): Advanced Hole: M6 counterbore over the clearance hole, a far side countersink added, then
+    // the counterbore turned into a countersink; back to tapped M6.
+    await mp.selectOption('#mc-pm select[data-k="kind"]', "adv");
+    await idle();
+    await mp.selectOption('#mc-pm select[data-k="end"]', "through");
+    await idle();
+    await mp.click('#mc-pm [data-aeadd="far"]');
+    await idle();
+    const adv = await mp.evaluate(() => { const d = window.__sv.model.mode().draft, l = window.__sv.model.last(); return { near: d.near?.map(e => e.t + ":" + (e.size ?? "") + ":" + e.dia.v).join(","), far: d.far?.map(e => e.t + ":" + e.dia.v).join(","), d: d.diameter.v, rows: document.querySelectorAll("#mc-pm .pm-aelem").length, callout: document.querySelector('#mc-pm .pm-hcallout')?.textContent ?? "", ok: l.statuses.every(s => s.ok), warn: !!document.querySelector("#mc-pm .pm-warn") }; });
+    await mp.selectOption('#mc-pm select[data-ae="near:0:t"]', "csink");
+    await idle();
+    const adv2 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft, l = window.__sv.model.last(); return { near: d.near?.map(e => e.t + ":" + e.dia.v).join(","), callout: document.querySelector('#mc-pm .pm-hcallout')?.textContent ?? "", ok: l.statuses.every(s => s.ok) }; });
+    await mp.selectOption('#mc-pm select[data-k="kind"]', "tapped");
+    await idle();
+    await mp.selectOption('#mc-pm select[data-k="size"]', "M6");
+    await idle();
+    await mp.selectOption('#mc-pm select[data-k="threadEnd"]', "through").catch(() => {});
+    await idle();
+    const aback = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { k: d.kind, near: d.near ?? null, s: d.size }; });
+    check(adv.near === "cbore:M6:11,straight:M6:6.6" && adv.far === "csink:13.44" && adv.d === 6.6 && adv.rows === 3 && adv.callout.includes("⌴Ø11") && adv.callout.includes("FAR SIDE") && adv.ok && !adv.warn
+      && adv2.near === "csink:13.44,straight:6.6" && adv2.callout.includes("⌵Ø13.44 × 90°") && adv2.ok && aback.k === "tapped" && aback.near === null && aback.s === "M6",
+      `model 1.534: Hole Wizard advanced hole (${JSON.stringify({ adv, adv2, aback })})`);
+    // 1.536 (FR-FT-051): Captive screw: the M6 kept, its thread through the cover, then Retracted screw (short retaining thread over
+    // the clearance bore, cover thickness shown) and a head counterbore; back to tapped M6.
+    await mp.selectOption('#mc-pm select[data-k="kind"]', "captive");
+    await idle();
+    const cap1 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft, l = window.__sv.model.last(); return { k: d.kind, s: d.size, d: d.diameter.v, end: d.end, callout: document.querySelector('#mc-pm .pm-hcallout')?.textContent ?? "", ok: l.statuses.every(s => s.ok) }; });
+    await mp.check('#mc-pm input[data-k="retract"]');
+    await idle();
+    await mp.check('#mc-pm input[data-k="capHead"]');
+    await idle();
+    const cap2 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft, l = window.__sv.model.last(); return { r: d.retract, hold: d.capHold?.v, lt: d.capThread?.v, cb: d.cbDia?.v, need: [...document.querySelectorAll("#mc-pm .pm-help")].some(p => /thickness needed/i.test(p.textContent ?? "")), callout: document.querySelector('#mc-pm .pm-hcallout')?.textContent ?? "", ok: l.statuses.every(s => s.ok), box: !!document.querySelector('#mc-pm input[data-num="capThread"]') }; });
+    await mp.selectOption('#mc-pm select[data-k="kind"]', "tapped");
+    await idle();
+    await mp.selectOption('#mc-pm select[data-k="size"]', "M6");
+    await idle();
+    await mp.selectOption('#mc-pm select[data-k="threadEnd"]', "through").catch(() => {});
+    await idle();
+    const cback2 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { k: d.kind, r: d.retract ?? null, s: d.size }; });
+    check(cap1.k === "captive" && cap1.s === "M6" && cap1.d === 6.6 && cap1.end === "through" && cap1.callout.includes("M6-6H") && cap1.ok
+      && cap2.r === true && cap2.hold === 4.8 && cap2.lt === 12 && cap2.cb === 11 && cap2.need && cap2.box && cap2.callout.includes("⌴Ø11") && cap2.callout.includes("M6-6H ↧4.8") && cap2.ok
+      && cback2.k === "tapped" && cback2.r === null && cback2.s === "M6",
+      `model 1.536: Hole Wizard captive screw (${JSON.stringify({ cap1, cap2, cback2 })})`);
+    // 1.538 (FR-FT-052): a click on another face of the plate (a side face we can see) adds a hole square to it there.
+    {
+      let side = null;
+      for (const w of [[0, -30, 10], [50, 0, 10], [0, 30, 10], [-50, 0, 10]]) {
+        const at = await world(w);
+        const name = await mp.evaluate(([x, y]) => window.__sv.model.faceName(x, y), at);
+        if (name && /:side:/.test(name)) { side = { at, name }; break; }
+      }
+      if (side) { await mp.mouse.click(side.at[0], side.at[1]); await idle(); }
+      const sp = await mp.evaluate(() => { const d = window.__sv.model.mode().draft, l = window.__sv.model.last(), fr = l.frames[d.id]; return { n: d.spots?.length ?? 0, face: d.spots?.[0]?.face.name ?? null, sp: fr?.sp?.length ?? 0, box: document.querySelector('#mc-pm [data-focus="pts"]')?.textContent ?? "", ok: l.statuses.every(s => s.ok) }; });
+      if (side) { await mp.evaluate(() => document.querySelector('#mc-pm [data-rms="0"]')?.click()); await idle(); }
+      const sp2 = await mp.evaluate(() => window.__sv.model.mode().draft.spots?.length ?? 0);
+      check(side && sp.n === 1 && sp.face === side.name && sp.sp === 1 && sp.box === "3 holes" && sp.ok && sp2 === 0, `model 1.538: Hole Wizard hole on another face (${JSON.stringify({ side, sp, sp2 })})`);
+    }
+    // Options: Near side countersink defaults to the hole + 1 mm at 90°; unticking takes it away.
+    await mp.check('#mc-pm input[data-k="optNear"]').catch(() => {});
+    await idle();
+    const ncs = await mp.evaluate(() => ({ d: document.querySelector('#mc-pm input[data-num="nearCs.dia"]')?.value ?? null, a: document.querySelector('#mc-pm input[data-num="nearCs.angle"]')?.value ?? null, far: !!document.querySelector('#mc-pm input[data-k="optFar"]'), head: !!document.querySelector('#mc-pm input[data-k="optHead"]') }));
+    await mp.uncheck('#mc-pm input[data-k="optNear"]').catch(() => {});
+    await idle();
+    const ncsOff = await mp.evaluate(() => !document.querySelector('#mc-pm input[data-num="nearCs.dia"]'));
+    check(ncs.d === "6" && ncs.a === "90" && ncs.far && !ncs.head && ncsOff, `model 1.520: hole Options near side countersink on and off (${JSON.stringify(ncs)}, ${ncsOff})`);
+    // End conditions Up to vertex / Offset from surface are offered; a blind drilled hole shows its Drill angle (118°).
+    const ends = await mp.evaluate(() => [...document.querySelectorAll('#mc-pm select[data-k="end"] option')].map(o => o.value));
+    await mp.selectOption('#mc-pm select[data-k="end"]', "blind");
+    await idle();
+    const drill = await mp.evaluate(() => document.querySelector('#mc-pm input[data-num="drillAngle"]')?.value ?? null);
+    await mp.selectOption('#mc-pm select[data-k="end"]', "through");
+    await idle();
+    check(ends.includes("vertex") && ends.includes("offset") && drill === "118", `model 1.520: hole end Up to vertex / Offset from surface and Drill angle (${JSON.stringify(ends)}, ${drill})`);
     await mp.click("#mc-ok");
     await idle();
     const vHole = await vol(), stHole = await lastSt();
@@ -3013,6 +4111,31 @@ try {
     await idle();
     await mp.selectOption('#mc-pm select[data-k="size"]', "M8");
     await idle();
+    // 1.524 (FR-FT-051 UX): the panel shows the hole's half section and its drawing callout, types as pictograms, Type/Positions tabs; favourites fold.
+    const hux = await mp.evaluate(() => ({ svg: !!document.querySelector('#mc-pm [data-hpreview] svg.hole-diagram path.hd-edge'), callout: document.querySelector('#mc-pm .pm-hcallout')?.textContent ?? "", icons: document.querySelectorAll('#mc-pm [data-hkind] svg').length, on: document.querySelector('#mc-pm [data-hkind].on')?.dataset.hkind, tabs: [...document.querySelectorAll('#mc-pm .pm-htabs [role=tab]')].map(b => b.dataset.htab + ":" + b.getAttribute("aria-selected")).join(), favOpen: document.querySelector('#mc-pm [data-ui=favs]')?.open }));
+    await mp.click('#mc-pm [data-hkind="csink"]');
+    await idle();
+    const huxK = await mp.evaluate(() => ({ kind: window.__sv.model.mode().draft.kind, callout: document.querySelector('#mc-pm .pm-hcallout')?.textContent ?? "" }));
+    await mp.click('#mc-pm [data-htab="pos"]');
+    const huxP = await mp.evaluate(() => ({ pos: !document.querySelector('#mc-pm [data-hpane="pos"]').hidden, type: !document.querySelector('#mc-pm [data-hpane="type"]').hidden, face: !!document.querySelector('#mc-pm [data-hpane="pos"] .pm-box[data-focus="hplane"]') }));
+    await mp.click('#mc-pm [data-htab="type"]');
+    await mp.click('#mc-pm [data-hkind="cbore"]');
+    await idle();
+    await mp.selectOption('#mc-pm select[data-k="size"]', "M8");
+    await idle();
+    check(hux.svg && hux.callout.includes("⌴Ø15") && hux.icons === 11 && hux.on === "cbore" && hux.tabs === "type:true,pos:false" && hux.favOpen === false
+      && huxK.kind === "csink" && huxK.callout.includes("⌵Ø") && huxP.pos && !huxP.type && huxP.face,
+      `model 1.524: Hole Wizard panel preview, type pictograms and Type/Positions tabs (${JSON.stringify({ hux, huxK, huxP })})`);
+    // 1.528 (FR-FT-051): the counterbore follows the screw type: DIN 7984 low head M8 = Ø15 × 5.6 (ISO 4762's Ø15 × 8.6 with a 3 mm lower head).
+    await mp.selectOption('#mc-pm select[data-k="screw"]', "din7984");
+    await idle();
+    const scr = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { screw: d.screw, cb: [d.cbDia?.v, d.cbDepth?.v], types: [...document.querySelectorAll('#mc-pm select[data-k="screw"] option')].map(o => o.value).join() }; });
+    await mp.selectOption('#mc-pm select[data-k="screw"]', "iso4762");
+    await idle();
+    const scr0 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { screw: d.screw ?? null, cb: [d.cbDia?.v, d.cbDepth?.v] }; });
+    check(scr.screw === "din7984" && scr.cb[0] === 15 && scr.cb[1] === 5.6 && scr.types === "iso4762,din7984,iso7380,iso1207" && scr0.screw === null && scr0.cb[1] === 8.6,
+      `model 1.528: Hole Wizard screw types size the counterbore (${JSON.stringify({ scr, scr0 })})`);
+    await mp.click('#mc-pm [data-ui="favs"] > summary');
     await mp.fill('#mc-pm input[data-ui="favName"]', "M8 cbore");
     await mp.click('#mc-pm [data-ui="favSave"]');
     await mp.selectOption('#mc-pm select[data-k="kind"]', "simple");
@@ -3034,7 +4157,7 @@ try {
   }
 
   // --- Part modelling 1.34.0: ellipse and partial ellipse in sketches (FR-SK-018) ---
-  if (inShard(4)) {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -3089,7 +4212,7 @@ try {
     await mp.waitForTimeout(1200);
     await mp.click('#mc-tools [data-fly="line"]');
     const lnFly = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
-    await mp.click("#mc-menu button:nth-child(2)");
+    await mp.click("#mc-menu button:nth-child(4)");
     await click([-22, 0]); await click([-15, -3]); await click([-8, 0]); await click([-15, 3]); await click([-22, 0]);
     const spl = await mp.evaluate(() => { const ed = window.__sv.model.editor(), e = ed.sk.ents.find(x => x.t === "spline"); return e ? { n: e.pts.length, closed: !!e.closed, dof: ed.info.dof } : null; });
     await mp.evaluate(() => window.__sv.modeller.ok());
@@ -3098,7 +4221,7 @@ try {
     await idle();
     const cut3 = await mp.evaluate(() => { const r = window.__sv.model.last(); return { v: r.props?.volume ?? 0, ok: r.statuses.every(s => s.ok), faces: window.__sv.viewer.parts[0]?.data.faces.length }; });
     const dSpl = cut.v - cut3.v;
-    check(lnFly === "Line|Spline|Style spline|Equation driven curve" && spl?.n === 4 && spl.closed && spl.dof === 8 && cut3.ok && dSpl > 42 * 5 && dSpl < 42 * 5 * 1.7, `model 1.35: a closed spline through four clicks, cut through the part (${lnFly}, ${JSON.stringify(spl)}, ${cut3.ok}, ${dSpl.toFixed(1)})`);
+    check(lnFly === "Line|Centerline|Midpoint line|Spline|Style spline|Equation driven curve" && spl?.n === 4 && spl.closed && spl.dof === 8 && cut3.ok && dSpl > 42 * 5 && dSpl < 42 * 5 * 1.7, `model 1.35: a closed spline through four clicks, cut through the part (${lnFly}, ${JSON.stringify(spl)}, ${cut3.ok}, ${dSpl.toFixed(1)})`);
     await ctx.close();
   }
 
@@ -3150,7 +4273,7 @@ try {
   }
 
   // --- Part modelling 1.139.0: section at the sketch plane (FR-SK-006), configuration table CSV (FR-CFG-003) ---
-  if (inShard(1)) {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -3197,6 +4320,87 @@ try {
     await mp.evaluate(() => document.querySelector("#lang-btn").click());
     check(/^Configuration,\$STATE@Sketch1,/.test(csv) && /\nDefault,/.test(csv) && /\nConfig2,/.test(csv) && /D1@Sketch1/.test(csv) && cfg.names.join() === "Default,Config2,Tall" && cfg.act === "Config2" && cfg.depth === 35 && cfg.d1 === 30 && cfg.ok, `model 1.139: configuration table export and import (${csv.split("\n")[0]}, ${JSON.stringify(cfg)})`);
     check(ru === "Таблица конфигураций|Экспорт таблицы|Импорт таблицы…", `model 1.139: configuration table in Russian (${ru})`);
+    await ctx.close();
+  }
+
+  // --- 1.344.0: Evaluate ▸ Mass properties (FR-MAT-002): moments of inertia, principal axes, output frames incl. own axes ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 60000 });
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // A 100 × 50 × 20 block from the origin, density 20 g/cm³: 2000 g, centre (50, 25, 10).
+    await mp.evaluate(() => window.__sv.model.store.change("Block", d => {
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [
+        { id: "p1", t: "point", x: 0, y: 0 }, { id: "p2", t: "point", x: 100, y: 0 }, { id: "p3", t: "point", x: 100, y: 50 }, { id: "p4", t: "point", x: 0, y: 50 },
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }] });
+      d.features.push({ id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } });
+      d.material = { name: "Test", density: 20 };
+    }));
+    await idle();
+    await mp.waitForFunction(() => window.__sv.viewer.parts.length === 1);
+    await mp.evaluate(() => { const d = document.querySelector("#density"); d.value = "20"; d.dispatchEvent(new Event("input")); });
+    await mp.evaluate(() => [...document.querySelectorAll("#cm-tabs button")].find(b => /Evaluate/.test(b.textContent))?.click());
+    await mp.click("#mp-btn");
+    await mp.waitForSelector("#mp-panel:not([hidden]) .mp-grid");
+    const read = () => mp.evaluate(() => {
+      const P = document.querySelector("#mp-panel"), grids = P.querySelectorAll(".mp-grid");
+      const val = (g, k) => +([...g.querySelectorAll(".mp-c")].map(e => e.textContent).find(x => x.startsWith(`${k} =`)) ?? "").split("=")[1]?.replace(/,/g, "");
+      return {
+        text: P.textContent, frames: [...P.querySelectorAll("select[data-mp=frame] option")].map(o => o.value), frame: P.querySelector("select[data-mp=frame]").value,
+        com: ["X", "Y", "Z"].map(k => val(grids[0], k)), L: ["Lxx", "Lyy", "Lzz", "Lxy"].map(k => val(grids[1], k)), I: ["Ixx", "Iyy", "Izz", "Ixy", "Iyz", "Izx"].map(k => val(grids[2], k)),
+        P: [...P.querySelectorAll(".mp-princ span")].map(e => e.textContent),
+        axes: window.__sv.hl.com.visible, btn: document.querySelector("#mp-btn").getAttribute("aria-pressed"),
+      };
+    });
+    let r = await read();
+    // kg·mm² (mass ≥ 1 kg; one decimal from 1000 up): Lxx = m(b² + h²)/12 = 483.3333, Ixx = Lxx + m(25² + 10²) = 1933.3333, Ixy = m·50·25 = 2500.
+    check(r.btn === "true" && r.axes && /2\.0000 kg/.test(r.text) && /kg·mm²/.test(r.text) && r.com.join() === "50,25,10"
+      && near(r.L[0], 483.3333, 0.06) && near(r.L[1], 1733.3333, 0.06) && near(r.L[2], 2083.3333, 0.06) && r.L[3] === 0
+      && near(r.I[0], 1933.3333, 0.06) && near(r.I[3], 2500, 0.06) && near(r.I[4], 500, 0.06) && near(r.I[5], 1000, 0.06)
+      && /^Ix = \(1\.0000, 0\.0000, 0\.0000\)/.test(r.P[0]) && /Px = 483\.3333/.test(r.P[1]),
+      `mass 1.344: Evaluate ▸ Mass properties lists CoM, principal, Lxx… and Ixx… of a 2 kg block (${JSON.stringify({ com: r.com, L: r.L, I: r.I, P: r.P.slice(0, 2) })})`);
+    // Own axes, typed: origin at the centre of mass, X along world Y → Ixx is the world-Y moment and the centre is at 0.
+    await mp.click("#mp-panel [data-mp=type]");
+    for (const [k, v] of [["o0", "50"], ["o1", "25"], ["o2", "10"], ["x0", "0"], ["x1", "1"], ["x2", "0"]]) await mp.fill(`#mp-panel [data-ax="${k}"]`, v);
+    await mp.fill('#mp-panel [data-ax="name"]', "Mine");
+    await mp.click("#mp-panel [data-mp=addaxes]");
+    r = await read();
+    const markOn = await mp.evaluate(() => window.__sv.viewer.scene.children.some(o => o.type === "AxesHelper" && o.visible && Math.abs(o.position.x - 50) < 1e-9));
+    check(r.frame === "u:0" && /Mine/.test(r.text) && r.com.every(v => Math.abs(v) < 1e-9) && near(r.I[0], 1733.3333, 0.06) && near(r.I[1], 483.3333, 0.06) && markOn,
+      `mass 1.344: typed own axes become the output coordinate system (${JSON.stringify({ frame: r.frame, com: r.com, I: r.I.slice(0, 2), markOn })})`);
+    // Own axes, picked: Pick axes, then a click on the top face puts Z up at its centre; the part stays unselected.
+    await mp.click("#mp-panel [data-mp=pick]");
+    await mp.evaluate(() => {
+      const { viewer, handlePick } = window.__sv, p = viewer.parts[0], V3 = p.group.position.constructor;
+      const f = p.data.faces.find(x => x.normal?.[2] > 0.99);
+      handlePick({ kind: "onFace", point: new V3(...f.centroid), part: p, face: f, normal: new V3(...f.normal), px: 0 });
+    });
+    r = await read();
+    const sel = await mp.evaluate(() => window.__sv.state.selectedParts.length);
+    check(r.frame === "u:1" && r.frames.join() === "global,u:0,u:1" && near(r.com[2], -10, 1e-3) && sel === 0,
+      `mass 1.344: picked own axes on the top face (${JSON.stringify({ frames: r.frames, com: r.com, sel })})`);
+    await mp.selectOption("#mp-panel select[data-mp=frame]", "global");
+    r = await read();
+    check(r.com.join() === "50,25,10", `mass 1.344: back to the global frame (${r.com})`);
+    await mp.addScriptTag({ content: await readFile(createRequire(import.meta.url).resolve("axe-core/axe.min.js"), "utf8") });
+    const ax = await mp.evaluate(async () => (await window.axe.run(document.querySelector("#mp-panel"), { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] }, resultTypes: ["violations"] })).violations.map(v => `${v.id}: ${v.nodes.slice(0, 2).map(n => n.target.join(" ")).join(", ")}`));
+    check(ax.length === 0, `mass 1.344: 0 WCAG 2.1 AA violations in the mass properties panel${ax.length ? ": " + ax.join(" | ") : ""}`);
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(300);
+    const ru = await mp.evaluate(() => { const P = document.querySelector("#mp-panel"); return { h: P.querySelector("h2").textContent, eng: [...P.querySelectorAll("h3, label, button, .mp-note, .k, .mp-scope")].map(e => e.textContent.trim()).filter(x => /\b(the|of|and|Mass|Density|Volume|Pick|Show|Include)\b/.test(x)) }; });
+    await mp.click("#lang-btn");
+    check(ru.h === "Массовые характеристики" && ru.eng.length === 0, `mass 1.344: mass properties panel in Russian (${ru.h}${ru.eng.length ? ": " + ru.eng.join(" | ") : ""})`);
+    await mp.click("#mp-panel [data-mp=close]");
+    const closed = await mp.evaluate(() => ({ hidden: document.querySelector("#mp-panel").hidden, marks: window.__sv.viewer.scene.children.filter(o => o.type === "AxesHelper" && o.visible && Math.abs(o.position.x - 50) < 1e-9).length }));
+    check(closed.hidden && closed.marks === 0, `mass 1.344: closing the panel removes its axes (${JSON.stringify(closed)})`);
     await ctx.close();
   }
 
@@ -3248,7 +4452,7 @@ try {
   }
 
   // --- Part modelling 1.142.0: text along a curve (FR-SK-020) ---
-  if (inShard(4)) {
+  if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -3291,8 +4495,51 @@ try {
     await ctx.close();
   }
 
+  // --- 1.433.0: File ▸ Export ▸ STEP for a modelled part and an assembly (it said "needs a STEP, IGES or BREP model") ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // An empty part: the panel's buttons say why nothing is saved.
+    await mp.click("#file-btn");
+    await mp.click("#file-menu [data-f=export]");
+    await mp.waitForFunction(() => document.querySelector("#rt-export").getAttribute("aria-selected") === "true");
+    await mp.click("#png");
+    const empty = await mp.waitForFunction(() => [...document.querySelectorAll(".toast")].some(t => /no body to export/.test(t.textContent)), null, { timeout: 5000 }).then(() => true, () => false);
+    await mp.evaluate(() => window.__sv.model.store.change("Plate", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -20, -10), P("b", 20, -10), P("c", 20, 10), P("d", -20, 10), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } });
+    }));
+    await mp.waitForTimeout(150);
+    await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.data, null, { timeout: 120000 });
+    const stepOf = async () => {
+      const [dl] = await Promise.all([mp.waitForEvent("download", { timeout: 120000 }), mp.click("#step-export")]);
+      const text = (await readFile(await dl.path())).toString();
+      return { name: dl.suggestedFilename(), iso: text.startsWith("ISO-10303-21"), solid: /MANIFOLD_SOLID_BREP/.test(text) };
+    };
+    const part = await stepOf();
+    await mp.click("#new-more");
+    await mp.click("#new-asm-part");
+    await mp.waitForFunction(() => window.__sv.asm.doc?.components.length === 1 && !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === 1, null, { timeout: 120000 });
+    await mp.click("#file-btn");
+    await mp.click("#file-menu [data-f=export]");
+    const asmStep = await stepOf();
+    check(empty, "export 1.433: Export on an empty part says there is no body yet");
+    check(part.iso && part.solid && /\.step$/.test(part.name), `export 1.433: File ▸ Export ▸ STEP saves a modelled part (${JSON.stringify(part)})`);
+    check(asmStep.iso && asmStep.solid && /\.step$/.test(asmStep.name), `export 1.433: File ▸ Export ▸ STEP saves an assembly (${JSON.stringify(asmStep)})`);
+    await ctx.close();
+  }
+
   // --- Part modelling 1.144.0: arc and centrepoint slot tools with the Modify box (FR-SK-017) ---
-  if (inShard(3)) {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -3368,6 +4615,22 @@ try {
     await click([15, 15]); await click([25, 15]); await click([20, 18]);
     await modify("8");
     await modify("30");
+    // 1.371 (FR-UI-114, FR-SK-065): the Modify box title holds the dimension's name; a new name renames it, a taken one is refused.
+    {
+      const d0 = await mp.evaluate(() => { const ed = window.__sv.model.editor(); ed.setTool("select"); const d = ed.sk.dims.filter(x => !x.driven); ed.editDim(d[0].id); return { id: d[0].id, name: d[0].name, other: d[1]?.name }; });
+      await mp.waitForSelector(".mod-box .mod-name");
+      await mp.fill(".mod-box .mod-name", d0.other ?? "1bad");
+      await mp.press(".mod-box .mod-name", "Enter");
+      const refused = await mp.evaluate(() => ({ open: !!document.querySelector(".mod-box"), bad: document.querySelector(".mod-box .mod-name")?.getAttribute("aria-invalid") }));
+      await mp.fill(".mod-box .mod-name", "Width");
+      await mp.press(".mod-box .mod-name", "Enter");
+      await mp.waitForTimeout(150);
+      const named = await mp.evaluate(id => ({ name: window.__sv.model.editor().sk.dims.find(x => x.id === id)?.name, open: !!document.querySelector(".mod-box") }), d0.id);
+      check(refused.open && refused.bad === "true" && named.name === "Width" && !named.open,
+        `sketch 1.371: a name typed in the Modify box title renames the dimension; a taken name is refused (${JSON.stringify({ d0, refused, named })})`);
+      await mp.evaluate(() => window.__sv.model.editor().setTool("cslot"));
+      await mp.waitForTimeout(100);
+    }
     const cs = await mp.evaluate(() => {
       const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id);
       const mid = sk.rels.find(r => r.t === "midpoint"), m = P(mid?.e[0]), ax = P(mid?.e[1]);
@@ -3425,7 +4688,7 @@ try {
   }
 
   // --- Part modelling 1.157.0: conic, parabola and equation driven curve (FR-SK-021) ---
-  if (inShard(2)) {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -3485,10 +4748,12 @@ try {
     // Focus (20, -8), vertex (20, -12): f = 4; ends over x = 10 and x = 35 → (10, -5.75), (35, 2.0625); tangents meet at (22.5, -21.375).
     await click([20, -8]); await click([20, -12]); await click([10, -15]); await click([35, -15]);
     const par = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id), c = sk.ents.find(e => e.kind === "parabola"); return c ? c.pts.map(id => [P(id).x, P(id).y].map(v => Math.round(v * 1000) / 1000).join(",")).join(" ") : ""; });
-    check(par === "10,-5.75 22.5,-21.375 35,2.063", `model 1.157: parabola from focus, vertex and two ends (${par})`);
+    // 35, 2.0625 sits on a rounding edge: compare within 0.002 (pixel snapping of the clicks).
+    const parWant = [10, -5.75, 22.5, -21.375, 35, 2.0625], parGot = par.split(/[ ,]/).map(Number);
+    check(parGot.length === 6 && parGot.every((v, i) => Math.abs(v - parWant[i]) < 0.002), `model 1.157: parabola from focus, vertex and two ends (${par})`);
     await mp.click('#mc-tools [data-fly="line"]');
     const lfly = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
-    await mp.click("#mc-menu button:nth-child(4)");
+    await mp.click("#mc-menu button:nth-child(6)");
     await mp.waitForSelector("#mc-pm [data-cq=add]");
     await mp.selectOption("#mc-pm [data-cq=mode]", "param");
     await mp.waitForSelector("#mc-pm [data-cq=x]");
@@ -3504,13 +4769,13 @@ try {
     })();
     await mp.click("#mc-pm [data-cq=add]");
     const eq = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id), c = sk.ents.find(e => e.kind === "eqn"); return c ? { ends: c.pts.map(id => [P(id).x, P(id).y].map(v => Math.round(v * 1000) / 1000).join(",")).join(" "), fixes: sk.rels.filter(r => r.t === "fix").length, sel: [...ed.selection][0] === c.id, ok: ed.info.status, panel: !!document.querySelector("#mc-pm [data-cq=y]") } : null; });
-    check(lfly === "Line|Spline|Style spline|Equation driven curve" && eq && eq.ends === "-20,0 -40,0" && eq.fixes === 2 && eq.sel && eq.ok === "ok" && eq.panel,
+    check(lfly === "Line|Centerline|Midpoint line|Spline|Style spline|Equation driven curve" && eq && eq.ends === "-20,0 -40,0" && eq.fixes === 2 && eq.sel && eq.ok === "ok" && eq.panel,
       `model 1.157: equation driven curve x(t), y(t) added from the panel with fixed ends (${lfly}, ${JSON.stringify(eq)})`);
     check(ruAdd === "Добавить кривую", `model 1.157: Add curve in Russian (${ruAdd})`);
     // 1.164: a style spline (FR-SK-019 P5) from the Line flyout: four control points, the last clicked again ends it.
     await mp.keyboard.press("Escape");
     await mp.click('#mc-tools [data-fly="line"]');
-    await mp.click("#mc-menu button:nth-child(3)");
+    await mp.click("#mc-menu button:nth-child(5)");
     const sTool = await mp.evaluate(() => window.__sv.model.editor().tool);
     for (const q of [[12, -15], [17, -9], [24, -15], [30, -9], [30, -9]]) await click(q);
     const sty = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id), c = sk.ents.find(e => e.kind === "style"); return c ? { n: c.pts.length, closed: !!c.closed, ends: [c.pts[0], c.pts.at(-1)].map(id => [P(id).x, P(id).y].map(v => Math.round(v)).join(",")).join(" "), ok: ed.info.status } : null; });
@@ -3549,7 +4814,7 @@ try {
   }
 
   // --- Part modelling 1.215.0: sketch orientation, X axis along a model edge (FR-SK-002); 1.234.0 pierce (FR-SK-051) ---
-  if (inShard(4)) {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -3608,7 +4873,7 @@ try {
   }
 
   // --- Part modelling 1.36.0: selection helpers while picking fillet edges (FR-SEL-005) ---
-  if (inShard(4)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -3652,7 +4917,7 @@ try {
   }
 
   // --- Part modelling 1.37.0: sketch Show/Hide, visible main planes, Normal to (N), hole snapping to the origin ---
-  if (inShard(2)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -3664,7 +4929,8 @@ try {
     await mp.waitForFunction(() => window.__sv);
     const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 60000 });
     const world = w => mp.evaluate(w => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(); const s = new (v.camera.position.constructor)(...w).project(v.camera); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; }, w);
-    const settle = () => mp.waitForFunction(() => { const p = window.__sv.viewer.camera.position.toArray().join(); const same = window.__camLast === p; window.__camLast = p; return same; }, null, { polling: 250, timeout: 10000 });
+    // A camera move starts on the next frame: wait a little, then for no animation and the same position twice.
+    const settle = async () => { await mp.waitForTimeout(100); await mp.waitForFunction(() => { const v = window.__sv.viewer, p = v.camera.position.toArray().join(); const same = !v.animating && window.__camLast === p; window.__camLast = p; return same; }, null, { polling: 250, timeout: 10000 }); };
     const camDir = () => mp.evaluate(() => { const v = window.__sv.viewer; return v.camera.position.clone().sub(v.controls.target).normalize().toArray(); });
     await mp.click("#new-part");
     await mp.waitForFunction(() => window.__sv.model?.store);
@@ -3747,7 +5013,7 @@ try {
   }
 
   // --- Part modelling 1.38.0: modelled (helical) thread from the thread panel (FR-FT-055) ---
-  if (inShard(4)) {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -3779,7 +5045,7 @@ try {
   }
 
   // --- 1.39.0: local vault in the browser: save a part, check in, read-only bar, history, roll back, audit trail (FR-PDM) ---
-  if (inShard(3)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -3795,7 +5061,7 @@ try {
     await mp.waitForFunction(() => window.__sv.model?.store);
     await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("Block", d => { d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -10, -10), P("b", 10, -10), P("c", 10, 10), P("d", -10, 10), L("l1", "a", "b"), L("l2", "b", "c"), L("l3", "c", "d"), L("l4", "d", "a")] }, { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } }); }); });
     await idle();
-    // A new vault in the browser workspace, then Save part to vault.
+    // A new vault in the browser workspace, then Save to vault.
     await mp.click("#t-vault");
     await mp.fill("#v-name", "Smoke vault");
     await mp.click('#vault-panel [data-a="new-ws"]');
@@ -3803,7 +5069,7 @@ try {
     await mp.click('#vault-panel [data-a="savepart"]');
     await mp.waitForSelector("#vault-panel .v-row");
     const row1 = await mp.evaluate(() => document.querySelector("#vault-panel .v-row").textContent.replace(/\s+/g, " ").trim());
-    const title1 = await mp.evaluate(() => document.querySelector("#doc-name").textContent);
+    const title1 = await mp.evaluate(() => document.querySelector("#doc").textContent);
     // Edit, save (into the working copy), check in with a comment: version 2.
     await mp.evaluate(() => window.__sv.model.store.change("Depth", d => { d.features[1].depth = { v: 20 }; }));
     await idle();
@@ -3837,8 +5103,373 @@ try {
     await ctx.close();
   }
 
-  // --- 1.40.0: vault export to ZIP and import, storage report and purge (FR-PDM-007/008) ---
+  // --- 1.514.0: vault status chip in the header with a tooltip; a drawing of a vault part goes into the vault ---
   if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    mp.on("dialog", d => d.accept());
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => { localStorage.setItem("sv:tips", "off"); localStorage.setItem("mc:vaultUser", "Andrey"); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 60000 });
+    const block = () => mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("Block", d => { d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -10, -10), P("b", 10, -10), P("c", 10, 10), P("d", -10, 10), L("l1", "a", "b"), L("l2", "b", "c"), L("l3", "c", "d"), L("l4", "d", "a")] }, { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } }); }); });
+    const rows = () => mp.evaluate(() => [...document.querySelectorAll("#vault-panel .v-row")].map(r => r.textContent.replace(/\s+/g, " ").trim()).join(" | "));
+    const newDrawing = async () => {
+      await mp.evaluate(() => document.querySelector("#new-drawing").click());
+      // Since 1.518.0 a new drawing starts empty: add Standard 3 views once the model is in.
+      await mp.waitForFunction(() => window.__sv.drw.loaded(), null, { timeout: 90000 });
+      await mp.evaluate(() => document.querySelector('#drw [data-a="std3"]').click());
+      await mp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length > 0, null, { timeout: 90000 });
+    };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await block();
+    await idle();
+    await mp.click("#t-vault");
+    await mp.fill("#v-name", "Chip vault");
+    await mp.click('#vault-panel [data-a="new-ws"]');
+    await mp.waitForSelector('#vault-panel [data-a="savepart"]:not([disabled])');
+    await mp.click('#vault-panel [data-a="savepart"]');
+    await mp.waitForSelector("#vault-panel .v-row");
+    await mp.waitForFunction(() => !document.querySelector("#doc-vault").hidden);
+    const head = await mp.evaluate(() => ({ name: document.querySelector("#doc-name").textContent, chip: document.querySelector("#doc-vault").textContent, tip: document.querySelector("#doc").title }));
+    // A new drawing of the vault part: Save puts it in the vault beside the part, checked out, no download.
+    await newDrawing();
+    let downloads = 0;
+    mp.on("download", () => downloads++);
+    await mp.evaluate(() => window.__sv.drawing.save());
+    await mp.waitForFunction(() => /\.mcaddrw/.test(document.querySelector("#vault-panel")?.textContent ?? ""), null, { timeout: 15000 }).catch(() => {});
+    const r1 = await rows();
+    const tied = await mp.evaluate(() => !!window.__sv.drawing.vault && !window.__sv.drawing.dirty);
+    // A second part with an open drawing: Save to vault takes the drawing along.
+    await mp.evaluate(() => window.__sv.drawing.hide());
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.some(f => f.id === "x"));
+    await block();
+    await idle();
+    await newDrawing();
+    await mp.evaluate(() => window.__sv.drawing.hide());
+    await mp.waitForFunction(() => window.__sv.modeller.active);
+    await mp.evaluate(() => window.__sv.vault.saveOpenDoc());
+    await mp.waitForFunction(() => document.querySelectorAll("#vault-panel .v-row").length >= 4, null, { timeout: 15000 }).catch(() => {});
+    const r2 = await rows();
+    const n2 = await mp.evaluate(() => document.querySelectorAll("#vault-panel .v-row").length);
+    check(/^Part1\.mcadprt$/.test(head.name.trim()) && /^v1 · Draft · checked out to you$/.test(head.chip) && /version 1/.test(head.tip) && /Lifecycle state: Draft/.test(head.tip) && /Checked out to you/.test(head.tip),
+      `vault 1.514: the header shows the vault status in its own chip with a tooltip that explains it (${JSON.stringify(head)})`);
+    check(/Part1\.mcaddrw/.test(r1) && tied && downloads === 0 && n2 === 4 && /Part2\.mcadprt/.test(r2) && /Part2\.mcaddrw/.test(r2),
+      `vault 1.514: a drawing of a vault part saves into the vault, and Save to vault takes the part's open drawing along (${r1}; ${tied}, ${downloads}; ${n2}: ${r2})`);
+    await ctx.close();
+  }
+
+  // --- Vault menu (1.436.0) in the header, a vault in a picked folder that is remembered, an assembly saved back into the vault (FR-PDM-002/010/080) ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    // The folder picker cannot be driven: it hands out a folder of the origin's private file system instead.
+    await mp.addInitScript(() => { window.showDirectoryPicker = async () => (await navigator.storage.getDirectory()).getDirectoryHandle("Picked folder", { create: true }); });
+    await mp.goto(`${origin}/index.html?debug&nokernel`);
+    await mp.evaluate(() => { localStorage.setItem("sv:tips", "off"); localStorage.setItem("mc:vaultUser", "Andrey"); });
+    await mp.goto(`${origin}/index.html?debug&nokernel`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.evaluate(() => window.__sv.vaultFolders.useMemory());
+    const menu = async id => { await mp.click("#vault-btn"); await mp.waitForSelector("#vault-menu:not([hidden])"); if (id) await mp.click(`#vault-menu [data-v="${id}"]`); };
+    const items = () => mp.evaluate(() => [...document.querySelectorAll("#vault-menu button")].map(b => `${b.dataset.v.replace(/^folder:.*/, "folder")}${b.disabled ? "-" : ""}`).join(","));
+    // No vault: the menu offers the folder and the browser vaults; File ▸ Vault… opens the same menu.
+    const btnShown = await mp.evaluate(() => { const r = document.querySelector("#vault-btn").getBoundingClientRect(); return r.width > 20 && r.height > 20; });
+    await menu();
+    const closed = await items();
+    await mp.keyboard.press("Escape");
+    await mp.click("#file-btn");
+    await mp.click('#file-menu [data-f="vault"]');
+    await mp.waitForSelector("#vault-menu:not([hidden])");
+    // New vault in a folder: the vault opens, its file list shows, the button is lit.
+    await mp.click('#vault-menu [data-v="new-dir"]');
+    await mp.waitForSelector('#vault-panel [data-a="add"]');
+    const lit = await mp.evaluate(() => document.querySelector("#vault-btn").classList.contains("on") && document.querySelector("#t-vault").getAttribute("aria-selected") === "true" && window.__sv.vault.vault.info.name);
+    // An assembly goes in with Save to vault, checked out; Save then writes the working copy, Check in makes v2.
+    await mp.click("#empty-asm");
+    await mp.waitForFunction(() => window.__sv.asm.doc);
+    await menu("save");
+    await mp.waitForSelector("#vault-panel .v-row", { state: "attached" });
+    await mp.waitForFunction(() => /v1/.test(document.querySelector("#doc").textContent));
+    const title1 = await mp.evaluate(() => document.querySelector("#doc").textContent);
+    await mp.evaluate(() => window.__sv.asm.change(d => { d.name = "Frame"; }));
+    await mp.evaluate(() => window.__sv.asm.save());
+    const saved = await mp.evaluate(async () => { const v = window.__sv.vault.vault, f = (await v.files())[0]; return `${window.__sv.asm.dirty}/${(await v.status(f)).modified}`; });
+    await menu();
+    const opened = await items();
+    await mp.click('#vault-menu [data-v="ci"]');
+    await mp.fill('#vault-dlg textarea[name="comment"]', "Renamed");
+    await mp.click('#vault-dlg button[value="ok"]');
+    await mp.waitForFunction(() => /v2/.test(document.querySelector("#vault-panel .v-row")?.textContent ?? ""));
+    // Checked in: saving is refused until it is checked out again from the menu.
+    await mp.evaluate(() => window.__sv.asm.change(d => { d.name = "Frame 2"; }));
+    await mp.evaluate(() => window.__sv.asm.save());
+    const refused = await mp.evaluate(() => window.__sv.asm.dirty);
+    await menu("co");
+    await mp.waitForFunction(() => /checked out/.test(document.querySelector("#doc").textContent));
+    await mp.evaluate(() => window.__sv.asm.save());
+    const savedAgain = await mp.evaluate(() => window.__sv.asm.dirty);
+    await menu("hist");
+    await mp.waitForSelector("#vault-dlg tbody tr");
+    const hist = await mp.evaluate(() => [...document.querySelectorAll("#vault-dlg tbody tr")].map(r => r.cells[0].textContent + ":" + r.cells[3].textContent).join("|"));
+    await mp.click('#vault-dlg button[value="cancel"]');
+    // Close vault: the folder is remembered in the menu and opens again without the picker. The assembly is still
+    // checked out with changes, so the check-in reminder comes first.
+    await menu("close");
+    await mp.waitForSelector('#vault-dlg[open] button[value="close"]');
+    await mp.click('#vault-dlg button[value="close"]');
+    await mp.waitForFunction(() => !document.querySelector("#vault-btn").classList.contains("on"));
+    await mp.evaluate(() => { window.showDirectoryPicker = async () => { throw new Error("picker used"); }; });
+    await menu();
+    const again = await items();
+    const folderName = await mp.evaluate(() => document.querySelector('#vault-menu [data-v^="folder:"]')?.textContent ?? "");
+    await mp.click('#vault-menu [data-v^="folder:"]');
+    await mp.waitForSelector("#vault-panel .v-row");
+    const row = await mp.evaluate(() => document.querySelector("#vault-panel .v-row").textContent.replace(/\s+/g, " ").trim());
+    // With the side panel folded away the file list comes in a window.
+    await mp.click("#nav-toggle");
+    await menu("panel");
+    await mp.waitForSelector("#vault-win[open] .v-row");
+    await mp.click('#vault-win [data-a="close"]');
+    await mp.waitForFunction(() => document.querySelector("#vault-panel").parentElement.id === "tab-vault", null, { timeout: 5000 }).catch(() => {});
+    const home = await mp.evaluate(() => document.querySelector("#vault-panel").parentElement.id);
+    check(btnShown && closed === "new-dir,open-dir,new-ws,import,panel" && lit === "Picked folder", `vault menu: Vault button and menu, new vault in a picked folder (${btnShown}, ${closed}, ${lit})`);
+    check(/v1 · .*checked out/.test(title1) && saved === "false/true" && opened === "save-,co-,ci,undo,latest,hist,add,addfolder,search,panel,settings,close" && refused === true && savedAgain === false && hist === "v2:Renamed|v1:Added", `vault menu: an assembly saved to the vault, saved into the working copy, checked in and out from the menu (${title1}, ${saved}, ${opened}, ${refused}, ${savedAgain}, ${hist})`);
+    check(again === "new-dir,open-dir,folder,new-ws,import,panel" && folderName === "Picked folder" && /\.mcadasm/.test(row) && /v2/.test(row) && home === "tab-vault", `vault menu: the vault folder is remembered and reopens; the file list opens in a window without the side panel (${again}, ${folderName}, ${row}, ${home})`);
+    await ctx.close();
+  }
+
+  // --- Vault exam (1.451.0): a vault in a project folder takes its files in place, Switch to and Import in the Vault menu,
+  // the selected file's commands in view, Check out from the data card, recycle bin feedback, one tab per vault file
+  // that says when the vault has a newer version (FR-PDM-002/003/016/040/080) ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    // The picked folder is a project folder with files in a subfolder already (the real picker cannot be driven).
+    await mp.addInitScript(() => { window.showDirectoryPicker = async () => (await navigator.storage.getDirectory()).getDirectoryHandle("Project", { create: true }); });
+    await mp.goto(`${origin}/index.html?debug&nokernel`);
+    await mp.evaluate(() => { localStorage.setItem("sv:tips", "off"); localStorage.setItem("mc:vaultUser", "Andrey"); });
+    await mp.goto(`${origin}/index.html?debug&nokernel`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.evaluate(async () => {
+      window.__sv.vaultFolders.useMemory();
+      const root = await (await navigator.storage.getDirectory()).getDirectoryHandle("Project", { create: true });
+      const put = async (d, name, text) => { const w = await (await d.getFileHandle(name, { create: true })).createWritable(); await w.write(text); await w.close(); };
+      await put(await root.getDirectoryHandle("parts", { create: true }), "notes.txt", "bolt list");
+      await put(root, "readme.txt", "project");
+      // A second vault, in the browser, to switch to.
+      await window.__sv.vault.createInBrowser("Other");
+      window.__sv.vault.close();
+    });
+    const menu = async id => { await mp.click("#vault-btn"); await mp.waitForSelector("#vault-menu:not([hidden])"); if (id) await mp.click(`#vault-menu [data-v="${id}"]`); };
+    const items = () => mp.evaluate(() => [...document.querySelectorAll("#vault-menu button")].map(b => b.dataset.v.replace(/^folder:.*/, "folder")).join(","));
+    const toastText = () => mp.evaluate(() => document.querySelector("#toasts")?.textContent ?? "");
+    await menu();
+    const closedMenu = await items();
+    // New vault in the folder: the files already there are offered, with their subfolders, and go in where they are.
+    await mp.click('#vault-menu [data-v="new-dir"]');
+    await mp.waitForSelector("#vault-dlg[open] .v-pick");
+    const offered = await mp.evaluate(() => [...document.querySelectorAll("#vault-dlg .v-pick label")].map(l => l.textContent.trim()).join(","));
+    await mp.click('#vault-dlg button[value="ok"]');
+    await mp.waitForFunction(() => window.__sv.vault.files.length === 2);
+    const paths = await mp.evaluate(() => window.__sv.vault.files.map(f => f.path).sort().join(","));
+    await menu();
+    const openMenu = await items();
+    await mp.keyboard.press("Escape");
+    // The selected file's commands stay at the foot of the panel.
+    await mp.click("#t-vault");
+    await mp.click('#vault-panel .v-row[data-id]');
+    const sticky = await mp.evaluate(() => getComputedStyle(document.querySelector("#vault-panel > .v-acts")).position + ":" + document.querySelector("#vault-panel .v-acts-h")?.textContent);
+    // Data card of a file not checked out: Check out right there, and the card opens editable.
+    await mp.click('#vault-panel [data-a="card"]');
+    await mp.waitForSelector('#vault-dlg[open] button[value="co"]');
+    await mp.click('#vault-dlg button[value="co"]');
+    await mp.waitForFunction(() => document.querySelector("#vault-dlg[open] .v-form input:not([disabled])"));
+    const editable = await mp.evaluate(() => !!document.querySelector("#vault-dlg[open] .v-form input:not([disabled])"));
+    await mp.click('#vault-dlg button[value="cancel"]');
+    await mp.click('#vault-panel [data-a="undo"]');
+    await mp.click('#confirm [data-a="ok"]');
+    await mp.waitForFunction(() => !document.querySelector("#vault-panel .v-lock"));
+    // Delete and restore say what happened.
+    await mp.click('#vault-panel [data-a="del"]');
+    await mp.click('#confirm [data-a="ok"]');
+    await mp.waitForFunction(() => /recycle bin/.test(document.querySelector("#toasts")?.textContent ?? ""));
+    const deleted = await toastText();
+    await vaultMore(mp, "bin");
+    await mp.click("#vault-dlg [data-restore]");
+    await mp.waitForFunction(() => /restored/.test(document.querySelector("#toasts")?.textContent ?? ""));
+    const restored = await toastText();
+    // An assembly saved to the vault, then the vault moves on (a roll back): its tab says so.
+    await mp.click("#empty-asm");
+    await mp.waitForFunction(() => window.__sv.asm.doc);
+    await menu("save");
+    await mp.waitForFunction(() => /v1/.test(document.querySelector("#doc").textContent));
+    await mp.evaluate(async () => { const p = window.__sv.vault, v = p.vault, f = p.files.find(x => x.kind === "assembly"); await v.undoCheckOut(f.id); await v.rollBack(f.id, 1); await p.refresh(); });
+    await mp.waitForFunction(() => /newer v2/.test(document.querySelector("#doc").textContent));
+    const stale = await mp.evaluate(() => document.querySelector("#doc").textContent);
+    // Opening it again from the list reloads it in its own tab instead of a second one.
+    await menu("panel");
+    await mp.evaluate(() => [...document.querySelectorAll("#vault-panel .v-row")].find(r => /\.mcadasm/.test(r.textContent)).dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
+    await mp.waitForFunction(() => /v2/.test(document.querySelector("#doc").textContent) && !/newer/.test(document.querySelector("#doc").textContent));
+    await mp.evaluate(() => [...document.querySelectorAll("#vault-panel .v-row")].find(r => /\.mcadasm/.test(r.textContent)).dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
+    await mp.waitForTimeout(500);
+    const tabs = await mp.evaluate(() => document.querySelectorAll("#doc-tabs [data-dt]").length);
+    // Switch to the browser vault straight from the menu.
+    await menu();
+    await mp.click('#vault-menu [data-v="ws:Other"]');
+    await mp.waitForFunction(() => window.__sv.vault.vault?.info.name === "Other");
+    check(closedMenu.includes("import") && offered === "parts/notes.txt,readme.txt" && paths === "parts/notes.txt,readme.txt" && openMenu.includes("addfolder") && openMenu.includes("ws:Other"), `vault exam: a vault in a project folder takes its files in place; Import and Switch to in the menu (${closedMenu} | ${offered} | ${paths} | ${openMenu})`);
+    check(sticky === "sticky:readme.txt" && editable && /recycle bin/.test(deleted) && /restored/.test(restored), `vault exam: commands in view, Check out from the data card, delete and restore feedback (${sticky}, ${editable}, ${deleted}, ${restored})`);
+    check(/v1 · newer v2 in the vault/.test(stale) && tabs === 1, `vault exam: a tab behind the vault says so and reloads in place (${stale}, ${tabs} tabs)`);
+    await ctx.close();
+  }
+
+  // --- Vault UI round: right-click menu on vault rows, Ctrl/Shift multi-select with check-in / state change / delete
+  // for all of them, and the vault's own commands in a ⋯ menu (FR-PDM-080) ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug&nokernel`);
+    await mp.evaluate(() => { localStorage.setItem("sv:tips", "off"); localStorage.setItem("mc:vaultUser", "Andrey"); });
+    await mp.goto(`${origin}/index.html?debug&nokernel`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.evaluate(async () => {
+      const p = window.__sv.vault;
+      await p.createInBrowser("Multi");
+      await p.addFiles(["a.txt", "b.txt", "c.txt", "d.txt"].map(n => new File([n], n)));
+    });
+    await mp.click("#t-vault");
+    await mp.waitForFunction(() => document.querySelectorAll("#vault-panel .v-row").length === 4);
+    const rows = mp.locator("#vault-panel .v-row");
+    const selNames = () => mp.evaluate(() => [...document.querySelectorAll("#vault-panel .v-row.sel .v-name")].map(x => x.textContent).join(","));
+    const menuText = () => mp.evaluate(() => [...document.querySelectorAll("#v-menu:not([hidden]) button")].map(b => b.textContent).join("|"));
+    // The panel top: Add, Add in folder, Save, search; the rest sits in ⋯.
+    const top = await mp.evaluate(() => [...document.querySelectorAll("#vault-panel .v-top [data-a]")].map(b => b.dataset.a).join(","));
+    await mp.click('#vault-panel [data-a="more"]');
+    const more = await mp.evaluate(() => [...document.querySelectorAll("#v-menu button")].map(b => b.dataset.v).join(","));
+    await mp.keyboard.press("Escape");
+    const back = await mp.evaluate(() => document.activeElement?.dataset.a + ":" + document.querySelector("#v-menu").hidden);
+    // Click, Ctrl+click, Shift+click.
+    await rows.nth(0).click();
+    await rows.nth(2).click({ modifiers: ["Control"] });
+    const ctrlSel = await selNames();
+    await rows.nth(3).click({ modifiers: ["Shift"] });
+    const shiftSel = await selNames();
+    // Right-click a selected row: the menu acts on all of them; Check out both.
+    await rows.nth(2).click({ button: "right" });
+    const multiMenu = await menuText();
+    await mp.click('#v-menu button:has-text("Check out")');
+    await mp.waitForFunction(() => document.querySelectorAll("#vault-panel .v-lock").length === 2);
+    // One changed working copy, then Check in from the multi-select bar: one comment for both.
+    await mp.evaluate(async () => { const p = window.__sv.vault, f = p.files.find(x => x.path === "d.txt"); await p.vault.saveWorking(f.id, new TextEncoder().encode("d2")); await p.refresh(); });
+    await mp.click('#vault-panel [data-a="mci"]');
+    await mp.fill("#vault-dlg textarea", "both");
+    await mp.click('#vault-dlg button[value="ok"]');
+    await mp.waitForFunction(() => !document.querySelector("#vault-panel .v-lock"));
+    const versions = await mp.evaluate(() => window.__sv.vault.files.map(f => `${f.path}:${f.versions.length}:${f.versions.at(-1).comment}`).sort().join(","));
+    // Change state of both from the bar.
+    await mp.click('#vault-panel [data-mtr="Submit for review"]');
+    await mp.click('#vault-dlg button[value="ok"]');
+    await mp.waitForFunction(() => window.__sv.vault.files.filter(f => f.state === "In review").length === 2);
+    // Approve names the revision each file will get, before it is given.
+    await mp.click('#vault-panel [data-mtr="Approve"]');
+    await mp.waitForSelector("#vault-dlg[open] .v-check li");
+    const nextRev = await mp.evaluate(() => [...document.querySelectorAll("#vault-dlg .v-nextrev")].map(x => x.textContent).join("|"));
+    await mp.click('#vault-dlg button[value="cancel"]');
+    // A plain right-click on an unselected row selects it alone and shows the one-file menu.
+    await rows.nth(0).click({ button: "right" });
+    const oneMenu = await menuText();
+    const oneSel = await selNames();
+    await mp.keyboard.press("Escape");
+    // Ctrl+A in the list, then Delete: all four to the recycle bin after one question.
+    await rows.nth(0).focus();
+    await mp.keyboard.press("Control+a");
+    const allSel = await selNames();
+    await mp.keyboard.press("Delete");
+    await mp.click('#confirm [data-a="ok"]');
+    await mp.waitForFunction(() => window.__sv.vault.files.length === 0);
+    // What's behind: the part moves on, its drawing still keeps v1's copy; Update puts v2's document in (FR-PDM-022).
+    const pmf = { format: "mobiuscad", schema: 1, kind: "part" }, wmf = { format: "mobiuscad", schema: 1, kind: "drawing" };
+    const pdoc = d => ({ schema: 1, kind: "part", id: "d_plate", name: "plate", features: [], props: { description: d } });
+    const pfile = d => [...zip(Object.entries({ "manifest.json": JSON.stringify(pmf), "document.json": JSON.stringify(pdoc(d)) }))];
+    const wfile = [...zip(Object.entries({ "manifest.json": JSON.stringify(wmf), "drawing.json": JSON.stringify({ schema: 1, kind: "drawing", id: "w1", name: "plate", sheets: [{}], source: { kind: "part", name: "plate.mcadprt", doc: pdoc("v1") } }) }))];
+    await mp.evaluate(async ([a, b, w]) => {
+      const p = window.__sv.vault, v = p.vault;
+      const f = await v.add("plate.mcadprt", new Uint8Array(a));
+      await v.add("plate.mcaddrw", new Uint8Array(w));
+      await v.checkOut(f.id); await v.saveWorking(f.id, new Uint8Array(b)); await v.checkIn(f.id, "v2");
+      await p.refresh();
+    }, [pfile("v1"), pfile("v2"), wfile]);
+    await mp.waitForSelector('#vault-panel [data-a="behind"]');
+    const behindBtn = await mp.textContent('#vault-panel [data-a="behind"]');
+    await mp.click('#vault-panel [data-a="behind"]');
+    await mp.waitForFunction(() => /What's behind/.test(document.querySelector("#vault-dlg[open] h3")?.textContent ?? ""));
+    const behindDlg = await mp.evaluate(() => document.querySelector("#vault-dlg").innerText.replace(/\s+/g, " "));
+    await mp.click("#vault-dlg [data-up]");
+    await mp.waitForFunction(() => /up to date/.test(document.querySelector("#vault-dlg[open]")?.innerText ?? ""));
+    await mp.keyboard.press("Escape");
+    const updated = await mp.evaluate(async () => {
+      const p = window.__sv.vault, f = p.files.find(x => x.path === "plate.mcaddrw");
+      return { n: f.versions.length, comment: f.versions.at(-1).comment, lock: !!f.checkout, btn: !!document.querySelector('#vault-panel [data-a="behind"]') };
+    });
+    // The selected file's details: who uses it, as links that select that file.
+    await mp.click('#vault-panel .v-row:has-text("plate.mcadprt")');
+    const det = await mp.evaluate(() => document.querySelector("#vault-panel .v-details")?.innerText.replace(/\s+/g, " "));
+    await mp.click('#vault-panel .v-details [data-goto]');
+    const went = await mp.textContent("#vault-panel .v-acts-h");
+    check(/Version 2 by Andrey/.test(det) && /Used by plate\.mcaddrw · uses v2/.test(det) && went === "plate.mcaddrw", `vault UI: the details show the version and who uses the file, with links (${det} | ${went})`);
+    // Folders in the list fold, and filter chips narrow it (FR-PDM-080).
+    await mp.evaluate(async () => { const p = window.__sv.vault; await p.vault.add("docs/specs/e.txt", new TextEncoder().encode("e")); await p.refresh(); });
+    await mp.waitForSelector('#vault-panel .v-folder[data-folder="docs/specs"]');
+    const listText = () => mp.evaluate(() => [...document.querySelectorAll("#vault-panel .v-files > *")].map(x => x.classList.contains("v-folder") ? `[${x.dataset.folder}]` : x.querySelector(".v-name").textContent).join(","));
+    const tree = await listText();
+    await mp.click('#vault-panel .v-folder[data-folder="docs"]');
+    const foldedList = await listText();
+    await mp.click('#vault-panel .v-folder[data-folder="docs"]');
+    const chipsShown = await mp.evaluate(() => [...document.querySelectorAll("#vault-panel [data-chip]")].map(b => b.textContent.trim()).join("|"));
+    await mp.click('#vault-panel [data-chip="drawing"]');
+    const onlyDrw = await listText();
+    await mp.click('#vault-panel [data-chip="all"]');
+    // Close vault with a changed file still checked out: a reminder first; Cancel keeps the vault open.
+    await mp.evaluate(async () => { const p = window.__sv.vault, f = p.files.find(x => x.path === "docs/specs/e.txt"); await p.vault.checkOut(f.id); await p.vault.saveWorking(f.id, new TextEncoder().encode("e2")); await p.refresh(); });
+    await mp.click('#vault-panel [data-a="close"]');
+    await mp.waitForSelector("#vault-dlg[open]");
+    const remind = await mp.evaluate(() => document.querySelector("#vault-dlg").innerText.replace(/\s+/g, " "));
+    await mp.click('#vault-dlg button[value="cancel"]');
+    const stillOpen = await mp.evaluate(() => !!window.__sv.vault.vault);
+    // Closed, the start card offers the vault used last; a click opens it again.
+    await mp.evaluate(() => window.__sv.vault.close());
+    await mp.waitForSelector("#empty-vault");
+    const reopenText = await mp.textContent("#empty-vault");
+    await mp.click("#empty-vault");
+    await mp.waitForFunction(() => window.__sv.vault.vault?.info.name === "Multi" && !document.querySelector("#empty-vault"));
+    check(reopenText === "Reopen vault Multi", `vault UI: the start card reopens the vault used last (${reopenText})`);
+    check(/Changes not checked in .*docs\/specs\/e\.txt/.test(remind) && stillOpen, `vault UI: closing the vault with changes not checked in reminds first (${remind}, ${stillOpen})`);
+    check(tree === "plate.mcaddrw,plate.mcadprt,[docs],[docs/specs],e.txt" && foldedList === "plate.mcaddrw,plate.mcadprt,[docs]" && chipsShown === "All|Parts 1|Drawings 1|Other files 1" && onlyDrw === "plate.mcaddrw",
+      `vault UI: folders in the list fold, filter chips narrow it (${tree} | ${foldedList} | ${chipsShown} | ${onlyDrw})`);
+    check(top === "more,close,add,addfolder,savepart,search" && more === "behind,notes,changes,packages,audit,verify,storage,export,bin,settings,workflow,user" && back === "more:true",
+      `vault UI: a slim panel top with the vault's commands in ⋯ (${top} | ${more} | ${back})`);
+    check(ctrlSel === "a.txt,c.txt" && shiftSel === "c.txt,d.txt" && /^Check out\|Get latest\|Change state: Submit for review\|Request change…\|Delete$/.test(multiMenu)
+      && versions === "a.txt:1:Added,b.txt:1:Added,c.txt:1:Added,d.txt:2:both" && /^Open\|Check out\|Get latest\|.*History\|Where used\|Data card\|Rename/.test(oneMenu) && oneSel === "a.txt" && allSel === "a.txt,b.txt,c.txt,d.txt",
+      `vault UI: Ctrl/Shift multi-select, row menu, check-in / state change / delete for several files (${ctrlSel} | ${shiftSel} | ${multiMenu} | ${versions} | ${oneMenu} | ${oneSel} | ${allSel})`);
+    check(nextRev === "becomes revision A|becomes revision A", `vault UI: the state change dialog names the revision each file will get (${nextRev})`);
+    check(behindBtn === "1 behind" && /Drawings whose model changed/.test(behindDlg) && /plate\.mcaddrw/.test(behindDlg) && /plate\.mcadprt · v1 → v2/.test(behindDlg) && updated.n === 2 && /^Updated to the latest plate\.mcadprt$/.test(updated.comment) && !updated.lock && !updated.btn,
+      `vault UI: What's behind lists a drawing whose model moved on, and Update checks in a version with the latest model (${behindBtn} | ${behindDlg} | ${JSON.stringify(updated)})`);
+    await ctx.close();
+  }
+
+  // --- 1.40.0: vault export to ZIP and import, storage report and purge (FR-PDM-007/008) ---
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -3855,7 +5486,7 @@ try {
     await mp.waitForTimeout(100);
     if (await mp.inputValue("#v-name") !== "Backup test") await mp.fill("#v-name", "Backup test");
     await mp.click('#vault-panel [data-a="new-ws"]');
-    await mp.waitForSelector('#vault-panel [data-a="export"]');
+    await mp.waitForSelector('#vault-panel [data-a="more"]');
     // Three versions of one file and a PDF.
     await mp.evaluate(async () => {
       const p = window.__sv.vault, v = p.vault, b = s => new TextEncoder().encode(s);
@@ -3865,7 +5496,7 @@ try {
       await p.refresh();
     });
     // Export ZIP from the tab (all versions) and import it as a second vault.
-    await mp.click('#vault-panel [data-a="export"]');
+    await vaultMore(mp, "export");
     const [dl] = await Promise.all([mp.waitForEvent("download"), mp.click('#vault-dlg button[value="ok"]')]);
     const zipPath = await dl.path();
     const name = dl.suggestedFilename();
@@ -3875,7 +5506,7 @@ try {
     await mp.waitForFunction(() => window.__sv.vault.vault?.root.name === "Backup test (2)", null, { timeout: 10000 }).catch(() => {});
     const imported = await mp.evaluate(async () => { const v = window.__sv.vault.vault; const fs = await v.files(); const f = fs.find(x => x.path === "note.txt"); return { root: v.root.name, n: fs.length, v1: new TextDecoder().decode(await v.versionBytes(f.id, 1)), ok: (await v.verify()).missing.length === 0 }; });
     // Storage report and purge from the tab.
-    await mp.click('#vault-panel [data-a="storage"]');
+    await vaultMore(mp, "storage");
     await mp.waitForSelector("#vault-dlg tbody tr");
     const rep = await mp.evaluate(() => [...document.querySelectorAll("#vault-dlg tbody tr")].map(r => [...r.cells].map(c => c.textContent).join(":")).join("|"));
     await mp.fill('#vault-dlg [name="keep"]', "1");
@@ -3892,7 +5523,7 @@ try {
   }
 
   // --- Drawings (FRS 11, FR-DRW-001/002/003/010/011/016/030/031): standard 3 views, model and projected views, drag, title block, export, .mcaddrw, associative update, RU, axe ---
-  if (inShard(1)) {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
@@ -3911,7 +5542,7 @@ try {
     const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-07T00:00:00Z", units: "mm" };
     await dp.setInputFiles("#file-input", { name: "Block.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
     await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
-    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await newDrawing3(dp);
     const ready = () => dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
     await ready();
@@ -3925,6 +5556,12 @@ try {
       `drawing: new drawing of a part gets the standard 3 views, lined up in first angle, at 1:1 on A3 (${sheet}, ${JSON.stringify(v3)}, front ${fb})`);
     check(prims.hidden === 4 && prims.circles === 1 && prims.text.includes("BLK-001") && prims.text.includes("Steel") && prims.text.includes("0.910 kg") && prims.text.includes("1:1"),
       `drawing: exact HLR lines (hidden hole edges dashed, the hole a true circle) and title block from the part (number, material, mass) (${prims.hidden} hidden, ${prims.circles} circle, ${prims.text.filter(s => /BLK|Steel|kg/.test(s)).join(" / ")})`);
+    // The part behind the drawing has an undo step of its own; Ctrl+Z on the drawing must leave it alone (drawings exam #1).
+    // The drawing takes that change as its own "Update from model" step once the part is rebuilt, so it is made
+    // before the moves: the two Ctrl+Z below then undo exactly the moves.
+    await dp.evaluate(() => window.__sv.modeller.store.change("Revision", d => { d.props.revision = "B"; }));
+    await dp.waitForFunction(() => window.__sv.drw.doc().source.doc?.props?.revision === "B", null, { timeout: 90000 });
+    await ready();
     // Drag the front view: its projected views follow; a projected view only slides along its alignment.
     const pt = (x, y) => dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]);
     let [sx, sy] = await pt(v3[0].x, v3[0].y + 9);
@@ -3940,10 +5577,25 @@ try {
     check(d(v3[0], moved[0]) === "-20,15" && d(v3[1], moved[1]) === "-20,15" && d(v3[2], moved[2]) === "-20,15" && d(moved[2], slid[2]) === "10,0" && flat(moved[2], slid[2]),
       `drawing: dragging the parent moves its projected views; a side view only slides sideways (${d(v3[0], moved[0])} ${d(v3[1], moved[1])} ${d(v3[2], moved[2])}, side ${d(moved[2], slid[2])})`);
     await dp.keyboard.press("Control+z"); await dp.keyboard.press("Control+z");
-    const undone = await views();
-    check(undone.length === 3 && d(v3[0], undone[0]) === "0,0" && d(v3[2], undone[2]) === "0,0", "drawing: Ctrl+Z undoes the moves");
+    const undone = await views(), rev = await dp.evaluate(() => window.__sv.modeller.store.doc.props.revision);
+    check(undone.length === 3 && d(v3[0], undone[0]) === "0,0" && d(v3[2], undone[2]) === "0,0" && rev === "B", `drawing: Ctrl+Z undoes the moves and not the part's last step (revision ${rev})`);
+    // Custom sheet scale (drawings exam #17): a box under the list takes it, no browser prompt.
+    {
+      await dp.keyboard.press("Escape");
+      await ready();
+      await dp.selectOption('#drw .drw-props [data-s="scale"]', "custom");
+      const box = dp.locator("#drw .drw-props input.drw-cscale");
+      const focused = await dp.evaluate(() => document.activeElement?.classList.contains("drw-cscale"));
+      await box.fill("1:3"); await box.press("Enter");
+      await dp.waitForTimeout(150);
+      const sc = await dp.evaluate(() => window.__sv.drw.doc().sheets[0].scale.join(":"));
+      await dp.selectOption('#drw .drw-props [data-s="scale"]', "1:1");
+      await ready();
+      const back = await dp.evaluate(() => window.__sv.drw.doc().sheets[0].scale.join(":"));
+      check(focused && sc === "1:3" && back === "1:1", `drawing: Custom… scale is typed into a box under the list (${focused}, ${sc}, back ${back})`);
+    }
     // Model view ▾ Isometric: the preview follows the cursor; the click places it, then projected views come off it.
-    await dp.click('#drw [data-a="model"]');
+    await drwCmd(dp, "model");
     await dp.click('#drw [data-orient="iso"]');
     [sx, sy] = await pt(330, 220);
     await dp.mouse.move(sx, sy); await dp.mouse.move(sx + 3, sy + 3);
@@ -4006,11 +5658,90 @@ try {
     await dp2.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 5 && window.__sv.drw.ready(), null, { timeout: 90000 });
     const reb = await dp2.evaluate(() => ({ open: !document.querySelector("#drw").hidden, name: document.querySelector("#drw .drw-name").textContent }));
     check(reb.open && reb.name === "Block.mcaddrw", `drawing: a saved .mcaddrw opens with its views (${JSON.stringify(reb)})`);
+    // Model on a drawing opened by itself opens the part it carries in its own tab; the drawing's tab then has the part under it.
+    {
+      const tabs = () => dp2.$$eval("#doc-tabs [data-dt]", els => els.length);
+      const t0 = await tabs();
+      await dp2.click('#drw [data-a="back"]');
+      await dp2.waitForFunction(() => window.__sv.modeller.active && window.__sv.viewer.parts.length > 0 && document.querySelector("#drw").hidden, null, { timeout: 60000 });
+      const t1 = await tabs(), pid = await dp2.evaluate(() => window.__sv.modeller.store.doc.id);
+      await dp2.evaluate(() => [...document.querySelectorAll("#doc-tabs [data-dt]")].find(e => /mcaddrw/.test(e.textContent))?.click());
+      await dp2.waitForFunction(() => !document.querySelector("#drw").hidden && window.__sv.drw.doc()?.sheets[0].views.length === 5, null, { timeout: 60000 });
+      const same = await dp2.evaluate(id => window.__sv.drw.doc().source.doc.id === id && window.__sv.modeller.active, pid);
+      // Back on the drawing its menus still open (drawings exam #29: each return added the toolbar listeners again, so a click toggled twice).
+      await drwCmd(dp2, "tables");
+      const menuOpen = await dp2.evaluate(() => document.querySelector('#drw [data-a="tables"]').getAttribute("aria-expanded") === "true");
+      await dp2.keyboard.press("Escape");
+      check(menuOpen, "drawing: after Model and back, the Tables menu still opens");
+      // Drawings exam #36: a click on a view's tree row keeps the focus in the tree (the rows are rebuilt), so Delete deletes it.
+      const leaf = await dp2.evaluate(() => { const vs = window.__sv.drw.doc().sheets[0].views; return vs.find(v => !vs.some(c => c.parent === v.id))?.id; });
+      await dp2.click(`#drw .drw-tree [data-sel="${leaf}"]`);
+      const treeFocus = await dp2.evaluate(() => !!document.activeElement?.closest(".drw-tree"));
+      await dp2.keyboard.press("Delete");
+      await dp2.waitForFunction(() => window.__sv.drw.doc().sheets[0].views.length === 4, null, { timeout: 5000 }).catch(() => {});
+      const afterDel = await dp2.evaluate(() => window.__sv.drw.doc().sheets[0].views.length);
+      await dp2.keyboard.press("Control+z");
+      await dp2.waitForFunction(() => window.__sv.drw.doc().sheets[0].views.length === 5, null, { timeout: 5000 }).catch(() => {});
+      check(treeFocus && afterDel === 4, `drawing: a view clicked in the tree is deleted by the Delete key (exam #36) (${JSON.stringify({ treeFocus, afterDel })})`);
+      await dp2.click('#drw [data-a="back"]');
+      await dp2.waitForFunction(() => document.querySelector("#drw").hidden, null, { timeout: 20000 });
+      const t2 = await tabs();
+      check(t0 === 1 && t1 === 2 && same && t2 === 2, `drawing: Model on a drawing opened alone opens its part in a tab, once (${JSON.stringify({ t0, t1, t2, same })})`);
+    }
+    // File ▸ Open drawing on that part: its drawing (in a tab and in the recent documents, offered once) comes back; hidden over a drawing.
+    {
+      const tabs = () => dp2.$$eval("#doc-tabs [data-dt]", els => els.length);
+      await dp2.click("#file-btn");
+      await dp2.waitForFunction(() => !document.querySelector("#file-menu").hidden);
+      const has = await dp2.evaluate(() => !!document.querySelector('#file-menu [data-f="open-drawing"]'));
+      await dp2.click('#file-menu [data-f="open-drawing"]');
+      await dp2.waitForFunction(() => !document.querySelector("#drw").hidden && window.__sv.drw.doc()?.sheets[0].views.length === 5, null, { timeout: 60000 });
+      const picker = await dp2.evaluate(() => !!document.querySelector("#drw-pick-dlg[open]"));
+      const t3 = await tabs();
+      await dp2.click('#drw [data-a="file"]');
+      await dp2.waitForFunction(() => !document.querySelector("#file-menu").hidden);
+      const over = await dp2.evaluate(() => !!document.querySelector('#file-menu [data-f="open-drawing"]'));
+      await dp2.keyboard.press("Escape");
+      check(has && !picker && t3 === 2 && !over, `drawing: File ▸ Open drawing opens the part's drawing from its tab, without a second tab (${JSON.stringify({ has, picker, t3, over })})`);
+    }
+    await ctx.close();
+  }
+
+  // --- Drawings: fast hidden-line views for big assemblies (drawings exam round two; `?fasthlr` = always) ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug&fasthlr`);
+    await dp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    const part = { schema: 1, kind: "part", id: "d_drwfast", name: "Block", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", -50, -30), P("p2", 50, -30), P("p3", 50, 30), P("p4", -50, 30),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
+      { id: "s2", type: "sketch", name: "Sketch2", plane: { face: { name: "f1:end" } }, rels: [], dims: [], ents: [P("c0", 10, 0), { id: "c1", t: "circle", c: "c0", r: 8 }] },
+      { id: "f2", type: "extrude", name: "Cut1", sketch: "s2", op: "cut", end: "through", depth: { v: 0 } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-10T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "Block.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await newDrawing3(dp);
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
+    await dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
+    const prims = await dp.evaluate(() => {
+      const p = window.__sv.drw.prims(), vis = p.filter(x => x.layer === "VISIBLE");
+      const len = vis.reduce((t, x) => t + (x.t === "l" ? Math.hypot(x.p[2] - x.p[0], x.p[3] - x.p[1]) : 0), 0);
+      return { hidden: p.filter(x => x.layer === "HIDDEN").length, circles: vis.filter(x => x.t === "a" && Math.abs(x.r - 8) < 1e-9).length, poly: vis.filter(x => x.t === "p").length, len: Math.round(len * 1000) / 1000, kinds: [...new Set(vis.map(x => x.t))].join("") };
+    });
+    check(prims.hidden === 4 && prims.circles === 1 && prims.poly === 0,
+      `drawing: fast hidden-line views rebuild exact lines and the hole as a true Ø16 circle (${JSON.stringify(prims)})`);
     await ctx.close();
   }
 
   // --- Drawings: section, detail and auxiliary views (FR-DRW-012/013/014, AT-P5-2) ---
-  if (inShard(4)) {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
@@ -4029,7 +5760,7 @@ try {
     const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-07T00:00:00Z", units: "mm" };
     await dp.setInputFiles("#file-input", { name: "Block.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
     await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
-    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await newDrawing3(dp);
     const ready = () => dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
     await ready();
@@ -4039,7 +5770,7 @@ try {
     const at = (id, u, w) => dp.evaluate(([i, a, b]) => { const p = window.__sv.drw.placement(i); return window.__sv.drw.sheetPt(p.x + (a - p.uc) * p.s, p.y + (b - p.vc) * p.s); }, [id, u, w]);
     const scr = (x, y) => dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]);
     // Section ▾ Vertical: the cutting line follows the cursor over the front view; click through the hole, place the view on the left.
-    await dp.click('#drw [data-a="section"]'); await dp.click('#drw [data-cut="v"]');
+    await drwCmd(dp, "section"); await dp.click('#drw [data-cut="v"]');
     let [x, y] = await at(front.id, 10, 5);
     await dp.mouse.move(x - 5, y); await dp.mouse.move(x, y);
     const cutPreview = await dp.evaluate(() => document.querySelectorAll("#drw .drw-cut").length);
@@ -4056,7 +5787,7 @@ try {
     const cutArea = (secProj?.cut ?? []).reduce((t, l) => t + Math.abs(area(l)), 0);
     let prims = await dp.evaluate(() => window.__sv.drw.prims().map(p => ({ t: p.t, layer: p.layer, s: p.s, r: p.r, pen: p.pen })));
     const hatchN = prims.filter(p => p.layer === "HATCH").length, texts = prims.filter(p => p.t === "t").map(p => p.s);
-    check(cutPreview > 0 && sec && sec.letter === "A" && sec.look === -1 && Math.abs(sec.line[0] - 10) < 0.05 && sec.line[0] === sec.line[2] && Math.abs(sec.y - front.y) < 0.02 && sec.x < front.x,
+    check(cutPreview > 0 && sec && sec.letter === "A" && sec.look === 1 && Math.abs(sec.line[0] - 10) < 0.05 && sec.line[0] === sec.line[2] && Math.abs(sec.y - front.y) < 0.02 && sec.x < front.x,
       `drawing: section view from a vertical cutting line through the hole, placed on the left and lined up with the front view (${JSON.stringify(sec && { line: sec.line, look: sec.look, x: sec.x, y: sec.y })}, front ${front.x},${front.y})`);
     check(Math.abs(cutArea - (60 * 20 - 16 * 20)) < 0.5 && hatchN > 20 && texts.includes("SECTION A-A") && prims.filter(p => p.t === "t" && p.layer === "ANNOT" && p.s === "A").length === 2 && prims.some(p => p.layer === "ANNOT" && p.pen === "center"),
       `drawing: section A-A is hatched over the cut faces (area ${cutArea.toFixed(2)} mm² = 60×20 − 16×20), with its label and a lettered cutting line on the front view (${hatchN} hatch lines)`);
@@ -4070,14 +5801,14 @@ try {
     await ready();
     vs = await views();
     const flipped = vs.find(v => v.id === sec.id);
-    check(Math.round(dragged.x - sec.x) === -10 && Math.abs(dragged.y - sec.y) < 1e-9 && flipped.look === 1 && flipped.x > front.x && Math.abs(flipped.y - sec.y) < 1e-9,
+    check(Math.round(dragged.x - sec.x) === -10 && Math.abs(dragged.y - sec.y) < 1e-9 && flipped.look === -1 && flipped.x > front.x && Math.abs(flipped.y - sec.y) < 1e-9,
       `drawing: a section view slides only along its direction; Flip direction puts it on the other side (${dragged.x - sec.x},${dragged.y - sec.y}; flipped x ${flipped.x}, look ${flipped.look})`);
     await dp.keyboard.press("Control+z");
     await ready();
     // Smart dimension on the section's cut faces (FR-DRW-021): the hole's two cut walls are 16 apart.
     {
       const cutN = await dp.evaluate(i => (window.__sv.drw.proj(i)?.cutEdges ?? []).filter(e => e.k.endsWith("|§")).length, sec.id);
-      await dp.click('#drw [data-a="dim"]');
+      await drwCmd(dp, "dim");
       for (const u of [8, -8]) { const [cx, cy] = await at(sec.id, u, 10); await dp.mouse.move(cx, cy + 2); await dp.mouse.move(cx, cy); await dp.mouse.click(cx, cy); }
       const [px, py] = await at(sec.id, 0, 32);
       await dp.mouse.move(px + 3, py); await dp.mouse.move(px, py); await dp.mouse.click(px, py);
@@ -4090,7 +5821,7 @@ try {
       await ready();
     }
     // Detail: centre on the hole in the top view (it snaps to the circle's centre), radius 15, then place: 2:1, clipped, with its circle and label.
-    await dp.click('#drw [data-a="detail"]'); await dp.click('#drw [data-det="circle"]');
+    await drwCmd(dp, "detail"); await dp.click('#drw [data-det="circle"]');
     [x, y] = await at(top.id, 10.6, 0.5);
     await dp.mouse.move(x, y); await dp.mouse.click(x, y);
     [x, y] = await at(top.id, 25, 0);
@@ -4105,7 +5836,7 @@ try {
     check(det && det.letter === "B" && det.parent === top.id && det.c.join(",") === "10,0" && Math.abs(det.r - 15) < 0.05 && prims.some(p => p.t === "a" && p.layer === "VISIBLE" && Math.abs(p.r - 16) < 1e-6) && detTexts.includes("DETAIL B") && detTexts.includes("Scale 2:1") && detTexts.includes("B"),
       `drawing: detail view B of the hole at 2:1 (centre snapped, circle Ø32 on the sheet, label and circle on the parent) (${JSON.stringify(det && { c: det.c, r: det.r })})`);
     // Auxiliary: click the front view's top edge, place the view above it, square to the edge.
-    await dp.click('#drw [data-a="aux"]');
+    await drwCmd(dp, "aux");
     [x, y] = await at(front.id, -30, 20);
     await dp.mouse.move(x, y + 2); await dp.mouse.move(x, y);
     const edgeHi = await dp.evaluate(() => document.querySelectorAll("#drw .drw-edge").length);
@@ -4116,10 +5847,38 @@ try {
     vs = await views();
     const aux = vs.find(v => v.kind === "aux");
     const auxBox = aux && await dp.evaluate(i => window.__sv.drw.placement(i).box.map(v => Math.round(v * 1000) / 1000), aux.id);
-    check(edgeHi === 1 && aux && aux.letter === "C" && aux.look === 1 && Math.abs(aux.x - front.x) < 0.02 && aux.y > front.y && auxBox && Math.round(auxBox[2] - auxBox[0]) === 100 && Math.round(auxBox[3] - auxBox[1]) === 60,
+    check(edgeHi === 1 && aux && aux.letter === "C" && aux.look === -1 && Math.abs(aux.x - front.x) < 0.02 && aux.y > front.y && auxBox && Math.round(auxBox[2] - auxBox[0]) === 100 && Math.round(auxBox[3] - auxBox[1]) === 60,
       `drawing: auxiliary view C square to a picked edge, lined up with its parent (${JSON.stringify(aux && { x: aux.x, y: aux.y, look: aux.look })}, box ${auxBox})`);
+    // 1.512.0: an auxiliary view from a line drawn with Annotate ▸ Line over the top view (a CAD app's sketched line), then undone.
+    {
+      const viewsBefore = vs.length;
+      await dp.keyboard.press("Escape");
+      await drwTool(dp, "skline");
+      for (const [u, w] of [[-30, -20], [30, 20]]) { [x, y] = await at(top.id, u, w); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); }
+      await dp.keyboard.press("Escape");
+      const drawnN = await dp.evaluate(() => (window.__sv.drw.doc().sheets[0].annots ?? []).filter(a => a.t === "sk").length);
+      await drwCmd(dp, "aux");
+      [x, y] = await at(top.id, 15, 10);
+      await dp.mouse.move(x, y + 2); await dp.mouse.move(x, y);
+      const lineHi = await dp.evaluate(() => document.querySelectorAll("#drw .drw-edge").length);
+      await dp.mouse.click(x, y);
+      [x, y] = await scr(top.x + 60, top.y - 40);
+      await dp.mouse.move(x, y + 3); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+      await ready();
+      vs = await views();
+      const aux2 = vs.find(v => v.kind === "aux" && v.id !== aux?.id);
+      const dir = aux2 && (aux2.line[3] - aux2.line[1]) / (aux2.line[2] - aux2.line[0]);
+      const box2 = aux2 && await dp.evaluate(i => window.__sv.drw.placement(i)?.box ?? null, aux2.id);
+      check(drawnN === 1 && lineHi === 1 && aux2 && aux2.parent === top.id && Math.abs(dir - 2 / 3) < 0.02 && box2,
+        `drawing: auxiliary view folded about a line drawn on the top view (${JSON.stringify({ drawnN, lineHi, line: aux2?.line, parent: aux2?.parent === top.id })})`);
+      await dp.keyboard.press("Escape");
+      await dp.keyboard.press("Control+z"); await ready();
+      await dp.keyboard.press("Control+z"); await ready();
+      const left = await dp.evaluate(() => ({ v: window.__sv.drw.doc().sheets[0].views.length, sk: (window.__sv.drw.doc().sheets[0].annots ?? []).filter(a => a.t === "sk").length }));
+      check(left.v === viewsBefore && left.sk === 0, `drawing: undo takes the drawn-line auxiliary view and the line back off (${JSON.stringify(left)})`);
+    }
     // 1.114.0 offset section (FR-DRW-012): a path on the top view at y = 10 left of x = 0, a step down to y = 0, then through the hole.
-    await dp.click('#drw [data-a="section"]'); await dp.click('#drw [data-cut="off"]');
+    await drwCmd(dp, "section"); await dp.click('#drw [data-cut="off"]');
     for (const [u, w] of [[-45, 10], [0, 10], [0, 0], [45, 0]]) { [x, y] = await at(top.id, u, w); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); }
     const pathPreview = await dp.evaluate(() => document.querySelectorAll("#drw polyline.drw-cut").length);
     await dp.mouse.click(x, y);
@@ -4136,7 +5895,7 @@ try {
     check(pathPreview === 1 && off && off.path.length === 8 && off.letter === "D" && Math.abs(offArea - (50 * 20 + (50 - 16) * 20)) < 0.5 && prims.filter(p => p.t === "t" && p.layer === "ANNOT" && p.s === "D").length === 2,
       `drawing: offset section D through two planes, both hatched (area ${offArea.toFixed(2)} mm² = 50×20 + 34×20; path ${JSON.stringify(off?.path)})`);
     // Aligned section (FR-DRW-012): first leg along −x on the top view, centre at the origin, second leg up +y; it turns into the first leg's plane.
-    await dp.click('#drw [data-a="section"]'); await dp.click('#drw [data-cut="aligned"]');
+    await drwCmd(dp, "section"); await dp.click('#drw [data-cut="aligned"]');
     for (const [u, w] of [[-45, 0], [0, 0], [0, 25]]) { [x, y] = await at(top.id, u, w); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); }
     [x, y] = await scr(top.x, top.y - 75);
     await dp.mouse.move(x + 5, y); await dp.mouse.move(x, y);
@@ -4151,7 +5910,7 @@ try {
     check(alv && alv.path.length === 6 && alv.letter === "E" && Math.abs(alArea - (50 * 20 + 30 * 20)) < 0.5 && prims.filter(p => p.t === "t" && p.layer === "ANNOT" && p.s === "E").length === 2,
       `drawing: aligned section E, the second leg turned into the first leg's plane (area ${alArea.toFixed(2)} mm² = 50×20 + 30×20; path ${JSON.stringify(alv?.path)})`);
     // Detail profile (FR-DRW-013): four corners round the hole on the top view, closed by clicking the first again.
-    await dp.click('#drw [data-a="detail"]'); await dp.click('#drw [data-det="profile"]');
+    await drwCmd(dp, "detail"); await dp.click('#drw [data-det="profile"]');
     for (const [u, w] of [[0, -12], [22, -12], [22, 12], [5, 12], [0, -12]]) { [x, y] = await at(top.id, u, w); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); }
     [x, y] = await scr(330, 170);
     await dp.mouse.move(x + 4, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
@@ -4190,7 +5949,7 @@ try {
   }
 
   // --- Drawings: dimensions, model items, hole callouts, centre marks, notes (FR-DRW-020..023, AT-P5-1/3) ---
-  if (inShard(2)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
@@ -4210,7 +5969,7 @@ try {
     const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-08T00:00:00Z", units: "mm" };
     await dp.setInputFiles("#file-input", { name: "Plate.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
     await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
-    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await newDrawing3(dp);
     const ready = () => dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
     await ready();
@@ -4223,18 +5982,26 @@ try {
     const centre = pr.filter(p => p.layer === "CENTER" && p.pen === "center").length;
     check(centre === 4, `drawing: centre marks on the hole seen end-on and centrelines on it from the front and the side (${centre} centre lines)`);
     // Model items: the sketch's 100 and 60 and the Ø16 go to the top view, the extrude depth 20 to the front.
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="items"]');
+    await drwTool(dp, "items");
     await dp.waitForTimeout(150);
     let an = await annots();
     let tx = await texts();
     const where = an.map(a => `${a.src}@${a.view === front.id ? "front" : a.view === top.id ? "top" : "?"}`).sort().join(" ");
     check(an.length === 4 && where === "f1:depth@front s1:d1@top s1:d2@top s2:d3@top" && ["100", "60", "Ø16", "20"].every(s => tx.includes(s)),
       `drawing: model items imported once each into the view where they read best (${where}; ${tx.join(" ")})`);
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="items"]');
+    await drwTool(dp, "items");
     await dp.waitForTimeout(150);
     check((await annots()).length === 4, "drawing: model items are not inserted twice");
+    {
+      // Their dimension lines sit 10 mm from the view on the sheet, whatever its scale.
+      const sc = await dp.evaluate(() => { const s = window.__sv.drw.doc().sheets[0].scale; return s[0] / s[1]; });
+      const near = (x, cands) => Math.min(...cands.map(c => Math.abs(Math.abs(x - c) - 10 / sc)));
+      const hd = an.find(a => a.src === "s1:d1"), vd = an.find(a => a.src === "s1:d2");
+      const eh = near(hd.pos[1], [-30, 30, 0, 60, -60]), ev = near(vd.pos[0], [-50, 50, 0, 100, -100]);
+      check(eh < 0.02 && ev < 0.02, `drawing: model items sit 10 mm outside the view on the sheet (scale ${sc}; off by ${eh.toFixed(3)} / ${ev.toFixed(3)})`);
+    }
     // Smart dimension: the front view's top edge, placed above it, is a horizontal 100; the hole's circle gives Ø16.
-    await dp.click('#drw [data-a="dim"]');
+    await drwCmd(dp, "dim");
     let [x, y] = await at(front.id, -20, 20);
     await dp.mouse.move(x, y + 3); await dp.mouse.move(x, y);
     const hov = await dp.evaluate(() => document.querySelectorAll("#drw .drw-edge").length);
@@ -4253,6 +6020,77 @@ try {
     tx = await texts();
     check(hov >= 1 && pv >= 1 && smart.length === 2 && smart[0].k === "h" && smart[0].view === front.id && smart[1].k === "dia" && tx.filter(s => s === "100").length === 2 && tx.filter(s => s === "Ø16").length === 2,
       `drawing: Smart dimension: an edge placed above it gives a horizontal 100, a circle gives Ø16, with a live preview (${JSON.stringify(smart.map(a => a.k))}, ${tx.join(" ")})`);
+    // 1.445.0 angle arrows: an angle placed tight in the corner gets its arrows outside (the arc grows tails); Inside takes them off; then deleted.
+    {
+      const sc = await dp.evaluate(() => { const s = window.__sv.drw.doc().sheets[0].scale; return s[0] / s[1]; });
+      await drwCmd(dp, "dim");
+      [x, y] = await at(front.id, -20, 20); await dp.mouse.move(x, y + 3); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+      [x, y] = await at(front.id, 50, 7); await dp.mouse.move(x + 3, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+      [x, y] = await at(front.id, 50 - 2 / sc, 20 - 2 / sc); await dp.mouse.move(x - 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+      await dp.keyboard.press("Escape");
+      const n0 = (await annots()).length, made = (await annots()).find(a => a.k === "ang");
+      const sweep = () => dp.evaluate(() => { const q = window.__sv.drw.prims().filter(p => p.t === "a" && p.layer === "ANNOT" && Math.abs(p.r - 3) < 0.2).pop(); return q ? q.a1 - q.a0 : null; });
+      const s0 = await sweep();
+      const tp = await dp.evaluate(() => { const q = window.__sv.drw.prims().find(p => p.t === "t" && p.layer === "ANNOT" && p.s === "90°"); return q ? window.__sv.drw.sheetPt(q.x + 1.5, q.y + 1.2) : null; });
+      let s1 = null, has = false, st = false, gone = false;
+      if (tp) {
+        await dp.mouse.click(tp[0], tp[1]);
+        has = !!(await dp.$('#drw .drw-props [data-d="arrows"]')) && !!(await dp.$('#drw .drw-props [data-d="noext"]'));
+        if (has) {
+          await dp.selectOption('#drw .drw-props [data-d="arrows"]', "in");
+          s1 = await sweep(); st = (await annots()).some(a => a.k === "ang" && a.arrows === "in");
+          await dp.click('#drw .drw-props [data-a="adel"]');
+          gone = (await annots()).length === n0 - 1 && !(await annots()).some(a => a.k === "ang");
+        }
+      }
+      check(!!made && has && st && gone && s0 > Math.PI / 2 + 1 && Math.abs(s1 - Math.PI / 2) < 1e-6, `drawing: a tight angle dimension has its arrows outside, Inside puts them back (${JSON.stringify({ made: !!made, has, st, gone, s0, s1, tp: !!tp, ks: (await annots()).map(q => q.k).join() })})`);
+    }
+    // Extension lines (Andrey, 2026-11-10): a distance between the top and bottom edges placed right of the view starts
+    // both extension lines at the edges' right ends, not at their middles across the part. Undone afterwards.
+    {
+      const bx = await dp.evaluate(id => { const p = window.__sv.drw.placement(id); return { b: p.box, right: p.x + (p.box[2] - p.uc) * p.s, s: p.s }; }, front.id);
+      const level = () => dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "l" && p.layer === "ANNOT" && Math.abs(p.p[1] - p.p[3]) < 1e-6).map(p => [Math.min(p.p[0], p.p[2]), Math.max(p.p[0], p.p[2]), p.p[1]].map(v => Math.round(v * 1000) / 1000).join()));
+      const before = new Set(await level()), n0 = (await annots()).length;
+      await drwCmd(dp, "dim");
+      [x, y] = await at(front.id, -20, bx.b[3]); await dp.mouse.move(x, y + 3); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+      [x, y] = await at(front.id, -20, bx.b[1]); await dp.mouse.move(x, y - 3); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+      [x, y] = await at(front.id, bx.b[2] + 14 / bx.s, (bx.b[1] + bx.b[3]) / 2); await dp.mouse.move(x - 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+      await dp.keyboard.press("Escape");
+      const made = (await annots()).slice(n0).map(a => a.k).join(), added = (await level()).filter(s => !before.has(s)).map(s => s.split(",").map(Number));
+      await dp.keyboard.press("Control+z");
+      const back = (await annots()).length === n0;
+      check(made === "al" && back && added.length === 2 && added.every(l => l[0] > bx.right + 0.5 && l[0] < bx.right + 1.5), `drawing: extension lines start at the edge ends nearest the dimension line (${JSON.stringify({ made, back, right: bx.right, added })})`);
+    }
+    // Diameter from the side (Andrey, 2026-11-10): in the front view the Ø16 hole shows as two hidden lines; a click on
+    // one gives its diameter as a linear dimension with Ø. Undone afterwards.
+    {
+      const bx = await dp.evaluate(id => { const p = window.__sv.drw.placement(id); return { b: p.box, s: p.s }; }, front.id);
+      const n0 = (await annots()).length, c0 = (await texts()).filter(s => s === "Ø16").length;
+      let made = null, c1 = 0, upright = 0;
+      for (const u of [18, -18, 2, -2]) {
+        await drwCmd(dp, "dim");
+        [x, y] = await at(front.id, u, (bx.b[1] + bx.b[3]) / 2); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+        [x, y] = await at(front.id, u, bx.b[1] - 14 / bx.s); await dp.mouse.move(x, y + 2); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+        await dp.keyboard.press("Escape");
+        const an2 = await annots();
+        if (an2.length > n0) {
+          made = an2[an2.length - 1]; c1 = (await texts()).filter(s => s === "Ø16").length;
+          upright = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "l" && p.layer === "ANNOT" && Math.abs(p.p[0] - p.p[2]) < 1e-6).length);
+          await dp.keyboard.press("Control+z");
+          break;
+        }
+      }
+      const back = (await annots()).length === n0;
+      check(made && made.k === "dia" && made.view === front.id && c1 === c0 + 1 && upright >= 2 && back, `drawing: a hole's hidden line in a side view gives its diameter as a linear dimension (${JSON.stringify({ k: made?.k, c0, c1, upright, back })})`);
+      // Both hidden lines of the hole, one after the other: the distance between the two lines (exam #14), not between circle centres.
+      await drwCmd(dp, "dim");
+      for (const u of [2, 18]) { [x, y] = await at(front.id, u, (bx.b[1] + bx.b[3]) / 2); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); }
+      [x, y] = await at(front.id, 10, bx.b[1] - 14 / bx.s); await dp.mouse.move(x, y + 2); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+      await dp.keyboard.press("Escape");
+      const two = (await annots()).slice(n0), t16 = (await texts()).includes("16");
+      if (two.length) await dp.keyboard.press("Control+z");
+      check(two.length === 1 && two[0].k === "al" && two[0].refs.every(r => r.s) && t16, `drawing: two outline lines of a hole give the distance between them (${JSON.stringify(two.map(a => ({ k: a.k, refs: a.refs })))}, 16 shown ${t16})`);
+    }
     // Select the 100 by its text and give it a ± tolerance.
     [x, y] = await at(front.id, 0, 40.5);
     await dp.mouse.click(x, y);
@@ -4260,6 +6098,109 @@ try {
     if (selA) await dp.click('#drw [data-tolt="sym"]');
     tx = await texts();
     check(selA && tx.includes("100±0.1"), `drawing: a dimension selected by its text takes a ± tolerance (${tx.filter(s => /±/.test(s)).join(" ")})`);
+    // Reference and basic dimensions (FR-DRW-021): parentheses round the whole value; a basic one is boxed and drops its tolerance.
+    await dp.selectOption('#drw .drw-props [data-d="show"]', "ref");
+    const txRef = await texts();
+    const thin0 = await dp.evaluate(() => window.__sv.drw.prims().filter(q => q.t === "l" && q.layer === "ANNOT").length);
+    await dp.selectOption('#drw .drw-props [data-d="show"]', "basic");
+    const txBasic = await texts();
+    const thin1 = await dp.evaluate(() => window.__sv.drw.prims().filter(q => q.t === "l" && q.layer === "ANNOT").length);
+    await dp.selectOption('#drw .drw-props [data-d="show"]', "");
+    tx = await texts();
+    check(txRef.includes("(100±0.1)") && !txBasic.some(s => /±/.test(s)) && thin1 === thin0 + 4 && tx.includes("100±0.1"),
+      `drawing: a reference dimension is in parentheses, a basic one boxed without tolerance (${txRef.filter(s => /\(/.test(s)).join(" ")}; ${thin0} → ${thin1} lines)`);
+    // Arrows outside by hand (FR-DRW-021): the dimension line grows past both extension lines; Auto puts them back.
+    const dimLine = () => dp.evaluate(() => Math.max(...window.__sv.drw.prims().filter(q => q.t === "l" && q.layer === "ANNOT" && Math.abs(q.p[1] - q.p[3]) < 1e-6).map(q => Math.abs(q.p[2] - q.p[0]))));
+    const len0 = await dimLine();
+    await dp.selectOption('#drw .drw-props [data-d="arrows"]', "out");
+    const len1 = await dimLine();
+    await dp.selectOption('#drw .drw-props [data-d="arrows"]', "");
+    const len2b = await dimLine();
+    check(len1 > len0 + 5 && Math.abs(len2b - len0) < 1e-6, `drawing: a linear dimension's arrows go outside by hand and back (${[len0, len1, len2b].map(v => v.toFixed(1)).join(" → ")})`);
+    // Foreshortened radius (FR-DRW-021): the Ø16 as a radius whose line stops short of the centre with a jog; then back.
+    [x, y] = await at(top.id, 30, 25);
+    await dp.mouse.click(x + 12, y - 5);
+    const selR = await dp.evaluate(() => document.querySelector('#drw .drw-props [data-d="k"]')?.value);
+    let fore = null;
+    if (selR === "dia") {
+      await dp.selectOption('#drw .drw-props [data-d="k"]', "rad");
+      const jog = () => dp.evaluate(() => window.__sv.drw.prims().filter(q => q.t === "p" && q.layer === "ANNOT" && !q.closed && q.p.length === 8).length);
+      const j0 = await jog();
+      await dp.check('#drw .drw-props [data-d="fore"]');
+      const j1 = await jog(), stored = (await annots()).some(a => a.k === "rad" && a.fore === true), txR = await texts();
+      await dp.uncheck('#drw .drw-props [data-d="fore"]');
+      await dp.selectOption('#drw .drw-props [data-d="k"]', "dia");
+      fore = { j0, j1, stored, r8: txR.includes("R8"), back: (await annots()).some(a => a.k === "dia" && !a.fore) && !(await dp.$('#drw .drw-props [data-d="fore"]')) };
+    }
+    check(fore && fore.j1 === fore.j0 + 1 && fore.stored && fore.r8 && fore.back, `drawing: a radius dimension is foreshortened with a jog and goes back to a diameter (${selR}; ${JSON.stringify(fore)})`);
+    // Arrow outside the circle (the Ø16 is still selected): on by default for a diameter (1.452.0); off draws the line
+    // across the circle (more prims, stored as false), and on again drops the key.
+    {
+      const nAn = () => dp.evaluate(() => window.__sv.drw.prims().filter(q => q.layer === "ANNOT").length);
+      const n0 = await nAn(), has = !!(await dp.$('#drw .drw-props [data-d="rout"]'));
+      const on0 = has && await dp.isChecked('#drw .drw-props [data-d="rout"]');
+      if (has) await dp.uncheck('#drw .drw-props [data-d="rout"]');
+      const n1 = await nAn(), st = (await annots()).some(a => a.k === "dia" && a.outside === false);
+      if (has) await dp.check('#drw .drw-props [data-d="rout"]');
+      const n2 = await nAn(), off = !(await annots()).some(a => "outside" in a);
+      check(has && on0 && st && off && n1 >= n0 && n2 === n0, `drawing: a diameter's leader stops at the rim by default, crosses the circle when turned off, and back (${JSON.stringify({ has, on0, st, off, n0, n1, n2 })})`);
+    }
+    // 1.446.0 text along the leader (the Ø16 is still selected): the text turns to the leader's angle and back.
+    {
+      const rot = () => dp.evaluate(() => { const q = window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "ANNOT" && p.s === "Ø16").pop(); return q ? q.rot ?? 0 : null; });
+      const r0 = await rot(), has = !!(await dp.$('#drw .drw-props [data-d="ralong"]'));
+      if (has) await dp.check('#drw .drw-props [data-d="ralong"]');
+      const r1 = await rot(), st = (await annots()).some(a => a.k === "dia" && a.along === true);
+      if (has) await dp.uncheck('#drw .drw-props [data-d="ralong"]');
+      const r2 = await rot(), off = !(await annots()).some(a => a.along);
+      check(has && st && off && r0 === 0 && r2 === 0 && r1 !== null && Math.abs(r1) > 1, `drawing: a diameter's text lies along its leader and goes back (${JSON.stringify({ has, st, off, r0, r1, r2 })})`);
+    }
+    // A diameter displayed as a linear dimension (the Ø16 is still selected), then back.
+    {
+      const has = !!(await dp.$('#drw .drw-props [data-d="dlin"]'));
+      const count = () => dp.evaluate(() => window.__sv.drw.prims().filter(q => q.t === "l" && q.layer === "ANNOT").length);
+      let r = null;
+      if (has) {
+        const n0 = await count();
+        await dp.selectOption('#drw .drw-props [data-d="dlin"]', "h");
+        const n1 = await count(), stored = (await annots()).some(a => a.k === "dia" && a.lin === "h"), txD = await texts();
+        await dp.selectOption('#drw .drw-props [data-d="dlin"]', "");
+        r = { n0, n1, stored, dia: txD.includes("Ø16"), back: await count() === n0 && !(await annots()).some(a => a.lin) };
+      }
+      check(r && r.n1 > r.n0 && r.stored && r.dia && r.back, `drawing: a diameter is displayed as a linear dimension with extension lines and goes back (${JSON.stringify(r)})`);
+    }
+    // Arrowheads of its own (the Ø16 is still selected, one arrow at the rim since 1.452.0): oblique strokes are thick lines; Document goes back.
+    {
+      const thick = () => dp.evaluate(() => window.__sv.drw.prims().filter(q => q.t === "l" && q.layer === "ANNOT" && q.pen === "thick").length);
+      const k0 = await thick();
+      await dp.selectOption('#drw .drw-props [data-d="ends"]', "tick");
+      const k1 = await thick(), stored = (await annots()).some(a => a.ends === "tick");
+      await dp.selectOption('#drw .drw-props [data-d="ends"]', "");
+      const k2 = await thick();
+      check(k1 === k0 + 1 && stored && k2 === k0 && !(await annots()).some(a => a.ends), `drawing: a dimension takes its own arrowheads and goes back to the document's (${k0} → ${k1} → ${k2})`);
+    }
+    // Back to the 100, which the next checks work on.
+    [x, y] = await at(front.id, 0, 40.5);
+    await dp.mouse.click(x, y);
+    // Text below (FR-DRW-021): a second line under the dimension line, gone again when cleared.
+    await dp.fill('#drw .drw-props [data-d="below"]', "2 PLACES"); await dp.dispatchEvent('#drw .drw-props [data-d="below"]', "change");
+    await dp.waitForTimeout(100);
+    const below1 = await dp.evaluate(() => { const ps = window.__sv.drw.prims().filter(q => q.t === "t" && q.layer === "ANNOT"); const b = ps.find(q => q.s === "2 PLACES"), m = ps.find(q => q.s === "100±0.1"); return b && m ? [m.y - b.y, b.h] : null; });
+    await dp.fill('#drw .drw-props [data-d="below"]', ""); await dp.dispatchEvent('#drw .drw-props [data-d="below"]', "change");
+    await dp.waitForTimeout(100);
+    const below2 = (await texts()).includes("2 PLACES");
+    check(!!below1 && below1[0] > below1[1] && !below2, `drawing: a dimension takes a second line of text under its line and loses it again (${JSON.stringify(below1)})`);
+    // Extension lines and horizontal text (FR-DRW-021): hiding both drops two lines; horizontal text splits the dimension line in two.
+    const annLines = () => dp.evaluate(() => window.__sv.drw.prims().filter(q => q.t === "l" && q.layer === "ANNOT").length);
+    const nl0 = await annLines();
+    await dp.selectOption('#drw .drw-props [data-d="noext"]', "both");
+    const nl1 = await annLines();
+    await dp.selectOption('#drw .drw-props [data-d="noext"]', "");
+    await dp.check('#drw .drw-props [data-d="horiz"]');
+    const nl2 = await annLines();
+    await dp.uncheck('#drw .drw-props [data-d="horiz"]');
+    const nl3 = await annLines();
+    check(nl1 === nl0 - 2 && nl2 === nl0 + 1 && nl3 === nl0, `drawing: a dimension hides its extension lines and takes horizontal text in a gap of its line (${[nl0, nl1, nl2, nl3].join(" → ")} lines)`);
     // ISO 286 fit (FR-DRW-021): the Ø16 takes H7, shown with its deviations from the table (+0.018 / 0).
     const dia = await dp.evaluate(() => { const p = window.__sv.drw.prims().find(q => q.t === "t" && q.layer === "ANNOT" && q.s === "Ø16"); return p && [p.x, p.y + p.h / 2]; });
     [x, y] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), dia);
@@ -4275,44 +6216,156 @@ try {
     const devGap = await dp.evaluate(() => { const els = [...document.querySelectorAll("#drw svg text")], r = s => els.find(e => e.textContent === s)?.getBoundingClientRect(); const m = r("Ø16H7"), u = r("+0.018"), l = [...els].filter(e => e.textContent === "0").map(e => e.getBoundingClientRect()).find(q => m && Math.abs(q.left - u.left) < 2); return m && u ? { gap: +(u.left - m.right).toFixed(1), lo: l ? +(l.left - m.right).toFixed(1) : null, h: +m.height.toFixed(1) } : null; });
     check(devGap && devGap.gap > -0.15 * devGap.h && (devGap.lo === null || devGap.lo > -0.15 * devGap.h), `drawing: fit deviations clear the dimension text (${JSON.stringify(devGap)})`);
     // Hole callout and a note.
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="hole"]');
+    await drwTool(dp, "hole");
     [x, y] = await at(top.id, 10, -8);
     await dp.mouse.move(x, y); await dp.mouse.click(x, y);
     [x, y] = await at(top.id, 40, -45);
     await dp.mouse.move(x, y); await dp.mouse.click(x, y);
-    dp.once("dialog", d => d.accept("BREAK SHARP EDGES"));
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="note"]');
+    // Hole callout options (FR-DRW-022): a line under the automatic text, and the number of holes left out.
+    {
+      await dp.waitForTimeout(150);
+      let r = null;
+      // The dialog (also on a double-click of the callout): a line below, the count off, a symbol button into your own text.
+      if (await dp.$('#drw .drw-props [data-a="aedit"]')) {
+        const dlg = "#drw-hole-dlg[open]";
+        await dp.click('#drw .drw-props [data-a="aedit"]'); await dp.waitForSelector(dlg);
+        const syms = await dp.evaluate(() => [...document.querySelectorAll("#drw-hole-dlg .ad-syms [data-ins]")].map(b => b.dataset.ins.trim()).join(""));
+        await dp.fill(`${dlg} [data-h="below"]`, "EQ SP");
+        await dp.uncheck(`${dlg} [data-h="count"]`);
+        const pv = await dp.evaluate(() => [...document.querySelectorAll("#drw-hole-dlg .ad-pv text")].map(e => e.textContent).join("|"));
+        await dp.click(`${dlg} button[value=ok]`); await annotDlgGone(dp);
+        const t1 = await texts(), h1 = (await annots()).find(a => a.t === "hole");
+        // A symbol pressed on the hole's own text makes it yours; Cancel leaves the callout alone.
+        await dp.click('#drw .drw-props [data-a="aedit"]'); await dp.waitForSelector(dlg);
+        await dp.click(`${dlg} [data-h="txt"]`); await dp.click(`${dlg} .ad-syms [data-ins="⌴"]`);
+        if (process.env.SMOKE_SHOTS) await dp.screenshot({ path: `${process.env.SMOKE_SHOTS}/drawing-hole-dialog.png` });
+        const own = await dp.evaluate(() => { const d = document.querySelector("#drw-hole-dlg"); return { auto: d.querySelector("[data-h=auto]").checked, txt: d.querySelector("[data-h=txt]").value, ro: d.querySelector("[data-h=txt]").readOnly }; });
+        await dp.click(`${dlg} [data-cancel]`); await annotDlgGone(dp);
+        const hc = (await annots()).find(a => a.t === "hole");
+        await dp.click('#drw .drw-props [data-a="aedit"]'); await dp.waitForSelector(dlg);
+        await dp.check(`${dlg} [data-h="count"]`); await dp.fill(`${dlg} [data-h="below"]`, "");
+        await dp.click(`${dlg} button[value=ok]`); await annotDlgGone(dp);
+        const t2 = await texts(), h2 = (await annots()).find(a => a.t === "hole");
+        r = { below: t1.includes("EQ SP") && t1.includes("Ø16 THRU") && pv.includes("EQ SP"), stored: h1?.below === "EQ SP" && h1?.count === false, back: !t2.includes("EQ SP") && h2 && h2.below == null && h2.count == null,
+          syms: syms.startsWith("Ø⌴⌵↧"), own: !own.auto && !own.ro && own.txt.includes("⌴") && own.txt.includes("Ø16"), cancel: hc?.txt == null && hc?.below === "EQ SP" };
+      }
+      check(r && r.below && r.stored && r.back && r.syms && r.own && r.cancel, `drawing: the hole callout dialog takes a line below, leaves the number of holes out, has symbol buttons and cancels (${JSON.stringify(r)})`);
+    }
+    await drwTool(dp, "note");
     [x, y] = await dp.evaluate(() => window.__sv.drw.sheetPt(40, 60));
     await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    // The new note's text box has the focus with its text selected (drawings exam #9): type, Tab commits.
+    await dp.waitForFunction(() => document.activeElement?.matches?.("textarea[data-d=ntxt]"));
+    await dp.keyboard.type("BREAK SHARP EDGES"); await dp.keyboard.press("Tab");
     await dp.waitForTimeout(150);
     tx = await texts();
     an = await annots();
     check(tx.includes("Ø16 THRU") && tx.includes("BREAK SHARP EDGES") && an.some(a => a.t === "hole") && an.some(a => a.t === "note" && !a.view),
       `drawing: hole callout from the model (Ø16 THRU) and a note on the sheet (${tx.filter(s => /THRU|BREAK/.test(s)).join(" / ")})`);
+    // Drawing tree (1.522.0): annotations are listed under their view and under Sheet annotations; the new note's group
+    // opened for it; another group opens on a click; a row selects its annotation; hovering a row outlines it on the sheet;
+    // Left from an annotation row goes to its group.
+    {
+      const ho = await dp.evaluate(() => window.__sv.drw.doc().sheets[0].annots.find(a => a.t === "hole"));
+      const tr0 = await dp.evaluate(v => ({ sheetGrp: document.querySelector('.drw-tree [data-tw=""]')?.getAttribute("aria-expanded"), on: document.querySelector(".drw-tree .drw-ti.ann.on small")?.textContent,
+        viewGrp: document.querySelector(`.drw-tree [data-tw="${v}"]`)?.getAttribute("aria-expanded") }), ho.view);
+      // The hole's group opened when the callout was selected above: a click folds it, another opens it.
+      const grp = `.drw-tree [data-tw="${ho.view}"]`;
+      await dp.click(grp);
+      const folded = await dp.evaluate(g => document.querySelector(g)?.getAttribute("aria-expanded"), grp);
+      if (folded === "true") await dp.click(grp);
+      await dp.click(grp);
+      await dp.click(`.drw-tree [data-sela="${ho.id}"]`);
+      const tr1 = await dp.evaluate(() => ({ head: document.querySelector(".drw-pm-head b")?.textContent, on: document.querySelector(".drw-tree .drw-ti.ann.on")?.textContent }));
+      await dp.hover('.drw-tree [data-tw=""] + [role=group] [data-sela]');
+      const hov = await dp.evaluate(() => document.querySelectorAll(".drw-ovl .drw-hov").length);
+      await dp.focus('.drw-tree .drw-ti.ann.on');
+      await dp.keyboard.press("ArrowLeft");
+      const up = await dp.evaluate(v => document.activeElement?.getAttribute("data-tw") === v, ho.view);
+      await dp.click('.drw-tree [data-tw=""] + [role=group] [data-sela]');
+      const tr2 = await dp.evaluate(() => document.querySelector(".drw-pm-head b")?.textContent);
+      check(tr0.sheetGrp === "true" && tr0.on === "BREAK SHARP EDGES" && tr0.viewGrp === "true" && folded === "false" && tr1.head === "Hole callout" && /Hole callout/.test(tr1.on ?? "") && hov >= 1 && up && tr2 === "Note",
+        `drawing tree lists annotations by view, selects them and outlines the hovered one (${JSON.stringify([tr0, folded, tr1, hov, up, tr2])})`);
+      // 1.527: the status bar says what the selection takes and shows the pointer's sheet position; an annotation
+      // under the pointer on the sheet is outlined before it is pressed.
+      const nt = await dp.evaluate(() => { const q = window.__sv.drw.prims().find(p => p.t === "t" && p.s === "BREAK SHARP EDGES"); return q ? window.__sv.drw.sheetPt(q.x + 2, q.y + 1) : null; });
+      await dp.mouse.move(10, 10);
+      await dp.mouse.move(nt[0], nt[1]);
+      const sb = await dp.evaluate(() => ({ msg: document.querySelector(".drw-st-msg")?.textContent, xy: document.querySelector(".drw-xy")?.textContent, hov: document.querySelectorAll(".drw-ovl .drw-hov").length, cur: document.querySelector(".drw-svg").style.cursor }));
+      check(/Drag the annotation/.test(sb.msg ?? "") && /^X \d+\.\d  Y \d+\.\d mm$/.test(sb.xy ?? "") && sb.cur === "move",
+        `drawing status bar: selection hint and pointer position on the sheet; the annotation under the pointer is pickable (${JSON.stringify(sb)})`);
+    }
+    // Note border (FR-DRW-023): the placed note is selected; a circle frames it, None takes it away.
+    const arcsOf = async () => (await prims()).filter(p => p.t === "a" && p.layer === "ANNOT").length;
+    const arcs0 = await arcsOf();
+    await dp.selectOption('.drw-props [data-d="nborder"]', "circle");
+    const nb1 = { arcs: await arcsOf(), border: (await annots()).find(a => a.t === "note" && !a.view)?.border };
+    await dp.selectOption('.drw-props [data-d="nborder"]', "");
+    const nb2 = { arcs: await arcsOf(), has: "border" in (await annots()).find(a => a.t === "note" && !a.view) };
+    check(nb1.border === "circle" && nb1.arcs === arcs0 + 1 && nb2.arcs === arcs0 && !nb2.has, `drawing: a note takes a circle border and loses it again (${JSON.stringify([arcs0, nb1, nb2])})`);
+    // Note justification (FR-DRW-023): centred text keeps the block, the lines move to its middle.
+    const noteText = () => dp.evaluate(() => { const p = window.__sv.drw.prims().find(p => p.t === "t" && p.s === "BREAK SHARP EDGES"); return p && { x: p.x, al: p.al }; });
+    const nt0 = await noteText();
+    await dp.selectOption('.drw-props [data-d="nal"]', "c");
+    const nt1 = await noteText(), nal1 = (await annots()).find(a => a.t === "note" && !a.view)?.al;
+    await dp.selectOption('.drw-props [data-d="nal"]', "");
+    const nt2 = await noteText(), nal2 = "al" in (await annots()).find(a => a.t === "note" && !a.view);
+    check(nt0?.al === "l" && nt1?.al === "c" && nt1.x > nt0.x + 5 && nal1 === "c" && nt2?.al === "l" && Math.abs(nt2.x - nt0.x) < 1e-6 && !nal2,
+      `drawing: a note's text is centred and set left again (${JSON.stringify([nt0?.x, nt1?.x, nt1?.al, nal1, nal2])})`);
+    // The worker reads holes from the geometry too (FR-DRW-022): the Ø16 cut is a one-piece stack open at both ends.
+    const geoHoles = await dp.evaluate(() => window.__sv.drw.holes());
+    check(geoHoles.some(h => h.segs === 1 && h.open[0] && h.open[1]), `drawing: holes read from the geometry (${JSON.stringify(geoHoles)})`);
+    // Hole callouts follow the drawing's dual dimensions and default decimals (FR-DRW-022).
+    await dp.keyboard.press("Escape");
+    await dp.selectOption('.drw-props [data-st="dual"]', "in");
+    await dp.selectOption('.drw-props [data-st="lin"]', "1");
+    const dualHole = await texts();
+    await dp.selectOption('.drw-props [data-st="dual"]', "");
+    await dp.selectOption('.drw-props [data-st="lin"]', "");
+    const plainHole = await texts();
+    check(dualHole.includes("Ø16.0 [0.630] THRU") && plainHole.includes("Ø16 THRU"), `drawing: a hole callout shows inches and the default decimals with the drawing (${dualHole.filter(s => /THRU/.test(s)).join(" / ")})`);
+    // Extension lines follow the drafting style (FR-DRW-025): no gap and 3 mm past the dimension line make the thin lines longer; the defaults bring them back.
+    {
+      const thinLen = () => dp.evaluate(() => window.__sv.drw.prims().filter(q => q.t === "l" && q.layer === "ANNOT" && q.pen === "thin").reduce((s, q) => s + Math.hypot(q.p[2] - q.p[0], q.p[3] - q.p[1]), 0));
+      const e0 = await thinLen();
+      await dp.selectOption('.drw-props [data-st="extGap"]', "0");
+      const e1 = await thinLen();
+      await dp.selectOption('.drw-props [data-st="extOver"]', "3");
+      const e2 = await thinLen(), st = await dp.evaluate(() => window.__sv.drw.doc().style);
+      await dp.selectOption('.drw-props [data-st="extGap"]', "");
+      await dp.selectOption('.drw-props [data-st="extOver"]', "");
+      const e3 = await thinLen(), st3 = await dp.evaluate(() => window.__sv.drw.doc().style ?? {});
+      check(e1 > e0 + 1.9 && e2 > e1 + 1.9 && st?.extGap === 0 && st?.extOver === 3 && Math.abs(e3 - e0) < 1e-6 && st3.extGap == null && st3.extOver == null,
+        `drawing: extension lines take the style's gap and overshoot and go back (${[e0, e1, e2, e3].map(v => v.toFixed(1)).join(" → ")})`);
+    }
     // Property link in a note (FR-DRW-023): $PRP:"Scale" shows the sheet scale.
-    dp.once("dialog", d => d.accept('SCALE $PRP:"Scale"'));
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="note"]');
+    await drwTool(dp, "note");
     [x, y] = await dp.evaluate(() => window.__sv.drw.sheetPt(40, 75));
     await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    // The new note's text box has the focus with its text selected (drawings exam #9): type, Tab commits.
+    await dp.waitForFunction(() => document.activeElement?.matches?.("textarea[data-d=ntxt]"));
+    await dp.keyboard.type('SCALE $PRP:"Scale"'); await dp.keyboard.press("Tab");
     await dp.waitForTimeout(150);
     tx = await texts();
     const scaleNote = tx.find(s => s.startsWith("SCALE "));
     check(scaleNote && !scaleNote.includes("$PRP") && /^SCALE \d+:\d+$/.test(scaleNote), `drawing: a note's $PRP:"Scale" link shows the sheet scale (${scaleNote})`);
-    // Ordinate and chain dimensions (FR-DRW-021): base corner, hole centre, far corner; one click adds each dimension.
+    // Ordinate and chain dimensions (FR-DRW-021): base corner, hole centre, a click where the set goes (drawings exam #15:
+    // like a CAD app, so it doesn't land on the dimensions already there), far corner; each later click adds its dimension.
     const clicks = async (id, pts) => { for (const [u, w] of pts) { const [cx, cy] = await at(id, u, w); await dp.mouse.move(cx + 2, cy); await dp.mouse.move(cx, cy); await dp.mouse.click(cx, cy); } };
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="ord"]');
-    await clicks(top.id, [[-50, -30], [10, 0], [50, -30]]);
+    await drwTool(dp, "ord");
+    await clicks(top.id, [[-50, -30], [10, 0], [0, -45], [50, -30]]);
     await dp.keyboard.press("Escape");
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="chain"]');
-    await clicks(top.id, [[-50, 30], [10, 0], [50, 30]]);
+    await drwTool(dp, "chain");
+    await clicks(top.id, [[-50, 30], [10, 0], [0, 47], [50, 30]]);
     await dp.keyboard.press("Escape");
     an = await annots();
     tx = await texts();
     const ords = an.filter(a => a.k === "oh").length, chain = an.filter(a => !a.src && a.k === "h" && a.view === top.id).length;
-    check(ords === 3 && chain === 2 && tx.includes("0") && tx.includes("40") && tx.filter(s => s === "60").length >= 3,
-      `drawing: ordinate dimensions 0 / 60 / 100 from the base corner and a chain 60 + 40 along the top edge (${ords} ordinates, ${chain} chain; ${tx.join(" ")})`);
+    const rows = [...new Set(an.filter(a => a.k === "oh").map(a => a.pos[1]))].join() + "/" + [...new Set(an.filter(a => !a.src && a.k === "h" && a.view === top.id).map(a => a.pos[1]))].join();
+    check(ords === 3 && chain === 2 && rows === "-45/47" && tx.includes("0") && tx.includes("40") && tx.filter(s => s === "60").length >= 3,
+      `drawing: ordinate dimensions 0 / 60 / 100 from the base corner and a chain 60 + 40 along the top edge, each in the row clicked (${ords} ordinates, ${chain} chain, rows ${rows}; ${tx.join(" ")})`);
     // Hole table (FR-DRW-024): origin at the corner, the Ø16 hole tagged A1 at X 60 / Y 30, the table placed below the view.
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="htable"]');
+    await drwTool(dp, "htable");
     await clicks(top.id, [[-50, -30], [-50, -60]]);
     tx = await texts();
     const htab = (await annots()).find(a => a.t === "htable");
@@ -4338,8 +6391,142 @@ try {
     await ctx.close();
   }
 
+  // --- Drawings: annotations on the side view of a round part (Andrey, 2026-11-11): a Ø100 × 10 disc with a Ø10 hole seen
+  // from the front is lines only (cylinder outlines, face rims edge-on, the hole's hidden lines); every leader tool picks
+  // them and its leader lands on the line clicked. ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    const part = { schema: 1, kind: "part", id: "d_drwside", name: "Disc", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "o", t: "point", x: 0, y: 0 }, { id: "c", t: "circle", c: "o", r: 50 }] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 10 } },
+      { id: "s2", type: "sketch", name: "Sketch2", plane: { face: { name: "f1:end" } }, rels: [], dims: [], ents: [{ id: "h0", t: "point", x: 30, y: 0 }, { id: "h1", t: "circle", c: "h0", r: 5 }] },
+      { id: "f2", type: "extrude", name: "Cut1", sketch: "s2", op: "cut", end: "through", depth: { v: 0 } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-11T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "Disc.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await newDrawing3(dp);
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
+    await dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
+    const front = await dp.evaluate(() => window.__sv.drw.doc().sheets[0].views[0].id);
+    // View axes ↔ sheet: the front view's box, its scale, and where the hole's hidden lines are (u).
+    const geo = await dp.evaluate(id => {
+      const p = window.__sv.drw.placement(id), u = sx => p.uc + (sx - p.x) / p.s;
+      const hid = window.__sv.drw.prims().filter(q => q.t === "l" && q.layer === "HIDDEN" && Math.abs(q.p[0] - q.p[2]) < 1e-6).map(q => u(q.p[0]));
+      return { box: p.box, s: p.s, x: p.x, uc: p.uc, hid };
+    }, front);
+    const sheetX = u => geo.x + (u - geo.uc) * geo.s;
+    const at = (u, w) => dp.evaluate(([i, a, b]) => { const p = window.__sv.drw.placement(i); return window.__sv.drw.sheetPt(p.x + (a - p.uc) * p.s, p.y + (b - p.vc) * p.s); }, [front, u, w]);
+    const click = async (u, w) => { const [x, y] = await at(u, w); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); };
+    const tool = an => drwTool(dp, an);
+    const annots = () => dp.evaluate(() => (window.__sv.drw.doc().sheets[0].annots ?? []).map(a => JSON.parse(JSON.stringify(a))));
+    const [u0, v0, u1, v1] = geo.box, vm = (v0 + v1) / 2, hu = geo.hid.length ? geo.hid.reduce((a, b) => Math.abs(a) < Math.abs(b) ? a : b) : null;
+    // Datum A on the left outline, datum B on the top face (a circle seen edge-on), a hole callout and a position tolerance
+    // on the hole's hidden line, surface finish on the top face, a note to the right outline.
+    await tool("datum"); await click(u0, vm); await click(u0 - 20, vm);
+    await tool("datum"); await click((u0 + u1) / 2 - 20, v1); await click((u0 + u1) / 2 - 20, v1 + 15);
+    if (hu != null) { await tool("hole"); await click(hu, vm); await click(hu + 30, v1 + 25); }
+    if (hu != null) { await tool("gtol"); await click(hu, vm); await click(hu + 20, v0 - 20); await annotDlgOk(dp); }
+    await tool("surf"); await click((u0 + u1) / 2 + 20, v1); await click((u0 + u1) / 2 + 20, v1 + 10);
+    await tool("note"); await click(u1, vm); await click(u1 + 25, vm + 15);
+    await dp.keyboard.press("Escape");
+    await dp.waitForTimeout(150);
+    const an = await annots();
+    const res = await dp.evaluate(() => ({ dangle: document.querySelectorAll("#drw .drw-dangle").length, prims: window.__sv.drw.prims().filter(p => p.layer === "ANNOT").map(p => ({ t: p.t, p: p.p, fill: p.fill, s: p.s })) }));
+    const ends = res.prims.filter(p => p.t === "l" || p.t === "p").flatMap(p => { const o = []; for (let i = 0; i + 1 < p.p.length; i += 2) o.push(p.p[i]); return o; });
+    const touches = u => ends.some(x => Math.abs(x - sheetX(u)) < 0.02);
+    const kinds = an.map(a => a.t).join();
+    const da = an.find(a => a.t === "datum" && a.letter === "A"), db = an.find(a => a.t === "datum" && a.letter === "B"), ho = an.find(a => a.t === "hole");
+    check(hu != null && kinds === "datum,datum,hole,gtol,surf,note" && !!da?.ref?.s && !!db && !!ho?.ref?.s && res.dangle === 0 && touches(u0) && touches(u1) && touches(hu)
+      && res.prims.some(p => p.t === "t" && /Ø10/.test(p.s)),
+      `drawing: on a round part's side view datums, hole callouts, tolerances, surface finish and notes pick its outlines, face lines and hidden lines and land on them (${JSON.stringify({ kinds, hu, a: da?.ref, ho: ho?.ref, dangle: res.dangle, u0: touches(u0), u1: touches(u1), h: hu != null && touches(hu) })})`);
+    await ctx.close();
+  }
+
+  // --- Drawings: a cross hole drilled through a round shaft (Andrey, 2026-11-11). Its rim on the shaft is a saddle curve,
+  // not a circle, but seen along the hole it draws as one: dimension, hole callout, datum and centre mark take it; seen
+  // from the side the hole's hidden lines give its diameter. ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    const part = { schema: 1, kind: "part", id: "d_drwcross", name: "Shaft", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "o", t: "point", x: 0, y: 0 }, { id: "c", t: "circle", c: "o", r: 16 }] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 80 } },
+      { id: "s2", type: "sketch", name: "Sketch2", plane: { std: "XZ" }, rels: [], dims: [], ents: [{ id: "h0", t: "point", x: 0, y: 50 }, { id: "h1", t: "circle", c: "h0", r: 4 }] },
+      { id: "f2", type: "extrude", name: "Cut1", sketch: "s2", op: "cut", end: "through2", depth: { v: 0 } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-11T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "Shaft.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await newDrawing3(dp);
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
+    await dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
+    // The view that shows the hole as a circle (a visible Ø8 arc or circle), and one that shows its two hidden lines.
+    const found = await dp.evaluate(() => {
+      const d = window.__sv.drw, vs = d.doc().sheets[0].views, out = { circ: null, side: null };
+      for (const v of vs) {
+        const p = d.placement(v.id), inBox = (x, y) => { const u = p.uc + (x - p.x) / p.s, w = p.vc + (y - p.y) / p.s; return u > p.box[0] - 1 && u < p.box[2] + 1 && w > p.box[1] - 1 && w < p.box[3] + 1; };
+        const ps = d.prims();
+        // The rim is drawn as an arc or as a polyline: take the circle through three of its points.
+        const ring = q => {
+          if (q.layer !== "VISIBLE") return null;
+          if (q.t === "a") return Math.abs(q.r - 4 * p.s) < 1e-3 && inBox(q.o[0], q.o[1]) ? { c: q.o, r: q.r } : null;
+          if (q.t !== "p" || q.p.length < 10) return null;
+          const n = q.p.length / 2, at = i => [q.p[2 * i], q.p[2 * i + 1]], [a, b, e] = [at(0), at(Math.floor(n / 3)), at(Math.floor(2 * n / 3))];
+          const dd = 2 * (a[0] * (b[1] - e[1]) + b[0] * (e[1] - a[1]) + e[0] * (a[1] - b[1]));
+          if (Math.abs(dd) < 1e-9) return null;
+          const sq = v => v[0] * v[0] + v[1] * v[1];
+          const o = [(sq(a) * (b[1] - e[1]) + sq(b) * (e[1] - a[1]) + sq(e) * (a[1] - b[1])) / dd, (sq(a) * (e[0] - b[0]) + sq(b) * (a[0] - e[0]) + sq(e) * (b[0] - a[0])) / dd];
+          for (let i = 0; i < n; i++) if (Math.abs(Math.hypot(at(i)[0] - o[0], at(i)[1] - o[1]) - 4 * p.s) > 0.02) return null;
+          return inBox(o[0], o[1]) ? { c: o, r: 4 * p.s } : null;
+        };
+        const c = ps.map(ring).find(Boolean);
+        if (c && !out.circ) out.circ = { id: v.id, c: c.c, r: c.r, s: p.s };
+        const hid = ps.filter(q => q.t === "l" && q.layer === "HIDDEN" && inBox(q.p[0], q.p[1]) && inBox(q.p[2], q.p[3]) && Math.hypot(q.p[2] - q.p[0], q.p[3] - q.p[1]) > 20 * p.s);
+        if (!c && hid.length >= 2 && !out.side) out.side = { id: v.id, l: hid[0].p, s: p.s };
+      }
+      return out;
+    });
+    const px = (x, y) => dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]);
+    const clickS = async (x, y) => { const [a, b] = await px(x, y); await dp.mouse.move(a + 2, b); await dp.mouse.move(a, b); await dp.mouse.click(a, b); };
+    const annots = () => dp.evaluate(() => (window.__sv.drw.doc().sheets[0].annots ?? []).map(a => JSON.parse(JSON.stringify(a))));
+    let ok = !!found.circ && !!found.side, got = {};
+    if (ok) {
+      const { c, r } = found.circ, k = Math.SQRT1_2;
+      // The hole has its centre mark already, before any annotation.
+      got.mark = await dp.evaluate(([cx, cy]) => window.__sv.drw.prims().some(q => q.t === "l" && q.layer === "CENTER" && Math.abs((q.p[0] + q.p[2]) / 2 - cx) < 0.01 && Math.abs((q.p[1] + q.p[3]) / 2 - cy) < 0.01 && Math.hypot(q.p[2] - q.p[0], q.p[3] - q.p[1]) < 30), c);
+      await drwCmd(dp, "dim"); await clickS(c[0] + r * k, c[1] + r * k); await clickS(c[0] + 25, c[1] + 25); await dp.keyboard.press("Escape");
+      await drwTool(dp, "hole"); await clickS(c[0] - r * k, c[1] + r * k); await clickS(c[0] - 30, c[1] + 30); await dp.keyboard.press("Escape");
+      await drwTool(dp, "datum"); await clickS(c[0] + r * k, c[1] - r * k); await clickS(c[0] + 20, c[1] - 20); await dp.keyboard.press("Escape");
+      // A distance from the hole's centre to the shaft's end: the centre is a point to pick.
+      const l = found.side.l, mx = (l[0] + l[2]) / 2, my = (l[1] + l[3]) / 2, horiz = Math.abs(l[3] - l[1]) < 1e-6;
+      await drwCmd(dp, "dim"); await clickS(mx, my); await clickS(mx + (horiz ? 0 : 30), my + (horiz ? 30 : 0)); await dp.keyboard.press("Escape");
+      await dp.waitForTimeout(150);
+      const an = await annots();
+      const txt = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.layer === "ANNOT" && p.t === "t").map(p => p.s));
+      got.kinds = an.map(a => a.t + (a.k ? ":" + a.k : "")).join();
+      got.txt = txt; got.dangle = await dp.evaluate(() => document.querySelectorAll("#drw .drw-dangle").length);
+      got.side = an.filter(a => a.t === "dim").map(a => a.view === found.side.id).join();
+      ok = got.mark && got.kinds === "dim:dia,hole,datum,dim:dia" && got.dangle === 0 && txt.filter(s => /^Ø8$/.test(s)).length === 2 && txt.some(s => /Ø8.*THRU/.test(s)) && got.side === "false,true";
+    }
+    check(ok, `drawing: a cross hole in a round shaft takes a diameter, a hole callout and a datum on its rim, has its centre mark, and gives Ø8 from its hidden lines in the side view (${JSON.stringify({ found, got })})`);
+    if (process.env.SMOKE_SHOTS) await dp.screenshot({ path: `${process.env.SMOKE_SHOTS}/drawing-crosshole.png` });
+    await ctx.close();
+  }
+
   // --- Drawings: GD&T, datums, surface finish, tables, GOST, PNG, dangling warning (FR-DRW-023/024/026/031) ---
-  if (inShard(4)) {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
@@ -4358,7 +6545,7 @@ try {
     const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-08T00:00:00Z", units: "mm" };
     await dp.setInputFiles("#file-input", { name: "Plate.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
     await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
-    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await newDrawing3(dp);
     const ready = () => dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
     await ready();
@@ -4366,13 +6553,21 @@ try {
     const at = (id, u, w) => dp.evaluate(([i, a, b]) => { const p = window.__sv.drw.placement(i); return window.__sv.drw.sheetPt(p.x + (a - p.uc) * p.s, p.y + (b - p.vc) * p.s); }, [id, u, w]);
     const texts = async () => (await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "ANNOT").map(p => p.s)));
     const annots = () => dp.evaluate(() => (window.__sv.drw.doc().sheets[0].annots ?? []).map(a => JSON.parse(JSON.stringify(a))));
-    const tool = async an => { await dp.click('#drw [data-a="annot"]'); await dp.click(`#drw [data-an="${an}"]`); };
+    const tool = an => drwTool(dp, an);
     const click = async (id, u, w) => { const [x, y] = await at(id, u, w); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); };
     // Geometric tolerance with a leader to the front view's top edge: a perpendicularity frame to datum A.
     await tool("gtol");
     await click(front.id, -30, 20);
     const [gx, gy] = await at(front.id, -40, 45);
     await dp.mouse.move(gx, gy); await dp.mouse.click(gx, gy);
+    // The dialog opens on its symbol palette: Cancel adds nothing, OK adds the frame.
+    await dp.waitForSelector("#drw-gtol-dlg[open] .gt-pal");
+    const gnew = await dp.evaluate(() => ({ pal: document.querySelectorAll("#drw-gtol-dlg .gt-pal [data-pick] svg").length, mods: document.querySelectorAll("#drw-gtol-dlg .ad-syms [data-ins]").length, pv: !!document.querySelector("#drw-gtol-dlg .ad-pv") }));
+    await dp.click("#drw-gtol-dlg [data-cancel]"); await annotDlgGone(dp);
+    const gnone = (await annots()).filter(a => a.t === "gtol").length;
+    await tool("gtol"); await click(front.id, -30, 20); await dp.mouse.move(gx, gy); await dp.mouse.click(gx, gy);
+    await annotDlgOk(dp);
+    check(gnew.pal === 14 && gnew.mods >= 12 && gnew.pv && gnone === 0 && (await annots()).filter(a => a.t === "gtol").length === 1, `drawing: a placed tolerance opens its dialog with symbol icons; Cancel adds nothing (${JSON.stringify(gnew)}, ${gnone})`);
     // Datum A on the bottom edge, the letter below; a datum on the hole's circle in the top view.
     await tool("datum");
     await click(front.id, -20, 0);
@@ -4388,18 +6583,59 @@ try {
     const g = an.find(a => a.t === "gtol"), ds = an.filter(a => a.t === "datum").map(a => a.letter).join(""), sf = an.find(a => a.t === "surf");
     check(g?.leader && g.view === front.id && g.rows[0].sym === "perp" && ds === "AB" && sf?.ref && tx.includes("0.05") && tx.includes("A") && tx.includes("B") && tx.includes("Ra 3.2"),
       `drawing: tolerance frame with a leader, datums A and B, surface finish on an edge (${JSON.stringify({ g: g?.rows, ds, sf: !!sf?.ref })}; ${tx.join(" ")})`);
+    // Surface finish options (the new symbol is selected): second requirement, lay, allowance, all around.
+    const ssel = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-d="st2"]'));
+    if (ssel) {
+      await dp.fill('#drw [data-d="st2"]', "Rz 6.3"); await dp.dispatchEvent('#drw [data-d="st2"]', "change");
+      await dp.check('#drw [data-d="slay"][value="⊥"]', { force: true });
+      await dp.check('#drw [data-d="sp"][value="none"]', { force: true }); await dp.check('#drw [data-d="sp"][value="removal"]', { force: true });
+      await dp.fill('#drw [data-d="sallow"]', "0.5"); await dp.dispatchEvent('#drw [data-d="sallow"]', "change");
+      await dp.check('#drw [data-d="saround"]');
+      if (process.env.SMOKE_SHOTS) await dp.locator("#drw .drw-props").screenshot({ path: `${process.env.SMOKE_SHOTS}/drawing-surf-panel.png` });
+    }
+    an = await annots(); tx = await texts();
+    const sf2 = an.find(a => a.t === "surf");
+    check(ssel && sf2.text2 === "Rz 6.3" && sf2.lay === "⊥" && sf2.allow === "0.5" && sf2.around === true && tx.includes("Rz 6.3") && tx.includes("⊥") && tx.includes("0.5"),
+      `drawing: surface finish with a second requirement, lay, allowance and all around (${JSON.stringify(sf2)}; ${tx.join(" ")})`);
     // The frame's properties: a Ø zone, (M) and a second row.
     await dp.mouse.move(gx + 8, gy + 4); await dp.mouse.click(gx + 8, gy + 4);
-    const gsel = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-grow="+"]'));
+    // A double-click opens the dialog: symbol from the palette, Ø and (M) as buttons at the cursor, a second frame, a second tolerance, between.
+    await dp.mouse.dblclick(gx + 8, gy + 4);
+    const gsel = !!(await dp.waitForSelector("#drw-gtol-dlg[open]", { timeout: 5000 }).catch(() => null));
     if (gsel) {
-      await dp.selectOption('#drw [data-d="g:0:sym"]', "pos");
-      await dp.check('#drw [data-d="g:0:dia"]');
-      await dp.selectOption('#drw [data-d="g:0:mod"]', "M");
-      await dp.click('#drw [data-grow="+"]');
+      const G = "#drw-gtol-dlg";
+      await dp.click(`${G} [data-sym="0"]`); await dp.click(`${G} .gt-pal [data-pick="pos"]`);
+      await dp.focus(`${G} [data-g="0:tol"]`); await dp.keyboard.press("Home"); await dp.click(`${G} [data-ins="Ø"]`);
+      await dp.keyboard.press("End"); await dp.click(`${G} [data-ins="Ⓜ"]`);
+      await dp.fill(`${G} [data-g="0:tol2"]`, "0.2"); await dp.fill(`${G} [data-g="0:d0"]`, "a"); await dp.click(`${G} [data-ins="Ⓛ"]`);
+      await dp.click(`${G} [data-add]`); await dp.keyboard.type("0.01");
+      await dp.fill(`${G} [data-o="above"]`, "2×"); await dp.fill(`${G} [data-o="below"]`, "SEP REQT");
+      await dp.fill(`${G} [data-o="b0"]`, "c"); await dp.fill(`${G} [data-o="b1"]`, "d");
+      await dp.click(`${G} [data-sym="1"]`);
+      if (process.env.SMOKE_SHOTS) await dp.screenshot({ path: `${process.env.SMOKE_SHOTS}/drawing-gtol-dialog.png` });
+      await dp.keyboard.press("Escape"); await dp.focus(`${G} [data-g="1:tol"]`);
+      await dp.keyboard.press("Enter");
+      await annotDlgGone(dp);
     }
     an = await annots(); tx = await texts();
     const g2 = an.find(a => a.t === "gtol");
-    check(gsel && g2.rows.length === 2 && g2.rows[0].sym === "pos" && g2.rows[0].dia && tx.includes("Ø0.05") && tx.includes("M"), `drawing: tolerance frame edited: position, Ø, (M), second row (${JSON.stringify(g2?.rows)})`);
+    check(gsel && g2.above === "2×" && g2.below === "SEP REQT" && tx.includes("2×") && tx.includes("SEP REQT"), `drawing: text above and below the tolerance frame (${g2?.above} / ${g2?.below}; ${tx.join(" ")})`);
+    check(gsel && g2.rows.length === 2 && g2.rows[0].sym === "pos" && g2.rows[0].tol === "Ø0.05Ⓜ" && g2.rows[0].tol2 === "0.2" && g2.rows[0].datums[0] === "AⓁ" && g2.rows[1].sym === "pos" && g2.rows[1].tol === "0.01" && g2.between?.join("") === "CD"
+      && tx.includes("Ø0.05") && tx.includes("M") && tx.includes("L") && tx.includes("0.2") && tx.includes("C") && tx.includes("D") && !!(await dp.$("#drw .drw-props .ad-pv")), `drawing: tolerance frame edited in its dialog: position, Ø, (M), second tolerance, datum (L), second frame, between, Enter = OK (${JSON.stringify(g2)})`);
+    // Datum feature options: open triangle and bent leader (datum B in the top view).
+    {
+      const [bx, by] = await at(top.id, 35, 20);
+      await dp.mouse.move(bx + 1, by); await dp.mouse.click(bx, by);
+      const dsel = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-d="dopen"]'));
+      const fills = () => dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "p" && p.layer === "ANNOT" && p.fill && p.p.length === 6).length);
+      const f0 = await fills();
+      if (dsel) { await dp.check('#drw [data-d="dopen"]'); await dp.check('#drw [data-d="dbent"]'); }
+      an = await annots();
+      const db = an.find(a => a.t === "datum" && a.letter === "B");
+      const f1 = await fills();
+      check(dsel && db?.open === true && db.bent === true && f1 === f0 - 1, `drawing: datum with an open triangle and a bent leader (${JSON.stringify(db)}; filled triangles ${f0} → ${f1})`);
+      await dp.keyboard.press("Escape");
+    }
     // Revision table at the frame's top-right corner, then a second revision B.
     await tool("rev");
     await dp.waitForTimeout(100);
@@ -4422,6 +6658,49 @@ try {
     const fmt = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "FORMAT").map(p => p.s));
     check(hasFmt && fmt.includes("Developed") && fmt.includes("N. control") && fmt.includes("Lit."), `drawing: GOST 2.104 title block (${fmt.slice(0, 8).join(" | ")})`);
     // PNG at 300 dpi: A3 is 4961 × 3508 px with a pHYs chunk of 11811 px/m.
+    // A tolerance frame attached to a dimension: placed by a click on the dimension's text, it sits centred under it,
+    // follows a drag of the dimension (or of itself), detaches from its panel, re-attaches when dropped on the text,
+    // and goes with the dimension when that is deleted.
+    {
+      const hit = id => dp.evaluate(i => window.__sv.drw.hit(i), id);
+      const mid = async id => { const b = await hit(id); return dp.evaluate(([x, y]) => window.__sv.drw.sheetPt(x, y), [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2]); };
+      const dragBy = async (id, dx, dy) => { const [x, y] = await mid(id); await dp.mouse.move(x, y); await dp.mouse.down(); await dp.mouse.move(x + dx / 2, y + dy / 2); await dp.mouse.move(x + dx, y + dy); await dp.mouse.up(); await dp.waitForTimeout(150); };
+      await drwCmd(dp, "dim"); await click(front.id, 30, 20); await click(front.id, 30, 36); await dp.keyboard.press("Escape");
+      const dm = (await annots()).filter(a => a.t === "dim").at(-1);
+      await tool("gtol");
+      { const [x, y] = await mid(dm.id); await dp.mouse.move(x + 1, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); }
+      await annotDlgOk(dp);
+      const ga = (await annots()).find(a => a.t === "gtol" && a.dim === dm.id);
+      const under = async () => { const d = await hit(dm.id), g = await hit(ga.id); return d && g ? { dx: +((d[0] + d[2]) / 2 - (g[0] + g[2]) / 2).toFixed(2), gap: +(d[1] - g[3]).toFixed(2), y: +d[1].toFixed(1) } : null; };
+      const u0 = ga && await under();
+      await dragBy(dm.id, 30, -25);
+      const u1 = ga && await under();
+      if (ga) await dragBy(ga.id, -20, -10);
+      const u2 = ga && await under(), pos2 = (await annots()).find(a => a.id === dm.id).pos;
+      const okU = u => u && Math.abs(u.dx) < 0.6 && u.gap > 0.5 && u.gap < 3;
+      check(!!ga && ga.view === front.id && !ga.leader && okU(u0) && okU(u1) && okU(u2) && u1.y > u0.y + 2 && u2.y > u1.y + 1 && pos2[0] !== dm.pos[0],
+        `drawing: a tolerance frame attached to a dimension sits under its text and moves with it (${JSON.stringify({ ga: !!ga, u0, u1, u2 })})`);
+      if (ga) {
+        // (A pause, so the click is not the second half of a double-click after the drag.)
+        await dp.waitForTimeout(600);
+        { const [x, y] = await mid(ga.id); await dp.mouse.click(x, y); }
+        await dp.click('#drw .drw-props [data-a="gdetach"]');
+        const free = (await annots()).find(a => a.id === ga.id), u3 = await under();
+        await dragBy(ga.id, 60, -40);
+        const far = await under();
+        // Dropped back on the dimension's text it attaches again.
+        const [gx2, gy2] = await mid(ga.id), [dx2, dy2] = await mid(dm.id);
+        await dp.mouse.move(gx2, gy2); await dp.mouse.down(); await dp.mouse.move((gx2 + dx2) / 2, (gy2 + dy2) / 2); await dp.mouse.move(dx2, dy2); await dp.mouse.up(); await dp.waitForTimeout(150);
+        const again = (await annots()).find(a => a.id === ga.id), u4 = await under();
+        // Deleting the dimension takes the frame along.
+        await dp.waitForTimeout(600);
+        { const [x, y] = await mid(dm.id); await dp.mouse.click(x, y); }
+        await dp.click('#drw .drw-props [data-a="adel"]');
+        const left = (await annots()).filter(a => a.id === dm.id || a.id === ga.id).length;
+        check(!free.dim && okU(u3) && !okU(far) && again.dim === dm.id && okU(u4) && left === 0,
+          `drawing: the frame detaches where it is, attaches again when dropped on the dimension, and is deleted with it (${JSON.stringify({ free: free.dim, u3, far, again: again.dim, u4, left })})`);
+      }
+    }
     const [png] = await Promise.all([dp.waitForEvent("download", { timeout: 60000 }), (async () => { await dp.click('#drw [data-a="export"]'); await dp.click('#drw [data-x="png"]'); })()]);
     const pb = await readFile(await png.path());
     const pw = pb.readUInt32BE(16), ph = pb.readUInt32BE(20), phys = pb.indexOf("pHYs"), ppm = phys > 0 ? pb.readUInt32BE(phys + 4) : 0;
@@ -4454,7 +6733,7 @@ try {
       { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", -w / 2, -h / 2), P("p2", w / 2, -h / 2), P("p3", w / 2, h / 2), P("p4", -w / 2, h / 2),
         { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }] },
       { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: d } }] });
-    const pin = { schema: 1, kind: "part", id: "pin", name: "Pin", units: { length: "mm", decimals: 2 }, props: { partNumber: "PN-7", description: "Dowel pin" }, rollback: null, features: [
+    const pin = { schema: 1, kind: "part", id: "pin", name: "Pin", units: { length: "mm", decimals: 2 }, props: { partNumber: "PN-7", description: "Dowel pin" }, material: { name: "Steel S235", density: 7.85 }, rollback: null, features: [
       { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("c0", 0, 0), { id: "c1", t: "circle", c: "c0", r: 4 }] },
       { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 15 } }] };
     const T = (x, y, z) => [1, 0, 0, x, 0, 1, 0, y, 0, 0, 1, z];
@@ -4465,7 +6744,7 @@ try {
     const ab = zip(Object.entries({ "manifest.json": JSON.stringify(amf), "document.json": JSON.stringify(asmDoc) }));
     await dp.evaluate(b => window.__sv.asm.openFile({ name: "Fixture.mcadasm", data: new Uint8Array(b).buffer }), [...ab]);
     await dp.waitForFunction(() => window.__sv.viewer.parts.length === 3, null, { timeout: 90000 });
-    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await newDrawing3(dp);
     const ready = () => dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
     await ready();
@@ -4474,13 +6753,15 @@ try {
     const at = (id, u, w) => dp.evaluate(([i, a, b]) => { const p = window.__sv.drw.placement(i); return window.__sv.drw.sheetPt(p.x + (a - p.uc) * p.s, p.y + (b - p.vc) * p.s); }, [id, u, w]);
     const texts = async () => (await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "ANNOT").map(p => p.s)));
     const annots = () => dp.evaluate(() => (window.__sv.drw.doc().sheets[0].annots ?? []).map(a => JSON.parse(JSON.stringify(a))));
-    const tool = async an => { await dp.click('#drw [data-a="annot"]'); await dp.click(`#drw [data-an="${an}"]`); };
+    const tool = an => drwTool(dp, an);
     const src = await dp.evaluate(() => window.__sv.drw.doc().source.kind);
+    // The drawing read the open assembly's own build instead of building the parts again (engine: 11 s → 0.1 s).
+    const preLoads = await dp.evaluate(() => window.__sv.drw.helper().preLoads);
     // BOM on the title block: Plate ×1, PN-7 (the pin's part number) ×2.
     await tool("bom");
     await dp.waitForTimeout(150);
     let tx = await texts();
-    const bomOk = ["Item", "Part number", "Description", "Qty", "Plate", "PN-7", "Dowel pin"].every(s => tx.includes(s)) && tx.includes("2");
+    const bomOk = ["Item", "Part number", "Description", "Qty", "Material", "Plate", "PN-7", "Dowel pin", "Steel S235"].every(s => tx.includes(s)) && tx.includes("2");
     // Auto balloon on the front view: one balloon per item, numbered 1 and 2.
     await dp.keyboard.press("Escape");
     const [fx, fy] = await at(front, 0, 10);
@@ -4490,7 +6771,44 @@ try {
     let an = await annots();
     const auto = an.filter(a => a.t === "balloon");
     const autoNums = (await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "ANNOT" && p.h === 5).map(p => p.s))).sort().join();
-    check(src === "asm" && bomOk && auto.length === 2 && auto.every(a => a.view === front) && autoNums === "1,2", `drawing: assembly drawing with a BOM (Plate ×1, PN-7 ×2) and auto balloons 1 and 2 (${src}; ${auto.length} balloons ${autoNums}; ${tx.join(" ")})`);
+    check(src === "asm" && preLoads === 1 && bomOk && auto.length === 2 && auto.every(a => a.view === front) && autoNums === "1,2", `drawing: assembly drawing from the open assembly's build (${preLoads} such loads), with a BOM (Plate ×1, PN-7 ×2) and auto balloons 1 and 2 (${src}; ${auto.length} balloons ${autoNums}; ${tx.join(" ")})`);
+    // Auto balloons keep clear of each other and of every view and annotation on the sheet (drawings exam round 2).
+    const clearOk = await dp.evaluate(ids => {
+      const d = window.__sv.drw, sh = d.doc().sheets[0], bs = (sh.annots ?? []).filter(a => ids.includes(a.id));
+      const at = a => { const p = d.placement(a.view); return [p.x + (a.pos[0] - p.uc) * p.s, p.y + (a.pos[1] - p.vc) * p.s]; };
+      const rects = sh.views.map(v => { const p = d.placement(v.id), hw = (p.box[2] - p.box[0]) / 2 * p.s, hh = (p.box[3] - p.box[1]) / 2 * p.s; return [p.x - hw, p.y - hh, p.x + hw, p.y + hh]; });
+      const q = bs.map(at);
+      return q.every((a, i) => q.every((b, j) => i === j || Math.hypot(a[0] - b[0], a[1] - b[1]) >= 10) && rects.every(r => !(a[0] > r[0] - 5 && a[0] < r[2] + 5 && a[1] > r[1] - 5 && a[1] < r[3] + 5)));
+    }, auto.map(a => a.id));
+    check(clearOk, `drawing: auto balloons sit clear of each other and of the views (${JSON.stringify(auto.map(a => a.pos))})`);
+    // Drawings exam #39: a view pushed against the top of the frame still gets its balloons inside the frame, off the title block.
+    {
+      await dp.keyboard.press("Escape");
+      await dp.keyboard.press("Control+z");
+      await dp.waitForFunction(() => !(window.__sv.drw.doc().sheets[0].annots ?? []).some(a => a.t === "balloon"));
+      const { frame } = await dp.evaluate(() => window.__sv.drw.frame());
+      const pf = await dp.evaluate(id => window.__sv.drw.placement(id), front);
+      const [px, py] = await dp.evaluate(([x, y]) => window.__sv.drw.sheetPt(x, y), [pf.x, pf.y]);
+      const [tx2, ty2] = await dp.evaluate(([x, y]) => window.__sv.drw.sheetPt(x, y), [pf.x, frame[3] - (pf.box[3] - pf.box[1]) / 2 * pf.s - 2]);
+      await dp.mouse.move(px, py); await dp.mouse.down(); await dp.mouse.move(tx2, ty2, { steps: 6 }); await dp.mouse.up();
+      await dp.waitForTimeout(300);
+      await tool("auto");
+      await dp.waitForTimeout(300);
+      const inFrame = await dp.evaluate(fid => {
+        const d = window.__sv.drw, sh = d.doc().sheets[0], { frame: f, tb } = d.frame(), bs = (sh.annots ?? []).filter(a => a.t === "balloon" && a.view === fid);
+        const p = d.placement(fid), at = a => [p.x + (a.pos[0] - p.uc) * p.s, p.y + (a.pos[1] - p.vc) * p.s];
+        return { n: bs.length, moved: Math.round(p.y), ok: bs.map(at).every(([x, y]) => x > f[0] + 4 && x < f[2] - 4 && y > f[1] + 4 && y < f[3] - 4 && !(x > tb[0] - 4 && y < tb[1] + tb[3] + 4)) };
+      }, front);
+      check(inFrame.n === 2 && inFrame.ok, `drawing: auto balloons stay inside the frame and off the title block (exam #39) (${JSON.stringify(inFrame)})`);
+      // Back as it was: undo the balloons and the move, then Auto balloon again where the view was.
+      await dp.keyboard.press("Escape");
+      await dp.keyboard.press("Control+z"); await dp.keyboard.press("Control+z");
+      await dp.waitForTimeout(400);
+      const [bx2, by2] = await at(front, 0, 10);
+      await dp.mouse.click(bx2, by2);
+      await tool("auto");
+      await dp.waitForFunction(() => (window.__sv.drw.doc().sheets[0].annots ?? []).filter(a => a.t === "balloon").length === 2);
+    }
     // A balloon by hand on a pin's circle in the top view reads 2.
     await tool("balloon");
     let [x, y] = await at(top, 34, 0);
@@ -4513,6 +6831,19 @@ try {
     const circles = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "a" && p.layer === "ANNOT" && p.r === 5 && p.a1 - p.a0 > 6).length);
     const nums2 = (await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "ANNOT" && p.h === 5).map(p => p.s))).sort().join();
     check(JSON.stringify(stacked?.stack) === '["c1"]' && circles === 4 && nums2 === "1,1,2,2", `drawing: stacked balloon adds item 1 under item 2 (${JSON.stringify(stacked?.stack)}; ${circles} circles; ${nums2})`);
+    // Balloon style (FR-DRW-023): a split circle shows each item's quantity below; a hexagon has no circle; Circular puts it back.
+    const balloonLook = () => dp.evaluate(() => { const p = window.__sv.drw.prims().filter(q => q.layer === "ANNOT"); return { circles: p.filter(q => q.t === "a" && q.r === 5 && q.a1 - q.a0 > 6).length, qty: p.filter(q => q.t === "t" && q.h === 3).map(q => q.s).sort().join() }; });
+    await dp.selectOption('#drw [data-d="bshape"]', "split");
+    await dp.waitForTimeout(150);
+    const bl1 = await balloonLook(), bs1 = (await annots()).find(a => a.t === "balloon" && a.view === top)?.shape;
+    await dp.selectOption('#drw [data-d="bshape"]', "hex");
+    await dp.waitForTimeout(150);
+    const bl2 = await balloonLook();
+    await dp.selectOption('#drw [data-d="bshape"]', "");
+    await dp.waitForTimeout(150);
+    const bl3 = await balloonLook(), bs3 = "shape" in (await annots()).find(a => a.t === "balloon" && a.view === top);
+    check(bs1 === "split" && bl1.circles === 4 && bl1.qty === "1,2" && bl2.circles === 2 && bl2.qty === "" && bl3.circles === 4 && !bs3,
+      `drawing: a balloon turns into a split circle with quantities, a hexagon and back (${JSON.stringify([bs1, bl1, bl2, bl3, bs3])})`);
     await dp.keyboard.press("Escape");
     // 1.99.0 alternate position (FR-DRW-015): select the top view, pick Pin<1>'s circle, drop that point 30 mm higher: the pin is drawn again in phantom lines.
     [x, y] = await at(top, -45, -25);
@@ -4541,7 +6872,7 @@ try {
     check(phc2 && left === 0, `drawing: an alternate position can be turned and removed (${JSON.stringify([phc2?.o, left])})`);
     // 1.114.0 (FR-DRW-012): a section through both pins cuts them; Don't cut Pin<1> draws it whole.
     await dp.keyboard.press("Escape");
-    await dp.click('#drw [data-a="section"]'); await dp.click('#drw [data-cut="h"]');
+    await drwCmd(dp, "section"); await dp.click('#drw [data-cut="h"]');
     [x, y] = await at(top, -45, 0);
     await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
     [x, y] = await at(top, 0, -95);
@@ -4620,7 +6951,7 @@ try {
   }
 
   // --- PDM: drawing compare, an assembly added with its parts (FR-PDM-051, FR-PDM-003/020) ---
-  if (inShard(1)) {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const vp = await ctx.newPage();
     vp.on("pageerror", e => errors.push(e.message));
@@ -4641,7 +6972,7 @@ try {
     // A drawing of it (standard 3 views); version 2 loses the side view.
     await vp.evaluate(b => window.__sv.asm.openFile({ name: "Base.mcadasm", data: new Uint8Array(b).buffer }), [...ab]);
     await vp.waitForFunction(() => window.__sv.viewer.parts.length === 1, null, { timeout: 90000 });
-    await vp.click("#new-more"); await vp.click("#new-drawing");
+    await newDrawing3(vp);
     await vp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
     const d1 = await vp.evaluate(() => JSON.parse(JSON.stringify(window.__sv.drw.doc())));
     const d2 = { ...d1, sheets: [{ ...d1.sheets[0], views: d1.sheets[0].views.slice(0, 2) }] };
@@ -4652,7 +6983,7 @@ try {
     await vp.waitForSelector("#v-name");
     await vp.fill("#v-name", "Compare test");
     await vp.click('#vault-panel [data-a="new-ws"]');
-    await vp.waitForSelector('#vault-panel [data-a="settings"]');
+    await vp.waitForSelector('#vault-panel [data-a="more"]');
     // The assembly with its embedded part: the part goes in as a file first and the assembly references it.
     const refs = await vp.evaluate(async b => {
       const p = window.__sv.vault;
@@ -4683,19 +7014,23 @@ try {
     // Releasing the part and the drawing stores Plate_revA.step (revision in it) and Base_revA.pdf beside them.
     const rel = await vp.evaluate(async did => {
       const p = window.__sv.vault, v = p.vault;
-      const part = (await v.files()).find(f => f.path === "Plate.mcadprt");
-      for (const id of [part.id, did]) { await p.transitionDlg(id, "Submit for review", "ok", [], ""); await p.transitionDlg(id, "Approve", "ok", [], ""); }
+      const part = (await v.files()).find(f => f.path === "Plate.mcadprt"), asm = (await v.files()).find(f => f.path === "Base.mcadasm");
+      // The drawing references its model now (vault exam V3), and a drawing is released after the model it shows.
+      for (const id of [part.id, asm.id, did]) { await p.transitionDlg(id, "Submit for review", "ok", [], ""); await p.transitionDlg(id, "Approve", "ok", [], ""); }
       const files = await v.files(), step = files.find(f => f.path === "Plate_revA.step"), pdf = files.find(f => f.path === "Base_revA.pdf");
       const text = step ? new TextDecoder().decode(await v.versionBytes(step.id, 1)) : "";
       const head = pdf ? new TextDecoder().decode((await v.versionBytes(pdf.id, 1)).slice(0, 5)) : "";
-      return { step: !!step, rev: /PRODUCT_DEFINITION_FORMATION[A-Z_]*\('A'/.test(text), pdf: head };
+      await p.refresh();
+      const row = [...document.querySelectorAll("#vault-panel .v-row.v-out")].map(r => r.textContent.replace(/\s+/g, " ").trim()).join("|");
+      return { step: !!step, rev: /PRODUCT_DEFINITION_FORMATION[A-Z_]*\('A'/.test(text), pdf: head, out: step && `${step.state}:${step.outputOf?.id === part.id}:${step.outputOf?.rev}`, row };
     }, id);
+    check(rel.out === "Released:true:A" && /↳ Plate_revA\.step.*Release file of Plate\.mcadprt · Rev A/.test(rel.row), `vault: release files are Released outputs listed under their part (${rel.out} | ${rel.row})`);
     check(rel.step && rel.rev && rel.pdf === "%PDF-", `vault: a release stores the part's STEP with its revision and the drawing's PDF (${JSON.stringify(rel)})`);
     await ctx.close();
   }
 
   // --- PDM vault thread (FRS 12.5 P4): lifecycle and revisions, data card, search, rename, recycle bin ---
-  if (inShard(3)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -4711,7 +7046,7 @@ try {
     await mp.waitForTimeout(100);
     if (await mp.inputValue("#v-name") !== "Lifecycle test") await mp.fill("#v-name", "Lifecycle test");
     await mp.click('#vault-panel [data-a="new-ws"]');
-    await mp.waitForSelector('#vault-panel [data-a="settings"]');
+    await mp.waitForSelector('#vault-panel [data-a="more"]');
     await mp.evaluate(async () => { await window.__sv.vault.addFiles([new File(["bracket"], "bracket.txt"), new File(["spare"], "spare.txt")]); });
     const rowText = n => mp.evaluate(i => document.querySelectorAll("#vault-panel .v-row")[i]?.textContent.replace(/\s+/g, " ").trim() ?? "", n);
     await mp.waitForFunction(() => document.querySelectorAll("#vault-panel .v-row").length === 2);
@@ -4752,31 +7087,33 @@ try {
     await mp.click('#vault-panel [data-a="rename"]');
     await mp.fill('#vault-dlg [name="path"]', "parts/bracket.txt");
     await mp.click('#vault-dlg button[value="ok"]');
-    await mp.waitForFunction(() => [...document.querySelectorAll("#vault-panel .v-name")].some(x => x.textContent === "parts/bracket.txt"));
+    await mp.waitForFunction(() => document.querySelector('#vault-panel .v-folder[data-folder="parts"]') && [...document.querySelectorAll("#vault-panel .v-name")].some(x => x.textContent === "bracket.txt"));
     // Delete the spare file to the recycle bin and restore it.
     await mp.click('#vault-panel .v-row:has-text("spare.txt")');
     await mp.click('#vault-panel [data-a="del"]');
     await mp.waitForSelector("#confirm[open]");
     await mp.click('#confirm [data-a="ok"]');
     await mp.waitForFunction(() => document.querySelectorAll("#vault-panel .v-row").length === 1);
-    await mp.click('#vault-panel [data-a="bin"]');
+    await vaultMore(mp, "bin");
     await mp.waitForSelector("#vault-dlg [data-restore]");
     await mp.click("#vault-dlg [data-restore]");
     await mp.waitForFunction(() => document.querySelectorAll("#vault-panel .v-row").length === 2);
     const audit = await mp.evaluate(async () => (await window.__sv.vault.vault.auditTrail()).map(e => e.action).filter(a => /transition|data card|move|rename|delete|restore/.test(a)).join(","));
     // Russian: state and revision are translated.
     await mp.click("#lang-btn");
-    await mp.waitForFunction(() => /Выпущен/.test(document.querySelector("#vault-panel .v-row")?.textContent ?? ""), null, { timeout: 5000 }).catch(() => {});
-    const ruRow = await rowText(0);
+    // The released file is in parts/ now, under the loose spare.txt.
+    const bracketRow = () => [...document.querySelectorAll("#vault-panel .v-row")].find(r => /bracket/.test(r.textContent))?.textContent.replace(/\s+/g, " ").trim() ?? "";
+    await mp.waitForFunction(f => /Выпущен/.test(eval(f)()), bracketRow.toString(), { timeout: 5000 }).catch(() => {});
+    const ruRow = await mp.evaluate(f => eval(f)(), bracketRow.toString());
     await mp.click("#lang-btn");
-    check(/Work in progress/.test(row0) && checks && /Approve/.test(dlgTitle) && /Released/.test(row1) && /Rev A/.test(row1) && /BR-001/.test(row1) && !canCheckOut, `vault P4: data card, Submit for review and Approve give revision A (${row0} → ${row1}; ${dlgTitle})`);
+    check(/Draft/.test(row0) && checks && /Approve/.test(dlgTitle) && /Released/.test(row1) && /Rev A/.test(row1) && /BR-001/.test(row1) && !canCheckOut, `vault P4: data card, Submit for review and Approve give revision A (${row0} → ${row1}; ${dlgTitle})`);
     check(found === "bracket.txt" && audit === "data card,transition,transition,move,delete,restore", `vault P4: search, move, recycle bin and audit (${found}; ${audit})`);
     check(/Выпущен/.test(ruRow) && /Ред\. A/.test(ruRow), `vault P4: lifecycle in Russian (${ruRow})`);
     await ctx.close();
   }
 
   // --- PDM vault thread (FRS 12.5 P5): change order, release package, workflow editor, notifications ---
-  if (inShard(1)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -4792,7 +7129,7 @@ try {
     await mp.waitForTimeout(100);
     if (await mp.inputValue("#v-name") !== "Team test") await mp.fill("#v-name", "Team test");
     await mp.click('#vault-panel [data-a="new-ws"]');
-    await mp.waitForSelector('#vault-panel [data-a="changes"]');
+    await mp.waitForSelector('#vault-panel [data-a="more"]');
     // Two released files (one transition on both: a release package).
     await mp.evaluate(async () => {
       const p = window.__sv.vault, v = p.vault;
@@ -4811,7 +7148,7 @@ try {
     // Waits for an async condition in the page (waitForFunction treats a promise as truthy).
     const until = async (fn, ms = 10000) => { for (let t0 = Date.now(); Date.now() - t0 < ms; await mp.waitForTimeout(100)) if (await mp.evaluate(fn)) return true; return false; };
     await until(async () => (await window.__sv.vault.vault.changes()).length === 1);
-    await mp.click('#vault-panel [data-a="changes"]');
+    await vaultMore(mp, "changes");
     await mp.waitForSelector("#vault-dlg [data-eco-ok]");
     await mp.click("#vault-dlg [data-eco-ok]");
     await mp.waitForSelector("#vault-dlg [data-eco-close]");
@@ -4824,14 +7161,14 @@ try {
     const after = await mp.evaluate(async () => (await window.__sv.vault.vault.files()).map(f => `${f.path}:${f.state}:${f.revision}`).join("|"));
     await mp.evaluate(() => document.querySelector("#vault-dlg")?.open && document.querySelector("#vault-dlg").close());
     // Release packages: two (the joint release and the change order), exported as a ZIP.
-    await mp.click('#vault-panel [data-a="packages"]');
+    await vaultMore(mp, "packages");
     await mp.waitForSelector("#vault-dlg [data-zip]");
     const pkgs = await mp.$$eval("#vault-dlg [data-zip]", x => x.length);
     const [dl] = await Promise.all([mp.waitForEvent("download"), mp.click("#vault-dlg [data-zip] >> nth=0")]);
     const zipName = dl.suggestedFilename();
     await mp.click('#vault-dlg button[value="cancel"]');
     // Workflow editor: add a state, save; it is in the settings.
-    await mp.click('#vault-panel [data-a="workflow"]');
+    await vaultMore(mp, "workflow");
     await mp.waitForSelector("#vault-dlg [data-add-s]");
     await mp.click("#vault-dlg [data-add-s]");
     await mp.waitForSelector('#vault-dlg [data-s="5"]');
@@ -4848,8 +7185,8 @@ try {
       v.user = "Andrey";
       await p.refresh();
     });
-    const badge = await mp.evaluate(() => document.querySelector('#vault-panel [data-a="notes"] .v-badge')?.textContent ?? "");
-    await mp.click('#vault-panel [data-a="notes"]');
+    const badge = await mp.evaluate(() => document.querySelector('#vault-panel [data-a="more"] .v-badge')?.textContent ?? "");
+    await vaultMore(mp, "notes");
     await mp.waitForSelector("#vault-dlg .v-log li");
     const note = await mp.textContent("#vault-dlg .v-log li");
     check(/arm\.txt:Change pending/.test(pending) && /pin\.txt:Released/.test(pending) && after === "arm.txt:Released:B|pin.txt:Released:A", `vault P5: change request, approve, close and release (${pending} → ${after})`);
@@ -4858,7 +7195,7 @@ try {
   }
 
   // 1.47: offline start (FR-STO-030): the service worker precaches the app; a reload offline still starts it.
-  if (inShard(2)) {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const pg = await ctx.newPage();
     await pg.goto(`${origin}/index.html?sw`);
@@ -4873,7 +7210,7 @@ try {
   }
 
   // --- 1.53: sketch: converted edges follow the model and dangle (FR-SK-064), dimension names (065), draggable text (066), edit sketch plane (007) ---
-  if (inShard(4)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -4962,7 +7299,7 @@ try {
   }
 
   // --- 1.56: rib (FR-FT-062) from the Sweep ▾ menu: an L bracket's corner gusset, previewed live, panel in Russian ---
-  if (inShard(2)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -4997,7 +7334,7 @@ try {
     const rib = await mp.evaluate(() => ({ v: window.__sv.model.last().props.volume, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length, names: window.__sv.model.store.doc.features.map(f => f.name).join(",") }));
     check(r0.type === "rib" && r0.sketch === "rs" && r0.title === "Rib" && Math.abs(r0.live - v0 - 8000) < 1e-3 && Math.abs(live4 - v0 - 6400) < 1e-3 && Math.abs(rib.v - v0 - 6400) < 1e-3 && !rib.bad && /Rib1/.test(rib.names),
       `model 1.56: Rib from an open line fills the bracket's corner, previewed live (FR-FT-062) (${JSON.stringify(r0)}, ${v0}, ${live4}, ${JSON.stringify(rib)})`);
-    // Split line (FR-FT-084): a circle on Top, clear of the rib, splits the base's top and bottom faces; the volume stays.
+    // Split line (FRS 2.3): a circle on Top, clear of the rib, splits the base's top and bottom faces; the volume stays.
     await mp.evaluate(() => window.__sv.model.store.change("Circle", d => { d.features.push({ id: "cs", type: "sketch", name: "Sketch4", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "o", t: "point", x: 20, y: 15 }, { id: "k", t: "circle", c: "o", r: 6 }] }); }));
     await settle();
     const nf0 = await mp.evaluate(() => window.__sv.model.last().faceNames.length);
@@ -5008,7 +7345,7 @@ try {
     await settle();
     const sp = await mp.evaluate(() => ({ v: window.__sv.model.last().props.volume, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length, faces: window.__sv.model.last().faceNames.length }));
     check(sp0.sketch === "cs" && sp0.count === "All faces it crosses" && sp0.faces === nf0 + 2 && sp.faces === nf0 + 2 && !sp.bad && Math.abs(sp.v - rib.v) < 1e-6,
-      `model 1.56: Split Line splits the faces a projected circle crosses, previewed live (FR-FT-084) (${nf0}, ${JSON.stringify(sp0)}, ${JSON.stringify(sp)})`);
+      `model 1.56: Split Line splits the faces a projected circle crosses, previewed live (FRS 2.3) (${nf0}, ${JSON.stringify(sp0)}, ${JSON.stringify(sp)})`);
     await mp.click("#lang-btn");
     await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "rib").id));
     await settle();
@@ -5018,7 +7355,7 @@ try {
   }
 
   // --- 1.57: multibody (FRS 9.10, AT-P3-3): split a body by a plane and combine it back, a boss that does not merge ---
-  if (inShard(3)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -5032,6 +7369,9 @@ try {
     const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
     await mp.click("#new-part");
     await mp.waitForFunction(() => window.__sv.model?.store);
+    await settle();
+    // An empty part says how to start (exam #11), not "Open a model to begin."
+    const emptyHint = await mp.evaluate(() => document.querySelector("#props")?.textContent ?? "");
     await mp.evaluate(() => window.__sv.model.store.change("Box", d => {
       const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
       d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -20, -10), P("b", 20, -10), P("c", 20, 10), P("d", -20, 10), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
@@ -5062,6 +7402,8 @@ try {
     await settle();
     await mp.evaluate(() => window.__sv.modeller.command("extrude"));
     await settle();
+    // The cursor starts in Depth (exam #7).
+    const depthFocus = await mp.evaluate(() => document.activeElement?.dataset?.num ?? "");
     const on = await mp.evaluate(() => document.querySelector('#mc-pm input[data-k="merge"]')?.checked);
     await mp.click('#mc-pm input[data-k="merge"]');
     await settle();
@@ -5069,6 +7411,219 @@ try {
     await mp.click("#mc-ok");
     await settle();
     check(on === true && mb.merge === false && mb.bodies === 2, `model 1.57: Extrude with Merge result off makes a new body (FR-FT-006) (${on}, ${JSON.stringify(mb)})`);
+    // 1.505 (FR-FT-007): Feature scope: a Through all - both cut on the boss's axis takes both bodies; with only
+    // the first body picked, the boss keeps its material.
+    {
+      await mp.evaluate(() => window.__sv.model.store.change("Circle", d => { d.features.push({ id: "ks", type: "sketch", name: "SketchScope", plane: { face: { name: "x:end" } }, rels: [], dims: [], ents: [{ id: "o", t: "point", x: 0, y: 0 }, { id: "c", t: "circle", c: "o", r: 2 }] }); }));
+      await settle();
+      const v0 = await mp.evaluate(() => window.__sv.model.last().props.volume);
+      const optsCut = await mp.evaluate(() => localStorage.getItem("mc:opts:cut"));
+      await mp.evaluate(() => window.__sv.modeller.command("cut"));
+      await settle();
+      await mp.selectOption('#mc-pm select[data-k="end"]', "through2");
+      await settle();
+      const vAll = await mp.evaluate(() => window.__sv.model.last().props.volume);
+      const allOn = await mp.evaluate(() => document.querySelector('#mc-pm input[data-k="scopeAll"]')?.checked);
+      await mp.click('#mc-pm input[data-k="scopeAll"]');
+      await settle();
+      const focusScope = await mp.evaluate(() => !!document.querySelector('#mc-pm [data-focus="scope"].focus'));
+      await mp.evaluate(() => { window.__sv.model.mode().draft.scope.push({ name: "x:end" }); window.__sv.modeller.draftChanged(); });
+      await settle();
+      const sc = await mp.evaluate(() => ({ v: window.__sv.model.last().props.volume, box: document.querySelector('#mc-pm [data-focus="scope"]')?.textContent }));
+      await mp.click("#mc-ok");
+      await settle();
+      const kept = await mp.evaluate(() => ({ scope: window.__sv.model.store.doc.features.at(-1).scope?.length, bodies: window.__sv.model.last().props.bodies }));
+      check(allOn === true && focusScope && sc.box === "1 body" && sc.v - vAll > 1 && v0 - sc.v > 1 && kept.scope === 1 && kept.bodies === 2,
+        `model 1.505: Feature scope cuts only the picked body (FR-FT-007) (${allOn}, ${focusScope}, ${JSON.stringify(sc)}, ${(v0 - vAll).toFixed(2)}, ${JSON.stringify(kept)})`);
+      // 1.506: the Hole panel has Feature scope too; a right-click on empty space lists the recent commands (FR-UI-113).
+      await mp.evaluate(() => window.__sv.modeller.command("hole"));
+      await settle();
+      const holeScope = await mp.evaluate(() => !!document.querySelector('#mc-pm input[data-k="scopeAll"]'));
+      await mp.click("#mc-cancel");
+      await settle();
+      const cv = await mp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return { x: r.left + 40, y: r.bottom - 40 }; });
+      await mp.mouse.click(cv.x, cv.y, { button: "right" });
+      await mp.waitForTimeout(200);
+      const recent = await mp.evaluate(() => { const m = document.getElementById("mc-menu"); return { shown: !m.hidden, head: m.querySelector(".mc-menu-h")?.textContent ?? "", items: [...m.querySelectorAll("button")].map(b => b.textContent) }; });
+      await mp.keyboard.press("Escape");
+      check(holeScope && recent.shown && recent.head === "Recent commands" && recent.items[0] === "Hole" && recent.items[1] === "Cut" && recent.items.includes("Zoom to fit"),
+        `model 1.506: Hole has Feature scope; right-click on empty space lists Recent commands (FR-FT-007, FR-UI-113) (${holeScope}, ${JSON.stringify(recent)})`);
+      // 1.535: a right-click on a face lists its feature's commands at the pointer, with the context toolbar above (FR-UI-025).
+      const onFace = await mp.evaluate(() => {
+        const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect();
+        for (let k = 0; k < 400; k++) {
+          const fx = 0.5 + ((k % 20) - 10) / 40, fy = 0.5 + (Math.floor(k / 20) - 10) / 40;
+          const ndc = new (v.camera.position.constructor)(fx * 2 - 1, -(fy * 2 - 1), 0);
+          if (v.pickMeshes({ x: ndc.x, y: ndc.y })) return { x: r.left + fx * r.width, y: r.top + fy * r.height };
+        }
+        return null;
+      });
+      let geo = null;
+      if (onFace) {
+        await mp.mouse.click(onFace.x, onFace.y, { button: "right" });
+        await mp.waitForTimeout(250);
+        geo = await mp.evaluate(() => { const m = document.getElementById("mc-menu"); return { shown: !m.hidden, head: m.querySelector(".mc-menu-h")?.textContent ?? "", items: [...m.querySelectorAll("button")].map(b => b.textContent), bar: document.querySelectorAll("#mc-cbar button").length }; });
+        await mp.keyboard.press("Escape");
+        await mp.evaluate(() => window.__sv.modeller.hideShortcutBar());
+      }
+      check(!!geo && geo.shown && geo.head !== "" && geo.items[0] === "Edit feature" && geo.items.includes("Suppress") && geo.items.includes("Delete") && geo.items.includes("Zoom to fit") && geo.bar > 0,
+        `model 1.535: right-click on a face lists its feature's commands under the context toolbar (FR-UI-025) (${JSON.stringify(geo)})`);
+      // 1.537: Ctrl+click builds a selection of faces and edges that commands take; Esc clears it (FR-SEL-007).
+      const spots = await mp.evaluate(() => {
+        const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(), out = [];
+        for (let k = 0; k < 64; k++) {
+          const fx = 0.2 + (k % 8) * 0.6 / 7, fy = 0.2 + Math.floor(k / 8) * 0.6 / 7;
+          if (v.pickMeshes({ x: fx * 2 - 1, y: -(fy * 2 - 1) })) out.push({ x: r.left + fx * r.width, y: r.top + fy * r.height });
+        }
+        return out;
+      });
+      const ctrlBuild = async () => {
+        for (const p of spots) {
+          await mp.keyboard.down("Control");
+          await mp.mouse.click(p.x, p.y);
+          await mp.keyboard.up("Control");
+          await mp.waitForTimeout(60);
+          const c = await mp.evaluate(() => window.__sv.modeller.multiCount);
+          if (c.faces + c.edges >= 2) return c;
+        }
+        return await mp.evaluate(() => window.__sv.modeller.multiCount);
+      };
+      const mc1 = await ctrlBuild();
+      const hint = await mp.evaluate(() => document.getElementById("st-hint")?.textContent ?? "");
+      await mp.evaluate(() => window.__sv.modeller.hideShortcutBar());
+      await mp.keyboard.press("Escape");
+      const mc0 = await mp.evaluate(() => window.__sv.modeller.multiCount);
+      const mc2 = await ctrlBuild();
+      const byEdges = mc2.edges > 0;
+      await mp.evaluate(c => { window.__sv.modeller.hideShortcutBar(); window.__sv.modeller.command(c); }, byEdges ? "fillet" : "shell");
+      await settle();
+      const taken = await mp.evaluate(k => window.__sv.model.mode().draft?.[k]?.length ?? -1, byEdges ? "edges" : "faces");
+      await mp.click("#mc-cancel");
+      await settle();
+      check(mc1.faces + mc1.edges >= 2 && /selected/.test(hint) && mc0.faces + mc0.edges === 0 && mc2.faces + mc2.edges >= 2 && taken === (byEdges ? mc2.edges : mc2.faces),
+        `model 1.537: Ctrl+click selects several faces/edges, Esc clears them, the command takes them all (FR-SEL-007) (${JSON.stringify({ spots: spots.length, mc1, hint, mc0, mc2, byEdges, taken })})`);
+      // 1.539: a left drag from empty space draws a box: left to right takes what lies inside, right to left what it
+      // crosses; the view does not turn; a click on empty space clears (FR-SEL-008).
+      {
+        await mp.evaluate(() => window.__sv.viewer.fit(false));
+        await mp.waitForTimeout(400);
+        const geom = await mp.evaluate(() => {
+          const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect();
+          let x0 = 1, x1 = 0, y0 = 1, y1 = 0;
+          for (let k = 0; k < 1600; k++) {
+            const fx = (k % 40 + 0.5) / 40, fy = (Math.floor(k / 40) + 0.5) / 40;
+            if (v.pickMeshes({ x: fx * 2 - 1, y: -(fy * 2 - 1) })) { x0 = Math.min(x0, fx); x1 = Math.max(x1, fx); y0 = Math.min(y0, fy); y1 = Math.max(y1, fy); }
+          }
+          return { r: { left: r.left, top: r.top, width: r.width, height: r.height }, x0, x1, y0, y1, cam: v.camera.position.toArray() };
+        });
+        const px = (fx, fy) => [geom.r.left + fx * geom.r.width, geom.r.top + fy * geom.r.height];
+        const drag = async (a, b) => {
+          await mp.mouse.move(a[0], a[1]);
+          await mp.mouse.down();
+          for (let i = 1; i <= 6; i++) await mp.mouse.move(a[0] + (b[0] - a[0]) * i / 6, a[1] + (b[1] - a[1]) * i / 6);
+          const cls = await mp.evaluate(() => document.querySelector(".mc-selbox")?.className ?? "");
+          await mp.mouse.up();
+          await mp.waitForTimeout(200);
+          return cls;
+        };
+        const m0 = Math.max(0.02, geom.x0 - 0.06), m1 = Math.min(0.98, geom.x1 + 0.06), n0 = Math.max(0.02, geom.y0 - 0.06), n1 = Math.min(0.98, geom.y1 + 0.06);
+        const winCls = await drag(px(m0, n0), px(m1, n1));
+        const win = await mp.evaluate(() => ({ ...window.__sv.modeller.multiCount, hint: document.getElementById("st-hint")?.textContent ?? "", cam: window.__sv.viewer.camera.position.toArray(), box: !!document.querySelector(".mc-selbox") }));
+        await mp.mouse.click(...px(m0, n0));
+        await mp.waitForTimeout(200);
+        const cleared = await mp.evaluate(() => window.__sv.modeller.multiCount);
+        // A crossing box from the right over the middle of the part.
+        const crCls = await drag(px(m1, (geom.y0 + geom.y1) / 2), px((geom.x0 + geom.x1) / 2, (geom.y0 + geom.y1) / 2 + 0.02));
+        const cross = await mp.evaluate(() => window.__sv.modeller.multiCount);
+        // A window strip of the same height from the left: only what lies wholly inside it, so fewer.
+        await drag(px(m0, (geom.y0 + geom.y1) / 2), px((geom.x0 + geom.x1) / 2, (geom.y0 + geom.y1) / 2 + 0.02));
+        const half = await mp.evaluate(() => window.__sv.modeller.multiCount);
+        await mp.keyboard.press("Escape");
+        const moved = Math.hypot(...win.cam.map((c, i) => c - geom.cam[i]));
+        check(win.faces >= 3 && win.edges >= 6 && /selected/.test(win.hint) && !win.box && moved < 1e-6 && !/cross/.test(winCls) && /cross/.test(crCls)
+          && cleared.faces + cleared.edges === 0 && cross.faces >= 1 && cross.edges >= 1 && half.faces + half.edges < cross.faces + cross.edges,
+          `model 1.539: box selection in the part, window and crossing, the view stays put, an empty click clears (FR-SEL-008) (${JSON.stringify({ geom: [geom.x0, geom.x1, geom.y0, geom.y1], winCls, win, moved, cleared, crCls, cross, half })})`);
+        // 1.542 (FR-SEL-008 P2): with Lasso selection on in the heads-up bar, the drag draws a lasso: clockwise round
+        // the part takes what lies inside, anticlockwise over its middle what the lasso touches.
+        await mp.click('#hud [data-hud="lasso"]');
+        const lassoOn = await mp.evaluate(() => document.querySelector('#hud [data-hud="lasso"]').getAttribute("aria-pressed"));
+        const lasso = async pts => {
+          await mp.mouse.move(...pts[0]);
+          await mp.mouse.down();
+          for (let k = 1; k < pts.length; k++) for (let i = 1; i <= 5; i++) await mp.mouse.move(pts[k - 1][0] + (pts[k][0] - pts[k - 1][0]) * i / 5, pts[k - 1][1] + (pts[k][1] - pts[k - 1][1]) * i / 5);
+          const cls = await mp.evaluate(() => document.querySelector(".mc-lasso")?.getAttribute("class") ?? "");
+          await mp.mouse.up();
+          await mp.waitForTimeout(200);
+          return cls;
+        };
+        const lwCls = await lasso([px(m0, n0), px(m1, n0), px(m1, n1), px(m0, n1), px(m0, n0 + 0.01)]);
+        const lw = await mp.evaluate(() => ({ ...window.__sv.modeller.multiCount, gone: !document.querySelector(".mc-lasso") }));
+        await mp.keyboard.press("Escape");
+        const ym = (geom.y0 + geom.y1) / 2, xm = (geom.x0 + geom.x1) / 2;
+        const lcCls = await lasso([px(m1, ym), px(xm, ym - 0.03), px(xm, ym + 0.03), px(m1, ym + 0.005)]);
+        const lc = await mp.evaluate(() => window.__sv.modeller.multiCount);
+        await mp.keyboard.press("Escape");
+        await mp.click('#hud [data-hud="lasso"]');
+        const lassoOff = await mp.evaluate(() => [document.querySelector('#hud [data-hud="lasso"]').getAttribute("aria-pressed"), localStorage.getItem("mc:lasso")]);
+        check(lassoOn === "true" && /mc-lasso/.test(lwCls) && !/cross/.test(lwCls) && lw.faces >= 3 && lw.edges >= 6 && lw.gone && /cross/.test(lcCls) && lc.faces + lc.edges >= 1 && lassoOff[0] === "false" && lassoOff[1] === null,
+          `model 1.542: lasso selection in the part, clockwise inside, anticlockwise touching (FR-SEL-008) (${JSON.stringify({ lassoOn, lwCls, lw, lcCls, lc, lassoOff })})`);
+        // 1.543 (FR-SEL-012): the cursor shows a glyph for what lies under it: on the part a face, edge or point
+        // kind with an SVG cursor; over empty space none (or a plane); leaving the canvas clears it.
+        const glyphAt = async (fx, fy) => {
+          await mp.mouse.move(...px(fx, fy), { steps: 3 });
+          await mp.waitForTimeout(120);
+          return mp.evaluate(() => { const c = window.__sv.viewer.renderer.domElement; return { k: c.dataset.hover ?? null, cur: getComputedStyle(c).cursor.slice(0, 30) }; });
+        };
+        const gPart = [];
+        for (const f of [0.5, 0.35, 0.65]) gPart.push(await glyphAt(geom.x0 + (geom.x1 - geom.x0) * f, geom.y0 + (geom.y1 - geom.y0) * f));
+        const gEmpty = await glyphAt(m0 * 0.5, n0 * 0.5 + 0.01);
+        await mp.mouse.move(geom.r.left + geom.r.width + 40, geom.r.top + 10);
+        await mp.waitForTimeout(120);
+        const gLeft = await mp.evaluate(() => window.__sv.viewer.renderer.domElement.dataset.hover ?? null);
+        check(gPart.every(g => ["face", "edge", "vertex", "point"].includes(g.k) && /^url\("data:image\/svg/.test(g.cur)) && gPart.some(g => g.k === "face")
+          && (gEmpty.k === null || gEmpty.k === "plane") && gLeft === null,
+          `model 1.543: hover cursor glyph for the entity under the pointer (FR-SEL-012) (${JSON.stringify({ gPart, gEmpty, gLeft })})`);
+        // 1.545 (FR-SEL-012): after OK or Cancel of a feature nothing stays selected (no lit faces, no tree row).
+        const selAfter = async how => {
+          const fid = await mp.evaluate(() => window.__sv.model.store.doc.features.find(f => f.type === "extrude")?.id);
+          await mp.evaluate(id => { window.__sv.modeller.selected = id; window.__sv.modeller.editFeature(id); }, fid);
+          await mp.waitForTimeout(300);
+          await mp.evaluate(h => (h === "ok" ? window.__sv.modeller.ok() : window.__sv.modeller.cancel()), how);
+          await mp.waitForTimeout(300);
+          await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden, null, { timeout: 60000 });
+          return mp.evaluate(() => ({ sel: window.__sv.modeller.selected, row: !!document.querySelector("#mc-tree .ft-row.sel"), mode: window.__sv.model.mode().kind }));
+        };
+        const sOk = await selAfter("ok"), sCancel = await selAfter("cancel");
+        check(sOk.sel === null && !sOk.row && sOk.mode === "none" && sCancel.sel === null && !sCancel.row && sCancel.mode === "none",
+          `model 1.545: nothing stays selected after OK or Cancel of a feature (FR-SEL-012) (${JSON.stringify({ sOk, sCancel })})`);
+      }
+      await mp.evaluate(() => window.__sv.model.store.undo());
+      await settle();
+      await mp.evaluate(() => window.__sv.model.store.undo());
+      await settle();
+      // The cut panel remembers Through all - both; later checks expect what was remembered before.
+      await mp.evaluate(o => { if (o == null) localStorage.removeItem("mc:opts:cut"); else localStorage.setItem("mc:opts:cut", o); }, optsCut);
+    }
+    // 1.363 (exam #7, #8, #11, #12, #24): Overall size comes from the exact box; a cut sketched on a plane under the
+    // part starts towards the part; Extrude seen straight on turns the view.
+    {
+      const size = await mp.evaluate(() => ({ box: window.__sv.model.last().props.box, text: [...document.querySelectorAll("#props .kv .v")].map(e => e.textContent).find(x => /×/.test(x)) ?? "" }));
+      await mp.evaluate(() => window.__sv.model.store.change("Circle", d => { d.features.push({ id: "k2", type: "sketch", name: "Sketch3", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "o", t: "point", x: 10, y: 0 }, { id: "c", t: "circle", c: "o", r: 2 }] }); }));
+      await settle();
+      await mp.evaluate(() => window.__sv.viewer.viewFrom(new window.__sv.viewer.camera.position.constructor(0, 0, 1), false));
+      await mp.evaluate(() => window.__sv.modeller.command("cut"));
+      await settle();
+      await mp.waitForTimeout(600);
+      const cut = await mp.evaluate(() => { const v = window.__sv.viewer, m = window.__sv.model.mode(), d = v.camera.position.clone().sub(v.controls.target).normalize(); return { flip: m.draft?.flip, end: m.draft?.end, bad: window.__sv.model.last().statuses.filter(x => !x.ok).length, look: Math.round(d.z * 100) / 100 }; });
+      await mp.click("#mc-cancel");
+      await settle();
+      await mp.evaluate(() => window.__sv.model.store.change("Drop", d => { d.features = d.features.filter(f => f.id !== "k2"); }));
+      await settle();
+      check(/empty/i.test(emptyHint) && !/Open a model/.test(emptyHint) && depthFocus === "depth"
+        && size.box && Math.abs(size.box[0][0] + 20) < 1e-6 && Math.abs(size.box[1][2] - 20) < 1e-6 && /^40\.000 × 20\.000 × 20\.000/.test(size.text)
+        && cut.flip === true && cut.end === "through" && cut.bad === 0 && cut.look > 0.2 && cut.look < 0.9,
+        `model 1.363: empty-part hint, Depth focused, exact Overall size, a cut from a plane under the part goes into it, Extrude turns a straight-on view (${JSON.stringify({ emptyHint, depthFocus, size, cut })})`);
+    }
     // Variable radius fillet on a corner edge: callouts at both ends, the end radius typed in the list.
     const v1 = await mp.evaluate(() => window.__sv.model.last().props.volume);
     await mp.evaluate(() => window.__sv.modeller.command("fillet"));
@@ -5091,7 +7646,7 @@ try {
   }
 
   // --- 1.58: Insert body (FR-FT-130/131): a STEP cube into a new part, then Check and heal ---
-  if (inShard(4)) {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -5121,7 +7676,7 @@ try {
   }
 
   // --- 1.59: full round fillet and face fillet (FR-FT-032), Scale (FR-BODY-006) ---
-  if (inShard(4)) {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -5168,7 +7723,7 @@ try {
   }
 
   // --- 1.60: Solid Bodies folder (FR-BODY-001): list, hide, colour, rename, delete ---
-  if (inShard(3)) {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -5190,6 +7745,23 @@ try {
     }));
     await settle();
     const t0 = await mp.evaluate(() => ({ folder: document.querySelector('#mc-tree .ft-row[data-id="folder:bodies"] .ft-name')?.textContent, rows: [...document.querySelectorAll("#mc-tree .ft-body .ft-name")].map(e => e.textContent), faces: window.__sv.model.last().faceNames.length }));
+    // A body's own material (FR-MAT-001): the cylinder in titanium weighs with its density, the box with the part's.
+    const massOf = async () => { await mp.evaluate(() => { document.querySelector("#mass-out").textContent = ""; document.querySelector("#mass-run").click(); }); await mp.waitForFunction(() => /Mass/.test(document.querySelector("#mass-out").textContent), null, { timeout: 10000 }); return mp.evaluate(() => { const s = document.querySelector("#mass-out").textContent; return { g: +(/Mass([\d.]+) g/.exec(s)?.[1] ?? NaN), dens: /from part materials/.test(s) }; }); };
+    await mp.evaluate(() => void window.__sv.modeller.pickBodyMaterial("e"));
+    await mp.waitForSelector("#mat-dlg[open]");
+    await mp.fill("#mat-q", "Ti-6Al-4V");
+    await mp.keyboard.press("ArrowDown");
+    await mp.keyboard.press("ArrowUp");
+    await mp.keyboard.press("Enter");
+    await mp.waitForSelector("#mat-dlg", { state: "detached" });
+    await settle();
+    const bm = { mat: await mp.evaluate(() => window.__sv.model.store.doc.bodies?.e?.material?.name), ...(await massOf()) };
+    await mp.evaluate(() => window.__sv.modeller.undo());
+    await settle();
+    const bm0 = await massOf();
+    const wantG = (8000 * 7.85 + Math.PI * 250 * 4.43) / 1000, plainG = (8000 + Math.PI * 250) * 7.85 / 1000;
+    check(bm.mat === "Titanium Ti-6Al-4V" && Math.abs(bm.g - wantG) < 0.02 && bm.dens && Math.abs(bm0.g - plainG) < 0.02 && !bm0.dens,
+      `model 1.453.0: a body's own material is used for its mass, the part's for the rest (${JSON.stringify({ bm, bm0, wantG, plainG })})`);
     // Hide the cylinder from its row: it leaves the view, the mass properties keep it.
     await mp.hover('#mc-tree .ft-row[data-id="body:e"]');
     await treeClick(mp, '#mc-tree .ft-row[data-id="body:e"] [data-a="bhide"]');
@@ -5221,6 +7793,71 @@ try {
     await settle();
     const ip = await mp.evaluate(() => ({ n: window.__sv.model.last().bodies.length, v: window.__sv.model.last().props.volume, f: window.__sv.model.store.doc.features.at(-1)?.file, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length }));
     check(ip.n === 2 && Math.abs(ip.v - 16000) < 0.1 && ip.f === "plate.mcadprt" && !ip.bad, `model 1.61: Insert part puts a saved part in as a body (FR-BODY-005) (${JSON.stringify(ip)})`);
+    await ctx.close();
+  }
+
+  // --- 1.462: a body's own material in drawings (FR-MAT-001): section hatching per body ---
+  if (inShard(6)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    // `nocache`: the checks below are about the drawing workers, so repeated sections must not come from the disk cache.
+    await mp.goto(`${origin}/index.html?debug&drwhelper=1&drwheap=1&nocache`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Two bodies", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -20, -10), P("b", 20, -10), P("c", 20, 10), P("d", -20, 10), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } },
+        { id: "k", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "c0", t: "point", x: 40, y: 0 }, { id: "cc", t: "circle", c: "c0", r: 5 }] },
+        { id: "e", type: "extrude", name: "Extrude2", sketch: "k", op: "boss", end: "blind", depth: { v: 10 }, merge: false });
+      d.material = { name: "Steel S235", density: 7.85 };
+      d.bodies = { e: { material: { name: "Titanium Ti-6Al-4V", density: 4.43 } } };
+    }));
+    await mp.waitForTimeout(300); await idle();
+    await newDrawing3(mp);
+    await mp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
+    // 1.487: the sheet is drawn once per view that lands, not once more for every render that asked for it.
+    const renders = await mp.evaluate(() => window.__sv.drw.renders());
+    check(renders <= 12, `drawing 1.487: Standard 3 views redraw the sheet a few times, not dozens (${renders} redraws)`);
+    const cut = await mp.evaluate(() => window.__sv.drw.section([0, 1, 0], [0, 0, 1], [0, 0, 5]));
+    const pairs = cut.keys.map((k, i) => `${k}=${cut.mats[i]}`).sort().join();
+    check(pairs === "body0=Steel S235,body1=Titanium Ti-6Al-4V",
+      `drawing 1.462: a section hatches each body by its own material, the part's for the rest (FR-MAT-001) (${pairs})`);
+    // 1.471: the title block lists the bodies' materials and weighs each body with its own density (40×20×10 steel + Ø10×10 titanium = 0.066 kg).
+    const tb = await mp.evaluate(() => window.__sv.drw.fields());
+    check(tb.material === "Steel S235, Titanium Ti-6Al-4V" && tb.mass === "0.066 kg",
+      `drawing 1.471: the title block's material and mass follow each body's material (FR-MAT-001) (${tb.material}; ${tb.mass})`);
+    // 1.476: a second drawing worker holds the same model; two sections asked at once run one on each.
+    await mp.waitForFunction(() => window.__sv.drw.helper().loaded, null, { timeout: 60000 });
+    const h0 = await mp.evaluate(() => window.__sv.drw.helper().helped);
+    const two = await mp.evaluate(() => Promise.all(["a", "b"].map(tag => window.__sv.drw.section([0, 1, 0], [0, 0, 1], [0, 0, 5], tag))));
+    const h1 = await mp.evaluate(() => window.__sv.drw.helper().helped);
+    const same = two.map(c => c.keys.map((k, i) => `${k}=${c.mats[i]}`).sort().join());
+    check(h1 > h0 && same.every(x => x === pairs),
+      `drawing 1.476: exact views run on two drawing workers at once, with the same model (${h0} → ${h1}; ${same.join(" | ")})`);
+    // 1.491: a projection no view wants any more (a deleted view's) is dropped, even while a worker runs it,
+    // and the next view is made as before.
+    const dropped = await mp.evaluate(async () => {
+      const p = window.__sv.drw.section([0, 1, 0], [0, 0, 1], [0, 0, 4], "gone").then(() => "made", e => e.message);
+      // The job is handed to a worker a few microtasks later (after the model's load promise), never later than the next task.
+      for (let i = 0; i < 4; i++) await Promise.resolve();
+      window.__sv.drw.drop();
+      return p;
+    });
+    const after = await mp.evaluate(() => window.__sv.drw.section([0, 1, 0], [0, 0, 1], [0, 0, 5], "after").then(c => c.keys.length, e => e.message));
+    check(dropped === "The view is gone" && after === 2, `drawing 1.491: a deleted view's projection is dropped and the next view still comes (${dropped}; ${after})`);
+    // 1.478: this page runs with `drwheap=1`, so the main drawing worker is started over (same model, cache kept)
+    // after every projection; all the checks above ran through such restarts.
+    const { recycles: rc, snap } = await mp.evaluate(() => window.__sv.drw.helper());
+    check(rc >= 2, `drawing 1.478: a drawing worker past its heap limit starts over with the same model between views (${rc} restarts)`);
+    // 1.482: the restarts and the helper read the full load's BREP snapshot instead of building the model again.
+    check(snap > 1000, `drawing 1.482: the drawing workers restart from a snapshot of the model (${snap} bytes)`);
     await ctx.close();
   }
 
@@ -5272,6 +7909,8 @@ try {
     await mp.click("#asm-tree .ft-comp >> nth=1");
     await mp.click('#asm-tools [data-ac="move"]');
     await mp.fill('#asm-pm input[data-pose="x"]', "100");
+    // An inserted part lands where the view looks (exam #67), so its Y is set too.
+    await mp.fill('#asm-pm input[data-pose="y"]', "0");
     await mp.fill('#asm-pm input[data-pose="rz"]', "90");
     await mp.press('#asm-pm input[data-pose="rz"]', "Enter");
     await shown(3);
@@ -5302,6 +7941,93 @@ try {
     const hid = await mp.evaluate(() => window.__sv.asm.props?.volume);
     await mp.keyboard.press("ControlOrMeta+z");
     await shown(3);
+    // 1.351 (FR-UI-105): Tab over the cube hides it, Shift+Tab over the same place shows it again.
+    const tabAt = await mp.evaluate(() => {
+      const a = window.__sv.asm, v = window.__sv.viewer, id = a.doc.components[2].id, i = a.shownIds.findIndex(s => s === id);
+      const m = v.parts[i].mesh; m.geometry.computeBoundingBox();
+      const c = m.geometry.boundingBox.getCenter(new (v.camera.position.constructor)()).applyMatrix4(m.matrixWorld).project(v.camera);
+      const r = v.renderer.domElement.getBoundingClientRect();
+      return { id, x: r.left + ((c.x + 1) / 2) * r.width, y: r.top + ((1 - c.y) / 2) * r.height };
+    });
+    await mp.evaluate(() => document.activeElement?.blur());
+    await mp.mouse.move(tabAt.x + 1, tabAt.y);
+    await mp.mouse.move(tabAt.x, tabAt.y);
+    await mp.keyboard.press("Tab");
+    await shown(2);
+    // (The cube's box centre may sit behind another component: whichever is under the cursor goes.)
+    const tabHid = await mp.evaluate(() => window.__sv.asm.doc.components.filter(c => c.hidden).map(c => c.id));
+    await mp.keyboard.press("Shift+Tab");
+    await shown(3);
+    const tabBack = await mp.evaluate(() => window.__sv.asm.doc.components.every(c => !c.hidden));
+    check(tabHid.length === 1 && tabBack, `asm 1.351: Tab hides the component under the cursor, Shift+Tab shows it again (${JSON.stringify([tabAt, tabHid, tabBack])})`);
+    // 1.371 (FR-SEL-009): a click on a component shows face › feature › component › assembly breadcrumbs.
+    await mp.mouse.click(tabAt.x, tabAt.y);
+    await mp.waitForTimeout(150);
+    const crumbs = await mp.evaluate(() => {
+      const el = document.getElementById("asm-crumbs");
+      if (!el) return null;
+      const ids = [...el.querySelectorAll(".mc-crumb")].map(b => b.dataset.id ?? "");
+      const comp = el.querySelector(".mc-crumb[data-id]:not([data-id=asm])");
+      window.__sv.asm.selected = null;
+      comp?.click();
+      return { ids, n: el.querySelectorAll(".mc-crumb").length, sel: window.__sv.asm.selected, cid: comp?.dataset.id, row: !!document.querySelector(`#asm-tree .ft-row.sel[data-id="${comp?.dataset.id}"]`) };
+    });
+    await mp.mouse.move(tabAt.x + 2, tabAt.y);
+    await mp.keyboard.press("Shift+D");
+    const crumbAt = await mp.evaluate(() => { const el = document.getElementById("asm-crumbs"); return el ? { c: el.classList.contains("at-cursor"), x: el.getBoundingClientRect().left } : null; });
+    await mp.keyboard.press("Escape");
+    const crumbGone = await mp.evaluate(() => !document.getElementById("asm-crumbs"));
+    check(!!crumbs && crumbs.n >= 3 && crumbs.ids[0] === "" && crumbs.ids.at(-1) === "asm" && crumbs.sel === crumbs.cid && crumbs.row && crumbAt?.c && crumbGone,
+      `asm 1.371: selection breadcrumbs from a click on a component, a crumb selects its tree row, Shift+D, Esc (${JSON.stringify({ crumbs, crumbAt, crumbGone })})`);
+    // 1.541 (FR-SEL-007/008): Ctrl+click rows picks several components; their menu hides them all as one step;
+    // a window box over the whole view takes every component, a crossing box the ones it touches; the view stays put.
+    await mp.click("#asm-tree .ft-comp >> nth=0");
+    await mp.click("#asm-tree .ft-comp >> nth=2", { modifiers: ["ControlOrMeta"] });
+    const pk = await mp.evaluate(() => ({ sel: window.__sv.asm.selection(), rows: document.querySelectorAll("#asm-tree .ft-comp.sel").length, status: document.querySelector("#asm-status")?.textContent ?? "", tint: window.__sv.viewer.scene.children.some(o => o.children?.some(m => m.userData?.picked)) }));
+    await mp.click("#asm-tree .ft-comp >> nth=2", { button: "right" });
+    const hideItem = mp.locator("#asm-menu button", { hasText: "Hide components (2)" });
+    const multiMenu = await hideItem.count();
+    if (multiMenu) await hideItem.click();
+    await shown(1);
+    const nHid = await mp.evaluate(() => window.__sv.asm.doc.components.filter(c => c.hidden).length);
+    await mp.keyboard.press("ControlOrMeta+z");
+    await shown(3);
+    await mp.evaluate(() => document.activeElement?.blur());
+    await mp.keyboard.press("Escape");
+    const esc = await mp.evaluate(() => window.__sv.asm.selection().length);
+    await mp.evaluate(() => window.__sv.viewer.fit(false));
+    await mp.waitForTimeout(100);
+    const vr = await mp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom }; });
+    const c2 = await mp.evaluate(() => {
+      const a = window.__sv.asm, v = window.__sv.viewer, id = a.doc.components[2].id, i = a.shownIds.findIndex(s => s === id);
+      const m = v.parts[i].mesh; m.geometry.computeBoundingBox();
+      const c = m.geometry.boundingBox.getCenter(new (v.camera.position.constructor)()).applyMatrix4(m.matrixWorld).project(v.camera);
+      const r = v.renderer.domElement.getBoundingClientRect();
+      return { id, x: r.left + ((c.x + 1) / 2) * r.width, y: r.top + ((1 - c.y) / 2) * r.height };
+    });
+    const cam0 = await mp.evaluate(() => window.__sv.viewer.camera.position.toArray().map(x => x.toFixed(3)).join());
+    const drag = async (x0, y0, x1, y1) => { await mp.mouse.move(x0, y0); await mp.mouse.down(); await mp.mouse.move((x0 + x1) / 2, (y0 + y1) / 2, { steps: 4 }); await mp.mouse.move(x1, y1, { steps: 4 }); await mp.mouse.up(); await mp.waitForTimeout(100); };
+    // Corners of the view not under the heads-up bar, the view cube or another overlay.
+    const free = await mp.evaluate(([x0, y0, dx, dy]) => { const cv = window.__sv.viewer.renderer.domElement; for (let k = 0; k < 40; k++) { const x = x0 + dx * k * 4, y = y0 + dy * k * 4; if (document.elementFromPoint(x, y) === cv) return { x, y }; } return { x: x0, y: y0 }; }, [vr.l + 6, vr.t + 6, 0, 1]);
+    const free2 = await mp.evaluate(([x0, y0, dx, dy]) => { const cv = window.__sv.viewer.renderer.domElement; for (let k = 0; k < 40; k++) { const x = x0 + dx * k * 4, y = y0 + dy * k * 4; if (document.elementFromPoint(x, y) === cv) return { x, y }; } return { x: x0, y: y0 }; }, [vr.r - 6, vr.b - 6, 0, -1]);
+    await drag(free.x, free.y, vr.r - 6, vr.b - 6);
+    const win = await mp.evaluate(() => window.__sv.asm.selection().length);
+    await drag(free2.x, free2.y, c2.x, c2.y);
+    const crossIds = await mp.evaluate(() => window.__sv.asm.selection()), cross = crossIds.length;
+    const cam1 = await mp.evaluate(() => window.__sv.viewer.camera.position.toArray().map(x => x.toFixed(3)).join());
+    await mp.keyboard.press("Escape");
+    check(pk.sel.length === 2 && pk.rows === 2 && /Selected: 2/.test(pk.status) && pk.tint && multiMenu === 1 && nHid === 2 && esc <= 1 && win === 3 && crossIds.includes(c2.id) && cam0 === cam1,
+      `asm 1.541: Ctrl+click and box selection of components, menu on all of them (${JSON.stringify({ pk, multiMenu, nHid, esc, win, cross, free, free2, vr, same: cam0 === cam1 })})`);
+    // 1.542: the same with Lasso selection on: a clockwise lasso round the view takes every component.
+    await mp.click('#hud [data-hud="lasso"]');
+    await mp.mouse.move(free.x, free.y); await mp.mouse.down();
+    for (const [x, y] of [[vr.r - 6, free.y], [vr.r - 6, vr.b - 6], [free.x, vr.b - 6], [free.x, free.y + 4]]) await mp.mouse.move(x, y, { steps: 6 });
+    await mp.mouse.up();
+    await mp.waitForTimeout(100);
+    const lassoN = await mp.evaluate(() => window.__sv.asm.selection().length);
+    await mp.keyboard.press("Escape");
+    await mp.click('#hud [data-hud="lasso"]');
+    check(lassoN === 3, `asm 1.542: a clockwise lasso takes every component inside it (${lassoN})`);
     // Save to bytes and reopen: the same components and poses.
     const re = await mp.evaluate(async () => {
       const sig = () => JSON.stringify(window.__sv.asm.doc.components.map(c => [c.id, c.name, c.part, c.tf, !!c.fixed, !!c.hidden]));
@@ -5323,7 +8049,7 @@ try {
   }
 
   // --- 1.62: mates (FR-MATE-003/006/008/009, AT-P4-1/3): pick faces in the view, preview, DOF, conflict refused, constrained drag ---
-  if (inShard(2)) {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -5449,6 +8175,100 @@ try {
         && more && items === "iso,front,top,right,normal" && top.z === -1 && top.gone,
         `asm 1.330: Alt+click picks faces behind in Mate, Mate button starts afresh, added note, Lock rotation, DOF status, tree eye, Views ▾ (${JSON.stringify({ o1, o2, front, under, fresh, added, box, lock, eye, more, items, top })})`);
     }
+    // 1.339 (exam #63-#73): Delete key on a mate, menus kept in the window, Enter steps through the Move panel,
+    // inserts land in the view and are numbered by file, a negative distance flips, undo tips name the step.
+    {
+      await mp.mouse.move(5, 5);
+      const undoTip = await mp.evaluate(() => document.querySelector('[data-ac="undo"]')?.title ?? "");
+      // Delete key: the mate selected in the tree goes, as one undo step.
+      const n0 = await mp.evaluate(() => window.__sv.asm.doc.mates.length);
+      await mp.click("#asm-tree .ft-mate");
+      await mp.keyboard.press("Delete");
+      await mp.waitForTimeout(200);
+      const delKey = await mp.evaluate(() => ({ n: (window.__sv.asm.doc.mates ?? []).length, tip: document.querySelector('[data-ac="undo"]')?.title ?? "" }));
+      await mp.evaluate(() => window.__sv.asm.undo());
+      await shown(2);
+      // A context menu opened at the bottom of the window opens upwards, inside it.
+      const menu = await mp.evaluate(() => {
+        const r = document.querySelector("#asm-tree .ft-mate");
+        r.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 60, clientY: window.innerHeight - 3 }));
+        const m = document.querySelector("#asm-menu"), b = m?.getBoundingClientRect();
+        const out = { open: !!m, inside: !!b && b.bottom <= window.innerHeight && b.top >= 0 };
+        m?.remove();
+        return out;
+      });
+      // Move panel: Enter applies a box and goes on to the next one.
+      await mp.evaluate(() => { const a = window.__sv.asm; a.moving = a.doc.components[1].id; a.renderPanel(); });
+      await mp.focus("#asm-pm input[data-pose=x]");
+      await mp.keyboard.press("Enter");
+      const enter = await mp.evaluate(() => ({ next: document.activeElement?.dataset?.pose ?? "", open: !!document.querySelector("#asm-pm input[data-pose]") }));
+      await mp.keyboard.press("Escape");
+      // Insert the plate's document under another file name: <1>, standing in the view.
+      const ins = await mp.evaluate(() => {
+        const a = window.__sv.asm, v = window.__sv.viewer, pd = JSON.parse(JSON.stringify(a.doc.parts[a.doc.components[0].part].doc));
+        const k0 = Object.keys(a.doc.parts).length;
+        a.insertPart(pd, "other.mcadprt");
+        const c = a.doc.components.at(-1), p = new v.camera.position.constructor(c.tf[3], c.tf[7], c.tf[11]).project(v.camera);
+        // Another file is another part, even with the same content (exam #87): editing it leaves the plate alone.
+        return { name: c.name, inView: Math.abs(p.x) < 1 && Math.abs(p.y) < 1, own: Object.keys(a.doc.parts).length === k0 + 1 && c.part !== a.doc.components[0].part };
+      });
+      await shown(3);
+      await mp.evaluate(() => window.__sv.asm.undo());
+      await shown(2);
+      // A negative distance flips the dimension.
+      const neg = await mp.evaluate(r => {
+        const a = window.__sv.asm;
+        a.startMate();
+        Object.assign(a.mating, { a: { comp: a.doc.components[0].id, face: r.top }, b: { comp: a.doc.components[1].id, face: r.bottom } });
+        a.setMateType("distance");
+        const vi = document.querySelector("#asm-pm [data-mv]"), flip0 = !!a.mating.flip;
+        vi.value = "-5";
+        vi.dispatchEvent(new Event("change"));
+        const out = { flipped: !!a.mating.flip !== flip0, value: a.mating.value };
+        a.cancelMate();
+        return out;
+      }, ref);
+      // Move panel: "Turn by" turns the pin about its concentric mate's axis (exam #51), as one undo step.
+      const turn = await mp.evaluate(async () => {
+        const a = window.__sv.asm, id = a.doc.components[1].id, x0 = a.doc.components[1].tf.filter((_, i) => i % 4 === 0);
+        a.moving = id; a.renderPanel();
+        const inp = document.querySelector("#asm-pm input[data-turn]");
+        if (!inp) return { box: false };
+        inp.value = "30";
+        inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+        const x1 = a.doc.components[1].tf.filter((_, i) => i % 4 === 0), dot = x0[0] * x1[0] + x0[1] * x1[1] + x0[2] * x1[2];
+        const out = { box: true, deg: Math.round(Math.acos(Math.max(-1, Math.min(1, dot))) * 1800 / Math.PI) / 10, ok: a.solved?.ok, mates: a.doc.mates.length };
+        a.moving = null; a.renderPanel();
+        return out;
+      });
+      await shown(2);
+      await mp.evaluate(() => window.__sv.asm.undo());
+      await shown(2);
+      check(turn.box && turn.deg === 30 && turn.ok && turn.mates === n0, `asm: Move panel turns a component by a typed angle about its mate axis (exam #51) (${JSON.stringify(turn)})`);
+      // Two flat faces that cannot be Coincident either way round but can be Parallel start as Parallel (exam #27):
+      // with the pin seated on the plate, its other end face cannot also lie on the plate's top.
+      const par = await mp.evaluate(r => {
+        const a = window.__sv.asm, d = a.doc, plate = d.components[0], pin = d.components[1];
+        const topOfPin = [...a.geo.get(pin.part).entries()].find(([, g]) => g.k === "plane" && g.n[2] > 0.99)?.[0];
+        a.startMate();
+        Object.assign(a.mating, { a: { comp: plate.id, face: r.top }, b: { comp: pin.id, face: r.bottom } });
+        a.setMateType("coincident"); a.okMate();
+        const seated = a.doc.mates.length;
+        // As a click on the second face leaves it: Coincident, face to face, nothing chosen by hand.
+        Object.assign(a.mating, { a: { comp: plate.id, face: r.top }, b: { comp: pin.id, face: topOfPin }, type: "coincident", align: "anti", typeSet: undefined, alignSet: undefined });
+        a.previewMate();
+        const out = { seated, type: a.mating.type, problem: a.mating.problem ?? "", pinTop: !!topOfPin };
+        a.cancelMate();
+        return out;
+      }, ref);
+      await shown(2);
+      await mp.evaluate(() => window.__sv.asm.undo());
+      await shown(2);
+      check(par.pinTop && par.seated === n0 + 1 && par.type === "parallel" && !par.problem, `asm: flat faces that cannot be Coincident start as Parallel (exam #27) (${JSON.stringify(par)})`);
+      check(/^Undo: .+ \(Ctrl\+Z\)$/.test(undoTip) && delKey.n === n0 - 1 && /^Undo: Delete Concentric1 \(Ctrl\+Z\)$/.test(delKey.tip)
+        && menu.open && menu.inside && enter.next === "y" && enter.open && ins.name === "other<1>" && ins.inView && ins.own && neg.flipped && neg.value === 5,
+        `asm 1.339: Delete key, menus inside the window, Enter through Move, inserts in view numbered by file, negative distance flips, undo tips (${JSON.stringify({ undoTip, delKey, n0, menu, enter, ins, neg })})`);
+    }
     const re = await mp.evaluate(async () => { const b = await window.__sv.asm.bytes(); await window.__sv.asm.openFile({ name: "m.mcadasm", data: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) }); return window.__sv.asm.doc.mates?.map(m => m.type).join(); });
     check(pick.a && pick.b && pick.a !== pick.b && pick.type === "concentric" && pick.title === "Mate" && pick.boxes.every(t => /: Cylindrical face$/.test(t)) && pick.moved && pick.picks === 2
       && m2.n === 2 && m2.types === "concentric,coincident" && m2.dof === 1 && Math.abs(m2.at[0] - 5) < 1e-3 && Math.abs(m2.at[1]) < 1e-3 && Math.abs(m2.at[2] - 10) < 1e-3 && m2.mark === "(-) pin<1>" && m2.rows === 2 && /^2 components · Under defined, 1 DOF( · pin<1>: 1 DOF)?$/.test(m2.status) && m2.panel
@@ -5459,7 +8279,7 @@ try {
   }
 
   // --- 1.63: interference detection, BOM and assembly STEP (FR-ASM-020/024, AT-P4-4..6) ---
-  if (inShard(3)) {
+  if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -5495,6 +8315,38 @@ try {
     await mp.click('#asm-tools [data-ac="bom"]');
     const bom = await mp.evaluate(() => ({ open: document.querySelector("#asm-bom").open, cells: [...document.querySelectorAll("#asm-bom tbody td")].map(e => e.textContent), csv: window.__sv.asm.bomCsvText() }));
     await mp.click('#asm-bom [data-a="close"]');
+    // Material… on a component sets its part's material for every instance; undo brings the old one back.
+    await mp.evaluate(() => { const a = window.__sv.asm; void a.pickPartMaterial(a.doc.components[1].id); });
+    await mp.waitForSelector("#mat-dlg[open]");
+    await mp.fill("#mat-q", "Ti-6Al-4V");
+    await mp.keyboard.press("ArrowDown");
+    await mp.keyboard.press("ArrowUp");
+    await mp.keyboard.press("Enter");
+    await mp.waitForSelector("#mat-dlg", { state: "detached" });
+    await shown(2);
+    const cmat = await mp.evaluate(() => { const a = window.__sv.asm, r = a.bom()[0]; return { mat: r.material, mass: Math.round(r.mass * 1e5) / 1e5, dens: [a.partDensity(0), a.partDensity(1)] }; });
+    await mp.evaluate(() => window.__sv.asm.undo());
+    await shown(2);
+    const cmat0 = await mp.evaluate(() => window.__sv.asm.bom()[0].material);
+    check(cmat.mat === "Titanium Ti-6Al-4V" && cmat.mass === 0.00443 && cmat.dens.join() === "4.43,4.43" && cmat0 === "Aluminium 6061",
+      `asm 1.434.0: Material… on a component sets the part's material for all its instances (${JSON.stringify(cmat)}, ${cmat0})`);
+    // A body with its own material (FR-MAT-001): the assembly's mass properties and the BOM weigh it with that material.
+    await mp.evaluate(() => window.__sv.asm.change(d => {
+      const pd = Object.values(d.parts)[0].doc;
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      pd.features.push({ id: "k", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", 20, -5), P("b", 30, -5), P("c", 30, 5), P("d", 20, 5), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
+        { id: "e", type: "extrude", name: "Extrude2", sketch: "k", op: "boss", end: "blind", depth: { v: 10 }, merge: false });
+      pd.bodies = { e: { material: { name: "Titanium Ti-6Al-4V", density: 4.43 } } };
+    }));
+    await shown(2);
+    await mp.evaluate(() => { document.querySelector("#mass-out").textContent = ""; document.querySelector("#mass-run").click(); });
+    await mp.waitForFunction(() => /Mass/.test(document.querySelector("#mass-out").textContent), null, { timeout: 10000 });
+    const bodyMat = await mp.evaluate(() => { const a = window.__sv.asm, s = document.querySelector("#mass-out").textContent; return { g: +(/Mass([\d.]+) g/.exec(s)?.[1] ?? NaN), com: window.__sv.hl.com.position.toArray().map(x => Math.round(x * 1000) / 1000), dens: a.partMasses(1, 1)?.map(b => b.density), kg: Math.round(a.bom()[0].mass * 1e6) / 1e6, csv: a.bomCsvText().split("\r\n")[1] }; });
+    await mp.evaluate(() => window.__sv.asm.undo());
+    await shown(2);
+    const bodyMat0 = await mp.evaluate(() => ({ none: window.__sv.asm.partMasses(0, 1), kg: window.__sv.asm.bom()[0].mass }));
+    check(Math.abs(bodyMat.g - 14.26) < 0.01 && bodyMat.com.join() === "20.033,0,5" && bodyMat.dens?.join() === "2.7,4.43" && bodyMat.kg === 0.00713 && bodyMat0.none === null && Math.abs(bodyMat0.kg - 0.0027) < 1e-9,
+      `asm 1.458.0: a body's own material counts in the assembly's mass properties and the BOM (${JSON.stringify({ bodyMat, bodyMat0 })})`);
     // STEP of the assembly reopens with the same names and placements (AT-P4-6).
     const step = [...await mp.evaluate(async () => [...await window.__sv.asm.stepBytes()])];
     await mp.setInputFiles("#file-input", { name: "rig.step", mimeType: "model/step", buffer: Buffer.from(step) });
@@ -5508,7 +8360,7 @@ try {
   }
 
   // --- 1.63: component patterns and exploded views (FR-ASM-022/023, AT-P4-5) ---
-  if (inShard(1)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -5574,7 +8426,7 @@ try {
   }
 
   // --- 1.65: sub-assemblies, replace, suppress, colour, BOM modes (FR-ASM-001/006/008/024) ---
-  if (inShard(4)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -5652,7 +8504,7 @@ try {
   }
 
   // --- 1.74: flexible sub-assemblies (FR-ASM-006), linked components (FR-ASM-003, FR-IO-011) ---
-  if (inShard(1)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -5726,7 +8578,7 @@ try {
   }
 
   // --- 1.81: assembly features (FR-ASM-027), assembly configurations (FR-ASM-026) ---
-  if (inShard(3)) {
+  if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const ap = await ctx.newPage();
     ap.on("pageerror", e => errors.push(e.message));
@@ -5799,7 +8651,7 @@ try {
   }
 
   // --- 1.79: fastener library (FR-ASM-028), mate references (FR-MATE-011) ---
-  if (inShard(1)) {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const fp = await ctx.newPage();
     fp.on("pageerror", e => errors.push(e.message));
@@ -5833,7 +8685,7 @@ try {
     await fp.click('#asm-tools [data-ac="fastener"]');
     const panel = await fp.evaluate(() => {
       window.__sv.asm.setFastener({ kind: "iso4762", size: "M6", length: 12 });
-      return { kinds: document.querySelectorAll('#asm-pm select[data-f="kind"] option').length, sizes: document.querySelectorAll('#asm-pm select[data-f="size"] option').length, len: document.querySelector('#asm-pm select[data-f="length"]')?.value };
+      return { kinds: document.querySelectorAll('#asm-pm [data-kind]').length, sizes: document.querySelectorAll('#asm-pm [data-size]').length, len: document.querySelector('#asm-pm select[data-f="length"]')?.value };
     });
     const hole = (x, z) => fp.evaluate(([x, z]) => {
       const a = window.__sv.asm, d = window.__sv.viewer.parts[0].data;
@@ -5875,9 +8727,9 @@ try {
     await fp.waitForFunction(() => window.__sv.asm.doc.mates?.length === 6 && !window.__sv.asm.building, null, { timeout: 120000 });
     await shown(5);
     const auto = await fp.evaluate(() => { const a = window.__sv.asm, c = a.doc.components, t = c[4].tf, r = v => Math.round(v * 1e3) / 1e3; return { mates: a.doc.mates.slice(4).map(m => [m.type, m.a.comp === c[0].id, m.b.comp === c[4].id]), at: [t[3], t[7], t[11]].map(r) }; });
-    check(panel.kinds === 17 && panel.sizes === 11 && panel.len === "12"
+    check(panel.kinds === 8 && panel.sizes === 20 && panel.len === "12"
       && /^ISO 4762 M6 x 12<1>$/.test(fast.names[1]) && /^ISO 4032 M6<1>$/.test(fast.names[2]) && JSON.stringify(fast.mates) === '["concentric","coincident","concentric","coincident"]'
-      && JSON.stringify(fast.screw) === "[10,10,5,1]" && JSON.stringify(fast.nut) === "[10,10,0,-1]" && JSON.stringify(fast.dof) === "[1,1]" && /2 parts placed/.test(fast.status ?? "") && fast.configs === 11
+      && JSON.stringify(fast.screw) === "[10,10,5,1]" && JSON.stringify(fast.nut) === "[10,10,0,-1]" && JSON.stringify(fast.dof) === "[1,1]" && /2 parts placed/.test(fast.status ?? "") && fast.configs === 20
       && refs.title === "Mate reference" && refs.plate === 2 && refs.pin === 2
       && JSON.stringify(auto.mates) === '[["concentric",true,true],["coincident",true,true]]' && JSON.stringify(auto.at) === "[30,10,5]",
       `asm 1.79: ISO fasteners placed on a hole with concentric + coincident mates; mate references mate a part on insert (FR-ASM-028, FR-MATE-011) (${JSON.stringify({ panel, fast, refs, auto })})`);
@@ -5885,7 +8737,7 @@ try {
   }
 
   // --- 1.158: toolbox (FR-ASM-028): size from the hole, flush parts; McMaster-Carr STEP drop-in ---
-  if (inShard(2)) {
+  if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const tp = await ctx.newPage();
     tp.on("pageerror", e => errors.push(e.message));
@@ -5900,7 +8752,7 @@ try {
     const pt = (id, x, y) => ({ id, t: "point", x, y }), ln = (id, a, b) => ({ id, t: "line", a, b });
     await tp.evaluate(f => window.__sv.model.store.change("Part", d => { d.features.push(...f); }), [
       { id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [pt("a", 0, 0), pt("b", 60, 0), pt("c", 60, 40), pt("d", 0, 40), ln("l1", "a", "b"), ln("l2", "b", "c"), ln("l3", "c", "d"), ln("l4", "d", "a"),
-        pt("h1", 20, 20), { id: "k1", t: "circle", c: "h1", r: 16 }, pt("h2", 48, 20), { id: "k2", t: "circle", c: "h2", r: 3 }] },
+        pt("h1", 20, 20), { id: "k1", t: "circle", c: "h1", r: 16 }, pt("h2", 48, 20), { id: "k2", t: "circle", c: "h2", r: 3 }, pt("h3", 48, 7), { id: "k3", t: "circle", c: "h3", r: 3.3 }] },
       { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } }]);
     await tp.waitForTimeout(150);
     await tp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
@@ -5920,7 +8772,7 @@ try {
     // A 625 bearing picked, the Ø32 bore clicked near the top: the size follows the bore (62xx series kept: 6201).
     const panel = await tp.evaluate(() => {
       window.__sv.asm.setFastener({ kind: "bearing", size: "625" });
-      return { title: document.querySelector("#asm-pm h3")?.textContent, groups: document.querySelectorAll('#asm-pm select[data-f="kind"] optgroup').length, auto: !!document.querySelector('#asm-pm [data-a="auto"]')?.checked };
+      return { title: document.querySelector("#asm-pm h3")?.textContent, groups: document.querySelectorAll('#asm-pm [data-cat]').length, auto: !!document.querySelector('#asm-pm [data-a="auto"]')?.checked };
     });
     await hole(20, 16, 9.5);
     await shown(2);
@@ -5936,20 +8788,79 @@ try {
       const at = k => { const t = c[k].tf; return [t[3], t[7], t[11], t[10]].map(r); };
       return { names: c.map(x => x.name), mates: a.doc.mates.map(m => [m.type, m.align ?? ""]), brg: at(1), pin: at(2), dof: [a.solved?.dof[c[1].id], a.solved?.dof[c[2].id]] };
     });
+    // 1.517 design library: search, the part previewed on the hole under the pointer, a card dragged onto the hole.
+    const lib = await tp.evaluate(() => {
+      const q = document.querySelector('#asm-pm [data-f="q"]');
+      q.value = "m6 nut";
+      q.dispatchEvent(new Event("input"));
+      return { found: [...document.querySelectorAll("#asm-pm [data-kind]")].map(b => b.dataset.kind), view: !!document.querySelector("#asm-pm .tb-view svg .tb-dim"), desig: document.querySelector("#asm-pm .tb-desig b")?.textContent };
+    });
+    const h3 = await tp.evaluate(() => {
+      const a = window.__sv.asm, d = window.__sv.viewer.parts[0].data, r = window.__sv.viewer.renderer.domElement.getBoundingClientRect();
+      for (let y = r.top + 8; y < r.bottom; y += 4) for (let x = r.left + 8; x < r.right; x += 4) {
+        const h = a.host.partAt(x, y), f = h && d.faces[h.face];
+        if (f?.type === "cylinder" && Math.abs(f.center[1] - 7) < 0.01 && h.point[2] > 5) return [x, y];
+      }
+      return null;
+    });
+    await tp.mouse.move(h3[0], h3[1]);
+    await tp.waitForFunction(() => /on a Ø6\.6 hole/.test(document.querySelector("#asm-pm [data-fstatus]")?.textContent ?? ""), null, { timeout: 10000 });
+    const hover = await tp.evaluate(() => ({ ghost: window.__sv.asm.toolGhost.visible && window.__sv.asm.toolGhost.children.length > 0, comps: window.__sv.asm.doc.components.length }));
+    const vpBox = await (await tp.$("#viewport")).boundingBox();
+    await tp.dragAndDrop('#asm-pm [data-kind="iso4032"]', "#viewport", { targetPosition: { x: h3[0] - vpBox.x, y: h3[1] - vpBox.y } });
+    await shown(4);
+    await tp.waitForFunction(() => window.__sv.asm.doc.mates?.length === 6 && !window.__sv.asm.building, null, { timeout: 120000 });
+    const dropped = await tp.evaluate(() => { const c = window.__sv.asm.doc.components[3], t = c.tf, r = v => Math.round(v * 1e3) / 1e3; return { name: c.name, at: [t[3], t[7], t[11], t[10]].map(r), kind: window.__sv.asm.fastening?.kind, thread: window.__sv.asm.doc.parts[c.part].doc.features.some(f => f.type === "thread" && f.internal) }; });
+    check(JSON.stringify(lib.found) === '["iso4032","iso4035","iso7040","iso4161"]' && lib.view && /^ISO 2338 6 x \d+$/.test(lib.desig ?? "") && hover.ghost && hover.comps === 3
+      && /^ISO 4032 M6<1>$/.test(dropped.name) && JSON.stringify(dropped.at) === "[48,7,10,1]" && dropped.kind === "iso4032" && dropped.thread,
+      `asm 1.517: design library search, hover preview on a hole, card dropped on the hole is sized and mated (FR-ASM-028) (${JSON.stringify({ lib, hover, dropped })})`);
+    // Spacers and retaining rings: search finds the standoffs; a DIN 471 ring is drawn from above with its opening.
+    const sp = await tp.evaluate(() => {
+      const q = document.querySelector('#asm-pm [data-f="q"]');
+      q.value = "standoff";
+      q.dispatchEvent(new Event("input"));
+      const found = [...document.querySelectorAll("#asm-pm [data-kind]")].map(b => b.dataset.kind);
+      window.__sv.asm.setFastener({ kind: "din471", size: "20" });
+      const out = { found, cat: document.querySelector("#asm-pm .tb-cat.on")?.dataset.cat ?? null, desig: document.querySelector("#asm-pm .tb-desig b")?.textContent, dims: [...document.querySelectorAll("#asm-pm .tb-view .tb-dt")].map(x => x.textContent) };
+      // Bearing series: "lm8" finds the linear bearing by its size; a flanged bearing shows its flange.
+      q.value = "lm8";
+      q.dispatchEvent(new Event("input"));
+      out.lm = [...document.querySelectorAll("#asm-pm [data-kind]")].map(b => b.dataset.kind);
+      q.value = "";
+      q.dispatchEvent(new Event("input"));
+      window.__sv.asm.setFastener({ kind: "bearingf", size: "F608" });
+      out.brg = [document.querySelectorAll('#asm-pm [data-kind]').length, document.querySelector("#asm-pm .tb-desig b")?.textContent, [...document.querySelectorAll("#asm-pm .tb-view .tb-dt")].map(x => x.textContent).join(",")];
+      // Inch: "unc" finds the ASME parts; a 1/4-20 cap screw lists its lengths in inches.
+      q.value = "unc";
+      q.dispatchEvent(new Event("input"));
+      out.unc = [...document.querySelectorAll("#asm-pm [data-kind]")].map(b => b.dataset.kind);
+      q.value = "";
+      q.dispatchEvent(new Event("input"));
+      window.__sv.asm.setFastener({ kind: "b183", size: "1/4-20" });
+      const len = document.querySelector('#asm-pm [data-f="length"]');
+      out.inch = [document.querySelector("#asm-pm .tb-desig b")?.textContent, len?.selectedOptions[0]?.textContent, document.querySelectorAll('#asm-pm [data-size]').length];
+      window.__sv.asm.setFastener({ kind: "iso4762", size: "M64" });
+      out.big = document.querySelector("#asm-pm .tb-desig b")?.textContent;
+      return out;
+    });
+    check(JSON.stringify(sp.found) === '["standoff","standoffm"]' && sp.desig === "DIN 471 20" && JSON.stringify(sp.dims) === '["d3 18.5","d1 20"]'
+      && JSON.stringify(sp.lm) === '["linear"]' && JSON.stringify(sp.brg) === '[5,"Flanged ball bearing F608","D1 25,d 8,B 7"]'
+      && JSON.stringify(sp.unc) === '["b183","b1821","b1822","b1822m","b1822w"]' && /^ASME B18\.3 1\/4-20 x [\d/-]+$/.test(sp.inch[0] ?? "") && sp.inch[1] === `${sp.inch[0].split(" x ")[1]} in` && sp.inch[2] === 13 && /^ISO 4762 M64 x \d+$/.test(sp.big ?? ""),
+      `asm toolbox 2: Toolbox standoffs, spacers, retaining rings, bearing series, M1.6 to M64 and ANSI inch (FR-ASM-028) (${JSON.stringify(sp)})`);
     await tp.evaluate(() => window.__sv.asm.closeTools());
     // McMaster-Carr: a downloaded STEP named "<part number>_<description>.STEP" keeps its part number and a buy link.
     const cube = [...await readFile(join(fixtures, "cube-10x10mm/Cube 10x10.stp"))];
     await tp.evaluate(b => window.__sv.asm.dropFiles([new File([new Uint8Array(b)], "91290A115_Black-Oxide Alloy Steel Socket Head Screw.STEP")]), cube);
-    await shown(4);
+    await shown(5);
     const mc = await tp.evaluate(() => {
-      const a = window.__sv.asm, c = a.doc.components[3], pd = a.doc.parts[c.part].doc;
+      const a = window.__sv.asm, c = a.doc.components[4], pd = a.doc.parts[c.part].doc;
       a.showBom();
       const link = document.querySelector("#asm-bom-body a[data-buy]");
       const row = link?.closest("tr")?.textContent ?? "";
       document.querySelector("#asm-bom [data-a=close]").click();
       return { pn: pd.props?.partNumber, desc: pd.props?.description, vendor: pd.props?.custom?.Vendor, href: link?.getAttribute("href"), target: link?.getAttribute("target"), row, csv: a.bomCsvText().split("\r\n").slice(0, 1)[0], csvRow: a.bomCsvText().split("\r\n").find(l => l.includes("91290A115")) };
     });
-    check(panel.title === "Toolbox" && panel.groups === 6 && panel.auto
+    check(panel.title === "Toolbox" && panel.groups === 8 && panel.auto
       && /^Ball bearing 6201<1>$/.test(tb.names[1]) && /^ISO 2338 6 x \d+<1>$/.test(tb.names[2])
       && JSON.stringify(tb.mates) === '[["concentric",""],["coincident","aligned"],["concentric",""],["coincident","aligned"]]'
       && JSON.stringify(tb.brg) === "[20,20,10,1]" && JSON.stringify(tb.pin) === "[48,20,10,1]" && JSON.stringify(tb.dof) === "[1,1]"
@@ -5961,7 +8872,7 @@ try {
   }
 
   // --- 1.76: mechanical mates (FR-MATE-005), clearance check (FR-ASM-021) ---
-  if (inShard(4)) {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -6311,11 +9222,11 @@ try {
         a180: mv.angle.every(v => Math.abs(Math.abs(v) - 180) < 1e-6), mrow, msvg, angle: mAngle.plot, read: /°/.test(mAngle.read) && /mm/.test(mAngle.read) };
       document.querySelector(`#motion [data-mo="tdel:${mt.id}"]`)?.click();
       mateVal.gone = !m.study.traces.some(x => x.id === mt.id);
-      // Sensor: Alert above 10 mm on the distance from start (the pin rises 20 mm over 2 s) marks the frames after 1 s,
+      // Sensor: Alert above 10.1 mm (10 mm itself is reached at 1 s, within the solver's tolerance) on the distance from start (the pin rises 20 mm over 2 s) marks the frames after 1 s,
       // shows Out of range at the end, and with Stop playback the trip is the first frame past 1 s.
       m.sel = null; m.selTrace = tr0.id; m.render(); m.showAt(m.time);
       plotAs("dist");
-      const amax = document.querySelector('#motion input[data-tr="amax"]'); amax.value = "10"; amax.dispatchEvent(new Event("change"));
+      const amax = document.querySelector('#motion input[data-tr="amax"]'); amax.value = "10.1"; amax.dispatchEvent(new Event("change"));
       const astop = document.querySelector('#motion input[data-tr="astop"]'); astop.checked = true; astop.dispatchEvent(new Event("change"));
       m.seek(2);
       const spans = m.alertSpansOf(tr0.id), sfps = m.study.fps;
@@ -6498,7 +9409,7 @@ try {
       && tc.mateVal.angle === "angle" && tc.mateVal.read && tc.mateVal.gone
       && tc.interfere.found && tc.interfere.starts > 0 && Math.abs(tc.interfere.ends - 2) < 1e-9 && tc.interfere.listed >= 1 && tc.interfere.bands >= 1
       && Math.abs(tc.interfere.sought - tc.interfere.starts) < 1e-9 && tc.interfere.withTouching >= tc.interfere.all0 && tc.interfere.ignoredAfter === 0 && tc.interfere.closed && tc.interfere.clashAll === false && tc.interfere.stopTrip && tc.interfere.stopOff
-      && tc.sensor.alert?.max === 10 && tc.sensor.alert?.stop === true && tc.sensor.one && tc.sensor.fromOk && Math.abs(tc.sensor.to - 2) < 1e-9
+      && tc.sensor.alert?.max === 10.1 && tc.sensor.alert?.stop === true && tc.sensor.one && tc.sensor.fromOk && Math.abs(tc.sensor.to - 2) < 1e-9
       && Object.values(tc.prox).every(v => v === true)
       && tc.sensor.bands === 1 && tc.sensor.out && tc.sensor.trip === tc.sensor.want
       && tc.interfere.seq.box && tc.interfere.seq.before === false && tc.interfere.seq.after === true,
@@ -6528,7 +9439,7 @@ try {
   }
 
   // --- 1.65: advanced mates, display states, transparency, open part (FR-MATE-004, FR-ASM-025/007) ---
-  if (inShard(2)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -6619,7 +9530,7 @@ try {
   }
 
   // --- 1.135: edit in context, sketch on another component, external references (FR-ASM-030) ---
-  if (inShard(3)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -6657,7 +9568,7 @@ try {
     await mp.evaluate(id => window.__sv.asm.editPart(id, true), boxId);
     await mp.waitForFunction(() => document.querySelector("#app").classList.contains("model") && document.querySelector("#mc-ret"));
     await modelIdle();
-    const inCtx = await mp.evaluate(() => ({ meshes: window.__sv.modeller.ctxView.children.length, bar: document.querySelector("#mc-ret")?.textContent }));
+    const inCtx = await mp.evaluate(() => ({ meshes: window.__sv.modeller.ctxView.children.filter(o => o.isMesh).length, bar: document.querySelector("#mc-ret")?.textContent }));
     await mp.evaluate(() => window.__sv.viewer.viewFrom(new window.__sv.viewer.camera.position.constructor(1, -1, 0.8), false));
     await mp.evaluate(() => { const v = window.__sv.viewer, V = v.camera.position.constructor; v.fit(false, new v.bounds.constructor(new V(-30, -30, -25), new V(30, 30, 10))); });
     await mp.waitForTimeout(200);
@@ -6717,8 +9628,93 @@ try {
     await ctx.close();
   }
 
-  // --- 1.67: collision detection while dragging (FR-MATE-002) ---
+  // --- 1.544: Convert Entities on another component's edge while editing in context (FR-ASM-030) ---
   if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+    const rect = (w, h, depth) => [{ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -w / 2, -h / 2), P("b", w / 2, -h / 2), P("c", w / 2, h / 2), P("d", -w / 2, h / 2), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
+      { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: depth } }];
+    const modelIdle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+    const makePart = async feats => {
+      await mp.click("#new-part");
+      await mp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+      await mp.evaluate(f => window.__sv.model.store.change("Part", d => { d.features.push(...f); }), feats);
+      await mp.waitForTimeout(150);
+      await modelIdle();
+      return [...await mp.evaluate(async () => [...await window.__sv.modeller.partBytes()])];
+    };
+    const plate = await makePart(rect(60, 60, 5)), box = await makePart(rect(10, 10, 10));
+    await mp.click("#new-more");
+    await mp.click("#new-asm");
+    await mp.waitForFunction(() => window.__sv.asm.doc);
+    const shown = n => mp.waitForFunction(k => !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === k, n, { timeout: 120000 });
+    await mp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "plate.mcadprt")), plate);
+    await shown(1);
+    await mp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "box.mcadprt")), box);
+    await shown(2);
+    await mp.evaluate(() => window.__sv.asm.change(d => { d.components[1].tf = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 30]; }));
+    await shown(2);
+    const [plateId, boxId] = await mp.evaluate(() => window.__sv.asm.doc.components.map(c => c.id));
+    await mp.evaluate(id => window.__sv.asm.editPart(id, true), boxId);
+    await mp.waitForFunction(() => document.querySelector("#app").classList.contains("model") && document.querySelector("#mc-ret"));
+    await modelIdle();
+    const lines = await mp.evaluate(() => window.__sv.modeller.ctxView.children.filter(o => !o.isMesh).length);
+    // A sketch on the box part's XY plane; Convert entities on the plate's top right edge (world x = 30, z = 5; part z = −25).
+    await mp.evaluate(() => window.__sv.model.store.change("Sketch", d => { d.features.push({ id: "cs", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [] }); }));
+    await modelIdle();
+    await mp.evaluate(() => window.__sv.modeller.editSketch("cs"));
+    await mp.waitForTimeout(800);
+    await modelIdle();
+    await mp.evaluate(() => window.__sv.viewer.viewFrom(new window.__sv.viewer.camera.position.constructor(1, -1, 0.8), false));
+    await mp.evaluate(() => { const v = window.__sv.viewer, V = v.camera.position.constructor; v.fit(false, new v.bounds.constructor(new V(-30, -30, -25), new V(30, 30, 10))); });
+    await mp.waitForTimeout(200);
+    await mp.evaluate(() => window.__sv.model.editor().setTool("convert"));
+    const [ex, ey] = await mp.evaluate(p => {
+      const v = window.__sv.viewer, q = new (v.camera.position.constructor)(...p).project(v.camera), r = v.renderer.domElement.getBoundingClientRect();
+      return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height];
+    }, [30, 8, -25]);
+    await mp.mouse.move(ex, ey); await mp.waitForTimeout(50); await mp.mouse.down(); await mp.mouse.up();
+    await mp.waitForFunction(() => window.__sv.model.editor()?.sk.rels.some(r => r.ext?.ctx), null, { timeout: 30000 }).catch(() => {});
+    const conv = await mp.evaluate(() => { const sk = window.__sv.model.editor().sk, r = sk.rels.find(x => x.ext?.ctx); const e = r && sk.ents.find(x => x.id === r.e[0]); const pt = id => sk.ents.find(x => x.id === id); return r ? { comp: r.ext.ctx.comp, host: r.ext.ctx.host, faces: r.ext.faces.length, t: e?.t, a: [pt(e.a).x, pt(e.a).y], b: [pt(e.b).x, pt(e.b).y], id: e.id } : null; });
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await mp.waitForTimeout(150);
+    // A 10 × 60 strip from x = 20 up to the converted line, extruded 5 mm (box 1000 + 3000 mm³).
+    if (conv) await mp.evaluate(c => window.__sv.model.store.change("Strip", d => {
+      const sk = d.features.find(f => f.id === "cs"), L = sk.ents.find(e => e.id === c.id), pa = sk.ents.find(e => e.id === L.a), pb = sk.ents.find(e => e.id === L.b);
+      sk.ents.push({ id: "q1", t: "point", x: 20, y: pa.y }, { id: "q2", t: "point", x: 20, y: pb.y }, { id: "n1", t: "line", a: L.a, b: "q1" }, { id: "n2", t: "line", a: "q1", b: "q2" }, { id: "n3", t: "line", a: "q2", b: L.b });
+      d.features.push({ id: "cx", type: "extrude", name: "Extrude2", sketch: "cs", op: "boss", end: "blind", depth: { v: 5 } });
+    }), conv);
+    await mp.waitForTimeout(150);
+    await modelIdle();
+    const inPart = await mp.evaluate(() => ({ v: Math.round(window.__sv.model.last().props.volume), mark: [...document.querySelectorAll("#ft-tree .ft-ext, #tab-features .ft-ext")].map(e => e.textContent) }));
+    await runCmd(mp, "External References");
+    await mp.waitForSelector("#mc-xref[open]");
+    const dlg = await mp.evaluate(() => document.querySelector("#mc-xref tbody")?.textContent ?? "");
+    await mp.click('#mc-xref [data-a="close"]');
+    await mp.click("#mc-ret button");
+    await mp.waitForFunction(() => window.__sv.asm.doc && document.querySelector("#app").classList.contains("asm"));
+    await shown(2);
+    const boxVol = () => mp.evaluate(id => { const a = window.__sv.asm, i = a.shownIds.indexOf(id), d = window.__sv.viewer.parts[i]?.data; return d ? Math.round(d.volume) : null; }, boxId);
+    const v0 = await boxVol();
+    // The plate moves 5 mm along X: the converted edge, and the strip's side with it (15 × 60 × 5).
+    await mp.evaluate(() => window.__sv.asm.change(d => { d.components[0].tf = [1, 0, 0, 5, 0, 1, 0, 0, 0, 0, 1, 0]; }));
+    await mp.waitForFunction(id => { const a = window.__sv.asm, i = a.shownIds.indexOf(id), d = window.__sv.viewer.parts[i]?.data; return !a.building && d && Math.abs(d.volume - 5500) < 1; }, boxId, { timeout: 60000 }).catch(() => {});
+    const v1 = await boxVol();
+    const geoX = await mp.evaluate(id => { const a = window.__sv.asm, c = a.doc.components.find(x => x.id === id); const r = a.doc.parts[c.part].doc.features.find(f => f.id === "cs")?.rels.find(x => x.ext?.ctx); return r?.ext.ctx.geo.start[0]; }, boxId);
+    check(lines === 1 && conv?.comp === plateId && conv.host === boxId && conv.faces === 2 && conv.t === "line" && Math.abs(conv.a[0] - 30) < 1e-3 && Math.abs(conv.b[0] - 30) < 1e-3
+      && inPart.v === 4000 && inPart.mark.join() === "->" && /Converted edge/.test(dlg) && /In context/.test(dlg) && v0 === 4000 && v1 === 5500 && Math.abs(geoX - 35) < 1e-3,
+      `asm 1.544: Convert entities on another component's edge in context; the curve follows the component (FR-ASM-030) (${JSON.stringify({ lines, conv, inPart, dlg, v0, v1, geoX })})`);
+    await ctx.close();
+  }
+
+  // --- 1.67: collision detection while dragging (FR-MATE-002) ---
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -6771,7 +9767,7 @@ try {
   }
 
   // --- 1.67: Alt-drag inferred mates (FR-MATE-007) ---
-  if (inShard(4)) {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -6825,7 +9821,7 @@ try {
   }
 
   // --- 1.67: direct editing, Move Face and Delete Face (FR-FT-101) ---
-  if (inShard(1)) {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -6866,7 +9862,7 @@ try {
   }
 
   // --- Move Face translate and rotate (FR-FT-101) ---
-  if (inShard(2)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -6912,6 +9908,29 @@ try {
     const wedge = 100 * 3600 * Math.tan(Math.PI / 18) / 2;
     check(Math.abs(tr.v - 100 * 60 * 25) < 1 && !tr.bad && focus === "axis" && Math.abs(rot.v - (120000 + wedge)) < 1 && !rot.bad && fin.mode === "rotate" && fin.type === "moveface",
       `model: Move Face translate (normal part only) and rotate about an edge (FR-FT-101) (${JSON.stringify({ tr, focus, rot, mode: fin.mode })})`);
+    // Dome (FR-FT-103, 1.547), from the Bodies menu: the top bulges 4 mm with a live preview; Reverse makes a dent.
+    await mp.evaluate(() => window.__sv.model.store.change("Undo move", d => { d.features.pop(); }));
+    await settle();
+    await runCmd(mp, "Dome");
+    await settle();
+    await mp.evaluate(() => { const m = window.__sv.model; m.mode().draft.faces = [{ name: "f1:end" }]; m.panel(); void m.rebuild(); });
+    await settle();
+    await mp.fill('#mc-pm input[data-num="distance"]', "4");
+    await mp.press('#mc-pm input[data-num="distance"]', "Tab");
+    await settle();
+    const dm = await vol();
+    const dpm = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm .pm-head h3")?.textContent ?? "", count: document.querySelector("#mc-pm .pm-count")?.textContent ?? "", ell: !!document.querySelector('#mc-pm input[data-k="elliptical"]') }));
+    await mp.check('#mc-pm input[data-k="flip"]');
+    await settle();
+    const dent = await vol();
+    await mp.uncheck('#mc-pm input[data-k="flip"]');
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const dfin = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.at(-1); return { type: f.type, name: f.name, d: f.distance.v }; });
+    check(dm.v > 120000 + 0.3 * 6000 * 4 && dm.v < 120000 + 6000 * 4 && !dm.bad && Math.abs(dent.v - (240000 - dm.v)) < 1 && !dent.bad && /Dome/.test(dpm.title) && dpm.count === "1 face" && dpm.ell
+      && dfin.type === "dome" && dfin.name === "Dome1" && dfin.d === 4,
+      `model 1.547: Dome bulges the top with a live preview, Reverse direction dents it (FR-FT-103) (${JSON.stringify({ dm, dent, dpm, dfin })})`);
     // Replace Face (Surface ▾): the top replaced by a flat surface 5 mm above it.
     await mp.evaluate(() => window.__sv.model.store.change("Surface", d => {
       d.features.pop();
@@ -6929,11 +9948,112 @@ try {
     await mp.click("#mc-ok");
     await settle();
     check(rp.title === "Replace Face" && Math.abs(rp.v - 100 * 60 * 25) < 1 && !rp.bad, `model: Replace Face grows the body to a surface (FR-FT-101) (${JSON.stringify(rp)})`);
+    // Wrap (Bodies ▾, FR-FT-104): a 12 × 8 rectangle on the front plane wrapped onto a Ø20 shaft, 1 mm proud, then sunk.
+    await mp.evaluate(() => window.__sv.model.store.change("Shaft", d => {
+      const P = (k, x, y) => ({ id: `w${k}`, t: "point", x, y });
+      d.features = [
+        { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "c0", t: "point", x: 0, y: 0 }, { id: "c1", t: "circle", c: "c0", r: 10 }] },
+        { id: "f1", type: "extrude", name: "Boss-Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 30 } },
+        { id: "s2", type: "sketch", name: "Sketch2", plane: { std: "XZ" }, rels: [], dims: [], ents: [P(1, -6, 11), P(2, 6, 11), P(3, 6, 19), P(4, -6, 19), { id: "wl1", t: "line", a: "w1", b: "w2" }, { id: "wl2", t: "line", a: "w2", b: "w3" }, { id: "wl3", t: "line", a: "w3", b: "w4" }, { id: "wl4", t: "line", a: "w4", b: "w1" }] }];
+    }));
+    await settle();
+    await runCmd(mp, "Wrap");
+    await settle();
+    const wpm = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, sketch: window.__sv.model.mode().draft.sketch, focus: document.querySelector("#mc-pm .pm-box.focus")?.dataset.focus ?? null }));
+    await mp.evaluate(() => { const m = window.__sv.model, f = m.mode().draft; f.face = { name: "f1:side:c1" }; m.panel(); void m.rebuild(); });
+    await settle();
+    const wv = await mp.evaluate(() => ({ v: window.__sv.model.last().props.volume, bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";") }));
+    await mp.selectOption('#mc-pm select[data-k="kind"]', "deboss");
+    await settle();
+    const wd = await mp.evaluate(() => ({ v: window.__sv.model.last().props.volume, bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";") }));
+    await mp.click("#mc-ok");
+    await settle();
+    const wfin = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.at(-1); return { type: f.type, kind: f.kind, name: f.name }; });
+    const shaft = Math.PI * 100 * 30;
+    check(wpm.title === "Wrap" && wpm.sketch === "s2" && wpm.focus === "faces" && Math.abs(wv.v - (shaft + 100.8)) < 0.5 && !wv.bad && Math.abs(wd.v - (shaft - 91.2)) < 0.5 && !wd.bad
+      && wfin.type === "wrap" && wfin.kind === "deboss" && wfin.name === "Wrap1",
+      `model 1.548: Wrap embosses and debosses a sketch on a shaft (FR-FT-104) (${JSON.stringify({ wpm, wv, wd, wfin })})`);
+    // Boundary Boss (Sweep ▾, FRS 2.3): two 20 mm squares 40 apart and four corner curves bowing out half way; the draft takes them all.
+    await mp.evaluate(() => window.__sv.model.store.change("Boundary", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), L = (id, a, b) => ({ id, t: "line", a, b });
+      const sq = (id, plane) => ({ id, type: "sketch", name: id, plane, rels: [], dims: [], ents: [P(id + "1", -10, -10), P(id + "2", 10, -10), P(id + "3", 10, 10), P(id + "4", -10, 10), L(id + "a", id + "1", id + "2"), L(id + "b", id + "2", id + "3"), L(id + "c", id + "3", id + "4"), L(id + "d", id + "4", id + "1")] });
+      d.features = [sq("SketchA", { std: "XY" }), { id: "p1", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 40 } }, sq("SketchB", { plane: "p1" }),
+        ...[[-10, -10], [10, -10], [10, 10], [-10, 10]].map(([x, y], i) => ({ id: `c${i}`, type: "curve", name: `Curve${i + 1}`, kind: "xyz", pts: [[x, y, 0], [x * 1.5, y * 1.5, 20], [x, y, 40]] }))];
+    }));
+    // No body yet, so wait for the rebuild alone.
+    await mp.waitForTimeout(150);
+    await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.statuses.length === 7, null, { timeout: 120000 });
+    await runCmd(mp, "Boundary Boss/Base");
+    await settle();
+    const bpm = await mp.evaluate(() => { const f = window.__sv.model.mode().draft; return { title: document.querySelector("#mc-pm h3")?.textContent, profiles: f.profiles.join(), guides: (f.guides ?? []).length, rows: document.querySelectorAll('#mc-pm select[data-k^="lg"]').length, v: Math.round(window.__sv.model.last().props?.volume ?? 0), bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    await mp.click("#mc-ok");
+    await settle();
+    const bfin = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.at(-1); return { type: f.type, boundary: f.boundary, name: f.name, v: Math.round(window.__sv.model.last().props.volume) }; });
+    check(bpm.title === "Boundary Boss/Base" && bpm.profiles === "SketchA,SketchB" && bpm.guides === 4 && bpm.rows === 5 && bpm.v > 16000 * 1.3 && !bpm.bad
+      && bfin.type === "loft" && bfin.boundary === true && bfin.name === "Boundary-Boss1" && bfin.v === bpm.v,
+      `model 1.557: Boundary Boss fills between profiles and Direction 2 curves (FRS 2.3) (${JSON.stringify({ bpm, bfin })})`);
+    // Flex (Bodies ▾, FR-FT-105): a 100 × 20 × 10 bar along X bent 90° (volume kept), trim planes drawn, then twisted; the panel shows the bend radius.
+    await mp.evaluate(() => window.__sv.model.store.change("Bar", d => {
+      const P = (k, x, y) => ({ id: `b${k}`, t: "point", x, y });
+      d.features = [
+        { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "YZ" }, rels: [], dims: [], ents: [P(1, -10, -5), P(2, 10, -5), P(3, 10, 5), P(4, -10, 5), { id: "bl1", t: "line", a: "b1", b: "b2" }, { id: "bl2", t: "line", a: "b2", b: "b3" }, { id: "bl3", t: "line", a: "b3", b: "b4" }, { id: "bl4", t: "line", a: "b4", b: "b1" }] },
+        { id: "f1", type: "extrude", name: "Boss-Extrude1", sketch: "s1", op: "boss", end: "mid", depth: { v: 100 } }];
+    }));
+    await settle();
+    await runCmd(mp, "Flex");
+    await settle();
+    const flexState = () => mp.evaluate(() => { const l = window.__sv.model.last(); let planes = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData.flexPlane) planes++; }); return { v: l.props.volume, hz: l.props.box[1][2], bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), planes }; });
+    const fpm = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, axis: window.__sv.model.mode().draft.axis, radius: [...document.querySelectorAll("#mc-pm .pm-help")].some(p => /Bend radius: 63\.66/.test(p.textContent)) }));
+    const fb = await flexState();
+    await mp.selectOption('#mc-pm select[data-k="kind"]', "twist");
+    await settle();
+    const ft = await flexState();
+    // 1.553: an arrow on each trim plane; dragging the first one inwards sets its offset.
+    const toScr = p => mp.evaluate(p => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(); const q = new v.camera.position.constructor(...p).project(v.camera); return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height]; }, p);
+    const fh = await mp.evaluate(() => [...document.querySelectorAll("#mc-layer .mc-handle")].map(h => { const b = h.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2, title: h.title }; }).filter(h => /trim plane/.test(h.title)));
+    const b0 = await toScr([-50, 0, 0]), b1 = await toScr([-30, 0, 0]);
+    const grab = fh.length ? [(b0[0] * 0.45 + fh[0].x * 0.55), (b0[1] * 0.45 + fh[0].y * 0.55)] : b0;
+    await mp.mouse.move(grab[0], grab[1]);
+    await mp.mouse.down();
+    for (let i = 1; i <= 6; i++) { await mp.mouse.move(grab[0] + ((b1[0] - b0[0]) * i) / 6, grab[1] + ((b1[1] - b0[1]) * i) / 6); await mp.waitForTimeout(40); }
+    await mp.mouse.up();
+    await settle();
+    const ftrim = await mp.evaluate(() => window.__sv.model.mode().draft?.trim1?.v ?? 0);
+    const fdrag = await flexState();
+    check(fh.length === 2 && ftrim > 12 && ftrim < 28 && Math.abs(fdrag.v - 20000) < 20 && !fdrag.bad,
+      `model 1.553: dragging a Flex trim plane arrow sets its offset (${JSON.stringify({ n: fh.length, ftrim, fdrag })})`);
+    // Triad position: unticking "at the centre" keeps it where it was (0, 0, 0) and shows X/Y/Z; typing X moves it.
+    await mp.click('#mc-pm input[data-k="tcentre"]');
+    await settle();
+    await mp.fill('#mc-pm input[data-k="ox"]', "10");
+    await mp.press('#mc-pm input[data-k="ox"]', "Tab");
+    await settle();
+    const ftri = await mp.evaluate(() => ({ o: window.__sv.model.mode().draft.origin, n: document.querySelectorAll('#mc-pm input[data-k^="o"]').length, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length }));
+    check(ftri.n === 3 && JSON.stringify(ftri.o) === "[10,0,0]" && !ftri.bad, `model 1.553: Flex triad position from the panel (${JSON.stringify(ftri)})`);
+    // 1.554: the triad has a drag arrow per world axis; dragging the X one 10 mm moves the triad to x = 20.
+    const tri = await mp.evaluate(() => { const a = window.__sv.modeller.arrows.find(x => x.key === "ox"); if (!a) return null; const p = a.pick.getWorldPosition(a.obj.position.clone()); return { p: [p.x, p.y, p.z], keys: window.__sv.modeller.arrows.map(x => x.key) }; });
+    if (tri) {
+      const g0 = await toScr(tri.p), g1 = await toScr([tri.p[0] + 10, tri.p[1], tri.p[2]]);
+      await mp.mouse.move(g0[0], g0[1]);
+      await mp.mouse.down();
+      for (let i = 1; i <= 6; i++) { await mp.mouse.move(g0[0] + ((g1[0] - g0[0]) * i) / 6, g0[1] + ((g1[1] - g0[1]) * i) / 6); await mp.waitForTimeout(40); }
+      await mp.mouse.up();
+      await settle();
+    }
+    const ftd = await mp.evaluate(() => ({ o: window.__sv.model.mode().draft.origin, x: document.querySelector('#mc-pm input[data-k="ox"]')?.value, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length }));
+    check(tri && ["ox", "oy", "oz"].every(k => tri.keys.includes(k)) && Math.abs(ftd.o[0] - 20) < 2.5 && ftd.o[1] === 0 && ftd.o[2] === 0 && Math.abs(parseFloat(ftd.x) - ftd.o[0]) < 1e-6 && !ftd.bad,
+      `model 1.554: dragging the Flex triad's X arrow moves the triad (${JSON.stringify({ tri, ftd })})`);
+    await mp.click("#mc-ok");
+    await settle();
+    const ffin = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.at(-1); return { type: f.type, kind: f.kind, name: f.name }; });
+    check(fpm.title === "Flex" && fpm.axis === "x" && fpm.radius && Math.abs(fb.v - 20000) < 20 && fb.hz > 15 && !fb.bad && fb.planes === 2
+      && Math.abs(ft.v - 20000) < 20 && !ft.bad && ffin.type === "flex" && ffin.kind === "twist" && ffin.name === "Flex1",
+      `model 1.552: Flex bends and twists a bar between trim planes (FR-FT-105) (${JSON.stringify({ fpm, fb, ft, ffin })})`);
     await ctx.close();
   }
 
   // --- surfaces 2 (FRS 9.11): revolved, lofted and trimmed surfaces; Delete Face leaving a surface ---
-  if (inShard(3)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -7018,7 +10138,7 @@ try {
   }
 
   // --- surfaces (FRS 9.11, FR-FT-100): extruded, planar, offset, knit into a solid, thicken ---
-  if (inShard(1)) {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -7090,7 +10210,7 @@ try {
   }
 
   // --- 1.55: helix, sweep and loft (FRS 9.9, AT-P3-1/2) from the Sweep ▾ commands, with their panels ---
-  if (inShard(3)) {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -7260,7 +10380,7 @@ try {
   }
 
   // --- 1.83: 3D sketch (FR-SK-080): click lines in space, Tab to turn the plane, relations and dimensions, then a sweep along it ---
-  if (inShard(4)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -7331,7 +10451,7 @@ try {
   }
 
   // --- 1.85: sweep twist and guide curve, loft centreline, variable pitch helix (FR-FT-080, FR-FT-082, FR-FT-083) ---
-  if (inShard(3)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -7414,7 +10534,7 @@ try {
   }
 
   // --- 1.88: Intersect bodies into regions (FR-BODY-007) and Untrim Surface (FR-FT-100) ---
-  if (inShard(4)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -7490,7 +10610,7 @@ try {
   }
 
   // --- 1.101: a sketch line made parallel to a model edge picked in the view (FR-SK-064) ---
-  if (inShard(1)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -7550,8 +10670,190 @@ try {
     await ctx.close();
   }
 
+  // --- 1.421: Selected Contours: extrude regions of a sketch whose lines cross or branch (FR-FT-010) ---
+  if (inShard(5)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // A 100 × 60 rectangle with a line across it at x = 20: two regions, no plain profile.
+    await mp.evaluate(() => window.__sv.model.store.change("Crossed", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", -50, -30), P("p2", 50, -30), P("p3", 50, 30), P("p4", -50, 30), P("q1", 20, -30), P("q2", 20, 30), Ln("l1", "p1", "p2"), Ln("l2", "p2", "p3"), Ln("l3", "p3", "p4"), Ln("l4", "p4", "p1"), Ln("l5", "q1", "q2")] });
+    }));
+    await settle();
+    await mp.evaluate(() => window.__sv.modeller.startFeature("extrude"));
+    await settle();
+    const open0 = await mp.evaluate(() => ({ box: document.querySelector('#mc-pm [data-focus="contours"]')?.className, help: document.querySelector("#mc-pm .pm-box.focus")?.dataset.focus, fills: 0 }));
+    // Click the right region (x 20..50) in the view.
+    const at = await mp.evaluate(() => {
+      const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect();
+      const q = new v.camera.position.constructor(35, 0, 0).project(v.camera);
+      return { x: r.left + ((q.x + 1) / 2) * r.width, y: r.top + ((1 - q.y) / 2) * r.height };
+    });
+    // 1.428: hovering a region lights it up before the click (a CAD app's pre-highlight).
+    const hoverN = () => mp.evaluate(() => { let n = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData.contourHover !== undefined && o.visible) n++; }); return n; });
+    await mp.mouse.move(at.x - 30, at.y - 30);
+    await mp.mouse.move(at.x, at.y);
+    await mp.waitForTimeout(200);
+    const hov = await hoverN();
+    await mp.mouse.click(at.x, at.y);
+    await settle();
+    const one = await mp.evaluate(() => ({ hov: 0, n: window.__sv.model.mode().draft?.contours?.length, box: document.querySelector('#mc-pm [data-focus="contours"]')?.textContent, v: Math.round(window.__sv.model.last().props?.volume ?? 0), bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.code).join() }));
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await settle();
+    const done = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(x => x.type === "extrude"); return { contours: f.contours?.length, v: Math.round(window.__sv.model.last().props?.volume ?? 0), faces: window.__sv.model.last().data?.faces?.length ?? 0 }; });
+    one.hov = hov;
+    check(/focus/.test(open0.box ?? "") && open0.help === "contours" && hov === 1 && one.n === 1 && !one.bad && one.v === 18000 && done.contours === 1 && done.v === 18000,
+      `model 1.421: Extrude on a sketch with a line across opens Selected Contours, hovering lights a region, a click in the view picks it (FR-FT-010) (${JSON.stringify({ open0, one, done })})`);
+    // 1.428: Planar Surface takes Selected Contours too: the left region (x -50..20) becomes one flat face.
+    await mp.evaluate(() => { window.__sv.modeller.startFeature("planesurf"); });
+    await settle();
+    const ps0 = await mp.evaluate(() => ({ type: window.__sv.model.mode().draft?.type, sketch: window.__sv.model.mode().draft?.sketch, focus: document.querySelector("#mc-pm .pm-box.focus")?.dataset.focus }));
+    const left = await mp.evaluate(() => {
+      const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect();
+      const q = new v.camera.position.constructor(-15, 0, 0).project(v.camera);
+      return { x: r.left + ((q.x + 1) / 2) * r.width, y: r.top + ((1 - q.y) / 2) * r.height };
+    });
+    await mp.mouse.click(left.x, left.y);
+    await settle();
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await settle();
+    const ps1 = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(x => x.type === "planesurf"); const l = window.__sv.model.last(); return { contours: f?.contours?.length, sheetFaces: l.sheetFaces, bad: l.statuses.filter(s => !s.ok).map(s => s.code).join() }; });
+    check(ps0.type === "planesurf" && ps0.sketch === "s" && ps0.focus === "contours" && ps1.contours === 1 && ps1.sheetFaces === 1 && !ps1.bad,
+      `model 1.428: Planar Surface on a sketch with a line across picks a region with Selected Contours (FR-FT-010) (${JSON.stringify({ ps0, ps1 })})`);
+    // 1.463: a cut's picked regions are drawn in the cut preview's yellow, a boss's in orange.
+    const fills = () => mp.evaluate(() => { const c = []; window.__sv.viewer.scene.traverse(o => { if (o.userData.contour !== undefined && o.visible) c.push({ hex: o.material.color.getHex(), cut: o.userData.contourCut }); }); return c; });
+    await mp.evaluate(() => window.__sv.modeller.startFeature("extrude"));
+    await settle();
+    await mp.mouse.click(left.x, left.y);
+    await settle();
+    const boss = await fills();
+    await mp.evaluate(() => { const m = window.__sv.model.mode(); if (m.kind === "feature") { m.draft.op = "cut"; m.draft.end = "through"; } window.__sv.modeller.draftChanged?.(); });
+    await settle();
+    const cutFills = await fills();
+    const cutPv = await mp.evaluate(() => { let n = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData.cutPreview) n++; }); return n; });
+    check(boss.length === 1 && boss[0].hex === 0xf08c00 && !boss[0].cut && cutFills.length === 1 && cutFills[0].hex === 0xffd43b && cutFills[0].cut === true,
+      `model 1.463: picked contours are orange for a boss and the cut preview's yellow for a cut (${JSON.stringify({ boss, cutFills, cutPv })})`);
+    await ctx.close();
+  }
+
+  // --- 1.451: features straight from the sketch being edited (FR-SK-004) ---
+  if (inShard(5)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Rect", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", -50, -30), P("p2", 50, -30), P("p3", 50, 30), P("p4", -50, 30), Ln("l1", "p1", "p2"), Ln("l2", "p2", "p3"), Ln("l3", "p3", "p4"), Ln("l4", "p4", "p1")] });
+    }));
+    await settle();
+    // In the sketch, the Sketch tab offers Extrude: it exits the sketch and opens the extrude on it with a preview.
+    await mp.evaluate(() => window.__sv.modeller.editSketch("s"));
+    await mp.waitForTimeout(200);
+    const inSk = await mp.evaluate(() => ({ mode: window.__sv.model.mode().kind, ext: !!document.querySelector('#mc-tools [data-c="extrude"]'), line: !!document.querySelector('#mc-tools [data-c="sk:line"]') }));
+    await mp.click('#mc-tools [data-c="extrude"]');
+    await settle();
+    const ext = await mp.evaluate(() => { const m = window.__sv.model.mode(); return { mode: m.kind, type: m.draft?.type, sketch: m.draft?.sketch, v: Math.round(window.__sv.model.last().props?.volume ?? 0), sk: !document.getElementById("app").classList.contains("sketching") }; });
+    await mp.evaluate(() => window.__sv.modeller.cancel());
+    await settle();
+    // Another tab while sketching shows its own commands: Surfaces → Planar Surface uses the open sketch too.
+    await mp.evaluate(() => window.__sv.modeller.editSketch("s"));
+    await mp.waitForTimeout(200);
+    await mp.click("#cm-t-surfaces");
+    const surfTab = await mp.evaluate(() => ({ ps: !!document.querySelector('#mc-tools [data-c="planesurf"]'), line: !!document.querySelector('#mc-tools [data-c="sk:line"]'), mode: window.__sv.model.mode().kind }));
+    await mp.click('#mc-tools [data-c="planesurf"]');
+    await settle();
+    const ps = await mp.evaluate(() => { const m = window.__sv.model.mode(); return { mode: m.kind, type: m.draft?.type, sketch: m.draft?.sketch }; });
+    await mp.evaluate(() => window.__sv.modeller.cancel());
+    await settle();
+    check(inSk.mode === "sketch" && inSk.ext && inSk.line && ext.mode === "feature" && ext.type === "extrude" && ext.sketch === "s" && ext.v === 60000 && ext.sk
+      && surfTab.ps && !surfTab.line && surfTab.mode === "sketch" && ps.mode === "feature" && ps.type === "planesurf" && ps.sketch === "s",
+      `model 1.451: Extrude or Planar Surface picked while editing a sketch exits it and opens the feature on it with a preview (FR-SK-004) (${JSON.stringify({ inSk, ext, surfTab, ps })})`);
+    await ctx.close();
+  }
+
+  // --- 1.456: extrude Direction 2 with its own end condition (FR-FT-011) ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // A 100 × 60 × 20 block, a plane 30 above XY and a 10 × 10 pad on it extruded 5 up.
+    await mp.evaluate(() => window.__sv.model.store.change("Pad", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      const rect = (id, cx, cy, w, h, plane) => ({ id, type: "sketch", name: id, plane, rels: [], dims: [], ents: [P(id + "1", cx - w / 2, cy - h / 2), P(id + "2", cx + w / 2, cy - h / 2), P(id + "3", cx + w / 2, cy + h / 2), P(id + "4", cx - w / 2, cy + h / 2), Ln(id + "a", id + "1", id + "2"), Ln(id + "b", id + "2", id + "3"), Ln(id + "c", id + "3", id + "4"), Ln(id + "d", id + "4", id + "1")] });
+      d.features.push(rect("s", 0, 0, 100, 60, { std: "XY" }), { id: "e", type: "extrude", name: "Boss-Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } },
+        { id: "pl", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 30 } }, rect("k", -30, 0, 10, 10, { plane: "pl" }),
+        { id: "f", type: "extrude", name: "Boss-Extrude2", sketch: "k", op: "boss", end: "blind", depth: { v: 5 } });
+    }));
+    await settle();
+    await mp.evaluate(() => window.__sv.modeller.editFeature("f"));
+    await settle();
+    await mp.check('#mc-pm input[data-k="dir2"]');
+    await settle();
+    const handles = () => mp.evaluate(() => document.querySelectorAll("#mc-layer .mc-handle").length);
+    const blind = { arrows: await handles(), v: await mp.evaluate(() => Math.round(window.__sv.model.last().props?.volume ?? 0)) };
+    await mp.selectOption('#mc-pm select[data-k="end2"]', "next");
+    await settle();
+    const next = await mp.evaluate(() => ({ end2: window.__sv.model.mode().draft?.end2, v: Math.round(window.__sv.model.last().props?.volume ?? 0), bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.code).join() }));
+    next.arrows = await handles();
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(200);
+    const ru = await mp.evaluate(() => [...document.querySelectorAll('#mc-pm select[data-k="end2"] option')].map(o => o.textContent).join("|"));
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(200);
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await settle();
+    const done = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(x => x.id === "f"); return { end2: f.end2, v: Math.round(window.__sv.model.last().props?.volume ?? 0) }; });
+    // Blind both ways: 120000 + 100 × (5 + 5); up to next: down to the block, 100 × (5 + 10).
+    check(blind.arrows === 2 && blind.v === 121000 && next.end2 === "next" && !next.bad && next.v === 121500 && next.arrows === 1 && done.end2 === "next" && done.v === 121500 && !/[A-Za-z]{3}/.test(ru),
+      `model 1.456: extrude Direction 2 with its own end condition (up to next) and its own drag arrow (FR-FT-011) (${JSON.stringify({ blind, next, done, ru })})`);
+    // A draft for each direction (FR-FT-014): the block 20 up and 20 down, Direction 1 drafted 5°, then Direction 2 too.
+    await mp.evaluate(() => window.__sv.modeller.editFeature("e"));
+    await settle();
+    await mp.check('#mc-pm input[data-k="dir2"]');
+    await settle();
+    await mp.check('#mc-pm input[data-k="draftOn"]');
+    await settle();
+    const vol = () => mp.evaluate(() => Math.round(window.__sv.model.last().props?.volume ?? 0));
+    const d1 = { v: await vol(), box: await mp.locator('#mc-pm input[data-k="draft2On"]').count() };
+    await mp.check('#mc-pm input[data-k="draft2On"]');
+    await settle();
+    const d2 = { v: await vol(), angle: await mp.locator('#mc-pm input[data-num="draft2.angle"]').count() };
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await settle();
+    const dd = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(x => x.id === "e"); return { a2: Math.round((f.draft2?.angle.v ?? 0) * 1800 / Math.PI), side2: window.__sv.model.last().faceNames?.filter(n => n.startsWith("e:side2:")).length }; });
+    // Frustum 20 high, 5° in: 120000 − 160·tan5°·400 + 4/3·tan²5°·8000 = 114482 (the pad comes after the edited feature, so it is not built).
+    check(Math.abs(d1.v - 234482) < 4 && d1.box === 1 && Math.abs(d2.v - 228964) < 4 && d2.angle === 1 && dd.a2 === 50 && dd.side2 === 4,
+      `model 1.460: a draft angle for each extrude direction (FR-FT-014) (${JSON.stringify({ d1, d2, dd })})`);
+    await ctx.close();
+  }
+
   // --- 1.116: Recognize Holes turns the holes of a body into Hole features (FR-FT-102) ---
-  if (inShard(3)) {
+  if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -7581,11 +10883,512 @@ try {
     const r1 = await state();
     check(Math.abs(r1.v - r0.v) < 0.05 && !r1.bad && r1.types === "sketch,extrude,hole,hole,delface,hole,hole" && r1.holes === "blind:1:8 blind:1:8 through:2:10 through:2:10",
       `model 1.116: Recognize Holes fills the holes and makes them again as Hole features (FR-FT-102) (${JSON.stringify({ r0, r1 })})`);
+    // 1.390 (FR-FT-102): Recognize Fillets on an imported body: a block with two R5 corners and a 2 mm chamfer.
+    await mp.evaluate(() => window.__sv.model.store.change("Blends", d => {
+      const S = k => `e:side:s${k}`;
+      d.features = d.features.filter(f => f.id === "s" || f.id === "e");
+      d.features.push({ id: "bf", type: "fillet", name: "Fillet1", radius: { v: 5 }, edges: [{ faces: [S("a"), S("b")] }, { faces: [S("b"), S("c")] }] },
+        { id: "bc", type: "chamfer", name: "Chamfer1", distance: { v: 2 }, edges: [{ faces: ["e:end", S("d")] }] });
+    }));
+    await settle();
+    const b0 = await state();
+    const brep = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "block.brep", brep }]; }), brep);
+    await settle();
+    const b1 = await state();
+    await runCmd(mp, "Recognize Fillets");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.some(f => f.type === "fillet"), null, { timeout: 120000 });
+    await settle();
+    const b2 = await state();
+    const blends = await mp.evaluate(() => window.__sv.model.store.doc.features.filter(f => f.type === "fillet" || f.type === "chamfer").map(f => `${f.name}:${Math.round((f.radius ?? f.distance).v * 100) / 100}:${f.edges.length}`).join(" "));
+    // The recognised fillet can be edited like any other.
+    await mp.evaluate(() => window.__sv.model.store.change("Edit", d => { d.features.find(f => f.type === "fillet").radius.v = 8; }));
+    await settle();
+    const b3 = await state();
+    check(!b0.bad && Math.abs(b1.v - b0.v) < 0.05 && Math.abs(b2.v - b0.v) < 0.05 && !b2.bad && b2.types === "import,delface,chamfer,fillet" && blends === "Chamfer1:2:1 Fillet1:5:2" && !b3.bad && b3.v < b2.v - 100,
+      `model 1.390: Recognize Fillets removes the fillets and chamfers of an imported body and makes them again as features (FR-FT-102) (${JSON.stringify({ b0, b1, b2, b3, blends })})`);
+    // Recognize Extrudes (FR-FT-102): a block with a 20 × 10 pocket 5 deep and a 12 × 6 boss 7 high, imported.
+    await mp.evaluate(() => window.__sv.model.store.change("Pocket and boss", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      const R = (id, x, y, w, h) => ({ id, type: "sketch", name: id, plane: { face: { name: "e:end" } }, rels: [], dims: [], ents: [P(id + 1, x, y), P(id + 2, x + w, y), P(id + 3, x + w, y + h), P(id + 4, x, y + h), Ln(id + "a", id + 1, id + 2), Ln(id + "b", id + 2, id + 3), Ln(id + "c", id + 3, id + 4), Ln(id + "d", id + 4, id + 1)] });
+      const B = (id, x, y) => ({ id, type: "sketch", name: id, plane: { std: "XY" }, rels: [], dims: [], ents: [P(id + 1, -x, -y), P(id + 2, x, -y), P(id + 3, x, y), P(id + 4, -x, y), Ln(id + "a", id + 1, id + 2), Ln(id + "b", id + 2, id + 3), Ln(id + "c", id + 3, id + 4), Ln(id + "d", id + 4, id + 1)] });
+      d.features = [B("s", 30, 20), { id: "e", type: "extrude", name: "Boss-Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } },
+        R("pk", -25, -5, 20, 10), { id: "ec", type: "extrude", name: "Cut-Extrude1", sketch: "pk", op: "cut", end: "blind", depth: { v: 5 } },
+        R("bs", 8, 2, 12, 6), { id: "eb", type: "extrude", name: "Boss-Extrude2", sketch: "bs", op: "boss", end: "blind", depth: { v: 7 } }];
+    }));
+    await settle();
+    const x0 = await state();
+    const brep2 = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "block.brep", brep }]; }), brep2);
+    await settle();
+    await runCmd(mp, "Recognize Extrudes");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.some(f => f.type === "extrude"), null, { timeout: 120000 });
+    await settle();
+    const x1 = await state();
+    const exts = await mp.evaluate(() => window.__sv.model.store.doc.features.filter(f => f.type === "extrude").map(f => `${f.op}:${f.end}:${Math.round(f.depth.v * 100) / 100}`).sort().join(" "));
+    // The recognised pocket can be made deeper like any other cut.
+    await mp.evaluate(() => window.__sv.model.store.change("Edit", d => { d.features.find(f => f.type === "extrude" && f.op === "cut").depth.v = 9; }));
+    await settle();
+    const x2 = await state();
+    check(!x0.bad && Math.abs(x0.v - (48000 - 1000 + 504)) < 0.05 && Math.abs(x1.v - x0.v) < 0.05 && !x1.bad && x1.types === "import,sketch,extrude,delbody,sketch,extrude,sketch,extrude" && exts === "boss:blind:20 boss:blind:7 cut:blind:5" && !x2.bad && Math.abs(x2.v - (x1.v - 800)) < 0.05,
+      `model: Recognize Extrudes makes an imported block with a pocket and a boss again as a base extrude and sketches with extrudes (FR-FT-102) (${JSON.stringify({ x0, x1, x2, exts })})`);
+    // 1.415: a turned shaft (a step and a cone, about Z) comes back as a sketch with a revolve.
+    await mp.evaluate(() => window.__sv.model.store.change("Shaft", d => {
+      const xy = [[0, 0], [10, 0], [10, 20], [6, 26], [6, 40], [0, 40]];
+      const ents = xy.map(([x, y], i) => ({ id: "rp" + i, t: "point", x, y }));
+      xy.forEach((_, i) => ents.push({ id: "rl" + i, t: "line", a: "rp" + i, b: "rp" + (i + 1) % xy.length }));
+      ents.push({ id: "ra", t: "point", x: 0, y: -5 }, { id: "rb", t: "point", x: 0, y: 45 }, { id: "rax", t: "line", a: "ra", b: "rb", cons: true });
+      d.features = [{ id: "r", type: "sketch", name: "r", plane: { std: "XZ" }, ents, rels: [], dims: [] },
+        { id: "v", type: "revolve", name: "Revolve1", sketch: "r", op: "boss", axis: "rax", angle: { v: Math.PI * 2 } }];
+    }));
+    await settle();
+    const t0 = await state();
+    const brep3 = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "shaft.brep", brep }]; }), brep3);
+    await settle();
+    await runCmd(mp, "Recognize Extrudes");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.some(f => f.type === "revolve"), null, { timeout: 120000 });
+    await settle();
+    const t1 = await state();
+    check(!t0.bad && t0.v > 1000 && Math.abs(t1.v - t0.v) < 0.05 && !t1.bad && t1.types === "import,sketch,revolve,delbody",
+      `model: Recognize Extrudes makes an imported turned shaft again as a sketch with a revolve (FR-FT-102) (${JSON.stringify({ t0, t1 })})`);
+    // 1.465: Recognize Features: a block with filleted corners, a pocket and a through hole comes back in modelling order.
+    await mp.evaluate(() => window.__sv.model.store.change("Block", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      const R = (id, plane, x, y, w, h) => ({ id, type: "sketch", name: id, plane, rels: [], dims: [], ents: [P(id + 1, x, y), P(id + 2, x + w, y), P(id + 3, x + w, y + h), P(id + 4, x, y + h), Ln(id + "a", id + 1, id + 2), Ln(id + "b", id + 2, id + 3), Ln(id + "c", id + 3, id + 4), Ln(id + "d", id + 4, id + 1)] });
+      d.features = [R("s", { std: "XY" }, -30, -20, 60, 40), { id: "e", type: "extrude", name: "Boss-Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } },
+        { id: "f", type: "fillet", name: "Fillet1", radius: { v: 5 }, edges: ["a", "b", "c", "d"].map((k, i) => ({ faces: ["e:side:s" + k, "e:side:s" + "abcd"[(i + 1) % 4]] })) },
+        R("pk", { face: { name: "e:end" } }, -25, -5, 20, 10), { id: "ec", type: "extrude", name: "Cut-Extrude1", sketch: "pk", op: "cut", end: "blind", depth: { v: 5 } },
+        { id: "o", type: "sketch", name: "o", plane: { face: { name: "e:end" } }, rels: [], dims: [], ents: [P("oc", 15, 5), { id: "ok", t: "circle", c: "oc", r: 4 }] },
+        { id: "eo", type: "extrude", name: "Cut-Extrude2", sketch: "o", op: "cut", end: "through", depth: { v: 10 } }];
+    }));
+    await settle();
+    const rf0 = await state();
+    const brepRf = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "block.brep", brep }]; }), brepRf);
+    await settle();
+    await runCmd(mp, "Recognize Features");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.some(f => f.type === "hole"), null, { timeout: 120000 });
+    await settle();
+    const rf1 = await state();
+    const names = await mp.evaluate(() => window.__sv.model.store.doc.features.map(f => f.name).join(","));
+    check(!rf0.bad && rf0.v > 40000 && Math.abs(rf1.v - rf0.v) < 0.05 && !rf1.bad && rf1.types === "import,sketch,extrude,delbody,sketch,extrude,hole,fillet" && names.split(",")[5] === "Cut1" && names.split(",")[7] === "Fillet1",
+      `model 1.465: Recognize Features makes an imported filleted block with a pocket and a hole again as base, cut, hole and fillet (FR-FT-102) (${JSON.stringify({ rf0, rf1, names })})`);
+    // 1.467: the recognised sketches come back fully defined (H/V relations and dimensions from the sketch origin).
+    const rdef = await mp.evaluate(() => window.__sv.model.store.doc.features.filter(f => f.type === "sketch").map(f => ({ dims: f.dims.length, hv: f.rels.filter(r => r.t === "horizontal" || r.t === "vertical").length, names: f.dims.map(d => d.name).join() })));
+    check(rdef.length === 2 && rdef.every(r => r.dims >= 4 && r.hv >= 4) && rdef[0].names.startsWith("D1,D2"),
+      `model 1.467: recognised sketches are fully defined with dimensions (FR-FT-102, FR-SK-045) (${JSON.stringify(rdef)})`);
+    // 1.472: as FeatureWorks dimensions them: the base sketch (a rectangle) gets its width and height as line lengths.
+    const lens = await mp.evaluate(() => window.__sv.model.store.doc.features.filter(f => f.type === "sketch").map(f => f.dims.filter(d => d.t === "distance" && d.e.length === 1).length));
+    check(lens.length === 2 && lens[0] >= 2 && lens[1] >= 2, `model 1.472: recognised sketches carry the lengths of their straight edges (${JSON.stringify(lens)})`);
+    // 1.474: counterbored and countersunk holes come back as Hole Wizard holes of their kind (not a hole plus a chamfer).
+    await mp.evaluate(() => window.__sv.model.store.change("Sunk", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      const H = (id, x, o) => ({ id, type: "hole", name: id, plane: { face: { name: "e:end" } }, pts: [[x, 0]], diameter: { v: 4 }, end: "through", depth: { v: 10 }, ...o });
+      d.features = [{ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("s1", -30, -20), P("s2", 30, -20), P("s3", 30, 20), P("s4", -30, 20), Ln("sa", "s1", "s2"), Ln("sb", "s2", "s3"), Ln("sc", "s3", "s4"), Ln("sd", "s4", "s1")] },
+        { id: "e", type: "extrude", name: "Boss-Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } },
+        H("h1", -15, { kind: "cbore", cbDia: { v: 8 }, cbDepth: { v: 4 } }), H("h2", 15, { kind: "csink", csDia: { v: 9 }, csAngle: { v: Math.PI / 2 } })];
+    }));
+    await settle();
+    const sk0 = await state();
+    const brepSk = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "sunk.brep", brep }]; }), brepSk);
+    await settle();
+    await runCmd(mp, "Recognize Features");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.some(f => f.type === "hole"), null, { timeout: 120000 });
+    await settle();
+    const sk1 = await state();
+    const sunk = await mp.evaluate(() => window.__sv.model.store.doc.features.filter(f => f.type === "hole").map(f => f.kind).sort().join());
+    check(!sk0.bad && Math.abs(sk1.v - sk0.v) < 0.05 && !sk1.bad && sk1.types === "import,sketch,extrude,delbody,hole,hole" && sunk === "cbore,csink",
+      `model 1.474: Recognize Features makes counterbored and countersunk holes again as Hole Wizard holes (FR-FT-102) (${JSON.stringify({ sk0, sk1, sunk })})`);
+    // 1.477: a cross hole through a round bar comes back as a sketch and a Through All cut on a standard plane (the bar itself as an extrude).
+    await mp.evaluate(() => window.__sv.model.store.change("Cross", d => {
+      const xy = [[0, 0], [10, 0], [10, 30], [0, 30]];
+      const ents = xy.map(([x, y], i) => ({ id: "rp" + i, t: "point", x, y }));
+      xy.forEach((_, i) => ents.push({ id: "rl" + i, t: "line", a: "rp" + i, b: "rp" + ((i + 1) % 4) }));
+      ents.push({ id: "ra", t: "point", x: 0, y: -5 }, { id: "rb", t: "point", x: 0, y: 35 }, { id: "rax", t: "line", a: "ra", b: "rb", cons: true });
+      d.features = [{ id: "r", type: "sketch", name: "Sketch1", plane: { std: "XZ" }, ents, rels: [], dims: [] },
+        { id: "v", type: "revolve", name: "Revolve1", sketch: "r", op: "boss", axis: "rax", angle: { v: Math.PI * 2 } },
+        { id: "o", type: "sketch", name: "Sketch2", plane: { std: "XZ" }, rels: [], dims: [], ents: [{ id: "oc", t: "point", x: 0, y: 15 }, { id: "ok", t: "circle", c: "oc", r: 2.5 }] },
+        { id: "c", type: "extrude", name: "Cut-Extrude1", sketch: "o", op: "cut", end: "through2", depth: { v: 10 } }];
+    }));
+    await settle();
+    const cx0 = await state();
+    const brepCx = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "cross.brep", brep }]; }), brepCx);
+    await settle();
+    await runCmd(mp, "Recognize Features");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.length > 1, null, { timeout: 120000 });
+    await settle();
+    const cx1 = await state();
+    check(!cx0.bad && cx0.v > 9000 && Math.abs(cx1.v - cx0.v) < 0.1 && !cx1.bad && cx1.types === "import,sketch,extrude,delbody,sketch,extrude",
+      `model 1.477: Recognize Features makes a cross hole through an imported shaft again as a Through All cut (FR-FT-102) (${JSON.stringify({ cx0, cx1 })})`);
+    // 1.484.0: a blind cross hole (drilled from a plane tangent to the bar, reversed) comes back as a plane and a Hole Wizard hole.
+    await mp.evaluate(() => window.__sv.model.store.change("Blind cross", d => {
+      const xy = [[0, 0], [10, 0], [10, 30], [0, 30]];
+      const ents = xy.map(([x, y], i) => ({ id: "rp" + i, t: "point", x, y }));
+      xy.forEach((_, i) => ents.push({ id: "rl" + i, t: "line", a: "rp" + i, b: "rp" + ((i + 1) % 4) }));
+      ents.push({ id: "ra", t: "point", x: 0, y: -5 }, { id: "rb", t: "point", x: 0, y: 35 }, { id: "rax", t: "line", a: "ra", b: "rb", cons: true });
+      d.features = [{ id: "r", type: "sketch", name: "Sketch1", plane: { std: "XZ" }, ents, rels: [], dims: [] },
+        { id: "v", type: "revolve", name: "Revolve1", sketch: "r", op: "boss", axis: "rax", angle: { v: Math.PI * 2 } },
+        { id: "p", type: "plane", name: "Plane1", base: { std: "XZ" }, mode: "offset", offset: { v: 10 }, flip: true },
+        { id: "h", type: "hole", name: "Hole1", plane: { plane: "p" }, pts: [[0, 15]], kind: "simple", diameter: { v: 5 }, end: "blind", depth: { v: 8 }, flip: true }];
+    }));
+    await settle();
+    const bx0 = await state();
+    const brepBx = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "blind.brep", brep }]; }), brepBx);
+    await settle();
+    await runCmd(mp, "Recognize Features");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.length > 1, null, { timeout: 120000 });
+    await settle();
+    const bx1 = await state();
+    const bxHole = await mp.evaluate(() => { const h = window.__sv.model.store.doc.features.find(f => f.type === "hole"); return h && { d: h.diameter.v, depth: +h.depth.v.toFixed(4), flip: !!h.flip }; });
+    check(!bx0.bad && bx0.v > 9000 && bx0.v < 9425 && Math.abs(bx1.v - bx0.v) < 0.1 && !bx1.bad && bx1.types === "import,sketch,extrude,delbody,plane,hole"
+      && bxHole?.d === 5 && bxHole.depth === 8 && bxHole.flip,
+      `model 1.484.0: Recognize Features makes a blind cross hole in an imported shaft again as a Hole on a tangent plane (FR-FT-102) (${JSON.stringify({ bx0, bx1, bxHole })})`);
+    // 1.484.0: a keyway (a slot with round ends sunk into the bar) comes back as a tangent plane, its outline sketched there and a blind cut.
+    await mp.evaluate(() => window.__sv.model.store.change("Keyway", d => {
+      const xy = [[0, 0], [10, 0], [10, 30], [0, 30]];
+      const ents = xy.map(([x, y], i) => ({ id: "rp" + i, t: "point", x, y }));
+      xy.forEach((_, i) => ents.push({ id: "rl" + i, t: "line", a: "rp" + i, b: "rp" + ((i + 1) % 4) }));
+      ents.push({ id: "ra", t: "point", x: 0, y: -5 }, { id: "rb", t: "point", x: 0, y: 35 }, { id: "rax", t: "line", a: "ra", b: "rb", cons: true });
+      const P = (id, x, y) => ({ id, t: "point", x, y });
+      d.features = [{ id: "r", type: "sketch", name: "Sketch1", plane: { std: "XZ" }, ents, rels: [], dims: [] },
+        { id: "v", type: "revolve", name: "Revolve1", sketch: "r", op: "boss", axis: "rax", angle: { v: Math.PI * 2 } },
+        { id: "p", type: "plane", name: "Plane1", base: { std: "XZ" }, mode: "offset", offset: { v: 10 } },
+        { id: "k", type: "sketch", name: "Sketch2", plane: { plane: "p" }, rels: [], dims: [], ents: [P("c1", 0, 10), P("c2", 0, 20), P("a1", 3, 10), P("a2", 3, 20), P("b1", -3, 10), P("b2", -3, 20),
+          { id: "l1", t: "line", a: "a1", b: "a2" }, { id: "l2", t: "line", a: "b2", b: "b1" }, { id: "q1", t: "arc", c: "c2", a: "a2", b: "b2" }, { id: "q2", t: "arc", c: "c1", a: "b1", b: "a1" }] },
+        { id: "c", type: "extrude", name: "Cut-Extrude1", sketch: "k", op: "cut", end: "blind", depth: { v: 3.5 } }];
+    }));
+    await settle();
+    const kw0 = await state();
+    const brepKw = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "keyway.brep", brep }]; }), brepKw);
+    await settle();
+    await runCmd(mp, "Recognize Features");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.length > 1, null, { timeout: 120000 });
+    await settle();
+    const kw1 = await state();
+    const kwCut = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.filter(f => f.type === "extrude").at(-1); return f && { op: f.op, depth: +f.depth.v.toFixed(4) }; });
+    check(!kw0.bad && kw0.v > 9000 && kw0.v < 9300 && Math.abs(kw1.v - kw0.v) < 0.1 && !kw1.bad && kw1.types === "import,sketch,extrude,delbody,plane,sketch,extrude"
+      && kwCut?.op === "cut" && kwCut.depth === 3.5,
+      `model 1.484.0: Recognize Features makes a keyway in an imported shaft again as a tangent plane, sketch and blind cut (FR-FT-102) (${JSON.stringify({ kw0, kw1, kwCut })})`);
+    // 1.485.0: a keyway running out through the shaft's end (round end at z = 20, open at z = 30).
+    await mp.evaluate(() => window.__sv.model.store.change("Open keyway", d => {
+      const xy = [[0, 0], [10, 0], [10, 30], [0, 30]];
+      const ents = xy.map(([x, y], i) => ({ id: "rp" + i, t: "point", x, y }));
+      xy.forEach((_, i) => ents.push({ id: "rl" + i, t: "line", a: "rp" + i, b: "rp" + ((i + 1) % 4) }));
+      ents.push({ id: "ra", t: "point", x: 0, y: -5 }, { id: "rb", t: "point", x: 0, y: 35 }, { id: "rax", t: "line", a: "ra", b: "rb", cons: true });
+      const P = (id, x, y) => ({ id, t: "point", x, y });
+      d.features = [{ id: "r", type: "sketch", name: "Sketch1", plane: { std: "XZ" }, ents, rels: [], dims: [] },
+        { id: "v", type: "revolve", name: "Revolve1", sketch: "r", op: "boss", axis: "rax", angle: { v: Math.PI * 2 } },
+        { id: "p", type: "plane", name: "Plane1", base: { std: "XZ" }, mode: "offset", offset: { v: 10 } },
+        { id: "k", type: "sketch", name: "Sketch2", plane: { plane: "p" }, rels: [], dims: [], ents: [P("c", 0, 20), P("a1", 3, 20), P("a2", 3, 35), P("b2", -3, 35), P("b1", -3, 20),
+          { id: "l1", t: "line", a: "a1", b: "a2" }, { id: "l2", t: "line", a: "a2", b: "b2" }, { id: "l3", t: "line", a: "b2", b: "b1" }, { id: "q", t: "arc", c: "c", a: "b1", b: "a1" }] },
+        { id: "c", type: "extrude", name: "Cut-Extrude1", sketch: "k", op: "cut", end: "blind", depth: { v: 3 } }];
+    }));
+    await settle();
+    const ok0 = await state();
+    const brepOk = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "keyway2.brep", brep }]; }), brepOk);
+    await settle();
+    await runCmd(mp, "Recognize Features");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.length > 1, null, { timeout: 120000 });
+    await settle();
+    const ok1 = await state();
+    const okCut = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.filter(f => f.type === "extrude").at(-1); return f && { op: f.op, depth: +f.depth.v.toFixed(4) }; });
+    check(!ok0.bad && ok0.v > 9000 && ok0.v < 9400 && Math.abs(ok1.v - ok0.v) < 0.1 && !ok1.bad && ok1.types === "import,sketch,extrude,delbody,plane,sketch,extrude"
+      && okCut?.op === "cut" && okCut.depth === 3,
+      `model 1.485.0: Recognize Features makes a keyway running out through an imported shaft's end again as a tangent plane, sketch and blind cut (FR-FT-102) (${JSON.stringify({ ok0, ok1, okCut })})`);
+    // 1.486.0: a cross hole at 45° round the shaft comes back on a plane at an angle about the Z axis (FR-REF-002).
+    await mp.evaluate(() => window.__sv.model.store.change("Angled cross", d => {
+      const xy = [[0, 0], [10, 0], [10, 30], [0, 30]];
+      const ents = xy.map(([x, y], i) => ({ id: "rp" + i, t: "point", x, y }));
+      xy.forEach((_, i) => ents.push({ id: "rl" + i, t: "line", a: "rp" + i, b: "rp" + ((i + 1) % 4) }));
+      ents.push({ id: "ra", t: "point", x: 0, y: -5 }, { id: "rb", t: "point", x: 0, y: 35 }, { id: "rax", t: "line", a: "ra", b: "rb", cons: true });
+      d.features = [{ id: "r", type: "sketch", name: "Sketch1", plane: { std: "XZ" }, ents, rels: [], dims: [] },
+        { id: "v", type: "revolve", name: "Revolve1", sketch: "r", op: "boss", axis: "rax", angle: { v: Math.PI * 2 } },
+        { id: "p", type: "plane", name: "Plane1", base: { std: "YZ" }, mode: "angle", offset: { v: 0 }, angle: { v: Math.PI / 4 }, about: { std: "Z" } },
+        { id: "o", type: "sketch", name: "Sketch2", plane: { plane: "p" }, rels: [], dims: [], ents: [{ id: "oc", t: "point", x: 0, y: 15 }, { id: "ok", t: "circle", c: "oc", r: 2.5 }] },
+        { id: "c", type: "extrude", name: "Cut-Extrude1", sketch: "o", op: "cut", end: "through2", depth: { v: 10 } }];
+    }));
+    await settle();
+    const ag0 = await state();
+    const brepAg = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "angled.brep", brep }]; }), brepAg);
+    await settle();
+    await runCmd(mp, "Recognize Features");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.length > 1, null, { timeout: 120000 });
+    await settle();
+    const ag1 = await state();
+    const agPlane = await mp.evaluate(() => { const p = window.__sv.model.store.doc.features.find(f => f.type === "plane"); return p && { mode: p.mode, about: p.about?.std, deg: Math.round(p.angle.v * 180 / Math.PI) }; });
+    check(!ag0.bad && ag0.v > 8900 && ag0.v < 9200 && Math.abs(ag1.v - ag0.v) < 0.1 && !ag1.bad && ag1.types === "import,sketch,extrude,delbody,plane,sketch,extrude"
+      && agPlane?.mode === "angle" && agPlane.about === "Z" && agPlane.deg === 45,
+      `model 1.486.0: Recognize Features makes a cross hole at 45° through an imported shaft again on a plane at an angle about the Z axis (FR-FT-102, FR-REF-002) (${JSON.stringify({ ag0, ag1, agPlane })})`);
+    // The Plane panel shows the axis it turns about.
+    await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "plane").id));
+    await mp.waitForSelector('#mc-pm select[data-k="about"]', { timeout: 10000 });
+    const agPanel = await mp.evaluate(() => ({ about: document.querySelector('#mc-pm select[data-k="about"]').value, opts: [...document.querySelectorAll('#mc-pm select[data-k="about"] option')].map(o => o.value).join(), edgeBox: !!document.querySelector('#mc-pm [data-k="focus-axis"]') }));
+    check(agPanel.about === "Z" && agPanel.opts === "edge,X,Y,Z" && !agPanel.edgeBox, `model 1.486.0: the Plane panel offers X, Y, Z and edges to turn about, Z picked (FR-REF-002) (${JSON.stringify(agPanel)})`);
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await settle();
+    // 1.488.0: a cross hole at a compound angle (35° round the shaft, 20° up) comes back on a plane about Z, the
+    // axis where it meets XY and a plane at an angle about that axis.
+    await mp.evaluate(() => window.__sv.model.store.change("Compound cross", d => {
+      const xy = [[0, 0], [10, 0], [10, 30], [0, 30]];
+      const ents = xy.map(([x, y], i) => ({ id: "rp" + i, t: "point", x, y }));
+      xy.forEach((_, i) => ents.push({ id: "rl" + i, t: "line", a: "rp" + i, b: "rp" + ((i + 1) % 4) }));
+      ents.push({ id: "ra", t: "point", x: 0, y: -5 }, { id: "rb", t: "point", x: 0, y: 35 }, { id: "rax", t: "line", a: "ra", b: "rb", cons: true });
+      d.features = [{ id: "r", type: "sketch", name: "Sketch1", plane: { std: "XZ" }, ents, rels: [], dims: [] },
+        { id: "v", type: "revolve", name: "Revolve1", sketch: "r", op: "boss", axis: "rax", angle: { v: Math.PI * 2 } },
+        { id: "p1", type: "plane", name: "Plane1", base: { std: "YZ" }, mode: "angle", offset: { v: 0 }, angle: { v: 35 * Math.PI / 180 }, about: { std: "Z" } },
+        { id: "a1", type: "axis", name: "Axis1", mode: "planes", planes: [{ std: "XY" }, { plane: "p1" }] },
+        { id: "p2", type: "plane", name: "Plane2", base: { plane: "p1" }, mode: "angle", offset: { v: 0 }, angle: { v: 20 * Math.PI / 180 }, about: { axis: "a1" } }];
+    }));
+    await settle();
+    const cpF = await mp.evaluate(() => window.__sv.model.last().frames?.p2 ?? null);
+    const cpXY = cpF ? [0, 1].map(k => { const ax = k ? cpF.y : cpF.x; return (0 - cpF.o[0]) * ax[0] + (0 - cpF.o[1]) * ax[1] + (15 - cpF.o[2]) * ax[2]; }) : [0, 15];
+    await mp.evaluate(xy => window.__sv.model.store.change("Compound cut", d => {
+      d.features.push({ id: "o", type: "sketch", name: "Sketch2", plane: { plane: "p2" }, rels: [], dims: [], ents: [{ id: "oc", t: "point", x: xy[0], y: xy[1] }, { id: "ok", t: "circle", c: "oc", r: 2 }] },
+        { id: "c", type: "extrude", name: "Cut-Extrude1", sketch: "o", op: "cut", end: "through2", depth: { v: 10 } });
+    }), cpXY);
+    await settle();
+    const cp0 = await state();
+    const brepCp = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "compound.brep", brep }]; }), brepCp);
+    await settle();
+    await runCmd(mp, "Recognize Features");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.length > 1, null, { timeout: 120000 });
+    await settle();
+    const cp1 = await state();
+    check(!!cpF && !cp0.bad && cp0.v > 9000 && cp0.v < 9300 && Math.abs(cp1.v - cp0.v) < 0.1 && !cp1.bad && cp1.types === "import,sketch,extrude,delbody,plane,axis,plane,sketch,extrude",
+      `model 1.488.0: Recognize Features makes a cross hole at a compound angle again on a plane about an axis (FR-FT-102) (${JSON.stringify({ cp0, cp1, cpXY })})`);
+    // 1.488.0: a shaft turned about a skew axis comes back as a plane about Z, an offset plane, a sketch and a revolve.
+    await mp.evaluate(() => window.__sv.model.store.change("Skew shaft", d => {
+      const c = Math.cos(25 * Math.PI / 180), s = Math.sin(25 * Math.PI / 180), at = (x, y) => ({ x: 3 + x * c - y * s, y: x * s + y * c });
+      const xy = [[0, 0], [10, 0], [10, 20], [6, 26], [6, 40], [0, 40]];
+      const ents = xy.map(([x, y], i) => ({ id: "rp" + i, t: "point", ...at(x, y) }));
+      xy.forEach((_, i) => ents.push({ id: "rl" + i, t: "line", a: "rp" + i, b: "rp" + ((i + 1) % xy.length) }));
+      ents.push({ id: "ra", t: "point", ...at(0, -5) }, { id: "rb", t: "point", ...at(0, 45) }, { id: "rax", t: "line", a: "ra", b: "rb", cons: true });
+      d.features = [{ id: "pa", type: "plane", name: "Plane1", base: { std: "YZ" }, mode: "angle", offset: { v: 0 }, angle: { v: Math.PI / 6 }, about: { std: "Z" } },
+        { id: "pb", type: "plane", name: "Plane2", base: { plane: "pa" }, mode: "offset", offset: { v: 7 } },
+        { id: "r", type: "sketch", name: "Sketch1", plane: { plane: "pb" }, ents, rels: [], dims: [] },
+        { id: "v", type: "revolve", name: "Revolve1", sketch: "r", op: "boss", axis: "rax", angle: { v: Math.PI * 2 } }];
+    }));
+    await settle();
+    const sw0 = await state();
+    const brepSw = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "skew.brep", brep }]; }), brepSw);
+    await settle();
+    await runCmd(mp, "Recognize Features");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.length > 1, null, { timeout: 120000 });
+    await settle();
+    const sw1 = await state();
+    check(!sw0.bad && sw0.v > 8000 && Math.abs(sw1.v - sw0.v) < 0.1 && !sw1.bad && sw1.types === "import,plane,plane,sketch,revolve,delbody",
+      `model 1.488.0: Recognize Features makes a shaft turned about a skew axis again as a sketch on a plane about Z and a revolve (FR-FT-102) (${JSON.stringify({ sw0, sw1 })})`);
+    // 1.489.0: a variable radius fillet comes back as a variable radius fillet with its two end radii.
+    await mp.evaluate(() => window.__sv.model.store.change("Variable fillet", d => {
+      const xy = [[-30, -20], [30, -20], [30, 20], [-30, 20]];
+      const ents = xy.map(([x, y], i) => ({ id: "vp" + i, t: "point", x, y }));
+      xy.forEach((_, i) => ents.push({ id: "vl" + (i + 1), t: "line", a: "vp" + i, b: "vp" + ((i + 1) % 4) }));
+      d.features = [{ id: "vs", type: "sketch", name: "Sketch1", plane: { std: "XY" }, ents, rels: [], dims: [] },
+        { id: "ve", type: "extrude", name: "Boss-Extrude1", sketch: "vs", op: "boss", end: "blind", depth: { v: 20 } },
+        { id: "vf", type: "fillet", name: "Fillet1", variable: true, radius: { v: 5 }, edges: [{ faces: ["ve:side:vl1", "ve:side:vl2"], r: 3, r2: 8 }] }];
+    }));
+    await settle();
+    const vf0 = await state();
+    const brepVf = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "vfil.brep", brep }]; }), brepVf);
+    await settle();
+    await runCmd(mp, "Recognize Features");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.length > 1, null, { timeout: 120000 });
+    await settle();
+    const vf1 = await state();
+    const vfr = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(x => x.type === "fillet"); return f && { v: !!f.variable, r: [f.edges[0].r, f.edges[0].r2].sort((a, b) => a - b) }; });
+    check(!vf0.bad && Math.abs(vf1.v - vf0.v) < 0.1 && !vf1.bad && vf1.types === "import,sketch,extrude,delbody,fillet" && vfr?.v && Math.abs(vfr.r[0] - 3) < 1e-3 && Math.abs(vfr.r[1] - 8) < 1e-3,
+      `model 1.489.0: Recognize Features makes a variable radius fillet again with its end radii (FR-FT-102) (${JSON.stringify({ vf0, vf1, vfr })})`);
+    // 1.493.0: a bent tube comes back as a path sketch, a profile sketch on its end and a Sweep (FR-FT-102).
+    await mp.evaluate(() => window.__sv.model.store.change("Tube", d => {
+      d.features = [{ id: "pt", type: "sketch", name: "Sketch1", plane: { std: "XZ" }, rels: [], dims: [], ents: [
+        { id: "q1", t: "point", x: 0, y: 0 }, { id: "q2", t: "point", x: 0, y: 40 }, { id: "q3", t: "point", x: 20, y: 60 }, { id: "q4", t: "point", x: 60, y: 60 }, { id: "qc", t: "point", x: 20, y: 40 },
+        { id: "w1", t: "line", a: "q1", b: "q2" }, { id: "w2", t: "arc", c: "qc", a: "q3", b: "q2" }, { id: "w3", t: "line", a: "q3", b: "q4" }] },
+        { id: "pr", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "pc", t: "point", x: 0, y: 0 }, { id: "pk", t: "circle", c: "pc", r: 5 }, { id: "pi", t: "circle", c: "pc", r: 3 }] },
+        { id: "sw", type: "sweep", name: "Sweep1", op: "boss", profile: "pr", path: { sketch: "pt" } }];
+    }));
+    await settle();
+    const tb0 = await state();
+    const brepTb = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "tube.brep", brep }]; }), brepTb);
+    await settle();
+    await runCmd(mp, "Recognize Features");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.length > 1, null, { timeout: 120000 });
+    await settle();
+    const tb1 = await state();
+    check(!tb0.bad && tb0.v > 3000 && Math.abs(tb1.v - tb0.v) < tb0.v * 1e-5 && !tb1.bad && tb1.types === "import,sketch,sketch,sweep,delbody",
+      `model 1.493.0: Recognize Features makes a bent tube again as path and profile sketches and a Sweep (FR-FT-102) (${JSON.stringify({ tb0, tb1 })})`);
+    // 1.496.0: a bent bar of any line/arc profile (a square on its corner: the bends are cones) comes back as a Sweep too.
+    await mp.evaluate(() => window.__sv.model.store.change("Bar", d => {
+      d.features = [{ id: "pt", type: "sketch", name: "Sketch1", plane: { std: "XZ" }, rels: [], dims: [], ents: [
+        { id: "q1", t: "point", x: 0, y: 0 }, { id: "q2", t: "point", x: 0, y: 40 }, { id: "q3", t: "point", x: 20, y: 60 }, { id: "q4", t: "point", x: 60, y: 60 }, { id: "qc", t: "point", x: 20, y: 40 },
+        { id: "w1", t: "line", a: "q1", b: "q2" }, { id: "w2", t: "arc", c: "qc", a: "q3", b: "q2" }, { id: "w3", t: "line", a: "q3", b: "q4" }] },
+        { id: "pr", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [
+          { id: "r0", t: "point", x: 0, y: -5 }, { id: "r1", t: "point", x: 5, y: 0 }, { id: "r2", t: "point", x: 0, y: 5 }, { id: "r3", t: "point", x: -5, y: 0 },
+          { id: "l0", t: "line", a: "r0", b: "r1" }, { id: "l1", t: "line", a: "r1", b: "r2" }, { id: "l2", t: "line", a: "r2", b: "r3" }, { id: "l3", t: "line", a: "r3", b: "r0" }] },
+        { id: "sw", type: "sweep", name: "Sweep1", op: "boss", profile: "pr", path: { sketch: "pt" } }];
+    }));
+    await settle();
+    const db0 = await state();
+    const brepDb = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "bar.brep", brep }]; }), brepDb);
+    await settle();
+    await runCmd(mp, "Recognize Features");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.length > 1, null, { timeout: 120000 });
+    await settle();
+    const db1 = await state();
+    check(!db0.bad && db0.v > 3000 && Math.abs(db1.v - db0.v) < db0.v * 1e-5 && !db1.bad && db1.types === "import,sketch,sketch,sweep,delbody",
+      `model 1.496.0: Recognize Features makes a bent bar of a line/arc profile again as a Sweep (FR-FT-102) (${JSON.stringify({ db0, db1 })})`);
+    // 1.498.0: a lofted body (rectangle up to a circle) comes back as two profile sketches on its ends and a Loft.
+    await mp.evaluate(() => window.__sv.model.store.change("Loft", d => {
+      d.features = [{ id: "pl", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 30 } },
+        { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [
+          { id: "r0", t: "point", x: -10, y: -6 }, { id: "r1", t: "point", x: 10, y: -6 }, { id: "r2", t: "point", x: 10, y: 6 }, { id: "r3", t: "point", x: -10, y: 6 },
+          { id: "l0", t: "line", a: "r0", b: "r1" }, { id: "l1", t: "line", a: "r1", b: "r2" }, { id: "l2", t: "line", a: "r2", b: "r3" }, { id: "l3", t: "line", a: "r3", b: "r0" }] },
+        { id: "s2", type: "sketch", name: "Sketch2", plane: { plane: "pl" }, rels: [], dims: [], ents: [{ id: "cc", t: "point", x: 2, y: 1 }, { id: "ci", t: "circle", c: "cc", r: 6 }] },
+        { id: "lf", type: "loft", name: "Loft1", op: "boss", profiles: ["s1", "s2"] }];
+    }));
+    await settle();
+    const lb0 = await state();
+    const brepLb = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "loft.brep", brep }]; }), brepLb);
+    await settle();
+    await runCmd(mp, "Recognize Features");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.length > 1, null, { timeout: 120000 });
+    await settle();
+    const lb1 = await state();
+    check(!lb0.bad && lb0.v > 3000 && Math.abs(lb1.v - lb0.v) < lb0.v * 1e-5 && !lb1.bad && lb1.types === "import,sketch,sketch,loft,delbody",
+      `model 1.498.0: Recognize Features makes a lofted body again as two profile sketches and a Loft (FR-FT-102) (${JSON.stringify({ lb0, lb1 })})`);
+    // 1.499.0: a coil spring (a sweep path out of one plane) comes back as a circle sketch, a Helix and a circular Sweep.
+    await mp.evaluate(() => window.__sv.model.store.change("Spring", d => {
+      d.features = [{ id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "c", t: "point", x: 0, y: 0 }, { id: "k", t: "circle", c: "c", r: 10 }] },
+        { id: "h1", type: "helix", name: "Helix1", sketch: "s1", mode: "pitchRev", pitch: { v: 6 }, revs: { v: 4 }, height: { v: 24 } },
+        { id: "w1", type: "sweep", name: "Sweep1", op: "boss", circular: { v: 3 }, path: { helix: "h1" } }];
+    }));
+    await settle();
+    const sp0 = await state();
+    const brepSp = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "spring.brep", brep }]; }), brepSp);
+    await settle();
+    await runCmd(mp, "Recognize Features");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.length > 1, null, { timeout: 120000 });
+    await settle();
+    const sp1 = await state();
+    const spH = await mp.evaluate(() => { const h = window.__sv.model.store.doc.features.find(f => f.type === "helix"); return h && { p: h.pitch.v, n: h.revs.v }; });
+    check(!sp0.bad && sp0.v > 1000 && Math.abs(sp1.v - sp0.v) < sp0.v * 1e-5 && !sp1.bad && sp1.types === "import,sketch,helix,sweep,delbody" && spH?.p === 6 && spH?.n === 4,
+      `model 1.499.0: Recognize Features makes a coil spring again as a circle sketch, a Helix and a circular Sweep (FR-FT-102) (${JSON.stringify({ sp0, sp1, spH })})`);
+    // 1.500.0: a spring whose axis is tilted 30° about X comes back on a reference plane at that angle.
+    await mp.evaluate(() => window.__sv.model.store.change("Tilted spring", d => {
+      d.features = [{ id: "t1", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "angle", offset: { v: 0 }, angle: { v: Math.PI / 6 }, about: { std: "X" } },
+        { id: "s1", type: "sketch", name: "Sketch1", plane: { plane: "t1" }, rels: [], dims: [], ents: [{ id: "c", t: "point", x: 0, y: 0 }, { id: "k", t: "circle", c: "c", r: 10 }] },
+        { id: "h1", type: "helix", name: "Helix1", sketch: "s1", mode: "pitchRev", pitch: { v: 6 }, revs: { v: 3 }, height: { v: 18 } },
+        { id: "w1", type: "sweep", name: "Sweep1", op: "boss", circular: { v: 3 }, path: { helix: "h1" } }];
+    }));
+    await settle();
+    const st0 = await state();
+    const brepSt = await mp.evaluate(async () => (await window.__sv.model.kernel.partBody(window.__sv.model.store.doc)).brep);
+    await mp.evaluate(brep => window.__sv.model.store.change("Import", d => { d.features = [{ id: "i", type: "import", name: "Imported1", file: "tilted.brep", brep }]; }), brepSt);
+    await settle();
+    await runCmd(mp, "Recognize Features");
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.length > 1, null, { timeout: 120000 });
+    await settle();
+    const st1 = await state();
+    const stP = await mp.evaluate(() => { const p = window.__sv.model.store.doc.features.find(f => f.type === "plane"); return p && { deg: +((p.angle?.v ?? 0) * 180 / Math.PI).toFixed(4), about: p.about?.std }; });
+    check(!st0.bad && st0.v > 1000 && Math.abs(st1.v - st0.v) < st0.v * 1e-5 && !st1.bad && st1.types === "import,plane,sketch,helix,sweep,delbody" && stP?.deg === 30 && stP?.about === "X",
+      `model 1.500.0: Recognize Features makes a spring on a tilted axis again on a reference plane at 30° about X (FR-FT-102) (${JSON.stringify({ st0, st1, stP })})`);
+    // 1.492.0 (FR-UI-100): a middle click on a straight edge turns the view about the edge's line; empty space clears it and puts Z up again.
+    await mp.evaluate(() => window.__sv.model.store.change("Block", d => {
+      const xy = [[-30, -20], [30, -20], [30, 20], [-30, 20]];
+      const ents = xy.map(([x, y], i) => ({ id: "bp" + i, t: "point", x, y }));
+      xy.forEach((_, i) => ents.push({ id: "bl" + (i + 1), t: "line", a: "bp" + i, b: "bp" + ((i + 1) % 4) }));
+      d.features = [{ id: "bs", type: "sketch", name: "Sketch1", plane: { std: "XY" }, ents, rels: [], dims: [] },
+        { id: "be", type: "extrude", name: "Boss-Extrude1", sketch: "bs", op: "boss", end: "blind", depth: { v: 20 } }];
+    }));
+    await settle();
+    await mp.evaluate(() => { const v = window.__sv.viewer; v.setPivot(null); v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
+    await mp.waitForTimeout(200);
+    const scr = pts => mp.evaluate(ps => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(), V = v.camera.position.constructor; return ps.map(p => { const s = new V(...p).project(v.camera); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; }); }, pts);
+    const [ep] = await scr([[-12, -20, 20]]);
+    await mp.mouse.click(ep[0], ep[1], { button: "middle" });
+    await mp.waitForTimeout(100);
+    const ex0 = await mp.evaluate(() => { const v = window.__sv.viewer; return { axis: v.pivotAxis && v.pivotAxis.toArray().map(x => +x.toFixed(3)), line: !!v.scene.children.find(o => o.userData.pivot === "axis"), rot: v.controls.enableRotate }; });
+    const line0 = await scr([[-25, -20, 20], [25, -20, 20], [0, 20, 0]]);
+    const exCv = await mp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return [r.left + r.width * 0.35, r.top + r.height * 0.75]; });
+    await mp.mouse.move(exCv[0], exCv[1]);
+    await mp.mouse.down();
+    for (let k = 1; k <= 8; k++) await mp.mouse.move(exCv[0] + k * 6, exCv[1] - k * 12);
+    await mp.mouse.up();
+    await mp.waitForTimeout(400);
+    const line1 = await scr([[-25, -20, 20], [25, -20, 20], [0, 20, 0]]);
+    const exCorner = await mp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return [r.right - 60, r.bottom - 60]; });
+    await mp.mouse.click(exCorner[0], exCorner[1], { button: "middle" });
+    await mp.waitForTimeout(100);
+    const ex1 = await mp.evaluate(() => { const v = window.__sv.viewer; return { pivot: v.pivot, axis: v.pivotAxis, line: !!v.scene.children.find(o => o.userData.pivot === "axis"), up: v.camera.up.toArray(), rot: v.controls.enableRotate }; });
+    const still = k => Math.hypot(line1[k][0] - line0[k][0], line1[k][1] - line0[k][1]);
+    check(ex0.axis && Math.abs(Math.abs(ex0.axis[0]) - 1) < 1e-3 && ex0.line && !ex0.rot && still(0) < 1.5 && still(1) < 1.5 && still(2) > 10
+      && ex1.pivot === null && ex1.axis === null && !ex1.line && ex1.rot && Math.abs(ex1.up[2] - 1) < 1e-9,
+      `model 1.492.0: a middle click on a straight edge turns the view about the edge's line (both ends stay put, the far corner moves); empty space clears it and puts Z up (FR-UI-100) (${JSON.stringify({ ex0, line0, line1, ex1 })})`);
+    await ctx.close();
+  }
+
+  // --- 1.477: Edit sketch frames the whole sketch, also past the body; one-point and empty sketches still open (exam #96) ---
+  if (inShard(6)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Parts", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), L = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "b", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", 0, 0), P("c", 20, 0), P("e", 20, 20), P("f", 0, 20), L("l1", "a", "c"), L("l2", "c", "e"), L("l3", "e", "f"), L("l4", "f", "a")] },
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "b", op: "boss", end: "blind", depth: { v: 10 } },
+        { id: "far", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [P("g", 10, 10), P("h", 400, 250), L("lf", "g", "h")] },
+        { id: "one", type: "sketch", name: "Sketch3", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p", 5, 5)] },
+        { id: "none", type: "sketch", name: "Sketch4", plane: { std: "XY" }, rels: [], dims: [], ents: [] });
+    }));
+    await settle();
+    // Where each sketch point lands on the canvas, as a fraction of its width and height, once the view has stopped.
+    const shown = async id => {
+      await mp.evaluate(id => window.__sv.modeller.editSketch(id), id);
+      await mp.waitForFunction(id => window.__sv.model.editor()?.sk?.id === id, id, { timeout: 30000 });
+      await settle();
+      await mp.waitForFunction(() => !window.__sv.viewer.animating, null, { timeout: 10000 });
+      const r = await mp.evaluate(() => {
+        const v = window.__sv.viewer, ed = window.__sv.model.editor(), f = ed.frame;
+        return ed.sk.ents.filter(e => e.t === "point").map(e => {
+          const w = [0, 1, 2].map(i => f.o[i] + f.x[i] * e.x + f.y[i] * e.y);
+          const s = new (v.camera.position.constructor)(...w).project(v.camera);
+          return [(s.x + 1) / 2, (1 - s.y) / 2].map(q => Math.round(q * 100) / 100);
+        });
+      });
+      await mp.evaluate(() => window.__sv.modeller.ok());
+      await settle();
+      return r;
+    };
+    const far = await shown("far"), one = await shown("one"), none = await shown("none");
+    const inside = ps => ps.every(([x, y]) => x > 0 && x < 1 && y > 0 && y < 1);
+    check(far.length === 2 && inside(far) && one.length === 1 && inside(one) && none.length === 0,
+      `exam #96: Edit sketch frames the whole sketch past the body, and sketches with one point or none still open (${JSON.stringify({ far, one, none })})`);
     await ctx.close();
   }
 
   // --- 1.119: Loft guide curves (FR-FT-082) ---
-  if (inShard(4)) {
+  if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -7627,7 +11430,7 @@ try {
   }
 
   // --- 1.134: Setback fillets (FR-FT-033) ---
-  if (inShard(1)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -7683,7 +11486,7 @@ try {
   }
 
   // --- 1.131: Loft connectors (FR-FT-082) ---
-  if (inShard(2)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -7921,7 +11724,7 @@ try {
   }
 
   // --- 1.98: vertex chamfer clicked on a corner, multi-thickness shell (FR-FT-041, FR-FT-060) ---
-  if (inShard(3)) {
+  if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -7991,7 +11794,7 @@ try {
   }
 
   // --- 1.96: slot hole up to next, extrude up to body (FR-FT-050, FR-FT-012) ---
-  if (inShard(1)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -8047,7 +11850,7 @@ try {
   }
 
   // --- 1.90: sketch- and table-driven patterns, patterns of faces (FR-FT-070, FR-FT-073) ---
-  if (inShard(1)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -8116,7 +11919,7 @@ try {
   }
 
   // --- 1.89: sketch snaps to model geometry (relations to the model) and middle-drag orbit while sketching ---
-  if (inShard(2)) {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -8191,7 +11994,7 @@ try {
   }
 
   // --- 1.317: Smart Dimension takes a model edge clicked at its middle, and the sketch status passes clicks through (exam bugs 49, 46) ---
-  if (inShard(3)) {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -8284,7 +12087,12 @@ try {
     check(/Полосы/.test(ruAna) && !/[A-Za-z]{3}/.test(ruAna) && off.hidden && off.own, `analysis: panel in Russian; turning it off restores the parts (${JSON.stringify([ruAna.slice(0, 60), off])})`);
 
     // Drawing view palette: every standard view drawn; drag the isometric one onto the sheet.
+    // 1.518: a new drawing starts with an empty sheet and the palette (a CAD app); Standard 3 views stays a command.
     await ap.click("#new-more"); await ap.click("#new-drawing");
+    await ap.waitForFunction(() => window.__sv.drw.loaded(), null, { timeout: 120000 });
+    const fresh = await ap.evaluate(() => ({ n: window.__sv.drw.doc().sheets[0].views.length, st: document.querySelector(".drw-status").textContent }));
+    check(fresh.n === 0 && /View palette/.test(fresh.st), `drawing: a new drawing opens with an empty sheet and the view palette (${JSON.stringify(fresh)})`);
+    await drwCmd(ap, "std3");
     await ap.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
     await ap.waitForFunction(() => [...document.querySelectorAll(".drw-pt path")].every(p => p.getAttribute("d")), null, { timeout: 60000 });
     const tiles = await ap.evaluate(() => [...document.querySelectorAll(".drw-pt")].map(b => b.dataset.pal).join(","));
@@ -8293,8 +12101,11 @@ try {
     await ap.waitForFunction(() => window.__sv.drw.doc().sheets[0].views.length === 4, null, { timeout: 10000 });
     await ap.keyboard.press("Escape");
     const iso = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views.at(-1); return { orient: v.orient, style: v.style, x: v.x, y: v.y, parent: v.parent ?? null }; });
-    check(tiles === "front,top,right,iso,back,bottom,left" && iso.orient === "iso" && iso.style === "hlr" && !iso.parent && iso.x > 200 && iso.y > 150,
-      `drawing palette: seven standard views, the isometric one dropped where it was let go (${tiles}, ${JSON.stringify(iso)})`);
+    // 1.518: the palette's pictures run behind the views and are never dropped as unwanted, so placing views
+    // while they are made neither blanks them nor starts the drawing worker over (that cost a cold start per view).
+    const recycles = await ap.evaluate(() => window.__sv.drw.helper().recycles);
+    check(tiles === "front,top,right,iso,back,bottom,left" && iso.orient === "iso" && iso.style === "hlr" && !iso.parent && iso.x > 200 && iso.y > 150 && recycles === 0,
+      `drawing palette: seven standard views, the isometric one dropped where it was let go, no worker restart (${tiles}, ${JSON.stringify(iso)}, recycles ${recycles})`);
     // Clicking a tile, then the sheet, places it too.
     await ap.click('[data-pal="bottom"]');
     await ap.locator(".drw-svg").click({ position: { x: svg.width * 0.75, y: svg.height * 0.75 } });
@@ -8311,13 +12122,70 @@ try {
     await ap.keyboard.press("Escape");
     const placed = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views.at(-1); return [v.orient, v.x, v.y]; });
     check(guide >= 1 && placed[0] === "front" && placed[1] === front[0], `drawing: inference line lines a new view up with another view's centre (${guide} guide, ${JSON.stringify([placed, front])})`);
-    // Annotation tab: the tools beside the sheet start the same commands.
-    await ap.click('[data-ptab="annot"]');
-    const tab = await ap.evaluate(() => ({ views: document.querySelector("#drw-pane-views").hidden, annot: document.querySelector("#drw-pane-annot").hidden, n: document.querySelectorAll("#drw-pane-annot button").length }));
-    await ap.click('#drw-pane-annot [data-an="note"]');
-    const mode = await ap.evaluate(() => window.__sv.drw.mode());
+    // One place for the tools (1.551.0): the command bar has View Layout / Annotation / Sketch tabs; the side panel keeps
+    // the view palette, the tree and the properties, with no tool buttons of its own.
+    const once = await ap.evaluate(() => { const ks = [...document.querySelectorAll("#drw [data-an]")].map(b => b.dataset.an);
+      return { n: ks.length, uniq: new Set(ks).size, dim: document.querySelectorAll('#drw [data-a="dim"]').length, side: document.querySelectorAll(".drw-side [data-an], .drw-side [data-a=dim], .drw-side [role=tab]").length,
+        tabs: [...document.querySelectorAll("#drw [data-ctab]")].map(b => b.dataset.ctab + (b.classList.contains("on") ? "*" : "")).join(), pal: !!document.querySelector(".drw-side #drw-pane-views .drw-pt") }; });
+    // The Section ▾ menu shows whole: its last row is on top at its own middle (it used to be cut off at the bar's edge).
+    const menuWhole = async a => { await drwCmd(ap, a); const r = await ap.evaluate(a => { const m = document.querySelector(`#drw [data-a="${a}"] + .drw-menu`), bs = [...m.querySelectorAll("button")];
+      return bs.every(b => { const q = b.getBoundingClientRect(); return q.bottom <= innerHeight && document.elementFromPoint(q.left + q.width / 2, q.top + q.height / 2)?.closest("button") === b; }) ? bs.length : -1; }, a); await ap.keyboard.press("Escape"); return r; };
+    const menus = [await menuWhole("section"), await menuWhole("model"), await menuWhole("detail"), await menuWhole("dims"), await menuWhole("tables")];
+    const exportWhole = await (async () => { await ap.click('#drw .drw-top [data-a="export"]'); const r = await ap.evaluate(() => [...document.querySelectorAll('#drw [data-a="export"] + .drw-menu button')].every(b => { const q = b.getBoundingClientRect(); return q.right <= innerWidth && document.elementFromPoint(q.left + q.width / 2, q.top + q.height / 2)?.closest("button") === b; })); await ap.keyboard.press("Escape"); return r; })();
+    check(once.n === 27 && once.uniq === 27 && once.dim === 1 && once.side === 0 && once.pal && once.tabs.replace("*", "") === "layout,annot,sketch" && menus.join() === "6,8,2,3,7" && exportWhole,
+      `drawing: every annotation tool has one button, on the command bar's tabs, none in the side panel; the ▾ menus show whole (${JSON.stringify([once, menus, exportWhole])})`);
+    await drwTool(ap, "note");
+    const mode = await ap.evaluate(() => ({ m: window.__sv.drw.mode(), on: [...document.querySelectorAll(".drw-cmds .drw-cb.on")].map(b => b.dataset.tool).join(), pressed: document.querySelector('.drw-cmds [data-an="note"]').getAttribute("aria-pressed"),
+      panes: [...document.querySelectorAll(".drw-cmds [data-cpane]")].map(g => g.dataset.cpane + (g.hidden ? "" : "*")).join() }));
+    // 1.508.0: hovering a button shows the command bar's tooltip with what to click.
+    await ap.hover('.drw-cmds [data-an="hole"]');
+    const tip = await ap.waitForSelector("#cm-tip", { timeout: 3000 }).then(e => e.textContent()).catch(() => "");
     await ap.keyboard.press("Escape");
-    check(tab.views && !tab.annot && tab.n === 26 && mode === "note", `drawing: annotation tab shows the 26 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
+    const unpressed = await ap.evaluate(() => document.querySelectorAll(".drw-cmds .drw-cb.on").length);
+    // A tool started from the keyboard shows on its own tab; a tool under a ▾ lights the ▾ up.
+    await ap.click('#drw [data-ctab="layout"]');
+    await ap.evaluate(() => document.querySelector(".drw-svg").focus());
+    await ap.keyboard.press("d");
+    const byKey = await ap.evaluate(() => ({ m: window.__sv.drw.mode(), tab: document.querySelector("#drw [data-ctab].on")?.dataset.ctab }));
+    await ap.keyboard.press("Escape");
+    await drwTool(ap, "chain");
+    const under = await ap.evaluate(() => document.querySelector('.drw-cmds [data-a="dims"]').classList.contains("on"));
+    await ap.keyboard.press("Escape");
+    check(mode.m === "note" && mode.on === "note" && mode.pressed === "true" && mode.panes === "layout,annot*,sketch" && unpressed === 0 && /Hole callout/.test(tip) && /round edge/.test(tip) && byKey.m === "dim" && byKey.tab === "annot" && under,
+      `drawing: Annotation tab: Note starts the note command and shows pressed; tooltips; D opens the Annotation tab; a tool under ▾ lights it (${JSON.stringify([mode, unpressed, tip, byKey, under])})`);
+    // Command bar: icon-over-label buttons in one row at 1440 px without scrolling; the running tool is pressed;
+    // under 1280 px only the icons show. Undo, Save and Export sit on the file row above.
+    await drwTool(ap, "balloon");
+    const bar = await ap.evaluate(() => { const bs = [...document.querySelectorAll(".drw-cmds .drw-cb")].filter(b => b.offsetWidth > 0), tops = new Set(bs.map(b => Math.round(b.getBoundingClientRect().top))), c = document.querySelector(".drw-cmds");
+      return { n: bs.length, fits: c.scrollWidth <= c.clientWidth + 1, rows: tops.size, on: [...document.querySelectorAll(".drw-cmds .drw-cb.on")].map(b => b.dataset.tool).join(), labels: bs.every(b => b.querySelector(".mc-l").offsetWidth > 0),
+        file: ["undo", "save", "export"].every(a => document.querySelector(`.drw-top [data-a="${a}"]`)), mode: window.__sv.drw.mode() }; });
+    await ap.keyboard.press("Escape");
+    await ap.setViewportSize({ width: 1100, height: 900 });
+    const narrow = await ap.evaluate(() => { const bs = [...document.querySelectorAll(".drw-cmds .drw-cb")].filter(b => b.offsetWidth > 0), c = document.querySelector(".drw-cmds"); return { labels: bs.filter(b => b.querySelector(".mc-l").offsetWidth > 0).length, rows: new Set(bs.map(b => Math.round(b.getBoundingClientRect().top))).size, fits: c.scrollWidth <= c.clientWidth + 1 }; });
+    await ap.setViewportSize({ width: 1440, height: 900 });
+    check(bar.n === 16 && bar.fits && bar.rows === 1 && bar.on === "balloon" && bar.mode === "balloon" && bar.labels && bar.file && narrow.labels === 0 && narrow.rows === 1 && narrow.fits,
+      `drawing: the Annotation tab shows its 16 icon commands in one row without scrolling, the running tool pressed; icons only under 1280 px (${JSON.stringify([bar, narrow])})`);
+    await ap.click('#drw [data-ctab="layout"]');
+    // Side panel as FeatureManager + PropertyManager: the palette folds away; a selected view's properties get a title
+    // row (icon, name, kind, ✕ back to the sheet) and their groups fold on the title, remembered.
+    await ap.click('.drw-tree [data-sel]:not([data-sel=""])');
+    await ap.click(".drw-palfold");
+    await ap.click('.drw-props [data-fold$=":1"]');
+    const pm = await ap.evaluate(() => { const fs = document.querySelector('.drw-props [data-fold$=":1"]').closest("fieldset");
+      return { head: document.querySelector(".drw-pm-head b")?.textContent, kind: document.querySelector(".drw-pm-head small")?.textContent, pal: [...document.querySelectorAll(".drw-pal")].reduce((h, e) => h + e.offsetHeight, 0),
+        folded: fs.classList.contains("folded"), inner: fs.querySelector("select")?.offsetHeight ?? -1, aria: fs.querySelector(".drw-fold").getAttribute("aria-expanded"),
+        kept: localStorage.getItem("mc:drwFolds"), palKept: localStorage.getItem("mc:drwPalFold") }; });
+    await ap.click(".drw-pm-x");
+    const pm2 = await ap.evaluate(() => ({ sel: window.__sv.drw.sel?.() ?? null, head: document.querySelector(".drw-pm-head small")?.textContent, x: !!document.querySelector(".drw-pm-x") }));
+    await ap.click('.drw-tree [data-sel]:not([data-sel=""])');
+    const again = await ap.evaluate(() => document.querySelector('.drw-props [data-fold$=":1"]').getAttribute("aria-expanded"));
+    await ap.click('.drw-props [data-fold$=":1"]');
+    await ap.click(".drw-palfold");
+    await ap.click(".drw-pm-x");
+    const pal = await ap.evaluate(() => [...document.querySelectorAll(".drw-pal")].reduce((h, e) => h + e.offsetHeight, 0));
+    check(pm.head === "Drawing View1" && pm.kind === "Model view" && pm.pal === 0 && pm.folded && pm.inner === 0 && pm.aria === "false" && /v:model:1/.test(pm.kept ?? "") && pm.palKept === "1"
+      && pm2.head === "Sheet" && !pm2.x && again === "false" && pal > 0,
+      `drawing: side panel: palette folds, view properties have a title row, groups fold and stay folded, ✕ goes back to the sheet (${JSON.stringify([pm, pm2, again, pal])})`);
     // 1.82.0 break view (FR-DRW-015): select the first front view, leave out u = −25…15 mm; it closes up to a 6 mm gap.
     const fv = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views[0]; const pl = window.__sv.drw.placement(v.id); return { id: v.id, x: v.x, y: v.y, s: pl.s, w: pl.box[2] - pl.box[0], uc: pl.uc }; });
     const clickAt = async (x, y) => { const q = await ap.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await ap.mouse.click(q[0], q[1]); };
@@ -8343,6 +12211,28 @@ try {
     await ap.selectOption('.drw-props [data-st="lines"]', "0.7");
     const sty = await ap.evaluate(() => ({ style: window.__sv.drw.doc().style, svg: /stroke-width="0.7"/.test(window.__sv.drw.svg()) }));
     check(sty.style?.text === 5 && sty.style?.arrow === "tick" && sty.style?.lines === 0.7 && sty.svg, `drawing: drafting style is kept with the drawing and thickens visible lines (${JSON.stringify(sty)})`);
+    // Default decimals per dimension kind (FR-DRW-025): Auto, or a number that dimensions without their own precision take.
+    await ap.selectOption('.drw-props [data-st="lin"]', "1");
+    await ap.selectOption('.drw-props [data-st="ang"]', "2");
+    const dec1 = await ap.evaluate(() => window.__sv.drw.doc().style);
+    await ap.selectOption('.drw-props [data-st="ang"]', "");
+    const dec2 = await ap.evaluate(() => window.__sv.drw.doc().style);
+    check(dec1.lin === 1 && dec1.ang === 2 && dec2.lin === 1 && !("ang" in dec2), `drawing: drafting style keeps default linear/angle decimals, Auto clears them (${JSON.stringify([dec1, dec2])})`);
+    // Default ± tolerance (FR-DRW-025): typed with a comma or a point; cleared, it is gone.
+    await ap.fill('.drw-props [data-st="tol"]', "0,05");
+    await ap.press('.drw-props [data-st="tol"]', "Tab");
+    const tol1 = await ap.evaluate(() => window.__sv.drw.doc().style?.tol);
+    await ap.fill('.drw-props [data-st="tol"]', "");
+    await ap.press('.drw-props [data-st="tol"]', "Tab");
+    const tol2 = await ap.evaluate(() => window.__sv.drw.doc().style);
+    check(tol1 === 0.05 && !("tol" in tol2), `drawing: drafting style keeps a default ± tolerance, empty clears it (${JSON.stringify([tol1, tol2])})`);
+    // Dual dimensions (FR-DRW-021): inches in brackets with their own decimals; Off drops both keys.
+    await ap.selectOption('.drw-props [data-st="dual"]', "in");
+    await ap.selectOption('.drw-props [data-st="dualPrec"]', "2");
+    const dual1 = await ap.evaluate(() => window.__sv.drw.doc().style);
+    await ap.selectOption('.drw-props [data-st="dual"]', "");
+    const dual2 = await ap.evaluate(() => ({ st: window.__sv.drw.doc().style, sel: !!document.querySelector('.drw-props [data-st="dualPrec"]') }));
+    check(dual1.dual === "in" && dual1.dualPrec === 2 && !("dual" in dual2.st) && !("dualPrec" in dual2.st) && !dual2.sel, `drawing: drafting style keeps dual dimensions and their decimals, Off clears them (${JSON.stringify([dual1, dual2])})`);
     // 1.87.0 view properties (FR-DRW-017): break a projected view's alignment, drag it off line, then put it back in line.
     const pv0 = await ap.evaluate(() => { const sh = window.__sv.drw.doc().sheets[0]; const v = sh.views.find(x => x.parent && x.side && !x.kind); const p = sh.views.find(x => x.id === v.parent); return { id: v.id, x: v.x, y: v.y, px: p.x, py: p.y, side: v.side }; });
     await clickAt(pv0.x, pv0.y);
@@ -8398,7 +12288,7 @@ try {
   }
 
   // 1.80.0: vault geometry compare (FR-PDM-050) and check-in with referenced files (FR-PDM-011).
-  if (inShard(2)) {
+  if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const vp = await ctx.newPage();
     vp.on("pageerror", e => errors.push(e.message));
@@ -8422,7 +12312,7 @@ try {
     await vp.waitForSelector("#v-name");
     await vp.fill("#v-name", "Geometry test");
     await vp.click('#vault-panel [data-a="new-ws"]');
-    await vp.waitForSelector('#vault-panel [data-a="settings"]');
+    await vp.waitForSelector('#vault-panel [data-a="more"]');
     // The plate 10 mm thick, then 15 mm: 80 × 50 × 5 mm more material.
     const ids = await vp.evaluate(async ([a, b, asm]) => {
       const p = window.__sv.vault, v = p.vault;
@@ -8454,7 +12344,7 @@ try {
   }
 
   // --- View navigation (FRS 13.13: FR-UI-101..104): arrow keys, Z, previous view, zoom to area/selection, Space picker ---
-  if (inShard(4)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const np = await ctx.newPage();
     np.on("pageerror", e => errors.push(e.message));
@@ -8576,7 +12466,7 @@ try {
   }
 
   // --- Commands (FRS 13.13: FR-UND-005, FR-UI-106/107/111): named undo and its list, Enter repeats, right-click OK/Cancel, pushpin ---
-  if (inShard(3)) {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const cp = await ctx.newPage();
     cp.on("pageerror", e => errors.push(e.message));
@@ -8749,7 +12639,7 @@ try {
   }
 
   // --- Weldments (FR-FT-121): structural members on a sketch, cut list, end cap, Russian panel ---
-  if (inShard(2)) {
+  if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -8774,7 +12664,7 @@ try {
     await mp.click('#mc-pm input[data-wseg="l4"]');
     await settle();
     const p1 = await mp.evaluate(() => ({ bodies: window.__sv.model.last().bodies?.length, size: window.__sv.model.mode().draft.size }));
-    // Clicking the line in the view ticks it again (SolidWorks picks path segments in the graphics area).
+    // Clicking the line in the view ticks it again (a CAD app picks path segments in the graphics area).
     const l4At = await mp.evaluate(() => { const v = window.__sv.viewer; v.controls.target.set(300, 200, 0); v.camera.up.set(0, 1, 0); v.camera.position.set(300, 200, 1600); v.camera.lookAt(300, 200, 0); v.controls.update(); v.fit(false); v.camera.updateMatrixWorld(); const r = v.renderer.domElement.getBoundingClientRect(), q = new v.camera.position.constructor(0, 200, 0).project(v.camera); return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height]; });
     await mp.mouse.click(l4At[0] + 2, l4At[1] + 1);
     await settle();
@@ -8791,7 +12681,7 @@ try {
     // Cut List… opens a table: two member rows and the total mass (steel assumed).
     await runCmd(mp, "Cut List");
     await mp.waitForSelector("#wld-cut[open]");
-    const cl = await mp.evaluate(() => ({ rows: document.querySelectorAll("#wld-cut tbody tr").length, total: document.querySelector("#wld-cut [data-wtotal]")?.textContent }));
+    const cl = await mp.evaluate(() => ({ rows: document.querySelectorAll("#wld-cut tbody tr:not([data-stock])").length, total: document.querySelector("#wld-cut [data-wtotal]")?.textContent }));
     // Item properties typed in the dialog are kept with the part and rename the item in the tree and the CSV.
     await mp.fill('#wld-cut input[data-cp="desc"][data-ci="0"]', "Top rail");
     await mp.press('#wld-cut input[data-cp="desc"][data-ci="0"]', "Tab");
@@ -8810,6 +12700,21 @@ try {
     // Exclude from cut list: the row stays (struck through) without an item number, and the total drops its mass; unticked it comes back.
     const sumOf = () => mp.evaluate(() => document.querySelector("#wld-cut [data-wsum]")?.textContent ?? "");
     const tot0 = num(await sumOf());
+    // Stock lengths under the list: one row per section with its pieces and summed length.
+    const stock = await mp.evaluate(() => [...document.querySelectorAll("#wld-cut tr[data-stock]")].map(tr => [...tr.children].map(td => td.textContent)));
+    check(stock.length >= 1 && stock.every(r => r[0] && Number(r[1]) >= 1 && num(r[2]) > 0), `weldments: stock lengths under the cut list (${JSON.stringify(stock)})`);
+    // A stock bar length adds the bars to buy; clearing it takes the columns away again.
+    await mp.fill('#wld-cut input[data-wbar="len"]', "6000");
+    await mp.dispatchEvent('#wld-cut input[data-wbar="len"]', "change");
+    await settle();
+    const bars = await mp.evaluate(() => [...document.querySelectorAll("#wld-cut tr[data-stock]")].map(tr => [...tr.children].map(td => td.textContent)));
+    const plan = await mp.evaluate(() => [...document.querySelectorAll("#wld-cut .wld-plan li[data-wplan]")].map(li => li.textContent));
+    await mp.fill('#wld-cut input[data-wbar="len"]', "");
+    await mp.dispatchEvent('#wld-cut input[data-wbar="len"]', "change");
+    await settle();
+    const bars0 = await mp.evaluate(() => document.querySelectorAll("#wld-cut tr[data-stock] [data-wbars]").length);
+    check(bars.length === stock.length && bars.every(r => r.length === 5 && Number(r[3]) >= 1) && bars0 === 0, `weldments: bars to buy from a stock bar length (${JSON.stringify({ bars, bars0 })})`);
+    check(plan.length >= 1 && plan.every(x => /\d/.test(x)), `weldments: cutting plan under the stock lengths (${JSON.stringify(plan)})`);
     await mp.check('#wld-cut input[data-cp="excl"][data-ci="1"]');
     await settle();
     const ex = await mp.evaluate(() => { const tr = document.querySelectorAll("#wld-cut tbody tr")[1]; return { item: tr.querySelector("[data-witem]")?.textContent, cls: tr.classList.contains("wld-excl"), excl: Object.values(window.__sv.model.store.doc.cutProps ?? {}).some(p => p.excl) }; });
@@ -8831,6 +12736,32 @@ try {
       return { folder: document.querySelector('#mc-tree .ft-row[data-id="folder:cutlist"]')?.textContent, rows: [...document.querySelectorAll('#mc-tree .ft-row[data-id^="cut:"] .ft-name')].map(e => e.textContent), tris: hl.reduce((n, o) => n + o.geometry.getAttribute("position").count / 3, 0), faces: window.__sv.model.last().bodies.map(b => b.faces) };
     });
     check(/Cut list \(2\)/.test(ct.folder ?? "") && JSON.stringify(ct.rows) === '["Top rail × 650 mm (2)","SHS 50x50x4 × 450 mm (2)"]' && ct.tris > 0 && ct.faces.every(n => n > 0), `weldments: Cut list folder in the tree highlights an item's bodies (${JSON.stringify(ct)})`);
+    // Sub-weldments: Create sub-weldment on a cut list item puts it in a folder of its own; one body of the other item added
+    // to it splits that item (1 + 1); the dialog heads the sub-weldment's rows; Dissolve puts everything back.
+    const menuPick = async (sel, label) => {
+      await mp.click(sel, { button: "right" });
+      await mp.waitForSelector("#mc-menu button");
+      await mp.locator("#mc-menu button", { hasText: label }).first().click();
+      await settle();
+    };
+    await menuPick('#mc-tree .ft-row[data-id="cut:0"]', "Create sub-weldment");
+    const sw0 = await mp.evaluate(() => ({ subs: window.__sv.model.store.doc.subWelds, rows: [...document.querySelectorAll('#mc-tree .ft-row[data-id^="cut:"], #mc-tree .ft-row[data-id^="wsub:"]')].map(e => `${e.dataset.id.split(":")[0]}${e.classList.contains("child") ? ">" : ""}:${e.querySelector(".ft-name").textContent}`), sel: window.__sv.modeller.selected }));
+    const other = await mp.evaluate(() => window.__sv.model.last().cutList[1].bodies[0]);
+    if (!(await mp.$(`#mc-tree .ft-row[data-id="body:${other}"]`))) await mp.evaluate(() => window.__sv.modeller.toggleFolder("bodies"));
+    await menuPick(`#mc-tree .ft-row[data-id="body:${other}"]`, "Add to Sub-weldment1");
+    const sw1 = await mp.evaluate(() => ({ rows: [...document.querySelectorAll('#mc-tree .ft-row[data-id^="cut:"], #mc-tree .ft-row[data-id^="wsub:"]')].map(e => `${e.dataset.id.split(":")[0]}${e.classList.contains("child") ? ">" : ""}:${e.querySelector(".ft-name").textContent}`) }));
+    await mp.evaluate(id => window.__sv.modeller.rename(id, "Frame"), `wsub:${sw0.subs?.[0]?.id}`);
+    await settle();
+    await runCmd(mp, "Cut List");
+    await mp.waitForSelector("#wld-cut[open]");
+    const sw2 = await mp.evaluate(() => ({ heads: [...document.querySelectorAll("#wld-cut tr.wld-subrow")].map(e => e.textContent), rows: document.querySelectorAll("#wld-cut tbody tr[data-ri]").length }));
+    await mp.click('#wld-cut [data-a="close"]');
+    await menuPick(`#mc-tree .ft-row[data-id="wsub:${sw0.subs?.[0]?.id}"]`, "Dissolve sub-weldment");
+    const sw3 = await mp.evaluate(() => ({ subs: window.__sv.model.store.doc.subWelds, rows: document.querySelectorAll('#mc-tree .ft-row[data-id^="cut:"]').length }));
+    check(sw0.subs?.length === 1 && JSON.stringify(sw0.rows) === '["cut:SHS 50x50x4 × 450 mm (2)","wsub:Sub-weldment1 (1)","cut>:Top rail × 650 mm (2)"]' && sw0.sel === `wsub:${sw0.subs[0].id}`
+      && JSON.stringify(sw1.rows) === '["cut:SHS 50x50x4 × 450 mm (1)","wsub:Sub-weldment1 (2)","cut>:Top rail × 650 mm (2)","cut>:SHS 50x50x4 × 450 mm (1)"]'
+      && JSON.stringify(sw2.heads) === '["Frame"]' && sw2.rows === 3 && sw3.subs === undefined && sw3.rows === 2,
+      `weldments: sub-weldments in the cut list (${JSON.stringify({ sw0, sw1, sw2, sw3 })})`);
     // Merge miter trimmed bodies: the four mitred tubes of the frame become one body, one cut list item 2 × 650 + 2 × 450 long.
     const frameId = await mp.evaluate(() => window.__sv.model.store.doc.features.find(x => x.type === "member").id);
     await mp.evaluate(id => window.__sv.modeller.editFeature(id), frameId);
@@ -8954,6 +12885,37 @@ try {
     await settle();
     const co = await mp.evaluate(() => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.find(x => x.type === "member"); return { corners: f.corners, gap: f.gap?.v, rows: (l.cutList ?? []).filter(c => c.desc === "SHS 50x50x4").map(c => [c.qty, c.length, c.angle1, c.angle2]) }; });
     check(nCorners === 4 && Object.keys(co.corners ?? {}).length === 1 && co.gap === 2 && JSON.stringify(co.rows) === "[[1,648.6,0,45],[1,647.2,45,45],[1,447.2,45,45],[1,396.6,0,45]]", `weldments: per-corner treatment and weld gap (${JSON.stringify({ nCorners, co })})`);
+    // Corner callouts in the view: one per corner, the one set above in bold; a click offers that corner's treatments.
+    await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "member").id));
+    await settle();
+    const cc0 = await mp.evaluate(() => [...document.querySelectorAll("#mc-layer .wld-corner")].map(e => [e.classList.contains("own"), e.textContent]));
+    await mp.click("#mc-layer .wld-corner:not(.own) >> nth=0");
+    const ccMenu = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent));
+    await mp.click('#mc-menu button:has-text("End butt 2")');
+    await settle();
+    const cc1 = await mp.evaluate(() => ({ corners: Object.values(window.__sv.model.mode().draft.corners ?? {}), own: document.querySelectorAll("#mc-layer .wld-corner.own").length, panel: [...document.querySelectorAll('#mc-pm select[data-k^="wcorner:"]')].map(e => e.value).sort() }));
+    await mp.click("#mc-cancel");
+    await settle();
+    check(cc0.length === 4 && cc0.filter(x => x[0]).length === 1 && ccMenu.length === 5 && /As set/.test(ccMenu[0]) && JSON.stringify(cc1.corners.sort()) === '["butt1","butt2"]' && cc1.own === 2 && JSON.stringify(cc1.panel) === '["","","butt1","butt2"]',
+      `weldments: corner callouts in the view (${JSON.stringify({ cc0, ccMenu, cc1 })})`);
+    // Locate profile: a point of the profile sketch on the path.
+    await mp.evaluate(() => window.__sv.modeller.editFeature("m3"));
+    await settle();
+    const lpOpts = await mp.evaluate(() => [...document.querySelectorAll('#mc-pm select[data-k="anchor"] option')].filter(o => o.value.startsWith("p:")).map(o => o.textContent));
+    // Located in the view: Locate profile shows the profile's points at the path start; a click on one moves it onto the path.
+    await mp.click('#mc-pm button[data-focus="wlocate"]');
+    await settle();
+    await mp.waitForTimeout(800); // the view zooms to the profile
+    const lpDots = await mp.evaluate(() => [...document.querySelectorAll("#mc-layer .wld-pierce")].map(e => e.dataset.pierce + (e.classList.contains("cur") ? "*" : "")));
+    await mp.click('#mc-layer .wld-pierce[data-pierce="p:q3"]');
+    await settle();
+    const lpAfter = await mp.evaluate(() => ({ anchor: window.__sv.model.mode().draft.anchor, dots: document.querySelectorAll("#mc-layer .wld-pierce").length, sel: document.querySelector('#mc-pm select[data-k="anchor"]').value }));
+    await mp.click("#mc-ok");
+    await settle();
+    const lp = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), anchor: window.__sv.model.store.doc.features.find(f => f.id === "m3").anchor, prof: (l.cutList ?? []).filter(c => c.desc === "Profile").map(c => [c.qty, c.length]) }; });
+    check(lpOpts.length === 4 && lpOpts[2] === "Sketch point 3" && JSON.stringify(lpDots) === '["p:q1*","p:q2","p:q3","p:q4","t","l","c","r","b"]' && lpAfter.anchor === "p:q3" && lpAfter.dots === 0 && lpAfter.sel === "p:q3" && !lp.bad && lp.anchor === "p:q3" && JSON.stringify(lp.prof) === "[[1,300]]", `weldments: Locate profile on a sketch point (${JSON.stringify({ lpOpts, lpDots, lpAfter, lp })})`);
+    await mp.evaluate(() => window.__sv.modeller.undo());
+    await settle();
     // A post on a plate: a gusset with two leg arrows, and a bead all round the tube from one picked side (tangent propagation).
     await mp.evaluate(() => {
       const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b });
@@ -8969,6 +12931,21 @@ try {
     await settle();
     const pb = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), beads: (l.cutList ?? []).filter(c => c.kind === "bead").map(c => [c.qty, c.length]) }; });
     check(!pb.bad && pb.beads.length === 1 && pb.beads[0][0] === 1 && Math.abs(pb.beads[0][1] - (4 * 28 + 12 * Math.PI)) < 0.2, `weldments: a bead all round a square tube from one picked side (${JSON.stringify(pb)})`);
+    // A round tube standing tilted on the plate: the root is an ellipse (semi-axes R and R / cos θ); one picked side brings the
+    // other half in, and the bead is one closed loft all round.
+    await mp.evaluate(() => {
+      window.__sv.model.store.change("Tilted post", d => {
+        d.features.push({ id: "k6", type: "sketch3d", name: "3DSketch3", rels: [], dims: [], pts: [{ id: "A", p: [1960, -60, -60], fixed: true }, { id: "B", p: [1960, 90, 290] }], segs: [{ id: "post", t: "line", pts: ["A", "B"] }] },
+          { id: "m6", type: "member", name: "Structural Member6", profile: "chs", size: "33.7x2.6", segs: [{ sketch: "k6", ent: "post" }], corner: "none" },
+          { id: "w6", type: "weldbead", name: "Fillet Bead2", faces1: [{ name: "pe:end", hint: [2050, 50, 10] }], faces2: [{ name: "m6:post:side:0" }], size: { v: 3 } });
+      });
+    });
+    await settle();
+    const eb = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), beads: (l.cutList ?? []).filter(c => c.kind === "bead").map(c => c.length) }; });
+    const eA = 33.7 / 2 / (350 / Math.hypot(150, 350)), eB = 33.7 / 2, ePer = Math.PI * (3 * (eA + eB) - Math.sqrt((3 * eA + eB) * (eA + 3 * eB)));
+    await mp.evaluate(() => window.__sv.model.store.undo());
+    await settle();
+    check(!eb.bad && eb.beads.length === 2 && eb.beads.some(x => Math.abs(x - ePer) < 0.3), `weldments: a bead round a tilted round tube follows the elliptical root (${JSON.stringify({ eb, ePer })})`);
     // Intermittent bead from the panel: the defaults (50 every 100) round the 149.7 mm loop give welds at 0 and 100.
     await mp.evaluate(() => window.__sv.modeller.editFeature("w5"));
     await settle();
@@ -8988,6 +12965,13 @@ try {
     await mp.click('#mc-pm input[data-k="wField"]');
     await settle();
     const symFlags = await mp.evaluate(() => document.querySelector('#mc-layer .wld-sym[data-weld="w5"]')?.textContent);
+    // Weld both sides: the symbol doubles its triangle; the plate's far side meets nothing here, so the bead stays valid.
+    await mp.click('#mc-pm input[data-k="wBoth"]');
+    await settle();
+    const bothSym = await mp.evaluate(() => ({ t: document.querySelector('#mc-layer .wld-sym[data-weld="w5"]')?.textContent, bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";") }));
+    check(!!bothSym.t?.includes("◺◹") && !bothSym.bad, `weldments: weld both sides shows on the symbol (${JSON.stringify(bothSym)})`);
+    await mp.click('#mc-pm input[data-k="wBoth"]');
+    await settle();
     // Unequal legs: unticking Equal leg lengths gives a second leg (1.5 × the first) and the symbol shows both.
     await mp.click('#mc-pm input[data-k="wEqual"]');
     await settle();
@@ -9051,15 +13035,47 @@ try {
     check(gLoc.loc === "start" && gLoc.side === "both" && gLoc.off === 10 && gLoc.field && !glBad, `weldments: gusset location offset and thickness side (${JSON.stringify({ gLoc, glBad })})`);
     await mp.evaluate(() => window.__sv.model.store.undo());
     await settle();
+    // Polygonal gusset: the other end by profile angle starts at the symmetric profile's angle; 60° then moves the flat at
+    // face 2; an unequal chamfer of the inner corner takes its own distance along face 2.
+    const gVol = () => mp.evaluate(() => window.__sv.model.last().props?.volume ?? 0);
+    const gv0 = await gVol();
+    await mp.evaluate(() => window.__sv.modeller.editFeature("g5"));
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wshape"]', "poly");
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wpolyEnd"]', "angle");
+    await settle();
+    const gp0 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { d1: d.d1.v, d2: d.d2.v, d3: d.d3?.v, a: d.polyAngle?.v, field: !!document.querySelector('#mc-pm [data-num="polyAngle"]') }; });
+    await mp.fill('#mc-pm input[data-num="polyAngle"]', "60");
+    await mp.press('#mc-pm input[data-num="polyAngle"]', "Tab");
+    await settle();
+    await mp.click('#mc-pm input[data-k="wChamfer"]');
+    await settle();
+    await mp.click('#mc-pm input[data-k="wChamfer2"]');
+    await settle();
+    await mp.fill('#mc-pm input[data-num="chamfer2"]', "12");
+    await mp.press('#mc-pm input[data-num="chamfer2"]', "Tab");
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const gp1 = await mp.evaluate(() => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.find(x => x.id === "g5"); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), a: f.polyAngle?.v, c: f.chamfer?.v, c2: f.chamfer2?.v, t: f.thickness.v, v: l.props?.volume ?? 0 }; });
+    const gd4 = gp0.d1 - (gp0.d2 - gp0.d3) / Math.tan(Math.PI / 3);
+    const gWant = ((gp0.d1 * gp0.d2 - 0.5 * (gp0.d1 - gd4) * (gp0.d2 - gp0.d3) - 0.5 * 5 * 12) - 0.5 * gp0.d1 * gp0.d2) * gp1.t;
+    check(gp0.field && Math.abs(gp0.a - Math.atan2(gp0.d2 - gp0.d3, gp0.d1 - gp0.d3)) < 1e-9 && !gp1.bad && Math.abs(gp1.a - Math.PI / 3) < 1e-9 && gp1.c === 5 && gp1.c2 === 12 && Math.abs(gp1.v - gv0 - gWant) < 1e-3 * Math.abs(gWant),
+      `weldments: polygonal gusset by profile angle, unequal chamfer (${JSON.stringify({ gp0, gp1, dv: gp1.v - gv0, gWant })})`);
+    await mp.evaluate(() => window.__sv.model.store.undo());
+    await settle();
     // A curved member: a line, a tangent quarter arc and a line; the arc is listed as such and revolved, its cut length is the arc length.
     await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); window.__sv.model.store.change("Bend", d => { d.features.push({ id: "sa", type: "sketch", name: "Bend", plane: { std: "XY" }, rels: [], dims: [], ents: [P("b0", 3000, 0), P("b1", 3300, 0), P("bc", 3300, 100), P("b2", 3400, 100), P("b3", 3400, 400), { id: "j1", t: "line", a: "b0", b: "b1" }, { id: "j2", t: "arc", c: "bc", a: "b1", b: "b2" }, { id: "j3", t: "line", a: "b2", b: "b3" }] }); }); });
     await settle();
     await runCmd(mp, "Structural Member");
     await settle();
-    const bl = await mp.evaluate(() => ({ segs: window.__sv.model.mode().draft?.segs?.map(s => s.ent), labels: [...document.querySelectorAll("#mc-pm input[data-wseg]")].map(e => e.closest("label")?.textContent?.trim()) }));
+    const bl = await mp.evaluate(() => ({ size: window.__sv.model.mode().draft?.size, segs: window.__sv.model.mode().draft?.segs?.map(s => s.ent), labels: [...document.querySelectorAll("#mc-pm input[data-wseg]")].map(e => e.closest("label")?.textContent?.trim()) }));
     await mp.click("#mc-ok");
     await settle();
     const bend = await mp.evaluate(() => { const l = window.__sv.model.last(), id = window.__sv.model.store.doc.features.at(-1).id; return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), arc: (l.cutList ?? []).some(c => c.length === 157.1), faces: (l.faceNames ?? []).filter(n => n.startsWith(id + ":j2:")).length }; });
+    // The new member starts with the size the first one was given (weldment defaults: the settings used last).
+    check(bl.size === "50x50x4", `weldments: a new member starts with the profile used last (${bl.size})`);
     check(JSON.stringify(bl.segs) === '["j1","j2","j3"]' && JSON.stringify(bl.labels) === '["Line 1","Arc 2","Line 3"]' && bend.faces > 0 && !bend.bad && bend.arc, `weldments: a member along a line, an arc and a line (${JSON.stringify({ bl, bend })})`);
     // Merge arc segment bodies: the line, arc and line become one body, one cut list item of the whole bent length (300 + 157.1 + 300).
     const bendId = await mp.evaluate(() => window.__sv.model.store.doc.features.at(-1).id);
@@ -9099,6 +13115,18 @@ try {
     await settle();
     const al = await mp.evaluate(id => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.find(x => x.id === id); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), align: f.align }; }, bendId);
     check(alNone && al.align?.ent === "j3" && al.align?.axis === "h" && !al.bad, `weldments: member profile alignment (${JSON.stringify({ alNone, alOpt, al })})`);
+    await mp.evaluate(() => window.__sv.modeller.undo());
+    await settle();
+    // Coped cut: the Butt end choice; the line meets the arc tangent-free at a sharp corner, so it butts there.
+    await mp.evaluate(id => window.__sv.modeller.editFeature(id), bendId);
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wcope"]', "coped");
+    await settle();
+    const copeHelp = await mp.evaluate(() => !!document.querySelector("#mc-pm .pm-help") && [...document.querySelectorAll("#mc-pm .pm-help")].some(e => /saddle/.test(e.textContent)));
+    await mp.click("#mc-ok");
+    await settle();
+    const cp2 = await mp.evaluate(id => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.find(x => x.id === id); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), coped: f.coped, bodies: l.bodies?.length }; }, bendId);
+    check(copeHelp && cp2.coped === true && !cp2.bad, `weldments: coped cut option on a member (${JSON.stringify({ copeHelp, cp2 })})`);
     await mp.evaluate(() => window.__sv.modeller.undo());
     await settle();
     // Trim/Extend End miter: two separate beams that stop short of a corner meet in a mitre.
@@ -9200,7 +13228,7 @@ try {
   }
 
   // --- Sheet metal (FR-FT-120): base flange from a gauge table, edge flange picked in the view, flatten, flat pattern DXF ---
-  if (inShard(3)) {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -9250,7 +13278,7 @@ try {
     const f1 = await mp.evaluate(() => ({ v: window.__sv.model.last().props?.volume ?? 0, bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";"), names: window.__sv.model.store.doc.features.map(f => f.name).join(",") }));
     check(f0.title === "Edge Flange" && f0.edges.length === 1 && /b?.*:p0:top/.test(f0.edges[0]) && f0.bends === 1 && f0.v > b1.v && !f1.bad && Math.abs(f1.v - want) / want < 1e-6 && /Base-Flange1,Edge-Flange1$/.test(f1.names),
       `sheet metal: Edge Flange on an edge clicked in the view, live preview, length typed (${JSON.stringify({ f0, f1, want })})`);
-    // The flange's length arrow (SolidWorks handle): at the flange tip, dragging it 10 mm further lengthens the flange live.
+    // The flange's length arrow (CAD app handle): at the flange tip, dragging it 10 mm further lengthens the flange live.
     await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "smflange").id));
     await settle();
     const fa = await mp.evaluate(() => {
@@ -9418,6 +13446,20 @@ try {
     check(ft0.title === "Forming Tool" && /:p0:top$/.test(ft0.face ?? "") && ft0.pts?.length === 1 && Math.hypot(ft0.pts[0][0] - 10, ft0.pts[0][1] - 25) < 1 && ft0.tool === "xhole" && ft0.rows === 1
       && !ft1.bad && ft1.forms === 1 && Math.abs(ft1.v - vt1.v - ftDv) < 1e-3,
       `sheet metal: Forming Tool places an extruded hole where the face is clicked (${JSON.stringify({ ft0, ft1, ftDv, v0: vt1.v })})`);
+    // Normal Cut: a Ø8 circle sketched on the bottom face (XY); Reverse direction sends it into the sheet, linked to thickness.
+    await mp.evaluate(() => window.__sv.model.store.change("Cut sketch", d => {
+      d.features.push({ id: "nsk", type: "sketch", name: "Sketch10", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "nc0", t: "point", x: 90, y: 10 }, { id: "nc", t: "circle", c: "nc0", r: 4 }] });
+    }));
+    await settle();
+    await smMenu("Normal Cut");
+    const nc0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, sketch: window.__sv.model.mode().draft?.sketch, end: document.querySelector('#mc-pm select[data-sm="end"]')?.value }));
+    await mp.click('#mc-pm input[data-k="flip"]');
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const nc1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    check(nc0.title === "Normal Cut" && nc0.sketch === "nsk" && nc0.end === "thick" && !nc1.bad && Math.abs(ft1.v - nc1.v - 16 * Math.PI * T) < 1e-3,
+      `sheet metal: Normal Cut cuts the sketched circle through the sheet (${JSON.stringify({ nc0, nc1, v0: ft1.v })})`);
     // Unfold: a flange on the back edge; click the plate's top face as the fixed face, ✓ with all bends: the sheet lies flat.
     // (The flat volume differs a little from the folded one unless K = 0.5.) Fold, ✓: back as it was.
     await mp.evaluate(() => window.__sv.model.store.change("Flange", d => {
@@ -9470,6 +13512,65 @@ try {
     check(cr0.title === "Corner Relief" && cr0.all === "All corners (1)" && cr0.rows === 1 && cr1.corners?.length === 1 && /^cr:b0\+cr:b1$/.test(cr1.corners[0]) && cr1.kind === "circle"
       && !cr2.bad && cr2.v < crv0 - 10 * T,
       `sheet metal: Corner Relief lists the two-bend corner, picks it on a click and cuts a circular relief (${JSON.stringify({ cr0, cr1, cr2, crv0 })})`);
+    // Edit it: Rectangular with fillet corners (radius T/2 by default), then Obround; each cuts less than the sharp rectangle would.
+    await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "smrelief").id));
+    await settle();
+    await mp.selectOption('#mc-pm select[data-sm="kind"]', "rect");
+    await settle();
+    const crSharp = await mp.evaluate(() => window.__sv.model.last().props?.volume ?? 0);
+    await mp.click('#mc-pm input[data-sm="rround"]');
+    await settle();
+    const cr3 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { round: d?.round?.v, field: !!document.querySelector('#mc-pm input[data-num="round"]'), v: window.__sv.model.last().props?.volume ?? 0 }; });
+    await mp.selectOption('#mc-pm select[data-sm="kind"]', "obround");
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const cr4 = await mp.evaluate(() => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.find(x => x.type === "smrelief"); return { kind: f?.kind, round: f?.round, v: l.props?.volume ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    check(Math.abs(cr3.round - T / 2) < 1e-3 && cr3.field && cr3.v > crSharp && !cr4.bad && cr4.kind === "obround" && cr4.round === undefined && cr4.v > cr3.v && cr4.v < crv0,
+      `sheet metal: Corner Relief with fillet corners and obround cut less than the sharp rectangle (${JSON.stringify({ crSharp, cr3, cr4, crv0 })})`);
+    // Sheet Metal Gusset: one flange on the front edge; click its bend at the middle, ✓: a rib inside the bend, a groove outside.
+    await mp.evaluate(() => window.__sv.model.store.change("Flange", d => {
+      const b = d.features.find(f => f.type === "smbase");
+      d.features = d.features.filter(f => f.id === "s1" || f.id === b.id);
+      d.features.push({ id: "gs", type: "smflange", name: "Edge-Flange10", edges: [{ faces: [`${b.id}:p0:top`, `${b.id}:p0:l1`] }], length: { v: 20 }, angle: { v: Math.PI / 2 } });
+    }));
+    await settle();
+    const gsv0 = await mp.evaluate(() => window.__sv.model.last().props?.volume ?? 0);
+    await smMenu("Sheet Metal Gusset");
+    const gq = T + R - (R + T) / Math.SQRT2;
+    const [gsx, gsy] = await scr([50, gq, gq]);
+    await mp.mouse.click(gsx, gsy);
+    await settle();
+    const gs0 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { title: document.querySelector("#mc-pm h3")?.textContent, bend: d?.bend, at: d?.at, depth: d?.depth?.v, width: d?.width?.v, picked: document.querySelector("#mc-pm [data-sm-bend]")?.textContent }; });
+    await mp.click("#mc-ok");
+    await settle();
+    const gs1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, n: l.sheet?.gussets?.length ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    check(gs0.title === "Sheet Metal Gusset" && gs0.bend === "gs:b0" && gs0.at === undefined && gs0.picked === "Picked bend" && gs0.depth > 0 && gs0.width > 2 * T
+      && !gs1.bad && gs1.n === 1 && Math.abs(gs1.v - gsv0) > 0.01,
+      `sheet metal: Sheet Metal Gusset goes on the clicked bend (${JSON.stringify({ gs0, gs1, gsv0 })})`);
+    // Edit it: 3 gussets (spacing defaults to twice the width), ✓: three ribs, three times the change in volume.
+    await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "smgusset").id));
+    await settle();
+    await mp.fill('#mc-pm input[data-sm="gcount"]', "3");
+    await mp.press('#mc-pm input[data-sm="gcount"]', "Enter");
+    await settle();
+    const gs2 = await mp.evaluate(() => ({ count: window.__sv.model.mode().draft?.count, spacing: window.__sv.model.mode().draft?.spacing?.v, field: !!document.querySelector('#mc-pm input[data-num="spacing"]') }));
+    await mp.click("#mc-ok");
+    await settle();
+    const gs3 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, n: l.sheet?.gussets?.length ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    check(gs2.count === 3 && gs2.spacing > 0 && gs2.field && !gs3.bad && gs3.n === 3 && Math.abs((gs3.v - gsv0) - 3 * (gs1.v - gsv0)) < 1e-3,
+      `sheet metal: Sheet Metal Gusset makes three ribs along the bend (${JSON.stringify({ gs2, gs3 })})`);
+    // Rounded tip: the ribs lose their top corners (less volume, still more than none); filleted edges likewise.
+    await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "smgusset").id));
+    await settle();
+    await mp.selectOption('#mc-pm select[data-sm="gtip"]', "round");
+    await settle();
+    const gsr0 = await mp.evaluate(() => ({ tip: window.__sv.model.mode().draft?.tip, fil: !!document.querySelector('#mc-pm input[data-sm="gfil"]') }));
+    await mp.click("#mc-ok");
+    await settle();
+    const gsr = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    check(gsr0.tip === "round" && !gsr0.fil && !gsr.bad && gsr.v < gs3.v - 1e-3 && gsr.v > gsv0 + 1e-3,
+      `sheet metal: Sheet Metal Gusset rounded tip (${JSON.stringify({ gsr0, gsr, gs3: gs3.v, gsv0 })})`);
     // Closed Corner: two flanges, material outside, made one at a time leave an open corner; clicking the front one's end face closes it.
     await mp.evaluate(() => window.__sv.model.store.change("Flanges", d => {
       const b = d.features.find(f => f.type === "smbase");
@@ -9593,11 +13694,214 @@ try {
       && !lb2.bad && lb1.v > 0 && Math.abs(lb2.v - lb1.v) / lb1.v < 5e-3
       && lbru.title === "Сгиб по сечениям" && !/[A-Za-z]{3}/.test(lbru.text.replace(/Enter|Esc|mm|Sketch8|Sketch9/g, "")),
       `sheet metal: Lofted Bend joins two sketched profiles with folded facets; flat pattern keeps the volume; panel in Russian (${JSON.stringify({ lb0, lb1, lb2, lbru })})`);
+    // Convert to Sheet Metal: a 100 × 60 × 40 box; click its top face, then its two long top edges, ✓: a U channel of the
+    // same size, thickness inside (defaults: T 2, R 2, K 0.5).
+    await mp.evaluate(() => window.__sv.model.store.change("Box", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), L = (id, a, b) => ({ id, t: "line", a, b });
+      d.features = [
+        { id: "cb", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("cb1", 0, 0), P("cb2", 100, 0), P("cb3", 100, 60), P("cb4", 0, 60), L("cl1", "cb1", "cb2"), L("cl2", "cb2", "cb3"), L("cl3", "cb3", "cb4"), L("cl4", "cb4", "cb1")] },
+        { id: "ce", type: "extrude", name: "Boss-Extrude1", sketch: "cb", op: "boss", end: "blind", depth: { v: 40 } },
+      ];
+    }));
+    await settle();
+    await mp.evaluate(() => window.__sv.viewer.fit(false));
+    await mp.waitForTimeout(300);
+    await smMenu("Convert to Sheet Metal");
+    for (const p of [[50, 30, 40], [50, 0, 40], [50, 60, 40]]) {
+      const [x, y] = await scr(p);
+      await mp.mouse.click(x, y);
+      await settle();
+    }
+    const cv0 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { title: document.querySelector("#mc-pm h3")?.textContent, face: d?.face?.name, edges: d?.edges?.map(e => [...e.faces].sort().join("|")), relief: d?.relief, rsel: document.querySelector('#mc-pm [data-sm="arelief"]')?.value }; });
+    await mp.click("#mc-ok");
+    await settle();
+    const cv1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, bends: l.sheet?.bends.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    const cvWant = 100 * (60 - 8 + 2 * (36 + 1.5 * Math.PI)) * 2;
+    check(cv0.title === "Convert to Sheet Metal" && cv0.face === "ce:end" && cv0.edges?.length === 2 && cv0.relief === "rect" && cv0.rsel === "rect" && !cv1.bad && cv1.bends === 2 && Math.abs(cv1.v - cvWant) < 1e-2,
+      `sheet metal: Convert to Sheet Metal turns the box into a U channel from the clicked face and edges (${JSON.stringify({ cv0, cv1, cvWant })})`);
+    // Insert Bends: a thin U section (walls 3) opening towards +Y, extruded 100; click its outside bottom (y = 0, seen from the default view), ✓: two bends, thickness 3.
+    await mp.evaluate(() => window.__sv.model.store.change("U section", d => {
+      const q = [[0, 0], [60, 0], [60, 40], [57, 40], [57, 3], [3, 3], [3, 40], [0, 40]];
+      d.features = [
+        { id: "iu", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [...q.map((p, i) => ({ id: `iq${i}`, t: "point", x: p[0], y: p[1] })), ...q.map((_p, i) => ({ id: `il${i}`, t: "line", a: `iq${i}`, b: `iq${(i + 1) % q.length}` }))] },
+        { id: "ie", type: "extrude", name: "Boss-Extrude1", sketch: "iu", op: "boss", end: "blind", depth: { v: 100 } },
+      ];
+    }));
+    await settle();
+    await mp.evaluate(() => window.__sv.viewer.fit(false));
+    await mp.waitForTimeout(300);
+    await smMenu("Insert Bends");
+    const [ibx, iby] = await scr([30, 0, 50]);
+    await mp.mouse.click(ibx, iby);
+    await settle();
+    const ib0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, face: window.__sv.model.mode().draft?.face?.name }));
+    await mp.click("#mc-ok");
+    await settle();
+    const ib1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, bends: l.sheet?.bends.length, t: l.sheet?.T, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    const ibWant = 100 * 3 * (60 - 10 + 2 * (40 - 5 + (Math.PI / 2) * 3.5));
+    check(ib0.title === "Insert Bends" && ib0.face === "ie:side:il0" && !ib1.bad && ib1.bends === 2 && Math.abs(ib1.t - 3) < 1e-9 && Math.abs(ib1.v - ibWant) < 1e-2,
+      `sheet metal: Insert Bends turns the thin U section into sheet metal from the clicked face (${JSON.stringify({ ib0, ib1, ibWant })})`);
+    // A hat section: the brims at the walls' feet don't touch the fixed top face; they are found across the walls and bent too.
+    await mp.evaluate(() => window.__sv.model.store.change("Hat section", d => {
+      const q = [[0, 0], [23, 0], [23, 37], [57, 37], [57, 0], [80, 0], [80, 3], [60, 3], [60, 40], [20, 40], [20, 3], [0, 3]];
+      d.features = [
+        { id: "hu", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [...q.map((p, i) => ({ id: `hq${i}`, t: "point", x: p[0], y: p[1] })), ...q.map((_p, i) => ({ id: `hl${i}`, t: "line", a: `hq${i}`, b: `hq${(i + 1) % q.length}` }))] },
+        { id: "he", type: "extrude", name: "Boss-Extrude1", sketch: "hu", op: "boss", end: "blind", depth: { v: 100 } },
+        { id: "hi", type: "sminsert", name: "Insert-Bends1", face: { name: "he:side:hl8" }, radius: { v: 2 }, k: 0.5 },
+      ];
+    }));
+    await settle();
+    const hb = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, bends: l.sheet?.bends.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    const hbWant = 100 * 3 * (154 + 4 * ((Math.PI / 2 - 2) * 3.5));
+    check(!hb.bad && hb.bends === 4 && Math.abs(hb.v - hbWant) < 1e-2, `sheet metal: Insert Bends follows a hat section's walls to the brims (${JSON.stringify({ hb, hbWant })})`);
+    // Convert with lips: a 100 × 60 × 40 box with a 10 mm rim round a 20 mm deep pocket; the four bottom edges and the
+    // walls' four top edges: each wall gets a 10 mm lip off the shared rim, mitred at the corners, none past the box.
+    const lipDoc = flat => window.__sv.model.store.change("Lip tray", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), L = (id, a, b) => ({ id, t: "line", a, b });
+      const rect = (id, x0, y0, x1, y1, plane) => ({ id, type: "sketch", name: id, plane, rels: [], dims: [], ents: [P(`${id}p1`, x0, y0), P(`${id}p2`, x1, y0), P(`${id}p3`, x1, y1), P(`${id}p4`, x0, y1), L(`${id}l1`, `${id}p1`, `${id}p2`), L(`${id}l2`, `${id}p2`, `${id}p3`), L(`${id}l3`, `${id}p3`, `${id}p4`), L(`${id}l4`, `${id}p4`, `${id}p1`)] });
+      const ls = ["l1", "l2", "l3", "l4"];
+      d.features = [
+        rect("s", 0, 0, 100, 60, { std: "XY" }),
+        { id: "e", type: "extrude", name: "Boss-Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 40 } },
+        { id: "pl", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 40 } },
+        rect("pk", 10, 10, 90, 50, { plane: "pl" }),
+        { id: "px", type: "extrude", name: "Cut-Extrude1", sketch: "pk", op: "cut", end: "blind", depth: { v: 20 } },
+        { id: "c", type: "smconvert", name: "Convert-Solid1", face: { name: "e:start" }, edges: [...ls.map(l => ({ faces: ["e:start", `e:side:s${l}`] })), ...ls.map(l => ({ faces: ["e:end", `e:side:s${l}`] }))], thickness: { v: 2 }, radius: { v: 2 }, k: 0.5 },
+        ...(flat ? [{ id: "fp", type: "smflat", name: "Flat-Pattern1" }] : []),
+      ];
+    });
+    await mp.evaluate(lipDoc, false);
+    await settle();
+    const lp = await mp.evaluate(() => {
+      const l = window.__sv.model.last(), ps = l.sheet?.panels ?? [];
+      const ap = (M, q) => [0, 1, 2].map(i => M.o[i] + M.x[i] * q[0] + M.y[i] * q[1]);
+      const out = ps.filter(p => p.outer.some(sg => sg.kind === "line" && [sg.a, sg.b].some(q => { const w = ap(p.M, q); return w[0] < -1e-6 || w[0] > 100 + 1e-6 || w[1] < -1e-6 || w[1] > 60 + 1e-6; }))).map(p => p.id);
+      return { v: l.props?.volume ?? 0, bends: l.sheet?.bends.length, out, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") };
+    });
+    await mp.evaluate(lipDoc, true);
+    await settle();
+    const lpf = await mp.evaluate(() => window.__sv.model.last().props?.volume ?? 0);
+    check(!lp.bad && lp.bends === 8 && !lp.out.length && Math.abs(lpf / lp.v - 1) < 6e-3,
+      `sheet metal: Convert gives each wall its own lip off a shared rim, mitred at the corners (${JSON.stringify({ lp, lpf })})`);
+    // A tray (all four walls of the 100 × 60 × 40 box) with Auto relief: the walls meet on the corners' bisector planes
+    // and each corner gets a rectangular relief, so the flat pattern has the part's volume; without relief, more.
+    const trayDoc = ([relief, flat]) => window.__sv.model.store.change("Tray", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), L = (id, a, b) => ({ id, t: "line", a, b });
+      d.features = [
+        { id: "s", type: "sketch", name: "s", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", 0, 0), P("p2", 100, 0), P("p3", 100, 60), P("p4", 0, 60), L("l1", "p1", "p2"), L("l2", "p2", "p3"), L("l3", "p3", "p4"), L("l4", "p4", "p1")] },
+        { id: "e", type: "extrude", name: "Boss-Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 40 } },
+        { id: "c", type: "smconvert", name: "Convert-Solid1", face: { name: "e:start" }, edges: ["l1", "l2", "l3", "l4"].map(l => ({ faces: ["e:start", `e:side:${l}`] })), thickness: { v: 2 }, radius: { v: 2 }, k: 0.5, ...(relief ? { relief: "rect" } : {}) },
+        ...(flat ? [{ id: "fp", type: "smflat", name: "Flat-Pattern1" }] : []),
+      ];
+    });
+    const trayVol = async (args) => { await mp.evaluate(trayDoc, args); await settle(); return mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; }); };
+    const tr0 = await trayVol([false, false]), tr1 = await trayVol([true, false]), tr1f = await trayVol([true, true]);
+    check(!tr0.bad && !tr1.bad && !tr1f.bad && tr1.v < tr0.v - 1 && Math.abs(tr1f.v / tr1.v - 1) < 1e-6,
+      `sheet metal: Convert's Auto relief cuts the tray's corners, and the flat pattern keeps the part's volume (${JSON.stringify({ tr0, tr1, tr1f })})`);
+    // Tab and Slot: a 100 × 50 plate and a separate 3 mm block 1 mm past one end (on the side away from the camera, so
+    // its face towards the plate shows above it). Click the plate's top edge there, then that block face, ✓: two tabs
+    // 10 × (1 + 2) into slots 0.1 bigger all round (2.1 deep: the default height is the thickness).
+    const tsS = await mp.evaluate(() => { const v = window.__sv.viewer; return v.camera.position.x > v.controls.target.x ? -1 : 1; });
+    await mp.evaluate(S => window.__sv.model.store.change("Plate and block", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), L = (id, a, b) => ({ id, t: "line", a, b });
+      const rect = (id, x0, y0, x1, y1) => ({ id, type: "sketch", name: id, plane: { std: "XY" }, rels: [], dims: [], ents: [P(`${id}p1`, x0, y0), P(`${id}p2`, x1, y0), P(`${id}p3`, x1, y1), P(`${id}p4`, x0, y1), L(`${id}l1`, `${id}p1`, `${id}p2`), L(`${id}l2`, `${id}p2`, `${id}p3`), L(`${id}l3`, `${id}p3`, `${id}p4`), L(`${id}l4`, `${id}p4`, `${id}p1`)] });
+      d.features = [
+        rect("s", -50, 0, 50, 50),
+        { id: "b", type: "smbase", name: "Base-Flange1", sketch: "s", thickness: { v: 2 }, radius: { v: 2 }, depth: { v: 20 }, k: 0.5 },
+        S > 0 ? rect("k", 51, -10, 54, 60) : rect("k", -54, -10, -51, 60),
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "k", op: "boss", end: "mid", depth: { v: 20 }, merge: false },
+      ];
+    }), tsS);
+    await settle();
+    await mp.evaluate(() => window.__sv.viewer.fit(false));
+    await mp.waitForTimeout(300);
+    await smMenu("Tab and Slot");
+    for (const p of [[50 * tsS, 25, 2], [51 * tsS, 25, 7]]) {
+      const [x, y] = await scr(p);
+      await mp.mouse.click(x, y);
+      await settle();
+    }
+    const ts0 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { title: document.querySelector("#mc-pm h3")?.textContent, edge: d?.edge ? [...d.edge.faces].sort().join("|") : null, face: d?.face?.name }; });
+    await mp.click("#mc-ok");
+    await settle();
+    const ts1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, panels: l.sheet?.panels.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    const tsWant = 100 * 50 * 2 + 3 * 70 * 20 + 2 * 10 * 3 * 2 - 2 * 10.2 * 2.2 * 2.1;
+    check(ts0.title === "Tab and Slot" && ts0.edge === (tsS > 0 ? "b:p0:sl2|b:p0:top" : "b:p0:sl4|b:p0:top") && ts0.face === (tsS > 0 ? "x:side:kl4" : "x:side:kl2")
+      && !ts1.bad && ts1.panels === 3 && Math.abs(ts1.v - tsWant) < 1e-2,
+      `sheet metal: Tab and Slot grows tabs from the clicked edge through slots in the clicked face (${JSON.stringify({ tsS, ts0, ts1, tsWant })})`);
+    // Rip: a 60 × 40 × 30 box shelled 2 thick, open at the top. Click the inside corner edge at the far corner (seen
+    // through the opening), ✓: a 0.1 slot on the corner's bisector takes √2·2·0.1 per mm of the 28 mm inside edge.
+    await mp.evaluate(() => window.__sv.model.store.change("Shelled box", d => {
+      const q = [[0, 0], [60, 0], [60, 40], [0, 40]];
+      d.features = [
+        { id: "rs", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [...q.map((p, i) => ({ id: `rq${i}`, t: "point", x: p[0], y: p[1] })), ...q.map((_p, i) => ({ id: `rl${i + 1}`, t: "line", a: `rq${i}`, b: `rq${(i + 1) % 4}` }))] },
+        { id: "re", type: "extrude", name: "Boss-Extrude1", sketch: "rs", op: "boss", end: "blind", depth: { v: 30 } },
+        { id: "rh", type: "shell", name: "Shell1", thickness: { v: 2 }, faces: [{ name: "re:end" }] },
+      ];
+    }));
+    await settle();
+    await mp.evaluate(() => window.__sv.viewer.fit(false));
+    await mp.waitForTimeout(300);
+    const rv0 = await mp.evaluate(() => window.__sv.model.last().props?.volume ?? 0);
+    const far = await mp.evaluate(() => { const c = window.__sv.viewer.camera.position; return [c.x > 30 ? 2 : 58, c.y > 20 ? 2 : 38]; });
+    await smMenu("Rip");
+    {
+      const [x, y] = await scr([far[0], far[1], 24]);
+      await mp.mouse.click(x, y);
+      await settle();
+    }
+    const rp0 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { title: document.querySelector("#mc-pm h3")?.textContent, edges: d?.edges?.map(e => [...e.faces].sort().join("|")) }; });
+    await mp.click("#mc-ok");
+    await settle();
+    const rp1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    const rpEdge = ({ "2,2": "rl1|rl4", "58,2": "rl1|rl2", "58,38": "rl2|rl3", "2,38": "rl3|rl4" })[far.join(",")].split("|").map(n => `rh:off:re:side:${n}`).join("|");
+    check(rp0.title === "Rip" && rp0.edges?.length === 1 && rp0.edges[0] === rpEdge && !rp1.bad && Math.abs(rv0 - rp1.v - Math.SQRT2 * 2 * 0.1 * 28) < 1e-3,
+      `sheet metal: Rip cuts a slot along the clicked inside corner edge (${JSON.stringify({ far, rp0, rp1, rv0, rpEdge })})`);
+    // Sheet Metal Properties: a 100 × 50 plate with a Ø10 hole and a 30 flange, aluminium; the dialog lists the cut-list values.
+    await mp.evaluate(() => window.__sv.model.store.change("Props plate", d => {
+      const q = [[0, 0], [100, 0], [100, 50], [0, 50]];
+      d.features = [
+        { id: "ps", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [...q.map((p, i) => ({ id: `pq${i}`, t: "point", x: p[0], y: p[1] })), ...q.map((_p, i) => ({ id: `pl${i + 1}`, t: "line", a: `pq${i}`, b: `pq${(i + 1) % 4}` })), { id: "pc0", t: "point", x: 70, y: 30 }, { id: "pc", t: "circle", c: "pc0", r: 5 }] },
+        { id: "pb", type: "smbase", name: "Base-Flange1", sketch: "ps", thickness: { v: 2 }, radius: { v: 2 }, depth: { v: 20 }, k: 0.5 },
+        { id: "pf", type: "smflange", name: "Edge-Flange1", edges: [{ faces: ["pb:p0:top", "pb:p0:pl1"] }], length: { v: 30 }, angle: { v: Math.PI / 2 } },
+      ];
+      d.material = { name: "Aluminium 6061", density: 2.7 };
+    }));
+    await settle();
+    await smMenu("Sheet Metal Properties");
+    await mp.waitForSelector("#sm-props[open]");
+    const sp = await mp.evaluate(() => Object.fromEntries([...document.querySelectorAll("#sm-props tr[data-prop]")].map(r => [r.dataset.prop, r.querySelector("td").textContent])));
+    const spH = 50 - 4 + (Math.PI / 2) * 3 + 26, spV = await mp.evaluate(() => window.__sv.model.last().props?.volume ?? 0);
+    const num = s => parseFloat(String(s).replace(",", "."));
+    check(Math.abs(num(sp["Bounding box length"]) - 100) < 0.01 && Math.abs(num(sp["Bounding box width"]) - spH) < 0.01 && num(sp["Sheet metal thickness"]) === 2
+      && sp["Cut outs"] === "1" && sp["Bends"] === "1" && Math.abs(num(sp["Cutting length - outer"]) - 2 * (100 + spH)) < 0.01 && Math.abs(num(sp["Cutting length - inner"]) - 10 * Math.PI) < 0.01
+      && Math.abs(spV - 2 * (100 * spH - 25 * Math.PI)) < 0.01 && /g$/.test(sp.Mass),
+      `sheet metal: Sheet Metal Properties lists the flat pattern's cut-list values (${JSON.stringify({ sp, spH, spV })})`);
+    await mp.click("#sm-props [data-a=close]");
+    // Bend table: the base flange's allowance from a radius × angle table typed into the panel.
+    await mp.evaluate(() => window.__sv.modeller.editFeature("pb"));
+    await settle();
+    await mp.selectOption("#mc-pm [data-sm=calc]", "table");
+    await settle();
+    await mp.selectOption("#mc-pm [data-sm=tkind]", "ba");
+    await settle();
+    await mp.evaluate(() => { const ta = document.querySelector("#mc-pm textarea[data-sm=table]"); ta.value = "r\t60\t120\n1\t2\t3\n4\t5\t7"; ta.dispatchEvent(new Event("change", { bubbles: true })); });
+    await settle();
+    const bt0 = await mp.evaluate(() => ({ tb: window.__sv.model.mode().draft?.table, ta: !!document.querySelector("#mc-pm textarea[data-sm=table]") }));
+    await mp.click("#mc-ok");
+    await settle();
+    await smMenu("Sheet Metal Properties");
+    await mp.waitForSelector("#sm-props[open]");
+    const bt1 = await mp.evaluate(() => ({ w: document.querySelector('#sm-props tr[data-prop="Bounding box width"] td')?.textContent, bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";") }));
+    const btW = 50 - 4 + (2.5 + 3.5 / 3) + 26;
+    check(bt0.ta && bt0.tb?.kind === "ba" && bt0.tb.v?.[1]?.[1] === 7 && !bt1.bad && Math.abs(num(bt1.w) - btW) < 0.01,
+      `sheet metal: a bend allowance table sets the flat pattern length (${JSON.stringify({ bt0, bt1, btW })})`);
+    await mp.click("#sm-props [data-a=close]");
     await ctx.close();
   }
 
   // --- Tabs + assembly rebuild, Modify box, feature dimensions on the model, resizable panels (FR-UI-114, FR-UI-115, FR-UI-002) ---
-  if (inShard(3)) {
+  if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
@@ -9641,26 +13945,26 @@ try {
     // The depth in the Modify box: ✕ leaves it, ✓ (Enter) changes it as one undo step.
     const clickDim = async v => { const i = await dp.evaluate(v => [...document.querySelectorAll(".mc-fdim")].findIndex(b => b.textContent === v), v); await dp.click(`.mc-fdim >> nth=${i}`); };
     await clickDim("10");
-    await dp.waitForSelector(".mod-box .sk-input");
-    const box = await dp.evaluate(() => ({ title: document.querySelector(".mod-box .mod-t").textContent, v: document.querySelector(".mod-box input").value, btns: [...document.querySelectorAll(".mod-box .mod-b button")].map(b => b.textContent).join("") }));
-    await dp.fill(".mod-box input", "25");
+    await dp.waitForSelector(".mod-box .mod-in");
+    const box = await dp.evaluate(() => ({ title: document.querySelector(".mod-box .mod-t").textContent, v: document.querySelector(".mod-box .mod-in").value, btns: [...document.querySelectorAll(".mod-box .mod-b button")].map(b => b.textContent).join("") }));
+    await dp.fill(".mod-box .mod-in", "25");
     await dp.click(".mod-box [data-m=x]");
     await dp.waitForTimeout(100);
     const kept = await dp.evaluate(() => window.__sv.model.store.doc.features.find(f => f.id === "x").depth.v);
     await clickDim("10");
-    await dp.waitForSelector(".mod-box .sk-input");
-    await dp.fill(".mod-box input", "25");
-    await dp.press(".mod-box input", "Enter");
+    await dp.waitForSelector(".mod-box .mod-in");
+    await dp.fill(".mod-box .mod-in", "25");
+    await dp.press(".mod-box .mod-in", "Enter");
     await dp.waitForTimeout(150);
     await idle();
     const after = await dp.evaluate(() => ({ depth: window.__sv.model.store.doc.features.find(f => f.id === "x").depth.v, undo: window.__sv.model.store.undoLabel, labels: [...document.querySelectorAll(".mc-fdim")].map(b => b.textContent).sort().join() }));
-    check(box.title === "Depth@Extrude1" && box.v === "10" && box.btns === "✓✕⟲" && kept === 10 && after.depth === 25 && /Depth@Extrude1/.test(after.undo) && after.labels === "25,60",
+    check(box.title === "Depth@Extrude1" && box.v === "10" && box.btns === "✓✕⟲⇄" && kept === 10 && after.depth === 25 && /Depth@Extrude1/.test(after.undo) && after.labels === "25,60",
       `modify: the Modify box changes a feature dimension (✕ keeps it, Enter takes it as one undo step) (${JSON.stringify({ box, kept, after })})`);
     // A sketch dimension: ⟲ rebuilds with the typed value, ✕ puts it back.
     const width = () => dp.evaluate(() => { const b = window.__sv.viewer.computeBounds(); return b.max.x - b.min.x; });
     await clickDim("60");
-    await dp.waitForSelector(".mod-box .sk-input");
-    await dp.fill(".mod-box input", "80");
+    await dp.waitForSelector(".mod-box .mod-in");
+    await dp.fill(".mod-box .mod-in", "80");
     await dp.click(".mod-box [data-m=rebuild]");
     await dp.waitForTimeout(300);
     await idle();
@@ -9670,6 +13974,27 @@ try {
     await idle();
     const back = await width();
     check(Math.abs(prev.size - 80) < 1e-6 && prev.stored === 60 && Math.abs(back - 60) < 1e-6, `modify: ⟲ rebuilds with the typed value and ✕ goes back (${JSON.stringify({ prev, back })})`);
+    // 1.371 (FR-UI-114): the increment field sets the spin step (kept for the next box); ⇄ reverses the extrude with the value.
+    await clickDim("25");
+    await dp.waitForSelector(".mod-box .mod-in");
+    await dp.fill(".mod-box .mod-inc", "5");
+    await dp.press(".mod-box .mod-inc", "Enter");
+    await dp.press(".mod-box .mod-in", "ArrowUp");
+    const spun = await dp.evaluate(() => document.querySelector(".mod-box .mod-in").value);
+    await dp.click(".mod-box [data-m=rev]");
+    await dp.press(".mod-box .mod-in", "Enter");
+    await dp.waitForTimeout(150);
+    await idle();
+    const rev = await dp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(f => f.id === "x"); return { depth: f.depth.v, flip: !!f.flip }; });
+    await clickDim("30");
+    await dp.waitForSelector(".mod-box .mod-in");
+    const incKept = await dp.evaluate(() => document.querySelector(".mod-box .mod-inc").value);
+    await dp.click(".mod-box [data-m=x]");
+    await dp.evaluate(() => window.__sv.modeller.undo());
+    await idle();
+    const unrev = await dp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(f => f.id === "x"); return { depth: f.depth.v, flip: !!f.flip }; });
+    check(spun === "30" && rev.depth === 30 && rev.flip && incKept === "5" && unrev.depth === 25 && !unrev.flip,
+      `modify 1.371: the increment field steps the value and is remembered; Reverse direction flips the extrude with the value as one undo step (${JSON.stringify({ spun, rev, incKept, unrev })})`);
     // Resizable side panel: the grip drags its width, which is remembered; a double-click restores it.
     const grip = await dp.$eval("#app > .grip-left", g => { const r = g.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + 200, role: g.getAttribute("role"), now: g.getAttribute("aria-valuenow") }; });
     await dp.mouse.move(grip.x, grip.y); await dp.mouse.down(); await dp.mouse.move(grip.x + 80, grip.y, { steps: 4 }); await dp.mouse.up();
@@ -9685,7 +14010,7 @@ try {
   }
 
   // --- Document tabs (FR-DOC-003, FR-UI-120): parts, assemblies and drawings stay open in tabs at the bottom ---
-  if (inShard(1)) {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
@@ -9748,7 +14073,7 @@ try {
   }
 
   // --- Several part tabs next to a STEP tab: each tab shows its own body; a lost WebGL context comes back ---
-  if (inShard(1)) {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
@@ -9760,7 +14085,8 @@ try {
     const idle = () => dp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
     const plate = async w => {
       await dp.click("#new-part");
-      await dp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.last());
+      // A new part rebuilds at once now that a kernel worker is ready, so wait for the empty document, not for no result.
+      await dp.waitForFunction(() => window.__sv.model?.store?.doc.features.length === 0);
       await dp.evaluate(w => window.__sv.model.store.change("Plate", d => {
         const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
         d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -w / 2, -10), P("b", w / 2, -10), P("c", w / 2, 10), P("d", -w / 2, 10), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
@@ -9785,6 +14111,31 @@ try {
       seen.push(i ? `${s.name}:${s.w}${s.step ? "+step" : ""}` : "step");
     }
     check(seen.join() === "Part1:40,Part2:80,step,Part1:40,Part2:80,Part1:40", `tabs: switching between two part tabs and a STEP tab shows each part's own body, without the STEP header (${seen})`);
+    // 1.377 (FR-DOC-003): a tab comes back with the camera and the selected row it was left with.
+    {
+      const go = async i => {
+        await dp.click(`#doc-tabs .dt >> nth=${i} >> .dt-b`);
+        if (i === 0) await dp.waitForFunction(() => !window.__sv.model.store && window.__sv.viewer.parts.length > 1 && document.querySelector("#loading").hidden, null, { timeout: 60000 });
+        else { await dp.waitForFunction(n => window.__sv.model.store?.doc.name === n, i === 1 ? "Part1" : "Part2"); await idle(); }
+        await dp.waitForTimeout(150);
+      };
+      const cam = () => dp.evaluate(() => { const v = window.__sv.viewer.getView(); return [...v.t, ...v.p, v.h].map(x => Math.round(x * 100) / 100); });
+      await treeClick(dp, '#mc-tree .ft-row[data-id="x"]');
+      await dp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(0.3, -0.2, 1), false); v.camera.zoom *= 1.7; v.camera.updateProjectionMatrix(); v.invalidate(); });
+      const c1 = await cam();
+      await go(0);
+      await dp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(-1, 0.4, 0.2), false); v.invalidate(); });
+      const c0 = await cam();
+      await go(2);
+      const c2 = await cam();
+      await go(1);
+      const b1 = await cam(), sel = await dp.evaluate(() => document.querySelector("#mc-tree .ft-row.sel")?.dataset.id ?? null);
+      await go(0);
+      const b0 = await cam();
+      await go(1);
+      const same = (a, b) => a.every((x, k) => Math.abs(x - b[k]) < 0.02 * Math.max(1, Math.abs(x)));
+      check(same(c1, b1) && same(c0, b0) && !same(c1, c2) && sel === "x", `tabs 1.377: a tab comes back with its camera and its selected row (${JSON.stringify({ c1, b1, c0, b0, c2, sel })})`);
+    }
     // A lost WebGL context (GPU reset) blanks the view; once the browser gives it back the view draws again.
     const lost = await dp.evaluate(async () => {
       const v = window.__sv.viewer, gl = v.renderer.getContext(), ext = gl.getExtension("WEBGL_lose_context");
@@ -9804,7 +14155,7 @@ try {
   }
 
   // --- STEP names written as raw Windows-1251 bytes (Russian CAD exports) show as Cyrillic, not "ÏË31à" ---
-  if (inShard(3)) {
+  if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
     const pg = await ctx.newPage();
     pg.on("pageerror", e => errors.push(e.message));
@@ -9822,7 +14173,7 @@ try {
   }
 
   // --- ✓/✕ always in reach: pinned panel title row and the confirmation corner at the top right of the view (FR-UI-021) ---
-  if (inShard(4)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1366, height: 700 } });
     const kp = await ctx.newPage();
     kp.on("pageerror", e => errors.push(e.message));
@@ -9878,7 +14229,7 @@ try {
   }
 
   // --- Drawings: a model view of another part configuration (FR-DRW-010) ---
-  if (inShard(1)) {
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
@@ -9897,7 +14248,7 @@ try {
     const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-08T00:00:00Z", units: "mm" };
     await dp.setInputFiles("#file-input", { name: "Block.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
     await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
-    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await newDrawing3(dp);
     const ready = () => dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
     await ready();
@@ -9923,7 +14274,7 @@ try {
   }
 
   // --- Drawings: flat pattern view of a sheet metal part, with bend lines and notes (FR-FT-120) ---
-  if (inShard(4)) {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
@@ -9941,7 +14292,7 @@ try {
     const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-08T00:00:00Z", units: "mm" };
     await dp.setInputFiles("#file-input", { name: "Bracket.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
     await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
-    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await newDrawing3(dp);
     const ready = () => dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
     await ready();
@@ -9964,7 +14315,7 @@ try {
     // Bend table: click the flat view, then place the table under it; the bend's note turns into its tag.
     const fp = await dp.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views.find(x => x.config === "@flat"), p = window.__sv.drw.placement(v.id); return { x: p.x, y: p.y, w: (p.box[2] - p.box[0]) * p.s, h: (p.box[3] - p.box[1]) * p.s }; });
     const aBefore = await dp.evaluate(() => [...document.querySelectorAll(".drw-svg text")].filter(t => t.textContent === "A").length);
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="btable"]');
+    await drwTool(dp, "btable");
     for (const [x, y] of [[fp.x, fp.y], [fp.x - fp.w / 2 - 70, fp.y + fp.h / 2]]) {
       const [cx, cy] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]);
       await dp.mouse.click(cx, cy);
@@ -9976,8 +14327,82 @@ try {
     await ctx.close();
   }
 
+  // --- Drawings: weld table of a weldment part (FR-FT-121) ---
+  if (inShard(6)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    // A 40x40x3 square tube standing on a plate, welded all round (tangent propagation from one side).
+    const part = { schema: 1, kind: "part", id: "d_drwweld", name: "Post", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p0", -100, -100), P("p1", 100, -100), P("p2", 100, 100), P("p3", -100, 100),
+        { id: "l0", t: "line", a: "p0", b: "p1" }, { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p0" }] },
+      { id: "p", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } },
+      { id: "k", type: "sketch3d", name: "3DSketch1", rels: [], dims: [], pts: [{ id: "A", p: [0, 0, 10], fixed: true }, { id: "B", p: [0, 0, 300] }], segs: [{ id: "post", t: "line", pts: ["A", "B"] }] },
+      { id: "m", type: "member", name: "Structural Member1", profile: "shs", size: "40x40x3", segs: [{ sketch: "k", ent: "post" }], corner: "none" },
+      { id: "w", type: "weldbead", name: "Fillet Bead1", faces1: [{ name: "p:end" }], faces2: [{ name: "m:post:side:5", hint: [20, 0, 155] }], size: { v: 4 } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-10T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "Post.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await newDrawing3(dp);
+    const ready = () => dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
+    await ready();
+    // Click the first view, then place the table beside it.
+    const vp = await dp.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views[0], p = window.__sv.drw.placement(v.id); return { x: p.x, y: p.y, w: (p.box[2] - p.box[0]) * p.s }; });
+    await drwTool(dp, "wtable");
+    for (const [x, y] of [[vp.x, vp.y], [vp.x + vp.w / 2 + 20, vp.y]]) {
+      const [cx, cy] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]);
+      await dp.mouse.click(cx, cy);
+    }
+    await ready();
+    const wt = await dp.evaluate(() => ({ n: window.__sv.drw.doc().sheets[0].annots.filter(a => a.t === "wtable").length, tx: [...document.querySelectorAll(".drw-svg text")].map(t => t.textContent),
+      note: document.querySelector("#drw .drw-props .drw-note")?.textContent ?? "" }));
+    const loop = (4 * (40 - 12) + 2 * Math.PI * 6).toFixed(2).replace(/\.?0+$/, "");
+    check(wt.n === 1 && ["Item", "Weld", "Leg", "Length", "Qty", "Continuous", "z4", loop].every(s => wt.tx.includes(s)),
+      `drawing: weld table lists the weldment's fillet bead with its leg and length (${JSON.stringify({ n: wt.n, loop, tx: wt.tx.filter(s => /^(Item|Weld|Leg|Continuous|z\d|1\d\d)/.test(s)), note: wt.note })})`);
+    // Placing the weld table tags the bead seen in its view with a box holding its weld table row; Tag the beads adds no second one.
+    await dp.waitForFunction(() => window.__sv.drw.doc().sheets[0].annots.some(a => a.t === "balloon" && a.weld), null, { timeout: 30000 }).catch(() => {});
+    await ready();
+    const tg = await dp.evaluate(() => { const ws = window.__sv.drw.doc().sheets[0].annots.filter(a => a.t === "balloon" && a.weld);
+      return { n: ws.length, shape: ws[0]?.shape, btn: !!document.querySelector('#drw .drw-props [data-a="wtags"]'), dangle: document.querySelectorAll("#drw .drw-dangle").length }; });
+    if (tg.btn) { await dp.click('#drw .drw-props [data-a="wtags"]'); await dp.waitForTimeout(500); }
+    const tg2 = await dp.evaluate(() => window.__sv.drw.doc().sheets[0].annots.filter(a => a.t === "balloon" && a.weld).length);
+    check(tg.n === 1 && tg.shape === "box" && tg.btn && tg.dangle === 0 && tg2 === 1,
+      `drawing: placing the weld table tags its view's bead once, numbered by its row (${JSON.stringify({ ...tg, again: tg2 })})`);
+    // Cut list table under the same view: the tube (300 - 10 mm long, square ends), then the bead; Weld beads unticked leaves it out.
+    await drwTool(dp, "ctable");
+    for (const [x, y] of [[vp.x, vp.y], [vp.x - vp.w / 2, vp.y - vp.w / 2 - 20]]) {
+      const [cx, cy] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]);
+      await dp.mouse.click(cx, cy);
+    }
+    await ready();
+    const ct = await dp.evaluate(() => ({ n: window.__sv.drw.doc().sheets[0].annots.filter(a => a.t === "ctable").length, tx: [...document.querySelectorAll(".drw-svg text")].map(t => t.textContent),
+      beads: !!document.querySelector('#drw .drw-props [data-d="cbeads"]') }));
+    check(ct.n === 1 && ct.beads && ["Description", "Angle 1", "Angle 2", "SHS 40x40x3", "290", "0°", "Fillet weld, leg 4"].every(s => ct.tx.includes(s)),
+      `drawing: cut list table lists the tube with its length and end angles and the bead (${JSON.stringify({ n: ct.n, tx: ct.tx.filter(s => /^(Item|Qty|Desc|Angle|SHS|Fillet|29\d|0°)/.test(s)) })})`);
+    await dp.click('#drw .drw-props [data-d="cbeads"]');
+    await ready();
+    const ct2 = await dp.evaluate(() => [...document.querySelectorAll(".drw-svg text")].map(t => t.textContent));
+    check(!ct2.includes("Fillet weld, leg 4") && ct2.includes("SHS 40x40x3"), `drawing: unticking Weld beads leaves the bead out of the cut list table`);
+    // Auto balloon on a weldment part: one balloon per cut list item seen in the view, numbered as in the cut list.
+    await drwTool(dp, "auto");
+    await dp.waitForFunction(() => window.__sv.drw.doc().sheets[0].annots.some(a => a.t === "balloon"), null, { timeout: 30000 }).catch(() => {});
+    await ready();
+    const bl = await dp.evaluate(() => { const bs = window.__sv.drw.doc().sheets[0].annots.filter(a => a.t === "balloon");
+      return { n: bs.length, tx: [...document.querySelectorAll(".drw-svg text")].map(t => t.textContent), dangle: document.querySelectorAll("#drw .drw-dangle").length }; });
+    check(bl.n >= 2 && bl.tx.includes("1") && bl.tx.includes("2") && !bl.tx.includes("?") && bl.dangle === 0,
+      `drawing: auto balloon numbers a weldment part's bodies by their cut list items (${JSON.stringify({ n: bl.n, dangle: bl.dangle, nums: bl.tx.filter(s => /^\d$|^\?$/.test(s)) })})`);
+    await ctx.close();
+  }
+
   // --- Drawings: revision cloud ---
-  if (inShard(3)) {
+  if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
@@ -9994,10 +14419,10 @@ try {
     const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-08T00:00:00Z", units: "mm" };
     await dp.setInputFiles("#file-input", { name: "Plate.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
     await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
-    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await newDrawing3(dp);
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
     const clickSheet = async (x, y) => { const [cx, cy] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await dp.mouse.move(cx, cy); await dp.mouse.click(cx, cy); };
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="cloud"]');
+    await drwTool(dp, "cloud");
     for (const [x, y] of [[30, 30], [90, 30], [90, 70], [30, 70], [30, 30]]) await clickSheet(x, y);
     await dp.waitForTimeout(150);
     const cl = await dp.evaluate(() => { const a = (window.__sv.drw.doc().sheets[0].annots ?? []).find(x => x.t === "cloud"); return { a: a && JSON.parse(JSON.stringify(a)), arcs: window.__sv.drw.prims().filter(p => p.t === "a" && p.layer === "ANNOT").length, mode: window.__sv.drw.mode(), panel: !!document.querySelector('#drw .drw-props [data-d="carc"]') }; });
@@ -10017,7 +14442,7 @@ try {
   }
 
   // --- Drawings: centreline and centre mark ---
-  if (inShard(1)) {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
@@ -10035,14 +14460,14 @@ try {
     const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-08T00:00:00Z", units: "mm" };
     await dp.setInputFiles("#file-input", { name: "Plate.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
     await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
-    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await newDrawing3(dp);
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
     const clickSheet = async (x, y) => { const [cx, cy] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await dp.mouse.move(cx, cy); await dp.mouse.click(cx, cy); };
     // View i's model box on the sheet (sheet mm): placement maps view axes u, v to x + (u - uc)·s, y + (v - vc)·s.
     const boxOf = i => dp.evaluate(k => { const v = window.__sv.drw.doc().sheets[0].views[k], p = window.__sv.drw.placement(v.id), S = (u, w) => [p.x + (u - p.uc) * p.s, p.y + (w - p.vc) * p.s]; return { id: v.id, box: [...S(p.box[0], p.box[1]), ...S(p.box[2], p.box[3])], s: p.s }; }, i);
     const centre = () => dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "l" && p.layer === "CENTER").map(p => p.p.map(v => Math.round(v * 100) / 100)));
     const fr = await boxOf(0), c0 = await centre();
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="cline"]');
+    await drwTool(dp, "cline");
     const xq = fr.box[0] + (fr.box[2] - fr.box[0]) * 0.2;
     await clickSheet(xq, fr.box[3]); await clickSheet(xq, fr.box[1]);
     await dp.waitForTimeout(150);
@@ -10056,7 +14481,7 @@ try {
     // Centre mark on the hole seen end-on in the top view: a cross 2 mm past the circle.
     const tp = await boxOf(1);
     const hc = await dp.evaluate(id => { const p = window.__sv.drw.placement(id); return [p.x + (25 - p.uc) * p.s, p.y + (0 - p.vc) * p.s]; }, tp.id);
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="cmark"]');
+    await drwTool(dp, "cmark");
     await clickSheet(hc[0] + 8 * tp.s, hc[1]);
     await dp.waitForTimeout(150);
     const c2 = await centre(), marks = await dp.evaluate(() => (window.__sv.drw.doc().sheets[0].annots ?? []).filter(a => a.t === "cline" && a.k === "mark").length);
@@ -10072,11 +14497,27 @@ try {
     const c3 = await centre();
     const longer = c3.some(q => Math.abs(q[1] - midY) < 0.05 && Math.abs(Math.min(q[0], q[2]) - (fr.box[0] - 5)) < 0.05);
     check(sel && ext === 5 && longer, `drawing: select a centreline on its line and change its extension (${JSON.stringify({ sel, ext, longer })})`);
+    // Drawings exam #16: the hole's two hidden outline lines in the front view (x = 17 and 33) give its centreline at x = 25.
+    await dp.keyboard.press("Escape");
+    const fq = (u, w) => dp.evaluate(([id, u, w]) => { const p = window.__sv.drw.placement(id); return [p.x + (u - p.uc) * p.s, p.y + (w - p.vc) * p.s]; }, [fr.id, u, w]);
+    await drwTool(dp, "cline");
+    for (const u of [17, 33]) { const q = await fq(u, 10); await clickSheet(q[0], q[1]); }
+    await dp.waitForTimeout(150);
+    const hl = await dp.evaluate(() => (window.__sv.drw.doc().sheets[0].annots ?? []).filter(a => a.t === "cline" && a.k === "line").map(a => a.refs.map(r => r.s ?? 0).join()));
+    const x25 = (await fq(25, 0))[0], c4 = await centre();
+    const onAxis = c4.filter(q => Math.abs(q[0] - x25) < 0.05 && Math.abs(q[2] - x25) < 0.05).length > c3.filter(q => Math.abs(q[0] - x25) < 0.05 && Math.abs(q[2] - x25) < 0.05).length;
+    check(hl.length === 2 && ["-1,1", "1,-1"].includes(hl[1]) && onAxis, `drawing: centreline between a hole's two hidden outline lines (${JSON.stringify({ hl, onAxis, x25 })})`);
+    // Balloons on a part drawing (drawings exam): item 1, as in other CAD apps, no longer refused.
+    await dp.keyboard.press("Escape");
+    await drwTool(dp, "auto");
+    await dp.waitForFunction(() => (window.__sv.drw.doc().sheets[0].annots ?? []).some(a => a.t === "balloon"), null, { timeout: 10000 }).catch(() => {});
+    const bal = await dp.evaluate(() => ({ n: (window.__sv.drw.doc().sheets[0].annots ?? []).filter(a => a.t === "balloon").length, one: window.__sv.drw.prims().some(p => p.t === "t" && p.layer === "ANNOT" && p.s === "1") }));
+    check(bal.n === 1 && bal.one, `drawing: Auto balloon on a part drawing numbers the part 1 (${JSON.stringify(bal)})`);
     await ctx.close();
   }
 
   // --- Drawings: bolt circle on evenly spaced holes (FR-DRW-023) ---
-  if (inShard(4)) {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
@@ -10095,7 +14536,7 @@ try {
     const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-09T00:00:00Z", units: "mm" };
     await dp.setInputFiles("#file-input", { name: "Flange.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
     await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
-    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await newDrawing3(dp);
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
     // The top view (views[1]) looks down on the holes: one centre-line circle through them, a radial line per hole, a cross on the bore.
     const marks = () => dp.evaluate(() => {
@@ -10120,7 +14561,7 @@ try {
   }
 
   // --- Drawings: slot centre marks (FR-DRW-023) ---
-  if (inShard(4)) {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
@@ -10141,7 +14582,7 @@ try {
     const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-09T00:00:00Z", units: "mm" };
     await dp.setInputFiles("#file-input", { name: "Slotted.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
     await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
-    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await newDrawing3(dp);
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
     // Top view (views[1]): centre-line segments within the slot's reach, in model mm about the plate centre.
     const sm = await dp.evaluate(() => {
@@ -10151,11 +14592,19 @@ try {
     });
     const runs = sm.map(q => Math.hypot(q[2] - q[0], q[3] - q[1])).sort((a, b) => a - b);
     check(sm.length === 3 && Math.abs(runs[0] - 14) < 0.05 && Math.abs(runs[1] - 14) < 0.05 && Math.abs(runs[2] - 54) < 0.05, `drawing: slot centreline and end centre lines, no crosses (${JSON.stringify(sm)})`);
+    // Front view (views[0]): the axis of each rounded slot end, 2 mm past the plate's faces (FR-DRW-023).
+    const sf = await dp.evaluate(() => {
+      const v = window.__sv.drw.doc().sheets[0].views[0], p = window.__sv.drw.placement(v.id), U = x => (x - p.x) / p.s + p.uc, W = y => (y - p.y) / p.s + p.vc;
+      const box = [p.x + (p.box[0] - p.uc) * p.s - 5, p.x + (p.box[2] - p.uc) * p.s + 5];
+      return { orient: v.orient, ls: window.__sv.drw.prims().filter(q => q.layer === "CENTER" && q.t === "l" && Math.abs(q.p[1] - p.y) < 20 * p.s && q.p[0] > box[0] && q.p[0] < box[1]).map(q => [U(q.p[0]), W(q.p[1]), U(q.p[2]), W(q.p[3])].map(x => Math.round(x * 100) / 100)) };
+    });
+    const xs = sf.ls.filter(q => q[0] === q[2] && Math.abs(Math.abs(q[3] - q[1]) - 14) < 0.05).map(q => q[0]).sort((a, b) => a - b);
+    check(sf.ls.length === 2 && xs.length === 2 && xs[0] === -20 && xs[1] === 20, `drawing: a slot seen from the side gets an axis at each rounded end (${JSON.stringify(sf)})`);
     await ctx.close();
   }
 
   // --- Drawings: arc slot centre marks (FR-DRW-023) ---
-  if (inShard(4)) {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
@@ -10177,7 +14626,7 @@ try {
     const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-09T00:00:00Z", units: "mm" };
     await dp.setInputFiles("#file-input", { name: "ArcSlotted.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
     await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
-    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await newDrawing3(dp);
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
     // Top view (views[1]): centre-line prims in model mm about the plate centre.
     const am = await dp.evaluate(() => {
@@ -10194,7 +14643,7 @@ try {
   }
 
   // --- Drawings: hole row centreline (FR-DRW-023) ---
-  if (inShard(1)) {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
@@ -10213,7 +14662,7 @@ try {
     const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-09T00:00:00Z", units: "mm" };
     await dp.setInputFiles("#file-input", { name: "HoleRow.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
     await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
-    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await newDrawing3(dp);
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
     // Top view (views[1]): centre lines in model mm about the plate centre, inside the plate.
     const rowLines = () => dp.evaluate(() => {
@@ -10228,8 +14677,41 @@ try {
     await ctx.close();
   }
 
-  // --- Drawings: weld symbol ---
+  // --- Drawings: centreline on a cone seen from the side (FR-DRW-023) ---
   if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    // A frustum Ø40 → Ø20 over 30 mm revolved about the sketch's y axis: a cone and two flat caps, no cylinder.
+    const pts = [P("p0", 0, 0), P("p1", 20, 0), P("p2", 10, 30), P("p3", 0, 30)], ids = pts.map(p => p.id);
+    const part = { schema: 1, kind: "part", id: "d_drwcone", name: "Cone", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XZ" }, rels: [], dims: [], ents: [...pts, ...ids.map((a, i) => ({ id: `l${i}`, t: "line", a, b: ids[(i + 1) % ids.length] }))] },
+      { id: "f1", type: "revolve", name: "Revolve1", sketch: "s1", op: "boss", axis: "l3", angle: { v: 2 * Math.PI } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-09T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "Cone.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await newDrawing3(dp);
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
+    // Front view (views[0]): the cone's axis runs vertically through the view, past both ends.
+    const cl = await dp.evaluate(() => {
+      const v = window.__sv.drw.doc().sheets[0].views[0], p = window.__sv.drw.placement(v.id), U = x => (x - p.x) / p.s + p.uc, W = y => (y - p.y) / p.s + p.vc;
+      return window.__sv.drw.prims().filter(q => q.layer === "CENTER" && q.t === "l").map(q => [U(q.p[0]), W(q.p[1]), U(q.p[2]), W(q.p[3])].map(x => Math.round(x * 100) / 100))
+        .filter(q => q.every(x => Math.abs(x) < 40));
+    });
+    // The 2 mm run past each end is in sheet mm, so in model mm it depends on the view's scale.
+    const axis = cl.filter(q => Math.abs(q[0]) < 0.01 && Math.abs(q[2]) < 0.01 && Math.min(q[1], q[3]) < -0.1 && Math.max(q[1], q[3]) > 30.1);
+    check(axis.length === 1, `drawing: a cone seen from the side gets a centreline on its axis (${JSON.stringify(cl)})`);
+    await ctx.close();
+  }
+
+  // --- Drawings: weld symbol ---
+  if (inShard(6)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
@@ -10246,32 +14728,37 @@ try {
     const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-08T00:00:00Z", units: "mm" };
     await dp.setInputFiles("#file-input", { name: "Plate.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
     await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
-    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await newDrawing3(dp);
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
     const clickSheet = async (x, y) => { const [cx, cy] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await dp.mouse.move(cx, cy); await dp.mouse.click(cx, cy); };
     const fr = await dp.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views[0], p = window.__sv.drw.placement(v.id), S = (u, w) => [p.x + (u - p.uc) * p.s, p.y + (w - p.vc) * p.s]; return [...S(p.box[0], p.box[1]), ...S(p.box[2], p.box[3])]; });
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="weld"]');
+    await drwTool(dp, "weld");
     const ex = fr[0] + (fr[2] - fr[0]) * 0.3;
     await clickSheet(ex, fr[3]);
     await clickSheet(ex + 15, fr[3] + 15);
-    await dp.waitForTimeout(150);
+    // The weld dialog opens on the placed symbol: icons for each side's weld; OK adds it.
+    await dp.waitForSelector("#drw-weld-dlg[open]");
+    const wicons = await dp.evaluate(() => document.querySelectorAll('#drw-weld-dlg [data-side="arrow"] [data-w] svg').length);
+    await dp.click("#drw-weld-dlg button[value=ok]"); await annotDlgGone(dp);
     const prims = () => dp.evaluate(() => window.__sv.drw.prims().filter(p => p.layer === "ANNOT"));
     const w1 = await dp.evaluate(() => { const a = (window.__sv.drw.doc().sheets[0].annots ?? []).find(x => x.t === "weld"); return a && JSON.parse(JSON.stringify(a)); });
     const p1 = await prims();
     const tri = p1.filter(p => p.t === "p" && p.closed && !p.fill).length, a4 = p1.some(p => p.t === "t" && p.s === "a4");
-    const panel = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-d="wosym"]'));
+    const panel = wicons === 7 && await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-a="aedit"]'));
     check(w1 && w1.leader && w1.arrow?.sym === "fillet" && tri >= 1 && a4 && panel, `drawing: weld symbol with an arrow to the clicked joint, fillet a4 on the arrow side (${JSON.stringify({ w1, tri, a4, panel })})`);
-    await dp.selectOption('#drw .drw-props [data-d="wosym"]', "v");
-    await dp.waitForTimeout(150);
-    await dp.check('#drw .drw-props [data-d="waround"]');
-    await dp.waitForTimeout(150);
+    await dp.click('#drw .drw-props [data-a="aedit"]'); await dp.waitForSelector("#drw-weld-dlg[open]");
+    await dp.click('#drw-weld-dlg [data-w="other:v"]');
+    await dp.check('#drw-weld-dlg [data-wo="around"]');
+    const wpv = await dp.evaluate(() => document.querySelectorAll("#drw-weld-dlg .ad-pv *").length);
+    if (process.env.SMOKE_SHOTS) await dp.screenshot({ path: `${process.env.SMOKE_SHOTS}/drawing-weld-dialog.png` });
+    await dp.click("#drw-weld-dlg button[value=ok]"); await annotDlgGone(dp);
     const p2 = await prims(), w2 = await dp.evaluate(() => { const a = (window.__sv.drw.doc().sheets[0].annots ?? []).find(x => x.t === "weld"); return a && JSON.parse(JSON.stringify(a)); });
     const dash = p2.filter(p => p.t === "l" && p.pen === "hidden").length, ring = p2.some(p => p.t === "a" && Math.abs(p.r - 1.5) < 1e-9);
-    const ru = await dp.evaluate(() => document.querySelector('#drw .drw-props [data-d="wosym"]')?.closest("fieldset")?.querySelector("legend")?.textContent);
-    check(w2.other?.sym === "v" && w2.around === true && dash === 1 && ring, `drawing: other-side V adds the dashed identification line; all around draws the circle (${JSON.stringify({ other: w2.other, dash, ring, ru })})`);
+    const ru = wpv;
+    check(w2.other?.sym === "v" && w2.around === true && dash === 1 && ring && wpv > 6, `drawing: other-side V adds the dashed identification line; all around draws the circle (${JSON.stringify({ other: w2.other, dash, ring, ru })})`);
     // Datum target (ISO 5459): click a point on the bottom edge, place the frame below; then make it a hatched area.
     await dp.keyboard.press("Escape");
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="dtarget"]');
+    await drwTool(dp, "dtarget");
     const tx = fr[0] + (fr[2] - fr[0]) * 0.6;
     await clickSheet(tx, fr[1]);
     await clickSheet(tx - 12, fr[1] - 14);
@@ -10288,7 +14775,7 @@ try {
     // Sheet sketch: a line drawn off the views snaps horizontal; a centre line type and a typed length.
     await dp.keyboard.press("Escape");
     const sk = () => dp.evaluate(() => (window.__sv.drw.doc().sheets[0].annots ?? []).filter(x => x.t === "sk").map(x => JSON.parse(JSON.stringify(x))));
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="skline"]');
+    await drwTool(dp, "skline");
     await clickSheet(30, 30);
     await clickSheet(70, 30.6);
     await dp.waitForTimeout(150);
@@ -10301,7 +14788,7 @@ try {
     }
     const s2 = await sk(), q3 = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.layer === "CENTER" && p.t === "l" && Math.abs(p.p[1] - p.p[3]) < 1e-6 && Math.abs(Math.abs(p.p[2] - p.p[0]) - 50) < 0.01).length);
     // Rectangle: two corners, picked again by clicking its edge.
-    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="skrect"]');
+    await drwTool(dp, "skrect");
     await clickSheet(30, 50); await clickSheet(60, 70);
     await dp.waitForTimeout(150);
     await dp.keyboard.press("Escape"); await clickSheet(45, 70.3); await dp.waitForTimeout(150);
@@ -10317,7 +14804,7 @@ try {
     if (comBox) { await dp.check('#drw .drw-props [data-v="com"]'); await dp.waitForTimeout(300); }
     const sym = await dp.evaluate(([x, y]) => window.__sv.drw.prims().filter(p => p.layer === "ANNOT" && ((p.t === "a" && Math.abs(p.r - 2) < 1e-9 && Math.hypot(p.o[0] - x, p.o[1] - y) < 0.05) || (p.t === "p" && p.fill && Math.hypot(p.p[0] - x, p.p[1] - y) < 0.05))).length, [cxm, cym]);
     await dp.keyboard.press("Escape");
-    await dp.click('#drw [data-a="dim"]');
+    await drwCmd(dp, "dim");
     await clickSheet(cxm + 0.3, cym + 0.2);
     await clickSheet(cxm + 15, fr[1]);
     await clickSheet(cxm + 30, cym - 3);
@@ -10329,13 +14816,14 @@ try {
   }
 
   // --- Drawings: quick previews of slow views while the exact lines are computed (FR-DRW-016, NFR-PERF-040) ---
-  if (inShard(3)) {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
     dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
     await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
-    await dp.goto(`${origin}/index.html?debug`);
+    // One drawing worker: with the helper, the exact views of this small part can land before any preview is drawn.
+    await dp.goto(`${origin}/index.html?debug&drwhelper=0`);
     await dp.waitForFunction(() => window.__sv);
     // A plate with 25 holes: over the edge count that turns quick previews on.
     const P = (id, x, y) => ({ id, t: "point", x, y });
@@ -10351,19 +14839,34 @@ try {
     const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-09T00:00:00Z", units: "mm" };
     await dp.setInputFiles("#file-input", { name: "Grid.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
     await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
-    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await newDrawing3(dp);
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 120000 });
     await dp.waitForTimeout(200);
     const pv = await dp.evaluate(() => window.__sv.drw.previews());
     const exact = await dp.evaluate(() => window.__sv.drw.doc().sheets[0].views.every(v => { const p = window.__sv.drw.proj(v.id); return p && !p.preview && p.vis.length > 0; }));
     check(pv.made >= 3 && pv.shown >= 1 && pv.left === 0 && exact, `drawing: slow model views show a quick preview first, then the exact lines (${JSON.stringify(pv)}, exact ${exact})`);
+    // 1.494: a section view gets a quick preview too (its cut, projected polygonally, with the cut loops hatched).
+    const front = await dp.evaluate(() => JSON.parse(JSON.stringify(window.__sv.drw.doc().sheets[0].views[0])));
+    const at = (u, w) => dp.evaluate(([a, b]) => { const p = window.__sv.drw.placement(window.__sv.drw.doc().sheets[0].views[0].id); return window.__sv.drw.sheetPt(p.x + (a - p.uc) * p.s, p.y + (b - p.vc) * p.s); }, [u, w]);
+    await drwCmd(dp, "section"); await dp.click('#drw [data-cut="v"]');
+    let [sx, sy] = await at(10, 5);
+    await dp.mouse.move(sx - 5, sy); await dp.mouse.move(sx, sy);
+    await dp.mouse.click(sx, sy);
+    [sx, sy] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [front.x + (front.x > 200 ? -140 : 140), front.y]);
+    await dp.mouse.move(sx + 5, sy); await dp.mouse.move(sx, sy);
+    await dp.mouse.click(sx, sy);
+    await dp.waitForFunction(() => window.__sv.drw.doc().sheets[0].views.some(v => v.kind === "section") && window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 120000 });
+    await dp.waitForFunction(() => window.__sv.drw.previews().sections >= 1, null, { timeout: 15000 }).catch(() => {});
+    const spv = await dp.evaluate(() => window.__sv.drw.previews());
+    const sexact = await dp.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views.find(x => x.kind === "section"), p = window.__sv.drw.proj(v.id); return !!p && p.vis.length > 0 && (p.cut?.length ?? 0) > 0; });
+    check(spv.sections >= 1 && spv.left === 0 && sexact, `drawing: a section view shows a quick preview with its cut first, then the exact lines (${JSON.stringify(spv)}, exact ${sexact})`);
     await ctx.close();
   }
 
   check(errors.length === 0, `no page errors${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
 
   // --- Parallel assembly builds (FR-ARC-016): distinct parts are built by helper kernel workers, same result as one worker ---
-  if (inShard(4)) {
+  if (inShard(3)) {
     const P = (id, x, y) => ({ id, t: "point", x, y });
     const plate = (id, w, h, d, holes) => ({ schema: 1, kind: "part", id, name: id, units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
       { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", -w / 2, -h / 2), P("p2", w / 2, -h / 2), P("p3", w / 2, h / 2), P("p4", -w / 2, h / 2),
@@ -10405,7 +14908,7 @@ try {
     check(Math.abs(one.props.volume - many.props.volume) < 1e-6 * one.props.volume && one.props.bodies === many.props.bodies, `parallel build: assembly mass properties match (${many.props.volume} vs ${one.props.volume})`);
   }
   // File menu (FR-UI-010): the header's File button replaces Open file; shortcuts, recent documents, Pack and Go.
-  if (inShard(2)) {
+  if (inShard(5)) {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true });
     const fp = await ctx.newPage();
     fp.on("pageerror", e => errors.push(e.message));
@@ -10467,12 +14970,269 @@ try {
     check(true, "File menu: a recent document opens again from the list");
     await ctx.close();
   }
+  // 1.381 (FR-HLP-003): the tutorial from the start card makes a part and ticks its steps from the document.
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const tp = await ctx.newPage();
+    tp.on("pageerror", e => errors.push(e.message));
+    tp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await tp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await tp.goto(`${origin}/index.html?debug&nokernel`);
+    await tp.waitForFunction(() => window.__sv);
+    const state = () => tp.evaluate(() => {
+      const el = document.querySelector("#tutorial");
+      return { shown: !el.hidden, n: Number(el.querySelector(".tut-n")?.dataset.n ?? -1), done: [...el.querySelectorAll("li.done")].map(li => Number(li.dataset.i)), cur: Number(el.querySelector("li.cur")?.dataset.i ?? -1), how: el.querySelector(".tut-how")?.textContent ?? "", steps: el.querySelectorAll("li").length };
+    });
+    const waitN = n => tp.waitForFunction(n => Number(document.querySelector("#tutorial .tut-n")?.dataset.n) === n, n, { timeout: 15000 });
+    const hidden0 = await tp.evaluate(() => document.querySelector("#tutorial").hidden);
+    await tp.click("#empty-tut");
+    await tp.waitForFunction(() => !document.querySelector("#tutorial").hidden);
+    const t0 = await state();
+    const name = await tp.evaluate(() => window.__sv.modeller.store.doc.name);
+    check(hidden0 && t0.shown && t0.steps === 10 && t0.n === 0 && t0.cur === 0 && /Top \(XY\)/.test(t0.how) && name === "Bracket", `tutorial 1.381: the start card opens a part named Bracket with ten steps, the first one open (${JSON.stringify({ hidden0, t0, name })})`);
+    // A sketch with a dimensioned rectangle ticks steps 1 to 3; an extrude ticks the fourth.
+    await tp.evaluate(() => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), L = (id, a, b) => ({ id, t: "line", a, b });
+      window.__sv.modeller.store.change("Sketch", d => { d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", 0, 0), P("b", 80, 0), P("c", 80, 50), P("d", 0, 50), L("l1", "a", "b"), L("l2", "b", "c"), L("l3", "c", "d"), L("l4", "d", "a")] }); });
+    });
+    await waitN(2);
+    const t2 = await state();
+    await tp.evaluate(() => window.__sv.modeller.store.change("Dimension", d => { const s = d.features.find(f => f.id === "s"); s.dims.push({ id: "d1", name: "D1", t: "distance", e: ["a", "b"], val: { v: 80 }, pos: [40, -10] }, { id: "d2", name: "D2", t: "distance", e: ["b", "c"], val: { v: 50 }, pos: [90, 25] }); }));
+    await waitN(3);
+    await tp.evaluate(() => window.__sv.modeller.store.change("Extrude", d => { d.features.push({ id: "e", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 6 } }); }));
+    await waitN(4);
+    const t4 = await state();
+    check(t2.cur === 2 && t2.done.join() === "0,1" && t4.cur === 4 && t4.done.join() === "0,1,2,3" && /top face/.test(t4.how), `tutorial 1.381: the steps tick themselves as the part grows, and the next one opens (${JSON.stringify({ t2, t4 })})`);
+    // Undo unticks; a click on a done step shows its directions again; Russian has every text.
+    await tp.evaluate(() => window.__sv.modeller.undo());
+    await waitN(3);
+    await tp.click('#tutorial li[data-i="0"] .tut-step');
+    const back = await state();
+    await tp.click("#lang-btn");
+    await tp.waitForFunction(() => document.documentElement.lang === "ru");
+    const ru = await tp.evaluate(() => document.querySelector("#tutorial").textContent);
+    await tp.click("#lang-btn");
+    await tp.waitForFunction(() => document.documentElement.lang === "en");
+    check(back.n === 3 && /Top \(XY\)/.test(back.how) && /Кронштейн за 10 шагов/.test(ru) && /3 из 10/.test(ru) && !/[A-Za-z]{4,}/.test(ru.replace(/\(XY\)/g, "")), `tutorial 1.381: undo unticks a step, a done step opens again, and the list is in Russian (${JSON.stringify({ back, ru: ru.slice(0, 120) })})`);
+    // Another document hides the list, the bracket's tab brings it back, ✕ closes it for good.
+    await tp.click("#new-part");
+    await tp.waitForFunction(() => window.__sv.modeller.store?.doc.name === "Part1");
+    await tp.waitForFunction(() => document.querySelector("#tutorial").hidden);
+    await tp.evaluate(() => [...document.querySelectorAll("#doc-tabs .dt .dt-b")].find(b => /Bracket/.test(b.textContent)).click());
+    await tp.waitForFunction(() => !document.querySelector("#tutorial").hidden, null, { timeout: 15000 });
+    const again = await state();
+    await tp.click("#tutorial [data-a=close]");
+    await tp.waitForTimeout(600);
+    const closed = await tp.evaluate(() => document.querySelector("#tutorial").hidden);
+    check(again.n === 3 && closed, `tutorial 1.381: the list follows the bracket's tab and ✕ closes it (${JSON.stringify({ again, closed })})`);
+    await ctx.close();
+  }
+  // 1.394 (FR-UI-091): touch: a finger held still opens the right-click menus, one finger orbits, two zoom.
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true });
+    const tp = await ctx.newPage();
+    tp.on("pageerror", e => errors.push(e.message));
+    tp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await tp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await tp.goto(`${origin}/index.html?debug&nokernel`);
+    await tp.waitForFunction(() => window.__sv);
+    await tp.click("#new-part");
+    await tp.waitForFunction(() => window.__sv.modeller.store?.doc);
+    await tp.evaluate(() => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), L = (id, a, b) => ({ id, t: "line", a, b });
+      window.__sv.modeller.store.change("Block", d => {
+        d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", 0, 0), P("b", 80, 0), P("c", 80, 50), P("d", 0, 50), L("l1", "a", "b"), L("l2", "b", "c"), L("l3", "c", "d"), L("l4", "d", "a")] });
+        d.features.push({ id: "e", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } });
+      });
+    });
+    await tp.waitForFunction(() => window.__sv.viewer.parts.length > 0 && window.__sv.modeller.last?.faceNames?.length, null, { timeout: 60000 });
+    await tp.waitForTimeout(600);
+    const cdp = await ctx.newCDPSession(tp);
+    const touch = (type, pts) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints: pts.map(([x, y], id) => ({ x, y, id })) });
+    const menuOpen = () => tp.evaluate(() => { const m = document.querySelector("#mc-menu"); return m && !m.hidden ? [...m.querySelectorAll("button")].map(b => b.textContent.trim()) : null; });
+    const row = await tp.evaluate(() => { const r = document.querySelector('#mc-tree .ft-row[data-id="e"]').getBoundingClientRect(); return [Math.round(r.left + 40), Math.round(r.top + r.height / 2)]; });
+    // A short tap opens no menu.
+    await touch("touchStart", [row]);
+    await tp.waitForTimeout(120);
+    await touch("touchEnd", []);
+    await tp.waitForTimeout(700);
+    const tapMenu = await menuOpen();
+    // Held still: the feature's menu; tapping Suppress in it suppresses the feature.
+    await touch("touchStart", [row]);
+    await tp.waitForFunction(() => { const m = document.querySelector("#mc-menu"); return m && !m.hidden; }, null, { timeout: 5000 });
+    const held = await menuOpen();
+    await touch("touchEnd", []);
+    await tp.waitForTimeout(500);
+    const still = await menuOpen();
+    const sup = await tp.evaluate(() => { const b = [...document.querySelectorAll("#mc-menu button")].find(b => b.textContent.trim() === "Suppress"); const r = b.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; });
+    await tp.touchscreen.tap(sup[0], sup[1]);
+    await tp.waitForFunction(() => window.__sv.modeller.store.doc.features.find(f => f.id === "e").suppressed === true, null, { timeout: 5000 });
+    check(tapMenu === null && held?.includes("Suppress") && still?.length === held.length, `touch 1.394: a finger held on a tree row opens its menu, a tap does not, and the menu stays when the finger lifts (${JSON.stringify({ tapMenu, held: held?.length, still: still?.length })})`);
+    await tp.evaluate(() => window.__sv.modeller.undo());
+    await tp.waitForFunction(() => !window.__sv.modeller.store.doc.features.find(f => f.id === "e").suppressed && window.__sv.viewer.parts.length > 0, null, { timeout: 30000 });
+    await tp.waitForTimeout(800);
+    // A finger that moves drops the press; it orbits instead. Two fingers moving apart zoom.
+    const cam = () => tp.evaluate(() => { const c = window.__sv.viewer.camera; return { p: c.position.toArray(), z: c.zoom, d: c.position.distanceTo(window.__sv.viewer.controls.target) }; });
+    const box = await tp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; });
+    const c0 = await cam();
+    await touch("touchStart", [box]);
+    for (let i = 1; i <= 8; i++) { await touch("touchMove", [[box[0] + i * 12, box[1] + i * 4]]); await tp.waitForTimeout(30); }
+    await tp.waitForTimeout(700);
+    const dragMenu = await menuOpen();
+    await touch("touchEnd", []);
+    await tp.waitForTimeout(300);
+    const c1 = await cam();
+    await touch("touchStart", [[box[0] - 40, box[1]], [box[0] + 40, box[1]]]);
+    for (let i = 1; i <= 8; i++) { await touch("touchMove", [[box[0] - 40 - i * 10, box[1]], [box[0] + 40 + i * 10, box[1]]]); await tp.waitForTimeout(30); }
+    await touch("touchEnd", []);
+    await tp.waitForTimeout(300);
+    const c2 = await cam();
+    const moved = Math.hypot(...c1.p.map((v, i) => v - c0.p[i])), dist = c => c.d / c.z;
+    check(dragMenu === null && moved > 1 && Math.abs(c1.z - c0.z) < 1e-9 && dist(c2) < dist(c1) * 0.9, `touch 1.394: one finger orbits and two fingers moving apart zoom in, with no menu (${JSON.stringify({ dragMenu, moved: +moved.toFixed(1), z: [c1.z, c2.z], d: [+dist(c1).toFixed(1), +dist(c2).toFixed(1)] })})`);
+    // Held on a face: the context toolbar, and lifting the finger leaves it there.
+    const mid = await tp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; });
+    await tp.evaluate(() => document.getElementById("mc-cbar")?.remove());
+    await touch("touchStart", [mid]);
+    await tp.waitForTimeout(350);
+    const early = await tp.evaluate(() => !!document.getElementById("mc-cbar"));
+    await tp.waitForFunction(() => !!document.getElementById("mc-cbar"), null, { timeout: 5000 });
+    await touch("touchEnd", []);
+    await tp.waitForTimeout(400);
+    const bar = await tp.evaluate(() => document.querySelectorAll("#mc-cbar button").length);
+    check(!early && bar > 0, `touch 1.394: a finger held on a face shows the context toolbar (${JSON.stringify({ early, bar })})`);
+    await ctx.close();
+  }
+
+  // --- Disk cache of built geometry (1.559.0): a part and its drawing opened again in a new page come from IndexedDB, no rebuild ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    const part = { schema: 1, kind: "part", id: "d_cacheblock", name: "Cached", units: { length: "mm", decimals: 2 }, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", -40, -25), P("p2", 40, -25), P("p3", 40, 25), P("p4", -40, 25),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 15 } },
+      { id: "s2", type: "sketch", name: "Sketch2", plane: { face: { name: "f1:end" } }, rels: [], dims: [], ents: [P("c0", 12, 0), { id: "c1", t: "circle", c: "c0", r: 6 }] },
+      { id: "f2", type: "extrude", name: "Cut1", sketch: "s2", op: "cut", end: "through", depth: { v: 0 } },
+    ] };
+    const file = { name: "Cached.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify({ format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-12T00:00:00Z", units: "mm" }), "document.json": JSON.stringify(part) })) };
+    const openPage = async (q = "") => {
+      const pg = await ctx.newPage();
+      pg.on("pageerror", e => errors.push(e.message));
+      pg.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+      await pg.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+      await pg.goto(`${origin}/index.html?debug${q}`);
+      await pg.waitForFunction(() => window.__sv);
+      await pg.setInputFiles("#file-input", file);
+      await pg.waitForFunction(() => window.__sv.viewer.parts.length > 0 && window.__sv.model.last()?.data, null, { timeout: 60000 });
+      return pg;
+    };
+    const shape = pg => pg.evaluate(() => { const r = window.__sv.model.last(); return `${r.faceNames.length} faces ${r.data.volume.toFixed(3)} mm3 ${r.faceNames.join(",")}`; });
+    const p1 = await openPage();
+    const first = await shape(p1);
+    // The result is written once editing pauses (1.5 s).
+    await p1.waitForFunction(() => window.__sv.buildCache.stats.puts >= 1, null, { timeout: 20000 });
+    await newDrawing3(p1);
+    const ready = pg => pg.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
+    await p1.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
+    await ready(p1);
+    // The load and the three views are stored (the load first).
+    await p1.waitForFunction(() => window.__sv.buildCache.stats.puts >= 5, null, { timeout: 20000 });
+    const lines1 = await p1.evaluate(() => window.__sv.drw.prims().filter(x => x.layer === "VISIBLE" || x.layer === "HIDDEN").length);
+    const hits1 = await p1.evaluate(() => ({ part: window.__sv.model.kernel.cacheHits, drw: window.__sv.drw.helper().diskHits }));
+    await p1.close();
+    const p2 = await openPage();
+    const again = await shape(p2);
+    const hit = await p2.evaluate(() => window.__sv.model.kernel.cacheHits);
+    // The kernel still builds the part behind the cached result, so an edit right after works as before.
+    await p2.evaluate(() => window.__sv.modeller.store.change("Deeper", d => { d.features[1].depth = { v: 25 }; }));
+    await p2.waitForFunction(() => window.__sv.model.last()?.data && Math.abs(window.__sv.model.last().data.bboxMax[2] - window.__sv.model.last().data.bboxMin[2] - 25) < 1e-6, null, { timeout: 60000 });
+    const edited = await p2.evaluate(() => ({ hits: window.__sv.model.kernel.cacheHits, h: +(window.__sv.model.last().data.bboxMax[2] - window.__sv.model.last().data.bboxMin[2]).toFixed(3) }));
+    await p2.evaluate(() => window.__sv.modeller.undo());
+    await p2.waitForFunction(() => window.__sv.model.last()?.data && Math.abs(window.__sv.model.last().data.bboxMax[2] - window.__sv.model.last().data.bboxMin[2] - 15) < 1e-6, null, { timeout: 60000 });
+    check(hits1.part === 0 && hit === 1 && again === first && edited.hits === 1 && edited.h === 25,
+      `cache 1.559: a part opened again in a new page is shown from the disk cache, identical, and edits still rebuild (${JSON.stringify({ hits1, hit, same: again === first, edited })})`);
+    await newDrawing3(p2);
+    await p2.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
+    await ready(p2);
+    const st2 = await p2.evaluate(() => ({ ...window.__sv.drw.helper(), lines: window.__sv.drw.prims().filter(x => x.layer === "VISIBLE" || x.layer === "HIDDEN").length }));
+    check(st2.diskHits >= 4 && st2.lines === lines1, `cache 1.559: its drawing loads the model and the three exact views from the disk cache (${JSON.stringify({ hits: st2.diskHits, lines: [lines1, st2.lines] })})`);
+    await p2.close();
+    // ?nocache: nothing read.
+    const p3 = await openPage("&nocache");
+    const off = await p3.evaluate(() => ({ hits: window.__sv.model.kernel.cacheHits, stats: window.__sv.buildCache.stats }));
+    check(off.hits === 0 && off.stats.hits === 0 && off.stats.misses === 0 && await shape(p3) === first, `cache 1.559: ?nocache builds the part in the kernel (${JSON.stringify(off)})`);
+    await p3.close();
+    // An assembly: its parts' bodies and analysed meshes come from the disk cache the second time, the same.
+    const T = (x, y, z) => [1, 0, 0, x, 0, 1, 0, y, 0, 0, 1, z];
+    const plate = (id, w, d, hole) => ({ ...structuredClone(part), id, name: id, features: [
+      { ...structuredClone(part.features[0]), ents: [P("p1", -w / 2, -15), P("p2", w / 2, -15), P("p3", w / 2, 15), P("p4", -w / 2, 15), ...part.features[0].ents.slice(4)] },
+      { ...part.features[1], depth: { v: d } }, ...(hole ? [{ ...structuredClone(part.features[2]), ents: [P("c0", 0, 0), { id: "c1", t: "circle", c: "c0", r: hole }] }, part.features[3]] : [])] });
+    const parts = {}, components = [];
+    for (let k = 0; k < 3; k++) {
+      parts[`p${k}`] = { name: `Part${k}`, file: `Part${k}.mcadprt`, doc: plate(`cpart${k}`, 40 + 10 * k, 5 + k, k % 2 ? 4 : 0) };
+      components.push({ id: `c${k}`, name: `Part${k}<1>`, part: `p${k}`, tf: T(0, 0, 20 * k), fixed: k === 0 });
+    }
+    components.push({ id: "c9", name: "Part1<2>", part: "p1", tf: [0, -1, 0, 100, 1, 0, 0, 0, 0, 0, 1, 0] });
+    const ab = [...zip(Object.entries({ "manifest.json": JSON.stringify({ format: "mobiuscad", schema: 1, kind: "assembly", app: "smoke", modified: "2026-11-12T00:00:00Z", units: "mm" }), "document.json": JSON.stringify({ schema: 1, kind: "assembly", id: "a_cache", name: "Cached asm", units: { length: "mm", decimals: 2 }, parts, components }) }))];
+    const asm = async () => {
+      const pg = await ctx.newPage();
+      pg.on("pageerror", e => errors.push(e.message));
+      await pg.goto(`${origin}/index.html?debug`);
+      await pg.waitForFunction(() => window.__sv);
+      await pg.evaluate(b => window.__sv.asm.openFile({ name: "Cached.mcadasm", data: new Uint8Array(b).buffer }), ab);
+      await pg.waitForFunction(() => window.__sv.viewer.parts.length === 4 && !window.__sv.asm.building, null, { timeout: 120000 });
+      // Written as each part is built; wait for the writes before the next page reads them.
+      await pg.waitForFunction(() => window.__sv.buildCache.stats.puts >= 3 || window.__sv.asm.kernel.cacheHits >= 3, null, { timeout: 20000 }).catch(() => {});
+      const r = await pg.evaluate(() => ({ hits: window.__sv.asm.kernel.cacheHits, parts: window.__sv.viewer.parts.map(p => [p.data.name, p.data.faces.length, Math.round(p.data.volume * 1000), p.data.faces.map(f => Math.round(f.area * 100)).join(",")]), volume: window.__sv.asm.props?.volume }));
+      await pg.close();
+      return r;
+    };
+    const a1 = await asm(), a2 = await asm();
+    check(a1.hits === 0 && a2.hits === 3 && JSON.stringify(a1.parts) === JSON.stringify(a2.parts) && Math.abs(a1.volume - a2.volume) < 1e-6 * a1.volume,
+      `cache 1.559: an assembly opened again takes its 3 parts from the disk cache, every component the same (${JSON.stringify({ hits: [a1.hits, a2.hits], v: [a1.volume, a2.volume] })})`);
+    await ctx.close();
+  }
+
+  // --- Disk cache of opened files (1.563.0): a STEP file opened again shows its mesh and exact values from IndexedDB; export still reads the B-rep ---
+  if (inShard(5)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const openStep = async () => {
+      const pg = await ctx.newPage();
+      pg.on("pageerror", e => errors.push(e.message));
+      await pg.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+      await pg.goto(`${origin}/index.html?debug`);
+      await pg.waitForFunction(() => window.__sv);
+      await pg.setInputFiles("#file-input", join(fixtures, "cax-if/as1-oc-214.stp"));
+      await pg.waitForFunction(() => document.querySelector("#st-kernel").dataset.state === "ready" && window.__sv.timings().exact, null, { timeout: 120000 });
+      // The entries are written after the result is shown.
+      await pg.waitForFunction(() => window.__sv.buildCache.stats.puts >= 2 || window.__sv.buildCache.stats.hits >= 2, null, { timeout: 20000 }).catch(() => {});
+      const r = await pg.evaluate(() => ({ t: window.__sv.timings(), parts: window.__sv.viewer.parts.map(p => [p.data.name, p.data.faces.length, p.data.index.length, Math.round(p.data.volume * 1000), !!p.data.exact, p.data.edges.filter(e => e.exact).length]) }));
+      return { pg, ...r };
+    };
+    const a = await openStep();
+    await a.pg.close();
+    const b = await openStep();
+    const [dl] = await Promise.all([b.pg.waitForEvent("download", { timeout: 60000 }), b.pg.evaluate(() => window.__sv.exportStep())]);
+    const step = await readFile(await dl.path(), "utf8");
+    const glue = await b.pg.evaluate(async () => (await (await fetch("occt/opencascade.full.js")).text()).includes("craftInvokerFunctionNow"));
+    await b.pg.close();
+    check(!a.t.cached && b.t.cached && b.t.load === undefined && JSON.stringify(a.parts) === JSON.stringify(b.parts) && b.parts.every(p => p[4]),
+      `import cache 1.563: a STEP file opened again comes from the disk cache with the same mesh and exact values, the kernel not read (${JSON.stringify({ shown: [Math.round(a.t.shown), Math.round(b.t.shown)], exact: [Math.round(a.t.exact), Math.round(b.t.exact)], parts: b.parts.length })})`);
+    check(/^ISO-10303-21;/.test(step) && (step.match(/MANIFOLD_SOLID_BREP/g) || []).length >= 1, `import cache 1.563: STEP export after a cached open reads the file into the kernel then (${step.length} bytes)`);
+    check(glue, "kernel start-up 1.564: the served opencascade.full.js makes embind invokers on first use (and the kernel above still exported STEP)");
+    await ctx.close();
+  }
 } catch (err) {
   console.error(err);
   failures++;
 } finally {
   await browser.close();
   server.close();
+}
+{
+  const end = Date.now();
+  const secs = blockTimes.map((b, i) => `#${b.n}:${Math.round(((blockTimes[i + 1]?.at ?? end) - b.at) / 1000)}`);
+  console.log(`\nblock times (s, #n = n-th block in the file): ${secs.join(" ")}`);
 }
 console.log(`${shardN > 1 ? `\nshard ${shardI}/${shardN}: ` : "\n"}${failures ? `${failures} check(s) failed` : "all checks passed"} in ${Math.round((Date.now() - started) / 1000)} s`);
 process.exit(failures ? 1 : 0);

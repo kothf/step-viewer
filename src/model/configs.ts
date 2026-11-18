@@ -3,7 +3,7 @@
 // (variable expressions, numeric values and expressions, counts, suppression, material). Switching
 // stores the current values into the active configuration and applies the target's.
 import { solve } from "../sketch/solver";
-import { MATERIALS } from "../tools/analysis";
+import { findMaterial, toRef } from "../tools/materials";
 import type { Num, PartDoc, PartConfig, SketchFeature } from "./types";
 
 export type ConfigState = PartConfig["state"];
@@ -171,7 +171,7 @@ function columns(d: PartDoc): Column[] {
   cols.push({
     head: "$MATERIAL",
     get: s => s.material?.name ?? "",
-    set: (s, v) => { s.material = v ? (MATERIALS.find(m => m.name.toLowerCase() === v.toLowerCase()) ?? (s.material?.name === v ? s.material : null)) : null; },
+    set: (s, v) => { const m = v ? findMaterial(v) : undefined; s.material = m ? toRef(m) : v && s.material?.name === v ? s.material : null; },
   });
   return cols;
 }

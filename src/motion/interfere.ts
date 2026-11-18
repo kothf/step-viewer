@@ -1,4 +1,4 @@
-// Interference over a motion study (FR-FT-122): SolidWorks' motion study Results → Interference Detection.
+// Interference over a motion study (FR-FT-122): a CAD app's motion study Results → Interference Detection.
 // The manager poses every frame and asks the assembly which shown components enter one another; these pure
 // helpers turn the per-frame pairs into time spans per pair and a CSV.
 

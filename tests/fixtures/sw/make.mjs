@@ -1,6 +1,6 @@
-// Builds the SolidWorks test fixtures from scratch, so no real (private) model
+// Builds the CAD app test fixtures from scratch, so no real (private) model
 // is needed: a 40 x 30 x 20 mm block as a hand-written Parasolid X_T body,
-// stored the way SolidWorks 2015+ stores sections, and an assembly placing
+// stored the way 2015+ files store sections, and an assembly placing
 // it twice. Run: node tests/fixtures/sw/make.mjs
 import { crc32, deflateRawSync, deflateSync } from "node:zlib";
 import { writeFileSync } from "node:fs";
@@ -73,7 +73,7 @@ function blockXt(lx, ly, lz) {
   return Buffer.from(s + "1 0 ", "latin1");
 }
 
-/** A Parasolid stream as SolidWorks stores it: chunk id, sizes, zlib data. */
+/** A Parasolid stream as a CAD app stores it: chunk id, sizes, zlib data. */
 function psStream(data) {
   const z = deflateSync(data);
   const head = Buffer.alloc(24);
@@ -83,7 +83,7 @@ function psStream(data) {
   return Buffer.concat([head, z]);
 }
 
-/** SolidWorks 2015+ container: marker, header, nibble-swapped name, raw deflate. */
+/** A CAD app 2015+ container: marker, header, nibble-swapped name, raw deflate. */
 function container(sections) {
   const out = [];
   for (const [name, data] of sections) {
@@ -112,7 +112,7 @@ const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <swReference id="8" swName="lid" swReferenceNumber="1" swSuppressed="NO" swHidden="NO" swModelRef="9" swConfigurationName="Default" swTransform="1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1"/>
 </swModel><swModel id="9" swName="lid" swConfigurationName="Default" swFileRef="10"/></swModelList></swSolidWorks>`
   .replace('</swHeader>', '<swFile id="10" swDocType="PART" swPath="C:\\Fixtures\\lid.SLDPRT"/></swHeader>');
-// A 1x1 PNG stands in for SolidWorks' thumbnail (shown when no geometry can be read).
+// A 1x1 PNG stands in for a CAD app's thumbnail (shown when no geometry can be read).
 const chunk = (type, data) => {
   const b = Buffer.alloc(12 + data.length);
   b.writeUInt32BE(data.length, 0);

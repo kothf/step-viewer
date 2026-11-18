@@ -10,6 +10,8 @@
 // 9 MB and would slow every type check down.
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { massOf, memoOf } from "./memo";
+import { covOfTensor, type Sym } from "../tools/inertia";
 
 export type V3 = [number, number, number];
 
@@ -55,6 +57,8 @@ export interface PartPatch {
   volume?: number;
   area?: number;
   com?: V3;
+  /** Covariance about `com` for unit density (src/tools/inertia.ts). */
+  inertia?: Sym;
   faces?: (FacePatch | null)[];
   edges?: (EdgePatch | null)[];
 }
@@ -247,9 +251,12 @@ export class Kernel {
     if (m.faces.length !== probe.faces) return { ok: false, reason: `face count ${m.faces.length} ≠ ${probe.faces}` };
 
     const faces: (FacePatch | null)[] = [];
+    const memo = memoOf(oc);
     let bad = 0, checked = 0;
     for (let f = 0; f < m.faces.length; f++) {
-      const fp = this.face(m.faces[f]);
+      // Kept per face (memo.ts): an edit re-measures only the faces it made. A copy, since curvature is added below.
+      const kept = memo.get("face", m.faces[f], () => this.face(m.faces[f]));
+      const fp = kept && { ...kept };
       faces.push(fp);
       const ma = probe.faceArea[f];
       if (!fp || !(ma > 0)) continue;
@@ -261,7 +268,7 @@ export class Kernel {
 
     for (const [f, pts] of probe.samples) {
       const fp = faces[f];
-      if (fp && fp.type === "freeform") Object.assign(fp, this.curvature(m.faces[f], pts));
+      if (fp && fp.type === "freeform") Object.assign(fp, this.curvatureOf(m.faces[f], pts));
     }
 
     const out: PartPatch = { ok: true, faces, edges: this.edges(m, probe) };
@@ -272,13 +279,24 @@ export class Kernel {
       oc.BRepGProp.SurfaceProperties_1(m.shape, props, false, false);
       out.area = props.Mass();
     }
-    if (m.solid && m.shape.ShapeType() === oc.TopAbs_ShapeEnum.TopAbs_SOLID) {
-      const vp = new oc.GProp_GProps_1();
-      oc.BRepGProp.VolumeProperties_1(m.shape, vp, true, false, false);
-      const vol = vp.Mass();
-      if (vol !== 0) { out.volume = Math.abs(vol); out.com = P(vp.CentreOfMass()); }
+    if (m.solid && this.allSolid(m.shape)) {
+      const mass = massOf(oc, m.shape), vol = mass.volume;
+      if (vol !== 0) {
+        out.volume = Math.abs(vol); out.com = [...mass.com];
+        out.inertia = covOfTensor(mass.inertia.map(r => r.map(v => v * Math.sign(vol))));
+      }
     }
     return out;
+  }
+
+  /** A solid, or a compound (multibody part) made only of solids. */
+  private allSolid(shape: any): boolean {
+    const oc = this.oc, T = oc.TopAbs_ShapeEnum, t = shape.ShapeType();
+    if (t === T.TopAbs_SOLID) return true;
+    if (t !== T.TopAbs_COMPOUND && t !== T.TopAbs_COMPSOLID) return false;
+    let n = 0;
+    for (const it = new oc.TopoDS_Iterator_2(shape, true, true); it.More(); it.Next(), n++) if (!this.allSolid(it.Value())) return false;
+    return n > 0;
   }
 
   private face(face: any): FacePatch | null {
@@ -312,6 +330,14 @@ export class Kernel {
     } catch { return null; }
   }
 
+  /** `curvature`, kept per face for the same sample points (a face a rebuild left alone keeps its triangles). */
+  private curvatureOf(face: any, pts: number[]): Pick<FacePatch, "kMin" | "kMax"> {
+    const key = pts.join();
+    const kept = memoOf(this.oc).get("curvature", face, () => ({ key: "", value: {} as Pick<FacePatch, "kMin" | "kMax"> }));
+    if (kept.key !== key) { kept.value = this.curvature(face, pts); kept.key = key; }
+    return kept.value;
+  }
+
   /** Principal curvatures at the sample points (projected onto the surface). */
   private curvature(face: any, pts: number[]): Pick<FacePatch, "kMin" | "kMax"> {
     const oc = this.oc;
@@ -320,14 +346,25 @@ export class Kernel {
       const sas = new oc.ShapeAnalysis_Surface(surf);
       const ad = new oc.BRepAdaptor_Surface_2(face, true);
       let kMin = Infinity, kMax = 0;
+      // The samples are neighbouring mesh nodes: each projection starts from the last one's (NextValueOfUV), which
+      // falls back to the full search when that does not converge.
+      let prev: any = null;
       for (let k = 0; k + 2 < pts.length; k += 3) {
-        const uv = sas.ValueOfUV(new oc.gp_Pnt_3(pts[k], pts[k + 1], pts[k + 2]), 1e-6);
+        const p = new oc.gp_Pnt_3(pts[k], pts[k + 1], pts[k + 2]);
+        const uv = prev ? sas.NextValueOfUV(prev, p, 1e-6, -1) : sas.ValueOfUV(p, 1e-6);
+        p.delete();
+        prev?.delete();
+        prev = uv;
         const pr = new oc.BRepLProp_SLProps_1(ad, uv.X(), uv.Y(), 2, 1e-9);
-        if (!pr.IsCurvatureDefined()) continue;
-        const a = Math.abs(pr.MinCurvature()), b = Math.abs(pr.MaxCurvature());
+        const ok = pr.IsCurvatureDefined();
+        const a = ok ? Math.abs(pr.MinCurvature()) : 0, b = ok ? Math.abs(pr.MaxCurvature()) : 0;
+        pr.delete();
+        if (!ok) continue;
         kMin = Math.min(kMin, a, b);
         kMax = Math.max(kMax, a, b);
       }
+      prev?.delete();
+      sas.delete(); ad.delete();
       return kMin === Infinity ? {} : { kMin, kMax };
     } catch { return {}; }
   }
@@ -349,9 +386,10 @@ export class Kernel {
       }
       return ids;
     });
+    const memo = memoOf(oc);
     const info = new Map<number, ReturnType<Kernel["edgeInfo"]>>();
     const get = (id: number) => {
-      if (!info.has(id)) info.set(id, this.edgeInfo(oc.TopoDS.Edge_1(map.FindKey(id))));
+      if (!info.has(id)) { const e = oc.TopoDS.Edge_1(map.FindKey(id)); info.set(id, memo.get("edge", e, () => this.edgeInfo(e))); }
       return info.get(id)!;
     };
 
@@ -486,7 +524,7 @@ export class Kernel {
     return this.stepOfDoc(doc);
   }
 
-  /** STEP of an XCAF document built elsewhere (a converted SolidWorks model). */
+  /** STEP of an XCAF document built elsewhere (a converted SLDPRT/SLDASM model). */
   stepOfDoc(doc: any): Uint8Array {
     const oc = this.oc;
     const path = `/out${++this.seq}.stp`;

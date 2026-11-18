@@ -53,7 +53,7 @@ export class Snapper {
   radiusPx = 15;
   private current: Snap | null = null;
   /**
-   * SolidWorks-style inference point: hovering a circle or arc shows its centre, hovering a straight edge its
+   * CAD-app-style inference point: hovering a circle or arc shows its centre, hovering a straight edge its
    * midpoint. The point stays offered (and pickable, even when the model hides it) until another edge is
    * hovered or the cursor wanders well away.
    */

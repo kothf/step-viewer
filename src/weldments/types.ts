@@ -3,6 +3,12 @@
 import type { FaceRef, Num, PlaneRef } from "../model/types";
 import type { Anchor, ProfileType } from "./profiles";
 
+/**
+ * Where a member's profile sits on its path: a library anchor (box corners, edge middles, centre), "o" the
+ * profile sketch's origin, or `p:<point id>` any point of the profile sketch (a CAD app's Locate profile).
+ */
+export type Pierce = Anchor | "o" | `p:${string}`;
+
 /** A path segment: a line of a 2D sketch or of a 3D sketch, by the sketch's id and the line's id. */
 export interface WeldSegRef { sketch: string; ent: string }
 
@@ -30,7 +36,7 @@ export interface MemberFeature {
   /** Cut list description in place of the profile's name. */
   desc?: string;
   /** Where the profile sits on the path; absent: its centre (a sketch profile: the sketch origin). */
-  anchor?: Anchor;
+  anchor?: Pierce;
   /** Rotation of the profile about the path. */
   angle?: Num;
   /** Mirror the profile left to right. */
@@ -44,8 +50,10 @@ export interface MemberFeature {
   mergeArcs?: boolean;
   /** Merge miter trimmed bodies: segments meeting at a mitred corner (no weld gap) become one body. */
   mergeMiter?: boolean;
+  /** Coped cut: a butted member's end follows the shape of the member it stops at (a saddle on a round tube) instead of a flat cut square to its face. */
+  coped?: boolean;
   /**
-   * Alignment (SolidWorks' Align): the profile's vertical (`axis` "v") or horizontal ("h") axis points along this
+   * Alignment (a CAD app's Align): the profile's vertical (`axis` "v") or horizontal ("h") axis points along this
    * straight sketch line, square to each segment, before the rotation angle; for every group. Absent: a 2D path
    * sketch's normal (else world Z) is up.
    */
@@ -55,7 +63,7 @@ export interface MemberFeature {
 /** A group of a Structural Member's segments placed with its own profile settings. */
 export interface MemberGroup {
   ents: string[];
-  anchor?: Anchor;
+  anchor?: Pierce;
   angle?: Num;
   mirror?: boolean;
 }
@@ -94,7 +102,7 @@ export interface EndCapFeature {
   /** Old files: true = `dir` "in". */
   inward?: boolean;
   /**
-   * Thickness direction (SolidWorks): "out" adds the plate past the end; "in" keeps the overall length
+   * Thickness direction (a CAD app): "out" adds the plate past the end; "in" keeps the overall length
    * (the member is cut back by the thickness); "internal" fits the plate inside a hollow profile's
    * inner outline, flush with the end, `inset` = clearance.
    */
@@ -121,8 +129,14 @@ export interface GussetFeature {
   /** Polygonal profile: the outer corner is cut off, leaving `d3` along each leg's end. */
   shape: "tri" | "poly";
   d3?: Num;
-  /** Inner corner chamfer (clears the weld between the members). */
+  /** Polygonal profile: the flat at the end of leg 2 (along face 1's direction) when it differs from `d3`. */
+  d4?: Num;
+  /** Polygonal profile: the sloping edge's angle from face 1 (radians); sets the flat at the end of leg 2 instead of `d4`. */
+  polyAngle?: Num;
+  /** Inner corner chamfer (clears the weld between the members): the distance along face 1, and along face 2 unless `chamfer2`. */
   chamfer?: Num;
+  /** The chamfer's distance along face 2 when it differs. */
+  chamfer2?: Num;
   loc: "mid" | "start" | "end";
   /** Moves the plate from its location along the corner line (from the start or end inwards; from the middle towards the end). */
   offset?: Num;
@@ -144,6 +158,8 @@ export interface WeldBeadFeature {
   inter?: { len: Num; pitch: Num; stagger?: boolean };
   /** From/to length: the bead only from `start` along each chain of edges for `len` (from the chain's other end when `flip`); intermittent welds fill this span. */
   span?: { start: Num; len: Num; flip?: boolean };
+  /** Weld both sides: each flat face of set 1 also brings the face on the other side of its plate (the nearest flat face of the same body facing the opposite way behind it). */
+  both?: boolean;
   /** false hides the weld symbol in the view. */
   symbol?: false;
   /** Weld all around (ISO 2553 circle at the knee of the symbol). */
@@ -174,6 +190,8 @@ export interface CutItem {
   volume: number;
   /** Body keys of the items (Bodies folder). */
   bodies: string[];
+  /** The sub-weldment (`PartDoc.subWelds` id) the item's bodies sit in; set by `splitSubs`, never by the kernel. */
+  sub?: string;
 }
 
 /** A cut list item's key in `PartDoc.cutProps`: what makes items alike (kind, description, length, end angles, plate size). */
@@ -182,7 +200,94 @@ export function cutKey(c: CutItem): string {
   return [c.kind, c.desc, r(c.length), r(c.angle1), r(c.angle2), (c.plate ?? []).map(r).join("x")].join("|") + (c.inter ? `|${c.inter.join("/")}` : "");
 }
 
+export interface SubWeld { id: string; name: string; bodies: string[] }
+
+/**
+ * The cut list as shown (a CAD app's sub-weldment folders): items whose bodies sit in different sub-weldments are split,
+ * the quantity following the body count (a bead's volume and length share out by its bodies). Items outside every sub-weldment
+ * come first, then each sub-weldment's in `subs` order; `cutKey` ignores `sub`, so item properties stay shared.
+ */
+export function splitSubs(items: CutItem[], subs: SubWeld[] | undefined): CutItem[] {
+  if (!subs?.length) return items;
+  const owner = new Map<string, string>();
+  for (const s of subs) for (const b of s.bodies) if (!owner.has(b)) owner.set(b, s.id);
+  const groups = new Map<string, CutItem[]>([["", []], ...subs.map(s => [s.id, []] as [string, CutItem[]])]);
+  for (const c of items) {
+    const by = new Map<string, string[]>();
+    for (const b of c.bodies) { const k = owner.get(b) ?? ""; by.set(k, [...(by.get(k) ?? []), b]); }
+    if (!c.bodies.length) by.set("", []);
+    for (const [k, bs] of by) {
+      const part: CutItem = { ...c, bodies: bs };
+      if (by.size > 1) {
+        // A bead row sums its bodies: volume and length share out by body count.
+        if (c.kind === "bead") { const f = bs.length / c.bodies.length; part.volume = c.volume * f; if (c.length != null) part.length = Math.round(c.length * f * 10) / 10; }
+        else part.qty = bs.length;
+      }
+      if (k) part.sub = k; else delete part.sub;
+      groups.get(k)!.push(part);
+    }
+  }
+  return [...groups.values()].flat();
+}
+
 /** The key of a corner in `MemberFeature.corners`: the meeting segments' ids, sorted, joined with "+". */
 export function cornerKey(ents: string[]): string {
   return [...ents].sort().join("+");
+}
+
+/** How `lengths` (mm) are cut from bars of length `bar` with a saw `kerf` between cuts: first fit, longest first. Each bar lists its pieces and what is left of it; pieces longer than a bar go in `over`. */
+export function barPlan(lengths: number[], bar: number, kerf = 0): { bars: { pieces: number[]; left: number }[]; over: number[] } {
+  const bars: { pieces: number[]; free: number }[] = [], over: number[] = [];
+  for (const l of [...lengths].sort((a, b) => b - a)) {
+    if (l > bar + 1e-6) { over.push(l); continue; }
+    // A bar holds its pieces plus a kerf between them: sizes l + kerf fit a capacity of bar + kerf.
+    let b = bars.find(x => x.free + 1e-6 >= l + kerf);
+    if (!b) bars.push(b = { pieces: [], free: bar + kerf });
+    b.pieces.push(l); b.free -= l + kerf;
+  }
+  const r1 = (v: number) => Math.round(v * 10) / 10;
+  return { bars: bars.map(b => ({ pieces: b.pieces, left: r1(Math.max(0, bar - b.pieces.reduce((s, l) => s + l, 0) - kerf * (b.pieces.length - 1))) })), over };
+}
+
+/** Equal bars of a cutting plan put together: the same pieces in the same order. */
+export function planGroups(plan: { pieces: number[]; left: number }[]): { n: number; pieces: number[]; left: number }[] {
+  const out: { n: number; pieces: number[]; left: number; key: string }[] = [];
+  for (const b of plan) {
+    const key = b.pieces.map(l => l.toFixed(1)).join("+");
+    const g = out.find(x => x.key === key);
+    if (g) g.n++; else out.push({ n: 1, pieces: b.pieces, left: b.left, key });
+  }
+  return out.map(({ key: _k, ...g }) => g);
+}
+
+/** Bars of length `bar` needed to cut `lengths` (mm) with a saw `kerf` between cuts (see `barPlan`). Pieces longer than a bar are counted in `over` and left out. */
+export function barsNeeded(lengths: number[], bar: number, kerf = 0): { bars: number; over: number } {
+  const p = barPlan(lengths, bar, kerf);
+  return { bars: p.bars.length, over: p.over.length };
+}
+
+/** A stock lengths row: profile, pieces, summed length in mm and, with a stock bar length, the bars to buy, what is left of them and the pieces too long for a bar. */
+export interface StockRow { desc: string; pieces: number; length: number; bars?: number; left?: number; over?: number; /** The cutting plan: each bar's pieces (mm, longest first) and what is left of it. */ plan?: { pieces: number[]; left: number }[] }
+
+/** Stock to buy for a cut list: per profile (member description), the number of pieces and their summed length in mm; `skip` leaves items out (excluded ones); `stock` (bar length and saw kerf in mm) adds the bars needed. */
+export function stockTotals(items: CutItem[], skip?: (c: CutItem) => boolean, stock?: { len?: number; kerf?: number }): StockRow[] {
+  const out = new Map<string, { desc: string; pieces: number; length: number; all: number[] }>();
+  for (const c of items) {
+    if (c.kind !== "member" || skip?.(c)) continue;
+    const r = out.get(c.desc) ?? { desc: c.desc, pieces: 0, length: 0, all: [] };
+    r.pieces += c.qty;
+    r.length += (c.length ?? 0) * c.qty;
+    for (let i = 0; i < c.qty; i++) r.all.push(c.length ?? 0);
+    out.set(c.desc, r);
+  }
+  const r1 = (v: number) => Math.round(v * 10) / 10;
+  return [...out.values()].map(({ all, ...r }) => {
+    const row: StockRow = { ...r, length: r1(r.length) };
+    if (stock?.len && stock.len > 0) {
+      const b = barPlan(all, stock.len, Math.max(0, stock.kerf ?? 0));
+      const fit = all.filter(l => l <= stock.len! + 1e-6).reduce((s, l) => s + l, 0);
+      row.bars = b.bars.length; row.left = r1(b.bars.length * stock.len - fit); row.over = b.over.length; row.plan = b.bars;
+    }
+    return row;
+  });
 }

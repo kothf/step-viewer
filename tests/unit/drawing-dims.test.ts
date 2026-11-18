@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { MEdge, Projection, Topo, V3 } from "../../src/kernel/drawing";
-import { bendRows, dimGeo, dimPrims, dimText, holeEdges, holeRows, viewAnnots, type AnnotCtx } from "../../src/drawing/annot";
+import { bendRows, cutCols, cutDesc, cutRows, edgeItem, weldItem, stackItem, weldRows, dimGeo, dimPrims, dimText, holeEdges, holeRows, useStyle, viewAnnots, type AnnotCtx } from "../../src/drawing/annot";
 import { placement } from "../../src/drawing/compose";
 import type { DimAnnot, DrawingView, GeoRef, Sheet } from "../../src/drawing/types";
 
@@ -97,6 +97,25 @@ test("hole table: end-on holes once each, tagged by size from the smallest, X/Y 
   assert.deepEqual(gone.dangling, ["t"]);
 });
 
+test("hole table on a solid: one row per hole (its drill), counterbore in the size, a boss rim is no hole (drawings exam #5)", () => {
+  const circ = (k: string, c: V3, r: number): MEdge => ({ k, t: "c", a: [c[0] + r, c[1], c[2]], b: [c[0] + r, c[1], c[2]], m: [c[0] - r, c[1], c[2]], c, ax: [0, 0, 1], r, sp: 2 * Math.PI });
+  const ht: Topo = {
+    edges: [circ("cb-top", [30, 20, 15], 5.5), circ("cb-floor", [30, 20, 8.6], 5.5), circ("dr-top", [30, 20, 8.6], 3.3), circ("dr-bot", [30, 20, 0], 3.3),
+      circ("boss", [0, 0, 35], 20), circ("boss-ch", [0, 0, 35], 18)],
+    cyls: [{ o: [0, 0, 15], ax: [0, 0, 1], r: 20, v0: 0, v1: 18, sp: 2 * Math.PI, f: "boss" }],
+    holes: [{ o: [30, 20, 0], ax: [0, 0, 1], segs: [{ k: "cyl", v0: 0, v1: 8.6, r0: 3.3, r1: 3.3 }, { k: "cyl", v0: 8.6, v1: 15, r0: 5.5, r1: 5.5 }], open: [true, true] }],
+  };
+  const holes = holeEdges(ht, P, [0, 0, 1]);
+  assert.deepEqual(holes.map(e => e.k), ["dr-top"]);
+  const ctx: AnnotCtx = { topo: ht, holes: [], items: [], box: null, dec: ".", label: s => s };
+  const a = { id: "t", t: "htable" as const, view: "v", origin: { pt: [0, 0, 0] as V3 }, holes: holes.map(e => ({ e: e.k, h: e.m, p: "e" as const })), pos: [0, -40] as [number, number], prec: 1 };
+  assert.deepEqual(holeRows(a, P, ctx).rows, [["A1", "30.0", "20.0", "Ø6.6 THRU ⌴Ø11 ↧6.4"]]);
+  // Drawings exam #41: dual dimensions leave the hole table in one unit (its X/Y columns are mm only).
+  useStyle({ dual: "in" });
+  try { assert.deepEqual(holeRows(a, P, ctx).rows, [["A1", "30.0", "20.0", "Ø6.6 THRU ⌴Ø11 ↧6.4"]]); } finally { useStyle(undefined); }
+  assert.deepEqual(holeEdges({ ...ht, holes: undefined }, P, [0, 0, 1]), [], "a solid without hole stacks has no holes");
+});
+
 test("bend table: bends tagged top to bottom then left to right, the tags replace the notes on the view", () => {
   const bends = [
     { a: [0, 10, 2] as V3, b: [100, 10, 2] as V3, up: true, angle: Math.PI / 2, r: 2 },
@@ -113,4 +132,107 @@ test("bend table: bends tagged top to bottom then left to right, the tags replac
   assert.ok(!tx.some(s => /^(UP|DOWN) /.test(s)), "no bend notes beside a bend table");
   const none = viewAnnots(sh, view, pl, { ...ctx, bends: [] });
   assert.deepEqual(none.dangling, ["b"]);
+});
+
+test("weld table: one row per kind of bead (continuous, intermittent, staggered, by leg), then a total (FR-FT-121)", () => {
+  const welds = [
+    { legs: "4", length: 149.7, qty: 2 },
+    { legs: "5×8", length: 151.75, qty: 1 },
+    { legs: "3.5", length: 80, qty: 1, inter: [20, 40] as [number, number] },
+    { legs: "3", length: 60, qty: 1, inter: [20, 50, 1] as [number, number, 1] },
+  ];
+  const ctx: AnnotCtx = { topo: { edges: [], cyls: [] }, holes: [], welds, items: [], box: null, dec: ",", label: (s, p) => s.replace(/\{(\w+)\}/g, (_m, k) => p?.[k] ?? "") };
+  const a = { id: "w", t: "wtable" as const, view: "v", pos: [0, -40] as [number, number] };
+  assert.deepEqual(weldRows(a, welds, ctx), [
+    ["1", "Continuous", "z4", "149,7", "2"], ["2", "Continuous", "z5×8", "151,75", "1"],
+    ["3", "Intermittent 20 / 40", "z3,5", "80", "1"], ["4", "Staggered 20 / 50", "z3", "60", "1"],
+    ["", "Total", "", "441,45", "5"],
+  ]);
+  assert.deepEqual(weldRows({ ...a, prec: 1 }, welds.slice(0, 1), ctx), [["1", "Continuous", "z4", "149,7", "2"]], "no total under one row");
+  const sh = { ...sheet, views: [view], annots: [a] } as unknown as Sheet;
+  const tx = viewAnnots(sh, view, pl, ctx).prims.filter(p => p.t === "t").map(p => (p as { s: string }).s);
+  assert.ok(["Item", "Weld", "Leg", "Length", "Qty", "z5×8", "Total"].every(s => tx.includes(s)), tx.join(" "));
+  assert.deepEqual(viewAnnots(sh, view, pl, { ...ctx, welds: [] }).dangling, ["w"]);
+});
+
+test("cut list table: the cut list's items with their numbers, typed descriptions, lengths and end angles (FR-FT-121)", () => {
+  const cuts = [
+    { item: 1, kind: "member" as const, desc: "SHS 40x40x3", length: 300.25, a1: 45, a2: 0, qty: 4, kg: 1.0512 },
+    { item: 2, kind: "plate" as const, desc: "10", plate: [200, 150, 10] as [number, number, number], qty: 1, kg: 2.356 },
+    { item: 3, kind: "member" as const, desc: "Leg", own: true, length: 500, a1: 0, a2: 0, qty: 2, kg: 1.75 },
+    { item: 4, kind: "bead" as const, desc: "4.5", length: 149.7, qty: 1, kg: 0.01 },
+    { item: 5, kind: "bead" as const, desc: "3", length: 60, qty: 1, kg: 0.005, inter: [20, 50, 1] as [number, number, 1] },
+  ];
+  const ctx: AnnotCtx = { topo: { edges: [], cyls: [] }, holes: [], cuts, items: [], box: null, dec: ",", label: (s, p) => s.replace(/\{(\w+)\}/g, (_m, k) => p?.[k] ?? "") };
+  const a = { id: "c", t: "ctable" as const, view: "v", pos: [0, -40] as [number, number] };
+  assert.deepEqual(cutCols(a), ["Item", "Qty", "Description", "Length", "Angle 1", "Angle 2"]);
+  assert.deepEqual(cutRows(a, cuts, ctx), [
+    ["1", "4", "SHS 40x40x3", "300,25", "45°", "0°"], ["2", "1", "Plate 10 × 200 × 150", "", "", ""],
+    ["3", "2", "Leg", "500", "0°", "0°"], ["4", "1", "Fillet weld, leg 4,5", "149,7", "", ""],
+    ["5", "1", "Staggered fillet weld, leg 3, 20 every 50", "60", "", ""],
+  ]);
+  const m = { ...a, beads: false, mass: true };
+  assert.deepEqual(cutCols(m).at(-1), "Mass (kg)");
+  assert.deepEqual(cutRows(m, cuts, ctx).map(r => [r[0], r[6]]), [["1", "1,05"], ["2", "2,36"], ["3", "1,75"]], "beads left out, numbers kept, mass each");
+  const sh = { ...sheet, views: [view], annots: [a] } as unknown as Sheet;
+  const out = viewAnnots(sh, view, pl, ctx), tx = out.prims.filter(p => p.t === "t").map(p => (p as { s: string }).s);
+  assert.ok(["Item", "Qty", "Description", "Angle 1", "SHS 40x40x3", "Plate 10 × 200 × 150"].every(s => tx.includes(s)), tx.join(" "));
+  assert.deepEqual(viewAnnots(sh, view, pl, { ...ctx, cuts: [] }).dangling, ["c"]);
+});
+
+test("cut list balloons: a weldment part drawing numbers bodies by their cut list item (FR-FT-121)", () => {
+  const cuts = [
+    { item: 1, kind: "member" as const, desc: "SHS 40x40x3", length: 300, a1: 45, a2: 45, qty: 4, kg: 1 },
+    { item: 2, kind: "plate" as const, desc: "10", plate: [200, 150, 10] as [number, number, number], qty: 2, kg: 2 },
+  ];
+  const cutFaces = { "m:e1:side:0": 1, "m:e1:side:1": 1, "p:f0": 2 };
+  const edges = [line("m:e1:side:0|m:e1:side:1", [0, 0, 0], [40, 0, 0]), line("p:f0|p:f1", [0, 20, 0], [40, 20, 0]), line("x:a|x:b", [0, 30, 0], [40, 30, 0])];
+  const ctx: AnnotCtx = { topo: { edges, cyls: [] }, holes: [], cuts, cutFaces, items: [], box: null, dec: ".", label: (s, p) => s.replace(/\{(\w+)\}/g, (_m, k) => p?.[k] ?? "") };
+  assert.equal(edgeItem(edges[0].k, ctx), 1);
+  assert.equal(edgeItem(edges[1].k, ctx), 2, "either face of the edge names the body");
+  assert.equal(edgeItem(edges[2].k, ctx), null);
+  assert.equal(stackItem("cut:2", ctx), 2);
+  assert.equal(stackItem("cut:9", ctx), null, "an item the cut list no longer has");
+  assert.equal(cutDesc(cuts[1], ctx), "Plate 10 × 200 × 150");
+  const b = { id: "b", t: "balloon" as const, view: "v", ref: { e: edges[0].k, h: edges[0].m, p: "e" as const }, pos: [20, -20] as [number, number], stack: ["cut:2"], shape: "split" as const };
+  const sh = { ...sheet, views: [view], annots: [b] } as unknown as Sheet;
+  const out = viewAnnots(sh, view, pl, ctx), tx = out.prims.filter(p => p.t === "t").map(p => (p as { s: string }).s);
+  assert.ok(["1", "2", "4"].every(s => tx.includes(s)), `item numbers and the split quantities: ${tx.join(" ")}`);
+  assert.deepEqual(out.dangling, []);
+  const lost = { ...b, ref: { ...b.ref, e: edges[2].k }, stack: [] };
+  assert.deepEqual(viewAnnots({ ...sh, annots: [lost] } as unknown as Sheet, view, pl, ctx).dangling, ["b"], "an edge of no cut list body dangles");
+});
+
+test("weld tags: a tag on a bead edge shows the bead's row in the weld table, apart from cut list balloons (FR-FT-121)", () => {
+  const welds = [{ legs: "4", length: 160, qty: 1 }, { legs: "6", length: 400, qty: 2 }];
+  const weldFaces = { "w:b0:leg1": 1, "w:b0:leg2": 1, "w:b1:face": 2 };
+  const cutFaces = { "w:b0:leg1": 3, "w:b0:leg2": 3, "w:b1:face": 4, "m:e1:side:0": 1 };
+  const edges = [line("w:b0:leg1|w:b0:leg2", [0, 0, 0], [40, 0, 0]), line("w:b1:face|m:e1:side:0", [0, 20, 0], [40, 20, 0]), line("m:e1:side:0|m:e1:side:1", [0, 30, 0], [40, 30, 0])];
+  const ctx: AnnotCtx = { topo: { edges, cyls: [] }, holes: [], welds, weldFaces, cutFaces, cuts: [], items: [], box: null, dec: ".", label: (s, p) => s.replace(/\{(\w+)\}/g, (_m, k) => p?.[k] ?? "") };
+  assert.equal(weldItem(edges[0].k, ctx), 1);
+  assert.equal(weldItem(edges[1].k, ctx), 2, "a bead face on either side of the edge names the bead");
+  assert.equal(weldItem(edges[2].k, ctx), null);
+  assert.equal(edgeItem(edges[0].k, ctx), 3, "a plain balloon still numbers the cut list item");
+  assert.equal(stackItem("weld:2", ctx), 2);
+  assert.equal(stackItem("weld:3", ctx), null, "a row the weld table no longer has");
+  const tag = { id: "w", t: "balloon" as const, view: "v", ref: { e: edges[1].k, h: edges[1].m, p: "e" as const }, pos: [20, -20] as [number, number], weld: true as const, shape: "split" as const };
+  const sh = { ...sheet, views: [view], annots: [tag] } as unknown as Sheet;
+  const out = viewAnnots(sh, view, pl, ctx), tx = out.prims.filter(p => p.t === "t").map(p => (p as { s: string }).s);
+  assert.ok(tx.includes("2") && !tx.includes("4"), `the weld row and its bead count, not the cut list item: ${tx.join(" ")}`);
+  assert.deepEqual(out.dangling, []);
+  const lost = { ...tag, ref: { ...tag.ref, e: edges[2].k } };
+  assert.deepEqual(viewAnnots({ ...sh, annots: [lost] } as unknown as Sheet, view, pl, ctx).dangling, ["w"], "an edge of no bead dangles");
+});
+
+test("section centrelines: cylinders the cut took away get none (drawings exam #4)", async () => {
+  const { cutAway } = await import("../../src/drawing/annot");
+  const parent = { id: "t", name: "Top", orient: "top", x: 100, y: 200 };
+  const t: Topo = { edges: [], cyls: [{ o: [0, 0, 15], ax: [0, 0, 1], r: 20, v0: 0, v1: 20, sp: 2 * Math.PI, f: "boss" }, { o: [0, 0, 0], ax: [0, 0, 1], r: 10, v0: 0, v1: 35, sp: 2 * Math.PI, f: "bore", in: true }, { o: [30, 25, 0], ax: [0, 0, 1], r: 3, v0: 0, v1: 15, sp: 2 * Math.PI, f: "far hole", in: true }] };
+  const kept = (look: 1 | -1) => {
+    const v = { id: "s", name: "A", kind: "section", parent: "t", line: [-40, 20, 40, 20], look, x: 100, y: 80 };
+    const sheet = { id: "sh", name: "S", size: "A3", scale: [1, 1], projection: "first", views: [parent, v], annots: [] } as never;
+    return cutAway(sheet, v as never, t).cyls.map(c => c.f).join(",");
+  };
+  const a = kept(1), b = kept(-1);
+  assert.deepEqual([a, b].sort(), ["boss,bore", "far hole"].sort(), `${a} | ${b}: one side keeps only the hole beyond y = 20, the other only the boss and bore`);
 });

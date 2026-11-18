@@ -29,6 +29,7 @@ const dot = (a: V3, b: V3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const len = (a: V3) => Math.hypot(a[0], a[1], a[2]);
 const scale = (a: V3, k: number): V3 => [a[0] * k, a[1] * k, a[2] * k];
+const add = (a: V3, b: V3): V3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 
 /** The geometry moved by a transform. */
 export function placeGeo(g: Geo, t: Tf): Geo {
@@ -63,22 +64,37 @@ function relTurn(t0: [Tf, Tf], tfa: Tf, tfb: Tf, d: V3): number {
 }
 
 /** The mate's residuals (lengths in mm, directions scaled by `L`), for world geometry. */
-export function residuals(m: Mate, ga: Geo, gb: Geo, L: number, tfa?: Tf, tfb?: Tf, gc?: Geo, gd?: Geo): number[] {
+/** A screw's turn (rad, in (−π, π]) and travel (mm) of b relative to a since the mate was made. */
+function screwMotion(m: Mate, ga: Geo, tfa: Tf, tfb: Tf): { turn: number; travel: number } {
+  const ia = invert(tfa), delta = compose(compose(ia, tfb), invert(compose(invert(m.t0![0]), m.t0![1])));
+  const dA = applyDir(ia, (ga as Geo & { k: "axis" }).d), pA = applyPoint(ia, ga.p);
+  return { turn: turnAbout(delta, I3x4, dA), travel: dot(sub(applyPoint(delta, pA), pA), dA) };
+}
+
+/**
+ * Residuals of one mate. `branch` holds a screw's turn with its turn count (unwrapped, rad) as the solver last
+ * accepted it, so the residual is smooth within a step; without it the nearest turn count is taken, which jumps every
+ * half pitch and made the solver lose its way when a handwheel had to turn far (exam #75).
+ */
+export function residuals(m: Mate, ga: Geo, gb: Geo, L: number, tfa?: Tf, tfb?: Tf, gc?: Geo, gd?: Geo, branch?: { u: number }, ends?: [V3, V3]): number[] {
   const da = dirOf(ga), db0 = dirOf(gb);
   const s = m.align === "aligned" ? 1 : -1;
   const sg = m.flip ? -1 : 1;
   const out: number[] = [];
   const dirs = (v: V3) => out.push(v[0] * L, v[1] * L, v[2] * L);
   const parallel = () => dirs(cross(da, db0));
+  // Offsets stay in mm (directions are × L to match): × L they were hundreds of times steeper than every other row,
+  // and the solver's damping, set from the steepest row, then swamped gentle motions such as a screw's turn (exam #75).
+  const offs = (v: V3) => out.push(v[0], v[1], v[2]);
   const axisOff = (a: Geo & { k: "axis" }, p: V3) => len(cross(sub(p, a.p), a.d));
   switch (m.type) {
     case "coincident":
       if (ga.k === "plane" && gb.k === "plane") { dirs(sub(da, scale(db0, s))); out.push(dot(da, sub(gb.p, ga.p))); }
-      else if (ga.k === "axis" && gb.k === "axis") { parallel(); dirs(cross(sub(gb.p, ga.p), ga.d)); }
+      else if (ga.k === "axis" && gb.k === "axis") { parallel(); offs(cross(sub(gb.p, ga.p), ga.d)); }
       else { const pl = ga.k === "plane" ? ga : gb as Geo & { k: "plane" }, ax = (ga.k === "axis" ? ga : gb) as Geo & { k: "axis" }; out.push(dot(pl.n, ax.d) * L, dot(pl.n, sub(ax.p, pl.p))); }
       break;
     case "concentric":
-      parallel(); dirs(cross(sub(gb.p, ga.p), da));
+      parallel(); offs(cross(sub(gb.p, ga.p), da));
       // Lock rotation: b's turn about a's axis since the mate was made stays zero.
       if (m.lockRot && tfa && tfb && m.t0 && ga.k === "axis") out.push(wrap(relTurn(m.t0, tfa, tfb, ga.d)) * L);
       break;
@@ -90,14 +106,19 @@ export function residuals(m: Mate, ga: Geo, gb: Geo, L: number, tfa?: Tf, tfb?: 
       break;
     case "distance": {
       const v = m.value ?? 0;
-      if (ga.k === "plane" && gb.k === "plane") { parallel(); out.push(dot(da, sub(gb.p, ga.p)) - sg * v); }
+      // Between planes the alignment counts, as in a coincident mate, so Aligned / Anti-aligned picks the side b faces (exam #64).
+      if (ga.k === "plane" && gb.k === "plane") { if (m.align) dirs(sub(da, scale(db0, s))); else parallel(); out.push(dot(da, sub(gb.p, ga.p)) - sg * v); }
       else if (ga.k === "axis" && gb.k === "axis") { parallel(); out.push(axisOff(ga, gb.p) - v); }
       else { const pl = ga.k === "plane" ? ga : gb as Geo & { k: "plane" }, ax = (ga.k === "axis" ? ga : gb) as Geo & { k: "axis" }; out.push(dot(pl.n, ax.d) * L, dot(pl.n, sub(ax.p, pl.p)) - sg * v); }
       break;
     }
     case "angle": {
       const b = scale(db0, sg);
-      out.push((Math.atan2(len(cross(da, b)), dot(da, b)) - (m.value ?? 0)) * L);
+      // Signed about the direction kept from when the mate was made (in a's frame), so ±θ differ (exam #72).
+      if (m.about && tfa) {
+        const ax = applyDir(tfa, m.about), c = cross(da, b);
+        out.push(wrap(Math.atan2(dot(c, ax), dot(da, b)) - (m.value ?? 0)) * L);
+      } else out.push((Math.atan2(len(cross(da, b)), dot(da, b)) - (m.value ?? 0)) * L);
       break;
     }
     case "tangent":
@@ -125,12 +146,12 @@ export function residuals(m: Mate, ga: Geo, gb: Geo, L: number, tfa?: Tf, tfb?: 
       const n = gc.n, refl = (v: V3) => sub(v, scale(n, 2 * dot(v, n))), reflP = (p: V3) => sub(p, scale(n, 2 * dot(sub(p, gc.p), n)));
       const ra = refl(da), pa = reflP(ga.p);
       if (ga.k === "plane" && gb.k === "plane") { dirs(sub(ra, db0)); out.push(dot(db0, sub(pa, gb.p))); }
-      else if (ga.k === "axis" && gb.k === "axis") { dirs(cross(ra, db0)); dirs(cross(sub(gb.p, pa), db0)); }
+      else if (ga.k === "axis" && gb.k === "axis") { dirs(cross(ra, db0)); offs(cross(sub(gb.p, pa), db0)); }
       break;
     }
     case "hinge":
       // Concentric on a/b, coincident on the faces c/d.
-      parallel(); dirs(cross(sub(gb.p, ga.p), da));
+      parallel(); offs(cross(sub(gb.p, ga.p), da));
       if (gc?.k === "plane" && gd?.k === "plane") { dirs(sub(gc.n, scale(gd.n, -1))); out.push(dot(gc.n, sub(gd.p, gc.p))); }
       break;
     case "gear": {
@@ -144,17 +165,16 @@ export function residuals(m: Mate, ga: Geo, gb: Geo, L: number, tfa?: Tf, tfb?: 
       break;
     }
     case "screw": {
-      parallel(); dirs(cross(sub(gb.p, ga.p), da));
+      parallel(); offs(cross(sub(gb.p, ga.p), da));
       if (!tfa || !tfb || !m.t0 || ga.k !== "axis") break;
       const pitch = m.ratio ?? 1, s2 = m.flip ? -1 : 1;
       if (Math.abs(pitch) < 1e-12) break;
       // b's motion relative to a since the mate was made, in a's frame: turn and travel along a's axis.
-      const ia = invert(tfa), delta = compose(compose(ia, tfb), invert(compose(invert(m.t0[0]), m.t0[1])));
-      const dA = applyDir(ia, ga.d), pA = applyPoint(ia, ga.p);
-      const turn = turnAbout(delta, I3x4, dA);
-      const travel = dot(sub(applyPoint(delta, pA), pA), dA);
-      const k = Math.round(((2 * Math.PI * travel) / (s2 * pitch) - turn) / (2 * Math.PI));
-      out.push(travel - (s2 * pitch * (turn + 2 * Math.PI * k)) / (2 * Math.PI));
+      const { turn, travel } = screwMotion(m, ga, tfa, tfb);
+      // The thread error in mm; the turn count is the one the solver last accepted, so a step sees no jump.
+      const lead = (s2 * pitch) / (2 * Math.PI);
+      if (branch) out.push(travel - lead * (branch.u + wrap(turn - branch.u)));
+      else out.push(lead * wrap(travel / lead - turn));
       break;
     }
     case "slot":
@@ -163,7 +183,16 @@ export function residuals(m: Mate, ga: Geo, gb: Geo, L: number, tfa?: Tf, tfb?: 
       if (!gc || ga.k !== "plane" || gc.k !== "plane") break;
       // The width faces' midplane, measured along a's normal.
       const sa = dot(da, ga.p), sc = dot(da, gc.p), wm = (sa + sc) / 2;
-      if (gb.k === "axis") { out.push(dot(da, gb.d) * L, dot(da, gb.p) - wm); }
+      if (gb.k === "axis") {
+        out.push(dot(da, gb.d) * L, dot(da, gb.p) - wm);
+        // A slot's pin stays between the end centres (a CAD app's Free slot mate, exam #81); zero inside, like a limit.
+        if (m.type === "slot" && ends) {
+          const [e0, e1] = ends, run = sub(e1, e0), Ls = len(run), u = scale(run, 1 / Math.max(Ls, 1e-12));
+          const mid = scale(add(e0, e1), 0.5), q = add(gb.p, scale(gb.d, dot(sub(mid, gb.p), gb.d)));
+          const t = dot(u, sub(q, e0));
+          out.push(t < 0 ? t : t > Ls ? t - Ls : 0);
+        }
+      }
       else if (gd) { parallel(); out.push((dot(da, gb.p) + dot(da, gd.p)) / 2 - wm); }
       break;
     }
@@ -179,10 +208,36 @@ export function residuals(m: Mate, ga: Geo, gb: Geo, L: number, tfa?: Tf, tfb?: 
   return out;
 }
 
+/**
+ * A slot's rounded ends: the two cylinders of the slot's half width that lie on its mid-plane, square to
+ * the side faces' normal (the farthest apart when there are more), in part coordinates. Null when the
+ * slot has no such ends (a slot open at one end, or straight walls only).
+ */
+export function slotEnds(a: Geo & { k: "plane" }, c: Geo & { k: "plane" }, faces: Iterable<Geo>): [V3, V3] | null {
+  const n = a.n, w = Math.abs(dot(n, sub(c.p, a.p))), mid = (dot(n, a.p) + dot(n, c.p)) / 2, tol = Math.max(1e-3, w * 1e-3);
+  const caps: (Geo & { k: "axis" })[] = [];
+  for (const g of faces) {
+    if (g.k !== "axis" || Math.abs(g.r - w / 2) > tol || Math.abs(dot(g.d, n)) > 1e-6 || Math.abs(dot(n, g.p) - mid) > tol) continue;
+    if (caps.some(q => Math.abs(Math.abs(dot(q.d, g.d)) - 1) > 1e-6)) continue;
+    if (!caps.some(q => len(cross(sub(q.p, g.p), g.d)) < tol)) caps.push(g);
+  }
+  if (caps.length < 2) return null;
+  // Each axis's point moved along it into the plane square to it through the first one.
+  const d = caps[0].d, o = caps[0].p, at = (g: Geo & { k: "axis" }): V3 => sub(g.p, scale(d, dot(sub(g.p, o), d)));
+  let best: [V3, V3] | null = null, far = 0;
+  for (let i = 0; i < caps.length; i++) for (let j = i + 1; j < caps.length; j++) {
+    const p = at(caps[i]), q = at(caps[j]), s = len(sub(q, p));
+    if (s > far) { far = s; best = [p, q]; }
+  }
+  return best;
+}
+
 export interface SolveInput {
   doc: AsmDoc;
   /** Local geometry of a component's face, or null when it cannot be found. */
   geo: (part: string, face: string) => Geo | null;
+  /** Every face's geometry of a part (finds a slot's rounded ends). */
+  faces?: (part: string) => Iterable<Geo>;
   /** Rotation centres in part coordinates (bounding-box centre), by part key. */
   centre?: (part: string) => V3;
   /** Extra mates to try (a mate being made), solved with the document's. */
@@ -203,7 +258,7 @@ export function solve(inp: SolveInput): SolveResult {
   const L = Math.max(1, inp.size ?? 100);
   const all = [...(doc.mates ?? []), ...(inp.extra ?? [])].filter(m => !m.suppressed);
   const missing: string[] = [];
-  type Live = { m: Mate; ga: Geo; gb: Geo; ca: string; cb: string; gc?: Geo; cc?: string; gd?: Geo; cd?: string };
+  type Live = { m: Mate; ga: Geo; gb: Geo; ca: string; cb: string; gc?: Geo; cc?: string; gd?: Geo; cd?: string; ends?: [V3, V3] };
   const live: Live[] = [];
   for (const m of all) {
     const ca = byId.get(m.a.comp), cb = byId.get(m.b.comp);
@@ -223,6 +278,7 @@ export function solve(inp: SolveInput): SolveResult {
         l.gd = gd; l.cd = cd.id;
       }
       if (m.type === "symmetric" && ca.id === cb.id && ca.id === cc.id) { missing.push(m.id); continue; }
+      if (m.type === "slot" && cc.id === ca.id && ga.k === "plane" && gc.k === "plane" && inp.faces) l.ends = slotEnds(ga, gc, inp.faces(ca.part)) ?? undefined;
     }
     live.push(l);
   }
@@ -237,7 +293,20 @@ export function solve(inp: SolveInput): SolveResult {
   for (const id of Object.keys(tf0)) tfs[id] = tf0[id].slice();
   const centreOf = (id: string): V3 => applyPoint(tfs[id], inp.centre?.(byId.get(id)!.part) ?? [0, 0, 0]);
 
-  const resOf = (l: Live, t: Record<string, Tf>) => residuals(l.m, placeGeo(l.ga, t[l.ca]), placeGeo(l.gb, t[l.cb]), L, t[l.ca], t[l.cb], l.gc && placeGeo(l.gc, t[l.cc!]), l.gd && placeGeo(l.gd, t[l.cd!]));
+  // A screw's turn count is picked (nearest) where the solve starts and after each accepted step, never inside a step,
+  // so the residual has no jump while a step and its line search are measured (exam #75).
+  const branches = new Map<Live, { u: number }>();
+  const pickBranches = () => {
+    for (const l of live) {
+      const m = l.m;
+      if (m.type !== "screw" || !m.t0 || l.ga.k !== "axis" || Math.abs(m.ratio ?? 1) < 1e-12) continue;
+      const { turn, travel } = screwMotion(m, placeGeo(l.ga, tfs[l.ca]), tfs[l.ca], tfs[l.cb]);
+      const sp = (m.flip ? -1 : 1) * (m.ratio ?? 1);
+      branches.set(l, { u: turn + 2 * Math.PI * Math.round(((2 * Math.PI * travel) / sp - turn) / (2 * Math.PI)) });
+    }
+  };
+  pickBranches();
+  const resOf = (l: Live, t: Record<string, Tf>) => residuals(l.m, placeGeo(l.ga, t[l.ca]), placeGeo(l.gb, t[l.cb]), L, t[l.ca], t[l.cb], l.gc && placeGeo(l.gc, t[l.cc!]), l.gd && placeGeo(l.gd, t[l.cd!]), branches.get(l), l.ends && [applyPoint(t[l.ca], l.ends[0]), applyPoint(t[l.ca], l.ends[1])]);
   const R = (t: Record<string, Tf>) => {
     const r: number[] = [];
     for (const l of live) r.push(...resOf(l, t));
@@ -296,14 +365,30 @@ export function solve(inp: SolveInput): SolveResult {
 
   let r = R(tfs);
   let ok = r.every(v => Math.abs(v) < tol);
-  let kicks = 0;
+  let kicks = 0, damp = DAMP_MIN;
   for (let it = 0; it < 80 && !ok && n; it++) {
     const J = jac(r);
-    const dx = dampedStep(J, r, n);
-    if (!dx) break;
     const f0 = norm(r);
-    let step = 1, next = r, tn = tfs;
-    for (let ls = 0; ls < 12; ls++) {
+    let dx: number[] | null = null, next = r, tn = tfs, good = false;
+    // Levenberg-Marquardt: a step is kept when it lowers the error about as much as the linear model promised;
+    // otherwise the damping goes up and the step is made again from the same Jacobian. Light damping lets gentle
+    // motions through (a screw's turn moves its row only pitch/2π per radian); heavy damping stops wild turns about
+    // directions the mates barely hold, such as a pin's spin when its fitted axis is a little off (exam #28, #75).
+    for (let tries = 0; tries < 7 && !good; tries++) {
+      dx = dampedStep(J, r, n, damp);
+      if (!dx) break;
+      let lin = 0;
+      for (let i = 0; i < J.length; i++) { const row = J[i]; let v = r[i]; for (let j = 0; j < n; j++) if (row[j] !== 0) v += row[j] * dx[j]; lin += v * v; }
+      tn = moved(dx, tfs);
+      next = R(tn);
+      const fn = norm(next), gain = f0 * f0 - fn * fn, promised = f0 * f0 - lin;
+      if (fn < f0 && gain >= 0.1 * promised) { good = true; if (gain >= 0.75 * promised) damp = Math.max(DAMP_MIN, damp / 10); }
+      else damp = Math.min(1e-2, damp * 100);
+    }
+    if (!dx) break;
+    // No damping gave a good step: shorten the last (most damped) one.
+    let step = 1;
+    for (let ls = 0; ls < 12 && !good; ls++) {
       tn = moved(dx.map(v => v * step), tfs);
       next = R(tn);
       if (norm(next) < f0) break;
@@ -319,6 +404,7 @@ export function solve(inp: SolveInput): SolveResult {
       continue;
     }
     for (const id of vars) tfs[id] = tn[id];
+    pickBranches();
     r = next;
     ok = r.every(v => Math.abs(v) < tol);
   }
@@ -336,6 +422,7 @@ export function solve(inp: SolveInput): SolveResult {
   if (ok && n && inp.dof !== false) {
     // A limit takes no freedom away, even when it sits at its end.
     for (const l of live) if (l.m.type === "limitdist" || l.m.type === "limitangle") l.m = { ...l.m, min: -Infinity, max: Infinity };
+    for (const l of live) l.ends = undefined;
     const J = jac(R(tfs));
     const N = nullSpace(J, n);
     free = N.length + loose;
@@ -376,7 +463,9 @@ function solveLinear(A: number[][], b: number[]): number[] | null {
  * Minimum-norm damped Gauss-Newton step dx = -Jᵀ (J Jᵀ + μI)⁻¹ r, or the same step as -(JᵀJ + μI)⁻¹ Jᵀ r when there
  * are fewer unknowns than residuals (the smaller system; a big linkage has hundreds of each, exam #62).
  */
-function dampedStep(J: number[][], r: number[], n: number): number[] | null {
+/** Lightest damping, as a share of the steepest column of JᵀJ. */
+const DAMP_MIN = 1e-10;
+function dampedStep(J: number[][], r: number[], n: number, damp = DAMP_MIN): number[] | null {
   const m = r.length;
   // Nonzero columns per row: a mate touches at most four components.
   const nz = J.map(row => { const c: number[] = []; for (let j = 0; j < n; j++) if (row[j] !== 0) c.push(j); return c; });
@@ -390,7 +479,7 @@ function dampedStep(J: number[][], r: number[], n: number): number[] | null {
     }
     let mx = 0;
     for (let i = 0; i < m; i++) mx = Math.max(mx, A[i][i]);
-    const mu = 1e-10 * mx + 1e-14;
+    const mu = damp * mx + 1e-14;
     for (let i = 0; i < m; i++) A[i][i] += mu;
     const y = solveLinear(A, r.map(v => -v));
     if (!y) return null;
@@ -406,7 +495,7 @@ function dampedStep(J: number[][], r: number[], n: number): number[] | null {
   });
   let mx = 0;
   for (let j = 0; j < n; j++) mx = Math.max(mx, A[j][j]);
-  const mu = 1e-10 * mx + 1e-14;
+  const mu = damp * mx + 1e-14;
   for (let j = 0; j < n; j++) A[j][j] += mu;
   return solveLinear(A, b);
 }
@@ -423,13 +512,23 @@ function nullSpace(J: number[][], n: number): number[][] {
   };
   const big = Math.max(1e-30, ...J.map(row => Math.sqrt(dot(row, row))));
   const rows: number[][] = [];
-  // Longest rows first, so a nearly dependent row is the one judged against the others.
-  for (const row of [...J].sort((a, b) => dot(b, b) - dot(a, a))) {
-    const v = row.slice(), l0 = Math.sqrt(dot(v, v));
-    if (l0 < 1e-9 * big) continue;
-    off(v, rows);
-    const l = Math.sqrt(dot(v, v));
-    if (l > 3e-5 * big) rows.push(v.map(x => x / l));
+  // The row that stands out most from the ones taken so far goes next (pivoting), so what is left at the end is
+  // only what the others already say. In any fixed order a mate repeated with a slightly different direction
+  // (a Lock stored 1e-5 rad off) could come last, look independent by that 1e-5 and take a real freedom away (exam #94).
+  const left = J.map(row => row.slice()).filter(v => Math.sqrt(dot(v, v)) >= 1e-9 * big);
+  while (left.length && rows.length < n) {
+    let bi = 0, bl = -1;
+    for (let i = 0; i < left.length; i++) { const l = dot(left[i], left[i]); if (l > bl) { bl = l; bi = i; } }
+    if (Math.sqrt(bl) <= 3e-5 * big) break;
+    const q = left[bi];
+    left[bi] = left[left.length - 1];
+    left.pop();
+    off(q, rows);
+    const l = Math.sqrt(dot(q, q));
+    if (l <= 3e-5 * big) continue;
+    for (let i = 0; i < q.length; i++) q[i] /= l;
+    rows.push(q);
+    for (const v of left) { const d = dot(v, q); if (d) for (let i = 0; i < v.length; i++) v[i] -= d * q[i]; }
   }
   const out: number[][] = [];
   for (let k = 0; k < n && rows.length + out.length < n; k++) {
@@ -450,12 +549,13 @@ function rank(vs: number[][]): number {
     const v = v0.slice();
     for (const b of basis) { const d = v.reduce((s, x, i) => s + x * b[i], 0); for (let i = 0; i < v.length; i++) v[i] -= d * b[i]; }
     const l = Math.sqrt(v.reduce((s, x) => s + x * x, 0));
-    if (l > 1e-6) basis.push(v.map(x => x / l));
+    // Null vectors are unit length over every unknown: a block below 1e-4 is round-off, not a freedom (exam #71).
+    if (l > 1e-4) basis.push(v.map(x => x / l));
   }
   return Math.min(6, basis.length);
 }
 
-/** Default alignment and side for a new mate, from where the references are now (as SolidWorks picks the nearer one). */
+/** Default alignment and side for a new mate, from where the references are now (as a CAD app picks the nearer one). */
 export function mateDefaults(type: MateType, ga: Geo, gb: Geo): Partial<Mate> {
   const da = dirOf(ga), db = dirOf(gb);
   const out: Partial<Mate> = {};

@@ -38,6 +38,20 @@ test("save and open give the same document", async () => {
   assert.deepEqual(dependants(s.doc, "s1").map(f => f.id), ["f1"]);
 });
 
+test("a part saved rolled back opens rolled back (FR-HIS-012, AT-UX-14)", async () => {
+  const s = new DocStore(newPart("Rolled"));
+  s.change("Add", d => {
+    d.features.push({ id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, ents: [], rels: [], dims: [] });
+    d.features.push({ id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 5 } });
+    d.features.push({ id: "f2", type: "extrude", name: "Extrude2", sketch: "s1", op: "cut", end: "blind", depth: { v: 2 } });
+    d.rollback = 1;
+    d.stdHidden = ["XY"];
+  });
+  const back = await unpackPart((await packPart(s.doc, "test")).buffer as ArrayBuffer);
+  assert.equal(back.rollback, 1);
+  assert.deepEqual(back.stdHidden, ["XY"]);
+});
+
 test("refuses foreign and newer files", async () => {
   const { zip } = await import("../../src/model/zip");
   const newer = await zip([{ name: "manifest.json", data: JSON.stringify({ format: "mobiuscad", schema: 99, kind: "part" }) }, { name: "document.json", data: "{}" }]);
@@ -58,4 +72,18 @@ test("save and open keep every feature type (planes, holes, bodies, imports…)"
   assert.deepEqual(back.features.map(f => f.type), ["plane", "delbody", "import", "scale"]);
   const odd = await packPart({ ...s.doc, features: [{ id: "z", type: "warp", name: "Warp1" } as never] }, "test");
   await assert.rejects(unpackPart(odd.buffer as ArrayBuffer), /Unknown feature type "warp"/);
+});
+
+test("named views stay through undo and redo and are saved with the part (FR-UI-104)", async () => {
+  const s = new DocStore(newPart());
+  s.change("Add sketch", d => { d.features.push({ id: "s1", type: "sketch", name: nextName(d, "sketch"), plane: { std: "XY" }, ents: [], rels: [], dims: [] }); });
+  s.amend(d => { d.views = [{ name: "Front close", t: [0, 0, 0], p: [0, -100, 0], h: 50 }]; });
+  assert.equal(s.dirty, true);
+  s.undo();
+  assert.equal(s.doc.features.length, 0);
+  assert.equal(s.doc.views?.[0].name, "Front close");
+  s.redo();
+  assert.equal(s.doc.views?.length, 1);
+  const back = await unpackPart((await packPart(s.doc, "test")).buffer as ArrayBuffer);
+  assert.deepEqual(back.views, s.doc.views);
 });

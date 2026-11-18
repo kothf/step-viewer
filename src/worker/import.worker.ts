@@ -4,6 +4,7 @@
 import { analyzeMesh, convertTree, type PartData, type TreeNode } from "../topology";
 import { facetFaces } from "../meshFaces";
 import { fixResultNames } from "../names";
+import { cacheEnable, cacheOpen, cachePut } from "../buildCache";
 // A 16×10×4 mm block with a hole (written by the app's own STEP export), read once while idle.
 import warmupStep from "./warmup.step?raw";
 
@@ -12,6 +13,8 @@ export interface MeshRequest {
   kind: "mesh";
   name: string;
   meshes: { name: string; pos: Float32Array; idx: Uint32Array | null; color?: number[] }[];
+  /** Disk cache key the result is stored under (null: not stored). */
+  cacheKey?: string | null;
 }
 
 /** Loads OpenCASCADE and reads a tiny model while the app is idle, so the first real file opens faster. */
@@ -26,6 +29,8 @@ export interface ImportRequest {
   name: string;
   occtBase: string;
   quality: "draft" | "normal" | "fine";
+  /** Disk cache key the result is stored under (null: not stored). */
+  cacheKey?: string | null;
 }
 
 const QUALITY = {
@@ -49,7 +54,16 @@ function loadOcct(base: string) {
 
 const post = (msg: unknown, transfer: Transferable[] = []) => (self as DedicatedWorkerGlobalScope).postMessage(msg, transfer);
 
-function finish(parts: PartData[], tree: TreeNode, timing: Record<string, number> = {}) {
+/** Opens the disk cache for a request that will store its result (alongside the work, so the store costs nothing). */
+function prepareCache(key: string | null | undefined) {
+  if (!key) return Promise.resolve();
+  cacheEnable();
+  return cacheOpen().catch(() => {});
+}
+
+function finish(parts: PartData[], tree: TreeNode, timing: Record<string, number> = {}, key?: string | null) {
+  // The cache takes its copy now (the database is open), before the arrays are handed over below.
+  if (key) void cachePut(key, { parts, tree });
   const transfer: Transferable[] = [];
   for (const p of parts) {
     transfer.push(p.positions.buffer, p.normals.buffer, p.index.buffer, p.edgeSegs.buffer);
@@ -58,7 +72,8 @@ function finish(parts: PartData[], tree: TreeNode, timing: Record<string, number
   post({ type: "done", parts, tree, timing }, transfer);
 }
 
-function importMesh(r: MeshRequest) {
+async function importMesh(r: MeshRequest) {
+  const cache = prepareCache(r.cacheKey);
   const parts: PartData[] = [];
   const n = r.meshes.length;
   r.meshes.forEach((m, i) => {
@@ -69,7 +84,8 @@ function importMesh(r: MeshRequest) {
   });
   const tree: TreeNode = n === 1 ? { name: r.name, parts: [0], children: [] }
     : { name: r.name, parts: [], children: parts.map((p, i) => ({ name: p.name, parts: [i], children: [] })) };
-  finish(parts, tree);
+  await cache;
+  finish(parts, tree, {}, r.cacheKey);
 }
 
 async function warm(occtBase: string) {
@@ -87,11 +103,12 @@ self.onmessage = async (e: MessageEvent<ImportRequest | MeshRequest | WarmReques
     return;
   }
   if (e.data.kind === "mesh") {
-    try { importMesh(e.data); } catch (err) { post({ type: "error", text: err instanceof Error ? err.message : String(err) }); }
+    try { await importMesh(e.data); } catch (err) { post({ type: "error", text: err instanceof Error ? err.message : String(err) }); }
     return;
   }
-  const { buffer, name, occtBase, quality } = e.data;
+  const { buffer, name, occtBase, quality, cacheKey } = e.data;
   try {
+    const cache = prepareCache(cacheKey);
     post({ type: "progress", text: "Loading geometry kernel…", pct: 5 });
     let t = performance.now();
     const timing: Record<string, number> = {};
@@ -117,7 +134,8 @@ self.onmessage = async (e: MessageEvent<ImportRequest | MeshRequest | WarmReques
       parts.push(analyzeMesh(res.meshes[i]));
     }
     lap("topology");
-    finish(parts, convertTree(res.root), timing);
+    await cache;
+    finish(parts, convertTree(res.root), timing, cacheKey);
   } catch (err) {
     post({ type: "error", text: err instanceof Error ? err.message : String(err) });
   }

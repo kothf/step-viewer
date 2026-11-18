@@ -119,7 +119,7 @@ export function posed(rest: Tf, p: { d: V3; r: V3 }): Tf {
   return out;
 }
 
-/** How a data point motor joins its rows (SolidWorks: Linear, Cubic spline, Akima). */
+/** How a data point motor joins its rows (a CAD app: Linear, Cubic spline, Akima). */
 export type PointsFit = "linear" | "cubic" | "akima";
 
 /**
@@ -174,7 +174,7 @@ function akimaSlopes(pts: [number, number][]): number[] {
   return d;
 }
 
-/** What a motor's plot shows: its displacement, velocity or acceleration over the study (SolidWorks motor graph). */
+/** What a motor's plot shows: its displacement, velocity or acceleration over the study (a CAD app's motor graph). */
 export type MotorPlot = "disp" | "vel" | "acc";
 
 /**
@@ -265,7 +265,7 @@ export function parsePoints(text: string, scale = 1): [number, number][] | null 
 
 /**
  * An expression motor's displacement (degrees or mm, as typed) at `t` seconds after its start. Trigonometry takes
- * radians, as in SolidWorks equations (`30*sin(2*pi*t)`). Throws an ExprError on bad text.
+ * radians, as in other CAD apps equations (`30*sin(2*pi*t)`). Throws an ExprError on bad text.
  */
 export function exprValue(src: string, t: number): number {
   return evaluate(src, "number", "mm", { t: { v: t, unit: true } });
@@ -361,7 +361,7 @@ export function playTime(elapsed: number, s: Pick<MotionStudy, "duration" | "pla
 /** Tracks a study needs re-solving for (camera and explode keys do not move the mates). */
 export const movesMates = (k: Track) => k.kind === "mate" || k.kind === "motor";
 
-/** A study that explodes (or collapses) a view over its length, as SolidWorks' animation wizard does. */
+/** A study that explodes (or collapses) a view over its length, as a CAD app's animation wizard does. */
 export function explodeKeys(duration: number, collapse = false): Key[] {
   return collapse ? [{ t: 0, v: 1 }, { t: duration, v: 0, interp: "ease" }] : [{ t: 0, v: 0 }, { t: duration, v: 1, interp: "ease" }];
 }

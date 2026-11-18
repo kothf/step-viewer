@@ -6,6 +6,7 @@
 // faces, so welding vertices by position recovers face adjacency exactly.
 
 export type V3 = [number, number, number];
+import { meshMoments, type Sym } from "./tools/inertia";
 export type FaceType = "plane" | "cylinder" | "sphere" | "other";
 export type EdgeType = "line" | "circle" | "arc" | "curve";
 
@@ -68,6 +69,8 @@ export interface PartData {
   volume: number;
   area: number;
   com: V3;
+  /** Covariance about `com` for unit density, [xx, yy, zz, xy, yz, zx] mm⁵ (src/tools/inertia.ts); exact when `exact`. */
+  inertia?: Sym;
   bboxMin: V3;
   bboxMax: V3;
   /** Volume, areas, lengths and radii were replaced by exact B-rep values. */
@@ -461,6 +464,7 @@ export function analyzeMesh(m: OcctMesh): PartData {
     volume: absV,
     area,
     com: volume !== 0 ? [com[0] / volume, com[1] / volume, com[2] / volume] : [0, 0, 0],
+    inertia: meshMoments(P, I).cov,
     bboxMin, bboxMax,
   };
 }

@@ -1,4 +1,4 @@
-// SolidWorks files to STEP, inside the kernel worker: each part's Parasolid
+// SLDPRT/SLDASM files to STEP, inside the kernel worker: each part's Parasolid
 // model becomes OCCT solids (parasolid.ts), an assembly places its parts from
 // its component tree, and the result is written as one STEP file that the
 // viewer then opens like any other (so every tool works on it).

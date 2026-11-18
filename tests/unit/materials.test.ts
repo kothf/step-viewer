@@ -1,0 +1,210 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { bodiesDensity, CATEGORIES, CHECKED, LIBRARY, MATERIAL_RU, SOURCES, customFile, findMaterial, mergeCustom, parseCustom, resolveRef, searchMaterials, toRef, validMaterial } from "../../src/tools/materials";
+import { RU } from "../../src/i18n.ru";
+import { materialPattern } from "../../src/drawing/compose";
+
+test("material library: large, unique names, sane values, a source and a Russian name for each (FR-MAT-001)", () => {
+  assert.ok(LIBRARY.length >= 150, `only ${LIBRARY.length} materials`);
+  assert.equal(new Set(LIBRARY.map(m => m.name)).size, LIBRARY.length);
+  for (const c of CATEGORIES) if (c.id !== "custom") assert.ok(LIBRARY.some(m => m.cat === c.id), `empty category ${c.id}`);
+  for (const m of LIBRARY) {
+    assert.ok(m.density > 0.1 && m.density < 23, `${m.name}: density ${m.density}`);
+    assert.ok(m.src && SOURCES[m.src], `${m.name}: source`);
+    assert.match(m.color!, /^#[0-9a-f]{6}$/);
+    if (m.E != null) assert.ok(m.E > 0 && m.E < 700, `${m.name}: E`);
+    if (m.nu != null) assert.ok(m.nu > 0 && m.nu <= 0.5, `${m.name}: nu`);
+    if (m.sy != null && m.su != null) assert.ok(m.sy <= m.su, `${m.name}: yield above tensile`);
+    if (m.k != null) assert.ok(m.k > 0 && m.k < 450, `${m.name}: k`);
+    if (m.cp != null) assert.ok(m.cp > 100 && m.cp < 4300, `${m.name}: cp`);
+    // Every name with English words has its Russian entry; trade names and bare designations stay as they are.
+    if (!/^(ABS|ASA|PLA|PETG|PC\/ABS|PEEK|PEI|TPU|Hastelloy)\b/.test(m.name)) assert.ok(RU[m.name], `${m.name}: no Russian name`);
+  }
+  for (const c of CATEGORIES) assert.equal(RU[c.name], c.ru);
+  assert.equal(MATERIAL_RU["Steel S235JR"], "Сталь S235JR");
+});
+
+test("the materials of older documents keep their names and densities", () => {
+  const old: [string, number][] = [["Steel (carbon)", 7.85], ["Stainless steel 304", 8.0], ["Aluminium 6061", 2.7], ["Brass", 8.5], ["Copper", 8.96], ["Titanium Ti-6Al-4V", 4.43], ["Cast iron", 7.2],
+    ["ABS", 1.04], ["PLA", 1.24], ["Nylon PA6", 1.14], ["Polycarbonate", 1.2], ["POM (Delrin)", 1.41], ["PEEK", 1.32], ["Wood (oak)", 0.75]];
+  for (const [name, density] of old) assert.equal(findMaterial(name)?.density, density, name);
+});
+
+test("material search: names, designations of other standards and Russian", () => {
+  const ru = (s: string) => RU[s] ?? s;
+  const names = (q: string, tr?: (s: string) => string) => searchMaterials(LIBRARY, q, tr).map(m => m.name);
+  assert.equal(names("")?.length, LIBRARY.length);
+  assert.equal(names("6061")[0], "Aluminium 6061");
+  assert.ok(names("1.4301").includes("Stainless steel 1.4301 (X5CrNi18-10)"));
+  assert.deepEqual(names("aisi 316l"), ["Stainless steel 1.4404 (X2CrNiMo17-12-2)"]);
+  assert.deepEqual(names("д16т"), ["Aluminium EN AW-2024 T3"]);
+  assert.equal(names("сталь 45", ru)[0], "Steel C45 (normalized)");
+  assert.equal(names("дуб", ru)[0], "Wood (oak)");
+  assert.equal(names("s355")[0], "Steel S355J2");
+  assert.equal(names("no such thing").length, 0);
+});
+
+test("a document's material: all properties stored, older name + density refs filled in from the library", () => {
+  const m = findMaterial("steel s355j2")!;
+  const r = toRef(m);
+  assert.deepEqual(r, { name: "Steel S355J2", density: 7.85, cat: "steel", E: 210, nu: 0.3, sy: 355, su: 470, k: 54, cp: 461, alpha: 12, color: "#8d9299" });
+  assert.equal(resolveRef({ name: "Aluminium 6061", density: 2.7 }).sy, 276);
+  // A changed density makes it the document's own material: nothing is filled in.
+  assert.equal(resolveRef({ name: "Aluminium 6061", density: 2.9 }).sy, undefined);
+  assert.equal(resolveRef({ name: "Unobtainium", density: 3 }).cat, "custom");
+});
+
+test("custom materials: validated, bad entries dropped", () => {
+  assert.equal(validMaterial({ name: " ", density: 1 }), null);
+  assert.equal(validMaterial({ name: "X", density: 0 }), null);
+  assert.deepEqual(validMaterial({ name: " My alloy ", density: "7.7", E: 200, nu: "x", color: "#AABBCC", junk: 1 }), { name: "My alloy", density: 7.7, cat: "custom", E: 200, color: "#aabbcc" });
+  assert.deepEqual(parseCustom('[{"name":"A","density":1},{"name":"A","density":2},{"density":3},7]').map(m => m.density), [1]);
+  assert.deepEqual(parseCustom("not json"), []);
+});
+
+test("section hatching follows the library category of a material", () => {
+  assert.equal(materialPattern("Steel S235JR"), "ansi32");
+  assert.equal(materialPattern("Tool steel X153CrMoV12"), "ansi32");
+  assert.equal(materialPattern("Cast steel GE240"), "ansi32");
+  assert.equal(materialPattern("Ductile cast iron EN-GJS-400-15"), "ansi31");
+  assert.equal(materialPattern("Gunmetal CuSn5Zn5Pb5-C"), "ansi33");
+  assert.equal(materialPattern("Cast aluminium EN AC-42100 T6 (AlSi7Mg0.3, sand cast)"), "ansi38");
+  assert.equal(materialPattern("Die cast magnesium AZ91D"), "ansi38");
+  assert.equal(materialPattern("Zinc alloy Zamak 3"), "ansi37");
+  assert.equal(materialPattern("PTFE"), "ansi34");
+  assert.equal(materialPattern("FR-4 (glass/epoxy laminate)"), "ansi34");
+  assert.equal(materialPattern("Titanium Grade 2"), "ansi31");
+});
+
+test("checked references name library materials and are plain https pages; corrected values (1.375.0)", () => {
+  const keys = Object.keys(CHECKED);
+  assert.ok(keys.length >= 40, `only ${keys.length} checked`);
+  for (const k of keys) {
+    const m = LIBRARY.find(x => x.name === k);
+    assert.ok(m, `${k}: not in the library`);
+    assert.equal(m!.ref, CHECKED[k]);
+    assert.match(CHECKED[k], /^[a-z0-9.-]+\.[a-z]{2,}\/\S*$/, k);
+    assert.doesNotThrow(() => new URL(`https://${CHECKED[k]}`), k);
+  }
+  assert.equal(findMaterial("Die cast aluminium A380")!.density, 2.71);
+  assert.equal(findMaterial("Silicon carbide (sintered)")!.density, 3.15);
+  assert.equal(findMaterial("Inconel 718 (aged)")!.su, 1276);
+  assert.equal(findMaterial("Gold")!.E, 78);
+});
+
+test("second pass (1.382.0): most of the library has a checked reference, the rest is known", () => {
+  const un = LIBRARY.filter(m => !m.ref).map(m => m.name);
+  assert.ok(Object.keys(CHECKED).length >= 119, `${Object.keys(CHECKED).length} checked`);
+  assert.ok(un.length <= 51, `${un.length} unchecked`);
+  assert.equal(findMaterial("Stainless steel 1.4404 (X2CrNiMo17-12-2)")!.ref, "www.thyssenkrupp-materials.co.uk/stainless-steel-316l-14404.html");
+  assert.equal(findMaterial("Bronze CuSn8 (phosphor bronze)")!.E, 115);
+});
+
+test("third pass (1.385.0): tool steels, titanium and two more steels have a reference", () => {
+  const un = LIBRARY.filter(m => !m.ref).map(m => m.name);
+  assert.ok(Object.keys(CHECKED).length >= 129, `${Object.keys(CHECKED).length} checked`);
+  assert.ok(un.length <= 41, `${un.length} unchecked`);
+  assert.equal(findMaterial("High speed steel HS6-5-2")!.density, 8.12);
+  assert.ok(findMaterial("Tool steel X153CrMoV12")!.ref);
+  assert.ok(un.includes("Titanium Grade 1"));
+});
+
+test("fourth pass (1.399.0): four plastics checked against makers' sheets", () => {
+  assert.ok(Object.keys(CHECKED).length >= 133, `${Object.keys(CHECKED).length} checked`);
+  assert.ok(LIBRARY.filter(m => !m.ref).length <= 37);
+  for (const n of ["PLA", "PETG", "PEI (Ultem 1000)", "Polyethylene PE-HD"]) assert.ok(findMaterial(n)!.ref, n);
+  assert.equal(findMaterial("PEI (Ultem 1000)")!.E, 3.6);
+  assert.equal(findMaterial("Polyethylene PE-HD")!.E, 1.1);
+});
+
+test("fifth pass (1.405.0): POM-H, PEEK, PET-P and OSB/3 checked against makers' sheets", () => {
+  const checked = LIBRARY.filter((m) => m.ref);
+  assert.ok(checked.length >= 137, `${checked.length} checked`);
+  assert.ok(LIBRARY.length - checked.length <= 33);
+  for (const n of ["POM (Delrin)", "PEEK", "PET (PET-P)", "OSB/3"]) assert.ok(findMaterial(n)?.ref, n);
+  assert.equal(findMaterial("PEEK")!.E, 4.5);
+  assert.equal(findMaterial("OSB/3")!.density, 0.6);
+});
+
+test("sixth pass (1.407.0): PA66 and PMMA checked against makers' sheets", () => {
+  const checked = LIBRARY.filter((m) => m.ref);
+  assert.ok(checked.length >= 139, `${checked.length} checked`);
+  assert.ok(LIBRARY.length - checked.length <= 31);
+  assert.ok(findMaterial("Nylon PA66")?.ref && findMaterial("PMMA (acrylic)")?.ref);
+  assert.equal(findMaterial("Nylon PA66")!.E, 2.4);
+});
+
+test("seventh pass (1.413.0): Douglas fir and water checked", () => {
+  const checked = LIBRARY.filter((m) => m.ref);
+  assert.ok(checked.length >= 141, `${checked.length} checked`);
+  assert.ok(findMaterial("Water (20 °C)")!.ref);
+  const fir = findMaterial("Wood (Douglas fir)")!;
+  assert.ok(fir.ref);
+  assert.equal(fir.E, 13.4);
+});
+
+test("eighth pass (1.416.0): PE-LD checked against a stock shape sheet", () => {
+  assert.ok(LIBRARY.filter((m) => m.ref).length >= 142);
+  const pe = findMaterial("Polyethylene PE-LD")!;
+  assert.ok(pe.ref);
+  assert.equal(pe.density, 0.92);
+});
+
+test("ninth pass (1.417.0): PA66-GF30 checked against a maker's sheet", () => {
+  assert.ok(LIBRARY.filter((m) => m.ref).length >= 143);
+  const pa = findMaterial("Nylon PA66-GF30")!;
+  assert.ok(pa.ref);
+  assert.equal(pa.density, 1.36);
+});
+
+test("tenth pass (1.420.0): teak, mahogany and balsa checked against the Wood Handbook", () => {
+  assert.ok(LIBRARY.filter((m) => m.ref).length >= 146);
+  for (const [n, e] of [["Wood (teak)", 10.7], ["Wood (mahogany)", 10.3], ["Wood (balsa)", 3.4]] as const) {
+    const m = findMaterial(n)!;
+    assert.equal(m.ref, "research.fs.usda.gov/download/treesearch/62244.pdf");
+    assert.equal(m.E, e);
+  }
+});
+
+test("eleventh pass (1.426.0): CuBe2 follows the maker's sheet for the age hardened state", () => {
+  assert.ok(LIBRARY.filter((m) => m.ref).length >= 147);
+  const m = findMaterial("Beryllium copper CuBe2 (age hardened)")!;
+  assert.ok(m.ref);
+  assert.equal(m.density, 8.36);
+  assert.equal(m.E, 131);
+  assert.equal(m.sy, 965);
+  assert.equal(m.su, 1140);
+});
+
+test("twelfth pass (1.429.0): ASA and PC/ABS follow named grades' sheets", () => {
+  assert.ok(LIBRARY.filter((m) => m.ref).length >= 149);
+  const a = findMaterial("ASA")!;
+  assert.ok(a.ref);
+  assert.deepEqual([a.density, a.E, a.sy], [1.07, 2.5, 54]);
+  const p = findMaterial("PC/ABS")!;
+  assert.ok(p.ref);
+  assert.deepEqual([p.density, p.E, p.sy], [1.13, 2.35, 54]);
+});
+
+test("a cut list item's density follows its bodies' own materials (FR-MAT-001)", () => {
+  const bodies = { a: { material: { name: "Titanium Ti-6Al-4V", density: 4.43 } }, b: {} };
+  assert.equal(bodiesDensity(["a"], bodies, 7.85), 4.43);
+  assert.equal(bodiesDensity(["b", "c"], bodies, 7.85), 7.85);
+  assert.ok(Math.abs(bodiesDensity(["a", "b"], bodies, 7.85) - (4.43 + 7.85) / 2) < 1e-12);
+  assert.equal(bodiesDensity([], undefined, 2.7), 2.7);
+});
+
+test("My materials export and import (FR-MAT-001): round trip, replace by name, library names and bad rows left out", () => {
+  const mine = [{ name: "Shop steel", density: 7.8, cat: "custom" as const, E: 205, color: "#808080" }, { name: "Foam", density: 0.03, cat: "custom" as const }];
+  const file = customFile(mine);
+  assert.equal(JSON.parse(file).format, "mobiuscad-materials");
+  const back = mergeCustom([], file);
+  assert.deepEqual(back.list, mine);
+  assert.deepEqual(back.added, ["Shop steel", "Foam"]);
+  const other = JSON.stringify([{ name: "Foam", density: 0.05 }, { name: LIBRARY[0].name, density: 1 }, { name: "", density: 1 }, { name: "Cork", density: 0.24 }]);
+  const r = mergeCustom(mine, other);
+  assert.deepEqual(r.list.map(m => [m.name, m.density]), [["Shop steel", 7.8], ["Foam", 0.05], ["Cork", 0.24]]);
+  assert.deepEqual([r.added, r.replaced, r.skipped, r.bad], [["Cork"], ["Foam"], [LIBRARY[0].name], 1]);
+  assert.throws(() => mergeCustom(mine, "not json"), /NOT_MATERIALS/);
+  assert.throws(() => mergeCustom(mine, "{\"a\": 1}"), /NOT_MATERIALS/);
+});

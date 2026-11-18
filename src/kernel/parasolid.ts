@@ -1,5 +1,5 @@
 // Parasolid B-rep (as parsed by parasolid-kit in native/parasolid-wasm) to
-// OpenCASCADE shapes, so SolidWorks parts open with exact geometry.
+// OpenCASCADE shapes, so SLDPRT parts open with exact geometry.
 //
 // The Parasolid model is topology (body, region, shell, face, loop, fin, edge,
 // vertex) plus geometry (curves, surfaces). Edges and vertices are built once
@@ -340,7 +340,7 @@ export class ParasolidBuilder {
    * A rolling-ball blend: Parasolid defines it implicitly (a ball of the given
    * radius rolling between two surfaces along a spine). Here it is the pipe of
    * that radius around the spine, which is the same surface for the constant
-   * radius fillets SolidWorks makes, trimmed later by the face's edges.
+   * radius fillets a CAD app makes, trimmed later by the face's edges.
    */
   private blendSurface(s: PsSurface) {
     const oc = this.oc;
@@ -717,7 +717,7 @@ export class ParasolidBuilder {
     }
   }
 
-  /** SolidWorks writes body colours as the SDL/TYSA_COLOUR attribute (RGB 0..1). */
+  /** A CAD app writes body colours as the SDL/TYSA_COLOUR attribute (RGB 0..1). */
   private colorOf(bodyId: Id): V | null {
     const a = this.m.attributes.find(x => x.owner === "body" && x.of === bodyId && /COLOU?R/i.test(x.name) && x.reals.length >= 3);
     if (!a) return null;

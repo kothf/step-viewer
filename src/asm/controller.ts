@@ -2,27 +2,41 @@
 // view or type the pose), fixed/floating, hide, delete, save and open .mcadasm. The kernel places the
 // components (src/kernel/assembly.ts) and the viewer shows one part per component, so the measuring
 // tools work across components as for an imported assembly.
+import type { VaultTie } from "../pdm/panel";
+import type { NamedViews } from "../viewer/navigation";
+import { MATE_LABEL, mateName } from "./mateName";
+import type { NamedView } from "../model/types";
 import * as THREE from "three";
 import { ModelKernel } from "../model/kernelClient";
+import type { ModelSnap } from "../drawing/drawing.worker";
 import { newPart, uid } from "../model/doc";
 import { PART_EXT, unpackPart } from "../model/file";
 import { t, onLangChange } from "../i18n";
-import { confirmModal, toast } from "../ui";
+import { featureLabel } from "../model/controller";
+import { askFileName, confirmModal, toast, untoast } from "../ui";
 import { ASM_EXT, packAsm, unpackAsm } from "./file";
 import { IDENTITY, applyDir, applyPoint, compose, fromPose, invert, poseAngles, rotation, translation } from "./math";
 import { activateState, addState, deleteState } from "./states";
+import { stepName } from "./steps";
 import { activateConfig, addConfig, deleteConfig, partUsed } from "./configs";
 import { activate as activatePartConfig } from "../model/configs";
 import { refreshExprs } from "../model/params";
-import { ctxRefs, syncCtx, type CtxComp, type PartContext } from "../model/context";
+import { ctxEdgeRefs, ctxRefs, findCtxEdge, moveEdgeGeo, syncCtx, type CtxComp, type CtxEdgeSeen, type PartContext } from "../model/context";
 import { mateDefaults, mateTypes, placeGeo, solve, type Geo, type SolveResult } from "./solver";
 import { folderPath, hashBytes, planLinks, type LinkFile } from "./links";
 import { MCMASTER, mcmasterPart, tagVendor, vendorOf } from "./vendor";
-import { FASTENERS, TOOLBOX_GROUPS, defaultLength, fastenerInfo, fastenerLengths, fastenerName, fastenerPart, fastenerSizes, sizeForHole, type FastenerKind } from "./fasteners";
+import { pickMaterial } from "../materialPicker";
+import { isLongPress } from "../longPress";
+import { lassoMode, mergeSel, rectRegion, regionProbe, type Rect, type Region as SelArea } from "../boxSelect";
+import { SelDrag } from "../selDrag";
+import { toRef } from "../tools/materials";
+import { FASTENERS, TOOLBOX_GROUPS, defaultLength, fastenerInfo, fastenerLengths, fastenerName, fastenerPart, fastenerSizes, lengthFor, lengthLabel, searchFasteners, sizeForHole, type FastenerKind, type ToolboxGroup } from "./fasteners";
+import { fastenerShape, shapeSvg, shapeVolume, type ToolShape } from "./toolboxShape";
 import { applySolved, autoExplode, expandPatterns, explodeAt, explodeOffsets, flattenSubs, patternSteps, solveView, topOf, type Expanded } from "./patterns";
 import { STOPPED, type AsmFeatureStatus } from "../model/kernelClient";
 import type { AsmComponentStatus, AsmDoc, AsmFeature, CompPattern, Component, ExplodeStep, ExplodeView, Mate, MateRef, MateType, Tf } from "./types";
 import type { BodyProps, PartDoc, V3 } from "../model/types";
+import { bodyMasses, type MassBody, type OwnBody } from "../tools/inertia";
 import type { PartData, TreeNode } from "../topology";
 import type { Viewer } from "../viewer/Viewer";
 
@@ -49,6 +63,8 @@ export interface AsmHost {
   editPart?(doc: PartDoc, fileName: string, label: string, back: (doc: PartDoc) => void, ctx?: PartContext): void;
   /** The part open in the modeller, if any (Make assembly from part). */
   openPart?(): { doc: PartDoc; fileName: string } | null;
+  /** The Smart measure tool in use ("select" = the default); box selection only runs with it. */
+  measureTool?(): string;
   appVersion: string;
 }
 
@@ -59,7 +75,6 @@ const FOREIGN = /\.(step|stp|iges|igs|brep)$/i;
 const MATE_TYPES: MateType[] = ["coincident", "parallel", "perpendicular", "tangent", "concentric", "lock", "distance", "angle"];
 const ADV_TYPES: MateType[] = ["symmetric", "width", "limitdist", "limitangle"];
 const MECH_TYPES: MateType[] = ["hinge", "slot", "gear", "screw"];
-const MATE_LABEL: Record<MateType, string> = { coincident: "Coincident", parallel: "Parallel", perpendicular: "Perpendicular", tangent: "Tangent", concentric: "Concentric", lock: "Lock", distance: "Distance", angle: "Angle", symmetric: "Symmetric", width: "Width", limitdist: "Limit distance", limitangle: "Limit angle", hinge: "Hinge", slot: "Slot", gear: "Gear", screw: "Screw" };
 const MATE_ICON: Record<MateType, string> = { coincident: "⊼", parallel: "∥", perpendicular: "⊥", tangent: "◠", concentric: "◎", lock: "🔒", distance: "↔", angle: "∠", symmetric: "⧓", width: "⇹", limitdist: "⟷", limitangle: "⦣", hinge: "⌒", slot: "⊂", gear: "⚙", screw: "⫰" };
 /** The advanced mate types that fit two references (FR-MATE-004). */
 const mechFits = (a: Geo["k"], b: Geo["k"]): MateType[] => (a === "axis" && b === "axis" ? ["hinge", "gear", "screw"] : a === "plane" && b === "axis" ? ["slot"] : []);
@@ -67,10 +82,13 @@ const mechFits = (a: Geo["k"], b: Geo["k"]): MateType[] => (a === "axis" && b ==
 const MORE_REFS: ReadonlySet<MateType> = new Set(["symmetric", "width", "hinge", "slot"]);
 const advFits = (a: Geo["k"], b: Geo["k"]): MateType[] => [...(a === b ? ["symmetric" as const] : []), ...(a === "plane" ? ["width" as const] : []), "limitdist", ...(a === b ? ["limitangle" as const] : [])];
 /** The mate being made or edited in the Mate panel. */
-interface MateDraft { edit?: string; a?: MateRef; b?: MateRef; c?: MateRef; d?: MateRef; type?: MateType; align?: "aligned" | "anti"; value?: number; flip?: boolean; min?: number; max?: number; ratio?: number; lockRot?: boolean; problem?: string; added?: string }
+interface MateDraft { edit?: string; a?: MateRef; b?: MateRef; c?: MateRef; d?: MateRef; type?: MateType; align?: "aligned" | "anti"; alignSet?: boolean; typeSet?: boolean; value?: number; flip?: boolean; min?: number; max?: number; ratio?: number; lockRot?: boolean; problem?: string; added?: string }
 
 /** An assembly kept in a document tab while another document is shown. */
-export interface AsmTab { doc: AsmDoc; fileName: string; handle: FileSystemFileHandle | null; undo: string[]; redo: string[]; savedAt: string; sel: string | null }
+/** The Mate panel's message when a mate cannot be solved even from turned starts. */
+const MATE_FAILS = "This mate cannot be solved with the others: the assembly would be over-defined, or the components stand too far from where the mate puts them. Move them closer and try again.";
+
+export interface AsmTab { doc: AsmDoc; fileName: string; handle: FileSystemFileHandle | null; undo: string[]; redo: string[]; savedAt: string; sel: string | null; vault: VaultTie | null }
 
 export class AsmController {
   doc: AsmDoc | null = null;
@@ -98,6 +116,8 @@ export class AsmController {
   collide = (() => { try { return localStorage.getItem("mc:asmCollide") === "1"; } catch { return false; } })();
   /** Mate geometry of each part's faces, in part coordinates, learnt from the shown meshes (by part key, face name). */
   private geo = new Map<string, Map<string, Geo>>();
+  /** Edges of parts whose edges a part edited in context converted (FR-ASM-030), in part coordinates, by part key. */
+  private edgeGeo = new Map<string, CtxEdgeSeen[]>();
   private centres = new Map<string, V3>();
   /** The transforms the shown meshes were made with, and their face names. */
   private shownTf: Record<string, Tf> = {};
@@ -125,11 +145,20 @@ export class AsmController {
   expanded: Expanded | null = null;
   /** Volume (mm³) of each part, from its shown mesh, for the BOM. */
   private volumes = new Map<string, number>();
+  /** Bodies of the shown components whose part has a body with its own material (FR-MAT-001), as built, by shown id. */
+  private ownBodies = new Map<string, OwnBody[]>();
+  /** The same per part key (volumes only matter there: the BOM). */
+  private partBodies = new Map<string, OwnBody[]>();
   private mateDown: { x: number; y: number } | null = null;
   /** The last Select Other pick in the Mate panel: where, which face, and the draft before it. */
   private mateOther: { x: number; y: number; i: number; before: MateDraft; draft: MateDraft } | null = null;
   /** Toolbox panel (FR-ASM-028): the standard part a click on a hole inserts; `auto` = its size follows the hole. */
-  fastening: { kind: FastenerKind; size: string; length: number; placed: number; auto: boolean } | null = null;
+  fastening: { kind: FastenerKind; size: string; length: number; placed: number; auto: boolean; cat: ToolboxGroup; q: string } | null = null;
+  /** The see-through part shown on the hole under the pointer (or a dragged card) while the Toolbox is open. */
+  private toolGhost = new THREE.Group();
+  private ghostKey = "";
+  /** The standard of the library card being dragged (dragover cannot read the drag data). */
+  dragKind: FastenerKind | null = null;
   /** Mate reference panel (FR-MATE-011): the component, the reference's name and its faces (up to three). */
   refing: { comp: string; name: string; faces: string[] } | null = null;
   /** Assembly feature panel (FR-ASM-027): the hole or cut being made or edited; `at`/`n`/`x` in `ref.comp`'s coordinates. */
@@ -146,6 +175,13 @@ export class AsmController {
     this.kernel.onCrash = () => toast(t("The geometry kernel stopped; it was restarted."), "warn");
     this.bindDom();
     host.viewer.scene.add(this.overlay);
+    host.viewer.scene.add(this.toolGhost);
+    this.bindTabHide();
+    // Box selection of components (FR-SEL-008).
+    window.addEventListener("pointerdown", e => this.boxDown(e), true);
+    window.addEventListener("pointermove", e => this.boxMove(e), true);
+    window.addEventListener("pointerup", e => this.boxUp(e), true);
+    this.bindToolbox();
     onLangChange(() => { delete $("#asm-pm").dataset.id; if (this.doc) this.renderAll(); });
   }
 
@@ -163,6 +199,19 @@ export class AsmController {
     return e;
   }
   get dirty() { return !!this.doc && JSON.stringify(this.doc) !== this.savedAt; }
+
+  /**
+   * A drawing of this assembly (FR-DRW-030): the shown components' shape from this kernel, which has built the parts
+   * already, so the drawing worker need not build them again (engine: ~11 s → ~0.1 s). Null unless `flat` is what
+   * the kernel builds now (asking for another document would make it rebuild and lose its cache for the 3D view).
+   */
+  async drawingSnap(flat: AsmDoc): Promise<ModelSnap | null> {
+    if (flat.id !== this.doc?.id) return null;
+    do await this.idle; while (this.building);
+    const e = this.expanded;
+    if (!e || flat.id !== e.doc.id || (flat !== e.doc && JSON.stringify(flat) !== JSON.stringify(e.doc))) return null;
+    return this.kernel.drawingSnap(e.doc);
+  }
   isAsmName(name: string) { return name.toLowerCase().endsWith(ASM_EXT); }
 
   // ---------- open, new, close ----------
@@ -172,7 +221,7 @@ export class AsmController {
     toast(t("New assembly: insert a part or a STEP model as the first component; it is fixed at the origin."));
   }
 
-  /** Make assembly from part (SolidWorks File → Make Assembly from Part): a new assembly with the open part fixed at the origin. */
+  /** Make assembly from part (CAD app File → Make Assembly from Part): a new assembly with the open part fixed at the origin. */
   fromPart() {
     const open = this.host.openPart?.();
     if (!open) return;
@@ -194,7 +243,8 @@ export class AsmController {
   park(): AsmTab | null {
     if (!this.doc) return null;
     this.closeTools();
-    const tab: AsmTab = { doc: this.doc, fileName: this.fileName, handle: this.handle, undo: this.undoStack, redo: this.redoStack, savedAt: this.savedAt, sel: this.selected };
+    this.hideCrumbs();
+    const tab: AsmTab = { doc: this.doc, fileName: this.fileName, handle: this.handle, undo: this.undoStack, redo: this.redoStack, savedAt: this.savedAt, sel: this.selected, vault: this.vault };
     this.close();
     return tab;
   }
@@ -206,6 +256,23 @@ export class AsmController {
     this.redoStack = tab.redo;
     this.savedAt = tab.savedAt;
     this.selected = tab.sel;
+    this.vault = tab.vault;
+    this.renderAll();
+  }
+
+  /**
+   * The open assembly came from a vault (FR-PDM-010/081): Save writes the working copy there, only while it is
+   * checked out here; the title shows the version and the lock.
+   */
+  vault: VaultTie | null = null;
+  setVault(v: VaultTie | null) {
+    this.vault = v;
+    if (this.doc) this.renderAll();
+  }
+  /** Marks the open assembly saved (the vault wrote it). */
+  markSaved() {
+    if (!this.doc) return;
+    this.savedAt = JSON.stringify(this.doc);
     this.renderAll();
   }
 
@@ -218,7 +285,11 @@ export class AsmController {
     this.redoStack = [];
     this.fileName = fileName;
     this.handle = handle;
+    this.vault = null;
     this.selected = null;
+    this.picked = [];
+    this.boxed = false;
+    this.selGroup.clear();
     this.moving = null;
     this.mating = null;
     this.interfere = null;
@@ -244,8 +315,15 @@ export class AsmController {
 
   close() {
     if (!this.doc) return;
+    this.hideCrumbs();
+    for (const o of [...this.ghostGroup.children]) this.dropGhost(o.userData.ghost);
+    this.ghostGroup.visible = false;
+    this.picked = [];
+    this.boxed = false;
+    this.selGroup.clear();
     this.motion?.close();
     this.doc = null;
+    this.vault = null;
     this.drag = null;
     this.mating = null;
     this.interfere = null;
@@ -266,7 +344,7 @@ export class AsmController {
     this.host.selectLeftTab("tree");
   }
 
-  private label() { return `${this.fileName || `${this.doc!.name}${ASM_EXT}`}${this.dirty ? " •" : ""}`; }
+  private label() { return `${this.fileName || `${this.doc!.name}${ASM_EXT}`}${this.vault ? ` · ${this.vault.label}` : ""}${this.dirty ? " •" : ""}`; }
 
   // ---------- changes, undo ----------
 
@@ -288,13 +366,39 @@ export class AsmController {
     this.rebuild();
   }
 
+  /** The Undo / Redo tip names the step (exam #73). */
+  private undoTip(redo: boolean) {
+    const top = (redo ? this.redoStack : this.undoStack).at(-1);
+    if (!top || !this.doc) return t(redo ? "Redo (Ctrl+Y)" : "Undo (Ctrl+Z)");
+    const other = JSON.parse(top) as AsmDoc;
+    const n = redo ? stepName(this.doc, other) : stepName(other, this.doc);
+    return t(redo ? "Redo: {what} (Ctrl+Y)" : "Undo: {what} (Ctrl+Z)", { what: t(n.key, n.params) });
+  }
+
+  /** The assembly's named views (FR-UI-104). */
+  namedViews(): NamedViews | null {
+    if (!this.doc) return null;
+    const set = (list: NamedView[]) => { if (!this.doc) return; if (list.length) this.doc.views = list; else delete this.doc.views; this.host.setDoc(this.label()); };
+    return {
+      list: () => [...(this.doc?.views ?? [])],
+      save: v => set([...(this.doc?.views ?? []).filter(x => x.name !== v.name), v]),
+      remove: name => set((this.doc?.views ?? []).filter(x => x.name !== name)),
+    };
+  }
   undo() { this.step(this.undoStack, this.redoStack); }
   redo() { this.step(this.redoStack, this.undoStack); }
   private step(from: string[], to: string[]) {
     const s = from.pop();
     if (!s || !this.doc) return;
     to.push(JSON.stringify(this.doc));
+    const views = this.doc.views;
     this.doc = JSON.parse(s);
+    // Named views are view data (FR-UI-104): undo keeps the current ones.
+    if (views?.length) this.doc!.views = views; else delete this.doc!.views;
+    // Typed angles belong to the pose undone; the Move panel shows the restored pose afresh (exam #73).
+    this.typedAngles.clear();
+    const pm = document.getElementById("asm-pm");
+    if (pm && this.moving) delete pm.dataset.id;
     if (this.moving && !this.doc!.components.some(c => c.id === this.moving)) this.moving = null;
     this.renderAll();
     this.rebuild();
@@ -329,6 +433,7 @@ export class AsmController {
           this.host.show(r.parts.map(p => p.data), tree, this.first && r.parts.length > 0);
           if (r.parts.length) this.first = false;
           this.applyOpacity();
+          this.drawPicked();
         } catch (err) {
           if (gen !== this.gen || (err as Error).message === STOPPED) return;
           toast(t("The assembly could not be rebuilt: {err}", { err: (err as Error).message }), true);
@@ -385,7 +490,10 @@ export class AsmController {
       const hit = new Set(pairs.map(p => `${p.a}|${p.b}`));
       it.near = near.filter(p => p.distance > 1e-6 && !hit.has(`${p.a}|${p.b}`));
       this.drawOverlay();
-    } catch (err) { toast(t("Interference detection failed: {err}", { err: (err as Error).message }), true); }
+    } catch (err) {
+      // The panel was closed while the clearance rows were still being worked out (opening a part stops the kernel): nothing failed for the user (exam #95).
+      if (this.interfere === it) toast(t("Interference detection failed: {err}", { err: (err as Error).message }), true);
+    }
     finally { $("#asm-busy").hidden = true; }
     this.renderPanel();
   }
@@ -463,6 +571,38 @@ export class AsmController {
     pm.querySelectorAll<HTMLElement>("[data-pair]").forEach(b => b.addEventListener("click", () => { it.sel = it.sel === Number(b.dataset.pair) ? -1 : Number(b.dataset.pair); this.drawOverlay(); this.renderPanel(); }));
   }
 
+  /** Density (g/cm³) of the part material of shown part `i` (FR-MAT-002 assembly mass properties); null when its part has no material. */
+  partDensity(i: number): number | null {
+    const c = this.anyComp(this.shownIds[i] ?? null);
+    if (!c) return null;
+    const e = this.expanded?.doc.parts[c.part] ?? this.doc?.parts[c.part];
+    return e?.doc?.material?.density ?? null;
+  }
+
+  /**
+   * Shown part `i` as bodies with their own densities, when a body of its part has its own material
+   * (FR-MAT-001): the others take the part's material, else `fallback`. Null for every other part.
+   */
+  partMasses(i: number, fallback: number): MassBody[] | null {
+    const id = this.shownIds[i], own = id ? this.ownBodies.get(id) : undefined, c = this.anyComp(id ?? null);
+    if (!own || !c) return null;
+    const d = (this.expanded?.doc.parts[c.part] ?? this.doc?.parts[c.part])?.doc;
+    return d ? bodyMasses(own, k => d.bodies?.[k]?.material?.density, d.material?.density ?? fallback) : null;
+  }
+
+  /** Mass in kg of one instance of part `k` from its bodies' own materials; undefined when it has none, null when a body has no material at all. */
+  private bodiesKg(k: string, d: PartDoc | undefined): number | null | undefined {
+    const own = this.partBodies.get(k);
+    if (!own || !d) return undefined;
+    let kg = 0;
+    for (const b of own) {
+      const rho = d.bodies?.[b.key]?.material?.density ?? d.material?.density;
+      if (rho === undefined) return null;
+      kg += (b.volume / 1e6) * rho;
+    }
+    return kg;
+  }
+
   /** BOM rows (FR-ASM-024): one per part, in the order first used, with quantity and mass. */
   /** BOM type: top level (sub-assemblies as one row) or parts only (flattened, FR-ASM-024). */
   bomMode: "top" | "parts" = "top";
@@ -481,12 +621,17 @@ export class AsmController {
         for (const [fk, fp] of Object.entries(flat.parts)) {
           if (!fk.startsWith(`${k}/`)) continue;
           const n = flat.components.filter(c => c.part === fk && !c.suppressed && c.id.split("/").length > 1).length / Math.max(1, top.components.filter(c => c.part === k && !c.suppressed).length);
+          const own = this.bodiesKg(fk, fp.doc);
+          if (own === null) return null;
+          if (own !== undefined) { sum += n * own; continue; }
           const v = this.volumes.get(fk);
           if (v === undefined || !fp.doc.material) return null;
           sum += n * (v / 1e6) * fp.doc.material.density;
         }
         return sum;
       }
+      const own = this.bodiesKg(k, p.doc);
+      if (own !== undefined) return own;
       const v = this.volumes.get(k);
       return v !== undefined && p.doc.material ? (v / 1e6) * p.doc.material.density : null;
     };
@@ -576,7 +721,7 @@ export class AsmController {
   startFasteners() {
     if (!this.doc) return;
     this.closeTools();
-    this.fastening = { kind: "iso4762", size: "M6", length: defaultLength("iso4762", "M6"), placed: 0, auto: this.fastenAuto };
+    this.fastening = { kind: "iso4762", size: "M6", length: defaultLength("iso4762", "M6"), placed: 0, auto: this.fastenAuto, cat: "Screws", q: "" };
     this.renderAll();
   }
 
@@ -615,21 +760,50 @@ export class AsmController {
    * seats on (the one facing out of the hole there). The fastener goes in along the axis from that face.
    */
   private pickHole(x: number, y: number) {
-    const hit = this.host.partAt(x, y);
+    const hit = this.holeNear(x, y) ?? this.host.partAt(x, y);
     if (hit) this.fastenHole(hit.idx, hit.face, hit.point);
+  }
+
+  /**
+   * The hole under (x, y), or one whose wall is within 8 px of it (a pointer on the rim, on the face round
+   * the hole), as a hit on its cylinder that `holeSpot` can place the panel's part on.
+   */
+  private holeNear(x: number, y: number): { idx: number; face: number; point: V3 } | null {
+    const ok = (h: { idx: number; face: number; point: V3 } | null) => !!h && this.host.viewer.parts[h.idx]?.data.faces[h.face]?.type === "cylinder" && !("err" in this.holeSpot(h.idx, h.face, h.point));
+    const h0 = this.host.partAt(x, y);
+    if (ok(h0)) return h0;
+    for (const r of [3, 6, 8]) for (let k = 0; k < 8; k++) {
+      const a = (k * Math.PI) / 4, h = this.host.partAt(x + r * Math.cos(a), y + r * Math.sin(a));
+      if (ok(h)) return h;
+    }
+    return null;
   }
 
   /** Inserts the panel's fastener on the hole whose cylinder is face `face` of shown part `idx`; `point` picks the end. */
   fastenHole(idx: number, faceIdx: number, point: V3) {
-    const hit = { idx, face: faceIdx, point };
     if (!this.fastening) return;
-    const id = this.shownIds[hit.idx], face = this.faceNames[hit.idx]?.[hit.face], c = this.comp(id);
-    if (!c || !face) { toast(t("Click the cylindrical face of a hole."), true); return; }
+    const spot = this.holeSpot(idx, faceIdx, point);
+    if ("err" in spot) { toast(spot.err, true); return; }
+    if (spot.size !== this.fastening.size) this.setFastener({ size: spot.size });
+    this.hideGhost();
+    this.insertFastener(spot.tf, { axis: spot.axis, seat: spot.seat });
+  }
+
+  /**
+   * Where the panel's fastener goes on the hole whose cylinder is face `faceIdx` of shown part `idx`: its
+   * placement (Z out of the hole at the seat face of the end nearer `point`), the faces it mates to and its
+   * size (the hole's, with Size from the hole), or why it cannot go there.
+   */
+  private holeSpot(idx: number, faceIdx: number, point: V3): { tf: Tf; axis: MateRef; seat: MateRef; size: string; dia: number } | { err: string } {
+    const f = this.fastening!;
+    const id = this.shownIds[idx], face = this.faceNames[idx]?.[faceIdx], c = this.comp(id);
+    const notHole = { err: t("Click the cylindrical face of a hole.") };
+    if (!c || !face) return notHole;
     const g = this.worldGeo({ comp: id, face });
-    if (g?.k !== "axis") { toast(t("Click the cylindrical face of a hole."), true); return; }
+    if (g?.k !== "axis") return notHole;
     // How far the cylinder runs along its axis, from its triangles.
-    const data = this.host.viewer.parts[hit.idx]?.data, fi = data?.faces[hit.face];
-    if (!data || !fi) return;
+    const data = this.host.viewer.parts[idx]?.data, fi = data?.faces[faceIdx];
+    if (!data || !fi) return notHole;
     let lo = Infinity, hi = -Infinity;
     for (let i = fi.triStart * 3; i < (fi.triStart + fi.triCount) * 3; i++) {
       const v = data.index[i] * 3;
@@ -638,12 +812,8 @@ export class AsmController {
       if (s > hi) hi = s;
     }
     // The size follows the hole (or a bearing's bore), when the panel says so and one fits.
-    const f = this.fastening;
-    if (f.auto) {
-      const fit = sizeForHole(f.kind, 2 * g.r, f.size);
-      if (fit && fit !== f.size) this.setFastener({ size: fit });
-    }
-    const tc = (hit.point[0] - g.p[0]) * g.d[0] + (hit.point[1] - g.p[1]) * g.d[1] + (hit.point[2] - g.p[2]) * g.d[2];
+    const size = (f.auto ? sizeForHole(f.kind, 2 * g.r, f.size) : null) ?? f.size;
+    const tc = (point[0] - g.p[0]) * g.d[0] + (point[1] - g.p[1]) * g.d[1] + (point[2] - g.p[2]) * g.d[2];
     const ends = Math.abs(tc - hi) <= Math.abs(tc - lo) ? [hi, lo] : [lo, hi];
     const tol = Math.max(1e-3, this.size() * 1e-5);
     for (const end of ends) {
@@ -668,28 +838,148 @@ export class AsmController {
       const xa = (() => { const k = u[0] * out[0] + u[1] * out[1] + u[2] * out[2]; const v: V3 = [u[0] - k * out[0], u[1] - k * out[1], u[2] - k * out[2]]; const l = Math.hypot(...v); return v.map(q => q / l) as V3; })();
       const ya: V3 = [out[1] * xa[2] - out[2] * xa[1], out[2] * xa[0] - out[0] * xa[2], out[0] * xa[1] - out[1] * xa[0]];
       const tf: Tf = [xa[0], ya[0], out[0], at[0], xa[1], ya[1], out[1], at[1], xa[2], ya[2], out[2], at[2]];
-      this.insertFastener(tf, { axis: { comp: id, face }, seat: { comp: id, face: seat } });
-      return;
+      return { tf, axis: { comp: id, face }, seat: { comp: id, face: seat }, size, dia: 2 * g.r };
     }
-    toast(t("No flat face around the end of that hole to seat the fastener on."), true);
+    return { err: t("No flat face around the end of that hole to seat the fastener on.") };
   }
 
+  // ---------- library preview: the part on the hole under the pointer, and cards dragged onto the view ----------
+
+  private bindToolbox() {
+    const cv = this.host.viewer.renderer.domElement;
+    let raf = 0, at: { x: number; y: number } | null = null;
+    cv.addEventListener("pointermove", e => {
+      if (!this.fastening || e.buttons) { if (this.ghostKey) this.hideGhost(); return; }
+      at = { x: e.clientX, y: e.clientY };
+      if (!raf) raf = requestAnimationFrame(() => { raf = 0; if (at && this.fastening) this.previewAt(at.x, at.y); });
+    });
+    cv.addEventListener("pointerleave", () => { at = null; this.hideGhost(); });
+  }
+
+  /** Shows the panel's part on the hole under (x, y), sized as it would be placed; false when there is no hole there. */
+  previewAt(x: number, y: number): boolean {
+    const f = this.fastening;
+    const hit = f && this.holeNear(x, y);
+    const spot = hit ? this.holeSpot(hit.idx, hit.face, hit.point) : null;
+    if (!f || !spot || "err" in spot) { this.hideGhost(); this.fastenStatus(); return false; }
+    const L = lengthFor(f.kind, spot.size, f.length);
+    this.showGhost(spot.tf, fastenerShape(f.kind, spot.size, L), `${f.kind}|${spot.size}|${L}`);
+    this.fastenStatus(t("{name} on a Ø{d} hole: click to place it.", { name: fastenerName(f.kind, spot.size, L), d: +spot.dia.toFixed(2) }));
+    return true;
+  }
+
+  /** The status line of the Toolbox panel: `text`, else what to do next. */
+  private fastenStatus(text?: string) {
+    const f = this.fastening, el = document.querySelector<HTMLElement>("#asm-pm [data-fstatus]");
+    if (!f || !el) return;
+    el.textContent = text ?? (f.placed ? t("{n} part placed. Click more holes, or ✓ to finish.|{n} parts placed. Click more holes, or ✓ to finish.", { n: f.placed })
+      : fastenerInfo(f.kind).fit ? t("Click the cylindrical face of a hole near the end the part goes in, or drag a card onto it.") : t("Insert it without a hole, then mate it."));
+  }
+
+  private showGhost(tf: Tf, sh: ToolShape, key: string) {
+    const g = this.toolGhost;
+    if (key !== this.ghostKey) {
+      this.clearGhost();
+      const mat = new THREE.MeshStandardMaterial({ color: 0xf2b134, transparent: true, opacity: 0.6, roughness: 0.5, metalness: 0.1, side: THREE.DoubleSide, depthWrite: false });
+      // The part inside the hole shows faintly through the model.
+      const xray = new THREE.MeshBasicMaterial({ color: 0xf2b134, transparent: true, opacity: 0.22, depthTest: false, depthWrite: false });
+      for (const s of sh.solids) {
+        if ("neg" in s && s.neg) continue;
+        let geo: THREE.BufferGeometry;
+        if (s.t === "rev") {
+          geo = new THREE.LatheGeometry(s.pts.map(([r, z]) => new THREE.Vector2(r, z)).concat([new THREE.Vector2(s.pts[0][0], s.pts[0][1])]), 48);
+          geo.rotateX(Math.PI / 2);
+        } else if (s.t === "hex") {
+          const R = s.s / Math.sqrt(3), shp = new THREE.Shape();
+          for (let i = 0; i < 6; i++) { const a = Math.PI / 6 + (i * Math.PI) / 3; if (i) shp.lineTo(R * Math.cos(a), R * Math.sin(a)); else shp.moveTo(R * Math.cos(a), R * Math.sin(a)); }
+          if (s.ri) { const h = new THREE.Path(); h.absarc(0, 0, s.ri, 0, 2 * Math.PI, true); shp.holes.push(h); }
+          geo = new THREE.ExtrudeGeometry(shp, { depth: s.z1 - s.z0, bevelEnabled: false, curveSegments: 32 });
+          geo.translate(0, 0, s.z0);
+        } else { geo = new THREE.BoxGeometry(s.x, s.y, s.z1 - s.z0); geo.translate(0, 0, (s.z0 + s.z1) / 2); }
+        geo.computeVertexNormals();
+        const m = new THREE.Mesh(geo, mat), x = new THREE.Mesh(geo, xray);
+        m.renderOrder = 5;
+        x.renderOrder = 6;
+        g.add(m, x);
+      }
+      this.ghostKey = key;
+    }
+    g.matrixAutoUpdate = false;
+    g.matrix.set(tf[0], tf[1], tf[2], tf[3], tf[4], tf[5], tf[6], tf[7], tf[8], tf[9], tf[10], tf[11], 0, 0, 0, 1);
+    g.matrixWorldNeedsUpdate = true;
+    g.visible = true;
+    this.host.viewer.invalidate();
+  }
+
+  private clearGhost() {
+    const mats = new Set<THREE.Material>();
+    const geos = new Set<THREE.BufferGeometry>();
+    for (const o of [...this.toolGhost.children]) { this.toolGhost.remove(o); const m = o as THREE.Mesh; geos.add(m.geometry); mats.add(m.material as THREE.Material); }
+    for (const g of geos) g.dispose();
+    for (const m of mats) m.dispose();
+    this.ghostKey = "";
+  }
+
+  private hideGhost() {
+    if (!this.toolGhost.visible && !this.ghostKey) return;
+    this.toolGhost.visible = false;
+    this.host.viewer.invalidate();
+  }
+
+  /** A library card dragged over the view: picks its standard and previews it on the hole under the pointer. */
+  toolboxDragOver(x: number, y: number) {
+    if (!this.doc) return;
+    if (!this.fastening) this.startFasteners();
+    if (this.dragKind && this.fastening!.kind !== this.dragKind) this.setFastener({ kind: this.dragKind });
+    this.previewAt(x, y);
+  }
+
+  toolboxDragLeave() { this.hideGhost(); }
+
+  /** A library card dropped on the view: on a hole it is sized and mated there; elsewhere it is inserted where it was dropped. */
+  toolboxDrop(x: number, y: number) {
+    if (!this.doc) return;
+    this.toolboxDragOver(x, y);
+    this.dragKind = null;
+    this.hideGhost();
+    const near = this.holeNear(x, y);
+    if (near) { this.fastenHole(near.idx, near.face, near.point); return; }
+    const hit = this.host.partAt(x, y);
+    this.insertFastener(hit ? translation(hit.point) : undefined);
+  }
+
+  /**
+   * The Toolbox panel (FR-ASM-028), a design library: search, category tiles, a card per standard (with its
+   * side view; drag one onto a hole), then the picked standard's side view with dimensions, size chips,
+   * length, designation and mass.
+   */
   private renderFastenerPanel() {
     const pm = $("#asm-pm"), f = this.fastening!;
     pm.hidden = false;
     pm.dataset.id = "fastener";
     const info = fastenerInfo(f.kind);
     const opt = (v: string, label: string, on: boolean) => `<option value="${esc(v)}"${on ? " selected" : ""}>${esc(label)}</option>`;
-    const kinds = TOOLBOX_GROUPS.map(gr => `<optgroup label="${esc(t(gr))}">${FASTENERS.filter(x => x.group === gr).map(x => opt(x.kind, t(x.label), x.kind === f.kind)).join("")}</optgroup>`).join("");
+    const cats = TOOLBOX_GROUPS.map(gr => {
+      const ks = FASTENERS.filter(x => x.group === gr), k0 = ks[0], sz = fastenerSizes(k0.kind), mid = sz[Math.floor(sz.length / 2)];
+      const on = !f.q && f.cat === gr;
+      return `<button class="tb-cat${on ? " on" : ""}" data-cat="${gr}" title="${esc(t(gr))}" role="tab" aria-selected="${on}">${shapeSvg(fastenerShape(k0.kind, mid, defaultLength(k0.kind, mid)), { w: 30, h: 24, cls: "tb-ico" })}<span>${esc(t(gr))}</span><span class="tb-n">${ks.length}</span></button>`;
+    }).join("");
+    const L = info.screw ? f.length : 0, shape = fastenerShape(f.kind, f.size, L);
+    const grams = shapeVolume(shape) * 7.85e-3;
     pm.innerHTML = `<div class="pm-head pm-top"><h3>${esc(t("Toolbox"))}</h3><span class="pm-okc"><button class="pm-ok" data-a="ok" title="${esc(t("OK (Enter)"))}" aria-label="${esc(t("OK (Enter)"))}">✓</button></span></div>`
-      + `<fieldset class="pm-group"><legend>${esc(t("Standard part"))}</legend>`
-      + `<label class="pm-field"><span>${esc(t("Standard"))}</span><select data-f="kind">${kinds}</select></label>`
-      + `<label class="pm-field"><span>${esc(t("Size"))}</span><select data-f="size" translate="no">${fastenerSizes(f.kind).map(x => opt(x, x, x === f.size)).join("")}</select></label>`
-      + (info.screw ? `<label class="pm-field"><span>${esc(t("Length"))}</span><select data-f="length" translate="no">${fastenerLengths(f.kind, f.size).map(x => opt(String(x), `${x} mm`, x === f.length)).join("")}</select></label>` : "")
+      + `<input type="search" class="tb-q" data-f="q" value="${esc(f.q)}" placeholder="${esc(t("Search: M6 nut, 4762, 6201…"))}" aria-label="${esc(t("Search the library"))}" />`
+      + `<div class="tb-cats" role="tablist" aria-label="${esc(t("Categories"))}">${cats}</div>`
+      + `<div class="tb-cards" data-cards>${this.fastenerCards()}</div>`
+      + `<fieldset class="pm-group tb-pick"><legend>${esc(t(info.label))}</legend>`
+      + `<div class="tb-view">${shapeSvg(shape, { w: 248, h: 150, dims: true, cls: "tb-svg", label: esc(fastenerName(f.kind, f.size, f.length)) })}</div>`
+      + `<div class="tb-sizes" role="group" aria-label="${esc(t("Size"))}" translate="no">${fastenerSizes(f.kind).map(x => `<button class="tb-size${x === f.size ? " on" : ""}" data-size="${esc(x)}" aria-pressed="${x === f.size}">${esc(x)}</button>`).join("")}</div>`
+      + (info.screw ? `<label class="pm-field"><span>${esc(t("Length"))}</span><select data-f="length" translate="no">${fastenerLengths(f.kind, f.size).map(x => opt(String(x), lengthLabel(f.kind, x), x === f.length)).join("")}</select></label>` : "")
       + (info.fit ? `<label class="pm-field pm-check"><input type="checkbox" data-a="auto"${f.auto ? " checked" : ""} /> ${esc(t("Size from the hole"))}</label>` : "")
-      + `<p class="pm-help muted" translate="no">${esc(fastenerName(f.kind, f.size, f.length))}</p></fieldset>`
-      + `<p class="pm-help" role="status" data-fstatus>${esc(f.placed ? t("{n} part placed. Click more holes, or ✓ to finish.|{n} parts placed. Click more holes, or ✓ to finish.", { n: f.placed }) : info.fit ? t("Click the cylindrical face of a hole near the end the part goes in.") : t("Insert it without a hole, then mate it."))}</p>`
+      + `<p class="tb-desig"><span>${esc(t("Designation"))}</span> <b translate="no">${esc(fastenerName(f.kind, f.size, f.length))}</b></p>`
+      + `<p class="pm-help muted">${esc(t("Steel, about {g} g", { g: grams < 10 ? +grams.toFixed(2) : +grams.toFixed(1) }))}</p></fieldset>`
+      + `<p class="pm-help" role="status" data-fstatus></p>`
       + `<button class="btn small" data-a="insert">${esc(t("Insert without a hole"))}</button>`;
+    this.fastenStatus();
     pm.querySelector("[data-a=ok]")!.addEventListener("click", () => this.closeTools());
     pm.querySelector("[data-a=insert]")!.addEventListener("click", () => this.insertFastener());
     pm.querySelector<HTMLInputElement>("[data-a=auto]")?.addEventListener("change", e => {
@@ -697,13 +987,59 @@ export class AsmController {
       try { localStorage.setItem("mc:toolboxAuto", f.auto ? "1" : "0"); } catch { /* per browser only */ }
     });
     pm.querySelectorAll<HTMLSelectElement>("select[data-f]").forEach(sel => sel.addEventListener("change", () => this.setFastener({ [sel.dataset.f!]: sel.dataset.f === "length" ? Number(sel.value) : sel.value })));
+    pm.querySelectorAll<HTMLButtonElement>("[data-size]").forEach(b => b.addEventListener("click", () => this.setFastener({ size: b.dataset.size })));
+    pm.querySelectorAll<HTMLButtonElement>("[data-cat]").forEach(b => b.addEventListener("click", () => {
+      f.cat = b.dataset.cat as ToolboxGroup;
+      f.q = "";
+      const first = FASTENERS.find(x => x.group === f.cat)!;
+      if (fastenerInfo(f.kind).group !== f.cat) this.setFastener({ kind: first.kind }); else this.renderPanel();
+    }));
+    const q = pm.querySelector<HTMLInputElement>("[data-f=q]")!;
+    q.addEventListener("input", () => {
+      f.q = q.value;
+      pm.querySelectorAll(".tb-cat").forEach(b => { const on = !f.q && (b as HTMLElement).dataset.cat === f.cat; b.classList.toggle("on", on); b.setAttribute("aria-selected", String(on)); });
+      pm.querySelector("[data-cards]")!.innerHTML = this.fastenerCards();
+      this.bindCards();
+    });
+    this.bindCards();
+  }
+
+  /** The cards of the panel's category, or of the search matches. */
+  private fastenerCards(): string {
+    const f = this.fastening!;
+    const list = f.q.trim() ? searchFasteners(f.q, t) : FASTENERS.filter(x => x.group === f.cat);
+    if (!list.length) return `<p class="pm-help muted">${esc(t("Nothing in the library matches that."))}</p>`;
+    return list.map(x => {
+      const sz = fastenerSizes(x.kind), size = sz.includes(f.size) ? f.size : sz[Math.floor(sz.length / 2)];
+      const label = t(x.label).replace(/\s*\([^)]*\)\s*$/, "");
+      return `<button class="tb-card${x.kind === f.kind ? " on" : ""}" data-kind="${x.kind}" draggable="true" aria-pressed="${x.kind === f.kind}" title="${esc(t(x.label))}">`
+        + `${shapeSvg(fastenerShape(x.kind, size, defaultLength(x.kind, size)), { w: 44, h: 34, cls: "tb-pic" })}`
+        + `<span class="tb-cn" translate="no">${esc(x.name.replace(/^(ISO|DIN) /, ""))}</span><span class="tb-cl">${esc(label)}</span></button>`;
+    }).join("");
+  }
+
+  private bindCards() {
+    $("#asm-pm").querySelectorAll<HTMLButtonElement>("[data-kind]").forEach(b => {
+      const kind = b.dataset.kind as FastenerKind;
+      b.addEventListener("click", () => { if (this.fastening && kind !== this.fastening.kind) this.setFastener({ kind }); });
+      b.addEventListener("dragstart", e => {
+        this.dragKind = kind;
+        e.dataTransfer?.setData(TOOLBOX_MIME, kind);
+        if (e.dataTransfer) e.dataTransfer.effectAllowed = "copy";
+      });
+      b.addEventListener("dragend", () => { this.dragKind = null; this.hideGhost(); });
+    });
   }
 
   /** Changes the panel's fastener; a size or standard without the length picks the nearest preferred one. */
   setFastener(v: { kind?: string; size?: string; length?: number }) {
     const f = this.fastening;
     if (!f) return;
-    if (v.kind) { f.kind = v.kind as FastenerKind; if (!fastenerSizes(f.kind).includes(f.size)) f.size = fastenerSizes(f.kind).includes("M6") ? "M6" : fastenerSizes(f.kind)[0]; }
+    if (v.kind) {
+      f.kind = v.kind as FastenerKind;
+      if (!f.q) f.cat = fastenerInfo(f.kind).group;
+      if (!fastenerSizes(f.kind).includes(f.size)) f.size = fastenerSizes(f.kind).includes("M6") ? "M6" : fastenerSizes(f.kind)[0];
+    }
     if (v.size) f.size = v.size;
     if (v.length) f.length = v.length;
     const ls = fastenerLengths(f.kind, f.size);
@@ -789,8 +1125,8 @@ export class AsmController {
   private addAutoMates(): boolean {
     if (!this.doc) return false;
     const mates: Mate[] = [], left: typeof this.autoMates = [];
-    const count: Record<string, number> = {};
-    const named = (type: MateType) => { count[type] = (count[type] ?? (this.doc!.mates ?? []).filter(m => m.type === type).length) + 1; return `${MATE_LABEL[type]}${count[type]}`; };
+    const used = new Set<string>();
+    const named = (type: MateType) => { const name = mateName(this.doc!.mates ?? [], type, used); used.add(name); return name; };
     const pair = (a: MateRef, b: MateRef, ga: Geo, gb: Geo, align: "anti" | "aligned" = "anti") => {
       const type: MateType = ga.k === "axis" && gb.k === "axis" ? "concentric" : "coincident";
       mates.push({ id: uid("m_"), name: named(type), type, a, b, ...(type === "coincident" && ga.k === "plane" && gb.k === "plane" ? { align } : {}) });
@@ -958,6 +1294,7 @@ export class AsmController {
     if (this.refing) { this.refing = null; this.clearPicks(); }
     if (this.featuring) { this.featuring = null; this.clearOverlay(); }
     this.fastening = null;
+    this.hideGhost();
     this.moving = null;
     this.renderAll();
   }
@@ -1187,16 +1524,22 @@ export class AsmController {
   // ---------- mates (FR-MATE-003/008) ----------
 
   /** Records each part's face geometry in part coordinates from the first shown instance. */
-  private learn(doc: AsmDoc, parts: { id: string; data: PartData; faces: string[] }[]) {
+  private learn(doc: AsmDoc, parts: { id: string; data: PartData; faces: string[]; bodies?: OwnBody[] }[]) {
     this.faceNames = parts.map(p => p.faces);
+    this.ownBodies.clear();
+    this.partBodies.clear();
     this.shownTf = {};
     this.builtTf = {};
     for (const c of this.doc?.components ?? []) this.builtTf[c.id] = c.tf.slice();
     const seen = new Set<string>();
+    // Parts with an edge that an in-context part converted (only those are worth keeping edges for).
+    const edgeParts = new Set<string>();
+    for (const e of Object.values(doc.parts)) if (e.doc && !e.asm) for (const { ext } of ctxEdgeRefs(e.doc)) { const k = this.anyCompIn(doc, ext.ctx.comp)?.part; if (k) edgeParts.add(k); }
     for (const p of parts) {
       const c = doc.components.find(x => x.id === p.id);
       if (!c) continue;
       this.shownTf[c.id] = c.tf.slice();
+      if (p.bodies) { this.ownBodies.set(p.id, p.bodies); this.partBodies.set(c.part, p.bodies); }
       const again = seen.has(c.part);
       seen.add(c.part);
       const inv = invert(c.tf), m = again ? this.geo.get(c.part) ?? new Map<string, Geo>() : new Map<string, Geo>();
@@ -1206,12 +1549,48 @@ export class AsmController {
         if (f.type === "plane" && f.normal) m.set(name, { k: "plane", p: applyPoint(inv, f.centroid), n: unit(applyDir(inv, f.normal)) });
         else if (f.type === "cylinder" && f.axis) m.set(name, { k: "axis", p: applyPoint(inv, f.center), d: unit(applyDir(inv, f.axis)), r: f.radius ?? 0 });
       });
+      if (!again && edgeParts.has(c.part)) {
+        const list: CtxEdgeSeen[] = [];
+        for (const e of p.data.edges) {
+          const a = p.faces[e.faces[0]], b = p.faces[e.faces[1]];
+          if (!a || !b || e.type === "curve") continue;
+          list.push({ faces: [a, b], geo: moveEdgeGeo(e, q => applyPoint(inv, q), q => applyDir(inv, q)) });
+        }
+        this.edgeGeo.set(c.part, list);
+      }
+      if (!again) this.keepMateFaces(doc, c.part, this.geo.get(c.part), m);
       this.geo.set(c.part, m);
       if (again) continue;
       this.volumes.set(c.part, p.data.volume);
       const b0 = p.data.bboxMin, b1 = p.data.bboxMax;
       this.centres.set(c.part, applyPoint(inv, [(b0[0] + b1[0]) / 2, (b0[1] + b1[1]) / 2, (b0[2] + b1[2]) / 2]));
     }
+  }
+
+  /**
+   * Mates keep their faces through a part edit (exam #84): a face whose name went away but whose surface is
+   * still there under another, new name (adding a concentric circle renamed an old part's outer face) is
+   * followed to that name, as a CAD app keeps a mate on the same face after a sketch edit.
+   */
+  private keepMateFaces(doc: AsmDoc, part: string, prev: Map<string, Geo> | undefined, now: Map<string, Geo>) {
+    if (!prev?.size) return;
+    const sub = (a: V3, b: V3): V3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], dot = (a: V3, b: V3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const len = (a: V3) => Math.hypot(a[0], a[1], a[2]), cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    const near = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) < 1e-5;
+    const same = (g: Geo, h: Geo) => {
+      if (g.k === "plane" && h.k === "plane") return near(g.n, h.n) && Math.abs(dot(g.n, sub(h.p, g.p))) < 1e-5;
+      if (g.k === "axis" && h.k === "axis") return Math.abs(Math.abs(dot(g.d, h.d)) - 1) < 1e-9 && Math.abs(g.r - h.r) < 1e-5 && len(cross(sub(h.p, g.p), g.d)) < 1e-5;
+      return false;
+    };
+    const moved = new Map<string, string>();
+    for (const [name, g] of prev) {
+      if (now.has(name)) continue;
+      const fresh = [...now].filter(([n, h]) => !prev.has(n) && same(g, h));
+      if (fresh.length === 1) moved.set(name, fresh[0][0]);
+    }
+    if (!moved.size) return;
+    const comps = new Set(doc.components.filter(x => x.part === part).map(x => x.id));
+    for (const mt of doc.mates ?? []) for (const r of [mt.a, mt.b, mt.c, mt.d]) if (r && comps.has(r.comp) && moved.has(r.face)) r.face = moved.get(r.face)!;
   }
 
   private size() { return Math.max(10, this.host.viewer.parts.length ? this.host.viewer.modelSize : 100); }
@@ -1227,7 +1606,7 @@ export class AsmController {
         for (const x of doc.components) if (x.id.startsWith(`${c.id}/`) && !start[x.id]) start[x.id] = compose(move, x.tf);
       }
     }
-    return solve({ doc, extra, start, geo: (part, face) => this.geo.get(part)?.get(face) ?? null, centre: part => this.centres.get(part) ?? [0, 0, 0], size: this.size(), dof });
+    return solve({ doc, extra, start, geo: (part, face) => this.geo.get(part)?.get(face) ?? null, faces: part => this.geo.get(part)?.values() ?? [], centre: part => this.centres.get(part) ?? [0, 0, 0], size: this.size(), dof });
   }
 
   /** Solves a changed document's mates into its transforms; when they conflict nothing moves. */
@@ -1257,8 +1636,7 @@ export class AsmController {
     const ga = this.worldGeo(target), gb = this.worldGeo(grab);
     if (!ga || !gb || ga.k !== gb.k) return false;
     const type: MateType = ga.k === "axis" ? "concentric" : "coincident";
-    const n = (this.doc.mates ?? []).filter(x => x.type === type).length + 1;
-    const mate: Mate = { id: uid("m_"), name: `${MATE_LABEL[type]}${n}`, type, a: target, b: grab, ...(type === "coincident" ? { align: "anti" as const } : {}) };
+    const mate: Mate = { id: uid("m_"), name: mateName(this.doc.mates ?? [], type), type, a: target, b: grab, ...(type === "coincident" ? { align: "anti" as const } : {}) };
     const start = { ...dropped };
     const r = this.solveDoc(this.doc, [mate], start);
     if (!r.ok) { toast(t("This mate cannot be solved with the others: the assembly would be over-defined."), true); return false; }
@@ -1332,6 +1710,31 @@ export class AsmController {
     return null;
   }
 
+  /**
+   * Turns a component by `deg` about the axis of its concentric, hinge or screw mate (exam #51). Each step of at most
+   * 60° is solved with a lock that holds the component's orientation against a fixed one (as a motion study's motor
+   * holds a turn), so the parts coupled to it follow instead of pulling it back, and a screw counts whole turns.
+   */
+  private turnOnAxis(id: string, deg: number): Record<string, Tf> | null {
+    const doc = this.doc, c = this.comp(id), ax = this.dragAxis(id);
+    const base = doc?.components.find(x => x.fixed && !x.suppressed && x.id !== id);
+    if (!doc || !c || !ax || !base || c.fixed || !Number.isFinite(deg)) return null;
+    const n = Math.max(1, Math.ceil(Math.abs(deg) / 60)), step = (deg * Math.PI) / 180 / n;
+    let work: AsmDoc = doc, tfs: Record<string, Tf> | null = null;
+    for (let k = 0; k < n; k++) {
+      const now = work.components.find(x => x.id === id)!.tf, want = compose(rotation(ax.o, ax.u, step), now);
+      const lock: Mate = { id: `${id}~turn`, name: "", type: "lock", a: { comp: base.id, face: "" }, b: { comp: id, face: "" }, rel: compose(invert(base.tf), want), keep: "rot" };
+      const start: Record<string, Tf> = {};
+      for (const x of work.components) start[x.id] = x.id === id ? want : x.tf;
+      const r = this.solveDoc(work, [lock], start, false);
+      if (!r.ok) return null;
+      tfs = r.tfs;
+      const got = tfs;
+      work = { ...work, components: work.components.map(x => (got[x.id] ? { ...x, tf: got[x.id] } : x)) };
+    }
+    return tfs;
+  }
+
   private mateLive(id: string) { return (this.doc?.mates ?? []).some(m => !m.suppressed && (m.a.comp === id || m.b.comp === id)); }
 
   /** Mate (FR-MATE-003/006): pick two faces, the likely mate type is chosen and previewed. */
@@ -1352,15 +1755,55 @@ export class AsmController {
     this.renderAll();
   }
 
+  /**
+   * Solves with one more mate; when that fails from where the parts stand, tries again with a component of the mate
+   * turned about its own axes (the mates' cylinders, else the world axes through its centre) by 90°, 180° and 270°,
+   * because the solver only finds the nearest solution: a mate made half a turn away is not over-defined (exam #63).
+   */
+  private solveMate(doc: AsmDoc, mate: Mate): SolveResult {
+    const r = this.solveDoc(doc, [mate]);
+    if (r.ok || r.missing.includes(mate.id)) return r;
+    const t0 = performance.now();
+    for (const id of [mate.b.comp, mate.a.comp]) {
+      const c = doc.components.find(x => x.id === id);
+      if (!c || c.fixed) continue;
+      const axes: { o: V3; u: V3 }[] = [];
+      for (const x of [...(doc.mates ?? []), mate]) {
+        if (x.suppressed) continue;
+        for (const ref of [x.a, x.b]) { const g = ref.comp === id ? this.worldGeo(ref) : null; if (g?.k === "axis" && !axes.some(q => Math.abs(new THREE.Vector3(...q.u).dot(new THREE.Vector3(...g.d))) > 0.999 && new THREE.Vector3(...g.p).sub(new THREE.Vector3(...q.o)).cross(new THREE.Vector3(...q.u)).length() < 1e-6)) axes.push({ o: g.p, u: g.d }); }
+      }
+      if (!axes.length) { const o = applyPoint(c.tf, this.centres.get(c.part) ?? [0, 0, 0]); axes.push({ o, u: [0, 0, 1] }, { o, u: [1, 0, 0] }, { o, u: [0, 1, 0] }); }
+      for (const ax of axes) for (const deg of [180, 90, 270]) {
+        if (performance.now() - t0 > 4000) return r;
+        const start: Record<string, Tf> = { [id]: compose(rotation(ax.o, ax.u, (deg * Math.PI) / 180), c.tf) };
+        for (const x of doc.components) start[x.id] ??= x.tf;
+        const rr = this.solveDoc(doc, [mate], start);
+        if (rr.ok) return rr;
+      }
+    }
+    return r;
+  }
+
   /** The draft as a mate, when it has both faces and a type that fits them. */
   private draftMate(): Mate | null {
     const m = this.mating;
     if (!m?.a || !m.b || !m.type || !this.doc) return null;
-    const n = (this.doc.mates ?? []).filter(x => x.type === m.type).length + 1;
     const old = m.edit ? this.doc.mates?.find(x => x.id === m.edit) : undefined;
-    const mate: Mate = { id: m.edit ?? uid("m_"), name: old && old.type === m.type ? old.name : `${MATE_LABEL[m.type].replace(/ (\w)/g, (_, c: string) => c.toUpperCase())}${n}`, type: m.type, a: m.a, b: m.b };
+    const mate: Mate = { id: m.edit ?? uid("m_"), name: old && old.type === m.type ? old.name : mateName((this.doc.mates ?? []).filter(x => x.id !== m.edit), m.type), type: m.type, a: m.a, b: m.b };
     if (m.align) mate.align = m.align;
     if (m.type === "distance" || m.type === "angle") { mate.value = m.value ?? 0; if (m.flip) mate.flip = true; }
+    // Angle: signed about a × b as the faces stand now (kept when edited), so +θ and −θ differ (exam #72).
+    if (m.type === "angle") {
+      if (old?.type === "angle" && old.about) mate.about = old.about;
+      else {
+        const ga = this.worldGeo(m.a), gb = this.worldGeo(m.b), ca = this.anyComp(m.a.comp);
+        if (ga && gb && ca) {
+          const da = ga.k === "plane" ? ga.n : ga.d, db0 = gb.k === "plane" ? gb.n : gb.d, sg = m.flip ? -1 : 1;
+          const c = new THREE.Vector3(...da).cross(new THREE.Vector3(...db0).multiplyScalar(sg));
+          if (c.length() > 1e-6) { c.normalize(); mate.about = applyDir(invert(ca.tf), [c.x, c.y, c.z]); }
+        }
+      }
+    }
     if (m.type === "lock") { const a = this.anyComp(m.a.comp), b = this.anyComp(m.b.comp); if (a && b) mate.rel = compose(invert(a.tf), b.tf); }
     if (m.type === "limitdist" || m.type === "limitangle") { mate.min = m.min ?? 0; mate.max = Math.max(mate.min, m.max ?? mate.min); if (m.flip) mate.flip = true; }
     if (m.type === "symmetric" || m.type === "width" || m.type === "slot" || m.type === "hinge") {
@@ -1396,9 +1839,23 @@ export class AsmController {
     if (!m) return;
     m.problem = undefined;
     if (!mate) { this.previewTfs(this.shownTf); this.renderPanel(); return; }
-    const r = this.solveDoc(this.withoutEdited(), [mate]);
+    let r = this.solveMate(this.withoutEdited(), mate);
+    // Face-to-face is only a first guess: when it can't be solved and the other alignment can (the part can't turn
+    // over, e.g. a pin on an axis), take that one, as a CAD app does (exam #74). A choice made in the panel stays.
+    if (!r.ok && mate.type === "coincident" && mate.align && !m.alignSet && !m.edit) {
+      const other = { ...mate, align: mate.align === "anti" ? "aligned" as const : "anti" as const };
+      const r2 = this.solveMate(this.withoutEdited(), other);
+      if (r2.ok) { m.align = other.align; r = r2; }
+    }
+    // Two flat faces start as Coincident; when the parts are already held so that it cannot be solved either way but
+    // Parallel can (two side faces of a part held by its other mates), start with Parallel (exam #27).
+    if (!r.ok && mate.type === "coincident" && mate.align && !m.typeSet && !m.alignSet && !m.edit) {
+      const par: Mate = { id: mate.id, name: mateName(this.doc?.mates ?? [], "parallel"), type: "parallel", a: mate.a, b: mate.b };
+      const r3 = this.solveMate(this.withoutEdited(), par);
+      if (r3.ok) { m.type = "parallel"; m.align = undefined; r = r3; }
+    }
     if (r.ok) this.previewTfs(r.tfs);
-    else { this.previewTfs(this.shownTf); m.problem = r.bad.includes(mate.id) || r.missing.includes(mate.id) ? t("This mate cannot be solved with the others: the assembly would be over-defined.") : t("The assembly mates cannot all be solved."); }
+    else { this.previewTfs(this.shownTf); m.problem = r.bad.includes(mate.id) || r.missing.includes(mate.id) ? t(MATE_FAILS) : t("The assembly mates cannot all be solved."); }
     this.renderPanel();
   }
 
@@ -1409,8 +1866,9 @@ export class AsmController {
     if (!m.a && !m.b) { this.cancelMate(); return; }
     const mate = this.draftMate();
     if (!mate) { toast(t("Pick two faces on different components, and a mate type that fits them."), true); return; }
-    const r = this.solveDoc(this.withoutEdited(), [mate]);
-    if (!r.ok) { m.problem = t("This mate cannot be solved with the others: the assembly would be over-defined."); this.renderPanel(); toast(m.problem, true); return; }
+    const r = this.solveMate(this.withoutEdited(), mate);
+    if (!r.ok) { m.problem = t(MATE_FAILS); this.renderPanel(); toast(m.problem, true); return; }
+    untoast([t(MATE_FAILS), t("This mate cannot be solved with the others: the assembly would be over-defined.")]);
     const edit = m.edit;
     this.mating = edit ? {} : { added: mate.name };
     this.mateOther = null;
@@ -1419,6 +1877,8 @@ export class AsmController {
       d.mates ??= [];
       const i = edit ? d.mates.findIndex(x => x.id === edit) : -1;
       if (i >= 0) d.mates[i] = mate; else d.mates.push(mate);
+      // Where the solve found it (perhaps from a turned start): the document's own solve goes on from there.
+      applySolved(d, r.tfs);
     });
     if (edit) this.cancelMate();
   }
@@ -1436,7 +1896,7 @@ export class AsmController {
       const o = this.mateOther, same = o && o.draft === m && Math.hypot(o.x - x, o.y - y) <= 4;
       const i = same ? (o!.i + 1) % faces.length : Math.min(1, faces.length - 1);
       const before = same ? o!.before : { ...m };
-      for (const k of ["a", "b", "c", "d", "type", "align", "value", "flip", "min", "max", "ratio"] as const) delete m[k];
+      for (const k of ["a", "b", "c", "d", "type", "align", "alignSet", "typeSet", "value", "flip", "min", "max", "ratio"] as const) delete m[k];
       Object.assign(m, before);
       this.mateOther = { x, y, i, before, draft: m };
       hit = faces[i];
@@ -1473,7 +1933,7 @@ export class AsmController {
     if (m.a && m.b) {
       const ga = this.worldGeo(m.a)!, gb = this.worldGeo(m.b)!;
       m.type = mateTypes(ga.k, gb.k)[0];
-      Object.assign(m, { align: undefined, value: undefined, flip: undefined }, mateDefaults(m.type, ga, gb));
+      Object.assign(m, { align: undefined, alignSet: undefined, typeSet: undefined, value: undefined, flip: undefined }, mateDefaults(m.type, ga, gb));
       if (m.type === "coincident" && ga.k === "plane" && gb.k === "plane") m.align = "anti";
     }
     this.drawPicks();
@@ -1484,6 +1944,8 @@ export class AsmController {
     const m = this.mating;
     if (!m) return;
     m.type = type;
+    m.typeSet = true;
+    m.alignSet = undefined;
     const ga = m.a && this.worldGeo(m.a), gb = m.b && this.worldGeo(m.b);
     if (ga && gb) {
       const d = mateDefaults(type, ga, gb);
@@ -1568,7 +2030,7 @@ export class AsmController {
       inp.addEventListener("change", () => { const f = inp.files?.[0]; if (f) void run(f); });
       inp.click();
     };
-    // Parts open in other tabs come first, as SolidWorks lists open documents (FR-DOC-003).
+    // Parts open in other tabs come first, as a CAD app lists open documents (FR-DOC-003).
     const open = this.host.openParts?.() ?? [];
     const btn = document.querySelector<HTMLElement>('#asm-tools [data-ac="insert"]');
     if (!open.length || !btn) { browse(); return; }
@@ -1580,20 +2042,44 @@ export class AsmController {
   }
 
   /** Adds a component of this part (or sub-assembly) document, named after its file. */
+  /** Deletes what is selected in the tree (the Delete key). */
+  private deleteSelected() {
+    const id = this.selected, d = this.doc;
+    if (!id || !d) return;
+    if (this.picked.length > 1) { void this.deleteComponents(this.selection()); return; }
+    if (d.mates?.some(x => x.id === id)) void this.deleteMate(id);
+    else if (d.components.some(x => x.id === id)) void this.deleteComponent(id);
+    else if (d.patterns?.some(x => x.id === id)) this.deletePattern(id);
+    else if (d.explodes?.some(x => x.id === id)) this.deleteExplode(id);
+    else if (d.features?.some(x => x.id === id)) this.deleteFeature(id);
+  }
+
+  /** Where a new component goes: beside the middle of the view, so it is on screen to be mated (exam #68). */
+  private insertPoint(): V3 {
+    const v = this.host.viewer, cam = v.camera as THREE.PerspectiveCamera & THREE.OrthographicCamera;
+    const target = v.controls.target;
+    const right = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0).normalize();
+    let half: number;
+    if ((cam as THREE.OrthographicCamera).isOrthographicCamera) half = (cam.right - cam.left) / (2 * (cam.zoom || 1));
+    else half = cam.position.distanceTo(target) * Math.tan(((cam.fov || 45) * Math.PI) / 360) * (cam.aspect || 1);
+    const p = target.clone().add(right.multiplyScalar(0.45 * half));
+    return [p.x, p.y, p.z];
+  }
+
   insertPart(pd: PartDoc, fileName: string, asm?: AsmDoc) {
     if (!this.doc) return;
     {
       const f = { name: fileName };
-      // Components are named after their file, as in SolidWorks.
+      // Components are named after their file, as in other CAD apps.
       const base = f.name.replace(/\.[^.]+$/, "") || pd.name;
       // The same document again shares its source (FR-ASM-005).
-      const key = this.sourceKey(pd, asm);
-      const n = this.doc!.components.filter(c => c.part === key).length + 1;
+      const key = this.sourceKey(pd, asm, f.name);
+      // Numbered by the file name, so the first insert of a file is <1> even when it shares a part with another file (exam #70).
+      const n = this.doc!.components.filter(c => c.name.startsWith(`${base}<`)).length + 1;
       const id = uid("c_");
       const firstOne = !this.doc!.components.length;
-      // Later components go beside what is there, along X.
-      const box = this.host.viewer.parts.length ? this.host.viewer.computeBounds() : null;
-      const at: V3 = firstOne || !box ? [0, 0, 0] : [box.max.x + Math.max(10, (box.max.x - box.min.x) * 0.2), 0, 0];
+      // Later components go into the view, right of its middle.
+      const at: V3 = firstOne || !this.host.viewer.parts.length ? [0, 0, 0] : this.insertPoint();
       this.change(d => {
         d.parts[key] ??= { name: base, file: f.name, doc: pd, ...(asm ? { asm } : {}) };
         d.components.push({ id, name: `${base}<${n}>`, part: key, tf: firstOne ? IDENTITY : translation(at), ...(firstOne ? { fixed: true } : {}) });
@@ -1653,10 +2139,13 @@ export class AsmController {
     finally { $("#asm-busy").hidden = true; }
   }
 
-  /** The key of an embedded source with this content, or a new one (FR-ASM-005). */
-  private sourceKey(pd: PartDoc, asm?: AsmDoc) {
+  /**
+   * The key of an embedded source with this content, or a new one (FR-ASM-005). With `file`, only a source read from a file
+   * of that name is shared: another file is another part even when its content is the same, as in other CAD apps (exam #87).
+   */
+  private sourceKey(pd: PartDoc, asm?: AsmDoc, file?: string) {
     const json = JSON.stringify(asm ?? pd);
-    return Object.entries(this.doc!.parts).find(([, p]) => JSON.stringify(p.asm ?? p.doc) === json && !!p.asm === !!asm)?.[0] ?? uid(asm ? "s_" : "p_");
+    return Object.entries(this.doc!.parts).find(([, p]) => JSON.stringify(p.asm ?? p.doc) === json && !!p.asm === !!asm && (file === undefined || p.file === file))?.[0] ?? uid(asm ? "s_" : "p_");
   }
 
   /** Replace component (FR-ASM-008): another file in its place; mates find their faces by name where they can. */
@@ -1664,7 +2153,7 @@ export class AsmController {
     const run = async (f: File) => {
       const src = await this.readSource(f);
       if (!src || !this.doc) return;
-      const key = this.sourceKey(src.pd, src.asm), base = f.name.replace(/\.[^.]+$/, "") || src.pd.name;
+      const key = this.sourceKey(src.pd, src.asm, f.name), base = f.name.replace(/\.[^.]+$/, "") || src.pd.name;
       this.change(d => {
         d.parts[key] ??= { name: base, file: f.name, doc: src.pd, ...(src.asm ? { asm: src.asm } : {}) };
         const c = d.components.find(x => x.id === id);
@@ -1673,7 +2162,11 @@ export class AsmController {
         c.name = `${base}<${d.components.filter(x => x.part === key).length}>`;
         for (const k of Object.keys(d.parts)) if (!partUsed(d, k)) delete d.parts[k];
       });
-      const lost = (this.doc.mates ?? []).filter(m => (m.a.comp === id || m.b.comp === id) && this.solved?.missing.includes(m.id)).length;
+      // The new part's faces are known once it is built: count the lost mates then, not against the old faces (exam #88).
+      do await this.idle; while (this.building);
+      if (!this.doc) return;
+      const missing = this.solveDoc(this.doc).missing;
+      const lost = (this.doc.mates ?? []).filter(m => (m.a.comp === id || m.b.comp === id) && missing.includes(m.id)).length;
       if (lost) toast(t("{n} mate could not find its face on the new component.|{n} mates could not find their faces on the new component.", { n: lost }), "warn");
     };
     if (file) { void run(file); return; }
@@ -1827,7 +2320,8 @@ export class AsmController {
   }
   private renameState(id: string) {
     const row = $("#asm-tree").querySelector<HTMLElement>(`.ft-row[data-id="${CSS.escape(id)}"]`), name = row?.querySelector<HTMLElement>(".ft-name");
-    const st = this.doc?.states?.find(s => s.id === id) ?? this.doc?.configs?.find(s => s.id === id);
+    // Display states, configurations and (exam #80) mates.
+    const st = this.doc?.states?.find(s => s.id === id) ?? this.doc?.configs?.find(s => s.id === id) ?? this.doc?.mates?.find(s => s.id === id);
     if (!row || !name || !st) return;
     const inp = document.createElement("input");
     inp.className = "ft-ren";
@@ -1842,7 +2336,7 @@ export class AsmController {
       if (done) return;
       done = true;
       const v = inp.value.trim();
-      if (apply && v && v !== st.name) this.change(d => { const s2 = d.states?.find(x => x.id === id) ?? d.configs?.find(x => x.id === id); if (s2) s2.name = v; });
+      if (apply && v && v !== st.name) this.change(d => { const s2 = d.states?.find(x => x.id === id) ?? d.configs?.find(x => x.id === id) ?? d.mates?.find(x => x.id === id); if (s2) s2.name = v; });
       else this.renderTree();
     };
     inp.addEventListener("keydown", e => { e.stopPropagation(); if (e.key === "Enter") { e.preventDefault(); finish(true); } else if (e.key === "Escape") { e.preventDefault(); finish(false); } });
@@ -1857,7 +2351,10 @@ export class AsmController {
     const parked = { doc, fileName: this.fileName, handle: this.handle, undo: this.undoStack, savedAt: this.savedAt, key: c.part, sel: id };
     const file = entry.file?.toLowerCase().endsWith(PART_EXT) ? entry.file : `${entry.name}${PART_EXT}`;
     this.host.editPart(JSON.parse(JSON.stringify(entry.doc)) as PartDoc, file, this.label().replace(/ •$/, ""), pd => {
+      // The faces as they were, so mates can follow a face the edit renamed (exam #84).
+      const faces = new Map(this.geo);
       this.load(parked.doc, parked.fileName, parked.handle);
+      for (const [k, g] of faces) this.geo.set(k, g);
       this.undoStack = parked.undo;
       this.savedAt = parked.savedAt;
       this.selected = parked.sel;
@@ -1892,7 +2389,19 @@ export class AsmController {
         }
         return out;
       });
-      comps.push({ comp: sid, label: own?.name ?? sid, positions: pos, index: part.data.index.slice(), faces });
+      // Its edges (lines, circles, arcs) for Convert Entities in context, with the middle in its own part coordinates.
+      const w = (q: V3): V3 => { v.set(q[0], q[1], q[2]).applyMatrix4(m); return [v.x, v.y, v.z]; };
+      const wd = (q: V3): V3 => { const n = new THREE.Vector3(q[0], q[1], q[2]).applyMatrix3(nm).normalize(); return [n.x, n.y, n.z]; };
+      const back = own ? invert(own.tf) : null;
+      const edges: NonNullable<CtxComp["edges"]> = [];
+      for (const e of part.data.edges) {
+        const a = names[e.faces[0]], b = names[e.faces[1]];
+        if (!a || !b || e.type === "curve" || !back) continue;
+        const g = moveEdgeGeo(e, w, wd), pts = new Float32Array(e.pts.length);
+        for (let k = 0; k < e.pts.length; k += 3) pts.set(w([e.pts[k], e.pts[k + 1], e.pts[k + 2]]), k);
+        edges.push({ ...g, faces: [a, b], pts, hint: applyPoint(back, g.mid) });
+      }
+      comps.push({ comp: sid, label: own?.name ?? sid, positions: pos, index: part.data.index.slice(), faces, edges });
     });
     return { host: c.id, tf: c.tf.slice(), comps };
   }
@@ -1905,13 +2414,20 @@ export class AsmController {
   private syncContext(doc: AsmDoc): boolean {
     let any = false;
     for (const entry of Object.values(doc.parts)) {
-      if (!entry.doc || entry.asm || !ctxRefs(entry.doc).length) continue;
+      if (!entry.doc || entry.asm || (!ctxRefs(entry.doc).length && !ctxEdgeRefs(entry.doc).length)) continue;
       const r = syncCtx(entry.doc, ref => {
         const host = doc.components.find(x => x.id === ref.host), c = this.anyCompIn(doc, ref.comp);
         const g = c && this.geo.get(c.part)?.get(ref.face);
         if (!host || !c || !g || g.k !== "plane") return null;
         const inv = invert(host.tf), w = placeGeo(g, c.tf) as { p: V3; n: V3 };
         return { p: applyPoint(inv, w.p), n: unit(applyDir(inv, w.n)) };
+      }, ext => {
+        // A converted edge: found again on its component by faces and place, then seen from the host.
+        const host = doc.components.find(x => x.id === ext.ctx.host), c = this.anyCompIn(doc, ext.ctx.comp);
+        const list = c && this.edgeGeo.get(c.part), e = list && findCtxEdge(list, ext);
+        if (!host || !c || !e) return null;
+        const m = compose(invert(host.tf), c.tf);
+        return { geo: moveEdgeGeo(e.geo, q => applyPoint(m, q), q => applyDir(m, q)), hint: e.geo.mid };
       });
       if (r.changed) any = true;
     }
@@ -1941,6 +2457,77 @@ export class AsmController {
     const c = this.comp(top), sub = c?.flexible ? this.doc?.parts[c.part]?.asm : undefined;
     return !more && !!sub?.components.some(x => x.id === child);
   }
+  /** The pointer over the view canvas (client px), for Shift+D. */
+  private pointer: { x: number; y: number } | null = null;
+  /** Where Shift+D put the breadcrumbs; null = top left of the view. */
+  private crumbAt: { x: number; y: number } | null = null;
+
+  /**
+   * Selection breadcrumbs (FR-SEL-009) for assemblies: after a click on the model, the chain from the face up to the
+   * assembly (face → part feature → component → its sub-assemblies → assembly) at the top left of the view. A click
+   * on a component selects it as in the tree, a right-click opens its menu.
+   */
+  private showCrumbs(hit: { idx: number; face: number } | null) {
+    const list: { id: string; icon: string; label: string; info?: boolean }[] = [];
+    const sid = hit ? this.shownIds[hit.idx] : undefined;
+    if (this.doc && sid && hit) {
+      const src = this.expanded?.doc ?? this.doc, own = this.anyComp(sid) ?? src.components.find(x => x.id === sid);
+      list.push({ id: "", icon: "▱", label: t("Face") });
+      const part = own ? src.parts[own.part]?.doc : undefined, fid = this.faceNames[hit.idx]?.[hit.face]?.split(":")[0];
+      const f = fid ? part?.features.find(x => x.id === fid) : undefined;
+      if (f) list.push({ id: "", icon: "⬚", label: featureLabel(f.name), info: true });
+      const parts = sid.split("/");
+      for (let k = parts.length; k >= 1; k--) {
+        const id = parts.slice(0, k).join("/"), c = this.anyComp(id) ?? src.components.find(x => x.id === id);
+        if (c) list.push({ id, icon: k === parts.length && !src.parts[c.part]?.asm ? "◧" : "◆", label: c.name });
+      }
+      list.push({ id: "asm", icon: "◆", label: this.doc.name });
+    }
+    let el = document.getElementById("asm-crumbs");
+    if (list.length < 3) { el?.remove(); this.crumbAt = null; return; }
+    if (!el) {
+      el = document.createElement("nav");
+      el.id = "asm-crumbs";
+      el.className = "mc-crumbs";
+      el.setAttribute("aria-label", t("Selection breadcrumbs"));
+      $("#asm-bar").append(el);
+    }
+    el.innerHTML = list.map((c, i) => (i ? `<span class="mc-crumb-sep" aria-hidden="true">›</span>` : "")
+      + (c.id ? `<button class="mc-crumb" data-id="${esc(c.id)}" translate="no">` : `<span class="mc-crumb here"${i ? "" : ` aria-current="true"`} translate="no">`)
+      + `<span aria-hidden="true">${esc(c.icon)}</span>${esc(c.label)}${c.id ? "</button>" : "</span>"}`).join("");
+    this.placeCrumbs();
+    el.querySelectorAll<HTMLElement>(".mc-crumb[data-id]").forEach(b => {
+      const id = b.dataset.id!;
+      b.addEventListener("click", () => this.selectCrumb(id));
+      b.addEventListener("contextmenu", e => {
+        e.preventDefault();
+        this.selectCrumb(id);
+        const c = this.comp(id);
+        if (c) this.menu(c, e.clientX, e.clientY);
+      });
+    });
+  }
+
+  private hideCrumbs() { this.showCrumbs(null); }
+
+  /** Selects what a breadcrumb names, as a click on its tree row does. */
+  private selectCrumb(id: string) {
+    this.selected = this.anyComp(id) ? id : null;
+    this.renderTree();
+    this.renderBar();
+    document.querySelector(`#asm-tree .ft-row[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "nearest" });
+  }
+
+  private placeCrumbs() {
+    const el = document.getElementById("asm-crumbs"), at = this.crumbAt;
+    if (!el) return;
+    el.classList.toggle("at-cursor", !!at);
+    if (!at) { el.style.left = el.style.top = ""; return; }
+    const vr = this.host.vp.getBoundingClientRect(), w = el.offsetWidth || 120, h = el.offsetHeight || 40;
+    el.style.left = `${Math.max(vr.left + 4, Math.min(at.x + 12, vr.right - w - 4))}px`;
+    el.style.top = `${Math.max(vr.top + 4, Math.min(at.y + 16, vr.bottom - h - 4))}px`;
+  }
+
   /** A component or a pattern instance. */
   private anyComp(id: string | null) { return id ? this.comp(id) ?? this.expanded?.doc.components.find(c => c.id === id) ?? null : null; }
 
@@ -1949,7 +2536,259 @@ export class AsmController {
     this.change(d => { const c = d.components.find(x => x.id === id); if (!c || !d.parts[c.part]?.asm) return; if (on) c.flexible = true; else { delete c.flexible; delete c.subTfs; } });
   }
   setFixed(id: string, fixed: boolean) { this.change(d => { const c = d.components.find(x => x.id === id); if (c) { if (fixed) c.fixed = true; else delete c.fixed; } }); }
-  setHidden(id: string, hidden: boolean) { this.change(d => { const c = d.components.find(x => x.id === id); if (c) { if (hidden) c.hidden = true; else delete c.hidden; } }); }
+  /**
+   * Hide/show under the cursor (FR-UI-105): Tab hides the component under the cursor, Shift+Tab shows a hidden one
+   * there, holding Ctrl+Shift+Tab draws the hidden ones see-through so a click shows one. Hidden components are not
+   * shown, so each keeps a ghost of the meshes it had when it was hidden.
+   */
+  private ghostGroup = new THREE.Group();
+  private tabPointer: { x: number; y: number; in: boolean } = { x: 0, y: 0, in: false };
+
+  private bindTabHide() {
+    const v = this.host.viewer, cv = v.renderer.domElement;
+    this.ghostGroup.visible = false;
+    v.scene.add(this.ghostGroup);
+    cv.addEventListener("pointermove", e => { this.tabPointer = { x: e.clientX, y: e.clientY, in: true }; });
+    cv.addEventListener("pointerleave", () => { this.tabPointer.in = false; });
+    const showGhosts = (on: boolean) => { if (this.ghostGroup.visible !== on) { this.ghostGroup.visible = on; v.invalidate(); } };
+    window.addEventListener("keydown", e => {
+      if (e.key !== "Tab" || e.altKey || !this.doc || this.picking || this.moving || !this.tabPointer.in) return;
+      const tg = e.target as HTMLElement;
+      if (!(tg === document.body || tg === document.documentElement || tg === cv || tg.id === "viewport")) return;
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && !e.shiftKey) return;
+      e.preventDefault(); e.stopPropagation();
+      if (mod) { showGhosts(true); return; }
+      const { x, y } = this.tabPointer;
+      if (e.shiftKey) {
+        const id = this.ghostAt(x, y);
+        if (id) this.setHidden(id, false); else toast(t("No hidden component under the cursor."));
+        return;
+      }
+      const hit = this.host.partAt(x, y), id = hit ? topOf(this.shownIds[hit.idx] ?? "") : "";
+      if (id && this.comp(id)) this.setHidden(id, true);
+    }, true);
+    window.addEventListener("keyup", e => { if (e.key === "Tab" || e.key === "Control" || e.key === "Shift" || e.key === "Meta") showGhosts(false); });
+    window.addEventListener("blur", () => showGhosts(false));
+    window.addEventListener("pointerdown", e => {
+      if (!this.ghostGroup.visible || e.button !== 0 || e.target !== cv) return;
+      const id = this.ghostAt(e.clientX, e.clientY);
+      if (!id) return;
+      e.preventDefault(); e.stopPropagation();
+      this.setHidden(id, false);
+    }, true);
+  }
+
+  /**
+   * Several components at once (FR-SEL-007/008): Ctrl+click in the tree or the view adds or removes one, and a left
+   * drag from empty space in the view draws a box (left to right: components wholly inside; right to left: those
+   * it touches; Ctrl adds). Empty = the one `selected` component, as before. Picked components are tinted blue.
+   */
+  private picked: string[] = [];
+  private selGroup = new THREE.Group();
+  private selMat = new THREE.MeshBasicMaterial({ color: 0x1c7ed6, transparent: true, opacity: 0.35, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+  private boxDrag: SelDrag | null = null;
+
+  /** The components a command acts on: the picked ones, else the selected one. */
+  selection(): string[] {
+    const ok = this.picked.filter(id => this.comp(id));
+    if (ok.length) return ok;
+    return this.selected && this.comp(this.selected) ? [this.selected] : [];
+  }
+
+  /** Makes `ids` the picked components (the last one is also the selected one) and redraws the tint and the tree. */
+  setPicked(ids: string[]) {
+    const order = new Map((this.doc?.components ?? []).map((c, i) => [c.id, i]));
+    this.picked = [...new Set(ids)].filter(id => order.has(id));
+    if (this.picked.length) this.selected = this.picked[this.picked.length - 1];
+    else if (this.selected && this.comp(this.selected) && ids.length === 0) this.selected = null;
+    this.drawPicked();
+    this.renderTree();
+    this.renderBar();
+  }
+
+  /** Ctrl+click: adds the component to the selection, or takes it out. */
+  private togglePick(id: string) {
+    this.boxed = false;
+    const cur = this.selection();
+    this.setPicked(cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id]);
+  }
+
+  private clearPicked() {
+    if (!this.picked.length) return;
+    this.picked = [];
+    this.drawPicked();
+  }
+
+  /** Tints the shown meshes of the picked components (they share the meshes' geometry, so nothing is copied). */
+  private drawPicked() {
+    const v = this.host.viewer, g = this.selGroup;
+    if (!g.parent) v.scene.add(g);
+    g.clear();
+    const on = new Set(this.picked.length > 1 || this.boxed ? this.picked : []);
+    if (on.size) this.shownIds.forEach((sid, i) => {
+      const p = v.parts[i];
+      if (!p || !on.has(topOf(sid)) || !p.group.visible) return;
+      p.mesh.updateMatrixWorld(true);
+      const m = new THREE.Mesh(p.mesh.geometry, this.selMat);
+      m.matrixAutoUpdate = false;
+      m.matrix.copy(p.mesh.matrixWorld);
+      m.renderOrder = 2200;
+      m.userData.picked = topOf(sid);
+      g.add(m);
+    });
+    v.invalidate();
+  }
+  /** The last selection came from a box: one boxed component is tinted too. */
+  private boxed = false;
+
+  /** Left press on empty space with Smart measure and no tool open: the orbit controls sit this drag out. */
+  private boxDown(e: PointerEvent) {
+    const v = this.host.viewer, canvas = v.renderer.domElement;
+    if (e.button !== 0 || e.pointerType !== "mouse" || e.target !== canvas || e.altKey || e.shiftKey) return;
+    if (!this.doc || !document.getElementById("app")?.classList.contains("asm") || this.picking || this.moving || this.ghostGroup.visible) return;
+    if ((this.host.measureTool?.() ?? "select") !== "select" || !v.controls.enabled || !v.controls.enableRotate || !v.parts.length) return;
+    if (this.host.partAt(e.clientX, e.clientY)) return;
+    v.controls.enabled = false;
+    this.boxDrag = new SelDrag(e.clientX, e.clientY, e.ctrlKey || e.metaKey, lassoMode());
+  }
+
+  private boxMove(e: PointerEvent) {
+    this.boxDrag?.move(e.clientX, e.clientY);
+  }
+
+  private boxUp(e: PointerEvent) {
+    const b = this.boxDrag;
+    if (!b || e.button !== 0) return;
+    this.boxDrag = null;
+    this.host.viewer.controls.enabled = true;
+    // A click on empty space ends a selection of several components.
+    if (!b.drawn) { if (!b.add && this.picked.length) { this.boxed = false; this.setPicked([]); } return; }
+    const got = b.end(e.clientX, e.clientY);
+    e.stopPropagation();
+    if (got) this.boxSelect(got.area, got.crossing, b.add);
+  }
+
+  /** The top-level components a screen box takes: wholly inside (window) or touched (crossing). Hidden ones are left out. */
+  boxComponents(where: Rect | SelArea, crossing: boolean): string[] {
+    const r: SelArea = "has" in where ? where : rectRegion(where);
+    const v = this.host.viewer, cr = v.renderer.domElement.getBoundingClientRect(), cam = v.camera, q = new THREE.Vector3();
+    const all = new Map<string, boolean>(), touch = new Set<string>();
+    this.shownIds.forEach((sid, i) => {
+      const id = topOf(sid), p = v.parts[i];
+      if (!p || !this.comp(id) || !p.group.visible) return;
+      p.mesh.updateMatrixWorld(true);
+      const pos = p.mesh.geometry.getAttribute("position"), m = p.mesh.matrixWorld;
+      let whole = true, any = false;
+      for (let k = 0; k < pos.count; k++) {
+        q.set(pos.getX(k), pos.getY(k), pos.getZ(k)).applyMatrix4(m).project(cam);
+        const ok = q.z >= -1 && q.z <= 1 && r.has(cr.left + ((q.x + 1) / 2) * cr.width, cr.top + ((1 - q.y) / 2) * cr.height);
+        if (ok) any = true; else whole = false;
+        if (crossing ? any : !whole) break;
+      }
+      if (!pos.count) whole = false;
+      all.set(id, (all.get(id) ?? true) && whole);
+      if (any) touch.add(id);
+    });
+    // A face larger than the box has no corner in it: probe what is seen inside.
+    if (crossing) for (const [x, y] of regionProbe(r, 400, 6)) {
+      const hit = this.host.partAt(x, y), id = hit ? topOf(this.shownIds[hit.idx] ?? "") : "";
+      if (id && this.comp(id)) touch.add(id);
+    }
+    const take = (id: string) => crossing ? touch.has(id) || all.get(id) === true : all.get(id) === true;
+    return (this.doc?.components ?? []).map(c => c.id).filter(take);
+  }
+
+  boxSelect(r: Rect | SelArea, crossing: boolean, add: boolean) {
+    const ids = this.boxComponents(r, crossing);
+    this.boxed = true;
+    this.setPicked(mergeSel(add ? this.selection() : [], ids, add));
+    if (!ids.length && !add) toast(t("Nothing in the box"));
+  }
+
+  /** The menu for several picked components: each command acts on all of them, as one undo step. */
+  private multiMenu(ids: string[], x: number, y: number) {
+    const each = (f: (c: Component) => void) => this.change(d => { for (const c of d.components) if (ids.includes(c.id)) f(c); });
+    const cs = ids.map(id => this.comp(id)!).filter(Boolean);
+    const n = cs.length;
+    this.popup([
+      ...(cs.some(c => !c.hidden) ? [[t("Hide components ({n})", { n }), () => { for (const c of cs) if (!c.hidden) this.keepGhost(c.id); each(c => { c.hidden = true; }); }] as [string, () => void]] : []),
+      ...(cs.some(c => c.hidden) ? [[t("Show components ({n})", { n }), () => each(c => { delete c.hidden; })] as [string, () => void]] : []),
+      ...(cs.some(c => !c.fixed) ? [[t("Fix"), () => each(c => { c.fixed = true; })] as [string, () => void]] : []),
+      ...(cs.some(c => c.fixed) ? [[t("Float"), () => each(c => { delete c.fixed; })] as [string, () => void]] : []),
+      ...(cs.some(c => !c.suppressed) ? [[t("Suppress"), () => each(c => { c.suppressed = true; })] as [string, () => void]] : []),
+      ...(cs.some(c => c.suppressed) ? [[t("Unsuppress"), () => each(c => { delete c.suppressed; })] as [string, () => void]] : []),
+      [t("Delete components ({n})", { n }), () => void this.deleteComponents(ids)],
+    ], x, y);
+  }
+
+  /** The right-click menu in the view: the picked components' when one of them is under the pointer, else that component's. */
+  private viewMenu(x: number, y: number) {
+    const hit = this.host.partAt(x, y), id = hit ? topOf(this.shownIds[hit.idx] ?? "") : "", c = this.comp(id);
+    if (!c) return;
+    if (this.picked.length > 1 && this.picked.includes(id)) { this.multiMenu(this.selection(), x, y); return; }
+    this.boxed = false;
+    this.clearPicked();
+    this.selected = id;
+    this.renderTree();
+    this.renderBar();
+    this.menu(c, x, y);
+  }
+
+  /** Deletes several components with their mates as one undo step. */
+  async deleteComponents(ids: string[]) {
+    const cs = ids.filter(id => this.comp(id));
+    if (cs.length === 1) { await this.deleteComponent(cs[0]); return; }
+    if (!cs.length || !(await confirmModal(t("Delete the selected components ({n}) from the assembly?", { n: cs.length })))) return;
+    const gone = new Set(cs);
+    this.change(d => {
+      d.components = d.components.filter(x => !gone.has(x.id));
+      if (d.mates) { d.mates = d.mates.filter(m => !gone.has(m.a.comp) && !gone.has(m.b.comp)); if (!d.mates.length) delete d.mates; }
+      if (d.patterns) { for (const p of d.patterns) { p.seeds = p.seeds.filter(x => !gone.has(x)); if (p.dir && gone.has(p.dir.comp)) p.dir = null; } d.patterns = d.patterns.filter(p => p.seeds.length); if (!d.patterns.length) delete d.patterns; }
+      if (d.explodes) for (const v of d.explodes) { for (const st of v.steps) st.comps = st.comps.filter(x => !gone.has(x) && ![...gone].some(g => x.includes(`~${g}~`))); v.steps = v.steps.filter(st => st.comps.length); }
+      for (const k of Object.keys(d.parts)) if (!partUsed(d, k)) delete d.parts[k];
+    });
+    if (this.moving && gone.has(this.moving)) this.moving = null;
+    if (this.selected && gone.has(this.selected)) this.selected = null;
+    this.picked = [];
+    this.drawPicked();
+    this.renderAll();
+  }
+
+  /** Keeps see-through copies of the shown meshes of top-level component `id`. */
+  private keepGhost(id: string) {
+    this.dropGhost(id);
+    const parts = this.host.viewer.parts;
+    this.shownIds.forEach((sid, i) => {
+      const p = parts[i];
+      if (topOf(sid) !== id || !p) return;
+      p.mesh.updateMatrixWorld(true);
+      const g = p.mesh.geometry.clone();
+      g.applyMatrix4(p.mesh.matrixWorld);
+      const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0x8c99a6, transparent: true, opacity: 0.28, depthWrite: false, side: THREE.DoubleSide }));
+      m.userData.ghost = id;
+      m.renderOrder = 2300;
+      this.ghostGroup.add(m);
+    });
+  }
+
+  private dropGhost(id: string) {
+    for (const o of [...this.ghostGroup.children]) if (o.userData.ghost === id) { this.ghostGroup.remove(o); const m = o as THREE.Mesh; m.geometry.dispose(); (m.material as THREE.Material).dispose(); }
+  }
+
+  /** The still-hidden component whose ghost is under a screen point. */
+  private ghostAt(x: number, y: number): string | null {
+    const v = this.host.viewer, r = v.renderer.domElement.getBoundingClientRect();
+    const rc = new THREE.Raycaster();
+    rc.setFromCamera(new THREE.Vector2(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1), v.camera);
+    const live = this.ghostGroup.children.filter(o => this.comp(o.userData.ghost)?.hidden);
+    return (rc.intersectObjects(live, false)[0]?.object.userData.ghost as string | undefined) ?? null;
+  }
+
+  setHidden(id: string, hidden: boolean) {
+    if (hidden) this.keepGhost(id);
+    this.change(d => { const c = d.components.find(x => x.id === id); if (c) { if (hidden) c.hidden = true; else delete c.hidden; } });
+  }
 
   async deleteComponent(id: string) {
     const c = this.comp(id);
@@ -1972,12 +2811,25 @@ export class AsmController {
     if (!this.comp(id)) return;
     this.moving = id;
     this.selected = id;
+    this.picked = [];
+    this.drawPicked();
     this.renderAll();
   }
 
   async save(as = false) {
     if (!this.doc) return;
     const bytes = await packAsm(this.doc, `MöbiusCAD ${this.host.appVersion}`);
+    if (this.vault && !as) {
+      // A vaulted assembly saves into the vault's working copy, and only while checked out here (FR-PDM-081).
+      if (this.vault.readOnly) { toast(t("This file is read-only: check it out to save, or use Save as."), true); return; }
+      try { await this.vault.save(bytes); }
+      catch (err) { toast(t("Could not save: {err}", { err: t((err as Error).message) }), true); return; }
+      this.savedAt = JSON.stringify(this.doc);
+      this.renderAll();
+      toast(t("Saved {name}", { name: this.title }), "success");
+      return;
+    }
+    if (as && this.vault) this.setVault(null);
     const blob = new Blob([bytes as BlobPart], { type: "application/zip" });
     const suggested = this.fileName || `${this.doc.name}${ASM_EXT}`;
     const w = window as Window & { showSaveFilePicker?: (o: unknown) => Promise<FileSystemFileHandle> };
@@ -1989,12 +2841,15 @@ export class AsmController {
         await out.close();
         this.fileName = this.handle.name;
       } else {
+        // No save dialog in this browser: ask for the name on the first save and on Save as (exam #9).
+        const file = this.fileName && !as ? this.fileName : await askFileName(suggested, ASM_EXT);
+        if (!file) return;
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
-        a.download = suggested;
+        a.download = file;
         a.click();
         setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-        this.fileName = suggested;
+        this.fileName = file;
       }
     } catch (err) { if ((err as Error).name !== "AbortError") toast(t("Could not save: {err}", { err: (err as Error).message }), true); return; }
     this.savedAt = JSON.stringify(this.doc);
@@ -2034,9 +2889,26 @@ export class AsmController {
     document.getElementById("new-asm-part")?.addEventListener("click", () => { shut(); this.fromPart(); });
     document.getElementById("empty-asm")?.addEventListener("click", () => this.newAssembly());
     document.addEventListener("keydown", e => {
+      // An open drawing owns the keyboard: its Ctrl+Z / Delete must not reach the assembly behind it (drawings exam #1).
+      if (document.getElementById("app")?.classList.contains("drawing")) return;
       if (this.doc && this.picking && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.target as HTMLElement).closest("input, textarea, select, dialog[open]")) {
         if (e.key === "Enter") { e.preventDefault(); if (this.mating) this.okMate(); else if (this.patterning) this.okPattern(); else if (this.exploding) this.okExplode(); else if (this.refing) this.okMateRef(); else if (this.featuring) this.okFeature(); else this.closeTools(); return; }
         if (e.key === "Escape") { e.preventDefault(); this.closeTools(); return; }
+      }
+      // Delete removes the item selected in the tree (a mate, component, pattern, exploded view or feature) (exam #67).
+      if (this.doc && (e.key === "Delete" || e.key === "Backspace") && !e.ctrlKey && !e.metaKey && !e.altKey && !this.picking && !this.moving && this.selected) {
+        const tg = e.target as HTMLElement;
+        if (!tg.closest("input, textarea, select, [contenteditable=true], dialog[open]") && (tg === document.body || tg.closest("#asm-tree") || tg === this.host.viewer.renderer.domElement)) {
+          e.preventDefault();
+          this.deleteSelected();
+          return;
+        }
+      }
+      if (this.doc && !this.picking && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.target instanceof Element && e.target.closest("input, textarea, select, dialog[open]"))) {
+        // Breadcrumbs (FR-SEL-009): Esc hides them, Shift+D brings them to the cursor.
+        if (e.key === "Escape" && document.getElementById("asm-crumbs") && !document.querySelector(".mag-lens")) this.hideCrumbs();
+        if (e.key === "Escape" && this.picked.length && !document.querySelector(".mag-lens, #asm-menu")) { this.boxed = false; this.setPicked([]); }
+        if (e.key.toLowerCase() === "d" && e.shiftKey && this.pointer && document.getElementById("asm-crumbs")) { e.preventDefault(); e.stopImmediatePropagation(); this.crumbAt = { ...this.pointer }; this.placeCrumbs(); return; }
       }
       if (!this.doc || !(e.ctrlKey || e.metaKey) || e.altKey) return;
       const tg = e.target as HTMLElement;
@@ -2060,11 +2932,16 @@ export class AsmController {
       // The Mate panel picks faces on a click (the view still orbits on a drag).
       if (this.picking) { this.mateDown = { x: e.clientX, y: e.clientY }; return; }
       const hit = this.host.partAt(e.clientX, e.clientY);
-      if (!hit) return;
+      if (!hit) { this.hideCrumbs(); return; }
       // A sub-assembly moves as one (FR-ASM-006): its children drag their top component.
       const id = topOf(this.shownIds[hit.idx]), c = this.comp(id);
       if (!c) return;
+      // Ctrl+click adds the component to the selection, or takes it out (FR-SEL-007); it never drags.
+      if ((e.ctrlKey || e.metaKey) && !e.altKey) { e.stopPropagation(); e.preventDefault(); this.togglePick(id); return; }
+      this.boxed = false;
+      this.clearPicked();
       this.selected = id;
+      this.showCrumbs(hit);
       this.renderStatus();
       if (c.fixed) { this.renderTree(); return; }
       // Left-drag on a floating component moves it in the view plane; the orbit controls never see it.
@@ -2079,6 +2956,18 @@ export class AsmController {
       if (e.altKey && face && own === id && this.geo.get(c.part)?.get(face)) this.drag.grab = { comp: id, face };
       canvas().setPointerCapture?.(e.pointerId);
     }, true);
+    // Right-click on a component without a drag (FR-UI-025): its menu, or the menu of every picked component.
+    let rdown: { x: number; y: number } | null = null;
+    vp.addEventListener("pointerdown", e => { rdown = e.button === 2 && e.target === canvas() ? { x: e.clientX, y: e.clientY } : null; }, true);
+    canvas().addEventListener("contextmenu", e => { if (isLongPress(e) && this.doc && !this.picking && !this.moving) this.viewMenu(e.clientX, e.clientY); });
+    vp.addEventListener("pointerup", e => {
+      const d0 = rdown;
+      rdown = null;
+      if (e.button !== 2 || !d0 || !this.doc || this.picking || this.moving || Math.hypot(e.clientX - d0.x, e.clientY - d0.y) > 4) return;
+      this.viewMenu(e.clientX, e.clientY);
+    }, true);
+    vp.addEventListener("pointermove", e => { this.pointer = e.target === canvas() ? { x: e.clientX, y: e.clientY } : null; });
+    vp.addEventListener("pointerleave", () => { this.pointer = null; });
     vp.addEventListener("pointermove", e => {
       const d = this.drag;
       if (!d) return;
@@ -2095,7 +2984,7 @@ export class AsmController {
         // A mated component moves only where its mates let it (FR-MATE-001): solved from the dragged position.
         if (!d.mated) return tfs;
         const r = this.solveDoc(doc, [], tfs, false);
-        // On an axis (concentric, hinge, screw) it may turn instead, as a wheel does in SolidWorks: the grabbed
+        // On an axis (concentric, hinge, screw) it may turn instead, as a wheel does in CAD apps: the grabbed
         // point turned towards the pointer about that axis, solved too; the one that follows the pointer better wins.
         const ax = d.axis;
         if (!ax) return r.ok ? r.tfs : null;
@@ -2182,6 +3071,7 @@ export class AsmController {
   private renderBar() {
     const bar = $("#asm-bar");
     bar.hidden = !this.doc;
+    if (!this.doc || this.picking || this.moving) this.hideCrumbs();
     if (!this.doc) return;
     const sel = this.comp(this.selected);
     const n0 = this.doc.components.length;
@@ -2204,17 +3094,18 @@ export class AsmController {
     $("#asm-tools").querySelectorAll<HTMLButtonElement>("[data-ac]").forEach(x => x.addEventListener("click", () => this.command(x.dataset.ac!)));
     const q = $("#asm-quick");
     q.hidden = false;
-    q.innerHTML = b("undo", t("Undo"), t("Undo (Ctrl+Z)"), !this.undoStack.length) + b("redo", t("Redo"), t("Redo (Ctrl+Y)"), !this.redoStack.length) + sep
+    q.innerHTML = b("undo", t("Undo"), this.undoTip(false), !this.undoStack.length) + b("redo", t("Redo"), this.undoTip(true), !this.redoStack.length) + sep
       + b("save", t("Save"), t("Save the assembly (.mcadasm)")) + b("step", t("STEP"), t("Export the assembly as STEP, one named part per component"), !n0);
     q.querySelectorAll<HTMLButtonElement>("[data-ac]").forEach(x => x.addEventListener("click", () => this.command(x.dataset.ac!)));
     this.renderStatus();
   }
 
-  /** SolidWorks' status: fully defined, under defined or over defined. */
+  /** A CAD app's status: fully defined, under defined or over defined. */
   private renderStatus() {
     if (!this.doc) return;
     const n = this.doc.components.length;
-    $("#asm-status").textContent = n ? `${t("{n} component|{n} components", { n })} · ${this.defText()}` : t("Insert a part or a STEP model to start.");
+    const k = this.picked.filter(id => this.comp(id)).length;
+    $("#asm-status").textContent = n ? `${t("{n} component|{n} components", { n })} · ${this.defText()}${k > 1 ? ` · ${t("Selected: {n}", { n: k })}` : ""}` : t("Insert a part or a STEP model to start.");
   }
 
   /** The status text: the state with the assembly's free degrees of freedom, and the selected component's. */
@@ -2261,13 +3152,14 @@ export class AsmController {
     if (!this.doc) { box.innerHTML = ""; return; }
     const st = new Map(this.statuses.map(s => [s.id, s]));
     const doc = this.doc;
+    const isSel = (id: string) => this.selected === id || this.picked.includes(id);
     const row = (id: string, icon: string, label: string, cls = "", extra = "") =>
-      `<div class="ft-row${cls}${this.selected === id ? " sel" : ""}" role="treeitem" aria-selected="${this.selected === id}" tabindex="${this.selected === id ? 0 : -1}" data-id="${esc(id)}"><span class="ft-ico" aria-hidden="true">${icon}</span><span class="ft-name" translate="no">${esc(label)}</span>${extra}</div>`;
+      `<div class="ft-row${cls}${isSel(id) ? " sel" : ""}" role="treeitem" aria-selected="${isSel(id)}" tabindex="${this.selected === id ? 0 : -1}" data-id="${esc(id)}"><span class="ft-ico" aria-hidden="true">${icon}</span><span class="ft-name" translate="no">${esc(label)}</span>${extra}</div>`;
     let html = row("asm", "◆", this.doc.name, " ft-root");
     html += `<div class="ft-group" role="group">${row("origin", "⊹", t("Origin"), " ft-plane")}</div>`;
     for (const c of this.doc.components) {
       const s = st.get(c.id);
-      // SolidWorks marks: (f) fixed, (-) under defined, (+) over defined, none when fully defined.
+      // A CAD app marks: (f) fixed, (-) under defined, (+) over defined, none when fully defined.
       const sv = this.solved, over = !!sv && (doc.mates ?? []).some(m => (sv.bad.includes(m.id) || sv.missing.includes(m.id)) && (m.a.comp === c.id || m.b.comp === c.id));
       const mark = c.fixed ? "(f) " : over ? "(+) " : sv && sv.dof[c.id] === 0 ? "" : "(-) ";
       const err = s && !s.ok ? `<span class="ft-err" title="${esc(s.message ?? "")}" role="img" aria-label="${esc(t("Error"))}: ${esc(s.message ?? "")}">⚠</span>` : "";
@@ -2338,6 +3230,9 @@ export class AsmController {
       r.addEventListener("click", e => {
         const a = (e.target as HTMLElement).closest<HTMLElement>("[data-a]")?.dataset.a;
         const c = this.comp(id), mt = this.doc?.mates?.find(x => x.id === id), pt = this.doc?.patterns?.find(x => x.id === id), xv = this.doc?.explodes?.find(x => x.id === id);
+        // Ctrl+click adds a component to the selection, or takes it out (FR-SEL-007).
+        if (c && !a && (e.ctrlKey || e.metaKey)) { this.togglePick(id); return; }
+        if (!a || !c) { this.boxed = false; this.clearPicked(); }
         const ds = this.doc?.states?.find(x => x.id === id);
         if (ds) { if (a === "del") this.deleteDisplayState(id); else this.activateDisplayState(id); return; }
         const cf = this.doc?.configs?.find(x => x.id === id);
@@ -2365,6 +3260,7 @@ export class AsmController {
       r.addEventListener("contextmenu", e => {
         e.preventDefault();
         const c = this.comp(id), mt = this.doc?.mates?.find(x => x.id === id);
+        if (c && this.picked.length > 1 && this.picked.includes(id)) { this.multiMenu(this.selection(), e.clientX, e.clientY); return; }
         if (c) this.menu(c, e.clientX, e.clientY);
         const ds = this.doc?.states?.find(x => x.id === id);
         if (ds) { this.popup([[t("Activate"), () => this.activateDisplayState(id)], [t("Rename"), () => this.renameState(id)], [t("Add display state"), () => this.addDisplayState()], [t("Delete"), () => this.deleteDisplayState(id)]], e.clientX, e.clientY); return; }
@@ -2380,12 +3276,30 @@ export class AsmController {
         else if (xv) this.popup([[this.exploded === id ? t("Collapse") : t("Explode"), () => this.toggleExplode(id)], [t("Edit exploded view"), () => this.startExplode(xv)], [t("Delete"), () => this.deleteExplode(id)]], e.clientX, e.clientY);
         else if (mt) this.popup([
           [t("Edit mate"), () => this.startMate(mt)],
+          [t("Rename"), () => this.renameState(mt.id)],
           ...(mt.align ? [[t("Flip mate alignment"), () => this.setMate(mt.id, { align: mt.align === "aligned" ? "anti" : "aligned" })] as [string, () => void]] : []),
           [mt.suppressed ? t("Unsuppress") : t("Suppress"), () => this.setMate(mt.id, { suppressed: mt.suppressed ? undefined : true })],
           [t("Delete"), () => void this.deleteMate(mt.id)],
         ], e.clientX, e.clientY);
       });
     });
+  }
+
+  /** Sets (or clears) the material of a component's part from the assembly, as a CAD app's Edit Material does:
+   *  every instance of that part follows, and the BOM and mass properties with it. One undo step. */
+  setPartMaterial(id: string, m: ReturnType<typeof toRef> | null) {
+    this.change(d => {
+      const c = d.components.find(x => x.id === id), e = c && d.parts[c.part];
+      if (!e || e.asm || !e.doc) return;
+      if (m) e.doc.material = m; else delete e.doc.material;
+    });
+  }
+
+  async pickPartMaterial(id: string) {
+    const c = this.doc?.components.find(x => x.id === id), e = c && this.doc?.parts[c.part];
+    if (!e || e.asm) return;
+    const r = await pickMaterial({ current: e.doc?.material ?? null, allowNone: true });
+    if (r) this.setPartMaterial(id, r.material ? toRef(r.material) : null);
   }
 
   private menu(c: Component, x: number, y: number) {
@@ -2397,6 +3311,7 @@ export class AsmController {
       ...(c.fixed ? [] : [[t("Move component"), () => this.moveComponent(c.id)] as [string, () => void]]),
       [c.hidden ? t("Show component") : t("Hide component"), () => this.setHidden(c.id, !c.hidden)],
       [c.suppressed ? t("Unsuppress") : t("Suppress"), () => this.setSuppressed(c.id, !c.suppressed)],
+      ...(this.doc?.parts[c.part]?.asm ? [] : [[t("Material…"), () => void this.pickPartMaterial(c.id)] as [string, () => void]]),
       [t("Component colour…"), () => this.pickColor(c)],
       [c.opacity !== undefined && c.opacity < 1 ? t("Make opaque") : t("Change transparency"), () => this.setOpacity(c.id, c.opacity !== undefined && c.opacity < 1 ? null : 0.35)],
       ...(c.color ? [[t("Reset colour"), () => this.setColor(c.id, null)] as [string, () => void]] : []),
@@ -2418,6 +3333,12 @@ export class AsmController {
     m.style.left = `${x}px`;
     m.style.top = `${y}px`;
     document.body.appendChild(m);
+    // Kept inside the window: a menu on the tree's last rows opens upwards, and scrolls when taller than the window (exam #66).
+    const r = m.getBoundingClientRect(), H = window.innerHeight, W = window.innerWidth;
+    if (r.height > H - 8) { m.style.maxHeight = `${H - 8}px`; m.style.overflowY = "auto"; }
+    const h = Math.min(r.height, H - 8);
+    if (y + h > H - 4) m.style.top = `${Math.max(4, Math.min(y - h, H - 4 - h))}px`;
+    if (x + r.width > W - 4) m.style.left = `${Math.max(4, W - 4 - r.width)}px`;
     m.querySelectorAll<HTMLButtonElement>("button").forEach(b => b.addEventListener("click", () => { m.remove(); items[Number(b.dataset.i)][1](); }));
     setTimeout(() => document.addEventListener("pointerdown", ev => { if (!m.contains(ev.target as Node)) m.remove(); }, { once: true }), 0);
     m.querySelector<HTMLButtonElement>("button")?.focus();
@@ -2450,6 +3371,7 @@ export class AsmController {
       + `<p class="pm-help" translate="no">${esc(c.name)}</p>`
       + `<fieldset class="pm-sec"><legend>${esc(t("Position"))}</legend>${f("x", "X", p[0], "mm")}${f("y", "Y", p[1], "mm")}${f("z", "Z", p[2], "mm")}</fieldset>`
       + `<fieldset class="pm-sec"><legend>${esc(t("Rotation"))}</legend>${f("rx", t("About X"), r[0], "°")}${f("ry", t("About Y"), r[1], "°")}${f("rz", t("About Z"), r[2], "°")}</fieldset>`
+      + (this.dragAxis(c.id) ? `<fieldset class="pm-sec"><legend>${esc(t("Turn on its mate axis"))}</legend><label class="pm-field"><span>${esc(t("Turn by"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-turn value="0" spellcheck="false" /><span class="muted">°</span></span></label><p class="pm-help muted">${esc(t("Enter turns the component by this angle about the axis of its concentric, hinge or screw mate; the parts mated to it follow."))}</p></fieldset>` : "")
       + `<label class="pm-field pm-check"><input type="checkbox" data-a="collide"${this.collide ? " checked" : ""} /> ${esc(t("Collision detection"))}</label>`
       + `<p class="pm-help muted">${esc(t("Or drag the component in the view."))}${this.collide ? ` ${esc(t("The drag stops where it would touch another component."))}` : ""}</p><p class="pm-help muted">${esc(t("Hold Alt while dragging a face onto a face of another component to mate them."))}</p>`;
     pm.querySelector("[data-a=ok]")!.addEventListener("click", () => { this.moving = null; this.renderPanel(); });
@@ -2460,6 +3382,21 @@ export class AsmController {
       this.renderPanel();
     });
     pm.onkeydown = e => { if (e.key === "Escape") { this.moving = null; this.renderPanel(); } };
+    const turn = pm.querySelector<HTMLInputElement>("input[data-turn]");
+    turn?.addEventListener("keydown", e => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      e.stopPropagation();
+      const deg = Number(turn.value.replace(",", "."));
+      if (!Number.isFinite(deg)) { turn.setAttribute("aria-invalid", "true"); return; }
+      turn.removeAttribute("aria-invalid");
+      if (!deg) return;
+      const res = this.turnOnAxis(c.id, deg);
+      if (!res) { toast(t("The mates do not let the component turn that far."), true); return; }
+      this.typedAngles.delete(c.id);
+      this.change(d => { for (const x of d.components) if (res[x.id]) x.tf = res[x.id]; });
+      turn.select();
+    });
     pm.querySelectorAll<HTMLInputElement>("input[data-pose]").forEach(inp => {
       const apply = () => {
         const vals: Record<string, number> = {};
@@ -2474,7 +3411,14 @@ export class AsmController {
         this.change(d => { const x = d.components.find(k => k.id === c.id); if (x) x.tf = tf; });
       };
       inp.addEventListener("change", apply);
-      inp.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); apply(); this.moving = null; this.renderPanel(); } });
+      // Enter applies and goes on to the next box, as Tab does; on the last one it closes the panel (exam #65).
+      inp.addEventListener("keydown", e => {
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        apply();
+        const all = [...pm.querySelectorAll<HTMLInputElement>("input[data-pose]")], next = all[all.indexOf(inp) + 1];
+        if (next) { next.focus(); next.select(); } else { this.moving = null; this.renderPanel(); }
+      });
     });
   }
 
@@ -2509,7 +3453,7 @@ export class AsmController {
         + `<p class="pm-help muted">${esc(t("The two cylinders share an axis and the two flat faces touch: one turn is left."))}</p>`
       : m.type === "slot"
         ? `<div class="pm-field"><span>${esc(t("Slot face 2"))}</span><button class="pm-box${m.a && m.b && !m.c ? " focus" : ""}" data-a="sc" translate="no">${esc(this.refText(m.c))}</button></div>`
-          + `<p class="pm-help muted">${esc(t("Selection 1 and slot face 2 are the sides of the slot; the pin (selection 2) stays centred between them and slides along."))}</p>`
+          + `<p class="pm-help muted">${esc(t("Selection 1 and slot face 2 are the sides of the slot; the pin (selection 2) stays centred between them and slides along, up to the slot's rounded ends."))}</p>`
         : m.type === "gear" ? ratioIn("Ratio", "") + `<p class="pm-help muted">${esc(t("Turns of selection 2 per turn of selection 1 (the radius ratio to start with). External gears turn opposite ways; Reverse makes them turn the same way."))}</p>`
           : m.type === "screw" ? ratioIn("Distance per revolution", "mm") + `<p class="pm-help muted">${esc(t("The two cylinders share an axis; turning one moves it along by this distance per turn."))}</p>` : "";
     const typeBtn = (k: MateType) => `<button class="btn small${m.type === k ? " on" : ""}" data-mt="${k}" aria-pressed="${m.type === k}"${fits.has(k) ? "" : " disabled"}><span aria-hidden="true">${MATE_ICON[k]}</span> ${esc(t(MATE_LABEL[k]))}</button>`;
@@ -2545,7 +3489,7 @@ export class AsmController {
       inp.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); inp.dispatchEvent(new Event("change")); this.okMate(); } });
     });
     pm.querySelectorAll<HTMLButtonElement>("[data-mt]").forEach(b => b.addEventListener("click", () => this.setMateType(b.dataset.mt as MateType)));
-    pm.querySelectorAll<HTMLButtonElement>("[data-al]").forEach(b => b.addEventListener("click", () => { m.align = b.dataset.al as "aligned" | "anti"; this.previewMate(); }));
+    pm.querySelectorAll<HTMLButtonElement>("[data-al]").forEach(b => b.addEventListener("click", () => { m.align = b.dataset.al as "aligned" | "anti"; m.alignSet = true; this.previewMate(); }));
     pm.querySelector<HTMLInputElement>("[data-a=flip]")?.addEventListener("change", e => { m.flip = (e.target as HTMLInputElement).checked; this.previewMate(); });
     pm.querySelector<HTMLInputElement>("[data-a=lockrot]")?.addEventListener("change", e => { m.lockRot = (e.target as HTMLInputElement).checked || undefined; this.previewMate(); });
     const ri = pm.querySelector<HTMLInputElement>("[data-ratio]");
@@ -2559,7 +3503,9 @@ export class AsmController {
     const vi = pm.querySelector<HTMLInputElement>("[data-mv]");
     vi?.addEventListener("change", () => {
       const v = Number(vi.value.replace(",", "."));
-      if (!Number.isFinite(v) || v < 0) { vi.setAttribute("aria-invalid", "true"); return; }
+      if (!Number.isFinite(v) || (v < 0 && m.type !== "distance" && m.type !== "angle")) { vi.setAttribute("aria-invalid", "true"); return; }
+      // A negative distance measures to the other side, as Flip dimension does (exam #64); an angle is signed (exam #72).
+      if (m.type === "distance" && v < 0) { m.flip = !m.flip; m.value = -v; vi.value = String(-v); this.previewMate(); return; }
       m.value = m.type === "angle" ? (v * Math.PI) / 180 : v;
       this.previewMate();
     });
@@ -2732,6 +3678,9 @@ function needsSolve(d: AsmDoc) {
 }
 
 /** Assembly command icons (FR-UI-015): MöbiusCAD's own stroke icons, 16 px, currentColor. */
+/** Drag data type of a Toolbox library card (its standard). */
+export const TOOLBOX_MIME = "application/x-mcad-toolbox";
+
 const AI = (d: string) => `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
 const ASM_ICONS: Record<string, string> = {
   insert: AI('<path d="M2.5 5.5 8 2.5l5.5 3v5L8 13.5l-5.5-3z"/><path d="M8 7v4M6 9h4"/>'),

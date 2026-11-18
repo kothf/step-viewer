@@ -14,7 +14,7 @@
 ## Contents
 
 1. [Introduction](#1-introduction)
-2. [Reference product analysis (SolidWorks)](#2-reference-product-analysis-solidworks)
+2. [Reference product analysis (a CAD app)](#2-reference-product-analysis-a-cad-app)
 3. [Baseline: what MöbiusCAD already has](#3-baseline-what-möbiuscad-already-has)
 4. [Product overview](#4-product-overview)
 5. [Phases and release plan](#5-phases-and-release-plan)
@@ -58,11 +58,11 @@ Out of scope for this FRS (may get their own documents later): simulation/FEA, C
 
 ### 1.3 Product principle
 
-MöbiusCAD uses the workflow that mechanical engineers already know from history-based CAD (SolidWorks, Onshape, Inventor, FreeCAD): sketch, feature, history tree, mates, drawings. SolidWorks is the functional benchmark used to judge completeness (section 2).
+MöbiusCAD uses the workflow that mechanical engineers already know from history-based CAD apps (Onshape, Inventor, FreeCAD and others): sketch, feature, history tree, mates, drawings. A leading CAD app is the functional benchmark used to judge completeness (section 2).
 
-For the user interface Andrey chose (2026-11-06) to **combine** SolidWorks' interaction model with MöbiusCAD's existing interface: a SolidWorks user should find the same layout and habits (feature tree on the left, a feature editing panel that takes the tree's place, tabbed command bar, OK/Cancel in the corner of the view, S-key shortcut bar, right-drag mouse gestures, heads-up view toolbar, drag handles on the model, Enter/Esc behaviour), while the look stays MöbiusCAD's own: header, colour tokens, light/dark themes, icons, panels, toasts, dialogs, EN/RU text and accessibility rules from the 1.8.0 UI/UX standards. Section 13 specifies this.
+For the user interface Andrey chose (2026-11-06) to **combine** a CAD app's interaction model with MöbiusCAD's existing interface: a CAD app user should find the same layout and habits (feature tree on the left, a feature editing panel that takes the tree's place, tabbed command bar, OK/Cancel in the corner of the view, S-key shortcut bar, right-drag mouse gestures, heads-up view toolbar, drag handles on the model, Enter/Esc behaviour), while the look stays MöbiusCAD's own: header, colour tokens, light/dark themes, icons, panels, toasts, dialogs, EN/RU text and accessibility rules from the 1.8.0 UI/UX standards. Section 13 specifies this.
 
-MöbiusCAD is an **original product**: its own name, icons, artwork, wording and file format. Layout conventions and interaction patterns shared across CAD tools are adopted; SolidWorks' icons, bitmaps, help text, templates and file formats are not reproduced. Reading SLDPRT/SLDASM as geometry (shipped in 1.16.0) is interoperability, not imitation.
+MöbiusCAD is an **original product**: its own name, icons, artwork, wording and file format. Layout conventions and interaction patterns shared across CAD tools are adopted; a CAD app's icons, bitmaps, help text, templates and file formats are not reproduced. Reading SLDPRT/SLDASM as geometry (shipped in 1.16.0) is interoperability, not imitation.
 
 ### 1.4 Definitions and abbreviations
 
@@ -104,25 +104,25 @@ Each requirement has an identifier, a priority and a phase:
 - `CLAUDE.md` (code map and conventions), `README.md`, `CHANGELOG.md`.
 - UI/UX standards (1.8.0): contrast, focus, breakpoints 1280/768, toasts, dialogs. Enforced by axe-core in `tests/smoke.mjs`.
 - Exact geometry kernel (1.13.0): `src/kernel/occ.ts`, `client.ts`, `kernel.worker.ts`.
-- SolidWorks import (1.16.0): `src/sw/`, `src/kernel/parasolid.ts`, `src/kernel/solidworks.ts`.
+- SLDPRT/SLDASM import (1.16.0): `src/sw/`, `src/kernel/parasolid.ts`, `src/kernel/solidworks.ts`.
 
 ---
 
-## 2. Reference product analysis (SolidWorks)
+## 2. Reference product analysis (a CAD app)
 
-SolidWorks (Dassault Systèmes) is the most used mechanical CAD in small and medium engineering companies, and the benchmark Andrey chose. This section lists its functionality by area, so each MöbiusCAD requirement can be traced to a capability users expect. The column "MöbiusCAD" gives the phase in which an equivalent arrives, or "—" when it is out of scope. Product names are trademarks of their owners and are used here only for reference.
+The reference CAD app is the most used mechanical CAD in small and medium engineering companies, and the benchmark Andrey chose. This section lists its functionality by area, so each MöbiusCAD requirement can be traced to a capability users expect. The column "MöbiusCAD" gives the phase in which an equivalent arrives, or "—" when it is out of scope. Product names are trademarks of their owners and are used here only for reference.
 
-> **Trademark notice.** SOLIDWORKS is a registered trademark of Dassault Systèmes SolidWorks Corporation; Onshape is a trademark of PTC Inc.; other names belong to their owners. They are named in this document only to describe and compare functionality. MöbiusCAD is not affiliated with, endorsed or sponsored by them. Product rule: the app itself does not use these names in its branding or UI labels, nor their logos, icons, artwork or help text; factual mentions such as "Open SolidWorks parts (.sldprt)" in file-format lists are allowed.
+> **Trademark notice.** Onshape is a trademark of PTC Inc.; other names belong to their owners. They are named in this document only to describe and compare functionality. MöbiusCAD is not affiliated with, endorsed or sponsored by them. Product rule: the app itself does not use these names in its branding or UI labels, nor their logos, icons, artwork or help text; factual mentions such as "Open SLDPRT parts (.sldprt)" in file-format lists are allowed.
 
 ### 2.1 Workflow model
 
-SolidWorks is history-based and parametric: a **part** is a sequence of features in the FeatureManager design tree, each feature driven by sketches and dimensions; changing a dimension rebuilds the part. Parts are inserted into **assemblies** and positioned by mates; **drawings** are 2D views projected from the 3D models and stay associative (a model change updates the drawing). Three document types (`.sldprt`, `.sldasm`, `.slddrw`) reference each other by file path. UI elements: CommandManager (tabbed ribbon), FeatureManager tree, PropertyManager (left panel to edit a feature), Heads-up View toolbar, shortcut bar (S key), mouse gestures, confirmation corner (OK/Cancel in the graphics area), Instant3D (drag arrows to change sizes), rollback bar.
+A CAD app is history-based and parametric: a **part** is a sequence of features in the FeatureManager design tree, each feature driven by sketches and dimensions; changing a dimension rebuilds the part. Parts are inserted into **assemblies** and positioned by mates; **drawings** are 2D views projected from the 3D models and stay associative (a model change updates the drawing). Three document types (`.sldprt`, `.sldasm`, `.slddrw`) reference each other by file path. UI elements: CommandManager (tabbed ribbon), FeatureManager tree, PropertyManager (left panel to edit a feature), Heads-up View toolbar, shortcut bar (S key), mouse gestures, confirmation corner (OK/Cancel in the graphics area), Instant3D (drag arrows to change sizes), rollback bar.
 
 MöbiusCAD keeps the same workflow model (history-based parts, mated assemblies, associative drawings) and the same interaction habits, mapped onto its existing interface (section 13), with one native container format with an extension per document kind (section 12).
 
 ### 2.2 Sketching
 
-| SolidWorks capability | Notes | MöbiusCAD |
+| CAD app capability | Notes | MöbiusCAD |
 | --- | --- | --- |
 | Sketch on plane or planar face | Front/Top/Right planes, any planar face, reference planes | P1 |
 | Line, centerline, midpoint line | Chained lines with tangent arc switching | P1 |
@@ -144,18 +144,18 @@ MöbiusCAD keeps the same workflow model (history-based parts, mated assemblies,
 | Display/Delete Relations, SketchXpert (conflict resolution) | | P1 (list/delete), P2 (assistant) |
 | Shaded sketch contours, contour selection, regions | Pick regions for extrude | P1 |
 | 3D sketch | Lines/splines in space | P5 |
-| Blocks (sketch blocks), sketch picture, DXF/DWG import into sketch | | P2 (DXF import), P5 (blocks, picture) |
+| Blocks (sketch blocks), sketch picture, DXF/DWG import into sketch | | P2 (DXF import), P5 (picture done 1.549.0, blocks done 1.554.0) |
 | Layout sketch driving several features | Shared sketches | P1 (sketch reuse) |
 
 ### 2.3 Part features
 
-| SolidWorks capability | Notes | MöbiusCAD |
+| CAD app capability | Notes | MöbiusCAD |
 | --- | --- | --- |
 | Extruded Boss/Base, Extruded Cut | End conditions: Blind, Through All, Up To Next, Up To Vertex, Up To Surface, Offset From Surface, Up To Body, Mid Plane; Direction 2; draft; thin feature; start from plane/surface/offset | P1 (Blind, Through All, Mid Plane, Up To Face, both directions, cut/boss), P2 (others, draft, thin) |
 | Revolved Boss/Cut | One/two directions, thin | P1 |
 | Swept Boss/Cut | Profile + path, guide curves, twist | P3 (basic), P5 (guides, twist) |
 | Lofted Boss/Cut | Profiles, guide curves, centerline, start/end constraints | P3 (basic), P5 (guides) |
-| Boundary Boss/Cut | | P5 |
+| Boundary Boss/Cut | Profiles in Direction 1, curves in Direction 2 | P5 (1.557.0: Coons patches between neighbouring curves) |
 | Fillet | Constant, variable, face fillet, full round, setback, FilletXpert | P1 (constant edge), P3 (face, full round, variable) |
 | Chamfer | Distance-distance, angle-distance, vertex, offset face | P1 (equal distance, distance-angle), P3 (others) |
 | Hole Wizard | Counterbore, countersink, hole, tapped, pipe tap, legacy, slot; standards ISO/ANSI; position by sketch points | P2 |
@@ -164,7 +164,7 @@ MöbiusCAD keeps the same workflow model (history-based parts, mated assemblies,
 | Draft | Neutral plane, parting line, step | P2 (neutral plane) |
 | Rib | | P3 |
 | Linear, circular, mirror pattern; curve-driven, sketch-driven, table-driven, fill, variable patterns | Features, faces or bodies | P2 (linear, circular, mirror), P3 (sketch-driven), P5 (others) |
-| Dome, wrap, deform, flex, indent, scale | | P5 |
+| Dome, wrap, deform, flex, indent, scale | | P5 (dome 1.547.0, FR-FT-103; wrap 1.548.0, FR-FT-104; flex 1.552.0, FR-FT-105; indent, scale) |
 | Reference geometry: plane, axis, coordinate system, point, mate reference | | P1 (plane, axis, point), P2 (coordinate system) |
 | Curves: split line, projected, composite, helix/spiral, curve through points | | P3 (helix, split line), P5 (others) |
 | Multibody: combine, intersect, split, delete/keep body, move/copy body, insert part | | P3 |
@@ -182,7 +182,7 @@ MöbiusCAD keeps the same workflow model (history-based parts, mated assemblies,
 
 ### 2.4 Assemblies
 
-| SolidWorks capability | Notes | MöbiusCAD |
+| CAD app capability | Notes | MöbiusCAD |
 | --- | --- | --- |
 | Insert components, fixed/floating, sub-assemblies (rigid/flexible) | | P4 |
 | Standard mates: coincident, parallel, perpendicular, tangent, concentric, lock, distance, angle | Flip alignment | P4 |
@@ -201,7 +201,7 @@ MöbiusCAD keeps the same workflow model (history-based parts, mated assemblies,
 
 ### 2.5 Drawings
 
-| SolidWorks capability | Notes | MöbiusCAD |
+| CAD app capability | Notes | MöbiusCAD |
 | --- | --- | --- |
 | Sheets, sheet formats, templates, title block with properties | ISO, ANSI, GOST templates | P5 |
 | Standard 3 views, model view, projected, isometric | First/third angle | P5 |
@@ -215,7 +215,7 @@ MöbiusCAD keeps the same workflow model (history-based parts, mated assemblies,
 
 ### 2.6 Files, data and other
 
-| SolidWorks capability | MöbiusCAD |
+| CAD app capability | MöbiusCAD |
 | --- | --- |
 | Native files referencing each other by path; Pack and Go | P0 (one container, `.mcadprt`/`.mcadasm`/`.mcaddrw`, embedded or linked parts), P4 (pack) |
 | Import STEP, IGES, Parasolid, ACIS, DXF/DWG, STL, 3MF; Import Diagnostics | already (STEP, IGES, BREP, SLDPRT, STL, OBJ, 3MF), P2 (DXF to sketch), P3 (heal imported bodies) |
@@ -227,7 +227,7 @@ MöbiusCAD keeps the same workflow model (history-based parts, mated assemblies,
 | PDM Standard / Professional (EPDM): vault, check-in/out, versions, revisions, workflows and transitions, data cards, numbering, search, where-used, version-aware BOMs, copy tree, ECO, notifications, audit | P2 (vault, versions, audit), P4 (revisions, workflow, references, data cards, search, BOM per revision), P5 (workflow editor, ECO, shared vault), P7 (server) |
 | PDM replication, cold storage, web portal, ERP integration | — |
 
-### 2.7 What SolidWorks users value and expect (inputs for UX)
+### 2.7 What CAD app users value and expect (inputs for UX)
 
 - Predictable rebuilds: editing an early dimension keeps fillets and holes on the "same" edges (topological naming).
 - Fast sketching with automatic relations and clear defined/undefined colouring.
@@ -260,7 +260,7 @@ The modeller builds on version 1.17.0. Reusing these parts is a requirement (NFR
 | UI kit | `src/ui.ts` (toasts, dialogs with focus trap, tabs, panels, sheets, busy buttons, empty states), `style.css` tokens | All new panels and dialogs. |
 | i18n | `src/i18n.ts`, `src/i18n.ru.ts`, DOM translation by MutationObserver | Every new string, EN and RU. |
 | Help and tips | `src/help.ts`, `src/hints.ts` | New Help sections for modelling, first-use tips for sketcher and features. |
-| SolidWorks import | `src/sw/*`, `parasolid.ts`, `solidworks.ts` | SLDPRT/SLDASM open as dumb solids that can be used as base bodies or assembly components. |
+| SLDPRT/SLDASM import | `src/sw/*`, `parasolid.ts`, `solidworks.ts` | SLDPRT/SLDASM open as dumb solids that can be used as base bodies or assembly components. |
 | Tests | `tests/smoke.mjs` (packaged build, headless Chromium, axe-core, layout checks) | Extended with modelling checks; a unit test runner is added for the solver and data model (NFR-QA-001). |
 
 Gaps the modeller must fill: no editable document model, no undo/redo, no persistence except measurements in localStorage, no sketch solver, no feature evaluation, no persistent kernel session, no topological naming, no drawing generator.
@@ -379,7 +379,7 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 
 ### 7.1 Documents and modes
 
-- **FR-DOC-001** (P0, M) The app shall support document kinds **Part**, **Assembly** (P4) and **Drawing** (P5), plus the existing read-only **Imported model** (STEP/IGES/BREP/mesh/SolidWorks) and **PCB** views.
+- **FR-DOC-001** (P0, M) The app shall support document kinds **Part**, **Assembly** (P4) and **Drawing** (P5), plus the existing read-only **Imported model** (STEP/IGES/BREP/mesh/SLDPRT/SLDASM) and **PCB** views.
 - **FR-DOC-002** (P0, M) A **New** menu shall create a Part (P0), Assembly (P4) or Drawing (P5) from a template: units (mm, cm, m, in, ft), angle unit (deg/rad), decimals, standard planes and origin, default material (none), drawing standard (ISO/ANSI) where relevant.
 - **FR-DOC-003** (P0, M) Several documents may be open at once in tabs; each tab has its own undo stack, kernel worker, selection and view. Switching tabs keeps camera and selection. Memory limit: at most 4 part/assembly kernels alive at once (LRU, others are rebuilt on activation).
 - **FR-DOC-004** (P1, M) An imported model shall offer **Edit as part**: it becomes a new Part whose first feature is an *Imported body* (exact B-rep from the kernel, names and colours kept); later features can cut, fillet or add to it. The original file is not changed.
@@ -438,7 +438,7 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 
 ### 7.7 Materials and properties
 
-- **FR-MAT-001** (P1, M) Material per part (and per body, P3) chosen from the existing material list (density), extended with: name, density, Young's modulus, Poisson, yield strength, colour hint. Custom materials are saved in the document and in a local library.
+- **FR-MAT-001** (P1, M) Material per part (and per body, P3) chosen from the existing material list (density), extended with: name, density, Young's modulus, Poisson, yield strength, colour hint. Custom materials are saved in the document and in a local library. *Built in 1.372.0 for parts: a library of 170 materials with a searchable dialog and custom materials; per-body materials are still to do.*
 - **FR-MAT-002** (P1, M) Mass properties panel (existing) works on the modelled part using exact kernel values: volume, area, mass, centre of mass, principal moments and axes of inertia (new), relative to origin or a chosen coordinate system.
 - **FR-MAT-003** (P1, M) Appearance: colour and opacity per part, body (P3), feature and face; stored in the document and exported to STEP.
 - **FR-MAT-004** (P2, S) Mass property override (user-entered mass/COM for purchased parts), flagged in BOM.
@@ -461,7 +461,7 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 - **FR-SK-001** (P1, M) **Sketch** starts on a selected plane or planar face; without a selection it asks for one, showing the standard planes. The view turns normal to the sketch plane (option: off), and the sketch toolbar replaces the feature toolbar.
 - **FR-SK-002** (P1, M) The sketch has a local 2D coordinate system: origin projected from the part origin; X axis aligned with the plane's natural direction (standard planes) or a chosen edge (P2: "Sketch orientation" option). **Sketch orientation done (1.215.0: X axis box in Edit sketch plane).**
 - **FR-SK-003** (P1, M) Leaving the sketch: **Exit sketch** (confirm corner, or Ctrl+Enter / the sketch button again) keeps changes; **Discard** (with confirmation if changed) reverts to the state at entry.
-- **FR-SK-004** (P1, M) Starting a feature (e.g. Extrude) while in a sketch exits the sketch and uses it as the feature's profile.
+- **FR-SK-004** (P1, M) Starting a feature (e.g. Extrude) while in a sketch exits the sketch and uses it as the feature's profile. **Done (1.451.0: Extrude/Cut/Revolve on the Sketch tab and the sketch menu; the other command bar tabs and Ctrl+K stay live while sketching).**
 - **FR-SK-005** (P1, M) Editing an existing sketch rolls the model back to just before that sketch; geometry after it is hidden or shown transparent (option).
 - **FR-SK-006** (P1, S) Section view option "Section at sketch plane" (reuse `Section.ts`) to sketch inside a part.
 - **FR-SK-007** (P1, M) The sketch plane of a sketch can be changed later (**Edit sketch plane**); relations to external geometry that no longer resolve become errors (FR-SK-064).
@@ -469,11 +469,11 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 ### 8.2 Sketch entities
 
 - **FR-SK-010** (P1, M) Point.
-- **FR-SK-011** (P1, M) Line: click-click chains; click-drag-release makes a single line; double-click or Esc ends the chain; moving back to the last end point switches to a tangent arc (A key toggles arc mode explicitly).
-- **FR-SK-012** (P1, M) Construction line (centerline): any entity can be toggled construction (Q key, or a property). Construction entities do not form profiles.
+- **FR-SK-011** (P1, M) Line: click-click chains; click-drag-release makes a single line; double-click or Esc ends the chain; moving back to the last end point switches to a tangent arc (A key toggles arc mode explicitly). **Tangent arc done (1.507.0).**
+- **FR-SK-012** (P1, M) Construction line (centerline): any entity can be toggled construction (Q key, or a property). Construction entities do not form profiles. **Centerline and Midpoint line tools (1.513.0).**
 - **FR-SK-013** (P1, M) Rectangle: corner-corner, centre-corner; produces 4 lines with horizontal/vertical and coincident relations. P2: 3-point corner, 3-point centre, parallelogram. **Done (1.152.0).**
 - **FR-SK-014** (P1, M) Circle: centre-radius, 3-point (P2: perimeter tangent circle). **Done (perimeter circle 1.167.0).**
-- **FR-SK-015** (P1, M) Arc: centre-start-end, 3-point, tangent arc from an endpoint.
+- **FR-SK-015** (P1, M) Arc: centre-start-end, 3-point, tangent arc from an endpoint. **Tangent Arc tool done (1.513.0).**
 - **FR-SK-016** (P1, M) Polygon: n sides (3–64), inscribed/circumscribed, centre + vertex; adds construction circle and equal relations.
 - **FR-SK-017** (P2, M) Slot: straight (overall/centre-to-centre), centre straight, 3-point arc slot, centre arc slot; with width dimension. **Done (1.144.0)**: `slot`/`cslot`/`aslot`/`aslot3` tools, live preview, width + length/radius dims with the Modify box.
 - **FR-SK-018** (P2, M) Ellipse and elliptical arc.
@@ -484,16 +484,16 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 
 ### 8.3 Sketch tools
 
-- **FR-SK-030** (P1, M) Trim: smart trim by clicking a segment (removes it up to the nearest intersections), and drag-through trim over several segments.
+- **FR-SK-030** (P1, M) Trim: smart trim by clicking a segment (removes it up to the nearest intersections), and drag-through trim over several segments. Jog line (1.523.0): a line stepped out between two clicks, sides square to it.
 - **FR-SK-031** (P1, M) Extend to the nearest intersection.
-- **FR-SK-032** (P1, M) Split entity at a point.
+- **FR-SK-032** (P1, M) Split entity at a point. Segment (1.527.0): a line, arc or circle divided into equal pieces, by points on it or as that many curves.
 - **FR-SK-033** (P1, M) Sketch fillet (radius) and sketch chamfer (distance, distance-angle) at a corner, keeping relations and adding a radius/distance dimension.
 - **FR-SK-034** (P1, M) Offset entities: selected chain or loop, distance, side, both sides, cap ends (arc/line); keeps an offset relation so the result follows the source (P2) or is static (P1). *Done: static copy (1.20.0); both sides, arc/line caps and linked offsets (offset relations + one dimension) in 1.240.0.*
 - **FR-SK-035** (P1, M) Convert entities (project model edges, loops of a face, or other sketches' entities into this sketch) with an "on edge" relation that follows the model.
 - **FR-SK-036** (P2, M) Intersection curve: intersection of the sketch plane with selected faces/bodies.
-- **FR-SK-037** (P2, M) Mirror entities about a line (adds symmetric relations); dynamic mirror while drawing.
+- **FR-SK-037** (P2, M) Mirror entities about a line (adds symmetric relations); dynamic mirror while drawing. **Dynamic mirror done (1.513.0).**
 - **FR-SK-038** (P2, M) Linear and circular sketch patterns with count and spacing as dimensions; instances keep equal relations to the seed.
-- **FR-SK-039** (P2, M) Move, copy, rotate, scale entities (numeric and by drag; relations to unselected geometry are kept or removed by choice).
+- **FR-SK-039** (P2, M) Move, copy, rotate, scale entities (numeric and by drag; relations to unselected geometry are kept or removed by choice). Stretch entities (1.519.0): the picked points move, curves ending on them stretch, dimensions across take the new sizes.
 - **FR-SK-040** (P2, M) Import DXF (R12–2018 lines, arcs, circles, polylines with bulges, splines, ellipses; layers selectable; units) into the active sketch, reusing the parser for profile export where possible.
 - **FR-SK-041** (P1, S) Grid (optional), with snap to grid (off by default). *Done in 1.303.0 (sketch panel Grid section: show, snap, spacing; automatic 1-2-5 spacing from the zoom).*
 - **FR-SK-042** (P1, M) Sketch inference while drawing: snap to end points, mid points, centres, quadrants, intersections, nearest on curve, model vertices/edges/face centres projected to the sketch plane (reuse Snapper). Dotted inference lines for horizontal/vertical alignment with existing points.
@@ -525,7 +525,7 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 
 ### 8.5 Dimensions
 
-- **FR-SK-060** (P1, M) One smart dimension tool infers the type from the selection: length of a line; distance point–point, point–line, line–line (parallel); horizontal/vertical distance (by cursor position); angle between two lines (four quadrants by cursor); radius/diameter of arcs/circles (toggle); arc length (arc + both end points); distance from a circle's centre, near side or far side (Shift).
+- **FR-SK-060** (P1, M) One smart dimension tool infers the type from the selection: length of a line; distance point–point, point–line, line–line (parallel); horizontal/vertical distance (by cursor position); angle between two lines (four quadrants by cursor); radius/diameter of arcs/circles (toggle); arc length (arc + both end points); distance from a circle's centre, near side or far side (Shift). **Arc length and arc conditions done (1.554.0).**
 - **FR-SK-061** (P1, M) Placing a dimension opens an inline value box at the dimension (Enter to apply, Esc to keep the current value); the box accepts expressions (FR-PAR-004).
 - **FR-SK-062** (P1, M) Driving vs driven: a dimension that would over-define the sketch is offered as driven (reference, shown in grey, in parentheses) or rejected.
 - **FR-SK-063** (P2, M) Ordinate dimensions (horizontal/vertical chains from a base) and symmetric/diameter dimensions about a centerline (for revolve profiles).
@@ -656,6 +656,8 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 - **FR-FT-100** (P5, S) Surface extrude, revolve, sweep, loft, planar surface, offset surface, knit (with "try to form solid"), fill (n-sided patch), trim, extend, thicken, delete face (delete and patch / delete and fill).
 - **FR-FT-101** (P5, S) Direct editing on any body, including imported ones: **Move face** (offset / translate / rotate), **Delete face** (heal), **Replace face**. Kernel: `BRepOffsetAPI_MakeOffsetShape` / `BRepAlgoAPI_Defeaturing`.
 - **FR-FT-102** (P5, C) Feature recognition on imported bodies: holes (cylinders through), fillets, chamfers, extrusions, turning them into editable features.
+- **FR-FT-103** (P5, S) **Dome** on flat faces: a distance at the face's middle, Reverse direction (a dent), Elliptical for round faces; round faces get an exact spherical or ellipsoidal cap, other outlines a smooth patch through the edges. Done in 1.547.0 (`Modeller.dome`). Left: domes on curved faces and the Continuous dome option for polygons.
+- **FR-FT-104** (P5, S) **Wrap**: a closed sketch on a plane parallel to a cylinder's axis wrapped onto a cylindrical face without stretching, Emboss (out by a depth) or Deboss (in); shafts and holes. Done 1.548.0.
 
 ### 9.12 Specialist features (P6)
 
@@ -828,7 +830,7 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 
 ### 12.5 Product data management: vault, versions, revisions
 
-Reference: SolidWorks PDM Professional (formerly Enterprise PDM, "EPDM") and PDM Standard. They keep CAD files in a **vault**: users check files out (lock) and in (new **version**), files move through a **workflow** of lifecycle states, a **revision** label is assigned on release, data cards hold metadata, and the vault knows which assemblies and drawings use which parts (where-used), so references never break. MöbiusCAD provides the same concepts without a server (C-1): the vault lives in a folder the user chooses, or in browser storage, and every operation runs in the browser. A server vault for teams with real access control is out of scope here (P7, separate FRS).
+Reference: the PDM systems that come with commercial CAD apps. They keep CAD files in a **vault**: users check files out (lock) and in (new **version**), files move through a **workflow** of lifecycle states, a **revision** label is assigned on release, data cards hold metadata, and the vault knows which assemblies and drawings use which parts (where-used), so references never break. MöbiusCAD provides the same concepts without a server (C-1): the vault lives in a folder the user chooses, or in browser storage, and every operation runs in the browser. A server vault for teams with real access control is out of scope here (P7, separate FRS).
 
 **Terms used in this section**
 
@@ -932,7 +934,7 @@ Reference: SolidWorks PDM Professional (formerly Enterprise PDM, "EPDM") and PDM
 
 ## 13. Functional requirements: user interface
 
-The modelling UI combines SolidWorks' interaction model with MöbiusCAD's existing interface (section 1.3). Each requirement below names the habit it keeps ("SW habit") and where it lives in MöbiusCAD.
+The modelling UI combines a CAD app's interaction model with MöbiusCAD's existing interface (section 1.3). Each requirement below names the habit it keeps ("SW habit") and where it lives in MöbiusCAD.
 
 ### 13.1 Layout
 
@@ -973,7 +975,7 @@ The modelling UI combines SolidWorks' interaction model with MöbiusCAD's existi
 
 ### 13.3 Graphics area interaction
 
-- **FR-UI-020** (P0, M) Mouse: existing orbit (left drag in view mode), pan, zoom to cursor; in modelling the SolidWorks mapping is available as a preference and default for new users of modelling: **middle drag rotates, Ctrl+middle pans, wheel zooms to cursor, Shift+middle zooms, Alt+middle rolls**, left button selects and drags handles. Preference "Mouse: MöbiusCAD (left-drag orbit) / Middle-drag orbit (as in most mechanical CAD)" in Display ▾; the UI does not name other products.
+- **FR-UI-020** (P0, M) Mouse: existing orbit (left drag in view mode), pan, zoom to cursor; in modelling the CAD app mapping is available as a preference and default for new users of modelling: **middle drag rotates, Ctrl+middle pans, wheel zooms to cursor, Shift+middle zooms, Alt+middle rolls**, left button selects and drags handles. Preference "Mouse: MöbiusCAD (left-drag orbit) / Middle-drag orbit (as in most mechanical CAD)" in Display ▾; the UI does not name other products.
 - **FR-UI-021** (P1, M) **Confirmation corner** (SW habit): ✓ and ✕ buttons in the top-right of the graphics area while a command or sketch is active, mirroring the panel's OK/Cancel; in a sketch it shows "exit sketch" and "discard".
 - **FR-UI-022** (P1, M) **Heads-up view bar** (SW habit), floating top centre: zoom to fit, zoom to area, previous view, section view toggle, view orientation ▾ (standard views + normal to), display style ▾, hide/show items ▾ (planes, axes, origins, sketches, sketch relations, dimensions), appearance, perspective toggle. It reuses existing view commands; in the viewer-only mode the same functions stay in the header as today.
 - **FR-UI-023** (P1, M) **Shortcut bar** (SW habit: S key): pressing S shows a small floating toolbar at the cursor with the commands relevant to the current mode (sketch: line, rectangle, circle, arc, trim, dimension, relation; part: sketch, extrude, revolve, fillet, chamfer, hole, plane; assembly: insert, mate, move). Customisable in Preferences (P2).
@@ -1000,7 +1002,7 @@ The modelling UI combines SolidWorks' interaction model with MöbiusCAD's existi
 
 - **FR-UI-050** (P1, M) Sketch status in the status bar and a badge in the graphics area: "Under defined (3 DOF) / Fully defined / Over defined"; colours per FR-SLV-002 with a legend in Help.
 - **FR-UI-051** (P1, M) Cursor feedback: the tool icon next to the cursor, inference glyphs (coincident, horizontal, tangent ...), the live length/angle/radius beside the cursor, dotted inference lines.
-- **FR-UI-052** (P1, M) Typing a number while drawing an entity opens the value box for its next size (length, then angle), so lines can be drawn fully by keyboard.
+- **FR-UI-052** (P1, M) Typing a number while drawing an entity opens the value box for its next size (length, then angle), so lines can be drawn fully by keyboard. Add dimensions on creation (1.527.0): new lines, rectangles, parallelograms, polygons, circles and arcs get their sizes as dimensions and the Modify box opens on each, as a CAD app with Add dimensions on (quick bar, sketch panel and Preferences switch).
 - **FR-UI-053** (P1, M) Dimension value boxes appear at the dimension (SW habit: Modify box) with ✓, ✕, rebuild and spin; Esc keeps the previous value.
 - **FR-UI-054** (P1, M) Sketch keyboard: L line, R rectangle, C circle, A arc (tangent arc while drawing), P point, G polygon, T trim, E extend, F sketch fillet, O offset, W slot, D dimension, K add relation, Q construction toggle (letters as built in 1.85.0, plus K), Esc ends the current tool then exits selection, Ctrl+Enter exits the sketch; letters are rebindable (P2) and do not collide with viewer letters while the sketch is active (viewer measure letters move under the Evaluate tab in modelling).
 - **FR-UI-055** (P1, S) Grid and inference toggles in the heads-up bar while sketching. *Done in 1.310.0 (quick access bar: Grid, Snap to grid, Inferences).*
@@ -1054,7 +1056,7 @@ The modelling UI combines SolidWorks' interaction model with MöbiusCAD's existi
 
 ### 13.13 Everyday interaction parity (audit 2026-11-08)
 
-An audit of SolidWorks' basic, everyday behaviours against this FRS and MöbiusCAD 1.85.0 (Appendix F) found habits that were missing here or described too loosely to build or test. The requirements below close those gaps; each has an acceptance test in section 16.2 (AT-UX-*). Sketch inference and snapping to model geometry (FR-SK-042, FR-SK-052) and middle-drag rotation in sketch mode (FR-UI-020) are being reworked in 1.89.0 and are not repeated here.
+An audit of a CAD app's basic, everyday behaviours against this FRS and MöbiusCAD 1.85.0 (Appendix F) found habits that were missing here or described too loosely to build or test. The requirements below close those gaps; each has an acceptance test in section 16.2 (AT-UX-*). Sketch inference and snapping to model geometry (FR-SK-042, FR-SK-052) and middle-drag rotation in sketch mode (FR-UI-020) are being reworked in 1.89.0 and are not repeated here.
 
 **Mouse and view**
 
@@ -1093,7 +1095,7 @@ An audit of SolidWorks' basic, everyday behaviours against this FRS and MöbiusC
 - **FR-UI-114** (P1, M) **Modify box** (completes FR-UI-053 and FR-UI-028): the box shows the dimension's name as its title (editable, FR-SK-065), the value with units, ✓, ✕, **Rebuild** (applies and keeps the box open), **Reverse direction** for linear dimensions, an increment field with spin buttons, and the mouse wheel over the box steps the value by the increment (Shift ×10, Alt ×0.1) with a live rebuild/solve; typing `=` starts an expression with variable and dimension name completion (FR-PAR-002). Enter = ✓, Esc = ✕ keeping the old value.
 - **FR-UI-115** (P1, M) **Feature dimensions on the model** (completes FR-HIS-010): a single click on a feature in the tree, or on one of its faces with Instant3D on, shows its driving dimensions (its sketch's and the feature's own) on the model in blue; a double click on a shown dimension opens the Modify box; a change rebuilds as one undo step. Double-clicking a feature row shows its dimensions (SW habit) and Edit feature stays in the context bar, the menu and Enter on the row. (1.85.0 opens Edit feature on a double click and shows no feature dimensions on the model.)
 - **FR-SK-067** (P1, M) **Instant 2D**: in a sketch, a selected driving dimension shows a round handle at its moving end; dragging it changes the value with a ruler and snap ticks, as model handles do (FR-UI-027), and is one undo step. *Done in 1.282.0.*
-- **FR-SK-068** (P1, M) Dimension placement feedback: while placing, the preview follows the cursor and shows the type it will be (horizontal, vertical, aligned, the angle quadrant, radius/diameter); a right-click locks the current orientation so the text can be moved freely; Esc cancels placement only. Clicking a placed dimension's arrow dots flips its arrows inside/outside. *Right-click lock done in 1.282.0 (the preview already showed the type and Esc cancels only the placement); arrow flipping waits for sketch arrowheads (sketch dimensions draw ticks).*
+- **FR-SK-068** (P1, M) Dimension placement feedback: while placing, the preview follows the cursor and shows the type it will be (horizontal, vertical, aligned, the angle quadrant, radius/diameter); a right-click locks the current orientation so the text can be moved freely; Esc cancels placement only. Clicking a placed dimension's arrow dots flips its arrows inside/outside. *Right-click lock done in 1.282.0 (the preview already showed the type and Esc cancels only the placement). Arrow flip done in 1.540.0: sketch dimensions draw arrowheads (outside by themselves when short), and the dot on the selected dimension or Flip arrows in the right-click menu flips them.*
 
 **Sketch interaction**
 
@@ -1117,7 +1119,7 @@ An audit of SolidWorks' basic, everyday behaviours against this FRS and MöbiusC
 **Menus and toolbars (review 2026-11-08, Andrey: "reorganize all menus/buttons")**
 
 - **FR-UI-117** (P1, M) **One command bar for everything** (completes FR-UI-010..013): every 3D document has one tabbed command bar, a full-width row under the header; no tool gets its own row of buttons. The tabs follow what is open: a model file shows **Evaluate**; a part shows **Features**, **Sketch**, **Surfaces**, **Weldments**, **Evaluate** (and **Sheet Metal** once it lands); an assembly shows **Assembly** and **Evaluate**. The bar remembers the last tab per document type. Features groups related commands behind split buttons (Sweep ▾ Loft, Cut-Sweep ▾ Cut-Loft, Pattern ▾, Plane ▾ Axis/Point/Coordinate system, Curves ▾ Helix/3D sketch/XYZ/Composite/Projected/Split line, Bodies ▾, Direct editing ▾); Surfaces and Weldments list their commands as buttons. Entering a sketch selects Sketch; leaving it selects Features.
-- **FR-UI-118** (P1, M) **Header = document and application**: the header holds the menu, Open, New ▾, the document name, the view controls (display mode, projection, standard views, Display ▾), language, theme, help and the panel toggles. Measuring tools live in the Evaluate tab; the right panel's pages (Properties, Section, Explode, Mass, Export) are tabs at the top of the right panel; Filter, Undo ▾, Redo, Save ▾ and STEP sit at the right end of the tab row, like SolidWorks' menu bar. Every keyboard shortcut works whichever tab is shown.
+- **FR-UI-118** (P1, M) **Header = document and application**: the header holds the menu, Open, New ▾, the document name, the view controls (display mode, projection, standard views, Display ▾), language, theme, help and the panel toggles. Measuring tools live in the Evaluate tab; the right panel's pages (Properties, Section, Explode, Mass, Export) are tabs at the top of the right panel; Filter, Undo ▾, Redo, Save ▾ and STEP sit at the right end of the tab row, like a CAD app's menu bar. Every keyboard shortcut works whichever tab is shown.
 - **FR-UI-119** (P1, M) **Rule for new modules**: a new module (sheet metal, motion, drawings, PCB) adds a tab or a group in an existing tab, never a floating bar of its own, and its buttons use the shared `mc-b` icon + label style with its own SVG icons (FR-UI-015). A tab whose buttons do not fit folds labels into icons with tooltips before it scrolls.
 - **FR-UI-120** (P1, M) **Document tabs** (completes FR-DOC-003): open parts, assemblies and drawings show as tabs along the bottom of the window above the status bar, each with its type icon, name, modified dot and ✕; a click switches to it, keeping its own undo, selection and camera; Ctrl+Tab cycles; closing a modified document asks to save. Opening a part from an assembly opens a new tab instead of replacing the assembly.
 
@@ -1168,7 +1170,7 @@ Reference machine: 4-core laptop CPU (2020 or newer), 8 GB RAM, integrated GPU, 
 
 - **NFR-USE-001** (P1, M) WCAG 2.1 AA for all panels and dialogs: 0 axe-core violations in light and dark (existing smoke-test gate); 4.5:1 text contrast, 3:1 for UI glyphs and sketch status colours against the background.
 - **NFR-USE-002** (P1, M) Every command reachable by keyboard; focus order logical; visible focus rings.
-- **NFR-USE-003** (P1, S) A SolidWorks user can make the AT-P1 bracket without reading Help in ≤ 10 minutes (hallway test with 3 users before P1 release).
+- **NFR-USE-003** (P1, S) A CAD app user can make the AT-P1 bracket without reading Help in ≤ 10 minutes (hallway test with 3 users before P1 release).
 - **NFR-USE-004** (P1, M) Every error message says what failed and what to do next, in EN and RU.
 
 ### 14.5 Compatibility
@@ -1271,7 +1273,7 @@ Reference machine: 4-core laptop CPU (2020 or newer), 8 GB RAM, integrated GPU, 
 }
 ```
 
-Transforms are column-major 4×4 in mm (same convention as three.js and the verified SolidWorks import, but in mm instead of metres).
+Transforms are column-major 4×4 in mm (same convention as three.js and the verified SLDPRT/SLDASM import, but in mm instead of metres).
 
 ### 15.4 Drawing document (schema sketch)
 
@@ -1437,7 +1439,7 @@ Each test is scripted in the smoke test where it can be (synthetic pointer and k
 | R-3 | opencascade.js build lacks needed classes or is too old/buggy (beta build) | Medium | High | P0 spike; custom opencascade.js build with only needed modules (smaller too); fallback to occt 7.8 build via emsdk |
 | R-4 | Sketch solver quality (flips, slow convergence, wrong DOF) | Medium | High | Proven PlaneGCS where licence allows, continuation steps, test set 16.3 |
 | R-5 | Kernel operations slow in WASM (booleans/fillets 3–5× slower than native) | Medium | Medium | Shape cache per feature, preview at coarse tolerance, cancel/restart, client-side instant extrude preview |
-| R-6 | Scope creep towards full SolidWorks parity | High | Medium | Phases with exit criteria; P5+ features are S/C; this FRS is the scope reference |
+| R-6 | Scope creep towards full CAD app parity | High | Medium | Phases with exit criteria; P5+ features are S/C; this FRS is the scope reference |
 | R-7 | Storage limits/quota in browsers, Safari OPFS eviction | Medium | Medium | Save to real files encouraged, quota warnings, recovery journal small, export reminders |
 | R-8 | Licence conflict of the solver (PlaneGCS port listed under MulanPSL-2.0 on npm, FreeCAD solver is LGPL) | Medium | Medium | D-2 licence review before bundling; own solver fallback |
 | R-9 | UI complexity hurts the simple viewer users | Medium | Medium | Lazy-loaded modelling mode; viewer layout unchanged until a model is created; smoke test on viewer layout |
@@ -1445,7 +1447,7 @@ Each test is scripted in the smoke test where it can be (synthetic pointer and k
 | R-11 | Drawing HLR quality/speed for complex parts | Medium | Medium | PolyAlgo preview, exact HLR in background, per-view caching |
 | R-13 | Shared vault on a synced folder corrupts data or loses locks (sync delay, conflict copies) | Medium | High | Append-only records, content-addressed objects, sequence numbers, conflict detection on check-in (FR-PDM-071), integrity check, clear documentation of supported folders |
 | R-14 | Users mistake vault roles for security | Medium | Medium | Settings and Help state that a folder vault identifies users but does not protect files (FR-PDM-037); real permissions only with a server vault (P7) |
-| R-12 | Trademark/look-alike concerns from adopting SolidWorks habits | Low | Medium | Own icons, names, artwork, help text; only generic interaction patterns adopted (section 1.3) |
+| R-12 | Trademark/look-alike concerns from adopting CAD app habits | Low | Medium | Own icons, names, artwork, help text; only generic interaction patterns adopted (section 1.3) |
 
 ---
 
@@ -1456,7 +1458,7 @@ Each test is scripted in the smoke test where it can be (synthetic pointer and k
 | D-1 | Product scope name: keep "MöbiusCAD" for viewer + modeller in one app | one app with modes / separate app | One app with modes (shared code and URL) |
 | D-2 | Sketch solver | PlaneGCS WASM (`@salusoft89/planegcs`, licence to verify) / own TypeScript solver | Spike both in P0; prefer PlaneGCS if the licence allows a separate replaceable WASM, else own |
 | D-3 | Topological naming strategy depth | history + signatures (proposed) / full OCAF TNaming | History + signatures in P1, revisit OCAF in P3 if failures |
-| D-4 | Default mouse mapping in modelling | keep MöbiusCAD left-drag orbit / SolidWorks middle-drag | Ask on first modelling start, remember the choice |
+| D-4 | Default mouse mapping in modelling | keep MöbiusCAD left-drag orbit / CAD app middle-drag | Ask on first modelling start, remember the choice |
 | D-5 | Native extensions | **Decided 2026-11-06:** separate `.mcadprt`, `.mcadasm`, `.mcaddrw`, same ZIP+JSON container | Kind visible in folders, Open/Insert dialogs filter by kind, own icon per kind |
 | D-6 | Standard plane names | XY/XZ/YZ / Top/Front/Right / both | Show "Front (XZ)" style with both |
 | D-7 | Phase order after P2 | assemblies before advanced parts / as listed | As listed (P3 parts, P4 assemblies), revisit after P2 user feedback |
@@ -1558,73 +1560,76 @@ All messages have Russian translations in `i18n.ru.ts`.
 | STEP | `STEPCAFControl_Writer/Reader`, `XCAFDoc_ShapeTool/ColorTool` (as in `occ.ts`) |
 | Defeaturing | `BRepAlgoAPI_Defeaturing` |
 
-### Appendix E. Sources consulted for the SolidWorks reference
+### Appendix E. Sources consulted for the CAD app reference
 
-- SolidWorks Help, Types of Mates (standard, advanced, mechanical): <https://help.solidworks.com/2021/english/SolidWorks/sldworks/r_Types_of_Mates_SWassy.htm>
-- GoEngineer, Introduction to SolidWorks Mates: <https://www.goengineer.com/blog/introduction-to-solidworks-mates>
-- SolidWorks 2026 what's new summaries (Hawk Ridge Systems, Javelin, SolidProfessor): <https://hawkridgesys.com/whats-new-in-solidworks-2026>, <https://www.javelin-tech.com/3d/assembly-modeling-whats-new-in-solidworks-2026/>, <https://solidprofessor.com/?p=9936793>
+- The reference CAD app's online help on mate types, and resellers' introductions to mates and what's-new summaries for its 2026 release.
 - PlaneGCS for the web: <https://github.com/Salusoft89/planegcs>, <https://npmjs.com/package/@salusoft89/planegcs>
-- Remaining SolidWorks functionality is from general product knowledge of SolidWorks 2020–2026 and should be checked against the official help where a detail matters.
+- Remaining CAD app functionality is from general product knowledge of its 2020–2026 releases and should be checked against the official help where a detail matters.
 
-### Appendix F. SolidWorks everyday UI/UX parity audit (2026-11-08, MöbiusCAD 1.85.0)
+### Appendix F. CAD app everyday UI/UX parity audit (2026-11-08, MöbiusCAD 1.85.0)
 
-Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 does (checked in `src/main.ts`, `src/model/controller.ts`, `src/sketch/editor.ts`, `src/viewer/Viewer.ts`). **New** = was missing from the FRS, added in 13.13. **Weaker** = in the FRS, implemented partly or differently. **Done** = matches. Items the modelling thread is reworking in 1.87.0 are marked so.
+Each row is a basic CAD app habit, where this FRS covers it, and what 1.85.0 does (checked in `src/main.ts`, `src/model/controller.ts`, `src/sketch/editor.ts`, `src/viewer/Viewer.ts`). **New** = was missing from the FRS, added in 13.13. **Weaker** = in the FRS, implemented partly or differently. **Done** = matches. Items the modelling thread is reworking in 1.87.0 are marked so.
 
 | Habit | FRS | 1.85.0 | Class |
 | --- | --- | --- | --- |
-| Middle-drag rotate, Ctrl+middle pan, Shift+middle zoom | FR-UI-020 | Left drag orbits, middle and right drag pan; no preference | Weaker (sketch mode fixed in 1.89.0) |
-| Snapping to model geometry and automatic relations while sketching | FR-SK-042, FR-SK-052 | Sketch points, origin, curves, H/V; dotted alignment lines with existing points (1.303.0) | Weaker (model vertices, midpoints and centres snap and stay attached in 1.89.0) |
-| Middle click sets the rotation centre | FR-UI-100 | No | New |
-| Double middle click fits; wheel direction preference | FR-UI-101 | No (F fits; zoom to cursor on) | New |
-| Arrow keys rotate/pan/roll, Z / Shift+Z zoom | FR-UI-102 (was only in Appendix A) | No | New |
-| Zoom to selection, zoom to area, previous view | FR-UI-103 (FR-UI-022 named them) | No (tree double-click fits a node in the viewer only) | New |
-| Space orientation picker, named views | FR-UI-031, FR-UI-104 | Ctrl+1…8 work; Space does nothing | Weaker / New (named views) |
-| Animated view changes | FR-UI-103 | Done (`animateTo`), no reduced-motion rule | New (detail) |
+| Middle-drag rotate, Ctrl+middle pan, Shift+middle zoom | FR-UI-020 | 1.329.0: Preferences → Mouse sets the middle button (rotate or pan) and the wheel direction | Done |
+| Snapping to model geometry and automatic relations while sketching | FR-SK-042, FR-SK-052 | 1.89.0 model snapping; 1.251.0 automatic relations while drawing; 1.303.0 alignment inference | Done |
+| Middle click sets the rotation centre | FR-UI-100 | 1.351.0: middle click on a vertex/edge/face sets the pivot with a marker, empty space clears; 1.492.0: a straight edge turns the view about its line (dashed), the camera may roll until the pivot goes | Done |
+| Double middle click fits; wheel direction preference | FR-UI-101 | 1.107.0: double middle click fits; 1.329.0: wheel direction in Preferences | Done |
+| Arrow keys rotate/pan/roll, Z / Shift+Z zoom | FR-UI-102 (was only in Appendix A) | 1.107.0: arrows 15°, Shift 90°, Ctrl pan, Z / Shift+Z, Alt+Z previous view | Done |
+| Zoom to selection, zoom to area, previous view | FR-UI-103 (FR-UI-022 named them) | 1.107.0: Zoom to selection, Zoom to area, Previous view (Space picker, Alt+Z) | Done |
+| Space orientation picker, named views | FR-UI-031, FR-UI-104 | 1.107.0: Space picker at the cursor (six views, Isometric, Normal to, zooms); 1.371.0: named views saved with the part/assembly | Done |
+| Animated view changes | FR-UI-103 | 1.107.0: 300 ms moves, instant with reduced motion | Done |
 | Normal to, twice flips | FR-UI-030 | Done (N and Ctrl+8) | Done |
-| Click empty space clears; Ctrl+click toggles | FR-SEL-002, FR-SEL-007 | Esc clears; sketch box select only | Weaker |
-| Box selection in the part | FR-SEL-002, FR-SEL-008 | Sketch only | Weaker |
+| Click empty space clears; Ctrl+click toggles | FR-SEL-002, FR-SEL-007 | 1.537.0: Ctrl+click adds/removes faces and edges in parts; a plain click or Esc clears; Fillet/Chamfer take every selected edge, Shell/Delete Face/Move Face every selected face | Done |
+| Box selection in the part | FR-SEL-002, FR-SEL-008 | 1.539.0: left drag from empty space, window left to right / crossing right to left, seen faces and edges only, filter applies, Ctrl adds; a drag on the part still orbits (lasso not yet) | Done |
+| Several components selected in an assembly | FR-SEL-007, FR-SEL-008 | 1.541.0: Ctrl+click in the tree or the view, box from empty space (window / crossing, Ctrl adds), blue tint, one menu (hide, show, fix, float, suppress, delete) for all of them as one undo step, Delete key | Done |
+| Lasso selection | FR-SEL-008 (P2) | 1.542.0: heads-up bar toggle; a left drag from empty space draws a lasso in parts and assemblies, clockwise = wholly inside, anticlockwise = touching, filter and Ctrl as for the box | Done |
+| Cursor glyph for the entity under the pointer | FR-SEL-012 | 1.543.0: face, edge, vertex, snap point, plane and sketch curve/point icons beside the arrow in parts, assemblies and sketches | Done |
+| Empty selection after OK or Cancel | FR-SEL-012 | 1.545.0: a feature's OK or Cancel leaves nothing selected (no lit faces, no highlighted tree row) | Done |
 | Select other | FR-SEL-004 | Alt+click cycles faces behind | Done |
 | Selection filter F5 | FR-SEL-003 | Done (faces, edges, vertices) | Done |
-| Breadcrumbs, D to the cursor | FR-SEL-009 | No | New |
-| Magnifying glass G | FR-SEL-010 | No | New |
-| Colour-coded selection boxes | FR-SEL-011 | One pick colour | New |
-| Tab / Shift+Tab hide and show under the cursor | FR-UI-105 | No (H hides the selection in the viewer) | New |
+| Breadcrumbs, D to the cursor | FR-SEL-009 | 1.354.0: part breadcrumbs (face/edge → feature → sketch → body → part) with hover, select and menu; Shift+D; 1.371.0: assemblies (face → part feature → component → sub-assemblies → assembly) | Done |
+| Magnifying glass G | FR-SEL-010 | 1.354.0: G lens at the cursor, wheel factor, picks inside at that zoom | Done |
+| Colour-coded selection boxes | FR-SEL-011 | 1.351.0: box colours on the panel and on the picks with a naming tag for edge/face boxes (fillet, chamfer, draft, shell, face edits, split); 1.387.0: also extrude Start at / Up to / Body, revolve Up to, hole Face / Up to, mirror Plane, faces to mirror or pattern, body split plane (a face the feature consumes, such as a mirror plane face that is fused away, cannot be drawn) | Done |
+| Tab / Shift+Tab hide and show under the cursor | FR-UI-105 | 1.351.0: Tab hides the body/component under the cursor, Shift+Tab shows a hidden one there, Ctrl+Shift+Tab held draws them see-through (bodies hidden earlier in the session; hidden ones from a saved file have no ghost until shown once) | Done |
 | Confirmation corner | FR-UI-021 | ✓/✕ in the view | Done |
 | Shortcut bar on S | FR-UI-023 | Done (part and sketch) | Done |
 | Context toolbar on selection | FR-UI-026 | Done | Done |
-| Right-click menu on geometry | FR-UI-025 | Browser menu suppressed; only fillet/chamfer edge helpers | Weaker |
-| Right-click during a command: OK / Cancel / Clear selections | FR-UI-107 | No | New |
+| Right-click menu on geometry | FR-UI-025 | 1.535.0: right-click on a face or edge shows the context toolbar above and a menu (Edit feature, Edit sketch, Suppress, Hide body, Normal to, Zoom to fit, Delete) for the feature that made it | Done |
+| Right-click during a command: OK / Cancel / Clear selections | FR-UI-107 | 1.107.0: right-click without drag offers OK and Cancel | Done |
 | Mouse gestures | FR-UI-024 (P2, S) | 1.316.0: right-drag radial guide in parts and sketches, 4 or 8 configurable directions, opt-in | Done |
-| Heads-up view bar | FR-UI-022 | View buttons sit in the header | Weaker |
+| Heads-up view bar | FR-UI-022 | 1.371.0: heads-up view bar (see Appendix G) | Done |
 | Fly-out mini tree while a panel is open | FR-UI-003 | 1.335.0: the panel fills the Features tab, the tree flies out at the top left of the view, folded until opened | Done |
-| Pushpin / OK and repeat | FR-UI-044, FR-UI-106 | No | New |
-| Undo inside an open panel | FR-UI-108 | No | New |
-| Selection box focus moves on by itself | FR-UI-109 | Partly per feature (`focus` fields) | New (rule) |
-| Panel remembers last options | FR-UI-043 | No (hole favourites only) | Weaker |
-| Value callouts on the model | FR-UI-110 | Fillet/chamfer callouts, extrude arrow | New (rule for all) |
-| Enter repeats the last command | FR-UI-111 | Enter exits a sketch / OKs a panel only | New |
-| Modify box with rebuild, spin, wheel | FR-UI-053, FR-UI-114 | 1.140.0: Modify box with name, ✓ ✕ ⟲, spin arrows, ↑/↓ and wheel (Shift ×10, Alt ×0.1), live solve in sketches; no editable title, increment field or reverse direction yet | Partly |
-| Feature dimensions on the model, double-click to edit | FR-HIS-010, FR-UI-028, FR-UI-115 | 1.140.0: double-click a face shows its feature's sketch dimensions and extrude depth on the model; a click opens the Modify box, one undo step; not yet from a tree click, and no angles or other feature values | Partly |
-| Instant2D dimension drag; placement lock on right-click | FR-SK-067, FR-SK-068 | Yes (1.282.0) | Done (no arrow flip yet) |
-| Typing a number while drawing | FR-UI-052 | No | Weaker |
-| Sketch keys (L R C A P T O D K Q) | FR-UI-054 | L R C A D T O Q, plus G polygon, F fillet, E extend, W slot; no K | Weaker (keys differ) |
-| Drag an end point onto another to merge | FR-SK-043 | 1.266.0: dropping a point on a point, the origin or a curve adds coincident / on curve | New |
-| Ctrl+drag copies sketch entities | FR-SK-044 | 1.266.0: copies with the relations and dimensions among them | New |
-| Sketch right-click menu (End chain, Select chain…) | FR-SK-045 | 1.275.0: right-click menu; a line-tool right-click ends the chain; 1.298.0: Fully define sketch | New |
+| Pushpin / OK and repeat | FR-UI-044, FR-UI-106 | 1.107.0: 📌 Keep visible and Ctrl+Enter | Done |
+| Undo inside an open panel | FR-UI-108 | 1.351.0: Ctrl+Z / Ctrl+Y step the panel's draft; the document stack waits for OK | Done |
+| Selection box focus moves on by itself | FR-UI-109 | 1.354.0: one-item boxes hand focus to the next empty required box; panels open on the first empty box | Done |
+| Panel remembers last options | FR-UI-043 | 1.107.0: options remembered per command (`rememberOptions`) | Done |
+| Value callouts on the model | FR-UI-110 | 1.354.0: callouts for the main values of every feature panel (Modify box, two-way with the panel, ⇄ flip); extrude/revolve/fillet/chamfer/end cap/gusset/flange keep their handles | Done |
+| Enter repeats the last command | FR-UI-111 | 1.107.0: Enter with no command running repeats the last one | Done |
+| Recent commands on a right-click | FR-UI-113 | 1.506.0: right-click on empty space with no command running lists the last 5 commands above Zoom to fit, Isometric, Normal to | Done |
+| Modify box with rebuild, spin, wheel | FR-UI-053, FR-UI-114 | 1.140.0: Modify box with name, ✓ ✕ ⟲, spin arrows, ↑/↓ and wheel (Shift ×10, Alt ×0.1), live solve in sketches; 1.371.0: editable dimension name in the title, increment field (remembered per kind of value), ⇄ Reverse direction for feature values with a direction; no `=` completion list | Done |
+| Feature dimensions on the model, double-click to edit | FR-HIS-010, FR-UI-028, FR-UI-115 | 1.140.0: double-click a face shows its feature's sketch dimensions and extrude depth on the model; a click opens the Modify box, one undo step; 1.371.0: also from a single click on the tree row, with the feature's own values (angles, radii, distances, thicknesses, spacing, instance counts) beside its faces; a double click on a row still opens Edit feature | Done |
+| Instant2D dimension drag; placement lock on right-click | FR-SK-067, FR-SK-068 | Yes (1.282.0; arrow flip 1.540.0) | Done |
+| Typing a number while drawing | FR-UI-052 | 1.121.0: typed sizes while drawing | Done |
+| Sketch keys (L R C A P T O D K Q) | FR-UI-054 | L R C A D T O Q, plus G polygon, F fillet, E extend, W slot; K = Add relation menu at the cursor (1.533.0) | Done |
+| Drag an end point onto another to merge | FR-SK-043 | 1.266.0: dropping a point on a point, the origin or a curve adds coincident / on curve | Done |
+| Ctrl+drag copies sketch entities | FR-SK-044 | 1.266.0: copies with the relations and dimensions among them | Done |
+| Sketch right-click menu (End chain, Select chain…) | FR-SK-045 | 1.275.0: right-click menu; a line-tool right-click ends the chain; 1.298.0: Fully define sketch | Done |
 | Quick snaps | FR-SK-046 | Yes (1.290.0) | Done |
-| Cursor x, y in the status bar while sketching | FR-SK-047 | 1.266.0: status shows DOF, the tool hint and the cursor x, y | New |
+| Cursor x, y in the status bar while sketching | FR-SK-047 | 1.266.0: status shows DOF, the tool hint and the cursor x, y | Done |
 | Hover a tree row highlights the feature; hover geometry highlights the row | FR-UI-061 | 1.324.0: both ways | Done |
 | Rollback bar drag and arrows | FR-HIS-005 | Done | Done |
-| Roll to previous / Roll to end; reopens rolled back | FR-HIS-012 | Bar works; menu items partly | New (detail) |
-| Shift+C collapse, eye buttons in the tree | FR-HIS-013 | Folders collapse; sketch Show/Hide in the menu | New |
-| Copy and paste features | FR-HIS-014 | No | New |
+| Roll to previous / Roll to end; reopens rolled back | FR-HIS-012 | 1.350.0: tree and rollback-bar menus (Roll back to here, Roll to previous, Roll forward past this, Roll to end); a part saved rolled back reopens rolled back with the notice and Roll to end | Done |
+| Shift+C collapse, eye buttons in the tree | FR-HIS-013 | 1.350.0: Shift+C folds folders, bodies and absorbed sketches; eye button on hover for sketch/plane/axis/point/csys/curve/body rows; hidden icons outlined | Done |
+| Copy and paste features | FR-HIS-014 | 1.342.0: Ctrl+C/Ctrl+V and Ctrl+drag for sketches, extrudes, revolves and holes; lost references listed | Done |
 | Tree reorder by drag, Alt+↑/↓ | FR-HIS-006 | Done | Done |
 | Rename F2, Del deletes | FR-UI-060 | Done | Done |
-| Undo/redo with names and a ▾ list | FR-UND-001, FR-UND-005 | Generic "Undo (Ctrl+Z)" tooltip, no list | Weaker / New |
+| Undo/redo with names and a ▾ list | FR-UND-001, FR-UND-005 | 1.107.0: named undo steps, Undo ▾ list | Done |
 | Rebuild Ctrl+B, force Ctrl+Q | FR-HIS-020 | Done | Done |
 | Command search Ctrl+K | FR-UI-014 (S) | Done (1.121.0) | Done |
-| Units in the status bar | FR-UI-116 | No | New |
-| Tooltips with the shortcut key | FR-UI-112 | Some buttons | New (rule) |
+| Units in the status bar | FR-UI-116 | 1.351.0: unit and decimals button in the status bar; the part's unit is a document change (undoable); mass stays g/kg | Done |
+| Tooltips with the shortcut key | FR-UI-112 | 1.351.0: command bar tooltips with name, shortcut key and description; disabled buttons say why | Done |
 
 ### Appendix G. Implementation status audit (2026-11-08, MöbiusCAD 1.87.0)
 
@@ -1634,17 +1639,17 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 
 | ID | Requirement | 1.87.0 | Class |
 | --- | --- | --- | --- |
-| FR-DOC-003 | Several documents open at once in tabs | 1.129.0: document tabs; parked documents keep their undo history; one kernel is live (the shown document is rebuilt on activation); camera and selection are not kept yet | Partly |
-| FR-HIS-022 | **What's wrong** list of all errors and warnings, each linking to its feature | Errors show as tree badges and tooltips and in the feature panel; there is no list | Partly |
+| FR-DOC-003 | Several documents open at once in tabs | 1.129.0: document tabs; parked documents keep their undo history; one kernel is live (the shown document is rebuilt on activation); 1.377.0: a tab comes back with its camera, and a part with its selected row | Done |
+| FR-HIS-022 | **What's wrong** list of all errors and warnings, each linking to its feature | 1.107.0: What's wrong list above the tree; a click selects, a double click edits | Done |
 | FR-UI-002 / FR-UI-003 | Left panel tabs, and a fly-out mini tree while a panel is open | The feature panel fills the Features tab and the tree flies out over the view (1.335.0) | Done |
 | FR-UI-014 | Command search (Ctrl+K) | Done in 1.121.0 | Done |
-| FR-UI-022 | Heads-up view bar in the graphics area | The view buttons sit in the header; 1.87.0 adds the Space picker | Partly |
+| FR-UI-022 | Heads-up view bar in the graphics area | 1.371.0: top-centre bar with Zoom to area, Previous view, standard views, projection and display style for parts and assemblies; 1.377.0: Section view toggle in the bar, which keeps clear of the ✓ ✕ corner and the view cube (Display ▾ stays in the header: it is a menu of settings, not a view command) | Done |
 | FR-UI-024 | Mouse gestures (P2, S) | 1.316.0 | Done |
 | FR-UI-043 | Panels remember the last options per feature type | 1.107.0: `rememberOptions`/`recallOptions` per command | Done |
 | FR-UI-061 | Hovering a tree row highlights the feature, and the other way round | 1.324.0 | Done |
 | FR-UI-080 | Preferences dialog with a Modelling page | 1.329.0: Display ▾ → Preferences… with Modelling, Sketch and Mouse pages (units, image quality, verification on rebuild, autosave, spin steps, sketch settings and colour legend, middle button and wheel). No document templates | Done |
-| FR-UI-091 | Tablets: touch gestures for parameters and view (P2, S) | No touch gestures | Not built |
-| FR-HLP-003 | Tutorial document "Bracket in 10 steps" (S) | No | Not built |
+| FR-UI-091 | Tablets: touch gestures for parameters and view (P2, S) | 1.394.0: Touch gestures (one-finger orbit and two-finger pan/zoom from the view controls; a finger held still for 0.55 s sends the right-click menu event, so tree, component, breadcrumb, command and sketch menus and the context toolbar open by touch). Parameters, suppress, configurations and export use the same taps as clicks; panels are overlays below 1280 px | Done |
+| FR-HLP-003 | Tutorial document "Bracket in 10 steps" (S) | 1.381.0: start card button opens a part named Bracket with a ten-step list at the top of the right panel; steps tick from the document (sketch, rectangle, dimensions, extrude, face sketch, wall, fillet, hole, chamfer, material), undo unticks, the list follows the document tab | Done |
 | FR-MEA-002 | Drag a measured value into a numeric input (S) | 1.319.0 | Done |
 | FR-CFG-003 | Configuration table as CSV (P5, C) | Done in 1.139.0 (Configurations panel: Export table / Import table…) | Done |
 
@@ -1654,7 +1659,7 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 | --- | --- | --- | --- |
 | FR-SK-006 | Section view at the sketch plane (S) | Done in 1.139.0 (sketch bar Section toggle) | Done |
 | FR-SK-020 | Text: bundled fonts, height, emboss/engrave (S) | Built in 1.137.0 (sans/serif/mono, bold, italic, angle); along a curve in 1.142.0 | Done |
-| FR-SK-042 / FR-SK-052 | Inference from model geometry; automatic relations while drawing | Being reworked in 1.87.0 by the modelling thread | Partly |
+| FR-SK-042 / FR-SK-052 | Inference from model geometry; automatic relations while drawing | 1.89.0 model snapping, 1.251.0 automatic relations, 1.303.0 alignment inference | Done |
 | FR-SK-073 | **Check sketch for feature** before starting it | Done in 1.121.0 (sketch panel Check) | Done |
 | FR-UI-052 | Typing a number while drawing opens the size box | 1.121.0: typed sizes while drawing | Done |
 
@@ -1662,27 +1667,34 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 
 | ID | Requirement | 1.87.0 | Class |
 | --- | --- | --- | --- |
-| FR-FT-012 | Extrude end condition **Up to body** | The other P2 end conditions are built (`EndKind`); Up to body is missing | Partly |
+| FR-FT-010 | Extrude/revolve from **selected regions** of a sketch | 1.421.0: Selected Contours (regions of crossing or branching curves, picked in the view; `src/sketch/regions.ts`, kernel `contourFaces`); 1.428.0: hover pre-highlight, Planar Surface; 1.463.0: cut regions in the cut preview colour | Done |
+| FR-FT-011 | Extrude **Direction 2** with any end condition (a CAD app offers all but mid plane) | 1.456.0: `end2` Blind / Through all / Up to next / Up to vertex / Up to face / Offset from surface / Up to body with any Direction 1 but Mid plane; its own drag arrow when blind | Done |
+| FR-FT-014 | Extrude **draft per direction** | 1.460.0: `draft2` (Direction 2 blind) with its own angle and outward; each direction tapers from the sketch plane, Direction 2 side faces `fid:side2:<ent>`; older two-way drafts keep their shape | Done |
+| FR-FT-007 | Feature scope for cuts and bosses in multibody parts | 1.505.0: extrude and revolve (cut, or boss with Merge result): All bodies or the bodies picked in the view; 1.506.0: sweep, loft and Hole Wizard too | Done |
+| FR-FT-012 | Extrude end condition **Up to body** | 1.100.0: Up to body | Done |
 | FR-FT-033 | Setback fillets (P3, S) | Yes | Built in 1.134.0: setback vertices with a distance each; fillets cut square to the edges, corner filled with a G1 patch |
-| FR-FT-041 | Vertex chamfer (three distances) and offset-face chamfer | Two distances is built; vertex and offset-face are missing | Partly |
-| FR-FT-050 | Hole types counterdrilled, clearance (close/normal/loose) and slot; end conditions up to face and up to next | Simple, counterbore, countersink, tapped and heat-set insert; blind or through all | Partly |
-| FR-FT-060 | Shell with multi-thickness faces (P3) | One thickness | Partly |
-| FR-FT-061 | Parting-line draft (P5) | Neutral-plane draft only | Partly |
-| FR-FT-062 | Rib draft | Rib without draft | Partly |
-| FR-FT-070 / FR-FT-071 / FR-FT-072 | Patterns and mirror of **faces and bodies** (P3) | Features only | Partly |
-| FR-FT-073 | **Sketch-driven** pattern (P3) and table-driven pattern (P5) | No (sketch patterns exist inside the sketcher only) | Not built |
+| FR-FT-041 | Vertex chamfer (three distances) and offset-face chamfer | 1.100.0: offset-face and vertex chamfers | Done |
+| FR-FT-050 | Hole types counterdrilled, clearance (close/normal/loose) and slot; end conditions up to face and up to next | 1.100.0: clearance, counterdrill and slot holes; Up to next and Up to surface ends | Done |
+| FR-FT-060 | Shell with multi-thickness faces (P3) | 1.100.0: multi-thickness faces | Done |
+| FR-FT-061 | Parting-line draft (P5) | 1.100.0: parting-line draft | Done |
+| FR-FT-062 | Rib draft | 1.100.0: rib draft (normal ribs) | Done |
+| FR-FT-070 / FR-FT-071 / FR-FT-072 | Patterns and mirror of **faces and bodies** (P3) | 1.100.0: features, faces or bodies as the pattern/mirror source | Done |
+| FR-FT-070 / FR-FT-071 | Skip instances by clicking them in the view | 1.502.0: Instances to skip box shows a dot per instance; a click skips it or brings it back | Done |
+| FR-FT-070 / FR-FT-071 | Linear spacing or total extent, seed only in direction 2; circular second direction (symmetric) | 1.502.0: Up to distance per direction, Pattern seed only; 1.503.0: Up to reference (plane or flat face + offset, per direction), circular Direction 2 (Symmetric or own count/angle) | Done |
+| FR-FT-073 | **Sketch-driven** pattern (P3) and table-driven pattern (P5) | 1.100.0: sketch-driven and table-driven patterns | Done |
 | FR-FT-074 | Geometry pattern option: copy the result, or re-evaluate per instance | Done in 1.141.0 (Geometry pattern box on feature patterns and mirror) | Done |
 | FR-FT-080 | Sweep start/end tangency (P5) | Done: start tangency in 1.108.0, end tangency in 1.143.0 | Done |
 | FR-FT-082 | Loft start/end constraints, connectors, guide curves | Built: ruled, close, centreline, start/end normal, guide curves (1.119.0) and connectors (1.131.0) | Built |
-| FR-BODY-007 | Intersect (S) and Indent (P5) | No | Not built |
-| FR-FT-102 | Feature recognition on imported bodies (P5, C) | No | Not built |
+| FRS 2.3 | Boundary Boss/Cut: Direction 1 profiles, Direction 2 curves | 1.557.0: `LoftFeature.boundary`, each cell between two curves filled by a Coons patch | Done |
+| FR-BODY-007 | Intersect (S) and Indent (P5) | 1.88.0: Intersect; 1.108.0: Indent | Done |
+| FR-FT-102 | Feature recognition on imported bodies (P5, C) | 1.116.0: Recognize Holes on imported bodies. 1.390.0: Recognize Fillets (fillets on straight and round edges, corner patches, equal-distance chamfers on straight edges; layered fillets in rounds). 1.398.0: chamfers on round edges (cones) and two-distance chamfers. 1.402.0: Recognize Extrudes (prismatic pockets, through cuts and bosses on a flat face become sketch + extrude). 1.406.0: nested pockets and bosses, in rounds. 1.408.0: blind cuts open to the side (steps, slots across a face, notches). 1.411.0: notches, cut corners and half-round cut-outs right through at an edge (through cuts; of two readings the larger sketch face wins). 1.414.0: the base of a prismatic imported body (sketch + extrude as a new body, the import deleted, finds put on it). 1.415.0: the base of a body of revolution (half section sketch with a centreline + revolve as a new body; axis in or parallel to a standard plane). 1.465.0: Recognize Features runs them all in one go (blends, holes, extrudes and the base, each on the body with the earlier finds off) and gives the tree in modelling order: base, extrudes, holes, fillets/chamfers, faces found again by place, no Delete Face when the base is found. Other bases (lofted, swept) are not recognised | Partly 1.467.0: recognised sketches come back fully defined (relations and dimensions). 1.472.0: edge lengths first (width and height), as FeatureWorks dimensions them. 1.474.0: counterbored and countersunk holes come back as Hole Wizard holes of their kind. 1.477.0: cross holes through shafts come back as Through All cuts. 1.484.0: blind cross holes come back as a tangent reference plane + Hole (Hole Wizard Reverse direction, `HoleFeature.flip`); keyways in shafts come back as a tangent plane + sketch + blind cut; 1.485.0: also keyways running out through the shaft end. 1.486.0: cross holes tilted in a standard plane come back on a Plane at an angle about the std axis. 1.488.0: compound-angle cross holes (plane about Z, axis, plane about the axis) and turned bases with a skew axis (plane about Z + offset plane). 1.489.0: variable radius fillets (B-spline blend face, radius at each end = chord / (2·sin(φ/2))). 1.493.0: swept bases of bent round rods and tubes (path of lines and arcs in one plane + profile on the end face + Sweep). 1.496.0: bent bars of any line/arc profile the same way. 1.498.0: lofted bases (two flat ends, every other face reaching from one to the other) as two end sketches + a new-body Loft. 1.499.0: coil springs (helical sweep paths, axis along a standard axis) as circle sketch + Helix + circular Sweep. 1.500.0: springs on skew axes (reference planes square to the axis, as for cross holes at an angle). 1.546.0: round rods and tubes along any 3D curve (3D sketch spline through the centreline + circular Sweep, volume to 1e-3). Left: non-round profiles along free 3D curves. |
 | FR-FT-131 | Check and heal as a feature with a before/after report (S) | Built in 1.126.0 (Check-Heal feature; Insert body also heals) | Built |
 
 **Assemblies (section 10)**
 
 | ID | Requirement | 1.87.0 | Class |
 | --- | --- | --- | --- |
-| FR-ASM-030 | In-context design: edit a part inside the assembly, references to other components | Edit in context (1.135.0): the assembly shown around the part, sketches on other components' flat faces, External References list with lock / lock all | Built (planes; converted edges not yet) |
+| FR-ASM-030 | In-context design: edit a part inside the assembly, references to other components | Edit in context (1.135.0): the assembly shown around the part, sketches on other components' flat faces, External References list with lock / lock all; 1.544.0: Convert entities on other components' edges (lines, circles, arcs), followed by the assembly | Done |
 
 **Planned, not started:** P6 sheet metal (FR-FT-120), weldments (FR-FT-121), motion (FR-FT-122) and the scripting console; P7 server vault and git backend (FR-PDM-072, FR-PDM-073).
 

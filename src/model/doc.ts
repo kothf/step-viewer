@@ -2,7 +2,7 @@
 // which gives undo/redo, dirty tracking and autosave in one place (FRS 6.2, 7.4).
 // Undo keeps whole snapshots: part documents are small JSON, and snapshots can't drift.
 import { weldRefs } from "../weldments/refs";
-import { SCHEMA, pathId, type Feature, type FeatureType, type PartDoc, type LineRef, type PlaneRef, type VertexRef } from "./types";
+import { SCHEMA, pathId, dir2Apart, type Feature, type FeatureType, type PartDoc, type LineRef, type PlaneRef, type VertexRef } from "./types";
 
 const UNDO_DEPTH = 200;
 
@@ -15,16 +15,17 @@ export function newPart(name = "Part1"): PartDoc {
     props: {},
     features: [],
     rollback: null,
+    naming: 2,
   };
 }
 
 /** English base names; shown translated, stored as is. */
-const BASE: Record<FeatureType, string> = { sketch: "Sketch", extrude: "Extrude", revolve: "Revolve", fillet: "Fillet", chamfer: "Chamfer", plane: "Plane", axis: "Axis", point: "Point", csys: "Coordinate system", shell: "Shell", draft: "Draft", mirror: "Mirror", lpattern: "LPattern", cpattern: "CirPattern", hole: "Hole", thread: "Thread", helix: "Helix", sweep: "Sweep", loft: "Loft", rib: "Rib", split: "Split Line", combine: "Combine", indent: "Indent", bsplit: "Split", delbody: "Body-Delete/Keep", movebody: "Body-Move/Copy", import: "Imported", heal: "Check-Heal", scale: "Scale", delface: "DeleteFace", moveface: "MoveFace", planesurf: "Surface-Plane", extsurf: "Surface-Extrude", offsurf: "Surface-Offset", knit: "Surface-Knit", thicken: "Thicken", replaceface: "ReplaceFace", revsurf: "Surface-Revolve", loftsurf: "Surface-Loft", trimsurf: "Surface-Trim", fillsurf: "Surface-Fill", extendsurf: "Surface-Extend", curve: "Curve", sweepsurf: "Surface-Sweep", sketch3d: "3DSketch", untrimsurf: "Surface-Untrim", intersect: "Intersect", member: "Structural Member", trimext: "Trim/Extend", endcap: "End cap", gusset: "Gusset", weldbead: "Fillet Bead", spattern: "SketchPattern", smloft: "Lofted-Bend", smbase: "Base-Flange", smflange: "Edge-Flange", smhem: "Hem", smbend: "Sketched-Bend", smjog: "Jog", smtab: "Tab", smcross: "Cross-Break", smvent: "Vent", smform: "Form-Tool", smunfold: "Unfold", smfold: "Fold", smrelief: "Corner-Relief", smcorner: "Break-Corner", smclosed: "Closed-Corner", smmiter: "Miter-Flange", smswept: "Swept-Flange", smflat: "Flat-Pattern" };
+const BASE: Record<FeatureType, string> = { sketch: "Sketch", extrude: "Extrude", revolve: "Revolve", fillet: "Fillet", chamfer: "Chamfer", plane: "Plane", axis: "Axis", point: "Point", csys: "Coordinate system", shell: "Shell", draft: "Draft", mirror: "Mirror", lpattern: "LPattern", cpattern: "CirPattern", hole: "Hole", thread: "Thread", helix: "Helix", sweep: "Sweep", loft: "Loft", rib: "Rib", split: "Split Line", combine: "Combine", indent: "Indent", bsplit: "Split", delbody: "Body-Delete/Keep", movebody: "Body-Move/Copy", import: "Imported", heal: "Check-Heal", scale: "Scale", delface: "DeleteFace", moveface: "MoveFace", dome: "Dome", wrap: "Wrap", flex: "Flex", planesurf: "Surface-Plane", extsurf: "Surface-Extrude", offsurf: "Surface-Offset", knit: "Surface-Knit", thicken: "Thicken", replaceface: "ReplaceFace", revsurf: "Surface-Revolve", loftsurf: "Surface-Loft", trimsurf: "Surface-Trim", fillsurf: "Surface-Fill", extendsurf: "Surface-Extend", curve: "Curve", sweepsurf: "Surface-Sweep", sketch3d: "3DSketch", untrimsurf: "Surface-Untrim", intersect: "Intersect", member: "Structural Member", trimext: "Trim/Extend", endcap: "End cap", gusset: "Gusset", weldbead: "Fillet Bead", spattern: "SketchPattern", smloft: "Lofted-Bend", smbase: "Base-Flange", smflange: "Edge-Flange", smhem: "Hem", smbend: "Sketched-Bend", smjog: "Jog", smtab: "Tab", smcross: "Cross-Break", smvent: "Vent", smcut: "Normal-Cut", smconvert: "Convert-Solid", sminsert: "Insert-Bends", smform: "Form-Tool", smunfold: "Unfold", smfold: "Fold", smrelief: "Corner-Relief", smgusset: "Sheet-Metal-Gusset", smcorner: "Break-Corner", smclosed: "Closed-Corner", smmiter: "Miter-Flange", smswept: "Swept-Flange", smflat: "Flat-Pattern", smtabslot: "Tab-and-Slot", smrip: "Rip" };
 /** Every feature type this version knows: a file with another one needs a newer app. */
 export const FEATURE_TYPES: readonly string[] = Object.keys(BASE);
 
-export function nextName(doc: PartDoc, type: FeatureType, cut = false) {
-  const base = cut ? (type === "revolve" ? "Revolve cut" : type === "sweep" ? "Cut-Sweep" : type === "loft" ? "Cut-Loft" : "Cut") : BASE[type];
+export function nextName(doc: PartDoc, type: FeatureType, cut = false, own?: string) {
+  const base = own ?? (cut ? (type === "revolve" ? "Revolve cut" : type === "sweep" ? "Cut-Sweep" : type === "loft" ? "Cut-Loft" : "Cut") : BASE[type]);
   let n = 1;
   const names = new Set(doc.features.map(f => f.name));
   while (names.has(`${base}${n}`)) n++;
@@ -104,7 +105,7 @@ export class DocStore {
     const s = this.undoStack.pop();
     if (!s) return;
     this.redoStack.push({ doc: JSON.stringify(this.doc), label: s.label });
-    this.doc = JSON.parse(s.doc);
+    this.doc = this.keepViews(JSON.parse(s.doc));
     this.emit("undo");
   }
 
@@ -112,8 +113,14 @@ export class DocStore {
     const s = this.redoStack.pop();
     if (!s) return;
     this.undoStack.push({ doc: JSON.stringify(this.doc), label: s.label });
-    this.doc = JSON.parse(s.doc);
+    this.doc = this.keepViews(JSON.parse(s.doc));
     this.emit("redo");
+  }
+
+  /** Named views are view data (FR-UI-104, FR-UND-004): undo and redo keep the current ones. */
+  private keepViews(d: PartDoc) {
+    if (this.doc.views?.length) d.views = this.doc.views; else delete d.views;
+    return d;
   }
 
   get dirty() { return JSON.stringify(this.doc) !== this.savedAt; }
@@ -132,12 +139,19 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
   };
   if (f.type === "extrude" || f.type === "revolve") features.push(f.sketch);
   if (f.type === "extrude" || f.type === "revolve") plane(f.upTo);
+  if (f.type === "extrude" || f.type === "revolve" || f.type === "sweep" || f.type === "loft" || f.type === "hole") faces.push(...(f.scope ?? []).map(x => x.name));
   if (f.type === "extrude") {
     const vtx = (v: VertexRef | undefined) => { if (v) { if ("point" in v) features.push(v.point); else faces.push(...v.edge.faces); } };
     if (f.end === "vertex") vtx(f.upToVertex);
     if (f.end === "body" && f.upToBody) faces.push(f.upToBody.name);
     if (f.start === "surface") plane(f.startRef);
     if (f.start === "vertex") vtx(f.startVertex);
+    // Direction 2's own end (FR-FT-011).
+    if (dir2Apart(f)) {
+      if (f.end2 === "upto" || f.end2 === "offset") plane(f.upTo2);
+      if (f.end2 === "vertex") vtx(f.upToVertex2);
+      if (f.end2 === "body" && f.upToBody2) faces.push(f.upToBody2.name);
+    }
   }
   if (f.type === "thread" && f.edge) faces.push(...f.edge.faces);
   if (f.type === "sketch") { plane(f.plane); if (f.xAxis) faces.push(...f.xAxis.edge.faces); }
@@ -156,14 +170,16 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
     if (l.axis) features.push(l.axis);
   };
   if (f.type === "csys") { line(f.x); line(f.z); }
+  if (f.type === "plane") line(f.about);
   if (f.type === "moveface") line(f.axis);
+  if (f.type === "wrap") { features.push(f.sketch); if (f.face) faces.push(f.face.name); }
   if (f.type === "hole") { plane(f.plane); if (f.end === "upto") plane(f.upTo); }
-  if (f.type === "shell" || f.type === "delface" || f.type === "moveface") faces.push(...f.faces.map(x => x.name));
+  if (f.type === "shell" || f.type === "delface" || f.type === "moveface" || f.type === "dome") faces.push(...f.faces.map(x => x.name));
   if (f.type === "draft") { plane(f.plane); faces.push(...f.faces.map(x => x.name)); for (const e of f.parting ?? []) faces.push(...e.faces); }
   if (f.type === "mirror" || f.type === "lpattern" || f.type === "cpattern" || f.type === "spattern") faces.push(...(f.faces ?? []).map(x => x.name), ...(f.bodies ?? []).map(x => x.name));
   if (f.type === "spattern") { features.push(...f.features); if (f.sketch) features.push(f.sketch); if (f.csys) features.push(f.csys); }
   if (f.type === "mirror") { plane(f.plane); features.push(...f.features); }
-  if (f.type === "lpattern") { line(f.dir); line(f.dir2); features.push(...f.features); }
+  if (f.type === "lpattern") { line(f.dir); line(f.dir2); plane(f.upTo); plane(f.upTo2); features.push(...f.features); }
   if (f.type === "cpattern") { line(f.axis); features.push(...f.features); }
   if (f.type === "helix") features.push(f.sketch);
   if (f.type === "sweep") { if (f.profile) features.push(f.profile); if (f.path) features.push(pathId(f.path)); if (f.guide) features.push(pathId(f.guide)); }
@@ -172,15 +188,20 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
   if (f.type === "loft") { features.push(...f.profiles); if (f.centerline) features.push(pathId(f.centerline)); for (const g of f.guides ?? []) features.push(pathId(g)); }
   if (f.type === "rib") features.push(f.sketch);
   if (f.type === "smloft") features.push(f.sketch1, f.sketch2);
-  if (f.type === "smbase" || f.type === "smbend" || f.type === "smjog" || f.type === "smtab" || f.type === "smmiter" || f.type === "smswept" || f.type === "smvent") features.push(f.sketch);
+  if (f.type === "smbase" || f.type === "smbend" || f.type === "smjog" || f.type === "smtab" || f.type === "smmiter" || f.type === "smswept" || f.type === "smvent" || f.type === "smcut") features.push(f.sketch);
   if (f.type === "smflange" || f.type === "smhem" || f.type === "smcorner" || f.type === "smmiter" || f.type === "smswept") for (const e of f.edges) faces.push(...e.faces);
   if (f.type === "smclosed" || f.type === "smcross") faces.push(...f.faces.map(x => x.name));
   if (f.type === "smform" && f.face) faces.push(f.face.name);
+  if (f.type === "smconvert") { if (f.face.name) faces.push(f.face.name); for (const e of f.edges) faces.push(...e.faces); }
+  if (f.type === "sminsert" && f.face.name) faces.push(f.face.name);
+  if (f.type === "smrip") for (const e of f.edges) faces.push(...e.faces);
+  if (f.type === "smtabslot") { if (f.edge) faces.push(...f.edge.faces); if (f.face) faces.push(f.face.name); }
   if (f.type === "smunfold" && f.face) faces.push(f.face.name);
+  if (f.type === "smgusset" && f.bend) faces.push(`${f.bend}:in`);
   if (f.type === "smrelief") for (const k of f.corners) faces.push(...k.split("+").map(b => `${b}:in`));
   if (f.type === "combine" || f.type === "indent") { if (f.main) faces.push(f.main.name); faces.push(...f.tools.map(x => x.name)); }
   if (f.type === "bsplit") { plane(f.plane); faces.push(...f.bodies.map(x => x.name)); }
-  if (f.type === "scale") faces.push(...f.bodies.map(x => x.name));
+  if (f.type === "scale" || f.type === "flex") faces.push(...f.bodies.map(x => x.name));
   if (f.type === "delbody") faces.push(...f.bodies.map(x => x.name));
   if (f.type === "movebody") { faces.push(...f.bodies.map(x => x.name)); line(f.axis); }
   if (f.type === "split") { features.push(f.sketch); faces.push(...f.faces.map(x => x.name)); }

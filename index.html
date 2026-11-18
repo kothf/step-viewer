@@ -22,7 +22,8 @@
     <button class="icon step-only" id="new-part" title="New part: sketch and model a part" aria-label="New part: sketch and model a part"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 1.5h6l3 3v10h-9z"/><path d="M9.5 1.5v3h3M8 7.5v5M5.5 10h5"/></svg></button>
     <button class="icon step-only new-more" id="new-more" aria-haspopup="menu" aria-expanded="false" aria-controls="new-menu" title="New: part or assembly" aria-label="New: part or assembly"><svg viewBox="0 0 8 16" width="8" height="16" aria-hidden="true"><path d="M1.5 7l2.5 2.5L6.5 7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>
     <div id="new-menu" class="mc-menu" role="menu" hidden><button role="menuitem" id="new-menu-part">New part</button><button role="menuitem" id="new-asm">New assembly</button><button role="menuitem" id="new-asm-part" title="A new assembly with the open part as its first, fixed component" hidden>Make assembly from part</button><button role="menuitem" id="new-drawing" title="Drawing: sheets with views of the open model">New drawing</button></div>
-    <div class="doc" id="doc" title="No file open"><span class="doc-dot" id="doc-status" data-state="idle" role="img" aria-label="Status: no file open"></span><span class="doc-name" id="doc-name" translate="no">No file open</span></div>
+    <button class="btn step-only vault-btn" id="vault-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="vault-menu" title="Vault: keep every version of your files, in a folder or in the browser"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2.5" width="12" height="10.5" rx="1.5"/><circle cx="8" cy="7.75" r="2.4"/><path d="M8 5.35v-1M8 11.15v-1M5.6 7.75h-1M11.4 7.75h-1M4.5 13v1.3M11.5 13v1.3"/></svg><span class="vault-lbl">Vault</span><svg viewBox="0 0 8 16" width="8" height="16" aria-hidden="true"><path d="M1.5 7l2.5 2.5L6.5 7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <div class="doc" id="doc" title="No file open"><span class="doc-dot" id="doc-status" data-state="idle" role="img" aria-label="Status: no file open"></span><span class="doc-name" id="doc-name" translate="no">No file open</span><span class="doc-vault" id="doc-vault" hidden></span></div>
     <button class="btn small step-only" id="back-pcb" hidden title="Back to the PCB layers and the 3D board">◂ Back to PCB</button>
     <div class="sep step-only"></div>
     <div class="seg step-only" id="display-mode" role="radiogroup" aria-label="Display mode">
@@ -80,6 +81,9 @@
         <button data-tool="bbox" aria-pressed="false" title="Bounding box of visible or selected parts (B)"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 2.5h11v11h-11z" stroke-dasharray="2 1.6"/><path d="M5.5 5.5h5v5h-5z"/></svg><span class="tb-lbl">Bounding box</span></button>
         <button data-tool="note" aria-pressed="false" title="Note: a text note with a leader on the model, in PNG and the PDF report (T). Drag the box to move it, double-click to edit"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 2.5h11v8h-6l-3 3v-3h-2z"/><path d="M5 5.5h6M5 7.8h4"/></svg><span class="tb-lbl">Note</span></button>
       </div>
+        <div class="tb-group" id="mp-tools" role="group" aria-label="Mass properties">
+        <button id="mp-btn" aria-pressed="false" title="Mass properties: mass, centre of mass, principal axes and moments of inertia of the model or the selected parts"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="3.8" r="1.6"/><path d="M4.6 6.5h6.8l2.1 7H2.5z"/><path d="M8 9v2.6M6.7 10.3h2.6"/></svg><span class="tb-lbl">Mass properties</span></button>
+        </div>
         <button id="csys-reset" class="btn small" hidden title="Back to the global coordinate system">⌖ Global CSYS</button>
       </div>
       <div id="mc-tools" class="mc-tools cm-pane" data-cm-pane="features sketch surfaces sheetmetal weldments" role="toolbar" aria-label="Modelling commands" hidden></div>
@@ -164,6 +168,7 @@
     <div id="tool-hint" class="tool-hint step-only" hidden></div>
     <div id="readout" class="readout step-only" hidden></div>
     <div id="ana-panel" class="ana-panel step-only" role="region" aria-label="Surface analysis" hidden></div>
+    <div id="mp-panel" class="mp-panel step-only" role="region" aria-label="Mass properties" hidden></div>
     <div id="hint" class="hint" role="status" hidden></div>
     <div id="gerber" class="gerber-vp gerber-only">
       <canvas id="g-canvas" aria-hidden="true"></canvas>
@@ -177,8 +182,9 @@
       <div class="empty-card">
         <svg viewBox="0 0 32 32" width="56" height="56" aria-hidden="true"><path d="M16 3 28 10v12L16 29 4 22V10z" fill="none" stroke="var(--accent)" stroke-width="1.4"/><path d="M16 3v26M4 10l12 7 12-7" stroke="var(--accent)" stroke-width="1.2" fill="none"/></svg>
         <h2>Drop a STEP file or Gerber set here</h2>
-        <p>AP203 · AP214 · AP242, plus IGES, BREP and SolidWorks parts and assemblies, parsed by OpenCASCADE, and STL, OBJ and 3MF meshes. PCB layers: Gerber RS-274X / X2, Excellon drill and .zip sets. Everything runs in your browser: files never leave your computer.</p>
+        <p>AP203 · AP214 · AP242, plus IGES, BREP and SLDPRT parts and assemblies, parsed by OpenCASCADE, and STL, OBJ and 3MF meshes. PCB layers: Gerber RS-274X / X2, Excellon drill and .zip sets. Everything runs in your browser: files never leave your computer.</p>
         <div class="row center"><button class="btn primary" data-open>Choose files…</button><button class="btn" id="empty-new">New part</button><button class="btn" id="empty-asm">New assembly</button></div>
+        <div class="row center empty-tut"><button class="btn small" id="empty-tut" title="A guided first part: the panel on the right ticks each step as you do it">Tutorial: bracket in 10 steps</button></div>
         <div id="mc-recover" class="mc-recover" hidden></div>
       </div>
     </div>
@@ -213,6 +219,7 @@
   </aside>
 
   <aside class="right panel step-only" id="right" aria-label="Properties and tools">
+    <section id="tutorial" class="tut" aria-label="Tutorial" hidden></section>
     <div class="tb-group rp-tabs" id="rp-tabs" role="tablist" aria-label="Right panel">
         <button data-tab="props" role="tab" id="rt-props" class="on" aria-selected="true" aria-controls="rp-props" title="Properties of the model or the selected part, face or edge"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.2"/><path d="M8 7.2v4"/><circle cx="8" cy="4.9" r=".9" fill="currentColor" stroke="none"/></svg><span class="tb-lbl">Properties</span></button>
         <button data-tab="section" role="tab" id="rt-section" aria-selected="false" tabindex="-1" aria-controls="rp-section" title="Section planes, caps and cut profiles"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 2.5h11v11h-11z"/><path d="M2.5 13.5 13.5 2.5v11z" fill="currentColor" fill-opacity=".35"/></svg><span class="tb-lbl">Section</span></button>
@@ -254,7 +261,7 @@
       </div>
     </section>
     <section class="rp" id="rp-mass" role="tabpanel" aria-labelledby="rt-mass"><h2 class="rp-title">Mass properties</h2>
-      <div class="row"><label for="material">Material</label> <select id="material"></select></div>
+      <div class="row"><span id="material-lbl">Material</span> <button type="button" class="btn small" id="material" aria-labelledby="material-lbl material" title="Choose a material from the library"></button></div>
       <div class="row"><label for="density">Density</label> <input type="number" id="density" step="0.01" min="0" value="7.85" style="width:80px" aria-describedby="density-err" /> g/cm³</div>
       <p class="field-err" id="density-err" role="alert" hidden></p>
       <div class="row"><button class="btn small" id="mass-run">Calculate</button><label class="chk"><input type="checkbox" id="com-show" checked /> Show CoM</label></div>
@@ -301,7 +308,9 @@
     </div>
     <span id="st-snap" class="st-snap" aria-live="off"></span>
     <span id="st-coord" class="mono"></span>
+    <span id="st-hint" class="st-hint step-only" aria-live="polite"></span>
     <span class="spacer"></span>
+    <button type="button" id="st-units" class="st-units step-only" aria-haspopup="menu" aria-expanded="false">mm</button>
     <span id="st-kernel" class="st-kernel step-only" hidden></span>
     <span id="st-stats" class="muted"></span>
     <span id="st-fps" class="muted mono"></span>
@@ -340,6 +349,12 @@
 <dialog id="wld-cut" class="modal wide" aria-labelledby="wld-cut-title">
   <h3 id="wld-cut-title">Cut list</h3>
   <div id="wld-cut-body" class="v-scroll"></div>
+  <div class="row end"><button class="btn" data-a="csv">Export CSV</button><button class="btn primary" data-a="close">Close</button></div>
+</dialog>
+
+<dialog id="sm-props" class="modal" aria-labelledby="sm-props-title">
+  <h3 id="sm-props-title">Sheet metal properties</h3>
+  <div id="sm-props-body" class="v-scroll"></div>
   <div class="row end"><button class="btn" data-a="csv">Export CSV</button><button class="btn primary" data-a="close">Close</button></div>
 </dialog>
 

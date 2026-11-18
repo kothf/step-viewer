@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { STLExporter } from "three/addons/exporters/STLExporter.js";
 import { OBJExporter } from "three/addons/exporters/OBJExporter.js";
 import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
-import { jsPDF } from "jspdf";
+import type { jsPDF as JsPDF } from "jspdf";
 import type { TreeNode } from "../topology";
 import type { Viewer } from "../viewer/Viewer";
 import type { Annotations } from "./Annotations";
@@ -201,7 +201,10 @@ export interface ReportInfo {
   image: HTMLCanvasElement;
 }
 
-export function inspectionReport(info: ReportInfo) {
+/** Loads the PDF writer (kept out of the start-up script: only reports and drawing PDFs need it). */
+export async function pdfWriter(): Promise<typeof JsPDF> { return (await import("jspdf")).jsPDF; }
+
+export function inspectionReport(jsPDF: typeof JsPDF, info: ReportInfo) {
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   doc.setProperties({ title: `Inspection report: ${info.fileName}`, creator: "MöbiusCAD" });
   const W = 210, M = 14;

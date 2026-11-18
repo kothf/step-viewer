@@ -338,3 +338,33 @@ test("a reference dimension follows the geometry (exam #42)", () => {
   assert.equal(solve(s).status, "ok");
   near(s.dims[0].val.v, 7);
 });
+
+test("arc length and arc conditions (FR-SK-060)", () => {
+  // Quarter arc of radius 10 about the origin point, from (10, 0) to (0, 10).
+  const s = sk([pt("c", 0, 0), pt("a", 10, 0), pt("b", 0, 10), { id: "arc", t: "arc", c: "c", a: "a", b: "b" }]);
+  near(measureDim(s, { t: "arclen", e: ["arc"] }), 5 * Math.PI);
+  // Clockwise way round from a is the long way: three quarters.
+  const r = sk([pt("c", 0, 0), pt("a", 0, 10), pt("b", 10, 0), { id: "arc", t: "arc", c: "c", a: "a", b: "b" }]);
+  near(measureDim(r, { t: "arclen", e: ["arc"] }), 15 * Math.PI);
+  // Driving it: the arc's ends (centre fixed, a fixed) move until the length is 10π (half a turn).
+  s.rels.push(rel("fix", "c"), rel("fix", "a"), rel("coincident", "b", "arc"));
+  s.dims.push(dim("arclen", 10 * Math.PI, "arc"));
+  assert.equal(solve(s).status, "ok");
+  near(P(s, "b")![0], -10, 1e-5); near(Math.abs(P(s, "b")![1]), 0, 1e-5);
+  // Circles of r 5 and 3, centres 20 apart: min = 12, max = 28, mixed = 22, to a point 20 - 5 = 15.
+  const c = sk([pt("p", 0, 0), pt("q", 20, 0), { id: "c1", t: "circle", c: "p", r: 5 }, { id: "c2", t: "circle", c: "q", r: 3 }, pt("z", 20, 0)]);
+  near(measureDim(c, { t: "distance", e: ["c1", "c2"], cond: ["min", "min"] }), 12);
+  near(measureDim(c, { t: "distance", e: ["c1", "c2"], cond: ["max", "max"] }), 28);
+  near(measureDim(c, { t: "distance", e: ["c1", "c2"], cond: ["max", "min"] }), 22);
+  near(measureDim(c, { t: "hdistance", e: ["c1", "z"], cond: ["min", "c"] }), 15);
+  // A line x = 30 to the circle c1: near side 25.
+  c.ents.push(pt("l0", 30, -5), pt("l1", 30, 5), ln("ln", "l0", "l1"));
+  near(measureDim(c, { t: "distance", e: ["ln", "c1"], cond: ["c", "min"] }), 25);
+  // Driving the near-side distance to 18 moves the second circle: centres 18 + 5 + 3 = 26 apart.
+  c.rels.push(rel("fix", "p"), rel("horizontal", "p", "q"));
+  c.dims.push(dim("distance", 18, "c1", "c2"));
+  c.dims[0].cond = ["min", "min"];
+  c.dims.push(dim("radius", 5, "c1"), dim("radius", 3, "c2"));
+  assert.equal(solve(c).status, "ok");
+  near(P(c, "q")![0], 26, 1e-5);
+});

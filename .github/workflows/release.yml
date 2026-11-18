@@ -27,19 +27,19 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  # The tag, and whether CI already tested this commit.
+  check:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      tested: ${{ steps.ci.outputs.tested }}
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-
       # TAG: the pushed tag, or for Run workflow v<version> (the typed one, else package.json's)
       - name: Tag must match package.json version
+        id: tag
         env:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
@@ -55,46 +55,88 @@ jobs:
             echo "::error::Tag $tag does not match package.json version $pkg"
             exit 1
           fi
-          echo "TAG=$tag" >> "$GITHUB_ENV"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-      - run: npm ci
-
-      # CI on main packages and smoke-tests every commit, and is running the moment a merge
-      # lands: wait for that run and use its result instead of testing again. Only when the
-      # commit has no CI run (or it was cancelled) is the smoke test run here.
+      # CI on main packages and smoke-tests commits, but not every one (see ci.yml: of the commits pushed
+      # while a run is going only the newest gets one, and a run can sit behind the account's job limit).
+      # A passed run is used as it is; a run whose jobs have started is waited for (up to 25 minutes);
+      # a run that has not started, was cancelled or does not exist means the smoke job below tests here.
       - name: CI result for this commit
+        id: ci
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          for i in $(seq 1 90); do
+          for i in $(seq 1 150); do
             # one look per round, so a run that finishes between two looks is not taken for "no run"
             s="$(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$GITHUB_SHA" --json status,conclusion \
-              --jq '[(map(select(.conclusion == "success")) | length), (map(select(.conclusion == "failure")) | length), (map(select(.status != "completed")) | length)] | map(tostring) | join(" ")')"
-            read -r ok failed pending <<< "$s"
-            if [ "$ok" -gt 0 ]; then echo "CI passed on $GITHUB_SHA"; echo "TESTED=1" >> "$GITHUB_ENV"; exit 0; fi
+              --jq '[(map(select(.conclusion == "success")) | length), (map(select(.conclusion == "failure")) | length), (map(select(.status == "in_progress")) | length)] | map(tostring) | join(" ")')"
+            read -r ok failed running <<< "$s"
+            if [ "$ok" -gt 0 ]; then echo "CI passed on $GITHUB_SHA"; echo "tested=1" >> "$GITHUB_OUTPUT"; exit 0; fi
             if [ "$failed" -gt 0 ]; then echo "::error::CI failed on $GITHUB_SHA: fix main (or re-run the failed CI job), then release again"; exit 1; fi
-            if [ "$pending" -eq 0 ] && [ "$i" -gt 6 ]; then break; fi
+            if [ "$running" -eq 0 ] && [ "$i" -gt 6 ]; then break; fi
             sleep 10
           done
           echo "::notice::No finished CI run on $GITHUB_SHA: testing here"
 
+  # Only when CI has no result for the commit: the smoke test in the same 6 shards as CI (in one job
+  # it takes longer than the release job used to be allowed, which cancelled two releases in a row).
+  smoke:
+    name: smoke ${{ matrix.shard }}/6
+    needs: check
+    if: needs.check.outputs.tested != '1'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: true
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
       - name: Cache Playwright's browser
-        if: env.TESTED != '1'
         uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-shell-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
 
       - name: Browser for the tests
-        if: env.TESTED != '1'
         run: npx playwright install --only-shell chromium || npx playwright install --with-deps --only-shell chromium
 
       - name: Package
-        run: npm run package -- "${TAG#v}"
+        run: npm run package
 
-      - name: Smoke test (packaged build)
-        if: env.TESTED != '1'
+      - name: Smoke test (packaged build), shard ${{ matrix.shard }}/6
+        env:
+          SMOKE_SHARD: ${{ matrix.shard }}/6
         run: npm test
+
+  release:
+    needs: [check, smoke]
+    # smoke is skipped when CI already passed
+    if: ${{ !cancelled() && needs.check.result == 'success' && (needs.smoke.result == 'success' || needs.smoke.result == 'skipped') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      TAG: ${{ needs.check.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Package
+        run: npm run package -- "${TAG#v}"
 
       - name: Release notes from CHANGELOG.md
         run: npm run --silent release-notes -- "$TAG" > release-notes.md
@@ -116,16 +158,41 @@ jobs:
             --notes-file release-notes.md \
             --verify-tag
 
-      # Starts the site's vendor update as soon as the release exists (it opens the
-      # PR that pins this version). Needs a SITE_DISPATCH_TOKEN secret: a token
-      # allowed to run workflows in kothf/astro_source-new_theme. Without it the
-      # step is skipped and the site's scheduled vendor update picks it up.
-      - name: Ask aerocat.tech to pick up this release
+      # Pins this release on aerocat.tech (kothf/astro_source-new_theme). The site repo is private,
+      # so its own Actions cost minutes and stop when its billing fails (2026-11-11): the vendor.json
+      # pin is committed from here instead, through the API with the SITE_DISPATCH_TOKEN secret
+      # (needs Contents read/write on that repo). The NUC deploys the site's main by itself, without
+      # Actions. When the commit is refused, the site's vendor-update workflow is dispatched as before.
+      - name: Pin this release on aerocat.tech
         env:
           SITE_TOKEN: ${{ secrets.SITE_DISPATCH_TOKEN }}
+          SITE_REPO: kothf/astro_source-new_theme
         run: |
-          if [ -z "$SITE_TOKEN" ]; then echo "::notice::No SITE_DISPATCH_TOKEN secret: the vendor update was not dispatched"; exit 0; fi
-          GH_TOKEN="$SITE_TOKEN" gh workflow run vendor-update.yml --repo kothf/astro_source-new_theme --ref main
+          if [ -z "$SITE_TOKEN" ]; then echo "::notice::No SITE_DISPATCH_TOKEN secret: aerocat.tech was not told"; exit 0; fi
+          export GH_TOKEN="$SITE_TOKEN"
+          V="${TAG#v}"
+          SHA=$(cut -d' ' -f1 "dist/step-viewer-$V.tar.gz.sha256")
+          pin() {
+            # gh's own --jq and node, so the runner needs no jq
+            gh api "repos/$SITE_REPO/contents/vendor.json?ref=main" --jq .content | base64 -d > vendor.json || return 1
+            blob=$(gh api "repos/$SITE_REPO/contents/vendor.json?ref=main" --jq .sha) || return 1
+            cur=$(node -p 'JSON.parse(require("fs").readFileSync("vendor.json")).packages.find(p => p.name === "step-viewer").version')
+            if [ "$(printf '%s\n%s\n' "$cur" "$V" | sort -V | tail -1)" = "$cur" ]; then
+              echo "aerocat.tech already pins $cur"; return 0
+            fi
+            V="$V" SHA="$SHA" node -e '
+              const fs = require("fs"), j = JSON.parse(fs.readFileSync("vendor.json"));
+              Object.assign(j.packages.find(p => p.name === "step-viewer"), { version: process.env.V, sha256: process.env.SHA });
+              fs.writeFileSync("vendor.new", JSON.stringify(j, null, 2) + "\n");'
+            gh api -X PUT "repos/$SITE_REPO/contents/vendor.json" \
+              -f message="chore(vendor): update step-viewer $V" -f branch=main \
+              -f sha="$blob" -f content="$(base64 -w0 vendor.new)" --jq .commit.sha >/dev/null || return 1
+            echo "aerocat.tech now pins step-viewer $V ($cur before)"
+          }
+          # a second try covers a concurrent commit on the site's main (stale blob sha)
+          pin || { sleep 5; pin; } && exit 0
+          echo "::warning::Could not commit the pin (does SITE_DISPATCH_TOKEN have Contents write on $SITE_REPO?); dispatching its vendor update instead"
+          gh workflow run vendor-update.yml --repo "$SITE_REPO" --ref main
 
       - uses: actions/configure-pages@v6
 
@@ -135,10 +202,29 @@ jobs:
 
   pages:
     needs: release
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
     runs-on: ubuntu-24.04
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - id: deployment
+      # A deployment normally takes under a minute. GitHub's side sometimes sits at "syncing_files"
+      # until the action's 10-minute timeout (runs 245 and 246, with the status page green), so the
+      # first try gives up after 4 minutes and a second one starts afresh. The release itself is
+      # already published by now: a failure here only leaves the github.io copy one version behind.
+      - id: first
         uses: actions/deploy-pages@v5
+        continue-on-error: true
+        with:
+          timeout: 240000
+
+      - id: retry
+        if: steps.first.outcome == 'failure'
+        uses: actions/deploy-pages@v5
+        with:
+          timeout: 600000
+
+      - id: deployment
+        env:
+          URL: ${{ steps.first.outputs.page_url || steps.retry.outputs.page_url }}
+        run: echo "page_url=$URL" >> "$GITHUB_OUTPUT"

@@ -8,7 +8,9 @@
 // `log/` (append-only, so concurrent writers never overwrite each other, FR-PDM-071).
 
 import { defaultCards, defaultWorkflow, formatNumber, PART_NUMBER, preLabel, revLabel, revIndex, ROLES, type CardField, type Numbering, type RevScheme, type Role, type Workflow, type WfTransition } from "./workflow";
-import { docJson, docRefs, docText, embedDocs, featureDiff, readProps, relPath, resolveRel, rewriteRefs, writeProps } from "./codec";
+import { flattenSubs } from "../asm/patterns";
+import type { AsmDoc } from "../asm/types";
+import { docJson, docRefs, docText, embedDocs, embedModel, featureDiff, readProps, relPath, resolveRel, rewriteRefs, writeProps } from "./codec";
 
 /** The little a vault needs from a directory. Names are single path segments. */
 export interface VDir {
@@ -36,7 +38,7 @@ export interface VaultInfo {
 }
 /** A reference from one version to another file (FR-PDM-020): the version it was checked in against, and how many. */
 /** A reference at check-in; `linked` = a linked assembly component (FR-ASM-003), whose version is the one its hash names. */
-export interface RefRec { id: string; path: string; version: number; qty: number; linked?: boolean }
+export interface RefRec { id: string; path: string; version: number; qty: number; linked?: boolean; docId?: string }
 export interface VersionRec {
   n: number; sha: string; size: number; at: string; user: string; comment: string; state: string; rolledBackFrom?: number;
   /** Content dropped by Purge old versions (the row stays in the history). */ purged?: boolean;
@@ -63,6 +65,8 @@ export interface FileRec {
   /** In the recycle bin (FR-PDM-025). */ deleted?: { at: string; user: string };
   copiedFrom?: { id: string; version: number };
   /** Record sequence number: the highest wins when a shared vault holds several (FR-PDM-071). */ seq?: number;
+  /** A release file (PDF, STEP) made from this file's version (FR-PDM-036): it follows that file's state and revision. */
+  outputOf?: { id: string; version: number; rev?: string };
 }
 export interface SearchQuery {
   /** FR-PDM-043: text inside the latest versions (drawing notes and tables, document properties, text files). */
@@ -320,6 +324,39 @@ export class Vault {
 
   latest(f: FileRec) { return f.versions[f.versions.length - 1]; }
 
+  /**
+   * Files in the vault folder that are not vault files yet (FR-PDM-003), with their subfolders: a vault made in
+   * a project folder takes the parts, assemblies and drawings already there in place. Hidden files and folders
+   * (the vault's own `.mcadvault`) are skipped; at most `limit` paths.
+   */
+  async untracked(limit = 2000): Promise<string[]> {
+    const known = new Set((await this.files(true)).map(f => f.path.toLowerCase()));
+    const out: string[] = [];
+    const walk = async (d: VDir, at: string, depth: number) => {
+      const list = (await d.list()).sort((a, b) => a.name.localeCompare(b.name));
+      for (const e of list) {
+        if (out.length >= limit) return;
+        if (e.name.startsWith(".") || e.name === STORE) continue;
+        const p = at ? `${at}/${e.name}` : e.name;
+        if (e.kind === "dir") { if (depth < 8) { const sub = await d.dir(e.name, false); if (sub) await walk(sub, p, depth + 1); } }
+        else if (!known.has(p.toLowerCase())) out.push(p);
+      }
+    };
+    await walk(this.root, "", 0);
+    return out;
+  }
+
+  /** Adds files already in the vault folder, in place: the assemblies after the parts they use, drawings last. */
+  async addInPlace(paths: string[], comment = "Added from the vault folder"): Promise<FileRec[]> {
+    const rank = (p: string) => (/\.mcadprt$/i.test(p) ? 0 : /\.mcadasm$/i.test(p) ? 1 : /\.mcaddrw$/i.test(p) ? 2 : 0);
+    const out: FileRec[] = [];
+    for (const p of [...paths].sort((a, b) => rank(a) - rank(b))) {
+      const data = await this.working(p);
+      if (data) out.push(await this.add(p, data, comment));
+    }
+    return out;
+  }
+
   /** Badge facts for a file (FR-PDM-016). */
   async status(f: FileRec) {
     const w = await this.working(f.path);
@@ -352,7 +389,54 @@ export class Vault {
     await this.writeWorking(path, data);
     await this.saveRec(f);
     await this.log("add", { file: f.id, path, version: 1, details: comment });
+    await this.linkDangling(f);
     return f;
+  }
+
+  /**
+   * Stores a release file made from `src` (FR-PDM-036): a new file in `src`'s state and revision, or a new version
+   * of the one already there (made again), without a check-out; it is the vault's own output, not a user's file.
+   */
+  async putOutput(path: string, data: Uint8Array, src: FileRec, comment: string): Promise<FileRec> {
+    const outputOf = { id: src.id, version: this.latest(src).n, ...(src.revision ? { rev: src.revision } : {}) };
+    const have = await this.byPath(path);
+    if (!have) {
+      const f = await this.add(path, data, comment, {}, { outputOf, state: src.state, ...(src.revision ? { revision: src.revision } : {}) });
+      f.versions[0].state = src.state;
+      await this.saveRec(f);
+      return f;
+    }
+    if (have.checkout) throw new VaultError("Checked out by {user}.", { user: have.checkout.user });
+    const sha = await this.putObject(data);
+    const n = this.latest(have).n + 1;
+    have.versions.push({ n, sha, size: data.length, at: new Date().toISOString(), user: this.user, comment, state: src.state, refs: [], card: { ...(have.card ?? {}) } });
+    Object.assign(have, { outputOf, state: src.state }, src.revision ? { revision: src.revision } : {});
+    await this.writeWorking(have.path, data);
+    await this.saveRec(have);
+    await this.log("check in", { file: have.id, path: have.path, version: n, details: comment });
+    return have;
+  }
+
+  /**
+   * Files added before the file they use (an assembly before its parts, a drawing before its model) get their
+   * references tied to it once it comes in, so Contains and Where used see it.
+   */
+  private async linkDangling(added: FileRec) {
+    if (added.kind !== "part" && added.kind !== "assembly") return;
+    const files = await this.files();
+    for (const o of files) {
+      const v = this.latest(o);
+      if (o.id === added.id || !v.refs?.some(r => !r.id)) continue;
+      let hit = false;
+      for (const r of v.refs) {
+        if (r.id || (await this.refTarget(o.path, r, files))?.id !== added.id) continue;
+        r.id = added.id;
+        r.version = 1;
+        if (!r.path) r.path = relPath(o.path, added.path);
+        hit = true;
+      }
+      if (hit) await this.saveRec(o);
+    }
   }
 
   /** Check out (FR-PDM-010): the file becomes editable here; others see the lock. */
@@ -531,6 +615,68 @@ export class Vault {
     return changed;
   }
 
+  /**
+   * What's behind (FR-PDM-022): files whose latest version was checked in against older versions of the files
+   * they use, so an assembly keeps old copies of its parts and a drawing an old copy of its model. Each with the
+   * references that moved on.
+   */
+  async behind(): Promise<{ id: string; path: string; kind: string; refs: { id: string; path: string; version: number; latest: number }[] }[]> {
+    const files = await this.files();
+    const all = new Map(files.map(x => [x.id, x]));
+    const out: { id: string; path: string; kind: string; refs: { id: string; path: string; version: number; latest: number }[] }[] = [];
+    for (const f of files) {
+      if (f.kind !== "assembly" && f.kind !== "drawing") continue;
+      const refs: { id: string; path: string; version: number; latest: number }[] = [];
+      for (const r of this.latest(f).refs ?? []) {
+        const c = all.get(r.id);
+        if (c && this.latest(c).n > r.version && !refs.some(x => x.id === c.id)) refs.push({ id: c.id, path: c.path, version: r.version, latest: this.latest(c).n });
+      }
+      if (refs.length) out.push({ id: f.id, path: f.path, kind: f.kind, refs });
+    }
+    return out;
+  }
+
+  /**
+   * Update from the vault (FR-PDM-022): the checked-out assembly's working copy takes the latest version of each
+   * part or sub-assembly that moved on since it was checked in (linked or embedded), a drawing's working copy the
+   * latest version of its model. Check it in to record it. Returns the paths that changed.
+   */
+  async updateRefs(id: string): Promise<string[]> {
+    const f = await this.file(id);
+    const st = await this.status(f);
+    if (!st.mine) throw new VaultError("Check the file out first.");
+    const data = await this.working(f.path);
+    if (!data) return [];
+    const all = new Map((await this.files()).map(x => [x.id, x]));
+    const moved = (this.latest(f).refs ?? []).flatMap(r => { const c = all.get(r.id); const lv = c && this.latest(c); return c && lv && !lv.purged && lv.n > r.version ? [{ r, c, lv }] : []; });
+    if (!moved.length) return [];
+    let out: Uint8Array | null = null;
+    if (f.kind === "drawing") {
+      const { c, lv } = moved[0];
+      const doc = await docJson(await this.object(lv.sha));
+      if (!doc) return [];
+      out = await embedModel(data, doc, old => {
+        // Pattern instances need face geometry to place: the drawing keeps the ones it had for parts still there.
+        const flat = flattenSubs(doc as unknown as AsmDoc);
+        const inst = ((old as unknown as AsmDoc | null)?.components ?? []).filter(x => x.id.includes("~") && flat.parts[x.part] && !flat.components.some(y => y.id === x.id));
+        return { ...flat, components: [...flat.components, ...inst] } as unknown as Record<string, unknown>;
+      });
+      return out ? (await this.writeWorking(f.path, out), [c.path]) : [];
+    }
+    const parts = new Map<string, unknown>(), subs = new Map<string, unknown>(), shas = new Map<string, string>(), changed: string[] = [];
+    for (const { r, c, lv } of moved) {
+      const d = await docJson(await this.object(lv.sha));
+      if (!d) continue;
+      (/\.mcadasm$/i.test(c.path) ? subs : parts).set(r.path, d);
+      shas.set(r.path, lv.sha);
+      changed.push(c.path);
+    }
+    out = changed.length ? await embedDocs(data, parts, subs, shas) : null;
+    if (!out) return [];
+    await this.writeWorking(f.path, out);
+    return changed;
+  }
+
   /** Get latest (FR-PDM-015): the working copy becomes the latest version (refused over local changes unless forced). */
   async getLatest(id: string, force = false) {
     const f = await this.file(id);
@@ -670,13 +816,42 @@ export class Vault {
     const files = await this.files();
     const out: RefRec[] = [];
     for (const r of refs) {
-      const target = resolveRel(path, r.path);
-      const f = target ? files.find(x => x.path.toLowerCase() === target.toLowerCase()) : undefined;
+      const f = await this.refTarget(path, r, files);
       // A linked component names the bytes it was read from: that version, even if newer ones exist.
       const exact = f && r.hash ? [...f.versions].reverse().find(v => v.sha === r.hash) : undefined;
-      out.push({ id: f?.id ?? "", path: r.path, version: exact?.n ?? (f ? this.latest(f).n : 0), qty: r.qty, ...(r.hash ? { linked: true } : {}) });
+      out.push({ id: f?.id ?? "", path: r.path || (f ? relPath(path, f.path) : ""), version: exact?.n ?? (f ? this.latest(f).n : 0), qty: r.qty, ...(r.hash ? { linked: true } : {}), ...(r.docId ? { docId: r.docId } : {}) });
     }
     return out;
+  }
+
+  /**
+   * The vault file a reference points at: the file at its relative path; else, as files added from a project
+   * folder keep their subfolders (parts/, drawings/), the one file of that name anywhere in the vault; else, for
+   * a drawing's model, the part or assembly whose document id it names.
+   */
+  private async refTarget(from: string, r: { path: string; docId?: string }, files: FileRec[]): Promise<FileRec | undefined> {
+    const target = r.path ? resolveRel(from, r.path) : null;
+    const at = target ? files.find(x => x.path.toLowerCase() === target.toLowerCase()) : undefined;
+    if (at) return at;
+    const base = r.path.split("/").pop()!.toLowerCase();
+    const named = base ? files.filter(x => x.path.split("/").pop()!.toLowerCase() === base) : [];
+    if (named.length === 1) return named[0];
+    if (!r.docId) return undefined;
+    for (const f of files) if ((f.kind === "part" || f.kind === "assembly") && await this.docIdOf(f) === r.docId) return f;
+    return undefined;
+  }
+
+  /** The document id inside a part or assembly file's latest version (kept per content hash). */
+  private docIds = new Map<string, string>();
+  private async docIdOf(f: FileRec): Promise<string> {
+    const v = this.latest(f);
+    let id = this.docIds.get(v.sha);
+    if (id === undefined) {
+      const d = v.purged ? null : await docJson(await this.object(v.sha)).catch(() => null);
+      id = typeof d?.id === "string" ? d.id : "";
+      this.docIds.set(v.sha, id);
+    }
+    return id;
   }
 
   /** The version of a referenced file a parent resolves to (FR-PDM-022). */
@@ -851,6 +1026,14 @@ export class Vault {
    * latest version the next revision label and, in MöbiusCAD documents, writes revision, state, approver and date
    * into the properties (a new version, FR-PDM-034). Returns the revision labels given.
    */
+  /** The revision label a transition will give the file, if it gives one (shown before approving). */
+  nextRevision(f: FileRec, name: string): string | undefined {
+    const tr = this.transitionsOf(f).find(x => x.name === name);
+    if (tr?.revision === "release") { const last = this.released(f); return revLabel(this.revScheme, last ? revIndex(this.revScheme, last.rev!) + 1 : 0); }
+    if (tr?.revision === "pre" && !this.released(f)) return preLabel(this.revScheme, f.versions.filter(v => v.pre).length) ?? undefined;
+    return undefined;
+  }
+
   async transition(ids: string[], name: string, comment = "", to?: string): Promise<Record<string, string | undefined>> {
     const chk = await this.checkTransition(ids, name, comment);
     const bad = chk.find(c => c.problems.length);
@@ -886,6 +1069,13 @@ export class Vault {
       await this.saveRec(f);
       await this.log("transition", { file: id, path: f.path, version: this.latest(f).n, details: `${name}: ${from} → ${tr.to}${label ? `, revision ${label}` : ""}${comment.trim() ? ` (${comment.trim()})` : ""}`, to: to || undefined });
       out[id] = label;
+      // Its release files of the revision in force follow it (made obsolete with it, say); older revisions' stay.
+      for (const o of await this.files()) {
+        // Only into an end state (obsolete, no way out): a change in work leaves the released files as they are.
+        if (o.outputOf?.id !== id || o.outputOf.rev !== f.revision || o.state === f.state || this.workflow.transitions.some(x => x.from === f.state)) continue;
+        o.state = f.state;
+        await this.saveRec(o);
+      }
     }
     // Files released together are recorded as a release package (FR-PDM-054).
     const tgt = this.workflow.transitions.find(x => x.name === name);

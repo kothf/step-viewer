@@ -1,4 +1,9 @@
 import "./style.css";
+import { cacheClear, cacheGet, cacheKey, cacheSize, cacheStats } from "./buildCache";
+import { lassoMode, setLassoMode } from "./boxSelect";
+import { installHoverCursors, setHoverKind, hoverKindOfSnap } from "./hoverCursor";
+import type { NamedView } from "./model/types";
+import { bindCommandTips } from "./tooltip";
 import * as THREE from "three";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
@@ -11,33 +16,41 @@ import { journalDrop, packPart, PART_EXT } from "./model/file";
 import type { PartTab } from "./model/controller";
 import type { AsmTab } from "./asm/controller";
 import type { DrawingTab } from "./drawing/workspace";
+import type { DrawingDoc } from "./drawing/types";
 import { bindNavigation } from "./viewer/navigation";
 import { SurfaceAnalysis } from "./viewer/Analysis";
 import { SectionManager, type SectionPlane } from "./viewer/Section";
 import { profileDrawing, toDxf, toSvg } from "./tools/profileExport";
 import { quadrants, virtualCorners, Snapper, SNAP_FILTERS, SEL_FILTER, type Snap } from "./tools/Snapper";
 import { Annotations } from "./tools/Annotations";
-import { VaultPanel } from "./pdm/panel";
+import { VaultPanel, type VaultTie } from "./pdm/panel";
+import { VaultMenu } from "./pdm/menu";
+import { useMemoryFolders } from "./pdm/folders";
 import {
   CIRCLE_MODES, describeEntity, entityFromSnap, formatMeasurement, makeNote, measure, measureBBox, MeasureError, smartBody, smartMeasure, TOOL_INFO, tx,
   type CircleMode,
   type Entity, type Measurement, type MeasureSource, type MeasureType, type PickRef,
 } from "./tools/measure";
-import { MATERIALS, massProperties } from "./tools/analysis";
-import { exportMesh, inspectionReport, measurementsCsv, measurementsJson, snapshot, download } from "./tools/exporters";
+import { massProperties, type MassResult } from "./tools/analysis";
+import { pickMaterial } from "./materialPicker";
+import { combine, massReport, principal, type Combined, type Frame } from "./tools/inertia";
+import { inertiaUnit, massPanelHtml, massText, type MassView } from "./tools/massPanel";
+import { exportMesh, inspectionReport, pdfWriter, measurementsCsv, measurementsJson, snapshot, download } from "./tools/exporters";
 import { csys, makeCsys, type Csys } from "./tools/csys";
-import { fmtArea, fmtLen, fmtMass, fmtVec, fmtVol, unitMm, units, type Unit } from "./tools/units";
+import { fmtArea, fmtLen, fmtMass, fmtNum, fmtVec, fmtVol, unitMm, units, type Unit } from "./tools/units";
 import { readStepMeta, type StepMeta } from "./stepMeta";
 import { analyzeMesh, type EdgeInfo, type PartData, type TreeNode, type V3 } from "./topology";
 import ImportWorker from "./worker/import.worker?worker";
 import { GerberView } from "./gerber/GerberView";
 import { bindGerberPanel } from "./gerber/panel";
 import { isPcbName, sniff } from "./gerber/load";
-import { bindModal, bindTabs, busy, confirmModal, emptyState, initConfirmCorners, initModals, initPanels, storage, toast } from "./ui";
+import { bindModal, bindTabs, busy, confirmModal, emptyState, initConfirmCorners, initModals, initPanels, storage, toast, trapFocus } from "./ui";
 import { lang, onLangChange, setLang, startI18n, t, withLang } from "./i18n";
 import { bindCommandBar, onCmTab, relabelCmTabs, setCmTabs, type CmTabId } from "./commandBar";
 import { renderHelp } from "./help";
 import { hint, relocalizeHint, setTips, tipsOn } from "./hints";
+import { initTutorial } from "./tutorialUi";
+import { sparesOn, warmSpare } from "./kernel/spare";
 import { KernelClient, type KernelStatus } from "./kernel/client";
 import { isMeshName, parseMesh } from "./meshLoad";
 import { isSolidWorksName } from "./sw/container";
@@ -47,14 +60,16 @@ import { openPrefs } from "./prefsUi";
 import { getPref, onPrefs } from "./prefs";
 import { DrawingWorkspace } from "./drawing/workspace";
 import { isDrawingName } from "./drawing/file";
-import { AsmController } from "./asm/controller";
+import { AsmController, TOOLBOX_MIME } from "./asm/controller";
 import { MotionManager } from "./motion/manager";
 import { flattenSubs } from "./asm/patterns";
 import { makeGrip, rememberDialogSizes } from "./resize";
 import { FileMenu, type LiveKind, type PackDoc } from "./fileMenu";
-import { recentAdd } from "./recent";
+import { recentAdd, recentFiles, recentList } from "./recent";
+import { drawingOf, peekDrawing, uniqueDrawings, type FoundDrawing, type ModelKey } from "./drawing/findDrawing";
 import { packAsm, ASM_EXT } from "./asm/file";
 import { bindValueDrops, dragValue } from "./valueDrop";
+import { bindLongPress } from "./longPress";
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 const $$ = <T extends HTMLElement = HTMLElement>(sel: string) => [...document.querySelectorAll(sel)] as T[];
@@ -113,10 +128,11 @@ const modeller = new ModelController({
   },
   selectedFace: () => (state.selection?.kind === "face" && state.selection.face ? state.selection.face.id : null),
   selectedEdge: () => (state.selection?.kind === "edge" && state.selection.edge ? state.selection.edge : null),
+  setUnits: u => applyUnits(u),
   setMaterial: m => {
     if (!m) return;
-    const i = MATERIALS.findIndex(x => x.name === m.name && x.density === m.density);
-    matSel.value = i >= 0 ? String(i) : "custom";
+    massMat = m.name;
+    renderMaterials();
     $<HTMLInputElement>("#density").value = String(m.density);
     validateDensity();
   },
@@ -124,6 +140,7 @@ const modeller = new ModelController({
   view: v => { if (v === "fit") viewer.fit(); else if (v === "normal") normalTo(); else if (VIEWS[v]) viewer.viewFrom(VIEWS[v]); },
   setCsys: (c, quiet) => setCsys(c ? { ...makeCsys(c.name, c.o, c.z, c.x), src: c.src } : null, true, quiet),
   clearPick: () => { if (state.tool !== "select") setTool("select"); handlePick(null); },
+  measureTool: () => state.tool,
   setDoc: label => setDoc(label, "ready"),
   selectLeftTab: tab => showLeftTab(tab),
   sketchSection: pl => {
@@ -161,6 +178,7 @@ const asm = new AsmController({
   setDoc: label => setDoc(label, "ready"),
   selectLeftTab: tab => showLeftTab(tab),
   leaveOthers: () => { docs?.before3d(); ++loadToken; modeller.close(); },
+  measureTool: () => state.tool,
   opened: label => docs?.opened("asm", label),
   openParts: () => (docs?.tabs ?? []).filter(x => x.kind === "part" && x.state).map(x => { const st = x.state as PartTab; return { doc: st.store.doc, fileName: st.fileName || `${st.store.doc.name}.mcadprt` }; }),
   // Edit part in place: the part takes over the assembly's tab, and Return to assembly takes it back.
@@ -233,6 +251,15 @@ screenSized(hl.com, 5);
 hl.com.renderOrder = 2000;
 hl.com.visible = false;
 viewer.scene.add(hl.hoverFace, hl.selFace, hl.hoverEdge, hl.selEdge, hl.pickMarks, hl.com);
+/** Principal axes of inertia through the centre of mass (Mass properties panel): Px red, Py green, Pz blue. */
+const mpAxes = new THREE.Group();
+for (const color of [0xe03131, 0x2f9e44, 0x1c7ed6]) {
+  const l = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color, depthTest: false }));
+  l.renderOrder = 2000;
+  mpAxes.add(l);
+}
+mpAxes.visible = false;
+viewer.scene.add(mpAxes);
 // X, Y, Z axes from the model origin (0, 0, 0), always on top, with letters at the tips.
 const originAxes = (() => {
   const group = new THREE.Group();
@@ -370,11 +397,21 @@ bindGerberPanel(gerber, {
   panels,
 });
 
+// Tutorial "Bracket in 10 steps" (FR-HLP-003): a new part with a self-ticking step list in the right panel.
+const tutorial = initTutorial({
+  doc: () => (modeller.active ? modeller.store?.doc ?? null : null),
+  start: name => modeller.newPart(name),
+});
+
 // Drawings (FRS section 11): sheets of the open part or STEP model, in their own workspace.
 const partListeners: (() => void)[] = [];
 const drawing = new DrawingWorkspace({
   appVersion: __APP_VERSION__,
   saved: (name, bytes) => void recentAdd([{ name, data: bytes }]),
+  intoVault: async (name, bytes, src): Promise<VaultTie | null> => {
+    const id = modelVaultId(src);
+    return id ? vaultPanel.addBeside(id, name, bytes) : null;
+  },
   fileMenu: btn => fileMenu.toggle(btn),
   occtBase: new URL("occt/", document.baseURI).href,
   async currentModel() {
@@ -393,8 +430,34 @@ const drawing = new DrawingWorkspace({
     const name = `${baseName()}.step`;
     return { name, file: { name, bytes }, info: { title: baseName() } };
   },
+  // A drawing opened by itself carries its model: Model opens that copy in its own tab (or shows its parked tab).
+  async openModel(m) {
+    const tabOf = (kind: "part" | "asm", id: string) => docs?.tabs.find(x => x.kind === kind && x.state && (kind === "part" ? (x.state as PartTab).store.doc.id : (x.state as AsmTab).doc.id) === id);
+    const ext = (name: string, e: string) => (name.toLowerCase().endsWith(e) ? name : `${name.replace(/\.[^.]+$/, "")}${e}`);
+    if (m.part) {
+      if (modeller.active && modeller.store?.doc.id === m.part.id) return false;
+      const tab = tabOf("part", m.part.id);
+      if (tab) await docs!.activate(tab.id);
+      else { const b = await packPart(m.part, `MöbiusCAD ${__APP_VERSION__}`); await modeller.openFile({ name: ext(m.name, PART_EXT), data: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer }); }
+      return true;
+    }
+    if (m.asm) {
+      if (asm.active && asm.doc?.id === m.asm.id) return false;
+      const tab = tabOf("asm", m.asm.id);
+      if (tab) await docs!.activate(tab.id);
+      else { const b = await packAsm(m.asm, `MöbiusCAD ${__APP_VERSION__}`); await asm.openFile({ name: ext(m.name, ASM_EXT), data: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer }); }
+      return true;
+    }
+    if (m.file) {
+      if (viewer.parts.length && !modeller.active && !asm.active && state.fileName === m.file.name) return false;
+      await openFiles([new File([m.file.bytes as BlobPart], m.file.name)]);
+      return true;
+    }
+    return false;
+  },
   livePart: id => (modeller.store?.doc.id === id ? modeller.store.doc : null),
   liveAsm: id => (asm.active && asm.doc?.id === id ? { doc: asm.doc, flat: asm.expanded?.doc ?? flattenSubs(asm.doc) } : null),
+  asmSnap: flat => (asm.active ? asm.drawingSnap(flat) : Promise.resolve(null)),
   onPartChange: fn => { partListeners.push(fn); },
   currentView() {
     if (!viewer.parts.length && !modeller.active) return null;
@@ -418,6 +481,119 @@ $("#new-drawing").addEventListener("click", () => {
   void drawing.newFromModel();
 });
 
+/**
+ * The open vault's file id of a drawing's part or assembly: the live document's or a parked tab's tie, when that
+ * document is the drawing's model; else null.
+ */
+function modelVaultId(src: DrawingDoc["source"] | null | undefined): string | null {
+  if (!src || src.kind === "file" || !(vaultPanel as VaultPanel).vault) return null;
+  const id = src.doc?.id;
+  const ok = (tie: VaultTie | null | undefined) => (tie && vaultPanel.has(tie.id) ? tie.id : null);
+  if (src.kind === "part" && modeller.store?.doc.id === id && ok(modeller.vault)) return modeller.vault!.id;
+  if (src.kind === "asm" && asm.doc?.id === id && ok(asm.vault)) return asm.vault!.id;
+  for (const tab of docs?.tabs ?? []) {
+    if (!tab.state) continue;
+    if (src.kind === "part" && tab.kind === "part" && (tab.state as PartTab).store.doc.id === id && ok((tab.state as PartTab).vault)) return (tab.state as PartTab).vault!.id;
+    if (src.kind === "asm" && tab.kind === "asm" && (tab.state as AsmTab).doc.id === id && ok((tab.state as AsmTab).vault)) return (tab.state as AsmTab).vault!.id;
+  }
+  return null;
+}
+
+/** A part or assembly just saved to the vault takes its open drawings along (the drawing workspace and drawing tabs). */
+async function drawingsIntoVault(modelId: string): Promise<void> {
+  const cur = drawing.current;
+  if (cur && !drawing.vault && modelVaultId(cur.source) === modelId) {
+    const p = await drawing.packed();
+    const tie = p && await vaultPanel.addBeside(modelId, p.name, p.data);
+    if (tie) { drawing.setVault(tie); drawing.markSaved(); }
+  }
+  for (const tab of docs?.tabs ?? []) {
+    const st = tab.kind === "drawing" ? tab.state as DrawingTab | null : null;
+    if (!st || st.vault || modelVaultId(st.store.doc.source) !== modelId) continue;
+    const p = await drawing.packed(st);
+    const tie = p && await vaultPanel.addBeside(modelId, p.name, p.data);
+    if (tie) { st.vault = tie; st.store.markSaved(); docs?.render(); }
+  }
+}
+
+/** The open 3D document a drawing can belong to (File ▸ Open drawing), or null. */
+function liveModelKey(): { key: ModelKey; name: string } | null {
+  if (drawing.open) return null;
+  if (modeller.active && modeller.store) return { key: { part: modeller.store.doc.id }, name: plainLabel(modeller.partName) || modeller.store.doc.name };
+  if (asm.active && asm.doc) return { key: { asm: asm.doc.id }, name: asm.doc.name };
+  if (viewer.parts.length && !isPcbMode() && state.fileName) return { key: { file: state.fileName }, name: state.fileName };
+  return null;
+}
+
+/**
+ * File ▸ Open drawing: the drawing of the open part, assembly or model file, from the drawing workspace, a
+ * document tab, the open vault or the recent documents. Several: the user picks one; none: offers New drawing.
+ */
+async function openDrawingOf() {
+  const live = liveModelKey();
+  if (!live) return;
+  const { key, name } = live, found: FoundDrawing[] = [];
+  const cur = drawing.current;
+  if (cur && drawingOf(cur.source, key)) found.push({ id: cur.id, label: cur.name, where: "open", open: () => drawing.show() });
+  for (const tab of docs?.tabs ?? []) {
+    const st = tab.kind === "drawing" ? tab.state as DrawingTab | null : null;
+    if (st && drawingOf(st.store.doc.source, key)) found.push({ id: st.store.doc.id, label: plainLabel(tab.label), where: "tab", open: () => docs!.activate(tab.id) });
+  }
+  const v = vaultPanel.vault;
+  if (v) {
+    try {
+      for (const f of await v.files()) {
+        if (f.deleted || !isDrawingName(f.path)) continue;
+        const bytes = await v.working(f.path) ?? await v.versionBytes(f.id, v.latest(f).n);
+        const d = await peekDrawing(bytes.slice().buffer as ArrayBuffer);
+        if (d && drawingOf(d.source, key)) found.push({ id: d.id, label: f.path, where: "vault", open: () => vaultPanel.openFile(f.id) });
+      }
+    } catch { /* the vault folder went away: the other places still count */ }
+  }
+  const recent = await recentList();
+  for (let i = 0; i < recent.length; i++) {
+    if (!isDrawingName(recent[i].name)) continue;
+    const fs = await recentFiles(i), file = fs?.find(x => isDrawingName(x.name));
+    const d = file && await peekDrawing(await file.arrayBuffer());
+    if (d && drawingOf(d.source, key)) found.push({ id: d.id, label: file!.name, where: "recent", open: () => openFiles(fs!) });
+  }
+  const list = uniqueDrawings(found);
+  if (list.length === 1) { await list[0].open(); return; }
+  if (!list.length) {
+    if (await confirmModal(t("No drawing of {name} is open, in the vault or in the recent documents. Make a new drawing of it?", { name }), t("New drawing"), t("Open drawing"))) $("#new-drawing").click();
+    return;
+  }
+  const pick = await pickDrawing(list, name);
+  if (pick) await pick.open();
+}
+
+/** Lets the user pick one of several drawings of the model. */
+function pickDrawing(list: FoundDrawing[], name: string): Promise<FoundDrawing | null> {
+  let d = document.getElementById("drw-pick-dlg") as HTMLDialogElement | null;
+  if (!d) {
+    d = document.createElement("dialog");
+    d.id = "drw-pick-dlg";
+    d.className = "modal v-dlg";
+    d.setAttribute("aria-labelledby", "drw-pick-title");
+    document.body.appendChild(d);
+    trapFocus(d, () => d!.open);
+  }
+  const dlg = d, where = { open: t("Open"), tab: t("In a tab"), vault: t("In the vault"), recent: t("Recent document") };
+  const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+  dlg.innerHTML = `<h3 id="drw-pick-title">${esc(t("Open drawing"))}</h3>`
+    + `<p class="muted">${esc(t("Drawings of {name}:", { name }))}</p>`
+    + `<div class="drw-pick-list">${list.map((x, i) => `<button class="btn" data-dp="${i}"><span translate="no">${esc(x.label)}</span> <span class="muted">${esc(where[x.where])}</span></button>`).join("")}</div>`
+    + `<div class="row end"><button class="btn" data-a="cancel">${esc(t("Cancel"))}</button></div>`;
+  return new Promise(res => {
+    let picked: FoundDrawing | null = null;
+    dlg.querySelectorAll<HTMLButtonElement>("[data-dp]").forEach(b => b.addEventListener("click", () => { picked = list[+b.dataset.dp!]; dlg.close(); }));
+    dlg.querySelector("[data-a=cancel]")!.addEventListener("click", () => dlg.close());
+    dlg.addEventListener("close", () => res(picked), { once: true });
+    dlg.showModal();
+    dlg.querySelector<HTMLButtonElement>("[data-dp]")?.focus();
+  });
+}
+
 // ---------- document tabs (FR-DOC-003, FR-UI-120) ----------
 /** The model file shown now (STEP/IGES/BREP/mesh), so its tab can open it again. */
 let modelSrc: { name: string; data: ArrayBuffer } | null = null;
@@ -435,7 +611,10 @@ function clearModelView() {
   renderProps();
   $("#empty").hidden = false;
 }
+/** The camera a document tab was parked with, applied by its first show (FR-DOC-003). */
+let tabView: ReturnType<Viewer["getView"]> | null = null;
 docs = new DocTabs({
+  view: () => ($("#empty").hidden && viewer.parts.length ? viewer.getView() : null),
   park(kind) {
     if (kind === "part") return modeller.park();
     if (kind === "asm") return asm.park();
@@ -445,6 +624,7 @@ docs = new DocTabs({
     return src;
   },
   async resume(tab: DocTab) {
+    tabView = tab.kind === "drawing" ? null : ((tab.view as typeof tabView) ?? null);
     if (tab.kind === "part") modeller.resume(tab.state as PartTab);
     else if (tab.kind === "asm") asm.resume(tab.state as AsmTab);
     else if (tab.kind === "drawing") await drawing.resume(tab.state as DrawingTab);
@@ -453,6 +633,8 @@ docs = new DocTabs({
       modeller.close();
       asm.close();
       await openBuffer(src.data.slice(0), src.name);
+      if (tabView && viewer.parts.length) viewer.setView(tabView, false);
+      tabView = null;
     }
   },
   close(kind) {
@@ -470,6 +652,12 @@ docs = new DocTabs({
     if (tab.kind === "drawing") return st ? (st as DrawingTab).store.dirty : drawing.dirty;
     return false;
   },
+  beforeClose(tab) {
+    // The vault file behind the tab, live or parked: a check-in reminder when it is checked out here.
+    const st = tab.state as { vault?: VaultTie | null } | null;
+    const tie = st ? st.vault : tab.kind === "part" ? modeller.vault : tab.kind === "asm" ? asm.vault : tab.kind === "drawing" ? drawing.vault : null;
+    return vaultPanel.closeReminder(tie);
+  },
   forget(tab) {
     // Closed without saving: no "recover unsaved part" card for it later.
     if (tab.kind === "part" && tab.state) journalDrop((tab.state as PartTab).store.doc.id);
@@ -481,12 +669,24 @@ let docState: [string, "idle" | "loading" | "ready" | "error"] = ["", "idle"];
 function setDoc(name: string, st: "idle" | "loading" | "ready" | "error") {
   docState = [name, st];
   const label = t({ idle: "no file open", loading: "loading", ready: "open", error: "could not open" }[st]);
-  $("#doc-name").textContent = name || t("No file open");
-  $("#doc").title = name ? `${name} (${label})` : t("No file open");
+  // A vault file's status (version, lifecycle state, check-out) goes in its own chip with a tooltip that spells it out.
+  let tie: VaultTie | null = null;
+  try { tie = st === "ready" ? liveVaultTie() : null; } catch { /* the controllers are not made yet */ }
+  const at = tie ? name.indexOf(` · ${tie.label}`) : -1;
+  const chip = $("#doc-vault");
+  $("#doc-name").textContent = (at >= 0 ? name.slice(0, at) + name.slice(at + 3 + tie!.label.length) : name) || t("No file open");
+  chip.hidden = at < 0;
+  chip.textContent = at >= 0 ? tie!.label : "";
+  $("#doc").title = name ? (at >= 0 ? `${$("#doc-name").textContent}\n${tie!.hint ?? tie!.label}` : `${name} (${label})`) : t("No file open");
   $("#doc").dataset.state = st;
   $("#doc-status").dataset.state = st;
   $("#doc-status").setAttribute("aria-label", t("Status: {s}", { s: label }));
   docs?.render();
+}
+/** The vault tie of the document shown in the header, if any. */
+function liveVaultTie(): VaultTie | null {
+  const k = fileMenuLive();
+  return k === "drawing" ? drawing.vault : k === "part" && modeller.active ? modeller.vault : k === "asm" && asm.active ? asm.vault : null;
 }
 function setPcbMode(on: boolean) {
   $("#app").classList.toggle("gerber", on);
@@ -541,7 +741,7 @@ function pcbStats() {
 
 const is3dName = (n: string) => /\.(step|stp|p21|iges|igs|brep|stl|obj|3mf|sldprt|sldasm)$/i.test(n);
 
-/** Opens dropped or chosen files: one 3D model, a SolidWorks assembly with its parts, or any number of PCB layers / zips. */
+/** Opens dropped or chosen files: one 3D model, an SLDASM assembly with its parts, or any number of PCB layers / zips. */
 async function openFiles(files: File[]) {
   if (!files.length) return;
   // File ▸ recent documents: the main file first (a drawing, part or assembly, else the biggest 3D model).
@@ -577,10 +777,13 @@ let loadToken = 0;
   const saveData = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData;
   const warm = () => { if (!loadToken) worker.postMessage({ kind: "warm", occtBase: new URL("occt/", document.baseURI).href }); };
   if (!saveData) "requestIdleCallback" in window ? requestIdleCallback(warm, { timeout: 3000 }) : setTimeout(warm, 1500);
+  // Then the full kernel (50 MB, 3–5 s to set up): parts, assemblies and the exact pass of a STEP file
+  // take this spare worker, so even the first document opens without waiting for that set-up.
+  if (!new URLSearchParams(location.search).has("nokernel")) setTimeout(() => warmSpare(new URL("occt/", document.baseURI).href), 2000);
 }
 
 /**
- * SolidWorks: the kernel worker reads the Parasolid model inside each part,
+ * SLDPRT / SLDASM: the kernel worker reads the Parasolid model inside each part,
  * places an assembly's parts and hands back STEP, which then opens as usual.
  * An assembly needs its part files dropped with it (or its whole folder).
  */
@@ -588,12 +791,12 @@ async function openSolidWorks(files: File[]) {
   const asm = files.filter(f => /\.sldasm$/i.test(f.name)).sort((a, b) => b.size - a.size);
   const main = asm[0] ?? files[0];
   const name = main.name;
-  if (kernelOff) { toast(t("SolidWorks files need the geometry kernel, which is turned off (?nokernel)."), true); return; }
+  if (kernelOff) { toast(t("SLDPRT/SLDASM files need the geometry kernel, which is turned off (?nokernel)."), true); return; }
   ++loadToken;
   const token = loadToken;
   restoreEmpty();
   setDoc(name, "loading");
-  setLoading(true, t("Reading the SolidWorks model in {name}…", { name }), 5);
+  setLoading(true, t("Reading the SLDPRT/SLDASM model in {name}…", { name }), 5);
   const parts = asm.length ? files : [main];
   if (!asm.length && files.length > 1) toast(t("Opening {name}. Open one part at a time, or drop the assembly with its parts.", { name }));
   let res: Awaited<ReturnType<typeof kernel.solidworks>>;
@@ -621,11 +824,11 @@ async function openSolidWorks(files: File[]) {
   if (loadToken !== token + 1) return;
   if (report.missing.length) toast(t("{n} part file is missing and left out: {list}. Drop the assembly together with its parts, or the whole folder.|{n} part files are missing and left out: {list}. Drop the assembly together with its parts, or the whole folder.|{n} part files are missing and left out: {list}. Drop the assembly together with its parts, or the whole folder.", { n: report.missing.length, list: listNames(report.missing) }), "warn");
   else if (report.failedFaces) toast(t("{n} face could not be rebuilt and is left out.|{n} faces could not be rebuilt and are left out.|{n} faces could not be rebuilt and are left out.", { n: report.failedFaces }), "warn");
-  if (report.notes.length) console.info("SolidWorks import notes:", report.notes);
+  if (report.notes.length) console.info("SLDPRT/SLDASM import notes:", report.notes);
 }
 const listNames = (a: string[]) => (a.length > 4 ? `${a.slice(0, 4).join(", ")} (+${a.length - 4})` : a.join(", "));
 
-/** SolidWorks' own thumbnail of a file whose geometry could not be read. */
+/** The authoring CAD app's own thumbnail of a file whose geometry could not be read. */
 let emptyHtml = "";
 function showPreview(png: Uint8Array, name: string) {
   const card = $("#empty .empty-card");
@@ -639,7 +842,7 @@ function showPreview(png: Uint8Array, name: string) {
   img.src = url;
   img.alt = t("Preview of {name}", { name });
   const p = document.createElement("p");
-  p.textContent = t("This is the picture SolidWorks saved in the file. Its geometry could not be read, so nothing can be measured.");
+  p.textContent = t("This is the picture the CAD app saved in the file. Its geometry could not be read, so nothing can be measured.");
   const b = document.createElement("button");
   b.className = "btn primary";
   b.textContent = t("Choose files…");
@@ -682,10 +885,16 @@ async function openMesh(buffer: ArrayBuffer, name: string) {
   setLoading(true, t("Reading {name}…", { name }), 2);
   state.meta = null;
   const t0 = performance.now();
-  let meshes;
-  try { meshes = await parseMesh(buffer, name); }
-  catch (err) { setLoading(false); setDoc(name, "error"); toast(t("Could not open {name}: {err}", { name, err: t((err as Error).message) }), true); return; }
-  const result = await runImport(name, { kind: "mesh", name, meshes }, meshes.flatMap(m => (m.idx ? [m.pos.buffer, m.idx.buffer] : [m.pos.buffer])));
+  // Opened before: the faces found then come from the disk cache.
+  const key = await cacheKey("import", pendingSrc.data, "mesh");
+  let result: Awaited<ReturnType<typeof runImport>> | undefined = await cacheGet(key);
+  if (token !== loadToken) return;
+  if (!result) {
+    let meshes;
+    try { meshes = await parseMesh(buffer, name); }
+    catch (err) { setLoading(false); setDoc(name, "error"); toast(t("Could not open {name}: {err}", { name, err: t((err as Error).message) }), true); return; }
+    result = await runImport(name, { kind: "mesh", name, meshes, cacheKey: key }, meshes.flatMap(m => (m.idx ? [m.pos.buffer, m.idx.buffer] : [m.pos.buffer])));
+  }
   if (!result || token !== loadToken) return;
   setLoading(true, t("Building scene…"), 97);
   await new Promise(r => setTimeout(r, 0));
@@ -708,8 +917,14 @@ async function openBuffer(buffer: ArrayBuffer, name: string) {
   timings = {};
   // The kernel worker reads the file again, with its B-rep, alongside the import.
   const size = buffer.byteLength;
-  const parts = startKernel(buffer.slice(0), name, token, t0);
-  const result = await runImport(name, { buffer, name, occtBase, quality }, [buffer]);
+  const src = pendingSrc.data;
+  // A file opened before (or a tab switched back to): its mesh and faces come from the disk cache.
+  const key = await cacheKey("import", src, quality);
+  const cached = await cacheGet<{ parts: PartData[]; tree: TreeNode; timing?: Record<string, number> }>(key);
+  if (cached) timings.cached = 1;
+  // Its exact values are most likely on disk too: no need to let the first frames draw before reading them.
+  const parts = startKernel(src.slice(0), name, token, t0, quality, !!cached);
+  const result = cached ?? (token === loadToken ? await runImport(name, { buffer, name, occtBase, quality, cacheKey: key }, [buffer]) : null);
   parts(result?.parts ?? null);
   if (!result || token !== loadToken) return;
   Object.assign(timings, result.timing, { worker: performance.now() - t0 });
@@ -735,15 +950,15 @@ function warmKernel() { if (!kernelOff && kernelAlongside) kernel.warm(); }
 /** With fewer cores the kernel waits for the model to be on screen instead of reading alongside the import. */
 const kernelAlongside = (navigator.hardwareConcurrency || 2) >= 6;
 /** Starts the exact-geometry read of a file; call the result with the imported parts (null: the import failed). */
-function startKernel(bytes: ArrayBuffer, name: string, token: number, t0: number): (parts: PartData[] | null) => void {
+function startKernel(bytes: ArrayBuffer, name: string, token: number, t0: number, quality: string, cached = false): (parts: PartData[] | null) => void {
   if (kernelOff) return () => {};
   let give!: (parts: PartData[] | null) => void;
   const parts = new Promise<PartData[] | null>(r => (give = r));
   const current = () => token === loadToken;
-  const start = kernelAlongside ? Promise.resolve()
+  const start = kernelAlongside || cached ? Promise.resolve()
     // Let the first frames draw before the kernel starts.
     : parts.then(() => new Promise<void>(r => setTimeout(r, 300)));
-  kernelJob = start.then(() => (current() ? kernel.open(bytes, name, parts, current) : 0));
+  kernelJob = start.then(() => (current() ? kernel.open(bytes, name, parts, current, quality) : 0));
   kernelJob.then(n => {
     if (!n || !current()) return;
     timings.exact = performance.now() - t0;
@@ -755,7 +970,7 @@ function startKernel(bytes: ArrayBuffer, name: string, token: number, t0: number
 function exactReady() {
   if (state.live && state.livePicks.length) showLive(state.livePicks);
   renderProps();
-  if (lastMassRun) runMass();
+  if (lastMassRun || mp.open) runMass();
 }
 function showKernelStatus() {
   const el = $("#st-kernel");
@@ -772,6 +987,9 @@ kernel.onStatus = (_s, note) => { kernelNote = note ?? ""; showKernelStatus(); }
 
 /** Saves the visible parts as STEP (the whole file, with its assembly, when everything is visible). */
 async function exportStep() {
+  // A modelled part or an assembly has no imported file: its own kernel writes the STEP.
+  if (modeller.active) return modeller.exportStep();
+  if (asm.active) return asm.exportStep();
   if (!viewer.parts.length) return;
   if (state.fileKey.startsWith("sv:pcb:")) return exportBoardStep();
   if (kernelJob && kernel.status === "loading") { toast(t("Loading the geometry kernel…")); await kernelJob; }
@@ -818,6 +1036,7 @@ function showModel(parts: PartData[], tree: TreeNode, name: string, key: string,
   buildTree();
   loadMeasurements();
   renderProps();
+  if (mp.open) runMass();
   const tris = result.parts.reduce((s, p) => s + p.index.length / 3, 0);
   const faces = result.parts.reduce((s, p) => s + p.faces.length, 0);
   modelStats = { parts: result.parts.length, faces, tris, s: (performance.now() - t0) / 1000 };
@@ -828,6 +1047,20 @@ function showModel(parts: PartData[], tree: TreeNode, name: string, key: string,
   pendingSrc = null;
   if (modelSrc) docs?.opened("model", name);
   hint("model");
+  warmDrawing();
+}
+
+let drawingWarm = false;
+/**
+ * Sets the drawing kernel up a few seconds after a model shows (once per page), so a new drawing's view palette
+ * and first view do not wait the ~3 s OpenCASCADE takes to start in a fresh worker. Not on small devices
+ * (`sparesOn`), with `?nokernel`, or under webdriver unless `?drwwarm` (the smoke test's pages stay light).
+ */
+function warmDrawing() {
+  const q = new URLSearchParams(location.search);
+  if (drawingWarm || !sparesOn() || q.has("nokernel") || (navigator.webdriver && !q.has("drwwarm"))) return;
+  drawingWarm = true;
+  setTimeout(() => drawing.warm(), 4000);
 }
 
 /** A modelled part's body after a rebuild: the first time like a newly opened file, later keeping the view and tools. */
@@ -857,6 +1090,7 @@ function showModelled(parts: PartData[], tree: TreeNode, name: string, first: bo
   viewer.load(parts, tree, first && parts.length > 0);
   if (surfAna.kind) void surfAna.refresh();
   if (!first) remeasure();
+  if (parts.length) warmDrawing();
   state.fileName = name;
   state.fileKey = "";
   document.title = `${name} · MöbiusCAD`;
@@ -866,7 +1100,9 @@ function showModelled(parts: PartData[], tree: TreeNode, name: string, first: bo
   renderProps();
   updateHint();
   if (first && parts.length) viewer.viewFrom(new THREE.Vector3(1, -1, 0.8), false);
-  if (lastMassRun) runMass();
+  // A document coming back from a parked tab is shown as it was left.
+  if (first && parts.length && tabView) { viewer.setView(tabView, false); tabView = null; }
+  if (lastMassRun || mp.open) runMass();
   for (const f of partListeners) f();
 }
 
@@ -879,6 +1115,7 @@ function showModelStats() {
 function resetForNewModel() {
   setTool("select");
   section.clear();
+  syncSectionHud();
   renderSections();
   stopDrag();
   hl.com.visible = false;
@@ -897,6 +1134,9 @@ function resetForNewModel() {
   $("#mass-out").innerHTML = "";
   lastMassRun = null;
   lastMass = [];
+  mp.picking = false; mp.typing = false;
+  mpAxes.visible = false; mpFrameMark.visible = false;
+  if (mp.open) renderMassPanel();
 }
 
 /** Skeleton loaders replace panel content when loading takes longer than this. */
@@ -919,16 +1159,22 @@ $<HTMLInputElement>("#file-input").addEventListener("change", e => {
   if (fs?.length) openFiles([...fs]);
   (e.target as HTMLInputElement).value = "";
 });
-vpEl.addEventListener("dragover", e => { e.preventDefault(); vpEl.classList.add("drag"); });
+vpEl.addEventListener("dragover", e => {
+  e.preventDefault();
+  // A Toolbox library card: preview the part on the hole under the pointer.
+  if (e.dataTransfer?.types.includes(TOOLBOX_MIME)) { e.dataTransfer.dropEffect = "copy"; asm.toolboxDragOver(e.clientX, e.clientY); return; }
+  vpEl.classList.add("drag");
+});
 // The user is about to open a file: start the exact-geometry kernel now (it takes seconds to set up).
 $("#file-input").addEventListener("click", () => warmKernel());
 window.addEventListener("dragenter", e => { if (e.dataTransfer?.types.includes("Files")) warmKernel(); });
-vpEl.addEventListener("dragleave", () => vpEl.classList.remove("drag"));
+vpEl.addEventListener("dragleave", () => { vpEl.classList.remove("drag"); asm.toolboxDragLeave(); });
 vpEl.addEventListener("drop", e => {
   e.preventDefault();
   vpEl.classList.remove("drag");
   const dt = e.dataTransfer;
   if (!dt) return;
+  if (dt.types.includes(TOOLBOX_MIME)) { asm.toolboxDrop(e.clientX, e.clientY); return; }
   // A dropped folder (an assembly with its parts) is read through its entries.
   const entries = [...dt.items].map(i => i.webkitGetAsEntry?.()).filter((x): x is FileSystemEntry => !!x);
   if (entries.some(x => x.isDirectory)) { filesOf(entries).then(fs => { if (fs.length) openFiles(fs); }); return; }
@@ -1050,6 +1296,7 @@ function setPartVisible(p: Part, on: boolean) {
 }
 function afterVisibilityChange() {
   refreshTreeVisibility();
+  massChanged();
   section.rebuild();
   viewer.computeBounds();
   viewer.invalidate();
@@ -1070,6 +1317,7 @@ function selectNode(n: TreeNode | null, fromViewport = false) {
   }
   refreshTreeVisibility();
   renderProps();
+  massChanged();
   viewer.invalidate();
 }
 
@@ -1117,9 +1365,23 @@ function kv(rows: [string, string][]) {
   return `<div class="kv">${rows.map(([k, v]) => `<span class="k">${esc(t(k))}</span><span class="v" translate="no">${v}</span>`).join("")}</div>`;
 }
 
+/** Overall size: a modelled part's exact box when every body shows, else the shown meshes' box (exam #12). */
+function overallSize(): THREE.Vector3 {
+  const box = modeller.active && viewer.parts.every(p => p.visible) ? modeller.bodyProps()?.box : undefined;
+  if (box) return new THREE.Vector3(box[1][0] - box[0][0], box[1][1] - box[0][1], box[1][2] - box[0][2]);
+  return viewer.computeBounds().getSize(new THREE.Vector3());
+}
+
 function renderProps() {
   const el = $("#props");
-  if (!viewer.parts.length) { el.innerHTML = `<p class="muted">${t("Open a model to begin.")}</p>`; return; }
+  if (!viewer.parts.length) {
+    // A new part has nothing to show yet: say how to start, not "open a model" (exam #11).
+    const part = $("#app").classList.contains("model");
+    // Editing an early sketch rolls the bodies back: the part is not empty then (exam #93).
+    const feats = part && (modeller.store?.doc.features.length ?? 0) > 0;
+    el.innerHTML = `<p class="muted">${t(feats ? "No bodies before the feature being edited." : part ? "This part is empty. Start a sketch on a plane to begin." : "Open a model to begin.")}</p>`;
+    return;
+  }
   const e = state.selection;
   let html = "";
   if (e) {
@@ -1175,7 +1437,7 @@ function renderProps() {
     html += `<h3 translate="no">${esc(state.fileName)}</h3>`;
     const rows: [string, string][] = [];
     const m = state.meta;
-    const b = viewer.computeBounds(), s = b.getSize(new THREE.Vector3());
+    const s = overallSize();
     rows.push(["Parts", String(viewer.parts.length)], ["Overall size", `${fmtLen(s.x, false)} × ${fmtLen(s.y, false)} × ${fmtLen(s.z)}`]);
     if (m) {
       rows.push(["Protocol", esc(m.protocol)], ["Schema", esc(m.schema)]);
@@ -1258,13 +1520,17 @@ function setTool(t: Tool) {
 
 function updateHint() {
   const h = $("#tool-hint");
+  const st = $("#st-hint");
+  // The default tool's prompt sits in the status bar so it never covers the model; the banner is for
+  // tools the user picked on purpose (they count picks and end with Esc).
   if (state.tool === "select") {
-    h.hidden = !viewer.parts.length;
-    h.innerHTML = state.selection && !state.livePair
-      ? `<b>${t("Smart measure")}</b> · ${t("click a second point, edge or face to measure between them")} · <span class="muted">${t("Esc to clear")}</span>`
-      : `<b>${t("Smart measure")}</b> · ${t("click a point, edge or face; a second click measures between them")}`;
+    h.hidden = true;
+    st.innerHTML = !viewer.parts.length ? "" : state.selection && !state.livePair
+      ? `<b>${t("Smart measure")}</b>: ${t("click a second point, edge or face to measure between them")} · ${t("Esc to clear")}`
+      : `<b>${t("Smart measure")}</b>: ${t("click a point, edge or face; a second click measures between them")}`;
     return;
   }
+  st.innerHTML = "";
   if (state.tool === "sectionFace") {
     h.hidden = false;
     h.innerHTML = `<b>${t("Section")}</b> · ${t("click a flat face to cut there, or a cylinder to cut through its axis")} · <span class="muted">${t("Esc to cancel")}</span>`;
@@ -1283,9 +1549,17 @@ $$("#tools button").forEach(b => b.addEventListener("click", () => setTool(b.dat
 // (FR-UI-118), so nothing sits below the fold. The header's panel button hides and shows the panel.
 const rpTabs = $("#rp-tabs");
 rpTabs.querySelectorAll<HTMLButtonElement>("[role=tab]").forEach(b => b.addEventListener("click", () => panels.show("right"), true));
+/** The page tabs show their names while all five fit; else only the open page's (the rest keep icon + tooltip). */
+function fitRpTabs() {
+  rpTabs.classList.toggle("rp-icons", false);
+  if (rpTabs.scrollWidth > rpTabs.clientWidth + 1) rpTabs.classList.toggle("rp-icons", true);
+}
 const showPage = bindTabs(rpTabs, tab => {
   $$(".rp").forEach(s => s.classList.toggle("on", s.id === `rp-${tab}`));
+  fitRpTabs();
 });
+new ResizeObserver(fitRpTabs).observe(rpTabs);
+onLangChange(fitRpTabs);
 // The Section button works like CAD: press it, then click the face to cut on.
 $("#rt-section").addEventListener("click", () => {
   const open = $("#rp-section").classList.contains("on") && !$("#app").classList.contains("no-right");
@@ -1365,7 +1639,7 @@ function nextColor() {
   return c;
 }
 
-// ---------- associative measurements (modelling): re-measured after every rebuild, like SolidWorks reference dimensions ----------
+// ---------- associative measurements (modelling): re-measured after every rebuild, like a CAD app's reference dimensions ----------
 /** Picks by persistent face and edge names, or null when one cannot be named (then the measurement stays fixed). */
 function pickRefs(picks: Entity[]): PickRef[] | null {
   if (!modeller.active || !picks.length) return null;
@@ -1470,6 +1744,13 @@ function pickMark(p: THREE.Vector3) {
 }
 
 function handlePick(snap: Snap | null) {
+  // Mass properties ▸ Pick axes: the click makes the output axes and selects nothing.
+  if (mp.picking && snap) {
+    const c = csysFrom(entityFromSnap(snap));
+    if (!c) { toast(t("Pick a flat face, a straight edge, a circle, a cylinder or a point."), true); return; }
+    addMassAxes({ ...c, name: t("Axes {n}", { n: mp.user.length + 1 }) });
+    return;
+  }
   if (state.tool === "select") {
     if (!snap) {
       state.selection = null;
@@ -1616,6 +1897,8 @@ function setCsys(c: Csys | null, refresh = true, quiet = false) {
   if (!refresh) return;
   refreshMeasurements();
   renderProps();
+  renderMass();
+  showMassMarks();
   if (c && !quiet) toast(t("Coordinates relative to {name}", { name: t(c.name) }));
   viewer.invalidate();
 }
@@ -1763,6 +2046,8 @@ canvas.addEventListener("pointerup", e => {
   const r = canvas.getBoundingClientRect();
   if (state.tool === "sectionFace") { sectionOnFace(faceUnder(e.clientX - r.left, e.clientY - r.top)); return; }
   if (e.altKey && state.tool === "select") { selectOther(e.clientX - r.left, e.clientY - r.top); return; }
+  // Ctrl+click in a part (FR-SEL-007): adds or removes a face or edge of the selection that commands take.
+  if ((e.ctrlKey || e.metaKey) && state.tool === "select" && modeller.ctrlPick(e)) return;
   handlePick(snapper.pick(e.clientX - r.left, e.clientY - r.top));
 });
 /** Select other (FR-SEL-004): Alt+click picks the next face behind, cycling at the same spot. */
@@ -1779,31 +2064,44 @@ function selectOther(x: number, y: number) {
 }
 canvas.addEventListener("pointermove", e => {
   lastPointer.x = e.clientX; lastPointer.y = e.clientY;
-  if (moveQueued || !viewer.parts.length) return;
+  // A box or lasso drag stops its pointerup, so a press left over is dropped once no button is held.
+  if (!e.buttons) downAt = null;
+  if (moveQueued) return;
   moveQueued = true;
-  requestAnimationFrame(() => { moveQueued = false; hover(); });
+  requestAnimationFrame(() => { moveQueued = false; if (viewer.parts.length) hover(); else hoverGlyph(null); });
 });
-canvas.addEventListener("pointerleave", () => { hideSnapMarks(); showEntity(hl.hoverFace, hl.hoverEdge, null); });
+canvas.addEventListener("pointerleave", () => { hideSnapMarks(); showEntity(hl.hoverFace, hl.hoverEdge, null); setHoverKind(canvas, null); });
+installHoverCursors();
+/**
+ * The hover glyph beside the cursor (FR-SEL-012): the sketch entity or plane the part controller reports,
+ * else the kind of the model snap under the cursor. None while orbiting or another view tool owns the pointer.
+ */
+function hoverGlyph(snapKind: string | null) {
+  const own = modeller.hoverGlyph(lastPointer.x, lastPointer.y);
+  setHoverKind(canvas, own ?? hoverKindOfSnap(snapKind));
+}
 canvas.addEventListener("contextmenu", e => e.preventDefault());
 
 function hideSnapMarks() { $("#snap-marker").hidden = true; $("#snap-hint").hidden = true; }
 
 function hover() {
   if (downAt && (Math.abs(lastPointer.x - downAt.x) > 4 || Math.abs(lastPointer.y - downAt.y) > 4)) {
-    hideSnapMarks(); return; // orbiting
+    hideSnapMarks(); setHoverKind(canvas, null); return; // orbiting
   }
-  if (section.arrowHot) { hideSnapMarks(); showEntity(hl.hoverFace, hl.hoverEdge, null); return; }
+  if (section.arrowHot) { hideSnapMarks(); showEntity(hl.hoverFace, hl.hoverEdge, null); setHoverKind(canvas, null); return; }
   const r = canvas.getBoundingClientRect();
   if (state.tool === "sectionFace") {
     // Picking a face to cut on: light up the whole face under the cursor, no point snapping.
     hideSnapMarks();
     const f = faceUnder(lastPointer.x - r.left, lastPointer.y - r.top);
     showEntity(hl.hoverFace, hl.hoverEdge, f ? { part: f.part, face: f.face, kind: "face" } : null);
+    setHoverKind(canvas, f ? "face" : null);
     return;
   }
   const snap = snapper.pick(lastPointer.x - r.left, lastPointer.y - r.top);
   state.lastSnap = snap;
-  // The hovered edge's centre or midpoint, shown faintly so it can be picked (SolidWorks-style inference).
+  hoverGlyph(snap?.kind ?? null);
+  // The hovered edge's centre or midpoint, shown faintly so it can be picked (CAD-app-style inference).
   const hint = snapper.hint, hintEl = $("#snap-hint");
   hintEl.hidden = !hint || (!!snap && snap.point.distanceTo(hint.point) < 1e-9);
   if (hint && !hintEl.hidden) {
@@ -1948,16 +2246,68 @@ $("#m-csv").addEventListener("click", () => state.measurements.length ? measurem
 const showLeftTab = bindTabs($(".tabs"), tab => { $$(".tab").forEach(t => t.classList.toggle("on", t.id === `tab-${tab}`)); if (tab === "vault") void vaultPanel.render(); });
 // Local vault (FRS 12.5): the Vault tab.
 const vaultPanel = new VaultPanel($("#vault-panel"), {
-  open: async (name, data) => {
+  open: async (name, data, replace) => {
     const buf = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
-    if (modeller.isPartName(name)) await modeller.openFile({ name, data: buf });
-    else if (asm.isAsmName(name)) await asm.openFile({ name, data: buf });
-    else await openFiles([new File([buf], name)]);
+    const go = async () => {
+      if (modeller.isPartName(name)) await modeller.openFile({ name, data: buf });
+      else if (asm.isAsmName(name)) await asm.openFile({ name, data: buf });
+      else await openFiles([new File([buf], name)]);
+    };
+    // A vault file reloaded after a vault action stays in its own tab instead of opening a second one.
+    if (replace && docs) await docs.replacing(go); else await go();
   },
-  part: () => (modeller.active ? { name: modeller.partName, bytes: () => modeller.partBytes() } : null),
-  setVault: v => modeller.setVault(v),
-  markSaved: () => modeller.markSaved(),
+  show: async id => {
+    const tab = docs?.tabs.find(x => x !== docs!.active && (x.state as { vault?: { id: string } | null } | null)?.vault?.id === id);
+    if (!tab) return false;
+    await docs!.activate(tab.id);
+    return true;
+  },
+  added: (id: string): Promise<void> => drawingsIntoVault(id).catch(e => toast(t("Could not save: {err}", { err: t((e as Error).message) }), true)),
+  doc: () => {
+    const k = fileMenuLive();
+    if (k === "drawing") return { name: drawing.title, kind: "drawing", tie: drawing.vault, bytes: async () => (await drawing.packed())?.data ?? null, setVault: v => drawing.setVault(v), markSaved: () => drawing.markSaved() };
+    if (k === "part" && modeller.active) return { name: plainLabel(modeller.partName), kind: "part", tie: modeller.vault, bytes: () => modeller.partBytes(), setVault: v => modeller.setVault(v), markSaved: () => modeller.markSaved() };
+    if (k === "asm" && asm.active) return { name: asm.title, kind: "assembly", tie: asm.vault, bytes: async () => asm.bytes(), setVault: v => asm.setVault(v), markSaved: () => asm.markSaved() };
+    return null;
+  },
 });
+/**
+ * Shows the vault's file list: the Vault tab of the side panel, or, when that panel is not on screen (a
+ * drawing, a PCB, a phone, the panel folded away), the same list in a window.
+ */
+function showVault() {
+  const panel = $("#vault-panel"), home = $("#tab-vault");
+  const win = document.getElementById("vault-win") as HTMLDialogElement | null;
+  if (win?.open) return;
+  const side = $("#tree-panel");
+  if (!drawing.open && side.offsetParent !== null && side.getBoundingClientRect().width > 150) { showLeftTab("vault"); return; }
+  let d = win;
+  if (!d) {
+    d = document.createElement("dialog");
+    d.id = "vault-win";
+    d.className = "modal v-dlg vault-win";
+    d.setAttribute("aria-labelledby", "vault-win-title");
+    d.innerHTML = `<div class="vault-win-h"><h3 id="vault-win-title">${t("Vault")}</h3><button class="btn small" data-a="close">${t("Close")}</button></div><div class="vault-win-b"></div>`;
+    document.body.appendChild(d);
+    trapFocus(d, () => d!.open);
+    d.querySelector("[data-a=close]")!.addEventListener("click", () => d!.close());
+    d.addEventListener("close", () => home.appendChild(panel));
+  }
+  d.querySelector(".vault-win-b")!.appendChild(panel);
+  void vaultPanel.render();
+  d.showModal();
+}
+const vaultMenu = new VaultMenu({ panel: vaultPanel, showPanel: showVault });
+/** The Vault button says which vault is open. */
+function syncVaultButton() {
+  const b = $("#vault-btn"), v = vaultPanel.vault;
+  b.classList.toggle("on", !!v);
+  b.title = v ? t("Vault {name}: check out, check in, history, versions", { name: v.info.name }) : t("Vault: keep every version of your files, in a folder or in the browser");
+  b.setAttribute("aria-label", b.title);
+}
+vaultPanel.onChange = syncVaultButton;
+onLangChange(syncVaultButton);
+$("#vault-btn").addEventListener("click", e => vaultMenu.toggle(e.currentTarget as HTMLElement));
 
 // ---------- display / views ----------
 function setMode(m: DisplayMode) {
@@ -2037,13 +2387,99 @@ function selectionBox(): THREE.Box3 | null {
   return parts.length ? b : null;
 }
 bindValueDrops();
+bindLongPress();
 const nav = bindNavigation({
   viewer,
   views: VIEWS,
   active: () => !drawing.open && !isPcbMode() && viewer.parts.length + (modeller.active ? 1 : 0) > 0,
   normalTo: () => normalTo(),
   selectionBox,
+  pointAt: (x, y) => {
+    const r = viewer.renderer.domElement.getBoundingClientRect();
+    const s = snapper.pick(x - r.left, y - r.top);
+    if (s) {
+      // A straight edge picked along its length (not at an end): the view turns about its line.
+      const e = s.edge;
+      if (e && e.type === "line" && !s.section && (s.kind === "onEdge" || s.kind === "midpoint")) {
+        const axis = viewer.toWorld(s.part, e.end).sub(viewer.toWorld(s.part, e.start));
+        if (axis.lengthSq() > 1e-12) return { p: s.point.clone(), axis };
+      }
+      return { p: s.point.clone() };
+    }
+    const f = faceUnder(x - r.left, y - r.top);
+    return f ? { p: f.point.clone() } : null;
+  },
+  // Named views (FR-UI-104): a part or an assembly keeps them in its document; a model file for this session.
+  namedViews: () => {
+    if (modeller.active) return modeller.namedViews();
+    if (asm.active) return asm.namedViews();
+    const key = state.fileKey || state.fileName;
+    if (!key) return null;
+    const list = () => sessionViews.get(key) ?? [];
+    return {
+      list: () => [...list()],
+      save: v => sessionViews.set(key, [...list().filter(x => x.name !== v.name), v]),
+      remove: name => sessionViews.set(key, list().filter(x => x.name !== name)),
+    };
+  },
 });
+const sessionViews = new Map<string, NamedView[]>();
+// Heads-up view bar (FR-UI-022): with a part or an assembly open, the view commands float at the top centre of the
+// view (as in other CAD apps): Zoom to area, Previous view, the standard views, projection and display style. The
+// header's own groups are moved there (their buttons and handlers stay the same) and go back for model files.
+{
+  const hud = document.createElement("div");
+  hud.id = "hud";
+  hud.className = "hud";
+  // A plain group, not role=toolbar: a toolbar's arrow keys would move focus along it, so after a click on Front the
+  // arrows did nothing at all; here they turn the view, as in other CAD apps (exam #78).
+  hud.setAttribute("role", "group");
+  hud.setAttribute("aria-label", t("View"));
+  hud.hidden = true;
+  hud.innerHTML = `<div class="seg" role="group"><button type="button" data-hud="area" title="${t("Zoom to area")}" aria-label="${t("Zoom to area")}">⬚</button>`
+    + `<button type="button" data-hud="prev" title="${t("Previous view (Alt+Z)")}" aria-label="${t("Previous view (Alt+Z)")}">↶</button>`
+    + `<button type="button" data-hud="section" aria-pressed="false" title="${t("Section view")}" aria-label="${t("Section view")}">◫</button>`
+    // Lasso selection (FR-SEL-008 P2): while on, a left drag from empty space draws a lasso instead of a box.
+    + `<button type="button" data-hud="lasso" aria-pressed="${lassoMode()}" title="${t("Lasso selection: drag clockwise for what is wholly inside, anticlockwise for what it touches")}" aria-label="${t("Lasso selection")}"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M8 2.5c3.6 0 6 1.7 6 3.8S11.6 10 8 10 2 8.4 2 6.3 4.4 2.5 8 2.5zM4.6 9.2c-.9 1.3-.6 2.9.9 3.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button></div>`;
+  hud.querySelector('[data-hud="lasso"]')!.addEventListener("click", e => { const b = e.currentTarget as HTMLElement, on = !lassoMode(); setLassoMode(on); b.setAttribute("aria-pressed", String(on)); b.classList.toggle("on", on); });
+  hud.querySelector('[data-hud="lasso"]')!.classList.toggle("on", lassoMode());
+  hud.querySelector('[data-hud="section"]')!.addEventListener("click", () => toggleSectionView());
+  hud.querySelector('[data-hud="area"]')!.addEventListener("click", () => nav.startZoomArea());
+  hud.querySelector('[data-hud="prev"]')!.addEventListener("click", () => nav.previousView());
+  $("#viewport").append(hud);
+  const moved = ["#views", "#projection", "#display-mode"].map(sel => { const el = $(sel), mark = document.createComment(sel); el.before(mark); return { el, mark }; });
+  const sync = () => {
+    const app = $("#app"), on = (app.classList.contains("model") || app.classList.contains("asm")) && !app.classList.contains("gerber");
+    if (on === !hud.hidden) return;
+    hud.hidden = !on;
+    for (const { el, mark } of moved) { if (on) hud.append(el); else mark.after(el); }
+    requestAnimationFrame(fitToolbar);
+    place();
+  };
+  // Centred on the view, but moved left when it would reach the confirmation corner or the view cube.
+  const place = () => {
+    if (hud.hidden) return;
+    const vp = $("#viewport").getBoundingClientRect(), w = hud.offsetWidth;
+    let limit = vp.right;
+    for (const el of document.querySelectorAll<HTMLElement>("#navcube, #mc-confirm:not([hidden]):not(.at-cursor), #asm-confirm:not([hidden]):not(.at-cursor)")) {
+      const r = el.getBoundingClientRect();
+      if (r.width && r.top < vp.top + 60) limit = Math.min(limit, r.left);
+    }
+    const left = Math.max(8, Math.min((vp.width - w) / 2, limit - vp.left - 8 - w));
+    hud.style.left = `${Math.round(left)}px`;
+  };
+  new ResizeObserver(place).observe($("#viewport"));
+  new ResizeObserver(place).observe(hud);
+  for (const id of ["#mc-confirm", "#asm-confirm"]) new MutationObserver(place).observe($(id), { attributes: true, attributeFilter: ["hidden", "class"] });
+  new MutationObserver(sync).observe($("#app"), { attributes: true, attributeFilter: ["class"] });
+  sync();
+  onLangChange(() => {
+    for (const [k, label] of [["area", "Zoom to area"], ["prev", "Previous view (Alt+Z)"], ["section", "Section view"]] as const) {
+      const b = hud.querySelector<HTMLElement>(`[data-hud="${k}"]`)!;
+      b.title = t(label); b.setAttribute("aria-label", t(label));
+    }
+  });
+}
 void nav;
 /** Normal to the sketch plane, or the selected flat face; again flips to the other side. */
 let lastNormal: THREE.Vector3 | null = null;
@@ -2149,25 +2585,68 @@ onLangChange(() => {
   validateDensity();
   if (csys.active) $("#csys-reset").textContent = `⌖ ${t("CSYS: {name} · back to global", { name: t(csys.active.name) })}`;
   fitToolbar();
+  syncUnitsButton();
   gerber.relocalize();
 });
 
+/** A unit picked anywhere: with a part open it is the part's unit, one undo step (FR-UI-116). */
 function setUnits(u: Unit) {
+  if (modeller.active && modeller.store) { modeller.setDocUnits(u); applyUnits(u); return; }
+  applyUnits(u);
+}
+function applyUnits(u: Unit) {
   units.current = u;
   $<HTMLSelectElement>("#units").value = u;
+  syncUnitsButton();
   storage.set("sv:units", u);
   refreshMeasurements();
   renderProps();
   renderSections();
+  renderMass();
 }
 function setDecimals(d: string) {
   units.decimals = d === "" ? null : Number(d);
   $<HTMLSelectElement>("#decimals").value = d;
+  syncUnitsButton();
   storage.set("sv:decimals", d);
   refreshMeasurements();
   renderProps();
   renderSections();
+  renderMass();
 }
+// Units in the status bar (FR-UI-116): the unit and decimals; a click opens the choices.
+const UNIT_NAMES: Record<Unit, string> = { mm: "Millimetres (mm)", cm: "Centimetres (cm)", m: "Metres (m)", in: "Inches (in)", ft: "Feet (ft)" };
+function syncUnitsButton() {
+  const b = document.getElementById("st-units");
+  if (!b) return;
+  b.textContent = `${units.current} · ${units.decimals ?? t("auto")}`;
+  b.title = t("Units and decimals: click to change");
+}
+function openUnitsMenu() {
+  const b = $("#st-units"), old = document.getElementById("st-units-menu");
+  if (old) { old.remove(); b.setAttribute("aria-expanded", "false"); return; }
+  const m = document.createElement("div");
+  m.id = "st-units-menu";
+  m.className = "menu st-units-menu";
+  m.setAttribute("role", "menu");
+  m.innerHTML = `<p class="menu-h">${t("Units")}</p>` + UNIT_LIST.map(u => `<button type="button" role="menuitemradio" aria-checked="${u === units.current}" data-u="${u}">${esc(t(UNIT_NAMES[u]))}</button>`).join("")
+    + `<p class="menu-h">${t("Decimals")}</p><div class="st-dec">` + ["", "0", "1", "2", "3", "4", "5", "6"].map(d => `<button type="button" role="menuitemradio" aria-checked="${(units.decimals === null ? "" : String(units.decimals)) === d}" data-d="${d}">${d === "" ? esc(t("Auto")) : d}</button>`).join("") + `</div>`;
+  document.body.appendChild(m);
+  const r = b.getBoundingClientRect();
+  m.style.left = `${Math.max(8, Math.min(r.left, innerWidth - m.offsetWidth - 8))}px`;
+  m.style.top = `${r.top - m.offsetHeight - 6}px`;
+  b.setAttribute("aria-expanded", "true");
+  const close = () => { m.remove(); b.setAttribute("aria-expanded", "false"); document.removeEventListener("pointerdown", away, true); };
+  const away = (e: Event) => { if (!m.contains(e.target as Node) && e.target !== b) close(); };
+  document.addEventListener("pointerdown", away, true);
+  m.addEventListener("keydown", e => { if (e.key === "Escape") { e.preventDefault(); close(); b.focus(); } });
+  m.querySelectorAll<HTMLButtonElement>("[data-u]").forEach(x => x.addEventListener("click", () => { close(); setUnits(x.dataset.u as Unit); }));
+  m.querySelectorAll<HTMLButtonElement>("[data-d]").forEach(x => x.addEventListener("click", () => { close(); setDecimals(x.dataset.d!); }));
+  m.querySelector<HTMLButtonElement>('[aria-checked="true"]')?.focus();
+}
+$("#st-units").addEventListener("click", openUnitsMenu);
+bindCommandTips($("#cm"));
+syncUnitsButton();
 $("#csys-reset").addEventListener("click", () => setCsys(null));
 $<HTMLSelectElement>("#units").addEventListener("change", e => setUnits((e.target as HTMLSelectElement).value as Unit));
 $<HTMLSelectElement>("#decimals").addEventListener("change", e => setDecimals((e.target as HTMLSelectElement).value));
@@ -2176,6 +2655,7 @@ $<HTMLSelectElement>("#decimals").addEventListener("change", e => setDecimals((e
   if (u && UNIT_LIST.includes(u)) { units.current = u; $<HTMLSelectElement>("#units").value = u; }
   const d = storage.get("sv:decimals");
   if (d && /^[0-6]$/.test(d)) { units.decimals = Number(d); $<HTMLSelectElement>("#decimals").value = d; }
+  syncUnitsButton();
 }
 $$<HTMLInputElement>("[data-snap]").forEach(c => c.addEventListener("change", () => {
   (SNAP_FILTERS as Record<string, boolean>)[c.dataset.snap!] = c.checked;
@@ -2186,6 +2666,27 @@ snapper.sectionSource = () => section.profiles();
 section.onDragging = on => { dragging = on; };
 section.onChange = () => updateSectionReadouts();
 
+/** The heads-up Section view button is pressed while a section plane cuts the model. */
+function syncSectionHud() {
+  const hb = document.querySelector<HTMLElement>('#hud [data-hud="section"]');
+  if (!hb) return;
+  const on = section.planes.some(sp => sp.enabled && sp.label !== "Sketch");
+  hb.setAttribute("aria-pressed", String(on));
+  hb.classList.toggle("on", on);
+}
+/** Heads-up Section view (FR-UI-022): turns every section plane off or on again; with none it cuts at the selected flat face, else through the middle on the front plane. */
+function toggleSectionView() {
+  if (!viewer.parts.length) return;
+  const ps = section.planes.filter(sp => sp.label !== "Sketch");
+  if (!ps.length) {
+    const e = state.selection;
+    addSection(e && e.kind === "face" && e.face?.type === "plane" ? "face" : "y");
+  } else {
+    const on = !ps.some(sp => sp.enabled);
+    for (const sp of ps) section.setEnabled(sp, on);
+    renderSections();
+  }
+}
 function addSection(kind: string) {
   if (!viewer.parts.length) return;
   if (state.tool === "sectionFace") setTool("select");
@@ -2270,6 +2771,7 @@ const unitFactor = unitMm;
 
 let sectionCount = 0;
 function renderSections() {
+  syncSectionHud();
   // A new plane (from the strip, a face, the result card or three points) brings up the Section page.
   if (section.planes.length > sectionCount) showPage("section");
   sectionCount = section.planes.length;
@@ -2301,7 +2803,7 @@ function renderSections() {
     const q = <T extends HTMLElement>(sel: string) => el.querySelector(sel) as T;
     const chk = q<HTMLInputElement>('input[type="checkbox"]'), range = q<HTMLInputElement>('[data-k="range"]'), num = q<HTMLInputElement>('[data-k="off"]');
     const step = q<HTMLInputElement>('[data-k="step"]'), az = q<HTMLInputElement>('[data-k="az"]'), elv = q<HTMLInputElement>('[data-k="el"]');
-    chk.addEventListener("change", () => { section.setEnabled(sp, chk.checked); updateSectionDeps(); });
+    chk.addEventListener("change", () => { section.setEnabled(sp, chk.checked); updateSectionDeps(); syncSectionHud(); });
     range.addEventListener("input", () => { section.setOffset(sp, parseFloat(range.value)); num.value = (sp.offset / f).toFixed(4); });
     num.addEventListener("change", () => { const v = parseFloat(num.value) * f; if (isFinite(v)) { section.setOffset(sp, v); range.value = String(v); } });
     const nudge = (k: number) => {
@@ -2425,17 +2927,21 @@ function refreshSelectionOverlays() {
 }
 
 // ---------- mass properties ----------
-const matSel = $<HTMLSelectElement>("#material");
+const matBtn = $<HTMLButtonElement>("#material");
+/** The material the density on the Mass page came from (its name), or null for a typed density. */
+let massMat: string | null = "Steel (carbon)";
 function renderMaterials() {
-  const v = matSel.value;
-  matSel.innerHTML = MATERIALS.map((m, i) => `<option value="${i}">${esc(t(m.name))} (${m.density})</option>`).join("") + `<option value="custom">${t("Custom…")}</option>`;
-  if (v) matSel.value = v;
+  matBtn.innerHTML = `<span translate="no">${esc(massMat ? t(massMat) : t("Custom…"))}</span> …`;
 }
 renderMaterials();
-matSel.addEventListener("change", () => {
-  if (matSel.value !== "custom") $<HTMLInputElement>("#density").value = String(MATERIALS[+matSel.value].density);
-});
-$<HTMLInputElement>("#density").addEventListener("input", () => { matSel.value = "custom"; validateDensity(); });
+matBtn.addEventListener("click", () => void pickMaterial({ current: massMat ? { name: massMat, density: +$<HTMLInputElement>("#density").value || 1 } : null }).then(r => {
+  if (!r?.material) return;
+  massMat = r.material.name;
+  $<HTMLInputElement>("#density").value = String(r.material.density);
+  renderMaterials();
+  validateDensity();
+}));
+$<HTMLInputElement>("#density").addEventListener("input", () => { massMat = null; renderMaterials(); validateDensity(); });
 /** Inline validation of the density field; returns the density or null when it is not usable. */
 function validateDensity(): number | null {
   const inp = $<HTMLInputElement>("#density"), err = $("#density-err");
@@ -2449,75 +2955,233 @@ function validateDensity(): number | null {
 }
 let lastMass: [string, string][] = [];
 /** Inputs of the last mass calculation, so the table can be rebuilt in another language (the PDF is English). */
-let lastMassRun: { r: ReturnType<typeof massProperties>; n: number; whole: boolean; density: number } | null = null;
+let lastMassRun: { r: MassResult; c: Combined; n: number; whole: boolean; density: number; perPart: boolean; exact: boolean; ovr: { mass: boolean; com: boolean } } | null = null;
+/** Mass Properties panel (Evaluate ▸ Mass properties): open, Include hidden bodies, Show principal axes, output frame. */
+const mp = {
+  open: false, hidden: false, axes: true,
+  /** Output frame key: "active" (the active CSYS), "global", "f:<feature id>" (a part coordinate system) or "u:<i>" (axes added here). */
+  frame: "active",
+  /** Axes the user added in the panel (picked on the model or typed), world mm. */
+  user: [] as Csys[],
+  /** The next click on the model makes axes (picked, not selected). */
+  picking: false,
+  typing: false,
+};
+const frameOf = (c: Csys | null): Frame | null => (c ? { origin: c.origin, x: c.x, y: c.y, z: c.z } : null);
+/** The output coordinate system: the active one unless the panel asks for the global one. */
+function mpFrame(): Csys | null {
+  const k = mp.frame;
+  if (k === "active") return csys.active;
+  if (k.startsWith("u:")) return mp.user[+k.slice(2)] ?? null;
+  if (k.startsWith("f:") && modeller.active) {
+    const f = modeller.csysList().find(x => x.id === k.slice(2));
+    return f ? makeCsys(f.name, f.o, f.z, f.x) : null;
+  }
+  return null;
+}
+/** Adds user axes and makes them the output frame. */
+function addMassAxes(c: Csys) {
+  mp.user.push(c);
+  mp.frame = `u:${mp.user.length - 1}`;
+  mp.picking = false; mp.typing = false;
+  renderMassPanel(); showMassMarks();
+}
+const fmtI = (v: number, massG: number) => { const u = inertiaUnit(massG); return `${fmtNum(v * u.k)}`; };
 function massRows(): [string, string][] {
   if (!lastMassRun) return [];
-  const { r, n, whole, density } = lastMassRun;
+  const { r, c, n, whole, density, perPart, ovr } = lastMassRun;
+  const rep = massReport(c, frameOf(csys.active)), u = inertiaUnit(c.mass).label, sfx = ` (${t("overridden")})`;
+  const tri = (a: number, b: number, d: number) => `${fmtI(a, c.mass)}, ${fmtI(b, c.mass)}, ${fmtI(d, c.mass)} ${u}`;
   const rows: [string, string][] = [
     ["Scope", whole ? t("whole model") : t("{n} parts", { n })],
-    ["Density", `${density} g/cm³`],
-    ["Volume", fmtVol(r.volume)], ["Mass", fmtMass(r.mass)], ["Surface area", fmtArea(r.area)],
-    ["Centre of mass", fmtVec(r.com)],
+    ["Density", perPart ? t("from part materials") : `${density} g/cm³`],
+    ["Volume", fmtVol(c.volume)], ["Mass", fmtMass(c.mass) + (ovr.mass ? sfx : "")], ["Surface area", fmtArea(c.area)],
+    ["Centre of mass", fmtVec(new THREE.Vector3(...c.com)) + (ovr.com ? sfx : "")],
+    ["Principal moments", tri(...rep.principal.moments)],
+    ["Principal axes", rep.principal.axes.map(a => `(${a.map(x => (Math.abs(x) < 5e-7 ? 0 : x).toFixed(3)).join(", ")})`).join(" ")],
+    ["Moments at centre of mass", `Lxx, Lyy, Lzz = ${tri(rep.atCom.xx, rep.atCom.yy, rep.atCom.zz)}`],
+    ["Products at centre of mass", `Lxy, Lyz, Lzx = ${tri(rep.atCom.xy, rep.atCom.yz, rep.atCom.zx)}`],
+    ["Moments at origin", `Ixx, Iyy, Izz = ${tri(rep.atOrigin.xx, rep.atOrigin.yy, rep.atOrigin.zz)}`],
     ["Bounding box", `${fmtLen(r.bbox.x, false)} × ${fmtLen(r.bbox.y, false)} × ${fmtLen(r.bbox.z)}`],
-    ["Box volume", fmtVol(r.bboxVolume)], ["Fill ratio", r.bboxVolume ? `${((r.volume / r.bboxVolume) * 100).toFixed(1)} %` : "-"],
+    ["Box volume", fmtVol(r.bboxVolume)], ["Fill ratio", r.bboxVolume ? `${((c.volume / r.bboxVolume) * 100).toFixed(1)} %` : "-"],
   ];
   if (r.openParts.length) rows.push(["Warning", t("{n} open shells: volume not reliable", { n: r.openParts.length })]);
-  // Mass property override of a modelled part (FR-MAT-004): entered values replace the calculated ones.
-  const ovr = whole && modeller.active ? modeller.massOverride() : null;
-  if (ovr && (ovr.mass !== undefined || ovr.com)) {
-    const sfx = ` (${t("overridden")})`;
-    for (const row of rows) {
-      if (row[0] === "Mass" && ovr.mass !== undefined) row[1] = fmtMass(ovr.mass * 1000) + sfx;
-      if (row[0] === "Centre of mass" && ovr.com) row[1] = fmtVec(new THREE.Vector3(...ovr.com)) + sfx;
-    }
-  }
-  // Modelled parts: exact principal moments of inertia from the kernel (FR-MAT-002).
-  const mp = whole && modeller.active ? modeller.bodyProps() : null;
-  if (mp?.moments && mp.axes) {
-    const k = density / 1000 / 1000; // mm⁵ × g/mm³ → g·mm² → kg·mm²
-    rows.push(["Principal moments", `${mp.moments.map(v => Number((v * k).toPrecision(5)).toLocaleString("en")).join(", ")} kg·mm²`]);
-    rows.push(["Principal axes", mp.axes.map(a => `(${a.map(c => (Math.abs(c) < 5e-7 ? 0 : c).toFixed(3)).join(", ")})`).join(" ")]);
-  }
   return rows;
 }
-function renderMass() { $("#mass-out").innerHTML = lastMassRun ? kv(massRows().map(([k, v]) => [k, esc(v)])) : ""; }
+function renderMass() {
+  $("#mass-out").innerHTML = lastMassRun ? kv(massRows().map(([k, v]) => [k, esc(v)])) : "";
+  renderMassPanel();
+}
+/** The parts mass properties are taken of: the selected ones, else the shown ones (all with Include hidden bodies). */
+function massParts() {
+  const sel = state.selectedParts.length && state.selectedNode !== viewer.tree ? state.selectedParts : null;
+  return sel ?? (mp.hidden ? viewer.parts : viewer.parts.filter(p => p.visible));
+}
 function runMass() {
   if (!viewer.parts.length) return;
-  const parts = state.selectedParts.length && state.selectedNode !== viewer.tree ? state.selectedParts : viewer.parts.filter(p => p.visible);
+  const parts = massParts();
   const density = validateDensity();
   if (density === null) return;
-  const r = massProperties(viewer, parts, density);
-  lastMassRun = { r, n: parts.length, whole: parts.length === viewer.parts.length, density };
+  // Assemblies take each component's part material (the field's density where a part has none), like the BOM.
+  const each = asm.active ? (p: Part) => { const i = viewer.parts.indexOf(p); return asm.partMasses(i, density) ?? asm.partDensity(i) ?? density; } : density;
+  let r = massProperties(viewer, parts, each);
+  // A modelled part whose bodies have their own materials (FR-MAT-001): each body weighs with its density.
+  const own = modeller.active && parts.length === 1 ? modeller.bodyMasses(density) : null;
+  if (own) {
+    const c = combine(own.map(b => ({ ...b, area: 0 })));
+    r = { ...r, ...c, volume: r.volume, area: r.area, com3: new THREE.Vector3(...c.com), densities: [...new Set(own.map(b => b.density))] };
+  }
+  const whole = !(state.selectedParts.length && state.selectedNode !== viewer.tree);
+  // Mass property override of a modelled part (FR-MAT-004): an entered mass scales the moments with it; an entered centre moves it.
+  const o = whole && modeller.active ? modeller.massOverride() : null;
+  let c: Combined = r;
+  const ovr = { mass: false, com: false };
+  if (o?.mass !== undefined && r.mass > 0) {
+    const k = (o.mass * 1000) / r.mass;
+    c = { ...c, mass: o.mass * 1000, cov: c.cov.map(v => v * k) as Combined["cov"] };
+    ovr.mass = true;
+  }
+  if (o?.com) { c = { ...c, com: [...o.com] }; ovr.com = true; }
+  lastMassRun = { r, c, n: parts.length, whole, density, perPart: r.densities.length > 1 || (asm.active && r.densities.some(d => d !== density)), exact: parts.every(p => p.data.exact), ovr };
   lastMass = withLang("en", massRows);
   renderMass();
-  const ovr = lastMassRun.whole && modeller.active ? modeller.massOverride() : null;
-  hl.com.position.copy(ovr?.com ? new THREE.Vector3(...ovr.com) : r.com);
-  hl.com.visible = $<HTMLInputElement>("#com-show").checked;
+  showMassMarks();
+}
+/** Centre of mass ball (Show CoM or the panel) and principal axes (panel) in the view. */
+function showMassMarks() {
+  const c = lastMassRun?.c;
+  hl.com.visible = !!c && ($<HTMLInputElement>("#com-show").checked || mp.open);
+  mpAxes.visible = !!c && mp.open && mp.axes && c.mass > 0;
+  const f = mp.open ? mpFrame() : null;
+  mpFrameMark.visible = !!f && f !== csys.active;
+  if (f) {
+    mpFrameMark.position.set(...f.origin);
+    mpFrameMark.setRotationFromMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3(...f.x), new THREE.Vector3(...f.y), new THREE.Vector3(...f.z)));
+    mpFrameMark.scale.setScalar(Math.max(viewer.modelSize * 0.1, 1));
+  }
+  if (c) {
+    hl.com.position.set(...c.com);
+    mpAxes.position.set(...c.com);
+    const p = principal(c.cov), L = Math.max(viewer.modelSize * 0.35, 1);
+    p.axes.forEach((a, i) => {
+      const g = (mpAxes.children[i] as THREE.Line).geometry;
+      g.setAttribute("position", new THREE.Float32BufferAttribute([-a[0] * L, -a[1] * L, -a[2] * L, a[0] * L, a[1] * L, a[2] * L], 3));
+      g.computeBoundingSphere();
+    });
+  }
   viewer.invalidate();
 }
 $("#mass-run").addEventListener("click", e => busy(e.currentTarget as HTMLElement, runMass));
-$<HTMLInputElement>("#com-show").addEventListener("change", e => { hl.com.visible = (e.target as HTMLInputElement).checked && lastMass.length > 0; viewer.invalidate(); });
+// Mass properties panel (FR-MAT-002): Evaluate ▸ Mass properties, like a CAD app's dialog but beside the view,
+// following the selection, visibility, units and coordinate system while it is open.
+const mpPanel = $("#mp-panel"), mpBtn = $("#mp-btn");
+function massView(): MassView | null {
+  const run = lastMassRun;
+  if (!run) return null;
+  const active = csys.active, f = mpFrame();
+  const options = [
+    { key: "global", name: t("Default (global)") },
+    ...(active ? [{ key: "active", name: `${t(active.name)} (${t("active")})` }] : []),
+    ...(modeller.active ? modeller.csysList().map(c => ({ key: `f:${c.id}`, name: c.name })) : []),
+    ...mp.user.map((c, i) => ({ key: `u:${i}`, name: c.name })),
+  ];
+  const key = f ? mp.frame : "global";
+  const notes: string[] = [];
+  if (run.r.openParts.length) notes.push(t("{n} open shells: volume not reliable", { n: run.r.openParts.length }));
+  if (!run.exact) notes.push(t("Some values come from the tessellation, so curved faces make them approximate."));
+  if (run.c.partial) notes.push(t("Some bodies have no moments of inertia; only their mass is counted."));
+  if (run.perPart) notes.push(t("Each part uses its own material; parts without one use {d} g/cm³.", { d: run.density }));
+  if (run.c.mass <= 0) notes.push(t("The density is 0, so there is no mass."));
+  return {
+    rep: massReport(run.c, frameOf(f)),
+    scope: run.whole ? t("Whole model ({n} parts)", { n: run.n }) : t("{n} selected parts", { n: run.n }),
+    density: run.perPart ? t("from part materials") : `${run.density} g/cm³`,
+    frame: { name: f ? t(f.name) : t("Default (global)"), options, key, picking: mp.picking, typing: mp.typing, user: key.startsWith("u:"), unit: units.current },
+    hidden: mp.hidden, axes: mp.axes, notes, overridden: run.ovr, canMaterial: !asm.active,
+  };
+}
+function renderMassPanel() {
+  mpPanel.hidden = !mp.open;
+  mpBtn.classList.toggle("on", mp.open);
+  mpBtn.setAttribute("aria-pressed", String(mp.open));
+  if (mp.open) mpPanel.innerHTML = massPanelHtml(massView(), t("Open a model to begin."));
+}
+function openMassPanel(on = !mp.open) {
+  mp.open = on;
+  if (on && viewer.parts.length) runMass();
+  renderMassPanel();
+  showMassMarks();
+}
+/** Runs again while the panel is open (selection, visibility or a rebuild changed what it measures). */
+function massChanged() { if (mp.open && viewer.parts.length) runMass(); }
+/** Output axes other than the global ones, drawn while the panel is open. */
+const mpFrameMark = new THREE.AxesHelper(1);
+(mpFrameMark.material as THREE.LineBasicMaterial).depthTest = false;
+mpFrameMark.renderOrder = 2000;
+mpFrameMark.visible = false;
+viewer.scene.add(mpFrameMark);
+mpBtn.addEventListener("click", () => openMassPanel());
+mpPanel.addEventListener("click", e => {
+  const a = (e.target as HTMLElement).closest<HTMLElement>("[data-mp]")?.dataset.mp;
+  if (a === "close") openMassPanel(false);
+  else if (a === "recalc") runMass();
+  else if (a === "pick") { mp.picking = !mp.picking; mp.typing = false; if (mp.picking && state.tool !== "select") setTool("select"); renderMassPanel(); }
+  else if (a === "type") { mp.typing = !mp.typing; mp.picking = false; renderMassPanel(); mpPanel.querySelector<HTMLInputElement>("[data-ax]")?.focus(); }
+  else if (a === "delframe" && mp.frame.startsWith("u:")) {
+    mp.user.splice(+mp.frame.slice(2), 1);
+    mp.frame = "global";
+    renderMassPanel(); showMassMarks();
+  } else if (a === "addaxes") {
+    const num = (k: string) => parseFloat(mpPanel.querySelector<HTMLInputElement>(`[data-ax="${k}"]`)?.value.replace(",", ".") ?? "");
+    const v3 = (k: string): V3 => [num(`${k}0`), num(`${k}1`), num(`${k}2`)];
+    const o = v3("o").map(x => x * unitMm()) as V3, x = v3("x"), z = v3("z");
+    const bad = [...o, ...x, ...z].some(n => !isFinite(n)) || Math.hypot(...x) < 1e-9 || Math.hypot(...z) < 1e-9;
+    const cr = Math.hypot(x[1] * z[2] - x[2] * z[1], x[2] * z[0] - x[0] * z[2], x[0] * z[1] - x[1] * z[0]) / (Math.hypot(...x) * Math.hypot(...z) || 1);
+    if (bad || cr < 1e-6) { toast(t("Enter an origin and two directions that are not parallel."), true); return; }
+    const name = mpPanel.querySelector<HTMLInputElement>('[data-ax="name"]')?.value.trim() || t("Axes {n}", { n: mp.user.length + 1 });
+    addMassAxes(makeCsys(name, o, z, x));
+  }
+  else if (a === "copy") {
+    const v = massView();
+    if (v) navigator.clipboard?.writeText(massText(v)).then(() => toast(t("Mass properties copied")), () => toast(t("Could not copy to the clipboard"), true));
+  } else if (a === "material") {
+    if (modeller.active) modeller.editProps();
+    else { panels.show("right"); showPage("mass"); $("#material").focus(); }
+  }
+});
+mpPanel.addEventListener("change", e => {
+  const el = e.target as HTMLInputElement, k = el.dataset.mp;
+  if (k === "frame") { mp.frame = el.value; renderMassPanel(); showMassMarks(); }
+  else if (k === "hidden") { mp.hidden = el.checked; runMass(); }
+  else if (k === "axes") { mp.axes = el.checked; showMassMarks(); }
+});
+mpPanel.addEventListener("keydown", e => { if (e.key === "Escape") { e.stopPropagation(); openMassPanel(false); mpBtn.focus(); } });
+onLangChange(renderMassPanel);
+
+$<HTMLInputElement>("#com-show").addEventListener("change", showMassMarks);
 
 // ---------- export ----------
+/** An empty new part or assembly: say so instead of doing nothing. */
+const nothingToExport = () => toast(t("There is no body to export yet."), true);
 const baseName = () => state.fileName.replace(/\.[^.]+$/, "") || "model";
 function bgColor() { return getComputedStyle(document.documentElement).getPropertyValue("--vp-top").trim() || "#ffffff"; }
 for (const [id, transparent] of [["#png", false], ["#png-t", true]] as const) {
   $(id).addEventListener("click", () => {
-    if (!viewer.parts.length) return;
+    if (!viewer.parts.length) { nothingToExport(); return; }
     const scale = parseInt($<HTMLSelectElement>("#png-scale").value);
     const c = snapshot(viewer, annotations, { scale, transparent, background: bgColor() });
     c.toBlob(b => b && download(b, `${baseName()}${transparent ? "-transparent" : ""}.png`), "image/png");
   });
 }
 $$("[data-export]").forEach(b => b.addEventListener("click", async () => {
-  if (!viewer.parts.length) return;
+  if (!viewer.parts.length) { nothingToExport(); return; }
   try { await exportMesh(viewer, b.dataset.export as "stl", baseName()); }
   catch (err) { toast(t("Export failed: {err}", { err: (err as Error).message }), true); }
 }));
-function report() {
-  if (!viewer.parts.length) return;
+async function report() {
+  if (!viewer.parts.length) { nothingToExport(); return; }
   if (!lastMass.length) runMass();
-  const s = viewer.computeBounds().getSize(new THREE.Vector3());
+  const s = overallSize();
   const m = state.meta;
   const meta: [string, string][] = [
     ["File", state.fileName], ["Parts", String(viewer.parts.length)],
@@ -2529,8 +3193,9 @@ function report() {
     if (m.timestamp) meta.push(["Timestamp", m.timestamp]);
     if (m.materials.length) meta.push(["Materials", m.materials.join(", ")]);
   }
+  const pdf = await pdfWriter();
   const image = snapshot(viewer, annotations, { scale: 2, transparent: false, background: "#ffffff" });
-  withLang("en", () => inspectionReport({ fileName: state.fileName, meta, mass: lastMass, measurements: state.measurements, image }));
+  withLang("en", () => inspectionReport(pdf, { fileName: state.fileName, meta, mass: lastMass, measurements: state.measurements, image }));
 }
 $("#report").addEventListener("click", e => busy(e.currentTarget as HTMLElement, report));
 $("#step-export").addEventListener("click", e => busy(e.currentTarget as HTMLElement, exportStep));
@@ -2559,7 +3224,7 @@ const plainLabel = (s: string) => s.replace(/\s*•$/, "");
 /** Saves the live document (File ▸ Save / Save as). A model file has no document of ours: Save as keeps a copy of it. */
 async function saveLive(as: boolean) {
   const k = fileMenuLive();
-  if (k === "drawing") await drawing.save();
+  if (k === "drawing") await drawing.save(as);
   else if (k === "part") await modeller.save(as);
   else if (k === "asm") await asm.save(as);
   else if (k === "model" && modelSrc && as) download(new Blob([modelSrc.data]), modelSrc.name);
@@ -2580,6 +3245,7 @@ const fileMenu = new FileMenu({
   newPart: () => $("#new-part").click(),
   newAsm: () => $("#new-asm").click(),
   newDrawing: () => $("#new-drawing").click(),
+  get openDrawing() { return liveModelKey() ? () => void openDrawingOf() : null; },
   get asmFromPart() { return modeller.active && !drawing.open ? () => $("#new-asm-part").click() : null; },
   async close() { const a = docs?.active; if (a) await docs!.close(a.id); },
   async closeAll() {
@@ -2642,6 +3308,7 @@ const fileMenu = new FileMenu({
     if (drawing.open) void drawing.exportAs("print");
     else print3d();
   },
+  vault: btn => vaultMenu.toggle(btn),
   properties() {
     if (drawing.open) drawing.sheetProperties();
     else if (fileMenuLive() === "part") modeller.editProps();
@@ -2719,4 +3386,4 @@ refreshMeasurements();
 // Orthographic by default (true dimensions on screen); the last choice is remembered.
 setProjection(storage.get("sv:proj") === "perspective" ? "perspective" : "orthographic");
 
-if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { surfAna, modeller, asm, motion, drawing, drw: drawing.debug(), vault: vaultPanel, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, csys, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, timings: () => Object.assign(timings, kernel.timing) } });
+if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { tutorial, surfAna, modeller, asm, motion, drawing, drw: drawing.debug(), vault: vaultPanel, vaultFolders: { useMemory: useMemoryFolders }, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, csys, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, buildCache: { stats: cacheStats, size: cacheSize, clear: cacheClear }, timings: () => Object.assign(timings, kernel.timing) } });
