@@ -361,7 +361,7 @@ details > :last-child { margin-bottom: 12px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .bar { width: 220px; height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
 .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
-/* Toasts: bottom-right stack. Info/success dismiss after 4 s, warnings and errors stay until closed. */
+/* Toasts: bottom-right stack. Info/success dismiss after 4 s, warnings after 10 s, errors after 20 s (not while hovered). */
 .toasts {
   position: fixed; right: 16px; bottom: 40px; z-index: 1200; display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
   max-width: min(420px, calc(100vw - 32px)); pointer-events: none;
