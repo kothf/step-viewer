@@ -11,7 +11,11 @@ export interface RecentEntry {
   size: number;
   /** How many files the entry opens. */
   count: number;
+  /** The vault file it was opened from or saved to: it opens through that vault again. */
+  vault?: RecentVault;
 }
+/** A vault file behind a recent entry: the vault (its folder or browser storage name) and the file's id. */
+export interface RecentVault { vault: string; where: "folder" | "browser"; id: string }
 interface Stored extends RecentEntry { key: string; files: { name: string; data: ArrayBuffer }[] }
 
 export const RECENT_MAX = 8;
@@ -38,13 +42,26 @@ async function all(db: IDBDatabase): Promise<Stored[]> {
 /** The list, newest first (empty when storage is unavailable). */
 export async function recentList(): Promise<RecentEntry[]> {
   try {
+    await queue;
     const db = await open();
-    try { return (await all(db)).map(({ name, at, size, count }) => ({ name, at, size, count })); } finally { db.close(); }
+    try { return (await all(db)).map(({ name, at, size, count, vault }) => ({ name, at, size, count, vault })); } finally { db.close(); }
   } catch { return []; }
 }
 
-/** Remembers files just opened or saved; the main file comes first. Older entries past RECENT_MAX go. */
-export async function recentAdd(files: { name: string; data: ArrayBuffer | Uint8Array | Blob }[]): Promise<void> {
+/** Writes one after another, so a vault link noted right after a plain open of the same file wins. */
+let queue: Promise<void> = Promise.resolve();
+
+/**
+ * Remembers files just opened or saved; the main file comes first. Older entries past RECENT_MAX go.
+ * `vault` = the vault file they are (absent: a loose file, which drops an older vault link of the entry).
+ */
+export function recentAdd(files: { name: string; data: ArrayBuffer | Uint8Array | Blob }[], vault?: RecentVault | null): Promise<void> {
+  const run = queue.then(() => put(files, vault ?? undefined));
+  queue = run;
+  return run;
+}
+
+async function put(files: { name: string; data: ArrayBuffer | Uint8Array | Blob }[], vault: RecentVault | undefined): Promise<void> {
   if (!files.length) return;
   try {
     const list = await Promise.all(files.map(async f => ({
@@ -57,7 +74,7 @@ export async function recentAdd(files: { name: string; data: ArrayBuffer | Uint8
     const db = await open();
     try {
       const tx = db.transaction(STORE, "readwrite"), st = tx.objectStore(STORE);
-      st.put({ key, name: list[0].name, at: Date.now(), size, count: list.length, files: list } satisfies Stored);
+      st.put({ key, name: list[0].name, at: Date.now(), size, count: list.length, files: list, ...(vault ? { vault } : {}) } satisfies Stored);
       const old = ((await req(st.getAll())) as Stored[]).sort((a, b) => b.at - a.at).slice(RECENT_MAX);
       for (const o of old) st.delete(o.key);
       await new Promise<void>((res, rej) => { tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); });
@@ -67,11 +84,17 @@ export async function recentAdd(files: { name: string; data: ArrayBuffer | Uint8
 
 /** The files of the i-th entry (newest first), or null. */
 export async function recentFiles(i: number): Promise<File[] | null> {
+  return (await recentItem(i))?.files ?? null;
+}
+
+/** The i-th entry's files and its vault link, or null. */
+export async function recentItem(i: number): Promise<{ files: File[]; vault?: RecentVault } | null> {
   try {
+    await queue;
     const db = await open();
     try {
       const e = (await all(db))[i];
-      return e ? e.files.map(f => new File([f.data], f.name)) : null;
+      return e ? { files: e.files.map(f => new File([f.data], f.name)), vault: e.vault } : null;
     } finally { db.close(); }
   } catch { return null; }
 }
