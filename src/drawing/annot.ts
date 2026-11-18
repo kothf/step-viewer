@@ -1630,7 +1630,7 @@ export function stackItem(s: string, ctx: Pick<AnnotCtx, "bom" | "cuts" | "welds
 
 /** The cut list table's columns (a CAD app's Weldment Cut List: ITEM NO., QTY., DESCRIPTION, LENGTH, ANGLE1, ANGLE2), with Material and Mass (kg) when asked. */
 export function cutCols(a: CutTableAnnot): string[] {
-  return ["Item", "Qty", "Description", "Length", "Angle 1", "Angle 2", ...(a.mat ? ["Material"] : []), ...(a.mass ? ["Mass (kg)"] : [])];
+  return ["Item", "Qty", ...(a.part ? ["Part number"] : []), "Description", "Length", "Angle 1", "Angle 2", ...(a.mat ? ["Material"] : []), ...(a.mass ? ["Mass (kg)"] : [])];
 }
 
 /**
@@ -1651,8 +1651,32 @@ export function cutDesc(c: CutInfo, ctx: Pick<AnnotCtx, "dec" | "label">, prec?:
 
 export function cutRows(a: CutTableAnnot, cuts: CutInfo[], ctx: AnnotCtx): string[][] {
   const f = (v: number) => fmtNum(v, a.prec, ctx.dec), desc = (c: CutInfo) => cutDesc(c, ctx, a.prec);
-  return cuts.filter(c => a.beads !== false || c.kind !== "bead").map(c => [String(c.item), String(c.qty), desc(c), c.length != null ? f(c.length) : "",
-    c.a1 != null ? `${f(c.a1)}°` : "", c.a2 != null ? `${f(c.a2)}°` : "", ...(a.mat ? [c.mat ?? ""] : []), ...(a.mass ? [fmtNum(c.kg, a.prec ?? 2, ctx.dec)] : [])]);
+  const n = cutCols(a).length, out: string[][] = [];
+  let sub: string | undefined;
+  for (const c of cuts) {
+    if (a.beads === false && c.kind === "bead") continue;
+    // Sub-weldments head their own items (a CAD app's cut list shows each as its own group, weldments exam #15).
+    if (c.sub !== sub) { sub = c.sub; if (sub) { const r = Array<string>(n).fill(""); r[a.part ? 3 : 2] = ctx.label("Sub-weldment: {name}", { name: sub }); out.push(r); } }
+    out.push([String(c.item), String(c.qty), ...(a.part ? [c.part ?? ""] : []), desc(c), c.length != null ? f(c.length) : "",
+      c.a1 != null ? `${f(c.a1)}°` : "", c.a2 != null ? `${f(c.a2)}°` : "", ...(a.mat ? [wrapCell(c.mat ?? "", CELL_W)] : []), ...(a.mass ? [fmtNum(c.kg, a.prec ?? 2, ctx.dec)] : [])]);
+  }
+  return out;
+}
+
+/** Longest line of a wrapped Material cell, in characters (a long grade name made the column ~55 mm wide, exam #15). */
+const CELL_W = 24;
+
+/** Text broken into lines of at most `w` characters at spaces (a longer word stays whole), joined with "\n" for `tablePrims`. */
+export function wrapCell(s: string, w: number): string {
+  if (s.length <= w) return s;
+  const lines: string[] = [];
+  let cur = "";
+  for (const word of s.split(" ")) {
+    if (cur && cur.length + 1 + word.length > w) { lines.push(cur); cur = word; }
+    else cur = cur ? `${cur} ${word}` : word;
+  }
+  if (cur) lines.push(cur);
+  return lines.join("\n");
 }
 
 // ---------- model items ----------

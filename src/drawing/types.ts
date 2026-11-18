@@ -205,7 +205,7 @@ export interface BalloonAnnot { id: string; t: "balloon"; view: string; ref: Geo
 export interface WeldTableAnnot { id: string; t: "wtable"; view: string; pos: [number, number]; prec?: number }
 /** Weldment cut list table (a CAD app's Weldment Cut List table, FR-FT-121): the part's cut list items beside a view of it;
  *  `beads` false leaves weld beads out, `mass` adds a mass column. */
-export interface CutTableAnnot { id: string; t: "ctable"; view: string; pos: [number, number]; prec?: number; beads?: boolean; mass?: boolean; /** Material column (before Mass). */ mat?: boolean }
+export interface CutTableAnnot { id: string; t: "ctable"; view: string; pos: [number, number]; prec?: number; beads?: boolean; mass?: boolean; /** Material column (before Mass). */ mat?: boolean; /** Part number column (after Qty), from the Cut List dialog. */ part?: boolean }
 export interface BendTableAnnot { id: string; t: "btable"; view: string; pos: [number, number]; prec?: number }
 
 export interface HoleTableAnnot { id: string; t: "htable"; view: string; origin: GeoRef; holes: GeoRef[]; pos: [number, number]; prec?: number }

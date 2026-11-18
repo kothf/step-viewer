@@ -184,7 +184,9 @@ function buildPart(doc: PartDoc, lite = false, variant = false): { shape: any; m
         ++n;
         for (const k of c.bodies) for (const nm of namesOf.get(k) ?? []) cutFaces[nm] ??= n;
         const mat = itemMatText(c, p, doc.bodies, doc.material?.name ?? "");
+        const sub = c.sub ? doc.subWelds?.find(w => w.id === c.sub)?.name : undefined;
         cuts.push({ item: n, kind: c.kind, desc: p?.desc || c.desc, ...(p?.desc ? { own: true } : {}), qty: c.kind === "bead" ? 1 : c.qty, kg, ...(mat ? { mat } : {}),
+          ...(p?.part ? { part: p.part } : {}), ...(sub ? { sub } : {}),
           ...(c.length != null ? { length: c.length } : {}), ...(c.kind === "member" ? { a1: c.angle1 ?? 0, a2: c.angle2 ?? 0 } : {}),
           ...(c.plate ? { plate: c.plate } : {}), ...(c.box ? { box: c.box } : {}), ...(c.inter ? { inter: c.inter } : {}) });
       }

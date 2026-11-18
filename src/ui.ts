@@ -15,6 +15,8 @@ export const storage = {
 export type ToastKind = "info" | "success" | "warn" | "error";
 /** Info and success toasts dismiss themselves after this many ms; warnings and errors stay until closed. */
 export const TOAST_MS = 4000;
+/** Warnings stay longer than information, but fade too (weldments exam #9: a warning sat over the view for two hours); errors stay until dismissed. */
+export const WARN_MS = 10000;
 const MAX_TOASTS = 4;
 
 /** Shows a non-blocking notification in the bottom-right stack. */
@@ -33,6 +35,7 @@ export function toast(msg: string, kind: ToastKind | boolean = "info") {
   el.querySelector(".x")!.addEventListener("click", () => el.remove());
   host.appendChild(el);
   if (k === "info" || k === "success") window.setTimeout(() => el.remove(), TOAST_MS);
+  else if (k === "warn") window.setTimeout(() => el.remove(), WARN_MS);
   const all = host.querySelectorAll(".toast");
   for (let i = 0; i < all.length - MAX_TOASTS; i++) all[i].remove();
 }
