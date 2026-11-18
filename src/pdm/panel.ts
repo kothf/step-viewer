@@ -46,6 +46,8 @@ export interface VaultHost {
   doc(): VaultDoc | null;
   /** A part or assembly was just saved to the vault: its open drawings go in beside it. */
   added?(id: string): Promise<void>;
+  /** A small PNG of the live document's view (the explorer's preview), or null when nothing is shown. */
+  thumb?(): Promise<Uint8Array | null>;
 }
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -104,6 +106,19 @@ export class VaultPanel {
   pickZip() { this.host.querySelector<HTMLInputElement>("#v-zip")?.click(); }
   /** Called when the vault opens, closes or its files change (the Vault menu's button follows). */
   onChange: (() => void) | null = null;
+  /** More listeners of the same changes (the Vault explorer). */
+  readonly listeners = new Set<() => void>();
+  private changed() { this.onChange?.(); for (const fn of this.listeners) fn(); }
+  /** The vault's files (not in the recycle bin), as last read. */
+  get fileList(): readonly FileRec[] { return this.files; }
+  /** A file's badge facts (checked out here, modified, no local copy), as last read. */
+  statusOf(id: string) { return this.state.get(id); }
+  /** The file uses older versions of what it references (FR-PDM-022). */
+  behindOf(id: string) { return this.behindList.find(b => b.id === id) ?? null; }
+  /** Notifications since the last visit. */
+  get unseenCount() { return this.unseen; }
+  /** Opens the Vault explorer (the side panel's button). */
+  onExplorer: (() => void) | null = null;
   /** Search results shown instead of all files (FR-PDM-042), with what was searched. */
   private found: { ids: Set<string>; label: string } | null = null;
   /** Users whose check-out of the selected file lost to an earlier one (FR-PDM-071). */
@@ -366,7 +381,7 @@ export class VaultPanel {
     if (this.openId) this.app.doc()?.setVault(null);
     this.ties = new WeakSet();
     void this.render();
-    this.onChange?.();
+    this.changed();
     void this.startCard();
   }
 
@@ -388,7 +403,7 @@ export class VaultPanel {
       this.behindList = await v.behind().catch(() => []);
     }
     await this.render();
-    this.onChange?.();
+    this.changed();
     void this.startCard();
   }
 
@@ -401,10 +416,11 @@ export class VaultPanel {
     await this.refresh();
   }
 
-  async addFiles(list: File[], withParts?: boolean) {
+  async addFiles(list: File[], withParts?: boolean, folder = "") {
     const v = this.vault;
     if (!v) return;
-    const items = await Promise.all(list.map(async f => ({ name: f.name, data: new Uint8Array(await f.arrayBuffer()) })));
+    const dir = folder ? `${folder.replace(/\/+$/, "")}/` : "";
+    const items = await Promise.all(list.map(async f => ({ name: dir + f.name, data: new Uint8Array(await f.arrayBuffer()) })));
     const chosen = await this.embeddedOffer(items.map(it => ({ path: it.name, data: it.data })), items.map(it => it.name), withParts);
     if (!chosen) return;
     if (items.length + chosen.length > 3) toast(t("Adding {n} files to the vault…", { n: items.length + chosen.length }));
@@ -471,7 +487,7 @@ export class VaultPanel {
    * Save to vault (FR-PDM-003): the live part, assembly or drawing goes in as a new file at version 1, checked
    * out here so work goes on; from then on Save writes its working copy in the vault.
    */
-  async saveOpenDoc() {
+  async saveOpenDoc(folder = "") {
     const v = this.vault, p = this.app.doc();
     if (!v) { toast(t("Open or create a vault first."), true); return; }
     if (!p) { toast(t("Open or create a part, an assembly or a drawing first."), true); return; }
@@ -479,10 +495,11 @@ export class VaultPanel {
     await this.run(async () => {
       const bytes = await p.bytes();
       if (!bytes) return;
-      const f = await v.add(p.name, bytes, "Added");
+      const f = await v.add(folder ? `${folder.replace(/\/+$/, "")}/${p.name}` : p.name, bytes, "Added");
       await v.checkOut(f.id);
       this.shown.set(f.id, 1);
       p.setVault(this.tie(f.id));
+      void this.keepThumb(f.id, true);
       p.markSaved();
       this.sel = f.id;
       toast(t("{name} is in the vault, checked out to you", { name: p.name }), "success");
@@ -570,7 +587,7 @@ export class VaultPanel {
       await this.app.open(version ? name.replace(/(\.[^.]+)$/, ` (v${version})$1`) : name, data, replace && !version);
       // A part, assembly or drawing opened from the vault saves back into it (an old version is a loose copy).
       const d = this.app.doc();
-      if (!version && d && d.kind === f.kind) { this.shown.set(id, v.latest(f).n); d.setVault(this.tie(id)); }
+      if (!version && d && d.kind === f.kind) { this.shown.set(id, v.latest(f).n); d.setVault(this.tie(id)); setTimeout(() => void this.keepThumb(id), 4000); }
     } catch (e) { toast(errText(e), true); }
   }
 
@@ -602,7 +619,7 @@ export class VaultPanel {
         return lines.join("\n");
       },
       get readOnly() { return !cur() || !panel.state.get(id)?.mine; },
-      save: async bytes => { await v.saveWorking(id, bytes); await this.refresh(); },
+      save: async bytes => { await v.saveWorking(id, bytes); await this.refresh(); void this.keepThumb(id, true); },
       checkOut: async () => {
         await this.run(() => v.checkOut(id));
         // Checked out over an older version on screen: the latest comes in first, so Save cannot undo it.
@@ -948,6 +965,13 @@ export class VaultPanel {
       const el = d.el.querySelector<HTMLInputElement>(`[name="c:${CSS.escape(fd.name)}"]`);
       if (el) vals[fd.name] = el.type === "checkbox" ? String(el.checked) : el.value;
     }
+    await this.saveCard(id, vals);
+  }
+
+  /** Writes a file's data card (checked out here). */
+  async saveCard(id: string, vals: Record<string, string>) {
+    const v = this.vault;
+    if (!v) return;
     await this.run(async () => {
       await v.setCard(id, vals);
       // The open part gets the properties too (its saved copy is the vault's working copy).
@@ -956,9 +980,28 @@ export class VaultPanel {
     });
   }
 
+  // ---------- thumbnails (the Vault explorer's preview) ----------
+
+  /** Files whose picture was taken this session. */
+  private thumbed = new Set<string>();
+  /**
+   * Keeps a picture of the live document's view as its vault file's thumbnail: after Save to vault, Save and
+   * Check in, and once a session for a file opened from the vault that has none yet.
+   */
+  async keepThumb(id: string, force = false) {
+    const v = this.vault;
+    if (!v || !this.app.thumb || this.openId !== id || (!force && this.thumbed.has(id))) return;
+    this.thumbed.add(id);
+    try {
+      if (!force && await v.thumb(id)) return;
+      const png = await this.app.thumb();
+      if (png && this.vault === v) { await v.setThumb(id, png); for (const fn of this.listeners) fn(); }
+    } catch { /* no picture: the explorer shows the file's icon */ }
+  }
+
   // ---------- references (FR-PDM-021/022, 052) ----------
 
-  private treeHtml(n: TreeNode, depth = 0): string {
+  treeHtml(n: TreeNode, depth = 0): string {
     const li = (c: TreeNode): string => `<li translate="no">${c.qty > 1 ? `<b>${c.qty}×</b> ` : ""}${esc(c.path)}${c.missing ? ` <span class="v-bad">${esc(t("missing"))}</span>` : ` · v${c.version}${c.rev ? ` · ${esc(c.rev)}` : ""} · <span translate="yes">${esc(tn(c.state))}</span>`}${c.linked ? ` · <span class="v-link" translate="yes">⛓ ${esc(t("linked"))}</span>` : ""}${c.newer ? ` <span class="v-warn-i" translate="yes">${esc(t("v{n} in the vault", { n: c.newer }))}</span>` : ""}${c.cycle ? " ↻" : ""}${c.children.length && depth < 20 ? `<ul>${c.children.map(x => li(x)).join("")}</ul>` : ""}</li>`;
     return `<ul class="v-tree">${depth ? li(n) : n.children.map(li).join("")}</ul>`;
   }
@@ -1071,6 +1114,45 @@ export class VaultPanel {
     if (this.openId === id) await this.reopen(id);
   }
 
+  /**
+   * Moves files into a folder ("" = the vault's top), keeping their names (the explorer's drag and drop). Files
+   * that use a moved file get a new version with the new path, so this asks first when there are any.
+   */
+  async moveMany(ids: string[], folder: string): Promise<boolean> {
+    const v = this.vault;
+    if (!v) return false;
+    const dir = folder.replace(/\/+$/, "");
+    const moves = ids.map(id => this.rec(id)).filter(Boolean).map(f => ({ f, to: (dir ? `${dir}/` : "") + f.path.split("/").pop()! })).filter(m => m.to !== m.f.path);
+    if (!moves.length) return false;
+    const users = new Set<string>();
+    for (const m of moves) for (const u of await v.usersOf(m.f.id)) if (!ids.includes(u.id)) users.add(u.path);
+    const where = dir || v.info.name;
+    const q = users.size
+      ? t("Move {n} file to {folder}? Files that use it get a new version with the new path: {files}|Move {n} files to {folder}? Files that use them get a new version with the new paths: {files}", { n: moves.length, folder: where, files: [...users].join(", ") })
+      : t("Move {n} file to {folder}?|Move {n} files to {folder}?", { n: moves.length, folder: where });
+    if (!await confirmModal(q, t("Move"), t("Move files"))) return false;
+    let done = 0;
+    await this.run(async () => {
+      for (const m of moves) { await v.rename(m.f.id, m.to); done++; }
+      toast(t("Moved {n} file to {folder}|Moved {n} files to {folder}", { n: done, folder: where }), "success");
+    });
+    if (this.openId && moves.some(m => m.f.id === this.openId)) await this.reopen(this.openId);
+    return done > 0;
+  }
+
+  /** Renames a folder: every file under it moves (the explorer's folder menu). */
+  async renameFolder(from: string, to: string) {
+    const v = this.vault;
+    const dst = to.trim().replace(/^\/+|\/+$/g, "");
+    if (!v || !dst || dst === from) return;
+    const inside = this.files.filter(f => f.path.startsWith(`${from}/`));
+    await this.run(async () => {
+      for (const f of inside) await v.rename(f.id, dst + f.path.slice(from.length));
+      toast(t("Renamed to {name}", { name: dst }), "success");
+    });
+    if (this.openId && inside.some(f => f.id === this.openId)) await this.reopen(this.openId);
+  }
+
   async copyTreeDlg(id: string) {
     const v = this.vault;
     if (!v) return;
@@ -1113,10 +1195,10 @@ export class VaultPanel {
   // ---------- several files at once (FR-PDM-080) ----------
 
   /** The selected files that can be checked out / are checked out here. */
-  private canCheckOut(id: string) { const f = this.rec(id); return !f.checkout && !!this.vault?.stateOf(f.state).checkout; }
-  private isMine(id: string) { return !!this.state.get(id)?.mine; }
+  canCheckOut(id: string) { const f = this.rec(id); return !f.checkout && !!this.vault?.stateOf(f.state).checkout; }
+  isMine(id: string) { return !!this.state.get(id)?.mine; }
   /** Transitions every one of the files has (by name). */
-  private commonTransitions(ids: string[]) {
+  commonTransitions(ids: string[]) {
     const v = this.vault!;
     const lists = ids.map(id => v.transitionsOf(this.rec(id)).map(x => x.name));
     return lists.length ? lists[0].filter(n => lists.every(l => l.includes(n))) : [];
@@ -1371,8 +1453,17 @@ export class VaultPanel {
     btns[0]?.focus();
   }
 
+  /** A menu of commands at x, y (the explorer's menus look and work like the panel's). */
+  showMenuAt(items: ([string, () => void, boolean?] | null)[], x: number, y: number, back?: HTMLElement | null) { this.showMenu(items, x, y, back); }
+
+  /** Asks for one line of text; null when cancelled. */
+  async askText(title: string, label: string, value: string, ok: string): Promise<string | null> {
+    const r = await this.form(title, `<label class="v-lbl">${esc(label)}<input name="v" value="${esc(value)}" maxlength="200" autofocus translate="no" /></label>`, ok);
+    return r ? String(r.v) : null;
+  }
+
   /** The ⋯ menu: the vault's own commands, kept out of the panel's top. */
-  private moreMenu(x: number, y: number, back: HTMLElement) {
+  moreMenu(x: number, y: number, back: HTMLElement) {
     this.showMenu([
       [t("What's behind…") + (this.behindCount ? ` (${this.behindCount})` : ""), () => void this.behindDlg(), false, "behind"],
       [t("Notifications") + (this.unseen ? ` (${this.unseen})` : ""), () => void this.notificationsDlg(), false, "notes"],
@@ -1403,10 +1494,15 @@ export class VaultPanel {
 
   /** The right-click menu of the selected file(s). */
   private rowMenu(x: number, y: number) {
-    const v = this.vault;
     const ids = this.selected;
+    this.fileMenu(ids, x, y, this.host.querySelector<HTMLElement>(`.v-row[data-id="${ids[0]}"]`));
+  }
+
+  /** The right-click menu of some files (the side panel's or the explorer's selection); `extra` goes after Open. */
+  fileMenu(ids: string[], x: number, y: number, backEl: HTMLElement | null, extra: ([string, () => void] | null)[] = []) {
+    const v = this.vault;
     if (!v || !ids.length) return;
-    const back = () => this.host.querySelector<HTMLElement>(`.v-row[data-id="${ids[0]}"]`);
+    const back = () => backEl;
     const trs = this.commonTransitions(ids).map(n => [`${t("Change state")}: ${tn(n)}`, () => void this.transitionDlg(ids, n)] as [string, () => void]);
     if (ids.length > 1) {
       this.showMenu([
@@ -1417,12 +1513,14 @@ export class VaultPanel {
         null, ...trs, null,
         [t("Request change…"), () => void this.newChange(ids)],
         [t("Delete"), () => void this.deleteMany(ids)],
+        ...(extra.length ? [null, ...extra] : []),
       ], x, y, back());
       return;
     }
     const id = ids[0], f = this.rec(id), st = this.state.get(id);
     this.showMenu([
       [t("Open"), () => void this.openFile(id), true],
+      ...extra,
       null,
       this.canCheckOut(id) ? [t("Check out"), () => void this.checkOut(id)] : null,
       st?.mine ? [t("Check in…"), () => void this.checkIn(id)] : null,
@@ -1851,7 +1949,7 @@ export class VaultPanel {
       })();
       const chipN = (c: Chip) => (this.found ? this.files.filter(f => this.found!.ids.has(f.id)) : this.files).filter(this.chipTest(c)).length;
       const chips = this.files.length ? `<div class="v-chips" role="group" aria-label="${esc(t("Show"))}">${CHIPS.filter(([c]) => c === "all" || c === this.filter || chipN(c)).map(([c, l]) => `<button class="v-chip${c === this.filter ? " on" : ""}" data-chip="${c}" aria-pressed="${c === this.filter}">${esc(t(l))}${c === "all" ? "" : ` <span class="v-chip-n">${chipN(c)}</span>`}</button>`).join("")}</div>` : "";
-      h.innerHTML = `<div class="pad v-top"><div class="v-title"><b translate="no">${esc(v.info.name)}</b><span class="v-who muted" title="${esc(t("User"))}" translate="no">${esc(this.user)}</span><button class="btn small v-more" data-a="more" aria-haspopup="menu" title="${esc(t("More vault commands"))}" aria-label="${esc(t("More vault commands"))}">⋯${this.unseen ? ` <span class="v-badge">${this.unseen}</span>` : ""}</button><button class="btn small" data-a="close">${esc(t("Close vault"))}</button></div>
+      h.innerHTML = `<div class="pad v-top"><div class="v-title"><b translate="no">${esc(v.info.name)}</b><span class="v-who muted" title="${esc(t("User"))}" translate="no">${esc(this.user)}</span><button class="btn small" data-a="explorer" title="${esc(t("The vault as a file manager in a tab of its own: folders, columns, preview, history"))}">${esc(t("Explorer"))}</button><button class="btn small v-more" data-a="more" aria-haspopup="menu" title="${esc(t("More vault commands"))}" aria-label="${esc(t("More vault commands"))}">⋯${this.unseen ? ` <span class="v-badge">${this.unseen}</span>` : ""}</button><button class="btn small" data-a="close">${esc(t("Close vault"))}</button></div>
         <div class="row"><button class="btn small" data-a="add">${esc(t("Add files…"))}</button><button class="btn small" data-a="addfolder" title="${esc(t("Files already in the vault folder go in where they are, subfolders and all"))}">${esc(t("Add files in this folder…"))}</button><button class="btn small" data-a="savepart"${this.app.doc() && !this.openId ? "" : " disabled"} title="${esc(t("The open part, assembly or drawing becomes a vault file, checked out to you"))}">${esc(t("Save to vault"))}</button>${this.behindCount ? `<button class="btn small v-behind-btn" data-a="behind" title="${esc(t("Assemblies and drawings that use older versions, and local copies behind the vault"))}">${esc(t("{n} behind", { n: this.behindCount }))}</button>` : ""}</div>
         <div class="row v-search"><input id="v-q" type="search" value="${esc(this.found?.label ?? "")}" placeholder="${esc(t("Search the vault"))}" aria-label="${esc(t("Search the vault"))}" /><button class="btn small" data-a="search">${esc(t("Advanced…"))}</button>${this.found ? `<button class="btn small" data-a="clearq">${esc(t("Clear"))}</button>` : ""}</div>
         <input type="file" id="v-files" multiple hidden /></div>
@@ -1986,6 +2084,7 @@ export class VaultPanel {
         case "eco": if (id) void this.newChange([id]); break;
         case "behind": void this.behindDlg(); break;
         case "upd": if (id) void this.updateFromVault(id); break;
+        case "explorer": this.onExplorer?.(); break;
         case "more": { const r = b.getBoundingClientRect(); this.moreMenu(r.left, r.bottom + 4, b); break; }
         case "selnone": if (this.sel) this.pick(this.sel); void this.render(); break;
         case "mco": void this.checkOutMany(this.selected); break;

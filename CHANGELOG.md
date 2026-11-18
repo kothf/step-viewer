@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.594.0] - 2026-11-18
+
+### Added
+- **Vault explorer**: a full file manager for the vault in its own tab at the bottom (Vault ▸ Vault explorer, or Explorer in the vault panel). A folder tree with Checked out to me and Recycle bin, a list you can sort by any column (name, type, checked out by, version, state, revision, part number, description, modified, size) and choose columns for, a preview pane with the file's state, version and quick commands, and tabs for the Data card (edited in place), Versions (open, roll back, compare), Contains, Where used and Bill of materials.
+- Ctrl/Shift multi-select, keyboard navigation (arrows, Enter, Backspace, F2, Delete, F5, Ctrl+F), right-click menus on files and folders (check out/in, get latest, change state, rename, move, delete, check out a whole folder), search across the vault with type/state/checked-out-by filters and an inside-files option, New folder, and drag and drop: drag files onto a folder to move them, or drop files from your computer to add them there.
+- Parts and assemblies saved to the vault get a thumbnail for the preview pane. The side panel stays as the quick vault view.
+
 ## [1.593.0] - 2026-11-18
 
 ### Changed
@@ -3775,7 +3782,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.593.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.594.0...HEAD
+[1.594.0]: https://github.com/kothf/step-viewer/compare/v1.593.0...v1.594.0
 [1.593.0]: https://github.com/kothf/step-viewer/compare/v1.592.0...v1.593.0
 [1.592.0]: https://github.com/kothf/step-viewer/compare/v1.591.0...v1.592.0
 [1.591.0]: https://github.com/kothf/step-viewer/compare/v1.590.0...v1.591.0

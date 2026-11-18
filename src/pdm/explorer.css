@@ -1,0 +1,193 @@
+/* The Vault explorer (FR-PDM-080): a file manager in a tab of its own, over the panels and the 3D view. */
+.vx {
+  grid-row: 2 / -3; grid-column: 1 / -1; z-index: 30; min-height: 0; min-width: 0;
+  display: flex; flex-direction: column; background: var(--bg); color: var(--text); font-size: 13px;
+  --vx-tree: 230px; --vx-prev: 300px; --vx-det: 260px;
+  container: vx / inline-size;
+}
+.vx[hidden] { display: none; }
+body.vault-ex .drw { visibility: hidden; }
+#app.vault-ex .doc-tabs { position: static; }
+.vx .vx-i { flex: none; width: 16px; height: 16px; }
+.vx-k-part { color: #2f7de1; }
+.vx-k-assembly { color: #d9822b; }
+.vx-k-drawing { color: #12a37f; }
+.vx-k-file { color: var(--muted); }
+.vx-k-vault { color: var(--accent-text); }
+.vx-k-folder, .vx-node .vx-i { color: #c9a227; }
+.vx-node.vx-special .vx-i, .vx-node[data-dir=""] > .vx-nr .vx-i { color: var(--accent-text); }
+:root[data-theme="dark"] .vx-k-part { color: #6aa6f8; }
+:root[data-theme="dark"] .vx-k-assembly { color: #f0a35c; }
+:root[data-theme="dark"] .vx-k-drawing { color: #41c9a2; }
+:root[data-theme="dark"] .vx-k-folder, :root[data-theme="dark"] .vx-node .vx-i { color: #e3c25b; }
+
+/* Toolbar */
+.vx-bar { display: flex; align-items: center; gap: 4px; padding: 6px 10px; background: var(--panel); border-bottom: 1px solid var(--line); min-width: 0; flex-wrap: nowrap; overflow: hidden; }
+.vx-grp { display: flex; align-items: center; gap: 2px; }
+.vx-sep { width: 1px; align-self: stretch; margin: 4px 4px; background: var(--line); }
+.vx-b { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 9px; border: 1px solid transparent; border-radius: 6px; background: none; color: var(--text); font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.vx-b:hover:not(:disabled) { background: var(--panel-2); border-color: var(--line); }
+.vx-b:disabled { color: var(--muted); opacity: 0.55; cursor: default; }
+.vx-b:focus-visible, .vx-row:focus-visible, .vx-node:focus-visible, .vx-tabs [role=tab]:focus-visible, .vx-th button:focus-visible, .vx-crumb:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.vx-b.vx-icon { width: 30px; padding: 0; justify-content: center; }
+.vx-b.on { color: var(--accent-text); background: var(--accent-soft); }
+.vx-badge { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--accent-fill); color: #fff; font-size: 11px; line-height: 16px; text-align: center; }
+.vx-search { display: flex; align-items: center; gap: 4px; margin-left: auto; min-width: 0; flex: 0 1 auto; }
+.vx-q { width: 260px; min-width: 120px; flex: 0 1 260px; height: 30px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); font: inherit; }
+.vx-q:focus { outline: 2px solid var(--focus); outline-offset: -1px; background: var(--panel); }
+.vx-filt { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; padding: 8px 12px; background: var(--panel-2); border-bottom: 1px solid var(--line); font-size: 12px; }
+.vx-filt label { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+.vx-filt select { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 3px 6px; }
+.vx-filt .chk { color: var(--text); }
+
+/* Panes */
+.vx-main { position: relative; flex: 1; min-height: 0; display: grid; grid-template-columns: var(--vx-tree) minmax(0, 1fr) var(--vx-prev); }
+.vx-tree { grid-column: 1; overflow: auto; background: var(--panel); border-right: 1px solid var(--line); padding: 6px 0; }
+.vx-tree ul { list-style: none; margin: 0; padding: 0; }
+.vx-node { outline: none; }
+.vx-nr { display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px 0 calc(6px + var(--l) * 16px); cursor: pointer; border-radius: 0; white-space: nowrap; }
+.vx-nr:hover { background: var(--panel-2); }
+.vx-node.on > .vx-nr { background: var(--accent-soft); color: var(--accent-text); font-weight: 600; }
+.vx-node:focus-visible > .vx-nr { outline: 2px solid var(--focus); outline-offset: -2px; }
+.vx-node:focus-visible { outline: none; }
+.vx-tw { flex: none; width: 12px; color: var(--muted); font-size: 10px; text-align: center; }
+.vx-nl { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.vx-cnt { margin-left: auto; padding-left: 8px; color: var(--muted); font-size: 11px; font-weight: 400; }
+.vx-node.vx-special { margin-top: 2px; }
+.vx-node.vx-special[data-dir="@mine"] { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 6px; }
+.vx .drop, .vx-node .vx-nr.drop { background: var(--accent-soft) !important; box-shadow: inset 0 0 0 2px var(--accent); }
+
+.vx-center { grid-column: 2; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--panel); }
+.vx-crumbs { display: flex; align-items: center; gap: 6px; height: 38px; padding: 0 10px; border-bottom: 1px solid var(--line); min-width: 0; }
+.vx-path { display: flex; align-items: center; gap: 2px; min-width: 0; overflow: hidden; }
+.vx-crumb { border: 0; background: none; color: var(--muted); font: inherit; padding: 3px 6px; border-radius: 5px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+.vx-crumb:hover { color: var(--text); background: var(--panel-2); }
+.vx-crumb[aria-current] { color: var(--text); font-weight: 600; }
+.vx-cs { color: var(--muted); }
+.vx-crumb-t { font-weight: 600; }
+.vx-cols { margin-left: auto; height: 28px; color: var(--muted); }
+
+/* File list */
+.vx-list { position: relative; flex: 1; min-height: 80px; overflow: auto; }
+.vx-grid { width: 100%; }
+.vx-tr { display: grid; grid-template-columns: var(--cols); align-items: center; min-width: 100%; }
+.vx-head { position: sticky; top: 0; z-index: 2; background: var(--panel-2); border-bottom: 1px solid var(--line); }
+.vx-th button { display: flex; align-items: center; gap: 4px; width: 100%; height: 30px; padding: 0 10px; border: 0; border-right: 1px solid var(--line); background: none; color: var(--muted); font: inherit; font-size: 12px; font-weight: 600; text-align: left; cursor: pointer; white-space: nowrap; overflow: hidden; }
+.vx-th button:hover { color: var(--text); background: var(--panel); }
+.vx-th[aria-sort="ascending"] button, .vx-th[aria-sort="descending"] button { color: var(--text); }
+.vx-th.num button { justify-content: flex-end; }
+.vx-arrow { font-size: 9px; color: var(--accent-text); }
+.vx-row { height: 32px; border-bottom: 1px solid var(--line); cursor: default; user-select: none; outline: none; }
+.vx-row:hover { background: var(--panel-2); }
+.vx-row.sel { background: var(--accent-soft); }
+.vx-row.sel .vx-nm { color: var(--accent-text); font-weight: 600; }
+.vx-td { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 0 10px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.vx-td > span { overflow: hidden; text-overflow: ellipsis; }
+.vx-td.num { justify-content: flex-end; font-variant-numeric: tabular-nums; }
+.vx-c-date, .vx-c-size, .vx-c-type, .vx-c-folder { color: var(--muted); }
+.vx-nm { overflow: hidden; text-overflow: ellipsis; }
+.vx-dir .vx-nm { font-weight: 500; }
+.vx-tag { flex: none; padding: 0 6px; border-radius: 9px; background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); font-size: 11px; line-height: 16px; }
+.vx-tag.mod { color: var(--accent-text); border-color: var(--accent); background: var(--accent-soft); }
+.vx-tag.old { color: var(--warn-text); border-color: color-mix(in srgb, var(--warn-text) 45%, transparent); }
+.vx-lock { display: inline-flex; align-items: center; gap: 4px; color: var(--warn-text); }
+.vx-lock.mine { color: var(--accent-text); }
+.vx-lock .vx-i { width: 14px; height: 14px; }
+.vx.dragging .vx-row.sel { opacity: 0.6; }
+.vx-empty { padding: 40px 20px; text-align: center; color: var(--text); }
+.vx-empty p { margin: 4px 0; }
+.vx-foot { flex: none; padding: 4px 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; background: var(--panel); }
+
+/* Details under the list */
+.vx-detail { flex: none; height: var(--vx-det); display: flex; flex-direction: column; min-height: 0; border-top: 1px solid var(--line); background: var(--panel); }
+.vx-tabs { display: flex; gap: 2px; padding: 0 8px; border-bottom: 1px solid var(--line); background: var(--panel-2); overflow-x: auto; scrollbar-width: thin; }
+.vx-tabs [role=tab] { height: 32px; padding: 0 12px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.vx-tabs [role=tab]:hover { color: var(--text); }
+.vx-tabs [role=tab][aria-selected="true"] { color: var(--text); font-weight: 600; border-bottom-color: var(--accent); }
+.vx-dpane { flex: 1; overflow: auto; padding: 8px 12px; min-height: 0; }
+.vx-dmsg { margin: 10px 0; }
+.vx-dbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; font-size: 12px; }
+.vx-dbar select { font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: 5px; padding: 2px 6px; }
+.vx-tbl { border-collapse: collapse; width: 100%; font-size: 12px; }
+.vx-tbl th { position: sticky; top: -8px; text-align: left; font-weight: 600; color: var(--muted); background: var(--panel); padding: 5px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.vx-tbl td { padding: 4px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.vx-tbl td:first-child { font-family: inherit; }
+.vx-tbl .num { text-align: right; font-variant-numeric: tabular-nums; }
+.vx-tbl tr.vx-cur td { font-weight: 600; }
+.vx-tbl .vx-acts { white-space: nowrap; text-align: right; }
+.vx-tbl .vx-acts .btn + .btn { margin-left: 4px; }
+.vx-ref, .vx-ref ul { list-style: none; margin: 0; padding: 0; }
+.vx-ref ul { padding-left: 20px; border-left: 1px dotted var(--line); margin-left: 7px; }
+.vx-ref li { padding: 2px 0; }
+.vx-ref li > .vx-i { vertical-align: -3px; margin-right: 6px; }
+.vx-ref .v-link, .vx-tbl .v-link { font-size: inherit; }
+.vx-card { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px 18px; }
+.vx-card label { display: grid; grid-template-columns: 120px 1fr auto; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.vx-card input:not([type=checkbox]), .vx-card select { min-width: 0; font: inherit; font-size: 13px; color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: 5px; padding: 4px 6px; }
+.vx-card input:disabled, .vx-card select:disabled { background: transparent; border-color: transparent; color: var(--text); opacity: 1; }
+.vx-card input[type=checkbox] { justify-self: start; }
+.vx-card-acts { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 6px; }
+
+/* Preview */
+.vx-prev { grid-column: 3; overflow: auto; padding: 12px; background: var(--panel); border-left: 1px solid var(--line); }
+.vx-pic { display: grid; place-items: center; height: 190px; border-radius: 8px; background: linear-gradient(var(--vp-top), var(--vp-bottom)); border: 1px solid var(--line); overflow: hidden; }
+.vx-pic img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.vx-pic .vx-big { width: 72px; height: 72px; stroke-width: 0.9; opacity: 0.9; }
+.vx-pic-many { display: flex; justify-content: center; gap: 10px; }
+.vx-pic-many .vx-i { width: 40px; height: 40px; stroke-width: 1; }
+.vx-pv-name { margin: 12px 0 2px; font-size: 15px; overflow-wrap: anywhere; }
+.vx-pv-path { margin: 0 0 8px; font-size: 12px; overflow-wrap: anywhere; }
+.vx-pv-tags { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
+.vx-pill { display: inline-flex; align-items: center; gap: 5px; padding: 1px 8px; border: 1px solid var(--line); border-radius: 10px; font-size: 12px; background: var(--panel-2); }
+.vx-pill i { width: 8px; height: 8px; border-radius: 50%; }
+.vx-pill-w { color: var(--warn-text); }
+.vx-pv-lock { display: flex; align-items: center; gap: 6px; margin: 6px 0; font-size: 12px; flex-wrap: wrap; }
+.vx-pv-lock .vx-i { width: 14px; height: 14px; }
+.vx-pv-lock:not(.muted) { color: var(--warn-text); }
+.vx-pv-lock.mine { color: var(--accent-text); }
+.vx-pv-acts { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+.vx-kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 10px 0 0; font-size: 12px; }
+.vx-kv dt { color: var(--muted); }
+.vx-kv dd { margin: 0; overflow-wrap: anywhere; }
+.vx-pv-list { list-style: none; padding: 0; margin: 10px 0; font-size: 12px; }
+.vx-pv-list li { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+.vx-pv-empty { padding: 40px 8px; text-align: center; }
+
+/* Grips */
+.vx-main > .grip-x { position: absolute; top: 0; bottom: 0; width: 7px; }
+.vx-g-tree { left: calc(var(--vx-tree) - 4px); }
+.vx-g-prev { right: calc(var(--vx-prev) - 4px); }
+.vx-center > .grip-y { flex: none; margin: -4px 0 -3px; position: relative; }
+
+/* No vault open */
+.vx-none { flex: 1; display: grid; place-items: center; padding: 24px; }
+.vx-none-c { max-width: 420px; text-align: center; padding: 32px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+.vx-none-c h2 { margin: 12px 0 6px; font-size: var(--fs-subtitle); }
+.vx-none-c .btn { margin-top: 12px; }
+.vx-none-i { width: 56px; height: 56px; color: var(--accent-text); stroke-width: 1; }
+
+/* Its tab at the bottom */
+.doc-tabs .dt-extra .dt-b svg { color: var(--accent-text); }
+
+/* Narrower windows: the less used toolbar buttons, then all of them, keep only their icons (and their name as
+   the tooltip and for screen readers). */
+@container vx (max-width: 1840px) {
+  .vx-b:is([data-x=newdir], [data-x=savedoc], [data-x=undo], [data-x=latest], [data-x=more], [data-x=filters]) .vx-bl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+}
+@container vx (max-width: 1180px) {
+  .vx-bar .vx-b .vx-bl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .vx-bar .vx-b { padding: 0 7px; }
+}
+@media (max-width: 1100px) {
+  .vx-main { grid-template-columns: var(--vx-tree) minmax(0, 1fr) 0; }
+  .vx-prev, .vx-g-prev { display: none; }
+}
+@media (max-width: 767px) {
+  .vx-main { grid-template-columns: 0 minmax(0, 1fr) 0; }
+  .vx-tree, .vx-g-tree { display: none; }
+  .vx-q { width: 140px; }
+  .vx { --vx-det: 200px; }
+}
+
+/* The 3D view's own header controls have nothing to act on while the explorer covers the view. */
+#app.vault-ex .topbar :is(#display-mode, #projection, #views, .sep.step-only, #back-pcb) { display: none; }
