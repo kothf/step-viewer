@@ -16,6 +16,6 @@ for (const f of readdirSync(dir).filter(f => f.endsWith(".mcadprt"))) {
   if (!res.body) { out[f] = { statuses: res.statuses }; continue; }
   const p = m.props(res.body);
   const r = (x: number) => +x.toPrecision(9);
-  out[f] = { names: [...res.body.names].sort(), ordered: res.body.names, statuses: res.statuses.map(s => [s.ok, s.code ?? "", s.warning ?? ""]), volume: r(p.volume), area: r(p.area), com: p.com.map(r), box: p.box?.map(v => v.map(r)), moments: p.moments.map(r) };
+  out[f] = { names: [...res.body.names].sort(), ordered: res.body.names, statuses: res.statuses.map(s => [s.ok, s.code ?? "", s.warning ?? ""]), volume: r(p.volume), area: r(p.area), com: p.com.map(r), box: p.box?.map(v => v.map(r)), moments: p.moments.map(r), bodies: m.bodyInfo(res.body, doc).map(b => `${b.key} ${r(b.volume)} ${b.ref.name}`) };
 }
 writeFileSync(outFile, JSON.stringify(out, null, 1));
