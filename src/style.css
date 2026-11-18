@@ -698,7 +698,9 @@ input.drop-val { outline: 2px solid var(--accent) !important; background: var(--
 .mc-l { font-size: 11px; white-space: nowrap; }
 .mc-line { display: flex; gap: 8px; align-items: center; }
 .mc-status:not(:empty), .mc-busy { pointer-events: none; background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 3px 9px; font-size: 12px; box-shadow: var(--shadow); }
-.mc-busy { color: var(--muted); }
+.mc-busy { color: var(--muted); position: relative; overflow: hidden; }
+.mc-busy[style*="--p"]::after { content: ""; position: absolute; left: 0; bottom: 0; height: 2px; width: var(--p); background: var(--accent); transition: width .2s; }
+canvas.mc-stale { filter: grayscale(0.85) opacity(0.6); transition: filter .2s; }
 /* Confirmation corner (a CAD app): ✓/✕ at the top right of the view, left of the nav cube, whenever a command is open. */
 .mc-confirm { position: absolute; right: 132px; top: 10px; z-index: 4; display: flex; gap: 6px; }
 #viewport:has(.mc-confirm:not([hidden])) .mc-bar { right: 228px; }

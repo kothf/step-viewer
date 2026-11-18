@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.578.0] - 2026-11-18
+## [1.579.0] - 2026-11-18
 
 ### Fixed
 
@@ -14,6 +14,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - **Unfold only refuses bends that carry a gusset.** Any other bend of a part with gussets unfolds.
 - **The geometry kernel recovers after it runs out of memory.** It is restarted and the part rebuilt; when it runs out again, the message says it was memory and suggests undoing the last change. Before, every feature showed an error until the page was reloaded.
 - **Error messages fade after 20 s** (warnings after 10 s), and stay while the pointer is on them.
+
+## [1.578.0] - 2026-11-18
+
+### Changed
+
+- **Slow rebuilds keep the model on screen.** After editing a sketch of a big part (a weldment of 30+ features), the model as it was stays in the view, greyed, until the new one is built, instead of an empty view; the Rebuilding… pill names the feature being built ("Trim/Extend2 (5 of 33)") with a progress bar under it.
 
 ## [1.577.0] - 2026-11-18
 
@@ -3656,7 +3662,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.578.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.579.0...HEAD
+[1.579.0]: https://github.com/kothf/step-viewer/compare/v1.578.0...v1.579.0
 [1.578.0]: https://github.com/kothf/step-viewer/compare/v1.577.0...v1.578.0
 [1.577.0]: https://github.com/kothf/step-viewer/compare/v1.576.0...v1.577.0
 [1.576.0]: https://github.com/kothf/step-viewer/compare/v1.575.0...v1.576.0

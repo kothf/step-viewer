@@ -2283,6 +2283,12 @@ try {
     const mid2 = await mp.evaluate(old => { const ed = window.__sv.model.editor(); return { rels: ed.sk.rels.filter(r => !old.includes(r.id)).map(r => r.t).sort(), snaps: [...ed.snaps] }; }, rb);
     check(mid2.rels.filter(x => x === "midpoint").length === 2 && mid2.rels.filter(x => x === "onCurve").length === 2 && mid2.rels.includes("vertical") && mid2.snaps.includes("mid"),
       `sketch: midpoints and an H/V end on an edge get their relations while drawing (weldments exam #2) (${JSON.stringify(mid2)})`);
+    // Exam #16: leaving the sketch never leaves the view greyed or the busy pill showing a feature's progress.
+    await mp.click("#mc-confirm .pm-ok, .pm-top .pm-ok");
+    await idle();
+    await mp.waitForTimeout(400);
+    const after = await mp.evaluate(() => ({ stale: !!document.querySelector("canvas.mc-stale"), busy: document.querySelector("#mc-busy").textContent, mode: window.__sv.model.editor() ? "sketch" : "none" }));
+    check(!after.stale && after.busy === "Rebuilding…" && after.mode === "none", `part: the view is not left greyed after a sketch edit (weldments exam #16) (${JSON.stringify(after)})`);
     await ctx.close();
   }
   if (inShard(6)) {

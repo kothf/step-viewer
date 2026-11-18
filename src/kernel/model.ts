@@ -6430,6 +6430,9 @@ export class Modeller {
   /** Turns verification on or off; the cached results were made the other way, so they are dropped. */
   setVerify(on: boolean) { if (on !== this.verify) { this.verify = on; this.cache = []; } }
 
+  /** Called before each feature that is built again (not from the cache): the worker reports rebuild progress (exam #16). */
+  onFeature?: (i: number, of: number, name: string) => void;
+
   evaluate(doc: PartDoc): { body: Named | null; sheets: Named | null; statuses: FeatureStatus[]; frames: Record<string, Frame>; sketches: Record<string, SketchFeature | Sketch3dFeature>; curves: Record<string, V3[]>; regions: Record<string, IntersectRegion[]>; spots: Record<string, PatternSpot[]>; sheet: SheetState | null } {
     const end = doc.rollback ?? doc.features.length;
     // Sketches whose On edge curves moved with the model (FR-SK-064): later features use the moved copy.
@@ -6478,6 +6481,7 @@ export class Modeller {
       let moved: SketchFeature | undefined;
       if (f.suppressed) status = { id: f.id, ok: true, code: "suppressed" };
       else {
+        this.onFeature?.(i, end, f.name);
         try {
           if (featureRefs(f).features.some(p => failed.has(p))) throw new FeatureError("E-FT-PARENT", "A sketch or plane this feature uses has an error.");
           this.warning = "";
