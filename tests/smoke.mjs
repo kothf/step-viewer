@@ -7272,7 +7272,7 @@ try {
     const lab = await mp.evaluate(() => { const el = [...document.querySelectorAll("#sk-layer .sk-dim")].find(e => e.dataset.id === "dd"); const b = el.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2, title: el.title }; });
     await mp.mouse.move(lab.x, lab.y); await mp.mouse.down(); await mp.mouse.move(lab.x + 30, lab.y + 30, { steps: 4 }); await mp.mouse.move(lab.x + 60, lab.y + 60, { steps: 4 }); await mp.mouse.up();
     await mp.waitForTimeout(100);
-    const moved = await mp.evaluate(() => { const ed = window.__sv.model.editor(); const d = ed.sk.dims.find(x => x.id === "dd"); const st = window.__sv.model.store.doc.features.find(f => f.id === "s3").dims.find(x => x.id === "dd"); return { pos: d.pos, stored: st.pos, input: !!document.querySelector(".sk-input"), v: d.val.v }; });
+    const followed = await mp.evaluate(() => { const ed = window.__sv.model.editor(); const d = ed.sk.dims.find(x => x.id === "dd"); const st = window.__sv.model.store.doc.features.find(f => f.id === "s3").dims.find(x => x.id === "dd"); return { pos: d.pos, stored: st.pos, input: !!document.querySelector(".sk-input"), v: d.val.v }; });
     check(lab.title === "D1@Sketch3" && Math.hypot(moved.pos[0] + 15, moved.pos[1] - 6) > 3 && JSON.stringify(moved.pos) === JSON.stringify(moved.stored) && !moved.input && moved.v === 30, `model 1.53: dimension text drags and stays where it is put; hover shows D1@Sketch3 (FR-SK-065/066) (${lab.title}, ${JSON.stringify(moved)})`);
     await mp.evaluate(() => { window.__sv.model.editor().select(["dd"]); window.__sv.model.panel(); });
     await mp.fill('#mc-pm input[data-a="dimname"]', "Width");
@@ -11990,7 +11990,7 @@ try {
     // The block grows to 60 wide: the line's start follows the corner.
     await mp.evaluate(() => window.__sv.model.store.change("Wider", d => { const s = d.features.find(f => f.id === "b"); s.ents.find(e => e.id === "b2").x = 30; s.ents.find(e => e.id === "b3").x = 30; }));
     await settle();
-    const moved = await mp.evaluate(() => { const s = window.__sv.model.store.doc.features.find(f => f.id === "k"); const line = s.ents.find(e => e.t === "line" && !e.cons); const a = s.ents.find(e => e.id === line.a); return { a: [a.x, a.y], bad: window.__sv.model.last().statuses.filter(x => !x.ok).length }; });
+    const followed = await mp.evaluate(() => { const s = window.__sv.model.store.doc.features.find(f => f.id === "k"); const line = s.ents.find(e => e.t === "line" && !e.cons); const a = s.ents.find(e => e.id === line.a); return { a: [a.x, a.y], bad: window.__sv.model.last().statuses.filter(x => !x.ok).length }; });
     check(sk.cons === 1 && sk.ext === 1 && sk.a && Math.hypot(sk.a[0] - 20, sk.a[1] - 10) < 1e-6 && Math.hypot(moved.a[0] - 30, moved.a[1] - 10) < 1e-6 && !moved.bad,
       `model 1.89: a sketch point snapped to a model vertex follows it when the model changes (${JSON.stringify({ sk, moved })})`);
     // Smart Dimension from the line to a model edge (the top's front edge, at its midpoint): a new reference and a dimension.
@@ -12758,7 +12758,16 @@ try {
     check(cl.rows === 2 && /Total mass [\d.,]+ kg/.test(cl.total ?? ""), `weldments: cut list dialog (${JSON.stringify(cl)})`);
     await settle();
     const cp = await mp.evaluate(() => ({ props: Object.values(window.__sv.model.store.doc.cutProps ?? {}), row: document.querySelector('#mc-tree .ft-row[data-id="cut:0"]')?.textContent ?? "" }));
-    check(JSON.stringify(cp.props) === '[{"desc":"Top rail","part":"FR-001","mat":"Aluminium 6061"}]' && cp.row.includes("Top rail"), `weldments: cut list item properties (${JSON.stringify(cp)})`);
+    check(JSON.stringify(cp.props.map(({ bodies, ...p }) => p)) === '[{"desc":"Top rail","part":"FR-001","mat":"Aluminium 6061"}]' && cp.props[0]?.bodies?.length === 2 && cp.row.includes("Top rail"), `weldments: cut list item properties (${JSON.stringify(cp)})`);
+    // The properties follow the item when its length changes (its key changes): stored under the old length's key with its bodies, they still name it (exam #17).
+    const followed = await mp.evaluate(() => {
+      const m = window.__sv.model;
+      m.store.change("Cut list properties", d => { const [[k, p]] = Object.entries(d.cutProps); d.cutProps = { [k.replace("|650|", "|600|")]: p }; });
+      return new Promise(r => setTimeout(() => r({ keys: Object.keys(m.store.doc.cutProps), row: document.querySelector('#mc-tree .ft-row[data-id="cut:0"]')?.textContent ?? "" }), 300));
+    });
+    await mp.evaluate(() => window.__sv.modeller.undo());
+    await settle();
+    check(followed.keys[0]?.includes("|600|") && followed.row.includes("Top rail"), `weldments: cut list properties follow an item whose length changed (${JSON.stringify(followed)})`);
     // Body materials (Bodies folder → Material…) weigh an item with no material of its own, and its Material list says so.
     await mp.evaluate(() => { const ks = window.__sv.model.last().cutList[1].bodies; window.__sv.model.store.change("Body material", d => { d.bodies ??= {}; for (const k of ks) d.bodies[k] = { ...(d.bodies[k] ?? {}), material: { name: "Aluminium 6061", density: 2.7 } }; }); });
     await settle();

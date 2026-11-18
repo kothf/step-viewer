@@ -203,6 +203,25 @@ export function cutKey(c: CutItem): string {
   return [c.kind, c.desc, r(c.length), r(c.angle1), r(c.angle2), (c.plate ?? []).map(r).join("x")].join("|") + (c.inter ? `|${c.inter.join("/")}` : "") + (c.box ? `|${c.box.map(r).join("x")}` : "");
 }
 
+type CutProp = NonNullable<PartDoc["cutProps"]>[string];
+
+/**
+ * Each item's typed properties (`PartDoc.cutProps`) and the key they sit under. An item's own key (`cutKey`) wins; when nothing
+ * is stored there (its length or angles changed, so the key did), the properties stored with one of its bodies (`bodies`) under
+ * a key no current item has are used, so a description or part number follows the item through a model change, as in a CAD app.
+ */
+export function cutPropsOf(items: CutItem[], props: PartDoc["cutProps"]): (c: CutItem) => { key: string; p: CutProp } {
+  const keys = new Set(items.map(cutKey));
+  const orphans = Object.entries(props ?? {}).filter(([k, p]) => !keys.has(k) && p.bodies?.length);
+  return c => {
+    const key = cutKey(c), own = props?.[key];
+    if (own) return { key, p: own };
+    const kind = `${c.kind}|`;
+    const hit = orphans.find(([k, p]) => k.startsWith(kind) && p.bodies!.some(b => c.bodies.includes(b)));
+    return hit ? { key: hit[0], p: hit[1] } : { key, p: {} };
+  };
+}
+
 export interface SubWeld { id: string; name: string; bodies: string[] }
 
 /**

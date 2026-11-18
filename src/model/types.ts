@@ -1183,7 +1183,7 @@ export interface PartDoc {
   /** Mass property override (FR-MAT-004), e.g. for a purchased part: mass in kg, centre of mass in mm; each absent one is calculated. */
   massOverride?: { mass?: number; com?: V3 };
   /** Weldment cut list item properties (FR-FT-121), keyed by `cutKey` of the item: own description, part number, notes. */
-  cutProps?: Record<string, { desc?: string; part?: string; note?: string; /** Material name from `MATERIALS` for this item's cut list mass (unset = the part's material). */ mat?: string; /** Excluded from the cut list (a CAD app's Exclude from cut list): no item number, mass or CSV row. */ excl?: boolean }>;
+  cutProps?: Record<string, { desc?: string; part?: string; note?: string; /** Material name from `MATERIALS` for this item's cut list mass (unset = the part's material). */ mat?: string; /** Excluded from the cut list (a CAD app's Exclude from cut list): no item number, mass or CSV row. */ excl?: boolean; /** The item's body keys when the properties were typed: `cutPropsOf` finds them again after the item's key changed. */ bodies?: string[] }>;
   /** Stock bar for the weldment cut list (FR-FT-121): bar length and saw kerf in mm; the Stock lengths table then counts the bars to buy. */
   stock?: { len?: number; kerf?: number };
   /** Sub-weldments (a CAD app's sub-weldment folders in the cut list): named groups of body keys; a body sits in at most one. */
