@@ -50,4 +50,6 @@ test("a part placed on a copy of itself clashes; flush neighbours do not", () =>
   const a = box(10, 10, 10);
   assert.equal(penetrates(a, box(10, 10, 10), new THREE.Matrix4(), 0.005), true);
   assert.equal(penetrates(a, box(10, 10, 10), at(10, 0, 0), 0.005), false);
+  // Slid half way into it along one side: every edge lies on a face plane, but the tops overlap.
+  for (const x of [1, 5, 9]) assert.equal(penetrates(a, box(10, 10, 10), at(x, 0, 0), 0.005), true, `x ${x}`);
 });

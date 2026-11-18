@@ -29,6 +29,27 @@ function inside(c: THREE.Vector3, t: THREE.Triangle, tol: number) {
 
 const na = new THREE.Vector3(), nb = new THREE.Vector3(), ca = new THREE.Vector3(), cb = new THREE.Vector3();
 
+/** Whether segments p–q and r–s of one plane (normal `n`) cross each other more than `tol` from all four ends. */
+function cross(p: THREE.Vector3, q: THREE.Vector3, r: THREE.Vector3, s: THREE.Vector3, n: THREE.Vector3, tol: number) {
+  const d1 = ca.subVectors(q, p), d2 = cb.subVectors(s, r);
+  const den = new THREE.Vector3().crossVectors(d1, d2).dot(n);
+  const l1 = d1.length(), l2 = d2.length();
+  if (Math.abs(den) < 1e-12 * l1 * l2) return false;
+  const w = new THREE.Vector3().subVectors(r, p);
+  const t = new THREE.Vector3().crossVectors(w, d2).dot(n) / den, u = new THREE.Vector3().crossVectors(w, d1).dot(n) / den;
+  return t * l1 > tol && (1 - t) * l1 > tol && u * l2 > tol && (1 - u) * l2 > tol;
+}
+
+/** Whether two triangles on one plane share more than an outline: a corner of one inside the other, or crossing edges. */
+function overlapFlat(a: THREE.Triangle, b: THREE.Triangle, tol: number) {
+  if (inside(b.a, a, tol) || inside(b.b, a, tol) || inside(b.c, a, tol) || inside(a.a, b, tol) || inside(a.b, b, tol) || inside(a.c, b, tol)) return true;
+  const A = [a.a, a.b, a.c], B = [b.a, b.b, b.c];
+  for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) if (cross(A[i], A[(i + 1) % 3], B[j], B[(j + 1) % 3], na, tol)) return true;
+  // The same triangle (a part on a copy of itself): neither test above sees it.
+  a.getMidpoint(ca); b.getMidpoint(cb);
+  return inside(cb, a, tol) || inside(ca, b, tol);
+}
+
 /**
  * Whether two triangles of different parts show the parts overlapping: an edge of either passes through the other by
  * more than `tol` (see `edgeThrough`), or they lie on one plane facing the same way and overlap (a part placed on
@@ -39,8 +60,7 @@ export function pierces(a: THREE.Triangle, b: THREE.Triangle, tol: number) {
   if (na.dot(nb) > 1 - 1e-6) {
     a.getPlane(pl);
     if (Math.abs(pl.distanceToPoint(b.a)) < tol && Math.abs(pl.distanceToPoint(b.b)) < tol && Math.abs(pl.distanceToPoint(b.c)) < tol) {
-      a.getMidpoint(ca); b.getMidpoint(cb);
-      return inside(cb, a, tol) || inside(ca, b, tol);
+      return overlapFlat(a, b, tol);
     }
   }
   return edgeThrough(a.a, a.b, b, tol) || edgeThrough(a.b, a.c, b, tol) || edgeThrough(a.c, a.a, b, tol)
