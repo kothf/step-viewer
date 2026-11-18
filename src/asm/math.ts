@@ -74,3 +74,33 @@ export function fromPose(p: V3, deg: V3): Tf {
   r[3] = p[0]; r[7] = p[1]; r[11] = p[2];
   return r;
 }
+
+/** The pose a fraction `u` of the way from `a` to `b` along the screw motion that takes one to the other, so a part
+ *  turning about an axis away from its origin stays on its arc between two solved frames (a plain blend of the
+ *  matrices would cut the corner and shrink it). */
+export function tweenTf(a: Tf, b: Tf, u: number): Tf {
+  if (u <= 0) return [...a];
+  if (u >= 1) return [...b];
+  const d = compose(b, invert(a));
+  const tr = d[0] + d[5] + d[10], th = Math.acos(Math.max(-1, Math.min(1, (tr - 1) / 2)));
+  const t: V3 = [d[3], d[7], d[11]];
+  if (th < 1e-9) return compose(translation([t[0] * u, t[1] * u, t[2] * u]), a);
+  let k: V3;
+  if (th < Math.PI - 1e-6) {
+    const s = 2 * Math.sin(th);
+    k = [(d[9] - d[6]) / s, (d[2] - d[8]) / s, (d[4] - d[1]) / s];
+  } else {
+    // Half a turn: the axis is the column of R + I with the largest diagonal.
+    const i = d[0] >= d[5] && d[0] >= d[10] ? 0 : d[5] >= d[10] ? 1 : 2;
+    const c: V3 = [d[i] + (i === 0 ? 1 : 0), d[4 + i] + (i === 1 ? 1 : 0), d[8 + i] + (i === 2 ? 1 : 0)];
+    const l = Math.hypot(...c);
+    k = [c[0] / l, c[1] / l, c[2] / l];
+  }
+  const along = k[0] * t[0] + k[1] * t[1] + k[2] * t[2];
+  const p: V3 = [t[0] - along * k[0], t[1] - along * k[1], t[2] - along * k[2]];
+  // The point the rotation turns about: (p + cot(θ/2)·(k × p)) / 2.
+  const ct = 1 / Math.tan(th / 2), kx: V3 = [k[1] * p[2] - k[2] * p[1], k[2] * p[0] - k[0] * p[2], k[0] * p[1] - k[1] * p[0]];
+  const c: V3 = [(p[0] + ct * kx[0]) / 2, (p[1] + ct * kx[1]) / 2, (p[2] + ct * kx[2]) / 2];
+  const m = compose(translation([k[0] * along * u, k[1] * along * u, k[2] * along * u]), rotation(c, k, th * u));
+  return compose(m, a);
+}
