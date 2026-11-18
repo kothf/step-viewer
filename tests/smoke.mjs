@@ -4646,11 +4646,15 @@ try {
     await mp.waitForFunction(() => window.__sv);
     await mp.click("#new-part");
     await mp.waitForFunction(() => window.__sv.model?.store);
-    // An empty part: the panel's buttons say why nothing is saved.
-    await mp.click("#file-btn");
-    await mp.click("#file-menu [data-f=export]");
-    await mp.waitForFunction(() => document.querySelector("#rt-export").getAttribute("aria-selected") === "true");
-    await mp.click("#png");
+    // An empty part: the Export dialog says why nothing is saved.
+    const exportVia = async f => {
+      await mp.click("#file-btn");
+      await mp.click("#file-menu [data-f=export]");
+      await mp.waitForSelector("#export-dlg[open]");
+      await mp.check(`#export-dlg input[value=${f}]`);
+      await mp.click("#export-dlg [data-a=ok]");
+    };
+    await exportVia("png");
     const empty = await mp.waitForFunction(() => [...document.querySelectorAll(".toast")].some(t => /no body to export/.test(t.textContent)), null, { timeout: 5000 }).then(() => true, () => false);
     await mp.evaluate(() => window.__sv.model.store.change("Plate", d => {
       const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
@@ -4660,7 +4664,7 @@ try {
     await mp.waitForTimeout(150);
     await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.data, null, { timeout: 120000 });
     const stepOf = async () => {
-      const [dl] = await Promise.all([mp.waitForEvent("download", { timeout: 120000 }), mp.click("#step-export")]);
+      const [dl] = await Promise.all([mp.waitForEvent("download", { timeout: 120000 }), exportVia("step")]);
       const text = (await readFile(await dl.path())).toString();
       return { name: dl.suggestedFilename(), iso: text.startsWith("ISO-10303-21"), solid: /MANIFOLD_SOLID_BREP/.test(text) };
     };
@@ -4668,12 +4672,69 @@ try {
     await mp.click("#new-more");
     await mp.click("#new-asm-part");
     await mp.waitForFunction(() => window.__sv.asm.doc?.components.length === 1 && !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === 1, null, { timeout: 120000 });
-    await mp.click("#file-btn");
-    await mp.click("#file-menu [data-f=export]");
     const asmStep = await stepOf();
     check(empty, "export 1.433: Export on an empty part says there is no body yet");
     check(part.iso && part.solid && /\.step$/.test(part.name), `export 1.433: File ▸ Export ▸ STEP saves a modelled part (${JSON.stringify(part)})`);
     check(asmStep.iso && asmStep.solid && /\.step$/.test(asmStep.name), `export 1.433: File ▸ Export ▸ STEP saves an assembly (${JSON.stringify(asmStep)})`);
+    await ctx.close();
+  }
+
+  // --- 1.588.0: File ▸ Export… is a dialog; STL quality re-meshes the exact body (fine by default), File ▸ Properties is a window ---
+  if (inShard(5)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Disc", d => {
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "c", t: "point", x: 0, y: 0 }, { id: "k", t: "circle", c: "c", r: 20 }] },
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } });
+    }));
+    await mp.waitForTimeout(150);
+    await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.data, null, { timeout: 120000 });
+    const viewTris = () => mp.evaluate(() => window.__sv.viewer.parts[0].mesh.geometry.index.count / 3);
+    const before = await viewTris();
+    // STL facets on the rim of the R20 disc: how many distinct directions the side faces point in.
+    const stlOf = async kind => {
+      await mp.click("#file-btn");
+      await mp.click("#file-menu [data-f=export]");
+      await mp.waitForSelector("#export-dlg[open]");
+      const dflt = await mp.$eval("#export-dlg [data-x=kind]", el => el.value);
+      await mp.check("#export-dlg input[value=stl]");
+      if (kind) await mp.selectOption("#export-dlg [data-x=kind]", kind);
+      const [dl] = await Promise.all([mp.waitForEvent("download", { timeout: 60000 }), mp.click("#export-dlg [data-a=ok]")]);
+      const b = await readFile(await dl.path()), n = b.readUInt32LE(80), dirs = new Set();
+      let box = [1e9, -1e9];
+      for (let i = 0; i < n; i++) {
+        const nz = b.readFloatLE(84 + i * 50 + 8);
+        if (Math.abs(nz) < 0.5) dirs.add(Math.round(Math.atan2(b.readFloatLE(84 + i * 50 + 4), b.readFloatLE(84 + i * 50)) * 180 / Math.PI));
+        for (let v = 0; v < 3; v++) { const x = b.readFloatLE(84 + i * 50 + 12 + v * 12); box = [Math.min(box[0], x), Math.max(box[1], x)]; }
+      }
+      const gone = await mp.waitForFunction(() => !document.querySelector("#export-dlg"), null, { timeout: 5000 }).then(() => true, () => false);
+      return { dflt, name: dl.suggestedFilename(), tris: n, sides: dirs.size, box: box.map(x => +x.toFixed(3)), gone };
+    };
+    const fine = await stlOf(null), coarse = await stlOf("coarse"), shown = await stlOf("view");
+    check(fine.dflt === "fine" && /\.stl$/.test(fine.name) && fine.sides >= 72 && fine.gone && Math.abs(fine.box[0] + 20) < 1e-3 && Math.abs(fine.box[1] - 20) < 1e-3,
+      `export 1.588: File ▸ Export… opens a dialog; STL at Fine (the default) has a facet at most every 5° round a Ø40 disc (${JSON.stringify(fine)})`);
+    check(coarse.sides < fine.sides && coarse.tris < fine.tris && shown.tris === before, `export 1.588: Coarse has fewer facets, As shown writes the view's triangles (${JSON.stringify({ coarse, shown, before })})`);
+    check(await viewTris() === before, "export 1.588: exporting at another quality leaves the view's mesh as it was");
+    // Assembly from the part: same mesh; File ▸ Properties opens a window with the model's properties.
+    await mp.click("#new-more");
+    await mp.click("#new-asm-part");
+    await mp.waitForFunction(() => window.__sv.asm.doc?.components.length === 1 && !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === 1, null, { timeout: 120000 });
+    const asmFine = await stlOf("fine");
+    check(asmFine.sides === fine.sides && asmFine.tris === fine.tris, `export 1.588: an assembly's STL is made from the exact parts too (${JSON.stringify(asmFine)})`);
+    await mp.click("#file-btn");
+    await mp.click("#file-menu [data-f=props]");
+    const pw = await mp.waitForFunction(() => document.querySelector("#props-win[open] #props")?.textContent, null, { timeout: 5000 }).then(h => h.jsonValue(), () => "");
+    await mp.click("#props-win [data-a=close]");
+    const home = await mp.waitForFunction(() => document.querySelector("#props").parentElement.id === "rp-props", null, { timeout: 5000 }).then(() => "rp-props", () => mp.evaluate(() => document.querySelector("#props").parentElement.id));
+    check(/Overall size/.test(pw) && home === "rp-props", `export 1.588: File ▸ Properties of an assembly opens a window and puts the page back (${pw.slice(0, 60)}, ${home})`);
     await ctx.close();
   }
 

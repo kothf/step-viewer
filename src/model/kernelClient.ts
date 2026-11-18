@@ -3,6 +3,7 @@
 // coalesce: while one runs, only the newest request waits (FR-ARC-013). A worker
 // whose heap grew too big, or that crashed, is replaced and rebuilds from the
 // document (FR-ARC-011/012).
+import type { ExportMesh } from "../kernel/occ";
 import { giveBack, takeWorker } from "../kernel/spare";
 import type { Prebuilt } from "../kernel/kernel.worker";
 import { kernelPool, type KernelPool } from "../kernel/pool";
@@ -371,6 +372,12 @@ export class ModelKernel {
   async drawingSnap(doc: AsmDoc): Promise<ModelSnap> {
     await this.start();
     return (await this.call<{ snap: ModelSnap }>({ type: "asmSnap", doc })).snap;
+  }
+
+  /** Mesh export triangles (STL, 3MF, OBJ, glTF) at a chord deviation `lin` mm and angle `ang` rad, made from the exact body. */
+  async exportMesh(of: "part" | "asm", lin: number, ang: number, doc?: AsmDoc): Promise<{ id: string | number; mesh: ExportMesh }[]> {
+    await this.start();
+    return (await this.call<{ meshes: { id: string | number; mesh: ExportMesh }[] }>({ type: "exportMesh", of, lin, ang, doc })).meshes;
   }
 
   async step(name: string, color: V3): Promise<Uint8Array> {

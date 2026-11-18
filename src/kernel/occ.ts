@@ -587,3 +587,34 @@ export class Kernel {
     this.root = null;
   }
 }
+
+/** Triangles of a B-rep shape for a mesh export: positions (x, y, z per vertex) and triangle vertex indices. */
+export interface ExportMesh { pos: Float32Array; idx: Uint32Array }
+
+/**
+ * Tessellates `shape` for export (STL, 3MF, OBJ, glTF) with an absolute chord deviation `lin` (mm) and angle `ang`
+ * (radians), independent of the view's mesh. The triangulation is cleaned off afterwards, so the view's own meshing
+ * (which keeps finer triangles once made) is not changed by an export.
+ */
+export function exportTriangles(oc: any, shape: any, lin: number, ang: number): ExportMesh {
+  oc.BRepTools.Clean(shape, true);
+  new oc.BRepMesh_IncrementalMesh_2(shape, Math.max(lin, 1e-4), false, Math.max(ang, 0.005), false);
+  const pos: number[] = [], idx: number[] = [];
+  try {
+    for (const ex = new oc.TopExp_Explorer_2(shape, oc.TopAbs_ShapeEnum.TopAbs_FACE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE); ex.More(); ex.Next()) {
+      const face = oc.TopoDS.Face_1(ex.Current());
+      const loc = new oc.TopLoc_Location_1();
+      const h = oc.BRep_Tool.Triangulation(face, loc, 0);
+      if (h.IsNull()) continue;
+      const tri = h.get(), trsf = loc.Transformation(), base = pos.length / 3;
+      for (let i = 1; i <= tri.NbNodes(); i++) { const p = tri.Node(i).Transformed(trsf); pos.push(p.X(), p.Y(), p.Z()); }
+      const rev = face.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED;
+      for (let t = 1; t <= tri.NbTriangles(); t++) {
+        const T = tri.Triangle(t);
+        const a = T.Value(1) - 1, b = T.Value(2) - 1, c = T.Value(3) - 1;
+        if (rev) idx.push(base + b, base + a, base + c); else idx.push(base + a, base + b, base + c);
+      }
+    }
+  } finally { oc.BRepTools.Clean(shape, true); }
+  return { pos: new Float32Array(pos), idx: new Uint32Array(idx) };
+}

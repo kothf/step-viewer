@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.588.0] - 2026-11-18
+
+### Fixed
+
+- **File ▸ Export… opens an Export dialog.** It used to switch the side panel to its Export page, which looked like nothing happened when that page was already showing or the panel was out of sight. Pick the format (STL, 3MF, STEP, OBJ, glTF, PNG, PDF report) and press Export; the dialog remembers your last format.
+- **File ▸ Properties of an assembly or an opened model opens a window** instead of switching the side panel.
+
+### Added
+
+- **Mesh quality for STL, 3MF, OBJ and glTF.** Files are tessellated again from the exact geometry: Coarse, Fine (the default: at most 0.01 mm off the true surface and 5° per facet, so round holes and shafts print round), Extra fine, Custom (deviation and angle), or As shown in the view. Works for modelled parts, assemblies and STEP/IGES/BREP files; the toast says how many triangles were written. The side panel's Export page has the same choice.
 ## [1.587.0] - 2026-11-18
 
 ### Changed
@@ -3739,7 +3749,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.587.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.588.0...HEAD
+[1.588.0]: https://github.com/kothf/step-viewer/compare/v1.587.0...v1.588.0
 [1.587.0]: https://github.com/kothf/step-viewer/compare/v1.586.0...v1.587.0
 [1.586.0]: https://github.com/kothf/step-viewer/compare/v1.585.0...v1.586.0
 [1.585.0]: https://github.com/kothf/step-viewer/compare/v1.584.0...v1.585.0
