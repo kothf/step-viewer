@@ -182,7 +182,7 @@ function buildPart(doc: PartDoc, lite = false, variant = false): { shape: any; m
         const mat = itemMatText(c, p, doc.bodies, doc.material?.name ?? "");
         cuts.push({ item: n, kind: c.kind, desc: p?.desc || c.desc, ...(p?.desc ? { own: true } : {}), qty: c.kind === "bead" ? 1 : c.qty, kg, ...(mat ? { mat } : {}),
           ...(c.length != null ? { length: c.length } : {}), ...(c.kind === "member" ? { a1: c.angle1 ?? 0, a2: c.angle2 ?? 0 } : {}),
-          ...(c.plate ? { plate: c.plate } : {}), ...(c.inter ? { inter: c.inter } : {}) });
+          ...(c.plate ? { plate: c.plate } : {}), ...(c.box ? { box: c.box } : {}), ...(c.inter ? { inter: c.inter } : {}) });
       }
       const beads = raw.filter(c => c.kind === "bead" && !doc.cutProps?.[cutKey(c)]?.excl);
       // Weld tags: every face of a bead's bodies names its weld table row.

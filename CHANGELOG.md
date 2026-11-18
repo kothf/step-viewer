@@ -5,12 +5,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.569.0] - 2026-11-18
+## [1.570.0] - 2026-11-18
 
 ### Added
 
 - **Autokey in motion studies.** The new Autokey button in the motion study bar records as you go, as in other CAD apps: turning, panning or zooming the view puts a camera key at the playhead (a new camera track starts with the old view at 0 s, and a view that did not move adds nothing), and dragging a component that no mate holds puts a placement key there, keeping the component's turn at that moment.
 - **Camera key properties.** A selected camera key shows its position, target, distance and (in orthographic views) zoom; type a value to change it. Changing the distance moves the camera along its line of sight.
+
+## [1.569.0] - 2026-11-18
+
+### Changed
+
+- **Every body of a weldment is in its cut list.** Bodies made by ordinary features (an extruded base plate, an inserted or imported body) used to be left out of the cut list; now, as in other CAD apps, each one is listed. A flat slab (two parallel faces, the volume of the larger one times the distance between them) is a plate of its thickness, width and length and groups with end caps and gussets of the same size; any other body is listed as *Body L × W × H* by its overall size. They show in the Cut list folder, the Cut List dialog and CSV, and the drawing's cut list table and balloons.
 
 ## [1.568.0] - 2026-11-18
 
@@ -3567,7 +3573,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.569.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.570.0...HEAD
+[1.570.0]: https://github.com/kothf/step-viewer/compare/v1.569.0...v1.570.0
 [1.569.0]: https://github.com/kothf/step-viewer/compare/v1.568.0...v1.569.0
 [1.568.0]: https://github.com/kothf/step-viewer/compare/v1.567.0...v1.568.0
 [1.567.0]: https://github.com/kothf/step-viewer/compare/v1.566.0...v1.567.0

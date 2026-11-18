@@ -1644,6 +1644,7 @@ export function cutDesc(c: CutInfo, ctx: Pick<AnnotCtx, "dec" | "label">, prec?:
   return c.own ? c.desc
     : c.kind === "member" ? c.desc
     : c.kind === "plate" ? ctx.label("Plate {t} × {w} × {l}", { t: f(c.plate![2]), w: f(c.plate![0]), l: f(c.plate![1]) })
+    : c.kind === "body" ? ctx.label("Body {l} × {w} × {h}", { l: f(c.box![0]), w: f(c.box![1]), h: f(c.box![2]) })
     : !c.inter ? ctx.label("Fillet weld, leg {s}", { s: d(c.desc) })
     : ctx.label(c.inter[2] ? "Staggered fillet weld, leg {s}, {l} every {e}" : "Intermittent fillet weld, leg {s}, {l} every {e}", { s: d(c.desc), l: f(c.inter[0]), e: f(c.inter[1]) });
 }

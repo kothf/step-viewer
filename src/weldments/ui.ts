@@ -618,7 +618,8 @@ function rowsOf(items: CutItem[], density: number, props?: CutProps, bodies?: Bo
   const L = (mm: number | undefined) => mm == null ? "" : (mm * UNITS[units.current].f).toLocaleString(undefined, { maximumFractionDigits: 1 });
   let n = 0;
   return items.map(c => {
-    const auto = c.kind === "member" ? c.desc : c.kind === "plate" ? t("Plate {t} × {w} × {l}", { t: c.plate![2], w: c.plate![0], l: c.plate![1] }) : beadText(c, t);
+    const auto = c.kind === "member" ? c.desc : c.kind === "plate" ? t("Plate {t} × {w} × {l}", { t: c.plate![2], w: c.plate![0], l: c.plate![1] })
+      : c.kind === "body" ? t("Body {l} × {w} × {h}", { l: c.box![0], w: c.box![1], h: c.box![2] }) : beadText(c, t);
     const key = cutKey(c), p = props?.[key] ?? {};
     const desc = p.desc || auto;
     const kg = (c.volume * itemDensity(c, p, bodies, density)) / 1e6;
@@ -639,7 +640,7 @@ export function cutListRows(items: CutItem[] | undefined, open: boolean, row: (i
   const item = (i: number) => {
     const r = rows[i], c = items[i];
     const len = r.length ? ` × ${r.length} ${units.current}` : "";
-    return row(`cut:${i}`, c.kind === "member" ? "▭" : c.kind === "plate" ? "▱" : "◣", `${r.desc}${len} (${r.qty})${r.excl ? ` · ${t("excluded")}` : ""}`, "", ` infolder ft-body${c.sub ? " child" : ""}${r.excl ? " wld-excl" : ""}`);
+    return row(`cut:${i}`, c.kind === "member" ? "▭" : c.kind === "plate" ? "▱" : c.kind === "body" ? "◼" : "◣", `${r.desc}${len} (${r.qty})${r.excl ? ` · ${t("excluded")}` : ""}`, "", ` infolder ft-body${c.sub ? " child" : ""}${r.excl ? " wld-excl" : ""}`);
   };
   items.forEach((c, i) => { if (!c.sub) html += item(i); });
   // Sub-weldment folders (a CAD app): each with its items under it; one with no current items still shows, so it can be dissolved.
@@ -660,7 +661,7 @@ export function cutListCsv(items: CutItem[], density: number, props?: CutProps, 
   items.forEach(c => {
     const p = props?.[cutKey(c)] ?? {};
     if (p.excl) return;
-    const desc = p.desc || (c.kind === "member" ? c.desc : c.kind === "plate" ? `Plate ${c.plate![2]} x ${c.plate![0]} x ${c.plate![1]}` : beadText(c, (k, p) => k.replace(/\{(\w+)\}/g, (_m, n) => String(p?.[n] ?? ""))));
+    const desc = p.desc || (c.kind === "member" ? c.desc : c.kind === "plate" ? `Plate ${c.plate![2]} x ${c.plate![0]} x ${c.plate![1]}` : c.kind === "body" ? `Body ${c.box![0]} x ${c.box![1]} x ${c.box![2]}` : beadText(c, (k, p) => k.replace(/\{(\w+)\}/g, (_m, n) => String(p?.[n] ?? ""))));
     const m = itemMat(p), kg = (c.volume * itemDensity(c, p, bodies, density)) / 1e6, qty = c.kind === "bead" ? 1 : c.qty;
     const bm = bodyMatName(c, bodies);
     lines.push([++n, qty, desc, c.length ?? "", c.kind === "member" ? c.angle1 ?? 0 : "", c.kind === "member" ? c.angle2 ?? 0 : "", m?.name ?? (bm === null ? "Mixed" : bm || partMat), kg.toFixed(4), (kg * (c.kind === "bead" ? 1 : c.qty)).toFixed(4), p.part ?? "", p.note ?? "", ...(subs?.length ? [subName(c.sub)] : [])].map(q).join(","));
