@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { Modeller } from "../../src/kernel/model";
 import type { Feature, PartDoc, SketchFeature, SkEnt } from "../../src/model/types";
 import type { SmRipFeature, SmTabSlotFeature, SmInsertFeature, SmConvertFeature, SmCutFeature, SmGussetFeature, SmReliefFeature, SmUnfoldFeature, SmFormFeature, SmVentFeature, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
-import { apply, edgeFlange, flatLoops, flatSize, bendAllowance, reliefCorners, filletLoop, flatPatternDoc } from "../../src/sheetmetal/sheet";
+import { apply, edgeFlange, flatFormLines, flatLoops, flatSize, bendAllowance, reliefCorners, filletLoop, flatPatternDoc } from "../../src/sheetmetal/sheet";
 import { flatDrawing } from "../../src/sheetmetal/flat";
 import { cutPropRows, cutPropsCsv, sheetCutProps } from "../../src/sheetmetal/cutprops";
 import { bendTableText, defaultTable, dinTable, parseBendTable, tableValue } from "../../src/sheetmetal/bendTable";
@@ -1115,4 +1115,29 @@ test("sheet metal: cut-list properties count cuts made by later features (exam #
   close(p.inner, 10 * Math.PI + 80, 1e-9);
   // The flat DXF of it: the hole once, as a circle.
   assert.equal(flatDrawing(r.sheet!).entities.filter(e => e.kind === "circle" && e.layer === "OUTLINE").length, 1);
+});
+
+test("sheet metal: louvers end to end stay one body when unfolded (exam #11)", async () => {
+  oc ??= await occ();
+  m ??= new Modeller(oc);
+  // The exam chassis: 300 × 200 plate, flanges on three sides, three louvers on the front flange placed by
+  // clicks, so their ends meet a few 1e-5 mm apart and one of them came out as a body of its own.
+  const s = rect("s", -150, -100, 150, 100);
+  const b = base({ thickness: { v: 1.5 }, radius: { v: 1.5 }, k: 0.44, depth: { v: 20 } });
+  const fl: SmFlangeFeature = { id: "f", type: "smflange", name: "Edge-Flange1", edges: ["sl1", "sl4", "sl2"].map(e => ({ faces: ["b:p0:top", `b:p0:${e}`] as [string, string] })), length: { v: 60 }, angle: { v: Math.PI / 2 } };
+  const lv: SmFormFeature = { id: "x", type: "smform", name: "Form-Tool1", face: { name: "f:p0:bot" }, tool: "louver", flip: true, angle: { v: 0 }, size: { v: 30 }, width: { v: 9 }, height: { v: 3.8 },
+    pts: [[-100.00001800162184, -127.39291015720545], [-70.00002528750488, -127.3929109066429], [-39.99998169092859, -127.39293200906405]] };
+  const unf: SmUnfoldFeature = { id: "u", type: "smunfold", name: "Unfold1", face: { name: "b:p0:top" }, bends: [] };
+  const plain = run(doc([s, b, fl, unf])).props.volume;
+  const folded = run(doc([s, b, fl, lv]));
+  const added = folded.props.volume - run(doc([s, b, fl])).props.volume;
+  assert.ok(added > 100);
+  const r = run(doc([s, b, fl, lv, unf]));
+  assert.equal(r.props.bodies, 1);
+  close(r.props.volume, plain + added, 1e-4);
+  // The flat pattern view draws the louvers' footprints (exam #15).
+  const fp = run(doc([s, b, fl, lv, flat]));
+  const lines = flatFormLines(fp.sheet!);
+  assert.ok(lines.length >= 3 * 2 * 4, `${lines.length} form lines`);
+  for (const p of lines) close(p[2], 1.5, 1e-9);
 });

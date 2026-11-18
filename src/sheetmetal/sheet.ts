@@ -1459,6 +1459,30 @@ export function flatBendLines(st: SheetState): { a: V3; b: V3; up: boolean }[] {
     ...(st.folds ?? []).map(f => ({ a: apply(st.root, [f.a[0], f.a[1], st.T]), b: apply(st.root, [f.b[0], f.b[1], st.T]), up: f.up }))];
 }
 
+/** Forming tool footprints on the flat pattern's top face, in world coordinates, as line pairs (exam #15: the DXF had them, the view did not). */
+export function flatFormLines(st: SheetState): V3[] {
+  const out: V3[] = [];
+  const P = (p: V2): V3 => apply(st.root, [p[0], p[1], st.T]);
+  const arc = (c: V2, r: number, a0: number, sw: number) => {
+    const n = Math.max(4, Math.ceil(Math.abs(sw) / (Math.PI / 24)));
+    for (let i = 0; i < n; i++) {
+      const t0 = a0 + sw * i / n, t1 = a0 + sw * (i + 1) / n;
+      out.push(P([c[0] + r * Math.cos(t0), c[1] + r * Math.sin(t0)]), P([c[0] + r * Math.cos(t1), c[1] + r * Math.sin(t1)]));
+    }
+  };
+  for (const m of st.forms ?? []) for (const x of m.mark) {
+    if (x.kind === "line") out.push(P(x.a), P(x.b));
+    else if (x.kind === "circle") arc(x.c, x.r, 0, 2 * Math.PI);
+    else if (x.kind === "arc") {
+      const a0 = Math.atan2(x.a[1] - x.c[1], x.a[0] - x.c[0]), a1 = Math.atan2(x.b[1] - x.c[1], x.b[0] - x.c[0]);
+      let sw = a1 - a0;
+      if (x.ccw) { while (sw <= 0) sw += 2 * Math.PI; } else { while (sw >= 0) sw -= 2 * Math.PI; }
+      arc(x.c, x.r, a0, sw);
+    }
+  }
+  return out;
+}
+
 /** A copy of a sheet metal part with its flat pattern shown (the Flat-Pattern feature on, or added last); null for other parts. */
 export function flatPatternDoc(doc: PartDoc): PartDoc | null {
   if (!doc.features.some(isSheetBase)) return null;

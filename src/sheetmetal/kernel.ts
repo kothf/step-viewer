@@ -13,7 +13,8 @@ export interface SheetApi {
   oc: any;
   bool(kind: "fuse" | "cut" | "common", a: Named, b: Named, fid: string): Named;
   /** `a` fused with / less every tool in one Boolean. */
-  boolAll?(kind: "fuse" | "cut", a: Named, tools: Named[], fid: string): Named;
+  /** `fuzzy` (fuse only): a fuzzy value for the one Boolean. */
+  boolAll?(kind: "fuse" | "cut", a: Named, tools: Named[], fid: string, fuzzy?: number): Named;
   segEdge(s: Seg, frame: Frame): any;
   sub(shape: any, kind: "FACE" | "EDGE"): any[];
   centroid(face: any): V3;
@@ -1112,8 +1113,8 @@ function boxOf(api: SheetApi, shape: any, pad: number): Box {
 }
 const boxesMeet = (p: Box, q: Box) => [0, 1, 2].every(k => p[0][k] <= q[1][k] && q[0][k] <= p[1][k]);
 
-function boolAll(api: SheetApi, kind: "fuse" | "cut", a: Named, tools: Named[], fid: string): Named {
-  if (api.boolAll) return api.boolAll(kind, a, tools, fid);
+function boolAll(api: SheetApi, kind: "fuse" | "cut", a: Named, tools: Named[], fid: string, fuzzy = 0): Named {
+  if (api.boolAll) return api.boolAll(kind, a, tools, fid, fuzzy);
   let out = a;
   for (const t of tools) out = api.bool(kind, out, t, fid);
   return out;
@@ -1174,8 +1175,19 @@ function reposition(api: SheetApi, T: number, st: SheetState, body: Named, from:
     }
     adds.push(moved(api, piece, flatTrsf(api, from.mats[best.id], to.mats[best.id])));
   }
-  out = boolAll(api, "fuse", out, adds, fid);
-  return out;
+  const fused = boolAll(api, "fuse", out, adds, fid);
+  // Pieces moved separately can land a few 1e-5 mm off each other (exam #11: three louvers placed end to end by
+  // clicks, one joined to the sheet only through its neighbour, came out as a body of its own): fuse them one at a
+  // time, largest first, with a fuzzy value when a piece did not join.
+  const n = solidsOf(api, fused).length;
+  if (adds.length && n > solidsOf(api, out).length) {
+    try {
+      let sq = out;
+      for (const a of [...adds].sort((p, q) => volumeOf(api, q.shape) - volumeOf(api, p.shape))) sq = boolAll(api, "fuse", sq, [a], fid, T * 1e-3);
+      if (solidsOf(api, sq).length < n) return sq;
+    } catch { /* keep the plain fuse */ }
+  }
+  return fused;
 }
 
 /**
