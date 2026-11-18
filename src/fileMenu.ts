@@ -28,6 +28,8 @@ export interface FileHost {
   dirtyCount(): number;
   open(): void;
   openFiles(files: File[]): void;
+  /** Opens the i-th recent document (through its vault when it came from one). */
+  openRecent?(i: number): void;
   newPart(): void;
   newAsm(): void;
   newDrawing(): void;
@@ -129,7 +131,7 @@ export class FileMenu {
     this.recent = await recentList();
     const row = (it: Item) => it.hidden ? "" : `<button role="menuitem" data-f="${it.id}"${it.on ? "" : " disabled"}${it.title ? ` title="${esc(it.title)}"` : ""}><span class="fm-l">${esc(it.label)}</span>${it.key ? `<kbd class="fm-k" translate="no">${esc(key(it.key))}</kbd>` : ""}</button>`;
     const recent = this.recent.length
-      ? `<hr />${this.recent.map((r, i) => `<button role="menuitem" data-f="recent:${i}" title="${esc(`${r.name}${r.count > 1 ? ` (+${r.count - 1})` : ""} · ${new Date(r.at).toLocaleString()}`)}"><span class="fm-l"><span class="fm-n">${i + 1}</span> <span translate="no">${esc(r.name)}</span>${r.count > 1 ? ` <span class="muted">+${r.count - 1}</span>` : ""}</span></button>`).join("")}<button role="menuitem" data-f="recent-clear"><span class="fm-l">${esc(t("Clear recent documents"))}</span></button>`
+      ? `<hr />${this.recent.map((r, i) => `<button role="menuitem" data-f="recent:${i}" title="${esc(`${r.name}${r.count > 1 ? ` (+${r.count - 1})` : ""} · ${new Date(r.at).toLocaleString()}`)}"><span class="fm-l"><span class="fm-n">${i + 1}</span> <span translate="no">${esc(r.name)}</span>${r.count > 1 ? ` <span class="muted">+${r.count - 1}</span>` : ""}${r.vault ? ` <span class="muted rec-vault">${esc(t("in vault {name}", { name: r.vault.vault }))}</span>` : ""}</span></button>`).join("")}<button role="menuitem" data-f="recent-clear"><span class="fm-l">${esc(t("Clear recent documents"))}</span></button>`
       : "";
     this.el.innerHTML = this.items().map(it => (it === "-" ? "<hr />" : row(it))).join("")
       + recent + `<hr />${row({ id: "exit", label: t("Exit"), on: true, title: t("Close every document; an installed app window closes too") })}`;
@@ -190,6 +192,7 @@ export class FileMenu {
   async run(id: string) {
     const h = this.host;
     if (id.startsWith("recent:")) {
+      if (h.openRecent) { h.openRecent(+id.slice(7)); return; }
       const fs = await recentFiles(+id.slice(7));
       if (fs) h.openFiles(fs); else toast(t("That document is no longer in the recent list."), true);
       return;

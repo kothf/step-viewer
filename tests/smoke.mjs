@@ -5728,6 +5728,17 @@ try {
     await mp.click("#empty-vault");
     await mp.waitForFunction(() => window.__sv.vault.vault?.info.name === "Multi" && !document.querySelector("#empty-vault"));
     check(reopenText === "Reopen vault Multi", `vault UI: the start card reopens the vault used last (${reopenText})`);
+    // 1.593: a file opened from the vault is a recent document of that vault, and opens through the vault again.
+    const plateId = await mp.evaluate(async () => { const p = window.__sv.vault, f = p.files.find(x => x.path === "plate.mcadprt"); await p.openFile(f.id); return f.id; });
+    await mp.waitForFunction(id => window.__sv.modeller.active && window.__sv.modeller.vault?.id === id, plateId, { timeout: 30000 });
+    await mp.evaluate(() => window.__sv.vault.close());
+    await mp.click("#file-btn");
+    await mp.click("#file-menu [data-f=close-all]");
+    await mp.waitForFunction(() => !document.querySelector("#empty").hidden && [...document.querySelectorAll("#empty-recent [data-recent]")].some(b => /plate\.mcadprt/.test(b.textContent)), null, { timeout: 30000 });
+    const recRow = await mp.evaluate(() => [...document.querySelectorAll("#empty-recent [data-recent]")].find(b => /plate\.mcadprt/.test(b.textContent)).textContent);
+    await mp.evaluate(() => [...document.querySelectorAll("#empty-recent [data-recent]")].find(b => /plate\.mcadprt/.test(b.textContent)).click());
+    const viaVault = await mp.waitForFunction(id => window.__sv.vault.vault?.info.name === "Multi" && window.__sv.modeller.active && window.__sv.modeller.vault?.id === id, plateId, { timeout: 30000 }).then(() => true, () => false);
+    check(/in vault Multi/.test(recRow) && viaVault, `vault UI: a recent document from a vault reopens through that vault, tied to its file (${recRow}, ${viaVault})`);
     check(/Changes not checked in .*docs\/specs\/e\.txt/.test(remind) && stillOpen, `vault UI: closing the vault with changes not checked in reminds first (${remind}, ${stillOpen})`);
     check(tree === "plate.mcaddrw,plate.mcadprt,[docs],[docs/specs],e.txt" && foldedList === "plate.mcaddrw,plate.mcadprt,[docs]" && chipsShown === "All|Parts 1|Drawings 1|Other files 1" && onlyDrw === "plate.mcaddrw",
       `vault UI: folders in the list fold, filter chips narrow it (${tree} | ${foldedList} | ${chipsShown} | ${onlyDrw})`);

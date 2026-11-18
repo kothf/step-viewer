@@ -69,7 +69,7 @@ import { MotionManager } from "./motion/manager";
 import { flattenSubs } from "./asm/patterns";
 import { makeGrip, rememberDialogSizes } from "./resize";
 import { FileMenu, type LiveKind, type PackDoc } from "./fileMenu";
-import { recentAdd, recentFiles, recentList } from "./recent";
+import { recentAdd, recentFiles, recentItem, recentList } from "./recent";
 import { drawingOf, peekDrawing, uniqueDrawings, type FoundDrawing, type ModelKey } from "./drawing/findDrawing";
 import { packAsm, ASM_EXT } from "./asm/file";
 import { bindValueDrops, dragValue } from "./valueDrop";
@@ -882,11 +882,25 @@ async function renderStartRecent() {
     const d = new Date(at), now = new Date();
     return d.toDateString() === now.toDateString() ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : d.toLocaleDateString();
   };
-  box.innerHTML = list.map((r, i) => `<button class="empty-rec" data-recent="${i}" title="${esc(`${r.name}${r.count > 1 ? ` (+${r.count - 1})` : ""} · ${new Date(r.at).toLocaleString()}`)}"><span class="ext" translate="no">${esc(ext(r.name))}</span><span class="nm" translate="no">${esc(r.name)}${r.count > 1 ? ` <span class="muted">+${r.count - 1}</span>` : ""}</span><span class="when">${esc(when(r.at))}</span></button>`).join("");
+  box.innerHTML = list.map((r, i) => `<button class="empty-rec" data-recent="${i}" title="${esc(`${r.name}${r.count > 1 ? ` (+${r.count - 1})` : ""} · ${new Date(r.at).toLocaleString()}`)}"><span class="ext" translate="no">${esc(ext(r.name))}</span><span class="nm"><span translate="no">${esc(r.name)}</span>${r.count > 1 ? ` <span class="muted">+${r.count - 1}</span>` : ""}${r.vault ? ` <span class="muted rec-vault">${esc(t("in vault {name}", { name: r.vault.vault }))}</span>` : ""}</span><span class="when">${esc(when(r.at))}</span></button>`).join("");
   box.querySelectorAll<HTMLElement>("[data-recent]").forEach(b => b.addEventListener("click", async () => {
-    const fs = await recentFiles(+b.dataset.recent!);
-    if (fs) void openFiles(fs); else { toast(t("That document is no longer in the recent list."), true); void renderStartRecent(); }
+    if (!await openRecent(+b.dataset.recent!)) void renderStartRecent();
   }));
+}
+
+/**
+ * Opens the i-th recent document. One that came from a vault opens through that vault, tied to its vault file;
+ * when the vault or the file is gone, the copy kept with the recent list opens instead. False = no such entry.
+ */
+async function openRecent(i: number): Promise<boolean> {
+  const e = await recentItem(i);
+  if (!e) { toast(t("That document is no longer in the recent list."), true); return false; }
+  if (e.vault) {
+    if (await vaultPanel.openRecent(e.vault)) return true;
+    toast(t("Could not open it from the vault {vault}: opened the copy kept with the recent documents.", { vault: e.vault.vault }), "warn");
+  }
+  await openFiles(e.files);
+  return true;
 }
 new MutationObserver(() => { if (!$("#empty").hidden) void renderStartRecent(); }).observe($("#empty"), { attributes: true, attributeFilter: ["hidden"] });
 onLangChange(() => void renderStartRecent());
@@ -2296,6 +2310,7 @@ const vaultPanel = new VaultPanel($("#vault-panel"), {
     await docs!.activate(tab.id);
     return true;
   },
+  recent: (name, data, ref) => void recentAdd([{ name, data }], ref),
   added: (id: string): Promise<void> => drawingsIntoVault(id).catch(e => toast(t("Could not save: {err}", { err: t((e as Error).message) }), true)),
   doc: () => {
     const k = fileMenuLive();
@@ -3373,6 +3388,7 @@ const fileMenu = new FileMenu({
   dirtyCount: () => docs?.dirtyTabs().length ?? 0,
   open: () => { warmKernel(); openPicker(); },
   openFiles: fs => void openFiles(fs),
+  openRecent: i => void openRecent(i),
   newPart: () => $("#new-part").click(),
   newAsm: () => $("#new-asm").click(),
   newDrawing: () => $("#new-drawing").click(),

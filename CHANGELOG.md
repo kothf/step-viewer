@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.594.0] - 2026-11-18
+## [1.595.0] - 2026-11-18
 
 ### Added
 - Assemblies: **Isolate** and **Make others transparent** on a component's right-click menu (and for several picked components). A bar at the bottom of the view switches the others between hidden and see-through; **Exit Isolate** or Esc brings them back. Only the view changes.
@@ -17,6 +17,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Esc did not close the **Hide/Show items** menu after a switch in it had been clicked.
 - Push/pull: while the arrow was dragged, the face's distance did not show by the arrow and a stale "Distance: 0 mm" callout stayed on the face.
 - Isolate: after picking hidden/transparent in the bar, Esc did not exit Isolate.
+
+## [1.594.0] - 2026-11-18
+
+### Fixed
+- **Recent documents from a vault open in the vault again.** A part, assembly or drawing opened from a vault is listed in File ▸ recent documents and on the start screen as *in vault …*; opening it from there opens that vault (a folder vault or a browser vault) and the file in it, checked in or checked out as before, instead of a loose copy. When the vault or the file is no longer there, the copy kept with the recent list opens and a message says so.
 
 ## [1.593.0] - 2026-11-18
 
@@ -3788,7 +3793,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.594.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.595.0...HEAD
+[1.595.0]: https://github.com/kothf/step-viewer/compare/v1.594.0...v1.595.0
 [1.594.0]: https://github.com/kothf/step-viewer/compare/v1.593.0...v1.594.0
 [1.593.0]: https://github.com/kothf/step-viewer/compare/v1.592.0...v1.593.0
 [1.592.0]: https://github.com/kothf/step-viewer/compare/v1.591.0...v1.592.0
