@@ -70,7 +70,7 @@ import { regionAt, regionPoint, sketchRegions, type Region } from "../sketch/reg
 import { SEL_FILTER } from "../tools/Snapper";
 import { lassoMode, mergeSel, rectRegion, regionInside, regionProbe, regionTaken, type Rect, type Region as SelArea } from "../boxSelect";
 import { SelDrag } from "../selDrag";
-import { bodyMasses } from "../tools/inertia";
+import { bodyMasses, combine } from "../tools/inertia";
 import { units, UNITS } from "../tools/units";
 import { csys } from "../tools/csys";
 import { askFileName, bindTabs, confirmModal, toast, trapFocus } from "../ui";
@@ -81,7 +81,7 @@ import type { EndCapFeature, GussetFeature } from "../weldments/types";
 import { capDir, splitSubs } from "../weldments/types";
 import { showSheetProps } from "../sheetmetal/propsUi";
 import { bindSmPanel, smCheck, smDraft, smPanel, SM_BASES, SM_ICONS, SM_TOOLS, SM_TREE_ICONS } from "../sheetmetal/ui";
-import { isSheet, isSheetBase, type SmFlangeFeature, type SmFormFeature, type SmUnfoldFeature, type SmReliefFeature, type SmGussetFeature, type SmConvertFeature, type SmInsertFeature, type SmTabSlotFeature } from "../sheetmetal/types";
+import { isSheet, isSheetBase, type SmBaseFeature, type SmHemFeature, type SmFlangeFeature, type SmFormFeature, type SmUnfoldFeature, type SmReliefFeature, type SmGussetFeature, type SmConvertFeature, type SmInsertFeature, type SmTabSlotFeature } from "../sheetmetal/types";
 import { apply as smApply, applyDir as smApplyDir, bendOfFace, reliefCorners, crossBreakLines, flatBendLines, flatPointOn, panelOfFace, placedState, unfoldBendLines } from "../sheetmetal/sheet";
 import { flatDxf } from "../sheetmetal/flat";
 import { modelItems, type ModelItem } from "../drawing/items";
@@ -168,7 +168,7 @@ const INSTANT_VALUES: [string, "length" | "angle" | "count", string][] = [
   ["count2", "count", "Instances"], ["pitch", "length", "Pitch"], ["height", "length", "Height"], ["length", "length", "Length"]];
 /** Features with a `flip` the Modify box can reverse. */
 const FLIP_TYPES = new Set(["extrude", "revolve", "plane", "moveface", "dome", "draft", "lpattern", "hole"]);
-const VALUE_CALLOUT_SKIP = new Set(["extrude", "revolve", "fillet", "chamfer", "endcap", "gusset", "smflange", "sketch", "sketch3d"]);
+const VALUE_CALLOUT_SKIP = new Set(["extrude", "revolve", "fillet", "chamfer", "endcap", "gusset", "smflange", "smhem", "sketch", "sketch3d"]);
 const roundReady = (f: FilletFeature | ChamferFeature) => f.type === "fillet" && f.kind
   ? !!f.faces1?.length && !!f.faces2?.length && (f.kind !== "full" || !!f.center?.length)
   : f.type === "chamfer" && f.mode === "vertex" ? !!f.vertices?.length : f.edges.length > 0;
@@ -3198,8 +3198,17 @@ export class ModelController {
 
   /** Sheet metal cut-list properties (FR-FT-120): bounding box, thickness, cutting lengths, bends, mass. */
   private sheetProps() {
-    const vol = this.last?.props?.volume, rho = this.doc.material?.density;
-    showSheetProps(this.last?.sheet, this.doc.name, vol != null && rho != null ? vol * rho / 1000 : undefined);
+    const d = this.doc, vol = this.last?.props?.volume, rho = d.material?.density;
+    // Bodies with their own material weigh by it; the rest by the part's. A typed mass override wins.
+    const own = d.bodies && Object.values(d.bodies).some(b => b.material);
+    const shown = (this.last?.bodies ?? []).filter(b => b.faces);
+    const mats = own && shown.length ? shown.map(b => d.bodies?.[b.key]?.material ?? d.material) : [d.material];
+    const names = [...new Set(mats.map(m => m?.name).filter((n): n is string => !!n))];
+    const dens = [...new Set(mats.map(m => m?.density))];
+    const mass = d.massOverride?.mass != null ? d.massOverride.mass * 1000
+      : own && mats.every(m => m) ? (() => { const bs = this.bodyMasses(rho ?? 0); return bs ? combine(bs).mass : undefined; })()
+      : vol != null && rho != null ? vol * rho / 1000 : undefined;
+    showSheetProps(this.last?.sheet, d.name, mass, { name: names.length ? names.join(", ") : undefined, density: dens.length === 1 ? dens[0] : undefined });
   }
 
   /** The flat pattern with its bend lines as DXF (R12, mm). */
@@ -5110,12 +5119,13 @@ export class ModelController {
   // ---------- extrude depth arrow (FR-FT-017, FR-UI-027) ----------
 
   /** The extrude or revolve being edited, or the one selected in the tree (dragging it edits it at once). */
-  private arrowFeature(): ExtrudeFeature | RevolveFeature | EndCapFeature | GussetFeature | SmFlangeFeature | FlexFeature | null {
+  private arrowFeature(): ExtrudeFeature | RevolveFeature | EndCapFeature | GussetFeature | SmFlangeFeature | SmHemFeature | SmBaseFeature | FlexFeature | null {
     const m = this.mode;
     // Sheet metal flanges show their arrow while folded only (the flat pattern hides where the flange stands).
     const folded = () => !this.doc.features.some(x => x.type === "smflat" && !x.suppressed);
-    const ok = (f: Feature | undefined): f is ExtrudeFeature | RevolveFeature | EndCapFeature | GussetFeature | SmFlangeFeature | FlexFeature => f?.type === "revolve" || (f?.type === "extrude" && (f.end === "blind" || f.end === "mid" || dir2Blind(f)))
-      || (f?.type === "endcap" && f.faces.length > 0) || (f?.type === "gusset" && !!f.face1 && !!f.face2) || (f?.type === "smflange" && f.edges.length > 0 && folded())
+    const ok = (f: Feature | undefined): f is ExtrudeFeature | RevolveFeature | EndCapFeature | GussetFeature | SmFlangeFeature | SmHemFeature | SmBaseFeature | FlexFeature => f?.type === "revolve" || (f?.type === "extrude" && (f.end === "blind" || f.end === "mid" || dir2Blind(f)))
+      || (f?.type === "endcap" && f.faces.length > 0) || (f?.type === "gusset" && !!f.face1 && !!f.face2) || ((f?.type === "smflange" || f?.type === "smhem") && f.edges.length > 0 && folded())
+      || (f?.type === "smbase" && folded() && this.smOpenBase(f))
       || (f?.type === "flex" && (this.last?.frames[f.id]?.len?.length ?? 0) >= 6);
     if (m.kind === "feature") return ok(m.draft) ? m.draft : null;
     // A part that was closed or handed back to its assembly has no store; its last selection must not draw (exam bug 40).
@@ -5141,7 +5151,8 @@ export class ModelController {
     if (!f) return;
     if (f.type === "endcap") { this.drawCapArrow(f); return; }
     if (f.type === "gusset") { this.drawGussetArrows(f); return; }
-    if (f.type === "smflange") { this.drawFlangeArrow(f); return; }
+    if (f.type === "smflange" || f.type === "smhem") { this.drawFlangeArrow(f); return; }
+    if (f.type === "smbase") { this.drawBaseArrow(f); return; }
     if (f.type === "flex") { this.drawFlexArrows(f); return; }
     const sk = this.store!.feature(f.sketch);
     if (sk?.type !== "sketch") return;
@@ -5187,8 +5198,28 @@ export class ModelController {
     this.handleLabel(f.id, "thickness", t("Drag the arrow to change the thickness; click to type it"));
   }
 
-  /** The length arrow of an edge flange (FR-FT-120): at the tip of its first flange, pointing away from the bend. */
-  private drawFlangeArrow(f: SmFlangeFeature) {
+  /** A base flange drawn from an open sketch (its lines become walls), not a closed plate. */
+  private smOpenBase(f: SmBaseFeature) {
+    const sk = this.store?.feature(f.sketch);
+    return sk?.type === "sketch" && !!sketchProfile(sk).error;
+  }
+
+  /** The depth arrow of a base flange from an open profile (FR-FT-120): from the sketch along its normal, as an extrude's. */
+  private drawBaseArrow(f: SmBaseFeature) {
+    const sk = this.store!.feature(f.sketch);
+    if (sk?.type !== "sketch") return;
+    const fr = this.frameOf(sk);
+    const pts = sk.ents.filter(e => e.t === "point") as { x: number; y: number }[];
+    if (!pts.length) return;
+    const cx = pts.reduce((a, p) => a + p.x, 0) / pts.length, cy = pts.reduce((a, p) => a + p.y, 0) / pts.length;
+    const base = new THREE.Vector3(...fr.o).addScaledVector(new THREE.Vector3(...fr.x), cx).addScaledVector(new THREE.Vector3(...fr.y), cy);
+    const dir = new THREE.Vector3(...fr.n).multiplyScalar(f.flip && !f.mid ? -1 : 1);
+    this.placeArrow(base, dir, f.depth.v, !!f.mid, "depth");
+    this.handleLabel(f.id, "depth", t("Drag the arrow to change the depth; click to type it"));
+  }
+
+  /** The length arrow of an edge flange or a hem (FR-FT-120): at the tip of its first flange, pointing away from the bend. */
+  private drawFlangeArrow(f: SmFlangeFeature | SmHemFeature) {
     const st = this.last?.sheet;
     const p = st?.panels.find(x => x.id === `${f.id}:p0`);
     const tip = p?.outer.find(s => s.ent === "tip"), att = p?.outer.find(s => s.ent === "att");
@@ -5414,7 +5445,7 @@ export class ModelController {
   private moveArrow(e: PointerEvent) {
     const m = this.mode, d = this.arrowDrag, a = this.arrow;
     if (m.kind === "feature" && m.draft.type === "revolve" && d && a?.ang) { this.moveAngle(e, m.draft, d); return; }
-    if (m.kind !== "feature" || (m.draft.type !== "extrude" && m.draft.type !== "endcap" && m.draft.type !== "gusset" && m.draft.type !== "smflange" && m.draft.type !== "flex") || !d || !a) return;
+    if (m.kind !== "feature" || (m.draft.type !== "extrude" && m.draft.type !== "endcap" && m.draft.type !== "gusset" && m.draft.type !== "smflange" && m.draft.type !== "smhem" && m.draft.type !== "smbase" && m.draft.type !== "flex") || !d || !a) return;
     const key = a.key;
     const k = a.mid ? 2 : 1;
     let v = d.depth + (this.axisParam(e) - d.start) * k;

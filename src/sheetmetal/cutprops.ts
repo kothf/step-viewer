@@ -136,8 +136,13 @@ export function sheetCutProps(st: SheetState): SheetCutProps {
   return { T: st.T, R: st.R, k, bends: st.bends.length + (st.folds?.length ?? 0), ...box, boxArea: box.length * box.width, area, outer, inner, cutouts };
 }
 
-/** The rows shown and exported (English labels, translated when shown). */
-export function cutPropRows(p: SheetCutProps, mass?: number): [string, number | null, "len" | "area" | "count" | "num" | "mass"][] {
+/** What the sheet is made of: material name(s) and density (g/cm³; absent when bodies differ). */
+export interface SheetMaterial { name?: string; density?: number }
+
+type Row = [string, number | string | null, "len" | "area" | "count" | "num" | "mass" | "text" | "density"];
+
+/** The rows shown and exported (English labels, translated when shown). `mass` in grams. */
+export function cutPropRows(p: SheetCutProps, mass?: number, mat?: SheetMaterial): Row[] {
   return [
     ["Bounding box length", p.length, "len"],
     ["Bounding box width", p.width, "len"],
@@ -150,13 +155,16 @@ export function cutPropRows(p: SheetCutProps, mass?: number): [string, number | 
     ["Cutting length - inner", p.inner, "len"],
     ["Cut outs", p.cutouts, "count"],
     ["Bends", p.bends, "count"],
+    ["Material", mat?.name ?? null, "text"],
+    ["Density", mat?.density ?? null, "density"],
     ["Mass", mass ?? null, "mass"],
   ];
 }
 
-/** CSV of the rows, in millimetres and kilograms. */
-export function cutPropsCsv(p: SheetCutProps, mass?: number): string {
-  const unit = { len: "mm", area: "mm²", count: "", num: "", mass: "kg" } as const;
+/** CSV of the rows, in millimetres, g/cm³ and kilograms. */
+export function cutPropsCsv(p: SheetCutProps, mass?: number, mat?: SheetMaterial): string {
+  const unit = { len: "mm", area: "mm²", count: "", num: "", mass: "kg", text: "", density: "g/cm³" } as const;
   const r = (x: number) => String(Math.round(x * 1e6) / 1e6);
-  return ["Property,Value,Unit", ...cutPropRows(p, mass).filter(x => x[1] != null).map(([k, v, q]) => `${k},${r(q === "mass" ? v! / 1000 : v!)},${unit[q]}`)].join("\n") + "\n";
+  const cell = (v: string) => /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+  return ["Property,Value,Unit", ...cutPropRows(p, mass, mat).filter(x => x[1] != null).map(([k, v, q]) => `${k},${typeof v === "string" ? cell(v) : r(q === "mass" ? v! / 1000 : v!)},${unit[q]}`)].join("\n") + "\n";
 }

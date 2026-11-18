@@ -8,7 +8,7 @@ import type { Feature, PartDoc, SketchFeature, SkEnt } from "../../src/model/typ
 import type { SmRipFeature, SmTabSlotFeature, SmInsertFeature, SmConvertFeature, SmCutFeature, SmGussetFeature, SmReliefFeature, SmUnfoldFeature, SmFormFeature, SmVentFeature, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
 import { apply, flatLoops, flatSize, bendAllowance, reliefCorners, filletLoop } from "../../src/sheetmetal/sheet";
 import { flatDrawing } from "../../src/sheetmetal/flat";
-import { cutPropsCsv, sheetCutProps } from "../../src/sheetmetal/cutprops";
+import { cutPropRows, cutPropsCsv, sheetCutProps } from "../../src/sheetmetal/cutprops";
 import { bendTableText, defaultTable, dinTable, parseBendTable, tableValue } from "../../src/sheetmetal/bendTable";
 import { loopPolygon, polyArea } from "../../src/sketch/profile";
 import { occ } from "./occ";
@@ -836,6 +836,16 @@ test("sheet metal: convert a solid box to sheet metal (FR-FT-120)", async () => 
   assert.ok(inL([8, 5, 39]) && inL([5, 8, 39]) && inL([95, 52, 39]) && !inL([50, 30, 39]) && !inL([12, 12, 39]), "lips meet at the corners round an open middle");
   const lf = run(doc([s, box, ...pk, lips, flat]));
   close(lf.props.volume, lt.props.volume, 6e-3);
+  // One lip only: its ends stop at the inner faces of the walls beside it (they used to run into their inner half,
+  // material the flat pattern then had twice), so the flat pattern keeps the folded volume.
+  const one = conv({ edges: [...["l1", "l2", "l3", "l4"].map(edge), { faces: ["e:end", "e:side:sl1"] as [string, string] }] });
+  const ot = run(doc([s, box, ...pk, one])), of = run(doc([s, box, ...pk, one, flat]));
+  close(of.props.volume, ot.props.volume, 3e-4);
+  const lipP = ot.sheet!.panels.find(p => p.id === "c:p5")!;
+  for (const sg of lipP.outer) for (const q of sg.kind === "line" ? [sg.a, sg.b] : []) {
+    const w = apply(lipP.M, [q[0], q[1], 1]);
+    assert.ok(w[0] > 2 - 1e-6 && w[0] < 98 + 1e-6, `the lip stays between the side walls' inner faces (${w})`);
+  }
   // Every lip panel ends at its corners: none reaches past the box's outline in its own plane.
   for (const p of lt.sheet!.panels) for (const sg of p.outer) for (const q of sg.kind === "line" ? [sg.a, sg.b] : []) {
     const w = apply(p.M, [q[0], q[1], 0]);
@@ -979,6 +989,12 @@ test("sheet metal: cut-list properties from the flat pattern (FR-FT-120)", async
   // CSV in mm.
   const csv = cutPropsCsv(p, 1234.5);
   assert.ok(csv.startsWith("Property,Value,Unit\nBounding box length,100,mm\n") && csv.includes("Cut outs,1,") && csv.includes("Mass,1.2345,kg"), csv);
+  // Material and density rows; names with a comma are quoted.
+  const csvM = cutPropsCsv(p, 1234.5, { name: "Steel, S235", density: 7.85 });
+  assert.ok(csvM.includes('Material,"Steel, S235",\n') && csvM.includes("Density,7.85,g/cm³") && !csv.includes("Material,"), csvM);
+  const rows = cutPropRows(p, undefined, { name: "Aluminium 6061" });
+  assert.deepEqual(rows.find(r => r[0] === "Material"), ["Material", "Aluminium 6061", "text"]);
+  assert.equal(rows.find(r => r[0] === "Density")![1], null);
 });
 
 test("sheet metal: bend tables (FR-FT-120)", async () => {

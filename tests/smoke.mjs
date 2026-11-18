@@ -13864,6 +13864,53 @@ try {
       && Math.abs(spV - 2 * (100 * spH - 25 * Math.PI)) < 0.01 && /g$/.test(sp.Mass),
       `sheet metal: Sheet Metal Properties lists the flat pattern's cut-list values (${JSON.stringify({ sp, spH, spV })})`);
     await mp.click("#sm-props [data-a=close]");
+    // Material: the part's name and density are listed; a body material weighs the sheet by its own density.
+    const spMass = num(sp.Mass);
+    await mp.evaluate(() => { const k = window.__sv.model.last().bodies[0].key; window.__sv.model.store.change("Body material", d => { d.bodies = { ...(d.bodies ?? {}), [k]: { ...(d.bodies?.[k] ?? {}), material: { name: "Steel S235", density: 7.85 } } }; }); });
+    await settle();
+    await smMenu("Sheet Metal Properties");
+    await mp.waitForSelector("#sm-props[open]");
+    const spB = await mp.evaluate(() => Object.fromEntries([...document.querySelectorAll("#sm-props tr[data-prop]")].map(r => [r.dataset.prop, r.querySelector("td").textContent])));
+    check(sp.Material === "Aluminium 6061" && /^2[.,]7/.test(sp.Density) && spB.Material === "Steel S235" && /^7[.,]85/.test(spB.Density)
+      && Math.abs(num(spB.Mass) / spMass - 7.85 / 2.7) < 0.01,
+      `sheet metal: Sheet Metal Properties show the material and weigh a body by its own (${JSON.stringify({ sp, spB })})`);
+    await mp.click("#sm-props [data-a=close]");
+    await mp.evaluate(() => window.__sv.model.store.change("Body material", d => { delete d.bodies; }));
+    await settle();
+    // A base flange from an open L: its depth arrow (as an extrude's) sits on the sketch and dragging it deepens the walls live.
+    const keepFs = await mp.evaluate(() => JSON.stringify(window.__sv.model.store.doc.features));
+    await mp.evaluate(() => window.__sv.model.store.change("Open base", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y });
+      d.features = [
+        { id: "os", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("oq0", 0, 0), P("oq1", 60, 0), P("oq2", 60, 40), { id: "ol1", t: "line", a: "oq0", b: "oq1" }, { id: "ol2", t: "line", a: "oq1", b: "oq2" }] },
+        { id: "ob", type: "smbase", name: "Base-Flange1", sketch: "os", thickness: { v: 2 }, radius: { v: 2 }, depth: { v: 30 }, k: 0.5 },
+      ];
+    }));
+    await settle();
+    await mp.evaluate(() => window.__sv.modeller.editFeature("ob"));
+    await settle();
+    const oa = await mp.evaluate(() => {
+      const as = window.__sv.modeller.arrows ?? [], v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect();
+      const scr = p => { const q = p.clone().project(v.camera); return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height]; };
+      const a = as[0];
+      if (!a) return { n: 0 };
+      const grip = a.obj.position.clone().addScaledVector(a.dir, a.scale * 0.8);
+      return { n: as.length, key: a.key, dir: a.dir.toArray().map(x => Math.round(x * 1000) / 1000), from: scr(grip), to: scr(grip.clone().addScaledVector(a.dir, 10)) };
+    });
+    if (oa.from) {
+      await mp.mouse.move(oa.from[0], oa.from[1]);
+      await mp.mouse.down();
+      for (let i = 1; i <= 6; i++) { await mp.mouse.move(oa.from[0] + ((oa.to[0] - oa.from[0]) * i) / 6, oa.from[1] + ((oa.to[1] - oa.from[1]) * i) / 6); await mp.waitForTimeout(40); }
+      await mp.mouse.up();
+      await settle();
+    }
+    const od = await mp.evaluate(() => ({ depth: window.__sv.model.mode().draft?.depth?.v, shown: document.querySelector('#mc-pm input[data-num="depth"]')?.value, bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";") }));
+    await mp.evaluate(() => window.__sv.modeller.cancel());
+    await settle();
+    check(oa.n === 1 && oa.key === "depth" && oa.dir[2] === 1 && od.depth > 35 && od.depth < 45 && !od.bad && String(od.depth) === od.shown,
+      `sheet metal: an open-profile Base Flange shows a depth arrow and dragging it deepens the walls (${JSON.stringify({ oa, od })})`);
+    await mp.evaluate(fs => window.__sv.model.store.change("Props plate", d => { d.features = JSON.parse(fs); }), keepFs);
+    await settle();
     // Bend table: the base flange's allowance from a radius × angle table typed into the panel.
     await mp.evaluate(() => window.__sv.modeller.editFeature("pb"));
     await settle();
