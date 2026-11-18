@@ -1577,3 +1577,12 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .props-win { width: min(460px, calc(100vw - 16px)); max-height: calc(100vh - 32px); padding: 0; }
 .props-win[open] { display: flex; flex-direction: column; }
 .props-win-b { overflow-y: auto; min-height: 0; padding: 8px 12px 12px; }
+/* Hide/Show item types (gap list M4): the heads-up eye menu. Parts only. */
+#app.asm #hud [data-hud="items"] { display: none; }
+#hud [data-hud="items"].on { color: var(--accent); }
+.hud-items { position: absolute; z-index: 6; min-width: 180px; padding: 6px 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+.hud-items[hidden] { display: none; }
+.hud-items-h { font-weight: 600; margin-bottom: 2px; }
+.hud-items label { display: flex; align-items: center; gap: 6px; padding: 2px 0; cursor: pointer; }
+.hud-items-all { display: flex; gap: 6px; margin-top: 4px; }
+.hud-items-all button { flex: 1; font-size: 11px; }

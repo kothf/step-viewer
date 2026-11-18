@@ -1,3 +1,4 @@
+import { onViewItems, setViewItem, viewItems, VIEW_ITEMS, type ViewItem } from "./viewItems";
 import "./style.css";
 import { cacheClear, cacheGet, cacheKey, cacheSize, cacheStats } from "./buildCache";
 import { lassoMode, setLassoMode } from "./boxSelect";
@@ -2499,6 +2500,42 @@ const sessionViews = new Map<string, NamedView[]>();
   hud.querySelector('[data-hud="section"]')!.addEventListener("click", () => toggleSectionView());
   hud.querySelector('[data-hud="area"]')!.addEventListener("click", () => nav.startZoomArea());
   hud.querySelector('[data-hud="prev"]')!.addEventListener("click", () => nav.previousView());
+  // Hide/Show item types (gap list M4): an eye menu with one switch per kind of reference item, plus all at once.
+  {
+    const seg = hud.querySelector(".seg")!;
+    const btn = document.createElement("button");
+    btn.type = "button"; btn.dataset.hud = "items"; btn.setAttribute("aria-haspopup", "true"); btn.setAttribute("aria-expanded", "false");
+    btn.innerHTML = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="8" r="2" fill="currentColor"/></svg>▾`;
+    seg.append(btn);
+    const menu = document.createElement("div");
+    menu.className = "hud-items"; menu.hidden = true; menu.setAttribute("role", "group");
+    const draw = () => {
+      const on = viewItems();
+      menu.innerHTML = `<div class="hud-items-h">${t("Hide/Show items")}</div>`
+        + VIEW_ITEMS.map(([k, label]) => `<label><input type="checkbox" data-vi="${k}"${on[k] ? " checked" : ""}> ${t(label)}</label>`).join("")
+        + `<div class="hud-items-all"><button type="button" data-vi-all="1">${t("Show all")}</button><button type="button" data-vi-all="0">${t("Hide all")}</button></div>`;
+      const any = VIEW_ITEMS.some(([k]) => !on[k]);
+      btn.classList.toggle("on", any);
+      btn.title = t(any ? "Hide/Show items (some hidden)" : "Hide/Show items"); btn.setAttribute("aria-label", t("Hide/Show items"));
+    };
+    draw();
+    menu.addEventListener("change", e => { const i = e.target as HTMLInputElement; if (i.dataset.vi) setViewItem(i.dataset.vi as ViewItem, i.checked); });
+    menu.addEventListener("click", e => { const b = (e.target as HTMLElement).closest<HTMLElement>("[data-vi-all]"); if (b) setViewItem(null, b.dataset.viAll === "1"); });
+    onViewItems(draw);
+    onLangChange(draw);
+    const open = (on: boolean) => {
+      menu.hidden = !on; btn.setAttribute("aria-expanded", String(on));
+      if (!on) return;
+      const r = btn.getBoundingClientRect(), vp = $("#viewport").getBoundingClientRect();
+      menu.style.top = `${r.bottom - vp.top + 6}px`;
+      menu.style.left = `${Math.max(8, Math.min(r.left - vp.left, vp.width - menu.offsetWidth - 8))}px`;
+      menu.querySelector<HTMLElement>("input")?.focus();
+    };
+    btn.addEventListener("click", () => open(menu.hidden));
+    document.addEventListener("pointerdown", e => { if (!menu.hidden && !menu.contains(e.target as Node) && !btn.contains(e.target as Node)) open(false); });
+    menu.addEventListener("keydown", e => { if (e.key === "Escape") { e.stopPropagation(); open(false); btn.focus(); } });
+    $("#viewport").append(menu);
+  }
   $("#viewport").append(hud);
   const moved = ["#views", "#projection", "#display-mode"].map(sel => { const el = $(sel), mark = document.createComment(sel); el.before(mark); return { el, mark }; });
   const sync = () => {
