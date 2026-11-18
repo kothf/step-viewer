@@ -1101,14 +1101,14 @@ try {
     const busySeen = await pg.evaluate(() => { document.querySelector("#g-png").click(); return document.querySelector("#g-png").classList.contains("busy"); });
     check(st.dur >= 150 && st.dur <= 250 && /ease-in-out/.test(st.ease) && busySeen, `ui states: ${st.dur} ms ${st.ease} transitions, spinner on export`);
 
-    // Toasts: bottom-right, info dismisses after 4 s, errors stay until dismissed.
+    // Toasts: bottom-right, info dismisses after 4 s, errors stay 20 s or until dismissed.
     await pg.evaluate(() => { window.__sv.toast("Info toast"); window.__sv.toast("Error toast", true); });
     const tpos = await pg.evaluate(() => { const r = document.querySelector("#toasts").getBoundingClientRect(); return { right: innerWidth - r.right, bottom: innerHeight - r.bottom }; });
     await pg.waitForTimeout(4300);
     const tAfter = await pg.evaluate(() => [...document.querySelectorAll("#toasts .toast")].map(t => [t.dataset.kind, t.getAttribute("role")]));
     await pg.click("#toasts .toast.error .x");
     const tGone = await pg.evaluate(() => !document.querySelector("#toasts .toast.error"));
-    check(tpos.right <= 24 && tpos.bottom <= 60 && tAfter.length === 1 && tAfter[0][0] === "error" && tAfter[0][1] === "alert" && tGone, `ui toasts: bottom-right, info auto-dismissed at 4 s, error sticky until closed (${JSON.stringify(tAfter)})`);
+    check(tpos.right <= 24 && tpos.bottom <= 60 && tAfter.length === 1 && tAfter[0][0] === "error" && tAfter[0][1] === "alert" && tGone, `ui toasts: bottom-right, info auto-dismissed at 4 s, error kept past it until closed (${JSON.stringify(tAfter)})`);
 
     // Modal: blurred backdrop, focus trapped, Esc and backdrop click close; destructive confirm ignores the backdrop.
     await pg.click("#help-btn");
@@ -9235,8 +9235,21 @@ try {
       const webm = await m.recordWebm();
       const wh = webm ? new Uint8Array(await webm.slice(0, 4).arrayBuffer()) : [];
       const pz = await m.recordFrames(160), pb = new Uint8Array(await pz.arrayBuffer());
+      // 1.580: GIF width and frame rate options, highlights left out while recording, smooth playback between frames.
+      const v = window.__sv.viewer, bare = [];
+      v.onRender(() => { if (m.recording === "gif") bare.push(!!v.bareKeep); });
+      m.setGifOpts({ w: 320, fps: 10 });
+      const g2 = new Uint8Array(await (await m.recordGif()).arrayBuffer()), g2w = g2[6] | (g2[7] << 8);
+      const opts = { w: m.gifOpts.w, fps: m.gifOpts.fps, stored: localStorage.getItem("mc:moGif"), sel: m.pane.querySelector("select[data-mo=gifw]")?.value, g2w, bare: bare.length > 0 && bare.every(Boolean), after: v.bareKeep === null };
+      m.setGifOpts({ w: 480, fps: 15 });
+      const fps = m.study.fps, a = m.tfsAt(3), b = m.tfsAt(4), h = m.tfsAt(3, 3.5 / fps);
+      const mv = Object.keys(a).find(k => b[k] && a[k].some((x, i) => Math.abs(x - b[k][i]) > 1e-6));
+      const diff = (x, y) => Math.max(...x.map((q, i) => Math.abs(q - y[i])));
+      const tween = mv ? { moving: true, fromA: diff(h[mv], a[mv]) > 1e-9, fromB: diff(h[mv], b[mv]) > 1e-9 } : { moving: false };
+      const props = getComputedStyle(m.pane.querySelector(".mo-props"));
+      const plots = { maxH: props.maxHeight, oy: props.overflowY };
       const eocd = new DataView(pb.buffer, pb.length - 22), pngs = { pk: String.fromCharCode(pb[0], pb[1]), n: eocd.getUint16(10, true), want: Math.round(m.study.duration * m.study.fps) + 1, name: new TextDecoder().decode(pb.slice(30, 30 + (pb[26] | (pb[27] << 8)))) };
-      return { pngs, gif: String.fromCharCode(...head), gifSize: gif.size, webm: webm ? [...wh].map(b => b.toString(16)).join("") : null, webmSize: webm?.size ?? 0 };
+      return { pngs, opts, tween, plots, gif: String.fromCharCode(...head), gifSize: gif.size, webm: webm ? [...wh].map(b => b.toString(16)).join("") : null, webmSize: webm?.size ?? 0 };
     });
     // Undo takes back the last motion edit; Russian pane has no English left; closing puts pin 2 back.
     const undo = await mp.evaluate(async () => { const a = window.__sv.asm; a.undo(); await new Promise(r => setTimeout(r, 50)); return a.doc.motions[0].duration; });
@@ -9563,6 +9576,8 @@ try {
       && look.listed && Math.abs(look.half.op - 0.5) < 0.02 && look.half.vis && look.half.mat && !look.end.vis && look.label === "Appearance"
       && Math.abs(look.moved[1] - (5 - 1 / 30)) < 1e-6 && look.back.op === 1 && look.back.vis && look.color.c0 === "ff0000" && look.color.purple && look.color.swatch === 2 && look.color.back && look.color.keyAll.all && look.color.keyAll.sel && /^#[0-9a-f]{6}$/.test(look.color.keyAll.c) && look.color.auto.pressed === "true" && look.color.auto.made === "0,2" && look.color.auto.keyed && look.color.auto.still === 2 && look.color.auto.off && look.color.auto.camProps.hasProps && look.color.auto.camProps.tz === 7 && Math.abs(look.color.auto.camProps.dist - 300) < 1e-6 && Math.abs(look.color.auto.camProps.shown - 300) < 0.01 && Math.abs(Math.hypot(cam1.p[0] - cam1.t[0], cam1.p[1] - cam1.t[1]) - Math.hypot(cam0[0] - cam1.t[0], cam0[1] - cam1.t[1])) < 1e-3 * Math.hypot(...cam0)
       && rec.gif === "GIF89a" && rec.gifSize > 1000 && rec.pngs.pk === "PK" && rec.pngs.n === rec.pngs.want && /_0001\.png$/.test(rec.pngs.name) && rec.webm === "1a45dfa3" && rec.webmSize > 1000 && undo === 5
+      && rec.opts.w === 320 && rec.opts.fps === 10 && /"w":320/.test(rec.opts.stored) && rec.opts.sel === "320" && rec.opts.g2w > 0 && rec.opts.g2w <= 320 && rec.opts.bare && rec.opts.after
+      && (!rec.tween.moving || (rec.tween.fromA && rec.tween.fromB)) && rec.plots.maxH !== "none" && rec.plots.oy === "auto"
       && !ru.bad.length && ru.title === "Исследование движения" && Math.abs(back.z) < 0.01 && Math.abs(back.x) < 0.01,
       `motion study: mate keys, rotary motor (constant, distance, data points with cubic spline, motion segments, motor graph, expression), explode and orbit wizard, appearance keys with colours, Key all, Autokey, camera key properties, GIF and WebM, undo, duplicate study, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, motorProf, dup, exploded, cam1, look, rec, undo, ru, back })})`);
     await ctx.close();
@@ -13743,7 +13758,7 @@ try {
     const ufBox = () => mp.evaluate(() => {
       const l = window.__sv.model.last(), P = l.data.positions, lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
       for (let i = 0; i < P.length; i++) { lo[i % 3] = Math.min(lo[i % 3], P[i]); hi[i % 3] = Math.max(hi[i % 3], P[i]); }
-      return { v: l.props?.volume ?? 0, y: Math.round((hi[1] - lo[1]) * 1000) / 1000, z: Math.round((hi[2] - lo[2]) * 1000) / 1000, unfold: l.sheet?.unfold?.bends.length ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") };
+      return { v: l.props?.volume ?? 0, y: Math.round((hi[1] - lo[1]) * 1000) / 1000, z: Math.round((hi[2] - lo[2]) * 1000) / 1000, unfold: l.sheet?.unfold?.bends.length ?? 0, f: l.faceNames?.length ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") };
     });
     const uf0 = await ufBox();
     await smMenu("Unfold");
@@ -13759,7 +13774,7 @@ try {
     await settle();
     const uf3 = await ufBox();
     check(uf1.title === "Unfold" && /:p0:top$/.test(uf1.face ?? "") && uf1.bends === 0 && uf1.all === "All bends" && !uf2.bad && uf2.z === T && uf2.unfold === 1 && uf2.y > 50 + 15 && Math.abs(uf2.v - uf0.v) < uf0.v * 0.01
-      && !uf3.bad && uf3.unfold === 0 && Math.abs(uf3.z - uf0.z) < 1e-3 && Math.abs(uf3.v - uf0.v) < 1e-3,
+      && !uf3.bad && uf3.unfold === 0 && Math.abs(uf3.z - uf0.z) < 1e-3 && Math.abs(uf3.v - uf0.v) < 1e-3 && uf2.f <= uf0.f + 8 && uf3.f <= uf0.f + 8,
       `sheet metal: Unfold lays the flange flat about the clicked face and Fold bends it back (${JSON.stringify({ uf0, uf1, uf2, uf3 })})`);
     // Corner Relief: one flange feature on the front and right edges (one mitred corner); the panel lists it, a click on the
     // plate near that corner picks it, Circular, ✓: material comes off at the corner.

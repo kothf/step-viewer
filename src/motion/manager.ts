@@ -8,14 +8,14 @@ import { toast } from "../ui";
 import { ExprError } from "../model/expr";
 import { uid } from "../model/doc";
 import * as THREE from "three";
-import { applyPoint, compose, invert } from "../asm/math";
+import { applyPoint, compose, invert, tweenTf } from "../asm/math";
 import { download } from "../tools/exporters";
 import type { AsmController } from "../asm/controller";
 import type { Mate, Tf } from "../asm/types";
 import type { V3 } from "../model/types";
 import type { Viewer } from "../viewer/Viewer";
 import { AXIS_MATES, VALUE_MATES, axisLock, cameraAt, colorAt, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, exprValue, motorPlotUnit, motorSeries, type MotorPlot, parsePoints, parseSegments, playTime, type PointsFit, sortKeys, valueAt } from "./evaluate";
-import { encodeGif } from "./gif";
+import { encodeGif, gifDelays } from "./gif";
 import { frameName, frameTimes } from "./frames";
 import { zip } from "../model/zip";
 import { clashCsv, clashItems, pairKey, steadyClashes, type ClashItem } from "./interfere";
@@ -43,6 +43,9 @@ const MOTOR_PLOTS: [MotorPlot, string][] = [["disp", "Displacement"], ["vel", "V
 const PROFILES: [MotorTrack["profile"], string][] = [["constant", "Constant speed"], ["distance", "Distance"], ["oscillate", "Oscillating"], ["points", "Data points"], ["segments", "Motion segments"], ["expr", "Expression"]];
 const INTERPS: [Interp, string][] = [["linear", "Linear"], ["snap", "Snap (jump)"], ["easein", "Ease in"], ["easeout", "Ease out"], ["ease", "Ease in/out"]];
 const MAX_ZOOM = 64;
+/** GIF widths (px) and frame rates offered beside the GIF button. */
+const GIF_WIDTHS = [320, 480, 640, 800, 1024, 1280];
+const GIF_RATES = [10, 15, 20, 25, 30];
 const interpOf = (raw: string): Interp | undefined => (INTERPS.some(([v]) => v === raw) && raw !== "linear" ? raw as Interp : undefined);
 
 export class MotionManager {
@@ -311,6 +314,19 @@ export class MotionManager {
   }
 
   /** Autokey: view changes become camera keys at the playhead (view-only, remembered per browser). */
+  /** GIF width (px) and frame rate, kept per browser (localStorage `mc:moGif`). */
+  gifOpts = (() => {
+    try { const o = JSON.parse(localStorage.getItem("mc:moGif") ?? "{}"); return { w: GIF_WIDTHS.includes(o.w) ? o.w as number : 480, fps: GIF_RATES.includes(o.fps) ? o.fps as number : 15 }; } catch { return { w: 480, fps: 15 }; }
+  })();
+  setGifOpts(o: Partial<{ w: number; fps: number }>) {
+    if (o.w && GIF_WIDTHS.includes(o.w)) this.gifOpts.w = o.w;
+    if (o.fps && GIF_RATES.includes(o.fps)) this.gifOpts.fps = o.fps;
+    try { localStorage.setItem("mc:moGif", JSON.stringify(this.gifOpts)); } catch { /* storage off */ }
+    const w = this.pane?.querySelector<HTMLSelectElement>("select[data-mo=gifw]"), f = this.pane?.querySelector<HTMLSelectElement>("select[data-mo=giffps]");
+    if (w) w.value = String(this.gifOpts.w);
+    if (f) f.value = String(this.gifOpts.fps);
+  }
+
   autoKey = (() => { try { return localStorage.getItem("mc:moAutokey") === "1"; } catch { return false; } })();
   private camBefore: CamKey | null = null;
 
@@ -473,8 +489,8 @@ export class MotionManager {
   /** Poses the view at study time `tq` (mates, exploded views, camera). */
   showAt(tq: number) {
     if (!this.open || !this.asm.doc) return;
-    const s = this.study, i = Math.min(frameCount(s) - 1, Math.max(0, Math.round(tq * s.fps)));
-    this.ensure(i);
+    const s = this.study, n = frameCount(s), i = Math.min(n - 1, Math.max(0, Math.round(tq * s.fps)));
+    this.ensure(Math.min(n - 1, Math.max(i, Math.floor(tq * s.fps) + 1)));
     const f = frameAt(s, tq, new Map((this.asm.doc.mates ?? []).map(m => [m.id, m])));
     const tfs = this.tfsAt(i, tq);
     this.asm.motionShow(tfs, f.explode);
@@ -485,10 +501,16 @@ export class MotionManager {
     this.updateHead(i);
   }
 
-  /** Component transforms at frame `i` (time `tq`): the solved frame with placement keys applied. */
+  /** Component transforms at frame `i` (time `tq`): the solved frame with placement keys applied. Between two solved
+   *  frames each part moves along the screw motion from one to the next, so playback is smooth at any frame rate. */
   private tfsAt(i: number, tq = i / this.study.fps): Record<string, Tf> {
     const s = this.study;
     let tfs = this.frames[i] ?? this.asm.restTfs();
+    const x = tq * s.fps, i0 = Math.floor(x + 1e-9), u = x - i0, a = this.frames[i0], b = this.frames[i0 + 1];
+    if (u > 1e-6 && a && b) {
+      tfs = { ...a };
+      for (const [id, tb] of Object.entries(b)) if (a[id]) tfs[id] = tweenTf(a[id], tb, u);
+    }
     const f = frameAt(s, tq, new Map((this.asm.doc?.mates ?? []).map(m => [m.id, m])));
     if (Object.keys(f.pose).length) {
       const rest = this.asm.restTfs();
@@ -511,11 +533,11 @@ export class MotionManager {
     if (!doc) return [];
     this.ensure(n - 1);
     const mates = new Map((doc.mates ?? []).map(m => [m.id, m]));
-    const per: [string, string][][] = [], tfs: Record<string, Tf>[] = [];
+    const per: [string, string][][] = [], tfs: Record<string, Tf>[] = [], memo = new Map<string, boolean>();
     for (let k = 0; k < n; k++) {
       tfs.push(this.tfsAt(k));
       this.asm.motionShow(tfs[k], frameAt(s, k / s.fps, mates).explode);
-      per.push(this.asm.motionClashes());
+      per.push(this.asm.motionClashes(memo));
     }
     if (!s.tracks.some(k => k.kind === "explode" && !k.off)) steadyClashes(per, tfs);
     // Pairs touching at the start (a pin in its hole, faces mated together) are left out unless asked for.
@@ -1130,13 +1152,14 @@ export class MotionManager {
     const done = new Promise<void>(res => { rec.onstop = () => res(); });
     this.recording = "webm";
     this.renderTransport();
+    this.viewer.bareKeep = new Set();
     this.capture = from => { c.draw(from); track.requestFrame?.(); };
     rec.start();
     const t0 = performance.now();
     await new Promise<void>(res => {
       const step = () => {
         if (!this.recording) { res(); return; }
-        const tq = Math.min(s.duration, (performance.now() - t0) / 1000);
+        const tq = Math.min(s.duration, ((performance.now() - t0) / 1000) * this.speed);
         this.time = tq;
         this.showAt(tq);
         if (tq >= s.duration) { void this.nextRender().then(() => res()); return; }
@@ -1144,7 +1167,7 @@ export class MotionManager {
       };
       step();
     });
-    this.capture = null;
+    this.capture = null; this.viewer.bareKeep = null;
     rec.stop();
     await done;
     this.recording = null;
@@ -1154,29 +1177,30 @@ export class MotionManager {
     return blob;
   }
 
-  /** Renders every frame (at most 15 per second, 480 px wide) and saves an animated GIF. */
-  async recordGif(maxW = 480): Promise<Blob | null> {
+  /** Renders the study at the GIF options' width and frame rate (`gifOpts`), at the playback speed, and saves an animated GIF. */
+  async recordGif(maxW = this.gifOpts.w): Promise<Blob | null> {
     if (this.recording || !this.asm.doc) return null;
-    const s = this.study, fps = Math.min(15, s.fps), n = Math.max(1, Math.round(s.duration * fps)) + 1;
+    const s = this.study, fps = this.gifOpts.fps, dt = this.speed / fps, n = Math.max(1, Math.round(s.duration / dt)) + 1;
     this.pause();
     this.recording = "gif";
     this.renderTransport();
     const c = this.composer(maxW), frames: Uint8ClampedArray[] = [];
+    this.viewer.bareKeep = new Set();
     this.capture = from => { c.draw(from); frames.push(c.g.getImageData(0, 0, c.out.width, c.out.height).data); };
     try {
       for (let i = 0; i < n && this.recording; i++) {
-        this.time = Math.min(s.duration, i / fps);
+        this.time = Math.min(s.duration, i * dt);
         this.showAt(this.time);
         await this.nextRender();
         this.setStatus(t("Recording frame {i} of {n}…", { i: i + 1, n }));
       }
-    } finally { this.capture = null; }
+    } finally { this.capture = null; this.viewer.bareKeep = null; }
     if (!this.recording) { this.renderTransport(); return null; }
     // A study that ends where it starts (a motor turning whole turns) would show that pose twice as the GIF loops.
     if (frames.length > 2 && sameFrame(frames[0], frames[frames.length - 1])) frames.pop();
     this.setStatus(t("Writing the GIF…"));
     await new Promise(r => setTimeout(r, 0));
-    const bytes = encodeGif(frames, c.out.width, c.out.height, 100 / fps);
+    const bytes = encodeGif(frames, c.out.width, c.out.height, gifDelays(frames.length, fps));
     this.recording = null;
     this.renderTransport();
     const blob = new Blob([bytes], { type: "image/gif" });
@@ -1193,6 +1217,7 @@ export class MotionManager {
     this.recording = "png";
     this.renderTransport();
     const c = this.composer(maxW), shots: Promise<Blob | null>[] = [];
+    this.viewer.bareKeep = new Set();
     this.capture = from => { c.draw(from); shots.push(new Promise(res => c.out.toBlob(res, "image/png"))); };
     try {
       for (let i = 0; i < n && this.recording; i++) {
@@ -1201,7 +1226,7 @@ export class MotionManager {
         await this.nextRender();
         this.setStatus(t("Recording frame {i} of {n}…", { i: i + 1, n }));
       }
-    } finally { this.capture = null; }
+    } finally { this.capture = null; this.viewer.bareKeep = null; }
     if (!this.recording) { this.renderTransport(); return null; }
     this.setStatus(t("Writing the ZIP…"));
     const blobs = await Promise.all(shots);
@@ -1238,7 +1263,7 @@ export class MotionManager {
   hide() {
     if (!this.open) return;
     this.recording = null;
-    this.capture = null;
+    this.capture = null; this.viewer.bareKeep = null;
     this.pause();
     this.open = false;
     this.pane.hidden = true;
@@ -1350,6 +1375,8 @@ export class MotionManager {
       + `<span class="mo-sp"></span>`
       + `<button class="btn small" data-mo="webm" title="${esc(t("Record the study as a WebM video"))}">${esc(this.recording === "webm" ? t("Stop recording") : t("Video"))}</button>`
       + `<button class="btn small" data-mo="gif" title="${esc(t("Save the study as an animated GIF"))}">${esc(this.recording === "gif" ? t("Stop recording") : "GIF")}</button>`
+      + `<label class="mo-f"><select data-mo="gifw" aria-label="${esc(t("GIF width"))}" title="${esc(t("GIF width"))}">${GIF_WIDTHS.map(v => `<option value="${v}"${v === this.gifOpts.w ? " selected" : ""}>${esc(t("{n} px", { n: v }))}</option>`).join("")}</select></label>`
+      + `<label class="mo-f"><select data-mo="giffps" aria-label="${esc(t("GIF frame rate"))}" title="${esc(t("GIF frame rate (the GIF plays at the playback speed)"))}">${GIF_RATES.map(v => `<option value="${v}"${v === this.gifOpts.fps ? " selected" : ""}>${v} fps</option>`).join("")}</select></label>`
       + `<button class="btn small" data-mo="png" title="${esc(t("Save every frame of the study as PNG images in a ZIP"))}">${esc(this.recording === "png" ? t("Stop recording") : t("Images"))}</button>`
       + `</div><div class="mo-body"><div class="mo-names"><div class="mo-name mo-rhead">${esc(t("Tracks"))}</div>${names}</div>`
       + `<div class="mo-tlw"><div class="mo-tl" style="width:calc(${this.zoom * 100}% - 20px)"><div class="mo-ruler" data-ruler title="${esc(t("Click or drag to move the playhead"))}">${ticks}${this.clashLane()}</div>${lanes}${tlanes}${empty}<div class="mo-head-line" aria-hidden="true"></div></div></div></div>`
@@ -1544,6 +1571,8 @@ export class MotionManager {
       else if (x) download(new Blob([traceCsv(this.tracePath(x.id), this.study.fps, this.traceAngle(x.id))], { type: "text/csv" }), `${this.fileBase()}-trace.csv`);
     });
     on("select[data-mo=mode]", "change", (_e, el) => this.edit(st => { st.play = (el as HTMLSelectElement).value as MotionStudy["play"]; }));
+    on("select[data-mo=gifw]", "change", (_e, el) => this.setGifOpts({ w: Number((el as HTMLSelectElement).value) }));
+    on("select[data-mo=giffps]", "change", (_e, el) => this.setGifOpts({ fps: Number((el as HTMLSelectElement).value) }));
     on("select[data-mo=speed]", "change", (_e, el) => { this.speed = Number((el as HTMLSelectElement).value); if (this.playing) { this.pause(); this.play(); } });
     on("select[data-mo=fps]", "change", (_e, el) => this.edit(st => { st.fps = Number((el as HTMLSelectElement).value); }));
     on("input[data-mo=name]", "change", (_e, el) => { const v = (el as HTMLInputElement).value.trim(); if (v) this.edit(st => { st.name = v; }); });

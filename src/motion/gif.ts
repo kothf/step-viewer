@@ -86,8 +86,16 @@ export function lzw(indices: Uint8Array, minCode: number): Uint8Array {
   return Uint8Array.from(out);
 }
 
-/** Writes an animated GIF from RGBA frames of one size; `delay` in hundredths of a second, looping forever. */
-export function encodeGif(frames: (Uint8ClampedArray | Uint8Array)[], w: number, h: number, delay: number): Uint8Array {
+/** Frame delays in hundredths of a second for `n` frames at `fps`, rounded so they add up to the true time (15 fps =
+ *  7, 6, 7, 7, 6, 7… rather than 7 every frame, which plays 5 % slow). */
+export function gifDelays(n: number, fps: number): number[] {
+  const at = (i: number) => Math.round((i * 100) / fps);
+  return Array.from({ length: n }, (_, i) => Math.max(2, at(i + 1) - at(i)));
+}
+
+/** Writes an animated GIF from RGBA frames of one size; `delay` in hundredths of a second (one for all frames or one
+ *  per frame), looping forever. */
+export function encodeGif(frames: (Uint8ClampedArray | Uint8Array)[], w: number, h: number, delay: number | number[]): Uint8Array {
   // Palette from about 60 000 pixels sampled over every frame keeps the median cut quick.
   const px = frames.reduce((s, f) => s + f.length / 4, 0), step = Math.max(1, Math.floor(px / 60000)) | 1, samp: number[] = [];
   for (const f of frames) for (let i = 0; i < f.length / 4; i += step) samp.push(f[i * 4], f[i * 4 + 1], f[i * 4 + 2]);
@@ -102,11 +110,12 @@ export function encodeGif(frames: (Uint8ClampedArray | Uint8Array)[], w: number,
   // NETSCAPE2.0: loop forever.
   parts.push(Uint8Array.from([0x21, 0xff, 0x0b, ...Array.from("NETSCAPE2.0", c => c.charCodeAt(0)), 0x03, 0x01, 0, 0, 0]));
   const cache = new Int16Array(32768).fill(-1), minCode = Math.max(2, bitsPer);
-  for (const f of frames) {
-    parts.push(Uint8Array.from([0x21, 0xf9, 0x04, 0x04, ...u16(Math.max(2, Math.round(delay))), 0, 0]));
+  frames.forEach((f, i) => {
+    const d = Array.isArray(delay) ? delay[Math.min(i, delay.length - 1)] : delay;
+    parts.push(Uint8Array.from([0x21, 0xf9, 0x04, 0x04, ...u16(Math.max(2, Math.round(d))), 0, 0]));
     parts.push(Uint8Array.from([0x2c, 0, 0, 0, 0, ...u16(w), ...u16(h), 0]));
     parts.push(lzw(indexPixels(f, pal0, cache), minCode));
-  }
+  });
   parts.push(Uint8Array.of(0x3b));
   const total = parts.reduce((s, p) => s + p.length, 0), out = new Uint8Array(total);
   let o = 0;

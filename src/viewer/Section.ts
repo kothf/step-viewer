@@ -160,6 +160,7 @@ export class SectionManager {
           const cap = new THREE.Mesh(geo, capMat);
           cap.renderOrder = order + 0.5;
           cap.raycast = () => {};
+          cap.userData.sectionCap = true;
           cap.onAfterRender = r => r.clearStencil();
           v.scene.add(cap);
           this.capObjects.push(cap);

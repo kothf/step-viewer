@@ -361,7 +361,7 @@ details > :last-child { margin-bottom: 12px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .bar { width: 220px; height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
 .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
-/* Toasts: bottom-right stack. Info/success dismiss after 4 s, warnings and errors stay until closed. */
+/* Toasts: bottom-right stack. Info/success dismiss after 4 s, warnings after 10 s, errors after 20 s (not while hovered). */
 .toasts {
   position: fixed; right: 16px; bottom: 40px; z-index: 1200; display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
   max-width: min(420px, calc(100vw - 32px)); pointer-events: none;
@@ -1213,7 +1213,7 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .motion .mo-key:focus-visible, .motion .mo-bar:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .motion .mo-head-line { position: absolute; top: 0; bottom: 0; width: 0; border-left: 2px solid var(--danger); pointer-events: none; }
 .motion .mo-empty { margin: 8px 0; }
-.motion .mo-props { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 5px 8px; border-top: 1px solid var(--line); min-height: 34px; }
+.motion .mo-props { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 5px 8px; border-top: 1px solid var(--line); min-height: 34px; max-height: 22vh; overflow-y: auto; flex-shrink: 0; }
 .motion .mo-status { padding: 0 8px 4px; min-height: 1em; color: var(--warn-text); }
 .motion .mo-status:empty { display: none; }
 @media (max-width: 768px) { .motion .mo-body { grid-template-columns: 120px 1fr; } .motion { max-height: 60%; } }
