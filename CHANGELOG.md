@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.591.0] - 2026-11-18
+
+### Added
+- Parts: an eye menu in the view's heads-up bar hides or shows all planes, axes, points, coordinate systems, sketches or curves at once (Show all / Hide all). Each item's own Hide/Show is kept.
+- Parts: right-click a face for **Face colour…** or **Feature colour…** (every face the feature made; also in the Features tree menu). A face's colour beats its feature's, which beats the body's; **Remove appearance** takes it off.
+- Parts: click a flat face and drag the arrow on it to push or pull the face; releasing adds a Move Face of that distance (Shift for finer steps).
+
 ## [1.590.0] - 2026-11-18
 
 ### Added
@@ -3764,6 +3771,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.590.0...HEAD
+[1.591.0]: https://github.com/kothf/step-viewer/compare/v1.590.0...v1.591.0
 [1.590.0]: https://github.com/kothf/step-viewer/compare/v1.589.0...v1.590.0
 [1.589.0]: https://github.com/kothf/step-viewer/compare/v1.588.0...v1.589.0
 [1.588.0]: https://github.com/kothf/step-viewer/compare/v1.587.0...v1.588.0

@@ -93,6 +93,7 @@ import { lang, onLangChange, t, withLang } from "../i18n";
 import { gestureSlot, loadGestures, GESTURE_SHOW, type GestureMode } from "../gestures";
 import { isLongPress } from "../longPress";
 import { gestureGuide } from "../gestureUi";
+import { onViewItems, viewItemShown } from "../viewItems";
 import { autosaveDelay, getPref, loadPrefs, onPrefs, qualityFactor, stepFor, type Prefs } from "../prefs";
 
 /** A drag handle in the view: an arrow, or the revolve angle grip (`ang`: centre on the axis, unit axis, radius vector at 0°). */
@@ -562,6 +563,9 @@ export class ModelController {
   /** `key`: the feature's number it drags; `label`: its value button. Several may show (gusset legs); `arrow` is the one in use. */
   private arrow: DragArrow | null = null;
   private arrows: DragArrow[] = [];
+  /** Push/pull (gap list M1): the flat face picked with Smart measure, which shows a drag arrow; and while dragging, where the arrow starts. */
+  private pushFace: number | null = null;
+  private pushAt: { base: THREE.Vector3; dir: THREE.Vector3 } | null = null;
   private arrowDrag: { start: number; depth: number; moved: boolean; raw?: number; key?: string } | null = null;
 
   constructor(private host: ModelHost, occtBase: string) {
@@ -572,6 +576,8 @@ export class ModelController {
     // A result shown from the disk cache that the kernel's own build did not match (it never should): build again.
     this.kernel.onStale = () => void this.rebuild();
     host.viewer.scene.add(this.decor);
+    // Hide/Show item types from the heads-up bar (gap list M4): redraw the planes, axes, sketches… at once.
+    onViewItems(() => { if (this.store) this.drawDecor(); });
     // Shown sketches and curves count in Zoom to fit and the view's clip range, so a big frame sketch
     // with no body yet fits the view and does not vanish when panned (weldments exam #1).
     host.viewer.extraBounds = () => {
@@ -853,6 +859,8 @@ export class ModelController {
     if (gen === this.rebuildGen) { clearTimeout(this.staleTimer); if (r) this.setStale(false); }
     if (!r || !this.store) return;
     this.last = r;
+    // Face numbers change with a rebuild: the push/pull arrow waits for the next pick.
+    if (!this.arrowDrag) this.pushFace = null;
     if (gen === this.rebuildGen) {
       this.shownRolled = rolled;
       if (m.kind === "none" && !this.instantDoc) this.fullData = r.data;
@@ -2738,7 +2746,7 @@ export class ModelController {
     if (k === "escape" && document.querySelector(".mag-lens")) return;
     // Shift+D: breadcrumbs and the confirmation corner to the cursor (FR-SEL-009; D stays the distance tool).
     if (k === "d" && e.shiftKey && this.pointerIn && (document.getElementById("mc-crumbs") || this.mode.kind !== "none")) { stop(); this.crumbsToCursor(); return; }
-    if (k === "escape" && this.mode.kind === "none") { this.hideCrumbs(); if (this.multi) { this.multi = null; this.drawDecor(); } }
+    if (k === "escape" && this.mode.kind === "none") { this.hideCrumbs(); if (this.multi || this.pushFace != null) { this.multi = null; this.pushFace = null; this.drawDecor(); } }
     if (k === "escape" && document.querySelector("#mc-sbar, #mc-cbar")) { stop(); this.hideShortcutBar(); return; }
     if (k === "escape" && this.instant && this.mode.kind === "none" && !document.querySelector("#mc-menu:not([hidden])")) { stop(); this.hideInstant(); return; }
     const m = this.mode;
@@ -3825,6 +3833,14 @@ export class ModelController {
     }
     const body = this.bodyAt(e.clientX, e.clientY);
     if (body) items.push([t("Hide body"), () => this.setBody(body, { hidden: true })]);
+    // Appearance (gap list M2): a colour for the face under the pointer, or for every face of its feature.
+    const fname = hit.edge ? undefined : names[fid];
+    if (fname) items.push([t("Face colour…"), () => this.pickAppearance("face", fname)]);
+    if (f) items.push([t("Feature colour…"), () => this.pickAppearance("feature", f.id)]);
+    if ((fname && this.doc.faceColors?.[fname]) || (f && this.doc.featureColors?.[f.id])) items.push([t("Remove appearance"), () => {
+      if (fname && this.doc.faceColors?.[fname]) this.setAppearance("face", fname, null);
+      else if (f) this.setAppearance("feature", f.id, null);
+    }]);
     const face = !hit.edge && hit.faceId != null ? this.host.viewer.parts[0]?.data.faces[hit.faceId] : undefined;
     if (face?.type === "plane") items.push([t("Normal to"), () => { this.ctxPick = pick; this.command("normal"); this.ctxPick = null; }]);
     items.push([t("Zoom to fit"), () => this.host.view?.("fit")]);
@@ -3833,6 +3849,32 @@ export class ModelController {
     const menu = document.getElementById("mc-menu");
     if (menu && f) menu.insertAdjacentHTML("afterbegin", `<div class="mc-menu-h" role="presentation" translate="no">${esc(featureLabel(f.name))}</div>`);
     return true;
+  }
+
+  /** Opens the browser's colour picker for a face or feature appearance (gap list M2). */
+  private pickAppearance(kind: "face" | "feature", key: string) {
+    const cur = (kind === "face" ? this.doc.faceColors?.[key] : this.doc.featureColors?.[key]) ?? this.doc.color ?? DEFAULT_COLOR;
+    const inp = document.createElement("input");
+    inp.type = "color";
+    inp.value = "#" + cur.map(x => Math.round(Math.max(0, Math.min(1, x)) * 255).toString(16).padStart(2, "0")).join("");
+    inp.style.cssText = "position:fixed;left:-100px;top:0;opacity:0";
+    document.body.append(inp);
+    const done = () => inp.remove();
+    inp.addEventListener("change", () => { const h = inp.value; this.setAppearance(kind, key, [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16) / 255) as V3); done(); });
+    inp.addEventListener("blur", () => setTimeout(done, 500));
+    inp.click();
+  }
+
+  /** Sets (or with null removes) a face's or a feature's colour as one undo step. */
+  setAppearance(kind: "face" | "feature", key: string, color: V3 | null) {
+    if (!this.store) return;
+    const label = color ? (kind === "face" ? "Face colour" : "Feature colour") : "Remove appearance";
+    this.store.change(label, d => {
+      const field = kind === "face" ? "faceColors" : "featureColors";
+      const map = { ...(d[field] ?? {}) };
+      if (color) map[key] = color; else delete map[key];
+      if (Object.keys(map).length) d[field] = map; else delete d[field];
+    });
   }
 
   /** The last feature commands, newest first (FR-UI-113). */
@@ -4631,7 +4673,7 @@ export class ModelController {
       if (f.type !== "sketch" || f.suppressed || (m.kind === "sketch" && m.id === f.id)) return;
       // Edit sketch plane: the sketch shows on the plane picked so far, highlighted.
       const moving = m.kind === "plane" && m.edit?.id === f.id;
-      if ((f.hidden ?? used.has(f.id)) && !moving) return;
+      if (((f.hidden ?? used.has(f.id)) || !viewItemShown("sketches")) && !moving) return;
       const g = moving ? { ...f, plane: m.edit!.plane } : f;
       this.lines(sketchSegments(g, this.frameOf(g)), moving ? 0xf08c00 : dark ? 0x8ab4ff : 0x1d4ed8, moving ? 2.2 : 1.4);
     });
@@ -4642,7 +4684,7 @@ export class ModelController {
     for (const [id, pts] of Object.entries(this.last?.curves ?? {})) {
       const hf = this.doc.features.find(x => x.id === id);
       const editing = m.kind === "feature" && m.draft.id === id;
-      if (!editing && ((hf?.type !== "helix" && hf?.type !== "curve") || hf.hidden || hf.suppressed)) continue;
+      if (!editing && ((hf?.type !== "helix" && hf?.type !== "curve") || hf.hidden || hf.suppressed || !viewItemShown("curves"))) continue;
       const pos: number[] = [];
       for (let i = 0; i + 1 < pts.length; i++) pos.push(...pts[i], ...pts[i + 1]);
       this.lines(pos, editing ? 0xf08c00 : dark ? 0x8ab4ff : 0x1d4ed8, editing ? 2.2 : 1.4);
@@ -5207,7 +5249,7 @@ export class ModelController {
     const hiddenStd = this.doc.stdHidden ?? [];
     for (const k of ["XY", "XZ", "YZ"] as const) {
       const sel = this.selected === `std:${k}`;
-      if (std || sel || !hiddenStd.includes(k)) square(STD_FRAMES[k], sel ? 0xf08c00 : colors[k], { std: k }, std ? 0.12 : sel ? 0.14 : 0.05, true, undefined, !std && !sel);
+      if (std || sel || (!hiddenStd.includes(k) && viewItemShown("planes"))) square(STD_FRAMES[k], sel ? 0xf08c00 : colors[k], { std: k }, std ? 0.12 : sel ? 0.14 : 0.05, true, undefined, !std && !sel);
     }
     // Reference planes, centred where the model's centre projects onto them.
     const centre = b && !b.isEmpty() ? b.getCenter(new THREE.Vector3()) : new THREE.Vector3();
@@ -5215,14 +5257,14 @@ export class ModelController {
     const end = this.doc.rollback ?? this.doc.features.length;
     const draftId = m.kind === "feature" && m.draft.type === "plane" ? m.draft.id : null;
     this.doc.features.slice(0, end).forEach(f => {
-      if (f.type !== "plane" || f.suppressed || f.hidden || f.id === draftId) return;
+      if (f.type !== "plane" || f.suppressed || f.hidden || f.id === draftId || (!std && !viewItemShown("planes") && this.selected !== f.id)) return;
       const fr = this.last?.frames[f.id];
       if (fr) square(fr, this.selected === f.id ? 0xf08c00 : 0x7c8594, { plane: f.id }, this.selected === f.id ? 0.16 : 0.08, true, onPlane(fr));
     });
     if (draftId) { const fr = this.last?.frames[draftId]; if (fr) square(fr, 0xf08c00, { plane: draftId }, 0.18, false, onPlane(fr)); }
     // Coordinate systems: a red/green/blue triad.
     const openCs = m.kind === "feature" && m.draft.type === "csys" ? m.draft.id : null;
-    const css = this.doc.features.slice(0, end).filter(f => f.type === "csys" && !f.suppressed && !f.hidden && f.id !== openCs).map(f => f.id);
+    const css = this.doc.features.slice(0, end).filter(f => f.type === "csys" && !f.suppressed && !f.hidden && (viewItemShown("csys") || this.selected === f.id) && f.id !== openCs).map(f => f.id);
     if (openCs) css.push(openCs);
     for (const id of css) {
       const fr = this.last?.frames[id];
@@ -5233,7 +5275,7 @@ export class ModelController {
     }
     // Reference axes (dash-dot lines through the model) and points (small crosses).
     const open = m.kind === "feature" && (m.draft.type === "axis" || m.draft.type === "point") ? m.draft.id : null;
-    const list = this.doc.features.slice(0, end).filter(f => (f.type === "axis" || f.type === "point") && !f.suppressed && !f.hidden && f.id !== open);
+    const list = this.doc.features.slice(0, end).filter(f => (f.type === "axis" || f.type === "point") && !f.suppressed && !f.hidden && (viewItemShown(f.type === "axis" ? "axes" : "points") || this.selected === f.id) && f.id !== open);
     if (open) list.push(m.kind === "feature" ? m.draft : list[0]);
     for (const f of list) {
       const fr = this.last?.frames[f.id];
@@ -5286,7 +5328,7 @@ export class ModelController {
     this.arrow = null;
     this.arrows = [];
     const f = this.arrowFeature();
-    if (!f) return;
+    if (!f) { this.drawPushArrow(); return; }
     if (f.type === "endcap") { this.drawCapArrow(f); return; }
     if (f.type === "gusset") { this.drawGussetArrows(f); return; }
     if (f.type === "smflange" || f.type === "smhem") { this.drawFlangeArrow(f); return; }
@@ -5557,7 +5599,77 @@ export class ModelController {
     return Math.abs(den) < 1e-9 ? 0 : (b * ee - d) / den;
   }
 
+  /** Push/pull arrow (gap list M1): on the flat face picked in Smart measure, or the one a push/pull drag is moving. */
+  private drawPushArrow() {
+    const m = this.mode;
+    if (m.kind === "feature" && m.instant && m.draft.type === "moveface" && this.pushAt) {
+      const v = (m.draft.flip ? -1 : 1) * m.draft.distance.v;
+      this.placeArrow(this.pushAt.base, this.pushAt.dir, v, false, "push");
+      this.sizeArrow();
+      return;
+    }
+    if (m.kind !== "none" || this.pushFace == null || !this.last) return;
+    const part = this.host.viewer.parts[0], face = part?.data.faces[this.pushFace];
+    if (!part || face?.type !== "plane" || !face.normal || !this.last.faceNames[this.pushFace]) { this.pushFace = null; return; }
+    const v = this.host.viewer;
+    this.placeArrow(v.toWorld(part, new THREE.Vector3(...face.center)), v.dirToWorld(part, face.normal).normalize(), 0, false, "push");
+    this.sizeArrow();
+  }
+
+  /** Starts a push/pull: a new Move Face of the picked face, built live while the arrow is dragged, added on release. */
+  private startPushDrag(e: PointerEvent) {
+    const fid = this.pushFace, a = this.arrow;
+    if (fid == null || !a || !this.store) return;
+    const ref = this.faceRef(fid);
+    if (!ref) return;
+    const d = this.doc, end = d.rollback ?? d.features.length;
+    const draft: MoveFaceFeature = { id: uid("f_"), type: "moveface", name: nextName(d, "moveface"), faces: [ref], distance: { v: 0 } };
+    this.pushAt = { base: a.base.clone(), dir: a.dir.clone() };
+    this.pushFace = null;
+    this.hideShortcutBar();
+    this.activeCmd = null;
+    this.mode = { kind: "feature", draft, index: d.features[end - 1]?.type === "smflat" ? end - 1 : end, isNew: true, instant: true };
+    this.arrowDrag = { start: this.axisParam(e), depth: 0, moved: false, key: "push" };
+    this.renderAll();
+    this.arrow = this.arrows.find(x => x.key === "push") ?? this.arrow;
+    const canvas = this.host.viewer.renderer.domElement;
+    canvas.style.cursor = "grabbing";
+    try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic event */ }
+  }
+
+  /** Push/pull drag: the signed distance along the face normal, out (pull) or in (push). */
+  private movePush(e: PointerEvent, f: MoveFaceFeature, d: NonNullable<typeof this.arrowDrag>) {
+    const a = this.arrow!;
+    let v = d.depth + (this.axisParam(e) - d.start);
+    const px = this.host.viewer.pxWorld(a.obj.position) * (e.shiftKey ? 1 : 6);
+    const step = 10 ** Math.floor(Math.log10(Math.max(px, 1e-6)));
+    const fu = UNITS[units.current].f;
+    v = (Math.round((v * fu) / step) * step) / fu;
+    if (Math.abs(v) < 1e-9) return;
+    const cur = (f.flip ? -1 : 1) * f.distance.v;
+    if (Math.abs(v - cur) < 1e-12) return;
+    d.moved = true;
+    f.distance = { v: Math.abs(v) };
+    if (v < 0) f.flip = true; else delete f.flip;
+    a.obj.position.copy(a.base).addScaledVector(a.dir, v);
+    this.sizeArrow();
+    const label = this.pushLabel();
+    label.textContent = `${v < 0 ? "−" : ""}${trimNum(Math.abs(v) * fu, units.decimals ?? this.doc.units.decimals)} ${units.current}`;
+    const s = a.obj.position.clone().addScaledVector(a.dir, a.scale * 1.5).project(this.host.viewer.camera);
+    label.style.left = `${((s.x + 1) / 2) * this.host.viewer.size.x}px`;
+    label.style.top = `${((1 - s.y) / 2) * this.host.viewer.size.y}px`;
+    void this.rebuild();
+  }
+
+  /** The distance label beside the push/pull arrow while it is dragged. */
+  private pushLabel(): HTMLElement {
+    let el = document.getElementById("mc-pushval");
+    if (!el) { el = document.createElement("span"); el.id = "mc-pushval"; el.className = "mc-handle"; $("#mc-layer").append(el); }
+    return el;
+  }
+
   private startArrowDrag(e: PointerEvent) {
+    if (this.mode.kind === "none" && this.arrow?.key === "push") { this.startPushDrag(e); return; }
     const f = this.arrowFeature();
     if (!f || !this.arrow) return;
     const key = this.arrow.key;
@@ -5583,6 +5695,7 @@ export class ModelController {
   private moveArrow(e: PointerEvent) {
     const m = this.mode, d = this.arrowDrag, a = this.arrow;
     if (m.kind === "feature" && m.draft.type === "revolve" && d && a?.ang) { this.moveAngle(e, m.draft, d); return; }
+    if (m.kind === "feature" && m.draft.type === "moveface" && d?.key === "push" && a) { this.movePush(e, m.draft, d); return; }
     if (m.kind !== "feature" || (m.draft.type !== "extrude" && m.draft.type !== "endcap" && m.draft.type !== "gusset" && m.draft.type !== "smflange" && m.draft.type !== "smhem" && m.draft.type !== "smbase" && m.draft.type !== "flex") || !d || !a) return;
     const key = a.key;
     const k = a.mid ? 2 : 1;
@@ -5652,6 +5765,12 @@ export class ModelController {
     const m = this.mode, d = this.arrowDrag;
     this.arrowDrag = null;
     this.host.viewer.renderer.domElement.style.cursor = "";
+    if (d?.key === "push") {
+      document.getElementById("mc-pushval")?.remove();
+      this.pushAt = null;
+      if (m.kind === "feature" && d.moved) this.ok(); else { this.exitMode(false); void this.rebuild(); }
+      return;
+    }
     if (m.kind === "feature" && m.instant) {
       if (d?.moved) this.ok(); else { this.exitMode(false); void this.rebuild(); }
       return;
@@ -6507,6 +6626,9 @@ export class ModelController {
     const edge = hit?.edge ?? null;
     const fid = edge ? null : hit?.faceId ?? null;
     this.ctxPick = { edge: edge ?? undefined, faceId: fid ?? undefined };
+    const pushWas = this.pushFace;
+    this.pushFace = !other && fid != null && this.host.viewer.parts[0]?.data.faces[fid]?.type === "plane" && !!names[fid] ? fid : null;
+    if (pushWas !== this.pushFace) this.drawDecor();
     if (edge) {
       items.push(["fillet", t("Fillet")], ["chamfer", t("Chamfer")]);
       const a = owner(edge.faces[0]), b = owner(edge.faces[1]);
@@ -7088,6 +7210,11 @@ export class ModelController {
       if (f.type === "extrude" || f.type === "revolve") items.push([t("Edit sketch"), () => void this.editSketch(f.sketch)]);
       if (f.type === "sketch") items.push([t("Edit sketch plane"), () => this.editSketchPlane(f.id)]);
       if (canCopy(f)) items.push([t("Copy (Ctrl+C)"), () => { this.copyFeature(f.id); }]);
+      // Appearance (gap list M2): features that make faces take a colour of their own.
+      if ((this.last?.faceNames ?? []).some(n => n.split(":")[0] === f.id)) {
+        items.push([t("Feature colour…"), () => this.pickAppearance("feature", f.id)]);
+        if (this.doc.featureColors?.[f.id]) items.push([t("Remove appearance"), () => this.setAppearance("feature", f.id, null)]);
+      }
       items.push([t("Rename"), () => this.startRename(f.id)]);
       items.push([f.suppressed ? t("Unsuppress") : t("Suppress"), () => this.toggleSuppress(f.id)]);
       if (f.type === "plane" || f.type === "axis" || f.type === "point" || f.type === "csys" || f.type === "helix" || f.type === "curve" || f.type === "sketch3d") items.push([f.hidden ? t("Show") : t("Hide"), () => this.toggleHidden(f.id)]);
@@ -9259,7 +9386,7 @@ export class ModelController {
     const m = this.mode, dark = document.documentElement.dataset.theme === "dark";
     const end = this.doc.rollback ?? this.doc.features.length;
     const editing = m.kind === "feature" && m.draft.type === "sketch3d" ? m.draft : null;
-    const list = this.doc.features.slice(0, end).filter((g): g is Sketch3dFeature => g.type === "sketch3d" && !g.suppressed && !g.hidden && g.id !== editing?.id);
+    const list = this.doc.features.slice(0, end).filter((g): g is Sketch3dFeature => g.type === "sketch3d" && !g.suppressed && !g.hidden && viewItemShown("curves") && g.id !== editing?.id);
     const segPos = (f: Sketch3dFeature, only?: (id: string) => boolean) => {
       const pos: number[] = [];
       for (const sg of f.segs) { if (only && !only(sg.id)) continue; const q = segPoints(f, sg); for (let i = 0; i + 1 < q.length; i++) pos.push(...q[i], ...q[i + 1]); }
