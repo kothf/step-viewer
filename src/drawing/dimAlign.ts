@@ -34,3 +34,27 @@ export function spaceDims(dims: DimAnnot[], box: [number, number, number, number
   }
   return moved;
 }
+
+/** A rapid dimension target (gap list D3): which side of the view, and the axis the dimension line is held on. */
+export interface RapidSlot { side: "top" | "bottom" | "left" | "right"; a: 0 | 1; dir: 1 | -1 }
+
+/** The rapid targets a dimension can use: top and bottom for horizontal ones, left and right for vertical ones. */
+export function rapidSlots(d: DimAnnot): RapidSlot[] {
+  const a = axisOf(d);
+  if (a === 1) return [{ side: "top", a: 1, dir: 1 }, { side: "bottom", a: 1, dir: -1 }];
+  if (a === 0) return [{ side: "right", a: 0, dir: 1 }, { side: "left", a: 0, dir: -1 }];
+  return [];
+}
+
+/**
+ * Where a dimension placed through a rapid target goes (gap list D3, a CAD app's rapid dimension): the next row
+ * on that side of the view, `first` sheet mm off the outline, `gap` sheet mm beyond the farthest dimension already
+ * there, so rows stay evenly spaced without dragging. `dims` = the view's other dimensions.
+ */
+export function rapidRow(dims: DimAnnot[], box: [number, number, number, number], s: number, slot: RapidSlot, first = 10, gap = 8): number {
+  const { a, dir } = slot;
+  const edge = dir > 0 ? box[a + 2] : box[a];
+  const there = dims.filter(d => axisOf(d) === a && (d.pos[a] - edge) * dir > 1e-9).map(d => d.pos[a] * dir);
+  const far = there.length ? Math.max(...there) * dir : null;
+  return far == null ? edge + dir * first / s : far + dir * gap / s;
+}

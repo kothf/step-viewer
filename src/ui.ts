@@ -152,6 +152,46 @@ export function chooseModal(title: string, text: string, options: { key: string;
 }
 
 /**
+ * A few lines of text, such as a feature comment (gap list M5). OK gives the text (trimmed, "" = remove),
+ * Remove gives "", Esc or Cancel gives null.
+ */
+export function askNote(title: string, value: string): Promise<string | null> {
+  const d = document.createElement("dialog");
+  d.id = "fcomment-dlg";
+  d.className = "modal fcomment-dlg";
+  d.setAttribute("aria-labelledby", "fcomment-dlg-title");
+  const esc = (x: string) => x.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+  d.innerHTML = `<form method="dialog"><h3 id="fcomment-dlg-title" translate="no">${esc(title)}</h3>`
+    + `<label class="fcomment-dlg-row"><span>Comment</span><textarea data-a="text" rows="4" spellcheck="true" translate="no"></textarea></label>`
+    + `<div class="row end">${value ? `<button class="btn" type="button" data-a="remove">Remove</button>` : ""}<button class="btn" type="button" data-a="cancel">Cancel</button><button class="btn primary" value="ok" data-a="ok">OK</button></div></form>`;
+  document.body.appendChild(d);
+  trapFocus(d, () => d.open);
+  const area = d.querySelector<HTMLTextAreaElement>("textarea")!;
+  area.value = value;
+  const opener = document.activeElement as HTMLElement | null;
+  d.returnValue = "";
+  d.showModal();
+  area.focus();
+  area.select();
+  return new Promise(resolve => {
+    let out: string | null = null;
+    d.addEventListener("click", e => {
+      const a = (e.target as HTMLElement).closest<HTMLElement>("[data-a]")?.dataset.a;
+      if (a === "cancel") d.close("");
+      else if (a === "remove") { area.value = ""; d.close("ok"); }
+    });
+    // Ctrl+Enter is OK; a plain Enter is a new line.
+    area.addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); d.close("ok"); } });
+    d.addEventListener("close", () => {
+      if (d.returnValue === "ok") out = area.value.trim();
+      d.remove();
+      opener?.focus?.();
+      resolve(out);
+    }, { once: true });
+  });
+}
+
+/**
  * Asks for a file name before a document is downloaded (exam #9): browsers without the save dialog
  * would otherwise write "Part1.mcadprt" with no chance to name it, where a CAD app shows Save As on the
  * first save. Returns the name with `ext`, or null when cancelled.

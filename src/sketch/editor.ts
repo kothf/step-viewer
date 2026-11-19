@@ -4,7 +4,7 @@
 //
 // The editor works on a copy of the sketch; every finished operation is handed
 // to the host with a label (one undo step each) and solved again.
-import { setToolCursor, toolCursorOf } from "../hoverCursor";
+import { dimCursorOf, setToolCursor, toolCursorOf } from "../hoverCursor";
 import * as THREE from "three";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
@@ -117,6 +117,8 @@ const REL_GLYPH: Record<RelKind, string> = {
   coincident: "◉", horizontal: "H", vertical: "V", parallel: "∥", perpendicular: "⊥", collinear: "⫽", equal: "=",
   tangent: "T", concentric: "◎", midpoint: "M", fix: "⚓", onCurve: "◦", symmetric: "⇹", intersection: "✕", curvature: "κ", pierce: "⊕", offset: "⇉",
 };
+/** The padlock drawn for a fixed point or curve (gap list S11). */
+const LOCK_SVG = `<svg width="10" height="11" viewBox="0 0 10 11" aria-hidden="true"><path d="M3 5V3.6a2 2 0 0 1 4 0V5" fill="none" stroke="currentColor" stroke-width="1.4"/><rect x="1" y="5" width="8" height="6" rx="1.2" fill="currentColor"/></svg>`;
 export const REL_NAME: Record<RelKind, string> = {
   coincident: "Coincident", horizontal: "Horizontal", vertical: "Vertical", parallel: "Parallel", perpendicular: "Perpendicular",
   collinear: "Collinear", equal: "Equal", tangent: "Tangent", concentric: "Concentric", midpoint: "Midpoint", fix: "Fix",
@@ -597,9 +599,51 @@ export class SketchEditor {
       // (gap list S7, as in other CAD apps).
       const h = this.hover, e = h && this.sk.ents.find(x => x.id === h.id);
       if (e && (e.t === "line" || e.t === "arc") && !e.cons && !e.id.includes("~")) { this.select(this.chainOf(e.id).segs.map(sg => sg.id)); return true; }
+      // Double-click a text: edit it in place (gap list S13).
+      if (e?.t === "text" && !e.id.includes("~")) { this.editTextInPlace(e.id); return true; }
       return false;
     }
     return false;
+  }
+
+  /** The open in-place text box (gap list S13). */
+  private textEdit: HTMLInputElement | null = null;
+  /** Edits a sketch text on the canvas: a box over the text, Enter (or a click away) applies, Esc keeps the old text. */
+  editTextInPlace(id: string) {
+    const e = this.ent(id);
+    if (e?.t !== "text") return;
+    this.textEdit?.remove();
+    const box = textBox(e, this.pt(e.p), textPath(this.sk.ents, e));
+    const pts = (box.length ? box : [this.pt(e.p)]).map(q => this.screen(q));
+    const x = Math.min(...pts.map(q => q[0])), y = Math.min(...pts.map(q => q[1])), h = Math.max(...pts.map(q => q[1])) - y;
+    const inp = this.textEdit = document.createElement("input");
+    inp.className = "sk-textedit";
+    inp.value = e.text;
+    inp.setAttribute("translate", "no");
+    inp.setAttribute("aria-label", t("Text"));
+    inp.style.left = `${x - 4}px`;
+    inp.style.top = `${y + h / 2 - 14}px`;
+    inp.style.minWidth = `${Math.max(80, Math.max(...pts.map(q => q[0])) - x + 24)}px`;
+    let done = false;
+    const end = (apply: boolean) => {
+      if (done) return;
+      done = true;
+      const v = inp.value;
+      inp.remove();
+      if (this.textEdit === inp) this.textEdit = null;
+      if (apply && v.trim() && v !== e.text) void this.setText(id, { text: v });
+    };
+    inp.addEventListener("keydown", ev => {
+      ev.stopPropagation();
+      if (ev.key === "Enter") { ev.preventDefault(); end(true); }
+      else if (ev.key === "Escape") { ev.preventDefault(); end(false); }
+    });
+    inp.addEventListener("pointerdown", ev => ev.stopPropagation());
+    inp.addEventListener("blur", () => end(true));
+    this.select([id]);
+    this.host.layer.appendChild(inp);
+    inp.focus();
+    inp.select();
   }
 
   /**
@@ -4196,6 +4240,8 @@ export class SketchEditor {
 
   render() {
     if (this.disposed) return;
+    // Smart Dimension: the cursor shows the type a click will place, and a lock once it is locked (gap list S9).
+    if (this.tool === "dim") setToolCursor(this.host.viewer.renderer.domElement, dimCursorOf(this.dimDraft.dim?.t, !!this.dimDraft.lock));
     this.syncPictures();
     this.dark = document.documentElement.dataset.theme === "dark";
     const C = this.dark ? COLORS.dark : COLORS.light;
@@ -4715,10 +4761,12 @@ export class SketchEditor {
     const per = new Map<string, number>();
     for (const r of this.sk.rels) {
       if (r.t === "coincident" || r.t === "onCurve" || this.lockedInsert(r.id)) continue;
+      // A plain fix is a lock on the point or curve (gap list S11), shown even with the glyphs hidden.
+      const lock = r.t === "fix" && !r.ext;
       // Hidden glyphs (FR-SK-053) still show while selected, so a relation picked in the list can be seen.
-      if (!this.showRels && !this.selection.has(r.id)) continue;
-      const el = mk(r.id, "sk-rel");
-      el.textContent = r.ext ? "⊡" : REL_GLYPH[r.t];
+      if (!lock && !this.showRels && !this.selection.has(r.id)) continue;
+      const el = mk(r.id, lock ? "sk-rel sk-fix" : "sk-rel");
+      if (lock) el.innerHTML = LOCK_SVG; else el.textContent = r.ext ? "⊡" : REL_GLYPH[r.t];
       const name = t(relName(r)) + (r.dangling ? ` · ${t("dangling: drag onto a model edge to re-attach")}` : "");
       el.title = name;
       el.setAttribute("aria-label", name);
@@ -4726,10 +4774,11 @@ export class SketchEditor {
       el.classList.toggle("bad", this.info.conflicting.includes(r.id));
       el.classList.toggle("dangling", !!r.dangling);
       const anchor = r.e.find(x => x !== ORIGIN) ?? ORIGIN;
-      const k = per.get(anchor) ?? 0;
-      per.set(anchor, k + 1);
+      const k = lock ? 0 : per.get(anchor) ?? 0;
+      if (!lock) per.set(anchor, k + 1);
       el.dataset.pos = JSON.stringify(this.anchorOf(anchor));
       el.dataset.k = String(k);
+      if (lock && this.ent(anchor)?.t === "point") { delete el.dataset.nrm; continue; }
       // Beside a curve, not on it: a click on the curve must not land on its glyph (exam bug 47).
       const side = this.glyphSide(anchor);
       if (side) { el.dataset.pos = JSON.stringify(side.p); el.dataset.nrm = JSON.stringify(side.n); } else delete el.dataset.nrm;
@@ -4974,6 +5023,8 @@ export class SketchEditor {
         el.style.top = `${cy - 8}px`;
         continue;
       }
+      // A point's lock sits just above right of it, clear of the point itself.
+      if (el.classList.contains("sk-fix")) { el.style.left = `${x + 5}px`; el.style.top = `${y - 19}px`; continue; }
       el.style.left = `${x + (el.classList.contains("sk-rel") ? 10 + k * 16 : 0)}px`;
       el.style.top = `${y + (el.classList.contains("sk-rel") ? 10 : 0)}px`;
     }

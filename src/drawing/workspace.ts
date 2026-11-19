@@ -4,7 +4,7 @@
 // around (Esc or ✓ ends); views drag on the sheet and projected ones stay lined up
 // with their parent. Lines come from the drawing worker (exact HLR).
 import { canPaint, paintFormat } from "./formatPaint";
-import { alignDim, spaceDims } from "./dimAlign";
+import { alignDim, rapidRow, rapidSlots, spaceDims } from "./dimAlign";
 import type { VaultTie } from "../pdm/panel";
 import fontUrl from "dejavu-fonts-ttf/ttf/DejaVuSans.ttf?url";
 import type { MEdge, Projection, ViewDir } from "../kernel/drawing";
@@ -1606,6 +1606,30 @@ export class DrawingWorkspace {
   }
 
   /** The dimension the picks and the cursor make (FR-DRW-021), CAD app style: the cursor's side picks horizontal, vertical or aligned. */
+  /**
+   * Rapid dimension targets (gap list D3, a CAD app's rapid dimension): while a horizontal or vertical dimension
+   * follows the cursor, small targets stand above and below (or left and right of) the view; with the cursor on one
+   * the dimension goes to the next row on that side (`rapidRow`), so rows stay evenly spaced without dragging.
+   */
+  private rapidDim(vid: string, d: DimAnnot, at: Pt): { d: DimAnnot; targets: { side: string; c: Pt; w: number; h: number; on: boolean }[] } {
+    const pl = this.placements.get(vid);
+    const slots = pl ? rapidSlots(d) : [];
+    if (!pl || !slots.length) return { d, targets: [] };
+    const box = pl.box, others = (this.sheet.annots ?? []).filter((x): x is DimAnnot => x.t === "dim" && x.view === vid);
+    const targets: { side: string; c: Pt; w: number; h: number; on: boolean }[] = [];
+    let out = d;
+    for (const sl of slots) {
+      const q: [number, number] = [(box[0] + box[2]) / 2, (box[1] + box[3]) / 2];
+      q[sl.a] = (sl.dir > 0 ? box[sl.a + 2] : box[sl.a]) + sl.dir * 5 / pl.s;
+      const c = toSheet(pl, q[0], q[1]) as Pt;
+      const w = sl.a === 1 ? 12 : 4, h = sl.a === 1 ? 4 : 12;
+      const on = Math.abs(at[0] - c[0]) <= w / 2 + 0.5 && Math.abs(at[1] - c[1]) <= h / 2 + 0.5;
+      targets.push({ side: sl.side, c, w, h, on });
+      if (on) { const pos: [number, number] = [d.pos[0], d.pos[1]]; pos[sl.a] = round(rapidRow(others, box, pl.s, sl)); out = { ...d, pos }; }
+    }
+    return { d: out, targets };
+  }
+
   private buildDim(viewId: string, picks: Pick[], at: Pt): DimAnnot | null {
     const pl = this.placements.get(viewId), v = findView(this.sheet, viewId);
     if (!pl || !v || !picks.length) return null;
@@ -1705,8 +1729,9 @@ export class DrawingWorkspace {
       if (!m.picks.length) { if (!pick) return; m.view = vid; m.picks = [pick]; }
       else if (pick && m.picks.length === 1 && !same(pick, m.picks[0]) && !(m.picks[0].kind === "circle" && pick.kind === "circle" && pick.e === m.picks[0].e && !(pick.side && m.picks[0].side))) m.picks.push(pick);
       else {
-        const d = this.buildDim(m.view!, m.picks, p);
-        if (!d) return;
+        const d0 = this.buildDim(m.view!, m.picks, p);
+        if (!d0) return;
+        const d = this.rapidDim(m.view!, d0, p).d;
         this.addAnnot({ ...d, id: uid("a_") }, "Dimension");
         m.picks = []; m.view = null;
       }
@@ -2139,7 +2164,9 @@ export class DrawingWorkspace {
       const hov = this.pickAt(vid, at, undefined, !m.picks.length, true);
       if (hov && !(m.picks.length >= 2)) s += show(hov, "drw-edge");
       if (m.picks.length) {
-        const d = this.buildDim(vid, m.picks, at), g = d && dimGeo(d, P, this.factsOf(vid)?.topo ?? null);
+        const d0 = this.buildDim(vid, m.picks, at), r = d0 ? this.rapidDim(vid, d0, at) : null, d = r?.d ?? null;
+        for (const t of r?.targets ?? []) s += `<rect class="drw-rapid${t.on ? " on" : ""}" data-rapid="${t.side}" x="${t.c[0] - t.w / 2}" y="${H - t.c[1] - t.h / 2}" width="${t.w}" height="${t.h}" rx="1"/>`;
+        const g = d && dimGeo(d, P, this.factsOf(vid)?.topo ?? null);
         if (d && g) s += `<g class="drw-preview">${svgBody(dimPrims(d, g, pl, this.ctx().dec).prims, H, "currentColor")}</g>`;
       }
     } else if (m.kind === "htable") {

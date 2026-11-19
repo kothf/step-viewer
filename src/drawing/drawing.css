@@ -204,3 +204,6 @@ dialog .gt-rows td, dialog .gt-rows td:first-child { padding: 3px 6px 3px 0; ver
 .drw-icoopt input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
 .drw-icoopt:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, var(--panel)); }
 .drw-icoopt:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Rapid dimension targets (gap list D3). */
+.drw-rapid { fill: rgba(28, 126, 214, .08); stroke: #1c7ed6; stroke-width: .3; stroke-dasharray: 1 .6; }
+.drw-rapid.on { fill: rgba(28, 126, 214, .3); stroke-dasharray: none; stroke-width: .45; }

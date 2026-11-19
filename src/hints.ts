@@ -67,5 +67,5 @@ export const relocalizeHint = render;
 /** Turns tips on (showing them all again from the start) or off. */
 export function setTips(on: boolean) {
   storage.set(KEY, on ? "on" : "off");
-  if (on) storage.set(SEEN, "");
+  if (on) { storage.set(SEEN, ""); storage.set("mc:coach", ""); }
 }
