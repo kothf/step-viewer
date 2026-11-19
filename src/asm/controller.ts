@@ -139,10 +139,12 @@ export class AsmController {
     /** Clearance check (FR-ASM-021): the minimum (mm) and the pairs closer than it. */
     clear: number; near: { a: string; b: string; distance: number; p1: number[]; p2: number[] }[] | null } | null = null;
   private overlay = new THREE.Group();
+  /** Dashed explode lines of the shown exploded view (gap list A3). */
+  private explodeLines = new THREE.Group();
   /** The pattern being made or edited (FR-ASM-022). */
   patterning: (Omit<CompPattern, "id" | "name"> & { edit?: string; focus: "seeds" | "dir" }) | null = null;
   /** The exploded view being made or edited, and the one shown (FR-ASM-023). */
-  exploding: { edit?: string; name: string; steps: ExplodeStep[]; sel: string[]; axis: string; dist: number } | null = null;
+  exploding: { edit?: string; name: string; steps: ExplodeStep[]; sel: string[]; axis: string; dist: number; lines?: boolean } | null = null;
   exploded: string | null = null;
   private explodeT = 0;
   private explodeAnim = 0;
@@ -181,6 +183,7 @@ export class AsmController {
     this.bindDom();
     host.viewer.scene.add(this.overlay);
     host.viewer.scene.add(this.toolGhost);
+    host.viewer.scene.add(this.explodeLines);
     this.bindTabHide();
     // Box selection of components (FR-SEL-008).
     window.addEventListener("pointerdown", e => this.boxDown(e), true);
@@ -318,6 +321,8 @@ export class AsmController {
     this.patterning = null;
     this.exploding = null;
     this.exploded = null;
+    this.drawExplodeLines(null, 0);
+    this.removeMateBar();
     this.expanded = null;
     this.clearOverlay();
     this.solved = null;
@@ -355,6 +360,8 @@ export class AsmController {
     this.patterning = null;
     this.exploding = null;
     this.exploded = null;
+    this.drawExplodeLines(null, 0);
+    this.removeMateBar();
     this.clearOverlay();
     this.gen++;
     this.building = false;
@@ -1458,7 +1465,7 @@ export class AsmController {
     if (!this.doc) return;
     this.closeTools();
     const n = (this.doc.explodes?.length ?? 0) + 1;
-    this.exploding = edit ? { edit: edit.id, name: edit.name, steps: edit.steps.map(s => ({ ...s, comps: [...s.comps] })), sel: [], axis: "z", dist: 20 } : { name: `Exploded${n}`, steps: [], sel: [], axis: "z", dist: Math.round(Math.max(10, this.host.viewer.modelSize * 0.3)) };
+    this.exploding = edit ? { edit: edit.id, name: edit.name, steps: edit.steps.map(s => ({ ...s, comps: [...s.comps] })), sel: [], axis: "z", dist: 20, lines: edit.lines } : { name: `Exploded${n}`, steps: [], sel: [], axis: "z", dist: Math.round(Math.max(10, this.host.viewer.modelSize * 0.3)) };
     this.renderAll();
     this.applyExplode();
   }
@@ -1479,7 +1486,7 @@ export class AsmController {
   private applyExplode(animate = false) {
     const doc = this.doc;
     if (!doc) return;
-    const view = this.exploding ? { id: "", name: "", steps: [...this.exploding.steps, ...(this.exploding.sel.length ? [{ comps: this.exploding.sel, dir: this.axisVec(this.exploding.axis), dist: this.exploding.dist }] : [])] } : doc.explodes?.find(v => v.id === this.exploded);
+    const view = this.exploding ? { id: "", name: "", lines: this.exploding.lines, steps: [...this.exploding.steps, ...(this.exploding.sel.length ? [{ comps: this.exploding.sel, dir: this.axisVec(this.exploding.axis), dist: this.exploding.dist }] : [])] } : doc.explodes?.find(v => v.id === this.exploded);
     const off = view ? explodeOffsets(view) : new Map<string, V3>();
     const target = view ? 1 : 0;
     const draw = (k: number) => {
@@ -1490,6 +1497,7 @@ export class AsmController {
         if (base) tfs[id] = compose(translation([o[0] * k, o[1] * k, o[2] * k]), base);
       }
       this.previewTfs(tfs);
+      this.drawExplodeLines(view?.lines ? off : null, k);
     };
     cancelAnimationFrame(this.explodeAnim);
     if (!animate) { draw(target); return; }
@@ -1505,6 +1513,38 @@ export class AsmController {
   }
   private lastOffsets: Map<string, V3> | null = null;
 
+  /** Dashed lines from each moved component's centre where it is assembled to where the view moves it, `k` of the way. */
+  private drawExplodeLines(off: Map<string, V3> | null, k: number) {
+    const g = this.explodeLines, v = this.host.viewer;
+    for (const c of [...g.children]) { g.remove(c); const l = c as THREE.Line; l.geometry?.dispose(); (l.material as THREE.Material)?.dispose(); }
+    if (off && k > 1e-6) {
+      const pts: THREE.Vector3[] = [];
+      this.shownIds.forEach((id, i) => {
+        const o = off.get(id), part = v.parts[i];
+        if (!o || !part || !part.group.visible || Math.hypot(o[0], o[1], o[2]) < 1e-9) return;
+        const d = part.data;
+        part.group.updateMatrixWorld(true);
+        const c1 = v.toWorld(part, [(d.bboxMin[0] + d.bboxMax[0]) / 2, (d.bboxMin[1] + d.bboxMax[1]) / 2, (d.bboxMin[2] + d.bboxMax[2]) / 2]);
+        pts.push(c1.clone().sub(new THREE.Vector3(o[0] * k, o[1] * k, o[2] * k)), c1.clone());
+      });
+      if (pts.length) {
+        const dash = Math.max(v.modelSize * 0.015, 1e-3);
+        const line = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineDashedMaterial({ color: 0xe8590c, dashSize: dash, gapSize: dash * 0.6, depthTest: false, transparent: true }));
+        line.computeLineDistances();
+        line.renderOrder = 999;
+        line.userData.explodeLines = pts.length / 2;
+        g.add(line);
+      }
+    }
+    v.invalidate();
+  }
+
+  /** Turns the explode lines of a saved exploded view on or off (one undo step). */
+  setExplodeLines(id: string, on: boolean) {
+    this.change(d => { const x = d.explodes?.find(v => v.id === id); if (!x) return; if (on) x.lines = true; else delete x.lines; });
+    if (this.exploded === id) queueMicrotask(() => this.applyExplode());
+  }
+
   toggleExplode(id: string) {
     this.exploded = this.exploded === id ? null : id;
     this.applyExplode(true);
@@ -1516,7 +1556,7 @@ export class AsmController {
     if (!ex || !this.doc) return;
     if (ex.sel.length) { ex.steps.push({ comps: ex.sel, dir: this.axisVec(ex.axis), dist: ex.dist }); ex.sel = []; }
     if (!ex.steps.length) { this.closeTools(); return; }
-    const view: ExplodeView = { id: ex.edit ?? uid("x_"), name: ex.name, steps: ex.steps };
+    const view: ExplodeView = { id: ex.edit ?? uid("x_"), name: ex.name, steps: ex.steps, ...(ex.lines ? { lines: true } : {}) };
     this.exploding = null;
     this.clearPicks();
     this.exploded = view.id;
@@ -1542,7 +1582,8 @@ export class AsmController {
       + `<fieldset class="pm-group"><legend>${esc(t("Add step"))}</legend><div class="pm-field"><span>${esc(t("Components"))}</span><button class="pm-box focus" translate="no">${esc(ex.sel.map(name).join(", ") || t("Click components in the view"))}</button></div>`
       + `<label class="pm-field"><span>${esc(t("Direction"))}</span><select data-a="axis">${AX.map(([k, l]) => `<option value="${k}"${ex.axis === k ? " selected" : ""}>${l}</option>`).join("")}</select></label>`
       + `<label class="pm-field"><span>${esc(t("Distance"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-a="dist" value="${esc(String(ex.dist))}" spellcheck="false" /><span class="muted">mm</span></span></label>`
-      + `<button class="btn small" data-a="add"${ex.sel.length ? "" : " disabled"}>${esc(t("Add step"))}</button></fieldset>`;
+      + `<button class="btn small" data-a="add"${ex.sel.length ? "" : " disabled"}>${esc(t("Add step"))}</button></fieldset>`
+      + `<fieldset class="pm-group"><legend>${esc(t("Options"))}</legend><label class="pm-field pm-check"><input type="checkbox" data-a="lines"${ex.lines ? " checked" : ""} /> ${esc(t("Explode lines"))}</label></fieldset>`;
     pm.querySelector("[data-a=ok]")!.addEventListener("click", () => this.okExplode());
     pm.querySelector("[data-a=cancel]")!.addEventListener("click", () => this.closeTools());
     pm.querySelector("[data-a=auto]")!.addEventListener("click", () => {
@@ -1552,6 +1593,7 @@ export class AsmController {
       this.renderPanel();
     });
     pm.querySelector("[data-a=add]")!.addEventListener("click", () => { ex.steps.push({ comps: ex.sel, dir: this.axisVec(ex.axis), dist: ex.dist }); ex.sel = []; this.drawPicks(); this.applyExplode(); this.renderPanel(); });
+    pm.querySelector<HTMLInputElement>("[data-a=lines]")!.addEventListener("change", e => { ex.lines = (e.target as HTMLInputElement).checked; this.applyExplode(); });
     pm.querySelector<HTMLSelectElement>("[data-a=axis]")!.addEventListener("change", e => { ex.axis = (e.target as HTMLSelectElement).value; this.applyExplode(); });
     const di = pm.querySelector<HTMLInputElement>("[data-a=dist]")!;
     di.addEventListener("change", () => { const v = Number(di.value.replace(",", ".")); if (!Number.isFinite(v)) { di.setAttribute("aria-invalid", "true"); return; } ex.dist = v; this.applyExplode(); });
@@ -1802,6 +1844,7 @@ export class AsmController {
   }
 
   cancelMate() {
+    this.removeMateBar();
     if (!this.mating) return;
     this.mating = null;
     this.clearPicks();
@@ -1966,6 +2009,7 @@ export class AsmController {
     } else this.mateOther = null;
     if (!hit) return;
     m.added = undefined;
+    this.mateAt = [x, y];
     const id = this.shownIds[hit.idx], face = this.faceNames[hit.idx]?.[hit.face];
     // A flexible sub-assembly's own components can be mated (FR-ASM-006); a rigid one cannot.
     const c = this.comp(id) ?? (this.flexChild(id) ? this.anyComp(id) : null);
@@ -3404,7 +3448,7 @@ export class AsmController {
         if (id === "folder:states") { this.popup([[t("Add display state"), () => this.addDisplayState()]], e.clientX, e.clientY); return; }
         const pt = this.doc?.patterns?.find(x => x.id === id), xv = this.doc?.explodes?.find(x => x.id === id);
         if (pt) this.popup([[t("Edit pattern"), () => this.startPattern(pt)], [pt.suppressed ? t("Unsuppress") : t("Suppress"), () => this.change(d => { const q = d.patterns?.find(x => x.id === id); if (q) { if (q.suppressed) delete q.suppressed; else q.suppressed = true; } })], [t("Delete"), () => this.deletePattern(id)]], e.clientX, e.clientY);
-        else if (xv) this.popup([[this.exploded === id ? t("Collapse") : t("Explode"), () => this.toggleExplode(id)], [t("Edit exploded view"), () => this.startExplode(xv)], [t("Delete"), () => this.deleteExplode(id)]], e.clientX, e.clientY);
+        else if (xv) this.popup([[this.exploded === id ? t("Collapse") : t("Explode"), () => this.toggleExplode(id)], [t("Edit exploded view"), () => this.startExplode(xv)], [xv.lines ? t("Hide explode lines") : t("Show explode lines"), () => this.setExplodeLines(id, !xv.lines)], [t("Delete"), () => this.deleteExplode(id)]], e.clientX, e.clientY);
         else if (mt) this.popup([
           [t("Edit mate"), () => this.startMate(mt)],
           [t("Rename"), () => this.renameState(mt.id)],
@@ -3477,6 +3521,7 @@ export class AsmController {
   }
 
   private renderPanel() {
+    if (!this.mating) this.removeMateBar();
     if (this.mating) { this.renderMatePanel(); return; }
     if (this.patterning) { this.renderPatternPanel(); return; }
     if (this.exploding) { this.renderExplodePanel(); return; }
@@ -3560,6 +3605,51 @@ export class AsmController {
     return `${c?.name ?? "?"}: ${g?.k === "axis" ? t("Cylindrical face") : t("Flat face")}`;
   }
 
+  /** Where the last mate face was clicked (client px), for the mate bar (gap list A4). */
+  private mateAt: [number, number] | null = null;
+
+  private removeMateBar() { document.getElementById("asm-matebar")?.remove(); }
+
+  /**
+   * Mate pop-up toolbar (gap list A4): once two faces are picked, the mate types that fit them, the alignment flip,
+   * the value of a distance/angle mate and ✓/✕ sit beside the last click, as in other CAD apps; the panel stays the full version.
+   */
+  private renderMateBar(fits: Set<MateType>) {
+    const m = this.mating, vp = document.getElementById("viewport");
+    if (!m?.a || !m.b || !vp || !this.mateAt) { this.removeMateBar(); return; }
+    let bar = document.getElementById("asm-matebar");
+    const keep = bar?.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.mb : undefined;
+    if (!bar) { bar = document.createElement("div"); bar.id = "asm-matebar"; bar.className = "asm-matebar"; bar.setAttribute("role", "toolbar"); bar.setAttribute("aria-label", t("Mate")); vp.appendChild(bar); }
+    const types = MATE_TYPES.filter(k => fits.has(k));
+    const canAlign = m.type === "coincident" || m.type === "parallel" || m.type === "distance" || m.type === "limitdist";
+    const deg = m.type === "angle";
+    const val = m.type === "distance" || deg ? Math.round((deg ? ((m.value ?? 0) * 180) / Math.PI : m.value ?? 0) * 1e6) / 1e6 : null;
+    bar.innerHTML = types.map(k => `<button class="mb-t${m.type === k ? " on" : ""}" data-mbt="${k}" aria-pressed="${m.type === k}" title="${esc(t(MATE_LABEL[k]))}" aria-label="${esc(t(MATE_LABEL[k]))}">${MATE_ICON[k]}</button>`).join("")
+      + (val != null ? `<span class="mb-val"><input type="text" inputmode="decimal" data-mb="val" value="${esc(String(val))}" spellcheck="false" aria-label="${esc(t(deg ? "Angle" : "Distance"))}" /><span class="muted">${deg ? "°" : "mm"}</span></span>` : "")
+      + (canAlign && m.type ? `<button data-mb="flip" title="${esc(t("Flip mate alignment"))}" aria-label="${esc(t("Flip mate alignment"))}">⇅</button>` : "")
+      + `<button class="mb-ok" data-mb="ok" title="${esc(t("OK (Enter)"))}" aria-label="${esc(t("OK (Enter)"))}">✓</button><button class="mb-x" data-mb="cancel" title="${esc(t("Clear selections"))}" aria-label="${esc(t("Clear selections"))}">✕</button>`;
+    const r = vp.getBoundingClientRect(), [cx, cy] = this.mateAt;
+    const w = bar.offsetWidth || 240, h = bar.offsetHeight || 34;
+    bar.style.left = `${Math.max(4, Math.min(r.width - w - 4, cx - r.left + 18))}px`;
+    bar.style.top = `${Math.max(4, Math.min(r.height - h - 4, cy - r.top + 18))}px`;
+    bar.querySelectorAll<HTMLButtonElement>("[data-mbt]").forEach(b => b.addEventListener("click", () => this.setMateType(b.dataset.mbt as MateType)));
+    bar.querySelector("[data-mb=flip]")?.addEventListener("click", () => { m.align = m.align === "aligned" ? "anti" : "aligned"; m.alignSet = true; this.previewMate(); });
+    bar.querySelector("[data-mb=ok]")!.addEventListener("click", () => this.okMate());
+    bar.querySelector("[data-mb=cancel]")!.addEventListener("click", () => { m.a = m.b = m.c = m.d = m.type = undefined; this.drawPicks(); this.previewMate(); });
+    const vi = bar.querySelector<HTMLInputElement>("[data-mb=val]");
+    if (vi) {
+      const take = () => {
+        const v = Number(vi.value.replace(",", "."));
+        if (!Number.isFinite(v)) { vi.setAttribute("aria-invalid", "true"); return false; }
+        if (m.type === "distance" && v < 0) { m.flip = !m.flip; m.value = -v; } else m.value = deg ? (v * Math.PI) / 180 : v;
+        return true;
+      };
+      vi.addEventListener("change", () => { if (take()) this.previewMate(); });
+      vi.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); if (take()) { this.previewMate(); this.okMate(); } } });
+      if (keep === "val") { vi.focus(); vi.select(); }
+    }
+  }
+
   /** The Mate PropertyManager: selections, standard mates, alignment and value, with a live preview. */
   private renderMatePanel() {
     const pm = $("#asm-pm"), m = this.mating!;
@@ -3608,6 +3698,7 @@ export class AsmController {
       + `<fieldset class="pm-group"><legend>${esc(t("Mechanical mates"))}</legend><div class="pm-mates">${MECH_TYPES.map(typeBtn).join("")}</div>${mech}</fieldset>`
       + (canAlign && m.type ? `<fieldset class="pm-group"><legend>${esc(t("Mate alignment"))}</legend><div class="pm-mates"><button class="btn small${m.align === "aligned" ? " on" : ""}" data-al="aligned" aria-pressed="${m.align === "aligned"}">${esc(t("Aligned"))}</button><button class="btn small${m.align !== "aligned" ? " on" : ""}" data-al="anti" aria-pressed="${m.align !== "aligned"}">${esc(t("Anti-aligned"))}</button></div></fieldset>` : "")
       + `<p class="${m.problem ? "pm-err" : "pm-help muted"}" role="status" data-mstatus>${esc(m.problem ?? (m.type === "symmetric" && !m.c ? t("Click the symmetry plane.") : m.type === "hinge" && (!m.c || !m.d) ? t("Click a flat face on each component to touch.") : m.type === "slot" && !m.c ? t("Click the other side face of the slot.") : m.type === "width" && (!m.c || (tabPlane && !m.d)) ? t("Click the second width face, then the second tab face.") : m.a && m.b && m.type ? t("Previewed in the view. ✓ adds the mate; the panel stays open for the next one.") : m.added ? t("{name} added. Click two faces for the next mate, or ✓ to close the panel.", { name: m.added }) : t("✓ with nothing picked closes the panel.")))}</p>`;
+    this.renderMateBar(fits);
     pm.querySelector("[data-a=ok]")!.addEventListener("click", () => this.okMate());
     pm.querySelector("[data-a=cancel]")!.addEventListener("click", () => this.cancelMate());
     pm.querySelector("[data-a=clear]")?.addEventListener("click", () => { m.a = m.b = m.c = m.d = m.type = undefined; this.drawPicks(); this.previewMate(); });

@@ -6,6 +6,7 @@ import { t } from "./i18n";
 import { trapFocus } from "./ui";
 import { AUTOSAVE_CHOICES, DEFAULT_PREFS, loadPrefs, setPrefs, settingMatches, type PrefKey, type Prefs } from "./prefs";
 import { SNAP_KINDS, parseSnaps } from "./sketch/snaps";
+import { RESERVED, assign, comboOf, loadShortcuts, saveShortcuts, type Shortcuts } from "./shortcuts";
 
 export interface PrefsHost {
   units(): string;
@@ -20,9 +21,11 @@ export interface PrefsHost {
   setTips(on: boolean): void;
   /** Opens the mouse gesture settings. */
   gestures(): void;
+  /** Part and sketch commands a shortcut can run: [id, label in the UI language, English label]. */
+  commands?(): [string, string, string][];
 }
 
-export type SettingsPage = "general" | "units" | "view" | "mouse" | "modelling" | "sketch";
+export type SettingsPage = "general" | "units" | "view" | "mouse" | "keys" | "modelling" | "sketch";
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const UNITS = ["mm", "cm", "m", "in", "ft"];
@@ -48,6 +51,7 @@ const PAGES: [SettingsPage, string, string][] = [
   ["units", "Units", "M2 11h12M4 11V8M6 11V9M8 11V7M10 11V9M12 11V8"],
   ["view", "View and performance", "M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"],
   ["mouse", "Mouse", "M5 2.5h6v6a3 3 0 0 1-6 0zM8 2.5v3"],
+  ["keys", "Keyboard", "M1.5 4.5h13v7h-13zM4 7h.01M6.5 7h.01M9 7h.01M11.5 7h.01M5 9.5h6"],
   ["modelling", "Modelling", "M3 5.5 8 3l5 2.5v5L8 13l-5-2.5zM3 5.5 8 8l5-2.5M8 8v5"],
   ["sketch", "Sketch", "M2.5 13.5 12 4l1.5 1.5L4 15H2.5zM10.5 5.5l1.5 1.5"],
 ];
@@ -81,6 +85,8 @@ export function openPrefs(host: PrefsHost, page?: SettingsPage | "modelling" | "
   const group = (title: string, body: string) => `<section class="set-group"><h4 class="set-gh">${esc(t(title))}</h4>${body}</section>`;
   const autosave = AUTOSAVE_CHOICES.map(s => `<option value="${s}"${s === p.autosave ? " selected" : ""}>${esc(s === 0 ? t("Off") : s === 1 ? t("After each change") : s < 60 ? t("{n} s", { n: s }) : t("{n} min", { n: s / 60 }))}</option>`).join("");
   const snapsOn = parseSnaps(p.snaps);
+  const keys: Shortcuts = { ...loadShortcuts() };
+  const cmds = host.commands?.() ?? [];
 
   const body: Record<SettingsPage, string> = {
     general: group("Interface",
@@ -104,6 +110,11 @@ export function openPrefs(host: PrefsHost, page?: SettingsPage | "modelling" | "
       + row("Wheel zoom", "", sel(`data-p="wheel"`, opt("normal", "Wheel away zooms in", p.wheel) + opt("reverse", "Wheel away zooms out", p.wheel))))
       + group("Mouse gestures",
         `<div class="set-row" data-find="${find("Mouse gestures", "Right-drag in a part or a sketch runs a command")}"><span class="set-l"><span class="set-t">${esc(t("Mouse gestures"))}</span>${help("Right-drag in a part or a sketch runs a command")}</span><span class="set-c"><button type="button" class="btn" data-a="gestures">${esc(t("Set up…"))}</button></span></div>`),
+    keys: `<p class="set-help set-gnote">${esc(t("Click a box and press the keys for that command; Backspace clears it. Save, undo, copy, Esc and the other fixed keys stay as they are."))}</p>`
+      + group("Part and sketch commands", cmds.map(([id, label, en]) => {
+        const fid = `set-k${++uid}`;
+        return `<div class="set-row" data-find="${find(en, "Keyboard")}"><span class="set-l"><label class="set-t" for="${fid}">${esc(label)}</label></span><span class="set-c"><input id="${fid}" class="set-key" readonly data-sc="${esc(id)}" value="${esc(keys[id] ?? "")}" placeholder="${esc(t("None"))}" aria-label="${esc(t("Shortcut for {name}", { name: label }))}" /><button type="button" class="icon" data-scx="${esc(id)}" aria-label="${esc(t("Clear"))}" title="${esc(t("Clear"))}">✕</button></span></div>`;
+      }).join("") || `<p class="set-help">${esc(t("Open a part to set its commands' shortcuts."))}</p>`),
     modelling: group("Rebuild",
       chk("verify", "Verification on rebuild", "Checks the body after every feature and warns when it is not valid. Slower.")),
     sketch: group("When a sketch opens",
@@ -208,7 +219,27 @@ export function openPrefs(host: PrefsHost, page?: SettingsPage | "modelling" | "
   dlg.querySelectorAll('[data-a="cancel"]').forEach(b => b.addEventListener("click", close));
   dlg.querySelector('[data-a="gestures"]')!.addEventListener("click", () => host.gestures());
 
+  // Shortcut boxes: the keys pressed in one become its combination; the command that had it loses it.
+  const keyBox = (id: string) => dlg.querySelector<HTMLInputElement>(`[data-sc="${CSS.escape(id)}"]`);
+  const setKey = (id: string, combo: string) => {
+    const lost = assign(keys, id, combo);
+    const box = keyBox(id);
+    if (box) box.value = combo;
+    if (lost) { const b = keyBox(lost); if (b) b.value = ""; flash(t("{key} moved from {name}.", { key: combo, name: cmds.find(c => c[0] === lost)?.[1] ?? lost })); }
+  };
+  dlg.querySelectorAll<HTMLInputElement>("[data-sc]").forEach(box => box.addEventListener("keydown", e => {
+    if (e.key === "Tab" || (e.key === "Escape" && !e.ctrlKey && !e.altKey && !e.shiftKey)) return;
+    e.preventDefault(); e.stopPropagation();
+    if ((e.key === "Backspace" || e.key === "Delete") && !e.ctrlKey && !e.altKey && !e.shiftKey) { setKey(box.dataset.sc!, ""); return; }
+    const combo = comboOf(e);
+    if (!combo) return;
+    if (RESERVED.has(combo)) { flash(t("{key} is kept for the app.", { key: combo })); return; }
+    setKey(box.dataset.sc!, combo);
+  }));
+  dlg.querySelectorAll<HTMLButtonElement>("[data-scx]").forEach(b => b.addEventListener("click", () => setKey(b.dataset.scx!, "")));
+
   const resetIn = (root: ParentNode) => {
+    root.querySelectorAll<HTMLInputElement>("[data-sc]").forEach(el => { assign(keys, el.dataset.sc!, ""); el.value = ""; });
     root.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-p]").forEach(el => {
       const v = DEFAULT_PREFS[el.dataset.p as PrefKey];
       if (el instanceof HTMLInputElement && el.type === "checkbox") el.checked = !!v;
@@ -254,6 +285,7 @@ export function openPrefs(host: PrefsHost, page?: SettingsPage | "modelling" | "
     if (hv("decimals").value !== host.decimals()) host.setDecimals(hv("decimals").value);
     const lang = hv("lang").value;
     setPrefs(out as Partial<Prefs>);
+    if (cmds.length) saveShortcuts(keys);
     close();
     if (lang !== host.lang()) host.setLang(lang);
   });

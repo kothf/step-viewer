@@ -135,7 +135,8 @@ export interface CompPattern {
 }
 
 export interface ExplodeStep { comps: string[]; dir: V3; dist: number }
-export interface ExplodeView { id: string; name: string; steps: ExplodeStep[] }
+/** `lines`: dashed explode lines from each moved component's place to where the view puts it (gap list A3). */
+export interface ExplodeView { id: string; name: string; steps: ExplodeStep[]; lines?: boolean }
 
 /**
  * Assembly feature (FR-ASM-027): a hole (circle) or cut extrude (rectangle) that starts on a flat face of
