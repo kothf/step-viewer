@@ -2688,6 +2688,7 @@ function openSettings(page?: SettingsPage) {
     lang: () => lang(), setLang: l => setLang(l as Parameters<typeof setLang>[0]),
     theme: () => document.documentElement.dataset.theme === "dark" ? "dark" : "light", setTheme: th => setTheme(th === "dark" ? "dark" : "light"),
     tips: () => tipsOn(), setTips: on => setTips(on),
+    commands: () => modeller.commandList(),
     gestures: () => gestureDialog(c => toast(t(c.on ? "Mouse gestures on: right-drag in a part or a sketch." : "Mouse gestures off."))),
   }, page);
 }

@@ -2903,6 +2903,14 @@ try {
       await mp.waitForSelector("#prefs-dlg", { state: "detached" });
     };
     await setGridUi({ grid: true });
+    // 1.598: Settings ▸ Keyboard lists the part commands with a shortcut box each (gap list U1).
+    await mp.click("#mc-quick [data-qset]");
+    await mp.waitForSelector("#prefs-dlg[open]");
+    await mp.click("#pt-keys");
+    const keyRows = await mp.evaluate(() => ({ n: document.querySelectorAll("#prefs-dlg [data-sc]").length, fillet: !!document.querySelector('#prefs-dlg [data-sc="fillet"]') }));
+    await mp.click('#prefs-dlg .set-foot [data-a="cancel"]');
+    await mp.waitForSelector("#prefs-dlg", { state: "detached" });
+    check(keyRows.n > 10 && keyRows.fillet, `sketch 1.598: Settings ▸ Keyboard lists the commands with shortcut boxes (${JSON.stringify(keyRows)})`);
     await mp.waitForTimeout(200);
     const grid0 = await mp.evaluate(() => { let n = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData?.skGrid) n += o.geometry.attributes.position.count / 2; }); return n; });
     await setGridUi({ snap: true, step: "10" });

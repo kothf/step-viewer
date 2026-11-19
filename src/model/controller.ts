@@ -5,6 +5,7 @@
 // The document (DocStore) is the source of truth; every rebuild sends it to the
 // kernel worker and shows the returned body with the viewer's own pipeline, so
 // the measuring tools work on modelled parts unchanged.
+import { commandFor, comboOf, loadShortcuts } from "../shortcuts";
 import { showSelStatus } from "../selStatus";
 import type { ExportMesh } from "../kernel/occ";
 import { fixRefsIn } from "./refFix";
@@ -2805,6 +2806,9 @@ export class ModelController {
     const mod = e.ctrlKey || e.metaKey;
     const stop = () => { e.preventDefault(); e.stopPropagation(); };
     if (this.tabKey(e)) { stop(); return; }
+    // Custom shortcuts (gap list U1) before the built-in letters, in a part or a sketch.
+    const custom = (this.mode.kind === "none" || this.mode.kind === "sketch") && !e.repeat ? commandFor(loadShortcuts(), comboOf(e)) : null;
+    if (custom) { stop(); if (custom === "import") this.importBodyFile(); else this.command(custom); return; }
     if (mod && k === "s") { stop(); void this.save(e.shiftKey); return; }
     if (mod && !e.shiftKey && k === "z") { stop(); this.undo(); return; }
     if (mod && (k === "y" || (e.shiftKey && k === "z"))) { stop(); this.redo(); return; }
@@ -3477,8 +3481,8 @@ export class ModelController {
   }
 
   /** Commands Ctrl+K can run now: [id, label in the UI language, English label]. */
-  private searchable(): [string, string, string][] {
-    const m = this.mode;
+  private searchable(kind: Mode["kind"] = this.mode.kind): [string, string, string][] {
+    const m = { kind };
     if (m.kind !== "none" && m.kind !== "sketch") return [];
     let fixed: [string, string][] = [["sketch", "Sketch"], ["extrude", "Extrude"], ["cut", "Cut"], ["revolve", "Revolve"], ["fillet", "Fillet"], ["chamfer", "Chamfer"], ["hole", "Hole"], ["thread", "Thread"], ["shell", "Shell"], ["draft", "Draft"], ["mirror", "Mirror"], ["lpattern", "Linear pattern"], ["cpattern", "Circular pattern"], ["plane", "Plane"], ["axis", "Axis"], ["point", "Point"], ["csys", "Coordinate system"], ["import", "Insert body"], ["save", "Save"], ["step", "Export STEP"], ["filter", "Selection filter"], ["undo", "Undo"], ["redo", "Redo"]];
     // In a sketch: Exit sketch, then the features, which exit the sketch and use it (FR-SK-004).
@@ -3488,6 +3492,9 @@ export class ModelController {
     const loc = new Map([...P3_TOOLS(), ...SURF_TOOLS(), ...SM_TOOLS()].map(x => [x[0] as string, x[1]]));
     return [...fixed.map(([id, l]) => [id, t(l), l] as [string, string, string]), ...en.map(([id, l]) => [id, loc.get(id) ?? l, l] as [string, string, string])];
   }
+
+  /** Commands a custom keyboard shortcut can run (Settings ▸ Keyboard, gap list U1). */
+  commandList(): [string, string, string][] { return this.searchable("none").filter(([id]) => id !== "undo" && id !== "redo" && id !== "save"); }
 
   /** Command search (FR-UI-014, Ctrl+K): type part of a command's name, in English or Russian, and run it. */
   commandSearch() {

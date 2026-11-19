@@ -1646,3 +1646,20 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .mc-sellist .sl-o { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mc-sellist li button { margin-left: auto; border: 0; background: none; color: var(--muted); cursor: pointer; padding: 0 4px; font-size: 14px; line-height: 1; }
 .mc-sellist li button:hover, .mc-sellist li button:focus-visible { color: var(--danger); }
+
+/* Mate pop-up toolbar beside the last picked face (gap list A4). */
+.asm-matebar { position: absolute; z-index: 30; display: flex; align-items: center; gap: 2px; padding: 3px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 4px 14px rgb(0 0 0 / 0.18); }
+.asm-matebar button { min-width: 30px; height: 30px; padding: 0 6px; border: 1px solid transparent; border-radius: 6px; background: none; color: inherit; font-size: 16px; cursor: pointer; }
+.asm-matebar button:hover { background: var(--hover, rgb(127 127 127 / 0.14)); }
+.asm-matebar button.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.asm-matebar .mb-ok { color: var(--ok, #2f9e44); font-weight: 700; }
+.asm-matebar .mb-x { color: var(--muted); }
+.asm-matebar .mb-val { display: inline-flex; align-items: center; gap: 3px; margin: 0 4px; font-size: 12px; }
+.asm-matebar .mb-val input { width: 64px; height: 26px; }
+
+/* Drawing format painter (gap list D1). */
+.drw svg.drw-painting { cursor: copy; }
+.drw-pm-paint.on { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+/* Settings ▸ Keyboard (gap list U1). */
+.set-key { width: 9.5em; text-align: center; font-family: var(--mono, monospace); cursor: pointer; }
+.set-key:focus { outline: 2px solid var(--accent); }

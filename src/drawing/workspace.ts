@@ -3,6 +3,8 @@
 // lines as a live preview, then projected views come off it as the cursor moves
 // around (Esc or ✓ ends); views drag on the sheet and projected ones stay lined up
 // with their parent. Lines come from the drawing worker (exact HLR).
+import { canPaint, paintFormat } from "./formatPaint";
+import { alignDim, spaceDims } from "./dimAlign";
 import type { VaultTie } from "../pdm/panel";
 import fontUrl from "dejavu-fonts-ttf/ttf/DejaVuSans.ttf?url";
 import type { MEdge, Projection, ViewDir } from "../kernel/drawing";
@@ -310,6 +312,10 @@ export class DrawingWorkspace {
   private dangling = new Set<string>();
   /** The selected annotation (views and annotations select one at a time). */
   private selA: string | null = null;
+  /** Align (gap list D2): the dimension whose line the next clicks put other dimensions on. */
+  private aligner: DimAnnot | null = null;
+  /** Format painter (gap list D1): the annotation whose look the next clicks copy onto others of its kind; Esc or a click on empty sheet ends it. */
+  private painter: Annot | null = null;
   private adrag: { id: string; start: Pt; orig: Pt; s: number; moved: boolean } | null = null;
   private drag: { id: string; start: [number, number]; orig: Map<string, [number, number]>; moved: boolean } | null = null;
   private pan: { x: number; y: number; vb: { x: number; y: number; w: number; h: number } } | null = null;
@@ -728,6 +734,8 @@ export class DrawingWorkspace {
     const m = this.mode;
     let s = "";
     if (this.loading) s = t("Loading the model into the drawing kernel…");
+    else if (this.aligner) s = t("Align: click other dimensions to put them on this one's line; Esc or a click on empty sheet ends it.");
+    else if (this.painter) s = t("Format painter: click annotations of the same kind to give them this look; Esc or a click on empty sheet ends it.");
     else if (m.kind === "model" && m.cfg === FLAT_CONFIG) s = t("Click on the sheet to place the flat pattern view. Esc cancels.");
     else if (m.kind === "model") s = t("Click on the sheet to place the {orient} view. Esc cancels.", { orient: t(ORIENT_NAMES[m.orient]).toLowerCase() });
     else if (m.kind === "projected") s = m.parent ? t("Move the cursor around the view and click to place a projected view. Esc or ✓ ends.") : t("Click the view to project from.");
@@ -1058,6 +1066,8 @@ export class DrawingWorkspace {
       if (v) this.placeProjected(v); else { const id = this.viewAt(p); if (id) { m.parent = id; this.sel = id; this.renderOverlay(); } }
       return;
     }
+    if (this.painter) { this.paintAt(p); return; }
+    if (this.aligner) { this.alignAt(p); return; }
     const aid = this.annotAt(p);
     if (aid) {
       const a = this.annot(aid)!, pl = a.view ? this.placements.get(a.view) : undefined;
@@ -2285,6 +2295,69 @@ export class DrawingWorkspace {
     return cutDesc(c, this.ctx());
   }
 
+  /** Starts the format painter from the selected annotation. */
+  private startPainter() {
+    const a = this.selA ? this.annot(this.selA) : undefined;
+    if (!a || !canPaint(a)) return;
+    this.painter = JSON.parse(JSON.stringify(a)) as Annot;
+    this.svg.classList.add("drw-painting");
+    this.renderStatus();
+    this.renderProps();
+  }
+
+  private endPainter() {
+    if (!this.painter) return;
+    this.painter = null;
+    this.svg.classList.remove("drw-painting");
+    this.renderStatus();
+    this.renderProps();
+  }
+
+  /** A click while the format painter is on: paints the annotation under it, or ends on empty sheet. */
+  private paintAt(p: Pt) {
+    const src = this.painter!, aid = this.annotAt(p), a = aid ? this.annot(aid) : undefined;
+    if (!a) { this.endPainter(); return; }
+    if (a.t !== src.t) { toast(t("The format painter only copies to the same kind of annotation."), "warn"); return; }
+    let changed = false;
+    this.store!.change("Format painter", d => { const x = (d.sheets[this.sheetIdx].annots ?? []).find(y => y.id === aid); if (x) changed = paintFormat(src, x); });
+    if (!changed) this.renderOverlay();
+  }
+
+  /** Starts Align from the selected horizontal or vertical dimension (gap list D2). */
+  private startAligner() {
+    const a = this.selA ? this.annot(this.selA) : undefined;
+    if (a?.t !== "dim" || (a.k !== "h" && a.k !== "v")) return;
+    this.endPainter();
+    this.aligner = JSON.parse(JSON.stringify(a)) as DimAnnot;
+    this.svg.classList.add("drw-painting");
+    this.renderStatus();
+    this.renderProps();
+  }
+
+  private endAligner() {
+    if (!this.aligner) return;
+    this.aligner = null;
+    this.svg.classList.remove("drw-painting");
+    this.renderStatus();
+    this.renderProps();
+  }
+
+  private alignAt(p: Pt) {
+    const src = this.aligner!, aid = this.annotAt(p), a = aid ? this.annot(aid) : undefined;
+    if (!a) { this.endAligner(); return; }
+    if (a.t !== "dim" || a.k !== src.k || a.view !== src.view) { toast(src.k === "h" ? t("Click another horizontal dimension of the same view.") : t("Click another vertical dimension of the same view."), "warn"); return; }
+    this.store!.change("Align dimensions", d => { const x = (d.sheets[this.sheetIdx].annots ?? []).find(y => y.id === aid); if (x?.t === "dim") alignDim(src, x); });
+  }
+
+  /** Space evenly (gap list D2): the selected view's horizontal and vertical dimensions in even rows round it. */
+  private spaceViewDims() {
+    const id = this.sel, pl = id ? this.placements.get(id) : undefined;
+    if (!id || !pl) return;
+    let n = 0;
+    this.store!.change("Space dimensions", d => { const ds = (d.sheets[this.sheetIdx].annots ?? []).filter((a): a is DimAnnot => a.t === "dim" && a.view === id); n = spaceDims(ds, pl.box, pl.s).length; });
+    if (!n) toast(t("The dimensions are already evenly spaced."));
+  }
+
   private setAnnot(label: string, fn: (a: Annot) => void) {
     const id = this.selA;
     if (!id) return;
@@ -3352,6 +3425,8 @@ export class DrawingWorkspace {
     const head = document.createElement("div");
     head.className = "drw-pm-head";
     head.innerHTML = `<span class="drw-pm-ic">${h.icon}</span><span class="drw-pm-t"><b${h.own ? ' translate="no"' : ""}>${esc(h.name)}</b><small>${esc(h.kind)}</small></span>`
+      + (this.selA && this.annot(this.selA) && canPaint(this.annot(this.selA)!) ? `<button class="icon drw-pm-paint${this.painter ? " on" : ""}" data-a="fpaint" aria-pressed="${!!this.painter}" aria-label="${esc(t("Format painter"))}" title="${esc(t("Format painter: copy this annotation's look to others"))}">🖌</button>` : "")
+      + (this.selA && (() => { const a = this.annot(this.selA!); return a?.t === "dim" && (a.k === "h" || a.k === "v"); })() ? `<button class="icon drw-pm-paint${this.aligner ? " on" : ""}" data-a="dalign" aria-pressed="${!!this.aligner}" aria-label="${esc(t("Align dimensions"))}" title="${esc(t("Align: click other dimensions to put them on this one's line"))}">⇉</button>` : "")
       + (selected ? `<button class="icon drw-pm-x" data-a="pmclose" aria-label="${esc(t("Close (Esc)"))}" title="${esc(t("Close (Esc)"))}">✕</button>` : "");
     host.prepend(head);
     const folded = readFolds();
@@ -3405,6 +3480,9 @@ export class DrawingWorkspace {
         ${v.parent && (v.kind !== "detail") ? `<fieldset class="pm-group"><legend>${esc(t("Alignment"))}</legend>
           <p class="drw-note">${esc(v.free ? t("Moves on its own.") : t("Lined up with {name}.", { name: findView(sh, v.parent)?.name ?? "?" }))}</p>
           <div class="row"><button class="btn small" data-a="${v.free ? "align" : "unalign"}">${esc(v.free ? t("Default alignment") : t("Break alignment"))}</button></div>
+        </fieldset>` : ""}
+        ${(sh.annots ?? []).some(a => a.t === "dim" && a.view === v.id && (a.k === "h" || a.k === "v")) ? `<fieldset class="pm-group"><legend>${esc(t("Dimensions"))}</legend>
+          <div class="row"><button class="btn small" data-a="dspace" title="${esc(t("Put the view's dimensions in even rows round it, nearest first"))}">${esc(t("Space dimensions evenly"))}</button></div>
         </fieldset>` : ""}
         ${v.kind === "detail" ? "" : `<fieldset class="pm-group drw-trim"><legend>${esc(t("Crop and break"))}</legend>
           <div class="row">
@@ -3527,6 +3605,9 @@ export class DrawingWorkspace {
       case "unalign": this.setView("Break alignment", v => { v.free = true; }); break;
       case "tbedit": void this.editFormat(); break;
       case "aedit": this.editAnnotDlg(this.selA); break;
+      case "fpaint": if (this.painter) this.endPainter(); else { this.endAligner(); this.startPainter(); } break;
+      case "dalign": if (this.aligner) this.endAligner(); else this.startAligner(); break;
+      case "dspace": this.spaceViewDims(); break;
       case "gdetach": {
         const h = this.annotHits.find(x => x.id === this.selA), a = this.selA ? this.annot(this.selA) : undefined, pl = a?.view ? this.placements.get(a.view) : undefined;
         const at = h && pl ? fromSheet(pl, h.box[0], h.box[3]) : null;
@@ -3813,6 +3894,8 @@ export class DrawingWorkspace {
     else if (mod && !typing && (k === "z" && !e.shiftKey)) this.store?.undo();
     else if (mod && !typing && (k === "y" || (k === "z" && e.shiftKey))) this.store?.redo();
     else if (typing || mod || e.altKey) used = false;
+    else if (k === "escape" && this.painter) this.endPainter();
+    else if (k === "escape" && this.aligner) this.endAligner();
     else if (k === "escape") { if (this.mode.kind !== "none") this.cancelMode(); else if (this.el.querySelector(".drw-menu:not([hidden])")) this.closeMenus(); else if (this.sel || this.selA) { this.sel = null; this.selA = null; this.renderAll(); } else used = false; }
     else if (k === "enter" && this.mode.kind === "brokenout" && (tgt as Element) === this.svg) this.finishBroken(this.mode);
     else if (k === "enter" && this.mode.kind === "cloud" && (tgt as Element) === this.svg) this.finishCloud(this.mode);

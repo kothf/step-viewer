@@ -5,6 +5,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.598.0] - 2026-11-19
+
+### Added
+- Assemblies: **mate bar by the cursor**. Once two faces are picked for a mate, a small bar beside the last click offers the mate types that fit them, the alignment flip, the distance or angle (type it and press Enter) and ✓; the Mate panel stays for everything else.
+- Assemblies: **explode lines**. Tick *Explode lines* in the Explode panel (or right-click an exploded view ▸ Show explode lines) for a dashed line from each moved component's place to where the view puts it.
+- Drawings: **format painter**. Select an annotation, press 🖌 in its properties, then click other annotations of the same kind: they take its decimals, tolerance, arrowheads and other display settings (text and place stay). Esc or a click on empty sheet ends it.
+- Drawings: **align dimensions**. Select a horizontal or vertical dimension, press ⇉, then click others of the same view: they move onto its line. A view's properties have **Space dimensions evenly**, which puts the dimensions round it in rows 10 mm off the view and 8 mm apart.
+- Settings ▸ **Keyboard**: your own shortcut for any part or sketch command (Extrude, Fillet, Shell, patterns, surfaces, sheet metal and the rest). A combination given to a second command moves to it; save, undo, copy, Esc and the other fixed keys stay with the app.
+
 ## [1.597.0] - 2026-11-19
 
 ### Added
@@ -3812,7 +3821,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.597.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.598.0...HEAD
+[1.598.0]: https://github.com/kothf/step-viewer/compare/v1.597.0...v1.598.0
 [1.597.0]: https://github.com/kothf/step-viewer/compare/v1.596.0...v1.597.0
 [1.596.0]: https://github.com/kothf/step-viewer/compare/v1.595.0...v1.596.0
 [1.595.0]: https://github.com/kothf/step-viewer/compare/v1.594.0...v1.595.0
