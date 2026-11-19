@@ -1250,7 +1250,8 @@ export class SketchEditor {
     let on: { p: V2; ed: ModelEdge; g: ExtGeo; at: "on" } | null = null;
     for (const ed of this.host.modelEdge(this.lastEv)) {
       const g = projectEdge(ed, this.frame);
-      if (!g) continue;
+      // Snaps take straight and round edges only; other curves are converted with Convert Entities.
+      if (!g || g.t === "spline" || (g.t === "line" && ed.type !== "line")) continue;
       const cands: [V2, "a" | "b" | "mid" | "c"][] = g.t === "line" ? [[g.a, "a"], [g.b, "b"], [[(g.a[0] + g.b[0]) / 2, (g.a[1] + g.b[1]) / 2], "mid"]]
         : g.t === "circle" ? [[g.c, "c"]] : [[g.a, "a"], [g.b, "b"], [uvOf(this.frame, ed.mid), "mid"], [g.c, "c"]];
       let best: [V2, "a" | "b" | "mid" | "c"] | null = null, bd = tol;
@@ -3754,9 +3755,9 @@ export class SketchEditor {
       const ent = this.entFrom(g);
       made.push({ id: ent.id, ext: this.host.edgeRef?.(ed) ?? null });
     }
-    if (!made.length) { this.host.toast(t("Only straight edges and circles square to the sketch can be converted."), "warn"); return; }
+    if (!made.length) { this.host.toast(t("Those edges are seen end-on from the sketch: there is nothing to convert."), "warn"); return; }
     for (const m of made) this.sk.rels.push({ id: uid("r"), t: "fix", e: [m.id], ...(m.ext ? { ext: m.ext } : {}) });
-    if (skipped) this.host.toast(t("{n} edges were not converted (curves not square to the sketch).", { n: skipped }), "warn");
+    if (skipped) this.host.toast(t("{n} edges were not converted (seen end-on from the sketch).", { n: skipped }), "warn");
     this.commit("Convert entities");
     this.render();
   }
@@ -3788,6 +3789,7 @@ export class SketchEditor {
     };
     const ent: SkEnt = g.t === "line" ? { id: uid("l"), t: "line", a: point(g.a), b: point(g.b) }
       : g.t === "circle" ? { id: uid("c"), t: "circle", c: point(g.c), r: g.r }
+      : g.t === "spline" ? { id: uid("s"), t: "spline", pts: g.pts.map(point), ...(g.closed ? { closed: true } : {}) }
       : { id: uid("a"), t: "arc", c: point(g.c), a: point(g.a), b: point(g.b) };
     this.sk.ents.push(ent);
     return ent;
@@ -3823,7 +3825,7 @@ export class SketchEditor {
       ne.x = q[0]; ne.y = q[1];
     } else {
       const g = projectEdge(ed[0], this.frame);
-      if (!g || !ref || !ne || !applyExt(next, ne, g)) { this.host.toast(t("That edge is a different kind of curve: pick a {kind}.", { kind: t(ent?.t === "line" ? "straight edge" : ent?.t === "circle" ? "circular edge" : "arc edge") }), "warn"); return false; }
+      if (!g || !ref || !ne || !applyExt(next, ne, g)) { this.host.toast(t("That edge is a different kind of curve: pick a {kind}.", { kind: t(ent?.t === "line" ? "straight edge" : ent?.t === "circle" ? "circular edge" : ent?.t === "spline" ? "curved edge" : "arc edge") }), "warn"); return false; }
     }
     const nr = next.rels.find(r => r.id === id)!;
     nr.ext = ref!;

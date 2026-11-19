@@ -5,26 +5,76 @@
 import type { Frame, SkEnt, SketchFeature, V2, V3 } from "../model/types";
 
 /** A model edge in world millimetres (the viewer's EdgeInfo, or one built from an OCCT edge). */
-export interface ModelEdge { type: string; start: V3; end: V3; mid: V3; closed: boolean; center?: V3; axis?: V3; radius?: number }
+export interface ModelEdge { type: string; start: V3; end: V3; mid: V3; closed: boolean; center?: V3; axis?: V3; radius?: number; pts?: number[] }
 
 /** An edge projected into sketch coordinates. */
-export type ExtGeo = { t: "line"; a: V2; b: V2 } | { t: "circle"; c: V2; r: number } | { t: "arc"; c: V2; a: V2; b: V2 };
+export type ExtGeo = { t: "line"; a: V2; b: V2 } | { t: "circle"; c: V2; r: number } | { t: "arc"; c: V2; a: V2; b: V2 }
+  | { t: "spline"; pts: V2[]; closed: boolean };
+
+/** `n` points evenly spaced along a polyline (closed: round the loop, the first not repeated). */
+export function resample(line: V2[], n: number, closed: boolean): V2[] {
+  const P = closed ? [...line, line[0]] : line;
+  const cum = [0];
+  for (let i = 1; i < P.length; i++) cum.push(cum[i - 1] + Math.hypot(P[i][0] - P[i - 1][0], P[i][1] - P[i - 1][1]));
+  const L = cum[cum.length - 1], out: V2[] = [];
+  const m = closed ? n : n - 1;
+  for (let k = 0, j = 1; k < n; k++) {
+    const s = L * k / m;
+    while (j < P.length - 1 && cum[j] < s) j++;
+    const u = (s - cum[j - 1]) / ((cum[j] - cum[j - 1]) || 1);
+    out.push([P[j - 1][0] + (P[j][0] - P[j - 1][0]) * u, P[j - 1][1] + (P[j][1] - P[j - 1][1]) * u]);
+  }
+  return out;
+}
+
+/** Any other edge seen on the sketch plane: an interpolating spline through points spread along its projection. */
+function curveOf(ed: ModelEdge, f: Frame): ExtGeo | null {
+  const raw = ed.pts;
+  if (!raw || raw.length < 6) return null;
+  const line: V2[] = [];
+  for (let k = 0; k + 2 < raw.length; k += 3) line.push(uvOf(f, [raw[k], raw[k + 1], raw[k + 2]]));
+  let closed = ed.closed;
+  if (closed && line.length > 2 && Math.hypot(line[0][0] - line.at(-1)![0], line[0][1] - line.at(-1)![1]) < 1e-9) line.pop();
+  let len = 0, span = 0;
+  for (let i = 1; i < line.length; i++) len += Math.hypot(line[i][0] - line[i - 1][0], line[i][1] - line[i - 1][1]);
+  for (const q of line) span = Math.max(span, Math.hypot(q[0] - line[0][0], q[1] - line[0][1]));
+  // Seen end-on (a curve square to the sketch) or squashed to a line: nothing to draw as a spline.
+  if (len < 1e-6 || span < 1e-6 * (1 + len)) return null;
+  if (closed && line.length < 3) closed = false;
+  {
+    // Seen edge-on (a curve lying in a plane square to the sketch): a straight line between its farthest points.
+    const a = line[0], b = line.reduce((m, q) => Math.hypot(q[0] - a[0], q[1] - a[1]) > Math.hypot(m[0] - a[0], m[1] - a[1]) ? q : m, line.at(-1)!), d = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    let far = 0, lo = 0, hi = 0;
+    const u: V2 = d ? [(b[0] - a[0]) / d, (b[1] - a[1]) / d] : [1, 0];
+    for (const q of line) {
+      const s = (q[0] - a[0]) * u[0] + (q[1] - a[1]) * u[1];
+      far = Math.max(far, Math.abs((q[0] - a[0]) * u[1] - (q[1] - a[1]) * u[0]));
+      lo = Math.min(lo, s); hi = Math.max(hi, s);
+    }
+    if (d && far < 1e-6 * (1 + len)) return { t: "line", a: [a[0] + u[0] * lo, a[1] + u[1] * lo], b: [a[0] + u[0] * hi, a[1] + u[1] * hi] };
+  }
+  return { t: "spline", pts: resample(line, closed ? 16 : 12, closed), closed };
+}
 
 export const uvOf = (f: Frame, w: V3): V2 => {
   const q = [w[0] - f.o[0], w[1] - f.o[1], w[2] - f.o[2]];
   return [q[0] * f.x[0] + q[1] * f.x[1] + q[2] * f.x[2], q[0] * f.y[0] + q[1] * f.y[1] + q[2] * f.y[2]];
 };
 
-/** Straight edges, and circles and arcs square to the sketch, as sketch geometry; other curves give null. */
+/**
+ * Straight edges, and circles and arcs square to the sketch, as sketch geometry; other curves (splines,
+ * ellipses, tilted circles) as a spline through points along their projection when the edge carries its
+ * polyline `pts`; null otherwise or when the edge is seen end-on.
+ */
 export function projectEdge(ed: ModelEdge, f: Frame): ExtGeo | null {
   if (ed.type === "line") {
     const a = uvOf(f, ed.start), b = uvOf(f, ed.end);
     return Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-9 ? null : { t: "line", a, b };
   }
   const round = (ed.type === "circle" || ed.type === "arc") && ed.center && ed.radius && ed.axis;
-  if (!round) return null;
+  if (!round) return curveOf(ed, f);
   const ax = ed.axis!;
-  if (Math.abs(ax[0] * f.n[0] + ax[1] * f.n[1] + ax[2] * f.n[2]) < 1 - 1e-6) return null;
+  if (Math.abs(ax[0] * f.n[0] + ax[1] * f.n[1] + ax[2] * f.n[2]) < 1 - 1e-6) return curveOf(ed, f);
   const c = uvOf(f, ed.center!);
   if (ed.closed) return { t: "circle", c, r: ed.radius! };
   const a = uvOf(f, ed.start), b = uvOf(f, ed.end), m = uvOf(f, ed.mid);
@@ -48,6 +98,12 @@ export function applyExt(sk: SketchFeature, ent: SkEnt, g: ExtGeo): boolean {
   }
   if (ent.t === "circle" && g.t === "circle") { ent.r = g.r; return set(ent.c, g.c); }
   if (ent.t === "arc" && g.t === "arc") return set(ent.c, g.c) && set(ent.a, g.a) && set(ent.b, g.b);
+  if (ent.t === "spline" && g.t === "spline" && !!ent.closed === g.closed) {
+    let q = resample(g.pts, ent.pts.length, g.closed);
+    // Keep the curve's direction, as for lines.
+    if (!g.closed) { const a = pt(ent.pts[0]); if (a && Math.hypot(a.x - q.at(-1)![0], a.y - q.at(-1)![1]) < Math.hypot(a.x - q[0][0], a.y - q[0][1])) q = q.reverse(); }
+    return ent.pts.every((id, i) => set(id, q[i]));
+  }
   return false;
 }
 
