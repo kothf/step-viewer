@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.603.0] - 2026-11-19
+
+### Fixed
+- Parts: **Extrude, Cut and Revolve with no sketch left to use** start a sketch (on the picked flat face, else on the plane you pick) and carry on with the command when you close the sketch, as in other CAD apps. Before, they took the last sketch even when a feature already used it, so Cut cut away the whole part through its own extrude's profile.
+- Parts: a **cut that would take the whole body away** says "The cut removes the whole body." Before, the geometry kernel stopped and was restarted.
+- Sketches: **Esc ends a spline** at the last point placed and keeps it, as it keeps a chain of lines. Before, the spline was thrown away.
+
 ## [1.602.0] - 2026-11-19
 
 ### Fixed
@@ -3869,7 +3876,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.602.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.603.0...HEAD
+[1.603.0]: https://github.com/kothf/step-viewer/compare/v1.602.0...v1.603.0
 [1.602.0]: https://github.com/kothf/step-viewer/compare/v1.601.0...v1.602.0
 [1.601.0]: https://github.com/kothf/step-viewer/compare/v1.600.0...v1.601.0
 [1.600.0]: https://github.com/kothf/step-viewer/compare/v1.599.0...v1.600.0

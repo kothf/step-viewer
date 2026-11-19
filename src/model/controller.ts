@@ -543,6 +543,8 @@ export class ModelController {
   /** Marks the open part saved (the vault wrote it). */
   markSaved() { if (!this.store) return; this.store.markSaved(); journalDrop(this.doc.id); }
   private selected: string | null = null;
+  /** Extrude/Cut/Revolve waiting on the sketch being drawn for it. */
+  private afterSketch: "extrude" | "cut" | "revolve" | null = null;
   private journalTimer = 0;
   private shownOnce = false;
   private decor = new THREE.Group();
@@ -1052,12 +1054,12 @@ export class ModelController {
   }
 
   /** Sketch: on the picked flat face or the selected plane; otherwise asks for one. */
-  startSketch() {
+  startSketch(face?: number | null) {
     if (!this.store) return;
     this.exitMode(false);
     const cp = this.ctxPick?.plane;
     if (cp && "ctx" in cp) { void this.createSketch(cp); return; }
-    const fid = this.pickedFace();
+    const fid = face !== undefined ? face : this.pickedFace();
     const pr = fid != null ? this.planeOfFace(fid) : null;
     if (pr) {
       // Project the face's edges (gap list S12, Settings ▸ Sketch): taken now, while the face numbers are these.
@@ -1238,6 +1240,7 @@ export class ModelController {
   startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "spattern" | "tpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "boundary" | "boundarycut" | "rib" | "split" | "combine" | "indent" | "intersect" | "bsplit" | "delbody" | "movebody" | "scale" | "flex" | "delface" | "moveface" | "dome" | "wrap" | "heal" | "smbase" | "smloft" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smrelief" | "smgusset" | "smcross" | "smvent" | "smcut" | "smconvert" | "sminsert" | "smform" | "smunfold" | "smfold" | "smmiter" | "smswept" | "smtabslot" | "smrip" | CurveTool | SurfTool | WeldTool) {
     if (!this.store) return;
     // Starting a feature from inside a sketch exits the sketch and uses it (FR-SK-004).
+    this.afterSketch = null;
     const fromSketch = this.mode.kind === "sketch" ? this.mode.id : null;
     if (fromSketch) { this.ok(); this.selected = fromSketch; }
     // Pre-selected edges for fillet and chamfer (FR-SEL-006): the edge picked with Smart measure.
@@ -1265,7 +1268,17 @@ export class ModelController {
     const end = d.rollback ?? d.features.length;
     const sketches = d.features.slice(0, end).filter((f): f is SketchFeature => f.type === "sketch");
     const used = new Set(d.features.flatMap(f => (f.type === "extrude" || f.type === "revolve" ? [f.sketch] : [])));
-    const pick = (this.selected && sketches.find(s => s.id === this.selected)) || [...sketches].reverse().find(s => !used.has(s.id)) || sketches.at(-1);
+    const chosen = (this.selected && sketches.find(s => s.id === this.selected)) || [...sketches].reverse().find(s => !used.has(s.id));
+    // Nothing to use (no sketch picked, every one already used): sketch the profile first on the picked face or a
+    // plane the user picks, and the command carries on when the sketch is closed (it used to re-use the last
+    // sketch, so Cut cut its own Extrude's profile through the whole part).
+    if (!chosen && (type === "extrude" || type === "cut" || type === "revolve")) {
+      this.startSketch(preSel.face);
+      this.afterSketch = type;
+      toast(t("Sketch the profile; the command goes on when you close the sketch."));
+      return;
+    }
+    const pick = chosen;
     let draft: Feature;
     const id = uid("f_");
     if (type === "extrude" || type === "cut") {
@@ -1529,6 +1542,10 @@ export class ModelController {
       if (sk) this.store!.collapse(this.sketchMark, m.isNew ? `Add ${sk.name}` : `Edit ${sk.name}`);
       this.renderBar();
       void this.rebuild();
+      // Extrude/Cut/Revolve started with no sketch to use: the new sketch goes straight into it, as in other CAD apps.
+      const then = this.afterSketch;
+      this.afterSketch = null;
+      if (then && sk && m.isNew) { this.selected = sk.id; this.startFeature(then); }
       return;
     }
     if (m.kind === "plane" && m.edit) {
@@ -1712,6 +1729,7 @@ export class ModelController {
   /** ✕: closes without changes (a sketch asks before throwing its edits away). */
   async cancel() {
     const m = this.mode;
+    if (m.kind === "sketch" || m.kind === "plane") this.afterSketch = null;
     if (m.kind === "sketch") {
       const changed = JSON.stringify(this.doc) !== m.entry;
       if (changed && !(await confirmModal(t("Discard the changes made to this sketch?"), t("Discard"), t("Exit sketch")))) return;

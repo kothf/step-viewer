@@ -882,6 +882,8 @@ export const RU: Record<string, string> = {
   "The revolve failed. Is the profile crossing the axis?": "Вращение не удалось. Контур пересекает ось?",
   "There is no body to cut yet.": "Тела для выреза пока нет.",
   "The cut does not touch the body.": "Вырез не задевает тело.",
+  "The cut removes the whole body.": "Вырез удаляет всё тело.",
+  "Sketch the profile; the command goes on when you close the sketch.": "Нарисуйте профиль; команда продолжится после закрытия эскиза.",
   "The new material could not be joined to the body.": "Новый материал не удалось объединить с телом.",
   "The cut failed.": "Вырез не удался.",
   "The size must be more than 0.": "Размер должен быть больше 0.",

@@ -4112,6 +4112,8 @@ export class SketchEditor {
       if (this.gripDrag) { this.endGrip(false); return true; }
       if (this.quickSnap) { this.setQuickSnap(null); return true; }
       if (this.pattern) { this.cancelPattern(); this.host.onSelection?.([...this.selection]); return true; }
+      // A spline with two or more points placed ends there and is kept, as the line tool keeps its chain.
+      if ((this.tool === "spline" || this.tool === "sspline") && this.draft.pts.length >= 2) { this.drawClick(this.draft.pts.at(-1)!, { detail: 2 } as MouseEvent); return true; }
       if (this.draft.pts.length || this.dimDraft.picks.length) { this.setTool(this.tool); return true; }
       if (this.tool !== "select") { this.setTool("select"); return true; }
       if (this.selection.size) { this.selection.clear(); this.render(); this.emitSel(); return true; }
