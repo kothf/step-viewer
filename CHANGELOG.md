@@ -17,6 +17,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Added
 - Drawings: **Ctrl+C / Ctrl+V copy an annotation**: select a note, a frame, a datum, a dimension or another annotation, press Ctrl+C, point where the copy goes and press Ctrl+V. A copy tied to model edges stays in its view; a free one may go on another sheet or drawing.
 - Sketches: **Ctrl+C / Ctrl+V copy sketch entities**: select lines, arcs, circles or text, press Ctrl+C, point where the copy goes and press Ctrl+V; the relations and dimensions among them come along, and the copy can go into another sketch or part.
+- Assemblies: **Ctrl+C / Ctrl+V copy components**: the selected components come back as new free instances of their parts (also in another assembly).
 
 ## [1.600.0] - 2026-11-19
 

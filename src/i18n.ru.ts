@@ -2542,6 +2542,7 @@ export const RU: Record<string, string> = {
   "Move annotation": "Перемещение обозначения",
   "Delete annotation": "Удаление обозначения",
   "Paste annotation": "Вставка обозначения",
+  "Copied {n} components. Ctrl+V adds them again.": "Скопировано компонентов: {n}. Ctrl+V добавит их ещё раз.",
   "Copied {n} sketch entities. Ctrl+V pastes them at the pointer.": "Скопировано элементов эскиза: {n}. Ctrl+V вставит их у указателя.",
   "On a dimension: it moves with it.": "На размере: перемещается вместе с ним.",
   "On a tolerance frame: it moves with it.": "На рамке допуска: перемещается вместе с ней.",

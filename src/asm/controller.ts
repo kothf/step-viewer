@@ -90,6 +90,9 @@ interface MateDraft { edit?: string; a?: MateRef; b?: MateRef; c?: MateRef; d?: 
 /** The Mate panel's message when a mate cannot be solved even from turned starts. */
 const MATE_FAILS = "This mate cannot be solved with the others: the assembly would be over-defined, or the components stand too far from where the mate puts them. Move them closer and try again.";
 
+/** The components Ctrl+C copied, with their part entries (a clipboard across assemblies). */
+let compClip: { comps: Component[]; parts: Record<string, AsmDoc["parts"][string]> } | null = null;
+
 export interface AsmTab { doc: AsmDoc; fileName: string; handle: FileSystemFileHandle | null; undo: string[]; redo: string[]; savedAt: string; sel: string | null; vault: VaultTie | null }
 
 /** Opacity of the components left out by Make others transparent. */
@@ -2737,6 +2740,42 @@ export class AsmController {
   private boxDrag: SelDrag | null = null;
 
   /** The components a command acts on: the picked ones, else the selected one. */
+  /** Ctrl+C: the selected top-level components (their parts go along, so they paste into another assembly too). */
+  private copyComponents(): boolean {
+    const doc = this.doc, ids = this.selection().filter(id => !id.includes("/"));
+    if (!doc || !ids.length) return false;
+    const comps = ids.map(id => doc.components.find(c => c.id === id)).filter((c): c is Component => !!c);
+    compClip = { comps: JSON.parse(JSON.stringify(comps)) as Component[], parts: Object.fromEntries(comps.map(c => [c.part, JSON.parse(JSON.stringify(doc.parts[c.part]))])) };
+    toast(t("Copied {n} components. Ctrl+V adds them again.", { n: comps.length }));
+    return true;
+  }
+
+  /** Ctrl+V: new instances of the copied components, as a CAD app pastes them: free (not fixed, no mates), turned as the
+   *  originals and moved together so the first lands where a new component goes. */
+  private pasteComponents() {
+    const clip = compClip;
+    if (!this.doc || !clip?.comps.length) return;
+    const at = this.host.viewer.parts.length ? this.insertPoint() : [0, 0, 0];
+    const o = clip.comps[0].tf, d = [at[0] - o[3], at[1] - o[7], at[2] - o[11]];
+    const made: string[] = [];
+    this.change(doc => {
+      for (const c of clip.comps) {
+        doc.parts[c.part] ??= JSON.parse(JSON.stringify(clip.parts[c.part]));
+        const base = doc.parts[c.part]?.name || c.name.replace(/<\d+>$/, "");
+        const n = doc.components.filter(x => x.name.startsWith(`${base}<`)).length + 1;
+        const tf = [...c.tf] as Tf;
+        tf[3] += d[0]; tf[7] += d[1]; tf[11] += d[2];
+        const id = uid("c_");
+        doc.components.push({ id, name: `${base}<${n}>`, part: c.part, tf, ...(c.color ? { color: c.color } : {}), ...(c.opacity !== undefined ? { opacity: c.opacity } : {}) });
+        made.push(id);
+      }
+    });
+    this.selected = made[0];
+    this.picked = made.length > 1 ? made : [];
+    this.renderTree();
+    this.renderStatus();
+  }
+
   selection(): string[] {
     const ok = this.picked.filter(id => this.comp(id));
     if (ok.length) return ok;
@@ -3079,6 +3118,8 @@ export class AsmController {
       if (k === "z" && !e.shiftKey) { e.preventDefault(); this.undo(); }
       else if (k === "y" || (k === "z" && e.shiftKey)) { e.preventDefault(); this.redo(); }
       else if (k === "s") { e.preventDefault(); void this.save(e.shiftKey); }
+      else if (k === "c" && !e.shiftKey && !this.picking && !window.getSelection()?.toString()) { if (this.copyComponents()) e.preventDefault(); }
+      else if (k === "v" && !e.shiftKey && !this.picking && compClip) { e.preventDefault(); this.pasteComponents(); }
     });
     const vp = this.host.vp;
     const canvas = () => this.host.viewer.renderer.domElement;

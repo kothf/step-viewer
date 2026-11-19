@@ -150,4 +150,14 @@ const ren = await pg.$("#asm-tree input.ft-ren");
 if (ren) { await pg.keyboard.type("Plate A"); await pg.keyboard.press("Enter"); await pg.waitForTimeout(600); }
 const names2 = await pg.$$eval("#asm-tree .ft-row .ft-name", els => els.map(e => e.textContent));
 check("B8", !!ren && names2.some(n => /Plate A/.test(n)), "F2 renames the selected component in the assembly tree", { names2 }, await snap(pg, "comp-f2"));
+// Ctrl+C / Ctrl+V of the selected component: a new free instance of the same part.
+await pg.locator("#asm-tree .ft-row").filter({ hasText: "Plate A" }).first().click();
+await pg.keyboard.press("Control+c");
+await pg.waitForTimeout(200);
+await pg.mouse.move(700, 450);
+await pg.keyboard.press("Control+v");
+await pg.waitForTimeout(2500);
+const names3 = await pg.$$eval("#asm-tree .ft-row .ft-name", els => els.map(e => e.textContent));
+const nparts = await pg.evaluate(() => window.__sv.viewer.parts.length);
+check("B9", names3.filter(n => /Plate A|Part1</.test(n)).length === 2 && nparts === 2, "Ctrl+C / Ctrl+V on a component adds another instance of its part", { names3, nparts }, await snap(pg, "comp-pasted"));
 await finish(browser, pg);
