@@ -90,6 +90,9 @@ interface MateDraft { edit?: string; a?: MateRef; b?: MateRef; c?: MateRef; d?: 
 /** The Mate panel's message when a mate cannot be solved even from turned starts. */
 const MATE_FAILS = "This mate cannot be solved with the others: the assembly would be over-defined, or the components stand too far from where the mate puts them. Move them closer and try again.";
 
+/** The components Ctrl+C copied, with their part entries (a clipboard across assemblies). */
+let compClip: { comps: Component[]; parts: Record<string, AsmDoc["parts"][string]> } | null = null;
+
 export interface AsmTab { doc: AsmDoc; fileName: string; handle: FileSystemFileHandle | null; undo: string[]; redo: string[]; savedAt: string; sel: string | null; vault: VaultTie | null }
 
 /** Opacity of the components left out by Make others transparent. */
@@ -2465,8 +2468,10 @@ export class AsmController {
   }
   private renameState(id: string) {
     const row = $("#asm-tree").querySelector<HTMLElement>(`.ft-row[data-id="${CSS.escape(id)}"]`), name = row?.querySelector<HTMLElement>(".ft-name");
-    // Display states, configurations and (exam #80) mates.
-    const st = this.doc?.states?.find(s => s.id === id) ?? this.doc?.configs?.find(s => s.id === id) ?? this.doc?.mates?.find(s => s.id === id);
+    // Display states, configurations, (exam #80) mates, and every other named row: components, patterns, exploded views, assembly features.
+    const named = (d: AsmDoc | null | undefined): { name: string } | undefined => d?.states?.find(s => s.id === id) ?? d?.configs?.find(s => s.id === id) ?? d?.mates?.find(s => s.id === id)
+      ?? d?.components.find(s => s.id === id) ?? d?.patterns?.find(s => s.id === id) ?? d?.explodes?.find(s => s.id === id) ?? d?.features?.find(s => s.id === id);
+    const st = named(this.doc);
     if (!row || !name || !st) return;
     const inp = document.createElement("input");
     inp.className = "ft-ren";
@@ -2481,7 +2486,7 @@ export class AsmController {
       if (done) return;
       done = true;
       const v = inp.value.trim();
-      if (apply && v && v !== st.name) this.change(d => { const s2 = d.states?.find(x => x.id === id) ?? d.configs?.find(x => x.id === id) ?? d.mates?.find(x => x.id === id); if (s2) s2.name = v; });
+      if (apply && v && v !== st.name) this.change(d => { const s2 = named(d); if (s2) s2.name = v; });
       else this.renderTree();
     };
     inp.addEventListener("keydown", e => { e.stopPropagation(); if (e.key === "Enter") { e.preventDefault(); finish(true); } else if (e.key === "Escape") { e.preventDefault(); finish(false); } });
@@ -2735,6 +2740,42 @@ export class AsmController {
   private boxDrag: SelDrag | null = null;
 
   /** The components a command acts on: the picked ones, else the selected one. */
+  /** Ctrl+C: the selected top-level components (their parts go along, so they paste into another assembly too). */
+  private copyComponents(): boolean {
+    const doc = this.doc, ids = this.selection().filter(id => !id.includes("/"));
+    if (!doc || !ids.length) return false;
+    const comps = ids.map(id => doc.components.find(c => c.id === id)).filter((c): c is Component => !!c);
+    compClip = { comps: JSON.parse(JSON.stringify(comps)) as Component[], parts: Object.fromEntries(comps.map(c => [c.part, JSON.parse(JSON.stringify(doc.parts[c.part]))])) };
+    toast(t("Copied {n} components. Ctrl+V adds them again.", { n: comps.length }));
+    return true;
+  }
+
+  /** Ctrl+V: new instances of the copied components, as a CAD app pastes them: free (not fixed, no mates), turned as the
+   *  originals and moved together so the first lands where a new component goes. */
+  private pasteComponents() {
+    const clip = compClip;
+    if (!this.doc || !clip?.comps.length) return;
+    const at = this.host.viewer.parts.length ? this.insertPoint() : [0, 0, 0];
+    const o = clip.comps[0].tf, d = [at[0] - o[3], at[1] - o[7], at[2] - o[11]];
+    const made: string[] = [];
+    this.change(doc => {
+      for (const c of clip.comps) {
+        doc.parts[c.part] ??= JSON.parse(JSON.stringify(clip.parts[c.part]));
+        const base = doc.parts[c.part]?.name || c.name.replace(/<\d+>$/, "");
+        const n = doc.components.filter(x => x.name.startsWith(`${base}<`)).length + 1;
+        const tf = [...c.tf] as Tf;
+        tf[3] += d[0]; tf[7] += d[1]; tf[11] += d[2];
+        const id = uid("c_");
+        doc.components.push({ id, name: `${base}<${n}>`, part: c.part, tf, ...(c.color ? { color: c.color } : {}), ...(c.opacity !== undefined ? { opacity: c.opacity } : {}) });
+        made.push(id);
+      }
+    });
+    this.selected = made[0];
+    this.picked = made.length > 1 ? made : [];
+    this.renderTree();
+    this.renderStatus();
+  }
+
   selection(): string[] {
     const ok = this.picked.filter(id => this.comp(id));
     if (ok.length) return ok;
@@ -3051,6 +3092,15 @@ export class AsmController {
           return;
         }
       }
+      // F2 renames the item selected in the tree, as in the part tree and a CAD app's FeatureManager.
+      if (this.doc && e.key === "F2" && !e.ctrlKey && !e.metaKey && !e.altKey && !this.picking && this.selected) {
+        const tg = e.target as HTMLElement;
+        if (!tg.closest("input, textarea, select, [contenteditable=true], dialog[open]") && (tg === document.body || tg.closest("#asm-tree") || tg === this.host.viewer.renderer.domElement)) {
+          e.preventDefault();
+          this.renameState(this.selected);
+          return;
+        }
+      }
       // Esc on the Isolate bar's button exits Isolate too.
       if (e.key === "Escape" && this.isolated && e.target instanceof Element && e.target.closest("#asm-iso")) { this.isolate(null); return; }
       if (this.doc && !this.picking && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.target instanceof Element && e.target.closest("input, textarea, select, dialog[open]"))) {
@@ -3068,6 +3118,10 @@ export class AsmController {
       if (k === "z" && !e.shiftKey) { e.preventDefault(); this.undo(); }
       else if (k === "y" || (k === "z" && e.shiftKey)) { e.preventDefault(); this.redo(); }
       else if (k === "s") { e.preventDefault(); void this.save(e.shiftKey); }
+      // Copy/paste of components only when no other pane (the motion timeline's keys, a menu) took the keys.
+      else if ((k === "c" || k === "v") && (e.defaultPrevented || tg.closest("#motion, .mc-menu"))) return;
+      else if (k === "c" && !e.shiftKey && !this.picking && !window.getSelection()?.toString()) { if (this.copyComponents()) e.preventDefault(); }
+      else if (k === "v" && !e.shiftKey && !this.picking && compClip) { e.preventDefault(); this.pasteComponents(); }
     });
     const vp = this.host.vp;
     const canvas = () => this.host.viewer.renderer.domElement;
@@ -3444,11 +3498,11 @@ export class AsmController {
         if (id === "folder:configs") { this.popup([[t("Add configuration"), () => this.addAsmConfig()]], e.clientX, e.clientY); return; }
         if (id === "asm") { this.popup([[t("Add configuration"), () => this.addAsmConfig()], [t("Add display state"), () => this.addDisplayState()], ...(this.linkCount() ? [[t("Update links…"), () => this.updateLinks()] as [string, () => void]] : [])], e.clientX, e.clientY); return; }
         const af = this.doc?.features?.find(x => x.id === id);
-        if (af) { this.popup([[t("Edit feature"), () => this.startFeature(af)], [af.suppressed ? t("Unsuppress") : t("Suppress"), () => this.change(d => { const q = d.features?.find(x => x.id === id); if (q) { if (q.suppressed) delete q.suppressed; else q.suppressed = true; } })], [t("Delete"), () => this.deleteFeature(id)]], e.clientX, e.clientY); return; }
+        if (af) { this.popup([[t("Edit feature"), () => this.startFeature(af)], [t("Rename"), () => this.renameState(id)], [af.suppressed ? t("Unsuppress") : t("Suppress"), () => this.change(d => { const q = d.features?.find(x => x.id === id); if (q) { if (q.suppressed) delete q.suppressed; else q.suppressed = true; } })], [t("Delete"), () => this.deleteFeature(id)]], e.clientX, e.clientY); return; }
         if (id === "folder:states") { this.popup([[t("Add display state"), () => this.addDisplayState()]], e.clientX, e.clientY); return; }
         const pt = this.doc?.patterns?.find(x => x.id === id), xv = this.doc?.explodes?.find(x => x.id === id);
-        if (pt) this.popup([[t("Edit pattern"), () => this.startPattern(pt)], [pt.suppressed ? t("Unsuppress") : t("Suppress"), () => this.change(d => { const q = d.patterns?.find(x => x.id === id); if (q) { if (q.suppressed) delete q.suppressed; else q.suppressed = true; } })], [t("Delete"), () => this.deletePattern(id)]], e.clientX, e.clientY);
-        else if (xv) this.popup([[this.exploded === id ? t("Collapse") : t("Explode"), () => this.toggleExplode(id)], [t("Edit exploded view"), () => this.startExplode(xv)], [xv.lines ? t("Hide explode lines") : t("Show explode lines"), () => this.setExplodeLines(id, !xv.lines)], [t("Delete"), () => this.deleteExplode(id)]], e.clientX, e.clientY);
+        if (pt) this.popup([[t("Edit pattern"), () => this.startPattern(pt)], [t("Rename"), () => this.renameState(id)], [pt.suppressed ? t("Unsuppress") : t("Suppress"), () => this.change(d => { const q = d.patterns?.find(x => x.id === id); if (q) { if (q.suppressed) delete q.suppressed; else q.suppressed = true; } })], [t("Delete"), () => this.deletePattern(id)]], e.clientX, e.clientY);
+        else if (xv) this.popup([[this.exploded === id ? t("Collapse") : t("Explode"), () => this.toggleExplode(id)], [t("Edit exploded view"), () => this.startExplode(xv)], [t("Rename"), () => this.renameState(id)], [xv.lines ? t("Hide explode lines") : t("Show explode lines"), () => this.setExplodeLines(id, !xv.lines)], [t("Delete"), () => this.deleteExplode(id)]], e.clientX, e.clientY);
         else if (mt) this.popup([
           [t("Edit mate"), () => this.startMate(mt)],
           [t("Rename"), () => this.renameState(mt.id)],
@@ -3495,6 +3549,7 @@ export class AsmController {
       ...((v => (v ? [[t("Buy at {vendor}", { vendor: v.vendor }), () => window.open(v.url, "_blank", "noopener,noreferrer")] as [string, () => void]] : []))(vendorOf(this.doc?.parts[c.part]?.doc))),
       ...(this.doc?.parts[c.part]?.link ? [[t("Embed in the assembly"), () => this.setLink(c.part, null)], [t("Update links…"), () => this.updateLinks()]] as [string, () => void][]
         : [[t("Link to file…"), () => this.linkComponent(c.id)] as [string, () => void]]),
+      [t("Rename"), () => this.renameState(c.id)],
       [t("Delete"), () => void this.deleteComponent(c.id)],
     ], x, y);
   }

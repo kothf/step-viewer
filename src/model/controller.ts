@@ -2835,6 +2835,9 @@ export class ModelController {
     if (mod && k === "k" && !e.shiftKey && !e.altKey) { stop(); this.commandSearch(); return; }
     if (mod && k === "q") { stop(); this.forceRebuild(true); return; }
     // Copy and paste features (FR-HIS-014): Ctrl+C on a tree row, Ctrl+V with a plane or flat face selected.
+    // Ctrl+C / Ctrl+V of sketch entities, as in a CAD app's sketcher: the copy lands at the pointer.
+    if (mod && !e.shiftKey && !e.altKey && k === "c" && this.mode.kind === "sketch") { const n = this.mode.editor.copySelection(); if (n) { stop(); toast(t("Copied {n} sketch entities. Ctrl+V pastes them at the pointer.", { n })); } return; }
+    if (mod && !e.shiftKey && !e.altKey && k === "v" && this.mode.kind === "sketch" && this.mode.editor.canPaste) { stop(); this.mode.editor.paste(); this.renderPanel(); return; }
     if (mod && !e.shiftKey && !e.altKey && k === "c" && this.mode.kind === "none" && !window.getSelection()?.toString()) { if (this.copyFeature()) stop(); return; }
     if (mod && !e.shiftKey && !e.altKey && k === "v" && this.mode.kind === "none" && this.clip) { stop(); this.pasteFeature(); return; }
     // Ctrl+Enter: OK and the same command again in a feature; leaves a sketch (FR-UI-044, FR-UI-106).
@@ -2886,6 +2889,9 @@ export class ModelController {
     if (k === "c" && e.shiftKey && m.kind === "none") { stop(); this.collapseAll(); return; }
     const feat = this.selected ? this.store.feature(this.selected) : undefined;
     if ((k === "delete" || k === "backspace") && feat && inTree) { stop(); void this.deleteFeature(feat.id); }
+    // Delete on a body or folder row does what its menu's Delete does (it did nothing).
+    else if ((k === "delete" || k === "backspace") && inTree && m.kind === "none" && this.selected?.startsWith("body:")) { stop(); this.deleteBody(this.selected.slice(5)); }
+    else if ((k === "delete" || k === "backspace") && inTree && m.kind === "none" && this.selected?.startsWith("folder:") && this.selected !== "folder:bodies" && this.selected !== "folder:cutlist") { stop(); this.deleteFolder(this.selected.slice(7)); }
     else if (k === "f2" && feat) { stop(); this.startRename(feat.id); }
   }
 
@@ -7335,7 +7341,7 @@ export class ModelController {
         else if (e.key === "Enter" && id === "configs") { e.preventDefault(); this.editConfigs(); }
         else if (id.startsWith("folder:") && (e.key === "Enter" || (e.key === "ArrowLeft") === !this.closedFolders.has(id.slice(7)) && (e.key === "ArrowLeft" || e.key === "ArrowRight"))) { e.preventDefault(); this.toggleFolder(id.slice(7)); $("#mc-tree").querySelector<HTMLElement>(`.ft-row[data-id="${CSS.escape(id)}"]`)?.focus(); }
         else if (r.classList.contains("ft-parentrow") && (e.key === "ArrowLeft") === !this.closedFeats.has(id) && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); this.toggleFeat(id); $("#mc-tree").querySelector<HTMLElement>(`.ft-row[data-id="${CSS.escape(id)}"]`)?.focus(); }
-        else if ((id.startsWith("folder:") || id.startsWith("wsub:")) && e.key === "F2") { e.preventDefault(); this.startRename(id); }
+        else if ((id.startsWith("folder:") || id.startsWith("wsub:") || id.startsWith("body:")) && e.key === "F2") { e.preventDefault(); this.startRename(id); }
         else if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown") && this.store!.feature(id)) {
           // Alt+↑/↓ moves the feature past its neighbour (keyboard reorder).
           e.preventDefault();

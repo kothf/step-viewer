@@ -10,7 +10,7 @@ import type { CutInfo, HoleInfo, ModelItem, SketchInfo, ThreadInfo, WeldInfo } f
 import { PEN_W, rotateBox, rotatePrims, type Prim } from "./prims";
 import { balloonPrims, bomCells, compOfKey, type Bom } from "./bom";
 import { datumPrims, gtolPrims, surfPrims, tablePrims } from "./gdt";
-import type { Annot, BendTableAnnot, CLineAnnot, CloudAnnot, DimAnnot, DraftStyle, DrawingView, GeoRef, GtolAnnot, HoleAnnot, HoleTableAnnot, NoteAnnot, Sheet, SurfAnnot, Tol, WeldTableAnnot, CutTableAnnot } from "./types";
+import type { Annot, BendTableAnnot, CLineAnnot, CloudAnnot, DatumAnnot, DimAnnot, DraftStyle, DrawingView, GeoRef, GtolAnnot, HoleAnnot, HoleTableAnnot, NoteAnnot, Sheet, SurfAnnot, Tol, WeldTableAnnot, CutTableAnnot } from "./types";
 import { topoOnly, viewDir, viewOnly, viewReq } from "./views";
 import { fitLimits } from "./iso286";
 import { weldPrims } from "./weld";
@@ -952,8 +952,41 @@ export function clearOfLines(f: [number, number, number, number], segs: number[]
   return [dx, dy];
 }
 
+/** What a datum feature symbol or a surface finish symbol can sit on besides a model edge: a datum on a dimension (a feature
+ *  of size) or a tolerance frame, a surface finish symbol on a dimension's extension or dimension line. */
+export const canHold = (kind: "datum" | "surf", h: Annot | undefined): h is DimAnnot | GtolAnnot => h?.t === "dim" || (kind === "datum" && h?.t === "gtol");
+
+/** The point of the nearest segment (x0, y0, x1, y1) to `T`, kept a little inside its ends, and that segment's direction. */
+export function segFoot(segs: number[][], T: P2): { at: P2; d: P2 } | null {
+  let best: { at: P2; d: P2 } | null = null, bd = Infinity;
+  for (const [x0, y0, x1, y1] of segs) {
+    const L = Math.hypot(x1 - x0, y1 - y0);
+    if (L < 1e-6) continue;
+    const d: P2 = [(x1 - x0) / L, (y1 - y0) / L], m = Math.min(2, L / 2);
+    const k = Math.max(m, Math.min(L - m, (T[0] - x0) * d[0] + (T[1] - y0) * d[1]));
+    const at: P2 = [x0 + d[0] * k, y0 + d[1] * k], dd = d2(at, T);
+    if (dd < bd) { bd = dd; best = { at, d }; }
+  }
+  return best;
+}
+
+/** The sides of a box as segments. */
+const boxSegs = (b: [number, number, number, number]) => [[b[0], b[1], b[2], b[1]], [b[2], b[1], b[2], b[3]], [b[2], b[3], b[0], b[3]], [b[0], b[3], b[0], b[1]]];
+
+/** Draws the datum and surface finish symbols that sit on a dimension or a tolerance frame (after those are drawn). */
+function onHosts(list: (DatumAnnot | SurfAnnot)[], hosts: Map<string, HostBox>, frames: Map<string, [number, number, number, number]>, pl: Placement | null, dec: string, out: AnnotOut) {
+  for (const a of list) {
+    const T = pl ? toSheet(pl, a.pos[0], a.pos[1]) : a.pos, h = hosts.get(a.on!), fb = frames.get(a.on!);
+    const segs = fb ? boxSegs(fb) : h?.segs?.length ? h.segs : h ? boxSegs(h.box) : [];
+    const f = segFoot(segs, T);
+    const r = a.t === "datum" ? datumPrims(a, f?.at ?? null, f?.d ?? [1, 0], T) : surfOn(a, T, f, dec);
+    if (!f) out.dangling.push(a.id);
+    out.prims.push(...r.prims); out.hits.push({ id: a.id, box: r.box });
+  }
+}
+
 /** Draws the frames held under their hosts (several on one host stack downwards), clear of the host's lines. */
-function heldFrames(held: GtolAnnot[], hosts: Map<string, HostBox>, dec: string, out: AnnotOut) {
+function heldFrames(held: GtolAnnot[], hosts: Map<string, HostBox>, dec: string, out: AnnotOut, frames?: Map<string, [number, number, number, number]>) {
   for (const a of held) {
     const h = hosts.get(a.dim!);
     if (!h) continue;
@@ -963,6 +996,7 @@ function heldFrames(held: GtolAnnot[], hosts: Map<string, HostBox>, dec: string,
       if (sx || sy) { at = [at[0] + sx, at[1] + sy]; r = gtolPrims(a, at, null, dec); }
     }
     out.prims.push(...r.prims); out.hits.push({ id: a.id, box: r.box });
+    frames?.set(a.id, r.box);
     hosts.set(a.dim!, { ...h, box: [Math.min(h.box[0], r.box[0]), r.box[1], Math.max(h.box[2], r.box[2]), h.box[3]] });
   }
 }
@@ -986,9 +1020,13 @@ export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: Ann
   // Tolerance frames attached to a dimension, hole callout or note are drawn after it, under its text.
   const hosts = new Map<string, HostBox>(), held: GtolAnnot[] = [];
   const hasHost = (id: string) => (sheet.annots ?? []).some(x => x.id === id && isGtolHost(x) && x.view === v.id);
+  // Datum and surface finish symbols on a dimension or tolerance frame are drawn last, on its lines.
+  const frames = new Map<string, [number, number, number, number]>(), onHost: (DatumAnnot | SurfAnnot)[] = [];
+  const holder = (a: DatumAnnot | SurfAnnot) => !!a.on && (sheet.annots ?? []).some(x => x.id === a.on && x.view === v.id && canHold(a.t, x));
   for (const a of sheet.annots ?? []) {
     if (a.view !== v.id) continue;
     if (a.t === "gtol" && a.dim && hasHost(a.dim)) { held.push(a); continue; }
+    if ((a.t === "datum" || a.t === "surf") && holder(a)) { onHost.push(a); continue; }
     let r: { prims: Prim[]; box: [number, number, number, number] } | null = null;
     if (a.t === "dim") {
       // A model item measures the part as it is now.
@@ -1016,8 +1054,9 @@ export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: Ann
     } else if (a.t === "gtol") {
       const pt = a.leader ? leaderEnd(a.leader, P, ctx.topo) : null;
       r = gtolPrims(a, toSheet(pl, a.pos[0], a.pos[1]), pt ? toSheet(pl, ...pt) : null, ctx.dec);
+      frames.set(a.id, r.box);
     } else if (a.t === "datum") {
-      const f = edgeFoot(a.ref, ctx.topo, P, pl, toSheet(pl, a.pos[0], a.pos[1]));
+      const f = a.ref ? edgeFoot(a.ref, ctx.topo, P, pl, toSheet(pl, a.pos[0], a.pos[1])) : null;
       r = datumPrims(a, f?.at ?? null, f?.d ?? [1, 0], toSheet(pl, a.pos[0], a.pos[1]));
       if (!f) out.dangling.push(a.id);
     } else if (a.t === "balloon") {
@@ -1068,7 +1107,8 @@ export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: Ann
     // A split parts list is picked on its blocks, not on the empty corner between them.
     if (r) { out.prims.push(...r.prims); const bx = (r as { boxes?: [number, number, number, number][] }).boxes; for (const box of bx && bx.length > 1 ? bx : [r.box]) out.hits.push({ id: a.id, box }); }
   }
-  heldFrames(held, hosts, ctx.dec, out);
+  heldFrames(held, hosts, ctx.dec, out, frames);
+  onHosts(onHost, hosts, frames, pl, ctx.dec, out);
   return out;
 }
 
@@ -1215,9 +1255,12 @@ export function sheetNotes(sheet: Sheet, label: Label = s => s, dec = ".", bom?:
   // Frames attached to a sheet note go under it.
   const hosts = new Map<string, HostBox>(), held: GtolAnnot[] = [];
   const hasHost = (id: string) => (sheet.annots ?? []).some(x => x.id === id && x.t === "note" && !x.view);
+  // Datums on a frame placed on the sheet (not in a view) go on that frame.
+  const frames = new Map<string, [number, number, number, number]>(), onHost: DatumAnnot[] = [];
   for (const a of sheet.annots ?? []) {
     if (a.view) continue;
     if (a.t === "gtol" && a.dim && hasHost(a.dim)) { held.push(a); continue; }
+    if (a.t === "datum") { if (a.on && (sheet.annots ?? []).some(x => x.id === a.on && x.t === "gtol" && !x.view)) onHost.push(a); continue; }
     if (a.t === "cloud") {
       const r = cloudPrims(a);
       out.prims.push(...r.prims);
@@ -1233,10 +1276,12 @@ export function sheetNotes(sheet: Sheet, label: Label = s => s, dec = ".", bom?:
     const r = a.t === "weld" ? weldPrims(a, a.pos, null) : a.t === "dtarget" ? dtargetPrims(a, a.pos, null) : a.t === "note" ? notePrims(a, a.pos, null) : a.t === "gtol" ? gtolPrims(a, a.pos, null, dec)
       : a.t === "surf" ? surfPrims(a, a.pos, dec) : a.t === "table" ? tablePrims(a.kind === "bom" ? { ...a, rows: bom ? bomCells(bom) : [] } : a, label, a.anchor === "br" ? frameOf(sheet)[3] - a.pos[1] : Infinity) : null;
     if (r && a.t === "note") hosts.set(a.id, { box: r.box, al: a.al === "r" ? "r" : a.al === "c" ? "c" : "l" });
+    if (r && a.t === "gtol") frames.set(a.id, r.box);
     // A split parts list is picked on its blocks, not on the empty corner between them.
     if (r) { out.prims.push(...r.prims); const bx = (r as { boxes?: [number, number, number, number][] }).boxes; for (const box of bx && bx.length > 1 ? bx : [r.box]) out.hits.push({ id: a.id, box }); }
   }
-  heldFrames(held, hosts, dec, out);
+  heldFrames(held, hosts, dec, out, frames);
+  onHosts(onHost, hosts, frames, null, dec, out);
   return out;
 }
 

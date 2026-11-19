@@ -5,6 +5,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.601.0] - 2026-11-19
+
+### Fixed
+- Drawings: a **datum feature symbol goes on a dimension or a tolerance frame**, not only on a model edge. Click a dimension's text with the Datum feature tool (a feature of size: the triangle sits on its dimension line, past the arrow, or on an extension line, whichever is nearer the letter) or click a tolerance frame (the triangle sits on the frame's edge), then place the letter. It moves with its host; the panel says what it is on.
+- Drawings: a **surface finish symbol goes on a dimension** too (on its extension or dimension line, or with a leader to it).
+- Drawings: deleting a dimension or frame also deletes the datum and surface finish symbols on it.
+- Assemblies: **components, patterns, exploded views and assembly features can be renamed** (Rename in their menu, or F2 on the selected row), not only mates, display states and configurations.
+- Parts: F2 renames a selected body row in the tree, as it does a feature or folder, and Delete deletes a selected body (Delete Body) or folder (keeping its features), as their menus do.
+
+### Added
+- Drawings: **Ctrl+C / Ctrl+V copy an annotation**: select a note, a frame, a datum, a dimension or another annotation, press Ctrl+C, point where the copy goes and press Ctrl+V. A copy tied to model edges stays in its view; a free one may go on another sheet or drawing.
+- Sketches: **Ctrl+C / Ctrl+V copy sketch entities**: select lines, arcs, circles or text, press Ctrl+C, point where the copy goes and press Ctrl+V; the relations and dimensions among them come along, and the copy can go into another sketch or part.
+- Assemblies: **Ctrl+C / Ctrl+V copy components**: the selected components come back as new free instances of their parts (also in another assembly).
+
 ## [1.600.0] - 2026-11-19
 
 ### Fixed
@@ -3846,7 +3860,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.600.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.601.0...HEAD
+[1.601.0]: https://github.com/kothf/step-viewer/compare/v1.600.0...v1.601.0
 [1.600.0]: https://github.com/kothf/step-viewer/compare/v1.599.0...v1.600.0
 [1.599.0]: https://github.com/kothf/step-viewer/compare/v1.598.0...v1.599.0
 [1.598.0]: https://github.com/kothf/step-viewer/compare/v1.597.0...v1.598.0

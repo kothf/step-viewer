@@ -14,6 +14,8 @@ import type { ArcCond, EdgeRef, Frame, RelKind, SkDim, SkEnt, SketchFeature, Ske
 import { applyExt, piercePoint, projectEdge, uvOf, type ExtGeo, type ModelEdge } from "./external";
 import { renameIn } from "../model/params";
 export { refPts } from "./define";
+/** The sketch entities Ctrl+C copied (kept across sketches and parts, as a clipboard). */
+let skClip: { ents: SkEnt[]; rels: SkRel[]; dims: SkDim[]; centre: V2 } | null = null;
 import { ORIGIN, curveJoint, freeDirections, isOver, measureDim, solve, tryAdd, type SolveResult } from "./solver";
 import { uid } from "../model/doc";
 import { fullyDefineSketch, nextDimName, refPts } from "./define";
@@ -2440,6 +2442,68 @@ export class SketchEditor {
   renameBlock(id: string, name: string) {
     this.sk = renameBlock(this.sk, id, name);
     this.commit("Rename block");
+  }
+
+  /** Ctrl+C in a sketch: the selected entities with their points, and the relations and dimensions wholly among them
+   *  (fix, pierce and model-edge relations left out). Returns how many entities were copied. */
+  copySelection(): number {
+    const ents = this.sk.ents.filter(e => this.selection.has(e.id) && e.id !== ORIGIN && !this.lockedInsert(e.id));
+    if (!ents.length) return 0;
+    const ids = new Set<string>();
+    const out: SkEnt[] = [];
+    const pt = (id: string) => {
+      if (ids.has(id)) return;
+      ids.add(id);
+      const q = this.pt(id);
+      out.push({ id, t: "point", x: q[0], y: q[1] });
+    };
+    for (const e of ents) {
+      if (e.t === "point") pt(e.id);
+      else { for (const q of refPts(e)) pt(q); if (e.t === "circle") pt(e.c); ids.add(e.id); out.push(structuredClone(e)); }
+    }
+    const inside = (xs: string[]) => xs.every(x => ids.has(x));
+    const rels = this.sk.rels.filter(r => r.t !== "fix" && r.t !== "pierce" && !r.ext && inside(r.e)).map(r => structuredClone(r));
+    const dims = this.sk.dims.filter(d => inside(d.e)).map(d => structuredClone(d));
+    const ps = out.filter((e): e is Extract<SkEnt, { t: "point" }> => e.t === "point");
+    const xs = ps.map(q => q.x), ys = ps.map(q => q.y);
+    skClip = { ents: out, rels, dims, centre: [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2] };
+    return ents.filter(e => e.t !== "point").length || ents.length;
+  }
+
+  /** Whether Ctrl+V has something to paste. */
+  get canPaste() { return !!skClip; }
+
+  /** Ctrl+V in a sketch: a copy of the copied entities centred on the pointer (or beside the originals), selected. */
+  paste(): boolean {
+    const c = skClip;
+    if (!c) return false;
+    const at = this.cursorUV ?? [c.centre[0] + 10, c.centre[1] + 10];
+    const d: V2 = [at[0] - c.centre[0], at[1] - c.centre[1]];
+    const map = new Map<string, string>();
+    const pre: Record<string, string> = { point: "p", line: "l", circle: "c", ellipse: "e", spline: "s", text: "t", arc: "a" };
+    for (const e of c.ents) map.set(e.id, uid(pre[e.t] ?? "x"));
+    const m = (id: string) => map.get(id) ?? id;
+    const made: string[] = [];
+    for (const e0 of c.ents) {
+      const e = structuredClone(e0) as SkEnt & Record<string, unknown>;
+      e.id = m(e0.id);
+      if (e.t === "point") { e.x += d[0]; e.y += d[1]; }
+      else {
+        for (const k of ["a", "b", "c", "p", "p0", "p1"]) if (typeof e[k] === "string") e[k] = m(e[k] as string);
+        if (Array.isArray(e.pts)) e.pts = (e.pts as unknown[]).map(x => (typeof x === "string" ? m(x) : x));
+        if (e.t === "text") { delete e.along; delete e.flip; }
+        made.push(e.id);
+      }
+      this.sk.ents.push(e);
+    }
+    if (!made.length) made.push(...c.ents.map(e => m(e.id)));
+    for (const r of c.rels) { const q = structuredClone(r); q.id = uid("r"); q.e = r.e.map(m); delete q.of; this.sk.rels.push(q); }
+    for (const dm of c.dims) this.sk.dims.push({ ...structuredClone(dm), id: uid("d"), name: this.nextDimName(), e: dm.e.map(m), ...(dm.pos ? { pos: [dm.pos[0] + d[0], dm.pos[1] + d[1]] as V2 } : {}) });
+    this.selection = new Set(made);
+    this.commit("Paste");
+    this.render();
+    this.emitSel();
+    return true;
   }
 
   selectAll() {
