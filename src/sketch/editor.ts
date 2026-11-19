@@ -599,9 +599,51 @@ export class SketchEditor {
       // (gap list S7, as in other CAD apps).
       const h = this.hover, e = h && this.sk.ents.find(x => x.id === h.id);
       if (e && (e.t === "line" || e.t === "arc") && !e.cons && !e.id.includes("~")) { this.select(this.chainOf(e.id).segs.map(sg => sg.id)); return true; }
+      // Double-click a text: edit it in place (gap list S13).
+      if (e?.t === "text" && !e.id.includes("~")) { this.editTextInPlace(e.id); return true; }
       return false;
     }
     return false;
+  }
+
+  /** The open in-place text box (gap list S13). */
+  private textEdit: HTMLInputElement | null = null;
+  /** Edits a sketch text on the canvas: a box over the text, Enter (or a click away) applies, Esc keeps the old text. */
+  editTextInPlace(id: string) {
+    const e = this.ent(id);
+    if (e?.t !== "text") return;
+    this.textEdit?.remove();
+    const box = textBox(e, this.pt(e.p), textPath(this.sk.ents, e));
+    const pts = (box.length ? box : [this.pt(e.p)]).map(q => this.screen(q));
+    const x = Math.min(...pts.map(q => q[0])), y = Math.min(...pts.map(q => q[1])), h = Math.max(...pts.map(q => q[1])) - y;
+    const inp = this.textEdit = document.createElement("input");
+    inp.className = "sk-textedit";
+    inp.value = e.text;
+    inp.setAttribute("translate", "no");
+    inp.setAttribute("aria-label", t("Text"));
+    inp.style.left = `${x - 4}px`;
+    inp.style.top = `${y + h / 2 - 14}px`;
+    inp.style.minWidth = `${Math.max(80, Math.max(...pts.map(q => q[0])) - x + 24)}px`;
+    let done = false;
+    const end = (apply: boolean) => {
+      if (done) return;
+      done = true;
+      const v = inp.value;
+      inp.remove();
+      if (this.textEdit === inp) this.textEdit = null;
+      if (apply && v.trim() && v !== e.text) void this.setText(id, { text: v });
+    };
+    inp.addEventListener("keydown", ev => {
+      ev.stopPropagation();
+      if (ev.key === "Enter") { ev.preventDefault(); end(true); }
+      else if (ev.key === "Escape") { ev.preventDefault(); end(false); }
+    });
+    inp.addEventListener("pointerdown", ev => ev.stopPropagation());
+    inp.addEventListener("blur", () => end(true));
+    this.select([id]);
+    this.host.layer.appendChild(inp);
+    inp.focus();
+    inp.select();
   }
 
   /**

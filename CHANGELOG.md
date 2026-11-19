@@ -12,6 +12,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Sketches: a **padlock on fixed points** (and fixed curves), shown even with relation glyphs turned off; click it to select the Fix relation.
 - **Feature comments**: right-click a feature in the tree ▸ Add comment…; a 💬 mark on the row shows the text as a tooltip, and a click on it edits it. Comments are undoable and rebuild nothing.
 - Double-click a face to show its feature's dimensions, as before; **double-click it again to open its sketch**. A feature with no dimensions to show opens its sketch at once.
+- **Measure inside a command**: 📏 in a feature panel's title row (or M) makes clicks in the view measure with Smart measure instead of picking for the feature; Esc or 📏 goes back to picking, and the panel stays open.
+- **Feature errors on the model**: a failed feature's sketch is drawn red where it lies, with a ⚠ callout naming the feature; hover it for the error, click it to edit the feature.
+- Sketches: **double-click a text to edit it on the canvas**; Enter keeps the new text, Esc the old one.
+- Drawings: **rapid dimension targets**. While a horizontal or vertical dimension follows the cursor, small targets stand above and below (or left and right of) the view; click one and the dimension goes to the next row on that side, 10 mm off the view and 8 mm beyond the last one.
+- **First-use tips in command panels**: the first time Sketch, Extrude, Cut, Revolve, Fillet, Chamfer, Shell, Hole, Mirror, the patterns, Sweep, Loft, Draft or Plane opens, a short card at the top of its panel says how it is used. Each shows once; Turn off tips (or Settings ▸ General) stops them.
 
 ### Changed
 - **Normal to** (N, Ctrl+8): pressed again it looks from the other side as before, and a third time it goes back to the view you had before the first press.

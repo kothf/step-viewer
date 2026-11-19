@@ -77,6 +77,8 @@ import { SelDrag } from "../selDrag";
 import { bodyMasses, combine } from "../tools/inertia";
 import { units, UNITS } from "../tools/units";
 import { csys } from "../tools/csys";
+import { COACH, coachFirst } from "../coach";
+import { setTips } from "../hints";
 import { askFileName, askNote, bindTabs, confirmModal, toast, trapFocus } from "../ui";
 import { cmTab, onCmTab, selectCmTab } from "../commandBar";
 import { rememberWeld } from "../weldments/defaults";
@@ -126,6 +128,8 @@ export interface ModelHost {
   selectedEdge?(): EdgeInfo | null;
   /** The measuring tool in use ("select" = Smart measure). */
   measureTool?(): string;
+  /** Clears the Smart measure result (measuring inside a command ends). */
+  clearMeasure?(): void;
   /** The part's material changed (or a part opened): preset the mass properties panel. */
   setMaterial?(m: MatRef | undefined): void;
   /** The open part's length unit became the display unit (FR-UI-116). */
@@ -634,7 +638,20 @@ export class ModelController {
 
   get active() { return !!this.store; }
   /** A command is taking clicks in the view (Smart measure leaves them alone). */
-  get picking() { return this.mode.kind !== "none" || !!this.arrowDrag; }
+  get picking() { return (this.mode.kind !== "none" && !this.measuring) || !!this.arrowDrag; }
+  /**
+   * Measure inside a command (gap list M8): while on, clicks in the view go to Smart measure, not to the open
+   * feature's boxes. The 📏 button in the panel head (or M) turns it on and off; Esc or closing the panel ends it.
+   */
+  measuring = false;
+  setMeasuring(on: boolean) {
+    on &&= this.mode.kind === "feature";
+    if (this.measuring === on) return;
+    this.measuring = on;
+    if (!on) this.host.clearMeasure?.();
+    this.renderPanel();
+    this.renderStatus();
+  }
   get editingSketch() { return this.mode.kind === "sketch"; }
   private get doc() { return this.store!.doc; }
   /** The open part and its file name (null when no part is open). */
@@ -2698,6 +2715,8 @@ export class ModelController {
       // Not stopped either: the view controls must see the right button go up.
       if (e.button === 2 && d && Math.hypot(e.clientX - d.x, e.clientY - d.y) <= 4) { if (!this.edgeMenu(e)) this.commandMenu(e); return; }
       if (e.button !== 0 || !d || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
+      // Measuring inside the command: Smart measure takes the click (main.ts), the feature does not.
+      if (m.kind === "feature" && this.measuring) return;
       // Not stopped: the orbit controls must see the button go up. Smart measure skips these clicks (`picking`).
       if (m.kind === "none" && this.multi && !e.ctrlKey && !e.metaKey) { this.multi = null; this.drawDecor(); }
       if (m.kind === "none") { if (e.detail < 2) this.hideInstant(); const at = { x: e.clientX, y: e.clientY }, alt = e.altKey; setTimeout(() => this.showContextBar(at, alt), 0); }
@@ -2826,6 +2845,9 @@ export class ModelController {
     if (e.key === "F5") { stop(); this.toggleFilterBar(); return; }
     // Esc closes the magnifying glass first (FR-SEL-010; its own listener takes it).
     if (k === "escape" && document.querySelector(".mag-lens")) return;
+    // Measuring inside a command (gap list M8): Esc goes back to picking; M turns it on and off.
+    if (k === "escape" && this.measuring) { stop(); this.setMeasuring(false); return; }
+    if (k === "m" && this.mode.kind === "feature" && !e.repeat) { stop(); this.setMeasuring(!this.measuring); return; }
     // Shift+D: breadcrumbs and the confirmation corner to the cursor (FR-SEL-009; D stays the distance tool).
     if (k === "d" && e.shiftKey && this.pointerIn && (document.getElementById("mc-crumbs") || this.mode.kind !== "none")) { stop(); this.crumbsToCursor(); return; }
     if (k === "escape" && this.mode.kind === "none") { this.hideCrumbs(); if (this.multi || this.pushFace != null) { this.multi = null; this.pushFace = null; this.drawDecor(); } }
@@ -4867,6 +4889,7 @@ export class ModelController {
     this.drawWeldSymbols();
     this.drawCornerCallouts();
     this.drawPatternSpots();
+    this.drawFeatureErrors();
     this.drawInstant();
     if (m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer")) {
       // The picked edges are drawn by drawBoxPicks in the Edges box's colour (FR-SEL-011).
@@ -5143,6 +5166,41 @@ export class ModelController {
       label.title = t("Weld symbol: click to edit the bead");
       label.dataset.at = JSON.stringify(fi.center);
       label.addEventListener("click", () => { if (this.mode.kind === "none") this.editFeature(id); });
+      $("#mc-layer").appendChild(label);
+    }
+    this.placeCallouts();
+  }
+
+  /**
+   * Feature errors on the model (gap list M9): a failed feature's sketch is drawn red where it lies, with a
+   * ⚠ callout naming the feature and the error; a click on it edits the feature. Only in mode none.
+   */
+  private drawFeatureErrors() {
+    if (this.mode.kind !== "none" || !this.last) return;
+    const end = this.doc.rollback ?? this.doc.features.length;
+    const st = new Map(this.last.statuses.map(x => [x.id, x]));
+    const feats = this.doc.features.slice(0, end);
+    let row = 0;
+    for (const f of feats) {
+      const s = st.get(f.id);
+      if (!s || s.ok || f.suppressed) continue;
+      const sks = feats.filter((g): g is SketchFeature => g.type === "sketch" && !g.suppressed && (g.id === f.id || absorbs(f, g.id)));
+      const pos: number[] = [];
+      for (const g of sks) pos.push(...sketchSegments(g, this.frameOf(g)));
+      if (!pos.length) continue;
+      this.lines(pos, 0xe03131, 2.6);
+      const c: V3 = [0, 0, 0];
+      for (let k = 0; k < pos.length; k += 3) { c[0] += pos[k]; c[1] += pos[k + 1]; c[2] += pos[k + 2]; }
+      const n = pos.length / 3;
+      const label = document.createElement("button");
+      label.className = "mc-handle mc-callout mc-ferr";
+      label.dataset.ferr = f.id;
+      label.dataset.at = JSON.stringify([c[0] / n, c[1] / n, c[2] / n]);
+      label.dataset.row = String(row++ % 3);
+      label.textContent = `⚠ ${featureLabel(f.name)}`;
+      label.title = `${featureLabel(f.name)}: ${statusText(s)}`;
+      label.setAttribute("aria-label", label.title);
+      label.addEventListener("click", () => { if (this.mode.kind === "none") this.editFeature(f.id); });
       $("#mc-layer").appendChild(label);
     }
     this.placeCallouts();
@@ -7601,7 +7659,70 @@ export class ModelController {
 
   // ---------- property panel ----------
 
+  /** The command whose first-use coach mark shows in the panel (gap list U5), until Got it or the panel closes. */
+  private coachKey: string | null = null;
   private renderPanel() {
+    this.renderPanel0();
+    this.measureButton();
+    this.coach();
+  }
+
+  /** The 📏 Measure toggle in a feature panel's head (gap list M8). */
+  private measureButton() {
+    const m = this.mode;
+    if (m.kind !== "feature") { this.measuring = false; return; }
+    const pm = $("#mc-pm");
+    pm.classList.toggle("pm-measuring", this.measuring);
+    const okc = pm.querySelector(":scope > .pm-head .pm-okc");
+    if (!okc || okc.querySelector(".pm-meas")) return;
+    if (this.measuring) {
+      const note = document.createElement("p");
+      note.className = "pm-measnote";
+      note.setAttribute("role", "status");
+      note.textContent = t("Measuring: clicks in the view measure. Esc or 📏 goes back to picking.");
+      okc.closest(".pm-head")!.after(note);
+    }
+    const b = document.createElement("button");
+    b.className = "icon pm-meas";
+    b.dataset.a = "pmmeasure";
+    b.setAttribute("aria-pressed", String(this.measuring));
+    const tip = this.measuring ? t("Back to picking (Esc)") : t("Measure without leaving the command (M)");
+    b.title = tip;
+    b.setAttribute("aria-label", tip);
+    b.textContent = "📏";
+    b.addEventListener("click", () => this.setMeasuring(!this.measuring));
+    okc.prepend(b);
+  }
+
+  private coach() {
+    const m = this.mode;
+    const key = m.kind === "sketch" ? "sketch" : m.kind === "feature" ? (m.draft.type === "extrude" && m.draft.op === "cut" ? "cut" : m.draft.type) : null;
+    if (!key) { this.coachKey = null; return; }
+    if (this.coachKey !== key) {
+      this.coachKey = null;
+      if (!coachFirst(key)) return;
+      this.coachKey = key;
+    }
+    const pm = $("#mc-pm");
+    if (pm.hidden || pm.querySelector(".pm-coach")) return;
+    const [title, how] = COACH[key];
+    const card = document.createElement("div");
+    card.className = "pm-coach";
+    card.setAttribute("role", "note");
+    card.innerHTML = `<div class="pm-coach-h"><span aria-hidden="true">💡</span> <b>${esc(t(title))}</b></div><p>${esc(t(how))}</p>`
+      + `<div class="pm-coach-a"><button class="btn small" data-coach="ok">${esc(t("Got it"))}</button><button class="btn small ghost" data-coach="off">${esc(t("Turn off tips"))}</button></div>`;
+    card.addEventListener("click", e => {
+      const a = (e.target as HTMLElement).closest<HTMLElement>("[data-coach]")?.dataset.coach;
+      if (!a) return;
+      if (a === "off") setTips(false);
+      this.coachKey = null;
+      card.remove();
+    });
+    const head = pm.querySelector(":scope > .pm-head");
+    if (head) head.after(card); else pm.prepend(card);
+  }
+
+  private renderPanel0() {
     const pm = $("#mc-pm");
     const m = this.mode;
     if (!this.store || m.kind === "none") { pm.hidden = true; pm.innerHTML = ""; return; }

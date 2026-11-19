@@ -32,7 +32,7 @@ test("only the same kind of annotation takes the format", () => {
   assert.equal(canPaint({ id: "g", t: "gtol" } as unknown as Annot), false);
 });
 
-import { alignDim, spaceDims } from "../../src/drawing/dimAlign";
+import { alignDim, rapidRow, rapidSlots, spaceDims } from "../../src/drawing/dimAlign";
 import type { DimAnnot as D } from "../../src/drawing/types";
 const dd = (id: string, k: D["k"], pos: [number, number], view = "v"): D => ({ id, t: "dim", view, k, refs: [], pos });
 
@@ -57,4 +57,19 @@ test("Space evenly rows the dimensions round a view 10 and then 8 sheet mm apart
   assert.deepEqual(at("left"), [-70, 0]);
   assert.deepEqual(at("on"), [0, 0]);
   assert.equal(moved.length, 4);
+});
+
+test("Rapid dimension rows: 10 mm off the view, then 8 mm beyond the farthest one on that side (gap list D3)", () => {
+  const box: [number, number, number, number] = [-50, -10, 50, 10];
+  const h = dim({ id: "h1", k: "h" }), v = dim({ id: "v1", k: "v" });
+  assert.deepEqual(rapidSlots(h).map(x => x.side), ["top", "bottom"]);
+  assert.deepEqual(rapidSlots(v).map(x => x.side), ["right", "left"]);
+  assert.deepEqual(rapidSlots(dim({ k: "a" as DimAnnot["k"] })), []);
+  const [top, bottom] = rapidSlots(h);
+  assert.equal(rapidRow([], box, 2, top), 15);
+  assert.equal(rapidRow([], box, 2, bottom), -15);
+  const there = [dim({ id: "a", k: "h", pos: [0, 15] }), dim({ id: "b", k: "h", pos: [0, 19] }), dim({ id: "c", k: "v", pos: [80, 0] })];
+  assert.equal(rapidRow(there, box, 2, top), 23);
+  assert.equal(rapidRow(there, box, 2, bottom), -15);
+  assert.equal(rapidRow(there, box, 2, rapidSlots(v)[0]), 84);
 });

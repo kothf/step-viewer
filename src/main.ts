@@ -148,6 +148,7 @@ const modeller = new ModelController({
   setCsys: (c, quiet) => setCsys(c ? { ...makeCsys(c.name, c.o, c.z, c.x), src: c.src } : null, true, quiet),
   clearPick: () => { if (state.tool !== "select") setTool("select"); handlePick(null); },
   measureTool: () => state.tool,
+  clearMeasure: () => { handlePick(null); },
   setDoc: label => setDoc(label, "ready"),
   selectLeftTab: tab => showLeftTab(tab),
   sketchSection: pl => {
