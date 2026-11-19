@@ -5,6 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.599.0] - 2026-11-19
+
+### Added
+- Sketches: the **Smart Dimension cursor shows the type** a click will place (horizontal, vertical or aligned) while the dimension follows the pointer, and a padlock once a right-click locks it.
+- Sketches: a **padlock on fixed points** (and fixed curves), shown even with relation glyphs turned off; click it to select the Fix relation.
+- **Feature comments**: right-click a feature in the tree ▸ Add comment…; a 💬 mark on the row shows the text as a tooltip, and a click on it edits it. Comments are undoable and rebuild nothing.
+- Double-click a face to show its feature's dimensions, as before; **double-click it again to open its sketch**. A feature with no dimensions to show opens its sketch at once.
+
+### Changed
+- **Normal to** (N, Ctrl+8): pressed again it looks from the other side as before, and a third time it goes back to the view you had before the first press.
+
 ## [1.598.0] - 2026-11-19
 
 ### Added
@@ -3821,7 +3832,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.598.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.599.0...HEAD
+[1.599.0]: https://github.com/kothf/step-viewer/compare/v1.598.0...v1.599.0
 [1.598.0]: https://github.com/kothf/step-viewer/compare/v1.597.0...v1.598.0
 [1.597.0]: https://github.com/kothf/step-viewer/compare/v1.596.0...v1.597.0
 [1.596.0]: https://github.com/kothf/step-viewer/compare/v1.595.0...v1.596.0

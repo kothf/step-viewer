@@ -77,7 +77,7 @@ import { SelDrag } from "../selDrag";
 import { bodyMasses, combine } from "../tools/inertia";
 import { units, UNITS } from "../tools/units";
 import { csys } from "../tools/csys";
-import { askFileName, bindTabs, confirmModal, toast, trapFocus } from "../ui";
+import { askFileName, askNote, bindTabs, confirmModal, toast, trapFocus } from "../ui";
 import { cmTab, onCmTab, selectCmTab } from "../commandBar";
 import { rememberWeld } from "../weldments/defaults";
 import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, cornerSpots, cutListRows, locateSpots, isWeldFeature, showCutList, weldChange, weldSymbols, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
@@ -6507,7 +6507,7 @@ export class ModelController {
 
   private hasInstant(f: Feature) { return this.instantItems(f).length > 0 || this.featureValues(f).length > 0; }
 
-  /** Double-click on the model: the dimensions of the feature that made the face or edge show on it, as in other CAD apps. */
+  /** Double-click on the model: the dimensions of the feature that made the face or edge show on it, as in other CAD apps; again: its sketch opens. */
   showInstant(x: number, y: number) {
     if (!this.store || !this.last || this.mode.kind !== "none") return;
     const hit = this.host.edgeAt(x, y);
@@ -6516,6 +6516,12 @@ export class ModelController {
     const f = id ? this.store.feature(id) : undefined;
     if (!f || f.suppressed) { this.hideInstant(); return; }
     this.hideShortcutBar();
+    // Again on a face of the feature whose dimensions show (or one with none to show): its sketch opens (gap list M6).
+    const sk = (f as { sketch?: unknown }).sketch;
+    const own = typeof sk === "string" && this.store.feature(sk)?.type === "sketch" ? sk : null;
+    // The first click of this double-click has just hidden them: that counts as still shown.
+    const shown = this.instant ?? (this.instantGone && performance.now() - this.instantGone.at < 900 ? this.instantGone.id : null);
+    if (own && (shown === f.id || !this.hasInstant(f))) { this.hideInstant(); void this.editSketch(own); return; }
     if (!this.hasInstant(f)) { this.hideInstant(); toast(t("{name} has no dimensions to show on the model.", { name: f.name })); return; }
     this.instant = f.id;
     this.selected = f.id;
@@ -6523,8 +6529,11 @@ export class ModelController {
     this.drawDecor();
   }
 
+  /** The feature whose dimensions were hidden last, and when (a double-click's first click hides them). */
+  private instantGone: { id: string; at: number } | null = null;
   hideInstant() {
     if (!this.instant) return;
+    this.instantGone = { id: this.instant, at: performance.now() };
     this.instant = null;
     this.drawDecor();
   }
@@ -7063,6 +7072,7 @@ export class ModelController {
       const hid = this.isHidden(f);
       const tools = `<span class="ft-tools">${hid == null ? "" : eyeButton(hid, featureLabel(f.name))}<button class="icon" tabindex="-1" data-a="sup" title="${esc(f.suppressed ? t("Unsuppress") : t("Suppress"))}" aria-label="${esc(f.suppressed ? t("Unsuppress") : t("Suppress"))}">${f.suppressed ? "◌" : "●"}</button><button class="icon" tabindex="-1" data-a="del" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">✕</button></span>`;
       const relMark = rel ? `<span class="ft-rel" title="${esc(relTip)}" role="img" aria-label="${esc(relTip)}">${par.has(f.id) ? "↑" : "↓"}</span>` : "";
+      const note = f.comment ? `<span class="ft-note" data-a="note" title="${esc(f.comment)}" role="img" aria-label="${esc(t("Comment"))}: ${esc(f.comment)}">💬</span>` : "";
       const ice = i < frozen ? `<span class="ft-ice" title="${esc(t("Frozen"))}" role="img" aria-label="${esc(t("Frozen"))}">❄</span>` : "";
       // External reference (FR-ASM-030): -> in context, ->* locked, ->? out of context (a CAD app marks).
       const xk = ctxMark(d, f);
@@ -7071,7 +7081,7 @@ export class ModelController {
       // A feature with an absorbed sketch folds it away (FR-HIS-013).
       const kidsOf = [...absorbed.values()].includes(i), open = !this.closedFeats.has(f.id);
       const twist = kidsOf ? `<button class="icon ft-twist" tabindex="-1" data-a="twist" aria-expanded="${open}" title="${esc(open ? t("Collapse") : t("Expand"))}" aria-label="${esc(open ? t("Collapse") : t("Expand"))}">${open ? "▾" : "▸"}</button>` : "";
-      return row(f.id, icon, featureLabel(f.name), ext + relMark + ice + badge + tools, `${hid ? " hid" : ""}${child ? " child" : ""}${inFolder ? " infolder" : ""}${f.suppressed ? " sup" : ""}${i >= end ? " rolled" : ""}${i < frozen ? " frozen" : ""}${editing ? " editing" : ""}${s && !s.ok ? " bad" : ""}${rel}${kidsOf ? " ft-parentrow" : ""}`, ` data-i="${i}" draggable="${m.kind === "none" && i >= frozen}"${kidsOf ? ` aria-expanded="${open}"` : ""}`).replace('<span class="ft-ico"', `${twist}<span class="ft-ico"`);
+      return row(f.id, icon, featureLabel(f.name), ext + relMark + note + ice + badge + tools, `${hid ? " hid" : ""}${child ? " child" : ""}${inFolder ? " infolder" : ""}${f.suppressed ? " sup" : ""}${i >= end ? " rolled" : ""}${i < frozen ? " frozen" : ""}${editing ? " editing" : ""}${s && !s.ok ? " bad" : ""}${rel}${kidsOf ? " ft-parentrow" : ""}`, ` data-i="${i}"${f.comment ? ` title="${esc(`${featureLabel(f.name)}\n${f.comment}`)}"` : ""} draggable="${m.kind === "none" && i >= frozen}"${kidsOf ? ` aria-expanded="${open}"` : ""}`).replace('<span class="ft-ico"', `${twist}<span class="ft-ico"`);
     };
     // Folders (FR-HIS-009): a folder row comes before its first member; closed folders hide their members.
     const frozen = this.frozenCount();
@@ -7168,6 +7178,7 @@ export class ModelController {
           this.treePicks.clear();
         }
         if (a === "sup") { this.toggleSuppress(id); return; }
+        if (a === "note") { void this.editComment(id); return; }
         if (a === "eye") { this.toggleHidden(id); return; }
         if (a === "twist") { this.toggleFeat(id); return; }
         if (a === "del") { void this.deleteFeature(id); return; }
@@ -7382,6 +7393,7 @@ export class ModelController {
         if (this.doc.featureColors?.[f.id]) items.push([t("Remove appearance"), () => this.setAppearance("feature", f.id, null)]);
       }
       items.push([t("Rename"), () => this.startRename(f.id)]);
+      items.push([f.comment ? t("Edit comment…") : t("Add comment…"), () => void this.editComment(f.id)]);
       items.push([f.suppressed ? t("Unsuppress") : t("Suppress"), () => this.toggleSuppress(f.id)]);
       if (f.type === "plane" || f.type === "axis" || f.type === "point" || f.type === "csys" || f.type === "helix" || f.type === "curve" || f.type === "sketch3d") items.push([f.hidden ? t("Show") : t("Hide"), () => this.toggleHidden(f.id)]);
       if (f.type === "csys") items.push(csys.active?.src === f.id ? [t("Back to the global coordinate system"), () => this.useCsys(null)] : [t("Use for measurements and export"), () => this.useCsys(f.id)]);
@@ -7404,6 +7416,19 @@ export class ModelController {
     }
     if (!items.length) return;
     this.showMenu(items, x, y, () => $("#mc-tree").querySelector<HTMLElement>(".ft-row.sel")?.focus());
+  }
+
+  /** A feature's comment (gap list M5): typed in a small dialog, one undo step; nothing is rebuilt for it. */
+  async editComment(id: string) {
+    const f = this.store?.feature(id);
+    if (!f) return;
+    const text = await askNote(featureLabel(f.name), f.comment ?? "");
+    if (text === null || text === (f.comment ?? "")) return;
+    this.store!.change(text ? t("Comment on {name}", { name: featureLabel(f.name) }) : t("Remove comment"), d => {
+      const g = d.features.find(x => x.id === id);
+      if (!g) return;
+      if (text) g.comment = text; else delete g.comment;
+    });
   }
 
   /** The rollback bar's own menu: Roll to previous and Roll to end. */

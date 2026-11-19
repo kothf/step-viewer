@@ -2640,8 +2640,8 @@ const sessionViews = new Map<string, NamedView[]>();
   });
 }
 void nav;
-/** Normal to the sketch plane, or the selected flat face; again flips to the other side. */
-let lastNormal: THREE.Vector3 | null = null;
+/** Normal to the sketch plane, or the selected flat face; again flips to the other side, a third time goes back. */
+let normalSeq: { n: THREE.Vector3; before: ReturnType<typeof viewer.getView>; step: 1 | 2 } | null = null;
 function normalTo(given?: [number, number, number]) {
   let n: THREE.Vector3 | null = null;
   const sn = modeller.sketchNormal();
@@ -2650,10 +2650,17 @@ function normalTo(given?: [number, number, number]) {
   else if (state.selection?.kind === "face" && state.selection.face?.normal && state.selection.face.type === "plane") n = viewer.dirToWorld(state.selection.part, state.selection.face.normal);
   else { const pn = modeller.selectedPlaneNormal(); if (pn) n = new THREE.Vector3(...pn); }
   if (!n) { toast(t("Select a flat face first (or open a sketch).")); return; }
-  const cam = viewer.camera.position.clone().sub(viewer.controls.target).normalize();
-  if (lastNormal && lastNormal.equals(n) && cam.dot(n) > 0.999) n.negate();
-  lastNormal = n.clone();
-  viewer.viewFrom(n);
+  const end = viewer.getView();
+  const cam = new THREE.Vector3(...end.p).sub(new THREE.Vector3(...end.t)).normalize();
+  // Normal to, again: the other side; a third time: back to the view before the first (gap list S10).
+  const seq = normalSeq;
+  if (seq && seq.n.distanceTo(n) < 1e-9) {
+    if (seq.step === 1 && cam.dot(n) > 0.999) { seq.step = 2; viewer.viewFrom(n.clone().negate()); return; }
+    if (seq.step === 2 && cam.dot(n) < -0.999) { normalSeq = null; viewer.setView(seq.before); return; }
+  }
+  const aligned = cam.dot(n) > 0.999;
+  normalSeq = { n: n.clone(), before: end, step: aligned ? 2 : 1 };
+  viewer.viewFrom(aligned ? n.clone().negate() : n);
 }
 // Display menu: a small popover under the header button; Esc, a click outside or the button closes it.
 {

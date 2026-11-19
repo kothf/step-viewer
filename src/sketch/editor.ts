@@ -4,7 +4,7 @@
 //
 // The editor works on a copy of the sketch; every finished operation is handed
 // to the host with a label (one undo step each) and solved again.
-import { setToolCursor, toolCursorOf } from "../hoverCursor";
+import { dimCursorOf, setToolCursor, toolCursorOf } from "../hoverCursor";
 import * as THREE from "three";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
@@ -117,6 +117,8 @@ const REL_GLYPH: Record<RelKind, string> = {
   coincident: "◉", horizontal: "H", vertical: "V", parallel: "∥", perpendicular: "⊥", collinear: "⫽", equal: "=",
   tangent: "T", concentric: "◎", midpoint: "M", fix: "⚓", onCurve: "◦", symmetric: "⇹", intersection: "✕", curvature: "κ", pierce: "⊕", offset: "⇉",
 };
+/** The padlock drawn for a fixed point or curve (gap list S11). */
+const LOCK_SVG = `<svg width="10" height="11" viewBox="0 0 10 11" aria-hidden="true"><path d="M3 5V3.6a2 2 0 0 1 4 0V5" fill="none" stroke="currentColor" stroke-width="1.4"/><rect x="1" y="5" width="8" height="6" rx="1.2" fill="currentColor"/></svg>`;
 export const REL_NAME: Record<RelKind, string> = {
   coincident: "Coincident", horizontal: "Horizontal", vertical: "Vertical", parallel: "Parallel", perpendicular: "Perpendicular",
   collinear: "Collinear", equal: "Equal", tangent: "Tangent", concentric: "Concentric", midpoint: "Midpoint", fix: "Fix",
@@ -4196,6 +4198,8 @@ export class SketchEditor {
 
   render() {
     if (this.disposed) return;
+    // Smart Dimension: the cursor shows the type a click will place, and a lock once it is locked (gap list S9).
+    if (this.tool === "dim") setToolCursor(this.host.viewer.renderer.domElement, dimCursorOf(this.dimDraft.dim?.t, !!this.dimDraft.lock));
     this.syncPictures();
     this.dark = document.documentElement.dataset.theme === "dark";
     const C = this.dark ? COLORS.dark : COLORS.light;
@@ -4715,10 +4719,12 @@ export class SketchEditor {
     const per = new Map<string, number>();
     for (const r of this.sk.rels) {
       if (r.t === "coincident" || r.t === "onCurve" || this.lockedInsert(r.id)) continue;
+      // A plain fix is a lock on the point or curve (gap list S11), shown even with the glyphs hidden.
+      const lock = r.t === "fix" && !r.ext;
       // Hidden glyphs (FR-SK-053) still show while selected, so a relation picked in the list can be seen.
-      if (!this.showRels && !this.selection.has(r.id)) continue;
-      const el = mk(r.id, "sk-rel");
-      el.textContent = r.ext ? "⊡" : REL_GLYPH[r.t];
+      if (!lock && !this.showRels && !this.selection.has(r.id)) continue;
+      const el = mk(r.id, lock ? "sk-rel sk-fix" : "sk-rel");
+      if (lock) el.innerHTML = LOCK_SVG; else el.textContent = r.ext ? "⊡" : REL_GLYPH[r.t];
       const name = t(relName(r)) + (r.dangling ? ` · ${t("dangling: drag onto a model edge to re-attach")}` : "");
       el.title = name;
       el.setAttribute("aria-label", name);
@@ -4726,10 +4732,11 @@ export class SketchEditor {
       el.classList.toggle("bad", this.info.conflicting.includes(r.id));
       el.classList.toggle("dangling", !!r.dangling);
       const anchor = r.e.find(x => x !== ORIGIN) ?? ORIGIN;
-      const k = per.get(anchor) ?? 0;
-      per.set(anchor, k + 1);
+      const k = lock ? 0 : per.get(anchor) ?? 0;
+      if (!lock) per.set(anchor, k + 1);
       el.dataset.pos = JSON.stringify(this.anchorOf(anchor));
       el.dataset.k = String(k);
+      if (lock && this.ent(anchor)?.t === "point") { delete el.dataset.nrm; continue; }
       // Beside a curve, not on it: a click on the curve must not land on its glyph (exam bug 47).
       const side = this.glyphSide(anchor);
       if (side) { el.dataset.pos = JSON.stringify(side.p); el.dataset.nrm = JSON.stringify(side.n); } else delete el.dataset.nrm;
@@ -4974,6 +4981,8 @@ export class SketchEditor {
         el.style.top = `${cy - 8}px`;
         continue;
       }
+      // A point's lock sits just above right of it, clear of the point itself.
+      if (el.classList.contains("sk-fix")) { el.style.left = `${x + 5}px`; el.style.top = `${y - 19}px`; continue; }
       el.style.left = `${x + (el.classList.contains("sk-rel") ? 10 + k * 16 : 0)}px`;
       el.style.top = `${y + (el.classList.contains("sk-rel") ? 10 : 0)}px`;
     }

@@ -55,9 +55,17 @@ export function hoverCursor(kind: HoverKind): string {
  * scissors for Trim, and so on, as other CAD apps do. The canvas carries `data-tool`; its rules come after the
  * hover rules, so the tool's cursor wins over a hover glyph.
  */
-export type ToolCursor = "line" | "rect" | "circle" | "arc" | "spline" | "point" | "polygon" | "slot" | "ellipse" | "text" | "trim" | "extend" | "corner" | "offset" | "dim" | "split";
+export type ToolCursor = "line" | "rect" | "circle" | "arc" | "spline" | "point" | "polygon" | "slot" | "ellipse" | "text" | "trim" | "extend" | "corner" | "offset" | "dim" | "split" | DimCursor;
+/** Smart Dimension while a linear dimension follows the cursor (gap list S9): horizontal, vertical or aligned, `l` = type locked. */
+export type DimCursor = "dimh" | "dimv" | "dima" | "dimhl" | "dimvl" | "dimal";
 
-export const TOOL_CURSORS: readonly ToolCursor[] = ["line", "rect", "circle", "arc", "spline", "point", "polygon", "slot", "ellipse", "text", "trim", "extend", "corner", "offset", "dim", "split"];
+export const TOOL_CURSORS: readonly ToolCursor[] = ["line", "rect", "circle", "arc", "spline", "point", "polygon", "slot", "ellipse", "text", "trim", "extend", "corner", "offset", "dim", "split", "dimh", "dimv", "dima", "dimhl", "dimvl", "dimal"];
+
+/** The Smart Dimension cursor for a dimension kind being placed; plain "dim" for kinds without a direction. */
+export function dimCursorOf(t: string | null | undefined, locked: boolean): ToolCursor {
+  const k = t === "hdistance" ? "dimh" : t === "vdistance" ? "dimv" : t === "distance" ? "dima" : null;
+  return k ? (locked ? `${k}l` as DimCursor : k) : "dim";
+}
 
 /** The cursor for a sketch tool name (`SkTool`); null for Select and tools without one. */
 export function toolCursorOf(tool: string): ToolCursor | null {
@@ -85,7 +93,7 @@ export function toolCursorOf(tool: string): ToolCursor | null {
 /** A pencil whose tip is the hot spot (2, 26). */
 const PENCIL = `<path d="M2 26 L4 20 L16 8 L20 12 L8 24 Z" fill="#ffd43b" stroke="#000" stroke-width="1" stroke-linejoin="round"/><path d="M2 26 L4 20 L8 24 Z" fill="#f1e3c8" stroke="#000" stroke-width="1" stroke-linejoin="round"/><path d="M2 26 L3 23 L5 25 Z" fill="#000"/>`;
 const STROKE = `fill="none" stroke="#1d4ed8" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"`;
-const SHAPES: Record<Exclude<ToolCursor, "text" | "trim" | "extend" | "dim">, string> = {
+const SHAPES: Record<Exclude<ToolCursor, "text" | "trim" | "extend" | "dim" | DimCursor>, string> = {
   line: `<path d="M17 11 L27 2" ${STROKE}/>`,
   rect: `<rect x="18" y="2" width="9" height="7" ${STROKE}/>`,
   circle: `<circle cx="22.5" cy="6" r="4.5" ${STROKE}/>`,
@@ -107,8 +115,17 @@ const OTHER: Record<"text" | "trim" | "extend" | "dim", string> = {
   dim: `${CROSS}<path d="M13 20 V26 M27 20 V26 M13 23 H27 M13 23 L15.5 21.5 M13 23 L15.5 24.5 M27 23 L24.5 21.5 M27 23 L24.5 24.5" fill="none" stroke="#1d4ed8" stroke-width="1.4" stroke-linecap="round"/>`,
 };
 
+const DIM_ICON = {
+  h: `<path d="M13 20 V26 M27 20 V26 M13 23 H27 M13 23 L15.5 21.5 M13 23 L15.5 24.5 M27 23 L24.5 21.5 M27 23 L24.5 24.5" fill="none" stroke="#1d4ed8" stroke-width="1.4" stroke-linecap="round"/>`,
+  v: `<path d="M14 13 H20 M14 27 H20 M17 13 V27 M17 13 L15.5 15.5 M17 13 L18.5 15.5 M17 27 L15.5 24.5 M17 27 L18.5 24.5" fill="none" stroke="#1d4ed8" stroke-width="1.4" stroke-linecap="round"/>`,
+  a: `<path d="M13 26 L26 14 M13 26 L16.4 25.4 M13 26 L13.6 22.6 M26 14 L22.6 14.6 M26 14 L25.4 17.4 M11 23 L14.5 26.5 M24 11 L27.5 14.5" fill="none" stroke="#1d4ed8" stroke-width="1.4" stroke-linecap="round"/>`,
+};
+const LOCK = `<path d="M21.5 6 V4.2 a2.3 2.3 0 0 1 4.6 0 V6" fill="none" stroke="#000" stroke-width="1.3"/><rect x="20" y="6" width="7.6" height="5.6" rx="1" fill="#f08c00" stroke="#000" stroke-width="0.8"/>`;
+const dimSvg = (k: DimCursor) => CROSS + DIM_ICON[k[3] as "h" | "v" | "a"] + (k.length > 4 ? LOCK : "");
+
 /** The SVG (28 × 28) of a tool cursor and its hot spot. */
 export function toolSvg(kind: ToolCursor): { svg: string; x: number; y: number } {
+  if (kind.startsWith("dim") && kind !== "dim") return { svg: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28">${dimSvg(kind as DimCursor)}</svg>`, x: 8, y: 8 };
   const body = kind in SHAPES ? PENCIL + SHAPES[kind as keyof typeof SHAPES] : OTHER[kind as keyof typeof OTHER];
   const hot = kind in SHAPES ? [2, 26] : [8, 8];
   return { svg: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28">${body}</svg>`, x: hot[0], y: hot[1] };

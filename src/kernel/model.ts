@@ -6666,7 +6666,8 @@ export class Modeller {
       const hit = this.cache[i];
       const keep = i < frozen && hit && hit.status.id === f.id && next.length === i;
       const prior = chain;
-      chain = keep ? hit.key : `${chain}|${JSON.stringify(f)}`;
+      // A feature comment (gap list M5) changes nothing built.
+      chain = keep ? hit.key : `${chain}|${JSON.stringify(f, (k, v) => (k === "comment" ? undefined : v))}`;
       if (hit && (hit.key === chain || (hit.alt !== undefined && hit.alt === chain))) {
         // The document may already hold the references as they resolved (`alt`): the same result, the same chain on.
         chain = hit.key;

@@ -1,7 +1,7 @@
 // Hover cursor glyphs (FR-SEL-012): which glyph a snap or sketch hit gets, and the cursor values.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { HOVER_KINDS, hoverCursor, hoverKindOfSketch, hoverKindOfSnap, hoverSvg } from "../../src/hoverCursor";
+import { HOVER_KINDS, TOOL_CURSORS, dimCursorOf, hoverCursor, hoverKindOfSketch, hoverKindOfSnap, hoverSvg, toolSvg } from "../../src/hoverCursor";
 
 test("snap kinds map to face, edge, vertex or point", () => {
   assert.equal(hoverKindOfSnap("onFace"), "face");
@@ -33,4 +33,16 @@ test("every kind has its own SVG cursor with the hot spot at the arrow tip", () 
     assert.equal(decodeURIComponent(c.slice(c.indexOf(",") + 1, c.indexOf('")'))), svg);
   }
   assert.equal(seen.size, HOVER_KINDS.length);
+});
+
+test("Smart Dimension cursors follow the dimension kind and the type lock (gap list S9)", () => {
+  assert.equal(dimCursorOf("hdistance", false), "dimh");
+  assert.equal(dimCursorOf("vdistance", true), "dimvl");
+  assert.equal(dimCursorOf("distance", false), "dima");
+  assert.equal(dimCursorOf("radius", true), "dim");
+  assert.equal(dimCursorOf(undefined, false), "dim");
+  // Horizontal looks like the plain tool's icon; the others all differ.
+  assert.equal(toolSvg("dimh").svg.includes("M13 23 H27"), true);
+  const svgs = new Set(TOOL_CURSORS.filter(k => k !== "dimh").map(k => toolSvg(k).svg));
+  assert.equal(svgs.size, TOOL_CURSORS.length - 1);
 });
