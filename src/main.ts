@@ -26,6 +26,7 @@ import { quadrants, virtualCorners, Snapper, SNAP_FILTERS, SEL_FILTER, type Snap
 import { Annotations } from "./tools/Annotations";
 import { VaultPanel, type VaultTie } from "./pdm/panel";
 import { VaultMenu } from "./pdm/menu";
+import { VaultExplorer } from "./pdm/explorer";
 import { useMemoryFolders } from "./pdm/folders";
 import {
   CIRCLE_MODES, describeEntity, entityFromSnap, formatMeasurement, makeNote, measure, measureBBox, MeasureError, smartBody, smartMeasure, TOOL_INFO, tx,
@@ -2312,6 +2313,20 @@ const vaultPanel = new VaultPanel($("#vault-panel"), {
   },
   recent: (name, data, ref) => void recentAdd([{ name, data }], ref),
   added: (id: string): Promise<void> => drawingsIntoVault(id).catch(e => toast(t("Could not save: {err}", { err: t((e as Error).message) }), true)),
+  // The explorer's preview: a small picture of the 3D view (not of a drawing over it).
+  thumb: async () => {
+    if (drawing.open || !viewer.parts.length || !$("#empty").hidden) return null;
+    const src = viewer.renderer.domElement;
+    viewer.render();
+    if (!src.width || !src.height) return null;
+    const W = 360, H = 270, k = Math.min(W / src.width, H / src.height);
+    const c = document.createElement("canvas");
+    c.width = W; c.height = H;
+    const w = src.width * k, h = src.height * k;
+    c.getContext("2d")!.drawImage(src, (W - w) / 2, (H - h) / 2, w, h);
+    const blob = await new Promise<Blob | null>(res => c.toBlob(res, "image/png"));
+    return blob ? new Uint8Array(await blob.arrayBuffer()) : null;
+  },
   doc: () => {
     const k = fileMenuLive();
     if (k === "drawing") return { name: drawing.title, kind: "drawing", tie: drawing.vault, bytes: async () => (await drawing.packed())?.data ?? null, setVault: v => drawing.setVault(v), markSaved: () => drawing.markSaved() };
@@ -2324,7 +2339,9 @@ const vaultPanel = new VaultPanel($("#vault-panel"), {
  * Shows the vault's file list: the Vault tab of the side panel, or, when that panel is not on screen (a
  * drawing, a PCB, a phone, the panel folded away), the same list in a window.
  */
-function showVault() {
+function showVault(force = false) {
+  // The Vault explorer on screen shows the vault already; a command that needs the panel moves it aside.
+  if (vaultExplorer.open) { if (!force && vaultPanel.vault) return; vaultExplorer.hide(); }
   const panel = $("#vault-panel"), home = $("#tab-vault");
   const win = document.getElementById("vault-win") as HTMLDialogElement | null;
   if (win?.open) return;
@@ -2367,7 +2384,7 @@ function showPropsWindow() {
   d.querySelector(".props-win-b")!.appendChild(props);
   d.showModal();
 }
-const vaultMenu = new VaultMenu({ panel: vaultPanel, showPanel: showVault });
+const vaultMenu = new VaultMenu({ panel: vaultPanel, showPanel: showVault, showExplorer: () => vaultExplorer.show() });
 /** The Vault button says which vault is open. */
 function syncVaultButton() {
   const b = $("#vault-btn"), v = vaultPanel.vault;
@@ -2376,6 +2393,23 @@ function syncVaultButton() {
   b.setAttribute("aria-label", b.title);
 }
 vaultPanel.onChange = syncVaultButton;
+// The Vault explorer (FR-PDM-080): the vault as a file manager in a tab of its own at the bottom.
+const vaultExplorer = new VaultExplorer({
+  panel: vaultPanel,
+  shown: () => docs?.render(),
+  vaultMenu: btn => vaultMenu.toggle(btn),
+});
+$("#app").appendChild(vaultExplorer.el);
+if (docs) docs.extra = {
+  label: () => (vaultPanel.vault ? t("Vault {name}", { name: vaultPanel.vault.info.name }) : t("Vault explorer")),
+  present: () => vaultExplorer.tabbed,
+  on: () => vaultExplorer.open,
+  show: () => vaultExplorer.show(),
+  hide: () => vaultExplorer.hide(),
+  close: () => vaultExplorer.close(),
+};
+vaultPanel.onExplorer = () => vaultExplorer.show();
+vaultPanel.listeners.add(() => { if (vaultExplorer.tabbed) docs?.render(); });
 onLangChange(syncVaultButton);
 $("#vault-btn").addEventListener("click", e => vaultMenu.toggle(e.currentTarget as HTMLElement));
 

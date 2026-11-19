@@ -7,8 +7,11 @@ import type { VaultPanel } from "./panel";
 
 export interface VaultMenuHost {
   panel: VaultPanel;
-  /** Shows the vault's file list (the Vault tab, or a window when the side panel is not on screen). */
-  showPanel(): void;
+  /** Shows the vault's file list (the Vault tab, or a window when the side panel is not on screen); `force`: also
+   * when the Vault explorer is on screen (it steps aside). */
+  showPanel(force?: boolean): void;
+  /** Shows the Vault explorer (its own tab). */
+  showExplorer(): void;
 }
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -67,6 +70,7 @@ export class VaultMenu {
         { id: "import", label: t("Import vault ZIP…"), title: t("A vault backup (Export ZIP) becomes a vault in this browser") },
         "-",
         { id: "panel", label: t("Vault panel") },
+        { id: "explorer", label: t("Vault explorer"), title: t("The vault as a file manager in a tab of its own: folders, columns, preview, history") },
       ];
     }
     const doc = p.docName, st = p.openFileState;
@@ -87,7 +91,8 @@ export class VaultMenu {
       { id: "add", label: t("Add files…") },
       { id: "addfolder", label: t("Add files in this folder…"), title: t("Files already in the vault folder go in where they are, subfolders and all") },
       { id: "search", label: t("Search the vault…") },
-      { id: "panel", label: t("Vault files") },
+      { id: "explorer", label: t("Vault explorer"), title: t("The vault as a file manager in a tab of its own: folders, columns, preview, history") },
+      { id: "panel", label: t("Vault files"), title: t("The quick list in the side panel") },
       { id: "settings", label: t("Vault settings") },
       "-",
       ...(others.length ? [{ head: t("Switch to") }, ...others, "-" as const] : []),
@@ -141,16 +146,17 @@ export class VaultMenu {
     if (id.startsWith("ws:")) { await p.openInBrowser(id.slice(3)); if (p.vault) this.host.showPanel(); return; }
     switch (id) {
       case "new-dir": case "open-dir": await p.pickFolder(id === "new-dir"); if (p.vault) this.host.showPanel(); break;
-      case "new-ws": this.host.showPanel(); await p.render(); p.focusName(); break;
-      case "import": this.host.showPanel(); await p.render(); p.pickZip(); break;
-      case "panel": this.host.showPanel(); break;
+      case "new-ws": this.host.showPanel(true); await p.render(); p.focusName(); break;
+      case "import": this.host.showPanel(true); await p.render(); p.pickZip(); break;
+      case "panel": this.host.showPanel(true); break;
+      case "explorer": this.host.showExplorer(); break;
       case "save": await p.saveOpenDoc(); break;
       case "co": if (open) await p.checkOut(open); break;
       case "ci": if (open) await p.checkIn(open); break;
       case "undo": if (open) await p.undoCheckOut(open); break;
       case "latest": if (open) await p.getLatest(open); break;
       case "hist": if (open) await p.history(open); break;
-      case "add": this.host.showPanel(); await p.render(); p.pickFiles(); break;
+      case "add": this.host.showPanel(true); await p.render(); p.pickFiles(); break;
       case "addfolder": this.host.showPanel(); await p.addFolderFiles(); break;
       case "search": await p.searchDlg(); this.host.showPanel(); break;
       case "settings": await p.settingsDlg(); break;
