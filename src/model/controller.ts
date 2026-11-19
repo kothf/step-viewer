@@ -2889,6 +2889,9 @@ export class ModelController {
     if (k === "c" && e.shiftKey && m.kind === "none") { stop(); this.collapseAll(); return; }
     const feat = this.selected ? this.store.feature(this.selected) : undefined;
     if ((k === "delete" || k === "backspace") && feat && inTree) { stop(); void this.deleteFeature(feat.id); }
+    // Delete on a body or folder row does what its menu's Delete does (it did nothing).
+    else if ((k === "delete" || k === "backspace") && inTree && m.kind === "none" && this.selected?.startsWith("body:")) { stop(); this.deleteBody(this.selected.slice(5)); }
+    else if ((k === "delete" || k === "backspace") && inTree && m.kind === "none" && this.selected?.startsWith("folder:") && this.selected !== "folder:bodies" && this.selected !== "folder:cutlist") { stop(); this.deleteFolder(this.selected.slice(7)); }
     else if (k === "f2" && feat) { stop(); this.startRename(feat.id); }
   }
 

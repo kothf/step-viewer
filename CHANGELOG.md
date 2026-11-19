@@ -12,7 +12,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Drawings: a **surface finish symbol goes on a dimension** too (on its extension or dimension line, or with a leader to it).
 - Drawings: deleting a dimension or frame also deletes the datum and surface finish symbols on it.
 - Assemblies: **components, patterns, exploded views and assembly features can be renamed** (Rename in their menu, or F2 on the selected row), not only mates, display states and configurations.
-- Parts: F2 renames a selected body row in the tree, as it does a feature or folder.
+- Parts: F2 renames a selected body row in the tree, as it does a feature or folder, and Delete deletes a selected body (Delete Body) or folder (keeping its features), as their menus do.
 
 ### Added
 - Drawings: **Ctrl+C / Ctrl+V copy an annotation**: select a note, a frame, a datum, a dimension or another annotation, press Ctrl+C, point where the copy goes and press Ctrl+V. A copy tied to model edges stays in its view; a free one may go on another sheet or drawing.
