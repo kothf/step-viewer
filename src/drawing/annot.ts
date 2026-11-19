@@ -578,6 +578,11 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
       const rr = rot * Math.PI / 180, up: P2 = [-Math.sin(rr), Math.cos(rr)];
       if (outside) out.push(thin(T, add2(T, u, totalW + 1)));
       box = writeText(add2(outside ? add2(T, u, totalW / 2 + 0.5) : T, up, 0.8), rot, "c");
+    } else if (outside && (a.lstyle === "straight" || a.bend != null)) {
+      // Straight leader (no shoulder) or a shoulder of a set length: the text stands beside its end, centred on it.
+      const L = a.lstyle === "straight" ? 0 : Math.max(0, a.bend!), end: P2 = [T[0] + sx * L, T[1]];
+      if (L > 0) out.push(thin(T, end));
+      box = writeText([end[0] + sx * 0.8, T[1] - h * 0.4], 0, sx > 0 ? "l" : "r");
     } else if (outside) {
       const end: P2 = [T[0] + sx * (totalW + 1), T[1]];
       out.push(thin(T, end));
@@ -896,8 +901,8 @@ export function cutAway(sheet: Sheet, v: DrawingView, topo: Topo): Topo {
 /** Annotations a tolerance frame can be attached under: a dimension, a hole callout or a note. */
 export type GtolHost = "dim" | "hole" | "note";
 export const isGtolHost = (a: Annot | undefined): a is DimAnnot | HoleAnnot | NoteAnnot => a?.t === "dim" || a?.t === "hole" || a?.t === "note";
-/** A host's text box and how frames line up under it: centred (dimension) or on the side its text starts (hole callout, note). */
-export type HostBox = { box: [number, number, number, number]; al: "c" | "l" | "r" };
+/** A host's text box and how frames line up under it: centred (dimension) or on the side its text starts (hole callout, note); `segs` = its lines (x0, y0, x1, y1), which frames keep clear of. */
+export type HostBox = { box: [number, number, number, number]; al: "c" | "l" | "r"; segs?: number[][] };
 
 /** Where a tolerance frame attached to a dimension, hole callout or note goes (its top-left corner, sheet mm): under the host's text box, centred or lined up with its text. */
 export const GTOL_UNDER = 1.2;
@@ -907,14 +912,58 @@ export function gtolUnder(a: GtolAnnot, box: [number, number, number, number], d
   return [x, box[1] - GTOL_UNDER - f[3]];
 }
 
-/** Draws the frames held under their hosts (several on one host stack downwards). */
+/** The straight pieces of a host's lines (thin lines and open polylines; arrowheads and text left out). */
+export function hostSegs(prims: Prim[]): number[][] {
+  const out: number[][] = [];
+  for (const p of prims) {
+    if (p.t === "l") for (let i = 0; i + 3 < p.p.length; i += 4) out.push(p.p.slice(i, i + 4));
+    else if (p.t === "p" && !p.fill) for (let i = 0; i + 3 < p.p.length; i += 2) out.push(p.p.slice(i, i + 4));
+  }
+  return out;
+}
+
+/**
+ * Moves a frame (its box `f`, sheet mm) off its host's lines: below a level line (a dimension line under the text),
+ * sideways off a leader leaving the text (a diameter's leader running down past the frame), by the smaller move.
+ * Returns the shift [dx, dy].
+ */
+export function clearOfLines(f: [number, number, number, number], segs: number[][], host: [number, number, number, number]): P2 {
+  const m = 0.8, b = [...f] as [number, number, number, number];
+  let dx = 0, dy = 0;
+  const near = (x: number, y: number) => x >= host[0] - 3 && x <= host[2] + 3 && y >= host[1] - 3 && y <= host[3] + 3;
+  for (let pass = 0; pass < 6; pass++) {
+    let moved = false;
+    for (const [x0, y0, x1, y1] of segs) {
+      // The part of the segment inside the frame's band of y (with a margin).
+      const ya = b[1] - m, yb = b[3] + m, ddy = y1 - y0, ddx = x1 - x0;
+      let t0 = 0, t1 = 1;
+      if (Math.abs(ddy) < 1e-9) { if (y0 < ya || y0 > yb) continue; }
+      else { const ta = (ya - y0) / ddy, tb = (yb - y0) / ddy; t0 = Math.max(0, Math.min(ta, tb)); t1 = Math.min(1, Math.max(ta, tb)); if (t0 > t1) continue; }
+      const xa = Math.min(x0 + ddx * t0, x0 + ddx * t1), xb = Math.max(x0 + ddx * t0, x0 + ddx * t1);
+      if (xb < b[0] - m || xa > b[2] + m) continue;
+      let sx = 0, sy = 0;
+      if (Math.abs(ddy) <= 0.2 * Math.abs(ddx)) sy = Math.min(y0, y1) - m - b[3];
+      else if (near(x0, y0) || near(x1, y1)) { const r = xb + m - b[0], l = xa - m - b[2]; sx = Math.abs(r) <= Math.abs(l) ? r : l; }
+      else continue;
+      b[0] += sx; b[2] += sx; b[1] += sy; b[3] += sy; dx += sx; dy += sy; moved = true;
+    }
+    if (!moved) break;
+  }
+  return [dx, dy];
+}
+
+/** Draws the frames held under their hosts (several on one host stack downwards), clear of the host's lines. */
 function heldFrames(held: GtolAnnot[], hosts: Map<string, HostBox>, dec: string, out: AnnotOut) {
   for (const a of held) {
     const h = hosts.get(a.dim!);
     if (!h) continue;
-    const r = gtolPrims(a, gtolUnder(a, h.box, dec, h.al), null, dec);
+    let at = gtolUnder(a, h.box, dec, h.al), r = gtolPrims(a, at, null, dec);
+    if (h.segs?.length) {
+      const [sx, sy] = clearOfLines(r.box, h.segs, h.box);
+      if (sx || sy) { at = [at[0] + sx, at[1] + sy]; r = gtolPrims(a, at, null, dec); }
+    }
     out.prims.push(...r.prims); out.hits.push({ id: a.id, box: r.box });
-    hosts.set(a.dim!, { al: h.al, box: [Math.min(h.box[0], r.box[0]), r.box[1], Math.max(h.box[2], r.box[2]), h.box[3]] });
+    hosts.set(a.dim!, { ...h, box: [Math.min(h.box[0], r.box[0]), r.box[1], Math.max(h.box[2], r.box[2]), h.box[3]] });
   }
 }
 
@@ -947,15 +996,15 @@ export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: Ann
       const g = dimGeo(it ? { ...a, refs: [{ pt: it.p[0] }, { pt: it.p[1] }] } : a, P, ctx.topo);
       if (g) r = dimPrims(a, g, pl, ctx.dec);
       else { const T = toSheet(pl, a.pos[0], a.pos[1]); r = { prims: [{ t: "t", x: T[0], y: T[1], s: "?", h: TEXT_H, al: "c", layer: "ANNOT" }], box: textBox(T[0], T[1], "?", TEXT_H, "c") }; out.dangling.push(a.id); }
-      hosts.set(a.id, { box: r.box, al: "c" });
+      hosts.set(a.id, { box: r.box, al: "c", segs: hostSegs(r.prims) });
     } else if (a.t === "hole") {
       const e = refEdge(a.ref, ctx.topo);
-      if (e && e.t === "c") { const hp = holePrims(a, e, P, pl, ctx, refLine(a.ref, P, ctx.topo)); r = hp; hosts.set(a.id, { box: hp.box, al: hp.al }); }
+      if (e && e.t === "c") { const hp = holePrims(a, e, P, pl, ctx, refLine(a.ref, P, ctx.topo)); r = hp; hosts.set(a.id, { box: hp.box, al: hp.al, segs: hostSegs(hp.prims) }); }
       else { const T = toSheet(pl, a.pos[0], a.pos[1]); r = { prims: [{ t: "t", x: T[0], y: T[1], s: "?", h: TEXT_H, al: "c", layer: "ANNOT" }], box: textBox(T[0], T[1], "?", TEXT_H, "c") }; out.dangling.push(a.id); hosts.set(a.id, { box: r.box, al: "c" }); }
     } else if (a.t === "note") {
       const pt = a.leader ? leaderEnd(a.leader, P, ctx.topo) : null;
       r = notePrims(a, toSheet(pl, a.pos[0], a.pos[1]), pt ? toSheet(pl, ...pt) : null);
-      hosts.set(a.id, { box: r.box, al: a.al === "r" ? "r" : a.al === "c" ? "c" : "l" });
+      hosts.set(a.id, { box: r.box, al: a.al === "r" ? "r" : a.al === "c" ? "c" : "l", segs: hostSegs(r.prims) });
     } else if (a.t === "weld") {
       const f = a.leader ? edgeFoot(a.leader, ctx.topo, P, pl, toSheet(pl, a.pos[0], a.pos[1])) : null;
       r = weldPrims(a, toSheet(pl, a.pos[0], a.pos[1]), f?.at ?? null);

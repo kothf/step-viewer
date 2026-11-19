@@ -6519,12 +6519,30 @@ try {
     // 1.446.0 text along the leader (the Ø16 is still selected): the text turns to the leader's angle and back.
     {
       const rot = () => dp.evaluate(() => { const q = window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "ANNOT" && p.s === "Ø16").pop(); return q ? q.rot ?? 0 : null; });
-      const r0 = await rot(), has = !!(await dp.$('#drw .drw-props [data-d="ralong"]'));
-      if (has) await dp.check('#drw .drw-props [data-d="ralong"]');
+      const r0 = await rot(), has = !!(await dp.$('#drw .drw-props [data-d="lstyle"]'));
+      if (has) await dp.selectOption('#drw .drw-props [data-d="lstyle"]', "along");
       const r1 = await rot(), st = (await annots()).some(a => a.k === "dia" && a.along === true);
-      if (has) await dp.uncheck('#drw .drw-props [data-d="ralong"]');
+      if (has) await dp.selectOption('#drw .drw-props [data-d="lstyle"]', "");
       const r2 = await rot(), off = !(await annots()).some(a => a.along);
       check(has && st && off && r0 === 0 && r2 === 0 && r1 !== null && Math.abs(r1) > 1, `drawing: a diameter's text lies along its leader and goes back (${JSON.stringify({ has, st, off, r0, r1, r2 })})`);
+    }
+    // 1.600.0 leader options (the Ø16 is still selected): a shoulder of a set length with the text beside its end,
+    // a straight leader with no shoulder, then back to the automatic shoulder under the text.
+    {
+      const geo = () => dp.evaluate(() => {
+        const q = window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "ANNOT" && p.s === "Ø16").pop();
+        const lv = window.__sv.drw.prims().filter(p => p.t === "l" && p.layer === "ANNOT" && Math.abs(p.p[1] - p.p[3]) < 1e-6 && q && Math.abs(p.p[1] - (q.y - 0.8)) < 2.5).map(p => +Math.abs(p.p[2] - p.p[0]).toFixed(2));
+        return { y: q ? +q.y.toFixed(2) : null, lv };
+      });
+      const has = !!(await dp.$('#drw .drw-props [data-d="bend"]'));
+      const g0 = await geo();
+      if (has) { await dp.fill('#drw .drw-props [data-d="bend"]', "12"); await dp.press('#drw .drw-props [data-d="bend"]', "Enter"); await dp.waitForTimeout(200); }
+      const g1 = await geo(), b1 = (await annots()).find(a => a.k === "dia" && a.bend != null)?.bend;
+      if (has) await dp.selectOption('#drw .drw-props [data-d="lstyle"]', "straight");
+      const g2 = await geo(), st = (await annots()).find(a => a.k === "dia" && a.lstyle === "straight");
+      if (has) await dp.selectOption('#drw .drw-props [data-d="lstyle"]', "");
+      const g3 = await geo(), off = !(await annots()).some(a => a.lstyle || a.bend != null);
+      check(has && b1 === 12 && g1.lv.includes(12) && !!st && !g2.lv.length && off && g3.y === g0.y, `drawing: a diameter's leader takes a set shoulder length, a straight leader, and goes back (${JSON.stringify({ has, g0, g1, b1, g2, st: !!st, g3 })})`);
     }
     // A diameter displayed as a linear dimension (the Ø16 is still selected), then back.
     {
@@ -7069,13 +7087,19 @@ try {
       { const [x, y] = await mid(dm.id); await dp.mouse.move(x + 1, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); }
       await annotDlgOk(dp);
       const ga = (await annots()).find(a => a.t === "gtol" && a.dim === dm.id);
-      const under = async () => { const d = await hit(dm.id), g = await hit(ga.id); return d && g ? { dx: +((d[0] + d[2]) / 2 - (g[0] + g[2]) / 2).toFixed(2), gap: +(d[1] - g[3]).toFixed(2), y: +d[1].toFixed(1) } : null; };
+      // Centred under the text, unless moved aside off the dimension's own lines (1.600.0): then no line crosses it.
+      const crossings = id => dp.evaluate(fid => {
+        const f = window.__sv.drw.hit(fid), m = 0.3, out = (x, y) => x < f[0] - 0.5 || x > f[2] + 0.5 || y < f[1] - 0.5 || y > f[3] + 0.5;
+        return window.__sv.drw.prims().filter(p => p.t === "l" && p.layer === "ANNOT" && (out(p.p[0], p.p[1]) || out(p.p[2], p.p[3])))
+          .filter(p => { for (let k = 0; k <= 20; k++) { const x = p.p[0] + (p.p[2] - p.p[0]) * k / 20, y = p.p[1] + (p.p[3] - p.p[1]) * k / 20; if (x > f[0] + m && x < f[2] - m && y > f[1] + m && y < f[3] - m) return true; } return false; }).length;
+      }, id);
+      const under = async () => { const d = await hit(dm.id), g = await hit(ga.id); return d && g ? { dx: +((d[0] + d[2]) / 2 - (g[0] + g[2]) / 2).toFixed(2), gap: +(d[1] - g[3]).toFixed(2), y: +d[1].toFixed(1), cross: await crossings(ga.id) } : null; };
       const u0 = ga && await under();
       await dragBy(dm.id, 30, -25);
       const u1 = ga && await under();
       if (ga) await dragBy(ga.id, -20, -10);
       const u2 = ga && await under(), pos2 = (await annots()).find(a => a.id === dm.id).pos;
-      const okU = u => u && Math.abs(u.dx) < 0.6 && u.gap > 0.5 && u.gap < 3;
+      const okU = u => u && (Math.abs(u.dx) < 0.6 || u.cross === 0 && Math.abs(u.dx) < 20) && u.gap > 0.5 && u.gap < 3;
       check(!!ga && ga.view === front.id && !ga.leader && okU(u0) && okU(u1) && okU(u2) && u1.y > u0.y + 2 && u2.y > u1.y + 1 && pos2[0] !== dm.pos[0],
         `drawing: a tolerance frame attached to a dimension sits under its text and moves with it (${JSON.stringify({ ga: !!ga, u0, u1, u2 })})`);
       if (ga) {

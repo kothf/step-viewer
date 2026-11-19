@@ -9,6 +9,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Fixed
 - Drawings: a **geometric tolerance frame attaches under a hole callout or a note**, not only under a dimension. Click the callout or note with the Geometric tolerance tool, or drag a free frame onto it: the frame sits under the text, lined up with its start, and moves with it. A frame left free under "5× Ø5 THRU" no longer happens; the panel says what the frame is attached to and Detach frees it. Deleting the callout or note takes its frames along.
+- Drawings: an attached frame **keeps clear of its host's lines**: it moves aside off a diameter's or radius's leader running down past it, and below a dimension line under the text, instead of being cut by them.
+
+### Added
+- Drawings: **leader options for radius and diameter dimensions** (Leader in the dimension panel, like in other CAD apps): Bent, on a level shoulder whose **Shoulder length** you can type (Auto = as long as the text, as before; with a length the text stands beside the shoulder's end), Straight with no shoulder, or Text along the leader.
 
 ## [1.599.0] - 2026-11-19
 

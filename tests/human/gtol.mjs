@@ -113,4 +113,34 @@ const gn = free && (await annots()).find(a => a.id === free.id);
 const un = gn?.dim && await under(no.id, gn.id);
 const img3 = await snap(pg, "frame-on-note");
 check("G4", !!no && gn?.dim === no.id && un && un.gap > 0.5 && un.gap < 3, "a free frame dragged onto a note attaches under it", { note: !!no, dim: gn?.dim, un }, img3);
+// A diameter on the hole (Andrey's photo: the leader ran through the frame): Dimension on the rim, text up and right,
+// then a frame clicked onto it. The frame keeps off the leader.
+await pg.keyboard.press("Escape");
+await pg.click('#drw [data-ctab="annot"]');
+await pg.click('#drw .drw-cmds [data-a="dim"]');
+await clickAt(pg, await sp(pl.x - r * Math.SQRT1_2, pl.y + r * Math.SQRT1_2));
+await pg.waitForTimeout(250);
+await clickAt(pg, await sp(pl.x - r - 6, pl.y + r + 12));
+await pg.waitForTimeout(400);
+await pg.keyboard.press("Escape");
+await pg.waitForTimeout(400);
+const dd = (await annots()).find(a => a.t === "dim" && (a.k === "dia" || a.k === "rad"));
+if (dd) {
+  await pg.waitForTimeout(600);
+  await tool("gtol");
+  await clickAt(pg, await centre(dd.id));
+  await okDlg();
+}
+const gd = dd && (await annots()).find(a => a.t === "gtol" && a.dim === dd.id);
+const crossing = gd && await pg.evaluate(([fid]) => {
+  const f = window.__sv.drw.hit(fid), m = 0.3;
+  // Every thin line on the sheet that is not part of the frame: does one pass through the frame's box?
+  const segs = window.__sv.drw.prims().filter(p => p.t === "l" && p.layer === "ANNOT").map(p => p.p);
+  const inside = (x, y) => x > f[0] + m && x < f[2] - m && y > f[1] + m && y < f[3] - m;
+  const out = (x, y) => x < f[0] - 0.5 || x > f[2] + 0.5 || y < f[1] - 0.5 || y > f[3] + 0.5;
+  const bad = segs.filter(p => (out(p[0], p[1]) || out(p[2], p[3]))).filter(p => { for (let k = 0; k <= 20; k++) { const x = p[0] + (p[2] - p[0]) * k / 20, y = p[1] + (p[3] - p[1]) * k / 20; if (inside(x, y)) return true; } return false; });
+  return bad.length ? JSON.stringify({ f, bad, d: window.__sv.drw.hit(window.__sv.drw.doc().sheets[0].annots.find(a => a.id === fid).dim) }) : 0;
+}, [gd.id]);
+const img5 = await snap(pg, "frame-off-leader");
+check("G5", !!gd && crossing === 0, "a frame attached to a diameter keeps off its leader", { dim: dd?.k, frame: !!gd, crossing }, img5);
 await finish(browser, pg);

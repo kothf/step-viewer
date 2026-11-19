@@ -478,6 +478,16 @@ test("GD&T, datums, surface finish, tables, GOST title block, dangling annotatio
   const vn = { ...sh, annots: [{ id: "n2", t: "note" as const, view: "v", pos: [40, 100] as [number, number], text: "X", al: "r" as const }, gt("g4", "n2", "v")] };
   const vh = new Map(viewAnnots(vn, vn.views[0], pl, { topo: { edges: [], cyls: [] }, holes: [], items: [], box: null, dec: ".", label: k => k }).hits.map(h => [h.id, h.box]));
   assert.ok(Math.abs(vh.get("g4")![2] - vh.get("n2")![2]) < 1e-9 && vh.get("g4")![3] < vh.get("n2")![1], "right-justified note: frame lined up on the right");
+  // A frame under a diameter whose leader leaves the shoulder's left end downwards is moved right, off the leader;
+  // one over a level dimension line goes below it; a line away from the text is left alone.
+  const { clearOfLines } = await import("../../src/drawing/annot");
+  const text: [number, number, number, number] = [100, 100, 110, 104], frame: [number, number, number, number] = [96, 92, 116, 98.8];
+  const [sx, sy] = clearOfLines(frame, [[100, 100, 80, 70]], text);
+  const xAt = (y: number) => 100 + (y - 100) * (20 / 30);
+  assert.ok(sy === 0 && frame[0] + sx > xAt(98.8 + 0.8) && sx < 6, `off the leader: ${sx}, ${sy}`);
+  const [, dy] = clearOfLines(frame, [[90, 97, 120, 97]], text);
+  assert.ok(dy < -1.5, `below the dimension line: ${dy}`);
+  assert.deepEqual(clearOfLines(frame, [[60, 95, 60, 0]], text), [0, 0]);
 });
 
 test("assembly BOM: items in first-use order, pattern and sub-assembly instances counted; balloons numbered", async () => {

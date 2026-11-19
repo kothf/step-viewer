@@ -157,6 +157,10 @@ export interface DimAnnot {
   outside?: boolean;
   /** Radius and diameter dimensions: the text lies along the leader (ISO aligned), not on a level shoulder. */
   along?: boolean;
+  /** Radius and diameter dimensions with the text outside the circle: "straight" = the leader runs to the text with no shoulder (text beside its end). */
+  lstyle?: "straight";
+  /** Radius and diameter dimensions, bent leader: the shoulder's length in sheet mm, the text beside its end (absent = the shoulder runs under the text). */
+  bend?: number;
 }
 
 /** A note: on the sheet (sheet mm) or on a view (its model axes, so it moves with the view), with an optional leader to the model. */
