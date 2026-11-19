@@ -3118,6 +3118,8 @@ export class AsmController {
       if (k === "z" && !e.shiftKey) { e.preventDefault(); this.undo(); }
       else if (k === "y" || (k === "z" && e.shiftKey)) { e.preventDefault(); this.redo(); }
       else if (k === "s") { e.preventDefault(); void this.save(e.shiftKey); }
+      // Copy/paste of components only when no other pane (the motion timeline's keys, a menu) took the keys.
+      else if ((k === "c" || k === "v") && (e.defaultPrevented || tg.closest("#motion, .mc-menu"))) return;
       else if (k === "c" && !e.shiftKey && !this.picking && !window.getSelection()?.toString()) { if (this.copyComponents()) e.preventDefault(); }
       else if (k === "v" && !e.shiftKey && !this.picking && compClip) { e.preventDefault(); this.pasteComponents(); }
     });
