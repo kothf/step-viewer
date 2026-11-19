@@ -5,6 +5,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.602.0] - 2026-11-19
+
+### Fixed
+- Drawings: **sheets can be renamed** (Name in the sheet's properties, F2 on the sheet, or Rename in its menu); the sheet tab follows. Before, a sheet kept its "Sheet n" name.
+- Drawings: **F2 renames** the selected view or sheet.
+
+### Added
+- Drawings: **right-click menus** on the sheet and in the drawing tree: a view has Rename and Delete view, an annotation Edit annotation, Copy and Delete, the empty sheet Paste, Rename, Add sheet and Zoom to fit. A right drag still pans.
+
 ## [1.601.0] - 2026-11-19
 
 ### Fixed
@@ -3860,7 +3869,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.601.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.602.0...HEAD
+[1.602.0]: https://github.com/kothf/step-viewer/compare/v1.601.0...v1.602.0
 [1.601.0]: https://github.com/kothf/step-viewer/compare/v1.600.0...v1.601.0
 [1.600.0]: https://github.com/kothf/step-viewer/compare/v1.599.0...v1.600.0
 [1.599.0]: https://github.com/kothf/step-viewer/compare/v1.598.0...v1.599.0

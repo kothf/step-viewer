@@ -2541,6 +2541,8 @@ export const RU: Record<string, string> = {
   "Dimension property": "Свойство размера",
   "Move annotation": "Перемещение обозначения",
   "Delete annotation": "Удаление обозначения",
+  "Edit annotation": "Изменить обозначение",
+  "Rename sheet": "Переименование листа",
   "Paste annotation": "Вставка обозначения",
   "Copied {n} components. Ctrl+V adds them again.": "Скопировано компонентов: {n}. Ctrl+V добавит их ещё раз.",
   "Copied {n} sketch entities. Ctrl+V pastes them at the pointer.": "Скопировано элементов эскиза: {n}. Ctrl+V вставит их у указателя.",

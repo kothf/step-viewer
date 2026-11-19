@@ -324,7 +324,7 @@ export class DrawingWorkspace {
   private painter: Annot | null = null;
   private adrag: { id: string; start: Pt; orig: Pt; s: number; moved: boolean } | null = null;
   private drag: { id: string; start: [number, number]; orig: Map<string, [number, number]>; moved: boolean } | null = null;
-  private pan: { x: number; y: number; vb: { x: number; y: number; w: number; h: number } } | null = null;
+  private pan: { x: number; y: number; vb: { x: number; y: number; w: number; h: number }; b?: number } | null = null;
   private loading = 0;
   private stale = false;
   private updateTimer = 0;
@@ -655,7 +655,15 @@ export class DrawingWorkspace {
       this.el.addEventListener("click", e => this.onClick(e));
       this.el.addEventListener("change", e => this.onInput(e as Event, true));
       this.el.addEventListener("input", e => this.onInput(e as Event, false));
-      document.addEventListener("pointerdown", e => { if (!(e.target as HTMLElement).closest?.(".drw-dd")) this.closeMenus(); });
+      document.addEventListener("pointerdown", e => { if (!(e.target as HTMLElement).closest?.(".drw-dd, .drw-ctx")) this.closeMenus(); });
+      // Right-click on a tree row: the row is selected, then its menu opens.
+      this.el.addEventListener("contextmenu", e => {
+        const r = (e.target as HTMLElement).closest?.<HTMLElement>(".drw-tree .drw-ti[data-sel], .drw-tree .drw-ti[data-sela]");
+        if (!r) return;
+        e.preventDefault();
+        r.click();
+        this.sheetMenu(e, null);
+      });
       // Menus are fixed to the window (placeMenu), so they close when their button moves away under them.
       window.addEventListener("resize", () => this.closeMenus());
       this.el.addEventListener("scroll", e => { if ((e.target as HTMLElement).classList?.contains("drw-cmds")) this.closeMenus(); }, true);
@@ -1103,7 +1111,7 @@ export class DrawingWorkspace {
   }
 
   private startPan(e: PointerEvent) {
-    this.pan = { x: e.clientX, y: e.clientY, vb: { ...this.vb } };
+    this.pan = { x: e.clientX, y: e.clientY, vb: { ...this.vb }, b: e.button };
     this.svg.setPointerCapture(e.pointerId);
     this.svg.classList.add("panning");
   }
@@ -1208,7 +1216,13 @@ export class DrawingWorkspace {
   }
 
   private onUp(e: PointerEvent) {
-    if (this.pan) { this.pan = null; this.svg.classList.remove("panning"); try { this.svg.releasePointerCapture(e.pointerId); } catch { /* gone */ } return; }
+    if (this.pan) {
+      const pan = this.pan;
+      this.pan = null; this.svg.classList.remove("panning"); try { this.svg.releasePointerCapture(e.pointerId); } catch { /* gone */ }
+      // A right click without a drag opens the menu of what is under the pointer, as in a CAD app's drawing.
+      if (pan.b === 2 && Math.hypot(e.clientX - pan.x, e.clientY - pan.y) < 4 && this.mode.kind === "none" && !this.painter && !this.aligner) this.sheetMenu(e, this.sheetPt(e));
+      return;
+    }
     if (this.adrag) {
       const d = this.adrag;
       this.adrag = null;
@@ -2052,6 +2066,56 @@ export class DrawingWorkspace {
     if (isNew) { this.addAnnot(r, "Weld symbol"); return; }
     this.selA = a.id;
     this.setAnnot("Weld symbol", x => { if (x.t !== "weld") return; for (const k of ["arrow", "other", "around", "field", "tail"] as const) { if (r[k] === undefined) delete x[k]; else (x as unknown as Record<string, unknown>)[k] = r[k]; } });
+  }
+
+  /** F2: the name box of the selected view, else of the sheet. */
+  private renameSel() {
+    if (this.selA) return;
+    this.renderProps();
+    const f = this.el.querySelector<HTMLInputElement>(this.sel ? '.drw-props input[data-v="name"]' : '.drw-props input[data-s="name"]');
+    f?.focus(); f?.select();
+  }
+
+  /** Edits the selected annotation: its dialog, else the first box of its panel. */
+  private editSelA() {
+    if (!this.selA || this.editAnnotDlg(this.selA)) return;
+    const f = this.el.querySelector<HTMLElement>(".drw-props textarea, .drw-props input:not([type=checkbox]):not([type=radio]), .drw-props select");
+    f?.focus(); (f as HTMLInputElement | null)?.select?.();
+  }
+
+  /** The right-click menu: of the annotation or view under the pointer (selected first), else of the sheet; `p` null =
+   *  the tree's selection. */
+  private sheetMenu(e: MouseEvent, p: Pt | null) {
+    this.closeMenus();
+    if (p) {
+      const aid = this.annotAt(p), vid = aid ? null : this.viewAt(p);
+      if (aid !== this.selA || vid !== this.sel) { this.selA = aid; this.sel = vid; this.renderTree(); this.renderProps(); this.renderOverlay(); }
+      this.lastPt = p;
+    }
+    const items: [string, () => void][] = [];
+    if (this.selA) {
+      const a = this.annot(this.selA);
+      items.push([t("Edit annotation"), () => this.editSelA()]);
+      if (a && "pos" in a && a.pos) items.push([t("Copy"), () => this.copyAnnot()]);
+      items.push([t("Delete"), () => this.deleteAnnot()]);
+    } else if (this.sel) {
+      items.push([t("Rename"), () => this.renameSel()]);
+      items.push([t("Delete view"), () => void this.deleteSel()]);
+    } else {
+      if (clipAnnot) items.push([t("Paste"), () => this.pasteAnnot()]);
+      items.push([t("Rename"), () => this.renameSel()]);
+      items.push([t("Add sheet"), () => this.el.querySelector<HTMLElement>('.drw-addsheet[data-a="addsheet"]')?.click()]);
+      items.push([t("Zoom to fit"), () => this.fit()]);
+    }
+    let m = this.el.querySelector<HTMLElement>(".drw-ctx");
+    if (!m) { m = document.createElement("div"); m.className = "drw-menu drw-ctx"; m.setAttribute("role", "menu"); this.el.append(m); }
+    m.innerHTML = items.map(([l], i) => `<button role="menuitem" data-ctx="${i}">${esc(l)}</button>`).join("");
+    m.querySelectorAll<HTMLButtonElement>("[data-ctx]").forEach(b => b.addEventListener("click", () => { this.closeMenus(); items[+b.dataset.ctx!][1](); }));
+    m.hidden = false;
+    m.style.position = "fixed";
+    m.style.left = `${Math.max(8, Math.min(e.clientX, innerWidth - m.offsetWidth - 8))}px`;
+    m.style.top = `${Math.max(8, Math.min(e.clientY, innerHeight - m.offsetHeight - 8))}px`;
+    m.querySelector<HTMLElement>("button")?.focus();
   }
 
   /** Opens the dialog of an annotation that has one. */
@@ -3616,6 +3680,7 @@ export class DrawingWorkspace {
     const f = this.fields();
     host.innerHTML = `
       <fieldset class="pm-group"><legend>${esc(t("Sheet"))}</legend>
+        <label class="drw-f">${esc(t("Name"))}<input data-s="name" value="${esc(sheetName(sh))}" translate="no"></label>
         <label class="drw-f">${esc(t("Size"))}<select data-s="size">${SIZE_LIST.map(s => `<option value="${s}"${sh.size === s ? " selected" : ""}>${s}</option>`).join("")}</select></label>
         <div class="seg drw-seg" role="radiogroup" aria-label="${esc(t("Orientation"))}">
           <button role="radio" data-orientation="land" aria-checked="${!sh.portrait}" class="${sh.portrait ? "" : "on"}">${esc(t("Landscape"))}</button><button role="radio" data-orientation="port" aria-checked="${!!sh.portrait}" class="${sh.portrait ? "on" : ""}">${esc(t("Portrait"))}</button>
@@ -3915,6 +3980,7 @@ export class DrawingWorkspace {
     if (el.dataset.d) { this.onAnnotInput(el); return; }
     const vk = el.dataset.v, sk = el.dataset.s;
     if (vk === "name") this.setView("Rename view", v => { v.name = val.trim() || v.name; });
+    else if (sk === "name") { if (val.trim() && val.trim() !== sheetName(this.sheet)) this.setSheet("Rename sheet", s => { s.name = val.trim(); }); }
     else if (vk === "cfg") this.setView("View configuration", v => { if (val) v.config = val; else delete v.config; if (val === FLAT_CONFIG) { v.orient = "top"; delete v.dir; } });
     else if (vk === "only") this.setView("View components", v => { if (val) v.only = [val]; else delete v.only; });
     else if (vk === "orient") {
@@ -4023,6 +4089,7 @@ export class DrawingWorkspace {
     else if (k === "enter" && this.mode.kind !== "none" && (tgt as Element) === this.svg) this.cancelMode();
     else if ((k === "delete" || k === "backspace") && this.selA && ((tgt as Element) === this.svg || tgt.closest(".drw-tree"))) this.deleteAnnot();
     else if ((k === "delete" || k === "backspace") && this.sel && ((tgt as Element) === this.svg || tgt.closest(".drw-tree"))) void this.deleteSel();
+    else if (k === "f2" && ((tgt as Element) === this.svg || tgt.closest(".drw-tree"))) this.renameSel();
     else if (k === "d" && tgt.closest(".drw")) this.startAnnot("dim");
     else if (k === "f" && tgt.closest(".drw")) this.fit();
     else used = false;
