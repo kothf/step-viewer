@@ -6462,7 +6462,7 @@ export class ModelController {
     this.syncFlyTree();
     this.syncSketchSection();
     if (m.kind !== "sketch") {
-      $("#mc-status").textContent = m.kind === "plane" ? t(m.edit?.pickX ? "Click a straight edge for the sketch X axis." : m.edit ? "Pick the new plane or flat face for the sketch." : "Pick a plane or a flat face for the sketch.")
+      $("#mc-status").textContent = m.kind === "plane" ? t(m.edit?.pickX ? "Click a straight edge for the sketch X axis." : m.edit ? "Pick the new plane or flat face for the sketch." : this.afterSketch ? "Pick a plane or a flat face for the sketch, or a sketch in the tree." : "Pick a plane or a flat face for the sketch.")
         : m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer") ? t("Click edges, or a face for all its edges; click again to remove.")
         : m.kind === "feature" ? t("Set the values in the panel; the view shows the result.") : "";
     }
@@ -7276,6 +7276,8 @@ export class ModelController {
         }
         if ((e.target as HTMLElement).matches("input")) return;
         const mm = this.mode;
+        // Extrude/Cut/Revolve waiting on a sketch: a sketch picked in the tree is its profile (contours of a used sketch too).
+        if (mm.kind === "plane" && !mm.edit && this.afterSketch && this.store!.feature(id)?.type === "sketch") { const then = this.afterSketch; this.exitMode(false); this.selected = id; this.startFeature(then); return; }
         if (mm.kind === "plane" && id.startsWith("std:")) { this.planePicked({ std: id.slice(4) as "XY" }); return; }
         if (mm.kind === "plane" && this.store!.feature(id)?.type === "plane") { this.planePicked({ plane: id }); return; }
         // Planes picked from the tree while a command needs one.

@@ -11423,7 +11423,11 @@ try {
       `model 1.428: Planar Surface on a sketch with a line across picks a region with Selected Contours (FR-FT-010) (${JSON.stringify({ ps0, ps1 })})`);
     // 1.463: a cut's picked regions are drawn in the cut preview's yellow, a boss's in orange.
     const fills = () => mp.evaluate(() => { const c = []; window.__sv.viewer.scene.traverse(o => { if (o.userData.contour !== undefined && o.visible) c.push({ hex: o.material.color.getHex(), cut: o.userData.contourCut }); }); return c; });
+    // Every sketch is used: Extrude asks for a plane, and the used sketch picked in the tree is taken for its contours.
     await mp.evaluate(() => window.__sv.modeller.startFeature("extrude"));
+    await mp.waitForTimeout(150);
+    const asked = await mp.evaluate(() => window.__sv.model.mode().kind);
+    await mp.dispatchEvent('#mc-tree .ft-row[data-id="s"]', "click");
     await settle();
     await mp.mouse.click(left.x, left.y);
     await settle();
@@ -11432,8 +11436,8 @@ try {
     await settle();
     const cutFills = await fills();
     const cutPv = await mp.evaluate(() => { let n = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData.cutPreview) n++; }); return n; });
-    check(boss.length === 1 && boss[0].hex === 0xf08c00 && !boss[0].cut && cutFills.length === 1 && cutFills[0].hex === 0xffd43b && cutFills[0].cut === true,
-      `model 1.463: picked contours are orange for a boss and the cut preview's yellow for a cut (${JSON.stringify({ boss, cutFills, cutPv })})`);
+    check(asked === "plane" && boss.length === 1 && boss[0].hex === 0xf08c00 && !boss[0].cut && cutFills.length === 1 && cutFills[0].hex === 0xffd43b && cutFills[0].cut === true,
+      `model 1.463: picked contours are orange for a boss and the cut preview's yellow for a cut; a used sketch is picked from the tree (${JSON.stringify({ asked, boss, cutFills, cutPv })})`);
     await ctx.close();
   }
 
@@ -13186,7 +13190,26 @@ try {
     await settle();
     const tip = await cp.getAttribute('#mc-quick [data-c="undo"]', "title");
     check((await nf()) === 2 && /Extrude1/.test(tip), `commands: the Undo button names the step it undoes (${tip})`);
-    // Enter with no command running repeats the last one.
+    // Undo ▾ lists the steps newest first; picking the second undoes both.
+    await cp.click('#mc-quick [data-fly="undo"]');
+    const list = await cp.evaluate(() => [...document.querySelectorAll("#mc-menu:not([hidden]) button")].map(b => b.textContent.trim()));
+    await cp.locator("#mc-menu button").nth(1).click();
+    await settle();
+    const undone = await nf();
+    await cp.keyboard.press("Control+y"); await cp.keyboard.press("Control+y");
+    await settle();
+    check(list.length === 2 && /Extrude1/.test(list[0]) && undone === 0 && (await nf()) === 2, `commands: the Undo list names the steps and undoes back to the one picked ([${list.join(", ")}] → ${undone} features)`);
+    // Enter with no command running repeats the last one. With every sketch used, Extrude sketches first: it asks for a plane.
+    await cp.evaluate(() => document.activeElement?.blur());
+    await cp.keyboard.press("Enter");
+    await cp.waitForTimeout(200);
+    const repNoSketch = await mode();
+    await cp.keyboard.press("Escape");
+    await cp.waitForTimeout(150);
+    const afterPlane = await mode();
+    check(repNoSketch === "plane" && afterPlane === "none" && (await nf()) === 2, `commands: Extrude with every sketch used asks for a sketch plane, Esc leaves it (${repNoSketch}, ${afterPlane})`);
+    await rect("s1b", -20, -40, 20, -25);
+    await settle();
     await cp.evaluate(() => document.activeElement?.blur());
     await cp.keyboard.press("Enter");
     await cp.waitForTimeout(200);
@@ -13199,19 +13222,12 @@ try {
     await cp.locator("#mc-menu button", { hasText: "Cancel" }).click();
     await cp.waitForTimeout(150);
     const afterCancel = await mode();
-    check(rep === "feature:extrude" && menu[0]?.includes("OK") && menu[1]?.includes("Cancel") && afterCancel === "none" && (await nf()) === 2,
+    check(rep === "feature:extrude" && menu[0]?.includes("OK") && menu[1]?.includes("Cancel") && afterCancel === "none" && (await nf()) === 3,
       `commands: Enter repeats Extrude, a right-click offers OK / Cancel and Cancel closes it (${rep}, [${menu.join(", ")}], ${afterCancel})`);
-    // Undo ▾ lists the steps newest first; picking the second undoes both.
-    await cp.click('#mc-quick [data-fly="undo"]');
-    const list = await cp.evaluate(() => [...document.querySelectorAll("#mc-menu:not([hidden]) button")].map(b => b.textContent.trim()));
-    await cp.locator("#mc-menu button").nth(1).click();
-    await settle();
-    const undone = await nf();
-    await cp.keyboard.press("Control+y"); await cp.keyboard.press("Control+y");
-    await settle();
-    check(list.length === 2 && /Extrude1/.test(list[0]) && undone === 0 && (await nf()) === 2, `commands: the Undo list names the steps and undoes back to the one picked ([${list.join(", ")}] → ${undone} features)`);
     // Pushpin: OK makes the feature and opens the same command again.
+    // Two unused sketches, so the command opened again has one to take.
     await rect("s2", 30, -10, 50, 10);
+    await rect("s2b", 60, -10, 80, 10);
     await settle();
     await cp.click('[data-c="extrude"]');
     await cp.waitForFunction(() => window.__sv.model.mode().kind === "feature");
@@ -13222,7 +13238,7 @@ try {
     const pinned = { n: await nf(), mode: await mode(), store: await cp.evaluate(() => localStorage.getItem("mc:pin")), on: await cp.evaluate(() => document.querySelector('#mc-pm [data-k="pin"]')?.getAttribute("aria-pressed")) };
     await cp.click('#mc-pm [data-k="pin"]');
     await cp.keyboard.press("Escape");
-    check(pinned.n === 4 && pinned.mode === "feature:extrude" && pinned.store === "1" && pinned.on === "true", `commands: with the pushpin on, OK keeps the Extrude panel open for the next one (${JSON.stringify(pinned)})`);
+    check(pinned.n === 6 && pinned.mode === "feature:extrude" && pinned.store === "1" && pinned.on === "true", `commands: with the pushpin on, OK keeps the Extrude panel open for the next one (${JSON.stringify(pinned)})`);
     // Remembered options (FR-UI-043): an extrude made Mid plane makes the next one start as Mid plane.
     await rect("s3", -20, 30, 20, 50);
     await settle();

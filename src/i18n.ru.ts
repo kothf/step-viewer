@@ -883,6 +883,7 @@ export const RU: Record<string, string> = {
   "There is no body to cut yet.": "Тела для выреза пока нет.",
   "The cut does not touch the body.": "Вырез не задевает тело.",
   "The cut removes the whole body.": "Вырез удаляет всё тело.",
+  "Pick a plane or a flat face for the sketch, or a sketch in the tree.": "Выберите плоскость или плоскую грань для эскиза или эскиз в дереве.",
   "Sketch the profile; the command goes on when you close the sketch.": "Нарисуйте профиль; команда продолжится после закрытия эскиза.",
   "The new material could not be joined to the body.": "Новый материал не удалось объединить с телом.",
   "The cut failed.": "Вырез не удался.",
