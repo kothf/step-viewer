@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.600.0] - 2026-11-19
+
+### Fixed
+- Drawings: a **geometric tolerance frame attaches under a hole callout or a note**, not only under a dimension. Click the callout or note with the Geometric tolerance tool, or drag a free frame onto it: the frame sits under the text, lined up with its start, and moves with it. A frame left free under "5× Ø5 THRU" no longer happens; the panel says what the frame is attached to and Detach frees it. Deleting the callout or note takes its frames along.
+
 ## [1.599.0] - 2026-11-19
 
 ### Added
@@ -3837,7 +3842,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.599.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.600.0...HEAD
+[1.600.0]: https://github.com/kothf/step-viewer/compare/v1.599.0...v1.600.0
 [1.599.0]: https://github.com/kothf/step-viewer/compare/v1.598.0...v1.599.0
 [1.598.0]: https://github.com/kothf/step-viewer/compare/v1.597.0...v1.598.0
 [1.597.0]: https://github.com/kothf/step-viewer/compare/v1.596.0...v1.597.0

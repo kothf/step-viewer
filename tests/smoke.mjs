@@ -6817,6 +6817,33 @@ try {
     check(hu != null && kinds === "datum,datum,hole,gtol,surf,note" && !!da?.ref?.s && !!db && !!ho?.ref?.s && res.dangle === 0 && touches(u0) && touches(u1) && touches(hu)
       && res.prims.some(p => p.t === "t" && /Ø10/.test(p.s)),
       `drawing: on a round part's side view datums, hole callouts, tolerances, surface finish and notes pick its outlines, face lines and hidden lines and land on them (${JSON.stringify({ kinds, hu, a: da?.ref, ho: ho?.ref, dangle: res.dangle, u0: touches(u0), u1: touches(u1), h: hu != null && touches(hu) })})`);
+    // A tolerance frame attaches under a hole callout and under a note like under a dimension (Andrey, 2026-11-19: it
+    // stayed free under "5× Ø5 THRU"): a click on the callout's text places it there, lined up with the text, and it
+    // follows a drag of the callout; a free frame dropped on the note attaches to it.
+    if (ho) {
+      const hit = id => dp.evaluate(i => window.__sv.drw.hit(i), id);
+      const mid = async id => { const b = await hit(id); return dp.evaluate(([x, y]) => window.__sv.drw.sheetPt(x, y), [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2]); };
+      const dragTo = async (id, tx, ty) => { const [x, y] = await mid(id); await dp.mouse.move(x, y); await dp.mouse.down(); await dp.mouse.move((x + tx) / 2, (y + ty) / 2); await dp.mouse.move(tx, ty); await dp.mouse.up(); await dp.waitForTimeout(150); };
+      const under = async (h, g) => { const a = await hit(h), b = await hit(g); return a && b ? { l: +(b[0] - a[0]).toFixed(2), r: +(a[2] - b[2]).toFixed(2), gap: +(a[1] - b[3]).toFixed(2), y: +a[1].toFixed(1) } : null; };
+      await dp.waitForTimeout(600);
+      await tool("gtol");
+      { const [x, y] = await mid(ho.id); await dp.mouse.move(x + 1, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); }
+      await annotDlgOk(dp);
+      const gh = (await annots()).find(a => a.t === "gtol" && a.dim === ho.id);
+      const lined = u => u && (Math.abs(u.l) < 0.05 || Math.abs(u.r) < 0.05) && u.gap > 0.5 && u.gap < 3;
+      const h0 = gh && await under(ho.id, gh.id);
+      { const [x, y] = await mid(ho.id); if (gh) await dragTo(ho.id, x + 40, y - 30); }
+      const h1 = gh && await under(ho.id, gh.id);
+      // A free frame (placed on empty paper) dropped on the note's text.
+      const no = (await annots()).find(a => a.t === "note");
+      await dp.waitForTimeout(600);
+      await tool("gtol"); await click(u1 + 60, v0 - 40); await annotDlgOk(dp);
+      const gf = (await annots()).filter(a => a.t === "gtol" && !a.dim && !a.leader).at(-1);
+      if (gf && no) { await dp.waitForTimeout(600); const [nx, ny] = await mid(no.id); await dragTo(gf.id, nx, ny); }
+      const gn = gf && (await annots()).find(a => a.id === gf.id), n0 = gn?.dim && await under(no.id, gn.id);
+      check(!!gh && !gh.leader && lined(h0) && lined(h1) && h1.y > h0.y + 2 && gn?.dim === no?.id && lined(n0),
+        `drawing: a tolerance frame attaches under a hole callout and a note, lined up with the text, and moves with them (${JSON.stringify({ gh: !!gh, h0, h1, gn: gn?.dim, n0 })})`);
+    }
     await ctx.close();
   }
 
