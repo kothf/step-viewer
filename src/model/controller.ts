@@ -5,6 +5,7 @@
 // The document (DocStore) is the source of truth; every rebuild sends it to the
 // kernel worker and shows the returned body with the viewer's own pipeline, so
 // the measuring tools work on modelled parts unchanged.
+import { showSelStatus } from "../selStatus";
 import type { ExportMesh } from "../kernel/occ";
 import { fixRefsIn } from "./refFix";
 import { fullyDefineSketch } from "../sketch/define";
@@ -754,6 +755,9 @@ export class ModelController {
     if (csys.active?.src) this.host.setCsys?.(null, true);
     this.store = null;
     this.selected = null;
+    this.multi = null;
+    document.getElementById("mc-sellist")?.remove();
+    if (this.multiStatus) { this.multiStatus = false; showSelStatus([], []); }
     // Hide the part bar and the empty-part card, or they show through in the assembly after New assembly.
     $("#mc-bar").hidden = true;
     $("#mc-confirm").hidden = true;
@@ -1037,7 +1041,13 @@ export class ModelController {
     if (cp && "ctx" in cp) { void this.createSketch(cp); return; }
     const fid = this.pickedFace();
     const pr = fid != null ? this.planeOfFace(fid) : null;
-    if (pr) { void this.createSketch(pr); return; }
+    if (pr) {
+      // Project the face's edges (gap list S12, Settings ▸ Sketch): taken now, while the face numbers are these.
+      const data = this.host.viewer.parts[0]?.data;
+      const project = getPref("projectFace") && data ? data.edges.filter(x => x.faces.includes(fid!)).map(ed => ({ ed, ref: this.refOfEdge(ed) })) : undefined;
+      void this.createSketch(pr, project);
+      return;
+    }
     const sel = this.selected && this.selected.startsWith("std:") ? this.selected.slice(4) as "XY" | "XZ" | "YZ" : null;
     if (sel) { void this.createSketch({ std: sel }); return; }
     const pl = this.selected ? this.store.feature(this.selected) : undefined;
@@ -1055,7 +1065,7 @@ export class ModelController {
     return { face: { name, hint: face.centroid }, ax: 1 };
   }
 
-  private async createSketch(plane: PlaneRef) {
+  private async createSketch(plane: PlaneRef, project?: { ed: EdgeInfo; ref: EdgeRef | null }[]) {
     const id = uid("f_");
     const before = JSON.stringify(this.doc);
     const mark = this.store!.mark();
@@ -1065,10 +1075,10 @@ export class ModelController {
       d.features.splice(at, 0, { id, type: "sketch", name: nextName(d, "sketch"), plane, ents: [], rels: [], dims: [] });
       if (d.rollback != null) d.rollback++;
     });
-    await this.editSketch(id, before, true, mark);
+    await this.editSketch(id, before, true, mark, project);
   }
 
-  async editSketch(id: string, entry = JSON.stringify(this.doc), isNew = false, mark = this.store?.mark() ?? 0) {
+  async editSketch(id: string, entry = JSON.stringify(this.doc), isNew = false, mark = this.store?.mark() ?? 0, project?: { ed: EdgeInfo; ref: EdgeRef | null }[]) {
     const sk = this.store?.feature(id);
     if (!sk || sk.type !== "sketch") return;
     if (!isNew && this.isFrozen(id)) { this.frozenToast(); return; }
@@ -1136,8 +1146,73 @@ export class ModelController {
     if (m.kind === "sketch" && m.id === id) {
       const f = this.frameOf(sk);
       m.editor.setSketch(this.store!.feature(id) as SketchFeature, f);
+      if (project?.length) m.editor.projectEdges(project);
       // Normal to the sketch, framing the model and the whole sketch, which may reach past the body (exam #96).
       if (getPref("rotateToSketch")) this.host.viewer.viewFrom(new THREE.Vector3(...f.n), true, m.editor.sketchBox());
+    }
+  }
+
+  /**
+   * Preselection (gap list M10): what was picked before a command fills it, for the commands the draft
+   * builders leave empty: faces → fillet/chamfer (all their edges), draft (faces to draft when several),
+   * offset surface, split, body commands (one face per body); a flat face → mirror plane; a straight edge or
+   * a flat/round face → pattern direction or axis.
+   */
+  private preselect(draft: Feature, sel: { edge: EdgeInfo | null; face: number | null; faces: number[]; edges: EdgeInfo[] }) {
+    const data = this.host.viewer.parts[0]?.data;
+    if (!data) return;
+    const faceIds = sel.faces.length ? sel.faces : sel.face != null && !sel.edges.length && !sel.edge ? [sel.face] : [];
+    const refs = (ids: number[]) => ids.map(i => this.faceRef(i)).filter((r): r is FaceRef => !!r);
+    const lineOf = (): LineRef | null => {
+      const ed = sel.edge ?? (sel.edges.length === 1 ? sel.edges[0] : null);
+      if (ed && (ed.type === "line" || ed.type === "circle" || ed.type === "arc")) { const r = this.refOfEdge(ed); if (r) return { edge: r }; }
+      const fi = faceIds.length === 1 ? faceIds[0] : null, f = fi != null ? data.faces[fi] : undefined;
+      if (fi != null && f && (f.type === "plane" || f.type === "cylinder")) { const r = this.faceRef(fi); if (r) return { face: r }; }
+      return null;
+    };
+    switch (draft.type) {
+      case "fillet": case "chamfer": {
+        if (draft.edges.length || !faceIds.length || ("mode" in draft && draft.mode === "vertex")) return;
+        const seen = new Set<number>();
+        for (const fi of faceIds) for (const ei of data.faces[fi]?.edges ?? []) {
+          if (seen.has(ei)) continue;
+          seen.add(ei);
+          const ed = data.edges[ei], r = ed ? this.refOfEdge(ed) : null;
+          if (r) draft.edges.push(r);
+        }
+        return;
+      }
+      case "draft": if (!draft.faces.length && sel.faces.length > 1) { draft.faces = refs(sel.faces); delete draft.plane; } return;
+      case "offsurf": if (sel.faces.length > 1) draft.faces = refs(sel.faces); return;
+      case "split": if (!draft.faces.length) draft.faces = refs(faceIds); return;
+      case "mirror": {
+        if (draft.plane || faceIds.length !== 1 || data.faces[faceIds[0]]?.type !== "plane") return;
+        const pr = this.planeOfFace(faceIds[0]);
+        if (pr) draft.plane = pr;
+        return;
+      }
+      case "lpattern": if (!draft.dir) { const l = lineOf(); if (l) draft.dir = l; } return;
+      case "cpattern": if (!draft.axis) { const l = lineOf(); if (l) draft.axis = l; } return;
+      case "delbody": case "movebody": case "scale": case "flex": case "intersect": case "bsplit": {
+        if (draft.bodies.length || !faceIds.length) return;
+        const keys = new Set<string>(), bodies = this.last?.bodies ?? [];
+        const keyOf = (fi: number) => { let at = 0; for (const b of bodies) { const n = b.faces ?? 0; if (fi >= at && fi < at + n) return b.key; at += n; } return String(fi); };
+        for (const fi of faceIds) {
+          const k = keyOf(fi);
+          if (keys.has(k)) continue;
+          keys.add(k);
+          const r = this.faceRef(fi);
+          if (r) draft.bodies.push(r);
+        }
+        return;
+      }
+      case "combine": case "indent": {
+        if (draft.main || !faceIds.length) return;
+        const [first, ...rest] = refs(faceIds);
+        if (first) { draft.main = first; draft.tools.push(...rest); }
+        return;
+      }
+      default: return;
     }
   }
 
@@ -1156,6 +1231,8 @@ export class ModelController {
     const multi = this.multi;
     const multiEdges = (type === "fillet" || type === "chamfer") && multi?.edges.length ? multi.edges.map(ed => this.refOfEdge(ed)).filter((r): r is EdgeRef => !!r) : null;
     const multiFaces = multi?.faces.length ? multi.faces.map(f => this.faceRef(f)).filter((r): r is FaceRef => !!r) : null;
+    // What was selected before the command, for the commands below that take it too (gap list M10).
+    const preSel = { edge: this.pickedEdge(), face: this.pickedFace(), faces: multi?.faces.slice() ?? [], edges: multi?.edges.slice() ?? [] };
     this.multi = null;
     const preFace = type === "plane" ? this.pickedFace() : null;
     // Axis and point take a picked edge or face too.
@@ -1330,6 +1407,7 @@ export class ModelController {
       if (multiEdges?.length) (draft as FilletFeature).edges = multiEdges;
       else if (pre) (draft as FilletFeature).edges = [pre];
     }
+    this.preselect(draft, preSel);
     this.recallOptions(type, draft);
     // The flat pattern stays last (a CAD app): new features go in before it.
     const index = d.features[end - 1]?.type === "smflat" ? end - 1 : end;
@@ -1339,7 +1417,7 @@ export class ModelController {
       : type === "spattern" ? ((draft as SketchPatternFeature).sketch || (draft as CopyFeature).features.length ? "seeds" : "psketch")
       : type === "tpattern" ? "seeds"
       : type === "csys" ? ((draft as CsysFeature).origin ? "cz" : "origin")
-      : type === "combine" || type === "indent" ? "main" : type === "bsplit" ? "mplane" : type === "delbody" || type === "movebody" || type === "scale" || type === "flex" || type === "intersect" ? "bodies"
+      : type === "combine" || type === "indent" ? ((draft as CombineFeature).main ? "bodies" : "main") : type === "bsplit" ? "mplane" : type === "delbody" || type === "movebody" || type === "scale" || type === "flex" || type === "intersect" ? "bodies"
       : WELD_TOOL_SET.has(type) ? weldFocus(draft) as Focus | undefined : undefined;
     this.mode = { kind: "feature", draft, index, isNew: true, focus: this.openFocus(draft, focus) };
     this.flowWas.set(this.mode, this.boxFlow(draft).filter(b => b.filled).map(b => b.focus).join(","));
@@ -3596,6 +3674,8 @@ export class ModelController {
 
   /** Ctrl+click selection (FR-SEL-007): faces and edges picked one by one with no command running. */
   private multi: { faces: number[]; edges: EdgeInfo[] } | null = null;
+  /** The status bar shows the Ctrl+click selection's sizes (gap list M3). */
+  private multiStatus = false;
   /** The Ctrl+click selection: how many faces and edges (tests). */
   get multiCount() { return { faces: this.multi?.faces.length ?? 0, edges: this.multi?.edges.length ?? 0 }; }
 
@@ -3607,6 +3687,7 @@ export class ModelController {
     if (!this.active || !this.store || !this.last || this.mode.kind !== "none") return false;
     const hit = this.host.edgeAt(e.clientX, e.clientY);
     if (!hit || (!hit.edge && hit.faceId == null)) return true;
+    this.pushFace = null;
     if (!this.multi) {
       const m = { faces: [] as number[], edges: [] as EdgeInfo[] };
       const se = this.host.selectedEdge?.() ?? null, sf = se ? null : this.host.selectedFace();
@@ -3699,6 +3780,7 @@ export class ModelController {
     const box: SelArea = "has" in where ? where : rectRegion(where);
     const v = this.host.viewer, part = v.parts[0];
     if (!part || this.mode.kind !== "none") return;
+    this.pushFace = null;
     const cr = v.renderer.domElement.getBoundingClientRect(), cam = v.camera, mw = part.mesh.matrixWorld;
     const data = part.data, geo = part.mesh.geometry as THREE.BufferGeometry, pos = geo.getAttribute("position"), idx = geo.getIndex();
     const triFace = new Int32Array(idx ? idx.count / 3 : pos.count / 3).fill(-1);
@@ -3775,10 +3857,62 @@ export class ModelController {
     if (st) st.textContent = total ? t("{n} selected: Ctrl+click adds or removes, Esc clears", { n: total }) : t("Nothing in the box");
   }
 
+  /**
+   * The selection list (gap list U2): one row per Ctrl+clicked face or edge with its kind and the feature that
+   * made it, × takes it out; Clear empties the selection. Shown in the view's lower left while there is one.
+   */
+  private renderSelList() {
+    const m = this.multi, data = this.host.viewer.parts[0]?.data;
+    let el = document.getElementById("mc-sellist");
+    if (!m || !data || !this.last) { el?.remove(); return; }
+    const owner = (fid: number) => {
+      const f = this.store?.feature(this.last!.faceNames[fid]?.split(":")[0] ?? "");
+      return f ? featureLabel(f.name) : "";
+    };
+    const faceKind = (fid: number) => { const ty = data.faces[fid]?.type; return ty === "plane" ? t("Planar face") : ty === "cylinder" ? t("Cylindrical face") : ty === "sphere" ? t("Spherical face") : t("Face"); };
+    const edgeKind = (e: EdgeInfo) => e.type === "line" ? t("Line edge") : e.type === "circle" ? t("Circular edge") : e.type === "arc" ? t("Arc edge") : t("Edge");
+    const row = (key: string, label: string, own: string) =>
+      `<li data-sel="${key}"><span class="sl-k">${esc(label)}</span>${own ? `<span class="sl-o" translate="no">${esc(own)}</span>` : ""}<button type="button" data-slx="${key}" aria-label="${esc(t("Remove from selection"))}" title="${esc(t("Remove from selection"))}">×</button></li>`;
+    const rows = [
+      ...m.faces.map(f => row(`f:${f}`, faceKind(f), owner(f))),
+      ...m.edges.map(e => row(`e:${e.id}`, edgeKind(e), owner(e.faces[0]))),
+    ];
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "mc-sellist";
+      el.className = "mc-sellist";
+      el.setAttribute("role", "region");
+      el.addEventListener("click", ev => {
+        const b = (ev.target as Element).closest<HTMLElement>("[data-slx],[data-slclear]");
+        const mm = this.multi;
+        if (!b || !mm) return;
+        if (b.dataset.slclear != null) this.multi = null;
+        else {
+          const [k, v] = b.dataset.slx!.split(":"), n = Number(v);
+          if (k === "f") mm.faces = mm.faces.filter(f => f !== n); else mm.edges = mm.edges.filter(e => e.id !== n);
+          if (!mm.faces.length && !mm.edges.length) this.multi = null;
+        }
+        this.drawDecor();
+        this.host.viewer.renderer.domElement.focus();
+      });
+      document.getElementById("viewport")?.appendChild(el);
+    }
+    el.setAttribute("aria-label", t("Selection"));
+    el.innerHTML = `<div class="sl-h"><b>${esc(t("Selection"))}</b> <span class="muted">${rows.length}</span><button type="button" data-slclear>${esc(t("Clear"))}</button></div><ul>${rows.join("")}</ul>`;
+  }
+
   /** The Ctrl+click selection in the view: edges as thick lines, faces as a see-through overlay. */
   private drawMulti() {
     const m = this.multi;
-    if (!m || this.mode.kind !== "none") return;
+    if (!m || this.mode.kind !== "none") {
+      if (this.multiStatus) { this.multiStatus = false; showSelStatus([], []); }
+      document.getElementById("mc-sellist")?.remove();
+      return;
+    }
+    const pd = this.host.viewer.parts[0]?.data;
+    showSelStatus(m.edges, pd ? m.faces.map(i => pd.faces[i]).filter(Boolean) : []);
+    this.multiStatus = true;
+    this.renderSelList();
     const col = 0x1c7ed6;
     if (m.edges.length) {
       const pos: number[] = [];
@@ -5586,6 +5720,8 @@ export class ModelController {
   private arrowHit(e: PointerEvent) {
     const ray = this.ray(e);
     for (const a of this.arrows) {
+      // Ctrl/Meta+click adds to the selection: the push arrow on a picked face must not take it.
+      if (a.key === "push" && this.mode.kind === "none" && (e.ctrlKey || e.metaKey)) continue;
       a.obj.updateMatrixWorld(true);
       if (ray.intersectObject(a.pick, false).length) { this.arrow = a; return true; }
     }
@@ -5612,7 +5748,7 @@ export class ModelController {
       if (this.arrowDrag?.key === "push" && v) this.showPushValue(v);
       return;
     }
-    if (m.kind !== "none" || this.pushFace == null || !this.last) return;
+    if (m.kind !== "none" || this.pushFace == null || !this.last || this.multi) return;
     const part = this.host.viewer.parts[0], face = part?.data.faces[this.pushFace];
     if (!part || face?.type !== "plane" || !face.normal || !this.last.faceNames[this.pushFace]) { this.pushFace = null; return; }
     const v = this.host.viewer;

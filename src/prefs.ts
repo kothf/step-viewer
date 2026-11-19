@@ -6,11 +6,13 @@ import { DEFAULT_SNAPS, SNAP_KINDS, parseSnaps } from "./sketch/snaps";
 export type PrefKey =
   | "rotateToSketch" | "quality" | "verify" | "autosave" | "lenStep" | "angStep" | "middle" | "wheel"
   | "autoRels" | "showRels" | "modelSnap" | "slotDims" | "addDims" | "grid" | "gridSnap" | "gridStep"
-  | "shade" | "snaps" | "importQuality";
+  | "shade" | "snaps" | "importQuality" | "projectFace";
 
 export interface Prefs {
   /** Turn the view normal to the sketch plane when a sketch opens. */
   rotateToSketch: boolean;
+  /** A new sketch on a model face starts with the face's edges as construction geometry tied to them. */
+  projectFace: boolean;
   /** Tessellation of the part on screen: coarse is faster, fine is smoother. */
   quality: "coarse" | "normal" | "fine";
   /** Check the body after each feature (BRepCheck), as a CAD app's verification on rebuild. */
@@ -49,7 +51,7 @@ export function snapsText(on: Iterable<string>) {
 }
 
 export const DEFAULT_PREFS: Prefs = {
-  rotateToSketch: true, quality: "normal", verify: false, autosave: 1, lenStep: 1, angStep: 5, middle: "pan", wheel: "normal",
+  rotateToSketch: true, projectFace: false, quality: "normal", verify: false, autosave: 1, lenStep: 1, angStep: 5, middle: "pan", wheel: "normal",
   autoRels: true, showRels: true, modelSnap: true,
   // Off: new curves stay under defined (blue) until the user dimensions them; Add dimensions turns it on.
   slotDims: false, addDims: false,
@@ -59,7 +61,7 @@ export const DEFAULT_PREFS: Prefs = {
 
 /** localStorage key of each preference. Booleans that default to on are stored "0" when off, the others "1" when on. */
 export const PREF_STORE: Record<PrefKey, string> = {
-  rotateToSketch: "mc:skRotate", quality: "mc:quality", verify: "mc:verify", autosave: "mc:autosave",
+  rotateToSketch: "mc:skRotate", projectFace: "mc:skProjectFace", quality: "mc:quality", verify: "mc:verify", autosave: "mc:autosave",
   lenStep: "mc:lenStep", angStep: "mc:angStep", middle: "mc:middle", wheel: "mc:wheel",
   autoRels: "mc:autoRels", showRels: "mc:skRels", modelSnap: "mc:modelSnap", slotDims: "mc:slotDims", addDims: "mc:skAutoDims",
   grid: "mc:skGrid", gridSnap: "mc:skGridSnap", gridStep: "mc:skGridStep",

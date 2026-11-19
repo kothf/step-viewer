@@ -107,7 +107,8 @@ export function openPrefs(host: PrefsHost, page?: SettingsPage | "modelling" | "
     modelling: group("Rebuild",
       chk("verify", "Verification on rebuild", "Checks the body after every feature and warns when it is not valid. Slower.")),
     sketch: group("When a sketch opens",
-      chk("rotateToSketch", "Rotate the view normal to the sketch plane"))
+      chk("rotateToSketch", "Rotate the view normal to the sketch plane")
+      + chk("projectFace", "Project the face's edges", "A new sketch on a model face starts with the face's outline as construction lines that follow the edges, to snap and dimension to."))
       + group("Display",
         chk("showRels", "Show relation glyphs", "Relation glyphs next to the entities; hover one to see what it ties, click to select it.")
         + chk("shade", "Shade closed regions", "Fill closed regions while sketching, so an outline that does not close shows at once."))

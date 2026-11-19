@@ -1,4 +1,5 @@
 import { onViewItems, setViewItem, viewItems, VIEW_ITEMS, type ViewItem } from "./viewItems";
+import { showSelStatus } from "./selStatus";
 import "./style.css";
 import { cacheClear, cacheGet, cacheKey, cacheSize, cacheStats } from "./buildCache";
 import { lassoMode, setLassoMode } from "./boxSelect";
@@ -1130,6 +1131,7 @@ function showModelled(parts: PartData[], tree: TreeNode, name: string, first: bo
     $("#back-pcb").hidden = true;
   } else {
     state.selection = null;
+    selStatusOf([]);
     state.picks = [];
     hl.pickMarks.clear();
     clearLive();
@@ -1170,6 +1172,7 @@ function resetForNewModel() {
   hl.com.visible = false;
   setCsys(null, false);
   state.selection = null;
+  selStatusOf([]);
   state.selectedNode = null;
   state.selectedParts = [];
   state.measurements = [];
@@ -1357,7 +1360,7 @@ function selectNode(n: TreeNode | null, fromViewport = false) {
   for (const p of viewer.parts) {
     p.material.emissive.setHex(state.selectedParts.includes(p) && n !== viewer.tree ? 0x0c1c3a : 0x000000);
   }
-  if (n && !fromViewport) { state.selection = null; showEntity(hl.selFace, hl.selEdge, null); }
+  if (n && !fromViewport) { state.selection = null; selStatusOf([]); showEntity(hl.selFace, hl.selEdge, null); }
   if (n) {
     // Reveal the node in the tree.
     let el = nodeEls.get(n)?.parentElement?.closest(".node");
@@ -1792,6 +1795,13 @@ function pickMark(p: THREE.Vector3) {
   hl.pickMarks.add(screenSized(m, 6, true));
 }
 
+/** The status bar's size summary of the Smart measure picks (gap list M3); points add nothing. */
+function selStatusOf(ents: Entity[]) {
+  const edges = ents.flatMap(e => e.kind === "edge" && e.edge ? [e.edge] : []);
+  const faces = ents.flatMap(e => e.kind === "face" && e.face ? [e.face] : []);
+  showSelStatus(edges, faces);
+}
+
 function handlePick(snap: Snap | null) {
   // Mass properties ▸ Pick axes: the click makes the output axes and selects nothing.
   if (mp.picking && snap) {
@@ -1804,6 +1814,7 @@ function handlePick(snap: Snap | null) {
     if (!snap) {
       state.selection = null;
       clearLive();
+      selStatusOf([]);
       showEntity(hl.selFace, hl.selEdge, null);
           selectNode(null);
       updateHint();
@@ -1817,6 +1828,7 @@ function handlePick(snap: Snap | null) {
       showLive([first, ent]);
       showEntity(hl.selFace, hl.selEdge, shown);
       pickMark(first.point);
+      selStatusOf([first, ent]);
       return;
     }
     hl.pickMarks.clear();
@@ -1828,6 +1840,7 @@ function handlePick(snap: Snap | null) {
     selectNode(node ?? null, true);
     if (!node) { state.selectedParts = [snap.part]; renderProps(); }
     showLive([ent]);
+    selStatusOf([ent]);
     return;
   }
   if (!snap) return;
@@ -1923,6 +1936,7 @@ function showBody(part: Part) {
   state.livePicks = [];
   state.livePair = true;
   state.selection = null;
+  selStatusOf([]);
   hl.pickMarks.clear();
   showEntity(hl.selFace, hl.selEdge, null);
   refreshMeasurements();
