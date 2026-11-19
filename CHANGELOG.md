@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.604.0] - 2026-11-19
+
+### Fixed
+- Sketches: **Convert Entities takes any model edge** that is not seen end-on. A spline, an ellipse or a circle on a sloping face becomes a fixed spline along its projection, and an arc or circle seen edge-on becomes a line, as in other CAD apps; each copy follows its edge when the model changes. Before, only straight edges and circles square to the sketch were converted and the rest were refused.
+- Vault: **Enter in the vault name box** makes the new browser vault, like its New vault button. Before, Enter did nothing.
+- Vault explorer: the **Part number** box on the data card has room for the number; its New number button is a small #+ button.
+
 ## [1.603.0] - 2026-11-19
 
 ### Fixed
@@ -3876,7 +3883,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.603.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.604.0...HEAD
+[1.604.0]: https://github.com/kothf/step-viewer/compare/v1.603.0...v1.604.0
 [1.603.0]: https://github.com/kothf/step-viewer/compare/v1.602.0...v1.603.0
 [1.602.0]: https://github.com/kothf/step-viewer/compare/v1.601.0...v1.602.0
 [1.601.0]: https://github.com/kothf/step-viewer/compare/v1.600.0...v1.601.0

@@ -2130,5 +2130,7 @@ export class VaultPanel {
     const q = h.querySelector<HTMLInputElement>("#v-q");
     q?.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); void this.find(q.value.trim() ? { text: q.value } : null, q.value.trim()); } });
     q?.addEventListener("search", () => { if (!q.value.trim()) void this.find(null, ""); });
+    // Enter in the vault name box makes the vault, like its New vault button.
+    h.querySelector<HTMLInputElement>("#v-name")?.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); h.querySelector<HTMLButtonElement>('[data-a="new-ws"]:not([disabled])')?.click(); } });
   }
 }

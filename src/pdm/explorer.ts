@@ -621,7 +621,7 @@ export class VaultExplorer {
     };
     const fields = v.cardFields(f.kind);
     const note = editable ? "" : `<div class="vx-dbar"><span class="muted">${esc(this.panel.canCheckOut(f.id) ? t("Check the file out to edit its data card.") : f.checkout ? t("Checked out by {user}.", { user: f.checkout.user }) : t("Read-only in this state"))}</span>${this.panel.canCheckOut(f.id) ? `<button class="btn small" data-x="co">${esc(t("Check out"))}</button>` : ""}</div>`;
-    return `${note}<form class="vx-card" data-card="${f.id}">${fields.map(fd => `<label><span>${esc(t(fd.name))}${fd.required ? " *" : ""}</span>${input(fd)}${fd.name === PART_NUMBER && editable ? `<button type="button" class="btn small" data-x="num">${esc(t("New number"))}</button>` : ""}</label>`).join("")}
+    return `${note}<form class="vx-card" data-card="${f.id}">${fields.map(fd => `<label><span>${esc(t(fd.name))}${fd.required ? " *" : ""}</span>${input(fd)}${fd.name === PART_NUMBER && editable ? `<button type="button" class="btn small vx-num" data-x="num" title="${esc(t("New number"))}" aria-label="${esc(t("New number"))}">#+</button>` : ""}</label>`).join("")}
       ${editable ? `<div class="vx-card-acts"><button type="button" class="btn small" data-x="cardreset">${esc(t("Revert"))}</button><button type="submit" class="btn small primary">${esc(t("Save"))}</button></div>` : ""}</form>`;
   }
 

@@ -409,9 +409,16 @@ export class Modeller {
     if (ty === oc.GeomAbs_CurveType.GeomAbs_Circle) {
       const c = ad.Circle();
       const closed = Math.abs(t1 - t0 - Math.PI * 2) < 1e-6 || d3(start, end) < 1e-7;
-      return { type: closed ? "circle" : "arc", start, end, mid, closed, center: this.xyz(c.Location()), axis: this.xyz(c.Axis().Direction()), radius: c.Radius() };
+      return { type: closed ? "circle" : "arc", start, end, mid, closed, center: this.xyz(c.Location()), axis: this.xyz(c.Axis().Direction()), radius: c.Radius(), pts: this.curvePts(ad, t0, t1) };
     }
-    return { type: "curve", start, end, mid, closed: d3(start, end) < 1e-7 };
+    return { type: "curve", start, end, mid, closed: d3(start, end) < 1e-7, pts: this.curvePts(ad, t0, t1) };
+  }
+
+  /** Points along an edge's curve (flat x, y, z), for sketch copies of curves other than lines and circles. */
+  private curvePts(ad: any, t0: number, t1: number): number[] {
+    const out: number[] = [];
+    for (let k = 0; k <= 64; k++) out.push(...this.xyz(ad.Value(t0 + (t1 - t0) * k / 64)));
+    return out;
   }
 
   /**
