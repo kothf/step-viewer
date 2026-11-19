@@ -2835,6 +2835,9 @@ export class ModelController {
     if (mod && k === "k" && !e.shiftKey && !e.altKey) { stop(); this.commandSearch(); return; }
     if (mod && k === "q") { stop(); this.forceRebuild(true); return; }
     // Copy and paste features (FR-HIS-014): Ctrl+C on a tree row, Ctrl+V with a plane or flat face selected.
+    // Ctrl+C / Ctrl+V of sketch entities, as in a CAD app's sketcher: the copy lands at the pointer.
+    if (mod && !e.shiftKey && !e.altKey && k === "c" && this.mode.kind === "sketch") { const n = this.mode.editor.copySelection(); if (n) { stop(); toast(t("Copied {n} sketch entities. Ctrl+V pastes them at the pointer.", { n })); } return; }
+    if (mod && !e.shiftKey && !e.altKey && k === "v" && this.mode.kind === "sketch" && this.mode.editor.canPaste) { stop(); this.mode.editor.paste(); this.renderPanel(); return; }
     if (mod && !e.shiftKey && !e.altKey && k === "c" && this.mode.kind === "none" && !window.getSelection()?.toString()) { if (this.copyFeature()) stop(); return; }
     if (mod && !e.shiftKey && !e.altKey && k === "v" && this.mode.kind === "none" && this.clip) { stop(); this.pasteFeature(); return; }
     // Ctrl+Enter: OK and the same command again in a feature; leaves a sketch (FR-UI-044, FR-UI-106).

@@ -1,0 +1,33 @@
+// Ctrl+C / Ctrl+V of sketch entities, by hand: a rectangle drawn, box-selected, copied, pasted at the pointer.
+import { open, snap, check, finish, idle, cmd, clickAt, screenOf } from "./lib.mjs";
+const { browser, pg } = await open("clip");
+await pg.click("#file-btn");
+await pg.click('#file-menu [data-f="new-part"]');
+await idle(pg);
+await cmd(pg, "Sketch");
+await pg.waitForTimeout(300);
+await pg.getByRole("button", { name: "Top (XY)" }).last().click();
+await pg.waitForTimeout(1200);
+await pg.click('#mc-tools [data-c="sk:rect"]');
+await clickAt(pg, await screenOf(pg, [-20, -10, 0]));
+await clickAt(pg, await screenOf(pg, [20, 10, 0]));
+await pg.keyboard.press("Escape");
+await pg.keyboard.press("Escape");
+await pg.waitForTimeout(300);
+const ents = () => pg.evaluate(() => { const sk = window.__sv.model.editor()?.sk; return sk ? { lines: sk.ents.filter(e => e.t === "line").length, rels: sk.rels.length, dims: sk.dims.length } : null; });
+// Box-select the whole rectangle from the upper left to the lower right.
+const a = await screenOf(pg, [-30, 20, 0]), b = await screenOf(pg, [30, -20, 0]);
+await pg.mouse.move(...a); await pg.mouse.down(); await pg.mouse.move((a[0] + b[0]) / 2, (a[1] + b[1]) / 2); await pg.mouse.move(...b); await pg.mouse.up();
+await pg.waitForTimeout(300);
+const e0 = await ents();
+await pg.keyboard.press("Control+c");
+await pg.waitForTimeout(200);
+const toastText = await pg.evaluate(() => document.getElementById("toasts")?.innerText ?? "");
+await pg.mouse.move(...(await screenOf(pg, [60, 40, 0])));
+await pg.waitForTimeout(150);
+await pg.keyboard.press("Control+v");
+await pg.waitForTimeout(600);
+const e1 = await ents();
+const img = await snap(pg, "pasted");
+check("C1", e0 && e1 && e1.lines === 2 * e0.lines && e1.rels >= 2 * e0.rels - 1, "a box-selected rectangle copied with Ctrl+C and pasted with Ctrl+V: a second rectangle with its relations", { e0, e1, toastText: toastText.slice(0, 80) }, img);
+await finish(browser, pg);
