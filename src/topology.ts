@@ -53,6 +53,8 @@ export interface EdgeInfo {
   exact?: boolean;
   /** The B-rep curve is an ellipse. */
   ellipse?: boolean;
+  /** The faces meet smoothly across it (or it is a seam): drawn or not by the view's Tangent edges switch. */
+  tangent?: boolean;
 }
 
 export interface PartData {
@@ -65,6 +67,11 @@ export interface PartData {
   faces: FaceInfo[];
   edges: EdgeInfo[];
   edgeSegs: Float32Array;
+  /**
+   * Tangent edges (gap list M7): `edgeSegs` holds the sharp edges' segments first and the tangent ones (faces meeting
+   * smoothly, under 4° apart, and seams) after; this many numbers are sharp. Absent: all of them.
+   */
+  sharpSegs?: number;
   closed: boolean;
   volume: number;
   area: number;
@@ -367,6 +374,16 @@ export function analyzeMesh(m: OcctMesh): PartData {
   const seen = new Uint32Array(nv);
   const count = new Map<number, number>();
 
+  // Per welded vertex and face: a vertex normal and the summed triangle normals there, for edge tangency.
+  const wNorm = new Map<number, Map<number, [V3, V3]>>();
+  const noteNorm = (i: number, fid: number, tx: number, ty: number, tz: number) => {
+    const w = weld[i];
+    let m = wNorm.get(w);
+    if (!m) { m = new Map(); wNorm.set(w, m); }
+    const e = m.get(fid);
+    if (e) { e[1][0] += tx; e[1][1] += ty; e[1][2] += tz; }
+    else m.set(fid, [[normals[3 * i], normals[3 * i + 1], normals[3 * i + 2]], [tx, ty, tz]]);
+  };
   brepFaces.forEach((bf, fid) => {
     const triStart = bf.first, triCount = bf.last - bf.first + 1;
     count.clear();
@@ -382,7 +399,9 @@ export function analyzeMesh(m: OcctMesh): PartData {
       const bx = P[3 * ib], by = P[3 * ib + 1], bz = P[3 * ib + 2];
       const qx = P[3 * ic], qy = P[3 * ic + 1], qz = P[3 * ic + 2];
       const ux = bx - ax, uy = by - ay, uz = bz - az, vx = qx - ax, vy = qy - ay, vz = qz - az;
-      const ta = Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx) / 2;
+      const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      const ta = Math.hypot(nx, ny, nz) / 2;
+      noteNorm(ia, fid, nx, ny, nz); noteNorm(ib, fid, nx, ny, nz); noteNorm(ic, fid, nx, ny, nz);
       const sx = ax + bx + qx, sy = ay + by + qy, sz = az + bz + qz;
       fArea += ta;
       fx += ta * sx / 3; fy += ta * sy / 3; fz += ta * sz / 3;
@@ -427,7 +446,32 @@ export function analyzeMesh(m: OcctMesh): PartData {
   }
 
   const edges: EdgeInfo[] = [];
-  const segOut: number[] = [];
+  const segOut: number[] = [], tanOut: number[] = [];
+  const cosOf = (a: V3, b: V3) => {
+    const la = Math.hypot(...a), lb = Math.hypot(...b);
+    return la > 0 && lb > 0 ? (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) / (la * lb) : -1;
+  };
+  // Exact normal direction of a classified plane/cylinder/sphere at p (sign not known), else null.
+  const surfDir = (f: FaceInfo | undefined, p: V3): V3 | null => {
+    if (!f) return null;
+    if (f.type === "plane" && f.normal) return f.normal;
+    if (f.type === "sphere") return sub(p, f.center);
+    if (f.type === "cylinder" && f.axis) {
+      const d = sub(p, f.center), ax = norm(f.axis), t = d[0] * ax[0] + d[1] * ax[1] + d[2] * ax[2];
+      return [d[0] - t * ax[0], d[1] - t * ax[1], d[2] - t * ax[2]];
+    }
+    return null;
+  };
+  // Tangent: facet normals within 20° (they also fix the sign), and the exact normals of classified faces within 1°,
+  // else the mesh's vertex normals within 12° (they are averaged facets, a half step off on curved faces).
+  const FACET_COS = Math.cos((20 * Math.PI) / 180), EXACT_COS = Math.cos(Math.PI / 180), VERT_COS = Math.cos((12 * Math.PI) / 180);
+  const smoothAt = (w: number, fa: number, fb: number) => {
+    const m = wNorm.get(w), a = m?.get(fa), b = m?.get(fb);
+    if (!a || !b || cosOf(a[1], b[1]) <= FACET_COS) return false;
+    const p = weldPos[w], na = surfDir(faces[fa], p), nb = surfDir(faces[fb], p);
+    if (na && nb) return Math.abs(cosOf(na, nb)) > EXACT_COS;
+    return cosOf(a[0], b[0]) > VERT_COS;
+  };
   for (const [gk, segs] of groups) {
     const [fa, fb] = gk.split("|").map(Number) as [number, number];
     for (const chain of chainSegments(segs, weldPos)) {
@@ -439,7 +483,11 @@ export function analyzeMesh(m: OcctMesh): PartData {
       edges.push(edge);
       faces[fa]?.edges.push(id);
       if (fb >= 0) faces[fb]?.edges.push(id);
-      for (let i = 1; i < pts.length; i++) segOut.push(...pts[i - 1], ...pts[i]);
+      // Tangent: a seam (one face on both sides) or faces whose normals agree at the chain's middle.
+      const tangent = fb >= 0 && (fa === fb || smoothAt(chain[chain.length >> 1], fa, fb));
+      if (tangent) edge.tangent = true;
+      const out = tangent ? tanOut : segOut;
+      for (let i = 1; i < pts.length; i++) out.push(...pts[i - 1], ...pts[i]);
     }
   }
 
@@ -459,7 +507,8 @@ export function analyzeMesh(m: OcctMesh): PartData {
     name: m.name || "Part",
     color: base,
     positions, normals, colors, index, faces, edges,
-    edgeSegs: Float32Array.from(segOut),
+    edgeSegs: Float32Array.from(tanOut.length ? segOut.concat(tanOut) : segOut),
+    ...(tanOut.length ? { sharpSegs: segOut.length } : {}),
     closed,
     volume: absV,
     area,

@@ -4766,6 +4766,8 @@ export class ModelController {
     if (m.kind !== "feature" || !layer || !pm || !this.last) return;
     const f = m.draft;
     if (VALUE_CALLOUT_SKIP.has(f.type)) return;
+    // A push/pull drag shows its own value by the arrow.
+    if (m.instant && this.pushAt) return;
     // Picking instances to skip: the instance dots stand where the callouts would, so the callouts step aside.
     if (m.focus === "skip") return;
     const fields = VALUE_KEYS.map(k => pm.querySelector<HTMLInputElement>(`input[data-num="${k}"], input[data-int="${k}"]`)).filter((x): x is HTMLInputElement => !!x && !x.closest("[hidden]"));
@@ -4883,7 +4885,8 @@ export class ModelController {
   private drawBoxPicks() {
     const m = this.mode;
     this.tintBoxes();
-    if (m.kind !== "feature") return;
+    // A push/pull drag: the arrow and the moving face say it all.
+    if (m.kind !== "feature" || (m.instant && this.pushAt)) return;
     const part = this.host.viewer.parts[0], names = this.last?.faceNames;
     const groups = this.boxPicks(m.draft);
     groups.forEach((g, k) => {
@@ -5606,6 +5609,7 @@ export class ModelController {
       const v = (m.draft.flip ? -1 : 1) * m.draft.distance.v;
       this.placeArrow(this.pushAt.base, this.pushAt.dir, v, false, "push");
       this.sizeArrow();
+      if (this.arrowDrag?.key === "push" && v) this.showPushValue(v);
       return;
     }
     if (m.kind !== "none" || this.pushFace == null || !this.last) return;
@@ -5653,12 +5657,23 @@ export class ModelController {
     if (v < 0) f.flip = true; else delete f.flip;
     a.obj.position.copy(a.base).addScaledVector(a.dir, v);
     this.sizeArrow();
+    this.showPushValue(v);
+    // The panel's Distance follows the drag.
+    const inp = document.querySelector<HTMLInputElement>('#mc-pm input[data-num="distance"]');
+    if (inp && document.activeElement !== inp) inp.value = trimNum(Math.abs(v) * UNITS[units.current].f, 6);
+    void this.rebuild();
+  }
+
+  /** The signed distance beside the push/pull arrow while it is dragged (drawn again after every rebuild clears the layer). */
+  private showPushValue(v: number) {
+    const a = this.arrow;
+    if (!a) return;
+    const fu = UNITS[units.current].f;
     const label = this.pushLabel();
     label.textContent = `${v < 0 ? "−" : ""}${trimNum(Math.abs(v) * fu, units.decimals ?? this.doc.units.decimals)} ${units.current}`;
     const s = a.obj.position.clone().addScaledVector(a.dir, a.scale * 1.5).project(this.host.viewer.camera);
     label.style.left = `${((s.x + 1) / 2) * this.host.viewer.size.x}px`;
     label.style.top = `${((1 - s.y) / 2) * this.host.viewer.size.y}px`;
-    void this.rebuild();
   }
 
   /** The distance label beside the push/pull arrow while it is dragged. */
@@ -6084,7 +6099,7 @@ export class ModelController {
       + (sk ? "" : `<div class="mc-sep"></div><span class="mc-fly">${btn("save", t("Save"), t("Save the part as .mcadprt (Ctrl+S)"))}<button class="mc-caret" data-fly="save" aria-haspopup="menu" title="${esc(t("More save options"))}" aria-label="${esc(t("More save options"))}">▾</button></span>` + btn("step", t("STEP"), t("Export the body as STEP")));
     q.querySelectorAll<HTMLButtonElement>("[data-c]").forEach(b => b.addEventListener("click", () => this.command(b.dataset.c!)));
     q.querySelector<HTMLElement>('[data-fly="undo"]')?.addEventListener("click", e => this.historyMenu(e.currentTarget as HTMLElement));
-    q.querySelectorAll<HTMLButtonElement>("[data-qt]").forEach(b => b.addEventListener("click", () => this.sketchToggle(b.dataset.qt as "grid" | "gridsnap" | "autorels" | "adddims" | "shade")));
+    q.querySelectorAll<HTMLButtonElement>("[data-qt]").forEach(b => b.addEventListener("click", () => this.sketchToggle(b.dataset.qt as "grid" | "gridsnap" | "autorels" | "adddims" | "shade" | "showdims")));
     q.querySelector<HTMLElement>("[data-qset]")?.addEventListener("click", () => this.host.openSettings?.("sketch"));
     q.querySelector<HTMLElement>('[data-fly="qsnap"]')?.addEventListener("click", e => {
       const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -6113,11 +6128,12 @@ export class ModelController {
       + tg("autorels", "⊥", t("Inferences"), t("Lines snap horizontal, vertical, perpendicular, parallel or tangent and keep that relation; hold Ctrl to draw without them."), ed.autoRels)
       + tg("adddims", "↔", t("Add dimensions"), t("New lines, rectangles, circles and arcs get their sizes as dimensions and the Modify box opens on each."), ed.addDims)
       + tg("shade", "▨", t("Shade"), t("Fill closed regions while sketching, so an outline that does not close shows at once."), ed.shadeRegions)
+      + tg("showdims", "⇹", t("Show dimensions"), t("Dimensions on the sketch; off hides them (a selected one still shows) to see the shape."), ed.showDims)
       + (this.host.openSettings ? `<button class="mc-b mc-qset" data-qset="sketch" title="${esc(t("Sketch settings: relations, snaps, grid and display (Ctrl+,)"))}"><span class="mc-i" aria-hidden="true"><svg viewBox="3 3 18 18" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M17.25 10.74L19.14 11.04L19.14 12.96L17.25 13.26L16.60 14.82L17.72 16.37L16.37 17.72L14.82 16.60L13.26 17.25L12.96 19.14L11.04 19.14L10.74 17.25L9.18 16.60L7.63 17.72L6.28 16.37L7.40 14.82L6.75 13.26L4.86 12.96L4.86 11.04L6.75 10.74L7.40 9.18L6.28 7.63L7.63 6.28L9.18 7.40L10.74 6.75L11.04 4.86L12.96 4.86L13.26 6.75L14.82 7.40L16.37 6.28L17.72 7.63L16.60 9.18Z"/><circle cx="12" cy="12" r="2.6"/></svg></span><span class="mc-l">${esc(t("Settings"))}</span></button>` : "");
   }
 
   /** Flips one sketch toggle, remembers it, and keeps the quick bar and the sketch panel in step. */
-  private sketchToggle(k: "grid" | "gridsnap" | "autorels" | "adddims" | "shade") {
+  private sketchToggle(k: "grid" | "gridsnap" | "autorels" | "adddims" | "shade" | "showdims") {
     const m = this.mode;
     if (m.kind !== "sketch") return;
     const ed = m.editor;
@@ -6125,11 +6141,13 @@ export class ModelController {
     else if (k === "gridsnap") ed.setGrid({ snap: !ed.gridSnap, show: ed.gridSnap ? undefined : true });
     else if (k === "adddims") ed.addDims = !ed.addDims;
     else if (k === "shade") { ed.shadeRegions = !ed.shadeRegions; ed.render(); }
+    else if (k === "showdims") { ed.showDims = !ed.showDims; ed.render(); }
     else ed.autoRels = !ed.autoRels;
     try {
       // Only the toggle that changed is stored, so the others keep following their defaults.
       if (k === "adddims") localStorage.setItem("mc:skAutoDims", ed.addDims ? "1" : "0");
       else if (k === "shade") localStorage.setItem("mc:skShade", ed.shadeRegions ? "1" : "0");
+      else if (k === "showdims") localStorage.setItem("mc:skDims", ed.showDims ? "1" : "0");
       else if (k === "grid") localStorage.setItem("mc:skGrid", ed.grid ? "1" : "0");
       else if (k === "gridsnap") { localStorage.setItem("mc:skGridSnap", ed.gridSnap ? "1" : "0"); localStorage.setItem("mc:skGrid", ed.grid ? "1" : "0"); }
       else localStorage.setItem("mc:autoRels", ed.autoRels ? "1" : "0");

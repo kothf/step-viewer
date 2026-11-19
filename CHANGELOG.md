@@ -5,6 +5,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.596.0] - 2026-11-19
+
+### Added
+- Assemblies: **Isolate** and **Make others transparent** on a component's right-click menu (and for several picked components). A bar at the bottom of the view switches the others between hidden and see-through; **Exit Isolate** or Esc brings them back. Only the view changes.
+- Sketch: double-click a line or arc to select its whole joined chain.
+- Sketch: **Show dimensions** on the sketch quick bar hides every dimension (a selected one still shows) to see the shape.
+- Display ▸ **Tangent edges**: off draws only sharp edges, leaving out the edges where faces meet smoothly, such as along fillets.
+
+### Fixed
+- Esc did not close the **Hide/Show items** menu after a switch in it had been clicked.
+- Push/pull: while the arrow was dragged, the face's distance did not show by the arrow and a stale "Distance: 0 mm" callout stayed on the face.
+- Isolate: after picking hidden/transparent in the bar, Esc did not exit Isolate.
+
 ## [1.595.0] - 2026-11-18
 
 ### Added
@@ -3787,7 +3800,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.595.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.596.0...HEAD
+[1.596.0]: https://github.com/kothf/step-viewer/compare/v1.595.0...v1.596.0
 [1.595.0]: https://github.com/kothf/step-viewer/compare/v1.594.0...v1.595.0
 [1.594.0]: https://github.com/kothf/step-viewer/compare/v1.593.0...v1.594.0
 [1.593.0]: https://github.com/kothf/step-viewer/compare/v1.592.0...v1.593.0

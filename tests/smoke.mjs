@@ -3046,6 +3046,35 @@ try {
     check(shaded >= 1 && unshaded === 0, `model 1.590: a closed circle is shaded while sketching, and Shade closed regions turns it off (${JSON.stringify([deco.regions, shaded, unshaded])})`);
     check(ep0.keys.join() === "x1,y1,x2,y2,len,ang" && Math.abs(ep1.x1 - 100) < 1e-6 && Math.abs(ep1.len - ep0.len) < 1e-6 && Math.abs(ep1.ang) < 1e-9 && lenOk === false && angOk === false && Math.abs(ep2.ang) < 1e-9 && Math.abs(ep2.x1 - 100) < 1e-6 && deco.open >= 1 && deco.open === deco.ends && deco.legend,
       `model 1.590: selected line shows start/end/length/angle, a typed start X moves it (the length dimension keeps its length), a length or angle its dimension or relation holds is refused, open ends are marked (${JSON.stringify([ep0, ep1, lenOk, angOk, deco])})`);
+    // 1.592 (gap list S7, S8): a double-click on a line picks its whole chain; Show dimensions off hides the labels.
+    {
+      await tool("rect");
+      await click([70, 80]);
+      await click([95, 100]);
+      await mp.keyboard.press("Escape");
+      await tool("select");
+      // Relation glyphs sit on the sides and would take the click: hidden for it.
+      await mp.evaluate(() => { const ed = window.__sv.model.editor(); ed.showRels = false; ed.render(); });
+      const [qx, qy] = await toPage([75, 80]);
+      await mp.mouse.move(qx, qy); await mp.waitForTimeout(60);
+      await mp.mouse.dblclick(qx, qy);
+      await mp.waitForTimeout(120);
+      const chain = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sel = [...ed.selection]; const one = sel.find(id => ed.sk.ents.find(e => e.id === id && (e.t === "line" || e.t === "arc"))); return { sel: sel.length, want: one ? ed.chainOf(one).segs.length : -1, kinds: sel.map(id => ed.sk.ents.find(e => e.id === id)?.t) }; });
+      await mp.evaluate(() => { const ed = window.__sv.model.editor(); ed.showRels = true; ed.render(); });
+      await mp.keyboard.press("Escape");
+      await mp.keyboard.press("Control+z");
+      await mp.waitForTimeout(100);
+      const nd = () => mp.evaluate(() => document.querySelectorAll(".sk-dim:not(.ord0)").length);
+      const d0 = await nd();
+      await mp.click("#mc-quick [data-qt=showdims]");
+      await mp.waitForTimeout(100);
+      const d1 = await nd();
+      await mp.click("#mc-quick [data-qt=showdims]");
+      await mp.waitForTimeout(100);
+      const d2 = await nd();
+      check(chain.sel === 4 && chain.sel === chain.want && chain.kinds.every(k => k === "line" || k === "arc") && d0 >= 1 && d1 === 0 && d2 === d0,
+        `model 1.592: double-click selects the joined chain, Show dimensions hides and shows the sketch's dimensions (gap list S7, S8) (${JSON.stringify({ chain, d0, d1, d2 })})`);
+    }
     // 1.316: mouse gestures (FR-UI-024): with the preference on, a right-drag shows the guide and runs the slot's command;
     // a right-click without a drag still opens the sketch menu.
     await mp.evaluate(() => localStorage.setItem("mc:gestures", JSON.stringify({ on: true, n: 4 })));
@@ -8352,6 +8381,21 @@ try {
     await mp.keyboard.press("Escape");
     check(pk.sel.length === 2 && pk.rows === 2 && /Selected: 2/.test(pk.status) && pk.tint && multiMenu === 1 && nHid === 2 && esc <= 1 && win === 3 && crossIds.includes(c2.id) && cam0 === cam1,
       `asm 1.541: Ctrl+click and box selection of components, menu on all of them (${JSON.stringify({ pk, multiMenu, nHid, esc, win, cross, free, free2, vr, same: cam0 === cam1 })})`);
+    // 1.592 (gap list A1/A2): Isolate on a component's menu hides the others (view only), the bar switches them to
+    // see-through, Exit Isolate (or Esc) brings everything back; nothing goes into the document.
+    const isoView = () => mp.evaluate(() => { const a = window.__sv.asm, v = window.__sv.viewer, id = a.doc.components[0].id; return { vis: v.parts.filter(p => p.visible).length, mine: a.shownIds.filter(s => s === id || s.startsWith(id + "/")).length, faded: v.parts.filter(p => p.opacity < 0.2).length, n: v.parts.length, bar: !!document.getElementById("asm-iso"), hidden: a.doc.components.filter(c => c.hidden).length }; });
+    await mp.click("#asm-tree .ft-comp >> nth=0", { button: "right" });
+    await mp.locator("#asm-menu button", { hasText: /^Isolate$/ }).click();
+    await mp.waitForTimeout(100);
+    const iso1 = await isoView();
+    await mp.selectOption('#asm-iso select[data-iso="mode"]', "trans");
+    await mp.waitForTimeout(100);
+    const iso2 = await isoView();
+    await mp.click('#asm-iso [data-iso="exit"]');
+    await mp.waitForTimeout(100);
+    const iso3 = await isoView();
+    check(iso1.bar && iso1.vis === iso1.mine && iso1.vis < iso1.n && iso1.hidden === 0 && iso2.vis === iso2.n && iso2.faded === iso2.n - iso2.mine && !iso3.bar && iso3.vis === iso3.n && iso3.faded === 0,
+      `asm 1.592: Isolate hides the other components, Others transparent fades them, Exit Isolate restores the view (gap list A1/A2) (${JSON.stringify({ iso1, iso2, iso3 })})`);
     // 1.542: the same with Lasso selection on: a clockwise lasso round the view takes every component.
     await mp.click('#hud [data-hud="lasso"]');
     await mp.mouse.move(free.x, free.y); await mp.mouse.down();
@@ -10369,6 +10413,19 @@ try {
     }
     check(!!arrow && pushed?.type === "moveface" && pushed.d > 1 && !pushed.flip && pushed.faces?.[0] === "f1:end" && Math.abs(pushed.v - 6000 * (20 + pushed.d)) < 1 && pushed.mode === "none" && pushed.mid.kind === "feature",
       `model 1.591: dragging the arrow on a picked flat face pulls it out as a Move Face (gap list M1) (${JSON.stringify({ arrow, pushed })})`);
+    // 1.592 (gap list M7): a fillet's edges are tangent; Display ▸ Tangent edges off draws only the sharp ones.
+    await mp.evaluate(() => window.__sv.model.store.change("Fillet", d => { d.features.push({ id: "f7", type: "fillet", name: "Fillet1", radius: { v: 3 }, edges: [{ faces: ["f1:side:s1l1", "f1:side:s1l2"] }] }); }));
+    await settle();
+    const segs = () => mp.evaluate(() => { const p = window.__sv.viewer.parts[0]; return { n: p.edges.geometry.instanceCount, all: p.data.edgeSegs.length / 6, sharp: (p.data.sharpSegs ?? -6) / 6, tan: p.data.edges.filter(e => e.tangent).length }; });
+    const t0 = await segs();
+    await mp.click("#display-btn");
+    await mp.uncheck("#tangent-edges");
+    const t1 = await segs();
+    await mp.check("#tangent-edges");
+    await mp.keyboard.press("Escape");
+    const t2 = await segs();
+    check(t0.tan >= 2 && t0.sharp > 0 && t0.sharp < t0.all && t0.n === t0.all && t1.n === t0.sharp && t2.n === t0.all,
+      `model 1.592: fillet edges are tangent, Tangent edges off hides them (gap list M7) (${JSON.stringify({ t0, t1, t2 })})`);
     await ctx.close();
   }
 

@@ -92,6 +92,9 @@ const MATE_FAILS = "This mate cannot be solved with the others: the assembly wou
 
 export interface AsmTab { doc: AsmDoc; fileName: string; handle: FileSystemFileHandle | null; undo: string[]; redo: string[]; savedAt: string; sel: string | null; vault: VaultTie | null }
 
+/** Opacity of the components left out by Make others transparent. */
+const ISO_FADE = 0.12;
+
 export class AsmController {
   doc: AsmDoc | null = null;
   private undoStack: string[] = [];
@@ -335,6 +338,9 @@ export class AsmController {
   close() {
     if (!this.doc) return;
     this.hideCrumbs();
+    this.isolated = null;
+    this.isoHid.clear();
+    document.getElementById("asm-iso")?.remove();
     for (const o of [...this.ghostGroup.children]) this.dropGhost(o.userData.ghost);
     this.ghostGroup.visible = false;
     this.picked = [];
@@ -2317,13 +2323,52 @@ export class AsmController {
   /** Transparency (FR-ASM-025): the shown parts of each component take its opacity. */
   private applyOpacity() {
     const v = this.host.viewer, comps = new Map((this.expanded?.doc.components ?? []).map(c => [c.id, c]));
+    const iso = this.isolated;
     this.shownIds.forEach((id, i) => {
       const p = v.parts[i];
       if (!p) return;
-      const op = comps.get(id)?.opacity ?? 1;
-      if (p.opacity !== op) { p.opacity = op; v.applyPartAppearance(p); }
+      // Isolate (gap list A1/A2): the others are hidden or faded, view only.
+      const out = !!iso && !iso.ids.has(topOf(id));
+      let op = comps.get(id)?.opacity ?? 1;
+      if (out && iso!.mode === "trans") op = Math.min(op, ISO_FADE);
+      let changed = p.opacity !== op;
+      p.opacity = op;
+      if (out && iso!.mode === "hide" && p.visible) { p.visible = false; this.isoHid.add(p); changed = true; }
+      else if (!(out && iso!.mode === "hide") && this.isoHid.has(p)) { p.visible = true; this.isoHid.delete(p); changed = true; }
+      if (changed) v.applyPartAppearance(p);
     });
     v.invalidate();
+  }
+
+  /** Isolate (gap list A1/A2): top-level components kept; the rest hidden or see-through until Exit Isolate. View only. */
+  private isolated: { ids: Set<string>; mode: "hide" | "trans" } | null = null;
+  private isoHid = new Set<object>();
+
+  isolate(ids: string[] | null, mode: "hide" | "trans" = "hide") {
+    const keep = (ids ?? []).filter(id => this.comp(id));
+    this.isolated = keep.length ? { ids: new Set(keep), mode } : null;
+    this.applyOpacity();
+    this.renderIsoBar();
+  }
+
+  isolation() { return this.isolated ? { ids: [...this.isolated.ids], mode: this.isolated.mode } : null; }
+
+  private renderIsoBar() {
+    document.getElementById("asm-iso")?.remove();
+    const iso = this.isolated;
+    if (!iso || !this.doc) return;
+    const bar = document.createElement("div");
+    bar.id = "asm-iso";
+    bar.className = "asm-iso";
+    bar.setAttribute("role", "group");
+    bar.setAttribute("aria-label", t("Isolate"));
+    bar.innerHTML = `<span>${esc(t("Isolated: {n}", { n: iso.ids.size }))}</span>`
+      + `<select data-iso="mode" aria-label="${esc(t("The others"))}"><option value="hide"${iso.mode === "hide" ? " selected" : ""}>${esc(t("Others hidden"))}</option><option value="trans"${iso.mode === "trans" ? " selected" : ""}>${esc(t("Others transparent"))}</option></select>`
+      + `<button type="button" data-iso="exit">${esc(t("Exit Isolate"))}</button>`;
+    // The focus leaves the select after a choice: Chrome keeps Esc for a focused select, and Esc must exit Isolate.
+    bar.querySelector("select")!.addEventListener("change", e => { const sel = e.target as HTMLSelectElement; this.isolate([...iso.ids], sel.value as "hide" | "trans"); sel.blur(); });
+    bar.querySelector("button")!.addEventListener("click", () => this.isolate(null));
+    document.getElementById("viewport")?.append(bar);
   }
   setOpacity(id: string, op: number | null) { this.change(d => { const c = d.components.find(x => x.id === id); if (c) { if (op !== null && op < 1) c.opacity = op; else delete c.opacity; } }); }
 
@@ -2774,6 +2819,8 @@ export class AsmController {
       ...(cs.some(c => c.fixed) ? [[t("Float"), () => each(c => { delete c.fixed; })] as [string, () => void]] : []),
       ...(cs.some(c => !c.suppressed) ? [[t("Suppress"), () => each(c => { c.suppressed = true; })] as [string, () => void]] : []),
       ...(cs.some(c => c.suppressed) ? [[t("Unsuppress"), () => each(c => { delete c.suppressed; })] as [string, () => void]] : []),
+      [t("Isolate"), () => this.isolate(ids, "hide")],
+      [t("Make others transparent"), () => this.isolate(ids, "trans")],
       [t("Delete components ({n})", { n }), () => void this.deleteComponents(ids)],
     ], x, y);
   }
@@ -2960,10 +3007,13 @@ export class AsmController {
           return;
         }
       }
+      // Esc on the Isolate bar's button exits Isolate too.
+      if (e.key === "Escape" && this.isolated && e.target instanceof Element && e.target.closest("#asm-iso")) { this.isolate(null); return; }
       if (this.doc && !this.picking && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.target instanceof Element && e.target.closest("input, textarea, select, dialog[open]"))) {
         // Breadcrumbs (FR-SEL-009): Esc hides them, Shift+D brings them to the cursor.
         if (e.key === "Escape" && document.getElementById("asm-crumbs") && !document.querySelector(".mag-lens")) this.hideCrumbs();
         if (e.key === "Escape" && this.picked.length && !document.querySelector(".mag-lens, #asm-menu")) { this.boxed = false; this.setPicked([]); }
+        else if (e.key === "Escape" && this.isolated && !document.querySelector(".mag-lens, #asm-menu")) this.isolate(null);
         if (e.key.toLowerCase() === "d" && e.shiftKey && this.pointer && document.getElementById("asm-crumbs")) { e.preventDefault(); e.stopImmediatePropagation(); this.crumbAt = { ...this.pointer }; this.placeCrumbs(); return; }
       }
       if (!this.doc || !(e.ctrlKey || e.metaKey) || e.altKey) return;
@@ -3391,6 +3441,7 @@ export class AsmController {
       [c.fixed ? t("Float") : t("Fix"), () => this.setFixed(c.id, !c.fixed)],
       ...(c.fixed ? [] : [[t("Move component"), () => this.moveComponent(c.id)] as [string, () => void]]),
       [c.hidden ? t("Show component") : t("Hide component"), () => this.setHidden(c.id, !c.hidden)],
+      ...(c.hidden || c.suppressed ? [] : [[t("Isolate"), () => this.isolate([c.id], "hide")], [t("Make others transparent"), () => this.isolate([c.id], "trans")]] as [string, () => void][]),
       [c.suppressed ? t("Unsuppress") : t("Suppress"), () => this.setSuppressed(c.id, !c.suppressed)],
       ...(this.doc?.parts[c.part]?.asm ? [] : [[t("Material…"), () => void this.pickPartMaterial(c.id)] as [string, () => void]]),
       [t("Component colour…"), () => this.pickColor(c)],

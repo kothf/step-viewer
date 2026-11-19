@@ -1632,3 +1632,6 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .hud-items label { display: flex; align-items: center; gap: 6px; padding: 2px 0; cursor: pointer; }
 .hud-items-all { display: flex; gap: 6px; margin-top: 4px; }
 .hud-items-all button { flex: 1; font-size: 11px; }
+/* Isolate in assemblies (gap list A1/A2): a small bar at the bottom of the view while isolated. */
+.asm-iso { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); z-index: 6; display: flex; gap: 8px; align-items: center; padding: 5px 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 9px; box-shadow: var(--shadow); font-size: 12px; }
+.asm-iso select, .asm-iso button { font-size: 12px; }
