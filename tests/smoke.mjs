@@ -7853,6 +7853,9 @@ try {
       };
       const mc1 = await ctrlBuild();
       const hint = await mp.evaluate(() => document.getElementById("st-hint")?.textContent ?? "");
+      // Gap list M3/U2: the status bar sums the picked sizes and the selection list has a row per item.
+      const selUi = await mp.evaluate(() => { const e = document.getElementById("st-sel"); return { st: e && !e.hidden ? e.textContent : "", rows: document.querySelectorAll("#mc-sellist li").length }; });
+      check(/\d+ (faces|edges)|Face:|Edge:/.test(selUi.st) && selUi.rows === mc1.faces + mc1.edges, `model 1.597: Ctrl+click selection shows its sizes in the status bar and a selection list (${JSON.stringify(selUi)})`);
       await mp.evaluate(() => window.__sv.modeller.hideShortcutBar());
       await mp.keyboard.press("Escape");
       const mc0 = await mp.evaluate(() => window.__sv.modeller.multiCount);

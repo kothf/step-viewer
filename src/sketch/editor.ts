@@ -4,6 +4,7 @@
 //
 // The editor works on a copy of the sketch; every finished operation is handed
 // to the host with a label (one undo step each) and solved again.
+import { setToolCursor, toolCursorOf } from "../hoverCursor";
 import * as THREE from "three";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
@@ -255,6 +256,7 @@ export class SketchEditor {
   }
 
   dispose() {
+    setToolCursor(this.host.viewer.renderer.domElement, null);
     this.closeInput(false);
     this.host.viewer.scene.remove(this.group, this.marker);
     this.dropGrid();
@@ -289,6 +291,7 @@ export class SketchEditor {
     this.showAlign([]);
     this.woke = [];
     this.tool = tool;
+    setToolCursor(this.host.viewer.renderer.domElement, toolCursorOf(tool));
     this.inferLine = null;
     this.setQuickSnap(null);
     this.showInfer(null);
@@ -3648,6 +3651,24 @@ export class SketchEditor {
     if (skipped) this.host.toast(t("{n} edges were not converted (curves not square to the sketch).", { n: skipped }), "warn");
     this.commit("Convert entities");
     this.render();
+  }
+
+  /**
+   * Project face edges (gap list S12): the edges (with their references) become construction curves held on
+   * them by On edge relations, as one undo step. Returns how many were made.
+   */
+  projectEdges(list: { ed: ModelEdge; ref: EdgeRef | null }[]): number {
+    let n = 0;
+    for (const { ed, ref } of list) {
+      const g = projectEdge(ed, this.frame);
+      if (!g) continue;
+      const ent = this.entFrom(g);
+      (ent as { cons?: boolean }).cons = true;
+      this.sk.rels.push({ id: uid("r"), t: "fix", e: [ent.id], ...(ref ? { ext: ref } : {}) });
+      n++;
+    }
+    if (n) { this.commit("Project face edges"); this.render(); }
+    return n;
   }
 
   /** A new sketch curve on projected edge geometry, reusing points already there. */

@@ -5,6 +5,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.597.0] - 2026-11-19
+
+### Added
+- **Selection sizes in the status bar**: a picked edge shows its length (and radius or arc angle), a picked face its area (and radius); with several picked (Ctrl+click or a box), the count and the summed length or area.
+- **Selection list**: with several faces or edges picked in a part, a small list at the bottom left of the view names each one with the feature that made it; × takes one out, Clear empties it.
+- **Preselection for more commands**: faces picked before Fillet or Chamfer give every edge of those faces; a flat face before Mirror is the mirror plane; an edge or face before Linear or Circular Pattern is its direction or axis; several faces before Draft, Offset Surface or Split; faces on bodies before the body commands (Delete/Move Body, Scale, Flex, Intersect, Split Body, Combine, Indent) pick those bodies.
+- Settings ▸ Sketch ▸ **Project the face's edges**: a new sketch on a model face starts with the face's outline as construction lines tied to the edges, to snap and dimension to (off by default).
+- Sketch tools change the cursor: a pencil with the shape for Line, Rectangle, Circle, Arc and the other drawing tools, scissors for Trim, and so on.
+
+### Fixed
+- Ctrl+click on a face that was picked alone (for push/pull) grabbed the push/pull arrow instead of adding the face to the selection; the arrow no longer shows while several items are picked.
+
 ## [1.596.0] - 2026-11-19
 
 ### Added
@@ -3800,7 +3812,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.596.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.597.0...HEAD
+[1.597.0]: https://github.com/kothf/step-viewer/compare/v1.596.0...v1.597.0
 [1.596.0]: https://github.com/kothf/step-viewer/compare/v1.595.0...v1.596.0
 [1.595.0]: https://github.com/kothf/step-viewer/compare/v1.594.0...v1.595.0
 [1.594.0]: https://github.com/kothf/step-viewer/compare/v1.593.0...v1.594.0

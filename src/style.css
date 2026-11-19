@@ -864,6 +864,7 @@ canvas.mc-stale { filter: grayscale(0.85) opacity(0.6); transition: filter .2s; 
 .pm-legend .sw.open { width: 10px; height: 10px; border: none; border-radius: 50%; background: #e8590c; margin: 0 4px; }
 :root[data-theme="dark"] .pm-legend .sw.open { background: #ff922b; }
 .st-skdef { font-weight: 600; white-space: nowrap; }
+.st-sel { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40vw; flex: 0 0 auto; font-weight: 600; }
 .st-skdef[data-state=full] { color: var(--text); }
 .link { background: none; border: 0; padding: 0; color: var(--accent-text); cursor: pointer; text-decoration: underline; font: inherit; }
 @media (max-width: 768px) {
@@ -1635,3 +1636,13 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 /* Isolate in assemblies (gap list A1/A2): a small bar at the bottom of the view while isolated. */
 .asm-iso { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); z-index: 6; display: flex; gap: 8px; align-items: center; padding: 5px 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 9px; box-shadow: var(--shadow); font-size: 12px; }
 .asm-iso select, .asm-iso button { font-size: 12px; }
+
+/* Selection list (gap list U2): the Ctrl+click picks in the part view's lower left. */
+.mc-sellist { position: absolute; left: 8px; bottom: 8px; z-index: 6; min-width: 190px; max-width: 280px; max-height: 40%; overflow: auto; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,.18); font-size: 12px; }
+.mc-sellist .sl-h { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--panel); }
+.mc-sellist .sl-h button { margin-left: auto; font-size: 11px; padding: 1px 6px; }
+.mc-sellist ul { list-style: none; margin: 0; padding: 2px 0; }
+.mc-sellist li { display: flex; align-items: center; gap: 6px; padding: 2px 6px; }
+.mc-sellist .sl-o { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mc-sellist li button { margin-left: auto; border: 0; background: none; color: var(--muted); cursor: pointer; padding: 0 4px; font-size: 14px; line-height: 1; }
+.mc-sellist li button:hover, .mc-sellist li button:focus-visible { color: var(--danger); }
