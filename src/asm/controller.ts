@@ -2465,8 +2465,10 @@ export class AsmController {
   }
   private renameState(id: string) {
     const row = $("#asm-tree").querySelector<HTMLElement>(`.ft-row[data-id="${CSS.escape(id)}"]`), name = row?.querySelector<HTMLElement>(".ft-name");
-    // Display states, configurations and (exam #80) mates.
-    const st = this.doc?.states?.find(s => s.id === id) ?? this.doc?.configs?.find(s => s.id === id) ?? this.doc?.mates?.find(s => s.id === id);
+    // Display states, configurations, (exam #80) mates, and every other named row: components, patterns, exploded views, assembly features.
+    const named = (d: AsmDoc | null | undefined): { name: string } | undefined => d?.states?.find(s => s.id === id) ?? d?.configs?.find(s => s.id === id) ?? d?.mates?.find(s => s.id === id)
+      ?? d?.components.find(s => s.id === id) ?? d?.patterns?.find(s => s.id === id) ?? d?.explodes?.find(s => s.id === id) ?? d?.features?.find(s => s.id === id);
+    const st = named(this.doc);
     if (!row || !name || !st) return;
     const inp = document.createElement("input");
     inp.className = "ft-ren";
@@ -2481,7 +2483,7 @@ export class AsmController {
       if (done) return;
       done = true;
       const v = inp.value.trim();
-      if (apply && v && v !== st.name) this.change(d => { const s2 = d.states?.find(x => x.id === id) ?? d.configs?.find(x => x.id === id) ?? d.mates?.find(x => x.id === id); if (s2) s2.name = v; });
+      if (apply && v && v !== st.name) this.change(d => { const s2 = named(d); if (s2) s2.name = v; });
       else this.renderTree();
     };
     inp.addEventListener("keydown", e => { e.stopPropagation(); if (e.key === "Enter") { e.preventDefault(); finish(true); } else if (e.key === "Escape") { e.preventDefault(); finish(false); } });
@@ -3051,6 +3053,15 @@ export class AsmController {
           return;
         }
       }
+      // F2 renames the item selected in the tree, as in the part tree and a CAD app's FeatureManager.
+      if (this.doc && e.key === "F2" && !e.ctrlKey && !e.metaKey && !e.altKey && !this.picking && this.selected) {
+        const tg = e.target as HTMLElement;
+        if (!tg.closest("input, textarea, select, [contenteditable=true], dialog[open]") && (tg === document.body || tg.closest("#asm-tree") || tg === this.host.viewer.renderer.domElement)) {
+          e.preventDefault();
+          this.renameState(this.selected);
+          return;
+        }
+      }
       // Esc on the Isolate bar's button exits Isolate too.
       if (e.key === "Escape" && this.isolated && e.target instanceof Element && e.target.closest("#asm-iso")) { this.isolate(null); return; }
       if (this.doc && !this.picking && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.target instanceof Element && e.target.closest("input, textarea, select, dialog[open]"))) {
@@ -3444,11 +3455,11 @@ export class AsmController {
         if (id === "folder:configs") { this.popup([[t("Add configuration"), () => this.addAsmConfig()]], e.clientX, e.clientY); return; }
         if (id === "asm") { this.popup([[t("Add configuration"), () => this.addAsmConfig()], [t("Add display state"), () => this.addDisplayState()], ...(this.linkCount() ? [[t("Update links…"), () => this.updateLinks()] as [string, () => void]] : [])], e.clientX, e.clientY); return; }
         const af = this.doc?.features?.find(x => x.id === id);
-        if (af) { this.popup([[t("Edit feature"), () => this.startFeature(af)], [af.suppressed ? t("Unsuppress") : t("Suppress"), () => this.change(d => { const q = d.features?.find(x => x.id === id); if (q) { if (q.suppressed) delete q.suppressed; else q.suppressed = true; } })], [t("Delete"), () => this.deleteFeature(id)]], e.clientX, e.clientY); return; }
+        if (af) { this.popup([[t("Edit feature"), () => this.startFeature(af)], [t("Rename"), () => this.renameState(id)], [af.suppressed ? t("Unsuppress") : t("Suppress"), () => this.change(d => { const q = d.features?.find(x => x.id === id); if (q) { if (q.suppressed) delete q.suppressed; else q.suppressed = true; } })], [t("Delete"), () => this.deleteFeature(id)]], e.clientX, e.clientY); return; }
         if (id === "folder:states") { this.popup([[t("Add display state"), () => this.addDisplayState()]], e.clientX, e.clientY); return; }
         const pt = this.doc?.patterns?.find(x => x.id === id), xv = this.doc?.explodes?.find(x => x.id === id);
-        if (pt) this.popup([[t("Edit pattern"), () => this.startPattern(pt)], [pt.suppressed ? t("Unsuppress") : t("Suppress"), () => this.change(d => { const q = d.patterns?.find(x => x.id === id); if (q) { if (q.suppressed) delete q.suppressed; else q.suppressed = true; } })], [t("Delete"), () => this.deletePattern(id)]], e.clientX, e.clientY);
-        else if (xv) this.popup([[this.exploded === id ? t("Collapse") : t("Explode"), () => this.toggleExplode(id)], [t("Edit exploded view"), () => this.startExplode(xv)], [xv.lines ? t("Hide explode lines") : t("Show explode lines"), () => this.setExplodeLines(id, !xv.lines)], [t("Delete"), () => this.deleteExplode(id)]], e.clientX, e.clientY);
+        if (pt) this.popup([[t("Edit pattern"), () => this.startPattern(pt)], [t("Rename"), () => this.renameState(id)], [pt.suppressed ? t("Unsuppress") : t("Suppress"), () => this.change(d => { const q = d.patterns?.find(x => x.id === id); if (q) { if (q.suppressed) delete q.suppressed; else q.suppressed = true; } })], [t("Delete"), () => this.deletePattern(id)]], e.clientX, e.clientY);
+        else if (xv) this.popup([[this.exploded === id ? t("Collapse") : t("Explode"), () => this.toggleExplode(id)], [t("Edit exploded view"), () => this.startExplode(xv)], [t("Rename"), () => this.renameState(id)], [xv.lines ? t("Hide explode lines") : t("Show explode lines"), () => this.setExplodeLines(id, !xv.lines)], [t("Delete"), () => this.deleteExplode(id)]], e.clientX, e.clientY);
         else if (mt) this.popup([
           [t("Edit mate"), () => this.startMate(mt)],
           [t("Rename"), () => this.renameState(mt.id)],
@@ -3495,6 +3506,7 @@ export class AsmController {
       ...((v => (v ? [[t("Buy at {vendor}", { vendor: v.vendor }), () => window.open(v.url, "_blank", "noopener,noreferrer")] as [string, () => void]] : []))(vendorOf(this.doc?.parts[c.part]?.doc))),
       ...(this.doc?.parts[c.part]?.link ? [[t("Embed in the assembly"), () => this.setLink(c.part, null)], [t("Update links…"), () => this.updateLinks()]] as [string, () => void][]
         : [[t("Link to file…"), () => this.linkComponent(c.id)] as [string, () => void]]),
+      [t("Rename"), () => this.renameState(c.id)],
       [t("Delete"), () => void this.deleteComponent(c.id)],
     ], x, y);
   }

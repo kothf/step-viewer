@@ -8,7 +8,7 @@ import { alignDim, rapidRow, rapidSlots, spaceDims } from "./dimAlign";
 import type { VaultTie } from "../pdm/panel";
 import fontUrl from "dejavu-fonts-ttf/ttf/DejaVuSans.ttf?url";
 import type { MEdge, Projection, ViewDir } from "../kernel/drawing";
-import { AUTO_LAYERS, isGtolHost, arrowOutside, withCut, ringTopo, coneMid, coneOutline, wholeCircle, edgeOnSeg, outlineSeg, clineSegs, cloudPrims, dimGeo, factsCtx, holeEdges, ringDist, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, stackItem, edgeItem, weldItem, cutDesc, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
+import { AUTO_LAYERS, canHold, isGtolHost, arrowOutside, withCut, ringTopo, coneMid, coneOutline, wholeCircle, edgeOnSeg, outlineSeg, clineSegs, cloudPrims, dimGeo, factsCtx, holeEdges, ringDist, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, stackItem, edgeItem, weldItem, cutDesc, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
 import type { PartDoc } from "../model/types";
 import type { AsmDoc } from "../asm/types";
 import { BALLOON_R, BOM_COLS, BOM_MAT_COL, autoBalloons, bomMats, compOfKey, sheetBom, subsOf, type BalloonItems, type Bom } from "./bom";
@@ -147,14 +147,16 @@ type AnnotMode =
   | { kind: "sk"; k: SketchAnnot["k"]; view: null; pts: Pt[]; at: Pt | null }
   /** Datum target (ISO 5459): optionally click the target on an edge, then place the frame circle. */
   | { kind: "dtarget"; view: string | null; leader: GeoRef | null; tp: Pt | null; at: Pt | null }
-  /** Datum feature: click an edge, then place the letter. */
-  | { kind: "datum"; view: string | null; ref: GeoRef | null; at: Pt | null }
-  /** Surface finish: click an edge, then place the symbol (on the edge, or away from it with a leader). */
-  | { kind: "surf"; view: string | null; ref: GeoRef | null; at: Pt | null }
+  /** Datum feature: click an edge (or a dimension or tolerance frame: `on`), then place the letter. */
+  | { kind: "datum"; view: string | null; ref: GeoRef | null; on?: string | null; at: Pt | null }
+  /** Surface finish: click an edge (or a dimension: `on`), then place the symbol (on the line, or away from it with a leader). */
+  | { kind: "surf"; view: string | null; ref: GeoRef | null; on?: string | null; at: Pt | null }
   /** Balloon (FR-DRW-030): click an edge of a component, then place the balloon. */
   | { kind: "balloon"; view: string | null; ref: GeoRef | null; at: Pt | null };
 /** What each lay symbol of ISO 1302 says about the direction of the surface pattern. */
 const LAY_NAMES: Record<string, string> = { "": "None", "=": "Parallel to the view plane", "⊥": "Perpendicular to the view plane", X: "Crossed", M: "Multi-directional", C: "Circular", R: "Radial", P: "Particulate, no direction" };
+/** The annotation Ctrl+C copied (kept across drawings, as a clipboard): the annotation, its place on the sheet, its drawing. */
+let clipAnnot: { a: Annot; at: Pt; drawing: string } | null = null;
 const ANNOT_KINDS = new Set(["dim", "dimset", "htable", "btable", "wtable", "ctable", "hole", "note", "gtol", "datum", "surf", "balloon", "cloud", "cline", "weld", "dtarget", "sk"]);
 const isAnnotMode = (m: Mode): m is AnnotMode => ANNOT_KINDS.has(m.kind);
 type Line4 = [number, number, number, number];
@@ -769,9 +771,9 @@ export class DrawingWorkspace {
     else if (m.kind === "dtarget") s = m.leader ? t("Click where the datum target frame goes.") : t("Click the target on an edge, or where the datum target frame goes.");
     else if (m.kind === "weld") s = m.leader ? t("Click where the weld symbol goes.") : t("Click the edge of the joint for the arrow, or where the weld symbol goes.");
     else if (m.kind === "gtol") s = m.leader ? t("Click where the tolerance frame goes.") : t("Click where the tolerance frame goes, a dimension, hole callout or note to attach it under, or first an edge for a leader.");
-    else if (m.kind === "datum") s = m.ref ? t("Click where the datum letter goes.") : t("Click the edge of the datum feature.");
+    else if (m.kind === "datum") s = m.ref || m.on ? t("Click where the datum letter goes.") : t("Click the edge of the datum feature, a dimension (feature of size) or a tolerance frame.");
     else if (m.kind === "balloon") s = m.ref ? t("Click where the balloon goes.") : t("Click an edge of a component.");
-    else if (m.kind === "surf") s = m.ref ? t("Click on the edge to put the symbol there, or away from it for a leader.") : t("Click the edge of the surface, or an empty place on the sheet.");
+    else if (m.kind === "surf") s = m.ref || m.on ? t("Click on the edge to put the symbol there, or away from it for a leader.") : t("Click the edge of the surface, a dimension, or an empty place on the sheet.");
     else if (m.kind === "aux") s = m.line ? t("Move the cursor to the side of the edge and click to place the auxiliary view. Esc cancels.") : t("Click a straight edge of a view or a line drawn on it.");
     else if (this.stale) s = t("The model changed: the views are out of date. Updating…");
     else if (this.projecting.size && this.kernel.restarting) s = t("Freeing the drawing kernel's memory, then projecting… {n} to go", { n: this.projecting.size });
@@ -1114,6 +1116,7 @@ export class DrawingWorkspace {
       return;
     }
     const p = this.sheetPt(e);
+    this.lastPt = p;
     if (this.adrag) {
       const d = this.adrag;
       if (!d.moved && Math.hypot(p[0] - d.start[0], p[1] - d.start[1]) < 0.5) return;
@@ -1432,6 +1435,18 @@ export class DrawingWorkspace {
       if (h.ring || h.id === skip || p[0] < h.box[0] - m || p[0] > h.box[2] + m || p[1] < h.box[1] - m || p[1] > h.box[3] + m) continue;
       const a = this.annot(h.id), d = a?.t === "gtol" && a.dim ? this.annot(a.dim) : a;
       if (isGtolHost(d)) return d;
+    }
+    return null;
+  }
+
+  /** A dimension or tolerance frame (in a view) under a sheet point that a datum or surface finish symbol can sit on. */
+  private holderAt(kind: "datum" | "surf", p: Pt): DimAnnot | GtolAnnot | null {
+    const m = 0.8;
+    for (let i = this.annotHits.length - 1; i >= 0; i--) {
+      const h = this.annotHits[i];
+      if (h.ring || p[0] < h.box[0] - m || p[0] > h.box[2] + m || p[1] < h.box[1] - m || p[1] > h.box[3] + m) continue;
+      const a = this.annot(h.id);
+      if (a && (a.view || a.t === "gtol") && canHold(kind, a)) return a;
     }
     return null;
   }
@@ -1871,7 +1886,10 @@ export class DrawingWorkspace {
       this.addAnnot({ id: uid("a_"), t: "balloon", view: m.view!, ref: m.ref, pos: [round(pos[0]), round(pos[1])] }, "Balloon");
       m.ref = null; m.view = null;
     } else if (m.kind === "datum" || m.kind === "surf") {
-      if (!m.ref) {
+      if (!m.ref && !m.on) {
+        // On a dimension (a datum on a feature of size, a finish on its extension line) or a tolerance frame, like a CAD app.
+        const h = this.holderAt(m.kind, p);
+        if (h) { m.view = h.view ?? null; m.on = h.id; this.renderStatus(); this.renderOverlay(); return; }
         const pick = vid && this.facts ? this.annotPick(vid, p) : null;
         if (pick && pick.kind !== "pt") { m.view = vid; m.ref = this.pickRef(pick); this.renderStatus(); this.renderOverlay(); return; }
         if (m.kind === "datum") { toast(t("Click an edge of a view.")); return; }
@@ -1880,12 +1898,14 @@ export class DrawingWorkspace {
         this.addAnnot({ id: uid("a_"), t: "surf", ...(vid ? { view: vid } : {}), pos: [round(pos[0]), round(pos[1])], proc: "removal", text: "Ra 3.2" }, "Surface finish");
         this.mode = { kind: "none" };
       } else {
-        const pl = this.placements.get(m.view!)!;
+        const pl = m.view ? this.placements.get(m.view) : undefined;
+        if (!pl && !m.on) return;
         let q = p;
-        if (m.kind === "surf") { const f = this.footAt(m.view!, m.ref, p); if (f && Math.hypot(f.at[0] - p[0], f.at[1] - p[1]) < this.snapTol() * 1.5) q = f.at; }
-        const pos = fromSheet(pl, q[0], q[1]), at: Pt = [round(pos[0]), round(pos[1])];
-        if (m.kind === "datum") this.addAnnot({ id: uid("a_"), t: "datum", view: m.view!, ref: m.ref, pos: at, letter: this.nextDatum() }, "Datum feature");
-        else this.addAnnot({ id: uid("a_"), t: "surf", view: m.view!, ref: m.ref, pos: at, proc: "removal", text: "Ra 3.2" }, "Surface finish");
+        if (m.kind === "surf" && m.ref) { const f = this.footAt(m.view!, m.ref, p); if (f && Math.hypot(f.at[0] - p[0], f.at[1] - p[1]) < this.snapTol() * 1.5) q = f.at; }
+        const pos = pl ? fromSheet(pl, q[0], q[1]) : q, at: Pt = [round(pos[0]), round(pos[1])];
+        const where = m.on ? { on: m.on } : { ref: m.ref! };
+        if (m.kind === "datum") this.addAnnot({ id: uid("a_"), t: "datum", ...(m.view ? { view: m.view } : {}), ...where, pos: at, letter: this.nextDatum() }, "Datum feature");
+        else this.addAnnot({ id: uid("a_"), t: "surf", view: m.view!, ...where, pos: at, proc: "removal", text: "Ra 3.2" }, "Surface finish");
         this.mode = { kind: "none" };
       }
     } else {
@@ -2042,6 +2062,43 @@ export class DrawingWorkspace {
     else if (a?.t === "weld") void this.editWeldAnnot(a);
     else return false;
     return true;
+  }
+
+  /** The sheet point the pointer was last over (Ctrl+V pastes there). */
+  private lastPt: Pt | null = null;
+
+  /** Ctrl+C: the selected annotation, as a CAD app copies a note or a frame. */
+  private copyAnnot() {
+    const a = this.selA ? this.annot(this.selA) : undefined;
+    if (!a || !("pos" in a) || !a.pos) { toast(t("This annotation cannot be copied.")); return; }
+    const pl = a.view ? this.placements.get(a.view) : undefined;
+    clipAnnot = { a: JSON.parse(JSON.stringify(a)) as Annot, at: pl ? toSheet(pl, a.pos[0], a.pos[1]) : [...a.pos] as Pt, drawing: this.doc.id };
+    toast(t("Copied. Ctrl+V pastes it at the pointer."));
+  }
+
+  /** Ctrl+V: a copy of the copied annotation where the pointer is (else beside the original), in the same view when it is on
+   *  this sheet; one tied to model edges needs that view, a free one (note, frame, table, cloud, sketch) may go anywhere. */
+  private pasteAnnot() {
+    if (!clipAnnot || !this.store) return;
+    const a = JSON.parse(JSON.stringify(clipAnnot.a)) as Annot & { pos: Pt };
+    const q: Pt = this.lastPt ?? [clipAnnot.at[0] + 10, clipAnnot.at[1] - 10];
+    const sameDoc = clipAnnot.drawing === this.doc.id;
+    const pl = a.view && sameDoc ? this.placements.get(a.view) : undefined;
+    const tied = (a.t === "dim" || a.t === "hole" || a.t === "datum" || a.t === "balloon" || a.t === "htable" || a.t === "btable" || a.t === "wtable" || a.t === "ctable"
+      || ((a.t === "note" || a.t === "gtol" || a.t === "weld" || a.t === "dtarget") && !!a.leader) || (a.t === "surf" && (!!a.ref || !!a.on)));
+    if (a.view && !pl) {
+      if (tied) { toast(t("Paste it on the sheet that has its view: it is tied to the model."), true); return; }
+      delete (a as { view?: string }).view;
+    }
+    if (a.t === "gtol" && a.dim) delete a.dim;
+    if ((a.t === "datum" || a.t === "surf") && a.on && !this.annot(a.on)) { toast(t("Paste it on the sheet that has its view: it is tied to the model."), true); return; }
+    a.pos = pl ? fromSheet(pl, q[0], q[1]) : q;
+    a.pos = [round(a.pos[0]), round(a.pos[1])];
+    a.id = uid("a_");
+    if (a.t === "datum") a.letter = this.nextDatum();
+    this.addAnnot(a, "Paste annotation");
+    this.selA = a.id;
+    this.renderAll();
   }
 
   private addAnnot(a: Annot, label: string) {
@@ -2219,10 +2276,28 @@ export class DrawingWorkspace {
         s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: this.factsOf(vid)?.topo.cyls ?? [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
       }
     } else if (m.kind === "datum" || m.kind === "surf") {
-      if (!m.ref) { const hov = this.annotPick(vid, at); if (hov && hov.kind !== "pt") s += show(hov, "drw-edge"); }
-      else {
+      if (!m.ref && !m.on) {
+        const h = this.holderAt(m.kind, at), hb = h && this.annotHits.find(x => x.id === h.id);
+        if (hb) s += `<rect class="drw-edge" x="${hb.box[0] - 0.8}" y="${H - hb.box[3] - 0.8}" width="${hb.box[2] - hb.box[0] + 1.6}" height="${hb.box[3] - hb.box[1] + 1.6}" fill="none"/>`;
+        else { const hov = this.annotPick(vid, at); if (hov && hov.kind !== "pt") s += show(hov, "drw-edge"); }
+      } else if (m.on) {
+        // The host is drawn again with the symbol, so the symbol finds the host's lines; only the symbol is kept.
+        const host = this.annot(m.on), hv = m.view ? this.sheet.views.find(x => x.id === m.view) : undefined, hpl = m.view ? this.placements.get(m.view) : undefined;
+        if (host && !m.view && m.kind === "datum") {
+          const keep = (this.sheet.annots ?? []).filter(x => x.id === host.id);
+          const pa: Annot = { id: "_pa", t: "datum", on: m.on, pos: at, letter: this.nextDatum() };
+          const mine = sheetNotes({ ...this.sheet, annots: keep }).prims.length, all = sheetNotes({ ...this.sheet, annots: [...keep, pa] }).prims;
+          s += `<g class="drw-preview">${svgBody(all.slice(mine), H, "currentColor")}</g>`;
+        } else if (host && hv && hpl) {
+          const pos = fromSheet(hpl, at[0], at[1]);
+          const pa: Annot = m.kind === "datum" ? { id: "_pa", t: "datum", view: hv.id, on: m.on, pos, letter: this.nextDatum() } : { id: "_pa", t: "surf", view: hv.id, on: m.on, pos, proc: "removal", text: "Ra 3.2" };
+          const all = viewAnnots({ ...this.sheet, annots: [...(this.sheet.annots ?? []).filter(x => x.id === host.id || (x.t === "gtol" && x.dim === host.id)), pa] }, hv, hpl, this.ctx());
+          const n = all.prims.length, mine = viewAnnots({ ...this.sheet, annots: (this.sheet.annots ?? []).filter(x => x.id === host.id || (x.t === "gtol" && x.dim === host.id)) }, hv, hpl, this.ctx()).prims.length;
+          s += `<g class="drw-preview">${svgBody(all.prims.slice(mine, n).filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
+        }
+      } else {
         const pos = fromSheet(pl, at[0], at[1]);
-        const pa: Annot = m.kind === "datum" ? { id: "_pa", t: "datum", view: vid, ref: m.ref, pos, letter: this.nextDatum() } : { id: "_pa", t: "surf", view: vid, ref: m.ref, pos: (() => { const f = this.footAt(vid, m.ref!, at); return f && Math.hypot(f.at[0] - at[0], f.at[1] - at[1]) < this.snapTol() * 1.5 ? fromSheet(pl, ...f.at) : pos; })(), proc: "removal", text: "Ra 3.2" };
+        const pa: Annot = m.kind === "datum" ? { id: "_pa", t: "datum", view: vid, ref: m.ref!, pos, letter: this.nextDatum() } : { id: "_pa", t: "surf", view: vid, ref: m.ref!, pos: (() => { const f = this.footAt(vid, m.ref!, at); return f && Math.hypot(f.at[0] - at[0], f.at[1] - at[1]) < this.snapTol() * 1.5 ? fromSheet(pl, ...f.at) : pos; })(), proc: "removal", text: "Ra 3.2" };
         s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: this.factsOf(vid)?.topo.cyls ?? [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
       }
     } else if (!m.leader) { const hov = this.annotPick(vid, at); if (hov) s += show(hov, "drw-edge"); }
@@ -2286,7 +2361,12 @@ export class DrawingWorkspace {
     const id = this.selA;
     if (!id) return;
     this.selA = null;
-    this.store!.change("Delete annotation", d => { const S = d.sheets[this.sheetIdx]; S.annots = (S.annots ?? []).filter(a => a.id !== id && !(a.t === "gtol" && a.dim === id)); });
+    // What hangs on it goes too: frames under it, and datum / surface finish symbols on it or on those frames.
+    this.store!.change("Delete annotation", d => {
+      const S = d.sheets[this.sheetIdx], gone = new Set([id]);
+      for (let grew = true; grew;) { grew = false; for (const a of S.annots ?? []) { const on = a.t === "gtol" ? a.dim : a.t === "datum" || a.t === "surf" ? a.on : undefined; if (on && gone.has(on) && !gone.has(a.id)) { gone.add(a.id); grew = true; } } }
+      S.annots = (S.annots ?? []).filter(a => !gone.has(a.id));
+    });
   }
 
   /** The BOM's sub-assembly choice: the whole assembly or one top-level sub-assembly. */
@@ -2527,6 +2607,7 @@ export class DrawingWorkspace {
         <label class="drw-f">${esc(t("Letter"))}<input data-d="dl" value="${esc(a.letter)}" maxlength="2" translate="no"></label>
         <label class="drw-chk"><input type="checkbox" data-d="dopen"${a.open ? " checked" : ""}> ${esc(t("Open triangle"))}</label>
         <label class="drw-chk"><input type="checkbox" data-d="dbent"${a.bent ? " checked" : ""}> ${esc(t("Bent leader"))}</label>
+        ${a.on && this.annot(a.on) ? `<p class="drw-note">${esc(t(this.annot(a.on)!.t === "dim" ? "On a dimension: it moves with it." : "On a tolerance frame: it moves with it."))}</p>` : ""}
       </fieldset>${del}`;
     }
     if (a.t === "surf") {
@@ -3928,6 +4009,8 @@ export class DrawingWorkspace {
     else if (mod && k === "p") void this.exportAs("print");
     else if (mod && !typing && (k === "z" && !e.shiftKey)) this.store?.undo();
     else if (mod && !typing && (k === "y" || (k === "z" && e.shiftKey))) this.store?.redo();
+    else if (mod && !typing && k === "c" && this.selA && !e.shiftKey) this.copyAnnot();
+    else if (mod && !typing && k === "v" && clipAnnot && !e.shiftKey) this.pasteAnnot();
     else if (typing || mod || e.altKey) used = false;
     else if (k === "escape" && this.painter) this.endPainter();
     else if (k === "escape" && this.aligner) this.endAligner();

@@ -7335,7 +7335,7 @@ export class ModelController {
         else if (e.key === "Enter" && id === "configs") { e.preventDefault(); this.editConfigs(); }
         else if (id.startsWith("folder:") && (e.key === "Enter" || (e.key === "ArrowLeft") === !this.closedFolders.has(id.slice(7)) && (e.key === "ArrowLeft" || e.key === "ArrowRight"))) { e.preventDefault(); this.toggleFolder(id.slice(7)); $("#mc-tree").querySelector<HTMLElement>(`.ft-row[data-id="${CSS.escape(id)}"]`)?.focus(); }
         else if (r.classList.contains("ft-parentrow") && (e.key === "ArrowLeft") === !this.closedFeats.has(id) && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); this.toggleFeat(id); $("#mc-tree").querySelector<HTMLElement>(`.ft-row[data-id="${CSS.escape(id)}"]`)?.focus(); }
-        else if ((id.startsWith("folder:") || id.startsWith("wsub:")) && e.key === "F2") { e.preventDefault(); this.startRename(id); }
+        else if ((id.startsWith("folder:") || id.startsWith("wsub:") || id.startsWith("body:")) && e.key === "F2") { e.preventDefault(); this.startRename(id); }
         else if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown") && this.store!.feature(id)) {
           // Alt+↑/↓ moves the feature past its neighbour (keyboard reorder).
           e.preventDefault();
