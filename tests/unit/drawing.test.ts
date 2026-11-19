@@ -466,6 +466,28 @@ test("GD&T, datums, surface finish, tables, GOST title block, dangling annotatio
   assert.deepEqual(out.hits.map(h => h.id), ["d1"]);
   assert.ok(!out.prims.some(p => p.t === "p" && p.fill), "no triangle without the edge");
   assert.deepEqual(sheetNotes(sh).hits.map(h => h.id), ["t1"]);
+  // Tolerance frames attached to a note (on the sheet or in a view) sit under its text, lined up with its start, stacked;
+  // one whose note is gone is drawn where it was left.
+  const gt = (id: string, dim: string, view?: string) => ({ id, t: "gtol" as const, ...(view ? { view } : {}), pos: [200, 50] as [number, number], dim, rows: [{ sym: "flat" as const, tol: "0.05", datums: [] }] });
+  const sn = { ...sh, annots: [{ id: "n1", t: "note" as const, pos: [40, 100] as [number, number], text: "BREAK SHARP EDGES" }, gt("g1", "n1"), gt("g2", "n1"), gt("g3", "gone")] };
+  const hs = new Map(sheetNotes(sn).hits.map(h => [h.id, h.box]));
+  const n = hs.get("n1")!, f1 = hs.get("g1")!, f2 = hs.get("g2")!, f3 = hs.get("g3")!;
+  assert.ok(Math.abs(f1[0] - n[0]) < 1e-9 && f1[3] < n[1] && n[1] - f1[3] < 3, `under the note: ${n} / ${f1}`);
+  assert.ok(Math.abs(f2[0] - n[0]) < 1e-9 && f2[3] < f1[1], `stacked: ${f1} / ${f2}`);
+  assert.ok(f3[0] > 150, `free where it was left: ${f3}`);
+  const vn = { ...sh, annots: [{ id: "n2", t: "note" as const, view: "v", pos: [40, 100] as [number, number], text: "X", al: "r" as const }, gt("g4", "n2", "v")] };
+  const vh = new Map(viewAnnots(vn, vn.views[0], pl, { topo: { edges: [], cyls: [] }, holes: [], items: [], box: null, dec: ".", label: k => k }).hits.map(h => [h.id, h.box]));
+  assert.ok(Math.abs(vh.get("g4")![2] - vh.get("n2")![2]) < 1e-9 && vh.get("g4")![3] < vh.get("n2")![1], "right-justified note: frame lined up on the right");
+  // A frame under a diameter whose leader leaves the shoulder's left end downwards is moved right, off the leader;
+  // one over a level dimension line goes below it; a line away from the text is left alone.
+  const { clearOfLines } = await import("../../src/drawing/annot");
+  const text: [number, number, number, number] = [100, 100, 110, 104], frame: [number, number, number, number] = [96, 92, 116, 98.8];
+  const [sx, sy] = clearOfLines(frame, [[100, 100, 80, 70]], text);
+  const xAt = (y: number) => 100 + (y - 100) * (20 / 30);
+  assert.ok(sy === 0 && frame[0] + sx > xAt(98.8 + 0.8) && sx < 6, `off the leader: ${sx}, ${sy}`);
+  const [, dy] = clearOfLines(frame, [[90, 97, 120, 97]], text);
+  assert.ok(dy < -1.5, `below the dimension line: ${dy}`);
+  assert.deepEqual(clearOfLines(frame, [[60, 95, 60, 0]], text), [0, 0]);
 });
 
 test("assembly BOM: items in first-use order, pattern and sub-assembly instances counted; balloons numbered", async () => {

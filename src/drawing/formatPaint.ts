@@ -5,7 +5,7 @@ import type { Annot } from "./types";
  * other CAD apps' Format Painter does. Text, references and position stay; only how it is drawn moves across.
  */
 export const PAINT_KEYS: Partial<Record<Annot["t"], readonly string[]>> = {
-  dim: ["prec", "tol", "arrows", "show", "dual", "horiz", "ends", "insp", "noExt", "along", "outside"],
+  dim: ["prec", "tol", "arrows", "show", "dual", "horiz", "ends", "insp", "noExt", "along", "outside", "lstyle", "bend"],
   note: ["h", "border", "al", "end", "bent"],
   balloon: ["shape"],
   datum: ["open", "bent"],

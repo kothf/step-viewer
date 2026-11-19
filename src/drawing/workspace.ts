@@ -8,7 +8,7 @@ import { alignDim, rapidRow, rapidSlots, spaceDims } from "./dimAlign";
 import type { VaultTie } from "../pdm/panel";
 import fontUrl from "dejavu-fonts-ttf/ttf/DejaVuSans.ttf?url";
 import type { MEdge, Projection, ViewDir } from "../kernel/drawing";
-import { AUTO_LAYERS, arrowOutside, withCut, ringTopo, coneMid, coneOutline, wholeCircle, edgeOnSeg, outlineSeg, clineSegs, cloudPrims, dimGeo, factsCtx, holeEdges, ringDist, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, stackItem, edgeItem, weldItem, cutDesc, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
+import { AUTO_LAYERS, isGtolHost, arrowOutside, withCut, ringTopo, coneMid, coneOutline, wholeCircle, edgeOnSeg, outlineSeg, clineSegs, cloudPrims, dimGeo, factsCtx, holeEdges, ringDist, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, stackItem, edgeItem, weldItem, cutDesc, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
 import type { PartDoc } from "../model/types";
 import type { AsmDoc } from "../asm/types";
 import { BALLOON_R, BOM_COLS, BOM_MAT_COL, autoBalloons, bomMats, compOfKey, sheetBom, subsOf, type BalloonItems, type Bom } from "./bom";
@@ -26,7 +26,7 @@ import { editTitleBlock } from "./tbEditor";
 import { editGtol, editHole, editWeld, gtolPicture, surfIcon, weldIcon } from "./annotDlg";
 import { loadFormats } from "./formats";
 import { FIELD_LABEL, isoFormat, editableOf, SIZES, fieldAt, formatPrims, frameOf, sheetSize, tbSize, titleBlockAt, type Fields } from "./sheet";
-import type { Annot, BalloonAnnot, CLineAnnot, GtolAnnot, HoleAnnot, DatumTargetAnnot, DimAnnot, SketchAnnot, SkPen, WeldSide, WeldAnnot, DisplayStyle, DraftStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, GRow, HatchPattern, Orient, Sheet, SheetSize, SurfLay, TableAnnot, TangentEdges, Tol } from "./types";
+import type { Annot, BalloonAnnot, CLineAnnot, GtolAnnot, HoleAnnot, NoteAnnot, DatumTargetAnnot, DimAnnot, SketchAnnot, SkPen, WeldSide, WeldAnnot, DisplayStyle, DraftStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, GRow, HatchPattern, Orient, Sheet, SheetSize, SurfLay, TableAnnot, TangentEdges, Tol } from "./types";
 import { SURF_LAYS, cellLabel } from "./gdt";
 import { WELD_SYM_NAMES, beadWeld } from "./weld";
 import { SK_PENS, SK_PEN_NAMES, orthoSnap, skPoints, skPrims } from "./sheetSketch";
@@ -288,6 +288,10 @@ const ICON = {
 
 /** A drawing kept in a document tab while another document is shown. */
 export interface DrawingTab { store: DrawingStore; model: Uint8Array | undefined; fileName: string; info: DrawingModel["info"]; modelKey: string; sheetIdx: number; vault: VaultTie | null }
+
+/** Undo step and toast for a tolerance frame attached to a dimension, hole callout or note. */
+const hostStep = (h: Annot) => h.t === "dim" ? "Attach to dimension" : h.t === "hole" ? "Attach to hole callout" : "Attach to note";
+const hostToast = (h: Annot) => h.t === "dim" ? "Attached to the dimension: it moves with it." : h.t === "hole" ? "Attached to the hole callout: it moves with it." : "Attached to the note: it moves with it.";
 
 export class DrawingWorkspace {
   readonly el: HTMLElement;
@@ -764,7 +768,7 @@ export class DrawingWorkspace {
     else if (m.kind === "note") s = m.leader ? t("Click where the note goes.") : t("Click where the note goes, or first click an edge for a leader.");
     else if (m.kind === "dtarget") s = m.leader ? t("Click where the datum target frame goes.") : t("Click the target on an edge, or where the datum target frame goes.");
     else if (m.kind === "weld") s = m.leader ? t("Click where the weld symbol goes.") : t("Click the edge of the joint for the arrow, or where the weld symbol goes.");
-    else if (m.kind === "gtol") s = m.leader ? t("Click where the tolerance frame goes.") : t("Click where the tolerance frame goes, a dimension to attach it under, or first an edge for a leader.");
+    else if (m.kind === "gtol") s = m.leader ? t("Click where the tolerance frame goes.") : t("Click where the tolerance frame goes, a dimension, hole callout or note to attach it under, or first an edge for a leader.");
     else if (m.kind === "datum") s = m.ref ? t("Click where the datum letter goes.") : t("Click the edge of the datum feature.");
     else if (m.kind === "balloon") s = m.ref ? t("Click where the balloon goes.") : t("Click an edge of a component.");
     else if (m.kind === "surf") s = m.ref ? t("Click on the edge to put the symbol there, or away from it for a leader.") : t("Click the edge of the surface, or an empty place on the sheet.");
@@ -1072,8 +1076,8 @@ export class DrawingWorkspace {
     if (aid) {
       const a = this.annot(aid)!, pl = a.view ? this.placements.get(a.view) : undefined;
       this.sel = null; this.selA = aid;
-      // A frame attached to a dimension drags the dimension.
-      const lead = this.gtolDim(a) ?? a;
+      // A frame attached to a dimension, hole callout or note drags its host.
+      const lead = this.gtolHost(a) ?? a;
       if (lead.pos) this.adrag = { id: lead.id, start: p, orig: [...lead.pos] as Pt, s: pl?.s ?? 1, moved: false };
       this.svg.setPointerCapture(e.pointerId);
       this.renderTree(); this.renderProps(); this.renderOverlay();
@@ -1208,11 +1212,11 @@ export class DrawingWorkspace {
       try { this.svg.releasePointerCapture(e.pointerId); } catch { /* gone */ }
       if (!d.moved) return;
       const p = this.sheetPt(e), np: Pt = [round(d.orig[0] + (p[0] - d.start[0]) / d.s), round(d.orig[1] + (p[1] - d.start[1]) / d.s)];
-      // A free tolerance frame dropped on a dimension's text attaches to it.
-      const moved = this.annot(d.id), on = moved?.t === "gtol" && !moved.leader && !moved.dim ? this.dimAt(p, d.id) : null;
+      // A free tolerance frame dropped on a dimension's, hole callout's or note's text attaches to it.
+      const moved = this.annot(d.id), on = moved?.t === "gtol" && !moved.leader && !moved.dim ? this.hostAt(p, d.id) : null;
       if (on) {
-        this.store!.change("Attach to dimension", doc => { const a = (doc.sheets[this.sheetIdx].annots ?? []).find(x => x.id === d.id); if (a?.t === "gtol") { a.dim = on.id; a.view = on.view; a.pos = [...on.pos] as Pt; } });
-        toast(t("Attached to the dimension: it moves with it."));
+        this.store!.change(hostStep(on), doc => { const a = (doc.sheets[this.sheetIdx].annots ?? []).find(x => x.id === d.id); if (a?.t === "gtol") { a.dim = on.id; if (on.view) a.view = on.view; else delete a.view; a.pos = [...on.pos] as Pt; } });
+        toast(t(hostToast(on)));
         return;
       }
       this.store!.change("Move annotation", doc => { const a = (doc.sheets[this.sheetIdx].annots ?? []).find(x => x.id === d.id); if (a) a.pos = np; });
@@ -1420,23 +1424,23 @@ export class DrawingWorkspace {
 
   private annot(id: string): Annot | undefined { return (this.sheet.annots ?? []).find(a => a.id === id); }
 
-  /** The dimension whose text (or attached frame) is under a sheet point. */
-  private dimAt(p: Pt, skip?: string): DimAnnot | null {
+  /** The dimension, hole callout or note whose text (or attached frame) is under a sheet point. */
+  private hostAt(p: Pt, skip?: string): DimAnnot | HoleAnnot | NoteAnnot | null {
     const m = 0.8;
     for (let i = this.annotHits.length - 1; i >= 0; i--) {
       const h = this.annotHits[i];
       if (h.ring || h.id === skip || p[0] < h.box[0] - m || p[0] > h.box[2] + m || p[1] < h.box[1] - m || p[1] > h.box[3] + m) continue;
       const a = this.annot(h.id), d = a?.t === "gtol" && a.dim ? this.annot(a.dim) : a;
-      if (d?.t === "dim") return d;
+      if (isGtolHost(d)) return d;
     }
     return null;
   }
 
-  /** The dimension a tolerance frame is attached to, when it is still there. */
-  private gtolDim(a: Annot | undefined): DimAnnot | null {
+  /** The dimension, hole callout or note a tolerance frame is attached to, when it is still there. */
+  private gtolHost(a: Annot | undefined): DimAnnot | HoleAnnot | NoteAnnot | null {
     if (a?.t !== "gtol" || !a.dim) return null;
     const d = this.annot(a.dim);
-    return d?.t === "dim" && d.view === a.view ? d : null;
+    return isGtolHost(d) && d.view === a.view ? d : null;
   }
 
   private annotAt(p: Pt): string | null {
@@ -1455,17 +1459,17 @@ export class DrawingWorkspace {
     const moved = { ...a, pos: [d.orig[0] + (p[0] - d.start[0]) / d.s, d.orig[1] + (p[1] - d.start[1]) / d.s] as Pt } as Annot;
     const sh = { ...this.sheet, annots: (this.sheet.annots ?? []).map(x => (x.id === d.id ? moved : x)) };
     const H = sheetSize(sh)[1];
-    // Tolerance frames attached to a dragged dimension go along.
-    const along = (x: Annot) => x.id === d.id || (x.t === "gtol" && x.dim === d.id && moved.t === "dim");
+    // Tolerance frames attached to a dragged dimension, hole callout or note go along.
+    const along = (x: Annot) => x.id === d.id || (x.t === "gtol" && x.dim === d.id && isGtolHost(moved));
     let prims: Prim[] = [];
     if (moved.view) { const v = findView(sh, moved.view), pl = this.placements.get(moved.view); if (v && pl) prims = viewAnnots({ ...sh, annots: sh.annots.filter(along) }, v, pl, { ...this.ctx(), topo: this.ctx().topo && { ...this.ctx().topo!, cyls: [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)); }
-    else prims = sheetNotes({ ...sh, annots: [moved] }, (s, p) => t(s, p), this.ctx().dec, this.bom).prims;
+    else prims = sheetNotes({ ...sh, annots: sh.annots.filter(x => !x.view && along(x)) }, (s, p) => t(s, p), this.ctx().dec, this.bom).prims;
     const host = moved.view ? this.svg.querySelector(`.drw-view[data-v="${moved.view}"] .drw-annots`) : this.svg.querySelector(".drw-notes");
     if (!host) return;
     // Draw everything but the dragged one from the stored sheet, then the dragged one where it is now.
     let rest: Prim[];
     if (moved.view) { const v = findView(sh, moved.view)!, pl = this.placements.get(moved.view)!; rest = viewAnnots({ ...this.sheet, annots: (this.sheet.annots ?? []).filter(x => !along(x)) }, v, pl, this.ctx()).prims; }
-    else rest = sheetNotes({ ...this.sheet, annots: (this.sheet.annots ?? []).filter(x => x.id !== d.id) }, (s, p) => t(s, p), this.ctx().dec, this.bom).prims;
+    else rest = sheetNotes({ ...this.sheet, annots: (this.sheet.annots ?? []).filter(x => !along(x)) }, (s, p) => t(s, p), this.ctx().dec, this.bom).prims;
     host.innerHTML = svgBody(rest, H) + `<g class="drw-adrag">${svgBody(prims, H)}</g>`;
   }
 
@@ -1835,10 +1839,11 @@ export class DrawingWorkspace {
       this.mode = { kind: "none" };
       setTimeout(() => void this.editWeldAnnot(w, true));
     } else if (m.kind === "gtol") {
-      // A click on a dimension attaches the frame under its text.
-      const on = m.leader ? null : this.dimAt(p);
+      // A click on a dimension, hole callout or note attaches the frame under its text.
+      const on = m.leader ? null : this.hostAt(p);
       if (on) {
-        const g: GtolAnnot = { id: uid("a_"), t: "gtol", view: on.view, pos: [...on.pos] as Pt, dim: on.id, rows: [on.k === "dia" || on.k === "rad" ? { sym: "pos", tol: "0.1", dia: true, datums: ["A", "B"] } : { sym: "par", tol: "0.05", datums: ["A"] }] };
+        const round_ = on.t === "hole" || on.t === "dim" && (on.k === "dia" || on.k === "rad");
+        const g: GtolAnnot = { id: uid("a_"), t: "gtol", ...(on.view ? { view: on.view } : {}), pos: [...on.pos] as Pt, dim: on.id, rows: [round_ ? { sym: "pos", tol: "0.1", dia: true, datums: ["A", "B"] } : on.t === "note" ? { sym: "flat", tol: "0.05", datums: [] } : { sym: "par", tol: "0.05", datums: ["A"] }] };
         this.mode = { kind: "none" };
         setTimeout(() => void this.editGtolAnnot(g, true));
         return;
@@ -2439,7 +2444,8 @@ export class DrawingWorkspace {
         <label class="drw-f">${esc(t("Arrowheads"))}<select data-d="ends"><option value="">${esc(t("Document"))}</option>${(["filled", "open", "dot", "tick"] as const).map(k => `<option value="${k}"${a.ends === k ? " selected" : ""}>${esc(t(ARROW_NAMES[k]))}</option>`).join("")}</select></label>
         ${a.k === "dia" && !g?.dl ? `<label class="drw-f">${esc(t("Display"))}<select data-d="dlin">${([["", "Diameter"], ["h", "Linear, horizontal"], ["v", "Linear, vertical"]] as const).map(([k, l]) => `<option value="${k}"${(a.lin ?? "") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : ""}
         ${!g?.dl && ((a.k === "rad" && !a.fore) || (a.k === "dia" && !a.lin)) ? `<label class="drw-chk"><input type="checkbox" data-d="rout"${arrowOutside(a) ? " checked" : ""}> ${esc(t("Arrow outside the circle"))}</label>` : ""}
-        ${!g?.dl && (a.k === "rad" || (a.k === "dia" && !a.lin)) ? `<label class="drw-chk"><input type="checkbox" data-d="ralong"${a.along ? " checked" : ""}> ${esc(t("Text along the leader"))}</label>` : ""}
+        ${!g?.dl && (a.k === "rad" || (a.k === "dia" && !a.lin)) ? `<label class="drw-f">${esc(t("Leader"))}<select data-d="lstyle">${([["", "Bent (shoulder)"], ["straight", "Straight, no shoulder"], ["along", "Text along the leader"]] as const).map(([k, l]) => `<option value="${k}"${(a.along ? "along" : a.lstyle ?? "") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>
+        ${!a.along && !a.lstyle ? `<label class="drw-f">${esc(t("Shoulder length (mm)"))}<input data-d="bend" inputmode="decimal" placeholder="${esc(t("Auto"))}" value="${a.bend != null ? String(a.bend) : ""}"></label>` : ""}` : ""}
         ${a.k === "rad" ? `<label class="drw-chk"><input type="checkbox" data-d="fore"${a.fore ? " checked" : ""}> ${esc(t("Foreshortened radius"))}</label>` : ""}
         ${lin ? `<label class="drw-chk"><input type="checkbox" data-d="horiz"${a.horiz ? " checked" : ""}> ${esc(t("Horizontal text in the dimension line"))}</label>` : ""}
         <label class="drw-f">${esc(t("Decimals"))}<select data-d="prec"><option value="">${esc(t("Auto"))}</option>${[0, 1, 2, 3].map(n => `<option value="${n}"${a.prec === n ? " selected" : ""}>${n}</option>`).join("")}</select></label>
@@ -2511,7 +2517,7 @@ export class DrawingWorkspace {
       return `<fieldset class="pm-group"><legend>${esc(t("Geometric tolerance"))}</legend>
         <div class="ad-pvbox">${gtolPicture(a, this.ctx().dec)}</div>
         ${a.leader ? `<p class="drw-note">${esc(t("With a leader to the model."))}</p>` : ""}
-        ${this.gtolDim(a) ? `<p class="drw-note">${esc(t("Attached under a dimension: it moves with it."))}</p><div class="row"><button class="btn small" data-a="gdetach">${esc(t("Detach from the dimension"))}</button></div>` : !a.leader ? `<p class="drw-note">${esc(t("Drag the frame onto a dimension's text to attach it under the dimension."))}</p>` : ""}
+        ${this.gtolHost(a) ? `<p class="drw-note">${esc(t(this.gtolHost(a)!.t === "dim" ? "Attached under a dimension: it moves with it." : this.gtolHost(a)!.t === "hole" ? "Attached under a hole callout: it moves with it." : "Attached under a note: it moves with it."))}</p><div class="row"><button class="btn small" data-a="gdetach">${esc(t("Detach"))}</button></div>` : !a.leader ? `<p class="drw-note">${esc(t("Drag the frame onto a dimension, hole callout or note to attach it under its text."))}</p>` : ""}
         <p class="drw-note">${esc(t("Double-click the frame on the sheet to edit it too."))}</p>
         <div class="row"><button class="btn small primary" data-a="aedit">${esc(t("Edit…"))}</button><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>
       </fieldset>`;
@@ -2616,9 +2622,11 @@ export class DrawingWorkspace {
     const num = (s: string) => { const v = parseFloat(s.replace(",", ".")); return isFinite(v) ? v : undefined; };
     this.setAnnot(k === "ntxt" || k === "htxt" ? "Text" : "Annotation property", a => {
       if (a.t === "dim") {
-        if (k === "k") { a.k = val as DimAnnot["k"]; if (a.k !== "dia") delete a.lin; if (a.k !== "rad") delete a.fore; if (a.k !== "rad" && a.k !== "dia") { delete a.outside; delete a.along; } }
+        if (k === "k") { a.k = val as DimAnnot["k"]; if (a.k !== "dia") delete a.lin; if (a.k !== "rad") delete a.fore; if (a.k !== "rad" && a.k !== "dia") { delete a.outside; delete a.along; delete a.lstyle; delete a.bend; } }
         else if (k === "rout") { const on = (el as HTMLInputElement).checked; if (a.k === "dia") { if (on) delete a.outside; else a.outside = false; } else if (on) a.outside = true; else delete a.outside; }
         else if (k === "ralong") { if ((el as HTMLInputElement).checked) a.along = true; else delete a.along; }
+        else if (k === "lstyle") { delete a.along; delete a.lstyle; if (val === "along") a.along = true; else if (val === "straight") a.lstyle = "straight"; if (val) delete a.bend; }
+        else if (k === "bend") { const v = num(val); if (v != null && v >= 0) a.bend = Math.round(v * 10) / 10; else delete a.bend; }
         else if (k === "dlin") { if (val === "h" || val === "v") a.lin = val; else delete a.lin; }
         else if (k === "ends") { if (val === "filled" || val === "open" || val === "dot" || val === "tick") a.ends = val; else delete a.ends; }
         else if (k === "arrows") { if (val === "in" || val === "out") a.arrows = val; else delete a.arrows; }
@@ -3637,8 +3645,8 @@ export class DrawingWorkspace {
       case "dspace": this.spaceViewDims(); break;
       case "gdetach": {
         const h = this.annotHits.find(x => x.id === this.selA), a = this.selA ? this.annot(this.selA) : undefined, pl = a?.view ? this.placements.get(a.view) : undefined;
-        const at = h && pl ? fromSheet(pl, h.box[0], h.box[3]) : null;
-        this.setAnnot("Detach from the dimension", x => { if (x.t !== "gtol") return; delete x.dim; if (at) x.pos = [round(at[0]), round(at[1])]; });
+        const at = h && pl ? fromSheet(pl, h.box[0], h.box[3]) : h && a && !a.view ? [h.box[0], h.box[3]] : null;
+        this.setAnnot("Detach", x => { if (x.t !== "gtol") return; delete x.dim; if (at) x.pos = [round(at[0]), round(at[1])]; });
         break;
       }
       case "align": this.realign(); break;
