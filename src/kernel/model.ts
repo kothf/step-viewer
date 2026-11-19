@@ -913,6 +913,11 @@ export class Modeller {
     return { target: this.compoundOf(list.filter((_, i) => idx.includes(i))), keep: list.filter((_, i) => !idx.includes(i)) };
   }
 
+  /** A cut that takes the whole body away leaves nothing to show or build on (an empty compound crashed the mesher). */
+  private notEmptied(out: Named) {
+    if (this.volume(out.shape) < 1e-9) throw new FeatureError("E-FT-EMPTY", "The cut removes the whole body.");
+  }
+
   /** Joins an extrude or revolve tool to the body, or cuts it out. */
   private applySwept(f: Feature & { type: "extrude" | "revolve" }, tool: Named, prev: Named | null, frame: Frame, so: V3): Named {
     if (f.op === "boss" && prev && f.type === "extrude") {
@@ -929,6 +934,7 @@ export class Modeller {
     if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body to cut yet.");
     const out = this.bool(f.type === "extrude" && f.outside ? "common" : "cut", prev, tool, f.id);
     if (Math.abs(this.volume(out.shape) - this.volume(prev.shape)) < 1e-9) throw new FeatureError("E-FT-NOCHANGE", "The cut does not touch the body.");
+    this.notEmptied(out);
     return out;
   }
 
@@ -3122,6 +3128,7 @@ export class Modeller {
     let out = this.bool("cut", sc.target!, tool, f.id);
     if (sc.keep.length) out = this.compoundOf([...sc.keep, ...this.bodyList(out)]);
     if (Math.abs(this.volume(out.shape) - this.volume(prev.shape)) < 1e-9) throw new FeatureError("E-FT-NOCHANGE", "The holes do not touch the body.");
+    this.notEmptied(out);
     // Retracted screw: the thread hangs below the retaining section and must stay inside the cover.
     if (short > 0) this.warning = `The cover is ${Math.round(short * 100) / 100} mm too thin to hide the retracted screw's thread: add a boss under the hole or use a shorter screw.`;
     if (!len.length && !spots.length) return { body: out, frame: fr0 };
@@ -6224,6 +6231,7 @@ export class Modeller {
     if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body to cut yet.");
     const out = this.bool("cut", prev, tool, f.id);
     if (Math.abs(this.volume(out.shape) - this.volume(prev.shape)) < 1e-9) throw new FeatureError("E-FT-NOCHANGE", "The cut does not touch the body.");
+    this.notEmptied(out);
     return out;
   }
 
