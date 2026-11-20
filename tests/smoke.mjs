@@ -16258,6 +16258,15 @@ try {
     await mp.selectOption('#sim-legend [data-k="kind"]', "u");
     await mp.uncheck('#sim-legend [data-k="deformed"]');
     const r2 = await sim();
+    // Error estimate: the first pass's error is known from the second (a bound for the result); its plot peaks at the clamp.
+    await mp.selectOption('#sim-legend [data-k="kind"]', "err");
+    await mp.waitForTimeout(150);
+    const re = await sim();
+    const errShown = await mp.evaluate(() => ({ kv: document.querySelector('#sim-tree .sim-kv [data-v="error"]')?.textContent ?? "", cols: document.querySelectorAll("#sim-tree .sim-passes thead th").length, unit: document.querySelector("#sim-legend .ana-scale span:nth-child(2)")?.textContent }));
+    check(re.errors.length === 2 && re.errors[0] > 0.5 && re.errors[0] < 40 && re.errors[1] === null && re.plot.kind === "err" && re.plot.range[0] === 0 && re.plot.range[1] > re.errors[0]
+      && /^< [\d.]+ %$/.test(errShown.kv) && errShown.cols === 5 && errShown.unit === "%",
+      `sim 1.610: the error estimate of a pass comes from the next one; the result's error is bounded and its plot shows where (${JSON.stringify({ errors: re.errors, range: re.plot.range, ...errShown })})`);
+    await mp.selectOption('#sim-legend [data-k="kind"]', "u");
     // Probe: a click on the plot at the middle of the top face pins the deflection there (0.354 of the tip's); Esc ends probing.
     await mp.click('#sim-legend [data-a="probe"]');
     p = await at("f1:end");

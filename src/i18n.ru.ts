@@ -5457,4 +5457,10 @@ export const RU: Record<string, string> = {
   "Clear probes": "Убрать пробы",
   "Remove probe": "Убрать пробу",
   "Click the plot to read the value at a point": "Щёлкните по эпюре, чтобы узнать значение в точке",
+  "Error estimate": "Оценка погрешности",
+  "Estimated error": "Оценка погрешности",
+  "In the energy norm, from how the passes converge": "В энергетической норме, по сходимости проходов",
+  "Where the last pass still changed the solution: the places that would gain most from more accuracy.": "Где последний проход ещё менял решение: эти места больше всего выиграют от повышения точности.",
+  "Est. error": "Погрешн.",
+  "Estimated error per pass": "Оценка погрешности по проходам",
 };

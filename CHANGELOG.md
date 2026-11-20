@@ -5,6 +5,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.610.0] - 2026-11-20
+
+### Added
+- Structural analysis: an **estimated error** for every solve. Each pass shows how far the pass before it was from it, in the energy norm; the Study tab gives the result's own error (extrapolated from the passes, or as an upper bound after two passes), a column in the passes table and a small **convergence chart**.
+- Structural analysis: the **Error estimate** plot in the results legend shows where the last pass still changed the solution, which is where more accuracy would pay off (usually at clamped edges and sharp corners).
+
+### Fixed
+- Structural analysis: a part whose faces fell almost on the middle of the solver's cells (a block drawn by hand, for one) could be solved wrongly at the highest pass: the large uncut pieces of such cells had too few integration points, so the last pass was slow and less accurate than the one before. They now get enough points for every pass, cells are lined up with a part that is within a hair of fitting them, and the coupling between cut cells is stiffer where a cell holds little material.
+
 ## [1.609.0] - 2026-11-20
 
 ### Added
@@ -3917,7 +3926,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.609.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.610.0...HEAD
+[1.610.0]: https://github.com/kothf/step-viewer/compare/v1.609.0...v1.610.0
 [1.609.0]: https://github.com/kothf/step-viewer/compare/v1.608.0...v1.609.0
 [1.608.0]: https://github.com/kothf/step-viewer/compare/v1.607.0...v1.608.0
 [1.607.0]: https://github.com/kothf/step-viewer/compare/v1.606.0...v1.607.0

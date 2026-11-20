@@ -120,6 +120,13 @@ export interface PassResult {
   /** At the sample points: displacement (3 each, mm) and von Mises stress (MPa). */
   u: Float32Array;
   vm: Float32Array;
+  /** Where this pass still changed the solution: the local estimate at the sample points, % (zeros on the first pass). */
+  err: Float32Array;
+  /**
+   * Error estimates in the energy norm, %, one per pass so far. A pass's error is known from the next one;
+   * the last entry is extrapolated from the two before (their ratio holds), or null when there are fewer.
+   */
+  errors: (number | null)[];
   maxU: number;
   maxVm: number;
   /** The energy change is within the target (or this was the last pass). */
@@ -159,6 +166,17 @@ export function cellSize(b: SimBody, cells = 150): number {
   return fit > 0.7 * h && fit < 1.4 * h ? fit : h;
 }
 
+/**
+ * The error of the pass after the ones whose errors are known: they fall by a steady ratio, so the next is
+ * e·(e / before), never more than e. Null with fewer than two.
+ */
+export function passError(known: number[]): number | null {
+  const n = known.length;
+  if (n < 2) return null;
+  const e = known[n - 1], b = known[n - 2];
+  return b > 0 ? e * Math.min(1, e / b) : 0;
+}
+
 /** The passes of a static study: degree 2, 3, 4 on the same cells, until the energy settles. */
 export function* runStatic(inp: RunInput): Generator<PassResult> {
   if (inp.problem.problems.length) throw new Error(`${inp.problem.problems[0].code}: ${inp.problem.problems[0].id}`);
@@ -168,17 +186,21 @@ export function* runStatic(inp: RunInput): Generator<PassResult> {
   const inside = insideOf(body);
   const h = cellSize(inp.body, inp.cells);
   const passes = Math.max(1, Math.min(3, Math.round(inp.passes)));
-  let grid: Grid | undefined, last = 0;
+  let grid: Grid | undefined, last = 0, prev: Float64Array | undefined;
+  const known: number[] = [];
   for (let k = 0; k < passes; k++) {
     const t0 = Date.now();
     const p = k + 2;
     const r = solveStatic({
-      lo: inp.body.lo, hi: inp.body.hi, inside, h, p, grid,
+      lo: inp.body.lo, hi: inp.body.hi, inside, h, p, grid, prev,
       mat: { E: inp.mat.E, nu: inp.mat.nu, rho: inp.mat.rho },
       fixed: inp.problem.fixed, loads: inp.problem.loads, gravity: inp.problem.gravity,
     });
     grid = r.grid;
-    const { u, vm } = r.sample(inp.pos, inp.nrm);
+    prev = r.x;
+    if (r.prevError != null) known.push(r.prevError);
+    const errors: (number | null)[] = [...known, passError(known)];
+    const { u, vm, err } = r.sample(inp.pos, inp.nrm);
     let maxU = 0, maxVm = 0;
     for (let i = 0; i < vm.length; i++) {
       maxVm = Math.max(maxVm, vm[i]);
@@ -187,7 +209,7 @@ export function* runStatic(inp: RunInput): Generator<PassResult> {
     const change = k ? (Math.abs(r.energy - last) / Math.abs(r.energy || 1)) * 100 : null;
     last = r.energy;
     const converged = change != null && change <= inp.energyTol;
-    yield { pass: k + 1, p, dofs: r.dofs, cells: r.grid.elems.length, energy: r.energy, change, ms: Date.now() - t0, reactions: r.reactions, applied: r.applied, u, vm, maxU, maxVm, converged, done: converged || k === passes - 1 };
+    yield { pass: k + 1, p, dofs: r.dofs, cells: r.grid.elems.length, energy: r.energy, change, ms: Date.now() - t0, reactions: r.reactions, applied: r.applied, u, vm, err, errors, maxU, maxVm, converged, done: converged || k === passes - 1 };
     if (converged) return;
   }
 }

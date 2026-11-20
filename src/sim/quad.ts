@@ -62,8 +62,12 @@ export function boxState(lo: ArrayLike<number>, hi: ArrayLike<number>, inside: I
   return ins === n ? 1 : ins === 0 ? 0 : -1;
 }
 
-/** Volume quadrature of the part of box [lo, hi] inside the body. */
-export function volumePoints(lo: number[], hi: number[], q: number, inside: Inside, depth: number, out = new Points(), state?: number, extra = 3): Points {
+/**
+ * Volume quadrature of the part of box [lo, hi] inside the body. A piece wholly inside that is found above the
+ * last octree level is large, so it gets `rich` Gauss points per direction: with fewer than p + 1 a degree-p
+ * field has strain modes the points do not see, and the cell's stiffness loses them.
+ */
+export function volumePoints(lo: number[], hi: number[], q: number, inside: Inside, depth: number, out = new Points(), state?: number, extra = 3, rich = q): Points {
   const st = state ?? boxState(lo, hi, inside);
   if (st === 0) return out;
   // a leaf holding an edge or corner of the body is split further, since its lines can follow only
@@ -83,11 +87,12 @@ export function volumePoints(lo: number[], hi: number[], q: number, inside: Insi
     for (let o = 0; o < 8; o++) {
       const a = [o & 1 ? m[0] : lo[0], o & 2 ? m[1] : lo[1], o & 4 ? m[2] : lo[2]];
       const b = [o & 1 ? hi[0] : m[0], o & 2 ? hi[1] : m[1], o & 4 ? hi[2] : m[2]];
-      volumePoints(a, b, q, inside, depth - 1, out);
+      volumePoints(a, b, q, inside, depth - 1, out, undefined, 3, rich);
     }
     return out;
   }
   if (st === -1) return lineLeaf(lo, hi, q, inside, out, hint?.axis);
+  if (depth > 0 && rich > q) q = rich;
   const g = gauss(q);
   const h = [(hi[0] - lo[0]) / 2, (hi[1] - lo[1]) / 2, (hi[2] - lo[2]) / 2];
   const c = [(hi[0] + lo[0]) / 2, (hi[1] + lo[1]) / 2, (hi[2] + lo[2]) / 2];

@@ -83,9 +83,12 @@ export interface GridOptions {
   minFrac?: number;
 }
 
+/** Gauss points per direction in the large uncut pieces of a cut cell: enough for the highest pass (p = 4). */
+const LEAF_RICH = 5;
+
 /** Cells of size h over [lo, hi] for the body `inside`. */
 export function makeGrid(lo: number[], hi: number[], h: number, inside: Inside, o: GridOptions): Grid {
-  const n = [0, 1, 2].map(a => Math.max(1, Math.ceil((hi[a] - lo[a]) / h - 1e-9)));
+  const n = [0, 1, 2].map(a => Math.max(1, Math.ceil((hi[a] - lo[a]) / h - 1e-4)));
   // centre the grid on the box so the leftover is shared by both ends
   const lo0 = [0, 1, 2].map(a => (lo[a] + hi[a]) / 2 - n[a] * h / 2);
   const g = new Grid(lo0, h, n);
@@ -98,7 +101,7 @@ export function makeGrid(lo: number[], hi: number[], h: number, inside: Inside, 
     // its Gauss points tested
     if (s0 === 0 && inside.hint) continue;
     const st = s0 === 0 ? -1 : s0;
-    const fine = st === 1 ? null : volumePoints(clo, chi, o.leafQ ?? 3, inside, s0 === -1 ? o.depth : 0, new Points(), st);
+    const fine = st === 1 ? null : volumePoints(clo, chi, o.leafQ ?? 3, inside, s0 === -1 ? o.depth : 0, new Points(), st, 3, LEAF_RICH);
     if (fine && !fine.n) continue;
     const pts = fine ? (o.fit && fine.n > o.fit ** 3 ? fitPoints(fine, clo, chi, o.fit) : fine) : volumePoints(clo, chi, o.q, inside, 0, new Points(), 1);
     const frac = pts.weight() / vol;

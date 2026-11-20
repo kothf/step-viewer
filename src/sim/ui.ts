@@ -49,7 +49,7 @@ const TIP: Record<string, string> = {
   moment: "Moment on faces",
   gravity: "Gravity on the whole part",
 };
-const PLOTS: [PlotKind, string][] = [["vm", "von Mises stress"], ["u", "Displacement"], ["ux", "Displacement X"], ["uy", "Displacement Y"], ["uz", "Displacement Z"], ["sf", "Safety factor"]];
+const PLOTS: [PlotKind, string][] = [["vm", "von Mises stress"], ["u", "Displacement"], ["ux", "Displacement X"], ["uy", "Displacement Y"], ["uz", "Displacement Z"], ["sf", "Safety factor"], ["err", "Error estimate"]];
 /** Safety factors above this are drawn as this (lightly loaded regions would hide the rest of the scale). */
 const SF_TOP = 10;
 const SUPPORT_COLOR = 0x2f9e44, LOAD_COLOR = 0xd6336c;
@@ -71,6 +71,21 @@ export function sig(x: number): string {
 }
 const num = (s: string) => { const v = Number(s.trim().replace(",", ".")); return isFinite(v) ? v : null; };
 const trim = (v: number) => String(Number(v.toPrecision(8)));
+
+/** The error estimate per pass on a log scale: how fast the passes converge. Nothing with fewer than two values. */
+function convergenceChart(errs: (number | null)[]): string {
+  const pts = errs.map((e, i) => ({ e, i })).filter((q): q is { e: number; i: number } => q.e != null && q.e > 0);
+  if (pts.length < 2) return "";
+  const W = 220, H = 64, L = 34, R = 8, T = 8, B = 16;
+  const lg = pts.map(q => Math.log10(q.e)), hi = Math.ceil(Math.max(...lg)), lo = Math.min(Math.floor(Math.min(...lg)), hi - 1);
+  const X = (i: number) => L + ((W - L - R) * i) / Math.max(1, errs.length - 1), Y = (v: number) => T + ((H - T - B) * (hi - v)) / (hi - lo);
+  const line = pts.map((q, k) => `${X(q.i).toFixed(1)},${Y(lg[k]).toFixed(1)}`).join(" ");
+  let s = `<svg class="sim-conv" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(t("Estimated error per pass"))}">`;
+  for (let d = lo; d <= hi; d++) s += `<line class="g" x1="${L}" x2="${W - R}" y1="${Y(d)}" y2="${Y(d)}"/><text class="a" x="${L - 4}" y="${Y(d) + 3}" text-anchor="end">${trim(10 ** d)} %</text>`;
+  errs.forEach((_, i) => { s += `<text class="a" x="${X(i)}" y="${H - 3}" text-anchor="middle">${i + 1}</text>`; });
+  s += `<polyline points="${line}"/>` + pts.map((q, k) => `<circle cx="${X(q.i).toFixed(1)}" cy="${Y(lg[k]).toFixed(1)}" r="2.6"${q.i === errs.length - 1 ? ' class="x"' : ""}/>`).join("");
+  return s + `</svg>`;
+}
 
 export class SimController {
   /** The study shown (view-only; the first one when unset or gone). */
@@ -148,7 +163,7 @@ export class SimController {
     const last = this.res?.passes.at(-1);
     return {
       study: this.study()?.id ?? null, editing: this.edit ? this.edit.draft.id : null, running: this.running, error: this.error, stale: this.stale(),
-      passes: this.res?.passes.map(p => ({ p: p.p, dofs: p.dofs, energy: p.energy, change: p.change, ms: p.ms })) ?? [],
+      passes: this.res?.passes.map(p => ({ p: p.p, dofs: p.dofs, energy: p.energy, change: p.change, ms: p.ms })) ?? [], errors: last?.errors ?? [],
       maxU: last?.maxU ?? null, maxVm: last?.maxVm ?? null, done: !!last?.done && !this.running,
       reactions: last?.reactions ?? [], applied: last?.applied ?? null,
       plot: { ...this.plot, shown: !!this.saved, range: this.range, scale: this.usedScale, points: (this.res?.mesh.pos.length ?? 0) / 3 }, marks: this.marks.children.length,
@@ -468,6 +483,7 @@ export class SimController {
 
   private values(r: PassResult, kind: PlotKind): Float32Array {
     if (kind === "vm") return r.vm;
+    if (kind === "err") return r.err;
     if (kind === "sf") {
       const sy = this.host.doc()?.material?.sy ?? 0, out = new Float32Array(r.vm.length);
       for (let i = 0; i < out.length; i++) out[i] = Math.min(SF_TOP, sy / Math.max(r.vm[i], 1e-9));
@@ -511,7 +527,7 @@ export class SimController {
   /** The plotted quantity's unit and the factor from the solver's units to it. */
   private plotUnit(): [string, number] {
     const k = this.plot.kind;
-    return k === "vm" ? ["MPa", 1] : k === "sf" ? ["", 1] : [units.current, UNITS[units.current].f];
+    return k === "vm" ? ["MPa", 1] : k === "sf" ? ["", 1] : k === "err" ? ["%", 1] : [units.current, UNITS[units.current].f];
   }
 
   /** Labels of the pinned probes, kept on their points as the view moves. */
@@ -585,10 +601,12 @@ export class SimController {
     if (r.vm.length !== n) return;
     // the safety factor needs a yield strength: without one the plot falls back to stress
     if (this.plot.kind === "sf" && !this.host.doc()?.material?.sy) this.plot.kind = "vm";
+    // the error estimate compares two passes
+    if (this.plot.kind === "err" && r.pass < 2) this.plot.kind = "vm";
     const val = this.values(r, this.plot.kind), sf = this.plot.kind === "sf";
     let lo = Infinity, hi = -Infinity;
     for (let i = 0; i < n; i++) { if (val[i] < lo) lo = val[i]; if (val[i] > hi) hi = val[i]; }
-    if (this.plot.kind === "vm" || this.plot.kind === "u") lo = 0;
+    if (this.plot.kind === "vm" || this.plot.kind === "u" || this.plot.kind === "err") lo = 0;
     this.range = [lo, hi];
     this.vals = val;
     const colors = new Float32Array(3 * n), span = hi - lo || 1;
@@ -703,10 +721,14 @@ export class SimController {
     html += `<dl class="sim-kv"><dt>${esc(t("Max von Mises stress"))}</dt><dd>${sig(last.maxVm)} MPa</dd><dt>${esc(t("Max displacement"))}</dt><dd>${esc(this.lenText(last.maxU))}</dd>`;
     const sy = this.host.doc()?.material?.sy;
     if (sy && last.maxVm > 0) html += `<dt>${esc(t("Lowest safety factor (yield)"))}</dt><dd${sy / last.maxVm < 1 ? ' class="sim-low"' : ""}>${sig(sy / last.maxVm)}</dd>`;
+    const errs = last.errors, eLast = errs.at(-1), eBefore = errs.length > 1 ? errs[errs.length - 2] : null;
+    if (eLast != null) html += `<dt title="${esc(t("In the energy norm, from how the passes converge"))}">${esc(t("Estimated error"))}</dt><dd data-v="error">≈ ${sig(eLast)} %</dd>`;
+    else if (eBefore != null) html += `<dt title="${esc(t("In the energy norm, from how the passes converge"))}">${esc(t("Estimated error"))}</dt><dd data-v="error">&lt; ${sig(eBefore)} %</dd>`;
     html += `<dt>${esc(t("Applied load"))}</dt><dd>${f(last.applied.force)} N</dd>`;
     last.reactions.forEach((re, i) => { html += `<dt>${esc(t("Reaction"))} <span translate="no">${esc(this.nameOf(r.ids[i] ?? ""))}</span></dt><dd title="${re.force.map(x => sig(x)).join(", ")} N">${f(re.force)} N</dd>`; });
-    html += `</dl><table class="sim-passes"><thead><tr><th>${esc(t("Pass"))}</th><th>${esc(t("Unknowns"))}</th><th>${esc(t("Energy change"))}</th><th>${esc(t("Time"))}</th></tr></thead><tbody>`
-      + r.passes.map(p => `<tr><td>${p.pass}</td><td>${p.dofs.toLocaleString("en-US").replace(/,/g, " ")}</td><td>${p.change == null ? "–" : `${sig(p.change)} %`}</td><td>${(p.ms / 1000).toFixed(1)} s</td></tr>`).join("") + `</tbody></table>`;
+    html += `</dl><table class="sim-passes"><thead><tr><th>${esc(t("Pass"))}</th><th>${esc(t("Unknowns"))}</th><th>${esc(t("Energy change"))}</th><th>${esc(t("Est. error"))}</th><th>${esc(t("Time"))}</th></tr></thead><tbody>`
+      + r.passes.map((p, i) => `<tr><td>${p.pass}</td><td>${p.dofs.toLocaleString("en-US").replace(/,/g, " ")}</td><td>${p.change == null ? "–" : `${sig(p.change)} %`}</td><td>${errs[i] == null ? "–" : `${i === errs.length - 1 ? "≈ " : ""}${sig(errs[i]!)} %`}</td><td>${(p.ms / 1000).toFixed(1)} s</td></tr>`).join("") + `</tbody></table>`
+      + convergenceChart(errs);
     if (!this.running) {
       html += `<p class="sim-note muted">${esc(last.converged ? t("Converged: the last pass changed the strain energy by {n} %.", { n: sig(last.change ?? 0) })
         : last.change != null ? t("Not converged to {tol} % yet (last change {n} %). Stress near sharp corners keeps rising with accuracy.", { tol: sig(this.study()?.settings.energyTol ?? 2), n: sig(last.change) })
@@ -760,12 +782,13 @@ export class SimController {
     if (!show) { el.innerHTML = ""; $("#viewport").classList.remove("sim-probing"); return; }
     const k = this.plot.kind, sf = k === "sf";
     const [unit, f] = this.plotUnit();
-    const plots = PLOTS.filter(([id]) => id !== "sf" || !!this.host.doc()?.material?.sy);
+    const plots = PLOTS.filter(([id]) => (id !== "sf" || !!this.host.doc()?.material?.sy) && (id !== "err" || r!.pass > 1));
     const top = sf && this.range[1] >= SF_TOP ? `${SF_TOP}+` : sig(this.range[1] * f);
     el.innerHTML = `<div class="ana-head"><select data-k="kind" aria-label="${esc(t("Result"))}">${plots.map(([id, l]) => `<option value="${id}"${id === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select>`
       + `<button class="sim-ib" data-a="close" title="${esc(t("Hide the plot"))}" aria-label="${esc(t("Hide the plot"))}">×</button></div>`
       + `<div class="ana-ramp" style="background:${RAMP_CSS}${sf ? ";transform:scaleX(-1)" : ""}"></div><div class="ana-scale"><span data-v="min">${sig(this.range[0] * f)}</span><span>${esc(unit)}</span><span data-v="max">${top}</span></div>`
       + (sf ? `<p class="ana-note">${esc(t("Yield strength divided by the von Mises stress; below 1 the material yields."))}</p>` : "")
+      + (k === "err" ? `<p class="ana-note">${esc(t("Where the last pass still changed the solution: the places that would gain most from more accuracy."))}</p>` : "")
       + `<label class="chk"><input type="checkbox" data-k="deformed"${this.plot.deformed ? " checked" : ""} />${esc(t("Deformed shape"))}</label>`
       + (this.plot.deformed ? `<label class="ana-row"><span>${esc(t("Scale"))}</span><input type="text" inputmode="decimal" data-k="scale" value="${this.plot.scale > 0 ? trim(this.plot.scale) : ""}" placeholder="${esc(t("auto"))} ×${sig(this.usedScale)}" aria-label="${esc(t("Deformation scale"))}" /></label>` : "")
       + `<div class="sim-probebar"><button class="btn small${this.probing ? " on" : ""}" data-a="probe" aria-pressed="${this.probing}" title="${esc(t("Click the plot to read the value at a point"))}">${esc(t("Probe"))}</button>`
