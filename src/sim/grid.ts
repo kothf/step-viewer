@@ -13,6 +13,8 @@ export interface Cell {
   /** 1 inside, −1 cut. */
   state: number;
   pts: Points;
+  /** Cut cells: the points found on the geometry, before moment fitting. */
+  fine: Points | null;
   /** Material volume / cell volume. */
   frac: number;
   /** Element holding the cell's polynomial. */
@@ -30,6 +32,8 @@ export class Grid {
   readonly cells: Cell[] = [];
   readonly elems: Element[] = [];
   readonly map: Int32Array;
+  /** Fine quadrature of the faces between cells (key cell·3 + axis), reused by later passes. */
+  readonly faces = new Map<number, Points | null>();
   constructor(readonly lo: number[], readonly h: number, readonly n: number[]) {
     this.map = new Int32Array(n[0] * n[1] * n[2]).fill(-1);
   }
@@ -73,6 +77,8 @@ export interface GridOptions {
   depth: number;
   /** Cut cells: Gauss points per direction of the moment-fitted rule (0 = keep every point). */
   fit?: number;
+  /** Gauss points per direction in the leaves of cut cells (default 3); kept so `refit` can reuse them. */
+  leafQ?: number;
   /** Cells below this volume fraction are aggregated. */
   minFrac?: number;
 }
@@ -88,17 +94,27 @@ export function makeGrid(lo: number[], hi: number[], h: number, inside: Inside, 
     const clo = [lo0[0] + i * h, lo0[1] + j * h, lo0[2] + k * h];
     const chi = [clo[0] + h, clo[1] + h, clo[2] + h];
     const s0 = boxState(clo, chi, inside);
-    // the 27 samples can miss thin material: an "outside" cell still has its Gauss points tested
+    // exact for a mesh body; else the 27 samples can miss thin material, so an "outside" cell still has
+    // its Gauss points tested
+    if (s0 === 0 && inside.hint) continue;
     const st = s0 === 0 ? -1 : s0;
-    let pts = volumePoints(clo, chi, o.q, inside, s0 === -1 ? o.depth : 0, new Points(), st);
-    if (!pts.n) continue;
-    if (st !== 1 && o.fit && pts.n > o.fit ** 3) pts = fitPoints(pts, clo, chi, o.fit);
+    const fine = st === 1 ? null : volumePoints(clo, chi, o.leafQ ?? 3, inside, s0 === -1 ? o.depth : 0, new Points(), st);
+    if (fine && !fine.n) continue;
+    const pts = fine ? (o.fit && fine.n > o.fit ** 3 ? fitPoints(fine, clo, chi, o.fit) : fine) : volumePoints(clo, chi, o.q, inside, 0, new Points(), 1);
     const frac = pts.weight() / vol;
     g.map[(k * n[1] + j) * n[0] + i] = g.cells.length;
-    g.cells.push({ ijk: [i, j, k], lo: clo, hi: chi, state: st, pts, frac, el: -1 });
+    g.cells.push({ ijk: [i, j, k], lo: clo, hi: chi, state: st, pts, fine, frac, el: -1 });
   }
   aggregate(g, o.minFrac ?? 0.25);
   return g;
+}
+
+/** The same cells with the quadrature for another degree: Gauss q in whole cells, the cut cells' points
+ * fitted again to fit³ points. The geometry is not queried again. */
+export function refit(g: Grid, q: number, fit: number) {
+  for (const c of g.cells) {
+    c.pts = c.fine ? (fit && c.fine.n > fit ** 3 ? fitPoints(c.fine, c.lo, c.hi, fit) : c.fine) : volumePoints(c.lo, c.hi, q, () => true, 0, new Points(), 1);
+  }
 }
 
 function aggregate(g: Grid, minFrac: number) {

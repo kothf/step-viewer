@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.607.0] - 2026-11-20
+
+### Added
+- Structural analysis, first step (the method spike, not in the app yet): the solver core that later releases build the Simulation tab on. It covers the part's cells, polynomial fields, quadrature on the exact faces, supports and loads, and a direct and an iterative solver. It is checked against beam theory, a thick pressurised cylinder and a real modelled bracket (volume within 0.0002 %). The results are in `docs/structural-spike.md`.
+
 ## [1.606.0] - 2026-11-20
 
 ### Added
@@ -3896,7 +3901,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.606.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.607.0...HEAD
+[1.607.0]: https://github.com/kothf/step-viewer/compare/v1.606.0...v1.607.0
 [1.606.0]: https://github.com/kothf/step-viewer/compare/v1.605.0...v1.606.0
 [1.605.0]: https://github.com/kothf/step-viewer/compare/v1.604.0...v1.605.0
 [1.604.0]: https://github.com/kothf/step-viewer/compare/v1.603.0...v1.604.0

@@ -28,7 +28,11 @@ export function gauss(n: number) {
   return r;
 }
 
-export type Inside = (x: number, y: number, z: number) => boolean;
+/** Inside test of the body; a mesh body adds exact line cuts and box hints (see body.ts). */
+export type Inside = ((x: number, y: number, z: number) => boolean) & {
+  hits?(axis: number, p: ArrayLike<number>): number[];
+  hint?(lo: ArrayLike<number>, hi: ArrayLike<number>): { axis: number; edge: boolean } | null;
+};
 
 /** Points (x, y, z, w) in a growable buffer. */
 export class Points {
@@ -44,6 +48,11 @@ export class Points {
 
 /** How a box lies against the body, by a 3×3×3 sample: 1 inside, 0 outside, −1 cut. */
 export function boxState(lo: ArrayLike<number>, hi: ArrayLike<number>, inside: Inside): number {
+  if (inside.hint) {
+    // exact: no boundary triangle meets the box, so one point tells
+    if (inside.hint(lo, hi)) return -1;
+    return inside((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2) ? 1 : 0;
+  }
   let ins = 0, n = 0;
   for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) for (let k = 0; k < 3; k++) {
     const x = lo[0] + (hi[0] - lo[0]) * i / 2, y = lo[1] + (hi[1] - lo[1]) * j / 2, z = lo[2] + (hi[2] - lo[2]) * k / 2;
@@ -54,9 +63,21 @@ export function boxState(lo: ArrayLike<number>, hi: ArrayLike<number>, inside: I
 }
 
 /** Volume quadrature of the part of box [lo, hi] inside the body. */
-export function volumePoints(lo: number[], hi: number[], q: number, inside: Inside, depth: number, out = new Points(), state?: number): Points {
+export function volumePoints(lo: number[], hi: number[], q: number, inside: Inside, depth: number, out = new Points(), state?: number, extra = 3): Points {
   const st = state ?? boxState(lo, hi, inside);
   if (st === 0) return out;
+  // a leaf holding an edge or corner of the body is split further, since its lines can follow only
+  // one face (needs the body's hint)
+  const hint = st === -1 && depth === 0 && inside.hint ? inside.hint(lo, hi) : null;
+  if (hint?.edge && extra > 0) {
+    const m = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
+    for (let o = 0; o < 8; o++) {
+      const a = [o & 1 ? m[0] : lo[0], o & 2 ? m[1] : lo[1], o & 4 ? m[2] : lo[2]];
+      const b = [o & 1 ? hi[0] : m[0], o & 2 ? hi[1] : m[1], o & 4 ? hi[2] : m[2]];
+      volumePoints(a, b, q, inside, 0, out, undefined, extra - 1);
+    }
+    return out;
+  }
   if (st === -1 && depth > 0) {
     const m = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
     for (let o = 0; o < 8; o++) {
@@ -66,7 +87,7 @@ export function volumePoints(lo: number[], hi: number[], q: number, inside: Insi
     }
     return out;
   }
-  if (st === -1) return lineLeaf(lo, hi, q, inside, out);
+  if (st === -1) return lineLeaf(lo, hi, q, inside, out, hint?.axis);
   const g = gauss(q);
   const h = [(hi[0] - lo[0]) / 2, (hi[1] - lo[1]) / 2, (hi[2] - lo[2]) / 2];
   const c = [(hi[0] + lo[0]) / 2, (hi[1] + lo[1]) / 2, (hi[2] + lo[2]) / 2];
@@ -81,18 +102,21 @@ export function volumePoints(lo: number[], hi: number[], q: number, inside: Insi
 /** A cut leaf box: Gauss lines along the axis closest to the boundary normal (guessed from where the
  * inside samples lie), each cut exactly at the boundary by bisection, Gauss points on every inside piece.
  * A boundary square to that axis is integrated exactly; a tilted one to the accuracy of the lines. */
-export function lineLeaf(lo: number[], hi: number[], q: number, inside: Inside, out: Points): Points {
-  const S = 4;
-  const m = [0, 0, 0];
-  let nin = 0;
-  for (let i = 0; i < S; i++) for (let j = 0; j < S; j++) for (let k = 0; k < S; k++) {
-    const f = [(i + 0.5) / S, (j + 0.5) / S, (k + 0.5) / S];
-    const p = f.map((t, a) => lo[a] + t * (hi[a] - lo[a]));
-    if (inside(p[0], p[1], p[2])) { nin++; for (let a = 0; a < 3; a++) m[a] += f[a] - 0.5; }
+export function lineLeaf(lo: number[], hi: number[], q: number, inside: Inside, out: Points, axis?: number): Points {
+  let ax = axis ?? 2;
+  if (axis === undefined) {
+    const S = 4;
+    const m = [0, 0, 0];
+    let nin = 0;
+    for (let i = 0; i < S; i++) for (let j = 0; j < S; j++) for (let k = 0; k < S; k++) {
+      const f = [(i + 0.5) / S, (j + 0.5) / S, (k + 0.5) / S];
+      const p = f.map((t, a) => lo[a] + t * (hi[a] - lo[a]));
+      if (inside(p[0], p[1], p[2])) { nin++; for (let a = 0; a < 3; a++) m[a] += f[a] - 0.5; }
+    }
+    if (nin) { const d = m.map(Math.abs); ax = d[0] >= d[1] && d[0] >= d[2] ? 0 : d[1] >= d[2] ? 1 : 2; }
   }
-  let ax = 2;
-  if (nin) { const d = m.map(Math.abs); ax = d[0] >= d[1] && d[0] >= d[2] ? 0 : d[1] >= d[2] ? 1 : 2; }
   const a1 = (ax + 1) % 3, a2 = (ax + 2) % 3;
+  if (inside.hits) return exactLeaf(lo, hi, q, inside, out, ax);
   const g = gauss(q);
   const h1 = (hi[a1] - lo[a1]) / 2, h2 = (hi[a2] - lo[a2]) / 2;
   const c1 = (hi[a1] + lo[a1]) / 2, c2 = (hi[a2] + lo[a2]) / 2;
@@ -128,9 +152,125 @@ export function lineLeaf(lo: number[], hi: number[], q: number, inside: Inside, 
   return out;
 }
 
+/** A cut leaf of a body with exact line cuts: lines along `ax` cut at the boundary; across them the
+ * length inside has kinks where the boundary meets the box's two faces square to `ax`, so the
+ * transverse rule is split there (and, one level up, where those kink curves meet the box edges). */
+function exactLeaf(lo: number[], hi: number[], q: number, inside: Inside, out: Points, ax: number): Points {
+  const a1 = (ax + 1) % 3, a2 = (ax + 2) % 3;
+  const g = gauss(q);
+  const hits = inside.hits!;
+  const p = [0, 0, 0];
+  const cuts = (axis: number, a: number, b: number) => {
+    const v = hits(axis, p);
+    return v.filter(x => x > a && x < b);
+  };
+  const pieces = (a: number, b: number, br: number[]) => {
+    const xs = [a, ...br.sort((x, y) => x - y), b];
+    const out: [number, number][] = [];
+    for (let i = 0; i + 1 < xs.length; i++) if (xs[i + 1] - xs[i] > 1e-12 * (b - a)) out.push([xs[i], xs[i + 1]]);
+    return out;
+  };
+  // u breaks: where the boundary crosses the four box edges along a1 that bound the faces square to ax
+  const ub: number[] = [];
+  for (const t of [lo[ax], hi[ax]]) for (const w of [lo[a2], hi[a2]]) {
+    p[ax] = t; p[a2] = w; p[a1] = lo[a1];
+    ub.push(...cuts(a1, lo[a1], hi[a1]));
+  }
+  for (const [u0, u1] of pieces(lo[a1], hi[a1], ub)) {
+    const hu = (u1 - u0) / 2, cu = (u0 + u1) / 2;
+    for (let i = 0; i < q; i++) {
+      const u = cu + hu * g.x[i];
+      const vb: number[] = [];
+      for (const t of [lo[ax], hi[ax]]) { p[ax] = t; p[a1] = u; p[a2] = lo[a2]; vb.push(...cuts(a2, lo[a2], hi[a2])); }
+      for (const [v0, v1] of pieces(lo[a2], hi[a2], vb)) {
+        const hv = (v1 - v0) / 2, cv = (v0 + v1) / 2;
+        for (let j = 0; j < q; j++) {
+          p[a1] = u; p[a2] = cv + hv * g.x[j];
+          const wt = hu * g.w[i] * hv * g.w[j];
+          const hs = hits(ax, p);
+          let k = 0;
+          while (k < hs.length && hs[k] <= lo[ax]) k++;
+          let inn = ((hs.length - k) & 1) === 1, s0 = lo[ax];
+          const seg = (a: number, b: number) => {
+            const hh = (b - a) / 2, cc = (a + b) / 2;
+            if (!(hh > 0)) return;
+            for (let m = 0; m < q; m++) { p[ax] = cc + hh * g.x[m]; out.push(p[0], p[1], p[2], wt * hh * g.w[m]); }
+          };
+          for (; k < hs.length && hs[k] < hi[ax]; k++) { if (inn) seg(s0, hs[k]); inn = !inn; s0 = hs[k]; }
+          if (inn) seg(s0, hi[ax]);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/** facePoints for a body with exact line cuts: the square is split only where an edge of the body
+ * crosses it; elsewhere Gauss lines across the boundary curve are cut exactly, with the transverse rule
+ * split where that curve meets the square's sides. */
+function exactFace(axis: number, at: number, lo: number[], hi: number[], q: number, inside: Inside, depth: number, out: Points): Points {
+  const a1 = (axis + 1) % 3, a2 = (axis + 2) % 3;
+  const bl = lo.slice(), bh = hi.slice();
+  bl[axis] = bh[axis] = at;
+  const h = inside.hint!(bl, bh);
+  const g = gauss(q);
+  if (!h) {
+    const c = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
+    c[axis] = at;
+    if (!inside(c[0], c[1], c[2])) return out;
+    const h1 = (hi[a1] - lo[a1]) / 2, h2 = (hi[a2] - lo[a2]) / 2;
+    for (let i = 0; i < q; i++) for (let j = 0; j < q; j++) {
+      const p = [0, 0, 0];
+      p[axis] = at; p[a1] = c[a1] + h1 * g.x[i]; p[a2] = c[a2] + h2 * g.x[j];
+      out.push(p[0], p[1], p[2], h1 * h2 * g.w[i] * g.w[j]);
+    }
+    return out;
+  }
+  if (h.edge && depth > 0) {
+    const m1 = (lo[a1] + hi[a1]) / 2, m2 = (lo[a2] + hi[a2]) / 2;
+    for (let o = 0; o < 4; o++) {
+      const l = lo.slice(), hh = hi.slice();
+      if (o & 1) l[a1] = m1; else hh[a1] = m1;
+      if (o & 2) l[a2] = m2; else hh[a2] = m2;
+      exactFace(axis, at, l, hh, q, inside, depth - 1, out);
+    }
+    return out;
+  }
+  // lines along d, stepping across t
+  const d = h.axis === a2 ? a2 : a1, t = d === a1 ? a2 : a1;
+  const hits = inside.hits!;
+  const p = [0, 0, 0];
+  p[axis] = at;
+  const tb: number[] = [];
+  for (const e of [lo[d], hi[d]]) { p[d] = e; p[t] = lo[t]; for (const x of hits(t, p)) if (x > lo[t] && x < hi[t]) tb.push(x); }
+  const xs = [lo[t], ...tb.sort((a, b) => a - b), hi[t]];
+  for (let s = 0; s + 1 < xs.length; s++) {
+    const t0 = xs[s], t1 = xs[s + 1];
+    if (!(t1 - t0 > 1e-12 * (hi[t] - lo[t]))) continue;
+    const ht = (t1 - t0) / 2, ct = (t0 + t1) / 2;
+    for (let i = 0; i < q; i++) {
+      p[t] = ct + ht * g.x[i];
+      const wt = ht * g.w[i];
+      const hs = hits(d, p);
+      let k = 0;
+      while (k < hs.length && hs[k] <= lo[d]) k++;
+      let inn = ((hs.length - k) & 1) === 1, s0 = lo[d];
+      const seg = (a: number, b: number) => {
+        const hh = (b - a) / 2, cc = (a + b) / 2;
+        if (!(hh > 0)) return;
+        for (let m = 0; m < q; m++) { p[d] = cc + hh * g.x[m]; out.push(p[0], p[1], p[2], wt * hh * g.w[m]); }
+      };
+      for (; k < hs.length && hs[k] < hi[d]; k++) { if (inn) seg(s0, hs[k]); inn = !inn; s0 = hs[k]; }
+      if (inn) seg(s0, hi[d]);
+    }
+  }
+  return out;
+}
+
 /** Quadrature of the part of an axis-aligned square face (normal along `axis`, at `at`) inside the body. */
 export function facePoints(axis: number, at: number, lo: number[], hi: number[], q: number, inside: Inside, depth: number, out = new Points()): Points {
   const a1 = (axis + 1) % 3, a2 = (axis + 2) % 3;
+  if (inside.hits && inside.hint) return exactFace(axis, at, lo, hi, q, inside, depth, out);
   const pt = (u: number, v: number) => { const p = [0, 0, 0]; p[axis] = at; p[a1] = u; p[a2] = v; return p; };
   let ins = 0;
   for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) {

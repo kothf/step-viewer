@@ -4,10 +4,11 @@
 // weakly (Nitsche) on boundary triangles, loads are tractions on boundary triangles.
 // Units: mm, N, MPa (so E in MPa, density in t/mm³).
 
-import { Basis } from "./basis";
+import { Basis, basisSize } from "./basis";
 import { gridTrianglePoints, facePoints, fitFacePoints, type Inside } from "./quad";
-import { makeGrid, type Grid } from "./grid";
+import { makeGrid, refit, type Grid } from "./grid";
 import { BlockMatrix, Envelope } from "./sparse";
+import { pcg } from "./pcg";
 
 export interface Material {
   /** Young's modulus, MPa. */
@@ -41,8 +42,14 @@ export interface StaticProblem {
   mat: Material;
   fixed: Support[];
   loads: Load[];
+  /** Cells of an earlier pass on the same body and cell size: reused, only refitted for p. */
+  grid?: Grid;
   /** Octree depth of the quadrature in cut cells (default 3). */
   depth?: number;
+  /** "direct" (envelope Cholesky), "pcg" (p-multigrid CG); default: direct up to DIRECT_LIMIT unknowns. */
+  solver?: "direct" | "pcg";
+  /** PCG relative residual (default 1e-8). */
+  tol?: number;
   /** Penalty factor (default 3). */
   beta?: number;
 }
@@ -53,14 +60,19 @@ export interface StaticResult {
   dofs: number;
   /** Coefficients per element: element e, basis b, component c at (e·n + b)·3 + c. */
   x: Float64Array;
+  /** PCG iterations (0 for the direct solver). */
+  iterations: number;
   /** Strain energy, N·mm (half of f·x). */
   energy: number;
-  ms: { grid: number; assemble: number; factor: number; solve: number };
+  ms: { grid: number; assemble: number; /** factor or PCG set-up */ factor: number; solve: number };
   /** Displacement at a point, mm. */
   disp(x: number, y: number, z: number): [number, number, number];
   /** Stress at a point [xx, yy, zz, xy, yz, zx], MPa. */
   stress(x: number, y: number, z: number): number[];
 }
+
+/** Unknowns up to which the direct solver is used. */
+export const DIRECT_LIMIT = 6000;
 
 const now = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
 
@@ -87,7 +99,9 @@ function traction(g: Float64Array, o: number, n: ArrayLike<number>, lam: number,
 export function solveStatic(pb: StaticProblem): StaticResult {
   const t0 = now();
   const p = pb.p, q = p + 1, fq = 2 * p + 1;
-  const grid = makeGrid(pb.lo, pb.hi, pb.h, pb.inside, { q, depth: pb.depth ?? 3, fit: 2 * p + 1 });
+  let grid = pb.grid;
+  if (grid) refit(grid, q, 2 * p + 1);
+  else grid = makeGrid(pb.lo, pb.hi, pb.h, pb.inside, { q, depth: pb.depth ?? 3, fit: 2 * p + 1 });
   const t1 = now();
   const { lam, mu } = lame(pb.mat);
   const bas = new Basis(p), bas2 = new Basis(p);
@@ -131,8 +145,17 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     const A0 = grid.cells[ca], ea = A0.el, eb = grid.cells[cb].el;
     if (ea === eb) return;
     const EA = grid.elems[ea], EB = grid.elems[eb];
-    let pts = facePoints(axis, A0.hi[axis], A0.lo, A0.hi, q, pb.inside, pb.depth ?? 3);
-    if (pts.n > fq * fq) pts = fitFacePoints(pts, axis, A0.hi[axis], A0.lo, A0.hi, fq);
+    // fine points of a cut face are kept on the grid for later passes
+    const key = ca * 3 + axis;
+    let pts = grid!.faces.get(key);
+    if (pts === undefined) {
+      pts = facePoints(axis, A0.hi[axis], A0.lo, A0.hi, 3, pb.inside, pb.depth ?? 3);
+      // a whole face keeps no points: it gets the plain Gauss rule of each pass
+      const area = grid!.h * grid!.h;
+      grid!.faces.set(key, Math.abs(pts.weight() - area) < 1e-12 * area ? null : pts);
+    }
+    if (!pts) pts = facePoints(axis, A0.hi[axis], A0.lo, A0.hi, q, () => true, 0);
+    else pts = fitFacePoints(pts, axis, A0.hi[axis], A0.lo, A0.hi, fq);
     const nrm = [0, 0, 0];
     nrm[axis] = 1;
     const Kaa = A.block(ea, ea), Kab = A.block(ea, eb), Kba = A.block(eb, ea), Kbb = A.block(eb, eb);
@@ -236,9 +259,17 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     for (let i = 0; i < m; i++) if (K[i * m + i] === 0) K[i * m + i] = 1;
   }
   const t2 = now();
-  const L = new Envelope(A);
-  const t3 = now();
-  const x = L.solve(f);
+  let x: Float64Array, t3: number, iterations = 0;
+  const useCg = pb.solver === "pcg" || (pb.solver !== "direct" && p >= 2 && nel * m > DIRECT_LIMIT);
+  if (useCg) {
+    const r = pcg(A, f, { coarse: 3 * basisSize(1), tol: pb.tol ?? 1e-8 });
+    x = r.x; iterations = r.iterations;
+    t3 = t2 + r.ms.setup;
+  } else {
+    const L = new Envelope(A);
+    t3 = now();
+    x = L.solve(f);
+  }
   const t4 = now();
   let energy = 0;
   for (let i = 0; i < f.length; i++) energy += f[i] * x[i];
@@ -252,7 +283,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     return grid.cells[c].el;
   };
   return {
-    grid, p, dofs: nel * m, x, energy,
+    grid, p, dofs: nel * m, x, energy, iterations,
     ms: { grid: t1 - t0, assemble: t2 - t1, factor: t3 - t2, solve: t4 - t3 },
     disp(px, py, pz) {
       const e = at(px, py, pz);
