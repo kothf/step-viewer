@@ -5,6 +5,7 @@
 // document (FR-ARC-011/012).
 import type { ExportMesh } from "../kernel/occ";
 import { giveBack, takeWorker } from "../kernel/spare";
+import type { SimBody } from "../sim/run";
 import type { Prebuilt } from "../kernel/kernel.worker";
 import { kernelPool, type KernelPool } from "../kernel/pool";
 import { cacheDelete, cacheGet, cacheKey, cacheOn, cachePut } from "../buildCache";
@@ -378,6 +379,12 @@ export class ModelKernel {
   async exportMesh(of: "part" | "asm", lin: number, ang: number, doc?: AsmDoc): Promise<{ id: string | number; mesh: ExportMesh }[]> {
     await this.start();
     return (await this.call<{ meshes: { id: string | number; mesh: ExportMesh }[] }>({ type: "exportMesh", of, lin, ang, doc })).meshes;
+  }
+
+  /** Structural analysis: the body the last rebuild made, as fine triangles with their face names, and its solid count. */
+  async simGeo(lin: number, ang: number): Promise<{ geo: SimBody; solids: number }> {
+    await this.start();
+    return this.call<{ geo: SimBody; solids: number }>({ type: "simGeo", lin, ang });
   }
 
   async step(name: string, color: V3): Promise<Uint8Array> {

@@ -5,6 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.608.0] - 2026-11-20
+
+### Added
+- **Structural analysis of parts: static studies** (first release in the app). A part has a new **Simulation** tab: New study, Material, supports (**Fixed support**, **Sliding**, **Hinge**, **Fixed in directions**), loads (**Force**, **Pressure**, **Moment**, **Gravity**), **Solve** and **Results**. A support or load opens a panel with ✓/✕; click faces on the model to add or remove them, and they are shown green (supports) or pink with an arrow (loads). The study is kept in the part file, follows the model through edits by face names, and every change is an undo step.
+- The part is solved as it is, with no mesh to make: up to three passes of rising accuracy on the exact geometry, with progress and Stop. The **Study** tab beside the model lists the material, supports, loads and results: largest von Mises stress and displacement, the lowest safety factor against yield, the applied load, the reaction at each support, and a table of passes with the change in strain energy.
+- Results on the model: von Mises stress, displacement (total, X, Y, Z) or the safety factor against yield (when the material has a yield strength) as a colour plot with a legend, on the **deformed shape** (automatic or typed scale, the undeformed model stays as a ghost) or on the model as it is. Results go out of date, and the plot comes off, when the model, the material or the study changes.
+- Clear messages when a study cannot run: no material with an elastic modulus, no loads, supports that leave the part free to move (with the number of free motions), a face that is gone, more than one solid body.
+
 ## [1.607.0] - 2026-11-20
 
 ### Added
@@ -3901,7 +3909,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.607.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.608.0...HEAD
+[1.608.0]: https://github.com/kothf/step-viewer/compare/v1.607.0...v1.608.0
 [1.607.0]: https://github.com/kothf/step-viewer/compare/v1.606.0...v1.607.0
 [1.606.0]: https://github.com/kothf/step-viewer/compare/v1.605.0...v1.606.0
 [1.605.0]: https://github.com/kothf/step-viewer/compare/v1.604.0...v1.605.0

@@ -88,6 +88,7 @@
         <button id="csys-reset" class="btn small" hidden title="Back to the global coordinate system">⌖ Global CSYS</button>
       </div>
       <div id="mc-tools" class="mc-tools cm-pane" data-cm-pane="features sketch surfaces sheetmetal weldments" role="toolbar" aria-label="Modelling commands" hidden></div>
+      <div id="sim-tools" class="mc-tools cm-pane" data-cm-pane="simulation" role="toolbar" aria-label="Simulation commands" hidden></div>
       <div id="asm-tools" class="mc-tools cm-pane" data-cm-pane="assembly" role="toolbar" aria-label="Assembly commands" hidden></div>
     </div>
     <div class="cm-foot"><div id="cm-tabs" class="cm-tabs" role="tablist" aria-label="Command tabs"></div><div class="cm-quick" id="mc-quick" hidden></div><div class="cm-quick" id="asm-quick" hidden></div></div>
@@ -97,6 +98,7 @@
   <aside class="left panel step-only" id="tree-panel" aria-label="Model tree and measurements">
     <div class="tabs" role="tablist" aria-label="Left panel">
       <button data-tab="features" role="tab" id="t-features" aria-selected="false" aria-controls="tab-features" tabindex="-1" hidden>Features</button>
+      <button data-tab="sim" role="tab" id="t-sim" aria-selected="false" aria-controls="tab-sim" tabindex="-1" hidden>Study</button>
       <button data-tab="asm" role="tab" id="t-asm" aria-selected="false" aria-controls="tab-asm" tabindex="-1" hidden>Assembly</button>
       <button data-tab="tree" class="on" role="tab" id="t-tree" aria-selected="true" aria-controls="tab-tree">Model tree</button>
       <button data-tab="measures" role="tab" id="t-measures" aria-selected="false" aria-controls="tab-measures" tabindex="-1">Measurements <span id="m-count" class="pill">0</span></button>
@@ -107,6 +109,10 @@
       <p id="mc-errors" class="pm-err pad" role="status" hidden></p>
       <input id="ft-search" type="search" placeholder="Filter features by name" aria-label="Filter the features" />
       <div id="mc-tree" class="ft" role="tree" aria-label="Feature tree"></div>
+    </section>
+    <section id="tab-sim" class="tab" role="tabpanel" aria-labelledby="t-sim">
+      <div id="sim-pm" class="pm" hidden></div>
+      <div id="sim-tree" class="sim-tree"></div>
     </section>
     <section id="tab-asm" class="tab" role="tabpanel" aria-labelledby="t-asm">
       <div id="asm-pm" class="pm" hidden></div>
@@ -168,6 +174,7 @@
     <canvas id="navcube" class="navcube step-only" width="110" height="110"></canvas>
     <div id="tool-hint" class="tool-hint step-only" hidden></div>
     <div id="readout" class="readout step-only" hidden></div>
+    <div id="sim-legend" class="ana-panel sim-legend step-only" role="region" aria-label="Analysis results" hidden></div>
     <div id="ana-panel" class="ana-panel step-only" role="region" aria-label="Surface analysis" hidden></div>
     <div id="mp-panel" class="mp-panel step-only" role="region" aria-label="Mass properties" hidden></div>
     <div id="hint" class="hint" role="status" hidden></div>

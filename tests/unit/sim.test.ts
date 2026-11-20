@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { Basis, basisSize, legendre } from "../../src/sim/basis";
 import { gauss, volumePoints, gridTrianglePoints, fitPoints } from "../../src/sim/quad";
 import { solveStatic, vonMises } from "../../src/sim/static";
+import { meshArea, plotTarget, refineMesh } from "../../src/sim/plotmesh";
 
 /** Two triangles of the axis-aligned rectangle x[axis] = at, outward normal along ±axis. */
 function rectFace(axis: number, at: number, lo: number[], hi: number[], out: boolean): number[] {
@@ -162,7 +163,7 @@ test("Lamé thick cylinder: pressure, sliding supports and curved cut cells", ()
   const r = solveStatic({
     lo: [0, 0, 0], hi: [b, b, Lz], h: 5, p: 3, mat: { E, nu: 0.3 },
     inside: (x, y, z) => { const rr = x * x + y * y; return x >= 0 && y >= 0 && z >= 0 && z <= Lz && rr >= a * a && rr <= b * b; },
-    fixed: [{ tris: sym(0), sliding: true }, { tris: sym(1), sliding: true }, { tris: ring(0, false), sliding: true }, { tris: ring(Lz, true), sliding: true }],
+    fixed: [{ tris: sym(0), mode: "sliding" }, { tris: sym(1), mode: "sliding" }, { tris: ring(0, false), mode: "sliding" }, { tris: ring(Lz, true), mode: "sliding" }],
     loads: [{ tris: arc(a), pressure: pr }],
   });
   const c = Math.SQRT1_2 * a + 1e-6;
@@ -173,4 +174,143 @@ test("Lamé thick cylinder: pressure, sliding supports and curved cut cells", ()
   const u = r.disp(c, c, Lz / 2);
   const uw = ((1 + 0.3) * pr * a * a) / (E * (b * b - a * a)) * ((1 - 2 * 0.3) * a + (b * b) / a);
   assert.ok(Math.abs(Math.hypot(u[0], u[1]) - uw) / uw < 0.01, `ur ${Math.hypot(u[0], u[1])} vs ${uw}`);
+});
+
+// ---------- SA1: reactions, gravity, moment, supports, studies ----------
+import { freeModes, momentField } from "../../src/sim/static";
+import { axisOf, cellSize, meshVolume, runStatic, studyProblem, type SimBody } from "../../src/sim/run";
+import { newStudy, nextId, itemName } from "../../src/sim/types";
+
+/** A box as a named-face body: faces x0, x1, y0, y1, z0, z1. */
+function boxBody(lo: number[], hi: number[]): SimBody {
+  const tris: number[] = [], face: number[] = [], names: string[] = [];
+  for (let a = 0; a < 3; a++) for (const end of [0, 1]) {
+    const t = rectFace(a, end ? hi[a] : lo[a], lo, hi, !!end);
+    names.push("xyz"[a] + end);
+    tris.push(...t);
+    for (let k = 0; k < t.length / 9; k++) face.push(names.length - 1);
+  }
+  return { tris: Float64Array.from(tris), face: Int32Array.from(face), names, lo, hi };
+}
+
+test("reactions balance the loads; gravity gives the weight", () => {
+  const rho = 7.85e-9, g = 9806.65;
+  const r = solveStatic({
+    lo, hi, inside: inBox, h: 20, p: 2, mat: { E, nu: 0.3, rho },
+    fixed: [{ tris: rectFace(0, 0, lo, hi, false) }],
+    loads: [{ tris: rectFace(0, L, lo, hi, true), force: [100, 0, -F] }],
+    gravity: [0, 0, -g],
+  });
+  const weight = rho * g * L * W * W;
+  assert.ok(Math.abs(r.applied.force[2] + F + weight) < 1e-9 * F);
+  for (let c = 0; c < 3; c++) assert.ok(Math.abs(r.reactions[0].force[c] + r.applied.force[c]) < 1e-6 * F, `force ${c}`);
+  for (let c = 0; c < 3; c++) assert.ok(Math.abs(r.reactions[0].moment[c] + r.applied.moment[c]) < 1e-6 * F * L, `moment ${c}`);
+  // the clamp's moment about y: the end force at L and the weight at L/2 (z down, so My = +F L + W L/2)
+  assert.ok(Math.abs(r.reactions[0].moment[1] + (F * L + weight * L / 2)) < 1e-6 * F * L);
+});
+
+test("moment load: pure bending gives M c / I and the end slope M L / E I", () => {
+  const M = 50000, I = W ** 4 / 12;
+  const mf = momentField(rectFace(0, L, lo, hi, true), [0, M, 0]);
+  assert.ok(Math.abs(mf.w[1] - M / I) < 1e-9 * M / I);
+  const r = solveStatic({
+    lo, hi, inside: inBox, h: 20, p: 3, mat: { E, nu: 0.3 },
+    fixed: [{ tris: rectFace(0, 0, lo, hi, false) }],
+    loads: [{ tris: rectFace(0, L, lo, hi, true), moment: [0, M, 0] }],
+  });
+  assert.ok(Math.abs(r.applied.moment[1] - M) < 1e-9 * M);
+  assert.ok(Math.hypot(...r.applied.force) < 1e-9 * M);
+  // moment +y: top fibre (z > 0) in tension, the tip goes down by M L² / 2 E I
+  const s = r.stress(L / 2, 0, W / 2 - 1e-6)[0];
+  assert.ok(Math.abs(s - (M * W / 2) / I) / ((M * W / 2) / I) < 0.02, `σ ${s}`);
+  const w = r.disp(L - 1e-6, 0, 0)[2], want = -(M * L * L) / (2 * E * I);
+  assert.ok(Math.abs(w - want) / Math.abs(want) < 0.02, `w ${w} vs ${want}`);
+});
+
+test("free bodies are found before solving", () => {
+  const x0 = rectFace(0, 0, lo, hi, false), z0 = rectFace(2, -W / 2, lo, hi, false), y0 = rectFace(1, -W / 2, lo, hi, false);
+  assert.equal(freeModes([], lo, hi), 6);
+  assert.equal(freeModes([{ tris: x0 }], lo, hi), 0);
+  assert.equal(freeModes([{ tris: x0, mode: "sliding" }], lo, hi), 3); // two slides and a spin on the plane
+  assert.equal(freeModes([{ tris: x0, mode: "sliding" }, { tris: z0, mode: "sliding" }], lo, hi), 1);
+  assert.equal(freeModes([{ tris: x0, mode: "sliding" }, { tris: z0, mode: "sliding" }, { tris: y0, mode: "sliding" }], lo, hi), 0);
+  assert.equal(freeModes([{ tris: x0, mode: "dirs", dirs: [false, false, true] }], lo, hi), 4); // z held on a plane at one x: z, a turn about x
+  assert.throws(() => solveStatic({ lo, hi, inside: inBox, h: 20, p: 2, mat: { E, nu: 0.3 }, fixed: [{ tris: x0, mode: "sliding" }], loads: [{ tris: z0, pressure: 1 }] }), /E-SIM-FREE: 3/);
+});
+
+test("hinge: the axis of a bore from its triangles; the pin leaves one turn free", () => {
+  const N = 32, R = 5, tris: number[] = [];
+  for (let i = 0; i < N; i++) {
+    const a = (2 * Math.PI * i) / N, b = (2 * Math.PI * (i + 1)) / N;
+    const P0 = [R * Math.cos(a), 0, R * Math.sin(a)], P1 = [R * Math.cos(b), 0, R * Math.sin(b)];
+    tris.push(...P0, ...P1, P1[0], 10, P1[2], ...P0, P1[0], 10, P1[2], P0[0], 10, P0[2]);
+  }
+  const ax = axisOf(tris)!;
+  assert.ok(Math.abs(Math.abs(ax[1]) - 1) < 1e-9);
+  assert.equal(axisOf(rectFace(0, 0, lo, hi, false)), null);
+  assert.equal(freeModes([{ tris, mode: "hinge", axis: ax }], [-5, 0, -5], [5, 10, 5]), 1);
+  assert.equal(freeModes([{ tris, mode: "hinge", axis: ax, axialFree: true }], [-5, 0, -5], [5, 10, 5]), 2);
+});
+
+test("a study on a named-face body runs its passes and converges", () => {
+  const b = boxBody(lo, hi);
+  assert.ok(Math.abs(meshVolume(b.tris) - L * W * W) < 1e-6);
+  assert.ok(cellSize(b) > 5 && cellSize(b) <= 20);
+  const st = newStudy([]);
+  assert.equal(st.name, "Static 1");
+  st.supports.push({ id: nextId(st, "s"), name: itemName(st, "fixed"), type: "fixed", faces: [{ name: "x0" }] });
+  st.loads.push({ id: nextId(st, "l"), name: itemName(st, "force"), type: "force", faces: [{ name: "x1" }], comp: [{ v: 0 }, { v: 0 }, { v: -F }] });
+  st.loads.push({ id: nextId(st, "l"), type: "pressure", faces: [{ name: "gone" }], value: { v: 1 } });
+  let pr = studyProblem(st, b);
+  assert.deepEqual(pr.problems, [{ id: "l2", code: "E-SIM-REF" }]);
+  st.suppressed = ["l2"];
+  pr = studyProblem(st, b);
+  assert.deepEqual(pr.problems, []);
+  assert.deepEqual(pr.supportIds, ["s1"]);
+  const pos = new Float32Array([L, 0, 0, L / 2, 0, W / 2]), nrm = new Float32Array([1, 0, 0, 0, 0, 1]);
+  const passes = [...runStatic({ body: b, mat: { name: "Steel", E, nu: 0.3, rho: 7.85e-9 }, problem: pr, passes: 3, energyTol: 2, pos, nrm })];
+  assert.ok(passes.length >= 2 && passes.length <= 3);
+  const last = passes[passes.length - 1];
+  assert.ok(last.done);
+  assert.ok(passes[1].change! > 0);
+  const want = F * L ** 3 / (3 * E * (W ** 4 / 12));
+  assert.ok(Math.abs(-last.u[2] - want) / want < 0.03, `tip ${last.u[2]}`);
+  assert.ok(Math.abs(last.vm[1] - 75) / 75 < 0.05, `σ ${last.vm[1]}`);
+  assert.ok(Math.abs(last.reactions[0].force[2] - F) < 1e-5 * F);
+  // normal force and pressure are the same thing spread over the area
+  const st2 = newStudy([st]);
+  assert.equal(st2.id, "st2");
+  st2.supports.push({ id: "s1", type: "fixed", faces: [{ name: "x0" }] });
+  st2.loads.push({ id: "l1", type: "force", faces: [{ name: "x1" }], normal: true, value: { v: 400 }, flip: true });
+  const p2 = studyProblem(st2, b);
+  assert.ok(Math.abs(p2.loads[0].pressure! + 1) < 1e-12);
+  assert.throws(() => [...runStatic({ body: b, mat: { name: "", E, nu: 0.3, rho: 0 }, problem: studyProblem({ ...st2, loads: [] }, b), passes: 1, energyTol: 2, pos, nrm })], /E-SIM-NOLOAD/);
+});
+
+test("plot mesh: edges are split to the target with no cracks and the same area", () => {
+  // two triangles of a 100 × 20 rectangle sharing the diagonal, vertices duplicated along it (as at a sharp edge)
+  const pos = [0, 0, 0, 100, 0, 0, 100, 20, 0, 0, 0, 0, 100, 20, 0, 0, 20, 0];
+  const nrm = new Array(18).fill(0).map((_, i) => (i % 3 === 2 ? 1 : 0));
+  const m = refineMesh(pos, nrm, null, 5);
+  assert.ok(Math.abs(meshArea(m.pos, m.index) - 2000) < 1e-6);
+  let longest = 0;
+  const edges = new Map<string, number>();
+  const key = (i: number) => `${m.pos[3 * i].toFixed(4)},${m.pos[3 * i + 1].toFixed(4)}`;
+  for (let t = 0; t < m.index.length; t += 3) for (let k = 0; k < 3; k++) {
+    const a = m.index[t + k], b = m.index[t + ((k + 1) % 3)];
+    longest = Math.max(longest, Math.hypot(m.pos[3 * a] - m.pos[3 * b], m.pos[3 * a + 1] - m.pos[3 * b + 1]));
+    const e = [key(a), key(b)].sort().join("|");
+    edges.set(e, (edges.get(e) ?? 0) + 1);
+  }
+  assert.ok(longest <= 5 + 1e-9, `longest edge ${longest}`);
+  // every inner edge is shared by exactly two triangles (no T-junctions); boundary edges lie on the rectangle's outline
+  for (const [e, n] of edges) {
+    const [a, b] = e.split("|").map(q => q.split(",").map(Number));
+    const onRim = (a[0] === b[0] && (a[0] === 0 || a[0] === 100)) || (a[1] === b[1] && (a[1] === 0 || a[1] === 20));
+    assert.equal(n, onRim ? 1 : 2, `edge ${e} is used ${n} times`);
+  }
+  for (let i = 0; i < m.nrm.length; i += 3) assert.ok(Math.abs(m.nrm[i + 2] - 1) < 1e-6);
+  // the first vertices are the input's own
+  assert.deepEqual(Array.from(m.pos.slice(0, 18)), pos);
+  assert.ok(plotTarget(2000, 5) === 5 && plotTarget(1e9, 1, 1000) > 1);
 });

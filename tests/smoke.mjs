@@ -16186,6 +16186,98 @@ try {
     check(glue, "kernel start-up 1.564: the served opencascade.full.js makes embind invokers on first use (and the kernel above still exported STEP)");
     await ctx.close();
   }
+  // --- Structural analysis 1.608 (FRS-structural SA1): a cantilever through the Simulation tab ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    const settle = async () => { await mp.waitForTimeout(150); await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 }); };
+    // A 20 × 20 bar, 200 long along Y, in a steel with E 210 GPa.
+    await mp.evaluate(() => window.__sv.model.store.change("Part", d => {
+      const P = (k, x, y) => ({ id: `s1p${k}`, t: "point", x, y }), L = (k, a, b) => ({ id: `s1l${k}`, t: "line", a: `s1p${a}`, b: `s1p${b}` });
+      d.features.push({ id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P(1, -10, 0), P(2, 10, 0), P(3, 10, 200), P(4, -10, 200), L(1, 1, 2), L(2, 2, 3), L(3, 3, 4), L(4, 4, 1)] },
+        { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } });
+      d.material = { name: "Test steel", density: 7.85, E: 210, nu: 0.3, sy: 235 };
+    }));
+    await settle();
+    const at = name => mp.evaluate(n => {
+      const v = window.__sv.viewer, part = v.parts[0], names = window.__sv.model.last().faceNames, f = part.data.faces[names.indexOf(n)];
+      const s = v.toWorld(part, f.center).clone().project(v.camera), r = v.renderer.domElement.getBoundingClientRect();
+      return { x: r.left + ((s.x + 1) / 2) * r.width, y: r.top + ((1 - s.y) / 2) * r.height };
+    }, name);
+    const sim = () => mp.evaluate(() => window.__sv.sim.state());
+    await mp.click("#cm-t-simulation");
+    const tabShown = await mp.evaluate(() => document.querySelector("#tab-sim").classList.contains("on") && !document.querySelector("#t-sim").hidden && !!document.querySelector("#sim-tree .sim-empty"));
+    // Fixed support on the end face at y = 0: the panel opens, a click on the face fills it, ✓ stores it (a study is made on the way).
+    await mp.click('#sim-tools [data-s="fixed"]');
+    let p = await at("f1:side:s1l1");
+    await mp.mouse.click(p.x, p.y);
+    await mp.waitForTimeout(200);
+    const picked = await mp.evaluate(() => ({ faces: document.querySelector("#sim-pm .sim-faces")?.textContent, marks: window.__sv.sim.state().marks, head: !!document.querySelector("#sim-pm .pm-head.pm-top .pm-ok") }));
+    await mp.click("#sim-pm .pm-ok");
+    await settle();
+    // 1000 N along the normal on the top face.
+    await mp.click('#sim-tools [data-s="force"]');
+    p = await at("f1:end");
+    await mp.mouse.click(p.x, p.y);
+    await mp.fill('#sim-pm [data-n="value"]', "1000");
+    await mp.keyboard.press("Tab");
+    await mp.click("#sim-pm .pm-ok");
+    await settle();
+    const study = await mp.evaluate(() => { const s = window.__sv.model.store.doc.studies?.[0]; return s && { sup: s.supports.map(x => [x.type, x.faces.map(f => f.name)]), load: s.loads.map(x => [x.type, x.value?.v, x.normal, x.faces.map(f => f.name)]) }; });
+    check(tabShown && picked.faces === "1 face" && picked.marks >= 1 && picked.head && JSON.stringify(study) === JSON.stringify({ sup: [["fixed", ["f1:side:s1l1"]]], load: [["force", 1000, true, ["f1:end"]]] }),
+      `sim 1.608: the Simulation tab opens the Study tab; a support and a force take faces clicked on the model (${JSON.stringify({ tabShown, picked, study })})`);
+    // Two passes; a uniform load on a cantilever: tip deflection F L³ / (8 E I) = 0.357 mm, root stress M c / I = 75 MPa.
+    await mp.selectOption('#sim-tree [data-k="passes"]', "2");
+    await settle();
+    await mp.click('#sim-tools [data-s="solve"]');
+    await mp.waitForFunction(() => { const s = window.__sv.sim.state(); return s.done || s.error; }, null, { timeout: 240000 });
+    await mp.waitForTimeout(200);
+    const r1 = await sim();
+    const shown = await mp.evaluate(() => ({ legend: !document.querySelector("#sim-legend").hidden, max: document.querySelector('#sim-legend [data-v="max"]')?.textContent, rows: document.querySelectorAll("#sim-tree .sim-passes tbody tr").length, kv: document.querySelector("#sim-tree .sim-kv")?.textContent ?? "" }));
+    const reaction = r1.reactions[0]?.force ?? [];
+    check(!r1.error && r1.passes.length === 2 && Math.abs(r1.maxU / 0.357 - 1) < 0.05 && Math.abs(r1.maxVm / 75 - 1) < 0.2 && Math.abs(reaction[2] - 1000) < 1 && r1.plot.shown && r1.plot.points > 500 && r1.plot.scale > 1
+      && shown.legend && shown.rows === 2 && /MPa/.test(shown.kv) && /1000 N/.test(shown.kv),
+      `sim 1.608: the cantilever solves in two passes: deflection, stress and reaction match beam theory, the plot and results show (${JSON.stringify({ err: r1.error, maxU: r1.maxU, maxVm: r1.maxVm, reaction, passes: r1.passes, plot: r1.plot, shown })})`);
+    // The plot can show displacement, undeformed; undo of the force puts the results out of date and takes the plot off.
+    await mp.selectOption('#sim-legend [data-k="kind"]', "u");
+    await mp.uncheck('#sim-legend [data-k="deformed"]');
+    const r2 = await sim();
+    await mp.keyboard.press("Control+z");
+    await settle();
+    const r3 = await sim();
+    const stale = await mp.evaluate(() => ({ legend: !document.querySelector("#sim-legend").hidden, note: /Out of date/.test(document.querySelector("#sim-tree .sim-res")?.textContent ?? ""), mat: window.__sv.viewer.parts[0].mesh.material === window.__sv.viewer.parts[0].material }));
+    check(r2.plot.kind === "u" && Math.abs(r2.plot.range[1] - r1.maxU) < 1e-6 && r2.plot.scale === 0 && r3.stale && !r3.plot.shown && !stale.legend && stale.note && stale.mat,
+      `sim 1.608: displacement plot without the deformed shape; an undo marks the results out of date and restores the model (${JSON.stringify({ range: r2.plot.range, scale: r2.plot.scale, stale: r3.stale, shown: r3.plot.shown, ...stale })})`);
+    // Without supports the solve says so and nothing runs; the Russian UI has no English left in the Study tab.
+    await mp.click('#sim-tree .sim-row [data-a="del"]');
+    await settle();
+    await mp.click('#sim-tools [data-s="solve"]');
+    await mp.waitForFunction(() => window.__sv.sim.state().error, null, { timeout: 60000 });
+    const free = await mp.evaluate(() => ({ error: window.__sv.sim.state().error, text: document.querySelector("#sim-tree .sim-res .sim-prob")?.textContent ?? "" }));
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(300);
+    const left = await mp.evaluate(() => {
+      const bad = [];
+      for (const root of [document.querySelector("#sim-tree"), document.querySelector("#sim-tools"), document.querySelector("#cm-tabs")]) {
+        const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        for (let n = w.nextNode(); n; n = w.nextNode()) if (!n.parentElement.closest('[translate="no"]') && /[A-Za-z]{3,}/.test(n.data.replace(/\b(GPa|MPa|mm)\b/g, ""))) bad.push(n.data.trim());
+        for (const e of root.querySelectorAll("[title], [aria-label]")) for (const a of ["title", "aria-label"]) { const v = e.getAttribute(a); if (v && /[A-Za-z]{3,}/.test(v) && !e.closest('[translate="no"]')) bad.push(v); }
+      }
+      return bad;
+    });
+    await mp.click("#lang-btn");
+    check(/^E-SIM-(FREE|NOLOAD)/.test(free.error ?? "") && free.text.length > 5 && left.length === 0,
+      `sim 1.608: a study without supports or loads is refused with a message; the Study tab is translated (${JSON.stringify({ free, left: left.slice(0, 6) })})`);
+    await ctx.close();
+  }
 } catch (err) {
   console.error(err);
   failures++;

@@ -14,21 +14,39 @@ export interface Material {
   /** Young's modulus, MPa. */
   E: number;
   nu: number;
+  /** Density, t/mm³ (g/cm³ × 1e-9); needed for gravity. */
+  rho?: number;
 }
 
 export interface Support {
-  /** Triangles (9 numbers each) of the fixed faces. */
+  /** Triangles (9 numbers each) of the supported faces. */
   tris: ArrayLike<number>;
-  /** Sliding (frictionless, symmetry) support: only the normal displacement is held. */
-  sliding?: boolean;
+  /**
+   * What is held (default fixed): `fixed` every direction, `sliding` only along the face normal,
+   * `hinge` the normal and the `axis` direction (a pin in a bore; `axialFree` leaves the axis free),
+   * `dirs` the ticked world directions.
+   */
+  mode?: "fixed" | "sliding" | "hinge" | "dirs";
+  axis?: ArrayLike<number>;
+  axialFree?: boolean;
+  dirs?: [boolean, boolean, boolean];
 }
 
 export interface Load {
   tris: ArrayLike<number>;
   /** Total force, N, shared over the faces by area (uniform traction). */
-  force?: [number, number, number];
+  force?: ArrayLike<number>;
   /** Pressure, MPa, pushing against the outward normal of each triangle. */
   pressure?: number;
+  /** Total moment, N·mm, about the faces' centroid, as a traction growing linearly from it. */
+  moment?: ArrayLike<number>;
+}
+
+export interface Reaction {
+  /** Force of the support on the body, N. */
+  force: [number, number, number];
+  /** Its moment about the origin, N·mm. */
+  moment: [number, number, number];
 }
 
 export interface StaticProblem {
@@ -42,6 +60,8 @@ export interface StaticProblem {
   mat: Material;
   fixed: Support[];
   loads: Load[];
+  /** Gravity, mm/s² (needs `mat.rho`). */
+  gravity?: ArrayLike<number>;
   /** Cells of an earlier pass on the same body and cell size: reused, only refitted for p. */
   grid?: Grid;
   /** Octree depth of the quadrature in cut cells (default 3). */
@@ -65,6 +85,13 @@ export interface StaticResult {
   /** Strain energy, N·mm (half of f·x). */
   energy: number;
   ms: { grid: number; assemble: number; /** factor or PCG set-up */ factor: number; solve: number };
+  /** Per support, in the order given. */
+  reactions: Reaction[];
+  /** Sum of the applied loads: force, N, and moment about the origin, N·mm. */
+  applied: Reaction;
+  /** Displacement (3 per point, mm) and von Mises stress (MPa) at points; `nrm` = outward normals, so a
+   * point on the surface is read from the cell the material is in. */
+  sample(pos: ArrayLike<number>, nrm?: ArrayLike<number>): { u: Float32Array; vm: Float32Array };
   /** Displacement at a point, mm. */
   disp(x: number, y: number, z: number): [number, number, number];
   /** Stress at a point [xx, yy, zz, xy, yz, zx], MPa. */
@@ -210,48 +237,65 @@ export function solveStatic(pb: StaticProblem): StaticResult {
       fn(grid.cells[c].el, x, y, z, pts.a[o + 3], nrm);
     }
   };
-  // Nitsche, u = 0: −N_i M_j − N_j M_iᵀ + 2γ N_i N_j I
-  // sliding, u·n = 0: −N_a n_c (T_bd·n) − N_b n_d (T_ac·n) + 2γ N_a N_b n_c n_d
-  const tn = new Float64Array(3 * nb);
+  // Nitsche for P u = 0 (P projects on the held directions): −N_a (P M_b) − N_b (P M_a)ᵀ + 2γ N_a N_b P
+  const free = freeModes(pb.fixed, pb.lo, pb.hi);
+  if (free > 0) throw new Error(`E-SIM-FREE: ${free}`);
+  const P = new Float64Array(9), PM = new Float64Array(9 * nb);
   for (const s of pb.fixed) located(s.tris, (e, x, y, z, w, nrm) => {
     const E = grid.elems[e];
     bas.eval(x, y, z, E.c, E.s);
     for (let b = 0; b < nb; b++) traction(bas.g, 3 * b, nrm, lam, mu, MA, 9 * b);
+    holdMatrix(s, nrm, P);
+    for (let b = 0; b < nb; b++) for (let c = 0; c < 3; c++) for (let d = 0; d < 3; d++)
+      PM[9 * b + 3 * c + d] = P[3 * c] * MA[9 * b + d] + P[3 * c + 1] * MA[9 * b + 3 + d] + P[3 * c + 2] * MA[9 * b + 6 + d];
     const K = A.block(e, e), v = bas.v;
     const gw = 2 * gamma * w;
-    if (s.sliding) {
-      for (let b = 0; b < nb; b++) for (let d = 0; d < 3; d++)
-        tn[3 * b + d] = MA[9 * b + d] * nrm[0] + MA[9 * b + 3 + d] * nrm[1] + MA[9 * b + 6 + d] * nrm[2];
-      for (let a = 0; a < nb; a++) for (let b = 0; b < nb; b++) {
-        const pen = gw * v[a] * v[b];
-        for (let c = 0; c < 3; c++) {
-          const row = (3 * a + c) * m + 3 * b;
-          for (let d = 0; d < 3; d++)
-            K[row + d] += w * (-v[a] * nrm[c] * tn[3 * b + d] - v[b] * nrm[d] * tn[3 * a + c]) + pen * nrm[c] * nrm[d];
-        }
-      }
-      return;
-    }
     for (let a = 0; a < nb; a++) for (let b = 0; b < nb; b++) {
       const pen = gw * v[a] * v[b];
       for (let c = 0; c < 3; c++) {
         const row = (3 * a + c) * m + 3 * b;
         for (let d = 0; d < 3; d++)
-          K[row + d] += -w * (v[a] * MA[9 * b + c * 3 + d] + v[b] * MA[9 * a + d * 3 + c]) + (c === d ? pen : 0);
+          K[row + d] += -w * (v[a] * PM[9 * b + 3 * c + d] + v[b] * PM[9 * a + 3 * d + c]) + pen * P[3 * c + d];
       }
     }
   });
+  const applied: Reaction = { force: [0, 0, 0], moment: [0, 0, 0] };
+  const add = (R: Reaction, x: number, y: number, z: number, fx: number, fy: number, fz: number) => {
+    R.force[0] += fx; R.force[1] += fy; R.force[2] += fz;
+    R.moment[0] += y * fz - z * fy; R.moment[1] += z * fx - x * fz; R.moment[2] += x * fy - y * fx;
+  };
   for (const L of pb.loads) {
     const area = triArea(L.tris);
     if (!(area > 0)) continue;
-    const t0 = (L.force ?? [0, 0, 0]).map(v => v / area), pr = L.pressure ?? 0;
+    const t0 = Array.from(L.force ?? [0, 0, 0]).map(v => v / area), pr = L.pressure ?? 0;
+    const mo = L.moment ? momentField(L.tris, L.moment) : null;
     const t = [0, 0, 0];
     located(L.tris, (e, x, y, z, w, nrm) => {
       const E = grid.elems[e];
       bas.eval(x, y, z, E.c, E.s);
       for (let c = 0; c < 3; c++) t[c] = t0[c] - pr * nrm[c];
+      if (mo) {
+        const rx = x - mo.c[0], ry = y - mo.c[1], rz = z - mo.c[2], o = mo.w;
+        t[0] += o[1] * rz - o[2] * ry; t[1] += o[2] * rx - o[0] * rz; t[2] += o[0] * ry - o[1] * rx;
+      }
+      add(applied, x, y, z, w * t[0], w * t[1], w * t[2]);
       for (let a = 0; a < nb; a++) for (let c = 0; c < 3; c++) f[e * m + 3 * a + c] += w * bas.v[a] * t[c];
     });
+  }
+  if (pb.gravity && pb.mat.rho) {
+    const g = Array.from(pb.gravity).map(v => v * pb.mat.rho!);
+    for (let e = 0; e < nel; e++) {
+      const E = grid.elems[e];
+      for (const ci of E.cells) {
+        const Q = grid.cells[ci].pts;
+        for (let k = 0; k < Q.n; k++) {
+          const o = 4 * k, w = Q.a[o + 3];
+          bas.eval(Q.a[o], Q.a[o + 1], Q.a[o + 2], E.c, E.s);
+          add(applied, Q.a[o], Q.a[o + 1], Q.a[o + 2], w * g[0], w * g[1], w * g[2]);
+          for (let a = 0; a < nb; a++) for (let c = 0; c < 3; c++) f[e * m + 3 * a + c] += w * bas.v[a] * g[c];
+        }
+      }
+    }
   }
   // keep elements nothing reaches solvable (no stiffness at all): pin them
   for (let e = 0; e < nel; e++) {
@@ -275,6 +319,29 @@ export function solveStatic(pb: StaticProblem): StaticResult {
   for (let i = 0; i < f.length; i++) energy += f[i] * x[i];
   energy /= 2;
 
+  // reactions: the Nitsche flux P (σ(u) n − 2γ u) over each support
+  const sn = [0, 0, 0], uu = [0, 0, 0];
+  const reactions = pb.fixed.map(s => {
+    const R: Reaction = { force: [0, 0, 0], moment: [0, 0, 0] };
+    located(s.tris, (e, px, py, pz, w, nrm) => {
+      const E = grid.elems[e];
+      bas.eval(px, py, pz, E.c, E.s);
+      holdMatrix(s, nrm, P);
+      sn[0] = sn[1] = sn[2] = uu[0] = uu[1] = uu[2] = 0;
+      for (let b = 0; b < nb; b++) {
+        traction(bas.g, 3 * b, nrm, lam, mu, MA, 0);
+        for (let d = 0; d < 3; d++) {
+          const v = x[e * m + 3 * b + d];
+          uu[d] += bas.v[b] * v;
+          sn[0] += MA[d] * v; sn[1] += MA[3 + d] * v; sn[2] += MA[6 + d] * v;
+        }
+      }
+      for (let c = 0; c < 3; c++) sn[c] -= 2 * gamma * uu[c];
+      add(R, px, py, pz, w * (P[0] * sn[0] + P[1] * sn[1] + P[2] * sn[2]), w * (P[3] * sn[0] + P[4] * sn[1] + P[5] * sn[2]), w * (P[6] * sn[0] + P[7] * sn[1] + P[8] * sn[2]));
+    });
+    return R;
+  });
+
   const at = (px: number, py: number, pz: number) => {
     const c = grid.cellOf(px, py, pz);
     if (c < 0) return -1;
@@ -285,6 +352,28 @@ export function solveStatic(pb: StaticProblem): StaticResult {
   return {
     grid, p, dofs: nel * m, x, energy, iterations,
     ms: { grid: t1 - t0, assemble: t2 - t1, factor: t3 - t2, solve: t4 - t3 },
+    reactions, applied,
+    sample(pos, nrm) {
+      const n = pos.length / 3, u = new Float32Array(3 * n), vm = new Float32Array(n);
+      const eps = 1e-6 * grid.h, G = new Float64Array(9);
+      for (let i = 0; i < n; i++) {
+        let px = pos[3 * i], py = pos[3 * i + 1], pz = pos[3 * i + 2];
+        if (nrm) { px -= eps * nrm[3 * i]; py -= eps * nrm[3 * i + 1]; pz -= eps * nrm[3 * i + 2]; }
+        const e = at(px, py, pz);
+        if (e < 0) continue;
+        G.fill(0);
+        let ux = 0, uy = 0, uz = 0;
+        for (let a = 0; a < nb; a++) {
+          const o = e * m + 3 * a, va = bas.v[a];
+          ux += va * x[o]; uy += va * x[o + 1]; uz += va * x[o + 2];
+          for (let c = 0; c < 3; c++) { const v = x[o + c]; G[c * 3] += v * bas.g[3 * a]; G[c * 3 + 1] += v * bas.g[3 * a + 1]; G[c * 3 + 2] += v * bas.g[3 * a + 2]; }
+        }
+        u[3 * i] = ux; u[3 * i + 1] = uy; u[3 * i + 2] = uz;
+        const tr = G[0] + G[4] + G[8];
+        vm[i] = vonMises([lam * tr + 2 * mu * G[0], lam * tr + 2 * mu * G[4], lam * tr + 2 * mu * G[8], mu * (G[1] + G[3]), mu * (G[5] + G[7]), mu * (G[6] + G[2])]);
+      }
+      return { u, vm };
+    },
     disp(px, py, pz) {
       const e = at(px, py, pz);
       const u: [number, number, number] = [0, 0, 0];
@@ -332,3 +421,141 @@ export function triNormals(tris: ArrayLike<number>, areas = false): Float64Array
   return out;
 }
 
+
+/** P (row-major 3×3): the projector on the directions a support holds at a point with normal n. */
+export function holdMatrix(s: Support, n: ArrayLike<number>, P: Float64Array) {
+  P.fill(0);
+  const mode = s.mode ?? "fixed";
+  if (mode === "fixed") { P[0] = P[4] = P[8] = 1; return; }
+  if (mode === "dirs") { const d = s.dirs ?? [true, true, true]; if (d[0]) P[0] = 1; if (d[1]) P[4] = 1; if (d[2]) P[8] = 1; return; }
+  for (let c = 0; c < 3; c++) for (let d = 0; d < 3; d++) P[3 * c + d] = n[c] * n[d];
+  if (mode === "hinge" && s.axis && !s.axialFree) {
+    // the axis direction square to the normal (on the bore they are square already)
+    const a = s.axis, an = a[0] * n[0] + a[1] * n[1] + a[2] * n[2];
+    const t = [a[0] - an * n[0], a[1] - an * n[1], a[2] - an * n[2]], l = Math.hypot(t[0], t[1], t[2]);
+    if (l > 1e-9) for (let c = 0; c < 3; c++) for (let d = 0; d < 3; d++) P[3 * c + d] += (t[c] * t[d]) / (l * l);
+  }
+}
+
+/** Jacobi eigen-decomposition of a symmetric n×n matrix (row-major, overwritten): values on the diagonal, vectors in the columns of V. */
+function jacobi(B: Float64Array, n: number): Float64Array {
+  const V = new Float64Array(n * n);
+  for (let i = 0; i < n; i++) V[i * n + i] = 1;
+  for (let sweep = 0; sweep < 40; sweep++) {
+    let off = 0, dia = 0;
+    for (let i = 0; i < n; i++) { dia += B[i * n + i] ** 2; for (let j = i + 1; j < n; j++) off += B[i * n + j] ** 2; }
+    if (off <= 1e-26 * dia) break;
+    for (let p = 0; p < n; p++) for (let q = p + 1; q < n; q++) {
+      const apq = B[p * n + q];
+      if (apq === 0) continue;
+      const th = (B[q * n + q] - B[p * n + p]) / (2 * apq);
+      const t = (th >= 0 ? 1 : -1) / (Math.abs(th) + Math.sqrt(th * th + 1));
+      const cs = 1 / Math.sqrt(t * t + 1), sn = t * cs;
+      for (let k = 0; k < n; k++) { const a = B[k * n + p], b = B[k * n + q]; B[k * n + p] = cs * a - sn * b; B[k * n + q] = sn * a + cs * b; }
+      for (let k = 0; k < n; k++) { const a = B[p * n + k], b = B[q * n + k]; B[p * n + k] = cs * a - sn * b; B[q * n + k] = sn * a + cs * b; }
+      for (let k = 0; k < n; k++) { const a = V[k * n + p], b = V[k * n + q]; V[k * n + p] = cs * a - sn * b; V[k * n + q] = sn * a + cs * b; }
+    }
+  }
+  return V;
+}
+
+/** With F = L Lᵀ (6×6, ridge added): the eigenvalues of L⁻¹ C L⁻ᵀ and M = L V, so C = M Λ Mᵀ. */
+function relative(C: Float64Array, F: Float64Array, ridge: number) {
+  const L = new Float64Array(36);
+  for (let j = 0; j < 6; j++) {
+    let d = F[j * 7] + ridge;
+    for (let k = 0; k < j; k++) d -= L[j * 6 + k] ** 2;
+    d = Math.sqrt(Math.max(d, 1e-300));
+    L[j * 7] = d;
+    for (let i = j + 1; i < 6; i++) { let v = F[i * 6 + j]; for (let k = 0; k < j; k++) v -= L[i * 6 + k] * L[j * 6 + k]; L[i * 6 + j] = v / d; }
+  }
+  const B = Float64Array.from(C);
+  for (let col = 0; col < 6; col++) for (let i = 0; i < 6; i++) { let v = B[i * 6 + col]; for (let k = 0; k < i; k++) v -= L[i * 6 + k] * B[k * 6 + col]; B[i * 6 + col] = v / L[i * 7]; }
+  for (let row = 0; row < 6; row++) for (let i = 0; i < 6; i++) { let v = B[row * 6 + i]; for (let k = 0; k < i; k++) v -= L[i * 6 + k] * B[row * 6 + k]; B[row * 6 + i] = v / L[i * 7]; }
+  const V = jacobi(B, 6), M = new Float64Array(36);
+  for (let i = 0; i < 6; i++) for (let j = 0; j < 6; j++) { let v = 0; for (let k = 0; k <= i; k++) v += L[i * 6 + k] * V[k * 6 + j]; M[i * 6 + j] = v; }
+  return { val: [0, 1, 2, 3, 4, 5].map(i => B[i * 7]), M };
+}
+
+/**
+ * How many of the six rigid-body motions the supports leave free (0 = held). Per support, a motion it
+ * holds less than 2 % as much as fixing the same faces would is taken as not held: the facets of a round
+ * face hold a spin about its axis a little, and that must still count as free.
+ */
+export function freeModes(supports: Support[], lo: ArrayLike<number>, hi: ArrayLike<number>): number {
+  const c = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
+  const L = Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 2 || 1;
+  const P = new Float64Array(9), R = new Float64Array(18), PR = new Float64Array(18);
+  const Call = new Float64Array(36), Fall = new Float64Array(36);
+  let total = 0;
+  for (const s of supports) {
+    const C = new Float64Array(36), F = new Float64Array(36);
+    const nrm = triNormals(s.tris), ar = triNormals(s.tris, true);
+    let area = 0;
+    for (let t = 0; t < ar.length; t++) {
+      if (!(ar[t] > 0)) continue;
+      const n = [nrm[3 * t], nrm[3 * t + 1], nrm[3 * t + 2]];
+      holdMatrix(s, n, P);
+      for (let k = 0; k < 3; k++) {
+        const o = 9 * t + 3 * k;
+        const r = [(s.tris[o] - c[0]) / L, (s.tris[o + 1] - c[1]) / L, (s.tris[o + 2] - c[2]) / L];
+        // columns: three translations, three rotations ω × r
+        R.fill(0);
+        R[0] = R[7] = R[14] = 1;
+        R[4] = r[2]; R[5] = -r[1]; R[9] = -r[2]; R[11] = r[0]; R[15] = r[1]; R[16] = -r[0];
+        for (let i = 0; i < 3; i++) for (let j = 0; j < 6; j++) PR[i * 6 + j] = P[3 * i] * R[j] + P[3 * i + 1] * R[6 + j] + P[3 * i + 2] * R[12 + j];
+        const w = ar[t] / 3;
+        for (let i = 0; i < 6; i++) for (let j = 0; j < 6; j++) {
+          C[i * 6 + j] += w * (PR[i] * PR[j] + PR[6 + i] * PR[6 + j] + PR[12 + i] * PR[12 + j]);
+          F[i * 6 + j] += w * (R[i] * R[j] + R[6 + i] * R[6 + j] + R[12 + i] * R[12 + j]);
+        }
+        area += w;
+      }
+    }
+    if (!(area > 0)) continue;
+    total += area;
+    const { val, M } = relative(C, F, 1e-12 * area);
+    for (let k = 0; k < 6; k++) {
+      if (val[k] < 0.02) continue;
+      for (let i = 0; i < 6; i++) for (let j = 0; j < 6; j++) Call[i * 6 + j] += val[k] * M[i * 6 + k] * M[j * 6 + k];
+    }
+    for (let i = 0; i < 36; i++) Fall[i] += F[i];
+  }
+  if (!(total > 0)) return 6;
+  const { val } = relative(Call, Fall, 1e-12 * total);
+  return val.filter(v => v < 1e-7).length;
+}
+
+/** Traction t = ω × (x − c) over the triangles whose moment about their centroid c is `moment`. */
+export function momentField(tris: ArrayLike<number>, moment: ArrayLike<number>): { c: number[]; w: number[] } {
+  const nt = tris.length / 9, ar = triNormals(tris, true);
+  const c = [0, 0, 0];
+  let A = 0;
+  for (let t = 0; t < nt; t++) { A += ar[t]; for (let k = 0; k < 3; k++) for (let a = 0; a < 3; a++) c[a] += (ar[t] / 3) * tris[9 * t + 3 * k + a]; }
+  for (let a = 0; a < 3; a++) c[a] /= A || 1;
+  // J = ∫ (|r|² I − r rᵀ) dA, exact for a triangle from its edge midpoints
+  const J = new Float64Array(9);
+  for (let t = 0; t < nt; t++) for (let k = 0; k < 3; k++) {
+    const o = 9 * t, k2 = (k + 1) % 3;
+    const r = [0, 1, 2].map(a => (tris[o + 3 * k + a] + tris[o + 3 * k2 + a]) / 2 - c[a]);
+    const w = ar[t] / 3, rr = r[0] * r[0] + r[1] * r[1] + r[2] * r[2];
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) J[3 * i + j] += w * ((i === j ? rr : 0) - r[i] * r[j]);
+  }
+  return { c, w: solve3(J, moment) };
+}
+
+function solve3(M: Float64Array, b: ArrayLike<number>): number[] {
+  const a = [[M[0], M[1], M[2], b[0]], [M[3], M[4], M[5], b[1]], [M[6], M[7], M[8], b[2]]];
+  const scale = Math.max(Math.abs(M[0]), Math.abs(M[4]), Math.abs(M[8])) || 1;
+  const x = [0, 0, 0], col = [0, 1, 2], used = [false, false, false];
+  const piv: [number, number][] = [];
+  for (let s = 0; s < 3; s++) {
+    let bi = -1, bj = -1, bv = 1e-9 * scale;
+    for (let i = 0; i < 3; i++) if (!used[i]) for (const j of col) if (Math.abs(a[i][j]) > bv && !piv.some(q => q[1] === j)) { bv = Math.abs(a[i][j]); bi = i; bj = j; }
+    if (bi < 0) break;
+    used[bi] = true; piv.push([bi, bj]);
+    for (let i = 0; i < 3; i++) if (i !== bi) { const f = a[i][bj] / a[bi][bj]; for (let j = 0; j < 4; j++) a[i][j] -= f * a[bi][j]; }
+  }
+  for (const [i, j] of piv) x[j] = a[i][3] / a[i][j];
+  return x;
+}

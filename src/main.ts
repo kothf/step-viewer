@@ -61,6 +61,7 @@ import { KernelClient, type KernelStatus } from "./kernel/client";
 import { isMeshName, parseMesh } from "./meshLoad";
 import { isSolidWorksName } from "./sw/container";
 import { ModelController } from "./model/controller";
+import { SimController } from "./sim/ui";
 import { gestureDialog } from "./gestureUi";
 import { openPrefs, type SettingsPage } from "./prefsUi";
 import { getPref, onPrefs } from "./prefs";
@@ -1659,7 +1660,7 @@ bindCommandBar();
 function syncCmTabs() {
   const app = $("#app");
   const list: CmTabId[] = app.classList.contains("gerber") ? []
-    : app.classList.contains("model") ? ["features", "sketch", "surfaces", "sheetmetal", "weldments", "evaluate"]
+    : app.classList.contains("model") ? ["features", "sketch", "surfaces", "sheetmetal", "weldments", "simulation", "evaluate"]
     : app.classList.contains("asm") ? ["assembly", "evaluate"]
     : $("#empty").hidden ? ["evaluate"] : [];
   setCmTabs(list);
@@ -2308,6 +2309,19 @@ $("#m-json").addEventListener("click", () => state.measurements.length ? measure
 $("#m-csv").addEventListener("click", () => state.measurements.length ? measurementsCsv(state.measurements, state.fileName) : toast(t("No measurements yet")));
 
 const showLeftTab = bindTabs($(".tabs"), tab => { $$(".tab").forEach(t => t.classList.toggle("on", t.id === `tab-${tab}`)); if (tab === "vault") void vaultPanel.render(); });
+// Structural analysis (FRS-structural, SA1): the Simulation tab and the Study side tab of a part.
+const sim = new SimController({
+  viewer,
+  ...modeller.simAccess(),
+  faceAt: (x, y) => {
+    const r = viewer.renderer.domElement.getBoundingClientRect();
+    const f = faceUnder(x - r.left, y - r.top);
+    return f ? { faceId: f.face.id, point: f.point.toArray() as [number, number, number] } : null;
+  },
+  showTab: () => { if (!$("#t-sim").hidden) showLeftTab("sim"); },
+});
+modeller.simHook = { active: () => sim.active, click: e => sim.click(e), key: e => sim.key(e), changed: () => sim.changed() };
+partListeners.push(() => sim.rebuilt());
 // Local vault (FRS 12.5): the Vault tab.
 const vaultPanel = new VaultPanel($("#vault-panel"), {
   open: async (name, data, replace) => {
@@ -3603,4 +3617,4 @@ refreshMeasurements();
 // Orthographic by default (true dimensions on screen); the last choice is remembered.
 setProjection(storage.get("sv:proj") === "perspective" ? "perspective" : "orthographic");
 
-if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { tutorial, surfAna, modeller, asm, motion, drawing, drw: drawing.debug(), vault: vaultPanel, vaultFolders: { useMemory: useMemoryFolders }, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, csys, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, buildCache: { stats: cacheStats, size: cacheSize, clear: cacheClear }, timings: () => Object.assign(timings, kernel.timing) } });
+if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { tutorial, surfAna, sim, modeller, asm, motion, drawing, drw: drawing.debug(), vault: vaultPanel, vaultFolders: { useMemory: useMemoryFolders }, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, csys, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, buildCache: { stats: cacheStats, size: cacheSize, clear: cacheClear }, timings: () => Object.assign(timings, kernel.timing) } });

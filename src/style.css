@@ -1696,3 +1696,40 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 :root[data-theme="dark"] .pm-measnote { background: #12304a; color: #a5d8ff; }
 /* Sketch text edited on the canvas (gap list S13). */
 .sk-textedit { position: absolute; z-index: 5; pointer-events: auto; height: 28px; padding: 2px 6px; font: 600 14px var(--sans, sans-serif); border: 2px solid #f08c00; border-radius: 4px; background: var(--panel, #fff); color: var(--text, #111); box-shadow: 0 2px 8px rgba(0,0,0,.2); }
+
+/* Structural analysis (FRS-structural, SA1): Study side tab and result legend */
+.sim-tree { padding: 6px 10px 12px; font-size: 12px; display: grid; gap: 10px; align-content: start; }
+.sim-empty { display: grid; gap: 8px; justify-items: start; color: var(--muted); }
+.sim-empty p { margin: 0; }
+.sim-head { display: flex; align-items: center; gap: 8px; }
+.sim-head select, .sim-head b { flex: 1; min-width: 0; font-size: 13px; }
+.sim-sec h4 { margin: 0 0 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.sim-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.sim-row { display: grid; grid-template-columns: 1fr auto auto auto; align-items: center; gap: 4px; border-radius: 6px; }
+.sim-row.cur { background: var(--accent-soft); }
+.sim-row.off .sim-name, .sim-row.off .sim-meta { opacity: .5; text-decoration: line-through; }
+.sim-name { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 4px 6px; border: 0; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; border-radius: 6px; }
+.sim-name:hover { background: var(--panel-2); }
+.sim-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.sim-dot.sup { background: #2f9e44; }
+.sim-dot.load { background: #d6336c; }
+.sim-meta { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.sim-ib { width: 24px; height: 24px; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; font-size: 14px; line-height: 1; }
+.sim-ib:hover { background: var(--panel-2); color: var(--text); }
+.sim-none { padding: 2px 6px; }
+.sim-note { margin: 4px 0 0; font-size: 11px; }
+.sim-prob { grid-column: 1 / -1; margin: 4px 0 0; color: var(--danger); font-size: 12px; }
+.sim-warn { border-color: var(--danger); }
+.sim-run { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; }
+.sim-run .spin { width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; flex: none; }
+.sim-kv { display: grid; grid-template-columns: 1fr auto; gap: 3px 10px; margin: 0 0 8px; }
+.sim-kv dt { color: var(--muted); }
+.sim-kv dd { margin: 0; font-family: var(--mono); text-align: right; }
+.sim-kv dd.sim-low { color: var(--danger); font-weight: 600; }
+.sim-passes { width: 100%; border-collapse: collapse; font-size: 11px; }
+.sim-passes th, .sim-passes td { padding: 2px 4px; text-align: right; border-bottom: 1px solid var(--line); font-family: var(--mono); }
+.sim-passes th { color: var(--muted); font: 500 11px inherit; }
+.sim-faces { cursor: default; }
+#sim-pm .btn.small { margin-top: 4px; }
+.sim-legend:has(~ #ana-panel:not([hidden])) { bottom: 190px; }
+@media (prefers-reduced-motion: reduce) { .sim-run .spin { animation: none; } }
