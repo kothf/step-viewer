@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.611.0] - 2026-11-21
+
+### Added
+- Structural analysis: **Report** (Simulation tab, and under the results in the Study tab) saves a solved study as a **PDF** or a **web page**: the study and its settings, the material, supports and loads with their values, the results table with reactions, pictures of the stress, displacement and safety factor plots in the current view with their colour scales, pinned probes, the passes with the convergence chart, and the assumptions. The text follows the interface language.
+- Structural analysis: the results in the Study tab state the assumptions of the analysis (linear elastic, small displacements).
+
 ## [1.610.0] - 2026-11-20
 
 ### Added
@@ -3926,7 +3932,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.610.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.611.0...HEAD
+[1.611.0]: https://github.com/kothf/step-viewer/compare/v1.610.0...v1.611.0
 [1.610.0]: https://github.com/kothf/step-viewer/compare/v1.609.0...v1.610.0
 [1.609.0]: https://github.com/kothf/step-viewer/compare/v1.608.0...v1.609.0
 [1.608.0]: https://github.com/kothf/step-viewer/compare/v1.607.0...v1.608.0
