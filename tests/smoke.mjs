@@ -16246,6 +16246,14 @@ try {
     check(!r1.error && r1.passes.length === 2 && Math.abs(r1.maxU / 0.357 - 1) < 0.05 && Math.abs(r1.maxVm / 75 - 1) < 0.2 && Math.abs(reaction[2] - 1000) < 1 && r1.plot.shown && r1.plot.points > 500 && r1.plot.scale > 1
       && shown.legend && shown.rows === 2 && /MPa/.test(shown.kv) && /1000 N/.test(shown.kv),
       `sim 1.608: the cantilever solves in two passes: deflection, stress and reaction match beam theory, the plot and results show (${JSON.stringify({ err: r1.error, maxU: r1.maxU, maxVm: r1.maxVm, reaction, passes: r1.passes, plot: r1.plot, shown })})`);
+    // Safety factor: yield 235 MPa over the highest stress at the low end, capped at 10; the planes stay off a plot.
+    const planes = () => mp.evaluate(() => { let n = 0; window.__sv.viewer.scene.traverse(o => { if (o.isMesh && o.userData.ref?.std && o.visible) n++; }); return n; });
+    await mp.selectOption('#sim-legend [data-k="kind"]', "sf");
+    await mp.waitForTimeout(150);
+    const rs = await sim();
+    const sfShown = { planes: await planes(), max: await mp.evaluate(() => document.querySelector('#sim-legend [data-v="max"]')?.textContent) };
+    check(rs.plot.kind === "sf" && Math.abs(rs.plot.range[0] / (235 / r1.maxVm) - 1) < 0.02 && rs.plot.range[1] === 10 && sfShown.max === "10+" && sfShown.planes === 0,
+      `sim 1.609: the safety factor plot runs from yield / highest stress to 10+, and the standard planes are not drawn over a plot (${JSON.stringify({ range: rs.plot.range, maxVm: r1.maxVm, ...sfShown })})`);
     // The plot can show displacement, undeformed; undo of the force puts the results out of date and takes the plot off.
     await mp.selectOption('#sim-legend [data-k="kind"]', "u");
     await mp.uncheck('#sim-legend [data-k="deformed"]');
@@ -16253,9 +16261,10 @@ try {
     await mp.keyboard.press("Control+z");
     await settle();
     const r3 = await sim();
+    const planesBack = await planes();
     const stale = await mp.evaluate(() => ({ legend: !document.querySelector("#sim-legend").hidden, note: /Out of date/.test(document.querySelector("#sim-tree .sim-res")?.textContent ?? ""), mat: window.__sv.viewer.parts[0].mesh.material === window.__sv.viewer.parts[0].material }));
-    check(r2.plot.kind === "u" && Math.abs(r2.plot.range[1] - r1.maxU) < 1e-6 && r2.plot.scale === 0 && r3.stale && !r3.plot.shown && !stale.legend && stale.note && stale.mat,
-      `sim 1.608: displacement plot without the deformed shape; an undo marks the results out of date and restores the model (${JSON.stringify({ range: r2.plot.range, scale: r2.plot.scale, stale: r3.stale, shown: r3.plot.shown, ...stale })})`);
+    check(r2.plot.kind === "u" && Math.abs(r2.plot.range[1] - r1.maxU) < 1e-6 && r2.plot.scale === 0 && r3.stale && !r3.plot.shown && !stale.legend && stale.note && stale.mat && planesBack === 3,
+      `sim 1.608: displacement plot without the deformed shape; an undo marks the results out of date and restores the model (${JSON.stringify({ range: r2.plot.range, scale: r2.plot.scale, stale: r3.stale, shown: r3.plot.shown, planesBack, ...stale })})`);
     // Without supports the solve says so and nothing runs; the Russian UI has no English left in the Study tab.
     await mp.click('#sim-tree .sim-row [data-a="del"]');
     await settle();

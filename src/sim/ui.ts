@@ -25,6 +25,8 @@ export interface SimHost {
   simGeo(lin: number, ang: number): Promise<{ geo: SimBody; solids: number }>;
   /** No part command is open. */
   idle(): boolean;
+  /** Draws the part's planes, sketches and marks again. */
+  redraw(): void;
   /** Shows the Study side tab. */
   showTab(): void;
 }
@@ -470,13 +472,18 @@ export class SimController {
     this.mats = [];
   }
 
+  /** A result plot is on the model. */
+  get plotting() { return !!this.saved; }
+
   private clearPlot() {
+    const was = !!this.saved;
     if (this.saved) {
       const s = this.saved;
       s.mesh.material = s.mat;
       this.saved = null;
     }
     this.disposePlot();
+    if (was) this.host.redraw();
     this.host.viewer.invalidate();
   }
 
@@ -508,6 +515,7 @@ export class SimController {
     this.mats.push(colorMat, under);
     this.saved = { mesh: part.mesh, mat: part.mesh.material };
     part.mesh.material = under;
+    this.host.redraw();
     const scale = this.plot.scale > 0 ? this.plot.scale : r.maxU > 0 ? (0.05 * this.host.viewer.modelSize) / r.maxU : 1;
     this.usedScale = this.plot.deformed ? scale : 0;
     let at = pm.pos;

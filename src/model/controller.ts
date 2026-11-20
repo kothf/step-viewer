@@ -351,7 +351,7 @@ export class ModelController {
   private kernel: ModelKernel;
   private last: Rebuild | null = null;
   /** Structural analysis (src/sim/ui.ts): takes view clicks and Enter/Esc while a support or load panel is open; told when the document changes. */
-  simHook: { active(): boolean; click(e: PointerEvent): boolean; key(e: KeyboardEvent): boolean; changed(): void } | null = null;
+  simHook: { active(): boolean; click(e: PointerEvent): boolean; key(e: KeyboardEvent): boolean; changed(): void; plotting(): boolean } | null = null;
   private mode: Mode = { kind: "none" };
   private fileName = "";
   private handle: FileSystemFileHandle | null = null;
@@ -651,6 +651,7 @@ export class ModelController {
       faceNames: () => this.last?.faceNames ?? [],
       simGeo: (lin: number, ang: number) => this.kernel.simGeo(lin, ang),
       idle: () => this.mode.kind === "none",
+      redraw: () => { if (this.store) this.drawDecor(); },
     };
   }
   /**
@@ -5489,9 +5490,11 @@ export class ModelController {
     // Standard planes: always while picking a plane; otherwise unless hidden, fainter, and clickable (context bar).
     const colors = { XY: 0x2f6fed, XZ: 0x2f9e44, YZ: 0xe8590c };
     const hiddenStd = this.doc.stdHidden ?? [];
+    // a result plot is read by its colours: planes stay off it unless they are being picked or are selected
+    const plot = !std && !!this.simHook?.plotting();
     for (const k of ["XY", "XZ", "YZ"] as const) {
       const sel = this.selected === `std:${k}`;
-      if (std || sel || (!hiddenStd.includes(k) && viewItemShown("planes"))) square(STD_FRAMES[k], sel ? 0xf08c00 : colors[k], { std: k }, std ? 0.12 : sel ? 0.14 : 0.05, true, undefined, !std && !sel);
+      if (std || sel || (!plot && !hiddenStd.includes(k) && viewItemShown("planes"))) square(STD_FRAMES[k], sel ? 0xf08c00 : colors[k], { std: k }, std ? 0.12 : sel ? 0.14 : 0.05, true, undefined, !std && !sel);
     }
     // Reference planes, centred where the model's centre projects onto them.
     const centre = b && !b.isEmpty() ? b.getCenter(new THREE.Vector3()) : new THREE.Vector3();
@@ -5499,7 +5502,7 @@ export class ModelController {
     const end = this.doc.rollback ?? this.doc.features.length;
     const draftId = m.kind === "feature" && m.draft.type === "plane" ? m.draft.id : null;
     this.doc.features.slice(0, end).forEach(f => {
-      if (f.type !== "plane" || f.suppressed || f.hidden || f.id === draftId || (!std && !viewItemShown("planes") && this.selected !== f.id)) return;
+      if (f.type !== "plane" || f.suppressed || f.hidden || f.id === draftId || (!std && (plot || !viewItemShown("planes")) && this.selected !== f.id)) return;
       const fr = this.last?.frames[f.id];
       if (fr) square(fr, this.selected === f.id ? 0xf08c00 : 0x7c8594, { plane: f.id }, this.selected === f.id ? 0.16 : 0.08, true, onPlane(fr));
     });

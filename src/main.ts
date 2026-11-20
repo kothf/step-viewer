@@ -2320,7 +2320,7 @@ const sim = new SimController({
   },
   showTab: () => { if (!$("#t-sim").hidden) showLeftTab("sim"); },
 });
-modeller.simHook = { active: () => sim.active, click: e => sim.click(e), key: e => sim.key(e), changed: () => sim.changed() };
+modeller.simHook = { active: () => sim.active, click: e => sim.click(e), key: e => sim.key(e), changed: () => sim.changed(), plotting: () => sim.plotting };
 partListeners.push(() => sim.rebuilt());
 // Local vault (FRS 12.5): the Vault tab.
 const vaultPanel = new VaultPanel($("#vault-panel"), {
