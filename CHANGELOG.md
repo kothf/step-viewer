@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.606.0] - 2026-11-20
+
+### Added
+- Docs: **functional requirements for structural analysis** (`docs/FRS-structural.md`). Analysis straight on the exact model with no meshing step, adaptive passes that refine by themselves, and loads and supports that stay on their faces after edits. Phases: a method spike, then linear static analysis of parts, modal analysis of parts, static analysis of assemblies with automatic connections, bolts and welds, and modal analysis of assemblies; buckling, thermal and contact come later. Everything runs in the browser with free tools only.
+
 ## [1.605.0] - 2026-11-20
 
 ### Added
@@ -3891,7 +3896,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.605.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.606.0...HEAD
+[1.606.0]: https://github.com/kothf/step-viewer/compare/v1.605.0...v1.606.0
 [1.605.0]: https://github.com/kothf/step-viewer/compare/v1.604.0...v1.605.0
 [1.604.0]: https://github.com/kothf/step-viewer/compare/v1.603.0...v1.604.0
 [1.603.0]: https://github.com/kothf/step-viewer/compare/v1.602.0...v1.603.0

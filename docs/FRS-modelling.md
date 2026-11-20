@@ -54,7 +54,7 @@ In scope:
 - Product data management without a server: a vault with check-out/check-in, versions, revisions, lifecycle workflow, where-used, data cards, change orders and audit trail (section 12.5).
 - Integration of everything above with the existing viewer: measuring, sections, mass properties, exploded view, export, EN/RU interface.
 
-Out of scope for this FRS (may get their own documents later): simulation/FEA, CAM, rendering beyond the existing viewer, PCB/ECAD editing (the PCB view stays a viewer), routing (pipes, cables), weldments beyond the structural basics listed, mould tools, server-based PDM with real access control (P7), plug-in API for third parties.
+Out of scope for this FRS (may get their own documents later): simulation/FEA (now `docs/FRS-structural.md`), CAM, rendering beyond the existing viewer, PCB/ECAD editing (the PCB view stays a viewer), routing (pipes, cables), weldments beyond the structural basics listed, mould tools, server-based PDM with real access control (P7), plug-in API for third parties.
 
 ### 1.3 Product principle
 
