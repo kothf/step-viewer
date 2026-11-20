@@ -1067,6 +1067,12 @@ canvas.mc-stale { filter: grayscale(0.85) opacity(0.6); transition: filter .2s; 
 .v-old::before { background: #d32f2f; }
 .v-new::before { background: #1b8a3a; }
 .v-table .v-acts { padding: 2px 0; white-space: nowrap; display: flex; gap: 4px; }
+/* Users (FR-PDM-037) */
+.v-err { color: var(--danger); font-weight: 600; margin: 0 0 8px; }
+.v-users th.c, .v-users td.c { text-align: center; }
+.v-users tr.v-off td:first-child { opacity: 0.6; text-decoration: line-through; }
+.v-adduser { border: 1px solid var(--line); border-radius: 6px; margin-top: 12px; padding: 8px 10px; }
+.v-adduser .row { flex-wrap: wrap; gap: 4px 12px; }
 .v-log { max-height: 30vh; overflow: auto; padding-left: 18px; font-size: var(--fs-caption); }
 .v-lbl { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
 .v-lbl textarea { font: inherit; padding: 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); }

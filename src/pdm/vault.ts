@@ -10,6 +10,7 @@
 import { defaultCards, defaultWorkflow, formatNumber, PART_NUMBER, preLabel, revLabel, revIndex, ROLES, type CardField, type Numbering, type RevScheme, type Role, type Workflow, type WfTransition } from "./workflow";
 import { flattenSubs } from "../asm/patterns";
 import type { AsmDoc } from "../asm/types";
+import { checkPassword, hashPassword, PASSWORD_MIN, sameName, type Account } from "./accounts";
 import { docJson, docRefs, docText, embedDocs, embedModel, featureDiff, readProps, relPath, resolveRel, rewriteRefs, writeProps } from "./codec";
 
 /** The little a vault needs from a directory. Names are single path segments. */
@@ -35,6 +36,8 @@ export interface VaultInfo {
   searches?: SavedSearch[];
   /** FR-PDM-036: a release stores the PDF of drawings and the STEP of parts and assemblies beside them (absent: on). */
   outputs?: boolean;
+  /** User accounts with hashed passwords (FR-PDM-037): when there is one, the vault asks who is working before anything. */
+  accounts?: Account[];
 }
 /** A reference from one version to another file (FR-PDM-020): the version it was checked in against, and how many. */
 /** A reference at check-in; `linked` = a linked assembly component (FR-ASM-003), whose version is the one its hash names. */
@@ -122,8 +125,151 @@ function splitPath(path: string) {
   return { dirs: parts.slice(0, -1), name: parts[parts.length - 1] };
 }
 
+/** A directory that refuses changes while `ok()` is false (a vault with accounts before the log in). */
+function guarded(d: VDir, ok: () => boolean): VDir {
+  const stop = () => { if (!ok()) throw new VaultError("Log in to the vault first."); };
+  return {
+    name: d.name,
+    async dir(name, create) {
+      let s = await d.dir(name, false);
+      if (!s && create) { stop(); s = await d.dir(name, true); }
+      return s && guarded(s, ok);
+    },
+    read: name => d.read(name),
+    async write(name, data) { stop(); return d.write(name, data); },
+    list: () => d.list(),
+    async remove(name) { stop(); return d.remove(name); },
+  };
+}
+
 export class Vault {
-  private constructor(readonly root: VDir, private store: VDir, public info: VaultInfo, public user: string, public computer: string) {}
+  readonly root: VDir;
+  private store: VDir;
+  /** False while a vault with accounts waits for its log in. */
+  private authed = true;
+  private constructor(root: VDir, store: VDir, public info: VaultInfo, public user: string, public computer: string) {
+    this.root = guarded(root, () => !this.locked);
+    this.store = guarded(store, () => !this.locked);
+  }
+
+  // ---------- accounts and log in (FR-PDM-037) ----------
+
+  /** Whether the vault has user accounts, so it asks for a log in. */
+  get secured() { return !!this.info.accounts?.length; }
+  /** A vault with accounts nobody has logged in to yet: it can be read, not changed. */
+  get locked() { return this.secured && !this.authed; }
+  /** The accounts without their password hashes. */
+  accounts() { return (this.info.accounts ?? []).map(({ name, roles, disabled, reset, created }) => ({ name, roles: [...roles], disabled: !!disabled, reset: !!reset, created })); }
+  account(name = this.user) { return this.info.accounts?.find(a => sameName(a.name, name)) ?? null; }
+  /** The account's password must be changed before anything else (set by an Admin's reset). */
+  get mustChange() { return !!this.account()?.reset && this.authed && this.secured; }
+
+  /** vault.json as it is on disk now (others may have changed it), keeping this session's user list. */
+  private async freshInfo() {
+    const raw = await this.store.read("vault.json");
+    if (raw) { try { this.info = { ...JSON.parse(dec.decode(raw)), users: this.info.users }; } catch { /* keep ours */ } }
+    return this.info;
+  }
+  private async writeInfo() { await this.store.write("vault.json", json(this.info)); }
+
+  /** Logs a user in with their password. */
+  async login(name: string, password: string) {
+    await this.freshInfo();
+    const a = this.account(name);
+    if (!a || a.disabled || !(await checkPassword(a, password))) throw new VaultError("Wrong user name or password.");
+    this.user = a.name;
+    this.authed = true;
+    if (!this.info.users.includes(a.name)) { this.info.users.push(a.name); await this.writeInfo(); }
+    await this.log("log in");
+  }
+
+  /** Ends the session: the vault is read-only until the next log in. */
+  async logout() {
+    if (!this.secured || !this.authed) return;
+    await this.log("log out");
+    this.authed = false;
+    this.user = "";
+  }
+
+  private static checkPassword(pw: string) {
+    if (pw.length < PASSWORD_MIN) throw new VaultError("The password needs at least {n} characters.", { n: PASSWORD_MIN });
+  }
+
+  /** Adds a user account (Admin). The first account must be the current user's, an Admin, which turns log ins on. */
+  async addUser(name: string, password: string, roles: Role[]) {
+    if (!this.has("Admin")) throw new VaultError("Only an Admin can manage users.");
+    name = name.trim();
+    if (!name || /[\/:*?"<>|]/.test(name)) throw new VaultError("Invalid user name.");
+    Vault.checkPassword(password);
+    await this.freshInfo();
+    const list = this.info.accounts ?? [];
+    if (list.some(a => sameName(a.name, name))) throw new VaultError("There is already a user called {name}.", { name });
+    const first = !list.length;
+    if (first && (!sameName(name, this.user) || !roles.includes("Admin"))) throw new VaultError("The first account is yours, as an Admin.");
+    const r = ROLES.filter(x => roles.includes(x));
+    if (!r.length) throw new VaultError("Give the user at least one role.");
+    list.push({ name, ...(await hashPassword(password)), roles: r, created: new Date().toISOString(), ...(first ? {} : { reset: true }) });
+    this.info.accounts = list;
+    if (first) { this.user = name; this.authed = true; }
+    if (!this.info.users.includes(name)) this.info.users.push(name);
+    await this.writeInfo();
+    await this.log("add user", { details: name, to: name });
+  }
+
+  /** Changes the logged-in user's own password. */
+  async changePassword(old: string, password: string) {
+    await this.freshInfo();
+    const a = this.account();
+    if (!a || this.locked) throw new VaultError("Log in to the vault first.");
+    if (!(await checkPassword(a, old))) throw new VaultError("The current password is wrong.");
+    Vault.checkPassword(password);
+    Object.assign(a, await hashPassword(password));
+    delete a.reset;
+    await this.writeInfo();
+    await this.log("change password");
+  }
+
+  /** Sets a new password for another user (Admin); they choose their own at the next log in. */
+  async resetPassword(name: string, password: string) {
+    if (!this.has("Admin")) throw new VaultError("Only an Admin can manage users.");
+    Vault.checkPassword(password);
+    await this.freshInfo();
+    const a = this.account(name);
+    if (!a) throw new VaultError("No such user.");
+    Object.assign(a, await hashPassword(password));
+    if (!sameName(a.name, this.user)) a.reset = true;
+    await this.writeInfo();
+    await this.log("reset password", { details: a.name, to: a.name });
+  }
+
+  private adminsLeft(list: Account[]) { return list.filter(a => !a.disabled && a.roles.includes("Admin")).length; }
+
+  /** Changes a user's roles or turns the account off (Admin); the last working Admin stays. */
+  async setAccount(name: string, patch: { roles?: Role[]; disabled?: boolean }) {
+    if (!this.has("Admin")) throw new VaultError("Only an Admin can manage users.");
+    await this.freshInfo();
+    const list = this.info.accounts ?? [], a = this.account(name);
+    if (!a) throw new VaultError("No such user.");
+    const was = { roles: a.roles, disabled: a.disabled };
+    if (patch.roles) { a.roles = ROLES.filter(x => patch.roles!.includes(x)); if (!a.roles.length) { a.roles = was.roles; throw new VaultError("Give the user at least one role."); } }
+    if (patch.disabled !== undefined) { if (patch.disabled) a.disabled = true; else delete a.disabled; }
+    if (!this.adminsLeft(list)) { a.roles = was.roles; if (was.disabled) a.disabled = true; else delete a.disabled; throw new VaultError("The vault needs at least one Admin."); }
+    await this.writeInfo();
+    await this.log(patch.disabled !== undefined ? (patch.disabled ? "disable user" : "enable user") : "set roles", { details: `${a.name}${patch.roles ? `: ${a.roles.join(", ")}` : ""}` });
+  }
+
+  /** Removes an account (Admin); not your own. Their name stays in the history. */
+  async removeUser(name: string) {
+    if (!this.has("Admin")) throw new VaultError("Only an Admin can manage users.");
+    if (sameName(name, this.user)) throw new VaultError("You cannot remove your own account.");
+    await this.freshInfo();
+    const list = this.info.accounts ?? [], i = list.findIndex(a => sameName(a.name, name));
+    if (i < 0) throw new VaultError("No such user.");
+    const [a] = list.splice(i, 1);
+    if (!this.adminsLeft(list)) { list.splice(i, 0, a); throw new VaultError("The vault needs at least one Admin."); }
+    await this.writeInfo();
+    await this.log("remove user", { details: a.name });
+  }
 
   /** Makes a vault in an empty (or not yet vaulted) directory (FR-PDM-001). */
   static async create(root: VDir, name: string, user: string, computer: string): Promise<Vault> {
@@ -144,6 +290,7 @@ export class Vault {
     const info = JSON.parse(dec.decode(raw)) as VaultInfo;
     if (info.format !== "mobiuscad-vault") throw new VaultError("This folder is not a vault.");
     const v = new Vault(root, store, info, user, computer);
+    if (v.secured) { v.authed = false; v.user = ""; return v; }
     if (!info.users.includes(user)) { info.users.push(user); await store.write("vault.json", json(info)); }
     return v;
   }
@@ -724,6 +871,11 @@ export class Vault {
 
   /** Roles of a user (FR-PDM-037): every role in a personal vault, and for the vault's creator. */
   rolesOf(user = this.user): Role[] {
+    if (this.secured) {
+      if (user === this.user && this.locked) return [];
+      const a = this.account(user);
+      return a && !a.disabled ? [...a.roles] : [];
+    }
     if (!this.info.shared || this.info.users[0] === user) return [...ROLES];
     return this.info.roles?.[user] ?? ["Designer"];
   }
@@ -736,8 +888,7 @@ export class Vault {
       const w = patch.workflow, names = new Set(w.states.map(s => s.name));
       if (!w.states.length || !names.has(w.initial) || w.transitions.some(x => !names.has(x.from) || !names.has(x.to))) throw new VaultError("The workflow has a transition to or from an unknown state.");
     }
-    const fresh = await this.store.read("vault.json");
-    if (fresh) { try { this.info = { ...JSON.parse(dec.decode(fresh)), users: this.info.users }; } catch { /* keep ours */ } }
+    await this.freshInfo();
     Object.assign(this.info, patch);
     await this.store.write("vault.json", json(this.info));
     await this.log(what === "saved search" ? "save search" : "settings", { details: Object.keys(patch).join(", ") });
