@@ -222,8 +222,8 @@ test("Lamé thick cylinder: pressure, sliding supports and curved cut cells", ()
 
 // ---------- SA1: reactions, gravity, moment, supports, studies ----------
 import { freeModes, momentField } from "../../src/sim/static";
-import { axisOf, cellSize, meshVolume, runStatic, studyProblem, type SimBody } from "../../src/sim/run";
-import { newStudy, nextId, itemName } from "../../src/sim/types";
+import { axisOf, cellSize, cornerPoint, edgeLines, meshVolume, runStatic, studyProblem, type SimBody } from "../../src/sim/run";
+import { newStudy, nextId, itemName, type StudyLoad } from "../../src/sim/types";
 
 /** A box as a named-face body: faces x0, x1, y0, y1, z0, z1. */
 function boxBody(lo: number[], hi: number[]): SimBody {
@@ -357,4 +357,46 @@ test("plot mesh: edges are split to the target with no cracks and the same area"
   // the first vertices are the input's own
   assert.deepEqual(Array.from(m.pos.slice(0, 18)), pos);
   assert.ok(plotTarget(2000, 5) === 5 && plotTarget(1e9, 1, 1000) > 1);
+});
+
+test("forces on an edge and on corners: found by face names, spread by length, balanced by the clamp", () => {
+  const b = boxBody(lo, hi);
+  const seg = edgeLines(b, "x1", "z1")!;
+  assert.equal(seg.length, 9);
+  assert.ok(Math.abs(Math.hypot(seg[3] - seg[0], seg[4] - seg[1], seg[5] - seg[2]) - W) < 1e-9);
+  // into the body: back along x and down from the top face
+  assert.ok(seg[6] < -0.5 && seg[8] < -0.5 && Math.abs(seg[7]) < 1e-9);
+  assert.equal(edgeLines(b, "x0", "x1")!.length, 0);
+  assert.equal(edgeLines(b, "x1", "gone"), null);
+  const c = cornerPoint(b, ["x1", "y1", "z1"], [L, W, W])!;
+  assert.deepEqual(c.slice(0, 3), [L, W / 2, W / 2]);
+  assert.ok(c[3] < 0 && c[4] < 0 && c[5] < 0);
+  assert.equal(cornerPoint(b, ["x0", "x1"], [0, 0, 0]), null);
+
+  const want = F * L ** 3 / (3 * E * (W ** 4 / 12));
+  const pos = new Float32Array([L, 0, 0]), nrm = new Float32Array([1, 0, 0]);
+  const run = (load: StudyLoad) => {
+    const st = newStudy([]);
+    st.supports.push({ id: "s1", type: "fixed", faces: [{ name: "x0" }] });
+    st.loads.push(load);
+    const pr = studyProblem(st, b);
+    assert.deepEqual(pr.problems, []);
+    const ps = [...runStatic({ body: b, mat: { name: "Steel", E, nu: 0.3, rho: 0 }, problem: pr, passes: 2, energyTol: 0, pos, nrm })];
+    return ps[ps.length - 1];
+  };
+  const comp = [{ v: 0 }, { v: 0 }, { v: -F }] as StudyLoad["comp"];
+  const onEdge = run({ id: "l1", type: "force", faces: [], on: "edges", edges: [{ faces: ["x1", "z1"] }], comp });
+  assert.ok(Math.abs(onEdge.applied.force[2] + F) < 1e-9 * F);
+  assert.ok(Math.abs(onEdge.reactions[0].force[2] - F) < 1e-5 * F);
+  assert.ok(Math.abs(onEdge.applied.moment[1] - F * L) < 1e-6 * F * L);
+  assert.ok(Math.abs(-onEdge.u[2] - want) / want < 0.04, `edge tip ${onEdge.u[2]} vs ${want}`);
+  const onPts = run({ id: "l1", type: "force", faces: [], on: "points", points: [{ faces: ["x1", "y0", "z1"], at: [L, -W / 2, W / 2] }, { faces: ["x1", "y1", "z1"], at: [L, W / 2, W / 2] }], comp });
+  assert.ok(Math.abs(onPts.applied.force[2] + F) < 1e-9 * F);
+  assert.ok(Math.abs(onPts.applied.moment[0]) < 1e-6 * F * W, "two corners: no twist");
+  assert.ok(Math.abs(-onPts.u[2] - want) / want < 0.05, `corner tip ${onPts.u[2]} vs ${want}`);
+  // a pick whose faces are gone is reported, an empty one too
+  const st = newStudy([]);
+  st.loads.push({ id: "l1", type: "force", faces: [], on: "edges", edges: [{ faces: ["x1", "nope"] }], comp });
+  st.loads.push({ id: "l2", type: "force", faces: [], on: "points", points: [], comp });
+  assert.deepEqual(studyProblem(st, b).problems, [{ id: "l1", code: "E-SIM-REF" }, { id: "l2", code: "E-SIM-EMPTY" }]);
 });

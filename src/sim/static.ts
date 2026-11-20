@@ -5,7 +5,7 @@
 // Units: mm, N, MPa (so E in MPa, density in t/mm³).
 
 import { Basis, basisSize } from "./basis";
-import { gridTrianglePoints, facePoints, fitFacePoints, type Inside } from "./quad";
+import { gauss, gridTrianglePoints, facePoints, fitFacePoints, type Inside } from "./quad";
 import { makeGrid, refit, type Grid } from "./grid";
 import { BlockMatrix, Envelope } from "./sparse";
 import { pcg } from "./pcg";
@@ -40,6 +40,13 @@ export interface Load {
   pressure?: number;
   /** Total moment, N·mm, about the faces' centroid, as a traction growing linearly from it. */
   moment?: ArrayLike<number>;
+  /**
+   * Edge load: segments of 9 numbers (two ends and a direction into the body); `force` is then the total
+   * over their length. `tris` is empty.
+   */
+  lines?: ArrayLike<number>;
+  /** Point load: 6 numbers per point (position and a direction into the body); `force` is shared equally. */
+  points?: ArrayLike<number>;
 }
 
 export interface Reaction {
@@ -284,7 +291,61 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     R.force[0] += fx; R.force[1] += fy; R.force[2] += fz;
     R.moment[0] += y * fz - z * fy; R.moment[1] += z * fx - x * fz; R.moment[2] += x * fy - y * fx;
   };
+  // the cell a boundary point belongs to: nudged into the body, further when the first try lands outside
+  const cellNear = (x: number, y: number, z: number, d: ArrayLike<number>, o: number) => {
+    for (const k of [1e-7, 1e-4, 1e-2, 0.1]) {
+      const c = grid.cellOf(x + k * grid.h * d[o], y + k * grid.h * d[o + 1], z + k * grid.h * d[o + 2]);
+      if (c >= 0) return c;
+    }
+    return -1;
+  };
+  const push = (c: number, x: number, y: number, z: number, fx: number, fy: number, fz: number) => {
+    const e = grid.cells[c].el, E = grid.elems[e];
+    bas.eval(x, y, z, E.c, E.s);
+    add(applied, x, y, z, fx, fy, fz);
+    for (let a = 0; a < nb; a++) { f[e * m + 3 * a] += bas.v[a] * fx; f[e * m + 3 * a + 1] += bas.v[a] * fy; f[e * m + 3 * a + 2] += bas.v[a] * fz; }
+  };
+  const gl = gauss(Math.max(2, p + 1));
   for (const L of pb.loads) {
+    if (L.points?.length && L.force) {
+      const P = L.points, n = P.length / 6;
+      for (let k = 0; k < n; k++) {
+        const c = cellNear(P[6 * k], P[6 * k + 1], P[6 * k + 2], P, 6 * k + 3);
+        if (c >= 0) push(c, P[6 * k], P[6 * k + 1], P[6 * k + 2], L.force[0] / n, L.force[1] / n, L.force[2] / n);
+      }
+      continue;
+    }
+    if (L.lines?.length && L.force) {
+      const S = L.lines;
+      let len = 0;
+      for (let o = 0; o < S.length; o += 9) len += Math.hypot(S[o + 3] - S[o], S[o + 4] - S[o + 1], S[o + 5] - S[o + 2]);
+      if (!(len > 0)) continue;
+      for (let o = 0; o < S.length; o += 9) {
+        const d = [S[o + 3] - S[o], S[o + 4] - S[o + 1], S[o + 5] - S[o + 2]], l = Math.hypot(d[0], d[1], d[2]);
+        // cut where the segment crosses a grid plane: the basis is a polynomial only inside a cell
+        const cuts = [0, 1];
+        for (let a = 0; a < 3; a++) {
+          if (Math.abs(d[a]) < 1e-12) continue;
+          const u0 = (S[o + a] - grid.lo[a]) / grid.h, u1 = u0 + d[a] / grid.h;
+          for (let q = Math.ceil(Math.min(u0, u1)); q <= Math.floor(Math.max(u0, u1)); q++) {
+            const tt = (q - u0) / (u1 - u0);
+            if (tt > 1e-9 && tt < 1 - 1e-9) cuts.push(tt);
+          }
+        }
+        cuts.sort((x, y) => x - y);
+        for (let i = 1; i < cuts.length; i++) {
+          const t0 = cuts[i - 1], t1 = cuts[i], tm = (t0 + t1) / 2;
+          if (t1 - t0 < 1e-12) continue;
+          const c = cellNear(S[o] + tm * d[0], S[o + 1] + tm * d[1], S[o + 2] + tm * d[2], S, o + 6);
+          if (c < 0) continue;
+          for (let g = 0; g < gl.x.length; g++) {
+            const tt = t0 + (t1 - t0) * (gl.x[g] + 1) / 2, w = (gl.w[g] / 2) * (t1 - t0) * l / len;
+            push(c, S[o] + tt * d[0], S[o + 1] + tt * d[1], S[o + 2] + tt * d[2], w * L.force[0], w * L.force[1], w * L.force[2]);
+          }
+        }
+      }
+      continue;
+    }
     const area = triArea(L.tris);
     if (!(area > 0)) continue;
     const t0 = Array.from(L.force ?? [0, 0, 0]).map(v => v / area), pr = L.pressure ?? 0;

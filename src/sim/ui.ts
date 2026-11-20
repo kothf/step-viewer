@@ -13,11 +13,12 @@ import { toRef } from "../tools/materials";
 import { UNITS, units } from "../tools/units";
 import { chooseModal, toast } from "../ui";
 import type { Part, Viewer } from "../viewer/Viewer";
+import type { EdgeInfo } from "../topology";
 import { SIM_STOPPED, SimClient } from "./client";
 import { meshArea, plotTarget, refineMesh, type PlotMesh } from "./plotmesh";
 import { chartSvg, reportHtml, reportPdf, type ReportBlock, type SimReport } from "./report";
 import { studyProblem, type PassResult, type SimBody } from "./run";
-import { GRAVITY, LOAD_LABEL, SUPPORT_LABEL, itemName, newStudy, nextId, type LoadType, type PlotKind, type Study, type StudyLoad, type StudySupport, type SupportType } from "./types";
+import { GRAVITY, LOAD_LABEL, SUPPORT_LABEL, itemName, newStudy, nextId, pickCount, type LoadType, type PlotKind, type Study, type StudyLoad, type StudySupport, type SupportType } from "./types";
 
 export interface SimHost {
   viewer: Viewer;
@@ -25,6 +26,8 @@ export interface SimHost {
   change(label: string, fn: (d: PartDoc) => void): void;
   faceNames(): string[];
   faceAt(x: number, y: number): { faceId: number; point: [number, number, number] } | null;
+  /** The snapped point under the pointer (part coordinates) and the edge it is on, if any. */
+  snapAt(x: number, y: number): { kind: string; point: [number, number, number]; edge?: EdgeInfo } | null;
   simGeo(lin: number, ang: number): Promise<{ geo: SimBody; solids: number }>;
   /** No part command is open. */
   idle(): boolean;
@@ -254,7 +257,11 @@ export class SimController {
     const e = this.edit, st = this.study();
     if (!e || !st) return;
     const d = e.draft;
-    if (d.type !== "gravity" && !d.faces.length) { toast(t("Click the faces on the model first."), "warn"); return; }
+    if (d.type !== "gravity" && !pickCount(d)) {
+      const on = (d as StudyLoad).on;
+      toast(on === "edges" ? t("Click the edges on the model first.") : on === "points" ? t("Click the corner points on the model first.") : t("Click the faces on the model first."), "warn");
+      return;
+    }
     const sid = st.id;
     const label = e.isNew ? t((SUPPORT_LABEL as Record<string, string>)[d.type] ?? (LOAD_LABEL as Record<string, string>)[d.type]) : t("Edit {name}", { name: d.name ?? "" });
     this.edit = null;
@@ -282,6 +289,7 @@ export class SimController {
     if (!ed && this.probing && this.saved) { this.probeAt(e.clientX, e.clientY); return true; }
     if (!ed) return false;
     if (ed.draft.type === "gravity") return true;
+    if (ed.kind === "load" && ed.draft.on) { this.pickEdgeOrPoint(ed.draft, e); return true; }
     const hit = this.host.faceAt(e.clientX, e.clientY);
     const name = hit ? this.host.faceNames()[hit.faceId] : undefined;
     if (!hit || !name) return true;
@@ -295,6 +303,36 @@ export class SimController {
     this.renderPanel();
     this.drawMarks();
     return true;
+  }
+
+  /** A force on edges or points: the edge or corner under the pointer joins or leaves it. */
+  private pickEdgeOrPoint(d: StudyLoad, e: PointerEvent) {
+    const s = this.host.snapAt(e.clientX, e.clientY), names = this.host.faceNames(), part = this.host.viewer.parts[0];
+    if (!part) return;
+    if (d.on === "edges") {
+      const ed = s?.edge, a = ed ? names[ed.faces[0]] : undefined, b = ed ? names[ed.faces[1]] : undefined;
+      if (!ed || !a || !b || a === b) { toast(t("Click an edge between two faces."), "warn"); return; }
+      const list = (d.edges ??= []), key = [a, b].sort().join("|");
+      const i = list.findIndex(x => [...x.faces].sort().join("|") === key);
+      if (i >= 0) list.splice(i, 1); else list.push({ faces: [a, b], hint: [...ed.mid] as [number, number, number] });
+    } else {
+      if (!s || s.kind !== "vertex") { toast(t("Click a corner point of the model."), "warn"); return; }
+      const tol = 1e-4 * this.host.viewer.modelSize, near = (q: number[]) => Math.hypot(q[0] - s.point[0], q[1] - s.point[1], q[2] - s.point[2]) <= tol;
+      const fs = new Set<string>();
+      for (const ed of part.data.edges) if (near(ed.start) || near(ed.end)) for (const f of ed.faces) if (names[f]) fs.add(names[f]);
+      if (fs.size < 2) { toast(t("Click a corner point of the model."), "warn"); return; }
+      const list = (d.points ??= []);
+      const i = list.findIndex(x => near(x.at));
+      if (i >= 0) list.splice(i, 1); else list.push({ faces: [...fs].sort(), at: s.point });
+    }
+    this.renderPanel();
+    this.drawMarks();
+  }
+
+  /** "3 faces", "2 edges", "1 point". */
+  private pickText(it: StudySupport | StudyLoad): string {
+    const on = (it as StudyLoad).on, n = pickCount(it);
+    return on === "edges" ? t("{n} edge|{n} edges", { n }) : on === "points" ? t("{n} point|{n} points", { n }) : t("{n} face|{n} faces", { n });
   }
 
   key(e: KeyboardEvent): boolean {
@@ -453,9 +491,34 @@ export class SimController {
       if (!load) return;
       const l = it as StudyLoad, len = this.host.viewer.modelSize * 0.14;
       let dir: THREE.Vector3 | null = null, at = g.centre;
+      let picked = g.tris.length > 0;
+      if (l.type === "force" && l.on) {
+        const names = this.host.faceNames(), pts: number[] = [], sum = new THREE.Vector3();
+        let n = 0;
+        if (l.on === "edges") for (const e of l.edges ?? []) for (const ed of part.data.edges) {
+          const a = names[ed.faces[0]], b = names[ed.faces[1]];
+          if (!((a === e.faces[0] && b === e.faces[1]) || (a === e.faces[1] && b === e.faces[0]))) continue;
+          for (let k = 0; k + 5 < ed.pts.length; k += 3) pts.push(ed.pts[k], ed.pts[k + 1], ed.pts[k + 2], ed.pts[k + 3], ed.pts[k + 4], ed.pts[k + 5]);
+          sum.add(new THREE.Vector3(...ed.mid)); n++;
+        }
+        else for (const q of l.points ?? []) { pts.push(...q.at); sum.add(new THREE.Vector3(...q.at)); n++; }
+        if (pts.length) {
+          const geo = new THREE.BufferGeometry();
+          geo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
+          const o = l.on === "edges"
+            ? new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color, depthTest: false, transparent: true }))
+            : new THREE.Points(geo, new THREE.PointsMaterial({ color, size: 11, sizeAttenuation: false, depthTest: false, transparent: true }));
+          o.renderOrder = 2940;
+          o.userData.simMark = it.id;
+          o.raycast = () => {};
+          this.marks.add(o);
+        }
+        picked = n > 0;
+        if (n) at = sum.multiplyScalar(1 / n);
+      }
       const comp = () => new THREE.Vector3(...(l.comp ?? [{ v: 0 }, { v: 0 }, { v: 0 }]).map(x => x.v) as [number, number, number]);
       if (l.type === "gravity") { dir = comp(); at = new THREE.Box3().setFromBufferAttribute(part.mesh.geometry.getAttribute("position") as THREE.BufferAttribute).getCenter(new THREE.Vector3()); }
-      else if (!g.tris.length) return;
+      else if (!picked) return;
       else if (l.type === "pressure" || (l.type === "force" && l.normal)) dir = g.normal ? g.normal.clone().multiplyScalar(l.flip ? 1 : -1) : null;
       else dir = comp();
       if (!dir || dir.lengthSq() === 0) return;
@@ -681,7 +744,7 @@ export class SimController {
     const blocks: ReportBlock[] = [];
     const kv = (rows: string[][]) => blocks.push({ kind: "table", rows: [[t("Property"), t("Value")], ...rows], widths: [2, 3] });
     const n3 = (c: number[], f: number, unit: string) => `X ${sig(c[0] * f)}, Y ${sig(c[1] * f)}, Z ${sig(c[2] * f)} ${unit}`;
-    const faces = (it: StudySupport | StudyLoad) => it.type === "gravity" ? "–" : String(it.faces.length);
+    const faces = (it: StudySupport | StudyLoad) => it.type === "gravity" ? "–" : this.pickText(it);
     const name = (it: StudySupport | StudyLoad) => (it.name ?? it.id) + (off.has(it.id) ? ` (${t("left out")})` : "");
     blocks.push({ kind: "h", text: t("Study") });
     kv([[t("Document"), doc.name], [t("Study"), st.name], [t("Kind"), t("Static")], [t("Passes"), `${res.passes.length} / ${st.settings.passes}`],
@@ -690,12 +753,12 @@ export class SimController {
     if (m) kv([[t("Name"), m.name], [t("Elastic modulus"), `${sig(m.E ?? NaN)} GPa`], [t("Poisson's ratio"), sig(m.nu ?? NaN)], [t("Density"), `${sig(m.density)} g/cm³`],
       ...(m.sy ? [[t("Yield strength"), `${sig(m.sy)} MPa`]] : [])]);
     blocks.push({ kind: "h", text: t("Supports") });
-    blocks.push({ kind: "table", widths: [3, 3, 1, 4], rows: [[t("Name"), t("Type"), t("Faces"), t("Details")], ...st.supports.map(s => [name(s), t(SUPPORT_LABEL[s.type]), faces(s),
+    blocks.push({ kind: "table", widths: [3, 3, 2, 4], rows: [[t("Name"), t("Type"), t("Applied to"), t("Details")], ...st.supports.map(s => [name(s), t(SUPPORT_LABEL[s.type]), faces(s),
       s.type === "hinge" && s.axialFree ? t("Free to slide along the axis") : s.type === "dirs" ? ["X", "Y", "Z"].filter((_, i) => (s.dirs ?? [true, true, true])[i]).join(", ") : ""])] });
     blocks.push({ kind: "h", text: t("Loads") });
-    blocks.push({ kind: "table", widths: [3, 3, 1, 4], rows: [[t("Name"), t("Type"), t("Faces"), t("Value")], ...st.loads.map(l => {
+    blocks.push({ kind: "table", widths: [3, 3, 2, 4], rows: [[t("Name"), t("Type"), t("Applied to"), t("Value")], ...st.loads.map(l => {
       const c = (l.comp ?? [{ v: 0 }, { v: 0 }, { v: 0 }]).map(x => x.v), pull = l.flip ? `, ${t("Reverse (pull)")}` : "";
-      const val = l.type === "force" ? (l.normal ? `${sig(l.value?.v ?? 0)} N, ${t("Along the face normal")}${pull}` : n3(c, 1, "N"))
+      const val = l.type === "force" ? (l.normal && !l.on ? `${sig(l.value?.v ?? 0)} N, ${t("Along the face normal")}${pull}` : n3(c, 1, "N"))
         : l.type === "pressure" ? `${sig(l.value?.v ?? 0)} MPa${pull}` : l.type === "moment" ? n3(c, 1e-3, "N·m") : n3(c, 1e-3, "m/s²");
       return [name(l), t(LOAD_LABEL[l.type]), faces(l), val];
     })] });
@@ -797,7 +860,7 @@ export class SimController {
       const isOff = off.has(it.id);
       return `<li class="sim-row${isOff ? " off" : ""}${bad ? " bad" : ""}${this.edit?.draft.id === it.id ? " cur" : ""}" data-id="${it.id}">`
         + `<button class="sim-name" data-a="edit" translate="no" title="${esc(t("Edit"))}"><i class="sim-dot ${load ? "load" : "sup"}" aria-hidden="true"></i>${esc(it.name ?? it.id)}</button>`
-        + `<span class="sim-meta">${it.type === "gravity" ? "" : esc(t("{n} face|{n} faces", { n: it.faces.length }))}</span>`
+        + `<span class="sim-meta">${it.type === "gravity" ? "" : esc(this.pickText(it))}</span>`
         + `<button class="sim-ib" data-a="toggle" aria-pressed="${isOff}" title="${esc(isOff ? t("Include in the analysis") : t("Leave out of the analysis"))}" aria-label="${esc(isOff ? t("Include in the analysis") : t("Leave out of the analysis"))}">${isOff ? "○" : "●"}</button>`
         + `<button class="sim-ib" data-a="del" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">×</button>`
         + (bad ? `<p class="sim-prob">${esc(this.errorText(`${bad}: ${it.id}`))}</p>` : "")
@@ -861,8 +924,11 @@ export class SimController {
     const nf = (k: string, label: string, v: number, unit: string) => `<label class="pm-field"><span>${esc(label)}</span><span class="pm-in"><input type="text" inputmode="decimal" data-n="${k}" value="${esc(trim(v))}" spellcheck="false" /><span class="muted">${esc(unit)}</span></span></label>`;
     let body = `<label class="pm-field"><span>${esc(t("Name"))}</span><input type="text" data-k="name" value="${esc(d.name ?? "")}" spellcheck="false" translate="no" /></label>`;
     if (d.type !== "gravity") {
-      body += group(t("Faces"), `<div class="pm-box focus sim-faces" role="status">${d.faces.length ? esc(t("{n} face|{n} faces", { n: d.faces.length })) : esc(d.type === "hinge" ? t("Click cylindrical faces on the model") : t("Click faces on the model"))}</div>`
-        + (d.faces.length ? `<button class="btn small" data-k="clear">${esc(t("Clear"))}</button>` : ""));
+      const on = (d as StudyLoad).on, n = pickCount(d);
+      const ask = on === "edges" ? t("Click edges on the model") : on === "points" ? t("Click corner points on the model") : d.type === "hinge" ? t("Click cylindrical faces on the model") : t("Click faces on the model");
+      const sel = d.type === "force" ? `<label class="pm-field"><span>${esc(t("Acts on"))}</span><select data-k="on">${[["", "Faces"], ["edges", "Edges"], ["points", "Points"]].map(([v, l]) => `<option value="${v}"${(on ?? "") === v ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : "";
+      body += group(on === "edges" ? t("Edges") : on === "points" ? t("Points") : t("Faces"), sel + `<div class="pm-box focus sim-faces" role="status">${n ? esc(this.pickText(d)) : esc(ask)}</div>`
+        + (n ? `<button class="btn small" data-k="clear">${esc(t("Clear"))}</button>` : ""));
     }
     if (e.kind === "support") {
       const s = e.draft;
@@ -872,10 +938,10 @@ export class SimController {
     } else {
       const l = e.draft, c = (l.comp ?? [{ v: 0 }, { v: 0 }, { v: 0 }]).map(x => x.v);
       if (l.type === "force") {
-        body += group(t("Force"), chk("normal", l.normal, t("Along the face normal"))
-          + (l.normal ? nf("value", t("Force"), l.value?.v ?? 0, "N") + chk("flip", l.flip, t("Reverse (pull)"))
+        body += group(t("Force"), (l.on ? "" : chk("normal", l.normal, t("Along the face normal")))
+          + (l.normal && !l.on ? nf("value", t("Force"), l.value?.v ?? 0, "N") + chk("flip", l.flip, t("Reverse (pull)"))
             : nf("c0", "X", c[0], "N") + nf("c1", "Y", c[1], "N") + nf("c2", "Z", c[2], "N"))
-          + `<p class="pm-help muted">${esc(t("The total over the picked faces."))}</p>`);
+          + `<p class="pm-help muted">${esc(l.on === "edges" ? t("The total, spread over the length of the picked edges.") : l.on === "points" ? t("The total, shared equally by the picked points.") : t("The total over the picked faces."))}</p>`);
       } else if (l.type === "pressure") body += group(t("Pressure"), nf("value", t("Pressure"), l.value?.v ?? 0, "MPa") + chk("flip", l.flip, t("Reverse (pull)")));
       else if (l.type === "moment") body += group(t("Moment"), nf("m0", "X", c[0] / 1000, "N·m") + nf("m1", "Y", c[1] / 1000, "N·m") + nf("m2", "Z", c[2] / 1000, "N·m") + `<p class="pm-help muted">${esc(t("About the centre of the picked faces."))}</p>`);
       else body += group(t("Acceleration"), nf("g0", "X", c[0] / 1000, "m/s²") + nf("g1", "Y", c[1] / 1000, "m/s²") + nf("g2", "Z", c[2] / 1000, "m/s²") + `<p class="pm-help muted">${esc(t("Uses the material's density."))}</p>`);
@@ -958,7 +1024,13 @@ export class SimController {
     const k = (e.target as HTMLElement).closest<HTMLElement>("button[data-k]")?.dataset.k;
     if (k === "ok") this.ok();
     else if (k === "cancel") this.cancel();
-    else if (k === "clear" && this.edit) { this.edit.draft.faces = []; this.renderPanel(); this.drawMarks(); }
+    else if (k === "clear" && this.edit) {
+      const d = this.edit.draft as StudyLoad;
+      d.faces = [];
+      if (d.edges) d.edges = [];
+      if (d.points) d.points = [];
+      this.renderPanel(); this.drawMarks();
+    }
   }
 
   private panelChange(el: HTMLInputElement) {
@@ -968,6 +1040,11 @@ export class SimController {
     if (k === "name") d.name = el.value.trim() || d.name;
     else if (k === "axialFree") d.axialFree = el.checked || undefined;
     else if (k === "normal") d.normal = el.checked;
+    else if (k === "on") {
+      const l = e.draft as StudyLoad, v = el.value as "" | "edges" | "points";
+      l.faces = []; delete l.edges; delete l.points;
+      if (v) { l.on = v; l.normal = false; if (v === "edges") l.edges = []; else l.points = []; } else delete l.on;
+    }
     else if (k === "flip") d.flip = el.checked || undefined;
     else if (k?.startsWith("dir")) { const a = [...(d.dirs ?? [true, true, true])] as [boolean, boolean, boolean]; a[Number(k[3])] = el.checked; d.dirs = a; }
     else if (nk) {
