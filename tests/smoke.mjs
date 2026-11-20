@@ -16277,6 +16277,22 @@ try {
     const prOff = (await sim()).probing;
     check(pr.s.probing && pr.s.probes.length === 1 && Math.abs(pr.s.probes[0] / (0.354 * r1.maxU) - 1) < 0.06 && /^0[.,]1\d* mm$/.test(pr.label) && pr.clear && !prOff && !!(await sim()).study,
       `sim 1.609: a probe pins the plotted value at the clicked point; Esc ends probing (${JSON.stringify({ probes: pr.s.probes, tip: r1.maxU, label: pr.label, clear: pr.clear, prOff })})`);
+    // Report: the Simulation tab's Report asks for the format; the web page carries the set-up, the results, three pictures and the statement; the PDF opens.
+    await mp.click("#cm-t-simulation");
+    await mp.click('#sim-tools [data-s="report"]');
+    await mp.waitForSelector("dialog.choose-dlg[open]");
+    const [dlH] = await Promise.all([mp.waitForEvent("download"), mp.click('dialog.choose-dlg [data-choose="html"]')]);
+    const repHtml = await readFile(await dlH.path(), "utf8");
+    await mp.click("#sim-tree [data-a=\"report\"]");
+    await mp.waitForSelector("dialog.choose-dlg[open]");
+    const [dlP] = await Promise.all([mp.waitForEvent("download"), mp.click('dialog.choose-dlg [data-choose="pdf"]')]);
+    const repPdf = await readFile(await dlP.path());
+    const repState = (await sim()).report, afterRep = (await sim()).plot;
+    const repFacts = { name: dlH.suggestedFilename(), pdfName: dlP.suggestedFilename(), imgs: (repHtml.match(/<img src="data:image\/jpeg/g) ?? []).length, tables: (repHtml.match(/<table>/g) ?? []).length,
+      statement: repHtml.includes("They do not replace a validated analysis"), force: repHtml.includes("1000 N"), probe: /<th>Probe<\/th>/.test(repHtml), pdf: repPdf.subarray(0, 5).toString(), pdfKb: Math.round(repPdf.length / 1024) };
+    check(/-report\.html$/.test(repFacts.name) && /-report\.pdf$/.test(repFacts.pdfName) && repFacts.imgs === 3 && repFacts.tables >= 6 && repFacts.statement && repFacts.force && repFacts.probe
+      && repFacts.pdf === "%PDF-" && repFacts.pdfKb > 60 && repState?.kind === "pdf" && repState.images === 3 && afterRep.kind === "u" && afterRep.shown,
+      `sim 1.611: the report as a web page and as a PDF holds the set-up, results, three pictures, the probe and the statement; the plot is as before (${JSON.stringify({ ...repFacts, repState, kind: afterRep.kind })})`);
     await mp.keyboard.press("Control+z");
     await settle();
     const r3 = await sim();

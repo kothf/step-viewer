@@ -90,6 +90,26 @@ await pg.keyboard.press("Escape");
 check("SA1-8", pr.probes.length === 2 && pr.labels.length === 2 && pr.probes[0] < 0.01 * r.maxU + 1e-4 && pr.probes[1] > 0.2 * r.maxU && pr.probes[1] < 0.5 * r.maxU && !(await sim()).probing,
   "two probes on the displacement plot: about zero at the clamped end, a part of the tip deflection at the middle", pr, img10);
 
+// SA1-10: Report: the button asks for the format; the web page and the PDF are saved, and the page reads well.
+await pg.click('#sim-tools [data-s="report"]');
+await pg.waitForSelector("dialog.choose-dlg[open]");
+const img12 = await snap(pg, "report-ask");
+const [dlH] = await Promise.all([pg.waitForEvent("download"), pg.click('dialog.choose-dlg [data-choose="html"]')]);
+const htmlPath = `${process.env.HT_OUT ?? "/mnt/project-files/gap-tests"}/sim-report.html`;
+await dlH.saveAs(htmlPath);
+await pg.click('#sim-tree [data-a="report"]');
+await pg.waitForSelector("dialog.choose-dlg[open]");
+const [dlP] = await Promise.all([pg.waitForEvent("download"), pg.click('dialog.choose-dlg [data-choose="pdf"]')]);
+const pdfHead = (await (await import("node:fs/promises")).readFile(await dlP.path())).subarray(0, 5).toString();
+const rp = await pg.context().newPage();
+await rp.setViewportSize({ width: 1000, height: 1400 });
+await rp.goto(`file://${htmlPath}`);
+const repFacts = await rp.evaluate(() => ({ h1: document.querySelector("h1")?.textContent, heads: [...document.querySelectorAll("h2")].map(e => e.textContent), imgs: [...document.querySelectorAll("figure img")].filter(i => i.naturalWidth > 100).length, chart: !!document.querySelector("svg.sim-conv polyline"), rows: document.querySelectorAll("tbody tr").length, text: document.body.innerText.includes("do not replace a validated analysis") }));
+await rp.screenshot({ path: `${process.env.HT_OUT ?? "/mnt/project-files/gap-tests"}/sim-report-page.png`, fullPage: true });
+await rp.close();
+check("SA1-10", repFacts.imgs === 3 && repFacts.heads.length >= 6 && repFacts.rows > 15 && repFacts.text && pdfHead === "%PDF-" && /report\.pdf$/.test(dlP.suggestedFilename()),
+  "Report saves a web page and a PDF with the set-up, the results, three pictures, the convergence and the statement", { ...repFacts, pdf: dlP.suggestedFilename() }, img12);
+
 // SA1-7: editing the force (double the load) puts the results out of date; Solve again doubles the deflection.
 await pg.click("#sim-tree .sim-row[data-id=\"l1\"] .sim-name");
 await pg.fill('#sim-pm [data-n="value"]', "2000");

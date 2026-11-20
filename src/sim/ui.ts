@@ -4,15 +4,18 @@
 // date when the model, the material or the study changes.
 import * as THREE from "three";
 import { cmTab, onCmTab, selectCmTab } from "../commandBar";
-import { onLangChange, t } from "../i18n";
+import fontUrl from "dejavu-fonts-ttf/ttf/DejaVuSans.ttf?url";
+import { lang, onLangChange, t } from "../i18n";
 import { pickMaterial } from "../materialPicker";
 import type { FaceRef, PartDoc } from "../model/types";
+import { download, pdfWriter } from "../tools/exporters";
 import { toRef } from "../tools/materials";
 import { UNITS, units } from "../tools/units";
-import { toast } from "../ui";
+import { chooseModal, toast } from "../ui";
 import type { Part, Viewer } from "../viewer/Viewer";
 import { SIM_STOPPED, SimClient } from "./client";
 import { meshArea, plotTarget, refineMesh, type PlotMesh } from "./plotmesh";
+import { chartSvg, reportHtml, reportPdf, type ReportBlock, type SimReport } from "./report";
 import { studyProblem, type PassResult, type SimBody } from "./run";
 import { GRAVITY, LOAD_LABEL, SUPPORT_LABEL, itemName, newStudy, nextId, type LoadType, type PlotKind, type Study, type StudyLoad, type StudySupport, type SupportType } from "./types";
 
@@ -38,7 +41,7 @@ const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;
 const $ = <T extends HTMLElement = HTMLElement>(s: string) => document.querySelector<T>(s)!;
 const SUPPORTS: SupportType[] = ["fixed", "sliding", "hinge", "dirs"];
 const LOADS: LoadType[] = ["force", "pressure", "moment", "gravity"];
-const ICON: Record<string, string> = { new: "＋", mat: "◈", fixed: "⏚", sliding: "⇄", hinge: "◎", dirs: "✛", force: "↓", pressure: "⇊", moment: "↻", gravity: "g", solve: "▶", stop: "■", results: "▦" };
+const ICON: Record<string, string> = { new: "＋", mat: "◈", fixed: "⏚", sliding: "⇄", hinge: "◎", dirs: "✛", force: "↓", pressure: "⇊", moment: "↻", gravity: "g", solve: "▶", stop: "■", results: "▦", report: "▤" };
 const TIP: Record<string, string> = {
   fixed: "Fixed support: the faces cannot move",
   sliding: "Sliding support: the faces slide in their own plane but cannot move across it",
@@ -72,20 +75,8 @@ export function sig(x: number): string {
 const num = (s: string) => { const v = Number(s.trim().replace(",", ".")); return isFinite(v) ? v : null; };
 const trim = (v: number) => String(Number(v.toPrecision(8)));
 
-/** The error estimate per pass on a log scale: how fast the passes converge. Nothing with fewer than two values. */
-function convergenceChart(errs: (number | null)[]): string {
-  const pts = errs.map((e, i) => ({ e, i })).filter((q): q is { e: number; i: number } => q.e != null && q.e > 0);
-  if (pts.length < 2) return "";
-  const W = 220, H = 64, L = 34, R = 8, T = 8, B = 16;
-  const lg = pts.map(q => Math.log10(q.e)), hi = Math.ceil(Math.max(...lg)), lo = Math.min(Math.floor(Math.min(...lg)), hi - 1);
-  const X = (i: number) => L + ((W - L - R) * i) / Math.max(1, errs.length - 1), Y = (v: number) => T + ((H - T - B) * (hi - v)) / (hi - lo);
-  const line = pts.map((q, k) => `${X(q.i).toFixed(1)},${Y(lg[k]).toFixed(1)}`).join(" ");
-  let s = `<svg class="sim-conv" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(t("Estimated error per pass"))}">`;
-  for (let d = lo; d <= hi; d++) s += `<line class="g" x1="${L}" x2="${W - R}" y1="${Y(d)}" y2="${Y(d)}"/><text class="a" x="${L - 4}" y="${Y(d) + 3}" text-anchor="end">${trim(10 ** d)} %</text>`;
-  errs.forEach((_, i) => { s += `<text class="a" x="${X(i)}" y="${H - 3}" text-anchor="middle">${i + 1}</text>`; });
-  s += `<polyline points="${line}"/>` + pts.map((q, k) => `<circle cx="${X(q.i).toFixed(1)}" cy="${Y(lg[k]).toFixed(1)}" r="2.6"${q.i === errs.length - 1 ? ' class="x"' : ""}/>`).join("");
-  return s + `</svg>`;
-}
+/** Shown with every result and in every report (FR-RES-060). */
+const ASSUMPTIONS = "Linear elastic analysis with small displacements. Results are estimates for design and depend on the loads, supports and connections chosen. They do not replace a validated analysis where one is required.";
 
 export class SimController {
   /** The study shown (view-only; the first one when unset or gone). */
@@ -113,6 +104,8 @@ export class SimController {
   /** The plotted value per plot-mesh vertex, as drawn. */
   private vals: Float32Array | null = null;
   private probeLayer: HTMLElement | null = null;
+  /** The last report saved (for tests). */
+  private lastReport: { kind: string; blocks: number; images: number } | null = null;
 
   constructor(private host: SimHost) {
     this.marks.name = "sim-marks";
@@ -167,7 +160,7 @@ export class SimController {
       maxU: last?.maxU ?? null, maxVm: last?.maxVm ?? null, done: !!last?.done && !this.running,
       reactions: last?.reactions ?? [], applied: last?.applied ?? null,
       plot: { ...this.plot, shown: !!this.saved, range: this.range, scale: this.usedScale, points: (this.res?.mesh.pos.length ?? 0) / 3 }, marks: this.marks.children.length,
-      probing: this.probing, probes: this.probes.map(p => this.probeValue(p)),
+      probing: this.probing, probes: this.probes.map(p => this.probeValue(p)), report: this.lastReport,
     };
   }
 
@@ -208,6 +201,7 @@ export class SimController {
     if (c === "mat") { void this.pickMat(); return; }
     if (c === "solve") { void this.solve(); return; }
     if (c === "stop") { this.client.cancel(); return; }
+    if (c === "report") { void this.report(); return; }
     if (c === "results") { this.plot.on = !this.plot.on; this.showPlot(); this.renderAll(); this.drawMarks(); return; }
     if (!this.study()) this.newStudy();
     const st = this.study();
@@ -646,6 +640,121 @@ export class SimController {
     this.host.viewer.invalidate();
   }
 
+  // ---------- report ----------
+
+  /** The plot of one result as a picture, in the current view, with its colour scale drawn in. */
+  private capture(kind: PlotKind): { src: string; w: number; h: number; caption: string } | null {
+    this.plot.kind = kind;
+    this.plot.on = true;
+    this.showPlot();
+    if (!this.saved || this.plot.kind !== kind) return null;
+    const v = this.host.viewer, src = v.renderer.domElement;
+    v.render();
+    if (!src.width || !src.height) return null;
+    const k = Math.min(1, 1400 / src.width), c = document.createElement("canvas");
+    c.width = Math.round(src.width * k); c.height = Math.round(src.height * k);
+    const g = c.getContext("2d")!;
+    g.fillStyle = "#ffffff"; g.fillRect(0, 0, c.width, c.height);
+    g.drawImage(src, 0, 0, c.width, c.height);
+    const [unit, f] = this.plotUnit(), sf = kind === "sf";
+    const lo = sig(this.range[0] * f), hi = sf && this.range[1] >= SF_TOP ? `${SF_TOP}+` : sig(this.range[1] * f);
+    // the colour scale, bottom left
+    const s = Math.max(1, c.width / 900), bw = 190 * s, bh = 10 * s, x0 = 14 * s, y0 = c.height - 30 * s;
+    g.fillStyle = "rgba(255,255,255,0.9)"; g.fillRect(x0 - 6 * s, y0 - 6 * s, bw + 12 * s, bh + 28 * s);
+    const gr = g.createLinearGradient(sf ? x0 + bw : x0, 0, sf ? x0 : x0 + bw, 0);
+    RAMP.forEach((col, i) => gr.addColorStop(i / (RAMP.length - 1), `rgb(${col.map(x => Math.round(x * 255)).join(",")})`));
+    g.fillStyle = gr; g.fillRect(x0, y0, bw, bh);
+    g.fillStyle = "#111827"; g.font = `${11 * s}px "DejaVu Sans", system-ui, sans-serif`; g.textBaseline = "top";
+    g.textAlign = "left"; g.fillText(lo, x0, y0 + bh + 3 * s);
+    g.textAlign = "center"; g.fillText(unit, x0 + bw / 2, y0 + bh + 3 * s);
+    g.textAlign = "right"; g.fillText(hi, x0 + bw, y0 + bh + 3 * s);
+    const label = t(PLOTS.find(p => p[0] === kind)![1]);
+    const caption = `${label}: ${lo} … ${hi}${unit ? ` ${unit}` : ""}` + (this.plot.deformed ? `. ${t("Deformed shape")} ×${sig(this.usedScale)}` : "");
+    return { src: c.toDataURL("image/jpeg", 0.9), w: c.width, h: c.height, caption };
+  }
+
+  /** What the report says: the study, its set-up and the results of the last pass, in the UI language. */
+  private reportOf(): SimReport | null {
+    const doc = this.host.doc(), st = this.study(), res = this.res, last = res?.passes.at(-1);
+    if (!doc || !st || !res || !last || this.stale()) return null;
+    const m = doc.material, off = new Set(st.suppressed ?? []);
+    const blocks: ReportBlock[] = [];
+    const kv = (rows: string[][]) => blocks.push({ kind: "table", rows: [[t("Property"), t("Value")], ...rows], widths: [2, 3] });
+    const n3 = (c: number[], f: number, unit: string) => `X ${sig(c[0] * f)}, Y ${sig(c[1] * f)}, Z ${sig(c[2] * f)} ${unit}`;
+    const faces = (it: StudySupport | StudyLoad) => it.type === "gravity" ? "–" : String(it.faces.length);
+    const name = (it: StudySupport | StudyLoad) => (it.name ?? it.id) + (off.has(it.id) ? ` (${t("left out")})` : "");
+    blocks.push({ kind: "h", text: t("Study") });
+    kv([[t("Document"), doc.name], [t("Study"), st.name], [t("Kind"), t("Static")], [t("Passes"), `${res.passes.length} / ${st.settings.passes}`],
+      [t("Unknowns"), last.dofs.toLocaleString("en-US").replace(/,/g, " ")], [t("Time"), `${(res.ms / 1000).toFixed(1)} s`]]);
+    blocks.push({ kind: "h", text: t("Material") });
+    if (m) kv([[t("Name"), m.name], [t("Elastic modulus"), `${sig(m.E ?? NaN)} GPa`], [t("Poisson's ratio"), sig(m.nu ?? NaN)], [t("Density"), `${sig(m.density)} g/cm³`],
+      ...(m.sy ? [[t("Yield strength"), `${sig(m.sy)} MPa`]] : [])]);
+    blocks.push({ kind: "h", text: t("Supports") });
+    blocks.push({ kind: "table", widths: [3, 3, 1, 4], rows: [[t("Name"), t("Type"), t("Faces"), t("Details")], ...st.supports.map(s => [name(s), t(SUPPORT_LABEL[s.type]), faces(s),
+      s.type === "hinge" && s.axialFree ? t("Free to slide along the axis") : s.type === "dirs" ? ["X", "Y", "Z"].filter((_, i) => (s.dirs ?? [true, true, true])[i]).join(", ") : ""])] });
+    blocks.push({ kind: "h", text: t("Loads") });
+    blocks.push({ kind: "table", widths: [3, 3, 1, 4], rows: [[t("Name"), t("Type"), t("Faces"), t("Value")], ...st.loads.map(l => {
+      const c = (l.comp ?? [{ v: 0 }, { v: 0 }, { v: 0 }]).map(x => x.v), pull = l.flip ? `, ${t("Reverse (pull)")}` : "";
+      const val = l.type === "force" ? (l.normal ? `${sig(l.value?.v ?? 0)} N, ${t("Along the face normal")}${pull}` : n3(c, 1, "N"))
+        : l.type === "pressure" ? `${sig(l.value?.v ?? 0)} MPa${pull}` : l.type === "moment" ? n3(c, 1e-3, "N·m") : n3(c, 1e-3, "m/s²");
+      return [name(l), t(LOAD_LABEL[l.type]), faces(l), val];
+    })] });
+    blocks.push({ kind: "h", text: t("Results") });
+    const f = (v: number[]) => sig(Math.hypot(v[0], v[1], v[2]));
+    const rows: string[][] = [[t("Max von Mises stress"), `${sig(last.maxVm)} MPa`], [t("Max displacement"), this.lenText(last.maxU)]];
+    if (m?.sy && last.maxVm > 0) rows.push([t("Lowest safety factor (yield)"), sig(m.sy / last.maxVm)]);
+    const errs = last.errors, eLast = errs.at(-1), eBefore = errs.length > 1 ? errs[errs.length - 2] : null;
+    if (eLast != null) rows.push([t("Estimated error"), `≈ ${sig(eLast)} %`]);
+    else if (eBefore != null) rows.push([t("Estimated error"), `< ${sig(eBefore)} %`]);
+    rows.push([t("Applied load"), `${f(last.applied.force)} N (${last.applied.force.map(x => sig(x)).join(", ")})`]);
+    last.reactions.forEach((re, i) => rows.push([`${t("Reaction")} ${this.nameOf(res.ids[i] ?? "")}`, `${f(re.force)} N (${re.force.map(x => sig(x)).join(", ")})`]));
+    kv(rows);
+    const keep = { ...this.plot };
+    const kinds: PlotKind[] = ["vm", "u", ...(m?.sy ? ["sf" as PlotKind] : [])];
+    for (const k of kinds) { const im = this.capture(k); if (im) blocks.push({ kind: "image", ...im }); }
+    this.plot = keep;
+    this.showPlot();
+    if (this.probes.length && this.saved) {
+      const [unit, uf] = this.plotUnit(), label = t(PLOTS.find(p => p[0] === this.plot.kind)![1]);
+      blocks.push({ kind: "table", widths: [2, 3], rows: [[t("Probe"), `${label}${unit ? `, ${unit}` : ""}`], ...this.probes.map((p, i) => [String(i + 1), sig(this.probeValue(p) * uf)])] });
+    }
+    blocks.push({ kind: "h", text: t("Convergence") });
+    blocks.push({ kind: "table", widths: [1, 2, 2, 2, 2], rows: [[t("Pass"), t("Unknowns"), t("Energy change"), t("Est. error"), t("Time")],
+      ...res.passes.map((p, i) => [String(p.pass), p.dofs.toLocaleString("en-US").replace(/,/g, " "), p.change == null ? "–" : `${sig(p.change)} %`, errs[i] == null ? "–" : `${i === errs.length - 1 ? "≈ " : ""}${sig(errs[i]!)} %`, `${(p.ms / 1000).toFixed(1)} s`])] });
+    if (errs.filter(e => e != null).length > 1) blocks.push({ kind: "chart", errs, label: t("Estimated error per pass") });
+    blocks.push({ kind: "p", muted: true, text: last.converged ? t("Converged: the last pass changed the strain energy by {n} %.", { n: sig(last.change ?? 0) })
+      : last.change != null ? t("Not converged to {tol} % yet (last change {n} %). Stress near sharp corners keeps rising with accuracy.", { tol: sig(st.settings.energyTol), n: sig(last.change) })
+      : t("One pass only: no convergence check.") });
+    blocks.push({ kind: "h", text: t("Assumptions") });
+    blocks.push({ kind: "p", text: t(ASSUMPTIONS) });
+    return { title: t("Structural analysis report"), sub: `${doc.name} · ${st.name} · ${new Date().toLocaleString(lang())} · MöbiusCAD ${__APP_VERSION__}`, blocks };
+  }
+
+  /** Report: asks for the format, then saves the file. `as` skips the question. */
+  async report(as?: "pdf" | "html") {
+    if (this.running || !this.res || this.stale()) { toast(t("Solve the study first.")); return; }
+    const kind = as ?? await chooseModal(t("Report"), t("The study, its supports and loads, the results with pictures of the current view, and the convergence."), [{ key: "pdf", label: "PDF" }, { key: "html", label: t("Web page (HTML)") }]);
+    if (!kind) return;
+    const rep = this.reportOf();
+    this.renderAll();
+    if (!rep) return;
+    const doc = this.host.doc()!, st = this.study()!;
+    const stem = `${doc.name}-${st.name}`.replace(/[\\/:*?"<>|]+/g, "_");
+    try {
+      if (kind === "html") download(new Blob([reportHtml(rep, lang())], { type: "text/html" }), `${stem}-report.html`);
+      else {
+        const [jsPDF, bytes] = await Promise.all([pdfWriter(), fetch(fontUrl).then(r => r.arrayBuffer())]);
+        const u8 = new Uint8Array(bytes);
+        let bin = "";
+        for (let i = 0; i < u8.length; i += 0x8000) bin += String.fromCharCode(...u8.subarray(i, i + 0x8000));
+        download(reportPdf(jsPDF, rep, btoa(bin)), `${stem}-report.pdf`);
+      }
+      this.lastReport = { kind, blocks: rep.blocks.length, images: rep.blocks.filter(b => b.kind === "image").length };
+    } catch (e) {
+      toast(t("Could not save: {err}", { err: (e as Error).message }), true);
+    }
+  }
+
   // ---------- rendering ----------
 
   private renderAll() {
@@ -667,7 +776,8 @@ export class SimController {
       + sep + group(t("Supports"), SUPPORTS.map(k => btn(k, t(SUPPORT_LABEL[k]), t(TIP[k]), { dis: busy })).join(""))
       + sep + group(t("Loads"), LOADS.map(k => btn(k, t(LOAD_LABEL[k]), t(TIP[k]), { dis: busy })).join(""))
       + sep + group(t("Solve"), (busy ? btn("stop", t("Stop"), t("Stop the analysis")) : btn("solve", t("Solve"), t("Run the analysis"), { dis: !st }))
-        + btn("results", t("Results"), t("Show or hide the result plot on the model"), { on: this.plot.on && !!this.res && !this.stale(), dis: !this.res || this.stale() }));
+        + btn("results", t("Results"), t("Show or hide the result plot on the model"), { on: this.plot.on && !!this.res && !this.stale(), dis: !this.res || this.stale() })
+        + btn("report", t("Report"), t("Save the study and its results as a report"), { dis: busy || !this.res || this.stale() }));
   }
 
   private renderTree() {
@@ -728,11 +838,13 @@ export class SimController {
     last.reactions.forEach((re, i) => { html += `<dt>${esc(t("Reaction"))} <span translate="no">${esc(this.nameOf(r.ids[i] ?? ""))}</span></dt><dd title="${re.force.map(x => sig(x)).join(", ")} N">${f(re.force)} N</dd>`; });
     html += `</dl><table class="sim-passes"><thead><tr><th>${esc(t("Pass"))}</th><th>${esc(t("Unknowns"))}</th><th>${esc(t("Energy change"))}</th><th>${esc(t("Est. error"))}</th><th>${esc(t("Time"))}</th></tr></thead><tbody>`
       + r.passes.map((p, i) => `<tr><td>${p.pass}</td><td>${p.dofs.toLocaleString("en-US").replace(/,/g, " ")}</td><td>${p.change == null ? "–" : `${sig(p.change)} %`}</td><td>${errs[i] == null ? "–" : `${i === errs.length - 1 ? "≈ " : ""}${sig(errs[i]!)} %`}</td><td>${(p.ms / 1000).toFixed(1)} s</td></tr>`).join("") + `</tbody></table>`
-      + convergenceChart(errs);
+      + chartSvg(errs, t("Estimated error per pass"));
     if (!this.running) {
       html += `<p class="sim-note muted">${esc(last.converged ? t("Converged: the last pass changed the strain energy by {n} %.", { n: sig(last.change ?? 0) })
         : last.change != null ? t("Not converged to {tol} % yet (last change {n} %). Stress near sharp corners keeps rising with accuracy.", { tol: sig(this.study()?.settings.energyTol ?? 2), n: sig(last.change) })
         : t("One pass only: no convergence check."))}</p>`;
+      html += `<p class="sim-note muted sim-assume">${esc(t(ASSUMPTIONS))}</p>`;
+      if (!this.stale()) html += `<button class="btn small" data-a="report">${esc(t("Report…"))}</button>`;
     }
     return html;
   }
@@ -806,6 +918,7 @@ export class SimController {
     if (a === "new") this.command("new");
     else if (a === "mat") void this.pickMat();
     else if (a === "solve") void this.solve();
+    else if (a === "report") void this.report();
     else if (a === "stop") this.client.cancel();
     else if (a === "edit" && id) this.editItem(id);
     else if (a === "del" && id && st) {
