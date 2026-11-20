@@ -91,6 +91,13 @@ export class SimController {
   private mats: THREE.Material[] = [];
   private range: [number, number] = [0, 0];
   private usedScale = 0;
+  /** Probe mode: a click on the plot pins the value there. */
+  private probing = false;
+  /** Pinned probes: a triangle of the plot mesh (three vertices) and the weights of the point in it. */
+  private probes: { i: [number, number, number]; w: [number, number, number] }[] = [];
+  /** The plotted value per plot-mesh vertex, as drawn. */
+  private vals: Float32Array | null = null;
+  private probeLayer: HTMLElement | null = null;
 
   constructor(private host: SimHost) {
     this.marks.name = "sim-marks";
@@ -106,7 +113,12 @@ export class SimController {
     pm.addEventListener("change", e => this.panelChange(e.target as HTMLInputElement));
     const lg = $("#sim-legend");
     lg.addEventListener("change", e => this.legendChange(e.target as HTMLInputElement));
-    lg.addEventListener("click", e => { if ((e.target as HTMLElement).closest("[data-a=close]")) { this.plot.on = false; this.showPlot(); this.renderAll(); } });
+    lg.addEventListener("click", e => {
+      const a = (e.target as HTMLElement).closest<HTMLElement>("[data-a]")?.dataset.a;
+      if (a === "close") { this.plot.on = false; this.probing = false; this.showPlot(); this.renderAll(); }
+      else if (a === "probe") { this.probing = !this.probing; this.renderLegend(); }
+      else if (a === "noprobes") { this.probes = []; this.drawProbes(); this.renderLegend(); }
+    });
     onCmTab(tab => { if (tab === "simulation" && this.host.doc()) this.host.showTab(); this.renderAll(); this.drawMarks(); });
     onLangChange(() => this.renderAll());
     this.renderAll();
@@ -129,7 +141,7 @@ export class SimController {
     return !!this.res && (!doc || !st || st.id !== this.res.study || this.keyOf(doc, st) !== this.res.key);
   }
 
-  get active() { return !!this.edit; }
+  get active() { return !!this.edit || (this.probing && !!this.saved); }
 
   /** For tests and the debug handle. */
   state() {
@@ -140,6 +152,7 @@ export class SimController {
       maxU: last?.maxU ?? null, maxVm: last?.maxVm ?? null, done: !!last?.done && !this.running,
       reactions: last?.reactions ?? [], applied: last?.applied ?? null,
       plot: { ...this.plot, shown: !!this.saved, range: this.range, scale: this.usedScale, points: (this.res?.mesh.pos.length ?? 0) / 3 }, marks: this.marks.children.length,
+      probing: this.probing, probes: this.probes.map(p => this.probeValue(p)),
     };
   }
 
@@ -150,7 +163,7 @@ export class SimController {
       this.docId = doc?.id ?? null;
       this.client.cancel();
       this.clearPlot();
-      this.edit = null; this.res = null; this.error = null; this.problems.clear(); this.activeId = null; this.running = false;
+      this.edit = null; this.res = null; this.error = null; this.problems.clear(); this.activeId = null; this.running = false; this.probes = []; this.probing = false;
     }
     $("#t-sim").hidden = !doc;
     if (this.edit && !this.study()) this.edit = null;
@@ -257,6 +270,7 @@ export class SimController {
   /** A click in the view while a panel is open: the face under it joins or leaves the item. */
   click(e: PointerEvent): boolean {
     const ed = this.edit;
+    if (!ed && this.probing && this.saved) { this.probeAt(e.clientX, e.clientY); return true; }
     if (!ed) return false;
     if (ed.draft.type === "gravity") return true;
     const hit = this.host.faceAt(e.clientX, e.clientY);
@@ -275,6 +289,7 @@ export class SimController {
   }
 
   key(e: KeyboardEvent): boolean {
+    if (!this.edit && this.probing && this.saved && e.key === "Escape") { this.probing = false; this.renderLegend(); return true; }
     if (!this.edit) return false;
     if (e.key === "Escape") { this.cancel(); return true; }
     if (e.key === "Enter") { this.ok(); return true; }
@@ -295,7 +310,7 @@ export class SimController {
     }
     const part = this.host.viewer.parts[0];
     if (!part) { toast(t("The part has no body yet."), "warn"); return; }
-    this.running = true; this.error = null; this.res = null; this.problems.clear();
+    this.running = true; this.error = null; this.res = null; this.problems.clear(); this.probes = [];
     this.clearPlot();
     this.progress = t("Reading the geometry…");
     this.renderAll();
@@ -466,6 +481,76 @@ export class SimController {
     return out;
   }
 
+  // ---------- probes ----------
+
+  /** Pins the plotted value at the point of the plot under the pointer. */
+  private probeAt(x: number, y: number) {
+    const ov = this.overlay, v = this.host.viewer;
+    if (!ov) return;
+    const r = v.renderer.domElement.getBoundingClientRect();
+    const rc = new THREE.Raycaster();
+    rc.setFromCamera(new THREE.Vector2(((x - r.left) / r.width) * 2 - 1, 1 - ((y - r.top) / r.height) * 2), v.camera);
+    const hits: THREE.Intersection[] = [];
+    THREE.Mesh.prototype.raycast.call(ov, rc, hits);
+    hits.sort((a, b) => a.distance - b.distance);
+    const h = hits.find(q => !v.clipPlanes.some(pl => pl.distanceToPoint(q.point) < 0)), f = h?.face;
+    if (!h || !f) return;
+    const pa = ov.geometry.getAttribute("position"), P = (i: number) => new THREE.Vector3().fromBufferAttribute(pa, i);
+    const w = THREE.Triangle.getBarycoord(ov.worldToLocal(h.point.clone()), P(f.a), P(f.b), P(f.c), new THREE.Vector3());
+    if (!w) return;
+    this.probes.push({ i: [f.a, f.b, f.c], w: [w.x, w.y, w.z] });
+    this.drawProbes();
+    this.renderLegend();
+  }
+
+  private probeValue(p: { i: [number, number, number]; w: [number, number, number] }) {
+    const a = this.vals;
+    return a ? p.w[0] * a[p.i[0]] + p.w[1] * a[p.i[1]] + p.w[2] * a[p.i[2]] : NaN;
+  }
+
+  /** The plotted quantity's unit and the factor from the solver's units to it. */
+  private plotUnit(): [string, number] {
+    const k = this.plot.kind;
+    return k === "vm" ? ["MPa", 1] : k === "sf" ? ["", 1] : [units.current, UNITS[units.current].f];
+  }
+
+  /** Labels of the pinned probes, kept on their points as the view moves. */
+  private drawProbes() {
+    const show = !!this.saved && !!this.overlay && this.probes.length > 0;
+    if (!show) { this.probeLayer?.replaceChildren(); return; }
+    if (!this.probeLayer) {
+      const el = this.probeLayer = document.createElement("div");
+      el.id = "sim-probes";
+      $("#viewport").appendChild(el);
+      el.addEventListener("click", e => {
+        const b = (e.target as HTMLElement).closest<HTMLElement>("[data-rm]");
+        if (b) { this.probes.splice(Number(b.dataset.rm), 1); this.drawProbes(); this.renderLegend(); }
+      });
+      this.host.viewer.onRender(() => this.placeProbes());
+    }
+    const [unit, f] = this.plotUnit();
+    this.probeLayer.innerHTML = this.probes.map((p, i) => `<div class="sim-probe" data-probe="${i}"><i></i><span translate="no">${sig(this.probeValue(p) * f)}${unit ? ` ${esc(unit)}` : ""}</span>`
+      + `<button data-rm="${i}" title="${esc(t("Remove probe"))}" aria-label="${esc(t("Remove probe"))}">×</button></div>`).join("");
+    this.placeProbes();
+  }
+
+  private placeProbes() {
+    const el = this.probeLayer, ov = this.overlay;
+    if (!el || !ov || !el.childElementCount) return;
+    const v = this.host.viewer, c = v.renderer.domElement, pa = ov.geometry.getAttribute("position");
+    const q = new THREE.Vector3(), s = new THREE.Vector3();
+    this.probes.forEach((p, k) => {
+      const d = el.children[k] as HTMLElement | undefined;
+      if (!d) return;
+      s.set(0, 0, 0);
+      for (let j = 0; j < 3; j++) s.addScaledVector(q.fromBufferAttribute(pa, p.i[j]), p.w[j]);
+      ov.localToWorld(s).project(v.camera);
+      d.style.left = `${c.offsetLeft + ((s.x + 1) / 2) * c.clientWidth}px`;
+      d.style.top = `${c.offsetTop + ((1 - s.y) / 2) * c.clientHeight}px`;
+      d.hidden = s.z > 1 || s.z < -1;
+    });
+  }
+
   private disposePlot() {
     if (this.overlay) { this.overlay.removeFromParent(); this.overlay.geometry.dispose(); this.overlay = null; }
     for (const m of this.mats) m.dispose();
@@ -483,6 +568,7 @@ export class SimController {
       this.saved = null;
     }
     this.disposePlot();
+    this.drawProbes();
     if (was) this.host.redraw();
     this.host.viewer.invalidate();
   }
@@ -504,6 +590,7 @@ export class SimController {
     for (let i = 0; i < n; i++) { if (val[i] < lo) lo = val[i]; if (val[i] > hi) hi = val[i]; }
     if (this.plot.kind === "vm" || this.plot.kind === "u") lo = 0;
     this.range = [lo, hi];
+    this.vals = val;
     const colors = new Float32Array(3 * n), span = hi - lo || 1;
     // a low safety factor is the red end
     for (let i = 0; i < n; i++) ramp(sf ? 1 - (val[i] - lo) / span : (val[i] - lo) / span, colors, 3 * i);
@@ -535,6 +622,9 @@ export class SimController {
     this.overlay.position.copy(part.mesh.position);
     this.overlay.quaternion.copy(part.mesh.quaternion);
     this.overlay.scale.copy(part.mesh.scale);
+    this.overlay.updateMatrixWorld(true);
+    if (this.probes.some(p => Math.max(...p.i) >= n)) this.probes = [];
+    this.drawProbes();
     this.host.viewer.invalidate();
   }
 
@@ -667,9 +757,9 @@ export class SimController {
     const r = this.res?.passes.at(-1);
     const show = !!r && !!this.saved && !!this.host.doc();
     el.hidden = !show;
-    if (!show) { el.innerHTML = ""; return; }
+    if (!show) { el.innerHTML = ""; $("#viewport").classList.remove("sim-probing"); return; }
     const k = this.plot.kind, sf = k === "sf";
-    const unit = k === "vm" ? "MPa" : sf ? "" : units.current, f = k === "vm" || sf ? 1 : UNITS[units.current].f;
+    const [unit, f] = this.plotUnit();
     const plots = PLOTS.filter(([id]) => id !== "sf" || !!this.host.doc()?.material?.sy);
     const top = sf && this.range[1] >= SF_TOP ? `${SF_TOP}+` : sig(this.range[1] * f);
     el.innerHTML = `<div class="ana-head"><select data-k="kind" aria-label="${esc(t("Result"))}">${plots.map(([id, l]) => `<option value="${id}"${id === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select>`
@@ -677,7 +767,10 @@ export class SimController {
       + `<div class="ana-ramp" style="background:${RAMP_CSS}${sf ? ";transform:scaleX(-1)" : ""}"></div><div class="ana-scale"><span data-v="min">${sig(this.range[0] * f)}</span><span>${esc(unit)}</span><span data-v="max">${top}</span></div>`
       + (sf ? `<p class="ana-note">${esc(t("Yield strength divided by the von Mises stress; below 1 the material yields."))}</p>` : "")
       + `<label class="chk"><input type="checkbox" data-k="deformed"${this.plot.deformed ? " checked" : ""} />${esc(t("Deformed shape"))}</label>`
-      + (this.plot.deformed ? `<label class="ana-row"><span>${esc(t("Scale"))}</span><input type="text" inputmode="decimal" data-k="scale" value="${this.plot.scale > 0 ? trim(this.plot.scale) : ""}" placeholder="${esc(t("auto"))} ×${sig(this.usedScale)}" aria-label="${esc(t("Deformation scale"))}" /></label>` : "");
+      + (this.plot.deformed ? `<label class="ana-row"><span>${esc(t("Scale"))}</span><input type="text" inputmode="decimal" data-k="scale" value="${this.plot.scale > 0 ? trim(this.plot.scale) : ""}" placeholder="${esc(t("auto"))} ×${sig(this.usedScale)}" aria-label="${esc(t("Deformation scale"))}" /></label>` : "")
+      + `<div class="sim-probebar"><button class="btn small${this.probing ? " on" : ""}" data-a="probe" aria-pressed="${this.probing}" title="${esc(t("Click the plot to read the value at a point"))}">${esc(t("Probe"))}</button>`
+      + (this.probes.length ? `<button class="btn small" data-a="noprobes">${esc(t("Clear probes"))}</button>` : "") + `</div>`;
+    $("#viewport").classList.toggle("sim-probing", this.probing);
   }
 
   // ---------- events ----------
@@ -711,7 +804,7 @@ export class SimController {
       });
     } else if (a === "delstudy" && st) {
       this.client.cancel();
-      this.edit = null; this.res = null; this.error = null;
+      this.edit = null; this.res = null; this.error = null; this.probes = []; this.probing = false;
       this.clearPlot();
       this.host.change(t("Delete study"), d => { d.studies = (d.studies ?? []).filter(x => x.id !== st.id); if (!d.studies.length) delete d.studies; });
       this.activeId = null;

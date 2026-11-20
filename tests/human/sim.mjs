@@ -71,6 +71,17 @@ const r2 = await sim();
 const img7 = await snap(pg, "displacement");
 check("SA1-6", r2.plot.kind === "u" && r2.plot.scale === 0 && Math.abs(r2.plot.range[1] - r.maxU) < 1e-6, "the legend switches the plot to displacement and turns the deformed shape off", r2.plot, img7);
 
+// SA1-8: Probe: click the plot, the value at that point is pinned on the model; Esc ends probing.
+await pg.click('#sim-legend [data-a="probe"]');
+await clickAt(pg, await screenOf(pg, [50, 0, 20]));
+await clickAt(pg, await screenOf(pg, [0, 0, 20]));
+await pg.waitForTimeout(250);
+const pr = await pg.evaluate(() => ({ probes: window.__sv.sim.state().probes, labels: [...document.querySelectorAll("#sim-probes .sim-probe span")].map(e => e.textContent) }));
+const img10 = await snap(pg, "probes");
+await pg.keyboard.press("Escape");
+check("SA1-8", pr.probes.length === 2 && pr.labels.length === 2 && pr.probes[0] < 0.01 * r.maxU + 1e-4 && pr.probes[1] > 0.2 * r.maxU && pr.probes[1] < 0.5 * r.maxU && !(await sim()).probing,
+  "two probes on the displacement plot: about zero at the clamped end, a part of the tip deflection at the middle", pr, img10);
+
 // SA1-7: editing the force (double the load) puts the results out of date; Solve again doubles the deflection.
 await pg.click("#sim-tree .sim-row[data-id=\"l1\"] .sim-name");
 await pg.fill('#sim-pm [data-n="value"]', "2000");
