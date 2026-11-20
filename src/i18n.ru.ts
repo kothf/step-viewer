@@ -5453,4 +5453,8 @@ export const RU: Record<string, string> = {
   "Simulation commands": "Команды расчёта",
   "Safety factor": "Запас прочности",
   "Yield strength divided by the von Mises stress; below 1 the material yields.": "Предел текучести, делённый на напряжение по Мизесу; ниже 1 материал течёт.",
+  "Probe": "Проба",
+  "Clear probes": "Убрать пробы",
+  "Remove probe": "Убрать пробу",
+  "Click the plot to read the value at a point": "Щёлкните по эпюре, чтобы узнать значение в точке",
 };
