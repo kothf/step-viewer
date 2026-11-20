@@ -18,6 +18,7 @@ import { applyPatch, probe } from "./patch";
 import { transformPart } from "../asm/light";
 import { invert } from "../asm/math";
 import { moveBodies } from "../tools/inertia";
+import { simGeometry } from "./simgeo";
 import type { PartData } from "../topology";
 import type { PartDoc } from "../model/types";
 import parasolidWasm from "../sw/parasolid.wasm?url";
@@ -57,6 +58,8 @@ export type KernelRequest =
   /** Modelling: STEP of the last evaluated body. */
   | { id: number; type: "modelStep"; name: string; color: [number, number, number] }
   | { id: number; type: "importBody"; buffer: ArrayBuffer; name: string }
+  /** Structural analysis (FR-SARC-012): the last evaluated body as fine triangles with their faces' names. */
+  | { id: number; type: "simGeo"; lin: number; ang: number }
   /**
    * Mesh export (STL, 3MF, OBJ, glTF) at a chord deviation `lin` mm and angle `ang` rad: `part` = the last shown part
    * body, `file` = the loaded file's meshes `which`, `asm` = each shown component of `doc` (by id, world coordinates).
@@ -77,7 +80,7 @@ let assembler: Assembler | null = null;
 /** Analysed part meshes in part coordinates, by evaluated source (FR-ASM-031). */
 let shared: WeakMap<object, { quality: number; data: PartData }> | null = null;
 /** The last evaluated body, for STEP export. */
-let lastBody: { shape: unknown; faces: unknown[] } | null = null;
+let lastBody: { shape: unknown; faces: unknown[]; names?: string[] } | null = null;
 /** What the view last showed of the part (shown solids and surface bodies), for mesh export. */
 let lastShown: { shape: unknown } | null = null;
 let heap: () => number = () => 0;
@@ -351,6 +354,13 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
       kernel.meshes = [{ shape: lastBody.shape, faces: lastBody.faces, name: r.name, color: r.color, solid: true }];
       const bytes = kernel.writeStep([0], [r.name], [r.color]).slice();
       post({ id: r.id, ok: true, bytes }, [bytes.buffer]);
+    } else if (r.type === "simGeo") {
+      if (!lastBody) throw new Error("E-SIM-NOBODY");
+      const oc = kernel.module;
+      let solids = 0;
+      for (const ex = new oc.TopExp_Explorer_2(lastBody.shape, oc.TopAbs_ShapeEnum.TopAbs_SOLID, oc.TopAbs_ShapeEnum.TopAbs_SHAPE); ex.More(); ex.Next()) solids++;
+      const geo = simGeometry(oc, lastBody.shape, lastBody.faces, r.lin, r.ang);
+      post({ id: r.id, ok: true, geo: { ...geo, names: lastBody.names ?? [] }, solids }, [geo.tris.buffer, geo.face.buffer]);
     } else if (r.type === "exportMesh") {
       const oc = kernel.module;
       let out: { id: string | number; mesh: ExportMesh }[];
