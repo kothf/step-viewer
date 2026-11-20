@@ -75,7 +75,7 @@ export function nextId(st: Study, prefix: "s" | "l"): string {
   return `${prefix}${n}`;
 }
 
-export const SUPPORT_LABEL: Record<SupportType, string> = { fixed: "Fixed", sliding: "Sliding", hinge: "Hinge", dirs: "Fixed in directions" };
+export const SUPPORT_LABEL: Record<SupportType, string> = { fixed: "Fixed support", sliding: "Sliding", hinge: "Hinge", dirs: "Fixed in directions" };
 export const LOAD_LABEL: Record<LoadType, string> = { force: "Force", pressure: "Pressure", gravity: "Gravity", moment: "Moment" };
 
 /** Default name of a new item: "Fixed 1", "Force 2". */

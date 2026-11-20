@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { Basis, basisSize, legendre } from "../../src/sim/basis";
 import { gauss, volumePoints, gridTrianglePoints, fitPoints } from "../../src/sim/quad";
 import { solveStatic, vonMises } from "../../src/sim/static";
+import { meshArea, plotTarget, refineMesh } from "../../src/sim/plotmesh";
 
 /** Two triangles of the axis-aligned rectangle x[axis] = at, outward normal along ±axis. */
 function rectFace(axis: number, at: number, lo: number[], hi: number[], out: boolean): number[] {
@@ -284,4 +285,32 @@ test("a study on a named-face body runs its passes and converges", () => {
   const p2 = studyProblem(st2, b);
   assert.ok(Math.abs(p2.loads[0].pressure! + 1) < 1e-12);
   assert.throws(() => [...runStatic({ body: b, mat: { name: "", E, nu: 0.3, rho: 0 }, problem: studyProblem({ ...st2, loads: [] }, b), passes: 1, energyTol: 2, pos, nrm })], /E-SIM-NOLOAD/);
+});
+
+test("plot mesh: edges are split to the target with no cracks and the same area", () => {
+  // two triangles of a 100 × 20 rectangle sharing the diagonal, vertices duplicated along it (as at a sharp edge)
+  const pos = [0, 0, 0, 100, 0, 0, 100, 20, 0, 0, 0, 0, 100, 20, 0, 0, 20, 0];
+  const nrm = new Array(18).fill(0).map((_, i) => (i % 3 === 2 ? 1 : 0));
+  const m = refineMesh(pos, nrm, null, 5);
+  assert.ok(Math.abs(meshArea(m.pos, m.index) - 2000) < 1e-6);
+  let longest = 0;
+  const edges = new Map<string, number>();
+  const key = (i: number) => `${m.pos[3 * i].toFixed(4)},${m.pos[3 * i + 1].toFixed(4)}`;
+  for (let t = 0; t < m.index.length; t += 3) for (let k = 0; k < 3; k++) {
+    const a = m.index[t + k], b = m.index[t + ((k + 1) % 3)];
+    longest = Math.max(longest, Math.hypot(m.pos[3 * a] - m.pos[3 * b], m.pos[3 * a + 1] - m.pos[3 * b + 1]));
+    const e = [key(a), key(b)].sort().join("|");
+    edges.set(e, (edges.get(e) ?? 0) + 1);
+  }
+  assert.ok(longest <= 5 + 1e-9, `longest edge ${longest}`);
+  // every inner edge is shared by exactly two triangles (no T-junctions); boundary edges lie on the rectangle's outline
+  for (const [e, n] of edges) {
+    const [a, b] = e.split("|").map(q => q.split(",").map(Number));
+    const onRim = (a[0] === b[0] && (a[0] === 0 || a[0] === 100)) || (a[1] === b[1] && (a[1] === 0 || a[1] === 20));
+    assert.equal(n, onRim ? 1 : 2, `edge ${e} is used ${n} times`);
+  }
+  for (let i = 0; i < m.nrm.length; i += 3) assert.ok(Math.abs(m.nrm[i + 2] - 1) < 1e-6);
+  // the first vertices are the input's own
+  assert.deepEqual(Array.from(m.pos.slice(0, 18)), pos);
+  assert.ok(plotTarget(2000, 5) === 5 && plotTarget(1e9, 1, 1000) > 1);
 });

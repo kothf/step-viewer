@@ -1197,6 +1197,8 @@ export interface PartDoc {
   /** Sub-weldments (a CAD app's sub-weldment folders in the cut list): named groups of body keys; a body sits in at most one. */
   subWelds?: { id: string; name: string; bodies: string[] }[];
   color?: V3;
+  /** Structural analysis studies (FRS-structural 15.1): supports, loads and settings; results are not stored. */
+  studies?: import("../sim/types").Study[];
   features: Feature[];
   /** Features after this index are not evaluated (rollback bar); null: all. */
   rollback: number | null;

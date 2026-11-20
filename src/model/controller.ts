@@ -350,6 +350,8 @@ export class ModelController {
   store: DocStore | null = null;
   private kernel: ModelKernel;
   private last: Rebuild | null = null;
+  /** Structural analysis (src/sim/ui.ts): takes view clicks and Enter/Esc while a support or load panel is open; told when the document changes. */
+  simHook: { active(): boolean; click(e: PointerEvent): boolean; key(e: KeyboardEvent): boolean; changed(): void } | null = null;
   private mode: Mode = { kind: "none" };
   private fileName = "";
   private handle: FileSystemFileHandle | null = null;
@@ -640,7 +642,17 @@ export class ModelController {
 
   get active() { return !!this.store; }
   /** A command is taking clicks in the view (Smart measure leaves them alone). */
-  get picking() { return (this.mode.kind !== "none" && !this.measuring) || !!this.arrowDrag; }
+  get picking() { return (this.mode.kind !== "none" && !this.measuring) || !!this.arrowDrag || (this.mode.kind === "none" && !!this.simHook?.active()); }
+  /** What the structural analysis UI needs from the open part. */
+  simAccess() {
+    return {
+      doc: () => this.store?.doc ?? null,
+      change: (label: string, fn: (d: PartDoc) => void) => { this.store?.change(label, fn); },
+      faceNames: () => this.last?.faceNames ?? [],
+      simGeo: (lin: number, ang: number) => this.kernel.simGeo(lin, ang),
+      idle: () => this.mode.kind === "none",
+    };
+  }
   /**
    * Measure inside a command (gap list M8): while on, clicks in the view go to Smart measure, not to the open
    * feature's boxes. The 📏 button in the panel head (or M) turns it on and off; Esc or closing the panel ends it.
@@ -731,7 +743,7 @@ export class ModelController {
     if (keep) this.store = keep;
     else {
       this.store = new DocStore(doc);
-      this.store.onChange(why => this.changed(why));
+      this.store.onChange(why => { this.changed(why); this.simHook?.changed(); });
       // Equations: every change re-evaluates the kept expressions (FR-PAR-002/003).
       this.store.normalize = d => {
         refreshExprs(d, units.current);
@@ -754,6 +766,7 @@ export class ModelController {
     // The part's units are the display units while it is open (FR-UI-116).
     if (doc.units.length !== units.current) this.host.setUnits?.(doc.units.length);
     this.renderAll();
+    this.simHook?.changed();
     this.host.opened?.(this.docLabel());
     if (!doc.features.length) {
       // A new part needs no kernel to show: the origin and the three planes go up at once (the kernel
@@ -798,6 +811,7 @@ export class ModelController {
     document.getElementById("app")!.classList.remove("model");
     this.host.viewer.emptySize = 1;
     $("#t-features").hidden = true;
+    this.simHook?.changed();
     this.host.selectLeftTab("tree");
     this.renderRecovery();
   }
@@ -2736,6 +2750,7 @@ export class ModelController {
       // Measuring inside the command: Smart measure takes the click (main.ts), the feature does not.
       if (m.kind === "feature" && this.measuring) return;
       // Not stopped: the orbit controls must see the button go up. Smart measure skips these clicks (`picking`).
+      if (m.kind === "none" && this.simHook?.active()) { this.simHook.click(e); return; }
       if (m.kind === "none" && this.multi && !e.ctrlKey && !e.metaKey) { this.multi = null; this.drawDecor(); }
       if (m.kind === "none") { if (e.detail < 2) this.hideInstant(); const at = { x: e.clientX, y: e.clientY }, alt = e.altKey; setTimeout(() => this.showContextBar(at, alt), 0); }
       else if (m.kind === "plane") this.pickPlane(e);
@@ -2843,6 +2858,7 @@ export class ModelController {
     const mod = e.ctrlKey || e.metaKey;
     const stop = () => { e.preventDefault(); e.stopPropagation(); };
     if (this.tabKey(e)) { stop(); return; }
+    if (this.mode.kind === "none" && this.simHook?.active() && this.simHook.key(e)) { stop(); return; }
     // Custom shortcuts (gap list U1) before the built-in letters, in a part or a sketch.
     const custom = (this.mode.kind === "none" || this.mode.kind === "sketch") && !e.repeat ? commandFor(loadShortcuts(), comboOf(e)) : null;
     if (custom) { stop(); if (custom === "import") this.importBodyFile(); else this.command(custom); return; }
