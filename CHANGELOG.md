@@ -5,6 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.609.0] - 2026-11-20
+
+### Added
+- Structural analysis: **Probe** in the results legend. With it on, a click on the plot pins the value at that point (stress, displacement or safety factor, whichever is shown); the labels follow the view and the deformed shape, change with the plotted result, and each has its own ×. **Clear probes** removes them all, Esc ends probing.
+
+### Changed
+- Structural analysis: the standard and reference planes are no longer drawn over a result plot, where they washed out its colours. They come back when the plot is hidden or goes out of date, and still show while a plane is selected.
+
 ## [1.608.0] - 2026-11-20
 
 ### Added
@@ -3909,7 +3917,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.608.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.609.0...HEAD
+[1.609.0]: https://github.com/kothf/step-viewer/compare/v1.608.0...v1.609.0
 [1.608.0]: https://github.com/kothf/step-viewer/compare/v1.607.0...v1.608.0
 [1.607.0]: https://github.com/kothf/step-viewer/compare/v1.606.0...v1.607.0
 [1.606.0]: https://github.com/kothf/step-viewer/compare/v1.605.0...v1.606.0
