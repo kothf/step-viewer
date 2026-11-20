@@ -11,6 +11,7 @@ import { geomComparable, geometryCompare, geomRows, mountDiffView } from "./geom
 import { folderHandle, forgetFolder, rememberFolder, vaultFolders } from "./folders";
 import type { RecentVault } from "../recent";
 import { fsaDir, MOVED_ON, Vault, VaultError, type FileRec, type Msg, type RefRec, type Resolve, type SearchQuery, type TreeNode, type VDir, STORE } from "./vault";
+import { PASSWORD_MIN } from "./accounts";
 import { defaultWorkflow, PART_NUMBER, ROLES, WIP, type CardField, type Role, type Workflow } from "./workflow";
 
 /**
@@ -271,7 +272,8 @@ export class VaultPanel {
     this.close();
   }
 
-  get user() { return storage.get("mc:vaultUser") || "User"; }
+  /** The vault's user: the logged-in account in a vault with accounts, else the name kept in this browser. */
+  get user() { return this.vault?.secured ? this.vault.user : storage.get("mc:vaultUser") || "User"; }
   private get computer() {
     let c = storage.get("mc:computer");
     if (!c) { c = `Browser-${Math.random().toString(36).slice(2, 6)}`; storage.set("mc:computer", c); }
@@ -347,6 +349,8 @@ export class VaultPanel {
 
   /** Opens a vault given its directory (tests, and the folder picker). */
   async use(v: Vault, where: "folder" | "browser" = "browser") {
+    // A vault with user accounts opens after a log in (FR-PDM-037).
+    if (v.locked && !(await this.loginDlg(v))) return;
     this.where = where;
     if (this.vault && this.openId) this.app.doc()?.setVault(null);
     this.ties = new WeakSet();
@@ -1508,8 +1512,137 @@ export class VaultPanel {
       null,
       [t("Vault settings"), () => void this.settingsDlg(), false, "settings"],
       [t("Workflow"), () => void this.workflowDlg(), false, "workflow"],
-      [t("User: {name}…", { name: this.user }), () => void this.userDlg(), false, "user"],
+      [t("Users…"), () => void this.usersDlg(), false, "users"],
+      [t("User: {name}…", { name: this.user }), () => void (this.vault?.secured ? this.accountDlg() : this.userDlg()), false, "user"],
+      ...(this.vault?.secured ? [[t("Log out"), () => void this.logout(), false, "logout"] as [string, () => void, boolean, string]] : []),
     ], x, y, back);
+  }
+
+  // ---------- accounts and log in (FR-PDM-037) ----------
+
+  /** Asks for a user name and password until they fit or the user cancels; then a forced password change if due. */
+  async loginDlg(v: Vault, why = ""): Promise<boolean> {
+    let err = why, name = storage.get("mc:vaultUser") || "";
+    for (;;) {
+      const r = await this.form(t("Log in to {name}", { name: v.info.name }), `${err ? `<p class="v-err" role="alert">${esc(err)}</p>` : ""}
+        <p class="muted">${esc(t("This vault has user accounts. Log in to work in it."))}</p>
+        <div class="v-form">
+        <label><span>${esc(t("User name"))}</span><input name="name" value="${esc(name)}" maxlength="40" autocomplete="username" required translate="no"${name ? "" : " autofocus"} /></label>
+        <label><span>${esc(t("Password"))}</span><input name="pw" type="password" autocomplete="current-password" required${name ? " autofocus" : ""} /></label>
+        </div>`, t("Log in"));
+      if (!r) return false;
+      name = String(r.name).trim();
+      try { await v.login(name, String(r.pw)); break; } catch (e) { err = errText(e); }
+    }
+    storage.set("mc:vaultUser", v.user);
+    if (v.mustChange) await this.passwordDlg(v, true);
+    return true;
+  }
+
+  /** Changes the user's own password; `forced` after an Admin's reset (the vault stays read-only until it is done). */
+  async passwordDlg(v: Vault, forced = false): Promise<boolean> {
+    let err = "";
+    for (;;) {
+      const r = await this.form(t("Change password"), `${err ? `<p class="v-err" role="alert">${esc(err)}</p>` : ""}
+        ${forced ? `<p>${esc(t("An Admin set a temporary password for you. Choose your own."))}</p>` : ""}
+        <div class="v-form">
+        <label><span>${esc(t("Current password"))}</span><input name="old" type="password" autocomplete="current-password" required autofocus /></label>
+        <label><span>${esc(t("New password"))}</span><input name="pw" type="password" autocomplete="new-password" required minlength="${PASSWORD_MIN}" /></label>
+        <label><span>${esc(t("Repeat the new password"))}</span><input name="pw2" type="password" autocomplete="new-password" required minlength="${PASSWORD_MIN}" /></label>
+        </div>`, t("Change password"));
+      if (!r) return false;
+      if (r.pw !== r.pw2) { err = t("The new passwords differ."); continue; }
+      try { await v.changePassword(String(r.old), String(r.pw)); toast(t("Password changed"), "success"); return true; } catch (e) { err = errText(e); }
+    }
+  }
+
+  /** The logged-in user: roles, change password, log out. */
+  async accountDlg() {
+    const v = this.vault;
+    if (!v?.secured) return;
+    const d = this.dialog(t("User: {name}", { name: v.user }), `<p>${esc(t("Roles"))}: ${v.rolesOf().map(r => esc(tn(r))).join(", ") || "—"}</p>`,
+      [[t("Close"), "cancel"], [t("Log out"), "logout"], [t("Change password"), "pw"]]);
+    const a = await d.done;
+    if (a === "pw") await this.passwordDlg(v);
+    else if (a === "logout") await this.logout();
+  }
+
+  /** Logs out and offers the log in again (another user on this computer); cancelling it closes the vault. */
+  async logout() {
+    const v = this.vault;
+    if (!v?.secured) return;
+    await v.logout();
+    if (this.openId) this.app.doc()?.setVault(null);
+    toast(t("Logged out"));
+    if (!(await this.loginDlg(v))) { this.close(); return; }
+    await this.refresh();
+  }
+
+  /** The Admin's user list (FR-PDM-037): add users with a starting password and roles, reset, turn off, remove. */
+  async usersDlg(note = "") {
+    const v = this.vault;
+    if (!v) return;
+    const admin = v.has("Admin");
+    if (!v.secured) {
+      if (!admin) { toast(t("Only an Admin can manage users."), true); return; }
+      const r = await this.form(t("Users"), `<p>${esc(t("Anyone who opens this vault can work in it under any name. With user accounts, the vault asks for a user name and password when it opens, and roles come from the accounts."))}</p>
+        <p>${esc(t("Start with your own account, an Admin; then add the others."))}</p>
+        <div class="v-form">
+        <label><span>${esc(t("User name"))}</span><input name="name" value="${esc(this.user)}" maxlength="40" autocomplete="username" required translate="no" /></label>
+        <label><span>${esc(t("Password"))}</span><input name="pw" type="password" autocomplete="new-password" required minlength="${PASSWORD_MIN}" autofocus /></label>
+        <label><span>${esc(t("Repeat the password"))}</span><input name="pw2" type="password" autocomplete="new-password" required minlength="${PASSWORD_MIN}" /></label>
+        </div>
+        <p class="muted">${esc(t("Log ins are checked by MöbiusCAD; the files are not encrypted. Anyone who can read the vault folder can read its files."))}</p>`, t("Turn on log ins"));
+      if (!r) return;
+      if (r.pw !== r.pw2) { toast(t("The passwords differ."), true); return; }
+      const name = String(r.name).trim();
+      await this.run(async () => {
+        v.user = name;
+        await v.addUser(name, String(r.pw), [...ROLES]);
+        storage.set("mc:vaultUser", v.user);
+        toast(t("Log ins are on: you are {name}, an Admin.", { name: v.user }), "success");
+      });
+      if (v.secured) await this.usersDlg();
+      return;
+    }
+    const rows = v.accounts().map(a => `<tr data-acc="${esc(a.name)}"${a.disabled ? ' class="v-off"' : ""}><td translate="no"><b>${esc(a.name)}</b>${a.name === v.user ? ` <span class="muted">(${esc(t("you"))})</span>` : ""}${a.reset ? `<br><span class="muted">${esc(t("new password at the next log in"))}</span>` : ""}</td>${ROLES.map(r => `<td class="c"><input type="checkbox" data-role="${r}" aria-label="${esc(tn(r))}"${a.roles.includes(r) ? " checked" : ""}${admin ? "" : " disabled"} /></td>`).join("")}<td class="c"><input type="checkbox" data-off aria-label="${esc(t("Off"))}"${a.disabled ? " checked" : ""}${admin && a.name !== v.user ? "" : " disabled"} /></td>${admin ? `<td class="v-acts"><button type="button" class="btn small" data-reset>${esc(t("Reset password"))}</button>${a.name !== v.user ? `<button type="button" class="btn small" data-rm>${esc(t("Remove"))}</button>` : ""}</td>` : ""}</tr>`).join("");
+    const add = admin ? `<fieldset class="v-adduser"><legend>${esc(t("Add user"))}</legend><div class="v-form">
+      <label><span>${esc(t("User name"))}</span><input name="nu" maxlength="40" autocomplete="off" translate="no" /></label>
+      <label><span>${esc(t("Starting password"))}</span><input name="np" type="text" autocomplete="off" minlength="${PASSWORD_MIN}" /></label>
+      </div><div class="row">${ROLES.map(r => `<label class="chk"><input type="checkbox" data-nrole="${r}"${r === "Designer" ? " checked" : ""} /> ${esc(tn(r))}</label>`).join("")}</div>
+      <p class="muted">${esc(t("Tell them the starting password; they choose their own at the first log in."))}</p>
+      <div class="row end"><button type="button" class="btn primary" data-add>${esc(t("Add user"))}</button></div></fieldset>` : `<p class="muted">${esc(t("Only an Admin can manage users."))}</p>`;
+    const d = this.dialog(t("Users"), `${note ? `<p class="v-err" role="alert">${esc(note)}</p>` : ""}<div class="v-scroll"><table class="v-table v-users"><thead><tr><th>${esc(t("User"))}</th>${ROLES.map(r => `<th class="c">${esc(tn(r))}</th>`).join("")}<th class="c">${esc(t("Off"))}</th>${admin ? "<th></th>" : ""}</tr></thead><tbody>${rows}</tbody></table></div>${add}`, [[t("Close"), "cancel"]]);
+    const again = (msg = "") => { d.el.close(); void this.usersDlg(msg); };
+    const act = async (work: () => Promise<unknown>, ok?: string) => {
+      try { await work(); if (ok) toast(ok, "success"); again(); } catch (e) { again(errText(e)); }
+      void this.refresh();
+    };
+    d.el.querySelectorAll<HTMLTableRowElement>("tr[data-acc]").forEach(tr => {
+      const name = tr.dataset.acc!;
+      tr.querySelectorAll<HTMLInputElement>("[data-role]").forEach(c => c.addEventListener("change", () => {
+        const roles = [...tr.querySelectorAll<HTMLInputElement>("[data-role]")].filter(x => x.checked).map(x => x.dataset.role as Role);
+        void act(() => v.setAccount(name, { roles }));
+      }));
+      tr.querySelector<HTMLInputElement>("[data-off]")?.addEventListener("change", e => void act(() => v.setAccount(name, { disabled: (e.target as HTMLInputElement).checked })));
+      tr.querySelector("[data-reset]")?.addEventListener("click", async () => {
+        d.el.close();
+        const r = await this.form(t("Reset password"), `<p translate="no"><b>${esc(name)}</b></p><div class="v-form"><label><span>${esc(t(name === v.user ? "New password" : "Starting password"))}</span><input name="pw" type="text" autocomplete="off" required minlength="${PASSWORD_MIN}" autofocus /></label></div>${name === v.user ? "" : `<p class="muted">${esc(t("Tell them the starting password; they choose their own at the first log in."))}</p>`}`, t("Reset password"));
+        if (!r) { again(); return; }
+        await act(() => v.resetPassword(name, String(r.pw)), t("Password reset"));
+      });
+      tr.querySelector("[data-rm]")?.addEventListener("click", async () => {
+        d.el.close();
+        if (!await confirmModal(t("Remove the user {name}? Their name stays in the history.", { name }), t("Remove"))) { again(); return; }
+        await act(() => v.removeUser(name), t("User removed"));
+      });
+    });
+    d.el.querySelector("[data-add]")?.addEventListener("click", () => {
+      const g = (n: string) => d.el.querySelector<HTMLInputElement>(`[name="${n}"]`)!.value;
+      const roles = [...d.el.querySelectorAll<HTMLInputElement>("[data-nrole]")].filter(x => x.checked).map(x => x.dataset.nrole as Role);
+      const name = g("nu").trim();
+      void act(() => v.addUser(name, g("np"), roles), t("User {name} added", { name }));
+    });
   }
 
   /** Who works in the vault (stored per browser). */
@@ -1518,7 +1651,7 @@ export class VaultPanel {
     const u = typeof r?.user === "string" ? r.user.trim() : "";
     if (!u) return;
     storage.set("mc:vaultUser", u);
-    if (this.vault) this.vault.user = u;
+    if (this.vault && !this.vault.secured) this.vault.user = u;
     await this.refresh();
   }
 
@@ -1649,15 +1782,15 @@ export class VaultPanel {
       <p class="muted">${esc(t("Pattern tokens: {YYYY} {YY} {MM} for the date, {0000} for the counter, {Project} or any data card field."))}</p>
       <label class="v-lbl">${esc(t("Data card fields, one per line: name | type | options;… | required | property"))}<textarea name="cards" rows="5" translate="no"${dis}>${esc(cards)}</textarea></label>
       <label class="chk"><input type="checkbox" name="shared"${v.info.shared ? " checked" : ""}${dis} /> ${esc(t("Shared vault: users have roles"))}</label>
-      <label class="v-lbl">${esc(t("Roles, one user per line (Designer, Checker, Approver, Admin)"))}<textarea name="roles" rows="3" translate="no"${dis}>${esc(roles)}</textarea></label>
-      <p class="muted">${esc(t("Users and roles identify who did what; they are not security. Anyone who can write to the vault folder can change its files."))}</p>`;
+      ${v.secured ? `<p class="muted">${esc(t("Roles are set per user account in Users…"))}</p>` : `<label class="v-lbl">${esc(t("Roles, one user per line (Designer, Checker, Approver, Admin)"))}<textarea name="roles" rows="3" translate="no"${dis}>${esc(roles)}</textarea></label>
+      <p class="muted">${esc(t("Users and roles identify who did what; they are not security. Anyone who can write to the vault folder can change its files. Users… turns on log ins with passwords."))}</p>`}`;
     const d = this.dialog(t("Vault settings"), body, admin ? [[t("Cancel"), "cancel"], [t("Save"), "ok"]] : [[t("Close"), "cancel"]]);
     if (await d.done !== "ok") return;
     const g = (n: string) => d.el.querySelector<HTMLInputElement>(`[name="${n}"]`)!;
     const types = new Set(["text", "number", "date", "list", "checkbox", "user"]);
     const fields: CardField[] = g("cards").value.split("\n").map(l => l.split("|").map(x => x.trim())).filter(p => p[0]).map(([name, type, opts, req, prop]) => ({ name, type: (types.has(type) ? type : "text") as CardField["type"], ...(opts ? { options: opts.split(";").map(x => x.trim()).filter(Boolean) } : {}), ...(req === "required" ? { required: true } : {}), ...(prop ? { prop } : {}) }));
     const roleMap: Record<string, Role[]> = {};
-    for (const l of g("roles").value.split("\n")) {
+    for (const l of (d.el.querySelector<HTMLTextAreaElement>('[name="roles"]')?.value ?? "").split("\n")) {
       const [u, rs2] = l.split(":");
       if (u?.trim()) roleMap[u.trim()] = (rs2 ?? "").split(",").map(x => x.trim()).filter((x): x is Role => (ROLES as string[]).includes(x));
     }
@@ -1669,7 +1802,7 @@ export class VaultPanel {
         outputs: g("outputs").checked,
         cards: { ...(v.info.cards ?? {}), "*": fields },
         shared: g("shared").checked,
-        roles: roleMap,
+        ...(v.secured ? {} : { roles: roleMap }),
       });
       toast(t("Vault settings saved"), "success");
     });
@@ -1853,6 +1986,13 @@ export class VaultPanel {
   /** A small form; resolves to its values, or null when cancelled. */
   private async form(title: string, html: string, ok: string): Promise<Record<string, string | boolean> | null> {
     const d = this.dialog(title, html, [[t("Cancel"), "cancel"], [ok, "ok"]]);
+    // Enter in a field means OK (the form's first button is Cancel, which a plain Enter would press).
+    d.el.addEventListener("keydown", e => {
+      const el = e.target as HTMLElement;
+      if (e.key !== "Enter" || e.isComposing || !(el instanceof HTMLInputElement) || el.type === "checkbox") return;
+      e.preventDefault();
+      d.el.querySelector("form")?.requestSubmit(d.el.querySelector<HTMLButtonElement>('button[value="ok"]'));
+    });
     // Select all / none / only documents over a list of files.
     d.el.querySelectorAll<HTMLElement>("[data-all]").forEach(b => b.addEventListener("click", e => {
       e.preventDefault();
@@ -1995,7 +2135,7 @@ export class VaultPanel {
     const h = this.host;
     h.querySelector<HTMLInputElement>("#v-user")?.addEventListener("change", e => {
       const u = (e.target as HTMLInputElement).value.trim();
-      if (u) { storage.set("mc:vaultUser", u); if (this.vault) this.vault.user = u; void this.refresh(); }
+      if (u) { storage.set("mc:vaultUser", u); if (this.vault && !this.vault.secured) this.vault.user = u; void this.refresh(); }
     });
     h.querySelectorAll<HTMLElement>("[data-openws]").forEach(b => b.addEventListener("click", () => void this.openInBrowser(b.dataset.openws!).catch(e => toast(t((e as Error).message), true))));
     h.querySelectorAll<HTMLElement>("[data-openfolder]").forEach(b => b.addEventListener("click", () => void this.openFolder(b.dataset.openfolder!)));

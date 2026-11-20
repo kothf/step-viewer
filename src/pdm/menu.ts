@@ -94,6 +94,8 @@ export class VaultMenu {
       { id: "explorer", label: t("Vault explorer"), title: t("The vault as a file manager in a tab of its own: folders, columns, preview, history") },
       { id: "panel", label: t("Vault files"), title: t("The quick list in the side panel") },
       { id: "settings", label: t("Vault settings") },
+      { id: "users", label: t("Users…"), title: t("User accounts with passwords: the vault asks who is working when it opens") },
+      ...(v.secured ? [{ id: "logout", label: t("Log out"), note: v.user, title: t("Another user can log in on this computer") }] : []),
       "-",
       ...(others.length ? [{ head: t("Switch to") }, ...others, "-" as const] : []),
       { id: "close", label: t("Close vault") },
@@ -160,6 +162,8 @@ export class VaultMenu {
       case "addfolder": this.host.showPanel(); await p.addFolderFiles(); break;
       case "search": await p.searchDlg(); this.host.showPanel(); break;
       case "settings": await p.settingsDlg(); break;
+      case "users": await p.usersDlg(); break;
+      case "logout": await p.logout(); break;
       case "close": void p.closeVault(); break;
     }
   }

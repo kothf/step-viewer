@@ -5522,7 +5522,7 @@ try {
     await mp.waitForFunction(() => document.querySelector("#vault-panel").parentElement.id === "tab-vault", null, { timeout: 5000 }).catch(() => {});
     const home = await mp.evaluate(() => document.querySelector("#vault-panel").parentElement.id);
     check(btnShown && closed === "new-dir,open-dir,new-ws,import,panel,explorer" && lit === "Picked folder", `vault menu: Vault button and menu, new vault in a picked folder (${btnShown}, ${closed}, ${lit})`);
-    check(/v1 · .*checked out/.test(title1) && saved === "false/true" && opened === "save-,co-,ci,undo,latest,hist,add,addfolder,search,explorer,panel,settings,close" && refused === true && savedAgain === false && hist === "v2:Renamed|v1:Added", `vault menu: an assembly saved to the vault, saved into the working copy, checked in and out from the menu (${title1}, ${saved}, ${opened}, ${refused}, ${savedAgain}, ${hist})`);
+    check(/v1 · .*checked out/.test(title1) && saved === "false/true" && opened === "save-,co-,ci,undo,latest,hist,add,addfolder,search,explorer,panel,settings,users,close" && refused === true && savedAgain === false && hist === "v2:Renamed|v1:Added", `vault menu: an assembly saved to the vault, saved into the working copy, checked in and out from the menu (${title1}, ${saved}, ${opened}, ${refused}, ${savedAgain}, ${hist})`);
     check(again === "new-dir,open-dir,folder,new-ws,import,panel,explorer" && folderName === "Picked folder" && /\.mcadasm/.test(row) && /v2/.test(row) && home === "tab-vault", `vault menu: the vault folder is remembered and reopens; the file list opens in a window without the side panel (${again}, ${folderName}, ${row}, ${home})`);
     await ctx.close();
   }
@@ -5750,7 +5750,7 @@ try {
     check(/Changes not checked in .*docs\/specs\/e\.txt/.test(remind) && stillOpen, `vault UI: closing the vault with changes not checked in reminds first (${remind}, ${stillOpen})`);
     check(tree === "plate.mcaddrw,plate.mcadprt,[docs],[docs/specs],e.txt" && foldedList === "plate.mcaddrw,plate.mcadprt,[docs]" && chipsShown === "All|Parts 1|Drawings 1|Other files 1" && onlyDrw === "plate.mcaddrw",
       `vault UI: folders in the list fold, filter chips narrow it (${tree} | ${foldedList} | ${chipsShown} | ${onlyDrw})`);
-    check(top === "explorer,more,close,add,addfolder,savepart,search" && more === "behind,notes,changes,packages,audit,verify,storage,export,bin,settings,workflow,user" && back === "more:true",
+    check(top === "explorer,more,close,add,addfolder,savepart,search" && more === "behind,notes,changes,packages,audit,verify,storage,export,bin,settings,workflow,users,user" && back === "more:true",
       `vault UI: a slim panel top with the vault's commands in ⋯ (${top} | ${more} | ${back})`);
     check(ctrlSel === "a.txt,c.txt" && shiftSel === "c.txt,d.txt" && /^Check out\|Get latest\|Change state: Submit for review\|Request change…\|Delete$/.test(multiMenu)
       && versions === "a.txt:1:Added,b.txt:1:Added,c.txt:1:Added,d.txt:2:both" && /^Open\|Check out\|Get latest\|.*History\|Where used\|Data card\|Rename/.test(oneMenu) && oneSel === "a.txt" && allSel === "a.txt,b.txt,c.txt,d.txt",
@@ -5836,6 +5836,69 @@ try {
       `vault explorer: New folder, search across folders with a Folder column, row menu (${newDir} | ${found} | ${folderCol} | ${menu})`);
     check(tabs === "Data card,Versions,Contains,Where used,Bill of materials" && closed === "true:true",
       `vault explorer: detail tabs, and the tab's × closes it (${tabs} | ${closed})`);
+    await ctx.close();
+  }
+
+  // --- 1.605.0: vault user accounts and log in (FR-PDM-037) ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const up = await ctx.newPage();
+    up.on("pageerror", e => errors.push(e.message));
+    up.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await up.goto(`${origin}/index.html?debug&nokernel`);
+    await up.evaluate(() => { localStorage.setItem("sv:tips", "off"); localStorage.setItem("mc:vaultUser", "Andrey"); });
+    await up.goto(`${origin}/index.html?debug&nokernel`);
+    await up.waitForFunction(() => window.__sv);
+    await up.evaluate(async () => {
+      window.__sv.vaultFolders.useMemory();
+      const p = window.__sv.vault;
+      await p.createInBrowser("Accounts");
+      await p.vault.add("a.txt", new TextEncoder().encode("a"));
+      await p.refresh();
+    });
+    const dlg = "#vault-dlg[open]";
+    // Vault ▸ Users… turns log ins on with the Admin's own account.
+    await up.click("#vault-btn");
+    await up.click('#vault-menu [data-v="users"]');
+    await up.fill(`${dlg} [name="pw"]`, "andrey-pw");
+    await up.fill(`${dlg} [name="pw2"]`, "andrey-pw");
+    await up.click(`${dlg} button[value="ok"]`);
+    await up.waitForSelector(`${dlg} tr[data-acc="Andrey"]`);
+    // Add a Designer with a starting password.
+    await up.fill(`${dlg} [name="nu"]`, "Olga");
+    await up.fill(`${dlg} [name="np"]`, "start-1");
+    await up.click(`${dlg} [data-add]`);
+    await up.waitForSelector(`${dlg} tr[data-acc="Olga"]`);
+    const users = await up.evaluate(() => [...document.querySelectorAll("#vault-dlg tr[data-acc]")].map(r => `${r.dataset.acc}:${[...r.querySelectorAll("[data-role]")].filter(c => c.checked).map(c => c.dataset.role).join("+")}`).join(","));
+    await up.click(`${dlg} button[value="cancel"]`);
+    const stored = await up.evaluate(async () => new TextDecoder().decode(await (await window.__sv.vault.vault.root.dir(".mcadvault")).read("vault.json")));
+    // Opening the vault again asks for a log in; a wrong password says so.
+    await up.evaluate(() => { const p = window.__sv.vault; p.close(); void p.openInBrowser("Accounts"); });
+    await up.waitForSelector(`${dlg} [name="pw"]`);
+    const asked = await up.evaluate(() => !window.__sv.vault.vault);
+    await up.fill(`${dlg} [name="name"]`, "olga");
+    await up.fill(`${dlg} [name="pw"]`, "nope-nope");
+    await up.click(`${dlg} button[value="ok"]`);
+    await up.waitForSelector(`${dlg} .v-err`);
+    const wrong = await up.textContent(`${dlg} .v-err`);
+    await up.fill(`${dlg} [name="pw"]`, "start-1");
+    await up.click(`${dlg} button[value="ok"]`);
+    // A starting password is changed at the first log in.
+    await up.waitForSelector(`${dlg} [name="old"]`);
+    await up.fill(`${dlg} [name="old"]`, "start-1");
+    await up.fill(`${dlg} [name="pw"]`, "olga-pw-1");
+    await up.fill(`${dlg} [name="pw2"]`, "olga-pw-1");
+    await up.click(`${dlg} button[value="ok"]`);
+    await up.waitForFunction(() => window.__sv.vault.vault?.user === "Olga");
+    const who = await up.evaluate(() => { const v = window.__sv.vault.vault; return `${v.user}:${v.rolesOf().join("+")}:${v.mustChange}`; });
+    await up.click("#vault-btn");
+    await up.waitForSelector('#vault-menu [data-v="logout"]', { timeout: 5000 }).catch(() => {});
+    const menu = await up.evaluate(() => [...document.querySelectorAll("#vault-menu [data-v]")].map(b => b.dataset.v).join(","));
+    await up.keyboard.press("Escape");
+    check(users === "Andrey:Designer+Checker+Approver+Admin,Olga:Designer" && !stored.includes("andrey-pw") && !stored.includes("start-1") && stored.includes('"accounts"'),
+      `vault accounts: Users… turns log ins on and adds a user; only salted hashes are stored (${users})`);
+    check(asked && /Wrong user name or password/.test(wrong ?? "") && who === "Olga:Designer:false" && /users,logout/.test(menu),
+      `vault accounts: opening asks for a log in, a starting password is changed at the first one, Log out in the menu (${asked} | ${wrong} | ${who} | ${menu})`);
     await ctx.close();
   }
 

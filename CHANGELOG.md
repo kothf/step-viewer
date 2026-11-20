@@ -5,6 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.605.0] - 2026-11-20
+
+### Added
+- Vault: **user accounts and log in**. Vault ▸ Users… (or ⋯ ▸ Users…) lets an Admin turn log ins on with their own password, then add users with a starting password and their roles (Designer, Checker, Approver, Admin), reset a password, turn an account off or remove it. A vault with accounts asks for a user name and password each time it is opened, and a user picks their own password at the first log in. Everyone can change their password (⋯ ▸ User), and Vault ▸ Log out lets another person log in on the same computer. Roles then come from the accounts, and nothing in the vault can be changed before a log in. Accounts are kept in the vault itself (salted PBKDF2 hashes in vault.json), so a vault in a shared or synced folder needs no server. It is a check inside MöbiusCAD, not encryption: anyone who can read the vault folder can read its files. A vault without accounts works as before.
+
+### Fixed
+- Vault: **Enter in a vault dialog's field presses its OK button** (log in, New folder, rename and the other small forms). Before, Enter pressed Cancel.
+
 ## [1.604.0] - 2026-11-19
 
 ### Fixed
@@ -3883,7 +3891,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.604.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.605.0...HEAD
+[1.605.0]: https://github.com/kothf/step-viewer/compare/v1.604.0...v1.605.0
 [1.604.0]: https://github.com/kothf/step-viewer/compare/v1.603.0...v1.604.0
 [1.603.0]: https://github.com/kothf/step-viewer/compare/v1.602.0...v1.603.0
 [1.602.0]: https://github.com/kothf/step-viewer/compare/v1.601.0...v1.602.0
