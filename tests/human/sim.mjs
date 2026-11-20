@@ -63,6 +63,14 @@ check("SA1-5", !r.error && Math.abs(r.maxU / 0.0465 - 1) < 0.08 && Math.abs(r.ma
   "the bar solves: tip deflection and root stress match beam theory, the reaction equals the load, the stress plot shows on the deformed shape", { err: r.error, maxU: r.maxU, maxVm: r.maxVm, passes: r.passes.map(p => [p.p, p.dofs, p.change]), reaction: r.reactions[0]?.force }, img6);
 void img5;
 
+// SA1-9: the Study tab gives the estimated error with a chart of the passes; the legend can plot where it sits.
+await pg.selectOption('#sim-legend [data-k="kind"]', "err");
+await pg.waitForTimeout(300);
+const er = await pg.evaluate(() => ({ errors: window.__sv.sim.state().errors, kv: document.querySelector('#sim-tree .sim-kv [data-v="error"]')?.textContent ?? "", chart: !!document.querySelector("#sim-tree svg.sim-conv polyline"), plot: window.__sv.sim.state().plot }));
+const img11 = await snap(pg, "error-estimate");
+check("SA1-9", er.errors.length === r.passes.length && (er.errors[1] == null || er.errors[0] > er.errors[1]) && /%/.test(er.kv) && (er.errors.length < 3 || er.chart) && er.plot.kind === "err" && er.plot.range[1] > 0,
+  "the error estimate falls from pass to pass, shows in the Study tab with its chart, and plots on the model", er, img11);
+
 // SA1-6: the legend switches to displacement on the undeformed model.
 await pg.selectOption('#sim-legend [data-k="kind"]', "u");
 await pg.uncheck('#sim-legend [data-k="deformed"]');

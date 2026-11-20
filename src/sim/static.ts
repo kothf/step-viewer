@@ -72,6 +72,8 @@ export interface StaticProblem {
   tol?: number;
   /** Penalty factor (default 3). */
   beta?: number;
+  /** The coefficients of the pass before on the same `grid` (a lower degree), for the error estimate. */
+  prev?: Float64Array;
 }
 
 export interface StaticResult {
@@ -89,9 +91,17 @@ export interface StaticResult {
   reactions: Reaction[];
   /** Sum of the applied loads: force, N, and moment about the origin, N·mm. */
   applied: Reaction;
-  /** Displacement (3 per point, mm) and von Mises stress (MPa) at points; `nrm` = outward normals, so a
-   * point on the surface is read from the cell the material is in. */
-  sample(pos: ArrayLike<number>, nrm?: ArrayLike<number>): { u: Float32Array; vm: Float32Array };
+  /**
+   * With `prev`: per element, the strain energy (N·mm) of the difference from the pass before, which is the
+   * energy-norm error of that pass seen from this one. Zeros without `prev`.
+   */
+  eta: Float64Array;
+  /** The pass before's error for the whole body, % in the energy norm: 100 · √(Σ eta / strain energy); null without `prev`. */
+  prevError: number | null;
+  /** Displacement (3 per point, mm), von Mises stress (MPa) and the local share of `eta` (%, the body's
+   * error were every element like the one the point is in) at points; `nrm` = outward normals, so a point on
+   * the surface is read from the cell the material is in. */
+  sample(pos: ArrayLike<number>, nrm?: ArrayLike<number>): { u: Float32Array; vm: Float32Array; err: Float32Array };
   /** Displacement at a point, mm. */
   disp(x: number, y: number, z: number): [number, number, number];
   /** Stress at a point [xx, yy, zz, xy, yz, zx], MPa. */
@@ -135,7 +145,16 @@ export function solveStatic(pb: StaticProblem): StaticResult {
   const nb = bas.n, m = 3 * nb, nel = grid.elems.length;
   const A = new BlockMatrix(nel, m);
   const f = new Float64Array(nel * m);
-  const gamma = (pb.beta ?? 3) * (lam + 2 * mu) * (p + 1) * (p + 1) / grid.h;
+  const gamma0 = (pb.beta ?? 3) * (lam + 2 * mu) * (p + 1) * (p + 1) / grid.h;
+  // an element that is partly outside the body carries its polynomial on less material, so its tractions are
+  // larger beside its energy: the penalty grows by the share that is missing (cells under 25 % are aggregated)
+  const gam = new Float64Array(nel);
+  for (let e = 0; e < nel; e++) {
+    let fr = 0;
+    for (const c of grid.elems[e].cells) fr = Math.max(fr, grid.cells[c].frac);
+    gam[e] = gamma0 / Math.min(1, Math.max(0.2, fr));
+  }
+  let gamma = gamma0;
   const el = (c: number) => grid.elems[grid.cells[c].el];
 
   // volume terms
@@ -176,7 +195,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     const key = ca * 3 + axis;
     let pts = grid!.faces.get(key);
     if (pts === undefined) {
-      pts = facePoints(axis, A0.hi[axis], A0.lo, A0.hi, 3, pb.inside, pb.depth ?? 3);
+      pts = facePoints(axis, A0.hi[axis], A0.lo, A0.hi, 5, pb.inside, pb.depth ?? 3);
       // a whole face keeps no points: it gets the plain Gauss rule of each pass
       const area = grid!.h * grid!.h;
       grid!.faces.set(key, Math.abs(pts.weight() - area) < 1e-12 * area ? null : pts);
@@ -186,6 +205,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     const nrm = [0, 0, 0];
     nrm[axis] = 1;
     const Kaa = A.block(ea, ea), Kab = A.block(ea, eb), Kba = A.block(eb, ea), Kbb = A.block(eb, eb);
+    gamma = Math.max(gam[ea], gam[eb]);
     for (let k = 0; k < pts.n; k++) {
       const o = 4 * k, w = pts.a[o + 3];
       const x = pts.a[o], y = pts.a[o + 1], z = pts.a[o + 2];
@@ -249,7 +269,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     for (let b = 0; b < nb; b++) for (let c = 0; c < 3; c++) for (let d = 0; d < 3; d++)
       PM[9 * b + 3 * c + d] = P[3 * c] * MA[9 * b + d] + P[3 * c + 1] * MA[9 * b + 3 + d] + P[3 * c + 2] * MA[9 * b + 6 + d];
     const K = A.block(e, e), v = bas.v;
-    const gw = 2 * gamma * w;
+    const gw = 2 * gam[e] * w;
     for (let a = 0; a < nb; a++) for (let b = 0; b < nb; b++) {
       const pen = gw * v[a] * v[b];
       for (let c = 0; c < 3; c++) {
@@ -336,11 +356,47 @@ export function solveStatic(pb: StaticProblem): StaticResult {
           sn[0] += MA[d] * v; sn[1] += MA[3 + d] * v; sn[2] += MA[6 + d] * v;
         }
       }
-      for (let c = 0; c < 3; c++) sn[c] -= 2 * gamma * uu[c];
+      for (let c = 0; c < 3; c++) sn[c] -= 2 * gam[e] * uu[c];
       add(R, px, py, pz, w * (P[0] * sn[0] + P[1] * sn[1] + P[2] * sn[2]), w * (P[3] * sn[0] + P[4] * sn[1] + P[5] * sn[2]), w * (P[6] * sn[0] + P[7] * sn[1] + P[8] * sn[2]));
     });
     return R;
   });
+
+  // error estimate: strain energy of what this pass changed, per element, beside the whole strain energy
+  const eta = new Float64Array(nel), prev = pb.prev && pb.prev.length % (3 * nel) === 0 ? pb.prev : null, pm = prev ? prev.length / nel : 0;
+  let strain = 0;
+  {
+    const G = new Float64Array(9), H = new Float64Array(9);
+    const dens = (g: Float64Array) => {
+      const tr = g[0] + g[4] + g[8];
+      let s = lam * tr * tr;
+      for (let c = 0; c < 3; c++) for (let j = 0; j < 3; j++) { const e2 = 0.5 * (g[c * 3 + j] + g[j * 3 + c]); s += 2 * mu * e2 * e2; }
+      return 0.5 * s;
+    };
+    for (let e = 0; e < nel; e++) {
+      const E = grid.elems[e];
+      for (const ci of E.cells) {
+        const Q = grid.cells[ci].pts;
+        for (let k = 0; k < Q.n; k++) {
+          const o = 4 * k, w = Q.a[o + 3];
+          bas.eval(Q.a[o], Q.a[o + 1], Q.a[o + 2], E.c, E.s);
+          G.fill(0); H.fill(0);
+          for (let a = 0; a < nb; a++) for (let c = 0; c < 3; c++) {
+            const v = x[e * m + 3 * a + c];
+            const dv = prev ? v - (3 * a + c < pm ? prev[e * pm + 3 * a + c] : 0) : 0;
+            for (let j = 0; j < 3; j++) { G[c * 3 + j] += v * bas.g[3 * a + j]; H[c * 3 + j] += dv * bas.g[3 * a + j]; }
+          }
+          strain += w * dens(G);
+          if (prev) eta[e] += w * dens(H);
+        }
+      }
+    }
+  }
+  let etaSum = 0;
+  for (let e = 0; e < nel; e++) etaSum += eta[e];
+  const prevError = !prev ? null : strain > 0 ? 100 * Math.sqrt(etaSum / strain) : 0;
+  const local = new Float32Array(nel);
+  for (let e = 0; e < nel; e++) local[e] = strain > 0 ? 100 * Math.sqrt((eta[e] * nel) / strain) : 0;
 
   const at = (px: number, py: number, pz: number) => {
     const c = grid.cellOf(px, py, pz);
@@ -352,15 +408,16 @@ export function solveStatic(pb: StaticProblem): StaticResult {
   return {
     grid, p, dofs: nel * m, x, energy, iterations,
     ms: { grid: t1 - t0, assemble: t2 - t1, factor: t3 - t2, solve: t4 - t3 },
-    reactions, applied,
+    reactions, applied, eta, prevError,
     sample(pos, nrm) {
-      const n = pos.length / 3, u = new Float32Array(3 * n), vm = new Float32Array(n);
+      const n = pos.length / 3, u = new Float32Array(3 * n), vm = new Float32Array(n), err = new Float32Array(n);
       const eps = 1e-6 * grid.h, G = new Float64Array(9);
       for (let i = 0; i < n; i++) {
         let px = pos[3 * i], py = pos[3 * i + 1], pz = pos[3 * i + 2];
         if (nrm) { px -= eps * nrm[3 * i]; py -= eps * nrm[3 * i + 1]; pz -= eps * nrm[3 * i + 2]; }
         const e = at(px, py, pz);
         if (e < 0) continue;
+        err[i] = local[e];
         G.fill(0);
         let ux = 0, uy = 0, uz = 0;
         for (let a = 0; a < nb; a++) {
@@ -372,7 +429,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
         const tr = G[0] + G[4] + G[8];
         vm[i] = vonMises([lam * tr + 2 * mu * G[0], lam * tr + 2 * mu * G[4], lam * tr + 2 * mu * G[8], mu * (G[1] + G[3]), mu * (G[5] + G[7]), mu * (G[6] + G[2])]);
       }
-      return { u, vm };
+      return { u, vm, err };
     },
     disp(px, py, pz) {
       const e = at(px, py, pz);

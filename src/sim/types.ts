@@ -54,7 +54,7 @@ export interface Study {
   plot?: { kind: PlotKind; scale?: number; deformed?: boolean };
 }
 
-export type PlotKind = "vm" | "u" | "ux" | "uy" | "uz" | "sf";
+export type PlotKind = "vm" | "u" | "ux" | "uy" | "uz" | "sf" | "err";
 
 export const DEFAULT_SETTINGS: StudySettings = { passes: 3, energyTol: 2 };
 export const GRAVITY = 9806.65;

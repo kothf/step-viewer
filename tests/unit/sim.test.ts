@@ -5,7 +5,10 @@ import assert from "node:assert/strict";
 import { Basis, basisSize, legendre } from "../../src/sim/basis";
 import { gauss, volumePoints, gridTrianglePoints, fitPoints } from "../../src/sim/quad";
 import { solveStatic, vonMises } from "../../src/sim/static";
+import type { Grid } from "../../src/sim/grid";
+import { passError } from "../../src/sim/run";
 import { meshArea, plotTarget, refineMesh } from "../../src/sim/plotmesh";
+import { MeshBody, insideOf } from "../../src/sim/body";
 
 /** Two triangles of the axis-aligned rectangle x[axis] = at, outward normal along ±axis. */
 function rectFace(axis: number, at: number, lo: number[], hi: number[], out: boolean): number[] {
@@ -134,6 +137,47 @@ test("strain energy grows with the degree (the passes converge from below)", () 
     assert.ok(r.energy > last, `p ${p}: ${r.energy} <= ${last}`);
     last = r.energy;
   }
+});
+
+test("error estimate: a pass's error is seen from the next one, falls with the degree, peaks at the clamp", () => {
+  const run = (p: number, grid?: Grid, prev?: Float64Array) => solveStatic({
+    lo, hi, inside: inBox, h: 20, p, grid, prev, mat: { E, nu: 0.3 },
+    fixed: [{ tris: rectFace(0, 0, lo, hi, false) }],
+    loads: [{ tris: rectFace(0, L, lo, hi, true), force: [0, 0, -F] }],
+  });
+  const r2 = run(2), r3 = run(3, r2.grid, r2.x), r4 = run(4, r3.grid, r3.x), r5 = run(5, r4.grid, r4.x);
+  assert.equal(r2.prevError, null);
+  const ref = r5.energy, real = (r: { energy: number }) => 100 * Math.sqrt(Math.max(0, ref - r.energy) / ref);
+  const est = [r3.prevError!, r4.prevError!, r5.prevError!];
+  // each estimate is the energy error of the pass before it, within a third; they fall
+  [r2, r3].forEach((r, i) => assert.ok(Math.abs(est[i] / real(r) - 1) < 0.35, `p ${r.p}: estimate ${est[i]} %, energy error ${real(r)} %`));
+  assert.ok(est[0] > est[1] && est[1] > est[2], `${est}`);
+  // the extrapolated error of the third pass is near what the fourth then finds
+  const guess = passError(est.slice(0, 2))!;
+  assert.ok(guess > 0.3 * est[2] && guess < 3 * est[2], `guess ${guess} vs ${est[2]}`);
+  assert.equal(passError([5]), null);
+  // the element that changed most touches the clamped end
+  let worst = 0;
+  for (let e = 1; e < r3.eta.length; e++) if (r3.eta[e] > r3.eta[worst]) worst = e;
+  assert.ok(r3.grid.elems[worst].c[0] < 20, `worst element at x ${r3.grid.elems[worst].c[0]}`);
+  const at = r3.sample([1, 0, 0, L - 1, 0, 0]);
+  assert.ok(at.err[0] > at.err[1] && at.err[1] >= 0);
+});
+
+test("half-cut cells: large uncut pieces get enough Gauss points, so p = 4 stays positive definite", () => {
+  // 20 × 19.998 × 20 on 6.666 mm cells centred on it: the end cells along x and z are cut in half, almost on
+  // their mid-planes, so each keeps whole octants
+  const l = [0, -9.999, 0], h = [20, 9.999, 20];
+  const inside = insideOf(new MeshBody(boxBody(l, h).tris));
+  const run = (p: number, grid?: Grid, prev?: Float64Array) => solveStatic({
+    lo: l, hi: h, inside, h: 6.666, p, grid, prev, mat: { E, nu: 0.3 }, solver: "direct",
+    fixed: [{ tris: rectFace(0, 0, l, h, false) }],
+    loads: [{ tris: rectFace(2, 20, l, h, true), force: [0, 0, -F] }],
+  });
+  const r2 = run(2), r3 = run(3, r2.grid, r2.x), r4 = run(4, r3.grid, r3.x);
+  assert.ok(r2.grid.cells.some(c => c.frac > 0.45 && c.frac < 0.6));
+  assert.ok(r2.energy < r3.energy && r3.energy < r4.energy, `${r2.energy} ${r3.energy} ${r4.energy}`);
+  assert.ok(r3.prevError! > r4.prevError!, `${r3.prevError} ${r4.prevError}`);
 });
 
 test("Lamé thick cylinder: pressure, sliding supports and curved cut cells", () => {

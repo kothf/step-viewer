@@ -1727,9 +1727,15 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .sim-kv dd { margin: 0; font-family: var(--mono); text-align: right; }
 .sim-kv dd.sim-low { color: var(--danger); font-weight: 600; }
 .sim-passes { width: 100%; border-collapse: collapse; font-size: 11px; }
-.sim-passes th, .sim-passes td { padding: 2px 4px; text-align: right; border-bottom: 1px solid var(--line); font-family: var(--mono); }
-.sim-passes th { color: var(--muted); font: 500 11px inherit; }
+.sim-passes th, .sim-passes td { padding: 2px 3px; white-space: nowrap; text-align: right; border-bottom: 1px solid var(--line); font-family: var(--mono); }
+.sim-passes th { color: var(--muted); font: 500 11px inherit; white-space: normal; }
 .sim-faces { cursor: default; }
+.sim-conv { display: block; width: 100%; max-width: 240px; margin: 6px 0 2px; }
+.sim-conv .g { stroke: var(--line); stroke-width: 1; }
+.sim-conv .a { fill: var(--muted); font: 9px var(--mono); }
+.sim-conv polyline { fill: none; stroke: var(--accent); stroke-width: 1.5; }
+.sim-conv circle { fill: var(--accent); }
+.sim-conv circle.x { fill: var(--panel); stroke: var(--accent); stroke-width: 1.5; }
 #sim-pm .btn.small { margin-top: 4px; }
 .sim-legend:has(~ #ana-panel:not([hidden])) { bottom: 190px; }
 .sim-probebar { display: flex; gap: 6px; margin-top: 6px; }

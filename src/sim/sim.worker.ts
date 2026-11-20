@@ -14,7 +14,7 @@ const post = (m: SimReply, transfer: Transferable[] = []) => (self as DedicatedW
 self.onmessage = (e: MessageEvent<SimRequest>) => {
   const r = e.data;
   try {
-    for (const pass of runStatic(r.input)) post({ id: r.id, pass }, [pass.u.buffer, pass.vm.buffer]);
+    for (const pass of runStatic(r.input)) post({ id: r.id, pass }, [pass.u.buffer, pass.vm.buffer, pass.err.buffer]);
     post({ id: r.id, done: true });
   } catch (err) {
     post({ id: r.id, error: err instanceof Error ? err.message : String(err) });
