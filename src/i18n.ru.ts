@@ -5451,4 +5451,6 @@ export const RU: Record<string, string> = {
   "Displacement Z": "Перемещение Z",
   "Analysis results": "Результаты расчёта",
   "Simulation commands": "Команды расчёта",
+  "Safety factor": "Запас прочности",
+  "Yield strength divided by the von Mises stress; below 1 the material yields.": "Предел текучести, делённый на напряжение по Мизесу; ниже 1 материал течёт.",
 };

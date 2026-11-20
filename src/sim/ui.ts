@@ -47,7 +47,9 @@ const TIP: Record<string, string> = {
   moment: "Moment on faces",
   gravity: "Gravity on the whole part",
 };
-const PLOTS: [PlotKind, string][] = [["vm", "von Mises stress"], ["u", "Displacement"], ["ux", "Displacement X"], ["uy", "Displacement Y"], ["uz", "Displacement Z"]];
+const PLOTS: [PlotKind, string][] = [["vm", "von Mises stress"], ["u", "Displacement"], ["ux", "Displacement X"], ["uy", "Displacement Y"], ["uz", "Displacement Z"], ["sf", "Safety factor"]];
+/** Safety factors above this are drawn as this (lightly loaded regions would hide the rest of the scale). */
+const SF_TOP = 10;
 const SUPPORT_COLOR = 0x2f9e44, LOAD_COLOR = 0xd6336c;
 /** Blue, cyan, green, yellow, red. */
 const RAMP: [number, number, number][] = [[0.11, 0.3, 0.85], [0.1, 0.75, 0.85], [0.25, 0.75, 0.3], [0.95, 0.85, 0.2], [0.88, 0.2, 0.15]];
@@ -449,6 +451,11 @@ export class SimController {
 
   private values(r: PassResult, kind: PlotKind): Float32Array {
     if (kind === "vm") return r.vm;
+    if (kind === "sf") {
+      const sy = this.host.doc()?.material?.sy ?? 0, out = new Float32Array(r.vm.length);
+      for (let i = 0; i < out.length; i++) out[i] = Math.min(SF_TOP, sy / Math.max(r.vm[i], 1e-9));
+      return out;
+    }
     const n = r.vm.length, out = new Float32Array(n);
     for (let i = 0; i < n; i++) {
       const x = r.u[3 * i], y = r.u[3 * i + 1], z = r.u[3 * i + 2];
@@ -483,13 +490,16 @@ export class SimController {
     if (!part || !res || !r || !this.plot.on || this.stale()) return;
     const pm = res.mesh, n = pm.pos.length / 3;
     if (r.vm.length !== n) return;
-    const val = this.values(r, this.plot.kind);
+    // the safety factor needs a yield strength: without one the plot falls back to stress
+    if (this.plot.kind === "sf" && !this.host.doc()?.material?.sy) this.plot.kind = "vm";
+    const val = this.values(r, this.plot.kind), sf = this.plot.kind === "sf";
     let lo = Infinity, hi = -Infinity;
     for (let i = 0; i < n; i++) { if (val[i] < lo) lo = val[i]; if (val[i] > hi) hi = val[i]; }
     if (this.plot.kind === "vm" || this.plot.kind === "u") lo = 0;
     this.range = [lo, hi];
     const colors = new Float32Array(3 * n), span = hi - lo || 1;
-    for (let i = 0; i < n; i++) ramp((val[i] - lo) / span, colors, 3 * i);
+    // a low safety factor is the red end
+    for (let i = 0; i < n; i++) ramp(sf ? 1 - (val[i] - lo) / span : (val[i] - lo) / span, colors, 3 * i);
     const colorMat = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0, roughness: 0.75, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
     colorMat.clippingPlanes = this.host.viewer.clipPlanes;
     const under = new THREE.MeshBasicMaterial({ color: 0x8a8f98, transparent: true, opacity: 0.12, depthWrite: false, side: THREE.DoubleSide });
@@ -650,10 +660,14 @@ export class SimController {
     const show = !!r && !!this.saved && !!this.host.doc();
     el.hidden = !show;
     if (!show) { el.innerHTML = ""; return; }
-    const unit = this.plot.kind === "vm" ? "MPa" : units.current, f = this.plot.kind === "vm" ? 1 : UNITS[units.current].f;
-    el.innerHTML = `<div class="ana-head"><select data-k="kind" aria-label="${esc(t("Result"))}">${PLOTS.map(([k, l]) => `<option value="${k}"${k === this.plot.kind ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select>`
+    const k = this.plot.kind, sf = k === "sf";
+    const unit = k === "vm" ? "MPa" : sf ? "" : units.current, f = k === "vm" || sf ? 1 : UNITS[units.current].f;
+    const plots = PLOTS.filter(([id]) => id !== "sf" || !!this.host.doc()?.material?.sy);
+    const top = sf && this.range[1] >= SF_TOP ? `${SF_TOP}+` : sig(this.range[1] * f);
+    el.innerHTML = `<div class="ana-head"><select data-k="kind" aria-label="${esc(t("Result"))}">${plots.map(([id, l]) => `<option value="${id}"${id === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select>`
       + `<button class="sim-ib" data-a="close" title="${esc(t("Hide the plot"))}" aria-label="${esc(t("Hide the plot"))}">×</button></div>`
-      + `<div class="ana-ramp" style="background:${RAMP_CSS}"></div><div class="ana-scale"><span data-v="min">${sig(this.range[0] * f)}</span><span>${esc(unit)}</span><span data-v="max">${sig(this.range[1] * f)}</span></div>`
+      + `<div class="ana-ramp" style="background:${RAMP_CSS}${sf ? ";transform:scaleX(-1)" : ""}"></div><div class="ana-scale"><span data-v="min">${sig(this.range[0] * f)}</span><span>${esc(unit)}</span><span data-v="max">${top}</span></div>`
+      + (sf ? `<p class="ana-note">${esc(t("Yield strength divided by the von Mises stress; below 1 the material yields."))}</p>` : "")
       + `<label class="chk"><input type="checkbox" data-k="deformed"${this.plot.deformed ? " checked" : ""} />${esc(t("Deformed shape"))}</label>`
       + (this.plot.deformed ? `<label class="ana-row"><span>${esc(t("Scale"))}</span><input type="text" inputmode="decimal" data-k="scale" value="${this.plot.scale > 0 ? trim(this.plot.scale) : ""}" placeholder="${esc(t("auto"))} ×${sig(this.usedScale)}" aria-label="${esc(t("Deformation scale"))}" /></label>` : "");
   }
