@@ -318,7 +318,7 @@ export class SimController {
       kind: this.study()?.kind ?? null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
       animating: !!this.anim, frames: this.anim?.frames ?? 0, gifs: this.gifs, gif: this.lastGif, near: this.nearModes(this.res?.passes.at(-1)), bodies: this.res?.parts ?? 1, bodyMats: this.res?.bodyMats?.map(b => b.name) ?? null, speed: this.speed, cumul: this.cumul, more: !!this.res?.passes.at(-1)?.more, range: this.study()?.settings.range ?? null,
       caps: { n: this.caps.length, ...this.capInfo },
-      asm: this.host.asm(), comps: this.res?.comps?.map(c => c.name) ?? null, contacts: (last?.contacts ?? []).map(c => ({ a: this.res?.comps?.[c.a]?.name ?? "", b: this.res?.comps?.[c.b]?.name ?? "", area: c.area, type: c.type })), links: this.study()?.links ?? [],
+      asm: this.host.asm(), comps: this.res?.comps?.map(c => c.name) ?? null, contacts: (last?.contacts ?? []).map(c => ({ a: this.res?.comps?.[c.a]?.name ?? "", b: this.res?.comps?.[c.b]?.name ?? "", area: c.area, type: c.type, force: c.force ?? null, moment: c.moment ?? null, at: c.at ?? null })), links: this.study()?.links ?? [],
       relief: !!this.study()?.settings.relief, accel: last?.accel ? { a: last.accel.a, alpha: last.accel.alpha } : null,
       cases: (this.study()?.cases ?? []).map(c => ({ name: c.name, off: c.off })), caseSel: this.caseSel, enveloped: this.enveloped,
       caseResults: (this.res?.cases ?? []).map(c => ({ name: this.caseName(c), maxVm: c.passes.at(-1)?.maxVm ?? null, maxU: c.passes.at(-1)?.maxU ?? null, passes: c.passes.length })),
@@ -688,7 +688,8 @@ export class SimController {
     const key = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
     const typed = new Map((st.links ?? []).map(l => [key(l.a, l.b), l.type]));
     const names = new Map(comps.map(c => [c.key, c.name]));
-    const rows: { a: string; b: string; area: number | null }[] = found.map(c => ({ a: comps[c.a]?.key ?? "", b: comps[c.b]?.key ?? "", area: c.area })).filter(r => r.a && r.b);
+    const rows: { a: string; b: string; area: number | null; force?: number[]; moment?: number[] }[] = found.map(c => ({ a: comps[c.a]?.key ?? "", b: comps[c.b]?.key ?? "", area: c.area, force: c.force, moment: c.moment })).filter(r => r.a && r.b);
+    const mag = (v: number[]) => Math.hypot(v[0], v[1], v[2]), forces = rows.some(r => r.force);
     const seen = new Set(rows.map(r => key(r.a, r.b)));
     for (const l of st.links ?? []) if (!seen.has(key(l.a, l.b))) rows.push({ a: l.a, b: l.b, area: null });
     const f = UNITS[units.current].f;
@@ -697,12 +698,14 @@ export class SimController {
       + `<p class="sim-note muted">${esc(t("Every component is analysed with its part's material. Components that touch, or come within the gap, are joined."))}</p>`
       + `<label class="sim-kv2">${esc(t("Gap tolerance"))} <input type="number" data-k="gap" min="0" step="0.05" value="${sig((st.settings.gap ?? DEFAULT_GAP) * f)}" aria-label="${esc(t("Gap tolerance"))}" /> ${esc(units.current)}</label>`;
     if (rows.length) {
-      html += `<table class="sim-contacts"><thead><tr><th>${esc(t("Components"))}</th><th>${esc(t("Area"))}, ${esc(units.current)}²</th><th>${esc(t("Type"))}</th></tr></thead><tbody>`
+      html += `<table class="sim-contacts"><thead><tr><th>${esc(t("Components"))}</th><th>${esc(t("Area"))}, ${esc(units.current)}²</th>${forces ? `<th>${esc(t("Force"))}, N<br />${esc(t("Moment"))}, N·m</th>` : ""}<th>${esc(t("Type"))}</th></tr></thead><tbody>`
         + rows.map(r => {
           const cur = typed.get(key(r.a, r.b)) ?? "bonded";
           return `<tr data-link="${esc(key(r.a, r.b))}"><td translate="no">${esc(names.get(r.a) ?? r.a)} – ${esc(names.get(r.b) ?? r.b)}</td><td>${r.area == null ? "" : sig(r.area * f * f)}</td>`
+            + (forces ? `<td><span data-v="cforce" title="${r.force ? `${r.force.map(x => sig(x)).join(", ")} N` : ""}">${r.force ? sig(mag(r.force)) : ""}</span><br /><span data-v="cmoment" title="${r.moment ? `${r.moment.map(x => sig(x * 1e-3)).join(", ")} N·m` : ""}">${r.moment ? sig(mag(r.moment) * 1e-3) : ""}</span></td>` : "")
             + `<td><select data-k="link" data-a="${esc(r.a)}" data-b="${esc(r.b)}" aria-label="${esc(t("Type"))}">${opt("bonded", "Bonded", cur)}${opt("sliding", "Sliding", cur)}${opt("none", "Not joined", cur)}</select></td></tr>`;
         }).join("") + `</tbody></table>`;
+      if (forces) html += `<p class="sim-note muted" data-v="cforcenote">${esc(t("Force: what the first component passes to the second. Moment: about the centre of the contact."))}</p>`;
     } else html += `<p class="sim-note muted" data-v="nolinks">${esc(res ? t("No components touch.") : t("The pairs found touching are listed here after a solve."))}</p>`;
     return html + `</div>`;
   }
@@ -1460,7 +1463,9 @@ export class SimController {
       const cs = res.passes.at(-1)?.contacts ?? [];
       if (cs.length) {
         blocks.push({ kind: "h", text: t("Connections") });
-        blocks.push({ kind: "table", widths: [6, 2, 2], rows: [[t("Components"), `${t("Area")}, mm²`, t("Type")], ...cs.map(c => [`${res.comps![c.a]?.name ?? ""} – ${res.comps![c.b]?.name ?? ""}`, sig(c.area), t(c.type === "sliding" ? "Sliding" : "Bonded")])] });
+        const v3 = (v: number[] | undefined, k: number) => (v ? `${sig(Math.hypot(v[0], v[1], v[2]) * k)} (${v.map(x => sig(x * k)).join(", ")})` : "–");
+        blocks.push({ kind: "table", widths: [4, 1.5, 3, 3, 1.5], rows: [[t("Components"), `${t("Area")}, mm²`, `${t("Force")}, N`, `${t("Moment")}, N·m`, t("Type")], ...cs.map(c => [`${res.comps![c.a]?.name ?? ""} – ${res.comps![c.b]?.name ?? ""}`, sig(c.area), v3(c.force, 1), v3(c.moment, 1e-3), t(c.type === "sliding" ? "Sliding" : "Bonded")])] });
+        blocks.push({ kind: "p", text: t("Force: what the first component passes to the second. Moment: about the centre of the contact.") });
       }
       return;
     }

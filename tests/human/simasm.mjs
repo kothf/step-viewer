@@ -93,6 +93,10 @@ await pg.waitForTimeout(400);
 await pg.click('#sim-tools [data-s="solve"]');
 await solved();
 const r3 = await sim();
+const cf = await pg.evaluate(() => ({ force: document.querySelector('#sim-tree .sim-contacts [data-v="cforce"]')?.textContent ?? "", moment: document.querySelector('#sim-tree .sim-contacts [data-v="cmoment"]')?.textContent ?? "", note: document.querySelector('#sim-tree [data-v="cforcenote"]')?.textContent ?? "" }));
+const loadN = Math.hypot(...(r3.applied?.force ?? [0, 0, 0])), passN = Math.hypot(...(r3.contacts[0]?.force ?? [0, 0, 0]));
+check("SAS-6", loadN > 0 && Math.abs(passN / loadN - 1) < 0.05 && Math.abs(parseFloat(cf.force) / loadN - 1) < 0.05 && cf.moment !== "" && cf.note.length > 10,
+  "the connection's row shows the force it carries, equal to the load, and its moment", { loadN, passN, cf }, await snap(pg, "connection-force"));
 check("SAS-5", !r3.error && r3.links.length === 0 && r3.contacts.length === 1 && Math.abs(r3.maxU / r.maxU - 1) < 1e-6, "bonded again, the study solves as before", { error: r3.error, maxU: [r.maxU, r3.maxU] }, await snap(pg, "bonded-again"));
 
 await finish(browser, pg);

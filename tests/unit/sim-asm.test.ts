@@ -94,3 +94,35 @@ test("AT-SA3-4: a block sliding on a plate passes on only the load across the su
   const r3 = [...runStatic(input(m, st2, [30, 30, 30], [0, 0, 1], 0.1, undefined, 2))].at(-1)!;
   assert.ok(Math.abs(r3.reactions[0].force[0] / 100 - 1) < 0.01, `bonded reaction ${r3.reactions[0].force}`);
 });
+
+test("FR-RES-008: a bonded connection carries the load across: force and moment about its centre", () => {
+  // a cantilever in two components joined at x = J: the joint passes on the tip load and its moment
+  const L = 100, B = 20, T = 10, F = 300, J = 40;
+  const m = boxes([{ id: "a", lo: [0, 0, 0], hi: [J, B, T] }, { id: "b", lo: [J, 0, 0], hi: [L, B, T] }]);
+  const st = newStudy([]);
+  st.supports.push({ id: "s1", type: "fixed", faces: [{ name: "a@x0" }] });
+  st.loads.push({ id: "l1", type: "force", faces: [{ name: "b@x1" }], comp: [{ v: 0 }, { v: 0 }, { v: -F }] });
+  const r = [...runStatic(input(m, st, [L, B / 2, T / 2], [1, 0, 0]))].at(-1)!;
+  const c = r.contacts![0];
+  assert.ok(c.force && c.moment && c.at, "force, moment and centre");
+  // b pulls on a with the load, so a passes the opposite to b
+  assert.ok(Math.abs(c.force![2] / F - 1) < 0.02, `shear ${c.force}`);
+  assert.ok(Math.abs(c.force![0]) < 0.02 * F && Math.abs(c.force![1]) < 0.02 * F, `other parts ${c.force}`);
+  assert.ok(Math.abs(c.at![0] - J) < 1e-6 && Math.abs(c.at![1] - B / 2) < 0.01 && Math.abs(c.at![2] - T / 2) < 0.01, `centre ${c.at}`);
+  // moment of what a does to b about the joint: balances the tip load's (L − J) × (−F z) = +F (L − J) about y
+  assert.ok(Math.abs(c.moment![1] / (-F * (L - J)) - 1) < 0.03, `moment ${c.moment}`);
+});
+
+test("FR-RES-008: a sliding connection passes on only the force square to it", () => {
+  const B = 20, T = 10, F = 400;
+  const m = boxes([{ id: "a", lo: [0, 0, 0], hi: [30, B, T] }, { id: "b", lo: [0, 0, T], hi: [30, B, 2 * T] }]);
+  const st = newStudy([]);
+  st.supports.push({ id: "s1", type: "fixed", faces: [{ name: "a@z0" }] }, { id: "s2", type: "sliding", faces: [{ name: "b@x0" }] }, { id: "s3", type: "sliding", faces: [{ name: "b@y0" }] });
+  st.loads.push({ id: "l1", type: "force", faces: [{ name: "b@z1" }], comp: [{ v: 0 }, { v: 0 }, { v: -F }] });
+  const r = [...runStatic(input(m, st, [15, B / 2, 2 * T], [0, 0, 1], 0.1, [{ a: 0, b: 1, type: "sliding" }]))].at(-1)!;
+  const c = r.contacts![0];
+  assert.equal(c.type, "sliding");
+  // a holds b up: it passes +F along z
+  assert.ok(Math.abs(c.force![2] / F - 1) < 0.02, `normal ${c.force}`);
+  assert.ok(Math.abs(c.force![0]) < 1e-6 * F && Math.abs(c.force![1]) < 1e-6 * F, `tangential ${c.force}`);
+});
