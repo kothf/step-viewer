@@ -1964,15 +1964,15 @@ export class VaultPanel {
   // ---------- dialogs ----------
 
   private dialog(title: string, html: string, buttons: [string, string][]) {
-    let d = document.getElementById("vault-dlg") as HTMLDialogElement | null;
-    if (!d) {
-      d = document.createElement("dialog");
-      d.id = "vault-dlg";
-      d.className = "modal v-dlg";
-      d.setAttribute("aria-labelledby", "vault-dlg-title");
-      document.body.appendChild(d);
-    }
-    if (d.open) d.close();
+    // A new element every time: a dialog's close event comes a task after it closes, so on a reused element the
+    // event of the dialog before would answer the new one at once (it then stayed open with nothing listening).
+    const old = document.getElementById("vault-dlg") as HTMLDialogElement | null;
+    if (old) { if (old.open) old.close(); old.remove(); }
+    const d = document.createElement("dialog");
+    d.id = "vault-dlg";
+    d.className = "modal v-dlg";
+    d.setAttribute("aria-labelledby", "vault-dlg-title");
+    document.body.appendChild(d);
     d.innerHTML = `<form method="dialog"><h3 id="vault-dlg-title" translate="no">${esc(title)}</h3><div class="v-body">${html}</div><div class="row end">${buttons.map(([l, v], i) => `<button class="btn${i === buttons.length - 1 && buttons.length > 1 ? " primary" : ""}" value="${v}"${v === "cancel" ? " formnovalidate" : ""}>${esc(l)}</button>`).join("")}</div></form>`;
     d.returnValue = "";
     const opener = document.activeElement as HTMLElement | null;

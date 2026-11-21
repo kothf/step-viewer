@@ -13,6 +13,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - A click on a row shows that component alone: the others fade to ghosts, the colour scale and the Max / Min labels are the component's own. The same click again, or **Show all**, brings the whole assembly back.
 - The report has the same table.
 
+### Fixed
+
+- Vault dialogs: a dialog opened right after another one closed could be answered by the closing of the first, and then stayed open doing nothing (seen at the log in after closing Users…).
+
 ## [1.633.0] - 2026-11-21
 
 ### Added
