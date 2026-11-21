@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.631.0] - 2026-11-21
+
+### Added
+
+- Structural analysis of assemblies: **connection forces**. After a static solve each row of the Connections table shows the force the first component passes to the second over the contact and its moment about the centre of the contact (hover a value for its X, Y, Z parts). The report lists them too.
+
 ## [1.630.0] - 2026-11-21
 
 ### Added
@@ -4071,7 +4077,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.630.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.631.0...HEAD
+[1.631.0]: https://github.com/kothf/step-viewer/compare/v1.630.0...v1.631.0
 [1.630.0]: https://github.com/kothf/step-viewer/compare/v1.629.0...v1.630.0
 [1.629.0]: https://github.com/kothf/step-viewer/compare/v1.628.0...v1.629.0
 [1.628.0]: https://github.com/kothf/step-viewer/compare/v1.627.0...v1.628.0

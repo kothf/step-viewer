@@ -163,8 +163,14 @@ export interface Mode {
   x: Float64Array;
 }
 
-/** Two domains joined where they touch: `force` = what a passes to b over the patch, N (after the solve). */
-export interface Contact { a: number; b: number; area: number; type: "bonded" | "sliding"; force?: [number, number, number] }
+/**
+ * Two domains joined where they touch. After a static solve: `force` = what a passes to b over the patch, N,
+ * `moment` = its moment about the patch's centre `at`, N·mm (FR-RES-008).
+ */
+export interface Contact {
+  a: number; b: number; area: number; type: "bonded" | "sliding";
+  force?: [number, number, number]; moment?: [number, number, number]; at?: [number, number, number];
+}
 
 export interface StaticResult {
   grid: Grid;
@@ -373,6 +379,8 @@ export function solveStatic(pb: StaticProblem): StaticResult {
   // domains are joined where one's surface lies on another's: the same terms as between elements, each side
   // with its own material. A point of A's surface is on B when a step along the normal ends inside B.
   const contacts: Contact[] = [];
+  // the joining points, kept for the connection forces: contact, elements a and b, x, y, z, w, normal, γ
+  const joins: number[] = [];
   const sets: RigidSet[] = [];
   const rc = [(pb.lo[0] + pb.hi[0]) / 2, (pb.lo[1] + pb.hi[1]) / 2, (pb.lo[2] + pb.hi[2]) / 2];
   const rL = Math.hypot(pb.hi[0] - pb.lo[0], pb.hi[1] - pb.lo[1], pb.hi[2] - pb.lo[2]) / 2 || 1;
@@ -434,6 +442,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
         }
         const na = nbs[ea], nc = nbs[eb];
         gamma = Math.max(gam[ea], gam[eb]);
+        joins.push(contacts.indexOf(f.c), ea, eb, x, y, z, w, nrm[0], nrm[1], nrm[2], gamma);
         pair(A.block(ea, ea), bas.v, MA, 1, na, bas.v, MA, 1, na, w);
         pair(A.block(ea, eb), bas.v, MA, 1, na, bas2.v, MB, -1, nc, w);
         pair(A.block(eb, ea), bas2.v, MB, -1, nc, bas.v, MA, 1, na, w);
@@ -920,6 +929,48 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     });
     return R;
   });
+
+  // connection forces: the flux the joining terms carry, ½(σ_a + σ_b) n − γ (u_a − u_b), is what b does to a
+  if (!modal && joins.length) {
+    const tot = contacts.map(() => new Float64Array(10));
+    const ta = [0, 0, 0], ua = [0, 0, 0];
+    for (let o = 0; o < joins.length; o += 11) {
+      const ci = joins[o], ea = joins[o + 1], eb = joins[o + 2], px = joins[o + 3], py = joins[o + 4], pz = joins[o + 5], w = joins[o + 6];
+      const nrm = [joins[o + 7], joins[o + 8], joins[o + 9]], g = joins[o + 10];
+      ta[0] = ta[1] = ta[2] = ua[0] = ua[1] = ua[2] = 0;
+      for (const [e, sg] of [[ea, 1], [eb, -1]]) {
+        const E = grid.elems[e];
+        bas.eval(px, py, pz, E.c, E.s);
+        setMat(e);
+        for (let b = 0; b < nb; b++) {
+          traction(bas.g, 3 * b, nrm, lam, mu, MA, 0);
+          for (let d = 0; d < 3; d++) {
+            const v = x[e * m + 3 * b + d];
+            ua[d] += sg * bas.v[b] * v;
+            ta[0] += 0.5 * MA[d] * v; ta[1] += 0.5 * MA[3 + d] * v; ta[2] += 0.5 * MA[6 + d] * v;
+          }
+        }
+      }
+      for (let c = 0; c < 3; c++) ta[c] -= g * ua[c];
+      if (contacts[ci].type === "sliding") {
+        const tn = ta[0] * nrm[0] + ta[1] * nrm[1] + ta[2] * nrm[2];
+        for (let c = 0; c < 3; c++) ta[c] = tn * nrm[c];
+      }
+      // a passes to b the opposite
+      const T = tot[ci], fx = -w * ta[0], fy = -w * ta[1], fz = -w * ta[2];
+      T[0] += fx; T[1] += fy; T[2] += fz;
+      T[3] += py * fz - pz * fy; T[4] += pz * fx - px * fz; T[5] += px * fy - py * fx;
+      T[6] += w * px; T[7] += w * py; T[8] += w * pz; T[9] += w;
+    }
+    contacts.forEach((c, i) => {
+      const T = tot[i];
+      if (!(T[9] > 0)) return;
+      const cx = T[6] / T[9], cy = T[7] / T[9], cz = T[8] / T[9];
+      c.at = [cx, cy, cz];
+      c.force = [T[0], T[1], T[2]];
+      c.moment = [T[3] - (cy * T[2] - cz * T[1]), T[4] - (cz * T[0] - cx * T[2]), T[5] - (cx * T[1] - cy * T[0])];
+    });
+  }
 
   // error estimate: strain energy of what this pass changed, per element, beside the whole strain energy
   const eta = new Float64Array(nel), prev = pb.prev && pb.prev.length % (3 * nel) === 0 ? pb.prev : null, pm = prev ? prev.length / nel : 0;

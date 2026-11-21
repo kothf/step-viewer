@@ -16917,7 +16917,7 @@ try {
     await mp.click('#sim-tools [data-s="solve"]');
     await solved();
     const a1 = await sim();
-    const asTree = await mp.evaluate(() => ({ rows: [...document.querySelectorAll("#sim-tree .sim-contacts tbody tr")].map(tr => tr.textContent), wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth }));
+    const asTree = await mp.evaluate(() => ({ rows: [...document.querySelectorAll("#sim-tree .sim-contacts tbody tr")].map(tr => tr.textContent), force: parseFloat(document.querySelector("#sim-tree .sim-contacts [data-v=cforce]")?.textContent ?? ""), wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth }));
     await mp.click("#lang-btn");
     const asRu = await mp.evaluate(() => [...document.querySelectorAll("#tab-sim .sim-links *")].filter(e => !e.children.length && !e.closest("[translate=no]")).map(e => e.textContent.trim()).filter(x => /[A-Za-z]{4}/.test(x)));
     await mp.click("#lang-btn");
@@ -16935,7 +16935,7 @@ try {
     const a4 = await sim();
     // a cantilever 200.05 long, 500 N spread over the top of the outer half: tip deflection of the order F a² (3 L − a) / 6 E I
     check(asTab.tab && !asTab.mat && asPick === "1 face" && asSet && /@/.test(asSet.sup[0][0]) && /^c2@/.test(asSet.load[0][0]) && Number(asSet.gap) > 0
-      && a1.asm && !a1.error && a1.contacts.length === 1 && Math.abs(a1.contacts[0].area / 400 - 1) < 0.02 && a1.contacts[0].type === "bonded" && a1.comps.length === 2 && asTree.rows.length === 1 && asTree.wide <= 0 && a1.plot.shown
+      && a1.asm && !a1.error && a1.contacts.length === 1 && Math.abs(a1.contacts[0].area / 400 - 1) < 0.02 && a1.contacts[0].type === "bonded" && a1.contacts[0].force && Math.abs(Math.hypot(...a1.contacts[0].force) / 500 - 1) < 0.05 && asTree.force && Math.abs(asTree.force / 500 - 1) < 0.05 && a1.comps.length === 2 && asTree.rows.length === 1 && asTree.wide <= 0 && a1.plot.shown
       && a1.maxU > 0.2 && a1.maxU < 0.6 && asRu.length === 0
       && a2.stale && a2.links.length === 1 && /E-SIM-LOOSE/.test(a3.error ?? "") && /Nothing holds/.test(asSaid) && a4.links.length === 0,
       `sim 1.630: an assembly's study joins two bars across a 0.05 mm gap and lists the connection; not joined, the loose bar is named; translated (${JSON.stringify({ asTab, asPick, asSet, error: a1.error, contacts: a1.contacts, comps: a1.comps, maxU: a1.maxU, asTree, asRu, stale: a2.stale, links: [a2.links, a4.links], loose: a3.error, asSaid })})`);

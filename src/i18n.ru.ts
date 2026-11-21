@@ -5386,6 +5386,7 @@ export const RU: Record<string, string> = {
   "Bonded": "Жёсткое",
   "Not joined": "Не соединены",
   "No components touch.": "Компоненты не соприкасаются.",
+  "Force: what the first component passes to the second. Moment: about the centre of the contact.": "Сила: то, что первый компонент передаёт второму. Момент: относительно центра контакта.",
   "Connection type": "Тип соединения",
   "The pairs found touching are listed here after a solve.": "Найденные пары соприкасающихся компонентов появятся здесь после расчёта.",
   "Every component is analysed with its part's material. Components that touch, or come within the gap, are joined.": "Каждый компонент рассчитывается с материалом своей детали. Компоненты, которые соприкасаются или сходятся ближе допуска на зазор, соединяются.",
