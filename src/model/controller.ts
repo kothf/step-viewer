@@ -710,6 +710,7 @@ export class ModelController {
       change: (label: string, fn: (d: PartDoc) => void) => { this.store?.change(label, fn); },
       faceNames: () => this.last?.faceNames ?? [],
       simGeo: (lin: number, ang: number) => this.kernel.simGeo(lin, ang),
+      bodies: () => (this.last?.bodies ?? []).map(b => ({ key: b.key, name: this.bodyName(b.key) })),
       idle: () => this.mode.kind === "none",
       redraw: () => { if (this.store) this.drawDecor(); },
     };

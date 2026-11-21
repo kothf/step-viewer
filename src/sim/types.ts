@@ -173,6 +173,8 @@ export interface Study {
   welds?: StudyWeld[];
   connectors?: StudyConnector[];
   masses?: StudyMass[];
+  /** Parts: materials of this study only (FR-SMAT-003), by Bodies folder key; "" = the part's. The part keeps its own. */
+  mats?: Record<string, MatRef>;
   /** Probes: points on the undeformed model, mm, whose result values are read after each solve (FR-RES-005). */
   probes?: V3[];
   /** Static studies: load cases (FR-LOAD-022), each solved on its own with the same supports. None = one case with every load. */

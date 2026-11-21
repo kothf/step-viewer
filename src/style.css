@@ -1833,6 +1833,9 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .sim-lfilter select { flex: 1 1 100px; min-width: 0; max-width: 100%; font-size: 11px; }
 .sim-contacts tbody tr[data-a="link"] { cursor: pointer; }
 .sim-contacts tbody tr[data-a="link"]:hover, .sim-contacts tbody tr[data-a="link"]:focus-visible { background: var(--panel-2); }
+.sim-smat { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 4px; font-size: 12px; color: var(--muted); }
+.sim-smat .btn, .sim-smats .btn { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sim-smats li { grid-template-columns: minmax(0, 1fr) auto; }
 .sim-contacts tr.sim-glue td { padding-left: 10px; color: var(--muted); }
 .sim-contacts tr.sim-glue input { width: 54px; font-size: 11px; }
 .sim-contacts tbody tr.sel { background: color-mix(in srgb, var(--accent) 16%, transparent); }

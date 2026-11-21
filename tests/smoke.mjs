@@ -16989,6 +16989,33 @@ try {
     check(bmStale && /Smoke alloy/.test(bmTree) && !bm.error && bm.bodyMats?.length === 2 && bm.bodyMats[1] === "Smoke alloy" && /own material/.test(bmNote.note) && bmNote.wide <= 0
       && Math.abs(bm.mass * 1000 - (0.628 + 0.0648)) < 0.003 && bm.modes[0].hz > bd.modes[0].hz * 1.05 && bm.modes[0].hz < 421 && bm.plot.shown && bmRu.length === 0,
       `sim 1.629: a body with its own material is analysed with it: the mass is the sum of both bodies and the frequency follows; translated (${JSON.stringify({ bmKey, bmStale, bmTree, error: bm.error, bodyMats: bm.bodyMats, note: bmNote, mass: bm.mass, hz: [bd.modes[0].hz, bm.modes[0].hz], bmRu })})`);
+    // 1.644: the second body gets another material for this study only; the part keeps its own
+    const smBtn = `#sim-tree .sim-smats li[data-body="${bmKey}"] [data-a="smat"]`;
+    const sm0 = await mp.evaluate(q => ({ rows: document.querySelectorAll("#sim-tree .sim-smats li").length, text: document.querySelector(q)?.textContent ?? "", part: document.querySelector('#sim-tree .sim-smat [data-a="smat"]')?.textContent ?? "" }), smBtn);
+    await mp.click(smBtn);
+    await mp.waitForSelector("#mat-dlg[open]");
+    await mp.fill("#mat-q", "S235");
+    await mp.waitForTimeout(300);
+    await mp.click("#mat-dlg .mat-list li");
+    await mp.click('#mat-dlg [data-a="ok"]');
+    await settle();
+    const sm1 = await mp.evaluate(([q, k]) => ({ own: document.querySelectorAll("#sim-tree .sim-smats .btn.own").length, text: document.querySelector(q)?.textContent ?? "", doc: window.__sv.model.store.doc.bodies?.[k]?.material?.name ?? null, study: Object.keys(window.__sv.model.store.doc.studies.find(x => x.id === window.__sv.sim.state().study)?.mats ?? {}), stale: window.__sv.sim.state().stale, wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth }), [smBtn, bmKey]);
+    await mp.click('#sim-tools [data-s="solve"]');
+    await mp.waitForFunction(() => { const s = window.__sv.sim.state(); return s.done || s.error; }, null, { timeout: 240000 });
+    await mp.waitForTimeout(300);
+    const sm2 = await sim();
+    await mp.click("#lang-btn");
+    const smRu = await mp.evaluate(() => [...document.querySelectorAll("#tab-sim .sim-mat *")].filter(e => !e.children.length && !e.closest("[translate=no]")).map(e => e.textContent.trim()).filter(x => /[A-Za-z]{4}/.test(x)));
+    await mp.click("#lang-btn");
+    await settle();
+    await mp.click(smBtn);
+    await mp.waitForSelector("#mat-dlg[open]");
+    await mp.click('#mat-dlg [data-a="none"]');
+    await settle();
+    const sm3 = await mp.evaluate(q => ({ own: document.querySelectorAll("#sim-tree .sim-smats .btn.own").length, text: document.querySelector(q)?.textContent ?? "", mats: window.__sv.model.store.doc.studies.find(x => x.id === window.__sv.sim.state().study)?.mats ?? null }), smBtn);
+    check(sm0.rows === 2 && /Smoke alloy/.test(sm0.text) && sm0.part.length > 2 && sm1.own === 1 && /S235/.test(sm1.text) && sm1.doc === "Smoke alloy" && sm1.study.length === 1 && sm1.study[0] === bmKey && sm1.stale && sm1.wide <= 0
+      && !sm2.error && Math.abs(sm2.mass * 1000 - 0.628 * 1.3) < 0.01 && sm2.modes[0].hz < bm.modes[0].hz * 0.97 && smRu.length === 0 && sm3.own === 0 && /Smoke alloy/.test(sm3.text) && !sm3.mats,
+      `sim 1.644: a body takes another material in one study only: the part keeps its own, the mass and the frequency follow the study's; None goes back; translated (${JSON.stringify({ sm0, sm1, error: sm2.error, mass: sm2.mass, hz: [bm.modes[0].hz, sm2.modes[0].hz], bodyMats: sm2.bodyMats, smRu, sm3 })})`);
     await addBody("b3", 300, 320);
     await settle();
     await mp.click('#sim-tools [data-s="solve"]');
@@ -17115,6 +17142,20 @@ try {
       && b3.stale && !b4.error && Math.abs(b4.bolts[0].axial / 2000 - 1) < 0.02 && b4.bolts[0].preload === 2000 && b4.bolts[0].cls === "12.9" && b4.bolts[0].sf > 1
       && b5.stale && b5.boltList[0].off,
       `sim 1.637: a toolbox screw with its nut is analysed as a bolt: it carries the push in shear when the plates are not joined, keeps its preload when tightened, and is rated by its class; translated (${JSON.stringify({ list: [b0.boltList, b1.boltList, b5.boltList], error: [b2.error, b4.error], bolts: [b2.bolts, b4.bolts], marks: b2.boltMarks, excluded: b2.excluded, bTree, bRu, stale: [b3.stale, b5.stale] })})`);
+    // 1.644: the screw as a solid sits in its hole by a concentric mate: the study proposes a sliding connection there
+    await bp.click('#sim-tree [data-a="findlinks"]');
+    await bp.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.finding && s.found; }, null, { timeout: 120000 });
+    await bp.waitForTimeout(400);
+    const mh0 = await bp.evaluate(() => ({ mates: (window.__sv.asm.doc.mates ?? []).map(m => m.type), hints: [...document.querySelectorAll("#sim-tree [data-v=matehint]")].map(e => e.textContent), links: window.__sv.sim.state().links.length }));
+    await bp.click("#lang-btn");
+    const mhRu = await bp.evaluate(() => [...document.querySelectorAll("#tab-sim .sim-matehint, #tab-sim .sim-matehint button")].map(e => [...e.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent.replace(/Part\d*<\d+>|M\d+[^ ]*/g, "").trim()).join(" ")).filter(x => /[A-Za-z]{4}/.test(x)));
+    await bp.click("#lang-btn");
+    await bp.waitForTimeout(300);
+    if (mh0.hints.length) await bp.click("#sim-tree [data-a=matelink]");
+    await bp.waitForTimeout(400);
+    const mh1 = await bp.evaluate(() => ({ hints: document.querySelectorAll("#sim-tree [data-v=matehint]").length, links: window.__sv.sim.state().links, wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth }));
+    check(mh0.mates.includes("concentric") && mh0.hints.length >= 1 && /concentric mate/.test(mh0.hints[0]) && mh1.hints === mh0.hints.length - 1 && mh1.links.length === mh0.links + 1 && mh1.links.at(-1).type === "sliding" && mh1.wide <= 0 && mhRu.every(x => /[а-яё]/i.test(x)),
+      `sim 1.644: a concentric mate proposes a sliding connection for its two components, set with one click (${JSON.stringify({ mh0, mhRu, mh1 })})`);
     await ctx.close();
   }
 

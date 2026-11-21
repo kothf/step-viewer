@@ -58,6 +58,10 @@ export interface SimHost {
   asm(): boolean;
   /** An assembly's shown components with their parts' material names ("" = none). */
   comps(): { id: string; name: string; material: string; fastener?: { role: "screw" | "nut" | "washer"; d: number; pitch: number; o: number[]; z: number[] } }[];
+  /** An assembly's hinge and concentric mates, by component id (FR-CON-008). */
+  mates(): { a: string; b: string; type: string; name: string }[];
+  /** A part's solid bodies, by Bodies folder key (none for an assembly). */
+  bodies(): { key: string; name: string }[];
   faceNames(): string[];
   faceAt(x: number, y: number): { faceId: number; point: [number, number, number] } | null;
   /** The snapped point under the pointer (part coordinates) and the edge it is on, if any. */
@@ -346,6 +350,7 @@ export class SimController {
     const model = this.host.stateKey();
     const parts: unknown[] = [...model.head, st.supports, st.loads, st.settings, st.suppressed ?? null];
     if (st.refine?.length) parts.push(st.refine);
+    if (st.mats && Object.keys(st.mats).length) parts.push(Object.entries(st.mats).sort(([a], [b]) => (a < b ? -1 : 1)));
     if (st.welds?.length) parts.push(st.welds.map(w => (w.on === "points" ? [w.id, w.edges, w.points ?? [], w.dia ?? DEFAULT_SPOT] : [w.id, w.edges])));
     if (st.connectors?.length) parts.push(st.connectors.map(c => [c.id, c.faces.map(f => f.name), c.faces2.map(f => f.name), c.kind, c.k, c.kr ?? null]));
     if (st.masses?.length) parts.push(st.masses.map(m => [m.id, m.faces.map(f => f.name), m.mass]));
@@ -543,7 +548,8 @@ export class SimController {
     const off = new Set(st.suppressed ?? []), on = <T extends { id: string }>(l: T[]) => l.filter(x => !off.has(x.id));
     if (st.kind !== "modal" && !st.settings.relief && !on(st.supports).length) return;
     if (st.kind !== "modal" && !on(st.loads).length && !on(st.supports).some(s => s.type === "disp")) return;
-    if (!this.host.asm() && !(doc.material?.E && doc.material.nu != null)) return;
+    const am = this.matOf(doc);
+    if (!this.host.asm() && !(am?.E && am.nu != null)) return;
     if (!this.host.model()) return;
     const tag = `${doc.id}|${st.id}|${this.keyOf(doc, st)}`;
     if (tag === this.autoFor) return;
@@ -827,7 +833,7 @@ export class SimController {
     const doc = this.host.doc(), st = this.study();
     if (!doc || !st || this.running) return;
     if (this.edit) { toast(t("Finish the open command first.")); return; }
-    const m = doc.material, asm = this.host.asm();
+    const m = this.matOf(doc), asm = this.host.asm();
     if (!asm && (!m || !m.E || m.nu == null)) {
       toast(t("Pick a material with an elastic modulus and Poisson's ratio first."), "warn");
       void this.pickMat();
@@ -897,9 +903,9 @@ export class SimController {
         // the pairs with their gaps and patches are found beside the solve, for the Connections table
         if (!this.freshFound(st)) void this.findFrom(bodies, st.settings.gap ?? DEFAULT_GAP, this.foundKey(st)).then(() => { this.renderAll(); this.drawMarks(); }).catch(() => {});
         joined = { gap: st.settings.gap ?? DEFAULT_GAP, links: (st.links ?? []).flatMap(l => (at.has(l.a) && at.has(l.b) ? [{ a: at.get(l.a)!, b: at.get(l.b)!, type: l.type, ...(l.type === "adhesive" ? { kn: glueStiffness(l)[0], kt: glueStiffness(l)[1] } : {}) }] : [])) };
-      } else if (m && bodies && bodies.length > 1 && bodies.some(b => doc.bodies?.[b.key]?.material)) {
+      } else if (m && bodies && bodies.length > 1 && bodies.some(b => this.bodyMatOf(doc, b.key))) {
         regions = bodies.map(b => {
-          const q = doc.bodies?.[b.key]?.material ?? m;
+          const q = this.bodyMatOf(doc, b.key) ?? m;
           if (!q.E || q.nu == null) throw new Error(`E-SIM-BODYMAT: ${q.name}`);
           return { tris: b.tris, mat: simMat(q) };
         });
@@ -1192,10 +1198,45 @@ export class SimController {
         }).join("") + `</tbody></table>`;
       if (shown.length >= 2) html += `<label class="sim-kv2">${esc(t("All shown:"))} <select data-k="linkall" aria-label="${esc(t("All shown:"))}"><option value="">${esc(t("Set type…"))}</option>${opt("bonded", "Bonded", "-")}${opt("sliding", "Sliding", "-")}${opt("adhesive", "Adhesive", "-")}${opt("none", "Not joined", "-")}</select></label>`;
       if (glue.size) html += `<p class="sim-note muted" data-v="gluenote">${esc(t(GLUE_NOTE))}</p>`;
+      // mates guide the defaults (FR-CON-008): a pair turning on a hinge or concentric mate is proposed as sliding
+      const mates = this.host.mates(), of = (k: string) => compOf(k).split("/")[0];
+      for (const r of rows) {
+        if (typed.has(key(r.a, r.b))) continue;
+        const mt = mates.find(x => (x.a === of(r.a) && x.b === of(r.b)) || (x.a === of(r.b) && x.b === of(r.a)));
+        if (mt) html += `<p class="sim-note sim-matehint" data-v="matehint">${esc(t(mt.type === "hinge" ? "A hinge mate joins {a} and {b}." : "A concentric mate joins {a} and {b}.", { a: names.get(r.a) ?? r.a, b: names.get(r.b) ?? r.b }))} <button class="btn small" data-a="matelink" data-la="${esc(r.a)}" data-lb="${esc(r.b)}" title="${esc(t("Sliding lets the two turn and slide on each other; Bonded holds them as one piece."))}">${esc(t("Make sliding"))}</button></p>`;
+      }
       if (pre?.list.length) html += `<p class="sim-note muted" data-v="cpatchnote">${esc(t("Click a row to show the contact: orange on the first component, blue on the second."))}</p>`;
       if (forces) html += `<p class="sim-note muted" data-v="cforcenote">${esc(t("Force: what the first component passes to the second. Moment: about the centre of the contact."))}</p>`;
     } else html += `<p class="sim-note muted" data-v="nolinks">${esc(res || pre ? t("No components touch.") : t("Find connections lists the pairs that touch; a solve lists them too."))}</p>`;
     return html + `</div>`;
+  }
+
+  /** The part's material as the active study takes it: the study's own when it has one (FR-SMAT-003). */
+  private matOf(doc: SimDoc | null | undefined) {
+    return (!this.host.asm() && this.study()?.mats?.[""]) || doc?.material || null;
+  }
+  /** A body's own material in the active study: the study's, else the part document's (null: the part's material). */
+  private bodyMatOf(doc: SimDoc, key: string) {
+    return this.study()?.mats?.[key] ?? doc.bodies?.[key]?.material ?? null;
+  }
+  /** The bodies that have a material of their own in the active study. */
+  private bodyKeys(doc: SimDoc): string[] {
+    return [...new Set([...Object.keys(doc.bodies ?? {}), ...Object.keys(this.study()?.mats ?? {})])].filter(k => k && this.bodyMatOf(doc, k));
+  }
+  /** Picks a material for this study only: the part's (`key` "") or one body's; None goes back to the document's. */
+  private async pickStudyMat(key: string) {
+    const st = this.study();
+    if (!st || this.running || this.host.asm()) return;
+    const got = await pickMaterial({ current: st.mats?.[key] ?? null, allowNone: true });
+    if (!got) return;
+    const ref = got.material ? toRef(got.material) : null;
+    this.host.change(t("Study material"), d => {
+      const s = d.studies?.find(x => x.id === st.id);
+      if (!s) return;
+      const all = { ...(s.mats ?? {}) };
+      if (ref) all[key] = ref; else delete all[key];
+      if (Object.keys(all).length) s.mats = all; else delete s.mats;
+    });
   }
 
   private nameOf(id: string) {
@@ -1408,12 +1449,12 @@ export class SimController {
   /** Yield strength (MPa, 0 = none) of the material at a sample point: its body's when bodies have their own materials. */
   private yieldAt(r: PassResult, i: number): number {
     const B = this.res?.bodyMats;
-    return B && r.dom ? B[r.dom[i]]?.sy ?? 0 : this.host.doc()?.material?.sy ?? 0;
+    return B && r.dom ? B[r.dom[i]]?.sy ?? 0 : this.matOf(this.host.doc())?.sy ?? 0;
   }
   /** A yield strength is known for the results (any body's). */
   private hasYield(): boolean {
     const B = this.res?.bodyMats;
-    return B ? B.some(b => b.sy > 0) : !!this.host.doc()?.material?.sy;
+    return B ? B.some(b => b.sy > 0) : !!this.matOf(this.host.doc())?.sy;
   }
   /** Lowest safety factor against yield: the part's yield over `peak`, or body by body with their own materials. */
   private lowSf(r: PassResult, peak: number): number | null {
@@ -1423,7 +1464,7 @@ export class SimController {
       for (let i = 0; i < r.vm.length; i++) { const y = B[r.dom[i]]?.sy ?? 0; if (y > 0 && r.vm[i] > 0) lo = Math.min(lo, y / r.vm[i]); }
       return Number.isFinite(lo) ? lo : null;
     }
-    const sy = this.host.doc()?.material?.sy;
+    const sy = this.matOf(this.host.doc())?.sy;
     return sy && peak > 0 ? sy / peak : null;
   }
 
@@ -2195,9 +2236,9 @@ export class SimController {
       return;
     }
     const seen = new Set<string>(), rows: string[][] = [];
-    for (const b of Object.values(doc.bodies ?? {})) {
-      const q = b.material;
-      if (!q || q.name === doc.material?.name || seen.has(q.name)) continue;
+    for (const key of this.bodyKeys(doc)) {
+      const q = this.bodyMatOf(doc, key);
+      if (!q || q.name === this.matOf(doc)?.name || seen.has(q.name)) continue;
       seen.add(q.name);
       rows.push([q.name, `${sig(q.E ?? NaN)} GPa`, sig(q.nu ?? NaN), `${sig(q.density)} g/cm³`, q.sy ? `${sig(q.sy)} MPa` : "–"]);
     }
@@ -2210,7 +2251,7 @@ export class SimController {
   private reportOf(): SimReport | null {
     const doc = this.host.doc(), st = this.study(), res = this.res, last = res?.passes.at(-1);
     if (!doc || !st || !res || !last || this.stale()) return null;
-    const m = doc.material, off = new Set(st.suppressed ?? []);
+    const m = this.matOf(doc), off = new Set(st.suppressed ?? []);
     const blocks: ReportBlock[] = [];
     const kv = (rows: string[][]) => blocks.push({ kind: "table", rows: [[t("Property"), t("Value")], ...rows], widths: [2, 3] });
     const n3 = (c: number[], f: number, unit: string) => `X ${sig(c[0] * f)}, Y ${sig(c[1] * f)}, Z ${sig(c[2] * f)} ${unit}`;
@@ -2299,7 +2340,7 @@ export class SimController {
   }
 
   private modalReport(doc: SimDoc, st: Study, res: Results, last: PassResult): SimReport {
-    const m = doc.material, off = new Set(st.suppressed ?? []), blocks: ReportBlock[] = [];
+    const m = this.matOf(doc), off = new Set(st.suppressed ?? []), blocks: ReportBlock[] = [];
     const kv = (rows: string[][]) => blocks.push({ kind: "table", rows: [[t("Property"), t("Value")], ...rows], widths: [2, 3] });
     blocks.push({ kind: "h", text: t("Study") });
     kv([[t("Document"), doc.name], [t("Study"), st.name], [t("Kind"), t("Modal")], [t("Passes"), `${res.passes.length} / ${Math.min(MODAL_PASSES, st.settings.passes)}`],
@@ -2413,8 +2454,10 @@ export class SimController {
       return;
     }
     const list = doc.studies ?? [];
-    const m = doc.material, matOk = !!m && !!m.E && m.nu != null;
-    const ownMats = [...new Set(Object.values(doc.bodies ?? {}).map(b => b.material?.name).filter((n): n is string => !!n && n !== m?.name))];
+    const m = this.matOf(doc), matOk = !!m && !!m.E && m.nu != null, own = st.mats?.[""], solids = this.host.asm() ? [] : this.host.bodies();
+    const ownMats = [...new Set(this.bodyKeys(doc).map(k => this.bodyMatOf(doc, k)?.name).filter((n): n is string => !!n && n !== m?.name))];
+    const studyMat = `<div class="sim-smat"><span>${esc(t("In this study"))}</span><button class="btn small${own ? " own" : ""}" data-a="smat" data-b="" title="${esc(t("Another material for this study only: the part keeps its own"))}">${own ? `<span translate="no">${esc(own.name)}</span>` : esc(t("As the part"))}</button></div>`
+      + (solids.length > 1 ? `<ul class="sim-complist sim-smats">${solids.map(b => { const q = st.mats?.[b.key], cur = this.bodyMatOf(doc, b.key); return `<li data-body="${esc(b.key)}"><span class="sim-cname" translate="no">${esc(b.name)}</span><button class="btn small${q ? " own" : ""}" data-a="smat" data-b="${esc(b.key)}" title="${esc(q ? t("Material picked for this study") : t("The body's material in the part"))}">${cur ? `<span translate="no">${esc(cur.name)}</span>` : esc(t("As the part"))}</button></li>`; }).join("")}</ul>` : "");
     const off = new Set(st.suppressed ?? []);
     const row = (it: StudySupport | StudyLoad | StudyRefine | StudyExtra, load: boolean) => {
       const bad = this.problems.get(it.id);
@@ -2435,7 +2478,7 @@ export class SimController {
     if (this.host.asm()) html += this.compsHtml(st) + this.boltsHtml(st)
       + (st.welds?.length ? `<div class="sim-sec sim-welds"><h4>${esc(t("Welds"))}</h4><p class="sim-note muted">${esc(t(WELD_NOTE))}</p><ul class="sim-list">${st.welds.map(w => row(w, false)).join("")}</ul></div>` : "")
       + this.linksHtml(st);
-    else html += `<div class="sim-sec"><h4>${esc(t("Material"))}</h4><button class="pm-box${matOk ? "" : " sim-warn"}" data-a="mat">${m ? `<span translate="no">${esc(m.name)}</span>` : esc(t("No material"))}</button>`
+    else html += `<div class="sim-sec sim-mat"><h4>${esc(t("Material"))}</h4><button class="pm-box${matOk ? "" : " sim-warn"}" data-a="mat">${doc.material ? `<span translate="no">${esc(doc.material.name)}</span>` : esc(t("No material"))}</button>` + studyMat
       + (m && matOk ? `<p class="sim-note muted">E ${sig(m.E!)} GPa · ν ${sig(m.nu!)}${m.sy ? ` · ${esc(t("yield"))} ${sig(m.sy)} MPa` : ""}</p>` : `<p class="sim-prob">${esc(t("The analysis needs a material with an elastic modulus and Poisson's ratio."))}</p>`)
       + (ownMats.length ? `<p class="sim-note muted sim-bodymats">${esc(t("Bodies with their own material:"))} <span translate="no">${esc(ownMats.join(", "))}</span></p>` : "") + `</div>`;
     const modal = st.kind === "modal";
@@ -2804,6 +2847,17 @@ export class SimController {
     else if (a === "rmprobe") { const i = Number(b.dataset.i); this.setProbes(t("Remove probe"), l => l.filter((_p, k) => k !== i)); this.renderAll(); }
     else if (a === "findlinks") void this.findLinks();
     else if (a === "compmat") void this.pickCompMat(b.dataset.c ?? "");
+    else if (a === "smat") void this.pickStudyMat(b.dataset.b ?? "");
+    else if (a === "matelink") {
+      const st = this.study(), la = b.dataset.la ?? "", lb = b.dataset.lb ?? "";
+      if (st && la && lb) this.host.change(t("Connection type"), d => {
+        const s2 = d.studies?.find(x => x.id === st.id);
+        if (!s2) return;
+        const rest = (s2.links ?? []).filter(l => !((l.a === la && l.b === lb) || (l.a === lb && l.b === la)));
+        rest.push({ a: la, b: lb, type: "sliding" });
+        s2.links = rest;
+      });
+    }
     else if (a === "comprigid") this.toggleRigid(b.dataset.c ?? "");
     else if (a === "link") {
       if ((e.target as HTMLElement).closest("select")) return;
