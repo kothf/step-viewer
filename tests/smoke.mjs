@@ -17377,6 +17377,58 @@ try {
       && !k2s.error && k2s.conns[0].spring && Math.abs(k2s.conns[0].stretch / 0.2 - 1) < 0.03 && k2s.maxU > k1s.maxU + 0.15
       && kTree.rows === 1 && Math.abs(kTree.force / 500 - 1) < 0.02 && kTree.wide <= 0 && kRu.length === 0 && !k3s.connList?.length,
       `sim 1.640: a rigid connector carries the whole load between bars that are not joined, and as a spring it gives force over stiffness; translated (${JSON.stringify({ list: kc0.connList, error: [k1s.error, k2s.error], conns: [k1s.conns, k2s.conns], maxU: [k1s.maxU, k2s.maxU], kTree, kRu })})`);
+    // 1.643: a spot weld through the second bar joins the two at their joint; then an adhesive layer between them
+    await mp.selectOption("#sim-tree select[data-k=link]", "none");
+    await mp.waitForTimeout(300);
+    await mp.click('#sim-tools [data-s="spot"]');
+    await mp.waitForSelector('#sim-pm [data-q="dia"]');
+    // seen from behind, the far end of the second bar: the spot goes through the bar to the first one
+    const spView = await mp.evaluate(() => window.__sv.viewer.getView());
+    await mp.evaluate(() => { const v = window.__sv.viewer, V = v.camera.position.constructor; v.viewFrom(new V(0, 1, 0), false); });
+    await mp.waitForTimeout(500);
+    p = await at(1, 1, 1);
+    await mp.mouse.click(p.x, p.y);
+    await mp.waitForTimeout(250);
+    const spPick = await mp.evaluate(() => document.querySelector("#sim-pm .sim-faces")?.textContent ?? "");
+    await mp.fill('#sim-pm [data-q="dia"]', "10");
+    await mp.keyboard.press("Tab");
+    await mp.click("#sim-pm .pm-ok");
+    await mp.waitForTimeout(400);
+    await mp.evaluate(v => window.__sv.viewer.setView(v), spView);
+    await mp.waitForTimeout(400);
+    const sp0 = await sim();
+    await mp.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const sp1 = await sim();
+    const spTree = await mp.evaluate(() => ({ rows: document.querySelectorAll("#sim-tree .sim-spottable tbody tr").length, count: document.querySelector("#sim-tree .sim-spottable [data-v=scount]")?.textContent ?? "", wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth }));
+    await mp.click('#sim-tree .sim-welds .sim-row [data-a="del"]');
+    await mp.waitForTimeout(300);
+    await mp.selectOption("#sim-tree select[data-k=link]", "adhesive");
+    await mp.waitForSelector('#sim-tree [data-k="gluet"]');
+    await mp.fill('#sim-tree [data-k="gluet"]', "1");
+    await mp.keyboard.press("Tab");
+    await mp.waitForTimeout(300);
+    await mp.fill('#sim-tree [data-k="gluee"]', "200");
+    await mp.keyboard.press("Tab");
+    await mp.waitForTimeout(300);
+    const gl0 = await sim();
+    await mp.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const gl1 = await sim();
+    const glWide = await mp.evaluate(() => document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth);
+    await mp.click("#lang-btn");
+    const glRu = await mp.evaluate(() => [...document.querySelectorAll("#tab-sim .sim-links *")].filter(e => !e.children.length && !e.closest("[translate=no]")).map(e => e.textContent.trim()).filter(x => /[A-Za-z]{4}/.test(x)));
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(300);
+    await mp.selectOption("#sim-tree select[data-k=link]", wLink);
+    await mp.waitForTimeout(300);
+    const gl2 = await sim();
+    const mag3 = v => (v ? Math.hypot(v[0], v[1], v[2]) : 0);
+    check(sp0.weldList?.length === 1 && sp0.weldList[0].points === 1 && sp0.weldList[0].dia === 10 && /1 point/.test(spPick)
+      && !sp1.error && sp1.welds?.[0]?.spot && sp1.welds[0].spots === 1 && Math.abs(sp1.welds[0].force / 500 - 1) < 0.03 && Math.abs(sp1.welds[0].stress - sp1.welds[0].peak / (Math.PI * 25)) < 1e-9 && spTree.rows === 1 && spTree.count === "1" && spTree.wide <= 0
+      && gl0.links?.[0]?.type === "adhesive" && gl0.links[0].t === 1 && gl0.links[0].E === 200 && !gl1.error && gl1.contacts?.[0]?.type === "adhesive" && Math.abs(mag3(gl1.contacts[0].force) / 500 - 1) < 0.03 && gl1.maxU > 1.5 * k1s.maxU
+      && glWide <= 0 && glRu.length === 0 && !gl2.links?.length && !gl2.weldList?.length,
+      `sim 1.643: a spot weld through the second bar carries the load between bars that are not joined; an adhesive layer carries it and gives way more than a rigid joint; translated (${JSON.stringify({ list: sp0.weldList, spPick, error: [sp1.error, gl1.error], welds: sp1.welds, spTree, links: [gl0.links, gl2.links], contact: gl1.contacts?.[0], maxU: [k1s.maxU, gl1.maxU], glWide, glRu })})`);
     // SA4: the joined bars solved again are compared with the result before; a modal study of the assembly, and a copy with a mass
     await mp.click('#sim-tools [data-s="solve"]');
     await solved();

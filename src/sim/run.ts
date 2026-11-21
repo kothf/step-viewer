@@ -71,6 +71,30 @@ const vkey = (t: ArrayLike<number>, o: number, q: number) => `${Math.round(t[o] 
 const quantum = (b: SimBody) => 1e-7 * Math.max(b.hi[0] - b.lo[0], b.hi[1] - b.lo[1], b.hi[2] - b.lo[2], 1e-9);
 
 /**
+ * Spot weld points for the solver (6 numbers each): the point, and the direction into the body at the face
+ * it is on (against the normal of that face's nearest triangle). Null when a face is gone.
+ */
+export function spotPoints(b: SimBody, pts: { faces: string[]; at: number[] }[]): Float64Array | null {
+  const T = b.tris, out: number[] = [];
+  for (const p of pts) {
+    const f = b.names.indexOf(p.faces[0]);
+    if (f < 0) return null;
+    let best = Infinity, bt = -1;
+    for (let t = 0; t < b.face.length; t++) {
+      if (b.face[t] !== f) continue;
+      const o = 9 * t;
+      const d = Math.hypot((T[o] + T[o + 3] + T[o + 6]) / 3 - p.at[0], (T[o + 1] + T[o + 4] + T[o + 7]) / 3 - p.at[1], (T[o + 2] + T[o + 5] + T[o + 8]) / 3 - p.at[2]);
+      if (d < best) { best = d; bt = t; }
+    }
+    if (bt < 0) return null;
+    const o = 9 * bt, ux = T[o + 3] - T[o], uy = T[o + 4] - T[o + 1], uz = T[o + 5] - T[o + 2], vx = T[o + 6] - T[o], vy = T[o + 7] - T[o + 1], vz = T[o + 8] - T[o + 2];
+    const n = [uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx], l = Math.hypot(n[0], n[1], n[2]) || 1;
+    out.push(p.at[0], p.at[1], p.at[2], -n[0] / l, -n[1] / l, -n[2] / l);
+  }
+  return Float64Array.from(out);
+}
+
+/**
  * The edge two faces share, as segments of 9 numbers: both ends and a direction into the body (against the
  * two faces' normals). Null when a face is gone, empty when they share no edge.
  */
@@ -430,7 +454,7 @@ export interface RunInput {
    * An assembly: `regions` are its components, each solved as its own body whatever its material and joined to
    * the others where they touch or come within `gap` mm (bonded unless `links` says otherwise, by region index).
    */
-  asm?: { gap: number; links?: { a: number; b: number; type: "sliding" | "none" }[] };
+  asm?: { gap: number; links?: { a: number; b: number; type: "sliding" | "none" | "adhesive"; kn?: number; kt?: number }[] };
   /** Bolts between the regions (FR-CON-020): beams between two patches of their surfaces. */
   bolts?: Bolt[];
   /** Welds along edges where two components meet (FR-CON-022). */
