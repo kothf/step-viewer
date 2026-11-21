@@ -18,10 +18,15 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # The unit tests in 3 parallel jobs (UNIT_SHARD, see scripts/unit.mjs): one job had grown to the 10 minute limit.
   unit:
-    name: unit tests
+    name: unit tests ${{ matrix.shard }}/3
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v7
 
@@ -34,6 +39,8 @@ jobs:
 
       - name: Unit tests (kernel, sketch solver, documents)
         run: npm run test:unit
+        env:
+          UNIT_SHARD: ${{ matrix.shard }}/3
 
   # The browser smoke test in 6 parallel shards (SMOKE_SHARD, see tests/smoke.mjs), about 5 minutes each
   # instead of 9 minutes in one job. Each job packages the build itself: that takes ~15 s, less than
