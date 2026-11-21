@@ -3912,13 +3912,18 @@ try {
     const vNoShell = await vol();
     await mp.keyboard.press("Escape");
     await mp.click('#mc-tools [data-c="hole"]');
-    const hA = await world([30, 15, 20]), hB = await world([-30, 15, 20]);
+    // 1.637 (FR-FT-052): the first click opens the hole's position sketch with a point there; the second adds a point with the Point tool; ✓ goes back to the hole.
+    const hA = await world([30, 15, 20]);
     await mp.mouse.click(hA[0], hA[1]);
+    await mp.waitForFunction(() => window.__sv.model.mode().kind === "sketch", null, { timeout: 30000 });
     await idle();
-    await mp.waitForFunction(() => document.querySelector('#mc-pm [data-focus="pts"]')?.textContent === "1 hole", null, { timeout: 15000 }).catch(() => {});
-    await idle();
+    const hB = await world([-30, 15, 20]);
     await mp.mouse.click(hB[0], hB[1]);
     await idle();
+    await mp.click("#mc-ok");
+    await mp.waitForFunction(() => window.__sv.model.mode().kind === "feature", null, { timeout: 30000 });
+    await idle();
+    await mp.click('#mc-pm [data-htab="type"]');
     await mp.selectOption('#mc-pm select[data-k="kind"]', "tapped");
     await idle();
     const holePanel = await mp.evaluate(() => ({ n: document.querySelector('#mc-pm [data-focus="pts"]')?.textContent, d: document.querySelector('#mc-pm input[data-num="diameter"]')?.value, td: document.querySelector('#mc-pm input[data-num="threadDepth"]')?.value }));
@@ -5261,8 +5266,10 @@ try {
     await mp.click('#mc-tools [data-c="hole"]');
     const [hx, hy] = await world([0.3, 0.2, 20]);
     await mp.mouse.click(hx, hy);
+    await mp.waitForFunction(() => window.__sv.model.mode().kind === "sketch", null, { timeout: 30000 });
     await idle();
-    await mp.waitForFunction(() => document.querySelector('#mc-pm [data-focus="pts"]')?.textContent === "1 hole", null, { timeout: 15000 }).catch(() => {});
+    await mp.click("#mc-ok");
+    await mp.waitForFunction(() => window.__sv.model.mode().kind === "feature", null, { timeout: 30000 });
     await idle();
     await mp.click("#mc-ok");
     await idle();

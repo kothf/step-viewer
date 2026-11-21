@@ -1127,7 +1127,7 @@ export class ModelController {
     await this.editSketch(id, before, true, mark, project);
   }
 
-  async editSketch(id: string, entry = JSON.stringify(this.doc), isNew = false, mark = this.store?.mark() ?? 0, project?: { ed: EdgeInfo; ref: EdgeRef | null }[]) {
+  async editSketch(id: string, entry = JSON.stringify(this.doc), isNew = false, mark = this.store?.mark() ?? 0, project?: { ed: EdgeInfo; ref: EdgeRef | null }[], turn = true) {
     const sk = this.store?.feature(id);
     if (!sk || sk.type !== "sketch") return;
     if (!isNew && this.isFrozen(id)) { this.frozenToast(); return; }
@@ -1197,7 +1197,7 @@ export class ModelController {
       m.editor.setSketch(this.store!.feature(id) as SketchFeature, f);
       if (project?.length) m.editor.projectEdges(project);
       // Normal to the sketch, framing the model and the whole sketch, which may reach past the body (exam #96).
-      if (getPref("rotateToSketch")) this.host.viewer.viewFrom(new THREE.Vector3(...f.n), true, m.editor.sketchBox());
+      if (turn && getPref("rotateToSketch")) this.host.viewer.viewFrom(new THREE.Vector3(...f.n), true, m.editor.sketchBox());
     }
   }
 
@@ -4572,7 +4572,10 @@ export class ModelController {
       // The first click on a face opens the hole's position sketch there with a point where it was clicked
       // (a CAD app's Hole Wizard Positions), so the holes can be dimensioned.
       const hit = this.host.faceAt(e.clientX, e.clientY);
-      void this.holePositions(hit && "face" in r ? hit.point : undefined);
+      // Snapped as later clicks are (origin, vertices, centres on the face): the face's plane stands in for the sketch frame.
+      const fc = hit ? this.host.viewer.parts[0]?.data.faces[hit.faceId] : undefined;
+      const sn = hit && fc?.normal ? this.holeSnap(e, { o: fc.centroid, n: fc.normal, x: [1, 0, 0], y: [0, 1, 0] }) : null;
+      void this.holePositions(hit && "face" in r ? sn ?? hit.point : undefined);
       return;
     }
     const hit = this.host.faceAt(e.clientX, e.clientY);
@@ -4693,7 +4696,8 @@ export class ModelController {
     f.sketch = sid;
     this.holeParked = { draft: f, isNew: m.isNew, index, base, sketch: sid, prev };
     this.holeTab = "pos";
-    await this.editSketch(sid, entry, made, mark);
+    // The view stays as it is (a CAD app's Positions tab places holes on the model as seen).
+    await this.editSketch(sid, entry, made, mark, undefined, false);
     const mm = this.mode;
     if (mm.kind !== "sketch" || mm.id !== sid) { if (this.holeParked?.sketch === sid && mm.kind !== "sketch") this.holeParked = null; return; }
     mm.editor.setTool("point");
