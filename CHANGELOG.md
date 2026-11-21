@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.651.0] - 2026-11-21
+
+### Added
+
+- Simulation: **thermal studies of parts**, and a **Structural | Thermal** switch at the left of the Simulation bar. Structural keeps the commands it had; Thermal shows Thermal study, Material, Ambient, the heat sources (Heat power on faces or throughout the whole body, Heat flux) and the cooling (Fixed temperature, Convection with presets for still and moving air and water, Radiation), then Solve, Results and Report. The switch follows the open study, and a command of the other analysis opens the study of that kind used last, or starts one. A thermal study is solved meshless on the exact geometry like the structural ones, in up to three passes that stop once the temperatures settle; radiation is solved again until the surface temperatures stop changing. The Study tab shows the highest and lowest temperature, the heat put in and what each condition takes away with their balance, the estimated error and the passes; the plot shows temperature (°C) or heat flux (W/m²) with probes, a path, section planes and a report (PDF or HTML). A study with nothing to take the heat away, or with a material without a thermal conductivity, says so in plain words. Powers and fluxes take units (mW, W, kW; W/m², W/cm², W/mm²) and global variables.
+
+### Changed
+
+- Simulation bar: a modal study no longer shows the Loads group (it was greyed out).
+
 ## [1.650.0] - 2026-11-21
 
 ### Added
@@ -4243,6 +4253,7 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.650.0...HEAD
+[1.651.0]: https://github.com/kothf/step-viewer/compare/v1.650.0...v1.651.0
 [1.650.0]: https://github.com/kothf/step-viewer/compare/v1.649.0...v1.650.0
 [1.649.0]: https://github.com/kothf/step-viewer/compare/v1.648.0...v1.649.0
 [1.648.0]: https://github.com/kothf/step-viewer/compare/v1.647.0...v1.648.0

@@ -430,7 +430,7 @@ Indicative effort with AI assistance: TH1 1–2 weeks, TH0 3–5 days, TH2 1–2
 - **NFR-TH-030** (TH0, M) Reuse of the modules in section 3; no second solver framework, no second legend, no second material list.
 - **NFR-TH-031** (TH0, M) Unit tests in node for the package reader (all encodings), matching, the scalar solver and analytic benchmarks; smoke checks in the packaged build for opening a package, the Parts list and a small thermal study; hands-on scenarios in `tests/human/` for J1–J7.
 - **NFR-TH-032** (TH0, M) Determinism to 1e-9 relative, as structural.
-- **NFR-TH-033** (TH1, M) Free libraries only; no new runtime dependency for the reader (DOMParser, DecompressionStream, existing zip code).
+- **NFR-TH-033** (TH1, M) Free libraries only; no new runtime dependency for the reader (its own text scan of the XML, DecompressionStream, existing zip code).
 - **NFR-TH-034** (TH1, M) Privacy: nothing leaves the browser.
 - **NFR-TH-035** (TH1, M) EN and RU for every string; axe-core and layout checks cover the Thermal tab, side page, summary card and legend in light and dark themes.
 - **NFR-TH-036** (TH1, M) A malformed package (bad XML, wrong array lengths, offsets past the end, NaN temperatures, zip bombs) never hangs or crashes the page: it is refused with a message naming what is wrong (E-TH-VTU).
