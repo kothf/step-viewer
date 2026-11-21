@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.620.0] - 2026-11-21
+
+### Added
+
+- Structural analysis: a part made of several bodies is analysed **bonded**. The bodies are joined wherever they touch and solved as one piece of the part's material, for static and modal studies; the Study tab says how many bodies were joined.
+
+### Changed
+
+- Structural analysis: a study of a part with a body that touches no other body, or with bodies that have a material of their own, is refused with a message saying why (it used to say only that one body is supported).
+
 ## [1.619.0] - 2026-11-21
 
 ### Added
@@ -3989,7 +3999,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.619.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.620.0...HEAD
+[1.620.0]: https://github.com/kothf/step-viewer/compare/v1.619.0...v1.620.0
 [1.619.0]: https://github.com/kothf/step-viewer/compare/v1.618.0...v1.619.0
 [1.618.0]: https://github.com/kothf/step-viewer/compare/v1.617.0...v1.618.0
 [1.617.0]: https://github.com/kothf/step-viewer/compare/v1.616.0...v1.617.0

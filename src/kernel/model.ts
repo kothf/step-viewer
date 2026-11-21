@@ -4254,6 +4254,18 @@ export class Modeller {
   // ---------- multibody (FRS 9.10) ----------
 
   /** The solids of a body, each with the body's face names. */
+  /**
+   * Structural analysis of a multibody part (FRS-structural SA2): the solids joined wherever they touch,
+   * as one piece of material ("bonded"). Faces keep their names; a face wholly in a contact is gone.
+   * `parts` = solids of `body`, `solids` = pieces left (more than 1: some bodies touch nothing).
+   */
+  bonded(body: Named): { body: Named; parts: number; solids: number } {
+    const list = this.bodyList(body);
+    if (list.length < 2) return { body, parts: list.length, solids: list.length };
+    const fused = this.fuseAll(list, "bond");
+    return { body: fused, parts: list.length, solids: this.bodyList(fused).length };
+  }
+
   private bodyList(body: Named): Named[] {
     const oc = this.oc, out: Named[] = [];
     for (const ex = new oc.TopExp_Explorer_2(body.shape, oc.TopAbs_ShapeEnum.TopAbs_SOLID, oc.TopAbs_ShapeEnum.TopAbs_SHAPE); ex.More(); ex.Next()) {

@@ -36,7 +36,7 @@ export interface SimHost {
   faceAt(x: number, y: number): { faceId: number; point: [number, number, number] } | null;
   /** The snapped point under the pointer (part coordinates) and the edge it is on, if any. */
   snapAt(x: number, y: number): { kind: string; point: [number, number, number]; edge?: EdgeInfo } | null;
-  simGeo(lin: number, ang: number): Promise<{ geo: SimBody; solids: number }>;
+  simGeo(lin: number, ang: number): Promise<{ geo: SimBody; solids: number; parts?: number }>;
   /** No part command is open. */
   idle(): boolean;
   /** Draws the part's planes, sketches and marks again. */
@@ -46,9 +46,10 @@ export interface SimHost {
 }
 
 type Edit = { kind: "support"; draft: StudySupport; isNew: boolean } | { kind: "load"; draft: StudyLoad; isNew: boolean };
-interface Results { study: string; key: string; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; cached?: boolean }
+/** `parts` = bodies of the part when there are several (they are analysed bonded). */
+interface Results { study: string; key: string; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; cached?: boolean; parts?: number }
 /** What the disk cache keeps of a finished solve (FR-SOL-030). */
-interface Kept { passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh }
+interface Kept { passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; parts?: number }
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const $ = <T extends HTMLElement = HTMLElement>(s: string) => document.querySelector<T>(s)!;
@@ -213,7 +214,7 @@ export class SimController {
       plot: { ...this.plot, shown: !!this.saved, range: this.range, scale: this.usedScale, points: (this.res?.mesh.pos.length ?? 0) / 3 }, marks: this.marks.children.length,
       probing: this.probing, probes: this.probes.map(p => this.probeValue(p)), probeAt: this.study()?.probes ?? [], probeCsv: this.probeTable(), report: this.lastReport, cached: !!this.res?.cached, cacheHits: this.cacheHits,
       kind: this.study()?.kind ?? null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
-      animating: !!this.anim, frames: this.anim?.frames ?? 0, gifs: this.gifs, gif: this.lastGif, near: this.nearModes(this.res?.passes.at(-1)), speed: this.speed, cumul: this.cumul, more: !!this.res?.passes.at(-1)?.more, range: this.study()?.settings.range ?? null,
+      animating: !!this.anim, frames: this.anim?.frames ?? 0, gifs: this.gifs, gif: this.lastGif, near: this.nearModes(this.res?.passes.at(-1)), bodies: this.res?.parts ?? 1, speed: this.speed, cumul: this.cumul, more: !!this.res?.passes.at(-1)?.more, range: this.study()?.settings.range ?? null,
       hot: this.hotList().map(h => ({ vm: h.vm, at: h.at, singular: h.singular, growth: h.growth })), labels: this.pins.length - this.probes.length,
     };
   }
@@ -246,7 +247,7 @@ export class SimController {
     const kept = await cacheGet<Kept>(await cacheKey("sim", key));
     const now = this.host.doc(), s2 = this.study();
     if (!kept?.passes?.length || !kept.mesh || this.res || this.running || now !== doc && now?.id !== doc.id || !s2 || s2.id !== st.id || !now || this.keyOf(now, s2) !== key) return;
-    this.res = { study: st.id, key, passes: kept.passes, ids: kept.ids, ms: kept.ms, mesh: kept.mesh, cached: true };
+    this.res = { study: st.id, key, passes: kept.passes, ids: kept.ids, ms: kept.ms, mesh: kept.mesh, cached: true, ...(kept.parts ? { parts: kept.parts } : {}) };
     this.cacheHits++;
     this.plot.on = false;
     this.syncProbes();
@@ -440,7 +441,10 @@ export class SimController {
     const key = this.keyOf(doc, st), t0 = performance.now();
     try {
       const size = this.host.viewer.modelSize;
-      const { geo, solids } = await this.host.simGeo(Math.max(0.002, size * 2e-5), 0.05);
+      // bodies with a material of their own would need a solver with several materials
+      const own = Object.values(doc.bodies ?? {}).map(b => b.material?.name).filter((n): n is string => !!n && n !== doc.material?.name);
+      if (own.length) throw new Error("E-SIM-BODYMATS");
+      const { geo, solids, parts } = await this.host.simGeo(Math.max(0.002, size * 2e-5), 0.05);
       if (solids !== 1) throw new Error("E-SIM-BODIES");
       const problem = studyProblem(st, geo);
       if (problem.problems.length) {
@@ -461,7 +465,7 @@ export class SimController {
       if (modal) problem.loads = [];
       this.progress = t("Pass {n} of {m}…", { n: 1, m: total });
       this.renderAll();
-      const res: Results = { study: st.id, key, passes: [], ids: problem.supportIds, ms: 0, mesh };
+      const res: Results = { study: st.id, key, passes: [], ids: problem.supportIds, ms: 0, mesh, ...(parts && parts > 1 ? { parts } : {}) };
       await this.client.solve({
         body: geo, problem, passes: total, energyTol: st.settings.energyTol, pos, nrm,
         ...(modal ? { modal: st.settings.range
@@ -479,7 +483,7 @@ export class SimController {
         this.drawMarks();
       });
       // a finished solve is kept for the next time this document is opened
-      if (res.passes.length) void cacheKey("sim", key).then(k => cachePut(k, { passes: res.passes, ids: res.ids, ms: res.ms, mesh: res.mesh } satisfies Kept));
+      if (res.passes.length) void cacheKey("sim", key).then(k => cachePut(k, { passes: res.passes, ids: res.ids, ms: res.ms, mesh: res.mesh, parts: res.parts } satisfies Kept));
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg !== SIM_STOPPED) { this.error = msg; toast(this.errorText(msg), "error"); }
@@ -501,7 +505,8 @@ export class SimController {
     switch (code) {
       case "E-SIM-NOLOAD": return t("Add a load first.");
       case "E-SIM-FREE": return rest.trim() === "6" && !this.study()?.supports.length ? t("Add a support first.") : t("The supports leave the part free to move ({n} free motions). Add or change the supports.", { n: rest.trim() });
-      case "E-SIM-BODIES": return t("Static analysis works on one solid body for now.");
+      case "E-SIM-BODIES": return t("Some bodies of the part touch no other body. A study needs one connected piece: join the bodies or delete the loose ones.");
+      case "E-SIM-BODYMATS": return t("Bodies with a material of their own are not analysed yet: a study uses the part's one material.");
       case "E-SIM-DENSITY": return t("The material has no density: a modal study needs one.");
       case "E-SIM-NOBODY": return t("The part has no body yet.");
       case "E-SIM-REF": return t("{name}: a face is gone. Pick its faces again.", { name });
@@ -1243,6 +1248,7 @@ export class SimController {
       html += `<p class="sim-note muted">${esc(last.converged ? t("Converged: the last pass changed the strain energy by {n} %.", { n: sig(last.change ?? 0) })
         : last.change != null ? t("Not converged to {tol} % yet (last change {n} %). Stress near sharp corners keeps rising with accuracy.", { tol: sig(this.study()?.settings.energyTol ?? 2), n: sig(last.change) })
         : t("One pass only: no convergence check."))}</p>`;
+      if (r.parts) html += `<p class="sim-note muted sim-bonded">${esc(t("The part's {n} bodies are analysed bonded: joined wherever they touch.", { n: r.parts }))}</p>`;
       html += `<p class="sim-note muted sim-assume">${esc(t(ASSUMPTIONS))}</p>`;
       if (!this.stale()) html += `<button class="btn small" data-a="report">${esc(t("Report…"))}</button>`;
     }
@@ -1275,6 +1281,7 @@ export class SimController {
       const st = this.study();
       if (r.cached) html += `<p class="sim-note muted sim-kept">${esc(t("From the last solve of this model and study."))}</p>`;
       if (st) html += `<p class="sim-note muted">${esc(this.modalNote(st, last))}</p>`;
+      if (r.parts) html += `<p class="sim-note muted sim-bonded">${esc(t("The part's {n} bodies are analysed bonded: joined wherever they touch.", { n: r.parts }))}</p>`;
       html += `<p class="sim-note muted sim-assume">${esc(t(ASSUMPTIONS))}</p>`;
       if (!this.stale()) html += `<button class="btn small" data-a="report">${esc(t("Report…"))}</button>`;
     }
