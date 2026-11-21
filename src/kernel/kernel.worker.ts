@@ -357,10 +357,10 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
     } else if (r.type === "simGeo") {
       if (!lastBody) throw new Error("E-SIM-NOBODY");
       const oc = kernel.module;
-      let solids = 0;
-      for (const ex = new oc.TopExp_Explorer_2(lastBody.shape, oc.TopAbs_ShapeEnum.TopAbs_SOLID, oc.TopAbs_ShapeEnum.TopAbs_SHAPE); ex.More(); ex.Next()) solids++;
-      const geo = simGeometry(oc, lastBody.shape, lastBody.faces, r.lin, r.ang);
-      post({ id: r.id, ok: true, geo: { ...geo, names: lastBody.names ?? [] }, solids }, [geo.tris.buffer, geo.face.buffer]);
+      // several bodies are analysed bonded: joined where they touch
+      const b = (modeller ?? new Modeller(oc)).bonded({ shape: lastBody.shape, faces: lastBody.faces, names: lastBody.names ?? [] });
+      const geo = simGeometry(oc, b.body.shape, b.body.faces, r.lin, r.ang);
+      post({ id: r.id, ok: true, geo: { ...geo, names: b.body.names }, solids: b.solids, parts: b.parts }, [geo.tris.buffer, geo.face.buffer]);
     } else if (r.type === "exportMesh") {
       const oc = kernel.module;
       let out: { id: string | number; mesh: ExportMesh }[];

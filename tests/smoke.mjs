@@ -16561,6 +16561,31 @@ try {
       && mTab.rows === 6 && /Hz/.test(mTab.f1) && /kg/.test(mTab.mass) && mTab.wide <= 0 && mTab.legend === "0" && mTab.kinds === "u,ux,uy,uz"
       && m3.mode === 2 && m3.plot.shown && !m4.animating && mLeft.length === 0,
       `sim 1.617: a modal study of the clamped bar finds its bending frequencies, lists the modes, shows the one clicked and swings its shape; the tab is translated (${JSON.stringify({ mSet, error: m1.error, hz, eff: m1.modes[0]?.eff, mass: m1.mass, passes: m1.passes, frames: [m1.frames, m2.frames], mTab, mode: m3.mode, animating: [m1.animating, m4.animating], left: mLeft.slice(0, 6) })})`);
+    // 1.620: a second body on the end of the bar is analysed bonded to it (one bar 260 long: 421 × (200 / 260)² = 249 Hz);
+    // a body that touches nothing is refused with a message.
+    const addBody = (id, y0, y1) => mp.evaluate(([id, y0, y1]) => window.__sv.model.store.change("Body", d => {
+      const P = (k, x, y) => ({ id: `${id}p${k}`, t: "point", x, y }), L = (k, a, b) => ({ id: `${id}l${k}`, t: "line", a: `${id}p${a}`, b: `${id}p${b}` });
+      d.features.push({ id: `s${id}`, type: "sketch", name: `Sketch ${id}`, plane: { std: "XY" }, rels: [], dims: [], ents: [P(1, -10, y0), P(2, 10, y0), P(3, 10, y1), P(4, -10, y1), L(1, 1, 2), L(2, 2, 3), L(3, 3, 4), L(4, 4, 1)] },
+        { id: `f${id}`, type: "extrude", name: `Extrude ${id}`, sketch: `s${id}`, op: "boss", end: "blind", depth: { v: 20 }, merge: false });
+    }), [id, y0, y1]);
+    await addBody("b2", 200, 260);
+    await settle();
+    await mp.selectOption('#sim-tree [data-k="find"]', "count");
+    await settle();
+    await mp.click('#sim-tools [data-s="solve"]');
+    await mp.waitForFunction(() => { const s = window.__sv.sim.state(); return s.done || s.error; }, null, { timeout: 240000 });
+    await mp.waitForTimeout(300);
+    const bd = await sim();
+    const bdNote = await mp.evaluate(() => ({ note: document.querySelector("#sim-tree .sim-bonded")?.textContent ?? "", bodies: window.__sv.model.last().bodies?.length ?? 0 }));
+    await addBody("b3", 300, 320);
+    await settle();
+    await mp.click('#sim-tools [data-s="solve"]');
+    await mp.waitForFunction(() => { const s = window.__sv.sim.state(); return s.done || s.error; }, null, { timeout: 240000 });
+    const apart = await sim();
+    const apartText = await mp.evaluate(() => document.querySelector("#tab-sim").textContent + [...document.querySelectorAll(".toast")].map(e => e.textContent).join(" "));
+    check(bdNote.bodies === 2 && !bd.error && bd.bodies === 2 && /2/.test(bdNote.note) && bd.modes.length === 6 && Math.abs(bd.modes[0].hz / 249 - 1) < 0.04 && Math.abs(bd.mass * 1000 - 0.628 * 1.3) < 0.003 && bd.plot.shown
+      && apart.error === "E-SIM-BODIES" && /touch no other body/.test(apartText),
+      `sim 1.620: two touching bodies are analysed bonded as one longer bar, and a body that touches nothing is refused (${JSON.stringify({ bdNote, error: bd.error, bodies: bd.bodies, hz: bd.modes.map(m => m.hz), mass: bd.mass, apart: apart.error })})`);
     await ctx.close();
   }
 } catch (err) {
