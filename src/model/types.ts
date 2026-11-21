@@ -13,12 +13,18 @@ export interface Num { v: number; expr?: string }
 
 // ---------- sketch ----------
 
+/**
+ * `ref` (1.645.0): a hidden copy of a model edge, made when a sketch point snaps to that edge (its end, middle or
+ * centre) or a relation or dimension picks it. It is construction geometry that holds the relation to the model,
+ * as a relation straight to the model edge does in other CAD apps: not drawn unless selected or under the pointer,
+ * and removed with the last thing that uses it (editor `dropUnusedRefs`).
+ */
 export type SkEnt =
   | { id: string; t: "point"; x: number; y: number; cons?: boolean }
-  | { id: string; t: "line"; a: string; b: string; cons?: boolean }
-  | { id: string; t: "circle"; c: string; r: number; cons?: boolean }
+  | { id: string; t: "line"; a: string; b: string; cons?: boolean; ref?: boolean }
+  | { id: string; t: "circle"; c: string; r: number; cons?: boolean; ref?: boolean }
   /** Arc counter-clockwise from a to b around c (|ca| = |cb| is implicit). */
-  | { id: string; t: "arc"; c: string; a: string; b: string; cons?: boolean }
+  | { id: string; t: "arc"; c: string; a: string; b: string; cons?: boolean; ref?: boolean }
   /**
    * Ellipse round c: a is the end of the major axis, b the end of the minor one (kept square to it).
    * With p0/p1 it is an elliptical arc, counter-clockwise from p0 to p1 (FR-SK-018).
@@ -31,7 +37,7 @@ export type SkEnt =
    * ends land on the two points (`src/sketch/conic.ts` `entBezier`). "style" (FR-SK-019 P5) = pts are the control
    * polygon of a clamped uniform B-spline of degree min(3, n - 1).
    */
-  | { id: string; t: "spline"; pts: string[]; closed?: boolean; cons?: boolean; kind?: "conic" | "parabola" | "eqn" | "style"; rho?: number; eq?: { mode: "xy" | "param"; x?: string; y: string; t0: string; t1: string; flip?: boolean } }
+  | { id: string; t: "spline"; pts: string[]; closed?: boolean; cons?: boolean; ref?: boolean; kind?: "conic" | "parabola" | "eqn" | "style"; rho?: number; eq?: { mode: "xy" | "param"; x?: string; y: string; t0: string; t1: string; flip?: boolean } }
   /**
    * Text (FR-SK-020): `text` from the anchor point `p` (left end of the baseline), capital letters `h` mm
    * tall, turned by `ang` (radians). `gl` keeps the glyph outlines (from the bundled DejaVu fonts) so

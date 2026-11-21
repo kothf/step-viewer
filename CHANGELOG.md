@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.645.0] - 2026-11-21
+
+### Fixed
+
+- Sketches: snapping a point to a model edge (its end, middle or centre), or picking a model edge for a relation or a dimension, no longer draws that edge into the sketch as a dashed construction line. The relation to the model edge is kept, as in other CAD apps; the copy that holds it is shown only under the pointer, while selected or when its edge is gone, and it is removed with the last relation, dimension or curve that uses it. Edges converted on purpose (Convert Entities, Project face edges) are drawn as before.
+- Revolve no longer takes such a hidden model edge copy as its default axis.
+
 ## [1.644.0] - 2026-11-21
 
 ### Added
@@ -4197,7 +4204,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.644.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.645.0...HEAD
+[1.645.0]: https://github.com/kothf/step-viewer/compare/v1.644.0...v1.645.0
 [1.644.0]: https://github.com/kothf/step-viewer/compare/v1.643.0...v1.644.0
 [1.643.0]: https://github.com/kothf/step-viewer/compare/v1.642.0...v1.643.0
 [1.642.0]: https://github.com/kothf/step-viewer/compare/v1.641.0...v1.642.0

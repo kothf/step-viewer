@@ -12719,7 +12719,9 @@ try {
     await mp.mouse.move(mx, my); await mp.mouse.click(mx, my);
     await mp.keyboard.press("Escape");
     await settle();
-    const sk = await mp.evaluate(() => { const ed = window.__sv.model.editor(); const s = ed.sk; const line = s.ents.find(e => e.t === "line" && !e.cons); const a = line && s.ents.find(e => e.id === line.a); return { cons: s.ents.filter(e => e.cons).length, ext: s.rels.filter(r => r.ext).length, a: a ? [a.x, a.y] : null }; });
+    const sk = await mp.evaluate(() => { const ed = window.__sv.model.editor(); const s = ed.sk; const line = s.ents.find(e => e.t === "line" && !e.cons); const a = line && s.ents.find(e => e.id === line.a); let dashed = 0; window.__sv.viewer.scene.traverse(o => { if (o.visible && o.userData?.skConstruction) dashed += o.geometry?.attributes?.instanceStart?.count ?? 0; }); return { cons: s.ents.filter(e => e.cons).length, refs: s.ents.filter(e => e.ref).length, dashed, ext: s.rels.filter(r => r.ext).length, a: a ? [a.x, a.y] : null }; });
+    // 1.645: the model edge's copy that holds the snap is hidden, not drawn as a dashed construction line.
+    check(sk.refs === 1 && sk.dashed === 0, `model 1.645: a snap to a model vertex draws no copy of the edge (${JSON.stringify(sk)})`);
     await mp.evaluate(() => window.__sv.modeller.ok());
     await settle();
     // The block grows to 60 wide: the line's start follows the corner.
