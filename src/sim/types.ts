@@ -86,6 +86,8 @@ export interface StudySettings {
   modes?: number;
   /** Modal studies: only the modes between these frequencies, Hz (then `modes` is not used; at most `MAX_MODES` are found). */
   range?: { from: number; to: number };
+  /** Static studies: inertia relief (FR-SUP-007). The part is held by nothing, its supports are left out, and the loads are balanced by its own inertia. */
+  relief?: boolean;
 }
 
 /** `modal` = natural frequencies and mode shapes: supports only (none = a free body), no loads. */

@@ -55,6 +55,9 @@ type Edit = { kind: "support"; draft: StudySupport; isNew: boolean } | { kind: "
 interface CaseResult { id: string; name: string; passes: PassResult[]; job: number }
 /** `passes` are the shown ones: the study's, or with load cases the picked case's or the envelope (one made-up pass). */
 interface Results { study: string; key: string; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; cached?: boolean; parts?: number; cases?: CaseResult[]; job?: number; env?: PassResult[] }
+/** A percentage for a narrow table: tiny ones are not written out with an exponent. */
+const pct = (v: number) => (Math.abs(v) < 0.01 ? (v === 0 ? "0" : "< 0.01") : sig(v));
+const RELIEF_NOTE = "The part is held by nothing: its supports are left out and the loads are balanced by its own inertia, as for a part in free flight or afloat.";
 /** The most load cases a study has. */
 export const MAX_CASES = 8;
 /** What the disk cache keeps of a finished solve (FR-SOL-030). */
@@ -297,6 +300,7 @@ export class SimController {
       kind: this.study()?.kind ?? null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
       animating: !!this.anim, frames: this.anim?.frames ?? 0, gifs: this.gifs, gif: this.lastGif, near: this.nearModes(this.res?.passes.at(-1)), bodies: this.res?.parts ?? 1, speed: this.speed, cumul: this.cumul, more: !!this.res?.passes.at(-1)?.more, range: this.study()?.settings.range ?? null,
       caps: { n: this.caps.length, ...this.capInfo },
+      relief: !!this.study()?.settings.relief, accel: last?.accel ? { a: last.accel.a, alpha: last.accel.alpha } : null,
       cases: (this.study()?.cases ?? []).map(c => ({ name: c.name, off: c.off })), caseSel: this.caseSel, enveloped: this.enveloped,
       caseResults: (this.res?.cases ?? []).map(c => ({ name: this.caseName(c), maxVm: c.passes.at(-1)?.maxVm ?? null, maxU: c.passes.at(-1)?.maxU ?? null, passes: c.passes.length })),
       path: (() => { const pv = this.pathValues(); let lo = Infinity, hi = -Infinity, inside = 0; if (pv) for (let i = 0; i < pv.v.length; i++) if (pv.ok[i]) { inside++; lo = Math.min(lo, pv.v[i]); hi = Math.max(hi, pv.v[i]); }
@@ -650,7 +654,7 @@ export class SimController {
     const name = this.nameOf(rest.trim());
     switch (code) {
       case "E-SIM-NOLOAD": return t("Add a load first.");
-      case "E-SIM-FREE": return rest.trim() === "6" && !this.study()?.supports.length ? t("Add a support first.") : t("The supports leave the part free to move ({n} free motions). Add or change the supports.", { n: rest.trim() });
+      case "E-SIM-FREE": return rest.trim() === "6" && !this.study()?.supports.length ? t("Add a support first, or turn on Inertia relief for a part that nothing holds.") : t("The supports leave the part free to move ({n} free motions). Add or change the supports.", { n: rest.trim() });
       case "E-SIM-BODIES": return t("Some bodies of the part touch no other body. A study needs one connected piece: join the bodies or delete the loose ones.");
       case "E-SIM-BODYMATS": return t("Bodies with a material of their own are not analysed yet: a study uses the part's one material.");
       case "E-SIM-DENSITY": return t("The material has no density: a modal study needs one.");
@@ -1382,7 +1386,8 @@ export class SimController {
     if (m) kv([[t("Name"), m.name], [t("Elastic modulus"), `${sig(m.E ?? NaN)} GPa`], [t("Poisson's ratio"), sig(m.nu ?? NaN)], [t("Density"), `${sig(m.density)} g/cm³`],
       ...(m.sy ? [[t("Yield strength"), `${sig(m.sy)} MPa`]] : [])]);
     blocks.push({ kind: "h", text: t("Supports") });
-    blocks.push({ kind: "table", widths: [3, 3, 2, 4], rows: [[t("Name"), t("Type"), t("Applied to"), t("Details")], ...st.supports.map(s => [name(s), t(SUPPORT_LABEL[s.type]), faces(s),
+    if (st.settings.relief) blocks.push({ kind: "p", text: `${t("Inertia relief")}. ${t(RELIEF_NOTE)}` });
+    else blocks.push({ kind: "table", widths: [3, 3, 2, 4], rows: [[t("Name"), t("Type"), t("Applied to"), t("Details")], ...st.supports.map(s => [name(s), t(SUPPORT_LABEL[s.type]), faces(s),
       s.type === "hinge" && s.axialFree ? t("Free to slide along the axis") : s.type === "dirs" ? ["X", "Y", "Z"].filter((_, i) => (s.dirs ?? [true, true, true])[i]).join(", ")
         : s.type === "disp" ? ["X", "Y", "Z"].map((a, i) => ((s.dirs ?? [true, true, true])[i] ? `${a} ${sig((s.disp ?? [0, 0, 0])[i])} mm` : "")).filter(Boolean).join(", ")
         : s.type === "elastic" ? `${t("Normal")} ${sig(s.kn ?? 0)} N/mm³, ${t("In the face")} ${sig(s.kt ?? 0)} N/mm³` : ""])] });
@@ -1413,6 +1418,10 @@ export class SimController {
     if (res.cases?.length) rows.unshift([t("Load case"), this.enveloped ? t("Envelope (highest of all cases)") : this.caseName(res.cases[Math.max(0, this.caseSel)])]);
     if (real) rows.push([t("Highest stress away from singularities"), `${sig(real.vm)} MPa`]);
     rows.push([t("Max displacement"), this.lenText(last.maxU)]);
+    if (last.accel && !this.enveloped) {
+      rows.push([t("Acceleration"), `${sig(Math.hypot(...last.accel.a) * 1e-3)} m/s² (${last.accel.a.map(x => sig(x * 1e-3)).join(", ")})`]);
+      if (Math.hypot(...last.accel.alpha) > 1e-9) rows.push([t("Angular acceleration"), `${sig(Math.hypot(...last.accel.alpha))} rad/s² (${last.accel.alpha.map(x => sig(x)).join(", ")})`]);
+    }
     if (m?.sy && peak > 0) rows.push([t("Lowest safety factor (yield)"), sig(m.sy / peak)]);
     const errs = last.errors, eLast = errs.at(-1), eBefore = errs.length > 1 ? errs[errs.length - 2] : null;
     if (eLast != null) rows.push([t("Estimated error"), `≈ ${sig(eLast)} %`]);
@@ -1581,7 +1590,9 @@ export class SimController {
     html += `<div class="sim-sec"><h4>${esc(t("Material"))}</h4><button class="pm-box${matOk ? "" : " sim-warn"}" data-a="mat">${m ? `<span translate="no">${esc(m.name)}</span>` : esc(t("No material"))}</button>`
       + (m && matOk ? `<p class="sim-note muted">E ${sig(m.E!)} GPa · ν ${sig(m.nu!)}${m.sy ? ` · ${esc(t("yield"))} ${sig(m.sy)} MPa` : ""}</p>` : `<p class="sim-prob">${esc(t("The analysis needs a material with an elastic modulus and Poisson's ratio."))}</p>`) + `</div>`;
     const modal = st.kind === "modal";
-    html += `<div class="sim-sec"><h4>${esc(t("Supports"))}</h4><ul class="sim-list">${st.supports.map(s => row(s, false)).join("") || none(modal ? t("None: the part is free. Supports are optional here.") : t("None yet: pick one in the Simulation tab."))}</ul></div>`;
+    const relief = !modal && !!st.settings.relief;
+    html += `<div class="sim-sec${relief ? " sim-relieved" : ""}"><h4>${esc(t("Supports"))}</h4><ul class="sim-list">${st.supports.map(s => row(s, false)).join("") || none(modal ? t("None: the part is free. Supports are optional here.") : relief ? t("None: the part is free.") : t("None yet: pick one in the Simulation tab."))}</ul>`
+      + (modal ? "" : `<label class="chk sim-relief" title="${esc(t(RELIEF_NOTE))}"><input type="checkbox" data-k="relief"${relief ? " checked" : ""} />${esc(t("Inertia relief"))}</label>` + (relief ? `<p class="sim-note muted">${esc(t(RELIEF_NOTE))}</p>` : "")) + `</div>`;
     if (!modal) html += `<div class="sim-sec"><h4>${esc(t("Loads"))}</h4><ul class="sim-list">${st.loads.map(l => row(l, true)).join("") || none(t("None yet: pick one in the Simulation tab."))}</ul></div>`;
     if (!modal && (st.loads.length > 1 || st.cases?.length)) {
       const cs = st.cases ?? [];
@@ -1636,16 +1647,21 @@ export class SimController {
     html += `<dl class="sim-kv"><dt>${esc(t("Max von Mises stress"))}</dt><dd data-v="maxvm">${sig(last.maxVm)} MPa${singular ? ` ${warn}` : ""}</dd>`;
     if (real) html += `<dt>${esc(t("Highest stress away from singularities"))}</dt><dd data-v="realvm">${sig(real.vm)} MPa</dd>`;
     html += `<dt>${esc(t("Max displacement"))}</dt><dd>${esc(this.lenText(last.maxU))}</dd>`;
+    if (last.accel && !env) {
+      const al = Math.hypot(...last.accel.alpha);
+      html += `<dt title="${esc(t("Inertia relief: the acceleration the loads give the free part"))}">${esc(t("Acceleration"))}</dt><dd data-v="accel" title="${last.accel.a.map(x => sig(x * 1e-3)).join(", ")} m/s²">${sig(Math.hypot(...last.accel.a) * 1e-3)} m/s²</dd>`;
+      if (al > 1e-9) html += `<dt>${esc(t("Angular acceleration"))}</dt><dd data-v="alpha" title="${last.accel.alpha.map(x => sig(x)).join(", ")} rad/s²">${sig(al)} rad/s²</dd>`;
+    }
     const sy = this.host.doc()?.material?.sy;
     if (sy && peak > 0) html += `<dt>${esc(t("Lowest safety factor (yield)"))}</dt><dd data-v="sf"${sy / peak < 1 ? ' class="sim-low"' : ""}>${sig(sy / peak)}</dd>`;
     const errs = last.errors, eLast = errs.at(-1), eBefore = errs.length > 1 ? errs[errs.length - 2] : null;
-    if (eLast != null) html += `<dt title="${esc(t("In the energy norm, from how the passes converge"))}">${esc(t("Estimated error"))}</dt><dd data-v="error">≈ ${sig(eLast)} %</dd>`;
-    else if (eBefore != null) html += `<dt title="${esc(t("In the energy norm, from how the passes converge"))}">${esc(t("Estimated error"))}</dt><dd data-v="error">&lt; ${sig(eBefore)} %</dd>`;
+    if (eLast != null) html += `<dt title="${esc(t("In the energy norm, from how the passes converge"))}">${esc(t("Estimated error"))}</dt><dd data-v="error">${pct(eLast).startsWith("<") ? "" : "≈ "}${pct(eLast).replace("<", "&lt;")} %</dd>`;
+    else if (eBefore != null) html += `<dt title="${esc(t("In the energy norm, from how the passes converge"))}">${esc(t("Estimated error"))}</dt><dd data-v="error">&lt; ${pct(eBefore).replace("< ", "")} %</dd>`;
     if (!env) html += `<dt>${esc(t("Applied load"))}</dt><dd>${f(last.applied.force)} N</dd>`;
     last.reactions.forEach((re, i) => { html += `<dt>${esc(t("Reaction"))} <span translate="no">${esc(this.nameOf(r.ids[i] ?? ""))}</span></dt><dd title="${re.force.map(x => sig(x)).join(", ")} N">${f(re.force)} N</dd>`; });
     html += `</dl>`;
     if (!env) html += `<table class="sim-passes"><thead><tr><th>${esc(t("Pass"))}</th><th>${esc(t("Unknowns"))}</th><th>${esc(t("Energy change"))}</th><th>${esc(t("Est. error"))}</th><th>${esc(t("Time"))}</th></tr></thead><tbody>`
-      + r.passes.map((p, i) => `<tr><td>${p.pass}</td><td>${p.dofs.toLocaleString("en-US").replace(/,/g, " ")}</td><td>${p.change == null ? "–" : `${sig(p.change)} %`}</td><td>${errs[i] == null ? "–" : `${i === errs.length - 1 ? "≈ " : ""}${sig(errs[i]!)} %`}</td><td>${(p.ms / 1000).toFixed(1)} s</td></tr>`).join("") + `</tbody></table>`
+      + r.passes.map((p, i) => `<tr><td>${p.pass}</td><td>${p.dofs.toLocaleString("en-US").replace(/,/g, " ")}</td><td>${p.change == null ? "–" : `${pct(p.change).replace("<", "&lt;")} %`}</td><td>${errs[i] == null ? "–" : `${i === errs.length - 1 && !pct(errs[i]!).startsWith("<") ? "≈ " : ""}${pct(errs[i]!).replace("<", "&lt;")} %`}</td><td>${(p.ms / 1000).toFixed(1)} s</td></tr>`).join("") + `</tbody></table>`
       + chartSvg(errs, t("Estimated error per pass"));
     for (const line of this.localNotes(r.passes)) html += `<p class="sim-note muted sim-local">${esc(line)}</p>`;
     if (hs.length) {
@@ -1884,6 +1900,7 @@ export class SimController {
       this.host.change(t("Modes"), d => { const s = d.studies?.find(x => x.id === st.id); if (s) s.settings.modes = v; });
     }
     else if (el.dataset.k === "cumul") { this.cumul = el.checked; this.renderTree(); }
+    else if (el.dataset.k === "relief") this.host.change(t("Inertia relief"), d => { const s = d.studies?.find(x => x.id === st.id); if (s) { if (el.checked) s.settings.relief = true; else delete s.settings.relief; } });
     else if (el.dataset.k === "case") this.pickCase(Number(el.value));
     else if (el.dataset.k === "cname" || el.dataset.k === "cload") {
       const cid = el.closest<HTMLElement>("[data-c]")?.dataset.c, cur = st.cases?.find(c => c.id === cid), lid = el.dataset.l ?? "";

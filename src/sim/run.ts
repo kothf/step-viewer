@@ -32,6 +32,8 @@ export interface StudyProblem {
   problems: { id: string; code: "E-SIM-REF" | "E-SIM-EMPTY" | "E-SIM-HINGE" | "E-SIM-SPRING" | "E-SIM-AXIS" | "E-SIM-ONESPIN" | "E-SIM-BEARING" }[];
   /** Local accuracy (FR-SOL-012): the elements meeting these triangles start `level` degrees higher. */
   refine?: { tris: Float64Array; level: number }[];
+  /** Inertia relief: no supports, the loads are balanced by the body's inertia. */
+  relief?: boolean;
   /** Which study item each entry of `fixed` is. */
   supportIds: string[];
 }
@@ -198,8 +200,10 @@ function linesOrPoints(b: SimBody, it: { on?: "edges" | "points"; edges?: StudyE
 export function studyProblem(st: Study, b: SimBody): StudyProblem {
   const off = new Set(st.suppressed ?? []);
   const out: StudyProblem = { fixed: [], loads: [], problems: [], supportIds: [] };
+  const relief = !!st.settings.relief && st.kind !== "modal";
+  if (relief) out.relief = true;
   for (const s of st.supports) {
-    if (off.has(s.id)) continue;
+    if (off.has(s.id) || relief) continue;
     const moved = (sup: Support) => {
       if (s.type !== "disp") return;
       const d = s.dirs ?? [true, true, true], v = s.disp ?? [0, 0, 0];
@@ -325,6 +329,8 @@ export interface PassResult {
   ms: number;
   reactions: Reaction[];
   applied: Reaction;
+  /** Inertia relief: the acceleration the loads give the free part (mm/s², rad/s²), its centre of mass (mm) and mass (t). */
+  accel?: { a: number[]; alpha: number[]; com: number[]; mass: number };
   /** At the sample points: displacement (3 each, mm) and von Mises stress (MPa). */
   u: Float32Array;
   vm: Float32Array;
@@ -504,7 +510,8 @@ export function sampleAt(sample: Sampler, pos: ArrayLike<number>, scale = 0, ins
 export function* runStatic(inp: RunInput, keep?: (s: Sampler, inside: (x: number, y: number, z: number) => boolean) => void): Generator<PassResult> {
   if (inp.problem.problems.length) throw new Error(`${inp.problem.problems[0].code}: ${inp.problem.problems[0].id}`);
   if (!inp.problem.loads.length && !inp.problem.gravity && !inp.problem.spin?.omega && !inp.problem.spin?.alpha && !inp.problem.fixed.some(s => s.value)) throw new Error("E-SIM-NOLOAD");
-  if (!inp.problem.fixed.length) throw new Error("E-SIM-FREE: 6");
+  if (!inp.problem.fixed.length && !inp.problem.relief) throw new Error("E-SIM-FREE: 6");
+  if (inp.problem.relief && !(inp.mat.rho > 0)) throw new Error("E-SIM-DENSITY");
   const body = new MeshBody(inp.body.tris);
   const inside = insideOf(body);
   const h = cellSize(inp.body, inp.cells);
@@ -539,7 +546,7 @@ export function* runStatic(inp: RunInput, keep?: (s: Sampler, inside: (x: number
     const r = solveStatic({
       lo: inp.body.lo, hi: inp.body.hi, inside, h, p, grid, prev, degrees,
       mat: { E: inp.mat.E, nu: inp.mat.nu, rho: inp.mat.rho },
-      fixed: inp.problem.fixed, loads: inp.problem.loads, gravity: inp.problem.gravity, spin: inp.problem.spin,
+      fixed: inp.problem.fixed, loads: inp.problem.loads, gravity: inp.problem.gravity, spin: inp.problem.spin, relief: inp.problem.relief,
     });
     grid = r.grid;
     prev = r.x;
@@ -557,7 +564,7 @@ export function* runStatic(inp: RunInput, keep?: (s: Sampler, inside: (x: number
     const change = k ? (Math.abs(r.energy - last) / Math.abs(r.energy || 1)) * 100 : null;
     last = r.energy;
     const converged = change != null && change <= inp.energyTol;
-    yield { pass: k + 1, p, raised, dofs: r.dofs, cells: r.grid.elems.length, energy: r.energy, change, ms: Date.now() - t0, reactions: r.reactions, applied: r.applied, u, vm, err, errors, maxU, maxVm, converged, done: converged || k === passes - 1 || (k >= GLOBAL_PASSES - 1 && k < passes - 1 && !markElements(ind, degrees ?? new Int8Array(ind.length).fill(GLOBAL_PASSES + 1)).length) };
+    yield { pass: k + 1, p, raised, dofs: r.dofs, cells: r.grid.elems.length, energy: r.energy, change, ms: Date.now() - t0, reactions: r.reactions, applied: r.applied, ...(r.accel ? { accel: r.accel } : {}), u, vm, err, errors, maxU, maxVm, converged, done: converged || k === passes - 1 || (k >= GLOBAL_PASSES - 1 && k < passes - 1 && !markElements(ind, degrees ?? new Int8Array(ind.length).fill(GLOBAL_PASSES + 1)).length) };
     if (converged) return;
   }
 }

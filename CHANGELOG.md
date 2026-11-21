@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.628.0] - 2026-11-21
+
+### Added
+
+- Structural analysis: **inertia relief**. With Inertia relief ticked under Supports, a static study solves a part that nothing holds: the loads are balanced by the inertia of the acceleration they give it, and the results show that acceleration. The study's supports are left out.
+
+### Fixed
+
+- Structural analysis: very small energy changes and error estimates no longer widen the passes table past the Study tab.
+
 ## [1.627.0] - 2026-11-21
 
 ### Added
@@ -4045,7 +4055,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.627.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.628.0...HEAD
+[1.628.0]: https://github.com/kothf/step-viewer/compare/v1.627.0...v1.628.0
 [1.627.0]: https://github.com/kothf/step-viewer/compare/v1.626.0...v1.627.0
 [1.626.0]: https://github.com/kothf/step-viewer/compare/v1.625.0...v1.626.0
 [1.625.0]: https://github.com/kothf/step-viewer/compare/v1.624.0...v1.625.0

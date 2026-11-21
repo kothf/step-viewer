@@ -16784,6 +16784,24 @@ try {
       && !lcEnv.error && lcEnv.enveloped && lcEnv.caseSel === -1 && lcEnv.res.length === 2 && lcEnv.res.every(c => c.maxVm > 0 && c.passes > 0) && Math.abs(lcEnv.maxVm - lcTop) <= 1e-9 * lcTop && lcEnv.shown && lcEnv.rows === 2 && lcEnv.note && lcEnv.opts === 3
       && !lcOne.enveloped && lcOne.caseSel === 1 && Math.abs(lcOne.maxVm - lcEnv.res[1].maxVm) <= 1e-9 * lcOne.maxVm && lcOne.reactions > 0 && !lcOne.stale && lcOff.cases === 0 && !lcOff.box,
       `sim 1.627: two load cases are solved in one go; the envelope holds the highest stress, a picked case shows its own; translated (${JSON.stringify({ lcLoads, lcBoxes, lcSet, lcRu, lcEnv, lcOne, lcOff })})`);
+    // 1.628: Inertia relief under Supports: the supports are left out and the loads are balanced by the part's inertia.
+    await mp.check('#sim-tree [data-k="relief"]');
+    await settle();
+    await mp.click("#lang-btn");
+    const irRu = await mp.evaluate(() => [...document.querySelectorAll("#sim-tree .sim-relieved .sim-relief, #sim-tree .sim-relieved .sim-note")].map(e => e.textContent.trim()).filter(x => /[A-Za-z]{4}/.test(x)));
+    await mp.click("#lang-btn");
+    await mp.click('#sim-tools [data-s="solve"]');
+    await mp.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.running && (s.done || s.error); }, null, { timeout: 300000 });
+    await mp.waitForTimeout(400);
+    const ir = await mp.evaluate(() => { const s = window.__sv.sim.state(); return { error: s.error, relief: s.relief, accel: s.accel, applied: s.applied?.force ?? null, reactions: s.reactions.length, maxU: s.maxU, maxVm: s.maxVm, shown: s.plot.shown,
+      dd: document.querySelector('#sim-tree [data-v="accel"]')?.textContent ?? "", note: !!document.querySelector("#sim-tree .sim-relieved .sim-note"), wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth }; });
+    await mp.uncheck('#sim-tree [data-k="relief"]');
+    await settle();
+    const irOff = await mp.evaluate(() => ({ relief: window.__sv.sim.state().relief, stale: window.__sv.sim.state().stale }));
+    const irMass = 7.85e-9 * 20 * 200 * 20, irF = ir.applied ? Math.hypot(...ir.applied) : 0, irA = ir.accel ? Math.hypot(...ir.accel.a) : 0;
+    check(!ir.error && ir.relief && ir.accel && irF > 0 && Math.abs(irA / (irF / irMass) - 1) < 0.02 && ir.reactions === 0 && ir.maxVm > 0 && ir.maxU < 5 && ir.shown && /m\/s²/.test(ir.dd) && ir.note && ir.wide <= 0 && irRu.length === 0
+      && !irOff.relief && irOff.stale,
+      `sim 1.628: with Inertia relief a study is solved without supports; the acceleration is the applied force over the mass; translated (${JSON.stringify({ ir, irF, irA, irMass, irRu, irOff })})`);
     await mp.selectOption('#sim-tree [data-k="study"]', "st2");
     await settle();
     // 1.620: a second body on the end of the bar is analysed bonded to it (one bar 260 long: 421 × (200 / 260)² = 249 Hz);
