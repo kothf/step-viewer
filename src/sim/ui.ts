@@ -26,7 +26,7 @@ import { nearExcitation, parseExcitation } from "./excite";
 import { chartSvg, reportHtml, reportPdf, type ReportBlock, type SimReport } from "./report";
 import { GLOBAL_PASSES, MAX_PASSES, positiveAxis, studyProblem, type PassResult, type SimBody } from "./run";
 import { shownValue, typedValue } from "./values";
-import { DEFAULT_MODES, GRAVITY, LOAD_LABEL, MAX_MODES, MODAL_PASSES, ON_TYPES, SUPPORT_LABEL, itemName, newStudy, nextId, pickCount, type LoadType, type PlotKind, type Study, type StudyKind, type StudyLoad, type StudySupport, type SupportType } from "./types";
+import { DEFAULT_MODES, GRAVITY, LOAD_LABEL, MAX_MODES, MAX_REFINE, MODAL_PASSES, ON_TYPES, REFINE_LABEL, SUPPORT_LABEL, itemName, newStudy, nextId, pickCount, type LoadType, type PlotKind, type Study, type StudyKind, type StudyLoad, type StudyRefine, type StudySupport, type SupportType } from "./types";
 
 export interface SimHost {
   viewer: Viewer;
@@ -45,7 +45,7 @@ export interface SimHost {
   showTab(): void;
 }
 
-type Edit = { kind: "support"; draft: StudySupport; isNew: boolean } | { kind: "load"; draft: StudyLoad; isNew: boolean };
+type Edit = { kind: "support"; draft: StudySupport; isNew: boolean } | { kind: "load"; draft: StudyLoad; isNew: boolean } | { kind: "refine"; draft: StudyRefine; isNew: boolean };
 /** `parts` = bodies of the part when there are several (they are analysed bonded). */
 interface Results { study: string; key: string; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; cached?: boolean; parts?: number }
 /** What the disk cache keeps of a finished solve (FR-SOL-030). */
@@ -55,7 +55,7 @@ const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;
 const $ = <T extends HTMLElement = HTMLElement>(s: string) => document.querySelector<T>(s)!;
 const SUPPORTS: SupportType[] = ["fixed", "sliding", "hinge", "dirs", "elastic", "disp"];
 const LOADS: LoadType[] = ["force", "pressure", "moment", "torque", "bearing", "remote", "hydro", "gravity", "centrifugal"];
-const ICON: Record<string, string> = { newmodal: "≈", new: "＋", mat: "◈", fixed: "⏚", sliding: "⇄", hinge: "◎", dirs: "✛", elastic: "≋", disp: "⇥", centrifugal: "⟳", torque: "⟲", bearing: "◒", hydro: "▽", remote: "⌖", force: "↓", pressure: "⇊", moment: "↻", gravity: "g", solve: "▶", stop: "■", results: "▦", report: "▤" };
+const ICON: Record<string, string> = { newmodal: "≈", new: "＋", mat: "◈", fixed: "⏚", sliding: "⇄", hinge: "◎", dirs: "✛", elastic: "≋", disp: "⇥", centrifugal: "⟳", torque: "⟲", bearing: "◒", hydro: "▽", remote: "⌖", refine: "⊞", force: "↓", pressure: "⇊", moment: "↻", gravity: "g", solve: "▶", stop: "■", results: "▦", report: "▤" };
 const TIP: Record<string, string> = {
   fixed: "Fixed support: the faces cannot move",
   sliding: "Sliding support: the faces slide in their own plane but cannot move across it",
@@ -82,7 +82,7 @@ const MODE_PLOTS: PlotKind[] = ["u", "ux", "uy", "uz"];
 const MODE_PERIOD = 1600;
 /** Frames of a recorded mode shape: one swing. */
 const GIF_FRAMES = 24;
-const SUPPORT_COLOR = 0x2f9e44, LOAD_COLOR = 0xd6336c;
+const SUPPORT_COLOR = 0x2f9e44, LOAD_COLOR = 0xd6336c, REFINE_COLOR = 0x1c7ed6;
 /** Blue, cyan, green, yellow, red. */
 const RAMP: [number, number, number][] = [[0.11, 0.3, 0.85], [0.1, 0.75, 0.85], [0.25, 0.75, 0.3], [0.95, 0.85, 0.2], [0.88, 0.2, 0.15]];
 const RAMP_CSS = `linear-gradient(90deg, ${RAMP.map(c => `rgb(${c.map(x => Math.round(x * 255)).join(",")})`).join(", ")})`;
@@ -193,6 +193,7 @@ export class SimController {
   /** What the results depend on: the model, the material and the study's set-up. */
   private keyOf(doc: PartDoc, st: Study) {
     const parts: unknown[] = [doc.features, doc.rollback, doc.vars ?? null, doc.material ?? null, st.supports, st.loads, st.settings, st.suppressed ?? null];
+    if (st.refine?.length) parts.push(st.refine);
     if (st.kind === "modal") parts.push("modal");
     return JSON.stringify(parts);
   }
@@ -216,7 +217,7 @@ export class SimController {
   state() {
     const last = this.res?.passes.at(-1);
     return {
-      study: this.study()?.id ?? null, editing: this.edit ? this.edit.draft.id : null, running: this.running, error: this.error, stale: this.stale(),
+      refine: (this.study()?.refine ?? []).map(r => [r.faces.length, r.level]), study: this.study()?.id ?? null, editing: this.edit ? this.edit.draft.id : null, running: this.running, error: this.error, stale: this.stale(),
       passes: this.res?.passes.map(p => ({ p: p.p, raised: p.raised ?? null, cells: p.cells, dofs: p.dofs, energy: p.energy, change: p.change, ms: p.ms })) ?? [], errors: last?.errors ?? [],
       maxU: last?.maxU ?? null, maxVm: last?.maxVm ?? null, done: !!last?.done && !this.running,
       reactions: last?.reactions ?? [], applied: last?.applied ?? null,
@@ -290,6 +291,13 @@ export class SimController {
     if (!this.study()) this.newStudy();
     const st = this.study();
     if (!st) return;
+    if (c === "refine") {
+      if (st.kind === "modal") { toast(t("Local accuracy is for static studies.")); return; }
+      this.edit = { kind: "refine", isNew: true, draft: { id: nextId(st, "r"), name: itemName(st, "refine"), type: "refine", faces: [], level: 1 } };
+      this.renderAll();
+      this.drawMarks();
+      return;
+    }
     if ((SUPPORTS as string[]).includes(c)) {
       const type = c as SupportType;
       this.edit = { kind: "support", isNew: true, draft: { id: nextId(st, "s"), name: itemName(st, type), type, faces: [], ...(type === "dirs" ? { dirs: [true, true, true] as [boolean, boolean, boolean] } : {}),
@@ -338,6 +346,7 @@ export class SimController {
     const s = st.supports.find(x => x.id === id), l = st.loads.find(x => x.id === id);
     if (s) this.edit = { kind: "support", isNew: false, draft: structuredClone(s) };
     else if (l) this.edit = { kind: "load", isNew: false, draft: structuredClone(l) };
+    else { const r = st.refine?.find(x => x.id === id); if (r) this.edit = { kind: "refine", isNew: false, draft: structuredClone(r) }; }
     this.renderAll();
     this.drawMarks();
   }
@@ -352,14 +361,14 @@ export class SimController {
       return;
     }
     const sid = st.id;
-    const label = e.isNew ? t((SUPPORT_LABEL as Record<string, string>)[d.type] ?? (LOAD_LABEL as Record<string, string>)[d.type]) : t("Edit {name}", { name: d.name ?? "" });
+    const label = e.isNew ? t(e.kind === "refine" ? REFINE_LABEL : (SUPPORT_LABEL as Record<string, string>)[d.type] ?? (LOAD_LABEL as Record<string, string>)[d.type]) : t("Edit {name}", { name: d.name ?? "" });
     this.edit = null;
     this.pickingAt = false;
     this.problems.delete(d.id);
     this.host.change(label, doc => {
       const s = doc.studies?.find(x => x.id === sid);
       if (!s) return;
-      const list = (e.kind === "support" ? s.supports : s.loads) as (StudySupport | StudyLoad)[];
+      const list = (e.kind === "support" ? s.supports : e.kind === "load" ? s.loads : (s.refine ??= [])) as (StudySupport | StudyLoad | StudyRefine)[];
       const i = list.findIndex(x => x.id === d.id);
       if (i >= 0) list[i] = d; else list.push(d);
     });
@@ -390,7 +399,7 @@ export class SimController {
       this.drawMarks();
       return true;
     }
-    if (ed.draft.on) { this.pickEdgeOrPoint(ed.draft, e); return true; }
+    if (ed.kind !== "refine" && ed.draft.on) { this.pickEdgeOrPoint(ed.draft, e); return true; }
     const hit = this.host.faceAt(e.clientX, e.clientY);
     const name = hit ? this.host.faceNames()[hit.faceId] : undefined;
     if (!hit || !name) return true;
@@ -433,7 +442,7 @@ export class SimController {
   }
 
   /** "3 faces", "2 edges", "1 point". */
-  private pickText(it: StudySupport | StudyLoad): string {
+  private pickText(it: StudySupport | StudyLoad | StudyRefine): string {
     const on = (it as StudyLoad).on, n = pickCount(it);
     return on === "edges" ? t("{n} edge|{n} edges", { n }) : on === "points" ? t("{n} point|{n} points", { n }) : t("{n} face|{n} faces", { n });
   }
@@ -525,7 +534,7 @@ export class SimController {
 
   private nameOf(id: string) {
     const st = this.study();
-    return [...(st?.supports ?? []), ...(st?.loads ?? [])].find(x => x.id === id)?.name ?? id;
+    return [...(st?.supports ?? []), ...(st?.loads ?? []), ...(st?.refine ?? [])].find(x => x.id === id)?.name ?? id;
   }
 
   private errorText(msg: string): string {
@@ -597,8 +606,8 @@ export class SimController {
     part.group.add(this.marks);
     const plotted = !!this.saved;
     const off = new Set(st.suppressed ?? []);
-    const draw = (it: StudySupport | StudyLoad, load: boolean, hot: boolean) => {
-      const color = load ? LOAD_COLOR : SUPPORT_COLOR;
+    const draw = (it: StudySupport | StudyLoad | StudyRefine, load: boolean, hot: boolean) => {
+      const color = it.type === "refine" ? REFINE_COLOR : load ? LOAD_COLOR : SUPPORT_COLOR;
       const g = this.faceGeo(part, this.faceIds(it.faces));
       if (g.tris.length) {
         const geo = new THREE.BufferGeometry();
@@ -680,6 +689,7 @@ export class SimController {
     const ed = this.edit;
     for (const s of st.supports) if (s.id !== ed?.draft.id && !off.has(s.id) && !plotted) draw(s, false, false);
     for (const l of st.loads) if (l.id !== ed?.draft.id && !off.has(l.id) && !plotted) draw(l, true, false);
+    for (const r of st.refine ?? []) if (r.id !== ed?.draft.id && !off.has(r.id) && !plotted) draw(r, false, false);
     if (ed) draw(ed.draft, ed.kind === "load", true);
     this.host.viewer.invalidate();
   }
@@ -1082,6 +1092,10 @@ export class SimController {
         : l.type === "remote" ? `${n3(c, 1, "N")}; ${n3((l.mom ?? []).map(x => x?.v ?? 0), 1e-3, "N·m")}; ${t("at ({x}, {y}, {z}) mm", { x: sig((l.at ?? [0, 0, 0])[0]), y: sig((l.at ?? [0, 0, 0])[1]), z: sig((l.at ?? [0, 0, 0])[2]) })}` : l.type === "moment" ? n3(c, 1e-3, "N·m") : n3(c, 1e-3, "m/s²");
       return [name(l), t(LOAD_LABEL[l.type]), faces(l), val];
     })] });
+    if (st.refine?.length) {
+      blocks.push({ kind: "h", text: t(REFINE_LABEL) });
+      blocks.push({ kind: "table", widths: [3, 2, 1], rows: [[t("Name"), t("Applied to"), t("Level")], ...st.refine.map(r => [(r.name ?? r.id) + (off.has(r.id) ? ` (${t("left out")})` : ""), this.pickText(r), String(r.level)])] });
+    }
     blocks.push({ kind: "h", text: t("Results") });
     const f = (v: number[]) => sig(Math.hypot(v[0], v[1], v[2]));
     const hs = this.hotList(), singular = hs.some(h => h.singular), real = singular ? hs.find(h => !h.singular) : undefined, peak = real?.vm ?? last.maxVm;
@@ -1220,7 +1234,7 @@ export class SimController {
     el.innerHTML = group(t("Study"), btn("new", t("New study"), t("New static study of this part"), { dis: busy }) + btn("newmodal", t("Modal study"), t("New modal study: the natural frequencies and mode shapes of this part"), { dis: busy }) + btn("mat", t("Material"), t("The part's material: elastic modulus, Poisson's ratio, strength"), { dis: busy }))
       + sep + group(t("Supports"), SUPPORTS.map(k => btn(k, t(SUPPORT_LABEL[k]), t(TIP[k]), { dis: busy })).join(""))
       + sep + group(t("Loads"), LOADS.map(k => btn(k, t(LOAD_LABEL[k]), t(TIP[k]), { dis: busy || noLoads })).join(""))
-      + sep + group(t("Solve"), (busy ? btn("stop", t("Stop"), t("Stop the analysis")) : btn("solve", t("Solve"), t("Run the analysis"), { dis: !st }))
+      + sep + group(t("Solve"), btn("refine", t(REFINE_LABEL), t("Local accuracy: the solution starts finer at the picked faces"), { dis: busy || noLoads }) + (busy ? btn("stop", t("Stop"), t("Stop the analysis")) : btn("solve", t("Solve"), t("Run the analysis"), { dis: !st }))
         + btn("results", t("Results"), t("Show or hide the result plot on the model"), { on: this.plot.on && !!this.res && !this.stale(), dis: !this.res || this.stale() })
         + btn("report", t("Report"), t("Save the study and its results as a report"), { dis: busy || !this.res || this.stale() }));
   }
@@ -1237,12 +1251,12 @@ export class SimController {
     const list = doc.studies ?? [];
     const m = doc.material, matOk = !!m && !!m.E && m.nu != null;
     const off = new Set(st.suppressed ?? []);
-    const row = (it: StudySupport | StudyLoad, load: boolean) => {
+    const row = (it: StudySupport | StudyLoad | StudyRefine, load: boolean) => {
       const bad = this.problems.get(it.id);
       const isOff = off.has(it.id);
       return `<li class="sim-row${isOff ? " off" : ""}${bad ? " bad" : ""}${this.edit?.draft.id === it.id ? " cur" : ""}" data-id="${it.id}">`
-        + `<button class="sim-name" data-a="edit" translate="no" title="${esc(t("Edit"))}"><i class="sim-dot ${load ? "load" : "sup"}" aria-hidden="true"></i>${esc(it.name ?? it.id)}</button>`
-        + `<span class="sim-meta">${it.type === "gravity" ? "" : it.type === "centrifugal" && !it.faces.length ? esc(this.axisText(it as StudyLoad)) : esc(this.pickText(it))}</span>`
+        + `<button class="sim-name" data-a="edit" translate="no" title="${esc(t("Edit"))}"><i class="sim-dot ${it.type === "refine" ? "ref" : load ? "load" : "sup"}" aria-hidden="true"></i>${esc(it.name ?? it.id)}</button>`
+        + `<span class="sim-meta">${it.type === "gravity" ? "" : it.type === "centrifugal" && !it.faces.length ? esc(this.axisText(it as StudyLoad)) : esc(this.pickText(it))}${it.type === "refine" ? ` · ${esc(t("level {n}", { n: it.level }))}` : ""}</span>`
         + `<button class="sim-ib" data-a="toggle" aria-pressed="${isOff}" title="${esc(isOff ? t("Include in the analysis") : t("Leave out of the analysis"))}" aria-label="${esc(isOff ? t("Include in the analysis") : t("Leave out of the analysis"))}">${isOff ? "○" : "●"}</button>`
         + `<button class="sim-ib" data-a="del" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">×</button>`
         + (bad ? `<p class="sim-prob">${esc(this.errorText(`${bad}: ${it.id}`))}</p>` : "")
@@ -1268,7 +1282,8 @@ export class SimController {
       + `<label class="pm-field"><span>${esc(t("Excitation"))}</span><input type="text" data-k="excite" value="${esc(st.excite ?? "")}" placeholder="${esc(t("e.g. 3000 rpm or 50 Hz"))}" title="${esc(t("A frequency the part is shaken at, such as a motor speed: modes within 10 % of it are marked"))}" spellcheck="false" /></label></div>`;
     else html += `<div class="sim-sec"><h4>${esc(t("Accuracy"))}</h4><label class="pm-field"><span>${esc(t("Passes"))}</span><select data-k="passes">${Array.from({ length: MAX_PASSES }, (_, i) => i + 1).map(k => `<option value="${k}"${k === st.settings.passes ? " selected" : ""}>${k}</option>`).join("")}</select></label>`
       + `<label class="pm-field"><span>${esc(t("Stop at energy change"))}, %</span><input type="number" data-k="tol" min="0" max="20" step="0.1" value="${sig(st.settings.energyTol)}"></label>`
-      + `<p class="sim-note muted">${esc(t("Each pass raises the accuracy on the same geometry and stops early once the strain energy changes by less than {n} %.", { n: sig(st.settings.energyTol) }))} ${esc(t("Passes after the third raise it only where the estimated error is highest."))}</p></div>`;
+      + `<p class="sim-note muted">${esc(t("Each pass raises the accuracy on the same geometry and stops early once the strain energy changes by less than {n} %.", { n: sig(st.settings.energyTol) }))} ${esc(t("Passes after the third raise it only where the estimated error is highest."))}</p>`
+      + (st.refine?.length ? `<ul class="sim-list sim-refs">${st.refine.map(r => row(r, false)).join("")}</ul>` : "") + `</div>`;
     html += `<div class="sim-sec sim-res" aria-live="polite"><h4>${esc(t("Results"))}</h4>${this.resultsHtml()}</div>`;
     el.innerHTML = html;
   }
@@ -1363,7 +1378,7 @@ export class SimController {
     pm.hidden = !e;
     if (!e) { pm.innerHTML = ""; return; }
     const d = e.draft;
-    const title = t((SUPPORT_LABEL as Record<string, string>)[d.type] ?? (LOAD_LABEL as Record<string, string>)[d.type]);
+    const title = t(e.kind === "refine" ? REFINE_LABEL : (SUPPORT_LABEL as Record<string, string>)[d.type] ?? (LOAD_LABEL as Record<string, string>)[d.type]);
     const group = (legend: string, inner: string) => `<fieldset class="pm-group"><legend>${esc(legend)}</legend>${inner}</fieldset>`;
     const chk = (k: string, on: boolean | undefined, label: string) => `<label class="chk pm-chk"><input type="checkbox" data-k="${k}"${on ? " checked" : ""} />${esc(label)}</label>`;
     const hint = t("A number, an expression, a unit or a global variable: 2 kN, 3 * F");
@@ -1376,7 +1391,10 @@ export class SimController {
       body += group(on === "edges" ? t("Edges") : on === "points" ? t("Points") : t("Faces"), sel + `<div class="pm-box focus sim-faces" role="status">${n ? esc(this.pickText(d)) : esc(ask)}</div>`
         + (n ? `<button class="btn small" data-k="clear">${esc(t("Clear"))}</button>` : ""));
     }
-    if (e.kind === "support") {
+    if (e.kind === "refine") {
+      body += group(t("Level"), `<label class="pm-field"><span>${esc(t("Level"))}</span><select data-k="level">${Array.from({ length: MAX_REFINE }, (_, i) => i + 1).map(k => `<option value="${k}"${k === e.draft.level ? " selected" : ""}>${k}</option>`).join("")}</select></label>`
+        + `<p class="pm-help muted">${esc(t("The solution starts this many steps more accurate where it meets these faces, from the first pass on. Use it at fillets, holes and other places where the stress peaks."))}</p>`);
+    } else if (e.kind === "support") {
       const s = e.draft;
       if (s.type === "hinge") body += group(t("Options"), chk("axialFree", s.axialFree, t("Free to slide along the axis")));
       if (s.type === "dirs") body += group(t("Held directions"), ["X", "Y", "Z"].map((a, i) => chk(`dir${i}`, (s.dirs ?? [true, true, true])[i], a)).join(""));
@@ -1492,6 +1510,7 @@ export class SimController {
         if (!s) return;
         s.supports = s.supports.filter(x => x.id !== id);
         s.loads = s.loads.filter(x => x.id !== id);
+        if (s.refine) { s.refine = s.refine.filter(x => x.id !== id); if (!s.refine.length) delete s.refine; }
         if (s.suppressed) s.suppressed = s.suppressed.filter(x => x !== id);
       });
     } else if (a === "toggle" && id && st) {
@@ -1573,6 +1592,7 @@ export class SimController {
     }
     else if (k === "flip") d.flip = el.checked || undefined;
     else if (k === "axis") (e.draft as StudyLoad).axis = el.value as "x" | "y" | "z";
+    else if (k === "level" && e.kind === "refine") e.draft.level = Math.max(1, Math.min(MAX_REFINE, Number(el.value) || 1));
     else if (k === "up") { const l = e.draft as StudyLoad; l.axis = el.value.slice(-1) as "x" | "y" | "z"; l.flip = el.value.length > 1 || undefined; }
     else if (el.dataset.q) {
       const q = el.dataset.q, v = num(el.value), sup = e.draft as StudySupport;
