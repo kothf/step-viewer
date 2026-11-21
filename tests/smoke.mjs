@@ -16628,6 +16628,48 @@ try {
       && mTab.rows === 6 && /Hz/.test(mTab.f1) && /kg/.test(mTab.mass) && mTab.wide <= 0 && mTab.legend === "0" && mTab.kinds === "u,ux,uy,uz"
       && m3.mode === 2 && m3.plot.shown && !m4.animating && mLeft.length === 0,
       `sim 1.617: a modal study of the clamped bar finds its bending frequencies, lists the modes, shows the one clicked and swings its shape; the tab is translated (${JSON.stringify({ mSet, error: m1.error, hz, eff: m1.modes[0]?.eff, mass: m1.mass, passes: m1.passes, frames: [m1.frames, m2.frames], mTab, mode: m3.mode, animating: [m1.animating, m4.animating], left: mLeft.slice(0, 6) })})`);
+    // 1.642.0: the memory a pass needs is known before it starts (over the budget: refused, or the passes end early); Solve on change.
+    const simMem = mb => mp.evaluate(v => { const u = new URL(location.href); if (v) u.searchParams.set("simmem", String(v)); else u.searchParams.delete("simmem"); history.replaceState(null, "", u); }, mb);
+    const simDone = async () => { await mp.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.running && (s.done || s.error); }, null, { timeout: 300000 }); await mp.waitForTimeout(400); };
+    await mp.selectOption('#sim-tree [data-k="passes"]', "2");
+    await mp.waitForTimeout(300);
+    await mp.click('#sim-tools [data-s="solve"]');
+    await simDone();
+    const y0 = await sim();
+    const yNeed = y0.passes.map(q => q.memory / 2 ** 20);
+    const yTitle = await mp.evaluate(() => document.querySelector("#sim-tree .sim-passes tbody td[title]")?.title ?? "");
+    await simMem(yNeed[0] / 2);
+    await mp.click('#sim-tools [data-s="solve"]');
+    await simDone();
+    const y1 = await sim();
+    const yProb = await mp.evaluate(() => document.querySelector("#sim-tree .sim-prob")?.textContent ?? "");
+    await simMem((yNeed[0] + yNeed[1]) / 2);
+    await mp.click('#sim-tools [data-s="solve"]');
+    await simDone();
+    const y2 = await sim();
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(300);
+    const yRu = await mp.evaluate(() => [document.querySelector('#sim-tree [data-v="capped"]')?.textContent ?? "x", document.querySelector("#sim-tree .sim-auto")?.textContent ?? "x", document.querySelector("#sim-tree .sim-auto")?.title ?? "x"].filter(s => /[A-Za-z]{3,}/.test(s)));
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(300);
+    await simMem(0);
+    await mp.check('#sim-tree [data-k="auto"]');
+    await mp.waitForTimeout(1500);
+    const y3 = await sim();
+    await mp.fill('#sim-tree [data-k="tol"]', "0.7");
+    await mp.keyboard.press("Tab");
+    await mp.waitForFunction(() => window.__sv.sim.state().autoRuns >= 1, null, { timeout: 20000 });
+    await simDone();
+    const y4 = await sim();
+    const yWide = await mp.evaluate(() => { const e = document.querySelector("#tab-sim"); return e.scrollWidth - e.clientWidth; });
+    await mp.uncheck('#sim-tree [data-k="auto"]');
+    await mp.waitForTimeout(300);
+    check(!y0.error && y0.passes.length >= 2 && yNeed.every(v => v > 0) && yNeed[1] > yNeed[0] && /\d/.test(yTitle)
+      && /^E-SIM-MEMORY: \d+/.test(y1.error ?? "") && /MB/.test(yProb)
+      && !y2.error && y2.passes.length === 1 && y2.capped > 0 && y2.done && yRu.length === 0
+      && y3.auto && y3.autoRuns === 0 && y3.passes.length === 1
+      && !y4.error && y4.autoRuns === 1 && y4.modes.length > 0 && y4.passes.length >= 2 && !y4.capped && !y4.stale && yWide <= 0,
+      `sim 1.642: the memory of each pass is known; under a small budget the solve is refused or the passes end early with a note; Solve on change solves by itself after a change (${JSON.stringify({ error: [y0.error, y1.error, y2.error, y4.error], yNeed, yTitle, yProb, capped: y2.capped, passes: [y0.passes.length, y2.passes.length, y4.passes.length], yRu, auto: [y3.autoRuns, y4.autoRuns], modes: y4.modes.length, yWide })})`);
     await ctx.close();
   }
 

@@ -221,3 +221,28 @@ function aggregate(g: Grid, minFrac: number, rigid?: boolean[]) {
     g.elems.push({ c: cl.lo.map((v, a) => (v + cl.hi[a]) / 2), s: g.h / 2, cells: [c] });
   }
 }
+
+/**
+ * The memory the stiffness matrix of a grid takes, bytes (FR-SOL-020): a dense block per element and two per
+ * pair of elements with cells side by side, `size(e)` unknowns in element e. Joins between domains, bolts and
+ * connectors add a little that is not counted.
+ */
+export function memoryBytes(g: Grid, size: (el: number) => number): number {
+  const nel = g.elems.length;
+  let sum = 0;
+  for (let e = 0; e < nel; e++) sum += size(e) ** 2;
+  const seen = new Set<number>();
+  for (const c of g.cells) {
+    for (let a = 0; a < 3; a++) {
+      const o = g.at(c.ijk[0] + (a === 0 ? 1 : 0), c.ijk[1] + (a === 1 ? 1 : 0), c.ijk[2] + (a === 2 ? 1 : 0), c.dom);
+      if (o < 0) continue;
+      const x = c.el, y = g.cells[o].el;
+      if (x === y) continue;
+      const k = Math.min(x, y) * nel + Math.max(x, y);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      sum += 2 * size(x) * size(y);
+    }
+  }
+  return 8 * sum;
+}

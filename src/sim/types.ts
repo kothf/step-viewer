@@ -175,6 +175,8 @@ export interface Study {
   path?: [V3, V3];
   /** Modal studies: a frequency the part is excited at, as typed ("3000 rpm", "50 Hz"); modes near it are flagged. Not part of the solve. */
   excite?: string;
+  /** Solve on change (FR-STU-022): the study is solved again by itself whenever the model or its set-up changes. Not part of the solve. */
+  auto?: boolean;
   /** View state: the plot shown and the deformation scale (0 = automatic). */
   plot?: { kind: PlotKind; scale?: number; deformed?: boolean };
 }

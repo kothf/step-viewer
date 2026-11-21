@@ -34,6 +34,7 @@ import { nearExcitation, parseExcitation } from "./excite";
 import { compareRows, noteSummary, parseSummaries, type CompareRow, type Summary, type SummaryStore } from "./compare";
 import { pathChart, pathChartSvg, pathCsv, pathLength, pathPoints, pathRows, type PathRow } from "./path";
 import { chartSvg, reportHtml, reportPdf, type ReportBlock, type SimReport } from "./report";
+import { MEMORY_LIMIT } from "./static";
 import { GLOBAL_PASSES, MAX_PASSES, edgeLines, envelope, positiveAxis, studyProblem, withoutFaces, type PassResult, type SimBody } from "./run";
 import { shownValue, typedValue } from "./values";
 import { NUT_FACTOR, boltPreload, type StudyBolt } from "./types";
@@ -83,6 +84,10 @@ interface BoltUse extends BoltKept { a: Float64Array; b: Float64Array; E: number
 interface Results { /** The welds, in the order of `PassResult.welds`. */ welds?: { id: string; name: string }[]; /** The connectors, in the order of `PassResult.connectors`. */ conns?: { id: string; name: string; spring: boolean }[]; /** The bolts, in the order of `PassResult.bolts`. */ bolts?: BoltKept[]; /** An assembly: its solids, by the solver's domain. */ comps?: { key: string; name: string }[]; /** Components the solve left out (ids). */ off?: string[]; study: string; key: string; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; cached?: boolean; parts?: number; cases?: CaseResult[]; job?: number; env?: PassResult[]; /** Bodies with their own materials: each body's material name and yield strength (MPa, 0 = none), by `PassResult.dom`. */ bodyMats?: { name: string; sy: number; rigid?: boolean }[] }
 const BOLT_NOTE = "Tension, shear and bending of each bolt as a beam. The safety factor compares their combined stress on the thread's stress area with the proof stress of the property class.";
 /** A percentage for a narrow table: tiny ones are not written out with an exponent. */
+/** Solve on change: how long after the last change the solve starts, ms. */
+const AUTO_DELAY = 700;
+/** The memory budget typed in the address (`?simmem=<MB>`, for tests), bytes; 0 = the default. */
+const memLimit = () => { const v = Number(new URLSearchParams(location.search).get("simmem")); return v > 0 ? v * 2 ** 20 : 0; };
 const pct = (v: number) => (Math.abs(v) < 0.01 ? (v === 0 ? "0" : "< 0.01") : sig(v));
 const RELIEF_NOTE = "The part is held by nothing: its supports are left out and the loads are balanced by its own inertia, as for a part in free flight or afloat.";
 /** The most load cases a study has. */
@@ -187,6 +192,10 @@ export class SimController {
   private client = new SimClient();
   /** The study state whose kept results were last asked for, so each is looked up once. */
   private asked = "";
+  /** Solve on change: the timer of the next look, the state it last started a solve for, and how many it started. */
+  private autoTimer = 0;
+  private autoFor = "";
+  private autoRuns = 0;
   private cacheHits = 0;
   private docId: string | null = null;
   private marks = new THREE.Group();
@@ -468,7 +477,7 @@ export class SimController {
     const last = this.res?.passes.at(-1);
     return {
       refine: (this.study()?.refine ?? []).map(r => [r.faces.length, r.level]), study: this.study()?.id ?? null, editing: this.edit ? this.edit.draft.id : null, running: this.running, error: this.error, stale: this.stale(),
-      passes: this.res?.passes.map(p => ({ p: p.p, raised: p.raised ?? null, cells: p.cells, dofs: p.dofs, energy: p.energy, change: p.change, ms: p.ms })) ?? [], errors: last?.errors ?? [],
+      passes: this.res?.passes.map(p => ({ p: p.p, raised: p.raised ?? null, cells: p.cells, dofs: p.dofs, energy: p.energy, change: p.change, ms: p.ms, memory: p.memory ?? null })) ?? [], errors: last?.errors ?? [], capped: last?.capped ?? null, auto: !!this.study()?.auto, autoRuns: this.autoRuns,
       maxU: last?.maxU ?? null, maxVm: last?.maxVm ?? null, done: !!last?.done && !this.running,
       reactions: last?.reactions ?? [], applied: last?.applied ?? null,
       plot: { ...this.plot, shown: !!this.saved, range: this.range, scale: this.usedScale, points: (this.res?.mesh.pos.length ?? 0) / 3 }, marks: this.marks.children.length,
@@ -512,6 +521,33 @@ export class SimController {
     this.renderAll();
     this.drawMarks();
     void this.restore();
+    this.autoSoon();
+  }
+
+  /** Solve on change (FR-STU-022): a little after the last change, a study that asks for it is solved again. */
+  private autoSoon() {
+    clearTimeout(this.autoTimer);
+    if (!this.study()?.auto) return;
+    this.autoTimer = window.setTimeout(() => this.autoSolve(), AUTO_DELAY);
+  }
+
+  private autoSolve() {
+    const doc = this.host.doc(), st = this.study();
+    if (!doc || !st?.auto) return;
+    // a solve under way, an open panel or an open command: look again later
+    if (this.running || this.edit || !this.host.idle()) { this.autoSoon(); return; }
+    if (this.res && !this.stale()) return;
+    // nothing to solve yet: no support (unless the body is free on purpose), or no load
+    const off = new Set(st.suppressed ?? []), on = <T extends { id: string }>(l: T[]) => l.filter(x => !off.has(x.id));
+    if (st.kind !== "modal" && !st.settings.relief && !on(st.supports).length) return;
+    if (st.kind !== "modal" && !on(st.loads).length && !on(st.supports).some(s => s.type === "disp")) return;
+    if (!this.host.asm() && !(doc.material?.E && doc.material.nu != null)) return;
+    if (!this.host.model()) return;
+    const tag = `${doc.id}|${st.id}|${this.keyOf(doc, st)}`;
+    if (tag === this.autoFor) return;
+    this.autoFor = tag;
+    this.autoRuns++;
+    void this.solve();
   }
 
   /** Results of the last finished solve of this very study state, from the disk cache (FR-SOL-030). */
@@ -538,6 +574,7 @@ export class SimController {
 
   /** The model was built and shown again: the mesh is new. */
   rebuilt() {
+    this.autoSoon();
     if (this.saved && this.saved.meshes[0]?.mesh === this.host.model()?.meshes[0]) this.clearPlot();
     this.saved = null;
     this.disposePlot();
@@ -886,7 +923,7 @@ export class SimController {
       this.progress = pre + t("Pass {n} of {m}…", { n: 1, m: total });
       this.renderAll();
       await this.client.solve({
-        body: geo, problem, passes: total, energyTol: st.settings.energyTol, pos, nrm,
+        body: geo, problem, passes: total, energyTol: st.settings.energyTol, pos, nrm, ...(memLimit() ? { memory: memLimit() } : {}),
         ...(modal ? { modal: st.settings.range
           ? { count: DEFAULT_MODES, max: MAX_MODES, range: [st.settings.range.from, st.settings.range.to] as [number, number] }
           : { count: Math.max(1, Math.min(MAX_MODES, Math.round(st.settings.modes ?? DEFAULT_MODES))) } } : {}),
@@ -1147,6 +1184,9 @@ export class SimController {
       case "E-SIM-LOOSE": return t("Nothing holds {names}: they touch no held component and have no support. Add a support, move them into contact or raise the gap tolerance.", { names: rest.split(",").map(i => this.comps[Number(i)]?.name ?? i).join(", ") });
       case "E-SIM-BODYMAT": return t("The material {name} of a body has no elastic modulus or Poisson's ratio.", { name: msg.split(": ")[1] ?? "" });
       case "E-SIM-DENSITY": return t("The material has no density: a modal study needs one.");
+      case "E-SIM-MEMORY": return this.host.asm()
+        ? t("The study needs about {n} MB of memory, more than a solve may take ({m} MB). Leave components out of the study or make some rigid.", { n: rest.trim(), m: Math.round((memLimit() || MEMORY_LIMIT) / 2 ** 20) })
+        : t("The study needs about {n} MB of memory, more than a solve may take ({m} MB). Remove local accuracy settings or simplify the part.", { n: rest.trim(), m: Math.round((memLimit() || MEMORY_LIMIT) / 2 ** 20) });
       case "E-SIM-CONNECTOR": return t("The connector {name} cannot be placed on its faces. Pick faces with some area on each side.", { name: this.nameOf(this.connIds[Number(msg.split(": ")[1])] ?? "") });
       case "E-SIM-MASS": return t("A mass has no faces left to sit on.");
       case "E-SIM-WELD": return t("The weld {name} lies beside no other component: click edges of one component that lie on another.", { name: this.nameOf(this.weldIds[Number(msg.split(": ")[1])] ?? "") });
@@ -2366,7 +2406,7 @@ export class SimController {
       + (modal ? "" : `<label class="chk sim-relief" title="${esc(t(RELIEF_NOTE))}"><input type="checkbox" data-k="relief"${relief ? " checked" : ""} />${esc(t("Inertia relief"))}</label>` + (relief ? `<p class="sim-note muted">${esc(t(RELIEF_NOTE))}</p>` : "")) + `</div>`;
     if (st.connectors?.length) html += `<div class="sim-sec sim-conns"><h4>${esc(t("Connectors"))}</h4><p class="sim-note muted">${esc(t(CONNECTOR_NOTE))}</p><ul class="sim-list">${st.connectors.map(c => row(c, false)).join("")}</ul></div>`;
     if (st.masses?.length) html += `<div class="sim-sec sim-masses"><h4>${esc(t("Masses"))}</h4><p class="sim-note muted">${esc(t(MASS_NOTE))}</p><ul class="sim-list">${st.masses.map(c => row(c, false)).join("")}</ul></div>`;
-    if (!modal) html += `<div class="sim-sec"><h4>${esc(t("Loads"))}</h4><ul class="sim-list">${st.loads.map(l => row(l, true)).join("") || none(t("None yet: pick one in the Simulation tab."))}</ul></div>`;
+    if (!modal) html += `<div class="sim-sec sim-loads"><h4>${esc(t("Loads"))}</h4><ul class="sim-list">${st.loads.map(l => row(l, true)).join("") || none(t("None yet: pick one in the Simulation tab."))}</ul></div>`;
     if (!modal && (st.loads.length > 1 || st.cases?.length)) {
       const cs = st.cases ?? [];
       html += `<div class="sim-sec sim-cases"><h4>${esc(t("Load cases"))}</h4>`
@@ -2382,11 +2422,13 @@ export class SimController {
       + `<label class="pm-field"><span>${esc(t("Passes"))}</span><select data-k="passes">${Array.from({ length: MODAL_PASSES }, (_, i) => i + 1).map(k => `<option value="${k}"${k === Math.min(MODAL_PASSES, st.settings.passes) ? " selected" : ""}>${k}</option>`).join("")}</select></label>`
       + `<label class="pm-field"><span>${esc(t("Stop at frequency change"))}, %</span><input type="number" data-k="tol" min="0" max="20" step="0.1" value="${sig(st.settings.energyTol)}"></label>`
       + `<p class="sim-note muted">${esc(t("Each pass raises the accuracy on the same geometry and stops early once no frequency changes by more than {n} %.", { n: sig(st.settings.energyTol) }))}</p>`
-      + `<label class="pm-field"><span>${esc(t("Excitation"))}</span><input type="text" data-k="excite" value="${esc(st.excite ?? "")}" placeholder="${esc(t("e.g. 3000 rpm or 50 Hz"))}" title="${esc(t("A frequency the part is shaken at, such as a motor speed: modes within 10 % of it are marked"))}" spellcheck="false" /></label></div>`;
+      + `<label class="pm-field"><span>${esc(t("Excitation"))}</span><input type="text" data-k="excite" value="${esc(st.excite ?? "")}" placeholder="${esc(t("e.g. 3000 rpm or 50 Hz"))}" title="${esc(t("A frequency the part is shaken at, such as a motor speed: modes within 10 % of it are marked"))}" spellcheck="false" /></label>`
+      + `<label class="chk sim-auto" title="${esc(t("After every change to the model or to the study, the study is solved again by itself"))}"><input type="checkbox" data-k="auto"${st.auto ? " checked" : ""} />${esc(t("Solve on change"))}</label>` + `</div>`;
     else html += `<div class="sim-sec"><h4>${esc(t("Accuracy"))}</h4><label class="pm-field"><span>${esc(t("Passes"))}</span><select data-k="passes">${Array.from({ length: MAX_PASSES }, (_, i) => i + 1).map(k => `<option value="${k}"${k === st.settings.passes ? " selected" : ""}>${k}</option>`).join("")}</select></label>`
       + `<label class="pm-field"><span>${esc(t("Stop at energy change"))}, %</span><input type="number" data-k="tol" min="0" max="20" step="0.1" value="${sig(st.settings.energyTol)}"></label>`
       + `<p class="sim-note muted">${esc(t("Each pass raises the accuracy on the same geometry and stops early once the strain energy changes by less than {n} %.", { n: sig(st.settings.energyTol) }))} ${esc(t("Passes after the third raise it only where the estimated error is highest."))}</p>`
-      + (st.refine?.length ? `<ul class="sim-list sim-refs">${st.refine.map(r => row(r, false)).join("")}</ul>` : "") + `</div>`;
+      + (st.refine?.length ? `<ul class="sim-list sim-refs">${st.refine.map(r => row(r, false)).join("")}</ul>` : "")
+      + `<label class="chk sim-auto" title="${esc(t("After every change to the model or to the study, the study is solved again by itself"))}"><input type="checkbox" data-k="auto"${st.auto ? " checked" : ""} />${esc(t("Solve on change"))}</label>` + `</div>`;
     html += `<div class="sim-sec sim-res" aria-live="polite"><h4>${esc(t("Results"))}</h4>${this.resultsHtml()}</div>`;
     el.innerHTML = html;
   }
@@ -2454,6 +2496,11 @@ export class SimController {
 
   private lenText(mm: number) { return `${sig(mm * UNITS[units.current].f)} ${units.current}`; }
 
+  /** The passes ended early: the next one would not fit in memory (FR-SOL-020). */
+  private cappedNote(last: PassResult): string {
+    return last.capped ? `<p class="sim-note sim-capped" data-v="capped">${esc(t("The passes ended here: the next one would need about {n} MB of memory, more than a solve may take ({m} MB).", { n: last.capped, m: Math.round((memLimit() || MEMORY_LIMIT) / 2 ** 20) }))}</p>` : "";
+  }
+
   /** One line per local pass: where the accuracy was raised. */
   private localNotes(passes: PassResult[]): string[] {
     return passes.filter(p => p.raised != null && p.pass > GLOBAL_PASSES).map(p => t("Pass {n}: accuracy raised in {k} of {m} cells.", { n: p.pass, k: p.raised!, m: p.cells }));
@@ -2500,9 +2547,10 @@ export class SimController {
     }
     html += `</dl>`;
     if (!env) html += `<table class="sim-passes"><thead><tr><th>${esc(t("Pass"))}</th><th>${esc(t("Unknowns"))}</th><th>${esc(t("Energy change"))}</th><th>${esc(t("Est. error"))}</th><th>${esc(t("Time"))}</th></tr></thead><tbody>`
-      + r.passes.map((p, i) => `<tr><td>${p.pass}</td><td>${p.dofs.toLocaleString("en-US").replace(/,/g, " ")}</td><td>${p.change == null ? "–" : `${pct(p.change).replace("<", "&lt;")} %`}</td><td>${errs[i] == null ? "–" : `${i === errs.length - 1 && !pct(errs[i]!).startsWith("<") ? "≈ " : ""}${pct(errs[i]!).replace("<", "&lt;")} %`}</td><td>${(p.ms / 1000).toFixed(1)} s</td></tr>`).join("") + `</tbody></table>`
+      + r.passes.map((p, i) => `<tr><td>${p.pass}</td><td${p.memory ? ` title="${esc(t("Memory: about {n} MB", { n: Math.max(1, Math.round(p.memory / 2 ** 20)) }))}"` : ""}>${p.dofs.toLocaleString("en-US").replace(/,/g, " ")}</td><td>${p.change == null ? "–" : `${pct(p.change).replace("<", "&lt;")} %`}</td><td>${errs[i] == null ? "–" : `${i === errs.length - 1 && !pct(errs[i]!).startsWith("<") ? "≈ " : ""}${pct(errs[i]!).replace("<", "&lt;")} %`}</td><td>${(p.ms / 1000).toFixed(1)} s</td></tr>`).join("") + `</tbody></table>`
       + chartSvg(errs, t("Estimated error per pass"));
     for (const line of this.localNotes(r.passes)) html += `<p class="sim-note muted sim-local">${esc(line)}</p>`;
+    html += this.cappedNote(last);
     if (hs.length) {
       const uf = UNITS[units.current].f;
       html += `<h5 class="sim-sub">${esc(t("Hot spots"))}</h5><table class="sim-hot"><thead><tr><th>#</th><th>${esc(t("von Mises stress"))}</th><th>X, Y, Z, ${esc(units.current)}</th></tr></thead><tbody>`
@@ -2535,6 +2583,7 @@ export class SimController {
       + `<dt>${esc(t("Mass"))}</dt><dd data-v="mass">${sig((last.mass ?? 0) * 1000)} kg</dd></dl>`;
     const range = this.study()?.settings.range;
     if (range && !modes.length) html += `<p class="sim-note sim-norange">${esc(t("No mode lies between {a} and {b} Hz.", { a: sig(range.from), b: sig(range.to) }))}</p>`;
+    html += this.cappedNote(last);
     if (last.more) html += `<p class="sim-note sim-more">${esc(t("{n} modes were found, the most a study finds, and the range goes on: more modes may lie in it.", { n: MAX_MODES }))}</p>`;
     if (modes.length) html += `<label class="chk sim-cumul"><input type="checkbox" data-k="cumul"${this.cumul ? " checked" : ""} />${esc(t("Add the effective masses up"))}</label>`;
     html += `<table class="sim-hot sim-modes"${modes.length ? "" : " hidden"}><thead><tr><th>#</th><th>${esc(t("Frequency"))}, Hz</th><th title="${esc(t("Effective mass: the share of the part's mass that moves with the mode along each axis"))}">X, %</th><th>Y, %</th><th>Z, %</th></tr></thead><tbody>`
@@ -2547,7 +2596,7 @@ export class SimController {
       : `<p class="sim-note muted sim-excite">${esc(t("No mode found lies within 10 % of the excitation at {f} Hz.", { f: sig(ex) }))}</p>`;
     if (rigid) html += `<p class="sim-note muted sim-rigid">${esc(t("{n} mode at 0 Hz is a motion of the whole part: the supports leave it free.|{n} modes at 0 Hz are motions of the whole part: the supports leave it free.", { n: rigid }))}</p>`;
     html += `<table class="sim-passes"><thead><tr><th>${esc(t("Pass"))}</th><th>${esc(t("Unknowns"))}</th><th>${esc(t("Frequency change"))}</th><th>${esc(t("Time"))}</th></tr></thead><tbody>`
-      + r.passes.map(p => `<tr><td>${p.pass}</td><td>${p.dofs.toLocaleString("en-US").replace(/,/g, " ")}</td><td>${p.change == null ? "–" : `${sig(p.change)} %`}</td><td>${(p.ms / 1000).toFixed(1)} s</td></tr>`).join("") + `</tbody></table>`;
+      + r.passes.map(p => `<tr><td>${p.pass}</td><td${p.memory ? ` title="${esc(t("Memory: about {n} MB", { n: Math.max(1, Math.round(p.memory / 2 ** 20)) }))}"` : ""}>${p.dofs.toLocaleString("en-US").replace(/,/g, " ")}</td><td>${p.change == null ? "–" : `${sig(p.change)} %`}</td><td>${(p.ms / 1000).toFixed(1)} s</td></tr>`).join("") + `</tbody></table>`;
     html += this.compareHtml();
     if (!this.running) {
       const st = this.study();
@@ -2876,6 +2925,7 @@ export class SimController {
       if (!el.value.trim() || !(v >= 0) || (from ? v >= r.to : v <= r.from)) { el.value = sig(from ? r.from : r.to); toast(t("The range must run from a lower to a higher frequency."), "warn"); return; }
       this.host.change(t("Frequency range"), d => { const s = d.studies?.find(x => x.id === st.id); if (s?.settings.range) { if (from) s.settings.range.from = v; else s.settings.range.to = v; } });
     }
+    else if (el.dataset.k === "auto") this.host.change(t("Solve on change"), d => { const s = d.studies?.find(x => x.id === st.id); if (s) { if (el.checked) s.auto = true; else delete s.auto; } });
     else if (el.dataset.k === "excite") {
       const v = el.value.trim();
       if (v && parseExcitation(v) == null) { el.setAttribute("aria-invalid", "true"); toast(t("Type a frequency such as 50 Hz or 3000 rpm."), "warn"); return; }
