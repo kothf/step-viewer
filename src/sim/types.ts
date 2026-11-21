@@ -54,12 +54,20 @@ export interface StudySettings {
   passes: number;
   /** Stop when the strain energy changes less than this between passes, %. */
   energyTol: number;
+  /** Modal studies: how many modes are found (default `DEFAULT_MODES`, at most `MAX_MODES`). */
+  modes?: number;
 }
+
+/** `modal` = natural frequencies and mode shapes: supports only (none = a free body), no loads. */
+export type StudyKind = "static" | "modal";
+export const DEFAULT_MODES = 6, MAX_MODES = 30;
+/** Passes of a modal study: degree 2, 3, 4 over the whole body. */
+export const MODAL_PASSES = 3;
 
 export interface Study {
   id: string;
   name: string;
-  kind: "static";
+  kind: StudyKind;
   supports: StudySupport[];
   loads: StudyLoad[];
   settings: StudySettings;
@@ -76,12 +84,14 @@ export type PlotKind = "vm" | "u" | "ux" | "uy" | "uz" | "sf" | "err";
 export const DEFAULT_SETTINGS: StudySettings = { passes: 3, energyTol: 2 };
 export const GRAVITY = 9806.65;
 
-/** A new static study named "Static n". */
-export function newStudy(existing: Study[]): Study {
-  let n = 1;
+/** A new study named "Static n" or "Modal n". */
+export function newStudy(existing: Study[], kind: StudyKind = "static"): Study {
+  let n = 1, k = 1;
   const ids = new Set(existing.map(s => s.id)), names = new Set(existing.map(s => s.name));
-  while (ids.has(`st${n}`) || names.has(`Static ${n}`)) n++;
-  return { id: `st${n}`, name: `Static ${n}`, kind: "static", supports: [], loads: [], settings: { ...DEFAULT_SETTINGS } };
+  const label = kind === "modal" ? "Modal" : "Static";
+  while (ids.has(`st${n}`)) n++;
+  while (names.has(`${label} ${k}`)) k++;
+  return { id: `st${n}`, name: `${label} ${k}`, kind, supports: [], loads: [], settings: kind === "modal" ? { ...DEFAULT_SETTINGS, modes: DEFAULT_MODES } : { ...DEFAULT_SETTINGS } };
 }
 
 /** The next free id with a prefix among a study's supports and loads. */

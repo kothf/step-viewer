@@ -1758,6 +1758,9 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .sim-ptable .sim-x { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 14px; line-height: 1; padding: 2px 5px; }
 .sim-ptable .sim-x:hover { color: var(--text); }
 .sim-hot tbody tr:hover, .sim-hot tbody tr:focus-visible { background: var(--panel-2); }
+.sim-modes tbody tr.rigid td { color: var(--muted); }
+.sim-modes tfoot td { color: var(--muted); border-bottom: 0; }
+.sim-legend .ana-row select { max-width: 150px; }
 .sim-hot tbody tr.sel { background: color-mix(in srgb, var(--accent) 16%, transparent); }
 .sim-warn { color: var(--warn, #e8590c); cursor: help; }
 .sim-sing { color: var(--text); }

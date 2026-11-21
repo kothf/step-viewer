@@ -24,7 +24,7 @@ import { hotSpots, type HotSpot } from "./hotspots";
 import { chartSvg, reportHtml, reportPdf, type ReportBlock, type SimReport } from "./report";
 import { GLOBAL_PASSES, MAX_PASSES, studyProblem, type PassResult, type SimBody } from "./run";
 import { shownValue, typedValue } from "./values";
-import { GRAVITY, LOAD_LABEL, ON_TYPES, SUPPORT_LABEL, itemName, newStudy, nextId, pickCount, type LoadType, type PlotKind, type Study, type StudyLoad, type StudySupport, type SupportType } from "./types";
+import { DEFAULT_MODES, GRAVITY, LOAD_LABEL, MAX_MODES, MODAL_PASSES, ON_TYPES, SUPPORT_LABEL, itemName, newStudy, nextId, pickCount, type LoadType, type PlotKind, type Study, type StudyKind, type StudyLoad, type StudySupport, type SupportType } from "./types";
 
 export interface SimHost {
   viewer: Viewer;
@@ -52,7 +52,7 @@ const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;
 const $ = <T extends HTMLElement = HTMLElement>(s: string) => document.querySelector<T>(s)!;
 const SUPPORTS: SupportType[] = ["fixed", "sliding", "hinge", "dirs"];
 const LOADS: LoadType[] = ["force", "pressure", "moment", "gravity"];
-const ICON: Record<string, string> = { new: "＋", mat: "◈", fixed: "⏚", sliding: "⇄", hinge: "◎", dirs: "✛", force: "↓", pressure: "⇊", moment: "↻", gravity: "g", solve: "▶", stop: "■", results: "▦", report: "▤" };
+const ICON: Record<string, string> = { newmodal: "≈", new: "＋", mat: "◈", fixed: "⏚", sliding: "⇄", hinge: "◎", dirs: "✛", force: "↓", pressure: "⇊", moment: "↻", gravity: "g", solve: "▶", stop: "■", results: "▦", report: "▤" };
 const TIP: Record<string, string> = {
   fixed: "Fixed support: the faces cannot move",
   sliding: "Sliding support: the faces slide in their own plane but cannot move across it",
@@ -66,6 +66,10 @@ const TIP: Record<string, string> = {
 const PLOTS: [PlotKind, string][] = [["vm", "von Mises stress"], ["u", "Displacement"], ["ux", "Displacement X"], ["uy", "Displacement Y"], ["uz", "Displacement Z"], ["sf", "Safety factor"], ["err", "Error estimate"]];
 /** Safety factors above this are drawn as this (lightly loaded regions would hide the rest of the scale). */
 const SF_TOP = 10;
+/** What a mode shape can be coloured by. */
+const MODE_PLOTS: PlotKind[] = ["u", "ux", "uy", "uz"];
+/** One swing of an animated mode shape, ms. */
+const MODE_PERIOD = 1600;
 const SUPPORT_COLOR = 0x2f9e44, LOAD_COLOR = 0xd6336c;
 /** Blue, cyan, green, yellow, red. */
 const RAMP: [number, number, number][] = [[0.11, 0.3, 0.85], [0.1, 0.75, 0.85], [0.25, 0.75, 0.3], [0.95, 0.85, 0.2], [0.88, 0.2, 0.15]];
@@ -127,6 +131,10 @@ export class SimController {
   private probeLayer: HTMLElement | null = null;
   /** The last report saved (for tests). */
   private lastReport: { kind: string; blocks: number; images: number } | null = null;
+  /** Modal results: the mode shown (−1 = the first elastic one) and whether its shape swings. */
+  private modeSel = -1;
+  private animate = true;
+  private anim: { raf: number; base: Float32Array; u: Float32Array; scale: number; t0: number; frames: number } | null = null;
 
   constructor(private host: SimHost) {
     this.marks.name = "sim-marks";
@@ -163,7 +171,9 @@ export class SimController {
 
   /** What the results depend on: the model, the material and the study's set-up. */
   private keyOf(doc: PartDoc, st: Study) {
-    return JSON.stringify([doc.features, doc.rollback, doc.vars ?? null, doc.material ?? null, st.supports, st.loads, st.settings, st.suppressed ?? null]);
+    const parts: unknown[] = [doc.features, doc.rollback, doc.vars ?? null, doc.material ?? null, st.supports, st.loads, st.settings, st.suppressed ?? null];
+    if (st.kind === "modal") parts.push("modal");
+    return JSON.stringify(parts);
   }
 
   private stale(): boolean {
@@ -172,6 +182,14 @@ export class SimController {
   }
 
   get active() { return !!this.edit || (this.probing && !!this.saved); }
+
+  /** The mode shown of modal results: the picked one, else the first that is not a rigid-body motion. */
+  private modeIndex(r: PassResult | undefined): number {
+    const m = r?.modes;
+    if (!m?.length) return -1;
+    if (this.modeSel >= 0 && this.modeSel < m.length) return this.modeSel;
+    return Math.max(0, m.findIndex(x => !x.rigid));
+  }
 
   /** For tests and the debug handle. */
   state() {
@@ -183,6 +201,8 @@ export class SimController {
       reactions: last?.reactions ?? [], applied: last?.applied ?? null,
       plot: { ...this.plot, shown: !!this.saved, range: this.range, scale: this.usedScale, points: (this.res?.mesh.pos.length ?? 0) / 3 }, marks: this.marks.children.length,
       probing: this.probing, probes: this.probes.map(p => this.probeValue(p)), probeAt: this.study()?.probes ?? [], probeCsv: this.probeTable(), report: this.lastReport, cached: !!this.res?.cached, cacheHits: this.cacheHits,
+      kind: this.study()?.kind ?? null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
+      animating: !!this.anim, frames: this.anim?.frames ?? 0,
       hot: this.hotList().map(h => ({ vm: h.vm, at: h.at, singular: h.singular, growth: h.growth })), labels: this.pins.length - this.probes.length,
     };
   }
@@ -240,6 +260,7 @@ export class SimController {
     if (!this.host.idle()) { toast(t("Finish the open command first.")); return; }
     this.host.showTab();
     if (c === "new") { this.newStudy(); return; }
+    if (c === "newmodal") { this.newStudy("modal"); return; }
     if (c === "mat") { void this.pickMat(); return; }
     if (c === "solve") { void this.solve(); return; }
     if (c === "stop") { this.client.cancel(); return; }
@@ -252,6 +273,7 @@ export class SimController {
       const type = c as SupportType;
       this.edit = { kind: "support", isNew: true, draft: { id: nextId(st, "s"), name: itemName(st, type), type, faces: [], ...(type === "dirs" ? { dirs: [true, true, true] as [boolean, boolean, boolean] } : {}) } };
     } else if ((LOADS as string[]).includes(c)) {
+      if (st.kind === "modal") { toast(t("A modal study has no loads: it finds how the part vibrates on its own.")); return; }
       const type = c as LoadType;
       const d: StudyLoad = { id: nextId(st, "l"), name: itemName(st, type), type, faces: [] };
       if (type === "force") { d.normal = true; d.value = { v: 100 }; d.comp = [{ v: 0 }, { v: 0 }, { v: -100 }]; }
@@ -264,13 +286,14 @@ export class SimController {
     this.drawMarks();
   }
 
-  private newStudy() {
+  private newStudy(kind: StudyKind = "static") {
     const doc = this.host.doc();
     if (!doc) return;
-    const st = newStudy(doc.studies ?? []);
+    const st = newStudy(doc.studies ?? [], kind);
     this.activeId = st.id;
-    this.host.change(t("New study"), d => { (d.studies ??= []).push(st); });
-    this.renderAll();
+    this.edit = null;
+    this.host.change(kind === "modal" ? t("New modal study") : t("New study"), d => { (d.studies ??= []).push(st); });
+    this.changed();
   }
 
   private async pickMat() {
@@ -396,7 +419,10 @@ export class SimController {
     }
     const part = this.host.viewer.parts[0];
     if (!part) { toast(t("The part has no body yet."), "warn"); return; }
-    this.running = true; this.error = null; this.res = null; this.problems.clear(); this.probes = []; this.probeKey = ""; this.hot = null; this.hotSel = -1;
+    this.running = true; this.error = null; this.res = null; this.problems.clear(); this.probes = []; this.probeKey = ""; this.hot = null; this.hotSel = -1; this.modeSel = -1;
+    const modal = st.kind === "modal";
+    // a mode is a shape: it is drawn deformed, whatever the last static plot was set to
+    if (modal) this.plot.deformed = true;
     this.clearPlot();
     this.progress = t("Reading the geometry…");
     this.renderAll();
@@ -420,12 +446,14 @@ export class SimController {
       const idx = g.getIndex()?.array ?? null;
       const mesh = refineMesh(p0, n0, idx, plotTarget(meshArea(p0, idx), size / 70));
       const pos = mesh.pos, nrm = mesh.nrm;
-      const total = Math.max(1, Math.min(MAX_PASSES, Math.round(st.settings.passes)));
+      const total = Math.max(1, Math.min(modal ? MODAL_PASSES : MAX_PASSES, Math.round(st.settings.passes)));
+      if (modal) problem.loads = [];
       this.progress = t("Pass {n} of {m}…", { n: 1, m: total });
       this.renderAll();
       const res: Results = { study: st.id, key, passes: [], ids: problem.supportIds, ms: 0, mesh };
       await this.client.solve({
         body: geo, problem, passes: total, energyTol: st.settings.energyTol, pos, nrm,
+        ...(modal ? { modal: { count: Math.max(1, Math.min(MAX_MODES, Math.round(st.settings.modes ?? DEFAULT_MODES))) } } : {}),
         mat: { name: m.name, E: m.E * 1000, nu: m.nu, rho: m.density * 1e-9, sy: m.sy ?? undefined, su: m.su ?? undefined },
       }, p => {
         res.passes.push(p);
@@ -461,6 +489,7 @@ export class SimController {
       case "E-SIM-NOLOAD": return t("Add a load first.");
       case "E-SIM-FREE": return rest.trim() === "6" && !this.study()?.supports.length ? t("Add a support first.") : t("The supports leave the part free to move ({n} free motions). Add or change the supports.", { n: rest.trim() });
       case "E-SIM-BODIES": return t("Static analysis works on one solid body for now.");
+      case "E-SIM-DENSITY": return t("The material has no density: a modal study needs one.");
       case "E-SIM-NOBODY": return t("The part has no body yet.");
       case "E-SIM-REF": return t("{name}: a face is gone. Pick its faces again.", { name });
       case "E-SIM-EMPTY": return t("{name} has no faces.", { name });
@@ -662,7 +691,7 @@ export class SimController {
   /** The probes as a table in the Study tab: place, stress, displacement, safety factor. */
   private probesHtml(): string {
     const r = this.res?.passes.at(-1), pm = this.res?.mesh;
-    if (!r || !pm || this.stale() || !this.probes.length) return "";
+    if (!r || !pm || this.stale() || !this.probes.length || r.modes) return "";
     const uf = UNITS[units.current].f;
     const place = (x: number) => String(Number((x * uf).toFixed(3)));
     // the safety factor is in the CSV; the side panel is too narrow for one more column
@@ -683,13 +712,14 @@ export class SimController {
   /** The plotted quantity's unit and the factor from the solver's units to it. */
   private plotUnit(): [string, number] {
     const k = this.plot.kind;
+    if (this.res?.passes.at(-1)?.modes) return ["", 1];
     return k === "vm" ? ["MPa", 1] : k === "sf" ? ["", 1] : k === "err" ? ["%", 1] : [units.current, UNITS[units.current].f];
   }
 
   /** The hot spots of the last pass: the highest stress peaks, likely singularities flagged. */
   private hotList(): HotSpot[] {
     const r = this.res;
-    if (!r || !r.passes.length) return [];
+    if (!r || !r.passes.length || r.passes[0].modes) return [];
     if (this.hot?.res !== r || this.hot.n !== r.passes.length) this.hot = { res: r, n: r.passes.length, list: hotSpots(r.mesh.pos, r.mesh.index, r.passes, this.host.viewer.modelSize / 12) };
     return this.hot.list;
   }
@@ -697,7 +727,7 @@ export class SimController {
   /** Labels of the highest and lowest values, and of the hot spots on a stress plot. */
   private peakLabels(): { v: number; html: string }[] {
     const a = this.vals;
-    if (!a || !this.plot.marks) return [];
+    if (!a || !this.plot.marks || this.res?.passes.at(-1)?.modes) return [];
     const [unit, f] = this.plotUnit(), val = (x: number) => `${sig(x * f)}${unit ? ` ${esc(unit)}` : ""}`;
     const out: { v: number; html: string }[] = [];
     const sing = esc(t("Stress singularity: value depends on refinement"));
@@ -756,6 +786,7 @@ export class SimController {
   }
 
   private disposePlot() {
+    if (this.anim) { cancelAnimationFrame(this.anim.raf); this.anim = null; }
     if (this.overlay) { this.overlay.removeFromParent(); this.overlay.geometry.dispose(); this.overlay = null; }
     for (const m of this.mats) m.dispose();
     this.mats = [];
@@ -783,10 +814,14 @@ export class SimController {
    */
   private showPlot() {
     this.clearPlot();
-    const part = this.host.viewer.parts[0], res = this.res, r = res?.passes.at(-1);
-    if (!part || !res || !r || !this.plot.on || this.stale()) return;
+    const part = this.host.viewer.parts[0], res = this.res, r0 = res?.passes.at(-1);
+    if (!part || !res || !r0 || !this.plot.on || this.stale()) return;
     const pm = res.mesh, n = pm.pos.length / 3;
-    if (r.vm.length !== n) return;
+    if (r0.vm.length !== n) return;
+    // modal results: the picked mode's shape is what is drawn
+    const mi = this.modeIndex(r0), shape = r0.shapes?.[mi];
+    const r: PassResult = shape ? { ...r0, u: shape } : r0;
+    if (r0.modes && !MODE_PLOTS.includes(this.plot.kind)) this.plot.kind = "u";
     // the safety factor needs a yield strength: without one the plot falls back to stress
     if (this.plot.kind === "sf" && !this.host.doc()?.material?.sy) this.plot.kind = "vm";
     // the error estimate compares two passes
@@ -809,7 +844,7 @@ export class SimController {
     this.saved = { mesh: part.mesh, mat: part.mesh.material };
     part.mesh.material = under;
     this.host.redraw();
-    const scale = this.plot.scale > 0 ? this.plot.scale : r.maxU > 0 ? (0.05 * this.host.viewer.modelSize) / r.maxU : 1;
+    const scale = this.plot.scale > 0 ? this.plot.scale : r.maxU > 0 ? ((r0.modes ? 0.08 : 0.05) * this.host.viewer.modelSize) / r.maxU : 1;
     this.usedScale = this.plot.deformed ? scale : 0;
     let at = pm.pos;
     if (this.plot.deformed) {
@@ -829,9 +864,32 @@ export class SimController {
     this.overlay.quaternion.copy(part.mesh.quaternion);
     this.overlay.scale.copy(part.mesh.scale);
     this.overlay.updateMatrixWorld(true);
+    if (shape && this.plot.deformed && this.animate) this.startAnim(pm.pos, shape, scale);
     this.syncProbes();
     this.drawProbes();
     this.host.viewer.invalidate();
+  }
+
+  /** Swings the drawn mode shape between its two extremes. */
+  private startAnim(base: Float32Array, u: Float32Array, scale: number) {
+    const a = this.anim = { raf: 0, base, u, scale, t0: performance.now(), frames: 0 };
+    const step = () => {
+      const ov = this.overlay;
+      if (this.anim !== a || !ov) return;
+      const k = scale * Math.cos((2 * Math.PI * (performance.now() - a.t0)) / MODE_PERIOD);
+      const pa = ov.geometry.getAttribute("position") as THREE.BufferAttribute, arr = pa.array as Float32Array;
+      for (let i = 0; i < arr.length; i++) arr[i] = base[i] + k * u[i];
+      pa.needsUpdate = true;
+      a.frames++;
+      this.host.viewer.invalidate();
+      a.raf = requestAnimationFrame(step);
+    };
+    a.raf = requestAnimationFrame(step);
+  }
+
+  /** The modes as rows of text: number, frequency, effective mass along X, Y, Z (%). */
+  private modeRows(r: PassResult): string[][] {
+    return (r.modes ?? []).map((m, i) => [String(i + 1), m.rigid ? `0 (${t("rigid body")})` : sig(m.hz), ...m.eff.map(e => (100 * e).toFixed(1))]);
   }
 
   // ---------- report ----------
@@ -862,8 +920,9 @@ export class SimController {
     g.textAlign = "left"; g.fillText(lo, x0, y0 + bh + 3 * s);
     g.textAlign = "center"; g.fillText(unit, x0 + bw / 2, y0 + bh + 3 * s);
     g.textAlign = "right"; g.fillText(hi, x0 + bw, y0 + bh + 3 * s);
-    const label = t(PLOTS.find(p => p[0] === kind)![1]);
-    const caption = `${label}: ${lo} … ${hi}${unit ? ` ${unit}` : ""}` + (this.plot.deformed ? `. ${t("Deformed shape")} ×${sig(this.usedScale)}` : "");
+    const mr = this.res?.passes.at(-1), mi = this.modeIndex(mr), mode = mr?.modes?.[mi];
+    const label = mode ? `${t("Mode {n}", { n: mi + 1 })}, ${mode.rigid ? t("rigid body") : `${sig(mode.hz)} Hz`}. ${t(PLOTS.find(p => p[0] === kind)![1])}` : t(PLOTS.find(p => p[0] === kind)![1]);
+    const caption = mode ? `${label}. ${t("Mode shapes have no scale: only the pattern of the motion is meaningful.")}` : `${label}: ${lo} … ${hi}${unit ? ` ${unit}` : ""}` + (this.plot.deformed ? `. ${t("Deformed shape")} ×${sig(this.usedScale)}` : "");
     return { src: c.toDataURL("image/jpeg", 0.9), w: c.width, h: c.height, caption };
   }
 
@@ -878,6 +937,7 @@ export class SimController {
     const faces = (it: StudySupport | StudyLoad) => it.type === "gravity" ? "–" : this.pickText(it);
     const name = (it: StudySupport | StudyLoad) => (it.name ?? it.id) + (off.has(it.id) ? ` (${t("left out")})` : "");
     blocks.push({ kind: "h", text: t("Study") });
+    if (last.modes) return this.modalReport(doc, st, res, last);
     kv([[t("Document"), doc.name], [t("Study"), st.name], [t("Kind"), t("Static")], [t("Passes"), `${res.passes.length} / ${st.settings.passes}`],
       [t("Unknowns"), last.dofs.toLocaleString("en-US").replace(/,/g, " ")], [t("Time"), `${(res.ms / 1000).toFixed(1)} s`]]);
     blocks.push({ kind: "h", text: t("Material") });
@@ -934,6 +994,42 @@ export class SimController {
     return { title: t("Structural analysis report"), sub: `${doc.name} · ${st.name} · ${new Date().toLocaleString(lang())} · MöbiusCAD ${__APP_VERSION__}`, blocks };
   }
 
+  private modalReport(doc: PartDoc, st: Study, res: Results, last: PassResult): SimReport {
+    const m = doc.material, off = new Set(st.suppressed ?? []), blocks: ReportBlock[] = [];
+    const kv = (rows: string[][]) => blocks.push({ kind: "table", rows: [[t("Property"), t("Value")], ...rows], widths: [2, 3] });
+    blocks.push({ kind: "h", text: t("Study") });
+    kv([[t("Document"), doc.name], [t("Study"), st.name], [t("Kind"), t("Modal")], [t("Passes"), `${res.passes.length} / ${Math.min(MODAL_PASSES, st.settings.passes)}`],
+      [t("Unknowns"), last.dofs.toLocaleString("en-US").replace(/,/g, " ")], [t("Time"), `${(res.ms / 1000).toFixed(1)} s`], [t("Mass"), `${sig((last.mass ?? 0) * 1000)} kg`]]);
+    blocks.push({ kind: "h", text: t("Material") });
+    if (m) kv([[t("Name"), m.name], [t("Elastic modulus"), `${sig(m.E ?? NaN)} GPa`], [t("Poisson's ratio"), sig(m.nu ?? NaN)], [t("Density"), `${sig(m.density)} g/cm³`]]);
+    blocks.push({ kind: "h", text: t("Supports") });
+    if (st.supports.length) blocks.push({ kind: "table", widths: [3, 3, 2, 4], rows: [[t("Name"), t("Type"), t("Applied to"), t("Details")], ...st.supports.map(s => [(s.name ?? s.id) + (off.has(s.id) ? ` (${t("left out")})` : ""), t(SUPPORT_LABEL[s.type]), this.pickText(s),
+      s.type === "hinge" && s.axialFree ? t("Free to slide along the axis") : s.type === "dirs" ? ["X", "Y", "Z"].filter((_, i) => (s.dirs ?? [true, true, true])[i]).join(", ") : ""])] });
+    else blocks.push({ kind: "p", text: t("No supports: the part is free.") });
+    blocks.push({ kind: "h", text: t("Modes") });
+    const sum = [0, 1, 2].map(c => (last.modes ?? []).reduce((a, x) => a + x.eff[c], 0));
+    blocks.push({ kind: "table", widths: [1, 3, 2, 2, 2], rows: [["#", `${t("Frequency")}, Hz`, `${t("Effective mass")} X, %`, "Y, %", "Z, %"], ...this.modeRows(last), ["", t("Sum"), ...sum.map(v => (100 * v).toFixed(1))]] });
+    const keep = { ...this.plot }, sel = this.modeSel, anim = this.animate;
+    this.animate = false;
+    const elastic = (last.modes ?? []).map((x, i) => (x.rigid ? -1 : i)).filter(i => i >= 0).slice(0, 4);
+    for (const i of elastic) { this.modeSel = i; const im = this.capture("u"); if (im) blocks.push({ kind: "image", ...im }); }
+    this.plot = keep; this.modeSel = sel; this.animate = anim;
+    this.showPlot();
+    blocks.push({ kind: "h", text: t("Convergence") });
+    blocks.push({ kind: "table", widths: [1, 2, 2, 2], rows: [[t("Pass"), t("Unknowns"), t("Frequency change"), t("Time")],
+      ...res.passes.map(p => [String(p.pass), p.dofs.toLocaleString("en-US").replace(/,/g, " "), p.change == null ? "–" : `${sig(p.change)} %`, `${(p.ms / 1000).toFixed(1)} s`])] });
+    blocks.push({ kind: "p", muted: true, text: this.modalNote(st, last) });
+    blocks.push({ kind: "h", text: t("Assumptions") });
+    blocks.push({ kind: "p", text: t(ASSUMPTIONS) });
+    return { title: t("Structural analysis report"), sub: `${doc.name} · ${st.name} · ${new Date().toLocaleString(lang())} · MöbiusCAD ${__APP_VERSION__}`, blocks };
+  }
+
+  private modalNote(st: Study, last: PassResult): string {
+    return last.converged ? t("Converged: the last pass changed the frequencies by at most {n} %.", { n: sig(last.change ?? 0) })
+      : last.change != null ? t("Not converged to {tol} % yet (last change {n} %).", { tol: sig(st.settings.energyTol), n: sig(last.change) })
+      : t("One pass only: no convergence check.");
+  }
+
   /** Report: asks for the format, then saves the file. `as` skips the question. */
   async report(as?: "pdf" | "html") {
     if (this.running || !this.res || this.stale()) { toast(t("Solve the study first.")); return; }
@@ -976,9 +1072,10 @@ export class SimController {
       `<button class="mc-b${o.on ? " on" : ""}" data-s="${id}" title="${esc(title)}"${o.on != null ? ` aria-pressed="${!!o.on}"` : ""}${o.dis ? " disabled" : ""}><span class="mc-i" aria-hidden="true">${ICON[id]}</span><span class="mc-l">${esc(label)}</span></button>`;
     const group = (label: string, inner: string) => `<div class="mc-g" role="group" aria-label="${esc(label)}">${inner}</div>`;
     const sep = `<div class="mc-sep"></div>`;
-    el.innerHTML = group(t("Study"), btn("new", t("New study"), t("New static study of this part"), { dis: busy }) + btn("mat", t("Material"), t("The part's material: elastic modulus, Poisson's ratio, strength"), { dis: busy }))
+    const noLoads = st?.kind === "modal";
+    el.innerHTML = group(t("Study"), btn("new", t("New study"), t("New static study of this part"), { dis: busy }) + btn("newmodal", t("Modal study"), t("New modal study: the natural frequencies and mode shapes of this part"), { dis: busy }) + btn("mat", t("Material"), t("The part's material: elastic modulus, Poisson's ratio, strength"), { dis: busy }))
       + sep + group(t("Supports"), SUPPORTS.map(k => btn(k, t(SUPPORT_LABEL[k]), t(TIP[k]), { dis: busy })).join(""))
-      + sep + group(t("Loads"), LOADS.map(k => btn(k, t(LOAD_LABEL[k]), t(TIP[k]), { dis: busy })).join(""))
+      + sep + group(t("Loads"), LOADS.map(k => btn(k, t(LOAD_LABEL[k]), t(TIP[k]), { dis: busy || noLoads })).join(""))
       + sep + group(t("Solve"), (busy ? btn("stop", t("Stop"), t("Stop the analysis")) : btn("solve", t("Solve"), t("Run the analysis"), { dis: !st }))
         + btn("results", t("Results"), t("Show or hide the result plot on the model"), { on: this.plot.on && !!this.res && !this.stale(), dis: !this.res || this.stale() })
         + btn("report", t("Report"), t("Save the study and its results as a report"), { dis: busy || !this.res || this.stale() }));
@@ -990,7 +1087,7 @@ export class SimController {
     if (!doc) { el.innerHTML = ""; return; }
     const st = this.study();
     if (!st) {
-      el.innerHTML = `<div class="sim-empty"><p>${esc(t("A study holds the supports and loads of one analysis. The part is solved as it is, without a mesh."))}</p><button class="btn" data-a="new">${esc(t("New study"))}</button></div>`;
+      el.innerHTML = `<div class="sim-empty"><p>${esc(t("A study holds the supports and loads of one analysis. The part is solved as it is, without a mesh."))}</p><button class="btn" data-a="new">${esc(t("New study"))}</button> <button class="btn" data-a="newmodal">${esc(t("Modal study"))}</button></div>`;
       return;
     }
     const list = doc.studies ?? [];
@@ -1011,12 +1108,17 @@ export class SimController {
     let html = `<div class="sim-head">`
       + (list.length > 1 ? `<select data-k="study" aria-label="${esc(t("Study"))}" translate="no">${list.map(s => `<option value="${s.id}"${s.id === st.id ? " selected" : ""}>${esc(s.name)}</option>`).join("")}</select>`
         : `<b translate="no">${esc(st.name)}</b>`)
-      + `<span class="muted">${esc(t("Static"))}</span><button class="sim-ib" data-a="delstudy" title="${esc(t("Delete study"))}" aria-label="${esc(t("Delete study"))}">×</button></div>`;
+      + `<span class="muted" data-v="kind">${esc(st.kind === "modal" ? t("Modal") : t("Static"))}</span><button class="sim-ib" data-a="delstudy" title="${esc(t("Delete study"))}" aria-label="${esc(t("Delete study"))}">×</button></div>`;
     html += `<div class="sim-sec"><h4>${esc(t("Material"))}</h4><button class="pm-box${matOk ? "" : " sim-warn"}" data-a="mat">${m ? `<span translate="no">${esc(m.name)}</span>` : esc(t("No material"))}</button>`
       + (m && matOk ? `<p class="sim-note muted">E ${sig(m.E!)} GPa · ν ${sig(m.nu!)}${m.sy ? ` · ${esc(t("yield"))} ${sig(m.sy)} MPa` : ""}</p>` : `<p class="sim-prob">${esc(t("The analysis needs a material with an elastic modulus and Poisson's ratio."))}</p>`) + `</div>`;
-    html += `<div class="sim-sec"><h4>${esc(t("Supports"))}</h4><ul class="sim-list">${st.supports.map(s => row(s, false)).join("") || none(t("None yet: pick one in the Simulation tab."))}</ul></div>`;
-    html += `<div class="sim-sec"><h4>${esc(t("Loads"))}</h4><ul class="sim-list">${st.loads.map(l => row(l, true)).join("") || none(t("None yet: pick one in the Simulation tab."))}</ul></div>`;
-    html += `<div class="sim-sec"><h4>${esc(t("Accuracy"))}</h4><label class="pm-field"><span>${esc(t("Passes"))}</span><select data-k="passes">${Array.from({ length: MAX_PASSES }, (_, i) => i + 1).map(k => `<option value="${k}"${k === st.settings.passes ? " selected" : ""}>${k}</option>`).join("")}</select></label>`
+    const modal = st.kind === "modal";
+    html += `<div class="sim-sec"><h4>${esc(t("Supports"))}</h4><ul class="sim-list">${st.supports.map(s => row(s, false)).join("") || none(modal ? t("None: the part is free. Supports are optional here.") : t("None yet: pick one in the Simulation tab."))}</ul></div>`;
+    if (!modal) html += `<div class="sim-sec"><h4>${esc(t("Loads"))}</h4><ul class="sim-list">${st.loads.map(l => row(l, true)).join("") || none(t("None yet: pick one in the Simulation tab."))}</ul></div>`;
+    if (modal) html += `<div class="sim-sec"><h4>${esc(t("Accuracy"))}</h4><label class="pm-field"><span>${esc(t("Modes"))}</span><input type="number" data-k="modes" min="1" max="${MAX_MODES}" step="1" value="${st.settings.modes ?? DEFAULT_MODES}"></label>`
+      + `<label class="pm-field"><span>${esc(t("Passes"))}</span><select data-k="passes">${Array.from({ length: MODAL_PASSES }, (_, i) => i + 1).map(k => `<option value="${k}"${k === Math.min(MODAL_PASSES, st.settings.passes) ? " selected" : ""}>${k}</option>`).join("")}</select></label>`
+      + `<label class="pm-field"><span>${esc(t("Stop at frequency change"))}, %</span><input type="number" data-k="tol" min="0" max="20" step="0.1" value="${sig(st.settings.energyTol)}"></label>`
+      + `<p class="sim-note muted">${esc(t("Each pass raises the accuracy on the same geometry and stops early once no frequency changes by more than {n} %.", { n: sig(st.settings.energyTol) }))}</p></div>`;
+    else html += `<div class="sim-sec"><h4>${esc(t("Accuracy"))}</h4><label class="pm-field"><span>${esc(t("Passes"))}</span><select data-k="passes">${Array.from({ length: MAX_PASSES }, (_, i) => i + 1).map(k => `<option value="${k}"${k === st.settings.passes ? " selected" : ""}>${k}</option>`).join("")}</select></label>`
       + `<label class="pm-field"><span>${esc(t("Stop at energy change"))}, %</span><input type="number" data-k="tol" min="0" max="20" step="0.1" value="${sig(st.settings.energyTol)}"></label>`
       + `<p class="sim-note muted">${esc(t("Each pass raises the accuracy on the same geometry and stops early once the strain energy changes by less than {n} %.", { n: sig(st.settings.energyTol) }))} ${esc(t("Passes after the third raise it only where the estimated error is highest."))}</p></div>`;
     html += `<div class="sim-sec sim-res" aria-live="polite"><h4>${esc(t("Results"))}</h4>${this.resultsHtml()}</div>`;
@@ -1037,6 +1139,7 @@ export class SimController {
     if (this.error && !this.running) html += `<p class="sim-prob">${esc(this.errorText(this.error))}</p>`;
     if (!r || !last) return html || `<p class="sim-note muted">${esc(t("Not solved yet."))}</p><button class="btn small" data-a="solve">${esc(t("Solve"))}</button>`;
     if (this.stale()) html += `<p class="sim-prob">${esc(t("Out of date: the model or the study changed."))} <button class="btn small" data-a="solve">${esc(t("Solve"))}</button></p>`;
+    if (last.modes) return html + this.modalHtml(r, last);
     const f = (v: number[]) => sig(Math.hypot(v[0], v[1], v[2]));
     const hs = this.hotList(), singular = hs.some(h => h.singular), real = singular ? hs.find(h => !h.singular) : undefined, peak = real?.vm ?? last.maxVm;
     const warn = `<span class="sim-warn" title="${esc(t("Stress singularity: value depends on refinement"))}">⚠</span>`;
@@ -1066,6 +1169,29 @@ export class SimController {
       html += `<p class="sim-note muted">${esc(last.converged ? t("Converged: the last pass changed the strain energy by {n} %.", { n: sig(last.change ?? 0) })
         : last.change != null ? t("Not converged to {tol} % yet (last change {n} %). Stress near sharp corners keeps rising with accuracy.", { tol: sig(this.study()?.settings.energyTol ?? 2), n: sig(last.change) })
         : t("One pass only: no convergence check."))}</p>`;
+      html += `<p class="sim-note muted sim-assume">${esc(t(ASSUMPTIONS))}</p>`;
+      if (!this.stale()) html += `<button class="btn small" data-a="report">${esc(t("Report…"))}</button>`;
+    }
+    return html;
+  }
+
+  /** Modal results: the mode table (a click shows a mode), the passes and what they mean. */
+  private modalHtml(r: Results, last: PassResult): string {
+    const modes = last.modes ?? [], sel = this.modeIndex(last), first = modes.find(m => !m.rigid), rigid = modes.filter(m => m.rigid).length;
+    const sum = [0, 1, 2].map(c => modes.reduce((a, x) => a + x.eff[c], 0));
+    let html = `<dl class="sim-kv">` + (first ? `<dt>${esc(t("Lowest natural frequency"))}</dt><dd data-v="f1">${sig(first.hz)} Hz</dd>` : "")
+      + `<dt>${esc(t("Mass"))}</dt><dd data-v="mass">${sig((last.mass ?? 0) * 1000)} kg</dd></dl>`;
+    html += `<table class="sim-hot sim-modes"><thead><tr><th>#</th><th>${esc(t("Frequency"))}, Hz</th><th title="${esc(t("Effective mass: the share of the part's mass that moves with the mode along each axis"))}">X, %</th><th>Y, %</th><th>Z, %</th></tr></thead><tbody>`
+      + this.modeRows(last).map((c, i) => `<tr data-a="mode" data-mode="${i}" tabindex="0" class="${modes[i].rigid ? "rigid" : ""}${i === sel ? " sel" : ""}">${c.map(x => `<td>${esc(x)}</td>`).join("")}</tr>`).join("")
+      + `</tbody><tfoot><tr><td></td><td>${esc(t("Sum"))}</td>${sum.map(v => `<td>${(100 * v).toFixed(1)}</td>`).join("")}</tr></tfoot></table>`;
+    html += `<p class="sim-note muted">${esc(t("X, Y, Z: effective mass, the share of the part's mass that moves with the mode along each axis. Click a mode to see its shape."))}</p>`;
+    if (rigid) html += `<p class="sim-note muted sim-rigid">${esc(t("{n} mode at 0 Hz is a motion of the whole part: the supports leave it free.|{n} modes at 0 Hz are motions of the whole part: the supports leave it free.", { n: rigid }))}</p>`;
+    html += `<table class="sim-passes"><thead><tr><th>${esc(t("Pass"))}</th><th>${esc(t("Unknowns"))}</th><th>${esc(t("Frequency change"))}</th><th>${esc(t("Time"))}</th></tr></thead><tbody>`
+      + r.passes.map(p => `<tr><td>${p.pass}</td><td>${p.dofs.toLocaleString("en-US").replace(/,/g, " ")}</td><td>${p.change == null ? "–" : `${sig(p.change)} %`}</td><td>${(p.ms / 1000).toFixed(1)} s</td></tr>`).join("") + `</tbody></table>`;
+    if (!this.running) {
+      const st = this.study();
+      if (r.cached) html += `<p class="sim-note muted sim-kept">${esc(t("From the last solve of this model and study."))}</p>`;
+      if (st) html += `<p class="sim-note muted">${esc(this.modalNote(st, last))}</p>`;
       html += `<p class="sim-note muted sim-assume">${esc(t(ASSUMPTIONS))}</p>`;
       if (!this.stale()) html += `<button class="btn small" data-a="report">${esc(t("Report…"))}</button>`;
     }
@@ -1122,18 +1248,22 @@ export class SimController {
     if (!show) { el.innerHTML = ""; $("#viewport").classList.remove("sim-probing"); return; }
     const k = this.plot.kind, sf = k === "sf";
     const [unit, f] = this.plotUnit();
-    const plots = PLOTS.filter(([id]) => (id !== "sf" || !!this.host.doc()?.material?.sy) && (id !== "err" || r!.pass > 1));
+    const modes = r!.modes, mi = this.modeIndex(r);
+    const plots = PLOTS.filter(([id]) => modes ? MODE_PLOTS.includes(id) : (id !== "sf" || !!this.host.doc()?.material?.sy) && (id !== "err" || r!.pass > 1));
     const top = sf && this.range[1] >= SF_TOP ? `${SF_TOP}+` : sig(this.range[1] * f);
-    el.innerHTML = `<div class="ana-head"><select data-k="kind" aria-label="${esc(t("Result"))}">${plots.map(([id, l]) => `<option value="${id}"${id === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select>`
+    const modeSel = modes ? `<label class="ana-row"><span>${esc(t("Mode shape"))}</span><select data-k="mode" aria-label="${esc(t("Mode shape"))}">${modes.map((m, i) => `<option value="${i}"${i === mi ? " selected" : ""}>${i + 1}: ${m.rigid ? esc(t("rigid body")) : `${sig(m.hz)} Hz`}</option>`).join("")}</select></label>` : "";
+    el.innerHTML = modeSel + `<div class="ana-head"><select data-k="kind" aria-label="${esc(t("Result"))}">${plots.map(([id, l]) => `<option value="${id}"${id === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select>`
       + `<button class="sim-ib" data-a="close" title="${esc(t("Hide the plot"))}" aria-label="${esc(t("Hide the plot"))}">×</button></div>`
       + `<div class="ana-ramp" style="background:${RAMP_CSS}${sf ? ";transform:scaleX(-1)" : ""}"></div><div class="ana-scale"><span data-v="min">${sig(this.range[0] * f)}</span><span>${esc(unit)}</span><span data-v="max">${top}</span></div>`
       + (sf ? `<p class="ana-note">${esc(t("Yield strength divided by the von Mises stress; below 1 the material yields."))}</p>` : "")
       + (k === "err" ? `<p class="ana-note">${esc(t("Where the last pass still changed the solution: the places that would gain most from more accuracy."))}</p>` : "")
       + `<label class="chk"><input type="checkbox" data-k="deformed"${this.plot.deformed ? " checked" : ""} />${esc(t("Deformed shape"))}</label>`
       + (this.plot.deformed ? `<label class="ana-row"><span>${esc(t("Scale"))}</span><input type="text" inputmode="decimal" data-k="scale" value="${this.plot.scale > 0 ? trim(this.plot.scale) : ""}" placeholder="${esc(t("auto"))} ×${sig(this.usedScale)}" aria-label="${esc(t("Deformation scale"))}" /></label>` : "")
-      + `<label class="chk"><input type="checkbox" data-k="marks"${this.plot.marks ? " checked" : ""} />${esc(t("Highest and lowest values"))}</label>`
-      + `<div class="sim-probebar"><button class="btn small${this.probing ? " on" : ""}" data-a="probe" aria-pressed="${this.probing}" title="${esc(t("Click the plot to read the value at a point"))}">${esc(t("Probe"))}</button>`
-      + (this.probes.length ? `<button class="btn small" data-a="noprobes">${esc(t("Clear probes"))}</button><button class="btn small" data-a="probecsv" title="${esc(t("Save the probes' places and values as a CSV file"))}">${esc(t("Export CSV"))}</button>` : "") + `</div>`;
+      + (modes ? (this.plot.deformed ? `<label class="chk"><input type="checkbox" data-k="animate"${this.animate ? " checked" : ""} />${esc(t("Animate"))}</label>` : "") + `<p class="ana-note">${esc(t("Mode shapes have no scale: only the pattern of the motion is meaningful."))}</p>` : "")
+      + (modes ? "" : `<label class="chk"><input type="checkbox" data-k="marks"${this.plot.marks ? " checked" : ""} />${esc(t("Highest and lowest values"))}</label>`)
+      + (modes ? "" : `<div class="sim-probebar"><button class="btn small${this.probing ? " on" : ""}" data-a="probe" aria-pressed="${this.probing}" title="${esc(t("Click the plot to read the value at a point"))}">${esc(t("Probe"))}</button>`
+      + (this.probes.length ? `<button class="btn small" data-a="noprobes">${esc(t("Clear probes"))}</button><button class="btn small" data-a="probecsv" title="${esc(t("Save the probes' places and values as a CSV file"))}">${esc(t("Export CSV"))}</button>` : "") + `</div>`);
+    if (modes && this.probing) this.probing = false;
     $("#viewport").classList.toggle("sim-probing", this.probing);
   }
 
@@ -1145,6 +1275,13 @@ export class SimController {
     const a = b.dataset.a!, id = b.closest<HTMLElement>("[data-id]")?.dataset.id;
     const st = this.study();
     if (a === "new") this.command("new");
+    else if (a === "newmodal") this.command("newmodal");
+    else if (a === "mode") {
+      this.modeSel = Number(b.dataset.mode);
+      this.plot.on = true;
+      this.showPlot();
+      this.renderAll();
+    }
     else if (a === "mat") void this.pickMat();
     else if (a === "solve") void this.solve();
     else if (a === "report") void this.report();
@@ -1190,10 +1327,15 @@ export class SimController {
     if (!st) return;
     if (el.dataset.k === "study") { this.activeId = el.value; this.edit = null; this.changed(); }
     else if (el.dataset.k === "passes") this.host.change(t("Passes"), d => { const s = d.studies?.find(x => x.id === st.id); if (s) s.settings.passes = Number(el.value) || 3; });
+    else if (el.dataset.k === "modes") {
+      const v = Math.round(Number(el.value));
+      if (!(v >= 1 && v <= MAX_MODES)) { el.value = String(st.settings.modes ?? DEFAULT_MODES); return; }
+      this.host.change(t("Modes"), d => { const s = d.studies?.find(x => x.id === st.id); if (s) s.settings.modes = v; });
+    }
     else if (el.dataset.k === "tol") {
       const v = Number(el.value);
       if (!(v >= 0 && v <= 20) || el.value.trim() === "") { el.value = sig(st.settings.energyTol); return; }
-      this.host.change(t("Stop at energy change"), d => { const s = d.studies?.find(x => x.id === st.id); if (s) s.settings.energyTol = v; });
+      this.host.change(st.kind === "modal" ? t("Stop at frequency change") : t("Stop at energy change"), d => { const s = d.studies?.find(x => x.id === st.id); if (s) s.settings.energyTol = v; });
     }
   }
 
@@ -1250,6 +1392,8 @@ export class SimController {
     if (k === "kind") this.plot.kind = el.value as PlotKind;
     else if (k === "deformed") this.plot.deformed = el.checked;
     else if (k === "marks") this.plot.marks = el.checked;
+    else if (k === "animate") this.animate = el.checked;
+    else if (k === "mode") { this.modeSel = Number(el.value); this.renderTree(); }
     else if (k === "scale") { const v = num(el.value); this.plot.scale = el.value.trim() && v != null && v > 0 ? v : 0; }
     else return;
     this.showPlot();

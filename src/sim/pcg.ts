@@ -46,7 +46,16 @@ export interface PcgResult { x: Float64Array; iterations: number; residual: numb
 
 const now = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
 
+/** A solver kept for several right-hand sides: the smoother's factors and the coarse matrix are made once. */
+export interface PcgSolver { setup: number; solve(b: Float64Array, x0?: Float64Array, tol?: number): PcgResult }
+
 export function pcg(A: BlockMatrix, b: Float64Array, o: PcgOptions): PcgResult {
+  const s = pcgSolver(A, o), r = s.solve(b);
+  r.ms.setup = s.setup;
+  return r;
+}
+
+export function pcgSolver(A: BlockMatrix, o: PcgOptions): PcgSolver {
   const t0 = now();
   const nel = A.nel, n = A.size, mc = o.coarse, ms = A.ms, off = A.off;
   let mmax = 0;
@@ -103,7 +112,10 @@ export function pcg(A: BlockMatrix, b: Float64Array, o: PcgOptions): PcgResult {
     sweep(z, r, false);
   };
 
+  const solve = (b: Float64Array, x0?: Float64Array, tol0?: number): PcgResult => {
+  const ts = now();
   const x = new Float64Array(n), r = Float64Array.from(b), z = new Float64Array(n), p = new Float64Array(n), q = new Float64Array(n);
+  if (x0) { x.set(x0); A.mul(x, q); for (let i = 0; i < n; i++) r[i] -= q[i]; }
   let bn = 0;
   for (let i = 0; i < n; i++) bn += b[i] * b[i];
   bn = Math.sqrt(bn) || 1;
@@ -111,8 +123,9 @@ export function pcg(A: BlockMatrix, b: Float64Array, o: PcgOptions): PcgResult {
   p.set(z);
   let rz = 0;
   for (let i = 0; i < n; i++) rz += r[i] * z[i];
-  const tol = o.tol ?? 1e-9, maxIt = o.maxIt ?? 500;
+  const tol = tol0 ?? o.tol ?? 1e-9, maxIt = o.maxIt ?? 500;
   let it = 0, res = 1;
+  { let rr = 0; for (let i = 0; i < n; i++) rr += r[i] * r[i]; if (Math.sqrt(rr) / bn < tol) return { x, iterations: 0, residual: Math.sqrt(rr) / bn, ms: { setup: 0, iterate: now() - ts } }; }
   for (; it < maxIt; it++) {
     A.mul(p, q);
     let pq = 0;
@@ -129,5 +142,7 @@ export function pcg(A: BlockMatrix, b: Float64Array, o: PcgOptions): PcgResult {
     rz = rz2;
     for (let i = 0; i < n; i++) p[i] = z[i] + be * p[i];
   }
-  return { x, iterations: it, residual: res, ms: { setup: t1 - t0, iterate: now() - t1 } };
+  return { x, iterations: it, residual: res, ms: { setup: 0, iterate: now() - ts } };
+  };
+  return { setup: t1 - t0, solve };
 }

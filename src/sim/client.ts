@@ -31,7 +31,7 @@ export class SimClient {
       };
       // a crashed worker (out of memory) is replaced at the next solve
       w.onerror = ev => { end(); this.worker?.terminate(); this.worker = null; reject(new Error(ev.message || SIM_STOPPED)); };
-      w.postMessage({ id, type: "static", input });
+      w.postMessage({ id, type: input.modal ? "modal" : "static", input });
     });
   }
 

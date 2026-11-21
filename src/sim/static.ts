@@ -8,7 +8,8 @@ import { Basis, basisSize } from "./basis";
 import { gauss, gridTrianglePoints, facePoints, fitFacePoints, type Inside } from "./quad";
 import { makeGrid, refit, type Grid } from "./grid";
 import { BlockMatrix, Envelope } from "./sparse";
-import { pcg } from "./pcg";
+import { pcg, pcgSolver } from "./pcg";
+import { subspace } from "./eigen";
 
 export interface Material {
   /** Young's modulus, MPa. */
@@ -93,6 +94,25 @@ export interface StaticProblem {
    * different degrees are joined like any others; each is integrated by the rule of its own degree.
    */
   degrees?: ArrayLike<number>;
+  /**
+   * Modal analysis (FR-SARC-022): the lowest `count` natural modes instead of a static solve. Loads are
+   * ignored, supports may leave the body free (the stiffness is then shifted). `start` = the `space` of an
+   * earlier pass on the same `grid` (any lower degree). Needs `mat.rho`.
+   */
+  modal?: { count: number; start?: Float64Array[]; tol?: number };
+}
+
+export interface Mode {
+  /** Natural frequency, Hz (0 for a rigid-body motion). */
+  hz: number;
+  /** ω², rad²/s². */
+  lambda: number;
+  /** A motion of the whole body without strain (a free or partly held body). */
+  rigid: boolean;
+  /** Effective mass along X, Y, Z as shares of the body's mass (0..1). */
+  eff: [number, number, number];
+  /** Coefficients in the layout of `x`, with φᵀ M φ = 1 (t, mm). */
+  x: Float64Array;
 }
 
 export interface StaticResult {
@@ -123,12 +143,21 @@ export interface StaticResult {
   sample(pos: ArrayLike<number>, nrm?: ArrayLike<number>): { u: Float32Array; vm: Float32Array; err: Float32Array };
   /** Displacement at a point, mm. */
   disp(x: number, y: number, z: number): [number, number, number];
+  /** Modal: the modes, lowest first; `use(k)` makes `sample`/`disp`/`stress` read mode k (the first to begin with). */
+  modes?: Mode[];
+  use?(k: number): void;
+  /** Modal: every vector of the last iteration, for the next pass's `start`. */
+  space?: Float64Array[];
+  /** Modal: the body's mass, t. */
+  mass?: number;
   /** Stress at a point [xx, yy, zz, xy, yz, zx], MPa. */
   stress(x: number, y: number, z: number): number[];
 }
 
 /** Unknowns up to which the direct solver is used. */
 export const DIRECT_LIMIT = 6000;
+/** The same for a modal solve, where one factorisation serves many solves. */
+export const MODAL_DIRECT = 9000;
 
 const now = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
 
@@ -332,7 +361,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
   };
   // Nitsche for P u = 0 (P projects on the held directions): −N_a (P M_b) − N_b (P M_a)ᵀ + 2γ N_a N_b P
   const free = freeModes(pb.fixed, pb.lo, pb.hi);
-  if (free > 0) throw new Error(`E-SIM-FREE: ${free}`);
+  if (free > 0 && !pb.modal) throw new Error(`E-SIM-FREE: ${free}`);
   const P = new Float64Array(9), PM = new Float64Array(9 * nb);
   for (const s of pb.fixed) located(s.tris, (e, x, y, z, w, nrm) => {
     const E = grid.elems[e];
@@ -429,10 +458,82 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     const K = A.block(e, e), m = 3 * nbs[e];
     for (let i = 0; i < m; i++) if (K[i * m + i] === 0) K[i * m + i] = 1;
   }
+  // modal: consistent mass from the same quadrature, the same for each component
+  let modes: Mode[] | undefined, space: Float64Array[] | undefined, mass = 0;
+  const modal = pb.modal && pb.mat.rho ? pb.modal : null;
+  let modalRun: (() => Float64Array) | null = null;
+  if (modal) {
+    const rho = pb.mat.rho!;
+    const Mel: Float64Array[] = [], Sel: Float64Array[] = [];
+    for (let e = 0; e < nel; e++) {
+      const E = grid.elems[e], ne = nbs[e];
+      const M = new Float64Array(ne * ne), S = new Float64Array(ne);
+      for (const ci of E.cells) {
+        const Q = grid.cells[ci].pts;
+        for (let k = 0; k < Q.n; k++) {
+          const o = 4 * k, w = Q.a[o + 3] * rho;
+          bas.eval(Q.a[o], Q.a[o + 1], Q.a[o + 2], E.c, E.s);
+          mass += w;
+          for (let a = 0; a < ne; a++) {
+            const va = bas.v[a] * w;
+            S[a] += va;
+            for (let b = 0; b < ne; b++) M[a * ne + b] += va * bas.v[b];
+          }
+        }
+      }
+      Mel.push(M); Sel.push(S);
+    }
+    const mulM = (v: Float64Array, y: Float64Array) => {
+      for (let e = 0; e < nel; e++) {
+        const M = Mel[e], ne = nbs[e], o = off[e];
+        for (let a = 0; a < ne; a++) {
+          let sx = 0, sy = 0, sz = 0;
+          for (let b = 0; b < ne; b++) { const mv = M[a * ne + b]; sx += mv * v[o + 3 * b]; sy += mv * v[o + 3 * b + 1]; sz += mv * v[o + 3 * b + 2]; }
+          y[o + 3 * a] = sx; y[o + 3 * a + 1] = sy; y[o + 3 * a + 2] = sz;
+        }
+      }
+    };
+    // a body the supports leave free has motions without stiffness: K + σM is solved instead, σ far under
+    // the first elastic mode of anything but a hair
+    const L = Math.hypot(pb.hi[0] - pb.lo[0], pb.hi[1] - pb.lo[1], pb.hi[2] - pb.lo[2]) || 1;
+    const scale = pb.mat.E / rho / (L * L);
+    const sigma = free > 0 ? 1e-4 * scale : 0;
+    if (sigma > 0) for (let e = 0; e < nel; e++) {
+      const K = A.block(e, e), M = Mel[e], ne = nbs[e], m = 3 * ne;
+      for (let a = 0; a < ne; a++) for (let b = 0; b < ne; b++) for (let c = 0; c < 3; c++) K[(3 * a + c) * m + 3 * b + c] += sigma * M[a * ne + b];
+    }
+    modalRun = () => {
+      const n = A.size;
+      const direct = pb.solver === "direct" || (pb.solver !== "pcg" && n <= MODAL_DIRECT);
+      let solve: (b: Float64Array, g?: Float64Array) => Float64Array;
+      if (direct) { const F = new Envelope(A); solve = b => F.solve(b); }
+      else { const S = pcgSolver(A, { coarse: 3 * basisSize(1), tol: 1e-6, maxIt: 300 }); solve = (b, g) => { const r = S.solve(b, g); iterations += r.iterations; return r.x; }; }
+      // an earlier pass's vectors in this pass's layout (zeros for the functions it did not have)
+      const start = (modal.start ?? []).map(v => {
+        if (v.length === n || deg || v.length % nel) return v;
+        const pm = v.length / nel, w = new Float64Array(n);
+        for (let e = 0; e < nel; e++) w.set(v.subarray(e * pm, e * pm + Math.min(pm, m)), e * m);
+        return w;
+      });
+      const r = subspace(n, solve, (v, y) => { A.mul(v, y); }, mulM, { count: modal.count, start, tol: modal.tol ?? (direct ? 1e-9 : 1e-6) });
+      space = r.space;
+      modes = r.values.map((th, k) => {
+        const v = r.vectors[k], lambda = th - sigma, rigid = lambda < 1e-5 * (sigma || scale * 1e-4) ;
+        const eff: [number, number, number] = [0, 0, 0];
+        for (let e = 0; e < nel; e++) for (let a = 0; a < nbs[e]; a++) for (let c = 0; c < 3; c++) eff[c] += Sel[e][a] * v[off[e] + 3 * a + c];
+        for (let c = 0; c < 3; c++) eff[c] = (eff[c] * eff[c]) / (mass || 1);
+        return { lambda: rigid ? 0 : lambda, hz: rigid ? 0 : Math.sqrt(Math.max(lambda, 0)) / (2 * Math.PI), rigid, eff, x: v };
+      });
+      return r.vectors[0] ?? new Float64Array(n);
+    };
+  }
   const t2 = now();
   let xs: Float64Array, t3: number, iterations = 0;
   const useCg = pb.solver === "pcg" || (pb.solver !== "direct" && p >= 2 && A.size > DIRECT_LIMIT);
-  if (useCg) {
+  if (modalRun) {
+    t3 = t2;
+    xs = modalRun();
+  } else if (useCg) {
     const r = pcg(A, f, { coarse: 3 * basisSize(1), tol: pb.tol ?? 1e-8 });
     xs = r.x; iterations = r.iterations;
     t3 = t2 + r.ms.setup;
@@ -531,6 +632,8 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     grid, p, dofs: A.size, x, energy, iterations,
     ms: { grid: t1 - t0, assemble: t2 - t1, factor: t3 - t2, solve: t4 - t3 },
     reactions, applied, eta, prevError,
+    modes, space, mass: modal ? mass : undefined,
+    use(k) { const v = modes?.[k]; if (v) x = v.x; },
     sample(pos, nrm) {
       const n = pos.length / 3, u = new Float32Array(3 * n), vm = new Float32Array(n), err = new Float32Array(n);
       const eps = 1e-6 * grid.h, G = new Float64Array(9);

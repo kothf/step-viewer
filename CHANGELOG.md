@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.617.0] - 2026-11-21
+
+### Added
+- Structural analysis: **modal studies** (Simulation ▸ **Modal study**): the natural frequencies and mode shapes of a part. A modal study takes supports only (none = a free part) and no loads; pick how many modes to find (6 by default, up to 30) and Solve. Like a static study it works on the part as it is, in up to three passes that stop once no frequency changes by more than the target.
+- The Study tab lists the modes with their frequency and **effective mass** along X, Y and Z, and their sums; modes at 0 Hz of a free or partly held part are marked as rigid-body motions. Click a mode to see its shape on the model, **animated** (Animate in the result panel), coloured by displacement, X, Y or Z.
+- The report of a modal study holds the mode table and a picture of the first mode shapes; its results are kept between sessions like a static study's.
+
 ## [1.616.0] - 2026-11-21
 
 ### Added
@@ -3962,7 +3969,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.616.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.617.0...HEAD
+[1.617.0]: https://github.com/kothf/step-viewer/compare/v1.616.0...v1.617.0
 [1.616.0]: https://github.com/kothf/step-viewer/compare/v1.615.0...v1.616.0
 [1.615.0]: https://github.com/kothf/step-viewer/compare/v1.614.0...v1.615.0
 [1.614.0]: https://github.com/kothf/step-viewer/compare/v1.613.0...v1.614.0
