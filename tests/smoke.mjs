@@ -2411,15 +2411,17 @@ try {
     const hot = await mp.evaluate(({ id, l1 }) => {
       const ed = window.__sv.model.editor(), el = document.querySelector(`.sk-rel[data-id="${id}"]`);
       if (!el) return { glyph: false };
+      // 1.645.0: relation glyphs are icons (relIcons.ts), with no text.
+      const icon = !!el.querySelector("svg.rel-ico") && !el.textContent.trim();
       el.dispatchEvent(new PointerEvent("pointerenter"));
       const lit = ed.relHot.has(l1);
       el.dispatchEvent(new PointerEvent("pointerleave"));
       ed.showRels = false; ed.render();
       const hidden = !document.querySelector(`.sk-rel[data-id="${id}"]`);
       ed.showRels = true; ed.render();
-      return { glyph: true, lit, cleared: ed.relHot.size === 0, hidden };
+      return { glyph: true, icon, lit, cleared: ed.relHot.size === 0, hidden };
     }, { id: inf.perpId, l1: inf.l1 });
-    check(glyph === "perpendicular" && inf.n === 4 && inf.perp && inf.dot < 1e-6 && inf.ctrlFree && inf.par && inf.cross < 1e-6 && inf.status === "ok" && hot.lit && hot.cleared && hot.hidden,
+    check(glyph === "perpendicular" && inf.n === 4 && inf.perp && inf.dot < 1e-6 && inf.ctrlFree && inf.par && inf.cross < 1e-6 && inf.status === "ok" && hot.icon && hot.lit && hot.cleared && hot.hidden,
       `model 1.251: automatic perpendicular/parallel relations while drawing, Ctrl suppresses them, relation glyphs light up their entities (${glyph}, ${JSON.stringify(inf)}, ${JSON.stringify(hot)})`);
     // 1.507.0 (FR-SK-011): A while a line chain is open draws a tangent arc from its end; the chain then goes on as lines.
     {
@@ -12719,7 +12721,9 @@ try {
     await mp.mouse.move(mx, my); await mp.mouse.click(mx, my);
     await mp.keyboard.press("Escape");
     await settle();
-    const sk = await mp.evaluate(() => { const ed = window.__sv.model.editor(); const s = ed.sk; const line = s.ents.find(e => e.t === "line" && !e.cons); const a = line && s.ents.find(e => e.id === line.a); return { cons: s.ents.filter(e => e.cons).length, ext: s.rels.filter(r => r.ext).length, a: a ? [a.x, a.y] : null }; });
+    const sk = await mp.evaluate(() => { const ed = window.__sv.model.editor(); const s = ed.sk; const line = s.ents.find(e => e.t === "line" && !e.cons); const a = line && s.ents.find(e => e.id === line.a); let dashed = 0; window.__sv.viewer.scene.traverse(o => { if (o.visible && o.userData?.skConstruction) dashed += o.geometry?.attributes?.instanceStart?.count ?? 0; }); return { cons: s.ents.filter(e => e.cons).length, refs: s.ents.filter(e => e.ref).length, dashed, ext: s.rels.filter(r => r.ext).length, a: a ? [a.x, a.y] : null }; });
+    // 1.647: the model edge's copy that holds the snap is hidden, not drawn as a dashed construction line.
+    check(sk.refs === 1 && sk.dashed === 0, `model 1.647: a snap to a model vertex draws no copy of the edge (${JSON.stringify(sk)})`);
     await mp.evaluate(() => window.__sv.modeller.ok());
     await settle();
     // The block grows to 60 wide: the line's start follows the corner.
@@ -17566,13 +17570,13 @@ try {
     }));
     await settle();
     const r0 = await hp.evaluate(() => { const m = window.__sv.model, h = m.store.doc.features.find(f => f.id === "h"); return { pts: h.pts, plane: h.plane, v: m.last().props.volume, ok: m.last().statuses.every(s => s.ok) }; });
-    await hp.evaluate(() => window.__sv.model.store.change("Move point", doc => { const k = doc.features.find(f => f.id === "k"); k.ents.find(e => e.id === "h2").x = -35; k.ents.push({ id: "h3", t: "point", x: 0, y: -15 }); }));
+    await hp.evaluate(() => window.__sv.model.store.change("Move point", doc => { const k = doc.features.find(f => f.id === "k"); k.ents.find(e => e.id === "h2").x = -35; k.ents.push({ id: "h3", t: "point", x: 0, y: -15 }, { id: "la", t: "point", x: -40, y: 20 }, { id: "lb", t: "point", x: 40, y: 20 }, { id: "ll", t: "line", a: "la", b: "lb" }); }));
     await settle();
     const r1 = await hp.evaluate(() => { const m = window.__sv.model, h = m.store.doc.features.find(f => f.id === "h"); return { pts: h.pts, v: m.last().props.volume, com: m.last().props.com, ok: m.last().statuses.every(s => s.ok) }; });
     const cyl = Math.PI * 25 * 10;
     check(r0.ok && r1.ok && r0.pts.length === 2 && r0.plane?.face?.name === "x:end" && Math.abs(r0.v - (60000 - 2 * cyl)) < 0.5
       && r1.pts.length === 3 && r1.pts[1][0] === -35 && Math.abs(r1.v - (60000 - 3 * cyl)) < 0.5 && Math.abs(r1.com[0] - 15 * cyl / (60000 - 3 * cyl)) < 1e-3,
-      `model 1.639: a hole takes its centres from its position sketch's points (construction left out) and follows when they move (${JSON.stringify({ r0, r1 })})`);
+      `model 1.639: a hole takes its centres from its position sketch's points (construction and line ends left out) and follows when they move (${JSON.stringify({ r0, r1 })})`);
     await ctx.close();
   }
 } catch (err) {

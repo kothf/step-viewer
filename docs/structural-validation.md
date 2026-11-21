@@ -53,7 +53,7 @@ Remarks:
 
 ## What the comparison found
 
-Defects, fixed in 1.645.0:
+Defects, fixed in 1.648.0:
 
 1. The connecting rod is two bodies that stand 0.00002 mm apart in the file. They were not joined, and the study
    refused the part. Bodies up to 0.001 mm apart are now bonded.

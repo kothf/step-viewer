@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.645.0] - 2026-11-21
+## [1.648.0] - 2026-11-21
 
 ### Added
 
@@ -18,6 +18,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Structural analysis: a face that a slot cuts in two (the bore of a fork) was shown picked on both walls but supported or loaded on the first wall only. Every wall of a picked face is now used.
 - Structural analysis: on parts with thin leftovers of cells the higher passes could overshoot (strain energy several per cent too high) or stop with "the stiffness matrix is singular". The penalty that joins a cut element to its neighbours is now measured for that element instead of taken from a formula.
 - Structural analysis of assemblies: a component much thinner than the others (a plate between thick parts) made the solver stop with "the stiffness matrix is singular" in the first or second pass. The scraps of cells at the rim of such a component are now joined to their neighbours.
+## [1.647.0] - 2026-11-21
+
+### Fixed
+
+- Sketches: snapping a point to a model edge (its end, middle or centre), or picking a model edge for a relation or a dimension, no longer draws that edge into the sketch as a dashed construction line. The relation to the model edge is kept, as in other CAD apps; the copy that holds it is shown only under the pointer, while selected or when its edge is gone, and it is removed with the last relation, dimension or curve that uses it. Edges converted on purpose (Convert Entities, Project face edges) are drawn as before.
+- Revolve no longer takes such a hidden model edge copy as its default axis.
+
+## [1.646.0] - 2026-11-21
+
+### Changed
+
+- **Hole positions**: only sketch **points** become hole centres, as in other CAD apps. The ends of lines and arcs in a position sketch (or in an existing sketch picked for a hole) no longer get holes, so lines can be drawn there to dimension the points from.
+
+## [1.645.0] - 2026-11-21
+
+### Changed
+
+- Sketch **relations have icons**, as in other CAD apps: the Add Relations buttons of the sketch panel, the Relations list, the K and right-click relation menus, the glyphs beside sketch entities and the inference beside the cursor while drawing all show the relation's icon (horizontal, vertical, coincident, tangent, parallel, perpendicular, equal, midpoint, symmetric, concentric, collinear and the rest) instead of a letter or a text-only button. The 3D sketch's relation buttons and list have them too.
 
 ## [1.644.0] - 2026-11-21
 
@@ -4211,7 +4229,10 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.645.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.648.0...HEAD
+[1.648.0]: https://github.com/kothf/step-viewer/compare/v1.647.0...v1.648.0
+[1.647.0]: https://github.com/kothf/step-viewer/compare/v1.646.0...v1.647.0
+[1.646.0]: https://github.com/kothf/step-viewer/compare/v1.645.0...v1.646.0
 [1.645.0]: https://github.com/kothf/step-viewer/compare/v1.644.0...v1.645.0
 [1.644.0]: https://github.com/kothf/step-viewer/compare/v1.643.0...v1.644.0
 [1.643.0]: https://github.com/kothf/step-viewer/compare/v1.642.0...v1.643.0
