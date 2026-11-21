@@ -11,7 +11,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - Structural analysis: **modal studies of assemblies** (SA4). **Modal study** on the Simulation tab of an assembly finds the natural frequencies and mode shapes of the components vibrating together, through the same connections, bolts, welds, connectors and masses as a static study.
 - Structural analysis: **Compare** (FR-STU-023). The end of a study's results puts them beside another solved study of the same kind, or beside this study's own result before the last change: highest stress, displacement and safety factor, or mass and the first six natural frequencies, with the difference in per cent. The comparison is in the report too.
-- **Duplicate study** (⧉ next to the study's name) copies a study with its supports, loads and settings, to try a change and compare.
+- **Duplicate study** (⧉ next to the study's name) copies a study with its supports, loads and settings, to try a change and compare. **Rename study** (✎) types its name anew; the study used last is remembered for each document (FR-STU-003).
+- Structural analysis results: the reactions **in total** and how far they are **out of balance** with the applied loads, in per cent (FR-RES-006); a reaction's tooltip also gives its moment about the origin.
+- **Show only a range of values** in the plot's legend (FR-RES-007): only the places at or above, or at or below, a typed value are drawn in colour, for example a safety factor at or below 2.
+- **Export CSV** under the hot spots saves their places and stresses, and **Deformed shape as STL** saves the deformed shape (or the shown mode shape) at the scale drawn (FR-REP-003).
 
 ## [1.640.0] - 2026-11-21
 

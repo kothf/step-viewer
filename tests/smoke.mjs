@@ -16382,6 +16382,45 @@ try {
     check(hl.length >= 2 && hl.at(-1).vm > 0.1 * hl[0].vm && hl.length === hot0.rows && Math.abs(hl[0].vm - hot0.maxVm) < 1e-3 * hot0.maxVm && hl.every((h, i) => i === 0 || h.vm <= hl[i - 1].vm) && hot0.warn === nSing && (nSing > 0) === (hot0.real !== null)
       && hot0.peaks.length === hot0.labels && hot0.peaks.length >= 1 && hot0.placed && hot1.sel === 1 && hot1.peaks.includes(`h${lastRow}`) && hot1.peaks.length >= hot0.peaks.length && hot2.peaks.length === 0 && hot2.labels === 0,
       `sim 1.614: the hot spots are listed highest first, labelled on the stress plot, a clicked row gets its label, and the labels can be turned off (${JSON.stringify({ hot: hl.map(h => ({ vm: +h.vm.toFixed(1), s: h.singular, g: h.growth && +h.growth.toFixed(2) })), rows: hot0.rows, peaks: hot0.peaks, after: hot1.peaks, off: hot2.peaks, real: hot0.real })})`);
+    // 1.641.0: the load balance, iso-clipping, hot spots as CSV, the deformed shape as STL, and a study renamed
+    const e0 = await sim();
+    const eBal = await mp.evaluate(() => document.querySelector('#sim-tree [data-v="balance"]')?.textContent ?? "");
+    await mp.check('#sim-legend [data-k="iso"]');
+    await mp.waitForTimeout(300);
+    const e1 = await sim();
+    await mp.selectOption('#sim-legend [data-k="isoside"]', "below");
+    await mp.waitForTimeout(300);
+    const e2 = await sim();
+    await mp.click("#lang-btn");
+    const eRu = await mp.evaluate(() => [...document.querySelectorAll("#sim-legend label, #sim-legend option, #sim-tree .sim-kv dt, #sim-tree [data-a=stl], #sim-tree [data-a=hotcsv]")].filter(e => !e.closest("[translate=no]")).map(e => [...e.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent.trim()).join("")).filter(x => /[A-Za-z]{4}/.test(x)));
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(300);
+    await mp.uncheck('#sim-legend [data-k="iso"]');
+    await mp.waitForTimeout(300);
+    const e3 = await sim();
+    await mp.click('#sim-tree [data-a="stl"]');
+    await mp.waitForTimeout(400);
+    const e4 = await sim();
+    const eName = await mp.evaluate(() => document.querySelector("#sim-tree .sim-head b, #sim-tree .sim-head select option:checked")?.textContent ?? "");
+    await mp.click('#sim-tree [data-a="renstudy"]');
+    await mp.waitForSelector('#sim-tree [data-k="sname"]');
+    await mp.keyboard.type("Renamed");
+    await mp.keyboard.press("Enter");
+    await mp.waitForTimeout(300);
+    const e5 = await sim();
+    const eHead = await mp.evaluate(() => document.querySelector("#sim-tree .sim-head")?.textContent ?? "");
+    await mp.click('#sim-tree [data-a="renstudy"]');
+    await mp.waitForSelector('#sim-tree [data-k="sname"]');
+    await mp.keyboard.type(eName);
+    await mp.keyboard.press("Enter");
+    await mp.waitForTimeout(300);
+    const eBack = await mp.evaluate(() => document.querySelector("#sim-tree .sim-head")?.textContent ?? "");
+    const eWide = await mp.evaluate(() => document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth);
+    check(e0.balance && e0.balance.off < 0.5 && /%/.test(eBal) && e0.hotCsv.trim().split("\r\n").length === hot0.rows + 1
+      && e1.iso.on && e1.drawn > 0 && e1.drawn < e0.drawn && e2.drawn > 0 && e2.drawn < e0.drawn && e1.drawn + e2.drawn >= e0.drawn && e3.drawn === e0.drawn
+      && e4.stl && e4.stl.tris === e0.drawn && e4.stl.bytes === 84 + 50 * e4.stl.tris
+      && eName.length > 0 && eHead.includes("Renamed") && !e5.stale && eBack.includes(eName) && eRu.length === 0 && eWide <= 0,
+      `sim 1.641: the reactions balance the load; Show only a range of values draws part of the plot; the hot spots as CSV, the deformed shape as STL; a study is renamed without losing its results; translated (${JSON.stringify({ balance: e0.balance, eBal, drawn: [e0.drawn, e1.drawn, e2.drawn, e3.drawn], stl: e4.stl, eName, eHead, stale: e5.stale, eBack, eRu, eWide })})`);
     // 1.615.0: probes live in the study (kept over a solve, exported as CSV); a fixed support holds an edge.
     await mp.click('#sim-legend [data-a="probe"]');
     p = await at("f1:end");
@@ -16577,7 +16616,7 @@ try {
       for (const root of [document.querySelector("#sim-tree"), document.querySelector("#sim-tools"), document.querySelector("#sim-legend")]) {
         const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
         for (let n = w.nextNode(); n; n = w.nextNode()) if (!n.parentElement.closest('[translate="no"]') && /[A-Za-z]{3,}/.test(n.data.replace(/\b(GPa|MPa|mm|GIF)\b/g, ""))) bad.push(n.data.trim());
-        for (const e of root.querySelectorAll("[title], [aria-label]")) for (const a of ["title", "aria-label"]) { const v = e.getAttribute(a); if (v && /[A-Za-z]{3,}/.test(v.replace(/\bGIF\b/g, "")) && !e.closest('[translate="no"]')) bad.push(v); }
+        for (const e of root.querySelectorAll("[title], [aria-label]")) for (const a of ["title", "aria-label"]) { const v = e.getAttribute(a); if (v && /[A-Za-z]{3,}/.test(v.replace(/\b(GIF|STL)\b/g, "")) && !e.closest('[translate="no"]')) bad.push(v); }
       }
       return bad;
     });

@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { componentRows, aloneIndex, vertexParts, withoutParts, moveWithParts } from "../../src/sim/comps";
+import { componentRows, aloneIndex, isoIndex, vertexParts, withoutParts, moveWithParts } from "../../src/sim/comps";
+import { hotCsv, loadBalance, stlBytes } from "../../src/sim/exports";
 
 test("FR-CON-030: highest stress, displacement and safety factor per component", () => {
   const dom = [0, 0, 1, 1, 1, 3];
@@ -43,4 +44,28 @@ test("FR-CON-031: the plot's points know their part, and move or go with it", ()
   const n = new Float32Array([1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0]);
   moveWithParts(n, of, [null, tf], true);
   assert.deepEqual([...n.slice(9)], [0, 1, 0], "a direction only turns");
+});
+
+test("FR-RES-007: iso-clipping keeps the triangles that reach the value", () => {
+  const index = Uint32Array.from([0, 1, 2, 1, 2, 3, 3, 4, 5]), val = [1, 2, 3, 4, 5, 6];
+  assert.deepEqual([...isoIndex(index, val, 4, true)], [0, 0, 0, 1, 2, 3, 3, 4, 5]);
+  assert.deepEqual([...isoIndex(index, val, 2, false)], [0, 1, 2, 1, 2, 3, 3, 3, 3]);
+  assert.deepEqual([...isoIndex(Uint32Array.from([0, 0, 0]), val, 0, true)], [0, 0, 0], "a triangle already left out stays out");
+});
+
+test("FR-REP-003, FR-RES-006: hot spots as CSV, the deformed shape as STL, and the load balance", () => {
+  assert.equal(hotCsv([{ at: [1, 2.0000001, 3], vm: 123.456789, singular: false }, { at: [0, 0, 0], vm: 900, singular: true }]),
+    "Hot spot,X (mm),Y (mm),Z (mm),von Mises (MPa),Singularity\r\n1,1,2,3,123.4568,no\r\n2,0,0,0,900,yes\r\n");
+  const pos = [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1], u = [0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0];
+  const stl = stlBytes(pos, [0, 1, 2, 3, 3, 3], u, 2), dv = new DataView(stl.buffer);
+  assert.equal(stl.length, 84 + 50);
+  assert.equal(dv.getUint32(80, true), 1, "the degenerate triangle is skipped");
+  assert.equal(dv.getFloat32(84 + 12 + 12 + 8, true), 2, "the second corner is moved by scale × u");
+  const n = [0, 1, 2].map(k => dv.getFloat32(84 + 4 * k, true));
+  assert.ok(Math.abs(Math.hypot(n[0], n[1], n[2]) - 1) < 1e-6 && n[1] === 0 && n[0] < 0 && n[2] > 0, `normal ${n}`);
+  const b = loadBalance([{ force: [0, 0, 60], moment: [1, 0, 0] }, { force: [0, 0, 40.05], moment: [2, 0, 0] }], { force: [0, 0, -100] });
+  assert.deepEqual(b.force.map(x => Number(x.toFixed(6))), [0, 0, 100.05]);
+  assert.deepEqual(b.moment, [3, 0, 0]);
+  assert.ok(Math.abs(b.off! - (100 * 0.05) / 100.05) < 1e-9);
+  assert.equal(loadBalance([], { force: [0, 0, -100] }).off, null);
 });

@@ -24,7 +24,8 @@ import { SIM_STOPPED, SimClient } from "./client";
 import type { Connection } from "./connect";
 import { boltCheck } from "./bolts";
 import { DEFAULT_CLASS, PROPERTY_CLASSES, proofStress } from "../asm/fasteners";
-import { aloneIndex, componentRows, moveWithParts, vertexParts, withoutParts, type CompRow } from "./comps";
+import { hotCsv, loadBalance, stlBytes } from "./exports";
+import { aloneIndex, isoIndex, componentRows, moveWithParts, vertexParts, withoutParts, type CompRow } from "./comps";
 import { meshArea, plotTarget, refineMesh, type PlotMesh } from "./plotmesh";
 import { locate, probeCsv, valueAt, type Located } from "./probes";
 import { hotSpots, type HotSpot } from "./hotspots";
@@ -240,6 +241,10 @@ export class SimController {
   /** Mode animation speed (1 = one swing in `MODE_PERIOD`) and whether the mode table adds the effective masses up; view only. */
   private speed = 1;
   private cumul = false;
+  /** Iso-clipping (FR-RES-007, view only): only the places at or beyond a value of the plotted result are drawn. */
+  private iso: { on: boolean; below: boolean; value: number | null } = { on: false, below: false, value: null };
+  /** The study's name is being typed. */
+  private renaming = false;
   /** Peak values of the studies' last results (and the ones before the last change), kept per document in localStorage. */
   private sums: SummaryStore = {};
   private sumsDoc = "";
@@ -286,9 +291,44 @@ export class SimController {
   // ---------- state ----------
 
   private study(): Study | null {
-    const list = this.host.doc()?.studies ?? [];
+    const doc = this.host.doc(), list = doc?.studies ?? [];
+    // the study used last in this document is the one shown (FR-STU-003)
+    if (this.activeId == null && doc && list.length > 1) { try { this.activeId = localStorage.getItem(`mc:simStudy:${doc.id}`); } catch { /* no storage */ } }
     return list.find(s => s.id === this.activeId) ?? list[0] ?? null;
   }
+  private setActive(id: string) {
+    this.activeId = id; this.renaming = false;
+    const doc = this.host.doc();
+    if (doc) { try { localStorage.setItem(`mc:simStudy:${doc.id}`, id); } catch { /* no storage */ } }
+  }
+  /** The value iso-clipping cuts at, in the solver's units: the typed one, else 2 for a safety factor, else the middle of the range. */
+  private isoValue(): number {
+    if (this.iso.value != null) return this.iso.value;
+    const [lo, hi] = this.range;
+    return this.plot.kind === "sf" && lo < 2 && hi > 2 ? 2 : (lo + hi) / 2;
+  }
+  /** The scale the deformed shape is drawn at. */
+  private shapeScale(r: PassResult): number {
+    return this.plot.scale > 0 ? this.plot.scale : r.maxU > 0 ? ((r.modes ? 0.08 : 0.05) * this.host.viewer.modelSize) / r.maxU : 1;
+  }
+  private fileBase(): string {
+    const doc = this.host.doc(), st = this.study();
+    return `${doc?.name ?? "model"}-${st?.name ?? "study"}`.replace(/[\\/:*?"<>|]+/g, "_");
+  }
+  private exportHot() {
+    const hs = this.hotList();
+    if (hs.length) download(new Blob([hotCsv(hs)], { type: "text/csv" }), `${this.fileBase()}-hot-spots.csv`);
+  }
+  /** The deformed shape (a modal study: the shown mode's) at the scale drawn, as a binary STL (FR-REP-003). */
+  private exportStl() {
+    const res = this.res, r0 = res?.passes.at(-1);
+    if (!res || !r0 || this.stale()) return;
+    const shape = r0.shapes?.[this.modeIndex(r0)], r: PassResult = shape ? { ...r0, u: shape } : r0;
+    const k = this.shapeScale(r), bytes = stlBytes(res.mesh.pos, res.mesh.index, r.u, k);
+    this.lastStl = { bytes: bytes.length, tris: new DataView(bytes.buffer).getUint32(80, true), scale: k };
+    download(new Blob([bytes.buffer as ArrayBuffer], { type: "model/stl" }), `${this.fileBase()}-deformed.stl`);
+  }
+  private lastStl: { bytes: number; tris: number; scale: number } | null = null;
 
   /** What the results depend on: the model, the material and the study's set-up. */
   private keyOf(_doc: SimDoc, st: Study) {
@@ -433,7 +473,7 @@ export class SimController {
       reactions: last?.reactions ?? [], applied: last?.applied ?? null,
       plot: { ...this.plot, shown: !!this.saved, range: this.range, scale: this.usedScale, points: (this.res?.mesh.pos.length ?? 0) / 3 }, marks: this.marks.children.length,
       probing: this.probing, probes: this.probes.map(p => this.probeValue(p)), probeAt: this.study()?.probes ?? [], probeCsv: this.probeTable(), report: this.lastReport, cached: !!this.res?.cached, cacheHits: this.cacheHits,
-      compare: this.compared(), kind: this.study()?.kind ?? null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
+      compare: this.compared(), iso: { ...this.iso, at: this.isoValue() }, renaming: this.renaming, balance: last && !last.modes ? loadBalance(last.reactions, last.applied) : null, stl: this.lastStl, hotCsv: this.res && !this.stale() && !last?.modes ? hotCsv(this.hotList()) : null, kind: this.study()?.kind ?? null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
       animating: !!this.anim, frames: this.anim?.frames ?? 0, gifs: this.gifs, gif: this.lastGif, near: this.nearModes(this.res?.passes.at(-1)), bodies: this.res?.parts ?? 1, bodyMats: this.res?.bodyMats?.map(b => b.name) ?? null, speed: this.speed, cumul: this.cumul, more: !!this.res?.passes.at(-1)?.more, range: this.study()?.settings.range ?? null,
       caps: { n: this.caps.length, ...this.capInfo },
       compRows: this.compRows().map(x => ({ name: this.res!.comps![x.d].name, vm: x.maxVm, u: x.maxU, sf: x.sf })), compSel: this.aloneDom(), drawn: this.overlay ? this.drawnTris() : 0, pose: { moved: this.pose.moved, off: this.pose.off.filter(Boolean).length }, plotBox: this.plotBox(),
@@ -572,7 +612,7 @@ export class SimController {
     const doc = this.host.doc();
     if (!doc) return;
     const st = newStudy(doc.studies ?? [], kind);
-    this.activeId = st.id;
+    this.setActive(st.id);
     this.edit = null;
     this.host.change(kind === "modal" ? t("New modal study") : t("New study"), d => { (d.studies ??= []).push(st); });
     this.changed();
@@ -1803,7 +1843,8 @@ export class SimController {
     colorMat.clippingPlanes = this.host.viewer.clipPlanes;
     const under = new THREE.MeshBasicMaterial({ color: 0x8a8f98, transparent: true, opacity: 0.12, depthWrite: false, side: THREE.DoubleSide });
     under.clippingPlanes = this.host.viewer.clipPlanes;
-    under.visible = this.plot.deformed;
+    const isoOn = this.iso.on && !r0.modes;
+    under.visible = this.plot.deformed || isoOn;
     this.mats.push(colorMat, under);
     this.saved = { meshes: part.meshes.map(mesh => ({ mesh, mat: mesh.material })) };
     // a component the study leaves out stays in view as a ghost, whatever the plot
@@ -1820,11 +1861,13 @@ export class SimController {
     part.meshes.forEach((mesh, k) => { mesh.material = ghost && out.has(compOf(am.names[am.faceOff[k]] ?? "")) ? ghost : under; });
     const dressed = part.meshes.map(mesh => mesh.material);
     this.host.redraw();
-    const scale = this.plot.scale > 0 ? this.plot.scale : r.maxU > 0 ? ((r0.modes ? 0.08 : 0.05) * this.host.viewer.modelSize) / r.maxU : 1;
+    const scale = this.shapeScale(r);
     this.usedScale = this.plot.deformed ? scale : 0;
     const at = new Float32Array(3 * n);
     for (let i = 0; i < 3 * n; i++) at[i] = this.plot.deformed ? pm.pos[i] + scale * r.u[i] : pm.pos[i];
-    const index = mask && dom ? aloneIndex(pm.index, dom, alone) : pm.index;
+    const index0 = mask && dom ? aloneIndex(pm.index, dom, alone) : pm.index;
+    // iso-clipping: only the places at or beyond the value are drawn in colour, the rest stays a ghost
+    const index = isoOn ? isoIndex(index0, val, this.isoValue(), !this.iso.below) : index0;
     const geo = new THREE.BufferGeometry();
     geo.setIndex(new THREE.BufferAttribute(index, 1));
     geo.setAttribute("position", new THREE.BufferAttribute(at, 3));
@@ -2308,9 +2351,9 @@ export class SimController {
     };
     const none = (text: string) => `<li class="sim-none muted">${esc(text)}</li>`;
     let html = `<div class="sim-head">`
-      + (list.length > 1 ? `<select data-k="study" aria-label="${esc(t("Study"))}" translate="no">${list.map(s => `<option value="${s.id}"${s.id === st.id ? " selected" : ""}>${esc(s.name)}</option>`).join("")}</select>`
+      + (this.renaming ? `<input type="text" data-k="sname" value="${esc(st.name)}" aria-label="${esc(t("Study name"))}" translate="no" />` : list.length > 1 ? `<select data-k="study" aria-label="${esc(t("Study"))}" translate="no">${list.map(s => `<option value="${s.id}"${s.id === st.id ? " selected" : ""}>${esc(s.name)}</option>`).join("")}</select>`
         : `<b translate="no">${esc(st.name)}</b>`)
-      + `<span class="muted" data-v="kind">${esc(st.kind === "modal" ? t("Modal") : t("Static"))}</span><button class="sim-ib" data-a="dupstudy" title="${esc(t("Duplicate study"))}" aria-label="${esc(t("Duplicate study"))}">⧉</button><button class="sim-ib" data-a="delstudy" title="${esc(t("Delete study"))}" aria-label="${esc(t("Delete study"))}">×</button></div>`;
+      + `<span class="muted" data-v="kind">${esc(st.kind === "modal" ? t("Modal") : t("Static"))}</span><button class="sim-ib" data-a="renstudy" aria-pressed="${this.renaming}" title="${esc(t("Rename study"))}" aria-label="${esc(t("Rename study"))}">✎</button><button class="sim-ib" data-a="dupstudy" title="${esc(t("Duplicate study"))}" aria-label="${esc(t("Duplicate study"))}">⧉</button><button class="sim-ib" data-a="delstudy" title="${esc(t("Delete study"))}" aria-label="${esc(t("Delete study"))}">×</button></div>`;
     if (this.host.asm()) html += this.compsHtml(st) + this.boltsHtml(st)
       + (st.welds?.length ? `<div class="sim-sec sim-welds"><h4>${esc(t("Welds"))}</h4><p class="sim-note muted">${esc(t(WELD_NOTE))}</p><ul class="sim-list">${st.welds.map(w => row(w, false)).join("")}</ul></div>` : "")
       + this.linksHtml(st);
@@ -2398,7 +2441,7 @@ export class SimController {
     let html = `<h5 class="sim-sub">${esc(t("Compare"))}</h5>`;
     if (!cmp) return html + `<p class="sim-note muted" data-v="cmpnone">${esc(t("Nothing to compare with yet: solve another study of this kind, or change the model and solve again."))}</p>`;
     html += `<label class="pm-field"><span>${esc(t("With"))}</span><select data-k="cmp">${c.opts.map(o => `<option value="${esc(o.v)}"${o.v === c.sel ? " selected" : ""}${o.v === "prev" ? "" : ' translate="no"'}>${esc(o.label)}</option>`).join("")}</select></label>`;
-    html += `<table class="sim-passes sim-cmptable"><thead><tr><th></th><th>${esc(t("This"))}</th><th>${esc(t("Other"))}</th><th>${esc(t("Difference"))}</th></tr></thead><tbody>`
+    html += `<table class="sim-cmptable"><thead><tr><th></th><th>${esc(t("This"))}</th><th>${esc(t("Other"))}</th><th>${esc(t("Difference"))}</th></tr></thead><tbody>`
       + cmp.rows.map(r => `<tr data-cmp="${r.key}"><td>${esc(this.compareLabel(r.key))}</td><td>${esc(this.compareValue(r.key, r.a))}</td><td>${esc(this.compareValue(r.key, r.b))}</td><td data-v="cmpchange">${esc(this.compareChange(r))}</td></tr>`).join("") + `</tbody></table>`;
     return html;
   }
@@ -2449,7 +2492,12 @@ export class SimController {
     if (eLast != null) html += `<dt title="${esc(t("In the energy norm, from how the passes converge"))}">${esc(t("Estimated error"))}</dt><dd data-v="error">${pct(eLast).startsWith("<") ? "" : "≈ "}${pct(eLast).replace("<", "&lt;")} %</dd>`;
     else if (eBefore != null) html += `<dt title="${esc(t("In the energy norm, from how the passes converge"))}">${esc(t("Estimated error"))}</dt><dd data-v="error">&lt; ${pct(eBefore).replace("< ", "")} %</dd>`;
     if (!env) html += `<dt>${esc(t("Applied load"))}</dt><dd>${f(last.applied.force)} N</dd>`;
-    last.reactions.forEach((re, i) => { html += `<dt>${esc(t("Reaction"))} <span translate="no">${esc(this.nameOf(r.ids[i] ?? ""))}</span></dt><dd title="${re.force.map(x => sig(x)).join(", ")} N">${f(re.force)} N</dd>`; });
+    last.reactions.forEach((re, i) => { html += `<dt>${esc(t("Reaction"))} <span translate="no">${esc(this.nameOf(r.ids[i] ?? ""))}</span></dt><dd title="${re.force.map(x => sig(x)).join(", ")} N; ${esc(t("moment about the origin"))} ${re.moment.map(x => sig(x / 1000)).join(", ")} N·m">${f(re.force)} N</dd>`; });
+    if (!env) {
+      const bal = loadBalance(last.reactions, last.applied);
+      if (last.reactions.length > 1) html += `<dt>${esc(t("Reactions in total"))}</dt><dd data-v="rtotal" title="${bal.force.map(x => sig(x)).join(", ")} N; ${esc(t("moment about the origin"))} ${bal.moment.map(x => sig(x / 1000)).join(", ")} N·m">${f(bal.force)} N</dd>`;
+      if (bal.off != null) html += `<dt title="${esc(t("How far the reactions are from balancing the applied loads, as a share of the load"))}">${esc(t("Out of balance"))}</dt><dd data-v="balance"${bal.off > 1 ? ' class="sim-low"' : ""}>${pct(bal.off).replace("<", "&lt;")} %</dd>`;
+    }
     html += `</dl>`;
     if (!env) html += `<table class="sim-passes"><thead><tr><th>${esc(t("Pass"))}</th><th>${esc(t("Unknowns"))}</th><th>${esc(t("Energy change"))}</th><th>${esc(t("Est. error"))}</th><th>${esc(t("Time"))}</th></tr></thead><tbody>`
       + r.passes.map((p, i) => `<tr><td>${p.pass}</td><td>${p.dofs.toLocaleString("en-US").replace(/,/g, " ")}</td><td>${p.change == null ? "–" : `${pct(p.change).replace("<", "&lt;")} %`}</td><td>${errs[i] == null ? "–" : `${i === errs.length - 1 && !pct(errs[i]!).startsWith("<") ? "≈ " : ""}${pct(errs[i]!).replace("<", "&lt;")} %`}</td><td>${(p.ms / 1000).toFixed(1)} s</td></tr>`).join("") + `</tbody></table>`
@@ -2458,7 +2506,7 @@ export class SimController {
     if (hs.length) {
       const uf = UNITS[units.current].f;
       html += `<h5 class="sim-sub">${esc(t("Hot spots"))}</h5><table class="sim-hot"><thead><tr><th>#</th><th>${esc(t("von Mises stress"))}</th><th>X, Y, Z, ${esc(units.current)}</th></tr></thead><tbody>`
-        + hs.map((h, i) => `<tr data-a="hot" data-hot="${i}" tabindex="0" class="${h.singular ? "sing" : ""}${i === this.hotSel ? " sel" : ""}"><td>${i + 1}</td><td>${sig(h.vm)} MPa${h.singular ? ` ${warn}` : ""}</td><td>${h.at.map(x => String(Number((x * uf).toFixed(3)))).join(", ")}</td></tr>`).join("") + `</tbody></table>`;
+        + hs.map((h, i) => `<tr data-a="hot" data-hot="${i}" tabindex="0" class="${h.singular ? "sing" : ""}${i === this.hotSel ? " sel" : ""}"><td>${i + 1}</td><td>${sig(h.vm)} MPa${h.singular ? ` ${warn}` : ""}</td><td>${h.at.map(x => String(Number((x * uf).toFixed(3)))).join(", ")}</td></tr>`).join("") + `</tbody></table><button class="btn small" data-a="hotcsv" title="${esc(t("Save the hot spots' places and values as a CSV file"))}">${esc(t("Export CSV"))}</button>`;
       if (singular) html += `<p class="sim-note sim-sing">⚠ ${esc(t("Stress singularity: value depends on refinement"))}. ${esc(real ? t("The safety factor uses the highest stress away from singularities.") : "")}</p>`;
     }
     html += this.compTableHtml();
@@ -2473,7 +2521,7 @@ export class SimController {
         : t("One pass only: no convergence check."))}</p>`;
       if (r.parts) html += `<p class="sim-note muted sim-bonded">${esc(t("The part's {n} bodies are analysed bonded: joined wherever they touch.", { n: r.parts }))}${r.bodyMats ? ` ${esc(t("Each body has its own material."))}` : ""}</p>`;
       html += `<p class="sim-note muted sim-assume">${esc(t(ASSUMPTIONS))}</p>`;
-      if (!this.stale()) html += `<button class="btn small" data-a="report">${esc(t("Report…"))}</button>`;
+      if (!this.stale()) html += `<button class="btn small" data-a="report">${esc(t("Report…"))}</button> <button class="btn small" data-a="stl" title="${esc(t("Save the deformed shape, at the scale shown, as an STL file"))}">${esc(t("Deformed shape as"))} <span translate="no">STL</span></button>`;
     }
     return html;
   }
@@ -2507,7 +2555,7 @@ export class SimController {
       if (st) html += `<p class="sim-note muted">${esc(this.modalNote(st, last))}</p>`;
       if (r.parts) html += `<p class="sim-note muted sim-bonded">${esc(t("The part's {n} bodies are analysed bonded: joined wherever they touch.", { n: r.parts }))}${r.bodyMats ? ` ${esc(t("Each body has its own material."))}` : ""}</p>`;
       html += `<p class="sim-note muted sim-assume">${esc(t(ASSUMPTIONS))}</p>`;
-      if (!this.stale()) html += `<button class="btn small" data-a="report">${esc(t("Report…"))}</button>`;
+      if (!this.stale()) html += `<button class="btn small" data-a="report">${esc(t("Report…"))}</button> <button class="btn small" data-a="stl" title="${esc(t("Save the deformed shape, at the scale shown, as an STL file"))}">${esc(t("Deformed shape as"))} <span translate="no">STL</span></button>`;
     }
     return html;
   }
@@ -2623,6 +2671,8 @@ export class SimController {
       + (this.plot.deformed ? `<label class="ana-row"><span>${esc(t("Scale"))}</span><input type="text" inputmode="decimal" data-k="scale" value="${this.plot.scale > 0 ? trim(this.plot.scale) : ""}" placeholder="${esc(t("auto"))} ×${sig(this.usedScale)}" aria-label="${esc(t("Deformation scale"))}" /></label>` : "")
       + (modes ? (this.plot.deformed ? `<label class="chk"><input type="checkbox" data-k="animate"${this.animate ? " checked" : ""} />${esc(t("Animate"))}</label><label class="ana-row"><span>${esc(t("Speed"))}</span><select data-k="speed">${[0.25, 0.5, 1, 2, 4].map(x => `<option value="${x}"${x === this.speed ? " selected" : ""}>×${x}</option>`).join("")}</select></label><button class="btn small" data-a="gif" title="${esc(t("Save one swing of this mode shape as an animated GIF of the current view"))}">${esc(t("Record GIF"))}</button>` : "") + `<p class="ana-note">${esc(t("Mode shapes have no scale: only the pattern of the motion is meaningful."))}</p>` : "")
       + (modes ? "" : `<label class="chk"><input type="checkbox" data-k="marks"${this.plot.marks ? " checked" : ""} />${esc(t("Highest and lowest values"))}</label>`)
+      + (modes ? "" : `<label class="chk"><input type="checkbox" data-k="iso"${this.iso.on ? " checked" : ""} />${esc(t("Show only a range of values"))}</label>`
+        + (this.iso.on ? `<div class="ana-row"><select data-k="isoside" aria-label="${esc(t("Show only a range of values"))}"><option value="above"${this.iso.below ? "" : " selected"}>${esc(t("At or above"))}</option><option value="below"${this.iso.below ? " selected" : ""}>${esc(t("At or below"))}</option></select><input type="text" inputmode="decimal" data-k="isoval" value="${sig(this.isoValue() * f)}" aria-label="${esc(t("Value"))}" /></div>` : ""))
       + (modes ? "" : `<div class="sim-probebar"><button class="btn small${this.probing ? " on" : ""}" data-a="probe" aria-pressed="${this.probing}" title="${esc(t("Click the plot to read the value at a point"))}">${esc(t("Probe"))}</button>`
       + `<button class="btn small${this.pathing ? " on" : ""}" data-a="path" aria-pressed="${this.pathing}" title="${esc(t("Click two points on the plot: the result is charted along the line between them"))}">${esc(t("Path"))}</button>`
       + (this.probes.length ? `<button class="btn small" data-a="noprobes">${esc(t("Clear probes"))}</button><button class="btn small" data-a="probecsv" title="${esc(t("Save the probes' places and values as a CSV file"))}">${esc(t("Export CSV"))}</button>` : "") + `</div>`);
@@ -2705,7 +2755,15 @@ export class SimController {
         if (set.has(id)) set.delete(id); else set.add(id);
         if (set.size) s.suppressed = [...set]; else delete s.suppressed;
       });
-    } else if (a === "dupstudy" && st) {
+    } else if (a === "renstudy" && st) {
+      this.renaming = !this.renaming;
+      this.renderTree();
+      const box = document.querySelector<HTMLInputElement>('#sim-tree [data-k="sname"]');
+      if (box) { box.focus(); box.select(); }
+      return;
+    } else if (a === "hotcsv") { this.exportHot(); return; }
+    else if (a === "stl") { this.exportStl(); return; }
+    else if (a === "dupstudy" && st) {
       const list = this.host.doc()?.studies ?? [], blank = newStudy(list, st.kind === "modal" ? "modal" : "static");
       let k = 2;
       while (list.some(x => x.name === `${st.name} (${k})`)) k++;
@@ -2713,7 +2771,7 @@ export class SimController {
       this.client.cancel();
       this.edit = null; this.res = null; this.error = null; this.probes = []; this.probeKey = ""; this.probing = false;
       this.clearPlot();
-      this.activeId = copy.id;
+      this.setActive(copy.id);
       this.host.change(t("Duplicate study"), d => { (d.studies ??= []).push(copy); });
     } else if (a === "delstudy" && st) {
       this.client.cancel();
@@ -2727,7 +2785,13 @@ export class SimController {
   private treeChange(el: HTMLInputElement) {
     const st = this.study();
     if (!st) return;
-    if (el.dataset.k === "study") { this.activeId = el.value; this.edit = null; this.changed(); }
+    if (el.dataset.k === "study") { this.setActive(el.value); this.edit = null; this.changed(); }
+    else if (el.dataset.k === "sname") {
+      const st0 = this.study(), name = el.value.trim();
+      this.renaming = false;
+      if (st0 && name && name !== st0.name) this.host.change(t("Rename study"), d => { const x = d.studies?.find(y => y.id === st0.id); if (x) x.name = name; });
+      else this.renderTree();
+    }
     else if (el.dataset.k === "passes") this.host.change(t("Passes"), d => { const s = d.studies?.find(x => x.id === st.id); if (s) s.settings.passes = Number(el.value) || 3; });
     else if (el.dataset.k === "modes") {
       const v = Math.round(Number(el.value));
@@ -2901,9 +2965,12 @@ export class SimController {
 
   private legendChange(el: HTMLInputElement) {
     const k = el.dataset.k;
-    if (k === "kind") this.plot.kind = el.value as PlotKind;
+    if (k === "kind") { this.plot.kind = el.value as PlotKind; this.iso.value = null; }
     else if (k === "deformed") this.plot.deformed = el.checked;
     else if (k === "marks") this.plot.marks = el.checked;
+    else if (k === "iso") { this.iso.on = el.checked; if (el.checked && this.iso.value == null) this.iso.below = this.plot.kind === "sf"; }
+    else if (k === "isoside") this.iso.below = el.value === "below";
+    else if (k === "isoval") { const v = num(el.value), fu = this.plotUnit()[1]; this.iso.value = el.value.trim() && v != null ? v / fu : null; }
     else if (k === "animate") this.animate = el.checked;
     else if (k === "speed") this.speed = Number(el.value) || 1;
     else if (k === "mode") { this.modeSel = Number(el.value); this.renderTree(); }
