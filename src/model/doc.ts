@@ -100,6 +100,20 @@ export class DocStore {
     this.undoStack.splice(i, this.undoStack.length - i, { doc: first.doc, label, seq: first.seq });
   }
 
+  /**
+   * Throws away the steps made since `mark` (a command cancelled after it changed the document, such as a hole
+   * whose position sketch was made in it): the document goes back to before them, with no redo. False when none.
+   */
+  discardSince(mark: number) {
+    const i = this.undoStack.findIndex(s => (s.seq ?? 0) >= mark);
+    if (i < 0) return false;
+    this.doc = JSON.parse(this.undoStack[i].doc) as PartDoc;
+    this.undoStack.splice(i);
+    this.redoStack = [];
+    this.emit("discard");
+    return true;
+  }
+
   get canUndo() { return this.undoStack.length > 0; }
   get canRedo() { return this.redoStack.length > 0; }
   get undoLabel() { return this.undoStack.at(-1)?.label ?? ""; }
@@ -181,7 +195,7 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
   if (f.type === "plane") line(f.about);
   if (f.type === "moveface") line(f.axis);
   if (f.type === "wrap") { features.push(f.sketch); if (f.face) faces.push(f.face.name); }
-  if (f.type === "hole") { plane(f.plane); if (f.end === "upto") plane(f.upTo); }
+  if (f.type === "hole") { if (f.sketch) features.push(f.sketch); else plane(f.plane); if (f.end === "upto") plane(f.upTo); }
   if (f.type === "shell" || f.type === "delface" || f.type === "moveface" || f.type === "dome") faces.push(...f.faces.map(x => x.name));
   if (f.type === "draft") { plane(f.plane); faces.push(...f.faces.map(x => x.name)); for (const e of f.parting ?? []) faces.push(...e.faces); }
   if (f.type === "mirror" || f.type === "lpattern" || f.type === "cpattern" || f.type === "spattern") faces.push(...(f.faces ?? []).map(x => x.name), ...(f.bodies ?? []).map(x => x.name));

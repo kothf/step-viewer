@@ -17,6 +17,7 @@ import { dir2Apart, dir2Feature, threadThrough, holeExits, headKind } from "../m
 import { featureRefs } from "../model/doc";
 import { applyRefFixes, type RefFix } from "../model/refFix";
 import { recognizedHoleFeatures, TAPER } from "../model/holes";
+import { holeSketchPoints } from "../model/holePos";
 import { advProfile, captiveStack } from "../model/advHole";
 import { ctxFrame } from "../model/context";
 import { loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
@@ -2912,7 +2913,7 @@ export class Modeller {
     const oc = this.oc;
     if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
     if (!f.plane) throw new FeatureError("E-HOLE-FACE", "Pick a flat face or a plane for the holes.");
-    const fr0 = this.planeFrame(f.plane, prev, frames);
+    const fr0 = f.sketch && frames[f.sketch] ? frames[f.sketch] : this.planeFrame(f.plane, prev, frames);
     // The panel places holes in this frame, so it is known even before the first hole.
     frames[f.id] = fr0;
     // Reverse direction: the holes go along the plane's normal instead of against it (x, y stay, so do the points).
@@ -6757,7 +6758,17 @@ export class Modeller {
           else if (f.type === "replaceface") body = this.replaceFaces(f, body, sheets);
           else if (f.type === "thicken") ({ body, sheets } = this.thicken(f, body, sheets));
           else if (f.type === "draft") body = this.draft(f, body, frames);
-          else if (f.type === "hole") { const h = this.hole(f, body, frames); body = h.body; frame = h.frame; frames[f.id] = frame; }
+          else if (f.type === "hole") {
+            // Positions from a sketch (Hole Wizard Positions): its points as they are now (On edge relations may have moved them), in its frame.
+            let hf = f;
+            if (f.sketch) {
+              const sk = doc.features.find(x => x.id === f.sketch);
+              if (sk?.type !== "sketch") throw new FeatureError("E-HOLE-SKETCH", "The hole's position sketch is missing.");
+              hf = { ...f, plane: sk.plane, pts: holeSketchPoints(sk).map(p => [p.x, p.y] as [number, number]) };
+              if (!hf.pts.length && !f.spots?.length) throw new FeatureError("E-HOLE-SKPTS", "The position sketch has no points: add sketch points for the holes.");
+            }
+            const h = this.hole(hf, body, frames); body = h.body; frame = h.frame; frames[f.id] = frame;
+          }
           else if (f.type === "mirror") body = this.mirror(f, doc, body, frames);
           else if (f.type === "helix") this.curves.set(f.id, this.helix(f, doc, body, frames));
           else if (f.type === "sketch3d") {
