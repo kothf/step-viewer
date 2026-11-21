@@ -21,6 +21,7 @@ import type { MatRef } from "../tools/materials";
 import type { SimModel } from "./model";
 import type { EdgeInfo } from "../topology";
 import { SIM_STOPPED, SimClient } from "./client";
+import type { Connection } from "./connect";
 import { meshArea, plotTarget, refineMesh, type PlotMesh } from "./plotmesh";
 import { locate, probeCsv, valueAt, type Located } from "./probes";
 import { hotSpots, type HotSpot } from "./hotspots";
@@ -111,6 +112,9 @@ const PATH_COLOR = 0x111827;
 /** Frames of a recorded mode shape: one swing. */
 const GIF_FRAMES = 24;
 const SUPPORT_COLOR = 0x2f9e44, LOAD_COLOR = 0xd6336c, REFINE_COLOR = 0x1c7ed6;
+/** A picked connection's patch: on its first component and on its second. */
+const PATCH_A = 0xf59f00, PATCH_B = 0x1c7ed6;
+const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 /** Blue, cyan, green, yellow, red. */
 const RAMP: [number, number, number][] = [[0.11, 0.3, 0.85], [0.1, 0.75, 0.85], [0.25, 0.75, 0.3], [0.95, 0.85, 0.2], [0.88, 0.2, 0.15]];
 const RAMP_CSS = `linear-gradient(90deg, ${RAMP.map(c => `rgb(${c.map(x => Math.round(x * 255)).join(",")})`).join(", ")})`;
@@ -148,6 +152,12 @@ export class SimController {
   private hot: { res: Results; n: number; list: HotSpot[] } | null = null;
   /** The hot spot picked in the list (its label is drawn on the model). */
   private hotSel = -1;
+  /** The pairs found touching before a solve (FR-CON-003), for the model state and gap they were found with. */
+  private found: { key: string; comps: { key: string; name: string }[]; list: Connection[] } | null = null;
+  private finding = false;
+  /** The connection whose patch is shown (its pair key), and what the Connections table is narrowed to. */
+  private linkSel = "";
+  private linkFilter = { comp: "", type: "" };
   /** What the labels on the plot stand on: a plot-mesh triangle and the weights of the point in it. */
   private pins: { i: number[]; w: number[] }[] = [];
   private client = new SimClient();
@@ -254,6 +264,36 @@ export class SimController {
     return JSON.stringify(parts);
   }
 
+  private foundKey(st: Study) { return JSON.stringify([this.host.stateKey(), st.settings.gap ?? DEFAULT_GAP]); }
+  private freshFound(st: Study | null | undefined) { return st && this.found && this.found.key === this.foundKey(st) ? this.found : null; }
+
+  /** Finds the pairs of components that touch or come within the gap, without solving (FR-CON-003). */
+  async findLinks() {
+    const st = this.study();
+    if (!st || !this.host.asm() || this.finding || this.running) return;
+    if (!this.host.model()) { toast(t("The assembly has no components to analyse yet."), "warn"); return; }
+    this.finding = true;
+    this.renderAll();
+    try {
+      const size = this.host.viewer.modelSize, key = this.foundKey(st);
+      const { regions } = await this.host.simGeo(Math.max(0.002, size * 2e-5), 0.05);
+      await this.findFrom(regions ?? [], st.settings.gap ?? DEFAULT_GAP, key);
+      const n = this.found?.key === key ? this.found.list.length : 0;
+      toast(n ? t("Connections found: {n}", { n }) : t("No components touch within the gap tolerance."), n ? "success" : "warn");
+    } catch (e) {
+      toast(this.errorText(e instanceof Error ? e.message : String(e)), "error");
+    } finally {
+      this.finding = false;
+      this.renderAll();
+      this.drawMarks();
+    }
+  }
+
+  private async findFrom(bodies: { key: string; tris: Float64Array; name?: string }[], gap: number, key: string) {
+    const list = await this.client.find(bodies.map(b => b.tris), gap);
+    if (list) this.found = { key, comps: bodies.map(b => ({ key: b.key, name: b.name ?? b.key })), list };
+  }
+
   private stale(): boolean {
     const doc = this.host.doc(), st = this.study();
     return !!this.res && (!doc || !st || st.id !== this.res.study || this.keyOf(doc, st) !== this.res.key);
@@ -319,6 +359,8 @@ export class SimController {
       animating: !!this.anim, frames: this.anim?.frames ?? 0, gifs: this.gifs, gif: this.lastGif, near: this.nearModes(this.res?.passes.at(-1)), bodies: this.res?.parts ?? 1, bodyMats: this.res?.bodyMats?.map(b => b.name) ?? null, speed: this.speed, cumul: this.cumul, more: !!this.res?.passes.at(-1)?.more, range: this.study()?.settings.range ?? null,
       caps: { n: this.caps.length, ...this.capInfo },
       asm: this.host.asm(), comps: this.res?.comps?.map(c => c.name) ?? null, contacts: (last?.contacts ?? []).map(c => ({ a: this.res?.comps?.[c.a]?.name ?? "", b: this.res?.comps?.[c.b]?.name ?? "", area: c.area, type: c.type, force: c.force ?? null, moment: c.moment ?? null, at: c.at ?? null })), links: this.study()?.links ?? [],
+      found: this.freshFound(this.study())?.list.map(c => ({ a: this.found!.comps[c.a]?.name ?? "", b: this.found!.comps[c.b]?.name ?? "", area: c.area, gap: c.gap, at: c.at })) ?? null, finding: this.finding, linkSel: this.linkSel,
+      patches: this.marks.children.filter(o => o.userData.simPatch).map(o => ({ side: o.userData.simPatch as string, tris: ((o as THREE.Mesh).geometry.getAttribute("position")?.count ?? 0) / 3 })),
       relief: !!this.study()?.settings.relief, accel: last?.accel ? { a: last.accel.a, alpha: last.accel.alpha } : null,
       cases: (this.study()?.cases ?? []).map(c => ({ name: c.name, off: c.off })), caseSel: this.caseSel, enveloped: this.enveloped,
       caseResults: (this.res?.cases ?? []).map(c => ({ name: this.caseName(c), maxVm: c.passes.at(-1)?.maxVm ?? null, maxU: c.passes.at(-1)?.maxU ?? null, passes: c.passes.length })),
@@ -601,6 +643,8 @@ export class SimController {
         });
         this.comps = bodies.map(b => ({ key: b.key, name: b.name ?? b.key }));
         const at = new Map(bodies.map((b, i) => [b.key, i]));
+        // the pairs with their gaps and patches are found beside the solve, for the Connections table
+        if (!this.freshFound(st)) void this.findFrom(bodies, st.settings.gap ?? DEFAULT_GAP, this.foundKey(st)).then(() => { this.renderAll(); this.drawMarks(); }).catch(() => {});
         joined = { gap: st.settings.gap ?? DEFAULT_GAP, links: (st.links ?? []).flatMap(l => (at.has(l.a) && at.has(l.b) ? [{ a: at.get(l.a)!, b: at.get(l.b)!, type: l.type }] : [])) };
       } else if (m && bodies && bodies.length > 1 && bodies.some(b => doc.bodies?.[b.key]?.material)) {
         regions = bodies.map(b => {
@@ -685,28 +729,50 @@ export class SimController {
   /** An assembly study: how its components are joined, and after a solve the pairs found touching. */
   private linksHtml(st: Study): string {
     const res = this.res && !this.stale() ? this.res : null, comps = res?.comps ?? [], found = res?.passes.at(-1)?.contacts ?? [];
-    const key = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+    const pre = this.freshFound(st);
+    const key = pairKey;
     const typed = new Map((st.links ?? []).map(l => [key(l.a, l.b), l.type]));
-    const names = new Map(comps.map(c => [c.key, c.name]));
-    const rows: { a: string; b: string; area: number | null; force?: number[]; moment?: number[] }[] = found.map(c => ({ a: comps[c.a]?.key ?? "", b: comps[c.b]?.key ?? "", area: c.area, force: c.force, moment: c.moment })).filter(r => r.a && r.b);
-    const mag = (v: number[]) => Math.hypot(v[0], v[1], v[2]), forces = rows.some(r => r.force);
-    const seen = new Set(rows.map(r => key(r.a, r.b)));
-    for (const l of st.links ?? []) if (!seen.has(key(l.a, l.b))) rows.push({ a: l.a, b: l.b, area: null });
+    const names = new Map([...(pre?.comps ?? []), ...comps].map(c => [c.key, c.name]));
+    type Row = { a: string; b: string; area: number | null; gap?: number; force?: number[]; moment?: number[] };
+    // what was found before the solve (with its gaps), then what the solve joined, then pairs only typed
+    const rows: Row[] = (pre?.list ?? []).map(c => ({ a: pre!.comps[c.a]?.key ?? "", b: pre!.comps[c.b]?.key ?? "", area: c.area, gap: c.gap })).filter(r => r.a && r.b);
+    const at = new Map(rows.map(r => [key(r.a, r.b), r]));
+    for (const c of found) {
+      const a = comps[c.a]?.key ?? "", b = comps[c.b]?.key ?? "";
+      if (!a || !b) continue;
+      const r = at.get(key(a, b));
+      // the solver's own row: its components in its order, since the force is what its first passes to its second
+      if (r) { r.a = a; r.b = b; r.area = c.area; r.force = c.force; r.moment = c.moment; }
+      else { const n: Row = { a, b, area: c.area, force: c.force, moment: c.moment }; rows.push(n); at.set(key(a, b), n); }
+    }
+    const mag = (v: number[]) => Math.hypot(v[0], v[1], v[2]), forces = rows.some(r => r.force), gaps = rows.some(r => r.gap != null);
+    for (const l of st.links ?? []) if (!at.has(key(l.a, l.b))) rows.push({ a: l.a, b: l.b, area: null });
+    const all = rows.length, fl = this.linkFilter;
+    const used = [...new Set(rows.flatMap(r => [r.a, r.b]))];
+    if (fl.comp && !used.includes(fl.comp)) fl.comp = "";
+    const shown = rows.filter(r => (!fl.comp || r.a === fl.comp || r.b === fl.comp) && (!fl.type || (typed.get(key(r.a, r.b)) ?? "bonded") === fl.type));
     const f = UNITS[units.current].f;
     const opt = (v: string, label: string, cur: string) => `<option value="${v}"${v === cur ? " selected" : ""}>${esc(t(label))}</option>`;
     let html = `<div class="sim-sec sim-links"><h4>${esc(t("Connections"))}</h4>`
       + `<p class="sim-note muted">${esc(t("Every component is analysed with its part's material. Components that touch, or come within the gap, are joined."))}</p>`
-      + `<label class="sim-kv2">${esc(t("Gap tolerance"))} <input type="number" data-k="gap" min="0" step="0.05" value="${sig((st.settings.gap ?? DEFAULT_GAP) * f)}" aria-label="${esc(t("Gap tolerance"))}" /> ${esc(units.current)}</label>`;
-    if (rows.length) {
-      html += `<table class="sim-contacts"><thead><tr><th>${esc(t("Components"))}</th><th>${esc(t("Area"))}, ${esc(units.current)}²</th>${forces ? `<th>${esc(t("Force"))}, N<br />${esc(t("Moment"))}, N·m</th>` : ""}<th>${esc(t("Type"))}</th></tr></thead><tbody>`
+      + `<label class="sim-kv2">${esc(t("Gap tolerance"))} <input type="number" data-k="gap" min="0" step="0.05" value="${sig((st.settings.gap ?? DEFAULT_GAP) * f)}" aria-label="${esc(t("Gap tolerance"))}" /> ${esc(units.current)}</label>`
+      + `<button class="btn small sim-find" data-a="findlinks"${this.finding || this.running ? " disabled" : ""}>${esc(this.finding ? t("Finding the connections…") : t("Find connections"))}</button>`;
+    if (all >= 4) html += `<div class="sim-lfilter"><select data-k="cfilter" aria-label="${esc(t("Component"))}"><option value="">${esc(t("All components"))}</option>${used.map(k => `<option value="${esc(k)}"${k === fl.comp ? " selected" : ""} translate="no">${esc(names.get(k) ?? k)}</option>`).join("")}</select>`
+      + `<select data-k="tfilter" aria-label="${esc(t("Type"))}">${opt("", "All types", fl.type)}${opt("bonded", "Bonded", fl.type)}${opt("sliding", "Sliding", fl.type)}${opt("none", "Not joined", fl.type)}</select></div>`;
+    if (all) {
+      const rows = shown;
+      html += `<table class="sim-contacts"><thead><tr><th>${esc(t("Components"))}</th><th>${esc(t("Area"))}, ${esc(units.current)}²${gaps ? `<br />${esc(t("Gap"))}, ${esc(units.current)}` : ""}</th>${forces ? `<th>${esc(t("Force"))}, N<br />${esc(t("Moment"))}, N·m</th>` : ""}<th>${esc(t("Type"))}</th></tr></thead><tbody>`
         + rows.map(r => {
           const cur = typed.get(key(r.a, r.b)) ?? "bonded";
-          return `<tr data-link="${esc(key(r.a, r.b))}"><td translate="no">${esc(names.get(r.a) ?? r.a)} – ${esc(names.get(r.b) ?? r.b)}</td><td>${r.area == null ? "" : sig(r.area * f * f)}</td>`
+          const k = key(r.a, r.b), patch = !!pre?.list.some(c => key(pre.comps[c.a]?.key ?? "", pre.comps[c.b]?.key ?? "") === k);
+          return `<tr data-link="${esc(k)}"${patch ? ` data-a="link" tabindex="0"` : ""} class="${k === this.linkSel ? "sel" : ""}"><td translate="no">${esc(names.get(r.a) ?? r.a)} – ${esc(names.get(r.b) ?? r.b)}</td><td>${r.area == null ? "" : sig(r.area * f * f)}${gaps ? `<br /><span data-v="cgap">${r.gap == null ? "" : String(Number((r.gap * f).toPrecision(2)))}</span>` : ""}</td>`
             + (forces ? `<td><span data-v="cforce" title="${r.force ? `${r.force.map(x => sig(x)).join(", ")} N` : ""}">${r.force ? sig(mag(r.force)) : ""}</span><br /><span data-v="cmoment" title="${r.moment ? `${r.moment.map(x => sig(x * 1e-3)).join(", ")} N·m` : ""}">${r.moment ? sig(mag(r.moment) * 1e-3) : ""}</span></td>` : "")
             + `<td><select data-k="link" data-a="${esc(r.a)}" data-b="${esc(r.b)}" aria-label="${esc(t("Type"))}">${opt("bonded", "Bonded", cur)}${opt("sliding", "Sliding", cur)}${opt("none", "Not joined", cur)}</select></td></tr>`;
         }).join("") + `</tbody></table>`;
+      if (shown.length >= 2) html += `<label class="sim-kv2">${esc(t("All shown:"))} <select data-k="linkall" aria-label="${esc(t("All shown:"))}"><option value="">${esc(t("Set type…"))}</option>${opt("bonded", "Bonded", "-")}${opt("sliding", "Sliding", "-")}${opt("none", "Not joined", "-")}</select></label>`;
+      if (pre?.list.length) html += `<p class="sim-note muted" data-v="cpatchnote">${esc(t("Click a row to show the contact: orange on the first component, blue on the second."))}</p>`;
       if (forces) html += `<p class="sim-note muted" data-v="cforcenote">${esc(t("Force: what the first component passes to the second. Moment: about the centre of the contact."))}</p>`;
-    } else html += `<p class="sim-note muted" data-v="nolinks">${esc(res ? t("No components touch.") : t("The pairs found touching are listed here after a solve."))}</p>`;
+    } else html += `<p class="sim-note muted" data-v="nolinks">${esc(res || pre ? t("No components touch.") : t("Find connections lists the pairs that touch; a solve lists them too."))}</p>`;
     return html + `</div>`;
   }
 
@@ -866,6 +932,20 @@ export class SimController {
       arrow.traverse(o => { o.raycast = () => {}; });
       this.marks.add(arrow);
     };
+    // the picked connection: where the two components face each other, each side in its own colour
+    const pre = this.host.asm() ? this.freshFound(st) : null;
+    const sel = pre?.list.find(c => pairKey(pre.comps[c.a]?.key ?? "", pre.comps[c.b]?.key ?? "") === this.linkSel);
+    if (sel) for (const [side, tris, color] of [["a", sel.pa, PATCH_A], ["b", sel.pb, PATCH_B]] as const) {
+      if (!tris.length) continue;
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.BufferAttribute(tris, 3));
+      const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.7, side: THREE.BackSide, depthTest: false, depthWrite: false }));
+      // each side is drawn from behind only: looking through a component one sees its own side of the contact
+      mesh.renderOrder = side === "a" ? 2960 : 2961;
+      mesh.userData.simPatch = side;
+      mesh.raycast = () => {};
+      this.marks.add(mesh);
+    }
     const ed = this.edit;
     for (const s of st.supports) if (s.id !== ed?.draft.id && !off.has(s.id) && !plotted) draw(s, false, false);
     for (const l of st.loads) if (l.id !== ed?.draft.id && !off.has(l.id) && !plotted) draw(l, true, false);
@@ -1971,6 +2051,14 @@ export class SimController {
     else if (a === "pathcsv") this.exportPath();
     else if (a === "rmpath") this.setPath(t("Remove path"), null);
     else if (a === "rmprobe") { const i = Number(b.dataset.i); this.setProbes(t("Remove probe"), l => l.filter((_p, k) => k !== i)); this.renderAll(); }
+    else if (a === "findlinks") void this.findLinks();
+    else if (a === "link") {
+      if ((e.target as HTMLElement).closest("select")) return;
+      const k = b.dataset.link ?? "";
+      this.linkSel = this.linkSel === k ? "" : k;
+      this.renderTree();
+      this.drawMarks();
+    }
     else if (a === "hot") {
       const i = Number(b.dataset.hot);
       this.hotSel = this.hotSel === i ? -1 : i;
@@ -2023,6 +2111,19 @@ export class SimController {
       const v = Math.max(0, Number(el.value) / UNITS[units.current].f);
       if (!Number.isFinite(v)) return;
       this.host.change(t("Gap tolerance"), d => { const s2 = d.studies?.find(x => x.id === st.id); if (s2) { if (Math.abs(v - DEFAULT_GAP) < 1e-12) delete s2.settings.gap; else s2.settings.gap = v; } });
+    } else if (el.dataset.k === "cfilter" || el.dataset.k === "tfilter") {
+      if (el.dataset.k === "cfilter") this.linkFilter.comp = el.value; else this.linkFilter.type = el.value;
+      this.renderTree();
+    } else if (el.dataset.k === "linkall") {
+      const v = el.value, pairs = [...document.querySelectorAll<HTMLSelectElement>("#sim-tree select[data-k=link]")].map(s => [s.dataset.a!, s.dataset.b!]);
+      if (!v || !pairs.length) return;
+      this.host.change(t("Connection type"), d => {
+        const s2 = d.studies?.find(x => x.id === st.id);
+        if (!s2) return;
+        const rest = (s2.links ?? []).filter(l => !pairs.some(([a, b]) => (l.a === a && l.b === b) || (l.a === b && l.b === a)));
+        if (v === "sliding" || v === "none") for (const [a, b] of pairs) rest.push({ a, b, type: v });
+        if (rest.length) s2.links = rest; else delete s2.links;
+      });
     } else if (el.dataset.k === "link") {
       const a = el.dataset.a!, b = el.dataset.b!, v = el.value;
       this.host.change(t("Connection type"), d => {

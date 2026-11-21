@@ -3,6 +3,7 @@
 import SimWorker from "./sim.worker?worker";
 import type { PassResult, RunInput, SampleResult } from "./run";
 import type { SimReply } from "./sim.worker";
+import type { Connection } from "./connect";
 
 export const SIM_STOPPED = "E-SIM-STOPPED";
 
@@ -57,6 +58,7 @@ export class SimClient {
       const end = () => { if (this.job?.id === id) this.job = null; };
       w.onmessage = (e: MessageEvent<SimReply>) => {
         const d = e.data;
+        if ("found" in d) return;
         if ("sample" in d) { const f = this.asks.get(d.id); this.asks.delete(d.id); f?.(d.sample); return; }
         if (d.id !== id) return;
         if ("pass" in d) { passes.push(d.pass); onPass(d.pass); }
@@ -69,6 +71,29 @@ export class SimClient {
     });
   }
 
+  /**
+   * The pairs of bodies joined across the gap (FR-CON-003), found in a worker of its own, so it can run
+   * beside a solve. A newer search ends the one before, which then resolves with null.
+   */
+  find(bodies: Float64Array[], gap: number): Promise<Connection[] | null> {
+    this.finder?.();
+    const w = new SimWorker(), id = ++this.seq;
+    return new Promise((resolve, reject) => {
+      const end = () => { w.terminate(); if (this.finder === stop) this.finder = null; };
+      const stop = () => { end(); resolve(null); };
+      this.finder = stop;
+      w.onmessage = (e: MessageEvent<SimReply>) => {
+        const d = e.data;
+        if (d.id !== id) return;
+        end();
+        if ("found" in d) resolve(d.found); else reject(new Error("error" in d ? d.error : "E-SIM-STOPPED"));
+      };
+      w.onerror = ev => { end(); reject(new Error(ev.message || SIM_STOPPED)); };
+      w.postMessage({ id, type: "connect", bodies, gap });
+    });
+  }
+  private finder: (() => void) | null = null;
+
   /** Ends the running solve; the passes already delivered stay with the caller. */
   cancel() {
     if (!this.job) return;
@@ -80,5 +105,5 @@ export class SimClient {
     j.reject(new Error(SIM_STOPPED));
   }
 
-  stop() { this.cancel(); this.worker?.terminate(); this.worker = null; this.dropAsks(); }
+  stop() { this.finder?.(); this.cancel(); this.worker?.terminate(); this.worker = null; this.dropAsks(); }
 }
