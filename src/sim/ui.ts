@@ -37,7 +37,7 @@ import { chartSvg, reportHtml, reportPdf, type ReportBlock, type SimReport } fro
 import { MEMORY_LIMIT } from "./static";
 import { GLOBAL_PASSES, MAX_PASSES, edgeLines, spotPoints, envelope, positiveAxis, studyProblem, thermalSetup, withoutFaces, type PassResult, type SimBody } from "./run";
 import { shownValue, typedValue } from "./values";
-import { NUT_FACTOR, boltPreload, DEFAULT_PAD, DEFAULT_TCC, linkConductance, DEFAULT_AMBIENT, FILM_PRESETS, THERMAL_LOADS, THERMAL_PASSES, THERMAL_SUPPORTS, isThermalType, type StudyBolt } from "./types";
+import { NUT_FACTOR, boltPreload, DEFAULT_PAD, DEFAULT_TCC, linkConductance, DEFAULT_AMBIENT, FILM_PRESETS, THERMAL_LOADS, THERMAL_PASSES, PACKAGE_MIN_POWER, type PackageHeat, THERMAL_SUPPORTS, isThermalType, type StudyBolt } from "./types";
 import { DEFAULT_GAP, DEFAULT_MODES, GRAVITY, LOAD_LABEL, MAX_MODES, MAX_REFINE, MODAL_PASSES, ON_TYPES, REFINE_LABEL, SUPPORT_LABEL, WELD_LABEL, SPOT_LABEL, DEFAULT_SPOT, DEFAULT_GLUE, glueStiffness, DEFAULT_THROAT, CONNECTOR_LABEL, MASS_LABEL, DEFAULT_SPRING, extrasOf, type StudyWeld, type StudyConnector, type StudyMass, type StudyExtra, caseStudy, compOf, offComps, itemName, newCase, newStudy, nextId, pickCount, type LoadType, type PlotKind, type Study, type StudyKind, type StudyLoad, type StudyRefine, type StudySupport, type SupportType } from "./types";
 
 /** What a study needs of its document: a part's, or an assembly's (which has no material or bodies of its own). */
@@ -103,7 +103,7 @@ const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;
 const $ = <T extends HTMLElement = HTMLElement>(s: string) => document.querySelector<T>(s)!;
 const SUPPORTS: SupportType[] = ["fixed", "sliding", "hinge", "dirs", "elastic", "disp"];
 const LOADS: LoadType[] = ["force", "pressure", "moment", "torque", "bearing", "remote", "hydro", "gravity", "centrifugal"];
-const ICON: Record<string, string> = { spot: "⊙", weld: "∿", connector: "⊷", mass: "◉", newmodal: "≈", new: "＋", mat: "◈", fixed: "⏚", sliding: "⇄", hinge: "◎", dirs: "✛", elastic: "≋", disp: "⇥", centrifugal: "⟳", torque: "⟲", bearing: "◒", hydro: "▽", remote: "⌖", refine: "⊞", force: "↓", pressure: "⇊", moment: "↻", gravity: "g", solve: "▶", stop: "■", results: "▦", report: "▤", "mode-structural": "σ", "mode-thermal": "℃", newthermal: "＋", ambient: "◌", heat: "✹", hflux: "⇶", temp: "⊜", conv: "≈", rad: "☼" };
+const ICON: Record<string, string> = { spot: "⊙", weld: "∿", connector: "⊷", mass: "◉", newmodal: "≈", new: "＋", mat: "◈", fixed: "⏚", sliding: "⇄", hinge: "◎", dirs: "✛", elastic: "≋", disp: "⇥", centrifugal: "⟳", torque: "⟲", bearing: "◒", hydro: "▽", remote: "⌖", refine: "⊞", force: "↓", pressure: "⇊", moment: "↻", gravity: "g", solve: "▶", stop: "■", results: "▦", report: "▤", "mode-structural": "σ", "mode-thermal": "℃", newthermal: "＋", ambient: "◌", heat: "✹", pkgheat: "✹", hflux: "⇶", temp: "⊜", conv: "≈", rad: "☼" };
 const TIP: Record<string, string> = {
   fixed: "Fixed support: the faces cannot move",
   sliding: "Sliding support: the faces slide in their own plane but cannot move across it",
@@ -725,6 +725,28 @@ export class SimController {
     this.changed();
   }
 
+  /**
+   * A thermal study of a board made from its thermal package (FR-TBRD-001): the package's ambient, one Heat from
+   * package load, and convection and radiation from every surface open to the air.
+   */
+  boardStudy(spec: { ambient?: number; emissivity?: number; heat: PackageHeat[] }): string | null {
+    const doc = this.host.doc();
+    if (!doc) return null;
+    const st = newStudy(doc.studies ?? [], "thermal");
+    if (spec.ambient !== undefined && Number.isFinite(spec.ambient)) st.settings.ambient = spec.ambient;
+    st.loads.push({ id: "l1", name: itemName(st, "pkgheat"), type: "pkgheat", faces: [], parts: spec.heat });
+    st.supports.push({ id: "s1", name: itemName(st, "conv"), type: "conv", faces: [], all: true, h: FILM_PRESETS[0][1] });
+    const emis = spec.emissivity !== undefined && spec.emissivity > 0 && spec.emissivity <= 1 ? spec.emissivity : 0.9;
+    st.supports.push({ id: "s2", name: itemName(st, "rad"), type: "rad", faces: [], all: true, emis });
+    this.setActive(st.id);
+    this.edit = null;
+    this.mode = "thermal";
+    this.modeFor = st.id;
+    this.host.change(t("New thermal study"), d => { (d.studies ??= []).push(st); });
+    this.changed();
+    return st.id;
+  }
+
   private async pickMat() {
     const doc = this.host.doc();
     if (!doc) return;
@@ -759,7 +781,7 @@ export class SimController {
     const e = this.edit, st = this.study();
     if (!e || !st) return;
     const d = e.draft;
-    if (d.type !== "gravity" && d.type !== "centrifugal" && !(d.type === "heat" && d.body && !this.host.asm()) && !pickCount(d)) {
+    if (d.type !== "gravity" && d.type !== "centrifugal" && !this.unpicked(d) && !pickCount(d)) {
       const on = (d as StudyLoad).on;
       toast(on === "edges" ? t("Click the edges on the model first.") : on === "points" ? t("Click the corner points on the model first.") : t("Click the faces on the model first."), "warn");
       return;
@@ -795,7 +817,7 @@ export class SimController {
     if (!ed && this.pathing && this.saved) { this.pathClick(e.clientX, e.clientY); return true; }
     if (!ed && this.probing && this.saved) { this.probeAt(e.clientX, e.clientY); return true; }
     if (!ed) return false;
-    if (ed.draft.type === "gravity" || (ed.draft.type === "heat" && ed.draft.body && !this.host.asm())) return true;
+    if (ed.draft.type === "gravity" || this.unpicked(ed.draft)) return true;
     if (ed.draft.type === "remote" && this.pickingAt) {
       // the point the load acts at: a snapped point of the model, else the place on the face under the pointer
       const s = this.host.snapAt(e.clientX, e.clientY), q = s?.point ?? this.host.faceAt(e.clientX, e.clientY)?.point;
@@ -873,7 +895,14 @@ export class SimController {
   }
 
   /** "3 faces", "2 edges", "1 point". */
+  /** An item that takes no picks: heat throughout a part, cooling of every open surface, a package's heat. */
+  private unpicked(d: { type: string; body?: boolean; all?: boolean }): boolean {
+    return (d.type === "heat" && !!d.body && !this.host.asm()) || d.type === "pkgheat" || ((d.type === "conv" || d.type === "rad") && !!d.all);
+  }
+
   private pickText(it: StudySupport | StudyLoad | StudyRefine | StudyExtra): string {
+    if ((it.type === "conv" || it.type === "rad") && (it as StudySupport).all) return t("all open surfaces");
+    if (it.type === "pkgheat") return t("{n} part|{n} parts", { n: ((it as StudyLoad).parts ?? []).filter(x => !x.off && x.p >= PACKAGE_MIN_POWER && x.comps.length).length });
     const on = (it as StudyLoad).on, n = pickCount(it);
     return on === "edges" ? t("{n} edge|{n} edges", { n }) : on === "points" ? t("{n} point|{n} points", { n }) : t("{n} face|{n} faces", { n });
   }
@@ -1414,12 +1443,22 @@ export class SimController {
   }
 
   /** A thermal study's results by component: its temperatures and the heat made in it. */
+  /** Temperature limits of the components a board's package gives one (FR-TBRD-022), by component id. */
+  private compLimits(): Map<string, number> {
+    const out = new Map<string, number>(), st = this.study(), off = new Set(st?.suppressed ?? []);
+    for (const l of st?.loads ?? []) if (l.type === "pkgheat" && !off.has(l.id)) for (const x of l.parts ?? []) if (x.limit !== undefined) for (const c of x.comps) out.set(c, x.limit);
+    return out;
+  }
+
   private thermalCompsHtml(r: Results, last: PassResult): string {
     const rows = last.thermal?.comps;
     if (!r.comps || !rows || rows.length < 2) return "";
-    const alone = this.aloneDom(), power = rows.some(x => x.power);
-    return `<h5 class="sim-sub">${esc(t("By component"))}</h5><table class="sim-comptable sim-tcomps"><thead><tr><th>${esc(t("Component"))}</th><th title="${esc(t("Highest temperature"))}">${esc(t("Max"))}, °C</th><th title="${esc(t("Mean temperature of its surface"))}">${esc(t("Mean"))}, °C</th>${power ? `<th title="${esc(t("Heat made in the component"))}">${esc(t("Heat"))}, W</th>` : ""}</tr></thead><tbody>`
-      + rows.map((x, d) => `<tr data-a="rcomp" data-rcomp="${d}" tabindex="0" class="${d === alone ? "sel" : ""}"><td translate="no" title="${esc(r.comps![d].name)}">${esc(r.comps![d].name)}</td><td data-v="tcmax">${sig(x.max)}</td><td>${sig(x.mean)}</td>${power ? `<td data-v="tcpower">${x.power ? sig(x.power) : ""}</td>` : ""}</tr>`).join("") + `</tbody></table>`
+    const alone = this.aloneDom(), power = rows.some(x => x.power), limits = this.compLimits();
+    const lim = (d: number) => limits.get(compOf(r.comps![d].key)), over = rows.filter((x, d) => lim(d) !== undefined && x.max > lim(d)!).length;
+    return `<h5 class="sim-sub">${esc(t("By component"))}</h5>`
+      + (limits.size ? `<p class="${over ? "sim-warn" : "sim-note muted"}" data-v="tover">${esc(over ? t("{n} part is over its temperature limit.|{n} parts are over their temperature limits.", { n: over }) : t("Every part is within its temperature limit."))}</p>` : "")
+      + `<table class="sim-comptable sim-tcomps"><thead><tr><th>${esc(t("Component"))}</th><th title="${esc(t("Highest temperature"))}">${esc(t("Max"))}, °C</th>${limits.size ? `<th title="${esc(t("Temperature limit from the package"))}">${esc(t("Limit"))}, °C</th>` : `<th title="${esc(t("Mean temperature of its surface"))}">${esc(t("Mean"))}, °C</th>`}${power ? `<th title="${esc(t("Heat made in the component"))}">${esc(t("Heat"))}, W</th>` : ""}</tr></thead><tbody>`
+      + rows.map((x, d) => `<tr data-a="rcomp" data-rcomp="${d}" tabindex="0" class="${d === alone ? "sel" : ""}${lim(d) !== undefined && x.max > lim(d)! ? " bad" : ""}"><td translate="no" title="${esc(r.comps![d].name)}">${esc(r.comps![d].name)}</td><td data-v="tcmax">${sig(x.max)}</td>${limits.size ? `<td data-v="tclimit">${lim(d) === undefined ? "" : sig(lim(d)!)}</td>` : `<td>${sig(x.mean)}</td>`}${power ? `<td data-v="tcpower">${x.power ? sig(x.power) : ""}</td>` : ""}</tr>`).join("") + `</tbody></table>`
       + `<p class="sim-note muted" data-v="compnote">${alone >= 0 ? `${esc(t("Showing {name} alone, on its own colour scale.", { name: r.comps[alone].name }))} <button class="btn small" data-a="rcompall">${esc(t("Show all"))}</button>` : esc(t("Click a row to show that component alone."))}</p>`;
   }
 
@@ -2615,10 +2654,12 @@ export class SimController {
   private thermalText(it: StudySupport | StudyLoad, st: Study): string {
     const amb = (s: StudySupport) => `${sig(s.ambient ?? st.settings.ambient ?? DEFAULT_AMBIENT)} °C`;
     if (it.type === "temp") return `${sig(it.temp ?? 0)} °C`;
+    if (it.type === "conv" && it.rth !== undefined && !it.all) return `${sig(it.rth)} K/W, ${amb(it)}`;
     if (it.type === "conv") return `${sig(it.h ?? 0)} W/(m²·K), ${amb(it)}`;
     if (it.type === "rad") return `ε ${sig(it.emis ?? 0)}, ${amb(it)}`;
     if (it.type === "heat") return `${sig(it.value?.v ?? 0)} W`;
     if (it.type === "hflux") return `${sig(it.value?.v ?? 0)} W/m²`;
+    if (it.type === "pkgheat") return `${sig((it.parts ?? []).reduce((a, x) => a + (x.off || !(x.p >= PACKAGE_MIN_POWER) || !x.comps.length ? 0 : x.p), 0))} W`;
     return "";
   }
 
@@ -2722,7 +2763,7 @@ export class SimController {
       + btn("report", t("Report"), t("Save the study and its results as a report"), { dis: busy || !this.res || this.stale() });
     if (thermal) {
       el.innerHTML = pick + sep + group(t("Study"), btn("newthermal", t("Thermal study"), t(asm ? "New thermal study: the temperatures of this assembly and where its heat goes" : TIP.newthermal), { dis: busy }) + (asm ? "" : btn("mat", t("Material"), t("The part's material: thermal conductivity"), { dis: busy })) + btn("ambient", t("Ambient"), t(TIP.ambient), { dis: busy }))
-        + sep + group(t("Heat sources"), THERMAL_LOADS.map(k => btn(k, t(LOAD_LABEL[k]), t(TIP[k]), { dis: busy })).join(""))
+        + sep + group(t("Heat sources"), THERMAL_LOADS.filter(k => k !== "pkgheat").map(k => btn(k, t(LOAD_LABEL[k]), t(TIP[k]), { dis: busy })).join(""))
         + sep + group(t("Cooling"), THERMAL_SUPPORTS.map(k => btn(k, t(SUPPORT_LABEL[k]), t(TIP[k]), { dis: busy })).join(""))
         + sep + group(t("Solve"), solve);
       return;
@@ -3048,7 +3089,7 @@ export class SimController {
         + group(t("Type"), `<label class="pm-field"><span>${esc(t("Type"))}</span><select data-k="ckind"><option value="rigid"${c.kind === "rigid" ? " selected" : ""}>${esc(t("Rigid"))}</option><option value="spring"${c.kind === "spring" ? " selected" : ""}>${esc(t("Spring"))}</option></select></label>`
           + (c.kind === "spring" ? kf("k0", t("Stiffness along X"), c.k[0], "N/mm") + kf("k1", t("Stiffness along Y"), c.k[1], "N/mm") + kf("k2", t("Stiffness along Z"), c.k[2], "N/mm") + kf("kr", t("Against turning"), c.kr === undefined ? undefined : c.kr * 1e-3, "N·m/rad", t("rigid")) : "")
           + `<p class="pm-help muted">${esc(c.kind === "spring" ? t("Each side moves as a whole. The spring acts between the two sides; leave Against turning empty to keep them from turning against each other.") : t("Each side moves as a whole, and the two sides move together as one rigid piece."))}</p>`);
-    } else if (d.type !== "gravity" && !(d.type === "heat" && (d as StudyLoad).body && !this.host.asm())) {
+    } else if (d.type !== "gravity" && !this.unpicked(d)) {
       const on = (d as StudyLoad).on, n = pickCount(d);
       const ask = on === "edges" ? t("Click edges on the model") : on === "points" ? (e.kind === "weld" ? t("Click points on a face of the model") : t("Click corner points on the model")) : d.type === "hinge" || d.type === "torque" || d.type === "bearing" ? t("Click cylindrical faces on the model") : d.type === "centrifugal" ? t("Click a cylindrical face for the axis, or leave it empty and choose an axis below") : t("Click faces on the model");
       const sel = ON_TYPES.includes(d.type) ? `<label class="pm-field"><span>${esc(e.kind === "load" ? t("Acts on") : t("Holds"))}</span><select data-k="on">${[["", "Faces"], ["edges", "Edges"], ["points", "Points"]].map(([v, l]) => `<option value="${v}"${(on ?? "") === v ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : "";
@@ -3085,8 +3126,12 @@ export class SimController {
       const ambient = `<label class="pm-field"><span>${esc(t("Ambient temperature"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-q="amb" value="${s.ambient === undefined ? "" : trim(s.ambient)}" placeholder="${trim(amb)}" title="${esc(t("Empty: the study's ambient temperature"))}" spellcheck="false" /><span class="muted">°C</span></span></label>`;
       if (s.type === "temp") body += group(t("Temperature"), q("temp", t("Temperature"), s.temp ?? amb, "°C")
         + `<p class="pm-help muted">${esc(t("The faces are held at this temperature, like a cold plate or a mounting surface whose temperature is known."))}</p>`);
-      if (s.type === "conv") body += group(t("Convection"), `<label class="pm-field"><span>${esc(t("Cooling by"))}</span><select data-k="film">${FILM_PRESETS.map(([l, v]) => `<option value="${v}"${s.h === v ? " selected" : ""}>${esc(t(l))}</option>`).join("")}<option value=""${FILM_PRESETS.some(([, v]) => v === s.h) ? "" : " selected"}>${esc(t("Custom"))}</option></select></label>`
-        + q("hc", t("Film coefficient"), s.h ?? FILM_PRESETS[0][1], "W/(m²·K)") + ambient
+      if (s.type === "conv" || s.type === "rad") body += group(t("Surfaces"), chk("all", s.all, t("All surfaces open to the air"))
+        + (s.all ? `<p class="pm-help muted">${esc(t("Every surface of the model, without the areas where components lie on each other."))}</p>` : ""));
+      const sink = s.rth !== undefined && !s.all;
+      if (s.type === "conv") body += group(t("Convection"), `<label class="pm-field"><span>${esc(t("Cooling by"))}</span><select data-k="film">${FILM_PRESETS.map(([l, v]) => `<option value="${v}"${!sink && s.h === v ? " selected" : ""}>${esc(t(l))}</option>`).join("")}${s.all ? "" : `<option value="rth"${sink ? " selected" : ""}>${esc(t("Heatsink (thermal resistance)"))}</option>`}<option value=""${sink || FILM_PRESETS.some(([, v]) => v === s.h) ? "" : " selected"}>${esc(t("Custom"))}</option></select></label>`
+        + (sink ? q("rth", t("Thermal resistance"), s.rth!, "K/W") : q("hc", t("Film coefficient"), s.h ?? FILM_PRESETS[0][1], "W/(m²·K)")) + ambient
+        + (sink ? `<p class="pm-help muted">${esc(t("A heatsink that is not modelled: the picked faces pass their heat to the air through this thermal resistance, as its data sheet gives it."))}</p>` : "")
         + `<p class="pm-help muted">${esc(t("The faces give heat to the air or liquid around them: film coefficient × area × how much hotter they are than the surroundings. The presets are typical figures."))}</p>`);
       if (s.type === "rad") body += group(t("Radiation"), q("emis", t("Emissivity"), s.emis ?? 0.9, "0…1") + ambient
         + `<p class="pm-help muted">${esc(t("The faces radiate to surroundings at the ambient temperature. About 0.9 for paint, plastics and anodised aluminium, 0.05 to 0.1 for bare polished metal."))}</p>`);
@@ -3115,6 +3160,14 @@ export class SimController {
         + `<p class="pm-help muted">${esc(t("The pressure grows with the depth below the fluid's surface; faces above it carry none."))}</p>`);
       else if (l.type === "heat") body += group(t("Heat"), chk("body", l.body, this.host.asm() ? t("Throughout the whole component") : t("Throughout the whole body")) + nf("value", t("Power"), l.value, "W")
         + `<p class="pm-help muted">${esc(l.body ? (this.host.asm() ? t("The total power, made evenly throughout the components the picked faces are on.") : t("The total power, made evenly throughout the part's volume.")) : t("The total power, spread evenly over the picked faces."))}</p>`);
+      else if (l.type === "pkgheat") {
+        const parts = l.parts ?? [];
+        body += group(t("Parts"), `<table class="sim-pkparts"><thead><tr><th></th><th>${esc(t("Part"))}</th><th>${esc(t("Power, W"))}</th></tr></thead><tbody>${parts.map((x, i) => {
+          const low = !(x.p >= PACKAGE_MIN_POWER), lost = !x.comps.length;
+          return `<tr data-pk="${x.id}" class="${low || lost ? "muted" : ""}"${lost ? ` title="${esc(t("No body of the model was matched to this part."))}"` : low ? ` title="${esc(t("Under 10 mW: left out."))}"` : ""}><td><input type="checkbox" data-k="pkon" data-i="${i}" aria-label="${esc(x.name)}"${x.off ? "" : " checked"}${lost ? " disabled" : ""} /></td><td translate="no">${esc(x.name)}</td><td><input type="text" inputmode="decimal" data-q="pkp" data-i="${i}" value="${trim(x.p)}" spellcheck="false"${lost ? " disabled" : ""} /></td></tr>`;
+        }).join("")}</tbody></table>`
+          + `<p class="pm-help muted">${esc(t("The power of each part from the board's thermal package, made throughout the part's bodies. Untick a part to leave it out, or type another power."))}</p>`);
+      }
       else if (l.type === "hflux") body += group(t("Heat flux"), nf("value", t("Heat flux"), l.value, "W/m²")
         + `<p class="pm-help muted">${esc(t("Power per area going into the picked faces."))}</p>`);
       else if (l.type === "remote") {
@@ -3451,16 +3504,28 @@ export class SimController {
     }
     else if (k === "flip") d.flip = el.checked || undefined;
     else if (k === "body") { const l = e.draft as StudyLoad; l.body = el.checked || undefined; if (l.body && !this.host.asm()) l.faces = []; }
-    else if (k === "film") { if (!el.value) return; (e.draft as StudySupport).h = Number(el.value); }
+    else if (k === "all") { const sp = e.draft as StudySupport; sp.all = el.checked || undefined; if (sp.all) { sp.faces = []; delete sp.rth; } }
+    else if (k === "pkon") { const x = (e.draft as StudyLoad).parts?.[Number(el.dataset.i)]; if (x) x.off = el.checked ? undefined : true; }
+    else if (k === "film") {
+      const sp = e.draft as StudySupport;
+      if (el.value === "rth") sp.rth ??= 10;
+      else { delete sp.rth; if (el.value) sp.h = Number(el.value); }
+    }
     else if (k === "axis") (e.draft as StudyLoad).axis = el.value as "x" | "y" | "z";
     else if (k === "ckind" && e.kind === "connector") e.draft.kind = el.value === "spring" ? "spring" : "rigid";
     else if (k === "level" && e.kind === "refine") e.draft.level = Math.max(1, Math.min(MAX_REFINE, Number(el.value) || 1));
     else if (k === "up") { const l = e.draft as StudyLoad; l.axis = el.value.slice(-1) as "x" | "y" | "z"; l.flip = el.value.length > 1 || undefined; }
     else if (el.dataset.q) {
       const q = el.dataset.q, v = num(el.value), sup = e.draft as StudySupport;
+      if (q === "pkp") {
+        const x = (e.draft as StudyLoad).parts?.[Number(el.dataset.i)], bad = v == null || v < 0;
+        el.setAttribute("aria-invalid", String(bad));
+        if (!bad && x) { x.p = v!; this.renderTree(); }
+        return;
+      }
       if (q === "amb" && !el.value.trim()) { delete sup.ambient; el.setAttribute("aria-invalid", "false"); this.renderTree(); return; }
       if (q === "kr" && e.kind === "connector" && !el.value.trim()) { delete e.draft.kr; el.setAttribute("aria-invalid", "false"); return; }
-      const bad = v == null || ((q === "kn" || q === "kt" || q === "kr" || (e.kind === "connector" && q[0] === "k")) && v < 0) || ((q === "throat" || q === "mass" || q === "dia" || q === "hc") && !(v > 0)) || (q === "emis" && !(v > 0 && v <= 1)) || ((q === "temp" || q === "amb") && v < -273.15);
+      const bad = v == null || ((q === "kn" || q === "kt" || q === "kr" || (e.kind === "connector" && q[0] === "k")) && v < 0) || ((q === "throat" || q === "mass" || q === "dia" || q === "hc" || q === "rth") && !(v > 0)) || (q === "emis" && !(v > 0 && v <= 1)) || ((q === "temp" || q === "amb") && v < -273.15);
       el.setAttribute("aria-invalid", String(bad));
       if (bad) return;
       if (e.kind === "connector") { if (q === "kr") e.draft.kr = v * 1e3; else if (/^k[012]$/.test(q)) e.draft.k[Number(q[1])] = v; return; }
@@ -3468,7 +3533,7 @@ export class SimController {
       if (q === "dia") { (e.draft as StudyWeld).dia = v; this.drawMarks(); }
       else if (q === "throat") (e.draft as StudyWeld).throat = v;
       else if (q === "kn") sup.kn = v; else if (q === "kt") sup.kt = v;
-      else if (q === "temp") sup.temp = v; else if (q === "hc") sup.h = v; else if (q === "emis") sup.emis = v; else if (q === "amb") sup.ambient = v;
+      else if (q === "temp") sup.temp = v; else if (q === "hc") sup.h = v; else if (q === "rth") sup.rth = v; else if (q === "emis") sup.emis = v; else if (q === "amb") sup.ambient = v;
       else if (q === "accel") (e.draft as StudyLoad).accel = v || undefined;
       else if (q === "level") (e.draft as StudyLoad).level = v;
       else if (q[0] === "a") { const l = e.draft as StudyLoad, a = [...(l.at ?? [0, 0, 0])] as [number, number, number]; a[Number(q[1])] = v; l.at = a; }

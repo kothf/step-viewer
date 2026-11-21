@@ -104,6 +104,18 @@ export class Kernel {
     return { brep, solids, faces };
   }
 
+  /** Each body the last `load` read as its own BREP text, in mesh order (an assembly from a model file, FR-TSTU-004). */
+  bodyBreps(): { name: string; color: V3 | null; brep: string; solid: boolean; faces: number }[] {
+    const oc = this.oc;
+    return this.meshes.map(m => {
+      const path = `/out${++this.seq}.brep`;
+      oc.BRepTools.Write_4(m.shape, path, false, false, oc.TopTools_FormatVersion.TopTools_FormatVersion_CURRENT, new oc.Message_ProgressRange_1());
+      const brep = oc.FS.readFile(path, { encoding: "utf8" }) as string;
+      oc.FS.unlink(path);
+      return { name: m.name, color: m.color, brep, solid: m.solid, faces: m.faces.length };
+    });
+  }
+
   load(bytes: Uint8Array, name: string): number[] {
     const oc = this.oc;
     this.dispose();

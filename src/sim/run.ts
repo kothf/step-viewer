@@ -5,7 +5,7 @@ import { MeshBody, insideOf } from "./body";
 import { solveStatic, staticMemory, MEMORY_LIMIT, momentField, triArea, triNormals, type Bolt, type BoltResult, type Weld, type WeldResult, type Connector, type ConnectorResult, type FaceMass, type Contact, type Load, type Reaction, type Support } from "./static";
 import { makeGrid, type Grid } from "./grid";
 import { gridTrianglePoints } from "./quad";
-import { DEFAULT_AMBIENT, GRAVITY, MAX_REFINE, compOf, isThermalType, type Study, type StudyEdge, type StudyPoint } from "./types";
+import { DEFAULT_AMBIENT, GRAVITY, MAX_REFINE, PACKAGE_MIN_POWER, compOf, isThermalType, type Study, type StudyEdge, type StudyPoint } from "./types";
 import { solveThermal, thermalMemory, type SinkFlow, type ThermalContact, type ThermalLink, type ThermalSink, type ThermalSource } from "./thermal";
 
 /** The body for the solver: the kernel's triangles with each one's face, and the face names. */
@@ -468,6 +468,17 @@ export interface ThermalSetup {
   problems: { id: string; code: "E-SIM-REF" | "E-SIM-EMPTY" | "E-TH-VALUE" }[];
 }
 
+/** Area of a triangle soup (9 numbers per triangle), mm². */
+function surfaceArea(tris: ArrayLike<number>): number {
+  let a = 0;
+  for (let o = 0; o + 8 < tris.length; o += 9) {
+    const ux = tris[o + 3] - tris[o], uy = tris[o + 4] - tris[o + 1], uz = tris[o + 5] - tris[o + 2];
+    const vx = tris[o + 6] - tris[o], vy = tris[o + 7] - tris[o + 1], vz = tris[o + 8] - tris[o + 2];
+    a += 0.5 * Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx);
+  }
+  return a;
+}
+
 /** The surface conditions and heat sources of a thermal study (FR-TLOAD, FR-TBC): W/m² and W/(m²·K) become per mm². */
 export function thermalSetup(st: Study, b: SimBody, regions?: string[]): ThermalSetup {
   const off = new Set(st.suppressed ?? []), amb = st.settings.ambient ?? DEFAULT_AMBIENT;
@@ -478,23 +489,56 @@ export function thermalSetup(st: Study, b: SimBody, regions?: string[]): Thermal
     if (!tris) out.problems.push({ id: it.id, code: "E-SIM-REF" });
     return tris;
   };
+  // "all open surfaces": the whole surface without the faces a fixed temperature or another item of its kind is on
+  const openTris = (s: Study["supports"][number]) => {
+    const taken = new Set<string>();
+    for (const o of st.supports) if (o !== s && !off.has(o.id) && !o.all && (o.type === "temp" || o.type === s.type)) for (const f of o.faces) taken.add(f.name);
+    if (!taken.size) return b.tris;
+    const gone = b.names.map(n => taken.has(n)), keep: number[] = [];
+    for (let i = 0; i < b.face.length; i++) if (!gone[b.face[i]]) for (let k = 0; k < 9; k++) keep.push(b.tris[9 * i + k]);
+    return Float64Array.from(keep);
+  };
   for (const s of st.supports) {
     if (off.has(s.id) || !isThermalType(s.type)) continue;
-    const tris = facesOf(s);
+    const open = !!s.all && s.type !== "temp";
+    const tris = open ? openTris(s) : facesOf(s);
     if (!tris) continue;
+    const free = open && regions ? { free: true } : {};
     if (s.type === "temp") out.sinks.push({ tris, temp: s.temp ?? amb });
     else if (s.type === "conv") {
+      if (s.rth !== undefined && !open) {
+        // a heatsink by its resistance: the film coefficient that gives 1 / Rth over the picked faces
+        const area = surfaceArea(tris);
+        if (!(s.rth > 0) || !(area > 0)) { out.problems.push({ id: s.id, code: "E-TH-VALUE" }); continue; }
+        out.sinks.push({ tris, h: 1 / (s.rth * area), ambient: s.ambient ?? amb });
+        out.sinkIds.push(s.id);
+        continue;
+      }
       if (!((s.h ?? 0) > 0)) { out.problems.push({ id: s.id, code: "E-TH-VALUE" }); continue; }
-      out.sinks.push({ tris, h: s.h! * 1e-6, ambient: s.ambient ?? amb });
+      out.sinks.push({ tris, h: s.h! * 1e-6, ambient: s.ambient ?? amb, ...free });
     } else {
       if (!((s.emis ?? 0) > 0) || s.emis! > 1) { out.problems.push({ id: s.id, code: "E-TH-VALUE" }); continue; }
-      out.sinks.push({ tris, emissivity: s.emis, ambient: s.ambient ?? amb });
+      out.sinks.push({ tris, emissivity: s.emis, ambient: s.ambient ?? amb, ...free });
     }
     out.sinkIds.push(s.id);
   }
   for (const l of st.loads) {
     if (off.has(l.id) || !isThermalType(l.type)) continue;
     const v = l.value?.v ?? 0;
+    if (l.type === "pkgheat") {
+      // a board's package: each part's power is made throughout the components its bodies became
+      let any = false;
+      for (const part of l.parts ?? []) {
+        if (part.off || !(part.p >= PACKAGE_MIN_POWER)) continue;
+        const comps = new Set(part.comps), doms: number[] = [];
+        (regions ?? []).forEach((k, i) => { if (comps.has(compOf(k))) doms.push(i); });
+        if (!doms.length) continue;
+        out.sources.push({ power: part.p, doms });
+        any = true;
+      }
+      if (!any) out.problems.push({ id: l.id, code: "E-SIM-EMPTY" });
+      continue;
+    }
     if (l.type === "heat" && l.body && regions) {
       // an assembly: the heat is made throughout the components the picked faces are on
       if (!l.faces.length) { out.problems.push({ id: l.id, code: "E-SIM-EMPTY" }); continue; }

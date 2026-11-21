@@ -8,9 +8,9 @@ import type { MatRef } from "../tools/materials";
 /** `temp`, `conv` and `rad` are a thermal study's surface conditions: a fixed temperature, convection to air, radiation to the surroundings. */
 export type SupportType = "fixed" | "sliding" | "hinge" | "dirs" | "elastic" | "disp" | "temp" | "conv" | "rad";
 /** `heat` (W) and `hflux` (W/m²) are a thermal study's heat sources. */
-export type LoadType = "force" | "pressure" | "gravity" | "moment" | "centrifugal" | "torque" | "bearing" | "hydro" | "remote" | "heat" | "hflux";
+export type LoadType = "force" | "pressure" | "gravity" | "moment" | "centrifugal" | "torque" | "bearing" | "hydro" | "remote" | "heat" | "hflux" | "pkgheat";
 export const THERMAL_SUPPORTS: SupportType[] = ["temp", "conv", "rad"];
-export const THERMAL_LOADS: LoadType[] = ["heat", "hflux"];
+export const THERMAL_LOADS: LoadType[] = ["heat", "hflux", "pkgheat"];
 /** Whether a support or load type belongs to thermal studies. */
 export const isThermalType = (type: string) => (THERMAL_SUPPORTS as string[]).includes(type) || (THERMAL_LOADS as string[]).includes(type);
 
@@ -36,11 +36,31 @@ export interface StudySupport {
   emis?: number;
   /** Convection and radiation: the temperature of the air or the surroundings, °C; absent = the study's ambient. */
   ambient?: number;
+  /** Convection: a heatsink on the faces given by its thermal resistance to the air, K/W, instead of `h`. */
+  rth?: number;
+  /** Convection and radiation: every surface open to the air instead of picked faces. */
+  all?: boolean;
   /** Fixed, fixed in directions and enforced displacement only: what is held, absent = faces. */
   on?: "edges" | "points";
   edges?: StudyEdge[];
   points?: StudyPoint[];
 }
+
+/** One part of a board's thermal package in a Heat from package load. */
+export interface PackageHeat {
+  /** The package's part id and designator. */
+  id: number;
+  name: string;
+  /** The components the part's bodies became. */
+  comps: string[];
+  /** Power, W. */
+  p: number;
+  off?: boolean;
+  /** Temperature limit of the part, °C, from the package. */
+  limit?: number;
+}
+/** Package parts under this power are left out, as the package does (FR-TBRD-002), W. */
+export const PACKAGE_MIN_POWER = 0.01;
 
 /** An edge of the model, named by the two faces it joins. */
 export interface StudyEdge { faces: [string, string]; hint?: V3 }
@@ -81,6 +101,8 @@ export interface StudyLoad {
   flip?: boolean;
   /** Heat power: made throughout the whole body instead of entering through faces. */
   body?: boolean;
+  /** Heat from package: the power of each part of a board's thermal package, made throughout its components. */
+  parts?: PackageHeat[];
 }
 
 /** Local accuracy (FR-SOL-012): the solution starts `level` degrees higher where it meets these faces. */
@@ -299,7 +321,7 @@ export function nextId(st: Study, prefix: "s" | "l" | "r" | "w" | "k" | "m"): st
 }
 
 export const SUPPORT_LABEL: Record<SupportType, string> = { fixed: "Fixed support", sliding: "Sliding", hinge: "Hinge", dirs: "Fixed in directions", elastic: "Elastic support", disp: "Enforced displacement", temp: "Fixed temperature", conv: "Convection", rad: "Radiation" };
-export const LOAD_LABEL: Record<LoadType, string> = { force: "Force", pressure: "Pressure", gravity: "Gravity", moment: "Moment", centrifugal: "Centrifugal load", torque: "Torque", bearing: "Bearing load", hydro: "Hydrostatic pressure", remote: "Remote load", heat: "Heat power", hflux: "Heat flux" };
+export const LOAD_LABEL: Record<LoadType, string> = { force: "Force", pressure: "Pressure", gravity: "Gravity", moment: "Moment", centrifugal: "Centrifugal load", torque: "Torque", bearing: "Bearing load", hydro: "Hydrostatic pressure", remote: "Remote load", heat: "Heat power", hflux: "Heat flux", pkgheat: "Heat from package" };
 
 export const REFINE_LABEL = "Local accuracy";
 

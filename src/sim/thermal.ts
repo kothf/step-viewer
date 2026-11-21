@@ -27,6 +27,8 @@ export interface ThermalSink {
   /** Radiation: emissivity 0..1 to surroundings at `ambient` °C. */
   emissivity?: number;
   ambient?: number;
+  /** With several domains: only the points of `tris` left open to the air, that is, not lying on another domain. */
+  free?: boolean;
 }
 
 export interface ThermalSource {
@@ -354,6 +356,28 @@ function contactFlows(c: Ctx, contacts: ThermalContact[], joins: number[], x: Fl
   for (const C of contacts) if (C.area > 0) { C.ta /= C.area; C.tb /= C.area; }
 }
 
+/** The points of some surface triangles that lie on no other domain: what the air around an assembly touches. */
+function freePoints(c: Ctx, tris: ArrayLike<number>, q: number): Float64Array {
+  const { grid, pb } = c, doms = c.doms!;
+  const eps = 2e-3 * grid.h, far = Math.max(0, pb.gap ?? 0) + eps;
+  const boxes = doms.map(d => triBox(d.tris)), L = located(c, tris, q);
+  let m = 0;
+  for (let o = 0; o < L.length; o += 8) {
+    const x = L[o + 1], y = L[o + 2], z = L[o + 3], nx = L[o + 5], ny = L[o + 6], nz = L[o + 7], own = c.dom[L[o]];
+    let on = false;
+    for (let d = 0; d < doms.length && !on; d++) {
+      if (d === own) continue;
+      const B = boxes[d];
+      if (x < B[0] - far || y < B[1] - far || z < B[2] - far || x > B[3] + far || y > B[4] + far || z > B[5] + far) continue;
+      on = doms[d].inside(x + eps * nx, y + eps * ny, z + eps * nz) || (far > eps && doms[d].inside(x + far * nx, y + far * ny, z + far * nz));
+    }
+    if (on) continue;
+    if (m !== o) L.copyWithin(m, o, o + 8);
+    m += 8;
+  }
+  return L.subarray(0, m);
+}
+
 /** The domains nothing takes heat from: no sink on them and none on anything they pass heat to. */
 function looseDomains(c: Ctx, contacts: ThermalContact[], at: Float64Array[]): number[] {
   const nd = c.doms!.length, root = Array.from({ length: nd }, (_, i) => i);
@@ -519,7 +543,7 @@ export function solveThermal(pb: ThermalProblem): ThermalResult {
   const tq = Math.max(2, p + 1);
   const A = new BlockMatrix(nel, nb), f = new Float64Array(A.size);
   volumeTerms(c, A);
-  const at = pb.sinks.map(s => located(c, s.tris, tq));
+  const at = pb.sinks.map(s => (s.free && doms ? freePoints(c, s.tris, tq) : located(c, s.tris, tq)));
   // the penalty is measured on the fixed-temperature faces and, with several domains, on every domain's surface
   const surf = at.filter((_L, i) => pb.sinks[i].temp !== undefined);
   if (doms) doms.forEach((d, i) => surf.push(located(c, d.tris, tq, i)));

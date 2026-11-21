@@ -5,6 +5,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.655.0] - 2026-11-21
+
+### Added
+
+- **Simulate a board from its thermal map** (FRS-thermal TH3, FR-TSTU-004, FR-TBRD-001/002/010/011, FR-TLOAD-004): with a board's STEP and its thermal package open, **Simulate** on the Thermal tab makes an assembly in a new tab, one component per body of the STEP, named after the package's parts. The board gets an effective material (laminate with its copper), the parts get guessed materials (resistors alumina, valves glass, electrolytic cans aluminium, parts made for a heatsink copper, the rest epoxy) that you can change, and a thermal study is set up: ambient from the package, one **Heat from package** load with every part's power, and convection and radiation from every open surface. Press Solve, or first add a heatsink: insert its model as another component and place it on the part.
+- **Heat from package** lists the parts with their power: untick a part to leave it out or type another power. Parts under 10 mW make no heat, as in the package.
+- Convection and Radiation have **All surfaces open to the air**: every surface of the model except the areas where components lie on each other and the faces that have a condition of their own.
+- Convection has **Heatsink (thermal resistance)**: the picked faces pass their heat to the air through a resistance in K/W, for a heatsink known only from its data sheet.
+- Results of a board study show each part's highest temperature beside the limit from the package, with the parts over their limit in red and counted above the table.
+
+### Changed
+
+- Long notes in the Study tab's rows wrap onto a second line instead of widening the tab.
+
 ## [1.654.0] - 2026-11-21
 
 ### Added
@@ -4277,7 +4291,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.654.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.655.0...HEAD
+[1.655.0]: https://github.com/kothf/step-viewer/compare/v1.654.0...v1.655.0
 [1.654.0]: https://github.com/kothf/step-viewer/compare/v1.653.0...v1.654.0
 [1.653.0]: https://github.com/kothf/step-viewer/compare/v1.652.0...v1.653.0
 [1.652.0]: https://github.com/kothf/step-viewer/compare/v1.651.0...v1.652.0

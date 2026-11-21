@@ -9,7 +9,7 @@ import { MATE_LABEL, mateName } from "./mateName";
 import type { NamedView } from "../model/types";
 import * as THREE from "three";
 import { penetrates } from "./clash";
-import { ModelKernel } from "../model/kernelClient";
+import { ModelKernel, type ImportedBody } from "../model/kernelClient";
 import type { ModelSnap } from "../drawing/drawing.worker";
 import { newPart, uid } from "../model/doc";
 import { PART_EXT, unpackPart } from "../model/file";
@@ -31,7 +31,7 @@ import { pickMaterial } from "../materialPicker";
 import { isLongPress } from "../longPress";
 import { lassoMode, mergeSel, rectRegion, regionProbe, type Rect, type Region as SelArea } from "../boxSelect";
 import { SelDrag } from "../selDrag";
-import { toRef } from "../tools/materials";
+import { toRef, type MatRef } from "../tools/materials";
 import { FASTENERS, TOOLBOX_GROUPS, defaultLength, fastenerInfo, fastenerOfId, fastenerLengths, fastenerName, fastenerPart, fastenerSizes, lengthFor, lengthLabel, searchFasteners, sizeForHole, type FastenerKind, type ToolboxGroup } from "./fasteners";
 import { fastenerShape, shapeSvg, shapeVolume, type ToolShape } from "./toolboxShape";
 import { applySolved, autoExplode, expandPatterns, explodeAt, explodeOffsets, flattenSubs, patternSteps, solveView, topOf, type Expanded } from "./patterns";
@@ -333,6 +333,34 @@ export class AsmController {
     this.insertPart(pd, file);
     this.undoStack = [];
     toast(t("New assembly with {name} fixed at the origin. Insert more components from the Assembly tab.", { name: file }));
+  }
+
+  /**
+   * An assembly from a model file (FR-TSTU-004): one component per body of the file, each fixed where the file has it,
+   * the import kept exact. Returns the component ids in the file's body order (null for a body with no faces).
+   */
+  async fromModel(buffer: ArrayBuffer, fileName: string, mats: (MatRef | null)[] = [], names: string[] = []): Promise<(string | null)[] | null> {
+    let bodies: ImportedBody[];
+    try { bodies = await this.kernel.importBodies(buffer, fileName); }
+    catch (err) { toast(t("The file could not be read: {msg}", { msg: (err as Error).message }), true); return null; }
+    if (!bodies.some(b => b.faces)) { toast(t("No faces or solids were found in the file."), true); return null; }
+    const stem = fileName.replace(/\.[^.]+$/, "");
+    const doc: AsmDoc = { schema: 1, kind: "assembly", id: uid("a_"), name: stem, units: { length: "mm", decimals: 2 }, components: [], parts: {} };
+    const ids: (string | null)[] = [], seen = new Map<string, number>();
+    bodies.forEach((b, i) => {
+      if (!b.faces) { ids.push(null); return; }
+      const base = (names[i] || b.name || `${stem} ${i + 1}`).trim(), n = (seen.get(base) ?? 0) + 1;
+      seen.set(base, n);
+      const pd = newPart(base);
+      pd.features.push({ id: "i", type: "import", name: "Imported1", file: fileName, brep: b.brep, ...(b.solid ? {} : { heal: true, tol: { v: 0.1 } }) });
+      if (mats[i]) pd.material = mats[i]!;
+      const key = uid("p_"), id = uid("c_");
+      doc.parts[key] = { name: base, file: fileName, doc: pd };
+      doc.components.push({ id, name: `${base}<${n}>`, part: key, tf: IDENTITY, fixed: true, ...(b.color ? { color: b.color } : {}) });
+      ids.push(id);
+    });
+    this.load(doc, "", null);
+    return ids;
   }
 
   async openFile(file: File | { name: string; data: ArrayBuffer }, handle: FileSystemFileHandle | null = null) {
