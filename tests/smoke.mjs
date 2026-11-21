@@ -16405,6 +16405,49 @@ try {
       && csvFile[1].length === csvFile[0].length && Number(csvFile[1][4]) > 0 && supPick.box === "1 edge" && supPick.label === "Holds" && supPick.marks === 2 && !sRes.error && pk1.sup.join() === "faces,edges" && rz.length === 2
       && Math.abs(rz[0] + rz[1] - 1750) < 0.5 && Math.abs(rz[1]) > 1 && pk1.shown === 1 && sRes.probes.length === 1 && Number.isFinite(sRes.probes[0]),
       `sim 1.615: a probe is kept in the study, undone on its own, shown again after a solve and saved as CSV; a fixed support on an edge takes its share of the load (${JSON.stringify({ unProbe, kept: pk0.kept, csv: csvFile, name: dlC.suggestedFilename(), supPick, error: sRes.error, sup: pk1.sup, rz, shown: pk1.shown })})`);
+    // 1.616.0: the probes are a table in the Study tab; a load value is an expression of a global variable;
+    // the results of a finished solve come back from the disk cache when the part is opened again.
+    const ptab = await mp.evaluate(() => { const rows = [...document.querySelectorAll("#sim-tree table.sim-ptable tbody tr")]; return { rows: rows.length, cells: rows[0]?.querySelectorAll("td").length ?? 0, place: rows[0]?.children[1]?.textContent ?? "", csv: !!document.querySelector('#sim-tree [data-a="probecsv"]') }; });
+    await mp.evaluate(() => window.__sv.model.store.change("Variable", d => { d.vars = [{ name: "F", expr: "150", kind: "number" }]; }));
+    await settle();
+    const nl = await mp.evaluate(() => window.__sv.model.store.doc.studies[0].loads.find(l => l.normal).id);
+    await mp.click(`#sim-tree .sim-row[data-id="${nl}"] [data-a="edit"]`);
+    await mp.fill('#sim-pm [data-n="value"]', "2 * nope");
+    await mp.keyboard.press("Tab");
+    const badVal = await mp.evaluate(() => document.querySelector('#sim-pm [data-n="value"]').getAttribute("aria-invalid"));
+    await mp.fill('#sim-pm [data-n="value"]', "2 * F + 0.2 kN");
+    await mp.keyboard.press("Tab");
+    const shownVal = await mp.evaluate(() => ({ text: document.querySelector('#sim-pm [data-n="value"]').value, bad: document.querySelector('#sim-pm [data-n="value"]').getAttribute("aria-invalid") }));
+    await mp.click("#sim-pm .pm-ok");
+    await settle();
+    const exprLoad = await mp.evaluate(id => window.__sv.model.store.doc.studies[0].loads.find(l => l.id === id).value, nl);
+    await mp.evaluate(() => window.__sv.model.store.change("Variable", d => { d.vars[0].expr = "400"; }));
+    await settle();
+    const exprLoad2 = await mp.evaluate(id => window.__sv.model.store.doc.studies[0].loads.find(l => l.id === id).value, nl);
+    await mp.click('#sim-tools [data-s="solve"]');
+    await mp.waitForFunction(() => { const s = window.__sv.sim.state(); return (s.done && !s.stale) || s.error; }, null, { timeout: 180000 });
+    const xRes = await sim();
+    await mp.waitForTimeout(1200);
+    // another part in a new tab, then back to this one: its results are read from the disk cache
+    const tab0 = await mp.evaluate(() => document.querySelector('#doc-tabs [data-dt][aria-current="page"]')?.dataset.dt ?? "");
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length, null, { timeout: 60000 });
+    const away = await sim();
+    await mp.click(`#doc-tabs [data-dt="${tab0}"]`);
+    await mp.waitForFunction(() => window.__sv.model?.store?.doc.features.length === 2 && window.__sv.sim.state().cached, null, { timeout: 60000 }).catch(() => {});
+    await settle();
+    await mp.click("#cm-t-simulation");
+    await mp.click("#t-sim");
+    const cRes = await sim();
+    const keptNote = await mp.evaluate(() => ({ note: !!document.querySelector("#sim-tree .sim-kept"), rows: document.querySelectorAll("#sim-tree table.sim-passes tbody tr").length, probes: document.querySelectorAll("#sim-tree table.sim-ptable tbody tr").length }));
+    await mp.click('#sim-tools [data-s="results"]');
+    await mp.waitForTimeout(400);
+    const cPlot = await sim();
+    check(ptab.rows === 1 && ptab.cells === 5 && ptab.place.split(",").length === 3 && ptab.csv && badVal === "true" && shownVal.text === "2 * F + 0.2 kN" && shownVal.bad !== "true"
+      && exprLoad.v === 500 && exprLoad.expr === "2 * F + 0.2 kN" && exprLoad2.v === 1000 && !xRes.error && Math.abs(Math.hypot(...xRes.applied.force) - 1750) < 0.5
+      && away.passes.length === 0 && cRes.cached && cRes.cacheHits === 1 && !cRes.stale && cRes.passes.length === xRes.passes.length && cRes.maxVm === xRes.maxVm && keptNote.note && keptNote.rows === xRes.passes.length && keptNote.probes === 1
+      && cPlot.plot.shown && cPlot.probes.length === 1,
+      `sim 1.616: the probes are a table in the Study tab, a load value follows a global variable, and the results come back from the disk cache when the part is opened again (${JSON.stringify({ ptab, badVal, shownVal, exprLoad, exprLoad2, error: xRes.error, applied: xRes.applied?.force, away: away.passes.length, cached: cRes.cached, hits: cRes.cacheHits, stale: cRes.stale, passes: cRes.passes.length, vm: [xRes.maxVm, cRes.maxVm], keptNote, shown: cPlot.plot.shown })})`);
     // Without supports the solve says so and nothing runs; the Russian UI has no English left in the Study tab.
     await mp.click('#sim-tree .sim-row [data-a="del"]');
     await settle();

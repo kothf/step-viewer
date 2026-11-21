@@ -7,7 +7,10 @@ import { cmTab, onCmTab, selectCmTab } from "../commandBar";
 import fontUrl from "dejavu-fonts-ttf/ttf/DejaVuSans.ttf?url";
 import { lang, onLangChange, t } from "../i18n";
 import { pickMaterial } from "../materialPicker";
-import type { FaceRef, PartDoc } from "../model/types";
+import { cacheGet, cacheKey, cachePut } from "../buildCache";
+import type { ExprError } from "../model/expr";
+import { evalVars } from "../model/params";
+import type { FaceRef, Num, PartDoc } from "../model/types";
 import { download, pdfWriter } from "../tools/exporters";
 import { toRef } from "../tools/materials";
 import { UNITS, units } from "../tools/units";
@@ -20,6 +23,7 @@ import { locate, probeCsv, valueAt, type Located } from "./probes";
 import { hotSpots, type HotSpot } from "./hotspots";
 import { chartSvg, reportHtml, reportPdf, type ReportBlock, type SimReport } from "./report";
 import { GLOBAL_PASSES, MAX_PASSES, studyProblem, type PassResult, type SimBody } from "./run";
+import { shownValue, typedValue } from "./values";
 import { GRAVITY, LOAD_LABEL, ON_TYPES, SUPPORT_LABEL, itemName, newStudy, nextId, pickCount, type LoadType, type PlotKind, type Study, type StudyLoad, type StudySupport, type SupportType } from "./types";
 
 export interface SimHost {
@@ -40,7 +44,9 @@ export interface SimHost {
 }
 
 type Edit = { kind: "support"; draft: StudySupport; isNew: boolean } | { kind: "load"; draft: StudyLoad; isNew: boolean };
-interface Results { study: string; key: string; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh }
+interface Results { study: string; key: string; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; cached?: boolean }
+/** What the disk cache keeps of a finished solve (FR-SOL-030). */
+interface Kept { passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh }
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const $ = <T extends HTMLElement = HTMLElement>(s: string) => document.querySelector<T>(s)!;
@@ -101,6 +107,9 @@ export class SimController {
   /** What the labels on the plot stand on: a plot-mesh triangle and the weights of the point in it. */
   private pins: { i: number[]; w: number[] }[] = [];
   private client = new SimClient();
+  /** The study state whose kept results were last asked for, so each is looked up once. */
+  private asked = "";
+  private cacheHits = 0;
   private docId: string | null = null;
   private marks = new THREE.Group();
   private saved: { mesh: THREE.Mesh; mat: THREE.Material } | null = null;
@@ -173,7 +182,7 @@ export class SimController {
       maxU: last?.maxU ?? null, maxVm: last?.maxVm ?? null, done: !!last?.done && !this.running,
       reactions: last?.reactions ?? [], applied: last?.applied ?? null,
       plot: { ...this.plot, shown: !!this.saved, range: this.range, scale: this.usedScale, points: (this.res?.mesh.pos.length ?? 0) / 3 }, marks: this.marks.children.length,
-      probing: this.probing, probes: this.probes.map(p => this.probeValue(p)), probeAt: this.study()?.probes ?? [], probeCsv: this.probeTable(), report: this.lastReport,
+      probing: this.probing, probes: this.probes.map(p => this.probeValue(p)), probeAt: this.study()?.probes ?? [], probeCsv: this.probeTable(), report: this.lastReport, cached: !!this.res?.cached, cacheHits: this.cacheHits,
       hot: this.hotList().map(h => ({ vm: h.vm, at: h.at, singular: h.singular, growth: h.growth })), labels: this.pins.length - this.probes.length,
     };
   }
@@ -185,7 +194,7 @@ export class SimController {
       this.docId = doc?.id ?? null;
       this.client.cancel();
       this.clearPlot();
-      this.edit = null; this.res = null; this.error = null; this.problems.clear(); this.activeId = null; this.running = false; this.probes = []; this.probeKey = ""; this.probing = false;
+      this.edit = null; this.res = null; this.error = null; this.problems.clear(); this.activeId = null; this.running = false; this.probes = []; this.probeKey = ""; this.probing = false; this.asked = "";
     }
     $("#t-sim").hidden = !doc;
     if (this.edit && !this.study()) this.edit = null;
@@ -193,6 +202,24 @@ export class SimController {
     if (this.saved) { this.syncProbes(); this.drawProbes(); }
     this.renderAll();
     this.drawMarks();
+    void this.restore();
+  }
+
+  /** Results of the last finished solve of this very study state, from the disk cache (FR-SOL-030). */
+  private async restore() {
+    const doc = this.host.doc(), st = this.study();
+    if (!doc || !st || this.res || this.running || this.edit) return;
+    const key = this.keyOf(doc, st), tag = `${doc.id}|${st.id}|${key}`;
+    if (tag === this.asked) return;
+    this.asked = tag;
+    const kept = await cacheGet<Kept>(await cacheKey("sim", key));
+    const now = this.host.doc(), s2 = this.study();
+    if (!kept?.passes?.length || !kept.mesh || this.res || this.running || now !== doc && now?.id !== doc.id || !s2 || s2.id !== st.id || !now || this.keyOf(now, s2) !== key) return;
+    this.res = { study: st.id, key, passes: kept.passes, ids: kept.ids, ms: kept.ms, mesh: kept.mesh, cached: true };
+    this.cacheHits++;
+    this.plot.on = false;
+    this.syncProbes();
+    this.renderAll();
   }
 
   /** The model was built and shown again: the mesh is new. */
@@ -410,6 +437,8 @@ export class SimController {
         this.renderAll();
         this.drawMarks();
       });
+      // a finished solve is kept for the next time this document is opened
+      if (res.passes.length) void cacheKey("sim", key).then(k => cachePut(k, { passes: res.passes, ids: res.ids, ms: res.ms, mesh: res.mesh } satisfies Kept));
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg !== SIM_STOPPED) { this.error = msg; toast(this.errorText(msg), "error"); }
@@ -628,6 +657,21 @@ export class SimController {
       const vm = valueAt(r.vm, p);
       return { at: [0, 1, 2].map(c => valueAt(pm.pos, p, 3, c)), vm, u: [valueAt(r.u, p, 3, 0), valueAt(r.u, p, 3, 1), valueAt(r.u, p, 3, 2)], sf: sy > 0 ? sy / Math.max(vm, 1e-9) : null };
     }));
+  }
+
+  /** The probes as a table in the Study tab: place, stress, displacement, safety factor. */
+  private probesHtml(): string {
+    const r = this.res?.passes.at(-1), pm = this.res?.mesh;
+    if (!r || !pm || this.stale() || !this.probes.length) return "";
+    const uf = UNITS[units.current].f;
+    const place = (x: number) => String(Number((x * uf).toFixed(3)));
+    // the safety factor is in the CSV; the side panel is too narrow for one more column
+    return `<h5 class="sim-sub">${esc(t("Probes"))}</h5><div class="sim-wide"><table class="sim-ptable"><thead><tr><th>#</th><th>X, Y, Z, ${esc(units.current)}</th><th>${esc(t("von Mises stress"))}, MPa</th><th>${esc(t("Displacement"))}, ${esc(units.current)}</th><th></th></tr></thead><tbody>`
+      + this.probes.map((p, i) => {
+        const vm = valueAt(r.vm, p), u = Math.hypot(valueAt(r.u, p, 3, 0), valueAt(r.u, p, 3, 1), valueAt(r.u, p, 3, 2));
+        return `<tr data-probe-row="${i}"><td>${i + 1}</td><td>${[0, 1, 2].map(c => place(valueAt(pm.pos, p, 3, c))).join(", ")}</td><td>${sig(vm)}</td><td>${sig(u * uf)}</td>`
+          + `<td><button class="sim-x" data-a="rmprobe" data-i="${i}" title="${esc(t("Remove probe"))}" aria-label="${esc(t("Remove probe"))}">×</button></td></tr>`;
+      }).join("") + `</tbody></table></div><button class="btn small" data-a="probecsv" title="${esc(t("Save the probes' places and values as a CSV file"))}">${esc(t("Export CSV"))}</button>`;
   }
 
   private exportProbes() {
@@ -1016,7 +1060,9 @@ export class SimController {
         + hs.map((h, i) => `<tr data-a="hot" data-hot="${i}" tabindex="0" class="${h.singular ? "sing" : ""}${i === this.hotSel ? " sel" : ""}"><td>${i + 1}</td><td>${sig(h.vm)} MPa${h.singular ? ` ${warn}` : ""}</td><td>${h.at.map(x => String(Number((x * uf).toFixed(3)))).join(", ")}</td></tr>`).join("") + `</tbody></table>`;
       if (singular) html += `<p class="sim-note sim-sing">⚠ ${esc(t("Stress singularity: value depends on refinement"))}. ${esc(real ? t("The safety factor uses the highest stress away from singularities.") : "")}</p>`;
     }
+    html += this.probesHtml();
     if (!this.running) {
+      if (r.cached) html += `<p class="sim-note muted sim-kept">${esc(t("From the last solve of this model and study."))}</p>`;
       html += `<p class="sim-note muted">${esc(last.converged ? t("Converged: the last pass changed the strain energy by {n} %.", { n: sig(last.change ?? 0) })
         : last.change != null ? t("Not converged to {tol} % yet (last change {n} %). Stress near sharp corners keeps rising with accuracy.", { tol: sig(this.study()?.settings.energyTol ?? 2), n: sig(last.change) })
         : t("One pass only: no convergence check."))}</p>`;
@@ -1035,7 +1081,8 @@ export class SimController {
     const title = t((SUPPORT_LABEL as Record<string, string>)[d.type] ?? (LOAD_LABEL as Record<string, string>)[d.type]);
     const group = (legend: string, inner: string) => `<fieldset class="pm-group"><legend>${esc(legend)}</legend>${inner}</fieldset>`;
     const chk = (k: string, on: boolean | undefined, label: string) => `<label class="chk pm-chk"><input type="checkbox" data-k="${k}"${on ? " checked" : ""} />${esc(label)}</label>`;
-    const nf = (k: string, label: string, v: number, unit: string) => `<label class="pm-field"><span>${esc(label)}</span><span class="pm-in"><input type="text" inputmode="decimal" data-n="${k}" value="${esc(trim(v))}" spellcheck="false" /><span class="muted">${esc(unit)}</span></span></label>`;
+    const hint = t("A number, an expression, a unit or a global variable: 2 kN, 3 * F");
+    const nf = (k: string, label: string, v: Num | undefined, unit: string) => `<label class="pm-field"><span>${esc(label)}</span><span class="pm-in"><input type="text" data-n="${k}" value="${esc(shownValue(v, d.type as LoadType))}" title="${esc(hint)}" spellcheck="false" translate="no" /><span class="muted">${esc(unit)}</span></span></label>`;
     let body = `<label class="pm-field"><span>${esc(t("Name"))}</span><input type="text" data-k="name" value="${esc(d.name ?? "")}" spellcheck="false" translate="no" /></label>`;
     if (d.type !== "gravity") {
       const on = (d as StudyLoad).on, n = pickCount(d);
@@ -1051,15 +1098,15 @@ export class SimController {
       if (s.on) body += `<p class="pm-help muted">${esc(t("An edge or a point holds the part, but the stress right at it has no meaning: it grows with every pass."))}</p>`;
       if (s.type === "sliding") body += `<p class="pm-help muted">${esc(t("Use it on flat faces, or as a symmetry plane."))}</p>`;
     } else {
-      const l = e.draft, c = (l.comp ?? [{ v: 0 }, { v: 0 }, { v: 0 }]).map(x => x.v);
+      const l = e.draft, c = l.comp ?? [];
       if (l.type === "force") {
         body += group(t("Force"), (l.on ? "" : chk("normal", l.normal, t("Along the face normal")))
-          + (l.normal && !l.on ? nf("value", t("Force"), l.value?.v ?? 0, "N") + chk("flip", l.flip, t("Reverse (pull)"))
+          + (l.normal && !l.on ? nf("value", t("Force"), l.value, "N") + chk("flip", l.flip, t("Reverse (pull)"))
             : nf("c0", "X", c[0], "N") + nf("c1", "Y", c[1], "N") + nf("c2", "Z", c[2], "N"))
           + `<p class="pm-help muted">${esc(l.on === "edges" ? t("The total, spread over the length of the picked edges.") : l.on === "points" ? t("The total, shared equally by the picked points.") : t("The total over the picked faces."))}</p>`);
-      } else if (l.type === "pressure") body += group(t("Pressure"), nf("value", t("Pressure"), l.value?.v ?? 0, "MPa") + chk("flip", l.flip, t("Reverse (pull)")));
-      else if (l.type === "moment") body += group(t("Moment"), nf("m0", "X", c[0] / 1000, "N·m") + nf("m1", "Y", c[1] / 1000, "N·m") + nf("m2", "Z", c[2] / 1000, "N·m") + `<p class="pm-help muted">${esc(t("About the centre of the picked faces."))}</p>`);
-      else body += group(t("Acceleration"), nf("g0", "X", c[0] / 1000, "m/s²") + nf("g1", "Y", c[1] / 1000, "m/s²") + nf("g2", "Z", c[2] / 1000, "m/s²") + `<p class="pm-help muted">${esc(t("Uses the material's density."))}</p>`);
+      } else if (l.type === "pressure") body += group(t("Pressure"), nf("value", t("Pressure"), l.value, "MPa") + chk("flip", l.flip, t("Reverse (pull)")));
+      else if (l.type === "moment") body += group(t("Moment"), nf("m0", "X", c[0], "N·m") + nf("m1", "Y", c[1], "N·m") + nf("m2", "Z", c[2], "N·m") + `<p class="pm-help muted">${esc(t("About the centre of the picked faces."))}</p>`);
+      else body += group(t("Acceleration"), nf("g0", "X", c[0], "m/s²") + nf("g1", "Y", c[1], "m/s²") + nf("g2", "Z", c[2], "m/s²") + `<p class="pm-help muted">${esc(t("Uses the material's density."))}</p>`);
     }
     // keep the caret when the panel is drawn again after a pick
     const act = document.activeElement as HTMLInputElement | null, keep = act && pm.contains(act) ? (act.dataset.n ?? act.dataset.k) : null;
@@ -1101,6 +1148,8 @@ export class SimController {
     else if (a === "mat") void this.pickMat();
     else if (a === "solve") void this.solve();
     else if (a === "report") void this.report();
+    else if (a === "probecsv") this.exportProbes();
+    else if (a === "rmprobe") { const i = Number(b.dataset.i); this.setProbes(t("Remove probe"), l => l.filter((_p, k) => k !== i)); this.renderAll(); }
     else if (a === "hot") {
       const i = Number(b.dataset.hot);
       this.hotSel = this.hotSel === i ? -1 : i;
@@ -1176,13 +1225,19 @@ export class SimController {
     else if (k === "flip") d.flip = el.checked || undefined;
     else if (k?.startsWith("dir")) { const a = [...(d.dirs ?? [true, true, true])] as [boolean, boolean, boolean]; a[Number(k[3])] = el.checked; d.dirs = a; }
     else if (nk) {
-      const v = num(el.value);
-      el.setAttribute("aria-invalid", String(v == null));
-      if (v == null) return;
-      if (nk === "value") d.value = { v };
+      let v: Num;
+      const doc = this.host.doc();
+      try { v = typedValue(el.value, e.draft.type as LoadType, doc ? evalVars(doc, units.current).values : {}); el.setAttribute("aria-invalid", "false"); el.title = ""; }
+      catch (err) {
+        const x = err as ExprError;
+        el.setAttribute("aria-invalid", "true");
+        el.title = x.key ? t(x.key, x.params) : String(err);
+        return;
+      }
+      if (nk === "value") d.value = v;
       else {
-        const f = nk[0] === "c" ? 1 : 1000, c = (d.comp ?? [{ v: 0 }, { v: 0 }, { v: 0 }]).map(x => ({ v: x.v })) as NonNullable<StudyLoad["comp"]>;
-        c[Number(nk[1])] = { v: v * f };
+        const c = (d.comp ?? [{ v: 0 }, { v: 0 }, { v: 0 }]).map(x => ({ ...x })) as NonNullable<StudyLoad["comp"]>;
+        c[Number(nk[1])] = v;
         d.comp = c;
       }
     } else return;

@@ -4,6 +4,7 @@
 import { evaluate, ExprError, type VarValue } from "./expr";
 import { solve } from "../sketch/solver";
 import type { Feature, Num, PartDoc, SketchFeature } from "./types";
+import { refreshStudyValues, studyTargets } from "../sim/values";
 
 /** An error as a fixed English sentence and its placeholders (translated when shown). */
 export interface ErrMsg { key: string; params?: Record<string, string> }
@@ -27,6 +28,7 @@ export function renameIn(src: string, from: string, to: string): string {
 export function renameEverywhere(doc: PartDoc, from: string, to: string) {
   for (const v of doc.vars ?? []) v.expr = renameIn(v.expr, from, to);
   for (const tg of exprTargets(doc)) tg.num.expr = renameIn(tg.num.expr!, from, to);
+  for (const tg of studyTargets(doc)) tg.num.expr = renameIn(tg.num.expr!, from, to);
 }
 
 /**
@@ -101,5 +103,7 @@ export function refreshExprs(doc: PartDoc, unit = "mm"): { key: string; owner: s
     for (const sk of touched) solve(sk);
     if (!changed) break;
   }
+  // load values of structural studies follow the variables too (FR-LOAD-021)
+  if (doc.studies?.length) failed.push(...refreshStudyValues(doc, evalVars(doc, unit).values));
   return failed;
 }
