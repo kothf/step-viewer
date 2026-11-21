@@ -16293,6 +16293,10 @@ try {
     check(/-report\.html$/.test(repFacts.name) && /-report\.pdf$/.test(repFacts.pdfName) && repFacts.imgs === 3 && repFacts.tables >= 6 && repFacts.statement && repFacts.force && repFacts.probe
       && repFacts.pdf === "%PDF-" && repFacts.pdfKb > 60 && repState?.kind === "pdf" && repState.images === 3 && afterRep.kind === "u" && afterRep.shown,
       `sim 1.611: the report as a web page and as a PDF holds the set-up, results, three pictures, the probe and the statement; the plot is as before (${JSON.stringify({ ...repFacts, repState, kind: afterRep.kind })})`);
+    // the probe is an undo step of its own (1.615.0): the first undo takes it away and the results stay
+    await mp.keyboard.press("Control+z");
+    await settle();
+    const unProbe = await mp.evaluate(() => ({ left: document.querySelectorAll("#sim-probes [data-probe]").length, kept: window.__sv.model.store.doc.studies[0].probes?.length ?? 0, stale: window.__sv.sim.state().stale }));
     await mp.keyboard.press("Control+z");
     await settle();
     const r3 = await sim();
@@ -16371,6 +16375,36 @@ try {
     check(hl.length >= 2 && hl.at(-1).vm > 0.1 * hl[0].vm && hl.length === hot0.rows && Math.abs(hl[0].vm - hot0.maxVm) < 1e-3 * hot0.maxVm && hl.every((h, i) => i === 0 || h.vm <= hl[i - 1].vm) && hot0.warn === nSing && (nSing > 0) === (hot0.real !== null)
       && hot0.peaks.length === hot0.labels && hot0.peaks.length >= 1 && hot0.placed && hot1.sel === 1 && hot1.peaks.includes(`h${lastRow}`) && hot1.peaks.length >= hot0.peaks.length && hot2.peaks.length === 0 && hot2.labels === 0,
       `sim 1.614: the hot spots are listed highest first, labelled on the stress plot, a clicked row gets its label, and the labels can be turned off (${JSON.stringify({ hot: hl.map(h => ({ vm: +h.vm.toFixed(1), s: h.singular, g: h.growth && +h.growth.toFixed(2) })), rows: hot0.rows, peaks: hot0.peaks, after: hot1.peaks, off: hot2.peaks, real: hot0.real })})`);
+    // 1.615.0: probes live in the study (kept over a solve, exported as CSV); a fixed support holds an edge.
+    await mp.click('#sim-legend [data-a="probe"]');
+    p = await at("f1:end");
+    await mp.mouse.click(p.x, p.y);
+    await mp.waitForTimeout(200);
+    await mp.keyboard.press("Escape");
+    const pk0 = await mp.evaluate(() => ({ kept: window.__sv.model.store.doc.studies[0].probes ?? [], shown: document.querySelectorAll("#sim-probes [data-probe]").length, csv: window.__sv.sim.state().probeCsv ?? "" }));
+    const [dlC] = await Promise.all([mp.waitForEvent("download"), mp.click('#sim-legend [data-a="probecsv"]')]);
+    const csvFile = (await readFile(await dlC.path())).toString().trim().split("\r\n").map(r => r.split(","));
+    await mp.click('#sim-legend [data-a="close"]');
+    await mp.click('#sim-tools [data-s="fixed"]');
+    await mp.selectOption('#sim-pm [data-k="on"]', "edges");
+    const spot2 = await edgeSpot();
+    await mp.mouse.click(spot2.mid.x, spot2.mid.y);
+    await mp.waitForTimeout(200);
+    const supPick = await mp.evaluate(() => ({ box: document.querySelector("#sim-pm .sim-faces")?.textContent, label: document.querySelector('#sim-pm [data-k="on"]').closest("label").querySelector("span").textContent,
+      marks: [...window.__sv.viewer.parts[0].group.getObjectByName("sim-marks").children].filter(o => o.isLineSegments).length }));
+    await mp.click("#sim-pm .pm-ok");
+    await settle();
+    await mp.selectOption('#sim-tree [data-k="passes"]', "2");
+    await settle();
+    await mp.click('#sim-tools [data-s="solve"]');
+    await mp.waitForFunction(() => { const s = window.__sv.sim.state(); return (s.done && !s.stale) || s.error; }, null, { timeout: 180000 });
+    const sRes = await sim();
+    const pk1 = await mp.evaluate(() => ({ shown: document.querySelectorAll("#sim-probes [data-probe]").length, sup: window.__sv.model.store.doc.studies[0].supports.map(x => x.on ?? "faces") }));
+    const rz = sRes.reactions.map(r => r.force[2]);
+    check(unProbe.left === 0 && unProbe.kept === 0 && !unProbe.stale && pk0.kept.length === 1 && pk0.kept[0].length === 3 && pk0.shown === 1 && /-probes\.csv$/.test(dlC.suggestedFilename()) && csvFile.length === 2 && csvFile[0][0] === "Probe" && csvFile[0].length >= 9
+      && csvFile[1].length === csvFile[0].length && Number(csvFile[1][4]) > 0 && supPick.box === "1 edge" && supPick.label === "Holds" && supPick.marks === 2 && !sRes.error && pk1.sup.join() === "faces,edges" && rz.length === 2
+      && Math.abs(rz[0] + rz[1] - 1750) < 0.5 && Math.abs(rz[1]) > 1 && pk1.shown === 1 && sRes.probes.length === 1 && Number.isFinite(sRes.probes[0]),
+      `sim 1.615: a probe is kept in the study, undone on its own, shown again after a solve and saved as CSV; a fixed support on an edge takes its share of the load (${JSON.stringify({ unProbe, kept: pk0.kept, csv: csvFile, name: dlC.suggestedFilename(), supPick, error: sRes.error, sup: pk1.sup, rz, shown: pk1.shown })})`);
     // Without supports the solve says so and nothing runs; the Russian UI has no English left in the Study tab.
     await mp.click('#sim-tree .sim-row [data-a="del"]');
     await settle();

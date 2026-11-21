@@ -4,7 +4,7 @@
 import { MeshBody, insideOf } from "./body";
 import { solveStatic, triArea, triNormals, type Load, type Reaction, type Support } from "./static";
 import type { Grid } from "./grid";
-import type { Study } from "./types";
+import type { Study, StudyEdge, StudyPoint } from "./types";
 
 /** The body for the solver: the kernel's triangles with each one's face, and the face names. */
 export interface SimBody {
@@ -135,12 +135,36 @@ export function axisOf(tris: ArrayLike<number>): number[] | null {
   return tr - top - bv > 0.02 * tr ? best : null;
 }
 
+/** The picked edges as segments, or the picked corners as points, of an item on edges or points; else the problem. */
+function linesOrPoints(b: SimBody, it: { on?: "edges" | "points"; edges?: StudyEdge[]; points?: StudyPoint[] }): Float64Array | "E-SIM-REF" | "E-SIM-EMPTY" {
+  const parts: number[] = [];
+  if (it.on === "edges") for (const e of it.edges ?? []) {
+    const s = edgeLines(b, e.faces[0], e.faces[1]);
+    if (!s || !s.length) return "E-SIM-REF";
+    for (const v of s) parts.push(v);
+  } else for (const pt of it.points ?? []) {
+    const c = cornerPoint(b, pt.faces, pt.at);
+    if (!c) return "E-SIM-REF";
+    parts.push(...c);
+  }
+  return parts.length ? Float64Array.from(parts) : "E-SIM-EMPTY";
+}
+
 /** Supports and loads of a study on the body's triangles. */
 export function studyProblem(st: Study, b: SimBody): StudyProblem {
   const off = new Set(st.suppressed ?? []);
   const out: StudyProblem = { fixed: [], loads: [], problems: [], supportIds: [] };
   for (const s of st.supports) {
     if (off.has(s.id)) continue;
+    if (s.on && (s.type === "fixed" || s.type === "dirs")) {
+      const g = linesOrPoints(b, s);
+      if (typeof g === "string") { out.problems.push({ id: s.id, code: g }); continue; }
+      const sup: Support = { tris: new Float64Array(0), mode: s.type, ...(s.on === "edges" ? { lines: g } : { points: g }) };
+      if (s.type === "dirs") sup.dirs = s.dirs ?? [true, true, true];
+      out.fixed.push(sup);
+      out.supportIds.push(s.id);
+      continue;
+    }
     if (!s.faces.length) { out.problems.push({ id: s.id, code: "E-SIM-EMPTY" }); continue; }
     const tris = trisOf(b, s.faces.map(f => f.name));
     if (!tris) { out.problems.push({ id: s.id, code: "E-SIM-REF" }); continue; }
@@ -162,18 +186,9 @@ export function studyProblem(st: Study, b: SimBody): StudyProblem {
       continue;
     }
     if (l.type === "force" && l.on) {
-      const none = new Float64Array(0), parts: number[] = [];
-      let gone = false;
-      if (l.on === "edges") for (const e of l.edges ?? []) {
-        const s = edgeLines(b, e.faces[0], e.faces[1]);
-        if (!s || !s.length) gone = true; else for (const v of s) parts.push(v);
-      } else for (const pt of l.points ?? []) {
-        const c = cornerPoint(b, pt.faces, pt.at);
-        if (!c) gone = true; else parts.push(...c);
-      }
-      if (gone) out.problems.push({ id: l.id, code: "E-SIM-REF" });
-      else if (!parts.length) out.problems.push({ id: l.id, code: "E-SIM-EMPTY" });
-      else out.loads.push(l.on === "edges" ? { tris: none, force: comp, lines: Float64Array.from(parts) } : { tris: none, force: comp, points: Float64Array.from(parts) });
+      const none = new Float64Array(0), g = linesOrPoints(b, l);
+      if (typeof g === "string") out.problems.push({ id: l.id, code: g });
+      else out.loads.push(l.on === "edges" ? { tris: none, force: comp, lines: g } : { tris: none, force: comp, points: g });
       continue;
     }
     if (!l.faces.length) { out.problems.push({ id: l.id, code: "E-SIM-EMPTY" }); continue; }

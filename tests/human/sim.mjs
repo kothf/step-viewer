@@ -188,4 +188,34 @@ const hotPeaks = await pg.evaluate(() => [...document.querySelectorAll("#sim-pro
 const img18 = await snap(pg, "hot-spots");
 check("SA1-13", hot.length >= 2 && hotRows === hot.length && hotPeaks.length >= 2,
   "the highest stress peaks are listed and labelled on the plot; a peak that keeps growing with accuracy is marked as a singularity", { hot: hot.map(h => ({ vm: +h.vm.toFixed(1), singular: h.singular, growth: h.growth })), labels: hotPeaks }, img18);
+// SA1-14: the probes of SA1-8 are still there after every solve since; Export CSV saves them.
+const kept = await pg.evaluate(() => ({ labels: document.querySelectorAll("#sim-probes [data-probe]").length, inStudy: window.__sv.model.store.doc.studies[0].probes?.length ?? 0 }));
+const [dlC] = await Promise.all([pg.waitForEvent("download"), pg.click('#sim-legend [data-a="probecsv"]')]);
+const csvPath = `${process.env.HT_OUT ?? "/mnt/project-files/gap-tests"}/sim-probes.csv`;
+await dlC.saveAs(csvPath);
+const csv = (await (await import("node:fs/promises")).readFile(csvPath)).toString().trim().split("\r\n");
+const img19 = await snap(pg, "probes-kept");
+check("SA1-14", kept.labels === 2 && kept.inStudy === 2 && csv.length === 3 && csv[0].startsWith("Probe,X (mm)") && /-probes\.csv$/.test(dlC.suggestedFilename()),
+  "probes are kept with the study and read again after each solve; Export CSV saves their places and values", { ...kept, csv }, img19);
+// SA1-15: a fixed support on an edge: Holds → Edges, a click on the edge, solve; it carries part of the load.
+await pg.click('#sim-legend [data-a="close"]');
+await pg.click('#sim-tools [data-s="fixed"]');
+await pg.selectOption('#sim-pm [data-k="on"]', "edges");
+await pg.mouse.click(spot.mid.x, spot.mid.y);
+await pg.waitForTimeout(250);
+const sb = await pg.evaluate(() => document.querySelector("#sim-pm .sim-faces")?.textContent);
+const img20 = await snap(pg, "support-on-edge");
+await pg.click("#sim-pm .pm-ok");
+await idle(pg);
+await pg.click("#t-sim");
+await pg.selectOption('#sim-tree [data-k="passes"]', "3");
+await idle(pg);
+await pg.click('#sim-tools [data-s="solve"]');
+await pg.waitForFunction(() => { const s = window.__sv.sim.state(); return (s.done && !s.stale) || s.error; }, null, { timeout: 300000 });
+const r6 = await sim();
+const img21 = await snap(pg, "support-on-edge-solved");
+const tot6 = Math.hypot(...r6.applied.force), sum6 = [0, 1, 2].map(c => r6.reactions.reduce((a, q) => a + q.force[c], 0) + r6.applied.force[c]);
+check("SA1-15", sb === "1 edge" && !r6.error && r6.reactions.length === 2 && Math.hypot(...r6.reactions[1].force) > 1e-3 * tot6 && Math.hypot(...sum6) < 2e-3 * tot6 && r6.probes.length === 2,
+  "a fixed support on an edge is picked on the model and solved; the two supports together carry the loads, the probes are still shown", { sb, reactions: r6.reactions.map(q => q.force), applied: r6.applied.force }, img21);
+void img20;
 await finish(browser, pg);

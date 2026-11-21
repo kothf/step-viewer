@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.615.0] - 2026-11-21
+
+### Added
+- Structural analysis: a **Fixed support** and **Fixed in directions** can hold **edges** or **corner points** as well as faces (**Holds** in the support's panel), so a part can rest on two edges or stand on three corners. Free motions are still found before solving: an edge alone leaves the turn about itself, a point three turns. The stress right at such a support is a singularity and is marked as one in the hot spots.
+- Structural analysis: **probes are kept with the study**. A probe is stored as a point of the model, so it is saved in the part file, comes back after every solve and can be undone. **Export CSV** in the legend saves every probe's place, von Mises stress, displacement with its components and safety factor.
+
 ## [1.614.0] - 2026-11-21
 
 ### Added
@@ -3949,7 +3955,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.614.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.615.0...HEAD
+[1.615.0]: https://github.com/kothf/step-viewer/compare/v1.614.0...v1.615.0
 [1.614.0]: https://github.com/kothf/step-viewer/compare/v1.613.0...v1.614.0
 [1.613.0]: https://github.com/kothf/step-viewer/compare/v1.612.0...v1.613.0
 [1.612.0]: https://github.com/kothf/step-viewer/compare/v1.611.0...v1.612.0

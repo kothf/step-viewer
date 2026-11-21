@@ -30,6 +30,13 @@ export interface Support {
   axis?: ArrayLike<number>;
   axialFree?: boolean;
   dirs?: [boolean, boolean, boolean];
+  /**
+   * Support on edges: segments of 9 numbers (two ends and a direction into the body), `tris` empty. Held by
+   * a penalty of the order of the face supports'; only `fixed` and `dirs` (an edge has no one normal).
+   */
+  lines?: ArrayLike<number>;
+  /** Support on points: 6 numbers per point (position and a direction into the body), `tris` empty. */
+  points?: ArrayLike<number>;
 }
 
 export interface Load {
@@ -278,6 +285,51 @@ export function solveStatic(pb: StaticProblem): StaticResult {
       fn(grid.cells[c].el, x, y, z, pts.a[o + 3], nrm);
     }
   };
+  // the cell a boundary point belongs to: nudged into the body, further when the first try lands outside
+  const cellNear = (x: number, y: number, z: number, d: ArrayLike<number>, o: number) => {
+    for (const k of [1e-7, 1e-4, 1e-2, 0.1]) {
+      const c = grid.cellOf(x + k * grid.h * d[o], y + k * grid.h * d[o + 1], z + k * grid.h * d[o + 2]);
+      if (c >= 0) return c;
+    }
+    return -1;
+  };
+  const gl = gauss(Math.max(2, p + 1));
+  /** Gauss points along segments (9 numbers each), cut at the grid planes: cell, point, weight (length). */
+  const onLines = (S: ArrayLike<number>, fn: (c: number, x: number, y: number, z: number, w: number) => void) => {
+    for (let o = 0; o < S.length; o += 9) {
+      const d = [S[o + 3] - S[o], S[o + 4] - S[o + 1], S[o + 5] - S[o + 2]], l = Math.hypot(d[0], d[1], d[2]);
+      // cut where the segment crosses a grid plane: the basis is a polynomial only inside a cell
+      const cuts = [0, 1];
+      for (let a = 0; a < 3; a++) {
+        if (Math.abs(d[a]) < 1e-12) continue;
+        const u0 = (S[o + a] - grid.lo[a]) / grid.h, u1 = u0 + d[a] / grid.h;
+        for (let q = Math.ceil(Math.min(u0, u1)); q <= Math.floor(Math.max(u0, u1)); q++) {
+          const tt = (q - u0) / (u1 - u0);
+          if (tt > 1e-9 && tt < 1 - 1e-9) cuts.push(tt);
+        }
+      }
+      cuts.sort((x, y) => x - y);
+      for (let i = 1; i < cuts.length; i++) {
+        const t0 = cuts[i - 1], t1 = cuts[i], tm = (t0 + t1) / 2;
+        if (t1 - t0 < 1e-12) continue;
+        const c = cellNear(S[o] + tm * d[0], S[o + 1] + tm * d[1], S[o + 2] + tm * d[2], S, o + 6);
+        if (c < 0) continue;
+        for (let g = 0; g < gl.x.length; g++) {
+          const tt = t0 + (t1 - t0) * (gl.x[g] + 1) / 2;
+          fn(c, S[o] + tt * d[0], S[o + 1] + tt * d[1], S[o + 2] + tt * d[2], (gl.w[g] / 2) * (t1 - t0) * l);
+        }
+      }
+    }
+  };
+  /** The points an edge or point support holds: cell, place and weight (the penalty times a length or 1). */
+  const heldAt = (s: Support, fn: (c: number, x: number, y: number, z: number, w: number) => void) => {
+    if (s.lines?.length) onLines(s.lines, (c, x, y, z, w) => fn(c, x, y, z, 2 * gam[grid.cells[c].el] * grid.h * w));
+    const Q = s.points;
+    if (Q?.length) for (let k = 0; k < Q.length; k += 6) {
+      const c = cellNear(Q[k], Q[k + 1], Q[k + 2], Q, k + 3);
+      if (c >= 0) fn(c, Q[k], Q[k + 1], Q[k + 2], 2 * gam[grid.cells[c].el] * grid.h * grid.h);
+    }
+  };
   // Nitsche for P u = 0 (P projects on the held directions): −N_a (P M_b) − N_b (P M_a)ᵀ + 2γ N_a N_b P
   const free = freeModes(pb.fixed, pb.lo, pb.hi);
   if (free > 0) throw new Error(`E-SIM-FREE: ${free}`);
@@ -301,18 +353,22 @@ export function solveStatic(pb: StaticProblem): StaticResult {
       }
     }
   });
+  // edges and points: a penalty on P u there (no flux terms: a line carries no traction integral)
+  const N0 = [0, 0, 0];
+  for (const s of pb.fixed) heldAt(s, (c, x, y, z, w) => {
+    const e = grid.cells[c].el, E = grid.elems[e];
+    bas.eval(x, y, z, E.c, E.s);
+    holdMatrix(s, N0, P);
+    const K = A.block(e, e), v = bas.v, ne = nbs[e], m = 3 * ne;
+    for (let a = 0; a < ne; a++) for (let b = 0; b < ne; b++) {
+      const pen = w * v[a] * v[b];
+      for (let c2 = 0; c2 < 3; c2++) for (let d = 0; d < 3; d++) K[(3 * a + c2) * m + 3 * b + d] += pen * P[3 * c2 + d];
+    }
+  });
   const applied: Reaction = { force: [0, 0, 0], moment: [0, 0, 0] };
   const add = (R: Reaction, x: number, y: number, z: number, fx: number, fy: number, fz: number) => {
     R.force[0] += fx; R.force[1] += fy; R.force[2] += fz;
     R.moment[0] += y * fz - z * fy; R.moment[1] += z * fx - x * fz; R.moment[2] += x * fy - y * fx;
-  };
-  // the cell a boundary point belongs to: nudged into the body, further when the first try lands outside
-  const cellNear = (x: number, y: number, z: number, d: ArrayLike<number>, o: number) => {
-    for (const k of [1e-7, 1e-4, 1e-2, 0.1]) {
-      const c = grid.cellOf(x + k * grid.h * d[o], y + k * grid.h * d[o + 1], z + k * grid.h * d[o + 2]);
-      if (c >= 0) return c;
-    }
-    return -1;
   };
   const push = (c: number, x: number, y: number, z: number, fx: number, fy: number, fz: number) => {
     const e = grid.cells[c].el, E = grid.elems[e];
@@ -320,7 +376,6 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     add(applied, x, y, z, fx, fy, fz);
     for (let a = 0, o = off[e]; a < nbs[e]; a++) { f[o + 3 * a] += bas.v[a] * fx; f[o + 3 * a + 1] += bas.v[a] * fy; f[o + 3 * a + 2] += bas.v[a] * fz; }
   };
-  const gl = gauss(Math.max(2, p + 1));
   for (const L of pb.loads) {
     if (L.points?.length && L.force) {
       const P = L.points, n = P.length / 6;
@@ -332,33 +387,9 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     }
     if (L.lines?.length && L.force) {
       const S = L.lines;
-      let len = 0;
-      for (let o = 0; o < S.length; o += 9) len += Math.hypot(S[o + 3] - S[o], S[o + 4] - S[o + 1], S[o + 5] - S[o + 2]);
+      const len = lineLength(S);
       if (!(len > 0)) continue;
-      for (let o = 0; o < S.length; o += 9) {
-        const d = [S[o + 3] - S[o], S[o + 4] - S[o + 1], S[o + 5] - S[o + 2]], l = Math.hypot(d[0], d[1], d[2]);
-        // cut where the segment crosses a grid plane: the basis is a polynomial only inside a cell
-        const cuts = [0, 1];
-        for (let a = 0; a < 3; a++) {
-          if (Math.abs(d[a]) < 1e-12) continue;
-          const u0 = (S[o + a] - grid.lo[a]) / grid.h, u1 = u0 + d[a] / grid.h;
-          for (let q = Math.ceil(Math.min(u0, u1)); q <= Math.floor(Math.max(u0, u1)); q++) {
-            const tt = (q - u0) / (u1 - u0);
-            if (tt > 1e-9 && tt < 1 - 1e-9) cuts.push(tt);
-          }
-        }
-        cuts.sort((x, y) => x - y);
-        for (let i = 1; i < cuts.length; i++) {
-          const t0 = cuts[i - 1], t1 = cuts[i], tm = (t0 + t1) / 2;
-          if (t1 - t0 < 1e-12) continue;
-          const c = cellNear(S[o] + tm * d[0], S[o + 1] + tm * d[1], S[o + 2] + tm * d[2], S, o + 6);
-          if (c < 0) continue;
-          for (let g = 0; g < gl.x.length; g++) {
-            const tt = t0 + (t1 - t0) * (gl.x[g] + 1) / 2, w = (gl.w[g] / 2) * (t1 - t0) * l / len;
-            push(c, S[o] + tt * d[0], S[o + 1] + tt * d[1], S[o + 2] + tt * d[2], w * L.force[0], w * L.force[1], w * L.force[2]);
-          }
-        }
-      }
+      onLines(S, (c, x, y, z, w) => push(c, x, y, z, w / len * L.force![0], w / len * L.force![1], w / len * L.force![2]));
       continue;
     }
     const area = triArea(L.tris);
@@ -440,6 +471,15 @@ export function solveStatic(pb: StaticProblem): StaticResult {
       }
       for (let c = 0; c < 3; c++) sn[c] -= 2 * gam[e] * uu[c];
       add(R, px, py, pz, w * (P[0] * sn[0] + P[1] * sn[1] + P[2] * sn[2]), w * (P[3] * sn[0] + P[4] * sn[1] + P[5] * sn[2]), w * (P[6] * sn[0] + P[7] * sn[1] + P[8] * sn[2]));
+    });
+    // the penalty's pull: −w P u
+    heldAt(s, (c, px, py, pz, w) => {
+      const e = grid.cells[c].el, E = grid.elems[e];
+      bas.eval(px, py, pz, E.c, E.s);
+      holdMatrix(s, N0, P);
+      uu[0] = uu[1] = uu[2] = 0;
+      for (let b = 0; b < nb; b++) for (let d = 0; d < 3; d++) uu[d] += bas.v[b] * x[e * m + 3 * b + d];
+      add(R, px, py, pz, -w * (P[0] * uu[0] + P[1] * uu[1] + P[2] * uu[2]), -w * (P[3] * uu[0] + P[4] * uu[1] + P[5] * uu[2]), -w * (P[6] * uu[0] + P[7] * uu[1] + P[8] * uu[2]));
     });
     return R;
   });
@@ -631,26 +671,37 @@ export function freeModes(supports: Support[], lo: ArrayLike<number>, hi: ArrayL
     const C = new Float64Array(36), F = new Float64Array(36);
     const nrm = triNormals(s.tris), ar = triNormals(s.tris, true);
     let area = 0;
-    for (let t = 0; t < ar.length; t++) {
-      if (!(ar[t] > 0)) continue;
-      const n = [nrm[3 * t], nrm[3 * t + 1], nrm[3 * t + 2]];
-      holdMatrix(s, n, P);
-      for (let k = 0; k < 3; k++) {
-        const o = 9 * t + 3 * k;
-        const r = [(s.tris[o] - c[0]) / L, (s.tris[o + 1] - c[1]) / L, (s.tris[o + 2] - c[2]) / L];
-        // columns: three translations, three rotations ω × r
-        R.fill(0);
-        R[0] = R[7] = R[14] = 1;
-        R[4] = r[2]; R[5] = -r[1]; R[9] = -r[2]; R[11] = r[0]; R[15] = r[1]; R[16] = -r[0];
-        for (let i = 0; i < 3; i++) for (let j = 0; j < 6; j++) PR[i * 6 + j] = P[3 * i] * R[j] + P[3 * i + 1] * R[6 + j] + P[3 * i + 2] * R[12 + j];
-        const w = ar[t] / 3;
-        for (let i = 0; i < 6; i++) for (let j = 0; j < 6; j++) {
-          C[i * 6 + j] += w * (PR[i] * PR[j] + PR[6 + i] * PR[6 + j] + PR[12 + i] * PR[12 + j]);
-          F[i * 6 + j] += w * (R[i] * R[j] + R[6 + i] * R[6 + j] + R[12 + i] * R[12 + j]);
-        }
-        area += w;
+    // what holds: (place, weight) samples with the projector set
+    const each = (fn: (r: number[], w: number) => void) => {
+      for (let t = 0; t < ar.length; t++) {
+        if (!(ar[t] > 0)) continue;
+        holdMatrix(s, [nrm[3 * t], nrm[3 * t + 1], nrm[3 * t + 2]], P);
+        for (let k = 0; k < 3; k++) { const o = 9 * t + 3 * k; fn([s.tris[o], s.tris[o + 1], s.tris[o + 2]], ar[t] / 3); }
       }
-    }
+      // edges and points count by length × L and by L²: only their rank matters here
+      const S = s.lines, Q = s.points;
+      if (S?.length || Q?.length) holdMatrix(s, [0, 0, 0], P);
+      if (S) for (let o = 0; o + 8 < S.length; o += 9) {
+        const l = Math.hypot(S[o + 3] - S[o], S[o + 4] - S[o + 1], S[o + 5] - S[o + 2]) * L;
+        if (!(l > 0)) continue;
+        fn([S[o], S[o + 1], S[o + 2]], l / 6); fn([S[o + 3], S[o + 4], S[o + 5]], l / 6);
+        fn([(S[o] + S[o + 3]) / 2, (S[o + 1] + S[o + 4]) / 2, (S[o + 2] + S[o + 5]) / 2], 2 * l / 3);
+      }
+      if (Q) for (let o = 0; o + 5 < Q.length; o += 6) fn([Q[o], Q[o + 1], Q[o + 2]], L * L);
+    };
+    each((q, w) => {
+      const r = [(q[0] - c[0]) / L, (q[1] - c[1]) / L, (q[2] - c[2]) / L];
+      // columns: three translations, three rotations ω × r
+      R.fill(0);
+      R[0] = R[7] = R[14] = 1;
+      R[4] = r[2]; R[5] = -r[1]; R[9] = -r[2]; R[11] = r[0]; R[15] = r[1]; R[16] = -r[0];
+      for (let i = 0; i < 3; i++) for (let j = 0; j < 6; j++) PR[i * 6 + j] = P[3 * i] * R[j] + P[3 * i + 1] * R[6 + j] + P[3 * i + 2] * R[12 + j];
+      for (let i = 0; i < 6; i++) for (let j = 0; j < 6; j++) {
+        C[i * 6 + j] += w * (PR[i] * PR[j] + PR[6 + i] * PR[6 + j] + PR[12 + i] * PR[12 + j]);
+        F[i * 6 + j] += w * (R[i] * R[j] + R[6 + i] * R[6 + j] + R[12 + i] * R[12 + j]);
+      }
+      area += w;
+    });
     if (!(area > 0)) continue;
     total += area;
     const { val, M } = relative(C, F, 1e-12 * area);
@@ -661,6 +712,14 @@ export function freeModes(supports: Support[], lo: ArrayLike<number>, hi: ArrayL
     for (let i = 0; i < 36; i++) Fall[i] += F[i];
   }
   if (!(total > 0)) return 6;
+  // edges and points alone do not span the six motions: a faint whole-body term keeps the comparison sound
+  for (let k = 0; k < 8; k++) {
+    const r = [k & 1 ? 1 : -1, k & 2 ? 1 : -1, k & 4 ? 1 : -1].map((sg, a2) => (sg * (hi[a2] - lo[a2])) / (2 * L));
+    R.fill(0);
+    R[0] = R[7] = R[14] = 1;
+    R[4] = r[2]; R[5] = -r[1]; R[9] = -r[2]; R[11] = r[0]; R[15] = r[1]; R[16] = -r[0];
+    for (let i = 0; i < 6; i++) for (let j = 0; j < 6; j++) Fall[i * 6 + j] += 1e-6 * (total / 8) * (R[i] * R[j] + R[6 + i] * R[6 + j] + R[12 + i] * R[12 + j]);
+  }
   const { val } = relative(Call, Fall, 1e-12 * total);
   return val.filter(v => v < 1e-7).length;
 }
@@ -697,4 +756,11 @@ function solve3(M: Float64Array, b: ArrayLike<number>): number[] {
   }
   for (const [i, j] of piv) x[j] = a[i][3] / a[i][j];
   return x;
+}
+
+/** Summed length of segments of 9 numbers. */
+export function lineLength(S: ArrayLike<number>): number {
+  let len = 0;
+  for (let o = 0; o + 8 < S.length; o += 9) len += Math.hypot(S[o + 3] - S[o], S[o + 4] - S[o + 1], S[o + 5] - S[o + 2]);
+  return len;
 }

@@ -1738,7 +1738,7 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .sim-conv circle.x { fill: var(--panel); stroke: var(--accent); stroke-width: 1.5; }
 #sim-pm .btn.small { margin-top: 4px; }
 .sim-legend:has(~ #ana-panel:not([hidden])) { bottom: 190px; }
-.sim-probebar { display: flex; gap: 6px; margin-top: 6px; }
+.sim-probebar { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .sim-probebar .btn.on { background: var(--accent); color: #fff; border-color: var(--accent); }
 #viewport.sim-probing canvas { cursor: crosshair; }
 #sim-probes { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 4; }
