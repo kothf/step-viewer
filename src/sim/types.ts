@@ -78,10 +78,16 @@ export interface StudyWeld {
   type: "weld";
   /** Always empty: a weld is on edges. */
   faces: FaceRef[];
-  on: "edges";
+  /** `points` = spot welds (FR-CON-024): each point is on a face of one component (`faces[0]`), and the spot
+   * goes through that component to the one behind it, joining the two over a disc of diameter `dia`, mm. */
+  on: "edges" | "points";
   edges: StudyEdge[];
+  points?: StudyPoint[];
+  dia?: number;
   throat: number;
 }
+export const SPOT_LABEL = "Spot weld";
+export const DEFAULT_SPOT = 6;
 /**
  * A connector (FR-CON-023): the faces of side one are tied to those of side two, each side moving as a whole
  * (mean displacement and rotation). Rigid, or a spring of `k` N/mm along X, Y, Z and `kr` N·mm/rad against turning.
@@ -199,7 +205,16 @@ export const compOf = (key: string) => { const m = /[@#]/.exec(key); return m ? 
 export const offComps = (st: Study | null | undefined) => new Set(Object.entries(st?.comps ?? {}).filter(([, c]) => c.off).map(([id]) => id));
 
 /** How two components (by id, `a` < `b`) are joined where they touch: sliding along the surface, or not at all. */
-export interface StudyLink { a: string; b: string; type: "sliding" | "none" }
+/** `adhesive` (FR-CON-025): bonded through a thin elastic layer `t` mm thick of modulus `E`, MPa. */
+export interface StudyLink { a: string; b: string; type: "sliding" | "none" | "adhesive"; t?: number; E?: number }
+export const DEFAULT_GLUE = { t: 0.2, E: 2000 };
+/** Poisson's ratio taken for an adhesive layer. */
+export const GLUE_NU = 0.4;
+/** An adhesive layer's stiffness per area across and along it, N/mm³: E / t and G / t. */
+export function glueStiffness(l: { t?: number; E?: number }): [number, number] {
+  const t = l.t && l.t > 0 ? l.t : DEFAULT_GLUE.t, E = l.E && l.E > 0 ? l.E : DEFAULT_GLUE.E;
+  return [E / t, E / (2 * (1 + GLUE_NU)) / t];
+}
 /** Assemblies: components are joined across gaps up to this wide, mm, when the study sets none (FR-CON-003). */
 export const DEFAULT_GAP = 0.1;
 
@@ -250,8 +265,8 @@ export const LOAD_LABEL: Record<LoadType, string> = { force: "Force", pressure: 
 export const REFINE_LABEL = "Local accuracy";
 
 /** Default name of a new item: "Fixed 1", "Force 2". */
-export function itemName(st: Study, type: SupportType | LoadType | "refine" | "weld" | "connector" | "mass"): string {
-  const label = type === "refine" ? REFINE_LABEL : type === "weld" ? WELD_LABEL : type === "connector" ? CONNECTOR_LABEL : type === "mass" ? MASS_LABEL : (SUPPORT_LABEL as Record<string, string>)[type] ?? (LOAD_LABEL as Record<string, string>)[type];
+export function itemName(st: Study, type: SupportType | LoadType | "refine" | "weld" | "spot" | "connector" | "mass"): string {
+  const label = type === "refine" ? REFINE_LABEL : type === "spot" ? SPOT_LABEL : type === "weld" ? WELD_LABEL : type === "connector" ? CONNECTOR_LABEL : type === "mass" ? MASS_LABEL : (SUPPORT_LABEL as Record<string, string>)[type] ?? (LOAD_LABEL as Record<string, string>)[type];
   const names = new Set([...st.supports, ...st.loads, ...(st.refine ?? []), ...extrasOf(st)].map(i => i.name));
   let n = 1;
   while (names.has(`${label} ${n}`)) n++;

@@ -35,10 +35,10 @@ import { compareRows, noteSummary, parseSummaries, type CompareRow, type Summary
 import { pathChart, pathChartSvg, pathCsv, pathLength, pathPoints, pathRows, type PathRow } from "./path";
 import { chartSvg, reportHtml, reportPdf, type ReportBlock, type SimReport } from "./report";
 import { MEMORY_LIMIT } from "./static";
-import { GLOBAL_PASSES, MAX_PASSES, edgeLines, envelope, positiveAxis, studyProblem, withoutFaces, type PassResult, type SimBody } from "./run";
+import { GLOBAL_PASSES, MAX_PASSES, edgeLines, spotPoints, envelope, positiveAxis, studyProblem, withoutFaces, type PassResult, type SimBody } from "./run";
 import { shownValue, typedValue } from "./values";
 import { NUT_FACTOR, boltPreload, type StudyBolt } from "./types";
-import { DEFAULT_GAP, DEFAULT_MODES, GRAVITY, LOAD_LABEL, MAX_MODES, MAX_REFINE, MODAL_PASSES, ON_TYPES, REFINE_LABEL, SUPPORT_LABEL, WELD_LABEL, DEFAULT_THROAT, CONNECTOR_LABEL, MASS_LABEL, DEFAULT_SPRING, extrasOf, type StudyWeld, type StudyConnector, type StudyMass, type StudyExtra, caseStudy, compOf, offComps, itemName, newCase, newStudy, nextId, pickCount, type LoadType, type PlotKind, type Study, type StudyKind, type StudyLoad, type StudyRefine, type StudySupport, type SupportType } from "./types";
+import { DEFAULT_GAP, DEFAULT_MODES, GRAVITY, LOAD_LABEL, MAX_MODES, MAX_REFINE, MODAL_PASSES, ON_TYPES, REFINE_LABEL, SUPPORT_LABEL, WELD_LABEL, SPOT_LABEL, DEFAULT_SPOT, DEFAULT_GLUE, glueStiffness, DEFAULT_THROAT, CONNECTOR_LABEL, MASS_LABEL, DEFAULT_SPRING, extrasOf, type StudyWeld, type StudyConnector, type StudyMass, type StudyExtra, caseStudy, compOf, offComps, itemName, newCase, newStudy, nextId, pickCount, type LoadType, type PlotKind, type Study, type StudyKind, type StudyLoad, type StudyRefine, type StudySupport, type SupportType } from "./types";
 
 /** What a study needs of its document: a part's, or an assembly's (which has no material or bodies of its own). */
 export type SimDoc = Pick<PartDoc, "id" | "name"> & Partial<Pick<PartDoc, "studies" | "vars" | "material" | "bodies">>;
@@ -99,7 +99,7 @@ const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;
 const $ = <T extends HTMLElement = HTMLElement>(s: string) => document.querySelector<T>(s)!;
 const SUPPORTS: SupportType[] = ["fixed", "sliding", "hinge", "dirs", "elastic", "disp"];
 const LOADS: LoadType[] = ["force", "pressure", "moment", "torque", "bearing", "remote", "hydro", "gravity", "centrifugal"];
-const ICON: Record<string, string> = { weld: "∿", connector: "⊷", mass: "◉", newmodal: "≈", new: "＋", mat: "◈", fixed: "⏚", sliding: "⇄", hinge: "◎", dirs: "✛", elastic: "≋", disp: "⇥", centrifugal: "⟳", torque: "⟲", bearing: "◒", hydro: "▽", remote: "⌖", refine: "⊞", force: "↓", pressure: "⇊", moment: "↻", gravity: "g", solve: "▶", stop: "■", results: "▦", report: "▤" };
+const ICON: Record<string, string> = { spot: "⊙", weld: "∿", connector: "⊷", mass: "◉", newmodal: "≈", new: "＋", mat: "◈", fixed: "⏚", sliding: "⇄", hinge: "◎", dirs: "✛", elastic: "≋", disp: "⇥", centrifugal: "⟳", torque: "⟲", bearing: "◒", hydro: "▽", remote: "⌖", refine: "⊞", force: "↓", pressure: "⇊", moment: "↻", gravity: "g", solve: "▶", stop: "■", results: "▦", report: "▤" };
 const TIP: Record<string, string> = {
   fixed: "Fixed support: the faces cannot move",
   sliding: "Sliding support: the faces slide in their own plane but cannot move across it",
@@ -135,6 +135,8 @@ const PATCH_A = 0xf59f00, PATCH_B = 0x1c7ed6;
 const WELD_NOTE = "A weld joins two components along the picked edges. Set their connection to Sliding or Not joined, else the bonded faces carry the load and the weld almost nothing.";
 const CONNECTOR_NOTE = "A connector ties the faces of its two sides together, each side moving as a whole: rigidly, or through a spring.";
 const MASS_NOTE = "A mass is spread over its faces: it weighs under gravity and spinning, and lowers the natural frequencies.";
+const SPOT_RESULT_NOTE = "Spot weld stress: the largest force of one spot over its area. Compare it with the allowable shear stress of the weld.";
+const GLUE_NOTE = "Adhesive: the two components are joined through an elastic layer of this thickness and modulus. Set the gap tolerance to at least the layer's thickness when they are modelled apart.";
 const WELD_RESULT_NOTE = "Weld stress: the largest force per length over the throat. Compare it with the allowable stress of the weld metal.";
 const BOLT_COLOR = 0x7048e8;
 const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
@@ -344,7 +346,7 @@ export class SimController {
     const model = this.host.stateKey();
     const parts: unknown[] = [...model.head, st.supports, st.loads, st.settings, st.suppressed ?? null];
     if (st.refine?.length) parts.push(st.refine);
-    if (st.welds?.length) parts.push(st.welds.map(w => [w.id, w.edges]));
+    if (st.welds?.length) parts.push(st.welds.map(w => (w.on === "points" ? [w.id, w.edges, w.points ?? [], w.dia ?? DEFAULT_SPOT] : [w.id, w.edges])));
     if (st.connectors?.length) parts.push(st.connectors.map(c => [c.id, c.faces.map(f => f.name), c.faces2.map(f => f.name), c.kind, c.k, c.kr ?? null]));
     if (st.masses?.length) parts.push(st.masses.map(m => [m.id, m.faces.map(f => f.name), m.mass]));
     parts.push(...model.tail);
@@ -491,7 +493,7 @@ export class SimController {
       found: this.freshFound(this.study())?.list.map(c => ({ a: this.found!.comps[c.a]?.name ?? "", b: this.found!.comps[c.b]?.name ?? "", area: c.area, gap: c.gap, at: c.at })) ?? null, finding: this.finding, linkSel: this.linkSel,
       patches: this.marks.children.filter(o => o.userData.simPatch).map(o => ({ side: o.userData.simPatch as string, tris: ((o as THREE.Mesh).geometry.getAttribute("position")?.count ?? 0) / 3 })),
       conns: this.connRows(), connList: (this.study()?.connectors ?? []).map(c => ({ id: c.id, a: c.faces.length, b: c.faces2.length, kind: c.kind, k: c.k, kr: c.kr ?? null })), massList: (this.study()?.masses ?? []).map(m => ({ id: m.id, faces: m.faces.length, mass: m.mass })), connSide: this.connSide,
-      welds: this.weldRows(), weldList: (this.study()?.welds ?? []).map(w => ({ id: w.id, edges: w.edges.length, throat: w.throat })),
+      welds: this.weldRows(), weldList: (this.study()?.welds ?? []).map(w => ({ id: w.id, edges: w.edges.length, throat: w.throat, ...(w.on === "points" ? { points: w.points?.length ?? 0, dia: w.dia ?? DEFAULT_SPOT } : {}) })),
       boltMarks: this.marks.children.filter(o => o.userData.simBolt).length,
       bolts: this.boltRows().map(x => ({ id: x.id, name: x.name, cls: x.cls, tapped: x.tapped, preload: x.preload, axial: x.axial, shear: x.shear, moment: x.moment, eq: x.eq, sf: x.sf })),
       boltList: this.study() ? this.screws(this.study()!).map(c => { const st = this.study()!, f = this.freshBolts(st); return { id: c.id, name: c.name, off: !!st.bolts?.[c.id]?.off, found: !!f?.list.some(x => x.id === c.id), missed: f?.missed.find(x => x.id === c.id)?.why ?? null }; }) : [],
@@ -600,9 +602,11 @@ export class SimController {
     if (!this.study()) this.newStudy();
     const st = this.study();
     if (!st) return;
-    if (c === "weld") {
+    if (c === "weld" || c === "spot") {
       if (!this.host.asm()) { toast(t("Welds join the components of an assembly.")); return; }
-      this.edit = { kind: "weld", isNew: true, draft: { id: nextId(st, "w"), name: itemName(st, "weld"), type: "weld", faces: [], on: "edges", edges: [], throat: DEFAULT_THROAT } };
+      this.edit = { kind: "weld", isNew: true, draft: c === "spot"
+        ? { id: nextId(st, "w"), name: itemName(st, "spot"), type: "weld", faces: [], on: "points", edges: [], points: [], dia: DEFAULT_SPOT, throat: DEFAULT_THROAT }
+        : { id: nextId(st, "w"), name: itemName(st, "weld"), type: "weld", faces: [], on: "edges", edges: [], throat: DEFAULT_THROAT } };
       this.renderAll();
       this.drawMarks();
       return;
@@ -697,7 +701,7 @@ export class SimController {
     if (e.kind === "connector" && !e.draft.faces2.length) { this.connSide = 2; this.renderPanel(); toast(t("Click the faces of the second side on the model."), "warn"); return; }
     if (e.kind === "mass" && !(e.draft.mass > 0)) { toast(t("Type a mass above 0."), "warn"); return; }
     const sid = st.id;
-    const label = e.isNew ? t(e.kind === "refine" ? REFINE_LABEL : e.kind === "connector" ? CONNECTOR_LABEL : e.kind === "mass" ? MASS_LABEL : e.kind === "weld" ? WELD_LABEL : (SUPPORT_LABEL as Record<string, string>)[d.type] ?? (LOAD_LABEL as Record<string, string>)[d.type]) : t("Edit {name}", { name: d.name ?? "" });
+    const label = e.isNew ? t(e.kind === "refine" ? REFINE_LABEL : e.kind === "connector" ? CONNECTOR_LABEL : e.kind === "mass" ? MASS_LABEL : e.kind === "weld" ? (e.draft.on === "points" ? SPOT_LABEL : WELD_LABEL) : (SUPPORT_LABEL as Record<string, string>)[d.type] ?? (LOAD_LABEL as Record<string, string>)[d.type]) : t("Edit {name}", { name: d.name ?? "" });
     this.edit = null;
     this.pickingAt = false;
     this.problems.delete(d.id);
@@ -732,6 +736,19 @@ export class SimController {
       if (!q) { toast(t("Click a point on the model."), "warn"); return true; }
       (ed.draft as StudyLoad).at = [q[0], q[1], q[2]].map(v => Math.round(v * 1e4) / 1e4) as [number, number, number];
       this.pickingAt = false;
+      this.renderPanel();
+      this.drawMarks();
+      return true;
+    }
+    if (ed.kind === "weld" && ed.draft.on === "points") {
+      // a spot weld: the place on the face under the pointer; a click on a spot takes it away
+      const hit = this.host.faceAt(e.clientX, e.clientY), name = hit ? this.host.faceNames()[hit.faceId] : undefined;
+      if (!hit || !name) { toast(t("Click a point on a face of the model."), "warn"); return true; }
+      if (offComps(this.study()).has(compOf(name))) { toast(t("This component is left out of the study."), "warn"); return true; }
+      const w = ed.draft, list = (w.points ??= []), r = (w.dia ?? DEFAULT_SPOT) / 2;
+      const i = list.findIndex(q => Math.hypot(q.at[0] - hit.point[0], q.at[1] - hit.point[1], q.at[2] - hit.point[2]) <= r);
+      if (i >= 0) list.splice(i, 1);
+      else list.push({ faces: [name], at: hit.point.map(v => Math.round(v * 1e4) / 1e4) as [number, number, number] });
       this.renderPanel();
       this.drawMarks();
       return true;
@@ -841,6 +858,11 @@ export class SimController {
       // welds: the lines of their edges in the solver's own triangles
       const gone = new Set(st.suppressed ?? []), weldUse = asm ? (st.welds ?? []).filter(w => !gone.has(w.id)) : [];
       const welds = weldUse.map(w => {
+        if (w.on === "points") {
+          const spots = spotPoints(geo, w.points ?? []);
+          if (!spots || !spots.length) throw new Error(`E-SIM-REF: ${w.id}`);
+          return { lines: new Float64Array(0), spots, d: w.dia ?? DEFAULT_SPOT };
+        }
         const all: number[] = [];
         for (const ed of w.edges) {
           const ln = edgeLines(geo, ed.faces[0], ed.faces[1]);
@@ -855,7 +877,7 @@ export class SimController {
       const simMat = (q: NonNullable<typeof doc.material>) => ({ name: q.name, E: (q.E ?? 0) * 1000, nu: q.nu ?? 0, rho: q.density * 1e-9, sy: q.sy ?? undefined, su: q.su ?? undefined });
       let regions: { tris: Float64Array; mat: ReturnType<typeof simMat>; rigid?: boolean }[] | undefined;
       // an assembly: every component is its own body with its part's material, joined to the others where they touch
-      let joined: { gap: number; links: { a: number; b: number; type: "sliding" | "none" }[] } | undefined;
+      let joined: { gap: number; links: { a: number; b: number; type: "sliding" | "none" | "adhesive"; kn?: number; kt?: number }[] } | undefined;
       if (asm) {
         if (!bodies?.length) throw new Error("E-SIM-NOBODY");
         const steelParts = new Set(this.host.comps().filter(c => c.fastener).map(c => c.id));
@@ -874,7 +896,7 @@ export class SimController {
         const at = new Map(bodies.map((b, i) => [b.key, i]));
         // the pairs with their gaps and patches are found beside the solve, for the Connections table
         if (!this.freshFound(st)) void this.findFrom(bodies, st.settings.gap ?? DEFAULT_GAP, this.foundKey(st)).then(() => { this.renderAll(); this.drawMarks(); }).catch(() => {});
-        joined = { gap: st.settings.gap ?? DEFAULT_GAP, links: (st.links ?? []).flatMap(l => (at.has(l.a) && at.has(l.b) ? [{ a: at.get(l.a)!, b: at.get(l.b)!, type: l.type }] : [])) };
+        joined = { gap: st.settings.gap ?? DEFAULT_GAP, links: (st.links ?? []).flatMap(l => (at.has(l.a) && at.has(l.b) ? [{ a: at.get(l.a)!, b: at.get(l.b)!, type: l.type, ...(l.type === "adhesive" ? { kn: glueStiffness(l)[0], kt: glueStiffness(l)[1] } : {}) }] : [])) };
       } else if (m && bodies && bodies.length > 1 && bodies.some(b => doc.bodies?.[b.key]?.material)) {
         regions = bodies.map(b => {
           const q = doc.bodies?.[b.key]?.material ?? m;
@@ -1060,15 +1082,20 @@ export class SimController {
     const r = this.res, last = r?.passes.at(-1), st = this.study();
     if (!r?.welds || !last?.welds || last.welds.length !== r.welds.length) return [];
     return r.welds.map((w, i) => {
-      const v = last.welds![i], a = st?.welds?.find(x => x.id === w.id)?.throat ?? DEFAULT_THROAT;
-      return { id: w.id, name: w.name, throat: a, length: v.length, force: Math.hypot(v.force[0], v.force[1], v.force[2]), peak: v.peak, mean: v.mean, stress: v.peak / a, at: v.at };
+      const v = last.welds![i], sw = st?.welds?.find(x => x.id === w.id), a = sw?.throat ?? DEFAULT_THROAT;
+      const spot = v.spots !== undefined || sw?.on === "points", dia = sw?.dia ?? DEFAULT_SPOT;
+      return { id: w.id, name: w.name, throat: a, length: v.length, force: Math.hypot(v.force[0], v.force[1], v.force[2]), peak: v.peak, mean: v.mean, stress: spot ? v.peak / (Math.PI * dia * dia / 4) : v.peak / a, at: v.at, spot, spots: v.spots ?? 0, dia };
     });
   }
 
   private weldTableHtml(): string {
-    const rows = this.weldRows();
-    if (!rows.length) return "";
-    return `<h5 class="sim-sub">${esc(t("Welds"))}</h5><table class="sim-passes sim-bolttable sim-weldtable"><thead><tr><th>${esc(t("Weld"))}</th><th>${esc(t("Force"))}, N</th><th title="${esc(t("Largest force per length"))}">N/mm</th><th title="${esc(t("Largest force per length over the throat"))}">MPa</th></tr></thead><tbody>`
+    const every = this.weldRows(), rows = every.filter(x => !x.spot), spots = every.filter(x => x.spot);
+    if (!every.length) return "";
+    const spotHtml = spots.length ? `<h5 class="sim-sub">${esc(t("Spot welds"))}</h5><table class="sim-passes sim-bolttable sim-spottable"><thead><tr><th>${esc(t(SPOT_LABEL))}</th><th>${esc(t("Spots"))}</th><th title="${esc(t("Largest force of one spot"))}">N</th><th title="${esc(t("Largest force of one spot over its area"))}">MPa</th></tr></thead><tbody>`
+      + spots.map(x => `<tr data-weld="${esc(x.id)}" title="${esc(`${t("Diameter")}: ${trim(x.dia)} mm. ${t("Force")}: ${sig(x.force)} N. ${t("Mean")}: ${sig(x.mean)} N`)}"><td translate="no">${esc(x.name)}</td><td data-v="scount">${x.spots}</td><td data-v="speak">${sig(x.peak)}</td><td data-v="sstress">${sig(x.stress)}</td></tr>`).join("")
+      + `</tbody></table><p class="sim-note muted" data-v="spotnote">${esc(t(SPOT_RESULT_NOTE))}</p>` : "";
+    if (!rows.length) return spotHtml;
+    return spotHtml + `<h5 class="sim-sub">${esc(t("Welds"))}</h5><table class="sim-passes sim-bolttable sim-weldtable"><thead><tr><th>${esc(t("Weld"))}</th><th>${esc(t("Force"))}, N</th><th title="${esc(t("Largest force per length"))}">N/mm</th><th title="${esc(t("Largest force per length over the throat"))}">MPa</th></tr></thead><tbody>`
       + rows.map(x => `<tr data-weld="${esc(x.id)}" title="${esc(`${t("Length")}: ${sig(x.length)} mm. ${t("Throat")}: ${trim(x.throat)} mm. ${t("Mean")}: ${sig(x.mean)} N/mm`)}"><td translate="no">${esc(x.name)}</td><td data-v="wforce">${sig(x.force)}</td><td data-v="wpeak">${sig(x.peak)}</td><td data-v="wstress">${sig(x.stress)}</td></tr>`).join("")
       + `</tbody></table><p class="sim-note muted" data-v="weldnote">${esc(t(WELD_RESULT_NOTE))}</p>`;
   }
@@ -1124,6 +1151,7 @@ export class SimController {
     const pre = this.freshFound(st);
     const key = pairKey;
     const typed = new Map((st.links ?? []).map(l => [key(l.a, l.b), l.type]));
+    const glue = new Map((st.links ?? []).filter(l => l.type === "adhesive").map(l => [key(l.a, l.b), l]));
     const names = new Map([...(pre?.comps ?? []), ...comps].map(c => [c.key, c.name]));
     type Row = { a: string; b: string; area: number | null; gap?: number; force?: number[]; moment?: number[] };
     // what was found before the solve (with its gaps), then what the solve joined, then pairs only typed
@@ -1150,7 +1178,7 @@ export class SimController {
       + `<label class="sim-kv2">${esc(t("Gap tolerance"))} <input type="number" data-k="gap" min="0" step="0.05" value="${sig((st.settings.gap ?? DEFAULT_GAP) * f)}" aria-label="${esc(t("Gap tolerance"))}" /> ${esc(units.current)}</label>`
       + `<button class="btn small sim-find" data-a="findlinks"${this.finding || this.running ? " disabled" : ""}>${esc(this.finding ? t("Finding the connections…") : t("Find connections"))}</button>`;
     if (all >= 4) html += `<div class="sim-lfilter"><select data-k="cfilter" aria-label="${esc(t("Component"))}"><option value="">${esc(t("All components"))}</option>${used.map(k => `<option value="${esc(k)}"${k === fl.comp ? " selected" : ""} translate="no">${esc(names.get(k) ?? k)}</option>`).join("")}</select>`
-      + `<select data-k="tfilter" aria-label="${esc(t("Type"))}">${opt("", "All types", fl.type)}${opt("bonded", "Bonded", fl.type)}${opt("sliding", "Sliding", fl.type)}${opt("none", "Not joined", fl.type)}</select></div>`;
+      + `<select data-k="tfilter" aria-label="${esc(t("Type"))}">${opt("", "All types", fl.type)}${opt("bonded", "Bonded", fl.type)}${opt("sliding", "Sliding", fl.type)}${opt("adhesive", "Adhesive", fl.type)}${opt("none", "Not joined", fl.type)}</select></div>`;
     if (all) {
       const rows = shown;
       html += `<table class="sim-contacts"><thead><tr><th>${esc(t("Components"))}</th><th>${esc(t("Area"))}, ${esc(units.current)}²${gaps ? `<br />${esc(t("Gap"))}, ${esc(units.current)}` : ""}</th>${forces ? `<th>${esc(t("Force"))}, N<br />${esc(t("Moment"))}, N·m</th>` : ""}<th>${esc(t("Type"))}</th></tr></thead><tbody>`
@@ -1159,9 +1187,11 @@ export class SimController {
           const k = key(r.a, r.b), patch = !!pre?.list.some(c => key(pre.comps[c.a]?.key ?? "", pre.comps[c.b]?.key ?? "") === k);
           return `<tr data-link="${esc(k)}"${patch ? ` data-a="link" tabindex="0"` : ""} class="${k === this.linkSel ? "sel" : ""}"><td translate="no">${esc(names.get(r.a) ?? r.a)} – ${esc(names.get(r.b) ?? r.b)}</td><td>${r.area == null ? "" : sig(r.area * f * f)}${gaps ? `<br /><span data-v="cgap">${r.gap == null ? "" : String(Number((r.gap * f).toPrecision(2)))}</span>` : ""}</td>`
             + (forces ? `<td><span data-v="cforce" title="${r.force ? `${r.force.map(x => sig(x)).join(", ")} N` : ""}">${r.force ? sig(mag(r.force)) : ""}</span><br /><span data-v="cmoment" title="${r.moment ? `${r.moment.map(x => sig(x * 1e-3)).join(", ")} N·m` : ""}">${r.moment ? sig(mag(r.moment) * 1e-3) : ""}</span></td>` : "")
-            + `<td><select data-k="link" data-a="${esc(r.a)}" data-b="${esc(r.b)}" aria-label="${esc(t("Type"))}">${opt("bonded", "Bonded", cur)}${opt("sliding", "Sliding", cur)}${opt("none", "Not joined", cur)}</select></td></tr>`;
+            + `<td><select data-k="link" data-a="${esc(r.a)}" data-b="${esc(r.b)}" aria-label="${esc(t("Type"))}">${opt("bonded", "Bonded", cur)}${opt("sliding", "Sliding", cur)}${opt("adhesive", "Adhesive", cur)}${opt("none", "Not joined", cur)}</select></td></tr>`
+            + (cur === "adhesive" ? `<tr class="sim-glue" data-glue="${esc(k)}"><td colspan="${forces ? 4 : 3}"><label title="${esc(t("Thickness of the adhesive layer"))}">${esc(t("Thickness"))} <input type="number" data-k="gluet" data-a="${esc(r.a)}" data-b="${esc(r.b)}" min="0" step="0.05" value="${trim(glue.get(k)?.t ?? DEFAULT_GLUE.t)}" /> mm</label> <label title="${esc(t("Elastic modulus of the adhesive"))}">E <input type="number" data-k="gluee" data-a="${esc(r.a)}" data-b="${esc(r.b)}" min="0" step="100" value="${trim(glue.get(k)?.E ?? DEFAULT_GLUE.E)}" /> MPa</label></td></tr>` : "");
         }).join("") + `</tbody></table>`;
-      if (shown.length >= 2) html += `<label class="sim-kv2">${esc(t("All shown:"))} <select data-k="linkall" aria-label="${esc(t("All shown:"))}"><option value="">${esc(t("Set type…"))}</option>${opt("bonded", "Bonded", "-")}${opt("sliding", "Sliding", "-")}${opt("none", "Not joined", "-")}</select></label>`;
+      if (shown.length >= 2) html += `<label class="sim-kv2">${esc(t("All shown:"))} <select data-k="linkall" aria-label="${esc(t("All shown:"))}"><option value="">${esc(t("Set type…"))}</option>${opt("bonded", "Bonded", "-")}${opt("sliding", "Sliding", "-")}${opt("adhesive", "Adhesive", "-")}${opt("none", "Not joined", "-")}</select></label>`;
+      if (glue.size) html += `<p class="sim-note muted" data-v="gluenote">${esc(t(GLUE_NOTE))}</p>`;
       if (pre?.list.length) html += `<p class="sim-note muted" data-v="cpatchnote">${esc(t("Click a row to show the contact: orange on the first component, blue on the second."))}</p>`;
       if (forces) html += `<p class="sim-note muted" data-v="cforcenote">${esc(t("Force: what the first component passes to the second. Moment: about the centre of the contact."))}</p>`;
     } else html += `<p class="sim-note muted" data-v="nolinks">${esc(res || pre ? t("No components touch.") : t("Find connections lists the pairs that touch; a solve lists them too."))}</p>`;
@@ -1189,7 +1219,9 @@ export class SimController {
         : t("The study needs about {n} MB of memory, more than a solve may take ({m} MB). Remove local accuracy settings or simplify the part.", { n: rest.trim(), m: Math.round((memLimit() || MEMORY_LIMIT) / 2 ** 20) });
       case "E-SIM-CONNECTOR": return t("The connector {name} cannot be placed on its faces. Pick faces with some area on each side.", { name: this.nameOf(this.connIds[Number(msg.split(": ")[1])] ?? "") });
       case "E-SIM-MASS": return t("A mass has no faces left to sit on.");
-      case "E-SIM-WELD": return t("The weld {name} lies beside no other component: click edges of one component that lie on another.", { name: this.nameOf(this.weldIds[Number(msg.split(": ")[1])] ?? "") });
+      case "E-SIM-ADHESIVE": return t("An adhesive connection needs a thickness and an elastic modulus above zero.");
+      case "E-SIM-WELD": if (this.study()?.welds?.find(w => w.id === this.weldIds[Number(msg.split(": ")[1])])?.on === "points") return t("The spot weld {name} reaches no other component: click points on a face that has another component behind it.", { name: this.nameOf(this.weldIds[Number(msg.split(": ")[1])] ?? "") });
+        return t("The weld {name} lies beside no other component: click edges of one component that lie on another.", { name: this.nameOf(this.weldIds[Number(msg.split(": ")[1])] ?? "") });
       case "E-SIM-PRELOAD": return t("A preloaded bolt clamps components that are not joined where they touch, so nothing takes the preload. Set their connection to Bonded or Sliding.");
       case "E-SIM-BOLT": return t("A bolt's seat could not be placed on the components. Untick that bolt to analyse it as a solid.");
       case "E-SIM-ALLRIGID": return t("Every component is rigid, so nothing can deform. Make at least one component elastic.");
@@ -2134,7 +2166,13 @@ export class SimController {
           ...br.map(x => [x.name, x.cls, x.preload ? sig(x.preload) : "–", sig(x.axial), sig(x.shear), sig(x.moment * 1e-3), sig(x.eq), isFinite(x.sf) ? sig(x.sf) : "–"])] });
         blocks.push({ kind: "p", text: t(BOLT_NOTE) });
       }
-      const wr = this.weldRows();
+      const wall = this.weldRows(), wr = wall.filter(x => !x.spot), ws = wall.filter(x => x.spot);
+      if (ws.length) {
+        blocks.push({ kind: "h", text: t("Spot welds") });
+        blocks.push({ kind: "table", widths: [4, 2, 2, 2, 2, 2], rows: [[t(SPOT_LABEL), t("Spots"), `${t("Diameter")}, mm`, `${t("Force")}, N`, `${t("Largest force of one spot")}, N`, `${t("Stress")}, MPa`],
+          ...ws.map(x => [x.name, String(x.spots), trim(x.dia), sig(x.force), sig(x.peak), sig(x.stress)])] });
+        blocks.push({ kind: "p", text: t(SPOT_RESULT_NOTE) });
+      }
       if (wr.length) {
         blocks.push({ kind: "h", text: t("Welds") });
         blocks.push({ kind: "table", widths: [4, 2, 2, 2, 2, 2], rows: [[t("Weld"), `${t("Length")}, mm`, `${t("Throat")}, mm`, `${t("Force")}, N`, `${t("Largest force per length")}, N/mm`, `${t("Stress")}, MPa`],
@@ -2145,7 +2183,7 @@ export class SimController {
       if (cs.length) {
         blocks.push({ kind: "h", text: t("Connections") });
         const v3 = (v: number[] | undefined, k: number) => (v ? `${sig(Math.hypot(v[0], v[1], v[2]) * k)} (${v.map(x => sig(x * k)).join(", ")})` : "–");
-        blocks.push({ kind: "table", widths: [4, 1.5, 3, 3, 1.5], rows: [[t("Components"), `${t("Area")}, mm²`, `${t("Force")}, N`, `${t("Moment")}, N·m`, t("Type")], ...cs.map(c => [`${res.comps![c.a]?.name ?? ""} – ${res.comps![c.b]?.name ?? ""}`, sig(c.area), v3(c.force, 1), v3(c.moment, 1e-3), t(c.type === "sliding" ? "Sliding" : "Bonded")])] });
+        blocks.push({ kind: "table", widths: [4, 1.5, 3, 3, 1.5], rows: [[t("Components"), `${t("Area")}, mm²`, `${t("Force")}, N`, `${t("Moment")}, N·m`, t("Type")], ...cs.map(c => [`${res.comps![c.a]?.name ?? ""} – ${res.comps![c.b]?.name ?? ""}`, sig(c.area), v3(c.force, 1), v3(c.moment, 1e-3), t(c.type === "sliding" ? "Sliding" : c.type === "adhesive" ? "Adhesive" : "Bonded")])] });
         blocks.push({ kind: "p", text: t("Force: what the first component passes to the second. Moment: about the centre of the contact.") });
       }
       const rows = this.compRows();
@@ -2359,7 +2397,7 @@ export class SimController {
     el.innerHTML = group(t("Study"), btn("new", t("New study"), this.host.asm() ? t("New static study of this assembly") : t("New static study of this part"), { dis: busy }) + btn("newmodal", t("Modal study"), this.host.asm() ? t("New modal study: the natural frequencies and mode shapes of this assembly") : t("New modal study: the natural frequencies and mode shapes of this part"), { dis: busy }) + (this.host.asm() ? "" : btn("mat", t("Material"), t("The part's material: elastic modulus, Poisson's ratio, strength"), { dis: busy })))
       + sep + group(t("Supports"), SUPPORTS.map(k => btn(k, t(SUPPORT_LABEL[k]), t(TIP[k]), { dis: busy })).join(""))
       + sep + group(t("Loads"), LOADS.map(k => btn(k, t(LOAD_LABEL[k]), t(TIP[k]), { dis: busy || noLoads })).join(""))
-      + sep + group(t("Connections"), (this.host.asm() ? btn("weld", t(WELD_LABEL), t("A weld along edges where two components meet"), { dis: busy }) : "") + btn("connector", t(CONNECTOR_LABEL), t("A rigid or spring connector between two sets of faces"), { dis: busy }) + btn("mass", t(MASS_LABEL), t("A mass spread over faces: it weighs and lowers the natural frequencies"), { dis: busy }))
+      + sep + group(t("Connections"), (this.host.asm() ? btn("weld", t(WELD_LABEL), t("A weld along edges where two components meet"), { dis: busy }) + btn("spot", t(SPOT_LABEL), t("Spot welds at points, through one component into the next"), { dis: busy }) : "") + btn("connector", t(CONNECTOR_LABEL), t("A rigid or spring connector between two sets of faces"), { dis: busy }) + btn("mass", t(MASS_LABEL), t("A mass spread over faces: it weighs and lowers the natural frequencies"), { dis: busy }))
       + sep + group(t("Solve"), btn("refine", t(REFINE_LABEL), t("Local accuracy: the solution starts finer at the picked faces"), { dis: busy || noLoads }) + (busy ? btn("stop", t("Stop"), t("Stop the analysis")) : btn("solve", t("Solve"), t("Run the analysis"), { dis: !st }))
         + btn("results", t("Results"), t("Show or hide the result plot on the model"), { on: this.plot.on && !!this.res && !this.stale(), dis: !this.res || this.stale() })
         + btn("report", t("Report"), t("Save the study and its results as a report"), { dis: busy || !this.res || this.stale() }));
@@ -2383,7 +2421,7 @@ export class SimController {
       const isOff = off.has(it.id);
       return `<li class="sim-row${isOff ? " off" : ""}${bad ? " bad" : ""}${this.edit?.draft.id === it.id ? " cur" : ""}" data-id="${it.id}">`
         + `<button class="sim-name" data-a="edit" translate="no" title="${esc(t("Edit"))}"><i class="sim-dot ${it.type === "refine" ? "ref" : it.type === "connector" ? "conn" : it.type === "mass" ? "mass" : it.type === "weld" ? "weld" : load ? "load" : "sup"}" aria-hidden="true"></i>${esc(it.name ?? it.id)}</button>`
-        + `<span class="sim-meta">${it.type === "gravity" ? "" : it.type === "centrifugal" && !it.faces.length ? esc(this.axisText(it as StudyLoad)) : esc(it.type === "connector" ? t(it.kind === "spring" ? "spring" : "rigid") : this.pickText(it))}${it.type === "mass" ? ` · ${trim(it.mass)} kg` : it.type === "refine" ? ` · ${esc(t("level {n}", { n: it.level }))}` : it.type === "weld" ? ` · a ${trim(it.throat)} mm` : ""}</span>`
+        + `<span class="sim-meta">${it.type === "gravity" ? "" : it.type === "centrifugal" && !it.faces.length ? esc(this.axisText(it as StudyLoad)) : esc(it.type === "connector" ? t(it.kind === "spring" ? "spring" : "rigid") : this.pickText(it))}${it.type === "mass" ? ` · ${trim(it.mass)} kg` : it.type === "refine" ? ` · ${esc(t("level {n}", { n: it.level }))}` : it.type === "weld" ? (it.on === "points" ? ` · ⌀ ${trim(it.dia ?? DEFAULT_SPOT)} mm` : ` · a ${trim(it.throat)} mm`) : ""}</span>`
         + `<button class="sim-ib" data-a="toggle" aria-pressed="${isOff}" title="${esc(isOff ? t("Include in the analysis") : t("Leave out of the analysis"))}" aria-label="${esc(isOff ? t("Include in the analysis") : t("Leave out of the analysis"))}">${isOff ? "○" : "●"}</button>`
         + `<button class="sim-ib" data-a="del" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">×</button>`
         + (bad ? `<p class="sim-prob">${esc(this.errorText(`${bad}: ${it.id}`))}</p>` : "")
@@ -2615,7 +2653,7 @@ export class SimController {
     pm.hidden = !e;
     if (!e) { pm.innerHTML = ""; return; }
     const d = e.draft;
-    const title = t(e.kind === "refine" ? REFINE_LABEL : e.kind === "connector" ? CONNECTOR_LABEL : e.kind === "mass" ? MASS_LABEL : e.kind === "weld" ? WELD_LABEL : (SUPPORT_LABEL as Record<string, string>)[d.type] ?? (LOAD_LABEL as Record<string, string>)[d.type]);
+    const title = t(e.kind === "refine" ? REFINE_LABEL : e.kind === "connector" ? CONNECTOR_LABEL : e.kind === "mass" ? MASS_LABEL : e.kind === "weld" ? (e.draft.on === "points" ? SPOT_LABEL : WELD_LABEL) : (SUPPORT_LABEL as Record<string, string>)[d.type] ?? (LOAD_LABEL as Record<string, string>)[d.type]);
     const group = (legend: string, inner: string) => `<fieldset class="pm-group"><legend>${esc(legend)}</legend>${inner}</fieldset>`;
     const chk = (k: string, on: boolean | undefined, label: string) => `<label class="chk pm-chk"><input type="checkbox" data-k="${k}"${on ? " checked" : ""} />${esc(label)}</label>`;
     const hint = t("A number, an expression, a unit or a global variable: 2 kN, 3 * F");
@@ -2630,7 +2668,7 @@ export class SimController {
           + `<p class="pm-help muted">${esc(c.kind === "spring" ? t("Each side moves as a whole. The spring acts between the two sides; leave Against turning empty to keep them from turning against each other.") : t("Each side moves as a whole, and the two sides move together as one rigid piece."))}</p>`);
     } else if (d.type !== "gravity") {
       const on = (d as StudyLoad).on, n = pickCount(d);
-      const ask = on === "edges" ? t("Click edges on the model") : on === "points" ? t("Click corner points on the model") : d.type === "hinge" || d.type === "torque" || d.type === "bearing" ? t("Click cylindrical faces on the model") : d.type === "centrifugal" ? t("Click a cylindrical face for the axis, or leave it empty and choose an axis below") : t("Click faces on the model");
+      const ask = on === "edges" ? t("Click edges on the model") : on === "points" ? (e.kind === "weld" ? t("Click points on a face of the model") : t("Click corner points on the model")) : d.type === "hinge" || d.type === "torque" || d.type === "bearing" ? t("Click cylindrical faces on the model") : d.type === "centrifugal" ? t("Click a cylindrical face for the axis, or leave it empty and choose an axis below") : t("Click faces on the model");
       const sel = ON_TYPES.includes(d.type) ? `<label class="pm-field"><span>${esc(e.kind === "load" ? t("Acts on") : t("Holds"))}</span><select data-k="on">${[["", "Faces"], ["edges", "Edges"], ["points", "Points"]].map(([v, l]) => `<option value="${v}"${(on ?? "") === v ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : "";
       body += group(on === "edges" ? t("Edges") : on === "points" ? t("Points") : t("Faces"), sel + `<div class="pm-box focus sim-faces" role="status">${n ? esc(this.pickText(d)) : esc(ask)}</div>`
         + (n ? `<button class="btn small" data-k="clear">${esc(t("Clear"))}</button>` : ""));
@@ -2640,6 +2678,9 @@ export class SimController {
         + `<p class="pm-help muted">${esc(t(MASS_NOTE))}</p>`);
     } else if (e.kind === "connector") {
       // its groups are above
+    } else if (e.kind === "weld" && e.draft.on === "points") {
+      body += group(t("Size"), `<label class="pm-field"><span>${esc(t("Diameter"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-q="dia" value="${trim(e.draft.dia ?? DEFAULT_SPOT)}" spellcheck="false" /><span class="muted">mm</span></span></label>`
+        + `<p class="pm-help muted">${esc(t("Click points on a face: each spot goes through that component and joins it to the one behind it over a disc of this diameter. A click on a spot takes it away."))}</p>`);
     } else if (e.kind === "weld") {
       body += group(t("Size"), `<label class="pm-field"><span>${esc(t("Throat"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-q="throat" value="${trim(e.draft.throat)}" spellcheck="false" /><span class="muted">mm</span></span></label>`
         + `<p class="pm-help muted">${esc(t("Click the edges of one component that lie on another: the two are joined along them. The stress in the weld is its force per length over the throat."))}</p>`);
@@ -2887,6 +2928,7 @@ export class SimController {
         if (!s2) return;
         const rest = (s2.links ?? []).filter(l => !pairs.some(([a, b]) => (l.a === a && l.b === b) || (l.a === b && l.b === a)));
         if (v === "sliding" || v === "none") for (const [a, b] of pairs) rest.push({ a, b, type: v });
+        else if (v === "adhesive") for (const [a, b] of pairs) rest.push((s2.links ?? []).find(l => l.type === "adhesive" && ((l.a === a && l.b === b) || (l.a === b && l.b === a))) ?? { a, b, type: v, ...DEFAULT_GLUE });
         if (rest.length) s2.links = rest; else delete s2.links;
       });
     } else if (el.dataset.k === "link") {
@@ -2896,7 +2938,16 @@ export class SimController {
         if (!s2) return;
         const rest = (s2.links ?? []).filter(l => !((l.a === a && l.b === b) || (l.a === b && l.b === a)));
         if (v === "sliding" || v === "none") rest.push({ a, b, type: v });
+        else if (v === "adhesive") rest.push({ a, b, type: v, ...DEFAULT_GLUE });
         if (rest.length) s2.links = rest; else delete s2.links;
+      });
+    } else if (el.dataset.k === "gluet" || el.dataset.k === "gluee") {
+      const a = el.dataset.a!, b = el.dataset.b!, v = Number(el.value), thick = el.dataset.k === "gluet";
+      el.setAttribute("aria-invalid", String(!(v > 0)));
+      if (!(v > 0)) return;
+      this.host.change(t(thick ? "Adhesive thickness" : "Adhesive modulus"), d => {
+        const l = d.studies?.find(x => x.id === st.id)?.links?.find(l => l.type === "adhesive" && ((l.a === a && l.b === b) || (l.a === b && l.b === a)));
+        if (l) { if (thick) l.t = v; else l.E = v; }
       });
     }
     else if (el.dataset.k === "relief") this.host.change(t("Inertia relief"), d => { const s = d.studies?.find(x => x.id === st.id); if (s) { if (el.checked) s.settings.relief = true; else delete s.settings.relief; } });
@@ -2974,12 +3025,13 @@ export class SimController {
     else if (el.dataset.q) {
       const q = el.dataset.q, v = num(el.value), sup = e.draft as StudySupport;
       if (q === "kr" && e.kind === "connector" && !el.value.trim()) { delete e.draft.kr; el.setAttribute("aria-invalid", "false"); return; }
-      const bad = v == null || ((q === "kn" || q === "kt" || q === "kr" || (e.kind === "connector" && q[0] === "k")) && v < 0) || ((q === "throat" || q === "mass") && !(v > 0));
+      const bad = v == null || ((q === "kn" || q === "kt" || q === "kr" || (e.kind === "connector" && q[0] === "k")) && v < 0) || ((q === "throat" || q === "mass" || q === "dia") && !(v > 0));
       el.setAttribute("aria-invalid", String(bad));
       if (bad) return;
       if (e.kind === "connector") { if (q === "kr") e.draft.kr = v * 1e3; else if (/^k[012]$/.test(q)) e.draft.k[Number(q[1])] = v; return; }
       if (q === "mass" && e.kind === "mass") { e.draft.mass = v; return; }
-      if (q === "throat") (e.draft as StudyWeld).throat = v;
+      if (q === "dia") { (e.draft as StudyWeld).dia = v; this.drawMarks(); }
+      else if (q === "throat") (e.draft as StudyWeld).throat = v;
       else if (q === "kn") sup.kn = v; else if (q === "kt") sup.kt = v;
       else if (q === "accel") (e.draft as StudyLoad).accel = v || undefined;
       else if (q === "level") (e.draft as StudyLoad).level = v;

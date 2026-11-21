@@ -105,6 +105,13 @@ export interface Bolt {
 export interface Weld {
   lines: ArrayLike<number>;
   k?: number;
+  /**
+   * Spot welds (FR-CON-024) instead of lines: 6 numbers per spot, a point on a face of one body and the
+   * direction into that body. The spot goes through the body to the next one behind it and joins the two over
+   * a disc of diameter `d`, mm, there; `k` = stiffness per area, N/mm³ (default: the joining penalty).
+   */
+  spots?: ArrayLike<number>;
+  d?: number;
 }
 
 export interface WeldResult {
@@ -116,6 +123,9 @@ export interface WeldResult {
   mean: number;
   /** Where the largest is. */
   at: [number, number, number];
+  /** Spot welds: how many spots joined two bodies; `length` is then their area, mm², and `peak` and `mean`
+   * the largest and the mean force of one spot, N. */
+  spots?: number;
 }
 
 /**
@@ -185,7 +195,7 @@ export interface StaticProblem {
   gap?: number;
   /** How pairs of domains are joined where they touch, when not bonded: sliding (only the motion across the
    * surface is shared) or not at all. */
-  links?: { a: number; b: number; type: "sliding" | "none" }[];
+  links?: { a: number; b: number; type: "sliding" | "none" | "adhesive"; kn?: number; kt?: number }[];
   fixed: Support[];
   loads: Load[];
   bolts?: Bolt[];
@@ -250,7 +260,7 @@ export interface Mode {
  * `moment` = its moment about the patch's centre `at`, N·mm (FR-RES-008).
  */
 export interface Contact {
-  a: number; b: number; area: number; type: "bonded" | "sliding";
+  a: number; b: number; area: number; type: "bonded" | "sliding" | "adhesive";
   force?: [number, number, number]; moment?: [number, number, number]; at?: [number, number, number];
 }
 
@@ -488,13 +498,22 @@ export function solveStatic(pb: StaticProblem): StaticResult {
   const contacts: Contact[] = [];
   // the joining points, kept for the connection forces: contact, elements a and b, x, y, z, w, normal, γ
   const joins: number[] = [];
+  // adhesive layers (FR-CON-025): stiffness per area across and along the layer, by pair and then by contact
+  const glues = new Map<number, [number, number]>(), glueOf: ([number, number] | undefined)[] = [];
   const sets: RigidSet[] = [];
   const rc = [(pb.lo[0] + pb.hi[0]) / 2, (pb.lo[1] + pb.hi[1]) / 2, (pb.lo[2] + pb.hi[2]) / 2];
   const rL = Math.hypot(pb.hi[0] - pb.lo[0], pb.hi[1] - pb.lo[1], pb.hi[2] - pb.lo[2]) / 2 || 1;
   if (doms) {
     const eps = 2e-3 * grid.h, gap = Math.max(0, pb.gap ?? 0), far = gap + eps, nd = doms.length;
-    const how = new Map<number, "sliding" | "none">();
-    for (const l of pb.links ?? []) how.set(Math.min(l.a, l.b) * nd + Math.max(l.a, l.b), l.type);
+    const how = new Map<number, "sliding" | "none" | "adhesive">();
+    for (const l of pb.links ?? []) {
+      const key = Math.min(l.a, l.b) * nd + Math.max(l.a, l.b);
+      how.set(key, l.type);
+      if (l.type === "adhesive") {
+        if (!(l.kn! > 0) || !(l.kt! > 0)) throw new Error("E-SIM-ADHESIVE");
+        glues.set(key, [l.kn!, l.kt!]);
+      }
+    }
     const boxes = doms.map(d => triBox(d.tris));
     const found = new Map<number, { c: Contact; set: RigidSet }>();
     const PJ = new Float64Array(9);
@@ -528,13 +547,28 @@ export function solveStatic(pb: StaticProblem): StaticResult {
         if (ca < 0 || cb < 0) continue;
         const slide = how.get(a * nd + b) === "sliding";
         let f = found.get(a * nd + b);
-        if (!f) { f = { c: { a, b, area: 0, type: slide ? "sliding" : "bonded" }, set: new RigidSet(a, b, rc, rL) }; found.set(a * nd + b, f); contacts.push(f.c); sets.push(f.set); }
+        const glue = glues.get(a * nd + b);
+        if (!f) { f = { c: { a, b, area: 0, type: glue ? "adhesive" : slide ? "sliding" : "bonded" }, set: new RigidSet(a, b, rc, rL) }; found.set(a * nd + b, f); contacts.push(f.c); sets.push(f.set); glueOf.push(glue); }
         f.c.area += w;
         for (let c = 0; c < 3; c++) for (let d = 0; d < 3; d++) PJ[3 * c + d] = slide ? nrm[c] * nrm[d] : c === d ? 1 : 0;
         f.set.add(PJ, x, y, z, w);
         const ea = grid.cells[ca].el, eb = grid.cells[cb].el, EA = grid.elems[ea], EB = grid.elems[eb];
         bas.eval(x, y, z, EA.c, EA.s);
         bas2.eval(x, y, z, EB.c, EB.s);
+        if (glue) {
+          // a thin elastic layer: the jump of the two motions is resisted by kn across it and kt along it
+          const kn = glue[0], kt = glue[1];
+          for (const [e1, N1, s1] of [[ea, bas.v, 1], [eb, bas2.v, -1]] as [number, Float64Array, number][])
+            for (const [e2, N2, s2] of [[ea, bas.v, 1], [eb, bas2.v, -1]] as [number, Float64Array, number][]) {
+              const K = A.block(e1, e2), n1 = nbs[e1], n2 = nbs[e2], m2 = 3 * n2;
+              for (let i2 = 0; i2 < n1; i2++) for (let j2 = 0; j2 < n2; j2++) {
+                const v = w * s1 * s2 * N1[i2] * N2[j2];
+                if (v) for (let c = 0; c < 3; c++) for (let d = 0; d < 3; d++) K[(3 * i2 + c) * m2 + 3 * j2 + d] += v * ((c === d ? kt : 0) + (kn - kt) * nrm[c] * nrm[d]);
+              }
+            }
+          joins.push(contacts.indexOf(f.c), ea, eb, x, y, z, w, nrm[0], nrm[1], nrm[2], 0);
+          continue;
+        }
         setMat(ea);
         for (let q2 = 0; q2 < nb; q2++) traction(bas.g, 3 * q2, nrm, lam, mu, MA, 9 * q2);
         setMat(eb);
@@ -700,13 +734,81 @@ export function solveStatic(pb: StaticProblem): StaticResult {
   // (weld, element a, element b, x, y, z, length weight, stiffness per length) per point
   const weldPts: number[] = [];
   const weldSets: RigidSet[] = [];
+  // the spot each of those points belongs to (−1: a weld along a line)
+  const weldSpot: number[] = [];
   if (doms && pb.welds?.length) {
     const e0 = 2e-3 * grid.h, far = Math.max(0, pb.gap ?? 0) + e0, gw = gauss(Math.max(2, p + 1));
     const DIRS: number[][] = [];
     for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (let k = -1; k <= 1; k++) if (i || j || k) { const l = Math.hypot(i, j, k); DIRS.push([i / l, j / l, k / l]); }
     const PI3 = Float64Array.from([1, 0, 0, 0, 1, 0, 0, 0, 1]);
+    // one point of a weld: the two elements share their motion there through a spring
+    const tie = (wi: number, mine: Map<number, RigidSet>, a: number, b: number, ca: number, cb: number, x: number, y: number, z: number, w: number, k: number, spot: number) => {
+      const ea = grid.cells[ca].el, eb = grid.cells[cb].el, EA = grid.elems[ea], EB = grid.elems[eb], kw = k * w;
+      bas.eval(x, y, z, EA.c, EA.s);
+      bas2.eval(x, y, z, EB.c, EB.s);
+      for (const [e1, N1, s1] of [[ea, bas.v, 1], [eb, bas2.v, -1]] as [number, Float64Array, number][])
+        for (const [e2, N2, s2] of [[ea, bas.v, 1], [eb, bas2.v, -1]] as [number, Float64Array, number][]) {
+          const K = A.block(e1, e2), n1 = nbs[e1], n2 = nbs[e2], m2 = 3 * n2;
+          for (let i2 = 0; i2 < n1; i2++) for (let j2 = 0; j2 < n2; j2++) {
+            const v = kw * s1 * s2 * N1[i2] * N2[j2];
+            if (v) for (let c = 0; c < 3; c++) K[(3 * i2 + c) * m2 + 3 * j2 + c] += v;
+          }
+        }
+      weldPts.push(wi, ea, eb, x, y, z, w, k);
+      weldSpot.push(spot);
+      let r = mine.get(a * doms.length + b);
+      if (!r) { r = new RigidSet(a, b, rc, rL); mine.set(a * doms.length + b, r); weldSets.push(r); }
+      r.add(PI3, x, y, z, spot < 0 ? w * rL : w);
+    };
+    const gr = gauss(3), TURN = 12;
     pb.welds.forEach((W, wi) => {
       const S = W.lines, mine = new Map<number, RigidSet>();
+      if (W.spots) {
+        const P = W.spots, R = (W.d ?? 0) / 2, ds = grid.h / 16, reach = 2 * rL;
+        if (!(R > 0)) throw new Error(`E-SIM-WELD: ${wi}`);
+        for (let o = 0, si = 0; o + 5 < P.length; o += 6, si++) {
+          const n = [P[o + 3], P[o + 4], P[o + 5]], nl = Math.hypot(n[0], n[1], n[2]);
+          if (!(nl > 0)) continue;
+          for (let c = 0; c < 3; c++) n[c] /= nl;
+          const at = (t: number) => [P[o] + t * n[0], P[o + 1] + t * n[1], P[o + 2] + t * n[2]];
+          let a = -1;
+          { const q = at(e0); for (let d = 0; d < doms.length; d++) if (doms[d].inside(q[0], q[1], q[2])) { a = d; break; } }
+          if (a < 0) continue;
+          // through the body the point is on, to where it ends
+          let t0 = e0, t1 = -1;
+          for (let t = e0 + ds; t < reach; t += ds) { const q = at(t); if (!doms[a].inside(q[0], q[1], q[2])) { t1 = t; break; } t0 = t; }
+          if (t1 < 0) continue;
+          for (let it = 0; it < 30; it++) { const tm = (t0 + t1) / 2, q = at(tm); if (doms[a].inside(q[0], q[1], q[2])) t0 = tm; else t1 = tm; }
+          // the body behind it, on it or within the gap
+          let b = -1, st = e0;
+          for (const s of far > e0 ? [e0, far] : [e0]) {
+            const q = at(t1 + s);
+            for (let d = 0; d < doms.length; d++) if (d !== a && doms[d].inside(q[0], q[1], q[2])) { b = d; st = s; break; }
+            if (b >= 0) break;
+          }
+          if (b < 0) continue;
+          const c0 = at(t1), ax = Math.abs(n[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+          const u = [n[1] * ax[2] - n[2] * ax[1], n[2] * ax[0] - n[0] * ax[2], n[0] * ax[1] - n[1] * ax[0]], ul = Math.hypot(u[0], u[1], u[2]);
+          for (let c = 0; c < 3; c++) u[c] /= ul;
+          const v = [n[1] * u[2] - n[2] * u[1], n[2] * u[0] - n[0] * u[2], n[0] * u[1] - n[1] * u[0]];
+          for (let g = 0; g < gr.x.length; g++) {
+            const r = R * (gr.x[g] + 1) / 2, wr = (gr.w[g] / 2) * R * r * (2 * Math.PI / TURN);
+            for (let q = 0; q < TURN; q++) {
+              const an = (q + 0.5 * (g % 2)) * 2 * Math.PI / TURN, cu = r * Math.cos(an), cv = r * Math.sin(an);
+              const x = c0[0] + cu * u[0] + cv * v[0], y = c0[1] + cu * u[1] + cv * v[1], z = c0[2] + cu * u[2] + cv * v[2];
+              const pa = [x - 2 * e0 * n[0], y - 2 * e0 * n[1], z - 2 * e0 * n[2]], pc = [x + st * n[0], y + st * n[1], z + st * n[2]];
+              if (!doms[a].inside(pa[0], pa[1], pa[2]) || !doms[b].inside(pc[0], pc[1], pc[2])) continue;
+              const ca = grid.cellOf(pa[0], pa[1], pa[2], a), cb = grid.cellOf(pc[0], pc[1], pc[2], b);
+              if (ca < 0 || cb < 0) continue;
+              const ea = grid.cells[ca].el, eb = grid.cells[cb].el;
+              const k = W.k ?? (rigidD[a] ? gam[eb] : rigidD[b] ? gam[ea] : Math.max(gam[ea], gam[eb]));
+              tie(wi, mine, a, b, ca, cb, x, y, z, wr, k, si);
+            }
+          }
+        }
+        if (!mine.size) throw new Error(`E-SIM-WELD: ${wi}`);
+        return;
+      }
       for (let o = 0; o + 8 < S.length; o += 9) {
         const d = [S[o + 3] - S[o], S[o + 4] - S[o + 1], S[o + 5] - S[o + 2]], l = Math.hypot(d[0], d[1], d[2]);
         if (!(l > 0)) continue;
@@ -741,23 +843,8 @@ export function solveStatic(pb: StaticProblem): StaticResult {
             if (b < 0) continue;
             const ca = grid.cellOf(ax, ay, az, a), cb = grid.cellOf(bx, by, bz, b);
             if (ca < 0 || cb < 0) continue;
-            const ea = grid.cells[ca].el, eb = grid.cells[cb].el, EA = grid.elems[ea], EB = grid.elems[eb];
             const soft = Math.min(...[a, b].filter(q => !rigidD[q]).map(q => mats[q].E), Infinity);
-            const k = W.k ?? (Number.isFinite(soft) ? soft : stiffest), kw = k * w;
-            bas.eval(x, y, z, EA.c, EA.s);
-            bas2.eval(x, y, z, EB.c, EB.s);
-            for (const [e1, N1, s1] of [[ea, bas.v, 1], [eb, bas2.v, -1]] as [number, Float64Array, number][])
-              for (const [e2, N2, s2] of [[ea, bas.v, 1], [eb, bas2.v, -1]] as [number, Float64Array, number][]) {
-                const K = A.block(e1, e2), n1 = nbs[e1], n2 = nbs[e2], m2 = 3 * n2;
-                for (let i2 = 0; i2 < n1; i2++) for (let j2 = 0; j2 < n2; j2++) {
-                  const v = kw * s1 * s2 * N1[i2] * N2[j2];
-                  if (v) for (let c = 0; c < 3; c++) K[(3 * i2 + c) * m2 + 3 * j2 + c] += v;
-                }
-              }
-            weldPts.push(wi, ea, eb, x, y, z, w, k);
-            let r = mine.get(a * doms.length + b);
-            if (!r) { r = new RigidSet(a, b, rc, rL); mine.set(a * doms.length + b, r); weldSets.push(r); }
-            r.add(PI3, x, y, z, w * rL);
+            tie(wi, mine, a, b, ca, cb, x, y, z, w, W.k ?? (Number.isFinite(soft) ? soft : stiffest), -1);
           }
         }
       }
@@ -1332,7 +1419,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
   // welds: the strip's force per length is its stiffness times the jump of the two bodies' motion
   const welds: WeldResult[] | undefined = pb.welds?.length && !modal ? pb.welds.map(() => ({ force: [0, 0, 0], length: 0, peak: 0, mean: 0, at: [0, 0, 0] })) : undefined;
   if (welds) {
-    const ju = [0, 0, 0];
+    const ju = [0, 0, 0], spotF = new Map<number, number[]>();
     for (let o = 0; o < weldPts.length; o += 8) {
       const R = welds[weldPts[o]], px = weldPts[o + 3], py = weldPts[o + 4], pz = weldPts[o + 5], w = weldPts[o + 6], k = weldPts[o + 7];
       ju[0] = ju[1] = ju[2] = 0;
@@ -1344,10 +1431,26 @@ export function solveStatic(pb: StaticProblem): StaticResult {
       const f = k * Math.hypot(ju[0], ju[1], ju[2]);
       for (let d = 0; d < 3; d++) R.force[d] += w * k * ju[d];
       R.length += w;
+      const sp = weldSpot[o / 8];
+      if (sp >= 0) {
+        // a spot weld: the force of each spot
+        const key = weldPts[o] * 1e6 + sp;
+        let T = spotF.get(key);
+        if (!T) { T = [0, 0, 0, 0, 0, 0, 0, weldPts[o]]; spotF.set(key, T); }
+        for (let d = 0; d < 3; d++) T[d] += w * k * ju[d];
+        T[3] += w * px; T[4] += w * py; T[5] += w * pz; T[6] += w;
+        continue;
+      }
       R.mean += w * f;
       if (f > R.peak) { R.peak = f; R.at = [px, py, pz]; }
     }
-    for (const R of welds) if (R.length > 0) R.mean /= R.length;
+    for (const T of spotF.values()) {
+      const R = welds[T[7]], f = Math.hypot(T[0], T[1], T[2]);
+      R.spots = (R.spots ?? 0) + 1;
+      R.mean += f;
+      if (f >= R.peak) { R.peak = f; R.at = [T[3] / T[6], T[4] / T[6], T[5] / T[6]]; }
+    }
+    for (const R of welds) { if (R.spots) R.mean /= R.spots; else if (R.length > 0) R.mean /= R.length; }
   }
 
   // connection forces: the flux the joining terms carry, ½(σ_a + σ_b) n − γ (u_a − u_b), is what b does to a
@@ -1374,6 +1477,12 @@ export function solveStatic(pb: StaticProblem): StaticResult {
         }
       }
       for (let c = 0; c < 3; c++) ta[c] -= g * ua[c];
+      const gl = glueOf[ci];
+      if (gl) {
+        // the layer alone carries the load: b pulls a back by its stiffness times the jump
+        const un = ua[0] * nrm[0] + ua[1] * nrm[1] + ua[2] * nrm[2];
+        for (let c = 0; c < 3; c++) ta[c] = -(gl[1] * ua[c] + (gl[0] - gl[1]) * un * nrm[c]);
+      }
       if (contacts[ci].type === "sliding") {
         const tn = ta[0] * nrm[0] + ta[1] * nrm[1] + ta[2] * nrm[2];
         for (let c = 0; c < 3; c++) ta[c] = tn * nrm[c];

@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.643.0] - 2026-11-21
+
+### Added
+
+- Structural analysis of assemblies: **spot welds** (FR-CON-024). **Spot weld** on the Simulation tab takes points clicked on a face and a diameter; each spot goes through that component and joins it to the one behind it over a disc of that size. The results list the number of spots, the largest force of one spot and its stress over the spot's area.
+- Structural analysis of assemblies: **adhesive layers** (FR-CON-025). The connection type **Adhesive** joins two components through a thin elastic layer with a thickness and an elastic modulus, instead of bonding them rigidly; the Connections table gives the force the layer carries.
+
 ## [1.642.0] - 2026-11-21
 
 ### Added
@@ -4183,7 +4190,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.642.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.643.0...HEAD
+[1.643.0]: https://github.com/kothf/step-viewer/compare/v1.642.0...v1.643.0
 [1.642.0]: https://github.com/kothf/step-viewer/compare/v1.641.0...v1.642.0
 [1.641.0]: https://github.com/kothf/step-viewer/compare/v1.640.0...v1.641.0
 [1.640.0]: https://github.com/kothf/step-viewer/compare/v1.639.0...v1.640.0
