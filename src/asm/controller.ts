@@ -244,6 +244,11 @@ export class AsmController {
       /** The shown components, in the view's part order, with their face names. */
       shown: () => this.shownIds.map((id, idx) => ({ idx, id, faces: this.faceNames[idx] ?? [] })),
       idle: () => !this.picking && !this.moving,
+      /** The shown components, once each, with their parts' material names. */
+      comps: () => {
+        const ex = this.expanded?.doc ?? this.doc;
+        return [...new Set(this.shownIds)].map(id => { const c = ex?.components.find(x => x.id === id); return { id, name: c?.name ?? id, material: (c && ex?.parts[c.part]?.doc?.material?.name) || "" }; });
+      },
       /** A fingerprint of everything but the studies and the view's own data. */
       stateKey: () => {
         const d = this.doc;

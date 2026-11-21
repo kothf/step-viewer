@@ -5,6 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.633.0] - 2026-11-21
+
+### Added
+
+- Structural analysis of assemblies: a **Components** list in the Study tab. Untick a component to leave it out of the study (FR-CON-001): it stays in view as a ghost, the solver does not see it, and a support or load still on it says so when solving. At least one component always stays.
+- A component can be analysed with another material than its part's, for this study only (FR-CON-002): click the material beside its name. The part itself is not changed; **No material** in the dialog goes back to the part's material.
+- The report lists the components left out.
+
 ## [1.632.0] - 2026-11-21
 
 ### Added
@@ -4085,7 +4093,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.632.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.633.0...HEAD
+[1.633.0]: https://github.com/kothf/step-viewer/compare/v1.632.0...v1.633.0
 [1.632.0]: https://github.com/kothf/step-viewer/compare/v1.631.0...v1.632.0
 [1.631.0]: https://github.com/kothf/step-viewer/compare/v1.630.0...v1.631.0
 [1.630.0]: https://github.com/kothf/step-viewer/compare/v1.629.0...v1.630.0

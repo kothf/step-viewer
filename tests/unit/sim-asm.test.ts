@@ -2,8 +2,8 @@
 // others where they touch or come within the gap tolerance.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { studyProblem, runStatic, type RunInput } from "../../src/sim/run";
-import { newStudy } from "../../src/sim/types";
+import { studyProblem, runStatic, withoutFaces, type RunInput } from "../../src/sim/run";
+import { compOf, newStudy, offComps } from "../../src/sim/types";
 import { findConnections } from "../../src/sim/connect";
 
 function rectFace(axis: number, at: number, lo: number[], hi: number[], out: boolean): number[] {
@@ -146,4 +146,32 @@ test("FR-CON-003: the pairs that touch or face each other within the gap are fou
   assert.ok(ac.pa.length > 0 && ac.pb.length > 0);
   // a tighter tolerance leaves the gapped pair out
   assert.deepEqual(findConnections(m.parts, 0.01).map(f => [f.a, f.b]), [[0, 2]]);
+});
+
+test("FR-CON-001/002: a component left out is not there for the solver; another material changes the stretch", () => {
+  const L = 100, B = 20, T = 10, F = 1000, J = 40;
+  // a third block sits on top of the bar: left out, the bar stretches as it does alone
+  const m = boxes([{ id: "a", lo: [0, 0, 0], hi: [J, B, T] }, { id: "b", lo: [J, 0, 0], hi: [L, B, T] }, { id: "c#1", lo: [20, 0, T], hi: [80, B, 3 * T] }]);
+  const st = newStudy([]);
+  st.supports.push({ id: "s1", type: "sliding", faces: [{ name: "a@x0" }] }, { id: "s2", type: "sliding", faces: [{ name: "a@y0" }, { name: "b@y0" }] }, { id: "s3", type: "sliding", faces: [{ name: "a@z0" }, { name: "b@z0" }] });
+  st.loads.push({ id: "l1", type: "force", faces: [{ name: "b@x1" }], comp: [{ v: F }, { v: 0 }, { v: 0 }] });
+  st.comps = { c: { off: true } };
+  const off = offComps(st);
+  assert.deepEqual([...off], ["c"]);
+  assert.equal(compOf("c#1@x0"), "c");
+  assert.equal(compOf("c#1"), "c");
+  const body = withoutFaces(m.body, n => off.has(compOf(n)));
+  assert.equal(body.face.length, 24);
+  assert.ok(Math.abs(body.hi[2] - T) < 1e-12, `box ${body.hi}`);
+  const alu = { name: "Aluminium", E: 70000, nu: 0.33, rho: 2.7e-9 };
+  const run = (mb: typeof steel | typeof alu) => [...runStatic({ body, mat: steel, regions: [{ tris: m.parts[0], mat: steel }, { tris: m.parts[1], mat: mb }], asm: { gap: 0.1 }, problem: studyProblem(st, body), passes: 3, energyTol: 0, pos: Float32Array.from([L, B / 2, T / 2]), nrm: Float32Array.from([1, 0, 0]) })].at(-1)!;
+  const u = (F * J) / (steel.E * B * T) + (F * (L - J)) / (steel.E * B * T);
+  const r = run(steel);
+  assert.ok(Math.abs(r.u[0] / u - 1) < 0.01, `end ${r.u[0]} vs ${u}`);
+  assert.equal(r.contacts!.length, 1);
+  const u2 = (F * J) / (steel.E * B * T) + (F * (L - J)) / (alu.E * B * T), r2 = run(alu);
+  assert.ok(Math.abs(r2.u[0] / u2 - 1) < 0.02, `end ${r2.u[0]} vs ${u2}`);
+  // a support on the component left out can no longer be solved
+  st.supports.push({ id: "s4", type: "fixed", faces: [{ name: "c#1@z1" }] });
+  assert.deepEqual(studyProblem(st, body).problems, [{ id: "s4", code: "E-SIM-REF" }]);
 });

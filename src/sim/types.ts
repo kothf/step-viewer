@@ -3,6 +3,7 @@
 // (persistent face names), so a study follows the model through edits (FR-STU-020).
 
 import type { FaceRef, Num, V3 } from "../model/types";
+import type { MatRef } from "../tools/materials";
 
 export type SupportType = "fixed" | "sliding" | "hinge" | "dirs" | "elastic" | "disp";
 export type LoadType = "force" | "pressure" | "gravity" | "moment" | "centrifugal" | "torque" | "bearing" | "hydro" | "remote";
@@ -111,6 +112,8 @@ export interface Study {
   suppressed?: string[];
   /** Assemblies: pairs of components that are not bonded where they touch (FR-CON-005/006). */
   links?: StudyLink[];
+  /** Assemblies: what the study changes on a component, by component id (FR-CON-001/002). */
+  comps?: Record<string, StudyComp>;
   /** Probes: points on the undeformed model, mm, whose result values are read after each solve (FR-RES-005). */
   probes?: V3[];
   /** Static studies: load cases (FR-LOAD-022), each solved on its own with the same supports. None = one case with every load. */
@@ -122,6 +125,13 @@ export interface Study {
   /** View state: the plot shown and the deformation scale (0 = automatic). */
   plot?: { kind: PlotKind; scale?: number; deformed?: boolean };
 }
+
+/** A component in a study: left out of the analysis (`off`), or analysed with another material than its part's. */
+export interface StudyComp { off?: boolean; material?: MatRef }
+/** The component a region key (`<comp>` or `<comp>#<solid>`) or a face name (`<comp>@<face>`) belongs to. */
+export const compOf = (key: string) => { const m = /[@#]/.exec(key); return m ? key.slice(0, m.index) : key; };
+/** The ids of the components a study leaves out. */
+export const offComps = (st: Study | null | undefined) => new Set(Object.entries(st?.comps ?? {}).filter(([, c]) => c.off).map(([id]) => id));
 
 /** How two components (by id, `a` < `b`) are joined where they touch: sliding along the surface, or not at all. */
 export interface StudyLink { a: string; b: string; type: "sliding" | "none" }

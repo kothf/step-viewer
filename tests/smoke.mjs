@@ -16954,6 +16954,39 @@ try {
       && a1.maxU > 0.2 && a1.maxU < 0.6 && asRu.length === 0
       && a2.stale && a2.links.length === 1 && /E-SIM-LOOSE/.test(a3.error ?? "") && /Nothing holds/.test(asSaid) && a4.links.length === 0,
       `sim 1.630: an assembly's study joins two bars across a 0.05 mm gap and lists the connection; not joined, the loose bar is named; translated (${JSON.stringify({ asTab, asPick, asSet, error: a1.error, contacts: a1.contacts, comps: a1.comps, maxU: a1.maxU, asTree, asRu, stale: a2.stale, links: [a2.links, a4.links], loose: a3.error, asSaid })})`);
+    // 1.633: a component gets another material for the study (the outer bar in aluminium bends more), or is left out
+    const c0 = await sim();
+    await mp.click('#sim-tree .sim-complist li[data-comp="c2"] [data-a="compmat"]');
+    await mp.waitForSelector("#mat-dlg[open]");
+    await mp.fill("#mat-q", "6061");
+    await mp.click("#mat-dlg .mat-list li[data-i]");
+    await mp.click("#mat-dlg [data-a=ok]");
+    await mp.waitForSelector("#mat-dlg", { state: "detached" });
+    await mp.waitForTimeout(400);
+    const c1 = await sim();
+    await mp.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const c2 = await sim();
+    await mp.click("#lang-btn");
+    const cRu = await mp.evaluate(() => [...document.querySelectorAll("#tab-sim .sim-comps *")].filter(e => !e.children.length && !e.closest("[translate=no]")).map(e => e.textContent.trim()).filter(x => /[A-Za-z]{4}/.test(x)));
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(300);
+    const cWide = await mp.evaluate(() => document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth);
+    // left out: the load on it can no longer be solved, and the message says why; the last component cannot be left out
+    await mp.uncheck('#sim-tree .sim-complist li[data-comp="c2"] [data-k="compon"]');
+    await mp.waitForTimeout(400);
+    const c3 = await sim();
+    await mp.click('#sim-tools [data-s="solve"]');
+    await solved();
+    const c4 = await sim();
+    const cSaid = await mp.evaluate(() => [...document.querySelectorAll(".toast")].map(x => x.textContent).join(" | "));
+    await mp.evaluate(() => { const b = [...document.querySelectorAll('#sim-tree .sim-complist [data-k="compon"]')].find(x => x.checked); b?.click(); });
+    await mp.waitForTimeout(300);
+    const c5 = await sim();
+    check(c0.compList?.length === 2 && c0.compList.every(c => !c.off && !c.own && c.material === "Test steel")
+      && c1.compList[1].own && /6061/.test(c1.compList[1].material) && !c2.error && c2.done && c2.maxU > 1.1 * a1.maxU && cRu.length === 0 && cWide <= 0
+      && c3.compList[1].off && /E-SIM-REF/.test(c4.error ?? "") && /left out of the study/.test(cSaid) && c5.compList.filter(c => c.off).length === 1,
+      `sim 1.633: a component analysed with another material bends more; a component left out takes its load's faces with it; one component always stays (${JSON.stringify({ list: [c0.compList, c1.compList, c3.compList, c5.compList], stale: c1.stale, error: [c2.error, c4.error], maxU: [a1.maxU, c2.maxU], cRu, cWide, cSaid })})`);
     await ctx.close();
   }
 } catch (err) {
