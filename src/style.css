@@ -1761,6 +1761,9 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .sim-modes tbody tr.rigid td { color: var(--muted); }
 .sim-modes tbody tr.near td { color: var(--warn, #e8590c); }
 .sim-excite.warn { color: var(--warn, #e8590c); }
+.sim-more { color: var(--warn, #e8590c); }
+.sim-cumul { margin: 6px 0 2px; }
+#sim-tree .pm-field { grid-template-columns: 96px minmax(0, 1fr); }
 .sim-modes tfoot td { color: var(--muted); border-bottom: 0; }
 .sim-legend .ana-row select { max-width: 150px; }
 .sim-hot tbody tr.sel { background: color-mix(in srgb, var(--accent) 16%, transparent); }
