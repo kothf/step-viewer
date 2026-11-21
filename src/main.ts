@@ -2318,6 +2318,11 @@ const sim = new SimController({
     const f = faceUnder(x - r.left, y - r.top);
     return f ? { faceId: f.face.id, point: f.point.toArray() as [number, number, number] } : null;
   },
+  snapAt: (x, y) => {
+    const r = viewer.renderer.domElement.getBoundingClientRect();
+    const s = snapper.pick(x - r.left, y - r.top);
+    return s ? { kind: s.kind, point: viewer.toPart(s.part, s.point.clone()).toArray() as [number, number, number], edge: s.edge } : null;
+  },
   showTab: () => { if (!$("#t-sim").hidden) showLeftTab("sim"); },
 });
 modeller.simHook = { active: () => sim.active, click: e => sim.click(e), key: e => sim.key(e), changed: () => sim.changed(), plotting: () => sim.plotting };

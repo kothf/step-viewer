@@ -35,6 +35,74 @@ function trisOf(b: SimBody, names: string[]): Float64Array | null {
   return Float64Array.from(out);
 }
 
+const vkey = (t: ArrayLike<number>, o: number, q: number) => `${Math.round(t[o] / q)},${Math.round(t[o + 1] / q)},${Math.round(t[o + 2] / q)}`;
+const quantum = (b: SimBody) => 1e-7 * Math.max(b.hi[0] - b.lo[0], b.hi[1] - b.lo[1], b.hi[2] - b.lo[2], 1e-9);
+
+/**
+ * The edge two faces share, as segments of 9 numbers: both ends and a direction into the body (against the
+ * two faces' normals). Null when a face is gone, empty when they share no edge.
+ */
+export function edgeLines(b: SimBody, fa: string, fb: string): Float64Array | null {
+  const ia = b.names.indexOf(fa), ib = b.names.indexOf(fb);
+  if (ia < 0 || ib < 0) return null;
+  if (ia === ib) return new Float64Array(0);
+  const q = quantum(b), T = b.tris, nrm = triNormals(T);
+  const sides = new Map<string, number>();
+  const each = (f: number, fn: (key: string, t: number, o0: number, o1: number) => void) => {
+    for (let t = 0; t < b.face.length; t++) {
+      if (b.face[t] !== f) continue;
+      const k = [0, 1, 2].map(v => vkey(T, 9 * t + 3 * v, q));
+      for (let e = 0; e < 3; e++) {
+        const i = e, j = (e + 1) % 3;
+        fn(k[i] < k[j] ? `${k[i]}|${k[j]}` : `${k[j]}|${k[i]}`, t, 9 * t + 3 * i, 9 * t + 3 * j);
+      }
+    }
+  };
+  each(ib, (key, t) => { sides.set(key, t); });
+  const out: number[] = [];
+  each(ia, (key, t, o0, o1) => {
+    const u = sides.get(key);
+    if (u === undefined) return;
+    const d = [0, 1, 2].map(c => -(nrm[3 * t + c] + nrm[3 * u + c]));
+    const l = Math.hypot(d[0], d[1], d[2]) || 1;
+    out.push(T[o0], T[o0 + 1], T[o0 + 2], T[o1], T[o1 + 1], T[o1 + 2], d[0] / l, d[1] / l, d[2] / l);
+  });
+  return Float64Array.from(out);
+}
+
+/**
+ * The corner where the faces meet nearest `at`: position and a direction into the body (against the normals
+ * of the triangles around it). Null when a face is gone or they share no point.
+ */
+export function cornerPoint(b: SimBody, faces: string[], at: ArrayLike<number>): number[] | null {
+  const ids = faces.map(n => b.names.indexOf(n));
+  if (!ids.length || ids.some(i => i < 0)) return null;
+  const q = quantum(b), T = b.tris;
+  const seen = new Map<string, { mask: Set<number>; o: number }>();
+  for (let t = 0; t < b.face.length; t++) {
+    if (!ids.includes(b.face[t])) continue;
+    for (let v = 0; v < 3; v++) {
+      const k = vkey(T, 9 * t + 3 * v, q);
+      let r = seen.get(k);
+      if (!r) seen.set(k, r = { mask: new Set(), o: 9 * t + 3 * v });
+      r.mask.add(b.face[t]);
+    }
+  }
+  const want = new Set(ids).size;
+  let best = -1, bd = Infinity, bk = "";
+  for (const [k, r] of seen) {
+    if (r.mask.size < want) continue;
+    const d = Math.hypot(T[r.o] - at[0], T[r.o + 1] - at[1], T[r.o + 2] - at[2]);
+    if (d < bd) { bd = d; best = r.o; bk = k; }
+  }
+  if (best < 0) return null;
+  const nrm = triNormals(T), d = [0, 0, 0];
+  for (let t = 0; t < b.face.length; t++) for (let v = 0; v < 3; v++)
+    if (vkey(T, 9 * t + 3 * v, q) === bk) for (let c = 0; c < 3; c++) d[c] -= nrm[3 * t + c];
+  const l = Math.hypot(d[0], d[1], d[2]) || 1;
+  return [T[best], T[best + 1], T[best + 2], d[0] / l, d[1] / l, d[2] / l];
+}
+
 /** The axis of a round face from its triangles: the direction most square to every normal. */
 export function axisOf(tris: ArrayLike<number>): number[] | null {
   const n = triNormals(tris), a = triNormals(tris, true);
@@ -91,6 +159,21 @@ export function studyProblem(st: Study, b: SimBody): StudyProblem {
     const comp = (l.comp ?? [{ v: 0 }, { v: 0 }, { v: 0 }]).map(c => c.v);
     if (l.type === "gravity") {
       out.gravity = (out.gravity ?? [0, 0, 0]).map((v, i) => v + comp[i]);
+      continue;
+    }
+    if (l.type === "force" && l.on) {
+      const none = new Float64Array(0), parts: number[] = [];
+      let gone = false;
+      if (l.on === "edges") for (const e of l.edges ?? []) {
+        const s = edgeLines(b, e.faces[0], e.faces[1]);
+        if (!s || !s.length) gone = true; else for (const v of s) parts.push(v);
+      } else for (const pt of l.points ?? []) {
+        const c = cornerPoint(b, pt.faces, pt.at);
+        if (!c) gone = true; else parts.push(...c);
+      }
+      if (gone) out.problems.push({ id: l.id, code: "E-SIM-REF" });
+      else if (!parts.length) out.problems.push({ id: l.id, code: "E-SIM-EMPTY" });
+      else out.loads.push(l.on === "edges" ? { tris: none, force: comp, lines: Float64Array.from(parts) } : { tris: none, force: comp, points: Float64Array.from(parts) });
       continue;
     }
     if (!l.faces.length) { out.problems.push({ id: l.id, code: "E-SIM-EMPTY" }); continue; }

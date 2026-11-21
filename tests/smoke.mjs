@@ -16301,6 +16301,42 @@ try {
     const stale = await mp.evaluate(() => ({ legend: !document.querySelector("#sim-legend").hidden, note: /Out of date/.test(document.querySelector("#sim-tree .sim-res")?.textContent ?? ""), mat: window.__sv.viewer.parts[0].mesh.material === window.__sv.viewer.parts[0].material }));
     check(r2.plot.kind === "u" && Math.abs(r2.plot.range[1] - r1.maxU) < 1e-6 && r2.plot.scale === 0 && r3.stale && !r3.plot.shown && !stale.legend && stale.note && stale.mat && planesBack === 3 && probesLeft === 0,
       `sim 1.608: displacement plot without the deformed shape; an undo marks the results out of date and restores the model (${JSON.stringify({ range: r2.plot.range, scale: r2.plot.scale, stale: r3.stale, shown: r3.plot.shown, planesBack, ...stale })})`);
+    // 1.612.0: a force on an edge, then on a corner point: picked in the view, named by faces, solved.
+    const edgeSpot = () => mp.evaluate(() => {
+      const v = window.__sv.viewer, part = v.parts[0], names = window.__sv.model.last().faceNames, r = v.renderer.domElement.getBoundingClientRect();
+      const scr = q => { const s = v.toWorld(part, q).clone().project(v.camera); return { x: r.left + ((s.x + 1) / 2) * r.width, y: r.top + ((1 - s.y) / 2) * r.height }; };
+      const top = names.indexOf("f1:end");
+      // an edge of the top face whose middle and start are both in view (the nearest to the eye)
+      const es = part.data.edges.filter(e => e.faces.includes(top)).map(e => ({ e, d: v.toWorld(part, e.mid).distanceTo(v.camera.position) })).sort((a, b) => a.d - b.d);
+      const e = es[0].e;
+      return { mid: scr(e.mid), start: scr(e.start), faces: e.faces.map(f => names[f]).sort() };
+    });
+    await mp.click('#sim-tools [data-s="force"]');
+    await mp.selectOption('#sim-pm [data-k="on"]', "edges");
+    const spot = await edgeSpot();
+    await mp.mouse.click(spot.mid.x, spot.mid.y);
+    await mp.waitForTimeout(200);
+    const edgePick = await mp.evaluate(() => ({ box: document.querySelector("#sim-pm .sim-faces")?.textContent, normal: !!document.querySelector('#sim-pm [data-k="normal"]'), marks: [...window.__sv.viewer.parts[0].group.getObjectByName("sim-marks").children].filter(o => o.isLineSegments).length }));
+    await mp.fill('#sim-pm [data-n="c2"]', "-500");
+    await mp.keyboard.press("Tab");
+    await mp.click("#sim-pm .pm-ok");
+    await settle();
+    await mp.click('#sim-tools [data-s="force"]');
+    await mp.selectOption('#sim-pm [data-k="on"]', "points");
+    await mp.mouse.click(spot.start.x, spot.start.y);
+    await mp.waitForTimeout(200);
+    const ptPick = await mp.evaluate(() => ({ box: document.querySelector("#sim-pm .sim-faces")?.textContent, marks: [...window.__sv.viewer.parts[0].group.getObjectByName("sim-marks").children].filter(o => o.isPoints).length }));
+    await mp.fill('#sim-pm [data-n="c2"]', "-250");
+    await mp.keyboard.press("Tab");
+    await mp.click("#sim-pm .pm-ok");
+    await settle();
+    const eLoads = await mp.evaluate(() => window.__sv.model.store.doc.studies[0].loads.filter(l => l.on).map(l => ({ on: l.on, edges: l.edges?.map(e => [...e.faces].sort()), faces: l.points?.[0]?.faces.length, rows: [...document.querySelectorAll("#sim-tree .sim-row .sim-meta")].map(e => e.textContent) })));
+    await mp.click('#sim-tools [data-s="solve"]');
+    await mp.waitForFunction(() => { const s = window.__sv.sim.state(); return (s.done && !s.stale) || s.error; }, null, { timeout: 180000 });
+    const eRes = await sim();
+    check(edgePick.box === "1 edge" && !edgePick.normal && edgePick.marks === 1 && ptPick.box === "1 point" && ptPick.marks === 1 && eLoads.length === 2 && eLoads[0].on === "edges" && JSON.stringify(eLoads[0].edges) === JSON.stringify([spot.faces])
+      && eLoads[1].on === "points" && eLoads[1].faces === 3 && eLoads[0].rows.includes("1 edge") && eLoads[0].rows.includes("1 point") && !eRes.error && Math.abs(eRes.applied.force[2] + 1750) < 1e-6 && Math.abs(eRes.reactions[0].force[2] - 1750) < 0.01,
+      `sim 1.612: a force on an edge and one on a corner point are picked in the view, kept by face names and solved; the reaction balances all three loads (${JSON.stringify({ edgePick, ptPick, eLoads: eLoads.map(l => ({ on: l.on, faces: l.faces })), error: eRes.error, applied: eRes.applied?.force, reaction: eRes.reactions[0]?.force })})`);
     // Without supports the solve says so and nothing runs; the Russian UI has no English left in the Study tab.
     await mp.click('#sim-tree .sim-row [data-a="del"]');
     await settle();

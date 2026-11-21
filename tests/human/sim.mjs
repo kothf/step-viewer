@@ -124,4 +124,40 @@ const r3 = await sim();
 const img9 = await snap(pg, "solved-again");
 check("SA1-7", stale && !r3.error && Math.abs(r3.maxU / r.maxU - 2) < 0.01, "a changed load marks the results out of date; solving again doubles the deflection", { stale, maxU: r3.maxU }, img9);
 void img8;
+
+// SA1-11: a force on an edge and one on a corner point: Acts on → Edges / Points, a click on the model each.
+await pg.click('#sim-legend [data-a="close"]');
+const spot = await pg.evaluate(() => {
+  const v = window.__sv.viewer, part = v.parts[0], r = v.renderer.domElement.getBoundingClientRect();
+  const scr = q => { const s = v.toWorld(part, q).clone().project(v.camera); return { x: r.left + ((s.x + 1) / 2) * r.width, y: r.top + ((1 - s.y) / 2) * r.height }; };
+  const e = part.data.edges.filter(e => e.type === "line").map(e => ({ e, d: v.toWorld(part, e.mid).distanceTo(v.camera.position) })).sort((a, b) => a.d - b.d)[0].e;
+  return { mid: scr(e.mid), start: scr(e.start) };
+});
+await pg.click('#sim-tools [data-s="force"]');
+await pg.selectOption('#sim-pm [data-k="on"]', "edges");
+await pg.mouse.click(spot.mid.x, spot.mid.y);
+await pg.fill('#sim-pm [data-n="c2"]', "-300");
+await pg.keyboard.press("Tab");
+const img13 = await snap(pg, "force-on-edge");
+const eb = await pg.evaluate(() => document.querySelector("#sim-pm .sim-faces")?.textContent);
+await pg.click("#sim-pm .pm-ok");
+await idle(pg);
+await pg.click('#sim-tools [data-s="force"]');
+await pg.selectOption('#sim-pm [data-k="on"]', "points");
+await pg.mouse.click(spot.start.x, spot.start.y);
+await pg.fill('#sim-pm [data-n="c2"]', "-200");
+await pg.keyboard.press("Tab");
+const img14 = await snap(pg, "force-on-point");
+const pb = await pg.evaluate(() => document.querySelector("#sim-pm .sim-faces")?.textContent);
+await pg.click("#sim-pm .pm-ok");
+await idle(pg);
+const img15 = await snap(pg, "edge-and-point-marks");
+await pg.click('#sim-tools [data-s="solve"]');
+await pg.waitForFunction(() => { const s = window.__sv.sim.state(); return (s.done && !s.stale) || s.error; }, null, { timeout: 300000 });
+const r4 = await sim();
+const img16 = await snap(pg, "edge-and-point-solved");
+const total = Math.hypot(...r4.applied.force), before = Math.hypot(...r3.applied.force);
+check("SA1-11", eb === "1 edge" && pb === "1 point" && !r4.error && total !== before && Math.abs(Math.hypot(...r4.reactions[0].force) - total) < 1e-3 * total,
+  "a force on an edge and one on a corner point are picked on the model and solved; the support carries all the loads", { eb, pb, applied: r4.applied.force, reaction: r4.reactions[0].force }, img16);
+void img13; void img14; void img15;
 await finish(browser, pg);

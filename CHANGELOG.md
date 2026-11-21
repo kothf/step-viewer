@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.612.0] - 2026-11-21
+
+### Added
+- Structural analysis: a **Force** can act on **edges** or on **corner points** as well as on faces (**Acts on** in the Force panel). A force on edges is spread over their length, a force on points is shared equally between them; both are given by X, Y, Z components. Edges and points are kept by the names of the faces that meet there, so the load follows the model through edits. They are drawn on the model and listed in the study tree and the report.
+
 ## [1.611.0] - 2026-11-21
 
 ### Added
@@ -3932,7 +3937,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.611.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.612.0...HEAD
+[1.612.0]: https://github.com/kothf/step-viewer/compare/v1.611.0...v1.612.0
 [1.611.0]: https://github.com/kothf/step-viewer/compare/v1.610.0...v1.611.0
 [1.610.0]: https://github.com/kothf/step-viewer/compare/v1.609.0...v1.610.0
 [1.609.0]: https://github.com/kothf/step-viewer/compare/v1.608.0...v1.609.0

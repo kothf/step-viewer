@@ -2,7 +2,7 @@
 // Values are in the solver's units: N, MPa, mm/s², N·mm. Faces are named like everywhere else
 // (persistent face names), so a study follows the model through edits (FR-STU-020).
 
-import type { FaceRef, Num } from "../model/types";
+import type { FaceRef, Num, V3 } from "../model/types";
 
 export type SupportType = "fixed" | "sliding" | "hinge" | "dirs";
 export type LoadType = "force" | "pressure" | "gravity" | "moment";
@@ -18,12 +18,21 @@ export interface StudySupport {
   dirs?: [boolean, boolean, boolean];
 }
 
+/** An edge of the model, named by the two faces it joins. */
+export interface StudyEdge { faces: [string, string]; hint?: V3 }
+/** A corner of the model, named by the faces that meet there; `at` tells corners of the same faces apart. */
+export interface StudyPoint { faces: string[]; at: V3 }
+
 export interface StudyLoad {
   id: string;
   name?: string;
   type: LoadType;
   /** Not for gravity. */
   faces: FaceRef[];
+  /** Force only: what it acts on, absent = faces. A force on edges or points is given by components. */
+  on?: "edges" | "points";
+  edges?: StudyEdge[];
+  points?: StudyPoint[];
   /** Force along the normal (N, into the face; total over the faces) or pressure (MPa). */
   value?: Num;
   /** Force (N), gravity (mm/s²) or moment (N·mm) as X, Y, Z components. */
@@ -85,4 +94,10 @@ export function itemName(st: Study, type: SupportType | LoadType): string {
   let n = 1;
   while (names.has(`${label} ${n}`)) n++;
   return `${label} ${n}`;
+}
+
+/** How many faces, edges or points an item is on. */
+export function pickCount(it: StudySupport | StudyLoad): number {
+  const l = it as StudyLoad;
+  return l.on === "edges" ? l.edges?.length ?? 0 : l.on === "points" ? l.points?.length ?? 0 : it.faces.length;
 }
