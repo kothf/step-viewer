@@ -5,6 +5,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.635.0] - 2026-11-21
+
+### Added
+
+- Structural analysis of assemblies: results on **exploded views** (FR-CON-031). With a plot shown, Explode moves the contours apart with their components (animated like the view itself, deformed shape, labels and probes included), and Collapse brings them back. Dragging a component takes its contours along too.
+- A component hidden by **Isolate** is left out of the plot, and a see-through component (its own transparency, a display state, or Isolate's *Make others transparent*) is shown as itself, so the results behind it can be read.
+- A component's colour and transparency no longer make a study's results out of date.
+
+### Changed
+
+- While components are moved apart, section planes cut the plain model: results on a section are painted for the assembled position only.
+
 ## [1.634.0] - 2026-11-21
 
 ### Added
@@ -4105,7 +4117,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.634.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.635.0...HEAD
+[1.635.0]: https://github.com/kothf/step-viewer/compare/v1.634.0...v1.635.0
 [1.634.0]: https://github.com/kothf/step-viewer/compare/v1.633.0...v1.634.0
 [1.633.0]: https://github.com/kothf/step-viewer/compare/v1.632.0...v1.633.0
 [1.632.0]: https://github.com/kothf/step-viewer/compare/v1.631.0...v1.632.0

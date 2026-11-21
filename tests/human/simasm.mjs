@@ -135,6 +135,28 @@ check("SAS-10", b0.compRows?.length === 2 && b1.compSel === 1 && b1.drawn < b0.d
 await pg.click('#sim-tree [data-a="rcompall"]');
 await pg.waitForTimeout(300);
 
+// exploded view: the contours go apart with the components, and come back on Collapse
+const e0 = await sim();
+await pg.click("#cm-t-assembly").catch(() => {});
+await pg.click('#asm-tools [data-ac="explode"]');
+await pg.waitForTimeout(400);
+await pg.click('#asm-pm [data-a="auto"]');
+await pg.waitForTimeout(500);
+await pg.click('#asm-pm [data-a="ok"]');
+await pg.waitForTimeout(1800);
+const e1 = await sim();
+const size = b => (b ? Math.hypot(b[3] - b[0], b[4] - b[1], b[5] - b[2]) : 0);
+const imgX = await snap(pg, "exploded-results");
+await pg.locator("#asm-tree .ft-explode").first().click({ button: "right" });
+await pg.waitForTimeout(250);
+await pg.locator("button:visible", { hasText: /^Collapse$/ }).first().click();
+await pg.waitForTimeout(1200);
+const e2 = await sim();
+check("SAS-11", !e1.stale && e1.pose?.moved >= 1 && size(e1.plotBox) > size(e0.plotBox) + 5 && e1.drawn === e0.drawn && e2.pose?.moved === 0 && Math.abs(size(e2.plotBox) - size(e0.plotBox)) < 1e-3,
+  "with the results shown, Explode moves the contours apart with their components and Collapse brings them back; the results stay valid", { pose: [e0.pose, e1.pose, e2.pose], size: [size(e0.plotBox), size(e1.plotBox), size(e2.plotBox)], stale: e1.stale }, imgX);
+await pg.click("#cm-t-simulation").catch(() => {});
+await pg.waitForTimeout(300);
+
 // left out: the component is a ghost, and what was put on it is named when solving
 await pg.uncheck('#sim-tree .sim-complist li:nth-child(2) [data-k="compon"]');
 await pg.waitForTimeout(400);

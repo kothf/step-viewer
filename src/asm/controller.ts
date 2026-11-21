@@ -255,7 +255,8 @@ export class AsmController {
         if (!d) return "";
         if (this.simKey?.doc !== d) {
           const { studies: _s, motions: _m, views: _v, explodes: _e, states: _t, ...rest } = d as AsmDoc & { states?: unknown };
-          const text = JSON.stringify(rest);
+          // a component's colour and transparency are looks: results stay valid when a display state changes them
+          const text = JSON.stringify({ ...rest, components: rest.components.map(({ color: _c, opacity: _o, ...c }) => c) });
           let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
           for (let i = 0; i < text.length; i++) { const c = text.charCodeAt(i); h1 = Math.imul(h1 ^ c, 2654435761); h2 = Math.imul(h2 ^ c, 1597334677); }
           this.simKey = { doc: d, key: `${d.id}:${text.length}:${(h1 >>> 0).toString(36)}${(h2 >>> 0).toString(36)}` };
@@ -3648,7 +3649,11 @@ export class AsmController {
     m.querySelector<HTMLButtonElement>("button")?.focus();
   }
 
+  private wasCmd = false;
   private renderPanel() {
+    // a command's panel lives in the Assembly tab: it comes to the front when a command starts (the Study tab may be there)
+    const cmd = this.picking || !!this.interfere || !!this.moving;
+    if (cmd !== this.wasCmd) { this.wasCmd = cmd; if (cmd) this.host.selectLeftTab("asm"); }
     if (!this.mating) this.removeMateBar();
     if (this.mating) { this.renderMatePanel(); return; }
     if (this.patterning) { this.renderPatternPanel(); return; }
