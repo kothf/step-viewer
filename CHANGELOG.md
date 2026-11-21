@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.650.0] - 2026-11-21
+
+### Added
+
+- Docs: **functional requirements for thermal analysis** (`docs/FRS-thermal.md`). First, opening a board's STEP file together with the thermal package its design app writes (temperatures on the 3D board and parts, a Parts list sorted by margin, problems, capacitor life, comparing two layouts), with the files' layout written down as the contract MöbiusCAD reads. Then steady-state thermal studies of parts and assemblies on the same no-mesh solver as the structural analysis (heat loads, natural and forced convection, radiation, thermal contacts, a board as a layered copper plate with its heat sources taken from the package), transient studies and thermal stress. The UI is planned around journeys with click budgets: opening the files is the whole set-up.
+
 ## [1.649.0] - 2026-11-21
 
 ### Added
@@ -4236,7 +4242,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.649.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.650.0...HEAD
+[1.650.0]: https://github.com/kothf/step-viewer/compare/v1.649.0...v1.650.0
 [1.649.0]: https://github.com/kothf/step-viewer/compare/v1.648.0...v1.649.0
 [1.648.0]: https://github.com/kothf/step-viewer/compare/v1.647.0...v1.648.0
 [1.647.0]: https://github.com/kothf/step-viewer/compare/v1.646.0...v1.647.0
