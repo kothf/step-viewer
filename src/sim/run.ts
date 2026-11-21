@@ -21,8 +21,14 @@ export interface StudyProblem {
   fixed: Support[];
   loads: Load[];
   gravity?: number[];
-  /** Items that cannot be solved as they are: code E-SIM-REF (face gone) or E-SIM-EMPTY (nothing picked). */
-  problems: { id: string; code: "E-SIM-REF" | "E-SIM-EMPTY" | "E-SIM-HINGE" }[];
+  /** A centrifugal load: the axis line, rad/s and rad/s². */
+  spin?: { p: number[]; axis: number[]; omega: number; alpha: number };
+  /**
+   * Items that cannot be solved as they are: E-SIM-REF (face gone), E-SIM-EMPTY (nothing picked), E-SIM-HINGE,
+   * E-SIM-SPRING (an elastic support without stiffness), E-SIM-AXIS (a centrifugal load's faces have no one axis),
+   * E-SIM-ONESPIN (a second centrifugal load).
+   */
+  problems: { id: string; code: "E-SIM-REF" | "E-SIM-EMPTY" | "E-SIM-HINGE" | "E-SIM-SPRING" | "E-SIM-AXIS" | "E-SIM-ONESPIN" }[];
   /** Which study item each entry of `fixed` is. */
   supportIds: string[];
 }
@@ -135,6 +141,33 @@ export function axisOf(tris: ArrayLike<number>): number[] | null {
   return tr - top - bv > 0.02 * tr ? best : null;
 }
 
+/** The axis of cylindrical faces as a line: the direction (`axisOf`) and the point nearest to every triangle's normal line. */
+export function axisLine(tris: ArrayLike<number>): { p: number[]; axis: number[] } | null {
+  const axis = axisOf(tris);
+  if (!axis) return null;
+  const n = triNormals(tris), ar = triNormals(tris, true);
+  // Σ a (I − n nᵀ) p = Σ a (I − n nᵀ) c, with the axis direction pinned at the centroid
+  const M = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], r = [0, 0, 0], cen = [0, 0, 0];
+  let area = 0;
+  for (let t = 0; t < ar.length; t++) {
+    const o = 9 * t, c = [0, 1, 2].map(i => (tris[o + i] + tris[o + 3 + i] + tris[o + 6 + i]) / 3);
+    for (let i = 0; i < 3; i++) {
+      cen[i] += ar[t] * c[i];
+      for (let j = 0; j < 3; j++) { const q = ar[t] * ((i === j ? 1 : 0) - n[3 * t + i] * n[3 * t + j]); M[i][j] += q; r[i] += q * c[j]; }
+    }
+    area += ar[t];
+  }
+  if (!(area > 0)) return null;
+  for (let i = 0; i < 3; i++) cen[i] /= area;
+  const ac = axis[0] * cen[0] + axis[1] * cen[1] + axis[2] * cen[2];
+  for (let i = 0; i < 3; i++) { for (let j = 0; j < 3; j++) M[i][j] += area * axis[i] * axis[j]; r[i] += area * axis[i] * ac; }
+  const det = (m: number[][]) => m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+  const D = det(M);
+  if (!(Math.abs(D) > 1e-12 * area ** 3)) return null;
+  const p = [0, 1, 2].map(k => det(M.map((row, i) => row.map((v, j) => (j === k ? r[i] : v)))) / D);
+  return { p, axis };
+}
+
 /** The picked edges as segments, or the picked corners as points, of an item on edges or points; else the problem. */
 function linesOrPoints(b: SimBody, it: { on?: "edges" | "points"; edges?: StudyEdge[]; points?: StudyPoint[] }): Float64Array | "E-SIM-REF" | "E-SIM-EMPTY" {
   const parts: number[] = [];
@@ -156,11 +189,18 @@ export function studyProblem(st: Study, b: SimBody): StudyProblem {
   const out: StudyProblem = { fixed: [], loads: [], problems: [], supportIds: [] };
   for (const s of st.supports) {
     if (off.has(s.id)) continue;
-    if (s.on && (s.type === "fixed" || s.type === "dirs")) {
+    const moved = (sup: Support) => {
+      if (s.type !== "disp") return;
+      const d = s.dirs ?? [true, true, true], v = s.disp ?? [0, 0, 0];
+      sup.mode = "dirs"; sup.dirs = d;
+      if (v.some((x, i) => d[i] && x !== 0)) sup.value = v.map((x, i) => (d[i] ? x : 0));
+    };
+    if (s.on && (s.type === "fixed" || s.type === "dirs" || s.type === "disp")) {
       const g = linesOrPoints(b, s);
       if (typeof g === "string") { out.problems.push({ id: s.id, code: g }); continue; }
-      const sup: Support = { tris: new Float64Array(0), mode: s.type, ...(s.on === "edges" ? { lines: g } : { points: g }) };
+      const sup: Support = { tris: new Float64Array(0), mode: s.type === "disp" ? "dirs" : s.type, ...(s.on === "edges" ? { lines: g } : { points: g }) };
       if (s.type === "dirs") sup.dirs = s.dirs ?? [true, true, true];
+      moved(sup);
       out.fixed.push(sup);
       out.supportIds.push(s.id);
       continue;
@@ -168,7 +208,15 @@ export function studyProblem(st: Study, b: SimBody): StudyProblem {
     if (!s.faces.length) { out.problems.push({ id: s.id, code: "E-SIM-EMPTY" }); continue; }
     const tris = trisOf(b, s.faces.map(f => f.name));
     if (!tris) { out.problems.push({ id: s.id, code: "E-SIM-REF" }); continue; }
-    const sup: Support = { tris, mode: s.type };
+    if (s.type === "elastic") {
+      const kn = Math.max(0, s.kn ?? 0), kt = Math.max(0, s.kt ?? 0);
+      if (!(kn > 0) && !(kt > 0)) { out.problems.push({ id: s.id, code: "E-SIM-SPRING" }); continue; }
+      out.fixed.push({ tris, mode: kn > 0 && kt > 0 ? "fixed" : kn > 0 ? "sliding" : "tangent", spring: { kn, kt } });
+      out.supportIds.push(s.id);
+      continue;
+    }
+    const sup: Support = { tris, mode: s.type === "disp" ? "dirs" : s.type };
+    moved(sup);
     if (s.type === "hinge") {
       const axis = axisOf(tris);
       if (!axis) { out.problems.push({ id: s.id, code: "E-SIM-HINGE" }); continue; }
@@ -183,6 +231,18 @@ export function studyProblem(st: Study, b: SimBody): StudyProblem {
     const comp = (l.comp ?? [{ v: 0 }, { v: 0 }, { v: 0 }]).map(c => c.v);
     if (l.type === "gravity") {
       out.gravity = (out.gravity ?? [0, 0, 0]).map((v, i) => v + comp[i]);
+      continue;
+    }
+    if (l.type === "centrifugal") {
+      if (out.spin) { out.problems.push({ id: l.id, code: "E-SIM-ONESPIN" }); continue; }
+      let line: { p: number[]; axis: number[] } | null;
+      if (l.faces.length) {
+        const tris = trisOf(b, l.faces.map(f => f.name));
+        if (!tris) { out.problems.push({ id: l.id, code: "E-SIM-REF" }); continue; }
+        line = axisLine(tris);
+        if (!line) { out.problems.push({ id: l.id, code: "E-SIM-AXIS" }); continue; }
+      } else line = { p: [0, 0, 0], axis: l.axis === "x" ? [1, 0, 0] : l.axis === "y" ? [0, 1, 0] : [0, 0, 1] };
+      out.spin = { ...line, omega: ((l.value?.v ?? 0) * Math.PI) / 30, alpha: l.accel ?? 0 };
       continue;
     }
     if (l.type === "force" && l.on) {
@@ -331,7 +391,7 @@ export function markElements(ind: ArrayLike<number>, deg: ArrayLike<number>, sha
  */
 export function* runStatic(inp: RunInput): Generator<PassResult> {
   if (inp.problem.problems.length) throw new Error(`${inp.problem.problems[0].code}: ${inp.problem.problems[0].id}`);
-  if (!inp.problem.loads.length && !inp.problem.gravity) throw new Error("E-SIM-NOLOAD");
+  if (!inp.problem.loads.length && !inp.problem.gravity && !inp.problem.spin?.omega && !inp.problem.spin?.alpha && !inp.problem.fixed.some(s => s.value)) throw new Error("E-SIM-NOLOAD");
   if (!inp.problem.fixed.length) throw new Error("E-SIM-FREE: 6");
   const body = new MeshBody(inp.body.tris);
   const inside = insideOf(body);
@@ -356,7 +416,7 @@ export function* runStatic(inp: RunInput): Generator<PassResult> {
     const r = solveStatic({
       lo: inp.body.lo, hi: inp.body.hi, inside, h, p, grid, prev, degrees,
       mat: { E: inp.mat.E, nu: inp.mat.nu, rho: inp.mat.rho },
-      fixed: inp.problem.fixed, loads: inp.problem.loads, gravity: inp.problem.gravity,
+      fixed: inp.problem.fixed, loads: inp.problem.loads, gravity: inp.problem.gravity, spin: inp.problem.spin,
     });
     grid = r.grid;
     prev = r.x;

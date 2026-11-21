@@ -4,8 +4,8 @@
 
 import type { FaceRef, Num, V3 } from "../model/types";
 
-export type SupportType = "fixed" | "sliding" | "hinge" | "dirs";
-export type LoadType = "force" | "pressure" | "gravity" | "moment";
+export type SupportType = "fixed" | "sliding" | "hinge" | "dirs" | "elastic" | "disp";
+export type LoadType = "force" | "pressure" | "gravity" | "moment" | "centrifugal";
 
 export interface StudySupport {
   id: string;
@@ -14,9 +14,14 @@ export interface StudySupport {
   faces: FaceRef[];
   /** Hinge: the pin may slide along its axis. */
   axialFree?: boolean;
-  /** Fixed in directions: X, Y, Z held. */
+  /** Fixed in directions: X, Y, Z held. Enforced displacement: X, Y, Z given (the others stay free). */
   dirs?: [boolean, boolean, boolean];
-  /** Fixed and fixed in directions only: what is held, absent = faces. */
+  /** Enforced displacement: where the given directions are moved to, mm. */
+  disp?: [number, number, number];
+  /** Elastic support: stiffness per area along the face normal and in its plane, N/mm³. */
+  kn?: number;
+  kt?: number;
+  /** Fixed, fixed in directions and enforced displacement only: what is held, absent = faces. */
   on?: "edges" | "points";
   edges?: StudyEdge[];
   points?: StudyPoint[];
@@ -27,14 +32,18 @@ export interface StudyEdge { faces: [string, string]; hint?: V3 }
 /** A corner of the model, named by the faces that meet there; `at` tells corners of the same faces apart. */
 export interface StudyPoint { faces: string[]; at: V3 }
 /** What takes edges or points instead of faces. */
-export const ON_TYPES: readonly string[] = ["force", "fixed", "dirs"];
+export const ON_TYPES: readonly string[] = ["force", "fixed", "dirs", "disp"];
 
 export interface StudyLoad {
   id: string;
   name?: string;
   type: LoadType;
-  /** Not for gravity. */
+  /** Not for gravity. Centrifugal: cylindrical faces whose axis the part spins about (none = `axis` through the origin). */
   faces: FaceRef[];
+  /** Centrifugal without faces: the world axis through the origin (default Z). */
+  axis?: "x" | "y" | "z";
+  /** Centrifugal: angular acceleration, rad/s². The speed is `value`, rpm. */
+  accel?: number;
   /** Force only: what it acts on, absent = faces. A force on edges or points is given by components. */
   on?: "edges" | "points";
   edges?: StudyEdge[];
@@ -106,8 +115,8 @@ export function nextId(st: Study, prefix: "s" | "l"): string {
   return `${prefix}${n}`;
 }
 
-export const SUPPORT_LABEL: Record<SupportType, string> = { fixed: "Fixed support", sliding: "Sliding", hinge: "Hinge", dirs: "Fixed in directions" };
-export const LOAD_LABEL: Record<LoadType, string> = { force: "Force", pressure: "Pressure", gravity: "Gravity", moment: "Moment" };
+export const SUPPORT_LABEL: Record<SupportType, string> = { fixed: "Fixed support", sliding: "Sliding", hinge: "Hinge", dirs: "Fixed in directions", elastic: "Elastic support", disp: "Enforced displacement" };
+export const LOAD_LABEL: Record<LoadType, string> = { force: "Force", pressure: "Pressure", gravity: "Gravity", moment: "Moment", centrifugal: "Centrifugal load" };
 
 /** Default name of a new item: "Fixed 1", "Force 2". */
 export function itemName(st: Study, type: SupportType | LoadType): string {

@@ -16561,6 +16561,55 @@ try {
       && mTab.rows === 6 && /Hz/.test(mTab.f1) && /kg/.test(mTab.mass) && mTab.wide <= 0 && mTab.legend === "0" && mTab.kinds === "u,ux,uy,uz"
       && m3.mode === 2 && m3.plot.shown && !m4.animating && mLeft.length === 0,
       `sim 1.617: a modal study of the clamped bar finds its bending frequencies, lists the modes, shows the one clicked and swings its shape; the tab is translated (${JSON.stringify({ mSet, error: m1.error, hz, eff: m1.modes[0]?.eff, mass: m1.mass, passes: m1.passes, frames: [m1.frames, m2.frames], mTab, mode: m3.mode, animating: [m1.animating, m4.animating], left: mLeft.slice(0, 6) })})`);
+    // 1.621: an elastic support under the bar's end, its top pushed down 0.05 mm by an enforced displacement (no load needed),
+    // then a centrifugal load: 6000 rpm about X throws the bar (0.628 kg, centre at y = 100, z = 10) outwards with ρ ω² V r.
+    await mp.click('#sim-tools [data-s="new"]');
+    await settle();
+    await mp.click('#sim-tools [data-s="elastic"]');
+    p = await at("f1:side:s1l1");
+    await mp.mouse.click(p.x, p.y);
+    await mp.waitForTimeout(200);
+    const elPanel = await mp.evaluate(() => ({ kn: document.querySelector('#sim-pm [data-q="kn"]')?.value, kt: document.querySelector('#sim-pm [data-q="kt"]')?.value, title: document.querySelector("#sim-pm h3")?.textContent }));
+    await mp.click("#sim-pm .pm-ok");
+    await settle();
+    await mp.click('#sim-tools [data-s="disp"]');
+    p = await at("f1:end");
+    await mp.mouse.click(p.x, p.y);
+    await mp.waitForTimeout(200);
+    await mp.uncheck('#sim-pm [data-k="dir0"]');
+    await mp.uncheck('#sim-pm [data-k="dir1"]');
+    await mp.fill('#sim-pm [data-q="d2"]', "-0.05");
+    await mp.keyboard.press("Tab");
+    const dvPanel = await mp.evaluate(() => ({ inputs: document.querySelectorAll("#sim-pm [data-q]").length, wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth }));
+    await mp.click("#sim-pm .pm-ok");
+    await settle();
+    await mp.selectOption('#sim-tree [data-k="passes"]', "2");
+    await settle();
+    const nSet = await mp.evaluate(() => window.__sv.model.store.doc.studies.at(-1).supports.map(s => [s.type, s.kn ?? null, s.dirs ?? null, s.disp ?? null]));
+    await mp.click('#sim-tools [data-s="solve"]');
+    await mp.waitForFunction(() => { const s = window.__sv.sim.state(); return s.done || s.error; }, null, { timeout: 240000 });
+    await mp.waitForTimeout(300);
+    const n1 = await sim();
+    await mp.click('#sim-tools [data-s="centrifugal"]');
+    await mp.waitForTimeout(200);
+    await mp.selectOption('#sim-pm [data-k="axis"]', "x");
+    await mp.fill('#sim-pm [data-n="value"]', "6000");
+    await mp.keyboard.press("Tab");
+    await mp.click("#sim-pm .pm-ok");
+    await settle();
+    const cfRow = await mp.evaluate(() => [...document.querySelectorAll("#sim-tree .sim-row")].at(-1)?.textContent ?? "");
+    await mp.click('#sim-tools [data-s="solve"]');
+    await mp.waitForFunction(() => { const s = window.__sv.sim.state(); return s.done || s.error; }, null, { timeout: 240000 });
+    await mp.waitForTimeout(300);
+    const n2 = await sim();
+    const rsum = n1.reactions.length === 2 ? [0, 1, 2].map(i => n1.reactions[0].force[i] + n1.reactions[1].force[i]) : [1e9];
+    check(elPanel.kn === "100" && elPanel.kt === "100" && elPanel.title === "Elastic support" && dvPanel.inputs === 1 && dvPanel.wide <= 0
+      && JSON.stringify(nSet) === JSON.stringify([["elastic", 100, null, null], ["disp", null, [false, false, true], [0, 0, -0.05]]])
+      && !n1.error && n1.reactions.length === 2 && n1.reactions[1].force[2] < -1 && Math.hypot(...rsum) < 0.01 * Math.abs(n1.reactions[1].force[2]) && n1.maxU > 0.05 && n1.plot.shown
+      && /Axis X/.test(cfRow) && !n2.error && Math.abs(n2.applied.force[1] / 24792 - 1) < 0.01 && Math.abs(n2.applied.force[2] / 2479 - 1) < 0.01 && Math.abs(n2.applied.force[0]) < 1,
+      `sim 1.621: an elastic support and an enforced displacement solve without a load and balance each other; a centrifugal load throws the bar outwards (${JSON.stringify({ elPanel, dvPanel, nSet, e1: n1.error, r: n1.reactions.map(r => r.force), maxU: n1.maxU, cfRow, e2: n2.error, applied: n2.applied?.force })})`);
+    await mp.selectOption('#sim-tree [data-k="study"]', "st2");
+    await settle();
     // 1.620: a second body on the end of the bar is analysed bonded to it (one bar 260 long: 421 × (200 / 260)² = 249 Hz);
     // a body that touches nothing is refused with a message.
     const addBody = (id, y0, y1) => mp.evaluate(([id, y0, y1]) => window.__sv.model.store.change("Body", d => {
