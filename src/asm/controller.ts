@@ -253,7 +253,7 @@ export class AsmController {
           const c = ex?.components.find(x => x.id === id), pd = c && ex?.parts[c.part]?.doc, f = fastenerOfId(pd?.id);
           // a toolbox screw, nut or washer: its axis, for the bolts of a study (FR-CON-020)
           const fastener = c && f?.role ? { role: f.role, d: f.d, pitch: f.pitch, o: applyPoint(c.tf, [0, 0, 0]), z: applyDir(c.tf, [0, 0, 1]) } : undefined;
-          return { id, name: c?.name ?? id, material: (pd && pd.material?.name) || "", ...(fastener ? { fastener } : {}) };
+          return { id, name: c?.name ?? id, material: (pd && pd.material?.name) || "", k: (pd && pd.material?.k) ?? null, ...(fastener ? { fastener } : {}) };
         });
       },
       /** A fingerprint of everything but the studies and the view's own data. */
