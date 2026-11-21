@@ -1726,9 +1726,9 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .sim-kv dt { color: var(--muted); }
 .sim-kv dd { margin: 0; font-family: var(--mono); text-align: right; }
 .sim-kv dd.sim-low { color: var(--danger); font-weight: 600; }
-.sim-passes { width: 100%; border-collapse: collapse; font-size: 11px; }
-.sim-passes th, .sim-passes td { padding: 2px 3px; white-space: nowrap; text-align: right; border-bottom: 1px solid var(--line); font-family: var(--mono); }
-.sim-passes th { color: var(--muted); font: 500 11px inherit; white-space: normal; }
+.sim-passes, .sim-hot { width: 100%; border-collapse: collapse; font-size: 11px; }
+.sim-passes th, .sim-passes td, .sim-hot th, .sim-hot td { padding: 2px 3px; white-space: nowrap; text-align: right; border-bottom: 1px solid var(--line); font-family: var(--mono); }
+.sim-passes th, .sim-hot th { color: var(--muted); font: 500 11px inherit; white-space: normal; }
 .sim-faces { cursor: default; }
 .sim-conv { display: block; width: 100%; max-width: 240px; margin: 6px 0 2px; }
 .sim-conv .g { stroke: var(--line); stroke-width: 1; }
@@ -1746,4 +1746,14 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .sim-probe i { position: absolute; left: -12px; bottom: -4px; width: 7px; height: 7px; border-radius: 50%; background: #111; border: 1.5px solid #fff; }
 .sim-probe button { width: 18px; height: 18px; border: 0; border-radius: 4px; background: none; color: var(--muted); cursor: pointer; line-height: 1; }
 .sim-probe button:hover { background: var(--panel-2); color: var(--text); }
+.sim-peak { padding-right: 6px; pointer-events: none; }
+.sim-peak.warn { border-color: var(--warn, #e8590c); pointer-events: auto; }
+.sim-peak.warn i { background: var(--warn, #e8590c); }
+.sim-peak b { font-weight: 600; color: var(--muted); }
+.sim-sub { margin: 8px 0 3px; font: 600 12px inherit; }
+.sim-hot tbody tr { cursor: pointer; }
+.sim-hot tbody tr:hover, .sim-hot tbody tr:focus-visible { background: var(--panel-2); }
+.sim-hot tbody tr.sel { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.sim-warn { color: var(--warn, #e8590c); cursor: help; }
+.sim-sing { color: var(--text); }
 @media (prefers-reduced-motion: reduce) { .sim-run .spin { animation: none; } }

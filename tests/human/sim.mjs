@@ -84,7 +84,7 @@ await pg.click('#sim-legend [data-a="probe"]');
 await clickAt(pg, await screenOf(pg, [50, 0, 20]));
 await clickAt(pg, await screenOf(pg, [0, 0, 20]));
 await pg.waitForTimeout(250);
-const pr = await pg.evaluate(() => ({ probes: window.__sv.sim.state().probes, labels: [...document.querySelectorAll("#sim-probes .sim-probe span")].map(e => e.textContent) }));
+const pr = await pg.evaluate(() => ({ probes: window.__sv.sim.state().probes, labels: [...document.querySelectorAll("#sim-probes [data-probe] span")].map(e => e.textContent) }));
 const img10 = await snap(pg, "probes");
 await pg.keyboard.press("Escape");
 check("SA1-8", pr.probes.length === 2 && pr.labels.length === 2 && pr.probes[0] < 0.01 * r.maxU + 1e-4 && pr.probes[1] > 0.2 * r.maxU && pr.probes[1] < 0.5 * r.maxU && !(await sim()).probing,
@@ -177,4 +177,15 @@ const img17 = await snap(pg, "local-passes");
 const lp = r5.passes;
 check("SA1-12", !r5.error && lp.length === 5 && lp[3].raised > 0 && lp[3].raised < lp[3].cells && lp[4].dofs > lp[3].dofs && notes.length === 2,
   "passes 4 and 5 raise the accuracy only where the error estimate is highest; the Study tab says in how many cells", { passes: lp.map(q => ({ p: q.p, raised: q.raised, cells: q.cells, dofs: q.dofs, ms: q.ms })), notes }, img17);
+// SA1-13: hot spots: the list under the results, labels on the stress plot, a singular peak is flagged.
+await pg.selectOption('#sim-legend [data-k="kind"]', "vm");
+await idle(pg);
+const hot = (await sim()).hot;
+const hotRows = await pg.locator("#sim-tree .sim-hot tbody tr").count();
+await pg.locator("#sim-tree .sim-hot tbody tr").last().click();
+await idle(pg);
+const hotPeaks = await pg.evaluate(() => [...document.querySelectorAll("#sim-probes .sim-peak")].map(e => e.textContent.trim()));
+const img18 = await snap(pg, "hot-spots");
+check("SA1-13", hot.length >= 2 && hotRows === hot.length && hotPeaks.length >= 2,
+  "the highest stress peaks are listed and labelled on the plot; a peak that keeps growing with accuracy is marked as a singularity", { hot: hot.map(h => ({ vm: +h.vm.toFixed(1), singular: h.singular, growth: h.growth })), labels: hotPeaks }, img18);
 await finish(browser, pg);

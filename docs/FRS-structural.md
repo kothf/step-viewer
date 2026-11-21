@@ -338,7 +338,7 @@ The recommended method, to be confirmed by the SA0 spike:
 - **FR-SOL-012** (SA2, M) **Local refinement**: the user picks faces or bodies and a level (1–3); cells touching them start finer and keep a lower error target.
 - **FR-SOL-013** (SA1, M) Thin-wall handling of FR-SARC-014 is automatic; a study option **Thin walls** (on by default) can turn it off for speed on solid parts.
 - **FR-SOL-014** (SA1, M) Error estimate per cell: residual of equilibrium in the cell, jumps of traction across cell faces and on loaded or free faces, weighted to energy norm. Its global value is shown per pass (FR-RES-040).
-- **FR-SOL-015** (SA1, M) **Singularity detection**: a point whose stress keeps growing by more than 20 % per refinement pass while the energy has converged is marked as a likely singularity (sharp re-entrant edge, point load, edge of a fixed face). The peak-stress convergence check ignores it, and the results mark it (FR-RES-012).
+- **FR-SOL-015** (SA1, M) **Singularity detection**: a point whose stress keeps growing with refinement (by more than 8 % in each of the last two passes and 25 % over both) while the energy has converged is marked as a likely singularity (sharp re-entrant edge, point load, edge of a fixed face). The peak-stress convergence check ignores it, and the results mark it (FR-RES-012).
 
 ### 9.3 Errors and limits
 
