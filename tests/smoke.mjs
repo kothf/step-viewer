@@ -16608,6 +16608,49 @@ try {
       && !n1.error && n1.reactions.length === 2 && n1.reactions[1].force[2] < -1 && Math.hypot(...rsum) < 0.01 * Math.abs(n1.reactions[1].force[2]) && n1.maxU > 0.05 && n1.plot.shown
       && /Axis X/.test(cfRow) && !n2.error && Math.abs(n2.applied.force[1] / 24792 - 1) < 0.01 && Math.abs(n2.applied.force[2] / 2479 - 1) < 0.01 && Math.abs(n2.applied.force[0]) < 1,
       `sim 1.621: an elastic support and an enforced displacement solve without a load and balance each other; a centrifugal load throws the bar outwards (${JSON.stringify({ elPanel, dvPanel, nSet, e1: n1.error, r: n1.reactions.map(r => r.force), maxU: n1.maxU, cfRow, e2: n2.error, applied: n2.applied?.force })})`);
+    // 1.622: Torque and Bearing load take cylindrical faces only (the bar has none: a flat face is refused with a hint);
+    // Hydrostatic pressure: water 1 m above the bar's top face (20 × 200 mm) presses 1000 × 9.80665 × 1 Pa × 4000 mm² = 39.2 N down.
+    await mp.click('#sim-tools [data-s="torque"]');
+    await mp.waitForTimeout(200);
+    p = await at("f1:end");
+    await mp.mouse.click(p.x, p.y);
+    await mp.waitForTimeout(200);
+    const tqPanel = await mp.evaluate(() => ({ title: document.querySelector("#sim-pm h3")?.textContent, value: document.querySelector('#sim-pm [data-n="value"]')?.value,
+      faces: document.querySelector("#sim-pm .sim-faces")?.textContent, toast: [...document.querySelectorAll(".toast")].map(e => e.textContent).join("|") }));
+    await mp.click("#sim-pm .pm-cancel");
+    await mp.click('#sim-tools [data-s="bearing"]');
+    await mp.waitForTimeout(200);
+    const brPanel = await mp.evaluate(() => ({ title: document.querySelector("#sim-pm h3")?.textContent, inputs: document.querySelectorAll("#sim-pm [data-n]").length }));
+    await mp.click("#sim-pm .pm-cancel");
+    await mp.locator('#sim-tree .sim-row [data-a="toggle"]').last().click();
+    await settle();
+    await mp.click('#sim-tools [data-s="hydro"]');
+    await mp.waitForTimeout(200);
+    p = await at("f1:end");
+    await mp.mouse.click(p.x, p.y);
+    await mp.waitForTimeout(200);
+    await mp.fill('#sim-pm [data-q="level"]', "1020");
+    await mp.keyboard.press("Tab");
+    const hyPanel = await mp.evaluate(() => ({ title: document.querySelector("#sim-pm h3")?.textContent, density: document.querySelector('#sim-pm [data-n="value"]')?.value, up: document.querySelector('#sim-pm [data-k="up"]')?.value,
+      wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth }));
+    await mp.click("#sim-pm .pm-ok");
+    await settle();
+    const hySet = await mp.evaluate(() => window.__sv.model.store.doc.studies.at(-1).loads.map(l => [l.type, l.value?.v ?? null, l.axis ?? null, l.level ?? null]));
+    await mp.click('#sim-tools [data-s="solve"]');
+    await mp.waitForFunction(() => { const s = window.__sv.sim.state(); return s.done || s.error; }, null, { timeout: 240000 });
+    await mp.waitForTimeout(300);
+    const n3 = await sim();
+    await mp.click("#lang-btn");
+    await mp.click('#sim-tools [data-s="torque"]');
+    await mp.waitForTimeout(200);
+    const tqRu = await mp.evaluate(() => { const en = /^(Torque|Reverse direction|About the faces|Click cylindrical)/; return [...document.querySelectorAll("#sim-pm h3, #sim-pm legend, #sim-pm label, #sim-pm p, #sim-pm .sim-faces")].map(e => e.textContent.trim()).filter(x => en.test(x)); });
+    await mp.click("#sim-pm .pm-cancel");
+    await mp.click("#lang-btn");
+    check(tqPanel.title === "Torque" && tqPanel.value === "10" && /cylindrical/.test(tqPanel.toast) && /Click cylindrical faces/.test(String(tqPanel.faces)) && brPanel.title === "Bearing load" && brPanel.inputs === 3
+      && hyPanel.title === "Hydrostatic pressure" && hyPanel.density === "1000" && hyPanel.up === "z" && hyPanel.wide <= 0
+      && JSON.stringify(hySet.at(-1)) === JSON.stringify(["hydro", 1000, "z", 1020])
+      && !n3.error && Math.abs(n3.applied.force[2] / -39.23 - 1) < 0.01 && Math.abs(n3.applied.force[0]) < 0.01 && Math.abs(n3.applied.force[1]) < 0.01 && tqRu.length === 0,
+      `sim 1.622: Torque and Bearing load ask for cylindrical faces; Hydrostatic pressure of a fluid above the face presses it with ρ g h A; the panel is translated (${JSON.stringify({ tqPanel, brPanel, hyPanel, hySet, e3: n3.error, applied: n3.applied?.force, tqRu })})`);
     await mp.selectOption('#sim-tree [data-k="study"]', "st2");
     await settle();
     // 1.620: a second body on the end of the bar is analysed bonded to it (one bar 260 long: 421 × (200 / 260)² = 249 Hz);

@@ -24,7 +24,7 @@ import { locate, probeCsv, valueAt, type Located } from "./probes";
 import { hotSpots, type HotSpot } from "./hotspots";
 import { nearExcitation, parseExcitation } from "./excite";
 import { chartSvg, reportHtml, reportPdf, type ReportBlock, type SimReport } from "./report";
-import { GLOBAL_PASSES, MAX_PASSES, studyProblem, type PassResult, type SimBody } from "./run";
+import { GLOBAL_PASSES, MAX_PASSES, positiveAxis, studyProblem, type PassResult, type SimBody } from "./run";
 import { shownValue, typedValue } from "./values";
 import { DEFAULT_MODES, GRAVITY, LOAD_LABEL, MAX_MODES, MODAL_PASSES, ON_TYPES, SUPPORT_LABEL, itemName, newStudy, nextId, pickCount, type LoadType, type PlotKind, type Study, type StudyKind, type StudyLoad, type StudySupport, type SupportType } from "./types";
 
@@ -54,8 +54,8 @@ interface Kept { passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const $ = <T extends HTMLElement = HTMLElement>(s: string) => document.querySelector<T>(s)!;
 const SUPPORTS: SupportType[] = ["fixed", "sliding", "hinge", "dirs", "elastic", "disp"];
-const LOADS: LoadType[] = ["force", "pressure", "moment", "gravity", "centrifugal"];
-const ICON: Record<string, string> = { newmodal: "≈", new: "＋", mat: "◈", fixed: "⏚", sliding: "⇄", hinge: "◎", dirs: "✛", elastic: "≋", disp: "⇥", centrifugal: "⟳", force: "↓", pressure: "⇊", moment: "↻", gravity: "g", solve: "▶", stop: "■", results: "▦", report: "▤" };
+const LOADS: LoadType[] = ["force", "pressure", "moment", "torque", "bearing", "hydro", "gravity", "centrifugal"];
+const ICON: Record<string, string> = { newmodal: "≈", new: "＋", mat: "◈", fixed: "⏚", sliding: "⇄", hinge: "◎", dirs: "✛", elastic: "≋", disp: "⇥", centrifugal: "⟳", torque: "⟲", bearing: "◒", hydro: "▽", force: "↓", pressure: "⇊", moment: "↻", gravity: "g", solve: "▶", stop: "■", results: "▦", report: "▤" };
 const TIP: Record<string, string> = {
   fixed: "Fixed support: the faces cannot move",
   sliding: "Sliding support: the faces slide in their own plane but cannot move across it",
@@ -68,6 +68,9 @@ const TIP: Record<string, string> = {
   elastic: "Elastic support: the faces rest on springs",
   disp: "Enforced displacement: the faces are moved by a given distance",
   centrifugal: "Centrifugal load: the part spins about an axis",
+  torque: "Torque on cylindrical faces, about their axis",
+  bearing: "Bearing load: a force pressed onto the half of a hole or shaft that faces it",
+  hydro: "Hydrostatic pressure: a fluid presses on the faces, more with depth",
 };
 const PLOTS: [PlotKind, string][] = [["vm", "von Mises stress"], ["u", "Displacement"], ["ux", "Displacement X"], ["uy", "Displacement Y"], ["uz", "Displacement Z"], ["sf", "Safety factor"], ["err", "Error estimate"]];
 /** Safety factors above this are drawn as this (lightly loaded regions would hide the rest of the scale). */
@@ -296,6 +299,9 @@ export class SimController {
       else if (type === "pressure") d.value = { v: 1 };
       else if (type === "moment") d.comp = [{ v: 0 }, { v: 0 }, { v: 1000 }];
       else if (type === "centrifugal") { d.value = { v: 3000 }; d.axis = "z"; }
+      else if (type === "torque") d.value = { v: 10000 };
+      else if (type === "bearing") d.comp = [{ v: 0 }, { v: 0 }, { v: -1000 }];
+      else if (type === "hydro") { d.value = { v: 1000 }; d.axis = "z"; d.level = 0; }
       else d.comp = [{ v: 0 }, { v: 0 }, { v: -GRAVITY }];
       this.edit = { kind: "load", isNew: true, draft: d };
     } else return;
@@ -378,6 +384,7 @@ export class SimController {
     else {
       if (d.type === "hinge" && this.host.viewer.parts[0]?.data.faces[hit.faceId]?.type !== "cylinder") { toast(t("A hinge needs a cylindrical face."), "warn"); return true; }
       if (d.type === "centrifugal" && this.host.viewer.parts[0]?.data.faces[hit.faceId]?.type !== "cylinder") { toast(t("Click a cylindrical face: its axis is the spin axis."), "warn"); return true; }
+      if ((d.type === "torque" || d.type === "bearing") && this.host.viewer.parts[0]?.data.faces[hit.faceId]?.type !== "cylinder") { toast(t("Click a cylindrical face."), "warn"); return true; }
       d.faces.push({ name, hint: hit.point });
     }
     this.renderPanel();
@@ -519,6 +526,7 @@ export class SimController {
       case "E-SIM-EMPTY": return t("{name} has no faces.", { name });
       case "E-SIM-SPRING": return t("{name}: give a stiffness above 0.", { name });
       case "E-SIM-AXIS": return t("{name}: the picked faces have no one axis. Pick cylindrical faces on one axis.", { name });
+      case "E-SIM-BEARING": return t("{name}: the force lies along the faces' axis. A bearing load presses across it.", { name });
       case "E-SIM-ONESPIN": return t("{name}: a study takes one centrifugal load.", { name });
       case "E-SIM-HINGE": return t("{name}: a hinge needs cylindrical faces on one axis.", { name });
       case "E-SIM-SINGULAR": return t("The solver could not solve this set-up. Check the supports.");
@@ -621,13 +629,19 @@ export class SimController {
       }
       else if (l.type === "gravity") { dir = comp(); at = new THREE.Box3().setFromBufferAttribute(part.mesh.geometry.getAttribute("position") as THREE.BufferAttribute).getCenter(new THREE.Vector3()); }
       else if (!picked) return;
+      else if (l.type === "torque") {
+        // along the faces' axis, the way the torque turns right-handed (run.ts `positiveAxis`)
+        const ax = part.data.faces[this.faceIds(l.faces)[0]]?.axis;
+        dir = ax ? new THREE.Vector3(...positiveAxis(ax) as [number, number, number]).multiplyScalar(l.flip ? -1 : 1) : null;
+      }
+      else if (l.type === "hydro") dir = g.normal ? g.normal.clone().multiplyScalar(-1) : null;
       else if (l.type === "pressure" || (l.type === "force" && l.normal)) dir = g.normal ? g.normal.clone().multiplyScalar(l.flip ? 1 : -1) : null;
       else dir = comp();
       if (!dir || dir.lengthSq() === 0) return;
       dir.normalize();
       // a pushing arrow ends on the face; a moment's arrow starts there, along its axis
-      const from = l.type === "moment" || l.type === "gravity" || l.type === "centrifugal" ? at.clone() : at.clone().addScaledVector(dir, -len);
-      const arrow = new THREE.ArrowHelper(dir, from, len, l.type === "moment" || l.type === "centrifugal" ? 0x7048e8 : color, len * 0.28, len * 0.12);
+      const from = l.type === "moment" || l.type === "torque" || l.type === "gravity" || l.type === "centrifugal" ? at.clone() : at.clone().addScaledVector(dir, -len);
+      const arrow = new THREE.ArrowHelper(dir, from, len, l.type === "moment" || l.type === "torque" || l.type === "centrifugal" ? 0x7048e8 : color, len * 0.28, len * 0.12);
       arrow.traverse(o => { const mm = (o as THREE.Mesh).material as THREE.Material | undefined; if (mm) { mm.depthTest = false; mm.transparent = true; } o.renderOrder = 2950; });
       arrow.userData.simArrow = it.id;
       arrow.traverse(o => { o.raycast = () => {}; });
@@ -1032,7 +1046,9 @@ export class SimController {
     blocks.push({ kind: "table", widths: [3, 3, 2, 4], rows: [[t("Name"), t("Type"), t("Applied to"), t("Value")], ...st.loads.map(l => {
       const c = (l.comp ?? [{ v: 0 }, { v: 0 }, { v: 0 }]).map(x => x.v), pull = l.flip ? `, ${t("Reverse (pull)")}` : "";
       const val = l.type === "force" ? (l.normal && !l.on ? `${sig(l.value?.v ?? 0)} N, ${t("Along the face normal")}${pull}` : n3(c, 1, "N"))
-        : l.type === "pressure" ? `${sig(l.value?.v ?? 0)} MPa${pull}` : l.type === "centrifugal" ? `${sig(l.value?.v ?? 0)} rpm${l.accel ? `, ${sig(l.accel)} rad/s²` : ""}` : l.type === "moment" ? n3(c, 1e-3, "N·m") : n3(c, 1e-3, "m/s²");
+        : l.type === "pressure" ? `${sig(l.value?.v ?? 0)} MPa${pull}` : l.type === "centrifugal" ? `${sig(l.value?.v ?? 0)} rpm${l.accel ? `, ${sig(l.accel)} rad/s²` : ""}`
+        : l.type === "torque" ? `${sig((l.value?.v ?? 0) * 1e-3)} N·m${l.flip ? `, ${t("Reverse direction")}` : ""}` : l.type === "bearing" ? n3(c, 1, "N")
+        : l.type === "hydro" ? `${sig(l.value?.v ?? 0)} kg/m³, ${this.levelText(l)}` : l.type === "moment" ? n3(c, 1e-3, "N·m") : n3(c, 1e-3, "m/s²");
       return [name(l), t(LOAD_LABEL[l.type]), faces(l), val];
     })] });
     blocks.push({ kind: "h", text: t("Results") });
@@ -1114,6 +1130,9 @@ export class SimController {
     blocks.push({ kind: "p", text: t(ASSUMPTIONS) });
     return { title: t("Structural analysis report"), sub: `${doc.name} · ${st.name} · ${new Date().toLocaleString(lang())} · MöbiusCAD ${__APP_VERSION__}`, blocks };
   }
+
+  /** A hydrostatic pressure's fluid surface. */
+  private levelText(l: StudyLoad): string { return t("surface at {a} = {v} mm", { a: (l.axis ?? "z").toUpperCase(), v: sig(l.level ?? 0) }); }
 
   /** A centrifugal load without faces: its world axis. */
   private axisText(l: StudyLoad): string { return t("Axis {a} at the origin", { a: (l.axis ?? "z").toUpperCase() }); }
@@ -1321,7 +1340,7 @@ export class SimController {
     let body = `<label class="pm-field"><span>${esc(t("Name"))}</span><input type="text" data-k="name" value="${esc(d.name ?? "")}" spellcheck="false" translate="no" /></label>`;
     if (d.type !== "gravity") {
       const on = (d as StudyLoad).on, n = pickCount(d);
-      const ask = on === "edges" ? t("Click edges on the model") : on === "points" ? t("Click corner points on the model") : d.type === "hinge" ? t("Click cylindrical faces on the model") : d.type === "centrifugal" ? t("Click a cylindrical face for the axis, or leave it empty and choose an axis below") : t("Click faces on the model");
+      const ask = on === "edges" ? t("Click edges on the model") : on === "points" ? t("Click corner points on the model") : d.type === "hinge" || d.type === "torque" || d.type === "bearing" ? t("Click cylindrical faces on the model") : d.type === "centrifugal" ? t("Click a cylindrical face for the axis, or leave it empty and choose an axis below") : t("Click faces on the model");
       const sel = ON_TYPES.includes(d.type) ? `<label class="pm-field"><span>${esc(e.kind === "load" ? t("Acts on") : t("Holds"))}</span><select data-k="on">${[["", "Faces"], ["edges", "Edges"], ["points", "Points"]].map(([v, l]) => `<option value="${v}"${(on ?? "") === v ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : "";
       body += group(on === "edges" ? t("Edges") : on === "points" ? t("Points") : t("Faces"), sel + `<div class="pm-box focus sim-faces" role="status">${n ? esc(this.pickText(d)) : esc(ask)}</div>`
         + (n ? `<button class="btn small" data-k="clear">${esc(t("Clear"))}</button>` : ""));
@@ -1353,6 +1372,14 @@ export class SimController {
         + nf("value", t("Speed"), l.value, "rpm")
         + `<label class="pm-field"><span>${esc(t("Acceleration"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-q="accel" value="${trim(l.accel ?? 0)}" spellcheck="false" /><span class="muted">rad/s²</span></span></label>`
         + `<p class="pm-help muted">${esc(t("The whole part spins about the axis. Uses the material's density."))}</p>`);
+      else if (l.type === "torque") body += group(t("Torque"), nf("value", t("Torque"), l.value, "N·m") + chk("flip", l.flip, t("Reverse direction"))
+        + `<p class="pm-help muted">${esc(t("About the faces' axis, spread over them. The arrow shows the axis it turns about, right-handed."))}</p>`);
+      else if (l.type === "bearing") body += group(t("Force"), nf("c0", "X", c[0], "N") + nf("c1", "Y", c[1], "N") + nf("c2", "Z", c[2], "N")
+        + `<p class="pm-help muted">${esc(t("Pressed onto the half of the faces that faces the force, most in the middle. The part of the force along the axis is left out."))}</p>`);
+      else if (l.type === "hydro") body += group(t("Fluid"), nf("value", t("Density"), l.value, "kg/m³")
+        + `<label class="pm-field"><span>${esc(t("Up"))}</span><select data-k="up">${["x", "y", "z", "-x", "-y", "-z"].map(a => `<option value="${a}"${(l.flip ? "-" : "") + (l.axis ?? "z") === a ? " selected" : ""}>${a.length > 1 ? "−" : "+"}${a.slice(-1).toUpperCase()}</option>`).join("")}</select></label>`
+        + `<label class="pm-field"><span>${esc(t("Surface at"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-q="level" value="${trim(l.level ?? 0)}" spellcheck="false" /><span class="muted">${(l.axis ?? "z").toUpperCase()}, mm</span></span></label>`
+        + `<p class="pm-help muted">${esc(t("The pressure grows with the depth below the fluid's surface; faces above it carry none."))}</p>`);
       else body += group(t("Acceleration"), nf("g0", "X", c[0], "m/s²") + nf("g1", "Y", c[1], "m/s²") + nf("g2", "Z", c[2], "m/s²") + `<p class="pm-help muted">${esc(t("Uses the material's density."))}</p>`);
     }
     // keep the caret when the panel is drawn again after a pick
@@ -1505,6 +1532,7 @@ export class SimController {
     }
     else if (k === "flip") d.flip = el.checked || undefined;
     else if (k === "axis") (e.draft as StudyLoad).axis = el.value as "x" | "y" | "z";
+    else if (k === "up") { const l = e.draft as StudyLoad; l.axis = el.value.slice(-1) as "x" | "y" | "z"; l.flip = el.value.length > 1 || undefined; }
     else if (el.dataset.q) {
       const q = el.dataset.q, v = num(el.value), sup = e.draft as StudySupport;
       const bad = v == null || ((q === "kn" || q === "kt") && v < 0);
@@ -1512,6 +1540,7 @@ export class SimController {
       if (bad) return;
       if (q === "kn") sup.kn = v; else if (q === "kt") sup.kt = v;
       else if (q === "accel") (e.draft as StudyLoad).accel = v || undefined;
+      else if (q === "level") (e.draft as StudyLoad).level = v;
       else { const a = [...(sup.disp ?? [0, 0, 0])] as [number, number, number]; a[Number(q[1])] = v; sup.disp = a; }
     }
     else if (k?.startsWith("dir")) { const a = [...(d.dirs ?? [true, true, true])] as [boolean, boolean, boolean]; a[Number(k[3])] = el.checked; d.dirs = a; }

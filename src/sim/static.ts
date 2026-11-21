@@ -63,6 +63,21 @@ export interface Load {
   lines?: ArrayLike<number>;
   /** Point load: 6 numbers per point (position and a direction into the body); `force` is shared equally. */
   points?: ArrayLike<number>;
+  /**
+   * Torque, N·mm, about the line through `p` along the unit `axis`, as a traction along the circumference
+   * growing with the distance from the axis (cylindrical faces; positive turns right-handed about `axis`).
+   */
+  torque?: { p: ArrayLike<number>; axis: ArrayLike<number>; value: number };
+  /**
+   * Bearing load: the total `force`, N, pressed onto the half of the (cylindrical) faces that faces it,
+   * as a pressure growing with the cosine of the angle from the force's direction.
+   */
+  bearing?: ArrayLike<number>;
+  /**
+   * Hydrostatic pressure: `gamma` N/mm³ (fluid density × gravity) per mm of depth below the point `p`
+   * on the fluid's surface, measured along the unit `down`; nothing above the surface.
+   */
+  hydro?: { p: ArrayLike<number>; down: ArrayLike<number>; gamma: number };
 }
 
 export interface Reaction {
@@ -459,15 +474,46 @@ export function solveStatic(pb: StaticProblem): StaticResult {
       onLines(S, (c, x, y, z, w) => push(c, x, y, z, w / len * L.force![0], w / len * L.force![1], w / len * L.force![2]));
       continue;
     }
-    const area = triArea(L.tris);
+    // a hydrostatic load acts on the wetted part only: the triangles are cut at the fluid's surface, so the pressure is linear on each
+    const tris = L.hydro ? wetted(L.tris, L.hydro.p, L.hydro.down) : L.tris;
+    const area = triArea(tris);
     if (!(area > 0)) continue;
     const t0 = Array.from(L.force ?? [0, 0, 0]).map(v => v / area), pr = L.pressure ?? 0;
-    const mo = L.moment ? momentField(L.tris, L.moment) : null;
+    const mo = L.moment ? momentField(tris, L.moment) : null;
     const t = [0, 0, 0];
-    located(L.tris, (e, x, y, z, w, nrm) => {
+    // torque and bearing loads are scaled so their totals are the given ones on this quadrature
+    const tq = L.torque, bf = L.bearing, hy = L.hydro;
+    let tqK = 0, bfK = 0;
+    const bd = bf ? Math.hypot(bf[0], bf[1], bf[2]) : 0;
+    if (tq || bd > 0) {
+      let i2 = 0, c2 = 0;
+      located(tris, (_e, x, y, z, w, nrm) => {
+        if (tq) {
+          const rx = x - tq.p[0], ry = y - tq.p[1], rz = z - tq.p[2], a = tq.axis;
+          const cx = a[1] * rz - a[2] * ry, cy = a[2] * rx - a[0] * rz, cz = a[0] * ry - a[1] * rx;
+          i2 += w * (cx * cx + cy * cy + cz * cz);
+        }
+        if (bd > 0) { const q = Math.max(0, -(nrm[0] * bf![0] + nrm[1] * bf![1] + nrm[2] * bf![2]) / bd); c2 += w * q * q; }
+      });
+      tqK = tq && i2 > 0 ? tq.value / i2 : 0;
+      bfK = c2 > 0 ? bd / c2 : 0;
+    }
+    located(tris, (e, x, y, z, w, nrm) => {
       const E = grid.elems[e];
       bas.eval(x, y, z, E.c, E.s);
       for (let c = 0; c < 3; c++) t[c] = t0[c] - pr * nrm[c];
+      if (tq) {
+        const rx = x - tq.p[0], ry = y - tq.p[1], rz = z - tq.p[2], a = tq.axis;
+        t[0] += tqK * (a[1] * rz - a[2] * ry); t[1] += tqK * (a[2] * rx - a[0] * rz); t[2] += tqK * (a[0] * ry - a[1] * rx);
+      }
+      if (bfK > 0) {
+        const q = bfK * Math.max(0, -(nrm[0] * bf![0] + nrm[1] * bf![1] + nrm[2] * bf![2]) / bd);
+        t[0] -= q * nrm[0]; t[1] -= q * nrm[1]; t[2] -= q * nrm[2];
+      }
+      if (hy) {
+        const q = hy.gamma * Math.max(0, (x - hy.p[0]) * hy.down[0] + (y - hy.p[1]) * hy.down[1] + (z - hy.p[2]) * hy.down[2]);
+        t[0] -= q * nrm[0]; t[1] -= q * nrm[1]; t[2] -= q * nrm[2];
+      }
       if (mo) {
         const rx = x - mo.c[0], ry = y - mo.c[1], rz = z - mo.c[2], o = mo.w;
         t[0] += o[1] * rz - o[2] * ry; t[1] += o[2] * rx - o[0] * rz; t[2] += o[0] * ry - o[1] * rx;
@@ -771,6 +817,24 @@ export function triNormals(tris: ArrayLike<number>, areas = false): Float64Array
   return out;
 }
 
+
+/** The part of triangles (9 numbers each) on the side of the plane through `p` that `down` points to. */
+export function wetted(tris: ArrayLike<number>, p: ArrayLike<number>, down: ArrayLike<number>): Float64Array {
+  const out: number[] = [];
+  for (let o = 0; o + 8 < tris.length; o += 9) {
+    const V = [0, 1, 2].map(k => [tris[o + 3 * k], tris[o + 3 * k + 1], tris[o + 3 * k + 2]]);
+    const d = V.map(v => (v[0] - p[0]) * down[0] + (v[1] - p[1]) * down[1] + (v[2] - p[2]) * down[2]);
+    // the polygon below the surface, in the triangle's own winding
+    const poly: number[][] = [];
+    for (let k = 0; k < 3; k++) {
+      const a = V[k], b = V[(k + 1) % 3], da = d[k], db = d[(k + 1) % 3];
+      if (da >= 0) poly.push(a);
+      if ((da > 0 && db < 0) || (da < 0 && db > 0)) { const u = da / (da - db); poly.push([a[0] + u * (b[0] - a[0]), a[1] + u * (b[1] - a[1]), a[2] + u * (b[2] - a[2])]); }
+    }
+    for (let k = 1; k + 1 < poly.length; k++) out.push(...poly[0], ...poly[k], ...poly[k + 1]);
+  }
+  return Float64Array.from(out);
+}
 
 /** P (row-major 3×3): the projector on the directions a support holds at a point with normal n. */
 export function holdMatrix(s: Support, n: ArrayLike<number>, P: Float64Array) {

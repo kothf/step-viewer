@@ -107,3 +107,73 @@ test("study items: elastic support, enforced displacement and centrifugal load b
   assert.ok(Math.abs(ln.p[0] - 5) < 1e-6 && Math.abs(ln.p[1] - 7) < 1e-6, `${ln.p}`);
   assert.equal(axisLine(rectFace(0, 0, lo, hi, false)), null);
 });
+
+test("torque, bearing load and hydrostatic pressure (FR-LOAD-005, FR-LOAD-008, FR-LOAD-009)", () => {
+  // a shaft of radius 10 and length 60 along Z, held at z = 0
+  const R = 10, H = 60, N = 64;
+  const side: number[] = [], base: number[] = [];
+  for (let i = 0; i < N; i++) {
+    const a0 = (2 * Math.PI * i) / N, a1 = (2 * Math.PI * (i + 1)) / N;
+    const P = (a: number, z: number) => [R * Math.cos(a), R * Math.sin(a), z];
+    side.push(...P(a0, 0), ...P(a1, 0), ...P(a1, H), ...P(a0, 0), ...P(a1, H), ...P(a0, H));
+    base.push(0, 0, 0, ...P(a1, 0), ...P(a0, 0));
+  }
+  const inCyl = (x: number, y: number, z: number) => x * x + y * y <= R * R && z >= 0 && z <= H;
+  const pb = { lo: [-R, -R, 0], hi: [R, R, H], inside: inCyl, h: 10, p: 3, mat: { E, nu: 0.3 }, fixed: [{ tris: base }] };
+  const M = 50000;
+  const tq = solveStatic({ ...pb, loads: [{ tris: side, torque: { p: [0, 0, 0], axis: [0, 0, 1], value: M } }] });
+  near(tq.applied.moment[2], M, 1e-9, "torque");
+  assert.ok(Math.hypot(...tq.applied.force) < 1e-6 * M / R);
+  // spread along the length the torque in the shaft falls linearly: the end turns M H / (2 G J)
+  const G = E / 2.6, J = (Math.PI * R ** 4) / 2;
+  near(tq.disp(R - 1e-6, 0, H - 1e-6)[1], ((M * H) / (2 * G * J)) * R, 0.03, "twist");
+  const F = 800;
+  const br = solveStatic({ ...pb, loads: [{ tris: side, bearing: [F, 0, 0] }] });
+  near(br.applied.force[0], F, 1e-9, "bearing force");
+  assert.ok(Math.abs(br.applied.force[1]) < 1e-6 * F && Math.abs(br.applied.force[2]) < 1e-9);
+  // only the half facing the force is pressed: the far side stays free of traction, so the near side sinks more
+  assert.ok(br.disp(0, 0, H / 2)[0] > 0);
+
+  // water (γ = 9.81e-6 N/mm³) against the end face of the bar, the surface at mid height
+  const gamma = 9.81e-6;
+  const hy = solveStatic({ lo, hi, inside, h: 10, p: 2, mat: { E, nu: 0.3 }, fixed: [{ tris: x0 }], loads: [{ tris: x1, hydro: { p: [0, 0, T / 2], down: [0, 0, -1], gamma } }] });
+  near(hy.applied.force[0], -(gamma * B * (T / 2) ** 2) / 2, 1e-6, "hydrostatic force");
+  // its line of action is a third of the depth above the bottom
+  near(hy.applied.moment[1] / hy.applied.force[0], T / 6, 1e-6, "centre of pressure");
+});
+
+test("study items: torque, bearing load and hydrostatic pressure become the solver's problem", async () => {
+  const { studyProblem, positiveAxis } = await import("../../src/sim/run");
+  const { newStudy, GRAVITY } = await import("../../src/sim/types");
+  const { loadValue, typedValue } = await import("../../src/sim/values");
+  // a hole of radius 3 about the line through (5, 7, ·) along −Z, and one flat face
+  const cyl: number[] = [];
+  for (let i = 0; i < 32; i++) {
+    const a0 = (2 * Math.PI * i) / 32, a1 = (2 * Math.PI * (i + 1)) / 32;
+    const P = (a: number, z: number) => [5 + 3 * Math.cos(a), 7 + 3 * Math.sin(a), z];
+    cyl.push(...P(a0, 0), ...P(a1, 10), ...P(a1, 0), ...P(a0, 0), ...P(a0, 10), ...P(a1, 10));
+  }
+  const flat = rectFace(0, L, lo, hi, true);
+  const body = { tris: Float64Array.from([...cyl, ...flat]), face: Int32Array.from([...cyl.map(() => 0).slice(0, cyl.length / 9), 1, 1]), names: ["hole", "x1"], lo, hi };
+  const st = newStudy([]);
+  st.loads.push({ id: "l1", type: "torque", faces: [{ name: "hole" }], value: { v: 5000 }, flip: true },
+    { id: "l2", type: "bearing", faces: [{ name: "hole" }], comp: [{ v: 300 }, { v: 0 }, { v: 40 }] },
+    { id: "l3", type: "bearing", faces: [{ name: "hole" }], comp: [{ v: 0 }, { v: 0 }, { v: 40 }] },
+    { id: "l4", type: "torque", faces: [{ name: "x1" }], value: { v: 1 } },
+    { id: "l5", type: "hydro", faces: [{ name: "x1" }], value: { v: 1000 }, axis: "y", flip: true, level: 12 });
+  const pb = studyProblem(st, body);
+  assert.deepEqual(pb.problems, [{ id: "l3", code: "E-SIM-BEARING" }, { id: "l4", code: "E-SIM-AXIS" }]);
+  const [tq, br, hy] = pb.loads;
+  // the axis is taken towards +Z whichever way the faces give it; Reverse turns the torque the other way
+  assert.ok(Math.abs(tq.torque!.axis[2] - 1) < 1e-9 && tq.torque!.value === -5000);
+  assert.ok(Math.abs(tq.torque!.p[0] - 5) < 1e-6 && Math.abs(tq.torque!.p[1] - 7) < 1e-6);
+  // the part of the force along the axis is left out
+  assert.ok(Math.abs(br.bearing![0] - 300) < 1e-9 && Math.abs(br.bearing![2]) < 1e-9);
+  assert.deepEqual([Array.from(hy.hydro!.p), Array.from(hy.hydro!.down)], [[0, 12, 0], [0, 1, 0]]);
+  near(hy.hydro!.gamma, 1e-9 * GRAVITY, 1e-12, "water");
+  assert.deepEqual(positiveAxis([0, -1, 0]), [-0, 1, -0]);
+  // typed values: torque in N·m, density in kg/m³ or g/cm³
+  assert.equal(typedValue("12 N·m", "torque").v, 12000);
+  assert.equal(loadValue("0.85 g/cm³", "hydro"), 850);
+  assert.equal(loadValue("2 kN", "bearing"), 2000);
+});

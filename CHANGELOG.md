@@ -5,6 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.622.0] - 2026-11-21
+
+### Added
+
+- Structural analysis: **Torque**. A moment about the axis of the picked cylindrical faces, spread over them as a traction round the circumference; an arrow shows the axis it turns about.
+- Structural analysis: **Bearing load**. A force pressed onto the half of a hole or shaft that faces it, strongest in the middle and fading to nothing at the sides, as a pin or a bearing loads its seat.
+- Structural analysis: **Hydrostatic pressure**. A fluid of a given density presses on the picked faces below its surface, growing with depth; faces above the surface carry nothing.
+
 ## [1.621.0] - 2026-11-21
 
 ### Added
@@ -4007,7 +4015,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.621.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.622.0...HEAD
+[1.622.0]: https://github.com/kothf/step-viewer/compare/v1.621.0...v1.622.0
 [1.621.0]: https://github.com/kothf/step-viewer/compare/v1.620.0...v1.621.0
 [1.620.0]: https://github.com/kothf/step-viewer/compare/v1.619.0...v1.620.0
 [1.619.0]: https://github.com/kothf/step-viewer/compare/v1.618.0...v1.619.0

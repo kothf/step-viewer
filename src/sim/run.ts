@@ -4,7 +4,7 @@
 import { MeshBody, insideOf } from "./body";
 import { solveStatic, triArea, triNormals, type Load, type Reaction, type Support } from "./static";
 import type { Grid } from "./grid";
-import type { Study, StudyEdge, StudyPoint } from "./types";
+import { GRAVITY, type Study, type StudyEdge, type StudyPoint } from "./types";
 
 /** The body for the solver: the kernel's triangles with each one's face, and the face names. */
 export interface SimBody {
@@ -26,9 +26,9 @@ export interface StudyProblem {
   /**
    * Items that cannot be solved as they are: E-SIM-REF (face gone), E-SIM-EMPTY (nothing picked), E-SIM-HINGE,
    * E-SIM-SPRING (an elastic support without stiffness), E-SIM-AXIS (a centrifugal load's faces have no one axis),
-   * E-SIM-ONESPIN (a second centrifugal load).
+   * E-SIM-ONESPIN (a second centrifugal load), E-SIM-BEARING (a bearing load whose force lies along the axis).
    */
-  problems: { id: string; code: "E-SIM-REF" | "E-SIM-EMPTY" | "E-SIM-HINGE" | "E-SIM-SPRING" | "E-SIM-AXIS" | "E-SIM-ONESPIN" }[];
+  problems: { id: string; code: "E-SIM-REF" | "E-SIM-EMPTY" | "E-SIM-HINGE" | "E-SIM-SPRING" | "E-SIM-AXIS" | "E-SIM-ONESPIN" | "E-SIM-BEARING" }[];
   /** Which study item each entry of `fixed` is. */
   supportIds: string[];
 }
@@ -139,6 +139,14 @@ export function axisOf(tris: ArrayLike<number>): number[] | null {
     v = w.map(x => x / top);
   }
   return tr - top - bv > 0.02 * tr ? best : null;
+}
+
+/** An axis direction turned to point the way of its largest component: towards +X, +Y or +Z. */
+export function positiveAxis(a: ArrayLike<number>): number[] {
+  let k = 0;
+  for (let i = 1; i < 3; i++) if (Math.abs(a[i]) > Math.abs(a[k]) + 1e-9) k = i;
+  const s = a[k] < 0 ? -1 : 1;
+  return [s * a[0], s * a[1], s * a[2]];
 }
 
 /** The axis of cylindrical faces as a line: the direction (`axisOf`) and the point nearest to every triangle's normal line. */
@@ -255,6 +263,25 @@ export function studyProblem(st: Study, b: SimBody): StudyProblem {
     const tris = trisOf(b, l.faces.map(f => f.name));
     if (!tris) { out.problems.push({ id: l.id, code: "E-SIM-REF" }); continue; }
     const sign = l.flip ? -1 : 1, v = l.value?.v ?? 0;
+    if (l.type === "torque" || l.type === "bearing") {
+      const line = axisLine(tris);
+      if (!line) { out.problems.push({ id: l.id, code: "E-SIM-AXIS" }); continue; }
+      const a = positiveAxis(line.axis);
+      if (l.type === "torque") { out.loads.push({ tris, torque: { p: line.p, axis: a, value: sign * v } }); continue; }
+      // a bearing presses across its axis: the part of the force along it is left out
+      const d = comp[0] * a[0] + comp[1] * a[1] + comp[2] * a[2], f = comp.map((c, i) => c - d * a[i]);
+      if (!(Math.hypot(f[0], f[1], f[2]) > 1e-9 * Math.max(1, Math.hypot(comp[0], comp[1], comp[2])))) { out.problems.push({ id: l.id, code: "E-SIM-BEARING" }); continue; }
+      out.loads.push({ tris, bearing: f });
+      continue;
+    }
+    if (l.type === "hydro") {
+      const k = l.axis === "x" ? 0 : l.axis === "y" ? 1 : 2, up = l.flip ? -1 : 1;
+      const p = [0, 0, 0], down = [0, 0, 0];
+      p[k] = l.level ?? 0; down[k] = -up;
+      // kg/m³ → t/mm³, times standard gravity: N/mm³ per mm of depth
+      out.loads.push({ tris, hydro: { p, down, gamma: v * 1e-12 * GRAVITY } });
+      continue;
+    }
     if (l.type === "pressure") out.loads.push({ tris, pressure: sign * v });
     else if (l.type === "moment") out.loads.push({ tris, moment: comp });
     else if (l.normal) out.loads.push({ tris, pressure: (sign * v) / (triArea(tris) || 1) });
