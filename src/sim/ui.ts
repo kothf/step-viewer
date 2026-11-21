@@ -26,9 +26,9 @@ import type { SectionManager } from "../viewer/Section";
 import { nearExcitation, parseExcitation } from "./excite";
 import { pathChart, pathChartSvg, pathCsv, pathLength, pathPoints, pathRows, type PathRow } from "./path";
 import { chartSvg, reportHtml, reportPdf, type ReportBlock, type SimReport } from "./report";
-import { GLOBAL_PASSES, MAX_PASSES, positiveAxis, studyProblem, type PassResult, type SimBody } from "./run";
+import { GLOBAL_PASSES, MAX_PASSES, envelope, positiveAxis, studyProblem, type PassResult, type SimBody } from "./run";
 import { shownValue, typedValue } from "./values";
-import { DEFAULT_MODES, GRAVITY, LOAD_LABEL, MAX_MODES, MAX_REFINE, MODAL_PASSES, ON_TYPES, REFINE_LABEL, SUPPORT_LABEL, itemName, newStudy, nextId, pickCount, type LoadType, type PlotKind, type Study, type StudyKind, type StudyLoad, type StudyRefine, type StudySupport, type SupportType } from "./types";
+import { DEFAULT_MODES, GRAVITY, LOAD_LABEL, MAX_MODES, MAX_REFINE, MODAL_PASSES, ON_TYPES, REFINE_LABEL, SUPPORT_LABEL, caseStudy, itemName, newCase, newStudy, nextId, pickCount, type LoadType, type PlotKind, type Study, type StudyKind, type StudyLoad, type StudyRefine, type StudySupport, type SupportType } from "./types";
 
 export interface SimHost {
   viewer: Viewer;
@@ -51,9 +51,14 @@ export interface SimHost {
 
 type Edit = { kind: "support"; draft: StudySupport; isNew: boolean } | { kind: "load"; draft: StudyLoad; isNew: boolean } | { kind: "refine"; draft: StudyRefine; isNew: boolean };
 /** `parts` = bodies of the part when there are several (they are analysed bonded). */
-interface Results { study: string; key: string; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; cached?: boolean; parts?: number }
+/** One load case's results; `job` names its solution in the worker (0 = not held). */
+interface CaseResult { id: string; name: string; passes: PassResult[]; job: number }
+/** `passes` are the shown ones: the study's, or with load cases the picked case's or the envelope (one made-up pass). */
+interface Results { study: string; key: string; passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; cached?: boolean; parts?: number; cases?: CaseResult[]; job?: number; env?: PassResult[] }
+/** The most load cases a study has. */
+export const MAX_CASES = 8;
 /** What the disk cache keeps of a finished solve (FR-SOL-030). */
-interface Kept { passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; parts?: number }
+interface Kept { passes: PassResult[]; ids: string[]; ms: number; mesh: PlotMesh; parts?: number; cases?: { id: string; name: string; passes: PassResult[] }[] }
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const $ = <T extends HTMLElement = HTMLElement>(s: string) => document.querySelector<T>(s)!;
@@ -174,6 +179,9 @@ export class SimController {
   /** Mode animation speed (1 = one swing in `MODE_PERIOD`) and whether the mode table adds the effective masses up; view only. */
   private speed = 1;
   private cumul = false;
+  /** The load case shown (index into the results' cases); -1 = the envelope of them all. */
+  private caseSel = -1;
+  private errorIn = "";
   private recording = false;
   private gifs = 0;
   private lastGif: { bytes: number; frames: number; w: number; h: number } | null = null;
@@ -221,12 +229,49 @@ export class SimController {
     const parts: unknown[] = [doc.features, doc.rollback, doc.vars ?? null, doc.material ?? null, st.supports, st.loads, st.settings, st.suppressed ?? null];
     if (st.refine?.length) parts.push(st.refine);
     if (st.kind === "modal") parts.push("modal");
+    else if (st.cases?.length) parts.push(st.cases.map(c => [c.id, c.off]));
     return JSON.stringify(parts);
   }
 
   private stale(): boolean {
     const doc = this.host.doc(), st = this.study();
     return !!this.res && (!doc || !st || st.id !== this.res.study || this.keyOf(doc, st) !== this.res.key);
+  }
+
+  /** With load cases: is the envelope shown, not one case? */
+  private get enveloped() { const c = this.res?.cases; return !!c && c.length > 1 && this.caseSel < 0; }
+
+  /** Points the results at the picked load case, or at the envelope of them all. */
+  private applyCase() {
+    const r = this.res, cs = r?.cases;
+    if (!r || !cs?.length) return;
+    if (this.caseSel >= cs.length) this.caseSel = -1;
+    if (cs.length > 1 && this.caseSel < 0) r.passes = (r.env ??= [envelope(cs.map(c => c.passes.at(-1)!))]);
+    else r.passes = cs[Math.max(0, this.caseSel)].passes;
+  }
+
+  /** A case's name as the study has it now (a rename does not make the results out of date). */
+  private caseName(c: CaseResult) { return this.study()?.cases?.find(x => x.id === c.id)?.name ?? c.name; }
+
+  private pickCase(i: number) {
+    const r = this.res;
+    if (!r?.cases || this.running) return;
+    this.caseSel = i;
+    this.applyCase();
+    this.hot = null; this.hotSel = -1; this.probeKey = "";
+    if (this.plot.on) this.showPlot();
+    this.syncProbes();
+    this.syncPath();
+    this.capsSoon();
+    this.renderAll();
+  }
+
+  /** The worker's solution behind the shown results; 0 when it holds none (the envelope has none). */
+  private job(): number {
+    const r = this.res;
+    if (!r || this.solved !== r || this.running || this.enveloped) return 0;
+    const j = r.cases ? r.cases[Math.max(0, this.caseSel)]?.job ?? 0 : r.job ?? 0;
+    return j && this.client.holds(j) ? j : 0;
   }
 
   get active() { return !!this.edit || ((this.probing || this.pathing) && !!this.saved); }
@@ -252,6 +297,8 @@ export class SimController {
       kind: this.study()?.kind ?? null, modes: last?.modes?.map(m => ({ hz: m.hz, rigid: m.rigid, eff: m.eff })) ?? [], mode: this.modeIndex(last), mass: last?.mass ?? null,
       animating: !!this.anim, frames: this.anim?.frames ?? 0, gifs: this.gifs, gif: this.lastGif, near: this.nearModes(this.res?.passes.at(-1)), bodies: this.res?.parts ?? 1, speed: this.speed, cumul: this.cumul, more: !!this.res?.passes.at(-1)?.more, range: this.study()?.settings.range ?? null,
       caps: { n: this.caps.length, ...this.capInfo },
+      cases: (this.study()?.cases ?? []).map(c => ({ name: c.name, off: c.off })), caseSel: this.caseSel, enveloped: this.enveloped,
+      caseResults: (this.res?.cases ?? []).map(c => ({ name: this.caseName(c), maxVm: c.passes.at(-1)?.maxVm ?? null, maxU: c.passes.at(-1)?.maxU ?? null, passes: c.passes.length })),
       path: (() => { const pv = this.pathValues(); let lo = Infinity, hi = -Infinity, inside = 0; if (pv) for (let i = 0; i < pv.v.length; i++) if (pv.ok[i]) { inside++; lo = Math.min(lo, pv.v[i]); hi = Math.max(hi, pv.v[i]); }
         return { at: this.study()?.path ?? null, picking: this.pathing, first: !!this.pathFirst, points: pv?.v.length ?? 0, inside, min: inside ? lo : null, max: inside ? hi : null, source: this.pathData?.source ?? null, csv: this.pathData ? pathCsv(this.pathData.rows) : null, drawn: this.pathMark?.userData.simPath ?? 0 }; })(),
       hot: this.hotList().map(h => ({ vm: h.vm, at: h.at, singular: h.singular, growth: h.growth })), labels: this.pins.length - this.probes.length,
@@ -287,7 +334,10 @@ export class SimController {
     const kept = await cacheGet<Kept>(await cacheKey("sim", key));
     const now = this.host.doc(), s2 = this.study();
     if (!kept?.passes?.length || !kept.mesh || this.res || this.running || now !== doc && now?.id !== doc.id || !s2 || s2.id !== st.id || !now || this.keyOf(now, s2) !== key) return;
-    this.res = { study: st.id, key, passes: kept.passes, ids: kept.ids, ms: kept.ms, mesh: kept.mesh, cached: true, ...(kept.parts ? { parts: kept.parts } : {}) };
+    this.res = { study: st.id, key, passes: kept.passes, ids: kept.ids, ms: kept.ms, mesh: kept.mesh, cached: true, ...(kept.parts ? { parts: kept.parts } : {}),
+      ...(kept.cases?.length ? { cases: kept.cases.map(c => ({ ...c, job: 0 })) } : {}) };
+    this.caseSel = -1;
+    this.applyCase();
     this.cacheHits++;
     this.plot.on = false;
     this.syncProbes();
@@ -502,7 +552,7 @@ export class SimController {
     }
     const part = this.host.viewer.parts[0];
     if (!part) { toast(t("The part has no body yet."), "warn"); return; }
-    this.running = true; this.error = null; this.res = null; this.problems.clear(); this.probes = []; this.probeKey = ""; this.hot = null; this.hotSel = -1; this.modeSel = -1;
+    this.running = true; this.error = null; this.errorIn = ""; this.res = null; this.problems.clear(); this.probes = []; this.probeKey = ""; this.hot = null; this.hotSel = -1; this.modeSel = -1;
     const modal = st.kind === "modal";
     // a mode is a shape: it is drawn deformed, whatever the last static plot was set to
     if (modal) this.plot.deformed = true;
@@ -510,6 +560,7 @@ export class SimController {
     this.progress = t("Reading the geometry…");
     this.renderAll();
     const key = this.keyOf(doc, st), t0 = performance.now();
+    let whole = true, made: Results | null = null;
     try {
       const size = this.host.viewer.modelSize;
       // bodies with a material of their own would need a solver with several materials
@@ -517,11 +568,14 @@ export class SimController {
       if (own.length) throw new Error("E-SIM-BODYMATS");
       const { geo, solids, parts } = await this.host.simGeo(Math.max(0.002, size * 2e-5), 0.05);
       if (solids !== 1) throw new Error("E-SIM-BODIES");
-      const problem = studyProblem(st, geo);
-      if (problem.problems.length) {
-        for (const p of problem.problems) this.problems.set(p.id, p.code);
-        throw new Error(`${problem.problems[0].code}: ${problem.problems[0].id}`);
+      // with load cases each one is solved on its own: the same supports, its own loads
+      const cases = modal ? [] : st.cases ?? [];
+      const runs = (cases.length ? cases : [null]).map(c => ({ c, problem: studyProblem(c ? caseStudy(st, c) : st, geo) }));
+      for (const r of runs) if (r.problem.problems.length) {
+        for (const p of r.problem.problems) this.problems.set(p.id, p.code);
+        throw new Error(`${r.problem.problems[0].code}: ${r.problem.problems[0].id}`);
       }
+      const problem = runs[0].problem;
       const g = part.mesh.geometry, pa = g.getAttribute("position"), na = g.getAttribute("normal"), n = pa.count;
       const p0 = new Float32Array(3 * n), n0 = new Float32Array(3 * n);
       for (let i = 0; i < n; i++) {
@@ -534,9 +588,14 @@ export class SimController {
       const pos = mesh.pos, nrm = mesh.nrm;
       const total = Math.max(1, Math.min(modal ? MODAL_PASSES : MAX_PASSES, Math.round(st.settings.passes)));
       if (modal) problem.loads = [];
-      this.progress = t("Pass {n} of {m}…", { n: 1, m: total });
+      const res: Results = { study: st.id, key, passes: [], ids: problem.supportIds, ms: 0, mesh, ...(parts && parts > 1 ? { parts } : {}), ...(cases.length ? { cases: [] } : {}) };
+      made = res; whole = false;
+      for (let ci = 0; ci < runs.length; ci++) {
+      const run = runs[ci], problem = run.problem, pre = run.c ? `${run.c.name}: ` : "";
+      const mine: PassResult[] = run.c ? [] : res.passes;
+      if (run.c) { res.cases!.push({ id: run.c.id, name: run.c.name, passes: mine, job: 0 }); res.passes = mine; this.caseSel = ci; this.errorIn = run.c.name; this.hot = null; }
+      this.progress = pre + t("Pass {n} of {m}…", { n: 1, m: total });
       this.renderAll();
-      const res: Results = { study: st.id, key, passes: [], ids: problem.supportIds, ms: 0, mesh, ...(parts && parts > 1 ? { parts } : {}) };
       await this.client.solve({
         body: geo, problem, passes: total, energyTol: st.settings.energyTol, pos, nrm,
         ...(modal ? { modal: st.settings.range
@@ -544,22 +603,36 @@ export class SimController {
           : { count: Math.max(1, Math.min(MAX_MODES, Math.round(st.settings.modes ?? DEFAULT_MODES))) } } : {}),
         mat: { name: m.name, E: m.E * 1000, nu: m.nu, rho: m.density * 1e-9, sy: m.sy ?? undefined, su: m.su ?? undefined },
       }, p => {
-        res.passes.push(p);
+        mine.push(p);
         res.ms = performance.now() - t0;
         this.res = res;
         this.plot.on = true;
-        if (!p.done) this.progress = t("Pass {n} of {m}…", { n: p.pass + 1, m: total });
+        if (!p.done) this.progress = pre + t("Pass {n} of {m}…", { n: p.pass + 1, m: total });
         this.showPlot();
         this.renderAll();
         this.drawMarks();
-      });
+      }, ci > 0);
+      if (!mine.length) throw new Error(SIM_STOPPED);
+      if (run.c) res.cases![ci].job = this.client.solution; else res.job = this.client.solution;
+      }
+      whole = true; this.errorIn = "";
+      if (res.cases) { this.caseSel = res.cases.length > 1 ? -1 : 0; this.hot = null; }
       // the worker keeps the last solution: the section planes can show it
-      if (res.passes.length && this.res === res) { this.solved = res; this.running = false; this.capsSoon(); this.syncPath(); }
+      if (res.passes.length && (this.res as Results | null) === res) {
+        this.solved = res; this.running = false;
+        if (res.cases) { this.applyCase(); this.showPlot(); }
+        this.capsSoon(); this.syncPath();
+      }
       // a finished solve is kept for the next time this document is opened
-      if (res.passes.length) void cacheKey("sim", key).then(k => cachePut(k, { passes: res.passes, ids: res.ids, ms: res.ms, mesh: res.mesh, parts: res.parts } satisfies Kept));
+      if (res.passes.length) {
+        const keep: Kept = { passes: res.cases ? res.cases.at(-1)!.passes : res.passes, ids: res.ids, ms: res.ms, mesh: res.mesh, parts: res.parts, ...(res.cases ? { cases: res.cases.map(c => ({ id: c.id, name: c.name, passes: c.passes })) } : {}) };
+        void cacheKey("sim", key).then(k => cachePut(k, keep));
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      if (msg !== SIM_STOPPED) { this.error = msg; toast(this.errorText(msg), "error"); }
+      if (msg !== SIM_STOPPED) { this.error = msg; toast((this.errorIn ? `${this.errorIn}: ` : "") + this.errorText(msg), "error"); }
+      // load cases are shown together or not at all
+      if (!whole && made?.cases && this.res === made) { this.res = null; this.clearPlot(); }
     } finally {
       this.running = false;
       this.renderAll();
@@ -805,8 +878,8 @@ export class SimController {
   private syncPath() {
     const st = this.study(), res = this.res, r = res?.passes.at(-1), path = st?.path;
     const usable = !!path && !!res && !!r && !r.modes && !this.stale();
-    const sol = usable && this.solved === res && !this.running ? this.client.solution : 0;
-    const key = usable ? `${res!.key}|${r!.pass}|${JSON.stringify(path)}|${sol}` : "";
+    const sol = usable ? this.job() : 0;
+    const key = usable ? `${res!.key}|${r!.pass}|${JSON.stringify(path)}|${sol}|${res!.cases ? this.caseSel : ""}` : "";
     if (key === this.pathKey) { this.drawPath(); return; }
     this.pathKey = key;
     if (!usable || !path || !res || !r) { this.pathData = null; this.drawPath(); return; }
@@ -822,7 +895,7 @@ export class SimController {
     this.pathData = { rows: pathRows(pos, vm, u, near), source: "surface" };
     this.drawPath();
     if (!sol) return;
-    void this.client.sample(Float32Array.from(pos), 0, true).then(s => {
+    void this.client.sample(Float32Array.from(pos), 0, true, sol).then(s => {
       if (!s || this.pathKey !== key) return;
       const ok = Uint8Array.from(near, (v, i) => (v || s.solid?.[i] ? 1 : 0));
       this.pathData = { rows: pathRows(pos, s.vm, s.u, ok), source: "solution" };
@@ -1029,7 +1102,7 @@ export class SimController {
 
   /** The shown plot can be carried onto the section caps: a static result whose solution the worker still holds. */
   private capsPaintable() {
-    return !!this.saved && !!this.res && this.solved === this.res && !this.running && !this.res.passes.at(-1)?.modes && !!this.client.solution;
+    return !!this.saved && !!this.res && !this.res.passes.at(-1)?.modes && !!this.job();
   }
 
   /** The plot came, went or changed: the section caps are made again (plain), then painted if they can be. */
@@ -1074,7 +1147,7 @@ export class SimController {
           const m = new THREE.Matrix4().multiplyMatrices(back, mesh.matrixWorld);
           for (let i = 0; i < n; i++) { p.fromBufferAttribute(pa, i).applyMatrix4(m); pos[3 * i] = p.x; pos[3 * i + 1] = p.y; pos[3 * i + 2] = p.z; }
           const kind = this.plot.kind, range = this.range, res = this.res;
-          const s = await this.client.sample(pos, this.usedScale);
+          const s = await this.client.sample(pos, this.usedScale, false, this.job());
           if (!s || !this.capsPaintable() || this.res !== res || !this.caps.some(c => c.mesh === mesh)) continue;
           const val = Float32Array.from(this.values({ u: s.u, vm: s.vm, err: s.err } as PassResult, kind)), hit = s.hit, w = CAP_GRID + 1;
           for (let i = 0; i < n; i++) if (hit[i]) { info.hit++; if (val[i] < info.min) info.min = val[i]; if (val[i] > info.max) info.max = val[i]; }
@@ -1323,6 +1396,12 @@ export class SimController {
         : l.type === "remote" ? `${n3(c, 1, "N")}; ${n3((l.mom ?? []).map(x => x?.v ?? 0), 1e-3, "N·m")}; ${t("at ({x}, {y}, {z}) mm", { x: sig((l.at ?? [0, 0, 0])[0]), y: sig((l.at ?? [0, 0, 0])[1]), z: sig((l.at ?? [0, 0, 0])[2]) })}` : l.type === "moment" ? n3(c, 1e-3, "N·m") : n3(c, 1e-3, "m/s²");
       return [name(l), t(LOAD_LABEL[l.type]), faces(l), val];
     })] });
+    if (res.cases?.length) {
+      blocks.push({ kind: "h", text: t("Load cases") });
+      blocks.push({ kind: "table", widths: [3, 5, 2, 2], rows: [[t("Name"), t("Loads"), `${t("Max von Mises stress")}, MPa`, `${t("Max displacement")}, ${units.current}`],
+        ...res.cases.map(c => { const cs = st.cases?.find(x => x.id === c.id), lp = c.passes.at(-1)!;
+          return [this.caseName(c), st.loads.filter(l => !off.has(l.id) && !cs?.off.includes(l.id)).map(l => l.name ?? l.id).join(", "), sig(lp.maxVm), sig(lp.maxU * UNITS[units.current].f)]; })] });
+    }
     if (st.refine?.length) {
       blocks.push({ kind: "h", text: t(REFINE_LABEL) });
       blocks.push({ kind: "table", widths: [3, 2, 1], rows: [[t("Name"), t("Applied to"), t("Level")], ...st.refine.map(r => [(r.name ?? r.id) + (off.has(r.id) ? ` (${t("left out")})` : ""), this.pickText(r), String(r.level)])] });
@@ -1331,13 +1410,14 @@ export class SimController {
     const f = (v: number[]) => sig(Math.hypot(v[0], v[1], v[2]));
     const hs = this.hotList(), singular = hs.some(h => h.singular), real = singular ? hs.find(h => !h.singular) : undefined, peak = real?.vm ?? last.maxVm;
     const rows: string[][] = [[t("Max von Mises stress"), `${sig(last.maxVm)} MPa${singular ? ` (${t("Stress singularity: value depends on refinement")})` : ""}`]];
+    if (res.cases?.length) rows.unshift([t("Load case"), this.enveloped ? t("Envelope (highest of all cases)") : this.caseName(res.cases[Math.max(0, this.caseSel)])]);
     if (real) rows.push([t("Highest stress away from singularities"), `${sig(real.vm)} MPa`]);
     rows.push([t("Max displacement"), this.lenText(last.maxU)]);
     if (m?.sy && peak > 0) rows.push([t("Lowest safety factor (yield)"), sig(m.sy / peak)]);
     const errs = last.errors, eLast = errs.at(-1), eBefore = errs.length > 1 ? errs[errs.length - 2] : null;
     if (eLast != null) rows.push([t("Estimated error"), `≈ ${sig(eLast)} %`]);
     else if (eBefore != null) rows.push([t("Estimated error"), `< ${sig(eBefore)} %`]);
-    rows.push([t("Applied load"), `${f(last.applied.force)} N (${last.applied.force.map(x => sig(x)).join(", ")})`]);
+    if (!this.enveloped) rows.push([t("Applied load"), `${f(last.applied.force)} N (${last.applied.force.map(x => sig(x)).join(", ")})`]);
     last.reactions.forEach((re, i) => rows.push([`${t("Reaction")} ${this.nameOf(res.ids[i] ?? "")}`, `${f(re.force)} N (${re.force.map(x => sig(x)).join(", ")})`]));
     kv(rows);
     const keep = { ...this.plot };
@@ -1355,8 +1435,8 @@ export class SimController {
       blocks.push({ kind: "table", widths: [1, 3, 4, 5], rows: [["#", `${t("von Mises stress")}, MPa`, `X, Y, Z, ${units.current}`, t("Note")],
         ...hs.map((h, i) => [String(i + 1), sig(h.vm), h.at.map(x => String(Number((x * uf).toFixed(3)))).join(", "), h.singular ? t("Stress singularity: value depends on refinement") : ""])] });
     }
-    blocks.push({ kind: "h", text: t("Convergence") });
-    blocks.push({ kind: "table", widths: [1, 2, 2, 2, 2], rows: [[t("Pass"), t("Unknowns"), t("Energy change"), t("Est. error"), t("Time")],
+    if (!this.enveloped) blocks.push({ kind: "h", text: t("Convergence") });
+    if (!this.enveloped) blocks.push({ kind: "table", widths: [1, 2, 2, 2, 2], rows: [[t("Pass"), t("Unknowns"), t("Energy change"), t("Est. error"), t("Time")],
       ...res.passes.map((p, i) => [String(p.pass), p.dofs.toLocaleString("en-US").replace(/,/g, " "), p.change == null ? "–" : `${sig(p.change)} %`, errs[i] == null ? "–" : `${i === errs.length - 1 ? "≈ " : ""}${sig(errs[i]!)} %`, `${(p.ms / 1000).toFixed(1)} s`])] });
     if (errs.filter(e => e != null).length > 1) blocks.push({ kind: "chart", errs, label: t("Estimated error per pass") });
     for (const line of this.localNotes(res.passes)) blocks.push({ kind: "p", muted: true, text: line });
@@ -1503,6 +1583,14 @@ export class SimController {
     const modal = st.kind === "modal";
     html += `<div class="sim-sec"><h4>${esc(t("Supports"))}</h4><ul class="sim-list">${st.supports.map(s => row(s, false)).join("") || none(modal ? t("None: the part is free. Supports are optional here.") : t("None yet: pick one in the Simulation tab."))}</ul></div>`;
     if (!modal) html += `<div class="sim-sec"><h4>${esc(t("Loads"))}</h4><ul class="sim-list">${st.loads.map(l => row(l, true)).join("") || none(t("None yet: pick one in the Simulation tab."))}</ul></div>`;
+    if (!modal && (st.loads.length > 1 || st.cases?.length)) {
+      const cs = st.cases ?? [];
+      html += `<div class="sim-sec sim-cases"><h4>${esc(t("Load cases"))}</h4>`
+        + cs.map(c => `<div class="sim-case" data-c="${c.id}"><div class="sim-case-h"><input type="text" data-k="cname" value="${esc(c.name)}" aria-label="${esc(t("Name"))}" translate="no" spellcheck="false" /><button class="sim-ib" data-a="rmcase" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">×</button></div>`
+          + st.loads.map(l => `<label class="chk"><input type="checkbox" data-k="cload" data-l="${l.id}"${c.off.includes(l.id) || off.has(l.id) ? "" : " checked"}${off.has(l.id) ? " disabled" : ""} /><span translate="no">${esc(l.name ?? l.id)}</span></label>`).join("") + `</div>`).join("")
+        + `<p class="sim-note muted">${esc(cs.length ? t("Each case is solved on its own with its ticked loads and the same supports. The results show one case, or the highest values of them all.") : t("All the loads act together. Add cases to solve different sets of the loads in one go."))}</p>`
+        + (cs.length < MAX_CASES ? `<button class="btn small" data-a="addcase">${esc(t("Add load case"))}</button>` : "") + `</div>`;
+    }
     if (modal) html += `<div class="sim-sec"><h4>${esc(t("Accuracy"))}</h4><label class="pm-field"><span>${esc(t("Find"))}</span><select data-k="find"><option value="count"${st.settings.range ? "" : " selected"}>${esc(t("The lowest modes"))}</option><option value="range"${st.settings.range ? " selected" : ""}>${esc(t("Modes in a frequency range"))}</option></select></label>`
       + (st.settings.range
         ? `<label class="pm-field"><span>${esc(t("From"))}, Hz</span><input type="number" data-k="rfrom" min="0" step="any" value="${sig(st.settings.range.from)}"></label><label class="pm-field"><span>${esc(t("To"))}, Hz</span><input type="number" data-k="rto" min="0" step="any" value="${sig(st.settings.range.to)}"></label>`
@@ -1530,11 +1618,19 @@ export class SimController {
     const r = this.res, last = r?.passes.at(-1);
     let html = "";
     if (this.running) html += `<p class="sim-run"><i class="spin" aria-hidden="true"></i>${esc(this.progress)} <button class="btn small" data-a="stop">${esc(t("Stop"))}</button></p>`;
-    if (this.error && !this.running) html += `<p class="sim-prob">${esc(this.errorText(this.error))}</p>`;
+    if (this.error && !this.running) html += `<p class="sim-prob">${this.errorIn ? `<span translate="no">${esc(this.errorIn)}</span>: ` : ""}${esc(this.errorText(this.error))}</p>`;
     if (!r || !last) return html || `<p class="sim-note muted">${esc(t("Not solved yet."))}</p><button class="btn small" data-a="solve">${esc(t("Solve"))}</button>`;
     if (this.stale()) html += `<p class="sim-prob">${esc(t("Out of date: the model or the study changed."))} <button class="btn small" data-a="solve">${esc(t("Solve"))}</button></p>`;
     if (last.modes) return html + this.modalHtml(r, last);
     const f = (v: number[]) => sig(Math.hypot(v[0], v[1], v[2]));
+    const env = this.enveloped;
+    if (r.cases?.length && !this.running) {
+      html += `<label class="pm-field"><span>${esc(t("Load case"))}</span><select data-k="case" translate="no">${r.cases.map((c, i) => `<option value="${i}"${!env && i === Math.max(0, this.caseSel) ? " selected" : ""}>${esc(this.caseName(c))}</option>`).join("")}`
+        + (r.cases.length > 1 ? `<option value="-1"${env ? " selected" : ""}>${esc(t("Envelope (highest of all cases)"))}</option>` : "") + `</select></label>`;
+      if (r.cases.length > 1) html += `<table class="sim-passes sim-casetable"><thead><tr><th>${esc(t("Load case"))}</th><th>${esc(t("von Mises stress"))}, MPa</th><th>${esc(t("Displacement"))}, ${esc(units.current)}</th></tr></thead><tbody>`
+        + r.cases.map((c, i) => { const lp = c.passes.at(-1)!; return `<tr data-a="case" data-case="${i}" tabindex="0" class="${!env && i === this.caseSel ? "sel" : ""}"><td translate="no">${esc(this.caseName(c))}</td><td>${sig(lp.maxVm)}</td><td>${sig(lp.maxU * UNITS[units.current].f)}</td></tr>`; }).join("") + `</tbody></table>`;
+      if (env) html += `<p class="sim-note muted sim-env">${esc(t("Envelope: at every point the highest stress of any case, and the displacement of the case that moves it most."))}</p>`;
+    }
     const hs = this.hotList(), singular = hs.some(h => h.singular), real = singular ? hs.find(h => !h.singular) : undefined, peak = real?.vm ?? last.maxVm;
     const warn = `<span class="sim-warn" title="${esc(t("Stress singularity: value depends on refinement"))}">⚠</span>`;
     html += `<dl class="sim-kv"><dt>${esc(t("Max von Mises stress"))}</dt><dd data-v="maxvm">${sig(last.maxVm)} MPa${singular ? ` ${warn}` : ""}</dd>`;
@@ -1545,9 +1641,10 @@ export class SimController {
     const errs = last.errors, eLast = errs.at(-1), eBefore = errs.length > 1 ? errs[errs.length - 2] : null;
     if (eLast != null) html += `<dt title="${esc(t("In the energy norm, from how the passes converge"))}">${esc(t("Estimated error"))}</dt><dd data-v="error">≈ ${sig(eLast)} %</dd>`;
     else if (eBefore != null) html += `<dt title="${esc(t("In the energy norm, from how the passes converge"))}">${esc(t("Estimated error"))}</dt><dd data-v="error">&lt; ${sig(eBefore)} %</dd>`;
-    html += `<dt>${esc(t("Applied load"))}</dt><dd>${f(last.applied.force)} N</dd>`;
+    if (!env) html += `<dt>${esc(t("Applied load"))}</dt><dd>${f(last.applied.force)} N</dd>`;
     last.reactions.forEach((re, i) => { html += `<dt>${esc(t("Reaction"))} <span translate="no">${esc(this.nameOf(r.ids[i] ?? ""))}</span></dt><dd title="${re.force.map(x => sig(x)).join(", ")} N">${f(re.force)} N</dd>`; });
-    html += `</dl><table class="sim-passes"><thead><tr><th>${esc(t("Pass"))}</th><th>${esc(t("Unknowns"))}</th><th>${esc(t("Energy change"))}</th><th>${esc(t("Est. error"))}</th><th>${esc(t("Time"))}</th></tr></thead><tbody>`
+    html += `</dl>`;
+    if (!env) html += `<table class="sim-passes"><thead><tr><th>${esc(t("Pass"))}</th><th>${esc(t("Unknowns"))}</th><th>${esc(t("Energy change"))}</th><th>${esc(t("Est. error"))}</th><th>${esc(t("Time"))}</th></tr></thead><tbody>`
       + r.passes.map((p, i) => `<tr><td>${p.pass}</td><td>${p.dofs.toLocaleString("en-US").replace(/,/g, " ")}</td><td>${p.change == null ? "–" : `${sig(p.change)} %`}</td><td>${errs[i] == null ? "–" : `${i === errs.length - 1 ? "≈ " : ""}${sig(errs[i]!)} %`}</td><td>${(p.ms / 1000).toFixed(1)} s</td></tr>`).join("") + `</tbody></table>`
       + chartSvg(errs, t("Estimated error per pass"));
     for (const line of this.localNotes(r.passes)) html += `<p class="sim-note muted sim-local">${esc(line)}</p>`;
@@ -1561,7 +1658,7 @@ export class SimController {
     html += this.pathHtml();
     if (!this.running) {
       if (r.cached) html += `<p class="sim-note muted sim-kept">${esc(t("From the last solve of this model and study."))}</p>`;
-      html += `<p class="sim-note muted">${esc(last.converged ? t("Converged: the last pass changed the strain energy by {n} %.", { n: sig(last.change ?? 0) })
+      if (!env) html += `<p class="sim-note muted">${esc(last.converged ? t("Converged: the last pass changed the strain energy by {n} %.", { n: sig(last.change ?? 0) })
         : last.change != null ? t("Not converged to {tol} % yet (last change {n} %). Stress near sharp corners keeps rising with accuracy.", { tol: sig(this.study()?.settings.energyTol ?? 2), n: sig(last.change) })
         : t("One pass only: no convergence check."))}</p>`;
       if (r.parts) html += `<p class="sim-note muted sim-bonded">${esc(t("The part's {n} bodies are analysed bonded: joined wherever they touch.", { n: r.parts }))}</p>`;
@@ -1723,6 +1820,14 @@ export class SimController {
       this.showPlot();
       this.renderAll();
     }
+    else if (a === "case") this.pickCase(Number(b.dataset.case));
+    else if (a === "addcase" && st) {
+      this.host.change(t("Add load case"), d => { const s = d.studies?.find(x => x.id === st.id); if (s && (s.cases?.length ?? 0) < MAX_CASES) (s.cases ??= []).push(newCase(s)); });
+    }
+    else if (a === "rmcase" && st) {
+      const cid = b.closest<HTMLElement>("[data-c]")?.dataset.c;
+      this.host.change(t("Delete load case"), d => { const s = d.studies?.find(x => x.id === st.id); if (s?.cases) { s.cases = s.cases.filter(c => c.id !== cid); if (!s.cases.length) delete s.cases; } });
+    }
     else if (a === "mat") void this.pickMat();
     else if (a === "solve") void this.solve();
     else if (a === "report") void this.report();
@@ -1749,6 +1854,7 @@ export class SimController {
         s.loads = s.loads.filter(x => x.id !== id);
         if (s.refine) { s.refine = s.refine.filter(x => x.id !== id); if (!s.refine.length) delete s.refine; }
         if (s.suppressed) s.suppressed = s.suppressed.filter(x => x !== id);
+        for (const c of s.cases ?? []) c.off = c.off.filter(x => x !== id);
       });
     } else if (a === "toggle" && id && st) {
       this.host.change(t("Suppress"), d => {
@@ -1778,6 +1884,19 @@ export class SimController {
       this.host.change(t("Modes"), d => { const s = d.studies?.find(x => x.id === st.id); if (s) s.settings.modes = v; });
     }
     else if (el.dataset.k === "cumul") { this.cumul = el.checked; this.renderTree(); }
+    else if (el.dataset.k === "case") this.pickCase(Number(el.value));
+    else if (el.dataset.k === "cname" || el.dataset.k === "cload") {
+      const cid = el.closest<HTMLElement>("[data-c]")?.dataset.c, cur = st.cases?.find(c => c.id === cid), lid = el.dataset.l ?? "";
+      if (!cur) return;
+      const name = el.value.trim();
+      if (el.dataset.k === "cname" && (!name || name === cur.name)) { el.value = cur.name; return; }
+      this.host.change(el.dataset.k === "cname" ? t("Rename load case") : t("Loads of a load case"), d => {
+        const c = d.studies?.find(x => x.id === st.id)?.cases?.find(x => x.id === cid);
+        if (!c) return;
+        if (el.dataset.k === "cname") c.name = name;
+        else c.off = el.checked ? c.off.filter(x => x !== lid) : [...new Set([...c.off, lid])];
+      });
+    }
     else if (el.dataset.k === "find") {
       const on = el.value === "range";
       if (on === !!st.settings.range) return;

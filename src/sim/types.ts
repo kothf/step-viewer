@@ -107,6 +107,8 @@ export interface Study {
   suppressed?: string[];
   /** Probes: points on the undeformed model, mm, whose result values are read after each solve (FR-RES-005). */
   probes?: V3[];
+  /** Static studies: load cases (FR-LOAD-022), each solved on its own with the same supports. None = one case with every load. */
+  cases?: StudyCase[];
   /** A straight path between two points of the undeformed model: the results are charted along it (not part of the set-up). */
   path?: [V3, V3];
   /** Modal studies: a frequency the part is excited at, as typed ("3000 rpm", "50 Hz"); modes near it are flagged. Not part of the solve. */
@@ -119,6 +121,24 @@ export type PlotKind = "vm" | "u" | "ux" | "uy" | "uz" | "sf" | "err";
 
 export const DEFAULT_SETTINGS: StudySettings = { passes: 3, energyTol: 2 };
 export const GRAVITY = 9806.65;
+
+/** A load case: the study's loads without the ones in `off`. */
+export interface StudyCase { id: string; name: string; off: string[] }
+
+/** A new load case named "Case n", with every load in it. */
+export function newCase(st: Study): StudyCase {
+  let n = 1, k = 1;
+  const ids = new Set((st.cases ?? []).map(c => c.id)), names = new Set((st.cases ?? []).map(c => c.name));
+  while (ids.has(`c${n}`)) n++;
+  while (names.has(`Case ${k}`)) k++;
+  return { id: `c${n}`, name: `Case ${k}`, off: [] };
+}
+
+/** The study as one of its load cases solves it: the case's left-out loads join the suppressed items. */
+export function caseStudy(st: Study, c: StudyCase): Study {
+  const loads = new Set(st.loads.map(l => l.id));
+  return { ...st, suppressed: [...new Set([...(st.suppressed ?? []), ...c.off.filter(id => loads.has(id))])] };
+}
 
 /** A new study named "Static n" or "Modal n". */
 export function newStudy(existing: Study[], kind: StudyKind = "static"): Study {

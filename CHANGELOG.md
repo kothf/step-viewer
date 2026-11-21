@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.627.0] - 2026-11-21
+
+### Added
+
+- Structural analysis: **load cases**. A static study with two or more loads can hold up to 8 cases, each with its own ticked loads and the same supports. Solve runs them all; the results show one case or the envelope (at every point the highest stress of any case), with a table of each case's highest stress and displacement, and the report lists them.
+
 ## [1.626.0] - 2026-11-21
 
 ### Added
@@ -4039,7 +4045,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.626.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.627.0...HEAD
+[1.627.0]: https://github.com/kothf/step-viewer/compare/v1.626.0...v1.627.0
 [1.626.0]: https://github.com/kothf/step-viewer/compare/v1.625.0...v1.626.0
 [1.625.0]: https://github.com/kothf/step-viewer/compare/v1.624.0...v1.625.0
 [1.624.0]: https://github.com/kothf/step-viewer/compare/v1.623.0...v1.624.0

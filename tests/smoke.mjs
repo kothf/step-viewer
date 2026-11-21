@@ -16753,6 +16753,37 @@ try {
     check(pthMid.first && /end point/.test(pthMid.hint) && !pth.picking && pthLen > 30 && pthLen < 70 && pth.points === 101 && pth.inside >= 95 && pth.source === "solution" && pth.drawn === 2 && pth.rows === 102
       && pth.max > 0 && pth.max <= 1.05 * pth.range[1] && pth.min < pth.max && pth.chart && pth.info.length > 5 && pth.wide <= 0 && pthRu.length === 0 && !pthOff.at && pthOff.drawn === 0 && !pthOff.chart,
       `sim 1.626: two clicks on the plot make a path; the result is charted along it and listed as CSV; Remove path takes it away; translated (${JSON.stringify({ pthMid, pth, pthLen, pthRu, pthOff })})`);
+    // 1.627: two load cases, the second without its first load: Solve runs both, the envelope is shown, a case can be picked.
+    const lcLoads = await mp.evaluate(() => { const s = window.__sv.sim.state(); return document.querySelectorAll("#sim-tree .sim-list .sim-row").length + ":" + s.study; });
+    await mp.click('#sim-tree [data-a="addcase"]');
+    await settle();
+    await mp.click('#sim-tree [data-a="addcase"]');
+    await settle();
+    const lcBoxes = await mp.evaluate(() => [...document.querySelectorAll('#sim-tree .sim-case:nth-of-type(2) input[data-k="cload"]')].map(e => [e.dataset.l, e.checked, e.disabled]));
+    await mp.uncheck('#sim-tree .sim-case:nth-of-type(2) input[data-k="cload"]:not([disabled]) >> nth=0');
+    await settle();
+    await mp.click("#lang-btn");
+    const lcRu = await mp.evaluate(() => [...document.querySelectorAll("#sim-tree .sim-cases h4, #sim-tree .sim-cases .sim-note, #sim-tree .sim-cases .btn")].map(e => e.textContent.trim()).filter(x => /[A-Za-z]{4}/.test(x)));
+    await mp.click("#lang-btn");
+    const lcSet = await mp.evaluate(() => ({ cases: window.__sv.sim.state().cases, wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth }));
+    await mp.click('#sim-tools [data-s="solve"]');
+    await mp.waitForFunction(() => { const s = window.__sv.sim.state(); return !s.running && (s.done || s.error); }, null, { timeout: 300000 });
+    await mp.waitForTimeout(400);
+    const lcEnv = await mp.evaluate(() => { const s = window.__sv.sim.state(); return { error: s.error, enveloped: s.enveloped, caseSel: s.caseSel, maxVm: s.maxVm, res: s.caseResults, shown: s.plot.shown,
+      rows: document.querySelectorAll("#sim-tree .sim-casetable tbody tr").length, note: !!document.querySelector("#sim-tree .sim-env"), opts: document.querySelectorAll('#sim-tree [data-k="case"] option').length }; });
+    await mp.selectOption('#sim-tree [data-k="case"]', "1");
+    await mp.waitForTimeout(400);
+    const lcOne = await mp.evaluate(() => { const s = window.__sv.sim.state(); return { enveloped: s.enveloped, caseSel: s.caseSel, maxVm: s.maxVm, reactions: s.reactions.length, stale: s.stale }; });
+    await mp.click('#sim-tree .sim-case [data-a="rmcase"]');
+    await settle();
+    await mp.click('#sim-tree .sim-case [data-a="rmcase"]');
+    await settle();
+    const lcOff = await mp.evaluate(() => ({ cases: window.__sv.sim.state().cases.length, box: !!document.querySelector("#sim-tree .sim-case") }));
+    const lcTop = Math.max(0, ...lcEnv.res.map(c => c.maxVm ?? 0));
+    check(lcSet.cases.length === 2 && lcSet.cases[0].off.length === 0 && lcSet.cases[1].off.length === 1 && lcSet.wide <= 0 && lcRu.length === 0
+      && !lcEnv.error && lcEnv.enveloped && lcEnv.caseSel === -1 && lcEnv.res.length === 2 && lcEnv.res.every(c => c.maxVm > 0 && c.passes > 0) && Math.abs(lcEnv.maxVm - lcTop) <= 1e-9 * lcTop && lcEnv.shown && lcEnv.rows === 2 && lcEnv.note && lcEnv.opts === 3
+      && !lcOne.enveloped && lcOne.caseSel === 1 && Math.abs(lcOne.maxVm - lcEnv.res[1].maxVm) <= 1e-9 * lcOne.maxVm && lcOne.reactions > 0 && !lcOne.stale && lcOff.cases === 0 && !lcOff.box,
+      `sim 1.627: two load cases are solved in one go; the envelope holds the highest stress, a picked case shows its own; translated (${JSON.stringify({ lcLoads, lcBoxes, lcSet, lcRu, lcEnv, lcOne, lcOff })})`);
     await mp.selectOption('#sim-tree [data-k="study"]', "st2");
     await settle();
     // 1.620: a second body on the end of the bar is analysed bonded to it (one bar 260 long: 421 × (200 / 260)² = 249 Hz);

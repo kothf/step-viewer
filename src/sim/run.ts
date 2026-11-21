@@ -447,6 +447,29 @@ export function boostOf(grid: Grid, refine: { tris: ArrayLike<number>; level: nu
   return out;
 }
 
+/**
+ * The envelope of several load cases' results on the same sample points (FR-LOAD-022): at each point the highest
+ * von Mises stress and error estimate, and the displacement of the case that moves the point most.
+ */
+export function envelope(cases: PassResult[]): PassResult {
+  const first = cases[0], n = first.vm.length;
+  const u = Float32Array.from(first.u), vm = Float32Array.from(first.vm), err = Float32Array.from(first.err);
+  for (const c of cases.slice(1)) {
+    for (let i = 0; i < n; i++) {
+      if (c.vm[i] > vm[i]) vm[i] = c.vm[i];
+      if (c.err[i] > err[i]) err[i] = c.err[i];
+      const a = Math.hypot(u[3 * i], u[3 * i + 1], u[3 * i + 2]), b = Math.hypot(c.u[3 * i], c.u[3 * i + 1], c.u[3 * i + 2]);
+      if (b > a) { u[3 * i] = c.u[3 * i]; u[3 * i + 1] = c.u[3 * i + 1]; u[3 * i + 2] = c.u[3 * i + 2]; }
+    }
+  }
+  const top = (f: (p: PassResult) => number) => Math.max(...cases.map(f));
+  const errors = first.errors.map((_e, i) => { const v = cases.map(c => c.errors[i]).filter((x): x is number => x != null); return v.length ? Math.max(...v) : null; });
+  return {
+    ...first, u, vm, err, errors, maxU: top(c => c.maxU), maxVm: top(c => c.maxVm), dofs: top(c => c.dofs), ms: cases.reduce((s, c) => s + c.ms, 0),
+    energy: top(c => c.energy), change: null, reactions: [], applied: { force: [0, 0, 0], moment: [0, 0, 0] }, converged: cases.every(c => c.converged), done: true,
+  };
+}
+
 /** Reads a solution anywhere in the body: what the worker keeps of the last pass (FR-RES-030). */
 export type Sampler = (pos: ArrayLike<number>, nrm?: ArrayLike<number>, hits?: boolean) => { u: Float32Array; vm: Float32Array; err: Float32Array; hit?: Uint8Array };
 /** `solid` (asked for): 1 where the point is inside the body itself, not only in one of its cells. */
