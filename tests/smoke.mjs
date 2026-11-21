@@ -16676,6 +16676,33 @@ try {
       && !n4.error && Math.abs(n4.applied.force[1] / 50 - 1) < 1e-6 && Math.abs(n4.applied.force[0]) < 1e-6 && Math.abs(n4.applied.force[2]) < 1e-6
       && Math.abs(n4.applied.moment[0] / -6000 - 1) < 1e-4 && Math.abs(n4.applied.moment[1]) < 0.5 && Math.abs(n4.applied.moment[2]) < 0.5,
       `sim 1.623: a remote load carries a force at a point to the picked face: the applied force and its moment about the origin are those of the force at the point (${JSON.stringify({ rmPanel, rmSet, e4: n4.error, applied: n4.applied })})`);
+    // 1.624: Local accuracy on the top face, level 2: the first pass runs at degree 4 there (2 elsewhere), so it has more unknowns.
+    await mp.click('#sim-tools [data-s="refine"]');
+    await mp.waitForTimeout(200);
+    p = await at("f1:end");
+    await mp.mouse.click(p.x, p.y);
+    await mp.waitForTimeout(200);
+    await mp.selectOption('#sim-pm [data-k="level"]', "2");
+    const rfPanel = await mp.evaluate(() => ({ title: document.querySelector("#sim-pm h3")?.textContent, faces: document.querySelector("#sim-pm .sim-faces")?.textContent,
+      wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth }));
+    await mp.click("#sim-pm .pm-ok");
+    await settle();
+    const rfRow = await mp.evaluate(() => ({ row: document.querySelector("#sim-tree .sim-refs .sim-row")?.textContent ?? "", stale: window.__sv.sim.state().stale, set: window.__sv.sim.state().refine,
+      wide: document.querySelector("#tab-sim").scrollWidth - document.querySelector("#tab-sim").clientWidth }));
+    await mp.click('#sim-tools [data-s="solve"]');
+    await mp.waitForFunction(() => { const s = window.__sv.sim.state(); return s.done || s.error; }, null, { timeout: 240000 });
+    await mp.waitForTimeout(300);
+    const n5 = await sim();
+    await mp.click("#lang-btn");
+    await mp.locator("#sim-tree .sim-refs .sim-row [data-a=edit]").click();
+    await mp.waitForTimeout(200);
+    const rfRu = await mp.evaluate(() => { const en = /^(Local accuracy|Level|The solution starts|level \d)/; return [...document.querySelectorAll("#sim-pm h3, #sim-pm legend, #sim-pm label > span, #sim-pm p, #sim-tree .sim-refs .sim-meta")].map(e => e.textContent.trim()).filter(x => en.test(x) || /level/.test(x)); });
+    await mp.click("#sim-pm .pm-cancel");
+    await mp.click("#lang-btn");
+    check(rfPanel.title === "Local accuracy" && /1 face/.test(rfPanel.faces) && rfPanel.wide <= 0 && /Local accuracy 1/.test(rfRow.row) && /level 2/.test(rfRow.row) && rfRow.stale && rfRow.wide <= 0
+      && JSON.stringify(rfRow.set) === JSON.stringify([[1, 2]]) && !n5.error && n5.passes[0].p === 4 && n4.passes[0].p === 2 && n5.passes[0].dofs > 1.2 * n4.passes[0].dofs && n5.passes[0].cells === n4.passes[0].cells
+      && Math.abs(n5.applied.force[1] / 50 - 1) < 1e-6 && rfRu.length === 0,
+      `sim 1.624: local accuracy on a face starts the solution two degrees higher there, with more unknowns in the first pass; the panel is translated (${JSON.stringify({ rfPanel, rfRow, e5: n5.error, p: [n4.passes[0]?.p, n5.passes[0]?.p], dofs: [n4.passes[0]?.dofs, n5.passes[0]?.dofs], rfRu })})`);
     await mp.selectOption('#sim-tree [data-k="study"]', "st2");
     await settle();
     // 1.620: a second body on the end of the bar is analysed bonded to it (one bar 260 long: 421 × (200 / 260)² = 249 Hz);

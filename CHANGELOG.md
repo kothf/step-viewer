@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.624.0] - 2026-11-21
+
+### Added
+
+- Structural analysis: **Local accuracy**. Pick faces and a level from 1 to 3, and a static study starts that many steps more accurate where the part meets them, from the first pass on. The items are listed under Accuracy in the Study tab, can be edited, left out or deleted, and go into the report.
+
 ## [1.623.0] - 2026-11-21
 
 ### Added
@@ -4021,7 +4027,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.623.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.624.0...HEAD
+[1.624.0]: https://github.com/kothf/step-viewer/compare/v1.623.0...v1.624.0
 [1.623.0]: https://github.com/kothf/step-viewer/compare/v1.622.0...v1.623.0
 [1.622.0]: https://github.com/kothf/step-viewer/compare/v1.621.0...v1.622.0
 [1.621.0]: https://github.com/kothf/step-viewer/compare/v1.620.0...v1.621.0

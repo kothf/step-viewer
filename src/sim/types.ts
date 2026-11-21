@@ -66,6 +66,17 @@ export interface StudyLoad {
   flip?: boolean;
 }
 
+/** Local accuracy (FR-SOL-012): the solution starts `level` degrees higher where it meets these faces. */
+export interface StudyRefine {
+  id: string;
+  name?: string;
+  type: "refine";
+  faces: FaceRef[];
+  /** 1..3 (`MAX_REFINE`). */
+  level: number;
+}
+export const MAX_REFINE = 3;
+
 export interface StudySettings {
   /** Adaptive passes, 1..6: three over the whole body, the rest local (run.ts `MAX_PASSES`). */
   passes: number;
@@ -90,7 +101,9 @@ export interface Study {
   supports: StudySupport[];
   loads: StudyLoad[];
   settings: StudySettings;
-  /** Ids of supports and loads left out of the solve. */
+  /** Static studies: places solved more accurately from the first pass on. */
+  refine?: StudyRefine[];
+  /** Ids of supports, loads and refinements left out of the solve. */
   suppressed?: string[];
   /** Probes: points on the undeformed model, mm, whose result values are read after each solve (FR-RES-005). */
   probes?: V3[];
@@ -116,8 +129,8 @@ export function newStudy(existing: Study[], kind: StudyKind = "static"): Study {
 }
 
 /** The next free id with a prefix among a study's supports and loads. */
-export function nextId(st: Study, prefix: "s" | "l"): string {
-  const ids = new Set([...st.supports, ...st.loads].map(i => i.id));
+export function nextId(st: Study, prefix: "s" | "l" | "r"): string {
+  const ids = new Set([...st.supports, ...st.loads, ...(st.refine ?? [])].map(i => i.id));
   let n = 1;
   while (ids.has(`${prefix}${n}`)) n++;
   return `${prefix}${n}`;
@@ -126,17 +139,19 @@ export function nextId(st: Study, prefix: "s" | "l"): string {
 export const SUPPORT_LABEL: Record<SupportType, string> = { fixed: "Fixed support", sliding: "Sliding", hinge: "Hinge", dirs: "Fixed in directions", elastic: "Elastic support", disp: "Enforced displacement" };
 export const LOAD_LABEL: Record<LoadType, string> = { force: "Force", pressure: "Pressure", gravity: "Gravity", moment: "Moment", centrifugal: "Centrifugal load", torque: "Torque", bearing: "Bearing load", hydro: "Hydrostatic pressure", remote: "Remote load" };
 
+export const REFINE_LABEL = "Local accuracy";
+
 /** Default name of a new item: "Fixed 1", "Force 2". */
-export function itemName(st: Study, type: SupportType | LoadType): string {
-  const label = (SUPPORT_LABEL as Record<string, string>)[type] ?? (LOAD_LABEL as Record<string, string>)[type];
-  const names = new Set([...st.supports, ...st.loads].map(i => i.name));
+export function itemName(st: Study, type: SupportType | LoadType | "refine"): string {
+  const label = type === "refine" ? REFINE_LABEL : (SUPPORT_LABEL as Record<string, string>)[type] ?? (LOAD_LABEL as Record<string, string>)[type];
+  const names = new Set([...st.supports, ...st.loads, ...(st.refine ?? [])].map(i => i.name));
   let n = 1;
   while (names.has(`${label} ${n}`)) n++;
   return `${label} ${n}`;
 }
 
 /** How many faces, edges or points an item is on. */
-export function pickCount(it: StudySupport | StudyLoad): number {
+export function pickCount(it: StudySupport | StudyLoad | StudyRefine): number {
   const l = it as { on?: "edges" | "points"; edges?: StudyEdge[]; points?: StudyPoint[] };
   return l.on === "edges" ? l.edges?.length ?? 0 : l.on === "points" ? l.points?.length ?? 0 : it.faces.length;
 }

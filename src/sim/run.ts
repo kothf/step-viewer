@@ -3,8 +3,9 @@
 
 import { MeshBody, insideOf } from "./body";
 import { solveStatic, momentField, triArea, triNormals, type Load, type Reaction, type Support } from "./static";
-import type { Grid } from "./grid";
-import { GRAVITY, type Study, type StudyEdge, type StudyPoint } from "./types";
+import { makeGrid, type Grid } from "./grid";
+import { gridTrianglePoints } from "./quad";
+import { GRAVITY, MAX_REFINE, type Study, type StudyEdge, type StudyPoint } from "./types";
 
 /** The body for the solver: the kernel's triangles with each one's face, and the face names. */
 export interface SimBody {
@@ -29,6 +30,8 @@ export interface StudyProblem {
    * E-SIM-ONESPIN (a second centrifugal load), E-SIM-BEARING (a bearing load whose force lies along the axis).
    */
   problems: { id: string; code: "E-SIM-REF" | "E-SIM-EMPTY" | "E-SIM-HINGE" | "E-SIM-SPRING" | "E-SIM-AXIS" | "E-SIM-ONESPIN" | "E-SIM-BEARING" }[];
+  /** Local accuracy (FR-SOL-012): the elements meeting these triangles start `level` degrees higher. */
+  refine?: { tris: Float64Array; level: number }[];
   /** Which study item each entry of `fixed` is. */
   supportIds: string[];
 }
@@ -297,6 +300,13 @@ export function studyProblem(st: Study, b: SimBody): StudyProblem {
     else if (l.normal) out.loads.push({ tris, pressure: (sign * v) / (triArea(tris) || 1) });
     else out.loads.push({ tris, force: comp });
   }
+  for (const r of st.refine ?? []) {
+    if (off.has(r.id)) continue;
+    if (!r.faces.length) { out.problems.push({ id: r.id, code: "E-SIM-EMPTY" }); continue; }
+    const tris = trisOf(b, r.faces.map(f => f.name));
+    if (!tris) { out.problems.push({ id: r.id, code: "E-SIM-REF" }); continue; }
+    (out.refine ??= []).push({ tris, level: Math.max(1, Math.min(MAX_REFINE, Math.round(r.level) || 1)) });
+  }
   return out;
 }
 
@@ -422,6 +432,21 @@ export function markElements(ind: ArrayLike<number>, deg: ArrayLike<number>, sha
   return out;
 }
 
+/** Local accuracy: how many degrees higher each element of the grid starts, from the triangles it holds. */
+export function boostOf(grid: Grid, refine: { tris: ArrayLike<number>; level: number }[]): Int8Array {
+  const out = new Int8Array(grid.elems.length);
+  for (const r of refine) {
+    const { pts, tri } = gridTrianglePoints(r.tris, grid.lo, grid.h, 2);
+    const nrm = triNormals(r.tris), eps = 1e-7 * grid.h;
+    for (let k = 0; k < pts.n; k++) {
+      const o = 4 * k, t = tri[k];
+      const c = grid.cellOf(pts.a[o] - eps * nrm[3 * t], pts.a[o + 1] - eps * nrm[3 * t + 1], pts.a[o + 2] - eps * nrm[3 * t + 2]);
+      if (c >= 0) { const e = grid.cells[c].el; if (out[e] < r.level) out[e] = r.level; }
+    }
+  }
+  return out;
+}
+
 /**
  * The passes of a static study on the same cells, until the energy settles: degree 2, 3, 4 everywhere,
  * then local passes that raise the degree by one only in the elements holding most of the error estimate.
@@ -438,9 +463,20 @@ export function* runStatic(inp: RunInput): Generator<PassResult> {
   const known: number[] = [];
   // local passes: each element's degree, and its share of the error when its degree was last raised
   let degrees: Int8Array | undefined, ind: Float64Array | undefined;
+  // local accuracy asked for by the user: those elements run ahead of the others from the first pass on
+  let boost: Int8Array | undefined;
+  if (inp.problem.refine?.length) {
+    grid = makeGrid(inp.body.lo, inp.body.hi, h, inside, { q: 3, depth: 3, fit: 5 });
+    boost = boostOf(grid, inp.problem.refine);
+    if (!boost.some(v => v > 0)) boost = undefined;
+  }
   for (let k = 0; k < passes; k++) {
     const t0 = Date.now();
     let p = k + 2, raised: number | undefined, marked: number[] = [];
+    if (boost && k < GLOBAL_PASSES) {
+      degrees = new Int8Array(boost.length);
+      for (let e = 0; e < boost.length; e++) { degrees[e] = Math.min(LOCAL_DEGREE, k + 2 + boost[e]); p = Math.max(p, degrees[e]); }
+    }
     if (k >= GLOBAL_PASSES && grid && ind) {
       degrees ??= new Int8Array(grid.elems.length).fill(GLOBAL_PASSES + 1);
       marked = markElements(ind, degrees);
@@ -457,7 +493,7 @@ export function* runStatic(inp: RunInput): Generator<PassResult> {
     });
     grid = r.grid;
     prev = r.x;
-    if (!ind || !degrees) ind = Float64Array.from(r.eta);
+    if (!ind || !degrees || k < GLOBAL_PASSES) ind = Float64Array.from(r.eta);
     else for (const e of marked) ind[e] = r.eta[e];
     if (r.prevError != null) known.push(r.prevError);
     const errors: (number | null)[] = [...known, passError(known)];
