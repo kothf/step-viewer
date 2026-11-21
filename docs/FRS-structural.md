@@ -202,7 +202,7 @@ Each phase ships as one or more releases through the normal flow. A phase is com
 | **SA2** | Part modal | Modal study: first N modes or modes in a range, free-free or supported, mode list with frequencies and effective masses, animated mode shapes; multibody parts (bonded bodies) for static and modal; more loads and supports (elastic support, enforced displacement, bearing, remote load, centrifugal); local refinement; results on sections | AT-SA2-1..6 |
 | **SA3** | Assembly linear static | Static study on an assembly: automatic connections with gap/overlap tolerance (bonded, sliding), bolts from the fastener library and hole pairs with preload, welds from weld beads, rigid and elastic connectors; include/exclude components, rigid components; results per component; reaction and connection forces | AT-SA3-1..7 |
 | **SA4** | Assembly modal | Modal study on assemblies with the SA3 connections (linear types); added masses; comparing two assembly designs | AT-SA4-1..3 |
-| **SA5** | Further analyses | Linear buckling, steady-state thermal, thermal stress, separating and frictional contact (non-linear), fatigue estimate from S-N data, design variants table | per analysis |
+| **SA5** | Further analyses | Linear buckling, steady-state thermal and thermal stress (now planned in `docs/FRS-thermal.md`), separating and frictional contact (non-linear), fatigue estimate from S-N data, design variants table | per analysis |
 | **SA6** | Non-linear and dynamics (optional) | Bilinear plasticity, large displacements, transient and frequency response | separate decision |
 
 Indicative effort for one developer with AI assistance: SA0 1–2 weeks, SA1 3–4 weeks, SA2 2 weeks, SA3 3–4 weeks, SA4 1 week. Planning numbers, not commitments; SA0 may change them.
