@@ -81,6 +81,11 @@ export interface StaticProblem {
   beta?: number;
   /** The coefficients of the pass before on the same `grid` (a lower degree), for the error estimate. */
   prev?: Float64Array;
+  /**
+   * Local refinement: the degree of each element of `grid` (2..p, `p` being their highest). Elements of
+   * different degrees are joined like any others; each is integrated by the rule of its own degree.
+   */
+  degrees?: ArrayLike<number>;
 }
 
 export interface StaticResult {
@@ -142,32 +147,39 @@ function traction(g: Float64Array, o: number, n: ArrayLike<number>, lam: number,
 
 export function solveStatic(pb: StaticProblem): StaticResult {
   const t0 = now();
-  const p = pb.p, q = p + 1, fq = 2 * p + 1;
+  const p = pb.p, q = p + 1;
   let grid = pb.grid;
-  if (grid) refit(grid, q, 2 * p + 1);
+  const deg = pb.grid && pb.degrees && pb.degrees.length === pb.grid.elems.length ? pb.degrees : null;
+  if (grid) refit(grid, q, 2 * p + 1, deg ? c => deg[c.el] : undefined);
   else grid = makeGrid(pb.lo, pb.hi, pb.h, pb.inside, { q, depth: pb.depth ?? 3, fit: 2 * p + 1 });
   const t1 = now();
   const { lam, mu } = lame(pb.mat);
   const bas = new Basis(p), bas2 = new Basis(p);
   const nb = bas.n, m = 3 * nb, nel = grid.elems.length;
-  const A = new BlockMatrix(nel, m);
-  const f = new Float64Array(nel * m);
-  const gamma0 = (pb.beta ?? 3) * (lam + 2 * mu) * (p + 1) * (p + 1) / grid.h;
+  // functions per element: the leading ones of the hierarchical basis up to the element's own degree
+  const nbs = new Int32Array(nel).fill(nb);
+  if (deg) for (let e = 0; e < nel; e++) nbs[e] = basisSize(Math.min(p, Math.max(1, deg[e])));
+  const A = new BlockMatrix(nel, Array.from(nbs, v => 3 * v));
+  const off = A.off;
+  const f = new Float64Array(A.size);
+  const gbase = (pb.beta ?? 3) * (lam + 2 * mu) / grid.h;
+  const pOf = (e: number) => (deg ? Math.min(p, Math.max(1, deg[e])) : p);
   // an element that is partly outside the body carries its polynomial on less material, so its tractions are
   // larger beside its energy: the penalty grows by the share that is missing (cells under 25 % are aggregated)
   const gam = new Float64Array(nel);
   for (let e = 0; e < nel; e++) {
     let fr = 0;
     for (const c of grid.elems[e].cells) fr = Math.max(fr, grid.cells[c].frac);
-    gam[e] = gamma0 / Math.min(1, Math.max(0.2, fr));
+    gam[e] = gbase * (pOf(e) + 1) ** 2 / Math.min(1, Math.max(0.2, fr));
   }
-  let gamma = gamma0;
+  let gamma = 0;
   const el = (c: number) => grid.elems[grid.cells[c].el];
 
   // volume terms
   for (let e = 0; e < nel; e++) {
     const E = grid.elems[e];
     const K = A.block(e, e);
+    const nb = nbs[e], m = 3 * nb;
     for (const ci of E.cells) {
       const P = grid.cells[ci].pts;
       for (let k = 0; k < P.n; k++) {
@@ -207,8 +219,10 @@ export function solveStatic(pb: StaticProblem): StaticResult {
       const area = grid!.h * grid!.h;
       grid!.faces.set(key, Math.abs(pts.weight() - area) < 1e-12 * area ? null : pts);
     }
-    if (!pts) pts = facePoints(axis, A0.hi[axis], A0.lo, A0.hi, q, () => true, 0);
-    else pts = fitFacePoints(pts, axis, A0.hi[axis], A0.lo, A0.hi, fq);
+    const pf = Math.max(pOf(ea), pOf(eb));
+    if (!pts) pts = facePoints(axis, A0.hi[axis], A0.lo, A0.hi, pf + 1, () => true, 0);
+    else pts = fitFacePoints(pts, axis, A0.hi[axis], A0.lo, A0.hi, 2 * pf + 1);
+    const na = nbs[ea], nc = nbs[eb];
     const nrm = [0, 0, 0];
     nrm[axis] = 1;
     const Kaa = A.block(ea, ea), Kab = A.block(ea, eb), Kba = A.block(eb, ea), Kbb = A.block(eb, eb);
@@ -219,18 +233,18 @@ export function solveStatic(pb: StaticProblem): StaticResult {
       bas.eval(x, y, z, EA.c, EA.s);
       bas2.eval(x, y, z, EB.c, EB.s);
       for (let b = 0; b < nb; b++) { traction(bas.g, 3 * b, nrm, lam, mu, MA, 9 * b); traction(bas2.g, 3 * b, nrm, lam, mu, MB, 9 * b); }
-      pair(Kaa, bas.v, MA, 1, bas.v, MA, 1, w);
-      pair(Kab, bas.v, MA, 1, bas2.v, MB, -1, w);
-      pair(Kba, bas2.v, MB, -1, bas.v, MA, 1, w);
-      pair(Kbb, bas2.v, MB, -1, bas2.v, MB, -1, w);
+      pair(Kaa, bas.v, MA, 1, na, bas.v, MA, 1, na, w);
+      pair(Kab, bas.v, MA, 1, na, bas2.v, MB, -1, nc, w);
+      pair(Kba, bas2.v, MB, -1, nc, bas.v, MA, 1, na, w);
+      pair(Kbb, bas2.v, MB, -1, nc, bas2.v, MB, -1, nc, w);
     }
   };
   // block (rows i, cols j): −½ s_i N_i M_j − ½ s_j N_j M_iᵀ + γ s_i s_j N_i N_j I
-  function pair(K: Float64Array, Ni: Float64Array, Mi: Float64Array, si: number, Nj: Float64Array, Mj: Float64Array, sj: number, w: number) {
-    const hw = 0.5 * w, gw = gamma * w * si * sj;
-    for (let a = 0; a < nb; a++) {
+  function pair(K: Float64Array, Ni: Float64Array, Mi: Float64Array, si: number, ni: number, Nj: Float64Array, Mj: Float64Array, sj: number, nj: number, w: number) {
+    const hw = 0.5 * w, gw = gamma * w * si * sj, m = 3 * nj;
+    for (let a = 0; a < ni; a++) {
       const na = Ni[a] * si * hw;
-      for (let b = 0; b < nb; b++) {
+      for (let b = 0; b < nj; b++) {
         const nbv = Nj[b] * sj * hw, pen = gw * Ni[a] * Nj[b];
         for (let c = 0; c < 3; c++) {
           const row = (3 * a + c) * m + 3 * b;
@@ -276,8 +290,9 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     for (let b = 0; b < nb; b++) for (let c = 0; c < 3; c++) for (let d = 0; d < 3; d++)
       PM[9 * b + 3 * c + d] = P[3 * c] * MA[9 * b + d] + P[3 * c + 1] * MA[9 * b + 3 + d] + P[3 * c + 2] * MA[9 * b + 6 + d];
     const K = A.block(e, e), v = bas.v;
+    const ne = nbs[e], m = 3 * ne;
     const gw = 2 * gam[e] * w;
-    for (let a = 0; a < nb; a++) for (let b = 0; b < nb; b++) {
+    for (let a = 0; a < ne; a++) for (let b = 0; b < ne; b++) {
       const pen = gw * v[a] * v[b];
       for (let c = 0; c < 3; c++) {
         const row = (3 * a + c) * m + 3 * b;
@@ -303,7 +318,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     const e = grid.cells[c].el, E = grid.elems[e];
     bas.eval(x, y, z, E.c, E.s);
     add(applied, x, y, z, fx, fy, fz);
-    for (let a = 0; a < nb; a++) { f[e * m + 3 * a] += bas.v[a] * fx; f[e * m + 3 * a + 1] += bas.v[a] * fy; f[e * m + 3 * a + 2] += bas.v[a] * fz; }
+    for (let a = 0, o = off[e]; a < nbs[e]; a++) { f[o + 3 * a] += bas.v[a] * fx; f[o + 3 * a + 1] += bas.v[a] * fy; f[o + 3 * a + 2] += bas.v[a] * fz; }
   };
   const gl = gauss(Math.max(2, p + 1));
   for (const L of pb.loads) {
@@ -360,7 +375,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
         t[0] += o[1] * rz - o[2] * ry; t[1] += o[2] * rx - o[0] * rz; t[2] += o[0] * ry - o[1] * rx;
       }
       add(applied, x, y, z, w * t[0], w * t[1], w * t[2]);
-      for (let a = 0; a < nb; a++) for (let c = 0; c < 3; c++) f[e * m + 3 * a + c] += w * bas.v[a] * t[c];
+      for (let a = 0; a < nbs[e]; a++) for (let c = 0; c < 3; c++) f[off[e] + 3 * a + c] += w * bas.v[a] * t[c];
     });
   }
   if (pb.gravity && pb.mat.rho) {
@@ -373,32 +388,38 @@ export function solveStatic(pb: StaticProblem): StaticResult {
           const o = 4 * k, w = Q.a[o + 3];
           bas.eval(Q.a[o], Q.a[o + 1], Q.a[o + 2], E.c, E.s);
           add(applied, Q.a[o], Q.a[o + 1], Q.a[o + 2], w * g[0], w * g[1], w * g[2]);
-          for (let a = 0; a < nb; a++) for (let c = 0; c < 3; c++) f[e * m + 3 * a + c] += w * bas.v[a] * g[c];
+          for (let a = 0; a < nbs[e]; a++) for (let c = 0; c < 3; c++) f[off[e] + 3 * a + c] += w * bas.v[a] * g[c];
         }
       }
     }
   }
   // keep elements nothing reaches solvable (no stiffness at all): pin them
   for (let e = 0; e < nel; e++) {
-    const K = A.block(e, e);
+    const K = A.block(e, e), m = 3 * nbs[e];
     for (let i = 0; i < m; i++) if (K[i * m + i] === 0) K[i * m + i] = 1;
   }
   const t2 = now();
-  let x: Float64Array, t3: number, iterations = 0;
-  const useCg = pb.solver === "pcg" || (pb.solver !== "direct" && p >= 2 && nel * m > DIRECT_LIMIT);
+  let xs: Float64Array, t3: number, iterations = 0;
+  const useCg = pb.solver === "pcg" || (pb.solver !== "direct" && p >= 2 && A.size > DIRECT_LIMIT);
   if (useCg) {
     const r = pcg(A, f, { coarse: 3 * basisSize(1), tol: pb.tol ?? 1e-8 });
-    x = r.x; iterations = r.iterations;
+    xs = r.x; iterations = r.iterations;
     t3 = t2 + r.ms.setup;
   } else {
     const L = new Envelope(A);
     t3 = now();
-    x = L.solve(f);
+    xs = L.solve(f);
   }
   const t4 = now();
   let energy = 0;
-  for (let i = 0; i < f.length; i++) energy += f[i] * x[i];
+  for (let i = 0; i < f.length; i++) energy += f[i] * xs[i];
   energy /= 2;
+  // every element in the layout of the highest degree: zeros for the functions a lower one does not have
+  let x = xs;
+  if (deg) {
+    x = new Float64Array(nel * m);
+    for (let e = 0; e < nel; e++) x.set(xs.subarray(off[e], off[e + 1]), e * m);
+  }
 
   // reactions: the Nitsche flux P (σ(u) n − 2γ u) over each support
   const sn = [0, 0, 0], uu = [0, 0, 0];
@@ -467,7 +488,7 @@ export function solveStatic(pb: StaticProblem): StaticResult {
     return grid.cells[c].el;
   };
   return {
-    grid, p, dofs: nel * m, x, energy, iterations,
+    grid, p, dofs: A.size, x, energy, iterations,
     ms: { grid: t1 - t0, assemble: t2 - t1, factor: t3 - t2, solve: t4 - t3 },
     reactions, applied, eta, prevError,
     sample(pos, nrm) {

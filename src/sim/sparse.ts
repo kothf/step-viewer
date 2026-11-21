@@ -1,37 +1,43 @@
 // Structural analysis (FR-SOL-003): element-block sparse matrix and a direct envelope solver.
-// Every element carries m unknowns, so the matrix is a set of dense m×m blocks, one per pair of
-// elements that share a face. The direct solver orders elements by reverse Cuthill–McKee, then runs
+// Element e carries ms[e] unknowns (the same for all, or more where the degree was raised), so the matrix
+// is a set of dense ms[a]×ms[b] blocks, one per pair of elements that share a face. The direct solver orders elements by reverse Cuthill–McKee, then runs
 // an envelope (variable band) Cholesky; for the slender bodies of the first phases the band stays narrow.
 
 export class BlockMatrix {
   /** blocks.get(a * nel + b) = rows of a × columns of b, row-major. */
   readonly blocks = new Map<number, Float64Array>();
   readonly adj: Set<number>[];
-  constructor(readonly nel: number, readonly m: number) {
+  /** Unknowns per element and where each element's start (nel + 1 entries). */
+  readonly ms: Int32Array;
+  readonly off: Int32Array;
+  constructor(readonly nel: number, m: number | ArrayLike<number>) {
     this.adj = Array.from({ length: nel }, (_, i) => new Set([i]));
+    this.ms = typeof m === "number" ? new Int32Array(nel).fill(m) : Int32Array.from(m);
+    this.off = new Int32Array(nel + 1);
+    for (let e = 0; e < nel; e++) this.off[e + 1] = this.off[e] + this.ms[e];
   }
   block(a: number, b: number) {
     const k = a * this.nel + b;
     let B = this.blocks.get(k);
     if (!B) {
-      B = new Float64Array(this.m * this.m);
+      B = new Float64Array(this.ms[a] * this.ms[b]);
       this.blocks.set(k, B);
       this.adj[a].add(b); this.adj[b].add(a);
     }
     return B;
   }
-  get size() { return this.nel * this.m; }
+  get size() { return this.off[this.nel]; }
   /** y = A x. */
   mul(x: Float64Array, y = new Float64Array(this.size)) {
     y.fill(0);
-    const m = this.m, nel = this.nel;
+    const nel = this.nel, ms = this.ms, off = this.off;
     for (const [k, B] of this.blocks) {
       const a = Math.floor(k / nel), b = k - a * nel;
-      const ra = a * m, cb = b * m;
-      for (let i = 0; i < m; i++) {
+      const ra = off[a], cb = off[b], ma = ms[a], mb = ms[b];
+      for (let i = 0; i < ma; i++) {
         let s = 0;
-        const o = i * m;
-        for (let j = 0; j < m; j++) s += B[o + j] * x[cb + j];
+        const o = i * mb;
+        for (let j = 0; j < mb; j++) s += B[o + j] * x[cb + j];
         y[ra + i] += s;
       }
     }
@@ -83,17 +89,22 @@ export class Envelope {
   private readonly first: Int32Array;
   private readonly start: Float64Array;
   private readonly data: Float64Array;
+  /** Unknowns per element and the start of each position's rows in the new order. */
+  private readonly ms: Int32Array;
+  private readonly poff: Int32Array;
   constructor(A: BlockMatrix) {
-    const m = A.m, nel = A.nel, n = (this.n = A.size);
+    const nel = A.nel, n = (this.n = A.size), ms = (this.ms = A.ms);
     this.perm = rcm(A.adj);
     this.pos = new Int32Array(nel);
     this.perm.forEach((e, k) => (this.pos[e] = k));
+    const poff = (this.poff = new Int32Array(nel + 1));
+    for (let k = 0; k < nel; k++) poff[k + 1] = poff[k] + ms[this.perm[k]];
     this.first = new Int32Array(n);
     this.start = new Float64Array(n + 1);
     for (let k = 0; k < nel; k++) {
       let lo = k;
       for (const b of A.adj[this.perm[k]]) lo = Math.min(lo, this.pos[b]);
-      for (let i = 0; i < m; i++) this.first[k * m + i] = lo * m;
+      for (let r = poff[k]; r < poff[k + 1]; r++) this.first[r] = poff[lo];
     }
     for (let r = 0; r < n; r++) this.start[r + 1] = this.start[r] + (r - this.first[r] + 1);
     const total = this.start[n];
@@ -104,12 +115,13 @@ export class Envelope {
       const a = Math.floor(key / nel), b = key - a * nel;
       const ka = this.pos[a], kb = this.pos[b];
       if (kb > ka) continue;
-      for (let i = 0; i < m; i++) {
-        const r = ka * m + i, base = this.start[r] - this.first[r];
-        for (let j = 0; j < m; j++) {
-          const c = kb * m + j;
+      const ma = ms[a], mb = ms[b];
+      for (let i = 0; i < ma; i++) {
+        const r = poff[ka] + i, base = this.start[r] - this.first[r];
+        for (let j = 0; j < mb; j++) {
+          const c = poff[kb] + j;
           if (c > r) continue;
-          L[base + c] += B[i * m + j];
+          L[base + c] += B[i * mb + j];
         }
       }
     }
@@ -132,9 +144,11 @@ export class Envelope {
   get values() { return this.data.length; }
   /** Solves A x = b (b in element-dof order); returns x in the same order. */
   solve(b: Float64Array): Float64Array {
-    const n = this.n, m = b.length / this.perm.length, L = this.data;
+    const n = this.n, L = this.data, ms = this.ms, poff = this.poff, nel = this.perm.length;
+    const off = new Int32Array(nel + 1);
+    for (let e = 0; e < nel; e++) off[e + 1] = off[e] + ms[e];
     const y = new Float64Array(n);
-    for (let k = 0; k < this.perm.length; k++) for (let i = 0; i < m; i++) y[k * m + i] = b[this.perm[k] * m + i];
+    for (let k = 0; k < nel; k++) { const e = this.perm[k]; for (let i = 0; i < ms[e]; i++) y[poff[k] + i] = b[off[e] + i]; }
     for (let r = 0; r < n; r++) {
       const fr = this.first[r], br = this.start[r] - fr;
       let s = y[r];
@@ -147,7 +161,7 @@ export class Envelope {
       for (let k = fr; k < r; k++) y[k] -= L[br + k] * v;
     }
     const x = new Float64Array(n);
-    for (let k = 0; k < this.perm.length; k++) for (let i = 0; i < m; i++) x[this.perm[k] * m + i] = y[k * m + i];
+    for (let k = 0; k < nel; k++) { const e = this.perm[k]; for (let i = 0; i < ms[e]; i++) x[off[e] + i] = y[poff[k] + i]; }
     return x;
   }
 }

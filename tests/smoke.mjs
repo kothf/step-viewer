@@ -16337,6 +16337,21 @@ try {
     check(edgePick.box === "1 edge" && !edgePick.normal && edgePick.marks === 1 && ptPick.box === "1 point" && ptPick.marks === 1 && eLoads.length === 2 && eLoads[0].on === "edges" && JSON.stringify(eLoads[0].edges) === JSON.stringify([spot.faces])
       && eLoads[1].on === "points" && eLoads[1].faces === 3 && eLoads[0].rows.includes("1 edge") && eLoads[0].rows.includes("1 point") && !eRes.error && Math.abs(eRes.applied.force[2] + 1750) < 1e-6 && Math.abs(eRes.reactions[0].force[2] - 1750) < 0.01,
       `sim 1.612: a force on an edge and one on a corner point are picked in the view, kept by face names and solved; the reaction balances all three loads (${JSON.stringify({ edgePick, ptPick, eLoads: eLoads.map(l => ({ on: l.on, faces: l.faces })), error: eRes.error, applied: eRes.applied?.force, reaction: eRes.reactions[0]?.force })})`);
+    // 1.613.0: five passes with the stop target at 0: passes 4 and 5 raise the accuracy in some cells only.
+    await mp.selectOption('#sim-tree [data-k="passes"]', "5");
+    await settle();
+    await mp.fill('#sim-tree [data-k="tol"]', "0");
+    await mp.keyboard.press("Tab");
+    await settle();
+    await mp.click('#sim-tools [data-s="solve"]');
+    await mp.waitForFunction(() => { const s = window.__sv.sim.state(); return (s.done && !s.stale) || s.error; }, null, { timeout: 300000 });
+    const lRes = await sim();
+    const lShown = await mp.evaluate(() => ({ notes: [...document.querySelectorAll("#sim-tree .sim-local")].map(e => e.textContent), rows: document.querySelectorAll("#sim-tree .sim-passes tbody tr").length, tol: window.__sv.model.store.doc.studies[0].settings.energyTol, opts: document.querySelectorAll('#sim-tree [data-k="passes"] option').length }));
+    const lp = lRes.passes ?? [];
+    check(!lRes.error && lp.length === 5 && lp[2].raised === null && lp[3].raised > 0 && lp[3].raised < lp[3].cells && lp[4].raised > 0 && lp[3].dofs > lp[2].dofs && lp[4].dofs > lp[3].dofs && lp[3].dofs < lp[2].dofs * 1.6
+      && lp[4].energy >= lp[2].energy * (1 - 1e-9) && lShown.notes.length === 2 && /^Pass 4: accuracy raised in \d+ of \d+ cells\.$/.test(lShown.notes[0]) && lShown.rows === 5 && lShown.tol === 0 && lShown.opts === 6
+      && Math.abs(lRes.reactions[0].force[2] - 1750) < 0.01,
+      `sim 1.613: passes 4 and 5 refine locally: more unknowns in some cells only, the energy keeps rising, the Study tab says where (${JSON.stringify({ error: lRes.error, passes: lp.map(q => ({ p: q.p, raised: q.raised, cells: q.cells, dofs: q.dofs, change: q.change })), ...lShown })})`);
     // Without supports the solve says so and nothing runs; the Russian UI has no English left in the Study tab.
     await mp.click('#sim-tree .sim-row [data-a="del"]');
     await settle();

@@ -48,12 +48,14 @@ const now = () => (typeof performance !== "undefined" ? performance.now() : Date
 
 export function pcg(A: BlockMatrix, b: Float64Array, o: PcgOptions): PcgResult {
   const t0 = now();
-  const m = A.m, nel = A.nel, n = A.size, mc = o.coarse;
+  const nel = A.nel, n = A.size, mc = o.coarse, ms = A.ms, off = A.off;
+  let mmax = 0;
+  for (let e = 0; e < nel; e++) mmax = Math.max(mmax, ms[e]);
   // element diagonal blocks, factored
   const D: Float64Array[] = [];
   for (let e = 0; e < nel; e++) {
     const B = Float64Array.from(A.block(e, e));
-    if (!cholesky(B, m)) throw new Error(`E-SIM-SINGULAR: element ${e}`);
+    if (!cholesky(B, ms[e])) throw new Error(`E-SIM-SINGULAR: element ${e}`);
     D.push(B);
   }
   // neighbours per element row, for the Gauss–Seidel sweeps
@@ -67,21 +69,22 @@ export function pcg(A: BlockMatrix, b: Float64Array, o: PcgOptions): PcgResult {
   for (const [k, B] of A.blocks) {
     const a = Math.floor(k / nel), c = k - a * nel;
     const C = Ac.block(a, c);
-    for (let i = 0; i < mc; i++) for (let j = 0; j < mc; j++) C[i * mc + j] = B[i * m + j];
+    const mb = ms[c];
+    for (let i = 0; i < mc; i++) for (let j = 0; j < mc; j++) C[i * mc + j] = B[i * mb + j];
   }
   const coarse = new Envelope(Ac);
   const t1 = now();
 
-  const tmp = new Float64Array(m);
+  const tmp = new Float64Array(mmax);
   const sweep = (x: Float64Array, r: Float64Array, forward: boolean) => {
     for (let s = 0; s < nel; s++) {
       const e = forward ? s : nel - 1 - s;
-      const eo = e * m;
+      const eo = off[e], m = ms[e];
       for (let i = 0; i < m; i++) tmp[i] = r[eo + i];
       // r_e − Σ_f A_ef x_f, including the diagonal block, then solve with it for the correction
       for (const { b: f, B } of rows[e]) {
-        const fo = f * m;
-        for (let i = 0; i < m; i++) { let s2 = 0; const io = i * m; for (let j = 0; j < m; j++) s2 += B[io + j] * x[fo + j]; tmp[i] -= s2; }
+        const fo = off[f], mf = ms[f];
+        for (let i = 0; i < m; i++) { let s2 = 0; const io = i * mf; for (let j = 0; j < mf; j++) s2 += B[io + j] * x[fo + j]; tmp[i] -= s2; }
       }
       const Bd = A.block(e, e);
       for (let i = 0; i < m; i++) { let s2 = 0; const io = i * m; for (let j = 0; j < m; j++) s2 += Bd[io + j] * x[eo + j]; tmp[i] -= s2; }
@@ -94,9 +97,9 @@ export function pcg(A: BlockMatrix, b: Float64Array, o: PcgOptions): PcgResult {
     z.fill(0);
     sweep(z, r, true);
     A.mul(z, Ax);
-    for (let e = 0; e < nel; e++) for (let i = 0; i < mc; i++) rc[e * mc + i] = r[e * m + i] - Ax[e * m + i];
+    for (let e = 0; e < nel; e++) for (let i = 0; i < mc; i++) rc[e * mc + i] = r[off[e] + i] - Ax[off[e] + i];
     const xc = coarse.solve(rc);
-    for (let e = 0; e < nel; e++) for (let i = 0; i < mc; i++) z[e * m + i] += xc[e * mc + i];
+    for (let e = 0; e < nel; e++) for (let i = 0; i < mc; i++) z[off[e] + i] += xc[e * mc + i];
     sweep(z, r, false);
   };
 

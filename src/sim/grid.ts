@@ -113,9 +113,12 @@ export function makeGrid(lo: number[], hi: number[], h: number, inside: Inside, 
 }
 
 /** The same cells with the quadrature for another degree: Gauss q in whole cells, the cut cells' points
- * fitted again to fit³ points. The geometry is not queried again. */
-export function refit(g: Grid, q: number, fit: number) {
+ * fitted again to fit³ points. The geometry is not queried again. `degree` gives a cell its own degree d
+ * (local refinement): then q = d + 1 and fit = 2d + 1 for that cell. */
+export function refit(g: Grid, q: number, fit: number, degree?: (c: Cell) => number) {
+  const q0 = q, fit0 = fit;
   for (const c of g.cells) {
+    if (degree) { const d = degree(c); q = Math.min(q0, d + 1); fit = Math.min(fit0, 2 * d + 1); }
     c.pts = c.fine ? (fit && c.fine.n > fit ** 3 ? fitPoints(c.fine, c.lo, c.hi, fit) : c.fine) : volumePoints(c.lo, c.hi, q, () => true, 0, new Points(), 1);
   }
 }
