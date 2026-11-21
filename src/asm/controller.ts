@@ -214,6 +214,67 @@ export class AsmController {
   }
 
   get active() { return !!this.doc; }
+
+  // ---------- structural analysis (FRS-structural SA3) ----------
+
+  /** The Simulation tab's hooks: clicks in the view while one of its panels is open, and document changes. */
+  simHook: { active(): boolean; click(e: PointerEvent): boolean; changed(): void } | null = null;
+  private simDown: { x: number; y: number } | null = null;
+  private simKey: { doc: AsmDoc; key: string } | null = null;
+  /** What a study of this assembly needs of it. */
+  simAccess() {
+    return {
+      doc: () => this.doc,
+      /** A study change is an undo step, but nothing is built again. */
+      change: (fn: (d: AsmDoc) => void) => {
+        if (!this.doc) return;
+        const before = JSON.stringify(this.doc), next = JSON.parse(before) as AsmDoc;
+        fn(next);
+        if (JSON.stringify(next) === before) return;
+        this.undoStack.push(before);
+        if (this.undoStack.length > 100) this.undoStack.shift();
+        this.redoStack = [];
+        // the model is the same: its key stays
+        if (this.simKey?.doc === this.doc) this.simKey.doc = next;
+        this.doc = next;
+        this.host.setDoc(this.label());
+        this.renderBar();
+        this.simHook?.changed();
+      },
+      /** The shown components, in the view's part order, with their face names. */
+      shown: () => this.shownIds.map((id, idx) => ({ idx, id, faces: this.faceNames[idx] ?? [] })),
+      idle: () => !this.picking && !this.moving,
+      /** A fingerprint of everything but the studies and the view's own data. */
+      stateKey: () => {
+        const d = this.doc;
+        if (!d) return "";
+        if (this.simKey?.doc !== d) {
+          const { studies: _s, motions: _m, views: _v, explodes: _e, states: _t, ...rest } = d as AsmDoc & { states?: unknown };
+          const text = JSON.stringify(rest);
+          let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+          for (let i = 0; i < text.length; i++) { const c = text.charCodeAt(i); h1 = Math.imul(h1 ^ c, 2654435761); h2 = Math.imul(h2 ^ c, 1597334677); }
+          this.simKey = { doc: d, key: `${d.id}:${text.length}:${(h1 >>> 0).toString(36)}${(h2 >>> 0).toString(36)}` };
+        }
+        return this.simKey.key;
+      },
+      /** The solver's geometry: every shown component, each solid with its material (its body's own, else its part's). */
+      simGeo: async (lin: number, ang: number) => {
+        const doc = this.doc;
+        if (!doc) throw new Error("E-SIM-NOBODY");
+        const ex = this.expand(doc).doc, r = await this.kernel.asmSimGeo(ex, lin, ang);
+        const many = new Map<string, number>();
+        for (const q of r.regions) many.set(q.comp, (many.get(q.comp) ?? 0) + 1);
+        return {
+          geo: r.geo, solids: 1,
+          regions: r.regions.map(q => {
+            const pd = ex.parts[q.part]?.doc, own = q.mat ? Object.values(pd?.bodies ?? {}).find(b => b.material?.name === q.mat)?.material : null;
+            const name = ex.components.find(c => c.id === q.comp)?.name ?? q.comp, n = many.get(q.comp)!;
+            return { key: n > 1 ? `${q.comp}#${q.solid}` : q.comp, tris: q.tris, mat: own ?? pd?.material ?? null, name: n > 1 ? `${name} (${q.solid + 1})` : name };
+          }),
+        };
+      },
+    };
+  }
   /** Clicks in the view pick mate faces (Smart measure leaves them alone). */
   get picking() { return !!this.mating || !!this.patterning || !!this.exploding || !!this.fastening || !!this.refing || !!this.featuring; }
 
@@ -356,6 +417,7 @@ export class AsmController {
     this.selGroup.clear();
     this.motion?.close();
     this.doc = null;
+    this.simHook?.changed();
     this.vault = null;
     this.drag = null;
     this.mating = null;
@@ -3135,6 +3197,8 @@ export class AsmController {
       if (!this.doc || e.button !== 0 || e.target !== canvas()) return;
       // The Mate panel picks faces on a click (the view still orbits on a drag).
       if (this.picking) { this.mateDown = { x: e.clientX, y: e.clientY }; return; }
+      // a study's panel picks faces on a click too
+      if (this.simHook?.active()) { this.simDown = { x: e.clientX, y: e.clientY }; return; }
       const hit = this.host.partAt(e.clientX, e.clientY);
       if (!hit) { this.hideCrumbs(); return; }
       // A sub-assembly moves as one (FR-ASM-006): its children drag their top component.
@@ -3258,6 +3322,9 @@ export class AsmController {
       this.previewTfs(next);
     }, true);
     vp.addEventListener("pointerup", e => {
+      const sd = this.simDown;
+      this.simDown = null;
+      if (sd && e.button === 0 && e.target === canvas() && Math.hypot(e.clientX - sd.x, e.clientY - sd.y) <= 4 && this.simHook?.active()) { this.simHook.click(e); return; }
       const md = this.mateDown;
       this.mateDown = null;
       if (this.picking && md && e.button === 0 && e.target === canvas() && Math.hypot(e.clientX - md.x, e.clientY - md.y) <= 4) {
@@ -3295,6 +3362,7 @@ export class AsmController {
     this.renderPanel();
     this.host.setDoc(this.label());
     document.title = `${this.doc.name} · MöbiusCAD`;
+    this.simHook?.changed();
   }
 
   private renderBar() {

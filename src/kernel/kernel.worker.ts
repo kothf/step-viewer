@@ -18,7 +18,7 @@ import { applyPatch, probe } from "./patch";
 import { transformPart } from "../asm/light";
 import { invert } from "../asm/math";
 import { moveBodies } from "../tools/inertia";
-import { simGeometry } from "./simgeo";
+import { simGeometry, asmSimGeometry } from "./simgeo";
 import type { PartData } from "../topology";
 import type { PartDoc } from "../model/types";
 import parasolidWasm from "../sw/parasolid.wasm?url";
@@ -60,6 +60,8 @@ export type KernelRequest =
   | { id: number; type: "importBody"; buffer: ArrayBuffer; name: string }
   /** Structural analysis (FR-SARC-012): the last evaluated body as fine triangles with their faces' names. */
   | { id: number; type: "simGeo"; lin: number; ang: number }
+  /** Structural analysis of an assembly (FR-CON-001): the shown components as fine triangles, each solid also on its own. */
+  | { id: number; type: "asmSimGeo"; doc: AsmDoc; lin: number; ang: number }
   /**
    * Mesh export (STL, 3MF, OBJ, glTF) at a chord deviation `lin` mm and angle `ang` rad: `part` = the last shown part
    * body, `file` = the loaded file's meshes `which`, `asm` = each shown component of `doc` (by id, world coordinates).
@@ -366,6 +368,16 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
       // each body's own surface too, so bodies with their own materials can be told apart
       const regions = b.parts > 1 && lastParts.length === b.parts ? lastParts.map(q => ({ key: q.key, tris: simGeometry(oc, q.part.shape, q.part.faces as any[], r.lin, r.ang).tris })) : undefined;
       post({ id: r.id, ok: true, geo: { ...geo, names: b.body.names }, solids: b.solids, parts: b.parts, regions }, [geo.tris.buffer, geo.face.buffer, ...(regions ?? []).map(q => q.tris.buffer)]);
+    } else if (r.type === "asmSimGeo") {
+      assembler ??= new Assembler(kernel.module);
+      const { placed } = assembler.evaluate(r.doc, 1);
+      const shown = placed.filter(p => p.body && !r.doc.components.find(c => c.id === p.id)?.hidden);
+      if (!shown.length) throw new Error("E-SIM-NOBODY");
+      const geo = asmSimGeometry(kernel.module, shown.map(p => ({ id: p.id, shape: p.body.shape, faces: p.body.faces as any[], names: p.body.names })), r.lin, r.ang);
+      // each solid's material: its body's own, else its part's
+      const mats = new Map(shown.map(p => [p.id, { part: p.part, own: assembler!.bodyMats(p.part, r.doc, p.src) }]));
+      const regions = geo.regions.map(q => ({ ...q, part: mats.get(q.comp)!.part, mat: mats.get(q.comp)!.own?.[q.solid] ?? null }));
+      post({ id: r.id, ok: true, geo: { tris: geo.tris, face: geo.face, lo: geo.lo, hi: geo.hi, names: geo.names }, regions }, [...new Set([geo.tris.buffer, geo.face.buffer, ...regions.map(q => q.tris.buffer)])]);
     } else if (r.type === "exportMesh") {
       const oc = kernel.module;
       let out: { id: string | number; mesh: ExportMesh }[];
